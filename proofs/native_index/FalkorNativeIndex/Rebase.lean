@@ -28,7 +28,7 @@ Both use one function, `IndexColumn::refresh` (`falkordb_index.rs:169`).
 | `rawTuples` | the removes of `refresh` (`:178-199`): the attribute read from `from`, no label check |
 | `entityTuples` | `graph_writes::entity_tuples` (`graph_writes.rs:444`): the label or type is checked per id |
 | `placedBelow` | `placed_below` (before #3568; `refresh` now calls `placed_in(.., None, Some(next), ..)`: `placedIn_none_eq_placedBelow_*`) |
-| `placedIn`, `IndexColumn.indexerInsert`, `catchUpBy` | `placed_in` (`falkordb_index.rs:222`), `indexer_insert` (`:356`), `catch_up_by` (`versioned.rs:182`) (#3568) |
+| `placedIn`, `IndexColumn.indexerInsert`, `catchUpBy` | `placed_in` (`falkordb_index.rs:222`), `indexer_insert` (`:356`), `catch_up_by` (`versioned.rs:209`) (#3568) |
 | `IndexColumn.refresh` | `IndexColumn::refresh` (`:169`), `writer_rebase` (`:326`), `indexer_catch_up` (`:337`) |
 | `Written`, `BS`, `EN` | `Written`, `BuildState<BuildCursor>`, `IndexEntry<IndexColumn>` |
 | `EN.writerRecord`, `EN.indexerApply`, `EN.publish` | `IndexEntry::writer_record` (`:280`), `indexer_apply` (`:293`), `publish` (`:324`) |
@@ -746,18 +746,27 @@ theorem rebased_commit_keeps_chain (ours theirs : SE) (f : IndexColumn) (h : ove
 
 /-- **...and the next batch fits**: the writer commits `after := fork.rebased pub f` (derived here from the
     rebase itself, not assumed). A batch prepared on the published copy has that copy's generation and
-    `p.commits + 1`; judged against the writer's rebased commit, which has `p.commits`, it is not discarded
-    (it is a `CatchUp`, the writer having moved the data version, by whichever way `catch_up_by` picks). The fit
-    reads only the generation, the commit count and the `since` count, so the refreshed column `f` is irrelevant. -/
+    `p.commits + 1`; judged against the writer's rebased commit, which has `p.commits`, it is never discarded as
+    gone or as another batch's: it is a `CatchUp`, the writer having moved the data version, by whichever way
+    `catch_up_by` picks, unless that catch-up would do more than the batch's limit (`limit`, `none` at the floor),
+    which discards it for its size alone (`CatchUpTooLarge`). The fit reads only the generation, the commit count
+    and the `since` count, so the refreshed column `f` is irrelevant. -/
 theorem rebased_batch_fits {R : Type} (work : EncodedTuples) (fork pub prepared : V R) (f : SE → SE → IndexColumn) (o p : SE)
     (ho : fork.entry = some o) (hp : pub.entry = some p) (hov : overtakenSE o p = true)
     (en : IndexEntry) (s : Nat) (hprep : prepared.entry = some ⟨en, p.generation, p.commits + 1, s⟩)
-    (hv : (fork.rebased pub f).version ≠ prepared.version) :
-    ∃ how, indexerFit work prepared (fork.rebased pub f) = .catchUp how := by
+    (hv : (fork.rebased pub f).version ≠ prepared.version) (limit : Option Nat) (read : Nat) :
+    (∃ how, indexerFit work prepared (fork.rebased pub f) limit read = .catchUp how) ∨
+      indexerFit work prepared (fork.rebased pub f) limit read = .discarded .catchUpTooLarge := by
   have hafter : (fork.rebased pub f).entry = some (rebasedSE o p (f o p)) := by
     simp [V.rebased, ho, hp]
   have hk := rebased_commit_keeps_chain o p (f o p) hov
-  exact ⟨catchUpBy (rebasedSE o p (f o p)).written (IndexColumn.batchLen work), by simp [indexerFit, hprep, hafter, discardedAgainst, hk.1, hk.2.1, hv]⟩
+  have hd : discardedAgainst ⟨en, p.generation, p.commits + 1, s⟩ (some (rebasedSE o p (f o p))) = none := by
+    simp [discardedAgainst, hk.1, hk.2.1]
+  simp only [indexerFit, hprep, hafter, hd]
+  rw [ite_eq_left hv]
+  split
+  · exact Or.inr rfl
+  · exact Or.inl ⟨_, rfl⟩
 
 /-! ## The smaller functions around them -/
 

@@ -84,10 +84,11 @@ never returns the node, the retained Filter cannot add it back. -/
 example : agree [0] (.atom (.inn (.prop 0) (.list [.lit (.i 1), .lit (.date 3)])))
     (node [0] [(0, .date 3)]) = false := by decide
 
-/-- C10 (shared with C): `1 IN n.arr AND …`: array-contains keeps its Filter only at the root;
-inside AND it is dropped, and Bool/Int share the numeric array field. -/
+/-- C10 — FIXED by #3736. `1 IN n.arr AND …`: array-contains used to keep its Filter only at the
+root, so inside AND it was dropped, and Bool/Int share the numeric array field (shared with C). An
+array-contains conjunct now stays among the leftovers (`pushAnd`): the scan agrees. -/
 example : agree [0] (.and [.inn (.lit (.i 1)) (.term (.prop 3)), .opq 0])
-    (node [0] [(3, .arr [.b true])]) = false := by decide
+    (node [0] [(3, .arr [.b true])]) = true := by decide
 
 /-- C11 — FIXED by #3072 (1c9994e37). `n.v > 'B' AND n.v < 'B'` merges into
 `Range{min:'B', max:'B', exclusive}`, which `build_string_range_node` used to turn into an exact match

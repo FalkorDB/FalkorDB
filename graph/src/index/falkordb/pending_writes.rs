@@ -14,16 +14,24 @@ use std::sync::Arc;
 
 use crate::{entity_type::EntityType, runtime::value::Value};
 
+use super::encode::KeyKind;
 use super::falkordb_index::{FalkorDbIndex, IndexKey};
+use super::numeric::EncodedTuples;
 
 /// Per column, its staged changes in the order they were made.
 pub(crate) type ColumnWrites = HashMap<IndexKey, Vec<IndexWrite>>;
 
-/// One staged change to one column: an encoded `(key, id)` tuple going in or coming out.
+/// One staged change to one column: an encoded `(key, id)` tuple going in or coming out of the
+/// column's tree for `kind`.
+///
+/// `kind` is part of the tuple's identity. A scalar `1` and a list element `1` on the same entity
+/// are different tuples in different trees, so a value that changes kind within one unit of work
+/// stages a remove from one tree and an add to the other, and neither may cancel the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct IndexWrite {
     pub(crate) key: u64,
     pub(crate) id: u64,
+    pub(crate) kind: KeyKind,
     pub(crate) add: bool,
 }
 
@@ -77,7 +85,8 @@ impl IndexChanges {
         self.push(index, label, attr, value, id, true);
     }
 
-    /// Encoded now, so a change holds 17 bytes of payload and no `Value`.
+    /// Encoded now, so a change holds 18 bytes of payload and no `Value`. A list value stages one
+    /// change per numeric element, each into the column's array tree.
     fn push(
         &mut self,
         index: &FalkorDbIndex,
@@ -87,11 +96,13 @@ impl IndexChanges {
         id: u64,
         add: bool,
     ) {
-        let Some(key) = index.encode_value(self.entity, label, attr, value) else {
-            return;
-        };
-        self.changes
-            .push(((label.clone(), attr.clone()), IndexWrite { key, id, add }));
+        let changes = &mut self.changes;
+        index.for_each_stored_key(self.entity, label, attr, value, |kind, key| {
+            changes.push((
+                (label.clone(), attr.clone()),
+                IndexWrite { key, id, kind, add },
+            ));
+        });
     }
 }
 
@@ -149,32 +160,33 @@ impl PendingIndexWrites {
     }
 }
 
-/// Collapse one column's staged changes to the last change per `(key, id)`, writing the tuples
-/// that end up removed to `removes` and those that end up added to `adds`, both sorted. Each is
-/// cleared first, so the caller can reuse their capacity across columns.
+/// Collapse one column's staged changes to the last change per `(kind, key, id)`, writing the
+/// tuples that end up removed to `removes` and those that end up added to `adds`, each with the
+/// tuples of its kind, sorted. Both are cleared first, so the caller can reuse their capacity
+/// across columns.
+///
+/// The kind is part of the tuple: collapsing on `(key, id)` alone would let a scalar `1` turning
+/// into the list `[1]` cancel itself (the remove from the scalar tree and the add to the array
+/// tree are the same `(key, id)`) and leave the tuple in the wrong tree.
 ///
 /// The sort is stable, so equal tuples keep the order they were staged in and the last of each
 /// run is the latest change.
 pub(crate) fn last_write_wins(
     log: &mut [IndexWrite],
-    removes: &mut Vec<(u64, u64)>,
-    adds: &mut Vec<(u64, u64)>,
+    removes: &mut EncodedTuples,
+    adds: &mut EncodedTuples,
 ) {
     removes.clear();
     adds.clear();
-    log.sort_by_key(|w| (w.key, w.id));
+    let tuple = |w: &IndexWrite| (w.kind, w.key, w.id);
+    log.sort_by_key(tuple);
     for (i, w) in log.iter().enumerate() {
-        let superseded = log
-            .get(i + 1)
-            .is_some_and(|next| (next.key, next.id) == (w.key, w.id));
+        let superseded = log.get(i + 1).is_some_and(|next| tuple(next) == tuple(w));
         if superseded {
             continue;
         }
-        if w.add {
-            adds.push((w.key, w.id));
-        } else {
-            removes.push((w.key, w.id));
-        }
+        let side = if w.add { &mut *adds } else { &mut *removes };
+        side[w.kind].push((w.key, w.id));
     }
 }
 
@@ -182,21 +194,43 @@ pub(crate) fn last_write_wins(
 mod tests {
     use super::*;
 
+    /// A change to the scalar tree.
     fn w(
         key: u64,
         id: u64,
         add: bool,
     ) -> IndexWrite {
-        IndexWrite { key, id, add }
+        IndexWrite {
+            key,
+            id,
+            kind: KeyKind::Scalar,
+            add,
+        }
+    }
+
+    /// A change to the array tree.
+    fn arr(
+        key: u64,
+        id: u64,
+        add: bool,
+    ) -> IndexWrite {
+        IndexWrite {
+            kind: KeyKind::Array,
+            ..w(key, id, add)
+        }
+    }
+
+    fn scalars(tuples: &[(u64, u64)]) -> EncodedTuples {
+        EncodedTuples::scalars(tuples.to_vec())
     }
 
     #[test]
     fn the_last_change_to_a_tuple_wins() {
-        let (mut removes, mut adds) = (Vec::new(), Vec::new());
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
         // SET n.v = 5 then DELETE n: add then remove of (5, n). The remove must win.
         let mut log = vec![w(1, 7, false), w(5, 7, true), w(5, 7, false)];
         last_write_wins(&mut log, &mut removes, &mut adds);
-        assert_eq!(removes, vec![(1, 7), (5, 7)]);
+        assert_eq!(removes, scalars(&[(1, 7), (5, 7)]));
         assert!(
             adds.is_empty(),
             "the deleted node's tuple must not be added"
@@ -205,8 +239,8 @@ mod tests {
         // v0 -> v1 -> v0: remove then add of (1, 7). The add must win.
         let mut log = vec![w(1, 7, false), w(2, 7, true), w(2, 7, false), w(1, 7, true)];
         last_write_wins(&mut log, &mut removes, &mut adds);
-        assert_eq!(removes, vec![(2, 7)]);
-        assert_eq!(adds, vec![(1, 7)]);
+        assert_eq!(removes, scalars(&[(2, 7)]));
+        assert_eq!(adds, scalars(&[(1, 7)]));
     }
 
     /// Long runs of changes to the same tuples, interleaved with each other and with tuples changed
@@ -215,7 +249,7 @@ mod tests {
     /// long.
     #[test]
     fn the_last_change_wins_in_a_long_log() {
-        let (mut removes, mut adds) = (Vec::new(), Vec::new());
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
         let mut log = Vec::new();
         for round in 0..40 {
             for tuple in 0..10 {
@@ -231,18 +265,55 @@ mod tests {
                 .map(|t| (t, 7))
                 .collect()
         };
-        assert_eq!(removes, ends(false));
+        assert_eq!(removes, scalars(&ends(false)));
         let mut want = ends(true);
         want.extend((0..40).map(|round| (100 + round, 8)));
-        assert_eq!(adds, want);
+        assert_eq!(adds, scalars(&want));
     }
 
     #[test]
     fn untouched_tuples_pass_through_sorted() {
-        let (mut removes, mut adds) = (vec![(9, 9)], vec![(9, 9)]);
+        let (mut removes, mut adds) = (scalars(&[(9, 9)]), scalars(&[(9, 9)]));
         let mut log = vec![w(3, 1, true), w(1, 2, false), w(2, 1, true)];
         last_write_wins(&mut log, &mut removes, &mut adds);
-        assert_eq!(removes, vec![(1, 2)], "cleared first, then filled");
-        assert_eq!(adds, vec![(2, 1), (3, 1)]);
+        assert_eq!(removes, scalars(&[(1, 2)]), "cleared first, then filled");
+        assert_eq!(adds, scalars(&[(2, 1), (3, 1)]));
+    }
+
+    /// A value changing kind inside one unit of work. `SET n.v = [1, 2]` on a node whose `v` was
+    /// the scalar `1` stages `remove scalar (1, n)` and `add array (1, n)`, `add array (2, n)`:
+    /// the same `(key, id)` leaving one tree and entering the other. Collapsing on `(key, id)`
+    /// alone would keep only the later change, so the scalar tuple would never be removed and
+    /// `n.v = 1` would keep matching a node whose `v` is now a list.
+    #[test]
+    fn a_change_of_kind_keeps_both_trees_changes() {
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
+        let mut log = vec![w(1, 7, false), arr(1, 7, true), arr(2, 7, true)];
+        last_write_wins(&mut log, &mut removes, &mut adds);
+        assert_eq!(
+            removes[KeyKind::Scalar],
+            vec![(1, 7)],
+            "the scalar tuple comes out"
+        );
+        assert!(removes[KeyKind::Array].is_empty());
+        assert!(adds[KeyKind::Scalar].is_empty());
+        assert_eq!(
+            adds[KeyKind::Array],
+            vec![(1, 7), (2, 7)],
+            "the elements go in"
+        );
+
+        // And back: `SET n.v = 1` on `[1, 2]`.
+        let mut log = vec![arr(1, 7, false), arr(2, 7, false), w(1, 7, true)];
+        last_write_wins(&mut log, &mut removes, &mut adds);
+        assert_eq!(removes[KeyKind::Array], vec![(1, 7), (2, 7)]);
+        assert_eq!(adds[KeyKind::Scalar], vec![(1, 7)]);
+        assert!(removes[KeyKind::Scalar].is_empty() && adds[KeyKind::Array].is_empty());
+    }
+
+    /// The kind rides in what used to be padding: a staged change is no bigger than before.
+    #[test]
+    fn a_staged_change_did_not_grow() {
+        assert_eq!(std::mem::size_of::<IndexWrite>(), 24);
     }
 }

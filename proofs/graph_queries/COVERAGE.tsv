@@ -198,3 +198,6 @@ graph/src/graph/graph.rs	relationship_id_space	1699	PROVEN	Ids.openRelSpace_eq
 graph/src/graph/graph.rs	grow_for_nodes	1765	PROVEN	Ids.growForNodes_spec
 graph/src/graph/graph.rs	first_node_with_relationships	2421	CONDITIONAL	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022) || CONDITIONAL on AdjExact (adjacency = union of relation tensors; the graph.rs mutators' invariant, not proven preserved)
 graph/src/graph/graph.rs	edge_has_type_id	1338	PROVEN	Schema.edgeHasTypeId_iff (#3567: the matrix read edge_has_type used inline); edgeHasType_iff
+# Online index build (#2355): fns the background builder added, not modelled yet.
+graph/src/graph/graph.rs	Graph::add_native_build	4508	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/graph/graph.rs	Graph::native_build_total	4544	NOT COVERED	online index build (#2355): not modelled yet

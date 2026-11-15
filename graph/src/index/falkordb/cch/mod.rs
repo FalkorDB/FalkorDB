@@ -1,14 +1,15 @@
 //! Customizable Contraction Hierarchies (CCH) path index — contract skeleton.
 //!
-//! Everything here is a stub: types and signatures the implementation changes build against.
-//! The engine does not call any of it yet: `Graph` only holds an empty list of indexes, and
+//! [`Cch`]'s methods are stubs: signatures the implementation changes build against. The
+//! engine does not call any of it yet: `Graph` only holds an empty list of indexes, and
 //! the query pipeline never reaches the `unimplemented!()` bodies below. (The public
 //! `Graph` methods in `graph.rs` are stubs too, or delegate to `FalkorDbIndex`'s CCH methods,
 //! which are, so a caller that invokes them directly reaches `unimplemented!()`.)
 //!
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
-//! - `customize.rs` Phase 2: customization, `WeightArr` (#3209)
+//! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
+//! - `customize.rs` Phase 2: customization (#3209)
 //! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
@@ -18,11 +19,13 @@
 
 mod customize;
 mod input;
+mod nd;
 mod order;
 mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -31,78 +34,122 @@ use super::falkordb_index::FalkorDbIndex;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
 use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
+use customize::Metric;
+use order::Topology;
 use thiserror::Error;
 
 /// The largest node count (`CchInput::n`, the graph's node capacity) a hierarchy is built
 /// for: the engine's own graph limit, `GrB_INDEX_MAX` (`2^60 - 1`). The id space refuses an
 /// id at or past it (`IdSpace::create`) and `node_cap`, the dimension of every node matrix,
-/// never grows past it, so no graph reaches [`Cch::build`] with more. Node ids, ranks and
-/// mids are `u64` throughout, so `u64::MAX` is free to be the "none" sentinel of the rank and
-/// mid arrays.
+/// never grows past it, so no graph reaches [`Cch::build`] with more. Every node id and
+/// rank is therefore below `usize::MAX`, which is what lets `Option<Rank>` be the size of a
+/// rank.
 ///
 /// A limit, not a promise: the hierarchy holds several dense arrays of `n + 1` entries, so in
 /// practice memory stops a graph well before this.
-#[allow(clippy::cast_possible_truncation)]
-pub const MAX_NODES: usize = GrB_INDEX_MAX as usize;
+#[allow(clippy::cast_possible_truncation)] // `2^60 - 1`; `try_from` is not usable in a `const`
+const MAX_NODES: usize = GrB_INDEX_MAX as usize;
 
-/// Compressed sparse row over `n` nodes, ids `u64`. Its arrays are sized once, when it is
-/// built, and never grow; they are `Vec`s as the GraphBLAS export hands them over.
+/// A `u64` node id or offset as an index.
+///
+/// # Panics
+/// If `id` does not fit a `usize`, which only a target narrower than 64 bits allows: every
+/// id and offset here is below [`MAX_NODES`] or a `Vec`'s length.
+fn id_index(id: u64) -> usize {
+    usize::try_from(id).expect("a node id or offset fits a usize")
+}
+
+/// An index as a `u64` node id or offset.
+///
+/// # Panics
+/// Never on a supported target: `usize` is at most 64 bits wide.
+fn index_id(index: usize) -> u64 {
+    u64::try_from(index).expect("an index fits a u64")
+}
+
+/// Compressed sparse row over `node_count` nodes, ids `u64`. Its arrays are sized once,
+/// when it is built, and never grow; they are `Vec`s as the GraphBLAS export hands them over.
 ///
 /// Every `Csr` here holds, by construction:
-/// * `p` has `n + 1` offsets, starting at 0, never decreasing, ending at `i.len()`;
-/// * every id in `i` is below `n`;
+/// * `row_offsets` has `node_count + 1` offsets, starting at 0, never decreasing, ending at
+///   `neighbors.len()`;
+/// * every id in `neighbors` is below `node_count`;
 /// * every row is sorted ascending and duplicate-free.
 ///
 /// A `Csr` exported from a GraphBLAS matrix gets all three from the export (`n + 1` row
 /// pointers, column indices below the dimension, sorted and unique within a row); the ones
 /// this module builds itself keep them.
-pub struct Csr {
-    n: usize,
-    /// `n + 1` offsets into `i`.
-    p: Vec<u64>,
-    /// Column ids, sorted and duplicate-free within each row.
-    i: Vec<u64>,
+pub(crate) struct Csr {
+    node_count: usize,
+    /// `node_count + 1` offsets into `neighbors`.
+    row_offsets: Vec<u64>,
+    /// Each row's node ids, sorted and duplicate-free within the row.
+    neighbors: Vec<u64>,
 }
 
 impl Csr {
-    /// The column ids of row `u`: `i[p[u]..p[u + 1]]`, sorted and duplicate-free.
+    /// The neighbors of `node`: `neighbors[row_offsets[node]..row_offsets[node + 1]]`, sorted
+    /// and duplicate-free.
     ///
     /// # Panics
-    /// If `u >= n`, or an offset is out of range of `i`.
+    /// If `node >= node_count`, or an offset is out of range of `neighbors`.
     #[must_use]
-    pub fn row(
+    fn row(
         &self,
-        u: usize,
+        node: usize,
     ) -> &[u64] {
-        &self.i[self.p[u] as usize..self.p[u + 1] as usize]
+        &self.neighbors[self.row_range(node)]
     }
 
-    /// Whether `p` is shaped as the type requires (`n + 1` offsets from 0 to `i.len()`,
-    /// never decreasing) and every id is below `n`. `O(n + nnz)`, no allocation: the check
-    /// that keeps a C library reading this `Csr` within its arrays.
+    /// Where `node`'s row sits in `neighbors` (and in a [`WeightCsr`]'s `values`):
+    /// `row_offsets[node]..row_offsets[node + 1]`.
+    ///
+    /// # Panics
+    /// If `node >= node_count`.
+    fn row_range(
+        &self,
+        node: usize,
+    ) -> Range<usize> {
+        id_index(self.row_offsets[node])..id_index(self.row_offsets[node + 1])
+    }
+
+    /// Whether `row_offsets` is shaped as the type requires (`node_count + 1` offsets from 0 to
+    /// `neighbors.len()`, never decreasing) and every id is below `node_count`.
+    /// `O(node_count + neighbors)`, no allocation: the check that keeps the ordering backend
+    /// reading this `Csr` within its arrays.
     #[must_use]
-    pub fn is_well_formed(&self) -> bool {
-        let n = self.n;
-        // `len - 1`, not `n + 1`: `n` may be anything, `usize::MAX` included.
-        self.p.len().checked_sub(1) == Some(n)
-            && self.p[0] == 0
-            && self.p[n] as usize == self.i.len()
-            && self.p.windows(2).all(|w| w[0] <= w[1])
-            && self.i.iter().all(|&v| (v as usize) < n)
+    fn is_well_formed(&self) -> bool {
+        let node_count = self.node_count;
+        // `len - 1`, not `node_count + 1`: `node_count` may be anything, `usize::MAX` included.
+        self.row_offsets.len().checked_sub(1) == Some(node_count)
+            && self.row_offsets[0] == 0
+            && usize::try_from(self.row_offsets[node_count]) == Ok(self.neighbors.len())
+            && self
+                .row_offsets
+                .windows(2)
+                .all(|offsets| offsets[0] <= offsets[1])
+            && self
+                .neighbors
+                .iter()
+                .all(|&neighbor| usize::try_from(neighbor).is_ok_and(|index| index < node_count))
     }
 
     /// Whether this is the adjacency of a simple undirected graph: well formed, rows
-    /// sorted and duplicate-free, no self-loop, and every entry mirrored (`v` in row `u`
-    /// iff `u` in row `v`). What [`CchInput::skeleton`] holds by construction; checked in
-    /// debug builds and by the tests, not on the release path.
+    /// sorted and duplicate-free, no self-loop, and every entry mirrored (`b` in row `a`
+    /// iff `a` in row `b`). What [`CchInput::skeleton`] holds by construction; checked
+    /// again before the ordering backend reads it.
     #[must_use]
-    pub fn is_symmetric_simple(&self) -> bool {
+    fn is_symmetric_simple(&self) -> bool {
         self.is_well_formed()
-            && (0..self.n).all(|u| {
-                let r = self.row(u);
-                r.windows(2).all(|w| w[0] < w[1])
-                    && r.iter().all(|&v| {
-                        v as usize != u && self.row(v as usize).binary_search(&(u as u64)).is_ok()
+            && (0..self.node_count).all(|node| {
+                let row = self.row(node);
+                row.windows(2).all(|pair| pair[0] < pair[1])
+                    && row.iter().all(|&neighbor| {
+                        id_index(neighbor) != node
+                            && self
+                                .row(id_index(neighbor))
+                                .binary_search(&index_id(node))
+                                .is_ok()
                     })
             })
     }
@@ -110,29 +157,30 @@ impl Csr {
 
 /// Directed weights: same shape as a [`Csr`], with one weight per entry.
 pub struct WeightCsr {
-    pub csr: Csr,
-    pub w: Vec<f64>,
+    csr: Csr,
+    /// One weight per entry of `csr.neighbors`.
+    values: Vec<f64>,
 }
 
 /// What `Graph` hands the hierarchy builder (built by #3211, consumed by #3208 and #3209).
 pub struct CchInput {
-    pub n: usize,
+    n: usize,
     /// Symmetric, no self-loops ([`Csr::is_symmetric_simple`]): `CchInput::build` takes it
     /// as the pattern union of the weights and their transpose after dropping the diagonal.
     /// Phase 1 only.
-    pub skeleton: Csr,
+    skeleton: Csr,
     /// Directed. One entry per node pair: the cheapest weight over all parallel edges and all
     /// indexed relationship types. A missing or non-numeric attribute counts as 1.0.
     /// An absent entry means "no edge". Weights must be `>= 0`; `+inf` is legal and means a
     /// closed edge: it exists, but no path can use it.
-    pub weights: WeightCsr,
+    weights: WeightCsr,
 }
 
 /// Identity of an index. The key is the whole definition.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CchIndexDef {
     rel_types: Vec<TypeId>,
-    pub weight_attr: u16,
+    weight_attr: u16,
 }
 
 impl CchIndexDef {
@@ -153,7 +201,7 @@ impl CchIndexDef {
     /// Sorted, duplicate-free — normalised by [`Self::new`], which is the only constructor.
     #[cfg(test)] // only the tests read it until the input build (#3211) does
     #[must_use]
-    pub fn rel_types(&self) -> &[TypeId] {
+    pub(crate) fn rel_types(&self) -> &[TypeId] {
         &self.rel_types
     }
 }
@@ -172,44 +220,44 @@ pub enum CchError {
     /// legal (a closed edge).
     #[error("a weight is negative or NaN")]
     InvalidWeight,
-    /// A bug, not bad input: the ordering backend failed on a well-formed graph, or
-    /// returned something other than a permutation. The message says which.
+    /// The weights are not shaped for the hierarchy: a different node count, or an edge
+    /// between two nodes it has no arc for. They come from a later version of the graph than
+    /// the one the hierarchy was built for, and only a rebuild can take them. Expected on a
+    /// live graph, not a bug. A malformed weight CSR is a bug, [`Self::Internal`], and a
+    /// build never returns this.
+    #[error("the weights do not match the CCH hierarchy: it needs a rebuild")]
+    NeedsRebuild,
+    /// A bug, not bad input. The message says which.
     #[error("internal CCH error: {0}")]
     Internal(&'static str),
+    /// A bug, not bad input: no elimination order could be produced. The message is the
+    /// ordering's own error, the backend's included, as text: the backend is a dependency
+    /// of this module, not of its callers.
+    #[error("internal CCH error: {0}")]
+    Ordering(String),
+}
+
+impl From<order::OrderError> for CchError {
+    fn from(error: order::OrderError) -> Self {
+        Self::Ordering(error.to_string())
+    }
 }
 
 /// The hierarchy. Cheap to share behind an `Arc`: the six structural arrays never change after
-/// `build`; only the four weight arrays are rewritten by `customize`.
+/// `build`, and a new metric is a new hierarchy sharing them ([`Cch::customized`]).
+///
+/// The internal layout — the two id spaces, what an arc id means, and what each of the four
+/// arrays holds — is documented in [`customize`], which scoped recustomization (#3217) and
+/// any later change to how the weight arrays are stored code against.
 pub struct Cch {
-    // filled in by the ordering (#3208) and customization (#3209) changes
+    /// Phase 1's output: the elimination order and the chordal supergraph. Metric
+    /// independent, so every version of this index shares one.
+    topology: Arc<Topology>,
+    /// Phase 2's output: the four per-arc arrays, indexed by arc id.
+    metric: Metric,
 }
 
 impl Cch {
-    /// Phase 1 + Phase 2.
-    ///
-    /// # Errors
-    /// [`CchError::InvalidWeight`] for a negative or NaN weight.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3208 and #3209. Nothing calls it yet.
-    pub fn build(_input: &CchInput) -> Result<Self, CchError> {
-        unimplemented!("hierarchy build, #3208 and #3209")
-    }
-
-    /// Phase 2 only, same structure, new weights.
-    ///
-    /// # Errors
-    /// [`CchError::InvalidWeight`] for a negative or NaN weight.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
-    pub fn customize(
-        &mut self,
-        _weights: &WeightCsr,
-    ) -> Result<(), CchError> {
-        unimplemented!("customization, #3209")
-    }
-
     /// Recompute the metric after the edges in `changed` changed weight, touching only the
     /// arcs those changes can reach.
     ///
@@ -217,7 +265,7 @@ impl Cch {
     /// last customization — raised, lowered, removed, or added where the hierarchy already
     /// has an arc. Direction does not matter (an arc carries both), duplicates are fine,
     /// and self-loops are ignored. `weights` is the **complete** new metric, the same
-    /// [`WeightCsr`] a full [`Cch::customize`] would take:
+    /// [`WeightCsr`] a full [`Cch::customized`] would take:
     /// - a removed edge is simply absent from it, and seeds its arc with infinity, as an
     ///   explicit `+inf` (a closed edge) does;
     /// - every pair whose weight differs from the previous metric must be in `changed`.
@@ -245,32 +293,25 @@ impl Cch {
 
     /// Cheapest weight and node sequence. Mapping node pairs to edge ids is the caller's job.
     ///
+    /// `None` when `dst` is unreachable from `src`, or when either is not a node of this
+    /// hierarchy. `src == dst` is the single-node path of weight `0.0`.
+    ///
+    /// Also `None` when every path's weight overflows `f64` (a chain of weights near
+    /// `f64::MAX`): the sum is `+inf`, which reads as "no path", as in C.
+    ///
+    /// Also `None` when unpacking a shortcut on the route finds an arc missing: the
+    /// hierarchy no longer matches the graph it was built from, which is a bug, not an
+    /// unreachable pair.
+    ///
     /// # Panics
-    /// Always — unimplemented until #3210. Nothing calls it yet.
+    /// On that missing arc when `debug_assertions` are on.
     #[must_use]
     pub fn query(
         &self,
-        _src: u64,
-        _dst: u64,
+        src: u64,
+        dst: u64,
     ) -> Option<(f64, Vec<u64>)> {
-        unimplemented!("query, #3210")
-    }
-
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
-    #[must_use]
-    pub fn node_count(&self) -> usize {
-        unimplemented!("customization, #3209")
-    }
-
-    /// Only the tests call it.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
-    #[cfg(test)]
-    #[must_use]
-    pub fn memory_usage(&self) -> usize {
-        unimplemented!("customization, #3209")
+        query::query(self, src, dst)
     }
 }
 
@@ -284,8 +325,8 @@ pub enum Recustomized {
     /// A changed pair has no arc in the hierarchy (a new adjacency), names a node the
     /// hierarchy does not have, or `weights` is shaped for a different node count.
     /// Recustomizing cannot represent it: the structure has to be rebuilt. **Nothing was
-    /// written.** On the `Full` path this is also what `customize`'s
-    /// `CchError::Internal` shape refusal becomes, so the two paths answer alike.
+    /// written.** On the `Full` path this is also what [`Cch::customized`]'s
+    /// [`CchError::NeedsRebuild`] becomes, so the two paths answer alike.
     NeedsRebuild,
 }
 
@@ -430,6 +471,7 @@ pub struct CchDirty {
 mod tests {
     use super::{Cch, CchIndex, CchIndexDef, Csr, TypeId};
     use crate::graph::{graph::Graph, graphblas::test_init};
+    use crate::index::falkordb::cch::testkit::{empty, to_input};
     use crate::index::falkordb::versioned::{BuildState, IndexEntry, VersionedIndex};
     use std::sync::Arc;
 
@@ -453,15 +495,16 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    /// `Csr::row` is the slice `p[u]..p[u + 1]` of `i`, empty rows included, and refuses a
-    /// row that does not exist rather than reading the next one.
+    /// `Csr::row` is the slice `row_offsets[node]..row_offsets[node + 1]` of `neighbors`,
+    /// empty rows included, and refuses a row that does not exist rather than reading the
+    /// next one.
     #[test]
     fn csr_row_slices_one_row() {
         // 0: [1, 2]   1: []   2: [0]
         let csr = Csr {
-            n: 3,
-            p: vec![0, 2, 2, 3],
-            i: vec![1, 2, 0],
+            node_count: 3,
+            row_offsets: vec![0, 2, 2, 3],
+            neighbors: vec![1, 2, 0],
         };
         assert_eq!(csr.row(0), &[1, 2]);
         assert!(csr.row(1).is_empty());
@@ -473,17 +516,17 @@ mod tests {
     /// undirected adjacency fails `is_symmetric_simple`, from the one clean path 0 - 1 - 2.
     #[test]
     fn csr_checks_catch_each_defect() {
-        let csr = |n: usize, p: &[u64], i: &[u64]| Csr {
-            n,
-            p: p.into(),
-            i: i.into(),
+        let csr = |node_count: usize, row_offsets: &[u64], neighbors: &[u64]| Csr {
+            node_count,
+            row_offsets: row_offsets.into(),
+            neighbors: neighbors.into(),
         };
         let clean = csr(3, &[0, 1, 3, 4], &[1, 0, 2, 1]);
         assert!(clean.is_well_formed() && clean.is_symmetric_simple());
         for bad in [
             csr(3, &[0, 1, 3], &[1, 0, 2]),       // n offsets, not n + 1
             csr(3, &[1, 1, 3, 4], &[1, 0, 2, 1]), // does not start at 0
-            csr(3, &[0, 1, 3, 3], &[1, 0, 2, 1]), // does not end at i.len()
+            csr(3, &[0, 1, 3, 3], &[1, 0, 2, 1]), // does not end at neighbors.len()
             csr(3, &[0, 2, 1, 4], &[1, 0, 2, 1]), // decreasing
             csr(3, &[0, 1, 3, 4], &[1, 0, 3, 1]), // id past n
         ] {
@@ -519,7 +562,7 @@ mod tests {
         );
 
         let def = CchIndexDef::new(vec![TypeId(1)], 0);
-        let cch = Arc::new(Cch {});
+        let cch = Arc::new(Cch::build(&to_input(&empty(0))).expect("empty hierarchy"));
         g.falkordb_index.cch_indexes.insert(
             def.clone(),
             IndexEntry::new(

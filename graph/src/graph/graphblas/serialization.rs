@@ -184,8 +184,14 @@ impl Encode<19> for RoaringTreemap {
         offset: u64,
     ) {
         let mut buf = Vec::with_capacity(count as usize * 8);
-        for id in self.iter().skip(offset as usize).take(count as usize) {
-            buf.extend_from_slice(&id.to_le_bytes());
+        // Seek to the `offset`-th id instead of skipping up to it, so a save split
+        // across many virtual keys does not re-walk every earlier id per key.
+        if let Some(first) = self.select(offset) {
+            let mut iter = self.iter();
+            iter.advance_to(first);
+            for id in iter.take(count as usize) {
+                buf.extend_from_slice(&id.to_le_bytes());
+            }
         }
         w.write_buffer(&buf);
     }
@@ -264,6 +270,66 @@ mod tests {
         fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
             self.0.take().ok_or_else(|| "no buffer".to_string())
         }
+    }
+
+    struct Collect(Vec<u8>);
+
+    impl Writer for Collect {
+        fn write_unsigned(
+            &mut self,
+            _: u64,
+        ) {
+        }
+        fn write_signed(
+            &mut self,
+            _: i64,
+        ) {
+        }
+        fn write_double(
+            &mut self,
+            _: f64,
+        ) {
+        }
+        fn write_buffer(
+            &mut self,
+            d: &[u8],
+        ) {
+            self.0.extend_from_slice(d);
+        }
+    }
+
+    /// A save split across virtual keys encodes the ids in slices; the slices,
+    /// seeked to a nonzero offset, must concatenate to the whole encode, including
+    /// ids spread over several 32-bit buckets and a slice past the end.
+    #[test]
+    fn deleted_entities_slices_concatenate_to_the_full_encode() {
+        let ids = [
+            0u64,
+            3,
+            4,
+            70_000,
+            70_001,
+            1 << 32,
+            (1 << 32) + 9,
+            (3 << 32) + 5,
+            u64::MAX,
+        ];
+        let bitmap: RoaringTreemap = ids.iter().copied().collect();
+        let mut whole = Collect(Vec::new());
+        bitmap.encode(&mut whole);
+        assert_eq!(whole.0.len(), ids.len() * 8);
+        for step in [1u64, 2, 4, 100] {
+            let mut sliced = Collect(Vec::new());
+            let mut offset = 0;
+            while offset < bitmap.len() {
+                bitmap.encode_with_range(&mut sliced, step, offset);
+                offset += step;
+            }
+            assert_eq!(sliced.0, whole.0, "slices of {step}");
+        }
+        let mut past = Collect(Vec::new());
+        bitmap.encode_with_range(&mut past, 5, bitmap.len());
+        assert!(past.0.is_empty());
     }
 
     /// `count * 8` used to wrap for a payload count of `2^61`, match an empty

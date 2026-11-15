@@ -2392,12 +2392,15 @@ impl Graph {
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
-            .map(|(src, dest, id)| {
-                let src_node = NodeId(src);
-                let dest_node = NodeId(dest);
-                (src_node, dest_node, RelationshipId(id))
+            .flat_map(move |m| {
+                // A self-loop is on the diagonal of both halves; take it from
+                // the outgoing one only.
+                let incoming = m
+                    .iter(id.0, id.0, true)
+                    .filter(|&(src, dest, _)| src != dest);
+                m.iter(id.0, id.0, false).chain(incoming)
             })
+            .map(|(src, dest, id)| (NodeId(src), NodeId(dest), RelationshipId(id)))
     }
 
     /// The lowest of `nodes` that still has a relationship, in either direction.
@@ -2474,21 +2477,25 @@ impl Graph {
         types: &[Arc<String>],
         direction: EdgeDirection,
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
-        let matrices: Vec<&Tensor> = if types.is_empty() {
-            self.relationship_matrices.iter().collect()
-        } else {
-            types
-                .iter()
-                .filter_map(|t| self.get_relationship_matrix(t))
-                .collect()
-        };
+        // The all-types case walks the matrices in place (it runs once per
+        // visited node in graph.traverse, so it must not allocate); only a
+        // typed lookup gathers its matrices, and an empty `Vec` costs nothing.
+        let all_types = types
+            .is_empty()
+            .then(|| self.relationship_matrices.iter())
+            .into_iter()
+            .flatten();
+        let matrices: Vec<&Tensor> = types
+            .iter()
+            .filter_map(|t| self.get_relationship_matrix(t))
+            .collect();
         let (with_outgoing, with_incoming) = match direction {
             EdgeDirection::Outgoing => (true, false),
             EdgeDirection::Incoming => (false, true),
             EdgeDirection::Both => (true, true),
         };
-        matrices
-            .into_iter()
+        all_types
+            .chain(matrices)
             .flat_map(move |m| {
                 let outgoing = with_outgoing
                     .then(|| m.iter(id.0, id.0, false))
@@ -4177,6 +4184,12 @@ impl Graph {
         }
     }
 
+    /// Whether the planner may answer `label.field` from an index of `index_type`.
+    ///
+    /// Under `index-falkordb` a Range lookup is the native column's alone, and the column is part
+    /// of this version: it serves once its build is done. RediSearch's readiness lives in its
+    /// index map, which every version shares, so it says nothing about this version's column, and
+    /// a version without the column must not plan a lookup it cannot answer.
     #[must_use]
     pub fn is_indexed(
         &self,
@@ -4184,6 +4197,10 @@ impl Graph {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
+        #[cfg(feature = "index-falkordb")]
+        if *index_type == IndexType::Range {
+            return self.falkordb_index.is_ready(EntityType::Node, label, field);
+        }
         self.node_indexer.is_label_indexed(label, field, index_type)
     }
 
@@ -4195,31 +4212,31 @@ impl Graph {
         self.node_indexer.query(label, query).map(NodeId)
     }
 
-    /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
+    /// Node ids for `query` from the native index column. Wraps [`FalkorDbIndex::query_column`],
     /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
     /// three-way answer: `Ok(rows)`, `Err(scan_filter)` (column still building — scan), or `None`
     /// (cannot be served). `use<>` keeps the returned iterator free of the `&self` borrow — it
     /// owns its tree snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
-    pub fn query_index_numeric_nodes(
+    pub fn query_index_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<Result<impl Iterator<Item = NodeId> + use<>, ScanFilter>> {
         self.falkordb_index
-            .query_numeric(EntityType::Node, label, query)
+            .query_column(EntityType::Node, label, query)
             .map(|answer| answer.map(|rows| rows.map(NodeId)))
     }
 
-    /// Answer an EDGE numeric query from the index column for `type_name`: an `Equal`, a `Range`,
-    /// an `IN` list, or an `OR` of equalities and `IN` lists on one attribute. Yields
+    /// Answer an EDGE query from the native index columns for `type_name`
+    /// ([`FalkorDbIndex::query_column`]). Yields
     /// `(src, dst, edge_id)`, with endpoints recovered from the graph's `edge_id → (src, dst)`
     /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
     /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
     /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes:
     /// `Ok(rows)`, `Err(scan_filter)` (still building — scan), `None` (not servable).
     #[cfg(feature = "index-falkordb")]
-    pub fn query_index_numeric_edges(
+    pub fn query_index_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
@@ -4227,7 +4244,7 @@ impl Graph {
     {
         let answer =
             self.falkordb_index
-                .query_numeric(EntityType::Relationship, type_name, query)?;
+                .query_column(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is
@@ -4244,36 +4261,34 @@ impl Graph {
         }))
     }
 
-    /// Whether the scan standing in for a column still building keeps node `id`: whether its value
-    /// of `attr` matches `scan_filter`, so the built column would answer the query with it. `attr`
-    /// is the filter's attribute as [`Self::get_node_attribute_id`] resolves it, once per scan
-    /// rather than once per node. Reads the committed value, which is the one the column indexes.
+    /// Whether the scan standing in for columns still building keeps node `id`: whether its values
+    /// match `scan_filter`, so the built columns would answer the query with it. `scan_filter`'s
+    /// attributes are resolved by [`Self::get_node_attribute_id`] ([`ScanFilter::resolve`]), once
+    /// per scan rather than once per node. Reads the committed values, which are the ones the
+    /// columns index.
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub fn node_matches(
         &self,
         id: NodeId,
-        attr: u16,
-        scan_filter: &ScanFilter,
+        scan_filter: &ScanFilter<u16>,
     ) -> bool {
-        self.get_node_attribute_by_idx(id, attr)
-            .is_some_and(|value| scan_filter.matches(&value))
+        scan_filter.matches(|&attr| self.get_node_attribute_by_idx(id, attr))
     }
 
-    /// [`Self::node_matches`] for relationship `id`, with `attr` resolved by
+    /// [`Self::node_matches`] for relationship `id`, with `scan_filter`'s attributes resolved by
     /// [`Self::get_relationship_attribute_id`].
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub fn relationship_matches(
         &self,
         id: RelationshipId,
-        attr: u16,
-        scan_filter: &ScanFilter,
+        scan_filter: &ScanFilter<u16>,
     ) -> bool {
-        self.get_relationship_attribute_by_idx(id, attr)
-            .is_some_and(|value| scan_filter.matches(&value))
+        scan_filter.matches(|&attr| self.get_relationship_attribute_by_idx(id, attr))
     }
 
+    /// The relationship counterpart of [`Self::is_indexed`].
     #[must_use]
     pub fn is_edge_indexed(
         &self,
@@ -4281,6 +4296,12 @@ impl Graph {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
+        #[cfg(feature = "index-falkordb")]
+        if *index_type == IndexType::Range {
+            return self
+                .falkordb_index
+                .is_ready(EntityType::Relationship, label, field);
+        }
         self.edge_indexer.is_label_indexed(label, field, index_type)
     }
 
@@ -4468,13 +4489,73 @@ impl Graph {
         let mut infos = self.node_indexer.index_info();
         for info in &mut infos {
             info.entity_type = String::from("NODE");
+            #[cfg(feature = "index-falkordb")]
+            self.add_native_build(EntityType::Node, info);
         }
         let mut edge_infos = self.edge_indexer.index_info();
         for info in &mut edge_infos {
             info.entity_type = String::from("RELATIONSHIP");
+            #[cfg(feature = "index-falkordb")]
+            self.add_native_build(EntityType::Relationship, info);
         }
         infos.extend(edge_infos);
         infos
+    }
+
+    /// Under `index-falkordb`, `info`'s label is under construction while any of its Range
+    /// attributes' native columns is `Building` in this version: each such column counts as
+    /// pending. The progress shown is the label's build as a whole, out of the label's or type's
+    /// entities, as C shows it: the least any of those columns has read, or what RediSearch has
+    /// populated of another of the label's fields (a fulltext or vector one) if that is less. The
+    /// label's or type's entities are counted once, and only while one of its columns builds.
+    #[cfg(feature = "index-falkordb")]
+    fn add_native_build(
+        &self,
+        entity: EntityType,
+        info: &mut IndexInfo,
+    ) {
+        let mut building: Option<(i32, u64)> = None;
+        for attr in &info.field_order {
+            let range = info
+                .fields
+                .get(attr)
+                .is_some_and(|fields| fields.iter().any(|f| f.ty == IndexType::Range));
+            if range
+                && let Some(read) = self.falkordb_index.building_read(entity, &info.label, attr)
+            {
+                building = Some(
+                    building.map_or((1, read), |(columns, least)| (columns + 1, least.min(read))),
+                );
+            }
+        }
+        let Some((columns, least)) = building else {
+            return;
+        };
+        let total = self.native_build_total(entity, &info.label);
+        let done = least.min(total);
+        // RediSearch reports what it has populated while it has a field pending.
+        info.progress = if info.pending > 0 {
+            done.min(info.progress)
+        } else {
+            done
+        };
+        info.pending += columns;
+        info.total = total;
+    }
+
+    /// The entities of `label`, or of relationship type `label`: what a build's progress is out of.
+    #[cfg(feature = "index-falkordb")]
+    fn native_build_total(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+    ) -> u64 {
+        match entity {
+            EntityType::Node => self.get_label_matrix(label).map_or(0, |lm| lm.nvals()),
+            EntityType::Relationship => self
+                .get_relationship_matrix(label)
+                .map_or(0, |t| t.edge_count()),
+        }
     }
 
     // ── Constraint management ─────────────────────────────────────────

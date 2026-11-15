@@ -66,12 +66,14 @@
 //! - [`storage`]: Shared storage seam (per-store backend registry; an in-memory
 //!   backend by default, an alternate backend swapped in by a statically-linked add-on)
 //! - [`entity_type`]: Node and relationship entity type discriminator
+//! - [`env_snapshot`]: Owned copies of a C `environ` array (Valkey `RTLD_DEEPBIND` repair)
 //! - [`identifier_limits`]: Maximum accepted length of an identifier
 //! - [`threadpool`]: Thread pool for parallel query execution
 //! - [`udf`]: User-defined function registration and dispatch
 
 pub mod effects;
 pub mod entity_type;
+pub mod env_snapshot;
 pub mod graph;
 pub mod identifier_limits;
 pub mod index;

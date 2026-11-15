@@ -1,8 +1,10 @@
-//! Safe Rust wrapper around GraphBLAS boolean sparse vectors.
+//! Safe Rust wrapper around GraphBLAS sparse vectors.
 //!
 //! This module provides [`Vector<T>`], which wraps `GrB_Vector` from the
-//! SuiteSparse:GraphBLAS C library. Currently only `Vector<bool>` is
-//! implemented, used to represent sets of node IDs efficiently.
+//! SuiteSparse:GraphBLAS C library. Three element types are implemented:
+//! `Vector<bool>`, used to represent sets of node IDs efficiently;
+//! `Vector<u64>`, a count or an id per index; and, with the `index-falkordb` feature,
+//! `Vector<f64>`, a weight per index.
 //!
 //! ## Use Cases
 //!
@@ -46,6 +48,10 @@ use crate::graph::graphblas::{
     GrB_Vector_setElement_UINT64, GxB_Vector_build_Scalar,
 };
 
+#[cfg(feature = "index-falkordb")]
+use super::length;
+#[cfg(feature = "index-falkordb")]
+use super::matrix::grb;
 use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
     GrB_BOOL, GrB_Info, GrB_Type, GrB_Type_get_String, GrB_Vector, GrB_Vector_free, GrB_Vector_new,
@@ -56,10 +62,11 @@ use super::{
     GxB_Vector_Iterator_seek, GxB_Vector_deserialize, GxB_Vector_load, GxB_Vector_serialize,
     GxB_Vector_unload,
 };
+use super::{GrB_FP64, GrB_Vector_extractTuples_FP64, GrB_Vector_nvals};
 
 /// A sparse vector backed by GraphBLAS.
 ///
-/// Generic over element type T, though currently only bool is implemented.
+/// Generic over element type T: `bool`, `u64` and (with `index-falkordb`) `f64`.
 /// The vector automatically frees its GraphBLAS resources on drop.
 pub struct Vector<T> {
     v: GrB_Vector,
@@ -97,11 +104,25 @@ impl From<GrB_Vector> for Vector<u64> {
 }
 
 impl<T> Vector<T> {
+    #[must_use]
+    pub const fn ptr(&self) -> GrB_Vector {
+        self.v
+    }
+
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Vector_clear(self.v);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+    }
+
+    /// The number of stored entries.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    fn nvals(&self) -> u64 {
+        let mut nvals = 0;
+        grb!(unsafe { GrB_Vector_nvals(&raw mut nvals, self.v) });
+        nvals
     }
 }
 
@@ -168,11 +189,6 @@ impl Vector<bool> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         v
-    }
-
-    #[must_use]
-    pub const fn ptr(&self) -> GrB_Vector {
-        self.v
     }
 
     #[must_use]
@@ -454,6 +470,39 @@ impl Decode<19> for Vector<bool> {
     }
 }
 
+/// `FP64` vectors, as a weight per index (e.g. a minimum per row).
+#[cfg(feature = "index-falkordb")]
+impl Vector<f64> {
+    #[must_use]
+    pub(crate) fn new(nrows: u64) -> Self {
+        let mut v: GrB_Vector = null_mut();
+        grb!(unsafe { GrB_Vector_new(&raw mut v, GrB_FP64, nrows) });
+        Self {
+            v,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Every stored entry as parallel index and value arrays, in index order.
+    #[must_use]
+    pub(crate) fn extract_tuples(&self) -> (Vec<u64>, Vec<f64>) {
+        let mut count = self.nvals();
+        let mut indices = vec![0; length(count)];
+        let mut values = vec![0.0; length(count)];
+        grb!(unsafe {
+            GrB_Vector_extractTuples_FP64(
+                indices.as_mut_ptr(),
+                values.as_mut_ptr(),
+                &raw mut count,
+                self.v,
+            )
+        });
+        indices.truncate(length(count));
+        values.truncate(length(count));
+        (indices, values)
+    }
+}
+
 impl Vector<u64> {
     pub fn new(nrows: u64) -> Self {
         unsafe {
@@ -486,11 +535,6 @@ impl Vector<u64> {
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(&self) -> Iter<u64> {
         Iter::new(self)
-    }
-
-    #[must_use]
-    pub const fn ptr(&self) -> GrB_Vector {
-        self.v
     }
 
     /// The sum of the stored values (`PLUS` monoid; 0 when empty).
@@ -814,5 +858,25 @@ mod decode_tests {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name with an interior-only NUL"),
         }
+    }
+}
+
+#[cfg(all(test, feature = "index-falkordb"))]
+mod fp64_tests {
+    use super::super::GrB_Vector_setElement_FP64;
+    use super::super::test_init::ensure_init;
+    use super::{Vector, grb};
+
+    /// Every entry, in index order, a stored `0.0` included; absent indices
+    /// are not reported.
+    #[test]
+    fn extract_tuples_returns_every_entry_in_index_order() {
+        ensure_init();
+        let v = Vector::<f64>::new(10);
+        assert_eq!(v.extract_tuples(), (vec![], vec![]));
+        for (i, x) in [(7, 2.5), (1, 0.0), (4, -1.0)] {
+            grb!(unsafe { GrB_Vector_setElement_FP64(v.ptr(), x, i) });
+        }
+        assert_eq!(v.extract_tuples(), (vec![1, 4, 7], vec![0.0, -1.0, 2.5]));
     }
 }

@@ -130,6 +130,8 @@ use crate::graph::{
     graphblas::matrix::{BoolExtract, Uint64Extract},
 };
 
+#[cfg(feature = "index-falkordb")]
+use super::versioned_matrix::Effective;
 use super::{
     matrix::{Descriptor, Dup, Matrix},
     serialization::{Decode, Encode, Reader, Writer},
@@ -1049,6 +1051,21 @@ impl Tensor {
         &self.dm
     }
 
+    /// The effective forward adjacency `(m ∖ dm) ∪ dp` as one `UINT64`
+    /// matrix, `dp`'s value winning on a pair it shadows: no copy when both
+    /// deltas are empty (see [`Effective`]). A multi-edge pair holds
+    /// [`MULTI_EDGE`] here, as it does in every layer; its ids are in `me`.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub(crate) fn effective_fwd(&self) -> Effective<'_, u64> {
+        // The deltas as every forward reader takes them (resynced, the fold
+        // decision latched), and the base's own wait, a no-op unless a resize
+        // flagged it: the merge reads it.
+        self.wait_fwd();
+        self.m.wait();
+        versioned_matrix::effective(&self.m, &self.dp, &self.dm)
+    }
+
     /// Structure-only `(src, dst)` iterator over the effective forward
     /// adjacency `(m ∖ dm) ∪ dp`, ignoring the stored edge-id values.
     #[must_use]
@@ -1482,39 +1499,54 @@ impl Encode<19> for Tensor {
         // inline state. Single-edge pairs store the edge id directly; multi-edge
         // pairs (inline value == MULTI_EDGE) store `(edge_count | MSB)` and push
         // their full id list from `me` into the tensor section below.
-        let mut f_rows: Vec<u64> = Vec::new();
-        let mut f_cols: Vec<u64> = Vec::new();
-        let mut f_vals: Vec<u64> = Vec::new();
+        //
+        // When there is nothing pending in the deltas and no pair holds more than
+        // one edge, the base `m` already *is* that matrix — every value an edge
+        // id with the MSB clear — so it is written as is, the way
+        // `VersionedMatrix::encode` writes its base. Rebuilding it through an
+        // iterator and `build` costs three `u64` per edge in scratch vectors plus
+        // a second matrix (gigabytes, and most of a SAVE, at 10^8 edges).
+        self.wait_fwd();
         let mut multi: Vec<(u64, u64, Vec<u64>)> = Vec::new();
-        for (src, dst, inline) in self.fwd_iter(0, u64::MAX) {
-            f_rows.push(src);
-            f_cols.push(dst);
-            if inline == MULTI_EDGE {
-                let (block, key) = compound_key(src, dst);
-                let ids: Vec<u64> = self
-                    .me_block(block)
-                    .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
-                    .unwrap_or_default();
-                f_vals.push(ids.len() as u64 | MSB_MASK);
-                multi.push((src, dst, ids));
-            } else {
-                f_vals.push(inline);
-            }
-        }
-
-        // Forward VersionedMatrix layout: base (effective), empty delta-plus,
-        // empty delta-minus. Folding dp into the base keeps the on-disk form
-        // canonical and matches what decode expects.
-        let empty = Matrix::<u64>::new(nrows, ncols);
-        if f_rows.is_empty() {
-            empty.encode(w);
+        if self.dp.nvals() == 0 && self.dm.nvals() == 0 && !self.has_multi_edge() {
+            let empty = Matrix::<u64>::new(nrows, ncols);
+            self.m.encode(w);
+            empty.encode(w); // delta-plus
+            empty.encode(w); // delta-minus
         } else {
-            let mut fm = Matrix::<u64>::new(nrows, ncols);
-            fm.build(&f_rows, &f_cols, &f_vals);
-            fm.encode(w);
+            let mut f_rows: Vec<u64> = Vec::new();
+            let mut f_cols: Vec<u64> = Vec::new();
+            let mut f_vals: Vec<u64> = Vec::new();
+            for (src, dst, inline) in self.fwd_iter(0, u64::MAX) {
+                f_rows.push(src);
+                f_cols.push(dst);
+                if inline == MULTI_EDGE {
+                    let (block, key) = compound_key(src, dst);
+                    let ids: Vec<u64> = self
+                        .me_block(block)
+                        .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
+                        .unwrap_or_default();
+                    f_vals.push(ids.len() as u64 | MSB_MASK);
+                    multi.push((src, dst, ids));
+                } else {
+                    f_vals.push(inline);
+                }
+            }
+
+            // Forward VersionedMatrix layout: base (effective), empty delta-plus,
+            // empty delta-minus. Folding dp into the base keeps the on-disk form
+            // canonical and matches what decode expects.
+            let empty = Matrix::<u64>::new(nrows, ncols);
+            if f_rows.is_empty() {
+                empty.encode(w);
+            } else {
+                let mut fm = Matrix::<u64>::new(nrows, ncols);
+                fm.build(&f_rows, &f_cols, &f_vals);
+                fm.encode(w);
+            }
+            empty.encode(w); // delta-plus
+            empty.encode(w); // delta-minus
         }
-        empty.encode(w); // delta-plus
-        empty.encode(w); // delta-minus
 
         let total = self.edge_count();
         w.write_unsigned(total);
@@ -1845,6 +1877,77 @@ impl Iterator for Iter<'_> {
 mod tests {
     use super::super::test_init::ensure_init;
     use super::*;
+
+    /// The effective forward matrix is the committed base itself when there
+    /// are no deltas, and `(m ∖ dm) ∪ dp` (with `dp`'s value) when there are,
+    /// checked pair by pair against the tensor's own iterator.
+    #[test]
+    #[cfg(feature = "index-falkordb")]
+    fn effective_fwd_is_the_base_or_the_merge() {
+        ensure_init();
+        const N: u64 = 1_000;
+        let mut t = Tensor::new(2 * N, 2 * N);
+        let srcs: Vec<u64> = (0..N).collect();
+        let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        let ids: Vec<u64> = (0..N).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        t.wait();
+        let mut t = t.dup();
+        t.flush();
+        assert!(t.fwd_m().nvals() == N && t.fwd_dp().nvals() == 0);
+        let eff = t.effective_fwd();
+        assert!(eff.is_borrowed(), "no deltas, yet a copy");
+        assert_eq!(eff.inner(), t.fwd_m().inner());
+
+        // Pending: delete ten committed edges, add ten new pairs and a second
+        // edge on one committed pair (which promotes it to MULTI_EDGE).
+        // `(edge_id, src, dst)`.
+        let gone: Vec<(u64, u64, u64)> = (0..10).map(|i| (i * 7, i * 7, i * 7 + 1)).collect();
+        t.remove_all(&gone);
+        let new_srcs: Vec<u64> = (0..10).map(|i| N + i).chain([500]).collect();
+        let new_dsts: Vec<u64> = (0..10).map(|i| N + i + 2).chain([501]).collect();
+        let new_ids: Vec<u64> = (0..11).map(|i| 5 * N + i).collect();
+        t.set_all_from_slices(&new_srcs, &new_dsts, &new_ids);
+        t.wait();
+        assert!(t.fwd_dp().nvals() > 0 && t.fwd_dm().nvals() > 0);
+
+        let eff = t.effective_fwd();
+        assert!(!eff.is_borrowed());
+        let mut want: FxHashMap<(u64, u64), Vec<u64>> = FxHashMap::default();
+        for (s, d, id) in t.iter_edges() {
+            want.entry((s, d)).or_default().push(id);
+        }
+        assert_eq!(eff.nvals(), want.len() as u64);
+        for ((s, d), ids) in &want {
+            let expect = if ids.len() == 1 { ids[0] } else { MULTI_EDGE };
+            assert_eq!(eff.get(*s, *d), Some(expect), "({s}, {d})");
+        }
+        assert_eq!(eff.get(500, 501), Some(MULTI_EDGE));
+        assert_eq!(eff.get(7, 8), None);
+    }
+
+    /// `effective_fwd` reads the deltas as every other forward reader does,
+    /// through `wait_fwd`: each delta's counter pinned to its exact size and
+    /// the fold decision latched (here a delta the size of the base: fold).
+    #[test]
+    #[cfg(feature = "index-falkordb")]
+    fn effective_fwd_resyncs_and_latches_like_every_forward_reader() {
+        ensure_init();
+        const N: u64 = 1_000;
+        let mut t = Tensor::new(2 * N, 2 * N);
+        let ids: Vec<u64> = (0..N).collect();
+        t.set_all_from_slices(&ids, &ids, &ids);
+        t.wait();
+        let mut t = t.dup();
+        t.flush();
+        let srcs: Vec<u64> = (N..2 * N).collect();
+        let new_ids: Vec<u64> = (N..2 * N).collect();
+        t.set_all_from_slices(&srcs, &ids, &new_ids);
+        assert!(!t.dp.folding());
+        let _ = t.effective_fwd();
+        assert!(t.dp.folding());
+        assert_eq!(t.dp.count(), t.dp.nvals());
+    }
 
     /// Edge id 0 must survive the bool round-trips in the delta layers: the
     /// bulk `remove_all` path derives `dm` from the committed u64 matrix, and
@@ -2491,6 +2594,52 @@ mod tests {
                 _ => Err("tape: expected buffer".to_string()),
             }
         }
+    }
+
+    /// A single-edge tensor with nothing pending in its deltas is written
+    /// straight from its base matrix; one with pending deltas is rebuilt from
+    /// the effective view. Both must decode to the same edges.
+    #[test]
+    fn encode_decode_round_trips_with_and_without_pending_deltas() {
+        ensure_init();
+        let round_trip = |t: &Tensor| {
+            let mut tape = Tape::default();
+            t.encode(&mut tape);
+            let mut back = Tensor::decode(&mut tape).expect("decode");
+            assert!(tape.ops.is_empty(), "decode left part of the stream");
+            back.rebuild_backward();
+            back.wait();
+            back
+        };
+        let edges = |t: &Tensor| {
+            let mut e: Vec<(u64, u64, u64)> = t.fwd_iter(0, u64::MAX).collect();
+            e.sort_unstable();
+            e
+        };
+
+        let t = Tensor::new(16, 16);
+        let mut t = t.dup();
+        t.set_all_from_slices(&[1, 1, 2, 5, 9], &[2, 3, 2, 5, 0], &[10, 11, 12, 13, 14]);
+        t.remove_all(&[(11, 1, 3)]);
+        t.set_all_from_slices(&[7], &[8], &[15]);
+        t.wait();
+        let expect = vec![(1, 2, 10), (2, 2, 12), (5, 5, 13), (7, 8, 15), (9, 0, 14)];
+        assert_eq!(edges(&t), expect);
+
+        // Whatever `t` holds in its deltas, a decoded tensor holds none: the
+        // second round trip is the one written straight from the base.
+        let once = round_trip(&t);
+        assert_eq!(once.dp.nvals() + once.dm.nvals(), 0);
+        assert!(!once.has_multi_edge());
+        let twice = round_trip(&once);
+        for back in [&once, &twice] {
+            assert_eq!(edges(back), expect);
+            assert_eq!(back.edge_count(), expect.len() as u64);
+            assert_eq!(back.get(1, 3).count(), 0);
+            assert_eq!(back.get(7, 8).collect::<Vec<_>>(), vec![15]);
+        }
+        // Encoding must leave the base matrix intact; it must still be whole.
+        assert_eq!(edges(&once), expect);
     }
 
     /// The round trip has to survive blocks. The blob stores endpoints rather

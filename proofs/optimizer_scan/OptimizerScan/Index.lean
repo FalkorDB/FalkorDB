@@ -466,13 +466,21 @@ def mergeInto (m : Option (Nat × IQ)) (L : Nat) (q : IQ) : Option (Nat × IQ) :
   | none => some (L, q)
   | some (L0, q0) => some (L0, mergeRange q0 q)
 
-/-- The AND branch of `try_filter_pushdown` (`utilize_index.rs:733-750`). -/
+/-- `value IN n.prop` (array-contains): the index may answer it with false positives, so its
+filter is always kept (`is_array_contains`, `utilize_index.rs`). -/
+def isArrayContains : A → Bool
+  | .inn l r => !hasT l && hasR r
+  | _ => false
+
+/-- The AND branch of `try_filter_pushdown` (`utilize_index.rs:733-756`). A pushed
+array-contains conjunct also stays among the leftovers, as it does on its own. -/
 def pushAnd (idx : Nat → List Nat) (ls : List Nat) :
     List A → Option (Nat × IQ) → List A → Option (Nat × IQ) × List A
   | [], m, rem => (m, rem)
   | a :: as, m, rem =>
     match trySingle idx ls a with
-    | some (L, q) => pushAnd idx ls as (mergeInto m L q) rem
+    | some (L, q) =>
+      pushAnd idx ls as (mergeInto m L q) (if isArrayContains a then rem ++ [a] else rem)
     | none => pushAnd idx ls as m (rem ++ [a])
 
 /-- The OR branch: every disjunct must convert (`utilize_index.rs:751-768`). -/
@@ -481,10 +489,6 @@ def pushOr (idx : Nat → List Nat) (ls : List Nat) : List A → Option (Option 
   | a :: as => match trySingle idx ls a, pushOr idx ls as with
     | some (L, q), some (_, qs) => some (some L, q :: qs)   -- label of the first disjunct
     | _, _ => none
-
-def isArrayContains : A → Bool
-  | .inn l r => !hasT l && hasR r
-  | _ => false
 
 /-- `try_filter_pushdown` (`utilize_index.rs:727-783`). -/
 def tryPushdown (idx : Nat → List Nat) (ls : List Nat) : F → Option (Nat × IQ × List A)

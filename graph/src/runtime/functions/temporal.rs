@@ -430,6 +430,11 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
         }
     }
 
+    // A trailing number with no unit (`P5`, `P1Y5`, `P-`) is not a duration.
+    if !num_buf.is_empty() {
+        return Err(format!("Duration component has no unit: {num_buf}"));
+    }
+
     // Parse time part
     if let Some(tp) = time_part {
         num_buf.clear();
@@ -451,6 +456,9 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
                     _ => return Err(format!("Unknown duration time component: {ch}")),
                 }
             }
+        }
+        if !num_buf.is_empty() {
+            return Err(format!("Duration component has no unit: {num_buf}"));
         }
     }
 

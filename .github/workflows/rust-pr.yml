@@ -44,7 +44,7 @@ jobs:
       file_changed: ${{ steps.check.outputs.changed }}
       # One key for every per-run tag: `pr-<N>` on a pull request (byte-identical
       # to what this workflow produced before) and `mg-<sha>` in the queue. The
-      # runtime images are `rc-<ci_key>`, the toolchain is `<ci_key>`.
+      # runtime images are `rc-<ci_key>-<server>`, the toolchain is `<ci_key>`.
       ci_key: ${{ steps.key.outputs.ci_key }}
       # Resolved once, read everywhere. This expression used to be repeated at
       # eleven call sites; a missed one fails closed in the ugliest way — a PR
@@ -87,7 +87,7 @@ jobs:
         #     stack rebuilds the tag for this PR.
         run: |
           set -euo pipefail
-          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
+          PATTERN="^(build/Dockerfile|build/build-server\.sh|build/libomp\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
           if [ "$EVENT" = "merge_group" ]; then
             RANGE="HEAD~1 HEAD"
           else
@@ -244,6 +244,7 @@ jobs:
       # The image vehicle only in the queue, and only from a branch that can
       # push. A fork pull request runs the artifact vehicle and nothing else.
       use_image: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
+      redis_leg: ${{ github.event_name == 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci-both-servers') }}
     secrets: inherit
 
   lint:
@@ -278,6 +279,8 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cargo run --locked --manifest-path native-deps/Cargo.toml -- lock --check
+      - name: Server pins agree across Dockerfiles
+        run: build/check-server-pins.sh
   native-index:
     # The native index (`index-falkordb`) is off by default, so `lint` and
     # `coverage` never compile it: its unit tests and its lints run only here.
@@ -461,6 +464,9 @@ jobs:
   # It must also keep reporting on BOTH events — a required check that the
   # merge_group run never reports fails the merge on a status that never
   # arrives. Hence `if: !cancelled()`.
+  #
+  # Both servers are covered through ci-pipeline: its image-valkey and
+  # image-redis legs fail it.
   ci-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -60,7 +60,7 @@ use std::time::{Duration, Instant};
 use rquickjs::object::Property;
 use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
 
-use crate::graph::graph::{Graph, NodeId, RelationshipId};
+use crate::graph::graph::{EdgeDirection, Graph, NodeId, RelationshipId};
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use crate::udf::type_convert;
@@ -98,37 +98,17 @@ fn with_current_graph<R>(f: impl FnOnce(&Graph) -> Result<R, String>) -> Result<
     f(unsafe { &*graph })
 }
 
-/// Collect edges from a node in a given direction.
+/// Collect edges from a node in a given direction, a self-loop once.
 /// Returns vec of (rel_id, src_id, dst_id) as u64.
 fn collect_edges(
     g: &Graph,
     node_id: u64,
     direction: &str,
 ) -> Vec<(u64, u64, u64)> {
-    let nid = NodeId::from(node_id);
-    let mut edges = Vec::new();
-    for (src, dst, rel_id) in g.get_node_relationships(nid) {
-        let src_u64: u64 = src.into();
-        let dst_u64: u64 = dst.into();
-        let rel_u64: u64 = rel_id.into();
-        match direction {
-            "outgoing" => {
-                if src_u64 == node_id {
-                    edges.push((rel_u64, src_u64, dst_u64));
-                }
-            }
-            "incoming" => {
-                if dst_u64 == node_id {
-                    edges.push((rel_u64, src_u64, dst_u64));
-                }
-            }
-            _ => {
-                // "both"
-                edges.push((rel_u64, src_u64, dst_u64));
-            }
-        }
-    }
-    edges
+    let direction = direction.parse().unwrap_or(EdgeDirection::Both);
+    g.get_node_relationships_by_type(NodeId::from(node_id), &[], direction)
+        .map(|(src, dst, rel_id)| (rel_id.into(), src.into(), dst.into()))
+        .collect()
 }
 
 /// Create a JS Node object with id, labels, attributes properties and getNeighbors() method.
