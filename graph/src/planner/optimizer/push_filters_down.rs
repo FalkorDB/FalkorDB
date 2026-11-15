@@ -176,10 +176,10 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 for grandchild in child.children() {
                     // `resets_env` branches expose only their named outputs, so
                     // they must not inherit Argument-propagated variables below.
-                    let (vars, resets_env) = match branch_output_variables(&grandchild) {
-                        Some(outputs) => (outputs, true),
-                        None => (collect_subtree_variables(&grandchild), false),
-                    };
+                    let (vars, resets_env) = branch_output_variables(&grandchild).map_or_else(
+                        || (collect_subtree_variables(&grandchild), false),
+                        |outputs| (outputs, true),
+                    );
                     children.push((grandchild.idx(), vars, resets_env));
                 }
             }
