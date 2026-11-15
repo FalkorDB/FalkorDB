@@ -201,3 +201,4 @@ graph/src/graph/graph.rs	edge_has_type_id	1332	PROVEN	Schema.edgeHasTypeId_iff (
 # Online index build (#2355): fns the background builder added, not modelled yet.
 graph/src/graph/graph.rs	Graph::add_native_build	4510	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/graph/graph.rs	Graph::native_build_total	4546	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/graph/graph.rs	get_node_int_attributes_by_idx	2686	NOT COVERED	(#3432): not modelled yet

@@ -187,3 +187,4 @@ graph/src/runtime/pending.rs	resync_published_indexes	1792	PROVEN	PD.resync_spec
 graph/src/runtime/pending.rs	commit_deferred_indexes	1846	PROVEN	PD.commitDeferred_spec
 graph/src/runtime/pending.rs	effects_count	1960	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
 graph/src/runtime/pending.rs	end_segment	1887	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err
+graph/src/graph/attribute_store.rs	get_int_attrs_by_idx_batch_into	1188	NOT COVERED	(#3432): not modelled yet
