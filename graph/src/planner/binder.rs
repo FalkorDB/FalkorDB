@@ -813,11 +813,8 @@ impl Binder {
                     } else {
                         // Create a variable with the original name (for procedure map lookup)
                         // but reserve it nameless, so no alias reaches it and RETURN * doesn't see it.
-                        let var = self.fresh_var(
-                            Some(name.clone()),
-                            Type::Any,
-                            self.env_stack.len() as u32 - 1,
-                        );
+                        let var =
+                            self.fresh_var(Some(name), Type::Any, self.env_stack.len() as u32 - 1);
                         self.current_env_mut().reserve(var.clone());
                         bound_vars.push(var);
                         bound_aliases.push(None);
@@ -2778,7 +2775,7 @@ fn raw_exprs_structurally_equal(
     a: &DynTree<ExprIR<Arc<String>>>,
     b: &DynTree<ExprIR<Arc<String>>>,
 ) -> bool {
-    fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
+    const fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
         matches!(node, ExprIR::AggOrderPlaceholder)
     }
 
@@ -2876,11 +2873,12 @@ mod tests {
     /// wastes ids and, nested, made the table grow with every level.
     #[test]
     fn scope_tables_list_each_variable_once() {
+        use std::fmt::Write as _;
         let _ = crate::runtime::functions::init_functions();
         let nested = |depth: usize| {
             let mut q = String::from("MATCH (n) RETURN ");
             for i in 0..depth {
-                q.push_str(&format!("[x{i} IN [1] | "));
+                let _ = write!(q, "[x{i} IN [1] | ");
             }
             q.push_str("[(x0)-->(y) | y]");
             q.push_str(&"]".repeat(depth));
