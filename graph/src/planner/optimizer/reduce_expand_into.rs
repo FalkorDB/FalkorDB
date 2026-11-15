@@ -91,7 +91,7 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
 /// a `CALL {}` / subquery body (every child of an apply but the first, which
 /// feeds it) and a nested plan are bound separately and reuse alias ids and
 /// scopes, so an edge only relates to the operators of its own plan.
-fn starts_plan(
+const fn starts_plan(
     parent: &IR,
     child_pos: usize,
 ) -> bool {

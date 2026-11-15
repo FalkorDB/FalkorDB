@@ -137,16 +137,19 @@ pub fn drain_pending(
     }
 }
 
-/// Marks an entry of a `sibling_edges` list as a *collapsed* edge: one the
-/// planner stopped emitting per edge, so it binds one arbitrary representative
-/// of its parallel edges. The flag is the top bit of the alias id. The
-/// collapsed edge matches a single relationship type, that of its
-/// representative.
+/// Marks an entry of a `sibling_edges` list as a *collapsed* edge.
+///
+/// A collapsed edge is one the planner stopped emitting per edge, so it binds
+/// one arbitrary representative of its parallel edges. The flag is the top bit
+/// of the alias id. The collapsed edge matches a single relationship type,
+/// that of its representative.
 pub const COLLAPSED_SIBLING: u32 = 1 << 31;
 
 /// Like [`COLLAPSED_SIBLING`], for a collapsed edge that matches every
-/// relationship type (an untyped pattern). A collapsed edge matching several
-/// but not all types is not flagged: its types are not known here.
+/// relationship type (an untyped pattern).
+///
+/// A collapsed edge matching several but not all types is not flagged: its
+/// types are not known here.
 pub const COLLAPSED_SIBLING_ANY_TYPE: u32 = 1 << 30;
 
 /// Every flag bit of a `sibling_edges` entry.
