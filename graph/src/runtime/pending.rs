@@ -1361,8 +1361,11 @@ impl Pending {
         // above, yet it was named by this segment: the snapshot a reply reads
         // states it by id, and so does the cancelled pair the effects carry to
         // the replica. Register it, as C does when the edge is created.
-        if !self.cancelled_relationships.is_empty() {
-            for r in &self.cancelled_relationships {
+        // Once per type: a bulk cascade cancels many edges of the same few
+        // types, and each lookup scans the schema.
+        let mut cancelled_types: FxHashSet<&Arc<String>> = FxHashSet::default();
+        for r in &self.cancelled_relationships {
+            if cancelled_types.insert(&r.type_name) {
                 g.get_type_id_mut(&r.type_name);
             }
         }
