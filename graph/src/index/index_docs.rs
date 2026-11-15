@@ -5,7 +5,7 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
 #[cfg(feature = "index-falkordb")]
-use super::falkordb::pending_writes::PendingIndexWrites;
+use super::falkordb::{cch::CchDirty, pending_writes::PendingIndexWrites};
 
 /// Edge documents to remove, keyed by relationship type: `type_id -> { edge_id
 /// -> (src, dst) }`.
@@ -39,4 +39,9 @@ pub struct IndexDocs {
     /// it.
     #[cfg(feature = "index-falkordb")]
     pub native: PendingIndexWrites,
+    /// What the unit's writes touched that a CCH index might care about, staged by the same
+    /// write methods as [`native`](Self::native) and flushed by the same owner into rebuilt
+    /// indexes on the private version (#3214). Empty for a graph with no CCH index.
+    #[cfg(feature = "index-falkordb")]
+    pub cch: CchDirty,
 }

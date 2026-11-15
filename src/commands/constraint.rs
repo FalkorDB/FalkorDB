@@ -2,7 +2,7 @@ use crate::query_session::{QuerySession, WriteAbort, WriteFacts};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use graph::effects::EffectsBuffer;
 use graph::effects::announce::{AnnouncedConstraint, SchemaBaseline};
@@ -10,9 +10,12 @@ use graph::entity_type::EntityType;
 use graph::graph::constraint::{ConstraintStatus, ConstraintType};
 use graph::identifier_limits::validate_identifier_len;
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use valkey_module::logging::{log_notice, log_warning};
+use valkey_module::{
+    Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
+};
 
 /// Validate that a name is a valid identifier: starts with a letter or underscore,
 /// followed by letters, digits, or underscores.
@@ -206,7 +209,6 @@ pub fn settle_constraint(
     loop {
         attempts += 1;
         match attempt_settle(graph, &ctx, announce, key, was_replicated) {
-            Ok(()) => break,
             // Transient: the window closes on its own. Nothing is held here —
             // `attempt_settle` has dropped its session, and with it the GIL and
             // the write lock — so sleeping is safe. A pause or failover ends, and
@@ -214,7 +216,7 @@ pub fn settle_constraint(
             Err(reason @ (WriteAbort::ReplicaTrafficPaused | WriteAbort::Stale)) => {
                 if Instant::now() >= deadline {
                     for c in announce {
-                        redis_module::logging::log_warning(format!(
+                        log_warning(format!(
                             "constraint on {:?} {} ({}) is stuck UNDER CONSTRUCTION: writes were \
                              refused for {}s across {attempts} attempts, so validation could not \
                              publish its result. It is not being enforced. Recover with \
@@ -238,7 +240,7 @@ pub fn settle_constraint(
                 // which is what lets a test assert it was exercised rather
                 // than pass because the window was never hit.
                 if attempts == 1 {
-                    redis_module::logging::log_notice(format!(
+                    log_notice(format!(
                         "constraint announcement on graph '{key_display}' is deferred ({reason}); \
                          retrying for up to {}s",
                         RETRY_BUDGET.as_secs(),
@@ -246,17 +248,17 @@ pub fn settle_constraint(
                 }
                 std::thread::sleep(BACKOFF);
             }
-            // The graph is gone, or this node is no longer a master. Neither
-            // resolves by waiting: on a demoted node the constraint is the new
-            // master's to finish, and `enforce_pending_constraints_after_promotion`
-            // is what picks it up.
-            Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => break,
+            // Settled; or the graph is gone, or this node is no longer a master.
+            // Neither of the last two resolves by waiting: on a demoted node the
+            // constraint is the new master's to finish, and
+            // `enforce_pending_constraints_after_promotion` is what picks it up.
+            Ok(()) | Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => break,
             // The version failed its own validation, so it was never published.
             // Permanent: retrying re-runs the same arithmetic on the same graph.
             // Logged loudly because the constraint is left unenforced and the id
             // space it was refused over is an engine fault, not a user error.
             Err(WriteAbort::Invalid(e)) => {
-                redis_module::logging::log_warning(format!(
+                log_warning(format!(
                     "constraint announcement on graph '{key_display}' was refused: {e}. \
                      The constraint is not being enforced."
                 ));
@@ -299,12 +301,7 @@ fn attempt_settle(
             originated_here: false,
         },
     );
-    let results = session.with_graph(|tg| {
-        tg.graph
-            .read()
-            .borrow()
-            .compute_pending_constraint_results()
-    });
+    let results = session.with_graph(|tg| tg.graph.read().compute_pending_constraint_results());
     if results.is_empty() {
         return Ok(());
     }
@@ -312,7 +309,7 @@ fn attempt_settle(
     // Escalation takes the global lock before the write lock (#726) and keeps the
     // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
     // shape as bulk_insert's Phase 2.
-    session.upgrade_to_write()?;
+    session.upgrade_to_write(None)?;
     // A refusal from `commit` comes back as the `WriteAbort` it maps to, not
     // flattened: the retry loop treats a stale version (retry) and an invalid
     // one (permanent) as opposites. Answering one bool for refusals once made
@@ -321,17 +318,13 @@ fn attempt_settle(
     // that was still UNDER CONSTRUCTION, with nothing to re-drive it.
     session
         .with_graph_mut(|tg| -> Result<(), WriteAbort> {
-            let g_arc = tg.graph.fork();
-            g_arc
-                .borrow_mut()
-                .apply_constraint_validation_results(results);
-            let settled = Arc::clone(&g_arc);
-            tg.graph.commit(g_arc)?;
+            let mut fork = tg.graph.fork();
+            fork.apply_constraint_validation_results(results);
+            let g = tg.graph.commit(fork)?;
 
             if was_replicated {
                 return Ok(());
             }
-            let g = settled.borrow();
             for c in announce {
                 // The constraint may have been dropped while validation ran:
                 // `drop_constraint` has no UNDER CONSTRUCTION guard and
@@ -368,7 +361,7 @@ fn attempt_settle(
                     // nothing can re-drive it because `GRAPH.CONSTRAINT CREATE`
                     // answers "already exists". Silent, and only visible as a
                     // replica that enforces a constraint the master does not.
-                    Err(e) => redis_module::logging::log_warning(format!(
+                    Err(e) => log_warning(format!(
                         "constraint on {:?} {} ({}) settled locally but could not be \
                          announced ({e}); replicas will keep reporting it UNDER \
                          CONSTRUCTION. Recover with GRAPH.CONSTRAINT DROP on graph \
@@ -390,11 +383,11 @@ fn attempt_settle(
 
 pub fn graph_constraint(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     // GRAPH.CONSTRAINT CREATE|DROP <key> UNIQUE|MANDATORY NODE|RELATIONSHIP <label> PROPERTIES <count> <prop1>...
     if args.len() < 8 {
-        return Err(redis_module::RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let mut args = args.into_iter().skip(1);
 
@@ -404,9 +397,7 @@ pub fn graph_constraint(
         "CREATE" => true,
         "DROP" => false,
         _ => {
-            return Err(redis_module::RedisError::String(
-                "Invalid constraint operation".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint operation".into()));
         }
     };
 
@@ -419,9 +410,7 @@ pub fn graph_constraint(
         "UNIQUE" => ConstraintType::Unique,
         "MANDATORY" => ConstraintType::Mandatory,
         _ => {
-            return Err(redis_module::RedisError::String(
-                "Invalid constraint type".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint type".into()));
         }
     };
 
@@ -431,17 +420,15 @@ pub fn graph_constraint(
         "NODE" => EntityType::Node,
         "RELATIONSHIP" => EntityType::Relationship,
         _ => {
-            return Err(redis_module::RedisError::String(
-                "Invalid constraint entity type".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint entity type".into()));
         }
     };
 
     // Label name
     let label_str = args.next_str()?;
-    validate_identifier_len(label_str, "Label name").map_err(redis_module::RedisError::String)?;
+    validate_identifier_len(label_str, "Label name").map_err(ValkeyError::String)?;
     if !is_valid_identifier(label_str) {
-        return Err(redis_module::RedisError::String(format!(
+        return Err(ValkeyError::String(format!(
             "Label name {label_str} is invalid"
         )));
     }
@@ -450,19 +437,15 @@ pub fn graph_constraint(
     // PROPERTIES keyword
     let props_kw = args.next_str()?;
     if !props_kw.eq_ignore_ascii_case("PROPERTIES") {
-        return Err(redis_module::RedisError::String(
-            "Expected PROPERTIES keyword".into(),
-        ));
+        return Err(ValkeyError::String("Expected PROPERTIES keyword".into()));
     }
 
     // Property count: Redis `string2ll` as in C (canonical decimal, no `+1` / `01`)
     let prop_count: i64 = args.next_arg()?.parse_integer().map_err(|_| {
-        redis_module::RedisError::String(
-            "Number of properties must be an integer between 1 and 255".into(),
-        )
+        ValkeyError::String("Number of properties must be an integer between 1 and 255".into())
     })?;
     if !(1..=255).contains(&prop_count) {
-        return Err(redis_module::RedisError::String(
+        return Err(ValkeyError::String(
             "Number of properties must be an integer between 1 and 255".into(),
         ));
     }
@@ -471,16 +454,15 @@ pub fn graph_constraint(
     let mut properties = Vec::with_capacity(prop_count as usize);
     for _ in 0..prop_count {
         let prop_str = args.next_str()?;
-        validate_identifier_len(prop_str, "Property name")
-            .map_err(redis_module::RedisError::String)?;
+        validate_identifier_len(prop_str, "Property name").map_err(ValkeyError::String)?;
         if !is_valid_identifier(prop_str) {
-            return Err(redis_module::RedisError::String(format!(
+            return Err(ValkeyError::String(format!(
                 "Property name {prop_str} is invalid"
             )));
         }
         let prop = Arc::new(prop_str.to_string());
         if properties.contains(&prop) {
-            return Err(redis_module::RedisError::String(
+            return Err(ValkeyError::String(
                 "Properties cannot contain duplicates".into(),
             ));
         }
@@ -489,18 +471,19 @@ pub fn graph_constraint(
 
     // Reject trailing tokens
     if args.next().is_some() {
-        return Err(redis_module::RedisError::String(
-            "Unexpected extra arguments".into(),
-        ));
+        return Err(ValkeyError::String("Unexpected extra arguments".into()));
     }
 
     // Open or create graph
     let key = ctx.open_key_writable(&key_str);
-    let graph = if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    let graph = if let Some(g) = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         g.clone()
     } else {
         if !is_create {
-            return Err(redis_module::RedisError::String(
+            return Err(ValkeyError::String(
                 "Unable to drop constraint, no such constraint.".into(),
             ));
         }
@@ -513,13 +496,15 @@ pub fn graph_constraint(
         // rebuilt from that name (`GraphContext_SetKey`) — not at the key the
         // command addressed, which differs once it holds a NUL.
         let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
-        create_key.set_value(&GRAPH_TYPE, g.clone())?;
+        create_key
+            .set_value(&GRAPH_TYPE, g.clone())
+            .map_err(wrong_type_compat)?;
         register_graph(name, g.clone());
         g
     };
 
-    let mut tg = graph.write();
-    let g_arc = tg.graph.fork();
+    let tg = graph.write();
+    let mut fork = tg.graph.fork();
 
     // Not for replication: nothing propagates `GRAPH.CONSTRAINT` any more, so
     // this can only be set while replaying an AOF written by a build that did.
@@ -534,14 +519,14 @@ pub fn graph_constraint(
     // as `ADD_SCHEMA`/`ADD_ATTRIBUTE` ahead of the record whose ids depend on
     // it. Taking the baseline *after* registering would hide exactly the
     // entries that need announcing.
-    let baseline = SchemaBaseline::of(&g_arc.borrow());
+    let baseline = SchemaBaseline::of(&fork);
 
     let result: Result<bool, String> = {
-        let mut g = g_arc.borrow_mut();
+        let g = &mut fork;
         if is_create {
             match g.create_constraint(ct, entity_type, &label, &properties) {
                 Ok(needs_background_validation) => {
-                    register_constraint_schema(&mut g, entity_type, &label, &properties);
+                    register_constraint_schema(g, entity_type, &label, &properties);
                     Ok(needs_background_validation)
                 }
                 Err(e) => Err(e),
@@ -554,10 +539,7 @@ pub fn graph_constraint(
 
     match result {
         Ok(needs_background_validation) => {
-            // The effect is built from the graph this write mutated, so keep a
-            // handle before `commit` consumes the one it swaps in.
-            let mutated = Arc::clone(&g_arc);
-            tg.graph.commit(g_arc).map_err(WriteAbort::from)?;
+            let mutated = tg.graph.commit(fork).map_err(WriteAbort::from)?;
 
             // Spawn background validation for large datasets on a dedicated
             // OS thread (not the query threadpool). Validation can take
@@ -623,10 +605,10 @@ pub fn graph_constraint(
                 } else if needs_background_validation {
                     Some(Some(ConstraintStatus::UnderConstruction))
                 } else {
-                    find_status(&mutated.borrow(), ct, entity_type, &label, &properties).map(Some)
+                    find_status(&mutated, ct, entity_type, &label, &properties).map(Some)
                 };
                 let Some(status) = status else {
-                    redis_module::logging::log_warning(format!(
+                    log_warning(format!(
                         "constraint CREATE on {entity_type:?} '{label}' was applied but its \
                          status could not be read back, so it was not announced; it will not \
                          reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
@@ -634,14 +616,14 @@ pub fn graph_constraint(
                         String::from_utf8_lossy(key_str.as_slice()),
                     ));
                     return if is_create {
-                        Ok(RedisValue::SimpleStringStatic("PENDING"))
+                        Ok(ValkeyValue::SimpleStringStatic("PENDING"))
                     } else {
-                        Ok(RedisValue::SimpleStringStatic("OK"))
+                        Ok(ValkeyValue::SimpleStringStatic("OK"))
                     };
                 };
                 let mut buf = EffectsBuffer::new();
                 match buf.build_constraint(
-                    &mutated.borrow(),
+                    &mutated,
                     is_create,
                     &AnnouncedConstraint {
                         ct,
@@ -662,7 +644,7 @@ pub fn graph_constraint(
                     // AOF. Same shape as `graph_core`'s "modified but produced
                     // no effects payload", and loud for the same reason: it is
                     // divergence that nothing else will report.
-                    Err(e) => redis_module::logging::log_warning(format!(
+                    Err(e) => log_warning(format!(
                         "constraint {} on {entity_type:?} '{label}' was applied but could \
                          not be announced ({e}); it will not reach replicas or the AOF",
                         if is_create { "CREATE" } else { "DROP" },
@@ -670,17 +652,17 @@ pub fn graph_constraint(
                 }
             }
             if is_create {
-                Ok(RedisValue::SimpleStringStatic("PENDING"))
+                Ok(ValkeyValue::SimpleStringStatic("PENDING"))
             } else {
-                Ok(RedisValue::SimpleStringStatic("OK"))
+                Ok(ValkeyValue::SimpleStringStatic("OK"))
             }
         }
         Err(e) if is_replayed && e == "Constraint already exists" => {
             // The second half of a v2-era AOF's verbatim pair: the constraint
             // was created by the first copy, so this one has nothing to do.
             // Erroring here would fail the load of an otherwise valid file.
-            Ok(RedisValue::SimpleStringStatic("OK"))
+            Ok(ValkeyValue::SimpleStringStatic("OK"))
         }
-        Err(e) => Err(redis_module::RedisError::String(e)),
+        Err(e) => Err(ValkeyError::String(e)),
     }
 }

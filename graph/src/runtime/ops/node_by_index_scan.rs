@@ -220,6 +220,9 @@ impl<'a> NodeByIndexScanOp<'a> {
                     ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(vars), None)
                 }?;
                 match list_val {
+                    // Kept as one `InList` rather than expanded to `Or(Equal, ..)`: it names one
+                    // attribute by construction, and RediSearch builds the same union from either
+                    // shape (`build_query_node`). Only the members kept here reach the index.
                     Value::List(items) => Ok(IndexQuery::in_list(key, &items)),
                     _ => Err("IN operator requires a list".into()),
                 }
@@ -256,36 +259,36 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                     // gap has to be visible to be closed. The message names the predicate so
                     // the failure is diagnosable rather than a bare "no rows".
                     #[cfg(feature = "index-falkordb")]
-                    let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
-                        .query_index_numeric_nodes(self.index, &q)
-                    {
-                        Some(Ok(rows)) => Some(Box::new(rows)),
-                        // The column exists and will serve this once its build reaches
-                        // every entity. Until then scan the label for what it will answer:
-                        // the planner dropped the predicate it handed this op, so the scan
-                        // must check it itself.
-                        Some(Err(scan_filter)) => {
-                            let runtime = self.runtime;
-                            // Resolved once per scan. No node holds a name the graph has
-                            // never seen.
-                            let nodes: Box<dyn Iterator<Item = NodeId>> =
-                                match g.get_node_attribute_id(scan_filter.attribute()) {
-                                    Some(attr) => {
-                                        let attr = attr as u16;
+                    let it: Option<Box<dyn Iterator<Item = NodeId>>> =
+                        match g.query_index_nodes(self.index, &q) {
+                            Some(Ok(rows)) => Some(Box::new(rows)),
+                            // The column exists and will serve this once its build reaches
+                            // every entity. Until then scan the label for what it will answer:
+                            // the planner dropped the predicate it handed this op, so the scan
+                            // must check it itself.
+                            Some(Err(scan_filter)) => {
+                                let runtime = self.runtime;
+                                // Resolved once per scan. No node holds a name the graph has
+                                // never seen.
+                                let nodes: Box<dyn Iterator<Item = NodeId>> = match scan_filter
+                                    .resolve(|attr| {
+                                        g.get_node_attribute_id(attr).map(|attr| attr as u16)
+                                    }) {
+                                    Some(scan_filter) => {
                                         Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
                                             move |&id| {
-                                                runtime.graph().node_matches(id, attr, &scan_filter)
+                                                runtime.graph().node_matches(id, &scan_filter)
                                             },
                                         ))
                                     }
                                     None => Box::new(std::iter::empty()),
                                 };
-                            Some(nodes)
-                        }
-                        None => {
-                            return Err(unsupported_by_native_index("node", self.index, &q));
-                        }
-                    };
+                                Some(nodes)
+                            }
+                            None => {
+                                return Err(unsupported_by_native_index("node", self.index, &q));
+                            }
+                        };
                     #[cfg(not(feature = "index-falkordb"))]
                     let it: Option<Box<dyn Iterator<Item = NodeId>>> =
                         Some(Box::new(g.get_indexed_nodes(self.index, q)));
