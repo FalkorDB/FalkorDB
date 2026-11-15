@@ -1,9 +1,11 @@
 #!/bin/sh
-# gosu(1) for the RPM-based server images (Dockerfile.rhel9,
-# Dockerfile.amazonlinux2023), installed there as /usr/local/bin/gosu.
+# gosu(1) for the per-OS server images (Dockerfile.rhel9,
+# Dockerfile.amazonlinux2023, Dockerfile.alpine), installed there as
+# /usr/local/bin/gosu.
 #
 # run.sh drops root with `gosu falkordb redis-server ...`. gosu is not packaged
-# for RHEL or Amazon Linux; setpriv(1) from util-linux makes the same switch:
+# for RHEL or Amazon Linux; setpriv(1) from util-linux (on Alpine, the setpriv
+# package) makes the same switch:
 # real and effective uid and gid, plus the user's supplementary groups.
 # Only the `gosu USER COMMAND...` form run.sh uses is supported.
 set -eu
