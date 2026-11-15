@@ -7,7 +7,7 @@ pub const MAX_VECTOR_DIMENSION: u64 = 1 << 24;
 /// reason; creation and load hold to the same limit so a saved graph reloads.
 pub const MAX_VECTOR_GRAPH_PARAM: usize = 1 << 20;
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct VectorIndexOptions {
     /// `u64`, matching C's `size_t`, the v19 RDB's field and the effects
     /// wire. A `u32` here meant every RDB load narrowed and every wire read
