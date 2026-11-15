@@ -1,6 +1,8 @@
-//! The native index's side of a unique-constraint check: which entities may already hold a
-//! member's key. The check itself, comparing those candidates' keys with the members', is
-//! `unique_violated` in `runtime::pending`; this only says where to look.
+//! The native index's side of a unique-constraint check: which entities may already hold a member's
+//! key.
+//!
+//! The check itself, comparing those candidates' keys with the members', is `unique_violated` in
+//! `runtime::pending`; this only says where to look.
 
 use std::{cell::RefCell, sync::Arc};
 
@@ -9,6 +11,7 @@ use rustc_hash::FxHashSet;
 
 use crate::{entity_type::EntityType, runtime::value::Value};
 
+use super::encode::KeyKind;
 use super::falkordb_index::{EqualCandidates, FalkorDbIndex};
 
 /// The native lookups for one member of a unique constraint: one per
@@ -36,18 +39,18 @@ pub(crate) fn native_unique_query<'g>(
 /// each candidate with every member's key, so a set of lookups read once has
 /// been checked for every member, and a member whose lookups are the same as an
 /// earlier member's needs no read. That is the case for a key with a member no
-/// column answers for (a string id, today) beside one most of the label shares
+/// column answers for (a list, say) beside one most of the label shares
 /// (a tenant): every member looks up only the tenant, and reading it once per
 /// member would make a bulk insert quadratic.
 #[derive(Default)]
-pub(crate) struct ReadOnce(RefCell<FxHashSet<Vec<(usize, u64)>>>);
+pub(crate) struct ReadOnce(RefCell<FxHashSet<Vec<(usize, KeyKind, u64)>>>);
 
 impl ReadOnce {
     /// The candidates of `lookups` ([`fewest_candidates`]), or none when an
     /// earlier member had the same lookups.
     pub(crate) fn candidates(
         &self,
-        lookups: Vec<EqualCandidates<'_>>,
+        lookups: &[EqualCandidates<'_>],
     ) -> impl Iterator<Item = u64> + use<> {
         let mut ids: Vec<_> = lookups.iter().map(EqualCandidates::id).collect();
         ids.sort_unstable();
@@ -67,7 +70,7 @@ impl ReadOnce {
 /// most `lookups.len()` times as many entities as it returns. Each lookup's
 /// rows own their tree snapshot, so the result borrows nothing (`use<>`).
 pub(crate) fn fewest_candidates(
-    lookups: Vec<EqualCandidates<'_>>
+    lookups: &[EqualCandidates<'_>]
 ) -> impl Iterator<Item = u64> + use<> {
     let mut rows: Vec<_> = lookups.iter().map(EqualCandidates::rows).collect();
     if rows.len() == 1 {

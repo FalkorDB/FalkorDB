@@ -1,7 +1,7 @@
 //! Where a graph command runs: inline on the calling thread, or blocked and handed to
 //! the thread pool.
 
-use redis_module::{Context, ContextFlags};
+use valkey_module::{Context, ContextFlags};
 
 /// True when this context must not block, so the command has to run inline on the
 /// calling thread.
