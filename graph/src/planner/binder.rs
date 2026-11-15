@@ -2415,6 +2415,12 @@ impl Binder {
             Type::Node => Some("Node"),
             Type::Relationship => Some("Edge"),
             Type::Path => Some("Path"),
+            Type::VecF32 => Some("Vectorf32"),
+            Type::Point => Some("Point"),
+            Type::Datetime => Some("Datetime"),
+            Type::Date => Some("Date"),
+            Type::Time => Some("Time"),
+            Type::Duration => Some("Duration"),
             Type::Optional(inner) => Self::type_name(inner),
             _ => None,
         }
