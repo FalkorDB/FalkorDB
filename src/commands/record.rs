@@ -155,11 +155,10 @@ fn record_mut(
         let vars = plan.node(idx).get_variables();
         raw::reply_with_array(ctx.ctx, vars.len() as _);
         for var in vars {
-            raw::reply_with_string_buffer(
-                ctx.ctx,
-                var.as_str().as_ptr().cast::<c_char>(),
-                var.as_str().len(),
-            );
+            // `to_string` keeps unnamed variables distinct (`as_str` is `?`
+            // for all of them), so a recording's bindings do not collide.
+            let label = var.to_string();
+            raw::reply_with_string_buffer(ctx.ctx, label.as_ptr().cast::<c_char>(), label.len());
         }
     }
     Ok(ValkeyValue::NoReply)
