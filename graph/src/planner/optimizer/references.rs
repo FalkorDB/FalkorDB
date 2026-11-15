@@ -87,10 +87,12 @@ pub(super) fn ir_references_variable(
             expr_references_variable(list, var_id, scope_id)
                 || (var.id == var_id && var.scope_id == scope_id)
         }
-        // The loop variable is an output binding, not a read: `FOREACH (r IN
-        // [1] | ...)` may reuse an outer edge's name, and a body that never
-        // reads it must not keep that edge per-edge. A body that does read it
-        // is a sibling branch, inspected on its own.
+        // The loop variable is not a read: it is bound only into the body's
+        // own environment (the operator outputs its input rows), and `FOREACH
+        // (r IN [1] | ...)` may reuse an outer edge's name, so a body that
+        // never reads it must not keep that edge per-edge. A body read of it
+        // shares the outer edge's `(id, scope_id)` and is conservatively
+        // treated as an edge read.
         IR::ForEach { list, .. } => expr_references_variable(list, var_id, scope_id),
         IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
             .iter()
