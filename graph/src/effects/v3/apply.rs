@@ -38,6 +38,7 @@ use crate::{
 pub use crate::effects::error::{ApplyError, LocalName};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 impl From<String> for ApplyError {
@@ -107,6 +108,7 @@ pub fn apply_effects(
     // re-registers every field of the surviving spec, so repeating it per
     // statement would be quadratic in the buffer and spawn redundant jobs.
     let mut touched: Vec<(EntityType, Arc<String>)> = Vec::new();
+    let mut seen: HashSet<(EntityType, Arc<String>)> = HashSet::new();
     for ddl in index_ddl {
         let target = ddl.target();
         if let Err(e) = ddl.run(g) {
@@ -115,7 +117,7 @@ pub fn apply_effects(
             }
             return Err(e);
         }
-        if !touched.contains(&target) {
+        if seen.insert(target.clone()) {
             touched.push(target);
         }
     }
