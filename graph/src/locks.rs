@@ -26,12 +26,20 @@
 //! Escalation is **idempotent** and **sticky**: once a writer, a query stays one
 //! until it ends, so everything after the first mutation — including reads of the
 //! shared, non-MVCC index — sees an exclusively locked graph.
+//!
+//! ## Publishing
+//!
+//! **global lock → publish.** [`MvccGraph`](crate::graph::mvcc_graph::MvccGraph)'s commits take
+//! `&self` and are only made while the global lock is held, so the global lock serializes every
+//! publish; a commit also publishes by compare-and-swap, so one that slipped past it is refused.
+
+use crate::graph::graph::Graph;
 
 /// The one thing a query plan can ask its host to do: become a writer.
 ///
 /// Implemented by whatever value the host uses to hold a query's locks, and handed
 /// to [`Runtime::new`](crate::runtime::runtime::Runtime::new); operators reach it
-/// through [`Runtime::write_escalation`](crate::runtime::runtime::Runtime::write_escalation).
+/// through [`Runtime::upgrade_to_write`](crate::runtime::runtime::Runtime::upgrade_to_write).
 /// No `Send`/`Sync`: a query's locks belong to one thread and are never shared.
 pub trait WriteEscalation {
     /// Escalate this query to writer mode, acquiring the global lock and the
@@ -40,5 +48,12 @@ pub trait WriteEscalation {
     /// Must be **idempotent**: a no-op when already a writer. `Err` means the
     /// escalation could not be honoured (e.g. the graph was deleted while no
     /// per-graph lock was held), and the caller must abort instead of mutating.
-    fn upgrade_to_write(&self) -> Result<(), String>;
+    ///
+    /// `fork` is the version the query builds into, for the host to check
+    /// against the published graph (and bring onto what was published since)
+    /// once it holds the write lock.
+    fn upgrade_to_write(
+        &self,
+        fork: &mut Graph,
+    ) -> Result<(), String>;
 }
