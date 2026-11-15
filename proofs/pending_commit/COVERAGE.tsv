@@ -115,6 +115,7 @@ graph/src/graph/attribute_store.rs	structural_memory_usage	1433	PROVEN	Content.s
 graph/src/graph/attribute_store.rs	encode_with_range	1427	PROVEN	Content.encode_spec, encode_decode_roundtrip
 graph/src/graph/attribute_store.rs	decode	1509	PROVEN	Content.decode_unimplemented
 graph/src/graph/attribute_store.rs	decode_with_count	1519	PROVEN	Content.decode_spec, encode_decode_roundtrip
+graph/src/graph/attribute_store.rs	with_id_bound	1168	NOT COVERED	(#3588): not modelled yet
 graph/src/runtime/pending.rs	flatten_label_map	61	PROVEN	PA.flatten_spec
 graph/src/runtime/pending.rs	is_valid_property	79	PROVEN	PA.isValidP: validate_spec, validate_depth (lists moved to validate_list_property by #3339)
 graph/src/runtime/pending.rs	validate_list_property	108	PROVEN	PA.validateListProperty/validateItems/validateItem: validateItem_ok (accepted ⇒ old-valid ∧ d + depth ≤ 4096), validateItems_nest, validate_nest (#3339 b080a44c1); save/load: value_math stored_roundtrip (for vectors that fit the u32 dimension, `VecsFit`: validation accepts vectors of any length)

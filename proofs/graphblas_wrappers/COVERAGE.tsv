@@ -82,11 +82,11 @@ graph/src/graph/graphblas/vector.rs	from_sorted_indices	149	PROVEN	GBWBulk.fromS
 graph/src/graph/graphblas/vector.rs	ptr	174	PROVEN	GBWGlue.VecH.ptr: ptr_vecFrom
 graph/src/graph/graphblas/vector.rs	iter	180	PROVEN	Misc.VIter.new_inv, VIter.drain_new (= Iter::new); Iter carries no borrow (report: UAF)
 graph/src/graph/graphblas/vector.rs	encode_blob	191	PROVEN	Index.blob_copy_in_bounds (u64->usize lossless on 64-bit)
-graph/src/graph/graphblas/vector.rs	decode_blob	211	PROVEN	Codes.decodeBlob_never_dies / decodeBlob_safe_on_reachable / decodeBlob_rejects_invalid_object (#2996 fix)
+graph/src/graph/graphblas/vector.rs	decode_blob	211	NOT COVERED	(#3588): body rewritten; not modelled yet
 graph/src/graph/graphblas/vector.rs	encode	454	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/vector.rs	decode	475	PROVEN	Codes.decodeU64_never_dies (#2996 fix)
+graph/src/graph/graphblas/vector.rs	decode	475	NOT COVERED	(#3588): body rewritten; not modelled yet
 graph/src/graph/graphblas/vector.rs	encode	482	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/vector.rs	decode	712	PROVEN	Codes.decodeBool_safe / decodeBool_never_dies; Index.blob_copy_in_bounds
+graph/src/graph/graphblas/vector.rs	decode	712	NOT COVERED	(#3588): body rewritten; not modelled yet
 graph/src/graph/graphblas/vector.rs	new	718	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	set	734	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	iter	747	PROVEN	Misc.VIter.new_inv, VIter.drain_new (= Iter::new); Iter carries no borrow (report: UAF)
@@ -104,6 +104,12 @@ graph/src/graph/graphblas/vector.rs	drop	852	AXIOMATISED	GrB_Vector_free / GxB_I
 graph/src/graph/graphblas/vector.rs	new	863	PROVEN	GBWGlue.vIterNew: vIterNew_depleted; UAF bug_vector_iter_outlives_vector
 graph/src/graph/graphblas/vector.rs	next	892	PROVEN	Misc.VIter.next_inv, VIter.next_depleted, VIter.drain_new (cursor state machine over the C iterator contract; Iter<bool> yields the index)
 graph/src/graph/graphblas/vector.rs	next	907	PROVEN	Misc.VIter.next_inv, VIter.next_depleted, VIter.drain_new (as :632; Iter<u64> yields the (index, value) pair)
+graph/src/graph/graphblas/vector.rs	blob_i64	244	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/vector.rs	check_blob_header	259	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/vector.rs	deserialize_untrusted	409	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/vector.rs	read	566	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/vector.rs	type_name	611	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/vector.rs	load	615	NOT COVERED	(#3588): not modelled yet
 graph/src/graph/graphblas/mod.rs	GrB_init	8016	AXIOMATISED	bindgen extern decl (GraphBLAS C API); spec = GraphBLAS.h, used via GrbInfo/Index/RowIter axioms
 graph/src/graph/graphblas/mod.rs	GrB_finalize	8019	AXIOMATISED	bindgen extern decl (GraphBLAS C API); spec = GraphBLAS.h, used via GrbInfo/Index/RowIter axioms
 graph/src/graph/graphblas/mod.rs	GxB_init	8022	AXIOMATISED	bindgen extern decl (GraphBLAS C API); spec = GraphBLAS.h, used via GrbInfo/Index/RowIter axioms
@@ -1203,15 +1209,26 @@ graph/src/graph/graphblas/tensor.rs	resize	821	PROVEN	Misc.resize_clamp_grownOk 
 graph/src/graph/graphblas/tensor.rs	edge_count	1229	PROVEN	Decode.edgeCount_no_panic / edgeCount_value (checked u64 adds and subs, under Wf incl. the two u64 bounds; also VM count_correct)
 graph/src/graph/graphblas/tensor.rs	iter_edges	1291	PROVEN	Misc.iterEdges (filter-then-chain, singles then every me id): iterEdges_count/iterEdges_length (same ids as iterExpand), iterEdges_all_single; order differs from the per-pair Iter::next once a MULTI_EDGE pair precedes a single
 graph/src/graph/graphblas/tensor.rs	iter	1308	PROVEN	Misc.iterExpand_eq_flatMap
-graph/src/graph/graphblas/tensor.rs	decode	1565	PROVEN	Decode.checkLayers_ok_iff / checkLayers_merge_in_bounds (#2996 layer sizes); Codes.decodeBlob_never_dies; #3033 promotion completeness: Decode.decodeCheck_ok_iff / decodeCheck_refuses_incomplete / decodeCheck_ok_complete / decodeCheck_ok_edgeCount_no_panic / decodeCheck_accepts_encoded
+graph/src/graph/graphblas/tensor.rs	decode	1565	NOT COVERED	(#3588): body rewritten; not modelled yet
 graph/src/graph/graphblas/tensor.rs	next	1709	PROVEN	Misc.expand (EdgeIds = inline or me row)
 graph/src/graph/graphblas/tensor.rs	next	1793	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_length
 graph/src/graph/graphblas/serialization.rs	encode	34	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
 graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	GBWSerial.encodeWithRangeDefault: defaults_panic
 graph/src/graph/graphblas/serialization.rs	decode	251	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
-graph/src/graph/graphblas/serialization.rs	decode_with_count	263	PROVEN	GBWSerial.decodeWithCountDefault: defaults_panic
+graph/src/graph/graphblas/serialization.rs	decode_with_count	263	NOT COVERED	(#3588): body rewritten; not modelled yet
 graph/src/graph/graphblas/serialization.rs	from_u64	146	PROVEN	GBWSerial.fromU64: fromU64_disc, fromU64_some, fromU64_none
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::new	1730	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320), only the test kit's oracle uses it
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::set	1757	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::build	1777	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::extract_tuples	1488	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
+graph/src/graph/graphblas/matrix.rs	drop	453	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	parse	478	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	at	482	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	index_width	523	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	index_at	540	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	check_structure	567	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	from_le	634	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	from_le	639	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	from_le	646	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	typed	653	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/matrix.rs	check_rows	672	NOT COVERED	(#3588): not modelled yet

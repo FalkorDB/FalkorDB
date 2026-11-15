@@ -80,5 +80,7 @@ graph/src/runtime/value.rs	sort_cmp_f64	1931	PROVEN	SC.scF64: SC.scF64_key (NaN 
 graph/src/runtime/value.rs	sort_cmp_f32	1943	PROVEN	Main.scF32: Main.scF32_key (-0.0 < 0.0, NaNs equal on top), Main.scF32_lw, Main.signed_zeros_apart, signed_zeros_apart_nested; history pre14e341_vec_zero_eq_but_hash_differs
 graph/src/runtime/value.rs	f32_hash_bits	1957	PROVEN	f32HashBits (Model): Main.f32HashBits_of_eq, Main.main_nans_one_key
 graph/src/runtime/value.rs	sort_cmp_int_float	1969	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
+graph/src/runtime/value.rs	order	1221	NOT COVERED	(#3588): not modelled yet
+graph/src/runtime/value.rs	get_type	1371	NOT COVERED	(#3588): not modelled yet
 graph/src/runtime/batch.rs	Batch::compare_rows_at	1289	PROVEN	Main.compareRowsAt: Main.compareRowsAt_eq_scMain (Unbound ties, else sort_cmp)
 graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Main.listSort (sort_by(Value::sort_cmp)): Main.listSort_perm, Main.listSort_sorted (output pairwise sort_cmp-ordered, well-formed input), Main.scMain_total (total order: W2-strlist-1 panic fixed by #2912)
