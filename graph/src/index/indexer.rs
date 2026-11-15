@@ -63,7 +63,6 @@ use std::{
 };
 
 use arc_swap::ArcSwapOption;
-use atomic_refcell::AtomicRefCell;
 use parking_lot::Mutex;
 use roaring::RoaringTreemap;
 
@@ -163,7 +162,7 @@ struct Shared {
     cancelled: AtomicBool,
     /// Latest committed graph, shared with background index population.
     /// Updated by `MvccGraph::commit()` so background batches see fresh data.
-    graph: ArcSwapOption<AtomicRefCell<Graph>>,
+    graph: ArcSwapOption<Graph>,
 }
 
 /// The indexes of one graph version. See the module docs.
@@ -202,8 +201,9 @@ impl Clone for Indexer {
     }
 }
 
-/// A reference to what all versions of one `Indexer` share, which holds no
-/// version's map: background work keeps it, and reads the committed graph's map per
+/// A reference to what all versions of one `Indexer` share, which holds no version's map.
+///
+/// Background work keeps it, and reads the committed graph's map per
 /// batch (from [`Self::get_graph`]) instead of pinning an old one (and with it an
 /// old, possibly retired, RediSearch spec).
 #[derive(Clone)]
@@ -212,7 +212,7 @@ pub struct IndexerHandle(Arc<Shared>);
 impl IndexerHandle {
     /// The latest committed graph, `None` until the first commit.
     #[must_use]
-    pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+    pub fn get_graph(&self) -> Option<Arc<Graph>> {
         self.0.graph.load_full()
     }
 
@@ -240,7 +240,7 @@ pub struct IndexChanges {
 
 impl IndexChanges {
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.owed.is_empty()
     }
 }
@@ -396,7 +396,7 @@ impl Indexer {
             }
         }
         if share_spec {
-            label_indexes.defer_fields(new_fields.clone(), field_options.clone());
+            label_indexes.defer_fields(new_fields.clone(), field_options);
         } else {
             let effective_stopwords = stopwords
                 .clone()
@@ -930,8 +930,7 @@ impl Indexer {
     ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
         self.index
             .get(label)
-            .map(|index| index.fields().clone())
-            .unwrap_or_default()
+            .map_or_default(|index| index.fields().clone())
     }
 
     /// Get fields for all labels.
@@ -1034,13 +1033,13 @@ impl Indexer {
     /// borrowed".
     pub fn set_graph(
         &self,
-        graph: Arc<AtomicRefCell<Graph>>,
+        graph: Arc<Graph>,
     ) {
         self.shared.graph.store(Some(graph));
     }
 
     #[must_use]
-    pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+    pub fn get_graph(&self) -> Option<Arc<Graph>> {
         self.shared.graph.load_full()
     }
 }

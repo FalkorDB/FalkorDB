@@ -5,7 +5,7 @@ import FalkorNativeIndex.Build
 An indexer batch is built on a *build version* of the published graph with no lock held
 (`Graph::new_build_version`, `graph.rs:1139`; `Graph::indexer_prepare`, `versioned.rs:366`), then
 `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:264`) fits it to whatever was published meanwhile
-(`Graph::indexer_fit`, `versioned.rs:462`). The proofs below model that logic on the one index the batch
+(`Graph::indexer_fit`, `versioned.rs:504`). The proofs below model that logic on the one index the batch
 is about (`V.entry`); everything else in the graph is the opaque `rest : R`, which a `Swap` takes from the
 published version.
 
@@ -20,7 +20,7 @@ published version.
 | `V.createEntry` | `FalkorDbIndex::insert_column` (`falkordb_index.rs:450`): `indexes_created += 1`, that is the generation |
 | `V.setBatchesPublished`, `V.batchPublishedSince` | `falkordb_index.rs:565`, `:575` |
 | `V.applyBatch` | `FalkorDbIndex::apply_indexer_batch` (`versioned.rs:353`) |
-| `indexerFit`, `catchUpBy`, `CatchUp` | `Graph::indexer_fit` (`versioned.rs:462`), `catch_up_by` (`:175`), `CatchUp` (`:149`): since #3568 the fit picks Refresh or Insert (`fit_catchUp_how`); the fit reads `SE.written` (the published copy's `since_last_indexer_step.len()`, `SE.since`) and `batchLen work` (`batch_len(&work)`) |
+| `indexerFit`, `catchUpBy`, `catchUpWork`, `CatchUp` | `Graph::indexer_fit` (`versioned.rs:504`), `catch_up_by` (`:209`), `CatchUp` (`:149`): since #3568 the fit picks Refresh or Insert (`fit_catchUp_how`); since #2355 a catch-up past the batch's limit is discarded (`fit_after_writer_too_large`); the fit reads `SE.written` (the published copy's `since_last_indexer_step.len()`, `SE.since`) and `batchLen work` (`batch_len(&work)`) |
 | `V.caughtUp`, `V.insertedOnto` | `Graph::caught_up_onto` (`:519`), `Graph::insert_index` (`:538`) |
 | `V.withBatchIndex` | `Graph::with_batch_index` (`:316`) with `take_index` (`:329`) |
 | `commitIndexerBatch` | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:264`) and `commit_version(_, false)` (`:293-388`), up to the swap |
@@ -61,7 +61,7 @@ def new (index : IndexColumn) (state : BuildState) (generation : Nat) : SE :=
   ⟨IndexEntry.new index state, generation, 0, 0⟩
 
 /-- What `Graph::indexer_fit` reads of the published copy: `since_last_indexer_step.len()` while `Building`,
-`0` for a `Ready` index (`versioned.rs:476-479`). -/
+`0` for a `Ready` index (`versioned.rs:518-521`). -/
 def written (s : SE) : Nat := if s.en.isBuilding then s.since else 0
 
 /-- `IndexEntry::indexer_apply`: as `IndexEntry.indexerApply`, and `indexer_commits += 1`. -/
@@ -91,12 +91,15 @@ theorem new_commits (i : IndexColumn) (st : BuildState) (g : Nat) :
 theorem written_ready (s : SE) (h : s.en.isBuilding = false) : s.written = 0 := by simp [written, h]
 end SE
 
-/-- `Discarded` (`versioned.rs:157-164`); `Writers` is gone since #3567: a batch catches up on writers. -/
+/-- `Discarded` (`versioned.rs:224-234`); `Writers` is gone since #3567: a batch catches up on writers. -/
 inductive Discarded where
   | gone | anotherBatch
+  /-- `CatchUpTooLarge` (`versioned.rs:233`, the online build, #2355): writers committed, and catching up would
+  do more than the batch's limit allows (`PreparedBatch::limit_catch_up`). -/
+  | catchUpTooLarge
 deriving DecidableEq, Repr
 
-/-- `CatchUp` (`versioned.rs:149-156`): how a batch that writers overtook catches up. -/
+/-- `CatchUp` (`versioned.rs:183-190`): how a batch that writers overtook catches up. -/
 inductive CatchUp where
   | refresh | insert
 deriving DecidableEq, Repr
@@ -104,7 +107,7 @@ deriving DecidableEq, Repr
 /-- `REFRESH_COST` (`versioned.rs:171`): refreshing one entity costs as much as inserting ten tuples. -/
 def REFRESH_COST : Nat := 10
 
-/-- `catch_up_by` (`versioned.rs:182`): refresh iff `written * REFRESH_COST < batch` (`u64::saturating_mul`,
+/-- `catch_up_by` (`versioned.rs:209`): refresh iff `written * REFRESH_COST < batch` (`u64::saturating_mul`,
 see `Rebase.catchUpBy_saturating`). -/
 def catchUpBy (written batch : Nat) : CatchUp :=
   if written * REFRESH_COST < batch then .refresh else .insert
@@ -219,18 +222,31 @@ end V
 /-- `VersionedIndex::batch_len` for `IndexColumn` (`falkordb_index.rs:382`) = `EncodedTuples::len`. -/
 def IndexColumn.batchLen (b : EncodedTuples) : Nat := b.len
 
-/-- `Graph::indexer_fit` (`versioned.rs:462`). `ours` is the batch's version, `pub` the published one, `work` the
-batch's tuples (`column.work`). The two numbers `catch_up_by` weighs when writers committed are read off them as
-Rust reads them: the published copy's `since_last_indexer_step.len()` (`SE.written`, `0` for a `Ready` index or
-no entry) and `batch_len(&work)`. -/
-def indexerFit {R : Type} (work : EncodedTuples) (ours pub : V R) : IndexerCommit :=
+/-- What a catch-up the way `how` does, as `indexer_fit` counts it (`versioned.rs:527-530`): a refresh reads
+again the `written` entities; an insert adds the batch's tuples and reads again the written entities in the
+batch's range, at most the `read` it was given. -/
+def catchUpWork (how : CatchUp) (written batchLen read : Nat) : Nat :=
+  match how with
+  | .refresh => written
+  | .insert => batchLen + min written read
+
+/-- `Graph::indexer_fit` (`versioned.rs:504`). `ours` is the batch's version, `pub` the published one, `work` the
+batch's tuples (`column.work`), `limit` its catch-up limit (`catch_up_limit`, `none` for a batch at the floor) and
+`read` what it read (`column.read`). The two numbers `catch_up_by` weighs when writers committed are read off them
+as Rust reads them: the published copy's `since_last_indexer_step.len()` (`SE.written`, `0` for a `Ready` index
+or no entry) and `batch_len(&work)`. A catch-up that would do more than `limit` is discarded (`:531`). -/
+def indexerFit {R : Type} (work : EncodedTuples) (ours pub : V R) (limit : Option Nat := none) (read : Nat := 0) :
+    IndexerCommit :=
   match ours.entry with
   | none => .discarded .gone
   | some o =>
     match discardedAgainst o pub.entry with
     | some why => .discarded why
     | none =>
-      if pub.version ≠ ours.version then .catchUp (catchUpBy ((pub.entry.map SE.written).getD 0) (IndexColumn.batchLen work))
+      if pub.version ≠ ours.version then
+        if limit.any (fun l => l < catchUpWork (catchUpBy ((pub.entry.map SE.written).getD 0) (IndexColumn.batchLen work))
+            ((pub.entry.map SE.written).getD 0) (IndexColumn.batchLen work) read) then .discarded .catchUpTooLarge
+        else .catchUp (catchUpBy ((pub.entry.map SE.written).getD 0) (IndexColumn.batchLen work))
       else if V.batchPublishedSince pub ours then .swap else .same
 
 /-- The version a batch commit publishes, for each fit (`commit_indexer_batch`, `mvcc_graph.rs:264-287`). -/
@@ -244,9 +260,9 @@ variable (work : EncodedTuples)
 
 /-- `MvccGraph::commit_indexer_batch` (`valid` is `Graph::validate`): the new published version and what
 went in; `none` is the `Invalid` refusal, nothing published. `f` is the catch-up of the batch's index. -/
-def commitIndexerBatch {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn) :
-    V R × Option IndexerCommit :=
-  let fit := indexerFit work prepared pub
+def commitIndexerBatch {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
+    (limit : Option Nat := none) (read : Nat := 0) : V R × Option IndexerCommit :=
+  let fit := indexerFit work prepared pub limit read
   match fit with
   | .discarded _ => (pub, some fit)
   | _ =>
@@ -267,8 +283,8 @@ under the host's global lock; a publisher without it breaks that). A `Discarded`
 `validate` refuses before the swap, and a refused swap leaves `now` published. Returns the published version
 afterwards and the outcome. -/
 def commitIndexerBatchE {R : Type} (pub now prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (unchanged : Bool) : V R × Except CommitError IndexerCommit :=
-  let fit := indexerFit work prepared pub
+    (unchanged : Bool) (limit : Option Nat := none) (read : Nat := 0) : V R × Except CommitError IndexerCommit :=
+  let fit := indexerFit work prepared pub limit read
   match fit with
   | .discarded _ => (now, .ok fit)
   | _ =>
@@ -301,9 +317,10 @@ theorem fit_after_other_batch {R : Type} (pub pub' : V R) (p : SE) (hp : pub.ent
   simp only [V.newBuildVersion, V.newVersion, V.applyBatch, hp, indexerFit, discardedAgainst, hent, hver]
   simp [ha.2.2.1, ha.2.2.2, V.batchPublishedSince, hcnt]
 
-/-- A writer committed meanwhile (the data version moved, this index untouched): `CatchUp` (#3567; before it,
-`Discarded Writers`), by whichever way `catch_up_by` picks (#3568) from the published copy's `since` count and the
-batch's length. -/
+/-- A writer committed meanwhile (the data version moved, this index untouched), for a batch with no catch-up limit
+(one at the floor): `CatchUp` (#3567; before it, `Discarded Writers`), by whichever way `catch_up_by` picks (#3568)
+from the published copy's `since` count and the batch's length. A batch with a limit: `fit_after_writer_within`,
+`fit_after_writer_too_large`. -/
 theorem fit_after_writer {R : Type} (pub pub' : V R) (p : SE) (hp : pub.entry = some p)
     (hb : p.en.isBuilding = true) (work : EncodedTuples) (next : Option BuildCursor)
     (hent : pub'.entry = pub.entry) (hver : pub'.version ≠ pub.version) :
@@ -312,6 +329,40 @@ theorem fit_after_writer {R : Type} (pub pub' : V R) (p : SE) (hp : pub.entry = 
   have ha := SE.indexerApply_building p work next hb
   simp only [V.newBuildVersion, V.newVersion, V.applyBatch, hp, indexerFit, discardedAgainst, hent]
   simp [ha.2.2.1, ha.2.2.2, hver]
+
+/-- A writer committed meanwhile, and the catch-up the fit picks stays within the batch's limit, or the batch has
+none: `CatchUp`, as `fit_after_writer`. -/
+theorem fit_after_writer_within {R : Type} (pub pub' : V R) (p : SE) (hp : pub.entry = some p)
+    (hb : p.en.isBuilding = true) (work : EncodedTuples) (next : Option BuildCursor)
+    (hent : pub'.entry = pub.entry) (hver : pub'.version ≠ pub.version) (limit : Option Nat) (read : Nat)
+    (hlim : ∀ l, limit = some l → catchUpWork (catchUpBy ((pub'.entry.map SE.written).getD 0) (IndexColumn.batchLen work))
+      ((pub'.entry.map SE.written).getD 0) (IndexColumn.batchLen work) read ≤ l) :
+    indexerFit work (pub.newBuildVersion.applyBatch work next).1 pub' limit read =
+      .catchUp (catchUpBy ((pub'.entry.map SE.written).getD 0) (IndexColumn.batchLen work)) := by
+  have ha := SE.indexerApply_building p work next hb
+  have hno : limit.any (fun l => l < catchUpWork (catchUpBy ((pub'.entry.map SE.written).getD 0)
+      (IndexColumn.batchLen work)) ((pub'.entry.map SE.written).getD 0) (IndexColumn.batchLen work) read) = false := by
+    cases limit with
+    | none => rfl
+    | some l => simpa using hlim l rfl
+  have hw : (pub'.entry.map SE.written).getD 0 = p.written := by rw [hent, hp]; rfl
+  rw [hw] at hno
+  simp only [V.newBuildVersion, V.newVersion, V.applyBatch, hp, indexerFit, discardedAgainst, hent]
+  simp [ha.2.2.1, ha.2.2.2, hver, hno]
+
+/-- A writer committed meanwhile, and the catch-up the fit picks would do more than the batch's limit:
+`CatchUpTooLarge`, so nothing is published (the online build, #2355). -/
+theorem fit_after_writer_too_large {R : Type} (pub pub' : V R) (p : SE) (hp : pub.entry = some p)
+    (hb : p.en.isBuilding = true) (work : EncodedTuples) (next : Option BuildCursor)
+    (hent : pub'.entry = pub.entry) (hver : pub'.version ≠ pub.version) (l read : Nat)
+    (hl : l < catchUpWork (catchUpBy ((pub'.entry.map SE.written).getD 0) (IndexColumn.batchLen work))
+      ((pub'.entry.map SE.written).getD 0) (IndexColumn.batchLen work) read) :
+    indexerFit work (pub.newBuildVersion.applyBatch work next).1 pub' (some l) read = .discarded .catchUpTooLarge := by
+  have ha := SE.indexerApply_building p work next hb
+  have hw : (pub'.entry.map SE.written).getD 0 = p.written := by rw [hent, hp]; rfl
+  rw [hw] at hl
+  simp only [V.newBuildVersion, V.newVersion, V.applyBatch, hp, indexerFit, discardedAgainst, hent]
+  simp [ha.2.2.1, ha.2.2.2, hver, hl]
 
 /-- Another batch committed on this index meanwhile: `AnotherBatch`, whatever else happened. -/
 theorem fit_after_same_batch {R : Type} (pub pub' : V R) (p p' : SE) (hp : pub.entry = some p)
@@ -344,20 +395,22 @@ theorem fit_after_recreate {R : Type} (pub pub' : V R) (p : SE) (hp : pub.entry 
 
 /-! ## The commit -/
 
+variable (limit : Option Nat) (read : Nat)
+
 theorem commit_discarded {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (why : Discarded) (h : indexerFit work prepared pub = .discarded why) :
-    commitIndexerBatch work pub prepared valid f = (pub, some (.discarded why)) := by
+    (why : Discarded) (h : indexerFit work prepared pub limit read = .discarded why) :
+    commitIndexerBatch work pub prepared valid f limit read = (pub, some (.discarded why)) := by
   simp [commitIndexerBatch, h]
 
 theorem commit_same {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (h : indexerFit work prepared pub = .same) (hv : valid prepared = true) :
-    commitIndexerBatch work pub prepared valid f = (prepared.setBatchesPublished pub true, some .same) := by
+    (h : indexerFit work prepared pub limit read = .same) (hv : valid prepared = true) :
+    commitIndexerBatch work pub prepared valid f limit read = (prepared.setBatchesPublished pub true, some .same) := by
   simp [commitIndexerBatch, h, commitVersion, hv]
 
 /-- `Swap`: the published version, at its own data version, with exactly the batch's index replaced. -/
 theorem commit_swap {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (h : indexerFit work prepared pub = .swap) (hv : valid (V.withBatchIndex prepared pub) = true) :
-    commitIndexerBatch work pub prepared valid f =
+    (h : indexerFit work prepared pub limit read = .swap) (hv : valid (V.withBatchIndex prepared pub) = true) :
+    commitIndexerBatch work pub prepared valid f limit read =
       ((V.withBatchIndex prepared pub).setBatchesPublished pub true, some .swap) ∧
     (V.withBatchIndex prepared pub).rest = pub.rest ∧
     (V.withBatchIndex prepared pub).version = pub.version ∧
@@ -372,9 +425,9 @@ theorem commit_swap {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : 
 /-- `CatchUp` (#3567, #3568), either way: the published version, at its own data version (the writers' data),
 with only the batch's index slot changed, by the way `how` says; the commit counts one batch. -/
 theorem commit_catchUp {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (how : CatchUp) (h : indexerFit work prepared pub = .catchUp how)
+    (how : CatchUp) (h : indexerFit work prepared pub limit read = .catchUp how)
     (hv : valid (V.caughtUp how prepared pub f) = true) :
-    commitIndexerBatch work pub prepared valid f =
+    commitIndexerBatch work pub prepared valid f limit read =
       ((V.caughtUp how prepared pub f).setBatchesPublished pub true, some (.catchUp how)) ∧
     (V.caughtUp how prepared pub f).rest = pub.rest ∧
     (V.caughtUp how prepared pub f).version = pub.version ∧
@@ -407,13 +460,13 @@ theorem commit_catchUp_insert {R : Type} (pub prepared : V R) (f : CatchUp → S
 /-- **#3545, a current commit publishes**: when nothing was published since the load (`now = pub`, the
 swap's pointer check passes) `commitIndexerBatchE` is exactly the commit above, with `Invalid` for its refusal. -/
 theorem commit_cas_current {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn) :
-    commitIndexerBatchE work pub pub prepared valid f true =
-      ((commitIndexerBatch work pub prepared valid f).1,
-        match (commitIndexerBatch work pub prepared valid f).2 with
+    commitIndexerBatchE work pub pub prepared valid f true limit read =
+      ((commitIndexerBatch work pub prepared valid f limit read).1,
+        match (commitIndexerBatch work pub prepared valid f limit read).2 with
         | some fit => .ok fit
         | none => .error .invalid) := by
   unfold commitIndexerBatchE commitIndexerBatch
-  generalize indexerFit work prepared pub = fit
+  generalize indexerFit work prepared pub limit read = fit
   cases fit with
   | discarded w => simp
   | same => by_cases hv : valid prepared = true <;> simp [commitVersion, hv]
@@ -424,9 +477,9 @@ theorem commit_cas_current {R : Type} (pub prepared : V R) (valid : V R → Bool
 (`unchanged = false`), `validate` accepts, and the fit is not `Discarded`: the commit is refused with `Stale`, and
 what is published is still `now`, the other publisher's version, untouched. -/
 theorem commit_cas_stale {R : Type} (pub now prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (c : IndexerCommit) (h : indexerFit work prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
+    (c : IndexerCommit) (h : indexerFit work prepared pub limit read = c) (hc : ∀ w, c ≠ .discarded w)
     (hv : valid (commitVersion pub prepared f c) = true) :
-    commitIndexerBatchE work pub now prepared valid f false = (now, .error .stale) := by
+    commitIndexerBatchE work pub now prepared valid f false limit read = (now, .error .stale) := by
   cases c with
   | discarded w => exact absurd rfl (hc w)
   | same => simp [commitIndexerBatchE, h, commitVersion] at hv ⊢; simp [hv]
@@ -436,9 +489,9 @@ theorem commit_cas_stale {R : Type} (pub now prepared : V R) (valid : V R → Bo
 /-- A refused version (`validate` fails) publishes nothing, whether or not another publisher slipped in:
 the validation refusal comes before the swap. -/
 theorem commit_cas_invalid {R : Type} (pub now prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (c : IndexerCommit) (h : indexerFit work prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
+    (c : IndexerCommit) (h : indexerFit work prepared pub limit read = c) (hc : ∀ w, c ≠ .discarded w)
     (hv : valid (commitVersion pub prepared f c) = false) (u : Bool) :
-    commitIndexerBatchE work pub now prepared valid f u = (now, .error .invalid) := by
+    commitIndexerBatchE work pub now prepared valid f u limit read = (now, .error .invalid) := by
   cases c with
   | discarded w => exact absurd rfl (hc w)
   | same => simp [commitIndexerBatchE, h, commitVersion] at hv ⊢; simp [hv]
@@ -448,7 +501,7 @@ theorem commit_cas_invalid {R : Type} (pub now prepared : V R) (valid : V R → 
 /-- **The fit makes the Refresh / Insert choice** (#3568): when it says `CatchUp how`, `how` is `catch_up_by` of
 the published copy's `since` count and the batch's length. -/
 theorem fit_catchUp_how {R : Type} (ours pub : V R) (how : CatchUp)
-    (h : indexerFit work ours pub = .catchUp how) :
+    (h : indexerFit work ours pub limit read = .catchUp how) :
     how = catchUpBy ((pub.entry.map SE.written).getD 0) (IndexColumn.batchLen work) := by
   unfold indexerFit at h
   split at h
@@ -456,14 +509,16 @@ theorem fit_catchUp_how {R : Type} (ours pub : V R) (how : CatchUp)
   · split at h
     · cases h
     · split at h
-      · cases h; rfl
+      · split at h
+        · cases h
+        · cases h; rfl
       · split at h <;> cases h
 
 /-- A refused version (`validate` fails) publishes nothing. -/
 theorem commit_invalid {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (c : IndexerCommit) (h : indexerFit work prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
+    (c : IndexerCommit) (h : indexerFit work prepared pub limit read = c) (hc : ∀ w, c ≠ .discarded w)
     (hv : valid (commitVersion pub prepared f c) = false) :
-    commitIndexerBatch work pub prepared valid f = (pub, none) := by
+    commitIndexerBatch work pub prepared valid f limit read = (pub, none) := by
   cases c with
   | discarded w => exact absurd rfl (hc w)
   | same => simp [commitIndexerBatch, h, commitVersion] at hv ⊢; simp [hv]
@@ -476,10 +531,10 @@ def isStale {R : Type} (pub fork : V R) : Bool := pub.version + 1 != fork.versio
 
 /-- `CatchUp` and `Swap` are built on `pub.new_build_version()`, so keep its data version; `Same` is at it. -/
 theorem commit_keeps_version {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (hsame : indexerFit work prepared pub = .same → prepared.version = pub.version) :
-    (commitIndexerBatch work pub prepared valid f).1.version = pub.version := by
+    (hsame : indexerFit work prepared pub limit read = .same → prepared.version = pub.version) :
+    (commitIndexerBatch work pub prepared valid f limit read).1.version = pub.version := by
   unfold commitIndexerBatch
-  generalize hf : indexerFit work prepared pub = fit
+  generalize hf : indexerFit work prepared pub limit read = fit
   cases fit with
   | discarded w => rfl
   | same =>
@@ -504,7 +559,7 @@ theorem commit_keeps_version {R : Type} (pub prepared : V R) (valid : V R → Bo
 
 /-- `Same` implies the batch's version is at the published data version (what `commit_version`'s
 `debug_assert!` checks). -/
-theorem fit_same_version {R : Type} (ours pub : V R) (h : indexerFit work ours pub = .same) : ours.version = pub.version := by
+theorem fit_same_version {R : Type} (ours pub : V R) (h : indexerFit work ours pub limit read = .same) : ours.version = pub.version := by
   unfold indexerFit at h
   split at h
   · cases h
@@ -512,18 +567,20 @@ theorem fit_same_version {R : Type} (ours pub : V R) (h : indexerFit work ours p
     · cases h
     · by_cases hv : pub.version = ours.version
       · exact hv.symm
-      · simp [hv] at h
+      · rw [ite_eq_left hv] at h
+        split at h <;> cases h
 
 theorem commit_not_stale {R : Type} (pub prepared fork : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn) :
-    isStale (commitIndexerBatch work pub prepared valid f).1 fork = isStale pub fork := by
-  have := commit_keeps_version work pub prepared valid f (fun h => fit_same_version work prepared pub h)
+    isStale (commitIndexerBatch work pub prepared valid f limit read).1 fork = isStale pub fork := by
+  have := commit_keeps_version work limit read pub prepared valid f
+    (fun h => fit_same_version work limit read prepared pub h)
   simp [isStale, this]
 
 /-- Each publish counts one batch. -/
 theorem commit_batches {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : CatchUp → SE → SE → IndexColumn)
-    (c : IndexerCommit) (hf : indexerFit work prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
+    (c : IndexerCommit) (hf : indexerFit work prepared pub limit read = c) (hc : ∀ w, c ≠ .discarded w)
     (hv : valid (commitVersion pub prepared f c) = true) :
-    (commitIndexerBatch work pub prepared valid f).1.batches = pub.batches + 1 := by
+    (commitIndexerBatch work pub prepared valid f limit read).1.batches = pub.batches + 1 := by
   cases c with
   | discarded w => exact absurd rfl (hc w)
   | same =>

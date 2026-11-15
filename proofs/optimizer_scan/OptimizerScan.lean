@@ -37,7 +37,7 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-295` |
 | `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:357-368, 547-595, 802-873` |
 | `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-355, 602-704, 481-544` |
-| `Index.pushAnd`/`mergeInto`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-783` |
+| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-801` |
 | `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:308-335` |
 | `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
 | `ScanOrder.place`, `runScoped` | `select_scan_node.rs:979-986, 1185-1235` |
@@ -138,10 +138,11 @@ Scan selection (`ScanOrder.lean`):
   strict string bound in an AND (gap: those hypotheses could now be weakened).
 - `proofs/optimizer_rewrites` bugs 3, 4: `id(n) > -1` / `>= -5` / `< -1` / `<= -1` via
   `id as u64` (`bug_id_seek_negative_operand` here), non-integer id operands error.
-- Array-contains keeps its Filter only at the root (`utilize_index.rs:773-780`): inside AND
-  it is dropped, so `1 IN n.arr AND n.k > 0` returns `arr: [true]` (Bool/Int share the numeric
-  array field). Rust with index `[4],[5]`, without `[5]`, C `[4],[5]` — index-dependent result
-  shared with C (Lean C10).
+- FIXED by #3736: array-contains used to keep its Filter only at the root: inside AND it was
+  dropped, so `1 IN n.arr AND n.k > 0` returned `arr: [true]` (Bool/Int share the numeric array
+  field). Rust with index `[4],[5]`, without `[5]`, C `[4],[5]` — an index-dependent result shared
+  with C (Lean C10, now stated as agreement). The AND branch keeps an array-contains conjunct's
+  filter (`is_array_contains`).
 
 ## Suspected / hazards (not confirmed as wrong results)
 - `utilize_node_by_id.rs:106` `parent().unwrap()` panics if a scan is the plan root. W4-plan-4's

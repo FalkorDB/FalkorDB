@@ -127,11 +127,11 @@ The lakefile has no path dependencies. Other projects rely on its results by cit
 
 ## Coverage
 
-`COVERAGE.tsv` has 134 rows: 69 in `versioned_matrix.rs`, 51 in `tensor.rs`, 9 in `mvcc_graph.rs` and 5 in `cow.rs`.
+`COVERAGE.tsv` has 135 rows: 69 in `versioned_matrix.rs`, 51 in `tensor.rs`, 10 in `mvcc_graph.rs` and 5 in `cow.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 133 |
+| PROVEN | 134 |
 | CONDITIONAL | 1 |
 
 - **CONDITIONAL:** `VersionedMatrix::count_in_rows`, on `LayerCount` (above).

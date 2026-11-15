@@ -447,7 +447,7 @@ fn apply_record(
                 &schema_type,
                 &label,
                 &fields,
-                index_options(&index_type, &options),
+                index_options(index_type, &options),
             )?;
             Ok(())
         }
@@ -537,12 +537,18 @@ fn apply_add_schema(
     match schema_type {
         EntityType::Node => {
             let assigned = usize::from(g.get_label_id_mut(name)) as i64;
-            let local = g.get_labels().get(id as usize).map(|l| l.to_string());
+            let local = g
+                .get_labels()
+                .get(id as usize)
+                .map(std::string::ToString::to_string);
             verify_id("label", name, i64::from(id), assigned, local)
         }
         EntityType::Relationship => {
             let assigned = g.get_type_id_mut(name).0 as i64;
-            let local = g.get_types().get(id as usize).map(|t| t.to_string());
+            let local = g
+                .get_types()
+                .get(id as usize)
+                .map(std::string::ToString::to_string);
             verify_id("relationship type", name, i64::from(id), assigned, local)
         }
     }
@@ -580,11 +586,15 @@ fn verify_schema(
     let (kind, local) = match schema_type {
         EntityType::Node => (
             "label",
-            g.get_labels().get(id as usize).map(|l| l.to_string()),
+            g.get_labels()
+                .get(id as usize)
+                .map(std::string::ToString::to_string),
         ),
         EntityType::Relationship => (
             "relationship type",
-            g.get_types().get(id as usize).map(|t| t.to_string()),
+            g.get_types()
+                .get(id as usize)
+                .map(std::string::ToString::to_string),
         ),
     };
     resolved(kind, name, i64::from(id), local)
@@ -630,7 +640,7 @@ fn resolve_type(
     relation_id: u32,
 ) -> Result<Arc<String>, ApplyError> {
     g.get_type(TypeId(relation_id as usize))
-        .ok_or(ApplyError::IdOutOfRange {
+        .ok_or_else(|| ApplyError::IdOutOfRange {
             kind: "relationship type",
             id: i64::from(relation_id),
         })
@@ -804,7 +814,7 @@ fn attr_map(
 /// which matters because an effect adds a field to an index that may already
 /// exist, and a language already set for the label refuses a second one.
 fn index_options(
-    index_type: &IndexType,
+    index_type: IndexType,
     options: &IndexFieldOptions,
 ) -> Option<IndexOptions> {
     match index_type {
@@ -1839,7 +1849,7 @@ mod tests {
 
         let mut buf = crate::effects::v3::new_buffer();
         crate::effects::v3::emit::for_each_record(&p, &master.borrow(), |r| {
-            r.encode(&mut buf).unwrap()
+            r.encode(&mut buf).unwrap();
         });
         assert_eq!(
             crate::effects::v3::test_aux::read_buffer(&buf)
@@ -1896,7 +1906,7 @@ mod tests {
             Record::UpdateNode {
                 ids: IdList::from([0]),
                 labels: vec![],
-                attr_ids: bad.to_vec(),
+                attr_ids: bad.clone(),
                 rows: vec![Value::Int(1), Value::Int(2)],
             }
             .encode(&mut buf)
@@ -2020,7 +2030,7 @@ mod tests {
     /// diverged a replica that was otherwise in step.
     #[test]
     fn an_absent_index_option_stays_absent_through_apply() {
-        let opts = index_options(&IndexType::Fulltext, &IndexFieldOptions::none_given(None))
+        let opts = index_options(IndexType::Fulltext, &IndexFieldOptions::none_given(None))
             .expect("a fulltext index carries a text block");
         let IndexOptions::Text(t) = opts else {
             panic!("expected the text half of a fulltext index");
@@ -2054,7 +2064,7 @@ mod tests {
             ef_construction: None,
             ef_runtime: None,
         };
-        let opts = index_options(&IndexType::Vector, &IndexFieldOptions::none_given(Some(v)))
+        let opts = index_options(IndexType::Vector, &IndexFieldOptions::none_given(Some(v)))
             .expect("a vector index carries a vector block");
         let IndexOptions::Vector(got) = opts else {
             panic!("expected the vector half");
@@ -2105,7 +2115,7 @@ mod tests {
 
     fn apply_one(
         g: &mut Graph,
-        record: Record,
+        record: &Record,
     ) -> Result<(), ApplyError> {
         let mut buf = new_buffer();
         record.encode(&mut buf).unwrap();
@@ -2131,7 +2141,7 @@ mod tests {
             let mut g = liveness_setup();
             let res = apply_one(
                 &mut g,
-                Record::CreateEdge {
+                &Record::CreateEdge {
                     ids: IdList::from([1]),
                     relation_id: 0,
                     src: IdList::from([src]),
@@ -2180,7 +2190,7 @@ mod tests {
         let before = g.node_count();
         let res = apply_one(
             &mut g,
-            Record::CreateNode {
+            &Record::CreateNode {
                 ids: IdList::from([2, 3, 2]),
                 labels: vec![],
                 attr_ids: vec![],
@@ -2251,7 +2261,7 @@ mod tests {
             let mut g = liveness_setup();
             let res = apply_one(
                 &mut g,
-                Record::UpdateNode {
+                &Record::UpdateNode {
                     ids: IdList::from([id]),
                     labels: vec![],
                     attr_ids: vec![0],
@@ -2268,7 +2278,7 @@ mod tests {
             let mut g = liveness_setup();
             let res = apply_one(
                 &mut g,
-                Record::SetLabels {
+                &Record::SetLabels {
                     ids: IdList::from([id]),
                     labels: vec![0],
                 },
@@ -2276,7 +2286,7 @@ mod tests {
             assert_not_live(res, "node", id);
             let res = apply_one(
                 &mut g,
-                Record::RemoveLabels {
+                &Record::RemoveLabels {
                     ids: IdList::from([id]),
                     labels: vec![0],
                 },
@@ -2290,7 +2300,7 @@ mod tests {
         let mut g = liveness_setup();
         let res = apply_one(
             &mut g,
-            Record::UpdateEdge {
+            &Record::UpdateEdge {
                 ids: IdList::from([5]),
                 relation_id: 0,
                 attr_ids: vec![0],
@@ -2350,7 +2360,7 @@ mod tests {
             let edges = g.relationship_count();
             let res = apply_one(
                 &mut g,
-                Record::DeleteNode {
+                &Record::DeleteNode {
                     ids: IdList::from([id]),
                     labels: vec![],
                 },

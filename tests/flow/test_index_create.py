@@ -13,7 +13,9 @@ GRAPH_ID = "index_create"
 
 class testIndexCreationFlow():
     def __init__(self):
-        self.env, self.db = Env()
+        # DEBUG LOADAOF, for the AOF replay test.
+        self.env, self.db = Env(enableDebugCommand=True)
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     # full-text index creation
@@ -653,8 +655,9 @@ class testIndexCreationFlow():
         # determine how much time does it take to construct our index
         start = time()
 
-        res = create_node_range_index(self.graph, 'L', 'v', sync=True)
+        res = create_node_range_index(self.graph, 'L', 'v')
         self.env.assertEqual(res.indices_created, 1)
+        wait_on_index(self.graph, 'L', timeout=300)
 
         # total index creation time
         elapsed = time() - start
@@ -689,8 +692,9 @@ class testIndexCreationFlow():
         res = self.graph.create_node_range_index('L', 'v')
         self.env.assertEqual(res.indices_created, 1)
 
-        # wait for index to become operational
-        wait_for_indices_to_sync(self.graph)
+        # wait for index to become operational, the way the first build's wait
+        # did, so the two times are measured alike
+        wait_on_index(self.graph, 'L', timeout=300)
 
         elapsed_2 = time() - start
 
@@ -964,7 +968,80 @@ class testIndexCreationFlow():
                 count = graph.ro_query(q).result_set[0][0]
                 self.env.assertEqual(count, n, message=f"index on L.{attr}")
 
-    def test20_range_zero_survives_a_rebuilt_fulltext_label(self):
+    # CREATE INDEX as the first query on a key that does not exist creates the
+    # graph, and commits the index before the graph is registered under its
+    # key. An index the engine builds in the background must still be built:
+    # its commit starts the build, whether or not the key holds the graph yet.
+    # Each test waits a bounded time, so an index left under construction
+    # fails it rather than hanging it.
+    def _assert_index_serves(self, graph):
+        graph.query("UNWIND range(1, 100) AS x CREATE (:L {v:x})")
+        q = "MATCH (n:L) WHERE n.v = 42 RETURN n.v"
+        self.env.assertIn("Node By Index Scan", str(graph.explain(q)))
+        self.env.assertEqual(graph.ro_query(q).result_set, [[42]])
+
+    def test20_create_index_on_missing_key_in_multi_exec(self):
+        graph = self.db.select_graph("index_on_missing_key_multi")
+        # A transactional pipeline sends MULTI, the query and EXEC on one connection.
+        pipe = self.conn.pipeline(transaction=True)
+        pipe.execute_command("GRAPH.QUERY", "index_on_missing_key_multi",
+                             "CREATE INDEX FOR (n:L) ON (n.v)")
+        res = pipe.execute(raise_on_error=False)
+        self.env.assertFalse(isinstance(res[0], Exception), message=str(res[0]))
+        self.env.assertIn("Indices created: 1", str(res[0]))
+        wait_on_index(graph, 'L', timeout=30)
+        self._assert_index_serves(graph)
+        graph.delete()
+
+    def test21_create_index_on_missing_key_in_aof_replay(self):
+        # Turn the AOF on, then replay it in-process with DEBUG LOADAOF. The
+        # rewrite that turning it on starts holds the dataset as it is; the
+        # CREATE INDEX comes after it, as a GRAPH.EFFECT: every write
+        # replicates as effects.
+        self.conn.config_set("appendonly", "no")
+        self.conn.config_set("appendonly", "yes")
+        try:
+            deadline = time() + 30
+            # A rewrite can be scheduled and not yet started: wait for both, read from one reply.
+            while ((p := self.conn.info("persistence")).get("aof_rewrite_in_progress", 0)
+                   or p.get("aof_rewrite_scheduled", 0)):
+                self.env.assertLess(time(), deadline, message="AOF rewrite did not finish")
+                if time() >= deadline:
+                    break
+                sleep(0.1)
+
+            graph = self.db.select_graph("index_on_missing_key_aof")
+            graph.query("CREATE INDEX FOR (n:L) ON (n.v)")
+            self.conn.execute_command("DEBUG", "LOADAOF")
+
+            wait_on_index(graph, 'L', timeout=30)
+            self._assert_index_serves(graph)
+            graph.delete()
+        finally:
+            self.conn.config_set("appendonly", "no")
+
+    def test22_create_index_on_a_graph_loaded_from_several_keys(self):
+        # A graph saved as several keys loads into a placeholder, unless its
+        # own key loads last, and the graph replaces the placeholder once its
+        # last key is in. An index created on it afterwards must be built. The reload saves every graph on the server
+        # one entity per key, so it starts from an empty server.
+        self.conn.flushall()
+        vkey_max = self.db.config_get("VKEY_MAX_ENTITY_COUNT")
+        self.db.config_set("VKEY_MAX_ENTITY_COUNT", 1)
+        try:
+            graph = self.db.select_graph("index_after_multi_key_load")
+            graph.query("UNWIND range(1, 100) AS x CREATE (:L {v:x})")
+            self.conn.execute_command("DEBUG", "RELOAD")
+            graph.query("CREATE INDEX FOR (n:L) ON (n.v)")
+            wait_on_index(graph, 'L', timeout=30)
+            q = "MATCH (n:L) WHERE n.v = 42 RETURN n.v"
+            self.env.assertIn("Node By Index Scan", str(graph.explain(q)))
+            self.env.assertEqual(graph.ro_query(q).result_set, [[42]])
+            graph.delete()
+        finally:
+            self.db.config_set("VKEY_MAX_ENTITY_COUNT", vkey_max)
+
+    def test23_range_zero_survives_a_rebuilt_fulltext_label(self):
         # A label with a fulltext index reports language "english". Handing that
         # to RediSearch on every rebuild made the spec carry a schema rule, and
         # a spec with a rule lost the value 0 from its range field. Adding a
@@ -988,7 +1065,7 @@ class testIndexCreationFlow():
         wait_for_indices_to_sync(graph)
         self.env.assertEqual(zero_found(), (1, 3))
 
-    def test21_a_rebuilt_label_reports_the_language_its_spec_uses(self):
+    def test24_a_rebuilt_label_reports_the_language_its_spec_uses(self):
         # The last fulltext field goes, the range field stays, and a new fulltext
         # field names another language. The spec is built with it, so the
         # metadata must say so, and a later rebuild must keep it.
@@ -1010,7 +1087,7 @@ class testIndexCreationFlow():
         create_node_range_index(graph, 'L', 'c', sync=True)  # rebuild
         self.env.assertEqual(language(), ['german'])
 
-    def test22_adding_a_field_keeps_the_existing_field_queryable(self):
+    def test25_adding_a_field_keeps_the_existing_field_queryable(self):
         # Adding a field to an indexed label populates it in the background.
         # Fulltext queries are not gated on the index being operational, so they
         # answer from whatever the spec holds: the documents the first field
@@ -1031,7 +1108,7 @@ class testIndexCreationFlow():
             graph.ro_query("CALL db.idx.fulltext.queryNodes('L', 'beta') "
                            "YIELD node RETURN count(node)").result_set, [[n]])
 
-    def test23_a_label_with_many_fields_survives_a_copy(self):
+    def test26_a_label_with_many_fields_survives_a_copy(self):
         # GRAPH.COPY serializes the graph and loads the stream through the RDB decoder,
         # which rebuilds a label's indexes field by field, batching the consecutive ones
         # that need no options into one call. Range and fulltext fields interleaved with a

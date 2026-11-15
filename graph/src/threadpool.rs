@@ -64,11 +64,13 @@ pub struct ThreadPool {
 unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
+    #[must_use]
     pub fn new(size: usize) -> Self {
         Self::with_names(size, None)
     }
 
     /// [`Self::new`], its workers named `{name}-0`, `{name}-1`, ….
+    #[must_use]
     pub fn named(
         size: usize,
         name: &str,
@@ -154,8 +156,11 @@ impl ThreadPool {
     }
 
     /// [`Self::shutdown`], waiting at most `timeout` for the workers: one still running a job by
-    /// then is left behind, detached, to exit when its job returns. For jobs that may block on
-    /// what the caller holds. Whether every worker exited in time.
+    /// then is left behind, to exit when its job returns. For jobs that may block on what the
+    /// caller holds. Whether every worker exited in time.
+    ///
+    /// A worker left behind is kept, not detached, so a later call waits for it again and reports
+    /// it until it has exited.
     pub fn shutdown_within(
         &self,
         timeout: Duration,
@@ -168,15 +173,13 @@ impl ThreadPool {
         while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) {
             thread::sleep(Duration::from_millis(1));
         }
-        let mut all_exited = true;
-        for worker in workers.drain(..) {
-            if worker.is_finished() {
-                let _ = worker.join();
-            } else {
-                all_exited = false;
-            }
+        let (exited, running): (Vec<_>, Vec<_>) =
+            workers.drain(..).partition(JoinHandle::is_finished);
+        for worker in exited {
+            let _ = worker.join();
         }
-        all_exited
+        *workers = running;
+        workers.is_empty()
     }
 }
 
@@ -194,8 +197,9 @@ pub fn spawn<F>(
         .spawn(job, idx);
 }
 
-/// [`spawn`] for a caller that may run with no pool (before init, e.g. in unit tests): the
-/// job comes back as `Err` instead of panicking, for the caller to run itself. Once every
+/// [`spawn`] for a caller that may run with no pool (before init, e.g. in unit tests).
+///
+/// The job comes back as `Err` instead of panicking, for the caller to run itself. Once every
 /// worker has exited ([`shutdown`] has returned) the pool drops the job, which runs its
 /// destructors on this thread. A job sent while [`shutdown`] is still draining is accepted
 /// and may never run or drop: the process is exiting, so a caller that needs the job's
@@ -257,6 +261,7 @@ impl QueueSlot {
     ///
     /// `max` is `MAX_QUEUED_QUERIES` as configured, so the count is a `u64` too
     /// and the two compare without a conversion.
+    #[must_use]
     pub fn try_acquire(max: u64) -> Option<Self> {
         Self::try_acquire_in(&QUEUED_QUERIES, max)
     }
@@ -289,7 +294,9 @@ mod tests {
     use std::sync::Arc;
     use std::sync::mpsc;
 
-    /// A bounded shutdown returns on time with a worker blocked in a job, and reports it.
+    /// A bounded shutdown returns on time with a worker blocked in a job, and reports it. It keeps
+    /// the worker: a repeat call reports it again while its job runs, and joins it once the job
+    /// returns.
     #[test]
     fn shutdown_within_leaves_a_blocked_job_behind() {
         let pool = Arc::new(ThreadPool::new(1));
@@ -310,11 +317,17 @@ mod tests {
                 .unwrap();
         });
         let exited = shutdown.recv_timeout(Duration::from_secs(2));
+        let again = pool.shutdown_within(Duration::from_millis(20));
         drop(release);
         assert_eq!(
             exited,
             Ok(false),
             "returned in time, the blocked worker left behind"
+        );
+        assert!(!again, "a repeat call still reports the blocked worker");
+        assert!(
+            pool.shutdown_within(Duration::from_secs(2)),
+            "joined once its job returned"
         );
     }
 
