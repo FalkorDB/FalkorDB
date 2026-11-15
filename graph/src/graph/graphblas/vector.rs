@@ -397,8 +397,16 @@ fn check_blob_header(blob: &[u8]) -> Result<u64, String> {
     if (BLOB_HEADER_SIZE as u64).saturating_add(table.saturating_mul(8)) > blob_len {
         return Err("blob block table runs past its end".to_string());
     }
-    // Entries the index array can hold: no more may be read from it.
-    Ok((if sparsity == 4 { vlen } else { ci / iw }).min(max_entries))
+    // Entries the index array can hold, and, unless every value is the one iso
+    // value (or the vector is a bitmap, whose values are held per cell), the
+    // value array too: no more may be read from either.
+    let by_index = if sparsity == 4 { vlen } else { ci / iw };
+    let held = if iso || sparsity == 4 {
+        by_index
+    } else {
+        by_index.min(cx / typesize)
+    };
+    Ok(held.min(max_entries))
 }
 
 /// `GxB_Vector_deserialize` of an untrusted blob, as the type `ty`.
