@@ -50,17 +50,18 @@ use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
 use parking_lot::RwLock;
-use redis_module::logging::{log_notice, log_warning};
-use redis_module::raw::{
-    self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
-    save_unsigned,
-};
-use redis_module::{
-    Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, native_types::RedisType,
-};
 use std::ffi::CString;
 use std::sync::Arc;
 use std::{os::raw::c_void, ptr::null_mut};
+use valkey_module::logging::{log_notice, log_warning};
+use valkey_module::raw::{
+    self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
+    save_unsigned,
+};
+use valkey_module::{
+    Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleEvent, RedisModuleTypeMethods,
+    ValkeyError, native_types::ValkeyType,
+};
 
 /// The configured `CACHE_SIZE`, for a graph an RDB callback is building.
 ///
@@ -148,7 +149,7 @@ unsafe extern "C" fn graph_rdb_load(
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(*graph);
             let graph_arc = mvcc.read();
-            graph_arc.borrow().set_indexer_graph(graph_arc.clone());
+            graph_arc.set_indexer_graph(graph_arc.clone());
             let tg = ThreadedGraph::from_mvcc(mvcc);
             let arc = Arc::new(RwLock::new(tg));
             register_graph_at(db, key_name, arc.clone());
@@ -165,7 +166,7 @@ unsafe extern "C" fn graph_rdb_load(
                 if let Some(graph) = decode_state.finalized.remove(&graph_key) {
                     let mvcc = MvccGraph::from_graph(graph);
                     let graph_arc = mvcc.read();
-                    graph_arc.borrow().set_indexer_graph(graph_arc.clone());
+                    graph_arc.set_indexer_graph(graph_arc.clone());
                     drop(graph_arc);
                     // If a placeholder Arc was already registered for this
                     // key (main key loaded in middle of stream), mutate it
@@ -242,8 +243,7 @@ unsafe extern "C" fn graph_rdb_save(
         // Direct encoding: use data_ptr() to bypass parking_lot RwLock which
         // deadlocks in the BGSAVE fork child when the write loop holds the write lock.
         let tg: &ThreadedGraph = &*graph_arc.data_ptr();
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         serializers::encoder::rdb_save_graph(rdb, &graph, &key_name);
     }
 }
@@ -282,8 +282,7 @@ unsafe fn save_key_slice(
             return false;
         };
         let tg: &ThreadedGraph = &*entry.graph.data_ptr();
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         serializers::encoder::rdb_save_graph_key(
             rdb,
             &graph,
@@ -423,8 +422,7 @@ pub unsafe extern "C" fn pre_fork_prepare() {
     let registry = GRAPH_REGISTRY.lock();
     for entry in registry.values() {
         let tg: &ThreadedGraph = unsafe { &*entry.graph.data_ptr() };
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         graph.wait_all();
     }
 }
@@ -436,7 +434,7 @@ pub unsafe extern "C" fn pre_fork_prepare() {
 /// Called by Redis internals with a valid module context.
 pub unsafe extern "C" fn on_persistence(
     ctx: *mut RedisModuleCtx,
-    _eid: redis_module::RedisModuleEvent,
+    _eid: RedisModuleEvent,
     subevent: u64,
     _data: *mut c_void,
 ) {
@@ -541,8 +539,7 @@ unsafe fn create_graph_virtual_keys(
         // the graph through MvccGraph's committed version (Arc clone),
         // so reading ThreadedGraph fields here is also safe.
         let tg: &ThreadedGraph = &*graph_ref.data_ptr();
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
 
         let multi_payloads = build_multi_key_payloads(&graph, vkey_max as u64);
         let key_count = multi_payloads.len();
@@ -868,7 +865,7 @@ fn install_graph(
 ) {
     let mvcc = MvccGraph::from_graph(graph);
     let graph_arc = mvcc.read();
-    graph_arc.borrow().set_indexer_graph(graph_arc.clone());
+    graph_arc.set_indexer_graph(graph_arc.clone());
     drop(graph_arc);
 
     if let Some(ph) = placeholder {
@@ -988,11 +985,27 @@ const _: () = {
     );
 };
 
+/// Error `valkey-module` returns when a key holds a different module type.
+const WRONG_TYPE_VALKEY: &str = "Existing key has wrong Valkey type";
+/// The wording clients have always seen for that error, kept stable across the
+/// switch from `redis-module` to `valkey-module`.
+const WRONG_TYPE_COMPAT: &str = "Existing key has wrong Redis type";
+
+/// `map_err` adapter for `get_value(&GRAPH_TYPE)` and `set_value(&GRAPH_TYPE, ..)`,
+/// which both check the key's type: keeps the client-visible wrong-type error
+/// identical to the one `redis-module` produced.
+pub fn wrong_type_compat(err: ValkeyError) -> ValkeyError {
+    match err {
+        ValkeyError::Str(msg) if msg == WRONG_TYPE_VALKEY => ValkeyError::Str(WRONG_TYPE_COMPAT),
+        other => other,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Type statics
 // ---------------------------------------------------------------------------
 
-pub static GRAPH_TYPE: RedisType = RedisType::new(
+pub static GRAPH_TYPE: ValkeyType = ValkeyType::new(
     "graphdata",
     19,
     RedisModuleTypeMethods {
@@ -1091,7 +1104,7 @@ unsafe extern "C" fn graphmeta_aux_load(
     0
 }
 
-pub static GRAPHMETA_TYPE: RedisType = RedisType::new(
+pub static GRAPHMETA_TYPE: ValkeyType = ValkeyType::new(
     "graphmeta",
     19,
     RedisModuleTypeMethods {
