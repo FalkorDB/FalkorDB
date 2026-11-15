@@ -23,6 +23,10 @@ cp in/reprove.md out/reprove.md
 verdict() { echo "gates=$1" >> "$GITHUB_OUTPUT"; echo "$1" > "$GITHUB_WORKSPACE/out/gate_status"; }
 echo "$PROOFS_SHA" > "$GITHUB_WORKSPACE/out/head_sha"
 cd proofs-src || exit 1
+# lean_ci.sh and coverage.sh run `python3 -` here, in the PR's checkout: without
+# this, Python imports from the current directory, so a PR's own `re.py` would
+# run inside the gate.
+export PYTHONSAFEPATH=1
 if [[ -s ../out/proofs.patch ]] && ! git apply --index ../out/proofs.patch 2> ../out/apply.log; then
   { echo "Patch does not apply to the proofs base:"; echo '```'; cat ../out/apply.log; echo '```'; } > ../out/gates.md
   verdict rejected; exit 0

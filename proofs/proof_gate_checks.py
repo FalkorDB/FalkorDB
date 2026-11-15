@@ -202,6 +202,9 @@ FORBID = re.compile(r'(#eval|#exec|#exit|\brun_cmd\b|\brun_elab\b|\brun_meta\b|\
                     # A syntax quotation: only metaprogramming uses one, and text
                     # in it (`(command| theorem t : False := ...)) is not a declaration.
                     r'`\(|'
+                    # Turns an elaboration error into a passing build, so a theorem
+                    # under it would be counted as compiled though it failed.
+                    r'#guard_msgs|'
                     r'\baxiom\b|\bsorry\b|\badmit\b|\bsorryAx\b|AXIOM-OK)')
 # The part of FORBID that runs code while Lean builds (the rest only leaves a
 # theorem unproven, which lean_ci.sh reports).
@@ -258,6 +261,18 @@ def trusted_files():
 
 untrusted = []
 head_files = set(git('ls-files', '--', 'proofs').split())
+# Only regular files: a symlink is read here by its target's name while Lake
+# follows it to content nothing checked, and a submodule is someone else's tree.
+for entry in git('ls-files', '-s', '--', 'proofs').splitlines():
+    mode, _, rest = entry.partition(' ')
+    path = rest.split('\t', 1)[-1]
+    if mode in ('120000', '160000'):
+        untrusted.append(f'- `{path}` is a {"symlink" if mode == "120000" else "submodule"}')
+# Build outputs in the tree would pass for this build's: the fresh-.olean check
+# trusts that this runner produced every .olean it finds.
+for f in sorted(head_files):
+    if '/.lake/' in f or f.endswith(('.olean', '.ilean')):
+        untrusted.append(f'- `{f}` is a tracked build output')
 for f in sorted({p for p in head_files | set(trusted_files()) if BUILD_INPUTS.match(p)}):
     if (git('show', f':{f}') if f in head_files else None) != trusted(f):
         untrusted.append(f'- `{f}` differs from the base branch')
