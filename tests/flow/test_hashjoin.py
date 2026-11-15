@@ -143,7 +143,9 @@ class testHashJoin(FlowTestsBase):
         g = self.graph
         g.query("UNWIND [1, 2] AS i CREATE (:A {v: 1, w: i}), (:B {v: 1, w: i})")
 
-        res = g.query("UNWIND [1, 2] AS x MATCH (a:A), (b:B) WHERE a.v = b.v RETURN count(*)")
+        q = "UNWIND [1, 2] AS x MATCH (a:A), (b:B) WHERE a.v = b.v RETURN count(*)"
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        res = g.query(q)
         self.env.assertEqual(res.result_set, [[8]])
 
         res = g.query("""UNWIND [1, 2] AS x
@@ -153,9 +155,11 @@ class testHashJoin(FlowTestsBase):
 
         # more outer rows than one batch, correlated on both sides
         g.query("UNWIND range(1, 3000) AS i CREATE (:C {v: i % 10, w: i})")
-        res = g.query("""UNWIND range(1, 3000) AS x
-                         MATCH (a:C {w: x}), (b:C) WHERE b.v = a.v AND b.w <= 20
-                         RETURN count(*)""")
+        q = """UNWIND range(1, 3000) AS x
+               MATCH (a:C {w: x}), (b:C) WHERE b.v = a.v AND b.w <= 20
+               RETURN count(*)"""
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        res = g.query(q)
         self.env.assertEqual(res.result_set, [[6000]])
 
     def test_join_inside_batched_subplan_with_mixed_key_types(self):
