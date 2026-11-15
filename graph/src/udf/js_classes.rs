@@ -76,8 +76,8 @@ use crate::udf::type_convert;
 /// those properties on a real entity object has no effect.
 pub struct JsEntity(Value);
 
-unsafe impl<'js> JsLifetime<'js> for JsEntity {
-    type Changed<'to> = JsEntity;
+unsafe impl JsLifetime<'_> for JsEntity {
+    type Changed<'to> = Self;
 }
 
 impl<'js> Trace<'js> for JsEntity {
@@ -109,6 +109,7 @@ fn new_entity_object<'js>(
 
 /// The entity behind a JS object created by [`create_js_node`],
 /// [`create_js_edge`] or [`create_js_path`], or `None` for any other object.
+#[must_use]
 pub fn entity_value(obj: &Object<'_>) -> Option<Value> {
     Class::<JsEntity>::from_object(obj).map(|cls| cls.borrow().0.clone())
 }
