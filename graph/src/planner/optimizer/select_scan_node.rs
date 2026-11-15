@@ -691,7 +691,7 @@ fn select_var_len_scan_node(
             scan.node_mut(root_idx).push_child_tree(t);
         }
         if in_merge {
-            scan = tree!(IR::IncludePending { node: to.clone() }, scan);
+            scan = tree!(IR::IncludePending { node: to }, scan);
         }
 
         optimized_plan.node_mut(child_idx).prune();
@@ -1153,7 +1153,7 @@ pub(super) fn select_scan_node(
             // Build the new subtree bottom-up. Nothing below mutates the plan,
             // so an unplaceable filter can still abandon the rewrite.
             let mut subtree = existing_child.clone().unwrap_or_else(|| {
-                make_scan_subtree(&best_node, in_merge, preserved_argument.clone())
+                make_scan_subtree(&best_node, in_merge, preserved_argument.clone(), vec![])
             });
             if orderable {
                 let mut placed_bound = initial_bound;
