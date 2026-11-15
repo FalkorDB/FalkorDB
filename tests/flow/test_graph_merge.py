@@ -1070,6 +1070,9 @@ class testGraphMergeFlow():
         for label, expected in (("A", 2), ("M", 0), ("B", 2)):
             res = self.graph.query(f"MATCH (n:{label}) RETURN count(n)")
             self.env.assertEqual(res.result_set, [[expected]])
+        # and exactly one fresh path exists, not merely the right label counts
+        res = self.graph.query("MATCH (:A)-[:R]->()-[:S]->(:B) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])
         self.graph.query("MATCH (n) DETACH DELETE n")
 
     def test45_merge_traverse_skips_explicitly_deleted_edge(self):
