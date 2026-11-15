@@ -710,6 +710,11 @@ class testTraversalConstruction():
             for limit in (1, 2, 5, 25, 100):
                 got = g.query(f"{body} LIMIT {limit}").result_set
                 self.env.assertEqual(len(got), min(limit, 25), message=f"LIMIT {limit}")
+                # and they are rows of the full result, not just enough rows
+                got_set = Counter(map(tuple, got))
+                full_set = Counter(map(tuple, total))
+                self.env.assertTrue(all(got_set[x] <= full_set[x] for x in got_set),
+                                    message=f"LIMIT {limit} subset")
         finally:
             g.delete()
 
