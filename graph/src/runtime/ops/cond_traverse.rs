@@ -150,6 +150,10 @@ struct CtState {
     chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent plan flags, read in the per-row loop"
+)]
 pub struct CondTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
@@ -304,12 +308,13 @@ fn build_unrestricted_iter(
     types: &[Arc<String>],
 ) -> Option<Iter> {
     debug_assert!(types.len() <= 1, "several types stream through UnionIter");
-    match types.first() {
-        None => Some(g.adjacency_matrix().iter(0, u64::MAX)),
-        Some(t) => g
-            .get_relationship_matrix(t)
-            .map(|t| t.structural_iter(0, u64::MAX)),
-    }
+    types.first().map_or_else(
+        || Some(g.adjacency_matrix().iter(0, u64::MAX)),
+        |t| {
+            g.get_relationship_matrix(t)
+                .map(|t| t.structural_iter(0, u64::MAX))
+        },
+    )
 }
 
 /// Stream the union of several types' pair matrices without materializing
@@ -339,12 +344,13 @@ fn build_transposed_iter(
     types: &[Arc<String>],
 ) -> Option<Iter> {
     debug_assert!(types.len() <= 1, "several types stream through UnionIter");
-    match types.first() {
-        None => Some(g.adjacency_matrix().transpose().iter(0, u64::MAX)),
-        Some(t) => g
-            .get_relationship_matrix(t)
-            .map(|t| t.matrix_t().iter(0, u64::MAX)),
-    }
+    types.first().map_or_else(
+        || Some(g.adjacency_matrix().transpose().iter(0, u64::MAX)),
+        |t| {
+            g.get_relationship_matrix(t)
+                .map(|t| t.matrix_t().iter(0, u64::MAX))
+        },
+    )
 }
 
 /// The transposed counterpart of `build_union_iter`: every type's
@@ -361,7 +367,11 @@ fn build_transposed_union_iter(
 }
 
 impl<'a> CondTraverseOp<'a> {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::fn_params_excessive_bools,
+        reason = "built once from the plan node; mirrors its fields"
+    )]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -909,7 +919,7 @@ impl<'a> CondTraverseOp<'a> {
         batch: &Batch<'a>,
         row_idx: usize,
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
-    ) -> Result<(), String> {
+    ) {
         let env = BatchRow::new(batch, row_idx);
 
         let from_id = env.value_at(rp.from.alias.id).and_then(|v| match v {
@@ -917,14 +927,14 @@ impl<'a> CondTraverseOp<'a> {
             _ => None,
         });
         if from_id.is_none() && batch.is_bound_at(rp.from.alias.id, row_idx) {
-            return Ok(());
+            return;
         }
         let to_id = env.value_at(rp.to.alias.id).and_then(|v| match v {
             Value::Node(id) => Some(id),
             _ => None,
         });
         if to_id.is_none() && batch.is_bound_at(rp.to.alias.id, row_idx) {
-            return Ok(());
+            return;
         }
 
         let g = runtime.graph();
@@ -944,7 +954,7 @@ impl<'a> CondTraverseOp<'a> {
         }
         let state = state_ref.as_mut().unwrap();
         if state.no_match {
-            return Ok(());
+            return;
         }
         let g = runtime.graph();
 
@@ -1108,8 +1118,6 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         drop(g);
-
-        Ok(())
     }
 
     /// `expand_row`'s expansion for a multi-type pattern: the single-type
@@ -1342,13 +1350,16 @@ impl<'a> CondTraverseOp<'a> {
     /// Alias id of the endpoint this traverse introduces (respecting
     /// transposition and any fused chain).
     fn out_alias_id(&self) -> u32 {
-        if let Some(last_hop) = self.chain.last() {
-            last_hop.to.alias.id
-        } else if self.transposed {
-            self.relationship_pattern.from.alias.id
-        } else {
-            self.relationship_pattern.to.alias.id
-        }
+        self.chain.last().map_or_else(
+            || {
+                if self.transposed {
+                    self.relationship_pattern.from.alias.id
+                } else {
+                    self.relationship_pattern.to.alias.id
+                }
+            },
+            |last_hop| last_hop.to.alias.id,
+        )
     }
 
     /// OPTIONAL MATCH fallback: gather the unexpanded input rows and bind the
@@ -1429,7 +1440,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     batch,
                     row_idx,
                     &mut expanded,
-                )?;
+                );
                 if expanded.is_empty() {
                     // Optional traverse: remember the unexpanded row so it can
                     // be null-padded once the seeded batch is exhausted.
