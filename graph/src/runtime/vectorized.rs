@@ -305,7 +305,6 @@ mod tests {
     use crate::runtime::eval::{ExprEval, NO_ROW};
     use crate::runtime::ordermap::OrderMap;
     use crate::runtime::value::Point;
-    use orx_tree::NodeMut;
 
     #[test]
     fn test_cmp_op_flip() {
