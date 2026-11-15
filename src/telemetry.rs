@@ -360,7 +360,7 @@ pub fn delete_stream_if_stream(
     )];
     let is_stream = matches!(
         ctx.call("TYPE", args.iter().collect::<Vec<_>>().as_slice()),
-        Ok(ValkeyValue::SimpleString(t)) if t == "stream"
+        Ok(ValkeyValue::SimpleString(t) | ValkeyValue::BulkString(t)) if t == "stream"
     );
     if is_stream {
         let _ = ctx.call("DEL", args.iter().collect::<Vec<_>>().as_slice());
@@ -1264,8 +1264,13 @@ fn flusher_loop() {
                     let name = &run[0].graph_name;
                     // The stream is written into the graph's database; this
                     // context is detached, so it is selected per run.
-                    unsafe {
-                        raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(tsc, run[0].db);
+                    // Not written anywhere else: a stream in whatever database the detached
+                    // context happens to have selected would be another graph's history.
+                    if unsafe {
+                        raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(tsc, run[0].db)
+                    } != raw::REDISMODULE_OK as i32
+                    {
+                        continue;
                     }
                     // The registry named this key; Redis has to agree that it still
                     // holds this graph. See `key_holds_graph`. One graph per run, so

@@ -78,6 +78,19 @@ unsafe fn io_db(rdb: *mut RedisModuleIO) -> i32 {
     unsafe { raw::RedisModule_GetDbIdFromIO.unwrap()(rdb) }
 }
 
+/// Switches `ctx` back to the database it had selected when dropped, so a panic in the
+/// code that ran in between does not leave the module context on another database.
+struct RestoreDb {
+    ctx: *mut RedisModuleCtx,
+    db: i32,
+}
+
+impl Drop for RestoreDb {
+    fn drop(&mut self) {
+        unsafe { raw::RedisModule_SelectDb.unwrap()(self.ctx, self.db) };
+    }
+}
+
 /// Run `f` with `ctx` switched to database `db`, then switch back. `None` when
 /// `db` does not exist.
 unsafe fn in_db<R>(
@@ -86,13 +99,14 @@ unsafe fn in_db<R>(
     f: impl FnOnce() -> R,
 ) -> Option<R> {
     unsafe {
-        let orig = raw::RedisModule_GetSelectedDb.unwrap()(ctx);
+        let _restore = RestoreDb {
+            ctx,
+            db: raw::RedisModule_GetSelectedDb.unwrap()(ctx),
+        };
         if raw::RedisModule_SelectDb.unwrap()(ctx, db) != raw::REDISMODULE_OK as i32 {
             return None;
         }
-        let r = f();
-        raw::RedisModule_SelectDb.unwrap()(ctx, orig);
-        Some(r)
+        Some(f())
     }
 }
 
@@ -102,7 +116,10 @@ unsafe fn for_each_db(
     mut f: impl FnMut(),
 ) {
     unsafe {
-        let orig = raw::RedisModule_GetSelectedDb.unwrap()(ctx);
+        let _restore = RestoreDb {
+            ctx,
+            db: raw::RedisModule_GetSelectedDb.unwrap()(ctx),
+        };
         let mut db = 0;
         while raw::RedisModule_SelectDb.unwrap()(ctx, db) == raw::REDISMODULE_OK as i32 {
             if raw::RedisModule_DbSize.unwrap()(ctx) > 0 {
@@ -110,7 +127,6 @@ unsafe fn for_each_db(
             }
             db += 1;
         }
-        raw::RedisModule_SelectDb.unwrap()(ctx, orig);
     }
 }
 

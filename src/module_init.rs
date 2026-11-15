@@ -90,7 +90,8 @@ static RedisModuleEvent_ReplicaChange: RedisModuleEvent = RedisModuleEvent { id:
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_Shutdown: RedisModuleEvent = RedisModuleEvent { id: 5, dataver: 1 };
 
-/// Redis event ID for SWAPDB (REDISMODULE_EVENT_SWAPDB).
+/// Redis event ID for SWAPDB (REDISMODULE_EVENT_SWAPDB, 11 in redismodule.h; Valkey keeps the
+/// same value). The module bindings do not export the constant.
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_SwapDB: RedisModuleEvent = RedisModuleEvent { id: 11, dataver: 1 };
 

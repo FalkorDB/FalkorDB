@@ -164,10 +164,10 @@ src/query_session.rs	Gil::drop	525	PROVEN	QuerySession.gilDrop: gil_stack, gil_o
 src/query_session.rs	lock_gil	546	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/query_session.rs	release_gil	559	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/module_init.rs	pthread_atfork	97	AXIOMATISED	libc pthread_atfork declaration
-src/module_init.rs	on_fork_child	124	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
+src/module_init.rs	on_fork_child	124	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced)
 src/module_init.rs	sync_deepbind_environ	160	NOT COVERED	Linux-only; not modelled. Bound to ld.so/libc: dlopen(NULL) + dlsym("environ"), then points libc's own environ at graph::env_snapshot::leak_deep_copy of that array. CI reaches only its no-op return; the snapshot path runs only under a valkey-server that copy-relocates environ (#3493).
 graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)
-src/module_init.rs	graph_init	205	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range; historical pre3328_* (W4-redis-3 / #3268, fixed by #3328)
+src/module_init.rs	graph_init	205	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphIni)
 src/module_init.rs	info_func	502	PROVEN	ModuleInit.infoSections: info_normal
 src/module_init.rs	on_flush	517	PROVEN	ModuleInit.onFlush: onFlush_id
 src/module_init.rs	on_shutdown	530	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
@@ -247,7 +247,7 @@ src/commands/bulk_insert.rs	bulk_insert_sync	554	PROVEN	Commands.processTokens f
 src/commands/bulk_insert.rs	bulk_insert_sync_yield	602	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
 src/commands/bulk_insert.rs	parse_count	653	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
 src/commands/bulk_insert.rs	max_records	689	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
-src/commands/bulk_insert.rs	graph_bulk_insert	703	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
+src/commands/bulk_insert.rs	graph_bulk_insert	703	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publish)
 src/commands/config_cmd.rs	config_get_one	57	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
 src/commands/config_cmd.rs	validate_config_set	118	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
 src/commands/config_cmd.rs	validate_timeout_cross_constraints	210	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
@@ -260,17 +260,17 @@ src/commands/constraint.rs	is_valid_identifier	22	PROVEN	Commands.validIdent: va
 src/commands/constraint.rs	register_constraint_schema	66	PROVEN	Commands.registerSchema: registerSchema_contains
 src/commands/constraint.rs	find_status	85	PROVEN	Commands.findStatus: findStatus_none
 src/commands/constraint.rs	settle_constraint	174	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
-src/commands/constraint.rs	attempt_settle	284	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
-src/commands/constraint.rs	graph_constraint	384	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053)
+src/commands/constraint.rs	attempt_settle	284	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #36)
+src/commands/constraint.rs	graph_constraint	384	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused,)
 src/commands/copy.rs	pipe	19	AXIOMATISED	libc pipe(2)
 src/commands/copy.rs	fork	20	AXIOMATISED	libc fork(2)
 src/commands/copy.rs	_exit	21	AXIOMATISED	libc _exit(2)
 src/commands/copy.rs	waitpid	22	AXIOMATISED	libc waitpid(2)
-src/commands/copy.rs	graph_copy	29	PROVEN	Commands.copyOut/tz/exitCode: copy_ok_iff, exited_iff (trailing_zeros>=7 = WIFEXITED); replica gets GRAPH.RESTORE of VecWriter bytes: BufferedIO.vec_roundtrip
+src/commands/copy.rs	graph_copy	29	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: Commands.copyOut/tz/exitCode: copy_ok_iff, exited_iff (trailing_zeros>=7 = WIFEX)
 src/commands/debug.rs	graph_debug	5	PROVEN	Commands.debugCmd: debug_start
 src/commands/debug.rs	debug_aux	23	PROVEN	Commands.debugCmd: debug_bad_action_replicated
 src/commands/delete.rs	graph_delete	37	PROVEN	Commands.deleteCmd: delete_stream_first, delete_nongraph
-src/commands/effect.rs	graph_effect	25	PROVEN	Commands.effectCmd: effect_replicates_iff
+src/commands/effect.rs	graph_effect	25	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: Commands.effectCmd: effect_replicates_iff)
 src/commands/explain.rs	explain	36	PROVEN	Commands.explainLine: explainLine_indent
 src/commands/explain.rs	graph_explain	60	PROVEN	Commands.explainCmd/explainCmdA: explain_missing, explain_inline, explain_flags_first, explain_flags_ok; QueryArgs.explainFront (parse_query_flags, explain.rs:65): four_commands_share
 src/commands/info.rs	graph_info	26	PROVEN	Commands.infoSections: info_all, info_unknown_only, info_case
@@ -281,11 +281,11 @@ src/commands/list.rs	graph_list	67	PROVEN	Commands.scanLoop (each element throug
 src/commands/memory.rs	c_schema_name	65	PROVEN	Commands.cSchemaName = cReplyName: cReplyName_nonul
 src/commands/memory.rs	memory_report	69	PROVEN	Commands.memTotal/memFields: memTotal_sum
 src/commands/memory.rs	graph_memory	181	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err
-src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, profile_timeout_parsed, profile_timeout_garbage_rejected (#3009 fixed 557f18868), profile_other_args_ignored
-src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
+src/commands/profile.rs	graph_profile	18	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, )
+src/commands/query.rs	graph_query	42	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, r)
 src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps; write_version: QuerySession.writeVersion_takes_nothing); rendering of recorded rows: RelLookup.recordDelete/s3449abort, #3449 fixed by #3462 (inspect || snapshot_required): fixed3449_record_snapshot, fixed3449_record_abort
-src/commands/record.rs	graph_record	169	PROVEN	Commands.recordKey: recordKey_creates
-src/commands/restore.rs	graph_restore	14	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
+src/commands/record.rs	graph_record	169	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: Commands.recordKey: recordKey_creates)
+src/commands/restore.rs	graph_restore	14	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/)
 src/commands/ro_query.rs	graph_ro_query	30	PROVEN	QueryArgs.roQueryFront (parse_query_flags, ro_query.rs:34-39): four_commands_share, garbage_timeout_rejected (#3009 fixed 557f18868); RoQuery.ro_never_writes
 src/commands/query_args.rs	parse_query_flags	44	PROVEN	QueryArgs.parseQueryFlags/scanFlags: parse_total, parse_arity, parse_ok_iff (accepts exactly 3..8 args + Grammar), parse_documented, parse_timeout_nonneg, rust_c_agree (= C _read_flags on every vector), four_commands_share, #3009 regressions (nonutf8_keeps_compact, timeout_noncanonical_rejected, garbage_timeout_rejected, version_above_uint_rejected, arity_capped)
 src/commands/query_args.rs	up_to_nul	82	PROVEN	QueryArgs.upToNul: nul_truncated_flag, rust_c_agree (C strcasecmp sees the same prefix)

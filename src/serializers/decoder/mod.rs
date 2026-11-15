@@ -141,8 +141,8 @@ pub fn rdb_load_graph(
         {
             let pg = decode_state.pending.get_mut(&graph_key).ok_or_else(|| {
                 format!(
-                    "pending graph {} not found while loading multi-key RDB payload",
-                    hdr.graph_name
+                    "pending graph {} (db {}) not found while loading multi-key RDB payload",
+                    hdr.graph_name, graph_key.0
                 )
             })?;
             decode_payloads_into_pending(&mut r, &payloads, pg, &hdr)?;
@@ -153,8 +153,8 @@ pub fn rdb_load_graph(
         let should_finalize = {
             let pg = decode_state.pending.get(&graph_key).ok_or_else(|| {
                 format!(
-                    "pending graph {} disappeared during multi-key RDB load",
-                    hdr.graph_name
+                    "pending graph {} (db {}) disappeared during multi-key RDB load",
+                    hdr.graph_name, graph_key.0
                 )
             })?;
             pg.keys_remaining == 0
@@ -162,8 +162,8 @@ pub fn rdb_load_graph(
         if should_finalize {
             let pg = decode_state.pending.remove(&graph_key).ok_or_else(|| {
                 format!(
-                    "pending graph {} not found at multi-key RDB finalization",
-                    hdr.graph_name
+                    "pending graph {} (db {}) not found at multi-key RDB finalization",
+                    hdr.graph_name, graph_key.0
                 )
             })?;
             let graph = finalize_pending_graph(pg);

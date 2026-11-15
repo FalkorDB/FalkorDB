@@ -66,7 +66,7 @@ src/serializers/encoder/mod.rs	vec_save_graph	59	PROVEN	Persist.encodeGraph: loa
 src/serializers/encoder/mod.rs	encode_graph	68	PROVEN	Persist.encodeGraph/encDir/encPayload: load_encode, key_rt, decDir_rt, payload_rt, entry_rt
 src/serializers/encoder/mod.rs	build_multi_key_payloads	95	PROVEN	Persist.buildMulti/fillKey/keysFrom: fillKey_spec, multi_key_tiles, multi_key_bound, multi_key_all_placed, multi_key_matrices
 src/serializers/encoder/mod.rs	build_payloads	192	PROVEN	Persist.buildPayloads: load_encode, fold_build, buildPayloads_bounds
-src/serializers/decoder/mod.rs	rdb_load_graph	44	PROVEN	Persist.rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build
+src/serializers/decoder/mod.rs	rdb_load_graph	44	NOT COVERED	(#2782): not modelled yet (body changed; was PROVEN: Persist.rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pendi)
 src/serializers/decoder/mod.rs	decode_payloads_into_pending	260	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
 src/serializers/decoder/mod.rs	finalize_pending_graph	310	PROVEN	Persist.finalizePG: run_keys, multi_load
 src/serializers/decoder/mod.rs	rebuild_indexes	345	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
@@ -76,3 +76,4 @@ src/serializers/decoder/mod.rs	load_graph_from_reader	431	PROVEN	Persist.loadFro
 graph/src/runtime/runtime.rs	publish	584	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
 graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
 graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor
+src/redis_type.rs	drop	89	NOT COVERED	(#2782): not modelled yet
