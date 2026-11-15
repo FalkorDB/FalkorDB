@@ -7,7 +7,6 @@ graph/src/runtime/ops/cond_traverse.rs	relationship_tensors	292	PROVEN	UnionGlue
 graph/src/runtime/ops/cond_traverse.rs	UnionIter::next	402	PROVEN	UnionStream.next/minHead: next_some, next_none, drain_spec (strictly ascending, each pair once, exactly the union); per-type iterators ascending: layerStream_spec (VMIter.iter_correct)
 graph/src/runtime/ops/cond_traverse.rs	UnionIter::seek	254	PROVEN	UnionStream.seek/Cur.seek: good_seek, mem_seek_stream, union_stream (stream after seek = ascending union of the types in range), union_stream_eq_merged (same pairs and order as the merged matrix it replaces), union_stream_single
 graph/src/runtime/ops/cond_traverse.rs	UnionIter::new	382	PROVEN	UnionStream.new: next_new (heads start empty: next before the first seek yields nothing)
-graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::delta_lmxm_into	86	PROVEN	UnionGlue.deltaInto: deltaInto_eff (= F * (A1 + .. + Ak) on the pattern: first type into f, the rest from a copy of the frontier, OR-ed; each layer set via GBWDelta.deltaLmxm_eff under VM.Inv), deltaInto_union_singleton; replaces the MxmSpec hypothesis for this fn (#3492)
 graph/src/runtime/ops/cond_traverse.rs	build_unrestricted_iter	306	PROVEN	UnionGlue.buildUnrestricted: buildUnrestricted_spec (untyped = adjacency iterator, single type = its structural iterator, none when the type is absent; several types never reach it, debug_assert)
 graph/src/runtime/ops/cond_traverse.rs	empty_edge_iter	333	PROVEN	CTGlue.emptyIter: emptyIter_nil
 graph/src/runtime/ops/cond_traverse.rs	build_transposed_iter	342	PROVEN	UnionGlue.buildUnrestricted over the transposed sources (adjacency transpose / tensor matrix_t): buildUnrestricted_spec
@@ -83,3 +82,16 @@ graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_qu
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	267	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
 graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	270	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
+graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::added_layers	95	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::count_lmxm_into	119	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::count_tensor	164	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	untyped_traversal_matrix	181	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	parallel_surplus	197	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	node_comparable_siblings	518	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	bound_node	582	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	sibling_edge_pairs	598	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::new	616	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::shared_self_loops	824	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::walks_backward	848	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::expand_batch_rows	925	NOT COVERED	(#3202): not modelled yet
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::take_batch	1379	NOT COVERED	(#3202): not modelled yet
