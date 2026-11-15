@@ -20,7 +20,7 @@ graph/src/storage/registry.rs	register_index_backend	31	PROVEN	Once.registry_spe
 graph/src/storage/registry.rs	index_backend	43	PROVEN	Once.registry_spec
 graph/src/storage/registry.rs	register_attr_backend	52	PROVEN	Once.registry_spec
 graph/src/storage/registry.rs	attr_backend	62	PROVEN	Once.registry_spec
-graph/src/graph/mvcc_graph.rs	new	115	MODELLED	Mvcc.init
+graph/src/graph/mvcc_graph.rs	new	115	NOT COVERED	(#3023): not modelled yet (body changed; was MODELLED: Mvcc.init)
 graph/src/graph/mvcc_graph.rs	from_graph	129	NOT COVERED	(#3023): not modelled yet (body changed; was MODELLED: Mvcc.init (arbitrary pub))
 graph/src/graph/mvcc_graph.rs	read	142	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
 graph/src/graph/mvcc_graph.rs	fork	154	PROVEN	Mvcc Ev.forkW/forkCur (takes nothing; version ver+1, base = published): one_commit_per_version, inline_write_ok, current_not_stale, private_on_committed (#3657)

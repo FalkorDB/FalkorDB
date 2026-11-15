@@ -17,8 +17,8 @@ graph/src/effects/v3/emit.rs	gather_rows	920	PROVEN	Emit.mergeRow_eq_lookup, Emi
 graph/src/effects/v3/apply.rs	from	44	PROVEN	ApplyHelpers.ofString: ofString_spec
 graph/src/effects/v3/apply.rs	apply_effects	54	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: ApplyHelpers.applyEffects (records then g.validate() then g.commit_index_docs, #)
 graph/src/effects/v3/apply.rs	from	138	PROVEN	ApplyHelpers.fromNodeOp (impl From<NodeOpError> for ApplyError, replaces node_op since #2846): fromNodeOp_spec, applyEffects_validate_refused; DanglingRelationship arm (#3022)
-graph/src/effects/v3/apply.rs	id_space_error_map	117	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: ApplyHelpers.idSpaceErrorMap: idSpaceErrorMap_injective (divergences), idSpaceEr)
-graph/src/effects/v3/apply.rs	apply_record	160	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Liveness.applyRec (checked arms since #3022; CREATE_NODE refuses a repeated id s)
+graph/src/effects/v3/apply.rs	id_space_error_map	117	PROVEN	ApplyHelpers.idSpaceErrorMap: idSpaceErrorMap_injective (divergences), idSpaceErrorMap_internal (Inconsistent/AlreadyTaken -> Graph), idSpaceErrorMap_divergence_not_graph
+graph/src/effects/v3/apply.rs	apply_record	160	PROVEN	Liveness.applyRec (checked arms since #3022; CREATE_NODE refuses a repeated id since #3298): applyRec_binv, applyAll_binv, wf_of_validate, apply_wf (whole buffer keeps the replica WF), edge_to_dead_refused (#2924), cancelled_pair, updates_on_dead_refused (W2-effects-2), delete_with_edges_refused (W2-effects-3), detach_delete_applies; store writes Apply.wf_createOne/wf_deleteNode/wf_updateNode_live/wf_setLabels_live; #3298 createNode_repeat_refused, createNode_ok_nodup, a_repeated_node_id_in_one_create_is_refused
 graph/src/effects/v3/apply.rs	apply_add_schema	532	PROVEN	ApplyHelpers.applyAddSchema/intern: applyAddSchema_eq_applyAddName; Emit.next_payload_refused
 graph/src/effects/v3/apply.rs	verify_id	558	PROVEN	ApplyHelpers.verifyId: verifyId_ok
 graph/src/effects/v3/apply.rs	verify_schema	581	PROVEN	ApplyHelpers.verifySchema: verifySchema_ok, buildIndexRec_verifies

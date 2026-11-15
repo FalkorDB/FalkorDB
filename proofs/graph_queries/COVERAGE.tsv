@@ -7,7 +7,7 @@ graph/src/graph/graph.rs	from	245	PROVEN	Accessors.nodeId_roundtrip
 graph/src/graph/graph.rs	from	251	PROVEN	Accessors.nodeId_roundtrip (RelId)
 graph/src/graph/graph.rs	from	257	PROVEN	Accessors.nodeId_roundtrip (RelId)
 graph/src/graph/graph.rs	new	264	PROVEN	Accessors.planNew_spec
-graph/src/graph/graph.rs	from	400	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Accessors.nodeOpErrorOf_spec)
+graph/src/graph/graph.rs	from	400	PROVEN	Accessors.nodeOpErrorOf_spec
 graph/src/graph/graph.rs	populate_index	560	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Index.populateStart_spec)
 graph/src/graph/graph.rs	populate_index_batch	594	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: see proofs/search_concurrency Tickets.batch)
 graph/src/graph/graph.rs	drop_index_bg	813	PROVEN	Index.dropBg_spec
@@ -167,7 +167,7 @@ graph/src/graph/graph.rs	validate_unique_constraint	4796	PROVEN	see proofs/graph
 graph/src/graph/graph.rs	build_composite_key	4851	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
 graph/src/graph/graph.rs	drop_constraint	4869	PROVEN	Constraints.dropC_length, swapRemove_length
 graph/src/graph/graph.rs	has_supporting_index	4892	PROVEN	Constraints.hasSupporting_nil
-graph/src/graph/graph.rs	constraint_depends_on_index	4911	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Constraints.drop_blocked)
+graph/src/graph/graph.rs	constraint_depends_on_index	4911	PROVEN	Constraints.drop_blocked
 graph/src/graph/graph.rs	cancel_indexing	4930	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
 graph/src/graph/graph.rs	set_indexer_graph	4938	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
 graph/src/graph/graph.rs	build_adjacency_matrix	4950	PROVEN	Queries.adjMatrix_single

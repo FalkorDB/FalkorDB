@@ -120,7 +120,7 @@ graph/src/graph/cow.rs	Cow::new_version	97	PROVEN	Cow.newVersion: newVersion_iso
 graph/src/graph/cow.rs	Cow::replace	112	PROVEN	replace: wstep_iso
 graph/src/graph/cow.rs	Cow::deref	128	PROVEN	VMCow.deref: deref_view
 graph/src/graph/cow.rs	Cow::deref_mut	134	PROVEN	derefMut: wstep_iso; old_write_leaks_into_new_version (release hazard; debug-asserted since #2905, runtime_ds CowModel.dbg_write_through_branched_source_panics)
-graph/src/graph/mvcc_graph.rs	MvccGraph::new	115	PROVEN	VMCow.mvccNew: mvccNew_ready
+graph/src/graph/mvcc_graph.rs	MvccGraph::new	115	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: VMCow.mvccNew: mvccNew_ready)
 graph/src/graph/mvcc_graph.rs	MvccGraph::from_graph	129	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: VMCow.mvccNew: mvccNew_ready)
 graph/src/graph/mvcc_graph.rs	MvccGraph::read	142	PROVEN	reader_view_frozen, snapshot_isolation
 graph/src/graph/mvcc_graph.rs	MvccGraph::fork	154	PROVEN	Mvcc.begin/sstep .begin: fork_takes_nothing, newVersion_iso
