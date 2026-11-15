@@ -340,7 +340,7 @@ mod tests {
         }
         let actual = actual.finish();
 
-        assert_eq!(expected.len(), 2 * 3 * 2 * 1, "2 left rows x 3 x 2 x 1");
+        assert_eq!(expected.len(), (2 * 3 * 2), "2 left rows x 3 x 2 x 1");
         assert_same(&expected, &actual);
     }
 
