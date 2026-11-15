@@ -258,7 +258,11 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             {
                 let mut ancestor = idx;
                 while let Some(parent) = optimized_plan.node(ancestor).parent() {
-                    if matches!(parent.data(), IR::Apply | IR::Optional(_)) {
+                    // A single-child `Optional` takes no input of its own: the
+                    // `Apply` above it feeds the row through, so keep walking.
+                    if matches!(parent.data(), IR::Apply)
+                        || (matches!(parent.data(), IR::Optional(_)) && parent.num_children() > 1)
+                    {
                         // Only inherit left-branch variables if the filter
                         // is NOT inside the left branch (child 0) itself.
                         let left_child_idx = parent.child(0).idx();
