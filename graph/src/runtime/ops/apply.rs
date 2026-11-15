@@ -148,6 +148,8 @@ impl<'a> ApplyOp<'a> {
                     | IR::Remove(_)
                     | IR::Delete { .. }
                     | IR::ForEach { .. }
+                    | IR::CreateIndex { .. }
+                    | IR::DropIndex { .. }
                     | IR::Commit
                     | IR::Aggregate { .. }
                     | IR::CartesianProduct

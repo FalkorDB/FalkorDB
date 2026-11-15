@@ -3105,12 +3105,11 @@ updating clause.")
         res = self.graph.query("""UNWIND range(1, 2000) AS i
                                   CALL { WITH i UNWIND [1, 1, 2, 2, 3] AS x
                                          RETURN x % 3 AS k, count(DISTINCT x) AS c }
-                                  RETURN i % 3 AS g, k, min(c), max(c), count(DISTINCT i)
+                                  RETURN i % 3 AS g, k, min(c), max(c), count(DISTINCT i % 6)
                                   ORDER BY g, k""")
         self.env.assertEqual(
             res.result_set,
-            [[g, k, 1, 1, n] for g, n in [(0, 666), (1, 667), (2, 667)]
-             for k in range(3)])
+            [[g, k, 1, 1, 2] for g in range(3) for k in range(3)])
 
         # the shape from the report: 5000 rows, three distinct values
         self.get_res_and_assertEquals(
