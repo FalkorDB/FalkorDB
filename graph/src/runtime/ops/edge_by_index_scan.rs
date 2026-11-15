@@ -128,6 +128,20 @@ fn scan_type<'r>(
 
 /// The edges the index returns for `q` (which `can_utilize_index` accepted), in graph
 /// order `(src, dst, edge)`.
+#[cfg_attr(
+    feature = "index-falkordb",
+    allow(
+        clippy::needless_pass_by_value,
+        reason = "the native index only borrows the query; the default index consumes it"
+    )
+)]
+#[cfg_attr(
+    not(feature = "index-falkordb"),
+    allow(
+        clippy::unnecessary_wraps,
+        reason = "only the native index can refuse a query, but both builds share the signature"
+    )
+)]
 fn indexed_edges<'r>(
     runtime: &'r Runtime,
     label: &Arc<String>,
@@ -140,23 +154,19 @@ fn indexed_edges<'r>(
     // anything else is an error under the flag. #51, mirrors
     // `NodeByIndexScanOp`.
     #[cfg(feature = "index-falkordb")]
-    let it: Box<dyn Iterator<Item = EdgeHit> + 'r> = match g.query_index_numeric_edges(label, &q) {
+    let it: Box<dyn Iterator<Item = EdgeHit> + 'r> = match g.query_index_edges(label, &q) {
         Some(Ok(rows)) => Box::new(rows),
         // Still building: scan the type for what the column will answer,
         // checking the predicate the planner dropped. See `NodeByIndexScanOp`.
         Some(Err(scan_filter)) => {
             // Resolved once per scan. No edge holds a name the graph has never seen.
-            match g.get_relationship_attribute_id(scan_filter.attribute()) {
-                Some(attr) => {
-                    let attr = attr as u16;
-                    Box::new(scan_type(runtime, label, all_edges_cache).filter(
-                        move |&(_, _, edge)| {
-                            runtime
-                                .graph()
-                                .relationship_matches(edge, attr, &scan_filter)
-                        },
-                    ))
-                }
+            match scan_filter.resolve(|attr| {
+                g.get_relationship_attribute_id(attr)
+                    .map(|attr| attr as u16)
+            }) {
+                Some(scan_filter) => Box::new(scan_type(runtime, label, all_edges_cache).filter(
+                    move |&(_, _, edge)| runtime.graph().relationship_matches(edge, &scan_filter),
+                )),
                 None => Box::new(std::iter::empty()),
             }
         }
@@ -566,7 +576,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
                 Value::Float(_) | Value::String(_) | Value::Bool(_) => true,
                 _ => false,
             },
-            _ => true,
+            IndexQuery::Point { .. } => true,
         }
     }
 }
