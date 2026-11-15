@@ -763,6 +763,10 @@ impl Binder {
             (saved_env_stack_len as u32..self.env_stack.len() as u32).collect();
         self.node_labels
             .retain(|&(scope_id, _), _| !inner_scope_ids.contains(&scope_id));
+        // Likewise the relationships the body's MATCH clauses bound: a later
+        // scope with the same id must not see them as already matched.
+        self.match_rel_vars
+            .retain(|&(scope_id, _)| !inner_scope_ids.contains(&scope_id));
 
         // 3. Capture subquery output, restore outer scope
         let subquery_env = self.current_env().clone();

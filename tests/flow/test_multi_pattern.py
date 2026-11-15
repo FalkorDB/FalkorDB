@@ -317,6 +317,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             except ResponseError as e:
                 self.env.assertContains("Cannot use the same relationship variable", str(e), message=q)
         # a projected relationship is a new binding and stays usable
-        res = g.query("MATCH ()-[r]->() WITH r MATCH (a)-[r]->(b) RETURN count(*)")
-        self.env.assertEqual(res.result_set, [[4]])
+        res = g.query("MATCH ()-[r]->() WITH r MATCH (a)-[r]->(b) "
+                      "RETURN DISTINCT id(r), id(a), id(b) ORDER BY id(r)")
+        self.env.assertEqual(res.result_set, [[0, 0, 1], [1, 1, 0]])
         g.delete()
