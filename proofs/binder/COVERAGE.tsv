@@ -42,5 +42,5 @@ graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2650	PROVEN	A
 graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2680	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause: the `_ =>` discriminant fallback, binder.rs:2695)
 graph/src/planner/binder.rs	sorted_scope_vars	2701	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2709	PROVEN	mergeSV_ge, mergeSV_covers
-graph/src/planner/mod.rs	Planner::fresh_var	838	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)
+graph/src/planner/mod.rs	Planner::fresh_var	853	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)
 graph/src/planner/mod.rs	may_share_edge	576	NOT COVERED	(#3202): not modelled yet
