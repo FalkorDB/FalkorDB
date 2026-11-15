@@ -13,7 +13,8 @@
 //!  toFloat(x)              value_to_float()    String -> parse f64
 //!                                              Int    -> cast
 //!  toString(x)             value_to_string()   Int    -> decimal
-//!                                              Float  -> 6 decimal places
+//!                                              Float  -> shortest round-trip form,
+//!                                                        as Java's Double.toString
 //!                                              Point  -> "point({...})"
 //!                                              Temporal -> ISO 8601
 //!  toJSON(x)               to_json()           any value -> JSON string
@@ -347,7 +348,7 @@ mod float_to_string_tests {
             (0.0, "0.0"),
             (-0.0, "-0.0"),
             (0.1 + 0.2, "0.30000000000000004"),
-            (1234567.0, "1234567.0"),
+            (1_234_567.0, "1234567.0"),
             (1e7, "1.0E7"),
             (1e20, "1.0E20"),
             (-1.5e300, "-1.5E300"),
@@ -355,7 +356,11 @@ mod float_to_string_tests {
             (1e-4, "1.0E-4"),
             (1e-7, "1.0E-7"),
             // An exact decimal tie: Java picks the even last digit.
-            (562949953421312.25, "5.629499534213122E14"),
+            #[allow(
+                clippy::excessive_precision,
+                reason = "the literal spells the exact tie the test is about"
+            )]
+            (562_949_953_421_312.25, "5.629499534213122E14"),
             (1.25e-5, "1.25E-5"),
             (5e-324, "4.9E-324"),
             (1e-323, "9.9E-324"),
