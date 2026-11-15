@@ -142,6 +142,7 @@ src/graph_core.rs	graph_free	1787	PROVEN	GraphCore.free: free_unregisters, free_
 src/query_session.rs	QuerySession::begin	157	PROVEN	QuerySession.begin: escalate_order
 src/query_session.rs	QuerySession::begin_with	164	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
 src/query_session.rs	QuerySession::begin_writer	179	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
+src/query_session.rs	QuerySession::begin_writer_checked	205	NOT COVERED	(#3559): not modelled yet
 src/query_session.rs	QuerySession::facts	197	PROVEN	QuerySession.Facts (returns the facts it was begun with): reauth_replay
 src/query_session.rs	QuerySession::write_version	211	PROVEN	QuerySession.writeVersion: writeVersion_takes_nothing (infallible; reader Unchecked(ver+1), writer Current; #3657)
 src/query_session.rs	QuerySession::is_stale	227	PROVEN	QuerySession.isStale: stale_sticky
