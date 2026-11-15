@@ -83,7 +83,7 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
 /// A `Filter` is never moved below one of these, nor into a branch that
 /// feeds a sibling subtree containing one: the write must still happen for
 /// every row that reaches it, whatever a later `WHERE` says.
-fn is_write(ir: &IR) -> bool {
+const fn is_write(ir: &IR) -> bool {
     matches!(
         ir,
         IR::Create(_)
