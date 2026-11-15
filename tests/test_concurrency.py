@@ -1,4 +1,5 @@
 import os
+import time
 import common
 from falkordb import FalkorDB
 from multiprocessing import Pool
@@ -228,7 +229,6 @@ def test_queued_write_not_starved_by_inline_writers():
     # of inline writes it never finished (C finishes it in one pass, holding the
     # write lock throughout). After a few stale runs it must run as a writer.
     import threading
-    import time
 
     common.g.query("UNWIND range(1, 500000) AS i CREATE (:Big {v: i})")
     common.g.query("CREATE (:Marker {c: 0})")
@@ -274,7 +274,6 @@ def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
     # writer commits underneath it, so the same unbounded retry applied. After a few
     # stale builds it must build as a writer.
     import threading
-    import time
     from click.testing import CliRunner
     from falkordb_bulk_loader.bulk_insert import bulk_insert
 
@@ -348,7 +347,6 @@ def test_queued_write_timeout_spans_stale_retries():
     # One run fits the budget, two do not, so resetting the budget on a retry
     # would let the write finish.
     import threading
-    import time
 
     common.g.query("UNWIND range(1, 500000) AS i CREATE (:Big {v: i})")
     common.g.query("CREATE (:Marker {c: 0})")
