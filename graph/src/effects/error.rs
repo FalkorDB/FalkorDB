@@ -461,9 +461,8 @@ impl std::fmt::Display for LocalName {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        match &self.0 {
-            Some(n) => write!(f, " (that id is '{n}' here)"),
-            None => Ok(()),
-        }
+        self.0
+            .as_ref()
+            .map_or(Ok(()), |n| write!(f, " (that id is '{n}' here)"))
     }
 }
