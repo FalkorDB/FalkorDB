@@ -40,7 +40,7 @@ fi
 
 # Two execution modes, selected by FALKORDB_TEST_IMAGE:
 #
-# - CI mode (FALKORDB_TEST_IMAGE set, e.g. ghcr.io/falkordb/falkordb-server:rc-pr-N):
+# - CI mode (FALKORDB_TEST_IMAGE set, e.g. ghcr.io/falkordb/falkordb-server:rc-pr-N-valkey):
 #   tests/flow/common.py Env() handles all redis lifecycle (connects to the
 #   shared `master` GHA service, or spawns a private container when the test
 #   passes load-time moduleArgs). RLTest gets --env existing-env so it doesn't
@@ -50,8 +50,8 @@ fi
 # - Local dev (FALKORDB_TEST_IMAGE unset):
 #   Original behavior — RLTest spawns the server locally with --loadmodule.
 #   Cargo-build the .so, run ./flow.sh — works the same as before this PR.
-#   FALKORDB_SERVER=valkey runs valkey-server (from PATH) instead of
-#   redis-server; in CI mode the image decides.
+#   It runs valkey-server (from PATH); FALKORDB_SERVER=redis runs
+#   redis-server instead. In CI mode the image decides.
 #
 # --parallelism 1 in CI because the shared `master` service is process-singleton;
 # parallel RLTest classes would collide on its state. Locally RLTest spawns one
@@ -60,11 +60,11 @@ if [[ "$FALKORDB_TEST_IMAGE" != "" ]]; then
     MODULE_ARGS=(--env existing-env --existing-env-addr "${FALKORDB_HOST:-master}:${FALKORDB_PORT:-6379}")
     PARALLELISM="--parallelism 1"
 else
-    case "${FALKORDB_SERVER:-redis}" in
+    case "${FALKORDB_SERVER:-valkey}" in
         redis | valkey) ;;
         *) echo "FALKORDB_SERVER must be redis or valkey, not '$FALKORDB_SERVER'" >&2; exit 1 ;;
     esac
-    MODULE_ARGS=(--module "$TARGET_DIR/$TARGET" --oss-redis-path "${FALKORDB_SERVER:-redis}-server")
+    MODULE_ARGS=(--module "$TARGET_DIR/$TARGET" --oss-redis-path "${FALKORDB_SERVER:-valkey}-server")
 fi
 
 # Add test filter support

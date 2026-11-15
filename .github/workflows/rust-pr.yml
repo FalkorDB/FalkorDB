@@ -44,7 +44,7 @@ jobs:
       file_changed: ${{ steps.check.outputs.changed }}
       # One key for every per-run tag: `pr-<N>` on a pull request (byte-identical
       # to what this workflow produced before) and `mg-<sha>` in the queue. The
-      # runtime images are `rc-<ci_key>`, the toolchain is `<ci_key>`.
+      # runtime images are `rc-<ci_key>-<server>`, the toolchain is `<ci_key>`.
       ci_key: ${{ steps.key.outputs.ci_key }}
       # Resolved once, read everywhere. This expression used to be repeated at
       # eleven call sites; a missed one fails closed in the ugliest way — a PR
@@ -244,6 +244,7 @@ jobs:
       # The image vehicle only in the queue, and only from a branch that can
       # push. A fork pull request runs the artifact vehicle and nothing else.
       use_image: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
+      redis_leg: ${{ github.event_name == 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci-both-servers') }}
     secrets: inherit
 
   lint:
@@ -463,6 +464,9 @@ jobs:
   # It must also keep reporting on BOTH events — a required check that the
   # merge_group run never reports fails the merge on a status that never
   # arrives. Hence `if: !cancelled()`.
+  #
+  # Both servers are covered through ci-pipeline: its image-valkey and
+  # image-redis legs fail it.
   ci-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5

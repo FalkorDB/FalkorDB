@@ -177,8 +177,8 @@ ARG REDIS_VERSION
 ARG VALKEY_VERSION
 
 # Install the self-built servers at the same path the upstream `redis:` image
-# used (/usr/local/bin), so tests/common.py ("/usr/local/bin/redis-server",
-# or valkey-server with FALKORDB_SERVER=valkey) and RLTest's PATH lookup
+# used (/usr/local/bin), so tests/common.py ("/usr/local/bin/valkey-server",
+# or redis-server with FALKORDB_SERVER=redis) and RLTest's PATH lookup
 # pick them up transparently. Directory COPYs, so the sentinel/check-*
 # symlinks come along.
 COPY --from=redis-builder  /server-install/ /usr/local/
@@ -216,7 +216,7 @@ RUN python3 -m venv venv
 # it. The pin only bites when this image is rebuilt, which is why it surfaced
 # on a PR touching build/graphblas rather than on trunk. Drop it once
 # falkordb-py releases a fix.
-RUN venv/bin/pip install behave falkordb 'redis<8.1' falkordb-bulk-loader hypothesis pytest RLTest uv
+RUN venv/bin/pip install behave 'falkordb>=1.8.2' 'redis<8.1' falkordb-bulk-loader hypothesis pytest RLTest uv
 
 # ---- prebuilt native deps ----
 # Both stages publish into the same root, so the two COPYs compose into one
