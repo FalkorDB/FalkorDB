@@ -88,7 +88,7 @@ graph/src/runtime/functions/math.rs	apply_pow	328	PROVEN	MathFns.applyPow (#2904
 graph/src/runtime/functions/conversion.rs	register	40	PROVEN	ConvReg convSigs: convSigs_lower_nodup, orNull_aliases, orNull_accepts
 graph/src/runtime/functions/conversion.rs	value_to_integer	44	PROVEN	toInteger_int_literal_agrees_c (all signed-digit strings = C strtoll), toInteger_neg_overflow_null (#2955 fixed ac5c27b76), toInteger_int_literals_agree, toInteger_pos_overflow, leading_space, exp_literal, toInteger_nonfinite_diverges
 graph/src/runtime/functions/conversion.rs	value_to_float	103	PROVEN	ConvReg toFloat_ret, toFloat_arms, toFloatArgs_spec, toFloat_unsupported (f64 parse = ConvOps.parseF parameter)
-graph/src/runtime/functions/conversion.rs	value_to_string	125	PROVEN	ConvReg toStr_no_panic, arity_one, toStr_ret, toStr_unsupported (float Display = ConvOps.display parameter)
+graph/src/runtime/functions/conversion.rs	value_to_string	125	NOT COVERED	(#2937): body rewritten; not modelled yet
 graph/src/runtime/functions/conversion.rs	to_json	161	PROVEN	ConvReg toJson_spec, toJson_ret (to_json_string = parameter)
 graph/src/runtime/functions/conversion.rs	is_empty	175	PROVEN	isEmpty_no_panic
 graph/src/runtime/functions/conversion.rs	to_boolean	189	PROVEN	toBoolean_roundtrip, toBooleanStr examples
@@ -96,6 +96,7 @@ graph/src/runtime/functions/conversion.rs	to_boolean_list	219	PROVEN	toBooleanLi
 graph/src/runtime/functions/conversion.rs	to_float_list	246	PROVEN	toFloatList_eq
 graph/src/runtime/functions/conversion.rs	to_integer_list	265	PROVEN	toIntegerList_eq
 graph/src/runtime/functions/conversion.rs	to_string_list	281	PROVEN	toStringList_eq
+graph/src/runtime/functions/conversion.rs	float_to_string	299	NOT COVERED	(#2937): not modelled yet
 graph/src/runtime/functions/mod.rs	empty_procedure_batch	419	PROVEN	Registry.emptyProcedureBatch: emptyProcedureBatch_rows
 graph/src/runtime/functions/mod.rs	call	436	PROVEN	Registry.RuntimeFn.call (QuickJS bridge = argument): call_arms
 graph/src/runtime/functions/mod.rs	call_procedure_batch	451	PROVEN	Registry.RuntimeFn.callProcBatch: call_arms
