@@ -497,7 +497,8 @@ fn exposed_variables(node: &DynNode<IR>) -> HashSet<u32> {
         IR::Project { .. } | IR::Aggregate { .. } => {}
         // The body runs for its side effects; the input row passes through
         // unchanged, so neither the loop variable nor anything the body binds
-        // is visible afterwards. With a single child that child is the body.
+        // is visible afterwards. A single child is only the body, so that
+        // form exposes nothing; with two, child 0 is the input row source.
         IR::ForEach { .. } => {
             vars.clear();
             if node.num_children() == 2 {
@@ -1009,6 +1010,10 @@ pub(super) fn select_scan_node(
                 salvaged_filters = filters_of(optimized_plan, child_idx);
                 None // Will create a new scan for best_node instead
             } else {
+                // Invariant the `initial_bound` seed below relies on:
+                // `existing_child` is `Some` exactly when no scan is built for
+                // `best_node`, i.e. the kept outer-context child is the chain's
+                // leaf and only what it exposes counts as bound.
                 Some(optimized_plan.node_mut(child_idx).clone_as_tree())
             }
         };
