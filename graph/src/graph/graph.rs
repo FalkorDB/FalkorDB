@@ -74,7 +74,6 @@ use std::{
 
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
-use atomic_refcell::AtomicRefCell;
 use lru::LruCache;
 use orx_tree::DynTree;
 use parking_lot::{Mutex, MutexGuard};
@@ -142,7 +141,7 @@ use crate::{
 /// still query RediSearch, so they are fed exactly as before. This is per **field**, not per
 /// index, so a label carrying both a Range and a Fulltext index keeps the Fulltext half.
 #[cfg(not(feature = "index-falkordb"))]
-fn redisearch_fields(
+const fn redisearch_fields(
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>
 ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
     fields
@@ -650,7 +649,7 @@ fn populate_index_batch(
 
                 let graph = indexer
                     .get_graph()
-                    .filter(|g| published_at.is_none_or(|v| g.borrow().version >= v));
+                    .filter(|g| published_at.is_none_or(|v| g.version >= v));
                 let Some(graph) = graph else {
                     // Graph not yet committed, or not yet the version that
                     // created this index — reschedule this batch.
@@ -688,18 +687,15 @@ fn populate_index_batch(
                 let edge_triples: Vec<(u64, u64, u64)>;
                 let scanned_count: usize;
                 {
-                    let g = graph.borrow();
+                    let g = &*graph;
                     match kind {
                         IndexKind::Node => {
-                            ids = g
-                                .get_label_matrix(&label)
-                                .map(|lm| {
-                                    lm.iter(cursor.row, u64::MAX)
-                                        .take(BATCH_SIZE)
-                                        .map(|(n, _)| n)
-                                        .collect()
-                                })
-                                .unwrap_or_default();
+                            ids = g.get_label_matrix(&label).map_or_default(|lm| {
+                                lm.iter(cursor.row, u64::MAX)
+                                    .take(BATCH_SIZE)
+                                    .map(|(n, _)| n)
+                                    .collect()
+                            });
                             edge_triples = Vec::new();
                             scanned_count = ids.len();
                         }
@@ -707,9 +703,8 @@ fn populate_index_batch(
                             let skip_src = cursor.row;
                             let skip_dst = cursor.within_row_dst;
                             let skip_eid = cursor.within_pair_edge_id;
-                            let triples: Vec<(u64, u64, u64)> = g
-                                .get_relationship_matrix(&label)
-                                .map(|t| {
+                            let triples: Vec<(u64, u64, u64)> =
+                                g.get_relationship_matrix(&label).map_or_default(|t| {
                                     t.iter(cursor.row, u64::MAX, false)
                                         .filter(|(src, dst, eid)| {
                                             // Row mismatch: past the resume
@@ -730,8 +725,7 @@ fn populate_index_batch(
                                         })
                                         .take(BATCH_SIZE)
                                         .collect()
-                                })
-                                .unwrap_or_default();
+                                });
                             ids = Vec::new();
                             scanned_count = triples.len();
                             edge_triples = triples;
@@ -775,8 +769,7 @@ fn populate_index_batch(
                     IndexKind::Node => {
                         let last_id = ids.last().copied();
                         for id in ids {
-                            let g = graph.borrow();
-                            if let Some(doc) = build_doc(id, false, &g, &|| Document::new(id)) {
+                            if let Some(doc) = build_doc(id, false, &graph, &|| Document::new(id)) {
                                 batch.push(doc);
                             }
                         }
@@ -791,9 +784,8 @@ fn populate_index_batch(
                     IndexKind::Edge => {
                         let last_pos = edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
-                            let g = graph.borrow();
                             if let Some(doc) =
-                                build_doc(eid, true, &g, &|| Document::new_edge(src, dst, eid))
+                                build_doc(eid, true, &graph, &|| Document::new_edge(src, dst, eid))
                             {
                                 batch.push(doc);
                             }
@@ -2424,12 +2416,15 @@ impl Graph {
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
-            .map(|(src, dest, id)| {
-                let src_node = NodeId(src);
-                let dest_node = NodeId(dest);
-                (src_node, dest_node, RelationshipId(id))
+            .flat_map(move |m| {
+                // A self-loop is on the diagonal of both halves; take it from
+                // the outgoing one only.
+                let incoming = m
+                    .iter(id.0, id.0, true)
+                    .filter(|&(src, dest, _)| src != dest);
+                m.iter(id.0, id.0, false).chain(incoming)
             })
+            .map(|(src, dest, id)| (NodeId(src), NodeId(dest), RelationshipId(id)))
     }
 
     /// The lowest of `nodes` that still has a relationship, in either direction.
@@ -2506,21 +2501,25 @@ impl Graph {
         types: &[Arc<String>],
         direction: EdgeDirection,
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
-        let matrices: Vec<&Tensor> = if types.is_empty() {
-            self.relationship_matrices.iter().collect()
-        } else {
-            types
-                .iter()
-                .filter_map(|t| self.get_relationship_matrix(t))
-                .collect()
-        };
+        // The all-types case walks the matrices in place (it runs once per
+        // visited node in graph.traverse, so it must not allocate); only a
+        // typed lookup gathers its matrices, and an empty `Vec` costs nothing.
+        let all_types = types
+            .is_empty()
+            .then(|| self.relationship_matrices.iter())
+            .into_iter()
+            .flatten();
+        let matrices: Vec<&Tensor> = types
+            .iter()
+            .filter_map(|t| self.get_relationship_matrix(t))
+            .collect();
         let (with_outgoing, with_incoming) = match direction {
             EdgeDirection::Outgoing => (true, false),
             EdgeDirection::Incoming => (false, true),
             EdgeDirection::Both => (true, true),
         };
-        matrices
-            .into_iter()
+        all_types
+            .chain(matrices)
             .flat_map(move |m| {
                 let outgoing = with_outgoing
                     .then(|| m.iter(id.0, id.0, false))
@@ -2592,7 +2591,6 @@ impl Graph {
             .sum()
     }
 
-    #[must_use]
     pub fn get_nodes(
         &self,
         labels: &OrderSet<Arc<String>>,
@@ -3943,6 +3941,10 @@ impl Graph {
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
     /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
     /// private version the changes were staged against.
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "const only without `index-falkordb`; the feature build calls a non-const apply"
+    )]
     pub fn apply_index_writes(
         &mut self,
         docs: &mut IndexDocs,
@@ -4158,8 +4160,8 @@ impl Graph {
     /// derivation in `Indexer::drop_index`).
     fn drop_target_attrs(
         &self,
-        index_type: &IndexType,
-        entity_type: &EntityType,
+        index_type: IndexType,
+        entity_type: EntityType,
         label: &Arc<String>,
         attrs: &[Arc<String>],
     ) -> Vec<Arc<String>> {
@@ -4171,7 +4173,7 @@ impl Graph {
             indexer
                 .get_fields(label)
                 .into_iter()
-                .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
+                .filter(|(_, fields)| fields.iter().any(|f| f.ty == index_type))
                 .map(|(attr, _)| attr)
                 .collect()
         } else {
@@ -4189,7 +4191,7 @@ impl Graph {
         label: &Arc<String>,
         attrs: &[Arc<String>],
     ) -> bool {
-        self.drop_target_attrs(index_type, entity_type, label, attrs)
+        self.drop_target_attrs(*index_type, *entity_type, label, attrs)
             .iter()
             .any(|attr| self.constraint_depends_on_index(entity_type, label, attr, index_type))
     }
@@ -4224,7 +4226,7 @@ impl Graph {
         published_at: Option<u64>,
     ) -> Result<usize, String> {
         #[cfg(feature = "index-falkordb")]
-        let effective_attrs = self.drop_target_attrs(index_type, entity_type, label, attrs);
+        let effective_attrs = self.drop_target_attrs(*index_type, *entity_type, label, attrs);
 
         let (indexer, total, kind) = match entity_type {
             EntityType::Node => {
@@ -4285,6 +4287,12 @@ impl Graph {
         }
     }
 
+    /// Whether the planner may answer `label.field` from an index of `index_type`.
+    ///
+    /// Under `index-falkordb` a Range lookup is the native column's alone, and the column is part
+    /// of this version: it serves once its build is done. RediSearch's readiness lives in its
+    /// index map, which every version shares, so it says nothing about this version's column, and
+    /// a version without the column must not plan a lookup it cannot answer.
     #[must_use]
     pub fn is_indexed(
         &self,
@@ -4292,6 +4300,10 @@ impl Graph {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
+        #[cfg(feature = "index-falkordb")]
+        if *index_type == IndexType::Range {
+            return self.falkordb_index.is_ready(EntityType::Node, label, field);
+        }
         self.node_indexer.is_label_indexed(label, field, index_type)
     }
 
@@ -4303,31 +4315,31 @@ impl Graph {
         self.node_indexer.query(label, query).map(NodeId)
     }
 
-    /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
+    /// Node ids for `query` from the native index column. Wraps [`FalkorDbIndex::query_column`],
     /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
     /// three-way answer: `Ok(rows)`, `Err(scan_filter)` (column still building — scan), or `None`
     /// (cannot be served). `use<>` keeps the returned iterator free of the `&self` borrow — it
     /// owns its tree snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
-    pub fn query_index_numeric_nodes(
+    pub fn query_index_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<Result<impl Iterator<Item = NodeId> + use<>, ScanFilter>> {
         self.falkordb_index
-            .query_numeric(EntityType::Node, label, query)
+            .query_column(EntityType::Node, label, query)
             .map(|answer| answer.map(|rows| rows.map(NodeId)))
     }
 
-    /// Answer an EDGE numeric query from the index column for `type_name`: an `Equal`, a `Range`,
-    /// an `IN` list, or an `OR` of equalities and `IN` lists on one attribute. Yields
+    /// Answer an EDGE query from the native index columns for `type_name`
+    /// ([`FalkorDbIndex::query_column`]). Yields
     /// `(src, dst, edge_id)`, with endpoints recovered from the graph's `edge_id → (src, dst)`
     /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
     /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
     /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes:
     /// `Ok(rows)`, `Err(scan_filter)` (still building — scan), `None` (not servable).
     #[cfg(feature = "index-falkordb")]
-    pub fn query_index_numeric_edges(
+    pub fn query_index_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
@@ -4335,7 +4347,7 @@ impl Graph {
     {
         let answer =
             self.falkordb_index
-                .query_numeric(EntityType::Relationship, type_name, query)?;
+                .query_column(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is
@@ -4352,36 +4364,34 @@ impl Graph {
         }))
     }
 
-    /// Whether the scan standing in for a column still building keeps node `id`: whether its value
-    /// of `attr` matches `scan_filter`, so the built column would answer the query with it. `attr`
-    /// is the filter's attribute as [`Self::get_node_attribute_id`] resolves it, once per scan
-    /// rather than once per node. Reads the committed value, which is the one the column indexes.
+    /// Whether the scan standing in for columns still building keeps node `id`: whether its values
+    /// match `scan_filter`, so the built columns would answer the query with it. `scan_filter`'s
+    /// attributes are resolved by [`Self::get_node_attribute_id`] ([`ScanFilter::resolve`]), once
+    /// per scan rather than once per node. Reads the committed values, which are the ones the
+    /// columns index.
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub fn node_matches(
         &self,
         id: NodeId,
-        attr: u16,
-        scan_filter: &ScanFilter,
+        scan_filter: &ScanFilter<u16>,
     ) -> bool {
-        self.get_node_attribute_by_idx(id, attr)
-            .is_some_and(|value| scan_filter.matches(&value))
+        scan_filter.matches(|&attr| self.get_node_attribute_by_idx(id, attr))
     }
 
-    /// [`Self::node_matches`] for relationship `id`, with `attr` resolved by
+    /// [`Self::node_matches`] for relationship `id`, with `scan_filter`'s attributes resolved by
     /// [`Self::get_relationship_attribute_id`].
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub fn relationship_matches(
         &self,
         id: RelationshipId,
-        attr: u16,
-        scan_filter: &ScanFilter,
+        scan_filter: &ScanFilter<u16>,
     ) -> bool {
-        self.get_relationship_attribute_by_idx(id, attr)
-            .is_some_and(|value| scan_filter.matches(&value))
+        scan_filter.matches(|&attr| self.get_relationship_attribute_by_idx(id, attr))
     }
 
+    /// The relationship counterpart of [`Self::is_indexed`].
     #[must_use]
     pub fn is_edge_indexed(
         &self,
@@ -4389,6 +4399,12 @@ impl Graph {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
+        #[cfg(feature = "index-falkordb")]
+        if *index_type == IndexType::Range {
+            return self
+                .falkordb_index
+                .is_ready(EntityType::Relationship, label, field);
+        }
         self.edge_indexer.is_label_indexed(label, field, index_type)
     }
 
@@ -4576,13 +4592,76 @@ impl Graph {
         let mut infos = self.node_indexer.index_info();
         for info in &mut infos {
             info.entity_type = String::from("NODE");
+            #[cfg(feature = "index-falkordb")]
+            self.add_native_build(EntityType::Node, info);
         }
         let mut edge_infos = self.edge_indexer.index_info();
         for info in &mut edge_infos {
             info.entity_type = String::from("RELATIONSHIP");
+            #[cfg(feature = "index-falkordb")]
+            self.add_native_build(EntityType::Relationship, info);
         }
         infos.extend(edge_infos);
         infos
+    }
+
+    /// Under `index-falkordb`, `info`'s label is under construction while any of its Range
+    /// attributes' native columns is `Building` in this version: each such column counts as
+    /// pending. The progress shown is the label's build as a whole, out of the label's or type's
+    /// entities, as C shows it: the least any of those columns has read, or what RediSearch has
+    /// populated of another of the label's fields (a fulltext or vector one) if that is less. The
+    /// label's or type's entities are counted once, and only while one of its columns builds.
+    #[cfg(feature = "index-falkordb")]
+    fn add_native_build(
+        &self,
+        entity: EntityType,
+        info: &mut IndexInfo,
+    ) {
+        let mut building: Option<(i32, u64)> = None;
+        for attr in &info.field_order {
+            let range = info
+                .fields
+                .get(attr)
+                .is_some_and(|fields| fields.iter().any(|f| f.ty == IndexType::Range));
+            if range
+                && let Some(read) = self.falkordb_index.building_read(entity, &info.label, attr)
+            {
+                building = Some(
+                    building.map_or((1, read), |(columns, least)| (columns + 1, least.min(read))),
+                );
+            }
+        }
+        let Some((columns, least)) = building else {
+            return;
+        };
+        let total = self.native_build_total(entity, &info.label);
+        let done = least.min(total);
+        // RediSearch reports what it has populated while it has a field pending.
+        info.progress = if info.pending > 0 {
+            done.min(info.progress)
+        } else {
+            done
+        };
+        info.pending += columns;
+        info.total = total;
+    }
+
+    /// The entities of `label`, or of relationship type `label`: what a build's progress is out of.
+    #[cfg(feature = "index-falkordb")]
+    fn native_build_total(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+    ) -> u64 {
+        match entity {
+            EntityType::Node => self.get_label_matrix(label).map_or(
+                0,
+                super::graphblas::versioned_matrix::VersionedMatrix::nvals,
+            ),
+            EntityType::Relationship => self
+                .get_relationship_matrix(label)
+                .map_or(0, super::graphblas::tensor::Tensor::edge_count),
+        }
     }
 
     // ── Constraint management ─────────────────────────────────────────
@@ -4799,7 +4878,6 @@ impl Graph {
                         }
                     }
                 }
-                true
             }
             EntityType::Relationship => {
                 let Some(tensor) = self.get_relationship_matrix(&constraint.label) else {
@@ -4815,9 +4893,9 @@ impl Graph {
                         }
                     }
                 }
-                true
             }
         }
+        true
     }
 
     fn validate_unique_constraint(
@@ -4843,7 +4921,6 @@ impl Graph {
                         return false;
                     }
                 }
-                true
             }
             EntityType::Relationship => {
                 let Some(tensor) = self.get_relationship_matrix(&constraint.label) else {
@@ -4863,9 +4940,9 @@ impl Graph {
                         return false;
                     }
                 }
-                true
             }
         }
+        true
     }
 
     /// Build the composite unique-constraint key for `properties`.
@@ -4985,16 +5062,12 @@ impl Graph {
         self.edge_indexer.cancel();
     }
 
-    /// Takes `&self` (not `&mut self`): it only publishes the graph
-    /// reference into the node/edge indexers' own `Mutex`-guarded fields,
-    /// via `Indexer::set_graph`. This lets `MvccGraph::commit()` call it
-    /// through an immutable borrow of the graph, so the background index
-    /// population thread's own immutable borrows of the same
-    /// `AtomicRefCell<Graph>` are never blocked by (or racing against) a
-    /// concurrent mutable borrow here -- see `MvccGraph::commit()`.
+    /// Hand the published version `graph` (which is `self`) to the node and
+    /// edge indexers, for background population to read. Called by
+    /// `MvccGraph::commit` once it published `graph`.
     pub fn set_indexer_graph(
         &self,
-        graph: Arc<AtomicRefCell<Self>>,
+        graph: Arc<Self>,
     ) {
         self.node_indexer.set_graph(graph.clone());
         self.edge_indexer.set_graph(graph);
@@ -5518,7 +5591,7 @@ mod composite_key_tests {
     #[test]
     fn complete_key_is_built_and_discriminates() {
         let a = key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))]);
-        assert!(!a.is_empty());
+        assert_ne!(a, [] as [u8; 0]);
         assert_eq!(
             a,
             key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))])
@@ -5533,26 +5606,32 @@ mod composite_key_tests {
     /// is vacuously unique — regardless of which component it is.
     #[test]
     fn any_null_component_yields_empty_key() {
-        assert!(key(&["a", "b"], &[("a", Value::Int(1))]).is_empty());
-        assert!(key(&["a", "b"], &[("b", Value::Int(2))]).is_empty());
-        assert!(key(&["a", "b"], &[]).is_empty());
-        assert!(key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Null)]).is_empty());
-        assert!(key(&["a", "b"], &[("a", Value::Null), ("b", Value::Int(2))]).is_empty());
-        assert!(
+        assert_eq!(key(&["a", "b"], &[("a", Value::Int(1))]), [] as [u8; 0]);
+        assert_eq!(key(&["a", "b"], &[("b", Value::Int(2))]), [] as [u8; 0]);
+        assert_eq!(key(&["a", "b"], &[]), [] as [u8; 0]);
+        assert_eq!(
+            key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Null)]),
+            [] as [u8; 0]
+        );
+        assert_eq!(
+            key(&["a", "b"], &[("a", Value::Null), ("b", Value::Int(2))]),
+            [] as [u8; 0]
+        );
+        assert_eq!(
             key(
                 &["a", "b", "c"],
                 &[("a", Value::Int(1)), ("c", Value::Int(3))]
-            )
-            .is_empty()
+            ),
+            [] as [u8; 0]
         );
     }
 
     /// For a single property ALL and ANY coincide, so behaviour is unchanged.
     #[test]
     fn single_property_is_unaffected() {
-        assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
-        assert!(key(&["a"], &[]).is_empty());
-        assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
+        assert_ne!(key(&["a"], &[("a", Value::Int(1))]), [] as [u8; 0]);
+        assert_eq!(key(&["a"], &[]), [] as [u8; 0]);
+        assert_eq!(key(&["a"], &[("a", Value::Null)]), [] as [u8; 0]);
     }
 }
 
@@ -5592,7 +5671,7 @@ mod reservation_tests {
 
         fn reserve(
             &mut self,
-            g: &mut Graph,
+            g: &Graph,
             n: usize,
         ) -> Vec<u64> {
             let before = &self.created | &self.cancelled;
@@ -5696,7 +5775,7 @@ mod reservation_tests {
 
         let mut all = Vec::new();
         for _ in 0..5 {
-            all.extend(q.reserve(&mut g, 1024));
+            all.extend(q.reserve(&g, 1024));
         }
 
         assert_eq!(all, (0..5120).collect::<Vec<_>>(), "dense and in order");
@@ -5709,14 +5788,14 @@ mod reservation_tests {
     fn reclaims_from_the_bin_before_allocating_fresh() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 10);
+        q.reserve(&g, 10);
         q.commit(&mut g);
         delete(&mut g, &[2, 5, 7]);
 
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 2), vec![2, 5]);
-        assert_eq!(q.reserve(&mut g, 1), vec![7], "then the last freed id");
-        assert_eq!(q.reserve(&mut g, 2), vec![10, 11], "then fresh");
+        assert_eq!(q.reserve(&g, 2), vec![2, 5]);
+        assert_eq!(q.reserve(&g, 1), vec![7], "then the last freed id");
+        assert_eq!(q.reserve(&g, 2), vec![10, 11], "then fresh");
         q.commit(&mut g);
         assert_dense(&g, 12);
     }
@@ -5728,14 +5807,14 @@ mod reservation_tests {
     fn one_batch_spanning_the_bin_and_fresh_ids() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 10);
+        q.reserve(&g, 10);
         q.commit(&mut g);
         delete(&mut g, &[3]);
 
         // 9 live (0..10 minus 3), one in the bin, so 10 ids handed out.
         let mut q = Query::new(&mut g);
         assert_eq!(
-            q.reserve(&mut g, 3),
+            q.reserve(&g, 3),
             vec![3, 10, 11],
             "the freed id, then above the boundary"
         );
@@ -5750,7 +5829,7 @@ mod reservation_tests {
     fn a_cancelled_reservation_returns_to_the_bin() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        let ids = q.reserve(&mut g, 2);
+        let ids = q.reserve(&g, 2);
         assert_eq!(ids, vec![0, 1]);
         q.cancel(&mut g, 1);
         q.commit(&mut g);
@@ -5762,7 +5841,7 @@ mod reservation_tests {
         // A *later* query does hand it back out — by then it is a different
         // effects buffer, where recreating a recycled id is ordinary.
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 1), vec![1]);
+        assert_eq!(q.reserve(&g, 1), vec![1]);
         q.commit(&mut g);
         assert_dense(&g, 2);
     }
@@ -5773,7 +5852,7 @@ mod reservation_tests {
     fn reserving_after_a_cancellation_in_the_same_query() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 3);
+        q.reserve(&g, 3);
         q.cancel(&mut g, 1);
 
         // Id 1 is back in the bin, but this query has already had it, so it is
@@ -5781,7 +5860,7 @@ mod reservation_tests {
         // put the same id in two records of one effects buffer: the cancelled
         // node's own create/delete pair, and the real create that reused it.
         // A replica refuses that buffer as `AlreadyLive`, measured.
-        let next = q.reserve(&mut g, 2);
+        let next = q.reserve(&g, 2);
         assert_eq!(next, vec![3, 4], "not 1 again, even though it is free");
         q.commit(&mut g);
 
@@ -5796,7 +5875,7 @@ mod reservation_tests {
     fn relationship_ids_reclaim_then_allocate_fresh() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 4);
+        q.reserve(&g, 4);
         q.commit(&mut g);
 
         let type_name = Arc::new("R".to_owned());
@@ -5866,19 +5945,15 @@ mod reservation_tests {
     fn outstanding_covers_ids_reclaimed_by_an_earlier_batch() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 8);
+        q.reserve(&g, 8);
         q.commit(&mut g);
         delete(&mut g, &[0, 1, 2, 3, 4, 5]);
 
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 2), vec![0, 1]);
-        assert_eq!(q.reserve(&mut g, 2), vec![2, 3], "not 0 and 1 again");
-        assert_eq!(q.reserve(&mut g, 2), vec![4, 5]);
-        assert_eq!(
-            q.reserve(&mut g, 2),
-            vec![8, 9],
-            "bin exhausted, then fresh"
-        );
+        assert_eq!(q.reserve(&g, 2), vec![0, 1]);
+        assert_eq!(q.reserve(&g, 2), vec![2, 3], "not 0 and 1 again");
+        assert_eq!(q.reserve(&g, 2), vec![4, 5]);
+        assert_eq!(q.reserve(&g, 2), vec![8, 9], "bin exhausted, then fresh");
         q.commit(&mut g);
         assert_dense(&g, 10);
     }
@@ -6033,7 +6108,7 @@ mod adjacency_cascade_tests {
 
         // And deleting both endpoints clears it, S edge included.
         delete_nodes_cascade(&mut g, &[0, 1]);
-        assert!(adjacency_entries(&g).is_empty());
+        assert_eq!(adjacency_entries(&g), [] as [(u64, u64); 0]);
     }
 }
 
@@ -6220,10 +6295,10 @@ mod restore_tests {
     /// tensor shrink is where `me` kept the ids of pairs it cut off.
     #[test]
     fn restore_never_shrinks_the_saved_matrices() {
-        ensure_init();
         // Two nodes, saved by a server whose node_cap had grown to 40,960:
         // restore rounds two nodes up to one 16,384 chunk.
         const SAVED: u64 = 40_960;
+        ensure_init();
         let mut tensor = Tensor::new(SAVED, SAVED);
         tensor.set_all_from_slices(&[0, 0], &[1, 1], &[0, 1]);
         tensor.flush();

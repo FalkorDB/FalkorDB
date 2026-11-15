@@ -1,0 +1,2 @@
+# keep Lean proofs out of the GitHub language stats
+proofs/** linguist-detectable=false

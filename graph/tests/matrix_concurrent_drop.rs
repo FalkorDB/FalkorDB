@@ -65,6 +65,7 @@ unsafe extern "C" fn counting_free(p: *mut c_void) {
 
 #[test]
 fn concurrently_dropped_clones_free_the_matrix_once() {
+    const PAIRS: usize = 100_000;
     matrix::init(
         Some(counting_malloc),
         Some(counting_calloc),
@@ -76,7 +77,6 @@ fn concurrently_dropped_clones_free_the_matrix_once() {
     // A leak shows up as live GraphBLAS blocks left behind; a double free
     // would crash. The window is a few instructions wide, so use many pairs
     // and release both threads of each pair together.
-    const PAIRS: usize = 100_000;
     let before = LIVE.load(Ordering::SeqCst);
     let (mine, theirs): (Vec<_>, Vec<_>) = (0..PAIRS)
         .map(|i| {
