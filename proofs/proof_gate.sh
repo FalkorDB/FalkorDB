@@ -58,10 +58,13 @@ fi
 #   - no build-time code added to a .lean file (#eval, elab, IO, ...): with
 #     none, `lake build` only checks proofs and cannot touch this runner;
 #   - existing theorem statements unchanged (a weaker one would still build);
-#   - an explicit verdict for every changed function.
+#   - an explicit verdict for every changed function;
+#   - the PR head's own build inputs (Lake configs, toolchains) and build-time
+#     code the same as the base branch's (GATE_DIR's checkout), or it is not
+#     built at all (UNBUILT): building would run code nothing here checked.
 cp ../in/verdicts.json ../out/verdicts.json
 cp ../in/impact.json ../out/impact.json
-python3 -I "$GATE_DIR/proof_gate_checks.py" "$(git rev-parse HEAD)" ../in/impact.json ../in/verdicts.json ../out/added_theorems.json > ../out/checks.md 2> ../out/checks.err
+python3 -I "$GATE_DIR/proof_gate_checks.py" "$(git rev-parse HEAD)" ../in/impact.json ../in/verdicts.json ../out/added_theorems.json "$GATE_DIR/.." > ../out/checks.md 2> ../out/checks.err
 rc=$?
 if [[ $rc -ne 0 ]]; then
   # A crash is never a pass: nothing below has checked the patch.
@@ -76,20 +79,26 @@ fi
 # PR's own (left unstaged, so the checks above only saw the patch).
 cp "$GATE_DIR/lean_ci.sh" "$GATE_DIR/coverage.sh" proofs/
 cov=pass; ok=pass
-# Built even for an empty patch: the proofs are the PR head's, which the PR may
-# itself have edited, so "no proof change was needed" is only a pass if they build.
-lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
-# lake builds a project's default targets and what they import, so a file no
-# target imports is never checked. Each added or changed .lean file must have
-# a fresh .olean (this runner restores no cache).
-unbuilt=""
-for p in $(git diff --cached --name-only --no-renames --diff-filter=AM -- 'proofs/*.lean'); do
-  proj=$(cut -d/ -f1-2 <<< "$p"); mod=${p#"$proj"/}
-  [[ -f "$proj/.lake/build/lib/lean/${mod%.lean}.olean" ]] || unbuilt+="- \`$p\`"$'\n'
-done
-if [[ -n "$unbuilt" ]]; then
-  lean=fail; ok=fail
-  { echo; echo "Not built by any target of its project (import it from the project's root module):"; printf '%s' "$unbuilt"; } >> ../out/checks.md.tmp
+tags=$(tail -n 1 ../out/checks.md)
+if [[ "$tags" == *UNBUILT* ]]; then
+  # Never a pass: nothing was built, so nothing says the proofs hold.
+  lean=skipped; ok=held
+else
+  # Built even for an empty patch: the proofs are the PR head's, which the PR may
+  # itself have edited, so "no proof change was needed" is only a pass if they build.
+  lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
+  # lake builds a project's default targets and what they import, so a file no
+  # target imports is never checked. Each added or changed .lean file must have
+  # a fresh .olean (this runner restores no cache).
+  unbuilt=""
+  for p in $(git diff --cached --name-only --no-renames --diff-filter=AM -- 'proofs/*.lean'); do
+    proj=$(cut -d/ -f1-2 <<< "$p"); mod=${p#"$proj"/}
+    [[ -f "$proj/.lake/build/lib/lean/${mod%.lean}.olean" ]] || unbuilt+="- \`$p\`"$'\n'
+  done
+  if [[ -n "$unbuilt" ]]; then
+    lean=fail; ok=fail
+    { echo; echo "Not built by any target of its project (import it from the project's root module):"; printf '%s' "$unbuilt"; } >> ../out/checks.md.tmp
+  fi
 fi
 COVERAGE_RUST_ROOT="$GITHUB_WORKSPACE/code" bash proofs/coverage.sh --unmatched > ../out/coverage.log 2>&1 || cov=fail
 # coverage.sh exits 0 with findings; the counts decide (as in lean-proofs.yml).
@@ -100,7 +109,6 @@ badb=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' ../out/coverage.log)
 untracked=$(grep -cE '^(projects without COVERAGE\.tsv|TEST-ONLY rows on fns the scanner sees as production code)' ../out/coverage.log || true)
 if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${badb:-}" != 0 || "$untracked" != 0 ]]; then cov=fail; fi
 [[ "$cov" == fail ]] && ok=fail
-tags=$(tail -n 1 ../out/checks.md)
 {
   echo "Gates: \`lean_ci.sh\` **$lean**; \`coverage.sh --unmatched\` **$cov** (unlisted=${unlisted:-?}, unmatched=${unmatched:-?}, bad buckets=${badb:-?}, untracked=${untracked:-?})."
   echo

@@ -2,14 +2,18 @@
 """Lean-free checks of a re-prove patch, for proof_gate.sh (run from proofs-src/
 with the patch staged).
 
-Usage: proof_gate_checks.py <base sha> <impact.json> <verdicts.json> <added_theorems.json out>
+Usage: proof_gate_checks.py <base sha> <impact.json> <verdicts.json> <added_theorems.json out> <trusted root>
+
+<base sha> is the PR head the patch was made for; <trusted root> a checkout of
+the PR's base commit holding its proofs/ tree.
 
 Prints the Markdown report; its last line holds the tags REJECT (drop the patch),
+UNBUILT (the PR head changes what building runs, so the gate must not build it),
 HELD (a theorem statement, its context or a coverage row changed) and INCOMPLETE
 (a changed function has no valid verdict).
 """
-import json, re, subprocess, sys
-base, impact_path, verdicts_path, added_path = sys.argv[1:]
+import json, os, re, subprocess, sys
+base, impact_path, verdicts_path, added_path, trusted_root = sys.argv[1:]
 
 def git(*a):
     return subprocess.run(['git', *a], capture_output=True, text=True).stdout
@@ -65,6 +69,8 @@ NEXT_RE = re.compile(r'\n(?=[ \t]*(?:@\[[^\n]*\][ \t\n]*)?(?:(?:private|protecte
                      r'namespace|section|end|mutual|open|variable|set_option|attribute|#)\b)')
 
 BINDER_RE = re.compile(r"(?:let|have|letI|haveI)(?![\w'!?])")
+# What opens match arms inside a statement, so its `|` lines are not clauses.
+MATCH_OPEN_RE = re.compile(r"\bwith\b|(?<![\w'.])(?:fun|λ)\s*\||\bfunction\b")
 
 def statement(src, k):
     """Text from k to the first := outside brackets and strings.
@@ -107,9 +113,11 @@ def statement(src, k):
     stop = nxt.start() if nxt and nxt.start() < i else None
     bars = list(re.finditer(r'\n([ \t]*)\|', src[k:stop if stop is not None else i]))
     # Bars before the `:=` are clauses too when nothing above them opens a
-    # match (`match .. with`, `fun |`, `function`): the `:=` was then inside a
-    # clause's proof (`obtain ⟨a, b⟩ := h`, a `calc` step), not the separator.
-    if bars and (stop is not None or not re.search(r'\bwith\b|\bfun\s*\||\bfunction\b', src[k:k + bars[0].start()])):
+    # match (`match .. with`, `fun |`, `λ |`, `function`): the `:=` was then
+    # inside a clause's proof (`obtain ⟨a, b⟩ := h`, a `calc` step), not the
+    # separator. The search runs through the first bar, so a `fun` that ends
+    # its line is seen with the `|` that follows it.
+    if bars and (stop is not None or not MATCH_OPEN_RE.search(src[k:k + bars[0].end()])):
         i = k + min(bars, key=lambda m: (len(m.group(1)), m.start())).start()
     elif stop is not None:
         i = stop
@@ -120,9 +128,15 @@ def statement(src, k):
 # Commands that change what an unchanged statement means: section variables
 # (`variable (h : False)` + `include h` gives a theorem an impossible
 # premise), name resolution (`open`), typeclass resolution (`instance`,
-# `attribute [instance]`) and notation.
-CONTEXT_RE = re.compile(r'^[ \t]*(?:local[ \t]+|scoped[ \t]+)?(variable|include|omit|open|export|attribute|instance|notation|'
+# `attribute [instance]`) and notation. Any attributes and modifiers may come
+# first (`@[simp] private instance (priority := 2000) : LE Nat := ...`).
+MODIFIERS = (r'(?:@\[[^\]]*\][ \t\n]*)*'
+             r'(?:(?:private|protected|noncomputable|local|scoped|partial|unsafe|nonrec)[ \t]+)*')
+CONTEXT_RE = re.compile(r'^[ \t]*' + MODIFIERS + r'(variable|include|omit|open|export|attribute|instance|notation|'
                         r'infix|infixl|infixr|prefix|postfix|macro|syntax|universe|set_option)\b', re.M)
+# A declaration made an instance by attribute (`@[instance] def leAll : LE Nat`)
+# changes typeclass resolution just as `instance` does.
+INSTANCE_ATTR_RE = re.compile(r'^[ \t]*@\[[^\]]*\b(?:instance|default_instance)\b[^\]]*\]', re.M)
 
 def command_text(src, k):
     """A command from k: its line plus the indented lines that continue it."""
@@ -149,6 +163,10 @@ def decls(text):
         events.append((m.start(), m.group(1), m.group(2)))
     for m in CONTEXT_RE.finditer(code):
         events.append((m.start(), 'context', command_text(src, m.start())))
+    for m in INSTANCE_ATTR_RE.finditer(code):
+        # The attribute and the whole declaration it marks, up to the next command.
+        nxt = NEXT_RE.search(src, m.end())
+        events.append((m.start(), 'context', ' '.join(src[m.start():nxt.start() if nxt else len(src)].split())))
     for m in HEAD_RE.finditer(code):
         if m.start() and code[m.start() - 1] not in ' \t\n]':
             continue
@@ -181,26 +199,75 @@ problems = []
 FORBID = re.compile(r'(#eval|#exec|#exit|\brun_cmd\b|\brun_elab\b|\brun_meta\b|\brun_tac\b|'
                     r'\binitialize\b|\bbuiltin_initialize\b|\belab\b|\belab_rules\b|'
                     r'\bmacro_rules\b|\bIO\b|\bunsafe\b|\bimplemented_by\b|\bextern\b|'
+                    # A syntax quotation: only metaprogramming uses one, and text
+                    # in it (`(command| theorem t : False := ...)) is not a declaration.
+                    r'`\(|'
                     r'\baxiom\b|\bsorry\b|\badmit\b|\bsorryAx\b|AXIOM-OK)')
-for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=AM', '--', '*.lean').split():
-    # The forbidden lines the file had before stay allowed, once each.
+# The part of FORBID that runs code while Lean builds (the rest only leaves a
+# theorem unproven, which lean_ci.sh reports).
+BUILDTIME = re.compile(FORBID.pattern.replace(r'|\baxiom\b|\bsorry\b|\badmit\b|\bsorryAx\b|AXIOM-OK', ''))
+assert BUILDTIME.pattern != FORBID.pattern and not BUILDTIME.search('sorry')
+
+def added_lines(before_text, after_text, pattern):
+    """(line number, match, line) for each line of after_text matching pattern that
+    before_text did not have: the lines it had stay allowed, once each."""
     before = {}
-    for line in strip_comments(git('show', f'{base}:{f}')).split('\n'):
-        if FORBID.search(line):
+    for line in strip_comments(before_text).split('\n'):
+        if pattern.search(line):
             before[line.strip()] = before.get(line.strip(), 0) + 1
-    for n, line in enumerate(strip_comments(git('show', f':{f}')).split('\n'), 1):
-        m = FORBID.search(line)
+    out = []
+    for n, line in enumerate(strip_comments(after_text).split('\n'), 1):
+        m = pattern.search(line)
         if not m:
             continue
         if before.get(line.strip(), 0):
             before[line.strip()] -= 1
             continue
-        problems.append(f'- `{f}:{n}` adds `{m.group(1)}`: `{line.strip()[:120]}`')
+        out.append((n, m.group(1), line.strip()))
+    return out
+
+for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=AM', '--', '*.lean').split():
+    for n, what, line in added_lines(git('show', f'{base}:{f}'), git('show', f':{f}'), FORBID):
+        problems.append(f'- `{f}:{n}` adds `{what}`: `{line[:120]}`')
 if problems:
     print('Patch dropped: it adds build-time code or an unproven declaration:')
     print('\n'.join(problems))
     print('REJECT')
     sys.exit(0)
+
+# The PR head itself, with the patch, against the PR's base: building runs the
+# head's Lake configuration (a lakefile.lean is Lean code Lake executes, and a
+# manifest or toolchain picks what else runs) and every build-time command in
+# its .lean files. The checks above only saw the patch, so a head that changes
+# any of these is not built: its result could not be trusted, nor could the
+# gate's own outputs, which such code could rewrite.
+BUILD_INPUTS = re.compile(r'^proofs/[^/]+/(lakefile\.lean|lakefile\.toml|lean-toolchain|lake-manifest\.json)$')
+
+def trusted(path):
+    p = os.path.join(trusted_root, path)
+    if not os.path.isfile(p):
+        return None
+    with open(p, encoding='utf-8', errors='replace') as fh:
+        return fh.read()
+
+def trusted_files():
+    root = os.path.join(trusted_root, 'proofs')
+    for d, _, names in os.walk(root):
+        for name in names:
+            yield os.path.relpath(os.path.join(d, name), trusted_root)
+
+untrusted = []
+head_files = set(git('ls-files', '--', 'proofs').split())
+for f in sorted({p for p in head_files | set(trusted_files()) if BUILD_INPUTS.match(p)}):
+    if (git('show', f':{f}') if f in head_files else None) != trusted(f):
+        untrusted.append(f'- `{f}` differs from the base branch')
+for f in sorted(p for p in head_files if p.endswith('.lean')):
+    for n, what, line in added_lines(trusted(f) or '', git('show', f':{f}'), BUILDTIME):
+        untrusted.append(f'- `{f}:{n}` adds `{what}`: `{line[:120]}`')
+if untrusted:
+    print('Not built: the PR changes what building the proofs runs, so the gate would run code it has not '
+          'checked. Review these by hand; the `Lean proofs` check builds the PR as usual:')
+    print('\n'.join(untrusted))
 
 held = []
 # Existing theorems: the statement and the context above it must be unchanged.
@@ -303,4 +370,4 @@ if noname:
 if missing:
     print('No valid verdict for:')
     print('\n'.join(f"- `{c['file']}` `{c['fn']}` (line {c['line']})" for c in missing))
-print('HELD' if held else '', 'INCOMPLETE' if missing else '')
+print('UNBUILT' if untrusted else '', 'HELD' if held else '', 'INCOMPLETE' if missing else '')

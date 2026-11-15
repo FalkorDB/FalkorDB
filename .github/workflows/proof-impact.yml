@@ -341,11 +341,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: proofs-base
+          # The gate scripts, and the base's proofs/ tree they compare the PR
+          # head's build inputs and build-time code against.
           sparse-checkout: |
-            proofs/lean_ci.sh
-            proofs/coverage.sh
-            proofs/proof_gate.sh
-            proofs/proof_gate_checks.py
+            proofs/
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
