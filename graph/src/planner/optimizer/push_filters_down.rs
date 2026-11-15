@@ -95,15 +95,19 @@ fn branch_output_variables(
 /// `Optional`: every variable of the subtree, except those hidden beneath a
 /// `Project`/`Aggregate`, which only exposes the variables it names (ids are
 /// per scope, so a hidden variable's id may belong to a different variable
-/// further up). A `SemiApply`/`AntiSemiApply` contributes only its left child.
+/// further up). A `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer` contributes only its first child.
 fn visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
     if let Some(outputs) = branch_output_variables(node, false) {
         return outputs;
     }
     let mut vars = collect_subtree_variables(&DynTree::new(node.data().clone()).root());
-    // A (anti) semi-join emits only its left input's rows: its second child is
-    // the existence sub-plan, whose variables never reach the output.
-    let outputs = if matches!(node.data(), IR::SemiApply | IR::AntiSemiApply) {
+    // A (anti) semi-join, or an `OrApplyMultiplexer`, emits only its first
+    // child's rows: the others are existence sub-plans, whose variables never
+    // reach the output.
+    let outputs = if matches!(
+        node.data(),
+        IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+    ) {
         1
     } else {
         usize::MAX
