@@ -334,7 +334,8 @@ class testOptimizationsPlan(FlowTestsBase):
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Expand Into", executionPlan)
         resultset = self.graph.query(query).result_set
-        # The pair 0 -> 1 holds three edges, so it alone yields 3 * 3 rows.
+        # The pair 0 -> 1 holds three edges, so it alone yields 3 * 3 = 9 rows;
+        # LIMIT 3 keeps the first three.
         expected = [[0, 1]] * 3
         self.env.assertEqual(resultset, expected)
 

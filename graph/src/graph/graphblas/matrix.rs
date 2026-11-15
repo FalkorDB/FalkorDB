@@ -1407,7 +1407,9 @@ impl Matrix<u64> {
         Iter::new(self, min_row, max_row)
     }
 
-    /// `self * b` over `PLUS_FIRST`: each entry of `self` is a number of
+    /// `self * b` over `PLUS_FIRST`, computed as a `PLUS_PAIR` product (every
+    /// entry of `self` counted as one path) plus [`Self::add_excess_product`]
+    /// for the entries that stand for more. Each entry of `self` is a number of
     /// partial paths ending at a node, and the product adds it to every node
     /// reachable over one edge of `b`. So an entry of the result is the exact
     /// number of paths, where [`Matrix::lmxm`] over `ANY_PAIR` only records that
@@ -1438,6 +1440,7 @@ impl Matrix<u64> {
         next
     }
 
+    /// The correction to [`Self::count_product`]'s `PLUS_PAIR` product:
     /// `self += excess * b` over `PLUS_FIRST`, for the entries of the frontier
     /// that stand for more than one path. The `PAIR` product treats every entry
     /// as one path; `excess` holds the rest, and is nearly always empty, which

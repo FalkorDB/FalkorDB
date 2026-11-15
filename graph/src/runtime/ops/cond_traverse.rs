@@ -1255,7 +1255,7 @@ impl<'a> CondTraverseOp<'a> {
             {
                 // Both hops can use the same self-loop at this node; one edge
                 // may be matched only once per pattern.
-                count -= Self::shared_self_loops(&g, state, src_id);
+                count = count.saturating_sub(Self::shared_self_loops(&g, state, src_id));
             }
             if count == 0 {
                 continue;

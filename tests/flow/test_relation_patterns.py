@@ -498,7 +498,7 @@ class testRelationPattern(FlowTestsBase):
     # The parallel-edge counts and pending-delta structures a traversal reuses
     # must follow writes: the fused count, the unfused named count and the
     # edge total agree after every kind of change.
-    def test18_counts_follow_writes(self):
+    def test24_counts_follow_writes(self):
         g = self.db.select_graph("counts_follow_writes")
         g.query("UNWIND range(0, 9) AS i CREATE (:W {i: i})")
         g.query("MATCH (a:W), (b:W) WHERE b.i = (a.i + 1) % 10 CREATE (a)-[:R]->(b)")
@@ -531,7 +531,7 @@ class testRelationPattern(FlowTestsBase):
     # A LIMIT must still return rows when the first sources have no match and
     # when a later traverse drops what an earlier one produced (a label check, a
     # uniqueness check): no cap may be pushed below an operator that can drop.
-    def test20_limit_under_dropping_traverses(self):
+    def test25_limit_under_dropping_traverses(self):
         g = self.db.select_graph("limit_dropping")
         # 300 isolated sources first, then chains whose only D is far away
         g.query("UNWIND range(1, 300) AS i CREATE (:S {id: i})")
