@@ -220,6 +220,7 @@ Cypher Query String
   ```bash
   CXX=clang++ cargo clippy --workspace --all-targets -- -D warnings
   CXX=clang++ cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
+  cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
   ```
   Fix every warning. Where a lint is wrong or the shape is deliberate, put a
   scoped `#[allow(clippy::<lint>, reason = "...")]` on the narrowest item it

@@ -120,9 +120,9 @@ pub enum OrderError {
 ///   in row `lower` of `upward`. Also ascending. Only an incremental recustomization needs
 ///   it; the full sweep ignores it.
 ///
-/// An **arc slot** is an index into `upward.neighbors`: slot `k` in the range
-/// [`Topology::up_range`] gives for `r` is the arc between rank `r` and rank `upward.neighbors[k]`. Phase 2's weight arrays are
-/// indexed by exactly this slot. [`Topology::arc_slot`] resolves a rank pair to its slot.
+/// An **arc slot** is an index into `upward.neighbors`: slot `k` of [`Topology::up_range`] for
+/// rank `r` is the arc between rank `r` and rank `upward.neighbors[k]`. Phase 2's weight arrays
+/// are indexed by exactly this slot. [`Topology::arc_slot`] resolves a rank pair to its slot.
 ///
 /// All six arrays are built once and never grow, so they are boxed slices: no spare
 /// capacity is kept for the life of the index.
