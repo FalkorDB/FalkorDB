@@ -1441,11 +1441,13 @@ def test_aggregate_binds_only_the_new_scope():
     assert res.result_set == [["a", "b", 3, 6]]
 
     # A grouping key must not be read as the old-scope variable sharing its
-    # slot id: `p` below is unbound at the aggregation, not the key `p.name`
-    # (#3571).
+    # slot id (#3571): `p.name` in the item is read from `p`, not from the key
+    # `p.name` at that id. It is an implicit grouping key, so the item is
+    # `p.name` + the count of its group, a string concatenation. (C leaves
+    # `p` unbound and returns null.)
     query("CREATE (:Person {name: 'Tom'})-[:loves]->(:Person {name: 'Judy'})", write=True)
     res = query("MATCH (p) RETURN p.name, p.name + COUNT(p)", compare_results=False)
-    assert_result_set_equal_no_order(res, [["Tom", None], ["Judy", None]])
+    assert_result_set_equal_no_order(res, [["Tom", "Tom1"], ["Judy", "Judy1"]])
 
     # A MATCH after a WITH that aggregates must not see the old scope's slots
     # as bound: `b` shared the slot id of the old `m`, so the traversal was
@@ -1459,6 +1461,50 @@ def test_aggregate_binds_only_the_new_scope():
         "MATCH (m)-[r:R]->(b:V {id: 4}) RETURN m.id AS mid, c1, b.id AS bid"
     )
     assert res.result_set == [[3, 1, 4]]
+
+
+def test_aggregation_item_implicit_grouping_keys():
+    # In an item that mixes an aggregate with other terms, each maximal
+    # aggregate-free subexpression that reads a variable is a grouping key
+    # (openCypher), and its variables are bound when the item is computed.
+    # (C leaves those variables unbound and returns null.)
+    # A variable from the outer scope inside CALL {}:
+    res = query(
+        "WITH 10 AS x CALL { WITH x UNWIND [1, 2] AS y RETURN y, x + sum(y) AS z } "
+        "RETURN y, z ORDER BY y"
+    )
+    assert res.result_set == [[1, 11], [2, 12]]
+    # The implicit key splits groups the explicit key would merge:
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN x % 2 AS k, x + count(*) AS v ORDER BY k, v"
+    )
+    assert res.result_set == [[0, 3], [1, 2], [1, 4]]
+    # With no explicit key at all, and inside a map literal:
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN x % 2 + sum(x) AS v ORDER BY v"
+    )
+    assert res.result_set == [[2], [5]]
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN {s: sum(x), k: x % 2} AS m ORDER BY m.k"
+    )
+    assert res.result_set == [[{"s": 2, "k": 0}], [{"s": 4, "k": 1}]]
+    # A variable that a list comprehension or quantifier binds is not a key;
+    # an outer variable beside it is.
+    res = query(
+        "UNWIND [1, 2, 3] AS x WITH x, 10 AS y RETURN [v IN collect(x) | v + y] AS l"
+    )
+    assert res.result_set == [[[11, 12, 13]]]
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN x % 2 AS k, all(ok IN collect(x > 0) WHERE ok) AS a "
+        "ORDER BY k"
+    )
+    assert res.result_set == [[0, True], [1, True]]
+    # An implicit key is a key: an empty input has no group and no row, while
+    # a constant term leaves the aggregation keyless (one row).
+    res = query("UNWIND [] AS x RETURN x + count(*)")
+    assert res.result_set == []
+    res = query("UNWIND [] AS x RETURN 1 + count(*)")
+    assert res.result_set == [[1]]
 
 
 def test_pipelined_match_after_aggregating_with():
