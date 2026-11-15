@@ -117,7 +117,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let filter = filter.clone();
                 let child_idx = child.idx();
 
-                // Flatten conjuncts from both filters. The child's run first:
+                // Flatten conjuncts from both filters. The child's conjuncts run first:
                 // it was evaluated first before the merge, and `And` stops at
                 // the first false conjunct, so a conjunct pushed down onto it
                 // must still be guarded by it (`n.v <> 1` before
