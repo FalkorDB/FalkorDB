@@ -1141,9 +1141,9 @@ impl Index {
             // `RediSearch_IndexOptionsSetStopwords` deep-copies via
             // `rm_strdup`, so our CStrings can drop as soon as the call
             // returns.
-            if let Some(c_stopwords) = &c_stopwords {
+            if let Some(stopword_cstrs) = &c_stopwords {
                 let mut ptrs: Vec<*const c_char> =
-                    c_stopwords.iter().map(|cs| cs.as_ptr()).collect();
+                    stopword_cstrs.iter().map(|cs| cs.as_ptr()).collect();
                 RediSearch_IndexOptionsSetStopwords(
                     options,
                     ptrs.as_mut_ptr(),
