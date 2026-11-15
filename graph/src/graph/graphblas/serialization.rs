@@ -251,8 +251,9 @@ impl Decode<19> for RoaringTreemap {
     }
 }
 
-/// In-memory [`Writer`] and [`Reader`] for tests: records an encoder's calls
-/// and replays them to a decoder in the same order. Reading a different kind
+/// In-memory [`Writer`] and [`Reader`] for tests.
+///
+/// Records an encoder's calls and replays them to a decoder in the same order. Reading a different kind
 /// than was written next, or reading past the end, is an error, so a test sees
 /// a short or misaligned payload the way a real reader would.
 #[cfg(test)]

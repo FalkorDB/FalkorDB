@@ -78,12 +78,17 @@ impl<T> Drop for Vector<T> {
     }
 }
 
-/// Element-type marker for a vector whose GraphBLAS type is only known at run
-/// time: the five components of a matrix's `GxB_Container` (`p`, `h`, `i`, `b`,
+/// Element-type marker for a vector whose GraphBLAS type is only known at run time.
+///
+/// It stands for the five components of a matrix's `GxB_Container` (`p`, `h`, `i`, `b`,
 /// `x`), which hold `uint32`/`uint64` offsets and indices, `int8` bitmaps and
 /// the matrix's values. Their codec ([`Encode`]/[`Decode`] below) carries the
 /// real type by name, so nothing is converted; the marker only keeps the Rust
 /// side from claiming a type the vector does not have.
+#[allow(
+    clippy::empty_enums,
+    reason = "a type-level marker that is never constructed; `!` is not stable"
+)]
 pub enum Untyped {}
 
 impl From<GrB_Vector> for Vector<Untyped> {
