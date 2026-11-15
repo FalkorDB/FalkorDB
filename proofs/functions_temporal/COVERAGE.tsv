@@ -1,11 +1,11 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/functions/temporal.rs	get_int_field	50	PROVEN	Fns.getIntField (f64 as i64 via Num structure): getIntField_eq_slot
+graph/src/runtime/functions/temporal.rs	int_component	133	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
 graph/src/runtime/functions/temporal.rs	check_range	63	PROVEN	checkRange/inRange (None passes): used by quarterPath/weekPath; quarter_doq_errors, quarter_errors, week_huge_errors, dateFromComponents_total
 graph/src/runtime/functions/temporal.rs	date_from_components	82	PROVEN	dateFromComponents/weekPath/quarterPath/ymdPath: dateFromComponents_total (never panics, every input; #2950 737dfb5da), weekPath_ok, quarterPath_ok, week_huge_errors, quarter_doq_errors, ymd_no_truncation, week_edge_errors, dayOfWeek_seven_is_sunday, dayOfWeek_zero_rejected (ISO dayOfWeek, #2988); W2-temporal-1,-2 fixed (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412)
-graph/src/runtime/functions/temporal.rs	date_from_map	130	PROVEN	Fns.dateFromMap: dateFromMap_eq_slots, dateStruct_eq_map
-graph/src/runtime/functions/temporal.rs	time_from_components	142	PROVEN	Fns.timeFromComponents (as-u32 truncation, from_hms_opt): timeFromComponents_ok, u32-wrap example
-graph/src/runtime/functions/temporal.rs	time_from_map	154	PROVEN	Fns.timeFromMap: timeFromMap_eq_slots, localtimeStruct_eq_map
-graph/src/runtime/functions/temporal.rs	slot_to_int	164	PROVEN	Fns.slotToInt: slotToInt_range, slotToInt_nan, getIntField_eq_slot
+graph/src/runtime/functions/temporal.rs	date_from_values	226	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	time_from_components	142	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	time_from_values	267	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	struct_ints	233	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
 graph/src/runtime/functions/temporal.rs	parse_date_string	173	PROVEN	Parse.parseDate (chrono/parse in Chrono structure): parseDate_ok (soundness), parseDate_negative, parseDate_compact_rejects, parseDate_compact_ok_allDigits, compact_junk_examples, parseDate_week_first (#3125 1ea868116)
 graph/src/runtime/functions/temporal.rs	parse_week_date	268	PROVEN	weekSlice (rest.len() <= 2 branch and split_at_checked, #2950): weekSlice_err_iff, weekSlice_short_ok, week_slice_errors, sliceOk_ascii; W2-temporal-3 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/runtime/functions/temporal.rs	parse_time_string	308	PROVEN	Parse.parseTime: parseTime_ok (result < 86400), parseTime_compact_rejects (#3125 1ea868116)
@@ -15,14 +15,14 @@ graph/src/runtime/functions/temporal.rs	days_from_civil	463	PROVEN	daysFromCivil
 graph/src/runtime/functions/temporal.rs	construct_duration_secs	479	PROVEN	constructDuration (ends in checkDateRange since #2746): construct_decompose, construct_ym_s
 graph/src/runtime/functions/temporal.rs	check_date_range	541	PROVEN	Duration.checkDateRange: checkDateRange_iff (accepts exactly years within +-MAX_DATE_YEAR), checkDateRange_boundary, minDateDays_val, maxDateDays_val
 graph/src/runtime/functions/temporal.rs	decompose_duration	549	PROVEN	decomposeDuration: construct_decompose, decompose_monthsDur, neg_days_encoding
-graph/src/runtime/functions/temporal.rs	date_pure	567	PROVEN	Pure.datePure: pure_not_unreachable, pure_null, datePure_midnight, dateStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localtime_pure	584	PROVEN	Pure.localtimePure: pure_not_unreachable, localtimePure_range, localtimeStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localdatetime_pure	603	PROVEN	Pure.localdatetimePure: pure_not_unreachable, pure_null
-graph/src/runtime/functions/temporal.rs	duration_pure	620	PROVEN	Pure.durationPure/durLoop: durLoop_get, durationStruct_eq_map, pure_not_unreachable
-graph/src/runtime/functions/temporal.rs	duration_struct_pure	700	PROVEN	Pure.durationStructPure: durationStruct_eq_map
-graph/src/runtime/functions/temporal.rs	date_struct_pure	713	PROVEN	Pure.dateStructPure: dateStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localtime_struct_pure	728	PROVEN	Pure.localtimeStructPure: localtimeStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localdatetime_struct_pure	740	PROVEN	Pure.localdatetimeStructPure (date slots 0-6, time slots 7-9): register_wf (slot count 10)
+graph/src/runtime/functions/temporal.rs	date_pure	567	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	localtime_pure	584	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	localdatetime_pure	603	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	duration_pure	620	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	duration_struct_pure	700	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	date_struct_pure	713	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	localtime_struct_pure	728	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	localdatetime_struct_pure	740	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
 graph/src/runtime/functions/temporal.rs	register	760	PROVEN	Pure.registered/pureFns/structSlots: register_wf, register_nondet
 graph/src/runtime/functions/temporal.rs	timestamp_fn	766	PROVEN	Pure.timestampFn (clock as argument): definitional (returns Int(nowMs))
 graph/src/runtime/functions/temporal.rs	date_fn	782	PROVEN	Pure.dateFn: clock_fns_shape, fns_with_args
@@ -32,6 +32,11 @@ graph/src/runtime/functions/temporal.rs	duration_fn	842	PROVEN	Pure.durationFn =
 graph/src/runtime/functions/temporal.rs	date_transaction_fn	852	PROVEN	Pure.dateTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localtime_transaction_fn	864	PROVEN	Pure.localtimeTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localdatetime_transaction_fn	878	PROVEN	Pure.localdatetimeTransactionFn: transaction_consistent
+graph/src/runtime/functions/temporal.rs	map_components	67	NOT COVERED	(#3295): not modelled yet
+graph/src/runtime/functions/temporal.rs	struct_components	117	NOT COVERED	(#3295): not modelled yet
+graph/src/runtime/functions/temporal.rs	int_components	144	NOT COVERED	(#3295): not modelled yet
+graph/src/runtime/functions/temporal.rs	duration_from_values	787	NOT COVERED	(#3295): not modelled yet
+graph/src/runtime/functions/temporal.rs	construct_duration_secs_float	822	NOT COVERED	(#3295): not modelled yet
 graph/src/runtime/value.rs	Point::distance	153	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite_coords (finite for finite coordinates), distance_finite, distance_not_nan (hypothesis-free apart from the binary64 laws of the Flt/NanLaws structures, as for chrono and simsimd); W2-temporal-4 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/runtime/value.rs	Value::format_datetime	261	PROVEN	Components.formatDatetime: formatDatetime_spec, format_extremes (total, no chrono since #2986)
 graph/src/runtime/value.rs	Value::format_date	281	PROVEN	Components.formatDate: formatDate_spec, pushDate_eq, format_extremes, format_wide_years, formatDate_wide_distinct (#2986/#2746 fixed)
