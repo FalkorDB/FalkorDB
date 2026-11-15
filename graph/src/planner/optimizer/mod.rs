@@ -111,6 +111,7 @@ pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet
     use crate::runtime::runtime::push_node_variables;
     let mut vars = HashSet::new();
     let mut stack = vec![node.clone()];
+    let mut own = Vec::new();
     while let Some(node) = stack.pop() {
         match node.data() {
             IR::Project { exprs, copies, .. } => {
@@ -125,9 +126,9 @@ pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet
                 vars.extend(projections.iter().map(|(_, v)| v.id));
             }
             ir => {
-                let mut own = Vec::new();
                 push_node_variables(ir, &mut own);
-                vars.extend(own.into_iter().map(|v| v.id));
+                vars.extend(own.iter().map(|v| v.id));
+                own.clear();
                 stack.extend(node.children());
             }
         }
