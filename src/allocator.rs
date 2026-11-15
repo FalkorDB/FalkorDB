@@ -15,18 +15,22 @@
 //! 2. Each query runs on a single thread, so per-thread tracking is sufficient
 //! 3. Counters can be reset before each query for accurate per-query stats
 
+#[cfg(test)]
+use std::alloc::System;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
 use std::thread_local;
+#[cfg(not(test))]
+use valkey_module::alloc::ValkeyAlloc;
 
 /// Global allocator that delegates to Redis while tracking allocations per-thread.
 ///
-/// This allocator wraps `redis_module::alloc::RedisAlloc` to ensure all memory
+/// This allocator wraps `valkey_module::alloc::ValkeyAlloc` to ensure all memory
 /// is allocated through Redis's memory management system (for proper memory
 /// limits and tracking), while adding per-thread allocation counting.
 ///
 /// # Usage
-/// Registered as the global allocator via the `redis_module!` macro's
+/// Registered as the global allocator via the `valkey_module!` macro's
 /// `allocator` parameter.
 pub struct ThreadCountingAllocator;
 
@@ -47,11 +51,9 @@ unsafe impl GlobalAlloc for ThreadCountingAllocator {
     ) -> *mut u8 {
         // Unit tests run outside Redis, where its allocator does not exist.
         #[cfg(test)]
-        let ptr = unsafe { std::alloc::System.alloc(layout) };
+        let ptr = unsafe { System.alloc(layout) };
         #[cfg(not(test))]
-        let ptr = unsafe {
-            redis_module::alloc::RedisAlloc::alloc(&redis_module::alloc::RedisAlloc, layout)
-        };
+        let ptr = unsafe { ValkeyAlloc.alloc(layout) };
         if !ptr.is_null() {
             TRACKING_ENABLED.with(|enabled| {
                 if enabled.get() {
@@ -69,11 +71,11 @@ unsafe impl GlobalAlloc for ThreadCountingAllocator {
     ) {
         #[cfg(test)]
         unsafe {
-            std::alloc::System.dealloc(ptr, layout);
+            System.dealloc(ptr, layout);
         };
         #[cfg(not(test))]
         unsafe {
-            redis_module::alloc::RedisAlloc::dealloc(&redis_module::alloc::RedisAlloc, ptr, layout);
+            ValkeyAlloc.dealloc(ptr, layout);
         };
         TRACKING_ENABLED.with(|enabled| {
             if enabled.get() {

@@ -80,7 +80,7 @@ fn committed_multi() -> Tensor {
 /// **The repro.** One pending identifier in `me.dp`, on a pair no probe reads,
 /// and every multi-edge read gets dearer.
 #[test]
-#[ignore]
+#[ignore = "benchmark; run with --ignored"]
 fn me_delta_step() {
     ensure_init();
     let mut t = committed_multi();
@@ -136,7 +136,7 @@ fn me_delta_step() {
 /// the delta at all" test removes both, but reusing an attached iterator removes
 /// only the attach.
 #[test]
-#[ignore]
+#[ignore = "benchmark; run with --ignored"]
 fn me_delta_attach_vs_seek() {
     ensure_init();
     println!("\n=== where a non-empty me.dp spends its instructions ===");
