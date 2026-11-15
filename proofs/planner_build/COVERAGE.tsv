@@ -94,3 +94,4 @@ graph/src/planner/mod.rs	optimizer_depth_bound	790	NOT COVERED	(#3304): not mode
 graph/src/planner/mod.rs	with_optimizer_stack	831	NOT COVERED	(#3304): not modelled yet
 graph/src/planner/mod.rs	check_depth	980	NOT COVERED	(#3304): not modelled yet
 graph/src/planner/mod.rs	check_height	991	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	stack_size_for	753	NOT COVERED	(#3304): not modelled yet

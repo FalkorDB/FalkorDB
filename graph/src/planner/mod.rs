@@ -747,6 +747,13 @@ const STACK_PER_LEVEL: usize = if INSTRUMENTED_FRAMES {
 /// runs below and above the plan's own recursion.
 const STACK_BASE: usize = 1024 * 1024;
 
+/// Stack for a plan `levels` tall: the base plus the per-level share. Callers
+/// have already rejected anything past [`MAX_PLAN_DEPTH`], so this cannot
+/// overflow in practice; saturating keeps a wrap from ever shrinking it.
+const fn stack_size_for(levels: usize) -> usize {
+    STACK_BASE.saturating_add(levels.saturating_mul(STACK_PER_LEVEL))
+}
+
 /// Runs `f`, which walks `plan` recursively, on a stack sized for `plan`.
 ///
 /// The optimizer passes, the runtime operator build, every `next()` pull and
@@ -769,7 +776,7 @@ pub fn with_plan_stack<R>(
     if height <= SHALLOW_PLAN {
         return f();
     }
-    stacker::grow(STACK_BASE + height * STACK_PER_LEVEL, f)
+    stacker::grow(stack_size_for(height), f)
 }
 
 /// Levels one `CartesianProduct` branch can add while the optimizer works:
@@ -840,7 +847,7 @@ pub fn with_optimizer_stack<R>(
     if bound <= SHALLOW_PLAN {
         return f();
     }
-    stacker::grow(STACK_BASE + bound * STACK_PER_LEVEL, f)
+    stacker::grow(stack_size_for(bound), f)
 }
 
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
@@ -3677,9 +3684,12 @@ mod stack_tests {
         let plan = wide_plan(IR::Union, 10_000);
         assert_eq!(optimizer_depth_bound(&plan), plan.root().height());
         assert!(Planner::check_depth(&plan).is_ok());
-        let before = stacker::remaining_stack().unwrap();
-        let during = with_optimizer_stack(&plan, || stacker::remaining_stack().unwrap());
-        assert!(during <= before, "ran on a new stack: {during} > {before}");
+        // `remaining_stack` is unavailable on some platforms: nothing to check then.
+        let before = stacker::remaining_stack();
+        let during = with_optimizer_stack(&plan, stacker::remaining_stack);
+        if let (Some(before), Some(during)) = (before, during) {
+            assert!(during <= before, "ran on a new stack: {during} > {before}");
+        }
     }
 
     #[test]
