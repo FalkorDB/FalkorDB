@@ -89,3 +89,14 @@ graph/src/planner/hop_order.rs	self_loops_after_binders	25	PROVEN	HopOrder.selfL
 graph/src/parser/ast.rs	ExprIR::and_of	342	PROVEN	E.andOf = flat .and true (Expr.lean); AndOf.tv_andOf (three-valued value = Kleene AND of the operands), passes_andOf; andOf_nested_in_order, andOf_keeps_or (the Rust unit tests); with runtime errors: optimizer_rewrites AndOf.flat_eval, flat_passes
 graph/src/parser/ast.rs	ExprIR::or_of	348	PROVEN	E.orOf = flat .or false; AndOf.tv_orOf (three-valued value = Kleene OR of the operands); with runtime errors: optimizer_rewrites AndOf.flat_eval (o = true)
 graph/src/parser/ast.rs	ExprIR::flat	355	PROVEN	E.flat/flatBody/spliceOp: flat_eq_body (early return is a shortcut), flat_nil (identity), flat_single, flat_single_same, flat_many (splice in order, take_out keeps position), spliceOp_other (other operators never merged); optimizer_rewrites AndOf.flatT_eq_body, scL_splice (associativity with errors/nulls/short-circuit), flat_eval
+graph/src/planner/mod.rs	fmt	423	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	with_plan_stack	760	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	optimizer_depth_bound	790	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	with_optimizer_stack	831	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	descend	930	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	new	944	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	finish	958	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	check_depth	980	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	check_height	991	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	fresh_var	999	NOT COVERED	(#3304): not modelled yet
+graph/src/planner/mod.rs	plan	3095	NOT COVERED	(#3304): not modelled yet
