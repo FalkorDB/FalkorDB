@@ -139,7 +139,14 @@ def build_env(
 ) -> tuple[dict[str, str], tempfile.TemporaryDirectory | None]:
     """flow.sh hardcodes the module filename, so a foreign module is symlinked
     under the expected name (this is how the C module gets measured)."""
-    env = {**os.environ, "VERBOSE": "0", "PARALLELISM": "--parallelism 1"}
+    # flow.sh starts valkey-server unless told otherwise. These measurements
+    # are compared against the C module, which runs on Redis, so pin Redis.
+    env = {
+        **os.environ,
+        "FALKORDB_SERVER": "redis",
+        "VERBOSE": "0",
+        "PARALLELISM": "--parallelism 1",
+    }
     target = "libfalkordb.dylib" if sys.platform == "darwin" else "libfalkordb.so"
     tmp: tempfile.TemporaryDirectory | None = None
     if module.name == target:

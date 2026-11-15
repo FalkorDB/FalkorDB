@@ -1,6 +1,6 @@
 # Per-query benchmark + query-set coverage, on demand.
 #
-# Runs `bench/` — the per-query harness (317 queries) — for this PR, its base and
+# Runs `bench/` — the per-query harness (every query in `queries.py`) — for this PR, its base and
 # the production C engine, and reports per-query deltas plus how much of the
 # `graph` crate the query set covers.
 #
@@ -16,7 +16,7 @@
 # Nothing here compiles the engine. The three modules come from images that other
 # workflows already published:
 #
-#   pr    ghcr.io/falkordb/falkordb-server:rc-pr-<N>   (rust-pr.yml)
+#   pr    ghcr.io/falkordb/falkordb-server:rc-pr-<N>-valkey   (rust-pr.yml)
 #   base  falkordb/falkordb-server:edge-rs             (rust-push.yml, trunk)
 #   c     falkordb/falkordb-server:edge-c              (the C engine)
 #
@@ -51,7 +51,7 @@
 #
 # Allocated bytes (jemalloc merged-arena deltas, in `measure`) carry the vs-C
 # comparison. They are deterministic, unaffected by thread scheduling, and cover
-# all 317 queries rather than the callgrind subset.
+# every query rather than the callgrind subset.
 #
 # Wall-clock is never substituted for instructions. A time-based stand-in would
 # turn the gate into a noise detector while still looking like a measurement.
@@ -86,7 +86,9 @@ concurrency:
 env:
   C_IMAGE: docker.io/falkordb/falkordb-server:edge-c
   BASE_IMAGE: docker.io/falkordb/falkordb-server:edge-rs
-  PR_IMAGE: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
+  # Only the module is taken from it, and both servers' images carry the same
+  # one; a pull request always builds Valkey's.
+  PR_IMAGE: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}-valkey
   TOOLCHAIN: ghcr.io/falkordb/falkordb-build:latest
   MODULE_PATH: /var/lib/falkordb/bin/falkordb.so
   # The callgrind subset is spread over this many parallel jobs per engine.
@@ -123,7 +125,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: gh api -X POST "repos/$REPO/issues/$PR/reactions" -f content="eyes" || true
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -138,7 +140,7 @@ jobs:
           echo "count=$SHARD_COUNT" >> "$GITHUB_OUTPUT"
           echo "callgrind shards: $list"
 
-      # Without this the run silently measures whatever `rc-pr-<N>` happens to
+      # Without this the run silently measures whatever `rc-pr-<N>-valkey` happens to
       # point at. Observed: a labelled run measured an image built two commits
       # earlier because rust-pr.yml was still building the current head — the tag
       # existed, so nothing complained, and the comment attributed someone else's
@@ -158,16 +160,17 @@ jobs:
                           | sort_by(.run_number) | last | .id // empty')
             if [ -n "$RUN" ]; then
               # `build-rc-image` calls a reusable workflow, so its jobs surface as
-              # "build-rc-image / build (...)" — and rust-pr.yml now reaches it
-              # through `_ci-pipeline.yml`, which adds one more caller prefix:
-              # "ci-pipeline / build-rc-image / build (...)". Match it as a path
-              # segment, so the wait survives being nested one level deeper (or
-              # less) again. A bare prefix match on the old name found nothing,
-              # read that as "not scheduled yet", and polled to the timeout with
-              # the image already published (#3472). The segment form does not
-              # match `build-rc-asan-image`, a different image.
+              # "build-rc-image / build (...)" — and rust-pr.yml reaches it through
+              # `_ci-pipeline.yml` and then Valkey's leg (`_image-leg.yml`), each
+              # adding a caller prefix: "ci-pipeline / image-valkey / build-rc-image
+              # / build (...)". Match the last two as path segments, so the wait
+              # survives being nested deeper (or less) again. A bare prefix match
+              # on an old name found nothing, read that as "not scheduled yet",
+              # and polled to the timeout with the image already published
+              # (#3472). The segment form matches neither `build-rc-asan-image`
+              # nor Redis's leg (`image-redis`), whose images are not measured.
               STATES=$(gh api "repos/$REPO/actions/runs/$RUN/jobs?per_page=100" --paginate \
-                         --jq '[.jobs[] | select(.name | test("(^|/ )build-rc-image / "))
+                         --jq '[.jobs[] | select(.name | test("(^|/ )image-valkey / build-rc-image / "))
                                 | .conclusion // "pending"] | join(",")')
               case "$STATES" in
                 "")            echo "run $RUN has not scheduled build-rc-image yet" ;;
@@ -277,7 +280,7 @@ jobs:
           path: provenance.json
           retention-days: 7
 
-  # Full 317-query set, one runner per side, all three at once.
+  # Full query set, one runner per side, all three at once.
   measure:
     needs: preflight
     runs-on: ubuntu-latest
@@ -291,7 +294,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -351,10 +354,10 @@ jobs:
   #
   # vs-C lives on allocated bytes in the `measure` job instead: jemalloc
   # merged-arena deltas are unaffected by thread scheduling, and that comparison
-  # covers all 317 queries rather than 93.
+  # covers every query rather than the `cg=True` subset.
   #
-  # 93 queries at ~21s each (three runs per query, since the drift replicate) is
-  # ~33 min per side. Sharded SHARD_COUNT ways that is a few minutes of
+  # ~100 `cg=True` queries at ~21s each (three runs per query, since the drift
+  # replicate) is ~35 min per side. Sharded SHARD_COUNT ways that is a few minutes of
   # wall-clock, matching the full-set `measure` job, so callgrind stays off the
   # critical path. 2 sides x 6 shards = 12 jobs.
   callgrind:
@@ -374,7 +377,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -512,7 +515,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
