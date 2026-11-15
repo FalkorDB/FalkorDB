@@ -2068,6 +2068,7 @@ def test_order_by_aggregate_matches_projection_only_on_equal_constants():
     )
     res = query(f"MATCH (n:N) RETURN n.g AS g, {projected} AS m ORDER BY {projected}, g")
     assert res.result_set == [[0, False], [1, False]]
+    query("MATCH (n:N) DETACH DELETE n", write=True)
 
 
 def test_self_loop_hop_after_other_hops_keeps_them():
