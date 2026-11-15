@@ -1632,7 +1632,7 @@ mod differential {
                     }
                     // One boundary in four is the end of the query: the next
                     // one forks a new version, which may reuse what this freed.
-                    if (r >> 40) % 4 == 0 {
+                    if (r >> 40).is_multiple_of(4) {
                         space = space.new_version();
                         model.retired.clear();
                         versions += 1;

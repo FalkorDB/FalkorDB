@@ -5766,7 +5766,7 @@ mod reservation_tests {
         // One in the bin, two live, so three ids handed out.
         // The next query, so nothing is outstanding and the freed id may be
         // reused: the first one committed.
-        let mut g = g.new_version();
+        let g = g.new_version();
         let ids = g
             .relationship_id_space()
             .reserve(2, &RoaringTreemap::new())
@@ -5817,7 +5817,7 @@ mod reservation_tests {
     fn an_id_freed_earlier_in_a_query_is_not_reused_by_it() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 3);
+        q.reserve(&g, 3);
         q.commit(&mut g);
 
         // One query: a segment deletes 1, the next creates. The freed 1 still
@@ -5834,7 +5834,7 @@ mod reservation_tests {
 
         // The next query may take it.
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 1), vec![1]);
+        assert_eq!(q.reserve(&g, 1), vec![1]);
     }
 
     #[test]
