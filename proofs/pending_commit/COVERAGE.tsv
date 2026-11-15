@@ -111,7 +111,7 @@ graph/src/graph/attribute_store.rs	insert_attrs_rows	1268	PROVEN	Content.insertA
 graph/src/graph/attribute_store.rs	insert_attrs	1317	PROVEN	Content.insertAttrs_spec
 graph/src/graph/attribute_store.rs	import_attrs	1353	PROVEN	Content.importAttrs_spec
 graph/src/graph/attribute_store.rs	import_attrs_resolved	1390	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed
-graph/src/graph/attribute_store.rs	structural_memory_usage	1416	PROVEN	Content.structural_partition
+graph/src/graph/attribute_store.rs	structural_memory_usage	1455	PROVEN	Content.structural_partition
 graph/src/graph/attribute_store.rs	encode_with_range	1427	PROVEN	Content.encode_spec, encode_decode_roundtrip
 graph/src/graph/attribute_store.rs	decode	1509	PROVEN	Content.decode_unimplemented
 graph/src/graph/attribute_store.rs	decode_with_count	1519	PROVEN	Content.decode_spec, encode_decode_roundtrip
