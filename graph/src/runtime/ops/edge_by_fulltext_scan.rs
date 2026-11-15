@@ -89,7 +89,7 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    // A non-string relationship type or query matches nothing: no rows, as C.
+                    // A non-string relationship type or query matches nothing: this row yields no rows.
                     return Ok(None);
                 };
                 let Value::String(query_str) = ExprEval::from_runtime(self.runtime).eval(
