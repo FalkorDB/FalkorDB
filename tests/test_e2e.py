@@ -2060,6 +2060,15 @@ def test_order_by_aggregate_matches_projection_only_on_equal_constants():
         )
         assert res.result_set == [[0, 2], [1, 2]]
 
+    # quantifiers that differ only in kind are different aggregates
+    projected = "max(all(x IN [1, 2] WHERE x > 1))"
+    query_exception(
+        f"MATCH (n:N) RETURN n.g AS g, {projected} AS m ORDER BY max(any(x IN [1, 2] WHERE x > 1))",
+        "failed to map aggregation expression",
+    )
+    res = query(f"MATCH (n:N) RETURN n.g AS g, {projected} AS m ORDER BY {projected}, g")
+    assert res.result_set == [[0, False], [1, False]]
+
 
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
