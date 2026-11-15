@@ -101,6 +101,7 @@ enum ProjectionKind {
 
 /// The labels of a bound `REMOVE n:L1:L2` item, or `None` for a property
 /// removal.
+#[must_use]
 pub fn removed_node_labels(item: &QueryExpr<Variable>) -> Option<Vec<Arc<String>>> {
     let root = item.root();
     match root.data() {
