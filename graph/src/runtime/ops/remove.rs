@@ -140,7 +140,7 @@ impl Runtime<'_> {
                             .collect::<Vec<_>>();
                         self.pending
                             .borrow_mut()
-                            .remove_node_labels(node, &labels, &self.graph());
+                            .remove_node_labels(node, &labels, self.graph());
                     }
                 }
                 Value::Relationship(rel) => {
