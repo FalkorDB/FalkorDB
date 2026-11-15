@@ -307,7 +307,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
                 Value::Float(_) | Value::String(_) | Value::Bool(_) => true,
                 _ => false,
             },
-            _ => true,
+            IndexQuery::Point { .. } => true,
         }
     }
 }
@@ -323,6 +323,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
             let label = &self.relationship_pattern.types[0];
             let rp = self.relationship_pattern;
             match self.emitter.emit_lazy(|b, row| {
+                type EdgeRow = (NodeId, NodeId, RelationshipId);
                 let view = BatchRow::new(b, row);
                 let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
@@ -335,7 +336,6 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // `get_all_edges` is materialized once into the op's
                 // cache and shared by all subsequent rows via `Arc`,
                 // so we don't rebuild the full-type Vec per row.
-                type EdgeRow = (NodeId, NodeId, RelationshipId);
                 let runtime = self.runtime;
                 let cache = &self.all_edges_cache;
                 let scan_type = || -> Box<dyn Iterator<Item = EdgeRow>> {
@@ -368,7 +368,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         // `NodeByIndexScanOp`.
                         #[cfg(feature = "index-falkordb")]
                         let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
-                            .query_index_numeric_edges(label, &q)
+                            .query_index_edges(label, &q)
                         {
                             Some(Ok(rows)) => Some(Box::new(rows)),
                             // Still building: scan the type for what the column will answer,
@@ -377,17 +377,14 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                             Some(Err(scan_filter)) => {
                                 // Resolved once per scan. No edge holds a name the graph has
                                 // never seen.
-                                let edges: Box<dyn Iterator<Item = EdgeRow>> = match g
-                                    .get_relationship_attribute_id(scan_filter.attribute())
-                                {
-                                    Some(attr) => {
-                                        let attr = attr as u16;
+                                let edges: Box<dyn Iterator<Item = EdgeRow>> = match scan_filter
+                                    .resolve(|attr| {
+                                        g.get_relationship_attribute_id(attr)
+                                            .map(|attr| attr as u16)
+                                    }) {
+                                    Some(scan_filter) => {
                                         Box::new(scan_type().filter(move |&(_, _, edge)| {
-                                            runtime.graph().relationship_matches(
-                                                edge,
-                                                attr,
-                                                &scan_filter,
-                                            )
+                                            runtime.graph().relationship_matches(edge, &scan_filter)
                                         }))
                                     }
                                     None => Box::new(std::iter::empty()),
