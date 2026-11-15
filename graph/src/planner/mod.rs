@@ -1848,11 +1848,12 @@ impl Planner {
         // other, so what they bind does not count.
         let bound_before_clause = !self.visited.is_empty();
         // Computed once: the decomposition is a graph walk.
-        let single_component = pattern.connected_components().len() == 1
+        let components = pattern.connected_components();
+        let single_component = components.len() == 1
             && !filter
                 .as_ref()
                 .is_some_and(|f| Self::has_pattern_expr(&f.root()));
-        for component in pattern.connected_components() {
+        for component in components {
             let relationships = component.relationships();
             // Endpoints already bound by earlier clauses may carry labels
             // that were never enforced by a scan or traversal (e.g.

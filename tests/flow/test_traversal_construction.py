@@ -682,6 +682,12 @@ class testTraversalConstruction():
         g.query("""CREATE (a:A {id: 1})-[:R]->(b:B)-[:S]->(c:C)-[:T]->(d:D {id: 2})""")
         g.query("UNWIND range(0, 99) AS i CREATE (:C)-[:T]->(:D {id: 3})")
         q = "MATCH (a:A {id: 1})-[:R*1..2]->(b)-[:S]->(c)-[:T*1..2]->(d:D {id: 2}) RETURN count(*)"
+        plan = str(g.explain(q))
+        # the fixed hop binds `c` before the second walk starts from it, and
+        # the component is scanned from `a` rather than from the anchored `d`
+        self.env.assertTrue(plan.index("-[_anon_2:T*1..2]->(d)") < plan.index("Conditional Traverse | (b)->(c)"), message=plan)
+        self.env.assertContains("Node By Label Scan | (a:A)", plan)
+        self.env.assertNotContains("(d:D)", plan)
         self.env.assertEqual(g.query(q).result_set, [[1]])
         g.delete()
 
@@ -735,13 +741,18 @@ class testTraversalConstruction():
         wait_for_indices_to_sync(g)
         g.query("""CREATE (:A {id: 1})-[:R]->(:B {id: 1}), (:A {id: 99})-[:R]->(:B {id: 1}),
                           (:A {id: 5})-[:R]->(:C {id: 1})""")
-        for q, expected in [
-                ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 1),
-                ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 1),
-                ("MATCH (a:A) WHERE a.id = 99 MATCH (a)<-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 0),
-                ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 4),
-                ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 4),
-                ("MATCH (x:A) WHERE x.id = 5 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 2)]:
+        # `scans_b`: the walk starts from the indexed `b` (the earlier clause
+        # binds nothing the walk needs); otherwise `a` is bound by that clause
+        # and the walk must keep it, so no index scan on `b` is planned.
+        for q, expected, scans_b in [
+                ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 1, False),
+                ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 1, False),
+                ("MATCH (a:A) WHERE a.id = 99 MATCH (a)<-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 0, False),
+                ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 4, True),
+                ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 4, True),
+                ("MATCH (x:A) WHERE x.id = 5 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 2, True)]:
+            plan = str(g.explain(q))
+            self.env.assertEqual("Node By Index Scan | (b:B)" in plan, scans_b, message=plan)
             self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
         res = g.query("""UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]->(b:B {id: 1})
                          RETURN x, a.id ORDER BY x, a.id""").result_set
@@ -833,7 +844,7 @@ class testTraversalConstruction():
             plan = str(g.explain(q))
             # the fixed hop keeps leading: its traverse sits below the walk
             walk = plan.index("Variable Length Traverse")
-            self.env.assertTrue(plan.index("Conditional Traverse") > walk, message=plan)
+            self.env.assertGreater(plan.index("Conditional Traverse"), walk, message=plan)
             self.env.assertEqual(g.query(q).result_set, [[1]] if "(x:X)" in q else [[0]], message=q)
         g.delete()
 
