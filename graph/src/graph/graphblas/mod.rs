@@ -131,7 +131,7 @@ pub(crate) mod instr {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub(crate) fn read_instr() -> Option<u64> {
+    pub fn read_instr() -> Option<u64> {
         None
     }
 }
