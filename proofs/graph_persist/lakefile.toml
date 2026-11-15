@@ -1,0 +1,5 @@
+name = "falkor-graph-persist"
+defaultTargets = ["GraphPersist"]
+
+[[lean_lib]]
+name = "GraphPersist"

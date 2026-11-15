@@ -1458,10 +1458,7 @@ fn register_msf(funcs: &mut Functions) {
                     map
                 });
                 let compact_of = |orig: u64| -> Option<u64> {
-                    match &dense_map {
-                        Some(map) => map.get(orig as usize).copied().filter(|&c| c != u64::MAX),
-                        None => sorted_ids.binary_search(&orig).ok().map(|c| c as u64),
-                    }
+                    dense_map.as_ref().map_or_else(|| sorted_ids.binary_search(&orig).ok().map(|c| c as u64), |map| map.get(orig as usize).copied().filter(|&c| c != u64::MAX))
                 };
 
                 // Iterate relationships and fill weighted compact matrix.
