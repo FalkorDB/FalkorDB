@@ -10,7 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
-use redis_module::raw;
+use valkey_module::raw;
 
 use crate::reply::format_g;
 
@@ -119,54 +119,44 @@ impl SlowLog {
 
         // Check for existing entry with same hash.
         if let Some(existing) = inner.entries.iter_mut().find(|e| e.hash == hash) {
-            if latency_ms > existing.latency {
-                // Update latency, timestamp, and params.
-                existing.latency = latency_ms;
-                existing.timestamp = unix_now();
-                existing.params = if params_text.is_empty() {
+            if latency_ms <= existing.latency {
+                return;
+            }
+            // Update latency, timestamp, and params. This can raise the
+            // minimum, so fall through to recompute it (#3442).
+            existing.latency = latency_ms;
+            existing.timestamp = unix_now();
+            existing.params = if params_text.is_empty() {
+                None
+            } else {
+                Some(truncate(params_text))
+            };
+        } else {
+            let entry = SlowLogEntry {
+                cmd: cmd.to_owned(),
+                query: truncate(query_text),
+                params: if params_text.is_empty() {
                     None
                 } else {
                     Some(truncate(params_text))
-                };
-            }
-            return;
-        }
-
-        // Build truncated strings.
-        let truncated_query = truncate(query_text);
-        let truncated_params = if params_text.is_empty() {
-            None
-        } else {
-            Some(truncate(params_text))
-        };
-        let timestamp = unix_now();
-
-        if inner.entries.len() < MAX_ENTRIES {
-            inner.entries.push(SlowLogEntry {
-                cmd: cmd.to_owned(),
-                query: truncated_query,
-                params: truncated_params,
+                },
                 latency: latency_ms,
-                timestamp,
-                hash,
-            });
-        } else {
-            // Replace the fastest (min-latency) entry.
-            let idx = inner
-                .entries
-                .iter()
-                .enumerate()
-                .min_by(|a, b| a.1.latency.total_cmp(&b.1.latency))
-                .map(|(i, _)| i)
-                .unwrap();
-            inner.entries[idx] = SlowLogEntry {
-                cmd: cmd.to_owned(),
-                query: truncated_query,
-                params: truncated_params,
-                latency: latency_ms,
-                timestamp,
+                timestamp: unix_now(),
                 hash,
             };
+            if inner.entries.len() < MAX_ENTRIES {
+                inner.entries.push(entry);
+            } else {
+                // Replace the fastest (min-latency) entry.
+                let idx = inner
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1.latency.total_cmp(&b.1.latency))
+                    .map(|(i, _)| i)
+                    .unwrap();
+                inner.entries[idx] = entry;
+            }
         }
 
         // Recompute min_latency.

@@ -62,13 +62,12 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
-use atomic_refcell::AtomicRefCell;
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
-    cell::{Cell, RefCell},
+    cell::{Cell, OnceCell, Ref, RefCell, RefMut},
     collections::HashMap,
     marker::PhantomData,
     sync::Arc,
@@ -107,6 +106,46 @@ pub struct QueryStatistics {
 /// name-map lookup for the excess.
 const ATTR_ID_MEMO_CAP: usize = 32;
 
+/// The graph a [`Runtime`] is created on: a read query's published version,
+/// or a write query's fork.
+// Moved once, into `Runtime::new`: boxing the fork would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum QueryGraph {
+    Published(Arc<Graph>),
+    Fork(Graph),
+}
+
+impl From<Arc<Graph>> for QueryGraph {
+    fn from(g: Arc<Graph>) -> Self {
+        Self::Published(g)
+    }
+}
+
+impl From<Graph> for QueryGraph {
+    fn from(fork: Graph) -> Self {
+        Self::Fork(fork)
+    }
+}
+
+/// Shared access to the graph a [`Runtime`] reads; see [`Runtime::graph`].
+pub enum GraphRef<'r> {
+    /// A published version needs no borrow: nothing can change it.
+    Published(&'r Graph),
+    /// A write query's fork, borrowed so it is not changed meanwhile.
+    Fork(Ref<'r, Graph>),
+}
+
+impl std::ops::Deref for GraphRef<'_> {
+    type Target = Graph;
+
+    fn deref(&self) -> &Graph {
+        match self {
+            Self::Published(g) => g,
+            Self::Fork(g) => g,
+        }
+    }
+}
+
 /// The query execution context.
 ///
 /// Runtime holds all state needed to execute a query plan:
@@ -123,8 +162,13 @@ const ATTR_ID_MEMO_CAP: usize = 32;
 pub struct Runtime<'a> {
     /// Query parameters ($param syntax)
     pub parameters: HashMap<String, Value>,
-    /// Graph being queried (shared, thread-safe reference)
-    pub g: Arc<AtomicRefCell<Graph>>,
+    /// The published version this query reads: a read query's from the
+    /// start, a write query's once [`Self::publish`] published its fork.
+    published: OnceCell<Arc<Graph>>,
+    /// A write query's fork, until [`Self::publish`] takes it. Operators reach
+    /// the runtime through shared references, hence the cell. Read both
+    /// through [`Self::graph`] / [`Self::graph_mut`].
+    fork: RefCell<Option<Graph>>,
     /// Whether this is a write query
     pub write: bool,
     /// Batched mutations (lazy-initialized)
@@ -159,8 +203,12 @@ pub struct Runtime<'a> {
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     /// Cache of deleted relationships for result consistency
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
-    /// Cache for MERGE pattern matching — stores only the created entity bindings (variable id → value)
-    pub merge_pattern_cache: RefCell<HashMap<u64, Vec<(u32, Value)>>>,
+    /// Cache for MERGE pattern matching — stores only the created entity
+    /// bindings (variable id → value), keyed by the MERGE operator's plan node
+    /// and the pattern hash. Per operator, like C's `unique_entities`: another
+    /// MERGE clause with an equal pattern binds different variable ids and must
+    /// do its own match-or-create.
+    pub merge_pattern_cache: RefCell<HashMap<(NodeIdx<Dyn<IR>>, u64), Vec<(u32, Value)>>>,
     /// Pointer-identity memo of resolved node attribute ids. Plan
     /// expressions hold the same `Arc<String>` across all rows, so after
     /// the first resolution a lookup is a short pointer scan instead of a
@@ -371,8 +419,9 @@ impl ReturnNames for DynNode<'_, IR> {
                 }
                 child.get_return_names()
             }
-            IR::Skip(_) | IR::Limit(_) | IR::Distinct => self.child(0).get_return_names(),
-            IR::Union | IR::NestedPlans => self.child(0).get_return_names(),
+            IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Union | IR::NestedPlans => {
+                self.child(0).get_return_names()
+            }
             IR::Aggregate { names, .. } => names.clone(),
             _ => vec![],
         }
@@ -404,9 +453,8 @@ impl<'a> Runtime<'a> {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        g: Arc<AtomicRefCell<Graph>>,
+        g: impl Into<QueryGraph>,
         parameters: HashMap<String, Value>,
-        write: bool,
         plan: Arc<DynTree<IR>>,
         inspect: bool,
         import_folder: String,
@@ -424,12 +472,19 @@ impl<'a> Runtime<'a> {
             vec![]
         };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
-        if write {
-            pending.borrow_mut().set_schema_baseline(&g);
+        // A write query runs on its own fork, a read query on a published version.
+        let (published, fork) = match g.into() {
+            QueryGraph::Published(g) => (OnceCell::from(g), None),
+            QueryGraph::Fork(fork) => (OnceCell::new(), Some(fork)),
+        };
+        let write = fork.is_some();
+        if let Some(fork) = &fork {
+            pending.borrow_mut().set_schema_baseline(fork);
         }
         Self {
             parameters,
-            g,
+            published,
+            fork: RefCell::new(fork),
             write,
             pending,
             stats: RefCell::new(QueryStatistics::default()),
@@ -484,37 +539,101 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
-    /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
-    /// shared state (the index, or the published graph version).
+    /// The graph this query reads.
+    ///
+    /// A published version needs no borrow: nothing can change it. A write
+    /// query's fork is borrowed per access, since it is also borrowed mutably.
+    #[must_use]
+    pub fn graph(&self) -> GraphRef<'_> {
+        self.published.get().map_or_else(
+            || {
+                GraphRef::Fork(Ref::map(self.fork.borrow(), |fork| {
+                    fork.as_ref()
+                        .expect("a write query's fork was refused at commit")
+                }))
+            },
+            |g| GraphRef::Published(g),
+        )
+    }
+
+    /// The graph this write query mutates, borrowed exclusively.
+    ///
+    /// # Panics
+    ///
+    /// On a read query, or a write query whose fork was published: a
+    /// published version is never changed. Plans that write are run as write
+    /// queries, so this is a planner bug.
+    #[must_use]
+    pub fn graph_mut(&self) -> RefMut<'_, Graph> {
+        RefMut::map(self.fork.borrow_mut(), |fork| {
+            fork.as_mut().expect("graph_mut on a published version")
+        })
+    }
+
+    /// Publish this write query's fork with `commit`, which takes it by value
+    /// and returns the version it published. The query reads that version from
+    /// then on, e.g. to serialize its reply.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `commit` returns. The fork is gone then: `commit` consumed it.
+    ///
+    /// # Panics
+    ///
+    /// On a read query, or if the fork was published already.
+    pub fn publish<E>(
+        &self,
+        commit: impl FnOnce(Graph) -> Result<Arc<Graph>, E>,
+    ) -> Result<(), E> {
+        let fork = self
+            .fork
+            .borrow_mut()
+            .take()
+            .expect("a write query's fork is published once");
+        let published = commit(fork)?;
+        assert!(self.published.set(published).is_ok(), "published once");
+        Ok(())
+    }
+
+    /// Become a writer before mutating shared state (the index), handing the
+    /// host this query's fork to check and rebase ([`WriteEscalation`]).
     ///
     /// Not a guard: the host owns the locks for the whole query — they must
     /// outlive `query()` so the host can commit — so this only *changes mode*,
     /// never releases.
-    #[must_use]
-    pub fn write_escalation(&self) -> &'a dyn crate::locks::WriteEscalation {
+    ///
+    /// # Errors
+    ///
+    /// If the host refuses the escalation.
+    ///
+    /// [`WriteEscalation`]: crate::locks::WriteEscalation
+    pub fn upgrade_to_write(&self) -> Result<(), String> {
         self.write_escalation
+            .upgrade_to_write(&mut self.graph_mut())
     }
 
     /// Undo the index documents earlier `Commit`s published, after this query
     /// failed. See [`Pending::resync_published_indexes`].
     pub fn resync_published_indexes(
         &self,
-        committed: &Arc<AtomicRefCell<Graph>>,
+        committed: &Graph,
     ) {
         self.pending
             .borrow_mut()
-            .resync_published_indexes(committed, &self.g);
+            .resync_published_indexes(committed, &self.graph());
     }
 
     /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(&self) {
-        self.pending.borrow_mut().commit_deferred_indexes(&self.g);
+        self.pending
+            .borrow_mut()
+            .commit_deferred_indexes(&mut self.graph_mut());
     }
 
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
-        let labels_count = self.g.borrow().labels_count();
+        let labels_count = self.graph().labels_count();
         let mut result = vec![];
         let mut batch_op = self.run_batch(idx)?;
         if self.result_set_size >= 0 {
@@ -552,7 +671,7 @@ impl<'a> Runtime<'a> {
         }
         let run_duration = start.elapsed();
 
-        self.stats.borrow_mut().labels_added += self.g.borrow().labels_count() - labels_count;
+        self.stats.borrow_mut().labels_added += self.graph().labels_count() - labels_count;
         self.stats.borrow_mut().execution_time = run_duration.as_secs_f64() * 1000.0;
         Ok(ResultSummary {
             stats: self.stats.take(),
@@ -669,7 +788,7 @@ impl<'a> Runtime<'a> {
                     Vec::new()
                 }
             }
-            _ => node.get_child(0).map(|c| vec![c.idx()]).unwrap_or_default(),
+            _ => node.get_child(0).map_or_default(|c| vec![c.idx()]),
         }
     }
 
@@ -1293,8 +1412,8 @@ impl<'a> Runtime<'a> {
                 self,
                 label,
                 attrs,
-                index_type,
-                entity_type,
+                *index_type,
+                *entity_type,
                 options.as_ref(),
             ),
             IR::DropIndex {
@@ -1302,7 +1421,7 @@ impl<'a> Runtime<'a> {
                 attrs,
                 index_type,
                 entity_type,
-            } => super::index_ddl::drop_index(self, label, attrs, index_type, entity_type),
+            } => super::index_ddl::drop_index(self, label, attrs, *index_type, *entity_type),
         }
     }
 
@@ -1312,7 +1431,7 @@ impl<'a> Runtime<'a> {
         vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
         let mut min = 0u64;
-        let mut max = self.g.borrow().max_node_id();
+        let mut max = self.graph().max_node_id();
         for (expr, op) in filter {
             let id = match {
                 let this = &self;
@@ -1364,7 +1483,7 @@ impl<'a> Runtime<'a> {
         // `max_node_id()` is 0 both when id 0 is the only id and when no id
         // was ever handed out, so `min..=max` would seek a node 0 that was
         // never created.
-        if self.g.borrow().node_count() == 0 {
+        if self.graph().node_count() == 0 {
             return Ok(None);
         }
         let mut result = RoaringTreemap::new();
@@ -1382,7 +1501,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
         let attr_id = Self::memo_lookup(&self.node_attr_id_memo, key).unwrap_or_else(|| {
-            let attr_id = self.g.borrow_mut().get_or_create_node_attr_id(key);
+            let attr_id = self.graph_mut().get_or_create_node_attr_id(key);
             Self::memo_insert(&self.node_attr_id_memo, key, attr_id);
             attr_id
         });
@@ -1401,7 +1520,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
         let attr_id = Self::memo_lookup(&self.rel_attr_id_memo, key).unwrap_or_else(|| {
-            let attr_id = self.g.borrow_mut().get_or_create_rel_attr_id(key);
+            let attr_id = self.graph_mut().get_or_create_rel_attr_id(key);
             Self::memo_insert(&self.rel_attr_id_memo, key, attr_id);
             attr_id
         });
@@ -1487,7 +1606,7 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        let g = self.g.borrow();
+        let g = self.graph();
         let attr_id = self.node_attr_id(&g, attr)?;
         if let Some(value) = self.pending.borrow().get_node_attribute(id, attr_id) {
             return Some(value.clone());
@@ -1501,7 +1620,7 @@ impl<'a> Runtime<'a> {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        let g = self.g.borrow();
+        let g = self.graph();
         let attr_id = self.rel_attr_id(&g, attr)?;
         if let Some(value) = self
             .pending
@@ -1528,7 +1647,7 @@ impl<'a> Runtime<'a> {
             return None;
         }
         drop(deleted);
-        let g = self.g.borrow();
+        let g = self.graph();
         if let Some(attr_id) = self.rel_attr_id(&g, attr)
             && let Some(value) = self
                 .pending
@@ -1564,7 +1683,7 @@ impl<'a> Runtime<'a> {
         node_ids: &[NodeId],
         attr: &Arc<String>,
     ) -> Vec<Value> {
-        let g = self.g.borrow();
+        let g = self.graph();
         let attr_idx = self.node_attr_id(&g, attr);
 
         let deleted = self.deleted_nodes.borrow();
@@ -1624,7 +1743,7 @@ impl<'a> Runtime<'a> {
         rel_ids: &[RelationshipId],
         attr: &Arc<String>,
     ) -> Vec<Value> {
-        let g = self.g.borrow();
+        let g = self.graph();
         let attr_idx = self.rel_attr_id(&g, attr);
 
         let deleted = self.deleted_relationships.borrow();
@@ -1663,11 +1782,26 @@ impl<'a> Runtime<'a> {
         values
     }
 
+    /// Whether node `id` reads differently through this runtime than from the
+    /// committed graph: it was deleted earlier in the query (answered from the
+    /// snapshot) or has staged label/attribute changes. When it does not, a
+    /// caller can read the committed graph directly and skip building the
+    /// [`Self::get_node_labels`] / [`Self::get_node_attrs`] copies.
+    #[must_use]
+    pub fn node_differs_from_committed(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        let deleted = self.deleted_nodes.borrow();
+        (!deleted.is_empty() && deleted.contains_key(&id))
+            || self.pending.borrow().node_has_changes(id)
+    }
+
     pub fn get_node_labels(
         &self,
         id: NodeId,
     ) -> OrderSet<Arc<String>> {
-        let g = self.g.borrow();
+        let g = self.graph();
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             return dn.labels.iter().map(|l| g.get_label_by_id(*l)).collect();
         }
@@ -1718,7 +1852,7 @@ impl<'a> Runtime<'a> {
         &self,
         name: &str,
     ) -> Option<LabelId> {
-        self.g.borrow().get_label_id(name)
+        self.graph().get_label_id(name)
     }
 
     /// [`Self::node_has_label`] with the name already resolved.
@@ -1739,7 +1873,7 @@ impl<'a> Runtime<'a> {
         self.pending
             .borrow()
             .node_has_label(id, label_id)
-            .unwrap_or_else(|| self.g.borrow().node_has_label_id(id, label_id))
+            .unwrap_or_else(|| self.graph().node_has_label_id(id, label_id))
     }
 
     pub fn get_node_attrs(
@@ -1754,7 +1888,7 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let mut actual = OrderMap::from_unique_keys(g.get_node_all_attrs(id));
         self.pending.borrow().update_node_attrs(id, &mut actual, &g);
         actual
@@ -1772,7 +1906,7 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let mut actual = OrderMap::from_unique_keys(g.get_relationship_all_attrs(id));
         self.pending
             .borrow()
@@ -1790,7 +1924,7 @@ impl<'a> Runtime<'a> {
         if let Some(endpoints) = self.pending.borrow().get_created_relationship_endpoints(id) {
             return endpoints;
         }
-        self.g.borrow().get_relationship_endpoints(id)
+        self.graph().get_relationship_endpoints(id)
     }
 
     pub fn get_relationship_type(
@@ -1803,7 +1937,7 @@ impl<'a> Runtime<'a> {
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
             return Some(type_name);
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         g.get_type(g.get_relationship_type_id(id))
     }
 
@@ -1816,7 +1950,7 @@ impl<'a> Runtime<'a> {
         {
             return 0;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let base = g.get_node_indegree(id);
         let pending = self.pending.borrow();
         let added = pending.pending_indegree(id, &[]);
@@ -1834,7 +1968,7 @@ impl<'a> Runtime<'a> {
         {
             return 0;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let base = g.get_node_indegree_by_type(id, types);
         let pending = self.pending.borrow();
         let added = pending.pending_indegree(id, types);
@@ -1851,7 +1985,7 @@ impl<'a> Runtime<'a> {
         {
             return 0;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let base = g.get_node_outdegree(id);
         let pending = self.pending.borrow();
         let added = pending.pending_outdegree(id, &[]);
@@ -1869,7 +2003,7 @@ impl<'a> Runtime<'a> {
         {
             return 0;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let base = g.get_node_outdegree_by_type(id, types);
         let pending = self.pending.borrow();
         let added = pending.pending_outdegree(id, types);

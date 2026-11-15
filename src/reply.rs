@@ -26,10 +26,10 @@ use graph::runtime::{
     runtime::{QueryStatistics, ResultSummary, Runtime},
     value::Value,
 };
-use redis_module::{Context, raw};
 use std::fmt::Write;
 use std::os::raw::c_char;
 use std::sync::Arc;
+use valkey_module::{Context, raw};
 
 /// C's `%f`: Rust's `{:.6}` agrees on every finite value and on `inf` / `-inf`,
 /// but spells NaN `NaN` where C prints `nan`.
@@ -221,12 +221,12 @@ pub fn reply_compact_value(
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
-                    let key = runtime.g.borrow().get_node_attribute_id(key).unwrap();
+                    let key = runtime.graph().get_node_attribute_id(key).unwrap();
                     raw::reply_with_long_long(ctx.ctx, key as _);
                     reply_compact_value(ctx, runtime, value);
                 }
             } else {
-                let bg = runtime.g.borrow();
+                let bg = runtime.graph();
                 raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let labels_len = bg
                     .get_node_label_ids(*id)
@@ -256,7 +256,7 @@ pub fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, u64::from(*rel) as _);
             let dr = runtime.deleted_relationships.borrow();
             if let Some(x) = dr.get(rel) {
-                let bg = runtime.g.borrow();
+                let bg = runtime.graph();
                 let type_id = bg.get_type_id(&x.type_name).unwrap();
                 raw::reply_with_long_long(ctx.ctx, usize::from(type_id) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel_src) as _);
@@ -270,7 +270,7 @@ pub fn reply_compact_value(
                 }
                 drop(bg);
             } else {
-                let bg = runtime.g.borrow();
+                let bg = runtime.graph();
                 raw::reply_with_long_long(
                     ctx.ctx,
                     usize::from(bg.get_relationship_type_id(*rel)) as _,
@@ -425,7 +425,7 @@ pub fn reply_verbose_value(
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "labels");
 
-            let bg = runtime.g.borrow();
+            let bg = runtime.graph();
             let dn = runtime.deleted_nodes.borrow();
             if let Some(x) = dn.get(id) {
                 raw::reply_with_array(ctx.ctx, x.labels.len() as _);
@@ -479,17 +479,15 @@ pub fn reply_verbose_value(
             reply_with_str(ctx, "id");
             raw::reply_with_long_long(ctx.ctx, u64::from(*rel) as _);
 
-            let bg = runtime.g.borrow();
+            // Deleted, pending (a `GRAPH.RECORD` trace rendered after an
+            // error before `Commit`) or committed: the runtime's view knows
+            // all three, the committed graph only the last.
+            let type_name = runtime
+                .get_relationship_type(*rel)
+                .unwrap_or_else(|| Arc::new(String::new()));
+            let bg = runtime.graph();
             let dr = runtime.deleted_relationships.borrow();
             let deleted = dr.get(rel);
-            let type_name = deleted.map_or_else(
-                || {
-                    let type_id = bg.get_relationship_type_id(*rel);
-                    bg.get_type(type_id)
-                        .unwrap_or_else(|| Arc::new(String::new()))
-                },
-                |x| x.type_name.clone(),
-            );
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "type");
@@ -637,7 +635,7 @@ fn reply_result<const COMPACT: bool>(
     if runtime.return_names.is_empty() {
         // No RETURN clause — send only stats (matches C FalkorDB behavior).
         raw::reply_with_array(ctx.ctx, 1);
-        reply_stats(ctx, &result.stats, runtime.g.borrow().version);
+        reply_stats(ctx, &result.stats, runtime.graph().version);
         return;
     }
     raw::reply_with_array(ctx.ctx, 3);
@@ -675,7 +673,7 @@ fn reply_result<const COMPACT: bool>(
             }
         }
     }
-    reply_stats(ctx, &result.stats, runtime.g.borrow().version);
+    reply_stats(ctx, &result.stats, runtime.graph().version);
 }
 
 pub fn reply_verbose(
