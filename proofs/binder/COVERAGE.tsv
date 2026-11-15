@@ -43,3 +43,18 @@ graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2680	PROVEN
 graph/src/planner/binder.rs	sorted_scope_vars	2701	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2709	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	838	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)
+graph/src/planner/binder.rs	Scope::get	53	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::contains_key	60	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::insert	67	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::remove	75	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::push_unnamed	83	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::iter	91	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::keys	96	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::values	101	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::into_values	106	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::len	110	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Scope::retain	115	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::define_alias_in_scope	2258	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::lookup_alias	2283	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::resolve_alias	2295	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	denotes	2822	NOT COVERED	(#3302): not modelled yet

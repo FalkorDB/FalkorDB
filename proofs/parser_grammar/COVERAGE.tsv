@@ -114,3 +114,11 @@ graph/src/parser/ast.rs	QueryIR::return_column_names	1431	PROVEN	C.IR returnCols
 graph/src/parser/cypher.rs	Parser::add_pattern_relationship	1378	PROVEN	C.PatternG2 relOk_of (chainA_sound/chainN_sound/aspLoop_sound: a repeated alias fails, so every accepted relationship is fresh, in every clause; #3289), PatternBugs create_named_path_dup_rel_rejected, merge_dup_rel_rejected; C.ExprC2 pcChain (the pattern-comprehension caller keeps the first repeat as the `repeated` flag) with PatComp GPcChain, ClauseBugs pattern_comprehension_repeated_rel_refused
 graph/src/parser/cypher.rs	Parser::parse_relationship_types	3057	PROVEN	C.Pattern typesP / C.ExprC2 spTypes (`:` alone no longer continues, #3300): C.PatternG typesP_sound, typesP_colon_refused, C.ExprC5 spTypes_sound, np_typesP, cn_typesP; PatternBugs type_colon_refused
 graph/src/parser/cypher.rs	Parser::expect_property_after_paren	3409	PROVEN	C.Clauses expectDotP (inside targetP): C.ClausesG2 targetP_sound (GTarget.paren needs `.` after the `)`), Clauses.set_paren_needs_dot, ClauseBugs set_paren_target_refused (#3300)
+graph/src/parser/ast.rs	Alias::name	97	NOT COVERED	(#3302): not modelled yet
+graph/src/parser/ast.rs	Alias::from	106	NOT COVERED	(#3302): not modelled yet
+graph/src/parser/ast.rs	Alias::fmt	112	NOT COVERED	(#3302): not modelled yet
+graph/src/parser/ast.rs	write_anon	125	NOT COVERED	(#3302): not modelled yet
+graph/src/parser/ast.rs	Variable::is_unnamed	209	NOT COVERED	(#3302): not modelled yet
+graph/src/parser/ast.rs	QueryRelationship::new	706	NOT COVERED	(#3302): not modelled yet
+graph/src/parser/cypher.rs	Parser::next_unnamed	3065	NOT COVERED	(#3302): not modelled yet
+graph/src/parser/cypher.rs	Parser::parse_alias_or_unnamed	3072	NOT COVERED	(#3302): not modelled yet
