@@ -639,6 +639,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         try:
             g.delete()
         except ResponseError:
+            # the graph does not exist yet on a fresh server
             pass
         g.query("""CREATE (a:N {id: 0})-[:R {w: 1}]->(b:N {id: 1}),
                           (b)-[:R {w: 2}]->(c:N {id: 2}),
