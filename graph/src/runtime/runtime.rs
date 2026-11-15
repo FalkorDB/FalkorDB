@@ -463,28 +463,6 @@ fn last_id_le(f: f64) -> i128 {
     first_id_where(|x| x > f) - 1
 }
 
-#[cfg(test)]
-mod id_bound_tests {
-    use super::{first_id_ge, last_id_le};
-
-    #[test]
-    fn float_bounds_follow_the_f64_cast_of_the_id() {
-        // Below 2^53 the cast is exact: plain ceil / floor.
-        assert_eq!((first_id_ge(1.5), last_id_le(1.5)), (2, 1));
-        assert_eq!((first_id_ge(-1.5), last_id_le(-1.5)), (-1, -2));
-        assert_eq!((first_id_ge(3.0), last_id_le(3.0)), (3, 3));
-        // 2^53 + 1 rounds to 2^53 (ties to even), so both ids equal 2^53.0.
-        let b = 9_007_199_254_740_992_i128;
-        assert_eq!((first_id_ge(b as f64), last_id_le(b as f64)), (b, b + 1));
-        assert_eq!(((b - 1) as f64 == b as f64), false);
-        // Infinities saturate past every id.
-        assert_eq!(first_id_ge(f64::INFINITY), i128::from(i64::MAX) + 1);
-        assert_eq!(last_id_le(f64::INFINITY), i128::from(i64::MAX));
-        assert_eq!(first_id_ge(f64::NEG_INFINITY), i128::from(i64::MIN));
-        assert_eq!(last_id_le(f64::NEG_INFINITY), i128::from(i64::MIN) - 1);
-    }
-}
-
 impl<'a> Runtime<'a> {
     #[inline]
     pub fn inspect_batch(
@@ -2241,5 +2219,27 @@ pub fn map_to_index_options(
                 ef_runtime,
             })))
         }
+    }
+}
+
+#[cfg(test)]
+mod id_bound_tests {
+    use super::{first_id_ge, last_id_le};
+
+    #[test]
+    fn float_bounds_follow_the_f64_cast_of_the_id() {
+        // Below 2^53 the cast is exact: plain ceil / floor.
+        assert_eq!((first_id_ge(1.5), last_id_le(1.5)), (2, 1));
+        assert_eq!((first_id_ge(-1.5), last_id_le(-1.5)), (-1, -2));
+        assert_eq!((first_id_ge(3.0), last_id_le(3.0)), (3, 3));
+        // 2^53 + 1 rounds to 2^53 (ties to even), so both ids equal 2^53.0.
+        let b = 9_007_199_254_740_992_i128;
+        assert_eq!((first_id_ge(b as f64), last_id_le(b as f64)), (b, b + 1));
+        assert_ne!((b - 1) as f64, b as f64);
+        // Infinities saturate past every id.
+        assert_eq!(first_id_ge(f64::INFINITY), i128::from(i64::MAX) + 1);
+        assert_eq!(last_id_le(f64::INFINITY), i128::from(i64::MAX));
+        assert_eq!(first_id_ge(f64::NEG_INFINITY), i128::from(i64::MIN));
+        assert_eq!(last_id_le(f64::NEG_INFINITY), i128::from(i64::MIN) - 1);
     }
 }
