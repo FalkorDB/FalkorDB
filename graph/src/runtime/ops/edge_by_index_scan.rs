@@ -199,12 +199,17 @@ fn collect_hits(
 ) -> Option<Vec<EdgeHit>> {
     let mut all = Vec::new();
     for (src, dst, edge) in hits {
+        // Checked before each append, so an oversized query is refused without
+        // the vector growing past the budget.
+        if all.len() == max {
+            return None;
+        }
         all.push((src, dst, edge));
         if bidirectional && src != dst {
+            if all.len() == max {
+                return None;
+            }
             all.push((dst, src, edge));
-        }
-        if all.len() > max {
-            return None;
         }
     }
     Some(all)
