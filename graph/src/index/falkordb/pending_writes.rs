@@ -85,8 +85,9 @@ impl IndexChanges {
         self.push(index, label, attr, value, id, true);
     }
 
-    /// Encoded now, so a change holds its key and no `Value`. A list value stages one
-    /// change per numeric element, each into the column's array tree.
+    /// Encoded now, so a change holds its key and no `Value`: a number's encoding or the string
+    /// itself. A list value stages one change per indexed element (a number or a string), each
+    /// into the column's array tree.
     fn push(
         &mut self,
         index: &FalkorDbIndex,
@@ -343,7 +344,9 @@ mod tests {
         assert!(adds.is_empty());
     }
 
-    /// A staged change is a 16-byte key, the id, the kind and the side.
+    /// A staged change is a key (a number's encoding or a string, 16 bytes either way), the id, the
+    /// kind and the side. The key is a [`ColumnKey`], so every staged change, numeric ones
+    /// included, is 8 bytes larger than when a key was a bare `u64`.
     #[test]
     fn a_staged_change_is_32_bytes() {
         assert_eq!(std::mem::size_of::<IndexWrite>(), 32);

@@ -290,10 +290,6 @@ mod tests {
         assert_eq!(describe_predicate(&mixed), "an IN list on `a`");
     }
 
-    /// The ledger's whole value is that the message names the gap. A union is declined for three
-    /// different reasons and they need different work to close — a missing index kind, a member
-    /// kind the union does not serve, or a real cross-column merge — so reporting one as another
-    /// sends the reader after the wrong thing.
     /// A `NULL` operand is answered with no rows, never declined, so a message about a
     /// combination it sits in does not name it as the unindexable value.
     #[test]
@@ -313,6 +309,10 @@ mod tests {
         assert_eq!(describe_predicate(&null_range), "range on `a`");
     }
 
+    /// The ledger's whole value is that the message names the gap. A union is declined for three
+    /// different reasons and they need different work to close — a missing index kind, a member
+    /// kind the union does not serve, or a real cross-column merge — so reporting one as another
+    /// sends the reader after the wrong thing.
     #[test]
     fn a_declined_union_says_which_reason_applies() {
         // A member of a type no kind holds.

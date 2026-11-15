@@ -332,6 +332,11 @@ impl<P: Page, const BRANCH_MAX: usize> PageTree<P, BRANCH_MAX> {
                     // spare slots. Each separator is a full `(key, doc)` pair, not a bare key.
                     *acc += branch.seps.capacity() * std::mem::size_of::<Tuple<P::Key>>()
                         + branch.children.capacity() * std::mem::size_of::<Node<P, BRANCH_MAX>>();
+                    *acc += branch
+                        .seps
+                        .iter()
+                        .map(|(key, _)| P::key_heap_bytes(key))
+                        .sum::<usize>();
                     branch.children.iter().for_each(|c| walk(c, acc));
                 }
             }

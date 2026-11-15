@@ -86,6 +86,8 @@ pub struct DistinctIter {
     streams: std::vec::IntoIter<DocIter>,
     current: Option<Box<DocIter>>,
     seen: FxHashSet<u64>,
+    /// Whether a doc is remembered and skipped when a later stream repeats it.
+    dedupe: bool,
 }
 
 impl DistinctIter {
@@ -96,6 +98,16 @@ impl DistinctIter {
             streams: streams.into_iter(),
             current: None,
             seen: FxHashSet::default(),
+            dedupe: true,
+        }
+    }
+
+    /// `streams` read in order and known to hold no doc in common: chained, with nothing retained.
+    #[must_use]
+    pub(super) fn disjoint(streams: Vec<DocIter>) -> Self {
+        Self {
+            dedupe: false,
+            ..Self::new(streams)
         }
     }
 }
@@ -107,7 +119,7 @@ impl Iterator for DistinctIter {
         loop {
             if let Some(current) = self.current.as_mut() {
                 for doc in current.by_ref() {
-                    if self.seen.insert(doc) {
+                    if !self.dedupe || self.seen.insert(doc) {
                         return Some(doc);
                     }
                 }
@@ -375,9 +387,14 @@ impl EncodedTuples {
         key: ColumnKey,
         doc: u64,
     ) {
-        match key {
-            ColumnKey::Encoded(key) => self[kind].push((key, doc)),
-            ColumnKey::Tag(s) => self.tags[Self::tag_slot(kind)].push((s, doc)),
+        match (kind, key) {
+            (KeyKind::Scalar | KeyKind::Array, ColumnKey::Encoded(key)) => {
+                self[kind].push((key, doc));
+            }
+            (KeyKind::Tag | KeyKind::TagArray, ColumnKey::Tag(s)) => {
+                self.tags[Self::tag_slot(kind)].push((s, doc));
+            }
+            _ => unreachable!("a key of the kind's own type"),
         }
     }
 
