@@ -7,9 +7,9 @@ graph/src/graph/graph.rs	from	245	PROVEN	Accessors.nodeId_roundtrip
 graph/src/graph/graph.rs	from	251	PROVEN	Accessors.nodeId_roundtrip (RelId)
 graph/src/graph/graph.rs	from	257	PROVEN	Accessors.nodeId_roundtrip (RelId)
 graph/src/graph/graph.rs	new	264	PROVEN	Accessors.planNew_spec
-graph/src/graph/graph.rs	from	400	PROVEN	Accessors.nodeOpErrorOf_spec
-graph/src/graph/graph.rs	populate_index	560	PROVEN	Index.populateStart_spec
-graph/src/graph/graph.rs	populate_index_batch	594	PROVEN	see proofs/search_concurrency Tickets.batch
+graph/src/graph/graph.rs	from	400	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Accessors.nodeOpErrorOf_spec)
+graph/src/graph/graph.rs	populate_index	560	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Index.populateStart_spec)
+graph/src/graph/graph.rs	populate_index_batch	594	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: see proofs/search_concurrency Tickets.batch)
 graph/src/graph/graph.rs	drop_index_bg	813	PROVEN	Index.dropBg_spec
 graph/src/graph/graph.rs	grow_cap	860	PROVEN	Schema.growCap/growStep: growCap_ge_needed (needed <= GrB_INDEX_MAX), growCap_le_max, growCap_reaches, growCap_ge_cap, growCap_noop, growCap_chunked, growStep_small (#2911 checked/clamped step; total)
 graph/src/graph/graph.rs	new	905	PROVEN	Ids.newG_spec
@@ -131,7 +131,7 @@ graph/src/graph/graph.rs	get_relationship_attrs	3639	PROVEN	Accessors.getRelAttr
 graph/src/graph/graph.rs	get_relationship_all_attrs	3647	PROVEN	Accessors.getRelAttrs_eq
 graph/src/graph/graph.rs	get_relationship_all_attrs_by_id	3654	PROVEN	Accessors.getRelAttrCount_eq
 graph/src/graph/graph.rs	get_relationship_attr_count	3663	PROVEN	Accessors.getRelAttrCount_eq
-graph/src/graph/graph.rs	create_index	3670	PROVEN	Index.createIndex_node_spec
+graph/src/graph/graph.rs	create_index	3670	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Index.createIndex_node_spec)
 graph/src/graph/graph.rs	create_index_sync	3717	PROVEN	Index.createIndex_node_spec (same state effect, no spawn)
 graph/src/graph/graph.rs	populate_indexes_sync	3764	PROVEN	Index.syncDocs_mem
 graph/src/graph/graph.rs	index_locks	3869	AXIOMATISED	clones of the indexers' parking_lot mutexes
@@ -141,7 +141,7 @@ graph/src/graph/graph.rs	commit_index_locked	3944	PROVEN	Index.commitDocs_every_
 graph/src/graph/graph.rs	commit_edge_index	3954	PROVEN	Index.commitEdgeDocs_mem (takes lock)
 graph/src/graph/graph.rs	commit_edge_index_locked	3966	PROVEN	Index.commitEdgeDocs_mem
 graph/src/graph/graph.rs	commit_index_kind	4047	PROVEN	Index.commitDocs_noop, commitDocs_every_id
-graph/src/graph/graph.rs	drop_index	4094	PROVEN	Index.dropIndex_protects, Index.dropIndex_none_noattr, Constraints.drop_blocked
+graph/src/graph/graph.rs	drop_index	4094	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Index.dropIndex_protects, Index.dropIndex_none_noattr, Constraints.drop_blocked)
 graph/src/graph/graph.rs	is_indexed	4192	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
 graph/src/graph/graph.rs	get_indexed_nodes	4205	AXIOMATISED	RediSearch Indexer::query, ids wrapped (Accessors.nodeId_roundtrip)
 graph/src/graph/graph.rs	is_edge_indexed	4291	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
@@ -167,7 +167,7 @@ graph/src/graph/graph.rs	validate_unique_constraint	4796	PROVEN	see proofs/graph
 graph/src/graph/graph.rs	build_composite_key	4851	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
 graph/src/graph/graph.rs	drop_constraint	4869	PROVEN	Constraints.dropC_length, swapRemove_length
 graph/src/graph/graph.rs	has_supporting_index	4892	PROVEN	Constraints.hasSupporting_nil
-graph/src/graph/graph.rs	constraint_depends_on_index	4911	PROVEN	Constraints.drop_blocked
+graph/src/graph/graph.rs	constraint_depends_on_index	4911	NOT COVERED	(#3023): not modelled yet (body changed; was PROVEN: Constraints.drop_blocked)
 graph/src/graph/graph.rs	cancel_indexing	4930	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
 graph/src/graph/graph.rs	set_indexer_graph	4938	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
 graph/src/graph/graph.rs	build_adjacency_matrix	4950	PROVEN	Queries.adjMatrix_single
@@ -201,3 +201,9 @@ graph/src/graph/graph.rs	edge_has_type_id	1332	PROVEN	Schema.edgeHasTypeId_iff (
 # Online index build (#2355): fns the background builder added, not modelled yet.
 graph/src/graph/graph.rs	Graph::add_native_build	4510	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/graph/graph.rs	Graph::native_build_total	4546	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/graph/graph.rs	create_index_populated_at	3713	NOT COVERED	(#3023): not modelled yet
+graph/src/graph/graph.rs	drop_target_attrs	4161	NOT COVERED	(#3023): not modelled yet
+graph/src/graph/graph.rs	index_drop_blocked_by_constraint	4187	NOT COVERED	(#3023): not modelled yet
+graph/src/graph/graph.rs	drop_index_populated_at	4201	NOT COVERED	(#3023): not modelled yet
+graph/src/graph/graph.rs	drop_index_unchecked	4220	NOT COVERED	(#3023): not modelled yet
+graph/src/graph/graph.rs	repopulate_abandoned_index	5041	NOT COVERED	(#3023): not modelled yet
