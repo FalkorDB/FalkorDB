@@ -158,7 +158,8 @@ class testReduce():
         self.env.assertEqual(self.graph.query(q).result_set, [[1]])
 
         # the shadowed form is still a non-boolean expression in a WHERE
-        # clause, so it must be rejected rather than evaluated
+        # clause, so it must be rejected; the subscript is type-checked at
+        # runtime, as in C (https://github.com/FalkorDB/FalkorDB/issues/3261)
         self.graph.query("CREATE (:Node)")
         q = """MATCH (n)
                WHERE [x IN [0] | reduce(s=0, x IN [0] | s + reduce(s=0, x IN [0] | s + 1))][0]
@@ -167,7 +168,7 @@ class testReduce():
             self.graph.query(q)
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Expected boolean predicate", str(e))
+            self.env.assertContains("Type mismatch: expected Boolean but was Integer", str(e))
 
         # the server survived and the outer scope is uncorrupted
         self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
