@@ -115,6 +115,22 @@ impl UdfRepo {
             ));
         }
 
+        // As in C, a qualified name may not be claimed by two libraries, compared
+        // ignoring case: `Lib.f` vs `lib.f`, or library `a` registering `b.c`
+        // vs library `a.b` registering `c`. Calls are still case-sensitive.
+        if let Some(taken) = qualified_names.iter().find(|q| {
+            inner
+                .libraries
+                .iter()
+                .filter(|lib| lib.name != name)
+                .flat_map(|lib| &lib.function_names)
+                .any(|other| other.eq_ignore_ascii_case(q))
+        }) {
+            return Err(format!(
+                "Failed to register UDF library '{name}': function '{taken}' already registered"
+            ));
+        }
+
         // If replacing, remove old library first
         if let Some(pos) = existing_pos {
             let old_lib = inner.libraries.remove(pos);

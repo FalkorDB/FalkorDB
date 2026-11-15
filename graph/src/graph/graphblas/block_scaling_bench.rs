@@ -68,7 +68,7 @@ fn spread(blocks: u64) -> Tensor {
 /// Reported per *transaction*, not per pair, because that is the quantity the
 /// block loop makes proportional to block count.
 #[test]
-#[ignore]
+#[ignore = "benchmark; run with --ignored"]
 fn block_scaling_zero_cost() {
     ensure_init();
     println!("\n=== block (0,0) only, {PAIRS} multi-edge pairs ===");
@@ -97,7 +97,7 @@ fn block_scaling_zero_cost() {
 
 /// The case the design trades away: the same pairs spread thinner and thinner.
 #[test]
-#[ignore]
+#[ignore = "benchmark; run with --ignored"]
 fn block_scaling_crossover() {
     ensure_init();
     println!("\n=== {PAIRS} multi-edge pairs spread over N blocks ===");
@@ -149,13 +149,14 @@ fn block_scaling_crossover() {
 /// widths GraphBLAS actually picked so the numbers are attributable rather than
 /// inferred.
 #[test]
-#[ignore]
+#[ignore = "benchmark; run with --ignored"]
 fn block_scaling_index_width() {
     use super::matrix::Matrix;
 
-    ensure_init();
     const IDS: u64 = 200_000;
     const ROWS: u64 = 20_000;
+
+    ensure_init();
     let max = super::tensor::GrB_INDEX_MAX;
     println!(
         "global 32-bit hint set: {:?}",
@@ -210,7 +211,7 @@ fn block_scaling_index_width() {
 
 /// Probe: is the top row key writable, and is a wider dimension legal?
 #[test]
-#[ignore]
+#[ignore = "benchmark; run with --ignored"]
 fn block_scaling_top_row_probe() {
     use super::matrix::Matrix;
     use super::tensor::{BLOCK_SHIFT, GrB_INDEX_MAX, Tensor, compound_key};
