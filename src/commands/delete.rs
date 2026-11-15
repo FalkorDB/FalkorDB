@@ -27,19 +27,19 @@
 use crate::{
     commands::EMPTY_KEY_ERR,
     graph_core::{ThreadedGraph, c_graph_name},
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
     telemetry,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString};
 use std::sync::Arc;
+use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString};
 
 pub fn graph_delete(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     if args.len() != 2 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     let mut args = args.into_iter().skip(1);
@@ -49,7 +49,8 @@ pub fn graph_delete(
     let key_name = c_graph_name(&key);
     let key = ctx.open_key_writable(&key);
     if key
-        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
         .is_some()
     {
         // Delete the telemetry stream before removing the graph key.
