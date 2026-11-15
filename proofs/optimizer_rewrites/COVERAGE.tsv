@@ -80,3 +80,7 @@ graph/src/graph/graphblas/me_delta_bench.rs	per_op	43	NOT COVERED	TEST-ONLY: ben
 graph/src/graph/graphblas/me_delta_bench.rs	committed_multi	58	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_step	84	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_attach_vs_seek	140	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
+graph/src/planner/optimizer/reduce_expand_into.rs	starts_plan	94	NOT COVERED	(#3047): not modelled yet
+graph/src/planner/optimizer/reduce_expand_into.rs	branch_root	107	NOT COVERED	(#3047): not modelled yet
+graph/src/planner/optimizer/reduce_expand_into.rs	plan_indices	123	NOT COVERED	(#3047): not modelled yet
+graph/src/planner/optimizer/reduce_expand_into.rs	flag_collapsed_siblings	149	NOT COVERED	(#3047): not modelled yet
