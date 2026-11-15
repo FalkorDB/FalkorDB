@@ -27,12 +27,12 @@ graph/src/runtime/ops/mod.rs	drain_pending	127	PROVEN	ForEach.drainP (used in go
 graph/src/runtime/ops/union.rs	UnionOp::new	43	PROVEN	Union.St initial state in union_drain
 graph/src/runtime/ops/union.rs	UnionOp::store_argument_batch	57	PROVEN	Ctors.storeArg: storeArg_spec
 graph/src/runtime/ops/union.rs	UnionOp::next	68	PROVEN	Union.next; next_spec; drain_eq; union_drain; stream_all_ok; next_none_stays
-graph/src/runtime/batch.rs	Batch::clone_active_rows_seq_origin	1168	MODELLED	Correlated.tag (sequential origins; n<=1 sidecar omission equals tag 0)
-graph/src/runtime/batch.rs	Batch::merge_over_input	942	MODELLED	Correlated.applyBatched (abstract merge x y); column-level is_bound_at(id,0) test not modelled
-graph/src/runtime/batch.rs	Batch::origin_row	1303	MODELLED	Correlated.SubPlan origin tag
-graph/src/runtime/batch.rs	Batch::gather	896	MODELLED	Correlated.optionalBatched fallback (gather by unmatched origins)
-graph/src/runtime/batch.rs	BatchRow::to_owned_row	1437	MODELLED	MergeSlot.Row.ofCells (value_only column -> stored but unbound); BUGs #3368/#3369 fixed for the filed repro by #3050 (bug3368_filed_repro_fixed_by_3050; residual same_op_leftover_shares_entry); no general theorem
-graph/src/runtime/batch.rs	BatchOp::set_argument_batch	1601	AXIOMATISED	Correlated.Separable is a hypothesis on the sub-plan (not an axiom): argument leaves + per-row ops; ValueHashJoin arm shown non-separable (vhj_not_separable)
+graph/src/runtime/batch.rs	Batch::clone_active_rows_seq_origin	1170	MODELLED	Correlated.tag (sequential origins; n<=1 sidecar omission equals tag 0)
+graph/src/runtime/batch.rs	Batch::merge_over_input	944	MODELLED	Correlated.applyBatched (abstract merge x y); column-level is_bound_at(id,0) test not modelled
+graph/src/runtime/batch.rs	Batch::origin_row	1305	MODELLED	Correlated.SubPlan origin tag
+graph/src/runtime/batch.rs	Batch::gather	898	MODELLED	Correlated.optionalBatched fallback (gather by unmatched origins)
+graph/src/runtime/batch.rs	BatchRow::to_owned_row	1439	MODELLED	MergeSlot.Row.ofCells (value_only column -> stored but unbound); BUGs #3368/#3369 fixed for the filed repro by #3050 (bug3368_filed_repro_fixed_by_3050; residual same_op_leftover_shares_entry); no general theorem
+graph/src/runtime/batch.rs	BatchOp::set_argument_batch	1603	AXIOMATISED	Correlated.Separable is a hypothesis on the sub-plan (not an axiom): argument leaves + per-row ops; ValueHashJoin arm shown non-separable (vhj_not_separable)
 graph/src/runtime/ops/create.rs	build_attr_template	55	PROVEN	CreateAttrs.tplSet/tplBuild/rank: tplBuild_nodup, tplSet_ids, tplSet_lookup, tplBuild_lookup, rank_strict, rank_lt
 graph/src/runtime/ops/create.rs	resolve_map_attrs	84	PROVEN	CreateAttrs.resolveMap: resolveMap_spec
 graph/src/runtime/ops/create.rs	new	102	PROVEN	CreateBatch.CreateSt.new: createNew_spec

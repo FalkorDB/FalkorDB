@@ -38,50 +38,50 @@ graph/src/runtime/functions/algo_procedures.rs	register_cdlp	1253	PROVEN	AlgoBfs
 graph/src/runtime/functions/algo_procedures.rs	algo_cdlp	1258	PROVEN	Compact.wcc_rows_eq_spec (same assembly through compact_to_original, #3032), Config.maxIterations_wraps_to_zero; Compact.checkKnown_ok_iff (unknown label/type errors, #3058)
 graph/src/runtime/functions/algo_procedures.rs	register_msf	1372	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMsf; cypher_fn! procedure arm functions/mod.rs:328-352)
 graph/src/runtime/functions/algo_procedures.rs	algo_msf	1377	PROVEN	MsfFlow.keepMin_*, msf_dense_no_fallback, msf_fallback_key_space_mixed, compactOf_eq, denseTable_len (id map, #3586); GraphBLAS build/extract/LAGraph_msf AXIOMATISED
-graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1992	PROVEN	Config.maxLen_wraps, maxLen_small, pathCount
-graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2078	PROVEN	PathDispatch.parseSp_ok, parseSp_missing, parseSp_not_node
-graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2114	PROVEN	PathDispatch.parseSs_ok, parseSs_missing
-graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2133	PROVEN	PathDispatch.toNumeric_nat, toNumeric_neg_zero, toNumeric_nonfinite
-graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2155	PROVEN	AlgoGlue.cmp_found_path_strict (= Dfs.fpLt), DfsResult.fpLt_trans; Paths.lt
-graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2167	PROVEN	Paths.cost_agree, cost_no_prop_hops, cost_default_agrees, dijkstra_cost_no_prop, dijkstra_cost_configured (W2-traverse-5 fixed by #3113 8a66c01e5); CostProp.edgeNumericAttr, fastpath_missing_cost_one, fast_eq_enum (#3121 fixed by #3580)
-graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2184	PROVEN	Paths.far_outgoing, far_incoming, far_both
-graph/src/runtime/functions/algo_procedures.rs	node_successors	2216	PROVEN	Graph.mem_succs, succs_map_fst_sublist
-graph/src/runtime/functions/algo_procedures.rs	cmp	2251	PROVEN	Dijkstra.itemCmp_gt, itemCmp_max_min_weight (BinaryHeap pops a minimum weight)
-graph/src/runtime/functions/algo_procedures.rs	partial_cmp	2266	PROVEN	Dijkstra.itemPartialCmp_total (Some(cmp))
-graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2282	PROVEN	Dijkstra.dijkstra_correct (sound, optimal, complete, no panic), dijkstra_terminates; reported cost: CostProp.fastpath_missing_cost_one, Paths.dijkstra_cost_configured (missing_cost 1 when costProp configured, #3121 fixed by #3580)
-graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2388	PROVEN	BfsBound.bfs_sound, bfs_complete, bfs_src_eq_tgt
-graph/src/runtime/functions/algo_procedures.rs	record_found_path	2473	PROVEN	Paths.recordK_length, record1_min, record0_ties; Dfs.recordB_mem, recordB_bound, recordB_length; DfsResult.k1_step, k0_step
-graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2537	PROVEN	DfsSound.dfs_sound, dfs_no_panic; DfsExplore.explore; DfsResult.dfs_complete, dfs_k1, dfs_k0 (bound monotonicity proven for pathCount 0/1, hypothesis for >=2)
-graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2641	PROVEN	Paths.nextNode_far
-graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2672	PROVEN	PathDispatch.plan_dijkstra_iff, bfs_none_sound; PathSeed.bfs_seed_keeps_answer_k1/_k0; Paths.dijkstra_never_src_eq_dst
-graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2723	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSp; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2728	PROVEN	PathDispatch.algoSp_spec
-graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2735	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2740	PROVEN	PathDispatch.algoSs_spec
-graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2749	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2754	PROVEN	Compact.harmonic_complete, unfiltered_keeps_high_ids (#3044 fixed by #3045: source vector sized node_id_bound); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
-graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2918	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2923	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1989	PROVEN	Config.maxLen_wraps, maxLen_small, pathCount
+graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2075	PROVEN	PathDispatch.parseSp_ok, parseSp_missing, parseSp_not_node
+graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2111	PROVEN	PathDispatch.parseSs_ok, parseSs_missing
+graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2130	PROVEN	PathDispatch.toNumeric_nat, toNumeric_neg_zero, toNumeric_nonfinite
+graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2152	PROVEN	AlgoGlue.cmp_found_path_strict (= Dfs.fpLt), DfsResult.fpLt_trans; Paths.lt
+graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2164	PROVEN	Paths.cost_agree, cost_no_prop_hops, cost_default_agrees, dijkstra_cost_no_prop, dijkstra_cost_configured (W2-traverse-5 fixed by #3113 8a66c01e5); CostProp.edgeNumericAttr, fastpath_missing_cost_one, fast_eq_enum (#3121 fixed by #3580)
+graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2181	PROVEN	Paths.far_outgoing, far_incoming, far_both
+graph/src/runtime/functions/algo_procedures.rs	node_successors	2213	PROVEN	Graph.mem_succs, succs_map_fst_sublist
+graph/src/runtime/functions/algo_procedures.rs	cmp	2248	PROVEN	Dijkstra.itemCmp_gt, itemCmp_max_min_weight (BinaryHeap pops a minimum weight)
+graph/src/runtime/functions/algo_procedures.rs	partial_cmp	2263	PROVEN	Dijkstra.itemPartialCmp_total (Some(cmp))
+graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2279	PROVEN	Dijkstra.dijkstra_correct (sound, optimal, complete, no panic), dijkstra_terminates; reported cost: CostProp.fastpath_missing_cost_one, Paths.dijkstra_cost_configured (missing_cost 1 when costProp configured, #3121 fixed by #3580)
+graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2385	PROVEN	BfsBound.bfs_sound, bfs_complete, bfs_src_eq_tgt
+graph/src/runtime/functions/algo_procedures.rs	record_found_path	2470	PROVEN	Paths.recordK_length, record1_min, record0_ties; Dfs.recordB_mem, recordB_bound, recordB_length; DfsResult.k1_step, k0_step
+graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2534	PROVEN	DfsSound.dfs_sound, dfs_no_panic; DfsExplore.explore; DfsResult.dfs_complete, dfs_k1, dfs_k0 (bound monotonicity proven for pathCount 0/1, hypothesis for >=2)
+graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2638	PROVEN	Paths.nextNode_far
+graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2669	PROVEN	PathDispatch.plan_dijkstra_iff, bfs_none_sound; PathSeed.bfs_seed_keeps_answer_k1/_k0; Paths.dijkstra_never_src_eq_dst
+graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2720	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSp; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2725	PROVEN	PathDispatch.algoSp_spec
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2732	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2737	PROVEN	PathDispatch.algoSs_spec
+graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2746	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2751	PROVEN	Compact.harmonic_complete, unfiltered_keeps_high_ids (#3044 fixed by #3045: source vector sized node_id_bound); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
+graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2915	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2920	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
 graph/src/udf/js_classes.rs	with_graph	75	NOT COVERED	lends the graph for one UDF call and puts back the one lent before (set, then restore on drop), where set_current_graph/clear_current_graph set and cleared it; not modelled yet. Those were PROVEN: UdfClasses.withGraph_set, withGraph_clear
 graph/src/udf/js_classes.rs	drop	82	NOT COVERED	with_graph's restore guard: puts back the graph lent before; not modelled yet
 graph/src/udf/js_classes.rs	with_current_graph	90	PROVEN	UdfClasses.withGraph_set, withGraph_clear
 graph/src/udf/js_classes.rs	collect_edges	103	PROVEN	Neighbors.outgoing_ok, self_loop_twice
 graph/src/udf/js_classes.rs	create_js_node	140	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode, rs_runtime_first, RT.not_differs, jsNode_eq_helpers (fixed by #3464: runtime-first through node_differs_from_committed)
-graph/src/udf/js_classes.rs	set_node_labels	208	PROVEN	UdfNodeView.setNodeLabels, jsNode_eq_helpers, jsNode_labels (QuickJS array/object set AXIOMATISED)
-graph/src/udf/js_classes.rs	set_node_attrs	225	PROVEN	UdfNodeView.setNodeAttrs, jsNode_eq_helpers (UdfClasses.attrLoop: reserved keys not copied; QuickJS object set AXIOMATISED)
-graph/src/udf/js_classes.rs	create_js_edge	251	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node with runtime: UdfNodeView.rs_edge_ok, fixed3454_edge_source (fixed by #3464)
-graph/src/udf/js_classes.rs	create_js_path	326	PROVEN	UdfClasses.jsPath_length
-graph/src/udf/js_classes.rs	js_get_neighbors_entry	386	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
-graph/src/udf/js_classes.rs	js_get_neighbors	405	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes
-graph/src/udf/js_classes.rs	throw_js_error	534	PROVEN	UdfClasses.entryErr_spec (throwJs)
-graph/src/udf/js_classes.rs	js_get_node_by_id	546	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects, entryErr_spec
-graph/src/udf/js_classes.rs	js_get_node_by_id_impl	553	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects
-graph/src/udf/js_classes.rs	js_iterate_nodes	590	PROVEN	UdfClasses.iterNodes_all, iter_errors
-graph/src/udf/js_classes.rs	js_iterate_nodes_impl	597	PROVEN	UdfClasses.iterNodes_all, iter_errors (label-matrix scan AXIOMATISED)
-graph/src/udf/js_classes.rs	js_iterate_edges	644	PROVEN	UdfClasses.iter_errors
-graph/src/udf/js_classes.rs	js_iterate_edges_impl	651	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
-graph/src/udf/js_classes.rs	js_traverse	693	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
-graph/src/udf/js_classes.rs	js_traverse_impl	711	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
+graph/src/udf/js_classes.rs	set_node_labels	207	PROVEN	UdfNodeView.setNodeLabels, jsNode_eq_helpers, jsNode_labels (QuickJS array/object set AXIOMATISED)
+graph/src/udf/js_classes.rs	set_node_attrs	224	PROVEN	UdfNodeView.setNodeAttrs, jsNode_eq_helpers (UdfClasses.attrLoop: reserved keys not copied; QuickJS object set AXIOMATISED)
+graph/src/udf/js_classes.rs	create_js_edge	250	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node with runtime: UdfNodeView.rs_edge_ok, fixed3454_edge_source (fixed by #3464)
+graph/src/udf/js_classes.rs	create_js_path	325	PROVEN	UdfClasses.jsPath_length
+graph/src/udf/js_classes.rs	js_get_neighbors_entry	385	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
+graph/src/udf/js_classes.rs	js_get_neighbors	404	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes
+graph/src/udf/js_classes.rs	throw_js_error	531	PROVEN	UdfClasses.entryErr_spec (throwJs)
+graph/src/udf/js_classes.rs	js_get_node_by_id	543	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects, entryErr_spec
+graph/src/udf/js_classes.rs	js_get_node_by_id_impl	550	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects
+graph/src/udf/js_classes.rs	js_iterate_nodes	587	PROVEN	UdfClasses.iterNodes_all, iter_errors
+graph/src/udf/js_classes.rs	js_iterate_nodes_impl	592	PROVEN	UdfClasses.iterNodes_all, iter_errors (label-matrix scan AXIOMATISED)
+graph/src/udf/js_classes.rs	js_iterate_edges	642	PROVEN	UdfClasses.iter_errors
+graph/src/udf/js_classes.rs	js_iterate_edges_impl	649	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
+graph/src/udf/js_classes.rs	js_traverse	694	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
+graph/src/udf/js_classes.rs	js_traverse_impl	712	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
 graph/src/udf/js_context.rs	caught_error_message	70	PROVEN	UdfContext.norm_example, norm_quoted, norm_other, norm_idem_example, errMsg_name, errMsg_plain_error
 graph/src/udf/js_context.rs	compute_effective_js_timeout_ms	130	PROVEN	UdfContext.effTimeout_bounds, effTimeout_spec
 graph/src/udf/js_context.rs	validate_script	154	PROVEN	UdfContext.validateScript_spec, validateTimeout_bounds (QuickJS eval AXIOMATISED oracle)

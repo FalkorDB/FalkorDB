@@ -1201,14 +1201,14 @@ graph/src/graph/graphblas/lagraphx_bindings.rs	LAGr_BreadthFirstSearch_Extended	
 graph/src/graph/graphblas/lagraphx_bindings.rs	LAGraph_coloring_independent_set	596	AXIOMATISED	bindgen extern decl (LAGraphX C API); called from algo procedures, outside this project
 graph/src/graph/graphblas/lagraphx_bindings.rs	LAGraph_coloring_MIS	603	AXIOMATISED	bindgen extern decl (LAGraphX C API); called from algo procedures, outside this project
 graph/src/graph/graphblas/lagraphx_bindings.rs	LAGr_MaxFlow	610	AXIOMATISED	bindgen extern decl (LAGraphX C API); called from algo procedures, outside this project
-graph/src/graph/graphblas/tensor.rs	resize	825	PROVEN	Misc.resize_clamp_grownOk / resize_clamp_not_shrink (#3250 clamp: grown precondition always holds)
-graph/src/graph/graphblas/tensor.rs	edge_count	1248	PROVEN	Decode.edgeCount_no_panic / edgeCount_value (checked u64 adds and subs, under Wf incl. the two u64 bounds; also VM count_correct)
-graph/src/graph/graphblas/tensor.rs	iter_edges	1310	PROVEN	Misc.iterEdges (filter-then-chain, singles then every me id): iterEdges_count/iterEdges_length (same ids as iterExpand), iterEdges_all_single; order differs from the per-pair Iter::next once a MULTI_EDGE pair precedes a single
-graph/src/graph/graphblas/tensor.rs	iter	1327	PROVEN	Misc.iterExpand_eq_flatMap
-graph/src/graph/graphblas/tensor.rs	decode	1585	PROVEN	Decode.checkLayers_ok_iff / checkLayers_merge_in_bounds (#2996 layer sizes); Codes.decodeBlob_never_dies; #3033 promotion completeness: Decode.decodeCheck_ok_iff / decodeCheck_refuses_incomplete / decodeCheck_ok_complete / decodeCheck_ok_edgeCount_no_panic / decodeCheck_accepts_encoded
-graph/src/graph/graphblas/tensor.rs	next	1731	PROVEN	Misc.expand (EdgeIds = inline or me row)
-graph/src/graph/graphblas/tensor.rs	next	1815	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_length
-graph/src/graph/graphblas/tensor.rs	Tensor::effective_fwd	1060	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/tensor.rs	resize	823	PROVEN	Misc.resize_clamp_grownOk / resize_clamp_not_shrink (#3250 clamp: grown precondition always holds)
+graph/src/graph/graphblas/tensor.rs	edge_count	1246	PROVEN	Decode.edgeCount_no_panic / edgeCount_value (checked u64 adds and subs, under Wf incl. the two u64 bounds; also VM count_correct)
+graph/src/graph/graphblas/tensor.rs	iter_edges	1308	PROVEN	Misc.iterEdges (filter-then-chain, singles then every me id): iterEdges_count/iterEdges_length (same ids as iterExpand), iterEdges_all_single; order differs from the per-pair Iter::next once a MULTI_EDGE pair precedes a single
+graph/src/graph/graphblas/tensor.rs	iter	1325	PROVEN	Misc.iterExpand_eq_flatMap
+graph/src/graph/graphblas/tensor.rs	decode	1582	PROVEN	Decode.checkLayers_ok_iff / checkLayers_merge_in_bounds (#2996 layer sizes); Codes.decodeBlob_never_dies; #3033 promotion completeness: Decode.decodeCheck_ok_iff / decodeCheck_refuses_incomplete / decodeCheck_ok_complete / decodeCheck_ok_edgeCount_no_panic / decodeCheck_accepts_encoded
+graph/src/graph/graphblas/tensor.rs	next	1726	PROVEN	Misc.expand (EdgeIds = inline or me row)
+graph/src/graph/graphblas/tensor.rs	next	1810	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_length
+graph/src/graph/graphblas/tensor.rs	Tensor::effective_fwd	1058	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
 graph/src/graph/graphblas/serialization.rs	encode	34	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
 graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	GBWSerial.encodeWithRangeDefault: defaults_panic
 graph/src/graph/graphblas/serialization.rs	decode	64	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)

@@ -55,16 +55,16 @@ graph/src/runtime/value.rs	Contains::contains	1870	PROVEN	Glue.Contains class / 
 graph/src/runtime/value.rs	Contains::contains	1877	NOT COVERED	IN-list membership; not modelled here
 graph/src/runtime/value.rs	PartialOrd::partial_cmp	1902	NOT COVERED	thin wrapper over compare_value (null -> None); wrapper itself not modelled
 graph/src/runtime/value.rs	compare_floats	1915	PROVEN	cmpF: nan_breaks_antisymmetry; extended F (NaN payload, -0.0, fractions, ±inf) via fpcmp
-graph/src/runtime/value.rs	compare_vecf32	2003	MODELLED	cmpVec (length, then first_difference): vec_zero_eq_but_hash_differs; proven in value_math (chunked_eq_firstDiff)
-graph/src/runtime/value.rs	first_difference	2007	MODELLED	firstDifference: vec_zero_eq_but_hash_differs; proven in value_math
-graph/src/runtime/value.rs	ValuesDeduper::with_capacity	2045	PROVEN	Glue.withCapacity/checkAndInsert: withCapacity_first_then_seen, withCapacity_seen_iff
-graph/src/runtime/value.rs	ValuesDeduper::is_seen	2055	PROVEN	sliceHash: fx_row_collision (bug: distinct lists collide), fx_collision_general
-graph/src/runtime/value.rs	ValuesDeduper::has_hash	2066	NOT COVERED	hash-set membership not modelled (only the hash stream is)
-graph/src/runtime/value.rs	ValuesDeduper::check_and_insert_hash	2073	NOT COVERED	hash-set membership not modelled (only the hash stream is)
-graph/src/runtime/value.rs	Encode::encode	2085	NOT COVERED	serialisation; outside the order model
-graph/src/runtime/value.rs	Decode::decode	2171	NOT COVERED	serialisation; outside the order model
+graph/src/runtime/value.rs	compare_vecf32	2001	MODELLED	cmpVec (length, then first_difference): vec_zero_eq_but_hash_differs; proven in value_math (chunked_eq_firstDiff)
+graph/src/runtime/value.rs	first_difference	2005	MODELLED	firstDifference: vec_zero_eq_but_hash_differs; proven in value_math
+graph/src/runtime/value.rs	ValuesDeduper::with_capacity	2043	PROVEN	Glue.withCapacity/checkAndInsert: withCapacity_first_then_seen, withCapacity_seen_iff
+graph/src/runtime/value.rs	ValuesDeduper::is_seen	2053	PROVEN	sliceHash: fx_row_collision (bug: distinct lists collide), fx_collision_general
+graph/src/runtime/value.rs	ValuesDeduper::has_hash	2064	NOT COVERED	hash-set membership not modelled (only the hash stream is)
+graph/src/runtime/value.rs	ValuesDeduper::check_and_insert_hash	2071	NOT COVERED	hash-set membership not modelled (only the hash stream is)
+graph/src/runtime/value.rs	Encode::encode	2083	NOT COVERED	serialisation; outside the order model
+graph/src/runtime/value.rs	Decode::decode	2169	NOT COVERED	serialisation; outside the order model
 graph/src/runtime/ops/sort.rs	OrderedKey::cmp_key	76	PROVEN	Main.cmpKey (sort_cmp, DESC = swap; #2912 b033aecc6): Main.cmpKey_total (total preorder either direction)
-graph/src/runtime/batch.rs	Column::compare_at	399	PROVEN	Main.compareAt (Ints cmpI, Floats sort_cmp_f64, Values/ids sort_cmp): Main.compareAt_eq_scMain (every lane = sort_cmp on get), Main.scMain_total
+graph/src/runtime/batch.rs	Column::compare_at	401	PROVEN	Main.compareAt (Ints cmpI, Floats sort_cmp_f64, Values/ids sort_cmp): Main.compareAt_eq_scMain (every lane = sort_cmp on get), Main.scMain_total
 graph/src/runtime/ops/distinct.rs	DistinctOp::next	62	PROVEN	rowHash: fx_row_collision, fx_collision_general (bug: second colliding row dropped); set insert not modelled
 graph/src/runtime/functions/aggregation.rs	min_batch	498	PROVEN	minFold (NaN and null comparisons ignored, #2917): min_nan_ignored, minFold_step_int
 graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	NOT COVERED	op mapping; not modelled
@@ -77,8 +77,8 @@ graph/src/runtime/vectorized.rs	compare_value_column_3vl	280	NOT COVERED	column 
 graph/src/runtime/value.rs	Value::sort_cmp	1569	PROVEN	SC.sc (generic in sort_cmp_f32) = Main.scMain: Main.scMain_total (total preorder on every wf value, nested lists/maps/vectors/points), Main.scMain_fixes_2891, SC.sc_laws
 graph/src/runtime/value.rs	Value::sort_cmp_map	1606	PROVEN	SC.sc map arm (len, sorted keys, values; mapC): SC.map_swap, SC.map_trans, Main.scMain_total, Main.main_hash_consistent
 graph/src/runtime/value.rs	sort_cmp_f64	1931	PROVEN	SC.scF64: SC.scF64_key (NaN on top, -0.0 = 0.0), SC.scF64_lw, SC.scF64_refl
-graph/src/runtime/value.rs	sort_cmp_f32	1945	PROVEN	Main.scF32: Main.scF32_key (-0.0 < 0.0, NaNs equal on top), Main.scF32_lw, Main.signed_zeros_apart, signed_zeros_apart_nested; history pre14e341_vec_zero_eq_but_hash_differs
-graph/src/runtime/value.rs	f32_hash_bits	1959	PROVEN	f32HashBits (Model): Main.f32HashBits_of_eq, Main.main_nans_one_key
-graph/src/runtime/value.rs	sort_cmp_int_float	1971	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
-graph/src/runtime/batch.rs	Batch::compare_rows_at	1287	PROVEN	Main.compareRowsAt: Main.compareRowsAt_eq_scMain (Unbound ties, else sort_cmp)
+graph/src/runtime/value.rs	sort_cmp_f32	1943	PROVEN	Main.scF32: Main.scF32_key (-0.0 < 0.0, NaNs equal on top), Main.scF32_lw, Main.signed_zeros_apart, signed_zeros_apart_nested; history pre14e341_vec_zero_eq_but_hash_differs
+graph/src/runtime/value.rs	f32_hash_bits	1957	PROVEN	f32HashBits (Model): Main.f32HashBits_of_eq, Main.main_nans_one_key
+graph/src/runtime/value.rs	sort_cmp_int_float	1969	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
+graph/src/runtime/batch.rs	Batch::compare_rows_at	1289	PROVEN	Main.compareRowsAt: Main.compareRowsAt_eq_scMain (Unbound ties, else sort_cmp)
 graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Main.listSort (sort_by(Value::sort_cmp)): Main.listSort_perm, Main.listSort_sorted (output pairwise sort_cmp-ordered, well-formed input), Main.scMain_total (total order: W2-strlist-1 panic fixed by #2912)

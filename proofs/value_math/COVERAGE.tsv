@@ -58,16 +58,16 @@ graph/src/runtime/value.rs	contains	1870	NOT COVERED	trait method declaration
 graph/src/runtime/value.rs	contains	1877	PROVEN	proofs/functions_str_list Contains
 graph/src/runtime/value.rs	partial_cmp	1902	PROVEN	partialCmp_null
 graph/src/runtime/value.rs	compare_floats	1915	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
-graph/src/runtime/value.rs	compare_vecf32	2003	PROVEN	chunked_eq_firstDiff
-graph/src/runtime/value.rs	first_difference	2007	PROVEN	firstDiff_append, firstDiff_self
-graph/src/runtime/value.rs	with_capacity	2045	NOT COVERED	constructor
-graph/src/runtime/value.rs	is_seen	2055	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
-graph/src/runtime/value.rs	has_hash	2066	PROVEN	dedup_second_seen
-graph/src/runtime/value.rs	check_and_insert_hash	2073	PROVEN	dedup_second_seen, dedup_first_unseen
+graph/src/runtime/value.rs	compare_vecf32	2001	PROVEN	chunked_eq_firstDiff
+graph/src/runtime/value.rs	first_difference	2005	PROVEN	firstDiff_append, firstDiff_self
+graph/src/runtime/value.rs	with_capacity	2043	NOT COVERED	constructor
+graph/src/runtime/value.rs	is_seen	2053	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
+graph/src/runtime/value.rs	has_hash	2064	PROVEN	dedup_second_seen
+graph/src/runtime/value.rs	check_and_insert_hash	2071	PROVEN	dedup_second_seen, dedup_first_unseen
 graph/src/runtime/value.rs	value_nesting_error	76	PROVEN	Nesting.valueNestingError_text (decoder message; decodeValue_refuses_past_cap, decode_nest_deep); the property validator's own message (`validate_list_property`, "Property values can only be nested up to N levels deep") is a different string and its text is not proved
-graph/src/runtime/value.rs	encode	2085	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
-graph/src/runtime/value.rs	decode	2171	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
-graph/src/runtime/value.rs	decode_value	2183	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
+graph/src/runtime/value.rs	encode	2083	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
+graph/src/runtime/value.rs	decode	2169	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
+graph/src/runtime/value.rs	decode_value	2181	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
 graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
 graph/src/runtime/functions/math.rs	abs	46	PROVEN	abs_agree_except, abs_min_diverges, abs_nzero_diverges, unary_no_panic
 graph/src/runtime/functions/math.rs	ceil	63	PROVEN	int_rounding_identity, unary_no_panic
@@ -131,7 +131,7 @@ graph/src/runtime/functions/mod.rs	register_udf	1131	PROVEN	Registry.registerUdf
 graph/src/runtime/functions/mod.rs	unregister_udf	1142	PROVEN	Registry.unregisterUdf: unregisterUdf_spec, udf_case_sensitive (#3066), version_mono
 graph/src/runtime/functions/mod.rs	flush_udfs	1150	PROVEN	Registry.flushUdfs: flushUdfs_spec, version_mono
 graph/src/runtime/functions/mod.rs	get_udf_functions	1159	PROVEN	Registry.getUdfFunctions: registerUdf_spec, flushUdfs_spec, udf_uninit_noop
-graph/src/runtime/functions/mod.rs	get_functions	1166	PROVEN	Registry.getFunctions: getFunctions_after_init
+graph/src/runtime/functions/mod.rs	get_functions	1165	PROVEN	Registry.getFunctions: getFunctions_after_init
 graph/src/runtime/functions/aggregation.rs	register	49	PROVEN	AggScalar.aggRegistered: aggRegistered_nodup
 graph/src/runtime/functions/aggregation.rs	collect	55	PROVEN	AggScalar.collect: collect_fold
 graph/src/runtime/functions/aggregation.rs	count	77	PROVEN	AggScalar.count: count_fold
@@ -141,9 +141,9 @@ graph/src/runtime/functions/aggregation.rs	avg	166	PROVEN	AggScalar.avg/avgStep:
 graph/src/runtime/functions/aggregation.rs	percentile	230	PROVEN	AggScalar.percentile (#3007: stored only while nothing is collected): percentile_first_row (first non-null row's percentile, as C), percentile_keeps, percentile_collects (#2980 fixed)
 graph/src/runtime/functions/aggregation.rs	stdev	293	PROVEN	AggScalar.stdev: stdev_collects
 graph/src/runtime/functions/aggregation.rs	about_to_overflow	338	PROVEN	AggScalar.aboutToOverflow: avgStep_plain (mode switch) ; #eval vs C in Misc
-graph/src/runtime/functions/aggregation.rs	modf	677	PROVEN	AggScalar.modf: modf_recombine
-graph/src/runtime/functions/aggregation.rs	finalize_stdev	683	PROVEN	AggScalar.finalizeStdev: finalizeStdev_small, finalize_divisors
-graph/src/runtime/functions/aggregation.rs	finalize_stdevp	705	PROVEN	AggScalar.finalizeStdevp: finalizeStdevp_empty, finalize_divisors
+graph/src/runtime/functions/aggregation.rs	modf	676	PROVEN	AggScalar.modf: modf_recombine
+graph/src/runtime/functions/aggregation.rs	finalize_stdev	682	PROVEN	AggScalar.finalizeStdev: finalizeStdev_small, finalize_divisors
+graph/src/runtime/functions/aggregation.rs	finalize_stdevp	704	PROVEN	AggScalar.finalizeStdevp: finalizeStdevp_empty, finalize_divisors
 graph/src/runtime/functions/trig.rs	apply_unary_float	31	PROVEN	Trig applyUnary: applyUnary_no_panic (unreachable dead + ret type), applyUnary_null, applyUnary_int
 graph/src/runtime/functions/trig.rs	register	43	PROVEN	Trig trigSigs: trigSigs_names, trigSigs_nodup (add asserts hold), *_ret (results typed by declared ret)
 graph/src/runtime/functions/trig.rs	sin	47	PROVEN	Trig tSin: unary_rust_eq_c (= C AR_SIN), unary_null, applyUnary_no_panic (libm sin = parameter)
@@ -173,12 +173,12 @@ graph/src/runtime/functions/procedures.rs	db_vector_query_relationships	390	PROV
 graph/src/runtime/functions/procedures.rs	db_constraints	400	PROVEN	Procedures dbConstraints: yields_constraints; live vs C (same rows, order differs)
 graph/src/runtime/functions/procedures.rs	dbms_procedures	434	PROVEN	Procedures dbmsProcedures: yields_procedures, dbmsProcedures_sorted (sorted + permutation); live = C
 graph/src/runtime/functions/procedures.rs	dbms_functions	466	PROVEN	Procedures dbmsFunctions/mergePicks: mergePicks_eq (= List.merge), dbmsFunctions_merge_sorted, mergePicks_nil, keepUdf_spec
-graph/src/runtime/functions/procedures.rs	build_columns	554	PROVEN	Procedures buildColumns: yields_buildColumns, buildRow_reducible
-graph/src/runtime/functions/procedures.rs	type_to_dbms_value	613	PROVEN	Procedures tyValue: tyValue_eq (interning invisible), any_string
-graph/src/runtime/functions/procedures.rs	type_to_dbms_string	646	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_is_c (#3280: strictly C-ordered, same members), canon_eq_of, union_perm_invariant, union_point_null, union_tofloat, union_nested, union_any
-graph/src/runtime/functions/procedures.rs	collect_dbms_types	705	PROVEN	Procedures collectTys/collectTysL: collectTys_mem (members in the 17 C names), union_nested, union_any
-graph/src/runtime/functions/procedures.rs	format_union	717	PROVEN	Procedures formatUnion: any_string, examples
-graph/src/runtime/functions/procedures.rs	format_union_strings	729	PROVEN	Procedures formatUnion_strings_eq
+graph/src/runtime/functions/procedures.rs	build_columns	558	PROVEN	Procedures buildColumns: yields_buildColumns, buildRow_reducible
+graph/src/runtime/functions/procedures.rs	type_to_dbms_value	617	PROVEN	Procedures tyValue: tyValue_eq (interning invisible), any_string
+graph/src/runtime/functions/procedures.rs	type_to_dbms_string	650	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_is_c (#3280: strictly C-ordered, same members), canon_eq_of, union_perm_invariant, union_point_null, union_tofloat, union_nested, union_any
+graph/src/runtime/functions/procedures.rs	collect_dbms_types	709	PROVEN	Procedures collectTys/collectTysL: collectTys_mem (members in the 17 C names), union_nested, union_any
+graph/src/runtime/functions/procedures.rs	format_union	721	PROVEN	Procedures formatUnion: any_string, examples
+graph/src/runtime/functions/procedures.rs	format_union_strings	733	PROVEN	Procedures formatUnion_strings_eq
 graph/src/runtime/functions/path.rs	register	25	PROVEN	Procedures pathSigs + path_no_panic (validated Path|Null never hits unreachable!)
 graph/src/runtime/functions/path.rs	nodes	29	PROVEN	Procedures pathNodes: path_split, path_lengths, path_null, path_no_panic
 graph/src/runtime/functions/path.rs	relationships	52	PROVEN	Procedures pathRels: path_split, path_lengths, path_null, path_no_panic
