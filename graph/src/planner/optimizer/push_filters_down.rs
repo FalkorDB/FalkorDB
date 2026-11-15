@@ -104,7 +104,7 @@ fn visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
     // A (anti) semi-join, or an `OrApplyMultiplexer`, emits only its first
     // child's rows: the others are existence sub-plans, whose variables never
     // reach the output.
-    let outputs = if matches!(
+    let output_children = if matches!(
         node.data(),
         IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
     ) {
@@ -112,7 +112,7 @@ fn visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
     } else {
         usize::MAX
     };
-    for child in node.children().take(outputs) {
+    for child in node.children().take(output_children) {
         vars.extend(visible_variables(&child));
     }
     vars
