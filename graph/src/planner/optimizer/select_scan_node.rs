@@ -656,15 +656,6 @@ fn select_var_len_scan_node(
         if wrapper.idx() != scan_idx {
             continue;
         }
-        // Whatever sits below the scan feeds it rows (an earlier clause, an
-        // `UNWIND`, an `Argument`): the new scan keeps all of it, so their
-        // multiplicity and bindings survive the reversal.
-        let kept: Vec<DynTree<IR>> = optimized_plan
-            .node(scan_idx)
-            .children()
-            .map(|c| c.clone_as_tree())
-            .collect();
-
         // This used to refuse the reversal unless every endpoint carrying
         // inline attrs also had a Filter above the traverse — a cross-check
         // that the two representations agreed. There is only one representation
@@ -679,6 +670,15 @@ fn select_var_len_scan_node(
         if to_score <= from_score {
             continue;
         }
+
+        // Whatever sits below the scan feeds it rows (an earlier clause, an
+        // `UNWIND`, an `Argument`): the new scan keeps all of it, so their
+        // multiplicity and bindings survive the reversal.
+        let kept: Vec<DynTree<IR>> = optimized_plan
+            .node(scan_idx)
+            .children()
+            .map(|c| c.clone_as_tree())
+            .collect();
 
         let in_merge = in_merge_match_branch(optimized_plan, idx);
         let mut scan = if to.labels.is_empty() {
