@@ -76,3 +76,8 @@ graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	228	PROVEN	CartVhj
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	256	PROVEN	CartVhj.build: build_int
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	324	PROVEN	CartVhj.fillMatches/probe: fillMatches_int, probe_insert_fresh
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	366	PROVEN	CartVhj.vhjRows: vhjRows_spec
+graph/src/runtime/ops/apply.rs	row_has_deleted_entity	289	NOT COVERED	(#2779): not modelled yet
+graph/src/runtime/ops/apply.rs	flush_acc	311	NOT COVERED	(#2779): not modelled yet
+graph/src/runtime/ops/apply.rs	push_acc	323	NOT COVERED	(#2779): not modelled yet
+graph/src/runtime/ops/apply.rs	sub_plan_distincts	483	NOT COVERED	(#2779): not modelled yet
+graph/src/runtime/ops/apply.rs	imported_ids	514	NOT COVERED	(#2779): not modelled yet
