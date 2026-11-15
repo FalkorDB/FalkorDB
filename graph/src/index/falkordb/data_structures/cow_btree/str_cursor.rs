@@ -542,6 +542,26 @@ mod tests {
         assert_eq!(tree.point(&long).collect::<Vec<_>>(), vec![2]);
     }
 
+    /// The mirror of the above: the oversized page is the left neighbour of the underfull last
+    /// child, which must not be re-paired with it forever.
+    #[test]
+    fn removing_before_an_oversized_page_terminates() {
+        let long = Arc::new("a".repeat(5000));
+        let tuples = vec![
+            (long.clone(), 0),
+            (Arc::new("y".to_string()), 1),
+            (Arc::new("z".to_string()), 2),
+        ];
+        let mut tree = StrTree::<8>::from_sorted(&tuples);
+        tree.remove_batch(&[(Arc::new("y".to_string()), 1)]);
+        assert_eq!(tree.tuples().len(), 2);
+        assert_eq!(tree.point(&long).collect::<Vec<_>>(), vec![0]);
+        assert_eq!(
+            tree.point(&Arc::new("z".to_string())).collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
+
     /// A batch that repeats a tuple stores it once: a point lookup yields each doc once.
     #[test]
     fn a_repeated_tuple_in_a_batch_is_stored_once() {

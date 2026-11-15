@@ -2,11 +2,11 @@ file	function	line	bucket	lean_name_or_reason
 # Test code (#[cfg(test)] decode_f64 and the tests modules, graph/graph/falkordb_index_tests.rs) is TEST by the scanner; not listed.
 graph/src/index/falkordb/encode.rs	encode_numeric	31	PROVEN	encodeNumeric: filter_iff_key, encodeNumeric_some, nan_unindexed, temporal_unindexed, negZero_agrees; counterexamples bool_divergence, i64min_hole (live-confirmed, shared with C)
 graph/src/index/falkordb/encode.rs	encode_f64	129	PROVEN	encodeF64 (bit-level f64): encodeF64_cmp, encodeF64_inj, encodeF64_negZero, encodeF64_bounds, encodeF64_inf_extremes
-graph/src/index/falkordb/numeric.rs	NumericIndex::add_encoded	493	NOT COVERED	native Range column (#3740): RangeKind impl since the cleanup: takes tuples the column already sorted, fills only its two trees and skips an empty share; the Lean addEncoded sorts first; re-target pending
-graph/src/index/falkordb/numeric.rs	NumericIndex::remove_encoded	502	NOT COVERED	native Range column (#3740): RangeKind impl since the cleanup: takes tuples the column already sorted and skips an empty share; the Lean removeEncoded sorts first; re-target pending
+graph/src/index/falkordb/numeric.rs	NumericIndex::add_encoded	516	NOT COVERED	native Range column (#3740): RangeKind impl since the cleanup: takes tuples the column already sorted, fills only its two trees and skips an empty share; the Lean addEncoded sorts first; re-target pending
+graph/src/index/falkordb/numeric.rs	NumericIndex::remove_encoded	525	NOT COVERED	native Range column (#3740): RangeKind impl since the cleanup: takes tuples the column already sorted and skips an empty share; the Lean removeEncoded sorts first; re-target pending
 graph/src/index/falkordb/numeric.rs	NumericIndex::is_empty	533	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); isEmpty_spec
 graph/src/index/falkordb/numeric.rs	DocIter::next	64	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
-graph/src/index/falkordb/numeric.rs	DistinctIter::new	89	NOT COVERED	cross-attribute union (#3741): not modelled yet
+graph/src/index/falkordb/numeric.rs	DistinctIter::new	95	NOT COVERED	cross-attribute union (#3741): not modelled yet
 graph/src/index/falkordb/numeric.rs	DistinctIter::next	115	NOT COVERED	cross-attribute union (#3741): not modelled yet
 graph/src/index/falkordb/numeric.rs	DocIter::next/Distinct	64	NOT COVERED	cross-attribute union (#3741): the Distinct arm dispatches to DistinctIter::next, not modelled yet
 graph/src/index/falkordb/numeric.rs	DocIter::next/Strings	64	NOT COVERED	tag kind (#3742): the Strings arm dispatches to StrRanges::next (the string-keyed tree), not modelled yet
@@ -71,9 +71,9 @@ graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	NOT COVE
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; edgeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/index/falkordb/numeric.rs	EncodedTuples::scalars	292	PROVEN	EncodedTuples.scalars: encodedTuples_spec
 graph/src/index/falkordb/numeric.rs	EncodedTuples::is_empty	335	NOT COVERED	tag kind (#3742): also checks the tag tuples carried by string; re-target pending
-graph/src/index/falkordb/numeric.rs	EncodedTuples::len	322	NOT COVERED	tag kind (#3742): also counts the tag tuples carried by string; re-target pending
-graph/src/index/falkordb/numeric.rs	EncodedTuples::clear	328	NOT COVERED	tag kind (#3742): also clears the tag tuples carried by string; re-target pending
-graph/src/index/falkordb/numeric.rs	EncodedTuples::sort_dedup	349	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
+graph/src/index/falkordb/numeric.rs	EncodedTuples::len	343	NOT COVERED	tag kind (#3742): also counts the tag tuples carried by string; re-target pending
+graph/src/index/falkordb/numeric.rs	EncodedTuples::clear	349	NOT COVERED	tag kind (#3742): also clears the tag tuples carried by string; re-target pending
+graph/src/index/falkordb/numeric.rs	EncodedTuples::sort_dedup	370	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::push_encoded	123	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
 graph/src/index/falkordb/falkordb_index.rs	BuildCursor::precedes	538	PROVEN	BuildCursor.precedes: precedes_spec (node by id, edge by (src, dst) tuple <); the unreachable! on a kind mix never fires: kind_new, kind_place, scan_kind
 graph/src/index/falkordb/falkordb_index.rs	BuildCursor::new	573	PROVEN	BuildCursor.new: new_cursor, kind_new
@@ -102,9 +102,9 @@ graph/src/index/falkordb/graph_writes.rs	build_in_one_batch	412	PROVEN	buildInOn
 graph/src/index/falkordb/graph_writes.rs	scan	569	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
 graph/src/index/falkordb/graph_writes.rs	scan_nodes	594	PROVEN	scanNodes: scanNodes_tuples, scanNodes_missing, scanNodes_below_cursor (read nodes = those that precede the returned cursor), scanNodes_all
 graph/src/index/falkordb/graph_writes.rs	scan_edges	630	PROVEN	scanEdges/edgeLoop: edgeLoop_spec (prefix read, a multi-edge pair never split), scanEdges_below_cursor, scanEdges_missing, scanEdges_all, edgeLoop_all
-graph/src/index/falkordb/numeric.rs	KeySet::distinct	135	PROVEN	KeySet.distinct: distinct_mem (sorted, same members), lookup_distinct_mem, keysOf_sorted
+graph/src/index/falkordb/numeric.rs	KeySet::distinct	151	PROVEN	KeySet.distinct: distinct_mem (sorted, same members), lookup_distinct_mem, keysOf_sorted
 graph/src/index/falkordb/numeric.rs	KeySet::contains	169	PROVEN	KeySet.contains/matchesValue (Keys = binary_search over a sorted list = membership): distinct_mem, keysOf_sorted, lookup_mem, lookup_fromEntries
-graph/src/index/falkordb/numeric.rs	NumericIndex::range_keys	399	PROVEN	rangeKeys/rangeBounds (checked_add/checked_sub branches): range_eq, range_keys, rangeBounds_eq
+graph/src/index/falkordb/numeric.rs	NumericIndex::range_keys	422	PROVEN	rangeKeys/rangeBounds (checked_add/checked_sub branches): range_eq, range_keys, rangeBounds_eq
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::rows_at	165	NOT COVERED	tag kind (#3742): takes a ColumnKey (a number's encoding, or the string itself) since #3738; rowsAt models a u64 key, re-target pending
 graph/src/index/falkordb/falkordb_index.rs	EqualCandidates::rows	298	NOT COVERED	tag kind (#3742): reads under a ColumnKey since #3738 (a string no entity holds reads no rows); re-target pending
 graph/src/index/falkordb/falkordb_index.rs	EqualCandidates::id	305	NOT COVERED	tag kind (#3742): the id carries the ColumnKey since #3738; re-target pending
@@ -174,7 +174,7 @@ graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::indexer_insert	387	NO
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::batch_len	407	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::memory_usage	430	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::memory_usage	659	PROVEN	Memory.memoryUsage: memoryUsage_add, memoryUsage_nil (sum over every node and edge column; CCH not counted) (#3569)
-graph/src/index/falkordb/numeric.rs	NumericIndex::memory_usage	518	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
+graph/src/index/falkordb/numeric.rs	NumericIndex::memory_usage	541	NOT COVERED	tag kind (#3742): the column now also holds string tuples in the tag trees; the Lean model covers the numeric tree only; re-target pending
 graph/src/index/falkordb/versioned.rs	catch_up_by	175	PROVEN	Batch.catchUpBy: Rebase.catchUpBy_refresh_iff, catchUpBy_no_writes, catchUpBy_empty_batch, catchUpBy_many_writes, catchUpBy_saturating (u64 saturating_mul) (#3568)
 graph/src/index/falkordb/versioned.rs	VersionedIndex::indexer_insert	274	PROVEN	trait signature; the IndexColumn impl: Rebase.indexerInsert_mem (#3568)
 graph/src/index/falkordb/versioned.rs	VersionedIndex::batch_len	285	PROVEN	trait signature; the IndexColumn impl: Memory.batchLen_spec
@@ -246,9 +246,9 @@ graph/src/index/falkordb/falkordb_index.rs	ScanFilter::resolve	470	NOT COVERED	n
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::for_each_stored_key	918	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::combine_columns	1051	NOT COVERED	cross-attribute intersection and union (#3741): not modelled yet (intersect_columns until #3737)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::combine_columns::group	1060	NOT COVERED	cross-attribute intersection and union (#3741): not modelled yet
-graph/src/index/falkordb/numeric.rs	EncodedTuples::index	258	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
-graph/src/index/falkordb/numeric.rs	EncodedTuples::index_mut	267	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
-graph/src/index/falkordb/numeric.rs	NumericIndex::tree_mut	384	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
+graph/src/index/falkordb/numeric.rs	EncodedTuples::index	274	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
+graph/src/index/falkordb/numeric.rs	EncodedTuples::index_mut	283	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
+graph/src/index/falkordb/numeric.rs	NumericIndex::tree_mut	407	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/cch/customize.rs	validate	136	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
 graph/src/index/falkordb/cch/customize.rs	WeightCsr::entries	168	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
 graph/src/index/falkordb/cch/customize.rs	customize	187	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
@@ -270,14 +270,14 @@ graph/src/index/falkordb/cch/query.rs	arc	179	NOT COVERED	not modelled yet: CCH 
 graph/src/index/falkordb/cch/query.rs	unpack	206	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/query.rs	query	231	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/query.rs	erase_loops	352	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
-graph/src/index/falkordb/numeric.rs	KeySet::of_keys	145	NOT COVERED	native Range column (#3740): a key set from loose keys, Empty when there are none; not modelled yet
-graph/src/index/falkordb/numeric.rs	KeySet::and	175	NOT COVERED	native Range column (#3740): two predicates on one scalar under AND, folded on keys (window meets window, a point set keeps what the other side holds); not modelled yet
-graph/src/index/falkordb/numeric.rs	NumericIndex::for_each_stored_key	482	NOT COVERED	native Range column (#3740): RangeKind impl; delegates to encode::for_each_stored_key; not modelled yet
+graph/src/index/falkordb/numeric.rs	KeySet::of_keys	161	NOT COVERED	native Range column (#3740): a key set from loose keys, Empty when there are none; not modelled yet
+graph/src/index/falkordb/numeric.rs	KeySet::and	191	NOT COVERED	native Range column (#3740): two predicates on one scalar under AND, folded on keys (window meets window, a point set keeps what the other side holds); not modelled yet
+graph/src/index/falkordb/numeric.rs	NumericIndex::for_each_stored_key	505	NOT COVERED	native Range column (#3740): RangeKind impl; delegates to encode::for_each_stored_key; not modelled yet
 graph/src/index/falkordb/numeric.rs	NumericIndex::scalars	543	NOT COVERED	native Range column (#3740): RangeKind impl; the scalar-tree half of the old NumericIndex::lookup; not modelled yet
-graph/src/index/falkordb/numeric.rs	NumericIndex::lists_holding	537	NOT COVERED	native Range column (#3740): RangeKind impl; a point lookup in the array tree, the old array_contains; not modelled yet
-graph/src/index/falkordb/numeric.rs	NumericIndex::is_scalar_in	544	NOT COVERED	native Range column (#3740): RangeKind impl; the scan's scalar check, through the stored-key encoder; not modelled yet
-graph/src/index/falkordb/numeric.rs	NumericIndex::is_list_holding	551	NOT COVERED	native Range column (#3740): RangeKind impl; the scan's list check, through the stored-key encoder; not modelled yet
-graph/src/index/falkordb/numeric.rs	stores	610	NOT COVERED	native Range column (#3740): whether a value is stored under a matching key of one tree; not modelled yet
+graph/src/index/falkordb/numeric.rs	NumericIndex::lists_holding	560	NOT COVERED	native Range column (#3740): RangeKind impl; a point lookup in the array tree, the old array_contains; not modelled yet
+graph/src/index/falkordb/numeric.rs	NumericIndex::is_scalar_in	567	NOT COVERED	native Range column (#3740): RangeKind impl; the scan's scalar check, through the stored-key encoder; not modelled yet
+graph/src/index/falkordb/numeric.rs	NumericIndex::is_list_holding	574	NOT COVERED	native Range column (#3740): RangeKind impl; the scan's list check, through the stored-key encoder; not modelled yet
+graph/src/index/falkordb/numeric.rs	stores	633	NOT COVERED	native Range column (#3740): whether a value is stored under a matching key of one tree; not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::lookup	177	NOT COVERED	native Range column (#3740): not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::column	801	NOT COVERED	native Range column (#3740): not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::column_mut	817	NOT COVERED	native Range column (#3740): not modelled yet
@@ -324,9 +324,9 @@ graph/src/index/falkordb/range.rs	RangeIndex::lookup	739	NOT COVERED	native Rang
 graph/src/index/falkordb/range.rs	RangeIndex::query	792	NOT COVERED	native Range column (#3740): not modelled yet
 graph/src/index/falkordb/mod.rs	indexable	177	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/mod.rs	union_unindexable	186	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/numeric.rs	docs_in	561	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/numeric.rs	add_sorted	582	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/numeric.rs	remove_sorted	597	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/numeric.rs	docs_in	584	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/numeric.rs	add_sorted	605	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/numeric.rs	remove_sorted	620	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/range.rs	Kind::same	123	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/range.rs	Scalars::none	149	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/range.rs	Scalars::numeric	158	NOT COVERED	tag kind (#3742): not modelled yet
@@ -354,9 +354,9 @@ graph/src/index/falkordb/tag.rs	TagIndex::scalars	317	NOT COVERED	tag kind (#374
 graph/src/index/falkordb/tag.rs	TagIndex::lists_holding	325	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/tag.rs	TagIndex::is_scalar_in	332	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/tag.rs	TagIndex::is_list_holding	339	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/numeric.rs	EncodedTuples::tags	286	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
-graph/src/index/falkordb/numeric.rs	EncodedTuples::tag_slot	306	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
-graph/src/index/falkordb/numeric.rs	EncodedTuples::retain_docs	334	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
+graph/src/index/falkordb/numeric.rs	EncodedTuples::tags	302	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
+graph/src/index/falkordb/numeric.rs	EncodedTuples::tag_slot	327	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
+graph/src/index/falkordb/numeric.rs	EncodedTuples::retain_docs	355	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
 graph/src/index/falkordb/tag.rs	StrSel::ranges	90	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
 graph/src/index/falkordb/tag.rs	sorted_keys	250	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::empty	19	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
@@ -425,7 +425,7 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::remove_batc
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::combine	590	PROVEN	`<Leaf as Page>::combine`: the leaf arm moved from node.rs (aos_combine or rebuild) = combine's leaf arm (combine_spec, combine_good); Page.lean
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::heap_bytes	612	PROVEN	`<Leaf as Page>::heap_bytes` = the blob length: heapBytes' leaf arm (heapBytes_eq, heapBytes_aos); Page.lean
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	assert_leaf_params	619	PROVEN	Assert.constAssert: the LEAF_MAX in 2..=256 and is_read_width(DOC_BYTES) conjuncts, asserted on every u64 tree's birth (`Page::empty`, `Page::build`) since #3742; Assert.lean header
-graph/src/index/falkordb/numeric.rs	EncodedTuples::push	294	NOT COVERED	tag kind (#3742): files a tuple by its key, a number or a string; not modelled yet
+graph/src/index/falkordb/numeric.rs	EncodedTuples::push	310	NOT COVERED	tag kind (#3742): files a tuple by its key, a number or a string; not modelled yet
 graph/src/index/falkordb/pending_writes.rs	last_write_wins::tuple	181	NOT COVERED	tag kind (#3742): the (kind, key, id) a staged change collapses on; part of last_write_wins, re-target pending
 graph/src/index/falkordb/tag.rs	StrSel::window	63	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/tag.rs	cmp_lo	143	NOT COVERED	tag kind (#3742): not modelled yet
@@ -434,5 +434,5 @@ graph/src/index/falkordb/data_structures/cow_btree/page.rs	Combined::map	99	NOT 
 graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::holds	414	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::key_heap_bytes	75	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::key_heap_bytes	551	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/numeric.rs	DistinctIter::disjoint	104	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/numeric.rs	DistinctIter::disjoint	106	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::fill	528	NOT COVERED	tag kind (#3742): not modelled yet
