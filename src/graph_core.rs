@@ -54,9 +54,6 @@ use graph::{
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
-#[cfg(feature = "index-falkordb")]
-use redis_module::logging::log_warning;
-use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
@@ -65,6 +62,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     time::Instant,
+};
+use valkey_module::logging::{ValkeyLogLevel, log_warning};
+use valkey_module::{
+    Context, ContextFlags, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
 };
 
 use crate::allocator::{
@@ -103,7 +104,7 @@ pub fn up_to_nul(s: &str) -> &str {
 /// by the full key bytes and only rebuilds a key from the name when it creates one.
 /// See [`c_graph_key`].
 #[must_use]
-pub fn c_graph_name(key: &RedisString) -> String {
+pub fn c_graph_name(key: &ValkeyString) -> String {
     up_to_nul(&key.to_string_lossy()).to_owned()
 }
 
@@ -120,8 +121,8 @@ pub fn c_graph_name(key: &RedisString) -> String {
 #[must_use]
 pub fn c_graph_key(
     ctx: &Context,
-    key: &RedisString,
-) -> RedisString {
+    key: &ValkeyString,
+) -> ValkeyString {
     // Built from the bytes, not from `c_graph_name`: a Redis key name is binary and
     // need not be UTF-8 (`test_binary_key_name_scan_skip` keeps a graph under
     // `\xc3\x28...`), so rebuilding it through a lossy `String` would replace those
@@ -129,7 +130,7 @@ pub fn c_graph_key(
     // difference this is allowed to make.
     let bytes = key.as_slice();
     let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    RedisString::create_from_slice(ctx.get_raw(), &bytes[..end])
+    ValkeyString::create_from_slice(ctx.get_raw(), &bytes[..end])
 }
 
 /// Global registry of all live graph instances.
@@ -304,10 +305,10 @@ pub enum ProfileDetect {
 /// Centralising the `.expect()` here documents that invariant in one place and
 /// keeps call sites free of `unwrap()` noise.
 pub mod ffi {
-    use redis_module::raw;
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
     use std::ptr::null_mut;
+    use valkey_module::raw;
 
     const MSG: &str = "Redis module FFI pointer not initialised (call RedisModule_Init first)";
 
@@ -1013,13 +1014,13 @@ pub fn query_mut(
     key_name: Arc<str>,
     per_query_timeout: Option<i64>,
     version_check: Option<u64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // Reject a stale client-supplied schema version before doing any work.
     if let Some(provided_version) = version_check {
         let current_schema_version = graph.read().graph.read().schema_version;
         if provided_version != current_schema_version {
             reply_invalid_graph_version(ctx, current_schema_version as i64);
-            return Ok(RedisValue::NoReply);
+            return Ok(ValkeyValue::NoReply);
         }
     }
 
@@ -1042,7 +1043,7 @@ pub fn query_mut(
     }
 
     let Some(slot) = admit(ctx) else {
-        return Ok(RedisValue::NoReply);
+        return Ok(ValkeyValue::NoReply);
     };
 
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
@@ -1120,7 +1121,7 @@ pub fn query_mut(
                 if track_mem {
                     let (allocated, deallocated) = current_thread_usage();
                     ctx.log(
-                        redis_module::logging::RedisLogLevel::Notice,
+                        ValkeyLogLevel::Notice,
                         &format!(
                             "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
                             allocated as isize - deallocated as isize
@@ -1202,7 +1203,7 @@ pub fn query_mut(
         },
         None,
     );
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 /// Execute a query synchronously on the calling thread.
@@ -1215,7 +1216,7 @@ fn query_sync(
     write: bool,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // First pass: parse + detect if write, execute reads inline.
     // Sync query timeout to UDF JS runtime
     graph::udf::js_context::JS_TIMEOUT_MS
@@ -1304,7 +1305,7 @@ fn query_sync(
                         // replicates a query that already succeeded there, so
                         // this failing means the two have diverged.
                         divergence_guard::on_failure(ctx, key_name, "GRAPH.QUERY", &err, None);
-                        return Err(redis_module::RedisError::String(err));
+                        return Err(ValkeyError::String(err));
                     }
                 }
             } else {
@@ -1329,10 +1330,10 @@ fn query_sync(
             }
         }
         Err(err) => {
-            return Err(redis_module::RedisError::String(err));
+            return Err(ValkeyError::String(err));
         }
     }
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 #[inline]
@@ -1342,7 +1343,7 @@ pub fn profile_mut(
     query: &str,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // Contexts that cannot block run inline (see `query_mut` for the rationale, and
     // `must_run_inline` for the flag set).
     if must_run_inline(ctx) {
@@ -1350,7 +1351,7 @@ pub fn profile_mut(
     }
 
     let Some(slot) = admit(ctx) else {
-        return Ok(RedisValue::NoReply);
+        return Ok(ValkeyValue::NoReply);
     };
 
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
@@ -1434,7 +1435,7 @@ pub fn profile_mut(
         },
         None,
     );
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 fn profile_sync(
@@ -1443,7 +1444,7 @@ fn profile_sync(
     query: &str,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
     if mem_capacity > 0 {
         reset_counter();
@@ -1478,7 +1479,7 @@ fn profile_sync(
                     if mem_capacity > 0 {
                         disable_tracking();
                     }
-                    return Err(redis_module::RedisError::String(err));
+                    return Err(ValkeyError::String(err));
                 }
             }
         }
@@ -1488,13 +1489,13 @@ fn profile_sync(
             }
             // See `query_sync`: a replayed command failing is divergence.
             divergence_guard::on_failure(ctx, key_name, "GRAPH.PROFILE", &err, None);
-            return Err(redis_module::RedisError::String(err));
+            return Err(ValkeyError::String(err));
         }
     }
     if mem_capacity > 0 {
         disable_tracking();
     }
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 /// Publish a write that succeeded: commit the version, signal WATCH, replicate.
@@ -1578,7 +1579,7 @@ fn commit_and_replicate(
     // nothing to recover it. Loud rather than silent: this is how the
     // first-full-sync window went unnoticed.
     let Some(buf) = wq.effects_buffer else {
-        redis_module::logging::log_warning(format!(
+        log_warning(format!(
             "graph '{key_name}' was modified but produced no effects payload; \
              the change will not reach replicas or the AOF"
         ));

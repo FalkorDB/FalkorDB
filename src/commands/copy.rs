@@ -2,16 +2,18 @@ use crate::{
     commands::EMPTY_KEY_ERR,
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{ThreadedGraph, register_graph, up_to_nul},
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
     serializers,
 };
 use graph::graph::graphblas::matrix::set_nthreads;
 use graph::graph::mvcc_graph::MvccGraph;
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::os::raw::c_int;
 use std::os::unix::io::{FromRawFd, OwnedFd};
 use std::sync::Arc;
+use valkey_module::{
+    Context, KeyType, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
+};
 
 unsafe extern "C" {
     fn pipe(pipefd: *mut c_int) -> c_int;
@@ -26,10 +28,10 @@ unsafe extern "C" {
 
 pub fn graph_copy(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     let mut args = args.into_iter().skip(1);
@@ -37,7 +39,7 @@ pub fn graph_copy(
     let dest_key_name = args.next_arg()?;
 
     let dest_name = std::str::from_utf8(dest_key_name.as_slice())
-        .map_err(|_| RedisError::Str("ERR destination key is not valid UTF-8"))?;
+        .map_err(|_| ValkeyError::Str("ERR destination key is not valid UTF-8"))?;
 
     // The destination *key* is the full bytes the command named, for the existence
     // check as much as for the write: C opens `copy_ctx->rm_dest` both times and never
@@ -52,7 +54,10 @@ pub fn graph_copy(
 
     // Open src key (read) and verify it holds a graph.
     let src_key = ctx.open_key(&src_key_name);
-    let src_graph = match src_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    let src_graph = match src_key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         Some(g) => g.clone(),
         None => return EMPTY_KEY_ERR,
     };
@@ -60,14 +65,15 @@ pub fn graph_copy(
     // Verify dest key does not already exist.
     let dest_key = ctx.open_key_writable(&dest_key_name);
     if dest_key
-        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
         .is_some()
     {
-        return Err(RedisError::Str("destination key already exists"));
+        return Err(ValkeyError::Str("destination key already exists"));
     }
     // Also check if dest key exists as any other type.
-    if dest_key.key_type() != redis_module::KeyType::Empty {
-        return Err(RedisError::Str("destination key already exists"));
+    if dest_key.key_type() != KeyType::Empty {
+        return Err(ValkeyError::Str("destination key already exists"));
     }
 
     let cache_size = *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize;
@@ -79,7 +85,7 @@ pub fn graph_copy(
     // Create pipe.
     let mut pipe_fds = [0i32; 2];
     if unsafe { pipe(pipe_fds.as_mut_ptr()) } != 0 {
-        return Err(RedisError::Str("ERR could not create pipe"));
+        return Err(ValkeyError::Str("ERR could not create pipe"));
     }
     // SAFETY: pipe() just returned two valid, open file descriptors.
     let read_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
@@ -91,7 +97,7 @@ pub fn graph_copy(
         // OwnedFd drop closes both fds automatically.
         drop(read_fd);
         drop(write_fd);
-        return Err(RedisError::Str("ERR could not fork"));
+        return Err(ValkeyError::Str("ERR could not fork"));
     }
 
     if pid == 0 {
@@ -126,11 +132,11 @@ pub fn graph_copy(
             if err.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            return Err(RedisError::String(format!("ERR waitpid failed: {err}")));
+            return Err(ValkeyError::String(format!("ERR waitpid failed: {err}")));
         }
     }
 
-    let new_graph = result.map_err(RedisError::String)?;
+    let new_graph = result.map_err(ValkeyError::String)?;
 
     // Check child exit status.
     // WIFEXITED: (status & 0x7f) == 0
@@ -138,7 +144,7 @@ pub fn graph_copy(
     let exited = status.trailing_zeros() >= 7;
     let exit_code = (status >> 8) & 0xff;
     if !exited || exit_code != 0 {
-        return Err(RedisError::Str("ERR child process failed during copy"));
+        return Err(ValkeyError::Str("ERR child process failed during copy"));
     }
 
     // Serialize the decoded graph for replication before wrapping.
@@ -151,7 +157,9 @@ pub fn graph_copy(
     let tg = ThreadedGraph::from_mvcc(mvcc);
     let boxed = Arc::new(RwLock::new(tg));
 
-    dest_key.set_value(&GRAPH_TYPE, boxed.clone())?;
+    dest_key
+        .set_value(&GRAPH_TYPE, boxed.clone())
+        .map_err(wrong_type_compat)?;
     // Registered under the key it was written to: the registry is the module's index of
     // the *keyspace*, and `graph_rdb_save`, the virtual-key builder and the telemetry
     // flusher all address Redis by the name they find here.
@@ -163,5 +171,5 @@ pub fn graph_copy(
     // than a behaviour worth reproducing.
     ctx.replicate("GRAPH.RESTORE", &[dest_name.as_bytes(), &serialized]);
 
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
