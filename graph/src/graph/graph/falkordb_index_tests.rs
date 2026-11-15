@@ -4295,8 +4295,8 @@ fn a_building_columns_progress_counts_what_its_batches_have_read() {
     let (mut g, label, v, ty, w) = scan_fixture();
     let progress = |g: &Graph| {
         (
-            native_build_progress(&g, EntityType::Node, &label, &v),
-            native_build_progress(&g, EntityType::Relationship, &ty, &w),
+            native_build_progress(g, EntityType::Node, &label, &v),
+            native_build_progress(g, EntityType::Relationship, &ty, &w),
         )
     };
     let mut seen = vec![progress(&g)];

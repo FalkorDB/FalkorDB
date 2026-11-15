@@ -3887,7 +3887,11 @@ impl Graph {
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
     /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
     /// private version the changes were staged against.
-    pub const fn apply_index_writes(
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "const only without `index-falkordb`; the feature build calls a non-const apply"
+    )]
+    pub fn apply_index_writes(
         &mut self,
         docs: &mut IndexDocs,
     ) {
