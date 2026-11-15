@@ -2478,7 +2478,7 @@ impl Binder {
             ExprIR::Mul => it.try_fold(first, |a, b| a * b).ok(),
             ExprIR::Div => it.try_fold(first, |a, b| a / b).ok(),
             ExprIR::Modulo => it.try_fold(first, |a, b| a % b).ok(),
-            ExprIR::Pow => it.try_fold(first, apply_pow).ok(),
+            ExprIR::Pow => it.try_fold(first, |a, b| apply_pow(&a, &b)).ok(),
             _ => None,
         }
     }
