@@ -1,0 +1,159 @@
+# Commit the proof-impact bot's verified patch to a PR branch, on request.
+#
+# proof-impact.yml only suggests: its gate job leaves a patch (and its status) in the
+# run's `proof-gate` artifact. This workflow is the one place that pushes it, and
+# only when someone with write, maintain or admin access on the repository asks:
+#
+#   - a PR comment whose first line is `/proofs apply`, or
+#   - the label `proofs:apply` (removed again once handled, so it can be re-added).
+#
+# Both events run THIS file from the default branch / the PR's base branch, never the
+# PR's copy, and nothing here checks out or runs PR code: the PR head is checked out
+# only so `git apply` and `git commit` can write the patch onto it. The text of a
+# comment, a branch name or a login only ever reaches a script through `env:`.
+#
+#   resolve  read-only token: who asked, is it a same-repo PR that leaves the gate's own
+#            code alone (a PR that edits proof-impact.yml / the proofs scripts cannot
+#            vouch for its own patch), and which proof-impact run (with a gate
+#            artifact) belongs to this PR's *current* head; a moved head means "wait
+#            for the bot's run on the new head". Replies when it refuses.
+#   apply    the only job with `contents: write`. Takes the gate artifact of that run,
+#            applies it only when its status is `pass` (a `held` or failed patch is
+#            never committed), re-checks every path against the gate's allowlist
+#            (read from proof-impact.yml on the default branch), commits as
+#            falkordb-proof-bot, and pushes as a fast-forward to the head ref, with a
+#            lease on the head it built on. A head the author moved in the meantime
+#            (even back to an ancestor) is rejected; nothing is
+#            forced, nothing changes. It comments the commit SHA.
+#
+# The push token is a GitHub App installation token when the repository has the
+# secrets PROOF_BOT_APP_ID and PROOF_BOT_APP_KEY, so the push starts CI. Without
+# them it is GITHUB_TOKEN, whose pushes never start workflows; the PR comment then
+# says to push an empty commit (or close and reopen the PR) to run CI on it.
+#
+# No loop: proof-impact.yml recognises the bot's commit (author email and the
+# `Proof-Bot-Run:` trailer) and does not re-prove it, and nothing here triggers on
+# pushes. Comments by bots, including this workflow's replies, are ignored.
+
+name: Proof apply
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    # Runs the base branch's copy of this file; the PR's code is never run.
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  resolve:
+    # The cheap filters are here, so other comments cost nothing: a comment on a PR,
+    # by a person, that starts with the command; or the apply label.
+    if: >-
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       github.event.comment.user.type != 'Bot' &&
+       startsWith(github.event.comment.body, '/proofs apply')) ||
+      (github.event_name == 'pull_request_target' &&
+       github.event.label.name == 'proofs:apply')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read          # list proof-impact runs
+      pull-requests: write   # reply, and drop the label
+    outputs:
+      go: ${{ steps.resolve.outputs.go }}
+      pr: ${{ github.event.issue.number || github.event.pull_request.number }}
+      actor: ${{ github.event.comment.user.login || github.event.sender.login }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+      run_id: ${{ steps.resolve.outputs.run_id }}
+    steps:
+      # The default branch's (pull_request_target: the base branch's) copy; no ref.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: base
+          sparse-checkout: |
+            proofs/proof_apply.py
+            .github/workflows/proof-impact.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Check the right to apply and find the gate run
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number || github.event.pull_request.number }}
+          ACTOR: ${{ github.event.comment.user.login || github.event.sender.login }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          LABEL_NAME: ${{ github.event.label.name }}
+        run: python3 -I base/proofs/proof_apply.py resolve
+
+  apply:
+    needs: resolve
+    if: needs.resolve.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One apply per PR at a time; a second request waits, it never cancels the first.
+    concurrency:
+      group: proof-apply-${{ needs.resolve.outputs.pr }}
+      cancel-in-progress: false
+    permissions:
+      contents: write        # the push; the GITHUB_TOKEN fallback uses this
+      actions: read          # download the gate artifact of another run
+      pull-requests: write   # the commit comment
+    env:
+      # Whether the optional GitHub App is configured (secrets are not readable in `if:`).
+      HAS_APP: ${{ secrets.PROOF_BOT_APP_ID != '' && secrets.PROOF_BOT_APP_KEY != '' }}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        if: ${{ env.HAS_APP == 'true' }}
+        with:
+          app-id: ${{ secrets.PROOF_BOT_APP_ID }}
+          private-key: ${{ secrets.PROOF_BOT_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: read
+      # The default branch's scripts and allowlist.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: base
+          sparse-checkout: |
+            proofs/proof_apply.py
+            .github/workflows/proof-impact.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # The PR head, to write the patch onto. Nothing in it is run: no script, no
+      # build, no hook (a fresh clone has none), and the token is not left in its git config.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.resolve.outputs.head_sha }}
+          path: head
+          sparse-checkout: proofs
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        # Absent when the run had nothing to re-prove; the script says so.
+        continue-on-error: true
+        with:
+          name: proof-gate
+          path: gate
+          run-id: ${{ needs.resolve.outputs.run_id }}
+          github-token: ${{ steps.app.outputs.token || github.token }}
+      - name: Apply the verified patch
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          PUSH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.resolve.outputs.pr }}
+          ACTOR: ${{ needs.resolve.outputs.actor }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          HEAD_REF: ${{ needs.resolve.outputs.head_ref }}
+          RUN_ID: ${{ needs.resolve.outputs.run_id }}
+          GATE_DIR: ${{ github.workspace }}/gate
+          WORKTREE: ${{ github.workspace }}/head
+          ALLOWLIST_WORKFLOW: ${{ github.workspace }}/base/.github/workflows/proof-impact.yml
+        run: python3 -I base/proofs/proof_apply.py apply

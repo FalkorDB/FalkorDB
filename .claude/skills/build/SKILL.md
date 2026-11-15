@@ -58,8 +58,18 @@ cargo build --release  # release build -> target/release/libfalkordb.{so,dylib}
 
 ```bash
 cargo fmt --all -- --check
-CXX=clang++ cargo clippy --all-targets
+CXX=clang++ cargo clippy --workspace --all-targets -- -D warnings
+CXX=clang++ cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
+cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
 ```
+
+- The lint set is strict: pedantic, nursery and cargo, from `[workspace.lints]`
+  in `Cargo.toml` (and `[lints]` in `native-deps/Cargo.toml`), so a plain
+  `cargo clippy` shows what CI fails on. The `index-falkordb` run lints the
+  native index, which the default build does not compile.
+- In `native-deps`, `src/recipes/`, `src/toolchain.rs` and `src/util.rs` feed
+  the dependency cache key: a style edit there rebuilds all three native deps
+  everywhere. Allow their lints on the `mod` line in `src/lib.rs` instead.
 
 - `CXX=clang++` is required for clippy (and any build invoking the GraphBLAS
   FFI bindings under `graph/src/graph/graphblas/`, whose bindgen output is
@@ -68,13 +78,12 @@ CXX=clang++ cargo clippy --all-targets
   layout). Run `cargo fmt --all` (no `--check`) to auto-fix.
 - Run format + build + clippy together, in that order, for a full check —
   fail fast on formatting before spending time on a full compile.
-- For a stricter, opt-in clippy pass (pedantic/nursery/cargo lints, plus an
-  auto-fix mode) see the `lint` skill.
+- To auto-fix clippy warnings, see the `lint` skill.
 
 ## Notes
 
 - CI (`.github/workflows/rust-pr.yml`) runs the same `cargo fmt --all --check`
-  and `CXX=clang++ cargo clippy --all-targets` (pinned to a specific
+  and the clippy commands above (pinned to a specific
   `clang++` version in CI containers; any reasonably recent local `clang++`
   works).
 - Cross-platform release *artifacts* (Linux `.so`, macOS `.dylib`) and
