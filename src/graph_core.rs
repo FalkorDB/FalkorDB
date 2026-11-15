@@ -20,7 +20,7 @@
 //!                        |
 //!                        +--> single writer loop
 //!                              +--> execute_query_write()
-//!                              +--> commit() on success / rollback() on error
+//!                              +--> commit() on success / drop the fork on error
 //! ```
 //!
 //! The key design goal is predictable write ordering with high read throughput.
@@ -38,25 +38,22 @@ use crate::{
     slow_log::SlowLog,
     telemetry,
 };
-use atomic_refcell::AtomicRefCell;
 use crossfire::{
     MTx, Rx,
-    mpsc::{Array, bounded_blocking},
+    mpsc::{List, unbounded_blocking},
 };
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::online_build::BuildHost;
 use graph::{
     effects::payload::take_effects_buffer,
     effects::{EffectsBuffer, ReplicationSink},
-    graph::{
-        graph::{Graph, Plan},
-        mvcc_graph::MvccGraph,
-    },
+    graph::{graph::Plan, mvcc_graph::MvccGraph},
     planner::IR,
     runtime::runtime::{QueryStatistics, Runtime},
-    threadpool::{pending_count, spawn},
+    threadpool::{QueueSlot, spawn},
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
@@ -66,6 +63,10 @@ use std::{
     },
     time::Instant,
 };
+use valkey_module::logging::{ValkeyLogLevel, log_warning};
+use valkey_module::{
+    Context, ContextFlags, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
+};
 
 use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
@@ -73,6 +74,8 @@ use crate::allocator::{
 use crate::dispatch::must_run_inline;
 use crate::divergence_guard;
 use crate::query_session::QuerySession;
+#[cfg(feature = "index-falkordb")]
+use crate::query_session::hold_gil;
 
 /// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
 ///
@@ -85,10 +88,7 @@ use crate::query_session::QuerySession;
 /// conversions that used to abort the process (#2490).
 #[must_use]
 pub fn up_to_nul(s: &str) -> &str {
-    match s.find('\0') {
-        Some(end) => &s[..end],
-        None => s,
-    }
+    s.find('\0').map_or(s, |end| &s[..end])
 }
 
 /// The graph name the C engine would see for `key`: [`up_to_nul`] of its bytes.
@@ -101,7 +101,7 @@ pub fn up_to_nul(s: &str) -> &str {
 /// by the full key bytes and only rebuilds a key from the name when it creates one.
 /// See [`c_graph_key`].
 #[must_use]
-pub fn c_graph_name(key: &RedisString) -> String {
+pub fn c_graph_name(key: &ValkeyString) -> String {
     up_to_nul(&key.to_string_lossy()).to_owned()
 }
 
@@ -118,8 +118,8 @@ pub fn c_graph_name(key: &RedisString) -> String {
 #[must_use]
 pub fn c_graph_key(
     ctx: &Context,
-    key: &RedisString,
-) -> RedisString {
+    key: &ValkeyString,
+) -> ValkeyString {
     // Built from the bytes, not from `c_graph_name`: a Redis key name is binary and
     // need not be UTF-8 (`test_binary_key_name_scan_skip` keeps a graph under
     // `\xc3\x28...`), so rebuilding it through a lossy `String` would replace those
@@ -127,7 +127,7 @@ pub fn c_graph_key(
     // difference this is allowed to make.
     let bytes = key.as_slice();
     let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    RedisString::create_from_slice(ctx.get_raw(), &bytes[..end])
+    ValkeyString::create_from_slice(ctx.get_raw(), &bytes[..end])
 }
 
 /// Global registry of all live graph instances.
@@ -141,17 +141,17 @@ pub fn register_graph(
     name: String,
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
-    // Invariant: every registered name must have been removed from the
-    // registry before being re-inserted. `graph_free` removes entries on
-    // Redis key delete/overwrite/expire, and the RDB multi-key load path
-    // mutates the placeholder Arc in place rather than rebinding the name.
-    // If this assert fires, a caller is leaking the previously-registered
-    // Arc and likely racing index/teardown shutdown.
+    // A name can already be registered here, and that is not a leak. `graph_free`
+    // removes entries on Redis key delete/overwrite/expire, but the server may
+    // run it later than the key left the keyspace: Valkey flushes asynchronously
+    // by default (`lazyfree-lazy-user-flush`), so `DEBUG RELOAD`, `DEBUG LOADAOF`
+    // and a replica's full sync empty the old keyspace on a background thread
+    // and then load the new one, which registers the same name before the old
+    // value's `graph_free` has run. Redis flushes synchronously, which is why
+    // this only showed up on Valkey. The displaced entry is the old graph's
+    // registry clone; `graph_free` removes entries by pointer identity, so the
+    // old value's late `graph_free` cannot take out the new registration.
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
-    debug_assert!(
-        displaced.is_none(),
-        "register_graph: name already registered; missing graph_free or placeholder swap"
-    );
     // Drop any displaced graph off the main Redis thread. Index::drop ->
     // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
     // thread pool when its timer can't be stopped synchronously; that
@@ -196,9 +196,10 @@ pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
 /// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
 ///
 /// `graph_free` only runs for the *overwritten destination* value, so without
-/// this the old name keeps a stale entry: the next `register_graph` under
-/// that name (e.g. a concurrent write query re-creating the key) displaces
-/// it and trips the invariant assert above.
+/// this the old name keeps a stale entry, so the registry would list a graph
+/// no key holds until the next `register_graph` under that name (e.g. a
+/// concurrent write query re-creating the key) displaces it (see
+/// `register_graph`).
 pub fn rename_graph(
     old_name: &str,
     new_name: &str,
@@ -227,6 +228,11 @@ pub struct WriteMessage {
     pub received_at: i64,
     pub enqueue_instant: Instant,
     pub waiting_id: u64,
+    /// The query's admission slot, released when the drainer dequeues it — so
+    /// writes waiting here count against `MAX_QUEUED_QUERIES` exactly like jobs
+    /// waiting in the pool queue. Dropped with the message on every other path
+    /// (a failed send, a graph freed with writes still queued).
+    pub slot: Option<QueueSlot>,
     /// True if this is a GRAPH.PROFILE write: execute with profiling enabled and
     /// reply with the profile tree instead of the result set. Otherwise handled
     /// exactly like a GRAPH.QUERY write — same locking, commit and effects
@@ -236,7 +242,6 @@ pub struct WriteMessage {
 
 /// What `commit_and_replicate` needs to publish a finished write.
 struct WriteQueryOk {
-    graph: Arc<AtomicRefCell<Graph>>,
     effects_buffer: Option<EffectsBuffer>,
     modified: bool,
 }
@@ -253,9 +258,6 @@ impl WriteQueryOk {
         stats: &QueryStatistics,
     ) -> Self {
         Self {
-            // The MVCC version this query built, taken from the runtime that
-            // built it rather than passed alongside, so the two cannot differ.
-            graph: Arc::clone(&runtime.g),
             effects_buffer: take_effects_buffer(runtime),
             // `effects_count` as well as the counters: a query can replicate an
             // effect without moving any of them — index DDL does.
@@ -300,10 +302,10 @@ pub enum ProfileDetect {
 /// Centralising the `.expect()` here documents that invariant in one place and
 /// keeps call sites free of `unwrap()` noise.
 pub mod ffi {
-    use redis_module::raw;
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
     use std::ptr::null_mut;
+    use valkey_module::raw;
 
     const MSG: &str = "Redis module FFI pointer not initialised (call RedisModule_Init first)";
 
@@ -529,9 +531,14 @@ pub mod ffi {
 pub static REPLICATION_CONSUMERS: AtomicBool = AtomicBool::new(true);
 
 pub struct ThreadedGraph {
-    pub graph: MvccGraph,
-    pub sender: MTx<Array<Box<WriteMessage>>>,
-    pub receiver: Rx<Array<Box<WriteMessage>>>,
+    pub graph: Arc<MvccGraph>,
+    /// An unlimited channel, bounded by admission: every message carries the
+    /// [`QueueSlot`] its query took before dispatch, so the `MAX_QUEUED_QUERIES`
+    /// check covers it. Senders are pool workers holding this graph's read lock
+    /// and the drainer must take the write lock to run each message, so a send
+    /// that could wait on a full channel would deadlock.
+    pub sender: MTx<List<Box<WriteMessage>>>,
+    pub receiver: Rx<List<Box<WriteMessage>>>,
     pub write_loop: AtomicBool,
     pub slow_log: SlowLog,
 }
@@ -544,7 +551,7 @@ impl ThreadedGraph {
         cache_size: usize,
         name: &str,
     ) -> Self {
-        let (sender, receiver) = bounded_blocking(1024);
+        let (sender, receiver) = unbounded_blocking();
         Self {
             graph: MvccGraph::new(16384, 16384, cache_size, name),
             sender,
@@ -556,8 +563,8 @@ impl ThreadedGraph {
 
     /// Create a `ThreadedGraph` from an existing `MvccGraph`.
     /// Used by the RDB load path.
-    pub fn from_mvcc(graph: MvccGraph) -> Self {
-        let (sender, receiver) = bounded_blocking(1024);
+    pub fn from_mvcc(graph: Arc<MvccGraph>) -> Self {
+        let (sender, receiver) = unbounded_blocking();
         Self {
             graph,
             sender,
@@ -573,6 +580,7 @@ impl ThreadedGraph {
 /// Takes `session` rather than a `&ThreadedGraph`: the session owns the per-graph
 /// lock and may swap its read guard for a write guard mid-query, so a long-lived
 /// borrow would be invalidated. See `crate::query_session`.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_query(
     session: &QuerySession,
     ctx: &Context,
@@ -581,6 +589,7 @@ pub fn execute_query(
     write: bool,
     cmd: &str,
     per_query_timeout: Option<i64>,
+    admission: &mut Option<QueueSlot>,
 ) -> Result<ReadQueryResult, String> {
     let wall_start = Instant::now();
     let Plan {
@@ -589,7 +598,7 @@ pub fn execute_query(
         parameters,
         params_offset,
         ..
-    } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
+    } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
     // Single pass over the plan: index DDL (CREATE/DROP INDEX) and a Commit
     // node both mean this is a write. Writes escalate to writer mode lazily
     // during execution (see `crate::query_session`), so no further plan
@@ -614,13 +623,15 @@ pub fn execute_query(
             timed_out: false,
         });
     } else {
+        // A read executes right here, so it is no longer queued. A write keeps
+        // its slot until the write drainer dequeues it.
+        admission.take();
         session.with_graph(|tg| tg.graph.read())
     };
     let timeout_ms = compute_effective_timeout(per_query_timeout, is_write)?;
     let runtime = Runtime::new(
         g,
         parameters,
-        is_write,
         plan,
         false,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
@@ -661,10 +672,11 @@ pub fn execute_profile(
     ctx: &Context,
     query: &str,
     per_query_timeout: Option<i64>,
+    admission: &mut Option<QueueSlot>,
 ) -> Result<ProfileDetect, String> {
     let Plan {
         plan, parameters, ..
-    } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
+    } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
     // Detect writes (mirrors `execute_query`). A write is NOT executed here — it
     // must go through the serialized write queue to get the locking protocol and
     // effects replication.
@@ -677,12 +689,13 @@ pub fn execute_profile(
     if is_write {
         return Ok(ProfileDetect::Write);
     }
+    // Executing now — see `execute_query`.
+    admission.take();
     let g = session.with_graph(|tg| tg.graph.read());
     let timeout_ms = compute_effective_timeout(per_query_timeout, false)?;
     let runtime = Runtime::new(
         g,
         parameters,
-        false,
         plan.clone(),
         false,
         String::new(),
@@ -711,6 +724,10 @@ pub fn execute_profile(
 /// short-lived `session.with_graph` borrow instead.
 ///
 /// Returns `(params_offset, execution_time_ms)` for telemetry.
+///
+/// A write that started as a reader and lost its version to a writer that
+/// committed while it was matching ([`QuerySession::is_stale`]) has mutated and
+/// replied nothing, so it is run again from the start on a fresh session.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_query_write(
     session: QuerySession,
@@ -722,36 +739,77 @@ pub fn execute_query_write(
     per_query_timeout: Option<i64>,
     profile: bool,
 ) -> Result<(usize, f64), String> {
+    let graph = session.graph_arc();
+    let facts = session.facts();
+    let mut session = session;
+    loop {
+        match try_query_write(
+            session,
+            ctx,
+            key_name,
+            query,
+            compact,
+            first_cached,
+            per_query_timeout,
+            profile,
+        ) {
+            Err(WriteAttempt::Stale) => session = QuerySession::begin_with(&graph, facts),
+            Err(WriteAttempt::Failed(err)) => return Err(err),
+            Ok(done) => return Ok(done),
+        }
+    }
+}
+
+/// Why one run of [`try_query_write`] did not succeed.
+enum WriteAttempt {
+    /// Another writer committed while this one matched; run it again.
+    Stale,
+    Failed(String),
+}
+
+impl From<String> for WriteAttempt {
+    fn from(err: String) -> Self {
+        Self::Failed(err)
+    }
+}
+
+/// One run of [`execute_query_write`].
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_pass_by_value,
+    reason = "the session is consumed: dropping it releases the locks"
+)]
+fn try_query_write(
+    session: QuerySession,
+    ctx: &Context,
+    key_name: &Arc<str>,
+    query: &str,
+    compact: bool,
+    first_cached: bool,
+    per_query_timeout: Option<i64>,
+    profile: bool,
+) -> Result<(usize, f64), WriteAttempt> {
     let wall_start = Instant::now();
     let Plan {
         plan,
         parameters,
         params_offset,
         ..
-    } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
+    } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
     let cached = first_cached;
     debug_assert!(plan.iter().any(|n| matches!(
         n,
         IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
     )));
 
-    // Compute the timeout before taking the MVCC write slot, so an error
-    // here cannot leak the slot.
     let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
 
-    // Claim the MVCC write slot: `MvccGraph::write` CASes the single-writer flag and
-    // hands back a fresh COW version to build into — it is not a lock, so a writer
-    // that already owns the slot makes this fail rather than block. We are still a
-    // reader here, so an inline writer can be holding it; return a retryable error.
-    // On this branch we did NOT claim it, so callers must not roll back — the slot and
-    // its version belong to the other writer.
-    let Some(g) = session.with_graph(|tg| tg.graph.write()) else {
-        return Err("another write is in progress, retry the query".to_string());
-    };
+    // The private COW version to build into. Forking takes nothing, so an
+    // inline writer is never refused because we are still matching; if one
+    // commits meanwhile, the session finds this version stale on escalation.
     let runtime = Runtime::new(
-        g.clone(),
+        session.write_version(),
         parameters,
-        true,
         plan,
         false,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
@@ -773,11 +831,11 @@ pub fn execute_query_write(
             // private version: documents published by earlier `Commit`s are deleted
             // (entity never existed) or rewritten from committed values. Writer
             // mode, so no reader observes the interim state.
-            // Releases the MVCC write slot we took above, dropping the private
-            // version with all its writes. Slot ownership lives here — callers
-            // must NOT roll back.
             abandon_write(&session, &runtime);
-            return Err(err);
+            if session.is_stale() {
+                return Err(WriteAttempt::Stale);
+            }
+            return Err(err.into());
         }
     };
 
@@ -877,8 +935,11 @@ impl Drop for BlockedClient {
 ///
 /// Rules:
 /// - Per-query timeout cannot exceed TIMEOUT_MAX (if set).
-/// - Per-query timeout is only applied to read queries (write queries ignore it).
-/// - Falls back to TIMEOUT_DEFAULT, then deprecated TIMEOUT.
+/// - Once TIMEOUT_DEFAULT or TIMEOUT_MAX is set, every timeout — the per-query one
+///   included — applies to reads and writes alike; a write that runs out of time
+///   is rolled back. Under the deprecated TIMEOUT alone, only reads time out.
+///   This is C's `timeout_rw` (`_read_flags`, `cmd_dispatcher.c`).
+/// - Falls back to TIMEOUT_DEFAULT, then TIMEOUT_MAX, then deprecated TIMEOUT.
 /// - Returns None for unlimited.
 fn compute_effective_timeout(
     per_query_timeout: Option<i64>,
@@ -888,13 +949,15 @@ fn compute_effective_timeout(
     let timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
     let timeout_legacy = TIMEOUT.load(Ordering::Relaxed);
 
-    // Per-query timeout: enforce TIMEOUT_MAX limit, skip for writes
+    // C's `timeout_rw`: the new-style configs make timeouts apply to writes too.
+    let timeout_rw = timeout_max > 0 || timeout_default > 0;
+
+    // Per-query timeout: enforce TIMEOUT_MAX limit
     if let Some(pq) = per_query_timeout {
         if timeout_max > 0 && pq > timeout_max {
             return Err("The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value".to_string());
         }
-        // Per-query timeout is ignored for write queries
-        if !is_write && pq > 0 {
+        if pq > 0 && (!is_write || timeout_rw) {
             return Ok(Some(pq as u64));
         }
     }
@@ -917,7 +980,7 @@ fn compute_effective_timeout(
 
 /// Replies `[error, current_version]` for a client-supplied version that does
 /// not match the graph's current schema version.
-pub(crate) fn reply_invalid_graph_version(
+pub fn reply_invalid_graph_version(
     ctx: &Context,
     current_version: i64,
 ) {
@@ -925,6 +988,19 @@ pub(crate) fn reply_invalid_graph_version(
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_error(ctx.ctx, ERR.as_ptr());
     raw::reply_with_long_long(ctx.ctx, current_version);
+}
+
+/// Admit one query for dispatch, or reply "Max pending queries exceeded" (C's
+/// wording) and return `None` when `MAX_QUEUED_QUERIES` queries are already
+/// queued — in the thread pool or in any graph's write queue. Runs on the Redis
+/// main thread and never waits: rejecting is how a full queue is reported.
+fn admit(ctx: &Context) -> Option<QueueSlot> {
+    let slot = QueueSlot::try_acquire(MAX_QUEUED_QUERIES.load(Ordering::Relaxed));
+    if slot.is_none() {
+        let cerr = ffi::sanitise_error("Max pending queries exceeded");
+        raw::reply_with_error(ctx.ctx, cerr.as_ptr());
+    }
+    slot
 }
 
 #[inline]
@@ -939,13 +1015,13 @@ pub fn query_mut(
     key_name: Arc<str>,
     per_query_timeout: Option<i64>,
     version_check: Option<u64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // Reject a stale client-supplied schema version before doing any work.
     if let Some(provided_version) = version_check {
-        let current_schema_version = graph.read().graph.read().borrow().schema_version;
+        let current_schema_version = graph.read().graph.read().schema_version;
         if provided_version != current_schema_version {
             reply_invalid_graph_version(ctx, current_schema_version as i64);
-            return Ok(RedisValue::NoReply);
+            return Ok(ValkeyValue::NoReply);
         }
     }
 
@@ -967,20 +1043,9 @@ pub fn query_mut(
         );
     }
 
-    // Check pending queries limit before dispatching.
-    let max = MAX_QUEUED_QUERIES.load(Ordering::Relaxed) as usize;
-    if pending_count() >= max {
-        let bc = BlockedClient {
-            inner: unsafe { ffi::block_client(ctx.ctx) },
-        };
-        let err_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-        let err_ctx = Context::new(err_ctx);
-        let cerr = ffi::sanitise_error("Max pending queries exceeded");
-        unsafe { ffi::reply_error(err_ctx.ctx, cerr.as_ptr()) };
-        drop(bc);
-        unsafe { ffi::free_thread_safe_context(err_ctx.ctx) };
-        return Ok(RedisValue::NoReply);
-    }
+    let Some(slot) = admit(ctx) else {
+        return Ok(ValkeyValue::NoReply);
+    };
 
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let graph = graph.clone();
@@ -1001,6 +1066,7 @@ pub fn query_mut(
     let mut pool_waiting = telemetry::WaitingEntry::register(received_at, &key_name, &query);
     spawn(
         move || {
+            let mut slot = Some(slot);
             let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
             let enforce_mem = track_mem || mem_capacity > 0;
             if enforce_mem {
@@ -1043,7 +1109,11 @@ pub fn query_mut(
                 write,
                 cmd,
                 per_query_timeout,
+                &mut slot,
             );
+            // Released on every path out of the read phase except a write, which
+            // carries it into the write queue below.
+            let slot = slot.filter(|_| matches!(res, Ok(ref r) if r.is_write));
             let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
             telemetry::unregister_running(running_id);
 
@@ -1052,7 +1122,7 @@ pub fn query_mut(
                 if track_mem {
                     let (allocated, deallocated) = current_thread_usage();
                     ctx.log(
-                        redis_module::logging::RedisLogLevel::Notice,
+                        ValkeyLogLevel::Notice,
                         &format!(
                             "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
                             allocated as isize - deallocated as isize
@@ -1077,6 +1147,7 @@ pub fn query_mut(
                             received_at,
                             enqueue_instant: Instant::now(),
                             waiting_id,
+                            slot,
                             profile: false,
                         });
                         let send = session.with_graph(|tg| tg.sender.send(msg));
@@ -1133,7 +1204,7 @@ pub fn query_mut(
         },
         None,
     );
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 /// Execute a query synchronously on the calling thread.
@@ -1146,7 +1217,7 @@ fn query_sync(
     write: bool,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // First pass: parse + detect if write, execute reads inline.
     // Sync query timeout to UDF JS runtime
     graph::udf::js_context::JS_TIMEOUT_MS
@@ -1171,7 +1242,16 @@ fn query_sync(
     let running_id = telemetry::register_running(received_at, key_name, &query_arc, false);
     let res = {
         let session = QuerySession::begin(graph);
-        execute_query(&session, ctx, query, compact, write, cmd, per_query_timeout)
+        execute_query(
+            &session,
+            ctx,
+            query,
+            compact,
+            write,
+            cmd,
+            per_query_timeout,
+            &mut None,
+        )
     };
     let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
     telemetry::unregister_running(running_id);
@@ -1218,16 +1298,15 @@ fn query_sync(
                         telemetry::enqueue_entry(key_name, graph, entry);
                     }
                     Err(err) => {
-                        // execute_query_write already released the MVCC write
-                        // slot on failure (rollback lives there now); just
-                        // surface the error. Dropping the session releases the
-                        // write lock.
+                        // execute_query_write already discarded the private
+                        // version on failure; just surface the error. Dropping
+                        // the session releases the write lock.
                         //
                         // Unless it was the master's write: the master only
                         // replicates a query that already succeeded there, so
                         // this failing means the two have diverged.
                         divergence_guard::on_failure(ctx, key_name, "GRAPH.QUERY", &err, None);
-                        return Err(redis_module::RedisError::String(err));
+                        return Err(ValkeyError::String(err));
                     }
                 }
             } else {
@@ -1252,10 +1331,10 @@ fn query_sync(
             }
         }
         Err(err) => {
-            return Err(redis_module::RedisError::String(err));
+            return Err(ValkeyError::String(err));
         }
     }
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 #[inline]
@@ -1265,12 +1344,16 @@ pub fn profile_mut(
     query: &str,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // Contexts that cannot block run inline (see `query_mut` for the rationale, and
     // `must_run_inline` for the flag set).
     if must_run_inline(ctx) {
         return profile_sync(ctx, graph, query, key_name, per_query_timeout);
     }
+
+    let Some(slot) = admit(ctx) else {
+        return Ok(ValkeyValue::NoReply);
+    };
 
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let graph = graph.clone();
@@ -1291,7 +1374,9 @@ pub fn profile_mut(
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
 
-            let res = execute_profile(&session, &ctx, &query, per_query_timeout);
+            let mut slot = Some(slot);
+            let res = execute_profile(&session, &ctx, &query, per_query_timeout, &mut slot);
+            let slot = slot.filter(|_| matches!(res, Ok(ProfileDetect::Write)));
 
             // Read-phase memory tracking ends here; a write is tracked
             // separately inside process_write_queued_query.
@@ -1320,6 +1405,7 @@ pub fn profile_mut(
                         received_at,
                         enqueue_instant: Instant::now(),
                         waiting_id,
+                        slot,
                         profile: true,
                     });
                     let send = session.with_graph(|tg| tg.sender.send(msg));
@@ -1350,7 +1436,7 @@ pub fn profile_mut(
         },
         None,
     );
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 fn profile_sync(
@@ -1359,7 +1445,7 @@ fn profile_sync(
     query: &str,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
     if mem_capacity > 0 {
         reset_counter();
@@ -1367,7 +1453,7 @@ fn profile_sync(
     }
     let res = {
         let session = QuerySession::begin(graph);
-        execute_profile(&session, ctx, query, per_query_timeout)
+        execute_profile(&session, ctx, query, per_query_timeout, &mut None)
     };
     match res {
         // Read query — already profiled and replied.
@@ -1389,12 +1475,12 @@ fn profile_sync(
             match res {
                 Ok(_) => {}
                 Err(err) => {
-                    // execute_query_write already released the MVCC slot on
-                    // failure (rollback lives there); just surface the error.
+                    // execute_query_write already discarded the private
+                    // version on failure; just surface the error.
                     if mem_capacity > 0 {
                         disable_tracking();
                     }
-                    return Err(redis_module::RedisError::String(err));
+                    return Err(ValkeyError::String(err));
                 }
             }
         }
@@ -1404,13 +1490,13 @@ fn profile_sync(
             }
             // See `query_sync`: a replayed command failing is divergence.
             divergence_guard::on_failure(ctx, key_name, "GRAPH.PROFILE", &err, None);
-            return Err(redis_module::RedisError::String(err));
+            return Err(ValkeyError::String(err));
         }
     }
     if mem_capacity > 0 {
         disable_tracking();
     }
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 /// Publish a write that succeeded: commit the version, signal WATCH, replicate.
@@ -1420,26 +1506,20 @@ fn profile_sync(
 /// publish it identically. Both carried a copy of this, and of
 /// [`abandon_write`] below, which is how the effects decision came to be made
 /// in two places.
-pub(crate) fn finish_write(
+pub fn finish_write(
     session: &QuerySession,
     ctx: &Context,
     key_name: &Arc<str>,
-    runtime: &Runtime,
+    runtime: &Runtime<'_>,
     stats: &QueryStatistics,
 ) {
     let wq = WriteQueryOk::new(runtime, stats);
-    // `None` means the closure never ran, not that it failed:
-    // `with_graph_mut` yields it for a session still in reader mode.
-    if session
-        .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, wq))
-        .is_none()
-    {
-        // Never escalated, so the plan's `Commit` never ran and nothing was
-        // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There
-        // is nothing to publish or replicate; just release the MVCC write slot,
-        // which only commit or rollback clears.
-        session.with_graph(|tg| tg.graph.rollback());
-    }
+    // `with_graph_mut` skips the closure for a session still in reader mode:
+    // it never escalated, so the plan's `Commit` never ran and nothing was
+    // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There is
+    // nothing to publish or replicate, and the private version goes with the
+    // runtime.
+    session.with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, runtime, wq));
 }
 
 /// Discard a write that failed, leaving the published state as it was.
@@ -1448,15 +1528,17 @@ pub(crate) fn finish_write(
 /// existed) or rewritten from committed values before the private version goes,
 /// and this runs in writer mode, so no reader observes the interim state.
 ///
-/// Slot ownership lives with whoever claimed it: this releases it, so a caller
-/// that did *not* claim the slot must not call this.
-pub(crate) fn abandon_write(
+/// A session whose version was never found current (still matching, or its
+/// fork went stale) published no document, so there is nothing to resync. The
+/// version itself goes with the runtime; there is nothing else to release.
+pub fn abandon_write(
     session: &QuerySession,
     runtime: &Runtime,
 ) {
-    let committed = session.with_graph(|tg| tg.graph.read());
-    runtime.resync_published_indexes(&committed);
-    session.with_graph(|tg| tg.graph.rollback());
+    if session.version_is_current() {
+        let committed = session.with_graph(|tg| tg.graph.read());
+        runtime.resync_published_indexes(&committed);
+    }
 }
 
 /// Commit a successfully-executed write and replicate it.
@@ -1466,23 +1548,26 @@ pub(crate) fn abandon_write(
 /// writers. The last work a write does under the GIL; its caller releases the locks
 /// immediately afterwards and only then serializes the reply.
 fn commit_and_replicate(
-    g: &mut ThreadedGraph,
+    g: &ThreadedGraph,
     ctx: &Context,
     key_name: &Arc<str>,
+    runtime: &Runtime,
     wq: WriteQueryOk,
 ) {
     // Index document changes were already applied by each `CommitOp` while this
     // query held the write lock (so a later operator in the same query could see
     // them); nothing left to publish but the matrix version.
-    // `commit` validates the version before publishing it. It cannot refuse one
-    // from here: every write query ends its last segment through
+    // `commit` checks the version before publishing it, and cannot refuse one
+    // from here. Not stale: the session forked under the write lock, or found
+    // its fork current on escalation, and has held the lock since. Not
+    // invalid: every write query ends its last segment through
     // `Pending::end_segment`, which verifies the batch and rolls it over, so the
     // batch reaching this point is empty and passes trivially. A query with no
     // `Commit` operator at all — index DDL — creates no ids and passes for the
     // same reason. There is also nothing this could do about a refusal: the
     // query has already succeeded and its reply is about to be serialized.
-    if g.graph.commit(Arc::clone(&wq.graph)).is_err() {
-        unreachable!("a committed write query leaves an empty, verified id batch");
+    if let Err(e) = runtime.publish(|fork| g.graph.commit(fork)) {
+        unreachable!("a write query's version is current and verified by now: {e}");
     }
     // Signal the key as modified so WATCH gets triggered.
     unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
@@ -1495,7 +1580,7 @@ fn commit_and_replicate(
     // nothing to recover it. Loud rather than silent: this is how the
     // first-full-sync window went unnoticed.
     let Some(buf) = wq.effects_buffer else {
-        redis_module::logging::log_warning(format!(
+        log_warning(format!(
             "graph '{key_name}' was modified but produced no effects payload; \
              the change will not reach replicas or the AOF"
         ));
@@ -1507,6 +1592,37 @@ fn commit_and_replicate(
     // about it. What the bytes are, and what still has to happen to them, is
     // the format's.
     buf.replicate(&CtxSink(ctx), key_name.as_bytes());
+}
+
+// ---- The native index builder's host (feature: index-falkordb) ----
+//
+// The build itself (when batches run, on which threads, and how they commit) is the graph crate's
+// (`graph::index::falkordb::online_build`), and so is how a build reaches its graph. This is only
+// what the builder needs of Redis: the lock a batch publishes under, and the log. Module init
+// starts the builder with it.
+
+/// The Redis server, as the native index builder needs it: one for every graph.
+#[cfg(feature = "index-falkordb")]
+pub struct RedisBuildHost;
+
+#[cfg(feature = "index-falkordb")]
+impl BuildHost for RedisBuildHost {
+    /// The GIL, which every writer holds to commit.
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(),
+    ) {
+        let _gil = hold_gil();
+        f();
+    }
+
+    /// Into the server's log, as a warning, from whichever thread the builder runs on.
+    fn warn(
+        &self,
+        message: &str,
+    ) {
+        log_warning(message);
+    }
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
@@ -1524,22 +1640,21 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // BGSAVE interleave between messages.
         let msg = {
             let g = graph.read();
-            match g.receiver.try_recv() {
-                Ok(msg) => msg,
-                Err(_) => {
-                    g.write_loop.store(false, Ordering::Release);
-                    if g.receiver.is_empty() {
-                        return;
-                    }
-                    if g.write_loop
-                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-                        .is_err()
-                    {
-                        return;
-                    }
-                    // A producer raced an enqueue after we saw empty; keep draining.
-                    continue;
+            if let Ok(msg) = g.receiver.try_recv() {
+                msg
+            } else {
+                g.write_loop.store(false, Ordering::Release);
+                if g.receiver.is_empty() {
+                    return;
                 }
+                if g.write_loop
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                    .is_err()
+                {
+                    return;
+                }
+                // A producer raced an enqueue after we saw empty; keep draining.
+                continue;
             }
         };
         let WriteMessage {
@@ -1552,8 +1667,11 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             received_at,
             enqueue_instant,
             waiting_id,
+            slot,
             profile,
         } = *msg;
+        // Dequeued: no longer counts as queued.
+        drop(slot);
         let running_id = telemetry::transition_waiting_to_running(waiting_id);
         let write_start = Instant::now();
         let wait_ms = write_start.duration_since(enqueue_instant).as_secs_f64() * 1000.0;
@@ -1652,7 +1770,7 @@ const EFFECT_COMMAND: &str = "GRAPH.EFFECT";
 /// `pub(crate)` because the constraint command sends payloads of its own, from
 /// outside any query. They are still payloads, so they still go out through the
 /// format.
-pub(crate) struct CtxSink<'a>(pub(crate) &'a Context);
+pub struct CtxSink<'a>(pub(crate) &'a Context);
 
 impl ReplicationSink for CtxSink<'_> {
     fn replicate(

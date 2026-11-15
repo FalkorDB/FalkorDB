@@ -438,3 +438,21 @@ class testResultSetFlow(FlowTestsBase):
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN typeof(r)"""
         result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], "Edge")
+
+    # Verbose text of points and NaN, byte for byte as C prints them
+    def test19_verbose_point_and_nan_text(self):
+        con = self.env.getConnection()
+
+        def verbose(q):
+            return con.execute_command("GRAPH.QUERY", GRAPH_ID, q)[1][0]
+
+        # top-level point: no space after the colons (C's verbose point reply)
+        self.env.assertEqual(verbose("RETURN point({latitude: 1, longitude: 2})"),
+                             ["point({latitude:1.000000, longitude:2.000000})"])
+        # nested point: SIValue_ToString's form, with the spaces
+        self.env.assertEqual(verbose("RETURN [point({latitude: 1, longitude: 2})]"),
+                             ["[point({latitude: 1.000000, longitude: 2.000000})]"])
+        # NaN inside a list, a map and a vector is %f's `nan`
+        self.env.assertEqual(
+            verbose("RETURN [0.0/0.0, 1.0/0.0, -1.0/0.0, 1.5], {a: 0.0/0.0}, vecf32([0.0/0.0])"),
+            ["[nan, inf, -inf, 1.500000]", "{a: nan}", "<nan>"])

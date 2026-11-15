@@ -23,17 +23,21 @@
 //! can reject loading an incomplete module.
 
 use crate::commands::constraint::{Settling, settle_constraint};
+#[cfg(feature = "index-falkordb")]
+use crate::config::CONFIGURATION_INDEX_BUILD_THREAD_COUNT;
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
-    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
-    MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
-    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
+    apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
+#[cfg(feature = "index-falkordb")]
+use crate::graph_core::RedisBuildHost;
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::graph::constraint::ConstraintStatus;
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::online_build;
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{
@@ -44,12 +48,12 @@ use graph::{
     threadpool::{self, init_thread_pool},
     udf,
 };
-use redis_module::{
+use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
+use valkey_module::{
     Context, ContextFlags, InfoContext, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
     RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
-    RedisModuleEvent, Status, basic_info_command_handler, logging::log_warning, raw,
+    RedisModuleEvent, Status, ValkeyString, basic_info_command_handler, logging::log_warning, raw,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc, sync::atomic::AtomicI64};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -130,17 +134,77 @@ unsafe extern "C" fn on_fork_child() {
     let registry = crate::graph_core::GRAPH_REGISTRY.lock();
     for graph_arc in registry.values() {
         let tg: &crate::graph_core::ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         if !graph.is_synced() {
             std::process::abort();
         }
     }
 }
 
+/// Point this module's view of `environ` at a snapshot of the live environment.
+///
+/// Valkey `dlopen`s modules with `RTLD_DEEPBIND`, so the module and its
+/// dependencies (notably libomp) bind `environ` to libc's own definition
+/// before the global scope. When the server executable copy-relocates
+/// `environ` (Ubuntu's valkey-server package does), libc's startup code and
+/// `setenv` only ever update that copy, leaving libc's original NULL. libomp
+/// iterates `environ` directly during its first initialization and segfaults
+/// on the NULL.
+///
+/// When both views are already the same object (Redis, or a valkey-server
+/// without the copy relocation) this is a no-op. Valkey passes
+/// `RTLD_DEEPBIND` only on glibc and FreeBSD (musl ignores it), and macOS
+/// dylibs must not reference `environ` directly. FalkorDB ships only for
+/// Linux and macOS, so the helper exists only on Linux.
+#[cfg(target_os = "linux")]
+unsafe fn sync_deepbind_environ() {
+    unsafe extern "C" {
+        static mut environ: *mut *mut libc::c_char;
+    }
+    unsafe {
+        // `dlopen(NULL)` searches the global scope starting at the executable,
+        // which yields the copy-relocated `environ` that libc keeps updated.
+        let main = libc::dlopen(std::ptr::null(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        if main.is_null() {
+            return;
+        }
+        let live = libc::dlsym(main, c"environ".as_ptr()).cast::<*mut *mut libc::c_char>();
+        libc::dlclose(main);
+        let ours = &raw mut environ;
+        if live.is_null() || live == ours {
+            return;
+        }
+        // Install an owned, leaked snapshot rather than aliasing `*live`: the
+        // live array is typically the one glibc's `setenv` allocated, so a
+        // later `setenv` (e.g. libomp registering itself) may `realloc` it and
+        // leave `*ours` dangling. Copy the strings too: a `putenv` caller owns
+        // its buffer and may free it after `unsetenv`, so borrowing it could
+        // leave the snapshot pointing at freed memory.
+        let snapshot = graph::env_snapshot::leak_deep_copy(*live);
+        // The snapshot is a point-in-time view: a later `setenv` updates only
+        // the executable's copy, so code that scans `environ` directly (e.g.
+        // `std::env::vars()`) will not see it. That includes every other
+        // module the server loaded with `RTLD_DEEPBIND`, since they share
+        // libc's `environ`; they saw NULL before, so this is still an
+        // improvement. `getenv`/`std::env::var` go through libc and are
+        // unaffected. libomp only needs it once, at init.
+        //
+        // SAFETY: `ours` points to libc's `char **environ`; this runs on the
+        // main thread during module load. At startup no other thread reads
+        // it. Under a runtime `MODULE LOAD`, a thread of an earlier
+        // DEEPBIND-loaded module could read it concurrently; that is a single
+        // aligned pointer store, so it sees either the old or the new array,
+        // both NULL-terminated. `*live` and its strings are only read here.
+        // The snapshot owns both the pointer array and every string, all
+        // leaked, so it stays valid for the life of the process whatever a
+        // later `setenv`, `putenv` or `unsetenv` does to the live environment.
+        *ours = snapshot;
+    }
+}
+
 pub fn graph_init(
     ctx: &Context,
-    args: &[redis_module::RedisString],
+    args: &[ValkeyString],
 ) -> Status {
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
@@ -158,69 +222,12 @@ pub fn graph_init(
         std::process::exit(1);
     }));
 
-    // Parse module args for AtomicI64/AtomicU64 statics not registered in the
-    // redis_module! config section.
-    {
-        let args_str: Vec<String> = args
-            .iter()
-            .map(redis_module::RedisString::to_string_lossy)
-            .collect();
-        let mut i = 0;
-        while i < args_str.len() {
-            let name = args_str[i].to_uppercase();
-            let target_i64: Option<&AtomicI64> = match name.as_str() {
-                "TIMEOUT" => Some(&TIMEOUT),
-                "TIMEOUT_DEFAULT" => Some(&TIMEOUT_DEFAULT),
-                "TIMEOUT_MAX" => Some(&TIMEOUT_MAX),
-                "RESULTSET_SIZE" => Some(&RESULTSET_SIZE),
-                "QUERY_MEM_CAPACITY" => Some(&QUERY_MEM_CAPACITY),
-                "DELTA_MAX_PENDING_CHANGES" => Some(&DELTA_MAX_PENDING_CHANGES),
-                "EFFECTS_COMPRESSION" => Some(&EFFECTS_COMPRESSION),
-                "EFFECTS_THRESHOLD" => Some(&EFFECTS_THRESHOLD_DEPRECATED),
-                "OMP_THREAD_COUNT" => Some(&OMP_THREAD_COUNT),
-                _ => None,
-            };
-            if let Some(target) = target_i64 {
-                if i + 1 < args_str.len()
-                    && let Ok(v) = args_str[i + 1].parse::<i64>()
-                {
-                    target.store(v, std::sync::atomic::Ordering::Relaxed);
-                    i += 2;
-                    continue;
-                }
-                ctx.log_warning(&format!("Invalid value for {name} module argument"));
-                return Status::Err;
-            }
-            if name == "MAX_INFO_QUERIES" {
-                // Clamped rather than rejected, the same way C's setter caps it
-                // and the same way GRAPH.CONFIG SET does at run-time.
-                if i + 1 < args_str.len()
-                    && let Ok(v) = args_str[i + 1].parse::<i64>()
-                    && v >= 0
-                {
-                    MAX_INFO_QUERIES.store(
-                        v.min(MAX_INFO_QUERIES_CAP),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    i += 2;
-                    continue;
-                }
-                ctx.log_warning("Invalid value for MAX_INFO_QUERIES module argument");
-                return Status::Err;
-            }
-            if name == "MAX_QUEUED_QUERIES" {
-                if i + 1 < args_str.len()
-                    && let Ok(v) = args_str[i + 1].parse::<u64>()
-                {
-                    MAX_QUEUED_QUERIES.store(v, std::sync::atomic::Ordering::Relaxed);
-                    i += 2;
-                    continue;
-                }
-                ctx.log_warning("Invalid value for MAX_QUEUED_QUERIES module argument");
-                return Status::Err;
-            }
-            i += 1;
-        }
+    // Every module argument, parsed and validated the way C's `Config_Init`
+    // does. A bad argument refuses the load, as in C.
+    let args: Vec<String> = args.iter().map(ValkeyString::to_string_lossy).collect();
+    if let Err(err) = apply_module_args(ctx, &args) {
+        ctx.log_warning(&err);
+        return Status::Err;
     }
     unsafe {
         // Disable OpenMP's pthread_atfork handlers. Without this, the
@@ -260,6 +267,10 @@ pub fn graph_init(
         if RediSearch_SetDefaultScorer(c"TFIDF".as_ptr()) != REDISMODULE_OK as c_int {
             ctx.log_warning("Failed to set RediSearch default scorer to TFIDF");
         }
+        // Must run after the `KMP_*` `set_var` calls above and before
+        // GraphBLAS starts libomp, which reads `environ` once at init.
+        #[cfg(target_os = "linux")]
+        sync_deepbind_environ();
         if let Err(err) = init(
             RedisModule_Alloc,
             RedisModule_Calloc,
@@ -357,24 +368,7 @@ pub fn graph_init(
         }
     }
 
-    // Validate timeout mutual exclusion: cannot use deprecated TIMEOUT
-    // together with TIMEOUT_DEFAULT / TIMEOUT_MAX.
-    {
-        let timeout = TIMEOUT.load(std::sync::atomic::Ordering::Relaxed);
-        let timeout_default = TIMEOUT_DEFAULT.load(std::sync::atomic::Ordering::Relaxed);
-        let timeout_max = TIMEOUT_MAX.load(std::sync::atomic::Ordering::Relaxed);
-        if timeout > 0 && (timeout_default > 0 || timeout_max > 0) {
-            ctx.log_warning("Cannot specify TIMEOUT together with TIMEOUT_DEFAULT or TIMEOUT_MAX");
-            return Status::Err;
-        }
-        if timeout_default > 0 && timeout_max > 0 && timeout_default > timeout_max {
-            ctx.log_warning("TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX");
-            return Status::Err;
-        }
-    }
-
     // Initialize the thread pool with the configured thread count.
-    // THREAD_COUNT may come from module args (parsed by redis_module macro).
     let tc = get_thread_count(ctx) as usize;
     let _ = init_thread_pool(tc);
 
@@ -458,7 +452,7 @@ pub fn graph_init(
 
     // Subscribe to keyspace notifications for graph key rename handling.
     unsafe {
-        let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
+        let res = raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
             ctx.ctx,
             4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME)
             Some(on_keyspace_event),
@@ -487,11 +481,20 @@ pub fn graph_init(
         }
     }
 
+    // The native index's background builder: runs the indexer batches of every index left
+    // `Building`, however its `CREATE INDEX` arrived, on workers of its own, so a build never takes
+    // a query thread. Started before any graph exists: a commit made before would start no build.
+    #[cfg(feature = "index-falkordb")]
+    online_build::start(
+        (*CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx)).max(1) as usize,
+        Arc::new(RedisBuildHost),
+    );
+
     Status::Ok
 }
 
 /// The module's INFO callback. Adds nothing to a normal `INFO`, matching C's
-/// `InfoFunc` (debug.c). For a crash report it keeps redis-module's default
+/// `InfoFunc` (debug.c). For a crash report it keeps valkey-module's default
 /// trace info and, like C, lists every query that was executing.
 extern "C" fn info_func(
     ctx: *mut raw::RedisModuleInfoCtx,
@@ -531,9 +534,18 @@ unsafe extern "C" fn on_shutdown(
     // thread-safe context, which races with Redis tearing down server state
     // and produces a SIGSEGV under ASAN if left running.
     telemetry::shutdown_flusher_thread();
+    // Stop the index builder before the pool. Its workers get a bounded wait, since one may be
+    // waiting for the GIL this handler holds; one left behind may still read or free a graph
+    // version, so GraphBLAS and RediSearch are then left to the exiting process.
+    #[cfg(feature = "index-falkordb")]
+    let builder_exited = online_build::stop();
+    #[cfg(not(feature = "index-falkordb"))]
+    let builder_exited = true;
     threadpool::shutdown();
-    graph::graph::graphblas::matrix::shutdown();
-    unsafe { RediSearch_CleanupModule() };
+    if builder_exited {
+        graph::graph::graphblas::matrix::shutdown();
+        unsafe { RediSearch_CleanupModule() };
+    }
 }
 
 unsafe extern "C" fn on_role_change(
@@ -584,8 +596,7 @@ fn enforce_pending_constraints_after_promotion() {
             let pending: Vec<Settling> = {
                 let guard = tg.read();
                 let g = guard.graph.read();
-                g.borrow()
-                    .constraints()
+                g.constraints()
                     .iter()
                     .filter(|c| c.status == ConstraintStatus::UnderConstruction)
                     .map(|c| Settling {
@@ -671,19 +682,18 @@ unsafe extern "C" fn on_keyspace_event(
     ctx: *mut RedisModuleCtx,
     _type: c_int,
     event: *const std::os::raw::c_char,
-    key: *mut redis_module::raw::RedisModuleString,
+    key: *mut raw::RedisModuleString,
 ) -> c_int {
     let event_str = unsafe { std::ffi::CStr::from_ptr(event) }
         .to_str()
         .unwrap_or("");
 
     let mut key_len: usize = 0;
-    let key_ptr =
-        unsafe { redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
+    let key_ptr = unsafe { raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
     let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
     // Lossy rather than rejected: a Redis key name is arbitrary bytes, and every other
     // producer of a registry name converts the same lossy way — `register_graph` off
-    // `RedisString::to_string`, the virtual-key builder and `graph_rdb_save` off
+    // `ValkeyString::to_string`, the virtual-key builder and `graph_rdb_save` off
     // `String::from_utf8_lossy`. Bailing out here left a renamed non-UTF-8 graph
     // (`test_binary_key_name_scan_skip` keeps one under `\xc3\x28...`) with a stale
     // registry entry under the key it no longer occupies.

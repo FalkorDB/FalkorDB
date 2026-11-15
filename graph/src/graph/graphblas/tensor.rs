@@ -219,7 +219,7 @@ pub const ME_BLOCK_0: MeBlock = (0, 0);
 /// `promotion_survives_node_ids_past_the_old_key_width`.
 #[inline]
 #[must_use]
-pub fn compound_key(
+pub const fn compound_key(
     src: u64,
     dst: u64,
 ) -> (MeBlock, u64) {
@@ -238,7 +238,7 @@ pub fn compound_key(
 /// for `row < ME_DIM`, which holds for any key it produced.
 #[inline]
 #[must_use]
-pub fn compound_key_inverse(
+pub const fn compound_key_inverse(
     block: MeBlock,
     row: u64,
 ) -> (u64, u64) {
@@ -379,17 +379,16 @@ impl Tensor {
         &mut self,
         block: MeBlock,
     ) -> &mut VersionedMatrix<bool> {
-        let at = match self.me.iter().position(|(b, _)| *b == block) {
-            Some(at) => at,
-            None => {
-                // A new block is created at whatever width the tensor already
-                // has, so one that has widened does not go on creating narrow
-                // blocks behind it and re-widening them one at a time.
-                let ncols = self.me[0].1.ncols();
-                self.me
-                    .push((block, VersionedMatrix::<bool>::new(ME_DIM, ncols)));
-                self.me.len() - 1
-            }
+        let at = if let Some(at) = self.me.iter().position(|(b, _)| *b == block) {
+            at
+        } else {
+            // A new block is created at whatever width the tensor already
+            // has, so one that has widened does not go on creating narrow
+            // blocks behind it and re-widening them one at a time.
+            let ncols = self.me[0].1.ncols();
+            self.me
+                .push((block, VersionedMatrix::<bool>::new(ME_DIM, ncols)));
+            self.me.len() - 1
         };
         &mut self.me[at].1
     }
@@ -538,7 +537,9 @@ impl Tensor {
             match batch.entry((s, d)) {
                 Entry::Occupied(mut e) => {
                     let idx = *e.get();
-                    if idx != usize::MAX {
+                    if idx == usize::MAX {
+                        self.me_block_mut(block).set(key, id, true);
+                    } else {
                         // Second edge of a pair new in this batch: promote the
                         // pending inline slot in place.
                         let me = self.me_block_mut(block);
@@ -546,8 +547,6 @@ impl Tensor {
                         me.set(key, id, true);
                         m_ids[idx] = MULTI_EDGE;
                         e.insert(usize::MAX);
-                    } else {
-                        self.me_block_mut(block).set(key, id, true);
                     }
                 }
                 Entry::Vacant(e) => {
@@ -704,8 +703,7 @@ impl Tensor {
                     Some(MULTI_EDGE) => {
                         let ids: Vec<u64> = self
                             .me_block(block)
-                            .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
-                            .unwrap_or_default();
+                            .map_or_default(|me| me.iter(key, key).map(|(_, id)| id).collect());
                         debug_assert!(
                             ids.windows(2).all(|w| w[0] < w[1]),
                             "`me` row ({src}, {dst}) not ascending; the search below needs it"
@@ -806,24 +804,34 @@ impl Tensor {
         emptied
     }
 
+    #[must_use]
+    pub fn nrows(&self) -> u64 {
+        self.m.nrows()
+    }
+
+    #[must_use]
+    pub fn ncols(&self) -> u64 {
+        self.m.ncols()
+    }
+
+    /// Grow to at least `nrows x ncols`. Never shrinks: a smaller target keeps
+    /// the current dimension, so no entry is ever dropped. That keeps `me`,
+    /// which is keyed by pair rather than sized by node count, consistent with
+    /// the layers without having to be pruned (#3246).
     pub fn resize(
         &mut self,
         nrows: u64,
         ncols: u64,
     ) {
-        if nrows < self.m.nrows() || ncols < self.m.ncols() {
-            // Shrinking can drop entries; keep the straightforward path.
-            self.flush();
-            // GrB_Matrix_resize waits internally, so `m` holds no real pending
-            // work afterwards — waiting here would rebuild the freed hyper hash
-            // on every capacity grow (measured 1.4-5.7x write regressions).
-            self.m.resize(nrows, ncols);
-            // A resize moves no entries between layers, so the delta counters
-            // stand (a shrink that drops entries only adds to the drift
-            // `resync` bounds).
-            self.dp.resize(nrows, ncols);
-            self.dm.resize(nrows, ncols);
-            self.mt.resize(ncols, nrows);
+        debug_assert!(
+            nrows >= self.m.nrows() && ncols >= self.m.ncols(),
+            "Tensor::resize never shrinks ({}x{} -> {nrows}x{ncols})",
+            self.m.nrows(),
+            self.m.ncols(),
+        );
+        let nrows = nrows.max(self.m.nrows());
+        let ncols = ncols.max(self.m.ncols());
+        if nrows == self.m.nrows() && ncols == self.m.ncols() {
             return;
         }
         // Growing: the base is always COW-shared with the committed snapshot,
@@ -1472,39 +1480,53 @@ impl Encode<19> for Tensor {
         // inline state. Single-edge pairs store the edge id directly; multi-edge
         // pairs (inline value == MULTI_EDGE) store `(edge_count | MSB)` and push
         // their full id list from `me` into the tensor section below.
-        let mut f_rows: Vec<u64> = Vec::new();
-        let mut f_cols: Vec<u64> = Vec::new();
-        let mut f_vals: Vec<u64> = Vec::new();
+        //
+        // When there is nothing pending in the deltas and no pair holds more than
+        // one edge, the base `m` already *is* that matrix — every value an edge
+        // id with the MSB clear — so it is written as is, the way
+        // `VersionedMatrix::encode` writes its base. Rebuilding it through an
+        // iterator and `build` costs three `u64` per edge in scratch vectors plus
+        // a second matrix (gigabytes, and most of a SAVE, at 10^8 edges).
+        self.wait_fwd();
         let mut multi: Vec<(u64, u64, Vec<u64>)> = Vec::new();
-        for (src, dst, inline) in self.fwd_iter(0, u64::MAX) {
-            f_rows.push(src);
-            f_cols.push(dst);
-            if inline == MULTI_EDGE {
-                let (block, key) = compound_key(src, dst);
-                let ids: Vec<u64> = self
-                    .me_block(block)
-                    .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
-                    .unwrap_or_default();
-                f_vals.push(ids.len() as u64 | MSB_MASK);
-                multi.push((src, dst, ids));
-            } else {
-                f_vals.push(inline);
-            }
-        }
-
-        // Forward VersionedMatrix layout: base (effective), empty delta-plus,
-        // empty delta-minus. Folding dp into the base keeps the on-disk form
-        // canonical and matches what decode expects.
-        let empty = Matrix::<u64>::new(nrows, ncols);
-        if f_rows.is_empty() {
-            empty.encode(w);
+        if self.dp.nvals() == 0 && self.dm.nvals() == 0 && !self.has_multi_edge() {
+            let empty = Matrix::<u64>::new(nrows, ncols);
+            self.m.encode(w);
+            empty.encode(w); // delta-plus
+            empty.encode(w); // delta-minus
         } else {
-            let mut fm = Matrix::<u64>::new(nrows, ncols);
-            fm.build(&f_rows, &f_cols, &f_vals);
-            fm.encode(w);
+            let mut f_rows: Vec<u64> = Vec::new();
+            let mut f_cols: Vec<u64> = Vec::new();
+            let mut f_vals: Vec<u64> = Vec::new();
+            for (src, dst, inline) in self.fwd_iter(0, u64::MAX) {
+                f_rows.push(src);
+                f_cols.push(dst);
+                if inline == MULTI_EDGE {
+                    let (block, key) = compound_key(src, dst);
+                    let ids: Vec<u64> = self
+                        .me_block(block)
+                        .map_or_default(|me| me.iter(key, key).map(|(_, id)| id).collect());
+                    f_vals.push(ids.len() as u64 | MSB_MASK);
+                    multi.push((src, dst, ids));
+                } else {
+                    f_vals.push(inline);
+                }
+            }
+
+            // Forward VersionedMatrix layout: base (effective), empty delta-plus,
+            // empty delta-minus. Folding dp into the base keeps the on-disk form
+            // canonical and matches what decode expects.
+            let empty = Matrix::<u64>::new(nrows, ncols);
+            if f_rows.is_empty() {
+                empty.encode(w);
+            } else {
+                let mut fm = Matrix::<u64>::new(nrows, ncols);
+                fm.build(&f_rows, &f_cols, &f_vals);
+                fm.encode(w);
+            }
+            empty.encode(w); // delta-plus
+            empty.encode(w); // delta-minus
         }
-        empty.encode(w); // delta-plus
-        empty.encode(w); // delta-minus
 
         let total = self.edge_count();
         w.write_unsigned(total);
@@ -1549,6 +1571,19 @@ impl Decode<19> for Tensor {
         let fwd_dm = Matrix::<bool>::decode(r)?;
         let nrows = fwd_m.nrows();
         let ncols = fwd_m.ncols();
+        // Encode writes the three layers at one size. A payload that doesn't
+        // would have the merge below write outside `m`.
+        for (layer, dims) in [
+            ("delta-plus", (fwd_dp.nrows(), fwd_dp.ncols())),
+            ("delta-minus", (fwd_dm.nrows(), fwd_dm.ncols())),
+        ] {
+            if dims != (nrows, ncols) {
+                return Err(format!(
+                    "Tensor decode: forward {layer} is {}x{}, base is {nrows}x{ncols}",
+                    dims.0, dims.1
+                ));
+            }
+        }
 
         // Inline representation: `m` is UINT64 inline edge ids with MULTI_EDGE
         // sentinels; `me` holds all ids of multi-edge pairs. The on-disk forward
@@ -1583,6 +1618,15 @@ impl Decode<19> for Tensor {
                 m.set(src, dst, MULTI_EDGE);
             }
         }
+        // Settled before the tensor section is checked against it.
+        m.wait();
+
+        // The payload is untrusted, and promotion completeness — a pair has
+        // `me` ids exactly when its inline value is `MULTI_EDGE` — is what
+        // `edge_count` and iteration rely on. So every tensor entry must land
+        // on a marker (checked per entry below), and every marker must get
+        // ids (checked at the end by counting `me`'s pairs).
+        let markers = m.count_value_eq(MULTI_EDGE);
 
         let total_tensor_count = r.read_unsigned()?;
         if total_tensor_count > 0 {
@@ -1597,17 +1641,19 @@ impl Decode<19> for Tensor {
                     // the index. Reading the *values* instead collapsed every
                     // pair written by C to the single edge id 1.
                     let v = Vector::<bool>::decode_blob(r)?;
+                    if src >= nrows || dst >= ncols || m.get(src, dst) != Some(MULTI_EDGE) {
+                        return Err(format!(
+                            "Tensor decode: edge ids for ({src}, {dst}), which is not a multi-edge pair"
+                        ));
+                    }
                     // The blob stores endpoints, not row keys, so the on-disk
                     // form says nothing about how they are blocked and needs no
                     // version bump for this change: re-keying happens here.
                     let (block, key) = compound_key(src, dst);
-                    let at = match me.iter().position(|(b, _)| *b == block) {
-                        Some(at) => at,
-                        None => {
-                            me.push((block, VersionedMatrix::<bool>::new(ME_DIM, me_ncols)));
-                            me.len() - 1
-                        }
-                    };
+                    let at = me.iter().position(|(b, _)| *b == block).unwrap_or_else(|| {
+                        me.push((block, VersionedMatrix::<bool>::new(ME_DIM, me_ncols)));
+                        me.len() - 1
+                    });
                     // Streamed rather than collected: the ids are only needed
                     // one at a time, and the width check they used to be
                     // gathered for is a compare that fires at most once in the
@@ -1625,9 +1671,15 @@ impl Decode<19> for Tensor {
             }
         }
 
-        // The freshly built base must be materialized: the committed base is
+        let with_ids: u64 = me.iter().map(|(_, b)| Self::multi_pairs_in(b)).sum();
+        if with_ids != markers {
+            return Err(format!(
+                "Tensor decode: {markers} multi-edge pairs but edge ids for {with_ids}"
+            ));
+        }
+
+        // The freshly built base is materialized above: the committed base is
         // never pending inside a transaction (see `wait_fwd`).
-        m.wait();
         // Backward matrix is rebuilt by the caller (`rebuild_backward`) after
         // decode, so leave it empty here.
         Ok(Self {
@@ -1642,6 +1694,7 @@ impl Decode<19> for Tensor {
 }
 
 /// Owned edge-id iterator for one `(src, dest)` pair (see [`Tensor::get`]).
+///
 /// The common single-edge case is allocation-free; multi-edge pairs stream
 /// their `me` row live (the inner iterator keeps the underlying GraphBLAS
 /// matrix alive via its own `Arc`, so no borrow of the tensor is held).
@@ -1928,8 +1981,8 @@ mod tests {
 
     #[test]
     fn bulk_remove_and_extract_edge_id_zero() {
-        ensure_init();
         const N: u64 = 10_000;
+        ensure_init();
         let mut t = Tensor::new(N + 1, N + 1);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -1979,8 +2032,8 @@ mod tests {
     /// bug hides.
     #[test]
     fn resize_leaves_base_materialized() {
-        ensure_init();
         const N: u64 = 10_000;
+        ensure_init();
         let mut t = Tensor::new(N + 1, N + 1);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -2001,6 +2054,53 @@ mod tests {
         assert!(t.get(0, 1).next().is_some(), "edge lost across resize");
     }
 
+    /// `resize` never shrinks, so it can never cut a multi-edge pair off from
+    /// its `me` ids (#3246). Release builds keep the current size; debug
+    /// builds assert, so a new caller that tries to shrink is caught in tests.
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn resize_never_shrinks() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        // (0, 1) and (5, 6) are multi pairs, (1, 2) a single one.
+        t.set_all_from_slices(
+            &[0, 0, 1, 5, 5, 5],
+            &[1, 1, 2, 6, 6, 6],
+            &[10, 11, 12, 20, 21, 22],
+        );
+        t.flush();
+        t.wait();
+
+        t.resize(4, 4);
+        t.wait();
+
+        assert_eq!((t.nrows(), t.ncols()), (8, 8), "resize shrank the tensor");
+        let mut edges: Vec<_> = t.iter_edges().collect();
+        edges.sort_unstable();
+        assert_eq!(
+            edges,
+            vec![
+                (0, 1, 10),
+                (0, 1, 11),
+                (1, 2, 12),
+                (5, 6, 20),
+                (5, 6, 21),
+                (5, 6, 22)
+            ],
+        );
+        assert_eq!(t.edge_count(), 6);
+        assert_eq!(t.multi_pairs(), 2);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Tensor::resize never shrinks")]
+    fn resize_asserts_it_never_shrinks() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        t.resize(4, 4);
+    }
+
     /// Deleting everything must not leave the base *and* a base-sized `dm`
     /// resident. The fold is latched by the delete, but `flush` only runs on
     /// the next mutation of this same tensor — which for a delete-everything
@@ -2009,8 +2109,8 @@ mod tests {
     /// edges reported 41 MB of graph memory against 25 MB before the delete.
     #[test]
     fn deleting_everything_folds_the_tombstones_away() {
-        ensure_init();
         const N: u64 = 10_000;
+        ensure_init();
         let mut t = Tensor::new(N + 1, N + 1);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -2064,8 +2164,8 @@ mod tests {
     /// machine the old loop got for free by re-reading its own writes.
     #[test]
     fn batch_demote_leaves_every_survivor_inline() {
-        ensure_init();
         const N: u64 = FOLDABLE;
+        ensure_init();
         let mut t = committed_pairs(N);
 
         // Delete the odd id of every pair: each demotes 2 -> 1 edges.
@@ -2154,8 +2254,8 @@ mod tests {
     /// repeated ids in the batch must change nothing.
     #[test]
     fn batch_can_demote_and_then_empty_the_same_pair() {
-        ensure_init();
         const N: u64 = FOLDABLE;
+        ensure_init();
         let mut t = committed_pairs(N);
 
         let mut rels: Vec<(u64, u64, u64)> = Vec::new();
@@ -2202,8 +2302,8 @@ mod tests {
     /// committed base, which the buffered `dp` writes must not disturb.
     #[test]
     fn demoting_to_the_committed_value_cancels_to_clean() {
-        ensure_init();
         const N: u64 = FOLDABLE;
+        ensure_init();
         let mut t = Tensor::new(N + 1, N + 1);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -2403,6 +2503,52 @@ mod tests {
         }
     }
 
+    /// A single-edge tensor with nothing pending in its deltas is written
+    /// straight from its base matrix; one with pending deltas is rebuilt from
+    /// the effective view. Both must decode to the same edges.
+    #[test]
+    fn encode_decode_round_trips_with_and_without_pending_deltas() {
+        ensure_init();
+        let round_trip = |t: &Tensor| {
+            let mut tape = Tape::default();
+            t.encode(&mut tape);
+            let mut back = Tensor::decode(&mut tape).expect("decode");
+            assert!(tape.ops.is_empty(), "decode left part of the stream");
+            back.rebuild_backward();
+            back.wait();
+            back
+        };
+        let edges = |t: &Tensor| {
+            let mut e: Vec<(u64, u64, u64)> = t.fwd_iter(0, u64::MAX).collect();
+            e.sort_unstable();
+            e
+        };
+
+        let t = Tensor::new(16, 16);
+        let mut t = t.dup();
+        t.set_all_from_slices(&[1, 1, 2, 5, 9], &[2, 3, 2, 5, 0], &[10, 11, 12, 13, 14]);
+        t.remove_all(&[(11, 1, 3)]);
+        t.set_all_from_slices(&[7], &[8], &[15]);
+        t.wait();
+        let expect = vec![(1, 2, 10), (2, 2, 12), (5, 5, 13), (7, 8, 15), (9, 0, 14)];
+        assert_eq!(edges(&t), expect);
+
+        // Whatever `t` holds in its deltas, a decoded tensor holds none: the
+        // second round trip is the one written straight from the base.
+        let once = round_trip(&t);
+        assert_eq!(once.dp.nvals() + once.dm.nvals(), 0);
+        assert!(!once.has_multi_edge());
+        let twice = round_trip(&once);
+        for back in [&once, &twice] {
+            assert_eq!(edges(back), expect);
+            assert_eq!(back.edge_count(), expect.len() as u64);
+            assert_eq!(back.get(1, 3).count(), 0);
+            assert_eq!(back.get(7, 8).collect::<Vec<_>>(), vec![15]);
+        }
+        // Encoding must leave the base matrix intact; it must still be whole.
+        assert_eq!(edges(&once), expect);
+    }
+
     /// The round trip has to survive blocks. The blob stores endpoints rather
     /// than row keys, so no format change was needed — this is the test that
     /// says so, by decoding a multi-block tensor and reading every pair back.
@@ -2440,6 +2586,116 @@ mod tests {
         assert_eq!(back.get(b + 11, 12).collect::<Vec<_>>(), vec![9999]);
         assert_eq!(back.edge_count(), t.edge_count());
         assert_eq!(back.multi_pairs(), t.multi_pairs());
+    }
+
+    /// A tensor section entry for a pair the forward matrix does not mark as
+    /// multi-edge used to decode into an `me` row, after which `edge_count`
+    /// (and so the next save) panicked and iteration yielded a phantom edge.
+    #[test]
+    fn decode_rejects_edge_ids_for_a_pair_that_is_not_multi_edge() {
+        ensure_init();
+        // (7, 9) absent from the forward matrix, then (1, 2) holding a
+        // single edge: neither may take ids (here, id 3) from the tensor
+        // section.
+        let mut ids = Vector::<bool>::new(GrB_INDEX_MAX);
+        ids.set(3, true);
+        for (src, dst) in [(7, 9), (1, 2)] {
+            let mut t = Tensor::new(16, 16);
+            t.set_all_from_slices(&[1], &[2], &[5]);
+            let t = t.dup();
+            t.wait();
+            let mut tape = Tape::default();
+            t.encode(&mut tape);
+            // single-edge graph: ..., total edges, multi pair count 0, TDP 0
+            tape.ops.pop_back();
+            tape.ops.pop_back();
+            // TM: one pair, (src, dst) with the ids blob, as `encode` writes
+            // it; then an empty TDP.
+            for v in [1, src, dst] {
+                tape.ops.push_back(TapeOp::Unsigned(v));
+            }
+            ids.encode_blob(&mut tape);
+            tape.ops.push_back(TapeOp::Unsigned(0));
+            let err = Tensor::decode(&mut tape)
+                .err()
+                .unwrap_or_else(|| panic!("ids for ({src}, {dst}) accepted"));
+            assert!(
+                err.contains("not a multi-edge pair"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    /// The converse: a pair marked multi-edge whose ids never arrive.
+    #[test]
+    fn decode_rejects_a_multi_edge_pair_without_edge_ids() {
+        ensure_init();
+        let mut t = Tensor::new(16, 16);
+        t.set_all_from_slices(&[1, 1, 3, 3], &[2, 2, 4, 4], &[10, 11, 12, 13]);
+        let t = t.dup();
+        t.wait();
+        let mut tape = Tape::default();
+        t.encode(&mut tape);
+        // Tail: ..., 2 pairs, (src, dst, blob) x2, TDP 0. Drop the second
+        // pair and say there is only one.
+        let n = tape.ops.len();
+        let tdp = tape.ops.pop_back().unwrap();
+        tape.ops.truncate(n - 4);
+        tape.ops.push_back(tdp);
+        let count = tape.ops.len() - 5;
+        tape.ops[count] = TapeOp::Unsigned(1);
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("multi-edge pair without ids accepted");
+        assert!(
+            err.contains("2 multi-edge pairs but edge ids for 1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A `GRAPH.RESTORE` payload is untrusted: a corrupt multi-edge id blob has
+    /// to fail the decode, not panic (the module's panic hook exits the server).
+    #[test]
+    fn decode_rejects_a_corrupt_multi_edge_blob() {
+        ensure_init();
+        let mut t = Tensor::new(16, 16);
+        t.set_all_from_slices(&[1, 1], &[2, 2], &[10, 11]);
+        let t = t.dup();
+        t.wait();
+        let mut tape = Tape::default();
+        t.encode(&mut tape);
+        // The id blob is the last buffer on the tape; keep only its header.
+        let last = tape
+            .ops
+            .iter()
+            .rposition(|op| matches!(op, TapeOp::Buffer(_)))
+            .expect("no id blob on the tape");
+        if let TapeOp::Buffer(blob) = &mut tape.ops[last] {
+            blob.truncate(8);
+        }
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("corrupt blob accepted");
+        assert!(
+            err.contains("GxB_Vector_deserialize"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The forward delta layers must match the base's size: merging a larger
+    /// delta would write outside the rebuilt forward matrix.
+    #[test]
+    fn decode_rejects_forward_layers_of_different_sizes() {
+        ensure_init();
+        let mut tape = Tape::default();
+        Matrix::<u64>::new(4, 4).encode(&mut tape);
+        Matrix::<u64>::new(8, 8).encode(&mut tape);
+        Matrix::<bool>::new(4, 4).encode(&mut tape);
+        tape.ops.push_back(TapeOp::Unsigned(0));
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("mismatched layers accepted");
+        assert!(err.contains("delta-plus is 8x8"), "unexpected error: {err}");
     }
 
     /// `me` is created with a narrow column space so GraphBLAS stores its
@@ -2535,8 +2791,8 @@ mod tests {
     /// would show up as a lost edge.
     #[test]
     fn degree_agrees_with_counting_the_iterator() {
-        ensure_init();
         const N: u64 = 64;
+        ensure_init();
         let mut t = Tensor::new(N, N);
         // A deliberately uneven shape: row `r` holds `r % 5` pairs, and every
         // third pair is multi-edge with a different fan-out.

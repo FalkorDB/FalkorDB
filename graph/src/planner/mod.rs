@@ -30,6 +30,7 @@
 //! - **Sort/Skip/Limit**: Order and paginate results
 
 pub mod binder;
+mod hop_order;
 pub mod optimizer;
 pub mod tree;
 
@@ -39,6 +40,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::planner::hop_order::{HopShape, self_loops_after_binders};
 use crate::planner::optimizer::collect_expr_variables;
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
@@ -563,10 +565,8 @@ pub(super) fn inline_attrs_to_filter(
 
     if filters.is_empty() {
         None
-    } else if filters.len() == 1 {
-        Some(filters.pop().unwrap())
     } else {
-        Some(tree!(ExprIR::And; filters))
+        Some(ExprIR::and_of(filters))
     }
 }
 
@@ -762,7 +762,7 @@ struct ExtractedComprehension {
     /// Comprehensions nested within `where_filter` / `result_expr`, which may
     /// reference variables bound by `graph` and so must be applied inside this
     /// comprehension's sub-plan.
-    nested: Vec<ExtractedComprehension>,
+    nested: Vec<Self>,
 }
 
 /// What `extract_pattern_comprehensions` does with a bare existential
@@ -796,12 +796,7 @@ impl PatternMode {
         self,
         parent: &ExprIR<Variable>,
     ) -> Self {
-        if self == Self::SemiApply
-            && !matches!(
-                parent,
-                ExprIR::And | ExprIR::Or | ExprIR::Not | ExprIR::Paren
-            )
-        {
+        if self == Self::SemiApply && !matches!(parent, ExprIR::And | ExprIR::Or | ExprIR::Not) {
             Self::Exists
         } else {
             self
@@ -869,7 +864,7 @@ impl Planner {
     /// runtime creates an inline Argument for the input.
     fn add_argument_to_leaves(
         tree: &mut DynTree<IR>,
-        bound_vars: Option<Vec<(u32, u32)>>,
+        bound_vars: Option<&[(u32, u32)]>,
     ) {
         let mut leaves = Vec::new();
 
@@ -899,7 +894,7 @@ impl Planner {
         // Add Argument node as a child to each leaf.
         for leaf_idx in leaves {
             tree.node_mut(leaf_idx)
-                .push_child(IR::Argument(bound_vars.clone()));
+                .push_child(IR::Argument(bound_vars.map(<[_]>::to_vec)));
         }
     }
 
@@ -1329,9 +1324,10 @@ impl Planner {
         let mut chain: Option<DynTree<IR>> = None;
         for comprehension in extracted.iter().rev() {
             let sub_plan = self.build_pattern_comprehension_plan(comprehension);
-            chain = Some(match chain {
-                Some(inner) => tree!(IR::Apply, inner, sub_plan),
-                None => tree!(IR::Apply, sub_plan),
+            chain = Some(if let Some(inner) = chain {
+                tree!(IR::Apply, inner, sub_plan)
+            } else {
+                tree!(IR::Apply, sub_plan)
             });
         }
         for c in &extracted {
@@ -1424,7 +1420,7 @@ impl Planner {
 
         // Add PathBuilder to construct Path values from matched variables.
         if !paths.is_empty() {
-            sub_plan = tree!(IR::PathBuilder(paths.to_vec()), sub_plan);
+            sub_plan = tree!(IR::PathBuilder(paths.clone()), sub_plan);
         }
 
         // Nested comprehensions are planned while this comprehension's own
@@ -1497,13 +1493,6 @@ impl Planner {
         input: DynTree<IR>,
     ) -> DynTree<IR> {
         let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
-
-        // Unwrap Paren nodes transparently
-        if matches!(node.data(), ExprIR::Paren)
-            && let Some(child) = node.get_child(0)
-        {
-            return self.expr_to_plan(&child, inline_map, input);
-        }
 
         // Inline-pattern variable → SemiApply (pass if pattern exists)
         if let ExprIR::Variable(v) = node.data()
@@ -1683,11 +1672,7 @@ impl Planner {
 
         // Apply scalar filter first (cheapest).
         if !scalar_parts.is_empty() {
-            let filter_expr = if scalar_parts.len() == 1 {
-                Arc::new(scalar_parts.into_iter().next().unwrap())
-            } else {
-                Arc::new(tree!(ExprIR::And; scalar_parts))
-            };
+            let filter_expr = Arc::new(ExprIR::and_of(scalar_parts));
             plan = tree!(IR::Filter(filter_expr), plan);
         }
 
@@ -1869,8 +1854,7 @@ impl Planner {
         // hops of a component so constrained endpoints are reached first.
         let filter_vars: HashSet<u32> = filter
             .as_ref()
-            .map(|f| collect_expr_variables(f))
-            .unwrap_or_default();
+            .map_or_default(|f| collect_expr_variables(f));
         // Collect extra filters for bound variables with new constraints
         // (labels or inline properties). These are applied as top-level
         // filters rather than as plan components, so they don't interfere
@@ -1936,6 +1920,21 @@ impl Planner {
                 };
                 (base, has_bound, unfiltered)
             });
+            // Past the first hop, a fixed-length self-loop on a node nothing
+            // has bound yet could only scan that node again and cross it with
+            // the hops before it (the var-length hop that reaches it was
+            // sorted later). Move it to just after the first later hop that
+            // binds the node, so it becomes an ExpandInto on the bound node.
+            let sorted_rels = self_loops_after_binders(
+                sorted_rels,
+                |r| HopShape {
+                    from: (r.from.alias.id, r.from.alias.scope_id),
+                    to: (r.to.alias.id, r.to.alias.scope_id),
+                    self_loop: r.from.alias.id == r.to.alias.id,
+                    fixed: r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No,
+                },
+                |node| self.visited.contains(node),
+            );
             let mut iter = sorted_rels.iter();
             let Some(relationship) = iter.next() else {
                 // Node-only component (no relationships).
@@ -2071,7 +2070,7 @@ impl Planner {
                 lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
             };
             let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths(rel.clone()))
+                tree!(IR::AllShortestPaths(rel))
             } else if relationship.min_hops.is_some() {
                 // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
                 // Build scan child for the from-node when it's not yet visited
@@ -2135,7 +2134,7 @@ impl Planner {
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
                 if already_bound {
                     tree!(IR::ExpandInto {
-                        relationship: rel.clone(),
+                        relationship: rel,
                         emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                         sibling_edges: sibling_edges.clone(),
                     })
@@ -2149,7 +2148,7 @@ impl Planner {
                     };
                     tree!(
                         IR::ExpandInto {
-                            relationship: rel.clone(),
+                            relationship: rel,
                             emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                         },
@@ -2167,13 +2166,13 @@ impl Planner {
                 // by the endpoint blocks below, which no longer skip visited
                 // aliases.
                 tree!(IR::ExpandInto {
-                    relationship: rel.clone(),
+                    relationship: rel,
                     emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                     sibling_edges: sibling_edges.clone(),
                 })
             } else {
                 tree!(IR::CondTraverse {
-                    relationship: rel.clone(),
+                    relationship: rel,
                     emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                     sibling_edges: sibling_edges.clone(),
                     transposed: false,
@@ -2240,7 +2239,7 @@ impl Planner {
                     lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
                 };
                 res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(IR::AllShortestPaths(rel.clone()), res)
+                    tree!(IR::AllShortestPaths(rel), res)
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
                         && self.visited.contains(&(
@@ -2252,7 +2251,7 @@ impl Planner {
                             .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));
                     tree!(
                         IR::CondVarLenTraverse {
-                            relationship: rel.clone(),
+                            relationship: rel,
                             edge_filter: None,
                             emit_path: true,
                             path_var: None,
@@ -2267,28 +2266,33 @@ impl Planner {
                     if already_bound {
                         tree!(
                             IR::ExpandInto {
-                                relationship: rel.clone(),
+                                relationship: rel,
                                 emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                                 sibling_edges: sibling_edges.clone(),
                             },
                             res
                         )
                     } else {
+                        // The node is not bound yet: scan it once per row of
+                        // the hops planned so far, so the scan sits on top of
+                        // `res` and no earlier hop is dropped.
                         let scan = if rel.from.clone().labels.is_empty() {
-                            tree!(IR::AllNodeScan(rel.from.clone()))
+                            tree!(IR::AllNodeScan(rel.from.clone()), res)
                         } else {
-                            tree!(IR::NodeByLabelScan {
-                                node: rel.from.clone(),
-                            })
+                            tree!(
+                                IR::NodeByLabelScan {
+                                    node: rel.from.clone(),
+                                },
+                                res
+                            )
                         };
                         tree!(
                             IR::ExpandInto {
-                                relationship: rel.clone(),
+                                relationship: rel,
                                 emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                                 sibling_edges: sibling_edges.clone(),
                             },
-                            scan,
-                            res
+                            scan
                         )
                     }
                 } else if self
@@ -2300,7 +2304,7 @@ impl Planner {
                 {
                     tree!(
                         IR::ExpandInto {
-                            relationship: rel.clone(),
+                            relationship: rel,
                             emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                         },
@@ -2309,7 +2313,7 @@ impl Planner {
                 } else {
                     tree!(
                         IR::CondTraverse {
-                            relationship: rel.clone(),
+                            relationship: rel,
                             emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                             transposed: false,
@@ -2421,11 +2425,7 @@ impl Planner {
         // applied here so they sit above the stitching target, ensuring
         // the bound variable's env is available when the filter runs.
         if !bound_filters.is_empty() {
-            let filter_expr = if bound_filters.len() == 1 {
-                bound_filters.pop().unwrap()
-            } else {
-                tree!(ExprIR::And; bound_filters)
-            };
+            let filter_expr = ExprIR::and_of(bound_filters);
             res = tree!(IR::Filter(Arc::new(filter_expr)), res);
         }
         res
@@ -3142,7 +3142,7 @@ impl Planner {
                 // The Argument rows bind exactly the variables visited so
                 // far; passing them lets the scan-selection optimizer prove
                 // when the match branch is uncorrelated and add a scan.
-                Self::add_argument_to_leaves(&mut match_branch, Some(bound));
+                Self::add_argument_to_leaves(&mut match_branch, Some(&bound));
 
                 let paths = pattern.paths();
                 let merge = tree!(

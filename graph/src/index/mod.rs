@@ -45,6 +45,7 @@
 //! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
 
 pub mod falkordb;
+pub mod index_docs;
 pub mod indexer;
 pub mod redisearch;
 pub mod text_index_options;
@@ -120,9 +121,9 @@ pub struct Field {
 impl Field {
     fn make_arr_names(
         name: &CString,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> (Option<CString>, Option<CString>) {
-        if *ty == IndexType::Range {
+        if ty == IndexType::Range {
             let base = name.to_str().unwrap_or("");
             (
                 CString::new(format!("{base}:numeric:arr")).ok(),
@@ -139,7 +140,7 @@ impl Field {
         ty: IndexType,
         options: Option<TextIndexOptions>,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -156,7 +157,7 @@ impl Field {
         ty: IndexType,
         vector_options: VectorIndexOptions,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -713,6 +714,10 @@ impl Document {
         self.id
     }
 
+    #[allow(
+        clippy::match_same_arms,
+        reason = "temporal values and vectors are skipped for different reasons, each commented"
+    )]
     pub fn set(
         &mut self,
         field: &Field,
@@ -1241,11 +1246,11 @@ impl Index {
                             if options.nostem.unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTNOSTEM;
                             }
-                            // Any non-empty code turns phonetic matching on.
-                            // RediSearch takes a flag, not an algorithm, so
-                            // which code it is cannot reach it — see
-                            // `TextIndexOptions::phonetic`.
-                            if options.phonetic.as_deref().is_some_and(|p| !p.is_empty()) {
+                            // Any code but empty or C's "no" turns phonetic
+                            // matching on. RediSearch takes a flag, not an
+                            // algorithm, so which code it is cannot reach it —
+                            // see `TextIndexOptions::phonetic`.
+                            if options.phonetic_enabled() {
                                 field_options_flag |= RSFLDOPT_TXTPHONETIC;
                             }
                         }

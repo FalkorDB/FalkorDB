@@ -127,11 +127,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                     }
                 }
 
-                let merged = if conjuncts.len() == 1 {
-                    Arc::new(conjuncts.into_iter().next().unwrap())
-                } else {
-                    Arc::new(tree!(ExprIR::And; conjuncts))
-                };
+                let merged = Arc::new(ExprIR::and_of(conjuncts));
                 *optimized_plan.node_mut(idx).data_mut() = IR::Filter(merged);
                 optimized_plan.node_mut(child_idx).take_out();
 
@@ -180,10 +176,10 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 for grandchild in child.children() {
                     // `resets_env` branches expose only their named outputs, so
                     // they must not inherit Argument-propagated variables below.
-                    let (vars, resets_env) = match branch_output_variables(&grandchild) {
-                        Some(outputs) => (outputs, true),
-                        None => (collect_subtree_variables(&grandchild), false),
-                    };
+                    let (vars, resets_env) = branch_output_variables(&grandchild).map_or_else(
+                        || (collect_subtree_variables(&grandchild), false),
+                        |outputs| (outputs, true),
+                    );
                     children.push((grandchild.idx(), vars, resets_env));
                 }
             }
@@ -348,11 +344,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let child_idx = children[i].0;
 
                 // Build the filter expression for this child
-                let filter_expr = if conjuncts.len() == 1 {
-                    Arc::new(conjuncts.into_iter().next().unwrap())
-                } else {
-                    Arc::new(tree!(ExprIR::And; conjuncts))
-                };
+                let filter_expr = Arc::new(ExprIR::and_of(conjuncts));
 
                 // Insert the new filter node above the child
                 optimized_plan
@@ -363,12 +355,9 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             // Update or remove the original Filter
             if remaining.is_empty() {
                 optimized_plan.node_mut(idx).take_out();
-            } else if remaining.len() == 1 {
-                *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
             } else {
                 *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+                    IR::Filter(Arc::new(ExprIR::and_of(remaining)));
             }
 
             changed = true;
@@ -431,12 +420,7 @@ fn rebuild_with_cp_split(
             if remaining_conjuncts.is_empty() {
                 tree!(IR::CartesianProduct; new_children)
             } else {
-                let remaining_filter = if remaining_conjuncts.len() == 1 {
-                    Arc::new(remaining_conjuncts[0].clone())
-                } else {
-                    #[allow(clippy::unnecessary_to_owned)]
-                    Arc::new(tree!(ExprIR::And; remaining_conjuncts.to_vec()))
-                };
+                let remaining_filter = Arc::new(ExprIR::and_of(remaining_conjuncts.to_vec()));
                 let cp = tree!(IR::CartesianProduct; new_children);
                 tree!(IR::Filter(remaining_filter), cp)
             }

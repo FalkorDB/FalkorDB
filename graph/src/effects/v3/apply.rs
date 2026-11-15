@@ -85,8 +85,11 @@ pub fn apply_effects(
     // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
 
-    g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
-    g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+    // Both indexes once for the whole buffer: the native index's staged changes, then
+    // RediSearch's documents. A record may undo an earlier one's entry — the cancelled pair, or
+    // an UPDATE followed by a DELETE of the same node — and the native apply keeps only each
+    // entry's last change.
+    g.commit_index_docs(&mut docs);
     Ok(())
 }
 
@@ -211,6 +214,19 @@ fn apply_record(
             rows,
         } => {
             let nodes = ids.to_roaring();
+            // The set is what the id space is told, the list is what the label
+            // and attribute writes below walk; a repeated id makes them describe
+            // different graphs, and the set would silently create one node where
+            // the record names two. Refused, as `create_relationships_bulk`
+            // refuses the same shape for edges.
+            if nodes.len() != u64::from(ids.count()) {
+                return Err(ApplyError::Graph(format!(
+                    "bulk node create got {} ids of which only {} are distinct; \
+                     an id names one node",
+                    ids.count(),
+                    nodes.len()
+                )));
+            }
             // No reservation to make: these ids came from the master, not from
             // this graph's allocator. The graph refuses rather than
             // double-counting, so there is no separate check here to keep in step
@@ -229,7 +245,7 @@ fn apply_record(
             // them.
             let label_ids = checked_label_ids(g, &labels)?;
             if !label_ids.is_empty() {
-                g.set_node_labels_product(&ids, &label_ids, &mut docs.node_adds, true);
+                g.set_node_labels_product(&ids, &label_ids, docs, true);
             }
             // Checked before the emptiness gate, not inside it. With no
             // attributes the check is what says `rows` must also be empty —
@@ -239,13 +255,7 @@ fn apply_record(
             // same record shape reaching the two paths differently.
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
-                g.set_nodes_attributes_rows_of_labels(
-                    &ids,
-                    &label_ids,
-                    &attr_ids,
-                    &rows,
-                    &mut docs.node_adds,
-                )?;
+                g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             }
             Ok(())
         }
@@ -292,7 +302,7 @@ fn apply_record(
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                g.set_relationships_attributes(&map, &mut docs.edge_adds)?;
+                g.set_relationships_attributes(&map, docs)?;
             }
             Ok(())
         }
@@ -315,13 +325,7 @@ fn apply_record(
             let ids: Vec<u64> = ids.iter().collect();
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             let label_ids = checked_label_ids(g, &labels)?;
-            g.set_nodes_attributes_rows_of_labels(
-                &ids,
-                &label_ids,
-                &attr_ids,
-                &rows,
-                &mut docs.node_adds,
-            )?;
+            g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             Ok(())
         }
 
@@ -341,19 +345,14 @@ fn apply_record(
             // Edges still go through the map form; only the node store has the
             // row-major entry point so far.
             let map = attr_map(g, &ids, &attr_ids, &rows)?;
-            g.set_relationships_attributes_of_type(type_id, &map, &mut docs.edge_adds)?;
+            g.set_relationships_attributes_of_type(type_id, &map, docs)?;
             Ok(())
         }
 
         Record::SetLabels { ids, labels } => {
             require_live(g, EntityType::Node, &ids.to_roaring())?;
             let label_ids = checked_label_ids(g, &labels)?;
-            g.set_node_labels_product(
-                &ids.iter().collect::<Vec<_>>(),
-                &label_ids,
-                &mut docs.node_adds,
-                false,
-            );
+            g.set_node_labels_product(&ids.iter().collect::<Vec<_>>(), &label_ids, docs, false);
             Ok(())
         }
 
@@ -370,7 +369,7 @@ fn apply_record(
                     cols.push(lid);
                 }
             }
-            g.remove_nodes_labels(&rows, &cols, &mut docs.node_removes);
+            g.remove_nodes_labels(&rows, &cols, docs);
             Ok(())
         }
 
@@ -395,13 +394,13 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut docs.node_removes)?;
+            g.delete_nodes(&nodes, docs)?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut docs.edge_removes)?;
+            g.delete_relationships(&edges, docs)?;
             Ok(())
         }
 
@@ -449,7 +448,7 @@ fn apply_record(
                 &schema_type,
                 &label,
                 &fields,
-                index_options(&index_type, &options),
+                index_options(index_type, &options),
             )?;
             Ok(())
         }
@@ -539,12 +538,18 @@ fn apply_add_schema(
     match schema_type {
         EntityType::Node => {
             let assigned = usize::from(g.get_label_id_mut(name)) as i64;
-            let local = g.get_labels().get(id as usize).map(|l| l.to_string());
+            let local = g
+                .get_labels()
+                .get(id as usize)
+                .map(std::string::ToString::to_string);
             verify_id("label", name, i64::from(id), assigned, local)
         }
         EntityType::Relationship => {
             let assigned = g.get_type_id_mut(name).0 as i64;
-            let local = g.get_types().get(id as usize).map(|t| t.to_string());
+            let local = g
+                .get_types()
+                .get(id as usize)
+                .map(std::string::ToString::to_string);
             verify_id("relationship type", name, i64::from(id), assigned, local)
         }
     }
@@ -582,11 +587,15 @@ fn verify_schema(
     let (kind, local) = match schema_type {
         EntityType::Node => (
             "label",
-            g.get_labels().get(id as usize).map(|l| l.to_string()),
+            g.get_labels()
+                .get(id as usize)
+                .map(std::string::ToString::to_string),
         ),
         EntityType::Relationship => (
             "relationship type",
-            g.get_types().get(id as usize).map(|t| t.to_string()),
+            g.get_types()
+                .get(id as usize)
+                .map(std::string::ToString::to_string),
         ),
     };
     resolved(kind, name, i64::from(id), local)
@@ -632,7 +641,7 @@ fn resolve_type(
     relation_id: u32,
 ) -> Result<Arc<String>, ApplyError> {
     g.get_type(TypeId(relation_id as usize))
-        .ok_or(ApplyError::IdOutOfRange {
+        .ok_or_else(|| ApplyError::IdOutOfRange {
             kind: "relationship type",
             id: i64::from(relation_id),
         })
@@ -806,7 +815,7 @@ fn attr_map(
 /// which matters because an effect adds a field to an index that may already
 /// exist, and a language already set for the label refuses a second one.
 fn index_options(
-    index_type: &IndexType,
+    index_type: IndexType,
     options: &IndexFieldOptions,
 ) -> Option<IndexOptions> {
     match index_type {
@@ -1840,7 +1849,9 @@ mod tests {
         }
 
         let mut buf = crate::effects::v3::new_buffer();
-        crate::effects::v3::emit::for_each_record(&p, &master, |r| r.encode(&mut buf).unwrap());
+        crate::effects::v3::emit::for_each_record(&p, &master.borrow(), |r| {
+            r.encode(&mut buf).unwrap();
+        });
         assert_eq!(
             crate::effects::v3::test_aux::read_buffer(&buf)
                 .unwrap()
@@ -1896,7 +1907,7 @@ mod tests {
             Record::UpdateNode {
                 ids: IdList::from([0]),
                 labels: vec![],
-                attr_ids: bad.to_vec(),
+                attr_ids: bad.clone(),
                 rows: vec![Value::Int(1), Value::Int(2)],
             }
             .encode(&mut buf)
@@ -2020,7 +2031,7 @@ mod tests {
     /// diverged a replica that was otherwise in step.
     #[test]
     fn an_absent_index_option_stays_absent_through_apply() {
-        let opts = index_options(&IndexType::Fulltext, &IndexFieldOptions::none_given(None))
+        let opts = index_options(IndexType::Fulltext, &IndexFieldOptions::none_given(None))
             .expect("a fulltext index carries a text block");
         let IndexOptions::Text(t) = opts else {
             panic!("expected the text half of a fulltext index");
@@ -2054,7 +2065,7 @@ mod tests {
             ef_construction: None,
             ef_runtime: None,
         };
-        let opts = index_options(&IndexType::Vector, &IndexFieldOptions::none_given(Some(v)))
+        let opts = index_options(IndexType::Vector, &IndexFieldOptions::none_given(Some(v)))
             .expect("a vector index carries a vector block");
         let IndexOptions::Vector(got) = opts else {
             panic!("expected the vector half");
@@ -2105,7 +2116,7 @@ mod tests {
 
     fn apply_one(
         g: &mut Graph,
-        record: Record,
+        record: &Record,
     ) -> Result<(), ApplyError> {
         let mut buf = new_buffer();
         record.encode(&mut buf).unwrap();
@@ -2131,7 +2142,7 @@ mod tests {
             let mut g = liveness_setup();
             let res = apply_one(
                 &mut g,
-                Record::CreateEdge {
+                &Record::CreateEdge {
                     ids: IdList::from([1]),
                     relation_id: 0,
                     src: IdList::from([src]),
@@ -2169,6 +2180,29 @@ mod tests {
         .unwrap();
         apply_effects(&mut g, &buf).expect("both endpoints are live by then");
         assert_eq!(g.relationship_count(), 2);
+    }
+
+    /// #3247: a repeated id names two nodes and can only create one. Folding
+    /// the list into a set applied one node and dropped the other silently;
+    /// `CREATE_EDGE` already refuses the same shape.
+    #[test]
+    fn a_repeated_node_id_in_one_create_is_refused() {
+        let mut g = liveness_setup();
+        let before = g.node_count();
+        let res = apply_one(
+            &mut g,
+            &Record::CreateNode {
+                ids: IdList::from([2, 3, 2]),
+                labels: vec![],
+                attr_ids: vec![],
+                rows: vec![],
+            },
+        );
+        match res {
+            Err(ApplyError::Graph(msg)) => assert!(msg.contains("distinct"), "{msg}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert_eq!(g.node_count(), before, "the record was applied");
     }
 
     /// A node deleted earlier in the buffer may still be named, as the
@@ -2228,7 +2262,7 @@ mod tests {
             let mut g = liveness_setup();
             let res = apply_one(
                 &mut g,
-                Record::UpdateNode {
+                &Record::UpdateNode {
                     ids: IdList::from([id]),
                     labels: vec![],
                     attr_ids: vec![0],
@@ -2245,7 +2279,7 @@ mod tests {
             let mut g = liveness_setup();
             let res = apply_one(
                 &mut g,
-                Record::SetLabels {
+                &Record::SetLabels {
                     ids: IdList::from([id]),
                     labels: vec![0],
                 },
@@ -2253,7 +2287,7 @@ mod tests {
             assert_not_live(res, "node", id);
             let res = apply_one(
                 &mut g,
-                Record::RemoveLabels {
+                &Record::RemoveLabels {
                     ids: IdList::from([id]),
                     labels: vec![0],
                 },
@@ -2267,7 +2301,7 @@ mod tests {
         let mut g = liveness_setup();
         let res = apply_one(
             &mut g,
-            Record::UpdateEdge {
+            &Record::UpdateEdge {
                 ids: IdList::from([5]),
                 relation_id: 0,
                 attr_ids: vec![0],
@@ -2327,7 +2361,7 @@ mod tests {
             let edges = g.relationship_count();
             let res = apply_one(
                 &mut g,
-                Record::DeleteNode {
+                &Record::DeleteNode {
                     ids: IdList::from([id]),
                     labels: vec![],
                 },
