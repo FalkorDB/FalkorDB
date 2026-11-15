@@ -209,7 +209,7 @@ pub(super) fn ir_references_variable(
 /// the input. `Union`, `CartesianProduct` and the hash join run independent
 /// children: a variable the other branch binds is a different variable even when
 /// a fresh binder gave it the same `(id, scope_id)`.
-fn row_reaches_siblings(
+const fn row_reaches_siblings(
     parent: &IR,
     is_input_child: bool,
 ) -> bool {
