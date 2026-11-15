@@ -433,6 +433,14 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
         IR::Unwind { var, .. } => {
             aliases.insert(var.id);
         }
+        // A procedure's YIELDed outputs and an OPTIONAL's variables feed a
+        // later traversal like any other binding clause.
+        IR::ProcedureCall { yields, .. } => {
+            aliases.extend(yields.iter().map(|v| v.id));
+        }
+        IR::Optional(vars) => {
+            aliases.extend(vars.iter().map(|v| v.id));
+        }
         // Argument with known bound vars: the incoming rows bind exactly
         // these variables. `Argument(None)` stays opaque (conservative).
         // Only the id is kept: this set feeds `score_endpoint`'s `bound_vars`,
