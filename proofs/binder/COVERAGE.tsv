@@ -26,8 +26,8 @@ graph/src/planner/binder.rs	Binder::project_name	2181	PROVEN	projectName_new_cov
 graph/src/planner/binder.rs	Binder::resolve_name	2191	PROVEN	resolve: resolve_ok_iff, resolve_innermost, resolve_covers
 graph/src/planner/binder.rs	Binder::fresh_var	2259	PROVEN	freshVar: fresh_not_used, mint_new_covers
 graph/src/planner/binder.rs	Binder::ensure_type	2275	PROVEN	ensureType_table, ensureType_accepts_any_binding
-graph/src/planner/binder.rs	Binder::validate_boolean_operands	2296	PROVEN	Types.validate_logical, validate_nonlogical
-graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2300	PROVEN	Types.validate (recursive), validate_logical/nonlogical
+graph/src/planner/binder.rs	Binder::validate_boolean_operands	2296	NOT COVERED	(#3293): rewritten by this PR, model not updated yet; was PROVEN: Types.validate_logical, validate_nonlogical
+graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2300	NOT COVERED	(#3293): rewritten by this PR, model not updated yet; was PROVEN: Types.validate (recursive), validate_logical/nonlogical
 graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2322	PROVEN	Types.mayBool_sound_except; getElement_rejected (CONFIRMED bug binder.rs:2347), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
 graph/src/planner/binder.rs	Binder::expr_may_return_entity	2390	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
 graph/src/planner/binder.rs	expr_tree_to_value	2463	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
@@ -43,3 +43,8 @@ graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2680	PROVEN
 graph/src/planner/binder.rs	sorted_scope_vars	2701	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2709	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	838	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)
+graph/src/planner/binder.rs	Binder::validate_order_by_boolean_operands	2317	NOT COVERED	(#3293): not modelled yet
+graph/src/planner/binder.rs	Binder::non_boolean_operand_type	2379	NOT COVERED	(#3293): not modelled yet
+graph/src/planner/binder.rs	Binder::type_name	2408	NOT COVERED	(#3293): not modelled yet
+graph/src/planner/binder.rs	Binder::constant_value	2432	NOT COVERED	(#3293): not modelled yet
+graph/src/planner/binder.rs	Binder::constant_arithmetic	2472	NOT COVERED	(#3293): not modelled yet
