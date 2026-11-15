@@ -115,3 +115,6 @@ graph/src/udf/type_convert.rs	value_to_js_level	124	PROVEN	Marshal.toLevel: toLe
 graph/src/udf/type_convert.rs	js_to_value	252	PROVEN	Marshal.fromJs (= fromF at depth 0, any QuickJS heap): fromJs_frames, fromJs_past_cap, self_array_error, fromJs_nestArr_ok, fromJs_nestArr_past, advisory_array_error, fromJs_needs_all_frames (#3336); neg_zero_rt, vecf32_rt, forged_node_marker, forged_edge_marker (BUG), internal_keys_dropped
 graph/src/udf/type_convert.rs	js_to_value_at	262	PROVEN	Marshal.fromF: fromF_eq_run, fromStep, Step.run_frames, run_past_cap, run_eq_uncapped, run_mono; fromF_nestArr_ok, fromF_nestArr_err
 graph/src/udf/type_convert.rs	js_to_value_level	270	PROVEN	Marshal.fromLevel = runShape ∘ classify (array :319, path :359, plain object :443 depth checks): shape_leaf_indep, shape_chk_err, shape_ext, shape_total, shape_kid_err, shape_mono, pathLoop_err, plain_obj_is_map, fromJs_num, fromJs_big, fromJs_kind
+graph/src/runtime/functions/algo_procedures.rs	pin_row_major	584	NOT COVERED	(#3349): not modelled yet
+graph/src/runtime/functions/algo_procedures.rs	new_compact_bool_matrix	596	NOT COVERED	(#3349): not modelled yet
+graph/src/runtime/functions/algo_procedures.rs	cache_transpose	608	NOT COVERED	(#3349): not modelled yet
