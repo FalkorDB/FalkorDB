@@ -2084,7 +2084,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.remove_node_labels(NODE.into(), &[l], &g.borrow());
+        pending.remove_node_labels(NODE.into(), &[l], &g);
 
         assert_eq!(records(&pending, &g), vec![labelled(false, &[l])]);
     }
@@ -2107,7 +2107,7 @@ mod label_effect_tests {
         let l = labels[0];
 
         pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
-        pending.remove_node_labels(NODE.into(), &[l], &g.borrow());
+        pending.remove_node_labels(NODE.into(), &[l], &g);
 
         assert!(
             !pending.set_labels.contains_key(&NODE),
@@ -2134,7 +2134,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.remove_node_labels(NODE.into(), &[l], &g.borrow());
+        pending.remove_node_labels(NODE.into(), &[l], &g);
         pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert!(
@@ -2161,7 +2161,7 @@ mod label_effect_tests {
         let (l, m) = (labels[0], labels[1]);
 
         pending.set_node_labels(NODE.into(), &[l, m].into_iter().collect());
-        pending.remove_node_labels(NODE.into(), &[l], &g.borrow());
+        pending.remove_node_labels(NODE.into(), &[l], &g);
 
         assert_eq!(pending.node_has_label(NODE.into(), m), Some(true));
         assert_eq!(records(&pending, &g), vec![labelled(true, &[m])]);
