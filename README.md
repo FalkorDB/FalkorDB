@@ -65,6 +65,9 @@ To quickly try out FalkorDB, launch an instance using docker:
 docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb
 ```
 
+If `./data` was written by a Redis image of FalkorDB and the image you run is a
+Valkey one, see [Moving a data volume from Redis to Valkey](docs/valkey-migration.md).
+
 ### Step 2
 
 Then, open your browser and navigate to `http://localhost:3000`.

@@ -1114,7 +1114,7 @@ impl Binder {
                     self.node_labels
                         .insert((bound_var.scope_id, bound_var.id), labels);
                 }
-                let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
+                let expr = Arc::new(DynTree::new(ExprIR::Variable(var)));
                 projected.push((bound_var, expr));
             }
             projected.sort_by(|(name_a, _), (name_b, _)| name_a.name.cmp(&name_b.name));
@@ -1363,7 +1363,7 @@ impl Binder {
             labels.extend(node.labels.iter().cloned());
             let all_labels = labels.clone();
 
-            let bound_node = Arc::new(QueryNode::new(alias.clone(), all_labels, attrs));
+            let bound_node = Arc::new(QueryNode::new(alias, all_labels, attrs));
             bound.add_node(bound_node);
         }
 
@@ -1446,8 +1446,7 @@ impl Binder {
                     .or_default();
                 labels.extend(relationship.from.labels.iter().cloned());
                 let all_labels = labels.clone();
-                let bound_node =
-                    Arc::new(QueryNode::new(from_alias.clone(), all_labels, from_attrs));
+                let bound_node = Arc::new(QueryNode::new(from_alias, all_labels, from_attrs));
                 bound.add_node(bound_node.clone());
                 bound_node
             };
@@ -1499,7 +1498,7 @@ impl Binder {
                     .or_default();
                 labels.extend(relationship.to.labels.iter().cloned());
                 let all_labels = labels.clone();
-                let bound_node = Arc::new(QueryNode::new(to_alias.clone(), all_labels, to_attrs));
+                let bound_node = Arc::new(QueryNode::new(to_alias, all_labels, to_attrs));
                 bound.add_node(bound_node.clone());
                 bound_node
             };
@@ -1508,7 +1507,7 @@ impl Binder {
             // Nodes already added via alias_to_bound; no duplicate insert needed
 
             let mut new_rel = QueryRelationship::new(
-                alias.clone(),
+                alias,
                 relationship.types.clone(),
                 attrs,
                 from_bound,
@@ -2083,11 +2082,11 @@ impl Binder {
                     | ExprIR::Quantifier { .. }
                     | ExprIR::ListComprehension(_)
                     | ExprIR::Reduce(_)
-                    | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
+                    | ExprIR::PatternComprehension(_)
+                    | ExprIR::AggOrderByPlaceholder => unreachable!("handled above"),
                     ExprIR::CompiledRegex(_) => {
                         unreachable!("produced only by the binder itself")
                     }
-                    ExprIR::AggOrderByPlaceholder => unreachable!("handled above"),
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
@@ -2339,22 +2338,8 @@ impl Binder {
             // internal `case` function's `Type::Any` return did before CASE
             // became its own variant — being stricter would reject queries
             // that used to reach the runtime.
-            ExprIR::Case { .. } => true,
-
-            // Non-boolean: literals, unary arithmetic, subscript, list comprehension
-            ExprIR::List
-            | ExprIR::Map
-            | ExprIR::MapProjection
-            | ExprIR::Negate
-            | ExprIR::Length
-            | ExprIR::GetElement
-            | ExprIR::GetElements
-            | ExprIR::ListComprehension(_)
-            | ExprIR::PatternComprehension(_)
-            | ExprIR::NestedPlan(_) => false,
-
-            // Boolean literals, comparisons, predicates, and runtime-typed nodes
-            ExprIR::Eq
+            ExprIR::Case { .. }
+            | ExprIR::Eq
             | ExprIR::Neq
             | ExprIR::Lt
             | ExprIR::Gt
@@ -2374,18 +2359,28 @@ impl Binder {
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
+            | ExprIR::GetElement
             | ExprIR::ShortestPath(_)
-            | ExprIR::Pattern(_) => true,
+            | ExprIR::Pattern(_)
+            | ExprIR::CompiledRegex(_) => true,
 
+            // Non-boolean: literals, unary arithmetic, slice, list comprehension
+            ExprIR::List
+            | ExprIR::Map
+            | ExprIR::MapProjection
+            | ExprIR::Negate
+            | ExprIR::Length
+            | ExprIR::GetElements
+            | ExprIR::ListComprehension(_)
+            | ExprIR::PatternComprehension(_)
+            | ExprIR::NestedPlan(_)
+            // Replaced by a variable when the aggregate is bound
+            | ExprIR::AggOrderByPlaceholder => false,
+
+            // Boolean literals, comparisons, predicates, and runtime-typed
+            // nodes (a subscript returns whatever the element is)
             // Pre-evaluated constant – only Bool/Null are boolean-shaped
             ExprIR::Constant(v) => matches!(v, Value::Bool(_) | Value::Null),
-
-            // All regex kinds may return Null (and Matches returns Bool),
-            // matching the original functions' declared return types
-            ExprIR::CompiledRegex(_) => true,
-
-            // Replaced by a variable when the aggregate is bound
-            ExprIR::AggOrderByPlaceholder => false,
         }
     }
 
@@ -2401,7 +2396,11 @@ impl Binder {
             // CASE: as above, the branch results decide this and are not
             // inspected. `Type::Any::can_return_entity()` is true, so this
             // matches the pre-variant behaviour.
-            ExprIR::Case { .. } => true,
+            ExprIR::Case { .. }
+            | ExprIR::GetElement
+            | ExprIR::Property(_)
+            | ExprIR::Parameter(_)
+            | ExprIR::Reduce(_) => true,
 
             // Transparent wrapper – recurse into the single child
             ExprIR::Distinct => node.get_child(0).is_some_and(Self::expr_may_return_entity),
@@ -2409,10 +2408,6 @@ impl Binder {
             ExprIR::Paren => unreachable!("the binder removes every Paren"),
 
             // Subscript and property access could produce entities at runtime
-            ExprIR::GetElement | ExprIR::Property(_) | ExprIR::Parameter(_) | ExprIR::Reduce(_) => {
-                true
-            }
-
             // Everything else cannot produce a graph entity
             ExprIR::List
             | ExprIR::Map
@@ -2753,7 +2748,7 @@ fn raw_exprs_structurally_equal(
     a: &DynTree<ExprIR<Arc<String>>>,
     b: &DynTree<ExprIR<Arc<String>>>,
 ) -> bool {
-    fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
+    const fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
         matches!(node, ExprIR::AggOrderByPlaceholder)
     }
 
@@ -2907,14 +2902,17 @@ mod tests {
         let q = "MATCH (n:N) RETURN n.i AS __agg_order_by_placeholder__ \
                  ORDER BY __agg_order_by_placeholder__";
         // `project_copies` binds and plans the query, and panics if either fails
-        assert!(project_copies(q).is_empty());
+        assert_eq!(project_copies(q), Vec::<String>::new());
     }
 
     /// The iterable of a comprehension is still in the outer scope, so a
     /// projection repeated there is read from its alias.
     #[test]
     fn order_by_comprehension_iterable_reads_the_alias() {
-        assert!(project_copies("MATCH (n:N) RETURN n.i AS x ORDER BY [y IN [n.i] | y]").is_empty());
+        assert_eq!(
+            project_copies("MATCH (n:N) RETURN n.i AS x ORDER BY [y IN [n.i] | y]"),
+            Vec::<String>::new()
+        );
     }
 
     /// A UDF call is not rewritten to the projected alias: the library may
@@ -2923,7 +2921,7 @@ mod tests {
     fn udf_call_is_not_alias_rewritable() {
         use std::{collections::HashSet, sync::Arc};
 
-        use orx_tree::{DynTree, NodeRef};
+        use orx_tree::DynTree;
 
         use super::is_alias_rewritable;
         use crate::parser::ast::ExprIR;
