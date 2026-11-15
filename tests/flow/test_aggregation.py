@@ -498,3 +498,48 @@ class testAggregations():
                 self.env.assertEqual(sorted(r[1] for r in res), expected, message=q)
         finally:
             g.delete()
+
+    def test_distinct_state_is_per_group(self):
+        # Each group's DISTINCT seen-set was keyed by a 64-bit hash of the
+        # group's key row, so two groups whose keys collide shared one set
+        # and the second group skipped values seen by the first (#2969).
+        # The two keys below collide under that hash.
+        q = """UNWIND [[[0, 0], 1], [[1, -1452335207727870361], 1]] AS p
+               WITH p[0] AS k, p[1] AS v
+               RETURN k, count(*), count(DISTINCT v), collect(DISTINCT v) ORDER BY k"""
+        self.get_res_and_assertEquals(q, [[[0, 0], 1, 1, [1]],
+                                          [[1, -1452335207727870361], 1, 1, [1]]])
+        # the same through the per-row aggregation path
+        q = """UNWIND [[[0, 0], 1], [[1, -1452335207727870361], 1]] AS p
+               WITH p[0] AS k, p[1] AS v
+               RETURN k, {c: count(DISTINCT v)}.c ORDER BY k"""
+        self.get_res_and_assertEquals(q, [[[0, 0], 1], [[1, -1452335207727870361], 1]])
+
+    def test_null_key_sharing_an_accumulator_slot(self):
+        # The binder may give an aggregate's accumulator the slot id of a
+        # grouping key. Unbinding the accumulator after the key was written
+        # left the key unbound, and a null key then dropped out of the batch,
+        # so the reply hit an unwrap on None and the server exited (#3150).
+        g = self.db.select_graph("agg_null_key")
+        try:
+            g.query("""CREATE (:Invitation {id: 'inv1', email: 'm@x.org', created_at: 1}),
+                              (:K:Node {id: 'k', tier: 1})-[:P {w: 1}]->(:D:Node {id: 'd'})""")
+            for q, expected in [
+                ("RETURN null AS x, count(1) AS n", [[None, 1]]),
+                ("RETURN null AS x, collect(1) AS c", [[None, [1]]]),
+                ("MATCH (n:D) RETURN n.id AS k, n.missing AS x, count(n) AS c", [['d', None, 1]]),
+                ("MATCH (n:D) WITH n, 1 AS hops RETURN n.id AS id, min(hops), n.tier AS tier",
+                 [['d', 1, None]]),
+                ("""MATCH (inv:Invitation {id: 'inv1'})
+                    OPTIONAL MATCH (u:User) WHERE u.email = inv.email
+                    OPTIONAL MATCH (newer:Invitation)
+                        WHERE newer.email = inv.email AND newer.created_at > inv.created_at
+                    RETURN inv.id, u IS NOT NULL, u.a, u.b, collect(newer)""",
+                 [['inv1', False, None, None, []]]),
+                # keys must not be overwritten by one another either
+                ("WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*)", [[2, 1, 1]]),
+            ]:
+                res = g.query(q).result_set
+                self.env.assertEqual(res, expected, message=q)
+        finally:
+            g.delete()

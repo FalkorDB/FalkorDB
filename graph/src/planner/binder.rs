@@ -895,8 +895,13 @@ impl Binder {
                         }
                         _ => (false, HashMap::new()),
                     };
+                    // The branch's scopes must not share ids with the live
+                    // outer ones: a branch variable would read the outer
+                    // variable's record slot. Start them where a plain CALL
+                    // body starts, above the outer scopes, which stay empty
+                    // placeholders here.
                     let mut binder = Self {
-                        env_stack: vec![HashMap::new()],
+                        env_stack: vec![HashMap::new(); self.env_stack.len() + 1],
                         use_parent_scope: false,
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
@@ -1110,7 +1115,7 @@ impl Binder {
                     self.node_labels
                         .insert((bound_var.scope_id, bound_var.id), labels);
                 }
-                let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
+                let expr = Arc::new(DynTree::new(ExprIR::Variable(var)));
                 projected.push((bound_var, expr));
             }
             projected.sort_by(|(name_a, _), (name_b, _)| name_a.name.cmp(&name_b.name));
@@ -1361,7 +1366,7 @@ impl Binder {
             labels.extend(node.labels.iter().cloned());
             let all_labels = labels.clone();
 
-            let bound_node = Arc::new(QueryNode::new(alias.clone(), all_labels, attrs));
+            let bound_node = Arc::new(QueryNode::new(alias, all_labels, attrs));
             bound.add_node(bound_node);
         }
 
@@ -1444,8 +1449,7 @@ impl Binder {
                     .or_default();
                 labels.extend(relationship.from.labels.iter().cloned());
                 let all_labels = labels.clone();
-                let bound_node =
-                    Arc::new(QueryNode::new(from_alias.clone(), all_labels, from_attrs));
+                let bound_node = Arc::new(QueryNode::new(from_alias, all_labels, from_attrs));
                 bound.add_node(bound_node.clone());
                 bound_node
             };
@@ -1497,7 +1501,7 @@ impl Binder {
                     .or_default();
                 labels.extend(relationship.to.labels.iter().cloned());
                 let all_labels = labels.clone();
-                let bound_node = Arc::new(QueryNode::new(to_alias.clone(), all_labels, to_attrs));
+                let bound_node = Arc::new(QueryNode::new(to_alias, all_labels, to_attrs));
                 bound.add_node(bound_node.clone());
                 bound_node
             };
@@ -1506,7 +1510,7 @@ impl Binder {
             // Nodes already added via alias_to_bound; no duplicate insert needed
 
             let mut new_rel = QueryRelationship::new(
-                alias.clone(),
+                alias,
                 relationship.types.clone(),
                 attrs,
                 from_bound,
@@ -2337,22 +2341,8 @@ impl Binder {
             // internal `case` function's `Type::Any` return did before CASE
             // became its own variant — being stricter would reject queries
             // that used to reach the runtime.
-            ExprIR::Case { .. } => true,
-
-            // Non-boolean: literals, unary arithmetic, subscript, list comprehension
-            ExprIR::List
-            | ExprIR::Map
-            | ExprIR::MapProjection
-            | ExprIR::Negate
-            | ExprIR::Length
-            | ExprIR::GetElement
-            | ExprIR::GetElements
-            | ExprIR::ListComprehension(_)
-            | ExprIR::PatternComprehension(_)
-            | ExprIR::NestedPlan(_) => false,
-
-            // Boolean literals, comparisons, predicates, and runtime-typed nodes
-            ExprIR::Eq
+            ExprIR::Case { .. }
+            | ExprIR::Eq
             | ExprIR::Neq
             | ExprIR::Lt
             | ExprIR::Gt
@@ -2372,15 +2362,28 @@ impl Binder {
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
+            | ExprIR::GetElement
             | ExprIR::ShortestPath(_)
-            | ExprIR::Pattern(_) => true,
+            | ExprIR::Pattern(_)
+            | ExprIR::CompiledRegex(_) => true,
 
+            // Non-boolean: literals, unary arithmetic, slice, list comprehension
+            ExprIR::List
+            | ExprIR::Map
+            | ExprIR::MapProjection
+            | ExprIR::Negate
+            | ExprIR::Length
+            | ExprIR::GetElements
+            | ExprIR::ListComprehension(_)
+            | ExprIR::PatternComprehension(_)
+            | ExprIR::NestedPlan(_) => false,
+
+            // Boolean literals, comparisons, predicates, and runtime-typed
+            // nodes (a subscript returns whatever the element is)
             // Pre-evaluated constant – only Bool/Null are boolean-shaped
             ExprIR::Constant(v) => matches!(v, Value::Bool(_) | Value::Null),
-
             // All regex kinds may return Null (and Matches returns Bool),
             // matching the original functions' declared return types
-            ExprIR::CompiledRegex(_) => true,
         }
     }
 
@@ -2396,7 +2399,11 @@ impl Binder {
             // CASE: as above, the branch results decide this and are not
             // inspected. `Type::Any::can_return_entity()` is true, so this
             // matches the pre-variant behaviour.
-            ExprIR::Case { .. } => true,
+            ExprIR::Case { .. }
+            | ExprIR::GetElement
+            | ExprIR::Property(_)
+            | ExprIR::Parameter(_)
+            | ExprIR::Reduce(_) => true,
 
             // Transparent wrapper – recurse into the single child
             ExprIR::Distinct => node.get_child(0).is_some_and(Self::expr_may_return_entity),
@@ -2404,10 +2411,6 @@ impl Binder {
             ExprIR::Paren => unreachable!("the binder removes every Paren"),
 
             // Subscript and property access could produce entities at runtime
-            ExprIR::GetElement | ExprIR::Property(_) | ExprIR::Parameter(_) | ExprIR::Reduce(_) => {
-                true
-            }
-
             // Everything else cannot produce a graph entity
             ExprIR::List
             | ExprIR::Map

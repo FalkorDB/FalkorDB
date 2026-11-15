@@ -155,7 +155,7 @@ impl VarLenIter<'_> {
     ) {
         self.current_start = Some(start_node);
         let rt = self.runtime;
-        let g = rt.g.borrow();
+        let g = rt.graph();
         // 0-hop case: the start node itself is a valid result.
         if self.min_hops == 0
             && (self.dest_id.is_none() || self.dest_id == Some(start_node))
@@ -195,7 +195,7 @@ impl VarLenIter<'_> {
     #[allow(clippy::too_many_lines)]
     fn advance(&mut self) {
         let rt = self.runtime;
-        let g = rt.g.borrow();
+        let g = rt.graph();
         let rp = self.rp;
         let start_node = self.current_start.expect("frame requires a start node");
         let reversed = self.reversed;
@@ -448,6 +448,10 @@ pub struct CondVarLenTraverseOp<'a> {
 }
 
 impl<'a> CondVarLenTraverseOp<'a> {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "built once from the plan node; mirrors its fields"
+    )]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -507,6 +511,10 @@ impl<'a> CondVarLenTraverseOp<'a> {
     /// binds it without any transpose. Callers pass the op's fields explicitly
     /// so this runs inside the emitter closure without borrowing the emitter
     /// through `&self`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "takes the op's fields explicitly; see above"
+    )]
     fn expand_row(
         runtime: &'a Runtime<'a>,
         rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -557,7 +565,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
             vec![to_id.unwrap()]
         } else {
             from_id.map_or_else(
-                || runtime.g.borrow().get_nodes(&rp.from.labels, 0).collect(),
+                || runtime.graph().get_nodes(&rp.from.labels, 0).collect(),
                 |id| vec![id],
             )
         };
@@ -574,7 +582,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         let mut dest_label_ids: SmallVec<[LabelId; 2]> = SmallVec::new();
         let mut dest_label_missing = false;
         {
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             for l in dest_labels.iter() {
                 if let Some(id) = g.get_label_id(l) {
                     dest_label_ids.push(id);

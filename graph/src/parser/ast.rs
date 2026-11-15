@@ -1324,7 +1324,12 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::With { exprs: _, orderby: _orderby, .. } | Self::Return { exprs: _, orderby: _orderby, .. } => {
+            Self::With { .. } => {
+                iter.next().map_or_else(|| Err(String::from(
+                        "Query cannot conclude with WITH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
+                    )), |first| first.inner_validate(iter))
+            }
+            Self::Return { .. } => {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
@@ -1514,11 +1519,11 @@ mod tests {
         let and = ExprIR::and_of([a_or_b.clone(), a_xor_b.clone(), not_and.clone(), var("c")]);
         let expected = op(
             ExprIR::And,
-            vec![a_or_b.clone(), a_xor_b.clone(), not_and, var("c")],
+            vec![a_or_b, a_xor_b.clone(), not_and, var("c")],
         );
         assert_eq!(show(&and), show(&expected));
 
-        let or = ExprIR::or_of([a_and_b.clone(), a_xor_b, var("c")]);
+        let or = ExprIR::or_of([a_and_b, a_xor_b, var("c")]);
         assert_eq!(root_children(&or), 3);
         assert!(matches!(or.root().child(0).data(), ExprIR::And));
     }
