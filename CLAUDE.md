@@ -205,6 +205,17 @@ Cypher Query String
 - **Env** (`runtime/value.rs`) - Variable bindings flowing through pipeline
 - **Pending** (`runtime/pending.rs`) - Batched mutations for transactional semantics
 
+## Lean proofs
+
+Do not update or generate Lean proofs (`proofs/`) as part of a code change, even
+when the change touches a function listed in `proofs/*/COVERAGE.tsv`. CI handles
+it: `proof-impact.yml` lists the verified functions a PR changes, re-proves them,
+and posts the resulting patch on the PR, which a maintainer applies with
+`/proofs apply` (`proof-apply.yml`). Work on the proofs only when explicitly asked.
+That covers same-repo PRs only: for a PR from a fork the bot reports which
+verified functions changed but neither re-proves them nor applies a patch, so a
+maintainer updates those proofs by hand (or from a same-repo branch).
+
 ## Code Style
 
 - Uses `rustfmt` with vertical function parameter layout (`fn_params_layout = "Vertical"`)
