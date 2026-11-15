@@ -212,6 +212,9 @@ when the change touches a function listed in `proofs/*/COVERAGE.tsv`. CI handles
 it: `proof-impact.yml` lists the verified functions a PR changes, re-proves them,
 and posts the resulting patch on the PR, which a maintainer applies with
 `/proofs apply` (`proof-apply.yml`). Work on the proofs only when explicitly asked.
+That covers same-repo PRs only: for a PR from a fork the bot reports which
+verified functions changed but neither re-proves them nor applies a patch, so a
+maintainer updates those proofs by hand (or from a same-repo branch).
 
 ## Code Style
 

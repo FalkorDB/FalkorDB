@@ -261,9 +261,17 @@ head_files = set(git('ls-files', '--', 'proofs').split())
 for f in sorted({p for p in head_files | set(trusted_files()) if BUILD_INPUTS.match(p)}):
     if (git('show', f':{f}') if f in head_files else None) != trusted(f):
         untrusted.append(f'- `{f}` differs from the base branch')
+changed_lean = []
 for f in sorted(p for p in head_files if p.endswith('.lean')):
-    for n, what, line in added_lines(trusted(f) or '', git('show', f':{f}'), BUILDTIME):
+    now, was = git('show', f':{f}'), trusted(f)
+    if now != was:
+        changed_lean.append(f)
+    for n, what, line in added_lines(was or '', now, BUILDTIME):
         untrusted.append(f'- `{f}:{n}` adds `{what}`: `{line[:120]}`')
+# Every .lean file the PR or the patch adds or changes against the base: the
+# gate checks each was built (a fresh .olean), not only the patch's.
+with open(os.path.join(os.path.dirname(added_path), 'changed_lean.txt'), 'w') as out:
+    out.write(''.join(f + '\n' for f in changed_lean))
 if untrusted:
     print('Not built: the PR changes what building the proofs runs, so the gate would run code it has not '
           'checked. Review these by hand; the `Lean proofs` check builds the PR as usual:')
@@ -304,17 +312,28 @@ with open(added_path, 'w') as out:
 # too: its Lean names are free text, so nothing here checks they prove that
 # function.
 RANK = {b: i for i, b in enumerate(['PROVEN', 'CONDITIONAL', 'AXIOMATISED', 'MODELLED', 'NOT COVERED', 'TEST-ONLY'])}
+# coverage.sh's bucket aliases: a row it counts in a bucket must rank here as that bucket.
+ALIASES = {'AXIOMATIZED': 'AXIOMATISED', 'MODELED': 'MODELLED', 'NOT_COVERED': 'NOT COVERED',
+           'NOTCOVERED': 'NOT COVERED', 'UNCOVERED': 'NOT COVERED', 'TEST_ONLY': 'TEST-ONLY',
+           'TESTONLY': 'TEST-ONLY', 'COND': 'CONDITIONAL'}
+
+def bucket(cols):
+    b = cols[3].strip().upper()
+    b = ALIASES.get(b.replace(' ', '_'), ALIASES.get(b, b))
+    if b == 'NOT COVERED' and len(cols) > 4 and cols[4].strip().upper().startswith('TEST-ONLY'):
+        b = 'TEST-ONLY'
+    return b
 
 def worst(text):
     # Read rows as coverage.sh does: a header anywhere (or none), '#' comments,
-    # buckets in any case. Skipping only the first line would let a row put
-    # above the header count in coverage.sh yet go unseen here.
+    # buckets in any case or alias. Skipping only the first line would let a
+    # row put above the header count in coverage.sh yet go unseen here.
     out = {}
     for line in text.splitlines():
         cols = line.split('\t')
         if len(cols) < 4 or cols[0].strip().lower() == 'file' or not cols[0].strip() or line.startswith('#'):
             continue
-        key, rank = (cols[0], cols[1]), RANK.get(cols[3].strip().upper(), len(RANK))
+        key, rank = (cols[0], cols[1]), RANK.get(bucket(cols), len(RANK))
         out[key] = max(out.get(key, rank), rank)
     return out
 

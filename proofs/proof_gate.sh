@@ -88,13 +88,15 @@ else
   # itself have edited, so "no proof change was needed" is only a pass if they build.
   lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
   # lake builds a project's default targets and what they import, so a file no
-  # target imports is never checked. Each added or changed .lean file must have
-  # a fresh .olean (this runner restores no cache).
+  # target imports is never checked. Each .lean file the PR or the patch adds or
+  # changes against the base (listed by the checks) must have a fresh .olean
+  # (this runner restores no cache).
   unbuilt=""
-  for p in $(git diff --cached --name-only --no-renames --diff-filter=AM -- 'proofs/*.lean'); do
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
     proj=$(cut -d/ -f1-2 <<< "$p"); mod=${p#"$proj"/}
     [[ -f "$proj/.lake/build/lib/lean/${mod%.lean}.olean" ]] || unbuilt+="- \`$p\`"$'\n'
-  done
+  done < ../out/changed_lean.txt
   if [[ -n "$unbuilt" ]]; then
     lean=fail; ok=fail
     { echo; echo "Not built by any target of its project (import it from the project's root module):"; printf '%s' "$unbuilt"; } >> ../out/checks.md.tmp
