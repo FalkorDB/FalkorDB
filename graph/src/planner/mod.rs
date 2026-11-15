@@ -1038,8 +1038,8 @@ impl Planner {
     /// outer row and start the traversal there. An opaque `Argument(None)`
     /// hides that, so a labelled far endpoint would outscore the bound one
     /// and the sub-plan would walk every relationship into that label.
-    fn argument_vars(&self) -> Option<Vec<(u32, u32)>> {
-        Some(self.visited.iter().copied().collect())
+    fn argument_vars(&self) -> Vec<(u32, u32)> {
+        self.visited.iter().copied().collect()
     }
 
     /// Build a pattern sub-plan for a graph, saving and restoring visited state.
@@ -1052,7 +1052,7 @@ impl Planner {
         let mut sub_plan = self.plan_match(graph, None);
         self.visited = saved;
         self.verified_labels = saved_verified;
-        Self::add_argument_to_leaves(&mut sub_plan, self.argument_vars());
+        Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
         sub_plan
     }
 
@@ -1453,7 +1453,7 @@ impl Planner {
             sub_plan = tree!(IR::Filter(filter.clone()), sub_plan);
         }
 
-        Self::add_argument_to_leaves(&mut sub_plan, self.argument_vars());
+        Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
 
         // Build collect(result_expr) aggregation expression
         let collect_fn = get_functions()
@@ -2638,7 +2638,7 @@ impl Planner {
             let mut sub_plan = self.plan_match(&graph, None);
             self.visited = saved;
             self.verified_labels = saved_verified;
-            Self::add_argument_to_leaves(&mut sub_plan, self.argument_vars());
+            Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
             if is_anti {
                 res = tree!(IR::AntiSemiApply, res, sub_plan);
             } else {
@@ -3066,7 +3066,7 @@ impl Planner {
                     let argument_vars = self.argument_vars();
                     let mut match_plan = self.plan_match(&pattern, filter);
                     self.verified_labels = saved_verified;
-                    Self::add_argument_to_leaves(&mut match_plan, argument_vars);
+                    Self::add_argument_to_leaves(&mut match_plan, Some(&argument_vars));
                     // If all pattern variables are already bound from a prior clause,
                     // we need an Apply (correlated join) so the inner plan re-evaluates
                     // the pattern for each incoming row.  Otherwise, the Optional node
