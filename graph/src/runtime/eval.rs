@@ -298,6 +298,10 @@ struct ListLoop<'v, 't> {
     row: Option<Row>,
     /// `None`: not yet decided. `Some(None)`: the body must run per element.
     /// `Some(Some(outer))`: columnar, with these outer bindings broadcast.
+    #[allow(
+        clippy::option_option,
+        reason = "three states: undecided, per-element, columnar"
+    )]
     plan: Option<Option<Vec<(u32, Value)>>>,
 }
 
