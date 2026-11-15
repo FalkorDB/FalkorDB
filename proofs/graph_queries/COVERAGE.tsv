@@ -149,8 +149,8 @@ graph/src/graph/graph.rs	get_indexed_edges	4306	AXIOMATISED	RediSearch Indexer::
 graph/src/graph/graph.rs	get_all_edges	4321	PROVEN	Queries.allEdges_unknown
 graph/src/graph/graph.rs	fulltext_query_nodes	4334	AXIOMATISED	RediSearch fulltext_query delegation
 graph/src/graph/graph.rs	fulltext_query_edges	4349	AXIOMATISED	RediSearch fulltext_query_edges delegation
-graph/src/graph/graph.rs	vector_query_nodes	4373	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp, #3085)
-graph/src/graph/graph.rs	vector_query_edges	4433	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/graph/graph.rs	vector_query_nodes	4373	NOT COVERED	(#3382): body rewritten; not modelled yet
+graph/src/graph/graph.rs	vector_query_edges	4433	NOT COVERED	(#3382): body rewritten; not modelled yet
 graph/src/graph/graph.rs	index_info	4486	PROVEN	Index.indexInfo_length
 graph/src/graph/graph.rs	constraints	4565	PROVEN	Constraints.two_phase_eq (constraints projection)
 graph/src/graph/graph.rs	constraints_mut	4569	PROVEN	Constraints.upsert_twice (constraints_mut projection)

@@ -137,6 +137,7 @@ graph/src/index/indexer.rs	is_cancelled	884	PROVEN	Meta.Ixr.misc
 graph/src/index/indexer.rs	recreate_index	894	PROVEN	Meta.Ixr.recreate_spec
 graph/src/index/indexer.rs	set_graph	910	PROVEN	Meta.Ixr.misc
 graph/src/index/indexer.rs	get_graph	918	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	is_operational	536	NOT COVERED	(#3382): not modelled yet
 graph/src/index/redisearch/mod.rs	RediSearch_GetCApiVersion	167	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_CreateIndexOptions	226	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_FreeIndexOptions	231	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
