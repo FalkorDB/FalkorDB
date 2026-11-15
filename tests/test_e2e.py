@@ -2065,6 +2065,15 @@ def test_variable_named_like_an_anonymous_entity():
     assert res.result_set == [[None, ["A"]]]
 
 
+def test_foreach_slot_of_an_unnamed_entity_cannot_be_named():
+    """The slot a FOREACH keeps for an unnamed entity it created is not a name
+    a query can spell."""
+    query_exception(
+        "FOREACH (i IN [] | CREATE ()) WITH _foreach_0_1 AS n RETURN n",
+        "not defined",
+    )
+
+
 def test_return_star_leaves_out_unnamed_entities():
     query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
     # Only `a` is named: the relationship and the other node are not columns.
