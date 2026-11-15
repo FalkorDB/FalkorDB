@@ -389,6 +389,8 @@ class testBFSConcurrentWrites(FlowTestsBase):
                     got = sorted(self.reach(g, depth, edges))
                     if not valid(depth, got):
                         errors.append((depth, edges, got[:5], len(got)))
+                        # release the barrier so nobody waits out its timeout
+                        ready.abort()
                         break
                     if began_during and not done.is_set():
                         overlapped[i] += 1
@@ -403,9 +405,14 @@ class testBFSConcurrentWrites(FlowTestsBase):
         for t in threads:
             t.start()
         try:
-            ready.wait(timeout=60)
-            writing.set()
-            writer(self.db.select_graph(name))
+            try:
+                ready.wait(timeout=60)
+            except threading.BrokenBarrierError:
+                # a reader failed before the first barrier: `errors` says why
+                pass
+            else:
+                writing.set()
+                writer(self.db.select_graph(name))
         finally:
             done.set()
             for t in threads:
