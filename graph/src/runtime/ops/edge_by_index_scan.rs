@@ -25,6 +25,8 @@
 use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::unsupported_by_native_index;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
@@ -305,7 +307,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
                 Value::Float(_) | Value::String(_) | Value::Bool(_) => true,
                 _ => false,
             },
-            _ => true,
+            IndexQuery::Point { .. } => true,
         }
     }
 }
@@ -321,6 +323,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
             let label = &self.relationship_pattern.types[0];
             let rp = self.relationship_pattern;
             match self.emitter.emit_lazy(|b, row| {
+                type EdgeRow = (NodeId, NodeId, RelationshipId);
                 let view = BatchRow::new(b, row);
                 let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
@@ -333,45 +336,75 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // `get_all_edges` is materialized once into the op's
                 // cache and shared by all subsequent rows via `Arc`,
                 // so we don't rebuild the full-type Vec per row.
-                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                let runtime = self.runtime;
+                let cache = &self.all_edges_cache;
+                let scan_type = || -> Box<dyn Iterator<Item = EdgeRow>> {
+                    let cached = {
+                        let mut cache = cache.borrow_mut();
+                        if cache.is_none() {
+                            *cache = Some(Arc::new(runtime.graph().get_all_edges(label)));
+                        }
+                        Arc::clone(cache.as_ref().unwrap())
+                    };
+                    let mut idx = 0usize;
+                    Box::new(std::iter::from_fn(move || {
+                        if idx < cached.len() {
+                            let v = cached[idx];
+                            idx += 1;
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }))
+                };
+                // `None` means "scan instead": an index-unshaped predicate, which the planner
+                // keeps a filter for. Mirrors `NodeByIndexScanOp`.
+                let indexed: Option<Box<dyn Iterator<Item = EdgeRow>>> =
                     if Self::can_utilize_index(&q) {
                         let g = self.runtime.graph();
                         // Edge index: a numeric Equal/Range on a column we own is served
                         // by the CoW B-tree (endpoints recovered from the graph's reverse index);
-                        // string/geo/composite or a missing column falls through to RediSearch during
-                        // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
+                        // anything else is an error under the flag. #51, mirrors
+                        // `NodeByIndexScanOp`.
                         #[cfg(feature = "index-falkordb")]
-                        let it: Box<
-                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                        > = if let Some(hit) = g.query_index_numeric_edges(label, &q) {
-                            Box::new(hit)
-                        } else {
-                            Box::new(g.get_indexed_edges(label, q))
+                        let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
+                            .query_index_edges(label, &q)
+                        {
+                            Some(Ok(rows)) => Some(Box::new(rows)),
+                            // Still building: scan the type for what the column will answer,
+                            // checking the predicate the planner dropped. See
+                            // `NodeByIndexScanOp`.
+                            Some(Err(scan_filter)) => {
+                                // Resolved once per scan. No edge holds a name the graph has
+                                // never seen.
+                                let edges: Box<dyn Iterator<Item = EdgeRow>> = match scan_filter
+                                    .resolve(|attr| {
+                                        g.get_relationship_attribute_id(attr)
+                                            .map(|attr| attr as u16)
+                                    }) {
+                                    Some(scan_filter) => {
+                                        Box::new(scan_type().filter(move |&(_, _, edge)| {
+                                            runtime.graph().relationship_matches(edge, &scan_filter)
+                                        }))
+                                    }
+                                    None => Box::new(std::iter::empty()),
+                                };
+                                Some(edges)
+                            }
+                            None => {
+                                // See node_by_index_scan: native is the only index under this
+                                // flag, so an unserviceable predicate is a loud error.
+                                return Err(unsupported_by_native_index("relationship", label, &q));
+                            }
                         };
                         #[cfg(not(feature = "index-falkordb"))]
-                        let it: Box<
-                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                        > = Box::new(g.get_indexed_edges(label, q));
+                        let it: Option<Box<dyn Iterator<Item = EdgeRow>>> =
+                            Some(Box::new(g.get_indexed_edges(label, q)));
                         it
                     } else {
-                        let cached = {
-                            let mut cache = self.all_edges_cache.borrow_mut();
-                            if cache.is_none() {
-                                *cache = Some(Arc::new(self.runtime.graph().get_all_edges(label)));
-                            }
-                            Arc::clone(cache.as_ref().unwrap())
-                        };
-                        let mut idx = 0usize;
-                        Box::new(std::iter::from_fn(move || {
-                            if idx < cached.len() {
-                                let v = cached[idx];
-                                idx += 1;
-                                Some(v)
-                            } else {
-                                None
-                            }
-                        }))
+                        None
                     };
+                let base: Box<dyn Iterator<Item = EdgeRow>> = indexed.unwrap_or_else(scan_type);
 
                 // An undirected pattern matches each edge in both
                 // orientations (a self-loop once), as `CondTraverse` does;

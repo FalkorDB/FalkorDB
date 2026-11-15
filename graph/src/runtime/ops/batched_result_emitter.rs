@@ -560,7 +560,6 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         // drops the `cap < BATCH_SIZE` guard, so a cap above a batch came out
         // as the ceiling itself (FalkorDB#2922).
         let pack_ceiling = record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE));
-        debug_assert!((1..=BATCH_SIZE).contains(&pack_ceiling));
         Self {
             binding,
             batch: None,
