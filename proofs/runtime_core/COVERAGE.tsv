@@ -15,7 +15,7 @@ graph/src/runtime/runtime.rs	resync_published_indexes	617	PROVEN	Plan.resyncPubl
 graph/src/runtime/runtime.rs	commit_deferred_indexes	627	PROVEN	Plan.commitDeferred (delegates to Pending): delegates_spec
 graph/src/runtime/runtime.rs	query	633	PROVEN	Query.query_rows, Query.capLoop_flatten, Query.keep_exact, Query.query_write_pulls_all
 graph/src/runtime/runtime.rs	default_batch	683	PROVEN	Plan.defaultBatch: defaultBatch_spec
-graph/src/runtime/runtime.rs	record_cap	761	PROVEN	Budget.recordCap_hardCap_sound_oneSkip, Budget.need_sound; soft use Emitter.drive_flatten
+graph/src/runtime/runtime.rs	record_cap	761	NOT COVERED	(#2957): the PR changes this body and the Lean model is not updated yet. Was PROVEN: Budget.recordCap_hardCap_sound_oneSkip, Budget.need_sound; soft use Emitter.drive_flatten
 graph/src/runtime/runtime.rs	children_to_recurse	771	PROVEN	RunBatch.childrenToRecurse: childrenToRecurse_spec
 graph/src/runtime/runtime.rs	run_nested_plan	797	PROVEN	Plan.runNested: runNested_spec
 graph/src/runtime/runtime.rs	run_batch	829	PROVEN	RunBatch.runBatch_eq_rec, RunBatch.runBatch_ok_single
@@ -85,7 +85,7 @@ graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	MODELLED	should_
 graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	MODELLED	output = packed (row,item) pairs; gather not modelled
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter.refill_none, refill_some
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	NOT COVERED	(#2957): the PR changes this body and the Lean model is not updated yet. Was PROVEN: Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
 graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
 graph/src/runtime/ops/batched_result_emitter.rs	batch	759	NOT COVERED	trivial accessor
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	MODELLED	Emitter.initCeiling via with_binding

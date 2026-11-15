@@ -153,7 +153,7 @@ graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	Emitter f
 graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter drain_spec, drain_conserve
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter packRows_spec, stream_rows_active
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	NOT COVERED	(#2957): the PR changes this body and the Lean model is not updated yet. Was PROVEN: Emitter emitLazy_spec, emitAll_spec, grow_bounds
 graph/src/runtime/ops/batched_result_emitter.rs	reset	750	MODELLED	state cleared
 graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Gather.emNew/emWithBinding: emNew_spec
