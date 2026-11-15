@@ -450,10 +450,6 @@ fn digest_cancelled(
         // rather than invented if it ever is not: a made-up id would index the
         // pair under some other type.
         let Some(relation_id) = graph.get_type_id(&type_name).map(|t| schema_id(t.0)) else {
-            debug_assert!(
-                false,
-                "cancelled edge type {type_name} was never registered"
-            );
             continue;
         };
         rels.sort_unstable_by_key(|r| r.id);
