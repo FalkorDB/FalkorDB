@@ -57,13 +57,13 @@ graph/src/runtime/functions/aggregation.rs	max_batch	421	PROVEN	mmBatch (null an
 graph/src/runtime/functions/aggregation.rs	avg_batch	451	PROVEN	avg_count, avg_no_overflow_is_sum, avg_hom
 graph/src/runtime/functions/aggregation.rs	min_batch	498	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom; proofs/value_order min_nan_ignored
 graph/src/runtime/functions/aggregation.rs	percentile_batch	531	PROVEN	pctFold: pct_first_wins, pct_stable, pct_repro_first_row (W2-agg-4 fixed by #3007: first row's percentile, as C)
-graph/src/runtime/functions/aggregation.rs	stdev_batch	565	PROVEN	stdev_hom
-graph/src/runtime/functions/aggregation.rs	finalize_avg	599	PROVEN	avg_empty
-graph/src/runtime/functions/aggregation.rs	finalize_percentile_disc	617	PROVEN	disc_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 NaN panic fixed)
-graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	643	PROVEN	cont_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 fixed)
-graph/src/runtime/functions/aggregation.rs	modf	677	NOT COVERED	f64 libm split; no float reasoning
-graph/src/runtime/functions/aggregation.rs	finalize_stdev	683	MODELLED	finalizeStdev, stdev_empty, #eval [1,2,3,4]
-graph/src/runtime/functions/aggregation.rs	finalize_stdevp	705	NOT COVERED	population variant of finalize_stdev; checked only by agrees_vectorized_vs_per_row_aggregation
+graph/src/runtime/functions/aggregation.rs	stdev_batch	564	PROVEN	stdev_hom
+graph/src/runtime/functions/aggregation.rs	finalize_avg	598	PROVEN	avg_empty
+graph/src/runtime/functions/aggregation.rs	finalize_percentile_disc	616	PROVEN	disc_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 NaN panic fixed)
+graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	642	PROVEN	cont_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 fixed)
+graph/src/runtime/functions/aggregation.rs	modf	676	NOT COVERED	f64 libm split; no float reasoning
+graph/src/runtime/functions/aggregation.rs	finalize_stdev	682	MODELLED	finalizeStdev, stdev_empty, #eval [1,2,3,4]
+graph/src/runtime/functions/aggregation.rs	finalize_stdevp	704	NOT COVERED	population variant of finalize_stdev; checked only by agrees_vectorized_vs_per_row_aggregation
 graph/src/runtime/batch.rs	none	98	PROVEN	none_isNull
 graph/src/runtime/batch.rs	all	108	PROVEN	all_isNull
 graph/src/runtime/batch.rs	from_values	118	PROVEN	fromNulls_isNull
@@ -74,60 +74,60 @@ graph/src/runtime/batch.rs	clear	160	PROVEN	clear_isNull
 graph/src/runtime/batch.rs	classify_numeric	191	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
 graph/src/runtime/batch.rs	classify_stored_column	241	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
 graph/src/runtime/batch.rs	classify_column	279	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	classify_exact_column	295	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	extend_active_slice	308	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	get	340	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	len	357	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	is_empty	370	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	gather	377	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	compare_at	399	NOT COVERED	delegates to sort_cmp (#2912): proven in proofs/value_order Main.compareAt_eq_scMain and proofs/columnar compareAt_spec
-graph/src/runtime/batch.rs	push_bound	429	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_left_of	442	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	for_rights	498	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	width	519	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	new	547	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	len	553	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	is_empty	559	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_row	565	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_row_with	576	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_merged	659	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_planned	693	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	grow_cols	721	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	finish_row	736	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	finish	749	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	new	830	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	from_columns	865	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	into_compacted	883	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	gather	896	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	merge_over_input	942	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	concat	978	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	concat_typed_column	1069	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	clone_active_rows_seq_origin	1168	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	len	1177	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	active_len	1183	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	is_empty	1189	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	selection	1195	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	set_selection	1200	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	active_indices	1209	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	column	1218	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	set_column	1231	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	value_at	1269	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	compare_rows_at	1287	NOT COVERED	delegates to sort_cmp (#2912): proven in proofs/value_order Main.compareRowsAt_eq_scMain and proofs/columnar compareRowsAt_spec
-graph/src/runtime/batch.rs	origin_row	1303	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	set_origin_rows	1324	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	num_columns	1333	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	is_bound_at	1341	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	write_column	1352	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	extract_node_ids	1377	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	extract_rel_ids	1390	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	new	1412	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	value_at	1422	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	to_owned_row	1437	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	next	1469	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	size_hint	1492	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	set_argument_batch	1601	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	inspect_context	1733	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	next	1782	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	classify_exact_column	297	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	extend_active_slice	310	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	get	342	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	len	359	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	is_empty	372	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	gather	379	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	compare_at	401	NOT COVERED	delegates to sort_cmp (#2912): proven in proofs/value_order Main.compareAt_eq_scMain and proofs/columnar compareAt_spec
+graph/src/runtime/batch.rs	push_bound	431	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_left_of	444	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	for_rights	500	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	width	521	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	new	549	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	len	555	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	is_empty	561	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_row	567	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_row_with	578	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_merged	661	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_planned	695	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	grow_cols	723	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	finish_row	738	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	finish	751	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	new	832	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	from_columns	867	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	into_compacted	885	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	gather	898	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	merge_over_input	944	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	concat	980	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	concat_typed_column	1071	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	clone_active_rows_seq_origin	1170	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	len	1179	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	active_len	1185	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	is_empty	1191	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	selection	1197	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	set_selection	1202	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	active_indices	1211	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	column	1220	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	set_column	1233	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	value_at	1271	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	compare_rows_at	1289	NOT COVERED	delegates to sort_cmp (#2912): proven in proofs/value_order Main.compareRowsAt_eq_scMain and proofs/columnar compareRowsAt_spec
+graph/src/runtime/batch.rs	origin_row	1305	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	set_origin_rows	1326	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	num_columns	1335	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	is_bound_at	1343	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	write_column	1354	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	extract_node_ids	1379	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	extract_rel_ids	1392	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	new	1414	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	value_at	1424	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	to_owned_row	1439	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	next	1471	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	size_hint	1494	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	set_argument_batch	1603	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	inspect_context	1735	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	next	1784	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
 graph/src/runtime/ops/commit.rs	new	45	PROVEN	CommitSt.new: commit_new_ro, commit_new_write
 graph/src/runtime/ops/filter.rs	new	39	PROVEN	StreamOps.FilterSt.new: filterNew_spec
 graph/src/runtime/ops/filter.rs	eval	57	PROVEN	StreamOps.filterEval: filterEval_bools, filter_mem, filterEval_empty, filterEval_type_error

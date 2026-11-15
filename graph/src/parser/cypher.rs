@@ -4208,6 +4208,10 @@ mod tests {
 
     // Malformed literals are parse errors, named by the parameter that failed.
     #[test]
+    #[allow(
+        clippy::literal_string_with_formatting_args,
+        reason = "`{`a`}` is a malformed parameter value, not a format string"
+    )]
     fn malformed_params_name_the_parameter() {
         for value in ["[1,2", "{`a`:1", "{1:2}", "[1,]", "[,]", "{`a`}"] {
             let err = param_of(value).unwrap_err();

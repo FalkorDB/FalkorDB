@@ -99,7 +99,7 @@ pub(crate) mod instr {
     /// `bench/src/falkorbench/counters.py::read_rusage`, so engine-level and
     /// data-structure-level numbers are on one scale.
     #[cfg(target_os = "macos")]
-    pub(crate) fn read_instr() -> Option<u64> {
+    pub fn read_instr() -> Option<u64> {
         const RUSAGE_INFO_V4: i32 = 4;
         const RI_INSTRUCTIONS_OFF: usize = 16 + 29 * 8;
 
@@ -125,7 +125,7 @@ pub(crate) mod instr {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub(crate) fn read_instr() -> Option<u64> {
+    pub fn read_instr() -> Option<u64> {
         None
     }
 }

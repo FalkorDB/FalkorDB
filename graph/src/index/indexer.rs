@@ -790,8 +790,7 @@ impl Indexer {
         self.index
             .load()
             .get(label)
-            .map(|index| index.fields().clone())
-            .unwrap_or_default()
+            .map_or_default(|index| index.fields().clone())
     }
 
     /// Get fields for all labels.

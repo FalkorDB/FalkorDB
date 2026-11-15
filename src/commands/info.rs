@@ -19,6 +19,10 @@ use graph::runtime::string_pool;
 use valkey_module::{Context, ValkeyResult, ValkeyString, ValkeyValue};
 
 #[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "a Redis command handler must return `RedisResult`"
+)]
 pub fn graph_info(
     _ctx: &Context,
     args: Vec<ValkeyString>,

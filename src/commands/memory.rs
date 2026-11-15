@@ -73,7 +73,7 @@ fn c_schema_name(name: &str) -> ValkeyValue {
 fn memory_report(
     graph: &Arc<RwLock<ThreadedGraph>>,
     samples: usize,
-) -> ValkeyResult {
+) -> ValkeyValue {
     // L1-read for exactly the sampling pass, through a session: the index sizes come
     // from RediSearch FFI (`RediSearch_MemUsage`), and a session is what publishes the
     // lock mode that the GIL lock-order assertion reads (#726).
@@ -179,7 +179,7 @@ fn memory_report(
     out.push(ValkeyValue::SimpleString("indices_sz_mb".into()));
     out.push(ValkeyValue::Integer(indices_mb));
 
-    Ok(ValkeyValue::Array(out))
+    ValkeyValue::Array(out)
 }
 
 pub fn graph_memory(
@@ -236,7 +236,7 @@ pub fn graph_memory(
     // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
     // `must_run_inline`.
     if must_run_inline(ctx) {
-        return memory_report(&graph, samples);
+        return Ok(memory_report(&graph, samples));
     }
 
     // Run on the thread pool — see the module docs for why inline on the main
@@ -246,7 +246,7 @@ pub fn graph_memory(
         move || {
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
-            let _ = ctx.reply(memory_report(&graph, samples));
+            let _ = ctx.reply(Ok(memory_report(&graph, samples)));
             drop(bc);
             unsafe { ffi::free_thread_safe_context(ctx.ctx) };
         },

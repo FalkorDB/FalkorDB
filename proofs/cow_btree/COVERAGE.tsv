@@ -40,14 +40,14 @@ graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::merge_underfull
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::is_underfull	576	PROVEN	isUnderfull: isUnderfull_leaf, isUnderfull_branch, removeOne_flag, combine_two_not_uf, combine_two_left_not_uf, Good_wf
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::is_empty_node	585	PROVEN	isEmptyNode: isEmptyNode_toList, isEmptyNode_eq, stripEmpty_content, stripEmpty_good
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	595	NOT COVERED	Arc clone-before-mutate argued informally (Snapshot.lean header); PROVEN in proofs/index_layer (Leaf.makePrivate_cow)
-graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	Extract::make	20	PROVEN	Extract (trait as a structure): Extract.Lawful, nextWith_eq
-graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	DocExtract::make	32	PROVEN	DocExtract: DocExtract_make, DocExtract_lawful, rangeDocs_spec
-graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	TupleExtract::make	46	PROVEN	TupleExtract: TupleExtract_make, TupleExtract_lawful, rangeTuples_spec
-graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::new	82	PROVEN	Cursor.new/seek: seek_rest, new_inv_rest
-graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::set_leaf	123	PROVEN	wholeOf: wholeOf_sound
-graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::descend_left	140	PROVEN	descendLeft: descendLeft_rest, descendLeft_weight
-graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::advance_leaf	160	PROVEN	advanceLeaf: advanceLeaf_rest, advanceLeaf_weight
-graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::next	181	PROVEN	Cursor.nextWith (lazy key read): nextWith_eq; Cursor.next: next_spec, next_none, next_in, take_spec
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	Extract::make	22	PROVEN	Extract (trait as a structure): Extract.Lawful, nextWith_eq
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	DocExtract::make	34	PROVEN	DocExtract: DocExtract_make, DocExtract_lawful, rangeDocs_spec
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	TupleExtract::make	48	PROVEN	TupleExtract: TupleExtract_make, TupleExtract_lawful, rangeTuples_spec
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::new	84	PROVEN	Cursor.new/seek: seek_rest, new_inv_rest
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::set_leaf	125	PROVEN	wholeOf: wholeOf_sound
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::descend_left	142	PROVEN	descendLeft: descendLeft_rest, descendLeft_weight
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::advance_leaf	162	PROVEN	advanceLeaf: advanceLeaf_rest, advanceLeaf_weight
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::next	183	PROVEN	Cursor.nextWith (lazy key read): nextWith_eq; Cursor.next: next_spec, next_none, next_in, take_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	42	NOT COVERED	page byte encoding abstracted to the sorted entry list; PROVEN in proofs/index_layer
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_sorted	50	PROVEN	mergeWalk: mergeWalk_spec (strictly sorted union, no longer than the two inputs combined); also PROVEN in proofs/index_layer (Leaf.mergeD_spec)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	77	MODELLED	abstracted as (takeWhile p).length on a monotone predicate; PROVEN in proofs/index_layer
