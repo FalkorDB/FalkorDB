@@ -530,6 +530,11 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
         }
     }
 
+    // A trailing number with no unit (`P5`, `P1Y5`, `P-`) is not a duration.
+    if !num_buf.is_empty() {
+        return Err(format!("Duration component has no unit: {num_buf}"));
+    }
+
     // Parse time part
     if let Some(tp) = time_part {
         num_buf.clear();
@@ -551,6 +556,9 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
                     _ => return Err(format!("Unknown duration time component: {ch}")),
                 }
             }
+        }
+        if !num_buf.is_empty() {
+            return Err(format!("Duration component has no unit: {num_buf}"));
         }
     }
 
@@ -617,7 +625,9 @@ pub fn construct_duration_secs(
         .and_then(check_date_range)
 }
 
-/// Largest civil year a date or duration may reach. `civil_from_days` returns
+/// Largest civil year a date or duration may reach.
+///
+/// `civil_from_days` returns
 /// an `i32` year, so past this the year would silently wrap; the margin keeps
 /// the `year - 1970` and month-carry arithmetic around it inside `i32` too.
 pub const MAX_DATE_YEAR: i32 = i32::MAX - 2000;
@@ -770,6 +780,10 @@ const LOCALDATETIME_SLOTS: [&str; 10] = [
 
 /// Build a duration from validated components. Each must be a number; as in C
 /// a fraction carries into the smaller units (`days: 1.5` is `P1DT12H`).
+#[allow(
+    clippy::many_single_char_names,
+    reason = "the seven duration components, in the order construct_duration_secs takes them"
+)]
 fn duration_from_values(vals: &[Option<&Value>]) -> Result<Value, String> {
     let mut ints = [0i64; 7];
     let mut floats = [0f64; 7];
@@ -801,6 +815,10 @@ fn duration_from_values(vals: &[Option<&Value>]) -> Result<Value, String> {
 /// components are 32-bit floats, whole years and months anchor the date, the
 /// fractions of a year / month count as 365.25 / 30.44 days, and the rest is
 /// summed in seconds and truncated toward zero.
+#[allow(
+    clippy::suboptimal_flops,
+    reason = "unfused, as C computes it: a fused multiply-add can round differently"
+)]
 fn construct_duration_secs_float(c: [f64; 7]) -> Result<i64, String> {
     let [years, months, weeks, days, hours, minutes, seconds] = c.map(|x| x as f32);
     if !c.iter().all(|x| x.is_finite()) {
@@ -862,7 +880,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Int,
         non_deterministic,
         fn timestamp_fn(_, args) {
-            debug_assert!(args.is_empty());
+            debug_assert_eq!(args, []);
             let now = Utc::now();
             Ok(Value::Int(now.timestamp_millis()))
         }

@@ -333,7 +333,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// have any.
     #[cfg(test)]
     #[must_use]
-    pub fn root_is_branch(&self) -> bool {
+    pub const fn root_is_branch(&self) -> bool {
         matches!(self.root, Node::Branch(_))
     }
 
