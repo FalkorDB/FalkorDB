@@ -494,10 +494,12 @@ class testRestoreCorrupt():
         marker = bytes([TYPE_UNSIGNED]) + (2).to_bytes(8, "little")
         offsets = [i for i in range(len(payload) - 8)
                    if payload[i:i + 9] == marker]
-        refused = 0
-        for off in offsets:
+        # the dimension word is followed by M, EF_CONSTRUCTION and EF_RUNTIME
+        # (one tagged u64 each, nine bytes), then the sim_func word
+        sim_offsets = [i + 4 * 9 for i in offsets
+                       if payload[i + 4 * 9:i + 5 * 9] == marker]
+        self.env.assertGreaterEqual(len(sim_offsets), 1)
+        for off in sim_offsets:
             bad = payload[:off + 1] + (7).to_bytes(8, "little") + payload[off + 9:]
-            refused += not self.restore(bad)
-        # at least the sim_func word (and the dimension) refuse
-        self.env.assertGreaterEqual(refused, 1)
+            self.env.assertFalse(self.restore(bad))
         self.env.assertTrue(self.conn.ping())
