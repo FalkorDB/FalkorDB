@@ -43,41 +43,6 @@ graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2680	PROVEN
 graph/src/planner/binder.rs	sorted_scope_vars	2701	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2709	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	838	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)
-graph/src/planner/binder.rs	default	74	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind	99	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	scope_vars	114	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	update_all_node_labels	122	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	update_graph_labels	160	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	current_env	239	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	current_env_mut	245	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	push_scope	251	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	commit_scope	256	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_ir	262	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_call_subquery	716	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_call_body	824	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	build_import_projections	984	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	validate_import_with	1008	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_projection	1064	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_graph	1332	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_graph_create	1560	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	check_unbound_self_referential	1685	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_set_items	1703	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_expr	1728	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_expr_with_locals	1735	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	bind_expr_node	1749	NOT COVERED	(#3061): not modelled yet
 graph/src/planner/binder.rs	import_parent_names	2168	NOT COVERED	(#3061): not modelled yet
 graph/src/planner/binder.rs	hide_new_names	2202	NOT COVERED	(#3061): not modelled yet
 graph/src/planner/binder.rs	hide_names	2215	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	define_name_in_scope	2235	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	project_name	2257	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	resolve_name	2267	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	fresh_var	2335	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	ensure_type	2351	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	validate_boolean_operands	2372	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	validate_boolean_operands_impl	2376	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	expr_may_return_boolean	2398	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	expr_may_return_entity	2466	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	node_to_value	2541	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	is_agg_placeholder	2722	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	nodes_eq	2726	NOT COVERED	(#3061): not modelled yet
-graph/src/planner/binder.rs	expr_ir_eq	2756	NOT COVERED	(#3061): not modelled yet
