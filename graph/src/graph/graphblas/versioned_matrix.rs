@@ -101,7 +101,7 @@ pub(crate) struct Effective<'a, T>(borrow::Cow<'a, Matrix<T>>);
 impl<T> Effective<'_, T> {
     /// Whether this is the base itself, not a merged copy.
     #[cfg(test)]
-    pub(crate) fn is_borrowed(&self) -> bool {
+    pub(crate) const fn is_borrowed(&self) -> bool {
         matches!(self.0, borrow::Cow::Borrowed(_))
     }
 }

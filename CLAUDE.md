@@ -214,12 +214,12 @@ Cypher Query String
   (see `src/commands/explain.rs`)
 - The parser (`cypher.rs`) is hand-written, not generated from Cypher.g4 grammar file
 - GraphBLAS FFI bindings are in `graph/src/graph/GraphBLAS.rs` (auto-generated, do not edit)
-- Keep clippy clean under the strict set (the same flags `.vscode/settings.json`
-  gives rust-analyzer), and check it before every commit:
+- Keep clippy clean under the strict set: pedantic, nursery and cargo, from
+  `[workspace.lints]` in `Cargo.toml`, which CI enforces with `-D warnings`.
+  Check it before every commit, in both feature sets:
   ```bash
-  CXX=clang++ cargo clippy --workspace --all-targets -- -W clippy::pedantic \
-    -W clippy::nursery -W clippy::cargo -A clippy::missing-errors-doc \
-    -A clippy::missing-panics-doc -A clippy::doc-markdown
+  CXX=clang++ cargo clippy --workspace --all-targets -- -D warnings
+  CXX=clang++ cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
   ```
   Fix every warning. Where a lint is wrong or the shape is deliberate, put a
   scoped `#[allow(clippy::<lint>, reason = "...")]` on the narrowest item it

@@ -70,7 +70,7 @@ impl<C: Copy> BuildState<C> {
     }
 
     /// Where the next indexer batch resumes, or `None` once `Ready`.
-    pub(crate) fn next(&self) -> Option<C> {
+    pub(crate) const fn next(&self) -> Option<C> {
         match self {
             Self::Building { next, .. } => Some(*next),
             Self::Ready => None,
@@ -149,7 +149,7 @@ enum Prepared {
 impl PreparedBatch {
     /// Have the batch's commit publish nothing rather than catch up on more than `limit` of
     /// writers' changes under the host's locks ([`IndexerBatch::catch_up_limit`]).
-    pub(crate) fn limit_catch_up(
+    pub(crate) const fn limit_catch_up(
         &mut self,
         limit: u64,
     ) {
@@ -206,7 +206,7 @@ pub(crate) const REFRESH_COST: u64 = 10;
 
 /// Whether a batch of `batch` tuples refreshes the `written` entities or inserts itself: refresh
 /// if that is cheaper, counting each entity as [`REFRESH_COST`] tuples.
-fn catch_up_by(
+const fn catch_up_by(
     written: u64,
     batch: usize,
 ) -> CatchUp {
@@ -346,7 +346,7 @@ pub(crate) trait VersionedIndex: Clone + Sized {
 }
 
 impl<K: VersionedIndex> IndexEntry<K> {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         index: K,
         state: BuildState<K::Cursor>,
         generation: u64,
@@ -360,12 +360,12 @@ impl<K: VersionedIndex> IndexEntry<K> {
     }
 
     /// Whether some entities are not indexed yet.
-    pub(crate) fn is_building(&self) -> bool {
+    pub(crate) const fn is_building(&self) -> bool {
         matches!(self.state, BuildState::Building { .. })
     }
 
     /// Where the next indexer batch resumes, or `None` once the index is `Ready`.
-    pub(crate) fn cursor(&self) -> Option<K::Cursor> {
+    pub(crate) const fn cursor(&self) -> Option<K::Cursor> {
         self.state.next()
     }
 

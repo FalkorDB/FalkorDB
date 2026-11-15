@@ -43,7 +43,7 @@ use crate::graph::graph::NodeId;
 /// and needs no sentinel. Adding one keeps the order, so comparing ranks compares indices.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub(crate) struct Rank(NonZeroUsize);
+pub struct Rank(NonZeroUsize);
 
 impl Rank {
     /// # Panics
@@ -81,7 +81,7 @@ impl fmt::Debug for Rank {
 /// global allocator (Redis's `RedisModule_Alloc` in the server), and an allocation that fails
 /// there aborts the process, as any allocation in Rust does.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub(crate) enum OrderError {
+pub enum OrderError {
     /// More nodes than [`MAX_NODES`](super::MAX_NODES), the engine's own graph limit.
     #[error("the graph has more nodes than a CCH index is built for")]
     TooLarge,
@@ -120,13 +120,13 @@ pub(crate) enum OrderError {
 ///   in row `lower` of `upward`. Also ascending. Only an incremental recustomization needs
 ///   it; the full sweep ignores it.
 ///
-/// An **arc slot** is an index into `upward.neighbors`: slot `k` in [`Topology::up_range`]`(r)`
-/// is the arc between rank `r` and rank `upward.neighbors[k]`. Phase 2's weight arrays are
+/// An **arc slot** is an index into `upward.neighbors`: slot `k` in the range
+/// [`Topology::up_range`] gives for `r` is the arc between rank `r` and rank `upward.neighbors[k]`. Phase 2's weight arrays are
 /// indexed by exactly this slot. [`Topology::arc_slot`] resolves a rank pair to its slot.
 ///
 /// All six arrays are built once and never grow, so they are boxed slices: no spare
 /// capacity is kept for the life of the index.
-pub(crate) struct Topology {
+pub struct Topology {
     /// `rank_to_node[rank] = node`.
     rank_to_node: Box<[NodeId]>,
     /// `node_to_rank[node] = rank`.
@@ -321,7 +321,7 @@ pub(super) fn node_index(node: NodeId) -> usize {
 /// The slots of `rank`'s row in a compressed row array with these `offsets`. Shared by
 /// [`RankRows::slots`] and [`chordal_supergraph`], which reads its rows before they are a
 /// [`RankRows`].
-fn row_slots(
+const fn row_slots(
     offsets: &[usize],
     rank: Rank,
 ) -> Range<usize> {

@@ -38,7 +38,7 @@ pub struct CsrExport<V> {
 impl<V> CsrExport<V> {
     /// The matrix's row count.
     #[must_use]
-    pub fn row_count(&self) -> usize {
+    pub const fn row_count(&self) -> usize {
         self.row_offsets.len() - 1
     }
 }

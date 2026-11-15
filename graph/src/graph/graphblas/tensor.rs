@@ -1879,8 +1879,8 @@ mod tests {
     #[test]
     #[cfg(feature = "index-falkordb")]
     fn effective_fwd_is_the_base_or_the_merge() {
-        ensure_init();
         const N: u64 = 1_000;
+        ensure_init();
         let mut t = Tensor::new(2 * N, 2 * N);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -1927,8 +1927,8 @@ mod tests {
     #[test]
     #[cfg(feature = "index-falkordb")]
     fn effective_fwd_resyncs_and_latches_like_every_forward_reader() {
-        ensure_init();
         const N: u64 = 1_000;
+        ensure_init();
         let mut t = Tensor::new(2 * N, 2 * N);
         let ids: Vec<u64> = (0..N).collect();
         t.set_all_from_slices(&ids, &ids, &ids);

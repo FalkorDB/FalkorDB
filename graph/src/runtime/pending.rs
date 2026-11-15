@@ -1623,7 +1623,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(NodeId::from)
+                        read_once.candidates(&candidates).map(NodeId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -1718,7 +1718,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(RelationshipId::from)
+                        read_once.candidates(&candidates).map(RelationshipId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -2421,7 +2421,7 @@ mod native_unique_tests {
                 values,
             )
             .expect("both columns answer");
-            fewest_candidates(lookups).count()
+            fewest_candidates(&lookups).count()
         };
         let (tenant, three, absent) = (Value::Int(7), Value::Int(3), Value::Int(99));
         assert_eq!(
@@ -2481,17 +2481,17 @@ mod native_unique_tests {
         };
         let once = ReadOnce::default();
         assert_eq!(
-            once.candidates(lookups(7, "u1")).count(),
+            once.candidates(&lookups(7, "u1")).count(),
             51,
             "the first member reads the tenant"
         );
         assert_eq!(
-            once.candidates(lookups(7, "u2")).count(),
+            once.candidates(&lookups(7, "u2")).count(),
             0,
             "a member with the same lookups reads nothing more"
         );
         assert_eq!(
-            once.candidates(lookups(8, "u9")).count(),
+            once.candidates(&lookups(8, "u9")).count(),
             1,
             "another tenant is another lookup"
         );
@@ -2532,7 +2532,7 @@ mod native_unique_tests {
         .expect("id's column answers");
         assert_eq!(lookups.len(), 1, "the Building column declines");
         assert_eq!(
-            fewest_candidates(lookups).count(),
+            fewest_candidates(&lookups).count(),
             2,
             "the two holding id 1"
         );

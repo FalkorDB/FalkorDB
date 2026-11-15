@@ -7,6 +7,19 @@ members = [
 # so it must not inherit this workspace's RUSTFLAGS/target (e.g. an ASAN build).
 exclude = ["native-deps"]
 
+# The clippy lints CI enforces (with `-D warnings`). Here, rather than in CI's
+# command line, so a plain `cargo clippy` (and rust-analyzer) checks the same set.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+
 [package]
 name = "falkordb-rs"
 version = "99.99.99"
@@ -17,6 +30,9 @@ repository = "https://github.com/FalkorDB/FalkorDB"
 readme = "README.md"
 keywords = ["graph", "database"]
 categories = ["database"]
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]

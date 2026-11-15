@@ -4549,10 +4549,13 @@ impl Graph {
         label: &Arc<String>,
     ) -> u64 {
         match entity {
-            EntityType::Node => self.get_label_matrix(label).map_or(0, |lm| lm.nvals()),
+            EntityType::Node => self.get_label_matrix(label).map_or(
+                0,
+                super::graphblas::versioned_matrix::VersionedMatrix::nvals,
+            ),
             EntityType::Relationship => self
                 .get_relationship_matrix(label)
-                .map_or(0, |t| t.edge_count()),
+                .map_or(0, super::graphblas::tensor::Tensor::edge_count),
         }
     }
 
