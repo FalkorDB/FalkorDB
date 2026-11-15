@@ -36,20 +36,20 @@ impl EffectEncode<3> for Value {
         buf: &mut W,
     ) -> Result<(), EncodeError> {
         match self {
-            Value::Null => buf.u32(si_type::T_NULL as u32),
-            Value::Bool(b) => {
+            Self::Null => buf.u32(si_type::T_NULL as u32),
+            Self::Bool(b) => {
                 buf.u32(si_type::T_BOOL as u32);
                 buf.u8(u8::from(*b));
             }
-            Value::Int(i) => {
+            Self::Int(i) => {
                 buf.u32(si_type::T_INT64 as u32);
                 buf.i64(*i);
             }
-            Value::Float(f) => {
+            Self::Float(f) => {
                 buf.u32(si_type::T_DOUBLE as u32);
                 buf.f64(*f);
             }
-            Value::String(s) => {
+            Self::String(s) => {
                 // The intern bit rides along, as it does in the RDB encoding.
                 // Without it a replica rebuilds every string as a fresh `Arc`
                 // and its pool stays empty, so repeated strings cost it what
@@ -64,7 +64,7 @@ impl EffectEncode<3> for Value {
                 buf.u32(tag as u32);
                 buf.string(s);
             }
-            Value::List(items) => {
+            Self::List(items) => {
                 buf.u32(si_type::T_ARRAY as u32);
                 // u32, not u64: C reads the count as `uint32`.
                 buf.u32(u32::try_from(items.len()).map_err(|_| {
@@ -79,14 +79,14 @@ impl EffectEncode<3> for Value {
                     item.encode(buf)?;
                 }
             }
-            Value::Point(p) => {
+            Self::Point(p) => {
                 buf.u32(si_type::T_POINT as u32);
                 // 2 x f32. Rust's own format used f64 here, which silently doubles
                 // the payload and desyncs everything after it.
                 buf.bytes(&p.latitude.to_le_bytes());
                 buf.bytes(&p.longitude.to_le_bytes());
             }
-            Value::VecF32(v) => {
+            Self::VecF32(v) => {
                 buf.u32(si_type::T_VECTOR_F32 as u32);
                 // Exact: count then a fixed 4 bytes per element.
                 buf.reserve(4 + v.len() * 4);
@@ -100,19 +100,19 @@ impl EffectEncode<3> for Value {
                     buf.bytes(&f.to_le_bytes());
                 }
             }
-            Value::Datetime(ts) => {
+            Self::Datetime(ts) => {
                 buf.u32(si_type::T_DATETIME as u32);
                 buf.i64(*ts);
             }
-            Value::Date(ts) => {
+            Self::Date(ts) => {
                 buf.u32(si_type::T_DATE as u32);
                 buf.i64(*ts);
             }
-            Value::Time(ts) => {
+            Self::Time(ts) => {
                 buf.u32(si_type::T_TIME as u32);
                 buf.i64(*ts);
             }
-            Value::Duration(d) => {
+            Self::Duration(d) => {
                 buf.u32(si_type::T_DURATION as u32);
                 buf.i64(*d);
             }
@@ -194,7 +194,7 @@ impl EffectDecode<3> for Value {
                         let Some(Frame::List { items, .. }) = stack.pop() else {
                             unreachable!("just matched a list frame")
                         };
-                        value = Value::List(Arc::new(items));
+                        value = Self::List(Arc::new(items));
                     }
                 }
             }
