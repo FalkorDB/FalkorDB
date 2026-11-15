@@ -129,21 +129,22 @@ but are identical here:
 
 * **with a session** — `query_sync` / `profile_sync` use `begin_writer`, which is already
   a writer, so `escalate` never runs and the check is never consulted;
-* **with no session at all** — `GRAPH.CONSTRAINT`, `GRAPH.DELETE`, `GRAPH.RESTORE`,
-  `GRAPH.UDF`, `GRAPH.COPY` and `GRAPH.EFFECT` take the graph write lock directly, commit,
-  and replicate inline. They never enter this machinery.
+* **with no session at all** — `GRAPH.DELETE`, `GRAPH.RESTORE`, `GRAPH.UDF`, `GRAPH.COPY`
+  and `GRAPH.EFFECT` take the graph write lock directly, commit, and replicate inline, and
+  so does `GRAPH.CONSTRAINT` when `must_run_inline` keeps it on the main thread. They never
+  enter this machinery.
 
 So `GRAPH.CONSTRAINT` appears **twice** in the table below, and the two rows have
-different answers for different reasons: the command mutates and replicates inline and is
-covered by dispatch, while the validation thread it spawns is a separate write that
-outlives the command and has to answer for itself.
+different answers for different reasons: a client's command waits for the write lock on
+the pool like a write query, and is re-authorized there, while the validation thread it
+spawns is a separate write that outlives the command and has to answer for itself.
 
 ## Coverage
 
 | write origin | runs | escalates | re-authorized | why |
 | --- | --- | --- | --- | --- |
-| client command (`GRAPH.QUERY` / `PROFILE` / `RECORD` / `BULK`) | pool | yes | **yes** | the case the guard exists for |
-| client command, no session (`CONSTRAINT` / `DELETE` / `RESTORE` / `UDF` / `COPY`) | inline | no | n/a | mutates and replicates on the main thread; dispatch already gated it |
+| client command (`GRAPH.QUERY` / `PROFILE` / `RECORD` / `BULK` / `CONSTRAINT`) | pool | yes | **yes** | the case the guard exists for |
+| client command, no session (`DELETE` / `RESTORE` / `UDF` / `COPY`) | inline | no | n/a | mutates and replicates on the main thread; dispatch already gated it |
 | replication stream (`REPLICATED`) | inline | no | n/a | our master committed it; rejecting diverges us |
 | AOF/RDB replay (`LOADING`) | inline | no | n/a | in `must_run_inline`, so it never reaches a worker |
 | diskless load (`ASYNC_LOADING`) | pool | yes | **no** | not in `must_run_inline`, so it does reach the check — bypassed there, and captured at admission by `bulk_insert` |
@@ -158,7 +159,7 @@ path that later starts replicating flips the field named after replication.
 
 | site | `replicates` | `originated_here` | why |
 | --- | --- | --- | --- |
-| query drainer, `record`, `bulk` (normal) | `true` | `true` | `WriteFacts::CLIENT`, the default |
+| query drainer, `record`, `bulk` (normal), `constraint` command | `true` | `true` | `WriteFacts::CLIENT`, the default |
 | `bulk` under `ASYNC_LOADING` | `true` | `false` | already authorized and persisted, but it still replicates, so only the role check is waived |
 | `constraint` validation thread | `false` | `false` | emits no replication of its own; also runs on a replica applying the master's command |
 | — once #2419 adds the re-announce | **`true`** | `false` | one field, flipped in the commit that adds the replication |
