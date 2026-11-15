@@ -551,10 +551,9 @@ impl IdSpace {
         &self,
         nodes: &RoaringTreemap,
     ) -> Result<(), IdSpaceError> {
-        match (nodes & &self.recycled).min() {
-            Some(id) => Err(IdSpaceError::AlreadyRecycled(id)),
-            None => Ok(()),
-        }
+        (nodes & &self.recycled)
+            .min()
+            .map_or(Ok(()), |id| Err(IdSpaceError::AlreadyRecycled(id)))
     }
 
     /// Make `nodes` live, or refuse them and change nothing.
@@ -651,13 +650,10 @@ impl IdSpace {
         // costs 1.1us when every id was created by this batch, and 224us against
         // 966ns on a mixed delete. It only wins on the shape the guard above has
         // already returned from.
-        match (nodes - &self.taken)
+        (nodes - &self.taken)
             .max()
             .filter(|&id| id >= self.entry_bound)
-        {
-            Some(id) => Err(IdSpaceError::NeverCreated(id)),
-            None => Ok(()),
-        }
+            .map_or(Ok(()), |id| Err(IdSpaceError::NeverCreated(id)))
     }
 
     /// Refuse ids that are not live right now: free, or never allocated.
@@ -1265,7 +1261,7 @@ mod reclaim_ids_tests {
 
         assert_eq!(reclaim(&pool, &none, 3).0, vec![3, 9, 10]);
         assert_eq!(reclaim(&pool, &none, 99).0, vec![3, 9, 10, 40, 900]);
-        assert!(reclaim(&pool, &none, 0).0.is_empty());
+        assert_eq!(reclaim(&pool, &none, 0).0, [] as [u64; 0]);
     }
 
     /// Held ids are not handed out, wherever in the pool they sit.
@@ -1292,7 +1288,7 @@ mod reclaim_ids_tests {
     #[test]
     fn reports_how_many_it_could_take() {
         let pool: RoaringTreemap = (0..4u64).collect();
-        let held: RoaringTreemap = [2u64].into_iter().collect();
+        let held: RoaringTreemap = std::iter::once(2u64).collect();
 
         let (out, taken) = reclaim(&pool, &held, 9);
         assert_eq!(out, vec![0, 1, 3]);
@@ -1306,8 +1302,8 @@ mod reclaim_ids_tests {
         let empty = RoaringTreemap::new();
         let pool: RoaringTreemap = (0..4u64).collect();
 
-        assert!(reclaim(&empty, &empty, 10).0.is_empty());
-        assert!(reclaim(&pool, &pool, 10).0.is_empty());
+        assert_eq!(reclaim(&empty, &empty, 10).0, [] as [u64; 0]);
+        assert_eq!(reclaim(&pool, &pool, 10).0, [] as [u64; 0]);
     }
 
     /// It appends, so a caller can reclaim into a vector that already holds

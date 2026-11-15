@@ -18,7 +18,6 @@ _EXPECTED_WRITE_ERRORS = (
     "replica traffic is currently paused",
     "this instance is not a master",
     "Max pending queries exceeded",
-    "another write is in progress, retry the query",
 )
 
 stop_event = threading.Event()
