@@ -73,22 +73,22 @@ graph/src/parser/cypher.rs	Parser::parse_remove_items	3432	PROVEN	C.ClausesG2 re
 graph/src/parser/cypher.rs	Parser::parse_foreach_clause	3469	PROVEN	C.ClausesG3 GForeach/GBody in sound_mut, np_mut
 graph/src/parser/cypher.rs	Parser::reject_aggregate	3551	PROVEN	C.ExprC2 rejectAggregate_spec
 graph/src/parser/cypher.rs	Parser::find_aggregate_name	3563	PROVEN	C.Core find_aggregate_name_spec (aggName ↔ HasAgg)
-graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	C.Graph Var.fmt_anon, Var.fmt_named
+graph/src/parser/ast.rs	Variable::fmt	172	PROVEN	C.Graph Var.fmt_anon, Var.fmt_named
 graph/src/parser/ast.rs	Variable::eq	113	PROVEN	C.Graph Var.eq_spec (by id only)
 graph/src/parser/ast.rs	Variable::hash	124	PROVEN	C.Graph Var.hash_eq (equal variables hash alike)
 graph/src/parser/ast.rs	Variable::as_str	134	PROVEN	C.Graph Var.asStr_spec
-graph/src/parser/ast.rs	ExprIR::fmt	386	PROVEN	C.Fmt fmtOp, fmtOp_var/fmtOp_param/fmtOp_prop
-graph/src/parser/ast.rs	QuantifierType::fmt	480	PROVEN	C.Fmt fmtQuant_spec
-graph/src/parser/ast.rs	SupportAggregation::is_aggregation	497	PROVEN	C.IR isAggregation_spec
-graph/src/parser/ast.rs	is_aggregation(DynTree<Variable>)	501	PROVEN	C.IR isAggregation_spec
-graph/src/parser/ast.rs	is_aggregation(DynTree<Arc<String>>)	512	PROVEN	C.IR isAggregation_spec
-graph/src/parser/ast.rs	QueryNode::fmt	537	PROVEN	C.Fmt fmtNode_nolabel
-graph/src/parser/ast.rs	QueryNode::new	550	PROVEN	C.Graph QNode.new_spec
-graph/src/parser/ast.rs	QueryRelationship::fmt	598	PROVEN	C.Fmt fmtRel_untyped_undirected
+graph/src/parser/ast.rs	ExprIR::fmt	466	PROVEN	C.Fmt fmtOp, fmtOp_var/fmtOp_param/fmtOp_prop
+graph/src/parser/ast.rs	QuantifierType::fmt	560	PROVEN	C.Fmt fmtQuant_spec
+graph/src/parser/ast.rs	SupportAggregation::is_aggregation	577	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	is_aggregation(DynTree<Variable>)	581	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	is_aggregation(DynTree<Arc<String>>)	592	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	QueryNode::fmt	617	PROVEN	C.Fmt fmtNode_nolabel
+graph/src/parser/ast.rs	QueryNode::new	630	PROVEN	C.Graph QNode.new_spec
+graph/src/parser/ast.rs	QueryRelationship::fmt	678	PROVEN	C.Fmt fmtRel_untyped_undirected
 graph/src/parser/ast.rs	QueryRelationship::new	626	PROVEN	C.Graph QRel.new_spec (all_shortest_paths = No)
-graph/src/parser/ast.rs	QueryPath::new	663	PROVEN	C.Graph QPath.new_spec
+graph/src/parser/ast.rs	QueryPath::new	743	PROVEN	C.Graph QPath.new_spec
 graph/src/parser/ast.rs	QueryGraph::default	686	PROVEN	C.Graph QG.default_spec
-graph/src/parser/ast.rs	QueryGraph::fmt	699	PROVEN	C.Fmt fmtGraph_empty
+graph/src/parser/ast.rs	QueryGraph::fmt	779	PROVEN	C.Fmt fmtGraph_empty
 graph/src/parser/ast.rs	merge_attr_maps	722	PROVEN	C.Graph mergeAttrs_kids, mergeAttrs_map
 graph/src/parser/ast.rs	QueryGraph::add_node	740	PROVEN	C.Graph QG.addNode_spec, QG.addNode_distinct
 graph/src/parser/ast.rs	QueryGraph::merge_node	760	PROVEN	C.Graph QG.mergeNode_spec, QG.mergeNode_rels, extendSet_mem
@@ -104,8 +104,8 @@ graph/src/parser/ast.rs	QueryGraph::paths	843	PROVEN	C.Graph QG.accessors
 graph/src/parser/ast.rs	QueryGraph::filter_visited	850	PROVEN	C.Components filterVisited_nodes
 graph/src/parser/ast.rs	QueryGraph::connected_components	878	PROVEN	C.Components connectedComponents_spec (disjoint, from the graph, covering up to shared ids)
 graph/src/parser/ast.rs	QueryGraph::dfs	899	PROVEN	C.Components dfs_step/dfsRels_step (Step invariant)
-graph/src/parser/ast.rs	SetItem::fmt	952	PROVEN	C.Fmt fmtSetItem_attr
-graph/src/parser/ast.rs	QueryIR::fmt	1097	PROVEN	C.Fmt fmtIR_return
+graph/src/parser/ast.rs	SetItem::fmt	1034	PROVEN	C.Fmt fmtSetItem_attr
+graph/src/parser/ast.rs	QueryIR::fmt	1179	PROVEN	C.Fmt fmtIR_return
 graph/src/parser/ast.rs	QueryIR::validate	1206	PROVEN	C.IR validate; vClause_simple; match_last_after_call_rejected (#3297)
 graph/src/parser/ast.rs	QueryIR::inner_validate	1212	PROVEN	C.IR vClause/vNext/vAll/vUnion; with_last_rejected (#3291); vCall_np, match_last_rejected, call_validates_rest, call_transparent, match_last_after_call_rejected (#3297 fixes W4-plan-4)
 graph/src/parser/ast.rs	validate_set_items	1390	PROVEN	C.IR vSetItems_np

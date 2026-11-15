@@ -478,7 +478,13 @@ class testPathFilter(FlowTestsBase):
                             # user-written names that look like the parser's
                             # anonymous aliases are still variables
                             ("MATCH (n0) WITH * WHERE ()--(_anonymous) RETURN *", "_anonymous"),
-                            ("MATCH (n) WHERE (n)-[_anon_x:R]->() RETURN n", "_anon_x")]:
+                            ("MATCH (n) WHERE (n)-[_anon_x:R]->() RETURN n", "_anon_x"),
+                            # even one spelled exactly like a generated alias
+                            ("MATCH (n) WHERE (n)-[:R]->(_anon_999999) RETURN n", "_anon_999999"),
+                            ("MATCH (n) WHERE (n)-[_anon_999999:R]->() RETURN n", "_anon_999999"),
+                            # the binder's internal ORDER BY placeholder is no exception
+                            ("MATCH (n) WHERE (n)-->(__agg_order_by_placeholder__) RETURN n",
+                             "__agg_order_by_placeholder__")]:
             msg = assert_error_reply(self.env, self.conn, "GRAPH.QUERY", GRAPH_ID, query)
             self.env.assertContains(f"'{name}' not defined", msg or "")
 

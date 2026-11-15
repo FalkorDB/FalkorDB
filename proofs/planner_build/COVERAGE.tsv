@@ -47,22 +47,22 @@ graph/src/planner/mod.rs	plan_query	2719	PROVEN	rustStitch/stitchLoop; stitchLoo
 graph/src/planner/mod.rs	needs_apply_wrapping	2874	PROVEN	needsApplyWrapping; cp_stitch_shape, cp_stitch_loses_correlation (bug 2; PR #3100 also wraps when the CP reads its variables)
 graph/src/planner/mod.rs	ensure_apply_has_input	2911	PROVEN	Misc.ensureInput_ev_local (Apply(Argument, s) = Apply(s)), ensureInput_saturates
 graph/src/planner/mod.rs	Planner::plan	2934	PROVEN	per-clause plans: unwind/create/set/remove/delete/proc/merge/foreach/call/unit_call/optional/optional_apply/match_bound/union/project _correct; planCreate (PathBuilder over Create since #2829): create_loop_correct, create_first_correct, create_path_last_misplaced/_skips_create (bug 8); MATCH arm with its all_visited/any_visited decision: PathBind.planMatchArm, planMatchArm_path_unwrapped (a new path variable blocks the Apply wrap; bugs #2744/#2743/#2727/#2725); REMOVE arm: remove_correct is the row semantics only (graph effect opaque in specWrite) and the arm leaves verified_labels as is: RemoveVerified.bug3450_remove_keeps_verified_label (open #3450)
-graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	Ast.AV.fmt_named, AV.fmt_anon
+graph/src/parser/ast.rs	Variable::fmt	172	PROVEN	Ast.AV.fmt_named, AV.fmt_anon
 graph/src/parser/ast.rs	Variable::eq	113	PROVEN	Ast.AV.eqv_iff (id only), AV.eqv_other_scope, AV.eqv_equivalence
 graph/src/parser/ast.rs	Variable::hash	124	PROVEN	Ast.AV.hash_consistent (hash agrees with Eq)
 graph/src/parser/ast.rs	Variable::as_str	134	PROVEN	Ast.AV.asStr_spec
-graph/src/parser/ast.rs	ExprIR::fmt	386	PROVEN	Ast2.exprFmt (every variant), exprFmt_ops_distinct, exprFmt_param, exprFmt_func
-graph/src/parser/ast.rs	QuantifierType::fmt	480	PROVEN	Ast2.quantFmt, quantFmt_injective
-graph/src/parser/ast.rs	SupportAggregation::is_aggregation	497	PROVEN	Ast.isAggregation (trait method = any aggregate call in the tree): isAggregation_root/_child/_leaf
-graph/src/parser/ast.rs	is_aggregation	501	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf
-graph/src/parser/ast.rs	is_aggregation	512	PROVEN	Ast.isAggregation (raw-name impl, same DFS any)
-graph/src/parser/ast.rs	QueryNode::fmt	537	PROVEN	Ast.fmtNode, fmtNode_plain
-graph/src/parser/ast.rs	QueryNode::new	550	PROVEN	Ast.new_spec
-graph/src/parser/ast.rs	QueryRelationship::fmt	598	PROVEN	Ast.fmtRel, fmtRel_untyped
+graph/src/parser/ast.rs	ExprIR::fmt	466	PROVEN	Ast2.exprFmt (every variant), exprFmt_ops_distinct, exprFmt_param, exprFmt_func
+graph/src/parser/ast.rs	QuantifierType::fmt	560	PROVEN	Ast2.quantFmt, quantFmt_injective
+graph/src/parser/ast.rs	SupportAggregation::is_aggregation	577	PROVEN	Ast.isAggregation (trait method = any aggregate call in the tree): isAggregation_root/_child/_leaf
+graph/src/parser/ast.rs	is_aggregation	581	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf
+graph/src/parser/ast.rs	is_aggregation	592	PROVEN	Ast.isAggregation (raw-name impl, same DFS any)
+graph/src/parser/ast.rs	QueryNode::fmt	617	PROVEN	Ast.fmtNode, fmtNode_plain
+graph/src/parser/ast.rs	QueryNode::new	630	PROVEN	Ast.new_spec
+graph/src/parser/ast.rs	QueryRelationship::fmt	678	PROVEN	Ast.fmtRel, fmtRel_untyped
 graph/src/parser/ast.rs	QueryRelationship::new	626	PROVEN	Ast.new_spec (all_shortest_paths = No)
-graph/src/parser/ast.rs	QueryPath::new	663	PROVEN	Ast.new_spec
+graph/src/parser/ast.rs	QueryPath::new	743	PROVEN	Ast.new_spec
 graph/src/parser/ast.rs	QueryGraph::default	686	PROVEN	Ast.new_spec (empty nodes/rels/paths)
-graph/src/parser/ast.rs	QueryGraph::fmt	699	PROVEN	Ast.fmtGraph, fmtGraph_empty
+graph/src/parser/ast.rs	QueryGraph::fmt	779	PROVEN	Ast.fmtGraph, fmtGraph_empty
 graph/src/parser/ast.rs	merge_attr_maps	722	PROVEN	Ast.mergeAttrs_eq (entries concatenated, duplicates kept)
 graph/src/parser/ast.rs	QueryGraph::add_node	740	PROVEN	Ast.addNode_spec
 graph/src/parser/ast.rs	QueryGraph::merge_node	760	PROVEN	Ast.mergeNode_present (labels unioned via extendLabels_mem, attrs concatenated, same position), mergeNode_absent
@@ -78,8 +78,8 @@ graph/src/parser/ast.rs	QueryGraph::paths	843	PROVEN	Ast.accessors
 graph/src/parser/ast.rs	QueryGraph::filter_visited	850	PROVEN	Ast.filterVisited_nodes (only unvisited (id, scope) entities survive)
 graph/src/parser/ast.rs	QueryGraph::connected_components	878	PROVEN	Ast2.components_cover (every node visited / in some component), dfs_mono
 graph/src/parser/ast.rs	QueryGraph::dfs	899	PROVEN	Ast2.dfs (one id-only visited set for nodes, rels, paths): dfs_mono, dfs_marks, relStep_mono
-graph/src/parser/ast.rs	SetItem::fmt	952	PROVEN	Ast2.setItemFmt_replace, setItemFmt_merge
-graph/src/parser/ast.rs	QueryIR::fmt	1097	PROVEN	Ast2.clauseFmt, clauseFmt_union, clauseFmt_match
+graph/src/parser/ast.rs	SetItem::fmt	1034	PROVEN	Ast2.setItemFmt_replace, setItemFmt_merge
+graph/src/parser/ast.rs	QueryIR::fmt	1179	PROVEN	Ast2.clauseFmt, clauseFmt_union, clauseFmt_match
 graph/src/parser/ast.rs	QueryIR::validate	1206	PROVEN	Ast.validate: call_then_match_rejected, call_then_unwind_rejected, call_then_create_multi_type_rejected (#3297), with_last_rejected (#3291), validate_ends
 graph/src/parser/ast.rs	QueryIR::inner_validate	1212	PROVEN	Ast.innerValidate: call_validates_rest, call_transparent (#3297 fixes W4-plan-4), with_last_rejected (#3291), validate_ends, create_multi_type
 graph/src/parser/ast.rs	validate_set_items	1390	PROVEN	Ast.setItemsOk_spec
