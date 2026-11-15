@@ -67,12 +67,15 @@ graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::new	123	PROVEN	Ca
 graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::materialize_right	144	PROVEN	CartVhj.materialize: materialize_ok
 graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::next	162	PROVEN	CartVhj.cpRows (+ Columnar.BB.pushPlanned): cpRows_length, orbit_valid
 graph/src/runtime/ops/value_hash_join.rs	JoinHashTable::is_empty	96	PROVEN	CartVhj.jtEmpty: jtEmpty_spec
-graph/src/runtime/ops/value_hash_join.rs	hash_value	118	PROVEN	CartVhj.hashValue: hashValue_det
-graph/src/runtime/ops/value_hash_join.rs	keys_match	137	PROVEN	CartVhj.keysMatch: keysMatch_spec
-graph/src/runtime/ops/value_hash_join.rs	key_as_i64	153	PROVEN	CartVhj.keyAsI64: keyAsI64_spec (W2-rewrites-3: exact-int keying vs `=`)
-graph/src/runtime/ops/value_hash_join.rs	insert_value	176	PROVEN	CartVhj.insertValue/addRef: insertValue_spec, probe_insert_fresh
+graph/src/runtime/ops/value_hash_join.rs	hash_value	118	NOT COVERED	(#3018): rewritten by this PR, model not updated yet; was PROVEN: CartVhj.hashValue: hashValue_det
+graph/src/runtime/ops/value_hash_join.rs	keys_match	137	NOT COVERED	(#3018): rewritten by this PR, model not updated yet; was PROVEN: CartVhj.keysMatch: keysMatch_spec
+graph/src/runtime/ops/value_hash_join.rs	key_as_i64	153	NOT COVERED	(#3018): rewritten by this PR, model not updated yet; was PROVEN: CartVhj.keyAsI64: keyAsI64_spec (W2-rewrites-3: exact-int keying vs `=`)
+graph/src/runtime/ops/value_hash_join.rs	insert_value	176	NOT COVERED	(#3018): rewritten by this PR, model not updated yet; was PROVEN: CartVhj.insertValue/addRef: insertValue_spec, probe_insert_fresh
 graph/src/runtime/ops/value_hash_join.rs	promote_int_table	196	PROVEN	CartVhj.promote: promote_bucket
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	228	PROVEN	CartVhj.VhjSt.new: vhjNew_spec
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	256	PROVEN	CartVhj.build: build_int
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	324	PROVEN	CartVhj.fillMatches/probe: fillMatches_int, probe_insert_fresh
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	366	PROVEN	CartVhj.vhjRows: vhjRows_spec
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	256	NOT COVERED	(#3018): rewritten by this PR, model not updated yet; was PROVEN: CartVhj.build: build_int
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	324	NOT COVERED	(#3018): rewritten by this PR, model not updated yet; was PROVEN: CartVhj.fillMatches/probe: fillMatches_int, probe_insert_fresh
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	366	NOT COVERED	(#3018): rewritten by this PR, model not updated yet; was PROVEN: CartVhj.vhjRows: vhjRows_spec
+graph/src/runtime/ops/value_hash_join.rs	JoinKey::hash	136	NOT COVERED	(#3018): not modelled yet
+graph/src/runtime/ops/value_hash_join.rs	f32_join_bits	190	NOT COVERED	(#3018): not modelled yet
+graph/src/runtime/ops/value_hash_join.rs	same_build_key	256	NOT COVERED	(#3018): not modelled yet
