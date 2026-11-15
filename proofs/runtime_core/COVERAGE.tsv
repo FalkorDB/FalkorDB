@@ -15,8 +15,6 @@ graph/src/runtime/runtime.rs	resync_published_indexes	617	PROVEN	Plan.resyncPubl
 graph/src/runtime/runtime.rs	commit_deferred_indexes	627	PROVEN	Plan.commitDeferred (delegates to Pending): delegates_spec
 graph/src/runtime/runtime.rs	query	633	PROVEN	Query.query_rows, Query.capLoop_flatten, Query.keep_exact, Query.query_write_pulls_all
 graph/src/runtime/runtime.rs	default_batch	683	PROVEN	Plan.defaultBatch: defaultBatch_spec
-graph/src/runtime/runtime.rs	effective_limit	694	PROVEN	Budget.recordCap_sound_oneSkip; bug B1 Budget.hard_cap_unsound_expandInto/condTraverse/through_traverse
-graph/src/runtime/runtime.rs	effective_skip	729	PROVEN	Budget.recordCap_sound_oneSkip; bug B2 Budget.hard_cap_unsound_stacked_skip
 graph/src/runtime/runtime.rs	record_cap	761	PROVEN	Budget.recordCap_hardCap_sound_oneSkip, Budget.need_sound; soft use Emitter.drive_flatten
 graph/src/runtime/runtime.rs	children_to_recurse	771	PROVEN	RunBatch.childrenToRecurse: childrenToRecurse_spec
 graph/src/runtime/runtime.rs	run_nested_plan	797	PROVEN	Plan.runNested: runNested_spec
