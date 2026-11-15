@@ -109,7 +109,7 @@ trait IndexSubject: Clone {
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> bool;
 
     /// Subject-specific hook for function-based predicates. Node impl
@@ -162,9 +162,9 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> bool {
-        graph.is_indexed(label, attr, ty)
+        graph.is_indexed(label, attr, &ty)
     }
     fn try_func_scan(
         subject: &Self,
@@ -238,9 +238,9 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> bool {
-        graph.is_edge_indexed(label, attr, ty)
+        graph.is_edge_indexed(label, attr, &ty)
     }
     fn try_func_scan(
         _subject: &Self,
@@ -643,7 +643,7 @@ fn try_in_filter_scan<T: IndexSubject>(
     let attr = extract_attribute_from_subtree(filter, attr_side, traverser)?;
     let label = subject
         .all_labels()
-        .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
+        .find(|l| T::is_indexed(graph, l, &attr, IndexType::Range))?
         .clone();
 
     let query = if is_property_in_list {
@@ -691,7 +691,7 @@ fn try_single_filter_scan<T: IndexSubject>(
         extract_attribute_and_expression_from_filter(filter, Some(subject.alias()), traverser)?;
     let label = subject
         .all_labels()
-        .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
+        .find(|l| T::is_indexed(graph, l, &attr, IndexType::Range))?
         .clone();
     match filter.node(attr_side).data() {
         ExprIR::FuncInvocation(func) if func.name.as_str() == "distance" => {
@@ -771,6 +771,12 @@ fn try_filter_pushdown<T: IndexSubject>(
                             (prev_label, merge_range_queries(prev_q, query))
                         }
                     });
+                    // An array-contains conjunct keeps its filter, as it does on its own (below):
+                    // the index may return false positives for it (a numeric key is shared by
+                    // `1` and `true`), and a conjunction is no reason to trust them.
+                    if is_array_contains(subject, &conjunct, traverser) {
+                        remaining.push(conjunct);
+                    }
                 } else {
                     remaining.push(conjunct);
                 }
@@ -801,26 +807,36 @@ fn try_filter_pushdown<T: IndexSubject>(
             // For "value IN property" (array-contains), keep the filter
             // as a post-filter — the index may return false positives
             // for non-indexable array elements.
-            let is_array_contains = matches!(filter.root().data(), ExprIR::In)
-                && !subtree_has_property_of(
-                    filter,
-                    filter.root().child(0).idx(),
-                    subject.alias(),
-                    traverser,
-                )
-                && subtree_has_property_of(
-                    filter,
-                    filter.root().child(1).idx(),
-                    subject.alias(),
-                    traverser,
-                );
-            if is_array_contains {
+            if is_array_contains(subject, filter, traverser) {
                 (label, q, vec![filter.root().clone_as_tree()])
             } else {
                 (label, q, Vec::new())
             }
         }),
     }
+}
+
+/// Whether `filter` is `value IN subject.prop` (array-contains): a predicate the index answers
+/// with possible false positives — a numeric key is shared by `1` and `true`, and an element it
+/// cannot index is not in its array tree at all — so its filter is always kept.
+fn is_array_contains<T: IndexSubject>(
+    subject: &T,
+    filter: &DynTree<ExprIR<Variable>>,
+    traverser: &mut Bfs,
+) -> bool {
+    matches!(filter.root().data(), ExprIR::In)
+        && !subtree_has_property_of(
+            filter,
+            filter.root().child(0).idx(),
+            subject.alias(),
+            traverser,
+        )
+        && subtree_has_property_of(
+            filter,
+            filter.root().child(1).idx(),
+            subject.alias(),
+            traverser,
+        )
 }
 
 /// Whether a filter contains runtime values that might evaluate to
@@ -965,10 +981,9 @@ fn governing_filter(
     idx: NodeIdx<Dyn<IR>>,
 ) -> Option<(NodeIdx<Dyn<IR>>, QueryExpr<Variable>, bool)> {
     let mut node = plan.node(idx).parent()?;
-    let mut over_pending = false;
-    if matches!(node.data(), IR::IncludePending { .. }) && node.num_children() == 1 {
+    let over_pending = matches!(node.data(), IR::IncludePending { .. }) && node.num_children() == 1;
+    if over_pending {
         node = node.parent()?;
-        over_pending = true;
     }
     let IR::Filter(filter) = node.data() else {
         return None;
