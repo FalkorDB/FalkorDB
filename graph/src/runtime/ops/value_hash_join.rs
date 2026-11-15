@@ -138,6 +138,9 @@ impl Hash for JoinKey<'_> {
         state: &mut H,
     ) {
         match self.0 {
+            // Exactly 2^53 is left to `Value::hash`: it is exactly representable
+            // as an `f64`, so `Int(2^53)` and `Float(2^53)` already hash alike.
+            // Only the ints above it round to a different float.
             Value::Int(x) if x.unsigned_abs() > INT_KEY_LIMIT => {
                 2.hash(state);
                 (*x as f64 as i64).hash(state);
