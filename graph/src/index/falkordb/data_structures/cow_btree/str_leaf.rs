@@ -51,7 +51,7 @@ impl Group {
     const DOC_BYTES: usize = 10;
 
     /// Bytes this group encodes to at most, before its key shares a prefix with the previous one.
-    fn max_bytes(&self) -> usize {
+    const fn max_bytes(&self) -> usize {
         Self::KEY_BYTES + self.key.len() + Self::DOC_BYTES * self.docs.len()
     }
 }

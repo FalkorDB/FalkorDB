@@ -1,6 +1,8 @@
-//! The Range column: one `(label, attribute)` index, made of the kinds a RediSearch Range field is
-//! made of — NUMERIC, TAG and GEO. The numeric and tag kinds exist so far; GEO lands as a further
-//! field of [`RangeIndex`] implementing [`RangeKind`].
+//! The Range column: one `(label, attribute)` index.
+//!
+//! It is made of the kinds a RediSearch Range field is made of — NUMERIC, TAG and GEO. The numeric
+//! and tag kinds exist so far; GEO lands as a further field of [`RangeIndex`] implementing
+//! [`RangeKind`].
 //!
 //! A Cypher property is not typed, so one column has to hold whatever the entities put in it. The
 //! kinds are therefore not alternatives but **co-resident**: a column with `age = 30` on one node
@@ -121,8 +123,8 @@ impl<'a> Kind<'a> {
 
     /// Whether `self` and `other` are the same kind, whatever their values.
     const fn same(
-        &self,
-        other: &Self,
+        self,
+        other: Self,
     ) -> bool {
         matches!(
             (self, other),
@@ -258,6 +260,10 @@ impl Selection {
 
     /// The selection of a predicate on **one** attribute, or `None` when no kind serves it.
     #[must_use]
+    #[allow(
+        clippy::match_same_arms,
+        reason = "each declined query kind keeps its own comment"
+    )]
     pub fn of(query: &IndexQuery<Value>) -> Option<Self> {
         match query {
             IndexQuery::Equal { value, .. } => Self::equal(value),
@@ -328,7 +334,7 @@ impl Selection {
         for bound in [min, max].into_iter().flatten() {
             match Kind::of(bound) {
                 Some(this) => match &kind {
-                    Some(seen) if !seen.same(&this) => mixed = true,
+                    Some(seen) if !seen.same(this) => mixed = true,
                     Some(_) => {}
                     None => kind = Some(this),
                 },
@@ -577,14 +583,14 @@ impl RangeIndex {
     /// The numeric kind, for tests that look at its trees.
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn numeric(&self) -> &NumericIndex {
+    pub(crate) const fn numeric(&self) -> &NumericIndex {
         &self.numeric
     }
 
     /// The tag kind, for tests that look at its tuples.
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn tag(&self) -> &TagIndex {
+    pub(crate) const fn tag(&self) -> &TagIndex {
         &self.tag
     }
 
@@ -944,8 +950,11 @@ mod tests {
     #[test]
     fn null_answers_empty_and_an_unheld_type_declines() {
         let (idx, vs) = sample();
-        assert!(ids(&idx, &eq(Value::Null), &vs).is_empty());
-        assert!(ids(&idx, &range(Some(Value::Null), None), &vs).is_empty());
+        assert_eq!(ids(&idx, &eq(Value::Null), &vs), [] as [u64; 0]);
+        assert_eq!(
+            ids(&idx, &range(Some(Value::Null), None), &vs),
+            [] as [u64; 0]
+        );
         let point = Value::Point(Point {
             latitude: 1.0,
             longitude: 2.0,
@@ -1004,10 +1013,10 @@ mod tests {
         ]);
         assert_eq!(ids(&idx, &q, &vs), vec![3]);
         let q = IndexQuery::And(vec![eq(Value::Int(1)), eq(Value::Null)]);
-        assert!(ids(&idx, &q, &vs).is_empty());
+        assert_eq!(ids(&idx, &q, &vs), [] as [u64; 0]);
         // A `NULL` conjunct empties the conjunction even beside one no kind serves.
         let q = IndexQuery::And(vec![eq(Value::Null), eq(list(vec![Value::Int(1)]))]);
-        assert!(ids(&idx, &q, &vs).is_empty());
+        assert_eq!(ids(&idx, &q, &vs), [] as [u64; 0]);
         let q = IndexQuery::And(vec![eq(Value::Int(1)), eq(list(vec![Value::Int(1)]))]);
         assert!(
             idx.query(&q).is_none(),
@@ -1051,7 +1060,7 @@ mod tests {
         // No value is both a scalar and a list.
         let q = IndexQuery::And(vec![eq(Value::Int(1)), contains(Value::Int(1))]);
         assert_eq!(Selection::of(&q), Some(Selection::empty()));
-        assert!(ids(&idx, &q, &vs).is_empty());
+        assert_eq!(ids(&idx, &q, &vs), [] as [u64; 0]);
     }
 
     fn s(x: &str) -> Value {
@@ -1111,8 +1120,14 @@ mod tests {
     #[test]
     fn cross_type_comparisons_answer_empty() {
         let (idx, vs) = multitype();
-        assert!(ids(&idx, &range(Some(Value::Int(0)), Some(s("z"))), &vs).is_empty());
-        assert!(ids(&idx, &range(Some(s("a")), Some(Value::Int(9))), &vs).is_empty());
+        assert_eq!(
+            ids(&idx, &range(Some(Value::Int(0)), Some(s("z"))), &vs),
+            [] as [u64; 0]
+        );
+        assert_eq!(
+            ids(&idx, &range(Some(s("a")), Some(Value::Int(9))), &vs),
+            [] as [u64; 0]
+        );
     }
 
     /// `IN [...]` over a mixed list is served from every kind at once, and each doc appears once.
@@ -1199,7 +1214,7 @@ mod tests {
         idx.remove(&Value::Int(1), 1);
         idx.add(&s("1"), 1);
         let vs = [(s("1"), 1)];
-        assert!(ids(&idx, &eq(Value::Int(1)), &vs).is_empty());
+        assert_eq!(ids(&idx, &eq(Value::Int(1)), &vs), [] as [u64; 0]);
         assert_eq!(ids(&idx, &eq(s("1")), &vs), vec![1]);
         idx.remove(&s("1"), 1);
         assert!(idx.is_empty(), "no tuple stranded in any kind");

@@ -69,8 +69,6 @@
 //! position), producing the effective state — sorted by `(row, col)` —
 //! without materializing a merged matrix or issuing per-entry point lookups.
 
-#[cfg(feature = "index-falkordb")]
-use std::borrow;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -82,71 +80,8 @@ use super::{
 };
 use crate::graph::{
     cow::Cow,
-    graphblas::matrix::{BoolExtract, EWiseAdd, IterExtract, MatrixType},
+    graphblas::matrix::{BoolExtract, IterExtract, MatrixType},
 };
-
-/// The effective matrix of a base and its two delta layers, `(m ∖ dm) ∪ dp`,
-/// as [`effective`] returns it: the base itself, borrowed, when neither delta
-/// holds anything; a new matrix of its own otherwise. Read it through
-/// `Deref`, which never copies.
-///
-/// Read-only on purpose. `Matrix`'s `Clone` is shallow (a clone shares the
-/// GraphBLAS handle), so a `Cow`'s `to_mut` or `into_owned` on a borrowed
-/// base would hand out the shared base itself, and a write through it would
-/// change every version that holds it. A matrix of one's own is a `dup()`.
-#[cfg(feature = "index-falkordb")]
-pub(crate) struct Effective<'a, T>(borrow::Cow<'a, Matrix<T>>);
-
-#[cfg(feature = "index-falkordb")]
-impl<T> Effective<'_, T> {
-    /// Whether this is the base itself, not a merged copy.
-    #[cfg(test)]
-    pub(crate) fn is_borrowed(&self) -> bool {
-        matches!(self.0, borrow::Cow::Borrowed(_))
-    }
-}
-
-#[cfg(feature = "index-falkordb")]
-impl<T> Deref for Effective<'_, T> {
-    type Target = Matrix<T>;
-
-    fn deref(&self) -> &Matrix<T> {
-        &self.0
-    }
-}
-
-/// `(m ∖ dm) ∪ dp` in one GraphBLAS call: `eff<¬dm> = m ⊕ dp` (into a new matrix), with
-/// `⊕` from the element type ([`EWiseAdd`]), so on a `u64` layer a pending
-/// value in `dp` shadows the committed one; `dp ∩ dm = ∅`, so the mask never
-/// drops a pending addition. The mask is structural: a pair is deleted by
-/// being in `dm`, whatever value `dm` stores there. The delta fold writes the
-/// same union into the new base with a valued mask, which reads alike because
-/// `dm` stores only `true`; here it goes into a matrix of its own, and is
-/// skipped entirely when both deltas are empty.
-///
-/// The layers must not have pending work: reading a pending layer finishes
-/// that work, a mutation of a matrix readers may share. The callers wait
-/// first.
-#[cfg(feature = "index-falkordb")]
-pub(super) fn effective<'a, T: EWiseAdd + MatrixType>(
-    m: &'a Matrix<T>,
-    dp: &Matrix<T>,
-    dm: &Matrix<bool>,
-) -> Effective<'a, T> {
-    let (has_dp, has_dm) = (dp.nvals() != 0, dm.nvals() != 0);
-    if !has_dp && !has_dm {
-        return Effective(borrow::Cow::Borrowed(m));
-    }
-    let mut eff = T::new_matrix(m.nrows(), m.ncols());
-    let (mask, desc) = if has_dm {
-        (Some(dm), Some(matrix::Descriptor::SC))
-    } else {
-        (None, None)
-    };
-    eff.element_wise_add(mask, Some(m), Some(dp), desc);
-    eff.wait();
-    Effective(borrow::Cow::Owned(eff))
-}
 
 /// A delta layer is folded into the base once its size justifies a base
 /// rewrite. Every write transaction pays `O(|delta|)` just to touch a shared
@@ -217,7 +152,7 @@ const MIN_FOLD_DELTA: u64 = 256;
 /// Write-path fold policy, evaluated in `dup` (version creation). Balances the
 /// COW dup tax against the fold; see the module docs above for the model and
 /// the measurements behind [`WRITE_FOLD_K`].
-pub(super) fn should_fold(
+pub(super) const fn should_fold(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -229,7 +164,7 @@ pub(super) fn should_fold(
 /// [`should_fold`], but the transaction pays the `O(|delta|)` pending-tuple
 /// merge on top of the dup, so `w` is 250x larger and the balance point
 /// `sqrt(250) ≈ 16x` tighter. See [`READ_FOLD_K`].
-pub(super) fn should_fold_read(
+pub(super) const fn should_fold_read(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -238,7 +173,7 @@ pub(super) fn should_fold_read(
 }
 
 /// `|delta| ≥ sqrt(k · tx_added)`, or a delta comparable to the base.
-fn fold_balance(
+const fn fold_balance(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -258,7 +193,7 @@ fn fold_balance(
 /// same order as a single delta touch — and because the delta is holding as
 /// much memory as the base it shadows. Evaluated on the approximate counters,
 /// so it never forces a delta's pending tuples to merge.
-pub(super) fn delta_dominates_base(
+pub(super) const fn delta_dominates_base(
     delta_nvals: u64,
     base_nvals: u64,
 ) -> bool {
@@ -514,6 +449,10 @@ impl<T> Delta<T> {
 
     /// Consume the latched decision: true when this layer must fold *and* has
     /// something to fold.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "consuming the latch is a write; `&mut` keeps it to the owner"
+    )]
     pub(super) fn take_fold(&mut self) -> bool {
         self.fold.swap(false, Ordering::Relaxed) && self.layer.nvals() > 0
     }
@@ -755,21 +694,6 @@ impl<T> VersionedMatrix<T> {
     #[must_use]
     pub fn dm(&self) -> &Matrix<bool> {
         &self.dm
-    }
-
-    /// The matrix a reader sees, `(m ∖ dm) ∪ dp`, as one GraphBLAS matrix
-    /// (see [`Effective`]): no copy when both deltas are empty.
-    #[cfg(feature = "index-falkordb")]
-    #[must_use]
-    pub(crate) fn effective(&self) -> Effective<'_, T>
-    where
-        T: EWiseAdd + MatrixType,
-    {
-        // As every reader: the deltas resynced and the fold decision latched;
-        // then the base, which the merge reads.
-        self.wait();
-        self.m.wait();
-        effective(&self.m, &self.dp, &self.dm)
     }
 
     #[must_use]
@@ -1607,42 +1531,9 @@ mod tests {
 
     use super::super::matrix::{Dup, Matrix};
     use super::super::test_init::ensure_init;
-    #[cfg(feature = "index-falkordb")]
-    use super::effective;
     use super::{
         MIN_FOLD_DELTA, READ_FOLD_K, VersionedMatrix, WRITE_FOLD_K, should_fold, should_fold_read,
     };
-
-    /// `dm` masks structurally: a pair stored in `dm` is deleted even when
-    /// the stored value is `false`. A valued mask would read that `false` as
-    /// "not deleted" and let the committed entry through. Checked with `dm`
-    /// alone and with a pending addition in `dp`.
-    #[test]
-    #[cfg(feature = "index-falkordb")]
-    fn effective_masks_dm_by_structure_not_value() {
-        ensure_init();
-        let mut m = Matrix::<u64>::new(4, 4);
-        m.set(0, 1, 10);
-        m.set(2, 3, 20);
-        m.wait();
-        let mut dm = Matrix::<bool>::new(4, 4);
-        dm.set(0, 1, false);
-        dm.wait();
-        assert_eq!(dm.get(0, 1), Some(false), "an explicit stored false");
-        for with_dp in [false, true] {
-            let mut dp = Matrix::<u64>::new(4, 4);
-            if with_dp {
-                dp.set(1, 2, 30);
-            }
-            dp.wait();
-            let eff = effective(&m, &dp, &dm);
-            assert!(!eff.is_borrowed());
-            assert_eq!(eff.get(0, 1), None, "deleted pair visible, dp: {with_dp}");
-            assert_eq!(eff.get(2, 3), Some(20));
-            assert_eq!(eff.get(1, 2), with_dp.then_some(30));
-            assert_eq!(eff.nvals(), 1 + u64::from(with_dp));
-        }
-    }
 
     /// Smallest delta that satisfies the sqrt rule, i.e. `ceil(sqrt(k · tx))`.
     fn threshold(
@@ -1650,7 +1541,7 @@ mod tests {
         tx_added: u64,
     ) -> u64 {
         let target = k * tx_added;
-        (1..).find(|d| d * d >= target).unwrap()
+        (1..=target.max(1)).find(|d| d * d >= target).unwrap()
     }
 
     /// A base big enough that the `2·|delta| ≥ base_nvals` escape hatch never

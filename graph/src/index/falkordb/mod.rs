@@ -86,16 +86,14 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
                 format!("equality on `{key}` with a {} value", value.name())
             }
         }
-        Q::Range { key, min, max, .. } => {
-            match [min, max]
-                .into_iter()
-                .flatten()
-                .find(|v| !indexable(v) && !matches!(v, crate::runtime::value::Value::Null))
-            {
-                None => format!("range on `{key}`"),
-                Some(v) => format!("range on `{key}` with a {} bound", v.name()),
-            }
-        }
+        Q::Range { key, min, max, .. } => [min, max]
+            .into_iter()
+            .flatten()
+            .find(|v| !indexable(v) && !matches!(v, crate::runtime::value::Value::Null))
+            .map_or_else(
+                || format!("range on `{key}`"),
+                |v| format!("range on `{key}` with a {} bound", v.name()),
+            ),
         // Three reasons a union is declined, and naming the wrong one sends whoever reads the
         // ledger entry after work that isn't the problem. A union with a member that is not an
         // equality or `IN` list (`x = 1 OR x > 5`) needs the union to serve that member kind; one
@@ -114,14 +112,17 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
             match one_key {
                 None => format!("a union of {n} member{plural} spanning more than one attribute"),
                 Some(key) if members.iter().all(|&(_, served)| served) => {
-                    match union_unindexable(children) {
-                        Some(v) => format!(
-                            "a union of {n} member{plural} on `{key}` including a {} value",
-                            v.name()
-                        ),
-                        // Servable on its own: only described because something around it is not.
-                        None => format!("a union of {n} member{plural} on `{key}`"),
-                    }
+                    // Servable on its own (`None`): only described because something around it is
+                    // not.
+                    union_unindexable(children).map_or_else(
+                        || format!("a union of {n} member{plural} on `{key}`"),
+                        |v| {
+                            format!(
+                                "a union of {n} member{plural} on `{key}` including a {} value",
+                                v.name()
+                            )
+                        },
+                    )
                 }
                 Some(key) => format!(
                     "a union of {n} member{plural} on `{key}` with a member that is not an \
@@ -150,10 +151,10 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
                     .find(|v| !indexable(v) && !matches!(v, crate::runtime::value::Value::Null)),
                 other => Some(other),
             };
-            match unindexable {
-                None => format!("an IN list on `{key}`"),
-                Some(v) => format!("an IN list on `{key}` with a {} value", v.name()),
-            }
+            unindexable.map_or_else(
+                || format!("an IN list on `{key}`"),
+                |v| format!("an IN list on `{key}` with a {} value", v.name()),
+            )
         }
         Q::Point { key, .. } => format!("a geo predicate on `{key}`"),
         // The array trees hold numbers and strings, mirroring RediSearch's `numeric:arr` and
@@ -174,7 +175,7 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
 /// that coerce to one) and strings. `NULL`, points, temporals, lists, maps and vectors have no
 /// kind — a predicate over one is what a decline names.
 #[cfg(feature = "index-falkordb")]
-fn indexable(value: &crate::runtime::value::Value) -> bool {
+const fn indexable(value: &crate::runtime::value::Value) -> bool {
     use crate::runtime::value::Value as V;
     matches!(value, V::Int(_) | V::Float(_) | V::Bool(_) | V::String(_))
 }

@@ -17,10 +17,10 @@ shutdown = False
 def server_binary() -> str:
     """The server binary to spawn locally: /usr/local/bin/<server>-server.
 
-    FALKORDB_SERVER picks the server -- `redis` (default) or `valkey` -- as
-    it does in the docker images and flow.sh.
+    FALKORDB_SERVER picks the server -- `valkey` (default) or `redis` -- as
+    it does in flow.sh.
     """
-    server = os.environ.get("FALKORDB_SERVER") or "redis"
+    server = os.environ.get("FALKORDB_SERVER") or "valkey"
     if server not in ("redis", "valkey"):
         raise ValueError(f"FALKORDB_SERVER must be redis or valkey, not {server!r}")
     return f"/usr/local/bin/{server}-server"

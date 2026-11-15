@@ -357,6 +357,10 @@ impl Job {
         // publish's hold, release build).
         let _built = prepared.falkordb_index.clone();
         let mut prepared = Some(prepared);
+        #[allow(
+            clippy::collection_is_never_read,
+            reason = "only held, so its pages are freed after the GIL is released (see above)"
+        )]
         let mut _replaced = None;
         let (builder, host, id, generation) =
             (&self.builder, &self.builder.host, &self.id, self.generation);
@@ -418,7 +422,9 @@ impl Job {
             batch.limit_catch_up(sizing.catch_up_max);
         }
         #[cfg(test)]
-        if let Some(hold) = self.builder.while_reading.lock().take() {
+        let hold = self.builder.while_reading.lock().take();
+        #[cfg(test)]
+        if let Some(hold) = hold {
             hold(&prepared);
         }
         Ok(Read {
@@ -475,8 +481,9 @@ pub fn start(
 }
 
 /// Stop the builder, for good ([`Builder::stop_within`]): its workers get [`STOP_WAIT`], since the
-/// Redis shutdown handler calls this holding the GIL. Whether every worker exited: GraphBLAS may be
-/// torn down only then.
+/// Redis shutdown handler calls this holding the GIL.
+///
+/// Whether every worker exited: GraphBLAS may be torn down only then.
 #[must_use]
 pub fn stop() -> bool {
     BUILDER

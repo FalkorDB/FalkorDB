@@ -322,9 +322,11 @@ fn create_index_leaves_the_edge_column_to_its_batches() {
     assert_eq!(
         g.falkordb_index
             .query_column(EntityType::Relationship, &ty, &eq(&attr, 2))
-            .map(|answer| match answer {
-                Ok(rows) => rows.collect::<Vec<u64>>(),
-                Err(_) => panic!("a Ready column answered with a ScanFilter"),
+            .map(|answer| {
+                let Ok(rows) = answer else {
+                    panic!("a Ready column answered with a ScanFilter")
+                };
+                rows.collect::<Vec<u64>>()
             }),
         Some(vec![eids[1]]),
         "a Ready column serves reads"
@@ -413,7 +415,7 @@ fn set_null_removes_from_index() {
     let (mut g, label, attr, ids) = graph_with_index(1);
     set_attr(&mut g, ids[0], &attr, Value::Int(5));
     set_attr(&mut g, ids[0], &attr, Value::Null);
-    assert!(range_scan(&g, &label, &attr, 0, 100).is_empty());
+    assert_eq!(range_scan(&g, &label, &attr, 0, 100), [] as [u64; 0]);
 }
 
 /// DELETE removes the node's tuple, leaving the others.
@@ -437,7 +439,7 @@ fn delete_then_reuse_id_and_value_stays_correct() {
     let mut del = RoaringTreemap::new();
     del.insert(ids[0]);
     applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
-    assert!(range_scan(&g, &label, &attr, 4, 6).is_empty());
+    assert_eq!(range_scan(&g, &label, &attr, 4, 6), [] as [u64; 0]);
 
     // Reclaim the freed id for a fresh node with the same value.
     let reused: Vec<u64> = reserve_nodes(&mut g, 1);
@@ -730,7 +732,9 @@ fn contents(
         .iter()
         .map(|&v| (v, idx.array_contains(&Value::Int(v)).collect()))
         .collect();
-    in_lists.iter_mut().for_each(|(_, ids)| ids.sort_unstable());
+    for (_, ids) in &mut in_lists {
+        ids.sort_unstable();
+    }
     (
         per_value,
         idx.range(None, None, true, true).collect(),
@@ -857,6 +861,10 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_node_writes() {
 /// have already passed, which only the write path indexes, and a deleted edge behind the cursor,
 /// whose endpoints are gone by the time its removal is applied.
 #[test]
+#[allow(
+    clippy::many_single_char_names,
+    reason = "g, v, w, ty: the graph, values and type every test here uses"
+)]
 fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
@@ -1011,6 +1019,10 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
 /// batch: with a value other than the deleted edge's, and with the same value, where the unit's
 /// removal and addition of that one tuple collapse to the addition.
 #[test]
+#[allow(
+    clippy::many_single_char_names,
+    reason = "g, v, w, ty: the graph, values and type every test here uses"
+)]
 fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
     for new_w in [9, 1] {
         ensure_graphblas();
@@ -1320,6 +1332,10 @@ fn a_node_batch_reads_at_most_its_size() {
 /// empty and `Building`, and the build that follows still reaches every entity. C's populate reads
 /// nothing for a zero batch either (`indexed < batch_size || multi`, `src/index/index_construct.c`).
 #[test]
+#[allow(
+    clippy::many_single_char_names,
+    reason = "g, v, w, ty: the graph, values and type every test here uses"
+)]
 fn a_batch_of_size_zero_reads_nothing() {
     for entity in [EntityType::Node, EntityType::Relationship] {
         let (mut g, label, v, ty, w) = scan_fixture();
@@ -1968,7 +1984,7 @@ fn an_insert_catch_up_adds_the_batchs_strings_to_the_published_copy() {
         assert_eq!(tag_scan(&published, &label, &attr, value), want, "{value}");
     }
     assert_eq!(tag_scan(&before, &label, &attr, "s0"), vec![ids[0]]);
-    assert!(tag_scan(&before, &label, &attr, "w").is_empty());
+    assert_eq!(tag_scan(&before, &label, &attr, "w"), [] as [u64; 0]);
     assert!(
         tag_scan(&before, &label, &attr, "s2").is_empty(),
         "not built there yet"
@@ -2231,6 +2247,10 @@ fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
 /// writer changes one edge, so a batch of a->b alone inserts; to refresh, the batch also reads
 /// [`REFRESH_COST`] edges from a to nodes between b and c, which the column then holds too.
 #[test]
+#[allow(
+    clippy::many_single_char_names,
+    reason = "g, v, w, ty: the graph, values and type every test here uses"
+)]
 fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
     // (which edge is deleted, its id's new endpoints, the column after both commits as
     // (edge, value) pairs)
@@ -2378,6 +2398,10 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
 /// edge, so a batch of a->b alone catches up by inserting; to refresh, the batch also reads
 /// [`REFRESH_COST`] edges from a to nodes between b and c, which the column then holds too.
 #[test]
+#[allow(
+    clippy::many_single_char_names,
+    reason = "g, v, w, ty: the graph, values and type every test here uses"
+)]
 fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_order() {
     // Batch first; or writer first, the batch catching up by insert, or by refresh when it reads
     // `extra` more edges.
@@ -2521,10 +2545,10 @@ fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
         (Some(CatchUp::Insert), 4),
         (Some(CatchUp::Refresh), refreshes),
     ] {
-        let what = match writer_first {
-            Some(how) => format!("writer, then batch, {how:?}"),
-            None => "batch, then writer".to_string(),
-        };
+        let what = writer_first.map_or_else(
+            || "batch, then writer".to_string(),
+            |how| format!("writer, then batch, {how:?}"),
+        );
         let initial: Vec<i64> = (1..=nodes as i64).map(|i| 10 * i).collect();
         let (mvcc, label, attr, ids) = mvcc_building(&initial);
         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
@@ -2605,7 +2629,7 @@ fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
 #[test]
 fn a_fork_made_before_an_indexer_batch_commit_is_not_stale() {
     let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
-    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let id = IndexId::Column(EntityType::Node, (label, attr));
     let fork = mvcc.fork();
     let (prepared, batch) = prepare(&mvcc, &id, 2);
     assert_eq!(
@@ -3027,7 +3051,7 @@ fn delete_node_with_edges(
     id: u64,
 ) {
     delete_node(g, id);
-    let del: RoaringTreemap = [id].into_iter().collect();
+    let del: RoaringTreemap = std::iter::once(id).collect();
     applied!(g, |w| g.delete_implicit_edges(
         &del,
         &RoaringTreemap::new(),
@@ -3072,7 +3096,8 @@ fn set_edge_attr(
 ) {
     g.open_id_batches().expect("a consistent space");
     let aid = g.get_or_create_rel_attr_id(attr);
-    let set: FxHashMap<u64, Vec<(u16, Value)>> = [(eid, vec![(aid, value)])].into_iter().collect();
+    let set: FxHashMap<u64, Vec<(u16, Value)>> =
+        std::iter::once((eid, vec![(aid, value)])).collect();
     applied!(g, |d| g.set_relationships_attributes(&set, &mut d)).expect("set");
 }
 
@@ -3157,6 +3182,14 @@ fn check_column(
 /// must be `Ready` and equal a one-pass build of the final data. The test runs until every outcome of a commit has been seen, so a run
 /// in which the threads never raced fails.
 #[test]
+#[allow(
+    clippy::items_after_statements,
+    reason = "the drop guard sits beside the writers it counts"
+)]
+#[allow(
+    clippy::many_single_char_names,
+    reason = "v, w, x name the written values; ty, g as elsewhere in these tests"
+)]
 fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
     use parking_lot::{Mutex, RwLock};
     use rand::rngs::StdRng;
@@ -3248,8 +3281,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
     let random_write = |g: &mut Graph, op: u32, rng: &mut StdRng| {
         let mut people: Vec<u64> = g
             .get_label_matrix(&label)
-            .map(|m| m.iter(0, u64::MAX).map(|(n, _)| n).collect())
-            .unwrap_or_default();
+            .map_or_default(|m| m.iter(0, u64::MAX).map(|(n, _)| n).collect());
         let attr = if rng.random_bool(0.5) { &v } else { &w };
         if rng.random_bool(0.5)
             && let Some(BuildState::Building {
@@ -3271,8 +3303,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         }
         let edges: Vec<u64> = g
             .get_relationship_matrix(&ty)
-            .map(|t| t.iter(0, u64::MAX, false).map(|(_, _, e)| e).collect())
-            .unwrap_or_default();
+            .map_or_default(|t| t.iter(0, u64::MAX, false).map(|(_, _, e)| e).collect());
         let value = rng.random_range(0..VALUES);
         let new_value = if rng.random_bool(0.25) {
             ints(&[value, value / 2, value])
@@ -3532,11 +3563,13 @@ impl BuildHost for HostRef {
             return;
         };
         host.local.publish(&mut || {
-            if let Some(before) = host.before_publish.lock().take() {
+            let before = host.before_publish.lock().take();
+            if let Some(before) = before {
                 before(&host.mvcc);
             }
             f();
-            if let Some(after) = host.after_publish.lock().take() {
+            let after = host.after_publish.lock().take();
+            if let Some(after) = after {
                 after(&host.mvcc);
             }
         });
@@ -3675,7 +3708,7 @@ fn a_step_that_meets_another_batch_on_its_index_publishes_nothing() {
     let host = TestHost::new(mvcc);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let mut job = job_on(&host, &id, Sizing::fixed(1));
-    let other = id.clone();
+    let other = id;
     host.before_publish(move |mvcc| {
         let (prepared, batch) = prepare(mvcc, &other, 1);
         assert_eq!(
@@ -3816,11 +3849,11 @@ fn a_batch_frees_what_it_did_not_publish_after_the_hosts_lock() {
         }
     }));
     host.before_publish({
-        let (label, attr) = (label.clone(), attr.clone());
+        let (label, attr) = (label, attr);
         move |mvcc| {
             commit_write(mvcc, |g| {
                 g.falkordb_index
-                    .drop_column(EntityType::Node, &label, &attr)
+                    .drop_column(EntityType::Node, &label, &attr);
             });
         }
     });
@@ -4099,6 +4132,10 @@ fn a_jobs_batches_shrink_under_writers_and_grow_back() {
 /// The builder is the test's own, so the test starts its jobs: a commit starts them on the
 /// module's, which no unit test starts ([`online_build::enqueue`]).
 #[test]
+#[allow(
+    clippy::items_after_statements,
+    reason = "the drop guard sits beside the wait it stops the writer for"
+)]
 fn the_builder_finishes_its_builds_under_sustained_writes() {
     let nodes = online_build::SIZING.floor * 3 / 2;
     let values: Vec<i64> = (0..nodes as i64).collect();
@@ -4368,8 +4405,8 @@ fn a_building_columns_progress_counts_what_its_batches_have_read() {
     let (mut g, label, v, ty, w) = scan_fixture();
     let progress = |g: &Graph| {
         (
-            native_build_progress(&g, EntityType::Node, &label, &v),
-            native_build_progress(&g, EntityType::Relationship, &ty, &w),
+            native_build_progress(g, EntityType::Node, &label, &v),
+            native_build_progress(g, EntityType::Relationship, &ty, &w),
         )
     };
     let mut seen = vec![progress(&g)];
@@ -4530,7 +4567,7 @@ fn a_value_changing_kind_moves_between_trees() {
 
     set_attr(&mut g, n, &attr, Value::Int(1));
     assert_eq!(range_scan(&g, &label, &attr, 1, 1), vec![n]);
-    assert!(contains(&g, &label, &attr, 1).is_empty());
+    assert_eq!(contains(&g, &label, &attr, 1), [] as [u64; 0]);
 
     set_attr(&mut g, n, &attr, ints(&[1, 2]));
     assert!(
@@ -4575,13 +4612,13 @@ fn a_kind_change_and_a_delete_in_one_batch_leave_nothing() {
     g.delete_nodes(&del, &mut writes).unwrap();
     g.apply_index_writes(&mut writes);
 
-    assert!(range_scan(&g, &label, &attr, 0, 10).is_empty());
+    assert_eq!(range_scan(&g, &label, &attr, 0, 10), [] as [u64; 0]);
     assert_eq!(
         contains(&g, &label, &attr, 1),
         vec![ids[1]],
         "only the untouched list node is left"
     );
-    assert!(contains(&g, &label, &attr, 2).is_empty());
+    assert_eq!(contains(&g, &label, &attr, 2), [] as [u64; 0]);
 }
 
 /// Indexer batches carry the array half, and so does the RDB-load populate, which builds through

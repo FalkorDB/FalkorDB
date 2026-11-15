@@ -89,6 +89,66 @@ keep_root() {
     drop_privs=""
 }
 
+# The Redis data check, on Valkey images only. Valkey cannot load the save
+# files Redis 7.4 and later write: an RDB headed REDIS0 with version 12 or
+# higher is refused unless rdb-version-check is relaxed (valkey rdb.c,
+# rdbIsVersionAccepted). Redis 7.4 writes version 12, Redis 8.10 version 15.
+# The server is always started with --dir "$FALKORDB_DATA_PATH", and it takes
+# only plain file names for dbfilename, appendfilename and appenddirname, so it
+# can load only the top-level files of that directory and the *.base.rdb in
+# its AOF directory (the rest of an AOF is commands, which Valkey replays
+# whichever server wrote them). Check the header of each, and stop with the
+# migration steps when Redis wrote one. The migration is
+# docs/valkey-migration.md.
+
+# The files go to the shell as arguments (find -exec), not as lines, so a name
+# with a newline is checked whole. A glob would skip dot-prefixed names
+# (--dbfilename ..x, --appendfilename .aof, whose base is .aof.1.base.rdb).
+# A file's version is read from a header of REDIS0 and three digits
+# (`REDIS0015`); Valkey 9 heads its own files VALKEY.
+# shellcheck disable=SC2016
+CHECK_RDB_VERSION='
+for f; do
+    m=$(head -c 9 "$f" 2>/dev/null) || continue
+    case "$m" in
+        # 1NNN - 1000 rather than NNN: a leading 0 would read as octal.
+        REDIS0[0-9][0-9][0-9])
+            v=$(( 1${m#REDIS0} - 1000 ))
+            [ "$v" -ge 12 ] && printf "  %s (Redis RDB version %s)\n" "$f" "$v"
+            ;;
+    esac
+done
+exit 0'
+
+valkey_preflight() {
+    redis_files=$(
+        find -L "${FALKORDB_DATA_PATH}" -maxdepth 1 -type f \
+            -exec sh -c "$CHECK_RDB_VERSION" sh {} + 2>/dev/null
+        find -L "${FALKORDB_DATA_PATH}" -mindepth 2 -maxdepth 2 -type f -name '*.base.rdb' \
+            -exec sh -c "$CHECK_RDB_VERSION" sh {} + 2>/dev/null
+    )
+    [ -z "$redis_files" ] && return 0
+    cat >&2 <<EOF
+Error: this image runs Valkey, and ${FALKORDB_DATA_PATH} holds save files
+written by Redis 7.4 or later, which Valkey refuses to load:
+${redis_files}
+To keep this data, run a Redis image of FalkorDB (a tag ending in -redis) on
+this volume, or migrate the data to Valkey by starting this image with
+FALKORDB_REDIS_MIGRATION=1. Back up the volume first.
+See https://github.com/FalkorDB/FalkorDB/blob/main/docs/valkey-migration.md
+EOF
+    exit 1
+}
+
+if [ "$SERVER" = "valkey" ]; then
+    if [ "${FALKORDB_REDIS_MIGRATION:-0}" = "1" ]; then
+        SERVER_ARGS="${SERVER_ARGS} --rdb-version-check relaxed"
+        echo "Notice: FALKORDB_REDIS_MIGRATION=1: starting with --rdb-version-check relaxed. Save the data in Valkey's format (SAVE, and with AOF on, BGREWRITEAOF), then restart without it."
+    else
+        valkey_preflight
+    fi
+fi
+
 if [ "${BROWSER:-1}" -eq "1" ]; then
     if [ -d "${FALKORDB_BROWSER_PATH}" ]; then
         cd "${FALKORDB_BROWSER_PATH}" && HOSTNAME="0.0.0.0" ./docker-entrypoint.sh node server.js &

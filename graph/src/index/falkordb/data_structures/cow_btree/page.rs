@@ -54,6 +54,7 @@ pub trait Page: Clone + Sized {
 
     /// The page without `batch` (sorted, all routing here). Removal only shrinks a page, so the
     /// result is one page, possibly empty.
+    #[must_use]
     fn remove_batch(
         &self,
         batch: &[Tuple<Self::Key>],

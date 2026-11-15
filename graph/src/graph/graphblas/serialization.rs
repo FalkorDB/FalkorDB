@@ -329,7 +329,7 @@ mod tests {
         }
         let mut past = Collect(Vec::new());
         bitmap.encode_with_range(&mut past, 5, bitmap.len());
-        assert!(past.0.is_empty());
+        assert_eq!(past.0, [] as [u8; 0]);
     }
 
     /// `count * 8` used to wrap for a payload count of `2^61`, match an empty

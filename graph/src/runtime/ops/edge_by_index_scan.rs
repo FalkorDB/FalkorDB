@@ -307,7 +307,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
                 Value::Float(_) | Value::String(_) | Value::Bool(_) => true,
                 _ => false,
             },
-            _ => true,
+            IndexQuery::Point { .. } => true,
         }
     }
 }
@@ -323,6 +323,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
             let label = &self.relationship_pattern.types[0];
             let rp = self.relationship_pattern;
             match self.emitter.emit_lazy(|b, row| {
+                type EdgeRow = (NodeId, NodeId, RelationshipId);
                 let view = BatchRow::new(b, row);
                 let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
@@ -335,7 +336,6 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // `get_all_edges` is materialized once into the op's
                 // cache and shared by all subsequent rows via `Arc`,
                 // so we don't rebuild the full-type Vec per row.
-                type EdgeRow = (NodeId, NodeId, RelationshipId);
                 let runtime = self.runtime;
                 let cache = &self.all_edges_cache;
                 let scan_type = || -> Box<dyn Iterator<Item = EdgeRow>> {

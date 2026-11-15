@@ -121,9 +121,11 @@ use rustc_hash::FxHashMap;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::value::Value;
 
-/// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
-/// (`USHRT_MAX`, `src/graph/entities/attribute_set.h`). Never a valid id, so an id
-/// this large in an RDB is malformed rather than merely out of our range.
+/// Highest `u16`, reserved as "no attribute".
+///
+/// C's `ATTRIBUTE_ID_NONE` (`USHRT_MAX`, `src/graph/entities/attribute_set.h`).
+/// Never a valid id, so an id this large in an RDB is malformed rather than
+/// merely out of our range.
 pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
 
 /// How many distinct attribute names a graph can hold, given that
@@ -1733,7 +1735,7 @@ mod tests {
         let store = store_with(&[(1, &pairs)]);
         assert_eq!(store.entity_memory_usage(1), 4 * 12);
         assert_eq!(store.entity_memory_usage(2), 0);
-        assert!(store.data.block(0).unwrap().heap.is_empty());
+        assert_eq!(store.data.block(0).unwrap().heap, [] as [Value; 0]);
     }
 
     #[test]
@@ -1771,7 +1773,7 @@ mod tests {
         // The old string's heap slot must be recycled, not leaked.
         let block = store.data.block(0).unwrap();
         assert_eq!(block.heap.len(), 1);
-        assert!(block.heap_free.is_empty());
+        assert_eq!(block.heap_free, [] as [u32; 0]);
     }
 
     #[test]
@@ -2306,7 +2308,7 @@ mod tests {
         // An offset past the last live id writes nothing.
         let mut past = Recorder::default();
         store.encode_with_range(&mut past, &deleted, max_id, 5, total);
-        assert!(past.ops.is_empty());
+        assert_eq!(past.ops, [] as [Op; 0]);
     }
 
     #[test]
