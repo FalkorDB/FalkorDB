@@ -126,9 +126,9 @@ pub struct Field {
 impl Field {
     fn make_arr_names(
         name: &CString,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> (Option<CString>, Option<CString>, Option<CString>) {
-        if *ty == IndexType::Range {
+        if ty == IndexType::Range {
             let base = name.to_str().unwrap_or("");
             (
                 CString::new(format!("{base}:numeric:arr")).ok(),
@@ -146,7 +146,7 @@ impl Field {
         ty: IndexType,
         options: Option<TextIndexOptions>,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name, geo_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name, geo_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -164,7 +164,7 @@ impl Field {
         ty: IndexType,
         vector_options: VectorIndexOptions,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name, geo_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name, geo_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -835,6 +835,10 @@ impl Document {
         self.id
     }
 
+    #[allow(
+        clippy::match_same_arms,
+        reason = "temporal values and vectors are skipped for different reasons, each commented"
+    )]
     pub fn set(
         &mut self,
         field: &Field,
@@ -1495,7 +1499,7 @@ impl Index {
     /// Returns a null pointer if the query references unknown fields or
     /// unsupported value types.
     /// Convert a value to f64 for numeric index queries.
-    fn value_to_numeric(value: &Value) -> Option<f64> {
+    const fn value_to_numeric(value: &Value) -> Option<f64> {
         match value {
             Value::Int(i) => Some(*i as f64),
             Value::Float(f) => Some(*f),
@@ -1597,13 +1601,15 @@ impl Index {
         // Lex range: NULL pointer means open bound (infinity)
         let min_cstr = min.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
         // An open upper end stops below the Bool keys, which sort after every string.
-        let (max_cstr, include_max) = match max {
-            Some(s) => (
-                CString::new(tag_encode_lower(s.as_bytes())).ok(),
-                include_max,
-            ),
-            None => (CString::new(STRING_RANGE_END).ok(), true),
-        };
+        let (max_cstr, include_max) = max.map_or_else(
+            || (CString::new(STRING_RANGE_END).ok(), true),
+            |s| {
+                (
+                    CString::new(tag_encode_lower(s.as_bytes())).ok(),
+                    include_max,
+                )
+            },
+        );
         let min_ptr = min_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
         let max_ptr = max_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
 
