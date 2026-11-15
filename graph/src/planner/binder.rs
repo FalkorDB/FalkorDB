@@ -2349,12 +2349,10 @@ impl Binder {
                     && let ExprIR::FuncInvocation(func) = child.data()
                     && !func.ret_type.can_return_boolean()
                 {
-                    return Err(match Self::type_name(&func.ret_type) {
-                        Some(name) => {
-                            format!("Type mismatch: expected Boolean or Null but was {name}")
-                        }
-                        None => String::from("Type mismatch: expected Boolean or Null"),
-                    });
+                    return Err(Self::type_name(&func.ret_type).map_or_else(
+                        || String::from("Type mismatch: expected Boolean or Null"),
+                        |name| format!("Type mismatch: expected Boolean or Null but was {name}"),
+                    ));
                 }
                 if check_shape && !Self::expr_may_return_boolean(child) {
                     return Err(String::from("Type mismatch: expected Boolean or Null"));
