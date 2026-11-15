@@ -213,6 +213,15 @@ def _multi_write_loop(stop, counter, errors):
         errors.append(e)
 
 
+def _wait_for_inline_commits(counter, errors):
+    # Start the timed write only once inline commits are landing: a fixed sleep
+    # does not establish that, and without contention the write never goes stale.
+    deadline = time.time() + 10
+    while counter[0] == 0 and not errors and time.time() < deadline:
+        time.sleep(0.01)
+    assert counter[0] > 0 and not errors, errors
+
+
 def test_queued_write_not_starved_by_inline_writers():
     # A queued write matches as a reader and retries when an inline writer commits
     # underneath it. Every retry loses to the next commit, so under a steady stream
@@ -239,7 +248,7 @@ def test_queued_write_not_starved_by_inline_writers():
     for t in threads:
         t.start()
     try:
-        time.sleep(0.5)
+        _wait_for_inline_commits(counter, errors)
         r = Redis(
             host=os.environ.get("FALKORDB_HOST", "localhost"),
             port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
@@ -374,7 +383,7 @@ def test_queued_write_timeout_spans_stale_retries():
         ]
         for t in threads:
             t.start()
-        time.sleep(0.5)
+        _wait_for_inline_commits(counter, errors)
         timed_out = False
         try:
             r.execute_command("GRAPH.QUERY", "test", slow, "TIMEOUT", budget_ms)
