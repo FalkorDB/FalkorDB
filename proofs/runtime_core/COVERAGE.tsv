@@ -92,3 +92,6 @@ graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_r
 graph/src/runtime/ops/batched_result_emitter.rs	batch	759	NOT COVERED	trivial accessor
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	MODELLED	Emitter.initCeiling via with_binding
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	MODELLED	Emitter.initCeiling via with_binding (no bound column)
+graph/src/runtime/runtime.rs	from	119	NOT COVERED	(#3082): not modelled yet
+graph/src/runtime/runtime.rs	from	125	NOT COVERED	(#3082): not modelled yet
+graph/src/runtime/runtime.rs	push_node_variables	275	NOT COVERED	(#3082): not modelled yet
