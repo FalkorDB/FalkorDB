@@ -7,8 +7,9 @@
 # startup failure, not a skipped job.
 #
 # No service containers and no registry read: the caller built the engine and
-# uploaded it, RLTest spawns redis locally with --loadmodule, and coverage
-# profiles land straight in the workspace. That is what lets a fork — and a
+# uploaded it, RLTest spawns `<server>-server` (redis-server or valkey-server, from the
+# toolchain image) locally with --loadmodule, and coverage profiles land straight in the
+# workspace. That is what lets a fork — and a
 # stacked pull request — run the flow suite at all.
 
 name: Flow tests (flavour, artifact)
@@ -30,6 +31,12 @@ on:
         type: string
       build_image:
         description: "Toolchain image used as the job container"
+        required: true
+        type: string
+      server:
+        description: >
+          Server RLTest starts: redis or valkey, from the toolchain image (flow.sh's
+          FALKORDB_SERVER).
         required: true
         type: string
       artifact_name:
@@ -66,7 +73,7 @@ jobs:
   # that split exists to decide which cells can share a docker service, and
   # there is no docker here.
   flow:
-    name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ matrix.arch }})
+    name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ inputs.server }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     container: ${{ inputs.build_image }}
     permissions:
@@ -81,6 +88,7 @@ jobs:
       # yield '' when a is true — the empty string is falsy, so the `||` takes
       # over and it always evaluates to '1'.
       TARGET_DIR: ${{ inputs.artifact_path }}
+      FALKORDB_SERVER: ${{ inputs.server }}
     strategy:
       fail-fast: false
       matrix:
@@ -135,6 +143,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ${{ inputs.flavour }}-flow-logs-${{ matrix.arch }}-${{ strategy.job-index }}
+          name: ${{ inputs.flavour }}-${{ inputs.server }}-flow-logs-${{ matrix.arch }}-${{ strategy.job-index }}
           path: tests/flow/logs/
           if-no-files-found: ignore
