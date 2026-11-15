@@ -2920,15 +2920,27 @@ impl Planner {
         n: &DynTree<IR>,
     ) -> bool {
         let bound = n.root().get_variables();
-        let mentioned = res.node(idx).get_variables();
-        bound.iter().any(|v| {
-            mentioned
+        // `get_variables` walks the whole subtree, so this already holds every
+        // variable an operator below `idx` binds or names (traversal endpoints
+        // included); the set makes each lookup O(1).
+        let mentioned: HashSet<(u32, u32)> = res
+            .node(idx)
+            .get_variables()
+            .iter()
+            .map(|m| (m.id, m.scope_id))
+            .collect();
+        if bound
+            .iter()
+            .any(|v| mentioned.contains(&(v.id, v.scope_id)))
+        {
+            return true;
+        }
+        // Expression reads: one pass over the subtree, testing every bound
+        // variable against each operator.
+        res.node(idx).walk::<Bfs>().any(|ir| {
+            bound
                 .iter()
-                .any(|m| m.id == v.id && m.scope_id == v.scope_id)
-                || res
-                    .node(idx)
-                    .walk::<Bfs>()
-                    .any(|ir| ir_references_variable(ir, v.id, v.scope_id))
+                .any(|v| ir_references_variable(ir, v.id, v.scope_id))
         })
     }
 
