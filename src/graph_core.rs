@@ -53,8 +53,6 @@ use graph::{
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
-use redis_module::logging::log_warning;
-use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
@@ -63,6 +61,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     time::Instant,
+};
+use valkey_module::logging::{ValkeyLogLevel, log_warning};
+use valkey_module::{
+    Context, ContextFlags, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
 };
 
 use crate::allocator::{
@@ -84,10 +86,7 @@ use crate::query_session::hold_gil;
 /// conversions that used to abort the process (#2490).
 #[must_use]
 pub fn up_to_nul(s: &str) -> &str {
-    match s.find('\0') {
-        Some(end) => &s[..end],
-        None => s,
-    }
+    s.find('\0').map_or(s, |end| &s[..end])
 }
 
 /// The graph name the C engine would see for `key`: [`up_to_nul`] of its bytes.
@@ -100,7 +99,7 @@ pub fn up_to_nul(s: &str) -> &str {
 /// by the full key bytes and only rebuilds a key from the name when it creates one.
 /// See [`c_graph_key`].
 #[must_use]
-pub fn c_graph_name(key: &RedisString) -> String {
+pub fn c_graph_name(key: &ValkeyString) -> String {
     up_to_nul(&key.to_string_lossy()).to_owned()
 }
 
@@ -117,8 +116,8 @@ pub fn c_graph_name(key: &RedisString) -> String {
 #[must_use]
 pub fn c_graph_key(
     ctx: &Context,
-    key: &RedisString,
-) -> RedisString {
+    key: &ValkeyString,
+) -> ValkeyString {
     // Built from the bytes, not from `c_graph_name`: a Redis key name is binary and
     // need not be UTF-8 (`test_binary_key_name_scan_skip` keeps a graph under
     // `\xc3\x28...`), so rebuilding it through a lossy `String` would replace those
@@ -126,7 +125,7 @@ pub fn c_graph_key(
     // difference this is allowed to make.
     let bytes = key.as_slice();
     let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    RedisString::create_from_slice(ctx.get_raw(), &bytes[..end])
+    ValkeyString::create_from_slice(ctx.get_raw(), &bytes[..end])
 }
 
 /// Global registry of all live graph instances.
@@ -140,17 +139,17 @@ pub fn register_graph(
     name: String,
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
-    // Invariant: every registered name must have been removed from the
-    // registry before being re-inserted. `graph_free` removes entries on
-    // Redis key delete/overwrite/expire, and the RDB multi-key load path
-    // mutates the placeholder Arc in place rather than rebinding the name.
-    // If this assert fires, a caller is leaking the previously-registered
-    // Arc and likely racing index/teardown shutdown.
+    // A name can already be registered here, and that is not a leak. `graph_free`
+    // removes entries on Redis key delete/overwrite/expire, but the server may
+    // run it later than the key left the keyspace: Valkey flushes asynchronously
+    // by default (`lazyfree-lazy-user-flush`), so `DEBUG RELOAD`, `DEBUG LOADAOF`
+    // and a replica's full sync empty the old keyspace on a background thread
+    // and then load the new one, which registers the same name before the old
+    // value's `graph_free` has run. Redis flushes synchronously, which is why
+    // this only showed up on Valkey. The displaced entry is the old graph's
+    // registry clone; `graph_free` removes entries by pointer identity, so the
+    // old value's late `graph_free` cannot take out the new registration.
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
-    debug_assert!(
-        displaced.is_none(),
-        "register_graph: name already registered; missing graph_free or placeholder swap"
-    );
     // Drop any displaced graph off the main Redis thread. Index::drop ->
     // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
     // thread pool when its timer can't be stopped synchronously; that
@@ -195,9 +194,10 @@ pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
 /// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
 ///
 /// `graph_free` only runs for the *overwritten destination* value, so without
-/// this the old name keeps a stale entry: the next `register_graph` under
-/// that name (e.g. a concurrent write query re-creating the key) displaces
-/// it and trips the invariant assert above.
+/// this the old name keeps a stale entry, so the registry would list a graph
+/// no key holds until the next `register_graph` under that name (e.g. a
+/// concurrent write query re-creating the key) displaces it (see
+/// `register_graph`).
 pub fn rename_graph(
     old_name: &str,
     new_name: &str,
@@ -300,10 +300,10 @@ pub enum ProfileDetect {
 /// Centralising the `.expect()` here documents that invariant in one place and
 /// keeps call sites free of `unwrap()` noise.
 pub mod ffi {
-    use redis_module::raw;
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
     use std::ptr::null_mut;
+    use valkey_module::raw;
 
     const MSG: &str = "Redis module FFI pointer not initialised (call RedisModule_Init first)";
 
@@ -772,7 +772,11 @@ impl From<String> for WriteAttempt {
 }
 
 /// One run of [`execute_query_write`].
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_pass_by_value,
+    reason = "the session is consumed: dropping it releases the locks"
+)]
 fn try_query_write(
     session: QuerySession,
     ctx: &Context,
@@ -974,7 +978,7 @@ fn compute_effective_timeout(
 
 /// Replies `[error, current_version]` for a client-supplied version that does
 /// not match the graph's current schema version.
-pub(crate) fn reply_invalid_graph_version(
+pub fn reply_invalid_graph_version(
     ctx: &Context,
     current_version: i64,
 ) {
@@ -1009,13 +1013,13 @@ pub fn query_mut(
     key_name: Arc<str>,
     per_query_timeout: Option<i64>,
     version_check: Option<u64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // Reject a stale client-supplied schema version before doing any work.
     if let Some(provided_version) = version_check {
         let current_schema_version = graph.read().graph.read().schema_version;
         if provided_version != current_schema_version {
             reply_invalid_graph_version(ctx, current_schema_version as i64);
-            return Ok(RedisValue::NoReply);
+            return Ok(ValkeyValue::NoReply);
         }
     }
 
@@ -1038,7 +1042,7 @@ pub fn query_mut(
     }
 
     let Some(slot) = admit(ctx) else {
-        return Ok(RedisValue::NoReply);
+        return Ok(ValkeyValue::NoReply);
     };
 
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
@@ -1116,7 +1120,7 @@ pub fn query_mut(
                 if track_mem {
                     let (allocated, deallocated) = current_thread_usage();
                     ctx.log(
-                        redis_module::logging::RedisLogLevel::Notice,
+                        ValkeyLogLevel::Notice,
                         &format!(
                             "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
                             allocated as isize - deallocated as isize
@@ -1198,7 +1202,7 @@ pub fn query_mut(
         },
         None,
     );
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 /// Execute a query synchronously on the calling thread.
@@ -1211,7 +1215,7 @@ fn query_sync(
     write: bool,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // First pass: parse + detect if write, execute reads inline.
     // Sync query timeout to UDF JS runtime
     graph::udf::js_context::JS_TIMEOUT_MS
@@ -1300,7 +1304,7 @@ fn query_sync(
                         // replicates a query that already succeeded there, so
                         // this failing means the two have diverged.
                         divergence_guard::on_failure(ctx, key_name, "GRAPH.QUERY", &err, None);
-                        return Err(redis_module::RedisError::String(err));
+                        return Err(ValkeyError::String(err));
                     }
                 }
             } else {
@@ -1325,10 +1329,10 @@ fn query_sync(
             }
         }
         Err(err) => {
-            return Err(redis_module::RedisError::String(err));
+            return Err(ValkeyError::String(err));
         }
     }
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 #[inline]
@@ -1338,7 +1342,7 @@ pub fn profile_mut(
     query: &str,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     // Contexts that cannot block run inline (see `query_mut` for the rationale, and
     // `must_run_inline` for the flag set).
     if must_run_inline(ctx) {
@@ -1346,7 +1350,7 @@ pub fn profile_mut(
     }
 
     let Some(slot) = admit(ctx) else {
-        return Ok(RedisValue::NoReply);
+        return Ok(ValkeyValue::NoReply);
     };
 
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
@@ -1430,7 +1434,7 @@ pub fn profile_mut(
         },
         None,
     );
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 fn profile_sync(
@@ -1439,7 +1443,7 @@ fn profile_sync(
     query: &str,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
-) -> RedisResult {
+) -> ValkeyResult {
     let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
     if mem_capacity > 0 {
         reset_counter();
@@ -1474,7 +1478,7 @@ fn profile_sync(
                     if mem_capacity > 0 {
                         disable_tracking();
                     }
-                    return Err(redis_module::RedisError::String(err));
+                    return Err(ValkeyError::String(err));
                 }
             }
         }
@@ -1484,13 +1488,13 @@ fn profile_sync(
             }
             // See `query_sync`: a replayed command failing is divergence.
             divergence_guard::on_failure(ctx, key_name, "GRAPH.PROFILE", &err, None);
-            return Err(redis_module::RedisError::String(err));
+            return Err(ValkeyError::String(err));
         }
     }
     if mem_capacity > 0 {
         disable_tracking();
     }
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 /// Publish a write that succeeded: commit the version, signal WATCH, replicate.
@@ -1500,7 +1504,7 @@ fn profile_sync(
 /// publish it identically. Both carried a copy of this, and of
 /// [`abandon_write`] below, which is how the effects decision came to be made
 /// in two places.
-pub(crate) fn finish_write(
+pub fn finish_write(
     session: &QuerySession,
     ctx: &Context,
     key_name: &Arc<str>,
@@ -1525,7 +1529,7 @@ pub(crate) fn finish_write(
 /// A session whose version was never found current (still matching, or its
 /// fork went stale) published no document, so there is nothing to resync. The
 /// version itself goes with the runtime; there is nothing else to release.
-pub(crate) fn abandon_write(
+pub fn abandon_write(
     session: &QuerySession,
     runtime: &Runtime,
 ) {
@@ -1574,7 +1578,7 @@ fn commit_and_replicate(
     // nothing to recover it. Loud rather than silent: this is how the
     // first-full-sync window went unnoticed.
     let Some(buf) = wq.effects_buffer else {
-        redis_module::logging::log_warning(format!(
+        log_warning(format!(
             "graph '{key_name}' was modified but produced no effects payload; \
              the change will not reach replicas or the AOF"
         ));
@@ -1632,22 +1636,21 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // BGSAVE interleave between messages.
         let msg = {
             let g = graph.read();
-            match g.receiver.try_recv() {
-                Ok(msg) => msg,
-                Err(_) => {
-                    g.write_loop.store(false, Ordering::Release);
-                    if g.receiver.is_empty() {
-                        return;
-                    }
-                    if g.write_loop
-                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-                        .is_err()
-                    {
-                        return;
-                    }
-                    // A producer raced an enqueue after we saw empty; keep draining.
-                    continue;
+            if let Ok(msg) = g.receiver.try_recv() {
+                msg
+            } else {
+                g.write_loop.store(false, Ordering::Release);
+                if g.receiver.is_empty() {
+                    return;
                 }
+                if g.write_loop
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                    .is_err()
+                {
+                    return;
+                }
+                // A producer raced an enqueue after we saw empty; keep draining.
+                continue;
             }
         };
         let WriteMessage {
@@ -1763,7 +1766,7 @@ const EFFECT_COMMAND: &str = "GRAPH.EFFECT";
 /// `pub(crate)` because the constraint command sends payloads of its own, from
 /// outside any query. They are still payloads, so they still go out through the
 /// format.
-pub(crate) struct CtxSink<'a>(pub(crate) &'a Context);
+pub struct CtxSink<'a>(pub(crate) &'a Context);
 
 impl ReplicationSink for CtxSink<'_> {
     fn replicate(

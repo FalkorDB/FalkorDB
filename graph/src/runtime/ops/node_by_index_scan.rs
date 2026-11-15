@@ -299,7 +299,7 @@ impl<'a> NodeByIndexScanOp<'a> {
                     Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
                 )
             }
-            _ => true,
+            IndexQuery::Point { .. } => true,
         }
     }
 }
@@ -358,15 +358,14 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                     } else {
                         None
                     };
-                let base: Box<dyn Iterator<Item = NodeId>> = match served {
-                    Some(rows) => rows,
-                    None => {
-                        let runtime = self.runtime;
-                        Box::new(
-                            g.get_nodes(&self.node_pattern.labels, 0)
-                                .filter(move |&id| runtime.graph().node_holds(id, &q)),
-                        )
-                    }
+                let base: Box<dyn Iterator<Item = NodeId>> = if let Some(rows) = served {
+                    rows
+                } else {
+                    let runtime = self.runtime;
+                    Box::new(
+                        g.get_nodes(&self.node_pattern.labels, 0)
+                            .filter(move |&id| runtime.graph().node_holds(id, &q)),
+                    )
                 };
                 let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
                     Some(extra) => {

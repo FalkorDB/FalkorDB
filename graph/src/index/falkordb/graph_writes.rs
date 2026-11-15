@@ -78,6 +78,10 @@ impl Routed {
 /// Called before the graph overwrites the attributes, while the old value is still readable.
 /// Several SETs of one attribute in a transaction reach here already collapsed to
 /// `(first old, final new)`.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "every caller passes the graph's own maps"
+)]
 pub fn node_attrs_set(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
@@ -163,6 +167,10 @@ pub fn node_rows_set(
 ///
 /// Labels come from `new_labels` and never from the label matrix. Reading the matrix would force
 /// the delta merge that the graph hands the labels over to avoid.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "every caller passes the graph's own maps"
+)]
 pub fn new_node_attrs(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
@@ -271,8 +279,9 @@ pub fn labels_product_added(
 }
 
 /// REMOVE `:Label`: each `(label_rows[i], label_cols[i])` node loses a label, so its attributes
-/// come out of that label's columns. Without this the entries orphan, and come back as wrong
-/// rows when the id is reused.
+/// come out of that label's columns.
+///
+/// Without this the entries orphan, and come back as wrong rows when the id is reused.
 pub fn labels_removed(
     g: &Graph,
     label_rows: &[u64],
@@ -291,7 +300,9 @@ pub fn labels_removed(
     changes
 }
 
-/// DELETE: remove every indexed value of each deleted node. Called while its labels and
+/// DELETE: remove every indexed value of each deleted node.
+///
+/// Called while its labels and
 /// attributes are still there, with its labels as the `(node, label)` pairs the delete collected,
 /// grouped by node: a label-matrix lookup per node costs more than the whole delete otherwise
 /// does, and a node under no indexed label reads no attribute.
@@ -332,6 +343,10 @@ pub fn nodes_deleted(
 
 /// SET on existing edges: remove each written attribute's old value and add the new one. Called
 /// before the graph overwrites the attributes, as for [`node_attrs_set`].
+#[allow(
+    clippy::implicit_hasher,
+    reason = "every caller passes the graph's own maps"
+)]
 pub fn edge_attrs_set(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
@@ -341,6 +356,10 @@ pub fn edge_attrs_set(
 
 /// [`edge_attrs_set`] for edges all of type `type_id`: the replica's UPDATE_EDGE, where one
 /// record is one type. Taking the type saves a type-matrix scan per edge.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "every caller passes the graph's own maps"
+)]
 pub fn edge_attrs_set_of_type(
     g: &Graph,
     type_id: TypeId,
@@ -350,6 +369,10 @@ pub fn edge_attrs_set_of_type(
 }
 
 /// `type_id` is the edges' shared type when the caller knows it; `None` looks it up per edge.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "every caller passes the graph's own maps"
+)]
 fn edge_attrs_set_with(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
@@ -385,6 +408,10 @@ fn edge_attrs_set_with(
 }
 
 /// Edges created in this transaction: every attribute is an add.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "every caller passes the graph's own maps"
+)]
 pub fn new_edge_attrs(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
@@ -470,11 +497,12 @@ pub fn edges_deleted(
 
 // ---- Index DDL ----
 
-/// CREATE INDEX: create each attribute's column `Building`, its cursor at the start, and leave it to
-/// the background builder ([`online_build`](super::online_build)), which the commit that publishes
-/// the column hands it to. Until its last batch flips it `Ready`, the column serves no reads: the
-/// planner does not use it ([`Graph::is_indexed`]), and `db.indexes()` reports the index under
-/// construction. Only a Range index has native columns; any other type does nothing.
+/// CREATE INDEX: create each attribute's column `Building`, for the background builder to fill.
+///
+/// Each column's cursor starts at the start, and the commit that publishes the column hands it to
+/// the builder ([`online_build`](super::online_build)). Until its last batch flips it `Ready`, the column serves no reads: the planner does not use it
+/// ([`Graph::is_indexed`]), and `db.indexes()` reports the index under construction. Only a Range
+/// index has native columns; any other type does nothing.
 ///
 /// The column is never built through the RediSearch populate, which reaches the graph through the
 /// `Indexer`'s back-pointer. This index is part of the graph version, and keeping that reference
@@ -572,11 +600,16 @@ pub(crate) fn entity_tuples(
     }
 }
 
-/// Index population after an RDB load: build every column that a population snapshot of
-/// `label` covers, before the loaded graph is published, in one indexer batch each. `fields` maps
-/// each attribute to its index fields, and an attribute has a native column when one of its fields
-/// is a Range field. Unlike CREATE INDEX ([`create_index`]), the column is `Ready` when this
-/// returns: the RDB holds no record of which indexes were still building.
+/// Index population after an RDB load: build every column that a population snapshot of `label`
+/// covers, before the loaded graph is published, in one indexer batch each.
+///
+/// `fields` maps each attribute to its index fields, and an attribute has a native column when one
+/// of its fields is a Range field. Unlike CREATE INDEX ([`create_index`]), the column is `Ready`
+/// when this returns: the RDB holds no record of which indexes were still building.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "every caller passes the graph's own maps"
+)]
 pub fn populate(
     g: &mut Graph,
     entity: EntityType,

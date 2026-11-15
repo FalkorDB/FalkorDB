@@ -108,7 +108,7 @@ pub struct Field {
 
 impl Field {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         name: CString,
         ty: IndexType,
         options: Option<TextIndexOptions>,
@@ -122,7 +122,7 @@ impl Field {
     }
 
     #[must_use]
-    pub fn new_with_vector_options(
+    pub const fn new_with_vector_options(
         name: CString,
         ty: IndexType,
         vector_options: VectorIndexOptions,
@@ -633,6 +633,10 @@ impl Document {
         self.id
     }
 
+    #[allow(
+        clippy::match_same_arms,
+        reason = "temporal values and vectors are skipped for different reasons, each commented"
+    )]
     pub fn set(
         &mut self,
         field: &Field,

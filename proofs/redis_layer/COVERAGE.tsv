@@ -1,11 +1,11 @@
 file	function	line	bucket	lean_name_or_reason
-src/allocator.rs	alloc	44	PROVEN	Allocator.step (.alloc ok n): null_alloc_uncounted, run_traffic, query_accounting, alloc_passthrough (RedisAlloc = FFI input)
-src/allocator.rs	dealloc	65	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
-src/allocator.rs	enable_tracking	89	PROVEN	Allocator.step .enable: enable_sets, query_accounting
-src/allocator.rs	disable_tracking	97	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
-src/allocator.rs	current_thread_usage	106	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
-src/allocator.rs	net_thread_usage	114	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
-src/allocator.rs	reset_counter	123	PROVEN	Allocator.step .reset: reset_zero, query_accounting
+src/allocator.rs	alloc	48	PROVEN	Allocator.step (.alloc ok n): null_alloc_uncounted, run_traffic, query_accounting, alloc_passthrough (RedisAlloc = FFI input)
+src/allocator.rs	dealloc	67	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
+src/allocator.rs	enable_tracking	91	PROVEN	Allocator.step .enable: enable_sets, query_accounting
+src/allocator.rs	disable_tracking	99	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
+src/allocator.rs	current_thread_usage	108	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
+src/allocator.rs	net_thread_usage	116	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
+src/allocator.rs	reset_counter	125	PROVEN	Allocator.step .reset: reset_zero, query_accounting
 src/dispatch.rs	must_run_inline	36	AXIOMATISED	Redis ctx flags (RM_GetContextFlags); predicate identical to C cmd_dispatcher.c main_thread; not modelled beyond that
 src/divergence_guard.rs	is_replayed	41	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
 src/divergence_guard.rs	on_failure	53	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
@@ -80,11 +80,11 @@ src/serializers/mod.rs	null_terminated	245	PROVEN	Serial.nullTerm: strip_nullTer
 src/serializers/mod.rs	strip_null_terminator	253	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
 src/serializers/mod.rs	Schema::encode	262	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
 src/serializers/mod.rs	encode_schema_index_block	338	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
-src/serializers/mod.rs	encode_constraint_block	445	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
-src/serializers/mod.rs	Schema::decode	473	PROVEN	Serial.decSchema: decSchema_encSchema
-src/serializers/mod.rs	decode_schema_entry	535	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	637	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
-src/serializers/mod.rs	Schema::from_graph	727	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
+src/serializers/mod.rs	encode_constraint_block	444	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
+src/serializers/mod.rs	Schema::decode	472	PROVEN	Serial.decSchema: decSchema_encSchema
+src/serializers/mod.rs	decode_schema_entry	534	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
+src/serializers/mod.rs	decode_index_field	636	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
+src/serializers/mod.rs	Schema::from_graph	726	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	write_f	36	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
 src/reply.rs	format_value_to_string	49	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
 src/reply.rs	reply_with_str	113	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
@@ -210,7 +210,7 @@ src/telemetry.rs	enqueue_entry	905	PROVEN	Telemetry.enqueueOk: enqueue_off, enqu
 src/telemetry.rs	set_is_replica	958	PROVEN	Telemetry.setReplica: setReplica_eq
 src/telemetry.rs	start_flusher_thread	963	PROVEN	Telemetry.start: start_idem
 src/telemetry.rs	shutdown_flusher_thread	1016	PROVEN	Telemetry.shutdown/stopped: shutdown_keeps_names_if_parked, shutdown_frees_on_stop, shutdown_closes_sender
-src/telemetry.rs	flusher_loop	1051	PROVEN	Telemetry.iter/capDeferred/groupOrder: iter_disconnected, iter_replica_never_writes, iter_write_iff, capDeferred_len, capDeferred_suffix, group_keeps_order
+src/telemetry.rs	flusher_loop	1052	PROVEN	Telemetry.iter/capDeferred/groupOrder: iter_disconnected, iter_replica_never_writes, iter_write_iff, capDeferred_len, capDeferred_suffix, group_keeps_order
 src/slow_log.rs	prefix	32	PROVEN	SlowLog.strPrefix: prefix_total, prefix_le, prefix_isPrefix, prefix_boundary, prefix_longest, prefix_short, prefix_ascii
 src/slow_log.rs	truncate	38	PROVEN	SlowLog.truncate: truncate_total, truncate_short (W4-redis-1 fixed by #3234 3660a5fc3)
 src/slow_log.rs	entry_hash	51	PROVEN	SlowLog.hashInput: hashInput_total, hashInput_short, hashInput_bad (W4-redis-1 fixed by #3234 3660a5fc3)
@@ -248,24 +248,24 @@ src/commands/bulk_insert.rs	parse_count	647	PROVEN	Bulk.parseCount: parseCount_r
 src/commands/bulk_insert.rs	max_records	683	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
 src/commands/bulk_insert.rs	graph_bulk_insert	697	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
 src/commands/config_cmd.rs	config_get_one	57	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
-src/commands/config_cmd.rs	validate_config_set	114	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
-src/commands/config_cmd.rs	validate_timeout_cross_constraints	206	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
-src/commands/config_cmd.rs	check_timeout_constraints	220	PROVEN	LoadArgs.checkTimeouts: cross_eq (= Config.cross), step_agree (= C's per-field timeout setters on the load path)
-src/commands/config_cmd.rs	apply_config_set	261	PROVEN	Config.apply1 (used by rustSet_inv)
-src/commands/config_cmd.rs	ConfigValue::as_i64	304	PROVEN	Commands.asI64: asI64_small
-src/commands/config_cmd.rs	ConfigValue::as_u64	310	PROVEN	Commands.asU64: asU64_nonneg, asU64_neg
-src/commands/config_cmd.rs	graph_config	318	PROVEN	Config.dispatch: get_extra_wrong_arity, set_pairs_complete, dotless_i_not_folded; Config.rustSet (SET): rustSet_inv; Commands.getOne (GET)
-src/commands/constraint.rs	is_valid_identifier	19	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
-src/commands/constraint.rs	register_constraint_schema	63	PROVEN	Commands.registerSchema: registerSchema_contains
-src/commands/constraint.rs	find_status	82	PROVEN	Commands.findStatus: findStatus_none
-src/commands/constraint.rs	settle_constraint	171	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
-src/commands/constraint.rs	attempt_settle	282	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
-src/commands/constraint.rs	graph_constraint	391	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053)
-src/commands/copy.rs	pipe	17	AXIOMATISED	libc pipe(2)
-src/commands/copy.rs	fork	18	AXIOMATISED	libc fork(2)
-src/commands/copy.rs	_exit	19	AXIOMATISED	libc _exit(2)
-src/commands/copy.rs	waitpid	20	AXIOMATISED	libc waitpid(2)
-src/commands/copy.rs	graph_copy	27	PROVEN	Commands.copyOut/tz/exitCode: copy_ok_iff, exited_iff (trailing_zeros>=7 = WIFEXITED); replica gets GRAPH.RESTORE of VecWriter bytes: BufferedIO.vec_roundtrip
+src/commands/config_cmd.rs	validate_config_set	118	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
+src/commands/config_cmd.rs	validate_timeout_cross_constraints	210	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
+src/commands/config_cmd.rs	check_timeout_constraints	224	PROVEN	LoadArgs.checkTimeouts: cross_eq (= Config.cross), step_agree (= C's per-field timeout setters on the load path)
+src/commands/config_cmd.rs	apply_config_set	265	PROVEN	Config.apply1 (used by rustSet_inv)
+src/commands/config_cmd.rs	ConfigValue::as_i64	308	PROVEN	Commands.asI64: asI64_small
+src/commands/config_cmd.rs	ConfigValue::as_u64	314	PROVEN	Commands.asU64: asU64_nonneg, asU64_neg
+src/commands/config_cmd.rs	graph_config	322	PROVEN	Config.dispatch: get_extra_wrong_arity, set_pairs_complete, dotless_i_not_folded; Config.rustSet (SET): rustSet_inv; Commands.getOne (GET)
+src/commands/constraint.rs	is_valid_identifier	22	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
+src/commands/constraint.rs	register_constraint_schema	66	PROVEN	Commands.registerSchema: registerSchema_contains
+src/commands/constraint.rs	find_status	85	PROVEN	Commands.findStatus: findStatus_none
+src/commands/constraint.rs	settle_constraint	174	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
+src/commands/constraint.rs	attempt_settle	284	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
+src/commands/constraint.rs	graph_constraint	384	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053)
+src/commands/copy.rs	pipe	19	AXIOMATISED	libc pipe(2)
+src/commands/copy.rs	fork	20	AXIOMATISED	libc fork(2)
+src/commands/copy.rs	_exit	21	AXIOMATISED	libc _exit(2)
+src/commands/copy.rs	waitpid	22	AXIOMATISED	libc waitpid(2)
+src/commands/copy.rs	graph_copy	29	PROVEN	Commands.copyOut/tz/exitCode: copy_ok_iff, exited_iff (trailing_zeros>=7 = WIFEXITED); replica gets GRAPH.RESTORE of VecWriter bytes: BufferedIO.vec_roundtrip
 src/commands/debug.rs	graph_debug	5	PROVEN	Commands.debugCmd: debug_start
 src/commands/debug.rs	debug_aux	23	PROVEN	Commands.debugCmd: debug_bad_action_replicated
 src/commands/delete.rs	graph_delete	37	PROVEN	Commands.deleteCmd: delete_stream_first, delete_nongraph
@@ -283,11 +283,11 @@ src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_qu
 src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
 src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps; write_version: QuerySession.writeVersion_takes_nothing); rendering of recorded rows: RelLookup.recordDelete/s3449abort, #3449 fixed by #3462 (inspect || snapshot_required): fixed3449_record_snapshot, fixed3449_record_abort
 src/commands/record.rs	graph_record	169	PROVEN	Commands.recordKey: recordKey_creates
-src/commands/restore.rs	graph_restore	12	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
+src/commands/restore.rs	graph_restore	14	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
 src/commands/ro_query.rs	graph_ro_query	30	PROVEN	QueryArgs.roQueryFront (parse_query_flags, ro_query.rs:34-39): four_commands_share, garbage_timeout_rejected (#3009 fixed 557f18868); RoQuery.ro_never_writes
 src/commands/query_args.rs	parse_query_flags	44	PROVEN	QueryArgs.parseQueryFlags/scanFlags: parse_total, parse_arity, parse_ok_iff (accepts exactly 3..8 args + Grammar), parse_documented, parse_timeout_nonneg, rust_c_agree (= C _read_flags on every vector), four_commands_share, #3009 regressions (nonutf8_keeps_compact, timeout_noncanonical_rejected, garbage_timeout_rejected, version_above_uint_rejected, arity_capped)
 src/commands/query_args.rs	up_to_nul	82	PROVEN	QueryArgs.upToNul: nul_truncated_flag, rust_c_agree (C strcasecmp sees the same prefix)
-src/commands/slowlog.rs	graph_slowlog	16	PROVEN	Commands.slowlogCmd: slowlog_reset_ci
+src/commands/slowlog.rs	graph_slowlog	19	PROVEN	Commands.slowlogCmd: slowlog_reset_ci
 src/commands/udf.rs	graph_udf	47	PROVEN	Commands.udfCmd: udf_unknown
 src/commands/udf.rs	udf_load	68	PROVEN	Commands.udfLoadArgs: udf_load_plain, udf_load_replace
 src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one, udf_delete_extra

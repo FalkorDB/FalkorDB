@@ -146,7 +146,7 @@ pub fn encode_f64(x: f64) -> u64 {
 /// round-trip: it was normalized to `+0.0` on encode.
 #[cfg(test)]
 #[must_use]
-fn decode_f64(key: u64) -> f64 {
+const fn decode_f64(key: u64) -> f64 {
     let bits = if key & SIGN != 0 { key & !SIGN } else { !key };
     f64::from_bits(bits)
 }

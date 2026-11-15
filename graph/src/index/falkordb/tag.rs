@@ -43,7 +43,7 @@ pub enum StrSel {
     Window(StrBounds),
     /// Every string any member selects: a union with a window in it (`v = 'a' OR v > 'x'`). The
     /// members are never themselves unions.
-    Any(Vec<StrSel>),
+    Any(Vec<Self>),
 }
 
 impl StrSel {
@@ -104,6 +104,10 @@ impl StrSel {
             }
             (a, b) => {
                 let mut members = Vec::new();
+                #[allow(
+                    clippy::tuple_array_conversions,
+                    reason = "`a` and `b` were bound by the match arm above; this loop is one body for both"
+                )]
                 for side in [a, b] {
                     match side {
                         Self::Any(inner) => members.extend(inner),
@@ -507,7 +511,7 @@ mod tests {
         let idx = sample();
         assert_eq!(point(&idx, "bob"), vec![1]);
         assert_eq!(point(&idx, "Bob"), vec![3]);
-        assert!(point(&idx, "BOB").is_empty());
+        assert_eq!(point(&idx, "BOB"), [] as [u64; 0]);
         assert!(point(&idx, "bo").is_empty(), "no prefix matching");
         assert!(
             point(&idx, "never held").is_empty(),
@@ -544,8 +548,8 @@ mod tests {
         assert_eq!(all(None, Some("bob"), true, false), vec![2, 3]);
         assert_eq!(all(Some("alice"), Some("carol"), true, false), vec![1, 2]);
         // An inverted or empty window is an answer, not a panic.
-        assert!(all(Some("z"), Some("a"), true, true).is_empty());
-        assert!(all(Some("a"), Some("a"), false, false).is_empty());
+        assert_eq!(all(Some("z"), Some("a"), true, true), [] as [u64; 0]);
+        assert_eq!(all(Some("a"), Some("a"), false, false), [] as [u64; 0]);
     }
 
     /// A window and a set select by value, so a scan can match a string no batch has added yet.
@@ -575,7 +579,7 @@ mod tests {
     fn a_removed_string_leaves_nothing_behind() {
         let mut idx = sample();
         idx.remove(&val("bob"), 1);
-        assert!(point(&idx, "bob").is_empty());
+        assert_eq!(point(&idx, "bob"), [] as [u64; 0]);
         assert!(
             !idx.tag().tuples().iter().any(|(_, s, _)| s == "bob"),
             "no tuple for bob remains"
@@ -596,7 +600,7 @@ mod tests {
         assert_eq!(point(&idx, "a"), vec![10]);
         assert_eq!(holding(&idx, "a"), vec![20]);
         assert_eq!(holding(&idx, "b"), vec![20]);
-        assert!(holding(&idx, "c").is_empty());
+        assert_eq!(holding(&idx, "c"), [] as [u64; 0]);
         // A range over the scalar tree must not see list elements either.
         assert_eq!(range(&idx, Some(""), None, true, true), vec![10]);
     }
@@ -621,13 +625,13 @@ mod tests {
 
         idx.remove(&val("a"), 1);
         idx.add(&list(&["a"]), 1);
-        assert!(point(&idx, "a").is_empty());
+        assert_eq!(point(&idx, "a"), [] as [u64; 0]);
         assert_eq!(holding(&idx, "a"), vec![1]);
 
         idx.remove(&list(&["a"]), 1);
         idx.add(&val("a"), 1);
         assert_eq!(point(&idx, "a"), vec![1]);
-        assert!(holding(&idx, "a").is_empty());
+        assert_eq!(holding(&idx, "a"), [] as [u64; 0]);
 
         idx.remove(&val("a"), 1);
         assert!(idx.is_empty());
@@ -653,7 +657,7 @@ mod tests {
         assert_eq!(holding(&live, "d"), vec![102]);
         // And the copy the tuples were read on is as it was.
         assert_eq!(point(&batch, "b"), vec![2]);
-        assert!(point(&batch, "c").is_empty());
+        assert_eq!(point(&batch, "c"), [] as [u64; 0]);
     }
 
     /// Removing a string the copy never held changes nothing.

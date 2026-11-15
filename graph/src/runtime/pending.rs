@@ -69,7 +69,7 @@ const INVALID_PROPERTY_MSG: &str =
 
 /// Whether a non-list value is a valid property: a primitive, or NULL when
 /// `allow_null`. Lists are checked by [`validate_list_property`].
-fn is_valid_property(
+const fn is_valid_property(
     value: &Value,
     allow_null: bool,
 ) -> bool {
@@ -700,6 +700,7 @@ impl Pending {
     /// `set_labels` and `remove_labels` are disjoint per node (see
     /// [`Self::stage_node_labels`]), so at most one of the two branches below can
     /// match and the order they are consulted in carries no meaning.
+    #[must_use]
     pub fn node_has_label(
         &self,
         id: NodeId,
@@ -1570,7 +1571,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(NodeId::from)
+                        read_once.candidates(&candidates).map(NodeId::from)
                     },
                 );
                 let violated = unique_violated(
@@ -1615,10 +1616,10 @@ impl Pending {
             // would materialize the delta's pending tuples on every commit.
             // An edge's type never changes, so created under a different
             // type means not a member.
-            match self.created_rel_types.get(&edge_id.into()) {
-                Some(created_type) => created_type.as_str() == type_name.as_str(),
-                None => g.edge_has_type(edge_id.into(), type_name),
-            }
+            self.created_rel_types.get(&edge_id.into()).map_or_else(
+                || g.edge_has_type(edge_id.into(), type_name),
+                |created_type| created_type.as_str() == type_name.as_str(),
+            )
         });
 
         match constraint.ct {
@@ -1650,7 +1651,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(RelationshipId::from)
+                        read_once.candidates(&candidates).map(RelationshipId::from)
                     },
                 );
                 let violated = unique_violated(
@@ -1937,7 +1938,7 @@ mod label_effect_tests {
         add: bool,
         labels: &[LabelId],
     ) -> Record {
-        let ids: IdList = [NODE].into_iter().collect();
+        let ids: IdList = std::iter::once(NODE).collect();
         let mut shape: Vec<u32> = labels.iter().map(|l| usize::from(*l) as u32).collect();
         shape.sort_unstable();
         shape.dedup();
@@ -1957,7 +1958,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert_eq!(records(&pending, &g), vec![labelled(true, &[l])]);
     }
@@ -1988,7 +1989,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
         pending.remove_node_labels(NODE.into(), &[l]);
 
         assert!(
@@ -2012,7 +2013,7 @@ mod label_effect_tests {
         let l = labels[0];
 
         pending.remove_node_labels(NODE.into(), &[l]);
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert!(
             !pending.remove_labels.contains_key(&NODE),
@@ -2119,6 +2120,7 @@ mod native_unique_tests {
     use crate::graph::graphblas::test_init::ensure_init;
     use crate::index::falkordb::unique::fewest_candidates;
     use crate::index::index_docs::IndexDocs;
+    use std::iter::once;
 
     fn arc(s: &str) -> Arc<String> {
         Arc::new(s.to_string())
@@ -2335,7 +2337,7 @@ mod native_unique_tests {
                 values,
             )
             .expect("both columns answer");
-            fewest_candidates(lookups).count()
+            fewest_candidates(&lookups).count()
         };
         let (tenant, three, absent) = (Value::Int(7), Value::Int(3), Value::Int(99));
         assert_eq!(
@@ -2367,7 +2369,7 @@ mod native_unique_tests {
     /// member's key, so reading the tenant once covers them all.
     #[test]
     fn members_with_the_same_lookups_read_them_once() {
-        let list_id = |id: &str| Value::List(Arc::new([string(id)].into_iter().collect()));
+        let list_id = |id: &str| Value::List(Arc::new(once(string(id)).collect()));
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
@@ -2396,17 +2398,17 @@ mod native_unique_tests {
         };
         let once = ReadOnce::default();
         assert_eq!(
-            once.candidates(lookups(7, "u1")).count(),
+            once.candidates(&lookups(7, "u1")).count(),
             51,
             "the first member reads the tenant"
         );
         assert_eq!(
-            once.candidates(lookups(7, "u2")).count(),
+            once.candidates(&lookups(7, "u2")).count(),
             0,
             "a member with the same lookups reads nothing more"
         );
         assert_eq!(
-            once.candidates(lookups(8, "u9")).count(),
+            once.candidates(&lookups(8, "u9")).count(),
             1,
             "another tenant is another lookup"
         );
@@ -2447,7 +2449,7 @@ mod native_unique_tests {
         .expect("id's column answers");
         assert_eq!(lookups.len(), 1, "the Building column declines");
         assert_eq!(
-            fewest_candidates(lookups).count(),
+            fewest_candidates(&lookups).count(),
             2,
             "the two holding id 1"
         );

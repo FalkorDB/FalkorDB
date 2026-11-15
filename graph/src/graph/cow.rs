@@ -166,6 +166,10 @@ mod tests {
             self.0.get()
         }
 
+        #[allow(
+            clippy::needless_pass_by_ref_mut,
+            reason = "writes must go through `DerefMut`; that is what this tests"
+        )]
         fn set(
             &mut self,
             v: i32,

@@ -9,11 +9,11 @@ graph/src/effects/v3/emit.rs	for_each_record	323	PROVEN	Emit.gate_zero_stream, E
 graph/src/effects/v3/emit.rs	digest_cancelled	395	PROVEN	Digests.digestCancelledF: digestCancelled_pairs; Emit.digestCancelled (gate); digestCancelled_pairs only covers cancelled edges of registered types: a type whose every edge was cascaded away has no id, the pair is skipped and the replica IdSpace has a hole: RelIdsCovered refuted by CancelGap.bug3447_cancelled_edge_id_gap (BUG #3447), fix property relIdsCovered_of_registered
 graph/src/effects/v3/emit.rs	digest_created_nodes	497	PROVEN	Basic.memoGroup_eq_groupBy, Basic.sortDedup_set_eq, Basic.groupBy_flat, Basic.groupBy_keyed (+ proofs/replication emit/apply roundtrip over groupBy)
 graph/src/effects/v3/emit.rs	digest_created_edges	574	PROVEN	Digests.digestCreatedEdges/mkEdgeRec: digestCreatedEdges_perm, digestCreatedEdges_keyed, mkEdgeRec_shape (FxHashMap order abstracted; theorems order-insensitive)
-graph/src/effects/v3/emit.rs	digest_deleted_edges	635	PROVEN	Digests.digestDeletedEdges: digestDeletedEdges_perm
-graph/src/effects/v3/emit.rs	digest_updates	686	PROVEN	Digests.digestUpdates/updKey: digestUpdates_perm, digestUpdates_shape
-graph/src/effects/v3/emit.rs	digest_deleted_nodes	791	PROVEN	Basic.memoGroup_eq_groupBy, Basic.sortDedup_set_eq (the ascending cursor walk over deleted_node_labels is not modelled)
-graph/src/effects/v3/emit.rs	digest_labels	853	PROVEN	Digests.digestLabels: digestLabels_perm, digestLabels_nonempty; called with skip=None for remove_labels (emit.rs:370), so a stale remove_labels entry of a cancelled node ships before its CREATE_NODE: CancelGap.bug3448_removeLabels_before_create_refused (BUG #3448)
-graph/src/effects/v3/emit.rs	gather_rows	921	PROVEN	Emit.mergeRow_eq_lookup, Emit.gatherRows_length (+ unsorted counterexample example)
+graph/src/effects/v3/emit.rs	digest_deleted_edges	634	PROVEN	Digests.digestDeletedEdges: digestDeletedEdges_perm
+graph/src/effects/v3/emit.rs	digest_updates	685	PROVEN	Digests.digestUpdates/updKey: digestUpdates_perm, digestUpdates_shape
+graph/src/effects/v3/emit.rs	digest_deleted_nodes	790	PROVEN	Basic.memoGroup_eq_groupBy, Basic.sortDedup_set_eq (the ascending cursor walk over deleted_node_labels is not modelled)
+graph/src/effects/v3/emit.rs	digest_labels	852	PROVEN	Digests.digestLabels: digestLabels_perm, digestLabels_nonempty; called with skip=None for remove_labels (emit.rs:370), so a stale remove_labels entry of a cancelled node ships before its CREATE_NODE: CancelGap.bug3448_removeLabels_before_create_refused (BUG #3448)
+graph/src/effects/v3/emit.rs	gather_rows	920	PROVEN	Emit.mergeRow_eq_lookup, Emit.gatherRows_length (+ unsorted counterexample example)
 graph/src/effects/v3/apply.rs	from	44	PROVEN	ApplyHelpers.ofString: ofString_spec
 graph/src/effects/v3/apply.rs	apply_effects	54	PROVEN	ApplyHelpers.applyEffects (records then g.validate() then g.commit_index_docs, #2846/#3307): applyEffects_ok, applyEffects_validate_refused, validateG_ok (verify_id_batches then verify_created_relationships, #3022) (BUG W2-effects-4: not atomic for CREATE_INDEX, still present at 2c874022a, live repro)
 graph/src/effects/v3/apply.rs	from	103	PROVEN	ApplyHelpers.fromNodeOp (impl From<NodeOpError> for ApplyError, replaces node_op since #2846): fromNodeOp_spec, applyEffects_validate_refused; DanglingRelationship arm (#3022)
@@ -34,4 +34,4 @@ graph/src/effects/v3/apply.rs	index_options	807	PROVEN	ApplyHelpers.indexOptions
 graph/src/effects/v3/apply.rs	single_index_label	838	PROVEN	ApplyHelpers.singleIndexLabel: singleIndexLabel_ok
 graph/src/runtime/pending.rs	effects_count	1875	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.gate_drops_cancelled, Emit.gate_drops_schema_only (BUG W2-effects-1, still present at 2c874022a)
 graph/src/runtime/ops/commit.rs	CommitOp::next (effects gate)	69	PROVEN	Emit.commitShips, Emit.commitShips_eq_iff (BUG W2-effects-1, still present at 2c874022a)
-graph/src/effects/v3/emit.rs	wire_index_options	2087	PROVEN	EmitDDL.wireIndexOptions: wireIndexOptions_spec
+graph/src/effects/v3/emit.rs	wire_index_options	2085	PROVEN	EmitDDL.wireIndexOptions: wireIndexOptions_spec

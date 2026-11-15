@@ -1,6 +1,8 @@
-//! The native index's side of a unique-constraint check: which entities may already hold a
-//! member's key. The check itself, comparing those candidates' keys with the members', is
-//! `unique_violated` in `runtime::pending`; this only says where to look.
+//! The native index's side of a unique-constraint check: which entities may already hold a member's
+//! key.
+//!
+//! The check itself, comparing those candidates' keys with the members', is `unique_violated` in
+//! `runtime::pending`; this only says where to look.
 
 use std::{cell::RefCell, sync::Arc};
 
@@ -48,7 +50,7 @@ impl ReadOnce {
     /// earlier member had the same lookups.
     pub(crate) fn candidates(
         &self,
-        lookups: Vec<EqualCandidates<'_>>,
+        lookups: &[EqualCandidates<'_>],
     ) -> impl Iterator<Item = u64> + use<> {
         let mut ids: Vec<_> = lookups.iter().map(EqualCandidates::id).collect();
         ids.sort_unstable();
@@ -68,7 +70,7 @@ impl ReadOnce {
 /// most `lookups.len()` times as many entities as it returns. Each lookup's
 /// rows own their tree snapshot, so the result borrows nothing (`use<>`).
 pub(crate) fn fewest_candidates(
-    lookups: Vec<EqualCandidates<'_>>
+    lookups: &[EqualCandidates<'_>]
 ) -> impl Iterator<Item = u64> + use<> {
     let mut rows: Vec<_> = lookups.iter().map(EqualCandidates::rows).collect();
     if rows.len() == 1 {
