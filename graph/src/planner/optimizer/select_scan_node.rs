@@ -1410,7 +1410,7 @@ pub(super) fn select_scan_node(
 mod tests {
     use std::{collections::HashSet, sync::Arc};
 
-    use orx_tree::{DynTree, NodeRef};
+    use orx_tree::DynTree;
 
     use super::exposed_variables;
     use crate::parser::ast::{ExprIR, Variable};
