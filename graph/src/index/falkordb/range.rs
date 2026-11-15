@@ -596,8 +596,7 @@ impl RangeIndex {
 
     /// Call `emit` with each key a stored `value` takes in this column, and its [`KeyKind`]: a
     /// scalar lands in at most one kind, and a list's elements in the kinds' array trees. A string
-    /// is passed as itself ([`ColumnKey::Tag`]): it is numbered only by the column copy its tuple
-    /// goes into ([`add_encoded`](Self::add_encoded)).
+    /// is passed as itself ([`ColumnKey::Tag`]): the tag trees are keyed on the string.
     pub fn for_each_stored_key(
         &self,
         value: &Value,
@@ -751,7 +750,7 @@ impl RangeIndex {
                 // A scalar is of one kind, so the kinds' streams hold no doc in common, and an
                 // empty share is not read.
                 match (numeric == KeySet::Empty, tag.is_empty()) {
-                    (false, false) => DocIter::Distinct(DistinctIter::new(vec![
+                    (false, false) => DocIter::Distinct(DistinctIter::disjoint(vec![
                         self.numeric.scalars(numeric),
                         self.tag.scalars(tag),
                     ])),

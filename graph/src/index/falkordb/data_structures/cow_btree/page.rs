@@ -52,8 +52,9 @@ pub trait Page: Clone + Sized {
         batch: &[Tuple<Self::Key>],
     ) -> Vec<Self>;
 
-    /// The page without `batch` (sorted, all routing here). Removal only shrinks a page, so the
-    /// result is one page, possibly empty.
+    /// The page without `batch` (sorted, all routing here). Removal never adds a tuple, so the
+    /// result is one page, possibly empty; its byte size is not promised to shrink, since a page
+    /// that compresses keys against their predecessors can lengthen a suffix when one is removed.
     #[must_use]
     fn remove_batch(
         &self,
@@ -69,6 +70,11 @@ pub trait Page: Clone + Sized {
 
     /// Heap bytes the page holds.
     fn heap_bytes(&self) -> usize;
+
+    /// Heap bytes a separator key owns beyond its slot in the branch (none for a plain integer).
+    fn key_heap_bytes(_key: &Self::Key) -> usize {
+        0
+    }
 }
 
 /// A page after one insert: it still fits, or it split into itself and pages to its right, each

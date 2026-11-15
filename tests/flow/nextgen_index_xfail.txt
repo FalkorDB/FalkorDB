@@ -36,11 +36,10 @@ test_index_scans:testIndexScanFlow.test13_point_index_scan
 #                              lookup into it (#2453)
 #   conjunctions            -> same-attribute bounds fold arithmetically into one window;
 #                              cross-attribute ones intersect a column per attribute (#2453)
-#   strings and tags (18)   -> the tag kind: a per-column dictionary interning each distinct
-#                              string to a dense id, with the tree keyed by that id. Exact and
-#                              case-sensitive, because `utilize_index` keeps no filter over a
-#                              string equality. Lexicographic ranges resolve through the
-#                              dictionary rather than the key, so tokenizer-hostile strings
+#   strings and tags (18)   -> the tag kind: a tree keyed on the string itself, its bytes
+#                              prefix-compressed in pages. Exact and case-sensitive, because
+#                              `utilize_index` keeps no filter over a string equality. A range
+#                              scan compares the strings, so tokenizer-hostile strings
 #                              (separators, whitespace, backslashes) need no encoding at all —
 #                              which is what closed `test06_tag_separator`,
 #                              `test20_index_scan_stopwords` and `test_25_unescaped_string`.

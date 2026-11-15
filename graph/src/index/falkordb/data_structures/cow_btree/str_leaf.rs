@@ -305,7 +305,12 @@ fn group_tuples(tuples: &[Tuple<Arc<String>>]) -> Vec<Group> {
     let mut out: Vec<Group> = Vec::new();
     for (k, d) in tuples {
         match out.last_mut() {
-            Some(g) if g.key == k.as_bytes() => g.docs.push(*d),
+            // The input is sorted, so a repeat is the last doc: keep a tuple once.
+            Some(g) if g.key == k.as_bytes() => {
+                if g.docs.last() != Some(d) {
+                    g.docs.push(*d);
+                }
+            }
             _ => out.push(Group {
                 key: k.as_bytes().to_vec(),
                 docs: vec![*d],
@@ -407,11 +412,11 @@ impl StrLeaf {
 
     /// Whether the page holds `(key, doc)`.
     fn holds(
-        &self,
+        groups: &[Group],
         key: &Arc<String>,
         doc: u64,
     ) -> bool {
-        decode(&self.blob)
+        groups
             .iter()
             .any(|g| g.key == key.as_bytes() && g.docs.binary_search(&doc).is_ok())
     }
@@ -467,10 +472,16 @@ impl Page for StrLeaf {
         key: &Arc<String>,
         doc: u64,
     ) -> Option<PageInsert<Self>> {
-        if self.holds(key, doc) {
+        let groups = decode(&self.blob);
+        if Self::holds(&groups, key, doc) {
             return None;
         }
-        let mut pages = self.merge_batch(&[(key.clone(), doc)]).into_iter();
+        let mut pages = pack(merge_groups(
+            groups,
+            group_tuples(&[(key.clone(), doc)]),
+            true,
+        ))
+        .into_iter();
         let left = pages.next().expect("a page holding a tuple");
         let rights: Vec<_> = pages.map(|p| (p.min(), p)).collect();
         Some(if rights.is_empty() {
@@ -485,10 +496,15 @@ impl Page for StrLeaf {
         key: &Arc<String>,
         doc: u64,
     ) -> Option<(Self, bool)> {
-        if !self.holds(key, doc) {
+        let groups = decode(&self.blob);
+        if !Self::holds(&groups, key, doc) {
             return None;
         }
-        let page = self.remove_batch(&[(key.clone(), doc)]);
+        let page = encode(&merge_groups(
+            groups,
+            group_tuples(&[(key.clone(), doc)]),
+            false,
+        ));
         let underfull = page.is_underfull();
         Some((page, underfull))
     }
@@ -518,7 +534,8 @@ impl Page for StrLeaf {
     ) -> Combined<Self, Self::Key> {
         let both = concat_groups(decode(&self.blob), decode(&right.blob));
         let one = encode(&both);
-        if one.fits() {
+        // A lone page that is over budget (one oversized string) cannot be split: keep it whole.
+        if one.fits() || one.len < 2 {
             return Combined::One(one);
         }
         let total = one.len;
@@ -529,5 +546,10 @@ impl Page for StrLeaf {
 
     fn heap_bytes(&self) -> usize {
         self.blob.len()
+    }
+
+    fn key_heap_bytes(key: &Arc<String>) -> usize {
+        // The `Arc` allocation: two counts, the `String`, and its buffer.
+        2 * std::mem::size_of::<usize>() + std::mem::size_of::<String>() + key.capacity()
     }
 }
