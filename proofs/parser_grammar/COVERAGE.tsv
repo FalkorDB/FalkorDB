@@ -119,6 +119,5 @@ graph/src/parser/ast.rs	Alias::from	106	NOT COVERED	(#3302): not modelled yet
 graph/src/parser/ast.rs	Alias::fmt	112	NOT COVERED	(#3302): not modelled yet
 graph/src/parser/ast.rs	write_anon	125	NOT COVERED	(#3302): not modelled yet
 graph/src/parser/ast.rs	Variable::is_unnamed	209	NOT COVERED	(#3302): not modelled yet
-graph/src/parser/ast.rs	QueryRelationship::new	706	NOT COVERED	(#3302): not modelled yet
 graph/src/parser/cypher.rs	Parser::next_unnamed	3065	NOT COVERED	(#3302): not modelled yet
 graph/src/parser/cypher.rs	Parser::parse_alias_or_unnamed	3072	NOT COVERED	(#3302): not modelled yet
