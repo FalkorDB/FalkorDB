@@ -68,7 +68,7 @@ fn index_id(index: usize) -> u64 {
 }
 
 /// Compressed sparse row over `node_count` nodes, ids `u64`. Its arrays are sized once,
-/// when it is built, and never grow; they are `Vec`s as the GraphBLAS export hands them over.
+/// when it is built, and never grow; they are `Vec`s as the `GraphBLAS` export hands them over.
 ///
 /// Every `Csr` here holds, by construction:
 /// * `row_offsets` has `node_count + 1` offsets, starting at 0, never decreasing, ending at
@@ -76,7 +76,7 @@ fn index_id(index: usize) -> u64 {
 /// * every id in `neighbors` is below `node_count`;
 /// * every row is sorted ascending and duplicate-free.
 ///
-/// A `Csr` exported from a GraphBLAS matrix gets all three from the export (`n + 1` row
+/// A `Csr` exported from a `GraphBLAS` matrix gets all three from the export (`n + 1` row
 /// pointers, column indices below the dimension, sorted and unique within a row); the ones
 /// this module builds itself keep them.
 pub(crate) struct Csr {

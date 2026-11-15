@@ -53,8 +53,8 @@ pub struct Binder {
     copy_from_parent: HashMap<Arc<String>, (Variable, Variable)>,
     /// Accumulated labels for each node variable across all MATCH clauses.
     /// When `MATCH (n:N) ... MATCH (n:O)` is encountered, this maps
-    /// n's (scope_id, variable ID) → {N, O} so the planner can create a single
-    /// NodeByLabelScan with the full label set.
+    /// n's (`scope_id`, variable ID) → {N, O} so the planner can create a single
+    /// `NodeByLabelScan` with the full label set.
     node_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
     /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
     /// These are typed as `Type::Path` but represent a list of edges, so
@@ -115,7 +115,7 @@ impl Binder {
         self.env_stack.iter().map(sorted_scope_vars).collect()
     }
 
-    /// Post-process the bound IR: update every QueryNode's labels to the
+    /// Post-process the bound IR: update every `QueryNode`'s labels to the
     /// full accumulated set from `self.node_labels`.  This ensures that
     /// the first MATCH occurrence of a node has labels from all later
     /// MATCH clauses, so the planner can create efficient scans directly.
@@ -153,7 +153,7 @@ impl Binder {
         }
     }
 
-    /// Replace QueryNode labels in the graph with the full accumulated set.
+    /// Replace `QueryNode` labels in the graph with the full accumulated set.
     /// When `union` is set (OPTIONAL MATCH patterns) the accumulated labels
     /// are merged into the node's own labels instead of replacing them, so
     /// clause-local optional labels are preserved.
@@ -1114,7 +1114,7 @@ impl Binder {
                     self.node_labels
                         .insert((bound_var.scope_id, bound_var.id), labels);
                 }
-                let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
+                let expr = Arc::new(DynTree::new(ExprIR::Variable(var)));
                 projected.push((bound_var, expr));
             }
             projected.sort_by(|(name_a, _), (name_b, _)| name_a.name.cmp(&name_b.name));
@@ -1365,7 +1365,7 @@ impl Binder {
             labels.extend(node.labels.iter().cloned());
             let all_labels = labels.clone();
 
-            let bound_node = Arc::new(QueryNode::new(alias.clone(), all_labels, attrs));
+            let bound_node = Arc::new(QueryNode::new(alias, all_labels, attrs));
             bound.add_node(bound_node);
         }
 
@@ -1448,8 +1448,7 @@ impl Binder {
                     .or_default();
                 labels.extend(relationship.from.labels.iter().cloned());
                 let all_labels = labels.clone();
-                let bound_node =
-                    Arc::new(QueryNode::new(from_alias.clone(), all_labels, from_attrs));
+                let bound_node = Arc::new(QueryNode::new(from_alias, all_labels, from_attrs));
                 bound.add_node(bound_node.clone());
                 bound_node
             };
@@ -1501,7 +1500,7 @@ impl Binder {
                     .or_default();
                 labels.extend(relationship.to.labels.iter().cloned());
                 let all_labels = labels.clone();
-                let bound_node = Arc::new(QueryNode::new(to_alias.clone(), all_labels, to_attrs));
+                let bound_node = Arc::new(QueryNode::new(to_alias, all_labels, to_attrs));
                 bound.add_node(bound_node.clone());
                 bound_node
             };
@@ -1510,7 +1509,7 @@ impl Binder {
             // Nodes already added via alias_to_bound; no duplicate insert needed
 
             let mut new_rel = QueryRelationship::new(
-                alias.clone(),
+                alias,
                 relationship.types.clone(),
                 attrs,
                 from_bound,

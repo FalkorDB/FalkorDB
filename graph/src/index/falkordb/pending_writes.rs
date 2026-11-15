@@ -3,7 +3,7 @@
 //! Each write function in [`graph_writes`](super::graph_writes) reads the graph and returns the
 //! [`IndexChanges`] its write makes; it holds no state. The graph's write method that called it
 //! adds them to the [`PendingIndexWrites`] carried by the unit of work's
-//! [`IndexDocs`](crate::index::index_docs::IndexDocs), next to the RediSearch documents it fills
+//! [`IndexDocs`](crate::index::index_docs::IndexDocs), next to the `RediSearch` documents it fills
 //! there, and whoever owns the unit of work applies it once, where it publishes those documents:
 //! a Cypher query at the end of each `Commit` segment, a replicated effects buffer at the end of
 //! the buffer, `GRAPH.BULK` after each token. One application per unit instead of one per write
@@ -46,7 +46,7 @@ pub struct IndexChanges {
 impl IndexChanges {
     /// No changes yet, for one entity kind. Allocates nothing.
     #[must_use]
-    pub fn new(entity: EntityType) -> Self {
+    pub const fn new(entity: EntityType) -> Self {
         Self {
             entity,
             changes: Vec::new(),
@@ -55,7 +55,7 @@ impl IndexChanges {
 
     /// Whether the write changes nothing in the index.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
 

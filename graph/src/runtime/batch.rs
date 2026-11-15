@@ -267,7 +267,7 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
     classify_numeric(values, false, FloatLane::Pure)
 }
 
-/// Classifies a `Vec<Value>` into the most specific typed Column plus a NullBitmap.
+/// Classifies a `Vec<Value>` into the most specific typed Column plus a `NullBitmap`.
 ///
 /// - If every non-null value is `Int`: returns `Column::Ints` (nulls get a 0 placeholder)
 /// - Else if every non-null value is `Int`/`Float`: returns `Column::Floats` (ints promoted)
@@ -1159,7 +1159,7 @@ impl<'a> Batch<'a> {
     /// stamps each emitted row's `origin_row` with its sequential position
     /// (`0..n`) in active order. This is the columnar replacement for the
     /// correlated argument-batch idiom that clones active rows while setting
-    /// `e.origin_row = i` (Apply / Optional / SemiApply / Merge / OR-apply),
+    /// `e.origin_row = i` (Apply / Optional / `SemiApply` / Merge / OR-apply),
     /// used downstream to correlate sub-plan results back to outer rows.
     ///
     /// The `origin_rows` sidecar is emitted only when it would contain a
@@ -1260,7 +1260,7 @@ impl<'a> Batch<'a> {
         self.value_only.clear(idx);
     }
 
-    /// Read a single value by (var_id, row) from the typed columns. Returns
+    /// Read a single value by (`var_id`, row) from the typed columns. Returns
     /// `None` when the variable is unbound in this row (out-of-range slot or
     /// `Column::Unbound`); returns `Some(Value::Null)` for an explicitly-null
     /// binding. Clones the value.

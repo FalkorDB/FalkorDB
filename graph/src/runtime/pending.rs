@@ -56,7 +56,7 @@ use crate::{
     },
 };
 
-/// Flatten a node_id → [label_ids] map into parallel (rows, cols) arrays.
+/// Flatten a `node_id` → [`label_ids`] map into parallel (rows, cols) arrays.
 fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
     let total: usize = map.values().map(std::vec::Vec::len).sum();
     let mut rows = Vec::with_capacity(total);
@@ -75,7 +75,7 @@ const INVALID_PROPERTY_MSG: &str =
 
 /// Whether a non-list value is a valid property: a primitive, or NULL when
 /// `allow_null`. Lists are checked by [`validate_list_property`].
-fn is_valid_property(
+const fn is_valid_property(
     value: &Value,
     allow_null: bool,
 ) -> bool {
@@ -166,7 +166,7 @@ fn is_value_valid_for_index_lookup(value: &Value) -> bool {
     }
 }
 
-/// The RediSearch lookup for one member of a unique constraint: an equality on
+/// The `RediSearch` lookup for one member of a unique constraint: an equality on
 /// every constrained property, when each is Range-indexed (`indexed`) and each
 /// value is one the index matches exactly.
 #[cfg(not(feature = "index-falkordb"))]
@@ -199,7 +199,7 @@ fn redisearch_unique_query(
 ///
 /// Like C's `EnforceUniqueEntity`, each member's values are looked up in an
 /// index, so the cost is per member, not per entity in the label. A lookup only
-/// has to return a superset: the index may lag this commit (RediSearch gets a
+/// has to return a superset: the index may lag this commit (`RediSearch` gets a
 /// `Commit`'s documents after its checks) or key several values alike, so a
 /// candidate it returns is re-verified against the graph, and members are
 /// compared among themselves. When the index cannot answer for some member's
@@ -314,7 +314,7 @@ pub struct Pending {
     /// fills.
     pub(crate) created_nodes: RoaringTreemap,
     pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
-    /// Reverse index: rel_id → type_name for O(1) existence/type lookups
+    /// Reverse index: `rel_id` → `type_name` for O(1) existence/type lookups
     pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
     /// The relationship ids this batch has reserved and not yet cancelled — the
     /// mirror of `created_nodes`.
@@ -327,11 +327,11 @@ pub struct Pending {
     pub(crate) deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted
     pub(crate) deleted_relationships: RoaringTreemap,
-    /// Endpoints for deleted relationships — populated by commit(), read by the
+    /// Endpoints for deleted relationships — populated by `commit()`, read by the
     /// effects emitter, which takes a `Pending` and never the other way round.
     pub(crate) deleted_endpoints: Vec<DeletedEdge>,
     /// `(node_id, label_id)` for every deleted node that carried a label —
-    /// populated by commit(), used by the effects emitter.
+    /// populated by `commit()`, used by the effects emitter.
     ///
     /// Captured here because `delete_nodes` clears the label matrices, so by
     /// the time effects are encoded the labels are unrecoverable; and a label
@@ -375,15 +375,15 @@ pub struct Pending {
     pub(crate) new_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for existing relationships (full merge path)
     pub(crate) existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
-    /// Labels to add: node_id → [label_ids]
+    /// Labels to add: `node_id` → [`label_ids`]
     pub(crate) set_labels: FxHashMap<u64, Vec<u64>>,
-    /// Labels to remove: node_id → [label_ids]
+    /// Labels to remove: `node_id` → [`label_ids`]
     pub(crate) remove_labels: FxHashMap<u64, Vec<u64>>,
     /// Index documents this `Commit` produced.
     pub(crate) index_docs: IndexDocs,
     /// Index documents accumulated across the query's commits, applied only
     /// once the whole query succeeds so a failed one never leaves stale
-    /// entries in RediSearch.
+    /// entries in `RediSearch`.
     pub(crate) deferred_docs: IndexDocs,
     /// Union of every index document this query has published, accumulated across
     /// all of its `Commit`s, so a later failure can resync them against committed
@@ -489,7 +489,7 @@ impl IndexDocs {
         (nodes, edges)
     }
 
-    /// Write the batch to the shared RediSearch index.
+    /// Write the batch to the shared `RediSearch` index.
     ///
     /// Only valid in writer mode: the index is not MVCC, so readers must be
     /// excluded (mirrors C, which updates index docs inside the graph write lock).
@@ -750,6 +750,7 @@ impl Pending {
     /// `set_labels` and `remove_labels` are disjoint per node (see
     /// [`Self::stage_node_labels`]), so at most one of the two branches below can
     /// match and the order they are consulted in carries no meaning.
+    #[must_use]
     pub fn node_has_label(
         &self,
         id: NodeId,
@@ -839,7 +840,7 @@ impl Pending {
 
     /// Delete a pending-created node: mark it deleted, collect its labels and attrs,
     /// and also mark any pending-created relationships connected to it for deletion.
-    /// Returns (label_ids, attrs, connected_pending_rels) — the relationships carry
+    /// Returns (`label_ids`, attrs, `connected_pending_rels`) — the relationships carry
     /// their type and staged attrs so callers can snapshot them for later reads.
     ///
     /// # Errors
@@ -1143,7 +1144,7 @@ impl Pending {
     }
 
     /// Returns existing (non-created) node IDs that have pending label REMOVEs
-    /// for ANY of the given label_ids.
+    /// for ANY of the given `label_ids`.
     #[must_use]
     pub fn nodes_with_pending_label_removes(
         &self,
@@ -1622,7 +1623,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(NodeId::from)
+                        read_once.candidates(&candidates).map(NodeId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -1717,7 +1718,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(RelationshipId::from)
+                        read_once.candidates(&candidates).map(RelationshipId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -1783,7 +1784,7 @@ impl Pending {
     /// edge's document key comes from there, since committed state no longer has the
     /// edge at all.
     ///
-    /// `committed` is only read: RediSearch's documents live behind the
+    /// `committed` is only read: `RediSearch`'s documents live behind the
     /// indexer, which every version shares, so rewriting them changes no version, and
     /// a reader of `committed` is never disturbed.
     ///
@@ -1841,7 +1842,7 @@ impl Pending {
         g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
     }
 
-    /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
+    /// Write this `Commit`'s index documents to `RediSearch`. Writer mode only.
     pub fn commit_deferred_indexes(
         &mut self,
         g: &mut Graph,
@@ -2021,7 +2022,7 @@ mod label_effect_tests {
         add: bool,
         labels: &[LabelId],
     ) -> Record {
-        let ids: IdList = [NODE].into_iter().collect();
+        let ids: IdList = std::iter::once(NODE).collect();
         let mut shape: Vec<u32> = labels.iter().map(|l| usize::from(*l) as u32).collect();
         shape.sort_unstable();
         shape.dedup();
@@ -2041,7 +2042,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert_eq!(records(&pending, &g), vec![labelled(true, &[l])]);
     }
@@ -2072,7 +2073,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
         pending.remove_node_labels(NODE.into(), &[l]);
 
         assert!(
@@ -2096,7 +2097,7 @@ mod label_effect_tests {
         let l = labels[0];
 
         pending.remove_node_labels(NODE.into(), &[l]);
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert!(
             !pending.remove_labels.contains_key(&NODE),
@@ -2420,7 +2421,7 @@ mod native_unique_tests {
                 values,
             )
             .expect("both columns answer");
-            fewest_candidates(lookups).count()
+            fewest_candidates(&lookups).count()
         };
         let (tenant, three, absent) = (Value::Int(7), Value::Int(3), Value::Int(99));
         assert_eq!(
@@ -2480,17 +2481,17 @@ mod native_unique_tests {
         };
         let once = ReadOnce::default();
         assert_eq!(
-            once.candidates(lookups(7, "u1")).count(),
+            once.candidates(&lookups(7, "u1")).count(),
             51,
             "the first member reads the tenant"
         );
         assert_eq!(
-            once.candidates(lookups(7, "u2")).count(),
+            once.candidates(&lookups(7, "u2")).count(),
             0,
             "a member with the same lookups reads nothing more"
         );
         assert_eq!(
-            once.candidates(lookups(8, "u9")).count(),
+            once.candidates(&lookups(8, "u9")).count(),
             1,
             "another tenant is another lookup"
         );
@@ -2531,7 +2532,7 @@ mod native_unique_tests {
         .expect("id's column answers");
         assert_eq!(lookups.len(), 1, "the Building column declines");
         assert_eq!(
-            fewest_candidates(lookups).count(),
+            fewest_candidates(&lookups).count(),
             2,
             "the two holding id 1"
         );

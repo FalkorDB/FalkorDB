@@ -91,7 +91,7 @@ use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
 
 /// One past the highest id a batch may create.
 ///
-/// Every id is a row of the graph's matrices, and GraphBLAS refuses a dimension
+/// Every id is a row of the graph's matrices, and `GraphBLAS` refuses a dimension
 /// past `GrB_INDEX_MAX`: creating id `n` sizes them to at least `n + 1` rows, so
 /// the highest creatable id is one below it. Refused by [`IdSpace::create`],
 /// because the caller sizes the matrices before [`IdSpace::verify`] ever runs —
@@ -427,7 +427,7 @@ impl IdSpace {
     ///
     /// Created or cancelled — not left outstanding. The boundary counts live and
     /// free ids and deliberately not reserved ones: reservations would grow the
-    /// GraphBLAS matrix dimension `algo_procedures.rs` derives from it while
+    /// `GraphBLAS` matrix dimension `algo_procedures.rs` derives from it while
     /// leaving its liveness gate off, so `CALL algo.*` inside a write query would
     /// walk phantom nodes. An id still held when this runs lands *below* the
     /// boundary it opens, and the next [`Self::create`] of it is refused as
@@ -1265,7 +1265,7 @@ mod reclaim_ids_tests {
 
         assert_eq!(reclaim(&pool, &none, 3).0, vec![3, 9, 10]);
         assert_eq!(reclaim(&pool, &none, 99).0, vec![3, 9, 10, 40, 900]);
-        assert!(reclaim(&pool, &none, 0).0.is_empty());
+        assert_eq!(reclaim(&pool, &none, 0).0, [] as [u64; 0]);
     }
 
     /// Held ids are not handed out, wherever in the pool they sit.
@@ -1292,7 +1292,7 @@ mod reclaim_ids_tests {
     #[test]
     fn reports_how_many_it_could_take() {
         let pool: RoaringTreemap = (0..4u64).collect();
-        let held: RoaringTreemap = [2u64].into_iter().collect();
+        let held: RoaringTreemap = std::iter::once(2u64).collect();
 
         let (out, taken) = reclaim(&pool, &held, 9);
         assert_eq!(out, vec![0, 1, 3]);
@@ -1306,8 +1306,8 @@ mod reclaim_ids_tests {
         let empty = RoaringTreemap::new();
         let pool: RoaringTreemap = (0..4u64).collect();
 
-        assert!(reclaim(&empty, &empty, 10).0.is_empty());
-        assert!(reclaim(&pool, &pool, 10).0.is_empty());
+        assert_eq!(reclaim(&empty, &empty, 10).0, [] as [u64; 0]);
+        assert_eq!(reclaim(&pool, &pool, 10).0, [] as [u64; 0]);
     }
 
     /// It appends, so a caller can reclaim into a vector that already holds

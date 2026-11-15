@@ -19,7 +19,7 @@
 //! rather than asserted.
 //!
 //! Run with:
-//!   cargo test --release -p graph block_scaling -- --ignored --nocapture --test-threads=1
+//!   cargo test --release -p graph `block_scaling` -- --ignored --nocapture --test-threads=1
 
 use super::instr::read_instr;
 use super::tensor::{BLOCK_SHIFT, Tensor};
@@ -68,7 +68,7 @@ fn spread(blocks: u64) -> Tensor {
 /// Reported per *transaction*, not per pair, because that is the quantity the
 /// block loop makes proportional to block count.
 #[test]
-#[ignore]
+#[ignore = "benchmark: run by hand with --ignored --nocapture"]
 fn block_scaling_zero_cost() {
     ensure_init();
     println!("\n=== block (0,0) only, {PAIRS} multi-edge pairs ===");
@@ -97,7 +97,7 @@ fn block_scaling_zero_cost() {
 
 /// The case the design trades away: the same pairs spread thinner and thinner.
 #[test]
-#[ignore]
+#[ignore = "benchmark: run by hand with --ignored --nocapture"]
 fn block_scaling_crossover() {
     ensure_init();
     println!("\n=== {PAIRS} multi-edge pairs spread over N blocks ===");
@@ -138,7 +138,7 @@ fn block_scaling_crossover() {
 
 /// Does shrinking `me`'s declared dimensions buy anything?
 ///
-/// GraphBLAS 10 chooses 32- or 64-bit index arrays per matrix from its
+/// `GraphBLAS` 10 chooses 32- or 64-bit index arrays per matrix from its
 /// dimensions, so a matrix declared `GrB_INDEX_MAX` square stores 64-bit row
 /// and column indices even when it holds four entries. `me`'s columns are edge
 /// ids and its rows are compound keys, and the two are independent: the column
@@ -146,10 +146,10 @@ fn block_scaling_crossover() {
 /// hyperlist holds one per multi-edge pair.
 ///
 /// This prices each choice against the same content, and reports the index
-/// widths GraphBLAS actually picked so the numbers are attributable rather than
+/// widths `GraphBLAS` actually picked so the numbers are attributable rather than
 /// inferred.
 #[test]
-#[ignore]
+#[ignore = "benchmark: run by hand with --ignored --nocapture"]
 fn block_scaling_index_width() {
     use super::matrix::Matrix;
 
@@ -210,7 +210,7 @@ fn block_scaling_index_width() {
 
 /// Probe: is the top row key writable, and is a wider dimension legal?
 #[test]
-#[ignore]
+#[ignore = "benchmark: run by hand with --ignored --nocapture"]
 fn block_scaling_top_row_probe() {
     use super::matrix::Matrix;
     use super::tensor::{BLOCK_SHIFT, GrB_INDEX_MAX, Tensor, compound_key};

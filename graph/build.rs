@@ -1,6 +1,6 @@
-//! Link FalkorDB against its native dependencies.
+//! Link `FalkorDB` against its native dependencies.
 //!
-//! Everything about *producing* GraphBLAS, LAGraph and RediSearch lives in the
+//! Everything about *producing* `GraphBLAS`, `LAGraph` and `RediSearch` lives in the
 //! `native-deps` crate (a path build-dependency, so this is a plain function
 //! call -- no nested cargo, nothing to inherit `RUSTFLAGS` from). This script's
 //! job is narrower: turn the resolved prefixes into `cargo:rustc-link-*`
@@ -51,7 +51,7 @@ fn main() {
 /// being built with.
 ///
 /// The sanitizer flavour is a cache-key input rather than something sniffed out
-/// of `RUSTFLAGS`, which is what lets an instrumented and a clean RediSearch
+/// of `RUSTFLAGS`, which is what lets an instrumented and a clean `RediSearch`
 /// coexist in the cache. The cost of that is a second source of truth: if a
 /// sanitizer build forgets to set `REDISEARCH_SAN`, the key resolves to the
 /// CLEAN archive and links it into an ASAN module -- which produces confusing
@@ -69,9 +69,7 @@ fn assert_sanitizer_agrees(request: &Request) {
     // plain RUSTFLAGS, so checking only the first two would miss the exact
     // configuration this guard is for.
     let mut sources = vec![
-        std::env::var("CARGO_ENCODED_RUSTFLAGS")
-            .map(|v| v.replace('\x1f', " "))
-            .unwrap_or_default(),
+        std::env::var("CARGO_ENCODED_RUSTFLAGS").map_or_default(|v| v.replace('\x1f', " ")),
         std::env::var("RUSTFLAGS").unwrap_or_default(),
     ];
     if let Ok(target) = std::env::var("TARGET") {
@@ -203,7 +201,7 @@ fn link_cxx_and_openssl() {
     }
 }
 
-/// RediSearch 8.6, embedded as a static library.
+/// `RediSearch` 8.6, embedded as a static library.
 ///
 /// `native-deps` publishes it under stable names, so there is no variant-dir
 /// scan and no flavour guessing here any more: the sanitizer flavour is a
@@ -240,10 +238,10 @@ fn link_redisearch(redisearch: &Resolved) {
     link_static(&patched);
 }
 
-/// RediSearch's Rust archive carries a second copy of the `redis-module` crate
-/// whose linkme `#[distributed_slice]` markers collide with FalkorDB's at load
+/// `RediSearch`'s Rust archive carries a second copy of the `redis-module` crate
+/// whose linkme `#[distributed_slice]` markers collide with `FalkorDB`'s at load
 /// time. Produce a copy in `OUT_DIR` with every linkme section removed and return
-/// its path. The slices are empty in RediSearch's library build, so dropping them
+/// its path. The slices are empty in `RediSearch`'s library build, so dropping them
 /// only removes dead bookkeeping.
 fn strip_linkme_sections(archive: &Path) -> PathBuf {
     assert!(

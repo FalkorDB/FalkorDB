@@ -86,14 +86,14 @@ pub struct ApplyOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     optional_vars: Option<Vec<Variable>>,
     child_idx: NodeIdx<Dyn<IR>>,
-    /// Batched mode state (used when can_batch is true).
+    /// Batched mode state (used when `can_batch` is true).
     active: Option<Box<ActiveSubPlan<'a>>>,
     /// Batched mode's single buffered output batch (merged sub-plan results or
     /// the optional NULL fallback), emitted on the next `next()` without a
     /// row-by-row rebuild. The drive loop consumes it before producing another,
     /// so one slot suffices.
     pending_batch: Option<Batch<'a>>,
-    /// Per-row mode state (used when can_batch is false).
+    /// Per-row mode state (used when `can_batch` is false).
     per_row: Option<Box<PerRowState<'a>>>,
     can_batch: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,

@@ -18,7 +18,7 @@
 //! 3. **Labeled** (score 1) -- has at least one label
 //! 4. **Cardinality** (tiebreaker) -- label with fewer nodes wins
 //!
-//! ## Single CondTraverse
+//! ## Single `CondTraverse`
 //!
 //! ```text
 //! Before (to is better):          After (swap + transposed):
@@ -32,7 +32,7 @@
 //!
 //! ## Hop Ordering
 //!
-//! For chains of CondTraverse operators (CT_0 -> CT_1 -> ... -> CT_n), the
+//! For chains of `CondTraverse` operators (`CT_0` -> `CT_1` -> ... -> `CT_n`), the
 //! hops are re-ordered greedily from the chosen endpoint: each round takes a
 //! hop with an endpoint already bound (preferring one with *both* bound, then
 //! the best-scoring newly bound endpoint) and orients it to start there. On a
@@ -505,7 +505,7 @@ fn child_subtree_binds(
 /// predicate) scanning it instead is cheaper: `CondVarLenTraverseOp` sees a
 /// bound `to` with an unbound `from` and walks the relationship backwards, so
 /// the pattern still binds exactly the same rows. This mirrors what the
-/// `CondTraverse` chain logic does, and matches FalkorDB C — which likewise
+/// `CondTraverse` chain logic does, and matches `FalkorDB` C — which likewise
 /// only reverses on selectivity, never on label cardinality.
 fn select_var_len_scan_node(
     optimized_plan: &mut DynTree<IR>,
@@ -656,7 +656,7 @@ fn select_var_len_scan_node(
             scan.node_mut(root_idx).push_child(arg);
         }
         if in_merge {
-            scan = tree!(IR::IncludePending { node: to.clone() }, scan);
+            scan = tree!(IR::IncludePending { node: to }, scan);
         }
 
         optimized_plan.node_mut(child_idx).prune();
@@ -668,14 +668,14 @@ fn select_var_len_scan_node(
 
 /// Selects the optimal scan node for leaf `CondTraverse` operators.
 ///
-/// For each bottom-of-chain CondTraverse (leaf or with a non-CT child),
+/// For each bottom-of-chain `CondTraverse` (leaf or with a non-CT child),
 /// determines the best endpoint to scan from based on: (1) bound variables
 /// from child, (2) filter presence, (3) label presence, (4) label cardinality.
 /// Adds a `NodeByLabelScan` or `AllNodeScan` child for leaf chains, and
 /// optionally swaps from/to with `transposed=true` if the better endpoint is
 /// at the other end.
 ///
-/// For chains of CondTraverse operators, walks up to find the best endpoint
+/// For chains of `CondTraverse` operators, walks up to find the best endpoint
 /// across the entire chain. If the best endpoint is not at the bottom, reverses
 /// the chain direction.
 pub(super) fn select_scan_node(
@@ -1195,7 +1195,7 @@ pub(super) fn select_scan_node(
 
             // Build the new subtree bottom-up. Nothing below mutates the plan,
             // so an unplaceable filter can still abandon the rewrite.
-            let mut subtree = existing_child.clone().unwrap_or_else(|| {
+            let mut subtree = existing_child.unwrap_or_else(|| {
                 make_scan_subtree(&best_node, in_merge, preserved_argument.clone(), vec![])
             });
             if orderable {

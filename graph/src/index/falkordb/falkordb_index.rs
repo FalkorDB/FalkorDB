@@ -1,10 +1,10 @@
-//! Folded-roots MVCC holder: the FalkorDB index state that lives
+//! Folded-roots MVCC holder: the `FalkorDB` index state that lives
 //! on [`Graph`](crate::graph::Graph) as its own copy-on-write field, so
 //! `Graph::new_version()` forks it in `O(1)` per column and the committed-version
 //! `Arc<Graph>` swap publishes graph + index together — one atomic
 //! step, no torn read.
 //!
-//! Deliberately **pure data — no reference back to `Graph`**. The RediSearch
+//! Deliberately **pure data — no reference back to `Graph`**. The `RediSearch`
 //! `Indexer` holds an `Arc<ArcSwapOption<Graph>>` pointing
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
@@ -40,7 +40,7 @@ pub type IndexKey = (Arc<String>, Arc<String>);
 /// Index kinds are a **closed set we own**, so this is a static enum — no
 /// `Box<dyn>`, no boxed iterators, and exhaustive matching forces every kind to
 /// be handled (an unimplemented kind fails loudly, never silently). A Range column
-/// ([`RangeIndex`]) holds the kinds of one attribute together, as a RediSearch Range field
+/// ([`RangeIndex`]) holds the kinds of one attribute together, as a `RediSearch` Range field
 /// does; the numeric kind is the only one so far. More variants (Text, Vector) land with their
 /// kinds.
 #[derive(Clone)]
@@ -580,7 +580,7 @@ impl BuildCursor {
     }
 }
 
-/// The graph's FalkorDB indexes: one CoW column per indexed `(label, attr)`.
+/// The graph's `FalkorDB` indexes: one `CoW` column per indexed `(label, attr)`.
 ///
 /// Node and edge (relationship) columns live in separate maps — a node label and
 /// a relationship type can share a name, so one keyspace would collide. Callers
@@ -665,7 +665,7 @@ impl FalkorDbIndex {
 
     /// The column map for `entity` — node labels and relationship types keep
     /// separate keyspaces (a label and a type may share a name).
-    fn columns(
+    const fn columns(
         &self,
         entity: EntityType,
     ) -> &HashMap<IndexKey, IndexEntry<IndexColumn>> {
@@ -675,7 +675,7 @@ impl FalkorDbIndex {
         }
     }
 
-    fn columns_mut(
+    const fn columns_mut(
         &mut self,
         entity: EntityType,
     ) -> &mut HashMap<IndexKey, IndexEntry<IndexColumn>> {
@@ -904,7 +904,7 @@ impl FalkorDbIndex {
 
     /// Whether an indexer batch was published between `older`, an earlier version, and this
     /// published one.
-    pub(crate) fn batch_published_since(
+    pub(crate) const fn batch_published_since(
         &self,
         older: &Self,
     ) -> bool {
@@ -1243,6 +1243,8 @@ impl FalkorDbIndex {
     ///
     /// # Errors
     /// [`CchError::NotFound`] if no entry over `def` is held.
+    // Takes `&mut self` for the API it will have; the stub mutates nothing yet.
+    #[allow(clippy::needless_pass_by_ref_mut)]
     pub(crate) fn drop_cch(
         &mut self,
         _def: &CchIndexDef,
@@ -1763,7 +1765,7 @@ mod tests {
                 &label,
                 &IndexQuery::And(vec![
                     IndexQuery::Equal {
-                        key: key.clone(),
+                        key,
                         value: Value::Int(30),
                     },
                     IndexQuery::Equal {
@@ -1789,7 +1791,7 @@ mod tests {
     /// `n.a IN [...]` reaches the facade as one `InList`, and `a IN [..] OR a = ..` as an `Or` of
     /// lists and equalities. Each must be routed to that attribute's column, and anything that
     /// cannot be answered whole must be declined. A facade that declined every one would still
-    /// return the right rows, because RediSearch answers instead, so only a test at this level
+    /// return the right rows, because `RediSearch` answers instead, so only a test at this level
     /// notices.
     #[test]
     fn query_numeric_serves_in_lists_and_same_attribute_unions() {
@@ -1814,14 +1816,12 @@ mod tests {
         };
         // Union order is unspecified, so compare sorted ids.
         let served = |entity, q: &IndexQuery<Value>| -> Option<Vec<u64>> {
-            match idx.query_column(entity, &label, q)? {
-                Ok(it) => {
-                    let mut ids: Vec<u64> = it.collect();
-                    ids.sort_unstable();
-                    Some(ids)
-                }
-                Err(_) => panic!("column is still Building"),
-            }
+            let Ok(it) = idx.query_column(entity, &label, q)? else {
+                panic!("column is still Building")
+            };
+            let mut ids: Vec<u64> = it.collect();
+            ids.sort_unstable();
+            Some(ids)
         };
 
         assert_eq!(

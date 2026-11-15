@@ -20,7 +20,7 @@
 //! **Stopping.** Only the Redis shutdown handler stops the builder, and only where the server tears
 //! its modules down (`RS_GLOBAL_DTORS`: the sanitizer runs). [`stop`] waits a bounded time for the
 //! pool's workers, since one may be waiting for the GIL, which the shutdown handler holds, and says
-//! whether they all exited: the handler tears GraphBLAS down only then, so a worker left behind may
+//! whether they all exited: the handler tears `GraphBLAS` down only then, so a worker left behind may
 //! still free what it holds. A batch checks for the stop before it reads and again once it holds
 //! what publishing needs: after the stop, one that has not started reading does not, and one that
 //! waited to publish publishes nothing. One already reading goes on, inside the stop's wait or
@@ -357,6 +357,8 @@ impl Job {
         // publish's hold, release build).
         let _built = prepared.falkordb_index.clone();
         let mut prepared = Some(prepared);
+        // Only held, so its pages are freed after the GIL is released (see above).
+        #[allow(clippy::collection_is_never_read)]
         let mut _replaced = None;
         let (builder, host, id, generation) =
             (&self.builder, &self.builder.host, &self.id, self.generation);
@@ -418,7 +420,9 @@ impl Job {
             batch.limit_catch_up(sizing.catch_up_max);
         }
         #[cfg(test)]
-        if let Some(hold) = self.builder.while_reading.lock().take() {
+        let hold = self.builder.while_reading.lock().take();
+        #[cfg(test)]
+        if let Some(hold) = hold {
             hold(&prepared);
         }
         Ok(Read {
@@ -475,7 +479,7 @@ pub fn start(
 }
 
 /// Stop the builder, for good ([`Builder::stop_within`]): its workers get [`STOP_WAIT`], since the
-/// Redis shutdown handler calls this holding the GIL. Whether every worker exited: GraphBLAS may be
+/// Redis shutdown handler calls this holding the GIL. Whether every worker exited: `GraphBLAS` may be
 /// torn down only then.
 #[must_use]
 pub fn stop() -> bool {

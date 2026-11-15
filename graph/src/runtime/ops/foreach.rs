@@ -182,7 +182,7 @@ impl<'a> Iterator for ForEachOp<'a> {
                     }
 
                     // Pass through the original input row unchanged.
-                    self.pending.push_back(env.clone());
+                    self.pending.push_back(env);
 
                     if self.pending.len() >= BATCH_SIZE {
                         break;

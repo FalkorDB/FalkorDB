@@ -334,7 +334,7 @@ fn field_type_bits(field_type: u32) -> impl Iterator<Item = u32> {
         }
         // Lowest set bit, then clear it. `wrapping_neg` because `-rest` on the
         // sign bit would overflow in debug.
-        let lowest = rest & rest.wrapping_neg();
+        let lowest = rest.isolate_lowest_one();
         rest &= rest - 1;
         Some(lowest)
     })
@@ -508,7 +508,7 @@ mod tests {
             ("INDEX_FLD_VECTOR", index_field_type::INDEX_FLD_VECTOR),
         ] {
             assert!(
-                value <= u64::from(u32::MAX),
+                u32::try_from(value).is_ok(),
                 "{name} = {value:#x} does not fit the four bytes the wire carries"
             );
         }

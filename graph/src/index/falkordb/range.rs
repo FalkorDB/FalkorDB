@@ -1,4 +1,4 @@
-//! The Range column: one `(label, attribute)` index, made of the kinds a RediSearch Range field is
+//! The Range column: one `(label, attribute)` index, made of the kinds a `RediSearch` Range field is
 //! made of — NUMERIC, TAG and GEO. Only the numeric kind exists so far; the others land as further
 //! fields of [`RangeIndex`], each implementing [`RangeKind`].
 //!
@@ -101,7 +101,7 @@ impl Kind {
     /// The kind that indexes `value`, or `None` for a value no kind holds (`NULL`, a string, a
     /// point, a temporal, a list, a map, a vector). A list is deliberately not a kind: its
     /// *elements* are indexed by the numeric kind's array tree, but the list itself is not a value
-    /// any predicate can be routed by. Temporals are not indexed, as in the RediSearch path ([`encode_numeric`]).
+    /// any predicate can be routed by. Temporals are not indexed, as in the `RediSearch` path ([`encode_numeric`]).
     const fn of(value: &Value) -> Option<Self> {
         match value {
             Value::Int(_) | Value::Float(_) | Value::Bool(_) => Some(Self::Numeric),
@@ -136,7 +136,7 @@ impl Selection {
 
     /// Whether this selects nothing by construction.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         matches!(self, Self::Scalars(KeySet::Empty))
     }
 
@@ -432,7 +432,7 @@ impl RangeIndex {
     /// The numeric kind, for tests that look at its trees.
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn numeric(&self) -> &NumericIndex {
+    pub(crate) const fn numeric(&self) -> &NumericIndex {
         &self.numeric
     }
 

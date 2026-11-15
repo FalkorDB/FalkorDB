@@ -26,12 +26,30 @@
 #![allow(clippy::needless_collect)]
 // Pedantic style lints with low signal in this codebase.
 #![allow(clippy::similar_names)]
+// Style lints from the strict pass (pedantic + nursery) that this codebase does
+// not follow, each for its reason:
+// - `assert!(v.is_empty())` reads better than `assert_eq!(v, [] as [T; 0])`.
+#![allow(clippy::assert_is_empty)]
+// - tests and long functions declare small helpers where they are used.
+#![allow(clippy::items_after_statements)]
+// - `map_or_else` with two closures is often harder to read than `if let`.
+#![allow(clippy::option_if_let_else)]
+// - doc comments here lead with a full paragraph, not a one-line summary.
+#![allow(clippy::too_long_first_doc_paragraph)]
+// - matrix and graph-algorithm code uses the usual one-letter names.
+#![allow(clippy::many_single_char_names)]
+// - no map or set here is used with another hasher.
+#![allow(clippy::implicit_hasher)]
+// - match arms are grouped by meaning, each with its own comment, even when
+//   two bodies happen to agree; and per-branch code stays in its branch.
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::branches_sharing_code)]
 
-//! # FalkorDB Graph Engine
+//! # `FalkorDB` Graph Engine
 //!
-//! This crate contains the core graph database engine for FalkorDB.
+//! This crate contains the core graph database engine for `FalkorDB`.
 //! It provides Cypher query parsing, planning, optimization, and execution
-//! over a sparse matrix-based graph representation using GraphBLAS.
+//! over a sparse matrix-based graph representation using `GraphBLAS`.
 //!
 //! ## Query Processing Pipeline
 //!
@@ -59,8 +77,8 @@
 //! - [`parser`]: Cypher parser, AST definitions, and string escape utilities
 //! - [`planner`]: Semantic binding, logical plan generation, and optimization
 //! - [`graph`]: Graph data structures (sparse matrices, vectors, MVCC)
-//! - [`graph::graphblas`]: GraphBLAS FFI bindings (auto-generated)
-//! - [`index`]: Index types, management, and RediSearch FFI bindings
+//! - [`graph::graphblas`]: `GraphBLAS` FFI bindings (auto-generated)
+//! - [`index`]: Index types, management, and `RediSearch` FFI bindings
 //! - [`locks`]: The lock seam the host provides (escalate a query to writer mode)
 //! - [`runtime`]: Query execution engine and built-in functions
 //! - [`storage`]: Shared storage seam (per-store backend registry; an in-memory

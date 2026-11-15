@@ -123,7 +123,7 @@ use super::{
 /// or all pending rows are exhausted.
 ///
 /// Shared helper used by operators that buffer intermediate results
-/// (CondTraverse, ExpandInto, Unwind, ForEach, CondVarLenTraverse, LoadCsv).
+/// (`CondTraverse`, `ExpandInto`, Unwind, `ForEach`, `CondVarLenTraverse`, `LoadCsv`).
 pub fn drain_pending(
     pending: &mut VecDeque<Row>,
     builder: &mut BatchBuilder,

@@ -36,7 +36,7 @@
 //! arrival order. Sharing the tiebreaker means the top-k heap retains the same
 //! rows, in the same order, as a full sort followed by truncation — which some
 //! queries rely on (e.g. comparing a result against the same query with a
-//! reversed traversal pattern, tests/flow/test_social).
+//! reversed traversal pattern, `tests/flow/test_social`).
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;

@@ -42,7 +42,7 @@ use orx_tree::{Dyn, NodeIdx};
 pub struct CartesianProductOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    /// Pre-built right branch operators, seeded via set_argument_batch.
+    /// Pre-built right branch operators, seeded via `set_argument_batch`.
     pub(crate) right_children: Vec<BatchOp<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily materialized right-hand side. `None` means not yet computed.
@@ -340,7 +340,7 @@ mod tests {
         }
         let actual = actual.finish();
 
-        assert_eq!(expected.len(), 2 * 3 * 2 * 1, "2 left rows x 3 x 2 x 1");
+        assert_eq!(expected.len(), (2 * 3 * 2), "2 left rows x 3 x 2 x 1");
         assert_same(&expected, &actual);
     }
 

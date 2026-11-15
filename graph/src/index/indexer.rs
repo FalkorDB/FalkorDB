@@ -10,7 +10,7 @@
 //! - **Route queries** -- delegates [`IndexQuery`] execution to the correct
 //!   per-label [`Index`](super::Index).
 //! - **Commit mutations** -- batches of added/removed documents are flushed
-//!   to RediSearch during transaction commit.
+//!   to `RediSearch` during transaction commit.
 //! - **Background population** -- tracks progress, serializes background
 //!   batches with writes via a shared `write_lock`, and supports
 //!   cancellation.
@@ -43,7 +43,7 @@
 //! `load()` the current map snapshot without locking. Schema mutations
 //! (`create_index`, `drop_index`, ...) publish a new map via clone-and-swap
 //! while holding `write_lock`; per-document mutations (`commit`, ...) call
-//! `&self` methods on the internally-synchronized RediSearch spec.
+//! `&self` methods on the internally-synchronized `RediSearch` spec.
 //! Background population uses `write_lock` to avoid racing with
 //! per-transaction commit calls and schema changes.
 
@@ -366,7 +366,7 @@ impl Indexer {
         Ok(())
     }
 
-    /// Drop index fields and return (dropped_count, remaining_count).
+    /// Drop index fields and return (`dropped_count`, `remaining_count`).
     /// Returns `None` if the label has no index.
     ///
     /// Caller must hold [`Self::write_lock`] — map mutations are published
@@ -518,7 +518,7 @@ impl Indexer {
 
     /// Like [`fulltext_query`], but for *edge* indexes: yields
     /// `(src, dst, edge_id, score)` tuples read from the 24-byte
-    /// document key plus the RediSearch relevance score.
+    /// document key plus the `RediSearch` relevance score.
     pub fn fulltext_query_edges(
         &self,
         label: &Arc<String>,
@@ -571,7 +571,7 @@ impl Indexer {
     /// Returns `None` if the label has no index, the attribute has no
     /// vector field, or the field is missing similarity metadata.
     /// Used by the runtime to compute distances when materializing
-    /// KNN results — RediSearch's iterator-level score is not the
+    /// KNN results — `RediSearch`'s iterator-level score is not the
     /// distance, so the caller must compute it manually using the
     /// query and entity vectors plus this metric.
     #[must_use]
@@ -790,8 +790,7 @@ impl Indexer {
         self.index
             .load()
             .get(label)
-            .map(|index| index.fields().clone())
-            .unwrap_or_default()
+            .map_or_default(|index| index.fields().clone())
     }
 
     /// Get fields for all labels.
@@ -886,7 +885,7 @@ impl Indexer {
         self.cancelled.load(Ordering::Relaxed)
     }
 
-    /// Rebuild the RediSearch spec for `label` from scratch (drop + create +
+    /// Rebuild the `RediSearch` spec for `label` from scratch (drop + create +
     /// re-register fields), bumping the generation id so stale populate
     /// workers bail out.
     ///

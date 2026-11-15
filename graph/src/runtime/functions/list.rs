@@ -18,7 +18,7 @@
 //!  list.dedup(list)                    list_dedup()              deduplicated list
 //! ```
 //!
-//! The `list.*` functions follow the FalkorDB extension namespace.
+//! The `list.*` functions follow the `FalkorDB` extension namespace.
 //! `list.insert` and `list.insertListElements` accept an optional
 //! `allowDuplicate` boolean (default `true`).  Negative indices are
 //! normalised relative to the list length.

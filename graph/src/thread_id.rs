@@ -26,7 +26,7 @@ pub fn is_main_thread() -> bool {
         .is_some_and(|id| *id == thread::current().id())
 }
 
-/// Mark the current process as a fork child. Set from the pthread_atfork
+/// Mark the current process as a fork child. Set from the `pthread_atfork`
 /// CHILD handler so downstream code can detect whether it is running in
 /// the original parent or in a forked descendant.
 pub fn set_process_is_child(v: bool) {

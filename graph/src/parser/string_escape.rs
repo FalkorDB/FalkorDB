@@ -2,7 +2,7 @@
 //!
 //! This module provides functions to handle escape sequences in Cypher string
 //! literals, maintaining strict behavioral parity with the C reference
-//! implementation in FalkorDB.
+//! implementation in `FalkorDB`.
 //!
 //! ## Usage in the Parser
 //!

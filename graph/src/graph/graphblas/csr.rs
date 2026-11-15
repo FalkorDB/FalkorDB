@@ -1,14 +1,14 @@
-//! Row-major CSR export of a GraphBLAS matrix, copied into Rust `Vec`s: the
+//! Row-major CSR export of a `GraphBLAS` matrix, copied into Rust `Vec`s: the
 //! result type of [`Matrix::into_csr`] and [`Matrix::into_csr_pattern`], and
 //! the copy itself.
 //!
-//! GraphBLAS's own `GrB_Matrix_export` writes the arrays Rust allocated. It
+//! `GraphBLAS`'s own `GrB_Matrix_export` writes the arrays Rust allocated. It
 //! finishes the matrix's pending work first, so every row comes out sorted; it
 //! converts hypersparse, bitmap and full storage in a scratch copy of its own;
 //! it widens 32-bit indices to 64; and it expands iso values. A matrix stored
 //! by column is first copied by row (`Matrix::copy_csr`), since the export's
 //! own transpose can leave rows unsorted. So a matrix needs no setting up
-//! before it is exported, and nothing GraphBLAS allocated is ever freed by Rust.
+//! before it is exported, and nothing `GraphBLAS` allocated is ever freed by Rust.
 
 use std::os::raw::c_int;
 
@@ -18,7 +18,7 @@ use super::matrix::Matrix;
 use super::matrix::grb;
 use super::{GrB_Format, GrB_Index, GrB_Info, GrB_Matrix, GrB_Matrix_exportSize};
 
-/// Row-major CSR export of a GraphBLAS matrix.
+/// Row-major CSR export of a `GraphBLAS` matrix.
 ///
 /// Row `r` owns the entries `row_offsets[r] .. row_offsets[r + 1]`: their column
 /// indices are that slice of `column_indices`, ascending and duplicate-free, and —
@@ -38,7 +38,7 @@ pub struct CsrExport<V> {
 impl<V> CsrExport<V> {
     /// The matrix's row count.
     #[must_use]
-    pub fn row_count(&self) -> usize {
+    pub const fn row_count(&self) -> usize {
         self.row_offsets.len() - 1
     }
 }
@@ -58,7 +58,7 @@ pub(super) type ExportFn<V> = unsafe extern "C" fn(
 /// Copy `matrix` out as row-major CSR through `export`.
 ///
 /// Rows come out sorted when `matrix` is stored by row: see `Matrix::copy_csr`.
-/// An `export` of another type than the matrix's is refused by GraphBLAS
+/// An `export` of another type than the matrix's is refused by `GraphBLAS`
 /// (`GrB_DOMAIN_MISMATCH`), which panics here.
 ///
 /// # Safety
@@ -124,7 +124,7 @@ mod tests {
         GxB_Option_Field, test_init,
     };
 
-    /// Run `body` with this thread's GraphBLAS calls on `threads` threads,
+    /// Run `body` with this thread's `GraphBLAS` calls on `threads` threads,
     /// however many cores the machine has: a `GxB_Context` engaged on this
     /// thread only, so other tests are not affected.
     fn on_threads<R>(
@@ -145,7 +145,7 @@ mod tests {
         result
     }
 
-    /// Change how GraphBLAS stores `m`, behind the export's back.
+    /// Change how `GraphBLAS` stores `m`, behind the export's back.
     fn set_field<T>(
         m: &Matrix<T>,
         field: GxB_Option_Field,
@@ -221,7 +221,7 @@ mod tests {
         );
     }
 
-    /// However GraphBLAS stores the matrix (hypersparse, bitmap, full, by
+    /// However `GraphBLAS` stores the matrix (hypersparse, bitmap, full, by
     /// column, or with 64-bit offsets or column indices rather than its default
     /// 32), the export is the same 64-bit CSR. Each storage is set after the
     /// last write and checked before the export, so the export really meets it.
@@ -286,7 +286,7 @@ mod tests {
     }
 
     /// A matrix stored by column comes out with every row sorted. Random
-    /// entries, enough of them, and 8 GraphBLAS threads whatever the machine,
+    /// entries, enough of them, and 8 `GraphBLAS` threads whatever the machine,
     /// so that the transpose runs on several threads, which can leave rows
     /// unsorted: exporting such a matrix directly gave 78,583 out-of-order rows
     /// at this size, and none at 2 threads.
@@ -368,7 +368,7 @@ mod tests {
     }
 
     /// The export reads the matrix and frees only its own handle: a clone that
-    /// shares the GraphBLAS matrix keeps every entry.
+    /// shares the `GraphBLAS` matrix keeps every entry.
     #[test]
     fn a_clone_keeps_its_entries() {
         test_init::ensure_init();

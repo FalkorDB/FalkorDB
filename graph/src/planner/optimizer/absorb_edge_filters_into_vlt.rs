@@ -38,7 +38,7 @@
 //! ChildA                                  ChildA
 //! ```
 //!
-//! The pass also walks through transparent intermediate operators (PathBuilder,
+//! The pass also walks through transparent intermediate operators (`PathBuilder`,
 //! nested Filters) between the Filter and the VLT.
 
 use std::sync::Arc;
@@ -50,8 +50,8 @@ use crate::parser::ast::{ExprIR, Variable};
 use super::super::IR;
 use super::collect_expr_variables;
 
-/// Find a CondVarLenTraverse node that is a direct child of the given filter,
-/// or is the only child chain below the filter (e.g., Filter → VLT or Filter → PathBuilder → VLT).
+/// Find a `CondVarLenTraverse` node that is a direct child of the given filter,
+/// or is the only child chain below the filter (e.g., Filter → VLT or Filter → `PathBuilder` → VLT).
 fn find_descendant_vlt(
     plan: &DynTree<IR>,
     filter_idx: NodeIdx<Dyn<IR>>,
@@ -75,9 +75,9 @@ fn find_descendant_vlt(
     }
 }
 
-/// Absorbs edge filters into CondVarLenTraverse operators.
+/// Absorbs edge filters into `CondVarLenTraverse` operators.
 ///
-/// Detects patterns where a Filter sits directly above a CondVarLenTraverse
+/// Detects patterns where a Filter sits directly above a `CondVarLenTraverse`
 /// and the filter expression references only the VLT edge alias variable.
 /// In that case, the filter is absorbed into the VLT's `edge_filter` field
 /// so it can be evaluated per-hop during traversal.

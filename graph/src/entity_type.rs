@@ -1,6 +1,6 @@
 //! Entity type discriminator for graph elements.
 //!
-//! FalkorDB stores two kinds of entities in the graph: **nodes** and
+//! `FalkorDB` stores two kinds of entities in the graph: **nodes** and
 //! **relationships** (edges). Many operations -- index creation, schema
 //! introspection, and query planning -- need to distinguish between
 //! these two kinds at runtime.

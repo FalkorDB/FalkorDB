@@ -1,6 +1,6 @@
 //! Batch-mode value hash join operator — equi-join via build/probe hash table.
 //!
-//! Replaces CartesianProduct + equality Filter with a hash join when the
+//! Replaces `CartesianProduct` + equality Filter with a hash join when the
 //! optimizer detects an equality predicate between a left and right expression.
 //!
 //! ```text
@@ -106,7 +106,7 @@ impl JoinHashTable {
 /// A *randomized* seed (chosen once per process) makes the hash output
 /// unpredictable, so a client who controls join-key values can't precompute
 /// many distinct keys that all collide into a single bucket — the classic
-/// hash-flooding / algorithmic-complexity DoS that would turn an O(n) join into
+/// hash-flooding / algorithmic-complexity `DoS` that would turn an O(n) join into
 /// O(n²) chain scans. `aHash` stays close to `FxHash` speed (it uses AES
 /// intrinsics where available) while resisting that attack. The same seed is
 /// shared by the build and probe sides, so equal keys still hash identically.

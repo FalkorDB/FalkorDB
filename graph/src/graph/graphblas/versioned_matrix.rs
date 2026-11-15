@@ -63,7 +63,7 @@
 //! ## Iterator
 //!
 //! [`Iter`] performs a three-way sorted merge over the `m`, `dp`, and `dm`
-//! iterators (GraphBLAS row iterators yield ascending `(row, col)` order):
+//! iterators (`GraphBLAS` row iterators yield ascending `(row, col)` order):
 //! `m` entries matched by the `dm` lookahead are dropped, `dp` entries are
 //! interleaved in order (winning over a shadowed `m` entry at the same
 //! position), producing the effective state — sorted by `(row, col)` —
@@ -91,7 +91,7 @@ use crate::graph::{
 /// `Deref`, which never copies.
 ///
 /// Read-only on purpose. `Matrix`'s `Clone` is shallow (a clone shares the
-/// GraphBLAS handle), so a `Cow`'s `to_mut` or `into_owned` on a borrowed
+/// `GraphBLAS` handle), so a `Cow`'s `to_mut` or `into_owned` on a borrowed
 /// base would hand out the shared base itself, and a write through it would
 /// change every version that holds it. A matrix of one's own is a `dup()`.
 #[cfg(feature = "index-falkordb")]
@@ -101,7 +101,7 @@ pub(crate) struct Effective<'a, T>(borrow::Cow<'a, Matrix<T>>);
 impl<T> Effective<'_, T> {
     /// Whether this is the base itself, not a merged copy.
     #[cfg(test)]
-    pub(crate) fn is_borrowed(&self) -> bool {
+    pub(crate) const fn is_borrowed(&self) -> bool {
         matches!(self.0, borrow::Cow::Borrowed(_))
     }
 }
@@ -115,7 +115,7 @@ impl<T> Deref for Effective<'_, T> {
     }
 }
 
-/// `(m ∖ dm) ∪ dp` in one GraphBLAS call: `eff<¬dm> = m ⊕ dp` (into a new matrix), with
+/// `(m ∖ dm) ∪ dp` in one `GraphBLAS` call: `eff<¬dm> = m ⊕ dp` (into a new matrix), with
 /// `⊕` from the element type ([`EWiseAdd`]), so on a `u64` layer a pending
 /// value in `dp` shadows the committed one; `dp ∩ dm = ∅`, so the mask never
 /// drops a pending addition. The mask is structural: a pair is deleted by
@@ -217,7 +217,7 @@ const MIN_FOLD_DELTA: u64 = 256;
 /// Write-path fold policy, evaluated in `dup` (version creation). Balances the
 /// COW dup tax against the fold; see the module docs above for the model and
 /// the measurements behind [`WRITE_FOLD_K`].
-pub(super) fn should_fold(
+pub(super) const fn should_fold(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -229,7 +229,7 @@ pub(super) fn should_fold(
 /// [`should_fold`], but the transaction pays the `O(|delta|)` pending-tuple
 /// merge on top of the dup, so `w` is 250x larger and the balance point
 /// `sqrt(250) ≈ 16x` tighter. See [`READ_FOLD_K`].
-pub(super) fn should_fold_read(
+pub(super) const fn should_fold_read(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -238,7 +238,7 @@ pub(super) fn should_fold_read(
 }
 
 /// `|delta| ≥ sqrt(k · tx_added)`, or a delta comparable to the base.
-fn fold_balance(
+const fn fold_balance(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -258,7 +258,7 @@ fn fold_balance(
 /// same order as a single delta touch — and because the delta is holding as
 /// much memory as the base it shadows. Evaluated on the approximate counters,
 /// so it never forces a delta's pending tuples to merge.
-pub(super) fn delta_dominates_base(
+pub(super) const fn delta_dominates_base(
     delta_nvals: u64,
     base_nvals: u64,
 ) -> bool {
@@ -288,8 +288,8 @@ const ROW_FILTER_WORDS: usize = ROW_FILTER_BITS / 64;
 /// Readers merge three layers per scan, and the existing short-circuit asks
 /// whether a layer is empty *in total*. That is the wrong question for a narrow
 /// scan: one pending entry anywhere makes every single-row read attach and seek
-/// a GraphBLAS iterator that yields nothing (#2430). This answers the narrower
-/// question — may this layer hold row `r`? — without touching GraphBLAS.
+/// a `GraphBLAS` iterator that yields nothing (#2430). This answers the narrower
+/// question — may this layer hold row `r`? — without touching `GraphBLAS`.
 ///
 /// **The only safety property that matters is that it never says "no" when the
 /// answer is yes.** [`Self::Unknown`] is therefore the default for anything not
@@ -366,7 +366,7 @@ impl RowFilter {
 pub(super) struct Delta<T> {
     layer: Cow<Matrix<T>>,
     /// Approximate `layer.nvals()`, maintained by the mutation methods without
-    /// GraphBLAS calls. `GrB_Matrix_nvals` on a delta forces its pending
+    /// `GraphBLAS` calls. `GrB_Matrix_nvals` on a delta forces its pending
     /// tuples to merge (an `O(|delta|)` sort/merge), so the fold policy reads
     /// this counter instead and [`Self::resync`] pins it to the exact value
     /// whenever something materializes the layer anyway.
@@ -514,6 +514,8 @@ impl<T> Delta<T> {
 
     /// Consume the latched decision: true when this layer must fold *and* has
     /// something to fold.
+    // `&mut` marks taking the latched decision as exclusive, though the flag is atomic.
+    #[allow(clippy::needless_pass_by_ref_mut)]
     pub(super) fn take_fold(&mut self) -> bool {
         self.fold.swap(false, Ordering::Relaxed) && self.layer.nvals() > 0
     }
@@ -625,10 +627,10 @@ impl Delta<bool> {
         *self.count.get_mut() += 1;
     }
 
-    /// Add every pair in `rows` x `cols` and count them, in one GraphBLAS
+    /// Add every pair in `rows` x `cols` and count them, in one `GraphBLAS`
     /// call.
     ///
-    /// The product is formed inside GraphBLAS by `GrB_Matrix_assign`, so
+    /// The product is formed inside `GraphBLAS` by `GrB_Matrix_assign`, so
     /// nothing here enumerates it — the two things this layer keeps alongside
     /// the matrix are maintained without it. The row filter takes one `add` per
     /// *row*, not per pair, which is what it would have received anyway. The
@@ -757,7 +759,7 @@ impl<T> VersionedMatrix<T> {
         &self.dm
     }
 
-    /// The matrix a reader sees, `(m ∖ dm) ∪ dp`, as one GraphBLAS matrix
+    /// The matrix a reader sees, `(m ∖ dm) ∪ dp`, as one `GraphBLAS` matrix
     /// (see [`Effective`]): no copy when both deltas are empty.
     #[cfg(feature = "index-falkordb")]
     #[must_use]
@@ -783,10 +785,10 @@ impl<T> VersionedMatrix<T> {
     }
 
     /// The committed base `m` never holds real pending work: it is only
-    /// mutated by `flush` (which waits) and `resize` (GrB_Matrix_resize waits
+    /// mutated by `flush` (which waits) and `resize` (`GrB_Matrix_resize` waits
     /// internally), so it is never waited here. `GxB_WILL_WAIT` can still
     /// report true on `m` after a grow-resize — the hyper hash was freed —
-    /// but GraphBLAS rebuilds it on demand.
+    /// but `GraphBLAS` rebuilds it on demand.
     pub fn wait(&self) {
         // nvals only changes through ops that mark the matrix pending, so the
         // flag can only be stale when there is pending work — skip the nvals
@@ -817,9 +819,9 @@ impl<T> VersionedMatrix<T> {
     ///
     /// Read paths access `m` raw (no lock, no wait): `m()` hands the base to
     /// structural consumers, and [`Self::wait`] reads `m.nvals()` directly.
-    /// A GrB call on a pending matrix finishes that work internally — a
+    /// A `GrB` call on a pending matrix finishes that work internally — a
     /// mutation — so a published snapshot whose base is pending lets two
-    /// lock-free readers corrupt GrB state. dp/dm don't need this: every
+    /// lock-free readers corrupt `GrB` state. dp/dm don't need this: every
     /// read of them goes through the mutex-guarded [`Matrix::wait`] first.
     /// Called at MVCC commit; a no-op (one atomic load) when `m` is synced.
     pub fn wait_base(&self) {
@@ -827,15 +829,15 @@ impl<T> VersionedMatrix<T> {
     }
 
     /// Wait on all three internal matrices (m, dp, dm).
-    /// Used for fork safety — ensures no GrB internal locks are held.
+    /// Used for fork safety — ensures no `GrB` internal locks are held.
     pub fn wait_all(&self) {
         self.m.wait();
         self.dp.wait();
         self.dm.wait();
     }
 
-    /// Returns true if every internal matrix has no pending GraphBLAS
-    /// operations — i.e. wait_all was effective.
+    /// Returns true if every internal matrix has no pending `GraphBLAS`
+    /// operations — i.e. `wait_all` was effective.
     #[must_use]
     pub fn is_synced(&self) -> bool {
         self.m.is_synced() && self.dp.is_synced() && self.dm.is_synced()
@@ -1063,7 +1065,7 @@ impl VersionedMatrix<bool> {
     /// Bulk-remove all entries matching a mask matrix.
     ///
     /// Equivalent to calling `remove(i, j)` for every entry `(i, j)` in `mask`,
-    /// but executes in two GraphBLAS bulk operations instead of N individual calls:
+    /// but executes in two `GraphBLAS` bulk operations instead of N individual calls:
     /// - Entries in base `m` matching `mask` are marked deleted in `dm`
     /// - Entries in delta-plus `dp` matching `mask` are removed from `dp`
     pub fn remove_mask(
@@ -1268,7 +1270,7 @@ impl VersionedMatrix<bool> {
     /// behaviour is identical and only the speed differs.
     ///
     /// `CREATE_NODE`'s label set is the case that qualifies — the ids are fresh
-    /// by construction, so a million nodes taking one label is one GraphBLAS
+    /// by construction, so a million nodes taking one label is one `GraphBLAS`
     /// call rather than a million `setElement`s.
     pub fn set_product<const NEW: bool>(
         &mut self,
@@ -1529,7 +1531,7 @@ impl<E: IterExtract> Iter<E> {
         }
     }
 
-    /// Re-seek the inner GraphBLAS iterators to a new row range without
+    /// Re-seek the inner `GraphBLAS` iterators to a new row range without
     /// re-allocating them. Hot-loop callers (e.g. `CondTraverseOp` and
     /// `ExpandInto` looking up edges by `(src, dst)`) use this to amortize
     /// the per-pair iterator allocation.
@@ -1551,7 +1553,7 @@ impl<E: IterExtract> Iter<E> {
     }
 }
 
-/// Three-way sorted merge over the layer iterators. GraphBLAS row iterators
+/// Three-way sorted merge over the layer iterators. `GraphBLAS` row iterators
 /// yield entries in ascending `(row, col)` order, so the output is sorted by
 /// `(row, col)` too. `m` entries masked by `dm` are dropped; when `dp` holds
 /// the same pair as `m` (shadow), the live `dp` item wins.
@@ -1645,6 +1647,8 @@ mod tests {
     }
 
     /// Smallest delta that satisfies the sqrt rule, i.e. `ceil(sqrt(k · tx))`.
+    // The search ends at the first d with d*d >= target, which always exists.
+    #[allow(clippy::maybe_infinite_iter)]
     fn threshold(
         k: u64,
         tx_added: u64,

@@ -60,7 +60,7 @@ pub struct ExpandIntoOp<'a> {
     produced: usize,
     /// Persistent per-relationship-type edge-id iterators. Reused via `seek`
     /// to fetch edge IDs for a specific (src, dst) pair without allocating
-    /// fresh GxB_Iterators per pair.
+    /// fresh `GxB_Iterators` per pair.
     ///
     /// Lazily initialized on first use rather than at construction: the
     /// relationship type may be created by a sibling Commit earlier in the

@@ -68,7 +68,7 @@ mod tests {
     /// Compiles `query` through parse → bind → plan, then runs the Graph-free
     /// subset of the optimizer pipeline that governs `emit_path`, in pipeline
     /// order. The skipped passes (`reduce_count`, `select_scan_node`,
-    /// `utilize_index`, ...) need a live GraphBLAS context and do not change
+    /// `utilize_index`, ...) need a live `GraphBLAS` context and do not change
     /// which operators consume a path alias.
     fn optimized_varlen_plan(query: &str) -> DynTree<IR> {
         let mut parser = Parser::new(query);

@@ -1,6 +1,6 @@
 //! Fuses `Optional` wrappers whose sub-plan is a single-hop `CondTraverse`
 //! fed directly by an `Argument` into one optional `CondTraverse`, mirroring
-//! C FalkorDB's "Optional Conditional Traverse" operator.
+//! C `FalkorDB`'s "Optional Conditional Traverse" operator.
 //!
 //! ## Plan shapes (before)
 //!
@@ -77,7 +77,7 @@ fn fusable_traverse(
     vars.iter().all(|v| *v == rp.alias || v == out_alias)
 }
 
-/// Clones `sub`'s CondTraverse data with `optional = true`.
+/// Clones `sub`'s `CondTraverse` data with `optional = true`.
 fn fused_traverse(sub: &DynNode<IR>) -> IR {
     if let IR::CondTraverse {
         relationship,

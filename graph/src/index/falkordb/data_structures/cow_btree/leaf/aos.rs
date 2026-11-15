@@ -1,4 +1,4 @@
-//! The array-of-structs (AoS) leaf encoding: contiguous `(key, doc)` tuples,
+//! The array-of-structs (`AoS`) leaf encoding: contiguous `(key, doc)` tuples,
 //! `FIELD + DOC_BYTES` B/entry (12 B for a 4-byte doc, 16 B for the full u64).
 
 use std::sync::Arc;
@@ -45,7 +45,7 @@ impl<const DOC_BYTES: usize> AosLeaf<DOC_BYTES> {
         Self(Arc::from(buf.as_slice()))
     }
 
-    /// Two-pointer merge of `self`'s entries with a sorted `batch` into a single new tag-free AoS page — no
+    /// Two-pointer merge of `self`'s entries with a sorted `batch` into a single new tag-free `AoS` page — no
     /// `Vec<(u64, u64)>`, no sort, one allocation. Exact `(key, doc)` duplicates are dropped (re-adding an
     /// existing tuple is a no-op). The caller guarantees the result fits (`count + batch.len() <= LEAF_MAX`).
     pub(super) fn merge_batch(

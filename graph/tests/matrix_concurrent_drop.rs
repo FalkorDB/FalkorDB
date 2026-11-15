@@ -2,7 +2,7 @@
 //! last must free it, exactly once, even when clones are dropped on different
 //! threads at the same moment.
 //!
-//! Its own test binary: it installs a counting allocator into GraphBLAS, and
+//! Its own test binary: it installs a counting allocator into `GraphBLAS`, and
 //! `GrB_init` happens once per process.
 
 use std::ffi::c_void;
@@ -76,6 +76,7 @@ fn concurrently_dropped_clones_free_the_matrix_once() {
     // A leak shows up as live GraphBLAS blocks left behind; a double free
     // would crash. The window is a few instructions wide, so use many pairs
     // and release both threads of each pair together.
+    #[allow(clippy::items_after_statements)] // the sizes sit with the code that uses them
     const PAIRS: usize = 100_000;
     let before = LIVE.load(Ordering::SeqCst);
     let (mine, theirs): (Vec<_>, Vec<_>) = (0..PAIRS)

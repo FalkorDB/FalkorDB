@@ -1,19 +1,19 @@
 //! Configuration options for full-text search indexes.
 //!
-//! [`TextIndexOptions`] controls how RediSearch processes text when building
-//! and querying a fulltext index.  These options map directly to RediSearch
+//! [`TextIndexOptions`] controls how `RediSearch` processes text when building
+//! and querying a fulltext index.  These options map directly to `RediSearch`
 //! field and index settings:
 //!
-//! | Field       | RediSearch effect                                    |
+//! | Field       | `RediSearch` effect                                    |
 //! |-------------|------------------------------------------------------|
 //! | `weight`    | Scoring multiplier for the field (default 1.0)       |
 //! | `nostem`    | Disable stemming (e.g. keep "running" as-is)        |
 //! | `phonetic`  | Enable phonetic matching (sounds-like queries)       |
 //! | `language`  | Stemmer language (e.g. "english", "spanish")         |
-//! | `stopwords` | Custom stop-word list (overrides RediSearch default) |
+//! | `stopwords` | Custom stop-word list (overrides `RediSearch` default) |
 //!
 //! `language` and `stopwords` are index-wide settings applied once when the
-//! RediSearch index is created.  `weight`, `nostem`, and `phonetic` are
+//! `RediSearch` index is created.  `weight`, `nostem`, and `phonetic` are
 //! per-field settings applied when registering each fulltext field.
 
 use std::sync::Arc;
@@ -41,7 +41,7 @@ pub struct TextIndexOptions {
 pub const PHONETIC_OFF: &str = "no";
 
 impl TextIndexOptions {
-    /// Whether this field gets RediSearch's phonetic flag. C enables it for any code
+    /// Whether this field gets `RediSearch`'s phonetic flag. C enables it for any code
     /// but `"no"`; we also read empty (or absent) as off. Treating `"no"` as a code
     /// turned phonetic matching on for every fulltext index a C-written RDB carried.
     #[must_use]

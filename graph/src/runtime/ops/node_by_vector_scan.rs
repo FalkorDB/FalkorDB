@@ -8,7 +8,7 @@
 //! [`BATCH_SIZE`](super::super::batch::BATCH_SIZE) results into one columnar
 //! batch. The matched node binds to the node variable and, when a score yield
 //! variable is present, the distance binds to it as a float column. Results are
-//! ordered by ascending distance — RediSearch's `RediSearch_CreateVecSimNode`
+//! ordered by ascending distance — `RediSearch`'s `RediSearch_CreateVecSimNode`
 //! defaults to `BY_SCORE` ordering, which the graph index layer preserves.
 
 use std::sync::Arc;

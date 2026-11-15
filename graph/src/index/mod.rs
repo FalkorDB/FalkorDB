@@ -1,13 +1,13 @@
 //! Core index types for property-based graph lookups.
 //!
 //! This module defines the data structures and logic that sit between the
-//! query engine and the RediSearch C library.  Instead of scanning every
+//! query engine and the `RediSearch` C library.  Instead of scanning every
 //! node or relationship, the optimizer can use an [`Index`] to jump
 //! straight to entities that match a given property predicate.
 //!
 //! # Supported index types
 //!
-//! | [`IndexType`] | RediSearch fields used       | Typical Cypher predicate         |
+//! | [`IndexType`] | `RediSearch` fields used       | Typical Cypher predicate         |
 //! |---------------|-----------------------------|---------------------------------|
 //! | `Range`       | NUMERIC + TAG + GEO         | `n.age > 30`, `n.name = "Bob"` |
 //! | `Fulltext`    | FULLTEXT                    | Full-text search queries         |
@@ -38,10 +38,10 @@
 //!
 //! # Key types
 //!
-//! - [`Index`] -- owns a RediSearch index handle and its field definitions.
+//! - [`Index`] -- owns a `RediSearch` index handle and its field definitions.
 //! - [`Field`] -- a single indexed property (name + type + optional text options).
 //! - [`IndexQuery`] -- describes the predicate to evaluate against the index.
-//! - [`Document`] -- wraps a RediSearch document for inserting/updating entities.
+//! - [`Document`] -- wraps a `RediSearch` document for inserting/updating entities.
 //! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
 
 pub mod falkordb;
@@ -121,9 +121,9 @@ pub struct Field {
 impl Field {
     fn make_arr_names(
         name: &CString,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> (Option<CString>, Option<CString>) {
-        if *ty == IndexType::Range {
+        if ty == IndexType::Range {
             let base = name.to_str().unwrap_or("");
             (
                 CString::new(format!("{base}:numeric:arr")).ok(),
@@ -140,7 +140,7 @@ impl Field {
         ty: IndexType,
         options: Option<TextIndexOptions>,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -157,7 +157,7 @@ impl Field {
         ty: IndexType,
         vector_options: VectorIndexOptions,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -259,7 +259,7 @@ pub enum IndexQuery<T> {
     },
 }
 
-/// Lazy iterator over RediSearch query results.
+/// Lazy iterator over `RediSearch` query results.
 ///
 /// Wraps the C `RSResultsIterator` and calls `RediSearch_ResultsIteratorNext`
 /// on each `.next()`. Frees the C iterator on `Drop`.
@@ -553,16 +553,16 @@ const NODE_DOC_KEY_LEN: usize = std::mem::size_of::<u64>() * 2;
 const EDGE_DOC_KEY_LEN: usize = std::mem::size_of::<[u64; 3]>() * 2;
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
-/// Escape a TAG string value so it survives RediSearch's tag tokenizer and the
+/// Escape a TAG string value so it survives `RediSearch`'s tag tokenizer and the
 /// query-side `tag_strtolower` strip pass, collapsing to a single literal
-/// token. Mirrors C FalkorDB's `TagEncode_Lower` (FalkorDB/FalkorDB#2021,
+/// token. Mirrors C `FalkorDB`'s `TagEncode_Lower` (FalkorDB/FalkorDB#2021,
 /// `src/index/tag_encode.c`): every byte `<= 0x20` (control bytes, whitespace
 /// and the `\1` tag separator), `\` (0x5c, the read-side strip target) and `_`
 /// (0x5f, the escape prefix itself) is emitted as `_` followed by two lowercase
 /// hex digits; all other bytes pass through verbatim. Applied symmetrically on
 /// the index write and query paths so the stored key and the query key match.
-/// No decoder exists — the encoded form is only ever the RediSearch index key;
-/// the real attribute value is served from FalkorDB's own attribute store.
+/// No decoder exists — the encoded form is only ever the `RediSearch` index key;
+/// the real attribute value is served from `FalkorDB`'s own attribute store.
 fn tag_encode_lower(src: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(src.len());
     for &b in src {
@@ -621,7 +621,7 @@ unsafe fn decode_triple(ptr: *const u8) -> [u64; 3] {
     }
 }
 
-/// A document to be indexed, wrapping a RediSearch document.
+/// A document to be indexed, wrapping a `RediSearch` document.
 ///
 /// Owns the underlying `RSDoc`: `Drop` frees it via `RediSearch_FreeDocument`
 /// unless it was handed to `add_document`, which sets `consumed` because
@@ -630,10 +630,10 @@ unsafe fn decode_triple(ptr: *const u8) -> [u64; 3] {
 pub struct Document {
     rs_doc: *mut RSDoc,
     id: u64,
-    /// CStrings for array string elements. RediSearch stores raw pointers
+    /// `CStrings` for array string elements. `RediSearch` stores raw pointers
     /// into these during `set`, so they must live until after `add_document`.
     string_arr_values: Vec<CString>,
-    /// Set once `add_document` has passed `rs_doc` to RediSearch, which then
+    /// Set once `add_document` has passed `rs_doc` to `RediSearch`, which then
     /// owns and frees it. Gates `Drop` so we never free a consumed doc.
     consumed: bool,
 }
@@ -679,7 +679,7 @@ impl Document {
     /// Build a document keyed by the 24-byte `[src, dst, edge_id]`
     /// triple. Used by edge indexes so query results carry endpoints
     /// directly — no tensor scan needed to materialize `(src, dst)`
-    /// after an index hit. Mirrors FalkorDB C's `EdgeIndexKey` in
+    /// after an index hit. Mirrors `FalkorDB` C's `EdgeIndexKey` in
     /// `src/index/index_edge.c`.
     #[must_use]
     pub fn new_edge(
@@ -879,7 +879,7 @@ pub struct Index {
     /// their label has been replaced by a fresh `Index` after a DROP +
     /// CREATE round-trip, so they don't decrement the wrong counter.
     id: u64,
-    /// The RediSearch index spec. `None` until `create_rs_index` runs (the
+    /// The `RediSearch` index spec. `None` until `create_rs_index` runs (the
     /// former `null` sentinel). Shared across `Index` generations produced by
     /// [`Index::clone_for_update`]; the creation reference is dropped (via
     /// `RediSearch_DropIndex` in [`SpecHandle::drop`]) when the last
@@ -909,7 +909,7 @@ struct PendingSlots {
     stale_pending: i32,
 }
 
-/// RAII handle for a RediSearch index spec (`RefManager`). Owns one strong
+/// RAII handle for a `RediSearch` index spec (`RefManager`). Owns one strong
 /// reference; `Drop` releases it. The raw `*mut RSIndex` never escapes
 /// this type except as a transient passed straight into an FFI call.
 #[derive(Debug)]
@@ -964,7 +964,7 @@ impl Drop for OwnedIndex {
     }
 }
 
-/// Shared owner of the *creation* reference to a RediSearch index spec.
+/// Shared owner of the *creation* reference to a `RediSearch` index spec.
 ///
 /// Wrapped in an `Arc` and shared across `Index` generations produced by
 /// [`Index::clone_for_update`], so replacing the published `Index` (add
@@ -1042,7 +1042,7 @@ impl Index {
     }
 
     /// Assign a fresh id to this `Index`. Called when the underlying
-    /// RediSearch IndexSpec is rebuilt from scratch (`recreate_index`),
+    /// `RediSearch` `IndexSpec` is rebuilt from scratch (`recreate_index`),
     /// so background workers spawned against the previous incarnation
     /// observe the change and bail out instead of writing partial-spec
     /// docs into the freshly recreated index.
@@ -1059,7 +1059,7 @@ impl Index {
 
     /// Copy this `Index` for a clone-and-swap schema update.
     ///
-    /// The copy shares the RediSearch spec handle and the pending-ticket
+    /// The copy shares the `RediSearch` spec handle and the pending-ticket
     /// counters with `self` (so tickets acquired against the currently
     /// published generation stay balanced), while the Rust-side metadata
     /// (fields, language, ...) is deep-cloned so the copy can be mutated
@@ -1083,7 +1083,7 @@ impl Index {
 impl Index {
     // --- RediSearch index lifecycle ---
 
-    /// Returns true if a RediSearch index has been created.
+    /// Returns true if a `RediSearch` index has been created.
     #[must_use]
     pub const fn has_rs_index(&self) -> bool {
         self.spec.is_some()
@@ -1096,7 +1096,7 @@ impl Index {
         self.spec.as_ref().map_or(null_mut(), |h| h.as_ptr())
     }
 
-    /// Create the underlying RediSearch index with the given options.
+    /// Create the underlying `RediSearch` index with the given options.
     /// Should only be called when `!self.has_rs_index()`.
     pub fn create_rs_index(
         &mut self,
@@ -1177,7 +1177,7 @@ impl Index {
         Ok(())
     }
 
-    /// Register fields in the RediSearch index. Must be called after `create_rs_index`.
+    /// Register fields in the `RediSearch` index. Must be called after `create_rs_index`.
     pub fn register_fields(
         &self,
         fields: &HashMap<Arc<String>, Vec<Arc<Field>>>,
@@ -1349,7 +1349,7 @@ impl Index {
         Ok(())
     }
 
-    /// Build a RediSearch query node from an `IndexQuery`.
+    /// Build a `RediSearch` query node from an `IndexQuery`.
     ///
     /// Returns a null pointer if the query references unknown fields or
     /// unsupported value types.
@@ -1364,7 +1364,7 @@ impl Index {
     }
 
     /// Check if an Int value would lose precision when cast to f64.
-    /// Uses the same bitmask as C FalkorDB's RediSearch INT64 workaround,
+    /// Uses the same bitmask as C `FalkorDB`'s `RediSearch` INT64 workaround,
     /// applied to the value's magnitude so negative integers are handled
     /// correctly.
     #[must_use]
@@ -1372,7 +1372,7 @@ impl Index {
         i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0
     }
 
-    /// Build a RediSearch numeric range node for numeric values.
+    /// Build a `RediSearch` numeric range node for numeric values.
     fn build_numeric_range_node(
         &self,
         key: &Arc<String>,
@@ -1414,8 +1414,8 @@ impl Index {
         }
     }
 
-    /// Build a RediSearch TAG lex range node for string range queries.
-    /// Matches C FalkorDB's `_StringRangeToQueryNode` in index_query.c.
+    /// Build a `RediSearch` TAG lex range node for string range queries.
+    /// Matches C `FalkorDB`'s `_StringRangeToQueryNode` in `index_query.c`.
     fn build_string_range_node(
         &self,
         key: &Arc<String>,
@@ -1781,7 +1781,7 @@ impl Index {
 
     /// Execute a KNN vector query and yield `(entity_id, score)`
     /// pairs in HNSW iteration order. The yielded `score` is the
-    /// raw RediSearch relevance score read via
+    /// raw `RediSearch` relevance score read via
     /// `RediSearch_ResultsIteratorGetScore` — *not* the metric
     /// distance. Callers that need the actual distance under the
     /// configured similarity function should look up each entity's
@@ -1791,7 +1791,7 @@ impl Index {
     /// `vector` must be a dense `f32` slice whose length matches the
     /// indexed dimension; `field` is the property name used at index
     /// creation. The iterator returned holds onto the `Arc` so the
-    /// underlying buffer outlives lazy HNSW iteration — RediSearch
+    /// underlying buffer outlives lazy HNSW iteration — `RediSearch`
     /// stores the pointer without copying. Caller is responsible for
     /// using this only on indexes that actually have a vector field
     /// for `field`.
@@ -1854,7 +1854,7 @@ impl Index {
 
     /// Like [`vector_query`], but for *edge* indexes: yields
     /// `(src, dst, edge_id, score)` tuples — same caveat applies,
-    /// `score` is the raw RediSearch score, not the metric distance.
+    /// `score` is the raw `RediSearch` score, not the metric distance.
     /// Mirrors [`fulltext_query_edges`] in how the 24-byte `[u64; 3]`
     /// key is read. Should only be called on edge indexes.
     pub fn vector_query_edges(
@@ -2200,7 +2200,7 @@ impl Index {
 
     // --- memory usage ---
 
-    /// Report memory consumed by the underlying RediSearch index.
+    /// Report memory consumed by the underlying `RediSearch` index.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.spec

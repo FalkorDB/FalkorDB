@@ -82,7 +82,7 @@ impl CompactIndexedLeaf {
     /// Encode the de-duplicated compact layout `[header][distinct values][index][docs]` (the caller has
     /// already chosen it and computed the widths). The distinct table and per-entry index are (re)built
     /// here in one in-cache pass over the ≤ `LEAF_MAX` entries — deliberately *not* carried over from
-    /// [`Leaf::from_pairs`], since materialising them there measurably slowed the far more common AoS path
+    /// [`Leaf::from_pairs`], since materialising them there measurably slowed the far more common `AoS` path
     /// while saving nothing here (the byte writes dominate).
     pub(super) fn build(
         pairs: &[(u64, u64)],

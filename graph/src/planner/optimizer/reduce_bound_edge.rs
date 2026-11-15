@@ -3,7 +3,7 @@
 //!
 //! A chain-less `CondTraverse` binds its edge alias to a representative edge
 //! id, and finding one costs a tensor lookup per surviving row — up to three
-//! GraphBLAS `extractElement` calls, since the effective value has to be read
+//! `GraphBLAS` `extractElement` calls, since the effective value has to be read
 //! through the `dp`/`dm`/`m` delta layers. That is dead work whenever the query
 //! never reads the edge (`MATCH (a)-[:R]->(b) RETURN count(b)`).
 //!
@@ -77,7 +77,7 @@ mod tests {
     /// Compiles `query` through parse → bind → plan, then runs the Graph-free
     /// subset of the pipeline that governs `bind_relationship`, in pipeline
     /// order. The skipped passes (`select_scan_node`, `utilize_index`, ...)
-    /// need a live GraphBLAS context and do not change which operators consume
+    /// need a live `GraphBLAS` context and do not change which operators consume
     /// an edge alias.
     fn optimized_plan(query: &str) -> DynTree<IR> {
         // Aggregate calls make the planner resolve names against the function

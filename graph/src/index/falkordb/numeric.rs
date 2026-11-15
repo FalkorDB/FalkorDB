@@ -1,4 +1,4 @@
-//! The numeric kind of a Range column: CoW B⁺-trees of `(key, entity_id)` tuples, where `key` is
+//! The numeric kind of a Range column: `CoW` B⁺-trees of `(key, entity_id)` tuples, where `key` is
 //! the [`encode_numeric`] image of the indexed value — one tree for scalar values and one for the
 //! elements of list values ([`KeyKind`]).
 //!
@@ -301,7 +301,7 @@ impl EncodedTuples {
 
 /// The numeric kind of one `(label, attribute)` column: entity ids keyed by the order-preserving
 /// encoding of their value, so `n.x <predicate> v` is a tree range scan. Non-numeric and `NaN`
-/// values are not indexed (parity with the RediSearch NUMERIC field it replaces).
+/// values are not indexed (parity with the `RediSearch` NUMERIC field it replaces).
 ///
 /// `Clone` is `O(1)` — the underlying `CowBTree` clone is a root-`Arc` bump — so
 /// a graph version can fork its index snapshot cheaply (see
@@ -326,7 +326,7 @@ impl NumericIndex {
     const TREES: [KeyKind; 2] = [KeyKind::Scalar, KeyKind::Array];
 
     /// The tree holding keys of `kind`, to change.
-    fn tree_mut(
+    const fn tree_mut(
         &mut self,
         kind: KeyKind,
     ) -> &mut Tree {
@@ -678,7 +678,7 @@ mod tests {
 
     /// A temporal value must not reach the tree. Stored as its raw number it lands among the
     /// numbers, so a numeric range scan walks straight over it and returns the entity — measured
-    /// on a server as `WHERE n.v > 0` returning date-valued nodes. The RediSearch path skips
+    /// on a server as `WHERE n.v > 0` returning date-valued nodes. The `RediSearch` path skips
     /// temporals for exactly this reason (`index/mod.rs`), and no index query is ever built for a
     /// temporal value, so an entry here could only ever surface as a wrong row.
     ///
@@ -766,7 +766,7 @@ mod tests {
         };
         assert_eq!(ids(idx.query(&eq).unwrap()), vec![3]);
         let rg = IndexQuery::Range {
-            key: key.clone(),
+            key,
             min: Some(Value::Int(10)),
             max: None,
             include_min: true,

@@ -20,7 +20,7 @@ pub struct Options {
     pub keep_for: Duration,
     /// Keys this checkout resolves to right now; always kept.
     pub keep_keys: BTreeSet<String>,
-    /// Also remove `deps/RediSearch/bin`, the in-tree RediSearch build output.
+    /// Also remove `deps/RediSearch/bin`, the in-tree `RediSearch` build output.
     pub worktree: Option<PathBuf>,
     pub dry_run: bool,
 }
@@ -166,7 +166,7 @@ mod tests {
     use crate::cache::{Cache, STAMP_NAME, USED_NAME};
     use crate::testing::TempDir;
 
-    const DAY: Duration = Duration::from_secs(24 * 3600);
+    const DAY: Duration = Duration::from_hours(24);
 
     fn entry(
         dir: &Path,
@@ -251,7 +251,7 @@ mod tests {
         entry(&gb.join("building00000000"), false, DAY);
         // Mid-build an entry has no stamp yet, but does have its scratch tree.
         fs::create_dir_all(gb.join("building00000000/.build")).unwrap();
-        let _held = crate::cache::BuildLock::acquire(gb.join("building00000000.lock")).unwrap();
+        let _held = crate::cache::BuildLock::acquire(&gb.join("building00000000.lock")).unwrap();
         let cache = Cache {
             root: tmp.0.clone(),
             prebuilt: Vec::new(),

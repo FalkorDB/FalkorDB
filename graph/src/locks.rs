@@ -11,7 +11,7 @@
 //! lock deadlocked the server for six hours (issue #726). That inversion is now
 //! unrepresentable here: this crate cannot take the global lock at all, so code that
 //! holds the indexer lock has nothing to invert against. Host FFI that *does* need
-//! the global lock (the RediSearch index spec lifecycle) documents it as a
+//! the global lock (the `RediSearch` index spec lifecycle) documents it as a
 //! precondition and relies on the caller having escalated.
 //!
 //! ## Two-phase locking (mirrors C's `QueryCtx_AcquireWriteLock`)

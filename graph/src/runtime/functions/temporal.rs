@@ -74,7 +74,7 @@ fn check_range(
     }
 }
 
-/// Build a NaiveDate from optional components. Supports ymd, week, and quarter modes.
+/// Build a `NaiveDate` from optional components. Supports ymd, week, and quarter modes.
 ///
 /// Every component is range-checked before it reaches chrono: chrono's
 /// `NaiveDate + TimeDelta` and `TimeDelta::days` panic on overflow, and a
@@ -762,7 +762,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Int,
         non_deterministic,
         fn timestamp_fn(_, args) {
-            debug_assert!(args.is_empty());
+            debug_assert_eq!(args, []);
             let now = Utc::now();
             Ok(Value::Int(now.timestamp_millis()))
         }

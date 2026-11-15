@@ -70,7 +70,7 @@ fn built(k: u64) -> Tensor {
 }
 
 #[test]
-#[ignore]
+#[ignore = "benchmark: run by hand with --ignored --nocapture"]
 fn degree_decomposition() {
     ensure_init();
     for k in [1u64, 2] {

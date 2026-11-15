@@ -41,7 +41,7 @@ use std::rc::Rc;
 
 use rquickjs::{Ctx, Function, Object, Persistent};
 
-/// Set up globals for validation mode: falkor.register() just collects names.
+/// Set up globals for validation mode: `falkor.register()` just collects names.
 pub fn setup_validate_globals(
     ctx: &Ctx<'_>,
     _names: Rc<RefCell<Vec<String>>>,
@@ -107,7 +107,7 @@ pub fn collect_validate_names(ctx: &Ctx<'_>) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-/// Set up globals for runtime mode: falkor.register() stores to global JS object.
+/// Set up globals for runtime mode: `falkor.register()` stores to global JS object.
 pub fn setup_runtime_globals(ctx: &Ctx<'_>) -> Result<(), String> {
     let globals = ctx.globals();
 

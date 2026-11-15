@@ -9,9 +9,9 @@ use super::{
     GrB_Type,
 };
 
-/// A Rust type a [`Scalar`] holds: its GraphBLAS type and setter.
-pub(crate) trait ScalarElement: Copy {
-    /// The GraphBLAS type of a scalar holding `Self`.
+/// A Rust type a [`Scalar`] holds: its `GraphBLAS` type and setter.
+pub trait ScalarElement: Copy {
+    /// The `GraphBLAS` type of a scalar holding `Self`.
     fn grb_type() -> GrB_Type;
 
     /// `GrB_Scalar_setElement_<T>`.
@@ -39,7 +39,7 @@ impl ScalarElement for bool {
 }
 
 /// A `GrB_Scalar` of `T`, which this value owns and frees on drop.
-pub(crate) struct Scalar<T> {
+pub struct Scalar<T> {
     scalar: GrB_Scalar,
     element: PhantomData<T>,
 }
@@ -65,7 +65,7 @@ impl<T: ScalarElement> Scalar<T> {
         grb!(unsafe { T::set_element(self.scalar, value) });
     }
 
-    /// The handle, for a GraphBLAS call. It stays this scalar's to free.
+    /// The handle, for a `GraphBLAS` call. It stays this scalar's to free.
     pub(crate) const fn ptr(&self) -> GrB_Scalar {
         self.scalar
     }

@@ -18,7 +18,7 @@
 //! ## Versioning
 //!
 //! Every mutation (`load`, `delete`, `flush`) increments `version`. Thread-local
-//! QuickJS contexts in [`js_context`](super::js_context) compare their cached
+//! `QuickJS` contexts in [`js_context`](super::js_context) compare their cached
 //! version against the repo version; on mismatch the context is rebuilt with
 //! the latest set of libraries.
 //!

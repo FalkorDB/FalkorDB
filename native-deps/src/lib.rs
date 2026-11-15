@@ -1,4 +1,4 @@
-//! Builds and caches FalkorDB's native dependencies.
+//! Builds and caches `FalkorDB`'s native dependencies.
 //!
 //! This crate replaces the old `graphblas.sh` and `redisearch.sh`. It is both a
 //! library and a binary over the same code, which is what lets one
@@ -15,6 +15,12 @@
 //!
 //! See [`key`] for how artifacts are addressed and [`cache`] for where they live.
 
+// Style lints the strict pass (pedantic + nursery) checks, which this crate does
+// not follow: `assert!(v.is_empty())` reads better than a typed empty-array
+// `assert_eq!`, and doc comments lead with a full paragraph.
+#![allow(clippy::assert_is_empty)]
+#![allow(clippy::too_long_first_doc_paragraph)]
+
 pub mod cache;
 pub mod dep;
 pub mod error;
@@ -25,10 +31,23 @@ pub mod local;
 pub mod lock;
 pub mod prejit;
 pub mod prune;
+// These three files feed the dependency cache key (build.rs hashes them), so a
+// style edit there would rebuild GraphBLAS, LAGraph and RediSearch for every
+// developer and CI run. Their style lints are allowed here instead.
+#[allow(
+    clippy::doc_markdown,
+    clippy::format_push_string,
+    clippy::manual_is_variant_and,
+    clippy::must_use_candidate,
+    clippy::unnecessary_wraps
+)]
 pub mod recipes;
 #[cfg(test)]
 mod testing;
+#[allow(clippy::doc_markdown)] // hashed into the cache key, see `recipes`
 pub mod toolchain;
+#[allow(clippy::doc_markdown, clippy::must_use_candidate)]
+// hashed into the cache key, see `recipes`
 pub mod util;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,12 +66,12 @@ use crate::util::{env_flag, env_opt, find_repo_root, log, now_secs};
 /// What to resolve, and how.
 #[derive(Debug, Clone)]
 pub struct Request {
-    /// FalkorDB checkout root (the directory holding `deps/native-deps.lock`).
+    /// `FalkorDB` checkout root (the directory holding `deps/native-deps.lock`).
     pub root: PathBuf,
     pub deps: Vec<Dep>,
-    /// Sanitizer flavor for RediSearch, e.g. `Some("address")`.
+    /// Sanitizer flavor for `RediSearch`, e.g. `Some("address")`.
     pub san: Option<String>,
-    /// Build a GraphBLAS with no PreJIT kernels, for `native-deps prejit`.
+    /// Build a `GraphBLAS` with no `PreJIT` kernels, for `native-deps prejit`.
     pub prejit_harvest: bool,
     /// Rebuild even on a cache hit.
     pub force: bool,
@@ -115,7 +134,7 @@ impl Resolved {
         self.prefix.join("lib")
     }
 
-    /// RediSearch only: the Rust archive, kept out of `lib/` because
+    /// `RediSearch` only: the Rust archive, kept out of `lib/` because
     /// `graph/build.rs` links a linkme-stripped copy of it rather than the
     /// original.
     #[must_use]
@@ -248,7 +267,7 @@ fn resolve_one(
     // checkout, undo what a killed build left, and only then believe it.
     let source = ctx.lock.source_dir(&req.root, dep.name())?;
     let state = ctx.source_state(dep.name())?;
-    let _source_lock = BuildLock::acquire(state.join("lock"))?;
+    let _source_lock = BuildLock::acquire(&state.join("lock"))?;
     let undone = SourceGuard::recover(&state.join("journal"), &ctx.lock.get(dep.name())?.rev)?;
     if undone > 0 {
         log(&format!(
@@ -273,7 +292,7 @@ fn resolve_one(
     }
 
     let entry = cache.entry_dir(dep, &key);
-    let _guard = BuildLock::acquire(cache.root.join(dep.name()).join(format!("{key}.lock")))?;
+    let _guard = BuildLock::acquire(&cache.root.join(dep.name()).join(format!("{key}.lock")))?;
 
     // Double-check: whoever held the lock has very likely just published it.
     if !req.force
@@ -372,7 +391,7 @@ fn resolve_local(
     if !req.force && Stamp::read(&entry).is_ok_and(|s| s.key == key) {
         log(&format!("{dep}: local build unchanged {}", entry.display()));
     } else {
-        let _guard = BuildLock::acquire(entry.with_extension("lock"))?;
+        let _guard = BuildLock::acquire(&entry.with_extension("lock"))?;
         build_entry(ctx, dep, &entry, &key, &manifest, resolved_so_far)?;
     }
     Ok(Resolved {

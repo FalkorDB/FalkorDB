@@ -33,7 +33,7 @@
 //! - **Compound nodes** (Add, Sub, Mul, And, Or, List, etc.) use a stack-based
 //!   iterative loop to avoid deep recursion. Children are pushed onto a stack
 //!   and results accumulate in a `Vec<Value>`.
-//! - **Complex nodes** (Quantifier, ListComprehension, Reduce, ShortestPath)
+//! - **Complex nodes** (Quantifier, `ListComprehension`, Reduce, `ShortestPath`)
 //!   fall back to recursive `eval()` calls since they need scoped env mutations.
 //!
 //! ## Iterable expressions
@@ -839,7 +839,7 @@ impl<'a> ExprEval<'a> {
                 ExprIR::Pow => res.push(
                     node.children()
                         .map(|child| self.eval_node(&child, env, agg_group_key))
-                        .reduce(|acc, value| apply_pow(acc?, value?))
+                        .reduce(|acc, value| apply_pow(&acc?, &value?))
                         .ok_or_else(|| {
                             String::from("Pow operator requires at least one argument")
                         })??,
@@ -1364,7 +1364,7 @@ impl<'a> ExprEval<'a> {
 
     /// Evaluate a `shortestPath()` or `allShortestPaths()` expression.
     ///
-    /// Children: [source_var_expr, dest_var_expr]
+    /// Children: [`source_var_expr`, `dest_var_expr`]
     /// Returns a `Path` value (alternating nodes and edges) or `Null`.
     #[allow(clippy::too_many_arguments)]
     fn eval_shortest_path<R: RowView + ?Sized>(

@@ -31,14 +31,14 @@
 //!
 //! - [`js_classes`] -- JS object representations of graph types (Node, Edge, Path)
 //!   with methods like `getNeighbors()` and `graph.traverse()`.
-//! - [`js_context`] -- Thread-local QuickJS runtime management, script validation,
+//! - [`js_context`] -- Thread-local `QuickJS` runtime management, script validation,
 //!   and the `call_udf_bridge` entry point used by the query evaluator.
 //! - [`js_globals`] -- Setup of the `falkor` global object in JS, including
 //!   `falkor.register()` and `falkor.log()`, in both validation and runtime modes.
 //! - [`repository`] -- Thread-safe, versioned storage of UDF library definitions
 //!   (name, source code, registered function names).
 //! - [`type_convert`] -- Bidirectional conversion between Rust [`Value`](crate::runtime::value::Value)
-//!   and QuickJS values, handling all supported types including graph entities.
+//!   and `QuickJS` values, handling all supported types including graph entities.
 //!
 //! ## Global Singleton
 //!

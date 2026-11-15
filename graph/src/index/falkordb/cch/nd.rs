@@ -2,7 +2,7 @@
 //! ([`nested_dissection_order`]).
 //!
 //! The backend is `feral-metis`, a pure-Rust multilevel nested dissection with AMD leaves,
-//! from FalkorDB's fork of feral (<https://github.com/FalkorDB/feral>, branch
+//! from `FalkorDB`'s fork of feral (<https://github.com/FalkorDB/feral>, branch
 //! `falkordb/i64`) with 64-bit indices (its `FALKORDB.md` lists the upstream versions and
 //! every change). CCH makes one call, `metis_order`, with its default options.
 //! Two things about that call shape this file:
@@ -11,7 +11,7 @@
 //!   where the skeleton's ids are `u64`. The copy also leaves out the isolated nodes and
 //!   renumbers the rest ([`order_connected_nodes`]), and the skeleton is checked before it,
 //!   since the backend indexes its arrays with these values.
-//! * **Nothing is shared between calls.** The backend's generator is a SplitMix64 owned by
+//! * **Nothing is shared between calls.** The backend's generator is a `SplitMix64` owned by
 //!   the call and seeded with a fixed seed, and it touches no global state, no signal
 //!   handler and no C library: the permutation depends on the skeleton alone, so calls run
 //!   concurrently and the order is the same on every run and every platform.
@@ -26,7 +26,7 @@ use feral_metis::{CscPattern, OrderingError};
 ///
 /// The skeleton must be the adjacency of a simple undirected graph
 /// ([`Csr::is_symmetric_simple`]). `CchInput::build` produces it by construction: the
-/// pattern union of the weights and their transpose in GraphBLAS, diagonal dropped, one
+/// pattern union of the weights and their transpose in `GraphBLAS`, diagonal dropped, one
 /// entry per pair, exported sorted. No graph data can make it otherwise, so a skeleton that
 /// fails is a bug in the engine, not a property of the user's graph. The check runs in
 /// release builds too, because the backend's result on anything else is undefined; it

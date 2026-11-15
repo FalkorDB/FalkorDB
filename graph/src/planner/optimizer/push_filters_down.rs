@@ -7,7 +7,7 @@
 //! ## Main Transformation
 //!
 //! Given a Filter with an AND predicate sitting above a multi-child operator
-//! (e.g. CartesianProduct), each conjunct is routed to the deepest child
+//! (e.g. `CartesianProduct`), each conjunct is routed to the deepest child
 //! whose output variables fully cover the conjunct's referenced variables.
 //!
 //! ```text

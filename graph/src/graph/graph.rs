@@ -116,32 +116,32 @@ use crate::{
     threadpool::spawn,
 };
 
-/// The index fields that still need feeding to RediSearch in this build.
+/// The index fields that still need feeding to `RediSearch` in this build.
 ///
-/// Every path that fills RediSearch goes through it: the per-write commits
+/// Every path that fills `RediSearch` goes through it: the per-write commits
 /// (`commit_index_kind`, `commit_edge_index_locked`), the build after `CREATE INDEX`
 /// (`populate_index`) and the build after an RDB load (`Graph::populate_indexes_sync`).
 ///
-/// Without `index-falkordb` this is the identity function: RediSearch owns every kind.
+/// Without `index-falkordb` this is the identity function: `RediSearch` owns every kind.
 ///
 /// With it, the native index owns every **Range** column. The scan ops route Range predicates to
 /// it, and unique constraints ask it for duplicates. Their calls to `get_indexed_nodes` /
-/// `get_indexed_edges`, RediSearch's only Range readers, are compiled only without the flag, so
-/// nothing in this build reads Range data from RediSearch. The two functions themselves are still
-/// compiled in: a caller added under the flag would read a RediSearch copy that writes no longer
+/// `get_indexed_edges`, `RediSearch`'s only Range readers, are compiled only without the flag, so
+/// nothing in this build reads Range data from `RediSearch`. The two functions themselves are still
+/// compiled in: a caller added under the flag would read a `RediSearch` copy that writes no longer
 /// reach.
 ///
 /// Dropping it is not just about the wasted write. A second copy of the data is what would let a
 /// native-index maintenance bug pass every test: the flag exists so that a gap *surfaces*, and a
-/// silent shadow copy in RediSearch is exactly the thing that stops it surfacing. It also makes
+/// silent shadow copy in `RediSearch` is exactly the thing that stops it surfacing. It also makes
 /// the write path measurable — while both engines were fed, any write benchmark was timing the
 /// double-write rather than the native index.
 ///
 /// Fulltext and Vector fields are untouched. They have no native equivalent, and their procedures
-/// still query RediSearch, so they are fed exactly as before. This is per **field**, not per
+/// still query `RediSearch`, so they are fed exactly as before. This is per **field**, not per
 /// index, so a label carrying both a Range and a Fulltext index keeps the Fulltext half.
 #[cfg(not(feature = "index-falkordb"))]
-fn redisearch_fields(
+const fn redisearch_fields(
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>
 ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
     fields
@@ -290,7 +290,7 @@ pub struct MemoryUsageReport {
     pub unlabeled_node_attr_sz: usize,
     pub edge_block_storage_sz: usize,
     pub edge_attr_by_type: Vec<(Arc<String>, usize)>,
-    /// RediSearch's own estimate of its indexes, and on a build with `index-falkordb` the native
+    /// `RediSearch`'s own estimate of its indexes, and on a build with `index-falkordb` the native
     /// index's columns as well.
     pub indices_sz: usize,
 }
@@ -441,7 +441,7 @@ pub struct Graph {
     relationship_type_matrix: VersionedMatrix<bool>,
     /// Per-label matrices (label ID → node membership)
     labels_matices: Vec<VersionedMatrix<bool>>,
-    /// Per-type relationship tensors (type ID → src×dst×edge_id)
+    /// Per-type relationship tensors (type ID → `src×dst×edge_id`)
     relationship_matrices: Vec<Tensor>,
     /// Graph-wide reverse index: `edge_id` → `(src, dst)` for O(1) endpoint
     /// lookup, as contiguous slots indexed by edge id. Edge IDs are densely
@@ -494,7 +494,7 @@ pub struct Graph {
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
     pub schema_version: u64,
-    /// FalkorDB numeric indexes, folded into the graph version: `new_version`
+    /// `FalkorDB` numeric indexes, folded into the graph version: `new_version`
     /// forks them copy-on-write and the committed-version swap publishes graph +
     /// index atomically.
     ///
@@ -670,15 +670,12 @@ fn populate_index_batch(
                     let g = &*graph;
                     match kind {
                         IndexKind::Node => {
-                            ids = g
-                                .get_label_matrix(&label)
-                                .map(|lm| {
-                                    lm.iter(cursor.row, u64::MAX)
-                                        .take(BATCH_SIZE)
-                                        .map(|(n, _)| n)
-                                        .collect()
-                                })
-                                .unwrap_or_default();
+                            ids = g.get_label_matrix(&label).map_or_default(|lm| {
+                                lm.iter(cursor.row, u64::MAX)
+                                    .take(BATCH_SIZE)
+                                    .map(|(n, _)| n)
+                                    .collect()
+                            });
                             edge_triples = Vec::new();
                             scanned_count = ids.len();
                         }
@@ -686,9 +683,8 @@ fn populate_index_batch(
                             let skip_src = cursor.row;
                             let skip_dst = cursor.within_row_dst;
                             let skip_eid = cursor.within_pair_edge_id;
-                            let triples: Vec<(u64, u64, u64)> = g
-                                .get_relationship_matrix(&label)
-                                .map(|t| {
+                            let triples: Vec<(u64, u64, u64)> =
+                                g.get_relationship_matrix(&label).map_or_default(|t| {
                                     t.iter(cursor.row, u64::MAX, false)
                                         .filter(|(src, dst, eid)| {
                                             // Row mismatch: past the resume
@@ -709,8 +705,7 @@ fn populate_index_batch(
                                         })
                                         .take(BATCH_SIZE)
                                         .collect()
-                                })
-                                .unwrap_or_default();
+                                });
                             ids = Vec::new();
                             scanned_count = triples.len();
                             edge_triples = triples;
@@ -836,12 +831,12 @@ fn drop_index_bg(
     );
 }
 
-/// Default for the NODE_CREATION_BUFFER configuration; the config
+/// Default for the `NODE_CREATION_BUFFER` configuration; the config
 /// registration and `CONFIGURATION_NODE_CREATION_BUFFER` in the root crate
 /// reference this constant so the default lives in one place.
 pub const DEFAULT_NODE_CREATION_BUFFER: u64 = 16384;
 
-/// Effective NODE_CREATION_BUFFER configuration value: the chunk size (in
+/// Effective `NODE_CREATION_BUFFER` configuration value: the chunk size (in
 /// entities) that matrix capacities grow by.
 ///
 /// Set once at module init from the normalized config (power of two, >= 128);
@@ -851,12 +846,12 @@ pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATIO
 /// Capacity growth step for entity matrices. Sparse matrices carry a
 /// row-pointer array sized by the matrix dimension, so doubling the
 /// capacity wastes up to `4 * cap` bytes per matrix at large graph sizes.
-/// Growing 25% at a time (rounded up to a NODE_CREATION_BUFFER chunk)
+/// Growing 25% at a time (rounded up to a `NODE_CREATION_BUFFER` chunk)
 /// bounds that slop while keeping resizes rare: each resize triggers
-/// GraphBLAS format conversions costing O(entries), so smaller growth
+/// `GraphBLAS` format conversions costing O(entries), so smaller growth
 /// steps measurably slow bulk inserts.
 ///
-/// Never past `GrB_INDEX_MAX`, the largest dimension GraphBLAS accepts. The
+/// Never past `GrB_INDEX_MAX`, the largest dimension `GraphBLAS` accepts. The
 /// step is checked rather than wrapped: near the top of `u64` the unchecked
 /// `cap + cap / 4` wrapped, and because `cap` stays a multiple of the chunk it
 /// never reached `needed` again — an infinite loop in release. Ids that large
@@ -1929,7 +1924,7 @@ impl Graph {
     }
 
     /// Import pre-resolved node attributes directly into the cache.
-    /// Used by bulk insert to avoid per-node OrderMap allocations.
+    /// Used by bulk insert to avoid per-node `OrderMap` allocations.
     ///
     /// Marks the imported nodes for (re)indexing, as
     /// [`import_node_attrs`](Self::import_node_attrs) does. `label_ids` is the label set the
@@ -2417,7 +2412,7 @@ impl Graph {
     ///   pairs by destination, so the incoming side asks those instead —
     ///   one bulk product per type, each following `nodes`.
     ///
-    /// Both are `Aᵀ·x` over the indicator `x` of `nodes`, which GraphBLAS
+    /// Both are `Aᵀ·x` over the indicator `x` of `nodes`, which `GraphBLAS`
     /// computes by pushing just the selected rows.
     #[must_use]
     pub fn first_node_with_relationships(
@@ -2567,7 +2562,6 @@ impl Graph {
             .sum()
     }
 
-    #[must_use]
     pub fn get_nodes(
         &self,
         labels: &OrderSet<Arc<String>>,
@@ -2689,7 +2683,7 @@ impl Graph {
 
     /// Create relationships of a single type using flat arrays.
     ///
-    /// Avoids HashMap overhead while using individual GraphBLAS set calls. The
+    /// Avoids `HashMap` overhead while using individual `GraphBLAS` set calls. The
     /// id space is required rather than optional: every caller has one now, and
     /// "checked against nothing" was a value pretending to be a mode.
     ///
@@ -2813,7 +2807,7 @@ impl Graph {
     /// Waiting the bases is what makes publication safe: readers reach bases
     /// lock-free (dp/dm reads go through the mutex-guarded `Matrix::wait`), so
     /// a pending base in a visible snapshot lets concurrent readers corrupt
-    /// GrB state. No-op per matrix when already synced, and it has to run
+    /// `GrB` state. No-op per matrix when already synced, and it has to run
     /// after the fold, which leaves the base pending.
     pub fn fold_oversized_deltas(&mut self) {
         self.zero_matrix.wait_base();
@@ -2833,9 +2827,9 @@ impl Graph {
         }
     }
 
-    /// Materialize all pending GraphBLAS operations on every matrix.
-    /// Called from pthread_atfork prepare handler to ensure no internal
-    /// GraphBLAS locks are held at fork time.
+    /// Materialize all pending `GraphBLAS` operations on every matrix.
+    /// Called from `pthread_atfork` prepare handler to ensure no internal
+    /// `GraphBLAS` locks are held at fork time.
     pub fn wait_all(&self) {
         self.zero_matrix.wait_all();
         self.adjacancy_matrix.wait_all();
@@ -2852,7 +2846,7 @@ impl Graph {
     /// Returns true if every matrix is fully synced — i.e. `wait_all`
     /// has been called and no writer has since enqueued pending ops.
     /// Used by the post-fork child handler to verify the parent's
-    /// pre_fork sync took effect before emitting an RDB.
+    /// `pre_fork` sync took effect before emitting an RDB.
     #[must_use]
     pub fn is_synced(&self) -> bool {
         self.zero_matrix.is_synced()
@@ -3506,7 +3500,7 @@ impl Graph {
 
     /// Borrow the relationship attribute store directly.
     ///
-    /// Lets a caller hand a GraphBLAS user-defined operator a minimal, read-only
+    /// Lets a caller hand a `GraphBLAS` user-defined operator a minimal, read-only
     /// handle to just the relationship weights (see `algo.MSF`'s weight operator)
     /// rather than a raw pointer to the whole graph.
     #[must_use]
@@ -3765,7 +3759,7 @@ impl Graph {
     /// Synchronously populate all pending indexes.
     /// Used after RDB load when the graph is fully constructed.
     ///
-    /// RediSearch gets only the fields [`redisearch_fields`] keeps; under `index-falkordb` the
+    /// `RediSearch` gets only the fields [`redisearch_fields`] keeps; under `index-falkordb` the
     /// native columns are built from every field.
     pub fn populate_indexes_sync(&mut self) {
         let node_snapshots = self.node_indexer.acquire_population_snapshots();
@@ -3893,6 +3887,8 @@ impl Graph {
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
     /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
     /// private version the changes were staged against.
+    // Not `const`: the body under `index-falkordb` calls the index.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn apply_index_writes(
         &mut self,
         docs: &mut IndexDocs,
@@ -3910,10 +3906,10 @@ impl Graph {
     }
 
     /// Commit a unit of work's index changes into this version: the native index's staged changes,
-    /// then RediSearch's node and edge documents. For an owner that publishes both at one point:
+    /// then `RediSearch`'s node and edge documents. For an owner that publishes both at one point:
     /// the replica at the end of an effects buffer, `GRAPH.BULK` once every token has succeeded.
     /// A Cypher query applies the native part at the end of each `Commit`
-    /// ([`Self::apply_index_writes`]) and publishes RediSearch's later.
+    /// ([`Self::apply_index_writes`]) and publishes `RediSearch`'s later.
     ///
     /// A kind with no documents is skipped before its indexer lock is taken.
     pub fn commit_index_docs(
@@ -3929,7 +3925,7 @@ impl Graph {
         }
     }
 
-    /// Write node index documents to RediSearch, taking the node indexer lock.
+    /// Write node index documents to `RediSearch`, taking the node indexer lock.
     pub fn commit_index(
         &self,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
@@ -3952,7 +3948,7 @@ impl Graph {
         self.commit_index_kind(guard, IndexKind::Node, index_add_docs, remove_docs);
     }
 
-    /// Write edge index documents to RediSearch, taking the edge indexer lock.
+    /// Write edge index documents to `RediSearch`, taking the edge indexer lock.
     pub fn commit_edge_index(
         &self,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
@@ -4187,7 +4183,7 @@ impl Graph {
     /// Whether the planner may answer `label.field` from an index of `index_type`.
     ///
     /// Under `index-falkordb` a Range lookup is the native column's alone, and the column is part
-    /// of this version: it serves once its build is done. RediSearch's readiness lives in its
+    /// of this version: it serves once its build is done. `RediSearch`'s readiness lives in its
     /// index map, which every version shares, so it says nothing about this version's column, and
     /// a version without the column must not plan a lookup it cannot answer.
     #[must_use]
@@ -4231,7 +4227,7 @@ impl Graph {
     /// Answer an EDGE query from the native index columns for `type_name`
     /// ([`FalkorDbIndex::query_column`]). Yields
     /// `(src, dst, edge_id)`, with endpoints recovered from the graph's `edge_id → (src, dst)`
-    /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
+    /// reverse index (`endpoints_for_edge`), like `RediSearch`'s edge read (which instead reads them
     /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
     /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes:
     /// `Ok(rows)`, `Err(scan_filter)` (still building — scan), `None` (not servable).
@@ -4367,7 +4363,7 @@ impl Graph {
     /// distance.
     ///
     /// Distances are computed manually from the query vector and each
-    /// entity's stored vector — RediSearch's per-result score is *not*
+    /// entity's stored vector — `RediSearch`'s per-result score is *not*
     /// the KNN distance, and reading it returns 0. For each result we
     /// look up the entity's vector property and apply the index's
     /// similarity function. Results are eagerly materialized into a
@@ -4505,7 +4501,7 @@ impl Graph {
     /// Under `index-falkordb`, `info`'s label is under construction while any of its Range
     /// attributes' native columns is `Building` in this version: each such column counts as
     /// pending. The progress shown is the label's build as a whole, out of the label's or type's
-    /// entities, as C shows it: the least any of those columns has read, or what RediSearch has
+    /// entities, as C shows it: the least any of those columns has read, or what `RediSearch` has
     /// populated of another of the label's fields (a fulltext or vector one) if that is less. The
     /// label's or type's entities are counted once, and only while one of its columns builds.
     #[cfg(feature = "index-falkordb")]
@@ -4551,10 +4547,13 @@ impl Graph {
         label: &Arc<String>,
     ) -> u64 {
         match entity {
-            EntityType::Node => self.get_label_matrix(label).map_or(0, |lm| lm.nvals()),
+            EntityType::Node => self.get_label_matrix(label).map_or(
+                0,
+                super::graphblas::versioned_matrix::VersionedMatrix::nvals,
+            ),
             EntityType::Relationship => self
                 .get_relationship_matrix(label)
-                .map_or(0, |t| t.edge_count()),
+                .map_or(0, super::graphblas::tensor::Tensor::edge_count),
         }
     }
 
@@ -5294,7 +5293,7 @@ impl Graph {
 #[cfg(feature = "index-falkordb")]
 impl Graph {
     /// Build a CCH index for `def` and hold it on this version of the graph. Synchronous:
-    /// unlike the RediSearch indexes there is no background population pass.
+    /// unlike the `RediSearch` indexes there is no background population pass.
     ///
     /// # Errors
     /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
@@ -5462,7 +5461,7 @@ mod composite_key_tests {
     #[test]
     fn complete_key_is_built_and_discriminates() {
         let a = key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))]);
-        assert!(!a.is_empty());
+        assert_ne!(a, [] as [u8; 0]);
         assert_eq!(
             a,
             key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))])
@@ -5477,26 +5476,32 @@ mod composite_key_tests {
     /// is vacuously unique — regardless of which component it is.
     #[test]
     fn any_null_component_yields_empty_key() {
-        assert!(key(&["a", "b"], &[("a", Value::Int(1))]).is_empty());
-        assert!(key(&["a", "b"], &[("b", Value::Int(2))]).is_empty());
-        assert!(key(&["a", "b"], &[]).is_empty());
-        assert!(key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Null)]).is_empty());
-        assert!(key(&["a", "b"], &[("a", Value::Null), ("b", Value::Int(2))]).is_empty());
-        assert!(
+        assert_eq!(key(&["a", "b"], &[("a", Value::Int(1))]), [] as [u8; 0]);
+        assert_eq!(key(&["a", "b"], &[("b", Value::Int(2))]), [] as [u8; 0]);
+        assert_eq!(key(&["a", "b"], &[]), [] as [u8; 0]);
+        assert_eq!(
+            key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Null)]),
+            [] as [u8; 0]
+        );
+        assert_eq!(
+            key(&["a", "b"], &[("a", Value::Null), ("b", Value::Int(2))]),
+            [] as [u8; 0]
+        );
+        assert_eq!(
             key(
                 &["a", "b", "c"],
                 &[("a", Value::Int(1)), ("c", Value::Int(3))]
-            )
-            .is_empty()
+            ),
+            [] as [u8; 0]
         );
     }
 
     /// For a single property ALL and ANY coincide, so behaviour is unchanged.
     #[test]
     fn single_property_is_unaffected() {
-        assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
-        assert!(key(&["a"], &[]).is_empty());
-        assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
+        assert_ne!(key(&["a"], &[("a", Value::Int(1))]), [] as [u8; 0]);
+        assert_eq!(key(&["a"], &[]), [] as [u8; 0]);
+        assert_eq!(key(&["a"], &[("a", Value::Null)]), [] as [u8; 0]);
     }
 }
 
@@ -5536,7 +5541,7 @@ mod reservation_tests {
 
         fn reserve(
             &mut self,
-            g: &mut Graph,
+            g: &Graph,
             n: usize,
         ) -> Vec<u64> {
             let before = &self.created | &self.cancelled;
@@ -5640,7 +5645,7 @@ mod reservation_tests {
 
         let mut all = Vec::new();
         for _ in 0..5 {
-            all.extend(q.reserve(&mut g, 1024));
+            all.extend(q.reserve(&g, 1024));
         }
 
         assert_eq!(all, (0..5120).collect::<Vec<_>>(), "dense and in order");
@@ -5653,14 +5658,14 @@ mod reservation_tests {
     fn reclaims_from_the_bin_before_allocating_fresh() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 10);
+        q.reserve(&g, 10);
         q.commit(&mut g);
         delete(&mut g, &[2, 5, 7]);
 
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 2), vec![2, 5]);
-        assert_eq!(q.reserve(&mut g, 1), vec![7], "then the last freed id");
-        assert_eq!(q.reserve(&mut g, 2), vec![10, 11], "then fresh");
+        assert_eq!(q.reserve(&g, 2), vec![2, 5]);
+        assert_eq!(q.reserve(&g, 1), vec![7], "then the last freed id");
+        assert_eq!(q.reserve(&g, 2), vec![10, 11], "then fresh");
         q.commit(&mut g);
         assert_dense(&g, 12);
     }
@@ -5672,14 +5677,14 @@ mod reservation_tests {
     fn one_batch_spanning_the_bin_and_fresh_ids() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 10);
+        q.reserve(&g, 10);
         q.commit(&mut g);
         delete(&mut g, &[3]);
 
         // 9 live (0..10 minus 3), one in the bin, so 10 ids handed out.
         let mut q = Query::new(&mut g);
         assert_eq!(
-            q.reserve(&mut g, 3),
+            q.reserve(&g, 3),
             vec![3, 10, 11],
             "the freed id, then above the boundary"
         );
@@ -5694,7 +5699,7 @@ mod reservation_tests {
     fn a_cancelled_reservation_returns_to_the_bin() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        let ids = q.reserve(&mut g, 2);
+        let ids = q.reserve(&g, 2);
         assert_eq!(ids, vec![0, 1]);
         q.cancel(&mut g, 1);
         q.commit(&mut g);
@@ -5706,7 +5711,7 @@ mod reservation_tests {
         // A *later* query does hand it back out — by then it is a different
         // effects buffer, where recreating a recycled id is ordinary.
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 1), vec![1]);
+        assert_eq!(q.reserve(&g, 1), vec![1]);
         q.commit(&mut g);
         assert_dense(&g, 2);
     }
@@ -5717,7 +5722,7 @@ mod reservation_tests {
     fn reserving_after_a_cancellation_in_the_same_query() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 3);
+        q.reserve(&g, 3);
         q.cancel(&mut g, 1);
 
         // Id 1 is back in the bin, but this query has already had it, so it is
@@ -5725,7 +5730,7 @@ mod reservation_tests {
         // put the same id in two records of one effects buffer: the cancelled
         // node's own create/delete pair, and the real create that reused it.
         // A replica refuses that buffer as `AlreadyLive`, measured.
-        let next = q.reserve(&mut g, 2);
+        let next = q.reserve(&g, 2);
         assert_eq!(next, vec![3, 4], "not 1 again, even though it is free");
         q.commit(&mut g);
 
@@ -5740,7 +5745,7 @@ mod reservation_tests {
     fn relationship_ids_reclaim_then_allocate_fresh() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 4);
+        q.reserve(&g, 4);
         q.commit(&mut g);
 
         let type_name = Arc::new("R".to_owned());
@@ -5810,19 +5815,15 @@ mod reservation_tests {
     fn outstanding_covers_ids_reclaimed_by_an_earlier_batch() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 8);
+        q.reserve(&g, 8);
         q.commit(&mut g);
         delete(&mut g, &[0, 1, 2, 3, 4, 5]);
 
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 2), vec![0, 1]);
-        assert_eq!(q.reserve(&mut g, 2), vec![2, 3], "not 0 and 1 again");
-        assert_eq!(q.reserve(&mut g, 2), vec![4, 5]);
-        assert_eq!(
-            q.reserve(&mut g, 2),
-            vec![8, 9],
-            "bin exhausted, then fresh"
-        );
+        assert_eq!(q.reserve(&g, 2), vec![0, 1]);
+        assert_eq!(q.reserve(&g, 2), vec![2, 3], "not 0 and 1 again");
+        assert_eq!(q.reserve(&g, 2), vec![4, 5]);
+        assert_eq!(q.reserve(&g, 2), vec![8, 9], "bin exhausted, then fresh");
         q.commit(&mut g);
         assert_dense(&g, 10);
     }
@@ -5977,7 +5978,7 @@ mod adjacency_cascade_tests {
 
         // And deleting both endpoints clears it, S edge included.
         delete_nodes_cascade(&mut g, &[0, 1]);
-        assert!(adjacency_entries(&g).is_empty());
+        assert_eq!(adjacency_entries(&g), [] as [(u64, u64); 0]);
     }
 }
 
@@ -6128,7 +6129,7 @@ mod grow_cap_tests {
     /// #2892. Near the top of `u64` the unchecked step wrapped, and since the
     /// capacity stays a multiple of the chunk it never reached `needed` — the
     /// loop spun forever in release. It now stops at the largest dimension
-    /// GraphBLAS accepts.
+    /// `GraphBLAS` accepts.
     #[test]
     fn growth_stops_at_the_largest_graphblas_dimension() {
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);

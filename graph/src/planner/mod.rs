@@ -20,10 +20,10 @@
 //!
 //! ## IR Operators
 //!
-//! - **NodeByLabelScan**: Scan all nodes with a label
-//! - **NodeByIndexScan**: Use an index for node lookup
-//! - **CondTraverse**: Traverse relationships conditionally
-//! - **ExpandInto**: Check for relationship between known nodes
+//! - **`NodeByLabelScan`**: Scan all nodes with a label
+//! - **`NodeByIndexScan`**: Use an index for node lookup
+//! - **`CondTraverse`**: Traverse relationships conditionally
+//! - **`ExpandInto`**: Check for relationship between known nodes
 //! - **Filter**: Apply predicate to filter tuples
 //! - **Project**: Compute new values from existing
 //! - **Aggregate**: Group and aggregate tuples
@@ -126,7 +126,7 @@ pub enum IR {
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
     },
-    /// Scan edges using an index, replacing CondTraverse when a filter
+    /// Scan edges using an index, replacing `CondTraverse` when a filter
     /// can be pushed into the edge index.
     EdgeByIndexScan {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
@@ -193,7 +193,7 @@ pub enum IR {
         /// scan accordingly.
         transposed: bool,
         /// Additional hops fused by `fuse_anonymous_traverse`, in traversal
-        /// order. Empty for a single-hop CondTraverse. Each chain hop is an
+        /// order. Empty for a single-hop `CondTraverse`. Each chain hop is an
         /// anonymous-edge, anonymous-intermediate-node traversal — only the
         /// final hop's `to` alias is bound at runtime.
         chain: Vec<Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>>,
@@ -248,9 +248,9 @@ pub enum IR {
     Filter(QueryExpr<Variable>),
     /// Cartesian product of child results
     CartesianProduct,
-    /// Value Hash Join: replaces CartesianProduct + equality Filter.
+    /// Value Hash Join: replaces `CartesianProduct` + equality Filter.
     /// Children: child(0) = left sub-plan, child(1) = right sub-plan.
-    /// The join expressions (lhs_exp evaluated on left rows, rhs_exp on right rows)
+    /// The join expressions (`lhs_exp` evaluated on left rows, `rhs_exp` on right rows)
     /// are stored here so the runtime can build a hash table.
     ValueHashJoin {
         lhs_exp: QueryExpr<Variable>,
@@ -282,7 +282,7 @@ pub enum IR {
     Skip(QueryExpr<Variable>),
     /// Limit to N rows
     Limit(QueryExpr<Variable>),
-    /// Aggregate with grouping keys, aggregations, copy_from_parent, and projections
+    /// Aggregate with grouping keys, aggregations, `copy_from_parent`, and projections
     Aggregate {
         names: Vec<Variable>,
         keys: Vec<(Variable, QueryExpr<Variable>)>,
@@ -306,7 +306,7 @@ pub enum IR {
     Union,
     /// Commit write operations to graph
     Commit,
-    /// FOREACH(var IN list | body_plan)
+    /// FOREACH(var IN list | `body_plan`)
     /// Children: child(0) = body sub-plan
     ForEach {
         list: QueryExpr<Variable>,
@@ -718,7 +718,7 @@ fn has_labels_filter(
 ///   during pattern-predicate decomposition without collisions.
 #[derive(Default)]
 pub struct Planner {
-    /// Variable (id, scope_id) pairs that are already bound in the current
+    /// Variable (id, `scope_id`) pairs that are already bound in the current
     /// execution stream.  Tracking scope alongside id prevents inner-scope
     /// variables from shadowing outer-scope variables with the same id.
     visited: HashSet<(u32, u32)>,
@@ -762,7 +762,7 @@ struct ExtractedComprehension {
     /// Comprehensions nested within `where_filter` / `result_expr`, which may
     /// reference variables bound by `graph` and so must be applied inside this
     /// comprehension's sub-plan.
-    nested: Vec<ExtractedComprehension>,
+    nested: Vec<Self>,
 }
 
 /// What `extract_pattern_comprehensions` does with a bare existential
@@ -775,7 +775,7 @@ enum PatternMode {
     /// expression's value is what matters: projections, UNWIND, FOREACH.
     Collect,
     /// Leave the pattern in place for `collect_patterns_and_rebuild`, which
-    /// turns it into a SemiApply / AntiSemiApply.  This is the preferred
+    /// turns it into a `SemiApply` / `AntiSemiApply`.  This is the preferred
     /// form in a WHERE predicate: a semi-join stops at the first match
     /// instead of materializing every path.
     SemiApply,
@@ -853,7 +853,7 @@ impl Planner {
 
     /// Attach `Argument` nodes to every leaf in the plan tree.
     ///
-    /// When a sub-plan is used inside a correlated join (Apply, SemiApply, etc.),
+    /// When a sub-plan is used inside a correlated join (Apply, `SemiApply`, etc.),
     /// its leaves must receive the current row from the outer stream.  `Argument`
     /// is the operator that feeds the outer row into the sub-plan.
     ///
@@ -864,7 +864,7 @@ impl Planner {
     /// runtime creates an inline Argument for the input.
     fn add_argument_to_leaves(
         tree: &mut DynTree<IR>,
-        bound_vars: Option<Vec<(u32, u32)>>,
+        bound_vars: Option<&Vec<(u32, u32)>>,
     ) {
         let mut leaves = Vec::new();
 
@@ -894,7 +894,7 @@ impl Planner {
         // Add Argument node as a child to each leaf.
         for leaf_idx in leaves {
             tree.node_mut(leaf_idx)
-                .push_child(IR::Argument(bound_vars.clone()));
+                .push_child(IR::Argument(bound_vars.cloned()));
         }
     }
 
@@ -1324,9 +1324,10 @@ impl Planner {
         let mut chain: Option<DynTree<IR>> = None;
         for comprehension in extracted.iter().rev() {
             let sub_plan = self.build_pattern_comprehension_plan(comprehension);
-            chain = Some(match chain {
-                Some(inner) => tree!(IR::Apply, inner, sub_plan),
-                None => tree!(IR::Apply, sub_plan),
+            chain = Some(if let Some(inner) = chain {
+                tree!(IR::Apply, inner, sub_plan)
+            } else {
+                tree!(IR::Apply, sub_plan)
             });
         }
         for c in &extracted {
@@ -1348,7 +1349,7 @@ impl Planner {
 
     /// Extract the parts of a WHERE predicate that need their own sub-plan:
     /// every pattern comprehension, plus any existential pattern sitting where
-    /// `expr_to_plan` cannot reach it with a SemiApply (an `XOR` operand, a
+    /// `expr_to_plan` cannot reach it with a `SemiApply` (an `XOR` operand, a
     /// comparison, a function argument, …).  Each is replaced in the predicate
     /// by an expression over a variable, and returned as a sub-plan the caller
     /// must `Apply` below the `Filter` so that variable is bound by the time
@@ -1419,7 +1420,7 @@ impl Planner {
 
         // Add PathBuilder to construct Path values from matched variables.
         if !paths.is_empty() {
-            sub_plan = tree!(IR::PathBuilder(paths.to_vec()), sub_plan);
+            sub_plan = tree!(IR::PathBuilder(paths.clone()), sub_plan);
         }
 
         // Nested comprehensions are planned while this comprehension's own
@@ -1658,7 +1659,7 @@ impl Planner {
     /// (e.g. `WHERE EXISTS { (a)-[:KNOWS]->(b) }`) from scalar predicates.
     ///
     /// Pattern predicates cannot be evaluated as simple filters -- they require
-    /// building a sub-plan (SemiApply / AntiSemiApply).  This function rebuilds
+    /// building a sub-plan (`SemiApply` / `AntiSemiApply`).  This function rebuilds
     /// the expression tree with patterns replaced by either:
     ///
     /// - **Extractable** patterns (`can_extract = true`): removed from the
@@ -1669,7 +1670,7 @@ impl Planner {
     /// - **Inline** patterns (`can_extract = false`): replaced with a fresh
     ///   synthetic variable and collected in `inline`.  These appear under OR
     ///   or other operators where they cannot be independently extracted and
-    ///   must be handled by `expr_to_plan` (OrApplyMultiplexer, etc.).
+    ///   must be handled by `expr_to_plan` (`OrApplyMultiplexer`, etc.).
     ///
     /// `can_extract` propagates through AND (conjuncts are independently
     /// extractable) but resets to `false` under OR, NOT, and other operators.
@@ -1808,7 +1809,7 @@ impl Planner {
     ///
     /// The pattern graph is decomposed into connected components.  Each component
     /// produces a sub-plan (scan + traversals), and disconnected components are
-    /// joined with a CartesianProduct.  The optional WHERE filter is then applied
+    /// joined with a `CartesianProduct`.  The optional WHERE filter is then applied
     /// on top, with pattern predicates decomposed into SemiApply/AntiSemiApply.
     ///
     /// The `visited` set is updated as variables are bound, so subsequent clauses
@@ -1824,8 +1825,7 @@ impl Planner {
         // hops of a component so constrained endpoints are reached first.
         let filter_vars: HashSet<u32> = filter
             .as_ref()
-            .map(|f| collect_expr_variables(f))
-            .unwrap_or_default();
+            .map_or_default(|f| collect_expr_variables(f));
         // Collect extra filters for bound variables with new constraints
         // (labels or inline properties). These are applied as top-level
         // filters rather than as plan components, so they don't interfere
@@ -2041,7 +2041,7 @@ impl Planner {
                 lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
             };
             let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths(rel.clone()))
+                tree!(IR::AllShortestPaths(rel))
             } else if relationship.min_hops.is_some() {
                 // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
                 // Build scan child for the from-node when it's not yet visited
@@ -2105,7 +2105,7 @@ impl Planner {
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
                 if already_bound {
                     tree!(IR::ExpandInto {
-                        relationship: rel.clone(),
+                        relationship: rel,
                         emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                         sibling_edges: sibling_edges.clone(),
                     })
@@ -2119,7 +2119,7 @@ impl Planner {
                     };
                     tree!(
                         IR::ExpandInto {
-                            relationship: rel.clone(),
+                            relationship: rel,
                             emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                         },
@@ -2137,13 +2137,13 @@ impl Planner {
                 // by the endpoint blocks below, which no longer skip visited
                 // aliases.
                 tree!(IR::ExpandInto {
-                    relationship: rel.clone(),
+                    relationship: rel,
                     emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                     sibling_edges: sibling_edges.clone(),
                 })
             } else {
                 tree!(IR::CondTraverse {
-                    relationship: rel.clone(),
+                    relationship: rel,
                     emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                     sibling_edges: sibling_edges.clone(),
                     transposed: false,
@@ -2210,7 +2210,7 @@ impl Planner {
                     lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
                 };
                 res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(IR::AllShortestPaths(rel.clone()), res)
+                    tree!(IR::AllShortestPaths(rel), res)
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
                         && self.visited.contains(&(
@@ -2222,7 +2222,7 @@ impl Planner {
                             .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));
                     tree!(
                         IR::CondVarLenTraverse {
-                            relationship: rel.clone(),
+                            relationship: rel,
                             edge_filter: None,
                             emit_path: true,
                             path_var: None,
@@ -2237,7 +2237,7 @@ impl Planner {
                     if already_bound {
                         tree!(
                             IR::ExpandInto {
-                                relationship: rel.clone(),
+                                relationship: rel,
                                 emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                                 sibling_edges: sibling_edges.clone(),
                             },
@@ -2259,7 +2259,7 @@ impl Planner {
                         };
                         tree!(
                             IR::ExpandInto {
-                                relationship: rel.clone(),
+                                relationship: rel,
                                 emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                                 sibling_edges: sibling_edges.clone(),
                             },
@@ -2275,7 +2275,7 @@ impl Planner {
                 {
                     tree!(
                         IR::ExpandInto {
-                            relationship: rel.clone(),
+                            relationship: rel,
                             emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                         },
@@ -2284,7 +2284,7 @@ impl Planner {
                 } else {
                     tree!(
                         IR::CondTraverse {
-                            relationship: rel.clone(),
+                            relationship: rel,
                             emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                             transposed: false,
@@ -2591,7 +2591,7 @@ impl Planner {
     /// applied below the Filter so their result lists are bound first;
     /// pattern predicates are separated from scalar ones by
     /// `collect_patterns_and_rebuild`:
-    ///   - "extractable" patterns become SemiApply / AntiSemiApply wrappers
+    ///   - "extractable" patterns become `SemiApply` / `AntiSemiApply` wrappers
     ///   - "inline" patterns (under OR, etc.) are handled by `expr_to_plan`
     ///   - remaining scalar predicates become a Filter node
     fn plan_filter(
@@ -2683,7 +2683,7 @@ impl Planner {
     /// unchanged. Labels, inline properties and the clause's `WHERE` are
     /// therefore unobservable, so the whole clause is dropped rather than
     /// planned as an `Apply` over an `Optional` that always matches. Mirrors
-    /// the early exit in FalkorDB C's `ExecutionPlan_ProcessPattern`.
+    /// the early exit in `FalkorDB` C's `ExecutionPlan_ProcessPattern`.
     fn is_redundant_optional_match(
         &self,
         ir: &QueryIR<Variable>,
@@ -2865,12 +2865,12 @@ impl Planner {
         res
     }
 
-    /// Returns true if a plan `n` being stitched into a CartesianProduct
+    /// Returns true if a plan `n` being stitched into a `CartesianProduct`
     /// requires Apply wrapping. Plans from data-producing clauses (LOAD CSV,
     /// UNWIND, WITH/RETURN projections) produce variables that may be referenced
-    /// inside the CartesianProduct — these need Apply + Argument propagation.
+    /// inside the `CartesianProduct` — these need Apply + Argument propagation.
     /// Plans from MATCH components (scans, traversals) are just additional
-    /// cross-product branches and should be inserted as CartesianProduct children.
+    /// cross-product branches and should be inserted as `CartesianProduct` children.
     fn needs_apply_wrapping(n: &DynTree<IR>) -> bool {
         // Walk to the root of n and check its type.
         // Match-produced plans have scan/traversal/filter/argument at root.
@@ -3113,7 +3113,7 @@ impl Planner {
                 // The Argument rows bind exactly the variables visited so
                 // far; passing them lets the scan-selection optimizer prove
                 // when the match branch is uncorrelated and add a scan.
-                Self::add_argument_to_leaves(&mut match_branch, Some(bound));
+                Self::add_argument_to_leaves(&mut match_branch, Some(&bound));
 
                 let paths = pattern.paths();
                 let merge = tree!(

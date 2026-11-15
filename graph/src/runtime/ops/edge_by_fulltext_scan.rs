@@ -15,7 +15,7 @@
 //!
 //! A downstream `Skip`/`Limit` lowers the emitter's pack ceiling (via
 //! `record_cap`), so `CALL db.idx.fulltext.queryRelationships(..) ... LIMIT k`
-//! drains only about `k` results from the RediSearch iterator instead of
+//! drains only about `k` results from the `RediSearch` iterator instead of
 //! eagerly packing a whole `BATCH_SIZE` worth of matches per call.
 
 use crate::graph::graph::RelationshipId;

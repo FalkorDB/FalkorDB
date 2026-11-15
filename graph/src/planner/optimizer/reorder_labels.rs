@@ -1,6 +1,6 @@
 //! Label reordering optimization pass.
 //!
-//! Sorts the labels in each `NodeByLabelScan` by their schema label_id
+//! Sorts the labels in each `NodeByLabelScan` by their schema `label_id`
 //! (insertion order in the graph). Labels not yet registered in the schema
 //! are placed at the end. This produces deterministic display output that
 //! reflects schema order rather than user-input or alphabetical order.
