@@ -2,6 +2,10 @@ import OpsTraverse.Basic
 /-
 # The bidirectional (source, destination) dedup of chained anonymous undirected hops
 
+**Historical (#3639)**: the PR that made uniqueness independent of naming removed this dedup
+from `CondTraverseOp`; the cites below are to the code before it. Its replacement (rows that
+carry every edge, the counted chain) is modelled in `PathCount`.
+
 | here | there |
 | --- | --- |
 | `dedupRows`    | the `bidir_dedup` loop of `CondTraverseOp::expand_row` (`cond_traverse.rs:1087-1110`): key `(src_key, out.to)`, `swap_remove` on a repeat |

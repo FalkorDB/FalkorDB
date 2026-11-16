@@ -13,7 +13,7 @@ import FalkorOptimizer.Basic
 | `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
 | `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
 | `isAnon`, `attrsEmpty` | `is_anon`, `rel_attrs_empty` fuse_anonymous_traverse.rs:36-51 (`node_attrs_empty` removed by #2390) |
-| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-192 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
+| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-201 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
 | `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
 | `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-87 |
 -/
@@ -236,14 +236,22 @@ structure CT where
   toV : Var
   /-- The edge alias (`relationship.alias`). -/
   edgeV : Var
+  /-- `chain.is_empty()` (no hop fused into it yet; #3639). -/
+  chainEmpty : Bool
 
 /-- `can_fuse(parent, child)`; `unread` = `intermediate_unreferenced` (whole plan since #2390).
 #2390 dropped the `node_attrs_empty(intermediate)` test (its map is a Filter now, which the
-reference check sees) and added the two edges to the reference check (:181-185). -/
+reference check sees) and added the two edges to the reference check (:195-199).
+#3639: sibling edges may name only these two hops' edges, and then neither may carry an
+already-fused chain (:137-148); the fused operator subtracts the shared self-loops
+(`hop2_distinct_add_selfLoops`). -/
 def canFuse (p c : CT) (unread : Var → Bool) : Bool :=
   p.bind && c.bind && !p.optional && !c.optional && !p.transposed && !c.transposed &&
   isAnon p.edgeName && isAnon c.edgeName && !p.emit && !c.emit &&
-  p.siblings.isEmpty && c.siblings.isEmpty && !p.bidirectional && !c.bidirectional &&
+  p.siblings.all (fun i => i == p.edgeV.id || i == c.edgeV.id) &&
+  c.siblings.all (fun i => i == p.edgeV.id || i == c.edgeV.id) &&
+  ((p.siblings.isEmpty && c.siblings.isEmpty) || (p.chainEmpty && c.chainEmpty)) &&
+  !p.bidirectional && !c.bidirectional &&
   !p.varLen && !c.varLen && attrsEmpty p.edgeAttrs && attrsEmpty c.edgeAttrs &&
   p.fromV == c.toV && isAnon p.fromName && p.fromLabels.isEmpty &&
   unread p.fromV && unread p.edgeV && unread c.edgeV
@@ -251,17 +259,121 @@ def canFuse (p c : CT) (unread : Var → Bool) : Bool :=
 /-- Fusion only happens on two plain, storage-direction, anonymous, unfiltered,
 fixed-length hops whose shared middle node is anonymous, unlabelled and — like both
 edges — read by no operator of the plan (its inline map, if any, is a Filter that reads
-it) — the preconditions of `fuse_same_support` (Passes.lean). -/
+it) — the preconditions of `fuse_same_support` (Passes.lean). Since #3639 their sibling
+lists hold at most each other's edge, and only on single hops (no fused chain yet). -/
 theorem canFuse_spec (p c : CT) (u : Var → Bool) (h : canFuse p c u = true) :
     p.optional = false ∧ c.optional = false ∧ p.emit = false ∧ c.emit = false ∧
     isAnon p.edgeName = true ∧ isAnon c.edgeName = true ∧ p.fromV = c.toV ∧
     isAnon p.fromName = true ∧ p.fromLabels = [] ∧
     p.edgeAttrs = .node .map [] ∧ c.edgeAttrs = .node .map [] ∧ p.varLen = false ∧ c.varLen = false ∧
-    p.siblings = [] ∧ c.siblings = [] ∧ u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
-  simp only [canFuse, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff] at h
+    (∀ i ∈ p.siblings, i = p.edgeV.id ∨ i = c.edgeV.id) ∧
+    (∀ i ∈ c.siblings, i = p.edgeV.id ∨ i = c.edgeV.id) ∧
+    ((p.siblings = [] ∧ c.siblings = []) ∨ (p.chainEmpty = true ∧ c.chainEmpty = true)) ∧
+    u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
+  simp only [canFuse, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff,
+    Bool.or_eq_true, List.all_eq_true] at h
   simp only [← attrsEmpty_iff]
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
     first | exact h.2 | exact h.1.2 | exact h.1.1.2 | simp_all
+
+/-- #3639: `()-[a]->()-[b]->()` with `a <> b` (each lists the other as a sibling) now fuses
+when both are plain single hops. -/
+theorem canFuse_pair_siblings (p c : CT) (u : Var → Bool)
+    (hb : p.bind = true ∧ c.bind = true) (ho : p.optional = false ∧ c.optional = false)
+    (ht : p.transposed = false ∧ c.transposed = false)
+    (hn : isAnon p.edgeName = true ∧ isAnon c.edgeName = true) (he : p.emit = false ∧ c.emit = false)
+    (hs : p.siblings = [c.edgeV.id] ∧ c.siblings = [p.edgeV.id])
+    (hch : p.chainEmpty = true ∧ c.chainEmpty = true)
+    (hd : p.bidirectional = false ∧ c.bidirectional = false) (hv : p.varLen = false ∧ c.varLen = false)
+    (ha : p.edgeAttrs = .node .map [] ∧ c.edgeAttrs = .node .map [])
+    (hm : p.fromV = c.toV ∧ isAnon p.fromName = true ∧ p.fromLabels = [])
+    (hu : u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true) :
+    canFuse p c u = true := by
+  obtain ⟨p1, p2⟩ := ha
+  have hu1 : u c.toV = true := hm.1 ▸ hu.1
+  simp [canFuse, hb, ho, ht, hn, he, hs, hch, hd, hv, hm, hu, p1, p2, attrsEmpty, hu1]
+
+/-! ### Two fused hops and edge uniqueness (#3639)
+
+Edges are `(id, src, dst)` with distinct ids. `hop2 E a c true` counts the paths
+`a -e1-> m -e2-> c` with `e1 ≠ e2` (what the two unfused hops, each listing the other as a
+sibling, produce); `hop2 E a c false` counts every path (the fused product). Two such
+hops share an edge only at a self-loop on `a = c`, so the fused count minus the self-loops
+is the unfused one. -/
+
+abbrev Edge := Nat × Nat × Nat
+
+def hop2 (E : List Edge) (a c : Nat) (distinct : Bool) : Nat :=
+  ((E.filter (fun e1 => e1.2.1 == a)).map fun e1 =>
+    (E.filter (fun e2 => e1.2.2 == e2.2.1 && e2.2.2 == c && (!distinct || e2.1 != e1.1))).length).sum
+
+def selfLoops (E : List Edge) (a : Nat) : Nat := (E.filter (fun e => e.2.1 == a && e.2.2 == a)).length
+
+theorem filter_ne_id_len (P : Edge → Bool) (E : List Edge) (hnd : (E.map Prod.fst).Nodup)
+    (e : Edge) (he : e ∈ E) :
+    (E.filter (fun x => P x && x.1 != e.1)).length + (if P e then 1 else 0) = (E.filter P).length := by
+  induction E with
+  | nil => simp at he
+  | cons x xs ih =>
+    simp only [List.map_cons, List.nodup_cons, List.mem_map] at hnd
+    obtain ⟨hx, hnd⟩ := hnd
+    rcases List.mem_cons.mp he with rfl | hmem
+    · have : xs.filter (fun y => P y && y.1 != e.1) = xs.filter P := by
+        apply List.filter_congr
+        intro y hy
+        have : y.1 ≠ e.1 := fun h => hx ⟨y, hy, h⟩
+        simp [this]
+      simp only [List.filter_cons, bne_self_eq_false, Bool.and_false, this]
+      cases P e <;> simp <;> omega
+    · have hne : x.1 ≠ e.1 := fun h => hx ⟨e, hmem, h.symm⟩
+      have := ih hnd hmem
+      have hb : (x.1 != e.1) = true := by simp [hne]
+      simp only [List.filter_cons, hb, Bool.and_true]
+      cases P x <;> simp <;> omega
+
+theorem sum_map_add {α} (l : List α) (f g : α → Nat) :
+    (l.map fun x => f x + g x).sum = (l.map f).sum + (l.map g).sum := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp only [List.map_cons, List.sum_cons, ih]; omega
+
+theorem sum_map_ite_one {α} (l : List α) (P : α → Bool) :
+    (l.map fun x => if P x then 1 else 0).sum = (l.filter P).length := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => cases h : P x <;> simp [h, ih] <;> omega
+
+/-- The fused (all-paths) count is the edge-distinct count plus, when the walk returns
+to its start, the self-loops on it. -/
+theorem hop2_distinct_add_selfLoops (E : List Edge) (hnd : (E.map Prod.fst).Nodup) (a c : Nat) :
+    hop2 E a c true + (if a = c then selfLoops E a else 0) = hop2 E a c false := by
+  unfold hop2 selfLoops
+  have step : ∀ e1 ∈ E.filter (fun e1 => e1.2.1 == a),
+      (E.filter (fun e2 => e1.2.2 == e2.2.1 && e2.2.2 == c && (!true || e2.1 != e1.1))).length
+        + (if (e1.2.2 == e1.2.1 && e1.2.2 == c) then 1 else 0)
+      = (E.filter (fun e2 => e1.2.2 == e2.2.1 && e2.2.2 == c && (!false || e2.1 != e1.1))).length := by
+    intro e1 h1
+    have := filter_ne_id_len (fun e2 => e1.2.2 == e2.2.1 && e2.2.2 == c) E hnd e1
+      (List.mem_filter.mp h1).1
+    simpa using this
+  rw [← List.map_congr_left (fun e1 h1 => step e1 h1), sum_map_add, sum_map_ite_one,
+    List.filter_filter]
+  congr 1
+  split
+  · subst c
+    congr 1
+    apply List.filter_congr
+    intro e _
+    cases h1 : (e.2.1 == a) <;> cases h2 : (e.2.2 == a) <;> simp_all <;> omega
+  · rw [eq_comm, List.length_eq_zero_iff, List.filter_eq_nil_iff]
+    intro e _
+    simp only [Bool.and_eq_true, beq_iff_eq, not_and]
+    omega
+
+/-- The 2-hop self-loop: `(:A)-[r]->(:A)`, `MATCH (a)-[e1]->()-[e2]->(a)` with `e1 <> e2`
+has no match, but the product counts `r;r`. -/
+theorem hop2_selfLoop_example : hop2 [(0, 5, 5)] 5 5 true = 0 ∧ hop2 [(0, 5, 5)] 5 5 false = 1 := by
+  decide
 
 /-! ## `fuse_optional_traverse` -/
 

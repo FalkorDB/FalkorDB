@@ -2057,5 +2057,11 @@ def test_self_loop_hop_after_other_hops_keeps_them():
         "MATCH (c)-[:L]->(c)<-[:S*]-(b)<-[:R]-(a) RETURN a.v, b.v, c.v",
     ]:
         assert query(q).result_set == [[1, 2, 3]], q
+    # Two self-loop hops over one :L edge: the two hops must bind distinct
+    # edges, and c has only one, so no row (it matched once while anonymous
+    # edges took no part in relationship uniqueness).
     res = query("MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)-[:L]->(c) RETURN count(*)")
-    assert res.result_set == [[1]]
+    assert res.result_set == [[0]]
+    query("MATCH (c:C {v: 3}) CREATE (c)-[:L]->(c)", write=True)
+    res = query("MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)-[:L]->(c) RETURN count(*)")
+    assert res.result_set == [[2]]

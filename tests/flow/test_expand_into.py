@@ -48,14 +48,15 @@ class testExpandInto():
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertContains("Expand Into", plan)
-        self.env.assertEqual(2, result.result_set[0][0])
+        # The first MATCH yields one row per parallel edge (2), and each row
+        # expands into both edges.
+        self.env.assertEqual(4, result.result_set[0][0])
 
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[e:R]->(b) RETURN e.v ORDER BY e.v"
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertContains("Expand Into", plan)
-        self.env.assertEqual(1, result.result_set[0][0])
-        self.env.assertEqual(2, result.result_set[1][0])
+        self.env.assertEqual([[1], [1], [2], [2]], result.result_set)
 
 
     # test expand into multiple hops with no multi-edge
@@ -91,7 +92,9 @@ class testExpandInto():
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertContains("Expand Into", plan)
-        self.env.assertEqual(4, result.result_set[0][0])
+        # `[*]` yields the 4 paths a -> b (2 edges x 2 edges), and each row
+        # expands into the same 4 paths again.
+        self.env.assertEqual(16, result.result_set[0][0])
 
     def test05_no_hop_multi_label(self):
         self.graph.delete()

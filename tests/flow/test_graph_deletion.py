@@ -933,10 +933,10 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("CREATE (d:D {n: 'd'}) RETURN ID(d)")
         self.env.assertEqual(res.result_set, [[0]])
 
-        # The anonymous form emits one row per adjacent pair, the bound form
-        # one per relationship.
+        # b and c are joined by two edges (:R and :S), and both forms emit one
+        # row per relationship.
         res = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n")
-        self.env.assertEqual(res.result_set, [['b', 'c']])
+        self.env.assertEqual(res.result_set, [['b', 'c'], ['b', 'c']])
         res = self.graph.query(
             "MATCH (x)-[r]->(y) RETURN x.n, y.n, type(r) ORDER BY type(r)")
         self.env.assertEqual(res.result_set, [['b', 'c', 'R'], ['b', 'c', 'S']])

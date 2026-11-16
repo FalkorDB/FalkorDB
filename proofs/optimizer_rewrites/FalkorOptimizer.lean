@@ -86,7 +86,7 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
   (absorbing edge-only conjuncts into the var-length traverse's per-hop filter
   keeps the rows, under the per-edge reading both engines use);
   `hasParam_iff`, `subst_params`, `evX_subst`; `refsVar_iff`, `refsVarId_iff`,
-  `refsVar_le_refsVarId`; `countVar_spec`; `attrsEmpty_iff`, `canFuse_spec`;
+  `refsVar_le_refsVarId`; `countVar_spec`; `attrsEmpty_iff`, `canFuse_spec`, `canFuse_pair_siblings`, `hop2_distinct_add_selfLoops` (#3639);
   `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new`.
   W6-opt-1 Case-2 walk (`CallBoundary`, from the retired pr2845_review):
   `Pr2845.filter_pushed_through_boundary`, fix `fixed_keeps_filter`/`fixed_conservative`.

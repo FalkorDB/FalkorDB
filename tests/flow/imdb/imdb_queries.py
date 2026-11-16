@@ -26,13 +26,14 @@ class IMDBQueries(object):
             query="""MATCH (n:actor{name:"Nicolas Cage"})-[:act]->(m:movie)<-[:act]-(a:actor)
                     RETURN a.name, m.title ORDER BY a.name""",
             description='Which actors played along side Nicolas Cage?',
+            # The two `act` edges of the pattern are distinct, so Nicolas Cage
+            # is not his own co-star (one edge to the movie, used twice).
             expected_result=[['Cassi Thomson', 'Left Behind'],
                             ['Chad Michael Murray', 'Left Behind'],
                             ['Gary Grubbs', 'Left Behind'],
                             ['Jordin Sparks', 'Left Behind'],
                             ['Lea Thompson', 'Left Behind'],
                             ['Martin Klebba', 'Left Behind'],
-                            ['Nicolas Cage', 'Left Behind'],
                             ['Quinton Aaron', 'Left Behind']]
         )
 

@@ -100,12 +100,21 @@ friends_visited_same_places_as_me_query = QueryInfo(
     query="""MATCH (ME:person {name:"Roi Lipman"})-[:visited]->(c:country)<-[:visited]-(f:person)<-[:friend]-(ME)
              RETURN f.name, c.name ORDER BY f.name, c.name""",
     description='Friends who have been to places I have visited?',
+    # One row per pair of `visited` edges (a person visits a country more than
+    # once, as parallel edges), not per pair of nodes: 13 rows, the same count
+    # as with both `visited` edges named and read.
     expected_result=[['Tal Doron', 'Japan'],
                      ['Alon Fital', 'Prague'],
+                     ['Alon Fital', 'Prague'],
+                     ['Alon Fital', 'Prague'],
+                     ['Alon Fital', 'Prague'],
+                     ['Tal Doron', 'USA'],
                      ['Tal Doron', 'USA'],
                      ['Omri Traub', 'USA'],
                      ['Boaz Arad', 'USA'],
+                     ['Boaz Arad', 'USA'],
                      ['Ori Laslo', 'USA'],
+                     ['Alon Fital', 'USA'],
                      ['Alon Fital', 'USA']]
 )
 
@@ -115,7 +124,8 @@ countries_visited_by_roi_tal_boaz = QueryInfo(
                    (C:person {name:"Boaz Arad"})-[:visited]->(X)
             RETURN X.name""",
     description='Countries visited by Roi, Tal and Boaz.',
-    expected_result=[['USA']]
+    # One row per combination of their `visited` edges to USA (parallel edges).
+    expected_result=[['USA'], ['USA'], ['USA'], ['USA']]
 )
 
 friends_older_than_me_query = QueryInfo(
@@ -160,11 +170,13 @@ how_many_countries_each_friend_visited_query = QueryInfo(
              ORDER BY countriesVisited DESC
              LIMIT 10""",
     description='Count for each friend how many countires he or she been to?',
-    expected_result=[['Alon Fital', 3],
+    # `count` counts rows, and a row is a `visited` edge: a friend who visited
+    # a country twice counts it twice.
+    expected_result=[['Alon Fital', 5],
+                     ['Boaz Arad', 4],
+                     ['Tal Doron', 4],
                      ['Omri Traub', 3],
-                     ['Tal Doron', 3],
-                     ['Ori Laslo', 3],
-                     ['Boaz Arad', 2]]
+                     ['Ori Laslo', 3]]
 )
 
 happy_birthday_query = QueryInfo(
@@ -378,8 +390,9 @@ number_of_paths_to_places_visited = QueryInfo(
              RETURN c.name, count(c)
              ORDER BY c.name""",
     description='Count number of paths to places I have visited',
+    # Roi's two `visited` edges to Prague each continue over the 5 paths back.
     expected_result=[['Japan', 2],
-                     ['Prague', 5],
+                     ['Prague', 10],
                      ['USA', 14]]
 )
 
