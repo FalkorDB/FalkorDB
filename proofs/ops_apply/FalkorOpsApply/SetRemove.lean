@@ -10,6 +10,7 @@ SET and REMOVE (graph/src/runtime/ops/set.rs, remove.rs).
 | `clearForReplace`                 | `clear_node_attrs_for_replace` (set.rs:125), `clear_relationship_attrs_for_replace` (set.rs:138), `Pending::clear_{node,relationship}_attributes` (pending.rs:591, :599) |
 | `setProp`, `setFrom`, `setAttrItem` | `Runtime::set_inner` (set.rs:151) |
 | `removeItem`, `removeInner`   | `Runtime::remove` (remove.rs:74) |
+| `skipDeleteChecks`, `isRelDeleted` | set.rs:81-90 (`skip_delete_checks`), `Runtime::is_relationship_deleted` (runtime.rs:1679, #3051) |
 
 Attribute store of one entity kind: committed `cv e k` and this query's pending writes
 `pv e k` (`some none` = pending null = removal); `get` = `get_{node,relationship}_attribute`
@@ -177,7 +178,8 @@ inductive Src (E K V : Type) where
   | other
 
 /-- `SET target(.prop)? = value` for one row. `gone` = the deleted-entity check
-(set.rs:196-201 node, :274-278 relationship), only consulted when `skip_delete_checks` is false. `attrsN`/`attrsR` =
+(set.rs:199-204 node; relationship :277 = `is_relationship_deleted`, `isRelDeleted` below), only
+consulted when `skip_delete_checks` is false. `attrsN`/`attrsR` =
 `get_node_attrs` / `get_relationship_attrs` of a source entity. -/
 def setAttrItem (ckeys : E → List K) (gone : Ent E → Bool) (skipDel : Bool)
     (attrsN attrsR : E → List (K × Option V))
@@ -254,6 +256,47 @@ theorem setLabelItem_live {L : Type} (gone : E → Bool) (labels : E → List L)
     (setLabelItem gone true labels (some (.node e)) false ls).map (· e) = .ok (labels e ++ ls) := by
   simp [setLabelItem, Except.map]
 
+/-- The records `is_relationship_deleted` (runtime.rs:1679-1689) reads: pending-deleted
+(`pd`), the graph's deleted set (`gd`), pending-created (`pc`), `reissued_relationships`
+(`re`) and the keys of `deleted_relationships` (`snap`). -/
+structure RelDel (E : Type) where
+  pd : E → Bool
+  gd : E → Bool
+  pc : E → Bool
+  re : E → Bool
+  snap : E → Bool
+
+/-- `is_relationship_deleted` (#3051): the relationship `gone` of `setAttrItem` / `removeItem`. -/
+def isRelDeleted (st : RelDel E) (e : E) : Bool :=
+  st.pd e || (st.gd e && !st.pc e) || (!st.pc e && !st.re e && st.snap e)
+
+/-- set.rs:81-90: the per-row deletion checks are skipped only when no node or relationship
+snapshot exists and nothing is pending-deleted (`has_deleted_rels` added by #3051). -/
+def skipDeleteChecks (delNodes delRels pendNodes pendRels : Bool) : Bool :=
+  !delNodes && !delRels && !pendNodes && !pendRels
+
+/-- **PROVEN** (#3051): when `skip_delete_checks` holds (the snapshot map and pending deletes
+empty), `is_relationship_deleted` can only be the graph's old record — so skipping it loses
+exactly what the check skipped before #3051, and an edge cascaded by `DETACH DELETE` (only in
+the snapshot map) always gets checked. -/
+theorem skipDeleteChecks_sound (st : RelDel E) (dn dr pn pr : Bool)
+    (hsnap : dr = false → ∀ e, st.snap e = false) (hpd : pr = false → ∀ e, st.pd e = false)
+    (h : skipDeleteChecks dn dr pn pr = true) (e : E) :
+    isRelDeleted st e = (st.gd e && !st.pc e) := by
+  simp only [skipDeleteChecks, Bool.and_eq_true, Bool.not_eq_true'] at h
+  obtain ⟨⟨⟨_, hdr⟩, _⟩, hp⟩ := h
+  simp [isRelDeleted, hpd hp e, hsnap hdr e]
+
+/-- **PROVEN** (#2967): a `SET r.k = v` on a relationship `is_relationship_deleted` reports
+(e.g. cascaded by `DETACH DELETE` of an endpoint, recorded only in the snapshot map) is
+skipped, as for nodes. -/
+theorem setAttrItem_rel_deleted (ckeys : E → List K) (st : RelDel E)
+    (aN aR : E → List (K × Option V)) (sN sR : Store E K V) (e : E) (p : Option K)
+    (val : Src E K V) (rep : Bool) (v : Option V) (hg : isRelDeleted st e = true) :
+    setAttrItem ckeys (fun t => match t with | .rel r => isRelDeleted st r | _ => false) false
+      aN aR sN sR (.rel e) p val rep v = .ok (sN, sR) := by
+  simp [setAttrItem, hg]
+
 /-- set.rs:76-93 / remove.rs:62-71: every active row in order, the first error aborts. -/
 def perRow {S R : Type} (f : S → R → Except String S) (s : S) (rows : List R) : Except String S :=
   rows.foldlM f s
@@ -285,8 +328,10 @@ theorem resolveItems_attr {A Tb : Type} (goc : Tb → String → Nat × Tb) (t :
 
 /-! ## REMOVE (remove.rs:74) -/
 
-/-- One REMOVE item: `e.k` → set null; `e:L…` on a node → remove only labels it has. -/
-def removeItem {L : Type} [DecidableEq L] (gone : E → Bool) (s : Store E K V) (labels : E → List L)
+/-- One REMOVE item: `e.k` → set null; `e:L…` on a node → remove only labels it has. `gone` is
+the node check (remove.rs:119-122), `goneR` = `is_relationship_deleted` (remove.rs:150, #3051:
+a REMOVE on a relationship the query deleted is skipped, after the label type check). -/
+def removeItem {L : Type} [DecidableEq L] (gone goneR : E → Bool) (s : Store E K V) (labels : E → List L)
     (target : Ent E) (isNull : Bool) (prop : Option K) (rmLabels : Option (List L)) :
     Except String (Store E K V × (E → List L)) :=
   match target with
@@ -298,18 +343,20 @@ def removeItem {L : Type} [DecidableEq L] (gone : E → Bool) (s : Store E K V) 
       | none => labels
     .ok (s1, l1)
   | .rel e =>
+    if rmLabels.isSome then .error "Type mismatch: expected Node but was Relationship" else
+    if goneR e then .ok (s, labels) else
     let s1 := match prop with | some k => put s e k none | none => s
-    if rmLabels.isSome then .error "Type mismatch: expected Node but was Relationship" else .ok (s1, labels)
+    .ok (s1, labels)
   | .other => if isNull then .ok (s, labels) else .error "Type mismatch: expected Node or Relationship"
 
 /-- `REMOVE n.k` makes `n.k` absent; `REMOVE n:L` drops exactly the listed labels the node has;
 a deleted node is untouched; `REMOVE r:L` on a relationship is a type error. -/
-theorem removeItem_spec {L : Type} [DecidableEq L] (gone : E → Bool) (s : Store E K V)
+theorem removeItem_spec {L : Type} [DecidableEq L] (gone goneR : E → Bool) (s : Store E K V)
     (labels : E → List L) (e : E) (k : K) (ls : List L) (hg : gone e = false) :
-    (∃ r, removeItem gone s labels (.node e) false (some k) none = .ok r ∧ get r.1 e k = none) ∧
-    (∃ r, removeItem gone s labels (.node e) false none (some ls) = .ok r ∧
+    (∃ r, removeItem gone goneR s labels (.node e) false (some k) none = .ok r ∧ get r.1 e k = none) ∧
+    (∃ r, removeItem gone goneR s labels (.node e) false none (some ls) = .ok r ∧
       ∀ l, l ∈ r.2 e ↔ l ∈ labels e ∧ l ∉ ls) ∧
-    removeItem gone s labels (.rel e) false none (some ls) = .error "Type mismatch: expected Node but was Relationship" := by
+    removeItem gone goneR s labels (.rel e) false none (some ls) = .error "Type mismatch: expected Node but was Relationship" := by
   refine ⟨⟨(put s e k none, labels), by simp [removeItem, hg], by simp [get_put]⟩,
     ⟨(s, fun e' => if e' = e then (labels e).filter (fun l => !(ls.filter (· ∈ labels e)).contains l)
       else labels e'), by simp [removeItem, hg], ?_⟩, rfl⟩
@@ -319,6 +366,17 @@ theorem removeItem_spec {L : Type} [DecidableEq L] (gone : E → Bool) (s : Stor
   constructor
   · rintro ⟨h1, h2⟩; exact ⟨h1, fun h => h2 l ⟨h, h1⟩ rfl⟩
   · rintro ⟨h1, h2⟩; exact ⟨h1, fun x hx he => h2 (he ▸ hx.1)⟩
+
+/-- **PROVEN** (#2967, #3051): `REMOVE r.k` makes a live relationship's `k` absent and leaves a
+relationship the query deleted untouched (before #3051 it staged the null; the commit then
+counted a removed property); `REMOVE r:L` is a type error either way. -/
+theorem removeItem_rel {L : Type} [DecidableEq L] (gone goneR : E → Bool) (s : Store E K V)
+    (labels : E → List L) (e : E) (k : K) :
+    (goneR e = false → ∃ r, removeItem gone goneR s labels (.rel e) false (some k) none = .ok r ∧
+      get r.1 e k = none) ∧
+    (goneR e = true → removeItem gone goneR s labels (.rel e) false (some k) none = .ok (s, labels)) := by
+  refine ⟨fun h => ⟨(put s e k none, labels), by simp [removeItem, h], by simp [get_put]⟩,
+    fun h => by simp [removeItem, h]⟩
 
 /-! ## `new` / `next` -/
 

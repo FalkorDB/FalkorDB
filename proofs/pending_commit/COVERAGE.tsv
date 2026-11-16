@@ -5,15 +5,15 @@ graph/src/runtime/ops/create.rs	build_attr_template	55	NOT COVERED	pattern/attr 
 graph/src/runtime/ops/create.rs	resolve_map_attrs	84	NOT COVERED	pattern/attr resolution
 graph/src/runtime/ops/create.rs	new	102	NOT COVERED	pattern/attr resolution
 graph/src/runtime/ops/create.rs	next	121	NOT COVERED	pattern/attr resolution
-graph/src/runtime/ops/create.rs	create_batch	139	MODELLED	Snapshot.createRust / Stats.step create
-graph/src/runtime/ops/create.rs	resolve_pattern	353	NOT COVERED	pattern/attr resolution
+graph/src/runtime/ops/create.rs	create_batch	139	MODELLED	Snapshot.createRust/createR / Stats.step create: createR_ReOk, rel_reissue_reads_new_owner (#3051)
+graph/src/runtime/ops/create.rs	resolve_pattern	354	NOT COVERED	pattern/attr resolution
 graph/src/runtime/ops/set.rs	new	40	NOT COVERED	operator plumbing
 graph/src/runtime/ops/set.rs	next	59	NOT COVERED	operator plumbing
 graph/src/runtime/ops/set.rs	set_batch	76	MODELLED	per-row set_inner
-graph/src/runtime/ops/set.rs	resolve_set_items	96	NOT COVERED	operator plumbing
-graph/src/runtime/ops/set.rs	set_inner	151	MODELLED	Props.replaceFrom: replace_reads_src (#3524: every `SET e = …` branch clears the staged attributes; reads = the source's last write), fixed3524_replace_clears_staged (fixed by #3524 af45ca776); the full per-item model is ops_apply SetRemove
-graph/src/runtime/ops/set.rs	clear_node_attrs_for_replace	125	PROVEN	Props.replaceFrom: replace_reads_src
-graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	138	PROVEN	Props.replaceFrom: replace_reads_src
+graph/src/runtime/ops/set.rs	resolve_set_items	99	NOT COVERED	operator plumbing
+graph/src/runtime/ops/set.rs	set_inner	154	MODELLED	Props.replaceFrom: replace_reads_src (#3524: every `SET e = …` branch clears the staged attributes; reads = the source's last write), fixed3524_replace_clears_staged (fixed by #3524 af45ca776); the full per-item model is ops_apply SetRemove
+graph/src/runtime/ops/set.rs	clear_node_attrs_for_replace	128	PROVEN	Props.replaceFrom: replace_reads_src
+graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	141	PROVEN	Props.replaceFrom: replace_reads_src
 graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	NOT COVERED	operator plumbing / snapshot map building
 graph/src/runtime/ops/delete.rs	rel_attrs_to_map	50	NOT COVERED	operator plumbing / snapshot map building
 graph/src/runtime/ops/delete.rs	snapshot_required	70	NOT COVERED	operator plumbing / snapshot map building
@@ -21,9 +21,9 @@ graph/src/runtime/ops/delete.rs	new	94	NOT COVERED	operator plumbing / snapshot 
 graph/src/runtime/ops/delete.rs	next	116	NOT COVERED	operator plumbing / snapshot map building
 graph/src/runtime/ops/delete.rs	delete_batch	130	NOT COVERED	operator plumbing / snapshot map building
 graph/src/runtime/ops/delete.rs	staged_label_ids	196	PROVEN	Labels.stagedLabelIds_eq_overlay, stagedLabelIds_run, deleted_snapshot_examples (#3288: committed ids with the staged adds/removes applied = the live view; fixes W4-fn-1 / #3245)
-graph/src/runtime/ops/delete.rs	delete_nodes_bulk	213	MODELLED	Snapshot.del, Stats.step
-graph/src/runtime/ops/delete.rs	delete_relationships_bulk	319	MODELLED	Snapshot.del (relationship map)
-graph/src/runtime/ops/delete.rs	delete_entity	415	MODELLED	Snapshot.del, Stats.step
+graph/src/runtime/ops/delete.rs	delete_nodes_bulk	213	MODELLED	Snapshot.del/delR, Stats.step: delR_ReOk, delR_reads_snapshot (#3051)
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	323	MODELLED	Snapshot.delR (relationship map): delR_ReOk, delR_reads_snapshot (#3051)
+graph/src/runtime/ops/delete.rs	delete_entity	418	MODELLED	Snapshot.del/delR, Stats.step: delR_ReOk, delR_reads_snapshot (#3051)
 graph/src/runtime/ops/remove.rs	new	30	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	next	48	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	remove_batch	62	NOT COVERED	operator plumbing
