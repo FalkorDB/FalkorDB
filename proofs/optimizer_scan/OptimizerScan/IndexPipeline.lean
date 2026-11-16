@@ -228,7 +228,7 @@ values are Null/Int/String, for filters built from `n.k op literal`, `literal op
 AND (no strict string bound) or OR, the rewritten plan selects exactly the nodes the original
 `Filter → NodeByLabelScan` does. Every counterexample in `IndexCex` breaks one hypothesis:
 two labels (C5, C6), a Bool value (C1; C2, temporal, fixed by #3076), a Date literal or computed
-constant (C3, C4), a computed attribute side (C7, C7', C8), a Date inside IN (C9), array-contains
+constant (C3, C4), a computed attribute side (C7, C7', C8: fixed by #3068, now agree), a Date inside IN (C9), array-contains
 (C10, the hypothesis only: array-contains in an AND keeps its filter since #3736); C11 (strict
 string bound in an AND) was fixed by #3072. -/
 theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true)

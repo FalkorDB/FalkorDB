@@ -61,6 +61,7 @@ Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`):
 - `sel_and2`: an index `And` is the intersection (a null child nulls both sides).
 - `sel_merge`, `rangeOK_merge`, `cu_merge`: `merge_range_queries` selects the conjunction and stays well-formed and usable.
 - `trySingle_spec`: `try_single_filter_scan` on covered atoms is exact, on `L`, well-formed, usable unless `IN`.
+- `trySingle_inn_bare` (#3068): an `IN` is pushed only when its index side is the bare property (`n.k IN [...]` or `x IN n.k`).
 - `pushAnd_spec`, `pushOr_spec`, `buildSome_any`: the AND / OR branches of `try_filter_pushdown` select the conjunction and disjunction.
 - `utilize_sound` (headline): single-label scan, Null/Int/String values, atoms `n.k op lit`, `lit op n.k`,
   `n.k IN [lits]`, unindexable conjuncts, combined by AND (no strict string bound) or OR — rewritten plan = original.
@@ -112,10 +113,11 @@ Scan selection (`ScanOrder.lean`):
    `[1],[2]`, C `[1],[2]`; `toString(n.a) IN ['1']` → Rust `[]`, C `[1]`;
    `n.a + 1 IN [2]` → Rust `[]`, without index `[1]` (C errors). Fix: require
    `ExprIR::Property` of the scanned alias as the whole left side (as the comparison path does at 693).
+   **Fixed by #3068** (`bare_property_of`): C7/C7' now agree; `trySingle_inn_bare`.
 5. **`x IN [n.a, n.b]` becomes array-contains on `n.a`** — same function, `(false, true)`
    arm with a list literal on the right. Lean C8. `2 IN [n.a, n.b]` → Rust `[]`, C `[3]`;
    `-1 IN [n.a]` → Rust `[]`, without index `[2]`. Fix: array-contains only when the right
-   side *is* `Property(scanned alias)`.
+   side *is* `Property(scanned alias)`. **Fixed by #3068**: C8 now agrees.
 
 6. **`select_scan_node` salvages a filter whose variable the pruned child bound (`Unwind`/`WITH`)** (W2-scan-6, #2972, fixed by open PR #3099) —
    `is_planner_scan_subtree` (`:315`) accepts a scan with *any* child; `argument_leaf_of` (`:276`)
