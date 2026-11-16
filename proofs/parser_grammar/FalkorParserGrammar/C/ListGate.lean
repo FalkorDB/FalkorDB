@@ -40,7 +40,7 @@ What is proved here:
    expression parser (the oracle covers CASE, comprehensions, maps, ... that
    the fragment lacks), so the theorem stays conditional on it. (b) holds when an attempt's outcome is a function of
    the key (`memo_hits_fail`); the key leaves out `anon_counter`, which the
-   outcome can read through anonymous names (see the project header).
+   outcome can carry through unnamed aliases `Alias.anon N` (see the project header).
 3. **Failed attempts are linear in the input** (`failed_attempts_linear`, a result about the
    abstract `memoRun` model over any visit list, not linked to parser runs):
    along any run, each key fails at most once, so with keys bounded by the
@@ -371,11 +371,11 @@ theorem cn_detailP (F : Nat) (cl : CK) (d : Nat) : Cn (detailP o F cl) (d + 1) d
   refine cn_bind (cn_tok_gen (by decide) (step_close (.inr (.inl rfl)) d)) fun _ => ?_
   exact cn_pure _ _
 
-theorem cn_relP (F : Nat) (cl : CK) (src : QNode Nat) (d : Nat) : Cn (relP o F cl src) d d := by
+theorem cn_relP (F : Nat) (cl : CK) (src : QNode Alias) (d : Nat) : Cn (relP o F cl src) d d := by
   unfold relP
   refine cn_bind (cn_opt_atom rfl _) fun inc => ?_
   refine cn_bind (cn_tok_atom rfl _) fun _ => ?_
-  have rest : ∀ dd : Nat × List Nat × ET × Option (Nat × Option Nat),
+  have rest : ∀ dd : Alias × List Nat × ET × Option (Nat × Option Nat),
       Cn (do
         tok .dash
         let out ← opt .gt

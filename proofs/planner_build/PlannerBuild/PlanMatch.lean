@@ -8,7 +8,7 @@ import PlannerBuild.Expr
 | `MSt` | `Planner.visited` / `verified_labels` |
 | `markLabels`, `unverified` | `mark_labels_verified` mod.rs:1787-1805, `unverified_labels` mod.rs:1809-1821 |
 | `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1877-1909 (stable) |
-| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2002-2011; `emit_rel(r) \|\| edge_pred.is_some()` |
+| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2002-2008 (`QR.named` = `!rel.alias.is_unnamed()`, #3528); `emit_rel(r) \|\| edge_pred.is_some()` |
 | `scanOf`, `withF` | `AllNodeScan`/`NodeByLabelScan` choice; optional inline-attribute `Filter` |
 | `LW`, `lowerInline` | `lowered_attrs` mod.rs:1852, `lower_inline_attrs` mod.rs:598-607 |
 | `stripNode`, `stripRel`, `stripEndpoints` | `strip_node_attrs` mod.rs:623-634, `strip_rel_attrs` :644-667, `strip_endpoint_attrs` :673-693 |
@@ -49,6 +49,7 @@ inductive Kind | fixed | varLen | shortest
 
 structure QR where
   alias : V
+  /-- `!alias.is_unnamed()` (the alias has a name; not derived from its rendered text) -/
   named : Bool
   frm : QN
   to : QN
@@ -140,7 +141,7 @@ def withF : Option Ex → MP → MP
   | some e, c => .filter e c
   | none, c => c
 
-/-- `emit_relationship`: a named edge, or one a named path lists (by id only, mod.rs:2003-2011). -/
+/-- `emit_relationship`: a named edge, or one a named path lists (by id only, mod.rs:2002-2008). -/
 def emitRel (c : Comp) (r : QR) : Bool :=
   r.named || c.paths.any fun p => p.2.any fun v => v.id == r.alias.id
 

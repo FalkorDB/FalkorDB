@@ -1,9 +1,10 @@
 /-
 # Pattern-level bugs and the theorems that pin their fixes
 
-Only `anon_name_collides` documents a bug that is still open (confirmed on a live server, Rust
-vs C). The #3289 and #3300 theorems pin the fixed, correct behaviour (a repeated relationship
-alias and `[:A:B]` are now refused, as in C); `create_named_path_distinct_rels_ok` and
+No pattern-level bug is open any more. `anon_name_distinct` pins the fix of W4-parse-1 (#3528:
+an unnamed entity's alias is `Alias.anon`, which no written name equals). The #3289 and #3300
+theorems pin the fixed, correct behaviour (a repeated relationship alias and `[:A:B]` are now
+refused, as in C); `create_named_path_distinct_rels_ok` and
 `create_anon_path_dup_rel_rejected` are the unchanged controls.
 -/
 import FalkorParserGrammar.C.PatternG2
@@ -11,15 +12,29 @@ import FalkorParserGrammar.C.Oracle0
 
 namespace FalkorParserGrammar.C
 
-/-- `MATCH (_anon_0:A), (:B)`: the anonymous node is named `_anon_0`
-(cypher.rs:3037), the same as the user's node, so `add_pattern_node` merges
-them into one node with labels A and B. Live: Rust returns 0 rows, C 1
-(on `CREATE (:A), (:B)`). -/
-theorem anon_name_collides :
+/-- **`MATCH (_anon_0:A), (:B)` has two nodes** (#3528, W4-parse-1 fixed): the user's node
+is `Alias.named _anon_0` and the unnamed one `Alias.anon 0` (`next_unnamed`, cypher.rs:3065), which
+differ, so `add_pattern_node` keeps them apart: labels `[[A], [B]]`, aliases as written. As in C
+(1 row on `CREATE (:A), (:B)`). Historical (before #3528, `anon_name_collides`): the unnamed node
+was *named* `_anon_0` (`format!("_anon_{}", ..)`), the same as the user's, so the two were merged
+into one node with labels A and B (Rust 0 rows, C 1). -/
+theorem anon_name_distinct :
     ((run (patternP o0 20 .match_)
       [.lparen, .ident (anonName 0), .colon, .ident 1, .rparen, .comma,
-       .lparen, .colon, .ident 2, .rparen]).get?.map (fun g => g.nodes.map (·.labels))) =
-      some [[1, 2]] := by decide
+       .lparen, .colon, .ident 2, .rparen]).get?.map
+        (fun g => g.nodes.map (fun n => (n.alias, n.labels)))) =
+      some [(.named (anonName 0), [1]), (.anon 0, [2])] := by decide
+
+/-- In general, a pattern alias the query wrote never equals an unnamed one: every `GOptVar`
+alias read from an identifier is `named`, every fresh one `anon` (#3528). -/
+theorem optVar_named_ne_anon {s s' t t' : PS} {v : Nat} {a b : Alias}
+    (ha : GOptVar s a s') (hb : GOptVar t b t') (hv : identOf s.cur = some v)
+    (hk : identOf t.cur = none) : a ≠ b := by
+  cases ha with
+  | named _ => cases hb with
+    | named h => simp [hk] at h
+    | anon _ => exact Alias.noConfusion
+  | anon h => simp [hv] at h
 
 /-- **`CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` is rejected** (#3289, W4-parse-2): every
 relationship goes through `add_pattern_relationship` (cypher.rs:1378), which refuses an alias the

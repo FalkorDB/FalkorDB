@@ -2,50 +2,102 @@
 # `QueryGraph` and friends (`graph/src/parser/ast.rs:470-890`)
 
 The pattern graph a MATCH / CREATE / MERGE builds, generic over the alias
-type `V` exactly as the Rust is generic over `TVar` (`Arc<String>` before
-binding, `Variable` after). Alias equality is `==` on `V`; for `Variable`
-that is `Variable::eq`, which compares ids only (ast.rs:112-118).
+type `V` exactly as the Rust is generic over the alias (`Alias` before
+binding, since #3528 `VarKind::Alias`; `Variable` after). Alias equality is `==` on `V`; for `Variable`
+that is `Variable::eq`, which compares ids only (ast.rs:186-193).
 -/
 import FalkorParserGrammar.C.Core
 
 namespace FalkorParserGrammar.C
 
-/-! ## `Variable` (ast.rs:90-139) -/
+/-! ## `Alias` (ast.rs:80-130) -/
 
-/-- `Variable { name, id, scope_id, ty }`; the type is irrelevant here. -/
+/-- `enum Alias { Named(Arc<String>), Anon(u32) }` (ast.rs:86-92, #3528): the alias of a pattern
+entity before binding. A name the query wrote (a name id, as everywhere in this model), or the
+parser's number for an unnamed entity. The two constructors are disjoint, so no identifier a
+query can spell (not even `` `_anon_0` ``) equals an unnamed entity's alias. The derived
+equality is `#[derive(PartialEq, Eq, Hash)]`. -/
+inductive Alias
+  | named (n : Nat)
+  | anon (k : Nat)
+  deriving DecidableEq, Repr
+
+/-- `Alias::name` (ast.rs:97-102): the written name, `None` for an unnamed entity. -/
+def Alias.name : Alias → Option Nat
+  | .named n => some n
+  | .anon _ => none
+theorem Alias.name_named (n : Nat) : (Alias.named n).name = some n := rfl
+theorem Alias.name_anon (k : Nat) : (Alias.anon k).name = none := rfl
+
+/-- `impl From<Arc<String>> for Alias` (ast.rs:105-109): a name is `Named`. -/
+def Alias.from (n : Nat) : Alias := .named n
+theorem Alias.from_spec (n : Nat) : Alias.from n = .named n ∧ (Alias.from n).name = some n :=
+  ⟨rfl, rfl⟩
+
+/-- **No written name is an unnamed alias** (#3528, W4-parse-1). -/
+theorem Alias.named_ne_anon (n k : Nat) : Alias.named n ≠ Alias.anon k := Alias.noConfusion
+
+/-- `write_anon` (ast.rs:125-130): how plans show unnamed entity `id`. -/
+def writeAnon (k : Nat) : String := "@anon_" ++ toString k
+theorem writeAnon_spec (k : Nat) : writeAnon k = "@anon_" ++ toString k := rfl
+
+/-- `impl Display for Alias` (ast.rs:111-122). -/
+def Alias.fmt : Alias → String
+  | .named n => toString n
+  | .anon k => writeAnon k
+instance : ToString Alias := ⟨Alias.fmt⟩
+theorem Alias.fmt_named (n : Nat) : (Alias.named n).fmt = toString n := rfl
+theorem Alias.fmt_anon (k : Nat) : (Alias.anon k).fmt = "@anon_" ++ toString k := rfl
+
+/-! ## `Variable` (ast.rs:150-218) -/
+
+/-- `Variable { name, anon, id, scope_id, ty }`; the type is irrelevant here. `anon` is the
+parser's number of an unnamed pattern entity (#3528), shown in plans. -/
 structure Var where
   name : Option Nat
+  anon : Option Nat
   id : Nat
   scope : Nat
   deriving Repr
 
-/-- `impl PartialEq for Variable` (ast.rs:112-118): by id only. -/
+/-- `impl PartialEq for Variable` (ast.rs:186-193): by id only. -/
 instance : BEq Var := ⟨fun a b => a.id == b.id⟩
 
 /-- `Variable::eq`: two variables are equal iff their ids are. -/
 theorem Var.eq_spec (a b : Var) : (a == b) = true ↔ a.id = b.id := by
   show (a.id == b.id) = true ↔ _; simp
 
-/-- `impl Hash for Variable` (ast.rs:122-129) hashes the id alone, so equal
+/-- `impl Hash for Variable` (ast.rs:197-204) hashes the id alone, so equal
 variables hash alike (the `Hash`/`Eq` contract). The hash is modelled as
 the hashed key. -/
 def Var.hashKey (a : Var) : Nat := a.id
 theorem Var.hash_eq (a b : Var) (h : (a == b) = true) : a.hashKey = b.hashKey :=
   (Var.eq_spec a b).1 h
 
-/-- `Variable::as_str` (ast.rs:133-136). Names are ids; `none` is `"?"`. -/
+/-- `Variable::as_str` (ast.rs:213-216). Names are ids; `none` is `"?"`. -/
 def Var.asStr (a : Var) : Option Nat := a.name
 theorem Var.asStr_spec (a : Var) : a.asStr = a.name := rfl
 
-/-- `impl Display for Variable` (ast.rs:99-109): the name, or `?<id>`. -/
+/-- `impl Display for Variable` (ast.rs:171-184): the name, else `@anon_<k>` for unnamed
+entity `k` (`write_anon`), else `?<id>`. -/
 def Var.fmt (a : Var) : String :=
-  match a.name with
-  | some n => toString n
-  | none => "?" ++ toString a.id
-theorem Var.fmt_anon (a : Var) (h : a.name = none) : a.fmt = "?" ++ toString a.id := by
-  simp [Var.fmt, h]
+  match a.name, a.anon with
+  | some n, _ => toString n
+  | none, some k => writeAnon k
+  | none, none => "?" ++ toString a.id
+theorem Var.fmt_anon (a : Var) (h : a.name = none) (ha : a.anon = none) :
+    a.fmt = "?" ++ toString a.id := by
+  simp [Var.fmt, h, ha]
+theorem Var.fmt_unnamed (a : Var) (k : Nat) (h : a.name = none) (ha : a.anon = some k) :
+    a.fmt = "@anon_" ++ toString k := by
+  simp [Var.fmt, h, ha, writeAnon]
 theorem Var.fmt_named (a : Var) (n : Nat) (h : a.name = some n) : a.fmt = toString n := by
   simp [Var.fmt, h]
+
+/-- `Variable::is_unnamed` (ast.rs:207-211). -/
+def Var.isUnnamed (a : Var) : Bool := a.name.isNone
+theorem Var.isUnnamed_spec (a : Var) : a.isUnnamed = true ↔ a.name = none := by
+  cases h : a.name <;> simp [Var.isUnnamed, h]
 
 /-! ## Nodes, relationships, paths -/
 

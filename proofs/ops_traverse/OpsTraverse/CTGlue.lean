@@ -63,7 +63,7 @@ theorem emptyIter_nil : emptyIter = [] := rfl
 `strip_rel_attrs`; proofs/planner_build `E.planMatch_stripped`, `E.firstRel_edge_pred`), so the batched path no
 longer needs to inspect them. -/
 
-/-! ## `CondTraverseOp::new` (cond_traverse.rs:365) -/
+/-! ## `CondTraverseOp::new` (cond_traverse.rs:375; #3528: the intermediate is anonymous iff it is unnamed, `fromName = none`, so a user-written `_anon…` name no longer arms the dedup) -/
 
 structure RelPat where
   fromAlias : Nat
@@ -86,7 +86,7 @@ structure CtCfg where
 
 def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : List Bool)
     (child : Option ChildCT) : CtCfg :=
-  let anon := rp.fromName.any (·.startsWith "_anon")
+  let anon := rp.fromName.isNone
   let (dedup, src) :=
     if !emitRel && rp.bidir && anon then
       match child with
@@ -106,14 +106,14 @@ sibling-free hops whose chain hops are all directed; a self-loop
 binds one endpoint column. -/
 theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (ch : Option ChildCT) :
     let c := ctNew rp er sib cb ch
-    (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName.any (·.startsWith "_anon") = true ∧
+    (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName.isNone = true ∧
       ∃ x, ch = some x ∧ x.emitRel = false ∧ x.bidir = true) ∧
     (c.dedup = true → c.dedupSrc = ch.map (·.fromAlias)) ∧
     (c.eligible = true → er = false ∧ rp.bidir = false ∧ sib = [] ∧ ∀ b ∈ cb, b = false) ∧
     (c.toCol = none ↔ rp.toAlias = rp.fromAlias) ∧ c.produced = 0 := by
   simp only [ctNew]
   refine ⟨?_, ?_, ?_, ?_, by first | rfl | trivial⟩
-  · by_cases h : (!er && rp.bidir && rp.fromName.any (·.startsWith "_anon")) = true
+  · by_cases h : (!er && rp.bidir && rp.fromName.isNone) = true
     · simp only [h, ite_true]
       simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
       obtain ⟨⟨h1, h2⟩, h3⟩ := h

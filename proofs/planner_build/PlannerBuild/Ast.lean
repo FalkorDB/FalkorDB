@@ -3,7 +3,7 @@
 
 | here | there |
 | --- | --- |
-| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:92-137 |
+| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.isUnnamed`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`is_unnamed`/`as_str` ast.rs:149-219 (Display ast.rs:172, `write_anon` ast.rs:125) |
 | `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs:473-640 |
 | `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs:481-489, 542-566, 643-660 |
 | `mergeAttrs` | `merge_attr_maps` ast.rs:667-683 |
@@ -29,15 +29,24 @@ namespace PlannerBuild.Ast
 
 /-! ## `Variable` -/
 
+/-- `Variable`: `anon` is the parser's number of an unnamed pattern entity (#3528); planner
+temporaries have neither a name nor an `anon` number. -/
 structure AV where
   name : Option String
   id : Nat
   scope : Nat
+  anon : Option Nat := none
   deriving DecidableEq, Repr
 
-def AV.fmt (v : AV) : String := match v.name with
-  | some n => n
-  | none => "?" ++ toString v.id
+/-- `Display for Variable` (ast.rs:172): the name, else `@anon_k` (`write_anon`, ast.rs:125),
+else `?id`. -/
+def AV.fmt (v : AV) : String := match v.name, v.anon with
+  | some n, _ => n
+  | none, some k => "@anon_" ++ toString k
+  | none, none => "?" ++ toString v.id
+
+/-- `Variable::is_unnamed` (ast.rs:209): no name — independent of what the variable prints as. -/
+def AV.isUnnamed (v : AV) : Bool := v.name.isNone
 
 /-- `PartialEq for Variable`: by id only (ast.rs:113-119). -/
 def AV.eqv (a b : AV) : Bool := a.id == b.id
@@ -47,15 +56,24 @@ def AV.hashKey (v : AV) : Nat := v.id
 
 def AV.asStr (v : AV) : String := v.name.getD "?"
 
-theorem AV.fmt_named (n : String) (i s : Nat) : AV.fmt ⟨some n, i, s⟩ = n := rfl
-theorem AV.fmt_anon (i s : Nat) : AV.fmt ⟨none, i, s⟩ = "?" ++ toString i := rfl
+theorem AV.fmt_named (n : String) (i s : Nat) (a : Option Nat) : AV.fmt ⟨some n, i, s, a⟩ = n := rfl
+theorem AV.fmt_anon (i s : Nat) : AV.fmt ⟨none, i, s, none⟩ = "?" ++ toString i := rfl
+theorem AV.fmt_unnamed (k i s : Nat) : AV.fmt ⟨none, i, s, some k⟩ = "@anon_" ++ toString k := rfl
+theorem AV.isUnnamed_spec (v : AV) : v.isUnnamed = true ↔ v.name = none := by
+  cases h : v.name <;> simp [AV.isUnnamed, h]
+/-- A query can write the name `@anon_0` (backquoted); that variable prints exactly like the
+unnamed entity `0`, yet it is not unnamed: anonymity cannot be read off the rendered text. -/
+theorem AV.unnamed_not_from_text (i j s : Nat) :
+    AV.fmt ⟨some "@anon_0", i, s, none⟩ = AV.fmt ⟨none, j, s, some 0⟩ ∧
+    AV.isUnnamed ⟨some "@anon_0", i, s, none⟩ = false ∧ AV.isUnnamed ⟨none, j, s, some 0⟩ = true :=
+  ⟨rfl, rfl, rfl⟩
 theorem AV.asStr_spec (v : AV) : v.asStr = v.name.getD "?" := rfl
 
 /-- Equality ignores scope and name — two variables of different scopes with
 the same id are "equal" (the root of the id-only issues noted elsewhere). -/
 theorem AV.eqv_iff (a b : AV) : a.eqv b = true ↔ a.id = b.id := by simp [AV.eqv]
 
-theorem AV.eqv_other_scope : AV.eqv ⟨some "a", 3, 0⟩ ⟨some "b", 3, 1⟩ = true := rfl
+theorem AV.eqv_other_scope : AV.eqv ⟨some "a", 3, 0, none⟩ ⟨some "b", 3, 1, none⟩ = true := rfl
 
 /-- `Hash` is consistent with `Eq` (as `HashMap`/`HashSet` require). -/
 theorem AV.hash_consistent (a b : AV) (h : a.eqv b = true) : a.hashKey = b.hashKey := by

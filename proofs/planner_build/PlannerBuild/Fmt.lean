@@ -4,7 +4,7 @@
 | here | there |
 | --- | --- |
 | `FRel`, `typesStr`, `hopsStr`, `fmtVarLen` | `fmt_var_len_rel` mod.rs:347-372 |
-| `fmtRelDir`, `fmtRel` | `fmt_rel_with_labels_dir` mod.rs:379-415, `fmt_rel_with_labels` mod.rs:375-377 |
+| `fmtRelDir`, `fmtRel` | `fmt_rel_with_labels_dir` mod.rs:381-417, `fmt_rel_with_labels` mod.rs:377-379 |
 | `IRK`, `irName`, `irDetail`, `irFmt` | `impl Display for IR` mod.rs:419-536 |
 
 Strings are built exactly as the `format!` calls do (payload `Display`s are
@@ -13,7 +13,11 @@ parameters: the node/relationship/pattern text is passed in already rendered).
 namespace PlannerBuild.Fmt
 
 structure FRel where
+  /-- the rendered alias (`Display for Variable`, `AV.fmt`) -/
   alias : String
+  /-- `rel.alias.is_unnamed()` (`AV.isUnnamed`, #3528): a flag of its own, since a named alias
+  may render like an unnamed one (`AV.unnamed_not_from_text`) -/
+  unnamed : Bool
   types : List String
   minHops : Option Nat
   maxHops : Option Nat
@@ -57,7 +61,7 @@ def fmtNode (alias : String) (labels : List String) : String :=
 def fmtRelDir (r : FRel) (transposed : Bool) : String :=
   let (l, rt) := arrows r.bidirectional transposed
   let toS := fmtNode r.to r.toLabels
-  if r.alias.startsWith "_anon" then "(" ++ r.frm ++ ")" ++ l ++ "-" ++ rt ++ "(" ++ toS ++ ")"
+  if r.unnamed then "(" ++ r.frm ++ ")" ++ l ++ "-" ++ rt ++ "(" ++ toS ++ ")"
   else if r.types.isEmpty then
     "(" ++ r.frm ++ ")" ++ l ++ "-[" ++ r.alias ++ "]-" ++ rt ++ "(" ++ toS ++ ")"
   else "(" ++ r.frm ++ ")" ++ l ++ "-[" ++ r.alias ++ ":" ++ "|".intercalate r.types ++ "]-" ++ rt ++
@@ -70,11 +74,19 @@ theorem fmtRel_eq (r : FRel) : fmtRel r = fmtRelDir r false := rfl
 theorem arrows_table (b t : Bool) :
     arrows b t = (if b then ("", "") else if t then ("<", "") else ("", ">")) := rfl
 
-/-- Anonymous edges print no bracket at all. -/
-theorem fmtRelDir_anon (r : FRel) (t : Bool) (h : r.alias.startsWith "_anon" = true) :
+/-- Anonymous (unnamed) edges print no bracket at all. -/
+theorem fmtRelDir_anon (r : FRel) (t : Bool) (h : r.unnamed = true) :
     fmtRelDir r t = "(" ++ r.frm ++ ")" ++ (arrows r.bidirectional t).1 ++ "-" ++
       (arrows r.bidirectional t).2 ++ "(" ++ fmtNode r.to r.toLabels ++ ")" := by
   simp [fmtRelDir, h]
+
+/-- A named edge prints its bracket with the rendered alias, whatever that alias spells
+(even a backquoted `@anon_0` or `_anon_0`). -/
+theorem fmtRelDir_named (r : FRel) (t : Bool) (h : r.unnamed = false) :
+    fmtRelDir r t = "(" ++ r.frm ++ ")" ++ (arrows r.bidirectional t).1 ++ "-[" ++ r.alias ++
+      typesStr r ++ "]-" ++ (arrows r.bidirectional t).2 ++ "(" ++ fmtNode r.to r.toLabels ++ ")" := by
+  unfold fmtRelDir typesStr
+  by_cases ht : r.types.isEmpty <;> simp [h, ht, String.append_assoc]
 
 /-! ## `Display for IR` -/
 

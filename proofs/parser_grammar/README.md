@@ -102,7 +102,7 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 | — | (Rust test only) | A pattern predicate in a projection swallows the `,`: `RETURN (a)-->(b), (b)-->(a)` returns one column (C: two). Same root cause as W2-binder-1 | **Open** |
 | — | `sign_sequences` | `+-1` is accepted, `- -1` and `-+1` are rejected; the grammar allows one sign (`- -1` is #2309) | **Open** |
 | W4-plan-4 | `call_validates_rest`, `match_last_after_call_rejected` | Nothing after a procedure CALL was validated: `… MERGE ()-[:R\|S]->()` created an edge, `… UNWIND [1] AS x` was accepted; C rejects all | **Fixed by #3297** (b774fdfad, main b84473a7f); the `parent().unwrap()` in `utilize_node_by_id` remains as a hazard |
-| W4-parse-1 | `anon_name_collides` | Anonymous entities are named `_anon_N`, a name users can write: `MATCH (_anon_0:A), (:B) RETURN count(*)` → Rust 0, C 1 | **Open** |
+| W4-parse-1 | `anon_name_distinct` (was `anon_name_collides`) | Anonymous entities were named `_anon_N`, a name users can write: `MATCH (_anon_0:A), (:B) RETURN count(*)` → Rust 0, C 1 | **Fixed by #3528** (unnamed aliases are `Alias::Anon(n)`) |
 | W4-parse-2 | `create_named_path_dup_rel_rejected` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` created 1 relationship (C: "already declared") | **Fixed by #3289** (`d15d38a10`) |
 | W4-parse-3 | `merge_dup_rel_rejected`, `pattern_comprehension_repeated_rel_refused` | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` created 1 relationship (C: error); pattern comprehensions ignored a repeat | **Fixed by #3289** |
 | W4-parse-4 | `set_paren_target_refused`, `set_paren_needs_dot`, `type_colon_refused` | `SET (n.x) = 5` and `[:A:B]` were accepted (C: syntax error) | **Fixed by #3300** (`f680bb9f2`) |
