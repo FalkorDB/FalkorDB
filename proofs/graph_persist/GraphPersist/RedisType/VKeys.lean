@@ -13,7 +13,7 @@ import GraphPersist.Persist.Payload
 | `deleteStaleGraphmeta`    | `delete_stale_graphmeta_keys` (:591-617) |
 | `deleteStaleVirtual`      | `delete_stale_virtual_keys` (:625-640) |
 
-`key_holds_graph` (:569) and `delete_key` (:549) are `RedisModule_*` calls (inputs / effects);
+`key_holds_graph` (:577, `RedisLayer.Telemetry.keyHolds` in proofs/redis_layer) is an input and `delete_key` (:547) a `RedisModule_*` effect;
 `build_multi_key_payloads` is the proved `buildMulti`, abstracted here as `layout`.
 
 * `save_main` / `save_vkey` / `save_single` — with distinct names, a graph needing `K ≥ 2`

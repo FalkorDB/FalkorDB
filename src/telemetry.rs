@@ -14,13 +14,12 @@ use std::sync::mpsc;
 use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use valkey_module::key::KeyFlags;
 use valkey_module::logging::log_warning;
 use valkey_module::{Context, ContextFlags, ValkeyString, ValkeyValue, raw};
 
 use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
 use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, up_to_nul};
-use crate::redis_type::GRAPH_TYPE;
+use crate::redis_type::key_holds_graph;
 
 /// Maximum stored string length for query/params in telemetry entries.
 const STR_MAX_LEN: usize = 2048;
@@ -808,33 +807,6 @@ fn release_batch_graphs(graphs: Vec<BatchGraph>) {
     }
 }
 
-/// True if the Redis key `name` currently holds `graph`. The GIL must be held.
-///
-/// The registry is the module's view of the keyspace; this is Redis's own, and the two
-/// can disagree. `graph_free` is the module type's free callback, so under lazy free
-/// (`lazyfree-lazy-user-flush yes`, `UNLINK`, an async `FLUSHALL`) it runs on the
-/// lazyfree thread — arbitrarily later than the key left the keyspace. Writing on the
-/// registry's word alone would then recreate the stream key of a graph Redis has
-/// already dropped, and because a key-API write is not propagated, that key exists on
-/// the master and nowhere else: the master/replica keyspace mismatch this whole check
-/// chain is here to prevent. One key open per graph per batch.
-fn key_holds_graph(
-    ctx: &Context,
-    name: &str,
-    graph: &Arc<RwLock<ThreadedGraph>>,
-) -> bool {
-    // NULL context, like every other string this module builds off the command path,
-    // so Redis does not tie it to an auto-memory pool that outlives the call.
-    let key_name = ValkeyString::create_from_slice(ptr::null_mut(), name.as_bytes());
-    // NOTOUCH: a report must not make the graph look more recently used than the query did.
-    // No `wrong_type_compat`: any `Err` just means "not our graph" and is never replied.
-    let key = ctx.open_key_with_flags(&key_name, KeyFlags::NOTOUCH);
-    matches!(
-        key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE),
-        Ok(Some(registered)) if registered.data_ptr() == graph.data_ptr()
-    )
-}
-
 /// Move everything already queued into `batch`, up to [`FLUSH_BATCH_MAX`].
 ///
 /// `true` if the channel has disconnected. `false` does *not* mean it has not: the loop
@@ -1231,15 +1203,19 @@ fn flusher_loop() {
                 for run in deferred.chunk_by(|a, b| a.graph_name == b.graph_name) {
                     let name = &run[0].graph_name;
                     // The registry named this key; Redis has to agree that it still
-                    // holds this graph. See `key_holds_graph`. One graph per run, so
-                    // any entry of it answers for the rest.
+                    // holds this graph (see `key_holds_graph`). On the registry's word
+                    // alone this would recreate the stream key of a graph Redis has
+                    // already dropped, and because a key-API write is not propagated,
+                    // that key would exist on the master and nowhere else. One graph
+                    // per run, so any entry of it answers for the rest, and one key
+                    // open per graph per batch.
                     let Some(b) = graphs
                         .iter()
                         .find(|b| Arc::as_ptr(&b.graph) == run[0].graph.as_ptr())
                     else {
                         continue;
                     };
-                    if !key_holds_graph(&ctx, name, &b.graph) {
+                    if !key_holds_graph(&ctx, name.as_bytes(), &b.graph) {
                         continue;
                     }
                     stream_entries(tsc, &mut template, name, run, max_len);
