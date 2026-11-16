@@ -1,8 +1,9 @@
 /-
 # proofs/pr3435_review — PR #3435 "perf: algo.BFS reads the stored matrix in place and pulls on wide levels"
 
-Fixes issue #3430. Rust read from the PR branch `perf/bfs-pushpull` @ a76e66420
-(28ab35368, then the review fix a76e66420, on origin/main 9212add39). The PR adds
+Fixes issue #3430. Rust read from the PR head d14a9f467 (28ab35368, the review fix
+a76e66420, 3b59f521f checking every GraphBLAS call of the push/pull loop, d14a9f467
+adding `source_has_out` to `many_expected`; first reviewed on origin/main 9212add39). The PR adds
 `Tensor::clean_fwd` / `Tensor::clean_bwd` (tensor.rs) and `bfs_levels_push_pull`,
 and changes `algo_bfs` (algo_procedures.rs) to lend the stored base instead of
 extracting a copy, to pass a `many_expected` estimate to LAGraph, and to run its
@@ -12,18 +13,19 @@ a76e66420 acted on this review: `k: i64` + INT64 levels, checked source
 
 Imports: versioned_matrix (`VMTensorOps.TT`, `VMTensor.Inv`/`effV`, `extract`,
 `VM.VM`/`eff`, the mutator invariant theorems) and algo_udf
-(`AlgoBfsReg.levelBranch`). COVERAGE rows stay commented out until the PR merges.
+(`AlgoBfsReg.levelBranch`). The COVERAGE rows cite the PR head; on merge fold them
+into versioned_matrix (tensor.rs) and algo_udf (algo_procedures.rs) and delete this project.
 
 ## Modules
 
-| here | there (PR branch a76e66420) |
+| here | there (PR head d14a9f467) |
 | --- | --- |
-| `Clean`       | `Tensor::clean_fwd` tensor.rs:989, `Tensor::clean_bwd` :997 |
+| `Clean`       | `Tensor::clean_fwd` tensor.rs:995, `Tensor::clean_bwd` :1003 |
 | `Dist`        | shortest-path distance, walks, `count` (= `GrB_Vector_nvals`) |
-| `PushPull`    | the loop of `bfs_levels_push_pull` algo_procedures.rs:1116-1160; GraphBLAS spec `GBSpec` |
-| `PushPullFuel`| the loop's fuel, exits, and `k: i64` (:1126, :1128, :1159) |
-| `Alloc`       | the whole fn :1066-1163: allocation, checked source, `fail` cleanup; history `bfsFullPre` |
-| `AlgoBfs`     | `algo_bfs` path selection :1195-1282 and its level-only `nodes` :1318-1333; LAGraph spec `LagSpec` |
+| `PushPull`    | the loop of `bfs_levels_push_pull` algo_procedures.rs:1170-1221; GraphBLAS spec `GBSpec`, checked return codes `GB.sparsity`/`nvalsOk`/`vSparsity` |
+| `PushPullFuel`| the loop's fuel, exits (`exit_conditions`, `ffi_failure_exits`), and `k: i64` (:1180, :1182, :1220) |
+| `Alloc`       | the whole fn :1115-1224: allocation, level sparsity hint, checked source, `fail` cleanup; history `bfsFullPre` |
+| `AlgoBfs`     | `algo_bfs` (:1231) path selection :1256-1367 and its level-only `nodes` :1403-1418; LAGraph spec `LagSpec` |
 | `Model`       | the FFI hypotheses are satisfiable (`gbModel_spec`, `lagModel_spec`) + `decide` runs |
 
 ## Claim 1 — `clean_fwd` / `clean_bwd` (PROVEN; transpose under the owner's `mt` abstraction)
@@ -55,7 +57,8 @@ Imports: versioned_matrix (`VMTensorOps.TT`, `VMTensor.Inv`/`effV`, `extract`,
   otherwise an `Err`, never fuel. `pushPull_heuristic_irrelevant`,
   `pushPull_correct_rust` (the Rust heuristic over any float model), `pushPull_ok_of_total`.
 * Exits: `Bfs.exit_conditions` (`k > max_level` with `max_level ≥ 0`; empty next
-  level `nq == 0`); `run_fuel_stable`/`run_fuel_any`: the unbounded `loop` = `run`
+  level `nq == 0`, once the checked calls succeeded); `Bfs.ffi_failure_exits` (a failing
+  frontier sparsity hint or `GrB_Vector_nvals` returns `Err`, 3b59f521f); `run_fuel_stable`/`run_fuel_any`: the unbounded `loop` = `run`
   with any fuel `≥ n`; termination because each level adds `nq ≥ 1` unvisited
   nodes (`step_visited`).
 * `k: i64` (a76e66420): `Bfs.k_increment_no_overflow` — at every `k += 1`,
@@ -64,7 +67,7 @@ Imports: versioned_matrix (`VMTensorOps.TT`, `VMTensor.Inv`/`effV`, `extract`,
   History: `pre_a76e664_overflow_needs_huge_graph` (28ab35368's `k: i32` could wrap
   only on a `2^31 - 1`-edge shortest path, then ignore `max_level`).
 * Source: `Bfs.bfsFull_src_out_of_range` / `bfsFull_src_error` — `src ≥ n` returns
-  `Err("BFS source failed: …")` (checked `setElement`, :1110-1114).
+  `Err("BFS source failed: …")` (checked `setElement`, :1164-1168; after the checked level sparsity hint :1156-1161).
 * Cleanup: `Bfs.bfsFull_no_leak` — on every `Err` path neither vector stays
   allocated, on `Ok` only the returned `v`. History:
   `pre_a76e664_frontier_alloc_leaks` (28ab35368 leaked `v` when `q`'s alloc failed).
@@ -93,7 +96,7 @@ Imports: versioned_matrix (`VMTensorOps.TT`, `VMTensor.Inv`/`effV`, `extract`,
 ## Claim 4 — existing theorems
 
 No existing theorem is invalidated. algo_udf `AlgoBfsReg.algoBfs` takes LAGraph's
-output as the input `lag`; the PR's result assembly (:1284-1353) is unchanged,
+output as the input `lag`; the PR's result assembly (:1369-1438) is unchanged,
 so `edgesBranch_aligned`, `branches_agree`, `levelBranch_no_src`, `algoBfs_*`
 hold with `lag.level` = either path's vector. graph_queries
 `Queries.adjMatrix_single` (build_adjacency_matrix) and every versioned_matrix
@@ -102,6 +105,16 @@ tensor.rs every fn after :982 by +19 (versioned_matrix 33 rows, graphblas_wrappe
 6 rows); algo_procedures.rs (at a76e66420) +1 for fns after :76, `register_bfs`/`algo_bfs`
 +107 (:1058→:1165, :1063→:1170), every fn after `algo_bfs` +153 (algo_udf,
 ops_traverse rows; algo_udf `AlgoBfsReg` header :1063-1205/:1144 too).
+
+## Re-check at d14a9f467
+
+Changes since a76e66420, all modelled: `bfs_levels_push_pull` checks the two
+sparsity hints and `GrB_Vector_nvals` (`GB.vSparsity`/`sparsity`/`nvalsOk`; only new
+`Err` exits, every `Ok` theorem unchanged, `bfsFull_no_leak` covers them);
+`edges_unexplored` uses `mul_add` (inside the arbitrary heuristic); `algo_bfs`'s
+`many_expected` adds `nvals + 1 ≥ n/64 ∧ nvals > 0 ∧ source_has_out` — `many_expected`
+is an arbitrary `Bool` in `levelVec_correct` / `nodes_path_independent` /
+`nodes_same_as_main`, so they cover it. `clean_fwd`/`clean_bwd` unchanged.
 
 ## Live check (28ab35368 dylib, port 6521; not re-run for a76e66420)
 

@@ -6,7 +6,7 @@ import Pr3435Review.PushPull
 * `step_inv` — one full iteration (step, `nq != 0`, assign, `k += 1`) keeps `Inv`.
 * `run_fuel_stable` — the fuel is never observed: Rust's unbounded `loop` is `run`
   with any fuel `≥ n`.
-* `k_increment_no_overflow` — `k += 1` (a76e66420 :1159, `k: i64`) is exact:
+* `k_increment_no_overflow` — `k += 1` (a76e66420 :1220, `k: i64`) is exact:
   `k + 1 ≤ n ≤ 2^60`. History: `pre_a76e664_overflow_needs_huge_graph` (the
   `i32` counter of 28ab35368 could wrap only on a `2^31 - 1`-edge shortest path).
 * `exit_conditions` — the loop's two exits are exactly `k > max_level`
@@ -98,11 +98,17 @@ theorem run_fuel_stable {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : He
     · rw [if_pos hx, if_pos hx]
     · rw [if_neg hx, if_neg hx]
       generalize hp : hr.choose s.h s.nq s.lastNq s.push = push
+      by_cases hsp : g.sparsity s.q push = false
+      · rw [if_pos hsp, if_pos hsp]
+      rw [if_neg hsp, if_neg hsp]
       generalize hq : (if push then g.vxm s.q s.v A else g.mxv s.q s.v AT) = res
       cases res with
       | none => rfl
       | some q' =>
         simp only
+        by_cases hnv : g.nvalsOk q' = false
+        · rw [if_pos hnv, if_pos hnv]
+        rw [if_neg hnv, if_neg hnv]
         by_cases h0 : g.nvals q' = 0
         · rw [if_pos h0, if_pos h0]
         · rw [if_neg h0, if_neg h0]
@@ -126,7 +132,7 @@ theorem run_fuel_any {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur 
     rw [← ih]
     exact run_fuel_stable hg hr hT hb hs hn ml (n + e) _ 1 (init_inv hs A ml h0) (by omega)
 
-/-- **`k: i64` never overflows** (a76e66420 :1126, :1159). At the `k += 1` of a
+/-- **`k: i64` never overflows** (a76e66420 :1180, :1220). At the `k += 1` of a
 level `K` that did not end the loop there are at least `K + 1` visited nodes, so
 `K + 1 ≤ n ≤ 2^60 < i64::MAX`: the increment is exact, in debug and release. -/
 theorem k_increment_no_overflow {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) {A AT : Pat}
@@ -169,15 +175,33 @@ counter is bounded by the node count. -/
 theorem k_le_n {H : Type} {n : Nat} {A : Pat} {src : Nat} {ml : Int} {K : Nat} {s : St H}
     (h : Inv n A src ml K s) : s.k ≤ n := by rw [h.k_eq]; have := h.k_le; omega
 
-/-- **The two exits.** `run` stops on fuel `f + 1` without recursing exactly
-when `max_level ≥ 0 ∧ k > max_level`, or the step fails, or the next level is
-empty (`nq == 0`), or the assign fails. -/
+/-- **The two `Ok` exits.** `run` stops on fuel `f + 1` with `Ok` when
+`max_level ≥ 0 ∧ k > max_level`, or when the next level is empty (`nq == 0`)
+after the checked GraphBLAS calls succeeded (frontier sparsity hint, step,
+nvals; the hint and nvals checked since 3b59f521f — their failures are the
+`Err` exits of `ffi_failure_exits`). -/
 theorem exit_conditions {H : Type} (g : GB) (hr : Heur H) (A AT : Pat) (ml : Int) (f : Nat) (s : St H) :
     (0 ≤ ml ∧ ml < s.k → run g hr A AT ml (f + 1) s = .ok s.v) ∧
     (∀ q', ¬ (0 ≤ ml ∧ ml < s.k) →
+      g.sparsity s.q (hr.choose s.h s.nq s.lastNq s.push) = true →
       (if hr.choose s.h s.nq s.lastNq s.push then g.vxm s.q s.v A else g.mxv s.q s.v AT) = some q' →
+      g.nvalsOk q' = true →
       g.nvals q' = 0 → run g hr A AT ml (f + 1) s = .ok s.v) := by
-  refine ⟨fun hx => by simp only [run]; rw [if_pos hx], fun q' hx hq h0 => ?_⟩
-  simp only [run]; rw [if_neg hx]; simp only [hq, h0, ite_true]
+  refine ⟨fun hx => by simp only [run]; rw [if_pos hx], fun q' hx hsp hq hnv h0 => ?_⟩
+  simp only [run]; rw [if_neg hx]; simp [hsp, hq, hnv, h0]
+
+/-- The `Err` exits 3b59f521f added: a failing frontier sparsity hint
+(:1194-1199) or `GrB_Vector_nvals` (:1209-1211) ends the loop with its error
+(through `fail`, which frees both vectors: `Alloc.bfsFull_no_leak`). -/
+theorem ffi_failure_exits {H : Type} (g : GB) (hr : Heur H) (A AT : Pat) (ml : Int) (f : Nat)
+    (s : St H) (hx : ¬ (0 ≤ ml ∧ ml < s.k)) :
+    (g.sparsity s.q (hr.choose s.h s.nq s.lastNq s.push) = false →
+      run g hr A AT ml (f + 1) s = .error "BFS frontier sparsity failed") ∧
+    (∀ q', g.sparsity s.q (hr.choose s.h s.nq s.lastNq s.push) = true →
+      (if hr.choose s.h s.nq s.lastNq s.push then g.vxm s.q s.v A else g.mxv s.q s.v AT) = some q' →
+      g.nvalsOk q' = false → run g hr A AT ml (f + 1) s = .error "BFS frontier nvals failed") := by
+  refine ⟨fun hsp => ?_, fun q' hsp hq hnv => ?_⟩
+  · simp only [run]; rw [if_neg hx]; simp [hsp]
+  · simp only [run]; rw [if_neg hx]; simp [hsp, hq, hnv]
 
 end Pr3435.Bfs

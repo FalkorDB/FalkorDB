@@ -15,6 +15,9 @@ def gbModel (n : Nat) : GB where
   mxv q v AT := some (fun j => decide (j < n) && (v j).isNone && (List.range n).any (fun i => AT j i && q i))
   assign v q k := some (fun j => if q j then some k else v j)
   nvals q := count n q
+  nvalsOk _ := true
+  sparsity _ _ := true
+  vSparsity := true
 
 theorem gbModel_spec (n : Nat) : GBSpec n (gbModel n) where
   vxm q v A q' h j := by

@@ -3,17 +3,17 @@ import Pr3435Review.Alloc
 import AlgoUdf.AlgoBfsReg
 /-! # Claim 3: `algo_bfs`'s level-only `nodes` list does not depend on the path
 
-PR branch a76e66420, `graph/src/runtime/functions/algo_procedures.rs`:
+PR head d14a9f467, `graph/src/runtime/functions/algo_procedures.rs`:
 
 | here | there |
 | --- | --- |
-| `clean`/`cleanB` | :1201-1210 — `clean_fwd` for a single type; `clean_bwd` only when `clean` is `Some` |
-| `aPat`           | :1211-1217 — the lent base, else `build_adjacency_matrix` (graph.rs:4724; one type = `Tensor::extract`, graph_queries `Queries.adjMatrix_single`) |
-| `manyExpected`   | :1224-1227 — `avg_degree^max_depth ≥ n/64` or unbounded; an **arbitrary** `Bool` here |
-| `usePP`          | :1248 — `clean_bwd.filter(many_expected && !want_edges)` |
-| `levelVec`       | :1248-1282 — `bfs_levels_push_pull(a, at, ..)` or `LAGr_BreadthFirstSearch_Extended(.., many_expected, ..)` |
-| `entries`        | `extract_vector_i64(level)` :1321 (AXIOMATISED in algo_udf: ascending `(index, value)`) |
-| `nodesOf`        | the level branch :1318-1333 = algo_udf `AlgoBfsReg.levelBranch` |
+| `clean`/`cleanB` | :1262-1271 — `clean_fwd` for a single type; `clean_bwd` only when `clean` is `Some` |
+| `aPat`           | :1272-1294 — the lent base, else `build_adjacency_matrix` (graph.rs:4950; one type = `Tensor::extract`, graph_queries `Queries.adjMatrix_single`) |
+| `manyExpected`   | :1306-1312 — `nvals + 1 ≥ n/64 ∧ nvals > 0 ∧ source_has_out ∧ (unbounded ∨ avg_degree^max_depth ≥ n/64)` (`source_has_out`: the row of `src` in A is non-empty, :1283/:1292, d14a9f467); an **arbitrary** `Bool` here, so every theorem below holds whatever it computes |
+| `usePP`          | :1333 — `clean_bwd.filter(many_expected && !want_edges)` |
+| `levelVec`       | :1326-1367 — `bfs_levels_push_pull(a, at, ..)` or `LAGr_BreadthFirstSearch_Extended(.., many_expected, ..)` |
+| `entries`        | `extract_vector_i64(level)` :1406 (AXIOMATISED in algo_udf: ascending `(index, value)`) |
+| `nodesOf`        | the level branch :1403-1418 = algo_udf `AlgoBfsReg.levelBranch` |
 | `mainLevelVec`   | origin/main 9212add39 :1089-1130 — always LAGraph on `build_adjacency_matrix`, `many_expected = false` |
 
 ## FFI spec assumed (`LagSpec`)
@@ -55,7 +55,7 @@ theorem levels_unique {A : Pat} {src : Nat} {ml : Int} {w₁ w₂ : LVec}
 def entries (n : Nat) (w : LVec) : List (Nat × Nat) :=
   (List.range n).filterMap (fun j => (w j).map (fun l => (j, l.toNat)))
 
-/-- The level branch (:1318-1333), owner's `levelBranch`. -/
+/-- The level branch (:1403-1418), owner's `levelBranch`. -/
 def nodesOf (n src : Nat) (hasDel : Bool) (del : Nat → Bool) (w : LVec) : List Nat :=
   AlgoUdf.AlgoBfsReg.levelBranch src hasDel del (entries n w)
 
@@ -66,33 +66,33 @@ inductive RelSel
   | single (t : TT) (mt : VM.VM)
   | other (adj : Pat)
 
-/-- :1201-1204. -/
+/-- :1262-1265. -/
 def clean : RelSel → Option (List (Nat × Nat))
   | .single t _ => cleanFwd t
   | .other _ => none
 
-/-- :1205-1210 (`[t] if clean.is_some()`). -/
+/-- :1266-1271 (`[t] if clean.is_some()`). -/
 def cleanB : RelSel → Option (List (Nat × Nat))
   | .single t mt => if (cleanFwd t).isSome then cleanBwd mt else none
   | .other _ => none
 
-/-- `build_adjacency_matrix(&rel_types)` (graph.rs:4724-4746). -/
+/-- `build_adjacency_matrix(&rel_types)` (graph.rs:4950-4973). -/
 def buildAdj : RelSel → Pat
   | .single t _ => patOf (extract t)
   | .other adj => adj
 
-/-- :1211-1217: the lent base when clean, else the materialized copy. -/
+/-- :1272-1294: the lent base when clean, else the materialized copy. -/
 def aPat (r : RelSel) : Pat :=
   match clean r with
   | some a => patOf a
   | none => buildAdj r
 
-/-- :1248 — the push/pull path is taken iff a clean transpose exists, the
+/-- :1333 — the push/pull path is taken iff a clean transpose exists, the
 traversal is expected large, and edges are not wanted. -/
 def usePP (r : RelSel) (manyExpected wantEdges : Bool) : Bool :=
   (cleanB r).isSome && manyExpected && !wantEdges
 
-/-- :1241-1282: the level vector, either path. `pp` is `bfs_levels_push_pull`
+/-- :1326-1367: the level vector, either path. `pp` is `bfs_levels_push_pull`
 (given `A`, `AT`), `lag` LAGraph's BFS. -/
 def levelVec (pp : Pat → Pat → Except String LVec) (lag : Pat → Nat → Int → Bool → Option LVec)
     (r : RelSel) (src : Nat) (ml : Int) (manyExpected : Bool) : Except String LVec :=
@@ -227,8 +227,8 @@ theorem nodes_same_as_main {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr :
 
 /-- **Out-of-range source: every path errors** (a76e66420), as origin/main does.
 So `algo_bfs` returns `Err` whichever path it takes. The messages differ:
-`"BFS source failed: GrB_INVALID_INDEX"` (push/pull, :1110-1114) vs
-`"LAGr_BreadthFirstSearch_Extended failed: <code>"` (:1278-1281). -/
+`"BFS source failed: GrB_INVALID_INDEX"` (push/pull, :1164-1168) vs
+`"LAGr_BreadthFirstSearch_Extended failed: <code>"` (:1363-1366). -/
 theorem src_out_of_range_all_err {H : Type} {n : Nat} {lag : Pat → Nat → Int → Bool → Option LVec}
     (hl : LagSpec n lag) (newV newQ : Bool) (g : GB) (hr : Heur H) (h0 : H)
     (r : RelSel) {src : Nat} (hs : n ≤ src) (ml : Int) (me : Bool) :
@@ -256,17 +256,20 @@ theorem usePP_iff (r : RelSel) (me : Bool) :
 its first step yielded an empty frontier and it returned `Ok` with no levels (the
 empty batch). Unreachable there too (a live node's id is below `node_cap` = the
 tensor's `nrows`), but claim 3 needed `src < n`. Fixed by a76e66420 (checked
-`setElement`, :1110-1114): `src_out_of_range_all_err`, and claim 3 no longer
+`setElement`, :1164-1168): `src_out_of_range_all_err`, and claim 3 no longer
 takes `src < n`. -/
 theorem pre_a76e664_pushPull_src_out_of_range {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H)
     (h0 : H) (A AT : Pat) {src : Nat} (hs : n ≤ src) (ml : Int) (hml : ¬ (0 ≤ ml ∧ ml < 1))
-    (htot : ∀ q v, (g.vxm q v A).isSome ∧ (g.mxv q v AT).isSome) :
+    (htot : ∀ q v, (g.vxm q v A).isSome ∧ (g.mxv q v AT).isSome)
+    -- 28ab35368 ignored the sparsity and nvals return codes (checked since 3b59f521f)
+    (hsp : ∀ q p, g.sparsity q p = true) (hnv : ∀ q, g.nvalsOk q = true) :
     ∃ w, bfsLevelsPushPull g hr h0 A AT n src ml = .ok w ∧ ∀ j, w j = none := by
   unfold bfsLevelsPushPull
   simp only [run]
   rw [if_neg (by simpa [init] using hml)]
   generalize hp : hr.choose (init n src h0).h (init n src h0).nq (init n src h0).lastNq
     (init n src h0).push = push
+  rw [if_neg (by simp [hsp])]
   have hv : ∀ j, (init n src h0).v j = none := by intro j; simp [init]; omega
   have hq : ∀ j, (init n src h0).q j = false := by intro j; simp [init]; omega
   generalize hr' : (if push then g.vxm (init n src h0).q (init n src h0).v A
@@ -290,7 +293,7 @@ theorem pre_a76e664_pushPull_src_out_of_range {H : Type} {n : Nat} {g : GB} (hg 
           rw [hq i] at hqi; exact absurd hqi (by simp)
     have h0' : g.nvals q' = 0 := by
       rw [hg.nvals]; exact (count_eq_zero_iff n q').2 (fun j _ => hz j)
-    simp only [h0', ite_true]
+    simp only [hnv, h0', ite_true, Bool.true_eq_false, ite_false]
     exact ⟨_, rfl, hv⟩
 
 end Pr3435.Algo
