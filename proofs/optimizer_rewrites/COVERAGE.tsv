@@ -29,7 +29,7 @@ graph/src/planner/optimizer/push_filters_down.rs	rebuild_node	385	PROVEN	Sequenc
 graph/src/planner/optimizer/reduce_bound_edge.rs	reduce_bound_edge	30	PROVEN	References2.ancestorsRead refsNew (ancestor walk), ancestors_le_outside; main_misses_call_sibling (#2896 sibling case, still open); References.refsNew_complete
 graph/src/planner/optimizer/reduce_count.rs	reduce_count	54	PROVEN	Passes.reduce_count_correct, reduce_count_stale
 graph/src/planner/optimizer/reduce_count.rs	extract_count_variable	193	PROVEN	Helpers.countVar_spec (count(var) -> var.id, scope dropped)
-graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	19	NOT COVERED	(#3047): body changed, not re-proven yet
+graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	30	PROVEN	References2.ancestorsRead refsNew vs readOutside_iff, main_misses_call_sibling (still open); References.refsNew_misses_sibling_edges (W2-traverse-1, still open); #3054 only adds recording collapsed edges + flag_collapsed_siblings (not modelled), the collapse decision is unchanged
 graph/src/planner/optimizer/reduce_var_len_path.rs	reduce_var_len_path	27	PROVEN	References2.ancestorsRead refsNew (same oracle and walk); References.refsNew_complete (CVLT edge attrs/edge_filter/path_var seen); UNWIND r loss fixed by #2390
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	Passes.reorder_perm, reorder_preserves
 graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	replace_cartesian_with_hash_join	73	PROVEN	Passes.vhj_correct, hash_join_drops_row
@@ -80,7 +80,7 @@ graph/src/graph/graphblas/me_delta_bench.rs	per_op	43	NOT COVERED	TEST-ONLY: ben
 graph/src/graph/graphblas/me_delta_bench.rs	committed_multi	58	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_step	84	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_attach_vs_seek	140	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
-graph/src/planner/optimizer/reduce_expand_into.rs	starts_plan	94	NOT COVERED	(#3047): not modelled yet
-graph/src/planner/optimizer/reduce_expand_into.rs	branch_root	107	NOT COVERED	(#3047): not modelled yet
-graph/src/planner/optimizer/reduce_expand_into.rs	plan_indices	123	NOT COVERED	(#3047): not modelled yet
-graph/src/planner/optimizer/reduce_expand_into.rs	flag_collapsed_siblings	149	NOT COVERED	(#3047): not modelled yet
+graph/src/planner/optimizer/reduce_expand_into.rs	starts_plan	94	NOT COVERED	(#3054): plan-tree predicate on orx_tree nodes; not modelled
+graph/src/planner/optimizer/reduce_expand_into.rs	branch_root	107	NOT COVERED	(#3054): plan-tree walk (orx_tree); not modelled
+graph/src/planner/optimizer/reduce_expand_into.rs	plan_indices	123	NOT COVERED	(#3054): plan-tree index collection (orx_tree); not modelled
+graph/src/planner/optimizer/reduce_expand_into.rs	flag_collapsed_siblings	149	NOT COVERED	(#3054): sets COLLAPSED_SIBLING flags in sibling_edges lists over the plan tree; not modelled (its runtime effect is modelled in Misc.edgeAlreadyUsed sibAvoids)

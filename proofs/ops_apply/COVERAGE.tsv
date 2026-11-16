@@ -76,4 +76,3 @@ graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	228	PROVEN	CartVhj
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	256	PROVEN	CartVhj.build: build_int
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	324	PROVEN	CartVhj.fillMatches/probe: fillMatches_int, probe_insert_fresh
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	366	PROVEN	CartVhj.vhjRows: vhjRows_spec
-graph/src/runtime/ops/mod.rs	Parallel::has_alternative	183	NOT COVERED	(#3047): not modelled yet

@@ -22,7 +22,7 @@ Yes, when the edge is emitted (the edge variable is read):
 - **undirected:** every edge matches in its stored direction and, unless it is a self-loop, in reverse too, so a self-loop matches once (`emit_bidir_iff`); ExpandInto, used when both endpoints are bound, does the same (`mem_expandInto_emit`);
 - **two hops:** `(a)-[r]->(x)<-[s]-(c)` returns exactly the openCypher match set with `r ≠ s` (`twoHop_emit_iff`).
 
-When the edge is not read, a directed hop *collapses* parallel edges into one row per node pair. That only ever returns rows emit mode would (`collapse_sub_emit`), and the directed keys are unique (`collapse_directed_iff`, `collapse_directed_keys_nodup`). Undirected anonymous collapse is a known exception: it can emit one representative per direction (W2-traverse-3). This is C's behaviour, not openCypher's: `MATCH (a)-[]->(b) RETURN count(*)` counts pairs, not edges.
+When the edge is not read, a directed hop *collapses* parallel edges into one row per node pair. Before #3054 that only ever returned rows emit mode would; since #3054 a collapsed hop may take an edge a sibling already bound when the pair has another edge, so it can return rows emit mode would not (counterexamples `collapse_sub_emit_fails`, `collapse_directed_iff_fails`; exact form `collapse_directed_iff_alt`). The directed keys are unique (`collapse_directed_keys_nodup`). Undirected anonymous collapse is a known exception: it can emit one representative per direction (W2-traverse-3). This is C's behaviour, not openCypher's: `MATCH (a)-[]->(b) RETURN count(*)` counts pairs, not edges.
 
 **2. Is the batched matrix-multiply path the same as row-by-row?**
 
