@@ -15,6 +15,7 @@ import FalkorCowBTree.BugsBatch
 import FalkorCowBTree.InsertBatchWF
 import FalkorCowBTree.Assert
 import FalkorCowBTree.Page
+import FalkorCowBTree.MergeEscape
 
 /-!
 # `cow_btree`: Lean 4 model and proofs (re-targeted to origin/main 1d15bf713: #3283 799968a8b; earlier #2897 7b60f28db, #3285 cab3cf192)
@@ -33,7 +34,7 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 | `remove`, `removeOne`, `collapse`, `removeRet` | `mod.rs:260-279`, `node.rs:419-438` |
 | `rebalance`, `cws`, `combine` | `node.rs:205`, `:100` (`combine_with_sibling`), `:374` (+ `aos_combine` `leaf/mod.rs:633`) |
 | `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:446-489`, `:167` |
-| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:142-162` (`merge_underfull`), `:497-508` (`merge_underfull_below`) |
+| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`); #3738's unchanged-borrow escape never fires (`MergeEscape.lean`) | `node.rs:142-170` (`merge_underfull`), `:497-508` (`merge_underfull_below`) |
 | `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:510`, `:198`, `:519` |
 | `route`, `applyBatch`, `insertBatch` | `node.rs:268-288` (old `:194-206`), `:243`, `mod.rs:241` |
 | `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:45`, `:79`, `mod.rs:199`, `leaf/mod.rs:51`/`:98`, `:472` |

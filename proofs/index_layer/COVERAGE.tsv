@@ -237,7 +237,7 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	43
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_sorted	51	PROVEN	Leaf.mergeD_spec (union, strictly sorted)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	78	PROVEN	Leaf.partitionPoint_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_walk	98	PROVEN	Leaf.mergeWI_fst, mergeWI_idx, mergeW_fst
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	count	181	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	count	183	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	key	192	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc	204	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	iter	236	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
@@ -246,7 +246,7 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	raw	353	PROVEN	Le
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc_layout	216	PROVEN	Leaf.docLayout_spec; LeafAosD.docLayoutD_spec (FIELD, FIELD + DOC_BYTES, DOC_BYTES)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_pairs	263	PROVEN	Leaf.fromPairs_roundtrip, scan_doc, scan_distinct; LeafAosD.fromPairsD_roundtrip (every DOC_BYTES in {1,2,4,8}), fromPairsD8
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_parts	322	PROVEN	Leaf.fromParts_spec, fromParts_format
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_batch	472	PROVEN	Leaf.mergeBatch_spec (all fast paths = slow path = merge_sorted)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_batch	474	PROVEN	Leaf.mergeBatch_spec (all fast paths = slow path = merge_sorted)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	count	18	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	key	23	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	doc	31	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
