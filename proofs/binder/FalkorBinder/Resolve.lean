@@ -5,7 +5,7 @@ import FalkorBinder.Table
 The binder state that name resolution reads (binder.rs:45-71), restricted to
 the two innermost scopes: `resolve_name` only ever looks at the current table
 and, when `use_parent_scope` is set, at `env_stack[len - 2]`
-(binder.rs:2216-2219).
+(binder.rs:2384-2390).
 -/
 namespace FalkorBinder
 
@@ -22,19 +22,22 @@ structure St where
   p2c : Env
   /-- `copy_from_parent`: name ↦ (parent variable, its copy in `cur`) -/
   cfp : List (Name × (Var × Var))
+  /-- `anon_vars` (#3528): unnamed pattern entity number ↦ its variable -/
+  anon : List (Nat × Var) := []
 
-/-- Names the binder reserves for itself (binder.rs:2181, 2192). -/
+/-- The name the binder reserves for itself (binder.rs:2353). Since #3528 no
+`_anon…` name is special: an unnamed entity has no name at all. -/
 def isSpecial (n : Name) : Bool :=
-  n == "__agg_order_by_placeholder__" || n.startsWith "_anon"
+  n == "__agg_order_by_placeholder__"
 
-/-- Innermost-first lookup in the comprehension locals (binder.rs:2201-2205). -/
+/-- Innermost-first lookup in the comprehension locals (binder.rs:2374-2378). -/
 def lookupLocals : List Env → Name → Option Var
   | [], _ => none
   | l :: ls, n => match lookupLocals ls n with
     | some v => some v
     | none => l.find? n
 
-/-- `Binder::resolve_name` (binder.rs:2175-2241), for a non-special name.
+/-- `Binder::resolve_name` (binder.rs:2348-2364) for a non-special name, i.e. `resolve_bound_name` (binder.rs:2369-2414).
 `locals` is in push order, so the *last* one is the innermost — matching
 `locals.iter().rev()`. Returns the new state and the variable. -/
 def resolve (st : St) (locals : List Env) (n : Name) : Except String (St × Var) :=
@@ -53,7 +56,7 @@ def resolve (st : St) (locals : List Env) (n : Name) : Except String (St × Var)
     | none =>
     match st.parent.find? n with
     | some pv =>
-      -- binder.rs:2223-2236: copy into the current scope, id = len()
+      -- binder.rs:2395-2410: copy into the current scope, id = len()
       let copy : Var := { pv with id := st.cur.length, scope := st.depth }
       .ok ({ st with cur := st.cur.insert n copy, cfp := (n, (pv, copy)) :: st.cfp }, copy)
     | none => .error s!"'{n}' not defined"
@@ -117,7 +120,7 @@ theorem resolve_covers (st : St) (locals : List Env) (n : Name) (st' : St) (v : 
 
 /-! ## `define_name_in_scope` and `ensure_type` -/
 
-/-- `Binder::ensure_type` (binder.rs:2259-2275). -/
+/-- `Binder::ensure_type` (binder.rs:2434-2450). -/
 def ensureType (existing ty : Ty) : Bool :=
   !((ty == .rel && (existing == .node || existing == .path)) ||
     (ty == .node && (existing == .rel || existing == .path)) ||
@@ -136,18 +139,17 @@ both accept strictly more than openCypher — recorded as a spec gap, not a
 Rust/C divergence. -/
 theorem ensureType_accepts_any_binding : ensureType .any .node = true := by decide
 
-/-- `Binder::define_name_in_scope` (binder.rs:2143-2163). -/
+/-- `Binder::define_name_in_scope` (binder.rs:2265-2282). Since #3528 every name is
+looked up: an unnamed entity goes through `define_alias_in_scope` instead. -/
 def defineName (e : Env) (depth : Nat) (n : Name) (ty : Ty) (allowReuse : Bool) :
     Except String (Env × Var) :=
-  if !n.startsWith "_anon" then
-    match e.find? n with
-    | some ex =>
-      if !allowReuse then .error s!"Variable `{n}` already declared"
-      else if !ensureType ex.ty ty then
-        .error s!"The alias '{n}' was specified for both a node and a relationship."
-      else .ok (e, ex)
-    | none => let v := freshVar e n ty depth; .ok (e.insert n v, v)
-  else let v := freshVar e n ty depth; .ok (e.insert n v, v)
+  match e.find? n with
+  | some ex =>
+    if !allowReuse then .error s!"Variable `{n}` already declared"
+    else if !ensureType ex.ty ty then
+      .error s!"The alias '{n}' was specified for both a node and a relationship."
+    else .ok (e, ex)
+  | none => let v := freshVar e n ty depth; .ok (e.insert n v, v)
 
 /-- `define_name_in_scope` looks only at the *current* table: a name that
 `resolve_name` would find through the parent copy is **redefined** as a
@@ -164,7 +166,7 @@ theorem defineName_ignores_parent :
       v.scope = 1 ∧ v.id = 1) := by
   refine ⟨⟨_, _, rfl, rfl⟩, ⟨_, _, rfl, by decide, rfl, rfl⟩⟩
 
-/-- `Binder::project_name` (binder.rs:2165-2173): always a fresh id, and the
+/-- `Binder::project_name` (binder.rs:2338-2346): always a fresh id, and the
 key is overwritten if present. -/
 def projectName (e : Env) (depth : Nat) (n : Name) (ty : Ty) : Env × Var :=
   let v := freshVar e n ty depth

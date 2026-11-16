@@ -22,12 +22,15 @@ planner's ids `len, len+1, …` avoid every id `H` the bound IR uses iff
 in two places while the removed ids are still in the IR
 (`erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks`).
 
-## Gap closed 2026-10-20: pattern predicates may declare variables (#1334)
-`bind_expr_node`'s `Pattern` arm (binder.rs:2082-2113) binds a WHERE pattern predicate with
-`bind_graph(…, false)`, which mints any unknown alias fresh. Property `PatternPredDeclaresNothing`
-(an accepted pattern predicate names only visible variables); refuted by
-`bug1334_pattern_predicate_declares_var`: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds with
-`n1` fresh (id 2) — live Rust returns every `n0`, C rejects it (issue #1334; the C error message is not recorded here).
+## Gap closed 2026-10-20: pattern predicates may declare variables (#1334) — fixed by #3528
+`bind_expr_node`'s `Pattern` arm bound a WHERE pattern predicate with `bind_graph(…, false)`,
+which minted any unknown alias fresh (`MATCH (n0) WITH * WHERE () -- (n1) RETURN *` returned every
+`n0`; C rejects it). Since #3528 (binder.rs:2174-2186) every named alias is first resolved with
+`resolve_bound_name`: property `PatternPredDeclaresNothing` now holds for every pattern
+(`patternPred_declares_nothing`), and `fixed1334_pattern_predicate_unbound` gives the issue's
+query "'n1' not defined". #3528 also makes unnamed entities `Alias.anon k` with no name (`Env` keys
+`none`, `Scope::unnamed`), so no user-written `_anon…` name is special any more
+(`anon_spelled_name_unbound`, `createCheck_anon`, `exists_pattern_first`).
 The slot-reuse family (#3333, #3369, #3375, #3368, #3150) is modelled in proofs/ops_aggregate
 `SlotReuse.lean` (`projLayout` = this binder's per-scope minting fed to the aggregate).
 

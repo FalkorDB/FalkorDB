@@ -8,11 +8,10 @@ graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	48	PROVEN
 graph/src/planner/optimizer/eliminate_true_filters.rs	expr_has_parameter	74	PROVEN	Helpers.hasParam_iff
 graph/src/planner/optimizer/eliminate_true_filters.rs	substitute_params	82	PROVEN	Helpers.subst_params (only unknown params remain), evX_subst (value unchanged)
 graph/src/planner/optimizer/eliminate_true_filters.rs	eliminate_true_filters	102	PROVEN	Basic.filter_true, filter_and_single; ConstEval.constTrue_filter (whole filter), andLoop_drop_constTrue (conjuncts; andLoop_drop_true with htrue discharged by constEval_sound since #2904); #3335 rebuilds the filter with ExprIR::and_of: AndOf.flat_passes (same Filter verdict, errors included), flat_eval
-graph/src/planner/optimizer/fuse_anonymous_traverse.rs	is_anon	37	PROVEN	Helpers.isAnon_some, isAnon_none
-graph/src/planner/optimizer/fuse_anonymous_traverse.rs	rel_attrs_empty	42	PROVEN	Helpers.attrsEmpty_iff (exactly the empty Map)
-graph/src/planner/optimizer/fuse_anonymous_traverse.rs	intermediate_unreferenced	70	PROVEN	References2.wholeRead (whole-plan BFS since #2390): anyRead_plug, wholeRead_covers (sees readers inside and outside the hops), fuse_unread_sound (with refsNew_complete)
-graph/src/planner/optimizer/fuse_anonymous_traverse.rs	can_fuse	83	PROVEN	Helpers.canFuse_spec (all preconditions of Passes.fuse_same_support; #2390: no node_attrs_empty, both edges also unreferenced)
-graph/src/planner/optimizer/fuse_anonymous_traverse.rs	fuse_anonymous_traverse	194	PROVEN	Passes.fuse_same_support, fuse_changes_multiplicity; Helpers.canFuse_spec; References2.fuse_unread_sound
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	rel_attrs_empty	37	PROVEN	Helpers.attrsEmpty_iff (exactly the empty Map)
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	intermediate_unreferenced	65	PROVEN	References2.wholeRead (whole-plan BFS since #2390): anyRead_plug, wholeRead_covers (sees readers inside and outside the hops), fuse_unread_sound (with refsNew_complete)
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	can_fuse	78	PROVEN	Helpers.canFuse_spec (all preconditions of Passes.fuse_same_support; #2390: no node_attrs_empty, both edges also unreferenced)
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	fuse_anonymous_traverse	189	PROVEN	Passes.fuse_same_support, fuse_changes_multiplicity; Helpers.canFuse_spec; References2.fuse_unread_sound
 graph/src/planner/optimizer/references.rs	ir_references_variable	41	PROVEN	References.refsNew: refsNew_complete (every read seen, under the planner invariant PlanInv = planner_build planMatch_stripped), refsNew_sound (only reads or bound vars), refsNew_sees_unwind/create/foreach; refsNew_misses_sibling_edges (W2-traverse-1)
 graph/src/planner/optimizer/references.rs	index_query_references_variable	205	PROVEN	References.iqLoop/iqRefs: iqLoop_iff (explicit stack = some operand mentions v, any And/Or depth), iqRefs_iff
 graph/src/planner/optimizer/references.rs	query_graph_references_variable	237	PROVEN	References.qgRefs (node attrs then rel attrs), within refsNew_complete/refsNew_sound

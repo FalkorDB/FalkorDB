@@ -76,7 +76,7 @@ def identArm (o : Oracle) (fr : List Nat → Option FnI) (F : Nat) (allow : Bool
     let v ← ident
     pure (leaf (.var v), false)
 
-def isPatG : Option (QG Nat) → Bool
+def isPatG : Option (QG Alias) → Bool
   | some g => !g.rels.isEmpty
   | none => false
 

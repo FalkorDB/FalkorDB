@@ -78,6 +78,75 @@ use crate::{
     },
 };
 
+/// A variable as the parser writes it, before binding.
+///
+/// An unnamed pattern entity has no name: it is identified by a number the
+/// parser hands out, so the pattern graph can still tell two of them apart
+/// without any string a query could spell (not even a backquoted one).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Alias {
+    /// A name the query wrote.
+    Named(Arc<String>),
+    /// An unnamed node, relationship or path, numbered per query.
+    Anon(u32),
+}
+
+impl Alias {
+    /// The name the query wrote, or `None` for an unnamed entity.
+    #[must_use]
+    pub const fn name(&self) -> Option<&Arc<String>> {
+        match self {
+            Self::Named(name) => Some(name),
+            Self::Anon(_) => None,
+        }
+    }
+}
+
+impl From<Arc<String>> for Alias {
+    fn from(name: Arc<String>) -> Self {
+        Self::Named(name)
+    }
+}
+
+impl Display for Alias {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Named(name) => write!(f, "{name}"),
+            Self::Anon(id) => write_anon(f, *id),
+        }
+    }
+}
+
+/// Writes how plans show unnamed entity `id`. This is the only place the
+/// spelling exists: no variable ever carries it as a name.
+fn write_anon(
+    f: &mut std::fmt::Formatter<'_>,
+    id: u32,
+) -> std::fmt::Result {
+    write!(f, "@anon_{id}")
+}
+
+/// The variable type of an AST stage, and what names a pattern entity there.
+///
+/// Before binding, a pattern entity is an [`Alias`]: a name, or a number for
+/// an unnamed one. An expression can only ever refer to a name, so
+/// [`ExprIR::Variable`] holds the plain variable type. After binding, every
+/// entity is a [`Variable`].
+pub trait VarKind {
+    type Alias: Clone + std::fmt::Debug + Display + Eq + Hash;
+}
+
+impl VarKind for Arc<String> {
+    type Alias = Alias;
+}
+
+impl VarKind for Variable {
+    type Alias = Self;
+}
+
 /// A variable in a Cypher query, either named or anonymous.
 ///
 /// Variables are assigned unique IDs during binding to distinguish between
@@ -90,7 +159,10 @@ use crate::{
 /// - `ty`: The inferred or declared type of the variable
 #[derive(Clone, Debug)]
 pub struct Variable {
+    /// `None` for an unnamed pattern entity and for planner temporaries.
     pub name: Option<Arc<String>>,
+    /// The parser's number for an unnamed pattern entity, shown in plans.
+    pub anon: Option<u32>,
     pub id: u32,
     pub scope_id: u32,
     pub ty: Type,
@@ -103,6 +175,8 @@ impl Display for Variable {
     ) -> std::fmt::Result {
         if let Some(name) = &self.name {
             write!(f, "{name}")
+        } else if let Some(anon) = self.anon {
+            write_anon(f, anon)
         } else {
             write!(f, "?{}", self.id)
         }
@@ -130,6 +204,12 @@ impl Hash for Variable {
 }
 
 impl Variable {
+    /// Whether this is an unnamed pattern entity, which no query can refer to.
+    #[must_use]
+    pub const fn is_unnamed(&self) -> bool {
+        self.name.is_none()
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.name.as_ref().map_or("?", |n| n.as_str())
@@ -152,7 +232,7 @@ impl Variable {
 /// # Type Parameter
 /// - `TVar`: Variable type (`Arc<String>` before binding, `Variable` after)
 #[derive(Clone, Debug)]
-pub enum ExprIR<TVar> {
+pub enum ExprIR<TVar: VarKind> {
     /// Literal/constant value. Carries any runtime [`Value`] including
     /// Null/Bool/Int/Float/String literals as well as folded values like
     /// Date, Duration, Map, etc.
@@ -326,7 +406,7 @@ pub struct ShortestPathInfo {
     pub directed: bool,
 }
 
-impl<TVar: Clone> ExprIR<TVar> {
+impl<TVar: VarKind + Clone> ExprIR<TVar> {
     /// `a AND b AND …` over `conjuncts`, kept flat.
     ///
     /// AND is associative, so an operand that is itself an AND contributes
@@ -382,7 +462,7 @@ impl<TVar: Clone> ExprIR<TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
+impl<TVar: VarKind + Display + std::fmt::Debug> Display for ExprIR<TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -526,14 +606,14 @@ impl SupportAggregation for DynTree<ExprIR<Arc<String>>> {
 /// - `labels` contains `Person`
 /// - `attrs` contains the property filter expression
 #[derive(Debug)]
-pub struct QueryNode<L, TVar> {
-    pub alias: TVar,
+pub struct QueryNode<L, TVar: VarKind> {
+    pub alias: TVar::Alias,
     pub labels: OrderSet<L>,
     pub attrs: QueryExpr<TVar>,
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<L: Display + PartialEq, TVar: Display + PartialEq> Display for QueryNode<L, TVar> {
+impl<L: Display + PartialEq, TVar: VarKind> Display for QueryNode<L, TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -545,10 +625,10 @@ impl<L: Display + PartialEq, TVar: Display + PartialEq> Display for QueryNode<L,
     }
 }
 
-impl<L, TVar> QueryNode<L, TVar> {
+impl<L, TVar: VarKind> QueryNode<L, TVar> {
     #[must_use]
     pub const fn new(
-        alias: TVar,
+        alias: TVar::Alias,
         labels: OrderSet<L>,
         attrs: QueryExpr<TVar>,
     ) -> Self {
@@ -569,8 +649,8 @@ impl<L, TVar> QueryNode<L, TVar> {
 /// - `bidirectional` is true for undirected patterns `-[]-`
 /// - `min_hops`/`max_hops` are set for variable-length patterns like `[*1..3]`
 #[derive(Debug)]
-pub struct QueryRelationship<T, L, TVar> {
-    pub alias: TVar,
+pub struct QueryRelationship<T, L, TVar: VarKind> {
+    pub alias: TVar::Alias,
     pub types: Vec<T>,
     pub attrs: QueryExpr<TVar>,
     pub from: Arc<QueryNode<L, TVar>>,
@@ -594,7 +674,7 @@ pub enum AllShortestPaths {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, TVar> {
+impl<T: Display, L: Display, TVar: VarKind> Display for QueryRelationship<T, L, TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -620,11 +700,11 @@ impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, 
     }
 }
 
-impl<T, L, TVar> QueryRelationship<T, L, TVar> {
+impl<T, L, TVar: VarKind> QueryRelationship<T, L, TVar> {
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub const fn new(
-        alias: TVar,
+        alias: TVar::Alias,
         types: Vec<T>,
         attrs: QueryExpr<TVar>,
         from: Arc<QueryNode<L, TVar>>,
@@ -653,16 +733,16 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
 /// - `var` is the path variable `p`
 /// - `vars` contains all variables in the path pattern
 #[derive(Debug)]
-pub struct QueryPath<TVar> {
-    pub var: TVar,
-    pub vars: Vec<TVar>,
+pub struct QueryPath<TVar: VarKind> {
+    pub var: TVar::Alias,
+    pub vars: Vec<TVar::Alias>,
 }
 
-impl<TVar> QueryPath<TVar> {
+impl<TVar: VarKind> QueryPath<TVar> {
     #[must_use]
     pub const fn new(
-        var: TVar,
-        vars: Vec<TVar>,
+        var: TVar::Alias,
+        vars: Vec<TVar::Alias>,
     ) -> Self {
         Self { var, vars }
     }
@@ -676,13 +756,13 @@ impl<TVar> QueryPath<TVar> {
 /// Uses `Arc` for sharing patterns between different parts of the query plan,
 /// avoiding expensive cloning of complex patterns.
 #[derive(Clone, Debug)]
-pub struct QueryGraph<T, L, TVar> {
+pub struct QueryGraph<T, L, TVar: VarKind> {
     nodes: Vec<Arc<QueryNode<L, TVar>>>,
     relationships: Vec<Arc<QueryRelationship<T, L, TVar>>>,
     paths: Vec<Arc<QueryPath<TVar>>>,
 }
 
-impl<T, L, TVar> Default for QueryGraph<T, L, TVar> {
+impl<T, L, TVar: VarKind> Default for QueryGraph<T, L, TVar> {
     fn default() -> Self {
         Self {
             nodes: Vec::default(),
@@ -693,7 +773,7 @@ impl<T, L, TVar> Default for QueryGraph<T, L, TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<T: Display + PartialEq, L: Display + PartialEq, TVar: Display + PartialEq + Eq + Hash> Display
+impl<T: Display + PartialEq, L: Display + PartialEq, TVar: VarKind> Display
     for QueryGraph<T, L, TVar>
 {
     fn fmt(
@@ -719,7 +799,7 @@ impl<T: Display + PartialEq, L: Display + PartialEq, TVar: Display + PartialEq +
 /// holding its value expression as its single child. Repeated keys are kept as
 /// separate entries: `{v: 1}` merged with `{v: 2}` becomes `{v: 1, v: 2}`,
 /// which the planner turns into `n.v = 1 AND n.v = 2`.
-fn merge_attr_maps<TVar: Clone>(
+fn merge_attr_maps<TVar: VarKind + Clone>(
     lhs: &QueryExpr<TVar>,
     rhs: &QueryExpr<TVar>,
 ) -> QueryExpr<TVar> {
@@ -736,7 +816,7 @@ fn merge_attr_maps<TVar: Clone>(
     Arc::new(merged)
 }
 
-impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
+impl<T, L, TVar: VarKind> QueryGraph<T, L, TVar> {
     pub fn add_node(
         &mut self,
         node: Arc<QueryNode<L, TVar>>,
@@ -777,7 +857,7 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
 
     pub fn replace_node(
         &mut self,
-        alias: &TVar,
+        alias: &TVar::Alias,
         node: Arc<QueryNode<L, TVar>>,
     ) {
         if let Some(pos) = self.nodes.iter().position(|n| n.alias == *alias) {
@@ -813,7 +893,7 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
         }
     }
 
-    pub fn variables(&self) -> impl Iterator<Item = TVar> + '_ {
+    pub fn variables(&self) -> impl Iterator<Item = TVar::Alias> + '_ {
         self.nodes
             .iter()
             .map(|n| n.alias.clone())
@@ -936,7 +1016,7 @@ pub type QueryExpr<TVar> = Arc<DynTree<ExprIR<TVar>>>;
 
 /// An item in a SET clause - either property assignment or label modification.
 #[derive(Clone, Debug)]
-pub enum SetItem<L, TVar> {
+pub enum SetItem<L, TVar: VarKind> {
     /// Property assignment: `n.prop = value` (replace=true) or `n += {props}` (replace=false)
     Attribute {
         target: QueryExpr<TVar>,
@@ -948,7 +1028,9 @@ pub enum SetItem<L, TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetItem<L, TVar> {
+impl<L: Display + PartialEq, TVar: VarKind + Display + std::fmt::Debug> Display
+    for SetItem<L, TVar>
+{
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -983,7 +1065,7 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
 /// A complete query is a sequence of these clauses. The planner converts
 /// this AST into an execution plan.
 #[derive(Debug)]
-pub enum QueryIR<TVar> {
+pub enum QueryIR<TVar: VarKind> {
     /// CALL procedure(args) YIELD outputs WHERE filter
     /// The bool indicates whether YIELD was explicitly written (true) or default outputs are used (false).
     /// yield_aliases stores the original field names when AS aliasing is used;
@@ -1093,7 +1175,7 @@ pub enum QueryIR<TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
+impl<TVar: VarKind + Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -1202,7 +1284,7 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
     }
 }
 
-impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
+impl<TVar: VarKind + Eq + Hash + Display> QueryIR<TVar> {
     pub fn validate(&self) -> Result<(), String> {
         self.inner_validate(std::iter::empty())
     }

@@ -333,9 +333,9 @@ theorem connectedComponents_spec (g : G) (f : Nat) (out : List G)
 
 /-- A two-node graph `(a)-[r]->(b)` is one component (concrete run). -/
 def exG : G :=
-  let a : QNode Var := ⟨⟨none, 0, 0⟩, [], leaf .map⟩
-  let b : QNode Var := ⟨⟨none, 1, 0⟩, [], leaf .map⟩
-  ⟨[a, b], [⟨⟨none, 2, 0⟩, [7], leaf .map, a, b, false, none, none, .no⟩], []⟩
+  let a : QNode Var := ⟨⟨none, none, 0, 0⟩, [], leaf .map⟩
+  let b : QNode Var := ⟨⟨none, none, 1, 0⟩, [], leaf .map⟩
+  ⟨[a, b], [⟨⟨none, none, 2, 0⟩, [7], leaf .map, a, b, false, none, none, .no⟩], []⟩
 #guard ((connectedComponents exG 10).map (·.length)) == some 1
 
 /-- `QueryGraph::filter_visited` (ast.rs:795-821): keep the entities whose

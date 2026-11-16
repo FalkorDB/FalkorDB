@@ -108,10 +108,12 @@ def deleteOk {B : Type} (mayEntity : B → Bool) (es : List B) : Bool := es.all 
 theorem deleteOk_iff {B : Type} (m : B → Bool) (es : List B) : deleteOk m es = true ↔ ∀ e ∈ es, m e = true := by
   simp [deleteOk]
 
-def returnStarOk (all : Bool) (env : Env) : Bool := !all || env.any fun kv => !kv.1.startsWith "_"
+/-- `RETURN *` needs a named variable not starting with `_` (binder.rs:618-623; unnamed
+entities have no key, #3528). -/
+def returnStarOk (all : Bool) (env : Env) : Bool := !all || env.names.any fun k => !k.startsWith "_"
 
 theorem returnStarOk_iff (all : Bool) (env : Env) :
-    returnStarOk all env = false ↔ all = true ∧ ∀ kv ∈ env, kv.1.startsWith "_" = true := by
+    returnStarOk all env = false ↔ all = true ∧ ∀ k ∈ env.names, k.startsWith "_" = true := by
   simp [returnStarOk]
 
 /-! ## CALL … YIELD -/
@@ -318,9 +320,9 @@ where
 /-- `UNWIND e AS x`: `e` is bound before `x` exists (so `UNWIND x AS x` needs an outer `x`),
 and `x` may not be already declared. -/
 theorem unwind_order (st st1 : St) (e : NE) (x : Name) (h1 : S.expr st e = .ok st1) (v : Var)
-    (hx : st1.cur.find? x = some v) (hn : x.startsWith "_anon" = false) :
+    (hx : st1.cur.find? x = some v) :
     bindIR S st (.unwind e x) = .error s!"Variable `{x}` already declared" := by
-  simp [bindIR, h1, defineName, hn, hx]
+  simp [bindIR, h1, defineName, hx]
 
 /-- MATCH: a non-boolean WHERE is rejected after binding. -/
 theorem match_nonbool (st st1 st2 : St) (rels : List RelEnds) (o : Bool) (p : Nat) (f : NE)
@@ -339,7 +341,7 @@ theorem delete_nonentity (st st1 : St) (es : List NE) (h : seqE S.expr st es = .
     bindIR S st (.delete es) = .error "DELETE can only be called on nodes, paths and relationships" := by
   simp [bindIR, h, hd]
 
-theorem return_star_empty (st : St) (p : Nat) (h : ∀ kv ∈ st.cur, kv.1.startsWith "_" = true) :
+theorem return_star_empty (st : St) (p : Nat) (h : ∀ k ∈ st.cur.names, k.startsWith "_" = true) :
     bindIR S st (.return_ true p) = .error "RETURN * is not allowed when there are no variables in scope" := by
   have : returnStarOk true st.cur = false := (returnStarOk_iff true st.cur).2 ⟨rfl, h⟩
   simp [bindIR, this]
@@ -370,8 +372,12 @@ def internalPrefixes : List String := ["_slot_", "__agg_placeholder_", "_quant_"
 
 def isInternal (n : Name) : Bool := internalPrefixes.any fun p => n.startsWith p
 
-/-- What a returning CALL body hands back: its final table minus internal reservations. -/
-def subqueryReturns (inner : Env) : Env := inner.filter fun kv => !isInternal kv.1
+/-- What a returning CALL body hands back: its final table's named variables
+(`Scope::iter`) minus internal reservations. -/
+def subqueryReturns (inner : Env) : List (Name × Var) :=
+  inner.filterMap fun kv => match kv.1 with
+    | some k => if isInternal k then none else some (k, kv.2)
+    | none => none
 
 /-- Steps 3-4 of `bind_call_subquery`: restore the outer table, reject a returned
 name the outer scope already has, then project each returned name to a fresh
@@ -397,7 +403,15 @@ theorem callSubquery_collision (outer inner : Env) (d : Nat) (kv : Name × Var) 
 /-- No internal reservation is ever returned. -/
 theorem subqueryReturns_noInternal (inner : Env) (kv : Name × Var) (h : kv ∈ subqueryReturns inner) :
     isInternal kv.1 = false := by
-  simp only [subqueryReturns, List.mem_filter, Bool.not_eq_true'] at h; exact h.2
+  simp only [subqueryReturns, List.mem_filterMap] at h
+  obtain ⟨⟨k, v⟩, _, hk⟩ := h
+  cases k with
+  | none => simp at hk
+  | some k =>
+    simp only at hk
+    split at hk
+    · simp at hk
+    · rename_i hi; simp at hk; rw [← hk]; simpa using hi
 
 theorem foldProject_covers (depth : Nat) : ∀ (ret : List (Name × Var)) (acc : Env × List (Var × Var)),
     acc.1.Covers → (∀ kv ∈ ret, acc.1.has kv.1 = false) → (ret.map (·.1)).Nodup →
@@ -412,7 +426,7 @@ theorem foldProject_covers (depth : Nat) : ∀ (ret : List (Name × Var)) (acc :
       simp only [projectName, Env.insert_new_eq (hn kv (by simp)), Env.has, List.any_append,
         List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff]
       refine ⟨by simpa [Env.has] using hn kv' (by simp [hkv']), ?_⟩
-      rw [beq_eq_false_iff_ne]; intro e; exact hd.1 ⟨kv', hkv', e.symm⟩
+      rw [beq_eq_false_iff_ne]; intro e; exact hd.1 ⟨kv', hkv', (Option.some.inj e).symm⟩
     · exact hd.2
 
 /-- With distinct returned names, the outer table stays covering: every returned
@@ -467,79 +481,102 @@ theorem sortProj_spec (ps : List (Var × Var)) :
 
 /-! ## `bind_graph_create` -/
 
-/-- The redeclaration check (binder.rs:1575-1644): a node that is a
+/-- The redeclaration check (binder.rs:1662-1730): a node that is a
 relationship endpoint is a reference; a bare node or a named relationship
-may not reuse a bound name at its first occurrence in the clause. -/
-def createStepN (env : Env) (endpoints : List Name) (acc : Except String (List Name)) (n : Name) :
+may not reuse a bound name (`lookup_alias`) at its first occurrence in the clause.
+Unnamed entities are skipped (#3528: `alias.name().is_none()`, so a user-written
+`_anon…` name is checked like any other). -/
+def createStepN (env : Env) (endpoints : List Alias) (acc : Except String (List Name)) (a : Alias) :
     Except String (List Name) :=
   match acc with
   | .error e => .error e
   | .ok defd =>
-    if isAnon n then .ok defd
-    else if endpoints.contains n then .ok (n :: defd)
-    else if !defd.contains n && env.has n then .error s!"The bound variable '{n}' can't be redeclared in a CREATE clause"
-    else .ok (n :: defd)
+    match a with
+    | .anon _ => .ok defd
+    | .named n =>
+      if endpoints.contains (.named n) then .ok (n :: defd)
+      else if !defd.contains n && env.has n then .error s!"The bound variable '{n}' can't be redeclared in a CREATE clause"
+      else .ok (n :: defd)
 
-def createStepR (env : Env) (acc : Except String (List Name)) (n : Name) : Except String (List Name) :=
+def createStepR (env : Env) (acc : Except String (List Name)) (a : Alias) : Except String (List Name) :=
   match acc with
   | .error e => .error e
   | .ok defd =>
-    if isAnon n then .ok defd
-    else if !defd.contains n && env.has n then .error s!"The bound variable '{n}' can't be redeclared in a CREATE clause"
-    else .ok (n :: defd)
+    match a with
+    | .anon _ => .ok defd
+    | .named n =>
+      if !defd.contains n && env.has n then .error s!"The bound variable '{n}' can't be redeclared in a CREATE clause"
+      else .ok (n :: defd)
 
-def createCheck (env : Env) (nodes rels : List Name) (endpoints : List Name) : Except String Unit :=
+def createCheck (env : Env) (nodes rels : List Alias) (endpoints : List Alias) : Except String Unit :=
   match rels.foldl (createStepR env) (nodes.foldl (createStepN env endpoints) (.ok [])) with
   | .error e => .error e
   | .ok _ => .ok ()
 
-theorem createCheck_fresh (env : Env) (nodes rels endpoints : List Name) (h : ∀ n, env.has n = false) :
+theorem createCheck_fresh (env : Env) (nodes rels endpoints : List Alias) (h : ∀ n, env.has n = false) :
     createCheck env nodes rels endpoints = .ok () := by
-  have hN : ∀ (l : List Name) (d : List Name), ∃ d', l.foldl (createStepN env endpoints) (.ok d) = .ok d' := by
+  have hN : ∀ (l : List Alias) (d : List Name), ∃ d', l.foldl (createStepN env endpoints) (.ok d) = .ok d' := by
     intro l
     induction l with
     | nil => intro d; exact ⟨d, rfl⟩
-    | cons n ns ih =>
-      intro d; simp only [List.foldl_cons, createStepN, h, Bool.and_false]
-      split
-      · exact ih _
-      · split <;> exact ih _
-  have hR : ∀ (l : List Name) (d : List Name), ∃ d', l.foldl (createStepR env) (.ok d) = .ok d' := by
+    | cons a ns ih =>
+      intro d
+      cases a with
+      | anon k => exact ih _
+      | named n =>
+        have : createStepN env endpoints (.ok d) (.named n) = .ok (n :: d) := by
+          simp only [createStepN, h, Bool.and_false]; split <;> rfl
+        simp only [List.foldl_cons, this]; exact ih _
+  have hR : ∀ (l : List Alias) (d : List Name), ∃ d', l.foldl (createStepR env) (.ok d) = .ok d' := by
     intro l
     induction l with
     | nil => intro d; exact ⟨d, rfl⟩
-    | cons n ns ih => intro d; simp only [List.foldl_cons, createStepR, h, Bool.and_false]; split <;> exact ih _
+    | cons a ns ih =>
+      intro d
+      cases a with
+      | anon k => exact ih _
+      | named n =>
+        have : createStepR env (.ok d) (.named n) = .ok (n :: d) := by
+          simp [createStepR, h]
+        simp only [List.foldl_cons, this]; exact ih _
   obtain ⟨d1, h1⟩ := hN nodes []
   obtain ⟨d2, h2⟩ := hR rels d1
   simp [createCheck, h1, h2]
 
 /-- `MATCH (a) CREATE (a:L)`: a bare node reusing a bound name is rejected. -/
-theorem createCheck_bare_bound (env : Env) (a : Name) (ha : isAnon a = false) (hb : env.has a = true) :
-    createCheck env [a] [] [] = .error s!"The bound variable '{a}' can't be redeclared in a CREATE clause" := by
-  simp [createCheck, createStepN, createStepR, ha, hb]
+theorem createCheck_bare_bound (env : Env) (a : Name) (hb : env.has a = true) :
+    createCheck env [.named a] [] [] = .error s!"The bound variable '{a}' can't be redeclared in a CREATE clause" := by
+  simp [createCheck, createStepN, hb]
 
 /-- …but as a relationship endpoint it is a reference (`CREATE (a)-[:R]->(b)`). -/
-theorem createCheck_endpoint (env : Env) (a : Name) (ha : isAnon a = false) :
-    createCheck env [a] [] [a] = .ok () := by
-  simp [createCheck, createStepN, createStepR, ha]
+theorem createCheck_endpoint (env : Env) (a : Name) :
+    createCheck env [.named a] [] [.named a] = .ok () := by
+  simp [createCheck, createStepN, createStepR]
+
+/-- #3528: an unnamed entity is never a redeclaration, whatever the scope holds. -/
+theorem createCheck_anon (env : Env) (k : Nat) (endpoints : List Alias) :
+    createCheck env [.anon k] [.anon k] endpoints = .ok () := by
+  simp [createCheck, createStepN, createStepR]
 
 /-- The whole of `bind_graph_create`: redeclaration check, self-reference
 check on every entity, attribute maps bound in the clause's incoming scope,
 then the pattern. -/
-def bindGraphCreate (S : Subs) (st : St) (nodes rels endpoints : List Name) (attrs : List (Name × NE))
+def bindGraphCreate (S : Subs) (st : St) (nodes rels endpoints : List Alias) (attrs : List (Alias × NE))
     (pat : Nat) : Except String St :=
   match createCheck st.cur nodes rels endpoints with
   | .error e => .error e
   | .ok () =>
-    match attrs.find? (fun a => !isAnon a.1 && selfRef a.1 a.2) with
-    | some a => .error s!"'{a.1}' not defined; undefined attribute"
+    match (attrs.filterMap fun a => match a.1 with
+        | .named n => if selfRef n a.2 then some n else none
+        | .anon _ => none).head? with
+    | some n => .error s!"'{n}' not defined; undefined attribute"
     | none => match seqE S.expr st (attrs.map (·.2)) with
       | .error e => .error e
       | .ok st1 => S.graph st1 pat
 
-theorem bindGraphCreate_selfRef (st : St) (a : Name) (e : NE) (ha : isAnon a = false) (hs : selfRef a e = true)
+theorem bindGraphCreate_selfRef (st : St) (a : Name) (e : NE) (hs : selfRef a e = true)
     (hc : createCheck st.cur [] [] [] = .ok ()) :
-    bindGraphCreate S st [] [] [] [(a, e)] 0 = .error s!"'{a}' not defined; undefined attribute" := by
-  simp [bindGraphCreate, hc, ha, hs]
+    bindGraphCreate S st [] [] [] [(.named a, e)] 0 = .error s!"'{a}' not defined; undefined attribute" := by
+  simp [bindGraphCreate, hc, hs]
 
 end FalkorBinder

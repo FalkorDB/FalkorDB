@@ -11,7 +11,7 @@ the value is `true` (filter.rs). `tv [] e` is the meaning of the user's WHERE.
 
 | here | there |
 | --- | --- |
-| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs:1676-1768 (inline ids minted at mod.rs:1693-1700 / 1716-1723) |
+| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs:1675-1769 (inline ids minted, unnamed and with no `anon` number, at mod.rs:1693-1699 / 1719-1725) |
 | `FP`, `run` | IR filter operators: `Filter` (filter.rs), `SemiApply`/`AntiSemiApply` (semi_apply.rs), `OrApplyMultiplexer` (or_apply_multiplexer.rs: row passes iff some branch has `has_result ^ is_anti`), `Argument` |
 | `FP.patSub g` | `build_pattern_sub_plan` mod.rs:1033-1044 (its rows are `sub g`) |
 | `toPlan` | `expr_to_plan` mod.rs:1488-1544 |
@@ -129,7 +129,7 @@ structure CSt where
 
 def scopeOf (g : QG) : Nat := (g.vars.head?.map V.scope).getD 0
 
-/-- Inline variable minted at mod.rs:1693-1700 / 1716-1723: id = current length
+/-- Inline variable minted at mod.rs:1693-1699 / 1719-1725: id = current length
 of the pattern's first variable's scope table, which then grows by one. -/
 def mint (st : CSt) (g : QG) : Nat × CSt :=
   let s := scopeOf g

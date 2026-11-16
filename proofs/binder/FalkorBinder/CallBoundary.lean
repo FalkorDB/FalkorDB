@@ -85,35 +85,36 @@ theorem bodyNew_eq_old (o : Nat) (imp : List (Name × Var)) (rest : List Clause)
 /-- Names distinct: what a `HashMap` key set guarantees. -/
 def Distinct (imp : List (Name × Var)) : Prop := (imp.map (·.1)).Nodup
 
-theorem has_false_of_not_mem (e : Env) (k : Name) (h : k ∉ e.map (·.1)) : e.has k = false := by
+theorem has_false_of_not_mem (e : Env) (k : Name) (h : k ∉ e.names) : e.has k = false := by
   simp only [Env.has]
   rw [List.any_eq_false]
   intro p hp hk
   apply h
   simp only [beq_iff_eq] at hk
-  exact List.mem_map.mpr ⟨p, hp, hk⟩
+  exact List.mem_filterMap.mpr ⟨p, hp, hk⟩
 
 /-- The import projections mint ids `len e, len e + 1, …` in order, all in
 the body scope, and leave a table of size `len e + k` whose keys are the
 old keys followed by the imported names. -/
 theorem importProj_spec (s : Nat) :
     ∀ (imp : List (Name × Var)) (e : Env), Distinct imp →
-      (∀ p ∈ imp, p.1 ∉ e.map (·.1)) →
+      (∀ p ∈ imp, p.1 ∉ e.names) →
       (importProj e s imp).1.length = e.length + imp.length ∧
-      (importProj e s imp).1.map (·.1) = e.map (·.1) ++ imp.map (·.1) ∧
+      (importProj e s imp).1.names = e.names ++ imp.map (·.1) ∧
       (importProj e s imp).2.map (·.1.id) = (List.range imp.length).map (e.length + ·) ∧
       ((importProj e s imp).1.ids = e.ids ++ (List.range imp.length).map (e.length + ·)) ∧
       ∀ q ∈ (importProj e s imp).2, q.1.scope = s
   | [], e, _, _ => by simp [importProj]
   | (n, v) :: rest, e, hd, hfresh => by
-    have hn : n ∉ e.map (·.1) := hfresh (n, v) (by simp)
+    have hn : n ∉ e.names := hfresh (n, v) (by simp)
     have hk := has_false_of_not_mem e n hn
     have hdist : Distinct rest := (List.nodup_cons.mp hd).2
     have hnr : n ∉ rest.map (·.1) := (List.nodup_cons.mp hd).1
-    have hfresh' : ∀ p ∈ rest, p.1 ∉ (e.insert n (freshVar e n v.ty s)).map (·.1) := by
+    have hfresh' : ∀ p ∈ rest, p.1 ∉ (e.insert n (freshVar e n v.ty s)).names := by
       intro p hp
       rw [Env.insert_new_eq hk]
-      simp only [List.map_append, List.map_cons, List.map_nil, List.mem_append, List.mem_singleton]
+      simp only [Env.names, List.filterMap_append, List.filterMap_cons, List.filterMap_nil,
+        List.mem_append, List.mem_singleton]
       rintro (h | h)
       · exact hfresh p (by simp [hp]) h
       · exact hnr (h ▸ List.mem_map.mpr ⟨p, hp, rfl⟩)
@@ -123,7 +124,7 @@ theorem importProj_spec (s : Nat) :
     simp only [importProj, projectName, hins]
     refine ⟨?_, ?_, ?_, ?_, ?_⟩
     · rw [ih1]; simp; omega
-    · rw [ih2]; simp
+    · rw [ih2]; simp [Env.names]
     · simp only [freshVar] at ih3
       simp only [List.map_cons, freshVar, List.length_cons]
       rw [ih3, List.range_succ_eq_map]
@@ -151,7 +152,7 @@ mints afterwards (`fresh_var` at `len()`) avoids them. -/
 theorem entry_ids_below (s : Nat) (imp : List (Name × Var)) (hd : Distinct imp) :
     let r := importProj [] s imp
     r.1.Covers ∧ (∀ j, r.1.length + j ∉ r.2.map (·.1.id)) ∧ r.1.length = imp.length := by
-  obtain ⟨h1, -, h3, h4, -⟩ := importProj_spec s imp [] hd (by simp)
+  obtain ⟨h1, -, h3, h4, -⟩ := importProj_spec s imp [] hd (by simp [Env.names])
   simp only [List.length_nil, Nat.zero_add, List.map_id'] at h1 h3 h4
   refine ⟨?_, ?_, h1⟩
   · intro i hi
@@ -282,7 +283,7 @@ theorem body_own_unbound {V : Type} (s : Nat) (imp : List (Name × Var)) (hd : D
     (r : RowF V) (j : Nat) (hj : imp.length ≤ j) :
     bodyInputNew (importProj [] s imp).2 r j = none := by
   apply projRow_unbound
-  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp)
+  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp [Env.names])
   rw [h3]; simp; omega
 
 /-- … and every imported variable reads its outer value. -/
@@ -290,7 +291,7 @@ theorem body_import_value {V : Type} (s : Nat) (imp : List (Name × Var)) (hd : 
     (r : RowF V) (p : Var × Var) (hp : p ∈ (importProj [] s imp).2) :
     bodyInputNew (importProj [] s imp).2 r p.1.id = r p.2.id := by
   apply projRow_import _ _ _ hp
-  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp)
+  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp [Env.names])
   rw [h3]; simp only [List.length_nil, Nat.zero_add, List.map_id']
   exact List.nodup_range
 

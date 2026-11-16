@@ -12,7 +12,7 @@ import FalkorOptimizer.Basic
 | `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
 | `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
 | `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
-| `isAnon`, `attrsEmpty` | `is_anon`, `rel_attrs_empty` fuse_anonymous_traverse.rs:36-51 (`node_attrs_empty` removed by #2390) |
+| `isAnon`, `attrsEmpty` | `Variable::is_unnamed` ast.rs:209 (#3528 removed `is_anon`), `rel_attrs_empty` fuse_anonymous_traverse.rs:37-46 (`node_attrs_empty` removed by #2390) |
 | `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-192 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
 | `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
 | `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-87 |
@@ -204,7 +204,9 @@ theorem countVar_spec (e : X) (i : Nat) :
 
 /-! ## `fuse_anonymous_traverse` preconditions -/
 
-def isAnon (name : Option String) : Bool := name.any (·.startsWith "_anon")
+/-- `Variable::is_unnamed` (ast.rs:209, #3528): an unnamed pattern entity has no name at
+all, so no user-written name (not even `_anon_0`) counts as anonymous. -/
+def isAnon (name : Option String) : Bool := name.isNone
 
 /-- An inline attribute map is "empty" iff it is a `Map` with no entries. -/
 def attrsEmpty : X → Bool
@@ -216,8 +218,9 @@ theorem attrsEmpty_iff (a : X) : attrsEmpty a = true ↔ a = .node .map [] := by
   · intro h; match a, h with | .node .map [], _ => rfl
   · rintro rfl; rfl
 
-theorem isAnon_none : isAnon none = false := rfl
-theorem isAnon_some (n : String) : isAnon (some n) = n.startsWith "_anon" := rfl
+theorem isAnon_none : isAnon none = true := rfl
+/-- Every named variable is a named one, whatever its spelling (#3528). -/
+theorem isAnon_some (n : String) : isAnon (some n) = false := rfl
 
 /-- What `can_fuse` reads of a CondTraverse. -/
 structure CT where

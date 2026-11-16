@@ -40,10 +40,11 @@ theorem mergeSV_covers (a b : List (List Var)) (s i : Nat)
 /-! ## FOREACH restore (binder.rs:678-709) -/
 
 /-- The restored table: the saved outer table plus every inner entry whose
-id the outer table does not hold, re-keyed `_foreach_{scope}_{id}`. -/
+id the outer table does not hold, re-keyed `_foreach_{scope}_{id}`; an unnamed one is
+pushed unnamed again (#3528, binder.rs:788-793). -/
 def foreachRestore (saved inner : Env) (scope : Nat) : Env :=
   saved ++ (inner.filter (fun p => !(saved.ids.contains p.2.id))).map
-    (fun p => (s!"_foreach_{scope}_{p.2.id}", p.2))
+    (fun p => (p.1.map (fun _ => s!"_foreach_{scope}_{p.2.id}"), p.2))
 
 /-- When the body only *added* entries, each minted at or above the outer
 size (`inner = saved ++ added`), the restored table holds exactly the inner
@@ -83,11 +84,11 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
 comprehension's sub-plan uses; the cleanup then keeps only the names that
-were there before (and `_anon*`). -/
+were there before (and, since #3528, every unnamed entry, which `retain` keeps). -/
 def compScope : Env :=
   [("n", ⟨"n", 0, 0, .node⟩), ("m", ⟨"m", 1, 0, .node⟩), ("r", ⟨"r", 2, 0, .rel⟩)]
 
-def compCleaned : Env := compScope.retain (fun k => k == "n" || k.startsWith "_anon")
+def compCleaned : Env := compScope.retain (fun k => k == "n")
 
 /-- **Root cause 2 (comprehensions).** The cleaned table has size 1 while
 ids 1 and 2 are still in the IR: the planner's first two fresh ids in scope

@@ -54,8 +54,9 @@ def identOf : CT → Option Nat
   | .kw k => some (kwId k)
   | _ => none
 
-/-- The name `format!("_anon_{n}")` (cypher.rs:3037, 3085, 3154) as a name id.
-A user may spell the same identifier (`_anon_0` is a valid name). -/
+/-- The identifier `_anon_k` as a name id: a valid name a query may write. Before #3528 the
+parser also named the `k`-th unnamed entity so (`format!("_anon_{}")`), hence W4-parse-1; since
+#3528 an unnamed entity is `Alias.anon k` (C.Graph), so this is an ordinary name. -/
 def anonName (k : Nat) : Nat := 2000000 + k
 
 /-! ## Expression trees (`ExprIR`, ast.rs) as far as the clause level looks into them -/

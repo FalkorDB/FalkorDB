@@ -5,7 +5,7 @@ import PlannerBuild.Expr
 | here | there |
 | --- | --- |
 | `PSt` | `Planner` fields `scope_vars` (as lengths), `visited`, `loop_vars`, `pattern_vars`, `nested_plans` (mod.rs:719-746); `minted` is a ghost log of `fresh_var` results |
-| `fresh` | `Planner::fresh_var` mod.rs:837-852 |
+| `fresh` | `Planner::fresh_var` mod.rs:835-850 (name and `anon` both `None`) |
 | `EC` | `ExtractedComprehension` mod.rs:751-766 |
 | `CP` | the IR built for a comprehension (Aggregate / Filter / Apply / PathBuilder / plan_match) |
 | `build`, `buildL` | `build_pattern_comprehension_plan` mod.rs:1401-1482 |
