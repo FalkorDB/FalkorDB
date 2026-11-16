@@ -14,7 +14,7 @@ The Rust code is `graph/src/planner/binder.rs`, plus the id-minting side of `gra
 Every variable id is minted as the **current size of its scope table**. The binder's `fresh_var`, the parent copy in `resolve_name`, and the planner's own `fresh_var` all hand out `len()`, `len()+1`, …. That is collision-free only if every id the bound plan uses is below `len()`. In Lean, a table that satisfies this is `Env.Covers`.
 
 - Adding a name keeps it (`mint_new_covers`, `resolve_covers`, `projectName_new_covers`, `foreachRestore_covers`, `mergeSV_covers`).
-- **Removing** a name breaks it, and the binder removes names in two places while their ids are still used by the plan (`erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks`). The next variable then gets an id that is already taken, and two variables share one row slot.
+- **Removing** a name breaks it (`erase_breaks_covers`). Before #3016 the binder removed names in two places while their ids were still used by the plan (`pre3016_where_copy_id_reused`, `pre3016_comprehension_cleanup_breaks`), so the next variable got an id that was already taken. Since #3016 a scope is a `Scope` (names plus nameless reserved slots): hiding a name keeps its slot (`where_copy_id_kept`, `comprehension_cleanup_covers`, `reserve_fresh_covers`).
 
 ## The questions this project answers
 
@@ -22,7 +22,7 @@ Every variable id is minted as the **current size of its scope table**. The bind
 
 `mint_fresh_iff` proves the planner's ids `len, len+1, …` avoid every id the bound plan uses **if and only if** every used id is below `len`. So `Env.Covers` on the table is not enough by itself: an id that was removed from the table but is still read by a Filter breaks the condition.
 
-- **On main, no, in three places.** After `MATCH (n) WITH n.v AS k WHERE n.v = 0`, the WITH scope is `{k ↦ 0, n ↦ 1}` (`n` is copied for the WHERE), then `n` is removed. The next `MATCH (x)-->(y)` gives `x` id 1, the same slot the Filter reads (`erase_breaks_covers`, `where_copy_id_reused`). Comprehension and pattern-comprehension locals are cleaned up the same way (`comprehension_cleanup_breaks`).
+- **Before #3016, no, in three places.** After `MATCH (n) WITH n.v AS k WHERE n.v = 0`, the WITH scope was `{k ↦ 0, n ↦ 1}` (`n` is copied for the WHERE), then `n` was removed. The next `MATCH (x)-->(y)` gave `x` id 1, the same slot the Filter reads (`pre3016_where_copy_id_reused`). Comprehension and pattern-comprehension locals were cleaned up the same way (`pre3016_comprehension_cleanup_breaks`). Since #3016 `n` is hidden, its slot kept, and `x` gets id 2 (`where_copy_id_kept`).
 
 **2. Does `resolve_name` find exactly the names that are in scope?**
 
@@ -32,7 +32,7 @@ Every variable id is minted as the **current size of its scope table**. The bind
 **3. Does a `WITH`/`RETURN` scope contain exactly its aliases?**
 
 - **Without ORDER BY, yes.** `projectItems_keys` proves a projection scope starts with exactly its aliases, in order; `with_plain` and `where_copy_removed` check the common cases.
-- **With ORDER BY, no.** In `MATCH (n) WITH n.v AS k ORDER BY n.v RETURN n`, the ORDER BY copy of `n` survives into the next clause, so the query is accepted and `RETURN *` returns `k, n` (`orderBy_leaks`). openCypher and C give the scope `[k]`.
+- **With ORDER BY, yes since #3016** (`orderBy_scoped`: the scope is `[k]`, as in openCypher and C). Before, the ORDER BY copy of `n` survived into the next clause, so `MATCH (n) WITH n.v AS k ORDER BY n.v RETURN n` was accepted and `RETURN *` returned `k, n` (`pre3016_orderBy_leaks`).
 
 **4. Do consecutive clauses bind in order?**
 
@@ -72,11 +72,11 @@ openCypher binds a pattern left to right, clause by clause.
 
 ### How `mint_fresh_iff` and the covering lemmas fit together
 
-1. **Model the table.** `Env` is a list of `(name, Var)` pairs standing for the Rust `HashMap<Arc<String>, Variable>`. `Env.insert`, `Env.erase` and `Env.retain` are the three mutations. `freshVar` is `Binder::fresh_var`: the new id is `e.length`.
+1. **Model the table.** `Env` is a list of `(Key, Var)` pairs standing for the Rust `Scope` (a `Key.name` entry is in `names`, a `Key.rsv` entry is a nameless reserved slot). `Env.insert`, `Env.erase`, `Env.retain`, `Env.reserve`, `Env.unreserve`, `Env.lift` and `Env.hide` are the mutations. `freshVar` is `Binder::fresh_var`: the new id is `e.length`.
 2. **State the invariant.** `Env.Covers e` says every id in `e` is below `e.length`. `fresh_not_used` follows directly: `e.length` is not among the ids.
 3. **Check every mutation.** Each place the binder inserts under a new key has a `_covers` theorem. Re-inserting an existing key with a smaller id is `reinsert_covers`.
 4. **Link to the planner.** `mint_fresh_iff` is pure arithmetic: ids `len + j` miss a set `H` for every `j` exactly when every element of `H` is below `len`. The binder bugs are the cases where `H` (ids the plan still reads) contains an id that `erase` or `retain` dropped from the table, so it is no longer below `len`.
-5. **Hypotheses.** `bindNode_covers` assumes `KeysFresh`: the reserved internal names (`_quant_`, `_lc_`, `_reduce_`, …) never clash with a name already in the table. This is a property of how the Rust formats those names, stated rather than proven.
+5. **Hypotheses.** None for `bindNode_covers` since #3016: internal reservations are nameless, so they cannot clash with a name (before, `KeysFresh` assumed the `_quant_`/`_lc_`/`_reduce_` keys were new).
 
 ## Bugs found
 
@@ -86,9 +86,9 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committ
 |---|---|---|---|
 | W2-binder-1 | `q2923_cause`, `fold_merges`, `node_attr_on_rel_rust_rejects` | Consecutive MATCH/CREATE clauses are folded into one pattern and bound nodes first: "'a' not defined" for consecutive CREATEs; relationship uniqueness across separate MATCHes (0 rows vs C 1); a MATCH after OPTIONAL MATCH becomes optional | **Open** (#2923; PR #2981, not merged, fixes the in-pattern case `node_attr_on_rel_rust_rejects`) |
 | W2-binder-2 | (planner side; see the header) | `MATCH (a:A), (b:B {v: a.v})` filters `b`'s inline map on `b`'s own scan: Rust `[]`, C 2 rows. The node case of #2923 | **Open** (#2923; PR #2981 not merged) |
-| W2-binder-3 | `erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks` | A removed WHERE copy or comprehension local frees an id still in use; the next variable reuses it. Wrong rows, extra rows, or "Invalid node id for 'to'" | **Open** (PR #3016 not merged) |
+| W2-binder-3 | `erase_breaks_covers`, `pre3016_where_copy_id_reused`, `pre3016_comprehension_cleanup_breaks` | A removed WHERE copy or comprehension local frees an id still in use; the next variable reuses it. Wrong rows, extra rows, or "Invalid node id for 'to'" | **Fixed** (#3016: `where_copy_id_kept`, `comprehension_cleanup_covers`) |
 | W2-binder-4 | `callBody_union_disjoint`, `union_branch_label_fixed` | UNION branches inside `CALL {}` started at scope 0, shared with the outer query | **Fixed** (#3027) |
-| W2-binder-5 | `orderBy_leaks` | ORDER BY copies leak past WITH/RETURN: a spurious "already declared", and `RETURN *` returns ORDER BY-only variables | **Open** (PR #3016 not merged) |
+| W2-binder-5 | `pre3016_orderBy_leaks` | ORDER BY copies leak past WITH/RETURN: a spurious "already declared", and `RETURN *` returns ORDER BY-only variables | **Fixed** (#3016: `orderBy_scoped`) |
 | W2-binder-6 | `labels_leak` | Labels from CREATE and from pattern comprehensions tighten an earlier MATCH scan: 0 or 1 rows where C returns 3 | **Open** (PR #3049 not merged) |
 | W2-binder-7 | `defineName_ignores_parent` | A pattern predicate in `WITH … WHERE` rebinds a parent variable as a fresh one: 3 rows where C returns 1 | **Open** (PR #3062 not merged) |
 | W4-plan-2 | `getElement_rejected`, `negate_rejected` | `WHERE n.flags[0]` → "Expected boolean predicate" (C: 1); same for `true AND l[0]` and `true AND -null` | **Open** |

@@ -1,16 +1,20 @@
 /-
 # Scope tables and id minting
 
-`Binder.env_stack : Vec<HashMap<Arc<String>, Variable>>` (binder.rs:47). A
-variable's id is minted as the *current size* of its scope's table
-(`fresh_var`, binder.rs:2243-2257; the parent copy in `resolve_name`,
-binder.rs:2224), and the planner mints its own ids the same way, as
+`Binder.env_stack : Vec<Scope>` (binder.rs:48). Since #3016 a `Scope`
+(binder.rs:84-93) is a name map plus a nameless `reserved` list: the variables
+whose ids stay taken but that no name reaches. A variable's id is minted as the
+*current size* of its scope (`Scope::len` = names + reserved, binder.rs:96-98;
+`fresh_var`, binder.rs:2387-2401; the parent copy in `resolve_name`,
+binder.rs:2368), and the planner mints its own ids the same way, as
 `scope_vars[scope].len()`, pushing each one so the next is one larger
 (`Planner::fresh_var`, planner/mod.rs:843-857).
 
-A `HashMap` is modelled as an association list with distinct keys; `insert`
-replaces the value of a present key and appends otherwise, so `length` is the
-map's `len()`.
+A scope is modelled as one association list keyed by `Key`: `.name n` for an
+entry of the `HashMap` (distinct keys; `insert` replaces the value of a present
+key and appends otherwise) and `.rsv` for an entry of `reserved` (one per id,
+`reserved_ids`). No name a query writes is a `.rsv` key, so `length` is
+`Scope::len()` and `find?` sees only the names.
 -/
 namespace FalkorBinder
 
@@ -30,24 +34,65 @@ structure Var where
   ty    : Ty
   deriving DecidableEq, Repr
 
-/-- One scope table. -/
-abbrev Env := List (Name × Var)
+/-- A scope entry's key: a name of `Scope::names`, or a slot of `Scope::reserved`. -/
+inductive Key
+  | name (n : Name)
+  | rsv
+  deriving DecidableEq, Repr
+
+instance : Coe Name Key := ⟨Key.name⟩
+
+@[simp] theorem Key.name_beq_name (a b : Name) : (Key.name a == Key.name b) = decide (a = b) := by
+  by_cases h : a = b <;> simp [h]
+
+@[simp] theorem Key.name_beq_rsv (a : Name) : (Key.name a == Key.rsv) = false := rfl
+@[simp] theorem Key.rsv_beq_name (a : Name) : (Key.rsv == Key.name a) = false := rfl
+
+/-- One scope table (`Scope`, binder.rs:84-93). -/
+abbrev Env := List (Key × Var)
 
 namespace Env
 
-def find? (e : Env) (k : Name) : Option Var := e.lookup k
+/-- `HashMap::get` on `names` (through `Deref`, binder.rs:146-150). -/
+def find? (e : Env) (k : Name) : Option Var := e.lookup (.name k)
 
-def has (e : Env) (k : Name) : Bool := e.any (·.1 == k)
+def has (e : Env) (k : Name) : Bool := e.any (·.1 == .name k)
 
-/-- `HashMap::insert`. -/
+/-- `HashMap::insert` on `names`. -/
 def insert (e : Env) (k : Name) (v : Var) : Env :=
-  if e.has k then e.map (fun p => if p.1 == k then (k, v) else p) else e ++ [(k, v)]
+  if e.has k then e.map (fun p => if p.1 == .name k then (.name k, v) else p) else e ++ [(.name k, v)]
 
-/-- `HashMap::remove`. -/
-def erase (e : Env) (k : Name) : Env := e.filter (fun p => p.1 != k)
+/-- `HashMap::remove` on `names`. -/
+def erase (e : Env) (k : Name) : Env := e.filter (fun p => p.1 != .name k)
 
-/-- `HashMap::retain`. -/
-def retain (e : Env) (keep : Name → Bool) : Env := e.filter (fun p => keep p.1)
+/-- `HashMap::retain` on `names` (reserved slots are untouched). -/
+def retain (e : Env) (keep : Name → Bool) : Env :=
+  e.filter (fun p => match p.1 with | .name n => keep n | .rsv => true)
+
+/-- `names.keys()`. -/
+def names (e : Env) : List Name :=
+  e.filterMap (fun p => match p.1 with | .name n => some n | .rsv => none)
+
+/-- `reserved_ids.contains(id)`. -/
+def rsvHas (e : Env) (id : Nat) : Bool := e.any (fun p => p.1 == .rsv && p.2.id == id)
+
+/-- `Scope::reserve` (binder.rs:104-112): listed once per id. -/
+def reserve (e : Env) (v : Var) : Env := if e.rsvHas v.id then e else e ++ [(.rsv, v)]
+
+/-- `Scope::unreserve` (binder.rs:114-121). -/
+def unreserve (e : Env) (id : Nat) : Env := e.filter (fun p => !(p.1 == .rsv && p.2.id == id))
+
+/-- `Scope::lift` (binder.rs:127-134). -/
+def lift (e : Env) (k : Name) (v : Var) : Env := (e.unreserve v.id).insert k v
+
+/-- One step of `Binder::hide_names` (binder.rs:355-366): the name goes, its
+variable stays reserved. -/
+def hide (e : Env) (k : Name) : Env :=
+  match e.find? k with
+  | some v => (e.erase k).reserve v
+  | none => e
+
+def hideAll (e : Env) (ks : List Name) : Env := ks.foldl hide e
 
 def ids (e : Env) : List Nat := e.map (·.2.id)
 
@@ -61,7 +106,7 @@ def freshVar (e : Env) (name : Name) (ty : Ty) (scope : Nat) : Var :=
   { name, id := e.length, scope, ty }
 
 theorem Env.insert_new_eq {e : Env} {k : Name} {v : Var} (h : e.has k = false) :
-    e.insert k v = e ++ [(k, v)] := by
+    e.insert k v = e ++ [(.name k, v)] := by
   simp [Env.insert, h]
 
 theorem Env.insert_old_length {e : Env} {k : Name} {v : Var} (h : e.has k = true) :
@@ -72,6 +117,28 @@ theorem Env.insert_new_length {e : Env} {k : Name} {v : Var} (h : e.has k = fals
     (e.insert k v).length = e.length + 1 := by
   simp [Env.insert_new_eq h]
 
+theorem Env.names_append (e f : Env) : (e ++ f).names = e.names ++ f.names := by
+  simp [Env.names, List.filterMap_append]
+
+theorem Env.names_name (k : Name) (v : Var) : Env.names [(.name k, v)] = [k] := rfl
+
+theorem Env.has_iff (e : Env) (k : Name) : e.has k = true ↔ k ∈ e.names := by
+  induction e with
+  | nil => simp [Env.has, Env.names]
+  | cons p ps ih =>
+    obtain ⟨key, v⟩ := p
+    cases key with
+    | name n =>
+      have : Env.names ((Key.name n, v) :: ps) = n :: Env.names ps := rfl
+      rw [this]; simp only [Env.has, List.any_cons] at ih ⊢
+      rw [List.mem_cons, ← ih, Bool.or_eq_true]
+      have : (Key.name n == Key.name k) = true ↔ k = n := by
+        simp only [beq_iff_eq, Key.name.injEq]; exact eq_comm
+      rw [this]
+    | rsv =>
+      have : Env.names ((Key.rsv, v) :: ps) = Env.names ps := rfl
+      rw [this, ← ih]; simp [Env.has]
+
 /-- The minted id is not in use, provided the table covers its ids. -/
 theorem fresh_not_used {e : Env} (h : e.Covers) (n : Name) (t : Ty) (s : Nat) :
     (freshVar e n t s).id ∉ e.ids := by
@@ -79,15 +146,42 @@ theorem fresh_not_used {e : Env} (h : e.Covers) (n : Name) (t : Ty) (s : Nat) :
   have := h _ hm
   simp [freshVar] at this
 
-/-- Minting under a *new* key (every `fresh_var` + `insert` pair in the
-binder: `define_name_in_scope`, `project_name`, the `_quant_`, `_lc_`,
-`_reduce_`, `__agg_placeholder_`, `_hidden_` and `_anon` reservations, and
-the parent copy in `resolve_name`) keeps the table covering. -/
+/-- Minting under a *new* name (every `fresh_var` + `insert` pair in the
+binder: `define_name_in_scope`, `project_name`, the `_anon` slots and the
+parent copy in `resolve_name`) keeps the table covering. The nameless
+reservations (`reserve_fresh_covers`) replaced the `_quant_`, `_lc_`,
+`_reduce_`, `__agg_placeholder_` and `_hidden_` keys in #3016. -/
 theorem mint_new_covers {e : Env} (h : e.Covers) {k : Name} (hk : e.has k = false)
     (n : Name) (t : Ty) (s : Nat) :
     (e.insert k (freshVar e n t s)).Covers := by
   intro i hi
   rw [Env.insert_new_eq hk] at hi ⊢
+  simp [Env.ids] at hi
+  simp
+  rcases hi with ⟨a, b, hab⟩ | hi
+  · have := h i (by simp [Env.ids]; exact ⟨a, b, hab⟩)
+    omega
+  · simp [freshVar] at hi; omega
+
+/-- A variable minted at `len()` is not yet reserved in a covering table. -/
+theorem rsvHas_fresh {e : Env} (h : e.Covers) : e.rsvHas e.length = false := by
+  unfold Env.rsvHas
+  rw [List.any_eq_false]
+  intro p hp hc
+  simp only [Bool.and_eq_true, beq_iff_eq] at hc
+  have := h p.2.id (List.mem_map_of_mem hp)
+  omega
+
+/-- Reserving the variable minted at `len()` (`fresh_var` + `Scope::reserve`)
+appends one nameless slot and keeps the table covering. -/
+theorem reserve_fresh_eq {e : Env} (h : e.Covers) (n : Name) (t : Ty) (s : Nat) :
+    e.reserve (freshVar e n t s) = e ++ [(.rsv, freshVar e n t s)] := by
+  simp [Env.reserve, freshVar, rsvHas_fresh h]
+
+theorem reserve_fresh_covers {e : Env} (h : e.Covers) (n : Name) (t : Ty) (s : Nat) :
+    (e.reserve (freshVar e n t s)).Covers := by
+  rw [reserve_fresh_eq h]
+  intro i hi
   simp [Env.ids] at hi
   simp
   rcases hi with ⟨a, b, hab⟩ | hi

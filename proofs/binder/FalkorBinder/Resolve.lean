@@ -23,9 +23,10 @@ structure St where
   /-- `copy_from_parent`: name ↦ (parent variable, its copy in `cur`) -/
   cfp : List (Name × (Var × Var))
 
-/-- Names the binder reserves for itself (binder.rs:2181, 2192). -/
-def isSpecial (n : Name) : Bool :=
-  n == "__agg_order_by_placeholder__" || n.startsWith "_anon"
+/-- Names `resolve_name` handles specially (binder.rs:2336): only `_anon*`.
+Since #3016 the ORDER BY aggregate placeholder is its own `ExprIR` variant,
+bound in `bind_expr_node` (binder.rs:1904-1912), not a name. -/
+def isSpecial (n : Name) : Bool := n.startsWith "_anon"
 
 /-- Innermost-first lookup in the comprehension locals (binder.rs:2201-2205). -/
 def lookupLocals : List Env → Name → Option Var
@@ -34,7 +35,7 @@ def lookupLocals : List Env → Name → Option Var
     | some v => some v
     | none => l.find? n
 
-/-- `Binder::resolve_name` (binder.rs:2175-2241), for a non-special name.
+/-- `Binder::resolve_name` (binder.rs:2330-2384), for a non-special name.
 `locals` is in push order, so the *last* one is the innermost — matching
 `locals.iter().rev()`. Returns the new state and the variable. -/
 def resolve (st : St) (locals : List Env) (n : Name) : Except String (St × Var) :=

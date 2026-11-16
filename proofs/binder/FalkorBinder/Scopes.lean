@@ -1,4 +1,5 @@
 import FalkorBinder.Pattern
+import FalkorBinder.BindExpr
 /-
 # Scope tables across clauses: UNION, CALL {}, FOREACH, comprehensions, labels
 -/
@@ -37,20 +38,51 @@ theorem mergeSV_covers (a b : List (List Var)) (s i : Nat)
     (h : i < lenAt a s ∨ i < lenAt b s) : i < lenAt (mergeSV a b) s := by
   have := mergeSV_ge a b s; omega
 
-/-! ## FOREACH restore (binder.rs:678-709) -/
+/-! ## FOREACH restore (binder.rs:851-866) -/
 
 /-- The restored table: the saved outer table plus every inner entry whose
-id the outer table does not hold, re-keyed `_foreach_{scope}_{id}`. -/
-def foreachRestore (saved inner : Env) (scope : Nat) : Env :=
-  saved ++ (inner.filter (fun p => !(saved.ids.contains p.2.id))).map
-    (fun p => (s!"_foreach_{scope}_{p.2.id}", p.2))
+id the outer table does not hold, reserved nameless (`Scope::reserve`, which
+lists an id once). Before #3016 they were re-keyed `_foreach_{scope}_{id}`. -/
+def foreachRestore (saved inner : Env) (_scope : Nat) : Env :=
+  (inner.filter (fun p => !(saved.ids.contains p.2.id))).foldl (fun e p => e.reserve p.2) saved
+
+theorem rsvHas_false_of_not_mem (e : Env) (i : Nat) (h : i ∉ e.ids) : e.rsvHas i = false := by
+  unfold Env.rsvHas
+  rw [List.any_eq_false]
+  intro p hp hc
+  simp only [Bool.and_eq_true, beq_iff_eq] at hc
+  exact h (hc.2 ▸ List.mem_map_of_mem hp)
+
+/-- Reserving entries of pairwise distinct ids that the table does not hold
+appends each one. -/
+theorem foldl_reserve_eq (l : Env) :
+    ∀ e : Env, (l.map (·.2.id)).Nodup → (∀ p ∈ l, p.2.id ∉ e.ids) →
+      l.foldl (fun e p => e.reserve p.2) e = e ++ l.map (fun p => (Key.rsv, p.2)) := by
+  induction l with
+  | nil => intro e _ _; simp
+  | cons q r ih =>
+    intro e hn hd
+    simp only [List.map_cons, List.nodup_cons] at hn
+    simp only [List.foldl_cons]
+    have h1 : e.reserve q.2 = e ++ [(.rsv, q.2)] := by
+      simp [Env.reserve, rsvHas_false_of_not_mem e _ (hd q (by simp))]
+    rw [h1, ih _ hn.2]
+    · simp
+    · intro p hp hm
+      simp only [Env.ids, List.map_append, List.mem_append, List.map_cons, List.map_nil,
+        List.mem_singleton] at hm
+      rcases hm with hm | hm
+      · exact hd p (by simp [hp]) hm
+      · exact hn.1 (hm ▸ List.mem_map_of_mem hp)
 
 /-- When the body only *added* entries, each minted at or above the outer
-size (`inner = saved ++ added`), the restored table holds exactly the inner
-ids and has the inner size — so a covering inner table stays covering: no id
-used inside the FOREACH is handed out again after it. -/
+size with distinct ids (`inner = saved ++ added`; ids of a `Scope` are
+distinct), the restored table holds exactly the inner ids and has the inner
+size — so a covering inner table stays covering: no id used inside the
+FOREACH is handed out again after it. -/
 theorem foreachRestore_covers (saved added : Env) (scope : Nat)
     (hs : saved.Covers) (ha : ∀ p ∈ added, saved.length ≤ p.2.id)
+    (hn : (added.map (·.2.id)).Nodup)
     (hi : (saved ++ added).Covers) :
     (foreachRestore saved (saved ++ added) scope).Covers ∧
     (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
@@ -59,41 +91,64 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
     intro p hp
     simp [Env.ids]
     exact ⟨p.1, p.2, hp, rfl⟩
+  have hnot : ∀ p ∈ added, p.2.id ∉ saved.ids := by
+    intro p hp hm
+    have := ha p hp
+    have := hs _ hm
+    omega
   have hA : added.filter (fun p => !(saved.ids.contains p.2.id)) = added := by
     rw [List.filter_eq_self]
     intro p hp
-    have := ha p hp
     simp only [Bool.not_eq_eq_eq_not, Bool.not_true, List.contains_eq_mem,
       decide_eq_false_iff_not]
-    intro hm
-    have := hs _ hm
-    omega
+    exact hnot p hp
+  have heq : foreachRestore saved (saved ++ added) scope =
+      saved ++ added.map (fun p => (Key.rsv, p.2)) := by
+    simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
+    exact foldl_reserve_eq added saved hn hnot
   have hids : (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
-    simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
-    simp [Env.ids, List.map_map, Function.comp_def]
+    rw [heq]; simp [Env.ids, List.map_map, Function.comp_def]
   have hlen : (foreachRestore saved (saved ++ added) scope).length = (saved ++ added).length := by
-    simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
-    simp
+    rw [heq]; simp
   refine ⟨?_, hids⟩
   intro i hmem
   rw [hids] at hmem; rw [hlen]; exact hi i hmem
 
-/-! ## Pattern comprehension / pattern predicate cleanup (binder.rs:1922, 2097) -/
+/-! ## Pattern comprehension / pattern predicate cleanup (binder.rs:2070-2071, 2245-2246) -/
 
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
 comprehension's sub-plan uses; the cleanup then keeps only the names that
 were there before (and `_anon*`). -/
 def compScope : Env :=
-  [("n", ⟨"n", 0, 0, .node⟩), ("m", ⟨"m", 1, 0, .node⟩), ("r", ⟨"r", 2, 0, .rel⟩)]
+  [(.name "n", ⟨"n", 0, 0, .node⟩), (.name "m", ⟨"m", 1, 0, .node⟩), (.name "r", ⟨"r", 2, 0, .rel⟩)]
 
+/-- The cleanup before #3016: `retain` dropped the entries. -/
 def compCleaned : Env := compScope.retain (fun k => k == "n" || k.startsWith "_anon")
 
-/-- **Root cause 2 (comprehensions).** The cleaned table has size 1 while
-ids 1 and 2 are still in the IR: the planner's first two fresh ids in scope
-0 — or the next binder variable (`x`, `y` of a following `MATCH (x)-->(y)`)
-— are exactly `m`'s and `r`'s. `mint_fresh_iff` says that is a collision. -/
-theorem comprehension_cleanup_breaks :
+/-- Since #3016 (`hide_names_except`, binder.rs:417-428): the names go, the
+slots stay reserved. -/
+def compHidden : Env := hideExcept ["n"] compScope
+
+/-- **Root cause 2 (comprehensions), fixed by #3016.** The hidden table keeps
+`m` and `r` out of scope but keeps their slots: size 3, every id below it, so
+the planner's and the next binder variable's fresh ids are new. -/
+theorem comprehension_cleanup_covers :
+    compScope.Covers ∧ compHidden.names = ["n"] ∧ compHidden.length = 3 ∧
+    compHidden.Covers ∧ (∀ i ∈ compScope.ids, i < compHidden.length) := by
+  refine ⟨?_, by decide, by decide, ?_, ?_⟩
+  · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
+  · intro i hi
+    have : compHidden.ids = [0, 1, 2] := by decide
+    rw [this] at hi; simp at hi; rcases hi with rfl | rfl | rfl <;> decide
+  · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
+
+/-- **Root cause 2 (comprehensions), before #3016.** The cleaned table had
+size 1 while ids 1 and 2 were still in the IR: the planner's first two fresh
+ids in scope 0 — or the next binder variable (`x`, `y` of a following
+`MATCH (x)-->(y)`) — were exactly `m`'s and `r`'s. `mint_fresh_iff` says that
+is a collision. -/
+theorem pre3016_comprehension_cleanup_breaks :
     compScope.Covers ∧ compCleaned.length = 1 ∧
     ¬ (∀ i ∈ compScope.ids, i < compCleaned.length) := by
   refine ⟨?_, by decide, ?_⟩

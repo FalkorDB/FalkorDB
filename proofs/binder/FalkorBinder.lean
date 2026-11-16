@@ -18,9 +18,12 @@ planner's `fresh_var` (planner/mod.rs:838, called at 1068, 1108, 1114 and 1461),
 planner's ids `len, len+1, …` avoid every id `H` the bound IR uses iff
 `∀ i ∈ H, i < len`. Minting under a new key keeps that (`mint_new_covers`,
 `resolve_covers`, `projectName_new_covers`, `foreachRestore_covers`,
-`mergeSV_covers`). **Removing** a key breaks it, and the binder removes keys
-in two places while the removed ids are still in the IR
-(`erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks`).
+`mergeSV_covers`, `reserve_fresh_covers`). **Removing** a key breaks it
+(`erase_breaks_covers`); before #3016 the binder removed keys in two places
+while the removed ids were still in the IR (`pre3016_where_copy_id_reused`,
+`pre3016_comprehension_cleanup_breaks`). Since #3016 a scope is a `Scope`
+(`names` + nameless `reserved` slots) and hiding a name keeps its slot
+(`where_copy_id_kept`, `comprehension_cleanup_covers`, `lift_restore_shadowed`).
 
 ## Gap closed 2026-10-20: pattern predicates may declare variables (#1334)
 `bind_expr_node`'s `Pattern` arm (binder.rs:2082-2113) binds a WHERE pattern predicate with
@@ -44,7 +47,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 
 | here | there |
 | --- | --- |
-| `Env`, `Env.insert/erase/retain` | `HashMap<Arc<String>, Variable>` scope table (binder.rs:47) |
+| `Env` (`Key.name`/`Key.rsv`), `Env.insert/erase/retain/names/reserve/unreserve/lift/hide/hideAll` | `Scope` (binder.rs:84-158; `names` + `reserved`), `hide_names` :355 |
 | `freshVar` | `Binder::fresh_var` binder.rs:2260 |
 | `mint_fresh_iff` | `Planner::fresh_var` planner/mod.rs:838-851 |
 | `St`, `pushScope` | `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`; `push_scope` :251, `commit_scope` :256 |
@@ -55,8 +58,8 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | `rustBind` / `specBind`, `Elem`, `split` | `bind_graph` :1333 (nodes 1356, then rels 1373) / C's textual order |
 | `fold`, `bindClauses` | `parse_pattern` part separator parser/cypher.rs:1565-1582 (and :2117 for predicates) |
 | `mergeSV`, `lenAt` | `merge_scope_vars` :2711, `Binder::bind` :99 |
-| `foreachRestore` | FOREACH arm of `bind_ir` :673-709 |
-| `compScope`/`compCleaned` | cleanup in `bind_expr_node` :1927 and :2106 |
+| `foreachRestore` | FOREACH arm of `bind_ir` :851-866 |
+| `compScope`/`compHidden` (`compCleaned` pre-#3016) | cleanup in `bind_expr_node` :2070 and :2245 |
 | `callBodyScope` | `bind_call_body` :824, stack push :845 (Query) vs UNION branch binder :903 |
 | `accumulate` / `specScanLabels` | `node_labels` accumulation :1360-1366, `update_all_node_labels` :122 |
 | `held`, `rsStamp`, `specStamp` (RemoveLabels.lean) | REMOVE arm :477, WITH label copy :1164-1173, stamp :122-150 |
@@ -77,16 +80,19 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * `resolve_covers`: the parent copy keeps the table covering.
 * `ensureType_table`: kind conflicts rejected are exactly node/rel/path used as one another.
 * `projectItems_keys`: a projection scope begins with exactly its aliases, in order.
-* `with_plain`, `where_copy_removed`, `orderBy_old_name_of_projected`: projection scopes agree with the spec in those cases.
+* `with_plain`, `where_copy_removed`, `orderBy_old_name_of_projected`, `orderBy_scoped`, `where_copy_id_kept`: projection scopes agree with the spec in those cases (the last two since #3016).
+* #3016: `comprehension_cleanup_covers`, `lift_restore_shadowed`, `bind_aggPh`, `bindYield_hidden_reserved`,
+  `subqueryReturns_noInternal`/`_names`, `lc_alias_returned`, `user_var_not_placeholder`; historical
+  `pre3016_orderBy_leaks`, `pre3016_where_copy_id_reused`, `pre3016_comprehension_cleanup_breaks`, `pre3016_agg_orderBy_by_name`.
 * `agree_on_outer_refs`: nodes-first binding and textual binding accept the same patterns when property maps only mention earlier-clause variables.
 * `mergeSV_ge`, `mergeSV_covers`: merged scope tables are pointwise at least as long as each input.
 * `foreachRestore_covers`: FOREACH restore keeps every inner id reserved.
 * `callBody_query_disjoint`, `callBody_union_disjoint`: a CALL body's scopes, plain or UNION branch, are disjoint from the live outer scopes (UNION since #3027, d42d121c6).
 * `unionCheck_ok_iff`, `validateImport_ok`: UNION column rule and CALL import rule as stated.
-* Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `where_copy_id_reused`,
-  `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`, `node_attr_on_rel_rust_rejects`,
+* Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `pre3016_where_copy_id_reused`,
+  `pre3016_comprehension_cleanup_breaks`, `pre3016_orderBy_leaks`, `defineName_ignores_parent`, `node_attr_on_rel_rust_rejects`,
   `node_attr_on_own_rel`, `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
-  `labels_leak`, `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
+  `labels_leak`, `pre3016_agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
 
 * Wave 5 (all binder.rs fns PROVEN): `sortedScopeVars_spec`, `push_toSt`, `updNode_union`/`_idem`;
   `bindNode_covers` (pattern-free expressions keep the table covering), `loop_var_shadows`,
@@ -113,7 +119,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
    `bug_inline_attr_referencing_other_component` ([] vs C 2 rows) — #2923's node case. Still present on
    8743953a8 (live: `MATCH (a:A), (b:B {v: a.v}) RETURN a.v, b.v` → Rust [], C [[1,1],[2,2]]). #2923's
    relationship repro is the clause fold (item 1), not this scan filter.
-3. **Removed-key id reuse** (binder.rs:1262-1273 WHERE/SKIP/LIMIT copies; :1927/:2106 comprehension/pattern locals):
+3. **Fixed by #3016** (hidden names keep their slots). **Removed-key id reuse** (binder.rs:1262-1273 WHERE/SKIP/LIMIT copies; :1927/:2106 comprehension/pattern locals):
    `bug_with_where_copy_id_reused_by_next_match` ([] vs [[0,1,0]]), `..._by_pattern_comprehension`,
    `bug_pattern_comprehension_locals_reused` (4 rows vs 3), `bug_where_comprehension_locals_reused`
    (runtime error "Invalid node id for 'to' in relationship pattern").
@@ -121,7 +127,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
    `env_stack: vec![HashMap::new(); outer + 1]` (binder.rs:903), so its scopes are above the outer ones
    (`callBody_union_disjoint`, `union_branch_label_fixed`); the test `bug_call_union_branch_scopes_alias_outer`
    passes. Kept as a number so the other items keep theirs.
-5. **ORDER BY copies cross the projection** (snapshot at binder.rs:1248 is after ORDER BY): `bug_order_by_variable_crosses_with`
+5. **Fixed by #3016** (snapshot now before ORDER BY, `orderBy_scoped`). **ORDER BY copies cross the projection** (snapshot at binder.rs:1248 is after ORDER BY): `bug_order_by_variable_crosses_with`
    (`WITH n.v AS k ORDER BY n.v RETURN n` accepted, `RETURN *` returns `k, n`), `bug_order_by_variable_returned_from_call`
    ("Variable `n` already declared in outer scope"; C returns rows).
 6. **Label accumulation leaks** from CREATE and pattern comprehensions into the earlier MATCH scan (binder.rs:1562→1360,
@@ -161,13 +167,11 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * Rust follows openCypher and C does not: `MATCH p=(a)-->(b) MATCH (p)` rejected; `reduce(a = 0, a IN …)` rejected;
   `RETURN [(n)-->(m)|m], m` rejected; within one MATCH `(a)-[r]->(), (a)-[s]->()` enforces r≠s.
 * Both accept what openCypher rejects: `WITH 1 AS a MATCH (a)` (`ensureType_accepts_any_binding`); `WITH n.v AS k WHERE n.v > 0`.
-* Rust over-accepts vs C: `RETURN n.v+1 AS k, count(*) ORDER BY n.v` (`agg_orderBy_by_name`); `(a)-[r {w: b.v}]->(b)` (`rel_attr_forward_node`).
+* Rust over-accepted vs C before #3016: `RETURN n.v+1 AS k, count(*) ORDER BY n.v` (`pre3016_agg_orderBy_by_name`; now `agg_orderBy_by_name` binds it with `n` hidden); `(a)-[r {w: b.v}]->(b)` (`rel_attr_forward_node`).
 
 ## Open PRs touching binder.rs (model = origin/main)
 * #2981: `bind_graph` defines named relationships before nodes' inline maps are bound and splits inline maps
   reading pending pattern variables (`split_inline_attrs`) — removes `node_attr_on_rel_rust_rejects` / bug 2.
-* #3016: keeps hidden scope variables' ids reserved and hides ORDER BY copies — fixes `erase_breaks_covers`,
-  `where_copy_id_reused`, `orderBy_leaks` (bugs 3, 5).
 * #3049: CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes `labels_leak` (bug 6).
 * #3062: pattern predicates in WITH … WHERE resolve pre-projection names — fixes `defineName_ignores_parent` (bug 7).
 * #3011: generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY
@@ -179,7 +183,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 ## Gaps
 Expressions are abstracted to the names they mention (BindExpr's `NE` keeps the variants the binder treats
 specially); `bind_graph` is `defineName` per name (Pattern.lean has the node/relationship order); sub-binders
-of `bind_ir` are parameters (`Subs`); the reserved-key formatting is a hypothesis (`KeysFresh`); function
+of `bind_ir` are parameters (`Subs`); function
 contracts (`pure_fn` = runtime fn, `struct_fn` = map fn, compiled regex = runtime regex) are hypotheses.
 The link from an id collision to a wrong answer is established by the Rust tests, not in Lean.
 -/

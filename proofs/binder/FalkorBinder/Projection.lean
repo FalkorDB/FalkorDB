@@ -64,40 +64,62 @@ def projectItems (st : St) (seen : List Name) :
       projectItems { st with cur, p2c } (a :: seen) rest
 
 /-- `Binder::bind_projection` for the non-`*` form, returning the scope the
-next clause sees. -/
+next clause sees (binder.rs:1208-1453). -/
 def bindProjection (st : St) (p : Proj) : Except String St := do
-  -- 1. items are bound in the scope *before* the projection (binder.rs:1071-1078)
+  -- 1. items are bound in the scope *before* the projection (binder.rs:1221-1228)
   let (st, bound) ← p.items.foldlM (init := (st, ([] : List (Name × PExpr × List Var))))
     fun (st, acc) (a, e) => do
       let (st, vs) ← resolveAll st e.vars
       pure (st, acc ++ [(a, e, vs)])
-  -- 2. push_scope + project (binder.rs:1147-1171)
+  -- 2. push_scope + project (binder.rs:1290-1318)
   let st ← projectItems (pushScope st) [] bound
-  -- 3. grouping names (binder.rs:1177-1192)
+  -- 3. grouping names (binder.rs:1325-1340)
   let groupBy := (p.items.filter (fun ie => !ie.2.agg)).flatMap (fun ie => ie.2.vars)
-  -- 4. ORDER BY, with the parent scope visible (binder.rs:1212-1215)
+  -- 4. snapshot of the names (binder.rs:1361-1364, before ORDER BY since #3016)
+  let before := st.cur.names
+  -- 5. ORDER BY, with the parent scope visible (binder.rs:1366-1369)
   let (st, _) ← p.orderBy.foldlM (init := (st, ([] : List Var)))
     fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
-  -- 5. aggregation: copies must be grouping names (binder.rs:1230-1241)
+  -- 6. aggregation: copies must be grouping names (binder.rs:1384-1395)
   if p.items.any (·.2.agg) && st.cfp.any (fun c => !groupBy.contains c.1) then
     throw "ORDER BY cannot reference variables not projected"
-  -- 6. snapshot, then WHERE / SKIP / LIMIT (binder.rs:1245-1255)
-  let before := st.cur.map (·.1)
+  -- 7. WHERE / SKIP / LIMIT (binder.rs:1397-1399)
   let (st, _) ← p.tail.foldlM (init := (st, ([] : List Var)))
     fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
-  -- 7. remove the copies made only by WHERE / SKIP / LIMIT (binder.rs:1260-1268)
+  -- 8. hide the copies made only by ORDER BY / WHERE / SKIP / LIMIT: their names go,
+  --    their slots stay reserved (`hide_names`, binder.rs:1410-1416)
+  let filterOnly := (st.cfp.map (·.1)).filter (fun k => !before.contains k)
+  let cur := st.cur.hideAll filterOnly
+  -- 9. commit_scope (binder.rs:1423-1424)
+  pure { st with cur, useParent := false, p2c := [], cfp := [] }
+
+/-- `bind_projection` before #3016 (historical): the snapshot was taken *after*
+ORDER BY, and the WHERE / SKIP / LIMIT copies were *removed* from the table. -/
+def bindProjectionPre3016 (st : St) (p : Proj) : Except String St := do
+  let (st, bound) ← p.items.foldlM (init := (st, ([] : List (Name × PExpr × List Var))))
+    fun (st, acc) (a, e) => do
+      let (st, vs) ← resolveAll st e.vars
+      pure (st, acc ++ [(a, e, vs)])
+  let st ← projectItems (pushScope st) [] bound
+  let groupBy := (p.items.filter (fun ie => !ie.2.agg)).flatMap (fun ie => ie.2.vars)
+  let (st, _) ← p.orderBy.foldlM (init := (st, ([] : List Var)))
+    fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
+  if p.items.any (·.2.agg) && st.cfp.any (fun c => !groupBy.contains c.1) then
+    throw "ORDER BY cannot reference variables not projected"
+  let before := st.cur.names
+  let (st, _) ← p.tail.foldlM (init := (st, ([] : List Var)))
+    fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
   let filterOnly := (st.cfp.map (·.1)).filter (fun k => !before.contains k)
   let cur := st.cur.retain (fun k => !filterOnly.contains k)
-  -- 8. commit_scope (binder.rs:1275-1276)
   pure { st with cur, useParent := false, p2c := [], cfp := [] }
 
 /-- The spec: the scope after `WITH`/`RETURN` is exactly its aliases. -/
 def specProjectionScope (p : Proj) : List Name := p.items.map (·.1)
 
-def keys (st : St) : List Name := st.cur.map (·.1)
+def keys (st : St) : List Name := st.cur.names
 
 def st0 : St :=
-  { cur := [("n", ⟨"n", 0, 0, .node⟩)], parent := [], depth := 0,
+  { cur := [(.name "n", ⟨"n", 0, 0, .node⟩)], parent := [], depth := 0,
     useParent := false, p2c := [], cfp := [] }
 
 /-- `MATCH (n) WITH n.v AS k RETURN …`: the scope is `[k]`, as specified. -/
@@ -107,30 +129,47 @@ theorem with_plain :
       .ok (specProjectionScope { items := [("k", { vars := ["n"] })] }) := by
   decide
 
-/-- **Root cause 4** — `MATCH (n) WITH n.v AS k ORDER BY n.v`: the ORDER BY
-copy of `n` is made before the snapshot, so it survives step 7 and the next
-clause sees `n` (binder accepts `RETURN n`; `RETURN *` returns `k, n`).
-openCypher and C: the scope is `[k]`. -/
-theorem orderBy_leaks :
+/-- **Root cause 4, fixed by #3016** — `MATCH (n) WITH n.v AS k ORDER BY n.v`:
+the snapshot is now taken before ORDER BY, so its copy of `n` is hidden and the
+next clause sees `[k]`, as openCypher and C specify (`RETURN n` is rejected,
+`RETURN *` returns `k`). The copy keeps its slot: the table still has size 2. -/
+theorem orderBy_scoped :
     (bindProjection st0 { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] }).map keys
+      = .ok (specProjectionScope { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] }) ∧
+    (bindProjection st0 { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] }).map
+      (·.cur.length) = .ok 2 := by
+  decide
+
+/-- Historical (`pre3016_`): before #3016 the ORDER BY copy of `n` was made
+after… before the snapshot, survived the cleanup, and the next clause saw `n`
+(binder accepted `RETURN n`; `RETURN *` returned `k, n`). Fixed by #3016. -/
+theorem pre3016_orderBy_leaks :
+    (bindProjectionPre3016 st0 { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] }).map keys
       = .ok ["k", "n"] ∧
     specProjectionScope { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] } = ["k"] := by
   decide
 
-/-- The WHERE copy, by contrast, is removed from the table … -/
+/-- The WHERE copy is hidden from the names … -/
 theorem where_copy_removed :
     (bindProjection st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map keys
       = .ok ["k"] := by
   decide
 
-/-- … but the Filter still reads it, at id 1 of scope 1, while the table
-the next clause mints from has length 1 (**root cause 2**): the next
-variable of the scope (`x` in `MATCH (x)-->(y)`) gets id 1 too. -/
-theorem where_copy_id_reused :
+/-- … and, since #3016, keeps its slot: the Filter reads it at id 1 of scope 1,
+and the next variable of the scope (`x` in `MATCH (x)-->(y)`) gets id 2, not 1
+(**root cause 2, fixed**). -/
+theorem where_copy_id_kept :
     (do let st ← projectItems (pushScope st0) [] [("k", { vars := ["n"] }, [⟨"n", 0, 0, .node⟩])]
         let (_, v) ← resolve st [] "n"
         pure v.id : Except String Nat) = .ok 1 ∧
     ((bindProjection st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map
+      (fun st => (freshVar st.cur "x" .node st.depth).id)) = .ok 2 := by
+  decide
+
+/-- Historical (`pre3016_`): the copy used to be removed, so `x` got id 1 too —
+the collision of root cause 2. Fixed by #3016. -/
+theorem pre3016_where_copy_id_reused :
+    ((bindProjectionPre3016 st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map
       (fun st => (freshVar st.cur "x" .node st.depth).id)) = .ok 1 := by
   decide
 
@@ -146,9 +185,16 @@ theorem orderBy_old_name_of_projected :
 /-- The aggregation check compares *variable names* inside the grouping
 expressions, not the expressions: `RETURN n.v % 2 AS k, count(*) AS c
 ORDER BY n.v` is accepted (C and openCypher reject — `n.v` is not a grouping
-key, so the order is not determined by the group). -/
+key, so the order is not determined by the group). Since #3016 the ORDER BY
+copy of `n` no longer leaks into the next scope. -/
 theorem agg_orderBy_by_name :
     (bindProjection st0
+      { items := [("k", { vars := ["n"] }), ("c", (PExpr.mk [] true false))], orderBy := [{ vars := ["n"] }] }).map keys = .ok ["k", "c"] := by
+  decide
+
+/-- Historical: before #3016 the same projection was accepted with `n` leaking. -/
+theorem pre3016_agg_orderBy_by_name :
+    (bindProjectionPre3016 st0
       { items := [("k", { vars := ["n"] }), ("c", (PExpr.mk [] true false))], orderBy := [{ vars := ["n"] }] }).map keys = .ok ["k", "c", "n"] := by
   decide
 
@@ -158,9 +204,6 @@ theorem agg_orderBy_rejects :
       { items := [("c", (PExpr.mk ["n"] true false))], orderBy := [{ vars := ["n"] }] }).map keys =
       .error "ORDER BY cannot reference variables not projected" := by
   decide
-
-theorem Env.has_iff (e : Env) (k : Name) : e.has k = true ↔ k ∈ e.map (·.1) := by
-  simp [Env.has, List.any_eq_true]
 
 /-- Whatever ORDER BY references, the projection scope starts with every
 alias, in order, each under a fresh id (binder.rs:1147-1171). -/
@@ -186,7 +229,7 @@ theorem projectItems_keys (st : St) (seen : List Name) (items : List (Name × PE
       have hk' : ∀ p2c, keys { st with cur := (projectName st.cur st.depth a Ty.any).1, p2c := p2c }
           = keys st ++ [a] := by
         intro p2c
-        simp only [keys, projectName, Env.insert_new_eq hn, List.map_append]; rfl
+        simp only [keys, projectName, Env.insert_new_eq hn, Env.names_append]; rfl
       have := ih _ _ (by rw [hk', hks]; simp) h
       rw [this, hk']; simp
 
