@@ -1,13 +1,13 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/index/mod.rs	make_arr_names	127	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Meta.makeArrNames_range/_other (and Search.arrNames))
-graph/src/index/mod.rs	new	144	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Meta.Field.new_spec)
-graph/src/index/mod.rs	new_with_vector_options	162	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Meta.Field.newVec_spec)
+graph/src/index/mod.rs	make_arr_names	127	PROVEN	Meta.makeArrNames_range/_other (#2975: also returns the `:geo` name) (and Search.arrNames, Search.geoName)
+graph/src/index/mod.rs	new	144	PROVEN	Meta.Field.new_spec (geo name since #2975)
+graph/src/index/mod.rs	new_with_vector_options	162	PROVEN	Meta.Field.newVec_spec (geo name since #2975)
 graph/src/index/mod.rs	options	180	PROVEN	Meta.Field.accessors
 graph/src/index/mod.rs	vector_options	185	PROVEN	Meta.Field.accessors
 graph/src/index/mod.rs	numeric_arr_name	190	PROVEN	Meta.Field.accessors
-graph/src/index/mod.rs	string_arr_name	195	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Meta.Field.accessors)
+graph/src/index/mod.rs	string_arr_name	195	PROVEN	Meta.Field.accessors
 graph/src/index/mod.rs	eq	206	PROVEN	Meta.Field.beqF_refl/beqF_symm, Field.eq_hash
-graph/src/index/mod.rs	hash	217	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Meta.Field.eq_hash (Eq/Hash consistency))
+graph/src/index/mod.rs	hash	217	PROVEN	Meta.Field.eq_hash (Eq/Hash consistency)
 graph/src/index/mod.rs	new	364	PROVEN	Iter.RIter.new_frees, RIter.items_next
 graph/src/index/mod.rs	empty	375	PROVEN	Iter.RIter.empty_spec
 graph/src/index/mod.rs	empty_scored	386	PROVEN	Iter.RIter.empty_spec (scoredIds)
@@ -24,8 +24,8 @@ graph/src/index/mod.rs	drop	560	PROVEN	Iter.RIter.frees
 graph/src/index/mod.rs	empty	585	PROVEN	Iter.RIter.empty_spec (VectorScoredIdIter delegates)
 graph/src/index/mod.rs	next	596	PROVEN	Iter.RIter.items_next (delegates to inner)
 graph/src/index/mod.rs	empty	611	PROVEN	Iter.RIter.empty_spec (VectorScoredEdgeTripleIter)
-graph/src/index/mod.rs	next	622	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Iter.RIter.items_next (delegates))
-graph/src/index/mod.rs	tag_encode_lower	666	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: tagEnc; tagEnc_injective, tagEnc_printable, tagEnc_no_backslash, tagEnc_nil_iff,)
+graph/src/index/mod.rs	next	622	PROVEN	Iter.RIter.items_next (delegates)
+graph/src/index/mod.rs	tag_encode_lower	666	PROVEN	tagEnc/tagEncRaw/tagUnit (#2975 order-preserving escape, empty string = 0x21); tagEnc_lexLt, tagEnc_inj, tagEnc_injective, tagEnc_printable, tagEnc_no_backslash, tagEnc_ne_nil, tagEnc_below_end, tagEnc_ne_boolKey, fixed2975_tagEnc_monotone
 graph/src/index/mod.rs	hex_encode_into	703	PROVEN	hexEncode; hexDecode_hexEncode, decodeId_nodeKey
 graph/src/index/mod.rs	hex_nibble	713	PROVEN	hexNibble; nib_digit, hex_roundtrip_byte
 graph/src/index/mod.rs	decode_id	723	PROVEN	decodeId; decodeId_nodeKey, nodeKey_injective
@@ -34,7 +34,7 @@ graph/src/index/mod.rs	drop	763	PROVEN	Iter.DocLife.freed_once (consumed gate: e
 graph/src/index/mod.rs	new	779	PROVEN	nodeKey; decodeId_nodeKey, nodeKey_injective
 graph/src/index/mod.rs	new_edge	806	PROVEN	edgeKey; decode_edgeKey
 graph/src/index/mod.rs	id	834	PROVEN	Meta.Idx.idOf_spec (Document.id = id/edge_id; Iter.delKey_spec)
-graph/src/index/mod.rs	set	838	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int; te)
+graph/src/index/mod.rs	set	842	PROVEN	setRange/docOf (#2975: Bool = TAG key, Point under the geo sub-field, list Bools in the string array); equal_exact, equal_exact_gen, numRange_exact, strRange_exact; fixed2975_bool_ne_int, fixed2975_bool_not_in_numeric_range, fixed2975_empty_string_indexed; temporals not indexed since #3076 (e20300436): Temporal.temporal_not_indexed, temporal_numRange_exact, temporal_equal_exact, fixed3076_temporal_in_numeric_range; vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams
 graph/src/index/mod.rs	from_owned	1062	PROVEN	Iter.RC.create/RC.clone (NULL => None), RC.create_inv
 graph/src/index/mod.rs	as_ptr	1067	PROVEN	Iter.RC (transient handle; not_freed while owned)
 graph/src/index/mod.rs	try_clone	1073	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
@@ -51,49 +51,49 @@ graph/src/index/mod.rs	clone_for_update	1204	PROVEN	Meta.Idx.cloneForUpdate_eq
 graph/src/index/mod.rs	has_rs_index	1224	PROVEN	Meta.Idx.hasRsIndex_spec
 graph/src/index/mod.rs	rs_ptr	1231	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
 graph/src/index/mod.rs	create_rs_index	1237	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
-graph/src/index/mod.rs	register_fields	1317	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok,)
+graph/src/index/mod.rs	register_fields	1317	PROVEN	Meta.Idx.registerOne_range (main, geo, numeric/string arrays since #2975)/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text
 graph/src/index/text_index_options.rs	phonetic_enabled	48	PROVEN	Meta.TextOpts.phoneticEnabled: phoneticEnabled_off_spellings, phoneticEnabled_code, phoneticEnabled_iff_ne_no; fixed3514_phonetic_no_is_off (#3514)
 graph/src/index/mod.rs	value_to_numeric	1502	PROVEN	valueToNumeric; equal_exact, numRange_exact
 graph/src/index/mod.rs	int_loses_f64_precision	1515	PROVEN	intLosesPrecision; intLosesPrecision_sound
 graph/src/index/mod.rs	build_numeric_range_node	1520	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf
-graph/src/index/mod.rs	build_string_range_node	1563	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no )
-graph/src/index/mod.rs	build_query_node	1628	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_p)
-graph/src/index/mod.rs	query	1827	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
-graph/src/index/mod.rs	query_edges	1850	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
-graph/src/index/mod.rs	fulltext_query	1868	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
-graph/src/index/mod.rs	fulltext_query_edges	1897	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
-graph/src/index/mod.rs	vector_query	1934	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
-graph/src/index/mod.rs	vector_query_edges	1996	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
-graph/src/index/mod.rs	add_document	2043	PROVEN	Table.add; commit_lookup, commit_preserves_inv
-graph/src/index/mod.rs	delete_document	2065	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
-graph/src/index/mod.rs	delete_edge_document	2082	PROVEN	Iter.delEdgeKey_spec
-graph/src/index/mod.rs	has_fulltext_field	2105	PROVEN	Meta.Idx.hasFulltextField_iff
-graph/src/index/mod.rs	contains_field	2113	PROVEN	Meta.Idx.containsField_iff
-graph/src/index/mod.rs	has_field_with_type	2122	PROVEN	Meta.Idx.hasFieldWithType_iff
-graph/src/index/mod.rs	get_fields	2134	PROVEN	Meta.Idx.getFields_spec
-graph/src/index/mod.rs	add_field_to_existing	2142	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
-graph/src/index/mod.rs	insert_field	2153	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
-graph/src/index/mod.rs	remove_field	2165	PROVEN	Meta.Idx.removeField_spec, removeField_inv
-graph/src/index/mod.rs	retain_fields	2177	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
-graph/src/index/mod.rs	is_empty	2189	PROVEN	Meta.Idx.isEmpty_iff
-graph/src/index/mod.rs	field_keys	2195	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
-graph/src/index/mod.rs	fields	2201	PROVEN	Meta.Idx.accessors
-graph/src/index/mod.rs	field_order	2207	PROVEN	Meta.Idx.accessors, Inv
-graph/src/index/mod.rs	all_fields	2212	PROVEN	Meta.Idx.allFields_mem
-graph/src/index/mod.rs	is_operational	2220	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
-graph/src/index/mod.rs	set_progress	2225	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	progress	2236	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	increment_pending_for_generation	2247	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2265	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
-graph/src/index/mod.rs	pending_count_for_generation	2287	PROVEN	Slots.countFor; bump_fresh
-graph/src/index/mod.rs	pending_count	2301	PROVEN	Slots.countFor s.gen; bump_fresh
-graph/src/index/mod.rs	language	2309	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	set_language	2314	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	stopwords	2325	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	set_stopwords	2330	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	memory_usage	2341	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
-graph/src/index/mod.rs	index_count	2351	PROVEN	Meta.Idx.indexCount_eq
-graph/src/index/mod.rs	recreate_index	2355	PROVEN	Meta.Idx.recreateIndex_ok
+graph/src/index/mod.rs	build_string_range_node	1563	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds; #2975 open upper end STRING_RANGE_END); strRange_exact (no equal-bounds premise since #3072, no byte premise on bounds since #2975), fixed3072_exclusive_equal_bounds, fixed2975_string_range_order/_gt, fixed2975_string_range_skips_bool
+graph/src/index/mod.rs	build_query_node	1630	PROVEN	buildQ/buildEq (tagKey for String|Bool since #2975); equal_exact, equal_exact_gen, inList_exact, inList_exact_gen, numRange_exact, strRange_exact, fixed2975_bool_ne_int, fixed2975_empty_string_indexed, bug_multilabel_and/or
+graph/src/index/mod.rs	query	1829	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
+graph/src/index/mod.rs	query_edges	1852	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
+graph/src/index/mod.rs	fulltext_query	1870	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
+graph/src/index/mod.rs	fulltext_query_edges	1899	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
+graph/src/index/mod.rs	vector_query	1936	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
+graph/src/index/mod.rs	vector_query_edges	1998	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
+graph/src/index/mod.rs	add_document	2045	PROVEN	Table.add; commit_lookup, commit_preserves_inv
+graph/src/index/mod.rs	delete_document	2067	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
+graph/src/index/mod.rs	delete_edge_document	2084	PROVEN	Iter.delEdgeKey_spec
+graph/src/index/mod.rs	has_fulltext_field	2107	PROVEN	Meta.Idx.hasFulltextField_iff
+graph/src/index/mod.rs	contains_field	2115	PROVEN	Meta.Idx.containsField_iff
+graph/src/index/mod.rs	has_field_with_type	2124	PROVEN	Meta.Idx.hasFieldWithType_iff
+graph/src/index/mod.rs	get_fields	2136	PROVEN	Meta.Idx.getFields_spec
+graph/src/index/mod.rs	add_field_to_existing	2144	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
+graph/src/index/mod.rs	insert_field	2155	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
+graph/src/index/mod.rs	remove_field	2167	PROVEN	Meta.Idx.removeField_spec, removeField_inv
+graph/src/index/mod.rs	retain_fields	2179	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
+graph/src/index/mod.rs	is_empty	2191	PROVEN	Meta.Idx.isEmpty_iff
+graph/src/index/mod.rs	field_keys	2197	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
+graph/src/index/mod.rs	fields	2203	PROVEN	Meta.Idx.accessors
+graph/src/index/mod.rs	field_order	2209	PROVEN	Meta.Idx.accessors, Inv
+graph/src/index/mod.rs	all_fields	2214	PROVEN	Meta.Idx.allFields_mem
+graph/src/index/mod.rs	is_operational	2222	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
+graph/src/index/mod.rs	set_progress	2227	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	progress	2238	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	increment_pending_for_generation	2249	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2267	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
+graph/src/index/mod.rs	pending_count_for_generation	2289	PROVEN	Slots.countFor; bump_fresh
+graph/src/index/mod.rs	pending_count	2303	PROVEN	Slots.countFor s.gen; bump_fresh
+graph/src/index/mod.rs	language	2311	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_language	2316	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	stopwords	2327	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_stopwords	2332	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	memory_usage	2343	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
+graph/src/index/mod.rs	index_count	2353	PROVEN	Meta.Idx.indexCount_eq
+graph/src/index/mod.rs	recreate_index	2357	PROVEN	Meta.Idx.recreateIndex_ok
 graph/src/index/indexer.rs	generation_id	89	PROVEN	Meta.Ticket.accessors
 graph/src/index/indexer.rs	label	94	PROVEN	Meta.Ticket.accessors
 graph/src/index/indexer.rs	language	102	PROVEN	Meta.IdxOptions.spec
@@ -281,8 +281,8 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	merge
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	block_copy_merge	370	PROVEN	Leaf.ciBcm_spec, bcmL_eq_merge, bcmL_spec
 graph/src/runtime/pending.rs	resync_published_indexes	1792	MODELLED	edge arm keyed by (src, dst, id): EdgeResync.resyncEdgeKeys/resyncEdges; property RollbackRestoresEdgeIndex refuted by bug2781_rollback_not_restored / bug2781_orphan_edge_doc (OPEN); fix shape resyncEdgesFixed_restores (node arm and full spec: proofs/pending_commit PD.resync_spec)
 graph/src/graph/graph.rs	commit_edge_index_locked	3966	MODELLED	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.resyncEdgeKeys (.1); PROVEN in proofs/graph_queries Index.commitEdgeDocs_mem
-graph/src/index/mod.rs	geo_name	200	NOT COVERED	(#2958): not modelled yet
-graph/src/index/mod.rs	in_list	284	NOT COVERED	(#2958): not modelled yet
-graph/src/index/mod.rs	can_be_served	304	NOT COVERED	(#2958): not modelled yet
-graph/src/index/mod.rs	is_indexable	309	NOT COVERED	(#2958): not modelled yet
-graph/src/index/mod.rs	tag_key	692	NOT COVERED	(#2958): not modelled yet
+graph/src/index/mod.rs	geo_name	200	PROVEN	Meta.Field.accessors (geo), Field.new_spec
+graph/src/index/mod.rs	in_list	284	PROVEN	inListQ (drops only Null); fixed2975_in_list_keeps_item, inList_exact_gen
+graph/src/index/mod.rs	can_be_served	304	PROVEN	canBeServed/scanEmits; fixed2975_point_equality, fixed2975_in_list_keeps_item, bug_folded_temporal_constant, fixed2975_folded_temporal_constant
+graph/src/index/mod.rs	is_indexable	309	PROVEN	indexable (default build: Bool indexable); fixed2975_point_equality, fixed2975_in_list_keeps_item
+graph/src/index/mod.rs	tag_key	692	PROVEN	tagKey (String -> tagEnc, Bool -> boolKey); equal_exact_gen, fixed2975_bool_ne_int, tagEnc_ne_boolKey

@@ -47,32 +47,29 @@ graph/src/planner/optimizer/utilize_index.rs	subtree_has_property_of	547	PROVEN	
 graph/src/planner/optimizer/utilize_index.rs	subtree_has_any_property	569	PROVEN	Cleanup.hasAnyProp_iff
 graph/src/planner/optimizer/utilize_index.rs	list_has_nested_list	582	PROVEN	Cleanup.nestedListE_iff
 graph/src/planner/optimizer/utilize_index.rs	try_in_filter_scan	602	PROVEN	Index.trySingle inn arm; sel_inList, trySingle_spec; IndexCex C7/C8/C9 counterexamples
-graph/src/planner/optimizer/utilize_index.rs	try_single_filter_scan	658	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Index.trySingle; trySingle_spec)
-graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	730	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Index.tryPushdown/pushAnd/pushOr; pushAnd_spec, pushOr_spec, utilize_sound (an a)
-graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	807	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Index.needsPost; used in utilize_sound (¬keep ⇒ canUtilize); IndexCex C3/C4 (Dat)
-graph/src/planner/optimizer/utilize_index.rs	is_non_indexable_subexpr	862	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Cleanup.nonIdxD_spec)
-graph/src/planner/optimizer/utilize_index.rs	rewrite_until_stable	928	PROVEN	Cleanup.untilStable_preserves, untilStable_stable
-graph/src/planner/optimizer/utilize_index.rs	governing_filter	984	PROVEN	Cleanup.governingFilter: governingFilter_spec (parent Filter, or grandparent across one single-child IncludePending ⇒ over_pending)
-graph/src/planner/optimizer/utilize_index.rs	match_scan_with_filter	1006	PROVEN	Cleanup.matchScanWithFilter_spec
-graph/src/planner/optimizer/utilize_index.rs	reorder_subject_labels	1032	PROVEN	ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	apply_filter_pushdown	1051	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Index.utilize = Cleanup.utilizeP false (utilizeP_false); utilize_sound; over_pen)
-graph/src/planner/optimizer/utilize_index.rs	try_index_rewrite	1096	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Cleanup.tryIndexRewrite: tryIndexRewrite_sound, tryIndexRewrite_pending_sound (i)
-graph/src/planner/optimizer/utilize_index.rs	prune_all_node_scan_child	1132	PROVEN	Cleanup.prune_sound; guard = references.rs index_query_references_variable by (id, scope) (proofs/optimizer_rewrites References.iqRefs_iff)
-graph/src/planner/optimizer/utilize_index.rs	add_to_labels_filter	1161	PROVEN	Cleanup.addToLabels_idem, hasLabelsSem
-graph/src/planner/optimizer/utilize_index.rs	utilize_index	1201	PROVEN	Cleanup.utilizeIndex_sound (4 passes compose), Index.utilize_sound, Cleanup.tryIndexRewrite_sound/_pending_sound, EdgeInline.edge_utilize_sound
-graph/src/planner/optimizer/utilize_index.rs	is_has_labels_for	1219	PROVEN	Cleanup.isHasLabelsFor_build, addToLabels_idem
-graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	730	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: Index.tryPushdown/pushAnd/pushOr; pushAnd_spec, pushOr_spec, utilize_sound (an a)
-graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown/array-contains	730	NOT COVERED	(#2958): not modelled yet (body changed; was MODELLED: the AND branch keeping an array-contains conjunct's filter (#3736): pushAnd mode)
+graph/src/planner/optimizer/utilize_index.rs	try_single_filter_scan	658	PROVEN	Index.trySingle cmp arm (body unchanged by #2975): IndexSound.trySingle_spec (exact on L, rangeOK, can_be_served unless IN; Bool equality literals admitted via eqV/opLitV), sel_buildOp_good, cu_buildOp_good
+graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	730	PROVEN	Index.tryPushdown/pushAnd/pushOr/pushedKeep (#2975: 4th component needs_post over pushed conjuncts/branches only; array-contains no longer forced into remaining): IndexPipeline.pushAnd_spec, pushOr_spec, pushAnd_cu, pushOr_cu, served_of_keep, tp_atom/tp_and/tp_or, utilize_sound; IndexCex.fixed2975_C10_or, fixed2975_C10_and; C5/C6 (multi-label) counterexamples remain
+graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	816	PROVEN	Index.needsPost (+ boolRangeBound; bool_valued_operand not modelled: it only adds keep=true, sound by Cleanup.idxScan_filter_sound): IndexPipeline.keep_false_cu (keep=false implies can_be_served), needsPost_inn; IndexCex.fixed2975_C3, fixed2975_C4
+graph/src/planner/optimizer/utilize_index.rs	is_non_indexable_subexpr	912	PROVEN	Cleanup.nonIdxD: nonIdxD_spec (allow-list since #2975); Index.nonIdxT/nonIdxA/litFlag; IndexCex.fixed2975_C3 (folded Date), fixed2975_C4 (arithmetic)
+graph/src/planner/optimizer/utilize_index.rs	rewrite_until_stable	954	PROVEN	Cleanup.untilStable_preserves, untilStable_stable
+graph/src/planner/optimizer/utilize_index.rs	governing_filter	993	PROVEN	Cleanup.governingFilter: governingFilter_spec (parent Filter, or grandparent across one single-child IncludePending ⇒ over_pending)
+graph/src/planner/optimizer/utilize_index.rs	match_scan_with_filter	1014	PROVEN	Cleanup.matchScanWithFilter_spec
+graph/src/planner/optimizer/utilize_index.rs	reorder_subject_labels	1026	PROVEN	ScanOrder.withPrimary_sound
+graph/src/planner/optimizer/utilize_index.rs	apply_filter_pushdown	1045	PROVEN	Index.utilize = Cleanup.utilizeP false (utilizeP_false), keep = over_pending || needs_post flag (#2975): IndexPipeline.utilize_sound, utilize_sound_all; Cleanup.utilizeP_true, idxScan_filter_sound, overPending_sound, overPending_needs_filter
+graph/src/planner/optimizer/utilize_index.rs	try_index_rewrite	1090	PROVEN	Cleanup.tryIndexRewrite: tryIndexRewrite_sound, tryIndexRewrite_pending_sound (4-tuple from try_filter_pushdown since #2975)
+graph/src/planner/optimizer/utilize_index.rs	prune_all_node_scan_child	1126	PROVEN	Cleanup.prune_sound; guard = references.rs index_query_references_variable by (id, scope) (proofs/optimizer_rewrites References.iqRefs_iff)
+graph/src/planner/optimizer/utilize_index.rs	add_to_labels_filter	1155	PROVEN	Cleanup.addToLabels_idem, hasLabelsSem
+graph/src/planner/optimizer/utilize_index.rs	utilize_index	1195	PROVEN	Cleanup.utilizeIndex_sound (4 passes compose), Index.utilize_sound, Cleanup.tryIndexRewrite_sound/_pending_sound, EdgeInline.edge_utilize_sound
+graph/src/planner/optimizer/utilize_index.rs	is_has_labels_for	1213	PROVEN	Cleanup.isHasLabelsFor_build, addToLabels_idem
 graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	IdSeek.getIdFilter: getIdFilter_spec, getIdFilter_other_scope ((id, scope) since #2390), flip_correct, flip_flip
 graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	IdSeek.collectFilters + seek_sound (with runtime.rs evaluate_id_filter; empty graph since #3394); counterexamples negative/float/null; hazard: parent().unwrap() at line 106 (W4-plan-4 repro rejected by validation since #3297)
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	ScanOrder.reorderLabels_sound, sortBy_perm
 graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	1428	PROVEN	IdSeek.evalIdFilter/evalIdFilterMain; step_none, step_some, step_nonempty, fold_none, fold_some, go_eq_fold, seek_sound, empty_graph_seek_none (#3394 fixes #3353 / W2-scan-2; history pre3394_seek_sound)
-graph/src/index/mod.rs	build_query_node (support, not a target file)	1628	MODELLED	Index.build; sel_eq, sel_range, sel_and2 (RediSearch node semantics as definitions)
-graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query	100	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: EdgeInline.evalIQE_ok, evalIQE_inList_err, evalIQ_inList)
+graph/src/index/mod.rs	build_query_node (support, not a target file)	1630	MODELLED	Index.build; sel_eq, sel_range, sel_and2, build_eq_good (RediSearch node semantics as definitions; Bool TAG key since #2975)
+graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query	100	PROVEN	Index.evalIQ (InList drops only Null since #2975: notNull) / EdgeInline.evalIQE: evalIQE_ok, evalIQE_inList_term, evalIQE_inList_err, evalIQ_inList; IndexCex.fixed2975_C9
 graph/src/runtime/ops/node_by_index_scan.rs	new	58	PROVEN	EdgeInline.extraLabels_spec, scanRow_eq_sel
-graph/src/runtime/ops/node_by_index_scan.rs	next	237	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: EdgeInline.scanRow_eq_sel; Index.utilize_sound)
-graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown/array-contains	730	NOT COVERED	(#2958): not modelled yet (body changed; was MODELLED: the AND branch keeping an array-contains conjunct's filter (#3736): pushAnd mode)
-graph/src/planner/optimizer/utilize_index.rs	pushed_needs_post_filter	789	NOT COVERED	(#2958): not modelled yet
-graph/src/planner/optimizer/utilize_index.rs	is_comparison	888	NOT COVERED	(#2958): not modelled yet
-graph/src/planner/optimizer/utilize_index.rs	is_boolean_operator	895	NOT COVERED	(#2958): not modelled yet
-graph/src/planner/optimizer/utilize_index.rs	is_exact_index_literal	937	NOT COVERED	(#2958): not modelled yet
+graph/src/runtime/ops/node_by_index_scan.rs	next	237	PROVEN	EdgeInline.scanRow (index when can_be_served, else get_nodes, then extra labels; default build): scanRow_eq_sel, canBeServed_empty; Index.Plan.sel; IndexPipeline.utilize_sound
+graph/src/planner/optimizer/utilize_index.rs	pushed_needs_post_filter	789	PROVEN	Index.pushedNeedsPost (isArrayContains || needsPost): IndexPipeline.keep_false_cu, served_of_keep, utilize_sound; IndexCex.fixed2975_C10_or
+graph/src/planner/optimizer/utilize_index.rs	is_comparison	888	PROVEN	a match! on ExprIR; used only by bool_valued_operand of needs_post_filter, which can only force keep_filter = true: Cleanup.idxScan_filter_sound (keeping the original Filter over the index scan is sound whatever the flag), so Index.needsPost omitting it keeps IndexPipeline.utilize_sound valid for the Rust flag
+graph/src/planner/optimizer/utilize_index.rs	is_boolean_operator	895	PROVEN	is_comparison || And/Or; used only by bool_valued_operand of needs_post_filter, which can only force keep_filter = true: Cleanup.idxScan_filter_sound (Filter kept over the index scan is sound whatever the flag); IndexPipeline.utilize_sound
+graph/src/planner/optimizer/utilize_index.rs	is_exact_index_literal	937	PROVEN	Index.exactLit / litFlag (default build: Bool exact), Cleanup.cexact/cother in nonIdxD_spec, Index.scalarLit (Bool whitelisted); IndexSound.eqV; IndexCex.fixed2975_C1, fixed2975_C3

@@ -14,7 +14,8 @@ open IndexLayer (Slots)
 /-- A field registered on the RS spec by `RediSearch_CreateField`. -/
 inductive RsKind
   | noneTag                          -- `NONE_INDEXABLE_FIELDS` (TAG, sep `\x01`, case-sensitive)
-  | rangeMain                        -- NUMERIC|GEO|TAG, sep `\x01`, case-sensitive
+  | rangeMain                        -- NUMERIC|TAG, sep `\x01`, case-sensitive (GEO dropped by #2975)
+  | geo                              -- GEO (`range:{attr}:geo`, #2975)
   | numArr                           -- NUMERIC
   | strArr                           -- TAG, sep `\x01`, case-sensitive
   | text (weight : Nat) (nostem phonetic : Bool)
@@ -83,7 +84,7 @@ def createRsIndex (x : Idx) (label : String) (stop : Option (List String)) (lang
   | none => if hasNul label then .error "nul"
             else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
 
-/-- The metric match of `register_fields` (`mod.rs:1273-1286`). -/
+/-- The metric match of `register_fields` (`mod.rs:1420-1434`). -/
 def metricOf (sim : Option String) : Except String String :=
   match sim.getD "euclidean" with
   | "euclidean" => .ok "L2"
@@ -91,12 +92,13 @@ def metricOf (sim : Option String) : Except String String :=
   | "cosine" => .ok "COSINE"
   | o => .error s!"Unknown similarity function '{o}', expected 'euclidean', 'ip', or 'cosine'"
 
-/-- One iteration of `register_fields` (`mod.rs:1192-1344`). `tieredOk` is
+/-- One iteration of `register_fields` (`mod.rs:1323-1494`). `tieredOk` is
 the result of `VecSimTieredParams_Init` + `VectorFieldSetParams` (FFI). -/
 def registerOne (fo : Option TextOpts) (tieredOk : Bool) (f : Field) : Except String (List RsReg) :=
   match f.ty with
   | .range =>
-    .ok ([⟨f.name, .rangeMain⟩] ++ (f.numArr.map (fun n => [⟨n, .numArr⟩])).getD [] ++
+    .ok ([⟨f.name, .rangeMain⟩] ++ (f.geo.map (fun n => [⟨n, .geo⟩])).getD [] ++
+         (f.numArr.map (fun n => [⟨n, .numArr⟩])).getD [] ++
          (f.strArr.map (fun n => [⟨n, .strArr⟩])).getD [])
   | .fulltext =>
     let eo := fo.or f.options
@@ -124,7 +126,7 @@ def registerAll (fo : Option TextOpts) (tieredOk : Bool) : List Field → Except
 
 def allFieldsOf (m : AMap (List Field)) : List Field := m.flatMap (·.2)
 
-/-- `register_fields` (`mod.rs:1181`), applied to the spec. -/
+/-- `register_fields` (`mod.rs:1317`), applied to the spec. -/
 def registerFields (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tieredOk : Bool) :
     Except String Idx :=
   match registerAll fo tieredOk (allFieldsOf m) with
@@ -220,12 +222,13 @@ theorem metricOf_ok (sim : Option String) (m : String) (h : metricOf sim = .ok m
     sim.getD "euclidean" ∈ ["euclidean", "ip", "cosine"] := by
   unfold metricOf at h; split at h <;> simp_all
 
-/-- `register_fields` on a Range field registers the main field and both array
-sub-fields — exactly the three RS fields `Model.Sub` (`main`, `numArr`, `strArr`)
-reads and writes. -/
+/-- `register_fields` on a Range field registers the main field (NUMERIC|TAG), the
+GEO sub-field (#2975) and both array sub-fields — exactly the four RS fields
+`Model.Sub` (`main`, `geo`, `numArr`, `strArr`) reads and writes. -/
 theorem registerOne_range (fo : Option TextOpts) (tk : Bool) (n : String) (o : Option TextOpts) :
     registerOne fo tk (Field.new n .range o) =
-      .ok [⟨n, .rangeMain⟩, ⟨n ++ ":numeric:arr", .numArr⟩, ⟨n ++ ":string:arr", .strArr⟩] := by
+      .ok [⟨n, .rangeMain⟩, ⟨n ++ ":geo", .geo⟩, ⟨n ++ ":numeric:arr", .numArr⟩,
+        ⟨n ++ ":string:arr", .strArr⟩] := by
   simp [registerOne, Field.new, makeArrNames]
 
 /-- Fulltext: the per-call options win over the field's own, weight defaults to

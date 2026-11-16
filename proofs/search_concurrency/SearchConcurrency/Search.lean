@@ -7,17 +7,17 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 
 | here | there |
 | --- | --- |
-| `IndexType`, `Field`            | `graph/src/index/mod.rs:97` `IndexType`, `:107` `Field`, `:138` `Field::new`, `:154` `new_with_vector_options` |
-| `arrNames`                      | `mod.rs:122` `Field::make_arr_names` |
-| `docSet`                        | `mod.rs:717-872` `Document::set` @ 8743953a8 (branch for branch; vector arm `:730-744`, #3087; temporal arm `:803`, #3076) |
+| `IndexType`, `Field`            | `graph/src/index/mod.rs:97` `IndexType`, `:108` `Field`, `:144` `Field::new`, `:162` `new_with_vector_options` |
+| `arrNames`, `geoName`           | `mod.rs:127` `Field::make_arr_names` (#2975: also the `:geo` name), `:200` `geo_name` |
+| `docSet`                        | `mod.rs:842-1008` `Document::set` @ d564b4f40 (branch for branch; vector arm `:856-870`, #3087; temporal arm `:934`, #3076; #2975: Bool is a TAG, list Bools go to the string array, Point to the `:geo` sub-field) |
 | `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
-| `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:869` |
+| `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:1001-1005` |
 | `buildDoc`                      | the per-attribute loop in `graph.rs:4043` `commit_index_kind` / `graph.rs:729` population `build_doc` |
-| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1907` `Index::add_document`) |
+| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:2045` `Index::add_document`) |
 | `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2021-2030` fulltext unknown-key refusal (#3094) |
 | `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2100-2177` `map_to_index_options` (`:2008-2179`), vector branch |
 | `parsePhonetic`                 | `runtime.rs:2051-2068` phonetic arm |
-| `metricOf`                      | `mod.rs:1273-1287` similarity match in `Index::register_fields` |
+| `metricOf`                      | `mod.rs:1418-1434` similarity match in `Index::register_fields` |
 | `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:143` `eval_vector_args` (k arm) |
 | `withCapacity`                  | Rust std `Vec::with_capacity`; historical use: `graph.rs:3883` / `:3938` `Vec::with_capacity(k)` @ 49f698d22 (removed by #3088; current model in `Knn`) |
 -/
@@ -61,14 +61,19 @@ structure Field where
   name : String
   ty : IndexType
   /-- `field.vector_options.map(|o| o.dimension)`: `none` when the field has no
-  vector options (`Field::new`, mod.rs:138), `some d` from `new_with_vector_options`
-  (mod.rs:154). -/
+  vector options (`Field::new`, mod.rs:144), `some d` from `new_with_vector_options`
+  (mod.rs:162). -/
   vdim : Option Nat := none
 deriving Repr
 
-/-- `Field::make_arr_names` (mod.rs:122): only range fields get array sub-fields. -/
+/-- `Field::make_arr_names` (mod.rs:127): only range fields get array sub-fields. -/
 def arrNames (f : Field) : Option (String × String) :=
   if f.ty = .range then some (f.name ++ ":numeric:arr", f.name ++ ":string:arr") else none
+
+/-- The third name `make_arr_names` returns since #2975 (mod.rs:136), read by
+`Field::geo_name` (mod.rs:200): only range fields get the geo sub-field. -/
+def geoName (f : Field) : Option String :=
+  if f.ty = .range then some (f.name ++ ":geo") else none
 
 def isNumeric : Val → Bool
   | .bool _ | .int _ | .float => true
@@ -78,8 +83,14 @@ def isStr : Val → Bool
   | .str _ => true
   | _ => false
 
-/-- `Document::set` (mod.rs:717-872), branch for branch. The vector arm
-(mod.rs:730-744, #3087) adds the blob only when
+/-- List items written to the string array (mod.rs:945-958): strings and, since
+#2975, Bools (as their TAG key). -/
+def isTagItem : Val → Bool
+  | .str _ | .bool _ => true
+  | _ => false
+
+/-- `Document::set` (mod.rs:842-1008), branch for branch. The vector arm
+(mod.rs:856-870, #3087) adds the blob only when
 `field.vector_options.as_ref().is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`,
 mirrored literally by `Option.any`. -/
 def docSet (f : Field) (v : Val) : List RSAdd :=
@@ -91,17 +102,20 @@ def docSet (f : Field) (v : Val) : List RSAdd :=
     | .str _ => [.text f.name]
     | _ => []
   | .range => match v with
-    | .bool _ | .int _ | .float => [.num f.name]
+    -- #2975: a Bool is a TAG key, never numeric 1/0 (mod.rs:886-896)
+    | .bool _ => [.tag f.name]
+    | .int _ | .float => [.num f.name]
     | .str _ => [.tag f.name]
-    -- #3076 (`e20300436`): temporals are not indexed (mod.rs:796-803)
+    -- #3076 (`e20300436`): temporals are not indexed (mod.rs:927-934)
     | .temporal => []
     | .list xs =>
       let n := (xs.filter isNumeric).length
-      let s := (xs.filter isStr).length
+      let s := (xs.filter isTagItem).length
       (if n > 0 then [.numArr (f.name ++ ":numeric:arr") n] else []) ++
       (if s > 0 then [.strArr (f.name ++ ":string:arr") s] else [])
     | .vecf32 _ => []
-    | .point => [.geo f.name]
+    -- #2975: under the geo sub-field, so a numeric range on the field cannot see it (mod.rs:990-999)
+    | .point => [.geo (f.name ++ ":geo")]
     | .null | .map | .node | .rel | .path => []
 
 /-- HISTORICAL (fe619ac5f, before #3087): the vector arm wrote `vec.len() * 4` bytes
@@ -136,9 +150,9 @@ RediSearch (`src/document.c` `AddDocumentCtx_Submit`, vector preprocess in
 `src/vector_index.c`, "Could not add vector with blob size N (expected M)") fails the
 **whole** document when a vector field's blob cannot be indexed: either its size is not
 `dim * sizeof(float32)`, or the field was created without vector params (no
-`dimOf`, the #3087 comment at mod.rs:722-729). Under `REPLACE` the previous document
+`dimOf`, the #3087 comment at mod.rs:848-855). Under `REPLACE` the previous document
 under the same key is removed first. `dimOf` is the dimension
-`RediSearch_VectorFieldSetParams` registered (`register_fields`, mod.rs:1270-1329,
+`RediSearch_VectorFieldSetParams` registered (`register_fields`, mod.rs:1317-1500,
 only when `dimension > 0`). -/
 structure RediSearch where
   dimOf : String → Option Nat
@@ -151,7 +165,7 @@ if accepted, nothing otherwise (REPLACE already deleted the old one). -/
 def RediSearch.stored (rs : RediSearch) (d : List RSAdd) : List RSAdd :=
   if rs.accepts d then d else []
 
-/-- `register_fields` (mod.rs:1270-1272): a vector field gets params, of its own
+/-- `register_fields` (mod.rs:1416-1417): a vector field gets params, of its own
 dimension, exactly when `vector_options` is present with `dimension > 0`. Only the
 "if" half is needed for the correctness theorems. -/
 def Registered (rs : RediSearch) (fv : List (Field × Val)) : Prop :=
@@ -285,7 +299,7 @@ theorem docSet_noparams_no_vector (f : Field) (hf : f.ty = .vector)
   intro k hk
   rcases h with h | h <;> rw [h] at hk <;> cases hk; exact Or.inl rfl
 
-/-- The fulltext arm indexes strings and nothing else (mod.rs:747-759). -/
+/-- The fulltext arm indexes strings and nothing else (mod.rs:872-884). -/
 theorem fulltext_only_strings (f : Field) (v : Val) (h : f.ty = .fulltext) :
     docSet f v = (if isStr v then [.text f.name] else []) := by
   unfold docSet; rw [h]; cases v <;> rfl
@@ -299,6 +313,34 @@ theorem range_never_vector_or_text (f : Field) (v : Val) (h : f.ty = .range) :
     ∀ a ∈ docSet f v, a.isVecOrText = false := by
   cases v <;> simp [docSet, h, RSAdd.isVecOrText]
   all_goals (intro a ha; rcases ha with ⟨_, rfl⟩ | ⟨_, rfl⟩ <;> rfl)
+
+def RSAdd.isNumOn (name : String) : RSAdd → Bool
+  | .num n => n == name
+  | _ => false
+
+/-- **#2975: on a range field only an Int or Float reaches the field's numeric
+tree.** A Bool is a TAG key and a Point goes to the `:geo` sub-field (whose
+geohashes RediSearch keeps in a numeric tree of *that* name), so a numeric
+range on the field sees neither. -/
+theorem range_num_only_numbers (f : Field) (v : Val) (h : f.ty = .range)
+    (hv : ∀ a ∈ docSet f v, a.isNumOn f.name = true) (hne : docSet f v ≠ []) :
+    (∃ i, v = .int i) ∨ v = .float := by
+  cases v <;> simp_all [docSet, RSAdd.isNumOn]
+  case list xs =>
+    by_cases hn : ∃ x, x ∈ xs ∧ isNumeric x = true
+    · have := hv _ (Or.inl ⟨hn, rfl⟩); simp at this
+    · obtain ⟨x, hx, ht⟩ := hne (fun x hx => by
+        cases hc : isNumeric x
+        · rfl
+        · exact absurd ⟨x, hx, hc⟩ hn)
+      have := hv _ (Or.inr ⟨⟨x, hx, ht⟩, rfl⟩); simp at this
+
+theorem docSet_range_bool (f : Field) (b : Bool) (h : f.ty = .range) :
+    docSet f (.bool b) = [.tag f.name] := by simp [docSet, h]
+
+theorem docSet_range_point (f : Field) (h : f.ty = .range) :
+    docSet f .point = [.geo (f.name ++ ":geo")] ∧ geoName f = some (f.name ++ ":geo") := by
+  simp [docSet, geoName, h]
 
 /-! ## Index options (`map_to_index_options`, runtime.rs:2008-2179, lines pinned at main 5c7af54f2)
 
@@ -354,7 +396,7 @@ inductive Metric where
   | l2 | ip | cosine
 deriving DecidableEq, Repr
 
-/-- `register_fields`' similarity match (mod.rs:1273-1287): default `"euclidean"`,
+/-- `register_fields`' similarity match (mod.rs:1418-1434): default `"euclidean"`,
 exact string compare — on the lower-cased name `parseSim` stored. -/
 def metricOf (s : Option String) : Except String Metric :=
   match s.getD "euclidean" with
@@ -380,7 +422,7 @@ def parseVector (m : Opts) : Except String VecOpts := do
   return { dimension := d, sim := s, m := mm, efC := c, efR := r }
 
 /-- Whether CREATE VECTOR INDEX succeeds end-to-end in Rust: parse, then the metric
-check in `register_fields` (only reached when `dimension > 0`, mod.rs:1270-1272).
+check in `register_fields` (only reached when `dimension > 0`, mod.rs:1416-1417).
 With no `OPTIONS` map at all, `create_index` now refuses (index_ddl.rs:61-65); that
 is `parseVector []`, an error, here. -/
 def rustAccepts (m : Opts) : Bool :=
@@ -545,7 +587,7 @@ def parsePhonetic : Option OptVal → Except String (Option String)
   | none => .ok none
   | some _ => .error "Phonetic must be bool or string"
 
-/-- `register_fields` sets `RSFLDOPT_TXTPHONETIC` iff the code is non-empty (mod.rs:1250). -/
+/-- `register_fields` sets `RSFLDOPT_TXTPHONETIC` iff the code is non-empty (mod.rs:1394). -/
 def phoneticFlag (p : Option String) : Bool := p.any (· ≠ "")
 
 /-- `phonetic:false` is stored as `""` and therefore does *not* set the flag. -/

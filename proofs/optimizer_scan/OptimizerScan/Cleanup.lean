@@ -1,37 +1,44 @@
 import OptimizerScan.EdgeInline
 /-
 # Expression walkers, the fixed-point driver, and the edge clean-up passes of
-# `utilize_index.rs` (origin/main 8743953a8, after #2390 d2c42e032)
+# `utilize_index.rs` (PR #2975 head; after #2390 d2c42e032)
 
 | here | there |
 | --- | --- |
 | `D`, `Ex`, `bfs` | `ExprIR<Variable>` trees and `indices::<Bfs>()` |
 | `extractAttr` | `extract_attribute_from_subtree` 357 |
 | `hasPropOf`, `hasAnyProp`, `nestedListE` | `subtree_has_property_of` 547, `subtree_has_any_property` 569, `list_has_nested_list` 582 |
-| `nonIdxD` | `is_non_indexable_subexpr` 855 |
+| `nonIdxD` | `is_non_indexable_subexpr` 912 (with `is_exact_index_literal` 937 for constants) |
 | `IQx` | `IndexQuery<QueryExpr<Variable>>`; the old `index_query_references_var` (1123 at a9377c636) was replaced by `references.rs::index_query_references_variable` (proven in `proofs/optimizer_rewrites`, `References.iqRefs_iff`, by `(id, scope)`) |
-| `rowsWithScan`, `prune_sound` | `prune_all_node_scan_child` 1055 |
-| `hasLabelsFilter`, `isHasLabelsFor`, `addToLabels` | `build_has_labels_filter` 71, `is_has_labels_for` 1142, `add_to_labels_filter` 1084 |
-| `untilStable` | `rewrite_until_stable` 881 |
-| `governingFilter`, `matchScanWithFilter` | `governing_filter` 920, `match_scan_with_filter` 942 |
-| `utilizeP`, `pendingSel` | `apply_filter_pushdown` 973 (`keep_filter = over_pending || needs_post_filter`) |
-| `tryIndexRewrite`, `utilizeIndex` | `try_index_rewrite` 1021, `utilize_index` 1124 |
+| `rowsWithScan`, `prune_sound` | `prune_all_node_scan_child` 1126 |
+| `hasLabelsFilter`, `isHasLabelsFor`, `addToLabels` | `build_has_labels_filter` 71, `is_has_labels_for` 1213, `add_to_labels_filter` 1155 |
+| `untilStable` | `rewrite_until_stable` 954 |
+| `governingFilter`, `matchScanWithFilter` | `governing_filter` 993, `match_scan_with_filter` 1014 |
+| `utilizeP`, `pendingSel` | `apply_filter_pushdown` 1045 (`keep_filter = over_pending || keep_filter`, the latter `try_filter_pushdown`'s `needs_post` flag since #2975) |
+| `tryIndexRewrite`, `utilizeIndex` | `try_index_rewrite` 1090, `utilize_index` 1195 |
 -/
 namespace OptimizerScan.Cleanup
 open OptimizerScan.Index
 
 /-! ## Expression trees and BFS -/
 
+/-- `ExprIR` node kinds. `var id` stands for a variable's `(id, scope_id)` pair; `cexact` is a
+constant `is_exact_index_literal` accepts besides Int/String (Null, Float, and Bool in the default
+build); `cother` any other constant (temporal, point, list, map); `structural` the comparison and
+boolean structure (`And`/`Or`/`Eq`/`Lt`/`Gt`/`Le`/`Ge`/`In`/`Paren`); `other` everything else
+(arithmetic, `Not`, …). -/
 inductive D
   | var (id : Nat)
   | param
   | cint (v : Int)
   | cstr (s : Nat)
+  | cexact
   | cother
   | list
   | map
   | func (name : String)
   | prop (k : Nat)
+  | structural
   | other
   deriving DecidableEq, Repr
 
@@ -205,19 +212,22 @@ theorem nestedListE_iff (d : D) (cs : List Ex) :
     nestedListE (.node d cs) = true ↔ d = .list ∧ ∃ c ∈ cs, c.d = .list := by
   simp [nestedListE, Ex.d, Ex.cs]
 
-/-- `is_non_indexable_subexpr` (`utilize_index.rs:855-873`). -/
+/-- `is_non_indexable_subexpr` (`utilize_index.rs:912-932`), an allow-list since #2975: only the
+scan variable, exact constants (`is_exact_index_literal` 937), the comparison/boolean structure and
+`Property` pass. -/
 def nonIdxD (lossyI : Int → Bool) (scan : Option Nat) : D → Bool
   | .var v => scan.all (· != v)
-  | .param => true
   | .cint v => lossyI v
-  | .list | .map => true
-  | .func _ => true
-  | _ => false
+  | .cstr _ | .cexact | .structural | .prop _ => false
+  | .param | .cother | .list | .map | .func _ | .other => true
 
+/-- **PROVEN**: `is_non_indexable_subexpr` flags exactly another variable, a parameter, a lossy
+Int, a non-exact constant (e.g. a folded `date(...)`, `IndexCex` C3), a list, a map, a function
+call and any other non-structural node such as arithmetic (`IndexCex` C4). -/
 theorem nonIdxD_spec (lossyI : Int → Bool) (scan : Option Nat) (d : D) :
     nonIdxD lossyI scan d = true ↔
       (∃ v, d = .var v ∧ scan ≠ some v) ∨ d = .param ∨ (∃ v, d = .cint v ∧ lossyI v = true) ∨
-      d = .list ∨ d = .map ∨ ∃ n, d = .func n := by
+      d = .cother ∨ d = .list ∨ d = .map ∨ (∃ n, d = .func n) ∨ d = .other := by
   cases d <;> simp [nonIdxD]
   cases scan <;> simp
 
@@ -226,7 +236,7 @@ theorem nonIdxD_spec (lossyI : Int → Bool) (scan : Option Nat) (d : D) :
 #2390 replaced the id-only walker below by `references.rs::index_query_references_variable(q, id,
 scope)`, proven in `proofs/optimizer_rewrites` (`References.iqRefs_iff`: true iff some operand
 mentions the variable `(id, scope)`, at any And/Or depth). `prune_all_node_scan_child` now asks it
-with the child scan's `(id, scope_id)` (`utilize_index.rs:1066-1069`). -/
+with the child scan's `(id, scope_id)` (`utilize_index.rs:1144`). -/
 
 inductive IQx
   | eq (e : Ex)
@@ -374,7 +384,7 @@ inductive Anc
   | pending (nchildren : Nat)
   | other
 
-/-- `governing_filter` (`utilize_index.rs:920-935`): the `Filter` directly above the scan, or above a
+/-- `governing_filter` (`utilize_index.rs:993-1006`): the `Filter` directly above the scan, or above a
     single-child `IncludePending` above it. Returns the Filter's depth (its `NodeIdx`), the filter, and
     whether an `IncludePending` was skipped. -/
 def governingFilter : List Anc → Option (Nat × F × Bool)
@@ -415,7 +425,7 @@ theorem governingFilter_spec (anc : List Anc) (d : Nat) (f : F) (op : Bool) :
       | other => simp [governingFilter] at h
   · rintro (⟨rest, rfl, rfl, rfl⟩ | ⟨rest, rfl, rfl, rfl⟩) <;> rfl
 
-/-- `match_scan_with_filter` (`utilize_index.rs:942-950`): the scan source matches and a Filter
+/-- `match_scan_with_filter` (`utilize_index.rs:1014-1021`): the scan source matches and a Filter
     governs it. -/
 def matchScanWithFilter {S : Type} (src : Option S) (anc : List Anc) : Option (S × Nat × F × Bool) :=
   match src, governingFilter anc with
@@ -434,13 +444,14 @@ theorem matchScanWithFilter_spec {S : Type} (src : Option S) (anc : List Anc) (s
       obtain ⟨d', f', op'⟩ := t
       simp only [Option.some.injEq, Prod.mk.injEq]
 
-/-- `apply_filter_pushdown` (`utilize_index.rs:973-1013`) with its `over_pending` flag:
-    `keep_filter = over_pending || needs_post_filter`. `utilizeP _ _ _ false` is `utilize`. -/
+/-- `apply_filter_pushdown` (`utilize_index.rs:1045-1084`) with its `over_pending` flag:
+    `keep_filter = over_pending || keep_filter`, the latter the `needs_post` flag `try_filter_pushdown`
+    returns (#2975). `utilizeP _ _ _ false` is `utilize`. -/
 def utilizeP (idx : Nat → List Nat) (ls : List Nat) (f : F) (overPending : Bool) : Plan :=
   match tryPushdown idx ls f with
   | none => .filter f (.labelScan ls)
-  | some (L, q, rem) =>
-    let keep := overPending || needsPost f
+  | some (L, q, rem, kf) =>
+    let keep := overPending || kf
     let scan := Plan.idxScan ls L q
     if rem.isEmpty then (if keep then .filter f scan else scan)
     else if keep then .filter f scan else .filter (.and rem) scan
@@ -451,7 +462,7 @@ theorem utilizeP_false (idx : Nat → List Nat) (ls : List Nat) (f : F) :
 
 /-- Over an `IncludePending` the original Filter always stays above the index scan. -/
 theorem utilizeP_true (idx : Nat → List Nat) (ls : List Nat) (f : F) (L' : Nat) (q : IQ) (rem : List A)
-    (h : tryPushdown idx ls f = some (L', q, rem)) :
+    (kf : Bool) (h : tryPushdown idx ls f = some (L', q, rem, kf)) :
     utilizeP idx ls f true = .filter f (.idxScan ls L' q) := by
   simp [utilizeP, h]
 
@@ -477,11 +488,12 @@ theorem idxScan_labels (idx : Nat → List Nat) (opq : Nat → Node → Bool) (L
 /-- On a single-label scan, the index scan under the original filter selects what
     `Filter → NodeByLabelScan` does (from `utilize_sound`, every shape). -/
 theorem idxScan_filter_sound (idx : Nat → List Nat) (opq : Nat → Node → Bool) (L : Nat) (f : F)
-    (hf : goodF f = true) (L' : Nat) (q : IQ) (rem : List A) (hp : tryPushdown idx [L] f = some (L', q, rem))
+    (hf : goodF f = true) (L' : Nat) (q : IQ) (rem : List A) (kf : Bool)
+    (hp : tryPushdown idx [L] f = some (L', q, rem, kf))
     (n : Node) (hn : Faithful n) :
     ((Plan.idxScan [L] L' q).sel idx opq n && evalF opq n f) = (reference [L] f).sel idx opq n := by
   have hu := utilize_sound idx L opq f hf n hn
-  rw [utilize_some idx [L] f L' q rem hp] at hu
+  rw [utilize_some idx [L] f L' q rem kf hp] at hu
   have href : (reference [L] f).sel idx opq n = (decide (L ∈ n.labels) && evalF opq n f) := by
     simp [reference, Plan.sel, hasAll_single]
   rw [href] at hu ⊢
@@ -501,10 +513,11 @@ theorem idxScan_filter_sound (idx : Nat → List Nat) (opq : Nat → Node → Bo
     scan under `Filter → IncludePending` selects exactly what `Filter → IncludePending →
     NodeByLabelScan` does, whatever the pending nodes are. -/
 theorem overPending_sound (idx : Nat → List Nat) (opq : Nat → Node → Bool) (L : Nat) (f : F)
-    (hf : goodF f = true) (L' : Nat) (q : IQ) (rem : List A) (hp : tryPushdown idx [L] f = some (L', q, rem))
+    (hf : goodF f = true) (L' : Nat) (q : IQ) (rem : List A) (kf : Bool)
+    (hp : tryPushdown idx [L] f = some (L', q, rem, kf))
     (pend : Node → Bool) (n : Node) (hn : Faithful n) :
     pendingSel idx opq pend f (.idxScan [L] L' q) n = pendingSel idx opq pend f (.labelScan [L]) n := by
-  have h := idxScan_filter_sound idx opq L f hf L' q rem hp n hn
+  have h := idxScan_filter_sound idx opq L f hf L' q rem kf hp n hn
   simp only [reference, Plan.sel] at h
   unfold pendingSel
   cases hfv : evalF opq n f <;> simp_all [Plan.sel]
@@ -517,7 +530,7 @@ theorem overPending_needs_filter (idx : Nat → List Nat) (opq : Nat → Node �
     (X.sel idx opq p || pend p) = true ∧ pendingSel idx opq pend f (.labelScan []) p = false := by
   simp [pendingSel, hp, hfail]
 
-/-- `try_index_rewrite` (`utilize_index.rs:1021-1047`) for a single-label node scan: only the
+/-- `try_index_rewrite` (`utilize_index.rs:1090-1117`) for a single-label node scan: only the
     filter push-down path remains (#2390). -/
 def tryIndexRewrite (idx : Nat → List Nat) (L : Nat) (gov : Option (Nat × F × Bool)) : Option Plan :=
   match gov with
@@ -547,9 +560,10 @@ theorem tryIndexRewrite_pending_sound (idx : Nat → List Nat) (opq : Nat → No
   cases hp : tryPushdown idx [L] f with
   | none => simp [hp] at h
   | some t =>
-    obtain ⟨L', q, rem⟩ := t
+    obtain ⟨L', q, rem, kf⟩ := t
     simp [hp] at h; subst h
-    exact ⟨L', q, utilizeP_true idx [L] f L' q rem hp, overPending_sound idx opq L f hf L' q rem hp pend n hn⟩
+    exact ⟨L', q, utilizeP_true idx [L] f L' q rem kf hp,
+      overPending_sound idx opq L f hf L' q rem kf hp pend n hn⟩
 
 /-- `utilize_index`: four `rewrite_until_stable` passes in sequence. Soundness
 composes: if each pass's rewrites preserve the plan's semantics, so does the

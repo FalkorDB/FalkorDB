@@ -7,6 +7,9 @@ Each `example` evaluates both the rewritten plan (`utilize`) and the reference
 reproduced against the real engine (Cypher, with vs without the index, and vs C) — see
 the header of `OptimizerScan.lean` for queries and outputs.
 
+PR #2975 fixes C1, C3, C4, C9 and the OR form of C10: they are now `fixed2975_*` theorems
+(the scan agrees). The last revision with those counterexamples is 343e077f2.
+
 Keys: 0 = `v`, 1 = `a`, 2 = `b`, 3 = `arr`. Labels: 0 = `L`/`A`, 1 = `B`.
 -/
 namespace OptimizerScan.Index.Cex
@@ -34,8 +37,17 @@ example : agree [0] (.and [.cmp .le (.lit (.i 1)) (.prop 0), .cmp .lt (.prop 0) 
 example : agree [0] (.or [.cmp .eq (.prop 0) (.lit (.i 1)), .cmp .eq (.prop 0) (.lit (.i 7))])
     (node [0] [(0, .i 7)]) := by decide
 
-/-- C1 (shared with C): Bool and Int share the NUMERIC field — `n.v = 1` matches `v: true`. -/
-example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.i 1)))) (node [0] [(0, .b true)]) = false := by
+/-- C1 — FIXED by #2975. Bool and Int used to share the NUMERIC field, so `n.v = 1` matched
+`v: true` with the Filter gone. A Bool now has its own TAG key (`Document::set`, `build_query_node`):
+the scan agrees. -/
+theorem fixed2975_C1 :
+    agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.i 1)))) (node [0] [(0, .b true)]) = true := by
+  decide
+
+/-- …and `n.v = true` is now served exactly by the index. -/
+theorem fixed2975_C1_bool :
+    agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.b true)))) (node [0] [(0, .b true)]) = true ∧
+    agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.b true)))) (node [0] [(0, .i 1)]) = true := by
   decide
 
 /-- C2 — FIXED by #3076 (e20300436). Temporal values used to be indexed as NUMERIC timestamps, so
@@ -44,18 +56,21 @@ scan now agrees. -/
 example : agree [0] (.atom (.cmp .gt (.prop 0) (.lit (.i 0)))) (node [0] [(0, .date 5)]) = true := by
   decide
 
-/-- C3: `n.v = date(...)` (folded to a `Constant(Date)`, which `is_non_indexable_subexpr` does
-not flag) — the Filter is dropped, `can_utilize_index` rejects the Date, the op falls back to a
-full label scan: every node of the label is returned. -/
-example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.date 3)))) (node [0] [(0, .i 1)]) = false := by
+/-- C3 — FIXED by #2975. `n.v = date(...)` is folded to a `Constant(Date)`, which
+`is_non_indexable_subexpr` used not to flag: the Filter was dropped, `can_be_served` rejected the
+Date and the op fell back to a full label scan (every node of the label). A constant that is not
+an exact index literal (`is_exact_index_literal`) is now flagged, so the Filter stays. -/
+theorem fixed2975_C3 :
+    agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.date 3)))) (node [0] [(0, .i 1)]) = true := by
   decide
 
-/-- C4: a constant expression that evaluates to an int ≥ 2^52 (`4503599627370495 +
-4503599627370495 + 3`): no literal is flagged, the Filter is dropped, the runtime value is
-lossy, fallback label scan — every node. -/
-example : agree [0] (.atom (.cmp .eq (.prop 0)
+/-- C4 — FIXED by #2975. A constant expression that evaluates to an int ≥ 2^52
+(`4503599627370495 + 4503599627370495 + 3`) used to flag nothing, the Filter was dropped, the runtime
+value was lossy and the op fell back to a label scan (every node). `is_non_indexable_subexpr` is now
+an allow-list: an arithmetic node is flagged, so the Filter stays. -/
+theorem fixed2975_C4 : agree [0] (.atom (.cmp .eq (.prop 0)
     (.add (.add (.lit (.i 4503599627370495)) (.lit (.i 4503599627370495))) (.lit (.i 3)))))
-    (node [0] [(0, .i 1)]) = false := by decide
+    (node [0] [(0, .i 1)]) = true := by decide
 
 /-- C5: multi-label AND. `(n:A:B) WHERE n.a = 1 AND n.b = 2` with `A(a)`, `B(b)`: both
 conjuncts are merged into one query on A's index, which has no `b` field → null → nothing. -/
@@ -79,16 +94,30 @@ example : agree [0] (.atom (.inn (.abs (.prop 1)) (.list [.lit (.i 1)])))
 example : agree [0] (.atom (.inn (.lit (.i 2)) (.list [.prop 1, .prop 2])))
     (node [0] [(1, .i 2), (2, .i 7)]) = false := by decide
 
-/-- C9: `n.v IN [1, date(...)]`: the runtime drops the Date item from the `Or`, the index
-never returns the node, the retained Filter cannot add it back. -/
-example : agree [0] (.atom (.inn (.prop 0) (.list [.lit (.i 1), .lit (.date 3)])))
-    (node [0] [(0, .date 3)]) = false := by decide
+/-- C9 — FIXED by #2975. `n.v IN [1, date(...)]`: the runtime used to drop the Date item, the
+index never returned the node, the retained Filter could not add it back. `in_list` now drops only
+Null, `can_be_served` refuses the list, the op falls back to the label scan, the Filter decides. -/
+theorem fixed2975_C9 : agree [0] (.atom (.inn (.prop 0) (.list [.lit (.i 1), .lit (.date 3)])))
+    (node [0] [(0, .date 3)]) = true := by decide
 
 /-- C10 — FIXED by #3736. `1 IN n.arr AND …`: array-contains used to keep its Filter only at the
 root, so inside AND it was dropped, and Bool/Int share the numeric array field (shared with C). An
 array-contains conjunct now stays among the leftovers (`pushAnd`): the scan agrees. -/
 example : agree [0] (.and [.inn (.lit (.i 1)) (.term (.prop 3)), .opq 0])
     (node [0] [(3, .arr [.b true])]) = true := by decide
+
+/-- C10 (OR form) — FIXED by #2975. `1 IN n.arr OR n.v = 9`: `needs_post_filter` looked only for
+non-indexable values, so the array-contains branch of an OR dropped the Filter, and the index
+(Bool/Int sharing the numeric array field) returned `arr: [true]`. `pushed_needs_post_filter` now
+keeps the Filter for any pushed array-contains branch or conjunct: the scan agrees. -/
+theorem fixed2975_C10_or :
+    agree [0] (.or [.inn (.lit (.i 1)) (.term (.prop 3)), .cmp .eq (.prop 0) (.lit (.i 9))])
+      (node [0] [(3, .arr [.b true])]) = true := by decide
+
+/-- …and the AND form with an indexable sibling (`1 IN n.arr AND n.v = 9` on `v: 9`). -/
+theorem fixed2975_C10_and :
+    agree [0] (.and [.inn (.lit (.i 1)) (.term (.prop 3)), .cmp .eq (.prop 0) (.lit (.i 9))])
+      (node [0] [(0, .i 9), (3, .arr [.b true])]) = true := by decide
 
 /-- C11 — FIXED by #3072 (1c9994e37). `n.v > 'B' AND n.v < 'B'` merges into
 `Range{min:'B', max:'B', exclusive}`, which `build_string_range_node` used to turn into an exact match

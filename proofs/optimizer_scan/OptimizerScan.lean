@@ -20,9 +20,19 @@ comparison (only `true` keeps a row).
 
 Re-targeted to origin/main 5e475e6c9: #2383 keeps an `IN [...]` list whole as `IndexQuery::InList`
 (node and edge index scans) instead of an `Or` of `Equal`s; `Index.Q` gained `inList`, `evalIQ`
-builds it, `canUtilize` has its arm, and the new query builds the same union and is accepted/refused by `can_utilize_index` exactly as the old `Or`
-(the `inList_same_as_pre2383` wrapper was removed in bbee75955, the last revision that has it is 17ccc5412; the equivalence itself stays proved as `build_inList_eq_or` and `canUtilize_inList_eq_or` in `Index.lean`). `utilize_sound` is unchanged in statement. #3436 only
+builds it, `canUtilize` (now `canBeServed`) has its arm, and the new query builds the same union and is accepted/refused by `can_utilize_index` exactly as the old `Or`
+(the `inList_same_as_pre2383` wrapper was removed in bbee75955, the last revision that has it is 17ccc5412; the equivalence itself stays proved as `build_inList_eq_or` and `canBeServed_inList_eq_or` in `Index.lean`). `utilize_sound` is unchanged in statement. #3436 only
 shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs:1415`.
+
+Re-targeted to PR #2975 (default build, `index-falkordb` off): a Bool has its own TAG key
+(`Fld.btag`), `can_utilize_index` became `IndexQuery::can_be_served` (`Index.canBeServed`; a Bool
+range bound is refused), `in_list` drops only Null, `is_non_indexable_subexpr` is an allow-list
+(`exactLit`, arithmetic flagged), `needs_post_filter` gained `bool_range_bound`, and
+`try_filter_pushdown` returns the `needs_post` flag computed by `pushed_needs_post_filter` over the
+pushed conjuncts / branches only (`pushedKeep`). `utilize_sound` keeps its statement; `goodA` is
+strengthened to admit Bool literals in `=` and `IN`, and `Faithful` holds of every node
+(`faithful_all`, `utilize_sound_all`). C1, C3, C4, C9 and the OR form of C10 are fixed
+(`IndexCex.fixed2975_*`; last revision with them: 343e077f2).
 
 ## Lean ↔ Rust
 
@@ -32,13 +42,13 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1415-1469` (`id as u64` at 1428) |
 | `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1470-1480` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
 | `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1783` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
-| `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
-| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
-| `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-295` |
-| `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:357-368, 547-595, 802-873` |
+| `Index.enc`, `arrEnc` | `index/mod.rs:842-1007` (`Document::set`) |
+| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1630-1826`, `Index::query` 1829 |
+| `Index.canBeServed`, `notNull`, `evalIQ` | `index/mod.rs:284-345` (`in_list`, `can_be_served`), `runtime/ops/node_by_index_scan.rs:100-231` |
+| `Index.hasT`, `firstP`, `exactLit`, `nonIdxT`, `boolRangeBound`, `needsPost`, `pushedNeedsPost` | `utilize_index.rs:357-368, 547-595, 789-946` |
 | `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-355, 602-704, 481-544` |
-| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-801` |
-| `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:308-335` |
+| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `pushedKeep`, `tryPushdown` | `utilize_index.rs:730-798` |
+| `Index.utilize`, `Plan.sel` | `utilize_index.rs:1045-1117`, `node_by_index_scan.rs:237-324` |
 | `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
 | `ScanOrder.place`, `runScoped` | `select_scan_node.rs:979-986, 1185-1235` |
 | `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
@@ -54,15 +64,18 @@ Id seeks (`IdSeek.lean`):
 
 Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`):
 - `ordI_swap`, `ord3_swap`, `eq3_swap`, `flip_correct`: comparison flip when the property is on the right.
-- `sel_eq`: `Equal` on a faithful literal (non-lossy Int, String) and faithful stored value (Null/Int/String) is exact.
+- `faithful_all`: since #2975 every stored value is faithful (Bool has its own TAG key).
+- `sel_eq`: `Equal` on an exact literal (non-lossy Int, String, Bool) is exact.
 - `sel_range`: every one- or two-sided numeric or string range is exact except the equal-string-bounds-with-an-exclusive-flag trap.
 - `sel_buildOp`: `build_op_query` is exact for all five operators.
 - `sel_inList`, `buildSome_eqs`, `cu_inList`: `n.k IN [literals]` is exact and runtime-usable when non-empty.
 - `sel_and2`: an index `And` is the intersection (a null child nulls both sides).
 - `sel_merge`, `rangeOK_merge`, `cu_merge`: `merge_range_queries` selects the conjunction and stays well-formed and usable.
-- `trySingle_spec`: `try_single_filter_scan` on covered atoms is exact, on `L`, well-formed, usable unless `IN`.
+- `trySingle_spec`: `try_single_filter_scan` on covered atoms is exact, on `L`, well-formed, servable unless `IN`.
 - `pushAnd_spec`, `pushOr_spec`, `buildSome_any`: the AND / OR branches of `try_filter_pushdown` select the conjunction and disjunction.
-- `utilize_sound` (headline): single-label scan, Null/Int/String values, atoms `n.k op lit`, `lit op n.k`,
+- `pushAnd_cu`, `pushOr_cu`, `keep_false_cu`, `served_of_keep` (#2975): when `pushed_needs_post_filter` is false for every
+  pushed conjunct / branch, the pushed query is servable by the index (`can_be_served`).
+- `utilize_sound` (headline), `utilize_sound_all`: single-label scan, any stored values, atoms `n.k op lit`, `lit op n.k`,
   `n.k IN [lits]`, unindexable conjuncts, combined by AND (no strict string bound) or OR — rewritten plan = original.
 
 Scan selection (`ScanOrder.lean`):
@@ -99,7 +112,9 @@ Scan selection (`ScanOrder.lean`):
    Fix: return `Ok(None)` when the graph has no id bound (`node_count + deleted == 0`), or
    make the range `[0, bound)` exclusive. Tests `bug_id_seek_phantom_node_*`.
    Re-checked live at 2c874022a (after #2846): still present (Rust 1 row, C 0).
-3. **Computed constants ≥ 2^52 return every node** — `is_non_indexable_subexpr`
+3. **Computed constants ≥ 2^52 return every node** — **FIXED by #2975** (`is_non_indexable_subexpr`,
+   `utilize_index.rs:912-932`, is an allow-list: arithmetic is flagged and the Filter stays; Lean
+   `IndexCex.fixed2975_C4`; last revision with the bug 343e077f2). Before: `is_non_indexable_subexpr`
    (`utilize_index.rs:855-873`) flags only literal lossy ints; `4503599627370495 +
    4503599627370495 + 3` is not flagged, the Filter is dropped, `can_utilize_index` rejects
    the runtime value and the op falls back to a label scan with no Filter. Lean `IndexCex` C4.
@@ -177,7 +192,7 @@ Scan selection (`ScanOrder.lean`):
   `edge_utilize_sound` (EdgeByIndexScan + bound-endpoint filter = Filter → CondTraverse),
   the inline-attribute path (removed by #2390; only an unchecked historical note remains), `distance()`
   scans (`distance_sound`: sound with a complete GEO filter; the Filter is always kept),
-  and `NodeByIndexScanOp` (`scanRow_eq_sel`, `evalIQE_*`, `canUtilize_empty`).
+  and `NodeByIndexScanOp` (`scanRow_eq_sel`, `evalIQE_*`, `canBeServed_empty` (was `canUtilize_empty`)).
 - `Cleanup`: BFS walkers (`mem_bfs`, `extractAttr_*`, `hasPropOf_iff`, `nonIdxD_spec`),
   `prune_sound` (dropping the AllNodeScan child keeps the edge multiset),
   `addToLabels_idem`, the fixed-point driver (`untilStable_preserves`, `untilStable_stable`),

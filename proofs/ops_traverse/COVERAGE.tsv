@@ -65,8 +65,8 @@ graph/src/runtime/eval.rs	NeighborIter::neighbors	232	NOT COVERED	idem
 graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1374	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
 graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1459	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	58	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	100	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: IndexScan.evalIQ: evalIQ_eq, evalIQ_inList (one InList since #2383), evalIQ_inLi)
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	237	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: IndexScan.scanRow (IndexSound = RediSearch contract): scanRow_spec, scans_stream)
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	100	PROVEN	IndexScan.evalIQ (InList via in_list = inListOf, #2975): evalIQ_eq, evalIQ_inList (every non-null item kept), evalIQ_inList_err, canUse_inList_null, fixed2975_inList_nonscalar (W2-index-3 fixed)
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	237	PROVEN	IndexScan.scanRow (default build; can_be_served = canBeServed; IndexSound = RediSearch contract): scanRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::new	47	PROVEN	IndexScan.VecSt.new: vecNew_spec
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::next	83	PROVEN	IndexScan.vecRow: vecRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	IndexScan.vecArgs: vecArgs_ok, vecArgs_bad_k
@@ -77,5 +77,8 @@ graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::next	78	PRO
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::new	40	PROVEN	IndexScan.ftNew/VecSt.new: ftNew_spec
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::next	75	PROVEN	IndexScan.edgeVecRow/vecArgs: edgeVecRow_spec, vecArgs_ok
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	80	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	118	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_i)
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	254	NOT COVERED	(#2958): not modelled yet (body changed; was PROVEN: IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: )
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	118	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err, canUse_inList_null, fixed2975_inList_nonscalar
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	254	PROVEN	IndexScan.edgeRow/orient (default build; can_be_served = canBeServed): edgeRow_sound, orient_mem, orient_length (undirected: both orientations, a self-loop once), scans_stream
+graph/src/index/mod.rs	in_list	284	PROVEN	IndexScan.inListOf/notNull: evalIQ_inList, canUse_inList_null, fixed2975_inList_nonscalar
+graph/src/index/mod.rs	can_be_served	304	PROVEN	IndexScan.canBeServed (default build, index-falkordb off; = canUse = canUseE): canUse_spec, canBeServed_2975, canUseE_spec, canUseE_eq_canUse, canUse_inListV_eq_or, canUseE_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist
+graph/src/index/mod.rs	is_indexable	309	PROVEN	IndexScan.indexable (default build: Bool true): canUse_spec, canBeServed_2975, canUseE_spec

@@ -10,7 +10,7 @@ import OptimizerScan.IndexPipeline
 | `eAlias`/`eLabels`/`eIndexed`/`eFunc`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs:218-310` |
 | `endpointOK`, `edgeScanSel`, `edgeRefSel` | `EdgeByIndexScanOp::next` `runtime/ops/edge_by_index_scan.rs:330-380` (bound-endpoint filter), `CondTraverse` + `Filter` |
 | `distScan`, `pointSel` | `try_distance_index_scan` 421, `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs:1545`) |
-| `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs:56,293,98` |
+| `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs:58,237,100` (PR #2975 head; default build, `index-falkordb` off) |
 -/
 namespace OptimizerScan.Index
 
@@ -191,11 +191,11 @@ theorem distance_keeps_filter (t : T) : nonIdxT (.abs t) = true := rfl
 
 /-! ## `NodeByIndexScanOp` -/
 
-/-- `NodeByIndexScanOp::new` (`node_by_index_scan.rs:66-70`). -/
+/-- `NodeByIndexScanOp::new` (`node_by_index_scan.rs:68-72`). -/
 def extraLabels (ls : List Nat) : Option (List Nat) := if ls.length > 1 then some ls.tail else none
 
 /-- `evaluate_index_query` with its error: `InList` over a non-list value is
-`Err("IN operator requires a list")` (`node_by_index_scan.rs:241`). -/
+`Err("IN operator requires a list")` (`node_by_index_scan.rs:227`). -/
 def evalIQE (q : IQ) : Except String Q :=
   match q with
   | .inList _ (.term t) => match evalC t with
@@ -203,11 +203,12 @@ def evalIQE (q : IQ) : Except String Q :=
     | _ => .error "IN operator requires a list"
   | _ => .ok (evalIQ q)
 
-/-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs:308-335`):
-index when `can_utilize_index`, else `get_nodes(labels)`, then the extra labels. -/
+/-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs:237-324`): the index
+(`get_indexed_nodes`) when `q.can_be_served()` (253), else `get_nodes(labels)` (301), then the
+extra labels (303-310). -/
 def scanRow (idx : Nat → List Nat) (ls : List Nat) (L : Nat) (q : IQ) (n : Node) : Bool :=
   let qv := evalIQ q
-  (if canUtilize qv then idxSel idx L qv n else hasAll ls n) &&
+  (if canBeServed qv then idxSel idx L qv n else hasAll ls n) &&
   (match extraLabels ls with | some ex => ex.all (· ∈ n.labels) | none => true)
 
 theorem extraLabels_spec (L : Nat) (rest : List Nat) :
@@ -246,16 +247,21 @@ theorem evalIQE_inList_err (k : Nat) (t : T) (h : ∀ xs, evalC t ≠ .arr xs) :
   · next xs hx => exact absurd hx (h xs)
   · rfl
 
-/-- `can_utilize_index`: an empty `Or`/`And` (e.g. `IN [NULL]` after the runtime
-drops non-scalars) is refused, so the kept Filter re-establishes correctness. -/
-theorem canUtilize_empty : canUtilize (.or []) = false ∧ canUtilize (.and []) = false := ⟨rfl, rfl⟩
+/-- `can_be_served` (`index/mod.rs:304-345`): an empty `Or`/`And`/`InList` (e.g. `IN [NULL]`
+after the runtime drops the Nulls) is refused, so the scan falls back to the label scan and the
+kept Filter re-establishes correctness. -/
+theorem canBeServed_empty :
+    canBeServed (.or []) = false ∧ canBeServed (.and []) = false ∧
+      ∀ k, canBeServed (.inList k []) = false := ⟨rfl, rfl, fun _ => rfl⟩
 
 theorem isIndexable_spec (v : V) :
     isIndexable v = match v with | .i x => !lossy x | .date _ | .arr _ => false | _ => true := by
   cases v <;> rfl
 
-/-- #2383: the runtime keeps an `IN` list whole, filtered to its scalar members. -/
+/-- #2383: the runtime keeps an `IN` list whole; since #2975 only its Null members are dropped
+(`IndexQuery::in_list`, `index/mod.rs:284-299`), so a Date member reaches `can_be_served`, which
+refuses the list (`IndexCex` C9, fixed). -/
 theorem evalIQ_inList (k : Nat) (r : R) :
-    evalIQ (.inList k r) = .inList k ((listVals r).filter isPrim) := rfl
+    evalIQ (.inList k r) = .inList k ((listVals r).filter notNull) := rfl
 
 end OptimizerScan.Index

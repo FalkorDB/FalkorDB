@@ -48,6 +48,16 @@ model and satisfies `LiveExpandInto` (`expandIntoP_live`); the pre-#3463 counter
 were removed in bbee75955 (the last revision that has them is 17ccc5412); `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
 `Pending` (`bug_condTraverse_*`).
 
+**PR #2975 (d564b4f40, base 343e077f2)**: the node and edge index scans now share
+`IndexQuery::can_be_served` (index/mod.rs:304, inner `is_indexable` :309), modelled as
+`IndexScan.canBeServed` (default build, `index-falkordb` off; `canUse`/`canUseE` are kept as names
+for it). A Point/temporal is no longer indexable, a Bool is (its own TAG key) but not as a range
+bound, `ArrayContains` refuses Null and lossy integers on both ops (`canBeServed_2975`,
+`canUseE_spec`). `evaluate_index_query` builds the list with `IndexQuery::in_list` (:284), which keeps
+every non-null item: W2-index-3 is fixed (`fixed2975_inList_nonscalar`; the last revision with the
+old `isScalar` witness is 343e077f2). `scanRow_spec`, `edgeRow_sound`, `orient_*` are re-proved
+unchanged; pins: node `evaluate_index_query`/`next` :100/:237, edge :118/:254.
+
 **Re-targeted to main 5e475e6c9** (from b84473a7f). #2383 (index serves `IN [...]` natively): the node and
 edge index scans now hand the evaluated list to the index as ONE `InList` instead of an `Or` of `Equal`s
 (`IndexScan.evalIQ_inList`, new `IQ.inListV`); `can_utilize_index` gained an `InList` arm (non-empty and every
@@ -103,7 +113,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `CTGlue` | `CondTraverseOp::new`/`build_state`/`trim_to_cap`/`out_alias_id`/`null_pad`/`next`, `ExpandIntoOp::new`, scan/builder constructors |
 | `VarLenGlue` | `path_value`, `VarLenIter::next` (frame-tree machine), `expand_row` endpoint plan, `new` |
 | `SlotFeed.aggRow`, `inputRow`, `declare` | how an Aggregate row feeds a later CondTraverse across `WITH`: `aggregate.rs:1150-1213`, `cond_traverse.rs:799-803,915-928`, binder slot ids `binder.rs:2155-2269` |
-| `IndexScan` | node/edge index scans (`evaluate_index_query`, `can_utilize_index`, `next` with the RediSearch contract `IndexSound` as hypothesis), fulltext and vector scans |
+| `IndexScan` | node/edge index scans (`evaluate_index_query`, `IndexQuery::in_list`/`can_be_served`, `next` with the RediSearch contract `IndexSound` as hypothesis), fulltext and vector scans |
 
 ## What is proved (plain English)
 
