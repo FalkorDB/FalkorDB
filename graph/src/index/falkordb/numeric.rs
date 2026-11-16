@@ -197,11 +197,8 @@ impl KeySet {
     #[must_use]
     pub fn of_windows(mut windows: Vec<(u64, u64)>) -> Self {
         debug_assert!(
-            windows.iter().all(|&(lo, hi)| lo <= hi)
-                && windows
-                    .windows(2)
-                    .all(|w| w[0].1.saturating_add(1) < w[1].0),
-            "windows are non-empty, sorted, disjoint and not adjacent: {windows:?}"
+            windows.iter().all(|&(lo, hi)| lo <= hi) && windows.windows(2).all(|w| w[0].1 < w[1].0),
+            "windows are non-empty, sorted and disjoint: {windows:?}"
         );
         match windows.len() {
             0 => Self::Empty,
