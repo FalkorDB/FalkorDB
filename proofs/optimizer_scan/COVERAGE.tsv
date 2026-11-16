@@ -2,20 +2,18 @@ file	function	line	bucket	lean_name_or_reason
 graph/src/planner/optimizer/select_scan_node.rs	score_endpoint	98	PROVEN	ScanTree.scoreEndpoint_spec (bound +3, filtered +2, labelled +1, filter_runs_late flag), score_bound_dominant
 graph/src/planner/optimizer/select_scan_node.rs	collect_filtered_vars	156	PROVEN	ScanTree.filteredVars: collectLoop_eq (above), spineVars_eq (downward spine), filteredVars_above_sub
 graph/src/planner/optimizer/select_scan_node.rs	collect	160	PROVEN	ScanTree.filterVars (a Filter is modelled as its Variable list; the BFS collect is that list): collectLoop_eq, spineVars_eq
-graph/src/planner/optimizer/select_scan_node.rs	make_scan_subtree	214	PROVEN	ScanTree.makeScanSubtree_planner, filtersOf_makeScanSubtree; ScanOrder.run_append
-graph/src/planner/optimizer/select_scan_node.rs	filters_of	250	PROVEN	ScanTree.filtersOf: filtersOf_wrap, filtersOf_makeScanSubtree; ScanOrder.salvage_wellScoped, boundAfter_hop; Salvage.salvaged_wellScoped, premise_of_spine (filters' variable sets from the model); premise REFUTED for an Unwind child: Salvage.premise_fails
-graph/src/planner/optimizer/select_scan_node.rs	argument_leaf_of	276	PROVEN	ScanTree.argumentLeafOf_spec
-graph/src/planner/optimizer/select_scan_node.rs	in_merge_match_branch	295	PROVEN	ScanTree.inMergeLoop_spec
-graph/src/planner/optimizer/select_scan_node.rs	is_planner_scan_subtree	315	PROVEN	ScanTree.plannerScan_agree, scanDepth_spec
-graph/src/planner/optimizer/select_scan_node.rs	planner_scan_alias	334	PROVEN	ScanTree.plannerScan_agree, scanDepth_spec
-graph/src/planner/optimizer/select_scan_node.rs	planner_scan_idx	353	PROVEN	ScanTree.plannerScan_agree, scanDepth_spec
-graph/src/planner/optimizer/select_scan_node.rs	swap_relationship	370	PROVEN	ScanOrder.swap_holds, swap_swap
-graph/src/planner/optimizer/select_scan_node.rs	collect_output_aliases	391	PROVEN	ScanTree.collectOutputAliases_spec
-graph/src/planner/optimizer/select_scan_node.rs	node_path	442	PROVEN	ScanTree.nodePath_eq
-graph/src/planner/optimizer/select_scan_node.rs	resolve_path	459	PROVEN	ScanTree.resolve_nodePath, pruneAt_parent
-graph/src/planner/optimizer/select_scan_node.rs	child_subtree_binds	475	PROVEN	ScanTree.childSubtreeBinds_spec
-graph/src/planner/optimizer/select_scan_node.rs	select_var_len_scan_node	510	PROVEN	ScanTree.vl_reverse_sound, reach_reverse_iff, vlNonLeaf_keeps_wrappers, vlLeaf_guards; CONFIRMED BUG vl_leaf_fires_over_filter, vl_leaf_drops_filter (leaf rewrite prunes a Filter wrapper, line 661)
-graph/src/planner/optimizer/select_scan_node.rs	select_scan_node	681	PROVEN	ScanOrder.order_sound, order_length, pick_perm, run_perm, place_wellScoped, runScoped_wellScoped, salvage_wellScoped, Salvage.salvaged_wellScoped/premise_of_spine (sound only with an honest initial_bound, and only when the salvaged filters read bound variables); CONFIRMED BUG lines 979-986, still present: best_node seeded as bound when the outer child is kept; CONFIRMED BUG #2972, open fix PR #3099 (Salvage.premise_fails, salvage_loses_row): a planner scan with an Unwind child is pruned whole (is_planner_scan_subtree:315, argument_leaf_of:276 keeps only an Argument) while its Filter reading the Unwind variable is salvaged: WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) Rust 0, C 1
+graph/src/planner/optimizer/select_scan_node.rs	make_scan_subtree	212	PROVEN	ScanTree.makeScanSubtree_planner, filtersOf_makeScanSubtree (#3099: no salvaged filters); ScanOrder.run_append
+graph/src/planner/optimizer/select_scan_node.rs	argument_leaf_of	241	PROVEN	ScanTree.argumentLeafOf_spec
+graph/src/planner/optimizer/select_scan_node.rs	in_merge_match_branch	260	PROVEN	ScanTree.inMergeLoop_spec
+graph/src/planner/optimizer/select_scan_node.rs	planner_scan_alias	348	PROVEN	ScanTree.plannerScan_agree, scanDepth_spec
+graph/src/planner/optimizer/select_scan_node.rs	planner_scan_idx	367	PROVEN	ScanTree.plannerScan_agree, scanDepth_spec
+graph/src/planner/optimizer/select_scan_node.rs	swap_relationship	384	PROVEN	ScanOrder.swap_holds, swap_swap
+graph/src/planner/optimizer/select_scan_node.rs	collect_output_aliases	405	PROVEN	ScanTree.collectOutputAliases_spec (#3099: ProcedureCall yields, Optional vars)
+graph/src/planner/optimizer/select_scan_node.rs	node_path	464	PROVEN	ScanTree.nodePath_eq
+graph/src/planner/optimizer/select_scan_node.rs	resolve_path	481	PROVEN	ScanTree.resolve_nodePath, pruneAt_parent
+graph/src/planner/optimizer/select_scan_node.rs	child_subtree_binds	497	PROVEN	ScanTree.childSubtreeBinds_spec
+graph/src/planner/optimizer/select_scan_node.rs	select_var_len_scan_node	532	PROVEN	ScanTree.vl_reverse_sound, reach_reverse_iff, vlNonLeaf_keeps_wrappers, vlLeaf_guards, vlLeaf_keeps_filter, vlLeafScan_spec; CONFIRMED BUG FIXED by #3099: vl_leaf_refuses_filter (was pre3099_vl_leaf_fires_over_filter, vl_leaf_drops_filter: the leaf rewrite pruned a Filter wrapper)
+graph/src/planner/optimizer/select_scan_node.rs	select_scan_node	728	PROVEN	ScanOrder.order_sound, order_length, pick_perm, run_perm, place_wellScoped, runScoped_wellScoped (sound only with an honest initial_bound); SelectSeed.seed_honest_of_bound; CONFIRMED BUG lines 997-1004, still present: best_node seeded as bound when the outer child is kept; REGRESSION by #3099 (SelectSeed.pre3099_plannerScan_seed_honest, plannerScan_seed_dishonest, plannerScan_loses_row): a plain MATCH (b) child is now kept, so MATCH (b) MATCH (b)<-[:S]-(d)-[:R]->(c:L {v:1})-[:R]->(z) RETURN count(*) 1 -> 0; #2972 FIXED by #3099 (Salvage, pre-#3099 model: premise_fails, salvage_loses_row)
 graph/src/planner/optimizer/utilize_index.rs	build_has_labels_filter	71	PROVEN	Cleanup.hasLabelsFilter, isHasLabelsFor_build, addToLabels_idem
 graph/src/planner/optimizer/utilize_index.rs	alias	101	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
 graph/src/planner/optimizer/utilize_index.rs	all_labels	105	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
@@ -76,3 +74,4 @@ graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	256	PROVEN	EdgeInline.i
 graph/src/runtime/ops/node_by_index_scan.rs	next	302	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound
 graph/src/planner/optimizer/utilize_index.rs	is_array_contains	791	PROVEN	Index.isArrayContains: isArrayContains_good, tp_atom, pushAnd (C10 agreement)
 graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown/array-contains	727	MODELLED	the AND branch keeping an array-contains conjunct's filter (#3736): pushAnd models it, but utilize_sound assumes goodA, which excludes array-contains (as it does the standalone branch); checked by decide only (IndexCex C10)
+graph/src/planner/optimizer/select_scan_node.rs	outer_child_bound_vars	283	PROVEN	ScanTree.outerChildBoundVars_sound, outerChildBoundVars_plannerScan, outerChildBoundVars_product, outerChildBoundVars_unwind
