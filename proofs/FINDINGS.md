@@ -154,7 +154,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 ### Wrong results: index layer (`proofs/index_layer/repro.py`)
 - **W2-index-1**: `n.v = date(..)` returns every node of the label (`utilize_index.rs:631` drops the filter and `node_by_index_scan.rs:252` falls back). C ✓.
 - **W2-index-2**: `n.v = point(..)` returns [] (`index/mod.rs:1660`). C ✓.
-- **W2-index-3**: `n.v IN [date(..), 2]` drops the date item (`node_by_index_scan.rs:221-236`). C ✓. Still open after #2383: the scan ops now build one `InList` but drop non-scalar members first (filter at about node_by_index_scan.rs:221-236). #2383 itself is behaviour-preserving (`canUse_inListV_eq_or`).
+- **W2-index-3** (fixed by #3064: `IndexQuery::in_list` keeps the date, `can_be_served` refuses it and the scan falls back; ops_traverse `inList_unservable_falls_back`, optimizer_scan `IndexCex` C9): `n.v IN [date(..), 2]` drops the date item (`node_by_index_scan.rs:221-236`). C ✓. Still open after #2383: the scan ops now build one `InList` but drop non-scalar members first (filter at about node_by_index_scan.rs:221-236). #2383 itself is behaviour-preserving (`canUse_inListV_eq_or`).
 - **W2-index-4**: for multi-label `(n:A:B)`, conditions on B's indexed property are pushed into A's index (`utilize_index.rs:503`, `:521`; `mod.rs:1547`, `:1564`). C ✓.
 - **W2-index-5**: `n.v > 0` returns dates, which are stored as numbers (`mod.rs:785`). C ✓.
 - **W2-index-6**: `n.v > 'a' AND n.v < 'a'` returns `'a'`, because the equal-bounds shortcut ignores exclusivity (`mod.rs:1418`). C ✓.

@@ -50,31 +50,78 @@ def mSem (m : Option (Nat × IQ)) (n : Node) : Bool :=
   | none => true
   | some (_, q) => qsem idx L q n
 
+theorem cu_inList (k : Nat) (ts : List T) (hne : ts ≠ []) (hts : ts.all scalarLit = true) :
+    canUtilize (evalIQ (.inList k (.list ts))) = true := by
+  have hgood : ∀ t ∈ ts, notNullV (evalC t) = true ∧ isIndexable (evalC t) = true := by
+    intro t ht
+    have := List.all_eq_true.mp hts t ht
+    rcases t with _ | ⟨_ | _ | _ | _ | _ | _⟩ | _ | _ | _ <;>
+      simp_all [scalarLit, evalC, evalT, notNullV, isIndexable]
+  have hfilt : (ts.map evalC).filter notNullV = ts.map evalC :=
+    List.filter_eq_self.mpr (fun c hc => by
+      obtain ⟨t, ht, rfl⟩ := List.mem_map.mp hc; exact (hgood t ht).1)
+  simp only [evalIQ, listVals, hfilt, canUtilize]
+  have hall : (ts.map evalC).all isIndexable = true :=
+    List.all_eq_true.mpr (fun c hc => by
+      obtain ⟨t, ht, rfl⟩ := List.mem_map.mp hc; exact (hgood t ht).2)
+  rw [hall]
+  cases ts with
+  | nil => exact absurd rfl hne
+  | cons _ _ => rfl
+
+/-- **PROVEN** (#3064, `pushed_needs_post_filter`): a covered conjunct pushed without asking to
+keep the filter is served by the index (`can_be_served`), so the scan never falls back to the
+whole label with the filter gone. -/
+theorem pushedNeeds_cu (a : A) (L' : Nat) (q : IQ) (hg : goodA a = true)
+    (hs : trySingle idx [L] a = some (L', q)) (hk : pushedNeeds a = false) :
+    canUtilize (evalIQ q) = true := by
+  obtain ⟨-, -, -, hcu, hin⟩ := trySingle_spec idx L (fun _ _ => true) a L' q hg hs
+  cases hia : isInn a
+  · exact hcu hia
+  · match a, hg, hia with
+    | .inn (.prop k) (.list ts), _, _ =>
+      rw [hin ts k rfl]
+      simp only [pushedNeeds, needsPostA, Bool.or_eq_false_iff] at hk
+      obtain ⟨-, hk⟩ := hk
+      split at hk
+      · next hc =>
+        simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff] at hc
+        exact cu_inList k ts hc.1 hc.2
+      · simp at hk
+
 /-- **PROVEN** (the AND branch of `try_filter_pushdown`): on a single-label scan, the merged
 query and the leftover conjuncts together select exactly the conjunction; every merged query
-stays on `L` and well-formed, and is usable by the runtime when no conjunct is an `IN`. -/
+stays on `L` and well-formed, and is usable by the runtime unless some merged conjunct asked to
+keep the filter (`pushed_needs_post_filter`, #3064). -/
 theorem pushAnd_spec (opq : Nat → Node → Bool) :
-    ∀ (as : List A) (m : Option (Nat × IQ)) (rem : List A),
+    ∀ (as : List A) (m : Option (Nat × IQ)) (rem : List A) (k : Bool),
     (∀ a ∈ as, goodA a = true ∧ strictStr a = false) →
     (∀ L0 q0, m = some (L0, q0) → L0 = L ∧ rangeOK idx L q0 = true) →
-    (∀ L0 q0, (pushAnd idx [L] as m rem).1 = some (L0, q0) → L0 = L ∧ rangeOK idx L q0 = true) ∧
+    (∀ L0 q0, (pushAnd idx [L] as m rem k).1 = some (L0, q0) → L0 = L ∧ rangeOK idx L q0 = true) ∧
     (∀ n : Node, Faithful n → L ∈ n.labels →
-      (mSem idx L (pushAnd idx [L] as m rem).1 n && (pushAnd idx [L] as m rem).2.all (evalA opq n))
+      (mSem idx L (pushAnd idx [L] as m rem k).1 n && (pushAnd idx [L] as m rem k).2.1.all (evalA opq n))
         = (mSem idx L m n && rem.all (evalA opq n) && as.all (evalA opq n))) ∧
-    ((∀ a ∈ as, isInn a = false) → (∀ L0 q0, m = some (L0, q0) → canUtilize (evalIQ q0) = true) →
-      ∀ L0 q0, (pushAnd idx [L] as m rem).1 = some (L0, q0) → canUtilize (evalIQ q0) = true)
-  | [], m, rem, _, hm => by
-    refine ⟨hm, fun n _ _ => by simp [pushAnd], fun _ h => h⟩
-  | a :: as, m, rem, hg, hm => by
+    ((k = false → ∀ L0 q0, m = some (L0, q0) → canUtilize (evalIQ q0) = true) →
+      (pushAnd idx [L] as m rem k).2.2 = false →
+      ∀ L0 q0, (pushAnd idx [L] as m rem k).1 = some (L0, q0) → canUtilize (evalIQ q0) = true)
+  | [], m, rem, k, _, hm => by
+    refine ⟨hm, fun n _ _ => by simp [pushAnd], fun hc hk => ?_⟩
+    simp only [pushAnd] at hk ⊢
+    exact hc hk
+  | a :: as, m, rem, k, hg, hm => by
     have hga := hg a (by simp)
     have hgs : ∀ b ∈ as, goodA b = true ∧ strictStr b = false := fun b hb => hg b (by simp [hb])
     simp only [pushAnd]
     split
     · next L' q hs =>
-      obtain ⟨hL', hex, hro, hcu, -⟩ := trySingle_spec idx L opq a L' q hga.1 hs
+      obtain ⟨hL', hex, hro, -, -⟩ := trySingle_spec idx L opq a L' q hga.1 hs
       subst L'
-      -- A good conjunct is never an array-contains, so it leaves the leftovers alone.
-      simp only [isArrayContains_good a hga.1, Bool.false_eq_true, ite_false]
+      -- every query merged so far is on `L`: the #3064 label check passes on a single-label scan
+      have hall : (m.all fun p => p.1 == L) = true := by
+        cases m with
+        | none => rfl
+        | some p => obtain ⟨L1, q1⟩ := p; simp [(hm L1 q1 rfl).1]
+      simp only [hall, ite_true]
       have hm' : ∀ L0 q0, mergeInto m L q = some (L0, q0) →
             L0 = L ∧ rangeOK idx L q0 = true := by
         intro L0 q0 h
@@ -85,8 +132,8 @@ theorem pushAnd_spec (opq : Nat → Node → Bool) :
           simp [mergeInto] at h; obtain ⟨rfl, rfl⟩ := h
           have := hm L1 q1 rfl
           exact ⟨this.1, rangeOK_merge idx L _ _ this.2 (hro hga.2)⟩
-      obtain ⟨ih1, ih2, ih3⟩ := pushAnd_spec opq as _ rem hgs hm'
-      refine ⟨ih1, fun n hn hL => ?_, fun hni hcm => ih3 (fun b hb => hni b (by simp [hb])) ?_⟩
+      obtain ⟨ih1, ih2, ih3⟩ := pushAnd_spec opq as _ rem (k || pushedNeeds a) hgs hm'
+      refine ⟨ih1, fun n hn hL => ?_, fun hcm => ih3 (fun hk' => ?_)⟩
       · rw [ih2 n hn hL]
         cases m with
         | none => simp [mSem, mergeInto, hex n hn hL]; cases evalA opq n a <;> simp
@@ -98,15 +145,16 @@ theorem pushAnd_spec (opq : Nat → Node → Bool) :
           simp only [List.all_cons]
           cases qsem idx L q1 n <;> cases rem.all (evalA opq n) <;> cases evalA opq n a <;> simp
       · intro L0 q0 h
-        have hcq := hcu (hni a (by simp))
+        simp only [Bool.or_eq_false_iff] at hk'
+        have hcq := pushedNeeds_cu idx L a L q hga.1 hs hk'.2
         cases m with
         | none => simp [mergeInto] at h; obtain ⟨rfl, rfl⟩ := h; exact hcq
         | some p =>
           obtain ⟨L1, q1⟩ := p
           simp [mergeInto] at h; obtain ⟨rfl, rfl⟩ := h
-          exact cu_merge _ _ (hcm L1 q1 rfl) hcq
-    · obtain ⟨ih1, ih2, ih3⟩ := pushAnd_spec opq as m (rem ++ [a]) hgs hm
-      refine ⟨ih1, fun n hn hL => ?_, fun hni hcm => ih3 (fun b hb => hni b (by simp [hb])) hcm⟩
+          exact cu_merge _ _ (hcm hk'.1 L1 q1 rfl) hcq
+    · obtain ⟨ih1, ih2, ih3⟩ := pushAnd_spec opq as m (rem ++ [a]) k hgs hm
+      refine ⟨ih1, fun n hn hL => ?_, ih3⟩
       rw [ih2 n hn hL]
       simp only [List.all_append, List.all_cons, List.all_nil, Bool.and_true]
       cases mSem idx L m n <;> cases rem.all (evalA opq n) <;> cases evalA opq n a <;> simp
@@ -119,34 +167,40 @@ theorem buildSome_any (F : List Nat) (n : Node) :
     cases h : build F q <;> simp [bsel, h, buildSome_any F n qs]
 
 /-- **PROVEN** (the OR branch): every disjunct converted, the union selects exactly the
-disjunction. -/
+disjunction; when no disjunct asked to keep the filter, every disjunct is served by the index. -/
 theorem pushOr_spec (opq : Nat → Node → Bool) :
-    ∀ (as : List A) (lab : Option Nat) (qs : List IQ),
-    (∀ a ∈ as, goodA a = true) → pushOr idx [L] as = some (lab, qs) →
+    ∀ (as : List A) (lab : Option Nat) (qs : List IQ) (k : Bool),
+    (∀ a ∈ as, goodA a = true) → pushOr idx [L] as = some (lab, qs, k) →
     (lab = none ↔ as = []) ∧ (∀ L0, lab = some L0 → L0 = L) ∧ (qs = [] ↔ as = []) ∧
     (∀ n : Node, Faithful n → L ∈ n.labels →
       (evalIQs qs).any (fun q => bsel (idx L) q n) = as.any (evalA opq n)) ∧
-    ((∀ a ∈ as, isInn a = false) → canAll (evalIQs qs) = true)
-  | [], lab, qs, _, h => by
-    simp [pushOr] at h; obtain ⟨rfl, rfl⟩ := h; simp [evalIQs, canAll]
-  | a :: as, lab, qs, hg, h => by
+    (k = false → canAll (evalIQs qs) = true)
+  | [], lab, qs, k, _, h => by
+    simp [pushOr] at h; obtain ⟨rfl, rfl, rfl⟩ := h; simp [evalIQs, canAll]
+  | a :: as, lab, qs, k, hg, h => by
     simp only [pushOr] at h
     split at h
-    · next L' q _ qs' hs hr =>
-      simp at h; obtain ⟨rfl, rfl⟩ := h
-      obtain ⟨hL', hex, -, hcu, -⟩ := trySingle_spec idx L opq a L' q (hg a (by simp)) hs
+    · next L' q lab' qs' k' hs hr =>
+      obtain ⟨hL', hex, -, -, -⟩ := trySingle_spec idx L opq a L' q (hg a (by simp)) hs
       subst L'
-      obtain ⟨-, -, -, ih4, ih5⟩ :=
-        pushOr_spec opq as _ qs' (fun b hb => hg b (by simp [hb])) hr
+      obtain ⟨-, ih2, -, ih4, ih5⟩ :=
+        pushOr_spec opq as _ qs' k' (fun b hb => hg b (by simp [hb])) hr
+      have hall : (lab'.all (· == L)) = true := by
+        cases lab' with
+        | none => rfl
+        | some L1 => simp [ih2 L1 rfl]
+      simp only [hall, ite_true, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl, rfl⟩ := h
       refine ⟨by simp, fun L0 h => by simp at h; rw [← h], by simp, fun n hn hL => ?_,
-        fun hni => ?_⟩
+        fun hk => ?_⟩
       · simp only [evalIQs, List.any_cons, List.any_cons]
         rw [ih4 n hn hL]
         have := hex n hn hL
         simp only [qsem, idxSel, hL, decide_true, Bool.true_and] at this
         rw [this]
-      · simp only [evalIQs, canAll]
-        rw [hcu (hni a (by simp)), ih5 (fun b hb => hni b (by simp [hb]))]; rfl
+      · simp only [Bool.or_eq_false_iff] at hk
+        simp only [evalIQs, canAll]
+        rw [pushedNeeds_cu idx L a L q (hg a (by simp)) hs hk.1, ih5 hk.2]; rfl
     · simp at h
 
 theorem needsPost_inn (a : A) (h : goodA a = true) (hi : isInn a = true) : nonIdxA a = true := by
@@ -155,25 +209,6 @@ theorem needsPost_inn (a : A) (h : goodA a = true) (hi : isInn a = true) : nonId
   | .cmp _ (.prop _) (.lit _), _ => simp [isInn] at hi
   | .cmp _ (.lit _) (.prop _), _ => simp [isInn] at hi
   | .opq _, _ => simp [isInn] at hi
-
-theorem cu_inList (k : Nat) (ts : List T) (hne : ts ≠ []) (hts : ts.all scalarLit = true) :
-    canUtilize (evalIQ (.inList k (.list ts))) = true := by
-  have hgood : ∀ t ∈ ts, isPrim (evalC t) = true ∧ isIndexable (evalC t) = true := by
-    intro t ht
-    have := List.all_eq_true.mp hts t ht
-    rcases t with _ | ⟨_ | _ | _ | _ | _ | _⟩ | _ | _ | _ <;>
-      simp_all [scalarLit, evalC, evalT, isPrim, isIndexable]
-  have hfilt : (ts.map evalC).filter isPrim = ts.map evalC :=
-    List.filter_eq_self.mpr (fun c hc => by
-      obtain ⟨t, ht, rfl⟩ := List.mem_map.mp hc; exact (hgood t ht).1)
-  simp only [evalIQ, listVals, hfilt, canUtilize]
-  have hall : (ts.map evalC).all isIndexable = true :=
-    List.all_eq_true.mpr (fun c hc => by
-      obtain ⟨t, ht, rfl⟩ := List.mem_map.mp hc; exact (hgood t ht).2)
-  rw [hall]
-  cases ts with
-  | nil => exact absurd rfl hne
-  | cons _ _ => rfl
 
 /-- The filter shapes the headline theorem covers: AND of covered atoms with no strict string
 comparison, OR of covered atoms, or a single covered atom. -/
@@ -185,52 +220,53 @@ def goodF : F → Bool
 theorem hasAll_single (n : Node) : hasAll [L] n = decide (L ∈ n.labels) := by
   simp [hasAll]
 
-theorem utilize_some (ls : List Nat) (f : F) (L' : Nat) (q : IQ) (rem : List A)
-    (h : tryPushdown idx ls f = some (L', q, rem)) :
+theorem utilize_some (ls : List Nat) (f : F) (L' : Nat) (q : IQ) (rem : List A) (keep : Bool)
+    (h : tryPushdown idx ls f = some (L', q, rem, keep)) :
     utilize idx ls f =
-      (if rem.isEmpty then (if needsPost f then .filter f (.idxScan ls L' q) else .idxScan ls L' q)
-       else if needsPost f then .filter f (.idxScan ls L' q) else .filter (.and rem) (.idxScan ls L' q)) := by
+      (if rem.isEmpty then (if keep then .filter f (.idxScan ls L' q) else .idxScan ls L' q)
+       else if keep then .filter f (.idxScan ls L' q) else .filter (.and rem) (.idxScan ls L' q)) := by
   simp [utilize, h]
 
-theorem tp_atom (ls : List Nat) (a : A) (L' : Nat) (q : IQ) (rem : List A)
-    (h : tryPushdown idx ls (.atom a) = some (L', q, rem)) :
-    trySingle idx ls a = some (L', q) ∧ rem = (if isArrayContains a then [a] else []) := by
+theorem tp_atom (ls : List Nat) (a : A) (L' : Nat) (q : IQ) (rem : List A) (keep : Bool)
+    (h : tryPushdown idx ls (.atom a) = some (L', q, rem, keep)) :
+    trySingle idx ls a = some (L', q) ∧ rem = [] ∧ keep = pushedNeeds a := by
   simp only [tryPushdown] at h
   cases hs : trySingle idx ls a with
   | none => simp [hs] at h
-  | some p => obtain ⟨L2, q2⟩ := p; simp [hs] at h; obtain ⟨rfl, rfl, rfl⟩ := h; simp
+  | some p => obtain ⟨L2, q2⟩ := p; simp [hs] at h; obtain ⟨rfl, rfl, rfl, rfl⟩ := h; simp
 
-theorem tp_and (ls : List Nat) (as : List A) (L' : Nat) (q : IQ) (rem : List A)
-    (h : tryPushdown idx ls (.and as) = some (L', q, rem)) :
-    (pushAnd idx ls as none []).1 = some (L', q) ∧ (pushAnd idx ls as none []).2 = rem := by
+theorem tp_and (ls : List Nat) (as : List A) (L' : Nat) (q : IQ) (rem : List A) (keep : Bool)
+    (h : tryPushdown idx ls (.and as) = some (L', q, rem, keep)) :
+    (pushAnd idx ls as none [] false).1 = some (L', q) ∧ (pushAnd idx ls as none [] false).2.1 = rem ∧
+      (pushAnd idx ls as none [] false).2.2 = keep := by
   simp only [tryPushdown] at h
-  cases hs : pushAnd idx ls as none [] with
+  cases hs : pushAnd idx ls as none [] false with
   | mk m r =>
+    obtain ⟨r, k⟩ := r
     cases m with
     | none => simp [hs] at h
-    | some p => obtain ⟨L2, q2⟩ := p; simp [hs] at h; obtain ⟨rfl, rfl, rfl⟩ := h; simp
+    | some p => obtain ⟨L2, q2⟩ := p; simp [hs] at h; obtain ⟨rfl, rfl, rfl, rfl⟩ := h; simp
 
-theorem tp_or (ls : List Nat) (as : List A) (L' : Nat) (q : IQ) (rem : List A)
-    (h : tryPushdown idx ls (.or as) = some (L', q, rem)) :
-    ∃ qs, pushOr idx ls as = some (some L', qs) ∧ q = .or qs ∧ rem = [] := by
+theorem tp_or (ls : List Nat) (as : List A) (L' : Nat) (q : IQ) (rem : List A) (keep : Bool)
+    (h : tryPushdown idx ls (.or as) = some (L', q, rem, keep)) :
+    ∃ qs, pushOr idx ls as = some (some L', qs, keep) ∧ q = .or qs ∧ rem = [] := by
   simp only [tryPushdown] at h
   cases hs : pushOr idx ls as with
   | none => simp [hs] at h
   | some p =>
-    obtain ⟨lab, qs⟩ := p
+    obtain ⟨lab, qs, k⟩ := p
     cases lab with
     | none => simp [hs] at h
-    | some L2 => simp [hs] at h; obtain ⟨rfl, rfl, rfl⟩ := h; exact ⟨qs, rfl, rfl, rfl⟩
+    | some L2 => simp [hs] at h; obtain ⟨rfl, rfl, rfl, rfl⟩ := h; exact ⟨qs, rfl, rfl, rfl⟩
 
 /-- **PROVEN** (headline, `utilize_index` soundness): on a single-label scan whose property
 values are Null/Int/String, for filters built from `n.k op literal`, `literal op n.k`,
 `n.k IN [literals]` (non-lossy Int or String literals) and unindexable conjuncts, combined by
 AND (no strict string bound) or OR, the rewritten plan selects exactly the nodes the original
-`Filter → NodeByLabelScan` does. Every counterexample in `IndexCex` breaks one hypothesis:
-two labels (C5, C6), a Bool value (C1; C2, temporal, fixed by #3076), a Date literal or computed
-constant (C3, C4), a computed attribute side (C7, C7', C8), a Date inside IN (C9), array-contains
-(C10, the hypothesis only: array-contains in an AND keeps its filter since #3736); C11 (strict
-string bound in an AND) was fixed by #3072. -/
+`Filter → NodeByLabelScan` does. Every open counterexample in `IndexCex` breaks one hypothesis:
+a Bool value (C1), a computed attribute side (C7, C7', C8). Fixed: C2 (#3076), C11 (#3072),
+C10 (#3736), and C3, C4, C5, C6, C9 (#3064: exact-literal allow-list, one label per pushed
+query, `IN` items kept); the theorem still assumes one label and Null/Int/String literals. -/
 theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true)
     (n : Node) (hn : Faithful n) :
     (utilize idx [L] f).sel idx opq n = (reference [L] f).sel idx opq n := by
@@ -245,7 +281,7 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
       simp [Plan.sel, idxSel, hasAll_single, hL]
     split
     · simp [Plan.sel, hasAll_single, hL]
-    · next L' q rem hp =>
+    · next L' q rem keep hp =>
       have hL' : L' = L := by
         unfold tryPushdown at hp
         cases f with
@@ -255,17 +291,17 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
           · simp at hp
         | and as =>
           simp only at hp; split at hp
-          · next L2 q2 rem2 he =>
+          · next L2 q2 rem2 k2 he =>
             simp at hp; obtain ⟨rfl, -⟩ := hp
-            have := (pushAnd_spec idx L opq as none [] (fun a ha => by
+            have := (pushAnd_spec idx L opq as none [] false (fun a ha => by
               have := List.all_eq_true.mp hf a ha; simp_all) (by simp)).1 L2 q2 (by rw [he])
             exact this.1
           · simp at hp
         | or as =>
           simp only at hp; split at hp
-          · next L2 qs he =>
+          · next L2 qs k2 he =>
             simp at hp; obtain ⟨rfl, -⟩ := hp
-            exact (pushOr_spec idx L opq as _ qs (fun a ha => List.all_eq_true.mp hf a ha) he).2.1 L2 rfl
+            exact (pushOr_spec idx L opq as _ qs k2 (fun a ha => List.all_eq_true.mp hf a ha) he).2.1 L2 rfl
           · simp at hp
       subst L'
       simp only
@@ -281,49 +317,34 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
     cases hp : tryPushdown idx [L] f with
     | none => simp [utilize, hp, Plan.sel, hasAll_single, hL]
     | some t =>
-      obtain ⟨L', q, rem⟩ := t
-      rw [utilize_some idx [L] f L' q rem hp]
+      obtain ⟨L', q, rem, keep⟩ := t
+      rw [utilize_some idx [L] f L' q rem keep hp]
       -- facts common to all three shapes
       have key : L' = L ∧ (∀ m : Node, Faithful m → L ∈ m.labels →
             (qsem idx L q m && rem.all (evalA opq m)) = evalF opq m f) ∧
-          (needsPost f = false → canUtilize (evalIQ q) = true) := by
+          (keep = false → canUtilize (evalIQ q) = true) := by
         cases f with
         | atom a =>
-          obtain ⟨hs, hrem⟩ := tp_atom idx [L] a L' q rem hp
-          obtain ⟨rfl, hex, -, hcu, hin⟩ := trySingle_spec idx L opq a L' q hf hs
+          obtain ⟨hs, hrem, hkeep⟩ := tp_atom idx [L] a L' q rem keep hp
+          obtain ⟨rfl, hex, -, -, -⟩ := trySingle_spec idx L opq a L' q hf hs
           refine ⟨rfl, fun m hm hLm => ?_, fun hk => ?_⟩
-          · simp [hrem, isArrayContains_good a hf, hex m hm hLm, evalF]
-          · cases hia : isInn a
-            · exact hcu hia
-            · match a, hf, hia with
-              | .inn (.prop k) (.list ts), hg, _ =>
-                rw [hin ts k rfl]
-                simp only [needsPost] at hk
-                split at hk
-                · next hc =>
-                  simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff] at hc
-                  exact cu_inList k ts hc.1 hc.2
-                · simp at hk
+          · simp [hrem, hex m hm hLm, evalF]
+          · exact pushedNeeds_cu idx _ a _ q hf hs (hkeep ▸ hk)
         | and as =>
-          obtain ⟨h1, h2⟩ := tp_and idx [L] as L' q rem hp
+          obtain ⟨h1, h2, h3⟩ := tp_and idx [L] as L' q rem keep hp
           have hg : ∀ a ∈ as, goodA a = true ∧ strictStr a = false := fun a ha => by
             have := List.all_eq_true.mp hf a ha; simp_all
-          obtain ⟨hlab, heq, hcu⟩ := pushAnd_spec idx L opq as none [] hg (by simp)
+          obtain ⟨hlab, heq, hcu⟩ := pushAnd_spec idx L opq as none [] false hg (by simp)
           obtain ⟨rfl, -⟩ := hlab L' q h1
           refine ⟨rfl, fun m hm hLm => ?_, fun hk => ?_⟩
           · have := heq m hm hLm
             rw [h1, h2] at this
             simpa [mSem, evalF] using this
-          · refine hcu (fun a ha => ?_) (by simp) L' q h1
-            cases hi : isInn a
-            · rfl
-            · have := needsPost_inn a (hg a ha).1 hi
-              simp only [needsPost, List.any_eq_false] at hk
-              exact absurd this (by simpa using hk a ha)
+          · exact hcu (by simp) (h3 ▸ hk) L' q h1
         | or as =>
-          obtain ⟨qs, hpo, rfl, rfl⟩ := tp_or idx [L] as L' q rem hp
+          obtain ⟨qs, hpo, rfl, rfl⟩ := tp_or idx [L] as L' q rem keep hp
           obtain ⟨-, hlab, hqe, hany, hcan⟩ :=
-            pushOr_spec idx L opq as _ qs (fun a ha => List.all_eq_true.mp hf a ha) hpo
+            pushOr_spec idx L opq as _ qs keep (fun a ha => List.all_eq_true.mp hf a ha) hpo
           obtain rfl := hlab L' rfl
           have hne : qs ≠ [] := by
             intro h
@@ -335,21 +356,16 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
               List.all_nil, Bool.and_true, evalF]
             rw [buildSome_any, hany m hm hLm]
           · simp only [evalIQ, canUtilize]
-            rw [hcan (fun a ha => ?_)]
-            · cases qs with
-              | nil => exact absurd rfl hne
-              | cons _ _ => rfl
-            · cases hi : isInn a
-              · rfl
-              · have := needsPost_inn a (List.all_eq_true.mp hf a ha) hi
-                simp only [needsPost, List.any_eq_false, Bool.not_eq_true] at hk
-                exact absurd this (by simpa using hk a ha)
+            rw [hcan hk]
+            cases qs with
+            | nil => exact absurd rfl hne
+            | cons _ _ => rfl
       obtain ⟨rfl, hsem, hcu⟩ := key
       have hs := hsem n hn hL
       have sel_filter : ∀ (g : F) (p : Plan), (Plan.filter g p).sel idx opq n =
           (p.sel idx opq n && evalF opq n g) := fun _ _ => rfl
-      cases hk : needsPost f <;> cases hr : rem.isEmpty <;>
-        simp only [hk, hr, ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
+      cases hk : keep <;> cases hr : rem.isEmpty <;>
+        simp only [hr, ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
       · rw [if_pos (hcu hk)]; exact hs
       · have : rem = [] := List.isEmpty_iff.mp hr
         subst this

@@ -24,6 +24,13 @@ builds it, `canUtilize` has its arm, and the new query builds the same union and
 (the `inList_same_as_pre2383` wrapper was removed in bbee75955, the last revision that has it is 17ccc5412; the equivalence itself stays proved as `build_inList_eq_or` and `canUtilize_inList_eq_or` in `Index.lean`). `utilize_sound` is unchanged in statement. #3436 only
 shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs:1415`.
 
+Re-checked against #3064: `canUtilize` is now `IndexQuery::can_be_served` (`index/mod.rs:291`,
+shared by both scan ops; lossy `ArrayContains` ints refused); `evalIQ`'s `IN` arm keeps every
+non-null item (`IndexQuery::in_list`); `nonIdxT` is an allow-list (`exactLit`, `+` flagged);
+`tryPushdown` merges only conjuncts on one label, and returns the keep flag (`pushedNeeds` per
+pushed conjunct) that `utilize` uses. `utilize_sound` is unchanged in statement; C3, C4, C5, C6,
+C9 now agree.
+
 ## Lean ↔ Rust
 
 | Lean | Rust |
@@ -32,13 +39,13 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1415-1469` (`id as u64` at 1428) |
 | `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1470-1480` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
 | `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1783` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
-| `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
-| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
-| `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-295` |
-| `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:357-368, 547-595, 802-873` |
+| `Index.enc`, `arrEnc` | `index/mod.rs:789-944` (`Document::set`) |
+| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1549-1760`, `Index::query` 1763 |
+| `Index.canUtilize`, `evalIQ`, `notNullV` | `index/mod.rs:271-327` (`in_list`, `can_be_served`), `runtime/ops/node_by_index_scan.rs:100-231` |
+| `Index.hasT`, `firstP`, `nonIdxT`, `exactLit`, `needsPostA`, `pushedNeeds` | `utilize_index.rs:357-368, 547-595, 882-912, 821-872, 794-803` |
 | `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-355, 602-704, 481-544` |
-| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-801` |
-| `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:308-335` |
+| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:730-803` |
+| `Index.utilize`, `Plan.sel` | `utilize_index.rs:1011-1083`, `node_by_index_scan.rs:253-310` |
 | `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
 | `ScanOrder.place`, `runScoped` | `select_scan_node.rs:979-986, 1185-1235` |
 | `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
@@ -99,7 +106,8 @@ Scan selection (`ScanOrder.lean`):
    Fix: return `Ok(None)` when the graph has no id bound (`node_count + deleted == 0`), or
    make the range `[0, bound)` exclusive. Tests `bug_id_seek_phantom_node_*`.
    Re-checked live at 2c874022a (after #2846): still present (Rust 1 row, C 0).
-3. **Computed constants ≥ 2^52 return every node** — `is_non_indexable_subexpr`
+3. **Computed constants ≥ 2^52 return every node** (FIXED by #3064: `+` is now flagged, the
+   Filter stays; `IndexCex` C4 agrees) — `is_non_indexable_subexpr`
    (`utilize_index.rs:855-873`) flags only literal lossy ints; `4503599627370495 +
    4503599627370495 + 3` is not flagged, the Filter is dropped, `can_utilize_index` rejects
    the runtime value and the op falls back to a label scan with no Filter. Lean `IndexCex` C4.
@@ -132,7 +140,7 @@ Scan selection (`ScanOrder.lean`):
 ## Also reproduced here but already reported by parallel wave-2 agents
 - `proofs/index_layer` bugs 1, 3, 4, 5, 6, 8: folded `date()` constant returns every node
   (C3); `IN [.., date()]` drops the item (C9); multi-label AND → nothing / OR loses rows
-  (C5, C6); temporals indexed as numbers (C2, FIXED by #3076); `n.v > 'B' AND n.v < 'B'`
+  (C5, C6) — C3, C5, C6, C9 FIXED by #3064; temporals indexed as numbers (C2, FIXED by #3076); `n.v > 'B' AND n.v < 'B'`
   exact-match trap (C11, FIXED by #3072 — both `IndexCex` examples now state agreement);
   Bool/Int conflation (C1, shared with C). `utilize_sound` still assumes no temporal values and no
   strict string bound in an AND (gap: those hypotheses could now be weakened).
