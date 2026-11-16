@@ -302,7 +302,7 @@ structure ConvOps (F : Type) where
   floorToInt : F → Option Int          -- `if !finite null else floor as i64`
   strToInt : String → Option Int       -- the String arm of `value_to_integer`
   ofInt : Int → F
-  display : F → String                 -- `format!("{f}")`
+  display : F → String                 -- `float_to_string(f)` (FloatToString, PR #3609)
   pointStr : F → F → String
   fmtDatetime : Int → String
   fmtDate : Int → String
@@ -330,7 +330,7 @@ def toFloat : V F → V F
   | .int i => .float (c.ofInt i)
   | _ => .null
 
-/-- `value_to_string` (conversion.rs:125) on a non-empty argument list. -/
+/-- `value_to_string` (conversion.rs:126) on a non-empty argument list. -/
 def toStr : V F → V F
   | .str s => .str s
   | .int i => .str (toString i)
