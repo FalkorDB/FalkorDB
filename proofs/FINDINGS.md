@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Fixed bugs and the merge history were removed on 2026-11-16; see the git history of this file before the commit that dropped them (`git log -- proofs/FINDINGS.md`). What is left is the open ledger: bugs that are not fixed on `main`, the decisions, the open gaps and the modelling limits.
+Fixed bugs and the merge history were removed on 2026-11-16; see the git history of this file before 7f2d99c85 (`git show 5261abd4f:proofs/FINDINGS.md`). What is left is the open ledger: bugs that are not fixed on `main`, the decisions, the open gaps and the modelling limits.
 
 ## Current state
 
