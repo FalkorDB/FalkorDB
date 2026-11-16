@@ -709,8 +709,12 @@ pub fn localdatetime_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
         Some(Value::Map(map)) => {
             let vals = map_components(map, &LOCALDATETIME_SLOTS, SUBSECOND_KEYS, false)?;
-            let d = date_from_values(&vals)?;
-            let t = time_from_values(&vals[7..])?;
+            // Every component is type-checked before the date is built, as in
+            // the literal-map path (`localdatetime_struct_pure`) and in C: an
+            // invalid `hour` is reported even when the month is out of range.
+            let c = int_components(&vals, &LOCALDATETIME_SLOTS)?;
+            let d = date_from_components(c[0], c[1], c[2], c[3], c[4], c[5], c[6])?;
+            let t = time_from_components(c[7], c[8], c[9])?;
             let dt = NaiveDateTime::new(d, t);
             Ok(Value::Datetime(dt.and_utc().timestamp()))
         }

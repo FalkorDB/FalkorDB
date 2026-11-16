@@ -17,7 +17,7 @@ graph/src/runtime/functions/temporal.rs	check_date_range	641	PROVEN	Duration.che
 graph/src/runtime/functions/temporal.rs	decompose_duration	649	PROVEN	decomposeDuration: construct_decompose, decompose_monthsDur, neg_days_encoding
 graph/src/runtime/functions/temporal.rs	date_pure	667	PROVEN	Pure.datePure: datePure_midnight, pure_not_unreachable, pure_null, dateStruct_eq_map, date_null_component_errors, date_unknown_key_errors
 graph/src/runtime/functions/temporal.rs	localtime_pure	684	PROVEN	Pure.localtimePure: localtimePure_range, pure_not_unreachable, pure_null, localtimeStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localdatetime_pure	708	PROVEN	Pure.localdatetimePure (date built before the time components are validated): pure_not_unreachable, pure_null, ldt_map_date_error; COUNTEREXAMPLE pr3607_localdatetime_map_ne_struct (map form != struct form)
+graph/src/runtime/functions/temporal.rs	localdatetime_pure	708	NOT COVERED	(#3295): not modelled yet (the map path now type-checks all ten components first)
 graph/src/runtime/functions/temporal.rs	duration_pure	726	PROVEN	Pure.durationPure/durationFromValues/dvLoop (cds, cdsF parameters): pure_not_unreachable, pure_null, durationStruct_eq_map, durationFromValues_ints
 graph/src/runtime/functions/temporal.rs	duration_struct_pure	845	PROVEN	Pure.durationStructPure: durationStruct_eq_map (rewriteArgs: slots + presence mask)
 graph/src/runtime/functions/temporal.rs	date_struct_pure	850	PROVEN	Pure.dateStructPure: dateStruct_eq_map, date_null_component_errors

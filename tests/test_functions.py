@@ -264,6 +264,10 @@ def test_temporal_map_components_are_validated():
         ("localtime({hour: null})", integer.format("hour")),
         ("localtime({hour: 1.5})", integer.format("hour")),
         ("localdatetime({year: 2020, hour: null})", integer.format("hour")),
+        # every component is type-checked before the date is built, on both
+        # paths and as in C: the bad hour wins over the bad month
+        ("localdatetime({year: 2020, month: 13, hour: null})", integer.format("hour")),
+        ("localdatetime({year: 2020, hour: 'x', month: 13})", integer.format("hour")),
         ("date({year: 2020, foo: 5})", unknown),
         ("localtime({hour: 1, foo: 5})", unknown),
         ("localdatetime({year: 2020, foo: 5})", unknown),
