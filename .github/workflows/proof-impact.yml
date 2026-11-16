@@ -442,7 +442,7 @@ jobs:
           elif [[ "$GATES" == pass ]]; then
             note="No proof change was needed."
           elif [[ "$GATES" == held && -s out/proofs.patch ]] && head -n 1 out/gates.md | grep -q '^Gates: `lean_ci.sh` \*\*pass\*\*; `coverage.sh --unmatched` \*\*pass\*\*'; then
-            note="Gates: **held** for review of the items above (both gates passed). After reviewing them, comment \`/proofs apply held\` to commit this patch (people with write access; only while the PR head is still \`${HEAD:0:9}\`), or apply \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) yourself."
+            note="Both gates passed; held only so someone looks at the changed statements or coverage rows above. Comment \`/proofs apply\` to commit this patch (people with write access; only while the PR head is still \`${HEAD:0:9}\`), or apply \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) yourself."
           else
             note="Gates: **${GATES:-did not run}**, so the patch is not suggested as is; it and the logs are in the [run's \`proof-gate\` artifact]($RUN_URL)."
           fi
@@ -463,7 +463,7 @@ jobs:
             echo
             echo "$note"
             echo
-            echo "<sub>At ${HEAD:0:9}. Advisory, not part of ci-gate; nothing is pushed unless someone asks with \`/proofs apply\` (or \`/proofs apply held\` for a held patch).</sub>"
+            echo "<sub>At ${HEAD:0:9}. Advisory, not part of ci-gate; nothing is pushed unless someone asks with \`/proofs apply\`.</sub>"
           } > comment.md
           id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
             -q ".[] | select(.user.login == \"$BOT_LOGIN\" and (.body | startswith(\"<!-- proof-reprove -->\"))) | .id" | head -1)

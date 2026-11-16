@@ -4,9 +4,7 @@
 # run's `proof-gate` artifact. This workflow is the one place that pushes it, and
 # only when someone with write, maintain or admin access on the repository asks:
 #
-#   - a PR comment whose first line is `/proofs apply` (or `/proofs apply held`, which
-#     also commits a `held` patch whose Lean build and coverage gate passed: the
-#     person asking has reviewed the held items the re-prove comment lists), or
+#   - a PR comment whose first line is `/proofs apply`, or
 #   - the label `proofs:apply` (removed again once handled, so it can be re-added).
 #
 # Both events run THIS file from the default branch / the PR's base branch, never the
@@ -20,8 +18,9 @@
 #            artifact) belongs to this PR's *current* head; a moved head means "wait
 #            for the bot's run on the new head". Replies when it refuses.
 #   apply    the only job with `contents: write`. Takes the gate artifact of that run,
-#            applies it only when its status is `pass` (or `held` with
-#            `/proofs apply held` and both gates passed; a failed patch is never committed), re-checks every path against the gate's allowlist
+#            applies it only when the Lean build and the coverage gate both passed
+#            (status `pass`, or `held` for review: asking is the review); a patch
+#            that failed a gate is never committed and the reply says why, re-checks every path against the gate's allowlist
 #            (read from proof-impact.yml on the default branch), commits as
 #            falkordb-proof-bot, and pushes as a fast-forward to the head ref, with a
 #            lease on the head it built on. A head the author moved in the meantime
@@ -72,7 +71,6 @@ jobs:
       head_sha: ${{ steps.resolve.outputs.head_sha }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
       run_id: ${{ steps.resolve.outputs.run_id }}
-      allow_held: ${{ steps.resolve.outputs.allow_held }}
     steps:
       # The default branch's (pull_request_target: the base branch's) copy; no ref.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -156,7 +154,6 @@ jobs:
           HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           HEAD_REF: ${{ needs.resolve.outputs.head_ref }}
           RUN_ID: ${{ needs.resolve.outputs.run_id }}
-          ALLOW_HELD: ${{ needs.resolve.outputs.allow_held }}
           GATE_DIR: ${{ github.workspace }}/gate
           WORKTREE: ${{ github.workspace }}/head
           ALLOWLIST_WORKFLOW: ${{ github.workspace }}/base/.github/workflows/proof-impact.yml
