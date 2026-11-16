@@ -1343,10 +1343,11 @@ inductive LitTree
   | negate (e : LitTree)
   | post (e : LitTree)          -- `.x`, `[i]`, `{..}`, `:L` wrapped at level 10
 
-/-- The level-9 check: `Negate(Constant(MIN))` → `MIN`; a bare
-`Constant(MIN)` → overflow; anything else passes. -/
+/-- The level-9 check: `Negate(Constant(MIN))` → `MIN`; since #3437
+(cypher.rs:2588-2602) any other negated integer literal folds to the constant
+`-v`; a bare `Constant(MIN)` → overflow; anything else passes. -/
 def level9 : LitTree → Except String LitTree
-  | .negate (.const v) => if v = I64MIN then .ok (.const I64MIN) else .ok (.negate (.const v))
+  | .negate (.const v) => if v = I64MIN then .ok (.const I64MIN) else .ok (.const (-v))
   | .const v => if v = I64MIN then .error "Integer overflow" else .ok (.const v)
   | e => .ok e
 
@@ -1379,6 +1380,13 @@ theorem litExpr_min (neg pf : Bool) :
 theorem litExpr_other (neg pf : Bool) (v : Int) (hv : v ≠ I64MIN) :
     ∃ t, litExpr neg pf v = .ok t := by
   cases neg <;> cases pf <;> simp [litExpr, level10, level9, hv]
+
+/-- #3437: a directly negated literal `-v` (no postfix) parses to the constant
+`-v`, not a `Negate` node; with a postfix (`-v.x`) the `Negate` stays. -/
+theorem litExpr_neg_folds (v : Int) (hv : v ≠ I64MIN) :
+    litExpr true false v = .ok (.const (-v)) ∧
+    litExpr true true v = .ok (.negate (.post (.const v))) := by
+  simp [litExpr, level10, level9, hv]
 
 /-- `i as u32` on an `i64` hop count (cypher.rs:1804, 1811, 3108, 3111). -/
 def asU32 (i : Int) : Nat := (i % 2 ^ 32).toNat

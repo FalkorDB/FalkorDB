@@ -619,9 +619,12 @@ def step (pe : List Tok → Out) (fuel : Nat) : List Frame → List Tok → St
     | 4 => cmpStep res K ts
     | 5 => predStep res K ts
     | 9 =>
-      -- the i64::MIN special case (2549-2565) reads `child(0)` of a Negate
+      -- the i64::MIN special case (2576-2588) reads `child(0)` of a Negate;
+      -- since #3437 (2588-2602) a negated integer literal folds to the constant
+      -- `-n` (`2^63` included: the i64::MIN arm gives the same constant)
       match res with
       | .node .neg [] => .panic
+      | .node .neg (.node (.int n) _ :: _) => ret (lf (.int (-n))) K ts
       | _ => ret res K ts
     | 10 => postStep pe fuel res K ts
     | 11 => closeStep res K ts

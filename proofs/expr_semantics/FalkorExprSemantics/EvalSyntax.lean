@@ -72,7 +72,9 @@ the binders `Quantifier` / `ListComprehension` / `Reduce`, `NestedPlan`, `Patter
 evaluated by a parameter that receives its children as *thunks* — it may evaluate them
 lazily, in any order, or not at all — on the same row. Shapes: `case` is
 `Case { has_subject }` with children `[subject?] ++ [List(arms)] ++ [else]`; `func` is a
-non-aggregate `FuncInvocation` whose children are not `[Distinct, _]`; `mapProj` is
+non-aggregate `FuncInvocation` whose children are not `[Distinct, _]` and that is not
+`size(<ListComprehension>)` (since #3437 that call counts the comprehension without building
+the list, eval.rs:591-594 / 1070-1077, so it is a `compound`); `mapProj` is
 `MapProjection` with children `[base, items…]`, items `projAll` (a child `MapProjection`),
 `projProp` (`Property(name)` without children) and `key` (`Constant(String)` with a child). -/
 inductive E (V : Type) where

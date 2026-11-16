@@ -35,20 +35,20 @@ graph/src/graph/graph.rs	set_nodes_attributes	1855	PROVEN	via insert_attrs: Span
 graph/src/graph/graph.rs	import_node_attrs	1892	PROVEN	via import_attrs: Props.read_your_writes_new
 graph/src/graph/graph.rs	import_node_attrs_resolved	1940	MODELLED	bulk path, no null filter
 graph/src/graph/graph.rs	import_relationship_attrs	2049	PROVEN	via import_attrs: Props.read_your_writes_new
-graph/src/graph/graph.rs	set_relationships_attributes	2860	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	set_relationships_attributes	2875	PROVEN	via insert_attrs: Span.mergeSpan_correct
 graph/src/graph/graph.rs	set_node_labels_product	2135	AXIOMATISED	GraphBLAS assign as set product
 graph/src/graph/graph.rs	set_nodes_labels_bulk	2214	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
 graph/src/graph/graph.rs	remove_nodes_labels	2260	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
 graph/src/graph/graph.rs	delete_nodes	2294	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
-graph/src/graph/graph.rs	create_relationships_bulk	2694	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_relationships	2953	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_implicit_edges	3088	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	create_relationships_bulk	2709	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_relationships	2968	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_implicit_edges	3103	NOT COVERED	tensor (proofs/versioned_matrix)
 graph/src/graph/graph.rs	get_or_create_node_attr_id	1973	NOT COVERED	name interning
 graph/src/graph/graph.rs	get_or_create_rel_attr_id	2042	NOT COVERED	name interning
-graph/src/graph/graph.rs	commit_index	3931	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index	3954	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index_locked	3966	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_index_kind	4047	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index	3946	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index	3969	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index_locked	3981	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index_kind	4062	NOT COVERED	RediSearch index boundary
 graph/src/graph/attribute_store.rs	into_iter	150	PROVEN	NameMap.accessors (into_iter = vec)
 graph/src/graph/attribute_store.rs	len	157	PROVEN	NameMap.accessors
 graph/src/graph/attribute_store.rs	is_empty	162	PROVEN	NameMap.accessors
@@ -100,21 +100,21 @@ graph/src/graph/attribute_store.rs	new	1154	PROVEN	Content.new_spec
 graph/src/graph/attribute_store.rs	new_version	1161	PROVEN	Content.newVersion_eq (value copy)
 graph/src/graph/attribute_store.rs	trim	1166	PROVEN	Content.dtrim_ok
 graph/src/graph/attribute_store.rs	get_attr_by_idx	1173	PROVEN	Content.getAttr_eq
-graph/src/graph/attribute_store.rs	get_attrs_by_idx_batch_into	1184	PROVEN	Content.getBatch_spec
-graph/src/graph/attribute_store.rs	has_attributes	1199	PROVEN	Content.reads_spec
-graph/src/graph/attribute_store.rs	attr_count	1208	PROVEN	Content.reads_spec
-graph/src/graph/attribute_store.rs	entity_memory_usage	1217	PROVEN	Content.reads_spec (+Pack.heapBytes_eq)
-graph/src/graph/attribute_store.rs	get_attr_ids	1228	PROVEN	Content.reads_spec
-graph/src/graph/attribute_store.rs	get_all_attrs_by_id	1238	PROVEN	Content.reads_spec
-graph/src/graph/attribute_store.rs	remove_all	1248	PROVEN	Content.removeAll_spec
-graph/src/graph/attribute_store.rs	insert_attrs_rows	1268	PROVEN	Content.insertAttrs_spec on insertRows (zip view: attrUpdates_view)
-graph/src/graph/attribute_store.rs	insert_attrs	1317	PROVEN	Content.insertAttrs_spec
-graph/src/graph/attribute_store.rs	import_attrs	1353	PROVEN	Content.importAttrs_spec
-graph/src/graph/attribute_store.rs	import_attrs_resolved	1390	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed
+graph/src/graph/attribute_store.rs	get_attrs_by_idx_batch_into	1223	PROVEN	Content.getBatch_spec
+graph/src/graph/attribute_store.rs	has_attributes	1238	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	attr_count	1247	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	entity_memory_usage	1256	PROVEN	Content.reads_spec (+Pack.heapBytes_eq)
+graph/src/graph/attribute_store.rs	get_attr_ids	1267	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	get_all_attrs_by_id	1277	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	remove_all	1287	PROVEN	Content.removeAll_spec
+graph/src/graph/attribute_store.rs	insert_attrs_rows	1307	PROVEN	Content.insertAttrs_spec on insertRows (zip view: attrUpdates_view)
+graph/src/graph/attribute_store.rs	insert_attrs	1356	PROVEN	Content.insertAttrs_spec
+graph/src/graph/attribute_store.rs	import_attrs	1392	PROVEN	Content.importAttrs_spec
+graph/src/graph/attribute_store.rs	import_attrs_resolved	1429	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed
 graph/src/graph/attribute_store.rs	structural_memory_usage	1455	PROVEN	Content.structural_partition
-graph/src/graph/attribute_store.rs	encode_with_range	1427	PROVEN	Content.encode_spec, encode_decode_roundtrip
-graph/src/graph/attribute_store.rs	decode	1509	PROVEN	Content.decode_unimplemented
-graph/src/graph/attribute_store.rs	decode_with_count	1519	PROVEN	Content.decode_spec, encode_decode_roundtrip
+graph/src/graph/attribute_store.rs	encode_with_range	1466	PROVEN	Content.encode_spec, encode_decode_roundtrip
+graph/src/graph/attribute_store.rs	decode	1548	PROVEN	Content.decode_unimplemented
+graph/src/graph/attribute_store.rs	decode_with_count	1558	PROVEN	Content.decode_spec, encode_decode_roundtrip
 graph/src/runtime/pending.rs	flatten_label_map	61	PROVEN	PA.flatten_spec
 graph/src/runtime/pending.rs	is_valid_property	79	PROVEN	PA.isValidP: validate_spec, validate_depth (lists moved to validate_list_property by #3339)
 graph/src/runtime/pending.rs	validate_list_property	108	PROVEN	PA.validateListProperty/validateItems/validateItem: validateItem_ok (accepted ⇒ old-valid ∧ d + depth ≤ 4096), validateItems_nest, validate_nest (#3339 b080a44c1); save/load: value_math stored_roundtrip (for vectors that fit the u32 dimension, `VecsFit`: validation accepts vectors of any length)
@@ -187,4 +187,4 @@ graph/src/runtime/pending.rs	resync_published_indexes	1792	PROVEN	PD.resync_spec
 graph/src/runtime/pending.rs	commit_deferred_indexes	1846	PROVEN	PD.commitDeferred_spec
 graph/src/runtime/pending.rs	effects_count	1960	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
 graph/src/runtime/pending.rs	end_segment	1887	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err
-graph/src/graph/attribute_store.rs	get_int_attrs_by_idx_batch_into	1188	NOT COVERED	(#3432): not modelled yet
+graph/src/graph/attribute_store.rs	get_int_attrs_by_idx_batch_into	1188	NOT COVERED	(#3432): not modelled yet; equivalence to the per-element path proved in proofs/pr3437_review (ExactProp.exact_eq_main, rows kept commented there until merge; models a739b990f)

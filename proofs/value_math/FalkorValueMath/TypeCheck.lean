@@ -55,8 +55,10 @@ def Ty.isAny : Ty → Bool
 
 mutual
 /-- `value_of_type` (value.rs:1282-1320), arms in source order. `none` = accepted,
-`some (actual, expected)` = the mismatch reported. -/
+`some (actual, expected)` = the mismatch reported. The first arm is #3437's
+`List(Any)` shortcut (value.rs:1328): no element walk. -/
 def valueOfType : V F → Ty → Option (Ty × Ty)
+  | .list _, .list .any => none
   | .list vs, .list ty => listLoop vs ty
   | v, t =>
     if tagMatch v t || t.isAny then none else
@@ -132,8 +134,13 @@ theorem vot_union (v : V F) (tys : List Ty) :
 theorem vot_any (v : V F) : valueOfType v .any = none := by
   cases v <;> simp [valueOfType, tagMatch, Ty.isAny]
 
+/-- The `List(Any)` shortcut agrees with the element walk it skips. -/
 theorem vot_list_list (vs : List (V F)) (ty : Ty) : valueOfType (.list vs) (.list ty) = listLoop vs ty := by
-  simp [valueOfType]
+  cases ty with
+  | any =>
+    rw [valueOfType]
+    exact ((listLoop_none vs .any).mpr (fun v _ => vot_any v)).symm
+  | _ => simp [valueOfType]
 
 theorem vot_nonlist_list (v : V F) (ty : Ty) (h : v.isList = false) :
     valueOfType v (.list ty) = some (getType v, .list ty) := by

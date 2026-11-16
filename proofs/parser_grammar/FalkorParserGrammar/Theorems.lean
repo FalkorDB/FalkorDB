@@ -25,9 +25,16 @@ theorem binary_pairs_agree :
 These hold for *every* integer literal `a b c` (the parser never looks at a
 literal's value), by evaluation. -/
 
-/-- `-a ^ b` is `(-a) ^ b`: unary minus binds tighter than `^` (Cypher.g4:342-347). -/
+/-- `-a ^ b` is `(-a) ^ b`: unary minus binds tighter than `^` (Cypher.g4:342-347).
+Since #3437 the negated literal is the folded constant `-a`. -/
 theorem neg_binds_tighter_than_pow (a b : Nat) :
-    parseAll 400 [.dash, .int a, .pow, .int b] = .ok (.node .pow [.node .neg [lf (.int a)], lf (.int b)]) [] := by
+    parseAll 400 [.dash, .int a, .pow, .int b] = .ok (.node .pow [lf (.int (-(a : Int))), lf (.int b)]) [] := by
+  rfl
+
+/-- The same precedence on a non-literal operand, which keeps its `Negate`:
+`-x ^ b` is `(-x) ^ b`. -/
+theorem neg_var_binds_tighter_than_pow (x b : Nat) :
+    parseAll 400 [.dash, .ident x, .pow, .int b] = .ok (.node .pow [.node .neg [lf (.var x)], lf (.int b)]) [] := by
   rfl
 
 /-- `a ^ b ^ c` is left-associative: one `Pow[a,b,c]`, folded left by the evaluator. -/
@@ -199,7 +206,7 @@ theorem exprList_comma_first (pe : List Tok → Out) (n : Nat) (r : List Tok)
 optional `-`), while `- -x` and `-+x` are rejected (#2309). The grammar
 allows exactly one sign. -/
 theorem sign_sequences :
-    parseAll 400 [.plus, .dash, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
+    parseAll 400 [.plus, .dash, .int 1] = .ok (lf (.int (-1))) [] ∧
     (∃ e, parseAll 400 [.dash, .dash, .int 1] = .err e) ∧
     (∃ e, parseAll 400 [.dash, .plus, .int 1] = .err e) ∧
     (∃ e, G.all 200 [.plus, .dash, .int 1] = .err e) := by
