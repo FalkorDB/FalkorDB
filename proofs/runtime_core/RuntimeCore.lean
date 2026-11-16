@@ -99,7 +99,7 @@ instantiated; `Instant` arithmetic.
 ## Wave-5 additions
 * `RelAccessors`: relationship reads, pending attribute writes (`setPendingAttr_spec`), typed
   materialisation, `label_id`, endpoints/type lookups (deleted > pending > committed).
-* `Plan`: `get_variables` (BFS walk stopping at the first Project), `get_return_names`,
+* `Plan`: `get_variables` (BFS queue; Project/Aggregate end their subtree, existence checks keep only their input), `get_return_names`,
   `inspect_batch`, `Runtime::new`, delegating accessors, `default_batch`, `run_nested_plan`,
   `build_batch_op` child popping and SKIP/LIMIT/VHJ checks; `children_to_recurse` spec in RunBatch.
 -/
