@@ -404,52 +404,43 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < td <;> by_cases a2 : 0 < tm <;> by_cases a3 : tm < td <;> by_cases a4 : td = 0 <;> by_cases a5 : tm = 0 <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case timeoutDefault =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
       by_cases a2 : x = td
       · subst a2
-        by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : tm = 0 <;>
-          by_cases a4 : 0 < tm <;> by_cases a5 : tm < x <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
-      · by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : tm = 0 <;>
-          by_cases a4 : 0 < tm <;> by_cases a5 : tm < x <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+        simp [Option.filter, TOk] at * <;> grind
+      · simp [Option.filter, TOk] at * <;> grind
   case timeoutMax =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
       by_cases a2 : x = tm
       · subst a2
-        by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : td = 0 <;>
-          by_cases a4 : 0 < td <;> by_cases a5 : x < td <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
-      · by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : td = 0 <;>
-          by_cases a4 : 0 < td <;> by_cases a5 : x < td <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+        simp [Option.filter, TOk] at * <;> grind
+      · simp [Option.filter, TOk] at * <;> grind
   case threadCount =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case ompThreadCount =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case cacheSize =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case maxQueued =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case vkeyMax =>
     cases rustParseI64 v with
     | none => simp
@@ -496,20 +487,17 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < td <;> by_cases a2 : 0 < tm <;> by_cases a3 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case jsHeap =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : 1048576 ≤ x <;> by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
-        simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case jsStack =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : 1048576 ≤ x <;> by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
-        simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case asyncDelete | cmdInfo | delayIndexing =>
     cases y : eqIC v (b "yes") <;> cases z : eqIC v (b "no") <;>
       simp only [y, z, Bool.false_eq_true, ite_false, ite_true] <;>
