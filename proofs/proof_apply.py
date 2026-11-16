@@ -9,6 +9,7 @@ environment, never through a shell command line.
             latest successful proof-impact run for the PR's current head.
   apply     Reads that run's `proof-gate` artifact (downloaded by the workflow into
             GATE_DIR), checks it again, and only when its gate status is `pass`
+            (or `held`, asked with `/proofs apply held`, and both gates passed)
             commits the patch on top of the PR head and pushes it as a plain
             fast-forward. Never forces; a moved head changes nothing.
 
@@ -34,7 +35,12 @@ BOT_NAME = "falkordb-proof-bot"
 BOT_EMAIL = "falkordb-proof-bot@users.noreply.github.com"
 TRAILER = "Proof-Bot-Run"
 LABEL = "proofs:apply"
-COMMAND = re.compile(r"\A[ \t]*/proofs[ \t]+apply[ \t]*\Z")
+# `/proofs apply held` also commits a `held` patch: the person asking has reviewed the
+# held items the re-prove comment lists (a changed theorem statement, a raised
+# coverage row). Only a held patch whose Lean build and coverage gate both passed.
+COMMAND = re.compile(r"\A[ \t]*/proofs[ \t]+apply(?:[ \t]+(?P<held>held))?[ \t]*\Z")
+# The first line of a gate's gates.md when both gates passed (proof_gate.sh).
+GATES_PASSED = re.compile(r"\AGates: `lean_ci\.sh` \*\*pass\*\*; `coverage\.sh --unmatched` \*\*pass\*\*")
 APP_NOTE = (
     "CI does not run on this commit: it was pushed with `GITHUB_TOKEN`, which GitHub never "
     "lets start workflows. Push an empty commit (`git commit --allow-empty`) or close and reopen the "
@@ -107,11 +113,14 @@ def resolve():
     repo, pr, actor = env("REPO"), env("PR"), env("ACTOR")
     event = env("EVENT_NAME")
     output(go="false")
+    held = False
 
     if event == "issue_comment":
         first = (env("COMMENT_BODY").splitlines() or [""])[0]
-        if not COMMAND.match(first):
+        m = COMMAND.match(first)
+        if not m:
             print("not an apply command"); return
+        held = bool(m.group("held"))
     elif event == "pull_request_target":
         if env("LABEL_NAME") != LABEL:
             print("another label"); return
@@ -187,7 +196,8 @@ def resolve():
                         f"`proof-gate` artifact (no verified function changed, or the artifact expired).")
         return
     print(f"actor {actor} ({role}); head {sha}; run {run['id']}")
-    output(go="true", head_sha=sha, head_ref=head["ref"], run_id=run["id"])
+    output(go="true", head_sha=sha, head_ref=head["ref"], run_id=run["id"],
+           allow_held="true" if held else "false")
 
 
 # ---------------------------------------------------------------- apply
@@ -219,10 +229,21 @@ def apply():
     # The artifact must be about the head we were asked about.
     if (read("head_sha") or "").strip() != sha:
         refuse(repo, pr, f"Not applied: the [run]({run_url})'s artifact is not for `{sha[:9]}`.")
-    if status != "pass":
-        reason = (read("gates.md") or "").strip()[:2000]
-        refuse(repo, pr, f"Not applied: the gate result is **{status}**, and a patch that is not "
-                         f"`pass` is never committed by the bot. See the [run]({run_url}).\n\n{reason}")
+    gates = (read("gates.md") or "").strip()
+    allow_held = env("ALLOW_HELD") == "true"
+    if status == "held" and allow_held:
+        # Held only for review: the person asking has reviewed it. A held patch that
+        # was not built (UNBUILT) or failed a gate is never committed.
+        if not GATES_PASSED.match(gates):
+            refuse(repo, pr, f"Not applied: this held patch did not pass both gates (Lean build and "
+                             f"coverage), so `/proofs apply held` cannot commit it. See the "
+                             f"[run]({run_url}).\n\n{gates[:2000]}")
+    elif status != "pass":
+        hint = (" If you have reviewed the held items listed below, comment `/proofs apply held` "
+                "to commit it." if status == "held" and GATES_PASSED.match(gates) else "")
+        refuse(repo, pr, f"Not applied: the gate result is **{status}**, and the bot commits only a "
+                         f"`pass` patch, or a `held` one on `/proofs apply held`. "
+                         f"See the [run]({run_url}).{hint}\n\n{gates[:2000]}")
     patch = os.path.join(gate, "proofs.patch")
     if not os.path.exists(patch) or os.path.getsize(patch) == 0:
         refuse(repo, pr, f"Nothing to apply: the [run]({run_url}) needed no proof change.")
@@ -259,7 +280,8 @@ def apply():
 
     msg = (f"proofs: update the Lean proofs for this change (proof-impact bot)\n\n"
            f"Verified patch of the proof-impact run {run_url}\n"
-           f"at {sha}, applied on request of {actor}.\n\n"
+           f"at {sha}, applied on request of {actor}"
+           f"{' (held items reviewed: /proofs apply held)' if status == 'held' else ''}.\n\n"
            f"{TRAILER}: {run_url}\n")
     git(work, "-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}", "commit", "-q", "-m", msg)
     new = git(work, "rev-parse", "HEAD").stdout.strip()
