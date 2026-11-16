@@ -17,11 +17,11 @@ def GExt.g4 : GExt := ⟨false⟩
 def GExt.rust : GExt := ⟨false⟩
 
 /-- Adding a relationship: fresh, or (with `dupDrop`) silently skipped. -/
-def RelOk (y : GExt) (g : QG Nat) (r : QRel Nat) : Prop := (g.addRel r).1 = true ∨ y.dupDrop = true
+def RelOk (y : GExt) (g : QG Alias) (r : QRel Alias) : Prop := (g.addRel r).1 = true ∨ y.dupDrop = true
 
 /-- `( SP? oC_PatternElementChain )*` of an anonymous path. -/
 inductive GChainA (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
-    QNode Nat → QG Nat × List Nat → PS → QG Nat × List Nat → PS → Prop
+    QNode Alias → QG Alias × List Alias → PS → QG Alias × List Alias → PS → Prop
   | nil {left gs s} : GChainA o x y cl left gs s gs s
   | cons {left gs s rr s1 out s'} : GRel o x left s rr s1 → RelOk y gs.1 rr.1 →
       GChainA o x y cl rr.2 (addPatNode cl ((gs.1.addRel rr.1).2, gs.2) rr.2) s1 out s' →
@@ -30,14 +30,14 @@ inductive GChainA (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
 /-- The same for a named path `p = ...`: the path's variables are collected
 and the path is added at the end. -/
 inductive GChainN (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (p : Nat) :
-    QNode Nat → List Nat → QG Nat × List Nat → PS → QG Nat × List Nat → PS → Prop
-  | nil {left vars gs s} : GChainN o x y cl p left vars gs s ((gs.1.addPath ⟨p, vars⟩).2, gs.2) s
+    QNode Alias → List Alias → QG Alias × List Alias → PS → QG Alias × List Alias → PS → Prop
+  | nil {left vars gs s} : GChainN o x y cl p left vars gs s ((gs.1.addPath ⟨.named p, vars⟩).2, gs.2) s
   | cons {left vars gs s rr s1 out s'} : GRel o x left s rr s1 → RelOk y gs.1 rr.1 →
       GChainN o x y cl p rr.2 (vars ++ [rr.1.alias, rr.2.alias])
         (addPatNode cl ((gs.1.addRel rr.1).2, gs.2) rr.2) s1 out s' →
       GChainN o x y cl p left vars gs s out s'
 
-theorem relOk_of {y : GExt} {g : QG Nat} {r : QRel Nat}
+theorem relOk_of {y : GExt} {g : QG Alias} {r : QRel Alias}
     (h : ¬((!(g.addRel r).1) = true)) : RelOk y g r := by
   unfold RelOk
   cases e : (g.addRel r).1
@@ -78,9 +78,9 @@ theorem chainN_sound (o : Oracle) (F : Nat) (cl : CK) (p : Nat) :
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
 
 /-- The allShortestPaths relationship loop (extension `asp`). -/
-inductive GAsp (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (la : Nat) :
-    QNode Nat → Bool → List Nat → QG Nat × List Nat → PS →
-      Bool × List Nat × (QG Nat × List Nat) → PS → Prop
+inductive GAsp (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (la : Alias) :
+    QNode Alias → Bool → List Alias → QG Alias × List Alias → PS →
+      Bool × List Alias × (QG Alias × List Alias) → PS → Prop
   | nil {prev found vars gs s} : GAsp o x y cl la prev found vars gs s (found, vars, gs) s
   | varLen {prev found vars gs s rr s1 out s'} : GRel o x prev s rr s1 →
       (rr.1.minH.isSome || rr.1.maxH.isSome) = true → found = false →
@@ -95,7 +95,7 @@ inductive GAsp (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (la : Nat) :
         (addPatNode cl ((gs.1.addRel rr.1).2, gs.2) rr.2) s1 out s' →
       GAsp o x y cl la prev found vars gs s out s'
 
-theorem aspLoop_sound (o : Oracle) (F : Nat) (cl : CK) (la : Nat) :
+theorem aspLoop_sound (o : Oracle) (F : Nat) (cl : CK) (la : Alias) :
     ∀ (n : Nat) prev found vars gs (s : PS) out s',
     aspLoop o F cl la n prev found vars gs s = .ok out s' →
       GAsp o Ext.rust GExt.rust cl la prev found vars gs s out s'
@@ -127,7 +127,7 @@ theorem aspLoop_sound (o : Oracle) (F : Nat) (cl : CK) (la : Nat) :
 
 /-- One `oC_PatternPart` (Cypher.g4:217-228), with how the Rust loop goes on. -/
 inductive GPart (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
-    QG Nat × List Nat → PS → PEnd × (QG Nat × List Nat) → PS → Prop
+    QG Alias × List Alias → PS → PEnd × (QG Alias × List Alias) → PS → Prop
   | anon {gs s left s1 out s'} : GNode o s left s1 →
       GChainA o x y cl left (addPatNode cl gs left) s1 out s' → GPart o x y cl gs s (.sep, out) s'
   | named {gs s p left s1 out s'} : identOf s.cur = some p → s.adv.cur = .eq →
@@ -140,10 +140,10 @@ inductive GPart (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
       GAsp o x y cl left.alias left false [left.alias] (addPatNode cl gs left) s1 res s2 →
       res.1 = true → s2.cur = .rparen →
       (e = PEnd.cont ∧ s2.adv.cur = .comma ∨ e = .stop) →
-      GPart o x y cl gs s (e, ((res.2.2.1.addPath ⟨p, res.2.1⟩).2, res.2.2.2))
+      GPart o x y cl gs s (e, ((res.2.2.1.addPath ⟨.named p, res.2.1⟩).2, res.2.2.2))
         (if e = .cont then s2.adv.adv else s2.adv)
 
-theorem partP_sound (o : Oracle) (F : Nat) (cl : CK) (gs : QG Nat × List Nat) (s : PS) r s'
+theorem partP_sound (o : Oracle) (F : Nat) (cl : CK) (gs : QG Alias × List Alias) (s : PS) r s'
     (h : partP o F cl gs s = .ok r s') : GPart o Ext.rust GExt.rust cl gs s r s' := by
   unfold partP at h
   peel h => a s1 h1
@@ -202,7 +202,7 @@ theorem partP_sound (o : Oracle) (F : Nat) (cl : CK) (gs : QG Nat × List Nat) (
 one part (`oC_Merge` has an `oC_PatternPart`); with `fold`, the clause's
 own keyword also separates parts. -/
 inductive GPat (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
-    QG Nat × List Nat → PS → QG Nat → PS → Prop
+    QG Alias × List Alias → PS → QG Alias → PS → Prop
   | last {gs s e gs1 s1} : GPart o x y cl gs s (e, gs1) s1 → e ≠ .cont → GPat o x y cl gs s gs1.1 s1
   | comma {gs s gs1 s1 out s'} : GPart o x y cl gs s (.sep, gs1) s1 → cl ≠ .merge →
       s1.cur = .comma → GPat o x y cl gs1 s1.adv out s' → GPat o x y cl gs s out s'

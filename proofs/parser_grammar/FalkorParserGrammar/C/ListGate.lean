@@ -371,11 +371,11 @@ theorem cn_detailP (F : Nat) (cl : CK) (d : Nat) : Cn (detailP o F cl) (d + 1) d
   refine cn_bind (cn_tok_gen (by decide) (step_close (.inr (.inl rfl)) d)) fun _ => ?_
   exact cn_pure _ _
 
-theorem cn_relP (F : Nat) (cl : CK) (src : QNode Nat) (d : Nat) : Cn (relP o F cl src) d d := by
+theorem cn_relP (F : Nat) (cl : CK) (src : QNode Alias) (d : Nat) : Cn (relP o F cl src) d d := by
   unfold relP
   refine cn_bind (cn_opt_atom rfl _) fun inc => ?_
   refine cn_bind (cn_tok_atom rfl _) fun _ => ?_
-  have rest : ∀ dd : Nat × List Nat × ET × Option (Nat × Option Nat),
+  have rest : ∀ dd : Alias × List Nat × ET × Option (Nat × Option Nat),
       Cn (do
         tok .dash
         let out ← opt .gt
