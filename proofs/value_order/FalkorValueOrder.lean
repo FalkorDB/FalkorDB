@@ -3,8 +3,16 @@ import FalkorValueOrder.Json
 import FalkorValueOrder.Model
 import FalkorValueOrder.SortCmp
 import FalkorValueOrder.Main
+import FalkorValueOrder.ValueOfType
 /-
 # Value order: what `compare_value` promises, and where it breaks
+
+**#3437 — `value_of_type(List, List(Any))` returns early (`ValueOfType.lean`, folded in from
+pr3437_review; cites are to the `perf/list-comprehension` branch, value.rs:1323).**
+`ValueOfType.vtPR` is the impl with the new first arm; `vtPR_eq`: it returns exactly what
+`W.valueOfType` returns, for every value and type (the early arm answers what the element walk
+answers, as `Any` accepts everything: `valueOfType_any`). Also `listFirst_eq`, `unionAll_eq`,
+`size_arg_list`.
 
 **Re-targeted to main 8621212fc** (from 289c201fe, before that fb3d516d0): no
 change to `compare_value`, `sort_cmp`, `PartialEq` or `Hash`. #2984 moves the

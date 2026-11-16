@@ -79,25 +79,25 @@ graph/src/runtime/vector_expr.rs	constant_nullness	139	PROVEN	VExpr constNull_sp
 graph/src/runtime/vector_expr.rs	is_null	150	PROVEN	VExpr EC.isNull_eq
 graph/src/runtime/vector_expr.rs	union_nulls	168	PROVEN	VExpr unionNulls_exact, unionNulls_values_inexact (harmless corner), unionNulls_length
 graph/src/runtime/vector_expr.rs	VectorEval::new	202	PROVEN	Dispatch VectorEval.new: new_runtime
-graph/src/runtime/vector_expr.rs	VectorEval::eval	211	PROVEN	VecEval.eval (over expr_semantics E, arms and guards in source order): eval_sound; CoreBridge.lawful (Lawful instance from the lane theorems), vec_sound (= ExprEval::eval_node per row; PropReads discharged by RuntimeReads.propReads); Dispatch eval: eval_sound, eval_cmp, eval_param_missing (Kind/Node model)
-graph/src/runtime/vector_expr.rs	VectorEval::eval_values	282	PROVEN	VecEval.evalValues: evalValues_sound; Dispatch evalValues: evalValues_sound
-graph/src/runtime/vector_expr.rs	eval_variable	306	PROVEN	Lanes evalVariable_agree, evalVariable_beyond; LaneWF evalVariable_wf; CoreBridge.lawful var field
-graph/src/runtime/vector_expr.rs	eval_property	330	PROVEN	CoreBridge.evalProperty/toEC: toEC_exact (classify_exact_column read back), lawful prop field (= per-row Property arm via RuntimeReads.matNode_eq); Column classifyExact_exact
-graph/src/runtime/vector_expr.rs	VectorEval::property_values	353	PROVEN	CoreBridge.propertyValues (bulk fetch = per-row read: RuntimeReads.matNode_eq/matRel_eq); Dispatch propertyValues: propertyValues_spec, propertyValues_none_iff
-graph/src/runtime/vector_expr.rs	eval_and_or	388	PROVEN	AndOrLane.evalAndOr/loop/scanP: evalAndOr_sound (= per-row andOrLoop at every row; children evaluated over the live rows), scanP_spec, loop_sound; proofs/functions_temporal VExpr.colEval_eq
-graph/src/runtime/vector_expr.rs	eval_case	474	PROVEN	CaseLane.evalCase/armLoop/splitHits/fill: evalCase_sound (= per-row eval_case at every row; WHEN over unclaimed, THEN over claimed rows), armLoop_sound; Lanes caseCol_agree, caseArm_then_only_on_hits, caseMatch_eq_compare_value
-graph/src/runtime/vector_expr.rs	eval_function	558	PROVEN	FuncLane.evalFunction (columns then foldCall of validate_args_type+call): evalFunction_sound; Lanes foldCall_agree
-graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	645	PROVEN	FuncLane.hasLabelsLane: hasLabelsLane_sound (under HL; HasLabelsFn.hl_hasLabelsFn: the registry hasLabels satisfies HL); Dispatch hasLabels: hasLabels_sound, hasLabels_typecheck_first
-graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	709	PROVEN	CoreBridge.perRow (ExprEval::eval_node per BatchRow): lawful perRow field; Dispatch perRow: perRow_spec, perRow_error
-graph/src/runtime/vector_expr.rs	compare_columns	734	PROVEN	VExpr compareColumns_agree, typedLane_agree; LaneWF compareColumns_wf; CoreOps allEq_rowCmp/allNeq_rowCmp/cmpResult_rowCmp (= ExprEval comparison arms)
-graph/src/runtime/vector_expr.rs	compare_i64_pairs	798	PROVEN	VExpr kernelI_get (pairs case of typedLane_agree)
-graph/src/runtime/vector_expr.rs	compare_f64_pairs	821	PROVEN	VExpr kernelF_get (pairs case of typedLane_agree)
-graph/src/runtime/vector_expr.rs	mask_out_nulls	843	PROVEN	VExpr maskOut_get
-graph/src/runtime/vector_expr.rs	negate_bools	857	PROVEN	Lanes negate_agree; LaneWF negate_wf; CoreOps notRow_eq (= ExprEval Not arm)
-graph/src/runtime/vector_expr.rs	arithmetic	881	PROVEN	Arith arithmetic_agree (intStage_agree, floatStage_agree, genericStage_agree); #3603 gate: div_min_neg_one, rem_min_neg_one (MIN % -1 = 0), intStage_min_div_neg_one, arithmetic_min_div_neg_one; LaneWF arithmetic_wf
-graph/src/runtime/vector_expr.rs	int_lane	963	PROVEN	Arith intLane_spec
-graph/src/runtime/vector_expr.rs	float_lane	975	PROVEN	Arith floatLane_spec
-graph/src/runtime/vector_expr.rs	float_operand	990	PROVEN	Arith floatStage_agree
+graph/src/runtime/vector_expr.rs	VectorEval::eval	211	PROVEN	VecEval.eval (over expr_semantics E, arms and guards in source order): eval_sound; CoreBridge.lawful (Lawful instance from the lane theorems), vec_sound (= ExprEval::eval_node per row; PropReads discharged by RuntimeReads.propReads); Dispatch eval: eval_sound, eval_cmp, eval_param_missing (Kind/Node model); #3437: Comp.PRArms armsPR (!counts_comprehension guard on the function arm): lawfulPR, counted_goes_per_row; Comp.Bridge armsPR: lawful_pr, eval_sound_pr
+graph/src/runtime/vector_expr.rs	VectorEval::eval_values	285	PROVEN	VecEval.evalValues: evalValues_sound; Dispatch evalValues: evalValues_sound
+graph/src/runtime/vector_expr.rs	eval_variable	309	PROVEN	Lanes evalVariable_agree, evalVariable_beyond; LaneWF evalVariable_wf; CoreBridge.lawful var field
+graph/src/runtime/vector_expr.rs	eval_property	333	PROVEN	CoreBridge.evalProperty/toEC: toEC_exact (classify_exact_column read back), lawful prop field (= per-row Property arm via RuntimeReads.matNode_eq); Column classifyExact_exact; #3437: a NodeIds child is fetched by the exact path: Comp.PRArms evalPropertyPR_eq (= CoreBridge.evalProperty), Comp.ExactProp exact_eq_main, toECx_eq, evalProp_eq
+graph/src/runtime/vector_expr.rs	VectorEval::property_values	365	PROVEN	CoreBridge.propertyValues (bulk fetch = per-row read: RuntimeReads.matNode_eq/matRel_eq); Dispatch propertyValues: propertyValues_spec, propertyValues_none_iff
+graph/src/runtime/vector_expr.rs	eval_and_or	400	PROVEN	AndOrLane.evalAndOr/loop/scanP: evalAndOr_sound (= per-row andOrLoop at every row; children evaluated over the live rows), scanP_spec, loop_sound; proofs/functions_temporal VExpr.colEval_eq
+graph/src/runtime/vector_expr.rs	eval_case	486	PROVEN	CaseLane.evalCase/armLoop/splitHits/fill: evalCase_sound (= per-row eval_case at every row; WHEN over unclaimed, THEN over claimed rows), armLoop_sound; Lanes caseCol_agree, caseArm_then_only_on_hits, caseMatch_eq_compare_value
+graph/src/runtime/vector_expr.rs	eval_function	570	PROVEN	FuncLane.evalFunction (columns then foldCall of validate_args_type+call): evalFunction_sound; Lanes foldCall_agree
+graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	657	PROVEN	FuncLane.hasLabelsLane: hasLabelsLane_sound (under HL; HasLabelsFn.hl_hasLabelsFn: the registry hasLabels satisfies HL); Dispatch hasLabels: hasLabels_sound, hasLabels_typecheck_first
+graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	721	PROVEN	CoreBridge.perRow (ExprEval::eval_node per BatchRow): lawful perRow field; Dispatch perRow: perRow_spec, perRow_error
+graph/src/runtime/vector_expr.rs	compare_columns	746	PROVEN	VExpr compareColumns_agree, typedLane_agree; LaneWF compareColumns_wf; CoreOps allEq_rowCmp/allNeq_rowCmp/cmpResult_rowCmp (= ExprEval comparison arms)
+graph/src/runtime/vector_expr.rs	compare_i64_pairs	810	PROVEN	VExpr kernelI_get (pairs case of typedLane_agree)
+graph/src/runtime/vector_expr.rs	compare_f64_pairs	833	PROVEN	VExpr kernelF_get (pairs case of typedLane_agree)
+graph/src/runtime/vector_expr.rs	mask_out_nulls	855	PROVEN	VExpr maskOut_get
+graph/src/runtime/vector_expr.rs	negate_bools	869	PROVEN	Lanes negate_agree; LaneWF negate_wf; CoreOps notRow_eq (= ExprEval Not arm)
+graph/src/runtime/vector_expr.rs	arithmetic	893	PROVEN	Arith arithmetic_agree (intStage_agree, floatStage_agree, genericStage_agree); #3603 gate: div_min_neg_one, rem_min_neg_one (MIN % -1 = 0), intStage_min_div_neg_one, arithmetic_min_div_neg_one; LaneWF arithmetic_wf
+graph/src/runtime/vector_expr.rs	int_lane	975	PROVEN	Arith intLane_spec
+graph/src/runtime/vector_expr.rs	float_lane	987	PROVEN	Arith floatLane_spec
+graph/src/runtime/vector_expr.rs	float_operand	1002	PROVEN	Arith floatStage_agree
 graph/src/runtime/row.rs	value_at	47	MODELLED	trait decl (Row.get / viewAt)
 graph/src/runtime/row.rs	to_owned_row	56	MODELLED	trait decl
 graph/src/runtime/row.rs	new	76	MODELLED	Row.empty
@@ -147,23 +147,37 @@ graph/src/runtime/ops/batched_result_emitter.rs	one	458	PROVEN	Gather.RowIter.on
 graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Gather.RowIter.spread: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Gather.RowIter.many: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Gather.rowIterNext/drainIt: rowIter_spec
-graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch (#2973: clamp form replaces the guarded arm); miscompiled_differs (#2922)
-graph/src/runtime/ops/batched_result_emitter.rs	seed	577	MODELLED	Emitter seedRows
-graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
-graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter drain_spec, drain_conserve
-graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
-graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter packRows_spec, stream_rows_active
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds
-graph/src/runtime/ops/batched_result_emitter.rs	reset	750	MODELLED	state cleared
-graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch: emNew_spec
-graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Gather.emNew/emWithBinding: emNew_spec
-graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)
+graph/src/runtime/ops/batched_result_emitter.rs	with_binding	566	PROVEN	Emitter withBinding_le_batch (#2973: clamp form replaces the guarded arm); miscompiled_differs (#2922)
+graph/src/runtime/ops/batched_result_emitter.rs	seed	590	MODELLED	Emitter seedRows
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	617	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	635	PROVEN	Emitter drain_spec, drain_conserve
+graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	664	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
+graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	689	PROVEN	Emitter packRows_spec, stream_rows_active
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	742	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds
+graph/src/runtime/ops/batched_result_emitter.rs	reset	763	MODELLED	state cleared
+graph/src/runtime/ops/batched_result_emitter.rs	batch	772	PROVEN	Gather.emBatch: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new	786	PROVEN	Gather.emNew/emWithBinding: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	796	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)
 # runtime.rs attribute reads (RuntimeReads, 2026-10-21): the bulk fetch is the per-row read, with the graph batch / by-name reads modelled as their definitions (proofs/runtime_core models the same fns with hbg/hName as hypotheses).
-graph/src/runtime/runtime.rs	materialize_node_property	1667	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
-graph/src/runtime/runtime.rs	materialize_node_property_values	1681	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
-graph/src/runtime/runtime.rs	materialize_relationship_property	1729	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
-graph/src/runtime/runtime.rs	materialize_relationship_property_values	1741	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
+graph/src/runtime/runtime.rs	materialize_node_property	1670	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
+graph/src/runtime/runtime.rs	materialize_node_property_values	1714	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
+graph/src/runtime/runtime.rs	materialize_relationship_property	1762	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
+graph/src/runtime/runtime.rs	materialize_relationship_property_values	1774	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
-graph/src/runtime/eval.rs	ExprEval::eval_batch	1161	PROVEN	EvalBatch.laws/evalBatch_sound (expr_semantics evalBatch_eq_perRow with BatchLaws proved)
-graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1177	PROVEN	EvalBatch.laws/evalBatch_sound
+graph/src/runtime/eval.rs	ExprEval::eval_batch	1271	PROVEN	EvalBatch.laws/evalBatch_sound (expr_semantics evalBatch_eq_perRow with BatchLaws proved)
+graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1287	PROVEN	EvalBatch.laws/evalBatch_sound
 graph/src/runtime/row.rs	push_slot	224	PROVEN	Row pushSlot / pushSlots_spec (appends one slot, bound bit as given; #3059); proofs/runtime_ds pushSlot: getById_pushSlot, isBound_pushSlot
+# #3437: list comprehensions / quantifiers over the list in chunks (eval.rs ListLoop, list_loop_chunk/columnar), the exact property fetch (Comp.ExactProp).
+graph/src/runtime/eval.rs	counts_comprehension	320	PROVEN	Comp.Bridge countsComprehension: counted_goes_per_row (routes size(<comprehension>) to eval_per_row), eval_sound_pr
+graph/src/runtime/eval.rs	new	328	PROVEN	Comp.Discharge newBody: newBody_drops (over expr_semantics evalNode); Comp.Final.bodiesOf/prBody; Comp.ListLoop perElem_eq, bulk_eq
+graph/src/runtime/eval.rs	vector_plan	349	PROVEN	Comp.Classifier vectorPlan: vectorPlan_some, vectorPlan_no_bad, vectorPlan_broadcasts, vectorPlan_vals
+graph/src/runtime/eval.rs	collect_body_vars	386	PROVEN	Comp.Classifier collect/collectAll (rejects nested binders; since e1d37442e also UDF/procedure/non-deterministic calls): collect_rejects_iff, collect_rejects, collect_extends, collect_reads; history pre_a739b990f_accepts_nested_binder
+graph/src/runtime/eval.rs	loop_var_column	419	PROVEN	Comp.Bridge loopVarColumn (columnar Column): loopVar_get; Comp.ChunkBatch.chunkBatch_loop
+graph/src/runtime/eval.rs	broadcast_column	431	PROVEN	Comp.Bridge broadcastColumn (columnar Column): broadcast_get; Comp.ChunkBatch.chunkBatch_outer
+graph/src/runtime/eval.rs	eval_quantifier	1338	PROVEN	Comp.Final.pr_quantifier_eq_main (Comp.Drive prQuant: quantifier_eq_main with Col.Sound = Comp.Concrete.colOf_sound: the PR's VectorEval over the chunk batch = ExprEval per element; columnar CoreBridge.lawful, Comp.PRArms.lawfulPR, Comp.Concrete.rowAgree; bulk reads RuntimeReads.propReads); hreg: the trees' hasLabels is the registry's
+graph/src/runtime/eval.rs	eval_list_comprehension	1400	PROVEN	Comp.Final.pr_comprehension_eq_main, pr_size_eq_main (Comp.Drive prListComp: comprehension_eq_main, size_eq_main, size_projection_error; Col.Sound = Comp.Concrete.colOf_sound)
+graph/src/runtime/eval.rs	list_loop_chunk	1491	PROVEN	Comp.Final.pr_chunkStep_eq (Comp.Drive chunkStep: chunkStep_eq, prRun_eq; Comp.ListLoop perElem_eq; Col.Sound = Comp.Concrete.colOf_sound) ; non-boolean predicate on the Collect/Tally sinks is the type error (Comp.ListLoop predOk, prStep; main's loop errors too)
+graph/src/runtime/eval.rs	list_loop_columnar	1598	PROVEN	Comp.Final.pr_columnar_sound (Comp.Chunked columnar, projection over the passed row indices passedIdx: columnar_sound, tested_spec; Comp.ChunkBatch.chunkBatch: chunkBatch_wf, chunkBatch_loop, chunkBatch_outer; Col.Sound = Comp.Concrete.colOf_sound) ; checkPred: a non-Bools predicate column with a non-boolean cell is the type error before the sink is touched (columnar_sound takes the result, chunkStep re-runs per element on any Err)
+graph/src/graph/graph.rs	get_node_int_attributes_by_idx	2686	PROVEN	Comp.ExactProp getIntLoop over node_attrs (NodeId repr(transparent) u64 cast): getIntLoop_spec
+graph/src/graph/attribute_store.rs	get_int_attrs_by_idx_batch_into	1188	PROVEN	Comp.ExactProp getIntLoop: getIntLoop_spec (ints = main's Int/Null values, 0 under null; on_null bits = from_values), getIntLoop_other (false at any other tag)
+graph/src/runtime/runtime.rs	materialize_node_property_exact	1685	PROVEN	Comp.ExactProp exactPR: exact_eq_main, getIntLoop_spec, getIntLoop_other

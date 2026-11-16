@@ -1,13 +1,13 @@
-import Pr3437Review.ExactProp
+import Columnar.Comp.ExactProp
 import Columnar.CoreBridge
 
 /-!
 # PR #3437's `VectorEval` (a739b990f) as columnar arms, and its `Lawful` instance
 
-The PR changes two arms of `VectorEval` (vector_expr.rs at a739b990f):
-* `eval_property` (:336-353): a `NodeIds` child is fetched with
+The PR changes two arms of `VectorEval` (vector_expr.rs):
+* `eval_property` (:333-350): a `NodeIds` child is fetched with
   `materialize_node_property_exact` (`ExactProp.exactPR`), anything else as before;
-* the function arm's guard gains `!counts_comprehension(node)` (:255-257), so
+* the function arm's guard gains `!counts_comprehension(node)` (:252-254), so
   `size(<list comprehension>)` is evaluated per row.
 
 `armsPR` is columnar's `CoreBridge.armsOf` with those two arms replaced, over a runtime whose
@@ -17,7 +17,7 @@ property column *is* main's (`ExactProp.exact_eq_main`, and the two models of
 PR's arms — so `VecEval.eval_sound` holds for the PR's `VectorEval::eval`.
 -/
 
-namespace Pr3437.PRArms
+namespace Columnar.Comp.PRArms
 open FalkorCore (V)
 open FalkorExpr.Eval (E Ev Compound Fn evalNode)
 open Columnar (Batch Column EC FloatModel)
@@ -36,15 +36,15 @@ structure NodeStore (F : Type) where
   attrIdx : String → Option Nat
   deletedEmpty : Bool
   noPendingAttrs : Bool
-  /-- the per-id value of the deleted / pending path (runtime.rs:1611-1626) -/
+  /-- the per-id value of the deleted / pending path (runtime.rs:1730-1745) -/
   slowAt : String → Nat → V F
 
-/-- `materialize_node_property_values` (runtime.rs:1595). -/
+/-- `materialize_node_property_values` (runtime.rs:1714). -/
 def NodeStore.matValues (st : NodeStore F) (ids : List Nat) (a : String) : List (V F) :=
   ExactProp.matValues (st.entry a) st.unpackOther (st.attrIdx a) st.deletedEmpty st.noPendingAttrs
     (fun keys => keys.map (st.slowAt a)) ids
 
-/-- `materialize_node_property_exact` (runtime.rs:1566); `0.0` is `ofInt 0`. -/
+/-- `materialize_node_property_exact` (runtime.rs:1685); `0.0` is `ofInt 0`. -/
 def NodeStore.exact (st : NodeStore F) (ids : List Nat) (a : String) : ExactProp.Column F × ExactProp.Bits :=
   ExactProp.exactPR (st.entry a) st.unpackOther (FloatModel.ofInt 0) (st.attrIdx a) st.deletedEmpty
     st.noPendingAttrs (fun keys => keys.map (st.slowAt a)) ids
@@ -94,7 +94,7 @@ theorem toECx_eq (vs : List (V F)) :
     | some fs => simp only [toECx, toEC]; exact congrArg _ (bm_ofValues vs)
     | none => simp [toECx, toEC]
 
-/-- The PR's `eval_property` (vector_expr.rs:336-353 at a739b990f). -/
+/-- The PR's `eval_property` (vector_expr.rs:333-350). -/
 def evalPropertyPR (rt : RT F) (st : NodeStore F) (col : Nat → Column F) (attr : String) (ch : E (V F))
     (rows : List Nat) : Option (EC F) :=
   match ch with
@@ -127,7 +127,7 @@ theorem evalPropertyPR_eq (rt : RT F) (st : NodeStore F) (col : Nat → Column F
     · rfl
   · rfl
 
-/-- `counts_comprehension(node)` (eval.rs:315-320): `size` over a single `ListComprehension`
+/-- `counts_comprehension(node)` (eval.rs:320-325): `size` over a single `ListComprehension`
 child (`isLC t`: catch-all tag `t` is `ListComprehension`). -/
 def countsC (isLC : Nat → Bool) (f : Fn (V F)) : List (E (V F)) → Bool
   | [.compound t _] => isLC t && f.name == "size"
@@ -136,7 +136,7 @@ def countsC (isLC : Nat → Bool) (f : Fn (V F)) : List (E (V F)) → Bool
 section
 variable (rt : RT F) (c : Compound (V F)) (b : Batch F) (st : NodeStore F) (isLC : Nat → Bool)
 
-/-- **The PR's `VectorEval` over batch `b`** (vector_expr.rs:211-283 at a739b990f): a counted
+/-- **The PR's `VectorEval` over batch `b`** (vector_expr.rs:211-280): a counted
 comprehension fails the function arm's guard and is evaluated per row (a `size` call never
 takes the `hasLabels` branch), and `NodeIds` properties are fetched exactly. -/
 def armsPR : Arms (V F) (EC F) :=
@@ -170,4 +170,4 @@ theorem counted_goes_per_row (f : Fn (V F)) (t : Nat) (cs : List (E (V F))) (row
   simp [armsPR, countsC, hk, hn, hg]
 end
 
-end Pr3437.PRArms
+end Columnar.Comp.PRArms

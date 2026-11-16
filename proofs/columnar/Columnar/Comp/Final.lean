@@ -1,5 +1,5 @@
-import Pr3437Review.Concrete
-import Pr3437Review.Runtime
+import Columnar.Comp.Concrete
+import Columnar.Comp.Runtime
 
 /-!
 # PR #3437: the headline theorems with `hS` discharged
@@ -11,11 +11,11 @@ with the PR's real `VectorEval` over the real chunk batch (`prCol`) and main's p
 evaluator (`prBody`: `ListLoop::new` over expr_semantics' `evalNode` with the engine's
 operations and the runtime's parameters), with the plan computed by `vector_plan` (`planOf`):
 
-* **`pr_comprehension_eq_main`** (`eval_list_comprehension`, eval.rs:1372),
-* **`pr_quantifier_eq_main`** (`ExprEval::eval_quantifier`, :1310),
+* **`pr_comprehension_eq_main`** (`eval_list_comprehension`, eval.rs:1400),
+* **`pr_quantifier_eq_main`** (`ExprEval::eval_quantifier`, :1338),
 * **`pr_size_eq_main`** (`size(<comprehension>)`),
-* **`pr_chunkStep_eq`** (`list_loop_chunk`, :1456),
-* **`pr_columnar_sound`** (`list_loop_columnar`, :1550).
+* **`pr_chunkStep_eq`** (`list_loop_chunk`, :1491),
+* **`pr_columnar_sound`** (`list_loop_columnar`, :1598).
 
 The `_of` forms take the runtime record abstractly and need `PropReads`; the headline forms
 take the runtime built from its attribute state (`RuntimeReads.rtOf`, `Runtime.nodeStore`), for
@@ -23,16 +23,16 @@ which `PropReads` is a theorem (`RuntimeReads.propReads`, `Runtime.propReads_wit
 `hasLabels` calls are the registered function (the shape of the trees the parser builds).
 -/
 
-namespace Pr3437.Final
+namespace Columnar.Comp.Final
 open FalkorCore (V)
 open FalkorExpr.Eval (E Ev Compound Fn evalNode)
 open Columnar (FloatModel)
 open Columnar.CoreOps (RT coreOps)
 open Columnar.CoreBridge (PropReads)
-open Pr3437.PRArms (withStore NodeStore)
-open Pr3437.ListLoop (Col Body)
-open Pr3437.Classifier (vectorPlan)
-open Pr3437.Concrete (colOf peOf Ok Reads)
+open Columnar.Comp.PRArms (withStore NodeStore)
+open Columnar.Comp.ListLoop (Col Body)
+open Columnar.Comp.Classifier (vectorPlan)
+open Columnar.Comp.Concrete (colOf peOf Ok Reads)
 
 variable {F : Type} [FloatModel F]
 
@@ -43,11 +43,11 @@ variable (rt : RT F) (c : Compound (V F)) (st : NodeStore F) (isLC isBad : Nat �
   (envAt : Nat → Option (V F)) (vid : Nat) (pred proj : E (V F))
 
 /-- The bodies `vector_plan` looks at: `predicate.iter().chain(projection.iter())` after
-`ListLoop::new` dropped the literal `true` and the identity projection (eval.rs:323-352). -/
+`ListLoop::new` dropped the literal `true` and the identity projection (eval.rs:328-357). -/
 def bodiesOf : List (E (V F)) :=
   (if !Discharge.isConstTrue pred then [pred] else []) ++ (if !Discharge.isLoopVar vid proj then [proj] else [])
 
-/-- `ListLoop::vector_plan` (eval.rs:344). -/
+/-- `ListLoop::vector_plan` (eval.rs:349). -/
 def planOf : Option (List (Nat × V F)) :=
   vectorPlan vid ((bodiesOf vid pred proj).map (Discharge.toBT isBad)) envAt
 
@@ -221,4 +221,4 @@ theorem pr_columnar_sound (sk : ListLoop.Sink F) (chunk : List (V F)) (sk' : Lis
   pr_columnar_sound_of _ c _ isLC isBad dbg envAt vid pred proj (propReads_S s rt0) hP hJ sk chunk sk' h
 end
 
-end Pr3437.Final
+end Columnar.Comp.Final

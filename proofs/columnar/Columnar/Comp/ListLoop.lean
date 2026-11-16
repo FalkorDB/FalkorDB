@@ -4,25 +4,25 @@ import FalkorStrList
 /-!
 # PR #3437: a list comprehension / quantifier body, chunked (`runtime/eval.rs`)
 
-Cites are to the PR branch (`perf/list-comprehension`, a739b990f) unless marked *main*
-(origin/main 9212add39).
+Cites are to the PR branch (`perf/list-comprehension`) unless marked *main* (origin/main
+before the PR's loops: the comprehension / quantifier arms of `eval_node`).
 
 | Lean | Rust |
 | --- | --- |
-| `isTrue` | `matches!(v, Value::Bool(true))` (eval.rs:1525, :1534, :1628) |
-| `kOf`, `boolMismatch` | the `Bool(true)/Bool(false)/Null/_ => Err` match (eval.rs:1542-1551, :1585-1594; *main* :1013-1023) |
-| `Sink` | `enum LoopSink` (eval.rs:304-311) |
-| `refStep`, `ref` | *main*'s per-element loops: comprehension eval.rs:1072-1080, quantifier :1010-1025 (`mainCompLoop`, `mainQuantLoop`) |
-| `Body` | `struct ListLoop` (eval.rs:289-300) after `ListLoop::new` (:323-338): `hasPred = false` iff the predicate was the literal `true`, `hasProj = false` iff the projection was the loop variable |
-| `prStep`, `bulk`, `perElem` | the per-element half of `list_loop_chunk` (eval.rs:1494-1546), with the `predicate.is_none() && projection.is_none()` shortcut (:1501-1508) |
+| `isTrue` | `matches!(v, Value::Bool(true))` (eval.rs:1562, :1571, :1686) |
+| `kOf`, `boolMismatch` | the `Bool(true)/Bool(false)/Null/_ => Err` match (eval.rs:1577-1586, :1643-1652; *main* :1025-1035) |
+| `Sink` | `enum LoopSink` (eval.rs:309-316) |
+| `refStep`, `ref` | *main*'s per-element loops: comprehension eval.rs:1078-1093, quantifier :1017-1035 (`mainCompLoop`, `mainQuantLoop`) |
+| `Body` | `struct ListLoop` (eval.rs:290-305) after `ListLoop::new` (:328-343): `hasPred = false` iff the predicate was the literal `true`, `hasProj = false` iff the projection was the loop variable |
+| `prStep`, `bulk`, `perElem` | the per-element half of `list_loop_chunk` (eval.rs:1529-1594), with the `predicate.is_none() && projection.is_none()` shortcut (:1536-1543) |
 | `EC`, `EC.vals` | `ExprColumn` read back through `ExprColumn::get`; `bools` is the `Bools(mask, nulls)` lane |
-| `Col`, `Col.Sound` | `VectorEval::eval` / `eval_values` over the chunk batch (eval.rs:1566, :1627, :1633) and the contract they meet (see `Bridge`) |
-| `countLocal`, `tallyNoProj`, `passedOf`, `columnar` | `list_loop_columnar` (eval.rs:1550-1652) |
-| `chunkStep` | `list_loop_chunk` (eval.rs:1456-1547): columnar first, re-run per element on any error |
-| `prRun` | the `for chunk in …` loops (eval.rs:1347-1356, :1408-1418, :1425-1427) |
+| `Col`, `Col.Sound` | `VectorEval::eval` / `eval_values` over the chunk batch (eval.rs:1614, :1685, :1691) and the contract they meet (see `Bridge`) |
+| `countLocal`, `tallyNoProj`, `passedOf`, `columnar` | `list_loop_columnar` (eval.rs:1598-1710) |
+| `chunkStep` | `list_loop_chunk` (eval.rs:1491-1595): columnar first, re-run per element on any error |
+| `prRun` | the `for chunk in …` loops (eval.rs:1375-1384, :1443-1453, :1460-1462) |
 -/
 
-namespace Pr3437.ListLoop
+namespace Columnar.Comp.ListLoop
 open FalkorCore FalkorStrList
 
 variable {F : Type}
@@ -39,9 +39,20 @@ def kOf : V F → Option K
   | .null => some .n
   | _ => none
 
+/-- A comprehension's predicate must give a boolean or null (`check_predicate_result`,
+eval.rs:1583-1591; main's loop, *main* eval.rs:1080-1090). -/
+def predOk (v : V F) : Bool := (kOf v).isSome
+
+theorem predOk_of_isTrue {v : V F} (h : isTrue v = true) : predOk v = true := by
+  cases v <;> simp_all [isTrue, predOk, kOf]
+  all_goals (split at h <;> simp_all)
+
+@[simp] theorem predOk_bool (b : Bool) : predOk (.bool b : V F) = true := by cases b <;> rfl
+@[simp] theorem predOk_null : predOk (.null : V F) = true := rfl
+
 def boolMismatch (v : V F) : String := "Type mismatch: expected Boolean but was " ++ v.name
 
-/-- `enum LoopSink` (eval.rs:304). -/
+/-- `enum LoopSink` (eval.rs:309). -/
 inductive Sink (F : Type) where
   | collect (acc : List (V F))
   | count (t f n : Nat)
@@ -61,10 +72,14 @@ variable (pe pj : V F → Except String (V F))
 def refStep : Sink F → V F → Except String (Sink F)
   | .collect acc, v => do
       let p ← pe v
-      if isTrue p then do let y ← pj v; pure (.collect (acc ++ [y])) else pure (.collect acc)
+      if predOk p then
+        if isTrue p then do let y ← pj v; pure (.collect (acc ++ [y])) else pure (.collect acc)
+      else throw (boolMismatch p)
   | .tally k, v => do
       let p ← pe v
-      if isTrue p then do let _ ← pj v; pure (.tally (k + 1)) else pure (.tally k)
+      if predOk p then
+        if isTrue p then do let _ ← pj v; pure (.tally (k + 1)) else pure (.tally k)
+      else throw (boolMismatch p)
   | .count t f n, v => do
       let p ← pe v
       match kOf p with
@@ -73,21 +88,23 @@ def refStep : Sink F → V F → Except String (Sink F)
 
 def ref (s : Sink F) (l : List (V F)) : Except String (Sink F) := l.foldlM (refStep pe pj) s
 
-/-- *main* eval.rs:1072-1080: `row.insert(var, value); match eval(child 1) { Bool(true) => {},
-_ => continue }; acc.push(eval(child 2)?)`. -/
+/-- *main* eval.rs:1078-1093: `row.insert(var, value); match eval(child 1) { Bool(true) => {},
+Bool(false) | Null => continue, v => Err(type mismatch) }; acc.push(eval(child 2)?)`. -/
 def mainCompLoop : List (V F) → List (V F) → Except String (List (V F))
   | acc, [] => .ok acc
   | acc, v :: vs =>
     match pe v with
     | .error e => .error e
     | .ok p =>
-      if isTrue p then
-        match pj v with
-        | .error e => .error e
-        | .ok y => mainCompLoop (acc ++ [y]) vs
-      else mainCompLoop acc vs
+      if predOk p then
+        if isTrue p then
+          match pj v with
+          | .error e => .error e
+          | .ok y => mainCompLoop (acc ++ [y]) vs
+        else mainCompLoop acc vs
+      else .error (boolMismatch p)
 
-/-- *main* eval.rs:1010-1025 (and the PR's short-list loop, eval.rs:1322-1337). -/
+/-- *main* eval.rs:1017-1035 (and the PR's short-list loop, eval.rs:1356-1370). -/
 def mainQuantLoop : Nat → Nat → Nat → List (V F) → Except String (Nat × Nat × Nat)
   | t, f, n, [] => .ok (t, f, n)
   | t, f, n, v :: vs =>
@@ -117,13 +134,17 @@ theorem ref_collect_eq_main : ∀ (l acc : List (V F)),
     | error e => rfl
     | ok p =>
       simp only [bind, Except.bind]
-      by_cases ht : isTrue p = true
-      · simp only [ht, ite_true]
-        cases hj : pj v with
-        | error e => rfl
-        | ok y => simp only [pure, Except.pure]; exact ref_collect_eq_main vs _
-      · simp only [ht, Bool.false_eq_true, ite_false, pure, Except.pure]
-        exact ref_collect_eq_main vs _
+      by_cases hk : predOk p = true
+      · simp only [hk, ite_true]
+        by_cases ht : isTrue p = true
+        · simp only [ht, ite_true]
+          cases hj : pj v with
+          | error e => rfl
+          | ok y => simp only [pure, Except.pure]; exact ref_collect_eq_main vs _
+        · simp only [ht, Bool.false_eq_true, ite_false, pure, Except.pure]
+          exact ref_collect_eq_main vs _
+      · simp only [hk, Bool.false_eq_true, ite_false, throw, throwThe, MonadExceptOf.throw,
+          Except.map]
 
 theorem ref_count_eq_main : ∀ (l : List (V F)) (t f n : Nat),
     ref pe pj (.count t f n) l = (mainQuantLoop pe t f n l).map fun (t, f, n) => .count t f n
@@ -150,22 +171,26 @@ theorem ref_tally_eq_collect : ∀ (l acc : List (V F)) (k : Nat),
     | error e => rfl
     | ok p =>
       simp only [bind, Except.bind]
-      by_cases ht : isTrue p = true
-      · simp only [ht, ite_true]
-        cases hj : pj v with
-        | error e => rfl
-        | ok y =>
-          simp only [pure, Except.pure]
-          rw [ref_tally_eq_collect vs (acc ++ [y]) (k + 1)]
-          cases hm : mainCompLoop pe pj (acc ++ [y]) vs with
+      by_cases hk : predOk p = true
+      · simp only [hk, ite_true]
+        by_cases ht : isTrue p = true
+        · simp only [ht, ite_true]
+          cases hj : pj v with
           | error e => rfl
-          | ok ys =>
-            have h1 := mainCompLoop_len vs (acc ++ [y]) ys hm
-            simp only [List.length_append, List.length_singleton] at h1
-            simp only [Except.map, Except.ok.injEq, Sink.tally.injEq, List.length_append,
-              List.length_singleton]; omega
-      · simp only [ht, Bool.false_eq_true, ite_false, pure, Except.pure]
-        exact ref_tally_eq_collect vs acc k
+          | ok y =>
+            simp only [pure, Except.pure]
+            rw [ref_tally_eq_collect vs (acc ++ [y]) (k + 1)]
+            cases hm : mainCompLoop pe pj (acc ++ [y]) vs with
+            | error e => rfl
+            | ok ys =>
+              have h1 := mainCompLoop_len vs (acc ++ [y]) ys hm
+              simp only [List.length_append, List.length_singleton] at h1
+              simp only [Except.map, Except.ok.injEq, Sink.tally.injEq, List.length_append,
+                List.length_singleton]; omega
+        · simp only [ht, Bool.false_eq_true, ite_false, pure, Except.pure]
+          exact ref_tally_eq_collect vs acc k
+      · simp only [hk, Bool.false_eq_true, ite_false, throw, throwThe, MonadExceptOf.throw,
+          Except.map]
 where
   mainCompLoop_len : ∀ (l acc ys : List (V F)), mainCompLoop pe pj acc l = .ok ys →
       acc.length ≤ ys.length
@@ -176,15 +201,18 @@ where
       | error e => simp [hp] at h
       | ok p =>
         simp only [hp] at h
-        by_cases ht : isTrue p = true
-        · simp only [ht, ite_true] at h
-          cases hj : pj v with
-          | error e => simp [hj] at h
-          | ok y =>
-            simp only [hj] at h
-            have := mainCompLoop_len vs _ ys h; simp at this; omega
-        · simp only [ht, Bool.false_eq_true, ite_false] at h
-          exact mainCompLoop_len vs acc ys h
+        by_cases hk : predOk p = true
+        · simp only [hk, ite_true] at h
+          by_cases ht : isTrue p = true
+          · simp only [ht, ite_true] at h
+            cases hj : pj v with
+            | error e => simp [hj] at h
+            | ok y =>
+              simp only [hj] at h
+              have := mainCompLoop_len vs _ ys h; simp at this; omega
+          · simp only [ht, Bool.false_eq_true, ite_false] at h
+            exact mainCompLoop_len vs acc ys h
+        · simp [hk] at h
 
 /-- **First error in element order.** If main's loop fails, it fails at the first element
 whose step fails, every earlier element having succeeded. -/
@@ -208,16 +236,28 @@ theorem ref_error_first : ∀ (l : List (V F)) (s : Sink F) (e : String),
 predicate passed — the projection's. -/
 theorem refStep_collect_error (acc : List (V F)) (v : V F) (e : String) :
     refStep pe pj (.collect acc) v = .error e ↔
-      pe v = .error e ∨ ∃ p, pe v = .ok p ∧ isTrue p = true ∧ pj v = .error e := by
+      pe v = .error e ∨ (∃ p, pe v = .ok p ∧ predOk p = false ∧ e = boolMismatch p) ∨
+        ∃ p, pe v = .ok p ∧ isTrue p = true ∧ pj v = .error e := by
   simp only [refStep]
   cases hp : pe v with
   | error e' => simp [bind, Except.bind]
   | ok p =>
     simp only [bind, Except.bind]
-    by_cases ht : isTrue p = true
-    · simp only [ht, ite_true]
-      cases pj v <;> simp [pure, Except.pure, ht]
-    · simp [ht, pure, Except.pure]
+    by_cases hk : predOk p = true
+    · simp only [hk, ite_true]
+      by_cases ht : isTrue p = true
+      · simp only [ht, ite_true]
+        cases pj v <;> simp [pure, Except.pure, ht, hk]
+      · simp [ht, hk, pure, Except.pure]
+    · have hk' : predOk p = false := by simpa using hk
+      simp only [hk', Bool.false_eq_true, ite_false, throw, throwThe, MonadExceptOf.throw,
+        Except.error.injEq, hp]
+      constructor
+      · intro h; exact Or.inr (Or.inl ⟨p, rfl, hk', h.symm⟩)
+      · rintro (h | ⟨q, hq, _, h⟩ | ⟨q, hq, ht, _⟩)
+        · cases h
+        · cases hq; exact h.symm
+        · cases hq; simp [predOk_of_isTrue ht] at hk'
 
 end
 
@@ -231,7 +271,7 @@ structure Body (F : Type) where
   pe : V F → Except String (V F)
   pj : V F → Except String (V F)
 
-/-- What `ListLoop::new` relies on when it drops a node (eval.rs:328-331): the literal
+/-- What `ListLoop::new` relies on when it drops a node (eval.rs:333-336): the literal
 `true` evaluates to `true`, and the loop variable evaluates to the element. These are
 `ExprEval::eval_node` on `ExprIR::Constant` / `ExprIR::Variable` (an `ExprEval` fact;
 part of the `RowAgree` hypothesis of the root report). -/
@@ -239,24 +279,28 @@ structure Body.Drops (b : Body F) : Prop where
   predTrue : b.hasPred = false → ∀ v, b.pe v = .ok (.bool true)
   projId : b.hasProj = false → ∀ v, b.pj v = .ok v
 
-/-- The loop body of eval.rs:1510-1546. -/
+/-- The loop body of eval.rs:1545-1581. -/
 def prStep (b : Body F) (s : Sink F) (v : V F) : Except String (Sink F) :=
   (if b.hasPred then b.pe v else pure (.bool true)) >>= fun pass =>
   match s with
   | .collect acc =>
-    if isTrue pass then
-      (if b.hasProj then b.pj v else pure v) >>= fun y => pure (.collect (acc ++ [y]))
-    else pure (.collect acc)
+    if predOk pass then
+      if isTrue pass then
+        (if b.hasProj then b.pj v else pure v) >>= fun y => pure (.collect (acc ++ [y]))
+      else pure (.collect acc)
+    else throw (boolMismatch pass)
   | .tally k =>
-    if isTrue pass then
-      (if b.hasProj then b.pj v else pure v) >>= fun _ => pure (.tally (k + 1))
-    else pure (.tally k)
+    if predOk pass then
+      if isTrue pass then
+        (if b.hasProj then b.pj v else pure v) >>= fun _ => pure (.tally (k + 1))
+      else pure (.tally k)
+    else throw (boolMismatch pass)
   | .count t f n =>
     match kOf pass with
     | some k => pure (bump k t f n)
     | none => throw (boolMismatch pass)
 
-/-- eval.rs:1501-1508: no predicate and no projection. -/
+/-- eval.rs:1536-1543: no predicate and no projection. -/
 def bulk : Sink F → List (V F) → Sink F
   | .collect acc, c => .collect (acc ++ c)
   | .count t f n, c => .count (t + c.length) f n
@@ -286,15 +330,15 @@ theorem bulk_eq (hd : b.Drops) (hp : b.hasPred = false) (hj : b.hasProj = false)
     rw [ref_cons]
     cases s with
     | collect acc =>
-      simp only [refStep, hd.predTrue hp v, hd.projId hj v, isTrue, bind, Except.bind, ite_true,
-        pure, Except.pure]
+      simp only [refStep, hd.predTrue hp v, hd.projId hj v, isTrue, predOk_bool, bind,
+        Except.bind, ite_true, pure, Except.pure]
       rw [bulk_eq hd hp hj vs]; simp [bulk]
     | count t f n =>
       simp only [refStep, hd.predTrue hp v, kOf, bump, bind, Except.bind, pure, Except.pure]
       rw [bulk_eq hd hp hj vs]; simp [bulk]; omega
     | tally k =>
-      simp only [refStep, hd.predTrue hp v, hd.projId hj v, isTrue, bind, Except.bind, ite_true,
-        pure, Except.pure]
+      simp only [refStep, hd.predTrue hp v, hd.projId hj v, isTrue, predOk_bool, bind,
+        Except.bind, ite_true, pure, Except.pure]
       rw [bulk_eq hd hp hj vs]; simp [bulk]; omega
 
 /-- **The per-element path is main's loop.** -/
@@ -309,4 +353,4 @@ theorem perElem_eq (hd : b.Drops) (s : Sink F) (c : List (V F)) :
       funext s v; exact prStep_eq b hd s v
     simp only [ref]; rw [show prStep b = refStep b.pe b.pj from this]
 
-end Pr3437.ListLoop
+end Columnar.Comp.ListLoop

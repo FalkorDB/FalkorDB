@@ -45,7 +45,7 @@ graph/src/parser/cypher.rs	Parser::parse_primary_expr	1950	PROVEN	C.PrimaryG pri
 graph/src/parser/cypher.rs	Parser::parse_list_operator_expression	2144	PROVEN	listOp (#3041: a bound that fails to parse is an error), listOp_ok, slice_bound_error_reported, slice_bounds_omitted, listOp_from_err, listOp_to_err, bounded_agree (no slice exception left) (#3036 fixed)
 graph/src/parser/cypher.rs	Parser::parse_property_lookup	2175	PROVEN	postLoop (.dot arm), postfix_tightest; C.ClausesG2 dotChain_sound
 graph/src/parser/cypher.rs	Parser::parse_expr	2192	PROVEN	parseExpr, parseExpr_no_panic
-graph/src/parser/cypher.rs	Parser::parse_expr_inner	2203	PROVEN	step/loop (notFrames, level-5 re-entry after IS NULL), parseExpr_no_panic, binary_pairs_agree, bounded_agree, not_not_kept, not_run_folds, is_null_then_predicate, precedence theorems
+graph/src/parser/cypher.rs	Parser::parse_expr_inner	2203	PROVEN	step/loop (notFrames, level-5 re-entry after IS NULL, level-9 negated int literal fold #3437), parseExpr_no_panic, binary_pairs_agree, bounded_agree, not_not_kept, not_run_folds, is_null_then_predicate, precedence theorems (neg_binds_tighter_than_pow, neg_var_binds_tighter_than_pow, sign_sequences)
 graph/src/parser/cypher.rs	Parser::match_dot_property_separator	2693	PROVEN	C.Fmt dotSep_spec; C.Index idxMore_sound
 graph/src/parser/cypher.rs	Parser::parse_ident	2712	PROVEN	C.Core ident_tryIdent, ident_ok; Model parseIdent_np
 graph/src/parser/cypher.rs	Parser::try_parse_ident	2731	PROVEN	C.Core ident_tryIdent, tryIdent_ok

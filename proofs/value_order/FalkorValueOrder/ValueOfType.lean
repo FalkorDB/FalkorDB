@@ -1,9 +1,9 @@
 import FalkorValueOrder.Glue
 
 /-!
-# PR #3437: `value_of_type(List, List(Any))` returns early (value.rs:1320-1321)
+# PR #3437: `value_of_type(List, List(Any))` returns early (value.rs:1328-1329)
 
-`vtPR` is `impl ValueTypeOf for Value::value_of_type` on the PR branch (value.rs:1315-1350):
+`vtPR` is `impl ValueTypeOf for Value::value_of_type` on the PR branch (value.rs:1323-1358):
 value_order's `W.valueOfType` (main, Glue.lean) with the new first arm
 `(Self::List(_), Type::List(ty)) if matches!(**ty, Type::Any) => None`, applied at every
 recursion level. **`vtPR_eq`**: it returns exactly what main returns, for every value and
@@ -11,7 +11,7 @@ every type — the early arm answers what main's element walk answers, because e
 is accepted by `Any` (`valueOfType_any`).
 -/
 
-namespace Pr3437.ValueOfType
+namespace ValueOrder.ValueOfType
 open ValueOrder.Glue
 
 variable {F F32 : Type}
@@ -99,4 +99,4 @@ theorem size_arg_list (vs : List (W F F32)) :
   · simp [vtPR, vtPR.unionAll]
   · rw [← vtPR_eq]; simp [vtPR, vtPR.unionAll]
 
-end Pr3437.ValueOfType
+end ValueOrder.ValueOfType

@@ -482,6 +482,19 @@ impl<I> Iterator for RowIter<'_, I> {
             Self::One(item) => item.take(),
         }
     }
+
+    /// Forwarded, so a consumer can size its buffer by the source.
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Many(iter) => iter.size_hint(),
+            Self::Spread(iter) => iter.size_hint(),
+            Self::One(item) => {
+                let n = usize::from(item.is_some());
+                (n, Some(n))
+            }
+        }
+    }
 }
 
 /// Owns the parent batch being expanded plus the current row's result iterator,

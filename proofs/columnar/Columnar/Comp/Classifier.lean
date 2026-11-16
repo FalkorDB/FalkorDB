@@ -1,14 +1,14 @@
-import Pr3437Review.ClassifierPre
+import Columnar.Comp.ClassifierPre
 
 /-!
-# PR #3437 (a739b990f): which bodies may run columnarly (`collect_body_vars`, `vector_plan`)
+# PR #3437: which bodies may run columnarly (`collect_body_vars`, `vector_plan`)
 
 | Lean | Rust |
 | --- | --- |
 | `BK`, `BT` | the `ExprIR` shapes `collect_body_vars` distinguishes (shared with `ClassifierPre`) |
-| `pre`, `collect`, `collectAll` | `collect_body_vars` (eval.rs:380-402); `collectAll` is `node.children().all(..)` (:400-401), short-circuiting |
-| `bad` | a nested `ListComprehension` / `Quantifier` / `Reduce`, a `NestedPlan`, `Pattern`, `PatternComprehension`, `Distinct`, a writing or aggregating function — anywhere in the tree |
-| `vectorPlan` | `ListLoop::vector_plan` (eval.rs:344-370): `.all(..)` over the present bodies, then every read other than the loop variable resolved through `env.value_at` (:361) |
+| `pre`, `collect`, `collectAll` | `collect_body_vars` (eval.rs:386-415); `collectAll` is `node.children().all(..)` (:413-414), short-circuiting |
+| `bad` | a nested `ListComprehension` / `Quantifier` / `Reduce`, a `NestedPlan`, `Pattern`, `PatternComprehension`, `Distinct`, a function that writes, aggregates, is a UDF or procedure, or is non-deterministic (`.func w a`: `w` = `func.write`, `a` = the rest of the rejected kinds; since e1d37442e the last three too) — anywhere in the tree |
+| `vectorPlan` | `ListLoop::vector_plan` (eval.rs:349-376): `.all(..)` over the present bodies, then every read other than the loop variable resolved through `env.value_at` (:369) |
 
 **`collect_rejects_iff`**: `collect_body_vars` returns `false` exactly when the tree has a
 `bad` node at any depth — nested binders included since a739b990f. **`vectorPlan_broadcasts`**:
@@ -18,10 +18,10 @@ environment value — no other binding exists in a columnar body. History:
 take the columnar path).
 -/
 
-namespace Pr3437.Classifier
-open Pr3437.ClassifierPre (BK BT)
+namespace Columnar.Comp.Classifier
+open Columnar.Comp.ClassifierPre (BK BT)
 
-/-- The `match node.data()` of eval.rs:384-399: `none` = `return false`. -/
+/-- The `match node.data()` of eval.rs:391-410: `none` = `return false`. -/
 def pre : BK → List Nat → Option (List Nat)
   | .var id, r => some (r ++ [id])
   | .listComp _, _ | .quant _, _ | .reduce _ _, _ => none
@@ -121,7 +121,7 @@ theorem collectAll_extends : ∀ (cs : List BT) (r : List Nat), ∃ r₁, (colle
       exact ⟨r₁ ++ r₂, by rw [hr2, hr]; simp⟩
 end
 
-open Pr3437.ClassifierPre (varsOf varsAll) in
+open Columnar.Comp.ClassifierPre (varsOf varsAll) in
 mutual
 theorem collect_reads : ∀ (t : BT) (r : List Nat), (collect t r).1 = true →
     ∀ id ∈ varsOf t, id ∈ (collect t r).2
@@ -155,7 +155,7 @@ theorem collectAll_reads : ∀ (cs : List BT) (r : List Nat), (collectAll cs r).
       · exact collectAll_reads cs r' hok id hcs
 end
 
-/-- `ListLoop::vector_plan` (eval.rs:344-370), a739b990f: reads other than the loop
+/-- `ListLoop::vector_plan` (eval.rs:349-376): reads other than the loop
 variable, deduplicated (`sort_unstable` + `dedup` is `eraseDups` up to order). -/
 def vectorPlan {V : Type} (varId : Nat) (bodies : List BT) (valueAt : Nat → Option V) :
     Option (List (Nat × V)) :=
@@ -187,7 +187,7 @@ theorem vectorPlan_no_bad {V : Type} (varId : Nat) (bodies : List BT) (valueAt :
     · exact hb.1
     · exact ih hb.2 ht'
 
-open Pr3437.ClassifierPre (varsAll mapM_mem) in
+open Columnar.Comp.ClassifierPre (varsAll mapM_mem) in
 /-- **Every variable a columnar body reads is the loop variable or broadcast with its
 environment value.** No id-uniqueness premise: since a739b990f nothing else is bound. -/
 theorem vectorPlan_broadcasts {V : Type} (varId : Nat) (bodies : List BT) (valueAt : Nat → Option V)
@@ -248,4 +248,4 @@ theorem pre_a739b990f_accepts_nested_binder :
     (collect (nestedQuant 0 1) []).1 = false := by
   decide
 
-end Pr3437.Classifier
+end Columnar.Comp.Classifier

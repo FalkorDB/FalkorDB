@@ -2,18 +2,18 @@ import FalkorCore.Value
 import FalkorCore.Float
 
 /-!
-# PR #3437: `materialize_node_property_exact` (runtime.rs:1566-1587)
+# PR #3437: `materialize_node_property_exact` (runtime.rs:1685-1706)
 
 | Lean | Rust |
 | --- | --- |
-| `Tag`, `Packed` | `enum Tag`, `struct PackedAttr` (attribute_store.rs:257-278); `payload` = `i64::from_le_bytes(payload)` |
-| `entry` | `self.data.get(key).and_then(|span| binary_search_by_key(attr_idx).map(entries[pos]))` — the lookup both `get_int_attrs_by_idx_batch_into` (attribute_store.rs:1194-1200) and `SpanRef::get` (:856-865) perform |
-| `unpack` | `Block::unpack` (attribute_store.rs:486-505): `Null → Null`, `Int → Int(payload)`, other tags opaque |
-| `batchValues` | `get_attrs_by_idx_batch_into(keys, idx, &Null, out)` (attribute_store.rs:1221-1232) via `get_node_attributes_by_idx` (graph.rs:2587) |
-| `getIntLoop` | `get_int_attrs_by_idx_batch_into` (attribute_store.rs:1186-1216) via `get_node_int_attributes_by_idx` (graph.rs:2602-2613); `on_null(i)` = `nulls.set(i)` |
-| `matValues` | `materialize_node_property_values` (runtime.rs:1595-1633); the deleted/pending path is `slow` (unchanged) |
+| `Tag`, `Packed` | `enum Tag`, `struct PackedAttr` (attribute_store.rs:259-280); `payload` = `i64::from_le_bytes(payload)` |
+| `entry` | `self.data.get(key).and_then(|span| binary_search_by_key(attr_idx).map(entries[pos]))` — the lookup both `get_int_attrs_by_idx_batch_into` (attribute_store.rs:1196-1202) and `SpanRef::get` (:858-867) perform |
+| `unpack` | `Block::unpack` (attribute_store.rs:488-507): `Null → Null`, `Int → Int(payload)`, other tags opaque |
+| `batchValues` | `get_attrs_by_idx_batch_into(keys, idx, &Null, out)` (attribute_store.rs:1223-1234) via `get_node_attributes_by_idx` (graph.rs:2671) |
+| `getIntLoop` | `get_int_attrs_by_idx_batch_into` (attribute_store.rs:1188-1218) via `get_node_int_attributes_by_idx` (graph.rs:2686-2697); `on_null(i)` = `nulls.set(i)` |
+| `matValues` | `materialize_node_property_values` (runtime.rs:1714-1752); the deleted/pending path is `slow` (unchanged) |
 | `classifyExact` | `classify_exact_column` (batch.rs:295) = `NullBitmap::from_values` + `classify_numeric(_, true, Pure)` (batch.rs:191-231) |
-| `exactPR` | `materialize_node_property_exact` (runtime.rs:1566-1587) |
+| `exactPR` | `materialize_node_property_exact` (runtime.rs:1685-1706) |
 | `evalPropPR`, `evalPropMain` | `VectorEval::eval_property`'s column (vector_expr.rs:337-353; main: `classify_exact_column(property_values(..)?)`, and `property_values` on `NodeIds` is `materialize_node_property_values` of the gathered ids, :379-386) |
 
 A `NullBitmap` is compared bit by bit on `0..len` (`Bits`).
@@ -26,7 +26,7 @@ same `Ints` lane (a `0` under each null) and the same null bits; in every other 
 stored value that is neither an integer nor null) it *is* that call.
 -/
 
-namespace Pr3437.ExactProp
+namespace Columnar.Comp.ExactProp
 open FalkorCore
 
 inductive Tag where
@@ -223,4 +223,4 @@ theorem getIntLoop_other (i : Nat) (out : List Int) (bm : Bits) (k : Nat) (ks : 
   simp only [getIntLoop, he]
   cases tag <;> simp_all
 
-end Pr3437.ExactProp
+end Columnar.Comp.ExactProp

@@ -22,6 +22,12 @@ namespace FalkorParserGrammar
 
 namespace G
 
+/-- `-a`: a negated integer literal is the constant `-n` (the Rust parser folds
+it, #3437; same meaning as `Negate`), anything else a `neg` node. -/
+def negOf : RT → RT
+  | .node (.int n) _ => lf (.int (-n))
+  | a => .node .neg [a]
+
 /-- One step of `oC_ComparisonExpression`'s chain builder. -/
 def chain : List RT → RT
   | [] => lf .null
@@ -190,7 +196,7 @@ def unE : Nat → List Tok → Out
   | 0, _ => .fuel
   | n + 1, .dash :: r =>
     match nonArith n r with
-    | .ok a r' => .ok (.node .neg [a]) r'
+    | .ok a r' => .ok (negOf a) r'
     | o => o
   | n + 1, .plus :: r => nonArith n r
   | n + 1, ts => nonArith n ts

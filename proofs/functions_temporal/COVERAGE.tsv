@@ -82,24 +82,24 @@ graph/src/runtime/vector_expr.rs	ExprColumn::is_null	150	NOT COVERED	bitmap plum
 graph/src/runtime/vector_expr.rs	union_nulls	168	MODELLED	laneRow isNull flag = union
 graph/src/runtime/vector_expr.rs	VectorEval::new	202	NOT COVERED	constructor
 graph/src/runtime/vector_expr.rs	VectorEval::eval	211	NOT COVERED	dispatch over ExprIR
-graph/src/runtime/vector_expr.rs	VectorEval::eval_values	282	NOT COVERED	property/variable fast paths
-graph/src/runtime/vector_expr.rs	VectorEval::eval_variable	306	NOT COVERED	column gather
-graph/src/runtime/vector_expr.rs	VectorEval::eval_property	330	NOT COVERED	bulk attribute fetch
-graph/src/runtime/vector_expr.rs	VectorEval::property_values	353	NOT COVERED	bulk attribute fetch
-graph/src/runtime/vector_expr.rs	VectorEval::eval_and_or	388	PROVEN	VExpr.colEval: colEval_eq, colEval_rows, rowEval_short
-graph/src/runtime/vector_expr.rs	VectorEval::eval_case	474	NOT COVERED	narrowing like AND/OR; not modelled
-graph/src/runtime/vector_expr.rs	VectorEval::eval_function	558	NOT COVERED	scalar folding; not modelled
-graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	645	NOT COVERED	label matrix (GraphBLAS)
-graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	709	MODELLED	VExpr.rowEval is the per-row reference
-graph/src/runtime/vector_expr.rs	compare_columns	734	NOT COVERED	f64/compare_value lanes (prior wave: value_order)
-graph/src/runtime/vector_expr.rs	compare_i64_pairs	798	NOT COVERED	elementwise i64 compare
-graph/src/runtime/vector_expr.rs	compare_f64_pairs	821	NOT COVERED	f64
-graph/src/runtime/vector_expr.rs	mask_out_nulls	843	NOT COVERED	bitmap plumbing
-graph/src/runtime/vector_expr.rs	negate_bools	857	NOT COVERED	trivial 3VL NOT
-graph/src/runtime/vector_expr.rs	arithmetic	881	PROVEN	VExpr.intLane: intLane_eq (int lane); float/generic lanes not modelled
-graph/src/runtime/vector_expr.rs	int_lane	963	PROVEN	VExpr.intLane
-graph/src/runtime/vector_expr.rs	float_lane	975	NOT COVERED	f64
-graph/src/runtime/vector_expr.rs	float_operand	990	NOT COVERED	trivial predicate
+graph/src/runtime/vector_expr.rs	VectorEval::eval_values	285	NOT COVERED	property/variable fast paths
+graph/src/runtime/vector_expr.rs	VectorEval::eval_variable	309	NOT COVERED	column gather
+graph/src/runtime/vector_expr.rs	VectorEval::eval_property	333	NOT COVERED	bulk attribute fetch
+graph/src/runtime/vector_expr.rs	VectorEval::property_values	365	NOT COVERED	bulk attribute fetch
+graph/src/runtime/vector_expr.rs	VectorEval::eval_and_or	400	PROVEN	VExpr.colEval: colEval_eq, colEval_rows, rowEval_short
+graph/src/runtime/vector_expr.rs	VectorEval::eval_case	486	NOT COVERED	narrowing like AND/OR; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_function	570	NOT COVERED	scalar folding; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	657	NOT COVERED	label matrix (GraphBLAS)
+graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	721	MODELLED	VExpr.rowEval is the per-row reference
+graph/src/runtime/vector_expr.rs	compare_columns	746	NOT COVERED	f64/compare_value lanes (prior wave: value_order)
+graph/src/runtime/vector_expr.rs	compare_i64_pairs	810	NOT COVERED	elementwise i64 compare
+graph/src/runtime/vector_expr.rs	compare_f64_pairs	833	NOT COVERED	f64
+graph/src/runtime/vector_expr.rs	mask_out_nulls	855	NOT COVERED	bitmap plumbing
+graph/src/runtime/vector_expr.rs	negate_bools	869	NOT COVERED	trivial 3VL NOT
+graph/src/runtime/vector_expr.rs	arithmetic	893	PROVEN	VExpr.intLane: intLane_eq (int lane); float/generic lanes not modelled
+graph/src/runtime/vector_expr.rs	int_lane	975	PROVEN	VExpr.intLane
+graph/src/runtime/vector_expr.rs	float_lane	987	NOT COVERED	f64
+graph/src/runtime/vector_expr.rs	float_operand	1002	NOT COVERED	trivial predicate
 graph/src/runtime/value.rs	Point::new	142	PROVEN	SpatialFns.Point.new: Point.new_fields
 graph/src/runtime/value.rs	Value::add_slow (Time/Duration arm)	967	PROVEN	Duration.timeAddDur (arm at value.rs:1069, #2985): timeAddDur_eq_tod, timeAddDur_range, timeAddDur_eq, time_normalised
 graph/src/runtime/value.rs	Sub::sub (Time/Duration arm)	1084	PROVEN	Duration.timeSubDur (arm at value.rs:1111, #2985): timeSubDur_range, timeSubDur_eq, timeSub_timeAdd, time_normalised

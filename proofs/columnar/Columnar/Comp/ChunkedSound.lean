@@ -1,4 +1,4 @@
-import Pr3437Review.Chunked
+import Columnar.Comp.Chunked
 
 /-!
 # PR #3437: `list_loop_columnar` is sound (split out of `Chunked.lean`)
@@ -8,7 +8,7 @@ tested column is main's predicate values read through each lane; **`columnar_sou
 the columnar path finishes gives exactly what main's loop gives.
 -/
 
-namespace Pr3437.ListLoop
+namespace Columnar.Comp.ListLoop
 open FalkorCore FalkorStrList
 
 variable {F : Type}
@@ -81,10 +81,11 @@ theorem tested_spec (hd : b.Drops) (hc : c.Sound b.pe b.pj) (chunk : List (V F))
     ∃ ps, chunk.mapM b.pe = .ok ps ∧ passedOf chunk tested = filterPass chunk ps ∧
       countLocal chunk.length tested = ps.foldlM cstep (0, 0, 0) ∧
       tallyNoProj chunk.length tested = (filterPass chunk ps).length ∧
-      (∀ col, tested = some col → col.vals'.length = chunk.length) := by
+      (∀ col, tested = some col → col.vals'.length = chunk.length) ∧
+      (checkPred tested = .ok () → ∀ p ∈ ps, predOk p = true) := by
   cases hp : b.hasPred
   · simp only [hp, Bool.false_eq_true, ite_false, pure, Except.pure, Except.ok.injEq] at h; subst h
-    refine ⟨chunk.map fun _ => .bool true, ?_, ?_, ?_, ?_, by simp⟩
+    refine ⟨chunk.map fun _ => .bool true, ?_, ?_, ?_, ?_, by simp, ?_⟩
     · have : ∀ xs : List (V F), xs.mapM b.pe = .ok (xs.map fun _ => .bool true) := by
         intro xs; induction xs with
         | nil => rfl
@@ -93,6 +94,7 @@ theorem tested_spec (hd : b.Drops) (hc : c.Sound b.pe b.pj) (chunk : List (V F))
     · simp [passedOf, filterPass_trues]
     · simp [countLocal, cstep_trues]
     · simp [tallyNoProj, filterPass_trues]
+    · intro _ p hp; simp only [List.mem_map] at hp; obtain ⟨_, _, rfl⟩ := hp; rfl
   · simp only [hp, ite_true] at h
     cases hcol : c.colP chunk with
     | error e => simp [hcol, Except.map] at h
@@ -100,7 +102,7 @@ theorem tested_spec (hd : b.Drops) (hc : c.Sound b.pe b.pj) (chunk : List (V F))
       simp only [hcol, Except.map, Except.ok.injEq] at h; subst h
       have hm := hc.pred chunk col hcol
       have hl := mapM_length hm
-      refine ⟨col.vals', hm, ?_, ?_, ?_, fun c' hc' => by cases hc'; exact hl⟩
+      refine ⟨col.vals', hm, ?_, ?_, ?_, fun c' hc' => by cases hc'; exact hl, ?_⟩
       · cases col with
         | bools cs => simp only [passedOf, EC.vals']; exact passed_bools chunk cs
         | vals vs => rfl
@@ -114,6 +116,19 @@ theorem tested_spec (hd : b.Drops) (hc : c.Sound b.pe b.pj) (chunk : List (V F))
         | vals vs =>
           simp only [EC.vals'] at hl
           simp only [tallyNoProj, EC.vals']; rw [filterPass_length chunk vs hl.symm]
+      · cases col with
+        | bools cs =>
+          intro _ p hp
+          simp only [EC.vals', List.mem_map] at hp
+          obtain ⟨q, _, rfl⟩ := hp
+          obtain ⟨q1, q2⟩ := q
+          simp only [cell]; split <;> simp
+        | vals vs =>
+          intro hchk p hp
+          simp only [checkPred, EC.vals'] at hchk hp
+          by_cases ha : vs.all predOk = true
+          · exact List.all_eq_true.1 ha p hp
+          · simp [ha, throw, throwThe, MonadExceptOf.throw, pure, Except.pure] at hchk
 
 /-- **A chunk the columnar path finishes gives exactly what main's loop gives.** -/
 theorem columnar_sound (hd : b.Drops) (hc : c.Sound b.pe b.pj) (s : Sink F) (chunk : List (V F))
@@ -123,7 +138,12 @@ theorem columnar_sound (hd : b.Drops) (hc : c.Sound b.pe b.pj) (s : Sink F) (chu
   | error e => rw [ht] at h; simp [bind, Except.bind] at h
   | ok tested =>
     rw [ht] at h; simp only [bind, Except.bind] at h
-    obtain ⟨ps, hm, hpass, hcount, htally, htl⟩ := tested_spec b c hd hc chunk tested ht
+    obtain ⟨ps, hm, hpass, hcount, htally, htl, hchk⟩ := tested_spec b c hd hc chunk tested ht
+    cases hcp : checkPred tested with
+    | error e => rw [hcp] at h; simp at h
+    | ok u =>
+    have hk := hchk (by rw [hcp])
+    rw [hcp] at h; simp only [bind, Except.bind] at h
     have hpi : (passedIdx chunk.length tested).map (chunk.getD · .null) = filterPass chunk ps := by
       rw [passedIdx_map chunk tested htl, hpass]
     have hplen : (passedIdx chunk.length tested).length = (filterPass chunk ps).length := by
@@ -139,7 +159,7 @@ theorem columnar_sound (hd : b.Drops) (hc : c.Sound b.pe b.pj) (s : Sink F) (chu
       | error e => simp [hps, Except.map] at h
       | ok r => simp only [hps, Except.map, Except.ok.injEq] at h ⊢; exact h
     | tally k =>
-      rw [ref_tally_pre _ _ chunk ps k hm]
+      rw [ref_tally_pre _ _ chunk ps k hm hk]
       cases hj : b.hasProj
       · simp only [hj, Bool.not_false, ite_true, pure, Except.pure, Except.ok.injEq] at h
         rw [mapM_id (hd.projId hj)]; simp [Except.map, ← h, htally]
@@ -156,7 +176,7 @@ theorem columnar_sound (hd : b.Drops) (hc : c.Sound b.pe b.pj) (s : Sink F) (chu
             rw [hpi] at hys
             simp [hys, Except.map, ← h]
     | collect acc =>
-      rw [ref_collect_pre _ _ chunk ps acc hm]
+      rw [ref_collect_pre _ _ chunk ps acc hm hk]
       cases hj : b.hasProj
       · simp only [hj, Bool.not_false, ite_true, hplen, hpi] at h
         rw [mapM_id (hd.projId hj)]
@@ -180,4 +200,4 @@ theorem columnar_sound (hd : b.Drops) (hc : c.Sound b.pe b.pj) (s : Sink F) (chu
 
 end
 
-end Pr3437.ListLoop
+end Columnar.Comp.ListLoop

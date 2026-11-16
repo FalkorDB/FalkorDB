@@ -13,3 +13,8 @@ path = "../core"
 [[require]]
 name = "falkor-expr-semantics"
 path = "../expr_semantics"
+
+# Quantifier counting `evalQuantifier`, outcome `K` (the list-comprehension chunk loops, Columnar.Comp).
+[[require]]
+name = "falkor-functions-str-list"
+path = "../functions_str_list"
