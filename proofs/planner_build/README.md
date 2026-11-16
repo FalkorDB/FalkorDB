@@ -37,8 +37,8 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 **4. Is `WHERE` with pattern predicates planned correctly?**
 
 - **Rebuilding the predicate is exact.** `collect_value` and `collect_passes` prove that replacing each pattern with a placeholder variable keeps the three-valued truth value.
-- **With two-valued atoms, the operator tree is exact.** `toPlan_correct` proves SemiApply / AntiSemiApply / OrApplyMultiplexer / Filter keep exactly the rows where the predicate is `true`, given that the non-pattern atoms are never null.
-- **With a null atom under `NOT`, no.** `NOT c` is planned as an anti-join against the rows where `c` is *true*, so it keeps rows where `c` is false **or null**. `MATCH (a:N) WHERE NOT (a.v > 1 OR (a)-->()) RETURN count(a)` → Rust 2, C 1 (`toPlan_not_null_bug`).
+- **The operator tree is exact, also with null atoms (since #3260).** `toPlan_correct3` proves SemiApply / AntiSemiApply / OrApplyMultiplexer / Filter keep exactly the rows where the predicate is `true` in three-valued logic (`toPlan_correct`: the two-valued form).
+- **A null atom under `NOT` was mishandled before #3260.** `NOT c` was planned as an anti-join against the rows where `c` is *true*, so it kept rows where `c` is false **or null**: `MATCH (a:N) WHERE NOT (a.v > 1 OR (a)-->()) RETURN count(a)` → Rust 2, C 1 (`pre3260_not_null_bug`). #3260 pushes the `NOT` down first (`push_not_down`, `tv_pushNot`), so it only wraps a scalar or an inline pattern (`toPlan_not_null_fixed`).
 - Since #3335 AND/OR are built flat through `ExprIR::and_of`/`or_of` (`tv_andOf`, `tv_orOf`).
 
 **5. Are `MATCH` patterns planned with the right hops?**
@@ -62,7 +62,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 | `merge_loop_correct`, `create_loop_correct` | MERGE and CREATE, with or without a named path, are correct when not last | `Clauses.lean` |
 | `union_correct`, `call_correct`, `foreach_correct` | UNION / UNION ALL, `CALL {}` and FOREACH are correct | `Clauses.lean` |
 | `cp_stitch_sound` | Prepending a MATCH to a Cartesian product is right when no other component reads its variables | `Match.lean` |
-| `toPlan_correct` | The SemiApply/AntiSemiApply/OrApplyMultiplexer/Filter tree keeps exactly the rows where WHERE is true (two-valued atoms) | `ToPlan.lean` |
+| `toPlan_correct3` | The SemiApply/AntiSemiApply/OrApplyMultiplexer/Filter tree keeps exactly the rows where WHERE is true (three-valued, since #3260) | `ToPlan.lean` |
 | `planFilter_correct` | `plan_filter` end to end, for a WHERE without pattern comprehensions | `Filter.lean` |
 | `extract_fresh`, `hoist_spec` | Pattern-comprehension extraction mints fresh variables; hoisting is sound exactly when no loop variable is read | `Nested.lean` |
 | `selfLoops_perm`, `deferred_after_binder`, `eq_reference` | #3102's hop order keeps every hop and places a self-loop after its binder | `HopOrder.lean` |
@@ -88,7 +88,7 @@ Each bug was checked live, Rust release module vs C module, and has a Rust repro
 | 2 | `cp_stitch_shape`, `cp_stitch_loses_correlation` | A `MATCH … WHERE` followed by a multi-component MATCH is cross-joined, not correlated: Rust `[1,0,7]`, C `[]` | **Open** (PR #3100 not merged) |
 | 3 | removed (17ccc5412) | The previous MATCH's WHERE was dropped when the next MATCH traversed from its variable; `… DELETE b` deleted data C does not | Fixed by #2390 (`rebuild_keeps_where`) |
 | 4 | `selfloop_ignores_chain` (still in `Match.lean`; its `pre3102_chainOp_selfloop_unbound` counterexample was removed in 17ccc5412) | A self-loop hop after other hops dropped them: `[null,2,3]` vs C `[1,2,3]` | Fixed by #3102 (#2999; `chainRel_selfloop_unbound`, `selfloop_scan_keeps_chain`) |
-| 5 (W4-plan-1) | `toPlan_not_null_bug` | `NOT (complex)` with an inline pattern keeps null rows: Rust 2, C 1 | **Open** |
+| 5 (W4-plan-1) | `pre3260_not_null_bug` | `NOT (complex)` with an inline pattern kept null rows: Rust 2, C 1 | **Fixed by #3260** (`toPlan_not_null_fixed`, `toPlan_correct3`) |
 | 6 (W4-plan-4) | `call_validates_rest`, `call_then_match_rejected` | Nothing after a procedure CALL was validated; `CALL db.labels() YIELD label MATCH (n)` reached a `parent().unwrap()` in `utilize_node_by_id` | **Fixed by #3297** (b774fdfad); the `unwrap()` in `utilize_node_by_id` remains as a hazard |
 | 7 (W4-plan-5) | `with_last_rejected` | A query could end with WITH; C and openCypher reject it | **Fixed by #3291** (608b62542) |
 | 8 (W8-plan-1) | `create_path_last_misplaced`, `create_path_last_skips_create` | Regression from #2829: CREATE with a named path as the last clause, after another clause, never runs | **Open** (PR #3101 not merged; covers bugs 1 and 8) |
@@ -119,7 +119,7 @@ There are no CONDITIONAL rows in this project.
 | `Match.lean` | `query_correct`, the Cartesian-product stitch, and the MATCH-specific bugs |
 | `Expr.lean` | Expressions as the planner sees them (`Ex`, `QG`), inline-variable helpers |
 | `Decomp.lean` | Three-valued WHERE (`tv`) and `collect_patterns_and_rebuild` (`collect`) |
-| `ToPlan.lean` | `expr_to_plan` (`toPlan`), `toPlan_correct`, `toPlan_not_null_bug` |
+| `ToPlan.lean` | `expr_to_plan` (`toPlan`), `push_not_down` (`pushNot`), `toPlan_correct3`, `toPlan_correct`, `pre3260_not_null_bug`, `toPlan_not_null_fixed` |
 | `Filter.lean`, `FilterPlan.lean` | `plan_filter` end to end |
 | `AndOf.lean` | `ExprIR::and_of`/`or_of` flattening (#3335) |
 | `Nested.lean`, `Nested2.lean` | Pattern-comprehension extraction and hoisting |
