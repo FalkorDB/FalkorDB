@@ -1,7 +1,7 @@
 import FalkorEffectsEmitApply.Emit
 import FalkorEffectsEmitApply.Liveness
 /-!
-# Emit then apply, with cancellation: two open replica divergences (#3447, #3448)
+# Emit then apply, with cancellation: replica divergences #3447 (open) and #3448 (fixed by #3459)
 
 `Emit.forEachRecord` (`for_each_record`, emit.rs:323-375 on 5e475e6c9) and
 `Live.applyAll` (the checked arms of `apply_record`) were proven separately;
@@ -27,12 +27,16 @@ pre-segment state* accepts. Two properties, both refuted on main:
   (`toLive`), applies on the replica. `digest_labels(&p.remove_labels, None, …)`
   (emit.rs:370) runs before `digest_cancelled` (:374) and does not skip created
   or cancelled nodes; `delete_pending_node` keeps the node's `remove_labels`
-  (proofs/pending_commit `bug3448_cancelled_node_keeps_remL`); the
+  (before #3459; proofs/pending_commit `fixed3448_cancelled_node_clears_remL` now); the
   `RemoveLabels` arm calls `require_live` (apply.rs:359-360).
   `bug3448_removeLabels_before_create_refused`: `CREATE (n:Foo) REMOVE n:Foo
   DELETE n` emits `AddLabel Foo, RemoveLabels [0], CreateNode [0], DeleteNode [0]`,
   refused with `NotLive node 0`; without the stale entry the same segment applies
-  (`agree3448_without_stale_remL`).
+  (`agree3448_without_stale_remL`). *Fixed by #3459*: `remove_node_labels` no
+  longer stages a removal of a label that was only staged, and `delete_pending_node`
+  clears `remove_labels`; the segment is now `p3459` and replays
+  (`fixed3448_replay_applies`). `bug3448_removeLabels_before_create_refused` stays as
+  the emitter's behaviour on the pre-#3459 `Pending`.
 -/
 namespace FalkorEA.CancelGap
 open FalkorEA
@@ -208,5 +212,26 @@ theorem agree3448_without_stale_remL :
     Live.okDangling (Live.applyAll rEmpty
       ((forEachRecord { p3448 with removeLabels := [] } g3448).flatMap (toLive fun _ => (0, 0)))) = some none := by
   decide
+
+/-- `CREATE (n:Foo) REMOVE n:Foo DELETE n` as staged **since #3459**: the removal only cancelled
+the staged add (`staged_labels_removed = 1`, proofs/pending_commit `fixed3448_remove_of_staged_label`)
+and `delete_pending_node` clears `remove_labels` (`fixed3448_cancelled_node_clears_remL`). -/
+def p3459 : Pending := { p3448 with removeLabels := [], stagedLabelsRemoved := 1 }
+
+/-- **#3448, fixed by #3459**: the gate stays open (`effects_count` counts the cancelled add), the
+commit ships `AddLabel Foo, CreateNode [0], DeleteNode [0]` with no `RemoveLabels`, and the replica
+applies it (`ReplayApplies`; before #3459: `bug3448_removeLabels_before_create_refused`). -/
+theorem fixed3448_replay_applies :
+    effectsCount p3459 = 1 ∧
+    commitShips p3459 g3448 = [.addLabel 0 "Foo", .createNode [0] [], .deleteNode [0] []] ∧
+    ReplayApplies (fun _ => (0, 0)) rEmpty p3459 g3448 := by
+  refine ⟨rfl, by decide, ?_⟩
+  have h : Live.okDangling (Live.applyAll rEmpty
+      ((forEachRecord p3459 g3448).flatMap (toLive fun _ => (0, 0)))) = some none := by decide
+  unfold ReplayApplies
+  generalize Live.applyAll rEmpty ((forEachRecord p3459 g3448).flatMap (toLive fun _ => (0, 0))) = x at h ⊢
+  cases x with
+  | error e => cases h
+  | ok r => exact ⟨r, rfl⟩
 
 end FalkorEA.CancelGap

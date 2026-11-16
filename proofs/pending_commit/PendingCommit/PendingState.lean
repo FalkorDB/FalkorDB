@@ -60,6 +60,8 @@ structure P where
   existR : FMap (List Entry)
   setL : FMap (List Nat)
   remL : FMap (List Nat)
+  /-- `staged_labels_removed` (#3459): removals that only cancelled a staged add. -/
+  stagedRem : Nat
 
 /-! ## Sets -/
 

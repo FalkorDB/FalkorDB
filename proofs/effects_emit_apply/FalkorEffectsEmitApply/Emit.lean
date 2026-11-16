@@ -5,7 +5,7 @@ import FalkorEffectsEmitApply.Basic
 
 Models `graph/src/effects/v3/emit.rs` (`for_each_record` and its digests) and
 the gate that decides whether it runs at all (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1958`).
+`Pending::effects_count` at `runtime/pending.rs:1987`).
 -/
 
 namespace FalkorEA
@@ -228,9 +228,11 @@ structure Pending where
   cancelledNodes    : List Nat
   cancelledRels     : List (Name × Nat)         -- (type name, id)
   baseline          : Schema
+  /-- `staged_labels_removed` (#3459): removals that only cancelled a staged add. -/
+  stagedLabelsRemoved : Nat := 0
 deriving Repr
 
-/-- `Pending::effects_count` (`runtime/pending.rs:1958-1977`), term for term.
+/-- `Pending::effects_count` (`runtime/pending.rs:1987-2009`), term for term.
     Note what is **not** summed: `cancelled_nodes`, `cancelled_relationships`,
     and the schema registered since `baseline`. -/
 def effectsCount (p : Pending) : Nat :=
@@ -239,6 +241,7 @@ def effectsCount (p : Pending) : Nat :=
   + p.newRelsAttrs.length + p.existingRelsAttrs.length
   + (p.setLabels.map (fun q => q.2.length)).sum
   + (p.removeLabels.map (fun q => q.2.length)).sum
+  + p.stagedLabelsRemoved
 
 def suffixRecs (mk : Nat → Name → Rec) (base : Nat) : List Name → List Rec
   | []      => []
@@ -408,6 +411,15 @@ theorem cancelled_edge_attr_dropped :
     effectsCount p = 0 ∧ commitShips p g = [] ∧
     forEachRecord p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
   refine ⟨rfl, rfl, ?_⟩
+  decide
+
+/-- #3459: a removal that only cancelled a staged add is counted, so `MATCH (n) SET n:L REMOVE n:L`
+on a committed node without `L` (nothing else staged, `L` newly registered) still ships `L`'s
+registration. -/
+theorem gate_keeps_staged_removal :
+    let p : Pending := { pSchemaOnly with stagedLabelsRemoved := 1 }
+    effectsCount p = 1 ∧ commitShips p gSchemaOnly = [.addLabel 0 "L6"] := by
+  refine ⟨rfl, ?_⟩
   decide
 
 end FalkorEA

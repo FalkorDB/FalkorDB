@@ -10,7 +10,7 @@ import FalkorEffectsEmitApply.CancelGap
 
 Target: `graph/src/effects/v3/emit.rs`, `graph/src/effects/v3/apply.rs`, and the
 gate in front of the emitter (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1958`). Coverage per Rust fn:
+`Pending::effects_count` at `runtime/pending.rs:1987`). Coverage per Rust fn:
 `COVERAGE.tsv` (36 rows, all PROVEN). Repros:
 `graph/tests/lean_effects_emit_apply.rs`
 (`cargo test -p graph --test lean_effects_emit_apply -- --nocapture --test-threads=1`).
@@ -27,7 +27,7 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 | `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs:60`                       |
 | `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:395`                           |
 | `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:323` (opcode granularity)       |
-| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1958`                 |
+| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1987`                 |
 | `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
 | `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:532,552`        |
 | `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:210`                    |
@@ -144,7 +144,7 @@ node) — refused since #3298 (`createNode_repeat_refused`).
 
 1. **A write that only registers schema or only cancels entities replicates
    nothing** — `runtime/ops/commit.rs:108` gates `buf.build` on
-   `effects_count() > 0` (`pending.rs:1958`), which counts neither
+   `effects_count() > 0` (`pending.rs:1987`), which counts neither
    `cancelled_nodes`/`cancelled_relationships` nor names registered since the
    `SchemaBaseline`, so `digest_cancelled` and `emit_schema_additions` never run.
    The master keeps the new label/attr and the moved id space; the next payload's
@@ -223,11 +223,12 @@ master's pre-segment state accepts. Two properties, both refuted on b84473a7f:
   once all created and cancelled types are registered).
 * **#3448** (property `ReplayApplies`): `digest_labels(&p.remove_labels, None,
   …)` (emit.rs:370) precedes `digest_cancelled` (:374); `delete_pending_node`
-  keeps the node's `remove_labels` (pending_commit
-  `bug3448_cancelled_node_keeps_remL`). `bug3448_removeLabels_before_create_refused`:
+  kept the node's `remove_labels` before #3459. `bug3448_removeLabels_before_create_refused`:
   `CREATE (n:Foo) REMOVE n:Foo DELETE n` → `AddLabel Foo, RemoveLabels [0],
   CreateNode [0], DeleteNode [0]`, refused `NotLive node 0`; control
-  `agree3448_without_stale_remL`.
+  `agree3448_without_stale_remL`. *Fixed by #3459* (pending_commit
+  `fixed3448_cancelled_node_clears_remL`): `fixed3448_replay_applies`; the gate counts
+  `staged_labels_removed` (`gate_keeps_staged_removal`).
 
 ## Gaps / assumptions
 
