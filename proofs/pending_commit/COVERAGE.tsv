@@ -17,13 +17,13 @@ graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	138	PROVEN	Pro
 graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	NOT COVERED	operator plumbing / snapshot map building
 graph/src/runtime/ops/delete.rs	rel_attrs_to_map	50	NOT COVERED	operator plumbing / snapshot map building
 graph/src/runtime/ops/delete.rs	snapshot_required	70	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	new	94	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	next	116	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	delete_batch	130	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	staged_label_ids	196	PROVEN	Labels.stagedLabelIds_eq_overlay, stagedLabelIds_run, deleted_snapshot_examples (#3288: committed ids with the staged adds/removes applied = the live view; fixes W4-fn-1 / #3245)
-graph/src/runtime/ops/delete.rs	delete_nodes_bulk	213	MODELLED	Snapshot.del, Stats.step
-graph/src/runtime/ops/delete.rs	delete_relationships_bulk	319	MODELLED	Snapshot.del (relationship map)
-graph/src/runtime/ops/delete.rs	delete_entity	415	MODELLED	Snapshot.del, Stats.step
+graph/src/runtime/ops/delete.rs	new	102	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	next	135	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	delete_batch	168	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	staged_label_ids	234	PROVEN	Labels.stagedLabelIds_eq_overlay, stagedLabelIds_run, deleted_snapshot_examples (#3288: committed ids with the staged adds/removes applied = the live view; fixes W4-fn-1 / #3245)
+graph/src/runtime/ops/delete.rs	delete_nodes_bulk	251	MODELLED	Snapshot.del, Stats.step
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	357	MODELLED	Snapshot.del (relationship map)
+graph/src/runtime/ops/delete.rs	delete_entity	453	MODELLED	Snapshot.del, Stats.step
 graph/src/runtime/ops/remove.rs	new	30	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	next	48	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	remove_batch	62	NOT COVERED	operator plumbing
