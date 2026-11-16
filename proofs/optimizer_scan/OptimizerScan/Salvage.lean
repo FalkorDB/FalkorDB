@@ -4,6 +4,11 @@ import OptimizerScan.ScanOrder
 /-
 # Salvaged filters: what `filters_of` hands `select_scan_node` to re-attach (#2390)
 
+**Historical (pre-#3099).** #3099 removes `filters_of` and `is_planner_scan_subtree`: a non-leaf child
+is now kept whole (unless it is a transparent `Argument`), so nothing is salvaged and the `Unwind`
+of `exChild` survives — bug 6 below is FIXED. The line numbers below are those of the pre-#3099
+source; `makeScanSubtree` no longer takes filters. The new seeding problem is `SelectSeed`.
+
 `ScanOrder.salvage_wellScoped` takes the premise "every salvaged filter reads only variables
 the new chain binds". This file models where those filters come from, with the variables each
 reads as the Rust computes them, and decides the premise.
@@ -111,7 +116,7 @@ theorem exChild_shape :
 /-- The rebuilt scan subtree (`make_scan_subtree` with the preserved Argument leaf, none here) has
 no `Unwind`: the operator that bound `k` is pruned with the scan. -/
 theorem rebuilt_drops_unwind :
-    hasUnwind (makeScanSubtree b [0] false (argumentLeafOf exChild) []) = false := by decide
+    hasUnwind (makeScanSubtree b [0] false (argumentLeafOf exChild)) = false := by decide
 
 /-- The rebuilt chain `(b)-[10]->(c)` from the seed `[b]`. -/
 def exSteps : List Step := [.hop ⟨1, 3, 10, 0, false⟩]

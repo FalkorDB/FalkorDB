@@ -510,6 +510,10 @@ Confirmed bug found by these reviews (pre-existing on main, not caused by any of
 - Fixed by #3161: an RDB saved by Rust across several virtual keys now loads in C with the graph listed in GRAPH.LIST.
 - All projects now cite main 2c874022a: 34 projects, 0 failing; 2443/2443 non-FFI non-test fns PROVEN (3738 non-test fns, 1295 AXIOMATISED, 630 test). Gap: graph_queries and pending_commit state the IdSpace behaviour they rely on as a hypothesis (`IdSpaceContract`, `CancelSpec`). It is proven in proofs/id_space, but the standalone projects are not linked, so the hypothesis is not yet discharged by importing those theorems.
 
+### Re-check against PR #3099 (8a40e2f60)
+- Fixes W2-scan-6 (#2972; nothing is salvaged any more) and the `select_var_len_scan_node` leaf-rewrite Filter drop (`ScanTree.vl_leaf_refuses_filter`).
+- REGRESSION (Lean `optimizer_scan` `SelectSeed.plannerScan_loses_row`): a plain earlier `MATCH (b)` child is now kept, but `initial_bound` still seeds `best_node`, so the old `initial_bound` bug (W-scan bug 1) now fires without a `WITH … LIMIT`: `CREATE (:A)<-[:S]-(:D)-[:R]->(:L {v:1})-[:R]->(:Z)` then `MATCH (b) MATCH (b)<-[:S]-(d)-[:R]->(c:L {v:1})-[:R]->(z) RETURN count(*)` gives 1 before #3099 and 0 after it (the latter is predicted from the `MATCH (b) WITH b MATCH …` form, which gives 0 on main). Fix: seed `best_node` only when `existing_child` is `None`.
+
 ### Decisions made
 - 2026-09-25 (Avi): a deleted entity keeps returning **all** its details (labels, properties, type, endpoints) for the rest of the query. Rust's current behaviour stays even where C returns `[]` for labels. PRs must not strip them; #3043 already leaves this alone. The gap (labels staged by SET/REMOVE earlier in the same query were missing from the deleted-node snapshot) was closed by #3288 (2026-11-02).
 - Traversal fixes filed as #3106–#3109, with PRs #3110–#3113. All PRs from this work carry the `6.0` label.

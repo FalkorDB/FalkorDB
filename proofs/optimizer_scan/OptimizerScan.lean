@@ -223,8 +223,22 @@ rewrite prunes the whole child subtree (`select_scan_node.rs:661`), including a 
 `planner_scan_alias` looked through. `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2})
 RETURN a.v, b.w` on `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` returns
 `[1,2],[5,2]` (should be `[1,2]`; the fixed-length `-[:R]->` form is right) on builds 88e92ae25
-and b3582e34a. `ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. Fix: refuse the leaf
-rewrite when the wrapper holds a `Filter`, or salvage it above the traverse with `filters_of`.
+and b3582e34a. `ScanTree.pre3099_vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. FIXED by #3099
+(the leaf rewrite refuses a wrapper `Filter`: `vl_leaf_refuses_filter`, `vlLeaf_keeps_filter`).
+
+## Re-check against PR #3099 (8a40e2f60)
+#3099 removes `filters_of` / `is_planner_scan_subtree`: a non-leaf child of the bottom `CondTraverse`
+is kept whole unless it is a transparent `Argument`, and `outer_child_bound_vars` (new, `:283`) reports
+what it binds for scoring. Model changes: `makeScanSubtree` takes no filters; `collectOutputAliases`
+gains the `ProcedureCall` / `Optional` arms; `outerChildBoundVars` (`outerChildBoundVars_sound`,
+`_plannerScan`, `_product`, `_unwind`); `vlLeaf` refuses a wrapper `Filter` and the rebuilt scan keeps
+all of the old scan's children (`vlLeafScan_spec`). Bug 6 (`Salvage`) is FIXED (nothing is salvaged).
+REGRESSION of bug 1 (`SelectSeed`): `initial_bound` (`:997-1004`) still seeds `best_node`, and a plain
+earlier `MATCH (b)` child — which used to be replaced by a fresh scan of `best_node` — is now kept, so
+`CREATE (:A)<-[:S]-(:D)-[:R]->(:L {v:1})-[:R]->(:Z)` then
+`MATCH (b) MATCH (b)<-[:S]-(d)-[:R]->(c:L {v:1})-[:R]->(z) RETURN count(*)` goes from 1 to 0
+(`SelectSeed.pre3099_plannerScan_seed_honest`, `plannerScan_seed_dishonest`, `plannerScan_loses_row`).
+Fix: insert `best_node` into `initial_bound` only when `existing_child` is `None`.
 -/
 import OptimizerScan.IdSeek
 import OptimizerScan.Index
@@ -236,3 +250,4 @@ import OptimizerScan.EdgeInline
 import OptimizerScan.Cleanup
 import OptimizerScan.ScanTree
 import OptimizerScan.Salvage
+import OptimizerScan.SelectSeed
