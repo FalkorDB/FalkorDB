@@ -10,6 +10,11 @@
 | `metaLoad`            | `graphmeta_rdb_load` (:858-874) |
 | `ioCacheSize`, `cacheOnLoad` | `io_cache_size` (:69), which every RDB load passes to `rdb_load_graph` (since #3262) |
 
+Since #3424 (#2782) every key here is a `DbKey = (io_db, key name)`: `Nm` stands for it, so
+`DECODE_STATE.{finalized, placeholders, pending}` and the registry view are per database.
+`MS.reg k` is the allocation whose `GRAPH_REGISTRY` entry (keyed by `graph_id`) is at `k`;
+`register_graph_at(db, name, arc)` on a fresh allocation is a point update of that view.
+
 `fin` is `DECODE_STATE.finalized[graph_name]` as the decoder (`Persist.Pending`) leaves it:
 `none` after every key but the last of a multi-key graph, the finished graph after the last.
 
