@@ -5,17 +5,18 @@ import SearchConcurrency.Search
 | here | there |
 | --- | --- |
 | `vectorQuery` (generic over the id type) | the shared body of both fns below |
-| `vectorQueryNodes`  | `graph/src/graph/graph.rs:4355-4409` `vector_query_nodes`, `count = node_count()` (`:1151`) |
-| `vectorQueryEdges`  | `graph.rs:4415-4465` `vector_query_edges`, `count = relationship_count()` (`:1168`) |
-| `clampK`            | `graph.rs:4375` / `:4434` `k.min(count.max(1) as usize)` |
+| `vectorQueryNodes`  | `graph/src/graph/graph.rs:4373-4433` `vector_query_nodes`, `count = node_count()` (`:1145`) |
+| `vectorQueryEdges`  | `graph.rs:4439-4495` `vector_query_edges`, `count = relationship_count()` (`:1162`) |
+| `opOk = false`      | `graph.rs:4381-4385` / `:4447-4451` `!indexer.is_operational(label)` → `Err("Invalid arguments for procedure ..")` (#3382, PR #3581) |
+| `clampK`            | `graph.rs:4399` / `:4464` `k.min(count.max(1) as usize)` |
 | `KnnIndex.query`    | `node_indexer.vector_query` / `edge_indexer.vector_query_edges` (RediSearch FFI) |
-| `dimCheck`          | `graph.rs:4363-4370` / `:4423-4430` dimension-mismatch `Err` |
-| `attrKnown = false` | `graph.rs:4381-4383` / `:4440-4442` `return Ok(Vec::new().into_iter())` |
-| `outCap`            | `graph.rs:4391-4392` / `:4450-4451` `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
-| `filterMap step`    | `graph.rs:4395-4398` / `:4454-4457` `let Value::VecF32 .. else continue` + `vec_distance::distance` |
-| `mergeSort`         | `graph.rs:4407` / `:4463` stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
+| `dimCheck`          | `graph.rs:4387-4394` / `:4453-4460` dimension-mismatch `Err` |
+| `attrKnown = false` | `graph.rs:4405-4407` / `:4470-4472` `return Ok(Vec::new().into_iter())` |
+| `outCap`            | `graph.rs:4415-4416` / `:4480-4481` `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
+| `filterMap step`    | `graph.rs:4419-4422` / `:4484-4487` `let Value::VecF32 .. else continue` + `vec_distance::distance` |
+| `mergeSort`         | `graph.rs:4431` / `:4493` stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
 
-(Line numbers are for main 5c7af54f2; the model was written against 89d68334a, #3088.)
+(Line numbers are for PR #3581 head d86528bf2; the model was written against 89d68334a, #3088.)
 
 RediSearch is a hypothesis structure (`KnnIndex`), not an axiom: it holds `ranked`, the
 index's documents in its own (approximate-distance) order, at most `count` of them
@@ -42,7 +43,7 @@ structure KnnIndex (α : Type) (count : Nat) where
   query : Nat → List α
   query_spec : ∀ k, query k = ranked.take k
 
-/-- `k.min(count.max(1) as usize)` (graph.rs:4375 / :4434). -/
+/-- `k.min(count.max(1) as usize)` (graph.rs:4399 / :4464). -/
 def clampK (k count : Nat) : Nat := min k (max count 1)
 
 /-- One loop iteration: `let Value::VecF32(v) = entity else continue;` then
@@ -72,13 +73,14 @@ structure Out (α D : Type) where
   rows : List (α × D)
 
 /-- The shared body of `vector_query_nodes` / `vector_query_edges`, branch for branch.
-`dimOk` is the `get_vector_dimension` check; `attrKnown` the attribute-id lookup;
+`opOk` is `Indexer::is_operational(label)` (no index, or no pending population ticket); `dimOk` is the `get_vector_dimension` check; `attrKnown` the attribute-id lookup;
 `vecOf` the batched attribute fetch (`None` = not a `Value::VecF32`); `dist` is
 `vec_distance::distance` against the query vector. -/
 def vectorQuery {α V D : Type} (F : FloatOps D) (count : Nat) (idx : KnnIndex α count)
-    (dimOk attrKnown : Bool) (vecOf : α → Option V) (dist : V → Option D) (k : Nat) :
+    (opOk dimOk attrKnown : Bool) (vecOf : α → Option V) (dist : V → Option D) (k : Nat) :
     Except String (Out α D) :=
-  if !dimOk then .error "Vector dimension mismatch"
+  if !opOk then .error "Invalid arguments for procedure"
+  else if !dimOk then .error "Vector dimension mismatch"
   else
     let k := clampK k count
     let raw := idx.query k
@@ -99,13 +101,13 @@ theorem clampK_le_k (k c : Nat) : clampK k c ≤ k := Nat.min_le_left _ _
 theorem clampK_le_count (k c : Nat) : clampK k c ≤ max c 1 := Nat.min_le_right _ _
 
 /-- **Allocation bounded by the live entity count, for every user `k`.** -/
-theorem alloc_bounded {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α c) dimOk attrKnown
-    (vecOf : α → Option V) dist k o (h : vectorQuery F c idx dimOk attrKnown vecOf dist k = .ok o) :
+theorem alloc_bounded {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α c) opOk dimOk attrKnown
+    (vecOf : α → Option V) dist k o (h : vectorQuery F c idx opOk dimOk attrKnown vecOf dist k = .ok o) :
     o.rsK ≤ max c 1 ∧ o.outCap ≤ c ∧ o.vecsCap ≤ c ∧ o.rows.length ≤ c := by
   unfold vectorQuery at h
   have hb := clampK_le_count k c
   have hr := idx.ranked_le
-  cases dimOk <;> cases attrKnown <;> simp at h <;> subst h
+  cases opOk <;> cases dimOk <;> cases attrKnown <;> simp at h <;> subst h
   · simp; omega
   · simp only [idx.query_spec, List.length_take, List.length_mergeSort]
     have := List.length_filterMap_le (score vecOf dist) (idx.ranked.take (clampK k c))
@@ -114,12 +116,12 @@ theorem alloc_bounded {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α c) 
 
 /-- Hence no `capacity overflow` panic and no OOM abort, whatever `k` is, provided the
 allocator can hold one 16-byte row per live entity (`(NodeId, f64)`). -/
-theorem no_abort_any_k {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α c) dimOk attrKnown
+theorem no_abort_any_k {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α c) opOk dimOk attrKnown
     (vecOf : α → Option V) dist k o mem
-    (h : vectorQuery F c idx dimOk attrKnown vecOf dist k = .ok o)
+    (h : vectorQuery F c idx opOk dimOk attrKnown vecOf dist k = .ok o)
     (hm : c * 16 ≤ mem) (hi : c * 16 ≤ isizeMax) :
     withCapacity 16 o.outCap mem = .ok (o.outCap * 16) := by
-  have := (alloc_bounded F c idx dimOk attrKnown vecOf dist k o h).2.1
+  have := (alloc_bounded F c idx opOk dimOk attrKnown vecOf dist k o h).2.1
   have h16 : o.outCap * 16 ≤ c * 16 := Nat.mul_le_mul_right _ this
   unfold withCapacity
   simp only [show ¬ (o.outCap * 16 > isizeMax) by omega, show ¬ (o.outCap * 16 > mem) by omega,
@@ -142,13 +144,13 @@ theorem candidates_topk {α} (c : Nat) (idx : KnnIndex α c) (k : Nat) :
 /-- When every candidate has a vector and a defined distance, the result has exactly
 `min k |index|` rows, each a candidate. -/
 theorem rows_length_topk {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α c)
-    (vecOf : α → Option V) dist k o
-    (h : vectorQuery F c idx true true vecOf dist k = .ok o)
+    (vecOf : α → Option V) dist k o opOk
+    (h : vectorQuery F c idx opOk true true vecOf dist k = .ok o)
     (hall : ∀ i ∈ idx.ranked, ∃ d, (vecOf i).bind dist = some d) :
     o.rows.length = min k idx.ranked.length ∧
     ∀ r ∈ o.rows, r.1 ∈ idx.ranked.take k := by
   unfold vectorQuery at h
-  simp at h; subst h
+  cases opOk <;> simp at h; subst h
   have ⟨heq, hlen⟩ := candidates_topk c idx k
   simp only [List.length_mergeSort]
   constructor
@@ -172,7 +174,7 @@ theorem rows_length_topk {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α 
 def oneNode : KnnIndex Nat 1 := ⟨[0], by decide, fun k => [0].take k, fun _ => rfl⟩
 
 theorem huge_k_one_row :
-    (vectorQueryNodes (V := Unit) (D := Nat) ⟨Nat.ble⟩ 1 oneNode true true (fun _ => some ())
+    (vectorQueryNodes (V := Unit) (D := Nat) ⟨Nat.ble⟩ 1 oneNode true true true (fun _ => some ())
       (fun _ => some 0) 1000000000000000).map (fun o => (o.rsK, o.outCap, o.rows)) =
       .ok (1, 1, [(0, 0)]) := by
   simp [vectorQuery, clampK, oneNode, score, Except.map]
@@ -181,10 +183,26 @@ theorem huge_k_one_row :
 and nothing is reserved. -/
 theorem empty_graph {α V D} (F : FloatOps D) (idx : KnnIndex α 0) (vecOf : α → Option V) dist k
     (hk : 0 < k) :
-    vectorQuery F 0 idx true true vecOf dist k = .ok ⟨1, 0, 0, []⟩ := by
+    vectorQuery F 0 idx true true true vecOf dist k = .ok ⟨1, 0, 0, []⟩ := by
   have hr := idx.ranked_le
   have hnil : idx.ranked = [] := List.eq_nil_of_length_eq_zero (by omega)
   have hc : clampK k 0 = 1 := by simp [clampK]; omega
   simp [vectorQuery, hc, idx.query_spec, hnil]
+
+/-- **#3382 gate (PR #3581).** While the label's index is not OPERATIONAL (a population
+ticket is pending: `db.indexes()` says UNDER CONSTRUCTION) the query is refused, as in C,
+for every `k`, dimension and attribute: no partial answer from a half-built index. -/
+theorem not_operational_refused {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α c)
+    dimOk attrKnown (vecOf : α → Option V) dist k :
+    ∃ e, vectorQuery F c idx false dimOk attrKnown vecOf dist k = .error e :=
+  ⟨_, rfl⟩
+
+/-- Conversely an `Ok` answer implies the index was OPERATIONAL. -/
+theorem ok_imp_operational {α V D} (F : FloatOps D) (c : Nat) (idx : KnnIndex α c)
+    opOk dimOk attrKnown (vecOf : α → Option V) dist k o
+    (h : vectorQuery F c idx opOk dimOk attrKnown vecOf dist k = .ok o) : opOk = true := by
+  cases opOk
+  · simp [vectorQuery] at h
+  · rfl
 
 end SC.Knn
