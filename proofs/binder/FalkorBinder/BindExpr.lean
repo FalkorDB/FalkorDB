@@ -47,6 +47,8 @@ inductive NE
   | paren (cs : List NE)
   /-- `AND` (`isOr = false`) / `OR` (`isOr = true`) -/
   | andOr (isOr : Bool) (cs : List NE)
+  /-- `AggOrderByPlaceholder`: the slot the parser appends to every aggregate call -/
+  | aggSlot
   /-- every other payload (not `Paren`, `And`, `Or`) -/
   | other (tag : Nat) (cs : List NE)
 
@@ -83,6 +85,9 @@ def reserve (st : St) (pfx : String) (x : Name) : St × Var :=
   ({ st with cur := st.cur.insert (C.rkey pfx st.depth v.id) v }, v)
 
 def isAnon (n : Name) : Bool := n.startsWith "_anon"
+
+/-- `AGG_SLOT_PREFIX` (binder.rs:44): a NUL cannot appear in an identifier. -/
+def aggSlotPrefix : String := "_\x00agg_placeholder_"
 
 /-- `bind_graph` on a pattern's names: each defined (reused if present). -/
 def bindNames (st : St) : List Name → Except String (St × List Var)
@@ -189,6 +194,10 @@ def bindNode (st : St) (locals : List Env) : NE → Except String (BE × St)
   | .andOr o cs => match bindL st locals cs with
     | .error e => .error e
     | .ok (bs, st1) => .ok (flatB o bs, st1)
+  | .aggSlot =>
+    -- binder.rs:1764-1773: always a fresh (unnamed) variable, in a slot of its own
+    let r := reserve C st aggSlotPrefix ""
+    .ok (.var r.2, r.1)
   | .other t cs => match bindL st locals cs with
     | .error e => .error e
     | .ok (bs, st1) => .ok (.other t bs, st1)
@@ -364,6 +373,23 @@ theorem bind_andOr_paren (st : St) (locals : List Env) (o : Bool) (xs ys : List 
       simp only
       rw [flatB_assoc o p.1 q.1 (h p.1 p.2 hx)]
 
+/-! ## #3011: the aggregate ORDER BY slot is a variant, not a name -/
+
+/-- The slot binds to a fresh variable with id `len()` in the current scope, reserved
+under `AGG_SLOT_PREFIX` + id (binder.rs:1764-1773); nothing is resolved. -/
+theorem bind_aggSlot (st : St) (locals : List Env) :
+    bindNode C st locals .aggSlot =
+      .ok (.var (freshVar st.cur "" .any st.depth),
+        { st with cur := st.cur.insert (C.rkey aggSlotPrefix st.depth st.cur.length)
+                     (freshVar st.cur "" .any st.depth) }) := rfl
+
+/-- A variable a query spells — even the old reserved `__agg_order_by_placeholder__` —
+is resolved like any other name (the special case in `resolve_name` is gone). -/
+theorem bind_var_ordinary (st : St) (locals : List Env) (n : Name) :
+    bindNode C st locals (.var n) = (resolve st locals n).map (fun r => (.var r.2, r.1)) := by
+  simp only [bindNode]
+  cases resolve st locals n <;> rfl
+
 /-! ## Reservations keep the table covering -/
 
 /-- The reserved key is new whenever the table covers its ids: it carries the
@@ -380,7 +406,7 @@ theorem reserve_frame (st : St) (p : String) (x : Name) :
 mutual
 def patFree : NE → Bool
   | .pattern _ | .patComp _ _ => false
-  | .var _ => true
+  | .var _ | .aggSlot => true
   | .quant _ cs | .listComp _ cs | .reduce _ _ cs | .prop _ cs | .func _ _ cs | .paren cs | .andOr _ cs
   | .other _ cs => patFreeL cs
 def patFreeL : List NE → Bool
@@ -507,6 +533,10 @@ theorem bindNode_covers (hk : KeysFresh C) : ∀ (st : St) (locals : List Env) (
     | ok p =>
       rw [h1] at h; simp at h; obtain ⟨-, rfl⟩ := h
       exact bindL_covers hk st locals cs hc hp p.1 p.2 h1
+  | st, locals, .aggSlot, hc, _, b, st', h => by
+    simp only [bindNode] at h
+    obtain ⟨-, rfl⟩ := Prod.mk.inj (Except.ok.inj h)
+    exact reserve_covers C hk st aggSlotPrefix "" hc
   | st, locals, .other t cs, hc, hp, b, st', h => by
     simp only [patFree] at hp
     simp only [bindNode] at h
@@ -624,7 +654,7 @@ mutual
 def selfRef (a : Name) : NE → Bool
   | .prop _ (.var n :: _) => n == a
   | .prop _ cs => selfRefL a cs
-  | .var _ | .pattern _ => false
+  | .var _ | .pattern _ | .aggSlot => false
   | .quant _ cs | .listComp _ cs | .reduce _ _ cs | .patComp _ cs | .func _ _ cs | .paren cs | .andOr _ cs
   | .other _ cs => selfRefL a cs
 def selfRefL (a : Name) : List NE → Bool

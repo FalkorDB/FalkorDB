@@ -23,9 +23,10 @@ structure St where
   /-- `copy_from_parent`: name ↦ (parent variable, its copy in `cur`) -/
   cfp : List (Name × (Var × Var))
 
-/-- Names the binder reserves for itself (binder.rs:2181, 2192). -/
+/-- Names the binder reserves for itself (binder.rs:2210). Since #3011 the aggregate
+ORDER BY slot is `ExprIR::AggOrderByPlaceholder` (BindExpr `NE.aggSlot`), not a name. -/
 def isSpecial (n : Name) : Bool :=
-  n == "__agg_order_by_placeholder__" || n.startsWith "_anon"
+  n.startsWith "_anon"
 
 /-- Innermost-first lookup in the comprehension locals (binder.rs:2201-2205). -/
 def lookupLocals : List Env → Name → Option Var

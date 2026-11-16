@@ -366,7 +366,7 @@ theorem union_state (st st' : St) (bs : List RC) (h : bindIR S st (.union bs) = 
 
 /-! ## CALL {} -/
 
-def internalPrefixes : List String := ["_slot_", "__agg_placeholder_", "_quant_", "_lc_", "_reduce_"]
+def internalPrefixes : List String := ["_slot_", "_\x00agg_placeholder_", "_quant_", "_lc_", "_reduce_"]
 
 def isInternal (n : Name) : Bool := internalPrefixes.any fun p => n.startsWith p
 

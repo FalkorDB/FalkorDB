@@ -51,7 +51,7 @@ graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	Ast.AV.fmt_named, AV.fmt_anon
 graph/src/parser/ast.rs	Variable::eq	113	PROVEN	Ast.AV.eqv_iff (id only), AV.eqv_other_scope, AV.eqv_equivalence
 graph/src/parser/ast.rs	Variable::hash	124	PROVEN	Ast.AV.hash_consistent (hash agrees with Eq)
 graph/src/parser/ast.rs	Variable::as_str	134	PROVEN	Ast.AV.asStr_spec
-graph/src/parser/ast.rs	ExprIR::fmt	392	PROVEN	Ast2.exprFmt (every variant), exprFmt_ops_distinct, exprFmt_param, exprFmt_func
+graph/src/parser/ast.rs	ExprIR::fmt	392	PROVEN	Ast2.exprFmt (every variant), exprFmt_ops_distinct, exprFmt_param, exprFmt_func, exprFmt_aggSlot
 graph/src/parser/ast.rs	QuantifierType::fmt	487	PROVEN	Ast2.quantFmt, quantFmt_injective
 graph/src/parser/ast.rs	SupportAggregation::is_aggregation	504	PROVEN	Ast.isAggregation (trait method = any aggregate call in the tree): isAggregation_root/_child/_leaf
 graph/src/parser/ast.rs	is_aggregation	508	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf

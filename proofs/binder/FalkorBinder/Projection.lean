@@ -5,6 +5,11 @@ import FalkorBinder.Resolve
 An expression is abstracted to the names it mentions (in DFS order), whether
 it is an aggregation, and whether it is a bare variable (the case that
 records a `parent_to_child_scope` entry, binder.rs:1156-1158).
+
+Since #3011 the ORDER BY expressions are first passed through
+`replace_projected_subtrees` (binder.rs:1213-1218; AggEq `replaceTop`): a sub-tree
+that repeats a projected item becomes that item's alias. `Proj.orderBy` is the
+ORDER BY *after* that rewrite; `orderBy_repeat_no_leak` is the rewritten case.
 -/
 namespace FalkorBinder
 
@@ -107,14 +112,23 @@ theorem with_plain :
       .ok (specProjectionScope { items := [("k", { vars := ["n"] })] }) := by
   decide
 
-/-- **Root cause 4** — `MATCH (n) WITH n.v AS k ORDER BY n.v`: the ORDER BY
+/-- **Root cause 4** — `MATCH (n) WITH n.v AS k ORDER BY n.w`: the ORDER BY
 copy of `n` is made before the snapshot, so it survives step 7 and the next
 clause sees `n` (binder accepts `RETURN n`; `RETURN *` returns `k, n`).
-openCypher and C: the scope is `[k]`. -/
+openCypher and C: the scope is `[k]`. (Since #3011 `ORDER BY n.v`, which repeats
+the item, is rewritten to `ORDER BY k` and no longer leaks: `orderBy_repeat_no_leak`.) -/
 theorem orderBy_leaks :
     (bindProjection st0 { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] }).map keys
       = .ok ["k", "n"] ∧
     specProjectionScope { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] } = ["k"] := by
+  decide
+
+/-- #3011: `MATCH (n) WITH n.v AS k ORDER BY n.v` — the ORDER BY is rewritten to
+`k` (AggEq `orderBy_repeat_reads_alias`), which resolves in the projection scope:
+no copy, the scope is `[k]`. -/
+theorem orderBy_repeat_no_leak :
+    (bindProjection st0 { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["k"] }] }).map keys
+      = .ok ["k"] := by
   decide
 
 /-- The WHERE copy, by contrast, is removed from the table … -/
