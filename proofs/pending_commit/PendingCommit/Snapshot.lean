@@ -145,7 +145,7 @@ theorem del_Good (s : RS) (h : Good s) (id : Nat) : Good (del s id) := by
   cases hf : find s.live id with
   | none => simpa [hf] using h
   | some e =>
-    simp only [hf]
+    simp only
     intro j hj
     simp [keys] at hj
     by_cases hji : j = id

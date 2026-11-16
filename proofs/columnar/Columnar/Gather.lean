@@ -265,7 +265,7 @@ theorem giVarLen_lawful : Lawful (giVarLen : GI _ _ _ (Cell F W)) vlCols vlVal :
         simp [giVarLen, wantsPath, hd, hc, hp, vlVal, vlCell]
     finish_ok l b o := by
       cases hd : b.distinct <;> cases hc : b.copy <;> cases hp : b.path <;>
-        simp [giVarLen, specFinish, vlCols, hd, hc, hp, vlCell] }⟩
+        simp [giVarLen, specFinish, vlCols, hd, hc, hp] }⟩
 
 /-- `Value` (binding: the alias): one value lane. -/
 def giValue : GI W Nat (List W) (Cell F W) where

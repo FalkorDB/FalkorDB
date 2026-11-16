@@ -417,6 +417,6 @@ def isEmpty : V F → Option (V F)
 theorem isEmpty_no_panic (v : V F) (h : Accepts v (.union [.map, .list .any, .string, .null])) :
     (isEmpty v).isSome := by
   rw [← valueOfType_none_iff] at h
-  cases v <;> simp_all [isEmpty, vot_union, unionLoop, valueOfType, tagMatch, Ty.isAny, listLoop_none, vot_any]
+  cases v <;> simp_all [isEmpty, vot_union, unionLoop, valueOfType, tagMatch, Ty.isAny]
 
 end ValueMath

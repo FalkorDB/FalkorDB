@@ -283,7 +283,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
             | error e =>
               rw [hq] at this
               cases hq' : pre3339_decode.decodeN co f len r with
-              | none => simp [hq, hq', capped, Except.map, Except.toOption]
+              | none => simp [hq', capped, Except.map, Except.toOption]
               | some q =>
                 obtain ⟨l, r'⟩ := q
                 rw [hq'] at this
@@ -292,7 +292,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
                   cases hwx : withinL (d + 1) l
                   · rfl
                   · simp [hwx] at this
-                simp [hq, hq', capped, within, hwl, Except.map, Except.toOption]
+                simp [hq', capped, within, hwl, Except.map, Except.toOption]
             | ok q =>
               obtain ⟨l, r'⟩ := q
               rw [hq] at this
@@ -305,7 +305,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
                 by_cases hwl : withinL (d + 1) l' = true
                 · simp only [hwl, ite_true, Option.some.injEq, Prod.mk.injEq] at this
                   obtain ⟨rfl, rfl⟩ := this
-                  simp [hq, hq', capped, within, hwl, hd', Except.map, Except.toOption]
+                  simp [hq', capped, within, hwl, hd', Except.map, Except.toOption]
                 · simp [hwl] at this
           · simp [Except.toOption, capped]
         simp only [t6, ite_false]
@@ -382,7 +382,7 @@ theorem decodeValue_encode_deep : ∀ (fuel d : Nat) (v : V F) (rest : List (Tok
     | list l =>
       simp only [Storable] at hst
       have hwl : withinL (d + 1) l = false := by simpa [within, hd'] using hw
-      simp only [encode, List.append_assoc, List.cons_append, List.nil_append]
+      simp only [encode, List.cons_append, List.nil_append]
       unfold decodeValue
       simp [hd, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         hN (d + 1) l rest (by simp at hs; omega) hst hwl, Except.map]

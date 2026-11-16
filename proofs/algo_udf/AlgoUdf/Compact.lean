@@ -74,7 +74,7 @@ theorem unfiltered_component_ids_are_members (n : Nat) (comp : Nat → Nat)
   apply List.map_congr_left
   intro i hi
   have hi' := List.mem_range.mp hi
-  simp [List.getD_eq_getElem?_getD, List.getElem?_range, hi', h.lt i hi']
+  simp [List.getD_eq_getElem?_getD, hi', h.lt i hi']
 
 /-- The spec's component id is always a reported node, hence so is Rust's. -/
 theorem spec_component_is_member (ids : List Nat) (comp : Nat → Nat)
@@ -171,7 +171,7 @@ theorem checkKnown_ok_iff (hasLabel hasType : String → Bool) (labels types : L
   | some l =>
     have := List.find?_some hl
     have hm := List.mem_of_find?_eq_some hl
-    simp only [Except.error.injEq, reduceCtorEq, false_iff, not_and]
+    simp only [reduceCtorEq, false_iff, not_and]
     intro h
     have := h _ hm
     simp_all

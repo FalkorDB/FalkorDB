@@ -373,7 +373,7 @@ theorem intStage_min_div_neg_one :
 /-- **PROVEN**: end to end, the columnar `/` of `i64::MIN` by `-1` errors exactly as the scalar one. -/
 theorem arithmetic_min_div_neg_one (other : AOp → V F → V F → Except String (V F)) :
     arithmetic other .div (.scalar (.int (-2 ^ 63))) (.scalar (.int (-1))) 1 = .error divOverflow := by
-  simp [arithmetic, intStage_min_div_neg_one, floatStage, floatOperand, genericStage, valueArith,
+  simp [arithmetic, floatStage, floatOperand, genericStage, valueArith,
     minDivNegOne, EC.get, divOverflow, List.range, List.range.loop]
   rfl
 

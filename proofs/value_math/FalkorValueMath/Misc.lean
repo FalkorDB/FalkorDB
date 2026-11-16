@@ -490,7 +490,7 @@ theorem pre3339_decode_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F))
     | str s => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, co.lossy_utf8]
     | list l =>
       simp only [Storable] at hst
-      simp only [encode, List.append_assoc, List.cons_append, List.nil_append]
+      simp only [encode, List.cons_append, List.nil_append]
       simp only [pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
       simp [hN l rest (by simp at hs; omega) hst]
     | point la lo =>
@@ -511,7 +511,7 @@ theorem pre3339_decode_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F))
     | null =>
       simp only [encode, List.cons_append, List.nil_append]
       unfold pre3339_decode
-      simp only [ite_eq_left (show T_NULL = T_NULL from rfl), ite_true]
+      simp only [ite_true]
     | map _ => simp [Storable] at hst
     | node _ => simp [Storable] at hst
     | rel _ => simp [Storable] at hst

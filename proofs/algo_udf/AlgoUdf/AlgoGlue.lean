@@ -34,7 +34,7 @@ theorem msgToString_prefix (m : List Nat) : ∃ rest, m = msgToString m ++ rest 
   | nil => simp
   | cons x t ih =>
     by_cases hx : x = 0
-    · right; simp [List.dropWhile_cons, hx]
+    · right; simp [hx]
     · simp only [List.dropWhile_cons, ne_eq, hx, not_false_eq_true, decide_true, ite_true]; exact ih
 
 /-! ## MSF scoring callbacks -/

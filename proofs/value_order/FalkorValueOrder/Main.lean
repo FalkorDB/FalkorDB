@@ -427,7 +427,7 @@ theorem point_nans_one_key (s s' : Bool) (p p' : Nat) (y : F) :
   refine ⟨?_, ?_⟩
   · simp only [scMain, sc, scF32_refl, thn_eq]
     simp [scF32, fpcmp, F.nkey, isNaN, cmpB, cmpN, cmpI]
-  · simp [hwords, f32HashBits, isNaN, F.nkey]
+  · simp [hwords, f32HashBits, F.nkey]
 
 /-- Signed zeros nested in a list stay apart too. -/
 theorem signed_zeros_apart_nested :

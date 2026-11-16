@@ -380,7 +380,7 @@ theorem upgrade_unregistered (t : Th) (i : Int) (c : Option (Bool × Bool)) (g :
     (upgrade (begin t) i (⟨false, c, g⟩ :: ws) f).map (·.1) = some (some .graphUnregistered) := by
   by_cases hi : i ≤ 0
   · by_cases hh : holdsGil t = true <;>
-      simp_all [upgrade, escalate, begin, dropMode, acquireWrite, pollLoop, World.att, authorize, holdsGil,
+      simp_all [upgrade, escalate, begin, dropMode, acquireWrite, World.att, authorize, holdsGil,
         gilAcquire]
   · by_cases hh : holdsGil t = true <;>
       simp_all [upgrade, escalate, begin, dropMode, acquireWrite, pollLoop, World.att, authorize, holdsGil,
@@ -400,7 +400,7 @@ theorem upgrade_refused_rechecks (s s' : S) (i : Int) (c : Option (Bool × Bool)
   have hr := (escalate_refused_reader s s' i _ _ he).1
   by_cases hi : i ≤ 0
   · by_cases hh : holdsGil (dropMode s'.mode s'.th) = true <;>
-      simp_all [upgrade, escalate, dropMode, acquireWrite, pollLoop, World.att, authorize, holdsGil,
+      simp_all [upgrade, escalate, dropMode, acquireWrite, World.att, authorize, holdsGil,
         gilAcquire]
   · by_cases hh : holdsGil (dropMode s'.mode s'.th) = true <;>
       simp_all [upgrade, escalate, dropMode, acquireWrite, pollLoop, World.att, authorize, holdsGil,

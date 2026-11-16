@@ -305,7 +305,7 @@ theorem processPairs_seek (g : Graph) (isRev emit : Bool) (r : RowIn) (p : Nat �
         · exact absurd (h q (by simp) hh) hp
       have e : pairRows g isRev r emit q = [] := by
         unfold pairRows; simp [hc]
-      simp only [List.filter_cons, hp, ite_false, processPairs, List.flatMap_cons, e, List.nil_append] at ih ⊢
+      simp only [List.filter_cons, hp, processPairs, List.flatMap_cons, e, List.nil_append] at ih ⊢
       exact ih
 
 /-- **Multi-type, directed, emit mode**: `expand_union_row` produces `(f,t,e)` iff `e` is an edge

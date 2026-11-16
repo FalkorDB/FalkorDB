@@ -177,7 +177,7 @@ theorem intLane_eq (op : Op) (rows : List (Int × Int × Bool)) :
       · have := h r (by simp) hn
         cases hv : valueArith op r.1 r.2.1 with
         | none => simp [hv] at this
-        | some v => simp [hv]
+        | some v => simp
       · simp
   cases op
   case div | rem =>

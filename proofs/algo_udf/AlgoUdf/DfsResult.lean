@@ -79,12 +79,12 @@ theorem dfs_complete (g : G) (cfg : Cfg) (hm : BoundMono g cfg) (b : Option Nat)
         (⟨es, W, C⟩ : FP) ∈ F.log := by
   by_cases h0 : 0 < cfg.maxLen
   · obtain ⟨F, h1, h2, _, h4⟩ := explore hm _ (succsRev g cfg.src) (init g cfg b) _ [] (inv_init g cfg b)
-      rfl (by simp [init, h0]) rfl
+      rfl (by simp [h0]) rfl
     refine ⟨F, h1, step_root_done h2 (Or.inr rfl), ?_⟩
     intro es W C hext hW
     have := h4 es W C (by simpa [init] using hext) hW
     simpa [pathOf, init] using this
-  · refine ⟨init g cfg b, .refl _, step_root_done rfl (Or.inl (by simp [init, h0])), ?_⟩
+  · refine ⟨init g cfg b, .refl _, step_root_done rfl (Or.inl (by simp [h0])), ?_⟩
     intro es W C hext _
     cases hext <;> omega
 

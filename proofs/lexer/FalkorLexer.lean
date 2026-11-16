@@ -1302,7 +1302,7 @@ theorem int_literal_correct (neg : Bool) (radix : Nat) (ds : List Nat) (hne : ds
   have hc : ¬ (ds = [] ∨ ds.any (fun d => radix ≤ d) = true) := by simp [hne, hb]
   unfold str2int specLit
   rw [ite_eq_right hc, ite_eq_right hc]
-  simp only [ne_eq, hne, not_false_eq_true, true_and]
+  simp only
   generalize digitsVal radix ds = v
   have e1 : I64MIN = -9223372036854775808 := rfl
   have e2 : I64MAX = 9223372036854775807 := rfl

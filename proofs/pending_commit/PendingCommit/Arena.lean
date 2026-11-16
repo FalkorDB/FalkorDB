@@ -234,7 +234,7 @@ theorem freeSpan_ok {b : Blk} (h : Inv b) {i : Nat} (hi : i < b.slots.length) :
     obtain ⟨b', hr, hsl, har, hd, hs⟩ := retire_ok h hi
     rw [hr]
     refine ⟨_, rfl, ?_, by simp [setSlot, hsl]⟩
-    simp only [setSlot, Option.map_some]
+    simp only [setSlot]
     rw [hsl]
     exact inv_setSlot h hi (by arith) (by arith) (.inl ⟨rfl, rfl⟩) (.inr rfl) (by arith)
 

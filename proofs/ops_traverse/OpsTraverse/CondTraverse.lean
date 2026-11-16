@@ -293,7 +293,7 @@ theorem twoHop_emit_iff {g : Graph} {nodes : List Nat} {a x r c s : Nat} :
     refine ⟨e1.src, ha, (e1.src, e1.dst, e1.id), ?_, (e1.dst, e2.src, e2.id), ?_, rfl, rfl, rfl, rfl, rfl⟩
     · exact emit_directed_iff.2 ⟨e1, he1, rfl, rfl, rfl, by simp, by simp [okBound], by simp [okBound]⟩
     · refine (mem_processPairs (fun _ _ => True) (pairs_spec g)).2
-        ⟨e2, he2, rfl, by simpa using hne, by simp [okBound, hd2], by simp [okBound], trivial, ?_⟩
+        ⟨e2, he2, rfl, by simpa using hne, by simp [okBound], by simp [okBound], trivial, ?_⟩
       simp [hd2]
 
 /-- `e1, e2 : 1→2`, `e3 : 2→3` (the repro graph). -/
@@ -371,7 +371,7 @@ theorem batched_eq_collapse {mxm : Mat → Mat → Mat} (h : MxmSpec mxm) (g : G
   simp only [Reach, mem_pairs]
   constructor
   · rintro ⟨s, hF, k, ⟨x, hx, h1, h2⟩, rfl⟩
-    exact ⟨s, hF, collapse_directed_iff.2 ⟨x, hx, h1, h2, by simp, by simp [okBound, h1], by simp [okBound]⟩⟩
+    exact ⟨s, hF, collapse_directed_iff.2 ⟨x, hx, h1, h2, by simp, by simp [okBound], by simp [okBound]⟩⟩
   · rintro ⟨s, hF, he⟩
     obtain ⟨x, hx, h1, h2, -, -, -⟩ := collapse_directed_iff.1 he
     exact ⟨s, hF, d, ⟨x, hx, h1, h2⟩, rfl⟩

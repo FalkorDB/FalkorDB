@@ -66,7 +66,7 @@ theorem construct_ym_s (Y M S : Int) (h1 : I64 (Y * 12)) (h2 : I64 (Y * 12 + M))
       some (daysFromCivil (1970 + (Y * 12 + M) / 12) ((Y * 12 + M) % 12 + 1) 1 * 86400 + S) := by
   have z : I64 0 := by unfold I64; decide
   unfold constructDuration chkMul chkAdd
-  simp only [Int.zero_mul, Int.zero_add, Int.mul_zero, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
+  simp only [Int.zero_mul, Int.zero_add, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
     chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind, checkDateRange, h7, and_self, ite_true]
 
 /-- `decompose_duration` (`temporal.rs:539-549`) as built in release (i32 wrap). -/

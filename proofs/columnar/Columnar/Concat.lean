@@ -342,7 +342,7 @@ theorem perRow_anyBound (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat
     intro r hr
     have := (toOwned_slot (hw b hb) hr i).2.1
     simp only [Function.comp] at this ⊢
-    rw [this]; simp [hpos, Bool.and_assoc]
+    rw [this]; simp [hpos]
 
 theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat) :
     (perRowRows bs).any (fun r => match r.get i with
@@ -364,7 +364,7 @@ theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat)
     intro r hr
     have := (toOwned_slot (hw b hb) hr i).2.2
     simp only [Function.comp] at this ⊢
-    rw [this]; simp [hpos, Bool.and_assoc]
+    rw [this]; simp [hpos]
 
 /-- **`concat` = per-row concat** (every slot, every row: value and bound bit), for any list
 of well-formed batches, empty ones included (#3059). -/

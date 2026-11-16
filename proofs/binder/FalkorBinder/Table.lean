@@ -148,7 +148,7 @@ theorem Env.has_iff_find (e : Env) (n : Name) : e.has n = true ↔ (e.find? n).i
     · subst hk; simp [Env.has, Env.find?, List.lookup]
     · have : (Key.nm n == k) = false := by simp; exact fun h => hk h.symm
       simp only [Env.has, Env.find?, List.any_cons, List.lookup, this] at ih ⊢
-      simp [hk, ih]
+      simp [hk]
 
 theorem Env.erase_find (e : Env) (n : Name) : (e.erase n).find? n = none := by
   induction e with

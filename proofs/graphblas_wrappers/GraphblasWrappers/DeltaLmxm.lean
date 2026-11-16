@@ -179,14 +179,14 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
           have := nz_false hl' i j
           simp only [hl, ite_false, opt, Bool.false_eq_true, false_iff, not_and]
           intro hb0
-          simp only [selTrue, ewGT, maskS, mxmCount, beq_iff_eq] at this
+          simp only [selTrue, ewGT, maskS, mxmCount] at this
           by_cases ha0 : cnt n F M i j = 0
           · omega
           · intro hlt
-            simp [Nat.pos_iff_ne_zero.1 hb0, ha0, Nat.pos_iff_ne_zero.1 hb0] at this
+            simp [ha0, Nat.pos_iff_ne_zero.1 hb0] at this
             omega
       rw [hlive]
-      simp only [mxmCount, mxmAny, Option.isSome_some, Bool.not_true, Bool.false_and,
+      simp only [mxmCount, mxmAny,
         Bool.and_eq_true, decide_eq_true_eq]
       by_cases hb0 : cnt n F DM i j = 0 <;> simp [hb0] <;> omega
     · have hb0 : cnt n F DM i j = 0 := by
@@ -209,7 +209,7 @@ theorem len_filter_split (l : List Nat) (p q : Nat → Bool) :
   | nil => simp
   | cons a t ih =>
     by_cases hp : p a = true <;> by_cases hq : q a = true <;>
-      simp [List.filter_cons, hp, hq, ih] <;> omega
+      simp [hp, hq, ih] <;> omega
 
 /-- With `dm ⊆ m`, the paths through `m` split into those through the live entries
 `m ∖ dm` and those through `dm`. -/
@@ -276,7 +276,7 @@ theorem deltaLmxm_eff (n : Nat) (F : Pat) (v : VM) (h : Inv v) (i j : Nat) :
   rw [deltaLmxm_correct n F _ _ _ (fun k j hd => by
     simpa [patOf] using h.dm_m (k, j) (by simpa [patOf] using hd))]
   unfold eff
-  simp only [patOf, decide_eq_true_eq, Bool.not_eq_true', decide_eq_false_iff_not]
+  simp only [patOf, decide_eq_true_eq, decide_eq_false_iff_not]
 
 open VM in
 /-- A `Tensor`'s forward layers (`m`, `dp`, `dm` of a pair-state grid `st`, each pair obeying
@@ -292,7 +292,7 @@ theorem deltaLmxm_tensor (n : Nat) (F : Pat) (st : Nat → Nat → VMTensor.Pair
   apply and_congr_right; intro _
   have hi := h k j
   unfold VMTensor.effV
-  cases hdp : (st k j).dp <;> cases hdm : (st k j).dm <;> cases hm : (st k j).m <;> simp [hdp, hdm, hm]
+  cases hdp : (st k j).dp <;> cases hdm : (st k j).dm <;> cases hm : (st k j).m <;> simp
 
 /-! ## History: before #3492 (a3a99bdbc) -/
 

@@ -182,7 +182,7 @@ theorem materialize_eq (w : W) (bg : List Nat → Nat → List Val)
         simp only [noDelete]
         cases w.attrId name <;> simp
     · have := hd hde id
-      simp only [Bool.not_true, ite_false, this]
+      simp only [Bool.not_true, this]
       simp only [noDelete]
       cases w.attrId name <;> simp
 
@@ -254,8 +254,8 @@ theorem fold_lookup (w : W) (hn : w.nameOk) (name : String) :
         have hk : w.attrName a = some name := (hn name a).mpr ha
         simp only [hk]
         split
-        · next hv => rw [OM.lookup_remove]; simp [hv]
-        · next hv => rw [OM.lookup_insert]; simp [hv]
+        · next hv => rw [OM.lookup_remove]; simp
+        · next hv => rw [OM.lookup_insert]; simp
       · simp only [hpa, ite_false]
         split
         · simp only [attrStep]
@@ -293,7 +293,7 @@ theorem attrs_agree (w : W) (hn : w.nameOk) (hd : w.deletedOk) (ha : w.attrsOk)
   cases hdi : w.deleted id with
   | some dn =>
     cases hde : w.deletedEmpty
-    · simp [hdi]
+    · simp
     · simp [hd hde id] at hdi
   | none =>
     simp only [ite_self]
@@ -615,7 +615,7 @@ theorem degree_exact (endp : Edge → Nat) (E C : List Edge) (D : Edge → Bool)
     | cons e L ih =>
       simp only [List.countP_cons, List.filter_cons]
       cases hD : D e <;> cases hp : (endp e = v && tyOk types e) <;>
-        simp [hp, List.countP_cons, ih] <;> omega
+        simp [hp, ih] <;> omega
   refine ⟨by rw [hsplit E]; omega, ?_⟩
   simp only [degree, Bool.false_eq_true, ite_false]
   rw [hsplit E]; omega

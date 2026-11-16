@@ -436,7 +436,7 @@ theorem asc_sorted : ∀ (run : List Seg), (∀ s ∈ run, WF s) → (∀ s ∈ 
       refine List.pairwise_append.2 ⟨hs_sorted, ih1, fun a ha' b hb => ?_⟩
       have := (iter_bounds hws hrs ha').2
       cases t with
-      | nil => simp [flat] at hb
+      | nil => simp at hb
       | cons u t' =>
         have h3 := ih2 u rfl b hb
         have h4 : ascR s u := hadj.1 u rfl
@@ -447,7 +447,7 @@ theorem asc_sorted : ∀ (run : List Seg), (∀ s ∈ run, WF s) → (∀ s ∈ 
       rcases hx with hx | hx
       · exact (iter_bounds hws hrs hx).1
       · cases t with
-        | nil => simp [flat] at hx
+        | nil => simp at hx
         | cons u t' =>
           have h3 := ih2 u rfl x hx
           have h4 : ascR s u := hadj.1 u rfl
@@ -480,7 +480,7 @@ theorem desc_sorted : ∀ (run : List Seg), (∀ s ∈ run, WF s) → (∀ s ∈
       refine List.pairwise_append.2 ⟨hs_sorted, ih1, fun a ha' b hb => ?_⟩
       have := (iter_bounds hws hrs ha').1
       cases t with
-      | nil => simp [flat] at hb
+      | nil => simp at hb
       | cons u t' =>
         have h3 := ih2 u rfl b hb
         have h4 : descR s u := hadj.1 u rfl
@@ -491,7 +491,7 @@ theorem desc_sorted : ∀ (run : List Seg), (∀ s ∈ run, WF s) → (∀ s ∈
       rcases hx with hx | hx
       · exact (iter_bounds hws hrs hx).2
       · cases t with
-        | nil => simp [flat] at hx
+        | nil => simp at hx
         | cons u t' =>
           have h3 := ih2 u rfl x hx
           have h4 : descR s u := hadj.1 u rfl

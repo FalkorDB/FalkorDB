@@ -464,10 +464,10 @@ theorem lexK_le_iff (p q : Nat × Int) :
   · simp [h1]
   · by_cases h2 : (a : Int) = c
     · by_cases h3 : b < d
-      · simp [h1, h2, h3] <;> omega
+      · simp [h2, h3] <;> omega
       · by_cases h4 : b = d
-        · simp [h1, h2, h3, h4]
-        · simp [h1, h2, h3, h4] <;> omega
+        · simp [h2, h4]
+        · simp [h2, h3, h4] <;> omega
     · simp [h1, h2] <;> omega
 
 theorem lexK_eq_iff (p q : Nat × Int) : lexK p q = .eq ↔ p = q := by
@@ -643,14 +643,14 @@ theorem finish_fst (la lb : Nat) (st : St) :
     · split
       · rename_i h3; simp [h3.2.1, h3.2.2]
       · split
-        · rename_i h4; simp [h4]
-        · rename_i h4; simp at h4; simp [h4]
+        · rename_i h4; simp
+        · rename_i h4; simp at h4; simp
 
 theorem cmpN_succ (a b : Nat) : cmpN (a + 1) (b + 1) = cmpN a b := by
   simp only [cmpN, cmpI]
   by_cases h1 : (a : Int) < b
   · have : ((a + 1 : Nat) : Int) < ((b + 1 : Nat) : Int) := by omega
-    simp [h1, this]
+    simp [h1]
   · by_cases h2 : (a : Int) = b
     · have : a = b := by omega
       subst this; simp

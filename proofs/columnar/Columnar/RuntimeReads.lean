@@ -156,9 +156,9 @@ theorem matRel_eq (ids : List Nat) (a : String) :
     · simp only [Bool.false_eq_true, ite_false]
       cases s.delRels.lookup id with
       | some attrs => rfl
-      | none => cases hai : s.attrId a <;> simp [hai] <;> split <;> simp_all
+      | none => cases hai : s.attrId a <;> simp <;> split <;> simp_all
     · simp only [ite_true, lookup_nil_isEmpty s.delRels he id]
-      cases hai : s.attrId a <;> simp [hai] <;> split <;> simp_all
+      cases hai : s.attrId a <;> simp <;> split <;> simp_all
 
 /-! ## The runtime built from the state -/
 

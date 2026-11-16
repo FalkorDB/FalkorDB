@@ -131,7 +131,7 @@ theorem lookup_compute (val : Constraint → Bool) :
     simp only [List.map_cons, List.nodup_cons] at hn
     simp only [computePending, List.filter_cons] at *
     rcases List.mem_cons.1 hm with rfl | hm'
-    · simp [hu, List.lookup]
+    · simp [hu]
     · have hne : d.id ≠ c.id := fun h => hn.1 (h ▸ List.mem_map_of_mem hm')
       have ih := lookup_compute val cs c hn.2 hm' hu
       have hb : (c.id == d.id) = false := by simp [Ne.symm hne]

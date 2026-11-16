@@ -487,7 +487,7 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      simp [Option.filter, TOk] at * <;> grind
+      simp [TOk] at * <;> grind
   case jsHeap =>
     cases rustParseI64 v with
     | none => simp
@@ -500,7 +500,7 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
       simp [Option.filter, TOk] at * <;> grind
   case asyncDelete | cmdInfo | delayIndexing =>
     cases y : eqIC v (b "yes") <;> cases z : eqIC v (b "no") <;>
-      simp only [y, z, Bool.false_eq_true, ite_false, ite_true] <;>
+      simp only [Bool.false_eq_true, ite_false, ite_true] <;>
       by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
       simp [TOk, *] at * <;> first | omega | (exfalso; omega)
   case importFolder =>
@@ -567,11 +567,11 @@ theorem cross_eq (c : Cfg) (vs : List (Name × Int)) :
   rw [← fold_td, ← fold_tm, h1, h2]
   by_cases a : (vs.any (·.1 == .timeout) = true ∧
       ((vs.foldl apply1 c).timeoutDefault > 0 ∨ (vs.foldl apply1 c).timeoutMax > 0))
-  · simp only [a, ite_true]; rfl
+  · simp only [a]; rfl
   · simp only [a, ite_false]
     by_cases b' : ((vs.foldl apply1 c).timeoutDefault > 0 ∧ (vs.foldl apply1 c).timeoutMax > 0 ∧
         (vs.foldl apply1 c).timeoutDefault > (vs.foldl apply1 c).timeoutMax)
-    · simp only [b', ite_true]
+    · simp only [b']
       cases vs.any (·.1 == Name.timeoutDefault) <;> rfl
     · simp only [b', ite_false]; rfl
 

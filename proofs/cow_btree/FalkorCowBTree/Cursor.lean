@@ -279,7 +279,7 @@ theorem new_inv_rest (c : Cfg) (h : Nat) (root : Node) (lo hi : Nat) (hw : TreeW
   have hs := TreeWF_sorted hw
   simp only [restStack, List.map_nil, List.flatten_nil, List.append_nil] at hr
   have hsr : Sorted ((toList h root).dropWhile (keyLt lo)) := Sorted.sublist (List.dropWhile_sublist _) hs
-  simp only [Cursor.new, Inv, rest, restStack, List.map_nil, List.flatten_nil, List.append_nil]
+  simp only [Cursor.new, Inv, rest, restStack]
   refine ⟨⟨?_, fun hwh => ?_⟩, ?_, trivial⟩
   · rw [hr]; exact hsr
   · apply wholeOf_sound _ _ _ _ hwh

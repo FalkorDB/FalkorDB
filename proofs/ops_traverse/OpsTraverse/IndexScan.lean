@@ -116,7 +116,7 @@ theorem evalIQ_inList {E : Type} (ev : E → Except String V) (asList : E → Ex
 non-empty and every member indexable. Hence `IN [NULL]` (filtered to empty) falls back to a label scan. -/
 theorem canUse_inListV_eq_or (k : String) (items : List V) :
     canUse (.inListV k items) = canUse (.or (items.map (.eq k))) := by
-  simp only [canUse, canUse.canUseL, canUseL_iff, List.isEmpty_map, List.all_map]
+  simp only [canUse, canUseL_iff, List.isEmpty_map, List.all_map]
   rfl
 
 theorem canUse_inListV_empty (k : String) : canUse (.inListV k []) = false := rfl
@@ -367,7 +367,7 @@ theorem orient_length (base : List (Nat × Nat × Nat)) :
     rw [ih]
     by_cases h : s = d
     · simp [h]; omega
-    · simp [h, List.filter_cons]; omega
+    · simp [h]; omega
 
 /-! ## Fulltext scans and the edge vector scan -/
 

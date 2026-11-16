@@ -371,7 +371,7 @@ theorem lookup_groupInsert {K A : Type} [DecidableEq K] (k j : K) (a : A) (g : L
     · subst h1; by_cases h2 : k' = j <;> simp [lookupG, h2]
     · simp only [h1, ite_false, lookupG]
       by_cases h2 : k' = j
-      · subst h2; simp [lookupG, h1, Ne.symm h1]
+      · subst h2; simp [Ne.symm h1]
       · simp [h2, ih]
 
 /-- Every group holds exactly the rows with its key, in arrival order: the

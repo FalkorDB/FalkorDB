@@ -18,7 +18,7 @@ theorem fromJs_eq (H : Heap) (v : JsV) : fromJs H v = Rget (fromF H (some MAX) (
 theorem toJs_datetime (ts : Int) : toJs (.datetime ts) =
     .ok (.obj [("__falkor_temporal_type".toList, .str "datetime")] (.date (mkDate (wrapI64 (ts * 1000))))) := by
   rw [toJs_eq]
-  simp [toF, needsV, toLevel, Rget, R.err, R.ok]
+  simp [toF, needsV, toLevel, Rget, R.ok]
 
 /-- An object with no `__falkor_type` marker and a Date / RegExp class is converted by `fromObjWith`. -/
 theorem classify_kind (ps : List (List Char × JsV)) (k : JsKind) (ht : tag ps = none) (hk : k ≠ .plain) :

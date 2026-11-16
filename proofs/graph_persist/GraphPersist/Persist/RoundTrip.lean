@@ -11,7 +11,7 @@ theorem length_filter_split (p : Nat → Bool) (l : List Nat) :
     (l.filter p).length + (l.filter fun x => !p x).length = l.length := by
   induction l with
   | nil => rfl
-  | cons x xs ih => by_cases h : p x <;> simp [List.filter_cons, h] <;> omega
+  | cons x xs ih => by_cases h : p x <;> simp [h] <;> omega
 
 /-- `encode_with_range` walks exactly `count` live ids: the deleted ids are distinct and
 all below `count + |deleted|`. -/

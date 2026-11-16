@@ -70,7 +70,7 @@ theorem firstDiff_append (x y x' y' : List F) (hl : x.length = x'.length) :
     firstDiff fc (x ++ y) (x' ++ y') =
       if (x.zip x').any (fun p => fc.ne p.1 p.2) then firstDiff fc x x' else firstDiff fc y y' := by
   induction x generalizing x' with
-  | nil => cases x' <;> simp_all [firstDiff]
+  | nil => cases x' <;> simp_all
   | cons a as ih =>
     cases x' with
     | nil => simp at hl
@@ -285,12 +285,12 @@ theorem mayFail_sound : ∀ (n : Nat) (v : V F), sizeOf v < n → mayFail fc v =
       simp only [mayFail] at hm
       have hall := hlist items (by simp at hs; omega) hm
       rw [cmpV, cmpList, listLoop2_self fc items hall]
-      by_cases h0 : items.length = 0 <;> simp [h0, compare_self_eq]
+      by_cases h0 : items.length = 0 <;> simp [h0]
     | path items =>
       simp only [mayFail] at hm
       have hall := hlist items (by simp at hs; omega) hm
       rw [cmpV, cmpList, listLoop2_self fc items hall]
-      by_cases h0 : items.length = 0 <;> simp [h0, compare_self_eq]
+      by_cases h0 : items.length = 0 <;> simp [h0]
     | map entries =>
       simp only [mayFail] at hm
       have hall : ∀ p ∈ entries, cmpV fc p.2 p.2 = (.eq, .none) := by

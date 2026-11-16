@@ -291,13 +291,13 @@ theorem decode_writePair (R : Roaring) (k v c rest remaining) (hk : k ∈ [0, 0x
   obtain ⟨h1, h2, h3, h4, h5, _⟩ :=
     pairHeader_fields k hk (widthCode (widthFor v)) (widthCode_lt v) (widthCode (widthFor c)) (widthCode_lt c)
   have hk1 : k &&& 3 ≠ 1 := by simp at hk; rcases hk with rfl | rfl | rfl <;> decide
-  simp only [SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK, SEG_KIND_ASCENDING, ne_eq] at h1 h2 h3
+  simp only [SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK, ne_eq] at h1 h2 h3
   simp only [writePair, decodeSeg, List.cons_append, SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK,
     SEG_KIND_ASCENDING, h1, h3, hk1, ne_eq, not_true_eq_false, ite_false]
   rw [widthOfCode_widthCode v _ h4, List.append_assoc, readU_le _ _ _ (widthFor_fits v hv)]
   simp only
   rw [widthOfCode_widthCode c _ h5, readU_le _ _ _ (widthFor_fits c hc)]
-  simp only [ne_eq, h2]
+  simp only [h2]
 
 theorem decode_encodeSeg (R : Roaring) (hR : RoaringOK R) (s : Seg) (remaining : Nat)
     (he : Encodable s remaining) (rest : List Nat) :
@@ -335,9 +335,9 @@ theorem decode_encodeSeg (R : Roaring) (hR : RoaringOK R) (s : Seg) (remaining :
     have hlen : ¬ (bm.length = 0 ∨ bm.length > remaining) := by
       have := List.length_pos_iff.2 hne; omega
     simp only [decodeSeg, List.cons_append, SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK,
-      SEG_KIND_ASCENDING, Nat.reduceAnd, Nat.reduceOr]
+      SEG_KIND_ASCENDING, Nat.reduceAnd]
     rw [List.append_assoc, readU_le _ _ _ hsz']
-    simp [take_append, hR.roundtrip bm hne hs hlt, hlen]
+    simp [take_append, hR.roundtrip bm hne hs hlt]
     exact ⟨hne, hl⟩
   | dsc bm =>
     simp [Seg.WF] at hw; simp [Seg.len] at hl
@@ -351,7 +351,7 @@ theorem decode_encodeSeg (R : Roaring) (hR : RoaringOK R) (s : Seg) (remaining :
     simp only [decodeSeg, List.cons_append, SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK,
       SEG_KIND_ASCENDING, Nat.reduceAnd, Nat.reduceOr]
     rw [List.append_assoc, readU_le _ _ _ hsz']
-    simp [take_append, hR.roundtrip bm hne hs hlt, hlen]
+    simp [take_append, hR.roundtrip bm hne hs hlt]
     exact ⟨hne, hl⟩
 
 theorem encodeSeg_len (R : Roaring) (s : Seg) (bytes : List Nat) (h : encodeSeg R s = .ok bytes) :

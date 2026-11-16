@@ -305,7 +305,7 @@ theorem getElements_bounds (len : Nat) (s e : Int) (h : ¬ sliceStart len s > sl
 
 theorem getElements_noOverflow (len : Nat) (x : Int) (hl : (len : Int) ≤ I64MAX)
     (hx : InI64 x) (hneg : x < 0) : InI64 ((len : Int) + x) := by
-  simp only [InI64, I64MIN, I64MAX] at *; omega
+  simp only [InI64, I64MAX] at *; omega
 
 /-- The clamp of the openCypher spec: negative bounds count from the end,
 then everything is clamped into `[0, len]`. -/
@@ -386,7 +386,7 @@ becomes `≥ 2^63` under `as usize`, and `.min(len)` clamps it. Proven for every
 list shorter than `i64::MAX` and every `i64` pair. -/
 theorem removeNorm_range (len : Nat) (idx : Int) (hl : (len : Int) ≤ I64MAX) (hi : InI64 idx) :
     InI64 (removeNorm len idx) := by
-  unfold removeNorm at *; simp only [InI64, I64MIN, I64MAX] at *; split <;> omega
+  unfold removeNorm at *; simp only [InI64, I64MAX] at *; split <;> omega
 
 theorem listRemoveRelease_eq_spec (l : List α) (idx count : Int)
     (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
@@ -395,7 +395,7 @@ theorem listRemoveRelease_eq_spec (l : List α) (idx count : Int)
   unfold listRemoveRelease listRemoveSpec
   simp only []
   generalize removeNorm l.length idx = n at *
-  simp only [InI64, I64MIN, I64MAX] at *
+  simp only [InI64, I64MAX] at *
   split
   · rfl
   · rename_i hg
@@ -461,7 +461,7 @@ theorem listRemove_eq_spec (l : List α) (idx count : Int)
   have hn := removeNorm_range l.length idx hl hi
   unfold listRemove listRemoveSpec removeSpan
   generalize removeNorm l.length idx = n at *
-  simp only [InI64, I64MIN, I64MAX] at *
+  simp only [InI64, I64MAX] at *
   by_cases hg : n < 0 ∨ n ≥ (l.length : Int) ∨ count ≤ 0
   · simp only [ite_eq_left hg]
   · simp only [ite_eq_right hg]
@@ -496,7 +496,7 @@ position is a valid split point for `vs[..pos]` / `vs[pos..]`. -/
 theorem insertNorm_safe (len : Nat) (idx : Int) (hl : (len : Int) < I64MAX) (hi : InI64 idx) :
     InI64 (insertNorm len idx) ∧
     (¬ (insertNorm len idx < 0 ∨ insertNorm len idx > len) → (insertNorm len idx).toNat ≤ len) := by
-  unfold insertNorm at *; simp only [InI64, I64MIN, I64MAX] at *
+  unfold insertNorm at *; simp only [InI64, I64MAX] at *
   constructor
   · split <;> omega
   · intro h; split at * <;> omega
@@ -710,7 +710,7 @@ def quant (q : QType) (xs : List K) : K := evalQuantifier q (cnt xs .t) (cnt xs 
 
 theorem cnt_cons (x : K) (xs : List K) (k : K) :
     cnt (x :: xs) k = cnt xs k + (if x = k then 1 else 0) := by
-  unfold cnt; cases x <;> cases k <;> simp [List.filter_cons] <;> omega
+  unfold cnt; cases x <;> cases k <;> simp <;> omega
 
 theorem fold_kand (xs : List K) :
     xs.foldr kand .t = (if cnt xs .f > 0 then .f else if cnt xs .n > 0 then .n else .t) := by
@@ -1113,10 +1113,10 @@ theorem trim_agrees_C (s : Str) : trimRust s = trimC s := by
       rw [hl, ← ih]
       by_cases hr : rtrim t = []
       · simp [hc, hr, ltrim]
-      · simp [hc, hr, ltrim, List.dropWhile]
+      · simp [hc, hr, ltrim]
     · have hl : ltrim (c :: t) = c :: t := by simp [ltrim, List.dropWhile, hc]
       rw [hl, rtrim_cons]
-      simp [hc, ltrim, List.dropWhile]
+      simp [hc, ltrim]
 
 theorem ltrim_head (s : Str) : ∀ c, (ltrim s).head? = some c → c ≠ ' ' := by
   intro c h
@@ -1210,7 +1210,7 @@ theorem splitAux_step (d : Str) (hd : d ≠ []) (s cur : Str) :
   | nil =>
     rw [splitAux]
     simp only [findFirst]
-    split <;> rename_i h <;> simp [h]
+    split <;> rename_i h <;> simp
   | cons c t ih =>
     rw [splitAux]
     simp only [findFirst]
@@ -1222,7 +1222,7 @@ theorem splitAux_step (d : Str) (hd : d ≠ []) (s cur : Str) :
       | none => simp
       | some j =>
         simp only [Option.map_some, List.reverse_cons, List.append_assoc, List.singleton_append,
-          List.take_succ_cons, List.cons.injEq, and_true]
+          List.take_succ_cons, List.cons.injEq]
         rw [show j + 1 + d.length = (j + d.length) + 1 by omega, List.drop_succ_cons]
         try simp
 

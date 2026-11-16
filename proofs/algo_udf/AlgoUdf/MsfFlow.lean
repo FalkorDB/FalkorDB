@@ -154,8 +154,8 @@ theorem compactOf_eq (ids : List Nat) (maxId : Nat) (hmax : ∀ o ∈ ids, o ≤
       by_cases hx : x ∈ ids
       · simp [hx]
       · by_cases hle : x ≤ maxId
-        · simp [hx, List.getElem?_replicate, hle, Nat.lt_succ_iff]
-        · simp [hx, List.getElem?_replicate, hle, Nat.lt_succ_iff]
+        · simp [hx, hle, Nat.lt_succ_iff]
+        · simp [hx, hle, Nat.lt_succ_iff]
     · cases hd
 
 /-- **#3444 fixed, memory**: when a table is built its length is at most `4 * n` (`n` = `ids.length`): at

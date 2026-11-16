@@ -229,7 +229,7 @@ theorem neg_eq_sub_zero {x : Int} (hx : InI64 x) (hne : x ≠ I64MIN) :
   simp only [hne, ↓reduceIte]
   rw [wrap_id]
   · simp
-  · simp only [InI64, I64MIN, I64MAX] at *; omega
+  · simp only [InI64, I64MIN] at *; omega
 
 /-! ## f64, abstractly -/
 
@@ -696,11 +696,11 @@ theorem divGate_spec (op : AOp) (a b : List (Option Int)) (hg : divGate op a b =
     | some y =>
       refine ⟨fun z hz h0 => ?_, fun hop x' y' hx hy => ?_⟩
       · simp at hz h0; subst h0
-        simp [Option.some.injEq] at this
+        simp at this
       · simp at hx hy; subst hx; subst hy; subst hop
         rintro ⟨h1, h2⟩; subst h1; subst h2
         have h0 : ¬ ((-1 : Int) = 0) := by decide
-        simp [h0] at this
+        simp at this
 
 /-- **The columnar arithmetic is the per-row `Value` arithmetic**: same rows,
 same values, and an error exactly when (and with exactly the message) the

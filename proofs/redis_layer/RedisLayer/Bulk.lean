@@ -229,7 +229,7 @@ theorem go_enc : ∀ (v : BV) (r : List Nat) (st : List Frame), wf C v →
     all_goals (intro h; omega)
   | .str s, r, st, h, _ => by
     obtain ⟨h1, h2⟩ := h
-    simp only [enc, List.cons_append, List.append_assoc, List.singleton_append]
+    simp only [enc, List.cons_append, List.append_assoc]
     rw [go.eq_def]
     simp only [show (3:Nat) ≠ 0 by omega, show (3:Nat) ≠ 1 by omega, show (3:Nat) ≠ 2 by omega,
       show (3:Nat) ≠ 4 by omega, ite_false, ite_true]
@@ -247,10 +247,10 @@ theorem go_enc : ∀ (v : BV) (r : List Nat) (st : List Frame), wf C v →
     simp only [show (5:Nat) ≠ 0 by omega, show (5:Nat) ≠ 1 by omega, show (5:Nat) ≠ 2 by omega,
       show (5:Nat) ≠ 4 by omega, show (5:Nat) ≠ 3 by omega, ite_false, ite_true]
     rw [ite_eq_right (by omega)]
-    simp only [List.length_append, C.len8, take8, drop8, hd, de8]
+    simp only [List.length_append, C.len8, take8, drop8, de8]
     rw [ite_eq_right (by omega)]
     cases xs with
-    | nil => simp [encs, attach]
+    | nil => simp [encs]
     | cons x xs =>
       rw [ite_eq_right (by simp; omega), ite_eq_right (by simp; omega)]
       simp only [Int.toNat_natCast]
@@ -752,7 +752,7 @@ theorem keepFirst_plainRead (seen : List Nat) (xs : List (Nat × BV)) :
     obtain ⟨b, v⟩ := p
     simp only [plainRead] at ih ⊢
     by_cases hv : v.isNull = true
-    · simp [List.filter_cons, hv, keepFirst, ih]
+    · simp [hv, keepFirst, ih]
     · simp only [List.filter_cons, hv, Bool.not_false, ite_true, keepFirst]
       split <;> simp [ih]
 

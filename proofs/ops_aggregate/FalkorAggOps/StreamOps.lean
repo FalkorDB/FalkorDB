@@ -66,7 +66,7 @@ theorem filterEval_empty (v : Verdict) : filterEval [] v = .ok none := rfl
 /-- A non-boolean value on the per-row lane is a type error (C: same message). -/
 theorem filterEval_type_error (r : Nat) (n : String) :
     filterEval [r] (.values [.other n]) = .error s!"Type mismatch: expected Boolean but was {n}" := by
-  simp [filterEval, List.zipIdx, Except.map, List.foldlM, bind, Except.bind]
+  simp [filterEval, List.zipIdx, Except.map, bind, Except.bind]
 
 /-- filter.rs:121-134: skip batches where nothing passes; errors propagate. -/
 def filterNext {B : Type} (eval : B → Except String (Option B)) : List (Except String B) → Option (Except String B) × List (Except String B)

@@ -87,7 +87,7 @@ theorem filter_over_max (maxRow : Nat) :
     intro hs hall
     have ha : a.1 > maxRow := hall a (by simp)
     have hbad : (decide (a.1 ≤ maxRow)) = false := by rw [decide_eq_false_iff_not]; omega
-    simp only [List.filter_cons, hbad, ite_false]
+    simp only [List.filter_cons, hbad]
     exact ih (rowSorted_tail hs) (fun e he => hall e (List.mem_cons.mpr (Or.inr he)))
 
 /-- The drive loop over a row-sorted remaining list yields exactly its entries
@@ -108,7 +108,7 @@ theorem drainL_eq_filter :
         simp only [depletedFor, decide_eq_false_iff_not]; omega
       have h2 : (e :: rest).filter (fun e => decide (e.1 ≤ maxRow))
               = e :: rest.filter (fun e => decide (e.1 ≤ maxRow)) := by
-        simp [List.filter_cons, he]
+        simp [he]
       rw [drainL, h1, ite_eq_right (by simp), h2, key]
     · have h1 : depletedFor (e :: rest) maxRow = true := by
         simp only [depletedFor, decide_eq_true_eq]; omega
@@ -154,7 +154,7 @@ theorem drain_seek_eq_spec (entries : List Entry) (minRow maxRow : Nat)
   apply List.filter_congr
   intro e _
   by_cases h1 : minRow ≤ e.1 <;> by_cases h2 : e.1 ≤ maxRow <;>
-    simp [h1, h2, Bool.and_eq_true, decide_eq_true_eq] <;> omega
+    simp [h1, h2] <;> omega
 
 /-- Corollary: **exactly once**. No entry in range is dropped or repeated —
 `drain` is the filtered sublist, so per-entry counts match one-for-one. -/

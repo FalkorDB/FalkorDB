@@ -103,7 +103,7 @@ theorem deletedDeg_aux (ep : Nat → Option (Nat × Nat)) (ty : Nat → Nat) (ty
       by_cases hall : (rs.all fun r => (ep r).isSome) = true
       · simp only [hall, ite_true]
         by_cases hc : (if useDst = true then t else f) = node ∧ (types = [] ∨ ty r ∈ types)
-        · simp only [hc, ite_true, decide_true]; simp; omega
+        · simp only [hc]; simp; omega
         · simp only [hc, ite_false, decide_false]; simp
       · simp [hall]
 

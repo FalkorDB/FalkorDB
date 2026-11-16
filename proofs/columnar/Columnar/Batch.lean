@@ -215,8 +215,8 @@ theorem gather_originRow {b b' : Batch F} {idx : List Nat} (h : b.gather idx = s
         · rename_i hany
           simp [originRow, ho, hget]
         · rename_i hany
-          simp only [originRow, ho, Option.getD_none]
-          simp only [List.any_eq_true, ne_eq, decide_eq_true_eq, not_exists, not_and,
+          simp only [originRow, ho]
+          simp only [not_exists, not_and,
             Decidable.not_not] at hany
           cases hx : o[idx[k]]? with
           | none => rfl

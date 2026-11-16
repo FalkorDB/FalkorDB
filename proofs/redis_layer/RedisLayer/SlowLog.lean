@@ -284,7 +284,7 @@ theorem add_nodup (s : SL) (h lat : Nat) (hs : (s.entries.map (·.hash)).Nodup)
       have := List.find?_eq_none.1 hn x hx
       simp at this
     simp only; split
-    · simp [List.nodup_append, hs, hnot]
+    · simp [List.nodup_append, hs]
       intro x hx e; exact hnot (List.mem_map.2 ⟨x, hx, e⟩)
     · exact nodup_map_set _ _ _ _ hs (fun x hx e => hnot (List.mem_map.2 ⟨x, hx, e⟩))
 

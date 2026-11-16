@@ -72,9 +72,9 @@ theorem length_mergeD {α : Type} [DecidableEq α] (le : α → α → Bool) :
     rw [mergeD]
     split
     · unfold emit; have := length_mergeD le as (b :: bs) (some a)
-      split <;> simp only [List.length_cons, List.length_nil] at this ⊢ <;> omega
+      split <;> simp only [List.length_cons] at this ⊢ <;> omega
     · unfold emit; have := length_mergeD le (a :: as) bs (some b)
-      split <;> simp only [List.length_cons, List.length_nil] at this ⊢ <;> omega
+      split <;> simp only [List.length_cons] at this ⊢ <;> omega
 termination_by l r => l.length + r.length
 
 theorem mergeWI_length {α : Type} [DecidableEq α] (le : α → α → Bool) (l : List α) (k : Nat) (r : List α)

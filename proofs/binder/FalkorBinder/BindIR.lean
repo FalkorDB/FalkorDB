@@ -528,12 +528,12 @@ theorem createCheck_fresh (env : Env) (nodes rels endpoints : List Alias) (h : â
 /-- `MATCH (a) CREATE (a:L)`: a bare node reusing a bound name is rejected. -/
 theorem createCheck_bare_bound (env : Env) (a : Name) (hb : env.has a = true) :
     createCheck env [.named a] [] [] = .error s!"The bound variable '{a}' can't be redeclared in a CREATE clause" := by
-  simp [createCheck, createStepN, createStepR, hb]
+  simp [createCheck, createStepN, hb]
 
 /-- â€¦but as a relationship endpoint it is a reference (`CREATE (a)-[:R]->(b)`). -/
 theorem createCheck_endpoint (env : Env) (a : Name) :
     createCheck env [.named a] [] [.named a] = .ok () := by
-  simp [createCheck, createStepN, createStepR]
+  simp [createCheck, createStepN]
 
 /-- An unnamed entity is never a redeclaration (#3303): `MATCH (a) CREATE ()` passes. -/
 theorem createCheck_anon (env : Env) (k : Nat) (eps : List Alias) :
