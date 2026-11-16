@@ -69,7 +69,7 @@ Every `bug_*` test asserts C's answer and fails today.
 * `AlgoGlue.lifecycle_frees_once` — the LAGraph adjacency handle is freed exactly
   once on every create/teardown path (borrowed or owned, success or failure).
 * `AlgoBfsReg.edgesBranch_aligned`, `branches_agree`, `register_empty`.
-* `UdfTraverse.traverse_nodes_nodup`, `traverse_both_edges_nodup`;
+* `UdfTraverse.traverse_nodes_nodup`, `traverse_edges_nodup`, `traverse_both_edges_nodup`;
   `UdfContext.ensureCurrent_version`, `rebuild_keys`, `bridge_clears`, `effTimeout_bounds`;
   `UdfGlobals.validate_names_nodup`, `runtime_keys_eq_qualified`;
   `UdfRepoOps.deserialize_atomic`, `serialize_roundtrip`, `list_shows_raw`.
@@ -78,9 +78,11 @@ Every `bug_*` test asserts C's answer and fails today.
 5. `graph.traverse([a], {returnType:'edges'})` returns a self-loop twice
    (js_classes.rs:770 → `collect_edges` :97-127). C `[1,0]`, Rust `[1,0,1]`.
    `UdfTraverse.traverse_self_loop_twice`; `bug_udf_traverse_self_loop_edge_twice`.
+   Fixed by #3253 (`seen_edges` de-dup in every direction): `traverse_self_loop_once`.
 6. `graph.traverse([a])` omits `a` when it is its own neighbour (start pre-marked
    visited, js_classes.rs:744). C `[0,1]`, Rust `[1]` (Rust's `getNeighbors` gives
    `[0,1]`). `traverse_drops_self_neighbour`; `bug_udf_traverse_omits_self_loop_neighbour`.
+   Fixed by #3253 (start no longer pre-marked): `traverse_keeps_self_neighbour`.
 7. `node.getNeighbors()` without an argument throws "Error converting from js
    'undefined' into type 'object'" (js_classes.rs:195 forwards `undefined` to an
    `Opt<Object>`, :352). C returns the neighbours.
