@@ -89,7 +89,7 @@ Every bug was reproduced against the real Rust (`graph/tests/lean_lexer.rs`, not
 | 8 | `pre2910_unesc_plus_bug` (removed in bbee75955; last held in 17ccc5412) | `'\u+041'` decoded to `A` | Fixed by #2910 (`unesc_plus_rejected`) |
 | 9 | `set_target_unbounded` | `MATCH (n) SET n.a.a…(5000) = 1` builds its target outside `check_depth`; the binder then overflows its stack. C rejects it | **Open** (#2895, PR #2900 not merged) |
 | 10 | `foreach_unbounded` | Nested `FOREACH (x IN [1] \| FOREACH (…))` never goes through `nested`; 100 000 levels abort the process with a stack overflow (C crashes as well) | **Open** (#2895, PR #2900 not merged) |
-| 11 | `pre3691_hop_truncation_bug` | A hop bound was cast `i as u32`, so `*4294967298` meant `*2` (C truncates the same way) | Fixed for #3691: `hop_bound` saturates (`hopBound_large`, `hopBound_mono`) |
+| 11 | `hop_truncation_bug` (removed by the #3691 fix; last held in 7df8e58) | A hop bound was cast `i as u32`, so `*4294967298` meant `*2` (C truncates the same way) | Fixed for #3691: `hop_bound` saturates (`hopBound_large`, `hopBound_mono`, `hopLit_min`); the range check runs before saturating (`hopBound_hides_inversion`) |
 
 There are no CONDITIONAL rows in this project.
 
@@ -97,7 +97,7 @@ There are no CONDITIONAL rows in this project.
 
 | File | What's in it |
 |---|---|
-| `FalkorLexer.lean` | The report header; bytes and boundaries (`splitBytes`, `boundary_iff`); `read_spaces` (`rs`) against the spec (`specSkip`, `rs_agrees_spec`) and the pre-#2908/#2910 versions; the token scanners, `getTok` and the loop `lexAll`; `cypher_unescape` (`unescF`) against `specUnescF`; integer literals (`str2int`, `evalLit`, `litExpr`); the hop cast `asU32`; the height model (`T`, `Reach`, `height_sound`) and `SET` targets; the call-recursion model (`Call`, `runCall`, `foreach_unbounded`) |
+| `FalkorLexer.lean` | The report header; bytes and boundaries (`splitBytes`, `boundary_iff`); `read_spaces` (`rs`) against the spec (`specSkip`, `rs_agrees_spec`) and the pre-#2908/#2910 versions; the token scanners, `getTok` and the loop `lexAll`; `cypher_unescape` (`unescF`) against `specUnescF`; integer literals (`str2int`, `evalLit`, `litExpr`); the hop bounds `hopLit` and `hopBound`; the height model (`T`, `Reach`, `height_sound`) and `SET` targets; the call-recursion model (`Call`, `runCall`, `foreach_unbounded`) |
 | `FalkorLexerExtra.lean` | The rest of `lexer.rs` and `string_escape.rs`: `pos`, `next`, `set_pos`, `current`, `current_str` (`LexSt`), `lex_numeric` (`lexNum`, `intLoop`, `floatLoop`), `err_ctx`/`format_error`, the `Token` `Display` impl (`tokDisplay_injective_punct`), and `cypher_escape` (`esc`, `unesc_escape`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

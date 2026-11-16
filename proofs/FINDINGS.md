@@ -93,7 +93,7 @@ Filed later, with no PR yet:
 
 Not filed:
 - The DISTINCT/MERGE hash-collision bug, because #2780 was closed as not planned.
-- The doubled-backtick escape, because C behaves the same. (Hop counts truncated to u32 were in this list too; #3691 reported them, and `hop_bound` now saturates them in Rust. C still truncates.)
+- The doubled-backtick escape, because C behaves the same. (Hop counts truncated to u32 were in this list too; the truncation was confirmed by the #3691 Rust repro, and `hop_bound` now saturates them in Rust. C still truncates.)
 
 ---
 

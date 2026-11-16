@@ -1811,14 +1811,14 @@ impl<'a> Parser<'a> {
             let (min, max) = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
                     self.lexer.next();
-                    Some(hop_bound(i))
+                    Some(hop_bound(hop_literal(i)))
                 } else {
                     None
                 };
                 if optional_match_token!(self.lexer, DotDot) {
                     let end = if let Token::Integer(i) = self.lexer.current()? {
                         self.lexer.next();
-                        Some(hop_bound(i))
+                        Some(hop_bound(hop_literal(i)))
                     } else {
                         None
                     };
@@ -3125,14 +3125,14 @@ impl<'a> Parser<'a> {
             let var_len = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
                     self.lexer.next();
-                    Some(hop_bound(i))
+                    Some(hop_literal(i))
                 } else {
                     None
                 };
                 if optional_match_token!(self.lexer, DotDot) {
                     let end = if let Token::Integer(i) = self.lexer.current()? {
                         self.lexer.next();
-                        Some(hop_bound(i))
+                        Some(hop_literal(i))
                     } else {
                         None
                     };
@@ -3148,6 +3148,8 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            // Compare the written bounds before saturating them, so a range
+            // such as `*4294967298..4294967297` is still rejected.
             if let Some((min, Some(max))) = var_len
                 && min > max
             {
@@ -3155,6 +3157,7 @@ impl<'a> Parser<'a> {
                     "Variable length path, maximum number of hops must be greater or equal to minimum number of hops.",
                 ));
             }
+            let var_len = var_len.map(|(min, max)| (hop_bound(min), max.map(hop_bound)));
             // Collapse [*1..1] / [*1] to a fixed single-hop edge so the
             // binding is a single Relationship value, matching FalkorDB.
             let var_len = if var_len == Some((1, Some(1))) {
@@ -3626,8 +3629,19 @@ impl<'a> Parser<'a> {
 /// traversal operators already read `u32::MAX` as "no upper bound", so the
 /// value saturates instead: a minimum that large matches nothing and a maximum
 /// that large is unbounded.
-fn hop_bound(value: i64) -> u32 {
-    u32::try_from(value).unwrap_or(if value < 0 { 0 } else { u32::MAX })
+fn hop_bound(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+/// Reads an integer token written as a hop bound.
+///
+/// Hop bounds are unsigned in the grammar: a leading `-` is a separate token,
+/// so the only negative value the lexer hands over here is `i64::MIN`, which
+/// it uses for the literal `9223372036854775808` (2^63). Reinterpreting the
+/// bits as `u64` gives that literal its real value.
+#[allow(clippy::cast_sign_loss)]
+const fn hop_literal(value: i64) -> u64 {
+    value as u64
 }
 
 #[cfg(test)]
@@ -4371,11 +4385,36 @@ mod tests {
     fn hop_bound_saturates_instead_of_wrapping() {
         assert_eq!(hop_bound(0), 0);
         assert_eq!(hop_bound(3), 3);
-        assert_eq!(hop_bound(i64::from(u32::MAX)), u32::MAX);
-        assert_eq!(hop_bound(i64::from(u32::MAX) + 1), u32::MAX);
-        assert_eq!(hop_bound(i64::from(u32::MAX) + 2), u32::MAX);
-        assert_eq!(hop_bound(i64::MAX), u32::MAX);
-        assert_eq!(hop_bound(-1), 0);
+        assert_eq!(hop_bound(u64::from(u32::MAX)), u32::MAX);
+        assert_eq!(hop_bound(u64::from(u32::MAX) + 1), u32::MAX);
+        assert_eq!(hop_bound(u64::from(u32::MAX) + 2), u32::MAX);
+        assert_eq!(hop_bound(u64::MAX), u32::MAX);
+        // The lexer hands 2^63 over as i64::MIN; it must saturate, not become 0.
+        assert_eq!(hop_literal(i64::MIN), 1 << 63);
+        assert_eq!(hop_bound(hop_literal(i64::MIN)), u32::MAX);
+    }
+
+    // Saturating first made both bounds u32::MAX, so an inverted range above
+    // u32::MAX was accepted.
+    #[test]
+    fn inverted_hop_range_above_u32_is_rejected() {
+        with_functions();
+        for pattern in [
+            "*4294967298..4294967297",
+            "*9223372036854775808..4294967297",
+            "*3..2",
+        ] {
+            let query = format!("MATCH (a:N)-[:R{pattern}]->(b:N) RETURN 1");
+            let err = Parser::new(&query).parse().expect_err(&query);
+            assert!(err.contains("maximum number of hops"), "{pattern}: {err}");
+        }
+        let max = format!("Some({})", u32::MAX);
+        let query = "MATCH (a:N)-[:R*1..9223372036854775808]->(b:N) RETURN 1";
+        let ir = format!("{:?}", Parser::new(query).parse().unwrap());
+        assert!(
+            ir.contains(&format!("min_hops: Some(1), max_hops: {max}")),
+            "{ir}"
+        );
     }
 
     // #3691: hop bounds above u32::MAX used to wrap, so `*4294967297` ran as
