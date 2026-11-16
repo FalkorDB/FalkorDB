@@ -15,6 +15,7 @@ reads as the Rust computes them, and decides the premise.
 | `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`, `:979-986`) and the preserved `Argument` leaf (`preserved_argument`, `:952`, `:1181`) |
 | `salvagedSteps`                        | `salvaged_filters` wrapped above the chain (`:1240-1246`, `:1156-1176`) |
 | `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` (`:214`) |
+| `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981, `:1286-1390`) |
 
 Result: the premise is **not** a fact about the Rust. `is_planner_scan_subtree` accepts a scan
 with *any* child, but `argument_leaf_of` keeps only an `Argument`; a child such as `Unwind`
@@ -154,5 +155,77 @@ theorem salvage_loses_row :
   intro hw
   simp [wellScoped, exSteps, salvagedSteps, filtersOf, exChild, seedBound, b, k, argVars,
     argumentLeafOf] at hw
+
+/-! ### The no-swap leaf rewrite (#2981, `select_scan_node.rs:1286-1390`)
+
+When the bottom traverse keeps its direction (`effectively_leaf`) and its child is a planner scan,
+the scan is pruned and `make_scan_subtree(from, ..)` scans the traverse's `from`. Before #2981 the
+spine's filters always went inside the new scan subtree (`salvaged_filters`), so a filter on the
+pruned scan's own node, when that node is the traverse's *other* endpoint (an earlier clause stitched
+in, `MATCH (a {v: 1}) MATCH (a)<-[]-(b {v: 0})`), was evaluated before anything bound it. Now, when
+`planner_scan_alias(child) ≠ (from.id, from.scope)`, they go above the traverse (`filters_above`,
+:1323-1336, :1366-1388). -/
+
+/-- The chain this branch builds from the seed (the new scan's node and the `Argument`): the
+salvaged filters inside the scan subtree (below the hop), or, when the pruned scan was for another
+node, above the hop. `old := true` is the pre-#2981 placement (always inside). -/
+def leafSteps (old : Bool) (fr : Var) (child : PT) (h : Hop) (pred : List Var → (Nat → Nat) → Bool) :
+    List Step :=
+  if !old && isPlannerScan child && (plannerScanAlias child).any (· != fr) then
+    .hop h :: salvagedSteps child pred
+  else salvagedSteps child pred ++ [.hop h]
+
+/-- **PROVEN**: a scan for the same node keeps its filters inside, as before. -/
+theorem leafSteps_same (old : Bool) (fr : Var) (child : PT) (h : Hop) pred
+    (hs : plannerScanAlias child = some fr) :
+    leafSteps old fr child h pred = salvagedSteps child pred ++ [.hop h] := by
+  simp [leafSteps, hs]
+
+/-- **PROVEN**: when the pruned scan was for the hop's other endpoint `a` and its filters read only
+`a` and the `Argument`'s variables, the new placement is well-scoped from the seed. -/
+theorem leafSteps_other_wellScoped (fr a : Var) (child : PT) (h : Hop) pred
+    (hs : plannerScanAlias child = some a) (hne : a ≠ fr) (ha : a.1 = h.src ∨ a.1 = h.dst)
+    (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ argVars (argumentLeafOf child)) :
+    wellScoped (seedBound fr.1 child) (leafSteps false fr child h pred) := by
+  have hp : isPlannerScan child = true := by
+    have := (plannerScan_agree child).2.1; rw [this, hs]; rfl
+  have e : leafSteps false fr child h pred = [.hop h] ++ salvagedSteps child pred := by
+    simp [leafSteps, hp, hs, hne]
+  rw [e]
+  apply salvaged_wellScoped child _ [.hop h] pred (by simp [wellScoped])
+  apply premise_of_spine child a _ _ _ hv
+  · intro x hx
+    simp [boundAfter, seedBound, hx]
+  · simp only [boundAfter, List.mem_cons]; omega
+
+namespace Leaf2981
+
+/-- `MATCH (a {v: 1}) MATCH (a)<-[]-(b {v: 0})`: a = 0, b = 1, the edge 2 (stored `b → a`). The
+traverse starts from `b`; its child is the first clause, `Filter(a.v = 1) → Scan(a)`. -/
+def a : Var := (0, 0)
+def bN : Var := (1, 0)
+def child : PT := .node (.filter [a]) [.node (.allNodeScan a) []]
+def hop : Hop := ⟨1, 0, 2, 0, false⟩
+
+/-- Node 11 -[12]-> node 10; `σ x = x + 10`. Node 10 (`a`) has `v = 1`. -/
+def E : Store := fun r x y e => r == 0 && x == 11 && y == 10 && e == 12
+def σ : Nat → Nat := fun x => x + 10
+def pred : List Var → (Nat → Nat) → Bool := fun _ σ => (if σ a.1 == 10 then 1 else 0) == 1
+
+/-- **PROVEN** (#2981 fixes the placement): before, the filter on `a` sat inside the scan of `b`, below
+the hop that binds `a` — not well-scoped, and the row generate-and-test keeps is lost; now it sits above
+the hop, and the row is kept. -/
+theorem fixed2981_filter_above_hop :
+    (leafSteps true bN child hop pred).all (fullHolds E σ) = true ∧
+    ¬ wellScoped (seedBound bN.1 child) (leafSteps true bN child hop pred) ∧
+    runScoped E σ (seedBound bN.1 child) (leafSteps true bN child hop pred) = false ∧
+    wellScoped (seedBound bN.1 child) (leafSteps false bN child hop pred) ∧
+    runScoped E σ (seedBound bN.1 child) (leafSteps false bN child hop pred) = true := by
+  refine ⟨by decide, ?_, by decide, ?_, by decide⟩
+  · simp [leafSteps, wellScoped, salvagedSteps, filtersOf, child, seedBound, a, bN, argVars, argumentLeafOf]
+  · exact leafSteps_other_wellScoped bN a child hop pred (by decide) (by decide) (by decide)
+      (by intro vs hvs v hv; simp [filtersOf, child] at hvs; subst hvs; simp at hv; exact Or.inl hv)
+
+end Leaf2981
 
 end OptimizerScan.Salvage

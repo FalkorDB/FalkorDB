@@ -80,8 +80,8 @@ authoritative line list.
 ## Gap closed 2026-10-20: #2502
 
 `C.PredicateBugs`: the property `PredEndsBeforeClause` (a WHERE pattern
-predicate stops before a clause keyword) and `bug2502_pred_swallows_match`,
-`bug2502_where_match_merged`: `parse_pattern(&Keyword::Match)` for a predicate
+predicate stops before a clause keyword) and, since #2981, `fixed2502_pred_stops_at_match`,
+`fixed2502_where_match_split` (pre-#2981 `bug2502_pred_swallows_match`, `bug2502_where_match_merged`): `parse_pattern(&Keyword::Match)` for a predicate
 (cypher.rs:2119 at `fb3d516d0`) continues on `MATCH` (1562-1579), so
 `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to two
 clauses. Live: Rust `'m' not defined`, C returns the rows (observed by hand during the open-bug

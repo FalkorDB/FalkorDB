@@ -179,8 +179,9 @@ node, labels, relationships and attributes are not written); `RowSound` is the o
    left subtree, and `get_variables` (`runtime.rs:319-323`) walks through `Aggregate`
    into the pre-WITH plan, so id 2 of scope 0 (the `_anon` edge) is taken for `r`
    (id 2 of scope 1, `binder.rs:2257-2268`) and `r.status = 'revoked'` lands on the
-   Argument → `n = 1, e = null` (C 123). Lean `bug3352_plan`, `bug3352_routes_unbound`
-   (`¬ RoutesBound`), `bug3352_slot_collision_drops_match` (`¬ RowSound`); `bug3352_fixed`
+   Argument → `n = 1, e = null` (C 123). Lean `bug3352_routes_unbound`
+   (`¬ RoutesBound` under the old `gv` inheritance); **fixed by #2981**: Case 2 inherits
+   `branch_visible_variables` (`bv`), `fixed3352_plan`, `fixed3352_inherits_outputs`, `fixed3352_rows_kept`; `bug3352_fixed`
    for `(id, scope)` routing. Live: three pre-WITH ids `{0,1,2}` → wrong, two → right.
 
 ## Gap closed 2026-10-20 (#2556) — `PushPlan`, select_scan_node chain re-ordering
@@ -236,7 +237,7 @@ binds what it reads).
   (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
 * #3006 — `push_filters_down.rs:122` merges `[child_filter, filter]`: the
   `merge_child_first_row` order; fixes bug 2.
-* #2981 — `push_filters_down` routes with `branch_visible_variables` (below an
+* #2981 (modelled: `PushPlan.bv`, `Sequence.guardHJ`) — `push_filters_down` routes with `branch_visible_variables` (below an
   env-resetting operator only its outputs survive; ids of the subtree minus its
   children's) instead of `collect_subtree_variables` for the Apply left side —
   narrows `id_only_routing_unsound`'s collision window (still ids only).

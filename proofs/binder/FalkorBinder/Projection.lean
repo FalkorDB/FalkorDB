@@ -41,7 +41,7 @@ def resolveAll (st : St) : List Name → Except String (St × List Var)
 /-- `push_scope` (binder.rs:251) as seen by name resolution. -/
 def pushScope (st : St) : St :=
   { cur := [], parent := st.cur, depth := st.depth + 1, useParent := true,
-    p2c := [], cfp := [] }
+    p2c := [], cfp := [], matchRels := st.matchRels }
 
 structure Proj where
   items   : List (Name × PExpr)

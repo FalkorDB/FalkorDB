@@ -10,7 +10,13 @@ import PlannerBuild.Clauses
   `ExpandInto(Scan(res))` (mod.rs:2262-2285), `selfloop_scan_keeps_chain`.
 * `cp_stitch_loses_correlation` (bug 2) / `cp_stitch_sound`: a MATCH plan
   prepended to the next MATCH's CartesianProduct (mod.rs:2809-2813) is
-  correct only when no other component reads its variables.
+  correct only when no other component reads its variables. Since #2981 the MATCH arm
+  Apply-wraps a multi-component MATCH that reads a bound variable
+  (`PathBind.planMatchArm_joined_wrapped`), so it is no longer stitched this way.
+* #2981: a MATCH after a MATCH that binds none of the bound variables is wrapped as a
+  one-branch CartesianProduct (`join_as_cartesian_branch`) and the earlier clause becomes
+  its other branch: `disjoint_match_cp`, `disjoint_match_where_cp`, `disjoint_match_sound`
+  (before: `disjoint_match_unwrapped`).
 * `where_scan_indistinguishable` (bug 3): `MATCH (a) WHERE φ MATCH (a)-->(b)`
   stitches into the exact tree shape `is_planner_scan_subtree`
   (optimizer/select_scan_node.rs:315) treats as prunable. **Fixed by #2390 (d2c42e032)**:
@@ -152,6 +158,52 @@ theorem cp_stitch_loses_correlation :
     let c := Plan.node (.hop .condTraverse 0) []
     correlated n c [] = [] ∧ (ev cexS (.node .cartesian [n, c]) [] ()).1 ≠ [] := by
   decide
+
+/-! ## #2981: a disjoint MATCH becomes a CartesianProduct branch -/
+
+section disjoint
+set_option linter.unusedSimpArgs false
+
+/-- `MATCH (a) MATCH (b)` before #2981: the second scan is stitched *over* the first
+(`Scan_b(Scan_a)`), a shape the scan selection could later re-select and drop. -/
+theorem disjoint_match_unwrapped (s t : Nat) :
+    rustStitch [.node (.scan s) [], .node (.scan t) []] = .node (.scan t) [.node (.scan s) []] := by
+  simp [rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend,
+    descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, firstPass,
+    isApply, clauseMin, applyChain]
+
+/-- Since #2981 the second clause is wrapped (`join_as_cartesian_branch`) and the first one
+becomes the other branch: `CartesianProduct(Scan_a, Scan_b)`. -/
+theorem disjoint_match_cp (rb : Plan → Bool) (s t : Nat) (hrb : rb (.node (.scan t) []) = false) :
+    rustStitch (wrapDisjoint rb [(.node (.scan s) [], false), (.node (.scan t) [], true)]) =
+      .node .cartesian [.node (.scan s) [], .node (.scan t) []] := by
+  simp [wrapDisjoint, joinAsCartesianBranch, branchWalk, hrb, rustStitch, stitchLoop, slotFirst, slotLoop,
+    slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep,
+    insertAt, Plan.modify, Plan.push0, firstPass, isApply, clauseMin, applyChain, needsApplyWrapping]
+
+/-- With a WHERE on the second clause the product goes below it, so the WHERE reads both:
+`MATCH (a) MATCH (b) WHERE φ` → `Filter_φ(CartesianProduct(Scan_a, Scan_b))`. -/
+theorem disjoint_match_where_cp (rb : Plan → Bool) (s t f : Nat) (hrb : rb (.node (.scan t) []) = false) :
+    rustStitch (wrapDisjoint rb [(.node (.scan s) [], false), (.node (.filter f) [.node (.scan t) []], true)]) =
+      .node (.filter f) [.node .cartesian [.node (.scan s) [], .node (.scan t) []]] := by
+  simp [wrapDisjoint, joinAsCartesianBranch, branchWalk, hrb, rustStitch, stitchLoop, slotFirst, slotLoop,
+    slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep,
+    insertAt, Plan.modify, Plan.push0, firstPass, isApply, clauseMin, applyChain, needsApplyWrapping]
+
+/-- And the wrapped plan means the product of the two clauses: each row of the first,
+merged with each row of the second (`cp_stitch_sound`; the second reads none of the first). -/
+theorem disjoint_match_sound (s t : Nat) (k : List (Rec V))
+    (ht : ∀ row g, ev S (.node (.scan t) []) row g = (k, g)) (r : Rec V) (g : G) :
+    ev S (.node .cartesian [.node (.scan s) [], .node (.scan t) []]) r g =
+      ((ev S (.node (.scan s) []) r g).1.flatMap (fun l => k.map l.merge), g) :=
+  cp_stitch_sound S _ _ k ht (fun _ _ => by simp [ev, Op.isBag, Sem.step, forRows_single]) r g
+
+/-- A subtree that reads a bound variable is left as it is. -/
+theorem joinAsCartesianBranch_reads (rb : Plan → Bool) (p q : Plan) (hq : p.get (branchWalk p) = some q)
+    (h : rb q = true) : joinAsCartesianBranch rb p = p := by
+  simp [joinAsCartesianBranch, hq, h]
+
+end disjoint
 
 /-! ## Bug 3: the WHERE of the previous MATCH looks like a planner scan -/
 

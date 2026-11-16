@@ -1,4 +1,5 @@
 import PlannerBuild.PlanMatch
+import PlannerBuild.Lift
 import PlannerBuild.HopOrder
 /-
 # `plan_match`: components, bound-label filters, path elision, joining
@@ -11,7 +12,10 @@ enforced gets exactly a `hasLabels(alias, missing)` filter, after which none
 are missing), `nodeOnly_*`, `planMatch_join`, `elide_spec`,
 `buildPatternSubPlan_restores`. #2390: `chainRel_lowers_from`/`_to`, `chainRel_edge_pred`,
 `nodeOnly_bound_filter`, the `stripped` invariant (`bindPath_stripped`, `elide_stripped`,
-`planComp_stripped`, `planMatch_stripped`).
+`planComp_stripped`, `planMatch_stripped`). #2981: `planMatch` = `planFrom` (the component loop)
+on `liftPattern`'s rewritten components, the lifted filters first (`planMatch_nolift`,
+`planMatch_join`, `planMatch_join_nolift`); `q2923_unlifted` / `q2923_lifted`,
+`q2923_bound_not_lifted`, `lifted_rel_emitted`.
 -/
 namespace PlannerBuild.E
 
@@ -490,11 +494,12 @@ theorem planComp_stripped (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) :
 
 /-! ## The whole pattern -/
 
-def planMatch (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP → MP)) : MP × MSt :=
+/-- The component loop from the lifted filters `pre` (`bound_filters`' initial content). -/
+def planFrom (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP → MP)) (pre : List Ex) : MP × MSt :=
   let step := fun (acc : List MP × MSt × List Ex × LW) (c : Comp) =>
     let x := planComp acc.2.1 fv acc.2.2.2 c
     (acc.1 ++ [x.1], x.2.1, acc.2.2.1 ++ x.2.2.1, x.2.2.2)
-  let x := comps.foldl step ([], st, [], [])
+  let x := comps.foldl step ([], st, pre, [])
   let res := match x.1 with
     | [p] => p
     | ps => .cp ps
@@ -506,21 +511,96 @@ def planMatch (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP �
     | fs => .filter (andOf fs) res   -- `ExprIR::and_of(bound_filters)` (#3335)
   (res, x.2.1)
 
+/-- `plan_match`: lift the cross-entity inline attrs (#2981, mod.rs:2014-2019), then plan the
+rewritten components with the lifted filters first in `bound_filters`. -/
+def planMatch (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP → MP)) : MP × MSt :=
+  planFrom st fv (liftPattern st comps).1 pf (liftPattern st comps).2
+
+/-- With nothing to lift, `plan_match` is the component loop on the pattern as written. -/
+theorem planMatch_nolift (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP → MP))
+    (h : liftPattern st comps = (comps, [])) : planMatch st fv comps pf = planFrom st fv comps pf [] := by
+  simp [planMatch, h]
+
+/-! ### #2923 / #2981: an inline map that reads another component -/
+
+section lift2923
+set_option linter.unusedSimpArgs false
+
+def v2923b : V := ⟨1, 0⟩
+def v2923c : V := ⟨2, 0⟩
+/-- `b.v` -/
+def bDotV : Ex := .node (.prop "v") [Ex.v v2923b]
+/-- `MATCH (b), (c {v: b.v})`: two components. -/
+def q2923c : Comp := { nodes := [{ alias := v2923c, attrs := [("v", bDotV)], ptr := 1 }], rels := [] }
+def q2923 : List Comp := [{ nodes := [{ alias := v2923b, ptr := 0 }], rels := [] }, q2923c]
+
+/-- Before #2981 (the components planned as written): `c.v = b.v` is a Filter inside the
+second CartesianProduct branch, where `b` is not bound, so no row passes. -/
+theorem q2923_unlifted :
+    (planFrom ⟨[], []⟩ [] q2923 none []).1 =
+      .cp [.allScan { alias := v2923b, ptr := 0 } [],
+           .filter (andOf [attrEq v2923c ("v", bDotV)]) (.allScan { alias := v2923c, ptr := 1 } [])] := by
+  simp [planFrom, planComp, q2923, q2923c, boundLabelFilters, orderRels, sortRels, HopOrder.selfLoopsAfterBinders, nodeOnly, lowerN, lowerInline, lwKey, MSt.bound, withF, scanOf, stripNode, inlineAttrsToFilter, markLabels, v2923b, v2923c, rewriteComp, keepNode, keepAttrs, readsPending, bDotV, nodes, nodesL, Ex.v]
+
+/-- Since #2981 the entry is lifted above the product, where both are bound. -/
+theorem q2923_lifted :
+    (planMatch ⟨[], []⟩ [] q2923 none).1 =
+      .filter (attrEq v2923c ("v", bDotV))
+        (.cp [.allScan { alias := v2923b, ptr := 0 } [], .allScan { alias := v2923c, ptr := 1 } []]) := by
+  simp only [planMatch, liftPattern, pendingOf, patVars, liftOrder]
+  simp [planFrom, planComp, q2923, q2923c, boundLabelFilters, orderRels, sortRels, HopOrder.selfLoopsAfterBinders, nodeOnly, lowerN, lowerInline, lwKey, MSt.bound, withF, scanOf, stripNode, inlineAttrsToFilter, markLabels, v2923b, v2923c, rewriteComp, keepNode, keepAttrs, readsPending, bDotV, nodes, nodesL, Ex.v,
+    liftItems, liftItem]
+  simp only [andOf]
+  rw [flat_single _ _ _ (by decide), flat_single _ _ _ (by decide)]
+
+/-- With `b` bound by an earlier clause the entry is not lifted: it reads no pending variable. -/
+theorem q2923_bound_not_lifted :
+    liftPattern ⟨[v2923b], []⟩ [q2923c] = ([q2923c], []) := by
+  rfl
+
+/-- `MATCH (c), (a)-[r:R {w: c.v}]->(b)` with `r` anonymous: the edge's entry is lifted
+and the edge is emitted (`lifted_rels`), so the Filter sees every parallel edge. -/
+def r2981 : QR :=
+  { alias := ⟨5, 0⟩, named := false, frm := { alias := ⟨3, 0⟩, ptr := 0 }, to := { alias := ⟨4, 0⟩, ptr := 0 },
+    attrs := [("w", .node (.prop "v") [Ex.v v2923c])], ptr := 2 }
+def q2981c : Comp := { nodes := [r2981.frm, r2981.to], rels := [r2981] }
+def q2981rel : List Comp := [{ nodes := [{ alias := v2923c, ptr := 0 }], rels := [] }, q2981c]
+
+theorem lifted_rel_emitted :
+    let L := liftPattern ⟨[], []⟩ q2981rel
+    L.2 = [andOf [attrEq r2981.alias ("w", .node (.prop "v") [Ex.v v2923c])]] ∧
+    ((L.1.getD 1 q2981c).rels.map fun r => (r.attrs.length, emitRel (L.1.getD 1 q2981c) r)) = [(0, true)] ∧
+    emitRel q2981c r2981 = false := by
+  refine ⟨rfl, rfl, rfl⟩
+
+end lift2923
+
 /-- One component: its plan; several: a CartesianProduct of them in order
-(mod.rs:2391-2395); bound-label/attr filters on top (mod.rs:2404-2412). -/
+(mod.rs:2567-2571); the lifted (#2981) then bound-label/attr filters on top (mod.rs:2584-2587). -/
 theorem planMatch_join (st : MSt) (fv : List Nat) (c : Comp) :
+    (planMatch st fv [c] none).1 =
+      let c' := rewriteComp (pendingOf st [c]) c
+      match (liftPattern st [c]).2 ++ (planComp st fv [] c').2.2.1 with
+      | [] => (planComp st fv [] c').1
+      | fs => .filter (andOf fs) (planComp st fv [] c').1 := by
+  simp [planMatch, planFrom, liftPattern]
+
+/-- The same, for a component with nothing to lift (the pre-#2981 statement). -/
+theorem planMatch_join_nolift (st : MSt) (fv : List Nat) (c : Comp)
+    (hl : liftPattern st [c] = ([c], [])) :
     (planMatch st fv [c] none).1 =
       match (planComp st fv [] c).2.2.1 with
       | [] => (planComp st fv [] c).1
       | fs => .filter (andOf fs) (planComp st fv [] c).1 := by
-  simp [planMatch]
+  rw [planMatch_nolift _ _ _ _ hl]; simp [planFrom]
 
 theorem planMatch_cp (st : MSt) (fv : List Nat) (c1 c2 : Comp)
+    (hl : liftPattern st [c1, c2] = ([c1, c2], []))
     (h1 : (planComp st fv [] c1).2.2.1 = [])
     (h2 : (planComp (planComp st fv [] c1).2.1 fv (planComp st fv [] c1).2.2.2 c2).2.2.1 = []) :
     (planMatch st fv [c1, c2] none).1 =
       .cp [(planComp st fv [] c1).1, (planComp (planComp st fv [] c1).2.1 fv (planComp st fv [] c1).2.2.2 c2).1] := by
-  simp [planMatch, h1, h2]
+  rw [planMatch_nolift _ _ _ _ hl]; simp [planFrom, h1, h2]
 
 /-- The whole MATCH plan (without the WHERE, a parameter) is stripped. -/
 theorem planMatch_stripped (st : MSt) (fv : List Nat) (comps : List Comp) :
@@ -546,9 +626,12 @@ theorem planMatch_stripped (st : MSt) (fv : List Nat) (comps : List Comp) :
           simp only [List.cons_append, MP.stripped.strippedL, Bool.and_eq_true] at hl ⊢
           exact ⟨hl.1, ihl hl.2 hm⟩
       exact hl _ _ h (planComp_stripped _ _ _ _)
-  have h0 := hf comps ([], st, [], []) rfl
   simp only [planMatch]
-  generalize (comps.foldl _ ([], st, [], [])) = x at h0 ⊢
+  generalize (liftPattern st comps).2 = pre
+  generalize (liftPattern st comps).1 = comps
+  have h0 := hf comps ([], st, pre, []) rfl
+  simp only [planFrom]
+  generalize (comps.foldl _ ([], st, pre, [])) = x at h0 ⊢
   have hr : (match x.1 with | [p] => p | ps => MP.cp ps).stripped = true := by
     split
     · rename_i p heq; rw [heq] at h0; simpa [MP.stripped.strippedL] using h0

@@ -239,24 +239,13 @@ theorem patternLoop_sound (o : Oracle) (F : Nat) (cl : CK) : ∀ (n : Nat) gs (s
           obtain ⟨rfl, rfl⟩ := pure_ok h2
           simp only [ite_true] at h
           exact .comma gp hm hc (patternLoop_sound o F cl n _ _ _ _ h)
-        case kw k =>
-          split at h2
-          · rename_i hk; subst k
-            peel h2 => u s4 h4
-            have := next_ok h4; subst this
-            obtain ⟨rfl, rfl⟩ := pure_ok h2
-            simp only [ite_true] at h
-            exact .kw rfl gp hm hc (patternLoop_sound o F cl n _ _ _ _ h)
-          · obtain ⟨rfl, rfl⟩ := pure_ok h2
-            simp only [Bool.false_eq_true, ite_false] at h
-            obtain ⟨rfl, rfl⟩ := pure_ok h; exact .last gp (by simp)
         all_goals (obtain ⟨rfl, rfl⟩ := pure_ok h2
                    simp only [Bool.false_eq_true, ite_false] at h
                    obtain ⟨rfl, rfl⟩ := pure_ok h; exact .last gp (by simp))
 
 /-- **parse_pattern is sound**: an accepted MATCH / CREATE / MERGE pattern
-is an `oC_Pattern` (one `oC_PatternPart` for MERGE) under the extensions
-keyword folding and `allShortestPaths` (the two flags of `Ext.rust`); `[:A:B]` and a silently
+is an `oC_Pattern` (one `oC_PatternPart` for MERGE) under the extension
+`allShortestPaths` (keyword folding is off in `Ext.rust` since #2981); `[:A:B]` and a silently
 dropped duplicate relationship variable are not extensions any more (#3300, #3289: a repeated
 relationship variable is rejected), and the query graph is the one the rules build. -/
 theorem patternP_sound (o : Oracle) (F : Nat) (cl : CK) (s : PS) g s'

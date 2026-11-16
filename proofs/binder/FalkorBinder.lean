@@ -84,8 +84,8 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * `callBody_query_disjoint`, `callBody_union_disjoint`: a CALL body's scopes, plain or UNION branch, are disjoint from the live outer scopes (UNION since #3027, d42d121c6).
 * `unionCheck_ok_iff`, `validateImport_ok`: UNION column rule and CALL import rule as stated.
 * Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `where_copy_id_reused`,
-  `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`, `node_attr_on_rel_rust_rejects`,
-  `node_attr_on_own_rel`, `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
+  `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`,
+  `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
   `labels_leak`, `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
 
 * Wave 5 (all binder.rs fns PROVEN): `sortedScopeVars_spec`, `push_toSt`, `updNode_union`/`_idem`;
@@ -164,8 +164,10 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * Rust over-accepts vs C: `RETURN n.v+1 AS k, count(*) ORDER BY n.v` (`agg_orderBy_by_name`); `(a)-[r {w: b.v}]->(b)` (`rel_attr_forward_node`).
 
 ## Open PRs touching binder.rs (model = origin/main)
-* #2981: `bind_graph` defines named relationships before nodes' inline maps are bound and splits inline maps
-  reading pending pattern variables (`split_inline_attrs`) — removes `node_attr_on_rel_rust_rejects` / bug 2.
+* #2981 (modelled): `bind_graph` defines named relationships before nodes' inline maps are bound (`defRels`)
+  — `node_attr_on_rel_rust_accepts`, `node_attr_on_own_rel_accepts`, `q2923_fixed` replace
+  `node_attr_on_rel_rust_rejects` / bug 2; a MATCH reusing an earlier MATCH's relationship variable is rejected
+  (`match_rel_reused`, `pruneMatchRels_spec`).
 * #3016: keeps hidden scope variables' ids reserved and hides ORDER BY copies — fixes `erase_breaks_covers`,
   `where_copy_id_reused`, `orderBy_leaks` (bugs 3, 5).
 * #3049: CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes `labels_leak` (bug 6).

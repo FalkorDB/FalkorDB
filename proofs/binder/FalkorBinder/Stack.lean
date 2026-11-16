@@ -5,8 +5,8 @@ import FalkorBinder.Scopes
 
 | here | there |
 | --- | --- |
-| `BSt` | `Binder` fields `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`, `retired_scope_vars` (binder.rs:44-71) |
-| `BSt.default` | `Default for Binder` binder.rs:73-85 |
+| `BSt` | `Binder` fields `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`, `match_rel_vars`, `retired_scope_vars` (binder.rs:44-75) |
+| `BSt.default` | `Default for Binder` binder.rs:77-90 |
 | `BSt.current`, `BSt.setCurrent` | `current_env` / `current_env_mut` binder.rs:239-249 |
 | `BSt.push`, `BSt.commit` | `push_scope` / `commit_scope` binder.rs:251-259 |
 | `sortedScopeVars`, `BSt.scopeVars` | `sorted_scope_vars` binder.rs:2686-2690, `scope_vars` binder.rs:114-116 |
@@ -21,8 +21,10 @@ structure BSt where
   p2c : Env
   cfp : List (Name × (Var × Var))
   retired : List (List Var)
+  /-- `match_rel_vars` (#2981) -/
+  matchRels : List (Nat × Nat)
 
-def BSt.default : BSt := ⟨[[]], false, [], [], []⟩
+def BSt.default : BSt := ⟨[[]], false, [], [], [], []⟩
 
 /-- `env_stack.last()` (the stack is never empty). -/
 def BSt.current (b : BSt) : Env := b.stack.getLastD []
@@ -41,11 +43,11 @@ def BSt.scopeVars (b : BSt) : List (List Var) := b.stack.map sortedScopeVars
 /-- Resolution's view: current table, its parent, depth = scope id. -/
 def BSt.toSt (b : BSt) : St :=
   { cur := b.current, parent := b.stack.dropLast.getLastD [], depth := b.stack.length - 1,
-    useParent := b.useParent, p2c := b.p2c, cfp := b.cfp }
+    useParent := b.useParent, p2c := b.p2c, cfp := b.cfp, matchRels := b.matchRels }
 
 theorem default_spec : BSt.default.stack.length = 1 ∧ BSt.default.current = [] ∧
-    BSt.default.scopeVars = [[]] ∧ BSt.default.useParent = false :=
-  ⟨rfl, rfl, by simp [BSt.default, BSt.scopeVars, sortedScopeVars], rfl⟩
+    BSt.default.scopeVars = [[]] ∧ BSt.default.useParent = false ∧ BSt.default.matchRels = [] :=
+  ⟨rfl, rfl, by simp [BSt.default, BSt.scopeVars, sortedScopeVars], rfl, rfl⟩
 
 theorem current_setCurrent (b : BSt) (e : Env) : (b.setCurrent e).current = e := by
   simp [BSt.setCurrent, BSt.current]
