@@ -103,31 +103,31 @@ theorem scopeVars_lengths (b : BSt) (s : Nat) :
 
 /-! ## `update_graph_labels` -/
 
-abbrev Key := Nat × Nat
+abbrev VKey := Nat × Nat
 
 def mergedLabels (union : Bool) (own acc : List Name) : List Name :=
   if union then own ++ acc.filter (fun l => !own.contains l) else acc
 
 /-- One node (alias key, labels): replaced by the accumulated set, or merged
 into its own labels for an OPTIONAL MATCH; untouched without an entry. -/
-def updNode (nl : List (Key × List Name)) (union : Bool) (n : Key × List Name) : Key × List Name :=
+def updNode (nl : List (VKey × List Name)) (union : Bool) (n : VKey × List Name) : VKey × List Name :=
   match nl.lookup n.1 with
   | some acc => (n.1, mergedLabels union n.2 acc)
   | none => n
 
 /-- Nodes, then each relationship's two endpoints (binder.rs:183-236). -/
-def updGraph (nl : List (Key × List Name)) (union : Bool) (nodes : List (Key × List Name))
-    (rels : List ((Key × List Name) × (Key × List Name))) :
-    List (Key × List Name) × List ((Key × List Name) × (Key × List Name)) :=
+def updGraph (nl : List (VKey × List Name)) (union : Bool) (nodes : List (VKey × List Name))
+    (rels : List ((VKey × List Name) × (VKey × List Name))) :
+    List (VKey × List Name) × List ((VKey × List Name) × (VKey × List Name)) :=
   (nodes.map (updNode nl union), rels.map fun r => (updNode nl union r.1, updNode nl union r.2))
 
-theorem updNode_replace (nl : List (Key × List Name)) (n : Key × List Name) (acc : List Name)
+theorem updNode_replace (nl : List (VKey × List Name)) (n : VKey × List Name) (acc : List Name)
     (h : nl.lookup n.1 = some acc) : updNode nl false n = (n.1, acc) := by
   simp [updNode, h, mergedLabels]
 
 /-- OPTIONAL MATCH: the clause's own labels are kept, in order, and every
 accumulated label is added once. -/
-theorem updNode_union (nl : List (Key × List Name)) (n : Key × List Name) (acc : List Name)
+theorem updNode_union (nl : List (VKey × List Name)) (n : VKey × List Name) (acc : List Name)
     (h : nl.lookup n.1 = some acc) :
     (updNode nl true n).2.take n.2.length = n.2 ∧ ∀ l ∈ acc, l ∈ (updNode nl true n).2 := by
   simp only [updNode, h, mergedLabels, ↓reduceIte, List.take_left']
@@ -136,11 +136,11 @@ theorem updNode_union (nl : List (Key × List Name)) (n : Key × List Name) (acc
   · exact List.mem_append_left _ ho
   · exact List.mem_append_right _ (List.mem_filter.2 ⟨hl, by simpa using ho⟩)
 
-theorem updNode_none (nl : List (Key × List Name)) (u : Bool) (n : Key × List Name)
+theorem updNode_none (nl : List (VKey × List Name)) (u : Bool) (n : VKey × List Name)
     (h : nl.lookup n.1 = none) : updNode nl u n = n := by simp [updNode, h]
 
 /-- Running the post-pass twice changes nothing more (idempotent). -/
-theorem updNode_idem (nl : List (Key × List Name)) (u : Bool) (n : Key × List Name) :
+theorem updNode_idem (nl : List (VKey × List Name)) (u : Bool) (n : VKey × List Name) :
     updNode nl u (updNode nl u n) = updNode nl u n := by
   cases h : nl.lookup n.1 with
   | none => simp [updNode, h]

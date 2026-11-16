@@ -230,6 +230,37 @@ class testTraversalConstruction():
         # `Results` operator, which is C's 14th line.
         self.env.assertEqual(len(ops), 13)
 
+    def test_equality_endpoint_beats_late_range_filter(self):
+        # `s` (inline equality, parked by the planner after the first hop) and
+        # `n` (WHERE range, above the chain) score the same. The scan must
+        # start from the equality-pinned `s`, which the index then seeks,
+        # not from a full label scan of `n` walked backwards three hops: on
+        # a 100k-node / 1.77M-edge graph that took over 60 s instead of ms.
+        g = self.db.select_graph("TraversalConstructionEq")
+        create_node_range_index(g, 'User', 'id', sync=True)
+        g.query("""UNWIND range(0, 29) AS i CREATE (:User {id: i, age: i})""")
+        g.query("""MATCH (a:User), (b:User) WHERE b.id = (a.id + 1) % 30
+                   OR b.id = (a.id * 7) % 30 CREATE (a)-[:Friend]->(b)""")
+
+        for q in ["""MATCH (s:User {id: $id})-->()-->()-->(n:User)
+                     WHERE n.age >= 18 RETURN DISTINCT n.id ORDER BY n.id""",
+                  """MATCH (s:User {id: $id})-->()-->(n:User)
+                     WHERE n.age >= 18 RETURN DISTINCT n.id ORDER BY n.id"""]:
+            plan = str(g.explain(q, {'id': 3}))
+            ops = plan.split(os.linesep)
+            ops.reverse()
+            self.env.assertContains("Node By Index Scan | (s:User)", ops[0])
+            self.env.assertNotContains("Label Scan", plan)
+
+            # Same rows as the WHERE-form, which always planned from `s`.
+            expected = g.query(q.replace("{id: $id}", "").replace(
+                "WHERE", "WHERE s.id = $id AND"), {'id': 3}).result_set
+            actual = g.query(q, {'id': 3}).result_set
+            self.env.assertEquals(actual, expected)
+            self.env.assertGreater(len(actual), 0)
+
+        g.delete()
+
     def test_start_with_index_filter(self):
         # TODO: enable this test, once we'll score higher filters that
         # have the potential turn into index scan
