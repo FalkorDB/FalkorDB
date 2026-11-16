@@ -184,42 +184,42 @@ src/module_init.rs	enforce_pending_constraints_after_promotion	584	PROVEN	Module
 src/module_init.rs	on_replica_change	651	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
 src/module_init.rs	on_loading	663	PROVEN	ModuleInit.onLoading: onLoading_only_end
 src/module_init.rs	on_keyspace_event	684	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
-src/telemetry.rs	truncate	34	PROVEN	Telemetry.truncate: truncate_short, truncate_len, truncate_prefix
-src/telemetry.rs	truncate_arc	50	PROVEN	Telemetry.truncateArc: truncateArc_eq
-src/telemetry.rs	stream_name	66	PROVEN	Telemetry.streamName: streamName_key_name, streamName_inj, streamName_nul, stream_same_slot, stream_other_slot
-src/telemetry.rs	StreamTemplate::new	150	PROVEN	Telemetry.argv/FIELD_NAMES: argv_len
-src/telemetry.rs	StreamTemplate::add	170	PROVEN	Telemetry.fieldValues/argv: argv_len
-src/telemetry.rs	StreamTemplate::report_failures	228	PROVEN	Telemetry.failMsg: failMsg_none
-src/telemetry.rs	create_detached_string	244	AXIOMATISED	RM_CreateString/RM_FreeString (Redis API)
-src/telemetry.rs	free_detached_string	251	AXIOMATISED	RM_CreateString/RM_FreeString (Redis API)
-src/telemetry.rs	stream_entries	268	PROVEN	Telemetry.streamOps: streamOps_writable, streamOps_trim_zero, streamOps_foreign
-src/telemetry.rs	delete_stream	336	PROVEN	Telemetry.deleteStreamKey: deleteStream_key_or_name
-src/telemetry.rs	next_id	354	PROVEN	Telemetry.nextIds: nextIds_nodup
-src/telemetry.rs	unix_now_secs	359	AXIOMATISED	SystemTime::now (OS clock)
-src/telemetry.rs	shard_for	404	PROVEN	Telemetry.shardFor: shardFor_lt
-src/telemetry.rs	register_running	409	PROVEN	Telemetry.registerRunning: registerRunning_placed
-src/telemetry.rs	unregister_running	429	PROVEN	Telemetry.unregisterRunning/removeId: removeId_absent, removeId_sub
-src/telemetry.rs	unregister_waiting	437	PROVEN	Telemetry.unregisterWaiting: removeId_absent
-src/telemetry.rs	register_waiting	451	PROVEN	Telemetry.registerWaiting: registerWaiting_placed
-src/telemetry.rs	WaitingEntry::register	481	PROVEN	Telemetry.WE: WE.drop_armed
-src/telemetry.rs	WaitingEntry::promote	491	PROVEN	Telemetry.WE.promote: WE.promote_then_drop, WE.promote_twice
-src/telemetry.rs	WaitingEntry::drop	497	PROVEN	Telemetry.WE.drop: WE.drop_armed, WE.promote_then_drop
-src/telemetry.rs	transition_waiting_to_running	509	PROVEN	Telemetry.transition: transition_moves, transition_absent, transition_placed
-src/telemetry.rs	snapshot_running	525	PROVEN	Telemetry.snapshotRunning: trySnapshot_unlocked
-src/telemetry.rs	try_snapshot_running	536	PROVEN	Telemetry.trySnapshotRunning: trySnapshot_sub, trySnapshot_unlocked
-src/telemetry.rs	snapshot_waiting	547	PROVEN	Telemetry.snapshotWaiting: registerWaiting_placed (shard concatenation)
-src/telemetry.rs	running_queries_reply	556	PROVEN	Telemetry.runningRow/runningReply: runningRow_len, runningReply_len
-src/telemetry.rs	waiting_queries_reply	580	PROVEN	Telemetry.waitingRow: waitingRow_len
-src/telemetry.rs	resolve_current_names	695	PROVEN	Telemetry.resolve/pass1/pass2Step/retain: retain_sound, retain_drops, pass1_unmoved, pass1_rebound, pass2Step_sound
-src/telemetry.rs	hold_batch_graphs	771	PROVEN	Telemetry.distinctAlive: distinctAlive_nodup, distinctAlive_complete
-src/telemetry.rs	release_batch_graphs	802	PROVEN	Telemetry.releaseSpawns: releaseSpawns_len
-src/telemetry.rs	key_holds_graph	821	PROVEN	Telemetry.keyHolds: keyHolds_iff
-src/telemetry.rs	drain_queued	845	PROVEN	Telemetry.drain: drain_bound, drain_conserves
-src/telemetry.rs	enqueue_entry	905	PROVEN	Telemetry.enqueueOk: enqueue_off, enqueue_replica, enqueue_full
-src/telemetry.rs	set_is_replica	958	PROVEN	Telemetry.setReplica: setReplica_eq
-src/telemetry.rs	start_flusher_thread	963	PROVEN	Telemetry.start: start_idem
-src/telemetry.rs	shutdown_flusher_thread	1016	PROVEN	Telemetry.shutdown/stopped: shutdown_keeps_names_if_parked, shutdown_frees_on_stop, shutdown_closes_sender
-src/telemetry.rs	flusher_loop	1052	PROVEN	Telemetry.iter/capDeferred/groupOrder: iter_disconnected, iter_replica_never_writes, iter_write_iff, capDeferred_len, capDeferred_suffix, group_keeps_order
+src/telemetry.rs	truncate	33	PROVEN	Telemetry.truncate: truncate_short, truncate_len, truncate_prefix
+src/telemetry.rs	truncate_arc	49	PROVEN	Telemetry.truncateArc: truncateArc_eq
+src/telemetry.rs	stream_name	65	PROVEN	Telemetry.streamName: streamName_key_name, streamName_inj, streamName_nul, stream_same_slot, stream_other_slot
+src/telemetry.rs	StreamTemplate::new	149	PROVEN	Telemetry.argv/FIELD_NAMES: argv_len
+src/telemetry.rs	StreamTemplate::add	169	PROVEN	Telemetry.fieldValues/argv: argv_len
+src/telemetry.rs	StreamTemplate::report_failures	227	PROVEN	Telemetry.failMsg: failMsg_none
+src/telemetry.rs	create_detached_string	243	AXIOMATISED	RM_CreateString/RM_FreeString (Redis API)
+src/telemetry.rs	free_detached_string	250	AXIOMATISED	RM_CreateString/RM_FreeString (Redis API)
+src/telemetry.rs	stream_entries	267	PROVEN	Telemetry.streamOps: streamOps_writable, streamOps_trim_zero, streamOps_foreign
+src/telemetry.rs	delete_stream	335	PROVEN	Telemetry.deleteStreamKey: deleteStream_key_or_name
+src/telemetry.rs	next_id	353	PROVEN	Telemetry.nextIds: nextIds_nodup
+src/telemetry.rs	unix_now_secs	358	AXIOMATISED	SystemTime::now (OS clock)
+src/telemetry.rs	shard_for	403	PROVEN	Telemetry.shardFor: shardFor_lt
+src/telemetry.rs	register_running	408	PROVEN	Telemetry.registerRunning: registerRunning_placed
+src/telemetry.rs	unregister_running	428	PROVEN	Telemetry.unregisterRunning/removeId: removeId_absent, removeId_sub
+src/telemetry.rs	unregister_waiting	436	PROVEN	Telemetry.unregisterWaiting: removeId_absent
+src/telemetry.rs	register_waiting	450	PROVEN	Telemetry.registerWaiting: registerWaiting_placed
+src/telemetry.rs	WaitingEntry::register	480	PROVEN	Telemetry.WE: WE.drop_armed
+src/telemetry.rs	WaitingEntry::promote	490	PROVEN	Telemetry.WE.promote: WE.promote_then_drop, WE.promote_twice
+src/telemetry.rs	WaitingEntry::drop	496	PROVEN	Telemetry.WE.drop: WE.drop_armed, WE.promote_then_drop
+src/telemetry.rs	transition_waiting_to_running	508	PROVEN	Telemetry.transition: transition_moves, transition_absent, transition_placed
+src/telemetry.rs	snapshot_running	524	PROVEN	Telemetry.snapshotRunning: trySnapshot_unlocked
+src/telemetry.rs	try_snapshot_running	535	PROVEN	Telemetry.trySnapshotRunning: trySnapshot_sub, trySnapshot_unlocked
+src/telemetry.rs	snapshot_waiting	546	PROVEN	Telemetry.snapshotWaiting: registerWaiting_placed (shard concatenation)
+src/telemetry.rs	running_queries_reply	555	PROVEN	Telemetry.runningRow/runningReply: runningRow_len, runningReply_len
+src/telemetry.rs	waiting_queries_reply	579	PROVEN	Telemetry.waitingRow: waitingRow_len
+src/telemetry.rs	resolve_current_names	694	PROVEN	Telemetry.resolve/pass1/pass2Step/retain: retain_sound, retain_drops, pass1_unmoved, pass1_rebound, pass2Step_sound
+src/telemetry.rs	hold_batch_graphs	770	PROVEN	Telemetry.distinctAlive: distinctAlive_nodup, distinctAlive_complete
+src/telemetry.rs	release_batch_graphs	801	PROVEN	Telemetry.releaseSpawns: releaseSpawns_len
+src/redis_type.rs	key_holds_graph	577	PROVEN	Telemetry.keyHolds: keyHolds_iff (moved from telemetry.rs by #3819; get_value::<_>(&GRAPH_TYPE) = keyValue input)
+src/telemetry.rs	drain_queued	817	PROVEN	Telemetry.drain: drain_bound, drain_conserves
+src/telemetry.rs	enqueue_entry	877	PROVEN	Telemetry.enqueueOk: enqueue_off, enqueue_replica, enqueue_full
+src/telemetry.rs	set_is_replica	930	PROVEN	Telemetry.setReplica: setReplica_eq
+src/telemetry.rs	start_flusher_thread	935	PROVEN	Telemetry.start: start_idem
+src/telemetry.rs	shutdown_flusher_thread	988	PROVEN	Telemetry.shutdown/stopped: shutdown_keeps_names_if_parked, shutdown_frees_on_stop, shutdown_closes_sender
+src/telemetry.rs	flusher_loop	1024	PROVEN	Telemetry.iter/capDeferred/groupOrder: iter_disconnected, iter_replica_never_writes, iter_write_iff, capDeferred_len, capDeferred_suffix, group_keeps_order
 src/slow_log.rs	prefix	32	PROVEN	SlowLog.strPrefix: prefix_total, prefix_le, prefix_isPrefix, prefix_boundary, prefix_longest, prefix_short, prefix_ascii
 src/slow_log.rs	truncate	38	PROVEN	SlowLog.truncate: truncate_total, truncate_short (W4-redis-1 fixed by #3234 3660a5fc3)
 src/slow_log.rs	entry_hash	51	PROVEN	SlowLog.hashInput: hashInput_total, hashInput_short, hashInput_bad (W4-redis-1 fixed by #3234 3660a5fc3)
@@ -264,12 +264,13 @@ src/commands/config_cmd.rs	apply_config_set	271	PROVEN	Config.apply1 (used by ru
 src/commands/config_cmd.rs	ConfigValue::as_i64	317	PROVEN	Commands.asI64: asI64_small
 src/commands/config_cmd.rs	ConfigValue::as_u64	323	PROVEN	Commands.asU64: asU64_nonneg, asU64_neg
 src/commands/config_cmd.rs	graph_config	331	PROVEN	Config.dispatch: get_extra_wrong_arity, set_pairs_complete, dotless_i_not_folded; Config.rustSet (SET): rustSet_inv; Commands.getOne (GET)
-src/commands/constraint.rs	is_valid_identifier	22	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
-src/commands/constraint.rs	register_constraint_schema	66	PROVEN	Commands.registerSchema: registerSchema_contains
-src/commands/constraint.rs	find_status	85	PROVEN	Commands.findStatus: findStatus_none
-src/commands/constraint.rs	settle_constraint	174	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
-src/commands/constraint.rs	attempt_settle	280	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
-src/commands/constraint.rs	graph_constraint	380	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053)
+src/commands/constraint.rs	is_valid_identifier	26	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
+src/commands/constraint.rs	register_constraint_schema	70	PROVEN	Commands.registerSchema: registerSchema_contains
+src/commands/constraint.rs	find_status	89	PROVEN	Commands.findStatus: findStatus_none
+src/commands/constraint.rs	settle_constraint	178	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
+src/commands/constraint.rs	attempt_settle	284	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
+src/commands/constraint.rs	graph_constraint	384	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053); pool path Commands.consWorker: consWorker_announce, consWorker_signal, consWorker_key_gone (#3819)
+src/commands/constraint.rs	apply_constraint	599	PROVEN	Commands.applyCons: applyCons_replayed_silent, applyCons_commit_refused, applyCons_aof_duplicate, applyCons_ok (#3819; create_constraint/drop_constraint/commit/find_status/build_constraint results are inputs)
 src/commands/copy.rs	pipe	19	AXIOMATISED	libc pipe(2)
 src/commands/copy.rs	fork	20	AXIOMATISED	libc fork(2)
 src/commands/copy.rs	_exit	21	AXIOMATISED	libc _exit(2)
