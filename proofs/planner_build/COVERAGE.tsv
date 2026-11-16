@@ -2,7 +2,7 @@ file	function	line	bucket	lean_name_or_reason
 graph/src/planner/mod.rs	subtree_contains	333	PROVEN	Misc.subtreeContains_iff (BFS any = some op of the subtree satisfies the predicate)
 graph/src/planner/mod.rs	fmt_var_len_rel	349	PROVEN	Fmt.fmtVarLen, hopsStr_empty (range printed unless exactly *1..1), hopsStr_inf
 graph/src/planner/mod.rs	fmt_rel_with_labels	377	PROVEN	Fmt.fmtRel_eq (= fmt_rel_with_labels_dir(rel, false))
-graph/src/planner/mod.rs	fmt_rel_with_labels_dir	381	PROVEN	Fmt.fmtRelDir, arrows_table, fmtRelDir_anon (anonymous edges print no bracket)
+graph/src/planner/mod.rs	fmt_rel_with_labels_dir	381	PROVEN	Fmt.fmtRelDir, arrows_table, fmtRelDir_anon (unnamed edges print no bracket; #3303: `is_unnamed`, FRel.unnamed)
 graph/src/planner/mod.rs	IR::fmt	419	PROVEN	Fmt.irFmt (every variant), fmt_set_remove, fmt_fused (hop/hops), fmt_condTraverse_plain
 graph/src/planner/mod.rs	inline_attrs_to_filter	542	PROVEN	E.inlineAttrsToFilter = and_of of the equalities; inlineAttrsToFilter_eq (and_of = the pre-#3335 f / And(fs) split, an equality is never an AND), inlineAttrsToFilter_none, inlineAttrsToFilter_conj, Rename.inlineAttrs_passes (passes iff every n.k = v is true)
 graph/src/planner/mod.rs	lower_inline_attrs	595	PROVEN	E.lowerInline: lowerInline_fresh, lowerInline_once (at most once per (alias, map)), lowerInline_two_maps (identity, not equality), lowerInline_mem/_mono/_other
@@ -47,7 +47,7 @@ graph/src/planner/mod.rs	plan_query	2712	PROVEN	rustStitch/stitchLoop; stitchLoo
 graph/src/planner/mod.rs	needs_apply_wrapping	2867	PROVEN	needsApplyWrapping; cp_stitch_shape, cp_stitch_loses_correlation (bug 2; PR #3100 also wraps when the CP reads its variables)
 graph/src/planner/mod.rs	ensure_apply_has_input	2904	PROVEN	Misc.ensureInput_ev_local (Apply(Argument, s) = Apply(s)), ensureInput_saturates
 graph/src/planner/mod.rs	Planner::plan	2927	PROVEN	per-clause plans: unwind/create/set/remove/delete/proc/merge/foreach/call/unit_call/optional/optional_apply/match_bound/union/project _correct; planCreate (PathBuilder over Create since #2829): create_loop_correct, create_first_correct, create_path_last_misplaced/_skips_create (bug 8); MATCH arm with its all_visited/any_visited decision: PathBind.planMatchArm, planMatchArm_path_unwrapped (a new path variable blocks the Apply wrap; bugs #2744/#2743/#2727/#2725); REMOVE arm: remove_correct is the row semantics only (graph effect opaque in specWrite) and the arm leaves verified_labels as is: RemoveVerified.bug3450_remove_keeps_verified_label (open #3450)
-graph/src/parser/ast.rs	Variable::fmt	172	PROVEN	Ast.AV.fmt_named, AV.fmt_anon
+graph/src/parser/ast.rs	Variable::fmt	172	PROVEN	Ast.AV.fmt_named, AV.fmt_anon, AV.fmt_unnamed (#3303: `@anon_<n>`)
 graph/src/parser/ast.rs	Variable::eq	187	PROVEN	Ast.AV.eqv_iff (id only), AV.eqv_other_scope, AV.eqv_equivalence
 graph/src/parser/ast.rs	Variable::hash	198	PROVEN	Ast.AV.hash_consistent (hash agrees with Eq)
 graph/src/parser/ast.rs	Variable::as_str	214	PROVEN	Ast.AV.asStr_spec
@@ -63,13 +63,13 @@ graph/src/parser/ast.rs	QueryRelationship::new	706	PROVEN	Ast.new_spec (all_shor
 graph/src/parser/ast.rs	QueryPath::new	743	PROVEN	Ast.new_spec
 graph/src/parser/ast.rs	QueryGraph::default	766	PROVEN	Ast.new_spec (empty nodes/rels/paths)
 graph/src/parser/ast.rs	QueryGraph::fmt	779	PROVEN	Ast.fmtGraph, fmtGraph_empty
-graph/src/parser/ast.rs	merge_attr_maps	722	PROVEN	Ast.mergeAttrs_eq (entries concatenated, duplicates kept)
+graph/src/parser/ast.rs	merge_attr_maps	802	PROVEN	Ast.mergeAttrs_eq (entries concatenated, duplicates kept)
 graph/src/parser/ast.rs	QueryGraph::add_node	820	PROVEN	Ast.addNode_spec
 graph/src/parser/ast.rs	QueryGraph::merge_node	840	PROVEN	Ast.mergeNode_present (labels unioned via extendLabels_mem, attrs concatenated, same position), mergeNode_absent
 graph/src/parser/ast.rs	QueryGraph::replace_node	858	PROVEN	Ast.replaceNode_spec
 graph/src/parser/ast.rs	QueryGraph::add_relationship	868	PROVEN	Ast.addRel_spec
 graph/src/parser/ast.rs	QueryGraph::add_path	884	PROVEN	Ast.addPath_spec
-graph/src/parser/ast.rs	QueryGraph::variables	816	PROVEN	Ast.variables_order (nodes, then rels, then paths)
+graph/src/parser/ast.rs	QueryGraph::variables	896	PROVEN	Ast.variables_order (nodes, then rels, then paths)
 graph/src/parser/ast.rs	QueryGraph::nodes	905	PROVEN	Ast.accessors
 graph/src/parser/ast.rs	QueryGraph::nodes_mut	909	PROVEN	Ast.accessors
 graph/src/parser/ast.rs	QueryGraph::relationships	914	PROVEN	Ast.accessors
