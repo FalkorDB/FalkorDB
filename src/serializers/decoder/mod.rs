@@ -30,7 +30,36 @@ pub enum LoadedKey {
     },
 }
 
-/// Decode a graph key from the RDB stream (v19 format).
+/// Read a key's payload directory: the `(EncodeState, count)` pairs it holds.
+///
+/// Encoding version 20 is version 19 plus one payload, `EncodeState::CchIndices`, which C
+/// writes only for a graph that has a CCH index; any other v20 key is a v19 key. This module
+/// has no CCH index, so it refuses a key that lists that payload: the load fails with an
+/// error naming it, before any payload is read. (Before, 10 decoded as `Final`, its payload
+/// was never read, and the load went on from the wrong place in the stream.)
+///
+/// # Errors
+/// A truncated stream, an unknown state, or a CCH index payload.
+fn decode_payload_directory(r: &mut dyn Reader) -> Result<Vec<(EncodeState, u64)>, String> {
+    let payload_count = r.read_unsigned()?;
+    let mut payloads = Vec::with_capacity(payload_count as usize);
+    for _ in 0..payload_count {
+        let state = r.read_unsigned()?;
+        let count = r.read_unsigned()?;
+        let state =
+            EncodeState::from_u64(state).ok_or_else(|| format!("unknown encode state: {state}"))?;
+        if state == EncodeState::CchIndices {
+            return Err(
+                "RDB v20 graph with CCH indexes: this module does not support CCH indexes"
+                    .to_string(),
+            );
+        }
+        payloads.push((state, count));
+    }
+    Ok(payloads)
+}
+
+/// Decode a graph key from the RDB stream (v19 format, or v20 without CCH indexes).
 ///
 /// `key_name` is the Redis key this payload arrived under. A multi-key graph
 /// spans several keys but names itself only once, in every payload's header,
@@ -55,15 +84,7 @@ pub fn rdb_load_graph(
     let schema = Schema::decode(&mut r)?;
 
     // --- Key Schema (payload directory) ---
-    let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
-    for _ in 0..payload_count {
-        let state = r.read_unsigned()?;
-        let count = r.read_unsigned()?;
-        let state =
-            EncodeState::from_u64(state).ok_or_else(|| format!("unknown encode state: {state}"))?;
-        payloads.push((state, count));
-    }
+    let payloads = decode_payload_directory(&mut r)?;
 
     // For multi-key graphs, check if we already have a pending graph in DECODE_STATE.
     if hdr.key_count > 1 {
@@ -444,15 +465,7 @@ fn load_graph_from_reader(
 
     let schema = Schema::decode(r)?;
 
-    let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
-    for _ in 0..payload_count {
-        let state = r.read_unsigned()?;
-        let count = r.read_unsigned()?;
-        let state =
-            EncodeState::from_u64(state).ok_or_else(|| format!("unknown encode state: {state}"))?;
-        payloads.push((state, count));
-    }
+    let payloads = decode_payload_directory(r)?;
 
     let mut node_attrs = AttributeStore::new();
     let mut rel_attrs = AttributeStore::new();
@@ -534,4 +547,55 @@ fn load_graph_from_reader(
     graph.populate_indexes_sync();
 
     Ok(graph)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serializers::buffered_io::VecWriter;
+    use graph::graph::graphblas::serialization::Writer;
+
+    fn directory(entries: &[(u64, u64)]) -> Vec<u8> {
+        let mut w = VecWriter::new();
+        w.write_unsigned(entries.len() as u64);
+        for &(state, count) in entries {
+            w.write_unsigned(state);
+            w.write_unsigned(count);
+        }
+        w.into_vec()
+    }
+
+    /// A v20 key without CCH indexes lists the same payloads a v19 key does.
+    #[test]
+    fn a_directory_without_cch_decodes() {
+        let bytes = directory(&[(1, 3), (5, 1), (9, 1)]);
+        let payloads = decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap();
+        assert_eq!(
+            payloads,
+            [
+                (EncodeState::Nodes, 3),
+                (EncodeState::GraphSchema, 1),
+                (EncodeState::LblsMatrix, 1),
+            ]
+        );
+    }
+
+    /// C's v20 lists `CchIndices` (10) last, only for a graph that has a CCH index. It used
+    /// to decode as `Final` and be skipped, leaving its payload to be misread.
+    #[test]
+    fn a_directory_with_cch_is_refused() {
+        let bytes = directory(&[(1, 3), (9, 1), (10, 1)]);
+        let err = decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap_err();
+        assert!(err.contains("CCH"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn an_unknown_state_is_refused() {
+        let bytes = directory(&[(12, 1)]);
+        let err = decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap_err();
+        assert!(
+            err.contains("unknown encode state: 12"),
+            "unexpected error: {err}"
+        );
+    }
 }

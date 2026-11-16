@@ -20,7 +20,11 @@ use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
 
-/// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
+/// RDB encoding version written. Matches C FalkorDB v19 format (buffered IO with type tags).
+///
+/// The decoder also loads C's v20, which is v19 plus a CCH index payload (written only for a
+/// graph that has a CCH index); a key carrying that payload is refused, as this module has no
+/// CCH index. See `decoder::decode_payload_directory`.
 #[allow(dead_code)]
 pub const ENCODING_VERSION: u64 = 19;
 
