@@ -33,8 +33,10 @@ Coverage per Rust fn: `COVERAGE.tsv`. Repro: `graph/tests/lean_graph_persist.rs`
 * `roaring_roundtrip`, `encoded_len_mult8`; `decode_filter_sound`,
   `oob_id_dropped`, `good_attr_kept` — load never binds an out-of-dictionary or
   NULL attribute, and keeps every good one.
-* `rust_C_unique_disagree`, `disagreement_two_sided`,
-  `constraint_creation_diverges`, `mandatory_agrees`, `enforcement_is_quadratic`.
+* `rust_C_unique_agree`, `composite_key_unambiguous`, `constraint_creation_agrees`
+  (#2991: the UNIQUE key is C's equality; the old divergence is kept as
+  `pre2991_rust_C_unique_disagree`, `pre2991_disagreement_two_sided`,
+  `pre2991_constraint_creation_diverges`), `mandatory_agrees`, `enforcement_is_quadratic`.
 
 ## Live round-trip results (DEBUG RELOAD, SAVE+restart, and cross-engine
 Rust→C / C→Rust, each with and without VKEY_MAX_ENTITY_COUNT=2/3)
