@@ -4,7 +4,7 @@ import RuntimeCore.Accessors
 /-
 # `Pending::commit` and constraint enforcement (pending.rs:1338-1700: `Pending::commit` to `check_edge_constraint`)
 
-* `constraintHas_eq` — `constraint_node_has_label` (:1556) answers from the
+* `constraintHas_eq` — `constraint_node_has_label` (:1554) answers from the
   staged label sets, then "created ⇒ no committed label", then the matrix; when
   created nodes carry no committed labels (fresh ids; reclaimed ids carry
   tombstones) that is exactly `Labels.overlay`, the query's own view.
@@ -25,11 +25,14 @@ import RuntimeCore.Accessors
   query fails iff some *operational* constraint's check fails.
 * `commit_spec` — `Pending::commit` (:1338), graph operations uninterpreted
   (`GOps`): the statistics it adds are `|created_nodes|`,
-  `|created_rel_types|`, `Σ|remove_labels|`, the attribute writers' counts,
+  `|created_rel_types|`, the attribute writers' counts,
   `|deleted_nodes|` and the implicit + actually-deleted explicit edges;
   `deleted_relationships` becomes the implicit ∪ actually-deleted edges, the
   explicit set is handed to both deleters, and the batch's index documents are
-  absorbed into the deferred set.
+  absorbed into the deferred set. Since #3587 it leaves `labels_removed` alone
+  (it used to add `Σ|remove_labels|`): REMOVE counts per clause, `Labels.remCount`.
+* `addCount_eq_constraintHas` — the `Labels added` count of `SET n:…` (set.rs:384-409),
+  read through `constraint_node_has_label`, is `Labels.addCount` over the query's view.
 -/
 namespace PendingCommit.PC
 open PA PS PD
@@ -54,6 +57,15 @@ theorem constraintHas_eq (p : P) (C : Nat → Nat → Bool) (hC : ∀ n ∈ p.cr
     · split
       · rename_i h; rw [hC n h l]
       · rfl
+
+/-- **`addCount_eq_constraintHas`**: the `Labels added` count of `SET n:…` (set.rs:384-409,
+`!constraint_node_has_label` per label) is `Labels.addCount` over the query's view. -/
+theorem addCount_eq_constraintHas (p : P) (C : Nat → Nat → Bool)
+    (hC : ∀ n ∈ p.created, ∀ l, C n l = false) (n : Nat) (ls : List Nat) :
+    (ls.filter (fun l => !constraintHas p C n l)).length =
+      Labels.addCount (C n) ⟨(fget p.setL n).getD [], (fget p.remL n).getD []⟩ ls := by
+  unfold Labels.addCount; congr 1
+  apply List.filter_congr; intro l _; rw [constraintHas_eq p C hC n l]
 
 /-! ## The UNIQUE scan -/
 
@@ -292,8 +304,7 @@ def stRels (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
 def stLabels (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   let g3 := if p.setL = [] then c.g else o.setLabels c.g (flatten p.setL).1 (flatten p.setL).2
   if p.remL = [] then some { c with g := g3 }
-  else some { c with g := o.removeLabels g3 (flatten p.remL).1 (flatten p.remL).2,
-                     s := { c.s with labelsRemoved := c.s.labelsRemoved + (flatten p.remL).1.length } }
+  else some { c with g := o.removeLabels g3 (flatten p.remL).1 (flatten p.remL).2 }
 
 def stNewN (o : GOps G) (p : P) (c : CS G) : CS G :=
   if p.newN = [] then c else
@@ -348,13 +359,13 @@ theorem stRels_s (o : GOps G) (p : P) (c c' : CS G) (h : stRels o p c = some c')
   · rename_i he; cases h; simp [he]
   · obtain ⟨g, -, rfl⟩ := Option.map_eq_some_iff.1 h; exact ⟨rfl, rfl, rfl⟩
 
+/-- Since #3587 the commit adds nothing to `labels_removed` (the REMOVE operator counts,
+`Labels.remCount`). -/
 theorem stLabels_s (o : GOps G) (p : P) (c c' : CS G) (h : stLabels o p c = some c') :
-    c'.s = { c.s with labelsRemoved := c.s.labelsRemoved + (p.remL.map (·.2.length)).sum } ∧
-      c'.imp = c.imp ∧ c'.act = c.act := by
-  have hf := (flatten_spec p.remL).1
+    c'.s = c.s ∧ c'.imp = c.imp ∧ c'.act = c.act := by
   unfold stLabels at h; dsimp only at h; split at h
-  · rename_i he; cases h; simp [he]
-  · cases h; exact ⟨by rw [hf], rfl, rfl⟩
+  · cases h; exact ⟨rfl, rfl, rfl⟩
+  · cases h; exact ⟨rfl, rfl, rfl⟩
 
 /-- Fields a step does not touch. -/
 def Keeps (c c' : CS G) : Prop :=
@@ -413,7 +424,7 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
     (h : commit o p g0 s0 = some r) :
     r.2.2.nodesCreated = s0.nodesCreated + p.created.length ∧
     r.2.2.relsCreated = s0.relsCreated + p.relTypes.length ∧
-    r.2.2.labelsRemoved = s0.labelsRemoved + (p.remL.map (·.2.length)).sum ∧
+    r.2.2.labelsRemoved = s0.labelsRemoved ∧
     r.2.2.nodesDeleted = s0.nodesDeleted + p.deletedN.length ∧
     (∃ imp act : List Nat, r.1.deletedR = imp.foldl sins [] ++ act ∧
       r.2.2.relsDeleted = s0.relsDeleted + imp.length + act.length) ∧
