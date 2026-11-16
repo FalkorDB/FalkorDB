@@ -127,7 +127,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 
 ### Wrong results: optimizer
 - **W2-rewrites-1**: a filter merge evaluates the outer conjunct first (`push_filters_down.rs:122`). This gives "Division by zero" where C returns 15.
-- **W2-rewrites-2 / W2-scan-***: id seek with a negative bound, `id(n) > -1`, gives 0 rows where C gives 5 (`runtime.rs:1319`); a non-integer bound (`id(n)=null`, `=1.0`, `>1.5`) raises an error where C gives 0 rows (`runtime.rs:1324`).
+- **W2-rewrites-2 / W2-scan-***: id seek with a negative bound, `id(n) > -1`, gives 0 rows where C gives 5 (`runtime.rs:1319`); a non-integer bound (`id(n)=null`, `=1.0`, `>1.5`) raises an error where C gives 0 rows (`runtime.rs:1324`). **Fixed by PR #3017** (`evaluate_id_filter` narrows `i128` bounds with float ceil/floor and returns `Ok(None)` for null/NaN/non-numeric): Lean `optimizer_scan` `IdSeek.seek_sound_all`, `seek_sound_int`.
 - **W2-rewrites-3**: the hash join drops Int/Float pairs near 2^53 (`value_hash_join.rs:153` compares keys exactly, while `=` goes through `as f64`).
 - **W2-rewrites-4**: a filter inside an uncorrelated `CALL {}` is pushed onto the Argument, so values are swapped (`push_filters_down.rs:214-261`, `mod.rs:91-109`). This is a new way to hit #2557.
 - **W2-scan-1**: `select_scan_node.rs:893-900` marks `best_node` as bound when no scan is built for it, so a filter runs before its variable is bound: 0 rows where C gives 1.
