@@ -9,7 +9,7 @@
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -654,7 +654,7 @@ impl FalkorDbIndex {
     pub fn labels_with_columns(
         &self,
         entity: EntityType,
-    ) -> HashSet<&str> {
+    ) -> FxHashSet<&str> {
         self.columns(entity)
             .keys()
             .map(|(label, _)| label.as_str())

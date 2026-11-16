@@ -1642,10 +1642,19 @@ impl Index {
         // in-flight readers keeps it alive until then. `create_rs_index`
         // below installs a fresh `self.spec`.
         self.spec = None;
-        let stopwords = self.stopwords.clone();
-        let language = self.language.clone();
-        self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
-        self.register_fields(self.fields(), None)?;
+        // RediSearch holds only Fulltext and Vector fields, so a label left with only Range
+        // fields gets no spec back (as on create): the native index serves them.
+        if self
+            .fields
+            .values()
+            .flatten()
+            .any(|f| f.ty != IndexType::Range)
+        {
+            let stopwords = self.stopwords.clone();
+            let language = self.language.clone();
+            self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
+            self.register_fields(self.fields(), None)?;
+        }
         // Bump id so any background populate still running against the
         // previous rs_idx detects the recreation and bails out. Pending is
         // tracked per generation, so stale workers release against their own

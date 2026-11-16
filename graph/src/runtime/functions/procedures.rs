@@ -238,7 +238,7 @@ pub fn register(funcs: &mut Functions) {
                                     }
                                     // A range attribute reports C's two array companions
                                     // too: the names C's RediSearch schema gives them.
-                                    if field.ty == IndexType::Range {
+                                    if field.ty == IndexType::Range && !name.is_empty() {
                                         rs_field_names.push(format!("{name}:numeric:arr"));
                                         rs_field_names.push(format!("{name}:string:arr"));
                                     }

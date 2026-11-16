@@ -1616,6 +1616,40 @@ class testIndexScanFlow():
             self.env.assertEqual(g.query(q).result_set, want, message=f"{q}\n{plan}")
         g.delete()
 
+    def test_47b_or_of_array_probes_on_a_scalar_raises_like_a_scan(self):
+        # `x IN n.prop` on a scalar property is a List type error under a plain
+        # scan. A union of such probes is declined by the native index, and the
+        # scan it falls back to must not turn the error into a row: the filter
+        # the planner pushed down has to stay to raise it. Nodes and
+        # relationships alike.
+        create = "CREATE (:AP {a: 3})-[:APR {a: 3}]->(:AP)"
+        queries = [
+            "MATCH (n:AP) WHERE 1 IN n.a OR 2 IN n.a RETURN n.a",
+            "MATCH ()-[r:APR]->() WHERE 1 IN r.a OR 2 IN r.a RETURN r.a",
+        ]
+
+        def outcome(g, q):
+            try:
+                return g.query(q).result_set
+            except redis.ResponseError as e:
+                return str(e)
+
+        truth = self.db.select_graph('array_probe_scan')
+        truth.query(create)
+        expected = [outcome(truth, q) for q in queries]
+        truth.delete()
+        for want in expected:
+            self.env.assertContains("Type mismatch", want)
+
+        g = self.db.select_graph('array_probe_index')
+        g.create_node_range_index('AP', 'a')
+        g.create_edge_range_index('APR', 'a')
+        wait_for_indices_to_sync(g)
+        g.query(create)
+        for q, want in zip(queries, expected):
+            self.env.assertEqual(outcome(g, q), want, message=q)
+        g.delete()
+
     def test_48_range_index_beside_fulltext_index(self):
         # A range index on an attribute that already has a fulltext index
         # must be queried through its own (range) field, not the fulltext
