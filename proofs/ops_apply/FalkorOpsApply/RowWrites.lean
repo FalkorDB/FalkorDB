@@ -15,8 +15,8 @@ Three Rust behaviours break that, each from one modelled mechanism:
 
 | issue | mechanism (fb3d516d0) | here |
 | --- | --- | --- |
-| #2738 | `ApplyOp::next_batched` (`apply.rs:152`) runs ONE sub-plan over all rows of the input batch; its `Commit` (`commit.rs:69`) drains every row before `pending.commit()`, so every row reads the pre-batch graph.  `can_batch` (`apply.rs:119-133`) does not blacklist `Create`/`Delete`/`Set`/`Commit`. | `applyBatchedW`, `canBatchApply_admits_write`, `bug2738_batched_call_hides_writes` |
-| #2729 | `CreateOp::next` (`create.rs:121`) and `DeleteOp::next` (`delete.rs:115`) stream one batch at a time against the shared `pending`; `create_batch`'s endpoint check (`create.rs:259-266`) reads pending deletes made by `delete_batch` for EARLIER batches.  Effects depend on how rows are cut into batches, and the plan inside `CALL {}` cuts them differently from top level. | `pipeline`, `PartitionInvariant`, `bug2729_batch_split_flips_endpoint_check` |
+| #2738 | `ApplyOp::next_batched` (`apply.rs:152`) runs ONE sub-plan over all rows of the input batch; its `Commit` (`commit.rs:69`) drains every row before `pending.commit()`, so every row reads the pre-batch graph.  `can_batch` (`apply.rs:119-133`) does not blacklist `Create`/`Delete`/`Set`/`Commit`. | `applyBatchedW`, `pre2968_canBatchApply_admits_write`, `bug2738_batched_call_hides_writes`; **fixed by #2968** (`canBatchApply_rejects_write`, `fixed2968_call_sees_writes`) |
+| #2729 | `CreateOp::next` (`create.rs:121`) and `DeleteOp::next` (`delete.rs:115`) stream one batch at a time against the shared `pending`; `create_batch`'s endpoint check (`create.rs:259-266`) reads pending deletes made by `delete_batch` for EARLIER batches.  Effects depend on how rows are cut into batches, and the plan inside `CALL {}` cuts them differently from top level. | `pipeline`, `PartitionInvariant`, `bug2729_batch_split_flips_endpoint_check`; **fixed by #2968** (DELETE over a writing child is eager: `pipelineEager`, `fixed2968_eager_delete_split_agnostic`) |
 | #3164 | `next_per_row` (`apply.rs:238`) commits each row's sub-plan (each `Union` branch has its own `Commit`, `union.rs:65-96`); the commit releases a deleted node's id (`Graph::delete_nodes`, `graph.rs:2216`) and the next `create_batch` reclaims it (`IdSpace::reserve`, `id_space.rs:483-498`, via `create.rs:158`).  A row holds only `Value::Node(NodeId)` (`value.rs:220`), so a later row's stale reference resolves to the new entity. | `NG`, `rustPerRow`, `NoStaleAlias`, `bug3164_stale_ref_deletes_recycled_id` |
 
 The sufficient condition under which batching IS sound for a writing sub-plan
@@ -101,11 +101,78 @@ on a graph with one `:N`.  Plan (live `GRAPH.EXPLAIN`): `Apply(Unwind, Project(C
 Create(NodeByLabelScan(Project(Argument))))))` — no blacklisted operator, so batched.
 State = the number of `:N` nodes. -/
 
-/-- The `can_batch` guard (`apply.rs:119-133`) admits the writing sub-plan above. -/
-theorem canBatchApply_admits_write :
-    canBatchApply [.project, .commit, .create, .scan] = true ∧
-    canBatchApply [.project, .commit, .delete, .project] = true ∧
-    canBatchApply [.project, .commit, .setProps, .scan] = true := by decide
+/-- History (fixed by #2968): the `can_batch` guard before #2968 (`apply.rs:119-133` at
+343e077f2) admitted the writing sub-plan above. -/
+theorem pre2968_canBatchApply_admits_write :
+    canBatchApplyPre2968 [.project, .commit, .create, .scan] = true ∧
+    canBatchApplyPre2968 [.project, .commit, .delete, .project] = true ∧
+    canBatchApplyPre2968 [.project, .commit, .setProps, .scan] = true := by decide
+
+/-- #2968: `can_batch` (`apply.rs:143-164`) refuses every sub-plan holding a writing
+operator, so a writing CALL {} always runs per row. -/
+theorem canBatchApply_rejects_write (sub : List IRKind) (k : IRKind) (hk : k ∈ sub)
+    (hw : k ∈ writeKinds) : canBatchApply sub = false := by
+  simp [canBatchApply]
+  exact ⟨k, hk, Or.inl hw⟩
+
+theorem canBatchApply_rejects_write_examples :
+    canBatchApply [.project, .commit, .create, .scan] = false ∧
+    canBatchApply [.project, .commit, .delete, .project] = false ∧
+    canBatchApply [.project, .commit, .setProps, .scan] = false := by decide
+
+/-- Per-row Apply over a writing sub-plan as `next_per_row` runs it since #2968
+(`apply.rs:346-467`): one sub-plan instance, hence one `Commit`, per row; when the sub-plan
+deletes (`sub_plan_deletes`, `apply.rs:185-187`), a row whose imported entity is already
+deleted (`row_has_deleted_entity`, `apply.rs:291-311`: `gone g x`) runs no sub-plan and
+writes nothing.  Its passthrough / OPTIONAL NULL row (`apply.rs:425-436`) is a row of
+Correlated's model, not of this effect model.  Output batching (`push_acc`/`flush_acc`,
+`apply.rs:313-344`) only re-cuts the flattened stream (`Correlated.pushAcc_flatten`, `pushAcc_le`). -/
+def applyPerRowW {G α β W : Type} (s : WSub G α β W) (deletes : Bool) (gone : G → α → Bool) :
+    G → List α → List (α × β) × G
+  | g, [] => ([], g)
+  | g, x :: xs =>
+    if deletes && gone g x then applyPerRowW s deletes gone g xs
+    else
+      let ys := (s.read g x).map (fun y => (x, y))
+      let g1 := s.commit g (ys.flatMap (fun p => s.writes p.2))
+      let r := applyPerRowW s deletes gone g1 xs
+      (ys ++ r.1, r.2)
+
+/-- A sub-plan that does not delete never skips: per-row mode is the reference. -/
+theorem applyPerRowW_no_delete {G α β W : Type} (s : WSub G α β W) (gone : G → α → Bool) :
+    ∀ g xs, applyPerRowW s false gone g xs = applyRefW s g xs := by
+  intro g xs
+  induction xs generalizing g with
+  | nil => rfl
+  | cons x xs ih => simp [applyPerRowW, applyRefW, ih]
+
+/-- Nor does it skip when no imported entity is ever gone. -/
+theorem applyPerRowW_never_gone {G α β W : Type} (s : WSub G α β W) (d : Bool)
+    (gone : G → α → Bool) (h : ∀ g x, gone g x = false) :
+    ∀ g xs, applyPerRowW s d gone g xs = applyRefW s g xs := by
+  intro g xs
+  induction xs generalizing g with
+  | nil => rfl
+  | cons x xs ih => simp [applyPerRowW, applyRefW, ih, h]
+
+/-- A skipped row contributes nothing and leaves the graph as it was. -/
+theorem applyPerRowW_skip {G α β W : Type} (s : WSub G α β W) (gone : G → α → Bool) (g : G)
+    (x : α) (xs : List α) (h : gone g x = true) :
+    applyPerRowW s true gone g (x :: xs) = applyPerRowW s true gone g xs := by
+  simp [applyPerRowW, h]
+
+/-- `ApplyOp::next` (`apply.rs:473-479`) over a writing sub-plan whose IR kinds are `sub`:
+batched when `can_batch`, else per row. -/
+def applyW {G α β W : Type} (sub : List IRKind) (gone : G → α → Bool) (s : WSub G α β W)
+    (g : G) (xs : List α) : List (α × β) × G :=
+  if canBatchApply sub then applyBatchedW s g xs
+  else applyPerRowW s (sub.contains .delete) gone g xs
+
+/-- #2968: a sub-plan with a writing operator always takes the per-row path. -/
+theorem applyW_write_per_row {G α β W : Type} (sub : List IRKind) (gone : G → α → Bool)
+    (s : WSub G α β W) (g : G) (xs : List α) (k : IRKind) (hk : k ∈ sub) (hw : k ∈ writeKinds) :
+    applyW sub gone s g xs = applyPerRowW s (sub.contains .delete) gone g xs := by
+  simp [applyW, canBatchApply_rejects_write sub k hk hw]
 
 /-- `MATCH (a:N) CREATE (:N)`: one row per `:N` in the committed graph, one node created
 per row. -/
@@ -126,6 +193,14 @@ theorem bug2738_batched_call_hides_writes :
   refine ⟨by decide, by decide, fun h => ?_⟩
   have := congrArg Prod.snd (h 1 [1, 2, 3])
   revert this; decide
+
+/-- **#2738 fixed by #2968**: through `ApplyOp::next`'s dispatch the #2738 query now
+returns C's 7 rows and leaves 8 `:N` (batched mode is no longer chosen for it). -/
+theorem fixed2968_call_sees_writes :
+    ((applyW [.project, .commit, .create, .scan] (fun (_ : Nat) (_ : Nat) => false) matchCreateN 1
+        [1, 2, 3]).1.length,
+     (applyW [.project, .commit, .create, .scan] (fun (_ : Nat) (_ : Nat) => false) matchCreateN 1
+        [1, 2, 3]).2) = (7, 8) := by decide
 
 /-! ## #2729 — streaming CREATE → DELETE depends on the batch split
 
@@ -211,6 +286,31 @@ theorem bug2729_batch_split_flips_endpoint_check :
   have := h.toBool [[row15, row15]] [[row15], [row15]] rfl
   revert this; decide
 
+/-- Since #2968 `DeleteOp` is eager when its subtree writes (`Delete.DeleteSt.new`,
+`deleteEager`, delete.rs:136-153): `Create` streams every batch against the pending state
+as it stood before the DELETE, and only then are the drained batches deleted in order. -/
+def createStep (r : CreateBatch.PRel Unit) (st : Delete.St)
+    (acc : List (CreateBatch.Ev Unit Unit) × List (List (CreateBatch.Row Unit)))
+    (rows : List (CreateBatch.Row Unit)) :
+    Except String (List (CreateBatch.Ev Unit Unit) × List (List (CreateBatch.Row Unit))) := do
+  let (log', rows') ← CreateBatch.createRel (ctxOf st) false acc.1 rows r
+  pure (log', acc.2 ++ [rows'])
+
+def pipelineEager (r : CreateBatch.PRel Unit) (v : Nat)
+    (s : Delete.St × List (CreateBatch.Ev Unit Unit)) (bs : List (List (CreateBatch.Row Unit))) :
+    Except String (Delete.St × List (CreateBatch.Ev Unit Unit)) := do
+  let (log, outs) ← bs.foldlM (createStep r s.1) (s.2, [])
+  let st ← outs.foldlM (fun st rows' => Delete.deleteBatch st (rows'.map fun row => dvOf (row v)) [])
+    s.1
+  pure (st, log)
+
+/-- **#2729 fixed by #2968**: with the eager DELETE both splits of the #2729 rows succeed,
+as on C. -/
+theorem fixed2968_eager_delete_split_agnostic :
+    (pipelineEager rt8 0 (st0, []) [[row15, row15]]).toBool = true ∧
+    (pipelineEager rt8 0 (st0, []) [[row15], [row15]]).toBool = true := by
+  decide
+
 /-! ## #3164 — per-row commits recycle ids under stale row references
 
 `UNWIND [1,2] AS x MATCH (n:A) CALL { WITH n DETACH DELETE n RETURN 1 AS k UNION
@@ -272,8 +372,13 @@ def refSub : WSub NG (Nat × Nat) ((Nat × Nat) × Nat) Op where
 def bindIn (g : NG) (id : Nat) : Nat × Nat :=
   ((g.live.find? (·.1 == id)).getD (id, 0))
 
-/-- Rust's per-row Apply (`next_per_row`, `apply.rs:238-337`): one commit per row. -/
-def rustPerRow (g : NG) (ids : List Nat) : NG := (applyRefW rustSub g ids).2
+/-- `row_has_deleted_entity` (`apply.rs:291-311`) for the imported `n`: the id is no longer
+live.  A recycled id is live again, so it does not count as deleted. -/
+def goneId (g : NG) (id : Nat) : Bool := !(g.live.map Prod.fst).contains id
+
+/-- Rust's per-row Apply (`next_per_row`, `apply.rs:346-467`): one commit per row; the body
+deletes, so a row whose `n` is gone is skipped (#2968). -/
+def rustPerRow (g : NG) (ids : List Nat) : NG := (applyPerRowW rustSub true goneId g ids).2
 
 def refPerRow (g : NG) (ids : List Nat) : NG := (applyRefW refSub g (ids.map (bindIn g))).2
 

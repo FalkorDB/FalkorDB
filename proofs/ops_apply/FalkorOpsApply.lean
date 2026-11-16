@@ -25,13 +25,13 @@ asserts C's answer and FAILS today).
 | --- | --- |
 | `Correlated.tag`                          | `Batch::clone_active_rows_seq_origin` (`batch.rs:1163`) |
 | `Correlated.SubPlan`, `Separable`         | `run_batch` + `set_argument_batch` (`batch.rs:1590`); separability = origin-respecting, row-local |
-| `Correlated.applyBatched`                 | `ApplyOp::next_batched` (`apply.rs:152`), `merge_over_input` (`batch.rs:943`) |
-| `Correlated.applyPerRow`                  | `ApplyOp::next_per_row` (`apply.rs:238`) |
+| `Correlated.applyBatched`                 | `ApplyOp::next_batched` (`apply.rs:202`), `merge_over_input` (`batch.rs:943`) |
+| `Correlated.applyPerRow`, `pushAcc`       | `ApplyOp::next_per_row` (`apply.rs:346`), `push_acc`/`flush_acc` (`apply.rs:325`/`:313`) |
 | `Correlated.optionalBatched`              | `OptionalOp::next_batched` (`optional.rs:125`), Optional arm of `apply.rs:210-229` |
 | `Correlated.optionalPerRow`               | `OptionalOp::next_per_row` (`optional.rs:195`) |
 | `Correlated.semiBatched`                  | `SemiApplyOp::next` (`semi_apply.rs:66`) |
 | `Correlated.orApply`                      | `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73`) |
-| `Correlated.canBatchApply/Optional`       | `can_batch` in `ApplyOp::new` (`apply.rs:119`), `OptionalOp::new` (`optional.rs:104`) |
+| `Correlated.canBatchApply/Optional`       | `can_batch` in `ApplyOp::new` (`apply.rs:143`), `OptionalOp::new` (`optional.rs:104`) |
 | `Correlated.vhj`                          | `ValueHashJoinOp::next` (`value_hash_join.rs:366-446`) |
 | `Union.next`, `Union.St`                  | `UnionOp::next` (`union.rs:68`), `current`/`current_child` |
 | `ForEach.chunks`, `execList`, `runChunks` | `ForEachOp::execute_list` (`foreach.rs:86`) |
@@ -152,11 +152,11 @@ one outer row and read (or recycled) by a later one were outside every theorem.
 `RowWrites.WSub` adds the graph state, the queued writes and the Commit; batched Apply
 (`applyBatchedW`, one Commit per input batch) vs per-row (`applyRefW`, one per row).
 Properties stated (each refuted on main, each live-reproduced Rust vs C):
-* `WriteSeparable` — #2738, `bug2738_batched_call_hides_writes` (`can_batch` admits
-  Create/Delete/Set/Commit: `canBatchApply_admits_write`); fix target
+* `WriteSeparable` — #2738, `bug2738_batched_call_hides_writes` (`can_batch` admitted
+  Create/Delete/Set/Commit before #2968: `pre2968_canBatchApply_admits_write`; fixed by #2968: `canBatchApply_rejects_write`, `fixed2968_call_sees_writes`); fix target
   `applyBatchedW_eq_ref_of_readIndep`.
 * `PartitionInvariant` — #2729, `bug2729_batch_split_flips_endpoint_check`, built from
-  `CreateBatch.createRel` + `Delete.deleteBatch` streaming per batch.
+  `CreateBatch.createRel` + `Delete.deleteBatch` streaming per batch; fixed by #2968 (eager DELETE, `fixed2968_eager_delete_split_agnostic`).
 * `NoStaleAlias` — #3164, `bug3164_stale_ref_deletes_recycled_id` (per-row commits
   release ids that `IdSpace::reserve` reclaims while rows still hold them).
 

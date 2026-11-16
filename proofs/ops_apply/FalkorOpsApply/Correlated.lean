@@ -109,6 +109,29 @@ def applyRef {α β γ : Type} (merge : α → β → γ) (f : SubPlan α β) (x
 theorem applyPerRow_eq_ref {α β γ : Type} (merge : α → β → γ) (f : SubPlan α β) (xs : List α) :
     applyPerRow merge f xs = applyRef merge f xs := rfl
 
+/-- `ApplyOp::push_acc` (`apply.rs:325-344`, #2968): append a merged sub-plan batch `b` to
+the output being built (`acc`, the rows of `self.acc` concatenated, `flush_acc`
+`apply.rs:313-321`), keeping it within `B = BATCH_SIZE`; the rows that do not fit go to
+`overflow` and lead the next output batch. -/
+def pushAcc {γ : Type} (B : Nat) (acc b : List γ) : List γ × Option (List γ) :=
+  if b.length ≤ B - acc.length then (acc ++ b, none)
+  else (acc ++ b.take (B - acc.length), some (b.drop (B - acc.length)))
+
+/-- No row is lost, duplicated or reordered: per-row mode's re-batching leaves the
+flattened stream `applyPerRow` describes unchanged. -/
+theorem pushAcc_flatten {γ : Type} (B : Nat) (acc b : List γ) :
+    (pushAcc B acc b).1 ++ (pushAcc B acc b).2.getD [] = acc ++ b := by
+  unfold pushAcc
+  split <;> simp
+
+/-- An output batch never exceeds `BATCH_SIZE`. -/
+theorem pushAcc_le {γ : Type} (B : Nat) (acc b : List γ) (h : acc.length ≤ B) :
+    (pushAcc B acc b).1.length ≤ B := by
+  unfold pushAcc
+  split
+  · simp; omega
+  · simp [List.length_take]; omega
+
 /-- Key lemma: looking the origin back up in the (suffix-extended) input recovers
 exactly the row the result came from. -/
 theorem lookup_tagged {α β γ : Type} (merge : α → β → γ) (g : α → List β) :
@@ -392,13 +415,24 @@ inductive IRKind
   | scan | traverse | filter | project | unwind | pathBuilder | semiApply | orApply
   | aggregate | cartesian | valueHashJoin | optional | apply | merge | union
   | sort | limit | skip | distinct
-  /- The writing operators (`IR::Create`, `IR::Delete`, `IR::Set`/`IR::Remove`, `IR::Commit`,
-  `planner/mod.rs:91,102,107,109,308`); none is on the `can_batch` blacklist (see RowWrites.lean). -/
-  | create | delete | setProps | commit
+  /- The writing operators (`IR::Create`, `IR::Delete`, `IR::Set`, `IR::Remove`, `IR::Commit`,
+  `IR::ForEach`, `IR::CreateIndex`, `IR::DropIndex`); all on the `can_batch` blacklist since
+  #2968 (see RowWrites.lean). -/
+  | create | delete | setProps | commit | remove | forEach | createIndex | dropIndex
   deriving DecidableEq, Repr
 
-/-- `ApplyOp::new`'s `can_batch` (`apply.rs:119-133`). -/
+/-- The operators a CALL {} body may write with (`apply.rs:146-153`). -/
+def writeKinds : List IRKind :=
+  [.create, .setProps, .remove, .delete, .forEach, .createIndex, .dropIndex, .commit]
+
+/-- `ApplyOp::new`'s `can_batch` (`apply.rs:143-164`; writing operators blacklisted since
+#2968, fixing #2738). -/
 def canBatchApply (sub : List IRKind) : Bool :=
+  !sub.any (fun k => k ∈ writeKinds ++ [.aggregate, .cartesian, .optional, .apply, .merge, .union,
+                          .sort, .limit, .skip, .distinct])
+
+/-- `can_batch` before #2968 (`apply.rs:119-133` at 343e077f2): no writing operator listed. -/
+def canBatchApplyPre2968 (sub : List IRKind) : Bool :=
   !sub.any (fun k => k ∈ [.aggregate, .cartesian, .optional, .apply, .merge, .union,
                           .sort, .limit, .skip, .distinct])
 

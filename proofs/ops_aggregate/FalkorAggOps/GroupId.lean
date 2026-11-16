@@ -181,4 +181,68 @@ the id-keyed table gives 1, as the reference does. -/
 theorem fixed2977_collision_example :
     dcgIdGo 2 [] [] [(0, 7), (2, 7)] = 1 ∧ dcgRef 2 [] [(0, 7), (2, 7)] = 1 := by decide
 
+/-! ## Per-row `CALL {}` resets only its own DISTINCT state (#2968, fixes #2779)
+
+Since #2968 `consume_input_vectorized` / `consume_input_per_row` record each Aggregate's
+group count (`aggregate_group_counts`, aggregate.rs:789-794 / :926-931), and
+`ApplyOp::next_per_row` (apply.rs:382-397), after each sub-plan run, removes the entries
+`(distinct node, group)` for the sub-plan's own DISTINCT nodes (`sub_plan_distincts`,
+apply.rs:485) and `group < count` instead of clearing the whole runtime-wide table
+(`value_dedupers.clear()`, the #2779 bug `Ops.distinct_fold_clear_overcounts`). -/
+
+/-- Every group's id is below the group count (`groups.len()`), so `0..count` covers them. -/
+theorem gid_lt_length (gs : List K) (k : K) (h : k ∈ gs) : gid gs k < gs.length := by
+  induction gs with
+  | nil => simp at h
+  | cons x xs ih =>
+    simp only [gid, List.length_cons]
+    by_cases hx : x = k
+    · simp [hx]
+    · have : k ∈ xs := by simpa [Ne.symm hx] using h
+      simp [hx]; have := ih this; omega
+
+/-- The DISTINCT table as entries `((distinct node, group id), value)`; the reset removes
+the entries of the sub-plan's nodes `ds` with a group below `n`. -/
+def resetDistincts (ds : List Nat) (n : Nat) (m : List ((Nat × Nat) × Nat)) :
+    List ((Nat × Nat) × Nat) :=
+  m.filter (fun e => !(ds.contains e.1.1 && decide (e.1.2 < n)))
+
+/-- An enclosing aggregate's DISTINCT state (a node outside the sub-plan) survives. -/
+theorem resetDistincts_keeps_outer (ds : List Nat) (n o : Nat) (m : List ((Nat × Nat) × Nat))
+    (ho : o ∉ ds) :
+    (resetDistincts ds n m).filter (fun e => e.1.1 == o) = m.filter (fun e => e.1.1 == o) := by
+  unfold resetDistincts
+  rw [List.filter_filter]
+  apply List.filter_congr
+  intro e _
+  by_cases h : e.1.1 = o
+  · subst h; simp [ho]
+  · simp [h]
+
+/-- The sub-plan's own state is gone when every group id is below the count
+(`gid_lt_length`): the next invocation starts fresh. -/
+theorem resetDistincts_clears_inner (ds : List Nat) (n : Nat) (m : List ((Nat × Nat) × Nat))
+    (hn : ∀ e ∈ m, e.1.1 ∈ ds → e.1.2 < n) :
+    ∀ e ∈ resetDistincts ds n m, e.1.1 ∉ ds := by
+  intro e he hd
+  unfold resetDistincts at he
+  rw [List.mem_filter] at he
+  have := hn e he.1 hd
+  simp [hd, this] at he
+
+/-- An outer `count(DISTINCT v)` (node `o`, group 0) fed batch by batch, with the per-row
+CALL reset of the sub-plan's nodes `ds` (count `n`) between batches. -/
+def countBatchesKeyed (o : Nat) (ds : List Nat) (n : Nat) :
+    List ((Nat × Nat) × Nat) → List (List Nat) → Nat
+  | _, [] => 0
+  | m, b :: bs =>
+    let d := dedupBy id ((m.filter (fun e => e.1 == (o, 0))).map Prod.snd) b
+    d.length + countBatchesKeyed o ds n (resetDistincts ds n (m ++ d.map (fun v => ((o, 0), v)))) bs
+
+/-- **#2779 fixed by #2968**: the #2779 shape (`UNWIND range(1,3000) AS i CALL { WITH i
+RETURN i % 2 AS v LIMIT 1 } RETURN count(DISTINCT v)`, 3 batches of `[1,0]`) counts 2, as
+C, where the whole-table clear counted 6 (`Ops.distinct_fold_clear_overcounts`). -/
+theorem fixed2968_outer_distinct_survives_call :
+    countBatchesKeyed 7 [3] 1 [] [[1, 0], [1, 0], [1, 0]] = 2 := by decide
+
 end FalkorAggOps.GroupId

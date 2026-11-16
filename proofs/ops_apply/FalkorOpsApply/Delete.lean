@@ -1,3 +1,4 @@
+import FalkorOpsApply.Correlated
 /-
 DELETE (graph/src/runtime/ops/delete.rs).
 
@@ -5,12 +6,12 @@ DELETE (graph/src/runtime/ops/delete.rs).
 | --- | --- |
 | `attrsToMap`               | `node_attrs_to_map` (delete.rs:39), `rel_attrs_to_map` (:50) |
 | `snapshotRequired`         | `snapshot_required` (delete.rs:70) |
-| `DeleteSt.new`             | `DeleteOp::new` (delete.rs:94; `inspect ||` since #3462) |
-| `deleteNext`               | `DeleteOp::next` (delete.rs:116) |
-| `deleteBatch`, `scan`      | `Runtime::delete_batch` (delete.rs:130) |
-| `delNodesBulk`             | `delete_nodes_bulk` (delete.rs:213) |
-| `delRelsBulk`              | `delete_relationships_bulk` (delete.rs:319) |
-| `delEntity`                | `Runtime::delete_entity` (delete.rs:415) |
+| `DeleteSt.new`             | `DeleteOp::new` (delete.rs:102; `inspect ||` since #3462, `eager` since #2968) |
+| `deleteNext`, `deleteEager` | `DeleteOp::next` (delete.rs:135; streaming arm :155-164, eager arm :136-153 since #2968) |
+| `deleteBatch`, `scan`      | `Runtime::delete_batch` (delete.rs:168) |
+| `delNodesBulk`             | `delete_nodes_bulk` (delete.rs:251) |
+| `delRelsBulk`              | `delete_relationships_bulk` (delete.rs:357) |
+| `delEntity`                | `Runtime::delete_entity` (delete.rs:453) |
 
 State = the id sets the classification reads and writes: pending `created_nodes` (`pc`),
 pending `deleted_nodes` (`pd`), the graph's deleted/recycled node set (`gd`, which
@@ -46,7 +47,7 @@ inductive DV where
 
 def mismatch : String := "Delete type mismatch, expecting either Node or Relationship."
 
-/-- `delete_entity` (delete.rs:415): node arm :421-493, relationship :494-519, path :520-524, null :525, error :526-530.
+/-- `delete_entity` (delete.rs:453): node arm :459-531, relationship :532-557, path :558-562, null :563, error :564-568.
 A pending-created node is un-created and its id recycled (`delete_pending_node`, which
 calls `cancel_node_id`); a committed live node is pending-deleted. -/
 def delNode (st : St) (id : Nat) : St :=
@@ -118,9 +119,9 @@ theorem delEntity_spec (st : St) :
   · simp [delEntity, Except.map, delNode_gone]
   · simp [delEntity, Except.map, delRel_gone]
 
-/-! ## `delete_nodes_bulk` (delete.rs:213) -/
+/-! ## `delete_nodes_bulk` (delete.rs:251) -/
 
-/-- The classification loop (delete.rs:218-229): skip pending-deleted, delete pending-created
+/-- The classification loop (delete.rs:256-267): skip pending-deleted, delete pending-created
 now, collect live committed ones. -/
 def bulkScan : List Nat → St × List Nat → St × List Nat
   | [], acc => acc
@@ -130,7 +131,7 @@ def bulkScan : List Nat → St × List Nat → St × List Nat
     else if !st.gd id then bulkScan ids (st, com ++ [id])
     else bulkScan ids (st, com)
 
-/-- delete.rs:268-297 (the cascade and `deleted_node` marking): every collected id is pending-deleted. -/
+/-- delete.rs:306-335 (the cascade and `deleted_node` marking): every collected id is pending-deleted. -/
 def delNodesBulk (st : St) (ids : List Nat) : St :=
   let (st1, com) := bulkScan ids (st, [])
   { st1 with pd := fun j => com.contains j || st1.pd j }
@@ -204,9 +205,9 @@ theorem delNodesBulk_spec (st : St) (ids : List Nat) :
     · exact Or.inl (by simp [h])
     · exact Or.inr h
 
-/-! ## `delete_relationships_bulk` (delete.rs:319) -/
+/-! ## `delete_relationships_bulk` (delete.rs:357) -/
 
-/-- delete.rs:328-346: deduplicate with `seen`, skip pending-deleted, split pending-created
+/-- delete.rs:366-384: deduplicate with `seen`, skip pending-deleted, split pending-created
 from live committed. -/
 def relScan (st : St) : List Nat → List Nat → List Nat × List Nat → List Nat × List Nat
   | [], _, acc => acc
@@ -334,9 +335,9 @@ theorem delRelsBulk_spec (st : St) (rels : List Nat) :
   · simp only [Bool.or_eq_true, List.contains_iff_mem]; left; left; exact h
   · simp [b, c, h.1, h.2]
 
-/-! ## `delete_batch` (delete.rs:130) -/
+/-! ## `delete_batch` (delete.rs:168) -/
 
-/-- The variable-tree scan (delete.rs:138-171), rows outer, variables inner. -/
+/-- The variable-tree scan (delete.rs:176-209), rows outer, variables inner. -/
 def scan (st : St) : List DV → Except String (St × List Nat × List Nat)
   | [] => .ok (st, [], [])
   | v :: vs => match v with
@@ -459,30 +460,50 @@ structure DeleteSt (C T : Type) where
   child : C
   trees : T
   snapshot : Bool
+  /-- since #2968: drain the child before deleting anything (delete.rs:117-126) -/
+  eager : Bool
 
-/-- delete.rs:94-108: since #3462 `snapshot = runtime.inspect || snapshot_required(..)`:
+/-- The operators whose presence in DELETE's subtree makes it eager
+(delete.rs:117-126, #2968): a writing child of a later batch must still see entities an
+earlier batch deleted. -/
+def eagerKinds : List Correlated.IRKind := [.create, .merge, .setProps, .remove, .forEach]
+
+/-- delete.rs:102-129: since #3462 `snapshot = runtime.inspect || snapshot_required(..)`:
 `GRAPH.RECORD` reads the rows every operator produced, so it snapshots even when no
-operator above DELETE reads them. -/
-def DeleteSt.new {C T : Type} (inspect : Bool) (child : C) (trees : T) (ancestorsCommit : List Bool) :
-    DeleteSt C T :=
-  { child, trees, snapshot := inspect || snapshotRequired ancestorsCommit }
+operator above DELETE reads them.  Since #2968 `eager = subtree_contains(.., Create | Merge |
+Set | Remove | ForEach)`; `sub` lists the IR kinds of DELETE's subtree. -/
+def DeleteSt.new {C T : Type} (inspect : Bool) (child : C) (trees : T) (ancestorsCommit : List Bool)
+    (sub : List Correlated.IRKind) : DeleteSt C T :=
+  { child, trees, snapshot := inspect || snapshotRequired ancestorsCommit,
+    eager := sub.any (· ∈ eagerKinds) }
 
-theorem deleteNew_spec {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool) :
-    (DeleteSt.new i c t anc).snapshot = (i || anc.any (!·)) ∧ (DeleteSt.new i c t anc).child = c := by
+theorem deleteNew_spec {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool)
+    (sub : List Correlated.IRKind) :
+    (DeleteSt.new i c t anc sub).snapshot = (i || anc.any (!·)) ∧
+      (DeleteSt.new i c t anc sub).child = c := by
   exact ⟨by simp [DeleteSt.new, snapshotRequired_spec], rfl⟩
 
 /-- #3462: under `GRAPH.RECORD` the snapshot is always on, even when every ancestor is a
 `Commit` (the case that skipped it before). -/
-theorem deleteNew_inspect_snapshots {C T : Type} (c : C) (t : T) (anc : List Bool) :
-    (DeleteSt.new true c t anc).snapshot = true := by
+theorem deleteNew_inspect_snapshots {C T : Type} (c : C) (t : T) (anc : List Bool)
+    (sub : List Correlated.IRKind) :
+    (DeleteSt.new true c t anc sub).snapshot = true := by
   simp [DeleteSt.new]
 
 /-- Without `inspect` the decision is the pre-#3462 one. -/
-theorem deleteNew_no_inspect {C T : Type} (c : C) (t : T) (anc : List Bool) :
-    (DeleteSt.new false c t anc).snapshot = snapshotRequired anc := by
+theorem deleteNew_no_inspect {C T : Type} (c : C) (t : T) (anc : List Bool)
+    (sub : List Correlated.IRKind) :
+    (DeleteSt.new false c t anc sub).snapshot = snapshotRequired anc := by
   simp [DeleteSt.new]
 
-/-- delete.rs:116-127: one child batch, `delete_batch`, pass the batch (or error) on. -/
+/-- #2968: DELETE is eager exactly when its subtree holds a writing operator. -/
+theorem deleteNew_eager_spec {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool)
+    (sub : List Correlated.IRKind) :
+    (DeleteSt.new i c t anc sub).eager = true ↔ ∃ k ∈ sub, k ∈ eagerKinds := by
+  simp [DeleteSt.new]
+
+/-- delete.rs:155-164 (the streaming arm, `eager = false`): one child batch,
+`delete_batch`, pass the batch (or error) on. -/
 def deleteNext {B : Type} (del : B → Except String Unit) : Option (Except String B) → Option (Except String B)
   | none => none
   | some (.error e) => some (.error e)
@@ -493,5 +514,37 @@ theorem deleteNext_spec {B : Type} (del : B → Except String Unit) (x : Option 
   cases x with
   | none => rfl
   | some eb => cases eb <;> rfl
+
+/-- delete.rs:136-153 (the eager arm, #2968), flattened over the stream: drain the child
+(the first child error is returned), then `delete_batch` every drained batch in order (the
+first delete error is returned), then replay the batches unchanged. -/
+def deleteEager {B : Type} (del : B → Except String Unit) (child : List (Except String B)) :
+    Except String (List B) := do
+  let bs ← child.mapM id
+  bs.forM del
+  pure bs
+
+theorem mapM_ok {B : Type} (bs : List B) :
+    (bs.map (Except.ok (ε := String))).mapM id = .ok bs := by
+  induction bs with
+  | nil => rfl
+  | cons b bs ih =>
+    simp only [List.map_cons, List.mapM_cons, id, ih]
+    rfl
+
+/-- On an error-free child the eager arm deletes every batch, then emits exactly the
+child's batches, in order: the rows are the streaming arm's, only the delete timing moves. -/
+theorem deleteEager_spec {B : Type} (del : B → Except String Unit) (bs : List B) :
+    deleteEager del (bs.map .ok) = (bs.forM del).map (fun _ => bs) := by
+  simp only [deleteEager, mapM_ok]
+  show (do bs.forM del; pure bs : Except String (List B)) = _
+  cases bs.forM del <;> rfl
+
+/-- A child error is returned before any delete runs. -/
+theorem deleteEager_child_error {B : Type} (del : B → Except String Unit) (e : String)
+    (bs : List B) (rest : List (Except String B)) :
+    deleteEager del (bs.map .ok ++ .error e :: rest) = .error e := by
+  simp only [deleteEager, List.mapM_append, mapM_ok]
+  rfl
 
 end Delete
