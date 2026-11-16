@@ -11,7 +11,7 @@ import VersionedMatrix.Policy
 | `extract`     | `extract` (:977) |
 | `rebuildBackward` | `rebuild_backward` (:998) |
 | `waitFwd`/`waitT`/`waitBase`/`waitAll`/`isSyncedT` | :421 / :1403 / :1414 / :1423 / :1436 |
-| `memoryUsage` | :1445 |
+| `memoryUsage`/`derivedMem` | :1631 / `Derived::memory_usage` (:321) |
 | `flushT`/`foldLatched`/`foldOversized` | :880 / :937 / :955 |
 | `dupT`        | `dup` (:1009) |
 | `resizeT`     | `resize` (:823; model in `TensorResize.lean`) |
@@ -208,9 +208,24 @@ theorem waitT_st (t : TT) : (waitT t).st = t.st ∧ (waitT t).nf = t.nf := by
 theorem waitT_me_synced (t : TT) : ∀ e ∈ (waitT t).me, e.synced = true := by
   intro e he; simp [waitT, syncAll] at he; obtain ⟨a, _, rfl⟩ := he; rfl
 
-def memoryUsage (fwd mt : Nat) (meMem : MeB → Nat) (t : TT) : Nat := fwd + mt + (t.me.map meMem).sum
-theorem memoryUsage_eq (fwd mt : Nat) (meMem : MeB → Nat) (t : TT) :
-    memoryUsage fwd mt meMem t = fwd + mt + (t.me.map meMem).sum := rfl
+/-- `Derived::memory_usage` (tensor.rs:321, #3639): bytes of the four lazily-built
+caches (`added`, `surplus`, `surplus_t`, `merged`); `none` = not built yet (or built
+as `None`), which `OnceLock::get` reports without building it. -/
+def derivedMem (added surplus surplusT merged : Option Nat) : Nat :=
+  added.getD 0 + surplus.getD 0 + surplusT.getD 0 + merged.getD 0
+theorem derivedMem_fresh : derivedMem none none none none = 0 := rfl
+
+/-- `Tensor::memory_usage` (:1631): `fwd` = `m + dp + dm`, `mt`, every `me`, plus
+the derived caches built so far (`dv` = `derivedMem ..`, #3639). -/
+def memoryUsage (fwd mt : Nat) (meMem : MeB → Nat) (dv : Nat) (t : TT) : Nat :=
+  fwd + mt + (t.me.map meMem).sum + dv
+theorem memoryUsage_eq (fwd mt : Nat) (meMem : MeB → Nat) (dv : Nat) (t : TT) :
+    memoryUsage fwd mt meMem dv t = fwd + mt + (t.me.map meMem).sum + dv := rfl
+/-- With no cache built (a fresh `Derived`, as every mutator leaves it) the figure
+is the pre-#3639 one. -/
+theorem memoryUsage_fresh (fwd mt : Nat) (meMem : MeB → Nat) (t : TT) :
+    memoryUsage fwd mt meMem (derivedMem none none none none) t
+      = fwd + mt + (t.me.map meMem).sum := rfl
 
 /-! ## flush / fold_latched / fold_oversized / dup -/
 

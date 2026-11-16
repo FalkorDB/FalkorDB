@@ -4,7 +4,7 @@
 | here | there |
 | --- | --- |
 | `Anc`                 | the `IR` variants the walks distinguish, `runtime/runtime.rs:687-706`, `:716-742` |
-| `effectiveLimit`      | `Runtime::effective_limit`, `runtime/runtime.rs:681-711` |
+| `effectiveLimit`      | `Runtime::effective_limit`, `runtime/runtime.rs:694-727` (#3639: a traverse with `sibling_edges` is a barrier) |
 | `effectiveSkip`       | `Runtime::effective_skip`, `runtime/runtime.rs:716-742` |
 | `recordCap`           | `Runtime::record_cap`, `runtime/runtime.rs:748-754` |
 | `Anc.sem`, `run`      | what each ancestor does to the row stream it pulls (LimitOp / SkipOp / ProjectOp / CondTraverseOp / ExpandIntoOp) |
@@ -26,22 +26,28 @@ namespace RuntimeCore.Budget
 
 /-- The ancestors the walks distinguish. `project g` is any 1:1 operator the walks treat
 as transparent (`Project`); `traverse f` is `CondTraverse`/`ExpandInto`, which map one
-input row to an arbitrary list of rows (possibly empty); `other h` is any barrier. -/
+input row to an arbitrary list of rows (possibly empty); `sib` is
+`!sibling_edges.is_empty()` (#3639: such a traverse is a barrier for `effective_limit`);
+`other h` is any barrier. -/
 inductive Anc (α : Type) where
   | limit (n : Nat)
   | skip (n : Nat)
   | project (g : α → α)
-  | condTraverse (f : α → List α)
-  | expandInto (f : α → List α)
+  | condTraverse (f : α → List α) (sib : Bool := false)
+  | expandInto (f : α → List α) (sib : Bool := false)
   | other (h : List α → List α)
 
 variable {α : Type}
 
-/-- `Runtime::effective_limit` (`runtime.rs:681-711`). -/
+/-- `Runtime::effective_limit` (`runtime.rs:694-727`): `Project`/`Skip` and a
+`CondTraverse`/`ExpandInto` with empty `sibling_edges` pass; a traverse with siblings
+(#3639) and everything else is a barrier. -/
 def effectiveLimit : List (Anc α) → Option Nat
   | [] => none
   | .limit n :: _ => some n
-  | .project _ :: r | .skip _ :: r | .condTraverse _ :: r | .expandInto _ :: r => effectiveLimit r
+  | .project _ :: r | .skip _ :: r | .condTraverse _ false :: r | .expandInto _ false :: r =>
+    effectiveLimit r
+  | .condTraverse _ true :: _ | .expandInto _ true :: _ => none
   | .other _ :: _ => none
 
 /-- `Runtime::effective_skip` (`runtime.rs:716-742`): the *first* `Skip` reached through
@@ -61,8 +67,8 @@ def Anc.sem : Anc α → List α → List α
   | .limit n, xs => xs.take n
   | .skip n, xs => xs.drop n
   | .project g, xs => xs.map g
-  | .condTraverse f, xs => xs.flatMap f
-  | .expandInto f, xs => xs.flatMap f
+  | .condTraverse f _, xs => xs.flatMap f
+  | .expandInto f _, xs => xs.flatMap f
   | .other h, xs => h xs
 
 /-- The rows reaching the top of the chain. -/
@@ -109,7 +115,7 @@ theorem need_sound : ∀ (as : List (Anc α)) (c : Nat), need as = some c →
     simp only [run, Anc.sem]
     rw [List.map_take]
     exact need_sound r c h _
-  | .condTraverse _ :: _, _, h, _ | .expandInto _ :: _, _, h, _ | .other _ :: _, _, h, _ => by
+  | .condTraverse _ _ :: _, _, h, _ | .expandInto _ _ :: _, _, h, _ | .other _ :: _, _, h, _ => by
     simp [need] at h
 
 /-- **PROVEN**: any budget at least `need` is sound too. -/
@@ -222,5 +228,20 @@ the correctness proof of that fix. On the soft consumers (`BatchedResultEmitter`
 current value is harmless — see `Emitter.emitAll_flatten`. -/
 theorem need_is_barrier_at_traverse (f : α → List α) (r : List (Anc α)) :
     need (.condTraverse f :: r) = none ∧ need (.expandInto f :: r) = none := ⟨rfl, rfl⟩
+
+/-- **PROVEN** (#3639): a traverse with sibling edges (relationship uniqueness) is a
+barrier for `effective_limit`, so `record_cap` gives the operators beneath it no cap. -/
+theorem effectiveLimit_sibling_barrier (f : α → List α) (r : List (Anc α)) :
+    effectiveLimit (.condTraverse f true :: r) = none ∧
+    effectiveLimit (.expandInto f true :: r) = none ∧
+    recordCap (.condTraverse f true :: r) = none ∧
+    recordCap (.expandInto f true :: r) = none := ⟨rfl, rfl, rfl, rfl⟩
+
+/-- **PROVEN** (#3639): beneath a traverse with sibling edges the hard cap is sound. -/
+theorem hardCap_sound_sibling_traverse (f : α → List α) (r : List (Anc α)) (xs : List α) :
+    run (.condTraverse f true :: r) (hardCap (recordCap (.condTraverse f true :: r)) xs) =
+      run (.condTraverse f true :: r) xs ∧
+    run (.expandInto f true :: r) (hardCap (recordCap (.expandInto f true :: r)) xs) =
+      run (.expandInto f true :: r) xs := ⟨rfl, rfl⟩
 
 end RuntimeCore.Budget

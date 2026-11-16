@@ -5,12 +5,12 @@ import OpsTraverse.Basic
 | here | there |
 | --- | --- |
 | `RowIn`                  | the endpoint bindings `from_id` / `to_id` read at `cond_traverse.rs:915-928` and the sibling-edge columns read by `edge_already_used` (`runtime/ops/mod.rs:155`) |
-| `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs:1235-1316`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
-| `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs:900-1118`): forward scan, then the reverse scan with `s != d` (`:1050`, `:1062`; the multi-type twin `expand_union_row` :1121, `UnionGlue`) for bidirectional patterns |
-| `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs:125-245`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` (`:183-184`) |
+| `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs:1735`; the #3639 id-free rows are `PathCount.processPairsIdFree`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
+| `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs:1401`; the multi-type twin `expand_union_row` :1618, `UnionGlue`): forward scan, then the reverse scan with `s != d` for bidirectional patterns; since #3639 `emit` is forced on `multi_edge` (`PathCount.expandRowEff`) |
+| `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs:126`; #3639 `emit || multi_edge`: `PathCount.expandIntoEff`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` (`:183-184`) |
 | `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`cond_traverse.rs:86-112`, `graphblas/matrix.rs:1520`; proved in `UnionGlue.deltaInto_eff`, `GBWDelta.deltaLmxm_correct`) |
 | `mxmRef`                 | a reference implementation proving `MxmSpec` is satisfiable |
-| `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs:742-747`) |
+| `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs:925`; #3639 counts paths: `PathCount.cchain`) |
 
 The GraphBLAS primitive is not given an `axiom`: every theorem about the
 batched path takes an arbitrary `mxm` together with a proof of `MxmSpec mxm`,

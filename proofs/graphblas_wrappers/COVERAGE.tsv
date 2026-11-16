@@ -1216,15 +1216,14 @@ graph/src/graph/graphblas/matrix.rs	Matrix<f64>::set	1686	NOT COVERED	TEST-ONLY:
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::build	1706	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::extract_tuples	1488	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	Matrix::pattern_outside	1104	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/matrix.rs	Matrix::count_product	1418	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/matrix.rs	Matrix::add_excess_product	1445	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/matrix.rs	Matrix::excess_paths	1470	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/matrix.rs	Matrix::count_lmxm	1504	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/matrix.rs	Matrix::count_lmxm_layers	1518	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/matrix.rs	Matrix::add_counted_product	1584	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/matrix.rs	Matrix::add_counts	1606	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/matrix.rs	Matrix::build	1865	NOT COVERED	(#3202): not modelled yet
-graph/src/graph/graphblas/tensor.rs	Derived::memory_usage	321	NOT COVERED	(#3202): not modelled yet
+graph/src/graph/graphblas/matrix.rs	Matrix::count_product	1420	NOT COVERED	(#3202): not modelled yet
+graph/src/graph/graphblas/matrix.rs	Matrix::add_excess_product	1448	NOT COVERED	(#3202): not modelled yet
+graph/src/graph/graphblas/matrix.rs	Matrix::excess_paths	1473	NOT COVERED	(#3202): not modelled yet
+graph/src/graph/graphblas/matrix.rs	Matrix::count_lmxm	1507	NOT COVERED	(#3202): not modelled yet
+graph/src/graph/graphblas/matrix.rs	Matrix::count_lmxm_layers	1521	NOT COVERED	(#3202): not modelled yet
+graph/src/graph/graphblas/matrix.rs	Matrix::add_counted_product	1587	NOT COVERED	(#3202): not modelled yet
+graph/src/graph/graphblas/matrix.rs	Matrix::add_counts	1609	NOT COVERED	(#3202): not modelled yet
+graph/src/graph/graphblas/matrix.rs	Matrix::build	1868	NOT COVERED	(#3202): not modelled yet
 graph/src/graph/graphblas/tensor.rs	Tensor::iter_multi_edges	1370	NOT COVERED	(#3202): not modelled yet
 graph/src/graph/graphblas/tensor.rs	Tensor::added_layer	1387	NOT COVERED	(#3202): not modelled yet
 graph/src/graph/graphblas/tensor.rs	Tensor::merged_layer	1405	NOT COVERED	(#3202): not modelled yet

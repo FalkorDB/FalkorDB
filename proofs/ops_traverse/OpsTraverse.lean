@@ -19,6 +19,7 @@ import OpsTraverse.PathVlt
 import OpsTraverse.ExpandIntoPending
 import OpsTraverse.UnionStream
 import OpsTraverse.UnionGlue
+import OpsTraverse.PathCount
 
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
