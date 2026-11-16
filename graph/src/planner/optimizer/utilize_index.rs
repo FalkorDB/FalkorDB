@@ -828,7 +828,10 @@ fn needs_post_filter(
             let node = filter.node(i);
             matches!(node.data(), ExprIR::In)
                 && node.num_children() == 2
-                && matches!(node.child(1).data(), ExprIR::Property(_))
+                && filter
+                    .node(node.child(1).idx())
+                    .indices::<Bfs>()
+                    .any(|j| matches!(filter.node(j).data(), ExprIR::Property(_)))
         });
     if or_with_array_probe {
         return true;

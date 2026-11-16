@@ -1626,6 +1626,8 @@ class testIndexScanFlow():
         queries = [
             "MATCH (n:AP) WHERE 1 IN n.a OR 2 IN n.a RETURN n.a",
             "MATCH ()-[r:APR]->() WHERE 1 IN r.a OR 2 IN r.a RETURN r.a",
+            "MATCH (n:AP) WHERE 1 IN (n.a + 0) OR 2 IN (n.a + 0) RETURN n.a",
+            "MATCH ()-[r:APR]->() WHERE 1 IN (r.a + 0) OR 2 IN (r.a + 0) RETURN r.a",
         ]
 
         def outcome(g, q):

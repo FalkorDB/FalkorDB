@@ -46,7 +46,7 @@ graph/src/planner/optimizer/utilize_index.rs	list_has_nested_list	582	PROVEN	Cle
 graph/src/planner/optimizer/utilize_index.rs	try_in_filter_scan	602	PROVEN	Index.trySingle inn arm; sel_inList, trySingle_spec; IndexCex C7/C8/C9 counterexamples
 graph/src/planner/optimizer/utilize_index.rs	try_single_filter_scan	658	PROVEN	Index.trySingle; trySingle_spec
 graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	727	PROVEN	Index.tryPushdown/pushAnd/pushOr; pushAnd_spec, pushOr_spec, utilize_sound (an array-contains conjunct keeps its filter since #3736: C10 now states agreement)
-graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	802	PROVEN	Index.needsPost; used in utilize_sound (¬keep ⇒ canUtilize); IndexCex C3/C4 (Date/computed constants)
+graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	802	NOT COVERED	(#3750): an OR holding an array probe (x IN <expr over a property>) now always keeps the filter; Index.needsPost does not model that guard yet
 graph/src/planner/optimizer/utilize_index.rs	is_non_indexable_subexpr	855	PROVEN	Cleanup.nonIdxD_spec
 graph/src/planner/optimizer/utilize_index.rs	rewrite_until_stable	881	PROVEN	Cleanup.untilStable_preserves, untilStable_stable
 graph/src/planner/optimizer/utilize_index.rs	governing_filter	920	PROVEN	Cleanup.governingFilter: governingFilter_spec (parent Filter, or grandparent across one single-child IncludePending ⇒ over_pending)
