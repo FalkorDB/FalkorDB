@@ -19,9 +19,18 @@ import OpsTraverse.PathVlt
 import OpsTraverse.ExpandIntoPending
 import OpsTraverse.UnionStream
 import OpsTraverse.UnionGlue
+import OpsTraverse.CondTraversePending
 
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
+
+**PR #3577** (CondTraverse reads `Pending`): `CondTraversePending.lean` models `process_pairs`,
+`expand_row`, `expand_union_row` and `expand_batch` with uncommitted deletes (`CTP.processPairsP`,
+`expandRowPend`, `expandUnionRowP`, `batchedP`); with nothing pending each is literally the earlier
+model (`*_empty`), so every earlier theorem is its no-pending instance; with deletes the match set
+is the effective graph's (`emitP_directed_iff`, `emitP_bidir_iff`, `collapseP_directed_iff`,
+`union_emitP_directed_iff`), collapse keeps one row per pair, the batched path equals the per-row
+collapse (`batchedP_eq_collapse`) and `LiveCondTraverse` holds (`expandRowPend_live`).
 
 **Re-targeted to main ee21013d6** (from e860645bb): #3112 (fixes #3108) flips the allShortestPaths
 edge list to src→dst for cycles too (`all_shortest_paths.rs:283-289`: `if !reverse { path.reverse() }`, no
@@ -46,7 +55,7 @@ moved (`expand_row` +151 from `:749`, `process_pairs` +291 from `:944`). The pro
 check to `ExpandIntoOp::expand_row` (`expand_into.rs:158-160`); `expandIntoP` is now the fixed
 model and satisfies `LiveExpandInto` (`expandIntoP_live`); the pre-#3463 counterexamples
 were removed in bbee75955 (the last revision that has them is 17ccc5412); `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
-`Pending` (`bug_condTraverse_*`).
+`Pending` (then `bug_condTraverse_*`, now `pre3577_condTraverse_*`: fixed by #3577).
 
 **Re-targeted to main 5e475e6c9** (from b84473a7f). #2383 (index serves `IN [...]` natively): the node and
 edge index scans now hand the evaluated list to the index as ONE `InList` instead of an `Or` of `Equal`s
@@ -211,11 +220,14 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    is `is_node_deleted`. Property `EIP.LiveExpandInto` is proved for main
    (`EIP.expandIntoP_live`); the old counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412.
 
-11. **#3463 follow-up: CondTraverse still matches an edge of a pending-deleted node**
-   (`cond_traverse.rs` never reads `Pending`; `expand_row` `:900`, `process_pairs` `:1235`).
-   `MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)` takes the CondTraverse path
-   (`x` unbound) and matches the doomed edge. Property `EIP.LiveCondTraverse`; Lean
-   `EIP.bug_condTraverse_main_violates`, `bug_condTraverse_matches_doomed_edge`. Not fixed.
+11. **#3463 follow-up: CondTraverse matched an edge of a pending-deleted node** — FIXED by
+   #3577: `process_pairs` (`cond_traverse.rs:1293-1296`, `:1333`, `:1355`) skips pending-deleted
+   endpoints and edges, `expand_batch` drops deleted sources/destinations and falls back to the
+   per-row path when an edge is pending-deleted (`:717-722`, `:746-748`, `:816-818`), and
+   `fuse_anonymous_traverse` does not fuse a plan containing a `Delete`. Property
+   `EIP.LiveCondTraverse` proved for the new model (`CTP.expandRowPend_live`,
+   `CTP.expandUnionRowP_live`); the old counterexample is kept as
+   `EIP.pre3577_condTraverse_violates`, `pre3577_condTraverse_matches_doomed_edge`.
 
 Gaps closed 2026-10-22: PathBuilder's `Value::Path` (var-length) branch is modelled
 (`PathVlt.lean`, catches #3451); ExpandInto reads pending deletes (`ExpandIntoPending.lean`,
