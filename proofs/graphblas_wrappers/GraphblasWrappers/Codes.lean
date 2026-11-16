@@ -112,6 +112,8 @@ theorem hardened_eq_blob (i : Info) :
 attacker-controlled decode of the five component vectors goes through
 `Vector::<bool>::decode` — the hardened, propagating path — so `Matrix::decode`
 does not add a code-assertion DoS beyond the container leak (see `Own`/report).
+Since #3080 both calls propagate their code as `Err` and the leak is fixed
+(`MatrixDecode.run_no_leak`, `MatrixDecode.decode_never_dies`).
 Its `GrB_Matrix_new(_, GrB_BOOL, 0, 0)` always satisfies the dimension bound. -/
 
 /-- The internal `GrB_Matrix_new(_, _, 0, 0)` in `Matrix::decode` always

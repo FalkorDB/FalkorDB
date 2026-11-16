@@ -36,7 +36,8 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 | `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1266 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
 | `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1617, per-entry check :1632-1636, final count check :1665-1670 (#3033) |
 | `Misc.grownOk`, `iterExpand`, `iterEdges`, `VIter` | `Matrix::grown` matrix.rs:739, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `Tensor::iter_edges` :1293, `vector::Iter::new`/`next` vector.rs:603-655 (cursor state machine; the C iterator contract is the model `cExhausted`) |
-| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:526, header pointers nulled :550-558 (#3097) |
+| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:623, header pointers nulled :650-659 (#3097); components written as `Vector<Untyped>` (#3080, same body) |
+| `MatrixDecode.parse`/`knownFormat`/`run` | `Decode<19> for Matrix` matrix.rs:529 (#3080): `ContainerHeader::parse` :498, `field` :502, format check :547-558, `OwnedContainer` `new` :452 / `replace` :463 / `drop` :476 |
 | `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1631-1768 (#3492: `F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
 | `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :498 / `ptr` :492, `Matrix::count_in_rows` matrix.rs:811 (#3022) |
 
@@ -92,7 +93,12 @@ entries in the selected rows — the double-counting argument over columns), `co
    `iter_edges` yields a phantom edge (7,9,3). Test
    `bug_tensor_decode_accepts_orphan_me_row_then_edge_count_panics`. Fix: in
    decode, require the pair's forward value to be a multi-edge marker.
-3. **`Matrix::decode` leaks 5 heap blocks per matrix** (matrix.rs:467):
+3. **`Matrix::decode` leaked 5 heap blocks per matrix — FIXED by #3080**
+   (`MatrixDecode.run_no_leak`: no double free, `Err` leaves nothing live, `Ok`
+   leaves only the returned matrix and its arrays; `run_ok_iff`, `decode_never_dies`,
+   `parse_ok_iff`/`parse_refuses_non_bool_flag`, `accepts_encoded`; history
+   `pre3080_success_leaks_five_slots`, `pre3080_error_leaks_container`; text below is
+   the pre-#3080 state) (then matrix.rs:467):
    `copy_nonoverlapping` overwrites the p/h/b/i/x vectors `GxB_Container_new`
    allocated. Every RDB load / RESTORE / full sync. 8 blocks per call on the `?`
    error paths (container + decoded components). Tests
@@ -139,5 +145,6 @@ import GraphblasWrappers.Decode
 import GraphblasWrappers.Misc
 import GraphblasWrappers.Glue
 import GraphblasWrappers.Serial
+import GraphblasWrappers.MatrixDecode
 import GraphblasWrappers.Bulk
 import GraphblasWrappers.DeltaLmxm
