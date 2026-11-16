@@ -4,7 +4,8 @@
 | here | there |
 | --- | --- |
 | `passes`, `optimize` | `optimize` optimizer/mod.rs:125-168 (pass order; NestedPlans recursion) |
-| `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs:80-99 |
+| `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs:103-123 |
+| `hasTarget`, `replaceHJ` | `has_filter_over_cartesian`, `replace_cartesian_with_hash_join` replace_cartesian_with_hash_join.rs:73-99 |
 | `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs:389-466 |
 | `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs:58-83 |
 | `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs:90-181 |
@@ -13,7 +14,9 @@
   transitive), so does `optimize`; `optimize_nested` — each nested plan is
   optimized independently; `passes_order` — the exact order (reduce_var_len_path twice).
 * `rebuildHJ_id` (no rewrite: a plain copy) and `rebuildHJ_sound` (a
-  congruence `R` + sound local rewrites ⇒ the rebuilt tree is `R`-equal).
+  congruence `R` + sound local rewrites ⇒ the rebuilt tree is `R`-equal);
+  `replaceHJ_eq_rebuildHJ`: skipping the rebuild when no `Filter -> CartesianProduct`
+  exists (`rebuildHJ_skip`) equals always rebuilding.
 * `rebuildCP_*`: identity off the target; at the target the CartesianProduct
   children are permuted (`splitCP_perm`) with the conjunct over the extracted ones.
 * `findVlt_spec`, `absorb_correct`: under the per-edge reading of an edge-only
@@ -136,6 +139,48 @@ termination_by fuel t => (fuel, sizeOf t)
 decreasing_by
   · simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; right; omega
   · simp_wf; omega
+
+/-- `has_filter_over_cartesian` (replace_cartesian_with_hash_join.rs:91-99):
+does any node of the tree satisfy `tgt` (a `Filter` whose child 0 is a
+`CartesianProduct`)? -/
+def hasTarget (tgt : T D → Bool) : T D → Bool
+  | .node d cs => tgt (.node d cs) || cs.attach.any fun ⟨c, _⟩ => hasTarget tgt c
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; omega
+
+/-- With no target node, the rebuild is a plain copy (the rewrite only fires
+on a target, the guard of `rebuild_with_hash_joins`). -/
+theorem rebuildHJ_skip (rw : T D → Option (T D)) (tgt : T D → Bool)
+    (hrw : ∀ t, tgt t = false → rw t = none) :
+    ∀ fuel t, hasTarget tgt t = false → rebuildHJ rw fuel t = t
+  | 0, t, _ => by rw [rebuildHJ]
+  | fuel + 1, .node d cs, h => by
+    rw [hasTarget] at h
+    simp only [Bool.or_eq_false_iff, List.any_eq_false] at h
+    have ih : ∀ c ∈ cs, rebuildHJ rw (fuel + 1) c = c := fun c hc =>
+      rebuildHJ_skip rw tgt hrw (fuel + 1) c (by
+        have := h.2 ⟨c, hc⟩ (List.mem_attach _ _)
+        simpa using this)
+    rw [rebuildHJ, hrw _ h.1]
+    simp only
+    congr 1
+    rw [List.attach_map_val (f := fun x => rebuildHJ rw (fuel + 1) x), List.map_congr_left ih, List.map_id']
+termination_by fuel t => (fuel, sizeOf t)
+decreasing_by simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; right; omega
+
+/-- `replace_cartesian_with_hash_join` (replace_cartesian_with_hash_join.rs:73-86):
+skip the rebuild when no `Filter -> CartesianProduct` exists. -/
+def replaceHJ (rw : T D → Option (T D)) (tgt : T D → Bool) (fuel : Nat) (t : T D) : T D :=
+  if hasTarget tgt t then rebuildHJ rw fuel t else t
+
+/-- The early return (#3468) changes nothing: the pass equals the unconditional rebuild. -/
+theorem replaceHJ_eq_rebuildHJ (rw : T D → Option (T D)) (tgt : T D → Bool)
+    (hrw : ∀ t, tgt t = false → rw t = none) (fuel : Nat) (t : T D) :
+    replaceHJ rw tgt fuel t = rebuildHJ rw fuel t := by
+  unfold replaceHJ
+  cases h : hasTarget tgt t
+  · exact (rebuildHJ_skip rw tgt hrw fuel t h).symm
+  · rfl
 
 /-! ## `rebuild_with_cp_split` -/
 
