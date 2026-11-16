@@ -564,7 +564,7 @@ fn load_graph_from_reader(
 mod tests {
     use super::*;
     use crate::serializers::buffered_io::VecWriter;
-    use graph::graph::graphblas::serialization::Writer;
+    use graph::graph::graphblas::serialization::{Encode, Writer};
 
     fn directory(entries: &[(u64, u64)]) -> Vec<u8> {
         let mut w = VecWriter::new();
@@ -610,6 +610,67 @@ mod tests {
                 decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap_err();
             assert!(err.contains("never saved"), "state {state}: {err}");
         }
+    }
+
+    /// A whole single-key value as C's v20 writes it for a graph with one CCH index: header,
+    /// schema, a directory ending in `CchIndices`, then the payloads. `GRAPH.RESTORE` and
+    /// `GRAPH.COPY` load it through `vec_load_graph`; it is refused at the directory, so only
+    /// the header and schema (written by this module's own encoders) are read before it, and
+    /// the payload words after it are never reached.
+    #[test]
+    fn a_whole_v20_value_with_a_cch_index_is_refused() {
+        let name = |s: &str| Arc::new(s.to_string());
+        let mut w = VecWriter::new();
+        Encode::<19>::encode(
+            &Header {
+                graph_name: "g".to_string(),
+                node_count: 2,
+                edge_count: 1,
+                deleted_node_count: 0,
+                deleted_edge_count: 0,
+                label_count: 1,
+                relationship_count: 1,
+                multi_edge: vec![false],
+                key_count: 1,
+            },
+            &mut w,
+        );
+        Encode::<19>::encode(
+            &Schema {
+                attribute_names: vec![name("time")],
+                node_labels: vec![name("N")],
+                relationship_types: vec![name("ROAD")],
+                indexes: Vec::new(),
+                constraints: Vec::new(),
+            },
+            &mut w,
+        );
+        let directory = [
+            (EncodeState::Nodes, 2),
+            (EncodeState::Edges, 1),
+            (EncodeState::LabelsMatrices, 1),
+            (EncodeState::RelationMatrices, 1),
+            (EncodeState::AdjMatrix, 1),
+            (EncodeState::LblsMatrix, 1),
+            (EncodeState::CchIndices, 1),
+        ];
+        w.write_unsigned(directory.len() as u64);
+        for (state, count) in directory {
+            w.write_unsigned(state as u64);
+            w.write_unsigned(count);
+        }
+        // The CCH payload, as C's `RdbSaveCCH_v20` writes it: one index over relationship
+        // type 0, weighted by attribute 0. The other payloads would precede it; none is read.
+        for word in [1, 1, 0, 0] {
+            w.write_unsigned(word);
+        }
+        let Err(err) = vec_load_graph(&w.into_vec(), 0, "g") else {
+            panic!("a v20 value with a CCH index loaded");
+        };
+        assert!(
+            err.contains("this module does not support CCH indexes"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
