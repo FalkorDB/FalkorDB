@@ -153,16 +153,17 @@ impl VarKind for Variable {
 /// variables with the same name in different scopes.
 ///
 /// # Fields
-/// - `name`: The variable name as it appears in the query (None for anonymous)
+/// - `alias`: What the query called it: a name, or the parser's number for an
+///   unnamed pattern entity. `None` for a planner temporary, which the query
+///   never wrote
 /// - `id`: Unique identifier assigned during binding
 /// - `scope_id`: The scope in which this variable was defined
 /// - `ty`: The inferred or declared type of the variable
 #[derive(Clone, Debug)]
 pub struct Variable {
-    /// `None` for an unnamed pattern entity and for planner temporaries.
-    pub name: Option<Arc<String>>,
-    /// The parser's number for an unnamed pattern entity, shown in plans.
-    pub anon: Option<u32>,
+    /// The name the query wrote or the number the parser gave an unnamed
+    /// pattern entity; `None` for a planner temporary (shown as `?{id}`).
+    pub alias: Option<Alias>,
     pub id: u32,
     pub scope_id: u32,
     pub ty: Type,
@@ -173,12 +174,9 @@ impl Display for Variable {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        if let Some(name) = &self.name {
-            write!(f, "{name}")
-        } else if let Some(anon) = self.anon {
-            write_anon(f, anon)
-        } else {
-            write!(f, "?{}", self.id)
+        match &self.alias {
+            Some(alias) => write!(f, "{alias}"),
+            None => write!(f, "?{}", self.id),
         }
     }
 }
@@ -204,15 +202,23 @@ impl Hash for Variable {
 }
 
 impl Variable {
-    /// Whether this is an unnamed pattern entity, which no query can refer to.
+    /// The name the query wrote, or `None` for an unnamed pattern entity or a
+    /// planner temporary.
     #[must_use]
-    pub const fn is_unnamed(&self) -> bool {
-        self.name.is_none()
+    pub fn name(&self) -> Option<&Arc<String>> {
+        self.alias.as_ref().and_then(Alias::name)
+    }
+
+    /// Whether no query can refer to this variable: an unnamed pattern entity
+    /// or a planner temporary.
+    #[must_use]
+    pub fn is_unnamed(&self) -> bool {
+        self.name().is_none()
     }
 
     #[must_use]
     pub fn as_str(&self) -> &str {
-        self.name.as_ref().map_or("?", |n| n.as_str())
+        self.name().map_or("?", |n| n.as_str())
     }
 }
 

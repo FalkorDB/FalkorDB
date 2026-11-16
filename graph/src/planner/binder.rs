@@ -79,6 +79,17 @@ impl Scope {
         self.named.remove(name)
     }
 
+    /// The unnamed pattern entity the parser numbered `id`. The parser's
+    /// numbers are unique per query, so at most one variable matches.
+    fn lookup_anon(
+        &self,
+        id: u32,
+    ) -> Option<&Variable> {
+        self.unnamed
+            .iter()
+            .find(|v| v.alias == Some(Alias::Anon(id)))
+    }
+
     /// Adds a variable no name refers to.
     fn push_unnamed(
         &mut self,
@@ -150,10 +161,6 @@ pub struct Binder {
     /// largest table any of them used, or those ids collide with real
     /// variables (or index past the table).
     retired_scope_vars: Vec<Vec<Variable>>,
-    /// Variables of the unnamed pattern entities bound so far, by the number
-    /// the parser gave them. Those numbers are unique per query, so the table
-    /// never needs scoping.
-    anon_vars: HashMap<u32, Variable>,
 }
 
 impl Default for Binder {
@@ -166,7 +173,6 @@ impl Default for Binder {
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
             retired_scope_vars: vec![],
-            anon_vars: HashMap::new(),
         }
     }
 }
@@ -713,7 +719,7 @@ impl Binder {
                             // but set Variable.name to the original field for procedure map lookup.
                             let var = self.define_name_in_scope(name.clone(), Type::Any, true)?;
                             let var = Variable {
-                                name: Some(original_field.clone()),
+                                alias: Some(Alias::Named(original_field.clone())),
                                 ..var
                             };
                             // Re-insert under alias name with the updated variable
@@ -721,7 +727,7 @@ impl Binder {
                             bound_vars.push(var.clone());
                             // Record alias: a Variable whose name is the alias
                             bound_aliases.push(Some(Variable {
-                                name: Some(name),
+                                alias: Some(Alias::Named(name)),
                                 ..var
                             }));
                         } else {
@@ -732,7 +738,7 @@ impl Binder {
                         // Create a variable with the original name (for procedure map lookup)
                         // but store it in scope under a `_`-prefixed key so RETURN * doesn't see it.
                         let var = self.fresh_var(
-                            Some(name.clone()),
+                            Some(Alias::Named(name.clone())),
                             Type::Any,
                             self.env_stack.len() as u32 - 1,
                         );
@@ -785,7 +791,7 @@ impl Binder {
                     if restored.contains(&v.id) {
                         continue;
                     }
-                    if v.name.is_none() {
+                    if v.is_unnamed() {
                         // A nameless variable keeps its slot without a key a
                         // query could spell.
                         self.current_env_mut().push_unnamed(v);
@@ -1000,7 +1006,6 @@ impl Binder {
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
                         retired_scope_vars: vec![],
-                        anon_vars: HashMap::new(),
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -1095,7 +1100,7 @@ impl Binder {
             let outer_expr = Arc::new(DynTree::new(ExprIR::Variable(outer_var.clone())));
             projections.push((inner_var, outer_expr));
         }
-        projections.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name));
+        projections.sort_by(|(a, _), (b, _)| a.name().cmp(&b.name()));
         projections
     }
 
@@ -1212,12 +1217,12 @@ impl Binder {
                 let expr = Arc::new(DynTree::new(ExprIR::Variable(var)));
                 projected.push((bound_var, expr));
             }
-            projected.sort_by(|(name_a, _), (name_b, _)| name_a.name.cmp(&name_b.name));
+            projected.sort_by(|(name_a, _), (name_b, _)| name_a.name().cmp(&name_b.name()));
 
             // Now add the explicit projections after the star-expanded ones
             let mut seen_aliases: HashSet<Arc<String>> = projected
                 .iter()
-                .filter_map(|(v, _)| v.name.clone())
+                .filter_map(|(v, _)| v.name().cloned())
                 .collect();
             for (name, expr) in bound_exprs {
                 if !seen_aliases.insert(name.clone()) {
@@ -1228,7 +1233,7 @@ impl Binder {
                 let bound_var = self.project_name(&name, Type::Any);
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
-                        .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
+                        .insert(var_name.name().unwrap().clone(), bound_var.clone());
                     // Carry forward node_labels for projected node variables.
                     if var_name.ty == Type::Node
                         && let Some(labels) = self
@@ -1255,7 +1260,7 @@ impl Binder {
                 let bound_var = self.project_name(&name, Type::Any);
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
-                        .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
+                        .insert(var_name.name().unwrap().clone(), bound_var.clone());
                     // Carry forward node_labels for projected node variables.
                     if var_name.ty == Type::Node
                         && let Some(labels) = self
@@ -1282,7 +1287,7 @@ impl Binder {
                     .indices::<Dfs>()
                     .filter_map(|idx| {
                         if let ExprIR::Variable(v) = e.node(idx).data() {
-                            v.name.clone()
+                            v.name().cloned()
                         } else {
                             None
                         }
@@ -1849,7 +1854,8 @@ impl Binder {
                 var: name,
             } => {
                 let scope_id = self.env_stack.len() as u32 - 1;
-                let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
+                let bound_var: Variable =
+                    self.fresh_var(Some(Alias::Named(name.clone())), Type::Any, scope_id);
                 // Reserve the ID slot in env_stack with a unique key.
                 let key = Arc::new(format!("_quant_{}_{}", scope_id, bound_var.id));
                 self.env_stack[scope_id as usize].insert(key, bound_var.clone());
@@ -1883,7 +1889,8 @@ impl Binder {
             }
             ExprIR::ListComprehension(name) => {
                 let scope_id = self.env_stack.len() as u32 - 1;
-                let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
+                let bound_var: Variable =
+                    self.fresh_var(Some(Alias::Named(name.clone())), Type::Any, scope_id);
                 // Reserve the ID slot in env_stack with a unique key.
                 let key = Arc::new(format!("_lc_{}_{}", scope_id, bound_var.id));
                 self.env_stack[scope_id as usize].insert(key, bound_var.clone());
@@ -1926,11 +1933,11 @@ impl Binder {
                 }
                 let scope_id = self.env_stack.len() as u32 - 1;
                 let bound_acc: Variable =
-                    self.fresh_var(Some(acc_name.clone()), Type::Any, scope_id);
+                    self.fresh_var(Some(Alias::Named(acc_name.clone())), Type::Any, scope_id);
                 let key = Arc::new(format!("_reduce_acc_{}_{}", scope_id, bound_acc.id));
                 self.env_stack[scope_id as usize].insert(key, bound_acc.clone());
                 let bound_iter: Variable =
-                    self.fresh_var(Some(iter_name.clone()), Type::Any, scope_id);
+                    self.fresh_var(Some(Alias::Named(iter_name.clone())), Type::Any, scope_id);
                 let key = Arc::new(format!("_reduce_iter_{}_{}", scope_id, bound_iter.id));
                 self.env_stack[scope_id as usize].insert(key, bound_iter.clone());
 
@@ -2147,7 +2154,7 @@ impl Binder {
                         // Verify children (source/dest vars) are bound
                         for child in &children {
                             if let ExprIR::Variable(var) = child.root().data()
-                                && var.name.is_none()
+                                && var.is_unnamed()
                             {
                                 return Err("A shortestPath requires bound nodes".to_string());
                             }
@@ -2253,14 +2260,18 @@ impl Binder {
             return Ok(existing.clone());
         }
 
-        let var = self.fresh_var(Some(name.clone()), ty, self.env_stack.len() as u32 - 1);
+        let var = self.fresh_var(
+            Some(Alias::Named(name.clone())),
+            ty,
+            self.env_stack.len() as u32 - 1,
+        );
         self.current_env_mut().insert(name, var.clone());
         Ok(var)
     }
 
     /// Binds a pattern entity's alias. A name is declared in the current
-    /// scope; an unnamed entity gets a nameless variable that only its own
-    /// pattern can reach, through `anon_vars`.
+    /// scope; an unnamed entity gets a nameless variable kept in the scope's
+    /// `unnamed` list, which only its own pattern can reach, by number.
     fn define_alias_in_scope(
         &mut self,
         alias: &Alias,
@@ -2270,16 +2281,12 @@ impl Binder {
         match alias {
             Alias::Named(name) => self.define_name_in_scope(name.clone(), ty, allow_reuse),
             Alias::Anon(id) => {
-                if let Some(existing) = self.anon_vars.get(id) {
+                if let Some(existing) = self.current_env().lookup_anon(*id) {
                     return Ok(existing.clone());
                 }
                 let scope_id = self.env_stack.len() as u32 - 1;
-                let var = Variable {
-                    anon: Some(*id),
-                    ..self.fresh_var(None, ty, scope_id)
-                };
+                let var = self.fresh_var(Some(alias.clone()), ty, scope_id);
                 self.current_env_mut().push_unnamed(var.clone());
-                self.anon_vars.insert(*id, var.clone());
                 Ok(var)
             }
         }
@@ -2292,7 +2299,7 @@ impl Binder {
     ) -> Option<&Variable> {
         match alias {
             Alias::Named(name) => self.current_env().get(name),
-            Alias::Anon(id) => self.anon_vars.get(id),
+            Alias::Anon(id) => self.current_env().lookup_anon(*id),
         }
     }
 
@@ -2305,8 +2312,8 @@ impl Binder {
         match alias {
             Alias::Named(name) => self.resolve_name(name, &[]),
             Alias::Anon(id) => self
-                .anon_vars
-                .get(id)
+                .current_env()
+                .lookup_anon(*id)
                 .cloned()
                 .ok_or_else(|| format!("unnamed entity {alias} is not bound")),
         }
@@ -2317,7 +2324,11 @@ impl Binder {
         name: &Arc<String>,
         ty: Type,
     ) -> Variable {
-        let var = self.fresh_var(Some(name.clone()), ty, self.env_stack.len() as u32 - 1);
+        let var = self.fresh_var(
+            Some(Alias::Named(name.clone())),
+            ty,
+            self.env_stack.len() as u32 - 1,
+        );
         self.current_env_mut().insert(name.clone(), var.clone());
         var
     }
@@ -2330,7 +2341,7 @@ impl Binder {
         // Special placeholder for aggregate function ordering - always create a fresh variable
         if name.as_str() == "__agg_order_by_placeholder__" {
             let scope_id = self.env_stack.len() as u32 - 1;
-            let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
+            let var = self.fresh_var(Some(Alias::Named(name.clone())), Type::Any, scope_id);
             // Insert with a unique key so each placeholder occupies its own
             // slot in the env (keeping env.len() == next available ID).
             let key = Arc::new(format!("__agg_placeholder_{}", var.id));
@@ -2364,8 +2375,7 @@ impl Binder {
                 let var_id = self.env_stack[current_scope_id as usize].len() as u32;
 
                 let copied_var = Variable {
-                    name: var.name.clone(),
-                    anon: var.anon,
+                    alias: var.alias.clone(),
                     id: var_id,
                     scope_id: current_scope_id,
                     ty: var.ty.clone(),
@@ -2383,15 +2393,14 @@ impl Binder {
 
     fn fresh_var(
         &self,
-        name: Option<Arc<String>>,
+        alias: Option<Alias>,
         ty: Type,
         scope_id: u32,
     ) -> Variable {
         let var_id = self.env_stack[scope_id as usize].len() as u32;
 
         Variable {
-            name,
-            anon: None,
+            alias,
             id: var_id,
             scope_id,
             ty,
@@ -2829,10 +2838,7 @@ fn denotes(
     var: &Variable,
     alias: &Alias,
 ) -> bool {
-    match alias {
-        Alias::Named(name) => var.name.as_ref() == Some(name),
-        Alias::Anon(id) => var.anon == Some(*id),
-    }
+    var.alias.as_ref() == Some(alias)
 }
 
 fn sorted_scope_vars(env: &Scope) -> Vec<Variable> {
@@ -2860,7 +2866,8 @@ fn merge_scope_vars(
 #[cfg(test)]
 mod tests {
     use super::Binder;
-    use crate::parser::cypher::Parser;
+    use crate::parser::{ast::Alias, cypher::Parser};
+    use std::collections::HashMap;
 
     /// The bound IR of `query`, rendered with `Debug`.
     fn bound(query: &str) -> String {
@@ -2956,13 +2963,92 @@ mod tests {
         ] {
             let ir = bound(&format!("MATCH ({name}:A), (:B) RETURN count(*)"));
             // Two distinct node variables: ids 0 and 1 of scope 0.
-            assert!(
-                ir.matches("Variable { name: Some").count() >= 1,
-                "{name}: {ir}"
-            );
-            assert!(ir.contains("anon: Some(0)"), "{name}: {ir}");
+            assert!(ir.matches("alias: Some(Named").count() >= 1, "{name}: {ir}");
+            assert!(ir.contains("alias: Some(Anon(0))"), "{name}: {ir}");
             let named = name.trim_matches('`');
             assert!(ir.contains(&format!("\"{named}\"")), "{name}: {ir}");
+        }
+    }
+
+    /// An unnamed entity is resolved through the scope that bound it, and every
+    /// mention of it - a path's element list, a later hop's endpoint, a MERGE
+    /// or comprehension that reuses it - lands on one variable that the scope
+    /// table holds at that variable's own slot, however many scopes
+    /// (WITH, CALL bodies, UNION branches, FOREACH) the query crosses.
+    #[test]
+    fn an_unnamed_entity_is_one_variable_in_its_own_scope() {
+        let _ = crate::runtime::functions::init_functions();
+        let queries = [
+            "MATCH p = ()-[]->()-[]->() RETURN p",
+            "MATCH p = (a)-[]->(:B)<-[]-(:C) RETURN p, a",
+            "MATCH ()-[]->() WITH 1 AS x MATCH (:B)-[]->() RETURN x",
+            "MATCH (a) WITH a MATCH p = (a)-[]->()-[]->() RETURN p",
+            "MATCH (a) RETURN a ORDER BY size([(a)-[]->() | 1])",
+            "MATCH (a) WITH a ORDER BY [(a)-[]->()-[]->() | 1] RETURN a",
+            "MATCH (a) WHERE (a)-[]->() AND ()-[]->(a) RETURN a",
+            "MATCH (a) RETURN [(a)-[]->() | [()-[]->(a) | 1]]",
+            "MATCH (a) CALL { WITH a MATCH p = (a)-[]->()-[]->() RETURN p } RETURN p",
+            "CALL { MATCH ()-[]->() RETURN 1 AS x } MATCH (:B)-[]->() RETURN x",
+            "MATCH ()-[]->() RETURN 1 AS x UNION MATCH (:B)-[]->() RETURN 2 AS x",
+            "MATCH (a) CALL { WITH a MATCH (a)-[]->() RETURN 1 AS x UNION MATCH ()-[]->(a) RETURN 2 AS x } RETURN x",
+            "MERGE p = ()-[:R]->(:B) RETURN p",
+            "MATCH (a) MERGE (a)-[:R]->() RETURN a",
+            "CREATE p = ()-[:R]->()-[:R]->() RETURN p",
+            "MATCH (a) FOREACH (x IN [1] | CREATE (a)-[:R]->()) RETURN a",
+            "MATCH (a) FOREACH (x IN [1] | MERGE p = (a)-[:R]->()) WITH a MATCH ()-[]->() RETURN a",
+            "MATCH (a) OPTIONAL MATCH (a)-[]->()-[]->() RETURN a",
+            "MATCH (a:A) WITH a MATCH (a)-[]->() WITH a MATCH ()-[]->(a) RETURN a",
+        ];
+        for query in queries {
+            let mut parser = Parser::new(query);
+            parser.parse_parameters().expect("parse parameters");
+            let raw = parser.parse().expect("parse");
+            let (ir, scope_vars) = Binder::default().bind(raw).expect(query);
+            let text = format!("{ir:?}");
+
+            // Every unnamed mention in the bound IR, as (number, scope, id).
+            let mut seen: HashMap<u32, (u32, u32)> = HashMap::new();
+            for (at, _) in text.match_indices("alias: Some(Anon(") {
+                let rest = &text[at + "alias: Some(Anon(".len()..];
+                let number: u32 = rest[..rest.find(')').unwrap()].parse().unwrap();
+                let field = |key: &str| -> u32 {
+                    let from = rest.find(key).unwrap() + key.len();
+                    let len = rest[from..].find(|c: char| !c.is_ascii_digit()).unwrap();
+                    rest[from..from + len].parse().unwrap()
+                };
+                let place = (field("scope_id: "), field("id: "));
+                assert_eq!(
+                    *seen.entry(number).or_insert(place),
+                    place,
+                    "{query}: unnamed entity {number} bound twice"
+                );
+            }
+            assert!(!seen.is_empty(), "{query}: expected an unnamed entity");
+
+            // ... each sits at its own slot of its scope's table. (Branches of
+            // a UNION bind in tables of their own, merged only by length.)
+            for (number, (scope, id)) in seen.into_iter().filter(|_| !query.contains("UNION")) {
+                let var = &scope_vars[scope as usize][id as usize];
+                assert_eq!(
+                    var.alias,
+                    Some(Alias::Anon(number)),
+                    "{query}: scope {scope} slot {id}"
+                );
+            }
+            // ... and every table is dense: a variable's id is its index.
+            for (scope, vars) in scope_vars
+                .iter()
+                .enumerate()
+                .filter(|_| !query.contains("UNION"))
+            {
+                for (slot, var) in vars.iter().enumerate() {
+                    assert_eq!(
+                        (var.scope_id as usize, var.id as usize),
+                        (scope, slot),
+                        "{query}"
+                    );
+                }
+            }
         }
     }
 }

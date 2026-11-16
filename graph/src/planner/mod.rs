@@ -839,8 +839,7 @@ impl Planner {
     ) -> Variable {
         let id = self.scope_vars[scope_id as usize].len() as u32;
         let var = Variable {
-            name: None,
-            anon: None,
+            alias: None,
             id,
             scope_id,
             ty,
@@ -1691,8 +1690,7 @@ impl Planner {
                     // record for inline handling via expr_to_plan.
                     let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
-                        name: None,
-                        anon: None,
+                        alias: None,
                         id: self.scope_vars[current_scope as usize].len() as u32,
                         scope_id: current_scope,
                         ty: Type::Bool,
@@ -1717,8 +1715,7 @@ impl Planner {
                     // recognize the negation and use AntiSemiApply.
                     let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
-                        name: None,
-                        anon: None,
+                        alias: None,
                         id: self.scope_vars[current_scope as usize].len() as u32,
                         scope_id: current_scope,
                         ty: Type::Bool,
@@ -1936,8 +1933,7 @@ impl Planner {
                             Arc::new(tree!(ExprIR::Map)),
                         ));
                         let edge_alias = Variable {
-                            name: None,
-                            anon: None,
+                            alias: None,
                             id: u32::MAX - node.alias.id,
                             scope_id: node.alias.scope_id,
                             ty: Type::Relationship,
@@ -2959,7 +2955,7 @@ impl Planner {
                 let yield_by_field = |field: &str| -> Option<Variable> {
                     named_outputs
                         .iter()
-                        .find(|v| v.name.as_ref().is_some_and(|n| n.as_str() == field))
+                        .find(|v| v.name().is_some_and(|n| n.as_str() == field))
                         .cloned()
                 };
                 // Pattern comprehensions in the arguments get their own
