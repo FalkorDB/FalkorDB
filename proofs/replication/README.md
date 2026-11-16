@@ -123,7 +123,7 @@ The lakefile requires [`../effects_emit_apply`](../effects_emit_apply) as a path
 | MODELLED | 2 |
 | NOT COVERED | 1 |
 
-- **MODELLED:** `Pending::commit` and `CommitOp::next` are the abstract `commit` here. Their faithful models are PROVEN in `pending_commit`; the emit gate in `CommitOp::next` is covered by `effects_emit_apply` (`commitShips_eq_iff`).
+- **MODELLED:** `Pending::commit` and `CommitOp::next` are the abstract `commit` here. Their faithful models are PROVEN in `pending_commit`; the emit gate in `CommitOp::next` is covered by `effects_emit_apply` (`commitShips_eq`).
 - **NOT COVERED:** `CommitOp::new`, an operator constructor, is outside this abstract model (PROVEN in `pending_commit`).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across projects, so these three are PROVEN repo-wide.
