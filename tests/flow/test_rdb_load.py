@@ -76,18 +76,28 @@ def _crc64(data):
     return crc
 
 
-def with_module_encver(dump, encver):
+def restamp(dump, encver=None, rdb_version=None):
     """`dump` (one module value, as DUMP returns it) with its module type's
-    encoding version set to `encver`, and the CRC recomputed.
+    encoding version and/or its RDB version replaced, and the CRC recomputed.
 
-    A DUMP is the value, a 2-byte RDB version and an 8-byte LE CRC-64. The value
-    starts with RDB_TYPE_MODULE_2 (7), then the 64-bit module type id (0x81 and
-    8 bytes BE) whose low 10 bits are the encoding version."""
+    A DUMP is the value, a 2-byte LE RDB version and an 8-byte LE CRC-64. The
+    value starts with RDB_TYPE_MODULE_2 (7), then the 64-bit module type id
+    (0x81 and 8 bytes BE) whose low 10 bits are the encoding version. A module
+    value is the same bytes in every RDB version, so a DUMP made by one server
+    restores on another once its RDB version is the server's own (a server
+    refuses a DUMP from a newer RDB version before the module sees it)."""
     assert dump[:2] == b"\x07\x81", dump[:2]
     type_id = int.from_bytes(dump[2:10], "big")
-    type_id = (type_id & ~0x3FF) | encver
-    body = dump[:2] + type_id.to_bytes(8, "big") + dump[10:-8]
+    if encver is not None:
+        type_id = (type_id & ~0x3FF) | encver
+    version = dump[-10:-8] if rdb_version is None else rdb_version
+    body = dump[:2] + type_id.to_bytes(8, "big") + dump[10:-10] + version
     return body + struct.pack("<Q", _crc64(body))
+
+
+def rdb_version(dump):
+    """The 2-byte RDB version a DUMP carries, as the server that made it writes it."""
+    return dump[-10:-8]
 
 
 def module_encver(dump):
@@ -384,7 +394,7 @@ class testRdbLoad():
         src.query("CREATE (:A {v: 1})-[:R {w: 2}]->(:B {v: 3})")
         dump = self.conn.dump("src")
         self.env.assertEqual(module_encver(dump), 19)
-        v20 = with_module_encver(dump, 20)
+        v20 = restamp(dump, encver=20)
         self.env.assertEqual(module_encver(v20), 20)
 
         self.conn.restore("dst", 0, v20)
@@ -405,17 +415,28 @@ class testRdbLoad():
         # and nothing is left under the key.
         self.conn.flushall()
         self.env.assertEqual(module_encver(CCH_V20_DUMP), 20)
+        # The dump was made by a Redis 8 server: stamp it with this server's
+        # RDB version, or a server with an older one (Valkey) refuses it as
+        # "payload version or checksum are wrong" before the module reads it.
+        self.conn.execute_command("GRAPH.QUERY", "probe", "CREATE (:P)")
+        dump = restamp(CCH_V20_DUMP, rdb_version=rdb_version(self.conn.dump("probe")))
+        self.conn.flushall()
         try:
-            self.conn.restore("cch_v20", 0, CCH_V20_DUMP)
+            self.conn.restore("cch_v20", 0, dump)
             self.env.assertTrue(False, message="a v20 value with a CCH index restored")
-        except redis.exceptions.ResponseError:
-            pass
+        except redis.exceptions.ResponseError as e:
+            # The module refused it: the server answers a failed module load
+            # with "Bad data format", whatever the module's reason.
+            self.env.assertContains("Bad data format", str(e))
         self.env.assertEqual(self.conn.exists("cch_v20"), 0)
         self.env.assertTrue(self.conn.ping())
+        # The reason reaches only the server log, which services mode does
+        # not expose (`log_path` is None); the reply above is checked in every
+        # mode.
         if self.env.log_path:
             with open(self.env.log_path, "rb") as f:
-                self.env.assertTrue(
-                    b"this module does not support CCH indexes" in f.read(),
+                self.env.assertContains(
+                    b"this module does not support CCH indexes", f.read(),
                     message="the refusal must be logged")
 
         # the server goes on loading other graphs

@@ -38,21 +38,32 @@ pub enum LoadedKey {
 /// error naming it, before any payload is read. (Before, 10 decoded as `Final`, its payload
 /// was never read, and the load went on from the wrong place in the stream.)
 ///
+/// `Init` and `Final` are never written to an RDB, by C or by this module; a directory that
+/// lists one is refused too, since no payload arm reads them and the stream would misalign
+/// the same way.
+///
 /// # Errors
-/// A truncated stream, an unknown state, or a CCH index payload.
+/// A truncated stream, an unknown state, `Init`, `Final`, or a CCH index payload.
 fn decode_payload_directory(r: &mut dyn Reader) -> Result<Vec<(EncodeState, u64)>, String> {
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    // No capacity from `payload_count`: it is read from the stream, unchecked.
+    let mut payloads = Vec::new();
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;
         let state =
             EncodeState::from_u64(state).ok_or_else(|| format!("unknown encode state: {state}"))?;
-        if state == EncodeState::CchIndices {
-            return Err(
-                "RDB v20 graph with CCH indexes: this module does not support CCH indexes"
-                    .to_string(),
-            );
+        match state {
+            EncodeState::CchIndices => {
+                return Err(
+                    "RDB v20 graph with CCH indexes: this module does not support CCH indexes"
+                        .to_string(),
+                );
+            }
+            EncodeState::Init | EncodeState::Final => {
+                return Err(format!("encode state {state:?} is never saved to an RDB"));
+            }
+            _ => {}
         }
         payloads.push((state, count));
     }
@@ -587,6 +598,18 @@ mod tests {
         let bytes = directory(&[(1, 3), (9, 1), (10, 1)]);
         let err = decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap_err();
         assert!(err.contains("CCH"), "unexpected error: {err}");
+    }
+
+    /// `Final` (11, 10 before v20) and `Init` (0) are never written: no payload arm reads them,
+    /// so accepting one would leave the stream at the wrong place.
+    #[test]
+    fn a_state_never_saved_is_refused() {
+        for state in [0, 11] {
+            let bytes = directory(&[(1, 3), (state, 1)]);
+            let err =
+                decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap_err();
+            assert!(err.contains("never saved"), "state {state}: {err}");
+        }
     }
 
     #[test]
