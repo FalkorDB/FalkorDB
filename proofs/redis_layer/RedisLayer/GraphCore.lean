@@ -12,7 +12,9 @@ import RedisLayer.Resp
 | `profileDepth`, `profileOps`| `reply_profile` `:884` (all ops, plain depth, since #2390) |
 | `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:587` / `execute_profile` `:674` write detection and `admission.take()` |
 | `writeSteps`                | `try_query_write` `:783`, `finish_write` `:1512`, `abandon_write` `:1537`, `commit_and_replicate` `:1553` |
-| `executeWrite`, `Attempt`   | `execute_query_write` `:737` (retry loop, #3290), `WriteAttempt::from` `:776` |
+| `executeWrite`, `Attempt`   | `execute_query_write` `:740` (retry loop, #3290), `WriteAttempt::from` `:805` |
+| `loopW`, `escalateNext`, `MAX_STALE_RETRIES` | `execute_query_write` `:740` bounded retry (#3559), `MAX_STALE_RETRIES` `:788`, `SLOW_STALE_RUN` `:795`; `graph_bulk_insert`'s phase loop (`bulk_insert.rs:945-987`) |
+| `resolveTimeout`, `budget`  | `try_query_write` `:818` timeout resolved once, budget from the write's start (`:843-856`) |
 | `admitQ`, `dispatch`        | `admit` `:1000`, `query_mut` `:1011` (#3014) |
 | `syncOutcome`               | `query_sync` `:1215`, `profile_sync` `:1445`, `profile_mut` `:1344` |
 | `loopExit`                  | `process_write_queued_query` `:1599` |
@@ -247,6 +249,161 @@ theorem executeWrite_first (k : Nat) (a : Attempt) (rest : List Attempt) (h : a 
 nothing, and it committed and replied nothing. -/
 theorem stale_run_silent (w m b : Bool) :
     writeSteps false w false m b = [] := by simp [writeSteps, abandonSteps]
+
+/-! ### Bounded retry (#3559)
+
+`execute_query_write` (`:740`) counts stale runs; after `MAX_STALE_RETRIES` (`:788`) of them, or
+after one that took `SLOW_STALE_RUN` (`:795`) or longer, it begins the next run with
+`QuerySession::begin_writer_checked` (writer from the start, so never stale:
+`QuerySession.writer_never_stale`), whose refusal ends the write with that error; otherwise
+`begin_with` (a reader). `graph_bulk_insert`'s phase loop (`bulk_insert.rs:945-987`) is the same
+loop: `as_writer` is `escalateNext`, a refused `begin_writer_checked` breaks with its error. -/
+
+def MAX_STALE_RETRIES : Nat := 3
+
+/-- Whether the run after the `n`-th stale run is begun as a writer. -/
+def escalateNext (n : Nat) (slow : Bool) : Bool := decide (MAX_STALE_RETRIES ≤ n) || slow
+
+/-- One run: its outcome begun as a writer (`true`) or a reader (`false`); whether it took
+`SLOW_STALE_RUN`; and `begin_writer_checked`'s refusal if the next run escalates. -/
+structure Run where
+  out : Bool → Attempt
+  slow : Bool
+  refuse : Option String
+
+/-- The loop from the `n`-th stale run, the current run begun as a writer iff `w`: the number of
+runs made, and the result (`none`: still running). -/
+def loopW (n : Nat) (w : Bool) : List Run → Nat × Option Attempt
+  | [] => (0, none)
+  | r :: rest =>
+    match r.out w with
+    | .stale =>
+      if escalateNext (n + 1) r.slow then
+        match r.refuse with
+        | some e => (1, some (.failed e))
+        | none => let p := loopW (n + 1) true rest; (p.1 + 1, p.2)
+      else let p := loopW (n + 1) false rest; (p.1 + 1, p.2)
+    | a => (1, some a)
+
+/-- After `MAX_STALE_RETRIES` stale runs, or a slow one, the next run is a writer. -/
+theorem escalate_after_max (n : Nat) (slow : Bool) (h : MAX_STALE_RETRIES ≤ n ∨ slow = true) :
+    escalateNext n slow = true := by
+  rcases h with h | h <;> simp [escalateNext, h]
+
+/-- …and a cheap stale run before that retries as a reader. -/
+theorem reader_before_max (n : Nat) (h : n < MAX_STALE_RETRIES) : escalateNext n false = false := by
+  simp [escalateNext]; omega
+
+theorem loopW_bound_aux (rs : List Run) (hw : ∀ r ∈ rs, r.out true ≠ .stale) :
+    ∀ n w, (loopW n w rs).1 ≤ (if w then 1 else 4 - min n 2) := by
+  induction rs with
+  | nil => intro n w; simp only [loopW]; split <;> omega
+  | cons r rest ih =>
+    intro n w
+    have hr := hw r (by simp)
+    have ih' := ih (fun x hx => hw x (by simp [hx]))
+    cases ho : r.out w with
+    | stale =>
+      cases w with
+      | true => exact absurd ho hr
+      | false =>
+        simp only [loopW, ho]
+        by_cases he : escalateNext (n + 1) r.slow = true
+        · simp only [he, ite_true]
+          cases r.refuse with
+          | some e => simp; omega
+          | none => have := ih' (n + 1) true; simp at this ⊢; omega
+        · simp only [he]
+          have hn : n + 1 < MAX_STALE_RETRIES := by
+            simp [escalateNext] at he; exact he.1
+          have := ih' (n + 1) false
+          simp [MAX_STALE_RETRIES] at hn this ⊢; omega
+    | failed e => simp only [loopW, ho]; split <;> omega
+    | ok => simp only [loopW, ho]; split <;> omega
+
+/-- **The retry is bounded** (#3559): a write that begins as a reader runs at most
+`MAX_STALE_RETRIES + 1` times, however many writers commit under it. -/
+theorem loopW_bounded (rs : List Run) (hw : ∀ r ∈ rs, r.out true ≠ .stale) :
+    (loopW 0 false rs).1 ≤ MAX_STALE_RETRIES + 1 := by
+  have := loopW_bound_aux rs hw 0 false; simpa [MAX_STALE_RETRIES] using this
+
+theorem loopW_decided_aux (rs : List Run) (hw : ∀ r ∈ rs, r.out true ≠ .stale) :
+    ∀ n w, (if w then 1 else 4 - min n 2) ≤ rs.length → (loopW n w rs).2.isSome := by
+  induction rs with
+  | nil => intro n w h; cases w <;> simp at h <;> omega
+  | cons r rest ih =>
+    intro n w h
+    have hr := hw r (by simp)
+    have ih' := ih (fun x hx => hw x (by simp [hx]))
+    cases ho : r.out w with
+    | stale =>
+      cases w with
+      | true => exact absurd ho hr
+      | false =>
+        simp only [loopW, ho]
+        by_cases he : escalateNext (n + 1) r.slow = true
+        · simp only [he, ite_true]
+          cases r.refuse with
+          | some e => simp
+          | none => exact ih' (n + 1) true (by simp at h ⊢; omega)
+        · simp only [he]
+          have hn : n + 1 < MAX_STALE_RETRIES := by
+            simp [escalateNext] at he; exact he.1
+          exact ih' (n + 1) false (by simp [MAX_STALE_RETRIES] at hn h ⊢; omega)
+    | failed e => simp [loopW, ho]
+    | ok => simp [loopW, ho]
+
+/-- …and it has ended by then: with that many runs available the result is decided. -/
+theorem loopW_decided (rs : List Run) (hw : ∀ r ∈ rs, r.out true ≠ .stale)
+    (hl : MAX_STALE_RETRIES + 1 ≤ rs.length) : (loopW 0 false rs).2.isSome :=
+  loopW_decided_aux rs hw 0 false (by simp [MAX_STALE_RETRIES] at hl ⊢; omega)
+
+/-- **A stale run is still invisible**: the loop never answers `Stale`. -/
+theorem loopW_not_stale (rs : List Run) : ∀ n w, (loopW n w rs).2 ≠ some .stale := by
+  induction rs with
+  | nil => intro n w; simp [loopW]
+  | cons r rest ih =>
+    intro n w
+    simp only [loopW]
+    split
+    · split
+      · cases r.refuse <;> simp [ih]
+      · simp [ih]
+    · rename_i a ha; simp_all
+
+/-- With no refusal, the result is the first run that was not stale, as `executeWrite_first`. -/
+theorem loopW_first (n : Nat) (w : Bool) (r : Run) (h : r.out w ≠ .stale) (rest : List Run) :
+    loopW n w (r :: rest) = (1, some (r.out w)) := by
+  cases ho : r.out w with
+  | stale => exact absurd ho h
+  | failed e => simp [loopW, ho]
+  | ok => simp [loopW, ho]
+
+/-- `try_query_write`'s budget (`:843-856`): the timeout is resolved once, on the first run
+(`resolveTimeout`), and each run gets what is left of it from the write's start; a run that
+starts with none left fails with "Query timed out" before running. -/
+def resolveTimeout (cached : Option (Option Nat)) (compute : Option Nat) : Option Nat :=
+  cached.getD compute
+
+def budget (total : Option Nat) (spent : Nat) : Except String (Option Nat) :=
+  match total with
+  | none => .ok none
+  | some t => if t ≤ spent then .error "Query timed out" else .ok (some (t - spent))
+
+/-- A later run ignores the config as it is now: the first run's resolution stands. -/
+theorem resolveTimeout_kept (t c : Option Nat) : resolveTimeout (some t) c = t := rfl
+
+/-- **One deadline for the whole write**: a run's budget plus the time already spent is the
+resolved timeout, and a run past it does not start. -/
+theorem budget_whole (t spent r : Nat) (h : budget (some t) spent = .ok (some r)) : spent + r = t := by
+  by_cases ht : t ≤ spent
+  · simp [budget, ht] at h
+  · simp [budget, ht] at h; omega
+
+theorem budget_exhausted (t spent : Nat) (h : t ≤ spent) :
+    budget (some t) spent = .error "Query timed out" := by simp [budget, h]
+
+theorem budget_none (spent : Nat) : budget none spent = .ok none := rfl
 
 /-- Every modified commit either replicates or logs that it could not. -/
 theorem modified_replicates_or_warns (buf : Bool) :

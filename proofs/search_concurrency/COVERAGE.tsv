@@ -55,7 +55,7 @@ src/graph_core.rs	new	550	PROVEN	unbounded write channel (#3014); Locks.never_st
 src/graph_core.rs	from_mvcc	566	MODELLED	as new
 src/graph_core.rs	execute_query	584	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
 src/graph_core.rs	execute_profile	670	MODELLED	as execute_query
-src/graph_core.rs	execute_query_write	740	PROVEN	Mvcc fork/checkFork (#3290/#3657): inline_write_ok, stale_then_rerun, checkFork_on_committed (retry sees the inline write) (BUG 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+src/graph_core.rs	execute_query_write	740	PROVEN	Mvcc fork/checkFork (#3290/#3657): inline_write_ok, stale_then_rerun, checkFork_on_committed (retry sees the inline write), stale_then_writer_rerun (#3559 escalated rerun) (BUG 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 src/graph_core.rs	reply_profile	932	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
 src/graph_core.rs	new	969	AXIOMATISED	RM_BlockClient FFI
 src/graph_core.rs	drop	977	AXIOMATISED	RM_UnblockClient FFI
@@ -74,7 +74,7 @@ src/graph_core.rs	replicate	1827	AXIOMATISED	RM_Replicate FFI
 src/graph_core.rs	graph_free	1840	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
 src/query_session.rs	begin	157	MODELLED	reader mode (graphR acquire)
 src/query_session.rs	begin_with	164	MODELLED	reader mode
-src/query_session.rs	begin_writer	179	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
+src/query_session.rs	begin_writer	179	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered); begin_writer_checked's retry: retry_writer_ordered
 src/query_session.rs	write_version	234	PROVEN	Mvcc Ev.forkW (reader) / Ev.forkCur (writer): inline_write_ok, reader_cannot_commit
 src/query_session.rs	check_fork	274	CONDITIONAL	Mvcc Ev.checkFork: checkFork_stale, checkFork_on_committed, one_commit_per_version; #3567 also rebases the fork onto indexer batches (no data change: native_index Rebase.V.rebased_keeps_data, rebased_not_stale); rests on a hypothesis about other code: the fork is not borrowed when it escalates (rebase_onto_indexer_batches' try_borrow_mut: a debug build panics, a release build returns Err(Stale)), a runtime lifecycle invariant not proven here
 src/query_session.rs	version_is_current	258	PROVEN	Mvcc cur ≠ none (Current): current_not_stale, private_on_committed; PROVEN in redis_layer QuerySession.versionIsCurrent

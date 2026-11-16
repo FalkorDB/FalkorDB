@@ -5,7 +5,8 @@
 | --- | --- |
 | `Lock.gil < .graph < .indexer` | `graph/src/locks.rs:9` ordering rule; `query_session.rs:30` `Mode` |
 | `escalateProg`                 | `QuerySession::escalate` (`query_session.rs:379-394`): release R, GIL, W |
-| `inlineWriterProg`             | `QuerySession::begin_writer` (`:182`): GIL, W |
+| `inlineWriterProg`             | `QuerySession::begin_writer` (`:179`): GIL, W |
+| `retryWriterProg`              | `QuerySession::begin_writer_checked` (`:205`, #3559) from `execute_query_write`'s / `graph_bulk_insert`'s retry: GIL, W |
 | `populateProg`                 | `populate_index_batch` (`graph.rs:562`): indexer lock only |
 | `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3799`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
@@ -105,6 +106,13 @@ def badEscalateProg : List Op := [.acq graphR, .acq gil]
 theorem all_programs_ordered :
     okProg [] writerProg ∧ okProg [] inlineWriterProg ∧ okProg [] populateProg ∧
     okProg [] dropIndexBgProg ∧ okProg [] forkProg ∧ okProg [] telemetryProg := by decide
+
+/-- #3559: a queued write that keeps going stale reruns from `begin_writer_checked` on its worker:
+GIL, then the write lock — `inlineWriterProg`'s order, off the main thread. -/
+def retryWriterProg : List Op :=
+  [.acq gil, .acq graphR, .acq indexer, .rel indexer, .rel graphR, .rel gil]
+
+theorem retry_writer_ordered : okProg [] retryWriterProg = true := by decide
 
 theorem bad_escalate_rejected : okProg [] badEscalateProg = false := by decide
 

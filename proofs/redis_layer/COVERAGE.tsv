@@ -120,8 +120,8 @@ src/graph_core.rs	ThreadedGraph::new	550	PROVEN	GraphCore.TG.new: TG.new_idle (u
 src/graph_core.rs	ThreadedGraph::from_mvcc	566	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
 src/graph_core.rs	execute_query	584	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
 src/graph_core.rs	execute_profile	670	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
-src/graph_core.rs	execute_query_write	740	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent
-src/graph_core.rs	try_query_write	818	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
+src/graph_core.rs	execute_query_write	740	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent; GraphCore.loopW/escalateNext (#3559 bounded retry): escalate_after_max, reader_before_max, loopW_bounded, loopW_decided, loopW_not_stale, loopW_first (writer runs never stale: QuerySession.writer_never_stale)
+src/graph_core.rs	try_query_write	818	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent; GraphCore.resolveTimeout/budget (#3559 one timeout for all runs): resolveTimeout_kept, budget_whole, budget_exhausted, budget_none
 src/graph_core.rs	WriteAttempt::from	805	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
 src/graph_core.rs	reply_profile	932	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
 src/graph_core.rs	BlockedClient::new	969	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
@@ -142,7 +142,7 @@ src/graph_core.rs	graph_free	1840	PROVEN	GraphCore.free: free_unregisters, free_
 src/query_session.rs	QuerySession::begin	157	PROVEN	QuerySession.begin: escalate_order
 src/query_session.rs	QuerySession::begin_with	164	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
 src/query_session.rs	QuerySession::begin_writer	179	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
-src/query_session.rs	QuerySession::begin_writer_checked	205	NOT COVERED	(#3559): not modelled yet
+src/query_session.rs	QuerySession::begin_writer_checked	205	PROVEN	QuerySession.beginWriterChecked (#3559): beginWriterChecked_refusal (same refusal as upgrade_to_write), beginWriterChecked_ok, beginWriterChecked_refused_releases, writer_never_stale
 src/query_session.rs	QuerySession::facts	220	PROVEN	QuerySession.Facts (returns the facts it was begun with): reauth_replay
 src/query_session.rs	QuerySession::write_version	234	PROVEN	QuerySession.writeVersion: writeVersion_takes_nothing (infallible; reader Unchecked(ver+1), writer Current; #3657)
 src/query_session.rs	QuerySession::is_stale	250	PROVEN	QuerySession.isStale: stale_sticky
@@ -247,7 +247,7 @@ src/commands/bulk_insert.rs	process_edge_token	475	PROVEN	Commands.edgeRecords: 
 src/commands/bulk_insert.rs	bulk_insert_sync	556	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
 src/commands/bulk_insert.rs	bulk_insert_sync_yield	604	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
 src/commands/bulk_insert.rs	parse_count	655	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
-src/commands/bulk_insert.rs	max_records	691	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
+src/commands/bulk_insert.rs	max_records	691	PROVEN	Bulk.ceiling_sound; phase-loop retry (#3559) = GraphCore.loopW: loopW_bounded, loopW_decided (never rejects honest payloads)
 src/commands/bulk_insert.rs	graph_bulk_insert	705	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
 src/commands/config_cmd.rs	config_get_one	57	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
 src/commands/config_cmd.rs	validate_config_set	118	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)

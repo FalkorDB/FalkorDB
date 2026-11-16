@@ -607,6 +607,19 @@ theorem stale_then_rerun :
     ((run init rerunTrace).map (fun s => (s.pub, s.acked, s.ver))) = some ([7, 8], [7, 8], 2) := by
   decide
 
+/-- **The escalated rerun** (#3559): after its stale runs the queued write begins as a writer
+(`QuerySession::begin_writer_checked`: GIL, write lock, then a `Current` version) instead of a
+reader. Nothing can commit under it, so it needs no check: `7` then `8`, both acknowledged, and the
+reader run is the only one ever found stale. -/
+def escalatedRerunTrace : List Ev :=
+  inlineTrace ++ [.escalate 1, .checkFork 1, .abandon 1, .release 1,
+                  .escalate 1, .forkCur 1, .mutate 1 8, .commit 1, .swap 1, .release 1]
+
+theorem stale_then_writer_rerun :
+    ((run init escalatedRerunTrace).map (fun s => (s.pub, s.acked, s.ver, s.stale))) =
+      some ([7, 8], [7, 8], 2, [1]) := by
+  decide
+
 /-- An indexer batch between the queued write's fork and its check does not make it stale:
 the check still succeeds, and the commit goes through. -/
 theorem batch_does_not_stale :

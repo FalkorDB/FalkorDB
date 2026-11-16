@@ -9,6 +9,7 @@ lock implementations themselves are parking_lot / Redis — AXIOMATISED rows for
 | --- | --- |
 | `Th`, `gilAcquire`, `gilDrop` | `Gil::acquire` `:472`, `Gil::drop` `:495`, `hold_gil` `:450`, `GIL_CTX` |
 | `S`, `begin`, `beginWriter`   | `QuerySession::begin` `:158`, `begin_with` `:165`, `begin_writer` `:180` |
+| `beginWriterChecked`          | `begin_writer_checked` `:205` (#3559) |
 | `release`                     | `release_locks` `:268`, `Drop` `:430` |
 | `withGraph`, `withGraphMut`   | `with_graph` `:285`, `with_graph_mut` `:301` |
 | `escalate`, `upgrade`         | `escalate` `:345`, `upgrade_to_write` `:319` (and the trait shim `:420`) |
@@ -175,6 +176,45 @@ theorem release_order (t : Th) (hm : t.main = false) (hc : t.ctx = false) :
     (release (beginWriter t)).th.log = t.log ++ [.gilLock, .writeLock, .writeUnlock, .gilUnlock] := by
   simp [release, beginWriter, dropMode, gilAcquire, gilDrop, hm, hc]
 
+/-- `begin_writer_checked` (`:205`, #3559): `begin_writer` (GIL, then the write lock), then the
+checks `upgrade_to_write` makes after escalating — registry, then `reauthorize_write`. On a
+refusal the session is returned out of scope inside the `Err`, so it is dropped: both locks go. -/
+def beginWriterChecked (t : Th) (registered : Bool) (ctx : Option (Bool × Bool)) (f : Facts) :
+    Option WriteAbort × S :=
+  let s := beginWriter t
+  if !registered then (some .graphUnregistered, release s)
+  else match reauthorize f ctx with
+    | some a => (some a, release s)
+    | none => (none, s)
+
+/-- **The same refusal escalation would give**: `begin_writer_checked` refuses exactly when, and
+with exactly the abort that, `upgrade_to_write` on a reader session refuses. -/
+theorem beginWriterChecked_refusal (t : Th) (r : Bool) (c : Option (Bool × Bool)) (f : Facts) :
+    (beginWriterChecked t r c f).1 = (upgrade (begin t) r c f).1 := by
+  cases r <;> simp [beginWriterChecked, upgrade, escalate, begin] <;>
+    cases reauthorize f c <;> rfl
+
+/-- Accepted, it is the `begin_writer` session: a writer from the start, holding the GIL. -/
+theorem beginWriterChecked_ok (t : Th) (r : Bool) (c : Option (Bool × Bool)) (f : Facts)
+    (h : (beginWriterChecked t r c f).1 = none) :
+    (beginWriterChecked t r c f).2 = beginWriter t := by
+  cases r <;> simp [beginWriterChecked] at h ⊢
+  cases hr : reauthorize f c <;> simp_all
+
+/-- Refused, it holds nothing: on a worker thread the write lock and then the GIL were released. -/
+theorem beginWriterChecked_refused_releases (t : Th) (r : Bool) (c : Option (Bool × Bool)) (f : Facts)
+    (hm : t.main = false) (hc : t.ctx = false) (a : WriteAbort)
+    (h : (beginWriterChecked t r c f).1 = some a) :
+    (beginWriterChecked t r c f).2.mode = none ∧ (beginWriterChecked t r c f).2.th.ctx = false ∧
+    (beginWriterChecked t r c f).2.th.log = t.log ++ [.gilLock, .writeLock, .writeUnlock, .gilUnlock] := by
+  have hrel := release_order t hm hc
+  have hctx : (release (beginWriter t)).th.ctx = false := by
+    simp [release, beginWriter, dropMode, gilAcquire, gilDrop, hm, hc]
+  cases r
+  · simp [beginWriterChecked]; exact ⟨rfl, hctx, hrel⟩
+  · cases hr : reauthorize f c <;> simp [beginWriterChecked, hr] at h ⊢
+    exact ⟨rfl, hctx, hrel⟩
+
 /-- A second escalation is free and re-checks nothing. -/
 theorem upgrade_twice (s : S) (r : Bool) (c : Option (Bool × Bool)) (f : Facts) :
     (upgrade (upgrade s r c f).2 r c f).1 = none := by
@@ -335,6 +375,14 @@ theorem stale_sticky (s : SS) (h : s.version = .stale) : isStale (checkForkStale
 theorem current_kept (s : SS) (h : versionIsCurrent s = true) : checkFork s = .ok s := by
   have : s.version = .current := by simpa [versionIsCurrent] using h
   simp [checkFork, this]
+
+/-- **A writer is never stale** (#3559): a session begun as a writer (`begin_writer_checked`) has a
+`Current` version from its fork, and `upgrade_to_write` passes it without a check, so `is_stale`
+stays false and the retry loop cannot rerun it. -/
+theorem writer_never_stale (s : SS) (hw : s.writer = true) (r : Bool) (a : Option WriteAbort) :
+    (upgradeSt (writeVersion s) r a).1 = .inl none ∧
+    isStale (upgradeSt (writeVersion s) r a).2 = false := by
+  simp [upgradeSt, writeVersion, hw, isStale]
 
 /-- `upgrade_to_write` reports `Stale` exactly from the check. -/
 theorem upgrade_stale (s : SS) (fv : Nat) (hw : s.writer = false) (hf : s.version = .unchecked fv)
