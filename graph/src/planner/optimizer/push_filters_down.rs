@@ -58,22 +58,9 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// subtree's variables are the right answer.
 fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
     match node.data() {
-        IR::Project { exprs, copies } => Some(
-            exprs
-                .iter()
-                .map(|(v, _)| v.id)
-                .chain(copies.iter().map(|(v, _)| v.id))
-                .collect(),
-        ),
-        IR::Aggregate {
-            names, projections, ..
-        } => Some(
-            names
-                .iter()
-                .map(|v| v.id)
-                .chain(projections.iter().map(|(v, _)| v.id))
-                .collect(),
-        ),
+        // The output contract lives in one place: only the new variable of a
+        // copy or projection is visible above, and the walk does not descend.
+        IR::Project { .. } | IR::Aggregate { .. } => Some(collect_subtree_variables(node)),
         _ => None,
     }
 }

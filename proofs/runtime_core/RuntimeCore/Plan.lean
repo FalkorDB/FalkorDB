@@ -3,7 +3,8 @@ Plan-shape helpers and constructors of `Runtime` (graph/src/runtime/runtime.rs).
 
 | here | there |
 | --- | --- |
-| `IRK`, `nodeVars`, `getVariables` | `GetVariables` trait (:209) and its `DynNode` impl (:213-330) |
+| `IRK`, `nodeVars`, `getVariables` | `GetVariables` trait (:257) and its `DynNode` impl (:261-272) |
+| `pushNodeVars`, `getVarsLoop` | `push_node_variables` (:275-391) and the `get_variables` loop over it (:262-271) |
 | `PT`, `returnNames`  | `ReturnNames` trait (:335) and its impl (:339-380) |
 | `inspectBatch`       | `Runtime::inspect_batch` (:384) |
 | `RtInit`, `rtNew`    | `Runtime::new` (:406-463) |
@@ -70,6 +71,31 @@ theorem getVariables_stops (pre post : List IRK) (ns : List Nat) (hp : ∀ k ∈
   | cons k ks ih =>
     have hk := hp k (List.mem_cons_self ..)
     cases k <;> simp_all [getVariables, isProject]
+
+/-! ## `push_node_variables` (:275) -/
+
+/-- `push_node_variables`: appends the node's own variables to `vars`, and returns
+`true` exactly for a `Project` (where `get_variables` stops). -/
+def pushNodeVars (k : IRK) (acc : List Nat) : List Nat × Bool := (acc ++ nodeVars k, isProject k)
+
+theorem pushNodeVars_spec (k : IRK) (acc : List Nat) :
+    (pushNodeVars k acc).1 = acc ++ nodeVars k ∧ ((pushNodeVars k acc).2 = true ↔ ∃ ns, k = .project ns) := by
+  refine ⟨rfl, ?_⟩; cases k <;> simp [pushNodeVars, isProject]
+
+/-- `get_variables` as written since #3092: `if push_node_variables(node, &mut vars) { break }`. -/
+def getVarsLoop : List IRK → List Nat → List Nat
+  | [], acc => acc
+  | k :: ks, acc =>
+    let r := pushNodeVars k acc
+    if r.2 then r.1 else getVarsLoop ks r.1
+
+/-- The loop over `push_node_variables` is the old `get_variables` walk. -/
+theorem getVarsLoop_eq (bfs : List IRK) (acc : List Nat) :
+    getVarsLoop bfs acc = acc ++ getVariables bfs := by
+  induction bfs generalizing acc with
+  | nil => simp [getVarsLoop, getVariables]
+  | cons k ks ih =>
+    cases k <;> simp [getVarsLoop, getVariables, pushNodeVars, isProject, nodeVars, ih]
 
 /-! ## `get_return_names` (:339) -/
 
