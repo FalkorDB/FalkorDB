@@ -60,6 +60,8 @@ structure Comp where
   nodes : List QN
   rels : List QR
   paths : List (V × List V) := []
+  /-- `QueryPath::incoming` of each path, by path variable (#3460; `[]`: none written `<-`). -/
+  pathInc : V → List Bool := fun _ => []
 
 structure MSt where
   visited : List V

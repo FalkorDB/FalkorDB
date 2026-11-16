@@ -65,6 +65,19 @@ Two parser PRs changed the model; all proofs were re-done on the new code.
 The three old counterexamples (`create_named_path_drops_dup_rel`, `merge_dup_rel_dropped`,
 `type_colon_accepted`, `set_paren_property_accepted`) are gone; W4-parse-2/3/4 are fixed.
 
+## PR #3460: the written direction is recorded on relationships and paths
+
+`parse_relationship_pattern` now sets `written_incoming` (`<-` without `->`) and returns it; the
+named-path chain, allShortestPaths and pattern-comprehension loops collect it into
+`QueryPath::incoming`, read back by `QueryPath::is_incoming(var_idx)` (`incoming[var_idx / 2]`).
+`C.QRel.inc`, `C.QPath.incoming`, `C.QPath.isIncoming`; `relP` sets it (`relShape_inc`: set exactly
+when `from`/`to` are swapped), `chainN`/`aspLoop` thread `incs` (`chainN_incoming_aligned`,
+`aspLoop_incoming_aligned`: `vars` has `2 * incoming.length + 1` entries, so `is_incoming(2i+1)`
+is relationship `i`'s flag, `QPath.isIncoming_rel`). `aspLoop` passes `r.inc` to `aspRel`, which
+differs from the old `c = .lt` only on `<-[]->` (bidirectional, `Forward` either way), so
+`aspRel_same_alias` is unchanged. `pcChain` does not model the comprehension's graph, so its stub
+path's flags are not modelled (acceptance unchanged). All soundness/NP theorems re-proved.
+
 ## Re-target to ee21013d6: #3112 (same-alias allShortestPaths arrow)
 
 `parse_pattern` now records `is_incoming` (the leading `<`, cypher.rs:1416-1418) before

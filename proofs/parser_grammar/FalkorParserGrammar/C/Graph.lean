@@ -67,10 +67,14 @@ structure QRel (V : Type) where
   minH : Option Nat
   maxH : Option Nat
   asp : ASP
+  /-- `written_incoming` (#3460): written `<-` (not `<-[]->`), so `src`/`dst` are swapped. -/
+  inc : Bool := false
 
+/-- `QueryPath`: `incoming` (#3460) has one entry per relationship, in pattern order. -/
 structure QPath (V : Type) where
   var : V
   vars : List V
+  incoming : List Bool := []
 
 /-- `QueryNode::new` (ast.rs:494-505). -/
 def QNode.new {V} (alias : V) (labels : List Nat) (attrs : ET) : QNode V := ⟨alias, labels, attrs⟩
@@ -78,19 +82,38 @@ theorem QNode.new_spec {V} (a : V) (l : List Nat) (t : ET) :
     (QNode.new a l t).alias = a ∧ (QNode.new a l t).labels = l ∧ (QNode.new a l t).attrs = t :=
   ⟨rfl, rfl, rfl⟩
 
-/-- `QueryRelationship::new` (ast.rs:569-594): `all_shortest_paths = No`. -/
+/-- `QueryRelationship::new` (ast.rs:629-651): `all_shortest_paths = No`,
+`written_incoming = false`. -/
 def QRel.new {V} (alias : V) (types : List Nat) (attrs : ET) (src dst : QNode V) (bidir : Bool)
-    (minH maxH : Option Nat) : QRel V := ⟨alias, types, attrs, src, dst, bidir, minH, maxH, .no⟩
+    (minH maxH : Option Nat) : QRel V := ⟨alias, types, attrs, src, dst, bidir, minH, maxH, .no, false⟩
 theorem QRel.new_spec {V} (a : V) ts t (s d : QNode V) b mn mx :
     let r := QRel.new a ts t s d b mn mx
     r.alias = a ∧ r.types = ts ∧ r.src.alias = s.alias ∧ r.dst.alias = d.alias ∧ r.bidir = b ∧
-      r.minH = mn ∧ r.maxH = mx ∧ r.asp = .no :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      r.minH = mn ∧ r.maxH = mx ∧ r.asp = .no ∧ r.inc = false :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- `QueryPath::new` (ast.rs:607-613). -/
-def QPath.new {V} (var : V) (vars : List V) : QPath V := ⟨var, vars⟩
-theorem QPath.new_spec {V} (v : V) (vs : List V) :
-    (QPath.new v vs).var = v ∧ (QPath.new v vs).vars = vs := ⟨rfl, rfl⟩
+/-- `relationship.written_incoming = true` (cypher.rs:3245-3246). -/
+def QRel.incoming {V} (r : QRel V) : QRel V := { r with inc := true }
+
+/-- `QueryPath::new` (ast.rs:673-684). -/
+def QPath.new {V} (var : V) (vars : List V) (incoming : List Bool) : QPath V := ⟨var, vars, incoming⟩
+theorem QPath.new_spec {V} (v : V) (vs : List V) (inc : List Bool) :
+    (QPath.new v vs inc).var = v ∧ (QPath.new v vs inc).vars = vs ∧
+      (QPath.new v vs inc).incoming = inc := ⟨rfl, rfl, rfl⟩
+
+/-- `QueryPath::is_incoming` (ast.rs:687-692): `incoming.get(var_idx / 2)`, `false` past the end. -/
+def QPath.isIncoming {V} (p : QPath V) (varIdx : Nat) : Bool := p.incoming.getD (varIdx / 2) false
+
+/-- The relationship at `vars[2i+1]` (node, rel, node, … layout) reads entry `i`. -/
+theorem QPath.isIncoming_rel {V} (p : QPath V) (i : Nat) :
+    p.isIncoming (2 * i + 1) = p.incoming.getD i false := by
+  simp only [QPath.isIncoming]
+  congr 1; omega
+
+/-- Past the recorded relationships it is `false` (an outgoing hop). -/
+theorem QPath.isIncoming_past {V} (p : QPath V) (k : Nat) (h : p.incoming.length ≤ k / 2) :
+    p.isIncoming k = false := by
+  simp [QPath.isIncoming, List.getD, List.getElem?_eq_none h]
 
 /-! ## `QueryGraph` (ast.rs:622-790) -/
 

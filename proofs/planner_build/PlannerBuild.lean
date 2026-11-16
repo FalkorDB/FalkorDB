@@ -82,12 +82,13 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
 * Comprehensions (Nested/Nested2): `extract_frame` (loop/pattern vars, visited restored), `extract_fresh`
   (every minted variable distinct and new), `extract_clean` / `extract_noPat` (nothing left to extract),
   `hoist_spec`/`hoist_nested`/`hoisted_loop_invariant` (hoisting is sound exactly when no loop variable is
-  read), `build_shape`, `chainOf_innermost` (clause Apply chain leaves a single-child slot),
+  read), #3460 `walkComps_*` (an existential pattern's path walks its relationships in written
+  direction: `2n+1` components, a revisited alias keeps its node), `build_shape`, `chainOf_innermost` (clause Apply chain leaves a single-child slot),
   `extractFilter_clean` (feeds `plan_filter` its precondition).
 * `plan_match` (PlanMatch*): operator tables `firstRel_core`/`chainRel_core`, `sortRels_spec`/`sortRels_tiers`
   (fixed < var-length < shortest, stable permutation), `planComp_binds`, bound-label filters
   `labelStep_spec`/`labelStep_verifies`, `nodeOnly_*` (synthetic self-loop id `u32::MAX - id`), path elision
-  `elide_*`, joining `planMatch_join`/`planMatch_cp`, `buildPatternSubPlan_restores`.
+  `elide_*` (#3460: never for a hop written `<-`, `elidable_incoming`, `pr3460_selfloop_not_elided`), joining `planMatch_join`/`planMatch_cp`, `buildPatternSubPlan_restores`.
 * #2390 (inline maps lowered once, PlanMatch*): `lowerInline_once` (one Filter per (alias, map) —
   no more `And(p, p)`), `lowerInline_two_maps`; `firstRel_lowers_from`/`_to`, `chainRel_lowers_from`/`_to`
   (both endpoints of every hop lowered to Filters, bound or not, for every operator kind);

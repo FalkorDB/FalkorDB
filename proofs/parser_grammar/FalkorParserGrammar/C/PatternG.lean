@@ -217,7 +217,7 @@ inductive GRel (o : Oracle) (x : Ext) : QNode Nat → PS → QRel Nat × QNode N
       GNode o s3 dst s4 →
       GRel o x src s
         ((if inc == out then QRel.new d.1 d.2.1 d.2.2.1 src dst true (d.2.2.2.map (·.1)) (d.2.2.2.bind (·.2))
-          else if inc then QRel.new d.1 d.2.1 d.2.2.1 dst src false (d.2.2.2.map (·.1)) (d.2.2.2.bind (·.2))
+          else if inc then (QRel.new d.1 d.2.1 d.2.2.1 dst src false (d.2.2.2.map (·.1)) (d.2.2.2.bind (·.2))).incoming
           else QRel.new d.1 d.2.1 d.2.2.1 src dst false (d.2.2.2.map (·.1)) (d.2.2.2.bind (·.2))), dst) s4
 
 theorem detailP_sound (o : Oracle) (F : Nat) (cl : CK) (s : PS) d s'

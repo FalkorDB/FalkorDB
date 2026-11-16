@@ -30,12 +30,13 @@ inductive GChainA (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
 /-- The same for a named path `p = ...`: the path's variables are collected
 and the path is added at the end. -/
 inductive GChainN (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (p : Nat) :
-    QNode Nat → List Nat → QG Nat × List Nat → PS → QG Nat × List Nat → PS → Prop
-  | nil {left vars gs s} : GChainN o x y cl p left vars gs s ((gs.1.addPath ⟨p, vars⟩).2, gs.2) s
-  | cons {left vars gs s rr s1 out s'} : GRel o x left s rr s1 → RelOk y gs.1 rr.1 →
-      GChainN o x y cl p rr.2 (vars ++ [rr.1.alias, rr.2.alias])
+    QNode Nat → List Nat → List Bool → QG Nat × List Nat → PS → QG Nat × List Nat → PS → Prop
+  | nil {left vars incs gs s} :
+      GChainN o x y cl p left vars incs gs s ((gs.1.addPath ⟨p, vars, incs⟩).2, gs.2) s
+  | cons {left vars incs gs s rr s1 out s'} : GRel o x left s rr s1 → RelOk y gs.1 rr.1 →
+      GChainN o x y cl p rr.2 (vars ++ [rr.1.alias, rr.2.alias]) (incs ++ [rr.1.inc])
         (addPatNode cl ((gs.1.addRel rr.1).2, gs.2) rr.2) s1 out s' →
-      GChainN o x y cl p left vars gs s out s'
+      GChainN o x y cl p left vars incs gs s out s'
 
 theorem relOk_of {y : GExt} {g : QG Nat} {r : QRel Nat}
     (h : ¬((!(g.addRel r).1) = true)) : RelOk y g r := by
@@ -61,10 +62,11 @@ theorem chainA_sound (o : Oracle) (F : Nat) (cl : CK) : ∀ (n : Nat) left gs (s
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
 
 theorem chainN_sound (o : Oracle) (F : Nat) (cl : CK) (p : Nat) :
-    ∀ (n : Nat) left vars gs (s : PS) out s',
-    chainN o F cl p n left vars gs s = .ok out s' → GChainN o Ext.rust GExt.rust cl p left vars gs s out s'
-  | 0, _, _, _, _, _, _, h => by simp [chainN] at h
-  | n + 1, left, vars, gs, s, out, s', h => by
+    ∀ (n : Nat) left vars incs gs (s : PS) out s',
+    chainN o F cl p n left vars incs gs s = .ok out s' →
+      GChainN o Ext.rust GExt.rust cl p left vars incs gs s out s'
+  | 0, _, _, _, _, _, _, _, h => by simp [chainN] at h
+  | n + 1, left, vars, incs, gs, s, out, s', h => by
     unfold chainN at h
     peel h => c s1 h1
     obtain ⟨hc0, hs⟩ := peek_ok h1; subst hc0; subst s1
@@ -74,33 +76,48 @@ theorem chainN_sound (o : Oracle) (F : Nat) (cl : CK) (p : Nat) :
       · simp at h
       · rename_i hd
         exact .cons (relP_sound o F cl left _ _ _ h2) (relOk_of hd)
-          (chainN_sound o F cl p n _ _ _ _ _ _ h)
+          (chainN_sound o F cl p n _ _ _ _ _ _ _ h)
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
+
+/-- #3460: a named path's `incoming` has one flag per relationship, so `vars` (node, rel, …, node)
+has `2 * incoming.length + 1` entries and `is_incoming(2i+1)` reads relationship `i`'s flag
+(`QPath.isIncoming_rel`); each flag is the parsed relationship's own `written_incoming`. -/
+theorem chainN_incoming_aligned {o : Oracle} {x : Ext} {y : GExt} {cl : CK} {p : Nat} :
+    ∀ {left vars incs gs s out s'}, GChainN o x y cl p left vars incs gs s out s' →
+      vars.length = 2 * incs.length + 1 →
+      ∃ (g : QG Nat × List Nat) (vs : List Nat) (is : List Bool),
+        out = ((g.1.addPath ⟨p, vs, is⟩).2, g.2) ∧ vs.length = 2 * is.length + 1 := by
+  intro left vars incs gs s out s' h
+  induction h with
+  | nil => intro hl; exact ⟨_, _, _, rfl, hl⟩
+  | cons _ _ _ ih =>
+    intro hl; apply ih; simp only [List.length_append, List.length_cons, List.length_nil]; omega
 
 /-- The allShortestPaths relationship loop (extension `asp`). -/
 inductive GAsp (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (la : Nat) :
-    QNode Nat → Bool → List Nat → QG Nat × List Nat → PS →
-      Bool × List Nat × (QG Nat × List Nat) → PS → Prop
-  | nil {prev found vars gs s} : GAsp o x y cl la prev found vars gs s (found, vars, gs) s
-  | varLen {prev found vars gs s rr s1 out s'} : GRel o x prev s rr s1 →
+    QNode Nat → Bool → List Nat → List Bool → QG Nat × List Nat → PS →
+      Bool × List Nat × List Bool × (QG Nat × List Nat) → PS → Prop
+  | nil {prev found vars incs gs s} : GAsp o x y cl la prev found vars incs gs s (found, vars, incs, gs) s
+  | varLen {prev found vars incs gs s rr s1 out s'} : GRel o x prev s rr s1 →
       (rr.1.minH.isSome || rr.1.maxH.isSome) = true → found = false →
       minTooBig rr.1 = false →
-      RelOk y gs.1 (aspRel rr.1 la (decide (s.cur = .lt))) →
-      GAsp o x y cl la rr.2 true (vars ++ [(aspRel rr.1 la (decide (s.cur = .lt))).alias, rr.2.alias])
-        (addPatNode cl ((gs.1.addRel (aspRel rr.1 la (decide (s.cur = .lt)))).2, gs.2) rr.2) s1 out s' →
-      GAsp o x y cl la prev found vars gs s out s'
-  | fixed {prev found vars gs s rr s1 out s'} : GRel o x prev s rr s1 →
+      RelOk y gs.1 (aspRel rr.1 la rr.1.inc) →
+      GAsp o x y cl la rr.2 true (vars ++ [(aspRel rr.1 la rr.1.inc).alias, rr.2.alias])
+        (incs ++ [rr.1.inc])
+        (addPatNode cl ((gs.1.addRel (aspRel rr.1 la rr.1.inc)).2, gs.2) rr.2) s1 out s' →
+      GAsp o x y cl la prev found vars incs gs s out s'
+  | fixed {prev found vars incs gs s rr s1 out s'} : GRel o x prev s rr s1 →
       (rr.1.minH.isSome || rr.1.maxH.isSome) = false → RelOk y gs.1 rr.1 →
-      GAsp o x y cl la rr.2 found (vars ++ [rr.1.alias, rr.2.alias])
+      GAsp o x y cl la rr.2 found (vars ++ [rr.1.alias, rr.2.alias]) (incs ++ [rr.1.inc])
         (addPatNode cl ((gs.1.addRel rr.1).2, gs.2) rr.2) s1 out s' →
-      GAsp o x y cl la prev found vars gs s out s'
+      GAsp o x y cl la prev found vars incs gs s out s'
 
 theorem aspLoop_sound (o : Oracle) (F : Nat) (cl : CK) (la : Nat) :
-    ∀ (n : Nat) prev found vars gs (s : PS) out s',
-    aspLoop o F cl la n prev found vars gs s = .ok out s' →
-      GAsp o Ext.rust GExt.rust cl la prev found vars gs s out s'
-  | 0, _, _, _, _, _, _, _, h => by simp [aspLoop] at h
-  | n + 1, prev, found, vars, gs, s, out, s', h => by
+    ∀ (n : Nat) prev found vars incs gs (s : PS) out s',
+    aspLoop o F cl la n prev found vars incs gs s = .ok out s' →
+      GAsp o Ext.rust GExt.rust cl la prev found vars incs gs s out s'
+  | 0, _, _, _, _, _, _, _, _, h => by simp [aspLoop] at h
+  | n + 1, prev, found, vars, incs, gs, s, out, s', h => by
     unfold aspLoop at h
     peel h => c s1 h1
     obtain ⟨hc0, hs⟩ := peek_ok h1; subst hc0; subst s1
@@ -118,12 +135,24 @@ theorem aspLoop_sound (o : Oracle) (F : Nat) (cl : CK) (la : Nat) :
             split at h
             · simp at h
             · exact .varLen gr hv (by simpa using hf) (by simpa using hm) (relOk_of ‹_›)
-                (aspLoop_sound o F cl la n _ _ _ _ _ _ _ h)
+                (aspLoop_sound o F cl la n _ _ _ _ _ _ _ _ h)
       · rename_i hv
         split at h
         · simp at h
-        · exact .fixed gr (by simpa using hv) (relOk_of ‹_›) (aspLoop_sound o F cl la n _ _ _ _ _ _ _ h)
+        · exact .fixed gr (by simpa using hv) (relOk_of ‹_›) (aspLoop_sound o F cl la n _ _ _ _ _ _ _ _ h)
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
+
+/-- The same for `p = allShortestPaths(...)`. -/
+theorem aspLoop_incoming_aligned {o : Oracle} {x : Ext} {y : GExt} {cl : CK} {la : Nat} :
+    ∀ {prev found vars incs gs s out s'}, GAsp o x y cl la prev found vars incs gs s out s' →
+      vars.length = 2 * incs.length + 1 → out.2.1.length = 2 * out.2.2.1.length + 1 := by
+  intro prev found vars incs gs s out s' h
+  induction h with
+  | nil => intro hl; exact hl
+  | varLen _ _ _ _ _ _ ih =>
+    intro hl; apply ih; simp only [List.length_append, List.length_cons, List.length_nil]; omega
+  | fixed _ _ _ _ ih =>
+    intro hl; apply ih; simp only [List.length_append, List.length_cons, List.length_nil]; omega
 
 /-- One `oC_PatternPart` (Cypher.g4:217-228), with how the Rust loop goes on. -/
 inductive GPart (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
@@ -132,15 +161,15 @@ inductive GPart (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
       GChainA o x y cl left (addPatNode cl gs left) s1 out s' → GPart o x y cl gs s (.sep, out) s'
   | named {gs s p left s1 out s'} : identOf s.cur = some p → s.adv.cur = .eq →
       GNode o s.adv.adv left s1 →
-      GChainN o x y cl p left [left.alias] (addPatNode cl gs left) s1 out s' →
+      GChainN o x y cl p left [left.alias] [] (addPatNode cl gs left) s1 out s' →
       GPart o x y cl gs s (.sep, out) s'
   | asp {gs s p left s1 res s2 e} : x.asp = true → identOf s.cur = some p → s.adv.cur = .eq →
       identOf s.adv.adv.cur = some nmAllShortest → s.adv.adv.adv.cur = .lparen →
       GNode o s.adv.adv.adv.adv left s1 → (s1.cur = .dash ∨ s1.cur = .lt) →
-      GAsp o x y cl left.alias left false [left.alias] (addPatNode cl gs left) s1 res s2 →
+      GAsp o x y cl left.alias left false [left.alias] [] (addPatNode cl gs left) s1 res s2 →
       res.1 = true → s2.cur = .rparen →
       (e = PEnd.cont ∧ s2.adv.cur = .comma ∨ e = .stop) →
-      GPart o x y cl gs s (e, ((res.2.2.1.addPath ⟨p, res.2.1⟩).2, res.2.2.2))
+      GPart o x y cl gs s (e, ((res.2.2.2.1.addPath ⟨p, res.2.1, res.2.2.1⟩).2, res.2.2.2.2))
         (if e = .cont then s2.adv.adv else s2.adv)
 
 theorem partP_sound (o : Oracle) (F : Nat) (cl : CK) (gs : QG Nat × List Nat) (s : PS) r s'
@@ -176,7 +205,7 @@ theorem partP_sound (o : Oracle) (F : Nat) (cl : CK) (gs : QG Nat × List Nat) (
             obtain ⟨hr, rfl⟩ := tok_ok h9
             peel h => c s10 h10
             obtain ⟨hc0, hs⟩ := peek_ok h10; subst hc0; subst s10
-            have ga := aspLoop_sound o F cl left.alias F left false [left.alias] _ _ _ _ h8
+            have ga := aspLoop_sound o F cl left.alias F left false [left.alias] [] _ _ _ _ h8
             have gn := nodeP_sound o F _ _ _ h6
             have hd : s6.cur = .dash ∨ s6.cur = .lt := by revert hdash; cases s6.cur <;> simp
             have hres' : res.1 = true := by simpa using hres
@@ -191,7 +220,7 @@ theorem partP_sound (o : Oracle) (F : Nat) (cl : CK) (gs : QG Nat × List Nat) (
       · peel h => left s4 h4
         peel h => out s5 h5
         obtain ⟨rfl, rfl⟩ := pure_ok h
-        exact .named hp he (nodeP_sound o F _ _ _ h4) (chainN_sound o F cl p F _ _ _ _ _ _ h5)
+        exact .named hp he (nodeP_sound o F _ _ _ h4) (chainN_sound o F cl p F _ _ _ _ _ _ _ h5)
   · dsimp only at h
     peel h => left s2 h2
     peel h => out s3 h3

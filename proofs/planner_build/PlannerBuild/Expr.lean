@@ -28,6 +28,15 @@ structure V where
   scope : Nat
   deriving DecidableEq, Repr
 
+/-- One relationship of a pattern as `extract_pattern_comprehensions` walks it (#3460): alias,
+stored `from`/`to`, and `written_incoming` (written `<-`, so `from`/`to` are the swapped ends). -/
+structure RelEnd where
+  alias : V
+  frm : V
+  to : V
+  inc : Bool
+  deriving DecidableEq, Repr
+
 /-- `QueryGraph`: identity, `variables()` in order, variables read by its inline maps. -/
 structure QG where
   gid : Nat
@@ -37,6 +46,9 @@ structure QG where
   nodes : List V := []
   /-- relationship aliases, in pattern order -/
   rels : List V := []
+  /-- the relationships with their endpoints and direction, in pattern order
+  (`relEnds.map (·.alias) = rels`) -/
+  relEnds : List RelEnd := []
   deriving DecidableEq, Repr
 
 inductive C

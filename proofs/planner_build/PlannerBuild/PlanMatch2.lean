@@ -234,12 +234,41 @@ theorem nodeOnly_stripped (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V)
 
 /-! ## A component with relationships -/
 
-/-- Path elision (mod.rs:2350-2387): a named path over the single var-length
-hop `(from)-[rel]->(to)` is bound by the CondVarLenTraverse itself. -/
-def elidable (rels : List QR) (p : V × List V) : Bool :=
+/-- Path elision (mod.rs:2355-2408): a named path over the single var-length
+hop `(from)-[rel]->(to)` is bound by the CondVarLenTraverse itself. #3460: not when that hop was
+written `<-` (`!path.is_incoming(1)`, i.e. `incoming[0]`): PathBuilder must reverse it. -/
+def elidable (rels : List QR) (inc : List Bool) (p : V × List V) : Bool :=
+  match rels with
+  | [r] => r.kind == .varLen && !(inc.getD 0 false) &&
+      (p.2.map V.id == [r.frm.alias.id, r.alias.id, r.to.alias.id])
+  | _ => false
+
+/-- The pre-#3460 condition, without the direction check. -/
+def elidablePre3460 (rels : List QR) (p : V × List V) : Bool :=
   match rels with
   | [r] => r.kind == .varLen && (p.2.map V.id == [r.frm.alias.id, r.alias.id, r.to.alias.id])
   | _ => false
+
+/-- #3460: a path whose hop was written `<-` is never elided. -/
+theorem elidable_incoming (rels : List QR) (inc : List Bool) (p : V × List V)
+    (h : inc.getD 0 false = true) : elidable rels inc p = false := by
+  rw [List.getD_eq_getElem?_getD] at h
+  unfold elidable; split <;> simp [h]
+
+/-- Written forward, the condition is the pre-#3460 one. -/
+theorem elidable_forward (rels : List QR) (inc : List Bool) (p : V × List V)
+    (h : inc.getD 0 false = false) : elidable rels inc p = elidablePre3460 rels p := by
+  rw [List.getD_eq_getElem?_getD] at h
+  unfold elidable elidablePre3460; split <;> simp [h]
+
+/-- `MATCH p = (a)<-[r*]-(a)`: stored `from = to = a`, so the ids match and before #3460 the
+path was elided onto the traverse (which emits it `from → to`, unreversed); now it is not. -/
+theorem pr3460_selfloop_not_elided (a r : V) :
+    let rel : QR := { alias := r, named := true, frm := { alias := a, ptr := 0 },
+                      to := { alias := a, ptr := 0 }, kind := .varLen, ptr := 0 }
+    let p : V × List V := (⟨9, 0⟩, [a, r, a])
+    elidablePre3460 [rel] p = true ∧ elidable [rel] [true] p = false := by
+  simp [elidablePre3460, elidable]
 
 /-- Bind the path variable on the first CondVarLenTraverse of that relationship
 still without one (pre-order). -/
@@ -263,8 +292,9 @@ where
       | some c' => some (c' :: cs)
       | none => (bindPathL rid pv cs).map (c :: ·)
 
-def elideStep (rels : List QR) (acc : MP × List (V × List V)) (p : V × List V) : MP × List (V × List V) :=
-  if elidable rels p then
+def elideStep (rels : List QR) (inc : V → List Bool) (acc : MP × List (V × List V)) (p : V × List V) :
+    MP × List (V × List V) :=
+  if elidable rels (inc p.1) p then
     match p.2[1]? with
     | some rv => match bindPath rv.id p.1 acc.1 with
       | some res' => (res', acc.2)
@@ -272,13 +302,13 @@ def elideStep (rels : List QR) (acc : MP × List (V × List V)) (p : V × List V
     | none => (acc.1, acc.2 ++ [p])
   else (acc.1, acc.2 ++ [p])
 
-def elide (rels : List QR) (paths : List (V × List V)) (res : MP) : MP :=
-  let x := paths.foldl (elideStep rels) (res, [])
+def elide (rels : List QR) (inc : V → List Bool) (paths : List (V × List V)) (res : MP) : MP :=
+  let x := paths.foldl (elideStep rels inc) (res, [])
   if x.2.isEmpty then x.1 else .pathB x.2 x.1
 
-theorem elide_fold (rels : List QR) (paths : List (V × List V)) (acc : MP × List (V × List V))
-    (h : ∀ p ∈ paths, elidable rels p = false) :
-    paths.foldl (elideStep rels) acc = (acc.1, acc.2 ++ paths) := by
+theorem elide_fold (rels : List QR) (inc : V → List Bool) (paths : List (V × List V))
+    (acc : MP × List (V × List V)) (h : ∀ p ∈ paths, elidable rels (inc p.1) p = false) :
+    paths.foldl (elideStep rels inc) acc = (acc.1, acc.2 ++ paths) := by
   induction paths generalizing acc with
   | nil => simp
   | cons p ps ih =>
@@ -286,15 +316,21 @@ theorem elide_fold (rels : List QR) (paths : List (V × List V)) (acc : MP × Li
     rw [ih _ (fun q hq => h q (by simp [hq]))]; simp
 
 /-- No elidable path: one PathBuilder with all of them (none: nothing). -/
-theorem elide_none (rels : List QR) (paths : List (V × List V)) (res : MP)
-    (h : ∀ p ∈ paths, elidable rels p = false) :
-    elide rels paths res = if paths.isEmpty then res else .pathB paths res := by
-  simp [elide, elide_fold rels paths _ h]
+theorem elide_none (rels : List QR) (inc : V → List Bool) (paths : List (V × List V)) (res : MP)
+    (h : ∀ p ∈ paths, elidable rels (inc p.1) p = false) :
+    elide rels inc paths res = if paths.isEmpty then res else .pathB paths res := by
+  simp [elide, elide_fold rels inc paths _ h]
+
+/-- #3460: paths whose hop was written `<-` all go to the PathBuilder. -/
+theorem elide_incoming (rels : List QR) (inc : V → List Bool) (paths : List (V × List V)) (res : MP)
+    (h : ∀ p ∈ paths, (inc p.1).getD 0 false = true) :
+    elide rels inc paths res = if paths.isEmpty then res else .pathB paths res :=
+  elide_none rels inc paths res (fun p hp => elidable_incoming _ _ _ (h p hp))
 
 /-- The single var-length hop's own path is bound on the traverse, no PathBuilder. -/
-theorem elide_varlen (r : QR) (p : V × List V) (res res' : MP) (rv : V)
-    (he : elidable [r] p = true) (h1 : p.2[1]? = some rv) (hb : bindPath rv.id p.1 res = some res') :
-    elide [r] [p] res = res' := by
+theorem elide_varlen (r : QR) (inc : V → List Bool) (p : V × List V) (res res' : MP) (rv : V)
+    (he : elidable [r] (inc p.1) p = true) (h1 : p.2[1]? = some rv) (hb : bindPath rv.id p.1 res = some res') :
+    elide [r] inc [p] res = res' := by
   simp [elide, elideStep, he, h1, hb]
 
 def planRels (c : Comp) : List QR → MP → MSt → LW → MP × MSt × LW
@@ -337,7 +373,7 @@ def planComp (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) : MP × MSt × List
   | r :: rs =>
     let f := firstRel lb.1 c lw r
     let x := planRels c rs f.1 (visit lb.1 r) f.2
-    (elide c.rels c.paths x.1, x.2.1, lb.2, x.2.2)
+    (elide c.rels c.pathInc c.paths x.1, x.2.1, lb.2, x.2.2)
 
 theorem visit_binds (st : MSt) (r : QR) (v : V) (hv : v = r.frm.alias ∨ v = r.to.alias ∨ v = r.alias) :
     (visit st r).bound v = true := by
@@ -445,10 +481,10 @@ theorem bindPathL_stripped (rid : Nat) (pv : V) : (cs cs' : List MP) →
       simp [MP.stripped.strippedL, bindPathL_stripped rid pv cs cs'' hcs]
 end
 
-theorem elide_stripped (rels : List QR) (paths : List (V × List V)) (res : MP) (h : res.stripped = true) :
-    (elide rels paths res).stripped = true := by
+theorem elide_stripped (rels : List QR) (inc : V → List Bool) (paths : List (V × List V)) (res : MP)
+    (h : res.stripped = true) : (elide rels inc paths res).stripped = true := by
   have hf : ∀ (ps : List (V × List V)) (acc : MP × List (V × List V)), acc.1.stripped = true →
-      (ps.foldl (elideStep rels) acc).1.stripped = true := by
+      (ps.foldl (elideStep rels inc) acc).1.stripped = true := by
     intro ps
     induction ps with
     | nil => intro acc h; exact h
@@ -486,7 +522,7 @@ theorem planComp_stripped (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) :
     cases c.nodes with
     | nil => rfl
     | cons n _ => exact nodeOnly_stripped _ _ _ _
-  | cons r rs => exact elide_stripped _ _ _ (planRels_stripped _ _ _ _ _ (firstRel_stripped _ _ _ _))
+  | cons r rs => exact elide_stripped _ _ _ _ (planRels_stripped _ _ _ _ _ (firstRel_stripped _ _ _ _))
 
 /-! ## The whole pattern -/
 
