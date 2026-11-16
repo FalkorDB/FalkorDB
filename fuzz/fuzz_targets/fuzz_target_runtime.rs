@@ -1,7 +1,7 @@
 #![no_main]
 
+use fuzz_support::init_index_support;
 use graph::{
-    fuzz_support::init_index_support,
     graph::{
         graph::{Graph, Plan},
         graphblas::{GrB_Mode, GrB_init},

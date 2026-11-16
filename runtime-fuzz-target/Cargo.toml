@@ -17,4 +17,6 @@ afl = "*"
 
 [dependencies.graph]
 path = "../graph"
-features = ["fuzz"]
+
+[dependencies.fuzz-support]
+path = "../fuzz-support"

@@ -74,8 +74,6 @@
 pub mod effects;
 pub mod entity_type;
 pub mod env_snapshot;
-#[cfg(feature = "fuzz")]
-pub mod fuzz_support;
 pub mod graph;
 pub mod identifier_limits;
 pub mod index;

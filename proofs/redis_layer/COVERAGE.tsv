@@ -308,17 +308,3 @@ src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filte
 src/graph_core.rs	RedisBuildHost::publish	1616	NOT COVERED	online index build (#2355): not modelled yet
 src/graph_core.rs	RedisBuildHost::warn	1625	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)
-# graph/src/fuzz_support.rs (#3839): built only with the `fuzz` feature, for the fuzz harnesses; never in the module.
-graph/src/fuzz_support.rs	FuzzString::alloc	36	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_get_detached_ctx	45	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_free_ctx	49	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_log	51	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_subscribe	58	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_create_string	66	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_create_string_from_string	80	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_retain_string	88	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_hold_string	98	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_trim_string_allocation	107	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_string_ptr_len	109	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	mock_free_string	121	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets
-graph/src/fuzz_support.rs	init_index_support	153	NOT COVERED	TEST-ONLY: fuzz harness support (`fuzz` feature): Redis module API stand-ins and RediSearch library init for the fuzz targets

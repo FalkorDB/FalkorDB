@@ -1,17 +1,21 @@
-//! Setup shared by the fuzz harnesses (`runtime-fuzz-target`, `fuzz/`).
+//! Setup shared by the fuzz harnesses (`runtime-fuzz-target`, `fuzz/`). A crate of its
+//! own, so the engine (`graph`) carries no fuzz-only code.
 //!
 //! The harnesses run the engine in-process with no Redis. RediSearch calls the
 //! `RedisModule_*` function pointers that Redis fills in when it loads a module,
 //! so without Redis they are null and the first call (e.g. `rm_calloc` in
-//! `CREATE INDEX`) jumps to address 0. [`init_redisearch`] fills in the ones the
+//! `CREATE INDEX`) jumps to address 0. [`init_index_support`] fills in the ones the
 //! library-mode paths use and initialises RediSearch as `module_init` does.
+
+// Dependency version duplicates are from transitive dependencies.
+#![allow(clippy::multiple_crate_versions)]
 
 use std::ffi::{c_char, c_int};
 use std::ptr::null_mut;
 use std::slice::from_raw_parts;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::index::redisearch::{
+use graph::index::redisearch::{
     REDISEARCH_INIT_LIBRARY, RediSearch_Init,
     redis::{
         REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_CreateString,
@@ -23,7 +27,7 @@ use crate::index::redisearch::{
         RedisModuleEventCallback, RedisModuleString,
     },
 };
-use crate::threadpool::init_thread_pool;
+use graph::threadpool::init_thread_pool;
 
 /// A `RedisModuleString` is opaque to RediSearch; the fuzz stand-in owns its bytes and
 /// is reference counted because RediSearch retains and holds strings.
@@ -55,6 +59,10 @@ const unsafe extern "C" fn mock_log(
 ) {
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "REDISMODULE_OK is the bindgen constant 0"
+)]
 const unsafe extern "C" fn mock_subscribe(
     _ctx: *mut RedisModuleCtx,
     _event: RedisModuleEvent,
@@ -150,6 +158,11 @@ unsafe extern "C" fn mock_free_string(
 ///
 /// # Panics
 /// If RediSearch fails to initialise.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "REDISMODULE_OK and REDISEARCH_INIT_LIBRARY are the bindgen constants 0 and 1"
+)]
 pub fn init_index_support() {
     // SAFETY: called once at harness start-up, before any other thread uses
     // RediSearch, so nothing reads the function pointers while they are written.
