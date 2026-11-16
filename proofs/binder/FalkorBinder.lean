@@ -18,9 +18,11 @@ planner's `fresh_var` (planner/mod.rs:838, called at 1068, 1108, 1114 and 1461),
 planner's ids `len, len+1, …` avoid every id `H` the bound IR uses iff
 `∀ i ∈ H, i < len`. Minting under a new key keeps that (`mint_new_covers`,
 `resolve_covers`, `projectName_new_covers`, `foreachRestore_covers`,
-`mergeSV_covers`). **Removing** a key breaks it, and the binder removes keys
-in two places while the removed ids are still in the IR
-(`erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks`).
+`mergeSV_covers`). **Removing** a key breaks it (`erase_breaks_covers`); before #3062 the binder
+removed keys in two places while the removed ids were still in the IR (`pre3062_where_copy_id_reused`,
+`pre3062_comprehension_cleanup_breaks`). Since #3062 it re-keys them instead (`hide_names` binder.rs:2215,
+`hide_new_names` :2202 → `Env.hide`/`hideNew`, `hiddenKeyFrom_fresh`, `Env.hideAll_covers`,
+`hideCleanup_covers`, `where_copy_id_fresh`, `comprehension_hide_keeps`).
 
 ## Gap closed 2026-10-20: pattern predicates may declare variables (#1334)
 `bind_expr_node`'s `Pattern` arm (binder.rs:2082-2113) binds a WHERE pattern predicate with
@@ -83,8 +85,10 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * `foreachRestore_covers`: FOREACH restore keeps every inner id reserved.
 * `callBody_query_disjoint`, `callBody_union_disjoint`: a CALL body's scopes, plain or UNION branch, are disjoint from the live outer scopes (UNION since #3027, d42d121c6).
 * `unionCheck_ok_iff`, `validateImport_ok`: UNION column rule and CALL import rule as stated.
-* Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `where_copy_id_reused`,
-  `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`, `node_attr_on_rel_rust_rejects`,
+* #3062: `where_copy_id_fresh`, `hideCleanup_covers`, `comprehension_hide_keeps`, `comprehension_labels_restored`,
+  `with_where_pattern_reuses_parent`, `with_renamed_pattern_reuses_projected` (bugs 3, 7 and the comprehension half of 6 fixed).
+* Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `pre3062_where_copy_id_reused`,
+  `pre3062_comprehension_cleanup_breaks` (history, fixed by #3062), `orderBy_leaks`, `defineName_ignores_parent`, `node_attr_on_rel_rust_rejects`,
   `node_attr_on_own_rel`, `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
   `labels_leak`, `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
 
@@ -113,7 +117,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
    `bug_inline_attr_referencing_other_component` ([] vs C 2 rows) — #2923's node case. Still present on
    8743953a8 (live: `MATCH (a:A), (b:B {v: a.v}) RETURN a.v, b.v` → Rust [], C [[1,1],[2,2]]). #2923's
    relationship repro is the clause fold (item 1), not this scan filter.
-3. **Removed-key id reuse** (binder.rs:1262-1273 WHERE/SKIP/LIMIT copies; :1927/:2106 comprehension/pattern locals):
+3. ~~Removed-key id reuse~~ **Fixed by #3062** (`hide_names`/`hide_new_names` re-key instead of removing): (binder.rs:1262-1273 WHERE/SKIP/LIMIT copies; :1927/:2106 comprehension/pattern locals):
    `bug_with_where_copy_id_reused_by_next_match` ([] vs [[0,1,0]]), `..._by_pattern_comprehension`,
    `bug_pattern_comprehension_locals_reused` (4 rows vs 3), `bug_where_comprehension_locals_reused`
    (runtime error "Invalid node id for 'to' in relationship pattern").
@@ -124,10 +128,12 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 5. **ORDER BY copies cross the projection** (snapshot at binder.rs:1248 is after ORDER BY): `bug_order_by_variable_crosses_with`
    (`WITH n.v AS k ORDER BY n.v RETURN n` accepted, `RETURN *` returns `k, n`), `bug_order_by_variable_returned_from_call`
    ("Variable `n` already declared in outer scope"; C returns rows).
-6. **Label accumulation leaks** from CREATE and pattern comprehensions into the earlier MATCH scan (binder.rs:1562→1360,
+6. **Label accumulation leaks** from CREATE (pattern-comprehension half fixed by #3062, `comprehension_labels_restored`)
+   and, before #3062, pattern comprehensions into the earlier MATCH scan (binder.rs:1562→1360,
    1881-1938 lack the save/restore of :339-345 and :2096-2101): `bug_create_labels_leak_into_match` (0 vs 3),
    `bug_pattern_comprehension_labels_leak_into_match` (1 row vs 3).
-7. **Pattern predicate in WITH … WHERE rebinds a parent name** (define_name_in_scope :2160 ignores the parent copy that
+7. ~~Pattern predicate in WITH … WHERE rebinds a parent name~~ **Fixed by #3062** (`import_parent_names` :2168
+   copies parent names first: `with_where_pattern_reuses_parent`, `with_renamed_pattern_reuses_projected`) (define_name_in_scope :2160 ignores the parent copy that
    pattern comprehensions pre-make at :1882): `bug_with_where_pattern_predicate_ignores_outer_variable` (3 rows vs 1).
 
 8. **A subscript is never accepted as a boolean** (NEW, `expr_may_return_boolean` binder.rs:2347-2356 lists
@@ -166,10 +172,10 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 ## Open PRs touching binder.rs (model = origin/main)
 * #2981: `bind_graph` defines named relationships before nodes' inline maps are bound and splits inline maps
   reading pending pattern variables (`split_inline_attrs`) — removes `node_attr_on_rel_rust_rejects` / bug 2.
-* #3016: keeps hidden scope variables' ids reserved and hides ORDER BY copies — fixes `erase_breaks_covers`,
-  `where_copy_id_reused`, `orderBy_leaks` (bugs 3, 5).
-* #3049: CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes `labels_leak` (bug 6).
-* #3062: pattern predicates in WITH … WHERE resolve pre-projection names — fixes `defineName_ignores_parent` (bug 7).
+* #3016: hides ORDER BY copies — fixes `orderBy_leaks` (bug 5).
+* #3049: CREATE labels stay out of the MATCH label set — fixes `labels_leak` (bug 6, CREATE half).
+* #3062 (modelled here): pattern predicates in WITH … WHERE resolve pre-projection names (bug 7), WHERE copies and
+  comprehension locals are hidden, not removed (bug 3), comprehension labels saved/restored (bug 6, comprehension half).
 * #3011: generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY
   expressions repeating a projection read its alias), guarded by `is_alias_rewritable`, which admits
   `Constant(Bool|Int|Float|String)` — exactly the kinds `expr_ir_eq` conflates with each other

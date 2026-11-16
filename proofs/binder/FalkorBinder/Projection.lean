@@ -1,6 +1,6 @@
 import FalkorBinder.Resolve
 /-
-# WITH / RETURN: `bind_projection` (binder.rs:1059-1301)
+# WITH / RETURN: `bind_projection` (binder.rs:1064-1306)
 
 An expression is abstracted to the names it mentions (in DFS order), whether
 it is an aggregation, and whether it is a bare variable (the case that
@@ -64,8 +64,10 @@ def projectItems (st : St) (seen : List Name) :
       projectItems { st with cur, p2c } (a :: seen) rest
 
 /-- `Binder::bind_projection` for the non-`*` form, returning the scope the
-next clause sees. -/
-def bindProjection (st : St) (p : Proj) : Except String St := do
+next clause sees; `hide` is how step 7 takes the WHERE-only copies out of sight
+(`bindProjection`: #3062's `hide_names`; `bindProjectionPre3062`: the `remove` loop
+before it). -/
+def bindProjectionWith (hide : Env → List Name → Env) (st : St) (p : Proj) : Except String St := do
   -- 1. items are bound in the scope *before* the projection (binder.rs:1071-1078)
   let (st, bound) ← p.items.foldlM (init := (st, ([] : List (Name × PExpr × List Var))))
     fun (st, acc) (a, e) => do
@@ -85,11 +87,18 @@ def bindProjection (st : St) (p : Proj) : Except String St := do
   let before := st.cur.map (·.1)
   let (st, _) ← p.tail.foldlM (init := (st, ([] : List Var)))
     fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
-  -- 7. remove the copies made only by WHERE / SKIP / LIMIT (binder.rs:1260-1268)
+  -- 7. hide the copies made only by WHERE / SKIP / LIMIT (binder.rs:1263-1272)
   let filterOnly := (st.cfp.map (·.1)).filter (fun k => !before.contains k)
-  let cur := st.cur.retain (fun k => !filterOnly.contains k)
-  -- 8. commit_scope (binder.rs:1275-1276)
+  let cur := hide st.cur filterOnly
+  -- 8. commit_scope (binder.rs:1279-1280)
   pure { st with cur, useParent := false, p2c := [], cfp := [] }
+
+/-- `bind_projection` since #3062: step 7 is `hide_names(&filter_only_keys)` (binder.rs:1272). -/
+def bindProjection : St → Proj → Except String St := bindProjectionWith Env.hideAll
+
+/-- Before #3062 (343e077f2): step 7 `remove`d each WHERE-only copy. -/
+def bindProjectionPre3062 : St → Proj → Except String St :=
+  bindProjectionWith (fun e ks => e.retain (fun k => !ks.contains k))
 
 /-- The spec: the scope after `WITH`/`RETURN` is exactly its aliases. -/
 def specProjectionScope (p : Proj) : List Name := p.items.map (·.1)
@@ -117,20 +126,40 @@ theorem orderBy_leaks :
     specProjectionScope { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] } = ["k"] := by
   decide
 
-/-- The WHERE copy, by contrast, is removed from the table … -/
+/-- The WHERE copy, by contrast, is out of sight: since #3062 it is re-keyed under
+`` _slot_hidden`n`1 `` (a key no query can spell), not removed, so the next clause cannot
+name `n` while the table keeps its slot. -/
 theorem where_copy_removed :
     (bindProjection st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map keys
-      = .ok ["k"] := by
+      = .ok ["k", "_slot_hidden`n`1"] ∧
+    (bindProjection st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map
+      (fun st => st.cur.has "n") = .ok false := by
   decide
 
-/-- … but the Filter still reads it, at id 1 of scope 1, while the table
-the next clause mints from has length 1 (**root cause 2**): the next
-variable of the scope (`x` in `MATCH (x)-->(y)`) gets id 1 too. -/
-theorem where_copy_id_reused :
+/-- **#3062 fixes root cause 2 for WHERE copies**: the Filter reads the copy at id 1 of scope 1,
+and the next variable of the scope (`x` in `MATCH (x)-->(y)`) now gets id 2. -/
+theorem where_copy_id_fresh :
     (do let st ← projectItems (pushScope st0) [] [("k", { vars := ["n"] }, [⟨"n", 0, 0, .node⟩])]
         let (_, v) ← resolve st [] "n"
         pure v.id : Except String Nat) = .ok 1 ∧
     ((bindProjection st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map
+      (fun st => (freshVar st.cur "x" .node st.depth).id)) = .ok 2 := by
+  decide
+
+/-- History (343e077f2, fixed by #3062): the WHERE copy was removed from the table … -/
+theorem pre3062_where_copy_removed :
+    (bindProjectionPre3062 st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map keys
+      = .ok ["k"] := by
+  decide
+
+/-- … but the Filter still read it, at id 1 of scope 1, while the table
+the next clause mints from had length 1 (**root cause 2**): the next
+variable of the scope (`x` in `MATCH (x)-->(y)`) got id 1 too. -/
+theorem pre3062_where_copy_id_reused :
+    (do let st ← projectItems (pushScope st0) [] [("k", { vars := ["n"] }, [⟨"n", 0, 0, .node⟩])]
+        let (_, v) ← resolve st [] "n"
+        pure v.id : Except String Nat) = .ok 1 ∧
+    ((bindProjectionPre3062 st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map
       (fun st => (freshVar st.cur "x" .node st.depth).id)) = .ok 1 := by
   decide
 
@@ -158,9 +187,6 @@ theorem agg_orderBy_rejects :
       { items := [("c", (PExpr.mk ["n"] true false))], orderBy := [{ vars := ["n"] }] }).map keys =
       .error "ORDER BY cannot reference variables not projected" := by
   decide
-
-theorem Env.has_iff (e : Env) (k : Name) : e.has k = true ↔ k ∈ e.map (·.1) := by
-  simp [Env.has, List.any_eq_true]
 
 /-- Whatever ORDER BY references, the projection scope starts with every
 alias, in order, each under a fresh id (binder.rs:1147-1171). -/

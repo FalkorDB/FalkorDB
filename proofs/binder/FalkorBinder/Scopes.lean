@@ -78,27 +78,39 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
   intro i hmem
   rw [hids] at hmem; rw [hlen]; exact hi i hmem
 
-/-! ## Pattern comprehension / pattern predicate cleanup (binder.rs:1922, 2097) -/
+/-! ## Pattern comprehension / pattern predicate cleanup (binder.rs:1922-1923, 2107-2108) -/
 
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
-comprehension's sub-plan uses; the cleanup then keeps only the names that
-were there before (and `_anon*`). -/
+comprehension's sub-plan uses. -/
 def compScope : Env :=
   [("n", ⟨"n", 0, 0, .node⟩), ("m", ⟨"m", 1, 0, .node⟩), ("r", ⟨"r", 2, 0, .rel⟩)]
 
+/-- The cleanup before #3062 kept only the names that were there before (and `_anon*`). -/
 def compCleaned : Env := compScope.retain (fun k => k == "n" || k.startsWith "_anon")
 
-/-- **Root cause 2 (comprehensions).** The cleaned table has size 1 while
-ids 1 and 2 are still in the IR: the planner's first two fresh ids in scope
+/-- **Root cause 2 (comprehensions)**, history (343e077f2, fixed by #3062). The cleaned table had
+size 1 while ids 1 and 2 were still in the IR: the planner's first two fresh ids in scope
 0 — or the next binder variable (`x`, `y` of a following `MATCH (x)-->(y)`)
-— are exactly `m`'s and `r`'s. `mint_fresh_iff` says that is a collision. -/
-theorem comprehension_cleanup_breaks :
+— were exactly `m`'s and `r`'s. `mint_fresh_iff` says that is a collision. -/
+theorem pre3062_comprehension_cleanup_breaks :
     compScope.Covers ∧ compCleaned.length = 1 ∧
     ¬ (∀ i ∈ compScope.ids, i < compCleaned.length) := by
   refine ⟨?_, by decide, ?_⟩
   · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
   · intro h; exact absurd (h 1 (by decide)) (by decide)
+
+/-- **#3062**: the cleanup now re-keys `m` and `r` (`hide_new_names`): the table keeps size 3, so
+every id the comprehension's sub-plan uses stays below `len()` and the next ids minted are 3, 4, …
+(`hideCleanup_covers` for every table). -/
+theorem comprehension_hide_keeps :
+    (compScope.hideNew ["n"]).Covers ∧ (compScope.hideNew ["n"]).length = 3 ∧
+    ∀ i ∈ compScope.ids, i < (compScope.hideNew ["n"]).length := by
+  have hd : compScope.Distinct := by unfold Env.Distinct; decide
+  have hc : compScope.Covers := by
+    intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
+  obtain ⟨c, l⟩ := Env.hideNew_covers ["n"] compScope hd hc
+  refine ⟨c, l, fun i hi => by rw [l]; exact hc i hi⟩
 
 /-! ## `CALL { … UNION … }` scope numbering (`bind_call_body`, binder.rs:824-925) -/
 
@@ -137,7 +149,7 @@ inductive LClause
   | optMatch (labels : List Name)      -- OPTIONAL MATCH (n:L…): saved/restored (binder.rs:338-346)
   | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs:2090-2092)
   | create (labels : List Name)        -- CREATE (n:L)-[..]->(): not saved
-  | comprehension (labels : List Name) -- [(n:L)-->() | …]: not saved
+  | comprehension (labels : List Name) -- [(n:L)-->() | …]: saved/restored since #3062 (binder.rs:1908-1910)
   | remove (labels : List Name)        -- REMOVE n:L…: `bind_ir` QueryIR::Remove (b84473a7f :477-482)
                                        -- binds the items and leaves `node_labels` alone (#3450)
   deriving Repr, DecidableEq
@@ -145,9 +157,17 @@ inductive LClause
 /-- The accumulated label set of one node variable after the clauses. -/
 def accumulate (acc : List Name) : List LClause → List Name
   | [] => acc
-  | .match_ ls :: r | .create ls :: r | .comprehension ls :: r =>
+  | .match_ ls :: r | .create ls :: r =>
     accumulate (acc ++ ls.filter (fun l => !acc.contains l)) r
-  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r => accumulate acc r
+  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r | .comprehension _ :: r => accumulate acc r
+
+/-- Before #3062 (343e077f2): a pattern comprehension's `bind_graph` was not wrapped in the
+`node_labels` save/restore, so its labels accumulated. -/
+def accumulatePre3062 (acc : List Name) : List LClause → List Name
+  | [] => acc
+  | .match_ ls :: r | .create ls :: r | .comprehension ls :: r =>
+    accumulatePre3062 (acc ++ ls.filter (fun l => !acc.contains l)) r
+  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r => accumulatePre3062 acc r
 
 /-- `update_all_node_labels` writes the accumulation into the *first* MATCH's
 scan. openCypher: that scan carries the labels of the (non-optional) MATCH
@@ -163,11 +183,23 @@ theorem labels_agree_match_only :
       specScanLabels [.match_ ["A"], .optMatch ["B"], .predicate ["C"], .match_ ["D"]] := by
   decide
 
-/-- **Root cause 5.** `MATCH (a) CREATE (a:Z)-[:T]->(:C)` scans `(a:Z)`, and
-`MATCH (a) RETURN [(a:A)-->(b) | b.v]` scans `(a:A)`. -/
+/-- **Root cause 5.** `MATCH (a) CREATE (a:Z)-[:T]->(:C)` scans `(a:Z)`. -/
 theorem labels_leak :
-    accumulate [] [.match_ [], .create ["Z"]] = ["Z"] ∧ specScanLabels [.match_ [], .create ["Z"]] = [] ∧
-    accumulate [] [.match_ [], .comprehension ["A"]] = ["A"] ∧
+    accumulate [] [.match_ [], .create ["Z"]] = ["Z"] ∧ specScanLabels [.match_ [], .create ["Z"]] = [] := by
+  decide
+
+/-- **#3062 fixes the comprehension half of root cause 5**: `MATCH (a) RETURN [(a:A)-->(b) | b.v]`
+scans `(a)`, as specified. -/
+theorem comprehension_labels_restored :
+    accumulate [] [.match_ [], .comprehension ["A"]] = [] ∧
+      accumulate [] [.match_ [], .comprehension ["A"]] = specScanLabels [.match_ [], .comprehension ["A"]] := by
+  decide
+
+/-- History (343e077f2, comprehension half fixed by #3062): `MATCH (a) CREATE (a:Z)-[:T]->(:C)`
+scanned `(a:Z)`, and `MATCH (a) RETURN [(a:A)-->(b) | b.v]` scanned `(a:A)`. -/
+theorem pre3062_labels_leak :
+    accumulatePre3062 [] [.match_ [], .create ["Z"]] = ["Z"] ∧ specScanLabels [.match_ [], .create ["Z"]] = [] ∧
+    accumulatePre3062 [] [.match_ [], .comprehension ["A"]] = ["A"] ∧
       specScanLabels [.match_ [], .comprehension ["A"]] = [] := by
   decide
 
