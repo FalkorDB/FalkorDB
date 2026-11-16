@@ -8,7 +8,7 @@ import OpsTraverse.VarLen
 | `bfs`               | the `while let Some(current) = queue.pop_front()` loop (`:146-265`), fuel-bounded; neighbours via `step` (`:161-191`, self-loop once when undirected) |
 | `back`              | the DFS backtrack iterator (`:278-304`): push `edge` then continue at `prev`, stop at `src` with a non-empty list |
 | `asp`               | the whole row: reverse always, cycles included (#3112; `:283-289`), reverse again for `AllShortestPaths::Reversed` (`:289-291`) |
-| `ends`, `buildNodes`| `PathBuilderOp`'s `Value::List` branch (`runtime/ops/path_builder.rs:148-172`): next node = the edge endpoint that differs from the previous node, via `Runtime::get_relationship_endpoints` |
+| `ends`, `buildNodes`| `PathBuilderOp`'s `Value::List` branch (`runtime/ops/path_builder.rs:102-127`): next node = the edge endpoint that differs from the previous node, via `Runtime::get_relationship_endpoints` |
 
 Edge-attribute filters (`:193-208`) are a pure pre-filter of the neighbour
 list and are not modelled. *Minimality*, *completeness* and *exactly-once* are proved in

@@ -94,8 +94,9 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
-| `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
-| `PathVlt.vltMain`, `revWalk` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs:88-139`, direction inferred at `:102-105`) |
+| `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:102-127`) |
+| `PathVlt.vltPR` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs:88-102`, direction `path.is_incoming(var_idx)`, #3460) |
+| `PathVlt.vltMain`, `revWalk` | the same branch before #3460 (direction inferred from the first node) |
 | `EIP.expandIntoP`, `Pending` | `ExpandIntoOp::expand_row` with pending deletes (`expand_into.rs:158-235`; `pending.rs:1115-1134`) |
 | `Scans.labelScan`, `idSeek`, `labelIdScan` | `node_by_label_scan.rs:77`, `node_by_id_seek.rs:55`, `node_by_label_and_id_scan.rs:59` |
 | `ASPFold.Rel`, `ASPInv.Inv`, `bstep`, `ASPStep`, `ASPFinal`, `ASPMain`, `ASPFuel` | the BFS of `all_shortest_paths.rs:141-265` (one `pop_front` iteration = `bstep`), its invariant, and the backtrack `:278-304` |
@@ -204,7 +205,8 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    `PathVlt.PathFollowsPattern`; Lean `bug3451_main_violates`,
    `bug3451_cycle_not_reversed`, `bug3451_expected`, `bug3451_noncyclic_ok`; main is
    right on every non-cyclic walk (`vltMain_follows_of_ne`); recording the direction
-   at plan time fixes it (`vltFix_follows`).
+   at plan time fixes it (`vltFix_follows`). FIXED by #3460: the `<-` is recorded in
+   `QueryPath::incoming` and picks the branch (`vltPR_follows`, `pr3460_cycle_reversed`).
 
 10. **#3452: ExpandInto matched an edge whose endpoint is pending-deleted** — FIXED by
    #3463 (b29a2885c): `expand_into.rs:158-160` now yields no row when either endpoint

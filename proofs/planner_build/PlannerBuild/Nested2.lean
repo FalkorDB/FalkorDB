@@ -7,7 +7,11 @@ import PlannerBuild.Nested
   nested comprehension (in order, the first innermost) over the `PathBuilder`
   over `plan_match(pattern)`; `acc` is minted in the comprehension's scope
   after the nested ones'; `visited` is restored.
-* `interleave_length`: an existential pattern's path has `n` nodes and `n-1` rels.
+* `interleave_length`: an existential pattern's path has `n` nodes and `n-1` rels (before #3460).
+* `walkComps_*` (#3460): the path components walk the relationships, each in its written
+  direction: `2n+1` components, alias of rel `i` at `2i+1`, its written end at `2i+2`, the
+  first rel's written start at `0`; `walkComps_revisit` (a revisited alias keeps its node,
+  where `interleave` dropped the last one) and `walkComps_incoming` (`(a)<-[r]-(b)` gives `a, r, b`).
 * `chain_*`: `extract_clause_expr_comprehensions` (mod.rs:1309-1340) builds
   `Apply(…Apply(sub_k)…, sub_1)`: the innermost Apply single-child (stitching
   fills it, `descend_clause_expr_applies`), the first comprehension outermost.
@@ -67,6 +71,49 @@ theorem interleave_nodes : ∀ (ns rs : List V) (i : Nat), i < ns.length → rs.
     have : 2 * (i + 1) = (2 * i) + 1 + 1 := by omega
     simp only [interleave, this, List.getElem?_cons_succ]
     exact interleave_nodes ns rs i h hl
+
+theorem walkSteps_length : ∀ rs : List RelEnd, (walkSteps rs).length = 2 * rs.length
+  | [] => rfl
+  | e :: es => by simp only [walkSteps, List.length_cons, walkSteps_length es]; omega
+
+theorem walkComps_length (e : RelEnd) (es : List RelEnd) :
+    (walkComps (e :: es)).length = 2 * (e :: es).length + 1 := by
+  simp only [walkComps, walkStart, List.singleton_append, List.length_cons, walkSteps_length]
+
+theorem walkComps_nil : walkComps [] = [] := rfl
+
+theorem walkComps_start (e : RelEnd) (es : List RelEnd) :
+    (walkComps (e :: es))[0]? = some (if e.inc then e.to else e.frm) := rfl
+
+theorem walkSteps_rel : ∀ (rs : List RelEnd) (i : Nat) (h : i < rs.length),
+    (walkSteps rs)[2 * i]? = some rs[i].alias ∧
+    (walkSteps rs)[2 * i + 1]? = some (if rs[i].inc then rs[i].frm else rs[i].to)
+  | [], _, h => by simp at h
+  | e :: es, 0, _ => by simp [walkSteps]
+  | e :: es, i + 1, h => by
+    simp only [List.length_cons, Nat.add_lt_add_iff_right] at h
+    have h1 : 2 * (i + 1) = 2 * i + 1 + 1 := by omega
+    simp only [walkSteps, h1, List.getElem?_cons_succ, List.getElem_cons_succ]
+    exact walkSteps_rel es i h
+
+/-- Relationship `i` sits at `2i+1`, followed by its written end (`from` if written `<-`). -/
+theorem walkComps_rel (rs : List RelEnd) (i : Nat) (h : i < rs.length) :
+    (walkComps rs)[2 * i + 1]? = some rs[i].alias ∧
+    (walkComps rs)[2 * i + 2]? = some (if rs[i].inc then rs[i].frm else rs[i].to) := by
+  match rs, h with
+  | e :: es, h =>
+    have := walkSteps_rel (e :: es) i h
+    simp only [walkComps, walkStart, List.singleton_append, List.getElem?_cons_succ]
+    exact this
+
+/-- `(a)-[r]->(b)-[s]->(a)`: `nodes()` is `[a, b]`; before #3460 the path was `a, r, b, s` (no
+end node), now it is `a, r, b, s, a`. -/
+theorem walkComps_revisit (a b r s : V) :
+    walkComps [⟨r, a, b, false⟩, ⟨s, b, a, false⟩] = [a, r, b, s, a] ∧
+    interleave [a, b] [r, s] = [a, r, b, s] := ⟨rfl, rfl⟩
+
+/-- `(a)<-[r]-(b)` is stored `from = b, to = a`; the path starts at the written start `a`. -/
+theorem walkComps_incoming (a b r : V) : walkComps [⟨r, b, a, true⟩] = [a, r, b] := rfl
 
 /-! ## `extract_clause_expr_comprehensions` -/
 

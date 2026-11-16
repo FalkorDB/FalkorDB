@@ -123,7 +123,7 @@ theorem toPlan_gen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) :
 /-! ## The three-valued counterexample (CONFIRMED bug) -/
 
 namespace Cex
-def g : QG := ⟨0, [⟨0, 0⟩], [], [], []⟩
+def g : QG := ⟨0, [⟨0, 0⟩], [], [], [], []⟩
 def ι : List (Nat × QG) := [(7, g)]
 /-- `NOT (x OR p)`: `x` an atom (say `a.v > 1`), `p` the inline pattern id 7. -/
 def e : Ex := .node .not [.node .or [.node (.other 0) [], Ex.v ⟨7, 0⟩]]

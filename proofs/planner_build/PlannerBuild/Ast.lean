@@ -116,28 +116,34 @@ structure QR where
   minHops : Option Nat
   maxHops : Option Nat
   shortest : Bool := false
+  /-- `written_incoming` (#3460): written `<-`, so `frm`/`to` are swapped. -/
+  writtenIncoming : Bool := false
 
+/-- `QueryPath`; `incoming` (#3460): one `<-` flag per relationship, in pattern order. -/
 structure QP where
   var : AV
   vars : List AV
+  incoming : List Bool := []
 
 structure QG where
   nodes : List QN := []
   rels : List QR := []
   paths : List QP := []
 
-/-- `QueryNode::new`, `QueryRelationship::new` (no allShortestPaths), `QueryPath::new`, `QueryGraph::default`. -/
+/-- `QueryNode::new`, `QueryRelationship::new` (no allShortestPaths, not `written_incoming`),
+`QueryPath::new`, `QueryGraph::default`. -/
 def QN.new (a : AV) (ls : List String) (at' : List (String × AE)) : QN := ⟨a, ls, at'⟩
 def QR.new (a : AV) (ts : List String) (at' : List (String × AE)) (f t : QN) (b : Bool) (mn mx : Option Nat) : QR :=
-  ⟨a, ts, at', f, t, b, mn, mx, false⟩
-def QP.new (v : AV) (vs : List AV) : QP := ⟨v, vs⟩
+  ⟨a, ts, at', f, t, b, mn, mx, false, false⟩
+def QP.new (v : AV) (vs : List AV) (inc : List Bool) : QP := ⟨v, vs, inc⟩
 def QG.default : QG := {}
 
 theorem new_spec (a : AV) (ls : List String) (at' : List (String × AE)) (ts : List String) (f t : QN) (b : Bool)
-    (mn mx : Option Nat) (v : AV) (vs : List AV) :
+    (mn mx : Option Nat) (v : AV) (vs : List AV) (inc : List Bool) :
     (QN.new a ls at').alias = a ∧ (QN.new a ls at').labels = ls ∧
     (QR.new a ts at' f t b mn mx).shortest = false ∧ (QR.new a ts at' f t b mn mx).frm = f ∧
-    (QR.new a ts at' f t b mn mx).to = t ∧ (QP.new v vs).vars = vs ∧
+    (QR.new a ts at' f t b mn mx).to = t ∧ (QR.new a ts at' f t b mn mx).writtenIncoming = false ∧
+    (QP.new v vs inc).vars = vs ∧ (QP.new v vs inc).incoming = inc ∧
     QG.default.nodes = [] ∧ QG.default.rels = [] ∧ QG.default.paths = [] := by
   simp [QN.new, QR.new, QP.new, QG.default]
 

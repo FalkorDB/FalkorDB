@@ -73,15 +73,15 @@ theorem np_chainA (F : Nat) (cl : CK) : ∀ n left gs, NP (chainA o F cl n left 
   | n + 1, left, gs => by
     unfold chainA; have := np_chainA F cl n; have := np_relP o ho F cl; np_go
 
-theorem np_chainN (F : Nat) (cl : CK) (p : Nat) : ∀ n left vars gs, NP (chainN o F cl p n left vars gs)
-  | 0, _, _, _ => np_fuelP
-  | n + 1, left, vars, gs => by
+theorem np_chainN (F : Nat) (cl : CK) (p : Nat) : ∀ n left vars incs gs, NP (chainN o F cl p n left vars incs gs)
+  | 0, _, _, _, _ => np_fuelP
+  | n + 1, left, vars, incs, gs => by
     unfold chainN; have := np_chainN F cl p n; have := np_relP o ho F cl; np_go
 
 theorem np_aspLoop (F : Nat) (cl : CK) (la : Nat) :
-    ∀ n prev found vars gs, NP (aspLoop o F cl la n prev found vars gs)
-  | 0, _, _, _, _ => np_fuelP
-  | n + 1, prev, found, vars, gs => by
+    ∀ n prev found vars incs gs, NP (aspLoop o F cl la n prev found vars incs gs)
+  | 0, _, _, _, _, _ => np_fuelP
+  | n + 1, prev, found, vars, incs, gs => by
     unfold aspLoop; have := np_aspLoop F cl la n; have := np_relP o ho F cl; np_go
 
 theorem np_partP (F : Nat) (cl : CK) (gs : QG Nat × List Nat) : NP (partP o F cl gs) := by
