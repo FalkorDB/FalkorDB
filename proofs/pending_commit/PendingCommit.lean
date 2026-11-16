@@ -13,6 +13,22 @@ Line numbers are current main (`5c7af54f2`), as are the COVERAGE.tsv rows, excep
 heading names an older commit (the `Re-target to …` sections keep the numbers of the commit they name,
 and `Re-pinned to …` states only the offsets).
 
+## Re-target to PR #2991: the UNIQUE key is C's equality
+
+`build_composite_key` (graph.rs:4866) now keys numbers by their folded `f64` and strings by
+length + bytes, and returns the empty key for lists, points, temporals, vecf32 and NaN;
+`unique_violated` (pending.rs:216) skips a member whose key is empty (:245-249). The model now
+separates values from keys: `UQ.entOf`/`keyOf` with `attr : Nat → Nat → Option W` and
+`kv : W → Option V` (`none` = not enforced), and `query_for` (`qf : List W → Option Q`) gets the
+member's values while `keys` holds key classes (Int 2^53+1 and Float 2^53 share a key but
+`is_value_valid_for_index_lookup` answers differently). Re-proved over it, same statements with
+`keyOf` for the key: `gather_none`, `gather_some`, `uniqueViolated_spec`, `_declined`, `_indexed`,
+`_agrees`, `checkUnique_spec`, `redisearch_hIdx` (whose FFI `hEq` is now per key component:
+the RediSearch numeric field holds `f64`, the tag at least the identical string),
+`checkUnique_redisearch_spec`, `redisearch_unindexed_scans`. New: `uniqueViolated_vacuous`
+(an unenforced value is ignored like `Null`), `keyOf_eq`, `zip_key`, `mapM_len`. Rows below
+:242 of pending.rs moved +5.
+
 ## Re-target to 53d694496 (from 5b18b9cab): #3547 / #2386, unique enforcement through `query_for` + `lookup`
 
 `unique_violated` (pending.rs:217) no longer takes `indexed: bool` and `lookup(IndexQuery)`; it takes

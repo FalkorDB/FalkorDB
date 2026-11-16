@@ -154,7 +154,7 @@ graph/src/graph/graph.rs	vector_query_edges	4433	PROVEN	see proofs/search_concur
 graph/src/graph/graph.rs	index_info	4486	PROVEN	Index.indexInfo_length
 graph/src/graph/graph.rs	constraints	4565	PROVEN	Constraints.two_phase_eq (constraints projection)
 graph/src/graph/graph.rs	constraints_mut	4569	PROVEN	Constraints.upsert_twice (constraints_mut projection)
-graph/src/graph/graph.rs	create_constraint	4582	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
+graph/src/graph/graph.rs	create_constraint	4582	PROVEN	see proofs/graph_persist Constraint.constraint_creation_agrees; Constraints.cmatches_iff
 graph/src/graph/graph.rs	add_constraint_raw	4636	PROVEN	Accessors.addRaw_spec
 graph/src/graph/graph.rs	upsert_constraint_raw	4652	PROVEN	Constraints.upsert_twice
 graph/src/graph/graph.rs	get_constraint_entity_count	4674	PROVEN	Constraints.entityCount, Schema.labelNodeCount_eq
@@ -163,23 +163,23 @@ graph/src/graph/graph.rs	validate_pending_constraints	4697	PROVEN	Constraints.tw
 graph/src/graph/graph.rs	compute_pending_constraint_results	4726	PROVEN	Constraints.lookup_compute, two_phase_eq
 graph/src/graph/graph.rs	apply_constraint_validation_results	4738	PROVEN	Constraints.two_phase_eq
 graph/src/graph/graph.rs	validate_mandatory_constraint	4757	PROVEN	see proofs/graph_persist Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4796	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4851	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
-graph/src/graph/graph.rs	drop_constraint	4869	PROVEN	Constraints.dropC_length, swapRemove_length
-graph/src/graph/graph.rs	has_supporting_index	4892	PROVEN	Constraints.hasSupporting_nil
-graph/src/graph/graph.rs	constraint_depends_on_index	4911	PROVEN	Constraints.drop_blocked
-graph/src/graph/graph.rs	cancel_indexing	4930	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
-graph/src/graph/graph.rs	set_indexer_graph	4938	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
-graph/src/graph/graph.rs	build_adjacency_matrix	4950	PROVEN	Queries.adjMatrix_single
-graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	4978	PROVEN	Queries.symAdj_symm
-graph/src/graph/graph.rs	memory_usage_report	4994	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
-graph/src/graph/graph.rs	estimate_entity_attr_size	5164	PROVEN	Accessors.estimateSize_eq
-graph/src/graph/graph.rs	encode_payload	5173	PROVEN	Index.encodeOp_nodes
-graph/src/graph/graph.rs	get_node_attribute_names	5230	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	get_relationship_attribute_names	5236	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	add_node_attribute_name	5242	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
-graph/src/graph/graph.rs	add_rel_attribute_name	5254	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
-graph/src/graph/graph.rs	build_global_attrs	5270	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	validate_unique_constraint	4796	PROVEN	see proofs/graph_persist Constraint.constraint_creation_agrees, rust_C_unique_agree
+graph/src/graph/graph.rs	build_composite_key	4866	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_agree, composite_key_unambiguous
+graph/src/graph/graph.rs	drop_constraint	4894	PROVEN	Constraints.dropC_length, swapRemove_length
+graph/src/graph/graph.rs	has_supporting_index	4917	PROVEN	Constraints.hasSupporting_nil
+graph/src/graph/graph.rs	constraint_depends_on_index	4936	PROVEN	Constraints.drop_blocked
+graph/src/graph/graph.rs	cancel_indexing	4955	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
+graph/src/graph/graph.rs	set_indexer_graph	4963	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
+graph/src/graph/graph.rs	build_adjacency_matrix	4975	PROVEN	Queries.adjMatrix_single
+graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	5003	PROVEN	Queries.symAdj_symm
+graph/src/graph/graph.rs	memory_usage_report	5019	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
+graph/src/graph/graph.rs	estimate_entity_attr_size	5189	PROVEN	Accessors.estimateSize_eq
+graph/src/graph/graph.rs	encode_payload	5198	PROVEN	Index.encodeOp_nodes
+graph/src/graph/graph.rs	get_node_attribute_names	5255	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	get_relationship_attribute_names	5261	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	add_node_attribute_name	5267	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	add_rel_attribute_name	5279	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	build_global_attrs	5295	PROVEN	Accessors.node_rel_same_id
 graph/src/graph/constraint.rs	fmt	14	PROVEN	Constraints.str_spec
 graph/src/graph/constraint.rs	fmt	34	PROVEN	Constraints.str_spec
 graph/src/graph/constraint.rs	new	60	PROVEN	Constraints.cnew_fresh

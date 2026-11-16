@@ -77,10 +77,10 @@ No; see [Bugs found](#bugs-found). Rust builds the UNIQUE key from `format!("{v:
 
 ```cypher
 CREATE (:L {v: 1})
-CREATE (:L {v: 1.0})   // Rust: accepted. C: unique constraint violation
+CREATE (:L {v: 1.0})   // before #2991 Rust: accepted. C: unique constraint violation
 ```
 
-The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes both ways (`disagreement_two_sided`): for duplicate lists, points, dates and vectors, Rust rejects and C accepts. MANDATORY constraints agree with C (`mandatory_agrees`).
+The same happened for `0.0` vs `-0.0` and `1` vs `true`, and the disagreement went both ways (`pre2991_disagreement_two_sided`): for duplicate lists, points, dates and vectors, Rust rejected and C accepted. Since #2991 the key is C's equality (`rust_C_unique_agree`, `composite_key_unambiguous`). MANDATORY constraints agree with C (`mandatory_agrees`).
 
 ## The headline theorems
 
@@ -98,7 +98,7 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 | `aux_roundtrip` | UDF libraries round-trip through the RDB aux fields | `RedisType/AuxData.lean` |
 | `uuid_counter_distinct`, `counter_field_bijective` | Virtual-key names differ whenever their counters differ mod 2^48, whatever the clock (#3286) | `RedisType/Uuid.lean` |
 | `countCheck_in_bounds` | The deleted-id decoder's checks keep every 8-byte read in bounds, whatever `count` the payload claims (#2996) | `Layout.lean` |
-| `rust_C_unique_disagree`, `constraint_creation_diverges` | Rust's UNIQUE key and C's disagree; creating a constraint over violating data diverges | `Constraint.lean` |
+| `rust_C_unique_agree`, `composite_key_unambiguous`, `constraint_creation_agrees` | Rust's UNIQUE key is C's equality (#2991); creating a constraint over existing data reports what C reports | `Constraint.lean` |
 
 ### How `load_encode` is proved
 
@@ -114,8 +114,8 @@ All confirmed against live Rust and C servers (see [`../FINDINGS.md`](../FINDING
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `rust_C_unique_disagree`, `disagreement_two_sided` | The UNIQUE key is type-tagged (`format!("{v:?}")` in `build_composite_key`). `{v:1}` and `{v:1.0}`, `{v:0.0}` and `{v:-0.0}`, `{v:1}` and `{v:true}` are all admitted (C rejects); duplicate lists, points, dates and vectors are rejected (C admits). Same through `SET` and on edges | **Open** (#2774) |
-| 2 | `constraint_creation_diverges` | A consequence of 1: creating a UNIQUE constraint over data that already violates it under C's rules reports OPERATIONAL (C: FAILED) | **Open** |
+| 1 | `pre2991_rust_C_unique_disagree`, `pre2991_disagreement_two_sided` | The UNIQUE key is type-tagged (`format!("{v:?}")` in `build_composite_key`). `{v:1}` and `{v:1.0}`, `{v:0.0}` and `{v:-0.0}`, `{v:1}` and `{v:true}` are all admitted (C rejects); duplicate lists, points, dates and vectors are rejected (C admits). Same through `SET` and on edges | Fixed by #2991 (`rust_C_unique_agree`) |
+| 2 | `pre2991_constraint_creation_diverges` | A consequence of 1: creating a UNIQUE constraint over data that already violates it under C's rules reports OPERATIONAL (C: FAILED) | Fixed by #2991 (`constraint_creation_agrees`) |
 | 3 | `enforcement_is_quadratic` | UNIQUE enforcement rebuilt a key map over the whole label for every affected node: `UNWIND range(1,8000) … CREATE` took 212 s (C 2.4 s) | Fixed by #3334 (closes #3330), modelled in [`../pending_commit`](../pending_commit) (`uniqueViolated_spec`). This project's theorem still describes the old scan |
 | 4 | removed (17ccc5412) | RDB-loaded graphs ignored `CACHE_SIZE` and used 25 (W5-rdb-1) | Fixed by #3262 (`cache_size_on_load`) |
 | 5 | none (the crash is inside the Redis module API) | `GRAPH.RESTORE` with a payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer`; a cut inside a record errors cleanly. C crashes on both | **Open** (#2537; external PR #3167) |
