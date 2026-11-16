@@ -2042,6 +2042,127 @@ def test_optional_match_null_merge():
 
 
 
+def test_call_optional_match_filter_not_pushed_with_outer_variable_ids():
+    """A filter in an OPTIONAL MATCH inside a CALL {} body must stay on the
+    body's own rows: variable ids are per scope, so the body's `n` must not
+    pass for an outer variable with the same id (#2728)."""
+    query("UNWIND range(1, 3) AS i CREATE (:A:B {id: i})", write=True)
+
+    res = query(
+        "MATCH (x:A:B) CALL { OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id AS nid }"
+        " RETURN x.id, nid ORDER BY x.id"
+    )
+    assert res.result_set == [[1, 3], [2, 3], [3, 3]]
+
+    res = query(
+        "MATCH (x:A:B) CALL { WITH x OPTIONAL MATCH (n:A:B) WHERE n.id = x.id + 1"
+        " RETURN n.id AS nid } RETURN x.id, nid ORDER BY x.id"
+    )
+    assert res.result_set == [[1, 2], [2, 3], [3, None]]
+
+    # The query from #2728.
+    res = query(
+        """
+        UNWIND [1] AS alias0
+        CALL { WITH * RETURN alias0 AS alias1, range(0, 4) AS alias2, range(9, 16, 1) AS alias3 SKIP 0 }
+        CREATE ({id: 135})
+        WITH alias0, alias3, alias2, alias1 AS alias4,
+             toBooleanOrNull(range(23, 9, -3)) AS alias5, localTime('12:00:00') AS alias6
+        WHERE true
+        CALL {
+            WITH alias3, alias2, alias6
+            OPTIONAL MATCH (n0)<-[r0:rt11]-(n1 {k6: '9'}), (n0), p0 = (n0)<-[:rt3]-()
+            WHERE size(r0.k9) >= 0
+            RETURN n1 AS n2, r0 AS r1, p0 AS p1, alias6 AS alias7, alias3 AS alias8,
+                   alias2 AS alias9, list.insertListElements(labels(n1), [0], 0, false) AS alias10
+        }
+        CALL db.relationshipTypes() YIELD relationshipType AS alias11
+        RETURN n2
+        """,
+        write=True,
+    )
+    assert res.result_set == []
+
+
+def test_call_optional_match_filter_wrapped_aggregate_inherits_only_outputs():
+    """An aggregate under a wrapper (`LIMIT`) in the left branch exposes only
+    its own outputs to the OPTIONAL MATCH, so the filter on `n` must not be
+    pushed onto an Argument that carries a discarded variable's id."""
+    query("UNWIND range(1, 3) AS i CREATE (:A:B {id: i})", write=True)
+
+    res = query(
+        "UNWIND [1] AS a UNWIND [1] AS b WITH count(*) AS k LIMIT 1"
+        " OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id"
+    )
+    assert res.result_set == [[3]]
+
+
+def test_optional_match_filter_after_projection_copy_to_another_slot():
+    """`WITH 1 AS k ORDER BY c` carries `c` through the projection from one
+    slot to another. The OPTIONAL MATCH after it inherits the slot the copy is
+    written to, not the one it was read from, which the next scan reuses."""
+    query("CREATE (:A:B {id: 3})", write=True)
+
+    res = query(
+        "UNWIND [1] AS a UNWIND [1] AS b UNWIND [1] AS c WITH 1 AS k ORDER BY c"
+        " OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id"
+    )
+    assert res.result_set == [[3]]
+
+
+def test_call_optional_match_filter_after_pattern_predicate():
+    """A pattern predicate (SemiApply / AntiSemiApply) in the left branch
+    contributes only its input's variables; its existence sub-plan's anonymous
+    entities must not pass for the body's variables (#2728)."""
+    query(
+        "CREATE (a:A:B {id: 1})-[:R]->(:A:B {id: 2}), (:A:B {id: 3})", write=True
+    )
+
+    for pred in ["(x)-[:R]->()", "NOT (x)-[:R]->()", "(x)-[:R]->(:B) OR x.id > 2"]:
+        res = query(
+            f"MATCH (x:A:B) WHERE {pred} CALL {{ OPTIONAL MATCH (n:A:B {{id: 3}})"
+            " RETURN n.id AS nid } RETURN x.id, nid ORDER BY x.id"
+        )
+        expected = {
+            "(x)-[:R]->()": [[1, 3]],
+            "NOT (x)-[:R]->()": [[2, 3], [3, 3]],
+            "(x)-[:R]->(:B) OR x.id > 2": [[1, 3], [3, 3]],
+        }[pred]
+        assert res.result_set == expected
+
+        res = query(
+            f"MATCH (x:A:B) WHERE {pred} OPTIONAL MATCH (n:A:B) WHERE n.id = 3"
+            " RETURN x.id, n.id ORDER BY x.id"
+        )
+        assert res.result_set == [[r[0], 3] for r in expected]
+
+
+def test_union_branch_optional_match_filter_keeps_anonymous_scan():
+    """A `WHERE` on an OPTIONAL MATCH inside a UNION branch of a CALL {} stays
+    above the anonymous node's scan: the branch's `_anon_0` shares its id with
+    an outer variable, and was pushed onto the scan's Argument, where it is
+    unbound ("Variable _anon_0 not found", #2742)."""
+    query("CREATE (:L {k0: true})", write=True)
+
+    body = """
+        MATCH (n0:L)
+        CALL { WITH * RETURN n0 AS n1 }
+        CALL {
+            WITH n0, n1
+            RETURN n0 AS n2
+            UNION
+            OPTIONAL MATCH ({k0: true}), ()
+            WHERE true
+            %s
+            RETURN null AS n2
+        }
+        RETURN id(n0), id(n1), id(n2) ORDER BY id(n2)
+    """
+    for barrier in ["", "CALL { RETURN 0 AS __barrier }"]:
+        res = query(body % barrier)
+        assert res.result_set == [[0, 0, 0], [0, 0, None]]
+
+
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
     (var-length) hop must not drop the hops planned before it (#2999)."""
