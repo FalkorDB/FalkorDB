@@ -68,7 +68,8 @@ inductive BE
 structure Ctx where
   /-- the reserved key for a minted loop variable: prefix, scope, id -/
   rkey : String → Nat → Nat → Name
-  /-- `expr_may_return_boolean` on the bound WHERE of a list comprehension -/
+  /-- the check on the bound WHERE of a list comprehension (binder.rs:1828-1840):
+  a logical root (`And`/`Or`/`Xor`/`Not`, #3293) passes, else `expr_may_return_boolean` -/
   mayBool : BE → Bool
   /-- `(scope, id)` of variable-length relationship variables -/
   varlen : List (Nat × Nat)
