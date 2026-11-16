@@ -90,7 +90,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `UnionStream.new`, `seek`, `next`, `drain` | `UnionIter::new` / `seek` / `next` (`cond_traverse.rs:245`, `:250`, `:265`) |
 | `UnionStream.layerStream` | the per-type `versioned_matrix::Iter` merge of `m`, `dp`, `dm` (`VMIter`), keyed by row-major position |
 | `UnionGlue.relationshipTensors`, `buildUnion`, `pickMatrix`, `deltaInto`, `expandUnionRow` | `relationship_tensors` (:288), `build_union_iter` (:317), the `TraversalMatrix` selection (:615-680), `delta_lmxm_into` (:86), `expand_union_row` (:1121) |
-| `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:155`) |
+| `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:261`) |
 | `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
@@ -112,9 +112,11 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 * Undirected single hop: stored orientation, plus the reverse for non-loops —
   a self-loop matches once (`emit_bidir_iff`); ExpandInto likewise
   (`mem_expandInto_emit`).
-* Collapse (anonymous edge) only emits rows emit mode would, one per matrix
-  pair when directed (`collapse_sub_emit`, `collapse_directed_iff`,
-  `collapse_directed_keys_nodup`).
+* Collapse (anonymous edge): one row per matrix pair when directed
+  (`collapse_directed_iff_alt`, `collapse_directed_iff_nil`, `collapse_directed_keys_nodup`).
+  Since #3054 it may take an edge a sibling already bound when the pair has another
+  edge, so it no longer only emits rows emit mode would (counterexamples
+  `collapse_sub_emit_fails`, `collapse_directed_iff_fails`).
 * Batched F·A path = per-row collapse, duplicate-free; a fused chain returns
   `(row,dst)` iff a walk through the chain's matrices exists — for *any* mxm
   meeting the GraphBLAS spec (`batched_eq_collapse`, `fused_chain_semantics`,

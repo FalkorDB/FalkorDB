@@ -147,7 +147,7 @@ theorem get_none_of_not_mem {r : Slots} {i : Nat} (h : ∀ p ∈ r, p.1 ≠ i) :
 
 /-- **What the property buys.** On a scoped row a fresh destination slot is
 free, so the traverse reads exactly `⟨source, none, []⟩` and the existing
-single-hop theorems (`collapse_directed_iff`, `batched_eq_collapse`) give the
+single-hop theorems (`collapse_directed_iff_nil`, `batched_eq_collapse`) give the
 source's true out-neighbours. A fix that makes `aggRow` scoped proves #3372
 closed through this lemma. -/
 theorem scoped_inputRow {declared : List Nat} {r : Slots} (hs : ScopedRow declared r)

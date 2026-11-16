@@ -47,14 +47,21 @@ structure Pending where
   delRels  : List Nat
 deriving DecidableEq, Repr
 
+/-- `Parallel::has_alternative(_, Matching::Tensors(own_types))` for a collapsed ExpandInto
+(`ops/mod.rs:183-234`, `deleted = pending.is_relationship_deleted`, `expand_into.rs:197-201`):
+more than one live edge joins the pair (#3054). -/
+def liveAlt (g : Graph) (p : Pending) (q : Nat × Nat) : Bool :=
+  decide (1 < ((edgesBetween g q.1 q.2).filter fun e => !(p.delRels.contains e)).length)
+
 /-- `ExpandIntoOp::expand_row` (relationship mode) with `Pending` as it was
-before #3463: no endpoint check. -/
+before #3463: no endpoint check. Since #3054 a collapsed hop also accepts a sibling-used edge
+when the pair has another live edge (`liveAlt`). -/
 def expandIntoPre (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
     (used : List Nat) : List Nat :=
   let ps := if bidir && src != dst then [(src, dst), (dst, src)] else [(src, dst)]
   ps.flatMap fun q =>
     let es := (edgesBetween g q.1 q.2).filter fun e =>
-      !(p.delRels.contains e) && !(used.contains e)
+      !(p.delRels.contains e) && (!(used.contains e) || (!emit && liveAlt g p q))
     if emit then es else es.take 1
 
 /-- `ExpandIntoOp::expand_row` (relationship mode) on main (`expand_into.rs:158-235`):
@@ -67,7 +74,10 @@ def expandIntoP (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
 /-- With nothing pending, the model is the committed-graph `expandInto`. -/
 theorem expandIntoP_empty (g : Graph) (b em : Bool) (s d : Nat) (u : List Nat) :
     expandIntoP g ⟨[], []⟩ b em s d u = expandInto g b em s d u := by
-  simp [expandIntoP, expandIntoPre, expandInto]
+  have hf : ∀ l : List Nat, (l.filter fun e => !(([] : List Nat).contains e)) = l :=
+    fun l => List.filter_eq_self.2 (by simp)
+  simp only [expandIntoP, expandIntoPre, expandInto, liveAlt, hasAlt, hf]
+  simp
 
 /-- An edge is live in the effective graph: not deleted itself, and neither
 endpoint deleted (a deleted node's edges go with it at commit). -/
@@ -81,28 +91,36 @@ def LiveExpandInto
 
 theorem mem_expandIntoPre {g : Graph} {p : Pending} {b em : Bool} {s d e : Nat}
     {u : List Nat} (h : e ∈ expandIntoPre g p b em s d u) :
-    e ∉ p.delRels ∧ e ∉ u ∧ ∃ x ∈ g, x.id = e ∧
+    e ∉ p.delRels ∧
+      (e ∉ u ∨ (em = false ∧ (liveAlt g p (s, d) = true ∨ liveAlt g p (d, s) = true))) ∧
+      ∃ x ∈ g, x.id = e ∧
       ((x.src = s ∧ x.dst = d) ∨ (x.src = d ∧ x.dst = s)) := by
   unfold expandIntoPre at h
   simp only [List.mem_flatMap] at h
   obtain ⟨q, hq, he⟩ := h
   have he' : e ∈ (edgesBetween g q.1 q.2).filter fun e =>
-      !(p.delRels.contains e) && !(u.contains e) := by
+      !(p.delRels.contains e) && (!(u.contains e) || (!em && liveAlt g p q)) := by
     cases em
     · exact List.mem_of_mem_take he
     · exact he
-  simp only [List.mem_filter, Bool.and_eq_true, Bool.not_eq_true',
+  simp only [List.mem_filter, Bool.and_eq_true, Bool.not_eq_true', Bool.or_eq_true,
     List.contains_eq_mem, decide_eq_false_iff_not] at he'
   obtain ⟨hb, hdr, hu⟩ := he'
   obtain ⟨x, hx, hid, h1, h2⟩ := mem_edgesBetween.1 hb
-  refine ⟨hdr, hu, x, hx, hid, ?_⟩
-  split at hq
-  · simp only [List.mem_cons, List.not_mem_nil, or_false] at hq
-    rcases hq with rfl | rfl
+  have hq' : q = (s, d) ∨ q = (d, s) := by
+    split at hq <;> simp only [List.mem_cons, List.not_mem_nil, or_false] at hq
+    · exact hq
+    · exact Or.inl hq
+  refine ⟨hdr, ?_, x, hx, hid, ?_⟩
+  · rcases hu with hu | hu
+    · exact Or.inl (by simpa using hu)
+    · have hu : em = false ∧ liveAlt g p q = true := by simpa using hu
+      rcases hq' with rfl | rfl
+      · exact Or.inr ⟨hu.1, Or.inl hu.2⟩
+      · exact Or.inr ⟨hu.1, Or.inr hu.2⟩
+  · rcases hq' with rfl | rfl
     · exact Or.inl ⟨h1, h2⟩
     · exact Or.inr ⟨h1, h2⟩
-  · simp only [List.mem_cons, List.not_mem_nil, or_false] at hq
-    subst hq; exact Or.inl ⟨h1, h2⟩
 
 /-- **Main satisfies the property** (#3463). -/
 theorem expandIntoP_live : LiveExpandInto expandIntoP := by

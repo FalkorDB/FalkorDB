@@ -5,8 +5,9 @@
 | --- | --- |
 | `checkTimeout`       | `Runtime::check_timeout`, `runtime/runtime.rs:530-537` (deadline = `Instant::now() + timeout_ms` from `Runtime::new`, `:457`) |
 | `asI64`, `checkMem`  | `Runtime::check_mem_capacity`, `runtime/runtime.rs:540-548` (`usage_fn() as i64`) |
-| `drainPending`       | `drain_pending`, `runtime/ops/mod.rs:127-139` |
-| `edgeAlreadyUsed`    | `edge_already_used`, `runtime/ops/mod.rs:155-172` |
+| `drainPending`       | `drain_pending`, `runtime/ops/mod.rs:127-138` |
+| `edgeAlreadyUsed`    | `edge_already_used`, `runtime/ops/mod.rs:261-295` (#3054; `edgeAlreadyUsedPre`: the pre-#3054 body) |
+| `Parallel.hasAlternative` | `Parallel::has_alternative`, `runtime/ops/mod.rs:183-234` |
 | `natOpt`, `vectorOptions` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs:2100-2178` |
 | `fulltextUnknown`    | the unknown-key refusal of the `IndexType::Fulltext` arm, `runtime.rs:2021-2030` |
 | `phonetic`           | the `phonetic` key of the `IndexType::Fulltext` arm, `runtime.rs:2051-2067` |
@@ -97,26 +98,28 @@ theorem drainPending_spec {α : Type} :
 inductive Slot where
   | rel (id : Nat)
   | other
+deriving DecidableEq
 
-/-- `edge_already_used`. -/
-def edgeAlreadyUsed (env : Nat → Option Slot) (edge own : Nat) : List Nat → Bool
+/-- `edge_already_used` before #3054 (`ops/mod.rs:155-172` at 343e077f2): plain relationship
+uniqueness. The historical model; on #3054's code it is the case with no collapsed edge
+(`edgeAlreadyUsed_emit`). -/
+def edgeAlreadyUsedPre (env : Nat → Option Slot) (edge own : Nat) : List Nat → Bool
   | [] => false
   | s :: ss =>
-    if s = own then edgeAlreadyUsed env edge own ss
+    if s = own then edgeAlreadyUsedPre env edge own ss
     else match env s with
-      | some (.rel r) => if r = edge then true else edgeAlreadyUsed env edge own ss
-      | _ => edgeAlreadyUsed env edge own ss
+      | some (.rel r) => if r = edge then true else edgeAlreadyUsedPre env edge own ss
+      | _ => edgeAlreadyUsedPre env edge own ss
 
-/-- **PROVEN**: `edge_already_used` is exactly "some *other* sibling relationship variable
-of the same MATCH component is already bound to this edge" (Cypher relationship
-uniqueness). -/
-theorem edgeAlreadyUsed_iff (env : Nat → Option Slot) (edge own : Nat) :
-    ∀ sib : List Nat, edgeAlreadyUsed env edge own sib = true ↔
+/-- **PROVEN** (pre-#3054 model): "some *other* sibling relationship variable of the same MATCH
+component is already bound to this edge" (Cypher relationship uniqueness). -/
+theorem edgeAlreadyUsedPre_iff (env : Nat → Option Slot) (edge own : Nat) :
+    ∀ sib : List Nat, edgeAlreadyUsedPre env edge own sib = true ↔
       ∃ s ∈ sib, s ≠ own ∧ env s = some (.rel edge)
-  | [] => by simp [edgeAlreadyUsed]
+  | [] => by simp [edgeAlreadyUsedPre]
   | s :: ss => by
-    have ih := edgeAlreadyUsed_iff env edge own ss
-    simp only [edgeAlreadyUsed]
+    have ih := edgeAlreadyUsedPre_iff env edge own ss
+    simp only [edgeAlreadyUsedPre]
     by_cases hs : s = own
     · simp only [hs, ite_true, ih, List.mem_cons]
       constructor
@@ -151,6 +154,236 @@ theorem edgeAlreadyUsed_iff (env : Nat → Option Slot) (edge own : Nat) :
             · rintro ⟨x, hx | hx, h1, h2⟩
               · subst hx; rw [he] at h2; simp at h2; exact absurd h2 hr
               · exact ⟨x, hx, h1, h2⟩
+
+/-! #### #3054: collapsed siblings and `Parallel::has_alternative` -/
+
+/-- `COLLAPSED_SIBLING` / `COLLAPSED_SIBLING_ANY_TYPE` (`ops/mod.rs:146,153`): flag bits of a
+`u32` `sibling_edges` entry. -/
+def COLLAPSED_SIBLING : Nat := 2 ^ 31
+def COLLAPSED_SIBLING_ANY_TYPE : Nat := 2 ^ 30
+
+/-- `entry & !SIBLING_FLAGS` on a `u32` entry (`ops/mod.rs:269`). -/
+def entryId (entry : Nat) : Nat := entry % 2 ^ 30
+/-- `entry & COLLAPSED_SIBLING_ANY_TYPE != 0`. -/
+def anyFlag (entry : Nat) : Bool := entry / 2 ^ 30 % 2 == 1
+/-- `entry & COLLAPSED_SIBLING != 0`. -/
+def oneFlag (entry : Nat) : Bool := entry / 2 ^ 31 % 2 == 1
+
+/-- A stored relationship: id, endpoints (`endpoints_for_edge`) and tensor index (its type,
+`relationship_type_matrix_iter(raw, raw)`). -/
+structure Rel where
+  id : Nat
+  src : Nat
+  dst : Nat
+  ty : Nat
+
+/-- `Parallel` (`ops/mod.rs:160-167`): the graph's relationships, the number of relationship
+tensors, the hop's own tensors when it is collapsed (`None` when it emits), and `deleted`. -/
+structure Parallel where
+  rels : List Rel
+  ntensors : Nat
+  ownTypes : Option (List Nat)
+  deleted : Nat → Bool
+
+/-- `Matching` (`ops/mod.rs:171-179`). -/
+inductive Matching where
+  | tensors (ts : List Nat)
+  | typeOfEdge
+  | anyType
+
+/-- Live edges of `(s, d)` in tensor `t`, uncapped. -/
+def Parallel.liveRaw (P : Parallel) (s d t : Nat) : Nat :=
+  if t < P.ntensors then
+    (P.rels.filter fun x => x.ty == t && x.src == s && x.dst == d && !P.deleted x.id).length
+  else 0
+
+/-- The `live` closure (`ops/mod.rs:197-205`): `get(tidx).map_or(0, …)`, `.take(2).count()`. -/
+def Parallel.live (P : Parallel) (s d t : Nat) : Nat := min 2 (P.liveRaw s d t)
+
+/-- `Parallel::has_alternative` (`ops/mod.rs:183-234`). The `break` once `total > 1` only
+stops adding (non-negative) counts, so it does not change `total > 1`; the sums below run to
+the end. -/
+def Parallel.hasAlternative (P : Parallel) (edge : Nat) (m : Matching) : Bool :=
+  match P.rels.find? (·.id == edge) with
+  | none => false
+  | some x =>
+    let total := match m with
+      | .tensors ts => (ts.map (P.live x.src x.dst)).sum
+      | .typeOfEdge => P.live x.src x.dst x.ty
+      | .anyType => ((List.range P.ntensors).map (P.live x.src x.dst)).sum
+    decide (1 < total)
+
+theorem min2_sum (l : List Nat) : min 2 (l.map (min 2)).sum = min 2 l.sum := by
+  induction l with
+  | nil => rfl
+  | cons a l ih => simp only [List.map_cons, List.sum_cons]; omega
+
+/-- **PROVEN**: the `take(2)` cap does not change the answer: `has_alternative` holds iff more
+than one live edge of the matched types joins the edge's endpoints. -/
+theorem hasAlternative_uncapped (P : Parallel) (edge : Nat) (m : Matching) :
+    P.hasAlternative edge m = match P.rels.find? (·.id == edge) with
+      | none => false
+      | some x => decide (1 < match m with
+        | .tensors ts => (ts.map (P.liveRaw x.src x.dst)).sum
+        | .typeOfEdge => P.liveRaw x.src x.dst x.ty
+        | .anyType => ((List.range P.ntensors).map (P.liveRaw x.src x.dst)).sum) := by
+  unfold Parallel.hasAlternative
+  split
+  · rfl
+  · rename_i x _
+    have key : ∀ l : List Nat, (1 < (l.map (P.live x.src x.dst)).sum ↔
+        1 < (l.map (P.liveRaw x.src x.dst)).sum) := by
+      intro l
+      have h := min2_sum (l.map (P.liveRaw x.src x.dst))
+      have e : (l.map (P.live x.src x.dst)) = (l.map (P.liveRaw x.src x.dst)).map (min 2) := by
+        simp [List.map_map, Function.comp_def, Parallel.live]
+      rw [e]; omega
+    cases m with
+    | tensors ts => simp only [decide_eq_decide]; exact key ts
+    | typeOfEdge =>
+      have hm : 1 < P.live x.src x.dst x.ty ↔ 1 < P.liveRaw x.src x.dst x.ty := by
+        simp only [Parallel.live]; omega
+      simp only [hm]
+    | anyType => simp only [decide_eq_decide]; exact key _
+
+/-- `own_avoids` (`ops/mod.rs:278-280`). -/
+def ownAvoids (P : Parallel) (edge : Nat) : Bool :=
+  match P.ownTypes with
+  | some ts => P.hasAlternative edge (.tensors ts)
+  | none => false
+
+/-- `sibling_avoids` (`ops/mod.rs:281-287`). -/
+def sibAvoids (P : Parallel) (edge entry : Nat) : Bool :=
+  if anyFlag entry then P.hasAlternative edge .anyType
+  else if oneFlag entry then P.hasAlternative edge .typeOfEdge
+  else false
+
+/-- `edge_already_used` (`ops/mod.rs:261-295`, #3054): a collision with a sibling is ignored when
+the expanding (collapsed) hop or the colliding (collapsed) sibling has an alternative edge. -/
+def edgeAlreadyUsed (P : Parallel) (env : Nat → Option Slot) (edge own : Nat) : List Nat → Bool
+  | [] => false
+  | entry :: ss =>
+    if entryId entry = own then edgeAlreadyUsed P env edge own ss
+    else match env (entryId entry) with
+      | some (.rel r) =>
+        if r = edge then
+          if ownAvoids P edge || sibAvoids P edge entry then edgeAlreadyUsed P env edge own ss
+          else true
+        else edgeAlreadyUsed P env edge own ss
+      | _ => edgeAlreadyUsed P env edge own ss
+
+/-- **PROVEN** (#3054): `edge_already_used` is "some other sibling is bound to this edge, and
+neither the expanding hop nor that sibling could have bound a parallel edge instead". -/
+theorem edgeAlreadyUsed_spec (P : Parallel) (env : Nat → Option Slot) (edge own : Nat) :
+    ∀ sib : List Nat, edgeAlreadyUsed P env edge own sib = true ↔
+      ∃ s ∈ sib, entryId s ≠ own ∧ env (entryId s) = some (.rel edge) ∧
+        ownAvoids P edge = false ∧ sibAvoids P edge s = false
+  | [] => by simp [edgeAlreadyUsed]
+  | s :: ss => by
+    have ih := edgeAlreadyUsed_spec P env edge own ss
+    simp only [edgeAlreadyUsed, List.mem_cons]
+    have tail : (∃ x, (x = s ∨ x ∈ ss) ∧ entryId x ≠ own ∧ env (entryId x) = some (.rel edge) ∧
+        ownAvoids P edge = false ∧ sibAvoids P edge x = false) ↔
+        ((entryId s ≠ own ∧ env (entryId s) = some (.rel edge) ∧
+          ownAvoids P edge = false ∧ sibAvoids P edge s = false) ∨
+        ∃ x ∈ ss, entryId x ≠ own ∧ env (entryId x) = some (.rel edge) ∧
+          ownAvoids P edge = false ∧ sibAvoids P edge x = false) := by
+      constructor
+      · rintro ⟨x, rfl | hx, h⟩
+        · exact Or.inl h
+        · exact Or.inr ⟨x, hx, h⟩
+      · rintro (h | ⟨x, hx, h⟩)
+        · exact ⟨s, Or.inl rfl, h⟩
+        · exact ⟨x, Or.inr hx, h⟩
+    rw [tail, ← ih]
+    by_cases hs : entryId s = own
+    · simp [hs]
+    · simp only [hs, ite_false, ne_eq, not_false_eq_true, true_and]
+      cases he : env (entryId s) with
+      | none => simp
+      | some sl =>
+        cases sl with
+        | other => simp
+        | rel r =>
+          by_cases hr : r = edge
+          · subst hr
+            cases ho : ownAvoids P r <;> cases hsa : sibAvoids P r s <;> simp
+          · simp [hr]
+
+/-- **PROVEN**: when the expanding hop emits and no sibling entry is flagged (no collapsed edge in
+the MATCH component), #3054's `edge_already_used` is the pre-#3054 one, hence exactly Cypher
+relationship uniqueness (`edgeAlreadyUsedPre_iff`). -/
+theorem edgeAlreadyUsed_emit (P : Parallel) (env : Nat → Option Slot) (edge own : Nat)
+    (hown : P.ownTypes = none) :
+    ∀ sib : List Nat, (∀ s ∈ sib, s < 2 ^ 30) →
+      edgeAlreadyUsed P env edge own sib = edgeAlreadyUsedPre env edge own sib
+  | [], _ => rfl
+  | s :: ss, h => by
+    have ih := edgeAlreadyUsed_emit P env edge own hown ss (fun x hx => h x (List.mem_cons_of_mem _ hx))
+    have hs : s < 2 ^ 30 := h s (by simp)
+    have hid : entryId s = s := Nat.mod_eq_of_lt hs
+    have hsa : sibAvoids P edge s = false := by
+      have h1 : s / 2 ^ 30 = 0 := Nat.div_eq_of_lt hs
+      have h2 : s / 2 ^ 31 = 0 := Nat.div_eq_of_lt (by omega)
+      simp [sibAvoids, anyFlag, oneFlag, h1, h2]
+    have hoa : ownAvoids P edge = false := by simp [ownAvoids, hown]
+    simp only [edgeAlreadyUsed, edgeAlreadyUsedPre, hid, hsa, hoa, Bool.or_false, ih]
+    rfl
+
+/-! #### Counterexample (#3054)
+
+`(a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t:R]->(x)` with none of `r, s, t` read: all three
+collapse (`reduce_expand_into`), each carries `COLLAPSED_SIBLING` in the others' sibling lists.
+On `a⇉x` (edges 1 and 2, type 0) Cypher has no match: three distinct edges out of two. Each
+collapsed hop binds the first candidate `edge_already_used` accepts (`expand_into.rs:210-229`,
+`cond_traverse.rs:1295-1318`). Before #3054: `r = 1`, `s = 2`, `t` finds none (0 rows). On
+#3054: `s` takes `1` (it collides with `r`, but edge `2` is an alternative), then `t` takes `1`
+as well (it collides with `r` and `s`, and `2` is still "an alternative", though `s` could only
+have avoided `r` by taking it): one row. `has_alternative` asks whether *another* parallel
+edge exists, not whether one is still free. -/
+
+/-- `a⇉x`: relationships 1 and 2, both `0 → 1` of type 0. -/
+def pTwo : Parallel := ⟨[⟨1, 0, 1, 0⟩, ⟨2, 0, 1, 0⟩], 1, some [0], fun _ => false⟩
+
+/-- Slots `r = 0`, `s = 1`, `t = 2`, each flagged `COLLAPSED_SIBLING` (one type). -/
+def sibTriple : List Nat := [COLLAPSED_SIBLING + 0, COLLAPSED_SIBLING + 1, COLLAPSED_SIBLING + 2]
+
+/-- The row after binding `r` (slot 0) and then `s` (slot 1). -/
+def envOf (binds : List (Nat × Nat)) (slot : Nat) : Option Slot :=
+  (binds.find? (·.1 == slot)).map fun b => .rel b.2
+
+/-- A collapsed hop's representative: the first candidate not already used. -/
+def pick (P : Parallel) (env : Nat → Option Slot) (own : Nat) (sib cands : List Nat) :
+    Option Nat :=
+  cands.find? fun e => !edgeAlreadyUsed P env e own sib
+
+def pickPre (env : Nat → Option Slot) (own : Nat) (sib cands : List Nat) : Option Nat :=
+  cands.find? fun e => !edgeAlreadyUsedPre env e own sib
+
+/-- **Counterexample (#3054)**: the three collapsed hops all bind edge 1 and the row survives,
+where the pre-#3054 code (correctly) finds no edge for `t`, and no three distinct edges exist. -/
+theorem collapsed_triple_reuses_edge :
+    pick pTwo (envOf []) 0 sibTriple [1, 2] = some 1 ∧
+    pick pTwo (envOf [(0, 1)]) 1 sibTriple [1, 2] = some 1 ∧
+    pick pTwo (envOf [(0, 1), (1, 1)]) 2 sibTriple [1, 2] = some 1 ∧
+    pickPre (envOf []) 0 [0, 1, 2] [1, 2] = some 1 ∧
+    pickPre (envOf [(0, 1)]) 1 [0, 1, 2] [1, 2] = some 2 ∧
+    pickPre (envOf [(0, 1), (1, 2)]) 2 [0, 1, 2] [1, 2] = none ∧
+    ¬ ∃ r ∈ [1, 2], ∃ s ∈ [1, 2], ∃ t ∈ [1, 2], r ≠ s ∧ r ≠ t ∧ s ≠ t := by
+  decide
+
+/-- **Counterexample (#3054)** to `edgeAlreadyUsed_iff` (proved before #3054, now
+`edgeAlreadyUsedPre_iff`): on #3054's code `edge_already_used` is no longer relationship
+uniqueness. At the `t` hop above, siblings `r` and `s` are both bound to edge 1, yet edge 1 is
+reported unused. -/
+theorem edgeAlreadyUsed_iff_fails :
+    ¬ ∀ (P : Parallel) (env : Nat → Option Slot) (edge own : Nat) (sib : List Nat),
+      edgeAlreadyUsed P env edge own sib = true ↔
+        ∃ s ∈ sib, entryId s ≠ own ∧ env (entryId s) = some (.rel edge) := by
+  intro h
+  have := (h pTwo (envOf [(0, 1), (1, 1)]) 1 2 sibTriple).2
+    ⟨COLLAPSED_SIBLING + 0, by decide, by decide, by decide⟩
+  revert this; decide
 
 /-! ### `map_to_index_options` (vector arm, phonetic) -/
 

@@ -404,7 +404,7 @@ theorem refsNew_sound (ir : IR) (v : Var) (h : refsNew ir v = true) : v ∈ read
 /-! ## `runtimeReadsIds`: the sibling-edge columns (W2-traverse-1, still open) -/
 
 /-- What the operator reads *at runtime*, by id: also the columns of `sibling_edges`
-(`edge_already_used`, `runtime/ops/mod.rs:155`). -/
+(`edge_already_used`, `runtime/ops/mod.rs:261`). -/
 def runtimeReadsIds (ir : IR) : List Nat :=
   (reads ir).map Var.id ++ match ir with
     | .condTraverse _ _ sib | .expandInto _ sib => sib
