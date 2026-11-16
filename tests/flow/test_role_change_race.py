@@ -173,51 +173,52 @@ class testRoleChangeRace(FlowTestsBase):
                     f"{confirmed} successful replies plus {ambiguous} "
                     f"force-unblocked writes of unknown outcome")
 
-    def test02_telemetry_batch_held_by_a_pause_is_dropped_on_demotion(self):
-        # The flusher's pause check holds prepared XADDs until replica traffic
-        # resumes. That makes one interleaving the *likely* one rather than a
-        # corner case: a FAILOVER opens the pause, the batch is held for its
-        # duration, and the window closes at the moment this instance has become a
-        # replica. Dispatching the held batch then would write telemetry directly
-        # to a replica - which `enqueue_entry` refuses to do on the hot path,
-        # because the master replicates its own entries to us.
+    def test02_telemetry_is_written_through_a_pause_and_after_a_demotion(self):
+        # Telemetry is node-local: the flusher writes each node's own stream through
+        # the key API, which propagates nothing. So there is no replication traffic
+        # for a pause to hold back, and no role under which the write is wrong - a
+        # replica logs the reads it serves.
         #
-        # Deterministic, unlike test01: the pause guarantees the batch is still
-        # pending when the demotion lands.
+        # The flusher used to hold its batch for the length of a pause and discard
+        # it if the instance had been demoted meanwhile. Both halves are gone, and
+        # this is the interleaving that exercised them: a pause, reads during it,
+        # then a demotion.
         env = self.env
         conn = env.getConnection()
         graph = self.db.select_graph(GRAPH_ID)
         stream = f"telemetry{{{GRAPH_ID}}}"
 
+        # Entries ever added, not XLEN: test01 leaves the stream at its
+        # MAX_INFO_QUERIES cap, where every write also trims.
+        def added():
+            return conn.xinfo_stream(stream)["entries-added"]
+
+        def wait_for_added(expected, timeout=2):
+            deadline = time.time() + timeout
+            while time.time() < deadline and added() != expected:
+                time.sleep(0.05)
+            return added()
+
         # a graph to read from, and a settled telemetry stream to measure against
         graph.query("CREATE (:P {v: 1})")
         time.sleep(0.5)
-        before = conn.execute_command("XLEN", stream)
-        # Positive control: without this, a build with telemetry disabled would
-        # satisfy every assertion below with an always-empty stream.
+        before = added()
         env.assertGreater(before, 0,
             message="telemetry stream is empty before the pause - the flusher "
-                    "never dispatched, so this test would pass vacuously")
+                    "never dispatched")
 
-        # PAUSE WRITE sets PAUSE_ACTION_REPLICA, so the flusher holds its batch.
-        # Reads still run, and every query enqueues a telemetry entry.
+        # Reads still run under PAUSE WRITE, and each one is logged while the
+        # pause is still open: the wait below is shorter than the pause.
         conn.execute_command("CLIENT", "PAUSE", "3000", "WRITE")
         for _ in range(20):
             graph.ro_query("MATCH (n:P) RETURN count(n)")
-        held = conn.execute_command("XLEN", stream)
-        env.assertEqual(held, before,
-            message="the flusher dispatched during a pause - the pause guard "
-                    "is not holding the batch, so this test cannot prove anything "
-                    "about what happens to a held batch")
+        env.assertEqual(wait_for_added(before + 20), before + 20,
+            message="reads served during a pause were not logged while it was open")
 
-        # Demote while that batch is still held, then let the pause lapse so the
-        # flusher wakes up as a replica.
+        # Demoted, the instance still logs the reads it serves.
         conn.execute_command("REPLICAOF", DEAD_MASTER_HOST, DEAD_MASTER_PORT)
-        time.sleep(4)
-
-        after = conn.execute_command("XLEN", stream)
-        env.assertEqual(after, before,
-            message="telemetry entries were written after this instance became a "
-                    "replica - the held batch was dispatched instead of discarded")
+        graph.ro_query("MATCH (n:P) RETURN count(n)")
+        env.assertEqual(wait_for_added(before + 21), before + 21,
+            message="a read served by a replica was not logged to its own stream")
 
         conn.execute_command("REPLICAOF", "NO", "ONE")

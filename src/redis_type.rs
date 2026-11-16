@@ -46,6 +46,7 @@ use crate::serializers;
 use crate::serializers::decoder::LoadedKey;
 use crate::serializers::encoder::build_multi_key_payloads;
 use crate::serializers::{DECODE_STATE, VKEY_STATE};
+use crate::telemetry;
 use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
@@ -368,8 +369,15 @@ pub unsafe extern "C" fn pre_fork_prepare() {
     }
 }
 
-/// Called by Redis persistence events. Creates virtual keys before RDB save,
-/// deletes them after save completes or fails.
+/// Called by Redis persistence events. Before a save it creates the virtual keys
+/// and strips the telemetry streams; after the save completes or fails it deletes
+/// the virtual keys.
+///
+/// The strip runs at every kind of start, which is C's `_IsEventPersistenceStart`:
+/// in the fork child of a BGSAVE, a diskless sync or an AOF rewrite it deletes the
+/// child's copy only, so the live server keeps its telemetry; in a synchronous
+/// `SAVE` or `DEBUG RELOAD` there is no copy, and the node's telemetry goes — which
+/// is acceptable for a stream that is trimmed, best-effort and local.
 ///
 /// # Safety
 /// Called by Redis internals with a valid module context.
@@ -383,12 +391,16 @@ pub unsafe extern "C" fn on_persistence(
         match subevent {
             raw::REDISMODULE_SUBEVENT_PERSISTENCE_SYNC_RDB_START => {
                 create_virtual_keys(ctx);
+                strip_telemetry_streams(ctx);
             }
-            raw::REDISMODULE_SUBEVENT_PERSISTENCE_RDB_START => {
-                // BGSAVE fork child: skip create_virtual_keys entirely.
-                // The fork child must avoid Rust heap allocations because
-                // glibc malloc arena locks may be held by parent threads
-                // that no longer exist in the child, causing deadlock.
+            raw::REDISMODULE_SUBEVENT_PERSISTENCE_RDB_START
+            | raw::REDISMODULE_SUBEVENT_PERSISTENCE_AOF_START
+            | raw::REDISMODULE_SUBEVENT_PERSISTENCE_SYNC_AOF_START => {
+                // No virtual keys here: a graph saved without them is written whole
+                // under its own key (`graph_rdb_save`). The first two run in a fork
+                // child, where the registry lock the strip takes is the one
+                // `on_fork_child` has already taken and released.
+                strip_telemetry_streams(ctx);
             }
             raw::REDISMODULE_SUBEVENT_PERSISTENCE_ENDED
             | raw::REDISMODULE_SUBEVENT_PERSISTENCE_FAILED => {
@@ -397,6 +409,22 @@ pub unsafe extern "C" fn on_persistence(
             #[allow(clippy::match_same_arms)]
             _ => {}
         }
+    }
+}
+
+/// Delete the telemetry stream of every registered graph, so that none reaches the
+/// snapshot about to be written. See [`telemetry::strip_stream`] for why.
+///
+/// The graphs come from `GRAPH_REGISTRY`, as in [`create_virtual_keys`], which is
+/// why a graph has to take its stream with it when it leaves the registry
+/// (`graph_free`): a stream whose graph is gone is one this pass cannot see.
+unsafe fn strip_telemetry_streams(ctx: *mut RedisModuleCtx) {
+    // Names copied out and the lock released before any key is touched: deleting a
+    // key calls back into the module (keyspace events), and nothing done under the
+    // registry lock should be able to come back for it.
+    let names: Vec<String> = GRAPH_REGISTRY.lock().keys().cloned().collect();
+    for name in &names {
+        telemetry::strip_stream(ctx, name);
     }
 }
 
