@@ -357,7 +357,7 @@ theorem rsLine_spec : ∀ r : List Char,
     · subst hc; simp [rsLine, bytes]; rfl
     · have ih := rsLine_spec r
       have hne : (c != '\n') = true := by simp [hc]
-      simp only [rsLine, if_neg hc, List.takeWhile_cons, hne, ite_true, List.length_cons,
+      simp only [rsLine, ite_eq_right hc, List.takeWhile_cons, hne, ite_true, List.length_cons,
         List.drop_succ_cons, bytes]
       rw [ih]
       generalize List.drop (List.takeWhile (fun x => x != '\n') r).length r = d
@@ -383,11 +383,11 @@ theorem rs_agrees_spec : ∀ f : Nat,
       | c :: r =>
         simp only [specSkip] at h
         by_cases hw : isWs c = true
-        · rw [if_pos hw] at h
+        · rw [ite_eq_left hw] at h
           cases hs : specSkip f r with
           | none => simp [hs] at h
           | some k => simp [hs] at h; subst h; simp [rs, hw, ihS r k hs]
-        · rw [if_neg hw] at h
+        · rw [ite_eq_right hw] at h
           have hrs : rs (c :: r) = if c = '/' then rsSlash r else 0 := by simp [rs, hw]
           rw [hrs]
           split at h
@@ -726,46 +726,46 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
     show TokOk (c :: r) (getTokC num esc c r)
     unfold getTokC
     by_cases h1 : c ∈ singles
-    · rw [if_pos h1]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one (singles_u8 c h1))⟩
-    rw [if_neg h1]
+    · rw [ite_eq_left h1]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one (singles_u8 c h1))⟩
+    rw [ite_eq_right h1]
     by_cases h2 : c = '+'
-    · rw [if_pos h2]; subst h2; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+    · rw [ite_eq_left h2]; subst h2; refine ⟨_, rfl, fun n e => ?_⟩; cases e
       by_cases h : r.head? = some '='
-      · rw [if_pos h]; exact .inr (tok_two (t := []) rfl h rfl)
-      · rw [if_neg h]; exact .inr (tok_one rfl)
-    rw [if_neg h2]
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h2]
     by_cases h3 : c = '='
-    · rw [if_pos h3]; subst h3; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+    · rw [ite_eq_left h3]; subst h3; refine ⟨_, rfl, fun n e => ?_⟩; cases e
       by_cases h : r.head? = some '~'
-      · rw [if_pos h]; exact .inr (tok_two (t := []) rfl h rfl)
-      · rw [if_neg h]; exact .inr (tok_one rfl)
-    rw [if_neg h3]
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h3]
     by_cases h4 : c = '<'
-    · rw [if_pos h4]; subst h4; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+    · rw [ite_eq_left h4]; subst h4; refine ⟨_, rfl, fun n e => ?_⟩; cases e
       by_cases h : r.head? = some '=' ∨ r.head? = some '>'
-      · rw [if_pos h]; rcases h with h | h
+      · rw [ite_eq_left h]; rcases h with h | h
         · exact .inr (tok_two (t := []) rfl h rfl)
         · exact .inr (tok_two (t := []) rfl h rfl)
-      · rw [if_neg h]; exact .inr (tok_one rfl)
-    rw [if_neg h4]
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h4]
     by_cases h5 : c = '>'
-    · rw [if_pos h5]; subst h5; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+    · rw [ite_eq_left h5]; subst h5; refine ⟨_, rfl, fun n e => ?_⟩; cases e
       by_cases h : r.head? = some '='
-      · rw [if_pos h]; exact .inr (tok_two (t := []) rfl h rfl)
-      · rw [if_neg h]; exact .inr (tok_one rfl)
-    rw [if_neg h5]
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h5]
     by_cases h6 : c = '.'
-    · rw [if_pos h6]; subst h6
+    · rw [ite_eq_left h6]; subst h6
       by_cases h : r.head? = some '.'
-      · rw [if_pos h]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_two (t := []) rfl h rfl)⟩
-      rw [if_neg h]
+      · rw [ite_eq_left h]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_two (t := []) rfl h rfl)⟩
+      rw [ite_eq_right h]
       by_cases h' : r.head?.map isDigit = some true
-      · rw [if_pos h']
+      · rw [ite_eq_left h']
         exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨max 2 (num ('.' :: r)), by omega, rfl⟩⟩
-      · rw [if_neg h']; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one rfl)⟩
-    rw [if_neg h6]
+      · rw [ite_eq_right h']; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one rfl)⟩
+    rw [ite_eq_right h6]
     by_cases h7 : c = '\'' ∨ c = '"'
-    · rw [if_pos h7]
+    · rw [ite_eq_left h7]
       have hc : u8 c = 1 := by rcases h7 with rfl | rfl <;> rfl
       cases hs : strScan c r with
       | none => exact ⟨_, rfl, fun n e => by cases e⟩
@@ -778,25 +778,25 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
         refine ⟨_, rfl, fun m e => ?_⟩
         simp only at e
         by_cases he : esc b = true
-        · rw [if_pos he] at e
+        · rw [ite_eq_left he] at e
           cases e
           refine .inr ⟨k + 2, by omega, ?_⟩
           have h3 : bytes (r.take (k + 1)) = bytes (r.take k) + u8 c := bytes_take_succ h2
           simp only [List.take_succ_cons, bytes, h3, h1, hc]; omega
-        · rw [if_neg he] at e; cases e
-    rw [if_neg h7]
+        · rw [ite_eq_right he] at e; cases e
+    rw [ite_eq_right h7]
     by_cases h8 : isDigit c = true
-    · rw [if_pos h8]
+    · rw [ite_eq_left h8]
       exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨max 1 (num (c :: r)), by omega, rfl⟩⟩
-    rw [if_neg h8]
+    rw [ite_eq_right h8]
     by_cases h9 : c = '$'
-    · rw [if_pos h9]; subst h9
+    · rw [ite_eq_left h9]; subst h9
       match r with
       | [] => exact ⟨_, rfl, fun n e => by cases e⟩
       | f :: r' =>
         simp only
         by_cases hf : f = '`'
-        · rw [if_pos hf]; subst hf
+        · rw [ite_eq_left hf]; subst hf
           cases hs : btpScan r' with
           | none => exact ⟨_, rfl, fun n e => by cases e⟩
           | some m =>
@@ -811,9 +811,9 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
             have h3 := bytes_take_succ h2
             simp only [List.take_succ_cons, bytes, h3]
             simp [u8] at h1 ⊢; omega
-        rw [if_neg hf]
+        rw [ite_eq_right hf]
         by_cases hf' : isIdChar f = true
-        · rw [if_pos hf']
+        · rw [ite_eq_left hf']
           have hb2 : bytes (('$' :: f :: r').take (2 + identRun r')) = 2 + identRun r' := by
             rw [Nat.add_comm, List.take_succ_cons, List.take_succ_cons]
             simp only [bytes, isIdChar_u8 hf', identRun_bytes]; simp [u8]; omega
@@ -821,10 +821,10 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
             (by rfl) hb2 (by omega)
           rw [hb]
           exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨_, by omega, hb2⟩⟩
-        · rw [if_neg hf']; exact ⟨_, rfl, fun n e => by cases e⟩
-    rw [if_neg h9]
+        · rw [ite_eq_right hf']; exact ⟨_, rfl, fun n e => by cases e⟩
+    rw [ite_eq_right h9]
     by_cases h10 : isIdStart c = true
-    · rw [if_pos h10]
+    · rw [ite_eq_left h10]
       have hc : u8 c = 1 := isIdChar_u8 (by simp [isIdChar, h10])
       have hb2 : bytes ((c :: r).take (1 + identRun r)) = 1 + identRun r := by
         rw [Nat.add_comm, List.take_succ_cons]
@@ -832,9 +832,9 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
       obtain ⟨b, hb⟩ := slice_ok' (c :: r) (i := 0) (j := 1 + identRun r) (ki := 0) (kj := 1 + identRun r) rfl hb2 (by omega)
       rw [hb]
       exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨_, by omega, hb2⟩⟩
-    rw [if_neg h10]
+    rw [ite_eq_right h10]
     by_cases h11 : c = '`'
-    · rw [if_pos h11]; subst h11
+    · rw [ite_eq_left h11]; subst h11
       cases hs : btScan r with
       | none =>
         simp only
@@ -852,7 +852,7 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
         refine .inr ⟨k + 2, by omega, ?_⟩
         have h3 := bytes_take_succ h2
         simp only [List.take_succ_cons, bytes, h3, h1]; simp [u8]; omega
-    rw [if_neg h11]
+    rw [ite_eq_right h11]
     exact ⟨_, rfl, fun n e => by cases e⟩
 
 /-! ## 4. The token loop: never panics, and covers the input exactly -/
@@ -1116,7 +1116,7 @@ theorem hexN_rust {w : Nat} {l : List Char} {v : Nat} (hw0 : 0 < w) (hw : w ≤ 
         · rename_i heq; simp at heq; exact absurd heq.1 hc
         · simp at *
         · rfl
-      simp only [this, Option.bind_some, h, hlt, if_true]
+      simp only [this, Option.bind_some, h, hlt, ite_true]
   · simp at h
 
 theorem hexVal_all : ∀ {l : List Char} {acc v : Nat}, hexVal l acc = some v → l.all isHexDigit = true
@@ -1147,7 +1147,7 @@ theorem unesc_agrees_spec : ∀ (f : Nat) (cs out : List Char),
     simp only [specUnescF] at h
     simp only [unescF]
     by_cases hc : c = '\\'
-    · rw [if_pos hc] at h ⊢
+    · rw [ite_eq_left hc] at h ⊢
       match r, h with
       | [], h => simp at h
       | e :: r', h =>
@@ -1164,10 +1164,10 @@ theorem unesc_agrees_spec : ∀ (f : Nat) (cs out : List Char),
           rw [hs] at h
           simp only at h
           by_cases hu : e = 'u' ∨ e = 'U'
-          · rw [if_pos hu] at h
+          · rw [ite_eq_left hu] at h
             have hse : simpleEsc e = none := by
               rcases hu with rfl | rfl <;> decide
-            rw [hse]; simp only; rw [if_pos hu]
+            rw [hse]; simp only; rw [ite_eq_left hu]
             generalize hw : (if e = 'u' then 4 else 8) = w at h ⊢
             have hw8 : w ≤ 8 := by rw [← hw]; split <;> omega
             have hw0 : 0 < w := by rw [← hw]; split <;> omega
@@ -1178,18 +1178,18 @@ theorem unesc_agrees_spec : ∀ (f : Nat) (cs out : List Char),
               obtain ⟨hb, hf⟩ := hexN_rust hw0 hw8 hx
               have hall := hexN_all hx
               simp only [hb, hall, ne_eq, not_true_eq_false, Bool.not_true, Bool.false_eq_true,
-                or_self, if_false, hf]
+                or_self, ite_false, hf]
               simp only at h
               by_cases hv : v.isValidChar
-              · rw [if_pos hv] at h; rw [if_pos hv]
+              · rw [ite_eq_left hv] at h; rw [ite_eq_left hv]
                 cases h2 : specUnescF f (r'.drop w) with
                 | none => simp [h2] at h
                 | some t =>
                   simp [h2] at h; subst h
                   simp [unesc_agrees_spec f _ t h2, Except.map]
-              · rw [if_neg hv] at h; simp at h
-          · rw [if_neg hu] at h; simp at h
-    · rw [if_neg hc] at h ⊢
+              · rw [ite_eq_right hv] at h; simp at h
+          · rw [ite_eq_right hu] at h; simp at h
+    · rw [ite_eq_right hc] at h ⊢
       cases h2 : specUnescF f r with
       | none => simp [h2] at h
       | some t => simp [h2] at h; subst h; simp [unesc_agrees_spec f r t h2, Except.map]
@@ -1301,7 +1301,7 @@ theorem int_literal_correct (neg : Bool) (radix : Nat) (ds : List Nat) (hne : ds
   · simp [str2int, specLit, hb, evalLit]
   have hc : ¬ (ds = [] ∨ ds.any (fun d => radix ≤ d) = true) := by simp [hne, hb]
   unfold str2int specLit
-  rw [if_neg hc, if_neg hc]
+  rw [ite_eq_right hc, ite_eq_right hc]
   simp only [ne_eq, hne, not_false_eq_true, true_and]
   generalize digitsVal radix ds = v
   have e1 : I64MIN = -9223372036854775808 := rfl
@@ -1311,25 +1311,25 @@ theorem int_literal_correct (neg : Bool) (radix : Nat) (ds : List Nat) (hne : ds
   by_cases hv : v = 9223372036854775808
   · subst hv
     cases neg
-    · simp only [if_true, evalLit, Bool.false_eq_true, if_false]
-      rw [if_neg (by rw [e1, e2]; omega)]; rfl
-    · simp only [if_true, evalLit]
-      rw [if_pos (by rw [e1, e2]; omega)]; rfl
-  · simp only [hv, if_false]
+    · simp only [ite_true, evalLit, Bool.false_eq_true, ite_false]
+      rw [ite_eq_right (by rw [e1, e2]; omega)]; rfl
+    · simp only [ite_true, evalLit]
+      rw [ite_eq_left (by rw [e1, e2]; omega)]; rfl
+  · simp only [hv, ite_false]
     by_cases hle : (v : Int) ≤ I64MAX
-    · rw [if_pos hle]
+    · rw [ite_eq_left hle]
       have h0 : (v : Int) ≠ I64MIN := by rw [e1]; omega
       cases neg
-      · simp only [evalLit, if_neg h0, Bool.false_eq_true, if_false, toOption_ok]
-        rw [if_pos (by rw [e1, e2] at *; omega)]
-      · simp only [evalLit, if_neg h0, if_true, toOption_ok]
-        rw [if_pos (by rw [e1, e2] at *; omega)]
-    · rw [if_neg hle]
+      · simp only [evalLit, ite_eq_right h0, Bool.false_eq_true, ite_false, toOption_ok]
+        rw [ite_eq_left (by rw [e1, e2] at *; omega)]
+      · simp only [evalLit, ite_eq_right h0, ite_true, toOption_ok]
+        rw [ite_eq_left (by rw [e1, e2] at *; omega)]
+    · rw [ite_eq_right hle]
       cases neg
-      · simp only [evalLit, toOption_err, Bool.false_eq_true, if_false]
-        rw [if_neg (by rw [e1, e2] at *; omega)]
-      · simp only [evalLit, toOption_err, if_true]
-        rw [if_neg (by rw [e1, e2] at *; omega)]
+      · simp only [evalLit, toOption_err, Bool.false_eq_true, ite_false]
+        rw [ite_eq_right (by rw [e1, e2] at *; omega)]
+      · simp only [evalLit, toOption_err, ite_true]
+        rw [ite_eq_right (by rw [e1, e2] at *; omega)]
 
 /-- `every_spelling_of_two_to_the_63_lexes_as_min`: `-0x08000000000000000`
 (a leading zero) is `-2^63`, as in C FalkorDB. -/

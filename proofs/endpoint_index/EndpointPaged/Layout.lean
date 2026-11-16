@@ -174,7 +174,7 @@ theorem fromSlots_spec (P : Nat) (hP : 0 < P) :
     rw [fromSlots]
     by_cases h0 : left = 0
     · subst h0; simp [Shape]; rw [Nat.div_eq_of_lt (by omega)]
-    rw [dif_neg h0]
+    rw [dite_eq_right h0]
     have hm : 0 < min left P := Nat.lt_min.2 ⟨by omega, hP⟩
     have hlt : left - min left P < left := by omega
     obtain ⟨hs, hf, hn, hne⟩ := ih _ hlt (it.drop (min left P)) (by simp; omega)

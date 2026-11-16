@@ -399,8 +399,8 @@ theorem compact_ok {b : Blk} (h : Inv b) :
   obtain ⟨p1, p2, p3⟩ := packOffsets_props 0 b.slots h.wf
   refine ⟨{ slots := packOffsets 0 b.slots, arena := sumBy (·.len) b.slots, dead := 0, slack := 0 }, ?_, ⟨?_, ?_, ?_, ?_⟩, rfl, rfl, ?_⟩
   · simp only [compact, csub]
-    rw [if_pos (by omega)]; simp only [Option.bind_some]
-    rw [if_pos (by omega)]; rfl
+    rw [ite_eq_left (by omega)]; simp only [Option.bind_some]
+    rw [ite_eq_left (by omega)]; rfl
   · simp only; omega
   · simp only; omega
   · intro s hs'; exact (p1 s hs').1

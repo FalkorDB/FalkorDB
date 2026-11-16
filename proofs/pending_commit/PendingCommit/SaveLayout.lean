@@ -82,7 +82,7 @@ theorem encRangePR_eq (r : RSet) (S : Store) (n : Nat) (del : List Nat)
     (hc : 0 < count) :
     encRangePR r S maxId count offset = encRange S (live n del) count offset := by
   unfold encRangePR encRange
-  rw [prEncode_spec, if_neg (by omega), hd, liveL_eq_live n del maxId hm, Nat.max_eq_left hc]
+  rw [prEncode_spec, ite_eq_right (by omega), hd, liveL_eq_live n del maxId hm, Nat.max_eq_left hc]
   simp
 
 /-! ## Payloads and the graph stream -/
@@ -227,7 +227,7 @@ theorem chunk_concat {E : Type} (ent : Nat → E) (r : RSet) (maxId cap : Nat)
       have hpos : 0 < min cap (n + 1) := Nat.lt_min.mpr ⟨hcap, Nat.succ_pos n⟩
       have hlt : n + 1 - min cap (n + 1) < n + 1 := by omega
       simp only [List.flatMap_cons]
-      rw [ih _ hlt (off + min cap (n + 1)), prEncode_spec, if_neg (by omega), ← List.map_append,
+      rw [ih _ hlt (off + min cap (n + 1)), prEncode_spec, ite_eq_right (by omega), ← List.map_append,
         take_drop_concat, show min cap (n + 1) + (n + 1 - min cap (n + 1)) = n + 1 by omega]
 
 /-- With `off = 0` and `total` = every live id, the concatenation is one full
@@ -236,6 +236,6 @@ theorem chunk_concat_full {E : Type} (ent : Nat → E) (r : RSet) (maxId cap : N
     (hcap : 0 < cap) (htot : 0 < (liveL (r.elems) maxId).length) :
     (chunkType cap hcap 0 (liveL (r.elems) maxId).length).flatMap (fun s => prEncode ent r maxId s.count s.offset) =
       prEncode ent r maxId (liveL (r.elems) maxId).length 0 := by
-  rw [chunk_concat, prEncode_spec, if_neg (by omega)]
+  rw [chunk_concat, prEncode_spec, ite_eq_right (by omega)]
 
 end SaveSlice

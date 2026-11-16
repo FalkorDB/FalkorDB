@@ -86,9 +86,9 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
     have hs' : ∀ p ∈ seen, p.2 ∉ xs := fun p hp hm => hs p hp (List.mem_cons_of_mem _ hm)
     simp only [scan]
     by_cases hk : key x = []
-    · rw [if_pos hk, scan_gen key xs seen hnd.2 hs']
+    · rw [ite_eq_left hk, scan_gen key xs seen hnd.2 hs']
       simp [hk]
-    · rw [if_neg hk]
+    · rw [ite_eq_right hk]
       have hs2 : ∀ p ∈ (key x, x) :: seen, p.2 ∉ xs := by
         intro p hp; simp at hp; rcases hp with rfl | hp
         · exact hnd.1
@@ -110,14 +110,14 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
           · obtain ⟨y, hy, hky⟩ := List.mem_map.1 hm
             have hy' := List.mem_filter.1 hy
             have := hall y hy'.1 (by simpa using hy'.2)
-            rw [e, if_pos hky.symm] at this; cases this
+            rw [e, ite_eq_left hky.symm] at this; cases this
           · have := hall a ha hka; rw [e] at this
             split at this
             · cases this
             · exact this
         · rintro ⟨⟨hnm, hn⟩, -, hall⟩
           refine ⟨hn, fun y hy hky => ?_⟩
-          rw [e, if_neg ?_]
+          rw [e, ite_eq_right ?_]
           · exact hall y hy hky
           · intro heq; exact hnm (List.mem_map.2 ⟨y, List.mem_filter.2 ⟨hy, by simpa using hky⟩, heq.symm⟩)
 

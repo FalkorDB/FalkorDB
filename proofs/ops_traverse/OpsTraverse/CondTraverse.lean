@@ -64,7 +64,7 @@ theorem mem_pairRows {g : Graph} {isRev emit : Bool} {r : RowIn} {p : Nat × Nat
         ∃ e ∈ (if emit then pes g r p else (pes g r p).take 1), x = (pf isRev p, pt isRev p, e) := by
   unfold pairRows
   by_cases hc : pcond r isRev p = true
-  · simp only [hc, if_true, List.mem_map, true_and]
+  · simp only [hc, ite_true, List.mem_map, true_and]
     constructor
     · rintro ⟨e, he, rfl⟩; exact ⟨e, he, rfl⟩
     · rintro ⟨e, he, rfl⟩; exact ⟨e, he, rfl⟩
@@ -93,7 +93,7 @@ theorem mem_processPairs {g : Graph} {ps : List (Nat × Nat)} {isRev : Bool} {r 
       ∃ x ∈ g, x.id = e ∧ e ∉ r.used ∧ okBound r.fromId f ∧ okBound r.toId t ∧
         Q x.src x.dst ∧
         (if isRev then x.src = t ∧ x.dst = f else x.src = f ∧ x.dst = t) := by
-  simp only [processPairs, List.mem_flatMap, mem_pairRows, if_true]
+  simp only [processPairs, List.mem_flatMap, mem_pairRows, ite_true]
   constructor
   · rintro ⟨⟨s, d⟩, hp, hc, e', he', hx⟩
     obtain ⟨⟨x, hx', hid, hs, hd⟩, hu⟩ := mem_pes.1 he'
@@ -128,9 +128,9 @@ theorem emit_directed_iff {g : Graph} {r : RowIn} {f t e : Nat} :
     (f, t, e) ∈ expandRow g false true r ↔
       ∃ x ∈ g, x.id = e ∧ x.src = f ∧ x.dst = t ∧ e ∉ r.used ∧
         okBound r.fromId f ∧ okBound r.toId t := by
-  simp only [expandRow, Bool.false_eq_true, if_false, List.append_nil]
+  simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil]
   rw [mem_processPairs (fun _ _ => True) (pairs_spec g)]
-  simp only [Bool.false_eq_true, if_false]
+  simp only [Bool.false_eq_true, ite_false]
   constructor
   · rintro ⟨x, hx, h1, h2, h3, h4, _, h5, h6⟩; exact ⟨x, hx, h1, h5, h6, h2, h3, h4⟩
   · rintro ⟨x, hx, h1, h5, h6, h2, h3, h4⟩; exact ⟨x, hx, h1, h2, h3, h4, trivial, h5, h6⟩
@@ -143,10 +143,10 @@ theorem emit_bidir_iff {g : Graph} {r : RowIn} {f t e : Nat} :
     (f, t, e) ∈ expandRow g true true r ↔
       ∃ x ∈ g, x.id = e ∧ e ∉ r.used ∧ okBound r.fromId f ∧ okBound r.toId t ∧
         ((x.src = f ∧ x.dst = t) ∨ (x.src ≠ x.dst ∧ x.src = t ∧ x.dst = f)) := by
-  simp only [expandRow, if_true, List.mem_append]
+  simp only [expandRow, ite_true, List.mem_append]
   rw [mem_processPairs (fun _ _ => True) (pairs_spec g),
     mem_processPairs (fun s d => s ≠ d) (pairs_filter_spec g)]
-  simp only [Bool.false_eq_true, if_false, if_true]
+  simp only [Bool.false_eq_true, ite_false, ite_true]
   constructor
   · rintro (⟨x, hx, h1, h2, h3, h4, _, h5⟩ | ⟨x, hx, h1, h2, h3, h4, hne, h5⟩)
     · exact ⟨x, hx, h1, h2, h3, h4, Or.inl h5⟩
@@ -161,8 +161,8 @@ theorem emit_bidir_iff {g : Graph} {r : RowIn} {f t e : Nat} :
 theorem collapse_sub_emit {g : Graph} {ps : List (Nat × Nat)} {isRev : Bool} {r : RowIn}
     {x : Nat × Nat × Nat} :
     x ∈ processPairs g ps isRev r false → x ∈ processPairs g ps isRev r true := by
-  simp only [processPairs, List.mem_flatMap, mem_pairRows, Bool.false_eq_true, if_false,
-    if_true]
+  simp only [processPairs, List.mem_flatMap, mem_pairRows, Bool.false_eq_true, ite_false,
+    ite_true]
   rintro ⟨p, hp, hc, e, he, hx⟩
   exact ⟨p, hp, hc, e, List.mem_of_mem_take he, hx⟩
 
@@ -174,12 +174,12 @@ theorem collapse_directed_iff {g : Graph} {r : RowIn} {f t : Nat} :
   constructor
   · rintro ⟨e, he⟩
     have := (emit_directed_iff (g := g)).1 (by
-      simp only [expandRow, Bool.false_eq_true, if_false, List.append_nil] at he ⊢
+      simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil] at he ⊢
       exact collapse_sub_emit he)
     obtain ⟨x, hx, rfl, h1, h2, h3, h4, h5⟩ := this
     exact ⟨x, hx, h1, h2, h3, h4, h5⟩
   · rintro ⟨x, hx, rfl, rfl, hu, hf, ht⟩
-    simp only [expandRow, Bool.false_eq_true, if_false, List.append_nil, processPairs,
+    simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil, processPairs,
       List.mem_flatMap, mem_pairRows]
     have hne : x.id ∈ pes g r (x.src, x.dst) := mem_pes.2 ⟨⟨x, hx, rfl, rfl, rfl⟩, hu⟩
     have hc : pcond r false (x.src, x.dst) = true := by simp [pcond, pf, pt, hf, ht]
@@ -199,7 +199,7 @@ theorem pairRows_keys (g : Graph) (r : RowIn) (p : Nat × Nat) :
     ((pairRows g false r false p).map fun x => (x.1, x.2.1)) = [p] := by
   unfold pairRows
   by_cases hc : pcond r false p = true
-  · simp only [hc, if_true, Bool.false_eq_true, if_false, List.map_map]
+  · simp only [hc, ite_true, Bool.false_eq_true, ite_false, List.map_map]
     cases pes g r p <;> simp [pf, pt]
   · simp [hc]
 
@@ -216,7 +216,7 @@ theorem collapse_keys_sublist (g : Graph) (r : RowIn) :
 
 theorem collapse_directed_keys_nodup (g : Graph) (r : RowIn) :
     ((expandRow g false false r).map fun x => (x.1, x.2.1)).Nodup := by
-  simp only [expandRow, Bool.false_eq_true, if_false, List.append_nil]
+  simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil]
   exact (nodup_pairs g).sublist (collapse_keys_sublist g r _)
 
 /-! ### Counterexample: undirected collapse is one row per pair *per direction*
@@ -286,7 +286,7 @@ theorem twoHop_emit_iff {g : Graph} {nodes : List Nat} {a x r c s : Nat} :
     obtain ⟨e2, he2, hid2, hu2, hb2, -, -, hdir⟩ :=
       (mem_processPairs (fun _ _ => True) (pairs_spec g)).1 h2
     simp only [okBound, Option.all_some, beq_iff_eq] at hb1 hb2
-    simp only [if_true] at hdir
+    simp only [ite_true] at hdir
     refine ⟨ha, ⟨e1, he1, hid1, hs1.trans hb1.symm, hd1⟩, ⟨e2, he2, hid2, hdir.1, hdir.2.trans hb2.symm⟩, ?_⟩
     simpa using hu2
   · rintro ⟨ha, ⟨e1, he1, rfl, rfl, rfl⟩, ⟨e2, he2, rfl, rfl, hd2⟩, hne⟩

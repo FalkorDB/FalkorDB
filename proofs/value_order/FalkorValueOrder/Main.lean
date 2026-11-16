@@ -290,7 +290,7 @@ theorem cmpKey_total (desc : Bool) (a b d : V) (wa : wf a = true) (wb : wf b = t
   have r1 := (scMain_total a b d wa wb wd).1
   cases desc
   · exact scMain_total a b d wa wb wd
-  · simp only [cmpKey, if_true]
+  · simp only [cmpKey, ite_true]
     refine ⟨by rw [r1]; rfl, by rw [sw b a wb wa]; cases scMain a b <;> rfl, ?_⟩
     rw [sw a b wa wb, sw b d wb wd, sw a d wa wd]
     intro h1 h2

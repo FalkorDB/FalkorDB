@@ -130,12 +130,12 @@ theorem find_filter_ne (l : List (Nat × Ent)) (id j : Nat) (h : j ≠ id) :
   | cons p ps ih =>
     by_cases hp : p.1 = id
     · rw [List.filter_cons_of_neg (by simp [hp])]
-      simp only [find]; rw [if_neg (by omega)]; exact ih
+      simp only [find]; rw [ite_eq_right (by omega)]; exact ih
     · rw [List.filter_cons_of_pos (by simp [hp])]
       simp only [find]
       by_cases hj : p.1 = j
-      · rw [if_pos hj, if_pos hj]
-      · rw [if_neg hj, if_neg hj, ih]
+      · rw [ite_eq_left hj, ite_eq_left hj]
+      · rw [ite_eq_right hj, ite_eq_right hj, ih]
 
 theorem find_filter_eq (l : List (Nat × Ent)) (id : Nat) : find (l.filter (·.1 != id)) id = none := by
   rw [find_none_iff]; simp [keys]
@@ -162,7 +162,7 @@ def FreshOK (s : RS) : Prop := ∀ id ∈ keys s.snap, id < s.fresh
 
 theorem find_cons_ne (l : List (Nat × Ent)) (a : Nat) (x : Ent) (j : Nat) (h : j ≠ a) :
     find ((a, x) :: l) j = find l j := by
-  simp only [find]; rw [if_neg (fun h' => h h'.symm)]
+  simp only [find]; rw [ite_eq_right (fun h' => h h'.symm)]
 
 /-- **`deferred_preserves_Good`**: allocating around the snapshot keeps every
 read sound. -/

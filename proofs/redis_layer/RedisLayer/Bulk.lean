@@ -86,7 +86,7 @@ theorem readNe_ok {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat
 theorem readNe_enc8 (pre r : List Nat) (i : Int) :
     readNe 8 C.dec8 (pre ++ C.enc8 i ++ r) pre.length = .ok (i, pre.length + 8) := by
   unfold readNe
-  rw [if_neg (by simp [C.len8])]
+  rw [ite_eq_right (by simp [C.len8])]
   have : (List.drop pre.length (pre ++ C.enc8 i ++ r)) = C.enc8 i ++ r := by
     rw [List.append_assoc, List.drop_left]
   rw [this, C.dec_enc8]
@@ -246,13 +246,13 @@ theorem go_enc : ∀ (v : BV) (r : List Nat) (st : List Frame), wf C v →
     rw [go.eq_def]
     simp only [show (5:Nat) ≠ 0 by omega, show (5:Nat) ≠ 1 by omega, show (5:Nat) ≠ 2 by omega,
       show (5:Nat) ≠ 4 by omega, show (5:Nat) ≠ 3 by omega, ite_false, ite_true]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     simp only [List.length_append, C.len8, take8, drop8, hd, de8]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     cases xs with
     | nil => simp [encs, attach]
     | cons x xs =>
-      rw [if_neg (by simp; omega), if_neg (by simp; omega)]
+      rw [ite_eq_right (by simp; omega), ite_eq_right (by simp; omega)]
       simp only [Int.toNat_natCast]
       exact go_encs (x :: xs) r st [] (by simp) h (by omega)
 theorem go_encs : ∀ (xs : List BV) (r : List Nat) (st : List Frame) (acc : List BV),
@@ -270,7 +270,7 @@ theorem go_encs : ∀ (xs : List BV) (r : List Nat) (st : List Frame) (acc : Lis
       simp only [depths] at hd; simp; omega
     rw [go_enc x _ _ h.1 hx, attach]
     simp only [List.length_cons]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     have hys : depths (y :: ys) + st.length + 1 ≤ MAX_VALUE_NESTING := by
       simp only [depths] at hd ⊢; omega
     have := go_encs (y :: ys) r st (acc ++ [x]) (by simp) h.2 hys
@@ -354,7 +354,7 @@ theorem records_enc (P : Nat) (hP : 1 ≤ P) (rs : List (List BV))
     have hv := hlen vs (List.mem_cons_self ..)
     have hne : vs ≠ [] := by intro h; rw [h] at hv; simp at hv; omega
     simp only [records, List.flatMap_cons]
-    rw [if_neg (by simp [encRec_ne_nil C vs hne])]
+    rw [ite_eq_right (by simp [encRec_ne_nil C vs hne])]
     have hr := readN_enc C vs (rs.flatMap (encRec C)) (hwf vs (List.mem_cons_self ..))
       (hdep vs (List.mem_cons_self ..))
     rw [hv] at hr
@@ -599,11 +599,11 @@ theorem recLoop_keepFirst (K : List Nat) :
     by_cases hskip : v.isNull = true ∨ a ∈ seen
     · have hc : (v.isNull || filled.getD s false) = true := by
         rw [hget]; rcases hskip with h | h <;> simp [h]
-      rw [if_pos hc, if_pos hskip]
+      rw [ite_eq_left hc, ite_eq_left hskip]
       exact recLoop_keepFirst K cs vs filled seen acc r hcs' hfl hinv hl' hw' hd'
     · have hc : ¬ (v.isNull || filled.getD s false) = true := by
         rw [hget]; simp only [not_or] at hskip; simp [hskip.1, hskip.2]
-      rw [if_neg hc, if_neg hskip]
+      rw [ite_eq_right hc, ite_eq_right hskip]
       have hlt : s < filled.length := by rw [hfl, hs]; exact List.idxOf_lt_length_of_mem haK
       have hinv' : ∀ b ∈ K, (filled.set s true).getD (K.idxOf b) false = decide (b ∈ a :: seen) := by
         intro b hb
@@ -683,7 +683,7 @@ theorem keepFirst_sublist (seen : List Nat) (xs : List (Nat × BV)) :
     simp only [keepFirst]
     split
     · exact (ih seen).cons _
-    · exact (ih _).cons₂ _
+    · exact (ih _).cons_cons _
 
 /-- **The first non-null value wins**: the entry kept for `a` is the first column naming `a`
 whose value is not null (and there is none exactly when every such column is null). -/
@@ -725,10 +725,10 @@ theorem keepFirst_nodup_eq (seen : List Nat) (xs : List (Nat × BV))
     have hb : b ∉ seen := hs (b, v) (List.mem_cons_self ..)
     simp only [keepFirst, plainRead, List.filter_cons]
     by_cases hv : v.isNull = true
-    · rw [if_pos (Or.inl hv), if_neg (by simp [hv])]
+    · rw [ite_eq_left (Or.inl hv), ite_eq_right (by simp [hv])]
       exact ih seen hnd.2 (fun p hp => hs p (List.mem_cons_of_mem _ hp))
     · have hv' : v.isNull = false := by simpa using hv
-      rw [if_neg (by simp [hv', hb]), if_pos (by simp [hv'])]
+      rw [ite_eq_right (by simp [hv', hb]), ite_eq_left (by simp [hv'])]
       congr 1
       refine ih (b :: seen) hnd.2 ?_
       intro p hp hm
@@ -753,7 +753,7 @@ theorem keepFirst_plainRead (seen : List Nat) (xs : List (Nat × BV)) :
     simp only [plainRead] at ih ⊢
     by_cases hv : v.isNull = true
     · simp [List.filter_cons, hv, keepFirst, ih]
-    · simp only [List.filter_cons, hv, Bool.not_false, if_true, keepFirst]
+    · simp only [List.filter_cons, hv, Bool.not_false, ite_true, keepFirst]
       split <;> simp [ih]
 
 /-- **End to end**: a record of a token whose header names no attribute twice reads exactly

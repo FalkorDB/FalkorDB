@@ -350,10 +350,10 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
           (p.sel idx opq n && evalF opq n g) := fun _ _ => rfl
       cases hk : needsPost f <;> cases hr : rem.isEmpty <;>
         simp only [hk, hr, ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
-      · rw [if_pos (hcu hk)]; exact hs
+      · rw [ite_eq_left (hcu hk)]; exact hs
       · have : rem = [] := List.isEmpty_iff.mp hr
         subst this
-        rw [if_pos (hcu hk)]; simpa using hs
+        rw [ite_eq_left (hcu hk)]; simpa using hs
       · split <;> cases hq : qsem idx L' q n <;> cases hf' : evalF opq n f <;> simp_all
       · split <;> cases hq : qsem idx L' q n <;> cases hf' : evalF opq n f <;> simp_all
 

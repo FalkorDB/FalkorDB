@@ -321,7 +321,7 @@ theorem phaseA_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
         rw [href]
         have := ih { st with out := st.out ++ [(r, bindCached cl (v, id))] }
                    ⟨rst.g, rst.next, rst.out ++ [(r, some id)]⟩ hJ hg hn hlt
-        simp only [bindCached, hv, beq_self_eq_true, if_true] at this ⊢
+        simp only [bindCached, hv, beq_self_eq_true, ite_true] at this ⊢
         obtain ⟨a1, a2, a3, a4, Ls, b1, b2, b3, _⟩ := this
         refine ⟨a1, a2, a3, a4, [(r, some id)] :: Ls, ?_, ?_, ?_, trivial⟩
         · rw [b1]; simp
@@ -457,7 +457,7 @@ theorem rust_eq_ref_noSet (cl : Clause α) (hs : NoSet cl) :
 theorem batches_flatten (B : Nat) (hB : 0 < B) (l : List α) : (batches B hB l).flatten = l := by
   induction l using batches.induct B hB with
   | case1 => rw [batches]; simp
-  | case2 l h ih => rw [batches, dif_neg h]; simp [ih]
+  | case2 l h ih => rw [batches, dite_eq_right h]; simp [ih]
 
 /-- The `BATCH_SIZE` instance, fresh query (empty cache). -/
 theorem merge_noSet_any_batch_size (cl : Clause α) (hs : NoSet cl) (B : Nat) (hB : 0 < B)

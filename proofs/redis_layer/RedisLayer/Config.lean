@@ -262,19 +262,19 @@ theorem cmdinfo_ok_iff (v : List Nat) (x : Int) :
     validate .cmdInfo v = .ok x ↔ (eqIC v (b "yes") ∧ x = 1) ∨ (eqIC v (b "no") = true ∧ eqIC v (b "yes") = false ∧ x = 0) := by
   simp only [validate]
   by_cases h1 : eqIC v (b "yes") = true
-  · simp only [h1, if_true, Except.ok.injEq, true_and]
+  · simp only [h1, ite_true, Except.ok.injEq, true_and]
     constructor
     · intro h; exact Or.inl h.symm
     · rintro (h | ⟨_, h, _⟩)
       · exact h.symm
       · simp at h
   · have h1' : eqIC v (b "yes") = false := by simpa using h1
-    simp only [h1', Bool.false_eq_true, if_false, false_and, false_or, true_and]
+    simp only [h1', Bool.false_eq_true, ite_false, false_and, false_or, true_and]
     by_cases h2 : eqIC v (b "no") = true
-    · simp only [h2, if_true, Except.ok.injEq, true_and]
+    · simp only [h2, ite_true, Except.ok.injEq, true_and]
       exact ⟨fun h => h.symm, fun h => h.symm⟩
     · have h2' : eqIC v (b "no") = false := by simpa using h2
-      simp only [h2', Bool.false_eq_true, if_false, false_and, iff_false]
+      simp only [h2', Bool.false_eq_true, ite_false, false_and, iff_false]
       intro h; cases h
 
 /-! ## `graph_config` head (`config_cmd.rs:318-353`, #3021)

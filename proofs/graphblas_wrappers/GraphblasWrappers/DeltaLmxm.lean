@@ -136,20 +136,20 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
       0 < cnt n F DP i j := by
   unfold deltaLmxm
   by_cases hhot : (!nz DP && !nz DM) = true
-  · rw [if_pos hhot]
+  · rw [ite_eq_left hhot]
     simp only [Bool.and_eq_true, Bool.not_eq_true'] at hhot
     have h1 := cnt_zero_of_nz_false (n := n) (F := F) hhot.2 i j
     have h2 := cnt_zero_of_nz_false (n := n) (F := F) hhot.1 i j
     simp only [mxmAny, decide_eq_true_eq]
     omega
-  · rw [if_neg hhot]
+  · rw [ite_eq_right hhot]
     simp only []
     -- value of the optional pieces
     have hacc : opt (if nz DP = true then
           (let ac := mxmAny n F DP; if nz ac = true then some ac else none) else none) i j = true ↔
         0 < cnt n F DP i j := by
       by_cases hd : nz DP = true
-      · simp only [hd, if_true]
+      · simp only [hd, ite_true]
         by_cases ha : nz (mxmAny n F DP) = true
         · simp [ha, opt, mxmAny]
         · have := nz_false (by simpa using ha) i j
@@ -160,7 +160,7 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
         simp [hd', opt, cnt_zero_of_nz_false hd']
     rw [addOpt, Bool.or_eq_true, hacc]
     by_cases hG : (nz DM = true ∧ nzU (mxmCount n F DM) = true)
-    · simp only [hG, and_self, if_true]
+    · simp only [hG, and_self, ite_true]
       have hb := hG
       rw [addOpt, Bool.or_eq_true]
       have hlive : opt (let live := selTrue (ewGT (maskS (mxmCount n F DM) (mxmCount n F M))
@@ -168,7 +168,7 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
           (0 < cnt n F DM i j ∧ cnt n F DM i j < cnt n F M i j) := by
         simp only []
         by_cases hl : nz (selTrue (ewGT (maskS (mxmCount n F DM) (mxmCount n F M)) (mxmCount n F DM))) = true
-        · simp only [hl, if_true, opt, selTrue, ewGT, maskS, mxmCount, beq_iff_eq]
+        · simp only [hl, ite_true, opt, selTrue, ewGT, maskS, mxmCount, beq_iff_eq]
           by_cases hb0 : cnt n F DM i j = 0
           · simp [hb0]
           · by_cases ha0 : cnt n F M i j = 0
@@ -177,7 +177,7 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
         · have hl' : nz (selTrue (ewGT (maskS (mxmCount n F DM) (mxmCount n F M)) (mxmCount n F DM))) = false := by
             simpa using hl
           have := nz_false hl' i j
-          simp only [hl, if_false, opt, Bool.false_eq_true, false_iff, not_and]
+          simp only [hl, ite_false, opt, Bool.false_eq_true, false_iff, not_and]
           intro hb0
           simp only [selTrue, ewGT, maskS, mxmCount, beq_iff_eq] at this
           by_cases ha0 : cnt n F M i j = 0
@@ -197,7 +197,7 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
             · simpa using h3
           exact cnt_zero_of_nzU_false h2 i j
         · exact cnt_zero_of_nz_false (n := n) (F := F) (by simpa using h1) i j
-      simp only [hG, if_false, mxmAny, hb0]
+      simp only [hG, ite_false, mxmAny, hb0]
       simp
 
 /-! ## Correctness: `F * (M - DM + DP)`, given `dm ⊆ m` -/

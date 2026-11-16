@@ -54,7 +54,7 @@ theorem int_roundtrip (i : Int) (h : i64min ≤ i ∧ i ≤ i64max) : rt (.int i
     · subst h0; rfl
     · simp only [h0, ite_false, F64.integral, F64.small, F64.toInt, F64.negZero, hs, decide_true,
         Bool.and_self, Bool.not_false, ite_true]
-  · simp only [hs, ite_false, bind, Except.bind, fromJs_big, h, and_self, if_true]
+  · simp only [hs, ite_false, bind, Except.bind, fromJs_big, h, and_self, ite_true]
 
 /-- Float round trips iff it is not an integral value below 2^53 in magnitude other
 than -0.0 (#3074). -/

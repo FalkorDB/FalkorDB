@@ -116,7 +116,7 @@ theorem buildTbl_get (ids : List Nat) (c : Nat) (t : List (Option Nat))
     rw [ih (c + 1) _ hlt' hnd'.2]
     by_cases hx : x = o
     · subst hx
-      simp only [List.mem_cons_self, if_true, hnd'.1]
+      simp only [List.mem_cons_self, ite_true, hnd'.1]
       simp [List.getElem?_set_self (hlt x (List.mem_cons_self ..))]
     · by_cases hm : x ∈ os
       · have hox : (o == x) = false := by simpa using Ne.symm hx

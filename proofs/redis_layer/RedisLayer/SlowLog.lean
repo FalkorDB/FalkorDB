@@ -137,7 +137,7 @@ theorem prefix_longest (s p : Bytes) (h : strPrefix s = some p) (m : Nat)
 
 /-- Queries of at most 2048 bytes are hashed / kept whole. -/
 theorem prefix_short (q : Bytes) (h : q.length ≤ STR_MAX_LEN) : strPrefix q = some q := by
-  rw [prefix_eq]; unfold floorCB; rw [if_pos h]; simp
+  rw [prefix_eq]; unfold floorCB; rw [ite_eq_left h]; simp
 
 theorem hashInput_short (q : Bytes) (h : q.length ≤ STR_MAX_LEN) : hashInput q = some q :=
   prefix_short q h
@@ -149,13 +149,13 @@ theorem truncate_short (s : Bytes) (h : s.length ≤ STR_MAX_LEN) : truncate s =
 theorem prefix_ascii (q : Bytes) (h : ∀ b ∈ q, b < 0x80) (hl : STR_MAX_LEN < q.length) :
     strPrefix q = some (q.take STR_MAX_LEN) := by
   have hl' : 2048 < q.length := hl
-  rw [prefix_eq]; unfold floorCB; rw [if_neg (by omega)]
+  rw [prefix_eq]; unfold floorCB; rw [ite_eq_right (by omega)]
   have hg : q.getD 2048 0 = q[2048]'hl' := by
     rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hl']; rfl
   have hb := h _ (List.getElem_mem hl')
   have : boundary q 2048 = true := by
     simp only [boundary, cont, hg]; simp; omega
-  rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, if_pos this]
+  rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, ite_eq_left this]
 
 /-- 2047 ASCII bytes then `é` (`C3 A9`): byte 2048 is a continuation byte. -/
 def bad : Bytes := List.replicate 2047 97 ++ [0xC3, 0xA9]
@@ -167,15 +167,15 @@ theorem getD_bad (p t : Bytes) (hp : p.length = 2047) : (p ++ 0xC3 :: 0xA9 :: t)
 theorem hashInput_bad (p t : Bytes) (hp : p.length = 2047) :
     hashInput (p ++ 0xC3 :: 0xA9 :: t) = some p := by
   unfold hashInput; rw [prefix_eq]; unfold floorCB
-  rw [if_neg (by simp [STR_MAX_LEN, hp]; omega)]
+  rw [ite_eq_right (by simp [STR_MAX_LEN, hp]; omega)]
   have hb : boundary (p ++ 0xC3 :: 0xA9 :: t) (2047 + 1) = false := by
     unfold boundary; rw [show 2047 + 1 = 2048 from rfl, getD_bad p t hp]; simp [cont, hp]; omega
   have hb' : boundary (p ++ 0xC3 :: 0xA9 :: t) (2046 + 1) = true := by
     unfold boundary
     rw [List.getD_eq_getElem?_getD, List.getElem?_append_right (by omega), hp]
     simp [cont]
-  rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, if_neg (by simp [hb]),
-    show (2047 : Nat) = 2046 + 1 from rfl, floorB_succ, if_pos hb']
+  rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, ite_eq_right (by simp [hb]),
+    show (2047 : Nat) = 2046 + 1 from rfl, floorB_succ, ite_eq_left hb']
   simp [hp]
 
 /-! ## Historical: before #3234 (`3660a5fc3`)
@@ -318,7 +318,7 @@ theorem add_repeat_max (s : SL) (h lat : Nat) (e : E) (he : e ∈ s.entries) (he
   have hxe : x = e := nodup_map_inj_E _ hnd x e hxm he (by rw [hxh, heh])
   subst hxe
   unfold add
-  rw [if_neg (by omega), if_neg hc, hx]
+  rw [ite_eq_right (by omega), ite_eq_right hc, hx]
   simp only
   split
   · rename_i hle

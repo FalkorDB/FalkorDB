@@ -81,11 +81,11 @@ theorem edgeCount_no_panic (m dp dm shadow multi me : Nat) (h : Wf m dp dm shado
   obtain ⟨h1, h2, h3, h4, h5⟩ := h
   unfold edgeCount cadd csub
   have e1 : dm ≤ m + dp := by omega
-  simp only [Option.bind, if_pos h4, if_pos e1]
+  simp only [Option.bind, ite_eq_left h4, ite_eq_left e1]
   have e2 : shadow ≤ m + dp - dm := h2
-  simp only [if_pos e2]
+  simp only [ite_eq_left e2]
   have e3 : multi ≤ m + dp - dm - shadow := h3
-  simp only [if_pos e3, if_pos h5]
+  simp only [ite_eq_left e3, ite_eq_left h5]
   rfl
 
 /-- The value it returns is the edge-count identity. -/
@@ -94,7 +94,7 @@ theorem edgeCount_value (m dp dm shadow multi me : Nat) (h : Wf m dp dm shadow m
   obtain ⟨h1, h2, h3, h4, h5⟩ := h
   unfold edgeCount cadd csub
   have e1 : dm ≤ m + dp := by omega
-  simp only [Option.bind, if_pos h4, if_pos e1, if_pos h2, if_pos h3, if_pos h5]
+  simp only [Option.bind, ite_eq_left h4, ite_eq_left e1, ite_eq_left h2, ite_eq_left h3, ite_eq_left h5]
 
 /-! ## Forward-layer sizes (#2996, tensor.rs:1562-1573)
 

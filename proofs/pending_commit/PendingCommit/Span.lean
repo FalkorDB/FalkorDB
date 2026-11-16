@@ -163,7 +163,7 @@ theorem get_none_of_all_gt {l : List Entry} {k : Nat} (h : ∀ a ∈ l, k < a.1)
   | cons e es ih =>
     have he := h e (by simp)
     simp only [get]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     exact ih (fun a ha => h a (by simp [ha]))
 
 theorem get_none_of_lt_head {p : Entry} {ps : List Entry} (h : Sorted (p :: ps))
@@ -705,8 +705,8 @@ theorem pureRemove_sublist : ∀ (old ps : List Entry), List.Sublist (pureRemove
       split
       · split
         · exact (pureRemove_sublist es _).cons e
-        · exact (pureRemove_sublist es _).cons₂ e
-      · exact (pureRemove_sublist es _).cons₂ e
+        · exact (pureRemove_sublist es _).cons_cons e
+      · exact (pureRemove_sublist es _).cons_cons e
 
 theorem pureRemove_get : ∀ (old ps : List Entry), Sorted old → Sorted ps → ∀ k,
     get (pureRemove old ps).1 k = if mem ps k then none else get old k

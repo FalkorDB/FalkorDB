@@ -322,13 +322,13 @@ theorem edgeRow_sound (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat
   unfold edgeRow at h
   generalize orient bd (if canUseE q = true then idx q else all) = base at h
   by_cases hc : (bf.isSome || bt.isSome || sa) = true
-  · rw [if_pos hc, List.mem_filter] at h
+  · rw [ite_eq_left hc, List.mem_filter] at h
     obtain ⟨_, hp⟩ := h
     cases tr <;> simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true', beq_iff_eq] at hp <;>
       simp only [Bool.false_eq_true, ite_false, ite_true] <;>
       obtain ⟨⟨h1, h2⟩, h3⟩ := hp <;>
       refine ⟨fun x hx => ?_, fun x hx => ?_, fun hs => ?_⟩ <;> simp_all
-  · rw [if_neg hc] at h
+  · rw [ite_eq_right hc] at h
     simp only [Bool.or_eq_true, not_or, Bool.not_eq_true, Option.isSome_eq_false_iff, Option.isNone_iff_eq_none] at hc
     obtain ⟨⟨h1, h2⟩, h3⟩ := hc
     refine ⟨fun x hx => by simp [h1] at hx, fun x hx => by simp [h2] at hx, fun hs => by simp [h3] at hs⟩

@@ -114,7 +114,7 @@ theorem bsearch_ok_iff (ks : List Nat) (hs : SSorted ks) (k i : Nat) :
           have := I.low (by omega); omega
         · exact h1
         · have := I.high i (by omega) hi; omega
-      subst hib; rw [if_pos hk]
+      subst hib; rw [ite_eq_left hk]
 
 /-- **`bsearch_err`**: `Err p` is the insertion point. -/
 theorem bsearch_err (ks : List Nat) (hs : SSorted ks) (k p : Nat) (h : bsearch ks k = .err p) :

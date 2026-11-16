@@ -293,7 +293,7 @@ theorem decode_writePair (R : Roaring) (k v c rest remaining) (hk : k ∈ [0, 0x
   have hk1 : k &&& 3 ≠ 1 := by simp at hk; rcases hk with rfl | rfl | rfl <;> decide
   simp only [SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK, SEG_KIND_ASCENDING, ne_eq] at h1 h2 h3
   simp only [writePair, decodeSeg, List.cons_append, SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK,
-    SEG_KIND_ASCENDING, h1, h3, hk1, ne_eq, not_true_eq_false, if_false]
+    SEG_KIND_ASCENDING, h1, h3, hk1, ne_eq, not_true_eq_false, ite_false]
   rw [widthOfCode_widthCode v _ h4, List.append_assoc, readU_le _ _ _ (widthFor_fits v hv)]
   simp only
   rw [widthOfCode_widthCode c _ h5, readU_le _ _ _ (widthFor_fits c hc)]
@@ -309,21 +309,21 @@ theorem decode_encodeSeg (R : Roaring) (hR : RoaringOK R) (s : Seg) (remaining :
     refine ⟨_, rfl, ?_⟩
     rw [decode_writePair R _ _ _ _ _ (by simp [SEG_KIND_RANGE]) (by unfold W at *; omega) (by unfold W at *; omega)]
     simp [SEG_KIND_RANGE]
-    repeat (rw [if_neg (by unfold W at *; omega)])
+    repeat (rw [ite_eq_right (by unfold W at *; omega)])
     rw [Nat.mod_eq_of_lt (by omega)]
   | rdesc b l =>
     simp [Seg.WF] at hw; simp [Seg.len] at hl
     refine ⟨_, rfl, ?_⟩
     rw [decode_writePair R _ _ _ _ _ (by simp [SEG_KIND_RANGE, SEG_DESCENDING]) (by omega) (by unfold W at *; omega)]
     simp [SEG_KIND_RANGE, SEG_DESCENDING]
-    repeat (rw [if_neg (by unfold W at *; omega)])
+    repeat (rw [ite_eq_right (by unfold W at *; omega)])
     rw [Nat.mod_eq_of_lt (by omega)]
   | rep i c =>
     simp [Seg.WF] at hw; simp [Seg.len] at hl
     refine ⟨_, rfl, ?_⟩
     rw [decode_writePair R _ _ _ _ _ (by simp [SEG_KIND_REPEAT]) (by omega) (by unfold W at *; omega)]
     simp [SEG_KIND_REPEAT, SEG_KIND_RANGE]
-    repeat (rw [if_neg (by unfold W at *; omega)])
+    repeat (rw [ite_eq_right (by unfold W at *; omega)])
     rw [Nat.mod_eq_of_lt (by omega)]
   | asc bm =>
     simp [Seg.WF] at hw; simp [Seg.len] at hl
@@ -371,10 +371,10 @@ theorem encodeSeg_exists (R : Roaring) (hR : RoaringOK R) (s : Seg) : ∃ bytes,
   | range b l | rdesc b l | rep b l => exact ⟨_, rfl⟩
   | asc bm =>
     exact ⟨(SEG_KIND_ASCENDING ||| 0) :: (le 4 (R.size bm) ++ R.ser bm), by
-      simp only [encodeSeg, encodeSeg.bitmap]; rw [if_neg (by rw [hR.size_eq]; simp)]⟩
+      simp only [encodeSeg, encodeSeg.bitmap]; rw [ite_eq_right (by rw [hR.size_eq]; simp)]⟩
   | dsc bm =>
     exact ⟨(SEG_KIND_ASCENDING ||| SEG_DESCENDING) :: (le 4 (R.size bm) ++ R.ser bm), by
-      simp only [encodeSeg, encodeSeg.bitmap]; rw [if_neg (by rw [hR.size_eq]; simp)]⟩
+      simp only [encodeSeg, encodeSeg.bitmap]; rw [ite_eq_right (by rw [hR.size_eq]; simp)]⟩
 
 def sumLen (segs : List Seg) : Nat := (segs.map Seg.len).sum
 
@@ -408,7 +408,7 @@ theorem encodeSegs_loop (R : Roaring) (hR : RoaringOK R) (count : Nat) (hc : cou
       have hle : ¬ len > count := by omega
       obtain ⟨bytes', hb', hdec⟩ := hex (count - len) (by omega) (by omega) (body ++ rest)
       rw [hbytes] at hb'; cases hb'
-      simp only [List.length_cons, loop, hle, if_false, List.append_assoc, hdec]
+      simp only [List.length_cons, loop, hle, ite_false, List.append_assoc, hdec]
       rw [hloop (len + s.len) (acc ++ [s]) rest (by simp only [sumLen] at *; omega)]
       simp
 
@@ -426,7 +426,7 @@ theorem readIds_encodeIds (R : Roaring) (hR : RoaringOK R) (segs : List Seg)
   simp only [readIds, List.append_assoc]
   rw [readU_le _ _ _ (by show segs.length < 256 ^ 4; simp; omega)]
   simp only
-  rw [if_neg (by omega), if_neg (by simp; omega)]
+  rw [ite_eq_right (by omega), ite_eq_right (by simp; omega)]
   rw [hloop 0 [] rest (by omega)]
   simp
 
@@ -582,7 +582,7 @@ theorem loop_safe (R : Roaring) (hR : RoaringOK R) (count : Nat) (hc : count < 4
     simp [loop] at h; obtain ⟨rfl, rfl, rfl⟩ := h
     exact ⟨[], by simp, rfl, by simp, by simp [sumLen], hle, [], by simp, by simp⟩
   | k + 1, len, acc, bs, segs, len', rest, hle, hb, h => by
-    simp only [loop, show ¬ len > count by omega, if_false] at h
+    simp only [loop, show ¬ len > count by omega, ite_false] at h
     split at h
     · cases h
     rename_i seg bs1 hdec
@@ -602,7 +602,7 @@ theorem loop_never_panics (R : Roaring) (count : Nat) :
     loop R count k len acc bs ≠ .error .panic
   | 0, _, _, _, _ => by simp [loop]
   | k + 1, len, acc, bs, hle => by
-    simp only [loop, show ¬ len > count by omega, if_false]
+    simp only [loop, show ¬ len > count by omega, ite_false]
     split
     · rename_i e he; intro h; cases h; exact decodeSeg_never_panics R bs _ he
     · rename_i seg bs1 hdec

@@ -38,7 +38,7 @@ theorem recordB_bound_le (res : List FP) (f : FP) (k : Nat) (b : Option Nat) (hk
     · split
       · exact fle
       · exact .refl _
-  · rw [if_pos (by omega)]
+  · rw [ite_eq_left (by omega)]
     split
     · exact fle
     · split
@@ -144,13 +144,13 @@ theorem k1_step {g : G} {cfg : Cfg} (hk : cfg.k = 1) {b0 : Option Nat} {st st' :
   rcases step_record hs with ⟨h1, h2, h3⟩ | ⟨f, hbf, h1, h2, h3⟩
   · unfold K1Inv; rw [h1, h2, h3]; exact I
   · unfold K1Inv; rw [h1, h2, h3]
-    simp only [recordB, hk, if_true]
+    simp only [recordB, hk, ite_true]
     rcases I with ⟨r1, r2, _⟩ | ⟨best, r1, r2, r3, r4⟩
     · rw [r1, r2]; right; exact ⟨f, rfl, by simp, by simp [fpLt_irrefl], rfl⟩
     · rw [r1]
       dsimp only
       by_cases hlt : fpLt f best = true
-      · rw [if_pos hlt]
+      · rw [ite_eq_left hlt]
         right; refine ⟨f, rfl, by simp, ?_, rfl⟩
         intro f' hf
         simp only [List.mem_append, List.mem_singleton] at hf
@@ -159,7 +159,7 @@ theorem k1_step {g : G} {cfg : Cfg} (hk : cfg.k = 1) {b0 : Option Nat} {st st' :
           | false => rfl
           | true => have := r3 f' hf; rw [fpLt_trans hc hlt] at this; cases this
         · exact fpLt_irrefl _
-      · rw [if_neg hlt]
+      · rw [ite_eq_right hlt]
         right; refine ⟨best, rfl, List.mem_append_left _ r2, ?_, r4⟩
         intro f' hf
         simp only [List.mem_append, List.mem_singleton] at hf
@@ -212,7 +212,7 @@ theorem k0_step {g : G} {cfg : Cfg} (hk : cfg.k = 0) {b0 : Option Nat} {st st' :
   rcases step_record hs with ⟨h1, h2, h3⟩ | ⟨f, hbf, h1, h2, h3⟩
   · unfold K0Inv; rw [h1, h2, h3]; exact I
   · unfold K0Inv; rw [h1, h2, h3]
-    simp only [recordB, hk, show (0 : Nat) ≠ 1 by decide, if_false, if_true]
+    simp only [recordB, hk, show (0 : Nat) ≠ 1 by decide, ite_false, ite_true]
     rcases I with ⟨r1, r2, _⟩ | ⟨m, hne, hb, hres, hlog, hall⟩
     · rw [r1, r2]; right
       refine ⟨f.w, by simp, rfl, ?_, ?_, ?_⟩ <;> simp
@@ -224,9 +224,9 @@ theorem k0_step {g : G} {cfg : Cfg} (hk : cfg.k = 0) {b0 : Option Nat} {st st' :
       rw [hb] at hbf
       simp at hbf
       rw [hbr]; dsimp only
-      rw [if_neg (by omega)]
+      rw [ite_eq_right (by omega)]
       by_cases hlt : f.w < best.w
-      · rw [if_pos hlt]
+      · rw [ite_eq_left hlt]
         right
         refine ⟨f.w, by simp, rfl, ?_, ?_, ?_⟩
         · intro f' hf; simp at hf; subst hf; simp
@@ -240,7 +240,7 @@ theorem k0_step {g : G} {cfg : Cfg} (hk : cfg.k = 0) {b0 : Option Nat} {st st' :
           rcases hf with hf | rfl
           · have := hlog f' hf; omega
           · simp
-      · rw [if_neg hlt]
+      · rw [ite_eq_right hlt]
         have heq : f.w = m := by omega
         right
         refine ⟨m, by simp, hb, ?_, ?_, ?_⟩

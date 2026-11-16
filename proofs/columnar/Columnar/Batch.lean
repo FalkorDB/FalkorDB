@@ -422,7 +422,7 @@ theorem column_setColumn [FloatModel F] (b : Batch F) (id : Nat) (c : Column F) 
   · subst hj
     rw [List.getElem?_set_self (by simp; omega)]
     simp
-  · rw [if_neg hj, List.getElem?_set_ne (Ne.symm hj)]
+  · rw [ite_eq_right hj, List.getElem?_set_ne (Ne.symm hj)]
     rcases Nat.lt_or_ge j b.cols.length with hl | hl
     · rw [List.getElem?_append_left hl]
     · rw [List.getElem?_append_right hl, List.getElem?_eq_none hl]
@@ -446,7 +446,7 @@ theorem setColumn_obs [FloatModel F] (b : Batch F) (id : Nat) (c : Column F) (r 
       (if c.isUnbound then none else c.toValues.bind (·[r]?), !c.isUnbound) ∧
     ∀ j, j ≠ id → (b.setColumn id c).obs j r = b.obs j r := by
   constructor
-  · simp only [obs, valueAt, isBound, column_setColumn, if_true, normCol_isUnbound]
+  · simp only [obs, valueAt, isBound, column_setColumn, ite_true, normCol_isUnbound]
     cases hu : c.isUnbound
     · obtain ⟨vs, hv⟩ := Column.toValues_isSome hu
       have hv' := normCol_toValues c
@@ -455,7 +455,7 @@ theorem setColumn_obs [FloatModel F] (b : Batch F) (id : Nat) (c : Column F) (r 
     · simp [setColumn]
   · intro j hj
     have hc := column_setColumn b id c j
-    rw [if_neg hj] at hc
+    rw [ite_eq_right hj] at hc
     have hv : (b.setColumn id c).vo j = b.vo j := by simp [setColumn, hj]
     simp only [obs, valueAt, isBound, hc, hv]
 

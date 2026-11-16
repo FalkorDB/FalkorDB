@@ -244,7 +244,7 @@ theorem sorted_ins {x : Nat} {l : List Nat} (h : List.Pairwise (· < ·) l) : Li
     rw [List.pairwise_cons] at h
     unfold ins
     by_cases h1 : x < z
-    · rw [if_pos h1]
+    · rw [ite_eq_left h1]
       refine List.pairwise_cons.2 ⟨?_, List.pairwise_cons.2 h⟩
       intro a ha
       simp at ha
@@ -252,8 +252,8 @@ theorem sorted_ins {x : Nat} {l : List Nat} (h : List.Pairwise (· < ·) l) : Li
       · exact h1
       · exact Nat.lt_trans h1 (h.1 a ha)
     · by_cases h2 : x = z
-      · rw [if_neg h1, if_pos h2]; exact List.pairwise_cons.2 h
-      · rw [if_neg h1, if_neg h2]
+      · rw [ite_eq_right h1, ite_eq_left h2]; exact List.pairwise_cons.2 h
+      · rw [ite_eq_right h1, ite_eq_right h2]
         refine List.pairwise_cons.2 ⟨?_, ih h.2⟩
         intro a ha
         rw [mem_ins] at ha
@@ -341,7 +341,7 @@ theorem ins_snoc {x : Nat} {l : List Nat} (h : ∀ y ∈ l, y < x) : ins x l = l
   | cons z t ih =>
     have hz := h z (by simp)
     unfold ins
-    simp only [show ¬ x < z by omega, show ¬ x = z by omega, if_false]
+    simp only [show ¬ x < z by omega, show ¬ x = z by omega, ite_false]
     simp [ih (fun y hy => h y (by simp [hy]))]
 
 theorem ins_cons {x : Nat} {l : List Nat} (h : ∀ y ∈ l, x < y) : ins x l = x :: l := by
@@ -613,13 +613,13 @@ theorem collapse_ok (c : Bool) (st : St) (hi : Inv st) (d : Bool) (hd : st.desc 
         obtain ⟨_, h2, h3⟩ := hrun
         obtain ⟨hsorted, _⟩ := asc_sorted _ hwr hi.rl h2 h3
         refine ⟨?_, hbm_ne, hs, hlt'⟩
-        simp only [Bool.false_eq_true, if_false, iter]
+        simp only [Bool.false_eq_true, ite_false, iter]
         exact sorted_ext hs hsorted (fun y => by rw [hm]; simp)
       | true =>
         obtain ⟨_, h2, h3⟩ := hrun
         obtain ⟨hsorted, _⟩ := desc_sorted _ hwr hi.rl h2 h3
         refine ⟨?_, hbm_ne, hs, hlt'⟩
-        simp only [if_true, iter]
+        simp only [ite_true, iter]
         have hrev : List.Pairwise (· < ·) (flat (st.segs.drop st.start)).reverse := by
           rw [List.pairwise_reverse]; exact hsorted
         have := sorted_ext hs hrev (fun y => by rw [hm]; simp)
@@ -629,7 +629,7 @@ theorem collapse_ok (c : Bool) (st : St) (hi : Inv st) (d : Bool) (hd : st.desc 
     have hc : collapse true st = some { st with
         segs := st.segs.take st.start ++ [if st.desc.getD false then Seg.dsc bm else Seg.asc bm],
         start := st.start + 1, desc := none } := by
-      simp only [collapse, if_true, hall]; rfl
+      simp only [collapse, ite_true, hall]; rfl
     refine ⟨_, hc, ?_, ?_, ?_⟩
     · simp only [hd, Option.getD_some]
       refine ⟨?_, ?_, ?_, ?_, ?_⟩
@@ -717,7 +717,7 @@ theorem pushTail_ok (c : Bool) (st : St) (hi : Inv st) (last : Seg)
   | none =>
     have hrun := hi.run; rw [hd] at hrun
     by_cases hc : last.max < id ∨ id < last.min
-    · simp only [push.pushTail, hd, hc, decide_true, if_true]
+    · simp only [push.pushTail, hd, hc, decide_true, ite_true]
       apply cont _ (by simp)
       rcases hrun with hrun | ⟨b, hrun⟩
       · rw [hrun]; exact runOk_single _ (by simp) _
@@ -740,7 +740,7 @@ theorem pushTail_ok (c : Bool) (st : St) (hi : Inv st) (last : Seg)
     cases d with
     | false =>
       by_cases hc : last.max < id
-      · simp only [push.pushTail, hd, hc, decide_true, if_true]
+      · simp only [push.pushTail, hd, hc, decide_true, ite_true]
         apply cont _ (by simp)
         obtain ⟨_, h2, h3⟩ := hrun
         refine ⟨by simp, fun s hs => ?_, ?_⟩
@@ -753,7 +753,7 @@ theorem pushTail_ok (c : Bool) (st : St) (hi : Inv st) (last : Seg)
         exact ⟨_, rfl, fresh, by simp [flat_snoc, hr1], rfl⟩
     | true =>
       by_cases hc : id < last.min
-      · simp only [push.pushTail, hd, hc, decide_true, if_true]
+      · simp only [push.pushTail, hd, hc, decide_true, ite_true]
         apply cont _ (by simp)
         obtain ⟨_, h2, h3⟩ := hrun
         refine ⟨by simp, fun s hs => ?_, ?_⟩
@@ -1046,7 +1046,7 @@ theorem push_ok (c : Bool) (st0 : St) (hi : Inv st0) (id : Nat) (hid : id < W) :
         have hrl := hrl_of (by simp [RL])
         have hin := inrun (by simp [RL])
         by_cases hd1 : id + 1 = b
-        · simp only [hd1, if_true]
+        · simp only [hd1, ite_true]
           refine ⟨_, rfl, ?_, ?_, by unfold claim; split <;> (try split) <;> rfl⟩
           · have hwn : WF (.rdesc b 2) := by simp [WF]; omega
             cases desc with
@@ -1071,7 +1071,7 @@ theorem push_ok (c : Bool) (st0 : St) (hi : Inv st0) (id : Nat) (hid : id < W) :
             simp [List.range'_succ]; omega
         · by_cases hd2 : b = id
           · subst hd2
-            simp only [hd1, if_false, if_true]
+            simp only [hd1, ite_false, ite_true]
             refine ⟨_, rfl, ?_, ?_, rfl⟩
             · refine ⟨by simp, ?_, ?_, ?_, ?_⟩
               · intro s hs; simp at hs; rcases hs with hs | rfl
@@ -1081,7 +1081,7 @@ theorem push_ok (c : Bool) (st0 : St) (hi : Inv st0) (id : Nat) (hid : id < W) :
               · dsimp only; rw [List.drop_length]; exact Or.inl rfl
               · intro s hs hr; simp at hs; subst hs; simp [RL] at hr
             · simp only [flat_snoc, iter, List.append_assoc]; simp
-          · simp only [hd1, hd2, if_false]
+          · simp only [hd1, hd2, ite_false]
             exact tail
       · split
         · rename_i h; simp at h; omega

@@ -621,7 +621,7 @@ theorem step_first (st : St) (r : Ordering × Flag) :
   · simp [h1]
   · by_cases h2 : r.1 ≠ .eq
     · simp [h1, h2]
-    · simp only [h1, h2, if_false]
+    · simp only [h1, h2, ite_false]
       by_cases h3 : st.first = .eq <;> simp_all
 
 theorem loop_first : ∀ (xs ys : List V) (st : St),
@@ -656,7 +656,7 @@ theorem cmpN_succ (a b : Nat) : cmpN (a + 1) (b + 1) = cmpN a b := by
       subst this; simp
     · have h3 : ¬ ((a + 1 : Nat) : Int) < ((b + 1 : Nat) : Int) := by omega
       have h4 : ¬ ((a + 1 : Nat) : Int) = ((b + 1 : Nat) : Int) := by omega
-      rw [if_neg h1, if_neg h2, if_neg h3, if_neg h4]
+      rw [ite_eq_right h1, ite_eq_right h2, ite_eq_right h3, ite_eq_right h4]
 
 theorem firstDiff_lex : ∀ xs ys : List V,
     (if firstDiff xs ys ≠ .eq then firstDiff xs ys else cmpN xs.length ys.length)
@@ -667,8 +667,8 @@ theorem firstDiff_lex : ∀ xs ys : List V,
       simp only [firstDiff, lex, cmpN, cmpI, List.length_cons, List.length_nil]
       have h1 : ¬ (((xs.length + 1 : Nat) : Int) < ((0 : Nat) : Int)) := by omega
       have h2 : ¬ (((xs.length + 1 : Nat) : Int) = ((0 : Nat) : Int)) := by omega
-      simp only [ne_eq, not_true_eq_false, if_false]
-      rw [if_neg h1, if_neg h2]
+      simp only [ne_eq, not_true_eq_false, ite_false]
+      rw [ite_eq_right h1, ite_eq_right h2]
   | x :: xs, y :: ys => by
       have ih := firstDiff_lex xs ys
       simp only [firstDiff, lex, List.length_cons, cmpN_succ]
@@ -685,7 +685,7 @@ theorem list_fst_eq_lex (xs ys : List V) :
   · obtain ⟨h1, h2⟩ := h
     rw [List.length_eq_zero_iff] at h1 h2
     subst h1; subst h2; decide
-  · rw [if_neg h, finish_fst, loop_first]
+  · rw [ite_eq_right h, finish_fst, loop_first]
     simp [St.init]
 
 /-! ### Lexicographic order lifts a total preorder -/

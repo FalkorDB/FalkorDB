@@ -264,7 +264,7 @@ theorem intStage_agree (other : AOp → V F → V F → Except String (V F)) (op
       have hn : (unionNulls lhs rhs len).isNull i = (lhs.isNull i || rhs.isNull i) :=
         unionNulls_exact lhs rhs len hl hr i hi (by simp [vy]) (by simp [vx])
       by_cases hdr : op = .div ∨ op = .rem
-      · rw [if_pos hdr] at hs
+      · rw [ite_eq_left hdr] at hs
         split at hs
         · rename_i hall2
           simp only [Bool.and_eq_true] at hall2
@@ -289,7 +289,7 @@ theorem intStage_agree (other : AOp → V F → V F → Except String (V F)) (op
               · simp [h1, h2, valueArith, hb, hx, hy, hm hdv', hdv']
               · simp [h1, h2, valueArith, hb, hx, hy, hdv']
         · simp at hs
-      · rw [if_neg hdr] at hs
+      · rw [ite_eq_right hdr] at hs
         simp only [Option.some.injEq] at hs
         subst hs
         rw [ints_get', hn, gx, gy, zipWith_getElem? _ _ _ i hx hy]

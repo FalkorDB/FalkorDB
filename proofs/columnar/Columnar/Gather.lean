@@ -110,7 +110,7 @@ theorem specFinish_get {C : Type} (cols : List Nat) (ls : List (List C)) (o : Ou
             intro o' hp; simp only [List.foldl_cons]
             rw [ihp _ (fun q hq => hp q (List.mem_cons_of_mem _ hq))]
             simp only [setCol]
-            rw [if_neg (fun he => hp p (List.mem_cons_self ..) he.symm)]
+            rw [ite_eq_right (fun he => hp p (List.mem_cons_self ..) he.symm)]
         rw [keep _ _ (fun p hp => fun he => hn'.1 (he ▸ (List.of_mem_zip hp).1))]
         simp [setCol]
       | succ i =>

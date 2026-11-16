@@ -319,7 +319,7 @@ theorem pass2Step_sound (gs : List BG) (e : List Char × Nat) (i : Nat) (b : BG)
       exact ⟨rfl, hjp.2⟩
     · simp [List.getElem?_modify] at hb
       obtain ⟨a, ha, hab⟩ := hb
-      rw [if_neg (Ne.symm hij)] at hab; subst hab
+      rw [ite_eq_right (Ne.symm hij)] at hab; subst hab
       simp [ha] at hn
 
 /-! ## Grouping by stream (`sort_by` + `chunk_by`) -/

@@ -383,7 +383,7 @@ theorem sync_is_yield_without_yields (n r : List Nat) :
       have h2 : noYield BOp.yield = false := rfl
       simp [List.filter, h1, h2]
   unfold processTokens
-  simp only [Bool.false_eq_true, if_false, if_true, List.filter_append]
+  simp only [Bool.false_eq_true, ite_false, ite_true, List.filter_append]
   rw [← h BOp.node n (fun t => by simp), ← h BOp.edge r (fun t => by simp)]
   rfl
 

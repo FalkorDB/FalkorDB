@@ -147,13 +147,13 @@ theorem bsearch_spec (f : Nat → Nat) (hmono : ∀ x y, x ≤ y → f x ≤ f y
     intro hle hlo hhi
     rw [bsearch]
     by_cases hlt : lo < hi
-    · rw [if_pos hlt]
+    · rw [ite_eq_left hlt]
       by_cases hf : f (lo + (hi - lo) / 2) > n
-      · rw [if_pos hf]
+      · rw [ite_eq_left hf]
         obtain ⟨a, b, c, e⟩ := ih ((lo + (hi - lo) / 2) - lo) (by omega) lo (lo + (hi - lo) / 2) rfl
           (by omega) hlo hf
         exact ⟨a, by omega, c, e⟩
-      · rw [if_neg hf]
+      · rw [ite_eq_right hf]
         have hlo' : ∀ x, x < lo + (hi - lo) / 2 + 1 → f x ≤ n := by
           intro x hx
           by_cases hxl : x < lo
@@ -161,7 +161,7 @@ theorem bsearch_spec (f : Nat → Nat) (hmono : ∀ x y, x ≤ y → f x ≤ f y
           · have := hmono x (lo + (hi - lo) / 2) (by omega); omega
         obtain ⟨a, b, c, e⟩ := ih (hi - (lo + (hi - lo) / 2 + 1)) (by omega) _ hi rfl (by omega) hlo' hhi
         exact ⟨by omega, b, c, e⟩
-    · rw [if_neg hlt]
+    · rw [ite_eq_right hlt]
       have : lo = hi := by omega
       subst this
       exact ⟨Nat.le_refl _, Nat.le_refl _, hhi, hlo⟩
@@ -252,8 +252,8 @@ theorem nthLive_empty_deleted (r : RSet) (he : r.elems = [])
     List.filter_eq_self.2 (by simp)
   rw [liveL, hf]
   by_cases h : n ≤ maxId
-  · rw [if_pos h, List.getElem?_range (by omega)]
-  · rw [if_neg h, List.getElem?_eq_none (by simp; omega)]
+  · rw [ite_eq_left h, List.getElem?_range (by omega)]
+  · rw [ite_eq_right h, List.getElem?_eq_none (by simp; omega)]
 
 theorem nthLive_past_end (r : RSet) (maxId n : Nat)
     (h : (liveL (r.elems) maxId).length ≤ n) : nthLive (r.rank) maxId n = none := by

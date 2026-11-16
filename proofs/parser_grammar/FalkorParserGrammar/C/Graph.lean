@@ -197,10 +197,10 @@ keys stay repeated, ast.rs:663-665). -/
 theorem mergeAttrs_kids (l r : ET) : (mergeAttrs l r).kids = l.kids ++ r.kids := by
   unfold mergeAttrs
   by_cases hr : r.kids = []
-  · rw [if_pos hr, hr, List.append_nil]
+  · rw [ite_eq_left hr, hr, List.append_nil]
   · by_cases hl : l.kids = []
-    · rw [if_neg hr, if_pos hl, hl, List.nil_append]
-    · rw [if_neg hr, if_neg hl]; rfl
+    · rw [ite_eq_right hr, ite_eq_left hl, hl, List.nil_append]
+    · rw [ite_eq_right hr, ite_eq_right hl]; rfl
 
 theorem mergeAttrs_map (l r : ET) (hl : l.root = .map) (hr : r.root = .map) :
     (mergeAttrs l r).root = .map := by

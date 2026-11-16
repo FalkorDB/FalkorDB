@@ -177,7 +177,7 @@ theorem pushDate_eq (y : Int) (m d : Nat) (hm : m < 100) (hd : d < 100) :
     have e : y.natAbs = y.toNat := by omega
     have h1 : ¬ y < 0 := by omega
     have := fourDigits_eq_pad y.toNat (by omega)
-    rw [e, if_neg h1, ← this, twoDigits_eq_pad m hm, twoDigits_eq_pad d hd]
+    rw [e, ite_eq_right h1, ← this, twoDigits_eq_pad m hm, twoDigits_eq_pad d hd]
     simp [String.append_assoc]
   · rfl
 
@@ -240,7 +240,7 @@ theorem pad2_length : ∀ n, n < 100 → (pad 2 n).length = 2 := by decide
 /-- `format_time` of a valid timestamp is exactly `HH:MM:SS` (8 characters). -/
 theorem formatTime_length (t : Int) (h : K.valid t = true) : (formatTime K t).length = 8 := by
   have r := clock_ranges t
-  simp only [formatTime, h, if_true, String.length_append]
+  simp only [formatTime, h, ite_true, String.length_append]
   rw [pad2_length _ (by omega), pad2_length _ (by omega), pad2_length _ (by omega)]
   rfl
 

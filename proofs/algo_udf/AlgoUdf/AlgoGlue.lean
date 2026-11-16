@@ -35,7 +35,7 @@ theorem msgToString_prefix (m : List Nat) : ∃ rest, m = msgToString m ++ rest 
   | cons x t ih =>
     by_cases hx : x = 0
     · right; simp [List.dropWhile_cons, hx]
-    · simp only [List.dropWhile_cons, ne_eq, hx, not_false_eq_true, decide_true, if_true]; exact ih
+    · simp only [List.dropWhile_cons, ne_eq, hx, not_false_eq_true, decide_true, ite_true]; exact ih
 
 /-! ## MSF scoring callbacks -/
 
@@ -161,7 +161,7 @@ theorem collectNodeIds_spec (scan : String → List Nat) (all : List Nat) (label
     (hne : labels ≠ []) :
     let r := collectNodeIds scan all labels
     (∀ x, x ∈ r ↔ ∃ l ∈ labels, x ∈ scan l) ∧ r.Nodup ∧ r.Pairwise (· ≤ ·) := by
-  simp only [collectNodeIds, hne, if_false]
+  simp only [collectNodeIds, hne, ite_false]
   obtain ⟨hnd, hmem⟩ := foldl_insertSet (labels.flatMap scan) [] (by simp)
   refine ⟨fun x => ?_, ?_, ?_⟩
   · rw [List.mem_mergeSort, hmem]; simp

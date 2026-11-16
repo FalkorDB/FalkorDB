@@ -81,7 +81,7 @@ theorem asp_complete (g : Graph) (hwf : g.WF) (b : Bool) (src dst maxH fuel : Na
       cases h : predsOf (bfs g b src dst 1 maxH false fuel (st0 src)) dst with
       | nil => have := mem_predsOf hmem; rw [h] at this; simp at this
       | cons _ _ => rfl
-  rw [if_neg (by simp [hpne])]
+  rw [ite_eq_right (by simp [hpne])]
   simp only [List.mem_map]
   exact ⟨es.reverse, hb, by simp⟩
 

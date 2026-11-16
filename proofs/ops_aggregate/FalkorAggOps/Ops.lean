@@ -34,12 +34,12 @@ theorem limitOp_spec {α : Type} (k : Nat) (bs : List (List α)) :
       by_cases h0 : b.length = 0
       · have : b = [] := List.eq_nil_of_length_eq_zero h0
         subst this; simp [ih]
-      · simp only [h0, if_false]
+      · simp only [h0, ite_false]
         by_cases h1 : r + 1 ≥ b.length
-        · simp only [h1, if_true, List.flatten_cons, ih, List.take_append]
+        · simp only [h1, ite_true, List.flatten_cons, ih, List.take_append]
           have : b.take (r + 1) = b := List.take_of_length_le h1
           rw [this]
-        · simp only [h1, if_false, List.flatten_cons, List.flatten_nil, List.append_nil,
+        · simp only [h1, ite_false, List.flatten_cons, List.flatten_nil, List.append_nil,
             List.take_append]
           have : r + 1 - b.length = 0 := by omega
           simp [this]
@@ -72,10 +72,10 @@ theorem skipOp_spec {α : Type} (s : Nat) (bs : List (List α)) :
     | succ r =>
       simp only [skipOp]
       by_cases h1 : r + 1 ≥ b.length
-      · simp only [h1, if_true, ih, List.flatten_cons, List.drop_append]
+      · simp only [h1, ite_true, ih, List.flatten_cons, List.drop_append]
         have : b.drop (r + 1) = [] := List.drop_eq_nil_of_le h1
         simp [this]
-      · simp only [h1, if_false, List.flatten_cons, skipOp_zero, List.drop_append]
+      · simp only [h1, ite_false, List.flatten_cons, skipOp_zero, List.drop_append]
         have : r + 1 - b.length = 0 := by omega
         simp [this]
 
@@ -122,12 +122,12 @@ theorem take_ins_take (c x : Nat) (l : List Nat) :
     | succ c =>
       simp only [List.take_succ_cons, ins]
       by_cases h : x < y
-      · simp only [h, if_true, List.take_succ_cons]
+      · simp only [h, ite_true, List.take_succ_cons]
         congr 1
         cases c with
         | zero => simp
         | succ c => simp [List.take_succ_cons, List.take_take]
-      · simp only [h, if_false, List.take_succ_cons, ih]
+      · simp only [h, ite_false, List.take_succ_cons, ih]
 
 /-- The semantic heap step: insert, then evict the worst row if over capacity. -/
 def semStep (c : Nat) (h : List Nat) (x : Nat) : List Nat := (ins x h).take c
@@ -153,8 +153,8 @@ theorem sorted_ins (x : Nat) (l : List Nat) (h : Sorted l) : Sorted (ins x l) :=
   | cons y ys ih =>
     unfold ins
     by_cases hxy : x < y
-    · simp only [hxy, if_true]; exact ⟨Nat.le_of_lt hxy, h⟩
-    · simp only [hxy, if_false]
+    · simp only [hxy, ite_true]; exact ⟨Nat.le_of_lt hxy, h⟩
+    · simp only [hxy, ite_false]
       cases ys with
       | nil => exact ⟨by omega, trivial⟩
       | cons z zs =>
@@ -162,8 +162,8 @@ theorem sorted_ins (x : Nat) (l : List Nat) (h : Sorted l) : Sorted (ins x l) :=
         have ih' := ih hs
         unfold ins at ih' ⊢
         by_cases hxz : x < z
-        · simp only [hxz, if_true] at ih' ⊢; exact ⟨by omega, ih'⟩
-        · simp only [hxz, if_false] at ih' ⊢; exact ⟨h.1, ih'⟩
+        · simp only [hxz, ite_true] at ih' ⊢; exact ⟨by omega, ih'⟩
+        · simp only [hxz, ite_false] at ih' ⊢; exact ⟨h.1, ih'⟩
 
 theorem sorted_isort (xs : List Nat) : Sorted (isort xs) := by
   have : ∀ acc, Sorted acc → Sorted (xs.foldl (fun a x => ins x a) acc) := by
@@ -203,10 +203,10 @@ theorem ins_lt_last (x : Nat) (h : List Nat) (hne : h ≠ []) (hx : x < h.getLas
       simp only [List.dropLast_cons_cons]
       unfold ins
       by_cases hxy : x < y
-      · simp only [hxy, if_true, List.cons_append]
+      · simp only [hxy, ite_true, List.cons_append]
         congr 2
         exact (List.dropLast_concat_getLast (by simp)).symm
-      · simp only [hxy, if_false, List.cons_append]
+      · simp only [hxy, ite_false, List.cons_append]
         congr 1
         exact ih (by simp) hx
 
@@ -234,7 +234,7 @@ theorem ins_all_le (x : Nat) : ∀ (h : List Nat), (∀ y ∈ h, y ≤ x) → in
   | [], _ => rfl
   | y :: t, hall => by
     have hy : ¬ x < y := by have := hall y (by simp); omega
-    simp only [ins, hy, if_false, List.cons_append]
+    simp only [ins, hy, ite_false, List.cons_append]
     rw [ins_all_le x t (fun z hz => hall z (by simp [hz]))]
 
 theorem take_ins_ge_last (x : Nat) (h : List Nat) (hs : Sorted h) (hne : h ≠ [])
@@ -249,21 +249,21 @@ theorem rustStep_eq_sem (c : Nat) (h : List Nat) (x : Nat) (hs : Sorted h)
   unfold rustStep semStep
   by_cases hc : c = 0
   · simp [hc]
-  simp only [hc, if_false]
+  simp only [hc, ite_false]
   by_cases hlt : h.length < c
-  · simp only [hlt, if_true]
+  · simp only [hlt, ite_true]
     rw [List.take_of_length_le]; rw [length_ins]; omega
-  · simp only [hlt, if_false]
+  · simp only [hlt, ite_false]
     have heq : h.length = c := by omega
     have hne : h ≠ [] := by intro e; subst e; simp at heq; exact hc heq.symm
     rw [List.getLast?_eq_some_getLast hne]
     simp only
     by_cases hx : x < h.getLast hne
-    · simp only [hx, if_true]
+    · simp only [hx, ite_true]
       rw [ins_lt_last x h hne hx, List.take_append_of_le_length]
       · rw [List.take_of_length_le]; rw [length_ins, List.length_dropLast]; omega
       · rw [length_ins, List.length_dropLast]; omega
-    · simp only [hx, if_false]
+    · simp only [hx, ite_false]
       rw [← heq]; exact (take_ins_ge_last x h hs hne (by omega)).symm
 
 /-- Headline: the streaming top-k heap returns exactly the first `cap` rows of
@@ -369,7 +369,7 @@ theorem lookup_groupInsert {K A : Type} [DecidableEq K] (k j : K) (a : A) (g : L
     simp only [groupInsert]
     by_cases h1 : k' = k
     · subst h1; by_cases h2 : k' = j <;> simp [lookupG, h2]
-    · simp only [h1, if_false, lookupG]
+    · simp only [h1, ite_false, lookupG]
       by_cases h2 : k' = j
       · subst h2; simp [lookupG, h1, Ne.symm h1]
       · simp [h2, ih]
@@ -427,7 +427,7 @@ theorem dedup_injective {α β : Type} [DecidableEq α] [DecidableEq β] (h : α
     by_cases hx : x ∈ seen
     · simp [hx, hm.mpr hx, ih]
     · have : ¬ h x ∈ seen.map h := fun e => hx (hm.mp e)
-      simp only [this, hx, if_false]
+      simp only [this, hx, ite_false]
       have := ih (x :: seen)
       simp only [List.map_cons] at this
       rw [this]

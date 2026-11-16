@@ -121,16 +121,16 @@ theorem icmp_agree (other : V F → V F → Ordering × Flag) (op : CmpOp) (a b 
   have hc : compare a b = (if a < b then Ordering.lt else if a = b then Ordering.eq else Ordering.gt) := by
     simp [compare, compareOfLessAndEq]
   rcases Int.lt_trichotomy a b with h | h | h
-  · have e : compare a b = .lt := by rw [hc, if_pos h]
+  · have e : compare a b = .lt := by rw [hc, ite_eq_left h]
     have h1 : a ≠ b := Int.ne_of_lt h
     have h2 : a ≤ b := Int.le_of_lt h
     have h3 : ¬ b ≤ a := Int.not_le.mpr h
     have h5 : (a != b) = true := bne_iff_ne.mpr h1
     cases op <;> simp [compareValues, compareValue, icmp, e, h, h1, h2, h3, h5] <;> rfl
   · subst h
-    have e : compare a a = .eq := by rw [hc, if_neg (Int.lt_irrefl a), if_pos rfl]
+    have e : compare a a = .eq := by rw [hc, ite_eq_right (Int.lt_irrefl a), ite_eq_left rfl]
     cases op <;> simp [compareValues, compareValue, icmp, e]
-  · have e : compare a b = .gt := by rw [hc, if_neg (by omega), if_neg (by omega)]
+  · have e : compare a b = .gt := by rw [hc, ite_eq_right (by omega), ite_eq_right (by omega)]
     have h1 : a ≠ b := (Int.ne_of_lt h).symm
     have h2 : b ≤ a := Int.le_of_lt h
     have h3 : ¬ a ≤ b := Int.not_le.mpr h

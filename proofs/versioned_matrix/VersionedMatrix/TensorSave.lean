@@ -131,7 +131,7 @@ theorem buildC_main (t : TT) (hrows : ∀ p ∈ t.ps, p.1 ≤ U64MAX) (q : Pair)
     simp only [Option.map_none]
     have hnone := List.find?_eq_none.1 hf
     by_cases hq : q ∈ t.ps
-    · rw [if_pos hq]
+    · rw [ite_eq_left hq]
       cases hv : effV (t.st q) with
       | none => rfl
       | some v =>
@@ -140,7 +140,7 @@ theorem buildC_main (t : TT) (hrows : ∀ p ∈ t.ps, p.1 ≤ U64MAX) (q : Pair)
           (mem_fwdIter t 0 U64MAX q v).2 ⟨hq, by simp [inRow, hrows q hq], hv⟩
         have := hnone _ hm
         simp at this
-    · rw [if_neg hq]
+    · rw [ite_eq_right hq]
   | some pv =>
     have hp := List.find?_some hf
     have hmem := List.mem_of_find?_eq_some hf
@@ -148,7 +148,7 @@ theorem buildC_main (t : TT) (hrows : ∀ p ∈ t.ps, p.1 ≤ U64MAX) (q : Pair)
     simp only [Function.comp, beq_iff_eq] at hp
     subst hp
     obtain ⟨hps, _, hv⟩ := (mem_fwdIter t 0 U64MAX p v).1 hmem
-    simp only [Option.map_some, if_pos hps, hv]
+    simp only [Option.map_some, ite_eq_left hps, hv]
 
 theorem dpCount_zero (t : TT) (h : dpCount t = 0) : ∀ p ∈ t.ps, (t.st p).dp = none := by
   intro p hp
@@ -186,7 +186,7 @@ theorem fast_base_eq (t : TT) (hi : AllInv t) (hb : BlkInv t) (hrows : ∀ p ∈
     rw [mainBase_eq, buildC_main t hrows q]
     unfold fastBase
     by_cases hq : q ∈ t.ps
-    · rw [if_pos hq, if_pos hq, heff q hq]
+    · rw [ite_eq_left hq, ite_eq_left hq, heff q hq]
       have := hnm q hq; rw [heff q hq] at this
       cases hmq : (t.st q).m with
       | none => simp
@@ -194,7 +194,7 @@ theorem fast_base_eq (t : TT) (hi : AllInv t) (hb : BlkInv t) (hrows : ∀ p ∈
         cases v with
         | id i => simp [u64Of]
         | multi => exact absurd hmq this
-    · rw [if_neg hq, if_neg hq]
+    · rw [ite_eq_right hq, ite_eq_right hq]
   · unfold mainMulti
     apply List.filterMap_eq_nil_iff.2
     intro pv hpv
@@ -203,7 +203,7 @@ theorem fast_base_eq (t : TT) (hi : AllInv t) (hb : BlkInv t) (hrows : ∀ p ∈
     have := hnm p hps
     rw [hv] at this
     simp only
-    rw [if_neg (fun h => this (by rw [h]))]
+    rw [ite_eq_right (fun h => this (by rw [h]))]
 
 /-- **`encPR_eq_encMain`**: the PR's payload is main's, for every tensor that
 satisfies versioned_matrix's invariants (rows are `u64`). -/

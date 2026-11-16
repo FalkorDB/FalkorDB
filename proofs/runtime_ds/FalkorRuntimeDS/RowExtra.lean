@@ -72,7 +72,7 @@ theorem getById_pushSlot (r : Row β) (v : Option β) (b : Bool) (i : Nat) :
   unfold getById pushSlot
   by_cases h : i = r.values.length
   · subst h; simp
-  · rw [if_neg h]
+  · rw [ite_eq_right h]
     by_cases h2 : i < r.values.length
     · simp [List.getElem?_append_left h2]
     · have h3 : r.values.length ≤ i := by omega

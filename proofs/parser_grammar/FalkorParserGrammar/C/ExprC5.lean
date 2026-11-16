@@ -135,12 +135,12 @@ theorem shortestP_sound (F : Nat) (s : PS) t s' (h : shortestP F s = .ok t s') :
                     generalize hfv : isFilter s20.cur = fv at h9
                     cases fv
                     case true =>
-                      rw [if_pos rfl] at h9
+                      rw [ite_eq_left rfl] at h9
                       peel h9 => u s22 h22
                       peel h9 => u s23 h23
                       obtain ⟨rfl, rfl⟩ := pure_ok h9
                       simp at hf
-                    rw [if_neg (by decide)] at h9
+                    rw [ite_eq_right (by decide)] at h9
                     have hnf : isFilter s20.cur = false := hfv
                     have hnp : ∀ p, s20.cur ≠ .param p := by
                       intro p hp; rw [hp] at hnf; simp [isFilter] at hnf

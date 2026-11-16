@@ -67,31 +67,31 @@ theorem walk_spec {E : Type} (ent : Nat → E) (count : Nat) (l : List Nat) (hl 
     rw [hr, walk]
     have hstep := filter_ge_step l hl a
     by_cases ha : a ∈ l
-    · rw [if_pos ha] at hstep
+    · rw [ite_eq_left ha] at hstep
       rw [hstep]
       simp only [List.head?_cons, List.tail_cons, ite_true]
       rw [ih (a + 1) enc henc]
       simp [ha]
-    · rw [if_neg ha] at hstep
+    · rw [ite_eq_right ha] at hstep
       rw [hstep]
       have hne : (l.filter (fun d => decide (a + 1 ≤ d))).head? ≠ some a := by
         intro h; have := head_filter_ge l (a + 1) a h; omega
-      rw [if_neg hne]
+      rw [ite_eq_right hne]
       have hfc : (a :: List.range' (a + 1) k).filter (fun i => !decide (i ∈ l)) =
           a :: (List.range' (a + 1) k).filter (fun i => !decide (i ∈ l)) := by
         simp [ha]
       rw [hfc]
       by_cases hc : enc + 1 ≥ count
-      · rw [if_pos hc]
+      · rw [ite_eq_left hc]
         have : count - enc = 0 + 1 := by omega
         rw [this]; simp
-      · rw [if_neg hc, ← hstep, ← filter_ge_step_neg l hl a ha, ih (a + 1) (enc + 1) (by omega)]
+      · rw [ite_eq_right hc, ← hstep, ← filter_ge_step_neg l hl a ha, ih (a + 1) (enc + 1) (by omega)]
         have : count - enc = (count - (enc + 1)) + 1 := by omega
         rw [this]; simp
 where
   filter_ge_step_neg (l : List Nat) (hl : l.Pairwise (· < ·)) (a : Nat) (ha : a ∉ l) :
       l.filter (fun d => decide (a + 1 ≤ d)) = l.filter (fun d => decide (a ≤ d)) := by
-    rw [filter_ge_step l hl a, if_neg ha]
+    rw [filter_ge_step l hl a, ite_eq_right ha]
 
 /-- **`prEncode_spec`**: the entities the PR writes. -/
 theorem prEncode_spec {E : Type} (ent : Nat → E) (r : RSet) (maxId count offset : Nat) :
@@ -100,7 +100,7 @@ theorem prEncode_spec {E : Type} (ent : Nat → E) (r : RSet) (maxId count offse
   unfold prEncode
   by_cases hc : count = 0
   · simp [hc]
-  · rw [if_neg hc, if_neg hc]
+  · rw [ite_eq_right hc, ite_eq_right hc]
     cases hn : nthLive (r.rank) maxId offset with
     | none =>
       have := nthLive_none r maxId offset hn
@@ -120,7 +120,7 @@ theorem prEncode_eq_main (r : RSet) (d : D) (maxId count offset : Nat)
     (hc : 0 < count) :
     prEncode (fun id => (id, dread d id)) r maxId count offset =
       encode d (fun i => decide (i ∈ r.elems)) maxId count offset := by
-  rw [prEncode_spec, if_neg (by omega), encode_spec, window_eq, Nat.max_eq_left hc]
+  rw [prEncode_spec, ite_eq_right (by omega), encode_spec, window_eq, Nat.max_eq_left hc]
 
 /-- **`count = 0`**: the PR writes nothing; main writes the first live entity at
 or after `offset`, if there is one. -/

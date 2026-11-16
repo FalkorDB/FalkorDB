@@ -185,20 +185,20 @@ theorem readRec_createNode (ids : C.T) (ls as : List Nat) (rows : List Val) (idb
   simp only [Nat.pos_iff_ne_zero.mp hc, ite_false, rLabelSet, bind_apply]
   rw [u16_w16 hl]
   simp only [bind_apply, guardCount, flatMap_w32_length]
-  rw [if_neg (by simp only [List.length_append, e1, e2, w16, w32, le_length]; omega)]
+  rw [ite_eq_right (by simp only [List.length_append, e1, e2, w16, w32, le_length]; omega)]
   simp only
   rw [readN_u32 ls hls]
   simp only [rAttrIds, bind_apply]
   rw [u16_w16 ha]
   simp only [bind_apply, guardCount, flatMap_w16_length]
-  rw [if_neg (by simp only [List.length_append, e1, e2, w16, w32, le_length]; omega)]
+  rw [ite_eq_right (by simp only [List.length_append, e1, e2, w16, w32, le_length]; omega)]
   simp only
   rw [readN_u16 as has]
   simp only [bind_apply]
   rw [C.roundtrip ids idb _ hid]
   simp only [rRows, bind_apply, guardCount]
   have hlen := (encL_len I rows rb hrb).2
-  rw [if_neg (by simp [MIN_VALUE_BYTES]; omega)]
+  rw [ite_eq_right (by simp [MIN_VALUE_BYTES]; omega)]
   simp only
   rw [← hrows, readN_decodeV utf8 I rows rb rest hrb hw]
   rfl
@@ -247,7 +247,7 @@ theorem readAll_concat :
     have hb := h (b, x) (by simp)
     have ih := readAll_concat items (fun p hp => h p (by simp [hp])) f (by simp at hf; omega)
     simp only [List.map_cons, List.flatten_cons, readAll]
-    rw [if_neg (by simp [hb.1])]
+    rw [ite_eq_right (by simp [hb.1])]
     rw [hb.2]
     simp only [ih]
 

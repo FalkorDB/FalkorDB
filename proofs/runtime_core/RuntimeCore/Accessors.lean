@@ -214,7 +214,7 @@ theorem lookupA_none (a : Nat) : ∀ (l : List (Nat × Val)), a ∉ l.map Prod.f
   | q :: qs, h => by
     simp only [List.map_cons, List.mem_cons, not_or] at h
     simp only [lookupA]
-    rw [if_neg (fun e => h.1 e.symm)]
+    rw [ite_eq_right (fun e => h.1 e.symm)]
     exact lookupA_none a qs h.2
 
 theorem fold_lookup (w : W) (hn : w.nameOk) (name : String) :

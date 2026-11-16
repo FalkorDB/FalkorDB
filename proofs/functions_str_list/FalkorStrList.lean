@@ -260,18 +260,18 @@ theorem getElement_spec (l : List α) (i : Int) :
       else if -(l.length : Int) ≤ i then l[(l.length + i).toNat]? else none := by
   unfold getElement getElementIdx
   by_cases h : i < 0
-  · simp only [h, if_true]
+  · simp only [h, ite_true]
     have : ¬ 0 ≤ i := by omega
-    simp only [this, if_false]
+    simp only [this, ite_false]
     by_cases h2 : -(l.length : Int) ≤ i
-    · simp only [h2, if_true]; rw [if_pos (by omega)]
-    · simp only [h2, if_false]; rw [if_neg (by omega)]
-  · simp only [h, if_false]
+    · simp only [h2, ite_true]; rw [ite_eq_left (by omega)]
+    · simp only [h2, ite_false]; rw [ite_eq_right (by omega)]
+  · simp only [h, ite_false]
     have : 0 ≤ i := by omega
-    simp only [this, if_true]
+    simp only [this, ite_true]
     by_cases h2 : i < l.length
     · simp [h2]
-    · simp only [h2, and_false, if_false]
+    · simp only [h2, and_false, ite_false]
       rw [List.getElem?_eq_none]; omega
 
 /-- C truncates the index to `int32_t` before normalising (`list_funcs.c`,
@@ -319,7 +319,7 @@ theorem getElements_spec (l : List α) (s e : Int) :
     getElements l s e =
       (l.drop (clampIdx l.length s)).take (clampIdx l.length e - clampIdx l.length s) := by
   unfold getElements sliceStart sliceEnd clampIdx
-  by_cases hs : s < 0 <;> by_cases he : e < 0 <;> simp only [hs, he, if_true, if_false]
+  by_cases hs : s < 0 <;> by_cases he : e < 0 <;> simp only [hs, he, ite_true, ite_false]
   all_goals
     split
     · -- early return: the spec side is empty too
@@ -444,8 +444,8 @@ theorem removeSpan_wf (len : Nat) (idx count : Int) (s e : Nat)
   generalize removeNorm len idx = n at *
   unfold I64MAX I64MIN at *
   by_cases hg : n < 0 ∨ n ≥ (len : Int) ∨ count ≤ 0
-  · rw [if_pos hg] at h; cases h
-  · rw [if_neg hg] at h
+  · rw [ite_eq_left hg] at h; cases h
+  · rw [ite_eq_right hg] at h
     simp only [Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
     split <;> (try split) <;> omega
@@ -463,8 +463,8 @@ theorem listRemove_eq_spec (l : List α) (idx count : Int)
   generalize removeNorm l.length idx = n at *
   simp only [InI64, I64MIN, I64MAX] at *
   by_cases hg : n < 0 ∨ n ≥ (l.length : Int) ∨ count ≤ 0
-  · simp only [if_pos hg]
-  · simp only [if_neg hg]
+  · simp only [ite_eq_left hg]
+  · simp only [ite_eq_right hg]
     have hsat : (satAdd64 n count).toNat = min (n + count).toNat 9223372036854775807 := by
       unfold satAdd64; unfold I64MAX I64MIN
       split <;> (try split) <;> omega
@@ -503,7 +503,7 @@ theorem insertNorm_safe (len : Nat) (idx : Int) (hl : (len : Int) < I64MAX) (hi 
 
 /-- `-1` inserts after the last element (C's `bounds_inclusive`). -/
 theorem insertNorm_minus_one (len : Nat) : insertNorm len (-1) = len := by
-  unfold insertNorm; simp only [show (-1 : Int) < 0 by decide, if_true]; omega
+  unfold insertNorm; simp only [show (-1 : Int) < 0 by decide, ite_true]; omega
 
 /-! ## `head` / `last` / `tail` / `reverse` / `size` on lists (`list.rs:61-150`) -/
 
@@ -560,7 +560,7 @@ theorem range_elems_between (start stop step : Int) (hs : step ≠ 0)
   by_cases hsg : step > 0
   · have hab : (step.natAbs : Int) = step := by omega
     have hup : stop ≥ start := by omega
-    simp only [hup, if_true] at hmulI
+    simp only [hup, ite_true] at hmulI
     rw [hab] at hmulI
     have : ((stop - start).natAbs : Int) = stop - start := by omega
     rw [this] at hmulI
@@ -575,7 +575,7 @@ theorem range_elems_between (start stop step : Int) (hs : step ≠ 0)
       subst this
       have hk0 : k = 0 := by simp at hk'; omega
       subst hk0; simp
-    · simp only [heq, if_false] at hmulI
+    · simp only [heq, ite_false] at hmulI
       have : ((start - stop).natAbs : Int) = start - stop := by omega
       rw [this] at hmulI
       have h0 : 0 ≤ (k : Int) * -step := Int.mul_nonneg (by omega) (by omega)
@@ -750,11 +750,11 @@ theorem single_spec (xs : List K) :
       else if cnt xs .t = 1 then .t else .f := by
   unfold quant evalQuantifier
   by_cases h1 : cnt xs .t > 1
-  · simp only [h1, if_true]; rw [if_neg (by omega)]
-  · simp only [h1, if_false]
+  · simp only [h1, ite_true]; rw [ite_eq_right (by omega)]
+  · simp only [h1, ite_false]
     by_cases h2 : cnt xs .n > 0
-    · simp only [h2, if_true]; rw [if_neg (by omega)]
-    · simp only [h2, if_false]
+    · simp only [h2, ite_true]; rw [ite_eq_right (by omega)]
+    · simp only [h2, ite_false]
       by_cases h3 : cnt xs .t = 1 <;> simp [h3] <;> omega
 
 /-! ## `x IN list` — `Contains for ThinVec<Value>` (`value.rs:1876-1899`)
@@ -792,7 +792,7 @@ theorem contains_false_iff (cmp : α → Ordering × Dis) (xs : List α) :
     by_cases hr : r = .eq
     · subst hr; cases d <;> simp
     · have : (r == Ordering.eq) = false := by cases r <;> simp_all
-      simp only [this, Bool.false_eq_true, if_false, ih]
+      simp only [this, Bool.false_eq_true, ite_false, ih]
       cases b <;> cases d <;> simp [hr]
 
 /-- The empty list never contains anything, not even null. -/
@@ -967,8 +967,8 @@ theorem substring3_agrees_C (s : Str) (start length : Int) :
   · rename_i h0
     have e : (start.toNat ≥ blen s) ↔ (start ≥ (blen s : Int)) := by omega
     by_cases hb : start ≥ (blen s : Int)
-    · rw [if_pos (e.mpr hb), if_pos hb]
-    · rw [if_neg (fun h => hb (e.mp h)), if_neg hb]
+    · rw [ite_eq_left (e.mpr hb), ite_eq_left hb]
+    · rw [ite_eq_right (fun h => hb (e.mp h)), ite_eq_right hb]
       split
       · rfl
       · congr 1
@@ -982,11 +982,11 @@ theorem substring3_agrees_C (s : Str) (start length : Int) :
 theorem substring3_spec (s : Str) (start length : Int) (h0 : 0 ≤ start) (hl : 0 ≤ length) :
     substring3 s start length = .ok ((s.drop start.toNat).take length.toNat) := by
   unfold substring3
-  rw [if_neg (by omega)]
+  rw [ite_eq_right (by omega)]
   split
   · rw [List.drop_eq_nil_of_le]; · simp
     have := length_le_blen s; omega
-  · rw [if_neg (by omega)]
+  · rw [ite_eq_right (by omega)]
 
 /-- Shared divergence (Rust = C): a negative length is *not* rejected when the
 start is already past the end — `substring('abc', 10, -1)` is `''`. -/
@@ -1094,12 +1094,12 @@ theorem rtrim_cons (c : Char) (t : Str) :
   rw [List.reverse_cons, List.dropWhile_append]
   by_cases he : (List.dropWhile isSp t.reverse).isEmpty
   · have he' : List.dropWhile isSp t.reverse = [] := List.isEmpty_iff.mp he
-    rw [if_pos he, he']
+    rw [ite_eq_left he, he']
     by_cases hc : isSp c
     · simp [List.dropWhile, hc]
     · simp [List.dropWhile, hc]
   · have he' : List.dropWhile isSp t.reverse ≠ [] := fun h => he (List.isEmpty_iff.mpr h)
-    rw [if_neg he]
+    rw [ite_eq_right he]
     simp [he']
 
 theorem trim_agrees_C (s : Str) : trimRust s = trimC s := by
@@ -1216,7 +1216,7 @@ theorem splitAux_step (d : Str) (hd : d ≠ []) (s cur : Str) :
     simp only [findFirst]
     by_cases h : d.isPrefixOf (c :: t) = true
     · simp [h]
-    · simp only [h, dite_false, if_false, Bool.false_eq_true]
+    · simp only [h, dite_false, ite_false, Bool.false_eq_true]
       rw [ih]
       cases findFirst d t with
       | none => simp
@@ -1501,7 +1501,7 @@ theorem joinLen_correct (d : Str) (l : List Str) (c : Nat)
   by_cases hl : l = []
   · subst hl; simp at h; simp [h]
   · have : l.map List.length ≠ [] := by simp [hl]
-    simp only [this, if_false, List.length_map] at h
+    simp only [this, ite_false, List.length_map] at h
     split at h
     · cases h
     · cases h; simp [hl]

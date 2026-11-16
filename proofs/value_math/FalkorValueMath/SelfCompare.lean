@@ -92,7 +92,7 @@ theorem chunked_eq_firstDiff (a b : List F) (hl : a.length = b.length) :
   induction n with
   | zero =>
     intro a b ha hl
-    rw [chunked, dif_neg (by omega)]
+    rw [chunked, dite_eq_right (by omega)]
   | succ n ih0 =>
     intro a b ha hl
     have ih : ∀ m, m < a.length → ∀ (a' b' : List F), a'.length = b'.length → a'.length = m →

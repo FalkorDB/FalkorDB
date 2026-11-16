@@ -466,8 +466,8 @@ theorem sortProj_spec (ps : List (Var × Var)) :
     (sortProj ps).Perm ps ∧ (sortProj ps).Pairwise (fun a b => a.1.name.getD "" ≤ b.1.name.getD "") := by
   refine ⟨List.mergeSort_perm _ _, ?_⟩
   have := List.pairwise_mergeSort (le := fun a b : Var × Var => decide (a.1.name.getD "" ≤ b.1.name.getD ""))
-    (fun a b c h1 h2 => by simp at *; exact String.le_trans h1 h2)
-    (fun a b => by simp; exact String.le_total _ _) ps
+    (fun a b c h1 h2 => by simp at *; exact Std.le_trans h1 h2)
+    (fun a b => by simp; exact Std.le_total) ps
   exact this.imp (fun h => by simpa using h)
 
 /-! ## `bind_graph_create` -/

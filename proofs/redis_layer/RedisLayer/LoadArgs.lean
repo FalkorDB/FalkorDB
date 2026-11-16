@@ -567,13 +567,13 @@ theorem cross_eq (c : Cfg) (vs : List (Name × Int)) :
   rw [← fold_td, ← fold_tm, h1, h2]
   by_cases a : (vs.any (·.1 == .timeout) = true ∧
       ((vs.foldl apply1 c).timeoutDefault > 0 ∨ (vs.foldl apply1 c).timeoutMax > 0))
-  · simp only [a, if_true]; rfl
-  · simp only [a, if_false]
+  · simp only [a, ite_true]; rfl
+  · simp only [a, ite_false]
     by_cases b' : ((vs.foldl apply1 c).timeoutDefault > 0 ∧ (vs.foldl apply1 c).timeoutMax > 0 ∧
         (vs.foldl apply1 c).timeoutDefault > (vs.foldl apply1 c).timeoutMax)
-    · simp only [b', if_true]
+    · simp only [b', ite_true]
       cases vs.any (·.1 == Name.timeoutDefault) <;> rfl
-    · simp only [b', if_false]; rfl
+    · simp only [b', ite_false]; rfl
 
 /-! ## The whole load -/
 
@@ -622,8 +622,8 @@ theorem rust_c_same_accept (fs : FS) (hfs : FsOk fs) (args : List (List Nat))
     (match applyModuleArgs fs 0 0 args with | .ok _ => true | .error _ => false) = cInit fs args := by
   unfold applyModuleArgs cInit
   by_cases hp : args.length % 2 = 1
-  · simp only [hp, if_true]
-  · simp only [hp, if_false]
+  · simp only [hp, ite_true]
+  · simp only [hp, ite_false]
     rw [← loop_agree fs hfs (pairs args) 0 0 false false ⟨by omega, by omega, by omega⟩ hv hz hr]
     cases loop fs 0 0 false false (pairs args) with
     | error e => rfl

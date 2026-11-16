@@ -384,7 +384,7 @@ theorem upgrade_unregistered (t : Th) (i : Int) (c : Option (Bool × Bool)) (g :
         gilAcquire]
   · by_cases hh : holdsGil t = true <;>
       simp_all [upgrade, escalate, begin, dropMode, acquireWrite, pollLoop, World.att, authorize, holdsGil,
-        gilAcquire, if_neg hi]
+        gilAcquire, ite_eq_right hi]
 
 /-- **A refused upgrade re-checks** (#3816): the session is a reader again, so calling
 `upgrade_to_write` again runs every check again and reports the same refusal while it
@@ -404,7 +404,7 @@ theorem upgrade_refused_rechecks (s s' : S) (i : Int) (c : Option (Bool × Bool)
         gilAcquire]
   · by_cases hh : holdsGil (dropMode s'.mode s'.th) = true <;>
       simp_all [upgrade, escalate, dropMode, acquireWrite, pollLoop, World.att, authorize, holdsGil,
-        gilAcquire, if_neg hi]
+        gilAcquire, ite_eq_right hi]
 
 /-! ## Readers and the writer gate (#3816, `read_past_gate` `:524`) -/
 

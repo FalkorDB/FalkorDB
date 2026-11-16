@@ -256,7 +256,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
         | list l => exact absurd rfl (hv l)
         | _ => simp [capped, within, hd']
       unfold decodeValue pre3339_decode
-      rw [if_neg hd]
+      rw [ite_eq_right hd]
       split
       · rename_i tag rest
         by_cases t1 : tag = T_NULL
@@ -644,7 +644,7 @@ theorem validateProperty_depth (v : V F) (h : validateProperty v = .ok ()) :
     · cases h
     · rename_i hd
       have := validateItem_ok (sizeOf (V.list l : V F) + 1) (.list l) 0 (by omega)
-        (by simp only [validateItem]; rw [if_neg (by omega)]; exact h)
+        (by simp only [validateItem]; rw [ite_eq_right (by omega)]; exact h)
       rcases this with h1 | h1
       · omega
       · exact absurd rfl (h1 l)
@@ -690,7 +690,7 @@ theorem validateItems_nest (k d : Nat) (x : V F) (hx : ∀ l, x ≠ .list l) (hp
     by_cases h : d + 1 > MAX_VALUE_NESTING
     · have : ¬ d + (k + 1) ≤ MAX_VALUE_NESTING := by omega
       simp [h, this]
-    · rw [if_neg h, ih (d + 1) (by omega), show d + 1 + k = d + (k + 1) by omega]
+    · rw [ite_eq_right h, ih (d + 1) (by omega), show d + 1 + k = d + (k + 1) by omega]
       by_cases h2 : d + (k + 1) ≤ MAX_VALUE_NESTING <;> simp [h2, validateItems]
 
 /-- A property of `k` lists around a primitive is accepted iff `k ≤ MAX`; past it the
@@ -698,7 +698,7 @@ error is the nesting message. -/
 theorem validateProperty_nest (k : Nat) (x : V F) (hx : ∀ l, x ≠ .list l) (hp : isValidProperty x false = true) :
     validateProperty (nest (k + 1) x) = if k + 1 ≤ MAX_VALUE_NESTING then .ok () else .error .nesting := by
   simp only [nest, validateProperty, validateListProperty]
-  rw [if_neg (by decide), validateItems_nest k 1 x hx hp (by decide), Nat.add_comm 1 k]
+  rw [ite_eq_right (by decide), validateItems_nest k 1 x hx hp (by decide), Nat.add_comm 1 k]
 
 /-! ## The decoder past the cap -/
 

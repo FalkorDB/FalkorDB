@@ -748,7 +748,7 @@ theorem deliver_ok : ∀ (v : Val) (st : List Frame), FramesOk st →
     have hf : 1 ≤ f.left := h f (by simp)
     have hst : FramesOk st := fun g hg => h g (by simp [hg])
     simp only [deliver]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     split
     · rename_i hgt
       refine ⟨by simp, ?_⟩

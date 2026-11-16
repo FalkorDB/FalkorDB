@@ -126,7 +126,7 @@ theorem kind_store (limit n : Nat) (del : List Nat) (S : Store) (hl : limit ≤ 
   funext j
   by_cases h : j ∈ live n del ∧ S j ≠ none
   · simp [h]
-  · rw [if_neg h]
+  · rw [ite_eq_right h]
     cases hs : S j with
     | none => rfl
     | some sp => exact absurd ⟨(hk.2.2.2 j sp hs).1, by simp [hs]⟩ h

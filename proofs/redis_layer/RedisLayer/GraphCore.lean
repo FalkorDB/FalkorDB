@@ -72,7 +72,7 @@ theorem upToNulB_split (k : Bytes) :
   | cons b bs ih =>
     by_cases hb : b = 0
     · subst hb; simp [upToNulB]
-    · simp only [upToNulB, hb, if_false]
+    · simp only [upToNulB, hb, ite_false]
       refine ⟨fun h => ?_, fun h => ?_⟩
       · have : 0 ∈ bs := by simp at h; rcases h with h | h; exact absurd h.symm hb; exact h
         obtain ⟨t, ht⟩ := ih.1 this
