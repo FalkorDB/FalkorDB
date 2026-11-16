@@ -115,7 +115,7 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 20 | `bug3349_one_node_projection_fails` (`LagContract.lean`) | `algo.WCC`/`pageRank` (and betweenness) on a one-node `nodeLabels` projection fail with -1000: the 1×1 compact matrix is stored by column, which `LAGraph_CheckGraph` rejects. Property `ProjectionTotal`; CDLP satisfies it (`cdlp_total`) | **Open** (#3349) |
 | 21 | removed (17ccc5412) | `create_js_node` read the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` saw `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE was likewise empty | Fixed by #3464 (#3454): `rs_runtime_first`, `rs_edge_ok`, `fixed3454_deleted_node`, `fixed3454_edge_source`, `RT.not_differs` |
 
-Also found by this project's work, but outside the model: SHUTDOWN after a main-thread UDF aborts, because the QuickJS runtime is freed before its contexts (W3-algo-2, **open**).
+Also found by this project's work, but outside the model: SHUTDOWN after a main-thread UDF aborts, because the QuickJS runtime is freed before its contexts (W3-algo-2). **Fixed by #3015** (field order of `ThreadJsState`): `UdfContext.threadJsState_drop_safe`; old order `threadJsState_old_drop_unsafe`.
 
 Model findings, not confirmed live:
 
@@ -178,7 +178,7 @@ The four AXIOMATISED rows are FFI: `extract_vector_f64`, `extract_vector_i64` an
 - **QuickJS** behaviour is assumed: `__proto__` never becomes an own key, array-index keys list first, `JS_IsDate`/`JS_IsRegExp` test the internal class, `new Date(ms)` is NaN beyond ±8.64e15 ms.
 - **`Graph::get_node_relationships`** is assumed to yield out-edges then in-edges, with a self-loop in both.
 - **Timeouts and memory limits** inside the searches only add an error exit and are not modelled.
-- **QuickJS runtime lifetime** (W3-algo-2) is not modelled.
+- **QuickJS runtime lifetime** (W3-algo-2) is modelled only as `ThreadJsState`'s field drop order; QuickJS object refcounts are not.
 
 ## Build and check
 

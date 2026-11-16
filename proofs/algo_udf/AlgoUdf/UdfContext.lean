@@ -10,11 +10,11 @@ flow around it.
 | `Caught`, `errMsg`        | `CaughtError`, `caught_error_message` :70-102 |
 | `normNotDefined`          | the `"x is not defined"` → `"'x' is not defined"` rewrite :81-85 |
 | `effTimeout`              | `compute_effective_js_timeout_ms` :130-137 |
-| `validateTimeout`         | the `effective_ms` of `validate_script` :164-168 |
-| `validateScript`          | `validate_script` :154-184 (setup → eval → collect) |
-| `Cache`, `ensureCurrent`  | `JS_STATE`, `ensure_context_current` :187-202 |
-| `rebuild`                 | `rebuild_context` :204-277 |
-| `bridge`                  | `call_udf_bridge` :281-355 (error mapping :328-338; graph slot cleared :351) |
+| `validateTimeout`         | the `effective_ms` of `validate_script` :168-172 |
+| `validateScript`          | `validate_script` :158-188 (setup → eval → collect) |
+| `Cache`, `ensureCurrent`  | `JS_STATE`, `ensure_context_current` :191-206 |
+| `rebuild`                 | `rebuild_context` :208-276 |
+| `bridge`                  | `call_udf_bridge` :280-352 (error mapping :327-337; graph slot cleared :350) |
 -/
 namespace AlgoUdf.UdfContext
 
@@ -183,6 +183,38 @@ theorem rebuild_fail (low : String → String) (l : Lib) (rest : List Lib) (ev :
     rebuild low (l :: rest) ev raw v =
       .error ("Failed to load UDF library '" ++ l.name ++ "': " ++ String.ofList (errMsg c true)) := by
   simp [rebuild, List.findSome?_cons, h]
+
+/-! ## ThreadJsState drop order (W3-algo-2, fixed by #3015)
+
+`struct ThreadJsState` (js_context.rs:143-151) has no `Drop` impl, so Rust drops its
+fields in declaration order; `rebuild_context` (`drop(state.take())`, :213) and
+thread-local destruction both use that glue. QuickJS aborts if the runtime is freed
+while a context or a persistent function is alive. -/
+
+inductive JsField | functions | context | runtime | version
+  deriving DecidableEq, Repr
+
+/-- Declaration order of `ThreadJsState` since #3015 (= its drop order). -/
+def threadJsStateFields : List JsField := [.functions, .context, .runtime, .version]
+
+/-- Before #3015: `runtime, context, functions, version`. -/
+def threadJsStateFieldsOld : List JsField := [.runtime, .context, .functions, .version]
+
+/-- `a` is dropped strictly before `b`. -/
+abbrev droppedBefore (order : List JsField) (a b : JsField) : Prop :=
+  order.idxOf a < order.idxOf b
+
+/-- The runtime outlives every JS object that refers to it. -/
+theorem threadJsState_drop_safe :
+    droppedBefore threadJsStateFields .functions .context ∧
+    droppedBefore threadJsStateFields .context .runtime ∧
+    droppedBefore threadJsStateFields .functions .runtime := by
+  decide
+
+/-- The old order freed the runtime first (W3-algo-2 at thread exit). -/
+theorem threadJsState_old_drop_unsafe :
+    ¬ droppedBefore threadJsStateFieldsOld .context .runtime := by
+  decide
 
 /-! ## call_udf_bridge -/
 

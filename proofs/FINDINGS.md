@@ -208,7 +208,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W3-gb-1**: a corrupt blob in GRAPH.RESTORE or an RDB panics the server via an `assert_eq!` on `GxB_Vector_deserialize` (`vector.rs:188`, `:219`; `tensor.rs:1586`). **Fixed by #2996 (d99861124)**: `decodeBlob_never_dies` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **W3-conc-4**: a huge `k` in `db.idx.vector.queryNodes` runs `Vec::with_capacity(k)` and SIGSEGVs (`graph.rs:3744`, `:3799`).
 - **W3-algo-1**: forged `__falkor_type` entity markers in a UDF result are trusted (`type_convert.rs:229-236`). This panics the reply or creates a dangling edge.
-- **W3-algo-2**: SHUTDOWN after a main-thread UDF aborts, because ThreadJsState drop order frees the QuickJS runtime first (`js_context.rs:129-136`).
+- **W3-algo-2**: SHUTDOWN after a main-thread UDF aborts, because ThreadJsState drop order frees the QuickJS runtime first (`js_context.rs:129-136`). **Fixed by #3015** (fields reordered, `js_context.rs:143-151`): `UdfContext.threadJsState_drop_safe`.
 - **W3-runtime-1/2**: the LIMIT/SKIP budget is pushed through hard-cap traversals (`runtime.rs:594-626`), so traverse→traverse under LIMIT, and stacked SKIPs, silently lose rows.
 - **W3-parser-9**: exponential backtracking in `parse_list_literal_or_comprehension` (`cypher.rs:2796-2803`). A 206-byte query takes 49 s; C is worse.
 
