@@ -152,9 +152,10 @@ Historical (2c874022a, #3091): Rust accepted a vector index without `dimension` 
 all four cases now answer as C. W5-idx-2 (vector index with no OPTIONS half-created on error) is
 also fixed: `index_ddl.rs:61-65` refuses before anything is registered — live, `db.indexes()` lists
 only the range index and `n.v = 1` still finds the node on both servers.
-Still divergent (live, #guards): (a) `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust
-creates the index (metric only checked for `dimension > 0`, mod.rs:1270-1272), C refuses;
-(since #3087 a vector on that index no longer drops the node: `dim0_keeps_range_entry`);
+Formerly divergent, **fixed by #3257**: (a) `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust
+created the index (metric only checked for `dimension > 0`, mod.rs:1270-1272), C refuses; the
+name is now checked at parse time (`parseSim_unknown`), so Rust agrees with C on every dimension
+(`rust_eq_c_all`). Still divergent (live, #guard):
 (b) fulltext `OPTIONS {weight:1.0, foo:true}` Rust refuses (`unknown option 'foo'`), C creates —
 C refuses only a non-empty map with no known key (`cFulltextKeysOk`; `rust_keys_ok_imp_c`).
 (C itself crashed on `CREATE FULLTEXT INDEX … OPTIONS {phonetic:true}`, on `db.indexes()` after `{language:'klingon'}`,

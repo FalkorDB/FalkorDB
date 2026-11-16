@@ -280,7 +280,7 @@ src/commands/list.rs	reply_bytes	59	PROVEN	Commands.replyBytes: replyBytes_str, 
 src/commands/list.rs	graph_list	67	PROVEN	Commands.scanLoop (each element through replyBytes): scanLoop_nonul, scanLoop_strs, scanPage_nonstr, scanLoop_page_none
 src/commands/memory.rs	c_schema_name	65	PROVEN	Commands.cSchemaName = cReplyName: cReplyName_nonul
 src/commands/memory.rs	memory_report	69	PROVEN	Commands.memTotal/memFields: memTotal_sum
-src/commands/memory.rs	graph_memory	181	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err
+src/commands/memory.rs	graph_memory	185	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err, memArgs_subcmd_err, memArgs_kw_err (C error texts, #3257)
 src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, profile_timeout_parsed, profile_timeout_garbage_rejected (#3009 fixed 557f18868), profile_other_args_ignored
 src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
 src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps; write_version: QuerySession.writeVersion_takes_nothing); rendering of recorded rows: RelLookup.recordDelete/s3449abort, #3449 fixed by #3462 (inspect || snapshot_required): fixed3449_record_snapshot, fixed3449_record_abort
