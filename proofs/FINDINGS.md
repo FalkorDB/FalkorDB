@@ -9,7 +9,7 @@ retired on 2026-10-15 after their PRs merged, their theorems folded into the own
 projects). Open PR reviews (2026-10-21, rows commented out until merge): `pr3435_review`,
 `pr3437_review`, `pr3438_review` (`pr3436_review` was folded into `runtime_core` and
 `pending_commit` on 2026-10-28) — see "PR reviews (2026-10-21)" below.
-All projects pin Lean `leanprover/lean4:v4.35.0` (upgraded from v4.34.0 on 2026-10-15).
+All projects pin Lean `leanprover/lean4:v4.36.0` (upgraded from v4.35.0 on 2026-11-16; the one source change was `String.data` → `String.toList` in graph_persist `Constraint.lean`, as v4.36 removed `String.data`).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
 `native_decide` or an axiom that is not justified with a `-- AXIOM-OK:` comment.
 Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
