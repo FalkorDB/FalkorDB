@@ -26,7 +26,7 @@ tests): 3000 random sets spanning four 2^32 high keys up to `u64::MAX`; every
 `iter` is strictly ascending and every `rank`, `advance_to` and `select` equals
 the definitions above — all pass.
 -/
-namespace Pr3438
+namespace SaveSlice
 
 /-- A `RoaringTreemap`: its ascending, distinct `u64` elements. -/
 structure RSet where
@@ -118,4 +118,4 @@ theorem head_filter_ge (l : List Nat) (a : Nat) :
   simp only [List.mem_filter, decide_eq_true_eq] at hm
   exact hm.2
 
-end Pr3438
+end SaveSlice

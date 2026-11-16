@@ -1,7 +1,7 @@
-import Pr3438Review.NthLive
+import PendingCommit.SaveNthLive
 import PendingCommit.StoreCodec
 /-
-# `AttributeStore::encode_with_range` on the PR (attribute_store.rs:1425-1474, 2fabe1a8a)
+# `AttributeStore::encode_with_range` as merged in #3438 (attribute_store.rs:1427-1476)
 
 ```rust
 if count == 0 { return; }
@@ -20,9 +20,9 @@ for id in start..=max_id {
 
 | here | there |
 | --- | --- |
-| `walk ent count ids q enc` | the `for id in start..=max_id` loop (:1452-1473); the cursor state is `q`, the ids the iterator has still to yield *including* `next_deleted = q.head?` (`next()` = advance to `q.tail`) |
-| `prEncode` | `encode_with_range` (:1425) |
-| `ent id` | the per-entity writes (:1458-1467), the same code as main's: abstract, then instantiated with pending_commit's `(id, dread d id)` |
+| `walk ent count ids q enc` | the `for id in start..=max_id` loop (:1453-1474); the cursor state is `q`, the ids the iterator has still to yield *including* `next_deleted = q.head?` (`next()` = advance to `q.tail`) |
+| `prEncode` | `encode_with_range` (:1427) |
+| `ent id` | the per-entity writes (:1459-1468), the same code as main's: abstract, then instantiated with pending_commit's `(id, dread d id)` |
 | `PendingCommit.Content.encode` | **main's** `encode_with_range` (9212add39 :1425; pending_commit `StoreCodec.lean`) |
 
 * `walk_spec` — with the cursor at the deleted ids `≥ id`, the loop writes the
@@ -36,10 +36,10 @@ for id in start..=max_id {
   `count_zero_witness` is a concrete store where they differ. No caller passes
   `count = 0` (`Layout.lean`, `encoder_counts_pos`).
 -/
-namespace Pr3438
+namespace SaveSlice
 open PendingCommit.Content
 
-/-- The PR's loop (:1452-1473). -/
+/-- The PR's loop (:1453-1474). -/
 def walk {E : Type} (ent : Nat → E) (count : Nat) : List Nat → List Nat → Nat → List E
   | [], _, _ => []
   | id :: ids, q, enc =>
@@ -47,7 +47,7 @@ def walk {E : Type} (ent : Nat → E) (count : Nat) : List Nat → List Nat → 
     else if enc + 1 ≥ count then [ent id]
     else ent id :: walk ent count ids q (enc + 1)
 
-/-- `encode_with_range` on the PR (:1425). -/
+/-- `encode_with_range` on the PR (:1427). -/
 def prEncode {E : Type} (ent : Nat → E) (r : RSet) (maxId count offset : Nat) : List E :=
   if count = 0 then []
   else match nthLive (r.rank) maxId offset with
@@ -149,4 +149,4 @@ theorem pr_encode_decode_roundtrip (r : RSet) (d : D) (h : SInv d) (hs : SOK d)
   rw [prEncode_eq_main r d maxId count offset hc]
   exact encode_decode_roundtrip d h hs limit hlim hfit _ maxId count offset
 
-end Pr3438
+end SaveSlice

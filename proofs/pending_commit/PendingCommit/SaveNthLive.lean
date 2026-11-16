@@ -1,6 +1,6 @@
-import Pr3438Review.Roaring
+import PendingCommit.SaveRoaring
 /-
-# `nth_live_id` (attribute_store.rs:1483-1504 on the PR branch, 2fabe1a8a)
+# `nth_live_id` (attribute_store.rs:1485-1506, #3438)
 
 ```rust
 fn nth_live_id(deleted: &RoaringTreemap, max_id: u64, n: u64) -> Option<u64> {
@@ -20,8 +20,8 @@ fn nth_live_id(deleted: &RoaringTreemap, max_id: u64, n: u64) -> Option<u64> {
 | --- | --- |
 | `cntLive l x` | live ids `< x`: `((0..x).filter(!deleted.contains)).count()` |
 | `liveL l maxId` | the ids main's walk visits and does not skip as deleted (`0..=max_id` minus `deleted`) |
-| `bsearch` | the `while lo < hi` loop (:1495-1502) |
-| `nthLive` | `nth_live_id` (:1483) |
+| `bsearch` | the `while lo < hi` loop (:1497-1504) |
+| `nthLive` | `nth_live_id` (:1485) |
 
 * `liveThrough_eq` — `x + 1 - rank(x)` is the number of live ids in `0..=x`,
   and `rank_le` — `rank(x) ≤ x + 1`, so the `u128` subtraction never underflows
@@ -34,7 +34,7 @@ fn nth_live_id(deleted: &RoaringTreemap, max_id: u64, n: u64) -> Option<u64> {
 * `nthLive_drop` — when it returns `some s`, the live ids from position `n` on
   are exactly the live ids of `s..=max_id`: what the PR's walk then visits.
 -/
-namespace Pr3438
+namespace SaveSlice
 
 /-- Live ids below `x`. -/
 def cntLive (l : List Nat) (x : Nat) : Nat := ((List.range x).filter (fun i => !decide (i ∈ l))).length
@@ -123,7 +123,7 @@ theorem liveThrough_no_overflow (x : Nat) (hx : x < 2 ^ 64) : x + 1 < 2 ^ 128 :=
 
 /-! ## The binary search -/
 
-/-- The `while lo < hi` loop (:1495-1502). -/
+/-- The `while lo < hi` loop (:1497-1504). -/
 def bsearch (f : Nat → Nat) (n : Nat) (lo hi : Nat) : Nat :=
   if lo < hi then
     if f (lo + (hi - lo) / 2) > n then bsearch f n lo (lo + (hi - lo) / 2)
@@ -166,7 +166,7 @@ theorem bsearch_spec (f : Nat → Nat) (hmono : ∀ x y, x ≤ y → f x ≤ f y
       subst this
       exact ⟨Nat.le_refl _, Nat.le_refl _, hhi, hlo⟩
 
-/-- `nth_live_id(deleted, max_id, n)` (:1483). -/
+/-- `nth_live_id(deleted, max_id, n)` (:1485). -/
 def nthLive (rank : Nat → Nat) (maxId n : Nat) : Option Nat :=
   if maxId + 1 - rank maxId ≤ n then none
   else some (bsearch (fun x => x + 1 - rank x) n n maxId)
@@ -259,4 +259,4 @@ theorem nthLive_past_end (r : RSet) (maxId n : Nat)
     (h : (liveL (r.elems) maxId).length ≤ n) : nthLive (r.rank) maxId n = none := by
   rw [nthLive_spec]; exact List.getElem?_eq_none h
 
-end Pr3438
+end SaveSlice

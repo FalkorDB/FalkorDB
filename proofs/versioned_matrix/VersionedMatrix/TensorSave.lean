@@ -1,6 +1,6 @@
 import VersionedMatrix.TensorResize
 /-
-# `Encode for Tensor`: the fast path (tensor.rs:1472-1570 on the PR, 2fabe1a8a)
+# `Encode for Tensor`: the fast path (tensor.rs:1472-1561, #3438)
 
 ```rust
 self.wait_fwd();
@@ -29,7 +29,7 @@ module-doc invariants, incl. promotion completeness `multi_me`/`single_me`) and
 | `mainTriples`/`mainBase` | main's `f_rows/f_cols/f_vals` and `fm.build` (or `empty` when no triple) (tensor.rs:1499-1530 PR / 9212add39 :1485-1515) |
 | `mainMulti`  | the `multi` list main fills (:1505-1513) |
 | `fastBase`   | the content of `self.m`: `id` inline, `MULTI_EDGE = u64::MAX` for a promoted pair |
-| `fastCond`   | `dp.nvals() == 0 && dm.nvals() == 0 && !has_multi_edge()` (:1493) |
+| `fastCond`   | `dp.nvals() == 0 && dm.nvals() == 0 && !has_multi_edge()` (:1492) |
 | `encMain`/`encPR` | the logical payload: base content, `edge_count()`, `multi` (the two deltas are `empty` in both) |
 
 * **`fast_base_eq`** — under the invariants, when `fastCond` holds the committed
@@ -52,7 +52,7 @@ round-trips); on the 16 that take the fast path the PR's and main's payloads
 decode to the same edges and `edge_count`; 15 of the 16 are byte-identical, one
 differs only in the base matrix's layout.
 -/
-namespace Pr3438
+namespace TensorSave
 open VMTensor VMTensorOps
 
 def MULTI_EDGE : Nat := 2 ^ 64 - 1
@@ -249,4 +249,4 @@ theorem decode_same {Mx Bytes T : Type} (X : MatrixRT Mx Bytes)
       (X.dec (X.enc mMain)).map (fun c => decodeT c (encMain ec t).total (encMain ec t).multi) := by
   rw [X.rt, X.rt, hPR, hMain, encPR_eq_encMain ec t hi hb hrows]
 
-end Pr3438
+end TensorSave

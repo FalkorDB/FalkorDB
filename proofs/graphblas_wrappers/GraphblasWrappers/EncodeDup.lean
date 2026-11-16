@@ -1,6 +1,6 @@
 import GraphblasWrappers.Glue
 /-
-# `Encode<19> for Matrix<T>` unloads a private `dup()` (matrix.rs:520-575, PR 2fabe1a8a)
+# `Encode<19> for Matrix<T>` unloads a private `dup()` (matrix.rs:527-582, #3438)
 
 ```rust
 let copy = self.dup();                                     // GrB_Matrix_dup (+ hyper-hash opt-out)
@@ -51,7 +51,7 @@ double free, unload of an emptied matrix, or allocating over a live handle.
   panics), unwinding drops `copy` and the heap is again the starting one.
   The five `ManuallyDrop<Vector>` views free nothing (modelled as `write`).
 -/
-namespace Pr3438
+namespace GBWSave
 open GBWGlue
 
 /-! ## (a) the payload -/
@@ -219,4 +219,4 @@ theorem pr_panic_after_dup {C : Type} (s : Heap C) (sf cp k : Nat) (c : C) (h : 
     · simp [upd, hx]
   simp [trace, step, h.sf_full, h.cp_free, hu, finalOf, hf]
 
-end Pr3438
+end GBWSave

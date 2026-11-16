@@ -1,4 +1,4 @@
-import Pr3438Review.Slice
+import PendingCommit.SaveSlice
 import GraphPersist.Persist.MultiLoad3
 import GraphPersist.Layout
 /-
@@ -11,12 +11,12 @@ graph_persist models main's payload encoders on its graph `G` (entity ids
 about the layout, not about how a slice is found, so the PR can only break them
 by changing the bytes of a payload. It does not:
 
-| here | there (PR 2fabe1a8a) |
+| here | there (main, #3438) |
 | --- | --- |
-| `encRangePR` | `AttributeStore::encode_with_range` (attribute_store.rs:1425) writing `encEnt` per entity |
+| `encRangePR` | `AttributeStore::encode_with_range` (attribute_store.rs:1427) writing `encEnt` per entity |
 | `encRoarPR`  | `Encode for RoaringTreemap::encode_with_range` (serialization.rs:180-197): `select(offset)`, `advance_to`, `take(count)` |
-| `encPayloadPR` | `Graph::encode_payload` (graph.rs:4942-4975) with the two above |
-| `encodeGraphPR` | `encode_graph` (encoder/mod.rs:66-88) |
+| `encPayloadPR` | `Graph::encode_payload` (graph.rs:5173) with the two above |
+| `encodeGraphPR` | `encode_graph` (encoder/mod.rs:68-90) |
 
 * **`encRoarPR_eq`** (claim 3) — the deleted-ids seek writes main's bytes for
   every `count` and `offset` (main: `iter().skip(offset).take(count)` =
@@ -35,7 +35,7 @@ by changing the bytes of a payload. It does not:
   encodes is one walk over the whole live range: slices of `vkey_max` live ids
   concatenate to the full encode.
 -/
-namespace Pr3438
+namespace SaveSlice
 open GraphPersist GraphPersist.Persist
 
 variable {M Tn Nm Ix Cn : Type}
@@ -238,4 +238,4 @@ theorem chunk_concat_full {E : Type} (ent : Nat → E) (r : RSet) (maxId cap : N
       prEncode ent r maxId (liveL (r.elems) maxId).length 0 := by
   rw [chunk_concat, prEncode_spec, if_neg (by omega)]
 
-end Pr3438
+end SaveSlice
