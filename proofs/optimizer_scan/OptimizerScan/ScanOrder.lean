@@ -247,7 +247,7 @@ theorem primary_split (label : Nat) (ls labels : List Nat) (h : label ∈ ls) :
   simpa [hasAll, withPrimary] using this
 
 
-/-! ### Binding-aware semantics and filter placement (`select_scan_node.rs:979-1235`)
+/-! ### Binding-aware semantics and filter placement (`select_scan_node.rs:1040-1290`)
 
 Generate-and-test hides one thing: a `Filter` evaluated before its variable is bound reads
 Null and drops the row. `runScoped` is the sequential semantics with a bound set `B`: a hop
@@ -395,11 +395,11 @@ theorem boundAfter_hop : ∀ (B : List Nat) (steps : List Step) (h : Hop), Step.
     · cases he
     · exact boundAfter_hop B rest h hm
 
-/-! #### Counterexample: the dishonest initial bound set (CONFIRMED bug, still present at 8743953a8)
+/-! #### Counterexample: the dishonest initial bound set (CONFIRMED bug, fixed by #3046 — see `Seed.lean`)
 
-`select_scan_node.rs:979-986` seeds `initial_bound` with `best_node.alias.id` *and* the
+Before #3046, `select_scan_node.rs:979-986` seeded `initial_bound` with `best_node.alias.id` *and* the
 variables of an existing (outer-context) child. When that child is kept, no scan for
-`best_node` is built (`subtree = existing_child.clone().unwrap_or_else(..)`, line 1198), so
+`best_node` is built (`subtree = existing_child.unwrap_or_else(..)`, now line 1255), so
 `best_node` is not bound — yet its inline-attribute Filter is placed as soon as the first hop
 runs. Query (C returns 1, Rust 0):
 `MATCH (b:A) WITH b LIMIT 1 MATCH (b)<-[]-(d)-[:R]->(c {v:1})-[:R]->(z) RETURN count(*)`.

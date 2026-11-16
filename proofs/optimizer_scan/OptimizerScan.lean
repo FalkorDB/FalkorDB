@@ -40,7 +40,8 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-801` |
 | `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:308-335` |
 | `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
-| `ScanOrder.place`, `runScoped` | `select_scan_node.rs:979-986, 1185-1235` |
+| `ScanOrder.place`, `runScoped` | `select_scan_node.rs:1040-1043, 1255-1290` |
+| `Seed.exposed`, `Seed.initialBound` | `select_scan_node.rs:479` (`exposed_variables`), `:1040-1043` (`initial_bound`, #3046) |
 | `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
 
 ## Proven (plain English)
@@ -75,7 +76,10 @@ Scan selection (`ScanOrder.lean`):
 
 ## CONFIRMED bugs (new in this wave)
 
-1. **`select_scan_node` places an inline-attribute Filter before its variable is bound**
+1. **`select_scan_node` placed an inline-attribute Filter before its variable was bound** — **FIXED by #3046**
+   (`initial_bound` is now `{best_node}` when a scan is built, else `exposed_variables` of the kept
+   child, `select_scan_node.rs:479`, `:1040-1043`; Lean `Seed.seed_keeps_row`, `seed_place_wellScoped`,
+   history `Seed.pre3046_seed_loses_row`). Before:
    — `select_scan_node.rs:979-986` seeds `initial_bound` with `best_node` even when the
    outer-context child is kept (no scan for `best_node` is built, line 1198). Lean:
    `ScanOrder` counterexample after `place_wellScoped`. Query
@@ -232,6 +236,7 @@ import OptimizerScan.IndexCex
 import OptimizerScan.IndexSound
 import OptimizerScan.IndexPipeline
 import OptimizerScan.ScanOrder
+import OptimizerScan.Seed
 import OptimizerScan.EdgeInline
 import OptimizerScan.Cleanup
 import OptimizerScan.ScanTree
