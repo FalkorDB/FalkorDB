@@ -159,28 +159,36 @@ structure GraphFn where
   pureArgs : List Ty
   hasStruct : Bool
   structSlots : List String
+  /-- `struct_masked` (#3607): the rewritten call carries a trailing presence-mask child. -/
+  structMasked : Bool
   args : FnArgs
   fnType : FnType
   ret : Ty
 
-/-- `GraphFn::new` (mod.rs:715). -/
+/-- `GraphFn::new` (mod.rs:719). -/
 def GraphFn.new (name : String) (f : S.Rt → List S.V → Except String S.V) (write nonDet : Bool)
     (args : FnArgs) (ft : FnType) (ret : Ty) : GraphFn S :=
-  ⟨name, .native f, write, nonDet, false, [], false, [], args, ft, ret⟩
+  ⟨name, .native f, write, nonDet, false, [], false, [], false, args, ft, ret⟩
 
-/-- `GraphFn::new_procedure` (mod.rs:740). -/
+/-- `GraphFn::new_procedure` (mod.rs:745). -/
 def GraphFn.newProcedure (name : String) (f : S.Rt → List S.V → Nat → Except String S.Batch)
     (write nonDet : Bool) (args : FnArgs) (ft : FnType) (ret : Ty) : GraphFn S :=
-  ⟨name, .nativeProcBatch f, write, nonDet, false, [], false, [], args, ft, ret⟩
+  ⟨name, .nativeProcBatch f, write, nonDet, false, [], false, [], false, args, ft, ret⟩
 
-/-- `GraphFn::new_udf` (mod.rs:765). -/
+/-- `GraphFn::new_udf` (mod.rs:771). -/
 def GraphFn.newUdf (name : String) : GraphFn S :=
-  ⟨name, .udf name, false, false, false, [], false, [], .varLength .any, .udf, .any⟩
+  ⟨name, .udf name, false, false, false, [], false, [], false, .varLength .any, .udf, .any⟩
 
 theorem new_fields (n : String) f w d a ft r :
     let g := GraphFn.new S n f w d a ft r
     g.name = n ∧ g.write = w ∧ g.nonDet = d ∧ g.hasPure = false ∧ g.hasStruct = false ∧
       g.fnType = ft := ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- None of the three constructors sets `struct_masked` (#3607); only `set_struct_fn` does. -/
+theorem new_unmasked (n : String) f w d a ft r pf :
+    (GraphFn.new S n f w d a ft r).structMasked = false ∧
+    (GraphFn.newProcedure S n pf w d a ft r).structMasked = false ∧
+    (GraphFn.newUdf S n).structMasked = false := ⟨rfl, rfl, rfl⟩
 
 theorem newUdf_fields (n : String) :
     let g := GraphFn.newUdf S n
@@ -288,7 +296,7 @@ theorem addVarLen_name (m : Fns S) (name : String) (f : S.Rt → List S.V → Ex
     by simp [addVarLen, h], ?_⟩
   rw [lookup_cons_self]; rfl
 
-/-- `set_pure_fn` (mod.rs:1009) / `set_struct_fn` (mod.rs:1031): panic unless registered;
+/-- `set_pure_fn` (mod.rs:1016) / `set_struct_fn` (mod.rs:1038): panic unless registered;
 update that entry only. (`Arc::get_mut` cannot fail at init: the registry is the sole owner.) -/
 def update (m : Fns S) (k : String) (u : GraphFn S → GraphFn S) : Option (Fns S) :=
   if has S m k then some (m.map fun p => (p.1, if p.1 = k then u p.2 else p.2)) else none
@@ -296,8 +304,9 @@ def update (m : Fns S) (k : String) (u : GraphFn S → GraphFn S) : Option (Fns 
 def setPureFn (m : Fns S) (name : String) (args : List Ty) : Option (Fns S) :=
   update S m (Lo.lower name) fun g => { g with hasPure := true, pureArgs := args }
 
-def setStructFn (m : Fns S) (name : String) (slots : List String) : Option (Fns S) :=
-  update S m (Lo.lower name) fun g => { g with hasStruct := true, structSlots := slots }
+def setStructFn (m : Fns S) (name : String) (slots : List String) (masked : Bool) : Option (Fns S) :=
+  update S m (Lo.lower name) fun g =>
+    { g with structMasked := masked, hasStruct := true, structSlots := slots }
 
 theorem lookup_map_update (m : Fns S) (k k' : String) (u : GraphFn S → GraphFn S) :
     lookup S (m.map fun p => (p.1, if p.1 = k then u p.2 else p.2)) k' =
@@ -328,14 +337,25 @@ theorem update_none (m : Fns S) (k : String) (u : GraphFn S → GraphFn S) :
     update S m k u = none ↔ has S m k = false := by
   unfold update; split <;> simp_all
 
-theorem setStructFn_spec (m : Fns S) (name : String) (slots : List String) :
-    (setStructFn S Lo m name slots = none ↔ has S m (Lo.lower name) = false) ∧
-    ∀ m', setStructFn S Lo m name slots = some m' →
+theorem setStructFn_spec (m : Fns S) (name : String) (slots : List String) (masked : Bool) :
+    (setStructFn S Lo m name slots masked = none ↔ has S m (Lo.lower name) = false) ∧
+    ∀ m', setStructFn S Lo m name slots masked = some m' →
       (lookup S m' (Lo.lower name)).map (·.structSlots) = some slots ∧
       ∀ k, k ≠ Lo.lower name → lookup S m' k = lookup S m k := by
   refine ⟨update_none S _ _ _, fun m' h => ?_⟩
   obtain ⟨hh, h1, h2⟩ := update_spec S _ _ _ _ h
   refine ⟨?_, h2⟩
+  rw [h1]
+  have := (has_iff S m _).mp hh
+  cases e : lookup S m (Lo.lower name) with
+  | none => simp [e] at this
+  | some g => rfl
+
+/-- #3607: `set_struct_fn` records the `masked` flag on that entry. -/
+theorem setStructFn_masked (m m' : Fns S) (name : String) (slots : List String) (masked : Bool)
+    (h : setStructFn S Lo m name slots masked = some m') :
+    (lookup S m' (Lo.lower name)).map (·.structMasked) = some masked := by
+  obtain ⟨hh, h1, -⟩ := update_spec S _ _ _ _ h
   rw [h1]
   have := (has_iff S m _).mp hh
   cases e : lookup S m (Lo.lower name) with

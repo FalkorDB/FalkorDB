@@ -53,7 +53,8 @@ structure Ops (V : Type) where
 /-- `GraphFn` (functions/mod.rs:662) as a `FuncInvocation(Arc<GraphFn>)` node holds it, with
 the fields `eval_node` and `VectorEval::eval` read: `call` is `func.func.call(rt, args)` with
 the runtime fixed, `validate` is `validate_args_type` (mod.rs:828), `structFn`/`structSlots`
-the positional struct-constructor form. Aggregations are not `func` nodes (see `E`). -/
+the positional struct-constructor form, `structMasked` (#3607) whether the rewrite appends
+a presence-mask child. Aggregations are not `func` nodes (see `E`). -/
 structure Fn (V : Type) where
   name : String
   write : Bool
@@ -62,6 +63,7 @@ structure Fn (V : Type) where
   structSlots : Nat
   validate : List V → Except String Unit
   call : List V → Except String V
+  structMasked : Bool := false
 
 /-- Expression trees (`ExprIR<Variable>`, parser/ast.rs:155). Every arm `eval_node` /
 `eval_compound` (eval.rs:340-1134) treats specially that a list-comprehension body can reach

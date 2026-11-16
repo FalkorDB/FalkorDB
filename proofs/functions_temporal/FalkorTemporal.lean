@@ -159,9 +159,9 @@ C's `date('2021-01-03').dayOfQuarter` is 4 (Rust 3, correct).
 - `shift_months` (shared by `+`/`-` since #2984): `y + years` (i32), and in
   `sub_duration_from_timestamp` `-years` (i32::MIN), plus `days * 86400` (i64), unchecked;
   only reachable through the year-wrap above.
-- `hour: 4294967297` is truncated by `as u32` in `time_from_components` (C does the same).
-  The date components no longer are: #2950 uses `i32::try_from`/`u32::try_from`
-  (`ymd_no_truncation`).
+- `hour: 4294967297` was truncated by `as u32` in `time_from_components` until #3607, which
+  uses `u32::try_from` (`timeFromComponents_no_wrap`; historical `pre3607_u32_wrap`). The
+  date components were fixed by #2950 (`ymd_no_truncation`).
 - `vec.*` distance via simsimd: not modelled (FFI).
 
 ## Modelling gaps
@@ -241,6 +241,25 @@ rows re-pinned (+20 after `check_range`, +28 after `date_from_components`, +29 a
 `SIType_ToString`); `SV.name` (the spatial.rs "Type mismatch … but was <name>" errors)
 updated. Nothing else modelled here changed; no value.rs COVERAGE.tsv row lies after
 `Value::name`, so none were re-pinned.
+
+## Re-proved for PR #3607 (temporal map validation)
+
+#3607 validates map components in one pass (`map_components` / `struct_components` /
+`int_component(s)` / `struct_ints`, Fns.lean): `null`, strings and floats are errors, not
+defaults; keys match case-insensitively; an unknown or repeated key errors after any bad
+value; durations accept floats (`duration_from_values`; `construct_duration_secs_float` is
+the parameter `cdsF`, NOT COVERED). The binder appends a presence mask to the struct
+rewrite (`rewriteArgs`). Re-proved with the same statements plus the rewrite's
+precondition (distinct keys, all slots): `dateStruct_eq_map`, `localtimeStruct_eq_map`,
+`durationStruct_eq_map` (via `mapComponents_exact`, `structComponents_rewrite`,
+`structInts_rewrite`), `pure_not_unreachable`, `datePure_midnight`, `localtimePure_range`,
+`timeFromComponents_ok`; new `register_masked`, `date_null_component_errors`,
+`date_unknown_key_errors`, `durationFromValues_ints`.
+**Counterexample** `pr3607_localdatetime_map_ne_struct`: `localdatetime` validates the date
+components and builds the date before validating the time components on the map path, but
+validates all ten first on the struct path, so `localdatetime({month: 13, hour: null})`
+reports "hour must be an integer value" while `WITH {month: 13, hour: null} AS m RETURN
+localdatetime(m)` reports "Invalid date: year=1970, month=13, day=1".
 
 ## Wave 6 (`VecDistance`)
 vec_distance.rs PROVEN against the exact simsimd 6.5.16 wrapper (length check, then the

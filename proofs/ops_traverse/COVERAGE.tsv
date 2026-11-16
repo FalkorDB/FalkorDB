@@ -62,8 +62,8 @@ graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2732	NOT COVERE
 graph/src/runtime/eval.rs	NeighborIter::new	164	NOT COVERED	shortestPath() BFS helpers; differential-tested only
 graph/src/runtime/eval.rs	NeighborIter::new_reversed	204	NOT COVERED	idem
 graph/src/runtime/eval.rs	NeighborIter::neighbors	232	NOT COVERED	idem
-graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1374	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
-graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1459	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
+graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1380	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
+graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1465	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	58	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	100	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList (one InList since #2383), evalIQ_inList_err (W2-index-3, still open)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	253	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff; InList arm (#2383): canUse_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist
