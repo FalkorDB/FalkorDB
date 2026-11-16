@@ -51,7 +51,7 @@ inductive N where
   | threadCount | timeout | timeoutDefault | timeoutMax | ompThreadCount | vkeyMax | cacheSize
   | resultsetSize | maxQueued | queryMemCapacity | deltaMax | nodeCreationBuffer | asyncDelete
   | cmdInfo | maxInfo | effectsThreshold | delayIndexing | importFolder | tempFolder
-  | jsHeap | jsStack
+  | jsHeap | jsStack | writeLockPoll
   -- Rust only
   | indexWorkerThreads | boltPort | effectsCompression
   deriving DecidableEq, Repr
@@ -67,13 +67,14 @@ def N.str : N → List Nat
   | .effectsThreshold => b "EFFECTS_THRESHOLD" | .delayIndexing => b "DELAY_INDEXING"
   | .importFolder => b "IMPORT_FOLDER" | .tempFolder => b "TEMP_FOLDER"
   | .jsHeap => b "JS_HEAP_SIZE" | .jsStack => b "JS_STACK_SIZE"
+  | .writeLockPoll => b "WRITE_LOCK_POLL_INTERVAL"
   | .indexWorkerThreads => b "INDEX_WORKER_THREADS" | .boltPort => b "BOLT_PORT"
   | .effectsCompression => b "EFFECTS_COMPRESSION"
 
 /-- C's `Config_Contains_field` chain, in its order. -/
 def cList : List N :=
   [.threadCount, .timeout, .timeoutDefault, .timeoutMax, .ompThreadCount, .vkeyMax, .cacheSize,
-   .resultsetSize, .maxQueued, .queryMemCapacity, .deltaMax, .nodeCreationBuffer, .asyncDelete,
+   .resultsetSize, .maxQueued, .queryMemCapacity, .deltaMax, .nodeCreationBuffer, .writeLockPoll, .asyncDelete,
    .cmdInfo, .maxInfo, .effectsThreshold, .delayIndexing, .importFolder, .tempFolder, .jsHeap, .jsStack]
 
 def rustOnly : List N := [.indexWorkerThreads, .boltPort, .effectsCompression]
@@ -145,7 +146,8 @@ is the #3021 model `Config.validate` of one member of the arm. `none` = no liter
 def validateConfigSet (n : Option N) (v : List Nat) : Except LErr Int :=
   match n with
   | some .timeout | some .timeoutDefault | some .timeoutMax | some .queryMemCapacity
-  | some .deltaMax | some .effectsCompression | some .effectsThreshold => mapE (validate .timeout v)
+  | some .deltaMax | some .effectsCompression | some .effectsThreshold
+  | some .writeLockPoll => mapE (validate .timeout v)   -- #3816
   | some .asyncDelete | some .cmdInfo | some .delayIndexing => mapE (validate .cmdInfo v)
   | some .resultsetSize => mapE (validate .resultsetSize v)
   | some .maxQueued => mapE (validate .maxQueued v)
@@ -260,7 +262,8 @@ def cSet (fs : FS) (td tm : Int) (n : N) (v : List Nat) : Option (Int × Int) :=
     | none => none
     | some x => if x ≠ tm then (if x ≠ 0 ∧ td > x then none else some (td, x)) else some (td, tm)
   | .resultsetSize => keep int
-  | .vkeyMax | .queryMemCapacity | .deltaMax | .nodeCreationBuffer | .maxInfo | .effectsThreshold => keep nn
+  | .vkeyMax | .queryMemCapacity | .deltaMax | .nodeCreationBuffer | .maxInfo | .effectsThreshold
+  | .writeLockPoll => keep nn
   | .asyncDelete | .cmdInfo | .delayIndexing => keep (cYesNo v)
   | .importFolder => some (td, tm)
   | .tempFolder => if fs.exists_ v && fs.isDir v && fs.writable v then some (td, tm) else none
@@ -465,6 +468,12 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     | some x =>
       by_cases a0 : x < 0 <;> by_cases a1 : 0 ≤ x <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
         simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+  case writeLockPoll =>
+    cases rustParseI64 v with
+    | none => simp
+    | some x =>
+      by_cases a0 : x < 0 <;> by_cases a1 : 0 ≤ x <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
+        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
   case nodeCreationBuffer =>
     cases rustParseI64 v with
     | none => simp
@@ -523,6 +532,7 @@ def toN : Name → N
   | .timeout => .timeout | .timeoutDefault => .timeoutDefault | .timeoutMax => .timeoutMax
   | .resultsetSize => .resultsetSize | .maxQueued => .maxQueued | .vkeyMax => .vkeyMax
   | .maxInfo => .maxInfo | .jsHeap => .jsHeap | .cmdInfo => .cmdInfo | .cacheSize => .cacheSize
+  | .writeLockPoll => .writeLockPoll
 
 theorem fold_td (vs : List (Name × Int)) (c : Cfg) :
     (vs.foldl apply1 c).timeoutDefault =
