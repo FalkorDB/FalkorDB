@@ -1647,6 +1647,8 @@ class testIndexScanFlow():
         wait_for_indices_to_sync(g)
         g.query(create)
         for q, want in zip(queries, expected):
+            # The index scan stays under the retained Filter that raises the error.
+            self.env.assertContains("Index Scan", str(g.explain(q)))
             self.env.assertEqual(outcome(g, q), want, message=q)
         g.delete()
 
