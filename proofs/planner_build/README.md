@@ -27,7 +27,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 **2. Does each clause's plan implement that clause?**
 
 - **For every clause kind, yes, in the positions the proof covers.** Each theorem holds for *any* input plan placed at the clause's insertion point. The clause theorems are `unwind_correct`, `create_correct`, `set_correct`, `remove_correct`, `delete_correct`, `proc_correct`, `project_correct`, `foreach_correct`, `call_correct`, `unit_call_correct`, `optional_correct`, `optional_apply_correct`, `match_bound_correct`, `union_correct`, `merge_loop_correct`, `merge_first_correct`, `create_loop_correct` and `create_first_correct`.
-- **MERGE or CREATE with a named path as the last clause, no.** The first insertion-point walk does not step over `PathBuilder`, so `Merge`/`Create` never runs. `MATCH (a:A) MERGE p=(a)-[:T]->(x:X)` fails with "Variable _anon_0 not found"; C creates the edge (`merge_path_last_misplaced`, `create_path_last_misplaced`). Adding `RETURN …` after it works.
+- **MERGE or CREATE with a named path as the last clause, no.** The first insertion-point walk does not step over `PathBuilder`, so `Merge`/`Create` never runs. `MATCH (a:A) MERGE p=(a)-[:T]->(x:X)` fails with "Variable _anon_0 not found"; C creates the edge (`pre3101_merge_path_last_misplaced`, `pre3101_create_path_last_misplaced`). Adding `RETURN …` after it works. Fixed by #3101: `merge_path_first_correct`, `create_path_first_correct`, `body_merge_path_fill`.
 
 **3. Is a `MATCH … WHERE` correlated with the next `MATCH`?**
 
@@ -84,14 +84,14 @@ Each bug was checked live, Rust release module vs C module, and has a Rust repro
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `merge_path_last_misplaced`, `merge_path_last_skips_merge` | MERGE with a named path as the last clause (of a query, a `CALL {}` body or a FOREACH body) never runs: "Variable _anon_0 not found" | **Open** (PR #3101 not merged) |
+| 1 | `pre3101_merge_path_last_misplaced`, `pre3101_merge_path_last_skips_merge` | MERGE with a named path as the last clause (of a query, a `CALL {}` body or a FOREACH body) never runs: "Variable _anon_0 not found" | **Fixed** by #3101 (`merge_path_first_correct`, `body_merge_path_fill`) |
 | 2 | `cp_stitch_shape`, `cp_stitch_loses_correlation` | A `MATCH … WHERE` followed by a multi-component MATCH is cross-joined, not correlated: Rust `[1,0,7]`, C `[]` | **Open** (PR #3100 not merged) |
 | 3 | removed (17ccc5412) | The previous MATCH's WHERE was dropped when the next MATCH traversed from its variable; `… DELETE b` deleted data C does not | Fixed by #2390 (`rebuild_keeps_where`) |
 | 4 | `selfloop_ignores_chain` (still in `Match.lean`; its `pre3102_chainOp_selfloop_unbound` counterexample was removed in 17ccc5412) | A self-loop hop after other hops dropped them: `[null,2,3]` vs C `[1,2,3]` | Fixed by #3102 (#2999; `chainRel_selfloop_unbound`, `selfloop_scan_keeps_chain`) |
 | 5 (W4-plan-1) | `toPlan_not_null_bug` | `NOT (complex)` with an inline pattern keeps null rows: Rust 2, C 1 | **Open** |
 | 6 (W4-plan-4) | `call_validates_rest`, `call_then_match_rejected` | Nothing after a procedure CALL was validated; `CALL db.labels() YIELD label MATCH (n)` reached a `parent().unwrap()` in `utilize_node_by_id` | **Fixed by #3297** (b774fdfad); the `unwrap()` in `utilize_node_by_id` remains as a hazard |
 | 7 (W4-plan-5) | `with_last_rejected` | A query could end with WITH; C and openCypher reject it | **Fixed by #3291** (608b62542) |
-| 8 (W8-plan-1) | `create_path_last_misplaced`, `create_path_last_skips_create` | Regression from #2829: CREATE with a named path as the last clause, after another clause, never runs | **Open** (PR #3101 not merged; covers bugs 1 and 8) |
+| 8 (W8-plan-1) | `pre3101_create_path_last_misplaced`, `pre3101_create_path_last_skips_create` | Regression from #2829: CREATE with a named path as the last clause, after another clause, never runs | **Fixed** by #3101 (`create_path_first_correct`) |
 | #2311 | `bug2311_optional_path_null` | `MATCH (n0:P) OPTIONAL MATCH p0=(n0) RETURN n0.id, p0`: Rust `1, null`, C `1, [(0)]`. The bound node-only branch never builds the path (`BindsAllPaths` fails) | **Open** |
 | #2737 | `bug2737_optional_path_null` | `MATCH (n1:X) OPTIONAL MATCH p6 = (n1) RETURN p6`: Rust `null`, C `[(0)]`. Same cause as #2311 | **Open** |
 | #2743 | `bug2743_bound_path_drops_rows` | `MATCH (n0:V) WITH * MATCH p0=(n0) RETURN count(*)`: Rust 0, C 1. No path, and the plan is not Apply-wrapped, so the earlier clauses land under an `Argument` that never runs them (`argIsLeaf` fails) | **Open** |

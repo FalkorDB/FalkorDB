@@ -10,13 +10,14 @@ computes the nested fill `pₙ[pₙ₋₁[…p₁]]` (`stitch_eq_nest`), where `
 `x` at `p`'s own insertion point. Whether `p[x]` means "run `x`, then clause
 `p` on its output" is then a per-clause question (Clauses.lean, Match.lean).
 
-The one place where the two walks disagree on a plan a clause can end with is
-`PathBuilder`: the first walk (mod.rs:2743-2749, and the FOREACH body walk
-mod.rs:3450) does not step over it, the in-loop walk (mod.rs:2817-2830) does
-(`walkFirst_pathBuilder`, `walkLoop_pathBuilder`). MERGE with a named path is
-planned as `PathBuilder(Merge(match))` (mod.rs:3128-3132), so when it is the
-last clause the previous clause lands beside `Merge`, under `PathBuilder`,
-which only ever runs its child 0: `merge_path_last_misplaced`.
+Since #3101 both walks step over `PathBuilder` (mod.rs:2759-2770 lists
+`IR::PathBuilder(_)`, as the in-loop walk mod.rs:2834-2847 does), so a MERGE or
+CREATE with a named path — planned as `PathBuilder(Merge(match))` /
+`PathBuilder(Create)` — gets its input below `Merge`/`Create` also when it is the
+last clause (Clauses.lean `merge_path_first_correct`, `create_path_first_correct`).
+Before #3101 the first walk stopped there (`walkFirstPre3101`), and the previous
+clause landed beside `Merge`, under `PathBuilder`, which only runs its child 0:
+`pre3101_merge_path_last_misplaced`.
 -/
 namespace PlannerBuild
 
@@ -47,8 +48,15 @@ def insertAt (p : Plan) (π : Path) (x : Plan) : Plan := p.modify (fun q => q.pu
 
 /-! ## The walks -/
 
-/-- Operators the first walk steps over (mod.rs:2743-2749). -/
+/-- Operators the first walk steps over (mod.rs:2759-2766; `PathBuilder` since #3101). -/
 def firstPass : Op → Bool
+  | .sort _ | .skip _ | .limit _ | .distinct | .filter _ | .semiApply | .antiSemiApply
+  | .orMux | .pathBuilder _ => true
+  | _ => false
+
+/-- The first walk's list before #3101 (no `PathBuilder`); kept for the
+historical bug theorems `pre3101_*` (Clauses.lean). -/
+def firstPassPre3101 : Op → Bool
   | .sort _ | .skip _ | .limit _ | .distinct | .filter _ | .semiApply | .antiSemiApply
   | .orMux => true
   | _ => false
@@ -68,14 +76,20 @@ def saturated : Plan → Bool
   | .node .apply (_ :: _ :: _) => true
   | _ => false
 
-/-- mod.rs:2743-2753. (A childless `Sort`… would make Rust panic on
+/-- mod.rs:2759-2770. (A childless `Sort`/`PathBuilder`… would make Rust panic on
 `child(0)`; the planner never builds one, the model stops.) -/
 def walkFirst : Plan → Path
   | .node op (c :: cs) =>
     if firstPass op || (isApply op && !cs.isEmpty) then 0 :: walkFirst c else []
   | .node _ [] => []
 
-/-- mod.rs:2817-2834. -/
+/-- The first walk before #3101. -/
+def walkFirstPre3101 : Plan → Path
+  | .node op (c :: cs) =>
+    if firstPassPre3101 op || (isApply op && !cs.isEmpty) then 0 :: walkFirstPre3101 c else []
+  | .node _ [] => []
+
+/-- mod.rs:2834-2851. -/
 def walkLoop : Plan → Path
   | .node op (c :: cs) =>
     if loopPass op || (isApply op && !cs.isEmpty) then 0 :: walkLoop c else []
@@ -139,6 +153,7 @@ def slotWith (w : Plan → Path) (p : Plan) : Path :=
     | some q2 => π2 ++ descendClause q2.depth q2
 
 def slotFirst := slotWith walkFirst
+def slotFirstPre3101 := slotWith walkFirstPre3101
 def slotLoop := slotWith walkLoop
 
 /-! ## `needs_apply_wrapping` and `add_argument_to_leaves` -/
