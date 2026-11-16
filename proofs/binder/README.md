@@ -92,7 +92,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committ
 | W2-binder-6 | `labels_leak` | Labels from CREATE and from pattern comprehensions tighten an earlier MATCH scan: 0 or 1 rows where C returns 3 | **Open** (PR #3049 not merged) |
 | W2-binder-7 | `defineName_ignores_parent` | A pattern predicate in `WITH … WHERE` rebinds a parent variable as a fresh one: 3 rows where C returns 1 | **Open** (PR #3062 not merged) |
 | W4-plan-2 | `getElement_rejected`, `negate_rejected` | `WHERE n.flags[0]` → "Expected boolean predicate" (C: 1); same for `true AND l[0]` and `true AND -null` | **Open** |
-| W4-plan-3 | `order_by_wrong_aggregate`, `const_kinds_conflated` | `expr_ir_eq` treats all Int/Float/Null/Bool/String constants as equal, so `ORDER BY max(n.v % 4.0)` sorts by the alias of `max(n.v % 3)`; C rejects the query | **Open**; PR #3011 would widen it to non-aggregate ORDER BY, so fix this first |
+| W4-plan-3 | `pre3254_order_by_wrong_aggregate`, `pre3254_const_kinds_conflated`; fixed: `const_kinds_distinguished`, `order_by_other_aggregate_rejected` | `expr_ir_eq` treats all Int/Float/Null/Bool/String constants as equal, so `ORDER BY max(n.v % 4.0)` sorts by the alias of `max(n.v % 3)`; C rejects the query | **Fixed** (#3254: `constants_equal`, exact Int/Float match `intFloatEq_iff`) |
 | W6-opt-1 | `pushed_read_unbound` | Filter push-down gives an OPTIONAL MATCH inside `CALL {}` the outer query's ids: "Variable n not found" where C returns rows | **Open** |
 | #1334 | `bug1334_pattern_predicate_declares_var` (property `PatternPredDeclaresNothing`) | A WHERE pattern predicate may mint a new named variable: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds and returns every `n0`; C rejects it (issue #1334; the C error message is not recorded here) | **Open** |
 | #3450 | `bug3450_remove_label_kept_across_with` (property `StampedLabelsHeld`, `RemoveLabels.lean`) | `REMOVE a:A` leaves `A` in the accumulated label set, which `WITH a` copies and `update_all_node_labels` stamps on the next MATCH: `MATCH (a:A) REMOVE a:A WITH a MATCH (a)-[:R]->(b)` gives 0 rows, C 1. The fixed stamp `specStamp` satisfies the property (`specStamp_held`). The issue's CREATE/MERGE back-propagation half does not reproduce | **Open** |
@@ -121,7 +121,7 @@ There are no CONDITIONAL rows in this project.
 | `BindIR.lean` | Per-clause rules of `bind_ir` (`RC`, `bindIR`): shortestPath, MERGE, YIELD, `CALL {}` subqueries, CREATE |
 | `Types.lean` | `mayBool`, `mayEntity`, `validate` |
 | `Fold.lean` | Constant folding (`nodeToValue`, `foldCall`), struct-constructor and regex rewrites |
-| `AggEq.lean` | `expr_ir_eq` (`exprIrEq`), structural equality, `replaceAgg` |
+| `AggEq.lean` | `constants_equal` (`constEq`), `expr_ir_eq` (`exprIrEq`), structural equality, `replaceAgg` |
 | `CallBoundary.lean` | The `CALL {}` entry projection added by #2845 (namespace `Pr2845`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
