@@ -11,7 +11,7 @@ import PlannerBuild.Expr
 | `build`, `buildL` | `build_pattern_comprehension_plan` mod.rs:1401-1482 |
 | `interleave` | path components, mod.rs:1115-1121 |
 | `hoist` | `hoist_or_nest` mod.rs:1195-1240 |
-| `extract`, `extractL` | `extract_pattern_comprehensions` mod.rs:1059-1187 |
+| `extract`, `extractL`, `patEC` | `extract_pattern_comprehensions` mod.rs:1065-1207 |
 | `chainOf`, `extractClause` | `extract_clause_expr_comprehensions` mod.rs:1304-1336 / `extract_list_expr_comprehensions` mod.rs:1287-1294 |
 | `extractFilter` | `extract_filter_comprehensions` mod.rs:1359-1396 |
 | `finish` | `Planner::finish` mod.rs:823-835 |
@@ -107,6 +107,28 @@ def hoist (st : PSt) (acc : List EC) (node : Ex) (comp : EC) : Ex × PSt × List
     (.node (.nested id comp.var) (free.map Ex.v),
      { b.2 with visited := saved, nestedN := b.2.nestedN + 1 }, acc)
 
+/-- `QueryGraph::add_path` (ast.rs:804-814) for a freshly minted path variable: appended to
+the pattern's paths, so `variables()` gains it last (the duplicate check never fires: the
+variable is new). -/
+def QG.addPath (g : QG) (pv : V) : QG := { g with vars := g.vars ++ [pv] }
+
+/-- The comprehension a bare pattern becomes (mod.rs:1132-1153). As a predicate (`Exists`)
+the path is built above the match, which still collapses a node pair; when its list is
+used (`Collect`, #3111) the path is registered on the pattern itself, so the match binds
+each edge (one path per relationship, as C). -/
+def patEC (m : Mode) (g : QG) (var pv : V) : EC :=
+  if m = .exists_ then .mk var g none (Ex.v pv) (some (pv, interleave g.nodes g.rels)) []
+  else .mk var (g.addPath pv) none (Ex.v pv) none []
+
+theorem patEC_var (m : Mode) (g : QG) (var pv : V) : (patEC m g var pv).var = var := by
+  unfold patEC; split <;> rfl
+
+/-- In Collect mode the path variable is one of the matched pattern's variables. -/
+theorem patEC_collect (g : QG) (var pv : V) :
+    patEC .collect g var pv = .mk var (g.addPath pv) none (Ex.v pv) none [] ∧
+      pv ∈ (g.addPath pv).vars := by
+  simp [patEC, QG.addPath]
+
 mutual
 def extract (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) : Ex → Ex × PSt × List EC
   | .node d cs => match d with
@@ -126,8 +148,7 @@ def extract (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) : Ex → Ex × PSt 
       else
         let a := fresh st sc
         let b := fresh a.2 sc
-        let h := hoist b.2 acc (.node d cs)
-          (.mk a.1 g none (Ex.v b.1) (some (b.1, interleave g.nodes g.rels)) [])
+        let h := hoist b.2 acc (.node d cs) (patEC m g a.1 b.1)
         (if m = .exists_ then gt0 h.1 else h.1, h.2.1, h.2.2)
     | _ =>
       let x := extractL sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs
