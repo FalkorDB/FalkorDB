@@ -95,6 +95,20 @@ bool ApplyCreateConstraint
 	uint8_t n ;
 	fread_assert (&n, sizeof (n), stream) ;
 
+	// A CONSTRAINT OVER NO PROPERTIES IS NOT A CONSTRAINT. Refused here rather
+	// than carried into GraphHub_AddConstraint, whose ASSERT (n > 0) is a
+	// no-op in release. cmd_constraint.c bounds a client statement at 1..255,
+	// so no statement produces this - a wire record does, and GRAPH.EFFECT is
+	// registered "write deny-script" with no master-link check, so any client
+	// that may write the key can send one.
+	if (n == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' names no properties",
+				label) ;
+		rm_free (label) ;
+		return false ;
+	}
+
 	AttributeID attr_ids [n] ;
 	char *props [n] ;
 	ReadConstraintAttributes (stream, n, attr_ids, props) ;

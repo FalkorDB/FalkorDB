@@ -302,6 +302,77 @@ void test_every_prefix_decodes_or_refuses_cleanly() {
 	_sweep(CREATE_INDEX_REC, sizeof(CREATE_INDEX_REC));
 }
 
+//------------------------------------------------------------------------------
+// a constraint names at least one property
+//------------------------------------------------------------------------------
+
+// 13 CREATE_CONSTRAINT over (:L) {p}, as the encoder lays it out:
+//   constraint_type - entity_type - status - schema_id - name - n_props - refs
+// n_props is ONE BYTE at offset 32, which is what the pair below varies.
+static const unsigned char CREATE_CONSTRAINT_REC[] = {
+	0x03, 0x00,                                      // version 3, no flags
+	0x0d, 0x00, 0x00, 0x00,                          // opcode 13
+	0x00, 0x00, 0x00, 0x00,                          // CT_UNIQUE
+	0x01, 0x00, 0x00, 0x00,                          // GETYPE_NODE
+	0x00, 0x00, 0x00, 0x00,                          // CT_ACTIVE
+	0x00, 0x00, 0x00, 0x00,                          // schema id 0
+	0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // name, 2 bytes
+	0x4c, 0x00,                                      // "L"
+	0x01,                                            // n_props = 1
+	0x00, 0x00,                                      // attribute id 0
+	0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // name, 2 bytes
+	0x70, 0x00                                       // "p"
+};
+
+#define N_PROPS_OFFSET 32
+
+// A ZERO PROPERTY COUNT IS REFUSED, and the positive half of this pair is what
+// makes that mean something: both payloads are the same record and differ in
+// that one byte, so a guard that refused too much - or a fixture that was
+// malformed for some unrelated reason - fails the first assertion rather than
+// passing the second for the wrong reason.
+//
+// What it protects: GraphHub_AddConstraint scans for duplicates with
+// i + 1 < n over a uint8_t. Written as i < n - 1, which is what it was, n == 0
+// gives UINT_MAX and reads off the end of a zero-length stack array. The
+// ASSERT (n > 0) stating the rule there compiles to nothing in release.
+void test_decode_refuses_a_constraint_with_no_properties() {
+	// the record as written decodes
+	EffectsV3Records *records = NULL;
+	EffectsV3Status status = EffectsV3_Decode((const char*)CREATE_CONSTRAINT_REC,
+			sizeof(CREATE_CONSTRAINT_REC), &records);
+
+	TEST_ASSERT(status == EFFECTS_V3_OK);
+	TEST_ASSERT(records != NULL);
+	EffectsV3_RecordsFree(records);
+
+	// the same record, stated over no properties at all
+	unsigned char buf[N_PROPS_OFFSET + 1];
+	memcpy(buf, CREATE_CONSTRAINT_REC, sizeof(buf));
+	buf[N_PROPS_OFFSET] = 0x00;
+
+	records = NULL;
+	status = EffectsV3_Decode((const char*)buf, sizeof(buf), &records);
+
+	TEST_ASSERT(status  == EFFECTS_V3_MALFORMED);
+	TEST_ASSERT(records == NULL);
+
+	// and the same for a DROP, which shares the reader
+	unsigned char drop[N_PROPS_OFFSET + 1 - 4];  // no status field
+	memcpy(drop, CREATE_CONSTRAINT_REC, 2);
+	drop[2] = 0x0e;  // opcode 14 DROP_CONSTRAINT
+	drop[3] = 0x00; drop[4] = 0x00; drop[5] = 0x00;
+	memcpy(drop + 6, CREATE_CONSTRAINT_REC + 6, 8);        // type, entity
+	memcpy(drop + 14, CREATE_CONSTRAINT_REC + 18, 14);     // schema id, name
+	drop[28] = 0x00;                                       // n_props = 0
+
+	records = NULL;
+	status = EffectsV3_Decode((const char*)drop, sizeof(drop), &records);
+
+	TEST_ASSERT(status  == EFFECTS_V3_MALFORMED);
+	TEST_ASSERT(records == NULL);
+}
+
 TEST_LIST = {
 	{"decode_collects_every_record",      test_decode_collects_every_record},
 	{"decode_refuses_a_truncated_payload", test_decode_refuses_a_truncated_payload},
@@ -314,5 +385,7 @@ TEST_LIST = {
 			test_reader_stops_where_the_consumer_stops},
 	{"every_prefix_decodes_or_refuses_cleanly",
 			test_every_prefix_decodes_or_refuses_cleanly},
+	{"decode_refuses_a_constraint_with_no_properties",
+			test_decode_refuses_a_constraint_with_no_properties},
 	{NULL, NULL}
 };

@@ -30,10 +30,27 @@ static inline EffectType ReadEffectType
 	return t;
 }
 
-static AttributeSet ReadAttributeSet
+// read an AttributeSet off the stream
+//
+// TWO OUTCOMES THAT USED TO SHARE ONE NULL. A record stating zero attributes
+// is a propertyless entity and perfectly legal; a value that will not decode
+// is a payload this build cannot interpret. Returning NULL for both made the
+// second indistinguishable from the first at every call site, so a truncated
+// value applied as an entity with no properties and Effects_Apply still
+// reported success - silent divergence, which is the one outcome the
+// divergence guard exists to prevent.
+//
+// So the verdict is the return value and the set is an out-param: false means
+// refuse the payload, true with *out == NULL means the record said zero.
+static bool ReadAttributeSet
 (
-	FILE *stream
+	FILE *stream,
+	AttributeSet *out  // the set read, NULL when the record states none
 ) {
+	ASSERT (out != NULL) ;
+
+	*out = NULL ;
+
 	//--------------------------------------------------------------------------
 	// effect format:
 	// attribute count
@@ -47,7 +64,7 @@ static AttributeSet ReadAttributeSet
 	uint16_t attr_count;
 	fread_assert(&attr_count, sizeof(attr_count), stream);
 	if (attr_count == 0) {
-		return NULL ;
+		return true ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -66,17 +83,18 @@ static AttributeSet ReadAttributeSet
 			// forced by the shared codec's signature; the surrounding v2 reads
 			// are hardened separately
 			for (uint16_t j = 0; j < i; j++) SIValue_Free (values[j]);
-			return NULL;
+			return false;
 		}
 	}
 
 	AttributeSet attr_set = NULL;
 	AttributeSet_Add (&attr_set, ids, values, attr_count, false) ;
 
-	return attr_set;
+	*out = attr_set;
+	return true;
 }
 
-static void ApplyCreateNode
+static bool ApplyCreateNode
 (
 	FILE *stream,     // effects stream
 	GraphContext *gc  // graph to operate on
@@ -109,7 +127,13 @@ static void ApplyCreateNode
 	// read attributes
 	//--------------------------------------------------------------------------
 
-	AttributeSet attr_set = ReadAttributeSet (stream) ;
+	AttributeSet attr_set = NULL ;
+	if (!ReadAttributeSet (stream, &attr_set)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_NODE carries an attribute value this "
+				"build cannot decode") ;
+		return false ;
+	}
 
 	//--------------------------------------------------------------------------
 	// create node
@@ -117,6 +141,8 @@ static void ApplyCreateNode
 
 	Node n = GE_NEW_NODE () ;
 	GraphHub_CreateNode (gc, &n, labels, lbl_count, attr_set, false) ;
+
+	return true ;
 }
 
 static inline void FlushEdges
@@ -155,7 +181,7 @@ static inline void FlushEdges
 //
 // multiple edges of the same relation type are batched together
 // for efficient insertion
-static void ApplyCreateEdge
+static bool ApplyCreateEdge
 (
 	FILE *stream,      // effects stream
 	GraphContext *gc,  // graph to operate on
@@ -178,6 +204,8 @@ static void ApplyCreateEdge
 
 	Edge **batch = arr_new (Edge *, 1) ;  // batch, points to edges
 	AttributeSet *sets = arr_new (AttributeSet, 1) ;  // attribute-sets
+
+	bool ok = true ;  // cleared when a value will not decode
 
 	RelationID r      = GRAPH_UNKNOWN_RELATION ;  // current edge relation id
 	RelationID prev_r = GRAPH_UNKNOWN_RELATION ;  // last processed relation id
@@ -214,7 +242,16 @@ static void ApplyCreateEdge
 		// read attributes
 		//----------------------------------------------------------------------
 
-		arr_append (sets, ReadAttributeSet(stream)) ;
+		AttributeSet set = NULL ;
+		if (!ReadAttributeSet (stream, &set)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_EDGE carries an attribute value this "
+					"build cannot decode") ;
+			ok = false ;
+			break ;
+		}
+
+		arr_append (sets, set) ;
 
 		//----------------------------------------------------------------------
 		// add edge to batch
@@ -249,12 +286,23 @@ static void ApplyCreateEdge
 		}
 	}
 
-	// flush last batch
-	FlushEdges (gc, batch, sets, r, &i) ;
+	if (ok) {
+		// flush last batch
+		FlushEdges (gc, batch, sets, r, &i) ;
+	} else {
+		// the batch is abandoned, so nothing takes over the sets already read:
+		// GraphHub_CreateEdges is what consumes them, and it is not reached
+		uint32_t n = arr_len (sets) ;
+		for (uint32_t k = 0 ; k < n ; k++) {
+			AttributeSet_Free (sets + k) ;
+		}
+	}
 
 	// clean up
 	arr_free (sets) ;
 	arr_free (batch) ;
+
+	return ok ;
 }
 
 // returns false if the effect references graph state that doesn't exist
@@ -855,11 +903,11 @@ bool Effects_Apply
 				break ;
 
 			case EFFECT_CREATE_NODE:
-				ApplyCreateNode (stream, gc) ;
+				ok = ApplyCreateNode (stream, gc) ;
 				break ;
 
 			case EFFECT_CREATE_EDGE:
-				ApplyCreateEdge (stream, gc, l) ;
+				ok = ApplyCreateEdge (stream, gc, l) ;
 				break ;
 
 			case EFFECT_SET_LABELS:

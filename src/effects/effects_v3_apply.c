@@ -63,6 +63,20 @@
 // walking an IdList without expanding it
 //------------------------------------------------------------------------------
 
+// what one step of the walk produced
+//
+// THREE OUTCOMES, NOT A BOOL PLUS A FLAG. "no id this time" covers two
+// completely different situations - the list gave up everything it described,
+// or a segment would not open - and they need opposite responses: the first is
+// how every walk ends, the second refuses the payload. Returning false for
+// both put the distinction in a second field the caller had to remember to
+// read, and a caller that forgot applied a prefix and reported success.
+typedef enum {
+	ID_ITER_OK,      // '*id' holds the next id
+	ID_ITER_END,     // the list is spent: every id it described was yielded
+	ID_ITER_BROKEN,  // a Set segment would not open, or yielded short
+} IdIterStatus;
+
 // a cursor over an IdList that yields one id at a time
 //
 // holds no array proportional to the list's cardinality: a Range and a Repeat
@@ -74,7 +88,7 @@ typedef struct {
 	uint64_t               produced;  // ids yielded from that segment
 	roaring64_bitmap_t    *bitmap;    // Set kinds only, owned
 	roaring64_iterator_t  *bit_it;    // Set kinds only, owned
-	bool                   broken;    // a bitmap failed to deserialize
+	IdIterStatus           status;    // what the last step returned
 } IdIter;
 
 static void _IdIter_Init
@@ -87,7 +101,7 @@ static void _IdIter_Init
 	it->produced = 0 ;
 	it->bitmap   = NULL ;
 	it->bit_it   = NULL ;
-	it->broken   = false ;
+	it->status   = ID_ITER_OK ;
 }
 
 // release whatever the current Set segment allocated
@@ -112,11 +126,25 @@ static void _IdIter_Free
 	_IdIter_CloseSegment (it) ;
 }
 
+// record what this step produced and hand it back
+//
+// the status is BOTH returned and kept, because a loop asks per step while the
+// check after it asks about the end of the walk - one value answering both
+static inline IdIterStatus _IdIter_Done
+(
+	IdIter *it,
+	IdIterStatus status
+) {
+	it->status = status ;
+	return status ;
+}
+
 // yield the next id
 //
-// returns false when the list is exhausted, or when a bitmap could not be
-// deserialized - 'broken' distinguishes the two
-static bool _IdIter_Next
+// ID_ITER_OK leaves the id in '*id'. ID_ITER_END is the ordinary end of the
+// walk. ID_ITER_BROKEN is a refusal: the caller must not treat what it already
+// collected as a complete list.
+static IdIterStatus _IdIter_Next
 (
 	IdIter *it,
 	uint64_t *id
@@ -132,7 +160,7 @@ static bool _IdIter_Next
 				if (it->produced < s->range_ascending.len) {
 					*id = s->range_ascending.base + it->produced ;
 					it->produced++ ;
-					return true ;
+					return _IdIter_Done (it, ID_ITER_OK) ;
 				}
 				break ;
 
@@ -141,7 +169,7 @@ static bool _IdIter_Next
 				if (it->produced < s->range_descending.len) {
 					*id = s->range_descending.base - it->produced ;
 					it->produced++ ;
-					return true ;
+					return _IdIter_Done (it, ID_ITER_OK) ;
 				}
 				break ;
 
@@ -149,7 +177,7 @@ static bool _IdIter_Next
 				if (it->produced < s->repeat.count) {
 					*id = s->repeat.id ;
 					it->produced++ ;
-					return true ;
+					return _IdIter_Done (it, ID_ITER_OK) ;
 				}
 				break ;
 
@@ -175,16 +203,14 @@ static bool _IdIter_Next
 						// decode already deserialized this blob to take its
 						// cardinality, so failing here means memory pressure
 						// rather than a malformed payload
-						it->broken = true ;
-						return false ;
+						return _IdIter_Done (it, ID_ITER_BROKEN) ;
 					}
 					it->bit_it = descending
 						? roaring64_iterator_create_last (it->bitmap)
 						: roaring64_iterator_create (it->bitmap) ;
 					if (it->bit_it == NULL) {
 						_IdIter_CloseSegment (it) ;
-						it->broken = true ;
-						return false ;
+						return _IdIter_Done (it, ID_ITER_BROKEN) ;
 					}
 				}
 
@@ -196,7 +222,7 @@ static bool _IdIter_Next
 						roaring64_iterator_advance (it->bit_it) ;
 					}
 					it->produced++ ;
-					return true ;
+					return _IdIter_Done (it, ID_ITER_OK) ;
 				}
 
 				// THE SET YIELDED WHAT DECODE COUNTED, checked rather than
@@ -211,15 +237,13 @@ static bool _IdIter_Next
 				// because decode already guarantees it, so a silent short walk
 				// there would apply a prefix and report success.
 				if (it->produced != card) {
-					it->broken = true ;
-					return false ;
+					return _IdIter_Done (it, ID_ITER_BROKEN) ;
 				}
 				break ;
 			}
 
 			default:
-				it->broken = true ;
-				return false ;
+				return _IdIter_Done (it, ID_ITER_BROKEN) ;
 		}
 
 		// this segment is spent
@@ -228,7 +252,7 @@ static bool _IdIter_Next
 		it->produced = 0 ;
 	}
 
-	return false ;
+	return _IdIter_Done (it, ID_ITER_END) ;
 }
 
 //------------------------------------------------------------------------------
@@ -525,11 +549,11 @@ static bool _ApplyCreateNode
 
 	uint32_t got = 0 ;
 	uint64_t id ;
-	while (got < count && _IdIter_Next (&it, &id)) {
+	while (got < count && _IdIter_Next (&it, &id) == ID_ITER_OK) {
 		ids[got++] = id ;
 	}
 
-	const bool broken = it.broken ;
+	const bool broken = it.status == ID_ITER_BROKEN ;
 	_IdIter_Free (&it) ;
 
 	if (broken || got != count) {
@@ -648,11 +672,12 @@ static bool _ApplyCreateEdge
 	uint32_t got = 0 ;
 	uint64_t id, src, dst ;
 
-	while (ok && got < count && _IdIter_Next (&it_ids, &id)) {
+	while (ok && got < count && _IdIter_Next (&it_ids, &id) == ID_ITER_OK) {
 		// the three lists are positionally aligned by construction, and decode
 		// has already checked all three total the record's count - so a short
 		// one here is a decoder bug, not a wire problem
-		if (!_IdIter_Next (&it_srcs, &src) || !_IdIter_Next (&it_dsts, &dst)) {
+		if (_IdIter_Next (&it_srcs, &src) != ID_ITER_OK ||
+			_IdIter_Next (&it_dsts, &dst) != ID_ITER_OK) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT CREATE_EDGE endpoint lists are shorter than "
 					"its id list") ;
@@ -677,7 +702,9 @@ static bool _ApplyCreateEdge
 		got++ ;
 	}
 
-	if (ok && (it_ids.broken || it_srcs.broken || it_dsts.broken)) {
+	if (ok && (it_ids.status  == ID_ITER_BROKEN ||
+			   it_srcs.status == ID_ITER_BROKEN ||
+			   it_dsts.status == ID_ITER_BROKEN)) {
 		ok = false ;
 	}
 
@@ -789,7 +816,7 @@ static bool _ApplyUpdateNode
 	uint64_t id ;
 	uint64_t k = 0 ;
 
-	while (ok && _IdIter_Next (&it, &id)) {
+	while (ok && _IdIter_Next (&it, &id) == ID_ITER_OK) {
 		if (id == INVALID_ENTITY_ID || !Graph_HasNode (g, id)) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT UPDATE_NODE references node %" PRIu64
@@ -819,7 +846,7 @@ static bool _ApplyUpdateNode
 		k++ ;
 	}
 
-	if (ok && it.broken) {
+	if (ok && it.status == ID_ITER_BROKEN) {
 		ok = false ;
 	}
 
@@ -909,12 +936,12 @@ static bool _ApplyUpdateEdge
 
 	uint64_t id ;
 	uint64_t k = 0 ;
-	while (k < rec->update_edge.count && _IdIter_Next (&it, &id)) {
+	while (k < rec->update_edge.count && _IdIter_Next (&it, &id) == ID_ITER_OK) {
 		table[k].id  = id ;
 		table[k].row = k ;
 		k++ ;
 	}
-	const bool broken = it.broken ;
+	const bool broken = it.status == ID_ITER_BROKEN ;
 	_IdIter_Free (&it) ;
 
 	if (broken || k != rec->update_edge.count) {
@@ -1022,7 +1049,7 @@ static bool _ApplyDeleteNode
 	bool ok = true ;
 	uint64_t id ;
 
-	while (ok && _IdIter_Next (&it, &id)) {
+	while (ok && _IdIter_Next (&it, &id) == ID_ITER_OK) {
 		if (!Graph_GetNode (g, id, batch + n)) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT DELETE_NODE references node %" PRIu64
@@ -1039,7 +1066,7 @@ static bool _ApplyDeleteNode
 		}
 	}
 
-	if (ok && it.broken) {
+	if (ok && it.status == ID_ITER_BROKEN) {
 		ok = false ;
 	}
 
@@ -1082,8 +1109,9 @@ static bool _ApplyDeleteEdge
 	bool ok = true ;
 	uint64_t id, src, dst ;
 
-	while (ok && _IdIter_Next (&ids, &id)) {
-		if (!_IdIter_Next (&srcs, &src) || !_IdIter_Next (&dsts, &dst)) {
+	while (ok && _IdIter_Next (&ids, &id) == ID_ITER_OK) {
+		if (_IdIter_Next (&srcs, &src) != ID_ITER_OK ||
+			_IdIter_Next (&dsts, &dst) != ID_ITER_OK) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT DELETE_EDGE endpoint lists are shorter than "
 					"its id list") ;
@@ -1122,7 +1150,9 @@ static bool _ApplyDeleteEdge
 		}
 	}
 
-	if (ok && (ids.broken || srcs.broken || dsts.broken)) {
+	if (ok && (ids.status  == ID_ITER_BROKEN ||
+			   srcs.status == ID_ITER_BROKEN ||
+			   dsts.status == ID_ITER_BROKEN)) {
 		ok = false ;
 	}
 
@@ -1228,7 +1258,7 @@ static bool _ApplyLabels
 	bool ok = true ;
 	uint64_t id ;
 
-	while (ok && _IdIter_Next (&it, &id)) {
+	while (ok && _IdIter_Next (&it, &id) == ID_ITER_OK) {
 		if (!Graph_HasNode (g, id)) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT %s references node %" PRIu64
@@ -1242,7 +1272,7 @@ static bool _ApplyLabels
 		}
 	}
 
-	if (ok && it.broken) {
+	if (ok && it.status == ID_ITER_BROKEN) {
 		ok = false ;
 	}
 
@@ -1325,7 +1355,9 @@ static bool _OptionsToMap
 				SI_ConstStringVal (o->phonetic)) ;
 	}
 
-	if (!o->is_vector) {
+	// the same gate the reader used, taken from the same place: the record's
+	// field type, not a flag stored beside the values
+	if ((o_rec->field_type & INDEX_FLD_VECTOR) == 0) {
 		return true ;
 	}
 
@@ -1437,11 +1469,17 @@ static Schema *_VerifyDDLRefs
 // NUMERIC|GEO|STR, and the index API takes the canonical INDEX_FLD_RANGE
 // rather than whichever subset arrived.
 //
-// PASSING THE SUBSET STRAIGHT THROUGH IS A CRASH, not a wrong answer.
-// GraphHub_AddIndex asserts its type is exactly FULLTEXT, RANGE or VECTOR, and
-// the build undefines NDEBUG, so that assert is live in release: a peer
+// PASSING THE SUBSET STRAIGHT THROUGH IS A CRASH, not a wrong answer. A peer
 // emitting 0x08 - string only, which is a perfectly ordinary range index -
-// aborts the replica.
+// aborted the replica when measured against a live server.
+//
+// GraphHub_AddIndex states the rule as ASSERT (t == FULLTEXT || RANGE ||
+// VECTOR), but that is NOT what stops it: ASSERT is gated on RG_DEBUG
+// (RG.h), which CMakeLists.txt defines only for a Debug build, so in release
+// it compiles to nothing. -UNDEBUG governs libc's assert() and RediSearch's
+// macro, not this one. The abort a release build takes comes from further in,
+// which is the reason to canonicalise here rather than rely on being stopped
+// downstream.
 //
 // A bit this build does not know, and two different kinds named by one
 // statement, are refused rather than guessed. An empty field type is a range

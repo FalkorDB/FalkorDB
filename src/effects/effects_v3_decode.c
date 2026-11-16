@@ -991,8 +991,6 @@ static EffectsV3Status _ReadIndexOptions
 	//--------------------------------------------------------------------------
 
 	if (field_type & INDEX_FLD_VECTOR) {
-		o->is_vector = true ;
-
 		// dimension has NO presence byte: a vector field must have one
 		if (!fread_checked (&o->dimension, sizeof (o->dimension), stream)) {
 			status = EFFECTS_V3_TRUNCATED ;
@@ -1287,6 +1285,27 @@ static EffectsV3Status _ReadConstraintRecord
 	uint8_t n_props ;
 	if (!_ReadU8 (stream, &n_props)) {
 		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	// A CONSTRAINT OVER NO PROPERTIES IS NOT A CONSTRAINT, and refusing it
+	// here is not tidiness. GraphHub_AddConstraint states the rule as
+	// ASSERT (n > 0), which compiles to nothing in release, and then scans
+	// for duplicates with
+	//
+	//     for (uint i = 0; i < n - 1; i++)       graph_hub.c
+	//
+	// where 'n' is a uint8_t. At n == 0 the subtraction is done as int, gives
+	// -1, and the comparison against an unsigned 'i' converts it to UINT_MAX -
+	// so the loop reads billions of entries off the end of a stack array sized
+	// from the same zero. cmd_constraint.c bounds PROPERTIES at 1..255 for a
+	// client, so no statement can produce this; a wire record can, and
+	// GRAPH.EFFECT is reachable by any client that may write to the key.
+	//
+	// It belongs here rather than beside the loop because the count is a
+	// FORMAT rule - both CREATE and DROP identify a constraint by its property
+	// list, and a DROP naming none cannot match the constraint it means.
+	if (n_props == 0) {
+		return EFFECTS_V3_MALFORMED ;
 	}
 
 	return _ReadAttrRefs (stream, n_props, attrs, n_attrs) ;

@@ -801,9 +801,15 @@ Constraint GraphHub_AddConstraint
 	//--------------------------------------------------------------------------
 
 	// sort the properties for an easy comparison later
+	// i + 1 < n, NOT i < n - 1. 'n' is a uint8_t, so at n == 0 the subtraction
+	// is done as int, gives -1, and converts to UINT_MAX against an unsigned
+	// 'i' - billions of reads off the end of a zero-length array. The ASSERT
+	// above states n > 0 and is a no-op in release, so it is not what stops
+	// this; the callers refuse a zero count, and the loop is written so that
+	// a caller that ever does not cannot read out of bounds.
 	bool dups = false ;
 	qsort (attr_ids, n, sizeof (AttributeID), _cmp_AttributeID) ;
-	for (uint i = 0; i < n - 1; i++) {
+	for (uint i = 0; i + 1 < n; i++) {
 		if (attr_ids [i] == attr_ids [i + 1]) {
 			dups = true ;
 			break ;

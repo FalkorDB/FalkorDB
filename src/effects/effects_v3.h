@@ -280,6 +280,13 @@ typedef struct {
 // Each option carries a presence byte, so an option that was not stated is
 // distinguishable from one stated at its default. 'dimension' has no presence
 // byte of its own: a vector field always has one.
+//
+// THERE IS NO is_vector FLAG HERE. Whether the vector half is present is
+// decided by the RECORD's 'field_type' & INDEX_FLD_VECTOR - which is all a
+// reader has - so storing it a second time beside the values only creates a
+// pair that can disagree, and a block written against the wrong expectation
+// desynchronises the stream rather than failing. Every site that needs the
+// answer has the record, and derives it.
 typedef struct {
 	bool      has_language;
 	char     *language;             // owned
@@ -292,7 +299,6 @@ typedef struct {
 	bool      nostem;
 	bool      has_phonetic;
 	char     *phonetic;             // owned
-	bool      is_vector;
 	uint64_t  dimension;
 	bool      has_m;                uint64_t m;
 	bool      has_ef_construction;  uint64_t ef_construction;

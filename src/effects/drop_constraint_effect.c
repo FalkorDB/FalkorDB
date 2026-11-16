@@ -89,6 +89,18 @@ bool ApplyDropConstraint
 	uint8_t n ;
 	fread_assert (&n, sizeof (n), stream) ;
 
+	// a constraint is identified by its property list, so a drop naming none
+	// cannot name the constraint it means. Schema_GetConstraint would simply
+	// find nothing, which reports a divergence that is really a malformed
+	// record - refused here so the log says which it was.
+	if (n == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT DROP_CONSTRAINT on '%s' names no properties",
+				label) ;
+		rm_free (label) ;
+		return false ;
+	}
+
 	AttributeID attr_ids [n] ;
 	char *props [n] ;
 	ReadConstraintAttributes (stream, n, attr_ids, props) ;
