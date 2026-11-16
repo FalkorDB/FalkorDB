@@ -91,7 +91,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `UnionStream.layerStream` | the per-type `versioned_matrix::Iter` merge of `m`, `dp`, `dm` (`VMIter`), keyed by row-major position |
 | `UnionGlue.relationshipTensors`, `buildUnion`, `pickMatrix`, `deltaInto`, `expandUnionRow` | `relationship_tensors` (:288), `build_union_iter` (:317), the `TraversalMatrix` selection (:615-680), `delta_lmxm_into` (:86), `expand_union_row` (:1121) |
 | `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:155`) |
-| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
+| `BidirDedup.dedupRows`, `dedupStream`, `dedupArgs` (`dedupBatches` = pre-#3071) | the `bidir_dedup` block (`cond_traverse.rs:1117-1137`); since #3071 kept across child batches and cleared per argument batch (`clear_bidir_dedup` `:374`, `batch.rs:1643`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
 | `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
@@ -164,12 +164,15 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    `optimizer/references.rs`, which still classifies `CondTraverse`/`ExpandInto` (and so their
    `sibling_edges`) as reading nothing.
 2. **Bidirectional dedup of chained anonymous undirected hops drops rows**
-   (`cond_traverse.rs`: setup :381-417, dedup block :1087-1107, per-batch reset :1465-1469): key ignores other columns
+   (`cond_traverse.rs`: setup :402-447, dedup block :1117-1137; pre-#3071 per-batch reset): key ignores other columns
    (`UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10), uses an
    intermediate node as source for ≥3 hops (`(a)-[]-()-[]-()-[]-(b)`: Rust 7
    pairs, C 12), and is reset per batch (K(2,3000): Rust counts 3/4, C 1).
    Lean `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result`.
    Still present on 8743953a8 (live: `UNWIND [1,2]` 5 vs C 10; 3-hop star 7 vs C 12).
+   **#3071 fixes the per-batch reset** (the set now lives across child batches and is
+   cleared per argument batch by `clear_bidir_dedup`): Lean `dedupStream_batch_invariant`,
+   `batch_split_fixed`. The outer-column and ≥3-hop collisions remain (now across batches too).
 3. **Undirected anonymous collapse is per direction, not per pair**
    (`cond_traverse.rs:985-1082`, `expand_into.rs:183-222`): `a→b, b→a, a→b`,
    `MATCH (a)-[]-(b) RETURN a.id, b.id` Rust 4 rows, C 2.

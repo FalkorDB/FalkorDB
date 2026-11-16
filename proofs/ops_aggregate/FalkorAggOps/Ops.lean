@@ -285,8 +285,10 @@ theorem topk_eq_take_sort (c : Nat) (xs : List Nat) :
       · simp [semStep]; omega
   exact this xs [] trivial (by simp)
 
-/-- `ORDER BY … SKIP s LIMIT k`: the Sort op keeps `cap = k + s` rows
-(sort.rs:493, `saturating_add` — no wrap), and Skip/Limit above it cut the
+/-- `ORDER BY … SKIP s LIMIT k`: the Sort op keeps `cap = record_cap` rows
+(sort.rs:504-506; since #3071 `record_cap` is `Runtime::hard_record_cap` = `k + s`,
+summed over every `Skip` up to the `Limit`, proofs/runtime_core
+`Budget.hardRecordCap_eq_need`), and Skip/Limit above it cut the
 window; that is the `[s, s+k)` window of the full sort. -/
 theorem sort_skip_limit (s k : Nat) (xs : List Nat) :
     ((xs.foldl (rustStep (k + s)) []).drop s).take k = ((isort xs).drop s).take k := by

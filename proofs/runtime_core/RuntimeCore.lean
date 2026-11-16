@@ -11,8 +11,8 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
 
 | here | there |
 | --- | --- |
-| `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs:681`), `effective_skip` (`:716`), `record_cap` (`:748`) |
-| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs`: stop `:1378-1383`, `trim_to_cap` `:1321-1340`), `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), SortOp top-k (`ops/sort.rs:509-511`) |
+| `Budget.rowBudgetAux/recordCap/hardRecordCap` | `Runtime::row_budget` (`runtime.rs:695`), `record_cap` (`:728`), `hard_record_cap` (`:740`) (#3071); `preEffectiveLimit/preEffectiveSkip/preRecordCap` are the pre-#3071 walks |
+| `Budget.hardCap`, `Budget.run` | the hard `hard_record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs`: stop `:1410-1414`, `trim_to_cap` `:1349-1369`), `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), SortOp top-k (`ops/sort.rs:504-506`) |
 | `Cell.*`      | #3436 `Runtime::graph()` / `graph_mut()` / `GraphRef` / `Deref` / `HeldRead` (`runtime.rs:115-137`, `:476-491`, `:559-589`): an atomic_refcell borrow-word model; `graph_deref`, `graph_same_result`, `read_program_same`, `sites_same`, `graph_mut_write_same`, `graph_mut_same_cell` |
 | `Drop.*` (`DropOrder.lean`) | `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()`: `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
 | `Proto.*`     | the read-guard protocol over `MvccGraph`, `QuerySession` and every graph-cell `borrow_mut`: `reader_guard_sound`, `guard_never_excl`, `readNew_never_panics`, `priv_borrows_owner_only`; open bug #3439 `writer_reply_race` |
@@ -70,10 +70,12 @@ B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`
 B2. `effective_skip` returns only the FIRST Skip (`runtime.rs:723-731`), so stacked Skips
     under one Limit under-budget the hard cap:
     `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1`: Rust [], C [20].
-    Test `bug_stacked_skip_under_limit_drops_rows`; Lean `hard_cap_unsound_stacked_skip`.
+    Test `bug_stacked_skip_under_limit_drops_rows`; Lean `pre3071_hard_cap_unsound_stacked_skip`.
     Fix for B1+B2: give hard-cap consumers `need` (`Budget.need_sound`): Skip adds, Project
     passes, CondTraverse/ExpandInto are barriers; keep the current hint for the soft
     emitter consumers (proven harmless there: `Emitter.drive_flatten`).
+    **#3071 does exactly this**: `hard_record_cap` = `need` (`Budget.hardRecordCap_eq_need`,
+    `hardRecordCap_sound`, `hardRecordCap_fixes_traverse`, `stacked_skip_fixed`); B1-B3 fixed.
 B3. (shared with C, openCypher violation) SortOp's top-k uses the same walk through
     CondTraverse: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1`
     → Rust [], C [] ; expected [20]. Test `bug_sort_topk_through_traverse_drops_rows`.

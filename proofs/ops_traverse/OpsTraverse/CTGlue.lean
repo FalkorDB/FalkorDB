@@ -6,13 +6,13 @@ CondTraverse / ExpandInto / scan operator glue and constructors.
 | --- | --- |
 | `ncolsT`               | `TraversalMatrix::ncols` (cond_traverse.rs:75) |
 | `emptyIter`            | `empty_edge_iter` (cond_traverse.rs:328) |
-| `ctNew`                | `CondTraverseOp::new` (cond_traverse.rs:365) |
-| `buildState`           | `CondTraverseOp::build_state` (cond_traverse.rs:480; multi-type branch :506-535, #3492) |
-| `trimToCap`            | `CondTraverseOp::trim_to_cap` (cond_traverse.rs:1321) |
-| `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs:1344) |
-| `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs:1356) |
-| `ctPack`               | one child batch of `CondTraverseOp::next` (cond_traverse.rs:1377) |
-| `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs:72), `next` (:251) |
+| `ctNew`                | `CondTraverseOp::new` (cond_traverse.rs:385; the `pack_hint`/`lift_pack_ceiling` of #3071 only size emitter batches, runtime_core `Emitter.lift_drive`) |
+| `buildState`           | `CondTraverseOp::build_state` (cond_traverse.rs:510; multi-type branch :506-535, #3492) |
+| `trimToCap`            | `CondTraverseOp::trim_to_cap` (cond_traverse.rs:1349) |
+| `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs:1372) |
+| `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs:1387) |
+| `ctPack`               | one child batch of `CondTraverseOp::next` (cond_traverse.rs:1408; the bidirectional dedup across child batches is `BidirDedup.dedupStream`) |
+| `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs:73; `pack_hint` sizes batches only), `next` (:251) |
 | `EmitCfg` constructors | `NodeByLabelScanOp::new` (node_by_label_scan.rs:56), `NodeByIdSeekOp::new` (node_by_id_seek.rs:32), `NodeByLabelAndIdScanOp::new` (node_by_label_and_id_scan.rs:34), `PathBuilderOp::new` (path_builder.rs:44), `AllShortestPathsOp::new` (all_shortest_paths.rs:59) |
 
 GraphBLAS matrices are their entry lists (`(row, col)` pairs) with a declared shape.
@@ -63,7 +63,7 @@ theorem emptyIter_nil : emptyIter = [] := rfl
 `strip_rel_attrs`; proofs/planner_build `E.planMatch_stripped`, `E.firstRel_edge_pred`), so the batched path no
 longer needs to inspect them. -/
 
-/-! ## `CondTraverseOp::new` (cond_traverse.rs:365) -/
+/-! ## `CondTraverseOp::new` (cond_traverse.rs:385) -/
 
 structure RelPat where
   fromAlias : Nat
@@ -93,7 +93,7 @@ def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : Lis
       | some c => if !c.emitRel && c.bidir then (true, some c.fromAlias) else (false, none)
       | none => (false, none)
     else (false, none)
-  -- cond_traverse.rs:431-436 (#2390: the inline-attr emptiness test is gone)
+  -- cond_traverse.rs:462-466 (#2390: the inline-attr emptiness test is gone)
   let eligible := !emitRel && !rp.bidir && !dedup && siblings.isEmpty &&
     chainBidir.all (!·)
   { dedup, dedupSrc := src, eligible, toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none,
@@ -143,7 +143,7 @@ theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (
   · by_cases h : rp.toAlias = rp.fromAlias <;> simp [h]
 
 /-- The F·A batched path is taken exactly for non-emitting, directed, dedup-free,
-sibling-free hops whose fused chain is all directed (cond_traverse.rs:431-436). -/
+sibling-free hops whose fused chain is all directed (cond_traverse.rs:462-466). -/
 theorem ctNew_eligible_iff (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
     (ch : Option ChildCT) :
     (ctNew rp er sib cb ch).eligible = true ↔
@@ -155,7 +155,7 @@ theorem ctNew_eligible_iff (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List
   · rintro ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩; exact ⟨h1, h2, h3, h4, h6⟩
   · rintro ⟨h1, h2, h3, h4, h6⟩; exact ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩
 
-/-! ## `build_state` (cond_traverse.rs:480) -/
+/-! ## `build_state` (cond_traverse.rs:510) -/
 
 structure CtState where
   fwdSrc : List Nat
@@ -222,7 +222,7 @@ theorem buildState_multi (resolve : List String → Option (List Nat)) (typeId :
 
 /-! ## `trim_to_cap`, `out_alias_id`, `null_pad` -/
 
-/-- cond_traverse.rs:1321-1341: keep the first `cap - produced` active rows. -/
+/-- cond_traverse.rs:1349-1369: keep the first `cap - produced` active rows. -/
 def trimToCap {R : Type} (cap : Option Nat) (produced : Nat) (rows : List R) : List R × Nat :=
   match cap with
   | none => (rows, produced)
@@ -286,7 +286,7 @@ theorem nullPad_spec {V : Type} (rows : List (Nat → Option V)) (un : List Nat)
       simp only [List.getElem_cons_succ]
       exact hg k (by simpa using hk) (by simpa using hk')
 
-/-! ## `CondTraverseOp::next` (cond_traverse.rs:1377) -/
+/-! ## `CondTraverseOp::next` (cond_traverse.rs:1408) -/
 
 /-- Output batches for one child batch: the batched F·A path's batches when it handles the
 batch, else the emitter's packed batches followed (for OPTIONAL) by one null-padded batch of the
@@ -305,14 +305,14 @@ theorem ctNext_stream {C R : Type} (batched : C → Option (List (List R))) (emi
       (cs.flatMap (ctPack batched emitted padded opt)).flatten.take cap := by
   rw [Drive.capDrive_flatten]; simp
 
-/-! ## `ExpandIntoOp::new` / `next` (expand_into.rs:72, :251) -/
+/-! ## `ExpandIntoOp::new` / `next` (expand_into.rs:73, :251) -/
 
 structure EiCfg where
   synthetic : Bool
   relCol : Option Nat
   produced : Nat
 
-/-- expand_into.rs:84-97: a synthetic multi-label check `(a:A:B)` (same alias, labels only on
+/-- expand_into.rs:86-98: a synthetic multi-label check `(a:A:B)` (same alias, labels only on
 `to`) binds no relationship column. -/
 def eiNew (fromA toA relA : Nat) (fromLabels toLabels : List String) : EiCfg :=
   let synthetic := fromA == toA && fromLabels.isEmpty && !toLabels.isEmpty
