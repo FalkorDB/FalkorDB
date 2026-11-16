@@ -62,7 +62,7 @@ pub fn register(funcs: &mut Functions) {
                     if start < 0 {
                         return Err("start must be a non-negative integer".into());
                     }
-                    if start >= s.len() as _ {
+                    if start >= s.chars().count() as _ {
                         return Ok(Value::String(Arc::new(String::new())));
                     }
                     let start = start as usize;
@@ -77,7 +77,7 @@ pub fn register(funcs: &mut Functions) {
                     }
 
                     let start = start as usize;
-                    if start >= s.len() {
+                    if start >= s.chars().count() {
                         return Ok(Value::String(Arc::new(String::new())));
                     }
 
@@ -208,7 +208,7 @@ pub fn register(funcs: &mut Functions) {
                     }
                 }
                 (Some(Value::Null), _) => Ok(Value::Null),
-                (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
+                (_, Some(Value::Null)) => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -276,7 +276,7 @@ pub fn register(funcs: &mut Functions) {
                     }
                 }
                 (Some(Value::Null), _) => Ok(Value::Null),
-                (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
+                (_, Some(Value::Null)) => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
