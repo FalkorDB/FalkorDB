@@ -208,7 +208,7 @@ pub fn register(funcs: &mut Functions) {
                     }
                 }
                 (Some(Value::Null), _) => Ok(Value::Null),
-                (_, Some(Value::Null)) => Ok(Value::Null),
+                (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
 
                 _ => unreachable!(),
             }
@@ -276,7 +276,7 @@ pub fn register(funcs: &mut Functions) {
                     }
                 }
                 (Some(Value::Null), _) => Ok(Value::Null),
-                (_, Some(Value::Null)) => Ok(Value::Null),
+                 (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
 
                 _ => unreachable!(),
             }
