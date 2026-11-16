@@ -65,7 +65,7 @@ Several passes collapse an edge, a bound edge or a variable-length path when nob
 
 - **Per operator, yes.** `refsNew_complete` proves the oracle reports every read of every IR variant, for plans the planner builds; `refsNew_sound` proves it reports only variables the operator reads or binds (a binder's own variable only keeps a flag on).
 - **For fusion, yes.** Fusion checks the whole plan (`anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound`).
-- **For the three `reduce_*` passes, no.** They walk ancestors only, so a reader in a sibling subtree is missed: `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3 (`main_misses_call_sibling`). The oracle also ignores `sibling_edges` (`refsNew_misses_sibling_edges`).
+- **For the three `reduce_*` passes, yes since #2918.** `variable_read_outside` checks every operator the rows reach, CALL bodies included (`varReadOutside_iff`, `pr2918_keeps_flag_when_read`, `pr2918_sees_call_sibling`). Before it they walked ancestors only: `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3 (`pre2918_misses_call_sibling`). The oracle still ignores `sibling_edges` (`refsNew_misses_sibling_edges`).
 
 **7. Do the remaining passes keep the result?**
 
@@ -115,7 +115,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | 4 (W2-rewrites-2) | `id_eq_null_errors` | `id(n) = null`, `= 1.0`, `> 1.5` → "Node ID must be an integer" (C: 0 rows) | **Open** |
 | 5 (W2-rewrites-3) | `hash_join_drops_row` | The hash join drops Int/Float pairs near 2⁵³: 2 rows where C gives 4 | **Open** |
 | 6 (W2-rewrites-4) | `id_only_routing_unsound` | A filter inside an uncorrelated `CALL {}` was pushed onto the Argument, swapping values (#2557) | No longer reproduces on main (most likely fixed by #2845); the Lean still describes id-only routing |
-| 7 | `refsNew_sees_*` (the per-operator reads the pre-#2390 oracle missed), `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | Per-operator part fixed by #2390; sibling part **open** (PR #2918 not merged) |
+| 7 | `refsNew_sees_*` (the per-operator reads the pre-#2390 oracle missed), `pre2918_misses_call_sibling` / `pr2918_sees_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | Per-operator part fixed by #2390; sibling part fixed by #2918; `sibling_edges` part (W2-traverse-1) **open** |
 | 8 (W4-plan-4) | `root_scan_has_no_parent` | `CALL db.labels() YIELD label MATCH (n)` makes a scan the plan root; `utilize_node_by_id` calls `parent().unwrap()` on it | **Repro closed by #3297** (validation now rejects the query, main b84473a7f); the `unwrap()` remains as a hazard |
 | W6-opt-1 | `filter_pushed_through_boundary` | Push-down gives an OPTIONAL MATCH inside `CALL {}` the outer ids: "Variable n not found" where C returns rows. `fixed_keeps_filter` checks the trial fix | **Open** |
 | #748 | `bug748_merge_skipped` (property `EffectSound`; `bug748_rows_only_blind`) | `WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0`: the constant `false` is pushed into both Apply branches, so the MERGE never runs. Rust 0 nodes, C 1; with `WITH *` both 1 (`bug748_with_star_control`) | **Open** |
@@ -139,8 +139,8 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | `AndOf.lean` | `ExprIR::and_of` (#3335): splicing an AND into an AND keeps the runtime value |
 | `Helpers.lean` | Syntactic helpers: parameters, variable references, count extraction, fusion preconditions, Project/Aggregate outputs |
 | `Passes.lean` | Fusion, optional fusion, the id seek, `reduce_count`, `reorder_labels`, hash join, push-down routing and the exclusion list |
-| `References.lean` | The "is this variable read?" oracle (`refsNew`), the pre-#2390 oracle and the PR #2918 walk |
-| `References2.lean` | The tree walks: ancestors only for the `reduce_*` passes, whole plan for fusion |
+| `References.lean` | The "is this variable read?" oracle (`refsNew`), the pre-#2390 oracle and an earlier PR #2918 oracle |
+| `References2.lean` | The tree walks: `variable_read_outside` for the `reduce_*` passes (#2918; the old ancestor walk kept for comparison), whole plan for fusion |
 | `Sequence.lean` | `optimize` sequencing, the tree rebuilds (`rebuild_with_hash_joins`), edge-filter absorption |
 | `CallBoundary.lean` | W6-opt-1: push-down across the `CALL {}` entry projection (namespace `Pr2845`) |
 | `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`, `RoutesBound`; #748, #997, #3352. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |

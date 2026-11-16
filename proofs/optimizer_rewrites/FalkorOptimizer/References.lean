@@ -13,10 +13,10 @@ one per-operator oracle, `optimizer/references.rs`.
 | `reads`              | specification: every variable any expression field of the operator mentions |
 | `binds`              | variables an operator binds that the oracle also counts (harmless: only keeps a flag) |
 | `PlanInv`            | the planner's invariant after #2390: scans / fixed-length operators carry no inline map, walks only their edge's (proofs/planner_build `E.planMatch_stripped`) |
-| `refsNew`            | `ir_references_variable` (`references.rs:41-198`) |
-| `iqLoop`, `iqRefs`   | `index_query_references_variable` (`references.rs:204-233`), its explicit stack |
-| `qgRefs`, `setItemsRefs`, `exprRefs`, `subtreeRefs` | `query_graph_references_variable` (:287-300), `set_items_reference_variable` (:302-314), `expr_references_variable` (:317-323), `subtree_references_variable` (:327-334) |
-| `refsPR`             | `ir_references_variable` of PR #2918 (superseded by #2390's oracle; its walk is not merged) |
+| `refsNew`            | `ir_references_variable` (`references.rs:41-206`, PR #2918 head 46e276b1f) |
+| `iqLoop`, `iqRefs`   | `index_query_references_variable` (`references.rs:318-347`), its explicit stack |
+| `qgRefs`, `setItemsRefs`, `exprRefs`, `subtreeRefs` | `query_graph_references_variable` (:350-363), `set_items_reference_variable` (:365-377), `expr_references_variable` (:380-386), `subtree_references_variable` (:390-397) |
+| `refsPR`             | `ir_references_variable` of PR #2918 (superseded by #2390's oracle; its walk is modelled in References2.varReadOutside) |
 
 Theorems: `iqLoop_iff` (the stack loop = "some operand mentions v", at any And/Or depth),
 `refsNew_complete` (under `PlanInv`, every read is seen), `refsNew_sound` (only reads or
@@ -181,18 +181,18 @@ theorem any_mem_flatten (v : Var) (es : List Ex) : es.any (mem v) = true ↔ v �
 
 /-! ## `references.rs` -/
 
-/-- `expr_references_variable` (:317-323): a BFS for `Variable(v)` with `v.id == id &&
+/-- `expr_references_variable` (:380-386): a BFS for `Variable(v)` with `v.id == id &&
 v.scope_id == scope` — by `(id, scope)`, never `==` (ids only, ast.rs). With an expression
 abstracted to the variables it mentions, that is membership (Helpers.refsVar_iff proves
 the BFS on the tree model). -/
 def exprRefs (e : Ex) (v : Var) : Bool := mem v e
-/-- `subtree_references_variable` (:327-334): the same question of one subtree. -/
+/-- `subtree_references_variable` (:390-397): the same question of one subtree. -/
 def subtreeRefs (e : Ex) (v : Var) : Bool := mem v e
 
 theorem exprRefs_iff (e : Ex) (v : Var) : exprRefs e v = true ↔ v ∈ e := mem_iff v e
 theorem subtreeRefs_iff (e : Ex) (v : Var) : subtreeRefs e v = true ↔ v ∈ e := mem_iff v e
 
-/-- `set_items_reference_variable` (:302-314). -/
+/-- `set_items_reference_variable` (:365-377). -/
 def setItemsRefs (items : List SetItem) (v : Var) : Bool :=
   items.any fun i => match i with
     | .attribute t x => exprRefs t v || exprRefs x v
@@ -213,12 +213,12 @@ theorem setItemsRefs_iff (items : List SetItem) (v : Var) :
     · simp_all [SetItem.reads, exprRefs, mem]
     · simp_all [SetItem.reads]
 
-/-- `query_graph_references_variable` (:287-300): node attrs, then relationship attrs. -/
+/-- `query_graph_references_variable` (:350-363): node attrs, then relationship attrs. -/
 def qgRefs (na ra : List Ex) (v : Var) : Bool := na.any (exprRefs · v) || ra.any (exprRefs · v)
 
-/-! ### `index_query_references_variable` (:204-233): an explicit stack -/
+/-! ### `index_query_references_variable` (:318-347): an explicit stack -/
 
-/-- The per-query arm of the `match` (:214-227); `And`/`Or` push their children and miss. -/
+/-- The per-query arm of the `match` (:328-341); `And`/`Or` push their children and miss. -/
 def iqHit (v : Var) : IQ → Bool
   | .eq e | .arrayContains e | .inList e => exprRefs e v
   | .range mn mx => mn.any (exprRefs · v) || mx.any (exprRefs · v)
@@ -244,7 +244,7 @@ theorem IQ.sizeL_reverse (a : List IQ) : IQ.sizeL a.reverse = IQ.sizeL a := by
   | nil => rfl
   | cons q a ih => simp [IQ.sizeL_append, IQ.sizeL, ih]; omega
 
-/-- `let mut pending = vec![query]; while let Some(q) = pending.pop() { … }` (:212-231). The
+/-- `let mut pending = vec![query]; while let Some(q) = pending.pop() { … }` (:326-345). The
 stack is a list with its top first, so `pending.extend(qs)` (push in order, last on top) is
 `qs.reverse ++ rest`; a leaf returns on a hit and otherwise continues. -/
 def iqLoop (v : Var) : List IQ → Bool
@@ -313,7 +313,9 @@ def iqRefs (q : IQ) (v : Var) : Bool := iqLoop v [q]
 theorem iqRefs_iff (q : IQ) (v : Var) : iqRefs q v = true ↔ v ∈ q.vars := by
   rw [iqRefs, iqLoop_iff v _ [q] (Nat.le_refl _)]; simp
 
-/-- `ir_references_variable` (references.rs:41-198): an exhaustive match (no `_` arm). -/
+/-- `ir_references_variable` (references.rs:41-206): an exhaustive match (no `_` arm). Since
+PR #2918 the `ForEach` arm (:96) reads only the list: the loop variable is bound into the body's
+own environment, so it is no longer reported (`refsNew_forEach_var_not_reported`). -/
 def refsNew (ir : IR) (v : Var) : Bool :=
   match ir with
   | .project es cs => es.any (fun e => exprRefs e.2 v) || cs.any (fun c => c.1 == v)
@@ -322,7 +324,8 @@ def refsNew (ir : IR) (v : Var) : Bool :=
   | .aggregate _ ks as ps => ks.any (fun e => exprRefs e.2 v) || as.any (fun e => exprRefs e.2 v) ||
       ps.any (fun c => c.1 == v || c.2 == v)
   | .pathBuilder ps => ps.any (mem v)
-  | .unwind e x | .forEach e x => exprRefs e v || x == v
+  | .unwind e x => exprRefs e v || x == v
+  | .forEach e _ => exprRefs e v
   | .delete es | .remove es => es.any (exprRefs · v)
   | .set items => setItemsRefs items v
   | .merge na ra oc om => qgRefs na ra v || setItemsRefs oc v || setItemsRefs om v
@@ -486,5 +489,12 @@ theorem refsPR_complete (ir : IR) (v : Var) (h : v ∈ reads ir) : refsPR ir v =
 theorem refsNew_sees_unwind : refsNew (.unwind [r] xV) r = true := by decide
 theorem refsNew_sees_create : refsNew (.create [[r]] []) r = true := by decide
 theorem refsNew_sees_foreach : refsNew (.forEach [r] xV) r = true := by decide
+
+/-- PR #2918: `FOREACH (r IN [1] | …)` binds the loop variable (it may reuse the outer edge's
+name and slot) but does not read it; a body read is another operator, which the walk
+(References2.varReadOutside) visits. -/
+theorem refsNew_forEach_var_not_reported (l : Ex) (x : Var) (h : x ∉ l) :
+    refsNew (.forEach l x) x = false := by
+  simp [refsNew, exprRefs, mem, h]
 
 end Falkor.Opt.Refs
