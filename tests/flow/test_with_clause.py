@@ -386,3 +386,83 @@ class testWithClause(FlowTestsBase):
                 self.env.assertContains("Type mismatch", str(e))
         finally:
             g.delete()
+
+    def test15_where_pattern_predicate_reads_the_pre_projection_variable(self):
+        # In WITH ... WHERE, a pattern predicate naming a variable from before
+        # the projection refers to that variable, as a scalar predicate does.
+        g = self.db.select_graph("with_where_pattern_predicate")
+        try:
+            g.query("CREATE (:A {v:1})-[:R]->(:B {v:0}), (:B {v:5})")
+            cases = [
+                ("MATCH (n) WITH n.v AS k WHERE (n)-->() RETURN k", [[1]]),
+                ("MATCH (n) WITH n.v AS k WHERE NOT (n)-->() RETURN k ORDER BY k", [[0], [5]]),
+                ("MATCH (n) WITH n AS m WHERE (n)-->(:B) RETURN m.v", [[1]]),
+                ("MATCH (n) WITH n.v AS k WHERE (n)<--() RETURN k", [[0]]),
+                ("MATCH (n) WITH n AS m WHERE size([(n)-->(x) | x]) > 0 RETURN m.v", [[1]]),
+            ]
+            for q, expected in cases:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+            # The label a comprehension's pattern puts on `n` holds inside it only:
+            # the B node survives through the other branch and still matches `(m)`.
+            for pattern in ["size([(n:A)-->(x) | x]) > 0", "(n:A)-->()"]:
+                q = f"MATCH (n) WITH n AS m WHERE {pattern} OR m.v = 5 MATCH (m) RETURN m.v ORDER BY m.v"
+                self.env.assertEqual(g.query(q).result_set, [[1], [5]], message=q)
+
+            # ORDER BY sees the pre-projection variables too, through a pattern
+            # comprehension (a bare pattern predicate is not parsed there).
+            for q in [
+                "MATCH (n) WITH n.v AS k ORDER BY size([(n)-->(x) | x]) DESC, k RETURN k",
+                "MATCH (n) WITH n AS m ORDER BY size([(n)-->(x) | x]) DESC, m.v RETURN m.v",
+            ]:
+                self.env.assertEqual(g.query(q).result_set, [[1], [0], [5]], message=q)
+        finally:
+            g.delete()
+
+    def test16_where_pattern_predicate_combined_scopes(self):
+        # Pre-projection names through renames, chained WITHs, a shadowing
+        # alias, comprehensions and what a later clause can still see.
+        g = self.db.select_graph("with_where_pattern_predicate_scopes")
+        try:
+            g.query(
+                "CREATE (a:L {id:1}), (b:L {id:2}), (c:L {id:3}), (:L {id:4}), (e:L {id:5}),"
+                " (a)-[:R]->(b), (b)-[:R]->(c), (a)-[:S]->(c), (e)-[:R]->(e)"
+            )
+            cases = [
+                # plain, renamed, and kept alongside the alias
+                ("MATCH (n:L) WITH n.id AS k WHERE (n)-[:R]->() RETURN k ORDER BY k", [[1], [2], [5]]),
+                ("MATCH (n:L) WITH n AS m WHERE (n)-[:R]->() AND NOT (n)-[:S]->() RETURN m.id ORDER BY m.id", [[2], [5]]),
+                ("MATCH (n:L) WITH n, n.id AS k WHERE (n)<-[:R]-() RETURN k ORDER BY k", [[2], [3], [5]]),
+                # two chained projections: the predicate names the immediately preceding variable
+                ("MATCH (n:L) WITH n AS m WITH m AS q WHERE (m)<-[:R]-() RETURN q.id ORDER BY q.id", [[2], [3], [5]]),
+                # a pattern predicate and a comprehension in one condition
+                ("MATCH (n:L) WITH n AS m WHERE (n)-[:S]->() OR size([(n)<-[:R]-(x) | x]) = 1 RETURN m.id ORDER BY m.id", [[1], [2], [3], [5]]),
+                # a pre-projection predicate beside one on the projected alias
+                ("MATCH (n:L) WITH n AS m WHERE (n)-[:R]->(:L) AND (m)-[:R]->(:L) RETURN m.id ORDER BY m.id", [[1], [2], [5]]),
+                # an alias that reuses the name `n` is the projected value, not the node
+                ("MATCH (n:L) WITH n.id AS n WHERE n > 2 RETURN n ORDER BY n", [[3], [4], [5]]),
+                # ORDER BY and SKIP/LIMIT before the WHERE
+                ("MATCH (n:L) WITH n AS m ORDER BY m.id SKIP 1 LIMIT 3 WHERE (n)-[:R]->() RETURN m.id ORDER BY m.id", [[2]]),
+            ]
+            for q, expected in cases:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+            # Several comprehensions in one condition each get their own scope
+            # slots, with the carried variable under its old or its new name.
+            for q in [
+                "MATCH (n:L) WITH n WHERE size([(n)-[:R]->(x) | x]) > 0 AND size([(n)<-[:S]-(y) | y]) >= 0 RETURN n.id ORDER BY n.id",
+                "MATCH (n:L) WITH n AS m WHERE size([(n)-[:R]->(x) | x]) > 0 AND size([(n)-[:S]->(y) | y]) >= 0 RETURN m.id ORDER BY m.id",
+            ]:
+                self.env.assertEqual(g.query(q).result_set, [[1], [2], [5]], message=q)
+
+            # A name a WHERE read from before the projection is not visible to
+            # the next clause: `n` in the MATCH is a new node (5 rows x 1 :S edge).
+            q = "MATCH (n:L) WITH n.id AS k WHERE n.id > 0 MATCH (n)-[:S]->(z) RETURN count(*)"
+            self.env.assertEqual(g.query(q).result_set, [[5]], message=q)
+
+            # The name the predicate used does not become a projected column.
+            res = g.query("MATCH (n:L) WITH n.id AS k WHERE (n)-[:R]->() RETURN *")
+            self.env.assertEqual(res.header[0][1], "k")
+            self.env.assertEqual(len(res.header), 1)
+        finally:
+            g.delete()
