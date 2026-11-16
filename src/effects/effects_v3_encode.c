@@ -494,15 +494,19 @@ static void _write_opt_u64
 // `dimension` alone has no presence byte, because a vector field must have one:
 // a vector block carries five values behind four markers.
 //
-// THE GATE IS field_type, NOT o->is_vector, because field_type is all the
-// READER has: _ReadIndexOptions decides the block exists from
-// `field_type & INDEX_FLD_VECTOR`. Deciding it here from a second, independent
-// flag lets the two disagree - a vector field_type with is_vector clear omits
-// the mandatory dimension, and the reader then takes the next record's opening
-// bytes as it and parses from the middle of five u64s. Rust hit exactly this
-// and now refuses the pair outright (EncodeError::OptionsFieldTypeMismatch,
-// graph/src/effects/v3/records.rs); with no error channel here, the gate comes
-// off the wire field and the flag is asserted against it.
+// THE GATE IS field_type, because field_type is all the READER has:
+// _ReadIndexOptions decides the block exists from `field_type &
+// INDEX_FLD_VECTOR`. Deciding it here from anything else lets the two
+// disagree - a vector field_type whose other source says otherwise omits the
+// mandatory dimension, and the reader then takes the next record's opening
+// bytes as it and parses from the middle of five u64s. Rust refuses that pair
+// outright (EncodeError::OptionsFieldTypeMismatch,
+// graph/src/effects/v3/records.rs), which it can because its encode sits
+// where a caller may still refuse the write; ours runs after the commit, from
+// a replication hook with nothing left to refuse.
+//
+// So there is no pair to check: the options block no longer carries a second
+// opinion about whether it is a vector. One field type, read in one place.
 static void _write_index_options
 (
 	const EffectsV3IndexOptions *o,  // options to write
@@ -510,12 +514,6 @@ static void _write_index_options
 	EffectsBytes *out                // sink
 ) {
 	const bool vector = (field_type & INDEX_FLD_VECTOR) != 0;
-
-	// a caller that disagrees with itself: the values would be written against
-	// the reader's expectation either way round, so fail here rather than emit
-	// a buffer that desynchronises the stream
-	ASSERT(o->is_vector == vector &&
-		   "index options' is_vector contradicts the record's field_type");
 
 	// language
 	EffectsV3_WriteUint(out, o->has_language ? 1 : 0, 1);
