@@ -225,6 +225,10 @@ RETURN a.v, b.w` on `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` r
 `[1,2],[5,2]` (should be `[1,2]`; the fixed-length `-[:R]->` form is right) on builds 88e92ae25
 and b3582e34a. `ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. Fix: refuse the leaf
 rewrite when the wrapper holds a `Filter`, or salvage it above the traverse with `filters_of`.
+FIXED by PR #3264 (0615f92a7): the leaf rewrite now refuses a `Filter` in the wrapper chain and any
+operator under the scan other than a childless `Argument` (`select_scan_node.rs:623-641`). Model:
+`VLCase.scanOnlyArgBelow`, `vlLeaf` (new) vs `vlLeafPre` (history); `vlLeaf_keeps_filter`,
+`vl_never_drops_filter`, `vlLeaf_eq_pre`, `vl_leaf_bug_case_fixed`.
 -/
 import OptimizerScan.IdSeek
 import OptimizerScan.Index

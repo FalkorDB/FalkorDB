@@ -552,6 +552,7 @@ structure VLCase where
   wrapperHasFilter : Bool     -- a `Filter` between the child and the scan
   childBindsTo : Bool         -- `child_subtree_binds(scan, to)`
   scanHasChildren : Bool      -- `kept` non-empty
+  scanOnlyArgBelow : Bool     -- the scan is a leaf or has exactly one childless `Argument` child (#3264)
   argBindsTo : Bool
   argOpaque : Bool
   fromScore : Nat
@@ -565,9 +566,16 @@ def vlGuards (c : VLCase) : Bool :=
 def vlNonLeaf (c : VLCase) : Bool :=
   vlGuards c && !c.wrapperHasPending && !c.wrapperHasFilter && c.childBindsTo && c.scanHasChildren
 
-/-- The leaf rewrite (`select_scan_node.rs:619-665`): scan `to` instead, replacing the *whole* child
-    subtree (`node_mut(child_idx).prune()`, line 661) — wrapper chain included. -/
+/-- The leaf rewrite (`select_scan_node.rs:623-686`): scan `to` instead, replacing the *whole* child
+    subtree (`node_mut(child_idx).prune()`, line 684) — wrapper chain included. Since #3264 it is
+    refused when the wrapper chain holds a `Filter` or the scan has anything but a childless
+    `Argument` under it (`select_scan_node.rs:630-641`). -/
 def vlLeaf (c : VLCase) : Bool :=
+  vlGuards c && !vlNonLeaf c && !c.wrapperHasFilter && c.scanOnlyArgBelow &&
+    !c.argOpaque && !c.argBindsTo && decide (c.fromScore < c.toScore)
+
+/-- The leaf rewrite before #3264 (history, base 343e077f2): no `Filter` / below-scan check. -/
+def vlLeafPre (c : VLCase) : Bool :=
   vlGuards c && !vlNonLeaf c && !c.argOpaque && !c.argBindsTo && decide (c.fromScore < c.toScore)
 
 /-- **PROVEN** (#2390): the non-leaf rewrite never drops a `Filter` (nor an `IncludePending`). -/
@@ -581,7 +589,26 @@ theorem vlLeaf_guards (c : VLCase) (h : vlLeaf c = true) :
     c.childIsFromScan = true ∧ c.argBindsTo = false ∧ c.argOpaque = false ∧ c.fromScore < c.toScore := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp_all [vlLeaf, vlGuards]
 
-/-! ### CONFIRMED BUG (pre-existing, not fixed by #2390): the leaf rewrite drops a wrapper `Filter`
+/-- **PROVEN** (#3264): the leaf rewrite never prunes a `Filter` wrapper, nor an operator under the
+    planner's scan other than a childless `Argument` (which it carries over). -/
+theorem vlLeaf_keeps_filter (c : VLCase) (h : vlLeaf c = true) :
+    c.wrapperHasFilter = false ∧ c.scanOnlyArgBelow = true := by
+  cases hf : c.wrapperHasFilter <;> cases ho : c.scanOnlyArgBelow <;> simp_all [vlLeaf]
+
+/-- **PROVEN** (#3264): neither rewrite of `select_var_len_scan_node` drops a `Filter` wrapper. -/
+theorem vl_never_drops_filter (c : VLCase) (h : vlNonLeaf c = true ∨ vlLeaf c = true) :
+    c.wrapperHasFilter = false := by
+  rcases h with h | h
+  · exact (vlNonLeaf_keeps_wrappers c h).1
+  · exact (vlLeaf_keeps_filter c h).1
+
+/-- The new rewrite is the old one plus the two #3264 refusals. -/
+theorem vlLeaf_eq_pre (c : VLCase) :
+    vlLeaf c = (vlLeafPre c && !c.wrapperHasFilter && c.scanOnlyArgBelow) := by
+  simp only [vlLeaf, vlLeafPre]; cases vlGuards c <;> cases vlNonLeaf c <;> cases c.wrapperHasFilter <;>
+    cases c.scanOnlyArgBelow <;> cases c.argOpaque <;> cases c.argBindsTo <;> simp
+
+/-! ### CONFIRMED BUG (pre-existing, not fixed by #2390; FIXED by #3264): the leaf rewrite drops a wrapper `Filter`
 
 `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2}) RETURN a.v, b.w`: clause 1's
 `Filter(a.v = 1) → AllNodeScan(a)` is stitched in as the var-length traverse's child, which
@@ -597,12 +624,16 @@ pre-#2390 build 88e92ae25): graph `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]-
 def vlBugCase : VLCase :=
   { expandInto := false, bidirectional := false, allShortest := false, sameEnds := false, oneChild := true,
     childIsFromScan := true, wrapperHasPending := false, wrapperHasFilter := true, childBindsTo := false,
-    scanHasChildren := false, argBindsTo := false, argOpaque := false,
+    scanHasChildren := false, scanOnlyArgBelow := true, argBindsTo := false, argOpaque := false,
     fromScore := (scoreEndpoint ⟨(0, 0), []⟩ ⟨[(1, 0)], [(1, 0), (0, 0)]⟩ [] (fun _ => 1)).1,
     toScore := (scoreEndpoint ⟨(1, 0), [7]⟩ ⟨[(1, 0)], [(1, 0), (0, 0)]⟩ [] (fun _ => 1)).1 }
 
-/-- The rewrite fires on the repro although the wrapper holds `a.v = 1`. -/
-theorem vl_leaf_fires_over_filter : vlLeaf vlBugCase = true ∧ vlBugCase.wrapperHasFilter = true := by
+/-- History (before #3264): the rewrite fired on the repro although the wrapper holds `a.v = 1`. -/
+theorem vl_leaf_fires_over_filter : vlLeafPre vlBugCase = true ∧ vlBugCase.wrapperHasFilter = true := by
+  decide
+
+/-- **PROVEN** (#3264 fixes it): the leaf rewrite now refuses the repro and keeps `a.v = 1`. -/
+theorem vl_leaf_bug_case_fixed : vlLeaf vlBugCase = false := by
   decide
 
 /-- What the rewritten plan selects (`Lt b`, `Lf a`, the backward walk) differs from the original
