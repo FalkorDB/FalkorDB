@@ -72,7 +72,7 @@ graph/src/runtime/ops/value_hash_join.rs	keys_match	137	PROVEN	CartVhj.keysMatch
 graph/src/runtime/ops/value_hash_join.rs	key_as_i64	153	PROVEN	CartVhj.keyAsI64: keyAsI64_spec (W2-rewrites-3: exact-int keying vs `=`)
 graph/src/runtime/ops/value_hash_join.rs	insert_value	176	PROVEN	CartVhj.insertValue/addRef: insertValue_spec, probe_insert_fresh
 graph/src/runtime/ops/value_hash_join.rs	promote_int_table	196	PROVEN	CartVhj.promote: promote_bucket
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	228	PROVEN	CartVhj.VhjSt.new: vhjNew_spec
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	256	PROVEN	CartVhj.build: build_int
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	324	PROVEN	CartVhj.fillMatches/probe: fillMatches_int, probe_insert_fresh
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	366	PROVEN	CartVhj.vhjRows: vhjRows_spec
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	237	PROVEN	CartVhj.VhjSt.new: vhjNew_spec (per_origin starts false, #3035)
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	266	PROVEN	CartVhj.build/buildPO: build_int, build_append, buildPO_origin (one table per origin_row, #3035), buildPO_single, buildPO_int_probe
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	352	PROVEN	CartVhj.fillMatches/fillMatchesPO/probe: fillMatches_int, fillMatches_absent, probe_insert_fresh, buildPO_int_probe
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	398	PROVEN	CartVhj.vhjRows/vhjRowsPO: vhjRows_spec, vhjRowsPO_spec, vhjRowsPO_single
