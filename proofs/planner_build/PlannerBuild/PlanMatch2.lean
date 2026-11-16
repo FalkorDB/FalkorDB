@@ -555,7 +555,7 @@ theorem planMatch_stripped (st : MSt) (fv : List Nat) (comps : List Comp) :
     · simpa [MP.stripped] using h0
   split <;> simp [MP.stripped, hr]
 
-/-! ## `build_pattern_sub_plan` (mod.rs:1038-1049) -/
+/-! ## `build_pattern_sub_plan` (mod.rs:1046-1057) -/
 
 def buildPatternSubPlan (st : MSt) (fv : List Nat) (comps : List Comp) (addArgs : MP → MP) : MP × MSt :=
   ((addArgs (planMatch st fv comps none).1), st)
@@ -565,5 +565,46 @@ as they were: its variables are not bound for the clauses that follow. -/
 theorem buildPatternSubPlan_restores (st : MSt) (fv : List Nat) (comps : List Comp) (aa : MP → MP) :
     (buildPatternSubPlan st fv comps aa).2 = st ∧
     (buildPatternSubPlan st fv comps aa).1 = aa (planMatch st fv comps none).1 := ⟨rfl, rfl⟩
+
+/-! ## `argument_vars` (mod.rs:1041-1043, #3340)
+
+The variables an `Argument` leaf declares bound: `visited` as it is when read. The IR
+model's `Argument` carries no payload (only `select_scan_node` reads it; the runtime
+ignores it), so the callers below take an `addArgs` parameterised by the list. -/
+
+def argumentVars (st : MSt) : List V := st.visited
+
+/-- `argument_vars` claims exactly the visited variables. -/
+theorem argumentVars_spec (st : MSt) (v : V) : v ∈ argumentVars st ↔ st.bound v = true := by
+  simp [argumentVars, MSt.bound]
+
+/-- `build_pattern_sub_plan` since #3340: the payload is read *after* `visited` is
+restored. -/
+def buildPatternSubPlanV (st : MSt) (fv : List Nat) (comps : List Comp)
+    (addArgs : List V → MP → MP) : MP × MSt :=
+  let r := planMatch st fv comps none
+  let st' := { r.2 with visited := st.visited, verified := st.verified }
+  (addArgs (argumentVars st') r.1, st')
+
+/-- The state is restored and the `Argument`s declare exactly the outer row's variables
+(the visited set before planning), never the pattern's own new variables. -/
+theorem buildPatternSubPlanV_spec (st : MSt) (fv : List Nat) (comps : List Comp)
+    (aa : List V → MP → MP) :
+    (buildPatternSubPlanV st fv comps aa).2 = st ∧
+    (buildPatternSubPlanV st fv comps aa).1 = aa (argumentVars st) (planMatch st fv comps none).1 := by
+  cases st; simp [buildPatternSubPlanV, argumentVars]
+
+/-- With the payload forgotten it is the old `buildPatternSubPlan`. -/
+theorem buildPatternSubPlanV_forget (st : MSt) (fv : List Nat) (comps : List Comp) (aa : MP → MP) :
+    buildPatternSubPlanV st fv comps (fun _ => aa) = buildPatternSubPlan st fv comps aa := by
+  cases st; simp [buildPatternSubPlanV, buildPatternSubPlan]
+
+/-- OPTIONAL MATCH arm: `argument_vars` is read before `plan_match`, so no variable the
+clause null-pads (`optional_vars`) is declared bound by its `Argument`s. -/
+theorem argumentVars_disjoint_optional (st : MSt) (vars : List V) (v : V)
+    (hv : v ∈ vars.filter fun v => !st.bound v) : v ∉ argumentVars st := by
+  intro h
+  rw [argumentVars_spec] at h
+  simp [h] at hv
 
 end PlannerBuild.E
