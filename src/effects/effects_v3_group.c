@@ -1122,7 +1122,7 @@ static void _options_from_map
 
 	// a vector field's block carries the vector half; every field type carries
 	// the text half, five clear bytes when nothing is stated
-	o->is_vector = (field_type & INDEX_FLD_VECTOR) != 0;
+	const bool vector = (field_type & INDEX_FLD_VECTOR) != 0;
 
 	if(SI_TYPE(options) != T_MAP) {
 		return;
@@ -1168,7 +1168,7 @@ static void _options_from_map
 		o->phonetic     = rm_strdup(v.stringval);
 	}
 
-	if(!o->is_vector) {
+	if(!vector) {
 		return;
 	}
 
@@ -1246,13 +1246,15 @@ static bool _streq(const char *a, const char *b) {
 // bytes. Both the flag and the value must agree - a stated weight of 1.0 and
 // an unstated weight are different statements even though the value slot of
 // the second is also 1.0 by memset.
+// 'vector' is the records' shared field type, already compared by the caller:
+// whether the vector half exists is a property of the RECORD, not of the block
 static bool _options_eq
 (
 	const EffectsV3IndexOptions *a,
-	const EffectsV3IndexOptions *b
+	const EffectsV3IndexOptions *b,
+	bool vector
 ) {
-	if(a->is_vector    != b->is_vector    ||
-	   a->has_language != b->has_language ||
+	if(a->has_language != b->has_language ||
 	   a->has_weight   != b->has_weight   ||
 	   a->has_nostem   != b->has_nostem   ||
 	   a->has_phonetic != b->has_phonetic ||
@@ -1281,7 +1283,7 @@ static bool _options_eq
 		}
 	}
 
-	if(!a->is_vector) {
+	if(!vector) {
 		return true;
 	}
 
@@ -1398,7 +1400,9 @@ void EffectsV3Grouping_AddIndexField
 
 		index_seen = true;
 
-		if(a->field_type == field_type && _options_eq(&a->options, &o)) {
+		if(a->field_type == field_type &&
+		   _options_eq(&a->options, &o,
+			   (field_type & INDEX_FLD_VECTOR) != 0)) {
 			_append_attr_ref(a, attr_id, attr_name);
 			_options_free(&o);
 			return;
