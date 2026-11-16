@@ -14,8 +14,8 @@ graph/src/graph/graphblas/matrix.rs	from	323	PROVEN	GBWGlue.descOf: descOf_injec
 graph/src/graph/graphblas/matrix.rs	drop	375	PROVEN	Handle::drop (#3090): Own.arc_frees_once (freed at most once, iff count reaches 0), arc_all_drop_frees_once, arc_every_interleaving_frees_once; fixed the Matrix::drop Arc::get_mut leak (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/graph/graphblas/matrix.rs	clone	407	PROVEN	Own.arcStep .clone (Arc<Handle> fetch_add): arc_frees_once (any n, any interleaving of clones and drops)
 graph/src/graph/graphblas/matrix.rs	pin_sparse	424	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	decode	529	NOT COVERED	(#3078): not modelled yet (body changed; was PROVEN: Codes.matrix_decode_internal_new_ok; component decode propagates; CONFIRMED leak)
-graph/src/graph/graphblas/matrix.rs	encode	623	NOT COVERED	(#3078): not modelled yet (body changed; was PROVEN: GBWGlue.encodeM: encodeM_spec, decodeC_encodeM (UnloadLoad + PtrBlind = GxB load)
+graph/src/graph/graphblas/matrix.rs	decode	529	PROVEN	MatrixDecode.run (#3080: OwnedContainer, scalar-field copy, Err on load/wait refusal): run_no_leak (no double free; Err leaves nothing live; Ok leaves only the matrix and its 5 arrays), run_ok_iff, decode_never_dies, accepts / parse_ok_iff / knownFormat_iff, accepts_encoded; Codes.matrix_decode_internal_new_ok; bug 3 (leak) fixed: history pre3080_success_leaks_five_slots, pre3080_error_leaks_container
+graph/src/graph/graphblas/matrix.rs	encode	623	PROVEN	GBWGlue.encodeM: encodeM_spec, decodeC_encodeM (UnloadLoad + PtrBlind = GxB load/unload spec), encodeM_no_heap_addresses / scrub_scalars (#3097 header pointers nulled); #3080 only retypes the component handles Vector<bool> -> Vector<Untyped> (same Encode body; the model's components are opaque)
 graph/src/graph/graphblas/matrix.rs	into_hyper	686	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	hyper_vector_count	724	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	transpose	761	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
@@ -79,7 +79,7 @@ graph/src/graph/graphblas/vector.rs	new	136	AXIOMATISED	thin wrapper over one Gr
 graph/src/graph/graphblas/vector.rs	set	152	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	wait	163	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	from_sorted_indices	176	PROVEN	GBWBulk.fromSortedIndices: fromSortedIndices_spec (indicator of the indices on both branches; GxB_Vector_build_Scalar as hypothesis) (#3022)
-graph/src/graph/graphblas/vector.rs	ptr	201	PROVEN	GBWGlue.VecH.ptr: ptr_vecFrom
+graph/src/graph/graphblas/vector.rs	ptr	123	PROVEN	GBWGlue.VecH.ptr: ptr_vecFrom; GBWBulk.VecU.ptr: VecU.ptr_eq (#3022); #3080 merged the Vector<bool>/Vector<u64> accessors into one on impl<T> Vector<T>
 graph/src/graph/graphblas/vector.rs	iter	202	PROVEN	Misc.VIter.new_inv, VIter.drain_new (= Iter::new); Iter carries no borrow (report: UAF)
 graph/src/graph/graphblas/vector.rs	encode_blob	213	PROVEN	Index.blob_copy_in_bounds (u64->usize lossless on 64-bit)
 graph/src/graph/graphblas/vector.rs	decode_blob	233	PROVEN	Codes.decodeBlob_never_dies / decodeBlob_safe_on_reachable / decodeBlob_rejects_invalid_object (#2996 fix)
@@ -90,7 +90,6 @@ graph/src/graph/graphblas/vector.rs	decode	372	PROVEN	Codes.decodeBool_safe / de
 graph/src/graph/graphblas/vector.rs	new	480	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	set	496	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	iter	509	PROVEN	Misc.VIter.new_inv, VIter.drain_new (= Iter::new); Iter carries no borrow (report: UAF)
-graph/src/graph/graphblas/vector.rs	ptr	514	PROVEN	GBWBulk.VecU.ptr: VecU.ptr_eq (#3022)
 graph/src/graph/graphblas/vector.rs	sum	515	PROVEN	GBWBulk.VecU.sum: VecU.sum_spec (PLUS-monoid reduce on u64 = sum of stored values modulo 2^64, the wrap modelled; GrB_Vector_reduce_UINT64 as hypothesis) (#3022)
 graph/src/graph/graphblas/vector.rs	size	532	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	resize	533	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
@@ -1215,9 +1214,9 @@ graph/src/graph/graphblas/matrix.rs	Matrix<f64>::new	1508	NOT COVERED	TEST-ONLY:
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::set	1535	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::build	1555	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::extract_tuples	1583	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
-graph/src/graph/graphblas/matrix.rs	new	452	NOT COVERED	#3080 (Matrix::decode no longer leaks its container components): new, not modelled
-graph/src/graph/graphblas/matrix.rs	replace	463	NOT COVERED	#3080 (Matrix::decode no longer leaks its container components): new, not modelled
-graph/src/graph/graphblas/matrix.rs	drop	476	NOT COVERED	#3080 (Matrix::decode no longer leaks its container components): new, not modelled
-graph/src/graph/graphblas/matrix.rs	parse	498	NOT COVERED	#3080 (Matrix::decode no longer leaks its container components): new, not modelled
-graph/src/graph/graphblas/matrix.rs	field	502	NOT COVERED	#3080 (Matrix::decode no longer leaks its container components): new, not modelled
-graph/src/graph/graphblas/vector.rs	from	95	NOT COVERED	#3080 (Matrix::decode no longer leaks its container components): new, not modelled
+graph/src/graph/graphblas/matrix.rs	new	452	PROVEN	OwnedContainer::new: MatrixDecode.fresh / run (GxB_Container_new propagated as Err, not assert): run_no_leak, run_ok_iff, decode_never_dies
+graph/src/graph/graphblas/matrix.rs	replace	463	PROVEN	OwnedContainer::replace: MatrixDecode.replace (frees the slot's empty vector, then installs the decoded one): run_no_leak (no double free, no leak)
+graph/src/graph/graphblas/matrix.rs	drop	476	PROVEN	OwnedContainer::drop: MatrixDecode.containerFree (GxB_Container_free frees container + slot vectors + held arrays): run_no_leak
+graph/src/graph/graphblas/matrix.rs	parse	498	PROVEN	ContainerHeader::parse: MatrixDecode.parse: parse_ok_iff, parse_refuses_non_bool_flag, parse_fields, flag_ok_iff
+graph/src/graph/graphblas/matrix.rs	field	502	PROVEN	MatrixDecode.field_in_bounds (slice in bounds and exactly N bytes: no panic)
+graph/src/graph/graphblas/vector.rs	from	95	PROVEN	GBWGlue.vecFrom: ptr_vecFrom (From<GrB_Vector> for Vector<Untyped>, #3080; same body as :104, :113)
