@@ -50,6 +50,7 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
 | `Ast.*`, `Ast2.*` | parser/ast.rs: `Variable` impls, `QueryGraph` builders, `filter_visited`, `connected_components`/`dfs`, `validate`/`inner_validate`, `return_column_names`, the `Display` impls |
 | `E.renameProj`, `newPSt` (Rename.lean) | `rename_projection_outputs` mod.rs:2646, `Planner::new` mod.rs:809 |
 | `E.MP.pathVars`, `E.BindsAllPaths`, `E.compVars`, `E.planMatchArm`, `E.MP.toPlan`, `Plan.argIsLeaf` (PathBind.lean) | paths a `plan_match` tree binds (PathBuilder mod.rs:1985, elision :2373); `QueryGraph::variables` ast.rs:816-822; MATCH arm mod.rs:3034-3082; Argument builds no children runtime.rs:658-660, emits one row :1285 |
+| `PlanDepth.bound`, `checkDepth`, `checkHeight`, `withPlanStack`, `withOptimizerStack`, `stackSizeFor` (PlanDepth.lean, #3304) | `optimizer_depth_bound` mod.rs:798, `Planner::check_depth` :988, `check_height` :999, `with_plan_stack` :768, `with_optimizer_stack` :839, `stack_size_for` :753 |
 
 ## Proven (plain English)
 
@@ -264,3 +265,4 @@ import PlannerBuild.Rename
 import PlannerBuild.Ast
 import PlannerBuild.Ast2
 import PlannerBuild.PathBind
+import PlannerBuild.PlanDepth

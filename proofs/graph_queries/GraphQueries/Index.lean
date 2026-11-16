@@ -19,7 +19,7 @@ for *any* indexer behaviour.
 | `indexInfo`       | `index_info` :4468 |
 | `memEstimate`, `labelPass` | `memory_usage_report` :4919 sampling arithmetic and seen-dedup |
 | `encodeOp`        | `encode_payload` :5093 dispatch |
-| `getPlan`         | `get_plan` :1383 cache decision |
+| `getPlan`, `getPlanChk` | `get_plan` :1377 cache decision; `getPlanChk` adds #3304's `check_depth`/`check_height` rejections |
 -/
 namespace GQ
 variable {V : Type}
@@ -312,6 +312,37 @@ theorem getPlan_stale (cache : List (String × Nat)) (q : String) (u u' : Nat) (
 theorem getPlan_then_hit (cache : List (String × Nat)) (q : String) (u : Nat) :
     (getPlan (getPlan cache q u u).2 q u u).1 = true := by
   unfold getPlan; by_cases h : (q, u) ∈ cache <;> simp [h]
+
+/-- `get_plan` with #3304's depth guards. `heightOk`: `Planner::check_height` accepts
+the optimized plan; `depthOk`: `Planner::check_depth` accepts the freshly planned one
+(the hit path does not run it: a cached plan passed it when it was cached). Returns
+(`some cached?` or `none` for `Err`, new cache). A rejected plan is not cached. -/
+def getPlanChk (cache : List (String × Nat)) (q : String) (udf udfAfter : Nat)
+    (depthOk heightOk : Bool) : Option Bool × List (String × Nat) :=
+  if (q, udf) ∈ cache then (if heightOk then some true else none, cache)
+  else if depthOk && heightOk then
+    (some false, if udfAfter = udf then (q, udf) :: cache.filter (·.1 != q) else cache)
+  else (none, cache)
+
+/-- On plans both guards accept, `get_plan` is the old cache decision. -/
+theorem getPlanChk_ok (cache : List (String × Nat)) (q : String) (u u' : Nat) :
+    getPlanChk cache q u u' true true =
+      (some (getPlan cache q u u').1, (getPlan cache q u u').2) := by
+  unfold getPlanChk getPlan; by_cases h : (q, u) ∈ cache <;> simp [h]
+
+/-- A query rejected as too deep leaves the plan cache as it was. -/
+theorem getPlanChk_reject_keeps_cache (cache : List (String × Nat)) (q : String) (u u' : Nat)
+    (d h : Bool) (hr : (d && h) = false) :
+    (getPlanChk cache q u u' d h).2 = cache := by
+  unfold getPlanChk; split
+  · rfl
+  · simp [hr]
+
+/-- A hit never changes the cache, whatever `check_height` says. -/
+theorem getPlanChk_hit_keeps_cache (cache : List (String × Nat)) (q : String) (u u' : Nat)
+    (d h : Bool) (hm : (q, u) ∈ cache) :
+    getPlanChk cache q u u' d h = (if h then some true else none, cache) := by
+  simp [getPlanChk, hm]
 
 /-- `is_synced`: conjunction over every matrix and tensor. -/
 def isSynced (flags : List Bool) : Bool := flags.all id
