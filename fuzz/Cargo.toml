@@ -16,6 +16,7 @@ libc = "0.2.186"
 
 [dependencies.graph]
 path = "../graph"
+features = ["fuzz"]
 
 [[bin]]
 name = "fuzz_target_runtime"

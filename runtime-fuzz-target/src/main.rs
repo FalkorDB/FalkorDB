@@ -2,6 +2,7 @@
 #![allow(clippy::multiple_crate_versions)]
 
 use graph::{
+    fuzz_support::init_index_support,
     graph::{
         graph::{Graph, Plan},
         graphblas::{GrB_Mode, GrB_init},
@@ -31,6 +32,7 @@ fn main() {
     unsafe {
         GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
     }
+    init_index_support();
     init_functions().expect("Failed to init functions");
     fuzz!(|data: &[u8]| {
         if let Ok(query) = std::str::from_utf8(data) {

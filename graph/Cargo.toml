@@ -18,6 +18,10 @@ workspace = true
 # process env var that could leak into a shipped binary.
 prejit_harvest = []
 
+# `fuzz_support::init_redisearch`: lets the fuzz harnesses (which have no Redis to
+# fill `RedisModule_*`) initialise RediSearch for library use.
+fuzz = ["dep:libc"]
+
 # Native FalkorDB numeric index (the in-repo replacement for RediSearch). Gates
 # `index::falkordb` — the encoder, the cow_btree-backed index, and its runtime
 # wiring. Off by default: the shipped build is byte-for-byte unchanged until this
@@ -36,6 +40,7 @@ index-falkordb = ["dep:feral-metis"]
 
 [dependencies]
 ahash = "0.8"
+libc = { version = "0.2", optional = true }
 arc-swap = "1"
 chrono = "0.4.45"
 crossfire = "3.1.19"
