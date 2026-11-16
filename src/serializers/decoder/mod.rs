@@ -612,13 +612,14 @@ mod tests {
         }
     }
 
-    /// A whole single-key value as C's v20 writes it for a graph with one CCH index: header,
-    /// schema, a directory ending in `CchIndices`, then the payloads. `GRAPH.RESTORE` and
-    /// `GRAPH.COPY` load it through `vec_load_graph`; it is refused at the directory, so only
-    /// the header and schema (written by this module's own encoders) are read before it, and
-    /// the payload words after it are never reached.
+    /// A synthetic single-key value, as C's v20 lays one out for a graph with a CCH index, up to
+    /// and including the directory: header and schema (written by this module's own encoders),
+    /// then a directory ending in `CchIndices`, then only the CCH payload's words. The payloads
+    /// the directory lists before it are left out: the decoder refuses the directory before it
+    /// reads any payload. `vec_load_graph` is the `GRAPH.RESTORE` path; `pipe_load_graph`
+    /// (`GRAPH.COPY`) and `rdb_load_graph` read the directory with the same function.
     #[test]
-    fn a_whole_v20_value_with_a_cch_index_is_refused() {
+    fn a_v20_value_with_a_cch_index_is_refused_at_the_directory() {
         let name = |s: &str| Arc::new(s.to_string());
         let mut w = VecWriter::new();
         Encode::<19>::encode(
