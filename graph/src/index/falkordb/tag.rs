@@ -197,7 +197,7 @@ impl TagIndex {
         match kind {
             KeyKind::Tag => &self.tree,
             KeyKind::TagArray => &self.array_tree,
-            KeyKind::Scalar | KeyKind::Array => {
+            KeyKind::Scalar | KeyKind::Array | KeyKind::Geo => {
                 unreachable!("the tag kind holds only tag trees")
             }
         }
@@ -211,7 +211,7 @@ impl TagIndex {
         match kind {
             KeyKind::Tag => &mut self.tree,
             KeyKind::TagArray => &mut self.array_tree,
-            KeyKind::Scalar | KeyKind::Array => {
+            KeyKind::Scalar | KeyKind::Array | KeyKind::Geo => {
                 unreachable!("the tag kind holds only tag trees")
             }
         }

@@ -24,12 +24,14 @@ prejit_harvest = []
 # is switched on. Under it the native index is the only Range index: a numeric
 # Equal, Range or IN list, an OR of numeric equalities and IN lists on one
 # attribute, or a numeric `value IN n.list` is served natively, and a predicate it
-# cannot serve raises an error instead of falling through to RediSearch.
+# cannot serve raises an error instead of falling through to RediSearch. It serves
+# the tag kind (strings) and the geo kind (points, `distance()` predicates) too; the
+# geo kind pulls in the optional `geo` crate below.
 # tests/flow/nextgen_index_xfail.txt lists the flow tests that fail on one.
 # Fulltext and Vector indexes are still RediSearch's. The CCH shortest-path index
 # (`index::falkordb::cch`) is part of it, and its nested-dissection ordering is the
 # only user of `feral-metis` below.
-index-falkordb = ["dep:feral-metis"]
+index-falkordb = ["dep:feral-metis", "dep:geo"]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -69,6 +71,10 @@ thin-vec = "0.2.18"
 thiserror = "2"
 zstd = { version = "0.14.0", default-features = false, features = ["arrays", "legacy", "zdict_builder"] }
 crc32fast = "1.4"
+# Geometry for the native geo kind (`index::falkordb::geo`): haversine destination
+# points and rectangle containment/intersection for the cell cover. Optional, enabled
+# only by `index-falkordb`; default features off, since the kind uses none of them.
+geo = { version = "0.33", default-features = false, optional = true }
 stacker = "0.1.25"
 
 [build-dependencies]
