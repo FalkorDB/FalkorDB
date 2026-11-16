@@ -11,7 +11,7 @@ only affects cost — it is the modelling gap stated in `OptimizerScan.lean`.
 | here | there |
 | --- | --- |
 | `Hop`, `Hop.holds`         | `IR::CondTraverse { relationship, transposed, .. }` and `CondTraverseOp` reading the relation matrix, or its transpose when `transposed` (`runtime/ops/cond_traverse.rs`) |
-| `Hop.swap`                 | `swap_relationship(rel, rel.to, rel.from)` + `transposed = true`, `select_scan_node.rs:370-387, 1051-1056` |
+| `Hop.swap`                 | `swap_relationship(rel, rel.to, rel.from)` + `transposed = true`, `select_scan_node.rs:372-389, 1051-1056` |
 | `pick`, `order`            | the greedy hop ordering loop, `select_scan_node.rs:1000-1060` |
 | `hasAll`                   | label conjunction checked by `NodeByLabelScan` / `get_nodes(labels)` |
 | `reorderLabels`            | `reorder_labels` (stable sort by schema id), `optimizer/reorder_labels.rs:16-47` |

@@ -10,11 +10,11 @@ reads as the Rust computes them, and decides the premise.
 
 | here | there |
 | --- | --- |
-| `ScanTree.IRk.filter vs`, `filtersOf`  | `IR::Filter(expr)`, `filters_of` `select_scan_node.rs:250`; `vs` = the `(id, scope_id)` of every `ExprIR::Variable` of the filter (`collect`, `:160`) |
+| `ScanTree.IRk.filter vs`, `filtersOf`  | `IR::Filter(expr)`, `filters_of` `select_scan_node.rs:252`; `vs` = the `(id, scope_id)` of every `ExprIR::Variable` of the filter (`collect`, `:161`) |
 | `ScanTree.isPlannerScan`, `argumentLeafOf` | `is_planner_scan_subtree` `:315` (a scan is accepted whatever its children are), `argument_leaf_of` `:276` |
 | `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`, `:979-986`) and the preserved `Argument` leaf (`preserved_argument`, `:952`, `:1181`) |
 | `salvagedSteps`                        | `salvaged_filters` wrapped above the chain (`:1240-1246`, `:1156-1176`) |
-| `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` (`:214`) |
+| `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` (`:216`; since #3594 an `Option<DynTree>`, here the `argumentLeafOf` leaf mapped to a one-node tree) |
 
 Result: the premise is **not** a fact about the Rust. `is_planner_scan_subtree` accepts a scan
 with *any* child, but `argument_leaf_of` keeps only an `Argument`; a child such as `Unwind`
@@ -111,7 +111,7 @@ theorem exChild_shape :
 /-- The rebuilt scan subtree (`make_scan_subtree` with the preserved Argument leaf, none here) has
 no `Unwind`: the operator that bound `k` is pruned with the scan. -/
 theorem rebuilt_drops_unwind :
-    hasUnwind (makeScanSubtree b [0] false (argumentLeafOf exChild) []) = false := by decide
+    hasUnwind (makeScanSubtree b [0] false ((argumentLeafOf exChild).map (PT.node · [])) []) = false := by decide
 
 /-- The rebuilt chain `(b)-[10]->(c)` from the seed `[b]`. -/
 def exSteps : List Step := [.hop ⟨1, 3, 10, 0, false⟩]
