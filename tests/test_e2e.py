@@ -2042,6 +2042,31 @@ def test_optional_match_null_merge():
 
 
 
+def test_alias_spelled_like_an_aggregate_slot_key_is_ordinary():
+    """An alias that spells the key reserving an aggregate's ORDER BY slot is
+    still the user's variable: it neither panics nor is replaced."""
+    res = query("WITH 7 AS __agg_placeholder_1 RETURN count(*) AS c, __agg_placeholder_1 AS saved")
+    assert res.result_set == [[1, 7]]
+    res = query("UNWIND [1, 2] AS x WITH x AS __agg_placeholder_1 "
+                "RETURN __agg_placeholder_1, count(*) AS c ORDER BY c, __agg_placeholder_1")
+    assert res.result_set == [[1, 1], [2, 1]]
+    # and the slot is not a column of `*`
+    res = query("WITH 5 AS a RETURN *, count(*) AS c")
+    assert [h[1] for h in res.header] == ["a", "c"]
+    assert res.result_set == [[5, 1]]
+
+
+def test_order_by_expression_with_a_different_constant_is_not_the_projection():
+    """`ORDER BY n.v % 4.0` is not the projected `n.v % 3`: it must sort by
+    its own key, while `n.v % 3.0` is the same value as `n.v % 3` (C compares
+    constants by value)."""
+    query("UNWIND range(1, 8) AS i CREATE (:O {v: i})", write=True)
+    res = query("MATCH (n:O) RETURN n.v % 3 AS k, n.v AS v ORDER BY n.v % 4.0, v")
+    assert [r[1] for r in res.result_set] == [4, 8, 1, 5, 2, 6, 3, 7]
+    res = query("MATCH (n:O) RETURN n.v % 3 AS k, n.v AS v ORDER BY n.v % 3.0, v")
+    assert [r[1] for r in res.result_set] == [3, 6, 1, 4, 7, 2, 5, 8]
+
+
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
     (var-length) hop must not drop the hops planned before it (#2999)."""

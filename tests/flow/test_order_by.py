@@ -287,3 +287,51 @@ class testOrderBy(FlowTestsBase):
             self.env.assertEqual(res[0][0], 17.0)
         finally:
             g.delete()
+
+    def test_order_by_repeating_a_projection(self):
+        """ORDER BY that repeats a projected expression sorts on the same
+        values wherever the repeat sits, including inside expressions that
+        bind their own names (#2925)"""
+        g = self.db.select_graph("order_by_projection_repeat")
+        try:
+            # not monotone in i, so a wrongly rewritten key changes the order
+            g.query("UNWIND [2, -3, 1] AS i CREATE (:N {i: i})")
+            for q, expected in [
+                # the whole expression, the expression inside a larger one
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY n.i DESC", [[2], [1], [-3]]),
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY n.i * n.i DESC", [[-3], [2], [1]]),
+                ("MATCH (n:N) RETURN n.i * n.i AS x ORDER BY n.i * n.i + 1 DESC", [[9], [4], [1]]),
+                # the comprehension variable shadows the projected alias `x`
+                # in the body, but not in the iterable
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY [x IN [1] | n.i * n.i][0] DESC", [[-3], [2], [1]]),
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY reduce(x = 0, y IN [1] | n.i * n.i) DESC", [[-3], [2], [1]]),
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY [y IN [n.i * n.i] | y][0] DESC", [[-3], [2], [1]]),
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY head([x IN [n.i * n.i] | x]) DESC", [[-3], [2], [1]]),
+            ]:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+            res = g.query("MATCH (n:N) RETURN count(n) AS c ORDER BY count(n)").result_set
+            self.env.assertEqual(res, [[3]])
+        finally:
+            g.delete()
+
+    def test_order_by_alias_named_like_the_internal_aggregate_slot(self):
+        """The slot the parser gives every aggregate call is not a name: a
+        query's own alias, backquoted or not, may be called anything,
+        including what the slot used to be called."""
+        g = self.db.select_graph("order_by_slot_name")
+        try:
+            g.query("UNWIND [2, -3, 1, 1] AS i CREATE (:N {i: i})")
+            name = "__agg_order_by_placeholder__"
+            for q, expected in [
+                (f"MATCH (n:N) RETURN n.i AS {name} ORDER BY {name} DESC", [[2], [1], [1], [-3]]),
+                (f"MATCH (n:N) RETURN n.i AS `{name}` ORDER BY n.i", [[-3], [1], [1], [2]]),
+                (f"MATCH (n:N) RETURN n.i AS `{name}`, count(*) AS c ORDER BY c DESC, `{name}`",
+                 [[1, 2], [-3, 1], [2, 1]]),
+                (f"MATCH (n:N) WITH n.i AS x WITH x, 7 AS `{name}` RETURN DISTINCT `{name}`", [[7]]),
+                (f"MATCH (n:N) RETURN count(n) AS c, n.i < 2 AS `{name}` ORDER BY count(n), `{name}`",
+                 [[1, False], [3, True]]),
+            ]:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        finally:
+            g.delete()

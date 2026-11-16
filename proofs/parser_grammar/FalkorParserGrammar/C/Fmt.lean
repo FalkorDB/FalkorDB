@@ -15,7 +15,7 @@ def joinSep (sep : String) : List String → String
   | [a] => a
   | a :: as => a ++ sep ++ joinSep sep as
 
-/-- `impl Display for ExprIR` (ast.rs:330-401), one arm per operator. -/
+/-- `impl Display for ExprIR` (ast.rs:392-464), one arm per operator. -/
 def fmtOp : EOp → String
   | .var v => toString v
   | .param p => "@" ++ toString p
@@ -36,11 +36,14 @@ def fmtOp : EOp → String
   | .patComp => "pattern comp"
   | .shortest .. => "shortestPath()"
   | .pattern => "<pattern>"
+  | .aggSlot => "<aggregate order-by slot>"
   | .other _ => "?"
 
 theorem fmtOp_var (v : Nat) : fmtOp (.var v) = toString v := rfl
 theorem fmtOp_param (p : Nat) : fmtOp (.param p) = "@" ++ toString p := rfl
 theorem fmtOp_prop (p : Nat) : fmtOp (.prop p) = "property(" ++ toString p ++ ")" := rfl
+/-- #3011: the aggregate ORDER BY slot prints as itself (ast.rs:461), never as a name. -/
+theorem fmtOp_aggSlot : fmtOp .aggSlot = "<aggregate order-by slot>" := rfl
 
 /-- `impl Display for QuantifierType` (ast.rs:424-436). -/
 def fmtQuant : Nat → String

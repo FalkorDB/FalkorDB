@@ -67,7 +67,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | `RC`, `bindIR`, `shortestOk`, `mergeOk`, `yieldLoop`, `bindYield`, `bindCallSubquery`, `importProjections`, `createCheck` (BindIR.lean) | `bind_ir` :262, `bind_call_subquery` :716, `build_import_projections` :984, `bind_graph_create` :1562 |
 | `mayBool`, `mayEntity`, `validate` (Types.lean) | `expr_may_return_boolean` :2323, `expr_may_return_entity` :2392, `validate_boolean_operands(_impl)` :2297/2301 |
 | `nodeToValue`, `collectConstArgs`, `foldCall`, `rewriteStruct`, `rewriteRegex` (Fold.lean) | `expr_tree_to_value` :2465, `collect_constant_args` :2497, folding :2124, `rewrite_struct_constructor` :2515, `rewrite_compiled_regex` :2580 |
-| `exprIrEq`, `strip`/`eqS`, `structEq`, `replaceAgg` (AggEq.lean) | `expr_ir_eq` :2682, `nodes_eq` :2652, `raw_exprs_structurally_equal` :2644, `replace_agg_subtrees` :2614 |
+| `constEq`, `exprIrEq`, `strip`/`eqS`, `structEq`, `rewritable`, `replaceProj`, `replaceTop` (AggEq.lean, #3011) | `constants_equal` :2753, `expr_ir_eq` :2814, `nodes_eq` :2778, `raw_exprs_structurally_equal` :2770, `is_alias_rewritable` :2690, `replace_projected_subtrees(_rec)` :2622/2634 |
 
 ## Proven (one line each)
 * `fresh_not_used`, `mint_new_covers`, `reinsert_covers`: minting under a new key is fresh and keeps the table covering.
@@ -93,7 +93,8 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
   `bind_iterable_outer`; per-arm `bindIR` theorems (`shortestOk_iff`, `mergeOk_*`, `yieldLoop_ok`,
   `callSubquery_covers`, `importProjections_covers`, `createCheck_*`); `mayBool_sound_except`, `mayEntity_eq`;
   `nodeToValue_sound`/`_complete`, `foldCall_sound`, `rewriteStruct_shape`, `rewriteRegex_spec`;
-  `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`.
+  `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceProj_id`/`_root_agg`/`_root_proj`/`_shadowed`/`_local_kept`,
+  `matchAgg_spec`, `matchProj_spec`, `orderBy_repeat_reads_alias` (#3011), `bind_aggSlot`, `bind_var_ordinary`.
 * #2845 CALL entry projection (`CallBoundary`, folded in from the retired pr2845_review):
   `Pr2845.bodyNew_entry`, `importProj_spec`, `entry_ids_below`, `body_own_unbound`,
   `body_import_value`, `union_branch_label_fixed` (#3027), `pushed_read_unbound` (W6-opt-1).
@@ -145,8 +146,15 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
    `MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m ORDER BY max(n.v % 4.0)` → Rust rows `[1,0],[2,1]`
    (sorted by `m`), C `failed to map aggregation expression within ORDER BY clause, please use alias`
    (openCypher order by `max(v % 4.0)` would be `[2,1],[1,0]`); with `% 4` (Int) Rust also rejects.
-   Lean `order_by_wrong_aggregate`, `const_kinds_conflated`. Fix: compare `Constant` values with
-   type-aware equality (`Value` equality, not discriminant) and compare quantifier kinds.
+   Lean `pre3011_const_kinds_conflated` (historical). FIXED by #3011 (`constants_equal`, quantifier
+   kinds compared): `order_by_wrong_aggregate_fixed`, `const_kinds_distinguished` — except Int vs an
+   exactly-equal Float, which `constants_equal` still treats as equal (bug 10).
+10. **ORDER BY `v / 2.0` sorted by the alias of `v / 2`** (NEW in #3011, unconfirmed live:
+   `replace_projected_subtrees` now rewrites non-aggregate ORDER BY sub-trees and `constants_equal`
+   equates `Int 2` with `Float 2.0`, but `/` and `%` on two Ints truncate):
+   `UNWIND [2, 3] AS v RETURN v / 2 AS k, v ORDER BY v / 2.0 DESC, v` → before #3011 `[[1,3],[1,2]]`,
+   #3011 `[[1,2],[1,3]]` (2/2 = 3/2 = 1 tie). Lean `Agg.pr3011_orderBy_div_int_float`. Fix: make
+   `constants_equal` kind-exact (Int ≠ Float), or only alias-rewrite when the value types agree.
 
 ## Spec vs C disagreements (not Rust-vs-C bugs)
 * `RETURN false AND (1+2)` / `WITH 2 AS x RETURN false AND x` / `false AND size([1])` → Rust `false`
@@ -170,11 +178,10 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
   `where_copy_id_reused`, `orderBy_leaks` (bugs 3, 5).
 * #3049: CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes `labels_leak` (bug 6).
 * #3062: pattern predicates in WITH … WHERE resolve pre-projection names — fixes `defineName_ignores_parent` (bug 7).
-* #3011: generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY
-  expressions repeating a projection read its alias), guarded by `is_alias_rewritable`, which admits
-  `Constant(Bool|Int|Float|String)` — exactly the kinds `expr_ir_eq` conflates with each other
-  (`const_kinds_conflated`). With it, bug 9 would extend to plain expressions, e.g.
-  `RETURN n.v % 3 AS k ORDER BY n.v % 4.0` (sorted by `k`). Fix bug 9 first (or compare constants by value).
+* #3011 (modelled): generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY
+  expressions repeating a projection read its alias, `orderBy_repeat_reads_alias`), adds the
+  `AggOrderByPlaceholder` slot (`bind_aggSlot`) and `constants_equal` (fixes bug 9). Residual: Int vs
+  exactly-equal Float constants still match (bug 10, `pr3011_orderBy_div_int_float`).
 
 ## Gaps
 Expressions are abstracted to the names they mention (BindExpr's `NE` keeps the variants the binder treats
