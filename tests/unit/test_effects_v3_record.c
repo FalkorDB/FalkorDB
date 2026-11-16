@@ -451,8 +451,8 @@ void test_effectsV3Record_indexVectorOptions(void) {
 		.create_index.field_type = 0x0010,
 		.create_index.attrs = refs,
 		.create_index.n_attrs = 1,
+		// the vector half is gated on field_type above, not on a flag here
 		.create_index.options = {
-			.is_vector = true,
 			.dimension = 128,
 			.has_m = true, .m               = 32,
 			.has_ef_construction = true, .ef_construction = 400,
