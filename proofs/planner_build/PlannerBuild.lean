@@ -38,7 +38,7 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
 | `E.containsInlineVar`, `hasPatternExpr`, `patternExprScope`, `Mode`, `needsExtraction`, `inlineAttrsToFilter`, `hasLabelsFilter`, `patternExprVariables` | `contains_inline_var` :928, `has_pattern_expr` :939, `pattern_expr_scope` :1340, `PatternMode` :773, `needs_extraction` :1364, `inline_attrs_to_filter` :545, `has_labels_filter` :696, `pattern_expr_variables` :1245 |
 | `E.tv` (Decomp.lean) | openCypher three-valued WHERE (Kleene AND/OR/NOT; pattern = has a match) |
 | `E.collect`, `E.mint` | `collect_patterns_and_rebuild` mod.rs:1676-1768 |
-| `E.FP`, `E.run`, `E.toPlan`, `orClass`, `andFold` (ToPlan.lean) | Filter/SemiApply/AntiSemiApply/OrApplyMultiplexer runtime; `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` mod.rs:1488-1655 |
+| `E.FP`, `E.run`, `E.toPlan`, `pushNot`/`negL`, `orClass`, `andFold` (ToPlan.lean) | Filter/SemiApply/AntiSemiApply/OrApplyMultiplexer runtime; `expr_to_plan` / `push_not_down` / `or_expr_to_plan` / `and_expr_to_plan` mod.rs:1489-1685 |
 | `E.planFilter` (FilterPlan.lean) | `plan_filter` mod.rs:2597-2636 |
 | `E.PSt`, `E.fresh`, `E.EC`, `E.build`, `E.hoist`, `E.extract` (Nested.lean) | Planner state, `fresh_var`, `ExtractedComprehension`, `build_pattern_comprehension_plan`, `hoist_or_nest`, `extract_pattern_comprehensions` |
 | `E.chainOf`, `extractClause`, `extractFilter` (Nested2.lean) | `extract_clause_expr_comprehensions` / `extract_list_expr_comprehensions` / `extract_filter_comprehensions` |
@@ -77,8 +77,8 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
 * WHERE decomposition (Decomp/ToPlan/Filter/FilterPlan): `collect_value`, `collect_passes` — rebuilding a
   predicate with pattern placeholders is exact in three-valued logic; `collect_inv`/`good_final`/`fresh_final`
   — the inline ids (keyed by id only) are distinct and fresh when the patterns share one scope;
-  `toPlan_correct` — SemiApply/AntiSemiApply/OrApplyMultiplexer/Filter keep exactly the rows where the
-  predicate is true, given two-valued atoms; `planFilter_scalar_correct` (3VL) / `planFilter_correct`.
+  `toPlan_correct3` — SemiApply/AntiSemiApply/OrApplyMultiplexer/Filter keep exactly the rows where the
+  predicate is true, in three-valued logic since #3260 (`toPlan_correct`: two-valued form); `planFilter_scalar_correct` (3VL) / `planFilter_correct`.
 * Comprehensions (Nested/Nested2): `extract_frame` (loop/pattern vars, visited restored), `extract_fresh`
   (every minted variable distinct and new), `extract_clean` / `extract_noPat` (nothing left to extract),
   `hoist_spec`/`hoist_nested`/`hoisted_loop_invariant` (hoisting is sound exactly when no loop variable is
@@ -140,16 +140,17 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    binding its node, and the no-binder case is `ExpandInto(Scan(res))` — `chainRel_selfloop_unbound`,
    `Match.selfloop_scan_keeps_chain`; history `selfloop_ignores_chain`.
 
-5. **`NOT (complex)` over an inline pattern predicate keeps NULL rows** (NEW): `expr_to_plan` plans
-   `NOT c` with `c` containing an inline pattern as `AntiSemiApply(input, plan(c))` (mod.rs:1543-1549); the
+5. **`NOT (complex)` over an inline pattern predicate kept NULL rows** — **FIXED by #3260**: `expr_to_plan`
+   now pushes the `NOT` down first (`push_not_down`, mod.rs:1531-1540/1560-1574; Lean `pushNot`,
+   `tv_pushNot`, `toPlan_correct3`, `toPlan_not_null_fixed`). Before, it planned
+   `NOT c` with `c` containing an inline pattern as `AntiSemiApply(input, plan(c))`; the
    inner plan keeps rows where `c` is *true*, so the anti-join keeps rows where `c` is false **or null**.
    openCypher (and C) keep only `c = false`. Graph `CREATE (:N {v:1}), (:N), (:N {v:5})-[:R]->(:M)`:
    `MATCH (a:N) WHERE NOT (a.v > 1 OR (a)-->()) RETURN count(a)` → Rust 2, C 1;
    on `CREATE (:N)-[:R]->(:M)`: `MATCH (a:N) WHERE NOT (a.v > 0 AND (a)-->()) RETURN count(a)` → Rust 1, C 0.
-   Lean `toPlan_not_null_bug` (`toPlan_correct` holds once atoms are two-valued). Fix: push `NOT` inward
+   Lean history `pre3260_not_null_bug`. The fix pushes `NOT` inward
    (De Morgan, valid in Kleene logic: `not3_or3`, `not3_and3`) so it only ever wraps a scalar (→ `Filter`) or
-   an inline pattern (→ `AntiSemiApply`). Tests `bug_not_over_or_with_pattern_keeps_null_rows`,
-   `bug_not_over_and_with_pattern_keeps_null_rows` (fail today).
+   an inline pattern (→ `AntiSemiApply`); flow test `test19_negated_pattern_predicate_drops_null_rows`.
 
 6. **Nothing after a procedure CALL was validated** — **FIXED by #3297** (b774fdfad, on main b84473a7f):
    `inner_validate`'s `Call` arm (parser/ast.rs:1224-1263) now continues with
