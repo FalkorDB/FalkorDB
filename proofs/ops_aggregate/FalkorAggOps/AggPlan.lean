@@ -5,15 +5,15 @@ Aggregate operator: expression analysis, accumulator zeroing/unbinding, `GroupKe
 | here | there |
 | --- | --- |
 | `Ex`, `Fn`, `Cst`            | `ExprIR<Variable>` tree (`DynNode`), `GraphFn`, `ExprIR::Constant` |
-| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs:167) |
-| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs:382) |
-| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs:313) |
-| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs:1082) |
-| `unbindAcc` / `unbindAccL`   | `unbind_agg_accumulators` (aggregate.rs:1230) |
-| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs:90, :101) |
+| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs:181) |
+| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs:511) |
+| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs:438) |
+| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs:1242) |
+| `unbindAcc` / `unbindAccL`   | history: `unbind_agg_accumulators` (aggregate.rs:1251 at 343e077f2, removed by #3579) |
+| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs:99, :115) |
 | `hashU64` (history)          | `HashU64::hash_u64` (removed by #2977; was aggregate.rs:1254/:1258) |
-| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs:208) |
-| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs:280) |
+| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs:324) |
+| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs:402) |
 
 `is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs:783), and the
 `initial` value lives in that variant, so a function is aggregate iff `init = some z`.
@@ -47,7 +47,7 @@ def isAggNode : Ex Z → Bool
   | .func f _ => f.init.isSome
   | _ => false
 
-/-! ## `subtree_has_aggregate` (aggregate.rs:167) -/
+/-! ## `subtree_has_aggregate` (aggregate.rs:181) -/
 
 mutual
 def hasAgg : Ex Z → Bool
@@ -88,7 +88,7 @@ aggregate call. -/
 theorem hasAgg_iff (e : Ex Z) : hasAgg e = true ↔ ∃ n ∈ nodes e, isAggNode n = true := by
   rw [hasAgg_spec]; simp
 
-/-! ## `analyze_agg_tree` (aggregate.rs:382) -/
+/-! ## `analyze_agg_tree` (aggregate.rs:511) -/
 
 inductive Input (Z : Type) where
   | var (v : Nat)
@@ -275,14 +275,14 @@ theorem multi_extra (f : Fn Z) (z : Z) (v acc : Nat) (cs : List Cst) (hf : f.ini
   unfold aggBody
   simp only [hd, hcs, multiArg]
 
-/-! ## `analyze` (aggregate.rs:313) -/
+/-! ## `analyze` (aggregate.rs:438) -/
 
 inductive KeyKind (Z : Type) where
   | var (v : Nat)
   | prop (v : Nat) (attr : Nat)
   | computed (e : Ex Z)
 
-/-- One key (aggregate.rs:316-370). `none` = the whole operator bails. -/
+/-- One key (aggregate.rs:444-491). `none` = the whole operator bails. -/
 def analyzeKey (e : Ex Z) : Option (KeyKind Z) :=
   match e with
   | .var v => some (.var v)
@@ -294,17 +294,32 @@ def analyzeKey (e : Ex Z) : Option (KeyKind Z) :=
     | _ => none
   | _ => if hasAgg e then none else some (.computed e)
 
-def analyze (keys aggs : List (Ex Z)) : Option (List (KeyKind Z) × List (VAgg Z)) :=
+/-- `analyze` (aggregate.rs:438-509). `implicit` is the operator's implicit grouping keys
+(`self.implicit`, computed by `implicit_keys` in `new`); since #3579 any of them sends the whole
+operator to the per-row path (:440-442). -/
+def analyze {I : Type} (implicit : List I) (keys aggs : List (Ex Z)) :
+    Option (List (KeyKind Z) × List (VAgg Z)) :=
+  if !implicit.isEmpty then none else
   match keys.mapM analyzeKey, aggs.mapM analyzeAgg with
   | some ks, some as => some (ks, as)
   | _, _ => none
 
-/-- `analyze` succeeds iff every key and every aggregate expression is vectorizable; the
-kinds are then in key/aggregate order (one per expression). -/
-theorem analyze_spec (keys aggs : List (Ex Z)) (ks : List (KeyKind Z)) (as : List (VAgg Z)) :
-    analyze keys aggs = some (ks, as) ↔
-      keys.mapM analyzeKey = some ks ∧ aggs.mapM analyzeAgg = some as := by
-  unfold analyze; split <;> simp_all
+/-- `analyze` succeeds iff there is no implicit grouping key and every key and every aggregate
+expression is vectorizable; the kinds are then in key/aggregate order (one per expression). -/
+theorem analyze_spec {I : Type} (implicit : List I) (keys aggs : List (Ex Z)) (ks : List (KeyKind Z))
+    (as : List (VAgg Z)) :
+    analyze implicit keys aggs = some (ks, as) ↔
+      implicit = [] ∧ keys.mapM analyzeKey = some ks ∧ aggs.mapM analyzeAgg = some as := by
+  unfold analyze
+  cases implicit with
+  | cons _ _ => simp
+  | nil => simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, ite_false, true_and]; split <;> simp_all
+
+/-- **Implicit grouping keys never take the vectorized path (#3579)**: their values are computed
+per row only, so the fallback `consume_batch_per_row` call of the vectorized path may pass none
+(aggregate.rs:683-685). -/
+theorem analyze_implicit_none {I : Type} (i : I) (is : List I) (keys aggs : List (Ex Z)) :
+    analyze (i :: is) keys aggs = none := rfl
 
 theorem mapM_length {α β : Type} (f : α → Option β) (xs : List α) (ys : List β)
     (h : xs.mapM f = some ys) : ys.length = xs.length := by
@@ -319,10 +334,11 @@ theorem mapM_length {α β : Type} (f : α → Option β) (xs : List α) (ys : L
       | none => simp [hx, hxs] at h
       | some bs => simp [hx, hxs] at h; subst h; simp [ih _ hxs]
 
-theorem analyze_lengths (keys aggs : List (Ex Z)) (ks : List (KeyKind Z)) (as : List (VAgg Z))
-    (h : analyze keys aggs = some (ks, as)) : ks.length = keys.length ∧ as.length = aggs.length := by
+theorem analyze_lengths {I : Type} (implicit : List I) (keys aggs : List (Ex Z)) (ks : List (KeyKind Z))
+    (as : List (VAgg Z))
+    (h : analyze implicit keys aggs = some (ks, as)) : ks.length = keys.length ∧ as.length = aggs.length := by
   rw [analyze_spec] at h
-  exact ⟨mapM_length _ _ _ h.1, mapM_length _ _ _ h.2⟩
+  exact ⟨mapM_length _ _ _ h.2.1, mapM_length _ _ _ h.2.2⟩
 
 /-- A key that is a bare variable or `var.prop` maps to the bulk kinds; a computed key is
 aggregate-free. -/

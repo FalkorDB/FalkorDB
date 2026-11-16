@@ -391,7 +391,7 @@ theorem groupAll_spec {K A : Type} [DecidableEq K] (rows : List (K × A)) (k : K
   simpa [groupAll, lookupG] using this []
 
 /-- Keyed aggregation over no rows has no groups; keyless aggregation
-pre-inserts the single empty-key group (aggregate.rs:533-540, :891-898), so it always
+pre-inserts the single empty-key group (aggregate.rs:648-656, :1009-1016), so it always
 emits one row of initial accumulators (`count`=0, `sum`=0.0, `avg`=null,
 `collect`=[] …; checked in `agrees_empty_input_aggregates`). -/
 theorem keyed_empty {K A : Type} [DecidableEq K] : groupAll ([] : List (K × A)) = [] := rfl
@@ -400,6 +400,89 @@ def keylessGroups {A : Type} (rows : List A) : List (Unit × List A) :=
   [((), rows)]
 
 theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length = 1 := rfl
+
+/-! ### Per-row grouping with implicit keys (#3579; aggregate.rs:1002-1139)
+
+`consume_input_per_row` pre-inserts the empty-key group only when there are neither explicit
+nor implicit keys (:1011); `consume_batch_per_row` groups by the explicit key values followed by
+the implicit key values (:1069-1090) and seeds a new group's accumulator row with the first row's
+values of the variables the implicit keys read (:1105-1113). -/
+
+/-- `consume_input_per_row` + `consume_batch_per_row` grouping: `keyless` is
+`keys.is_empty() && implicit.is_empty()`. -/
+def perRowGroups {V A : Type} [DecidableEq V] (keyless : Bool) (rows : List (List V × A)) :
+    List (List V × List A) :=
+  rows.foldl (fun g r => groupInsert r.1 r.2 g) (if keyless then [([], [])] else [])
+
+/-- The per-row group key: explicit key values, then implicit key values (:1084-1092). -/
+def rowKey {V : Type} (explicit implicit : List V) : List V := explicit ++ implicit
+
+/-- With keys, every group still holds exactly the rows with its key (bag semantics). -/
+theorem perRowGroups_spec {V A : Type} [DecidableEq V] (rows : List (List V × A)) (k : List V) :
+    perRowGroups false rows = groupAll rows ∧
+    (lookupG k (perRowGroups false rows)).getD [] = (rows.filter (fun r => r.1 = k)).map Prod.snd :=
+  ⟨rfl, groupAll_spec rows k⟩
+
+/-- Without explicit or implicit keys every row has the empty key: exactly one group, holding all
+rows (one output row even for an empty input). -/
+theorem perRowGroups_keyless {V A : Type} [DecidableEq V] (rows : List (List V × A))
+    (h : ∀ r ∈ rows, r.1 = []) : perRowGroups true rows = [([], rows.map Prod.snd)] := by
+  unfold perRowGroups
+  simp only [if_true]
+  suffices ∀ (acc : List A), rows.foldl (fun g r => groupInsert r.1 r.2 g) [([], acc)] =
+      [([], acc ++ rows.map Prod.snd)] by simpa using this []
+  induction rows with
+  | nil => intro acc; simp
+  | cons r rows ih =>
+    intro acc
+    have hr : r.1 = [] := h r (by simp)
+    simp only [List.foldl, groupInsert, hr, if_true]
+    rw [ih (fun r' hr' => h r' (by simp [hr']))]
+    simp
+
+/-- **Implicit keys are keys (#3571)**: with an implicit key and no input row there is no group,
+so `MATCH (n) RETURN n.v + count(*)` on an empty graph emits no row (it emitted one before). -/
+theorem implicit_empty_input_no_group {V A : Type} [DecidableEq V] :
+    perRowGroups false ([] : List (List V × A)) = [] := rfl
+
+/-- Rows of one group agree on every implicit key value: the explicit parts have one length
+(one value per key), so equal group keys have equal implicit parts. -/
+theorem rowKey_implicit_eq {V : Type} (e₁ e₂ i₁ i₂ : List V) (hl : e₁.length = e₂.length)
+    (h : rowKey e₁ i₁ = rowKey e₂ i₂) : e₁ = e₂ ∧ i₁ = i₂ :=
+  List.append_inj h hl
+
+/-- The new group's accumulator row: `default_acc` plus each implicit variable bound in the
+first row (:1105-1112). -/
+def seedAcc {V : Type} (vars : List Nat) (row acc : Nat → Option V) : Nat → Option V :=
+  vars.foldl (fun a v => match row v with
+    | some x => fun j => if j = v then some x else a j
+    | none => a) acc
+
+/-- Slots that are not implicit variables keep the default accumulator. -/
+theorem seedAcc_other {V : Type} (vars : List Nat) (row acc : Nat → Option V) (j : Nat)
+    (hj : j ∉ vars) : seedAcc vars row acc j = acc j := by
+  induction vars generalizing acc with
+  | nil => rfl
+  | cons v vs ih =>
+    simp only [seedAcc, List.foldl] at ih ⊢
+    have hv : j ≠ v := fun h => hj (by simp [h])
+    rw [ih _ (fun h => hj (by simp [h]))]
+    cases row v <;> simp [hv]
+
+/-- An implicit variable bound in the first row holds that row's value. -/
+theorem seedAcc_var {V : Type} (vars : List Nat) (row acc : Nat → Option V) (j : Nat) (x : V)
+    (hj : j ∈ vars) (hx : row j = some x) : seedAcc vars row acc j = some x := by
+  induction vars generalizing acc with
+  | nil => simp at hj
+  | cons v vs ih =>
+    simp only [seedAcc, List.foldl] at ih ⊢
+    by_cases hin : j ∈ vs
+    · exact ih _ hin
+    · have hv : j = v := by simpa [hin] using hj
+      subst hv
+      have := seedAcc_other vs row (fun i => if i = j then some x else acc i) j hin
+      simp only [seedAcc] at this
+      rw [hx]; simp [this]
 
 /-! ## DISTINCT state keyed by a hash (history: distinct.rs:79, aggregate.rs:724/:968 at ca36bfa15)
 

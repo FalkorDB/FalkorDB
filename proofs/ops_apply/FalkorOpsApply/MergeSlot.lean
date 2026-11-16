@@ -23,7 +23,7 @@ returns null in the same position, #3368). `MergeOp::next`'s all-bound shortcut
 (merge.rs:378-393) uses `is_bound_by_id` and is only reached when matches exist.
 
 Where does a value-only slot at a MERGE variable's id come from?  ops_aggregate
-`FalkorAggOps.AggPlan.bug3368_count_acc_in_merge_slot` / `bug3369_count_acc_in_merge_slot`
+`FalkorAggOps.AggPlan.pre3579_bug3368_count_acc_in_merge_slot` / `pre3579_bug3369_count_acc_in_merge_slot` (fixed on the aggregate side by #3579)
 (property `EmitsOnlyScope`): a keyless `count(*)` over a 2-variable scope leaves its
 accumulator, unbound but present, at slot 2; `WITH c0, count(*) AS c1` over `c0, r1, b` leaves
 it at slot 3. That row shape is restated here (`row2`, `row3_68`, `row3_69`), not imported.
@@ -341,7 +341,7 @@ def row2 (acc : MV) : Row := Row.ofCells [.bound (.int 1), .bound (.map 11), .va
 /-- #3368's last MERGE input: `c1` = 1, `r2`, the second count's accumulator at slot 2 (= `c`). -/
 def row3_68 (acc : MV) : Row := Row.ofCells [.bound (.int 1), .bound (.map 12), .valueOnly acc]
 /-- #3369's last MERGE input: `c0`, `c1`, `r2`, and `WITH c0, count(*)`'s accumulator at slot 3
-(= `c`), value-only (ops_aggregate `bug3369_count_acc_in_merge_slot`). -/
+(= `c`), value-only (ops_aggregate `pre3579_bug3369_count_acc_in_merge_slot`, fixed by #3579). -/
 def row3_69 (acc : MV) : Row :=
   Row.ofCells [.bound (.int 1), .bound (.int 1), .bound (.map 12), .valueOnly acc]
 

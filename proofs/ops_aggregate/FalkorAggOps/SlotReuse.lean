@@ -12,15 +12,16 @@ keeps the value (row.rs:160-166), which a later operator still reads.
 
 | here | there |
 | --- | --- |
-| `PItem`, `layoutGo`, `projLayout` | id minting of one projection: `bind_projection` binds every item with `bind_expr` **before** `push_scope` (binder.rs:1072-1078), so the parser's accumulator child `__agg_order_by_placeholder__` (cypher.rs:2046-2048, :2072-2074) gets `fresh_var` id = `len` of the pre-projection scope, kept unique under `__agg_placeholder_{id}` (binder.rs:2193-2200); the aliases then get `project_name` ids `0, 1, …` in the new scope (binder.rs:1149-1167, :2177-2185); the planner splits them into keys / aggregations in order (planner/mod.rs:2496-2512); a key whose tree is a bare variable records it as `original_var` (aggregate.rs:1160, :1199) |
+| `PItem`, `layoutGo`, `projLayout` | id minting of one projection: `bind_projection` binds every item with `bind_expr` **before** `push_scope` (binder.rs:1072-1078), so the parser's accumulator child `__agg_order_by_placeholder__` (cypher.rs:2046-2048, :2072-2074) gets `fresh_var` id = `len` of the pre-projection scope, kept unique under `__agg_placeholder_{id}` (binder.rs:2193-2200); the aliases then get `project_name` ids `0, 1, …` in the new scope (binder.rs:1149-1167, :2177-2185); the planner splits them into keys / aggregations in order (planner/mod.rs:2496-2512); a key whose tree is a bare variable records it as `original_var` (aggregate.rs:1317) |
 | `nextId` | the next clause's first new variable: the projection scope holds exactly its aliases (binder `projectItems_keys`), and `fresh_var` mints `len` (binder.rs:2255-2266) |
-| `finishVals` | the emitted row's stored values: `unbind` keeps the value (row.rs:160-166), so values = `finishCore` row + outputs |
+| `finishVals` | the emitted row's stored values: since #3579 `next` evaluates over `eval_env` and emits the key row plus the outputs only (aggregate.rs:1305-1355), so `finishVals = finishGroup`; `pre3579FinishVals` is the 343e077f2 body, where `unbind` kept the value (row.rs:160-166), so values = `finishCore` row + outputs |
 | `cell` | what a downstream operator or the reply reads at a slot of the one-row batch: `push_row` marks a column present iff the slot is bound or holds a non-null value (batch.rs:631-640), `finish` drops a non-present column (batch.rs:763-778), `value_at` returns the stored value (reply.rs:655 `unwrap`s it) |
 | `AV`, `finEv` | the values involved, and `ExprEval::eval` on an aggregate call: read the accumulator child's slot (`value_at(key.id)`, "Variable not found" if absent) and apply the finalizer (eval.rs:864-880); `finalize_avg` is `unreachable!` on a non-list accumulator (aggregation.rs:593-596) |
 
 The general properties a fixed `next` should satisfy are `OutputsOwnAcc`, `KeysBound` and
-`EmitsOnlyScope` (together `AggRowSpec`); each `bug…` theorem refutes one on the ids the
-binder assigns in the issue's query.
+`EmitsOnlyScope` (together `AggRowSpec`). Since #3579 they hold (`outputsOwnScope_main`,
+`keysBound_main`, `emitsOnlyScope_main`); each `pre3579_bug…` theorem refutes one on the
+343e077f2 model with the ids the binder assigns in the issue's query.
 -/
 namespace FalkorAggOps.AggPlan
 
@@ -54,8 +55,14 @@ def nextId (items : List (PItem Z)) : Nat := items.length
 
 /-! ## The emitted row: bound slots, stored values, what downstream reads -/
 
-/-- Stored values of the emitted row (`unbind` keeps them). -/
+/-- Stored values of the emitted row on main: since #3579 nothing is unbound, so the stored values
+are the bound slots (`finishGroup`). -/
 def finishVals {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
+  finishGroup ev keys aggs key acc
+
+/-- **History (#3522 until #3579).** Stored values of the emitted row (`unbind` kept them). -/
+def pre3579FinishVals {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
   match finishCore ev keys aggs key acc with
   | .error e => .error e
@@ -76,23 +83,38 @@ def slotAt {E : Type} (r : Except E (Env Z)) (j : Nat) : Option (Option Z) :=
   | .ok e => some (e j)
   | .error _ => none
 
-/-- What a reader sees at slot `j` of the emitted row (`none` if the group errored). -/
-def emitCell {E : Type} (isNull : Z → Bool) (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc : Env Z) (j : Nat) : Option (Option Z) :=
-  match finishGroup ev keys aggs key acc, finishVals ev keys aggs key acc with
+/-- What a reader sees at slot `j` of a row with bound slots `b` and stored values `v`. -/
+def emitCellOf {E : Type} (isNull : Z → Bool) (b v : Except E (Env Z)) (j : Nat) : Option (Option Z) :=
+  match b, v with
   | .ok b, .ok v => some (cell isNull b v j)
   | _, _ => none
 
+/-- What a reader sees at slot `j` of the emitted row on main (`none` if the group errored). -/
+def emitCell {E : Type} (isNull : Z → Bool) (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) (j : Nat) : Option (Option Z) :=
+  emitCellOf isNull (finishGroup ev keys aggs key acc) (finishVals ev keys aggs key acc) j
+
+/-- **History (#3522 until #3579).** What a reader saw at slot `j` of the emitted row. -/
+def pre3579EmitCell {E : Type} (isNull : Z → Bool) (ev : Ex Z → Env Z → Except E Z)
+    (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc : Env Z) (j : Nat) : Option (Option Z) :=
+  emitCellOf isNull (pre3579FinishGroup ev keys aggs key acc) (pre3579FinishVals ev keys aggs key acc) j
+
 /-! ## The properties a correct `next` satisfies -/
+
+/-- `OutputsOwnAcc` for a given finished row `r`. -/
+def OutputsOwnAccOn {E : Type} (r : Except E (Env Z)) (ev : Ex Z → Env Z → Except E Z)
+    (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Prop :=
+  ∀ p ∈ aggs, ∀ v, ev p.2 (combinedEnv keys key acc) = .ok v → slotAt r p.1 = some (some v)
 
 /-- **Each aggregation reads its own accumulator.** Every output is bound to its expression
 evaluated over the group's key row and accumulators alone (`combinedEnv`), i.e. no earlier
 output written during the loop changes a later aggregation's input. (No projection item can
-reference another item's alias, so nothing legitimate reads an output.) -/
+reference another item's alias, so nothing legitimate reads an output.) Since #3579 main evaluates
+over `evalEnv` instead, which leaves the key row out (#3571); the general form it proves is
+`AggNext.finishGroup_eval`. -/
 def OutputsOwnAcc {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Prop :=
-  ∀ p ∈ aggs, ∀ v, ev p.2 (combinedEnv keys key acc) = .ok v →
-    slotAt (finishGroup ev keys aggs key acc) p.1 = some (some v)
+  OutputsOwnAccOn (finishGroup ev keys aggs key acc) ev keys aggs key acc
 
 /-- **Every grouping column is bound.** Each key name is bound on the emitted row to its key
 value — including a `null` key, which is otherwise dropped from the batch. -/
@@ -101,18 +123,46 @@ def KeysBound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySp
   ∀ k ∈ keys, ∀ v, key k.name = some v →
     slotAt (finishGroup ev keys aggs key acc) k.name = some (some v)
 
+/-- `EmitsOnlyScope` for a given reader view `cellAt`. -/
+def EmitsOnlyScopeOn (cellAt : Nat → Option (Option Z)) (aggs : List (Nat × Ex Z)) (key : Env Z) :
+    Prop :=
+  ∀ j v, key j = none → j ∉ aggs.map Prod.fst → cellAt j ≠ some (some v)
+
 /-- **The emitted row carries only the new scope.** A slot that is neither in the key row
 (projected keys and `copy_from_parent` copies) nor an aggregate output reads as absent: no
 pre-projection alias and no accumulator value survives into ids the next clause will reuse. -/
 def EmitsOnlyScope {E : Type} (isNull : Z → Bool) (ev : Ex Z → Env Z → Except E Z)
     (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Prop :=
-  ∀ j v, key j = none → j ∉ aggs.map Prod.fst → emitCell isNull ev keys aggs key acc j ≠ some (some v)
+  EmitsOnlyScopeOn (emitCell isNull ev keys aggs key acc) aggs key
 
 /-- The three together: what a fix of `AggregateOp::next` should prove for binder ids. -/
 def AggRowSpec {E : Type} (isNull : Z → Bool) (ev : Ex Z → Env Z → Except E Z)
     (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Prop :=
   OutputsOwnAcc ev keys aggs key acc ∧ KeysBound ev keys aggs key acc ∧
     EmitsOnlyScope isNull ev keys aggs key acc
+
+/-- **`EmitsOnlyScope` holds on main for every layout (fixed by #3579).** -/
+theorem emitsOnlyScope_main {E : Type} (isNull : Z → Bool) (ev : Ex Z → Env Z → Except E Z)
+    (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc : Env Z) :
+    EmitsOnlyScope isNull ev keys aggs key acc := by
+  intro j v hk hj
+  unfold emitCell emitCellOf finishVals
+  cases h : finishGroup ev keys aggs key acc with
+  | error e => simp
+  | ok out =>
+    have := finishGroup_only_scope ev keys aggs key acc out h j hk hj
+    simp [cell, this]
+
+/-- **Every output reads only the old scope, on main (#3375, #3571; fixed by #3579).** With
+distinct output names and the group evaluating, each output is its expression over `evalEnv`. -/
+theorem outputsOwnScope_main {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) (hnd : (aggs.map Prod.fst).Nodup)
+    (hok : ∃ out, finishGroup ev keys aggs key acc = .ok out) :
+    ∀ p ∈ aggs, ∀ v, ev p.2 (evalEnv keys key acc) = .ok v →
+      slotAt (finishGroup ev keys aggs key acc) p.1 = some (some v) := by
+  obtain ⟨out, h⟩ := hok
+  intro p hp v hv
+  simp [slotAt, h, finishGroup_eval ev keys aggs key acc out hnd h p hp v hv]
 
 /-! ## Concrete values and finalizers -/
 
@@ -174,24 +224,48 @@ theorem layout3375 (f2 : Fn AV) : projLayout 1 (items3375 f2) =
     ([⟨0, none⟩, ⟨1, none⟩],
      [(2, .func cntF [.var 0, .var 1]), (3, .func f2 [.var 0, .var 2])]) := rfl
 
-/-- **#3375**: `count(x)`'s output (id 2) is written into `combined` before `sum(x)` reads its
-accumulator, which also has id 2, so `sum(x)` returns 3 (the count). Live: Rust `3, 3`, C `3, 6`. -/
-theorem bug3375_output_overwrites_next_acc :
+/-- **History, #3375 (fixed by #3579)**: before #3579 `count(x)`'s output (id 2) was written into
+`combined` before `sum(x)` read its accumulator, which also has id 2, so `sum(x)` returned 3 (the
+count). Live: Rust `3, 3`, C `3, 6`. -/
+theorem pre3579_bug3375_output_overwrites_next_acc :
     let L := projLayout 1 (items3375 sumF)
-    slotAt (finishGroup finEv L.1 L.2 key3375 (acc3375 (.int 6))) 3 = some (some (.int 3)) ∧
+    slotAt (pre3579FinishGroup finEv L.1 L.2 key3375 (acc3375 (.int 6))) 3 = some (some (.int 3)) ∧
     finEv (.func sumF [.var 0, .var 2]) (combinedEnv L.1 key3375 (acc3375 (.int 6))) = .ok (.int 6) ∧
-    ¬ OutputsOwnAcc finEv L.1 L.2 key3375 (acc3375 (.int 6)) := by
+    ¬ OutputsOwnAccOn (pre3579FinishGroup finEv L.1 L.2 key3375 (acc3375 (.int 6)))
+        finEv L.1 L.2 key3375 (acc3375 (.int 6)) := by
   refine ⟨by decide, rfl, fun h => ?_⟩
   have := h (3, .func sumF [.var 0, .var 2]) (List.Mem.tail _ (List.Mem.head _)) (.int 6) rfl
   revert this; decide
 
-/-- **#3375, `avg`**: the same overwrite hands `finalize_avg` an integer, and the server panics
-(live: `internal error: entered unreachable code: finalize_avg expects a list`; C returns 2). -/
-theorem bug3375_avg_panics :
+/-- **History, #3375 `avg` (fixed by #3579)**: the same overwrite handed `finalize_avg` an
+integer, and the server panicked (live: `internal error: entered unreachable code: finalize_avg
+expects a list`; C returns 2). -/
+theorem pre3579_bug3375_avg_panics :
     let L := projLayout 1 (items3375 avgF)
-    finishGroup finEv L.1 L.2 key3375 (acc3375 (.avgAcc 6 3)) = .error .avgPanic ∧
+    pre3579FinishGroup finEv L.1 L.2 key3375 (acc3375 (.avgAcc 6 3)) = .error .avgPanic ∧
     finEv (.func avgF [.var 0, .var 2]) (combinedEnv L.1 key3375 (acc3375 (.avgAcc 6 3))) = .ok (.int 2) := by
   exact ⟨rfl, rfl⟩
+
+/-- **#3375 fixed by #3579**: every aggregation is evaluated over the same `evalEnv` and no output is
+written back, so `sum(x)` reads its own accumulator: `3, 6`, as C, and `OutputsOwnAcc` holds. -/
+theorem fixed3375_sum :
+    let L := projLayout 1 (items3375 sumF)
+    slotAt (finishGroup finEv L.1 L.2 key3375 (acc3375 (.int 6))) 2 = some (some (.int 3)) ∧
+    slotAt (finishGroup finEv L.1 L.2 key3375 (acc3375 (.int 6))) 3 = some (some (.int 6)) ∧
+    OutputsOwnAcc finEv L.1 L.2 key3375 (acc3375 (.int 6)) := by
+  refine ⟨by decide, by decide, fun p hp v hv => ?_⟩
+  simp only [layout3375, List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with rfl | rfl
+  · obtain rfl := Except.ok.inj (hv.symm.trans (rfl : _ = Except.ok (AV.int 3)))
+    decide
+  · obtain rfl := Except.ok.inj (hv.symm.trans (rfl : _ = Except.ok (AV.int 6)))
+    decide
+
+/-- **#3375 `avg` fixed by #3579**: no panic; `avg(x)` = 2, as C. -/
+theorem fixed3375_avg :
+    let L := projLayout 1 (items3375 avgF)
+    slotAt (finishGroup finEv L.1 L.2 key3375 (acc3375 (.avgAcc 6 3))) 3 = some (some (.int 2)) := by
+  decide
 
 /-- Control (live: Rust and C both `3, 6`): with one key the second accumulator (id 2) is not an
 output id, so `sum` reads its own value. -/
@@ -216,8 +290,8 @@ def PreKeysBound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List Ke
   ∀ k ∈ keys, ∀ v, key k.name = some v →
     slotAt (preFinishGroup ev keys aggs key acc) k.name = some (some v)
 
-/-- **#3150 fixed by #3522 (ca36bfa15)**: `AggregateOp::next` unbinds the accumulators before it
-writes the keys (aggregate.rs:1192-1217), so on the same ids the null key `x` is bound to `null`
+/-- **#3150 fixed by #3522 (ca36bfa15), still so since #3579**: the emitted row is the key row with
+the outputs on top (aggregate.rs:1351-1354), so on the same ids the null key `x` is bound to `null`
 and the column is present (live: `null, 1`, as C), and `KeysBound` holds. -/
 theorem fixed3522_null_key_bound :
     let L := projLayout 0 items3150
@@ -270,20 +344,30 @@ def items3333 : List (PItem AV) := [.key (some 2), .agg cntF [.const .int]]
 theorem layout3333 : projLayout 5 items3333 =
     ([⟨0, some 2⟩], [(1, .func cntF [.const .int, .var 5])]) := rfl
 
-/-- **#3333**: the alias write `acc.insert(original_var, …)` binds slot 2 to `m`'s node, and the
-following `MATCH (m)-[r:R]->(b …)` gives `b` id `nextId = 2`, so `b` arrives already bound to
-`m`: the traversal looks for an edge from `m` to `m` and finds none. Live: Rust `[]`, C
-`[3, 1, 4]`. -/
-theorem bug3333_alias_binds_next_var :
+/-- **History, #3333 (fixed by #3579)**: the alias write `acc.insert(original_var, …)` bound slot 2
+to `m`'s node, and the following `MATCH (m)-[r:R]->(b …)` gives `b` id `nextId = 2`, so `b`
+arrived already bound to `m`: the traversal looked for an edge from `m` to `m` and found none.
+Live: Rust `[]`, C `[3, 1, 4]`. -/
+theorem pre3579_bug3333_alias_binds_next_var :
     let L := projLayout 5 items3333
     nextId items3333 = 2 ∧
-    slotAt (finishGroup finEv L.1 L.2 (upd env0 0 (.node 2)) (upd env0 5 (.int 1))) 2 =
+    slotAt (pre3579FinishGroup finEv L.1 L.2 (upd env0 0 (.node 2)) (upd env0 5 (.int 1))) 2 =
       some (some (.node 2)) ∧
-    ¬ EmitsOnlyScope AV.isNull finEv L.1 L.2 (upd env0 0 (.node 2)) (upd env0 5 (.int 1)) := by
+    ¬ EmitsOnlyScopeOn (pre3579EmitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.node 2)) (upd env0 5 (.int 1)))
+        L.2 (upd env0 0 (.node 2)) := by
   refine ⟨rfl, by decide, fun h => ?_⟩
   exact h 2 (.node 2) (by decide) (by decide) (by decide)
 
-/-- Controls, both returning `[3, 1, 4]` live on Rust: with one hop before the WITH (`x, m` = 0, 1)
+/-- **#3333 fixed by #3579**: no alias is written to the emitted row, so slot 2 (`b`) is unbound
+and absent, and `EmitsOnlyScope` holds. -/
+theorem fixed3333_alias_not_emitted :
+    let L := projLayout 5 items3333
+    slotAt (finishGroup finEv L.1 L.2 (upd env0 0 (.node 2)) (upd env0 5 (.int 1))) 2 = some none ∧
+    emitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.node 2)) (upd env0 5 (.int 1)) 2 = some none ∧
+    EmitsOnlyScope AV.isNull finEv L.1 L.2 (upd env0 0 (.node 2)) (upd env0 5 (.int 1)) :=
+  ⟨by decide, by decide, emitsOnlyScope_main _ _ _ _ _ _⟩
+
+/-- Controls, both returning `[3, 1, 4]` live on Rust (before #3579 too): with one hop before the WITH (`x, m` = 0, 1)
 the alias slot 1 is owned by the output `c1` and is skipped; with an extra item `0 AS z` the alias
 slot 2 is overwritten by `z`'s key value and `b` gets id 3, which is unbound. -/
 theorem agree3333_controls :
@@ -303,13 +387,13 @@ def itemsCount : List (PItem AV) := [.agg cntF [.const .int]]
 
 theorem layoutCount2 : projLayout 2 itemsCount = ([], [(0, .func cntF [.const .int, .var 2])]) := rfl
 
-/-- The shared cause: a keyless `count(*)` over a two-variable scope leaves the integer count at
-slot 2, unbound but present, which `EmitsOnlyScope` forbids. -/
-theorem countAcc_left_at_2 :
+/-- **History (fixed by #3579).** The shared cause: a keyless `count(*)` over a two-variable scope
+left the integer count at slot 2, unbound but present, which `EmitsOnlyScope` forbids. -/
+theorem pre3579_countAcc_left_at_2 :
     let L := projLayout 2 itemsCount
-    slotAt (finishGroup finEv L.1 L.2 env0 (upd env0 2 (.int 1))) 2 = some none ∧
-    emitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1)) 2 = some (some (.int 1)) ∧
-    ¬ EmitsOnlyScope AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1)) := by
+    slotAt (pre3579FinishGroup finEv L.1 L.2 env0 (upd env0 2 (.int 1))) 2 = some none ∧
+    pre3579EmitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1)) 2 = some (some (.int 1)) ∧
+    ¬ EmitsOnlyScopeOn (pre3579EmitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1))) L.2 env0 := by
   refine ⟨by decide, by decide, fun h => ?_⟩
   exact h 2 (.int 1) (by decide) (by decide) (by decide)
 
@@ -319,13 +403,15 @@ accumulator 3) at 3, the id of `c` in `UNWIND … AS r2 MERGE (c:C …)` (`c0, c
 Live (fresh graph): both leftovers are needed — `collect(1)` in either segment, or a third
 variable before the first count, makes the query correct — and then the second MERGE returns
 `c` = the integer 1, so `c.id` fails with "expected Map, Node, … but was Integer" (C: `'c1'`). -/
-theorem bug3369_count_acc_in_merge_slot :
+theorem pre3579_bug3369_count_acc_in_merge_slot :
     (let L := projLayout 2 itemsCount
-     emitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1)) 2 = some (some (.int 1))) ∧
+     pre3579EmitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1)) 2 = some (some (.int 1))) ∧
     (let L := projLayout 3 [PItem.key (some 0), .agg cntF [.const .int]]
      L = ([⟨0, some 0⟩], [(1, .func cntF [.const .int, .var 3])]) ∧
-     emitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.int 1)) (upd env0 3 (.int 1)) 3 = some (some (.int 1)) ∧
-     ¬ EmitsOnlyScope AV.isNull finEv L.1 L.2 (upd env0 0 (.int 1)) (upd env0 3 (.int 1))) := by
+     pre3579EmitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.int 1)) (upd env0 3 (.int 1)) 3 =
+       some (some (.int 1)) ∧
+     ¬ EmitsOnlyScopeOn (pre3579EmitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.int 1)) (upd env0 3 (.int 1)))
+        L.2 (upd env0 0 (.int 1))) := by
   refine ⟨by decide, rfl, by decide, fun h => ?_⟩
   exact h 3 (.int 1) (by decide) (by decide) (by decide)
 
@@ -334,12 +420,23 @@ AS c1` counts over a two-variable scope again, leaving the count at 2, and `UNWI
 (c:C …)` gives `c` id 2. With `WITH b` alone the accumulator is 1, which `r2` overwrites, and the
 query is correct (as reported). Live: Rust returns `[B] b1` for `c` and creates 2 nodes; C
 `[C] c1`, 3 nodes. -/
-theorem bug3368_count_acc_in_merge_slot :
+theorem pre3579_bug3368_count_acc_in_merge_slot :
     (let L := projLayout 2 itemsCount
-     emitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1)) 2 = some (some (.int 1)) ∧
-     ¬ EmitsOnlyScope AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1))) ∧
+     pre3579EmitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1)) 2 = some (some (.int 1)) ∧
+     ¬ EmitsOnlyScopeOn (pre3579EmitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1))) L.2 env0) ∧
     (let L := projLayout 1 itemsCount
      L = ([], [(0, .func cntF [.const .int, .var 1])])) := by
-  exact ⟨⟨countAcc_left_at_2.2.1, countAcc_left_at_2.2.2⟩, rfl⟩
+  exact ⟨⟨pre3579_countAcc_left_at_2.2.1, pre3579_countAcc_left_at_2.2.2⟩, rfl⟩
+
+/-- **#3368 / #3369 fixed by #3579**: no accumulator is left on the emitted row, so the slots the
+next segments' MERGE nodes get (2 and 3) are absent, and `EmitsOnlyScope` holds. -/
+theorem fixed3369_no_count_acc_left :
+    (let L := projLayout 2 itemsCount
+     emitCell AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1)) 2 = some none ∧
+     EmitsOnlyScope AV.isNull finEv L.1 L.2 env0 (upd env0 2 (.int 1))) ∧
+    (let L := projLayout 3 [PItem.key (some 0), .agg cntF [.const .int]]
+     emitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.int 1)) (upd env0 3 (.int 1)) 3 = some none ∧
+     EmitsOnlyScope AV.isNull finEv L.1 L.2 (upd env0 0 (.int 1)) (upd env0 3 (.int 1))) :=
+  ⟨⟨by decide, emitsOnlyScope_main _ _ _ _ _ _⟩, ⟨by decide, emitsOnlyScope_main _ _ _ _ _ _⟩⟩
 
 end FalkorAggOps.AggPlan
