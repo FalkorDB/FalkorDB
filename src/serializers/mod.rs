@@ -20,13 +20,17 @@ use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
 
-/// RDB encoding version written. Matches C FalkorDB v19 format (buffered IO with type tags).
+/// RDB encoding version written, and the newest one the decoder loads: C FalkorDB's v20.
 ///
-/// The decoder also loads C's v20, which is v19 plus a CCH index payload (written only for a
-/// graph that has a CCH index); a key carrying that payload is refused, as this module has no
-/// CCH index. See `decoder::decode_payload_directory`.
-#[allow(dead_code)]
-pub const ENCODING_VERSION: u64 = 19;
+/// v20 is v19 (buffered IO with type tags) plus a CCH index payload, which C writes only for
+/// a graph that has a CCH index. This module never writes that payload, so what it writes is
+/// v19's layout stamped 20; a key carrying the payload is refused, as this module has no CCH
+/// index. See `decoder::decode_payload_directory`.
+pub const ENCODING_VERSION: i32 = 20;
+
+/// The oldest encoding version the decoder loads: v19, the layout v20 extends. C decodes
+/// older versions with separate decoders, which this module does not have.
+pub const DECODE_MIN_VERSION: i32 = 19;
 
 /// Global state for virtual key management during RDB save.
 pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =

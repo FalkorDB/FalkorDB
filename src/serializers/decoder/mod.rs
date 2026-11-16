@@ -14,6 +14,7 @@ use super::EncodeState;
 use super::Header;
 use super::Schema;
 use super::buffered_io::BufferedReader;
+use super::{DECODE_MIN_VERSION, ENCODING_VERSION};
 use super::{DECODE_STATE, PendingGraph};
 
 /// What one RDB key turned out to hold.
@@ -70,7 +71,34 @@ fn decode_payload_directory(r: &mut dyn Reader) -> Result<Vec<(EncodeState, u64)
     Ok(payloads)
 }
 
+/// Refuse a key whose encoding version the decoder cannot read, as C's `rdb_load` does.
+///
+/// A newer version may lay its payloads out in a way this decoder does not know, and an
+/// older one predates the v19 layout. Either would be decoded as v19 and misread, so the
+/// load fails before anything is read.
+///
+/// # Errors
+/// `encver` is above [`ENCODING_VERSION`] or below [`DECODE_MIN_VERSION`].
+pub fn check_encoding_version(encver: i32) -> Result<(), String> {
+    if encver > ENCODING_VERSION {
+        return Err(format!(
+            "RDB encoding version {encver} is newer than this module's \
+             {ENCODING_VERSION}: not forward compatible"
+        ));
+    }
+    if encver < DECODE_MIN_VERSION {
+        return Err(format!(
+            "RDB encoding version {encver} is older than the oldest this module \
+             loads, {DECODE_MIN_VERSION}"
+        ));
+    }
+    Ok(())
+}
+
 /// Decode a graph key from the RDB stream (v19 format, or v20 without CCH indexes).
+///
+/// `encver` is the key's encoding version, which Redis passes to `rdb_load`; see
+/// [`check_encoding_version`].
 ///
 /// `key_name` is the Redis key this payload arrived under. A multi-key graph
 /// spans several keys but names itself only once, in every payload's header,
@@ -83,9 +111,11 @@ fn decode_payload_directory(r: &mut dyn Reader) -> Result<Vec<(EncodeState, u64)
 #[allow(clippy::too_many_lines)]
 pub fn rdb_load_graph(
     rdb: *mut RedisModuleIO,
+    encver: i32,
     key_name: &str,
     cache_size: usize,
 ) -> Result<LoadedKey, String> {
+    check_encoding_version(encver)?;
     let mut r = BufferedReader::new(rdb);
 
     // --- Header ---
@@ -574,6 +604,19 @@ mod tests {
             w.write_unsigned(count);
         }
         w.into_vec()
+    }
+
+    /// v19 and v20 load; a newer version, which may lay its payloads out differently, and an
+    /// older one, which predates the v19 layout, are refused before anything is read.
+    #[test]
+    fn only_versions_19_and_20_load() {
+        assert_eq!(ENCODING_VERSION, 20);
+        assert!(check_encoding_version(19).is_ok());
+        assert!(check_encoding_version(20).is_ok());
+        let newer = check_encoding_version(21).unwrap_err();
+        assert!(newer.contains("not forward compatible"), "{newer}");
+        let older = check_encoding_version(18).unwrap_err();
+        assert!(older.contains("older than the oldest"), "{older}");
     }
 
     /// A v20 key without CCH indexes lists the same payloads a v19 key does.
