@@ -33,7 +33,7 @@ cannot short-circuit (counterexample removed in bbee75955; the last revision tha
 `all_equals` / `all_not_equals` are modelled over their lazy iterators (`allEquals`,
 `allNotEquals`: `allEquals_two`, `allNotEquals_two`, `allEquals_stops`). **`evalNode_frame`**:
 evaluation reads the row only through the expression's `Variable` nodes (`E.vars`), for every
-arm (moved here from pr3437_review). `E.funcs` lists the functions a tree calls. Every theorem
+arm (moved here from the review project of PR #3437). `E.funcs` lists the functions a tree calls. Every theorem
 above the extension is unchanged in statement except that the catch-all's type is now
 `Compound V`. Live (main 9212add39 vs C): `UNWIND [0] AS x RETURN x <> 0 AND 1/x = 1` → Rust
 `false`, C `Division by zero`; likewise `false AND 1/x = 1`, `true OR 1/x = 1`,
