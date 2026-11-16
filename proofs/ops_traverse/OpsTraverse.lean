@@ -94,8 +94,8 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
-| `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
-| `PathVlt.vltMain`, `revWalk` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs:88-139`, direction inferred at `:102-105`) |
+| `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:156-180`) |
+| `PathVlt.vltMain`, `revWalk` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs:96-147`, direction inferred at `:110-113`) |
 | `EIP.expandIntoP`, `Pending` | `ExpandIntoOp::expand_row` with pending deletes (`expand_into.rs:158-235`; `pending.rs:1115-1134`) |
 | `Scans.labelScan`, `idSeek`, `labelIdScan` | `node_by_label_scan.rs:77`, `node_by_id_seek.rs:55`, `node_by_label_and_id_scan.rs:59` |
 | `ASPFold.Rel`, `ASPInv.Inv`, `bstep`, `ASPStep`, `ASPFinal`, `ASPMain`, `ASPFuel` | the BFS of `all_shortest_paths.rs:141-265` (one `pop_front` iteration = `bstep`), its invariant, and the backtrack `:278-304` |
@@ -197,7 +197,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes`.
 
 9. **#3451: incoming var-length cycle in a named path is not reversed**
-   (`path_builder.rs:102-110`: the direction is inferred by comparing the VLT path's
+   (`path_builder.rs:110-118`: the direction is inferred by comparing the VLT path's
    first node with the previous path node; on a cycle `n = m` it says "forward").
    `MATCH p=(a {id:0})<-[:R*3..3]-(a)` on `0→1→2→0`: Rust `[0,1,2,0]`/`[1,2,3]`,
    expected `[0,2,1,0]`/`[3,2,1]` (C `[0,2,1,0]`/`[1,2,3]`). Property
