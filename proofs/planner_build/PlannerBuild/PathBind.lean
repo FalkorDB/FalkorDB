@@ -163,11 +163,11 @@ theorem planMatchArm_path_unwrapped (st : MSt) (c : Comp) (m : Plan) (p : V × L
     exact ⟨p.1, by simp [compVars]; exact Or.inr (Or.inr ⟨p.2, hp⟩), by simp [hnew]⟩
   simp [planMatchArm, this]
 
-theorem refill_argument (q y : Plan) :
+theorem refill_argument [Mentions] (q y : Plan) :
     refill (.node .argument []) (slotLoop (.node .argument [])) q y = .node .argument [y] := by
   simp [refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
 
-theorem refill_eiArg (s : Nat) (q y : Plan) :
+theorem refill_eiArg [Mentions] (s : Nat) (q y : Plan) :
     refill (.node (.hop .expandInto s) [.node .argument []])
       (slotLoop (.node (.hop .expandInto s) [.node .argument []])) q y =
       .node (.hop .expandInto s) [.node .argument [y]] := by
@@ -175,14 +175,14 @@ theorem refill_eiArg (s : Nat) (q y : Plan) :
 
 /-- Stitched under an unwrapped `Argument`, the previous clauses are never run: the
 clause yields the argument row whatever they are (runtime.rs:658-660, 1285). -/
-theorem argument_fill_ignores_input {Val Gr : Type} (S : Sem Val Gr) (q y : Plan)
+theorem argument_fill_ignores_input [Mentions] {Val Gr : Type} (S : Sem Val Gr) (q y : Plan)
     (r : Rec Val) (g : Gr) :
     ev S (refill (.node .argument []) (slotLoop (.node .argument [])) q y) r g = ([r], g) := by
   rw [refill_argument]; simp [ev]
 
 /-- The same for the labelled form `ExpandInto(Argument)`: the label check runs on the
 argument row only. -/
-theorem expandInto_fill_ignores_input {Val Gr : Type} (S : Sem Val Gr) (s : Nat) (q y : Plan)
+theorem expandInto_fill_ignores_input [Mentions] {Val Gr : Type} (S : Sem Val Gr) (s : Nat) (q y : Plan)
     (r : Rec Val) (g : Gr) :
     ev S (refill (.node (.hop .expandInto s) [.node .argument []])
       (slotLoop (.node (.hop .expandInto s) [.node .argument []])) q y) r g =
@@ -280,14 +280,14 @@ def optQuery (l : String) : List Plan :=
    .node (.project 0) []]
 
 /-- The live EXPLAIN shape `Project(Apply(Scan, Optional(ExpandInto(Argument))))`. -/
-theorem optQuery_plan (l : String) :
+theorem optQuery_plan [Mentions] (l : String) :
     rustStitch (optQuery l) =
       .node (.project 0) [.node .apply [.node (.scan 0) [],
         .node (.optional [1]) [.node (.hop .expandInto 0) [.node .argument []]]]] := by
   simp only [optQuery, planMatch_labelled boundSt n0 p0 l boundSt_n0, addArgs_eiArg]
   simp [planMatchArm, compVars, pathComp, boundSt, MSt.bound, n0, p0, addArgs_eiArg, refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
 
-theorem optQuery_rows (l : String) :
+theorem optQuery_rows [Mentions] (l : String) :
     (ev pathS (rustStitch (optQuery l)) [] ()).1 = [[(0, 7)]] := by
   rw [optQuery_plan]; decide
 
@@ -295,7 +295,7 @@ theorem optQuery_rows (l : String) :
 C `1, [(0)]`). `plan_match` violates `BindsAllPaths`; the stitched plan
 `Project(Apply(Scan, Optional(ExpandInto(Argument))))` (the live EXPLAIN) returns the
 row without `p0`; openCypher returns it with the path. -/
-theorem bug2311_optional_path_null :
+theorem bug2311_optional_path_null [Mentions] :
     ¬ BindsAllPaths boundSt [] [pathComp { alias := n0, labels := ["P"], ptr := 0 } p0] ∧
     (ev pathS (rustStitch (optQuery "P")) [] ()).1 = [[(0, 7)]] ∧
     ¬ RowsBind [0, 1] (ev pathS (rustStitch (optQuery "P")) [] ()).1 ∧
@@ -305,7 +305,7 @@ theorem bug2311_optional_path_null :
 
 /-- **#2737** (`MATCH (n1:X) OPTIONAL MATCH p6 = (n1) RETURN p6` → Rust `null`, C `[(0)]`):
 the same shape as #2311. -/
-theorem bug2737_optional_path_null :
+theorem bug2737_optional_path_null [Mentions] :
     ¬ BindsAllPaths boundSt [] [pathComp { alias := n0, labels := ["X"], ptr := 0 } p0] ∧
     ¬ RowsBind [1] (ev pathS (rustStitch (optQuery "X")) [] ()).1 := by
   refine ⟨boundNode_path_not_built _ _ _ _ boundSt_n0, ?_⟩
@@ -328,14 +328,14 @@ theorem withQuery_unwrapped (st : MSt) (n : V) (l : String) (hb : st.bound n = t
   exact planMatchArm_path_unwrapped st _ _ (p0, [n]) (List.mem_singleton_self _) hp
 
 /-- The live EXPLAIN shape: the WITH and the first MATCH under the `Argument`. -/
-theorem withQuery_project (st : MSt) (n : V) (l : String) (hb : st.bound n = true)
+theorem withQuery_project [Mentions] (st : MSt) (n : V) (l : String) (hb : st.bound n = true)
     (hp : st.bound p0 = false) (k : Nat) :
     rustStitch (withQuery st n l (.node (.project k) [])) =
       .node (.project k) [.node (.hop .expandInto 0) [.node .argument [.node (.project 0) [.node (.scan 0) []]]]] := by
   simp only [withQuery, withQuery_unwrapped st n l hb hp]
   simp [refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
 
-theorem withQuery_aggregate (st : MSt) (n : V) (l : String) (hb : st.bound n = true)
+theorem withQuery_aggregate [Mentions] (st : MSt) (n : V) (l : String) (hb : st.bound n = true)
     (hp : st.bound p0 = false) (k : Nat) :
     rustStitch (withQuery st n l (.node (.aggregate k) [])) =
       .node (.aggregate k) [.node (.hop .expandInto 0) [.node .argument [.node (.project 0) [.node (.scan 0) []]]]] := by
@@ -346,7 +346,7 @@ theorem withQuery_aggregate (st : MSt) (n : V) (l : String) (hb : st.bound n = t
 C one row `1, [(0)]`). Both root causes: no `PathBuilder` (`BindsAllPaths` fails),
 and the unwrapped `Argument` gets the previous clauses as a child — the live EXPLAIN
 `Project(ExpandInto(Argument(Project(Scan))))` — violating `argIsLeaf`; the row is lost. -/
-theorem bug2744_bound_path_unfed_argument :
+theorem bug2744_bound_path_unfed_argument [Mentions] :
     ¬ BindsAllPaths boundSt [] [pathComp { alias := n0, labels := ["A"], ptr := 0 } p0] ∧
     (rustStitch (withQuery boundSt n0 "A" (.node (.project 0) []))).argIsLeaf = false ∧
     (ev pathS (rustStitch (withQuery boundSt n0 "A" (.node (.project 0) []))) [] ()).1 = [] ∧
@@ -357,7 +357,7 @@ theorem bug2744_bound_path_unfed_argument :
   · rw [withQuery_project boundSt n0 _ rfl rfl]; decide
 
 /-- **#2743** (`MATCH (n0:V) WITH * MATCH p0=(n0) RETURN count(*)` → Rust 0, C 1). -/
-theorem bug2743_bound_path_drops_rows :
+theorem bug2743_bound_path_drops_rows [Mentions] :
     ¬ BindsAllPaths boundSt [] [pathComp { alias := n0, labels := ["V"], ptr := 0 } p0] ∧
     (rustStitch (withQuery boundSt n0 "V" (.node (.aggregate 0) []))).argIsLeaf = false ∧
     (ev pathS (rustStitch (withQuery boundSt n0 "V" (.node (.aggregate 0) []))) [] ()).1 = [[(9, 0)]] ∧
@@ -375,7 +375,7 @@ def aliasSt : MSt := { visited := [alias4], verified := [] }
 → Rust 0 rows, C `'x'`; the full repro errors `Variable alias4 not found`). The pattern
 has one node-only component carrying `p1` (`connected_components`, ast.rs:926-928);
 the binder copies `:A` onto `alias4`, so the plan is `ExpandInto(Argument)` again. -/
-theorem bug2727_alias_path_drops_rows :
+theorem bug2727_alias_path_drops_rows [Mentions] :
     ¬ BindsAllPaths aliasSt [] [pathComp { alias := alias4, labels := ["A"], ptr := 0 } p0] ∧
     (rustStitch (withQuery aliasSt alias4 "A" (.node (.project 0) []))).argIsLeaf = false ∧
     (ev pathS (rustStitch (withQuery aliasSt alias4 "A" (.node (.project 0) []))) [] ()).1 = [] := by
@@ -390,7 +390,7 @@ def callQuery : List Plan :=
      (planMatch boundSt [] [pathComp { alias := n0, ptr := 0 } p0] none).1.toPlan,
    .node (.project 0) []]
 
-theorem callQuery_plan :
+theorem callQuery_plan [Mentions] :
     rustStitch callQuery =
       .node (.project 0) [.node .argument [.node (.procCall 0) [.node (.scan 0) []]]] := by
   have hu := planMatchArm_path_unwrapped boundSt (pathComp { alias := n0, ptr := 0 } p0)
@@ -404,7 +404,7 @@ theorem callQuery_plan :
 `Argument`; the CALL and the first MATCH are stitched under it (live EXPLAIN
 `Project(Argument(ProcedureCall(All Node Scan)))`), so the one output row is empty:
 `n0`, `label` and `p0` are all unbound. -/
-theorem bug2725_call_then_bound_path_loses_var :
+theorem bug2725_call_then_bound_path_loses_var [Mentions] :
     ¬ BindsAllPaths boundSt [] [pathComp { alias := n0, ptr := 0 } p0] ∧
     (rustStitch callQuery).argIsLeaf = false ∧
     (ev pathS (rustStitch callQuery) [] ()).1 = [[]] ∧
