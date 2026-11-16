@@ -196,7 +196,7 @@ pub fn graph_record(
             .set_value(&GRAPH_TYPE, graph.clone())
             .map_err(wrong_type_compat)?;
         let key_name: Arc<str> = Arc::from(name.as_str());
-        register_graph(name, graph.clone());
+        register_graph(ctx, name, graph.clone());
         (graph, key_name)
     };
 

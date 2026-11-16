@@ -13,8 +13,8 @@ Line numbers: `origin/main` (`3fec7d7c9`).
 | `enqueueOk`            | `enqueue_entry` gates `:892-937` |
 | `drain`                | `drain_queued` `:832` |
 | `capDeferred`          | `deferred.drain(..len - DEFERRED_XADD_MAX)` (`flusher_loop`) |
-| `resolve`              | `resolve_current_names` `:682-742` |
-| `groupOrder`           | `deferred.sort_by(graph_name)` + `chunk_by` (`flusher_loop`) |
+| `resolve`              | `resolve_current_names` `:738-779` |
+| `groupOrder`           | `deferred.sort_by((db, graph, graph_name))` + `chunk_by` (`flusher_loop`) |
 | `fieldValues`          | `StreamTemplate::add` value array `:176-201` |
 | `failMsg`              | `StreamTemplate::report_failures` `:228-240` |
 -/

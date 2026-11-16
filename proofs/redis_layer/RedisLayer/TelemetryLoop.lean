@@ -56,6 +56,36 @@ def deleteStreamKey (g : List Char) : List Char := streamName g
 theorem deleteStream_key_or_name (g : List Char) :
     deleteStreamKey (upToNul g) = deleteStreamKey g := streamName_key_name g
 
+/-- `delete_stream_if_stream` (`:352`): the key `DEL`ed, if any — only when `TYPE` says
+`stream` (`ty` is the `TYPE` reply), so `SET telemetry{g} keep` survives a relocation. -/
+def deleteIfStream (ty : List Char → String) (g : List Char) : Option (List Char) :=
+  if ty (deleteStreamKey g) = "stream" then some (deleteStreamKey g) else none
+
+theorem deleteIfStream_spec (ty : List Char → String) (g : List Char) :
+    (deleteIfStream ty g = some (deleteStreamKey g) ↔ ty (deleteStreamKey g) = "stream") ∧
+    (ty (deleteStreamKey g) ≠ "stream" → deleteIfStream ty g = none) := by
+  unfold deleteIfStream; constructor
+  · split <;> simp_all
+  · intro h; simp [h]
+
+/-- `delete_stream_in_db` (`:374`): from selected database `orig`, select `db` (`selOk`:
+`SelectDb` succeeded), delete there, re-select `orig`. Returns the (db, key) deleted and
+the database selected afterwards. -/
+def deleteInDb (ty : Int → List Char → String) (selOk : Bool) (orig db : Int) (g : List Char) :
+    Option (Int × List Char) × Int :=
+  if selOk then ((deleteIfStream (ty db) g).map (db, ·), orig) else (none, orig)
+
+/-- The selected database is restored, and a deletion only ever hits database `db`. -/
+theorem deleteInDb_spec (ty : Int → List Char → String) (selOk : Bool) (orig db : Int) (g : List Char) :
+    (deleteInDb ty selOk orig db g).2 = orig ∧
+    ∀ d k, (deleteInDb ty selOk orig db g).1 = some (d, k) → d = db ∧ k = deleteStreamKey g := by
+  unfold deleteInDb deleteIfStream
+  refine ⟨by split <;> rfl, ?_⟩
+  intro d k h
+  split at h
+  · split at h <;> simp_all
+  · cases h
+
 /-- `GRAPH.INFO` rows. -/
 inductive RV (F : Type) | bulk (s : String) | int (i : Int) | float (x : F)
 

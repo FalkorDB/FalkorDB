@@ -1,7 +1,9 @@
 use crate::query_session::{QuerySession, WriteAbort, WriteFacts};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
+    graph_core::{
+        CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph, registered_db,
+    },
     redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use graph::effects::EffectsBuffer;
@@ -14,7 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use valkey_module::logging::{log_notice, log_warning};
 use valkey_module::{
-    Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
+    Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
 };
 
 /// Validate that a name is a valid identifier: starts with a letter or underscore,
@@ -310,6 +312,14 @@ fn attempt_settle(
     // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
     // shape as bulk_insert's Phase 2.
     session.upgrade_to_write(None)?;
+    // Announce into the graph's own database. This context is detached, so it
+    // starts out in database 0, and a replicated command applies to the database
+    // its context has selected: a graph anywhere else had its settled status sent
+    // to the same key name in database 0 (#2782). Read here, with the GIL held
+    // from `upgrade_to_write`, so a `MOVE` or `SWAPDB` cannot move it in between.
+    if let Some(db) = registered_db(graph) {
+        unsafe { raw::RedisModule_SelectDb.unwrap()(ctx.ctx, db) };
+    }
     // A refusal from `commit` comes back as the `WriteAbort` it maps to, not
     // flattened: the retry loop treats a stale version (retry) and an invalid
     // one (permanent) as opposites. Answering one bool for refusals once made
@@ -499,7 +509,7 @@ pub fn graph_constraint(
         create_key
             .set_value(&GRAPH_TYPE, g.clone())
             .map_err(wrong_type_compat)?;
-        register_graph(name, g.clone());
+        register_graph(ctx, name, g.clone());
         g
     };
 

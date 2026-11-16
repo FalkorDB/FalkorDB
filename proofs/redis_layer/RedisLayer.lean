@@ -162,7 +162,7 @@ Headline theorems:
   `bytes_of_emits` gives the RESP2 bytes; `postponed_wrong_len` shows a wrong count breaks.
 * Telemetry: `streamName_key_name`/`streamName_inj`/`stream_same_slot`, registry placement and
   transitions, `WaitingEntry` guard laws, `drain_conserves`, `capDeferred_suffix`,
-  `retain_sound`/`pass2Step_sound` (re-keying), `group_keeps_order` (per-graph arrival order
+  `retain_sound`/`resolveOne_current` (re-keying by graph identity, #3424), `deleteIfStream_spec`, `group_keeps_order` (per-graph arrival order
   survives the sort), `iter_replica_never_writes`.
 * `LoadArgs.rust_c_same_accept` (#3328) — module-load arguments accepted exactly as C's
   `Config_Init` (modulo leading whitespace and Rust-only names, both confirmed live; for
@@ -170,7 +170,7 @@ Headline theorems:
   agrees with `access(W_OK)`);
   `error_applies_nothing`; `cross_eq`; historical `ModuleInit.pre3328_*`;
   `Bulk.deep_refused` (#3339 depth cap); `QuerySession.checkFork_spec`, `upgrade_stale`, `current_kept`, `ofCommit_ne`,
-  `GraphCore.executeWrite_first` (#3290); `GraphCore.admit_bounded` (#3014); `cGraphName_key`; `rename_moves`; `loopExit_safe`; `escalate_order`,
+  `GraphCore.executeWrite_first` (#3290); `GraphCore.admit_bounded` (#3014); `cGraphName_key`; `relocate_moves`, `swapDbs_get`, `ModuleInit.rename_pair`/`move_pair`/`not_a_graph` (#3424); `loopExit_safe`; `escalate_order`,
   `writer_holds_gil`, `release_order`; `consArgs_ok`, `cons_label_refused`, `cons_count_noncanonical`, `memArgs_samples`; `copy_ok_iff`/`exited_iff`;
   `memTotal_sum`; `sync_is_yield_without_yields`.
 
@@ -261,9 +261,9 @@ report exactly the bytes the query's own traffic allocated/freed (below `2^64`) 
 `QUERY_MEM_CAPACITY` check sees only the calling thread), `fresh_thread_counts` (the flag
 starts `true`).
 
-## Gap closed 2026-10-20 (bugs the model missed; both **Open**, live-checked on main 9d3869aa8 vs C)
-* #2782 `MultiDb`: keyspace keyed by `(db, key)` over the name-only `GRAPH_REGISTRY`.
-  `bug2782_same_name_other_db_aborts` (db0, db1, db0 → ok, ok, aborted in a release build, where the writer check aborts; a debug build trips the `debug_assert!` in `register_graph` (`graph_core.rs:152`) on the db1 create first; C ok×3), property
+## Gap closed 2026-10-20 (bugs the model missed; live-checked on main 9d3869aa8 vs C)
+* #2782 `MultiDb` (**fixed by #3424**: registry keyed by graph identity; `writes_succeed`, `fixed2782_repro`): historical
+  `Pre3424.pre3424_bug2782_same_name_other_db_aborts` (db0, db1, db0 → ok, ok, aborted in a release build, where the writer check aborts; a debug build trips the `debug_assert!` in `register_graph` (`graph_core.rs:152`) on the db1 create first; C ok×3), property
   `KeyspaceRegistered` / `WritesSucceed`; `existing_ok` shows the invariant suffices.
 * #2653 `KeyName`: key names as bytes with a concrete `from_utf8_lossy`.
   `bug2653_nonutf8_key_mangled` (`\xc3(bin` → `\xef\xbf\xbd(bin`, `\xff\xfe` → two U+FFFD),

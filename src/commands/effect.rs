@@ -60,7 +60,7 @@ pub fn graph_effect(
         create_key
             .set_value(&GRAPH_TYPE, g.clone())
             .map_err(wrong_type_compat)?;
-        register_graph(name, g.clone());
+        register_graph(ctx, name, g.clone());
         g
     };
 

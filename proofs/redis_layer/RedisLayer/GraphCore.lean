@@ -5,7 +5,7 @@ import RedisLayer.Resp
 | here | there (`origin/main`) |
 | --- | --- |
 | `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:87`, `c_graph_name` `:104`, `c_graph_key` `:119` |
-| `Reg.*`                     | `register_graph` `:140`, `graph_is_registered` `:188`, `rename_graph` `:202`, `graph_free` `:1761` |
+| `Reg.*`, `registerAt`, `register`, `isRegistered`, `registeredDb`, `relocate`, `swapDbs`, `free` | `register_graph_at` `:186`, `register_graph` `:173`, `graph_is_registered` `:222`, `registered_db` `:227`, `relocate_graph` `:233`, `swap_graph_dbs` `:247`, `graph_free` `:1828` (registry keyed by graph identity since #3424) |
 | `modified`                  | `WriteQueryOk::new` `:256` |
 | `sanitise`                  | `ffi::sanitise_error` `:318` |
 | `invalidVersionBytes`       | `reply_invalid_graph_version` `:986` |
@@ -91,30 +91,92 @@ theorem cGraphName_key (L : Lossy) (key : Bytes) : cGraphName L key = L.dec (cGr
     exact upToNulC_split _ _ (L.nonul _ (upToNulB_nonul key))
   · rw [(upToNulB_split key).2 h0, upToNulC_nofree _ (L.nonul _ h0)]
 
-/-! ## Registry (`GRAPH_REGISTRY`: key → graph allocation) -/
+/-! ## Registry (`GRAPH_REGISTRY`: graph identity → (database, key name), #2782)
 
-abbrev Reg := List (List Char × Nat)
+Since #3424 the registry is keyed by `graph_id` (the address of the graph's shared state)
+and each entry records where the graph lives: its logical database and its (lossy) key
+name. A graph is a `Nat` (its identity), a database an `Int` (`i32`). -/
 
-def Reg.insert (r : Reg) (k : List Char) (g : Nat) : Reg := (k, g) :: r.filter (·.1 ≠ k)
-def Reg.get (r : Reg) (k : List Char) : Option Nat := (r.find? (·.1 = k)).map (·.2)
+abbrev Reg := List (Nat × (Int × List Char))
 
-/-- `register_graph`; returns the displaced graph (dropped on another thread). -/
-def register (r : Reg) (k : List Char) (g : Nat) : Reg × Option Nat := (r.insert k g, r.get k)
-/-- `graph_is_registered`: by allocation, under any key. -/
-def isRegistered (r : Reg) (g : Nat) : Bool := r.any (·.2 = g)
-/-- `rename_graph`: `remove(old).and_then(|arc| insert(new, arc))`. -/
-def rename (r : Reg) (old new : List Char) : Reg × Option Nat :=
-  match r.get old with
+/-- `HashMap::get` by identity: where the graph is registered. -/
+def Reg.get (r : Reg) (g : Nat) : Option (Int × List Char) := (r.find? (·.1 = g)).map (·.2)
+
+/-- `register_graph_at` (`:186`): `entry(graph_id).and_modify(set db, name).or_insert(..)`.
+Re-registering a graph only moves it; no other entry is touched. -/
+def registerAt (r : Reg) (db : Int) (k : List Char) (g : Nat) : Reg := (g, (db, k)) :: r.filter (·.1 ≠ g)
+/-- `register_graph` (`:173`): `register_graph_at(selected_db(ctx), ..)`; `db` is the
+database the command's context has selected (`RedisModule_GetSelectedDb`, FFI). -/
+def register (r : Reg) (db : Int) (k : List Char) (g : Nat) : Reg := registerAt r db k g
+/-- `graph_is_registered` (`:222`): `contains_key(graph_id)`. -/
+def isRegistered (r : Reg) (g : Nat) : Bool := r.any (·.1 = g)
+/-- `registered_db` (`:227`). -/
+def registeredDb (r : Reg) (g : Nat) : Option Int := (r.get g).map (·.1)
+/-- `relocate_graph` (`:233`): move an entry, returning where it was; `None` (and no
+change) for a graph that is not registered. Replaces `rename_graph`. -/
+def relocate (r : Reg) (g : Nat) (db : Int) (k : List Char) : Reg × Option (Int × List Char) :=
+  match r.get g with
   | none => (r, none)
-  | some g => let r' := r.filter (·.1 ≠ old); (Reg.insert r' new g, Reg.get r' new)
-/-- `graph_free`: remove every key mapping to this allocation. -/
-def free (r : Reg) (g : Nat) : Reg := r.filter (·.2 ≠ g)
+  | some old => (registerAt r db k g, some old)
+/-- `swap_graph_dbs` (`:247`): `SWAPDB a b`. -/
+def swapDb (a b d : Int) : Int := if d = a then b else if d = b then a else d
+def swapDbs (r : Reg) (a b : Int) : Reg := r.map fun e => (e.1, (swapDb a b e.2.1, e.2.2))
+/-- `graph_free` (`:1828`): `remove(graph_id)`. -/
+def free (r : Reg) (g : Nat) : Reg := r.filter (·.1 ≠ g)
 
-theorem register_registered (r : Reg) (k : List Char) (g : Nat) : isRegistered (register r k g).1 g := by
-  simp [register, Reg.insert, isRegistered]
+theorem get_filter_self (r : Reg) (g : Nat) : Reg.get (r.filter (·.1 ≠ g)) g = none := by
+  unfold Reg.get
+  rw [List.find?_eq_none.2]; · rfl
+  intro x hx; simp at hx ⊢; exact hx.2
 
-theorem register_get (r : Reg) (k : List Char) (g : Nat) : (register r k g).1.get k = some g := by
-  simp [register, Reg.insert, Reg.get]
+theorem get_filter_other (r : Reg) (g h : Nat) (hne : h ≠ g) :
+    Reg.get (r.filter (·.1 ≠ g)) h = Reg.get r h := by
+  unfold Reg.get
+  rw [List.find?_filter]
+  congr 2; funext a
+  by_cases ha : a.1 = h
+  · simp [ha, hne]
+  · simp [ha]
+
+theorem isRegistered_iff (r : Reg) (g : Nat) : isRegistered r g = (r.get g).isSome := by
+  unfold isRegistered Reg.get
+  rw [Option.isSome_map]
+  induction r with
+  | nil => rfl
+  | cons x xs ih => by_cases hx : x.1 = g <;> simp [List.find?_cons, hx] at ih ⊢ <;> exact ih
+
+theorem registerAt_get (r : Reg) (db : Int) (k : List Char) (g : Nat) :
+    (registerAt r db k g).get g = some (db, k) := by
+  simp [registerAt, Reg.get]
+
+theorem registerAt_get_other (r : Reg) (db : Int) (k : List Char) (g h : Nat) (hne : h ≠ g) :
+    (registerAt r db k g).get h = r.get h := by
+  have : (Reg.get ((g, (db, k)) :: r.filter (·.1 ≠ g)) h) = Reg.get (r.filter (·.1 ≠ g)) h := by
+    simp [Reg.get, Ne.symm hne]
+  unfold registerAt; rw [this, get_filter_other _ _ _ hne]
+
+theorem register_registered (r : Reg) (db : Int) (k : List Char) (g : Nat) :
+    isRegistered (register r db k g) g := by
+  simp [register, registerAt, isRegistered]
+
+/-- The entry records the key and the database the graph was registered at. -/
+theorem register_get (r : Reg) (db : Int) (k : List Char) (g : Nat) :
+    (register r db k g).get g = some (db, k) := registerAt_get r db k g
+
+/-- **#2782 fixed**: registering a graph never displaces another — every other graph keeps
+its entry, wherever it is and whatever its name. -/
+theorem register_keeps_others (r : Reg) (db : Int) (k : List Char) (g h : Nat) (hne : h ≠ g) :
+    (register r db k g).get h = r.get h := registerAt_get_other r db k g h hne
+
+theorem register_keeps_registered (r : Reg) (db : Int) (k : List Char) (g h : Nat)
+    (hh : isRegistered r h = true) : isRegistered (register r db k g) h = true := by
+  by_cases e : h = g
+  · subst e; exact register_registered r db k h
+  · rw [isRegistered_iff] at hh ⊢; rw [register_keeps_others r db k g h e]; exact hh
+
+theorem registeredDb_register (r : Reg) (db : Int) (k : List Char) (g : Nat) :
+    registeredDb (register r db k g) g = some db := by
+  simp [registeredDb, register_get]
 
 theorem free_unregisters (r : Reg) (g : Nat) : isRegistered (free r g) g = false := by
   simp [free, isRegistered]
@@ -122,28 +184,43 @@ theorem free_unregisters (r : Reg) (g : Nat) : isRegistered (free r g) g = false
 theorem free_keeps_others (r : Reg) (g h : Nat) (hne : h ≠ g) :
     isRegistered (free r g) h = isRegistered r h := by
   simp only [free, isRegistered, List.any_filter]
-  congr 1; funext p; by_cases hp : p.2 = h <;> simp [hp, hne]
+  congr 1; funext p; by_cases hp : p.1 = h <;> simp [hp, hne]
 
-theorem rename_absent (r : Reg) (o n : List Char) (h : r.get o = none) : rename r o n = (r, none) := by
-  simp [rename, h]
+/-- A graph the registry does not know is not moved (renamed from `rename_absent`). -/
+theorem relocate_absent (r : Reg) (g : Nat) (db : Int) (k : List Char) (h : r.get g = none) :
+    relocate r g db k = (r, none) := by
+  simp [relocate, h]
 
-theorem get_filter_self (l : Reg) (o : List Char) : Reg.get (l.filter (·.1 ≠ o)) o = none := by
-  unfold Reg.get
-  rw [List.find?_eq_none.2]; · rfl
-  intro x hx; simp at hx ⊢; exact hx.2
+/-- **Relocation moves exactly the graph**: it is now registered at `(db, k)`, the old
+location is returned, and every other graph keeps its entry (renamed from `rename_moves`). -/
+theorem relocate_moves (r : Reg) (g : Nat) (db : Int) (k : List Char) (old : Int × List Char)
+    (h : r.get g = some old) :
+    (relocate r g db k).1.get g = some (db, k) ∧ (relocate r g db k).2 = some old ∧
+      ∀ h' ≠ g, (relocate r g db k).1.get h' = r.get h' := by
+  simp only [relocate, h]
+  exact ⟨registerAt_get r db k g, trivial, fun h' hne => registerAt_get_other r db k g h' hne⟩
 
-theorem rename_moves (r : Reg) (o n : List Char) (g : Nat) (h : r.get o = some g) :
-    (rename r o n).1.get n = some g ∧ ((o ≠ n) → (rename r o n).1.get o = none) := by
-  unfold rename; rw [h]; simp only
-  refine ⟨by simp [Reg.insert, Reg.get], fun hne => ?_⟩
-  unfold Reg.insert
-  have e : Reg.get ((n, g) :: List.filter (fun x => decide (x.1 ≠ n)) (List.filter (fun x => decide (x.1 ≠ o)) r)) o
-      = Reg.get (List.filter (fun x => decide (x.1 ≠ o)) (List.filter (fun x => decide (x.1 ≠ n)) r)) o := by
-    simp only [Reg.get, List.find?_cons]
-    have : (decide ((n, g).1 = o)) = false := by simp [Ne.symm hne]
-    simp only [this, List.filter_filter]
-    congr 2; congr 1; funext p; simp [Bool.and_comm]
-  rw [e, get_filter_self]
+theorem swapDbs_get (r : Reg) (a b : Int) (g : Nat) :
+    (swapDbs r a b).get g = (r.get g).map fun e => (swapDb a b e.1, e.2) := by
+  unfold swapDbs Reg.get
+  rw [List.find?_map]
+  simp only [Function.comp_def]
+  cases r.find? (·.1 = g) <;> rfl
+
+/-- **`SWAPDB a b`**: a graph of `a` is now in `b` and the other way round; every other
+graph, and every key name, stays; nothing is (un)registered. -/
+theorem swapDbs_spec (r : Reg) (a b : Int) (g : Nat) (k : List Char) :
+    ((r.get g = some (a, k)) → (swapDbs r a b).get g = some (b, k)) ∧
+    ((r.get g = some (b, k)) → (swapDbs r a b).get g = some (a, k)) ∧
+    (∀ d, d ≠ a → d ≠ b → r.get g = some (d, k) → (swapDbs r a b).get g = some (d, k)) ∧
+    isRegistered (swapDbs r a b) g = isRegistered r g := by
+  refine ⟨fun h => ?_, fun h => ?_, fun d ha hb h => ?_, ?_⟩
+  · rw [swapDbs_get, h]; simp [swapDb]
+  · rw [swapDbs_get, h]; by_cases e : b = a
+    · subst e; simp [swapDb]
+    · simp [swapDb, e]
+  · rw [swapDbs_get, h]; simp [swapDb, ha, hb]
+  · rw [isRegistered_iff, isRegistered_iff, swapDbs_get]; cases r.get g <;> rfl
 
 /-! ## Write bookkeeping -/
 

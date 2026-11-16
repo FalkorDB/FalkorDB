@@ -1,3 +1,4 @@
+import RedisLayer.GraphCore
 /-!
 # Module load: configuration table and event handlers (`src/module_init.rs`, `src/lib.rs`)
 
@@ -158,39 +159,123 @@ theorem pending_only_uc {G C} (u : C → Bool) (gs : List (G × List C)) :
   have : x ∈ cs.filter u := List.mem_filter.2 ⟨hx, hu⟩
   rw [e] at this; simp at this
 
-/-! ## `on_keyspace_event` (`:597`): two-phase RENAME -/
+/-! ## `on_keyspace_event` (`:761`), `on_swapdb` (`:744`): the registry follows the keyspace
+
+Since #3424 a graph's registry entry is found by the value now at the key, not by a name
+remembered from `rename_from`: `relocate_graph_at_key` (`:700`) opens the key in the
+event's database and, if it holds a graph (`held`, the `OpenKey`/`ModuleTypeGetType`
+FFI answer: the graph's identity or none), moves that graph's entry there
+(`GraphCore.relocate`), returning where it was. The telemetry stream of the old place is
+deleted only when no other graph of that database shares the name (`name_is_shared`,
+`:733`) and the key holds a stream (`delete_stream_if_stream`, `isStream`). -/
+
+open RedisLayer.GraphCore in
+/-- `name_is_shared` (`:733`). -/
+def nameIsShared (r : Reg) (db : Int) (name : List Char) : Bool := r.any fun e => e.2.1 = db && e.2.2 = name
 
 structure KS where
-  oldName : Option String
-  registry : List (String × Nat)
-  deleted : List String     -- telemetry streams `DEL`ed
+  registry : GraphCore.Reg
+  /-- `(db, graph name)` of every telemetry stream `DEL`ed. -/
+  deleted : List (Int × List Char)
 
-def renameReg (reg : List (String × Nat)) (old new : String) : List (String × Nat) :=
-  match reg.find? (·.1 = old) with
-  | none => reg
-  | some (_, g) => (new, g) :: (reg.filter (fun p => p.1 ≠ old && p.1 ≠ new))
+/-- `relocate_graph_at_key` (`:700`): `held` is the graph the key now holds, if any. -/
+def relocateAtKey (r : GraphCore.Reg) (held : Option Nat) (db : Int) (k : List Char) :
+    GraphCore.Reg × Option (Int × List Char) :=
+  match held with
+  | none => (r, none)
+  | some g => GraphCore.relocate r g db k
 
-def onKeyspace (s : KS) (event key : String) : KS :=
-  if event = "rename_from" then { s with oldName := some key }
-  else if event = "rename_to" then
-    match s.oldName with
-    | some old => ⟨none, renameReg s.registry old key, s.deleted ++ [old]⟩
-    | none => s
+/-- `delete_stream_if_stream` in database `db`: `DEL` only a stream (`TYPE` = `stream`). -/
+def delIfStream (isStream : Int → List Char → Bool) (del : List (Int × List Char)) (db : Int)
+    (name : List Char) : List (Int × List Char) :=
+  if isStream db name then del ++ [(db, name)] else del
+
+/-- `on_keyspace_event` for an event in database `db` (the one `ctx` has selected) on
+key `key`. `rename_from` / `move_from` and every other event: nothing. -/
+def onKeyspace (isStream : Int → List Char → Bool) (s : KS) (event : String) (db : Int)
+    (key : List Char) (held : Option Nat) : KS :=
+  if event = "rename_to" then
+    match relocateAtKey s.registry held db key with
+    | (r, some (d, old)) =>
+      if nameIsShared r d old then { s with registry := r }
+      else ⟨r, delIfStream isStream s.deleted db old⟩
+    | (r, none) => { s with registry := r }
+  else if event = "move_to" then
+    match relocateAtKey s.registry held db key with
+    | (r, some (d, old)) =>
+      if d ≠ db ∧ nameIsShared r d old = false then ⟨r, delIfStream isStream s.deleted d old⟩
+      else { s with registry := r }
+    | (r, none) => { s with registry := r }
   else s
 
-/-- `rename_to` without a preceding `rename_from` changes nothing. -/
-theorem rename_to_alone (s : KS) (k : String) (h : s.oldName = none) : onKeyspace s "rename_to" k = s := by
-  simp [onKeyspace, h]
+/-- **A renamed or moved key that holds no registered graph changes nothing** — neither
+the registry nor any stream (`telemetry{k}` of a plain key `k` is nobody's history). -/
+theorem not_a_graph (isStream : Int → List Char → Bool) (s : KS) (e : String) (db : Int)
+    (k : List Char) (held : Option Nat) (h : ∀ g, held = some g → s.registry.get g = none) :
+    onKeyspace isStream s e db k held = s := by
+  have hr : relocateAtKey s.registry held db k = (s.registry, none) := by
+    cases held with
+    | none => rfl
+    | some g => simp [relocateAtKey, GraphCore.relocate, h g rfl]
+  unfold onKeyspace; simp only [hr]; split <;> (try split) <;> rfl
 
-/-- A full RENAME re-keys the graph and deletes the old key's stream. -/
-theorem rename_pair (s : KS) (a b : String) (g : Nat) (h : s.registry.find? (·.1 = a) = some (a, g)) :
-    let s' := onKeyspace (onKeyspace s "rename_from" a) "rename_to" b
-    (s'.registry.find? (·.1 = b) = some (b, g)) ∧ s'.deleted = s.deleted ++ [a] ∧ s'.oldName = none := by
-  simp [onKeyspace, renameReg, h]
+/-- **A RENAME re-keys the graph and deletes the old key's stream** (when it is one and no
+other graph of the database shares the name). -/
+theorem rename_pair (isStream : Int → List Char → Bool) (s : KS) (db : Int) (a b : List Char) (g : Nat)
+    (h : s.registry.get g = some (db, a)) :
+    let s' := onKeyspace isStream s "rename_to" db b (some g)
+    s'.registry.get g = some (db, b) ∧
+    (nameIsShared s'.registry db a = false → isStream db a = true → s'.deleted = s.deleted ++ [(db, a)]) ∧
+    (∀ g' ≠ g, s'.registry.get g' = s.registry.get g') := by
+  obtain ⟨m1, m2, m3⟩ := GraphCore.relocate_moves s.registry g db b (db, a) h
+  have e : relocateAtKey s.registry (some g) db b = ((GraphCore.relocate s.registry g db b).1, some (db, a)) := by
+    simp only [relocateAtKey]; rw [← m2]
+  simp only [onKeyspace, if_true, e]
+  split
+  · exact ⟨m1, fun h1 => by simp_all, m3⟩
+  · exact ⟨m1, fun _ h2 => by simp [delIfStream, h2], m3⟩
+
+/-- **A MOVE re-keys the graph into the destination database and deletes its stream in
+the source database** (when it is one and no other graph there shares the name). -/
+theorem move_pair (isStream : Int → List Char → Bool) (s : KS) (src dst : Int) (k : List Char) (g : Nat)
+    (h : s.registry.get g = some (src, k)) (hne : src ≠ dst) :
+    let s' := onKeyspace isStream s "move_to" dst k (some g)
+    s'.registry.get g = some (dst, k) ∧
+    (nameIsShared s'.registry src k = false → isStream src k = true → s'.deleted = s.deleted ++ [(src, k)]) ∧
+    (∀ g' ≠ g, s'.registry.get g' = s.registry.get g') := by
+  obtain ⟨m1, m2, m3⟩ := GraphCore.relocate_moves s.registry g dst k (src, k) h
+  have e : relocateAtKey s.registry (some g) dst k = ((GraphCore.relocate s.registry g dst k).1, some (src, k)) := by
+    simp only [relocateAtKey]; rw [← m2]
+  have hm : ("move_to" = "rename_to") = False := by simp
+  simp only [onKeyspace, hm, if_false, if_true, e]
+  split
+  · exact ⟨m1, fun _ h2 => by simp [delIfStream, h2], m3⟩
+  · rename_i hc
+    exact ⟨m1, fun h1 _ => absurd ⟨hne, h1⟩ hc, m3⟩
+
+/-- `rename_from` and `move_from` are ignored: the old place comes from the registry. -/
+theorem from_events_ignored (isStream : Int → List Char → Bool) (s : KS) (db : Int) (k : List Char)
+    (held : Option Nat) :
+    onKeyspace isStream s "rename_from" db k held = s ∧ onKeyspace isStream s "move_from" db k held = s := by
+  constructor <;> simp [onKeyspace]
 
 /-- Other events are ignored. -/
-theorem other_event (s : KS) (e k : String) (h1 : e ≠ "rename_from") (h2 : e ≠ "rename_to") :
-    onKeyspace s e k = s := by simp [onKeyspace, h1, h2]
+theorem other_event (isStream : Int → List Char → Bool) (s : KS) (e : String) (db : Int)
+    (k : List Char) (held : Option Nat) (h1 : e ≠ "rename_to") (h2 : e ≠ "move_to") :
+    onKeyspace isStream s e db k held = s := by simp [onKeyspace, h1, h2]
+
+/-- `on_swapdb` (`:744`): `swap_graph_dbs(first, second)`; a null `data` changes nothing. -/
+def onSwapDb (r : GraphCore.Reg) (info : Option (Int × Int)) : GraphCore.Reg :=
+  match info with
+  | none => r
+  | some (a, b) => GraphCore.swapDbs r a b
+
+theorem onSwapDb_spec (r : GraphCore.Reg) (a b : Int) :
+    onSwapDb r none = r ∧ onSwapDb r (some (a, b)) = GraphCore.swapDbs r a b := ⟨rfl, rfl⟩
+
+theorem nameIsShared_spec (r : GraphCore.Reg) (db : Int) (n : List Char) :
+    nameIsShared r db n = true ↔ ∃ e ∈ r, e.2 = (db, n) := by
+  simp [nameIsShared, Prod.ext_iff]
 
 /-- `info_func`: nothing unless for a crash report. -/
 def infoSections (forCrash : Bool) (running : List String) : List String :=

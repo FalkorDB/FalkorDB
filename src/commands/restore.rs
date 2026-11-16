@@ -62,7 +62,7 @@ pub fn graph_restore(
         .set_value(&GRAPH_TYPE, boxed.clone())
         .map_err(wrong_type_compat)?;
     // Registered under the key it was written to — see `graph_core::register_graph`.
-    register_graph(dest_name.to_string(), boxed);
+    register_graph(ctx, dest_name.to_string(), boxed);
 
     // Replicate verbatim so sub-replicas also receive GRAPH.RESTORE.
     ctx.replicate_verbatim();

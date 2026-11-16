@@ -1,50 +1,59 @@
 import GraphPersist.Persist.Payload
-/-! # Virtual keys on save (redis_type.rs:185-234, :417-548, :591-726, :881-889)
+/-! # Virtual keys on save (redis_type.rs:245-300, :494-670, :702-756, :1089-1099)
+
+Since #3424 (#2782) every name here is a `DbKey = (db, name)` (serializers/mod.rs:37): `Nm`
+stands for it, and `vname (db, g) i` is the `i`-th virtual key `(db, {g}g_<uuid>)`, created
+in the graph's own database (`in_db`). Graphs are identified by `graph_id` (`Id`).
 
 | here | there |
 | --- | --- |
-| `VS`, `lookup`            | `VirtualKeyState { vkey_map, graph_vkeys }` (serializers/mod.rs:30-49); `HashMap::insert` overwrites, so a lookup sees the last insert |
-| `createVKeys`             | `create_virtual_keys` (:417-524); `vname g i` stands for the `i`-th name `{g}g_<uuid>` (see `Uuid`) |
-| `saveKeySlice`            | `save_key_slice` (:210-234, #3161) |
-| `rdbSave`, `SaveOut`      | `graph_rdb_save` (:185-205) |
-| `metaSave`, `vkeyType`    | `graphmeta_rdb_save` (:881-889); virtual keys typed `graphmeta` (:492-500, #3161) |
-| `deleteVKeys`             | `delete_virtual_keys` (:530-546) |
-| `scanKeys`, `Reply`       | `scan_keys_by_type` (:642-726), one `SCAN … TYPE` reply per step |
-| `deleteStaleGraphmeta`    | `delete_stale_graphmeta_keys` (:591-617) |
-| `deleteStaleVirtual`      | `delete_stale_virtual_keys` (:625-640) |
+| `VS`, `lookup`            | `VirtualKeyState { vkey_map, graph_vkeys }` (serializers/mod.rs:42-50), `KeySlice { graph_id, graph_name, payloads }`; `HashMap::insert` overwrites, so a lookup sees the last insert |
+| `createVKeys`             | `create_virtual_keys` (:499) over the registry's `(id, (db, name), graph)`, each through `create_graph_virtual_keys` (:530) |
+| `saveKeySlice`            | `save_key_slice` (:272, #3161; `owner` check #3424) |
+| `rdbSave`, `SaveOut`      | `graph_rdb_save` (:245), `owner = Some(graph_id)` of the key's value |
+| `metaSave`, `vkeyType`    | `graphmeta_rdb_save` (:1089, `owner = None`); virtual keys typed `graphmeta` (#3161) |
+| `deleteVKeys`             | `delete_virtual_keys` (:638) |
+| `scanKeys`, `Reply`       | `scan_keys_by_type` (:759), one `SCAN … TYPE` reply per step |
+| `deleteStaleGraphmeta`    | `delete_stale_graphmeta_keys` (:702), one scan per non-empty db (`for_each_db`) |
+| `deleteStaleVirtual`      | `delete_stale_virtual_keys` (:738), `meta_keys : Vec<DbKey>` |
 
-`key_holds_graph` (:569) and `delete_key` (:549) are `RedisModule_*` calls (inputs / effects);
+`key_holds_graph` and `delete_key` are `RedisModule_*` calls (inputs / effects);
 `build_multi_key_payloads` is the proved `buildMulti`, abstracted here as `layout`.
 
-* `save_main` / `save_vkey` / `save_single` — with distinct names, a graph needing `K ≥ 2`
-  keys is saved as `K` keys: its own key holds slice 0 and the `i`-th virtual key slice `i`,
-  each stamped `key_count = K`; any other graph is saved whole under its key.
-* `metaSave_of_slice` / `metaSave_rdbSave` — since #3161 a virtual key is a `graphmeta` key
-  and is written by `graphmeta_rdb_save`, which writes exactly the slice `graph_rdb_save`
-  would; `metaSave_stale` — a leftover graphmeta key writes nothing.
+* `save_main` / `save_vkey` / `save_single` — with distinct names and ids, a graph needing
+  `K ≥ 2` keys is saved as `K` keys: its own key holds slice 0 and the `i`-th virtual key
+  slice `i`, each stamped `key_count = K`; any other graph is saved whole under its key.
+* `save_other_owner` — a key whose value is another graph than the slice's (same lossy
+  name) is saved whole, never as that slice (#3424).
+* `metaSave_of_slice` / `metaSave_rdbSave` — a virtual key is written by
+  `graphmeta_rdb_save`, which writes exactly the slice `graph_rdb_save` would;
+  `metaSave_stale` — a leftover graphmeta key writes nothing.
 * `deleteVKeys_spec` — the end of a save deletes exactly the virtual keys it created.
-* `scanKeys_spec`, `deleteStaleVirtual_spec`.
+* `scanKeys_spec`, `deleteStaleGraphmeta_spec`, `deleteStaleVirtual_spec`.
 -/
 namespace GraphPersist.RedisType
 open GraphPersist Persist
 
-variable {Nm Gr : Type} [DecidableEq Nm]
+variable {Nm Id Gr : Type} [DecidableEq Nm] [DecidableEq Id]
+set_option linter.unusedSectionVars false
 
-structure VS (Nm : Type) where
-  map : List (Nm × (Nm × Nat × List Entry))
+/-- `vkey_map` values are `(graph_id, graph name, payloads)`. -/
+structure VS (Id Nm : Type) where
+  map : List (Nm × (Id × Nm × List Entry))
   gv : List (Nm × List Nm)
 
 /-- `HashMap::get` after a sequence of inserts: the last one for the key. -/
-def lookup {β : Type} (l : List (Nm × β)) (k : Nm) : Option β :=
+def lookup {κ β : Type} [DecidableEq κ] (l : List (κ × β)) (k : κ) : Option β :=
   (l.reverse.find? (fun p => p.1 = k)).map Prod.snd
 
-/-- What one graph contributes (`:433-512`): nothing unless its key holds it and it needs
-`K ≥ 2` keys; then key 0 under the graph's own name and keys `1..K` under virtual names. -/
+/-- What one graph contributes (`create_graph_virtual_keys`, :530): nothing unless its key
+holds it and it needs `K ≥ 2` keys; then key 0 under the graph's own name and keys `1..K`
+under virtual names. -/
 def vkInserts (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
-    (g : Nm) (gr : Gr) : List (Nm × (Nm × Nat × List Entry)) :=
+    (id : Id) (g : Nm) (gr : Gr) : List (Nm × (Id × Nm × List Entry)) :=
   if holds g gr ∧ 2 ≤ (layout gr).length then
-    (g, (g, 0, (layout gr).getD 0 [])) ::
-      ((List.range ((layout gr).length - 1)).map fun i => (vname g (i + 1), (g, i + 1, (layout gr).getD (i + 1) [])))
+    (g, (id, g, (layout gr).getD 0 [])) ::
+      ((List.range ((layout gr).length - 1)).map fun i => (vname g (i + 1), (id, g, (layout gr).getD (i + 1) [])))
   else []
 
 def vkNames (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
@@ -52,14 +61,15 @@ def vkNames (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vn
   if holds g gr ∧ 2 ≤ (layout gr).length then [(g, (List.range ((layout gr).length - 1)).map fun i => vname g (i + 1))]
   else []
 
-/-- `create_virtual_keys`: `vkey_state.clear()`, then each registered graph in turn. -/
+/-- `create_virtual_keys`: `vkey_state.clear()`, then each registered `(id, (db, name), graph)`
+in turn. -/
 def createVKeys (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
-    (registry : List (Nm × Gr)) : VS Nm :=
-  ⟨registry.flatMap (fun p => vkInserts holds layout vname p.1 p.2),
-   registry.flatMap (fun p => vkNames holds layout vname p.1 p.2)⟩
+    (registry : List (Id × Nm × Gr)) : VS Id Nm :=
+  ⟨registry.flatMap (fun p => vkInserts holds layout vname p.1 p.2.1 p.2.2),
+   registry.flatMap (fun p => vkNames holds layout vname p.2.1 p.2.2)⟩
 
 /-- The Redis keys `create_virtual_keys` opens and fills with a placeholder value. -/
-def createdKeys (vs : VS Nm) : List Nm := vs.gv.flatMap Prod.snd
+def createdKeys (vs : VS Id Nm) : List Nm := vs.gv.flatMap Prod.snd
 
 /-- What `graph_rdb_save` writes for one key. -/
 inductive SaveOut (Nm Gr : Type) where
@@ -68,69 +78,103 @@ inductive SaveOut (Nm Gr : Type) where
   /-- `rdb_save_graph(rdb, graph, key_name)`: the key's own value, whole -/
   | whole (key : Nm)
 
-/-- `save_key_slice` (:210, #3161): the slice `create_virtual_keys` assigned `key`,
-if this save assigned it one and its graph is still registered (`false` = `none`). -/
-def saveKeySlice (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) : Option (SaveOut Nm Gr) :=
+/-- `save_key_slice` (:272): the slice `create_virtual_keys` assigned `key`, if this save
+assigned it one, `owner` (when given) is the slice's graph, and that graph is still
+registered (`false` = `none`). `reg` is `GRAPH_REGISTRY.get` by id. -/
+def saveKeySlice (vs : VS Id Nm) (reg : Id → Option Gr) (key : Nm) (owner : Option Id) :
+    Option (SaveOut Nm Gr) :=
   match lookup vs.map key with
-  | some (g, _, payloads) =>
-    match reg g with
+  | some (id, g, payloads) =>
+    if owner.any (· ≠ id) then none else
+    match reg id with
     | some gr => some (.slice g gr payloads (1 + ((lookup vs.gv g).map List.length).getD 0))
     | none => none
   | none => none
 
-/-- `graph_rdb_save` (:177): the key's slice if it has one, else the whole graph. `reg` is
-`GRAPH_REGISTRY.get`. -/
-def rdbSave (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) : SaveOut Nm Gr :=
-  (saveKeySlice vs reg key).getD (.whole key)
+/-- `graph_rdb_save` (:245): the key's slice if it has one for the graph `owner` the key
+holds, else the whole graph. -/
+def rdbSave (vs : VS Id Nm) (reg : Id → Option Gr) (key : Nm) (owner : Id) : SaveOut Nm Gr :=
+  (saveKeySlice vs reg key (some owner)).getD (.whole key)
 
-/-- `graphmeta_rdb_save` (:881, #3161): a virtual key — typed `graphmeta` since #3161, as C
-types its own — encodes its slice; a graphmeta key this save did not create writes
-nothing (`none`). -/
-def metaSave (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) : Option (SaveOut Nm Gr) :=
-  saveKeySlice vs reg key
+/-- `graphmeta_rdb_save` (:1089): a virtual key — typed `graphmeta`, as C types its own —
+encodes its slice (no owner: its value is a dummy byte); a graphmeta key this save did not
+create writes nothing (`none`). -/
+def metaSave (vs : VS Id Nm) (reg : Id → Option Gr) (key : Nm) : Option (SaveOut Nm Gr) :=
+  saveKeySlice vs reg key none
 
-/-- The type `create_virtual_keys` gives a virtual key (:496-500): `graphmeta`, holding a
-dummy byte, not a `graphdata` placeholder graph — C frees a `graphdata` key by dropping its
-graph from `GRAPH.LIST`, which made a Rust-saved multi-key graph vanish from C's list (#3160). -/
+/-- The type `create_virtual_keys` gives a virtual key: `graphmeta`, holding a dummy byte,
+not a `graphdata` placeholder graph (#3160). -/
 def vkeyType : String := "graphmeta"
 
-/-- Both save callbacks agree on a key that has a slice. -/
-theorem metaSave_rdbSave (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) (o : SaveOut Nm Gr)
-    (h : metaSave vs reg key = some o) : rdbSave vs reg key = o := by
-  simp only [metaSave] at h; simp [rdbSave, h]
+/-- The slice's graph id assigned to `key`, if any. -/
+def sliceOwner (vs : VS Id Nm) (key : Nm) : Option Id := (lookup vs.map key).map (·.1)
+
+/-- Both save callbacks agree on a key that has a slice, when `graph_rdb_save` is called
+for the key's own graph. -/
+theorem metaSave_rdbSave (vs : VS Id Nm) (reg : Id → Option Gr) (key : Nm) (o : SaveOut Nm Gr)
+    (h : metaSave vs reg key = some o) (id : Id) (hid : sliceOwner vs key = some id) :
+    rdbSave vs reg key id = o := by
+  simp only [metaSave, saveKeySlice] at h
+  simp only [sliceOwner] at hid
+  simp only [rdbSave, saveKeySlice]
+  cases hl : lookup vs.map key with
+  | none => rw [hl] at h; cases h
+  | some v =>
+    obtain ⟨i, g, pl⟩ := v
+    rw [hl] at h hid; simp at hid; subst hid
+    revert h; cases hr : reg i <;> simp [hr]
 
 /-- Conversely: whatever slice `graph_rdb_save` would write for a key, the `graphmeta`
 callback writes too — so `save_main`/`save_vkey` hold for a virtual key saved through
-`graphmeta_rdb_save`, which is how Redis saves it since #3161. -/
-theorem metaSave_of_slice (vs : VS Nm) (reg : Nm → Option Gr) (key g : Nm) (gr : Gr) (pl : List Entry)
-    (k : Nat) (h : rdbSave vs reg key = .slice g gr pl k) : metaSave vs reg key = some (.slice g gr pl k) := by
-  unfold rdbSave at h; unfold metaSave
-  cases hs : saveKeySlice vs reg key with
-  | none => rw [hs] at h; cases h
-  | some o => rw [hs] at h; simp at h; rw [h]
+`graphmeta_rdb_save`. -/
+theorem metaSave_of_slice (vs : VS Id Nm) (reg : Id → Option Gr) (key g : Nm) (id : Id) (gr : Gr)
+    (pl : List Entry) (k : Nat) (h : rdbSave vs reg key id = .slice g gr pl k) :
+    metaSave vs reg key = some (.slice g gr pl k) := by
+  unfold rdbSave saveKeySlice at h; unfold metaSave saveKeySlice
+  cases hl : lookup vs.map key with
+  | none => rw [hl] at h; simp at h
+  | some v =>
+    obtain ⟨i, g', pl'⟩ := v
+    rw [hl] at h; simp only [Option.any_some, Option.any_none, Bool.false_eq_true, if_false]
+    revert h; by_cases hi : id = i <;> cases hr : reg i <;> simp [hi, hr]
 
 /-- A graphmeta key with no slice assigned writes nothing. -/
-theorem metaSave_stale (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) (h : lookup vs.map key = none) :
+theorem metaSave_stale (vs : VS Id Nm) (reg : Id → Option Gr) (key : Nm) (h : lookup vs.map key = none) :
     metaSave vs reg key = none := by simp [metaSave, saveKeySlice, h]
+
+/-- **A key holding another graph than its slice's is saved whole** (#3424): two keys of
+different bytes can share a lossy name, and the slice is only ever written for its own graph. -/
+theorem save_other_owner (vs : VS Id Nm) (reg : Id → Option Gr) (key : Nm) (owner id : Id)
+    (h : sliceOwner vs key = some id) (hne : owner ≠ id) :
+    rdbSave vs reg key owner = .whole key := by
+  simp only [sliceOwner] at h
+  simp only [rdbSave, saveKeySlice]
+  cases hl : lookup vs.map key with
+  | none => rw [hl] at h; cases h
+  | some v =>
+    obtain ⟨i, g, pl⟩ := v
+    rw [hl] at h; simp at h; subst h
+    simp [hne]
 
 /-! ## Lookups under distinct keys -/
 
-theorem lookup_unique {β : Type} (l : List (Nm × β)) (k : Nm) (v : β) (hmem : (k, v) ∈ l)
+theorem lookup_unique {κ β : Type} [DecidableEq κ] (l : List (κ × β)) (k : κ) (v : β) (hmem : (k, v) ∈ l)
     (huniq : ∀ p ∈ l, p.1 = k → p = (k, v)) : lookup l k = some v := by
   unfold lookup
-  have hex : ∃ p ∈ l.reverse, (fun p : Nm × β => decide (p.1 = k)) p = true := ⟨(k, v), by simpa using hmem, by simp⟩
+  have hex : ∃ p ∈ l.reverse, (fun p : κ × β => decide (p.1 = k)) p = true := ⟨(k, v), by simpa using hmem, by simp⟩
   obtain ⟨p, hp⟩ := Option.isSome_iff_exists.1 (List.find?_isSome.2 hex)
   have hpm := List.mem_of_find?_eq_some hp
   have hpk := List.find?_some hp
   simp at hpk
   rw [hp, huniq p (by simpa using hpm) hpk]; rfl
 
-theorem lookup_none {β : Type} (l : List (Nm × β)) (k : Nm) (h : ∀ p ∈ l, p.1 ≠ k) : lookup l k = none := by
+theorem lookup_none {κ β : Type} [DecidableEq κ] (l : List (κ × β)) (k : κ) (h : ∀ p ∈ l, p.1 ≠ k) :
+    lookup l k = none := by
   unfold lookup
   rw [List.find?_eq_none.2 (by intro p hp; simpa using h p (by simpa using hp))]; rfl
 
-theorem nodup_fst_eq {l : List (Nm × Gr)} (h : (l.map Prod.fst).Nodup) {a b : Nm × Gr}
-    (ha : a ∈ l) (hb : b ∈ l) (he : a.1 = b.1) : a = b := by
+theorem nodup_key_eq {α κ : Type} (f : α → κ) {l : List α} (h : (l.map f).Nodup) {a b : α}
+    (ha : a ∈ l) (hb : b ∈ l) (he : f a = f b) : a = b := by
   induction l with
   | nil => simp at ha
   | cons x xs ih =>
@@ -143,148 +187,157 @@ theorem nodup_fst_eq {l : List (Nm × Gr)} (h : (l.map Prod.fst).Nodup) {a b : N
     · exact absurd ⟨a, ha1, by rw [he, hb1]⟩ h.1
     · exact ih h.2 ha1 hb1
 
-/-- The naming assumptions the uuid scheme is meant to deliver: registry names distinct,
-virtual names injective, and no virtual name equal to a graph name. -/
-structure Names (registry : List (Nm × Gr)) (vname : Nm → Nat → Nm) : Prop where
-  reg_nodup : (registry.map Prod.fst).Nodup
+/-- `GRAPH_REGISTRY.get` by id over the registry's entries. -/
+def regGet (registry : List (Id × Nm × Gr)) : Id → Option Gr :=
+  lookup (registry.map fun p => (p.1, p.2.2))
+
+/-- The naming assumptions: registry ids distinct (a `HashMap` key), `(db, name)`s distinct
+(one graph per key of a database), virtual names injective, and no virtual name equal to a
+graph's key. -/
+structure Names (registry : List (Id × Nm × Gr)) (vname : Nm → Nat → Nm) : Prop where
+  id_nodup : (registry.map (·.1)).Nodup
+  reg_nodup : (registry.map (·.2.1)).Nodup
   vname_inj : ∀ g i g' j, vname g i = vname g' j → g = g' ∧ i = j
-  vname_fresh : ∀ g i, ∀ p ∈ registry, vname g i ≠ p.1
+  vname_fresh : ∀ g i, ∀ p ∈ registry, vname g i ≠ p.2.1
+
+theorem regGet_mem (registry : List (Id × Nm × Gr)) (hid : (registry.map (·.1)).Nodup)
+    (id : Id) (g : Nm) (gr : Gr) (hm : (id, g, gr) ∈ registry) : regGet registry id = some gr := by
+  apply lookup_unique
+  · exact List.mem_map.2 ⟨_, hm, rfl⟩
+  · intro p hp hpk
+    obtain ⟨q, hq, rfl⟩ := List.mem_map.1 hp
+    have := nodup_key_eq (·.1) hid hq hm hpk
+    subst this; rfl
 
 theorem mem_vkInserts {holds : Nm → Gr → Bool} {layout : Gr → List (List Entry)} {vname : Nm → Nat → Nm}
-    {g : Nm} {gr : Gr} {p : Nm × (Nm × Nat × List Entry)} (h : p ∈ vkInserts holds layout vname g gr) :
-    p.2.1 = g ∧ (p.1 = g ∧ p.2.2.1 = 0 ∨ ∃ i, p.1 = vname g (i + 1) ∧ p.2.2.1 = i + 1) := by
+    {id : Id} {g : Nm} {gr : Gr} {p : Nm × (Id × Nm × List Entry)} (h : p ∈ vkInserts holds layout vname id g gr) :
+    p.2.1 = id ∧ p.2.2.1 = g ∧ (p.1 = g ∧ p.2.2.2 = (layout gr).getD 0 [] ∨
+      ∃ i, i + 1 < (layout gr).length ∧ p.1 = vname g (i + 1) ∧ p.2.2.2 = (layout gr).getD (i + 1) []) := by
   unfold vkInserts at h
   split at h
   · simp only [List.mem_cons, List.mem_map, List.mem_range] at h
-    rcases h with rfl | ⟨i, _, rfl⟩
-    · exact ⟨rfl, Or.inl ⟨rfl, rfl⟩⟩
-    · exact ⟨rfl, Or.inr ⟨i, rfl, rfl⟩⟩
+    rcases h with rfl | ⟨i, hi, rfl⟩
+    · exact ⟨rfl, rfl, Or.inl ⟨rfl, rfl⟩⟩
+    · exact ⟨rfl, rfl, Or.inr ⟨i, by omega, rfl, rfl⟩⟩
   · simp at h
+
+theorem gv_lookup (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
+    (registry : List (Id × Nm × Gr)) (hn : Names registry vname) (id : Id) (g : Nm) (gr : Gr)
+    (hg : (id, g, gr) ∈ registry) (hh : holds g gr = true) (hK : 2 ≤ (layout gr).length) :
+    lookup (createVKeys holds layout vname registry).gv g =
+      some ((List.range ((layout gr).length - 1)).map fun i => vname g (i + 1)) := by
+  apply lookup_unique
+  · simp only [createVKeys, List.mem_flatMap]
+    exact ⟨(id, g, gr), hg, by simp [vkNames, hh, hK]⟩
+  · intro p hp hpg
+    simp only [createVKeys, List.mem_flatMap] at hp
+    obtain ⟨⟨id', g', gr'⟩, hreg, hpi⟩ := hp
+    simp only [vkNames] at hpi
+    split at hpi
+    · simp at hpi; subst hpi
+      simp only at hpg; subst hpg
+      have e := nodup_key_eq (·.2.1) hn.reg_nodup hreg hg rfl
+      simp only [Prod.mk.injEq] at e; obtain ⟨_, _, rfl⟩ := e
+      rfl
+    · simp at hpi
 
 /-- **The graph's own key holds slice 0.** -/
 theorem save_main (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
-    (registry : List (Nm × Gr)) (hn : Names registry vname) (g : Nm) (gr : Gr) (hg : (g, gr) ∈ registry)
-    (hh : holds g gr = true) (hK : 2 ≤ (layout gr).length) :
-    rdbSave (createVKeys holds layout vname registry) (lookup registry) g =
+    (registry : List (Id × Nm × Gr)) (hn : Names registry vname) (id : Id) (g : Nm) (gr : Gr)
+    (hg : (id, g, gr) ∈ registry) (hh : holds g gr = true) (hK : 2 ≤ (layout gr).length) :
+    rdbSave (createVKeys holds layout vname registry) (regGet registry) g id =
       .slice g gr ((layout gr).getD 0 []) (layout gr).length := by
-  have hreg_uniq : ∀ p ∈ registry, p.1 = g → p = (g, gr) := by
-    intro p hp hpg
-    obtain ⟨g', gr'⟩ := p; simp only at hpg; subst hpg
-    exact nodup_fst_eq hn.reg_nodup hp hg rfl
-  have hmap : lookup (createVKeys holds layout vname registry).map g = some (g, 0, (layout gr).getD 0 []) := by
+  have hmap : lookup (createVKeys holds layout vname registry).map g = some (id, g, (layout gr).getD 0 []) := by
     apply lookup_unique
     · simp only [createVKeys, List.mem_flatMap]
-      exact ⟨(g, gr), hg, by simp [vkInserts, hh, hK]⟩
+      exact ⟨(id, g, gr), hg, by simp [vkInserts, hh, hK]⟩
     · intro p hp hpg
       simp only [createVKeys, List.mem_flatMap] at hp
-      obtain ⟨⟨g', gr'⟩, hreg, hpi⟩ := hp
-      obtain ⟨h1, h2⟩ := mem_vkInserts hpi
-      simp only at h1 h2
-      rcases h2 with ⟨h3, h4⟩ | ⟨i, h3, _⟩
-      · have : g' = g := by rw [← h3, hpg]
+      obtain ⟨⟨id', g', gr'⟩, hreg, hpi⟩ := hp
+      obtain ⟨h1, h2, h3⟩ := mem_vkInserts hpi
+      simp only at h1 h2 h3
+      rcases h3 with ⟨h4, h5⟩ | ⟨i, _, h4, _⟩
+      · have : g' = g := by rw [← h4, hpg]
         subst this
-        have e := hreg_uniq _ hreg rfl
-        simp only [Prod.mk.injEq] at e; obtain ⟨_, rfl⟩ := e
-        simp only [vkInserts, hh, hK, true_and, decide_true, ite_true, List.mem_cons, List.mem_map,
-          List.mem_range] at hpi
-        rcases hpi with hpi | ⟨i, _, hpi⟩
-        · exact hpi
-        · rw [← hpi] at hpg; exact absurd hpg (hn.vname_fresh _ _ _ hg)
-      · rw [hpg] at h3; exact absurd h3.symm (hn.vname_fresh _ _ _ hg)
-  have hgv : lookup (createVKeys holds layout vname registry).gv g =
-      some ((List.range ((layout gr).length - 1)).map fun i => vname g (i + 1)) := by
-    apply lookup_unique
-    · simp only [createVKeys, List.mem_flatMap]
-      exact ⟨(g, gr), hg, by simp [vkNames, hh, hK]⟩
-    · intro p hp hpg
-      simp only [createVKeys, List.mem_flatMap] at hp
-      obtain ⟨⟨g', gr'⟩, hreg, hpi⟩ := hp
-      simp only [vkNames] at hpi
-      split at hpi
-      · simp at hpi; subst hpi
-        simp only at hpg; subst hpg
-        have e := hreg_uniq _ hreg rfl
-        simp only [Prod.mk.injEq] at e; obtain ⟨_, rfl⟩ := e
-        rfl
-      · simp at hpi
-  simp only [rdbSave, saveKeySlice, hmap, lookup_unique registry g gr hg hreg_uniq, hgv, Option.map_some, Option.getD_some,
-    List.length_map, List.length_range]
+        have e := nodup_key_eq (·.2.1) hn.reg_nodup hreg hg rfl
+        simp only [Prod.mk.injEq] at e; obtain ⟨rfl, _, rfl⟩ := e
+        obtain ⟨p1, p2, p3, p4⟩ := p
+        simp only at hpg h1 h2 h5; subst hpg h1 h2 h5; rfl
+      · rw [hpg] at h4; exact absurd h4.symm (hn.vname_fresh _ _ _ hg)
+  simp only [rdbSave, saveKeySlice, hmap, regGet_mem registry hn.id_nodup id g gr hg,
+    gv_lookup holds layout vname registry hn id g gr hg hh hK, Option.map_some, Option.getD_some,
+    List.length_map, List.length_range, Option.any_some, ne_eq, not_true_eq_false, decide_false,
+    Bool.false_eq_true, if_false]
   congr 1; omega
 
-/-- **The `i`-th virtual key holds slice `i`.** -/
+theorem vkey_lookup (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
+    (registry : List (Id × Nm × Gr)) (hn : Names registry vname) (id : Id) (g : Nm) (gr : Gr)
+    (hg : (id, g, gr) ∈ registry) (hh : holds g gr = true) (hK : 2 ≤ (layout gr).length)
+    (i : Nat) (hi : 1 ≤ i) (hiK : i < (layout gr).length) :
+    lookup (createVKeys holds layout vname registry).map (vname g i) =
+    some (id, g, (layout gr).getD i []) := by
+  apply lookup_unique
+  · simp only [createVKeys, List.mem_flatMap]
+    refine ⟨(id, g, gr), hg, ?_⟩
+    simp only [vkInserts, hh, hK, true_and, decide_true, ite_true, List.mem_cons, List.mem_map, List.mem_range]
+    right
+    exact ⟨i - 1, by omega, by rw [Nat.sub_add_cancel hi]⟩
+  · intro p hp hpg
+    simp only [createVKeys, List.mem_flatMap] at hp
+    obtain ⟨⟨id', g', gr'⟩, hreg, hpi⟩ := hp
+    obtain ⟨h1, h2, h3⟩ := mem_vkInserts hpi
+    simp only at h1 h2 h3
+    rcases h3 with ⟨h4, _⟩ | ⟨j, _, h4, h5⟩
+    · rw [hpg] at h4; exact absurd h4 (hn.vname_fresh _ _ _ hreg)
+    · rw [hpg] at h4
+      obtain ⟨rfl, hij⟩ := hn.vname_inj _ _ _ _ h4
+      have e := nodup_key_eq (·.2.1) hn.reg_nodup hreg hg rfl
+      simp only [Prod.mk.injEq] at e; obtain ⟨rfl, _, rfl⟩ := e
+      obtain ⟨p1, p2, p3, p4⟩ := p
+      simp only at hpg h1 h2 h5; subst hpg h1 h2 h5; rw [← hij]
+
+/-- **The `i`-th virtual key holds slice `i`** — written by `graphmeta_rdb_save`, the
+callback Redis calls for a `graphmeta` key. -/
+theorem save_vkey_meta (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
+    (registry : List (Id × Nm × Gr)) (hn : Names registry vname) (id : Id) (g : Nm) (gr : Gr)
+    (hg : (id, g, gr) ∈ registry) (hh : holds g gr = true) (hK : 2 ≤ (layout gr).length)
+    (i : Nat) (hi : 1 ≤ i) (hiK : i < (layout gr).length) :
+    metaSave (createVKeys holds layout vname registry) (regGet registry) (vname g i) =
+      some (.slice g gr ((layout gr).getD i []) (layout gr).length) := by
+  have hmap := vkey_lookup holds layout vname registry hn id g gr hg hh hK i hi hiK
+  simp only [metaSave, saveKeySlice, hmap, regGet_mem registry hn.id_nodup id g gr hg,
+    gv_lookup holds layout vname registry hn id g gr hg hh hK, Option.map_some, Option.getD_some,
+    List.length_map, List.length_range, Option.any_none, Bool.false_eq_true, if_false]
+  congr 2; omega
+
+/-- **The `i`-th virtual key holds slice `i`** (as `graph_rdb_save` would encode it for the
+slice's own graph). -/
 theorem save_vkey (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
-    (registry : List (Nm × Gr)) (hn : Names registry vname) (g : Nm) (gr : Gr) (hg : (g, gr) ∈ registry)
-    (hh : holds g gr = true) (hK : 2 ≤ (layout gr).length) (i : Nat) (hi : 1 ≤ i) (hiK : i < (layout gr).length) :
-    rdbSave (createVKeys holds layout vname registry) (lookup registry) (vname g i) =
+    (registry : List (Id × Nm × Gr)) (hn : Names registry vname) (id : Id) (g : Nm) (gr : Gr)
+    (hg : (id, g, gr) ∈ registry) (hh : holds g gr = true) (hK : 2 ≤ (layout gr).length)
+    (i : Nat) (hi : 1 ≤ i) (hiK : i < (layout gr).length) :
+    rdbSave (createVKeys holds layout vname registry) (regGet registry) (vname g i) id =
       .slice g gr ((layout gr).getD i []) (layout gr).length := by
-  have hreg_uniq : ∀ p ∈ registry, p.1 = g → p = (g, gr) := by
-    intro p hp hpg
-    obtain ⟨g', gr'⟩ := p; simp only at hpg; subst hpg
-    exact nodup_fst_eq hn.reg_nodup hp hg rfl
-  have hmap : lookup (createVKeys holds layout vname registry).map (vname g i) =
-      some (g, i, (layout gr).getD i []) := by
-    apply lookup_unique
-    · simp only [createVKeys, List.mem_flatMap]
-      refine ⟨(g, gr), hg, ?_⟩
-      simp only [vkInserts, hh, hK, true_and, decide_true, ite_true, List.mem_cons, List.mem_map, List.mem_range]
-      right
-      exact ⟨i - 1, by omega, by rw [Nat.sub_add_cancel hi]⟩
-    · intro p hp hpg
-      simp only [createVKeys, List.mem_flatMap] at hp
-      obtain ⟨⟨g', gr'⟩, hreg, hpi⟩ := hp
-      obtain ⟨h1, h2⟩ := mem_vkInserts hpi
-      simp only at h1 h2
-      rcases h2 with ⟨h3, _⟩ | ⟨j, h3, h4⟩
-      · rw [hpg] at h3; exact absurd h3 (hn.vname_fresh _ _ _ hreg)
-      · rw [hpg] at h3
-        obtain ⟨rfl, rfl⟩ := hn.vname_inj _ _ _ _ h3
-        have e := hreg_uniq _ hreg rfl
-        simp only [Prod.mk.injEq] at e; obtain ⟨_, rfl⟩ := e
-        simp only [vkInserts, hh, hK, true_and, decide_true, ite_true, List.mem_cons, List.mem_map,
-          List.mem_range] at hpi
-        rcases hpi with hpi | ⟨k, _, hpi⟩
-        · rw [hpi] at hpg; exact absurd hpg.symm (hn.vname_fresh _ _ _ hg)
-        · rw [← hpi] at hpg ⊢
-          obtain ⟨_, hk⟩ := hn.vname_inj _ _ _ _ hpg
-          have hkj : k = j := by omega
-          subst hkj; rfl
-  have hgv : lookup (createVKeys holds layout vname registry).gv g =
-      some ((List.range ((layout gr).length - 1)).map fun i => vname g (i + 1)) := by
-    apply lookup_unique
-    · simp only [createVKeys, List.mem_flatMap]
-      exact ⟨(g, gr), hg, by simp [vkNames, hh, hK]⟩
-    · intro p hp hpg
-      simp only [createVKeys, List.mem_flatMap] at hp
-      obtain ⟨⟨g', gr'⟩, hreg, hpi⟩ := hp
-      simp only [vkNames] at hpi
-      split at hpi
-      · simp at hpi; subst hpi
-        simp only at hpg; subst hpg
-        have e := hreg_uniq _ hreg rfl
-        simp only [Prod.mk.injEq] at e; obtain ⟨_, rfl⟩ := e
-        rfl
-      · simp at hpi
-  simp only [rdbSave, saveKeySlice, hmap, lookup_unique registry g gr hg hreg_uniq, hgv, Option.map_some, Option.getD_some,
-    List.length_map, List.length_range]
-  congr 1; omega
+  apply metaSave_rdbSave _ _ _ _ (save_vkey_meta holds layout vname registry hn id g gr hg hh hK i hi hiK)
+  simp [sliceOwner, vkey_lookup holds layout vname registry hn id g gr hg hh hK i hi hiK]
 
 /-- **Everything else is saved whole.** A key that is neither a split graph's own key nor
 one of its virtual keys is written by `rdb_save_graph` under its own name. -/
 theorem save_single (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
-    (registry : List (Nm × Gr)) (key : Nm)
-    (hk : ∀ g gr, (g, gr) ∈ registry → holds g gr = true → 2 ≤ (layout gr).length →
+    (registry : List (Id × Nm × Gr)) (key : Nm) (owner : Id)
+    (hk : ∀ id g gr, (id, g, gr) ∈ registry → holds g gr = true → 2 ≤ (layout gr).length →
       key ≠ g ∧ ∀ i, key ≠ vname g i) :
-    rdbSave (createVKeys holds layout vname registry) (lookup registry) key = .whole key := by
+    rdbSave (createVKeys holds layout vname registry) (regGet registry) key owner = .whole key := by
   have : lookup (createVKeys holds layout vname registry).map key = none := by
     apply lookup_none
     intro p hp hpk
     simp only [createVKeys, List.mem_flatMap] at hp
-    obtain ⟨⟨g, gr⟩, hreg, hpi⟩ := hp
+    obtain ⟨⟨id, g, gr⟩, hreg, hpi⟩ := hp
     simp only [vkInserts] at hpi
     split at hpi
     · rename_i hc
       obtain ⟨hh, hK⟩ := hc
-      obtain ⟨n1, n2⟩ := hk g gr hreg (by simpa using hh) hK
+      obtain ⟨n1, n2⟩ := hk id g gr hreg (by simpa using hh) hK
       simp only [List.mem_cons, List.mem_map, List.mem_range] at hpi
       rcases hpi with rfl | ⟨i, _, rfl⟩
       · exact n1 hpk.symm
@@ -294,33 +347,34 @@ theorem save_single (holds : Nm → Gr → Bool) (layout : Gr → List (List Ent
 
 /-! ## End of save: delete what was created -/
 
-/-- `delete_virtual_keys` (:530): `delete_key` each recorded name, then clear the state. -/
-def deleteVKeys (vs : VS Nm) : List Nm × VS Nm := (vs.gv.flatMap Prod.snd, ⟨[], []⟩)
+/-- `delete_virtual_keys` (:638): `delete_key` each recorded name (in its db), then clear
+the state. -/
+def deleteVKeys (vs : VS Id Nm) : List Nm × VS Id Nm := (vs.gv.flatMap Prod.snd, ⟨[], []⟩)
 
 theorem deleteVKeys_spec (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
-    (registry : List (Nm × Gr)) :
+    (registry : List (Id × Nm × Gr)) :
     (deleteVKeys (createVKeys holds layout vname registry)).1 = createdKeys (createVKeys holds layout vname registry) ∧
-    (deleteVKeys (createVKeys holds layout vname registry)).2 = ⟨[], []⟩ := ⟨rfl, rfl⟩
+    (deleteVKeys (createVKeys holds layout vname registry)).2 = (⟨[], []⟩ : VS Id Nm) := ⟨rfl, rfl⟩
 
 /-- Exactly the virtual names of every split graph. -/
 theorem createdKeys_spec (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
-    (registry : List (Nm × Gr)) (k : Nm) :
+    (registry : List (Id × Nm × Gr)) (k : Nm) :
     k ∈ createdKeys (createVKeys holds layout vname registry) ↔
-      ∃ g gr, (g, gr) ∈ registry ∧ holds g gr = true ∧ 2 ≤ (layout gr).length ∧
+      ∃ id g gr, (id, g, gr) ∈ registry ∧ holds g gr = true ∧ 2 ≤ (layout gr).length ∧
         ∃ i, 1 ≤ i ∧ i < (layout gr).length ∧ k = vname g i := by
   simp only [createdKeys, createVKeys, List.flatMap_assoc, List.mem_flatMap]
   constructor
-  · rintro ⟨⟨g, gr⟩, hreg, p, hp, hk⟩
+  · rintro ⟨⟨id, g, gr⟩, hreg, p, hp, hk⟩
     simp only [vkNames] at hp
     split at hp
     · rename_i hc
       simp at hp; subst hp
       simp only [List.mem_map, List.mem_range] at hk
       obtain ⟨i, hi, rfl⟩ := hk
-      exact ⟨g, gr, hreg, by simpa using hc.1, hc.2, i + 1, by omega, by omega, rfl⟩
+      exact ⟨id, g, gr, hreg, by simpa using hc.1, hc.2, i + 1, by omega, by omega, rfl⟩
     · simp at hp
-  · rintro ⟨g, gr, hreg, hh, hK, i, hi1, hi2, rfl⟩
-    refine ⟨(g, gr), hreg, (g, (List.range ((layout gr).length - 1)).map fun i => vname g (i + 1)),
+  · rintro ⟨id, g, gr, hreg, hh, hK, i, hi1, hi2, rfl⟩
+    refine ⟨(id, g, gr), hreg, (g, (List.range ((layout gr).length - 1)).map fun i => vname g (i + 1)),
       by simp [vkNames, hh, hK], ?_⟩
     simp only [List.mem_map, List.mem_range]
     exact ⟨i - 1, by omega, by rw [Nat.sub_add_cancel hi1]⟩
@@ -353,17 +407,29 @@ theorem scanKeys_stops (r : Reply Nm) (rest : List (Reply Nm)) (h : r = .null �
     scanKeys (r :: rest) = [] := by
   rcases h with rfl | rfl | rfl <;> rfl
 
-/-- `delete_stale_graphmeta_keys` (:591): delete every key the type scan returns. -/
-def deleteStaleGraphmeta (replies : List (Reply Nm)) : List Nm := scanKeys replies
+/-- `delete_stale_graphmeta_keys` (:702): in every non-empty database `d` (`for_each_db`),
+delete every key its type scan returns — as `(d, key)`. -/
+def deleteStaleGraphmeta {Db : Type} (replies : List (Db × List (Reply Nm))) : List (Db × Nm) :=
+  replies.flatMap fun (d, r) => (scanKeys r).map (d, ·)
 
-/-- `delete_stale_virtual_keys` (:625): the graphmeta sweep, then `mem::take(meta_keys)`
-deleted one by one; `meta_keys` is left empty. -/
-def deleteStaleVirtual (replies : List (Reply Nm)) (metaKeys : List Nm) : List Nm × List Nm :=
+theorem deleteStaleGraphmeta_spec {Db : Type} (replies : List (Db × List (Reply Nm))) (d : Db) (k : Nm) :
+    (d, k) ∈ deleteStaleGraphmeta replies ↔ ∃ r, (d, r) ∈ replies ∧ k ∈ scanKeys r := by
+  simp only [deleteStaleGraphmeta, List.mem_flatMap, List.mem_map, Prod.mk.injEq]
+  constructor
+  · rintro ⟨⟨d', r⟩, hm, k', hk, rfl, rfl⟩; exact ⟨r, hm, hk⟩
+  · rintro ⟨r, hm, hk⟩; exact ⟨(d, r), hm, k, hk, rfl, rfl⟩
+
+/-- `delete_stale_virtual_keys` (:738): the graphmeta sweep, then `mem::take(meta_keys)` —
+each `(db, key)` deleted in its db; `meta_keys` is left empty. -/
+def deleteStaleVirtual {Db : Type} (replies : List (Db × List (Reply Nm))) (metaKeys : List (Db × Nm)) :
+    List (Db × Nm) × List (Db × Nm) :=
   (deleteStaleGraphmeta replies ++ metaKeys, [])
 
-theorem deleteStaleVirtual_spec (replies : List (Reply Nm)) (metaKeys : List Nm) (k : Nm) :
-    (k ∈ (deleteStaleVirtual replies metaKeys).1 ↔ k ∈ scanKeys replies ∨ k ∈ metaKeys) ∧
+theorem deleteStaleVirtual_spec {Db : Type} (replies : List (Db × List (Reply Nm))) (metaKeys : List (Db × Nm))
+    (d : Db) (k : Nm) :
+    ((d, k) ∈ (deleteStaleVirtual replies metaKeys).1 ↔
+      (∃ r, (d, r) ∈ replies ∧ k ∈ scanKeys r) ∨ (d, k) ∈ metaKeys) ∧
     (deleteStaleVirtual replies metaKeys).2 = [] := by
-  simp [deleteStaleVirtual, deleteStaleGraphmeta]
+  simp [deleteStaleVirtual, deleteStaleGraphmeta_spec]
 
 end GraphPersist.RedisType
