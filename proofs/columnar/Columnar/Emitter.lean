@@ -10,14 +10,15 @@ gathers the parent columns by the packed parent rows.
 
 | here | there |
 | --- | --- |
-| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-570`; the clamp is `:562`) — since #2973 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`; #2922 was an LLVM miscompile of the guarded `match` it replaced on aarch64-apple-darwin |
-| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:744`) |
-| `drain` | `drain_pending_entry` (`:622-647`) |
-| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:676-717`, `:738-743`) |
-| `emitLazy` | `emit_lazy` (`:729-746`) |
+| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:560-584`; the clamp is `:569`) — since #2973 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`; #2922 was an LLVM miscompile of the guarded `match` it replaced on aarch64-apple-darwin |
+| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:754`) |
+| `drain` | `drain_pending_entry` (`:631-655`) |
+| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:686-727`, `:748-753`) |
+| `emitLazy` | `emit_lazy` (`:739-760`) |
+| `parentRows` | `parent_rows` / `record_parent_rows` after `emit_lazy` (`:756-774`, #3110) |
 | `stream` | the flattened `(row, item)` sequence of `pending` + unread rows |
 | `emitAll` | repeated `emit_lazy` until `Ok(None)` |
-| `finishLen` | `finish_batch` (`:651-669`) row count incl. the `should_expand` switch (`start_batch`, `:604-617`) |
+| `finishLen` | `finish_batch` (`:661-679`) row count incl. the `should_expand` switch (`start_batch`, `:613-625`) |
 | `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs:293-299`) |
 -/
 
@@ -26,7 +27,7 @@ open FalkorCore (V)
 
 def BATCH_SIZE : Nat := 1024
 
-/-- `with_binding` since #2973 (`batched_result_emitter.rs:562`):
+/-- `with_binding` since #2973 (`batched_result_emitter.rs:569`):
 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`. -/
 def withBinding (recordCap : Option Nat) : Nat :=
   match recordCap with
@@ -254,7 +255,38 @@ theorem batch_rows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List 
     obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hi
     exact (stream_rows_active h f x (hsub x hx)).2)
 
-/-- `finish_batch`'s row count: gathered when `start_batch` (`:604-617`) sets
+/-- `parent_rows` after one `emit_lazy` (`:756-758`, #3110): with `record_parent_rows` set
+(`:764-766`) it is the packed parent-row list `indices` (filled when
+`should_expand || record_parent_rows`, `:619`, `:639`); otherwise it keeps its previous value
+(initially empty, `with_binding`). -/
+def parentRows (rec : Bool) (prev : List Nat) (c : Nat) (p : Option (Nat × List I))
+    (t : List (Nat × List I)) : List Nat :=
+  if rec then (emitLazy c p t).1.map (·.1) else prev
+
+/-- **`parent_rows` names, row for row, the parent of each emitted row**: it is the emitted
+batch's parent-row column, so it has the emitted batch's length. -/
+theorem parentRows_spec (prev : List Nat) (c : Nat) (p : Option (Nat × List I))
+    (t : List (Nat × List I)) :
+    parentRows true prev c p t = (emitLazy c p t).1.map (·.1) ∧
+    (parentRows true prev c p t).length = min c (stream p t).length ∧
+    parentRows false prev c p t = prev := by
+  refine ⟨rfl, ?_, rfl⟩
+  simp [parentRows, (emitLazy_spec c p t).2]
+
+/-- Every recorded parent row is an active row of the seeded batch (`< len`), so a
+consumer may index per-parent-row state by it. -/
+theorem parentRows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List I)
+    (prev : List Nat) (c : Nat) :
+    ∀ r ∈ parentRows true prev c none (seedRows b f), r ∈ b.active ∧ r < b.len := by
+  intro r hr
+  simp only [parentRows, ite_true, List.mem_map] at hr
+  obtain ⟨x, hx, rfl⟩ := hr
+  have hs := (emitLazy_spec c none (seedRows b f)).1
+  have : x ∈ stream none (seedRows b f) := by
+    rw [← hs]; exact List.mem_append_left _ hx
+  exact stream_rows_active h f x this
+
+/-- `finish_batch`'s row count: gathered when `start_batch` (`:613-625`) sets
 `should_expand` — the parent has a column **or carries correlation origins**
 (`has_origins`, since #2845) — else a fresh `Batch::new(0)` whose length comes from
 the first installed column (`set_column` on an empty batch), or stays 0 when the
