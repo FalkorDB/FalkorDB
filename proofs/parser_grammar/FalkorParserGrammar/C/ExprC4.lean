@@ -15,12 +15,12 @@ inductive GSpTypes : PS → List Nat → List Nat → PS → Prop
       (s.adv.adv.cur = .colon ∧ s1 = s.adv.adv.adv ∨ s.adv.adv.cur ≠ .colon ∧ s1 = s.adv.adv) →
       GSpTypes s1 (acc ++ [t]) out s' → GSpTypes s acc out s'
 
-/-- shortestPath's `*` range (cypher.rs:1800-1823). -/
+/-- shortestPath's `*` range (cypher.rs:1811-1833). -/
 inductive GSpRange : PS → Nat × Option Nat → PS → Prop
   | none {s} : s.cur ≠ .star → GSpRange s (1, some 1) s
   | star {s r s'} : s.cur = .star → GRangeBody s.adv r s' → GSpRange s r s'
 
-/-- shortestPath's `[ ... ]` (cypher.rs:1781-1866), with no edge filter. -/
+/-- shortestPath's `[ ... ]` (cypher.rs:1798-1855), with no edge filter. -/
 inductive GSpDet : PS → List Nat × Nat × Option Nat → PS → Prop
   | bare {s} : s.cur ≠ .lbrack → GSpDet s ([], 1, some 1) s
   | det {s sa ts sb r sc} : s.cur = .lbrack →
@@ -55,8 +55,8 @@ theorem np_skipP : ∀ n d, NP (skipP n d)
 
 theorem np_spRangeP : NP spRangeP := by have := np_hopP; unfold spRangeP; np_go
 
-theorem np_shortestP (F : Nat) : NP (shortestP F) := by
-  have := np_spTypes; have := np_skipP; have := np_spRangeP
+theorem np_shortestP (pmap : P ET) (hp : NP pmap) (F : Nat) : NP (shortestP pmap F) := by
+  have := np_spTypes; have := np_spRangeP
   unfold shortestP; np_go
 
 theorem np_caseAlts (pe : PE) (hpe : NP pe) : ∀ n acc, NP (caseAlts pe n acc)

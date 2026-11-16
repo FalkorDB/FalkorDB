@@ -56,7 +56,7 @@ graph/src/parser/cypher.rs	parse_pattern	1400	NOT COVERED	parser routine not mod
 graph/src/parser/cypher.rs	parse_case_expression	1589	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_quantifier_expr	1621	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_reduce_expr	1680	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_shortest_path_expr	1758	MODELLED	fragment: hop bound cast i as u32 = asU32 (hop_truncation_bug); rest not modelled
+graph/src/parser/cypher.rs	parse_shortest_path_expr	1768	MODELLED	fragment: hop bound cast i as u32 = asU32 (hop_truncation_bug); rest not modelled
 graph/src/parser/cypher.rs	parse_primary_expr	1940	MODELLED	PRIMARY_LEVELS premise checked per constructor shape (primary_levels); parsing itself not modelled
 graph/src/parser/cypher.rs	parse_list_operator_expression	2134	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_property_lookup	2165	NOT COVERED	parser routine not modelled by the lexer project

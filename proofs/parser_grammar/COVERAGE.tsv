@@ -40,7 +40,7 @@ graph/src/parser/cypher.rs	Parser::parse_pattern	1400	PROVEN	C.PatternG2 pattern
 graph/src/parser/cypher.rs	Parser::parse_case_expression	1589	PROVEN	C.ExprC caseP_sound (GCase/GAlts), np_caseP
 graph/src/parser/cypher.rs	Parser::parse_quantifier_expr	1621	PROVEN	C.ExprC quantP_sound (GQuant), quantP_np (unreachable! guarded)
 graph/src/parser/cypher.rs	Parser::parse_reduce_expr	1680	PROVEN	C.ExprC reduceP_sound (GReduce), np_reduceP
-graph/src/parser/cypher.rs	Parser::parse_shortest_path_expr	1758	PROVEN	C.ExprC5 shortestP_sound (GShortest), C.ExprC4 np_shortestP; C.ExprC2 skipP_eof; skipFilter_eof_diverges (bug)
+graph/src/parser/cypher.rs	Parser::parse_shortest_path_expr	1768	PROVEN	C.ExprC5 shortestP_sound (GShortest), C.ExprC4 np_shortestP; #3019 filter parsed by parse_map: C.ExprC5 shortestP_param_eof_err, shortestP_filter_eof_err (pre-#3019 hang: C.ExprC2 skipP_eof, skipFilter_eof_diverges)
 graph/src/parser/cypher.rs	Parser::parse_primary_expr	1940	PROVEN	C.PrimaryG primaryC_sound (GAtom, all tokens), C.Primary primaryC_np; Model primary/bounded_agree
 graph/src/parser/cypher.rs	Parser::parse_list_operator_expression	2134	PROVEN	listOp (#3041: a bound that fails to parse is an error), listOp_ok, slice_bound_error_reported, slice_bounds_omitted, listOp_from_err, listOp_to_err, bounded_agree (no slice exception left) (#3036 fixed)
 graph/src/parser/cypher.rs	Parser::parse_property_lookup	2165	PROVEN	postLoop (.dot arm), postfix_tightest; C.ClausesG2 dotChain_sound

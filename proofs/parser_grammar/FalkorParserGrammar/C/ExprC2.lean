@@ -1,6 +1,6 @@
 /-
 # Pattern comprehensions, `[`-dispatch, shortestPath, and the
-# pattern-comprehension guards (cypher.rs:1753-1940, 2792-2995, 3551-3561)
+# pattern-comprehension guards (cypher.rs:1768-1925, 2792-2995, 3551-3561)
 -/
 import FalkorParserGrammar.C.ExprC
 
@@ -180,7 +180,7 @@ def listLitPU (o : Oracle) (F : Nat) (forb : Bool) : P (ET × Bool) := do
   | some v, true => do let t ← listCompP (o.pe false) v; pure (t, false)
   | _, _ => listLitRest o F forb saved
 
-/-! ## shortestPath (cypher.rs:1753-1940) -/
+/-! ## shortestPath (cypher.rs:1768-1925) -/
 
 /-- shortestPath's types: the same `parse_relationship_types` (cypher.rs:3057-3064) as a pattern's. -/
 def spTypes : Nat → List Nat → P (List Nat)
@@ -193,9 +193,11 @@ def spTypes : Nat → List Nat → P (List Nat)
       spTypes n (acc ++ [t])
     else pure (acc ++ [t])
 
-/-- The edge-filter skipper (cypher.rs:1835-1862): `{` deepens, `}`
-shallows and stops at depth ≤ 0, `]` stops before it; at end of input it
-never stops (the model's budget runs out: `fuel`). -/
+/-- **Historical (pre-#3019)**: the edge-filter skipper that
+`parse_shortest_path_expr` used before #3019 (cypher.rs:1835-1870 at
+343e077f2): `{` deepens, `}` shallows and stops at depth ≤ 0, `]` stops
+before it; at end of input it never stops (the model's budget runs out:
+`fuel`). #3019 replaced it by `parse_map` (see `shortestP`). -/
 def skipP : Nat → Int → P Unit
   | 0, _ => fuelP
   | n + 1, d => do
@@ -206,13 +208,13 @@ def skipP : Nat → Int → P Unit
     | .rbrack => pure ()
     | _ => do next; skipP n d
 
-/-- `Token::Parameter(_) | Token::LBracket` after the range (cypher.rs:1826-1830). -/
+/-- `Token::Parameter(_) | Token::LBracket` after the range (cypher.rs:1838-1848). -/
 def isFilter : CT → Bool
   | .param _ => true
   | .lbrace => true
   | _ => false
 
-/-- shortestPath's `*` range (cypher.rs:1800-1823). -/
+/-- shortestPath's `*` range (cypher.rs:1811-1833). -/
 def spRangeP : P (Nat × Option Nat) := do
   let st ← opt .star
   if st then do
@@ -226,8 +228,11 @@ def spRangeP : P (Nat × Option Nat) := do
       | none => pure (1, none)
   else pure (1, some 1)
 
-/-- `parse_shortest_path_expr`, after `shortestPath(`. -/
-def shortestP (F : Nat) : P ET := do
+/-- `parse_shortest_path_expr` (cypher.rs:1768-1925), after `shortestPath(`.
+`pmap` is `parse_map` (the oracle's `pmap`): since #3019 an edge filter is
+parsed, `$p` by one `next()` and `{...}` by `parse_map()?` (cypher.rs:1838-1848),
+instead of being skipped token by token (`skipP`). -/
+def shortestP (pmap : P ET) (F : Nat) : P ET := do
   let c0 ← peek
   if c0 ≠ .lparen then fail else do
   tok .lparen
@@ -248,7 +253,10 @@ def shortestP (F : Nat) : P ET := do
         let mm ← spRangeP
         let c2 ← peek
         let filt := isFilter c2
-        if filt then skipP F 0 else pure ()
+        (match c2 with
+          | .param _ => next
+          | .lbrace => do let _ ← pmap; pure ()
+          | _ => pure ())
         tok .rbrack
         pure (ts, mm.1, mm.2, filt)
       else pure ([], 1, some 1, false))
@@ -268,10 +276,9 @@ def shortestP (F : Nat) : P ET := do
       let ends := if inc && !out then (dst, src) else (src, dst)
       pure (.node (.shortest d.1 d.2.1 d.2.2.1 (inc || out)) [leaf (.var ends.1), leaf (.var ends.2)])
 
-/-- **An edge filter is never accepted**: whenever `shortestPath` returns,
-the relationship had no `{...}` / `$param` filter. With a filter the result
-is an error, or (input ending inside the filter) no result at all — the
-known hang, `skipFilter_eof_diverges`. -/
+/-- **Historical (pre-#3019)**: the old skipper never stops at end of input —
+the hang `skipFilter_eof_diverges`, fixed by #3019 (`shortestP_param_eof_err`,
+`shortestP_filter_eof_err`). -/
 theorem skipP_eof : ∀ n (d : Int) (k : Nat), skipP n d ([], k) = .fuel
   | 0, _, _ => rfl
   | n + 1, d, k => by

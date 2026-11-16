@@ -96,7 +96,7 @@ module with the C module (`bin/macos-arm64v8-release/falkordb.so`).
 
 | Lean | Rust | test |
 | --- | --- | --- |
-| `skipFilter_eof_diverges` | `shortestPath((a)-[{` at end of input: the filter-skip loop (cypher.rs:1833-1858) never ends; a worker thread spins forever, and 11 such queries stop all graph queries. C: syntax error. | `bug_shortest_path_filter_skip_loops_forever_at_eof` |
+| `skipFilter_eof_diverges` | **Fixed by #3019**: `shortestPath((a)-[{` at end of input: the filter-skip loop (cypher.rs:1835-1870 at 343e077f2) never ended; a worker thread spun forever, and 11 such queries stopped all graph queries. C: syntax error. Now the filter is parsed (`$p` one token, `{...}` by `parse_map`, cypher.rs:1838-1848): `C.shortestP_param_eof_err`, `C.shortestP_filter_eof_err`. | `bug_shortest_path_filter_skip_loops_forever_at_eof` |
 | — | Pattern predicate in a projection swallows the `,` (2103 → parse_pattern's comma loop 1546-1548). Live: `RETURN (a)-->(b), 1` is a syntax error; `RETURN (a)-->(b), (b)-->(a)` returns ONE column; C returns two. Same root cause as W2-binder-1. | `bug_pattern_predicate_swallows_projection_comma` |
 | `sign_sequences` | `+-1` accepted, `- -1` / `-+1` rejected; the grammar allows one sign. `- -1` is #2309. | — |
 
@@ -218,7 +218,7 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
 | `C.pipeScan`, `C.gateOK`, `C.listLitP`, `C.listLitPU`, `Oracle.seen` | `list_has_top_level_pipe` (2892-2912), the #3104 gate (2845-2878), the merged / pre-#3104 `parse_list_literal_or_comprehension`, `not_pattern_comprehension` |
 | `listOp` | `parse_list_operator_expression` (2136-2165) |
 | `parseMap`, `mapProj*`, `labels` | `parse_map` (3202), `parse_map_projection` (3234), `parse_labels` (3193) |
-| `skipFilter` | `parse_shortest_path_expr`'s filter skipper (1833-1858) |
+| `skipFilter` | `parse_shortest_path_expr`'s pre-#3019 filter skipper (1835-1870 at 343e077f2; historical) |
 | `setTarget`, `rejectUnparen` | `parse_set_items` / `parse_remove_items` targets (3336, 3432), `reject_unparenthesized_target` (3395) |
 | `G.*` | `oC_Expression` … `oC_Atom` (Cypher.g4:275-560) |
 | `C.CT`, `C.CK`, `C.P`, `tok`/`opt`/`ident`/`tryIdent` | `Token`, `Keyword` (lexer.rs:63-156), the parser, `match_token!` / `optional_match_token!` (macro.rs:51-113), `parse_ident` / `try_parse_ident` |

@@ -203,7 +203,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 
 ### Server crash / hang / data loss
 - **W3-conc-1**: the server hangs permanently once more than about 1024 queries are queued. The main thread holds the GIL and does a blocking send into the full pool queue (`threadpool.rs:59,96`, `graph_core.rs:1052`). C finishes 3000/3000. Lean: `pool_deadlock_reachable`; the fix is proven in `fixed_never_stuck`.
-- **W3-parser-1**: the shortestPath filter-skip loop never ends at EOF (`cypher.rs:1819-1845`). `RETURN shortestPath((a)-[{` spins a worker forever, and a handful of these block all graph queries.
+- **W3-parser-1**: the shortestPath filter-skip loop never ends at EOF (`cypher.rs:1819-1845`). `RETURN shortestPath((a)-[{` spins a worker forever, and a handful of these block all graph queries. **Fixed by #3019**: the filter is now parsed (`$p` one token, `{...}` by `parse_map`), so input ending inside it is a syntax error; Lean: `C.shortestP_param_eof_err`, `C.shortestP_filter_eof_err`.
 - **W3-planner-1**: the previous MATCH's WHERE is dropped when the next MATCH traverses from its variable (stitching at `planner/mod.rs:2710`, pruned by `select_scan_node.rs:239`). `… DELETE b` then deletes data that C does not.
 - **W3-gb-1**: a corrupt blob in GRAPH.RESTORE or an RDB panics the server via an `assert_eq!` on `GxB_Vector_deserialize` (`vector.rs:188`, `:219`; `tensor.rs:1586`). **Fixed by #2996 (d99861124)**: `decodeBlob_never_dies` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **W3-conc-4**: a huge `k` in `db.idx.vector.queryNodes` runs `Vec::with_capacity(k)` and SIGSEGVs (`graph.rs:3744`, `:3799`).
