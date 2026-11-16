@@ -71,6 +71,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `canUse_inListV_eq_or`, `canUseE_inListV_eq_or` | #2383: an `IN` list reaches the index on the same terms as the `Or` of `Equal`s it replaced (non-empty, every member indexable), so `IN [NULL]` still falls back | `IndexScan.lean` |
 | `scanRow_spec`, `edgeRow_sound`, `orient_length` | Index scans are sound pre-filters, honour bound endpoints, and read undirected edges both ways | `IndexScan.lean` |
 | `dedupRows_keys_nodup`, `dedupRows_keys_complete` | The bidirectional dedup keeps unique keys and never loses a key (the bugs are in *which* key) | `BidirDedup.lean` |
+| `Lin.dedup_exact`, `Lin.runBatches_eq` | Since #3110: one row per distinct (record, chain start, dest), whatever the batching | `BidirDedup.lean` |
 | `edgeVerdict_eq_filterEval` | A variable-length edge filter answers every evaluated value exactly as `FilterOp` does, by `StreamOps.filterEval` (non-boolean is a type error since #2390) | `VarLen.lean` |
 
 ### How `asp_minimal` is proved
@@ -90,7 +91,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | W2-traverse-1 | `twoHop_collapse_changes_count` | An unreferenced named edge is collapsed even though a sibling traverse still reads it for uniqueness (`reduce_expand_into.rs`; the oracle is now `optimizer/references.rs`). `MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)` on `a⇉b→c`: Rust 1, C 2. Related to #2896 | **Open** |
-| W2-traverse-2 | `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result` | The dedup for chained anonymous undirected hops (`cond_traverse.rs`) ignores other columns, keys on an intermediate node at 3+ hops, and resets per batch. `UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10; a 3-hop star: Rust 7, C 12 | **Open** |
+| W2-traverse-2 | `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result` | The dedup for chained anonymous undirected hops (`cond_traverse.rs`) ignores other columns, keys on an intermediate node at 3+ hops, and resets per batch. `UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10; a 3-hop star: Rust 7, C 12 | **Fixed by #3110**: `Lin.outer_rows_kept`, `Lin.three_hops_keyed_on_start`, `Lin.batch_split_same`, `Lin.dedup_exact` (old theorems kept on the pre-#3110 model) |
 | W2-traverse-3 | `bidir_collapse_duplicates_pair`, `expandInto_bidir_collapse_two_rows` | An undirected anonymous hop collapses per direction, not per pair. With `a→b`, `b→a`, `a→b`, `MATCH (a)-[]-(b) RETURN a.id, b.id`: Rust 4 rows, C 2 | **Open** |
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |
 | W2-traverse-4 | `directed_cycle_walk_order`, `directed_cycle_is_a_walk`, `directed_cycle_reversed_order` | allShortestPaths on a directed cycle returned the edge list backwards (`0→1→2→0`, `(a)-[*]->(a)` gave `[3,2,1]`). C was also wrong | Fixed by #3112 (fixes #3108): walk order `[1,2,3]` |
@@ -116,7 +117,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | `UnionStream.lean` | `UnionIter` (#3492): the k-way merge of per-type pair streams, `drain_spec`, `union_stream`, the layer-merge order (`layerStream_spec`) |
 | `UnionGlue.lean` | Multi-type matrix selection, `delta_lmxm_into` (`deltaInto_eff`), the iterator builders, `expand_union_row` (`union_emit_*_iff`, `union_collapse_directed_keys_nodup`) |
 | `CTGlue.lean` | CondTraverse/ExpandInto constructors, `build_state`, `trim_to_cap`, null padding, `next`; scan and PathBuilder constructors |
-| `BidirDedup.lean` | The bidirectional dedup block and its three counterexamples |
+| `BidirDedup.lean` | The pre-#3110 bidirectional dedup and its three counterexamples; the #3110 lineage-keyed dedup (`Lin`) and its exactness |
 | `VarLen.lean` | The variable-length DFS, `varLen_iff`, the absorbed edge filter |
 | `VarLenGlue.lean` | `path_value`, the `VarLenIter` frame machine, the endpoint plan, `new` |
 | `ShortestPaths.lean` | allShortestPaths BFS and backtrack, soundness, the cycle counterexamples, PathBuilder |

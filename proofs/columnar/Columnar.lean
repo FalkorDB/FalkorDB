@@ -39,7 +39,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | `Batch` | `Batch` selection / gather / compaction / `set_column` / `write_column` (`batch.rs:805-1394`), selection producers `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs:529` |
 | `Row`, `Row.pushSlot` | `Row` (`row.rs`), `Row::push_slot` (`row.rs:224`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1422-1457`) |
 | `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
-| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-787`), ExpandInto trim (`expand_into.rs:285-294`) |
+| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:489-814`), ExpandInto trim (`expand_into.rs:285-294`) |
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
 | `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` (`/` is `checked_div` since #3603: `i64::MIN / -1` errors and the int lane refuses it; `%` still wraps to 0) |
 | `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |

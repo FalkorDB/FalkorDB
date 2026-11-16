@@ -17,7 +17,7 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
 | `Drop.*` (`DropOrder.lean`) | `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()`: `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
 | `Proto.*`     | the read-guard protocol over `MvccGraph`, `QuerySession` and every graph-cell `borrow_mut`: `reader_guard_sound`, `guard_never_excl`, `readNew_never_panics`, `priv_borrows_owner_only`; open bug #3439 `writer_reply_race` |
 | `Reuse.*`     | `read_plan_no_update` (a read plan has no updating operator, from `redis_layer`'s `RedisLayer.Ro`), `accessor_unchanged`, `materialize_unchanged` (accessor theorems transfer through `graph()`) |
-| `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs:455-785`) |
+| `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs:450-814`) |
 | `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:620-667`) |
 | `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:816`), `children_to_recurse` (`:758`) |
 | `Accessors.*` | entity accessors `runtime.rs:1483-1984` (attrs, memo, labels, degrees, endpoints/type) |

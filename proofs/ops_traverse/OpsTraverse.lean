@@ -91,7 +91,8 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `UnionStream.layerStream` | the per-type `versioned_matrix::Iter` merge of `m`, `dp`, `dm` (`VMIter`), keyed by row-major position |
 | `UnionGlue.relationshipTensors`, `buildUnion`, `pickMatrix`, `deltaInto`, `expandUnionRow` | `relationship_tensors` (:288), `build_union_iter` (:317), the `TraversalMatrix` selection (:615-680), `delta_lmxm_into` (:86), `expand_union_row` (:1121) |
 | `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:155`) |
-| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
+| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block before #3110 (historical, W2-traverse-2) |
+| `BidirDedup.Lin.*` | since #3110: `BidirDedup::enter` (`cond_traverse.rs:175`), the dedup block (`:1146-1161`), `stamp_lineage` (`:1375`), lineage hand-off in `next` (`:1464`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
 | `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
@@ -141,7 +142,9 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 * PathBuilder's "other endpoint" rule reconstructs any walk's nodes when edge
   ids are unique (`buildNodes_walk`).
 * The bidir dedup keeps unique keys and never loses a key (`dedupRows_keys_nodup`,
-  `dedupRows_keys_complete`) — the bugs are in *which* key it uses.
+  `dedupRows_keys_complete`) — the bugs were in *which* key it used. Since #3110 the key is
+  `(record, chain-start node, dest)` and the result is exactly one row per distinct key over
+  the whole stream, independent of batching (`Lin.dedup_exact`, `Lin.runBatches_eq`).
 * The id-range label scan returns exactly labelled ∩ range for a sorted
   `get_nodes` (`labelIdScan_correct`).
 * Re-target to origin/main 8743953a8 (#2390, d2c42e032 "plan an inline property map once"):
@@ -170,6 +173,8 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    pairs, C 12), and is reset per batch (K(2,3000): Rust counts 3/4, C 1).
    Lean `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result`.
    Still present on 8743953a8 (live: `UNWIND [1,2]` 5 vs C 10; 3-hop star 7 vs C 12).
+   **Fixed by #3110** (lineage-keyed dedup): `Lin.outer_rows_kept`, `Lin.three_hops_keyed_on_start`,
+   `Lin.batch_split_same`, `Lin.dedup_exact`.
 3. **Undirected anonymous collapse is per direction, not per pair**
    (`cond_traverse.rs:985-1082`, `expand_into.rs:183-222`): `a→b, b→a, a→b`,
    `MATCH (a)-[]-(b) RETURN a.id, b.id` Rust 4 rows, C 2.
