@@ -85,7 +85,7 @@ theorem bodyNew_eq_old (o : Nat) (imp : List (Name × Var)) (rest : List Clause)
 /-- Names distinct: what a `HashMap` key set guarantees. -/
 def Distinct (imp : List (Name × Var)) : Prop := (imp.map (·.1)).Nodup
 
-theorem has_false_of_not_mem (e : Env) (k : Name) (h : k ∉ e.map (·.1)) : e.has k = false := by
+theorem has_false_of_not_mem (e : Env) (k : Name) (h : Key.nm k ∉ e.map (·.1)) : e.has k = false := by
   simp only [Env.has]
   rw [List.any_eq_false]
   intro p hp hk
@@ -98,25 +98,25 @@ the body scope, and leave a table of size `len e + k` whose keys are the
 old keys followed by the imported names. -/
 theorem importProj_spec (s : Nat) :
     ∀ (imp : List (Name × Var)) (e : Env), Distinct imp →
-      (∀ p ∈ imp, p.1 ∉ e.map (·.1)) →
+      (∀ p ∈ imp, Key.nm p.1 ∉ e.map (·.1)) →
       (importProj e s imp).1.length = e.length + imp.length ∧
-      (importProj e s imp).1.map (·.1) = e.map (·.1) ++ imp.map (·.1) ∧
+      (importProj e s imp).1.map (·.1) = e.map (·.1) ++ imp.map (Key.nm ·.1) ∧
       (importProj e s imp).2.map (·.1.id) = (List.range imp.length).map (e.length + ·) ∧
       ((importProj e s imp).1.ids = e.ids ++ (List.range imp.length).map (e.length + ·)) ∧
       ∀ q ∈ (importProj e s imp).2, q.1.scope = s
   | [], e, _, _ => by simp [importProj]
   | (n, v) :: rest, e, hd, hfresh => by
-    have hn : n ∉ e.map (·.1) := hfresh (n, v) (by simp)
+    have hn : Key.nm n ∉ e.map (·.1) := hfresh (n, v) (by simp)
     have hk := has_false_of_not_mem e n hn
     have hdist : Distinct rest := (List.nodup_cons.mp hd).2
     have hnr : n ∉ rest.map (·.1) := (List.nodup_cons.mp hd).1
-    have hfresh' : ∀ p ∈ rest, p.1 ∉ (e.insert n (freshVar e n v.ty s)).map (·.1) := by
+    have hfresh' : ∀ p ∈ rest, Key.nm p.1 ∉ (e.insert n (freshVar e n v.ty s)).map (·.1) := by
       intro p hp
       rw [Env.insert_new_eq hk]
       simp only [List.map_append, List.map_cons, List.map_nil, List.mem_append, List.mem_singleton]
       rintro (h | h)
       · exact hfresh p (by simp [hp]) h
-      · exact hnr (h ▸ List.mem_map.mpr ⟨p, hp, rfl⟩)
+      · exact hnr (Key.nm.inj h ▸ List.mem_map.mpr ⟨p, hp, rfl⟩)
     obtain ⟨ih1, ih2, ih3, ih4, ih5⟩ := importProj_spec s rest _ hdist hfresh'
     have hins := Env.insert_new_eq (v := freshVar e n v.ty s) hk
     simp only [hins] at ih1 ih2 ih3 ih4 ih5
