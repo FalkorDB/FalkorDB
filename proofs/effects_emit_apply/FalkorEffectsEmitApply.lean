@@ -28,7 +28,8 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 | `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:395`                           |
 | `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:323` (opcode granularity)       |
 | `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1958`                 |
-| `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
+| `Emit.commitShips`, `commitCount`      | un-gated `buf.build(..)` since #2970, `commit.rs:107-135`   |
+| `Emit.pre2970_commitShips`             | `if estimated > 0 { buf.build(..) }` before #2970           |
 | `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:532,552`        |
 | `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:210`                    |
 | `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs:318`                    |
@@ -56,13 +57,17 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
   staged vector makes the merge drop a cell (the invariant is load-bearing).
 * `gate_zero_stream` — when `effects_count = 0` the stream the emitter would
   write is exactly the schema additions plus the cancelled pairs;
-  `commitShips_eq_iff` — the gate is sound iff that residue is empty.
+  `pre2970_commitShips_eq_iff` — the old gate was sound iff that residue was empty.
+* Since #2970: `commitShips_eq` — the commit ships exactly `forEachRecord`;
+  `commitCount_pos_iff` — counted as modified iff the payload is non-empty;
+  `fixed2970_ships_cancelled`, `fixed2970_ships_schema_only`,
+  `fixed2970_ships_cancelled_edge_attr`.
 * `wf_createOne`, `wf_deleteNode` (live, no incident edge),
   `wf_updateNode_live`, `wf_setLabels_live` — with a liveness check each node
   arm preserves well-formedness (the fix, proved).
 * Counterexamples (all by `decide`, all reproduced in Rust):
-  `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`,
-  `cancelled_edge_attr_dropped`. The ones fixed by #3022 (`18fc277b9`) were removed after 17ccc5412, the last commit that holds them.
+  `pre2970_gate_drops_cancelled`, `pre2970_gate_drops_schema_only`, `next_payload_refused`,
+  `pre2970_cancelled_edge_attr_dropped` (W2-effects-1, fixed by #2970). The ones fixed by #3022 (`18fc277b9`) were removed after 17ccc5412, the last commit that holds them.
 
 ## #3022 (`Liveness.lean`): every record that acts on an entity checks it is live
 

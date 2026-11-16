@@ -286,9 +286,24 @@ def forEachRecord (p : Pending) (g : Schema) : List Rec :=
   ++ (if p.deletedNodes.isEmpty then [] else [Rec.deleteNode p.deletedNodes []])
   ++ digestCancelled p g
 
-/-- `CommitOp` (`runtime/ops/commit.rs:108`): `if estimated > 0 { buf.build(..) }`. -/
-def commitShips (p : Pending) (g : Schema) : List Rec :=
+/-- `CommitOp::next` before #2970 (`runtime/ops/commit.rs:108` at 343e077f2):
+    `if estimated > 0 { buf.build(..) }`. Kept as history for W2-effects-1. -/
+def pre2970_commitShips (p : Pending) (g : Schema) : List Rec :=
   if effectsCount p > 0 then forEachRecord p g else []
+
+/-- `CommitOp::next` since #2970 (`runtime/ops/commit.rs:107-125`), with
+    `build_effects` set: `buf.build(..)` runs unconditionally, so the buffer
+    holds exactly what `for_each_record` emits (an empty one is dropped by
+    `take_effects_buffer`). -/
+def commitShips (p : Pending) (g : Schema) : List Rec :=
+  forEachRecord p g
+
+/-- What `CommitOp::next` adds to `runtime.effects_count` (`commit.rs:125-135`):
+    the number of records `build` encoded (`format.rs:127-139`) when
+    `build_effects` is set, else `Pending::effects_count`. `graph_core.rs:274`
+    reads it as "modified". -/
+def commitCount (buildEffects : Bool) (p : Pending) (g : Schema) : Nat :=
+  if buildEffects then (commitShips p g).length else effectsCount p
 
 /-! ## What the gate drops -/
 
@@ -331,18 +346,38 @@ theorem gate_zero_stream (p : Pending) (g : Schema) (h : effectsCount p = 0) :
   simp [forEachRecord, h1, h2, h3, h4, h6, h8, hr]
   exact fun a b hm => h9 (a, b) hm
 
-/-- Soundness of the gate, stated the way a fix would need it: the commit ships
-    what the emitter would write **iff** the count is positive or the would-be
-    stream is empty. -/
-theorem commitShips_eq_iff (p : Pending) (g : Schema) :
-    commitShips p g = forEachRecord p g ↔ effectsCount p > 0 ∨ forEachRecord p g = [] := by
-  unfold commitShips
+/-- Soundness of the pre-#2970 gate: the commit shipped what the emitter would
+    write **iff** the count was positive or the would-be stream was empty. -/
+theorem pre2970_commitShips_eq_iff (p : Pending) (g : Schema) :
+    pre2970_commitShips p g = forEachRecord p g ↔ effectsCount p > 0 ∨ forEachRecord p g = [] := by
+  unfold pre2970_commitShips
   by_cases h : effectsCount p > 0
   · simp [h]
   · simp only [h, ↓reduceIte, false_or]
     exact ⟨fun e => e.symm, fun e => e.symm⟩
 
-/-! ### Counterexamples (both reproduced against the real code)
+
+/-! ## Since #2970: no gate -/
+
+/-- **The commit ships exactly what the emitter writes**, for every pending
+    state and schema — the right-hand side of `pre2970_commitShips_eq_iff`
+    holds unconditionally. -/
+theorem commitShips_eq (p : Pending) (g : Schema) : commitShips p g = forEachRecord p g := rfl
+
+/-- The query counts as modified (`effects_count > 0`, `graph_core.rs:274`)
+    exactly when the payload is non-empty, so a non-empty buffer is never
+    dropped by the `!wq.modified` early return (`graph_core.rs:1575`), and an
+    empty one never trips the "modified but produced no effects payload" error. -/
+theorem commitCount_pos_iff (p : Pending) (g : Schema) :
+    commitCount true p g > 0 ↔ commitShips p g ≠ [] := by
+  simp only [commitCount, ↓reduceIte]
+  cases commitShips p g <;> simp
+
+/-- Without `build_effects` the count is `Pending::effects_count`, as before. -/
+theorem commitCount_noBuild (p : Pending) (g : Schema) :
+    commitCount false p g = effectsCount p := rfl
+
+/-! ### Pre-#2970 counterexamples (W2-effects-1, fixed by #2970)
 
     `graph/tests/lean_effects_emit_apply.rs`:
     `fully_cancelled_write_ships_nothing_and_next_payload_is_refused` and
@@ -358,23 +393,37 @@ def pCancelled : Pending :=
 
 def gCancelled : Schema := ⟨["A"], [], ["p"]⟩
 
-theorem gate_drops_cancelled :
+theorem pre2970_gate_drops_cancelled :
     effectsCount pCancelled = 0 ∧
     forEachRecord pCancelled gCancelled =
       [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] ∧
-    commitShips pCancelled gCancelled = [] := by
+    pre2970_commitShips pCancelled gCancelled = [] := by
   refine ⟨rfl, ?_, rfl⟩
+  decide
+
+/-- #2970: the same write now ships all four records and counts as modified. -/
+theorem fixed2970_ships_cancelled :
+    commitShips pCancelled gCancelled =
+      [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] ∧
+    commitCount true pCancelled gCancelled = 4 := by
   decide
 
 /-- `OPTIONAL MATCH (n:Nope) SET n:L6`: `L6` registered, nothing else. -/
 def pSchemaOnly : Pending := { pCancelled with cancelledNodes := [] }
 def gSchemaOnly : Schema := ⟨["L6"], [], []⟩
 
-theorem gate_drops_schema_only :
+theorem pre2970_gate_drops_schema_only :
     effectsCount pSchemaOnly = 0 ∧
     forEachRecord pSchemaOnly gSchemaOnly = [.addLabel 0 "L6"] ∧
-    commitShips pSchemaOnly gSchemaOnly = [] := by
+    pre2970_commitShips pSchemaOnly gSchemaOnly = [] := by
   refine ⟨rfl, ?_, rfl⟩
+  decide
+
+/-- #2970: `ADD_SCHEMA 0 "L6"` ships, so the replica's dictionary stays aligned
+    (`next_payload_refused`'s accepting branch). -/
+theorem fixed2970_ships_schema_only :
+    commitShips pSchemaOnly gSchemaOnly = [.addLabel 0 "L6"] ∧
+    commitCount true pSchemaOnly gSchemaOnly = 1 := by
   decide
 
 /-! ### Why a dropped payload is a divergence and not a no-op
@@ -402,12 +451,19 @@ theorem next_payload_refused :
     (`cancelled_edge_attribute_is_a_silent_dictionary_divergence`). Here even an
     un-gated emitter would say nothing about `T1`'s edges, since the type has no
     id (`emit.rs:448-454`), but it would still announce `p4`. -/
-theorem cancelled_edge_attr_dropped :
+theorem pre2970_cancelled_edge_attr_dropped :
     let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
     let g : Schema := ⟨[], [], ["p4"]⟩
-    effectsCount p = 0 ∧ commitShips p g = [] ∧
+    effectsCount p = 0 ∧ pre2970_commitShips p g = [] ∧
     forEachRecord p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
   refine ⟨rfl, rfl, ?_⟩
+  decide
+
+/-- #2970: the attribute `p4` now ships. -/
+theorem fixed2970_ships_cancelled_edge_attr :
+    let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
+    let g : Schema := ⟨[], [], ["p4"]⟩
+    commitShips p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
   decide
 
 end FalkorEA

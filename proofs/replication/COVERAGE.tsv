@@ -5,7 +5,7 @@ graph/src/effects/v3/emit.rs	build_constraint_buffer	110	PROVEN	faithful: proofs
 graph/src/effects/v3/emit.rs	encode_all	186	PROVEN	faithful: proofs/effects_emit_apply encodeAll_ok/encodeAll_failed; bytes: proofs/effects_codec readRecord_encRecord
 graph/src/effects/v3/emit.rs	index_field_flags	204	PROVEN	faithful: proofs/effects_emit_apply indexFieldFlags_spec
 graph/src/effects/v3/emit.rs	build_index_buffer	226	PROVEN	faithful: proofs/effects_emit_apply buildIndexRec_verifies, encodeAll_ok
-graph/src/effects/v3/emit.rs	for_each_record	323	PROVEN	emit = engine loops: emit_refines; emit_apply, stream_simulation; gate: proofs/effects_emit_apply commitShips_eq_iff
+graph/src/effects/v3/emit.rs	for_each_record	323	PROVEN	emit = engine loops: emit_refines; emit_apply, stream_simulation; gate: proofs/effects_emit_apply commitShips_eq
 graph/src/effects/v3/emit.rs	digest_cancelled	395	PROVEN	faithful: proofs/effects_emit_apply digestCancelled_pairs
 graph/src/effects/v3/emit.rs	digest_created_nodes	497	PROVEN	memo loop = groupBy: memo_refines_groupBy, emit_refines; createBatch_perm, specsOf_group, emit_apply
 graph/src/effects/v3/emit.rs	digest_created_edges	574	PROVEN	faithful: proofs/effects_emit_apply digestCreatedEdges_perm, digestCreatedEdges_keyed, mkEdgeRec_shape
@@ -41,7 +41,7 @@ graph/src/effects/v3/format.rs	EffectsPayload::build	113	PROVEN	emit; faithful: 
 graph/src/effects/v3/format.rs	EffectsPayload::build_index	142	PROVEN	faithful: proofs/effects_codec fmtBuildIndex_eq, proofs/effects_emit_apply buildIndexRec_verifies
 graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	152	PROVEN	faithful: proofs/effects_codec fmtBuildConstraint_eq, proofs/effects_emit_apply buildConstraintRec_verifies
 graph/src/runtime/ops/commit.rs	CommitOp::new	45	NOT COVERED	operator constructor; not in this abstract model (PROVEN in proofs/pending_commit)
-graph/src/runtime/ops/commit.rs	CommitOp::next	69	MODELLED	drives commit (abstract); end_segment -> roll_id_batches since #2846 (assumption 4 in header); faithful: proofs/pending_commit; effects gate proofs/effects_emit_apply commitShips_eq_iff
+graph/src/runtime/ops/commit.rs	CommitOp::next	69	MODELLED	drives commit (abstract); end_segment -> roll_id_batches since #2846 (assumption 4 in header); faithful: proofs/pending_commit; effects gate proofs/effects_emit_apply commitShips_eq
 graph/src/runtime/pending.rs	Pending::commit	1337	MODELLED	abstract commit (node create/delete + schema): emit_apply; faithful model PROVEN in proofs/pending_commit (pending.rs is that project's target)
 graph/src/graph/graph.rs	Graph::get_label_id_mut	1256	PROVEN	intern = faithful get-or-create: intern_refines, intern_fresh, intern_id_lt
 graph/src/graph/graph.rs	Graph::node_id_bound	1701	PROVEN	GState.bound = IdSpace::bound = live + recycled.len(): absIds, createOne_refines, deleteOne_refines (Faithful.Ids.bound)

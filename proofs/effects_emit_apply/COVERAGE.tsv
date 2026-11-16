@@ -1,11 +1,11 @@
 file	function	line	bucket	lean_name_or_reason
 graph/src/effects/v3/emit.rs	schema_id	55	PROVEN	EmitDDL.schemaId: schemaId_spec (panics iff id >= 2^32)
-graph/src/effects/v3/emit.rs	emit_schema_additions	60	PROVEN	Emit.schemaAdditions: suffixRecs_ids, replayNames_suffix (replica at baseline ends with master dict), gate_drops_* 
+graph/src/effects/v3/emit.rs	emit_schema_additions	60	PROVEN	Emit.schemaAdditions: suffixRecs_ids, replayNames_suffix (replica at baseline ends with master dict), pre2970_gate_drops_*, fixed2970_ships_* 
 graph/src/effects/v3/emit.rs	build_constraint_buffer	110	PROVEN	EmitDDL.buildConstraintRec/resolveRefs + encodeAll: buildConstraintRec_verifies, encodeAll_ok
 graph/src/effects/v3/emit.rs	encode_all	186	PROVEN	EmitDDL.encodeAll: encodeAll_ok, encodeAll_failed
 graph/src/effects/v3/emit.rs	index_field_flags	204	PROVEN	EmitDDL.indexFieldFlags: indexFieldFlags_spec
 graph/src/effects/v3/emit.rs	build_index_buffer	226	PROVEN	EmitDDL.buildIndexRec/resolveRefs + encodeAll: buildIndexRec_verifies, encodeAll_ok
-graph/src/effects/v3/emit.rs	for_each_record	323	PROVEN	Emit.gate_zero_stream, Emit.commitShips_eq_iff (record-opcode granularity); emit-then-apply with cancellation (CancelGap): RemoveLabels for a created/cancelled node precedes its CREATE_NODE and the replica refuses it, ReplayApplies refuted: bug3448_removeLabels_before_create_refused (BUG #3448; control agree3448_without_stale_remL); when every allocated relationship type is registered, relIdsCovered_of_registered proves each id reaches a CREATE_EDGE; bug3447_cancelled_edge_id_gap refutes this on main (BUG #3447)
+graph/src/effects/v3/emit.rs	for_each_record	323	PROVEN	Emit.gate_zero_stream, Emit.commitShips_eq (record-opcode granularity); emit-then-apply with cancellation (CancelGap): RemoveLabels for a created/cancelled node precedes its CREATE_NODE and the replica refuses it, ReplayApplies refuted: bug3448_removeLabels_before_create_refused (BUG #3448; control agree3448_without_stale_remL); when every allocated relationship type is registered, relIdsCovered_of_registered proves each id reaches a CREATE_EDGE; bug3447_cancelled_edge_id_gap refutes this on main (BUG #3447)
 graph/src/effects/v3/emit.rs	digest_cancelled	395	PROVEN	Digests.digestCancelledF: digestCancelled_pairs; Emit.digestCancelled (gate); digestCancelled_pairs only covers cancelled edges of registered types: a type whose every edge was cascaded away has no id, the pair is skipped and the replica IdSpace has a hole: RelIdsCovered refuted by CancelGap.bug3447_cancelled_edge_id_gap (BUG #3447), fix property relIdsCovered_of_registered
 graph/src/effects/v3/emit.rs	digest_created_nodes	497	PROVEN	Basic.memoGroup_eq_groupBy, Basic.sortDedup_set_eq, Basic.groupBy_flat, Basic.groupBy_keyed (+ proofs/replication emit/apply roundtrip over groupBy)
 graph/src/effects/v3/emit.rs	digest_created_edges	574	PROVEN	Digests.digestCreatedEdges/mkEdgeRec: digestCreatedEdges_perm, digestCreatedEdges_keyed, mkEdgeRec_shape (FxHashMap order abstracted; theorems order-insensitive)
@@ -32,6 +32,6 @@ graph/src/effects/v3/apply.rs	check_attr_shape	730	PROVEN	ApplyHelpers.checkAttr
 graph/src/effects/v3/apply.rs	attr_map	774	PROVEN	ApplyHelpers.attrMap: attrMap_row
 graph/src/effects/v3/apply.rs	index_options	817	PROVEN	ApplyHelpers.indexOptions: indexOptions_spec
 graph/src/effects/v3/apply.rs	single_index_label	848	PROVEN	ApplyHelpers.singleIndexLabel: singleIndexLabel_ok
-graph/src/runtime/pending.rs	effects_count	1960	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.gate_drops_cancelled, Emit.gate_drops_schema_only (BUG W2-effects-1, still present at 2c874022a)
-graph/src/runtime/ops/commit.rs	CommitOp::next (effects gate)	69	PROVEN	Emit.commitShips, Emit.commitShips_eq_iff (BUG W2-effects-1, still present at 2c874022a)
+graph/src/runtime/pending.rs	effects_count	1960	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.commitCount_noBuild; history Emit.pre2970_gate_drops_cancelled, Emit.pre2970_gate_drops_schema_only (W2-effects-1, fixed by #2970)
+graph/src/runtime/ops/commit.rs	CommitOp::next (effects gate)	69	PROVEN	Emit.commitShips, Emit.commitCount, Emit.commitShips_eq, Emit.commitCount_pos_iff, Emit.commitCount_noBuild, Emit.fixed2970_ships_cancelled, Emit.fixed2970_ships_schema_only, Emit.fixed2970_ships_cancelled_edge_attr (W2-effects-1 fixed by #2970; history Emit.pre2970_commitShips_eq_iff)
 graph/src/effects/v3/emit.rs	wire_index_options	2085	PROVEN	EmitDDL.wireIndexOptions: wireIndexOptions_spec

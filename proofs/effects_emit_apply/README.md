@@ -18,14 +18,14 @@ The full Lean↔Rust mapping is in the header of [`FalkorEffectsEmitApply.lean`]
 **No, and this is still open (W2-effects-1).** `commit.rs` calls the emitter only when `Pending::effects_count()` is positive. That count does not include entities created and deleted in the same query (*cancelled* entities), nor labels, types and attribute names registered by the query. But the emitter would ship something for both:
 
 - `gate_zero_stream`: when the count is 0, the records the emitter would write are exactly the schema additions plus the cancelled create/delete pairs;
-- `commitShips_eq_iff`: the gate is correct exactly when that residue is empty.
+- `pre2970_commitShips_eq_iff`: the old gate was correct exactly when that residue was empty; since #2970 there is no gate and `commitShips_eq` proves the commit ships exactly what the emitter writes (`commitCount_pos_iff`: modified iff non-empty).
 
 The counterexamples are concrete queries:
 
-- `CREATE (a:A {p:1}) DELETE a` registers label `A` and attribute `p` on the master and ships nothing (`gate_drops_cancelled`);
-- `OPTIONAL MATCH (n:Nope) SET n:L6` registers `L6` and ships nothing (`gate_drops_schema_only`);
+- `CREATE (a:A {p:1}) DELETE a` registers label `A` and attribute `p` on the master and ships nothing (`pre2970_gate_drops_cancelled`);
+- `OPTIONAL MATCH (n:Nope) SET n:L6` registers `L6` and ships nothing (`pre2970_gate_drops_schema_only`);
 - the next write's `ADD_SCHEMA 1 "K6"` is then refused by the replica, which would assign id 0 (`next_payload_refused`). That forces a full resync, and during AOF load the server exits;
-- `CREATE (a)-[:T1 {p4:1}]->(b) DELETE a, b` is worse: no error at all, but the replica's attribute dictionary is missing `p4` (`cancelled_edge_attr_dropped`).
+- `CREATE (a)-[:T1 {p4:1}]->(b) DELETE a, b` is worse: no error at all, but the replica's attribute dictionary is missing `p4` (`pre2970_cancelled_edge_attr_dropped`).
 
 **2. Can a payload that the replica accepts leave its graph broken?**
 
@@ -82,7 +82,7 @@ All four were reproduced in Rust and against a live server (see [`../FINDINGS.md
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-effects-1 | `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`, `cancelled_edge_attr_dropped` | A write that only registers a name or only cancels entities ships nothing. The next payload is refused (full resync; AOF load exits), or the replica silently misses an attribute name. 134 of 200 random seeds diverge | **Open**: the gate at `commit.rs:107-108` is unchanged on 1d15bf713; no issue or PR yet |
+| W2-effects-1 | `pre2970_gate_drops_cancelled`, `pre2970_gate_drops_schema_only`, `next_payload_refused`, `pre2970_cancelled_edge_attr_dropped` | A write that only registers a name or only cancels entities ships nothing. The next payload is refused (full resync; AOF load exits), or the replica silently misses an attribute name. 134 of 200 random seeds diverge | **Fixed by #2970** (gate removed; `commitShips_eq`, `fixed2970_ships_*`) |
 | W2-effects-2 | removed (17ccc5412) | `UPDATE_NODE`/`UPDATE_EDGE`/`SET_LABELS`/`REMOVE_LABELS` on a dead id were accepted; the next node to recycle the id inherited the property or label | Fixed by #3022 (`wf_updateNode_live`, `wf_setLabels_live`, `apply_wf`) |
 | W2-effects-3 | removed (17ccc5412) | `DELETE_NODE` of a node with edges was accepted; the edge dangled and the next node with that id inherited it | Fixed by #3022 (`wf_deleteNode`, `apply_wf`) |
 | #3247 | removed (17ccc5412) | A `CREATE_NODE` naming the same id twice (`[2, 3, 2]`) applied: the id set created one node where the record named two, and the repeated id's row had no node of its own | Fixed by #3298 (`2bb51088b`): `createNode_repeat_refused`, `createNode_ok_nodup`, `a_repeated_node_id_in_one_create_is_refused` |
@@ -148,4 +148,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A fix for W2-effects-1 should turn `gate_drops_cancelled` and its siblings into `pre<PR>_` history and prove that the new gate ships whenever `forEachRecord` is non-empty (the right-hand side of `commitShips_eq_iff`). If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.
+A fix for W2-effects-1 should turn `pre2970_gate_drops_cancelled` and its siblings into `pre<PR>_` history and prove that the new gate ships whenever `forEachRecord` is non-empty (the right-hand side of `commitShips_eq_iff`). If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.
