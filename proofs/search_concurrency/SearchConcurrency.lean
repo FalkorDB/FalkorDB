@@ -76,7 +76,9 @@ whenever the label already has an entry (indexer.rs:359-361): `main_operational_
 batches of every populate job, an OPERATIONAL index has every field in every batch, outside
 the store→`populate_index` window), via the inductive invariant `MInv` (`reach_inv`);
 `main_lost_order_complete` (the interleaving that lost `b` now completes);
-`store_window_operational_incomplete` (that window is real, see Gaps);
+`store_window_operational_incomplete` (that window was real before #3680, see Gaps);
+since #3680 (`create_index` forks a fresh entry that owes its population, ticket counted at
+once): `operational_complete_always` (no `owed = false` hypothesis), `store_window_fixed`;
 `fixed_trace_complete` (the proposed fix, now shipped).
 `Search` (re-targeted to 8743953a8: #3087 vector guard; #3076 `e20300436` temporals no
 longer indexed — `docSet_temporal_not_indexed`): `docSet_vector_sound` (key property: any
@@ -187,11 +189,11 @@ fork — the property the Rust test `a_refused_commit_publishes_nothing` checks;
 
 ## Gaps
 
-Index population (73077bb4a): between `Indexer::create_index` storing the entry and
-`populate_index` acquiring its ticket (graph.rs:3681-3688, no lock held across them) the
-entry has pending 0, so `is_label_indexed` (indexer.rs:454) reports the new field usable
-while no document has it (`store_window_operational_incomplete`). Unconfirmed live; the
-window is a few instructions. `Tickets` does not model write-path tickets, `drop_index`
+Index population (73077bb4a … 343e077f): between `Indexer::create_index` storing the entry
+and `populate_index` acquiring its ticket the entry had pending 0, so `is_label_indexed`
+reported the new field usable while no document had it (`store_window_operational_incomplete`,
+on `pre3680_store`/`pre3680_acquire`). Closed by #3680: the entry owes its population with the
+ticket already counted (`operational_complete_always`, `store_window_fixed`). `Tickets` does not model write-path tickets, `drop_index`
 with fields remaining (recreate + populate), or `populate_indexes_sync`.
 
 RediSearch query semantics (tokenizer, stemming, stopword matching, scoring, HNSW
