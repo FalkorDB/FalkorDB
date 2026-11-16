@@ -171,7 +171,9 @@ Headline theorems:
   `error_applies_nothing`; `cross_eq`; historical `ModuleInit.pre3328_*`;
   `Bulk.deep_refused` (#3339 depth cap); `QuerySession.checkFork_spec`, `upgrade_stale`, `current_kept`, `ofCommit_ne`,
   `GraphCore.executeWrite_first` (#3290); `GraphCore.admit_bounded` (#3014); `cGraphName_key`; `rename_moves`; `loopExit_safe`; `escalate_order`,
-  `writer_holds_gil`, `release_order`; `consArgs_ok`, `cons_label_refused`, `cons_count_noncanonical`, `memArgs_samples`; `copy_ok_iff`/`exited_iff`;
+  `writer_holds_gil`, `release_order`; #3816 sliced write-lock wait and writer gate: `pollLoop_spec`,
+  `acquire_gate_open`, `escalate_refused_reader`, `upgrade_refused_rechecks` (historical
+  `Pre3816.pre3816_upgrade_twice_skips_checks`), `readPastGate_ends_reading`, `Config.wlpi_ok_nonneg`; `consArgs_ok`, `cons_label_refused`, `cons_count_noncanonical`, `memArgs_samples`; `copy_ok_iff`/`exited_iff`;
   `memTotal_sum`; `sync_is_yield_without_yields`.
 
 New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, ports 18820-3):

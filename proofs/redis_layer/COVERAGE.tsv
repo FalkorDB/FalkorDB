@@ -95,7 +95,7 @@ src/reply.rs	reply_stats	541	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (an
 src/reply.rs	reply_result	630	PROVEN	Resp.resultCalls: compact_reply, verbose_reply, noreturn_reply
 src/reply.rs	reply_verbose	679	PROVEN	Resp.resultCalls false: verbose_reply
 src/reply.rs	reply_compact	687	PROVEN	Resp.resultCalls true: compact_reply + Compact.decReply_enc; bytes_of_emits (RESP2 bytes)
-src/graph_core.rs	up_to_nul	89	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
+src/graph_core.rs	up_to_nul	90	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
 src/graph_core.rs	c_graph_name	104	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); GraphCore.Lossy (from_utf8_lossy kept as a core-library hypothesis structure; KeyName.lossy is a separate concrete model, not bridged to it) — #2653: bug2653_nonutf8_key_mangled
 src/graph_core.rs	c_graph_key	119	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key
 src/graph_core.rs	register_graph	140	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
@@ -116,53 +116,61 @@ src/graph_core.rs	ffi::hold_string	453	AXIOMATISED	one RedisModule_* call (Redis
 src/graph_core.rs	ffi::free_string	464	AXIOMATISED	one RedisModule_* call (Redis module API contract)
 src/graph_core.rs	ffi::trim_string_allocation	479	AXIOMATISED	one RedisModule_* call (Redis module API contract)
 src/graph_core.rs	ffi::replicate_argv	494	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ThreadedGraph::new	550	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	ThreadedGraph::from_mvcc	566	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	execute_query	584	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
-src/graph_core.rs	execute_profile	670	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
-src/graph_core.rs	execute_query_write	732	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent
-src/graph_core.rs	try_query_write	782	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
-src/graph_core.rs	WriteAttempt::from	771	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
-src/graph_core.rs	reply_profile	881	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
-src/graph_core.rs	BlockedClient::new	918	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	BlockedClient::drop	926	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	compute_effective_timeout	944	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
-src/graph_core.rs	reply_invalid_graph_version	983	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
-src/graph_core.rs	admit	997	PROVEN	GraphCore.admitQ: admit_bounded, capped (QueueSlot::try_acquire; never waits)
-src/graph_core.rs	query_mut	1008	PROVEN	GraphCore.dispatch/admitQ (#3014): stale_version, inline_uncapped, capped, admit_bounded
-src/graph_core.rs	query_sync	1212	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
-src/graph_core.rs	profile_mut	1341	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
-src/graph_core.rs	profile_sync	1442	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
-src/graph_core.rs	finish_write	1509	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657): reply_after_commit, unescalated_silent
-src/graph_core.rs	abandon_write	1534	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
-src/graph_core.rs	commit_and_replicate	1550	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
-src/graph_core.rs	process_write_queued_query	1628	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
-src/graph_core.rs	CtxSink::replicate	1774	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
-src/graph_core.rs	graph_free	1787	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
-src/query_session.rs	QuerySession::begin	157	PROVEN	QuerySession.begin: escalate_order
-src/query_session.rs	QuerySession::begin_with	164	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
-src/query_session.rs	QuerySession::begin_writer	179	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
-src/query_session.rs	QuerySession::facts	197	PROVEN	QuerySession.Facts (returns the facts it was begun with): reauth_replay
-src/query_session.rs	QuerySession::write_version	211	PROVEN	QuerySession.writeVersion: writeVersion_takes_nothing (infallible; reader Unchecked(ver+1), writer Current; #3657)
-src/query_session.rs	QuerySession::is_stale	227	PROVEN	QuerySession.isStale: stale_sticky
-src/query_session.rs	QuerySession::is_writer	239	PROVEN	QuerySession.SS.writer: writeVersion_takes_nothing
-src/query_session.rs	QuerySession::check_fork	251	CONDITIONAL	QuerySession.checkFork: checkFork_spec, checkFork_noop, current_kept, stale_sticky, upgrade_stale; SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; #3567 rebase_onto_indexer_batches (index progress only; native_index Rebase.V.rebased_keeps_data). CONDITIONAL on one undischarged hypothesis about other code: the rebase's one Err(Stale), a borrowed fork in a release build (graph/src/graph/mvcc_graph.rs rebase_onto_indexer_batches), never happens for an escalating writer's fork; the model has no such error, so checkFork_spec covers the is_stale refusal only
-src/query_session.rs	QuerySession::version_is_current	235	PROVEN	QuerySession.versionIsCurrent: writeVersion_takes_nothing, current_kept (abandonSteps resyncs iff current: GraphCore.failed_no_commit)
-src/query_session.rs	WriteAbort::from	74	PROVEN	QuerySession.WriteAbort.ofCommit: ofCommit_stale, ofCommit_invalid, ofCommit_ne (Stale ↦ retry, Invalid ↦ permanent)
-src/query_session.rs	QuerySession::release_locks	289	PROVEN	QuerySession.release: release_none, release_order
-src/query_session.rs	QuerySession::graph_arc	297	PROVEN	QuerySession.graphArc: graphArc_id
-src/query_session.rs	QuerySession::with_graph	306	PROVEN	QuerySession.withGraph: withGraph_released
-src/query_session.rs	QuerySession::with_graph_mut	322	PROVEN	QuerySession.withGraphMut: escalate_writer
-src/query_session.rs	QuerySession::upgrade_to_write	343	PROVEN	QuerySession.upgrade/upgradeS (check_fork last, #3657): upgrade_twice, upgrade_unregistered, upgrade_state, upgrade_stale, upgradeSt_stale_visible (a Stale report leaves Version::Stale, so is_stale is true for the retry)
-src/query_session.rs	QuerySession::escalate	372	PROVEN	QuerySession.escalate: escalate_order, escalate_mode, escalate_writer
-src/query_session.rs	reauthorize_write	406	PROVEN	QuerySession.reauthorize: reauth_paused, reauth_replica, reauth_replay, reauth_main
-src/query_session.rs	QuerySession::upgrade_to_write	447	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_unregistered, upgrade_state
-src/query_session.rs	QuerySession::drop	460	PROVEN	QuerySession.release: release_none
-src/query_session.rs	hold_gil	480	PROVEN	QuerySession.gilAcquire: gil_nested, gil_stack, gil_main, gil_out_of_order
-src/query_session.rs	Gil::acquire	502	PROVEN	QuerySession.gilAcquire: gil_nested, gil_main, gil_stack
-src/query_session.rs	Gil::drop	525	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
-src/query_session.rs	lock_gil	546	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
-src/query_session.rs	release_gil	559	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
+src/graph_core.rs	ThreadedGraph::new	553	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	ThreadedGraph::from_mvcc	570	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	execute_query	589	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
+src/graph_core.rs	execute_profile	675	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
+src/graph_core.rs	execute_query_write	737	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent
+src/graph_core.rs	try_query_write	787	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
+src/graph_core.rs	WriteAttempt::from	776	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
+src/graph_core.rs	reply_profile	886	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
+src/graph_core.rs	BlockedClient::new	923	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	BlockedClient::drop	931	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	compute_effective_timeout	949	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
+src/graph_core.rs	reply_invalid_graph_version	988	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
+src/graph_core.rs	admit	1002	PROVEN	GraphCore.admitQ: admit_bounded, capped (QueueSlot::try_acquire; never waits)
+src/graph_core.rs	query_mut	1013	PROVEN	GraphCore.dispatch/admitQ (#3014): stale_version, inline_uncapped, capped, admit_bounded
+src/graph_core.rs	query_sync	1217	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
+src/graph_core.rs	profile_mut	1346	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
+src/graph_core.rs	profile_sync	1447	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
+src/graph_core.rs	finish_write	1514	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657): reply_after_commit, unescalated_silent
+src/graph_core.rs	abandon_write	1539	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
+src/graph_core.rs	commit_and_replicate	1555	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
+src/graph_core.rs	process_write_queued_query	1633	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
+src/graph_core.rs	CtxSink::replicate	1781	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
+src/graph_core.rs	graph_free	1794	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
+src/query_session.rs	QuerySession::begin	178	PROVEN	QuerySession.begin: escalate_order
+src/query_session.rs	QuerySession::begin_with	185	PROVEN	QuerySession.beginWith/readPastGate (#3816: past the WriterGate first; facts parameter): beginWith_open, beginWith_nowait, readPastGate_ends_reading, upgrade_unregistered, reauth_replay
+src/query_session.rs	QuerySession::begin_writer	205	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
+src/query_session.rs	QuerySession::facts	225	PROVEN	QuerySession.Facts (returns the facts it was begun with): reauth_replay
+src/query_session.rs	QuerySession::write_version	239	PROVEN	QuerySession.writeVersion: writeVersion_takes_nothing (infallible; reader Unchecked(ver+1), writer Current; #3657)
+src/query_session.rs	QuerySession::is_stale	255	PROVEN	QuerySession.isStale: stale_sticky
+src/query_session.rs	QuerySession::is_writer	267	PROVEN	QuerySession.SS.writer: writeVersion_takes_nothing
+src/query_session.rs	QuerySession::check_fork	279	CONDITIONAL	QuerySession.checkFork: checkFork_spec, checkFork_noop, current_kept, stale_sticky, upgrade_stale; SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; #3567 rebase_onto_indexer_batches (index progress only; native_index Rebase.V.rebased_keeps_data). CONDITIONAL on one undischarged hypothesis about other code: the rebase's one Err(Stale), a borrowed fork in a release build (graph/src/graph/mvcc_graph.rs rebase_onto_indexer_batches), never happens for an escalating writer's fork; the model has no such error, so checkFork_spec covers the is_stale refusal only
+src/query_session.rs	QuerySession::version_is_current	263	PROVEN	QuerySession.versionIsCurrent: writeVersion_takes_nothing, current_kept (abandonSteps resyncs iff current: GraphCore.failed_no_commit)
+src/query_session.rs	WriteAbort::from	95	PROVEN	QuerySession.WriteAbort.ofCommit: ofCommit_stale, ofCommit_invalid, ofCommit_ne (Stale ↦ retry, Invalid ↦ permanent)
+src/query_session.rs	QuerySession::release_locks	317	PROVEN	QuerySession.release: release_none, release_order
+src/query_session.rs	QuerySession::graph_arc	325	PROVEN	QuerySession.graphArc: graphArc_id
+src/query_session.rs	QuerySession::with_graph	334	PROVEN	QuerySession.withGraph: withGraph_released
+src/query_session.rs	QuerySession::with_graph_mut	350	PROVEN	QuerySession.withGraphMut: escalate_writer (after a successful escalation), escalate_refused_reader (refused: None)
+src/query_session.rs	QuerySession::upgrade_to_write	377	PROVEN	QuerySession.upgrade/upgradeS (#3816: authorize_write per slice before the lock; check_fork last, #3657): upgrade_twice (after success), upgrade_refused_rechecks, upgrade_unregistered, upgrade_state, upgrade_stale, upgradeSt_stale_visible (a Stale report leaves Version::Stale, so is_stale is true for the retry); historical Pre3816.pre3816_upgrade_twice_skips_checks (refused session stayed a writer, fixed by #3816)
+src/query_session.rs	QuerySession::escalate	399	PROVEN	QuerySession.escalate (#3816: refusal re-takes the read lock): escalate_order, escalate_order_slices, escalate_mode, escalate_writer, escalate_refused_reader, writer_holds_gil; historical Pre3816.escalate_mode/escalate_writer
+src/query_session.rs	acquire_write	460	PROVEN	QuerySession.acquireWrite/pollLoop (#3816; the world decides per slice whether the lock came and what the check says): pollLoop_spec, acquire_gate_open, acquire_blocking, one_miss_gate_stays_open, escalate_order_slices
+src/query_session.rs	authorize_write	496	PROVEN	QuerySession.authorize (registry, then reauthorize_write): upgrade_unregistered, upgrade_refused_rechecks
+src/query_session.rs	read_past_gate	524	PROVEN	QuerySession.readPastGate: readPastGate_ends_reading, beginWith_open, beginWith_nowait
+src/query_session.rs	may_wait_at_gate	548	PROVEN	QuerySession.mayWaitAtGate (pool worker without the GIL): gate_waiter_holds_nothing
+src/query_session.rs	WriterGate::is_closed	569	AXIOMATISED	parking_lot Mutex<bool> read; QuerySession.readPastGate input (the gate states it sees)
+src/query_session.rs	WriterGate::close	573	AXIOMATISED	parking_lot Mutex<bool> + Condvar; QuerySession.Ev.gateClose/gateOpen (guard drop notifies all), gateBal balanced by pollLoop_spec
+src/query_session.rs	WriterGate::wait_until_open	577	AXIOMATISED	parking_lot Condvar wait loop; QuerySession.Ev.gateWait
+src/query_session.rs	reauthorize_write	598	PROVEN	QuerySession.reauthorize: reauth_paused, reauth_replica, reauth_replay, reauth_main
+src/query_session.rs	QuerySession::upgrade_to_write	639	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_refused_rechecks, upgrade_unregistered, upgrade_state
+src/query_session.rs	QuerySession::drop	652	PROVEN	QuerySession.release: release_none
+src/query_session.rs	hold_gil	674	PROVEN	QuerySession.gilAcquire (via holdsGil): gil_nested, gil_stack, gil_main, gil_out_of_order
+src/query_session.rs	holds_gil	681	PROVEN	QuerySession.holdsGil (main thread or GIL_CTX set): gil_main, gil_nested, gate_waiter_holds_nothing
+src/query_session.rs	Gil::acquire	701	PROVEN	QuerySession.gilAcquire (no-op iff holdsGil): gil_nested, gil_main, gil_stack
+src/query_session.rs	Gil::drop	724	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
+src/query_session.rs	lock_gil	745	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
+src/query_session.rs	release_gil	758	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/module_init.rs	pthread_atfork	97	AXIOMATISED	libc pthread_atfork declaration
 src/module_init.rs	on_fork_child	124	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
 src/module_init.rs	sync_deepbind_environ	160	NOT COVERED	Linux-only; not modelled. Bound to ld.so/libc: dlopen(NULL) + dlsym("environ"), then points libc's own environ at graph::env_snapshot::leak_deep_copy of that array. CI reaches only its no-op return; the snapshot path runs only under a valkey-server that copy-relocates environ (#3493).
@@ -220,12 +228,12 @@ src/slow_log.rs	SlowLog::add	97	PROVEN	SlowLog.add: add_bounded, add_nodup, add_
 src/slow_log.rs	SlowLog::reset	171	PROVEN	SlowLog.reset: reset_empty
 src/slow_log.rs	SlowLog::reply	181	PROVEN	SlowLog.replyLen: replyLen_len
 src/slow_log.rs	unix_now	218	AXIOMATISED	SystemTime::now (OS clock)
-src/config.rs	get_thread_count	130	PROVEN	ModuleInit.threadCount: threadCount_pos
-src/config.rs	normalize_node_creation_buffer	140	PROVEN	ModuleInit.normalizeNCB: normalizeNCB_ge, normalizeNCB_examples
-src/config.rs	validate_temp_folder	205	PROVEN	LoadArgs.validateTempFolder (FS = libc/std::fs hypothesis): step_agree (= C's TEMP_FOLDER checks under FsOk)
-src/config.rs	validate_load_only	223	PROVEN	LoadArgs.validateLoadOnly: step_agree, fixed3328_counterexamples, rust_only_names
-src/config.rs	apply_load_arg	252	PROVEN	LoadArgs.applyLoadArg/applied: ok_applies_each_pair, error_applies_nothing
-src/config.rs	apply_module_args	296	PROVEN	LoadArgs.applyModuleArgs: rust_c_same_accept, error_applies_nothing, ok_applies_each_pair, fixed3328_counterexamples, both_refuse; DIVERGENCES leading_space_divergence (confirmed live), rust_only_names
+src/config.rs	get_thread_count	141	PROVEN	ModuleInit.threadCount: threadCount_pos
+src/config.rs	normalize_node_creation_buffer	151	PROVEN	ModuleInit.normalizeNCB: normalizeNCB_ge, normalizeNCB_examples
+src/config.rs	validate_temp_folder	218	PROVEN	LoadArgs.validateTempFolder (FS = libc/std::fs hypothesis): step_agree (= C's TEMP_FOLDER checks under FsOk)
+src/config.rs	validate_load_only	236	PROVEN	LoadArgs.validateLoadOnly: step_agree, fixed3328_counterexamples, rust_only_names
+src/config.rs	apply_load_arg	269	PROVEN	LoadArgs.applyLoadArg/applied: ok_applies_each_pair, error_applies_nothing
+src/config.rs	apply_module_args	314	PROVEN	LoadArgs.applyModuleArgs: rust_c_same_accept, error_applies_nothing, ok_applies_each_pair, fixed3328_counterexamples, both_refuse; DIVERGENCES leading_space_divergence (confirmed live), rust_only_names
 src/commands/bulk_insert.rs	read_cstring	33	PROVEN	Bulk.cstr: cstr_enc, cstr_len
 src/commands/bulk_insert.rs	read_u32_ne	49	PROVEN	Bulk.readNe (w = 4; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w)
 src/commands/bulk_insert.rs	read_u64_ne	61	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
@@ -248,20 +256,20 @@ src/commands/bulk_insert.rs	bulk_insert_sync_yield	602	PROVEN	Commands.processTo
 src/commands/bulk_insert.rs	parse_count	653	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
 src/commands/bulk_insert.rs	max_records	689	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
 src/commands/bulk_insert.rs	graph_bulk_insert	703	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
-src/commands/config_cmd.rs	config_get_one	57	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
-src/commands/config_cmd.rs	validate_config_set	118	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
-src/commands/config_cmd.rs	validate_timeout_cross_constraints	210	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
-src/commands/config_cmd.rs	check_timeout_constraints	224	PROVEN	LoadArgs.checkTimeouts: cross_eq (= Config.cross), step_agree (= C's per-field timeout setters on the load path)
-src/commands/config_cmd.rs	apply_config_set	265	PROVEN	Config.apply1 (used by rustSet_inv)
-src/commands/config_cmd.rs	ConfigValue::as_i64	308	PROVEN	Commands.asI64: asI64_small
-src/commands/config_cmd.rs	ConfigValue::as_u64	314	PROVEN	Commands.asU64: asU64_nonneg, asU64_neg
-src/commands/config_cmd.rs	graph_config	322	PROVEN	Config.dispatch: get_extra_wrong_arity, set_pairs_complete, dotless_i_not_folded; Config.rustSet (SET): rustSet_inv; Commands.getOne (GET)
+src/commands/config_cmd.rs	config_get_one	59	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
+src/commands/config_cmd.rs	validate_config_set	123	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
+src/commands/config_cmd.rs	validate_timeout_cross_constraints	216	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
+src/commands/config_cmd.rs	check_timeout_constraints	230	PROVEN	LoadArgs.checkTimeouts: cross_eq (= Config.cross), step_agree (= C's per-field timeout setters on the load path)
+src/commands/config_cmd.rs	apply_config_set	271	PROVEN	Config.apply1 (used by rustSet_inv)
+src/commands/config_cmd.rs	ConfigValue::as_i64	317	PROVEN	Commands.asI64: asI64_small
+src/commands/config_cmd.rs	ConfigValue::as_u64	323	PROVEN	Commands.asU64: asU64_nonneg, asU64_neg
+src/commands/config_cmd.rs	graph_config	331	PROVEN	Config.dispatch: get_extra_wrong_arity, set_pairs_complete, dotless_i_not_folded; Config.rustSet (SET): rustSet_inv; Commands.getOne (GET)
 src/commands/constraint.rs	is_valid_identifier	22	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
 src/commands/constraint.rs	register_constraint_schema	66	PROVEN	Commands.registerSchema: registerSchema_contains
 src/commands/constraint.rs	find_status	85	PROVEN	Commands.findStatus: findStatus_none
 src/commands/constraint.rs	settle_constraint	174	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
-src/commands/constraint.rs	attempt_settle	284	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
-src/commands/constraint.rs	graph_constraint	384	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053)
+src/commands/constraint.rs	attempt_settle	280	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
+src/commands/constraint.rs	graph_constraint	380	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053)
 src/commands/copy.rs	pipe	19	AXIOMATISED	libc pipe(2)
 src/commands/copy.rs	fork	20	AXIOMATISED	libc fork(2)
 src/commands/copy.rs	_exit	21	AXIOMATISED	libc _exit(2)
@@ -296,6 +304,6 @@ src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one
 src/commands/udf.rs	udf_flush	170	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
 src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere
 # Online index build (#2355): fns the background builder added, not modelled yet.
-src/graph_core.rs	RedisBuildHost::publish	1611	NOT COVERED	online index build (#2355): not modelled yet
-src/graph_core.rs	RedisBuildHost::warn	1620	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::publish	1616	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::warn	1625	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)

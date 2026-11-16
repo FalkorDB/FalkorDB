@@ -24,6 +24,7 @@ namespace RedisLayer
 inductive Name where
   | timeout | timeoutDefault | timeoutMax | resultsetSize | maxQueued | vkeyMax
   | maxInfo | jsHeap | cmdInfo | cacheSize
+  | writeLockPoll   -- `WRITE_LOCK_POLL_INTERVAL` (#3816)
   deriving DecidableEq, Repr
 
 structure Cfg where
@@ -36,6 +37,7 @@ structure Cfg where
   maxInfo : Int := 1000
   jsHeap : Int := 268435456
   cmdInfo : Bool := true
+  writeLockPoll : Int := 5   -- `config.rs:130`, C's default
   deriving DecidableEq, Repr
 
 inductive CfgErr where
@@ -50,7 +52,7 @@ def jsMinSize : Int := 1048576
 the error. -/
 def validate (n : Name) (v : List Nat) : Except CfgErr Int :=
   match n with
-  | .timeout | .timeoutDefault | .timeoutMax =>     -- `:120-134`
+  | .timeout | .timeoutDefault | .timeoutMax | .writeLockPoll =>     -- `:128-142`
     match rustParseI64 v with
     | some x => if x < 0 then .error .failed else .ok x
     | none => .error .failed
@@ -91,6 +93,7 @@ def apply1 (c : Cfg) : Name × Int → Cfg
   | (.jsHeap, x) => { c with jsHeap := x }
   | (.cmdInfo, x) => { c with cmdInfo := x ≠ 0 }
   | (.cacheSize, _) => c
+  | (.writeLockPoll, x) => { c with writeLockPoll := x }
 
 /-- `validate_timeout_cross_constraints`: against the values *after* the whole batch. -/
 def cross (c : Cfg) (vs : List (Name × Int)) : Except CfgErr Unit :=
@@ -223,6 +226,18 @@ theorem fixed3021_counterexamples :
     validate .jsHeap (b "5") = .error .jsTooSmall ∧
     validate .cmdInfo (b "YeS") = .ok 1 ∧ validate .cmdInfo (b "no") = .ok 0 ∧
     validate .jsHeap (b "1048576") = .ok 1048576 := by decide
+
+/-- `WRITE_LOCK_POLL_INTERVAL` (#3816) takes C's non-negative rule; 0 means one blocking wait. -/
+theorem wlpi_ok_nonneg (v : List Nat) (x : Int) (h : validate .writeLockPoll v = .ok x) : 0 ≤ x := by
+  simp only [validate] at h
+  split at h
+  · split at h
+    · cases h
+    · cases h; omega
+  · cases h
+
+/-- …and is stored as given. -/
+theorem wlpi_applied (c : Cfg) (x : Int) : (apply1 c (.writeLockPoll, x)).writeLockPoll = x := rfl
 
 /-- Every accepted `VKEY_MAX_ENTITY_COUNT` is non-negative, so its `as u64` read is exact. -/
 theorem vkey_ok_nonneg (v : List Nat) (x : Int) (h : validate .vkeyMax v = .ok x) : 0 ≤ x := by

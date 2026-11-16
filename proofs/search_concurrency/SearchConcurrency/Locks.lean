@@ -4,8 +4,9 @@
 | here | there |
 | --- | --- |
 | `Lock.gil < .graph < .indexer` | `graph/src/locks.rs:9` ordering rule; `query_session.rs:30` `Mode` |
-| `escalateProg`                 | `QuerySession::escalate` (`query_session.rs:379-394`): release R, GIL, W |
-| `inlineWriterProg`             | `QuerySession::begin_writer` (`:182`): GIL, W |
+| `writerProg`, `pollWriterProg` | `QuerySession::escalate` (`query_session.rs:399`): release R, then `acquire_write` (`:460`): per slice GIL, timed W; since #3816 the `WriterGate` closes after two misses |
+| `gate`, `rank3816`, `gateReaderProg` | #3816: `WriterGate` (`:569-577`), `read_past_gate` (`:524`) |
+| `inlineWriterProg`             | `QuerySession::begin_writer` (`:205`): GIL, W |
 | `populateProg`                 | `populate_index_batch` (`graph.rs:562`): indexer lock only |
 | `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3799`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
@@ -177,6 +178,58 @@ theorem spec_programs_ordered :
     LockOrdered writerClosedScanProg ∧ LockOrdered restoreProg ∧
     noReacquire [] readerScanProg ∧ noReacquire [] populateSpecProg ∧
     noReacquire [] writerClosedScanProg ∧ noReacquire [] restoreProg := by decide
+
+/-! ## #3816 (af228a34f): the sliced write-lock wait and the writer gate
+
+Off the main thread `acquire_write` (`query_session.rs:460`) no longer blocks on the write
+lock holding the GIL: each slice takes the GIL, tries `try_write_arc_for(interval)` and on
+a miss gives the GIL back. After `GATE_AFTER_SLICES` misses it closes the graph's
+`WriterGate` (`:569-577`) and holds it until it has the lock; a pool reader in
+`read_past_gate` (`:524`) that finds the gate closed lets its read lock go and waits at the
+gate holding nothing. The gate is a lock the writer takes *before* the GIL, so it ranks
+below it; the timed try is an acquire of `graphR` that may give up (`.rel`). -/
+
+def gate : Nat := 6
+
+/-- The order with the gate first: gate < GIL < graph < indexer < registry < RediSearch. -/
+def rank3816 (l : Nat) : Nat := if l = gate then 0 else l + 1
+
+def okProgBy (rk : Nat → Nat) : List Nat → List Op → Bool
+  | _, [] => true
+  | held, .acq l :: ops => held.all (fun h => rk h < rk l) && okProgBy rk (l :: held) ops
+  | held, .rel l :: ops => okProgBy rk (held.erase l) ops
+
+/-- `escalate` with two missed slices, the gate closed, then the lock, then commit. -/
+def pollWriterProg : List Op :=
+  [.acq graphR, .rel graphR,                                   -- drop the read lock first
+   .acq gil, .acq graphR, .rel graphR, .rel gil,               -- slice 1: missed
+   .acq gil, .acq graphR, .rel graphR, .rel gil,               -- slice 2: missed
+   .acq gate,                                                   -- close the gate
+   .acq gil, .acq graphR,                                       -- slice 3: got it
+   .rel gate,                                                   -- gate guard drops on return
+   .acq indexer, .rel indexer, .acq registry, .rel registry, .rel graphR, .rel gil]
+
+/-- `read_past_gate`: read lock, gate closed: let it go, wait at the gate, read lock again. -/
+def gateReaderProg : List Op :=
+  [.acq graphR, .rel graphR, .acq gate, .rel gate, .acq graphR, .rel graphR]
+
+/-- Both new paths are ordered, and the old programs keep their order under the new rank. -/
+theorem gate_programs_ordered :
+    okProgBy rank3816 [] pollWriterProg ∧ okProgBy rank3816 [] gateReaderProg ∧
+    noReacquire [] pollWriterProg ∧ noReacquire [] gateReaderProg ∧
+    okProgBy rank3816 [] writerProg ∧ okProgBy rank3816 [] inlineWriterProg ∧
+    okProgBy rank3816 [] telemetryProg ∧ okProgBy rank3816 [] forkProg ∧
+    okProgBy rank3816 [] writerClosedScanProg ∧ okProgBy rank3816 [] restoreProg := by decide
+
+/-- A reader waiting at the closed gate holds no lock, so the gate's writer, which needs
+the GIL and the write lock, never waits on it (a gate reader cannot close a cycle). -/
+theorem gate_waiter_holds_nothing :
+    (gateReaderProg.take 2).foldl (fun h o => match o with
+      | .acq l => l :: h | .rel l => h.erase l) [] = [] := by decide
+
+/-- Holding the gate while waiting for the GIL would be refused if the gate ranked above
+the GIL (the reason it is taken first). -/
+theorem gate_above_gil_rejected : okProg [] pollWriterProg = false := by decide
 
 /-- Main at fb3d516d0, live repro of #3226:
 `MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000 RETURN count(n)`.
