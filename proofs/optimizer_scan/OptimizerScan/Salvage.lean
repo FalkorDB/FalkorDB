@@ -12,7 +12,7 @@ reads as the Rust computes them, and decides the premise.
 | --- | --- |
 | `ScanTree.IRk.filter vs`, `filtersOf`  | `IR::Filter(expr)`, `filters_of` `select_scan_node.rs:250`; `vs` = the `(id, scope_id)` of every `ExprIR::Variable` of the filter (`collect`, `:160`) |
 | `ScanTree.isPlannerScan`, `argumentLeafOf` | `is_planner_scan_subtree` `:315` (a scan is accepted whatever its children are), `argument_leaf_of` `:276` |
-| `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`, `:979-986`) and the preserved `Argument` leaf (`preserved_argument`, `:952`, `:1181`) |
+| `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`, `:1040-1043`) and the preserved `Argument` leaf (`preserved_argument`, `:952`, `:1181`) |
 | `salvagedSteps`                        | `salvaged_filters` wrapped above the chain (`:1240-1246`, `:1156-1176`) |
 | `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` (`:214`) |
 
@@ -26,7 +26,7 @@ row generate-and-test keeps (`salvage_loses_row`). Query:
 operator itself is gone from the plan). `premise_of_spine` gives sufficient conditions under which the premise holds (the converse is not proved).
 
 The bound sets here are keyed on the variable id alone, as the Rust keys them: `initial_bound` and `placed_bound`
-are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (`:979-986`, `:1185`,
+are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (`:1040-1043`, `:1259`,
 `:1221-1222`; `:424-428` notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
 `v.1` of each `(id, scope_id)` exactly where the Rust drops the scope; `filtersOf` still carries the pairs.
 -/
