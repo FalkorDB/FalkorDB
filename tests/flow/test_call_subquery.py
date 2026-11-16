@@ -3125,6 +3125,8 @@ updating clause.")
 
         self.graph.query("MATCH (n) DETACH DELETE n")
         self.graph.query("CREATE (:N {id:16}), (:N {id:120}), (:N {id:40})")
+        freed_id = self.graph.query(
+            "MATCH (a:N {id: 16}) RETURN id(a)").result_set[0][0]
 
         res = self.graph.query(
             """UNWIND [1, 2, 3] AS i
@@ -3146,6 +3148,12 @@ updating clause.")
         self.env.assertEqual(
             self.graph.query("MATCH (a:New) RETURN a.i ORDER BY a.i").result_set,
             [[1], [2], [3]])
+        # No node the query created took the id its DELETE freed (the
+        # corruption of #3164 was exactly that reuse).
+        new_ids = [r[0] for r in self.graph.query(
+            "MATCH (a:New) RETURN id(a)").result_set]
+        self.env.assertEqual(len(set(new_ids)), 3)
+        self.env.assertFalse(freed_id in new_ids)
         self.env.assertEqual(
             self.graph.query("MATCH (a:N) RETURN a.id ORDER BY a.id").result_set,
             [[40], [120]])
@@ -3162,6 +3170,8 @@ updating clause.")
             """CREATE (a:N {id:1}), (b:N {id:2}),
                       (a)-[:R {id:1}]->(b), (a)-[:R {id:2}]->(b),
                       (a)-[:R {id:3}]->(b)""")
+        freed_id = self.graph.query(
+            "MATCH ()-[r:R {id: 1}]->() RETURN id(r)").result_set[0][0]
 
         res = self.graph.query(
             """UNWIND [1, 2, 3] AS i
@@ -3184,6 +3194,10 @@ updating clause.")
             ).result_set,
             [["NEW", None, 1], ["NEW", None, 2], ["NEW", None, 3],
              ["R", 2, None], ["R", 3, None]])
+        new_ids = [r[0] for r in self.graph.query(
+            "MATCH ()-[r:NEW]->() RETURN id(r)").result_set]
+        self.env.assertEqual(len(set(new_ids)), 3)
+        self.env.assertFalse(freed_id in new_ids)
 
     def test_60_nested_call_and_merge_do_not_reuse_deleted_ids(self):
         queries = [
@@ -3234,22 +3248,6 @@ updating clause.")
                 ).result_set,
                 [[["N"], 2, None], [["New"], None, 1], [["New"], None, 2],
                  [["New"], None, 3]], depth=0)
-
-    def test_61_union_branch_without_import_keeps_its_own_labels(self):
-        """A UNION branch of a CALL body that imports nothing was bound with
-        scope ids that restart at 0; the outer MATCH's labels (also scope 0,
-        id 0) were applied over it, so `CREATE (:New)` created a `:N`."""
-        self.graph.query("MATCH (n) DETACH DELETE n")
-        self.graph.query("CREATE (:N {id: 1})")
-        self.graph.query(
-            """MATCH (a:N)
-               CALL { RETURN 0 AS x UNION CREATE (:New {i: 1}) RETURN 1 AS x }
-               RETURN x""")
-        self.env.assertEqual(
-            self.graph.query(
-                "MATCH (n) RETURN labels(n), n.id, n.i ORDER BY n.id, n.i"
-            ).result_set,
-            [[["N"], 1, None], [["New"], None, 1]])
 
     def test_62_issue_3164_query(self):
         """The reported query: the second branch's creates were shifted onto

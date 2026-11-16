@@ -238,6 +238,26 @@ class testEffects_01_Shapes(_EffectsBase):
             m.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set)
         self.env.assertTrue(graph_eq(m, r))
 
+    def test07b_cancelled_edge_of_an_unregistered_type_leaves_no_id_hole(self):
+        # The edge `:R` is created and cancelled by the DETACH DELETE in the same
+        # segment, so on a fresh graph type R is never registered. The id it
+        # held is now held back for the rest of the query, so `:S` takes the
+        # next id. The replica must still be told about the cancelled id, or it
+        # sees relationship id 1 with no id 0 before it and refuses the payload.
+        fresh = "effects_cancelled_unregistered_type"
+        m = Graph(self.master, fresh)
+        r = Graph(self.replica, fresh)
+
+        res = m.query("CREATE (a)-[:R]->(b) DETACH DELETE a "
+                      "WITH b CREATE (b)-[:S]->(:X)")
+        self.env.assertEqual(res.relationships_created, 1)
+        self.wait_for_replica_offset()
+
+        q = "MATCH ()-[r]->() RETURN type(r), ID(r)"
+        self.env.assertEqual(m.ro_query(q).result_set, [["S", 1]])
+        self.env.assertEqual(r.ro_query(q).result_set, [["S", 1]])
+        self.env.assertTrue(graph_eq(m, r))
+
     def test08_everything_still_agrees(self):
         # A whole-graph comparison once the shapes above have all been applied.
         # Cheap now: test05 removed the bulk of the nodes.

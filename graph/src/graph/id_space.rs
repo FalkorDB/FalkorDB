@@ -262,9 +262,7 @@ fn reclaim_ids(
     out: &mut Vec<u64>,
 ) -> u64 {
     let mut free = pool - taken - issued;
-    if !quarantined.is_empty() {
-        free -= quarantined;
-    }
+    free -= quarantined;
     let before = out.len();
     out.extend(free.iter().take(count as usize));
     (out.len() - before) as u64

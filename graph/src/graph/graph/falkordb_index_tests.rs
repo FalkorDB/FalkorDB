@@ -52,10 +52,8 @@ fn reserve_nodes(
     g: &mut Graph,
     n: usize,
 ) -> Vec<u64> {
-    g.open_id_batches().expect("a consistent space");
-    // Each call stands for a query of its own: what an earlier one freed is
-    // free again, as `MvccGraph` ends the quarantine when it publishes.
-    g.end_id_quarantine();
+    // Each call stands for a query of its own.
+    g.begin_query_ids();
     g.node_id_space()
         .reserve(n, &RoaringTreemap::new())
         .expect("reserved")

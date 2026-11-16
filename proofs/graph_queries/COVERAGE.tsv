@@ -15,7 +15,7 @@ graph/src/graph/graph.rs	grow_cap	860	PROVEN	Schema.growCap/growStep: growCap_ge
 graph/src/graph/graph.rs	new	876	PROVEN	Ids.newG_spec
 graph/src/graph/graph.rs	restore	921	PROVEN	Ids.restore_ids, restoreCap_covers, clampTiers_mono, restore_LInv, fillEndpoints_spec
 graph/src/graph/graph.rs	rebuild_derived_matrices	1034	PROVEN	Ids.rebuildRelType_complete (tensor rebuild_backward = GraphBLAS transpose); #3250 node half Ids.rebuildNodeMs (node_cap = max(node_cap, saved)): rebuild_never_shrinks, rebuild_keeps_entries (tensor dims not on Ten; Tensor::resize in versioned_matrix)
-graph/src/graph/graph.rs	trim_attr_stores	1072	PROVEN	Ids.trimAttrStores_id
+graph/src/graph/graph.rs	trim_attr_stores	1079	PROVEN	Ids.trimAttrStores_id
 graph/src/graph/graph.rs	new_version	1078	PROVEN	Ids.newVersion_spec (fresh batch per version)
 graph/src/graph/graph.rs	name	1140	PROVEN	Accessors (field projection; newVersion_spec keeps it)
 graph/src/graph/graph.rs	node_count	1145	PROVEN	Ids.markNodesLive_spec / nodeBound_eq (IdSpace::live) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
@@ -201,4 +201,5 @@ graph/src/graph/graph.rs	edge_has_type_id	1332	PROVEN	Schema.edgeHasTypeId_iff (
 # Online index build (#2355): fns the background builder added, not modelled yet.
 graph/src/graph/graph.rs	Graph::add_native_build	4510	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/graph/graph.rs	Graph::native_build_total	4546	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/graph/graph.rs	end_id_quarantine	1080	NOT COVERED	(#3164): not modelled yet
+graph/src/graph/graph.rs	end_id_quarantine	1087	NOT COVERED	(#3164): not modelled yet
+graph/src/graph/graph.rs	finish_version	1073	NOT COVERED	(#3164): end-of-version tail calling trim_attr_stores and end_id_quarantine; the quarantine half is not modelled yet

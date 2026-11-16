@@ -1157,8 +1157,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.graph.delete()
         res = self.graph.query("""CREATE (d) DELETE d WITH 1 AS dummy
                                   CREATE (n:V {id: 1, k1: 2})
-                                  RETURN n.k1, labels(n), properties(n)""")
-        self.env.assertEqual(res.result_set, [[2, ["V"], {"id": 1, "k1": 2}]])
+                                  RETURN n.k1, labels(n), properties(n), id(n)""")
+        # `d` took id 0 and freed it; `n` must not be handed it back
+        self.env.assertEqual(res.result_set, [[2, ["V"], {"id": 1, "k1": 2}, 1]])
 
         # relationships: property, type and endpoints of the new edge
         fresh("CREATE (:X)-[:R {v:1}]->(:Y), (:P), (:Q)")
