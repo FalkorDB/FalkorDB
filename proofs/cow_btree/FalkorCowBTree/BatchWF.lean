@@ -3,8 +3,8 @@ import FalkorCowBTree.Batch
 /-!
 # `remove_batch` after #3283 (W7-btree-1 fixed): the model, and `TreeWF` is preserved
 
-#3283 (799968a8b) changed `merge_underfull` (`node.rs:155-175`): after each `combine_with_sibling`
-step it calls the new `Node::merge_underfull_below` (`node.rs:563-574`) on every node the combine
+#3283 (799968a8b) changed `merge_underfull` (`node.rs:142-162`): after each `combine_with_sibling`
+step it calls the new `Node::merge_underfull_below` (`node.rs:497-508`) on every node the combine
 produced (one after a merge, two after a borrow), and then re-examines index `left`. `merge_underfull_below`
 re-runs `merge_underfull` over a produced branch's children when one of them is under-full. That
 repairs the lone-child branch that a combine used to carry one level up untouched (Bug 3,
@@ -51,11 +51,11 @@ def ufCount (c : Cfg) (cs : List Node) : Nat := cs.countP (isUnderfull c)
 def Mono (c : Cfg) (h : Nat) (f : Node → Node) : Prop :=
   ∀ n, size h (f n) ≤ size h n ∧ (size h (f n) = size h n → isUnderfull c (f n) = isUnderfull c n)
 
-/-- `left` in `merge_underfull` (`node.rs:163`) and `combine_with_sibling` (`node.rs:120-124`): the
+/-- `left` in `merge_underfull` (`node.rs:150`) and `combine_with_sibling` (`node.rs:107-111`): the
     pair is `(i, i + 1)`, or `(i - 1, i)` when `i` is the last child. -/
 def leftOf (len i : Nat) : Nat := if i + 1 < len then i else i - 1
 
-/-- One body of the #3283 loop (`node.rs:161-173`): `combine_with_sibling` on the pair at `left`, then
+/-- One body of the #3283 loop (`node.rs:148-160`): `combine_with_sibling` on the pair at `left`, then
     `merge_underfull_below` (`f`) on the one node a merge leaves, or the two a borrow leaves. -/
 def muStep (c : Cfg) (f : Node → Node) (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
   let li := leftOf cs.length i
@@ -246,13 +246,13 @@ theorem muStep_len (c : Cfg) (f : Node → Node) (seps : List E) (cs : List Node
   · rw [hst]; simp; omega
   · rw [hst]; simp; omega
 
-/-- The `while` loop of `merge_underfull` (`node.rs:160-174`), for a repair `f`. -/
+/-- The `while` loop of `merge_underfull` (`node.rs:147-161`), for a repair `f`. -/
 def muLoop (c : Cfg) (h : Nat) (f : Node → Node) (hf : Mono c h f) (seps : List E) (cs : List Node) (i : Nat) :
     List E × List Node :=
-  if hc : 1 < cs.length ∧ i < cs.length then                                    -- line 172
-    if hu : isUnderfull c (cs.getD i default) = true then                       -- line 173
-      muLoop c h f hf (muStep c f seps cs i).1 (muStep c f seps cs i).2 (leftOf cs.length i)  -- lines 174-182
-    else muLoop c h f hf seps cs (i + 1)                                        -- line 184
+  if hc : 1 < cs.length ∧ i < cs.length then                                    -- line 159
+    if hu : isUnderfull c (cs.getD i default) = true then                       -- line 160
+      muLoop c h f hf (muStep c f seps cs i).1 (muStep c f seps cs i).2 (leftOf cs.length i)  -- lines 161-169
+    else muLoop c h f hf seps cs (i + 1)                                        -- line 171
   else (seps, cs)
 termination_by (lsize h cs, ufCount c (cs.drop i), cs.length - i)
 decreasing_by
@@ -310,12 +310,12 @@ theorem muLoop_size (c : Cfg) (h : Nat) (f : Node → Node) (hf : Mono c h f) :
     rw [muLoop, dite_eq_right hc]
     simp
 
-/-- `Node::merge_underfull_below` (`node.rs:563-574`), given the repair `f` for the children's height:
+/-- `Node::merge_underfull_below` (`node.rs:497-508`), given the repair `f` for the children's height:
     re-run the loop over a branch's children when one of them is under-full; a leaf is untouched. -/
 def mubBody (c : Cfg) (h : Nat) (f : Node → Node) (hf : Mono c h f) : Node → Node
   | .branch seps cs =>
-    if cs.any (isUnderfull c) then                                   -- line 565
-      let r := muLoop c h f hf seps cs 0                             -- lines 570-571
+    if cs.any (isUnderfull c) then                                   -- line 499
+      let r := muLoop c h f hf seps cs 0                             -- lines 504-505
       .branch r.1 r.2
     else .branch seps cs
   | n => n
@@ -340,10 +340,10 @@ def mubF (c : Cfg) : (h : Nat) → {f : Node → Node // Mono c h f}
   | 0 => ⟨id, fun _ => ⟨Nat.le_refl _, fun _ => rfl⟩⟩
   | h + 1 => ⟨mubBody c h (mubF c h).1 (mubF c h).2, mubBody_mono c h _ _⟩
 
-/-- **`Node::merge_underfull_below`** (`node.rs:563-574`) on a node of height `h`. -/
+/-- **`Node::merge_underfull_below`** (`node.rs:497-508`) on a node of height `h`. -/
 def mergeUnderfullBelow (c : Cfg) (h : Nat) (n : Node) : Node := (mubF c h).1 n
 
-/-- **`merge_underfull`** (`node.rs:155-175`, after #3283) on children of height `h`. -/
+/-- **`merge_underfull`** (`node.rs:142-162`, after #3283) on children of height `h`. -/
 def mergeUnderfull (c : Cfg) (h : Nat) (seps : List E) (cs : List Node) : List E × List Node :=
   muLoop c h (mubF c h).1 (mubF c h).2 seps cs 0
 
@@ -352,19 +352,19 @@ theorem mergeUnderfullBelow_branch (c : Cfg) (h : Nat) (seps : List E) (cs : Lis
       if cs.any (isUnderfull c) then .branch (mergeUnderfull c h seps cs).1 (mergeUnderfull c h seps cs).2
       else .branch seps cs := rfl
 
-/-- `Node::remove_batch` (`node.rs:498-555`), after #3283: the repair is
-    the new `merge_underfull` (line 553). -/
+/-- `Node::remove_batch` (`node.rs:446-489`), after #3283: the repair is
+    the new `merge_underfull` (line 487). -/
 def removeBatch (c : Cfg) : Nat → Node → List E → Node
-  | _, .leaf es, batch => .leaf (subtract es batch)                   -- lines 503-516
+  | _, .leaf es, batch => .leaf (subtract es batch)                   -- `Page::remove_batch`, leaf/mod.rs:567-582
   | 0, n@(.branch _ _), _ => n                                        -- unreachable (uniform height)
   | h + 1, .branch seps cs, batch =>
     let kids := (route seps cs batch).map
-      (fun (p : Node × List E) => if p.2 = [] then p.1 else removeBatch c h p.1 p.2)    -- lines 523-544
-    let st := stripEmpty seps kids 0                                  -- line 547
-    if st.2 = [] then .leaf []                                        -- lines 548-550
+      (fun (p : Node × List E) => if p.2 = [] then p.1 else removeBatch c h p.1 p.2)    -- lines 469-490
+    let st := stripEmpty seps kids 0                                  -- line 493
+    if st.2 = [] then .leaf []                                        -- lines 494-496
     else
-      let mu := mergeUnderfull c h st.1 st.2                          -- line 552
-      .branch mu.1 mu.2                                               -- line 553
+      let mu := mergeUnderfull c h st.1 st.2                          -- line 498
+      .branch mu.1 mu.2                                               -- line 499
 
 /-- A drained root is a leaf; its ghost height is 0 (Rust tracks no height). -/
 def leafAt0 : Node × Nat → Node × Nat
@@ -486,7 +486,7 @@ def CombG (c : Cfg) (h : Nat) (a b : Node) (m1 m2 : Nat) : Combined → Prop
   | .one m => PreG c h m m1 m2 ∧ toList h m = toList h a ++ toList h b
   | .two l s r => PreG c h l m1 s ∧ PreG c h r s m2 ∧ toList h l ++ toList h r = toList h a ++ toList h b
 
-/-- **`Node::combine` (`node.rs:384`) of two `Good` siblings** — neither needs to be well-formed (two
+/-- **`Node::combine` (`node.rs:374`) of two `Good` siblings** — neither needs to be well-formed (two
     lone-child branches side by side): the result has at least two `Good` children per node. -/
 theorem combine_good (c : Cfg) : ∀ (h : Nat) (a b : Node) (m1 sep m2 : Nat),
     Good c h a m1 sep → Good c h b sep m2 → CombG c h a b m1 m2 (combine c a sep b)
@@ -535,7 +535,7 @@ theorem getD_take_append {α} (cs xs : List α) (li j : Nat) (d : α) (hj : j < 
   rw [List.getD_eq_getElem?_getD, List.getElem?_append_left (by simp; omega), List.getElem?_take_of_lt hj,
     ← List.getD_eq_getElem?_getD]
 
-/-- **`merge_underfull` (`node.rs:155-175`)**: over a chain of `Good` children it ends with a chain of
+/-- **`merge_underfull` (`node.rs:142-162`)**: over a chain of `Good` children it ends with a chain of
     `Good` children, no longer, with the same entries, and — if two or more remain — none under-full. -/
 theorem muLoop_good (c : Cfg) (h : Nat) (f : Node → Node) (hf : Mono c h f) (hs : Spec c h f) :
     ∀ (seps : List E) (cs : List Node) (i : Nat) (lo hi : Nat),
@@ -608,7 +608,7 @@ theorem muLoop_good (c : Cfg) (h : Nat) (f : Node → Node) (hf : Mono c h f) (h
     have := hpre j (by omega) hj
     rwa [getD_eq_getElem _ _ _ hj] at this
 
-/-- **`merge_underfull_below` (`node.rs:563-574`) repairs**: at every height it turns a node `combine`
+/-- **`merge_underfull_below` (`node.rs:497-508`) repairs**: at every height it turns a node `combine`
     built from `Good` siblings into a `Good` node with the same entries. -/
 theorem mubF_spec (c : Cfg) (hB4 : 4 ≤ c.B) : ∀ h, Spec c h (mubF c h).1
   | 0 => fun n lo hi hp => ⟨hp, rfl⟩
@@ -645,7 +645,7 @@ theorem mergeUnderfull_good (c : Cfg) (hB4 : 4 ≤ c.B) (h : Nat) (seps : List E
 section
 variable {P Q : Nat → Nat → Node → Prop}
 
-/-- Dropping child `i` and the near separator (`strip_empty`, `node.rs:184-194`) keeps a chain whose
+/-- Dropping child `i` and the near separator (`strip_empty`, `node.rs:171-181`) keeps a chain whose
     predicate tolerates wider bounds: the neighbour that absorbs the gap gets the wider range. -/
 theorem COK_del (hP : ∀ a b a' b' n, P a b n → a' ≤ a → b ≤ b' → P a' b' n) (hlt : ∀ a b n, P a b n → a < b) :
     ∀ {lo hi : Nat} {ss : List E} {ns : List Node} (i : Nat), COK P lo ss ns hi → 2 ≤ ns.length →
@@ -680,7 +680,7 @@ theorem COK_del (hP : ∀ a b a' b' n, P a b n → a' ≤ a → b ≤ b' → P a
   | _, _, [_], [_, _], i + 2, _, _, hi' => by simp at hi'; omega
   | _, _, _ :: _ :: _, [_], _, h, _, _ => by simp [COK] at h
 
-/-- **The routing sweep keeps the chain** (`node.rs:523-544`): replacing each touched child by `g`
+/-- **The routing sweep keeps the chain** (`node.rs:457-478`): replacing each touched child by `g`
     applied to its slice is fine when `g` maps a child with predicate `P` (and a non-empty slice at or
     above its lower bound) to one with predicate `Q`. -/
 theorem route_cok (g : Node → List E → Node) (hPQ : ∀ a b n, P a b n → Q a b n)
@@ -731,7 +731,7 @@ theorem GoodOrEmpty_lt {c : Cfg} {h : Nat} {a b : Nat} {n : Node} (hg : GoodOrEm
   · exact Good_lt hg
   · exact hlt
 
-/-- **`strip_empty` (`node.rs:180-195`)** leaves a chain of non-empty children (or nothing). -/
+/-- **`strip_empty` (`node.rs:167-182`)** leaves a chain of non-empty children (or nothing). -/
 theorem stripEmpty_good (c : Cfg) (h : Nat) (lo hi : Nat) : ∀ (seps : List E) (cs : List Node) (i : Nat),
     (COK (GoodOrEmpty c h) lo seps cs hi ∨ (cs = [] ∧ seps = [])) →
     (∀ j, j < i → j < cs.length → isEmptyNode (cs.getD j default) = false) →
@@ -802,7 +802,7 @@ theorem isEmptyNode_eq {n : Node} (he : isEmptyNode n = true) : n = .leaf [] := 
   | leaf es => simp [isEmptyNode] at he; rw [he]
   | branch _ _ => simp [isEmptyNode] at he
 
-/-- **`Node::remove_batch` (`node.rs:498-555`) after #3283**: on a well-formed non-root subtree and a
+/-- **`Node::remove_batch` (`node.rs:446-489`) after #3283**: on a well-formed non-root subtree and a
     sorted batch at or above its lower bound, the result is `Good` (or a drained, empty leaf) and holds
     exactly the entries not in the batch. -/
 theorem removeBatch_good (c : Cfg) (hB4 : 4 ≤ c.B) : ∀ (h : Nat) (n : Node) (lo hi : Nat) (batch : List E),

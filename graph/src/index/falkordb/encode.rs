@@ -15,6 +15,8 @@
 //! coercion inherits RediSearch's precision limit for integer magnitudes
 //! `>= 2^53`; it is documented here and a wider key is a future refinement.
 
+use std::sync::Arc;
+
 use crate::runtime::value::Value;
 
 /// IEEE-754 sign bit of an `f64`.
@@ -40,25 +42,46 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
     (!x.is_nan()).then(|| encode_f64(x))
 }
 
-/// Which kind of stored value a key comes from, and so which of a column's two trees it lives in.
+/// Which tree of a column a key lives in: the kind of value it indexes, and whether it came from a
+/// scalar or from the elements of a list.
 ///
-/// A numeric column keeps **scalar** values and the elements of **list** values apart. One tree
-/// for both would give a node with `v = [1, 2]` the key for `1`, so `WHERE n.v = 1`, which is false
-/// in Cypher, would match it, and `Equal` has no post-filter to catch that (its plan is a bare
-/// `Node By Index Scan`). RediSearch keeps the same separation with its `numeric:arr` sub-field;
-/// this is the native equivalent. It lives here because the encoder is what decides it: see
-/// [`for_each_stored_key`].
+/// A column keeps **scalar** values and the elements of **list** values apart. One tree for both
+/// would give a node with `v = [1, 2]` the key for `1`, so `WHERE n.v = 1`, which is false in
+/// Cypher, would match it, and `Equal` has no post-filter to catch that (its plan is a bare
+/// `Node By Index Scan`). RediSearch keeps the same separation with its `numeric:arr` and
+/// `string:arr` sub-fields; this is the native equivalent.
+///
+/// A Cypher property is not typed, so one Range column holds whatever the entities put in it:
+/// numbers ([`Scalar`](Self::Scalar), [`Array`](Self::Array)) and strings ([`Tag`](Self::Tag),
+/// [`TagArray`](Self::TagArray)), each in the tree that can order it: a number keyed by its `u64`
+/// encoding, a string by itself ([`ColumnKey`]).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum KeyKind {
-    /// A scalar value: at most one key per entity.
+    /// A numeric scalar value: at most one key per entity, its [`encode_numeric`] image.
     Scalar,
-    /// The elements of a list value: one key per numeric element, read only by `value IN n.prop`.
+    /// The numeric elements of a list value: one key per element, read only by `value IN n.prop`.
     Array,
+    /// A string scalar value: the string itself, in a string-keyed tree.
+    Tag,
+    /// The string elements of a list value: one key per distinct element.
+    TagArray,
+}
+
+/// The key a value takes in one tree: a number's encoding, or a string itself.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ColumnKey {
+    /// The key of a [`Scalar`](KeyKind::Scalar) or [`Array`](KeyKind::Array) tuple.
+    Encoded(u64),
+    /// The key of a [`Tag`](KeyKind::Tag) or [`TagArray`](KeyKind::TagArray) tuple.
+    Tag(Arc<String>),
 }
 
 impl KeyKind {
     /// Every kind, in order.
-    pub const ALL: [Self; 2] = [Self::Scalar, Self::Array];
+    pub const ALL: [Self; 4] = [Self::Scalar, Self::Array, Self::Tag, Self::TagArray];
+
+    /// The numeric kinds, the trees [`for_each_stored_key`] fills.
+    pub const NUMERIC: [Self; 2] = [Self::Scalar, Self::Array];
 }
 
 /// Call `emit` with each key a **stored** value contributes, and the kind of key it is.

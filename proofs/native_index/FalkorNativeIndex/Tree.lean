@@ -13,7 +13,7 @@ entry list and each operation *is* its proven content spec. `enc`/`keyOf`/`docOf
 
 | here | Rust | proven contents |
 | --- | --- | --- |
-| `tInsert` | `CowBTree::insert` (`cow_btree/mod.rs:223`) | cow_btree `insert_spec` (= `sins`) |
+| `tInsert` | `CowBTree::insert` (`cow_btree/mod.rs:220`) | cow_btree `insert_spec` (= `sins`) |
 | `tRemove` | `CowBTree::remove` (`:260`) | cow_btree `remove_spec` (= `List.erase`) |
 | `tInsertBatch` | `CowBTree::insert_batch` (`:241`) | cow_btree `insertBatch_wf`, index_layer `Leaf.insertBatch_contents` (= union) |
 | `tRemoveBatch` | `CowBTree::remove_batch` (`:286`) | cow_btree `removeBatchTree_wf` (= `List.filter`) |
