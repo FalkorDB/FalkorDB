@@ -87,7 +87,10 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
   keeps the rows, under the per-edge reading both engines use);
   `hasParam_iff`, `subst_params`, `evX_subst`; `refsVar_iff`, `refsVarId_iff`,
   `refsVar_le_refsVarId`; `countVar_spec`; `attrsEmpty_iff`, `canFuse_spec`;
-  `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new`.
+  `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_eq_subtreeIds`, `branchOut_copy_new`;
+  `mem_subtreeIds`, `mem_subtreeIds_other`, `subtreeIds_resets`, `subtreeIds_stops_at_aggregate`
+  (`collect_subtree_variables` since #3092); history `pre3092_branchOut_spec`, `pre3092_branchOut_copy_old`,
+  `pre3092_mem_subtreeIds`.
   W6-opt-1 Case-2 walk (`CallBoundary`, from the retired pr2845_review):
   `Pr2845.filter_pushed_through_boundary`, fix `fixed_keeps_filter`/`fixed_conservative`.
 
@@ -158,8 +161,9 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
 
 The push-down theorems above compare result rows only and route by `(id, scope)`.
 `PushPlan` gives push_filters_down a plan tree with graph state that writes
-change, and the routing exactly as main computes it (bare ids, `get_variables`
-walking through `Aggregate`, Case 1/Case 2 inheritance). Property `EffectSound`
+change, and the routing exactly as main computes it (bare ids, `collect_subtree_variables`
+= `sv`, which since #3092 stops at `Project`/`Aggregate`; before it `get_variables` walking
+through `Aggregate`, `Cfg.pre3092`; Case 1/Case 2 inheritance). Property `EffectSound`
 (rows **and** the node count left behind are kept; the only write modelled is creating a bare
 node, labels, relationships and attributes are not written); `RowSound` is the old criterion;
 `RoutesBound` (a pushed conjunct reads only variables available where it lands).
@@ -179,9 +183,12 @@ node, labels, relationships and attributes are not written); `RowSound` is the o
    left subtree, and `get_variables` (`runtime.rs:319-323`) walks through `Aggregate`
    into the pre-WITH plan, so id 2 of scope 0 (the `_anon` edge) is taken for `r`
    (id 2 of scope 1, `binder.rs:2257-2268`) and `r.status = 'revoked'` lands on the
-   Argument → `n = 1, e = null` (C 123). Lean `bug3352_plan`, `bug3352_routes_unbound`
-   (`¬ RoutesBound`), `bug3352_slot_collision_drops_match` (`¬ RowSound`); `bug3352_fixed`
+   Argument → `n = 1, e = null` (C 123). Lean `pre3092_bug3352_plan`, `pre3092_bug3352_routes_unbound`
+   (`¬ RoutesBound`), `pre3092_bug3352_slot_collision_drops_match` (`¬ RowSound`); `bug3352_fixed`
    for `(id, scope)` routing. Live: three pre-WITH ids `{0,1,2}` → wrong, two → right.
+   **Fixed by #3092** (`collect_subtree_variables` stops at the `Aggregate`): `bug3352_routes_bound`,
+   `bug3352_fixed_main` (`n = 1, e = 1`). The #997 CASE control now lands above the `Unwind`
+   (`bug997_case_control`; before: `pre3092_bug997_case_control`).
 
 ## Gap closed 2026-10-20 (#2556) — `PushPlan`, select_scan_node chain re-ordering
 
@@ -219,11 +226,9 @@ binds what it reads).
 
 ## Suspected, unconfirmed
 
-* `branch_output_variables` (push_filters_down.rs:65) takes `copies.0` as the
-  (Lean `branchOut_copy_new`)
+* (Fixed by #3092) `branch_output_variables` took `copies.0` as the
   Project's output, but `copies` is `(old, new)` (binder.rs:2234, project.rs:115) —
-  outputs are the new vars. Currently only makes push-down more conservative, but
-  with scope-blind ids it can also admit a conjunct whose id matches an old var.
+  outputs are the new vars (Lean `pre3092_branchOut_copy_old`; now `branchOut_copy_new`).
 * Filters on zero-variable conjuncts (`rand() < 0.5`) are pushed into every CP/Apply branch.
 * Pushing into one CP branch evaluates the conjunct even when the other branch is
   empty, so a query can start to error (Lean `push_cp_left` needs `NoErr`).
@@ -241,8 +246,9 @@ binds what it reads).
   children's) instead of `collect_subtree_variables` for the Apply left side —
   narrows `id_only_routing_unsound`'s collision window (still ids only).
 * #3092 — `collect_subtree_variables` stops at Project/Aggregate (their outputs
-  only) instead of `get_variables` of the whole subtree — same direction as
-  #2981; `mem_subtreeIds` describes origin/main.
+  only, the new side of copies/projections) instead of `get_variables` of the whole
+  subtree; `branch_output_variables` delegates to it. Modelled (`Helpers.subtreeIds`,
+  `PushPlan.sv`, `Cfg.main`); the pre-#3092 code is `Cfg.pre3092` / `*Pre3092`.
 * #3100 — exports `ir_references_variable` for the planner's CP-correlation check
   (planner bug 2); no change to the oracle itself (needs a rebase onto references.rs).
 * #3054 — `reduce_expand_into` removes a collapsed (no longer emitted) edge from

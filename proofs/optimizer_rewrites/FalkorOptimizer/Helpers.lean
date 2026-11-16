@@ -10,12 +10,14 @@ import FalkorOptimizer.Basic
 | `subst`, `evX` | `substitute_params` eliminate_true_filters.rs:83-98; a parameter-aware evaluator |
 | `refsVar` | `expr_references_variable` / `subtree_references_variable` references.rs:317-334 (a BFS, by `(id, scope)`) |
 | `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
-| `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
+| `collectIds` | `collect_expr_variables` optimizer/mod.rs:92-100 |
+| `PT`, `subtreeVars`, `subtreeIds` | `collect_subtree_variables` optimizer/mod.rs:110-137 (#3092: stops at Project/Aggregate, their outputs only) |
 | `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
 | `isAnon`, `attrsEmpty` | `is_anon`, `rel_attrs_empty` fuse_anonymous_traverse.rs:36-51 (`node_attrs_empty` removed by #2390) |
 | `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-192 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
 | `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
-| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-87 |
+| `branchOut` | `branch_output_variables` push_filters_down.rs:59-66 (#3092: `collect_subtree_variables` of a Project/Aggregate) |
+| `OutIR`, `branchOutPre3092`, `subtreeIdsPre3092` | history: both before #3092 (`copies.0`/`projections.0`; ids of `get_variables`) |
 -/
 namespace Falkor.Opt
 
@@ -180,11 +182,67 @@ theorem mem_collectIds (e : X) (i : Nat) : i ∈ collectIds e ↔ ∃ v, XD.var 
   · rintro ⟨d, hd, h⟩; cases d <;> simp at h; exact ⟨_, hd, h⟩
   · rintro ⟨v, hv, rfl⟩; exact ⟨_, hv, rfl⟩
 
-/-- `collect_subtree_variables`: the ids of what `get_variables` reports. -/
-def subtreeIds (getVars : List Var) : List Nat := getVars.map Var.id
+/-- History (before #3092): `collect_subtree_variables` was the ids of what `get_variables` reports. -/
+def subtreeIdsPre3092 (getVars : List Var) : List Nat := getVars.map Var.id
 
-theorem mem_subtreeIds (gv : List Var) (i : Nat) : i ∈ subtreeIds gv ↔ ∃ v ∈ gv, v.id = i := by
+theorem pre3092_mem_subtreeIds (gv : List Var) (i : Nat) : i ∈ subtreeIdsPre3092 gv ↔ ∃ v ∈ gv, v.id = i := by
+  simp [subtreeIdsPre3092]
+
+/-- A plan subtree as `collect_subtree_variables` reads it: `Project` (`exprs`,
+`copies` as `(old, new)` pairs), `Aggregate` (`names`, `projections` as `(old, new)`),
+and every other operator with the variables `push_node_variables` reports for it. -/
+inductive PT
+  | project (es : List Var) (cs : List (Var × Var)) (kids : List PT)
+  | aggregate (ns : List Var) (ps : List (Var × Var)) (kids : List PT)
+  | other (own : List Var) (kids : List PT)
+
+mutual
+/-- `collect_subtree_variables` (mod.rs:110-137): a Project/Aggregate contributes its
+outputs (the *new* side of each copy/projection) and is not descended; every other
+node contributes its own variables and is descended. (Rust uses a stack and a
+`HashSet`; only membership matters.) -/
+def subtreeVars : PT → List Var
+  | .project es cs _ => es ++ cs.map Prod.snd
+  | .aggregate ns ps _ => ns ++ ps.map Prod.snd
+  | .other own kids => own ++ subtreeVarsL kids
+def subtreeVarsL : List PT → List Var
+  | [] => []
+  | t :: ts => subtreeVars t ++ subtreeVarsL ts
+end
+
+def subtreeIds (t : PT) : List Nat := (subtreeVars t).map Var.id
+
+theorem mem_subtreeIds (t : PT) (i : Nat) : i ∈ subtreeIds t ↔ ∃ v ∈ subtreeVars t, v.id = i := by
   simp [subtreeIds]
+
+theorem mem_subtreeVarsL (ts : List PT) (v : Var) : v ∈ subtreeVarsL ts ↔ ∃ t ∈ ts, v ∈ subtreeVars t := by
+  induction ts with
+  | nil => simp [subtreeVarsL]
+  | cons t ts ih => simp [subtreeVarsL, ih]
+
+/-- Below a Project/Aggregate nothing is reported: the children do not matter. -/
+theorem subtreeIds_resets (es : List Var) (cs : List (Var × Var)) (k k' : List PT) :
+    subtreeIds (.project es cs k) = subtreeIds (.project es cs k') ∧
+    subtreeIds (.aggregate es cs k) = subtreeIds (.aggregate es cs k') := ⟨rfl, rfl⟩
+
+/-- Any other node: its own variables and those of every child subtree. -/
+theorem mem_subtreeIds_other (own : List Var) (kids : List PT) (i : Nat) :
+    i ∈ subtreeIds (.other own kids) ↔ (∃ v ∈ own, v.id = i) ∨ ∃ t ∈ kids, i ∈ subtreeIds t := by
+  simp only [mem_subtreeIds, subtreeVars, List.mem_append, mem_subtreeVarsL]
+  constructor
+  · rintro ⟨v, hv | ⟨t, ht, hv⟩, rfl⟩
+    · exact .inl ⟨v, hv, rfl⟩
+    · exact .inr ⟨t, ht, v, hv, rfl⟩
+  · rintro (⟨v, hv, rfl⟩ | ⟨t, ht, v, hv, rfl⟩)
+    · exact ⟨v, .inl hv, rfl⟩
+    · exact ⟨v, .inr ⟨t, ht, hv⟩, rfl⟩
+
+/-- #3092 vs before: an `Aggregate` over a child that binds id 2 (the #3352 shape).
+`get_variables` walked through it (`names` and the child's variables); now only its
+outputs are reported. -/
+theorem subtreeIds_stops_at_aggregate :
+    subtreeIds (.aggregate [⟨0, 1⟩, ⟨1, 1⟩] [] [.other [⟨2, 0⟩] []]) = [0, 1] ∧
+    2 ∈ subtreeIdsPre3092 [⟨0, 1⟩, ⟨1, 1⟩, ⟨2, 0⟩] := by decide
 
 /-! ## `extract_count_variable` -/
 
@@ -303,33 +361,60 @@ theorem fusedCT_spec (c : CT) : (fusedCT c).optional = true ∧ { fusedCT c with
 
 /-! ## `branch_output_variables` -/
 
+/-- `branch_output_variables` (push_filters_down.rs:59-66, since #3092): a
+Project/Aggregate reports `collect_subtree_variables` of itself; anything else `none`. -/
+def branchOut : PT → Option (List Nat)
+  | t@(.project ..) | t@(.aggregate ..) => some (subtreeIds t)
+  | .other .. => none
+
+/-- Above a Project/Aggregate only its outputs are visible — the *new* variable of
+each copy/projection (project.rs:115, aggregate.rs:716 insert `new_var`); elsewhere
+`none` (the subtree's variables). Ids only — scope is dropped (see `id_only_routing_unsound`). -/
+theorem branchOut_spec (t : PT) :
+    (∀ es cs k, t = .project es cs k → ∀ i, i ∈ (branchOut t).getD [] ↔ ∃ v ∈ es ++ cs.map Prod.snd, v.id = i) ∧
+    (∀ ns ps k, t = .aggregate ns ps k → ∀ i, i ∈ (branchOut t).getD [] ↔ ∃ v ∈ ns ++ ps.map Prod.snd, v.id = i) ∧
+    (∀ own k, t = .other own k → branchOut t = none) := by
+  refine ⟨?_, ?_, ?_⟩
+  · rintro es cs k rfl i; simp [branchOut, mem_subtreeIds, subtreeVars]
+  · rintro ns ps k rfl i; simp [branchOut, mem_subtreeIds, subtreeVars]
+  · rintro own k rfl; rfl
+
+/-- The output contract lives in one place: `branch_output_variables` of a
+Project/Aggregate is `collect_subtree_variables` of it. -/
+theorem branchOut_eq_subtreeIds (t : PT) (h : (branchOut t).isSome) : branchOut t = some (subtreeIds t) := by
+  cases t <;> simp_all [branchOut]
+
+/-- The copy's *new* variable — what the Project actually outputs — is reported
+(fixed by #3092; before it, only the parent-scope id was: `pre3092_branchOut_copy_old`). -/
+theorem branchOut_copy_new :
+    branchOut (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)] []) = some [5] := rfl
+
+/-! ### History: `branch_output_variables` before #3092 -/
+
 /-- `Project.copies` holds `(old, new)` pairs (binder.rs:2234; project.rs:115
-inserts `new_var`); `branch_output_variables` reads the first component. -/
+inserts `new_var`); before #3092 `branch_output_variables` read the first component. -/
 inductive OutIR
   | project (exprs : List Var) (copies : List (Var × Var))
   | aggregate (names projections : List Var)
   | other
 
-def branchOut : OutIR → Option (List Nat)
+def branchOutPre3092 : OutIR → Option (List Nat)
   | .project es cs => some (es.map Var.id ++ cs.map (·.1.id))
   | .aggregate ns ps => some (ns.map Var.id ++ ps.map Var.id)
   | .other => none
 
-/-- Above a Project/Aggregate only its outputs are visible; elsewhere `none`
-(the subtree's variables). Ids only — scope is dropped (see `id_only_routing_unsound`). -/
-theorem branchOut_spec (o : OutIR) :
-    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOut o).getD [] ↔ ∃ v ∈ es ++ cs.map Prod.fst, v.id = i) ∧
-    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOut o).getD [] ↔ ∃ v ∈ ns ++ ps, v.id = i) ∧
-    (o = .other → branchOut o = none) := by
+theorem pre3092_branchOut_spec (o : OutIR) :
+    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOutPre3092 o).getD [] ↔ ∃ v ∈ es ++ cs.map Prod.fst, v.id = i) ∧
+    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOutPre3092 o).getD [] ↔ ∃ v ∈ ns ++ ps, v.id = i) ∧
+    (o = .other → branchOutPre3092 o = none) := by
   refine ⟨?_, ?_, ?_⟩
-  · rintro es cs rfl i; simp [branchOut, or_and_right, exists_or]
-  · rintro ns ps rfl i; simp [branchOut, or_and_right, exists_or]
+  · rintro es cs rfl i; simp [branchOutPre3092, or_and_right, exists_or]
+  · rintro ns ps rfl i; simp [branchOutPre3092, or_and_right, exists_or]
   · rintro rfl; rfl
 
-/-- The copy's *new* variable — what the Project actually outputs — is not
-reported (only the parent-scope id is). Suspected, see the root header. -/
-theorem branchOut_copy_new :
-    branchOut (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
+/-- Before #3092 the copy's *new* variable was not reported, only the parent-scope id. -/
+theorem pre3092_branchOut_copy_old :
+    branchOutPre3092 (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
 
 /-! ## `utilize_node_by_id`'s parent lookup -/
 
