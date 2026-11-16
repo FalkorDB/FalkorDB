@@ -73,9 +73,9 @@ use crate::allocator::{
 };
 use crate::dispatch::must_run_inline;
 use crate::divergence_guard;
-use crate::query_session::QuerySession;
 #[cfg(feature = "index-falkordb")]
 use crate::query_session::hold_gil;
+use crate::query_session::{QuerySession, WriterGate};
 
 /// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
 ///
@@ -541,6 +541,9 @@ pub struct ThreadedGraph {
     pub receiver: Rx<List<Box<WriteMessage>>>,
     pub write_loop: AtomicBool,
     pub slow_log: SlowLog,
+    /// Where readers wait while a writer is kept from the write lock. Inside the
+    /// lock because there is nowhere else to put it — see [`WriterGate`].
+    pub writer_gate: Arc<WriterGate>,
 }
 
 unsafe impl Send for ThreadedGraph {}
@@ -558,6 +561,7 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
+            writer_gate: Arc::default(),
         }
     }
 
@@ -571,6 +575,7 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
+            writer_gate: Arc::default(),
         }
     }
 }
