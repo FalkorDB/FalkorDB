@@ -13,12 +13,16 @@ graph/src/planner/optimizer/fuse_anonymous_traverse.rs	rel_attrs_empty	42	PROVEN
 graph/src/planner/optimizer/fuse_anonymous_traverse.rs	intermediate_unreferenced	70	PROVEN	References2.wholeRead (whole-plan BFS since #2390): anyRead_plug, wholeRead_covers (sees readers inside and outside the hops), fuse_unread_sound (with refsNew_complete)
 graph/src/planner/optimizer/fuse_anonymous_traverse.rs	can_fuse	83	PROVEN	Helpers.canFuse_spec (all preconditions of Passes.fuse_same_support; #2390: no node_attrs_empty, both edges also unreferenced)
 graph/src/planner/optimizer/fuse_anonymous_traverse.rs	fuse_anonymous_traverse	194	PROVEN	Passes.fuse_same_support, fuse_changes_multiplicity; Helpers.canFuse_spec; References2.fuse_unread_sound
-graph/src/planner/optimizer/references.rs	ir_references_variable	41	PROVEN	References.refsNew: refsNew_complete (every read seen, under the planner invariant PlanInv = planner_build planMatch_stripped), refsNew_sound (only reads or bound vars), refsNew_sees_unwind/create/foreach; refsNew_misses_sibling_edges (W2-traverse-1)
-graph/src/planner/optimizer/references.rs	index_query_references_variable	205	PROVEN	References.iqLoop/iqRefs: iqLoop_iff (explicit stack = some operand mentions v, any And/Or depth), iqRefs_iff
-graph/src/planner/optimizer/references.rs	query_graph_references_variable	237	PROVEN	References.qgRefs (node attrs then rel attrs), within refsNew_complete/refsNew_sound
-graph/src/planner/optimizer/references.rs	set_items_reference_variable	252	PROVEN	References.setItemsRefs: setItemsRefs_iff (= v in SetItem.reads, label by (id, scope))
-graph/src/planner/optimizer/references.rs	expr_references_variable	267	PROVEN	References.exprRefs_iff; Helpers.refsVar_iff (BFS by (id, scope) on the tree model)
-graph/src/planner/optimizer/references.rs	subtree_references_variable	277	PROVEN	References.subtreeRefs_iff; Helpers.refsVar_iff (same BFS on a subtree)
+graph/src/planner/optimizer/references.rs	ir_references_variable	41	PROVEN	References.refsNew: refsNew_complete (every read seen, under the planner invariant PlanInv = planner_build planMatch_stripped), refsNew_sound (only reads or bound vars), refsNew_sees_unwind/create/foreach, refsNew_forEach_var_not_reported (#2918: the FOREACH loop variable is not a read); refsNew_misses_sibling_edges (W2-traverse-1)
+graph/src/planner/optimizer/references.rs	row_reaches_siblings	214	PROVEN	References2.rowReachesSiblings (Union/CartesianProduct/ValueHashJoin never; else only from the input child), within varReadOutside_iff; pr2918_input_not_seen_from_body, pr2918_cartesian_sibling_not_seen
+graph/src/planner/optimizer/references.rs	ir_binds_variable	225	PROVEN	References2.bindsVar / Plan.anyBinds (the child.walk BFS), within srLoop_iff; pr2918_union_own_branch_skipped
+graph/src/planner/optimizer/references.rs	subtree_reads_variable	249	PROVEN	References2.srLoop/subtreeReads: srLoop_iff (explicit stack = some operator of Plan.reachOps reads v, any depth/order), subtreeReads_iff, reachOps_sub
+graph/src/planner/optimizer/references.rs	variable_read_outside	289	PROVEN	References2.varReadOutside: varReadOutside_iff (= some operator of reachedOps reads v), pr2918_keeps_flag_when_read (with refsNew_complete), ancestors_le_varReadOutside, varReadOutside_le_readOutside, pr2918_sees_call_sibling
+graph/src/planner/optimizer/references.rs	index_query_references_variable	318	PROVEN	References.iqLoop/iqRefs: iqLoop_iff (explicit stack = some operand mentions v, any And/Or depth), iqRefs_iff
+graph/src/planner/optimizer/references.rs	query_graph_references_variable	350	PROVEN	References.qgRefs (node attrs then rel attrs), within refsNew_complete/refsNew_sound
+graph/src/planner/optimizer/references.rs	set_items_reference_variable	365	PROVEN	References.setItemsRefs: setItemsRefs_iff (= v in SetItem.reads, label by (id, scope))
+graph/src/planner/optimizer/references.rs	expr_references_variable	380	PROVEN	References.exprRefs_iff; Helpers.refsVar_iff (BFS by (id, scope) on the tree model)
+graph/src/planner/optimizer/references.rs	subtree_references_variable	390	PROVEN	References.subtreeRefs_iff; Helpers.refsVar_iff (same BFS on a subtree)
 graph/src/planner/optimizer/fuse_optional_traverse.rs	fusable_traverse	40	PROVEN	Helpers.fusable_spec (= hypothesis of Passes.fuse_optional_correct)
 graph/src/planner/optimizer/fuse_optional_traverse.rs	fused_traverse	81	PROVEN	Helpers.fusedCT_spec (same traverse, optional = true); Passes.optCT
 graph/src/planner/optimizer/fuse_optional_traverse.rs	fuse_optional_traverse	105	PROVEN	Passes.fuse_optional_correct
@@ -26,33 +30,44 @@ graph/src/planner/optimizer/push_filters_down.rs	branch_output_variables	59	PROV
 graph/src/planner/optimizer/push_filters_down.rs	push_filters_down	102	PROVEN	Basic.push_cp_left, push_cp_right, push_extend, push_sort_perm, push_sort_sorted, push_limit_const, limit_not_transparent, skip_not_transparent, merge_order_rust_errors, merge_child_first_row; Passes.limit_skip_not_excluded, id_only_routing_unsound; W6-opt-1 Case-2 walk (CallBoundary, from pr2845_review): Pr2845.filter_pushed_through_boundary, fixed_keeps_filter, fixed_conservative; #3335 rebuilds the filter with ExprIR::and_of: AndOf.flat_passes (same Filter verdict, errors included), flat_eval; gap closed 2026-10-20 (PushPlan, plan tree with writes and id-only routing): property EffectSound/RowSound/RoutesBound REFUTED on main by bug748_merge_skipped, bug997_create_skipped (constant conjunct starves a CALL write), bug3352_slot_collision_drops_match, bug3352_routes_unbound (pre-WITH id taken for r); fixed routing bug748_fixed, bug997_fixed, bug3352_fixed
 graph/src/planner/optimizer/push_filters_down.rs	rebuild_with_cp_split	378	PROVEN	Basic.push_cp_left/right (CP associativity/regrouping of branches as the same identity); #3335 rebuilds the filter with ExprIR::and_of: AndOf.flat_passes (same Filter verdict, errors included), flat_eval
 graph/src/planner/optimizer/push_filters_down.rs	rebuild_node	385	PROVEN	Sequence.rebuildCP_off (copy off target), rebuildCP_on, splitCP_perm (CP children permuted, none lost)
-graph/src/planner/optimizer/reduce_bound_edge.rs	reduce_bound_edge	30	PROVEN	References2.ancestorsRead refsNew (ancestor walk), ancestors_le_outside; main_misses_call_sibling (#2896 sibling case, still open); References.refsNew_complete
+graph/src/planner/optimizer/reduce_bound_edge.rs	reduce_bound_edge	30	PROVEN	References2.varReadOutside refsNew (variable_read_outside since #2918): varReadOutside_iff, pr2918_keeps_flag_when_read, ancestors_le_varReadOutside, pr2918_sees_call_sibling (#2896 sibling case fixed; was pre2918_misses_call_sibling); References.refsNew_complete
 graph/src/planner/optimizer/reduce_count.rs	reduce_count	54	PROVEN	Passes.reduce_count_correct, reduce_count_stale
 graph/src/planner/optimizer/reduce_count.rs	extract_count_variable	193	PROVEN	Helpers.countVar_spec (count(var) -> var.id, scope dropped)
-graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	19	PROVEN	References2.ancestorsRead refsNew vs readOutside_iff, main_misses_call_sibling (still open); References.refsNew_misses_sibling_edges (W2-traverse-1, still open)
-graph/src/planner/optimizer/reduce_var_len_path.rs	reduce_var_len_path	27	PROVEN	References2.ancestorsRead refsNew (same oracle and walk); References.refsNew_complete (CVLT edge attrs/edge_filter/path_var seen); UNWIND r loss fixed by #2390
+graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	22	PROVEN	References2.varReadOutside refsNew (variable_read_outside since #2918): varReadOutside_iff, pr2918_keeps_flag_when_read, varReadOutside_le_readOutside, pr2918_sees_call_sibling (was pre2918_misses_call_sibling); References.refsNew_misses_sibling_edges (W2-traverse-1, still open)
+graph/src/planner/optimizer/reduce_var_len_path.rs	reduce_var_len_path	29	PROVEN	References2.varReadOutside refsNew (same walk as reduce_expand_into): varReadOutside_iff, pr2918_keeps_flag_when_read, ancestors_le_varReadOutside; References.refsNew_complete (CVLT edge attrs/edge_filter/path_var seen); UNWIND r loss fixed by #2390
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	Passes.reorder_perm, reorder_preserves
 graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	replace_cartesian_with_hash_join	73	PROVEN	Passes.vhj_correct, hash_join_drops_row
 graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	rebuild_with_hash_joins	80	PROVEN	Sequence.rebuildHJ_id (copy when nothing fires), rebuildHJ_sound (congruence + sound local rewrite vhj_correct)
 graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	try_hash_join_rewrite	101	PROVEN	Passes.vhj_correct (side selection is the coverage test of push_cp_left); #3335 rebuilds the filter with ExprIR::and_of: AndOf.flat_passes (same Filter verdict, errors included), flat_eval
 graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	Passes.flip_holds
 graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	Passes.idFilter_correct, step_correct, step_no_wrap, id_gt_neg_empty, id_le_neg_all, id_eq_null_errors (with runtime.rs:1309 evaluate_id_filter); Helpers.root_scan_has_no_parent (hazard: parent().unwrap() on a root scan; the W4-plan-4 repro is rejected by validation since #3297)
-graph/src/planner/optimizer/reduce_bound_edge.rs	optimized_plan	82	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	bound_edges	98	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	unread_edge_is_not_bound	113	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	named_but_unread_edge_is_not_bound	119	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	returned_edge_is_bound	127	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	filtered_edge_is_bound	133	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	deleted_edge_is_bound	139	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	anonymous_edge_in_a_named_path_is_bound	149	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	edge_read_after_a_with_barrier_is_bound	155	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_bound_edge.rs	optional_traverse_keeps_the_distinction	161	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_var_len_path.rs	optimized_varlen_plan	73	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_var_len_path.rs	emit_paths	87	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_var_len_path.rs	has_value_hash_join	97	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_var_len_path.rs	absorbed_edge_filter_lets_unused_path_be_skipped	104	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_var_len_path.rs	consumed_path_is_kept_despite_absorption	113	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
-graph/src/planner/optimizer/reduce_var_len_path.rs	path_consumed_through_value_hash_join_is_kept	121	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	optimized_plan	71	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	bound_edges	87	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	unread_edge_is_not_bound	102	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	named_but_unread_edge_is_not_bound	108	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	returned_edge_is_bound	116	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	filtered_edge_is_bound	122	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	deleted_edge_is_bound	128	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	anonymous_edge_in_a_named_path_is_bound	138	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	edge_read_after_a_with_barrier_is_bound	144	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	edge_read_inside_a_call_subquery_is_bound	150	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	optional_traverse_keeps_the_distinction	158	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	emitted_edges	64	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	unread_edge_collapses	87	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	edge_read_outside_the_ancestors_is_emitted	103	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	edge_read_by_an_operators_arguments_is_emitted	121	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	edge_read_in_another_union_branch_is_not_a_read	137	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	edge_bound_by_a_union_branch_in_a_call_body_is_not_a_read	156	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	imported_and_rematched_edge_is_still_a_read	177	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	foreach_loop_variable_named_like_the_edge_is_not_a_read	192	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_expand_into.rs	non_traversal_binders_in_union_branches_do_not_change_edge_reads	210	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	optimized_varlen_plan	64	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	emit_paths	78	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	has_value_hash_join	88	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	absorbed_edge_filter_lets_unused_path_be_skipped	95	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	consumed_path_is_kept_despite_absorption	104	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	path_consumed_through_value_hash_join_is_kept	112	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	path_read_outside_the_ancestors_is_kept	130	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
 # graphblas *_bench.rs: benchmark harnesses, no production callers; listed here so the aggregator can exclude them
 graph/src/graph/graphblas/block_scaling_bench.rs	per_op	32	NOT COVERED	TEST-ONLY: benchmark harness (block_scaling_bench.rs), not production code
 graph/src/graph/graphblas/block_scaling_bench.rs	spread	47	NOT COVERED	TEST-ONLY: benchmark harness (block_scaling_bench.rs), not production code
@@ -80,7 +95,3 @@ graph/src/graph/graphblas/me_delta_bench.rs	per_op	43	NOT COVERED	TEST-ONLY: ben
 graph/src/graph/graphblas/me_delta_bench.rs	committed_multi	58	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_step	84	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_attach_vs_seek	140	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
-graph/src/planner/optimizer/references.rs	row_reaches_siblings	212	NOT COVERED	(#2896): not modelled yet
-graph/src/planner/optimizer/references.rs	ir_binds_variable	223	NOT COVERED	(#2896): not modelled yet
-graph/src/planner/optimizer/references.rs	subtree_reads_variable	247	NOT COVERED	(#2896): not modelled yet
-graph/src/planner/optimizer/references.rs	variable_read_outside	287	NOT COVERED	(#2896): not modelled yet

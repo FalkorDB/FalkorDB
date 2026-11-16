@@ -27,7 +27,7 @@ Files: `Basic` (rows, eval, Filter, push-down, merge, eliminate_true_filters),
 `References` (the "is this variable read?" oracle `optimizer/references.rs` behind
 reduce_expand_into / reduce_bound_edge / reduce_var_len_path / fuse_anonymous_traverse,
 introduced by #2390; also the a9377c636 and PR #2918 oracles), `References2` (the tree walks:
-ancestor-only for the three `reduce_*` passes, whole-plan for fusion since #2390), `Passes` (fusion, optional fusion, node-by-id, reduce_count,
+`variable_read_outside` for the three `reduce_*` passes since #2918, whole-plan for fusion since #2390), `Passes` (fusion, optional fusion, node-by-id, reduce_count,
 reorder_labels, hash join, the push-down routing and exclusion list).
 Each file's header maps its definitions to Rust `file:line`.
 Files (wave 5): `Helpers` (the syntactic helpers: parameters, variable
@@ -66,8 +66,8 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
   `And`/`Or` depth; `setItemsRefs_iff`, `exprRefs_iff`.
 * `anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound` — fusion's whole-plan check (since #2390)
   sees every reader of the intermediate and both edges, inside or outside the hops.
-* `refsPR_complete`, `readOutside_iff`, `pr_keeps_flag_when_read` — PR #2918 (its walk is still
-  not merged); `ancestors_le_outside` — the old oracle erred only toward collapsing.
+* `varReadOutside_iff`, `srLoop_iff`, `pr2918_keeps_flag_when_read` — #2918's `variable_read_outside`: the three `reduce_*` passes keep the flag whenever an operator that receives the rows reads the variable, CALL bodies and other Apply right sides included (`pr2918_sees_call_sibling`); `ancestors_le_varReadOutside`, `varReadOutside_le_readOutside`. Older: `refsPR_complete`, `readOutside_iff`, `pr_keeps_flag_when_read` (an earlier PR revision;
+  its oracle superseded by #2390); `ancestors_le_outside` — the old walk erred only toward collapsing.
 * `fuse_same_support` — anonymous-chain fusion keeps the set of rows (and,
   `fuse_changes_multiplicity`, collapses paths to pairs exactly as C does).
 * `fuse_optional_correct` — Optional-over-traverse fusion is column-exact.
@@ -131,17 +131,17 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
    → Rust (1,1),(1,2)…(1,5); C (1,1),(2,1)…(5,1). Scope-blind ids (mod.rs:91-109)
    plus Apply Case 2 inheritance (push_filters_down.rs:214-261). Lean
    `id_only_routing_unsound`. Test `known_2557_call_subquery_filter_reads_outer_variable`.
-7. **(known #2896) — per-operator part FIXED by #2390 (d2c42e032), sibling part still open.**
+7. **(known #2896) — per-operator part FIXED by #2390 (d2c42e032), sibling part fixed by #2918.**
    a9377c636's `ir_references_variable` missed Unwind/ForEach lists, Create/Merge pattern
    properties, ProcedureCall args, LoadCsv, Skip/Limit, index-scan queries:
    `MATCH (a)-[r]->(b) UNWIND [r.w] AS w RETURN w` → Rust [1],[3] of [1],[2],[3];
    `… CREATE (:C {w: r.w})` created 2 of 3; `FOREACH` likewise; `()-[r*1..1]->() UNWIND r` lost rows.
    On 8743953a8 all of these match C (live); the surviving evidence is Lean
-   `refsNew_complete` / `refsNew_sees_*`. **Still open**: the three `reduce_*` passes walk
-   ancestors only, so a reader in a sibling subtree is missed —
+   `refsNew_complete` / `refsNew_sees_*`. Before #2918 the three `reduce_*` passes walked
+   ancestors only, so a reader in a sibling subtree was missed —
    `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3;
-   `RETURN [(a)-->(b) | r.w]` → Rust `[1]`, C three rows (Lean `main_misses_call_sibling`);
-   and the oracle ignores `sibling_edges` (W2-traverse-1: `MATCH (a)-[r]->(x)<-[s]-(c)
+   `RETURN [(a)-->(b) | r.w]` → Rust `[1]`, C three rows (Lean `pre2918_misses_call_sibling`; fixed: `pr2918_sees_call_sibling`);
+   **still open**: the oracle ignores `sibling_edges` (W2-traverse-1: `MATCH (a)-[r]->(x)<-[s]-(c)
    RETURN count(*)` → Rust 1, C 2; Lean `refsNew_misses_sibling_edges`).
 
 8. **(NEW; still crashes the server on 8743953a8, live) `utilize_node_by_id` panics on a root scan** — `utilize_node_by_id.rs:106`
@@ -231,9 +231,9 @@ binds what it reads).
 
 ## Open PRs touching these files (model = origin/main)
 
-* #2918 — `variable_read_outside` for the three `reduce_*` passes (its per-operator
-  oracle is superseded by #2390's references.rs): modelled as `readOutside`
-  (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
+* #2918 (this model) — `variable_read_outside` for the three `reduce_*` passes, modelled as
+  `varReadOutside` (`varReadOutside_iff`, `srLoop_iff`); fixes the sibling part of bug 7
+  (`pre2918_misses_call_sibling` → `pr2918_sees_call_sibling`).
 * #3006 — `push_filters_down.rs:122` merges `[child_filter, filter]`: the
   `merge_child_first_row` order; fixes bug 2.
 * #2981 — `push_filters_down` routes with `branch_visible_variables` (below an
