@@ -11,13 +11,13 @@ gathers the parent columns by the packed parent rows.
 | here | there |
 | --- | --- |
 | `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-570`; the clamp is `:562`) — since #2973 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`; #2922 was an LLVM miscompile of the guarded `match` it replaced on aarch64-apple-darwin |
-| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:744`) |
-| `drain` | `drain_pending_entry` (`:622-647`) |
-| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:676-717`, `:738-743`) |
-| `emitLazy` | `emit_lazy` (`:729-746`) |
+| `grow`, `emitCeil` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)`, since #3071 only `if count > 0` (`:754-756`) |
+| `drain` | `drain_pending_entry` (`:629-655`) |
+| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:683-725`, `:743-750`) |
+| `emitLazy` | `emit_lazy` (`:736-758`) |
 | `stream` | the flattened `(row, item)` sequence of `pending` + unread rows |
 | `emitAll` | repeated `emit_lazy` until `Ok(None)` |
-| `finishLen` | `finish_batch` (`:651-669`) row count incl. the `should_expand` switch (`start_batch`, `:604-617`) |
+| `finishLen` | `finish_batch` (`:658-676`) row count incl. the `should_expand` switch (`start_batch`, `:611-624`) |
 | `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs:293-299`) |
 -/
 
@@ -33,8 +33,12 @@ def withBinding (recordCap : Option Nat) : Nat :=
   | some cap => max 1 (min cap BATCH_SIZE)
   | none => BATCH_SIZE
 
-/-- The doubling after each `emit_lazy`. -/
+/-- The doubling after an `emit_lazy` that emitted a batch. -/
 def grow (c : Nat) : Nat := min (c * 2) BATCH_SIZE
+
+/-- The ceiling after one `emit_lazy` that packed `out` (`:754-756`, #3071): grown only
+when something was emitted. -/
+def emitCeil {I : Type} (c : Nat) (out : List I) : Nat := if out = [] then c else grow c
 
 /-- **The ceiling is always in `[1, BATCH_SIZE]`** (in the source; #2922's
 miscompiled binary yields `cap` itself for `cap ≥ BATCH_SIZE`). -/
@@ -45,6 +49,19 @@ theorem withBinding_le_batch (rc : Option Nat) : 1 ≤ withBinding rc ∧ withBi
 
 theorem grow_bounds {c : Nat} (h : 1 ≤ c ∧ c ≤ BATCH_SIZE) : 1 ≤ grow c ∧ grow c ≤ BATCH_SIZE := by
   unfold grow BATCH_SIZE at *; omega
+
+/-- **PROVEN** (#3071): the ceiling after `emit_lazy` stays in `[1, BATCH_SIZE]`, and an
+empty call (before the first `seed`) leaves it unchanged. -/
+theorem emitCeil_bounds {I : Type} {c : Nat} (out : List I) (h : 1 ≤ c ∧ c ≤ BATCH_SIZE) :
+    1 ≤ emitCeil c out ∧ emitCeil c out ≤ BATCH_SIZE := by
+  unfold emitCeil; split
+  · exact h
+  · exact grow_bounds h
+
+theorem emitCeil_empty {I : Type} (c : Nat) : emitCeil c ([] : List I) = c := by simp [emitCeil]
+
+theorem emitCeil_nonempty {I : Type} (c : Nat) (out : List I) (h : out ≠ []) :
+    emitCeil c out = grow c := by simp [emitCeil, h]
 
 /-- A lowered ceiling reaches `BATCH_SIZE` again (here: 10 → … → 1024 in 7 steps). -/
 theorem grow_reaches : Nat.repeat grow 7 (withBinding (some 10)) = BATCH_SIZE := by decide
@@ -195,12 +212,12 @@ theorem emitLazy_spec (c : Nat) (p : Option (Nat × List I)) (t : List (Nat × L
           omega
 
 /-- Repeated `emit_lazy` until it returns `None` (count 0), with the ceiling
-growing after every call; `fuel` bounds the calls. -/
+growing after every non-empty call (`emitCeil`); `fuel` bounds the calls. -/
 def emitAll : Nat → Nat → Option (Nat × List I) → List (Nat × List I) → List (List (Nat × I))
   | 0, _, _, _ => []
   | fuel + 1, c, p, t =>
     let r := emitLazy c p t
-    if r.1 = [] then [] else r.1 :: emitAll fuel (grow c) r.2.1 r.2.2
+    if r.1 = [] then [] else r.1 :: emitAll fuel (emitCeil c r.1) r.2.1 r.2.2
 
 /-- **The emitted batches, concatenated, are the per-row expansion in order**
 (`flat_map` over active rows of `(row, item)`), each batch is non-empty and has
@@ -226,7 +243,7 @@ theorem emitAll_spec :
       have hrest : (stream (emitLazy c p t).2.1 (emitLazy c p t).2.2).length ≤ fuel := by
         have := congrArg List.length h1
         rw [List.length_append] at this; omega
-      obtain ⟨ih1, ih2⟩ := emitAll_spec fuel (grow c) _ _ (grow_bounds hc) hrest
+      obtain ⟨ih1, ih2⟩ := emitAll_spec fuel (emitCeil c (emitLazy c p t).1) _ _ (emitCeil_bounds _ hc) hrest
       refine ⟨by rw [List.flatten_cons, ih1, h1], ?_⟩
       intro bt hbt
       rcases List.mem_cons.mp hbt with rfl | hbt
@@ -254,7 +271,7 @@ theorem batch_rows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List 
     obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hi
     exact (stream_rows_active h f x (hsub x hx)).2)
 
-/-- `finish_batch`'s row count: gathered when `start_batch` (`:604-617`) sets
+/-- `finish_batch`'s row count: gathered when `start_batch` (`:611-624`) sets
 `should_expand` — the parent has a column **or carries correlation origins**
 (`has_origins`, since #2845) — else a fresh `Batch::new(0)` whose length comes from
 the first installed column (`set_column` on an empty batch), or stays 0 when the
@@ -274,7 +291,7 @@ theorem finishLen_origins_kept : finishLen 0 true false 5 = 5 := rfl
 
 /-- **Latent row loss**: a no-alias emitter over a parent with no column and no
 origins emits `count` results as a 0-row batch. The only no-alias user, ExpandInto
-(`expand_into.rs:95`), always has both endpoint columns bound, so this is not
+(`expand_into.rs:96`), always has both endpoint columns bound, so this is not
 reachable today. -/
 theorem finishLen_drops : finishLen 0 false false 5 = 0 := rfl
 

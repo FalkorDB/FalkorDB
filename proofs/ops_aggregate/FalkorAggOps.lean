@@ -33,7 +33,7 @@ fail, the 3 `agrees_*` pass; `bug_list_literal_of_aggregates_collapses` passes s
 | `countBatch`/`countStarBatch`, `sumBatch`, `collectBatch`, `mmBatch`, `avgBatch`+`aboutToOverflow`+`finalizeAvg`, `stdevBatch`+`finalizeStdev`, `pctFold` | functions/aggregation.rs:350, :394, :371, :421/:498, :451/:338/:599, :565/:683, :531 (8621212fc) |
 | `maxScalar` | aggregation.rs:119 (scalar max body; NaN comparisons ignored since #2917) |
 | `limitOp`, `skipOp` | ops/limit.rs:52, ops/skip.rs:50 |
-| `ins`/`isort`, `rustStep`, `semStep` | ops/sort.rs:302 `build_full_sort`, :403 `build_top_k`, :504 `next` (cap = k+s) |
+| `ins`/`isort`, `rustStep`, `semStep` | ops/sort.rs:299 `build_full_sort`, :400 `build_top_k`, :501 `next` (cap = `record_cap` = k+s, #3071) |
 | `project_flatten`, `unwindOne`/`chunks` | ops/project.rs:54, ops/unwind.rs:90 + batched emitter |
 | `groupInsert`/`groupAll`/`lookupG`, `keylessGroups` | ops/aggregate.rs `GroupMap` :65, per-row :710/:972, keyless pre-insert :533-540/:891-898 |
 | `dedupBy`, `distinctCountBatches` | ops/distinct.rs:62; apply.rs:283 dedupers clear |

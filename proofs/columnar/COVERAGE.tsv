@@ -62,9 +62,9 @@ graph/src/runtime/batch.rs	value_at	1424	PROVEN	Row viewAt; toOwned_get_eq_view 
 graph/src/runtime/batch.rs	to_owned_row	1439	PROVEN	Row toOwned_bound_slot, toOwned_unbound_slot, toOwned_get_eq_view, toOwned_trailing_unbound, pushSlots_spec (one Row::push_slot per column, #3059)
 graph/src/runtime/batch.rs	next	1471	PROVEN	Batch.active (active_lt)
 graph/src/runtime/batch.rs	size_hint	1494	PROVEN	sizeHint: sizeHint_spec
-graph/src/runtime/batch.rs	set_argument_batch	1603	PROVEN	OpTree.setArg: setArg_args, setArg_resets
-graph/src/runtime/batch.rs	inspect_context	1735	PROVEN	inspectCtx: inspectCtx_spec
-graph/src/runtime/batch.rs	next	1784	PROVEN	opNext/leafNext: opNext_spec
+graph/src/runtime/batch.rs	set_argument_batch	1603	PROVEN	OpTree.setArg: setArg_args, setArg_resets (reset abstracts per-argument state incl. #3071 clear_bidir_dedup)
+graph/src/runtime/batch.rs	inspect_context	1736	PROVEN	inspectCtx: inspectCtx_spec
+graph/src/runtime/batch.rs	next	1785	PROVEN	opNext/leafNext: opNext_spec
 graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	PROVEN	Dispatch fromExprIR: fromExprIR_isSome, fromExprIR_sem, flip_sem, eval_cmp
 graph/src/runtime/vectorized.rs	flip	84	PROVEN	VExpr icmp_flip, fcmp_flip
 graph/src/runtime/vectorized.rs	compare_i64_column	105	PROVEN	VExpr kernelI_get, icmp_agree
@@ -148,21 +148,21 @@ graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Gather.RowIter
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Gather.RowIter.many: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Gather.rowIterNext/drainIt: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch (#2973: clamp form replaces the guarded arm); miscompiled_differs (#2922)
-graph/src/runtime/ops/batched_result_emitter.rs	seed	577	MODELLED	Emitter seedRows
-graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
-graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter drain_spec, drain_conserve
-graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
-graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter packRows_spec, stream_rows_active
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds
-graph/src/runtime/ops/batched_result_emitter.rs	reset	750	MODELLED	state cleared
-graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch: emNew_spec
-graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Gather.emNew/emWithBinding: emNew_spec
-graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)
+graph/src/runtime/ops/batched_result_emitter.rs	seed	584	MODELLED	Emitter seedRows
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	611	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	629	PROVEN	Emitter drain_spec, drain_conserve
+graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	658	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
+graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	683	PROVEN	Emitter packRows_spec, stream_rows_active
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	736	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds, emitCeil_bounds, emitCeil_empty, emitCeil_nonempty (#3071: ceiling grows only on a non-empty batch)
+graph/src/runtime/ops/batched_result_emitter.rs	reset	762	MODELLED	state cleared
+graph/src/runtime/ops/batched_result_emitter.rs	batch	771	PROVEN	Gather.emBatch: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new	785	PROVEN	Gather.emNew/emWithBinding: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	795	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)
 # runtime.rs attribute reads (RuntimeReads, 2026-10-21): the bulk fetch is the per-row read, with the graph batch / by-name reads modelled as their definitions (proofs/runtime_core models the same fns with hbg/hName as hypotheses).
-graph/src/runtime/runtime.rs	materialize_node_property	1667	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
-graph/src/runtime/runtime.rs	materialize_node_property_values	1681	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
-graph/src/runtime/runtime.rs	materialize_relationship_property	1729	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
-graph/src/runtime/runtime.rs	materialize_relationship_property_values	1741	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
+graph/src/runtime/runtime.rs	materialize_node_property	1645	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
+graph/src/runtime/runtime.rs	materialize_node_property_values	1659	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
+graph/src/runtime/runtime.rs	materialize_relationship_property	1707	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
+graph/src/runtime/runtime.rs	materialize_relationship_property_values	1719	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
 graph/src/runtime/eval.rs	ExprEval::eval_batch	1161	PROVEN	EvalBatch.laws/evalBatch_sound (expr_semantics evalBatch_eq_perRow with BatchLaws proved)
 graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1177	PROVEN	EvalBatch.laws/evalBatch_sound

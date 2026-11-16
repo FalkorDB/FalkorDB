@@ -142,7 +142,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-apply-3**: MERGE results depend on BATCH_SIZE (`merge.rs:313-343`). *Fixed by #3067 (b47d6d6a3), see Merged 2026-10-29.*
 - **W2-apply-4**: the all-bound MERGE shortcut drops matches visible to a path variable (`merge.rs:368-400`): `count(p)` is 1 where C gives 2.
 - **W2-apply-5** (low): batched Optional moves the NULL rows after the matched rows, which `collect()` exposes.
-- **W2-traverse-2**: the bidirectional dedup (`cond_traverse.rs:273-299`, `947-968`, `1267`) ignores other columns, keys on an intermediate node at 3 or more hops, and resets per batch.
+- **W2-traverse-2**: the bidirectional dedup (`cond_traverse.rs:273-299`, `947-968`, `1267`) ignores other columns, keys on an intermediate node at 3 or more hops, and resets per batch. The per-batch reset is fixed by #3071 (Lean `BidirDedup.batch_split_fixed`); the other two remain.
 - **W2-traverse-3**: an undirected anonymous collapse gives one row per direction (`cond_traverse.rs:876-942`, `expand_into.rs:182-221`): 4 rows where C gives 2.
 - **W2-traverse-4**: allShortestPaths on a directed cycle returns the path reversed (`all_shortest_paths.rs:284-288`). C is also wrong. *Fixed by #3112 (99013f34b; closes #3108), see Merged 2026-10-29.*
 - **W2-traverse-5**: algo.SPpaths/SSpaths charged cost 0 per relationship with a `costProp` configured but missing on an edge (`algo_procedures.rs`, the Dijkstra cost step); C charges 1. *Fixed by #3580 (e8ad0d334; closes #3121) for that case only, see Merged 2026-10-29. With no `costProp` at all the Dijkstra fast path still reports 0 (`CostProp.fast_unconfigured_agree`), while the enumeration path's default is 1.0 per edge; the fast-path versus enumeration disagreement is still open (C master charges 1 there since ae9ef2a73).*
@@ -209,7 +209,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W3-conc-4**: a huge `k` in `db.idx.vector.queryNodes` runs `Vec::with_capacity(k)` and SIGSEGVs (`graph.rs:3744`, `:3799`).
 - **W3-algo-1**: forged `__falkor_type` entity markers in a UDF result are trusted (`type_convert.rs:229-236`). This panics the reply or creates a dangling edge.
 - **W3-algo-2**: SHUTDOWN after a main-thread UDF aborts, because ThreadJsState drop order frees the QuickJS runtime first (`js_context.rs:129-136`).
-- **W3-runtime-1/2**: the LIMIT/SKIP budget is pushed through hard-cap traversals (`runtime.rs:594-626`), so traverse→traverse under LIMIT, and stacked SKIPs, silently lose rows.
+- **W3-runtime-1/2**: the LIMIT/SKIP budget is pushed through hard-cap traversals (`runtime.rs:594-626`), so traverse→traverse under LIMIT, and stacked SKIPs, silently lose rows. Fixed by #3071 (`hard_record_cap` = `need`: Lean `Budget.hardRecordCap_eq_need`, `hardRecordCap_fixes_traverse`, `stacked_skip_fixed`).
 - **W3-parser-9**: exponential backtracking in `parse_list_literal_or_comprehension` (`cypher.rs:2796-2803`). A 206-byte query takes 49 s; C is worse.
 
 ### Wrong results

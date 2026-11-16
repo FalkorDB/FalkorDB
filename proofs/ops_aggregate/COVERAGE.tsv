@@ -27,10 +27,10 @@ graph/src/runtime/ops/sort.rs	eq	156	PROVEN	SortCmp.heEq: heEq_partial, heapCmp_
 graph/src/runtime/ops/sort.rs	partial_cmp	165	PROVEN	SortCmp.hePartialCmp: heEq_partial
 graph/src/runtime/ops/sort.rs	cmp	173	PROVEN	SortCmp.heapCmp: heapCmp_seq_strict, lexCmp_swap, Discharge.heapCmp_main (heapCmp_swap/heapCmp_refl with Lawful sort_cmp discharged: Discharge.lawful_main)
 graph/src/runtime/ops/sort.rs	classify_sort_key	203	PROVEN	SortKey.classifySortKey: classifySortKey_get, classifyPure_lossless
-graph/src/runtime/ops/sort.rs	new	277	PROVEN	SortSt.new: sort_new_spec
-graph/src/runtime/ops/sort.rs	build_full_sort	302	PROVEN	isort, sorted_isort (+ truncate: sort_skip_limit)
-graph/src/runtime/ops/sort.rs	build_top_k	403	PROVEN	rustStep_eq_sem, topk_eq_take_sort
-graph/src/runtime/ops/sort.rs	next	504	PROVEN	sort_skip_limit (cap = k + s, saturating)
+graph/src/runtime/ops/sort.rs	new	276	PROVEN	SortSt.new: sort_new_spec (#3071: single recordCap field)
+graph/src/runtime/ops/sort.rs	build_full_sort	299	PROVEN	isort, sorted_isort (+ truncate: sort_skip_limit)
+graph/src/runtime/ops/sort.rs	build_top_k	400	PROVEN	rustStep_eq_sem, topk_eq_take_sort
+graph/src/runtime/ops/sort.rs	next	501	PROVEN	sort_skip_limit (cap = record_cap = k + s, saturating; runtime_core Budget.hardRecordCap_eq_need)
 graph/src/runtime/ops/limit.rs	new	32	PROVEN	LimitSt.new: limit_new_spec
 graph/src/runtime/ops/limit.rs	next	52	PROVEN	limitOp_spec, limit_zero
 graph/src/runtime/ops/skip.rs	new	32	PROVEN	SkipSt.new: skip_new_spec
@@ -126,8 +126,8 @@ graph/src/runtime/batch.rs	to_owned_row	1439	NOT COVERED	columnar representation
 graph/src/runtime/batch.rs	next	1471	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
 graph/src/runtime/batch.rs	size_hint	1494	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
 graph/src/runtime/batch.rs	set_argument_batch	1603	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	inspect_context	1735	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	next	1784	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	inspect_context	1736	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	next	1785	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
 graph/src/runtime/ops/commit.rs	new	45	PROVEN	CommitSt.new: commit_new_ro, commit_new_write
 graph/src/runtime/ops/filter.rs	new	39	PROVEN	StreamOps.FilterSt.new: filterNew_spec
 graph/src/runtime/ops/filter.rs	eval	57	PROVEN	StreamOps.filterEval: filterEval_bools, filter_mem, filterEval_empty, filterEval_type_error
