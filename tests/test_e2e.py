@@ -483,6 +483,46 @@ def test_collapsed_edge_ignores_uniqueness_only_among_parallel_edges():
     assert res.result_set == [[1, 2], [2, 1]]
 
 
+def test_collapsed_hops_cannot_reuse_an_edge_a_sibling_bound():
+    # A collapsed hop ignores a collision only while the pair still holds an
+    # edge no other hop of the clause is bound to. Over two parallel edges a
+    # third hop has none left (relationship uniqueness needs three distinct
+    # edges), however many siblings bound the same representative.
+    query("CREATE (a:N)-[:R]->(x:N), (a)-[:R]->(x)", write=True)
+    res = query(
+        "MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t:R]->(x) RETURN count(*)"
+    )
+    assert res.result_set == [[0]]
+    res = query(
+        "MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t:R]->(x) RETURN r, s, t"
+    )
+    assert res.result_set == []
+    # one hop read: the other two are collapsed siblings, still three hops
+    res = query(
+        "MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t:R]->(x) RETURN id(t)"
+    )
+    assert res.result_set == []
+    # two hops over two edges still match
+    res = query("MATCH (a)-[r:R]->(x), (a)-[s:R]->(x) RETURN id(r), id(s)")
+    assert len(res.result_set) == 2
+    assert all(r != s for r, s in res.result_set)
+    assert res.result_set[0][::-1] == res.result_set[1]
+    res = query("MATCH (a)-[r:R]->(x), (a)-[s:R]->(x) RETURN count(*)")
+    assert res.result_set == [[1]]
+    # three hops over three edges: 3! assignments when every hop is read
+    query("MATCH (a:N)-[:R]->(x) WITH a, x LIMIT 1 CREATE (a)-[:R]->(x)", write=True)
+    res = query(
+        "MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t:R]->(x) RETURN id(r), id(s), id(t)"
+    )
+    assert len(res.result_set) == 6
+    assert len({tuple(row) for row in res.result_set}) == 6
+    assert all(len(set(row)) == 3 for row in res.result_set)
+    res = query(
+        "MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t:R]->(x) RETURN count(*)"
+    )
+    assert res.result_set == [[1]]
+
+
 def test_collapsed_edge_uniqueness_is_scoped_to_its_union_branch():
     # The branches of a UNION reuse alias ids; collapsing `r` and `s` in one
     # branch must not relax the uniqueness the other branch applies to them.
