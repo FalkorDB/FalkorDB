@@ -6,7 +6,7 @@ A model of `graph/src/planner/mod.rs` plan construction (`Planner::plan`,
 reference semantics, with machine-checked agreement against an openCypher
 driving-table semantics (each clause maps a bag of records, plus the graph
 state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
-518 theorems. Rust source: origin/main `5c7af54f2` (planner/mod.rs cites checked against it; re-targeted across #2390, d2c42e032
+521 theorems. Rust source: origin/main `5c7af54f2` (planner/mod.rs cites checked against it; re-targeted across #2390, d2c42e032
 "plan an inline property map once", and #3335: `ExprIR::and_of`/`or_of` flattening —
 `AndOf.lean`, `tv_andOf`/`tv_orOf` — and no `Paren` past the binder: `expr_to_plan` no
 longer unwraps one, `PatternMode::descend` no longer treats it as a connective; #3297: the
@@ -23,8 +23,9 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
 | `walkFirst` / `walkLoop` | insertion-point walks mod.rs:2743-2753 / 2817-2834 |
 | `projDescend`, `applyChain` | mod.rs:2756-2769, 2764-2768 |
 | `descendOne`, `descendClause`, `satChain`, `saturated` | mod.rs:969-1012, 953-958 |
-| `insertStep`, `stitchLoop`, `rustStitch` | mod.rs:2774-2850 (`push_sibling_tree(Left)` / `push_child_tree`, Apply-wrap of a CartesianProduct) |
-| `needsApplyWrapping`, `addArgs` | mod.rs:2874-2907, 865-899 |
+| `insertStep`, `stitchLoop`, `rustStitch` | mod.rs:2775-2851 (`push_sibling_tree(Left)` / `push_child_tree`, Apply-wrap of a CartesianProduct) |
+| `needsApplyWrapping`, `addArgs` | mod.rs:2876-2907, 866-900 |
+| `Mentions`, `planVars`, `readsPlan` (Stitch.lean) | `GetVariables::get_variables` runtime/runtime.rs:261, `ir_references_variable` optimizer/references.rs:41, `reads_plan_variables` mod.rs:2917-2945 (#3100) |
 | `planProject`, `ProjC` | `plan_project` mod.rs:2415-2586 |
 | `planMerge` | MERGE arm mod.rs:3100-3133 |
 | `planProc` | CALL procedure arm mod.rs:2941-3032 |
@@ -73,7 +74,9 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
   (MERGE without path as last clause), `create_loop_correct` (CREATE with or without named path, not
   last; the path bound since #2829), `create_first_correct` (CREATE without path as last clause).
 * `cp_stitch_sound`: prepending a MATCH plan to a CartesianProduct is right when no other component
-  reads its variables.
+  reads its variables. #3100: `cp_stitch_reader_wrapped` (a product that names or reads a variable the
+  plan binds Apply-wraps it), `cp_stitch_shape` (otherwise it is the first branch),
+  `cp_stitch_keeps_correlation` (bug 2's repro now yields the correlated rows).
 * WHERE decomposition (Decomp/ToPlan/Filter/FilterPlan): `collect_value`, `collect_passes` — rebuilding a
   predicate with pattern placeholders is exact in three-valued logic; `collect_inv`/`good_final`/`fresh_final`
   — the inline ids (keyed by id only) are distinct and fresh when the patterns share one scope;
@@ -101,7 +104,7 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
   `inlineAttrs_passes`, EXPLAIN strings.
 * Counterexamples backing the bugs: `merge_path_last_misplaced`, `merge_path_last_skips_merge`,
   `create_path_last_misplaced`, `create_path_last_skips_create`,
-  `selfloop_ignores_chain`, `cp_stitch_shape` + `cp_stitch_loses_correlation` (by `decide`),
+  `selfloop_ignores_chain`, `pre3100_cp_stitch_shape` + `cp_stitch_loses_correlation` (by `decide`; bug 2, fixed by #3100),
   `where_scan_indistinguishable`.
 
 ## CONFIRMED bugs (Rust release vs C `bin/macos-arm64v8-release/falkordb.so`, live servers; plus Rust tests)
@@ -115,7 +118,9 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    `FOREACH (i IN [1] | CREATE (y:Y) MERGE p=(y)-[:T]->(:X))`. Adding `RETURN …` works.
    Fix: add `IR::PathBuilder(_)` to the first walk's list (and the FOREACH body walk), or reuse the
    loop walk. Tests `bug_merge_named_path_as_last_clause`, `…_last_in_call_body`, `…_last_in_foreach_body`.
-2. **A `MATCH … WHERE` followed by a multi-component MATCH is cross-joined, not correlated**:
+2. **(FIXED by #3100 — `reads_plan_variables` Apply-wraps the previous plan when a branch of the
+   product names or reads one of its variables; Lean `cp_stitch_keeps_correlation`, history
+   `pre3100_cp_stitch_shape`.)** **A `MATCH … WHERE` followed by a multi-component MATCH is cross-joined, not correlated**:
    `needs_apply_wrapping` (mod.rs:2874-2894) treats a Filter-over-scan as a plain CP branch and
    mod.rs:2809-2813 prepends it; the component that mentions the earlier variable was planned as if it
    were bound, but under the CartesianProduct it re-binds it. `MATCH (a) WHERE a.v = 0 MATCH (a)-[:R]->(b), (c:C) RETURN a.v, b.v, c.v`
@@ -207,7 +212,8 @@ C 0. The binder half (`node_labels`) is in proofs/binder `RemoveLabels.lean`.
 * #3101 (MERGE p=… as last clause): adds `PathBuilder` to the first walk and steps over it in the FOREACH /
   CALL body walk — fixes bug 1 (`merge_path_last_misplaced` no longer applies: `walkFirst` would pass it).
 * #3100 (correlate MATCH … WHERE with the next CP): Apply-wraps when the CP subtree reads a variable the
-  previous plan binds (`reads_plan_variables`) — fixes bug 2 (`cp_stitch_sound` is the remaining CP case).
+  previous plan binds (`reads_plan_variables`) — modelled (`readsPlan` in `insertStep`), fixes bug 2
+  (`cp_stitch_keeps_correlation`; `cp_stitch_sound` is the remaining CP case).
 * #3102 merged (61284ea4f), see bug 4 and HopOrder.lean.
 * #2981 (inline attrs reading another pattern variable): splits inline maps (`split_inline_attrs`) and checks
   the moved entries where the variable is bound — changes `inline_attrs_to_filter` call sites in `plan_match`

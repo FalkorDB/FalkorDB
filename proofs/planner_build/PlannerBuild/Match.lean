@@ -9,8 +9,10 @@ import PlannerBuild.Clauses
   shape the planner built before #3102. **Fixed by #3102 (61284ea4f)**: the planner builds
   `ExpandInto(Scan(res))` (mod.rs:2262-2285), `selfloop_scan_keeps_chain`.
 * `cp_stitch_loses_correlation` (bug 2) / `cp_stitch_sound`: a MATCH plan
-  prepended to the next MATCH's CartesianProduct (mod.rs:2809-2813) is
-  correct only when no other component reads its variables.
+  prepended to the next MATCH's CartesianProduct (mod.rs:2810-2814) is
+  correct only when no other component reads its variables. **Fixed by #3100**:
+  `reads_plan_variables` Apply-wraps it then (`cp_stitch_reader_wrapped`,
+  `cp_stitch_keeps_correlation`; the old decision is `pre3100_cp_stitch_shape`).
 * `where_scan_indistinguishable` (bug 3): `MATCH (a) WHERE φ MATCH (a)-->(b)`
   stitches into the exact tree shape `is_planner_scan_subtree`
   (optimizer/select_scan_node.rs:315) treats as prunable. **Fixed by #2390 (d2c42e032)**:
@@ -24,7 +26,7 @@ variable {V G : Type} (S : Sem V G)
 /-! ## Composition -/
 
 /-- A clause plan together with its meaning at the slot of walk `w`. -/
-def Chain (w : Plan → Path) : List (Plan × (Rec V → Res V G → Res V G)) → Prop
+def Chain [Mentions] (w : Plan → Path) : List (Plan × (Rec V → Res V G → Res V G)) → Prop
   | [] => True
   | c :: cs => Implements S w (fun _ => True) c.1 c.2 ∧ Chain w cs
 
@@ -35,7 +37,7 @@ def compose (first : Rec V → G → Res V G) :
   | [], r, g => first r g
   | F :: Fs, r, g => F r (compose first Fs r g)
 
-theorem nestLoop_correct (ps : List (Plan × (Rec V → Res V G → Res V G))) (p0 : Plan)
+theorem nestLoop_correct [Mentions] (ps : List (Plan × (Rec V → Res V G → Res V G))) (p0 : Plan)
     (h : Chain S walkLoop ps) (r : Rec V) (g : G) :
     ev S (nestLoop (ps.map Prod.fst ++ [p0])) r g = compose (ev S p0) (ps.map Prod.snd) r g := by
   induction ps generalizing r g with
@@ -56,7 +58,7 @@ theorem nestLoop_correct (ps : List (Plan × (Rec V → Res V G → Res V G))) (
 implements `Fₙ` at the first-walk slot and every middle one implements its
 `Fᵢ` at the loop-walk slot, the stitched plan (`plan_query`) evaluates to
 `Fₙ ∘ … ∘ F₂ ∘ ⟦p₁⟧`. -/
-theorem query_correct (p1 : Plan) (mid : List (Plan × (Rec V → Res V G → Res V G)))
+theorem query_correct [Mentions] (p1 : Plan) (mid : List (Plan × (Rec V → Res V G → Res V G)))
     (last : Plan) (Fl : Rec V → Res V G → Res V G)
     (hl : Implements S walkFirst (fun _ => True) last Fl) (hm : Chain S walkLoop mid)
     (r : Rec V) (g : G) :
@@ -99,12 +101,34 @@ theorem selfloop_scan_empty_chain (s sc : Nat) (res : Plan) (r : Rec V) (g : G)
 /-! ## Bug 2: a MATCH stitched as a CartesianProduct branch -/
 
 /-- `insertStep` at a CartesianProduct with a plan that does not need wrapping
-(its root is a scan / traversal / Filter over one, mod.rs:2874-2894) makes it
-the first branch. -/
-theorem cp_stitch_shape (cs : List Plan) (n : Plan) (h : needsApplyWrapping n = false) :
+(its root is a scan / traversal / Filter over one, mod.rs:2876-2907) and whose
+variables no operator of the product names or reads (`reads_plan_variables`,
+#3100) makes it the first branch. -/
+theorem cp_stitch_shape [Mentions] (cs : List Plan) (n : Plan) (h : needsApplyWrapping n = false)
+    (hr : readsPlan (.node .cartesian cs) n = false) :
     fillAt (.node .cartesian cs) [] n = .node .cartesian (n :: cs) := by
   unfold fillAt
-  rw [insertStep_CP _ [] n cs rfl, h]; rfl
+  rw [insertStep_CP _ [] n cs rfl, h, hr]; rfl
+
+/-- **#3100**: when the product names or reads a variable `n` binds, `n` is
+Apply-wrapped like a data-producing clause, whatever its root. -/
+theorem cp_stitch_reader_wrapped [Mentions] (cs : List Plan) (n : Plan)
+    (hr : readsPlan (.node .cartesian cs) n = true) :
+    fillAt (.node .cartesian cs) [] n = .node .apply [n, .node .cartesian (cs.map addArgs)] := by
+  unfold fillAt
+  rw [insertStep_CP _ [] n cs rfl, hr, Bool.or_true]; rfl
+
+/-- The CartesianProduct decision before #3100 (base 343e077f2, mod.rs:2775-2778):
+`needs_apply_wrapping(n)` alone. -/
+def pre3100InsertCP (cs : List Plan) (n : Plan) : Plan :=
+  if needsApplyWrapping n then .node .apply [n, .node .cartesian (cs.map addArgs)]
+  else .node .cartesian (n :: cs)
+
+/-- History (bug 2, fixed by #3100): before #3100 a plan that needs no wrapping
+always became a plain first branch of the product. -/
+theorem pre3100_cp_stitch_shape (cs : List Plan) (n : Plan) (h : needsApplyWrapping n = false) :
+    pre3100InsertCP cs n = .node .cartesian (n :: cs) := by
+  simp [pre3100InsertCP, h]
 
 /-- The branches are evaluated on the operator's argument row, not on the
 rows of the new first branch: -/
@@ -153,6 +177,36 @@ theorem cp_stitch_loses_correlation :
     correlated n c [] = [] ∧ (ev cexS (.node .cartesian [n, c]) [] ()).1 ≠ [] := by
   decide
 
+/-- The variables of the repro: the scan binds `a` (0); the traversal names its
+endpoints `a` and `b` (1). -/
+def cexM : Mentions where
+  vars := fun o => match o with
+    | .scan 0 => [0]
+    | .hop _ 0 => [0, 1]
+    | _ => []
+  refs := fun _ _ => false
+
+/-- **Bug 2 fixed by #3100**: the bug-2 shape (`pre3100_cp_stitch_shape`) gave the
+cross join of `cp_stitch_loses_correlation`; with `reads_plan_variables` the scan is
+Apply-wrapped, the traversal gets an `Argument` tap, and the stitched plan yields
+exactly the correlated rows (none). -/
+theorem cp_stitch_keeps_correlation :
+    let n := Plan.node (.scan 0) []
+    let c := Plan.node (.hop .condTraverse 0) []
+    pre3100InsertCP [c] n = .node .cartesian [n, c] ∧
+    @readsPlan cexM (.node .cartesian [c]) n = true ∧
+    @fillAt cexM (.node .cartesian [c]) [] n =
+      .node .apply [n, .node .cartesian [.node (.hop .condTraverse 0) [.node .argument []]]] ∧
+    (ev cexS (@fillAt cexM (.node .cartesian [c]) [] n) [] ()).1 = correlated n c [] := by
+  intro n c
+  have hr : @readsPlan cexM (.node .cartesian [c]) n = true := rfl
+  have ha : addArgs c = .node (.hop .condTraverse 0) [.node .argument []] := by simp [c, addArgs]
+  have hf : @fillAt cexM (.node .cartesian [c]) [] n =
+      .node .apply [n, .node .cartesian [.node (.hop .condTraverse 0) [.node .argument []]]] := by
+    rw [@cp_stitch_reader_wrapped cexM [c] n hr, List.map_singleton, ha]
+  refine ⟨rfl, hr, hf, ?_⟩
+  rw [hf]; decide
+
 /-! ## Bug 3: the WHERE of the previous MATCH looks like a planner scan -/
 
 /-- `is_planner_scan_subtree` (select_scan_node.rs:239-252). -/
@@ -165,7 +219,7 @@ def isPlannerScanSubtree : Plan → Bool
 next MATCH's leaf traversal gives a traversal whose child is a planner scan
 subtree — the optimizer prunes it as its own (select_scan_node.rs:1186) and
 the WHERE disappears. -/
-theorem where_scan_indistinguishable (φ s t : Nat) :
+theorem where_scan_indistinguishable [Mentions] (φ s t : Nat) :
     let prev := Plan.node (.filter φ) [.node (.scan s) []]
     let next := Plan.node (.hop .condTraverse t) []
     fillAt next (slotLoop next) prev = .node (.hop .condTraverse t) [prev] ∧
