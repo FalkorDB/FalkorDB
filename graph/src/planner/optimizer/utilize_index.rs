@@ -90,8 +90,7 @@ type Scan<T> = Option<(T, Arc<String>, IndexQuery<QueryExpr<Variable>>)>;
 /// Shared interface for the two pattern kinds that can back an index
 /// scan (node labels and relationship types). Every kind-specific
 /// decision in the utilization passes — which IR variant to match,
-/// which IR variant to emit, which indexer to query, and whether
-/// function-based predicates like `distance()` are supported — lives
+/// which IR variant to emit, and which indexer to query — lives
 /// here so the passes themselves are uniform.
 trait IndexSubject: Clone {
     /// Kind-specific metadata threaded through a rewrite: `()` for

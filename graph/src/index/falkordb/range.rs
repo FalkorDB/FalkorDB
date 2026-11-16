@@ -665,7 +665,7 @@ impl RangeIndex {
         let Self { numeric, tag, geo } = self;
         numeric.for_each_stored_key(value, &mut emit);
         tag.for_each_stored_key(value, &mut emit);
-        geo.for_each_stored_key(value, emit);
+        geo.for_each_stored_key(value, &mut emit);
     }
 
     /// Append the tuples `(value, id)` takes in this column to `out`, each with the tuples of its

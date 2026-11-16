@@ -236,8 +236,8 @@ impl<'a> NodeByIndexScanOp<'a> {
                         // Under the flag, a member no kind holds (a date, a map) keeps the list
                         // whole: `can_utilize_index` then sends the query to a scan, whose retained
                         // filter checks every member. Dropping it would lose the rows holding it,
-                        // which the filter cannot add back. A `NULL` member matches nothing and
-                        // is still dropped.
+                        // which the filter cannot add back. A `NULL` member matches nothing, and
+                        // is dropped only when the rest of the list is servable.
                         let unservable = cfg!(feature = "index-falkordb")
                             && items.iter().any(|v| !keep(v) && !matches!(v, Value::Null));
                         let items = if unservable || items.iter().all(keep) {
