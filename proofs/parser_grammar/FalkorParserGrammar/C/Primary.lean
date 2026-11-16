@@ -19,7 +19,6 @@ structure FnI where
   count : Bool
 
 def nmReduce : Nat := 4000003
-def nmPlaceholder : Nat := 4000004
 
 /-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs:2772-2787). -/
 def argItemsP (pe : PE) : Nat → List ET → P (List ET)
@@ -46,13 +45,13 @@ def callTail (pe : PE) (F : Nat) (fi : FnI) : P ET := do
       if !fi.count then fail else do
       if dis then fail else do
       tok .rparen
-      pure (.node (.func fi.id true) [leaf (.int 1), leaf (.var nmPlaceholder)])
+      pure (.node (.func fi.id true) [leaf (.int 1), leaf .aggPh])
     else do
       let args ← argsP pe F []
       if !(fi.lo ≤ args.length ∧ args.length ≤ fi.hi) then fail else do
       if args.any (fun a => (aggName a).isSome) then fail else do
       let args := if dis then [ET.node .distinct args] else args
-      pure (.node (.func fi.id true) (args ++ [leaf (.var nmPlaceholder)]))
+      pure (.node (.func fi.id true) (args ++ [leaf .aggPh]))
   else do
     let args ← argsP pe F []
     if !(fi.lo ≤ args.length ∧ args.length ≤ fi.hi) then fail else do

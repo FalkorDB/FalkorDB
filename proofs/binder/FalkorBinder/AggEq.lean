@@ -5,7 +5,7 @@
 | --- | --- |
 | `RV`, `RD`, `RE` | raw (pre-bind) `ExprIR<Arc<String>>` payloads and trees |
 | `disc` | `std::mem::discriminant` of the `ExprIR` variant |
-| `isAggPlaceholder` | binder.rs:2631-2633 |
+| `isAggPlaceholder` | binder.rs:2778-2780 |
 | `exprIrEq` | `expr_ir_eq` binder.rs:2665-2683 |
 | `nodesEq` | `nodes_eq` binder.rs:2635-2663 |
 | `structEq` | `raw_exprs_structurally_equal` binder.rs:2627-2684 |
@@ -38,6 +38,8 @@ inductive RD
   | param (p : String)
   | quant (kind : Nat) (v : String)
   | listComp (v : String)
+  /-- `ExprIR::AggOrderPlaceholder` (#3016; before, `Variable("__agg_order_by_placeholder__")`) -/
+  | aggPh
   | other (tag : Nat)
   deriving DecidableEq, Repr
 
@@ -50,16 +52,28 @@ def RE.d : RE → RD | .node d _ => d
 /-- Variant discriminant: payloads are ignored. -/
 def disc : RD → Nat
   | .var _ => 0 | .func _ _ => 1 | .const _ => 2 | .prop _ => 3 | .param _ => 4
-  | .quant _ _ => 5 | .listComp _ => 6 | .other t => 7 + t
+  | .quant _ _ => 5 | .listComp _ => 6 | .aggPh => 7 | .other t => 8 + t
 
 def placeholder : String := "__agg_order_by_placeholder__"
 
+/-- `is_agg_placeholder`: `matches!(node, ExprIR::AggOrderPlaceholder)`. -/
 def isAggPlaceholder : RD → Bool
+  | .aggPh => true
+  | _ => false
+
+theorem isAggPlaceholder_iff (d : RD) : isAggPlaceholder d = true ↔ d = .aggPh := by
+  cases d <;> simp [isAggPlaceholder]
+
+/-- Before #3016 the placeholder was the variable `__agg_order_by_placeholder__`. -/
+def pre3016_isAggPlaceholder : RD → Bool
   | .var v => v == placeholder
   | _ => false
 
-theorem isAggPlaceholder_iff (d : RD) : isAggPlaceholder d = true ↔ d = .var placeholder := by
-  cases d <;> simp [isAggPlaceholder]
+/-- A user variable spelled like the placeholder (backticked) is no longer skipped
+when comparing aggregates; before #3016 it was. -/
+theorem user_var_not_placeholder :
+    isAggPlaceholder (.var placeholder) = false ∧ pre3016_isAggPlaceholder (.var placeholder) = true :=
+  ⟨rfl, by simp [pre3016_isAggPlaceholder]⟩
 
 variable (feq : Nat → Nat → Bool)
 
@@ -164,7 +178,7 @@ theorem const_kinds_conflated (i : Int) (f : Nat) : exprIrEq feq (.const (.int i
 def aggOf (k : RV) : RE :=
   .node (.func "max" true)
     [.node (.other 20) [.node (.prop "v") [.node (.var "n") []], .node (.const k) []],
-     .node (.var placeholder) []]
+     .node .aggPh []]
 
 /-- The CONFIRMED bug: they compare equal, so ORDER BY `max(n.v % 4.0)` is
 replaced by the alias of `max(n.v % 3)` (binder.rs:2606-2610). C rejects the

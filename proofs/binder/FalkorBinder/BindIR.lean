@@ -108,10 +108,11 @@ def deleteOk {B : Type} (mayEntity : B → Bool) (es : List B) : Bool := es.all 
 theorem deleteOk_iff {B : Type} (m : B → Bool) (es : List B) : deleteOk m es = true ↔ ∀ e ∈ es, m e = true := by
   simp [deleteOk]
 
-def returnStarOk (all : Bool) (env : Env) : Bool := !all || env.any fun kv => !kv.1.startsWith "_"
+/-- Over the scope's names (`Scope` derefs to `names`; reserved slots are never seen). -/
+def returnStarOk (all : Bool) (env : Env) : Bool := !all || env.names.any fun k => !k.startsWith "_"
 
 theorem returnStarOk_iff (all : Bool) (env : Env) :
-    returnStarOk all env = false ↔ all = true ∧ ∀ kv ∈ env, kv.1.startsWith "_" = true := by
+    returnStarOk all env = false ↔ all = true ∧ ∀ k ∈ env.names, k.startsWith "_" = true := by
   simp [returnStarOk]
 
 /-! ## CALL … YIELD -/
@@ -171,9 +172,10 @@ theorem yield_requires_entity (fields : List Name) (ys : List (Name × Option Na
   simp [this]
 
 /-- Binding one yield (binder.rs:625-656): `YIELD f AS a` registers `a` with the
-variable's name set to the source field; without `YIELD` the variable is hidden
-under `_hidden_{id}_{name}` so `RETURN *` ignores it. -/
-def bindYield (explicit : Bool) (hidden : Nat → Name → Name) (e : Env) (depth : Nat)
+variable's name set to the source field; without `YIELD` the variable is
+reserved nameless (binder.rs:813-819; before #3016 hidden under
+`_hidden_{id}_{name}`), so neither an alias nor `RETURN *` reaches it. -/
+def bindYield (explicit : Bool) (e : Env) (depth : Nat)
     (y : Name × Option Name) : Except String (Env × Var) :=
   if explicit then
     match defineName e depth y.1 .any true with
@@ -183,16 +185,25 @@ def bindYield (explicit : Bool) (hidden : Nat → Name → Name) (e : Env) (dept
       | none => .ok (e1, v)
   else
     let v := freshVar e y.1 .any depth
-    .ok (e.insert (hidden v.id y.1) v, v)
+    .ok (e.reserve v, v)
 
-theorem bindYield_alias (hidden : Nat → Name → Name) (e : Env) (d : Nat) (n f : Name) (e1 : Env) (v : Var)
+theorem bindYield_alias (e : Env) (d : Nat) (n f : Name) (e1 : Env) (v : Var)
     (h : defineName e d n .any true = .ok (e1, v)) :
-    bindYield true hidden e d (n, some f) = .ok (e1.insert n { v with name := f }, { v with name := f }) := by
+    bindYield true e d (n, some f) = .ok (e1.insert n { v with name := f }, { v with name := f }) := by
   simp [bindYield, h]
 
-theorem bindYield_hidden (hidden : Nat → Name → Name) (e : Env) (d : Nat) (y : Name × Option Name) :
-    bindYield false hidden e d y =
-      .ok (e.insert (hidden e.length y.1) (freshVar e y.1 .any d), freshVar e y.1 .any d) := rfl
+theorem bindYield_hidden (e : Env) (d : Nat) (y : Name × Option Name) :
+    bindYield false e d y =
+      .ok (e.reserve (freshVar e y.1 .any d), freshVar e y.1 .any d) := rfl
+
+/-- The hidden yield adds no name (so `RETURN *` and aliases cannot see it) and,
+on a covering table, takes the fresh slot `len()`. -/
+theorem bindYield_hidden_reserved (e : Env) (d : Nat) (y : Name × Option Name) (h : e.Covers) :
+    bindYield false e d y =
+      .ok (e ++ [(.rsv, freshVar e y.1 .any d)], freshVar e y.1 .any d) ∧
+    (e.reserve (freshVar e y.1 .any d)).names = e.names := by
+  refine ⟨by rw [bindYield_hidden, reserve_fresh_eq h], ?_⟩
+  rw [reserve_fresh_eq h, Env.names_append]; simp [Env.names]
 
 /-! ## The dispatcher -/
 
@@ -228,7 +239,6 @@ structure Subs where
   mayEntity : NE → Bool
   columns : RC → List Name
   labels : LabelsOf
-  hidden : Nat → Name → Name
   callSub : St → RC → Bool → Except String St
   bindBranch : RC → Except String Unit
 
@@ -291,7 +301,7 @@ def bindIR : St → RC → Except String St
       match (if explicit then yieldOk proc fields ys else .ok ()) with
       | .error e => .error e
       | .ok () =>
-        match seqE (fun st y => (bindYield explicit S.hidden st.cur st.depth y).map
+        match seqE (fun st y => (bindYield explicit st.cur st.depth y).map
             fun r => { st with cur := r.1 }) st1 ys with
         | .error e => .error e
         | .ok st2 => match filter with
@@ -339,7 +349,7 @@ theorem delete_nonentity (st st1 : St) (es : List NE) (h : seqE S.expr st es = .
     bindIR S st (.delete es) = .error "DELETE can only be called on nodes, paths and relationships" := by
   simp [bindIR, h, hd]
 
-theorem return_star_empty (st : St) (p : Nat) (h : ∀ kv ∈ st.cur, kv.1.startsWith "_" = true) :
+theorem return_star_empty (st : St) (p : Nat) (h : ∀ k ∈ st.cur.names, k.startsWith "_" = true) :
     bindIR S st (.return_ true p) = .error "RETURN * is not allowed when there are no variables in scope" := by
   have : returnStarOk true st.cur = false := (returnStarOk_iff true st.cur).2 ⟨rfl, h⟩
   simp [bindIR, this]
@@ -366,12 +376,20 @@ theorem union_state (st st' : St) (bs : List RC) (h : bindIR S st (.union bs) = 
 
 /-! ## CALL {} -/
 
+/-- What a returning CALL body hands back: its final table's names
+(`subquery_env.names`, binder.rs:921-925); reserved slots carry no name. -/
+def subqueryReturns (inner : Env) : List (Name × Var) :=
+  inner.filterMap fun kv => match kv.1 with | .name n => some (n, kv.2) | .rsv => none
+
+/-- Before #3016 internal reservations were named entries told apart by prefix. -/
 def internalPrefixes : List String := ["_slot_", "__agg_placeholder_", "_quant_", "_lc_", "_reduce_"]
 
 def isInternal (n : Name) : Bool := internalPrefixes.any fun p => n.startsWith p
 
-/-- What a returning CALL body hands back: its final table minus internal reservations. -/
-def subqueryReturns (inner : Env) : Env := inner.filter fun kv => !isInternal kv.1
+/-- The pre-#3016 filter: named entries minus every internal-looking prefix —
+which also dropped a user alias such as `_lc_x`. -/
+def pre3016_subqueryReturns (inner : Env) : List (Name × Var) :=
+  (subqueryReturns inner).filter fun kv => !isInternal kv.1
 
 /-- Steps 3-4 of `bind_call_subquery`: restore the outer table, reject a returned
 name the outer scope already has, then project each returned name to a fresh
@@ -394,10 +412,35 @@ theorem callSubquery_collision (outer inner : Env) (d : Nat) (kv : Name × Var) 
   have : (subqueryReturns inner).any (fun kv => outer.has kv.1) = true := List.any_eq_true.2 ⟨kv, hk, h⟩
   exact ⟨"already declared in outer scope", by simp [bindCallSubquery, this]⟩
 
-/-- No internal reservation is ever returned. -/
-theorem subqueryReturns_noInternal (inner : Env) (kv : Name × Var) (h : kv ∈ subqueryReturns inner) :
-    isInternal kv.1 = false := by
-  simp only [subqueryReturns, List.mem_filter, Bool.not_eq_true'] at h; exact h.2
+/-- No internal reservation is ever returned: exactly the named entries are,
+and the returned names are the scope's names. -/
+theorem subqueryReturns_noInternal (inner : Env) (kv : Name × Var) :
+    kv ∈ subqueryReturns inner ↔ (Key.name kv.1, kv.2) ∈ inner := by
+  obtain ⟨n, v⟩ := kv
+  simp only [subqueryReturns, List.mem_filterMap]
+  constructor
+  · rintro ⟨⟨k, w⟩, hm, hk⟩
+    cases k with
+    | name m => simp at hk; obtain ⟨rfl, rfl⟩ := hk; exact hm
+    | rsv => simp at hk
+  · intro hm; exact ⟨_, hm, rfl⟩
+
+theorem subqueryReturns_names (inner : Env) : (subqueryReturns inner).map (·.1) = inner.names := by
+  induction inner with
+  | nil => rfl
+  | cons p r ih =>
+    obtain ⟨k, v⟩ := p
+    cases k <;> simp [subqueryReturns, Env.names] at ih ⊢ <;> exact ih
+
+/-- A user alias with an internal-looking prefix is returned since #3016; before, it was
+silently dropped: `CALL { RETURN 1 AS _lc_x } RETURN _lc_x` failed with
+"'_lc_x' not defined". -/
+theorem lc_alias_returned :
+    subqueryReturns [(.name "_lc_x", ⟨"_lc_x", 0, 1, .any⟩)] = [("_lc_x", ⟨"_lc_x", 0, 1, .any⟩)] ∧
+    pre3016_subqueryReturns [(.name "_lc_x", ⟨"_lc_x", 0, 1, .any⟩)] = [] := by
+  have h : "_lc_x".startsWith "_lc_" = true := by simp
+  refine ⟨rfl, ?_⟩
+  simp [pre3016_subqueryReturns, subqueryReturns, isInternal, internalPrefixes, h]
 
 theorem foldProject_covers (depth : Nat) : ∀ (ret : List (Name × Var)) (acc : Env × List (Var × Var)),
     acc.1.Covers → (∀ kv ∈ ret, acc.1.has kv.1 = false) → (ret.map (·.1)).Nodup →
@@ -412,7 +455,7 @@ theorem foldProject_covers (depth : Nat) : ∀ (ret : List (Name × Var)) (acc :
       simp only [projectName, Env.insert_new_eq (hn kv (by simp)), Env.has, List.any_append,
         List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff]
       refine ⟨by simpa [Env.has] using hn kv' (by simp [hkv']), ?_⟩
-      rw [beq_eq_false_iff_ne]; intro e; exact hd.1 ⟨kv', hkv', e.symm⟩
+      rw [beq_eq_false_iff_ne]; intro e; exact hd.1 ⟨kv', hkv', (Key.name.inj e).symm⟩
     · exact hd.2
 
 /-- With distinct returned names, the outer table stays covering: every returned

@@ -36,10 +36,13 @@ def fmtOp : EOp → String
   | .patComp => "pattern comp"
   | .shortest .. => "shortestPath()"
   | .pattern => "<pattern>"
+  | .aggPh => "__agg_order_by_placeholder__"
   | .other _ => "?"
 
 theorem fmtOp_var (v : Nat) : fmtOp (.var v) = toString v := rfl
 theorem fmtOp_param (p : Nat) : fmtOp (.param p) = "@" ++ toString p := rfl
+/-- #3016: the placeholder prints as the old variable name did (ast.rs:407). -/
+theorem fmtOp_aggPh : fmtOp .aggPh = "__agg_order_by_placeholder__" := rfl
 theorem fmtOp_prop (p : Nat) : fmtOp (.prop p) = "property(" ++ toString p ++ ")" := rfl
 
 /-- `impl Display for QuantifierType` (ast.rs:424-436). -/
