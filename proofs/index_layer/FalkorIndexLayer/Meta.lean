@@ -6,8 +6,8 @@ Line numbers are from origin/main (5c7af54f2), located by item name.
 | Lean | Rust |
 | --- | --- |
 | `IType` | `IndexType` `mod.rs:97` |
-| `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:108-168` |
-| `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:193`, `Hash::hash` `mod.rs:204` |
+| `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:108-201` (geo sub-field since #2975) |
+| `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:205`, `Hash::hash` `mod.rs:217` |
 | `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:888`) |
 | `Idx` | `Index` `mod.rs:876` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
 | `Idx.*` accessors / mutators | `mod.rs:1049-2241` (each cited below) |
@@ -70,54 +70,63 @@ structure Field where
   vopts : Option VecOpts
   numArr : Option String
   strArr : Option String
+  /-- `geo_name` (#2975): the GEO sub-field `range:{attr}:geo` of a Range field. -/
+  geo : Option String := none
   deriving DecidableEq, Repr
 
-/-- `Field::make_arr_names` (`mod.rs:122`). The `name` is a `CString` built from
-a Rust `String`, so `to_str()` succeeds and `format!` adds no NUL: both
-`CString::new(..).ok()` are `Some`. -/
-def makeArrNames (name : String) (ty : IType) : Option String × Option String :=
-  if ty = .range then (some (name ++ ":numeric:arr"), some (name ++ ":string:arr")) else (none, none)
+/-- `Field::make_arr_names` (`mod.rs:127`). The `name` is a `CString` built from
+a Rust `String`, so `to_str()` succeeds and `format!` adds no NUL: every
+`CString::new(..).ok()` is `Some`. Since #2975 it also names the GEO sub-field. -/
+def makeArrNames (name : String) (ty : IType) : Option String × Option String × Option String :=
+  if ty = .range then (some (name ++ ":numeric:arr"), some (name ++ ":string:arr"), some (name ++ ":geo"))
+  else (none, none, none)
 
-/-- `Field::new` (`mod.rs:138`). -/
+/-- `Field::new` (`mod.rs:144`). -/
 def Field.new (name : String) (ty : IType) (o : Option TextOpts) : Field :=
   { name, ty, options := o, vopts := none,
-    numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
+    numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2.1,
+    geo := (makeArrNames name ty).2.2 }
 
-/-- `Field::new_with_vector_options` (`mod.rs:155`). -/
+/-- `Field::new_with_vector_options` (`mod.rs:162`). -/
 def Field.newVec (name : String) (ty : IType) (v : VecOpts) : Field :=
   { name, ty, options := none, vopts := some v,
-    numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
+    numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2.1,
+    geo := (makeArrNames name ty).2.2 }
 
-/-- `PartialEq for Field` (`mod.rs:192`): name and type only. -/
+/-- `PartialEq for Field` (`mod.rs:209`): name and type only. -/
 def Field.beqF (a b : Field) : Bool := a.name == b.name && a.ty == b.ty
-/-- `Hash for Field` (`mod.rs:204`): hashes the name only (`H` = any hasher). -/
+/-- `Hash for Field` (`mod.rs:221`): hashes the name only (`H` = any hasher). -/
 def Field.hashF (H : String → Nat) (f : Field) : Nat := H f.name
 
 theorem makeArrNames_range (n : String) :
-    makeArrNames n .range = (some (n ++ ":numeric:arr"), some (n ++ ":string:arr")) := rfl
+    makeArrNames n .range =
+      (some (n ++ ":numeric:arr"), some (n ++ ":string:arr"), some (n ++ ":geo")) := rfl
 theorem makeArrNames_other (n : String) (t : IType) (h : t ≠ .range) :
-    makeArrNames n t = (none, none) := by simp [makeArrNames, h]
+    makeArrNames n t = (none, none, none) := by simp [makeArrNames, h]
 
-/-- `Field::new`: name/type/options kept, no vector options, array sub-field
-names present exactly for Range fields. -/
+/-- `Field::new`: name/type/options kept, no vector options, array and geo
+sub-field names present exactly for Range fields. -/
 theorem Field.new_spec (n : String) (t : IType) (o : Option TextOpts) :
     (Field.new n t o).name = n ∧ (Field.new n t o).ty = t ∧ (Field.new n t o).options = o ∧
     (Field.new n t o).vopts = none ∧
-    ((Field.new n t o).numArr.isSome ↔ t = .range) ∧ ((Field.new n t o).strArr.isSome ↔ t = .range) := by
+    ((Field.new n t o).numArr.isSome ↔ t = .range) ∧ ((Field.new n t o).strArr.isSome ↔ t = .range) ∧
+    ((Field.new n t o).geo.isSome ↔ t = .range) := by
   by_cases h : t = .range <;> simp [Field.new, makeArrNames, h]
 
 theorem Field.newVec_spec (n : String) (t : IType) (v : VecOpts) :
     (Field.newVec n t v).name = n ∧ (Field.newVec n t v).ty = t ∧ (Field.newVec n t v).options = none ∧
     (Field.newVec n t v).vopts = some v ∧
-    ((Field.newVec n t v).numArr.isSome ↔ t = .range) ∧ ((Field.newVec n t v).strArr.isSome ↔ t = .range) := by
+    ((Field.newVec n t v).numArr.isSome ↔ t = .range) ∧ ((Field.newVec n t v).strArr.isSome ↔ t = .range) ∧
+    ((Field.newVec n t v).geo.isSome ↔ t = .range) := by
   by_cases h : t = .range <;> simp [Field.newVec, makeArrNames, h]
 
-/-- Accessors `options`/`vector_options`/`numeric_arr_name`/`string_arr_name`
-(`mod.rs:171-188`) return the stored components. -/
+/-- Accessors `options`/`vector_options`/`numeric_arr_name`/`string_arr_name`/`geo_name`
+(`mod.rs:180-201`) return the stored components. -/
 theorem Field.accessors (n : String) (t : IType) (o : Option TextOpts) (v : Option VecOpts)
-    (na sa : Option String) :
-    let f : Field := ⟨n, t, o, v, na, sa⟩
-    f.options = o ∧ f.vopts = v ∧ f.numArr = na ∧ f.strArr = sa := ⟨rfl, rfl, rfl, rfl⟩
+    (na sa ga : Option String) :
+    let f : Field := ⟨n, t, o, v, na, sa, ga⟩
+    f.options = o ∧ f.vopts = v ∧ f.numArr = na ∧ f.strArr = sa ∧ f.geo = ga :=
+  ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `Eq`/`Hash` consistency (the `HashMap`/`HashSet` contract): equal fields hash equal. -/
 theorem Field.eq_hash (H : String → Nat) (a b : Field) (h : a.beqF b = true) :

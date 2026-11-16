@@ -16,7 +16,7 @@ characters comes down to three questions. Can two strings share a key
 (`tagEnc_injective`: no)? Can a key contain the separator, NUL, whitespace or
 backslash (`tagEnc_printable`, `tagEnc_no_backslash`: no)? Does the encoding
 preserve the lexicographic order that range queries need
-(`tagEnc_not_monotone`: **no**, bug 7)?
+(`tagEnc_lexLt`: yes since #2975; before, bug 7)?
 
 Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 `native_decide`. The headline theorems depend only on `propext`,
@@ -26,19 +26,20 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 
 | Lean (`Model.lean`) | Rust |
 | --- | --- |
-| `tagEnc`, `escaped`, `hexDigit` | `mod.rs:566` `tag_encode_lower` |
+| `tagEnc`, `tagEncRaw`, `tagUnit` | `mod.rs:666` `tag_encode_lower` (#2975: order-preserving escape, `''` ↦ `0x21`) |
+| `boolKey`, `STRING_RANGE_END`, `tagKey` | `mod.rs:688-691` `BOOL_TRUE_KEY`/`BOOL_FALSE_KEY`/`STRING_RANGE_END`, `mod.rs:692` `tag_key` |
 | `hexEncode`, `leBytes`, `nodeKey` | `mod.rs:582` `hex_encode_into`, `Document::new` `mod.rs:658` |
 | `hexNibble`, `hexDecode`, `fromLe`, `decodeId` | `mod.rs:592` `hex_nibble`, `mod.rs:602` `decode_id` |
 | `edgeKey` | `Document::new_edge` `mod.rs:685`, `decode_triple` `mod.rs:613`, `delete_edge_document` `mod.rs:1946` |
-| `intLosesPrecision` | `mod.rs:1371` `int_loses_f64_precision` |
-| `setRange`, `docOf` | `Document::set` `mod.rs:717` (Range field arm), field names `mod.rs:121` |
+| `intLosesPrecision` | `mod.rs:1515` `int_loses_f64_precision` |
+| `setRange`, `docOf` | `Document::set` `mod.rs:842` (Range field arm; #2975: Bool is a TAG key, Point goes to the `:geo` sub-field), field names `mod.rs:127` |
 | `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:730-744` (#3087 dimension guard) |
-| `valueToNumeric` | `mod.rs:1356` |
-| `buildNumRange` | `mod.rs:1376` `build_numeric_range_node` |
-| `buildStrRange` | `mod.rs:1419` `build_string_range_node` |
-| `buildEq`, `buildQ` | `mod.rs:1477` `build_query_node` |
-| `indexHit` | `Index::query` `mod.rs:1691` (null node ⇒ empty iterator) |
-| `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,252,249,309` |
+| `valueToNumeric` | `mod.rs:1502` (#2975: no Bool) |
+| `buildNumRange` | `mod.rs:1520` `build_numeric_range_node` |
+| `buildStrRange` | `mod.rs:1563` `build_string_range_node` (#2975: open upper end is `STRING_RANGE_END`) |
+| `buildEq`, `buildQ` | `mod.rs:1630` `build_query_node` |
+| `indexHit` | `Index::query` `mod.rs:1829` (null node ⇒ empty iterator) |
+| `inListQ`, `indexable`, `canBeServed`, `scanEmits` | `IndexQuery::in_list` `mod.rs:284`, `is_indexable` `mod.rs:309`, `can_be_served` `mod.rs:304` (#2975; used by the node/edge scan ops) |
 | `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:324 build_op_query` |
 | `Table.add/del`, `commit` | `add_document` `mod.rs:1907` (ADD_REPLACE), `delete_document` `mod.rs:1929`, `Indexer::commit` `indexer.rs:730` |
 | `Slots.inc/dec/bump/countFor` | `mod.rs:2111/2129/1049/2151`, `indexer.rs:624-717` |
@@ -58,19 +59,20 @@ abstracted as `ENum` (an order embedding of the finite values into `Int`, plus
 ## Proven (plain English)
 Keys and encoding (`Proofs.lean`):
 - `nib_digit`, `hex_roundtrip_byte`: hex nibble encode and decode are inverses.
-- `tagDec_tagEnc`, `tagEnc_injective`: the TAG encoding is injective on byte strings.
+- `tagEnc_lexLt`, `tagEnc_inj`, `tagEnc_injective`: since #2975 the TAG encoding is order-preserving and injective on every byte string.
 - `tagEnc_printable`: every encoded byte is > 0x20, so there is no separator, NUL or whitespace.
-- `tagEnc_no_backslash`: no `\` in the encoding. `tagEnc_nil_iff`: only the empty string encodes to empty.
+- `tagEnc_no_backslash`: no `\` in the encoding. `tagEnc_ne_nil`: no key is empty (`''` is `0x21`, #2975).
+- `tagEnc_below_end`, `tagEnc_ne_boolKey`: a UTF-8 string's key sorts below `STRING_RANGE_END` and is never a Bool key.
 - `hexDecode_hexEncode`, `fromLe_leBytesN`, `decodeId_nodeKey`, `nodeKey_injective`, `nodeKey_length`: node keys round-trip and are 16 chars.
 - `decode_edgeKey`: the 48-char edge key round-trips `(src,dst,eid)`.
 - `intLosesPrecision_sound`: a literal that passes the precision guard has |i| < 2^52, or is i64::MIN, and is exact in f64.
 
 Query exactness (index hits = full scan plus the Cypher filter):
 - `ENum.le_le_iff_eq`, `inNum_point`, `rsMatch_union`, `rsMatch_inter`: RS node algebra.
-- `equal_exact`: `n.k = literal` is exact for stored Int, Float or non-empty String.
-- `inList_exact`: `n.k IN [scalar literals]` is exact under the same conditions.
+- `equal_exact`: `n.k = literal` is exact for stored Int, Float or non-empty String; `equal_exact_gen` (#2975) adds stored and literal Bool and the empty string.
+- `inList_exact`, `inList_exact_gen`: `n.k IN [scalar literals]` is exact under the same conditions.
 - `numRange_exact`: numeric `<,<=,>,>=` and two-sided ranges are exact for every stored number, ±inf included since #3081 (`numRange_exact_fin`: the earlier finite/NaN form).
-- `strRange_exact` (`Strings.lean`): string ranges are exact when no string has a byte ≤ 0x20, `\` or `_` and stored strings are non-empty (since #3072 equal bounds need no premise). `lexLt_irrefl`, `lexLt_asymm`, `lexLt_total`, `tagEnc_id` support it.
+- `strRange_exact` (`Strings.lean`): string ranges are exact for every UTF-8 stored string and any bounds (since #2975; before, no string could have a byte ≤ 0x20, `\` or `_`; since #3072 equal bounds need no premise).
 
 Maintenance and tickets (`Maintenance.lean`):
 - `foldl_add_lookup`, `foldl_del_lookup`, `commit_lookup`: exactly what `Indexer::commit` leaves for each id.
@@ -86,16 +88,16 @@ without and with the index, on Rust (port 18300) and C (port 18301). The C
 module is `bin/macos-arm64v8-release`. Output is shown as full scan → index
 scan.
 
-1. `bug_folded_temporal_constant` (`utilize_index.rs:631-647` plus `node_by_index_scan.rs:252`).
+1. FIXED by #2975 in the optimizer (it now keeps the filter; see `optimizer_scan`). `bug_folded_temporal_constant` (with the filter dropped) and `fixed2975_folded_temporal_constant` (with it kept) (`utilize_index.rs:631-647` plus `node_by_index_scan.rs:252`).
    - Query: `MATCH (n:L) WHERE n.v = date('2020-01-01')`, and also `(n:L {v: date(..)})`, `n.v > date(..)`, and edges.
    - Rust returns **every** node of the label: `['date']` → `['date','int']`. C: `['date']`.
    - Cause: the constant is folded to `Constant(Date)`, which `is_non_indexable_subexpr` treats as indexable, so the filter is dropped. The runtime then refuses the index and falls back to a label scan.
    - Fix: keep the filter for any non-scalar `Constant`, or treat an index-refused fallback as "filter required".
-2. `bug_point_equality` (`mod.rs:1685`; `node_by_index_scan.rs:257` says Point is indexable).
+2. FIXED by #2975: Point is no longer `is_indexable`, so the scan falls back with the filter kept (`fixed2975_point_equality`; `bug_point_equality` removed, the last revision that has it is 343e077f2). Was: (`mod.rs:1685`; `node_by_index_scan.rs:257` says Point is indexable).
    - Query: `n.v = point({latitude:1.0, longitude:2.0})`.
    - Rust: `['p']` → `[]`. C: `['p']`.
    - Fix: add a Point `Equal` arm (a geo node with radius 0 plus the kept filter), or mark Point not indexable for `Equal`.
-3. `bug_in_list_drops_item` (`node_by_index_scan.rs:222`).
+3. FIXED by #2975: `IndexQuery::in_list` keeps the item and the list is not servable (`fixed2975_in_list_keeps_item`; `bug_in_list_drops_item` removed, the last revision that has it is 343e077f2). Was: (`node_by_index_scan.rs:222`).
    - Query: `n.v IN [date('2020-01-01'), 2]`.
    - Rust: `['date','int']` → `['int']`. C: `['date','int']`.
    - Fix: if any item is dropped, fall back to a label scan (the filter is already kept).
@@ -112,18 +114,18 @@ scan.
    - Query: `n.v > 'a' AND n.v < 'a'`: Rust `[]` → `['a']`. C: `[]`.
    - Now an exclusive side with equal bounds is the empty node (`mod.rs:1433-1438`):
      `fixed3072_exclusive_equal_bounds`, and `strRange_exact` lost its equal-bounds premise.
-7. `bug_string_range_order` / `_gt`, `tagEnc_not_monotone` (`mod.rs:565` used by `mod.rs:1457`).
+7. FIXED by #2975 (`tagEnc_lexLt`, `strRange_exact`, `fixed2975_tagEnc_monotone`, `fixed2975_string_range_order` / `_gt`, `fixed2975_string_range_skips_bool`; the counterexamples were removed, the last revision that has them is 343e077f2). Was: `bug_string_range_order` / `_gt`, `tagEnc_not_monotone`.
    - The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong in both directions.
    - `n.v < 'JohnA'` with `'John Smith'` stored: `['js']` → `[]`. `n.v > 'a!'` with `'a b'` stored: `[]` → `['ab']`.
    - C is also wrong, differently (it does not encode). Batch runs show C's string range index is much worse.
    - Fix: use an order-preserving escape. For example, map bytes b ≤ 0x20 to `0x21 0x21+b`, shift `!` itself, and so on. Or keep the filter for string ranges.
-8. `bug_bool_eq_int` (`mod.rs:760,1360`).
+8. FIXED by #2975: Bool is stored as a TAG key (`fixed2975_bool_ne_int`, `fixed2975_bool_not_in_numeric_range`, `equal_exact_gen`; `bug_bool_eq_int` removed, the last revision that has it is 343e077f2). Was: `bug_bool_eq_int`.
    - Query: `n.v = 1` also returns `v = true`, and `n.v = true` returns `v = 1`: `['int']` → `['bool','int']`.
    - C has the same bug.
 9. FIXED by #3081 (ff3d24ba7) (old `mod.rs:1388,1395`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
    - An absent bound became ±inf with an exclusive flag, so `n.v > 0`, `n.v >= 1.0/0.0` and `n.v <= -1.0/0.0` missed stored ±inf: `['-inf','inf']` → `[]`. C has the same bug.
    - Now an absent bound is inclusive (`mod.rs:1402-1403`): `fixed3081_open_bound_includes_inf`, and `numRange_exact` covers stored ±inf.
-10. `bug_empty_string_not_indexed`: `n.v = ''` → `[]`, and `n.v < 'a'` misses `''`. C has the same bug. Fix: an INDEXEMPTY equivalent, or a sentinel encoding for the empty string.
+10. FIXED by #2975: `''` is the key `0x21` (`fixed2975_empty_string_indexed`; the counterexample was removed, the last revision that has it is 343e077f2). Was: `bug_empty_string_not_indexed`: `n.v = ''` → `[]`, and `n.v < 'a'` misses `''`. C has the same bug. Fix: an INDEXEMPTY equivalent, or a sentinel encoding for the empty string.
 11. FIXED by #3081 (ff3d24ba7). Edge index scan with an undirected pattern (`runtime/ops/edge_by_index_scan.rs`; outside the model, found by the differential run).
     - Query: `MATCH ()-[r:R]-() WHERE r.v >= 1` returned each edge once instead of twice: `['e','e']` → `['e']`. C has the same bug.
     - Now proved in `ops_traverse` (`IndexScan.orient_mem`, `orient_length`).
@@ -297,9 +299,9 @@ matching the live repro (ports 6640 Rust / 6641 C):
 Re-pin only. `Pending::resync_published_indexes` moved to `pending.rs:1789` (at origin/main 5c7af54f2). #2383 (the native
 index serves `IN [...]` as an InList union of point lookups) changes `falkordb/falkordb_index.rs`
 and `falkordb/numeric.rs`, which belong to `native_index`. It also rewrote the `IN` path in
-`runtime/ops/node_by_index_scan.rs` (the `InList` arm and `can_utilize_index`), which is what `expandIn`,
-`indexable` and `canUtilize` in the table above model: that model needs a re-check against the
-new `InList` arm (not redone in this pass). `indexer.rs`, `index/mod.rs` and the RediSearch wrapper are
+`runtime/ops/node_by_index_scan.rs` (the `InList` arm and `can_utilize_index`), which `expandIn`,
+`indexable` and `canUtilize` modelled. #2975 replaced them by `IndexQuery::in_list` / `can_be_served`
+(`mod.rs:284-345`), now modelled as `inListQ` / `canBeServed`. `indexer.rs`, `index/mod.rs` and the RediSearch wrapper are
 unchanged.
 -/
 import FalkorIndexLayer.Model

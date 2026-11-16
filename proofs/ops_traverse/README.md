@@ -69,6 +69,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `run_complete` | The variable-length frame machine yields every frame's items | `VarLenGlue.lean` |
 | `labelIdScan_correct` | The label + id-range scan returns exactly labelled ∩ range | `Scans.lean` |
 | `canUse_inListV_eq_or`, `canUseE_inListV_eq_or` | #2383: an `IN` list reaches the index on the same terms as the `Or` of `Equal`s it replaced (non-empty, every member indexable), so `IN [NULL]` still falls back | `IndexScan.lean` |
+| `canBeServed_2975`, `fixed2975_inList_nonscalar` | #2975: node and edge scans share `can_be_served` (Point/temporal never served, Bool served by equality only, `ArrayContains` refuses Null and lossy integers); an `IN` list keeps every non-null item, so an unservable member makes the scan fall back instead of losing its rows (W2-index-3 fixed) | `IndexScan.lean` |
 | `scanRow_spec`, `edgeRow_sound`, `orient_length` | Index scans are sound pre-filters, honour bound endpoints, and read undirected edges both ways | `IndexScan.lean` |
 | `dedupRows_keys_nodup`, `dedupRows_keys_complete` | The bidirectional dedup keeps unique keys and never loses a key (the bugs are in *which* key) | `BidirDedup.lean` |
 | `edgeVerdict_eq_filterEval` | A variable-length edge filter answers every evaluated value exactly as `FilterOp` does, by `StreamOps.filterEval` (non-boolean is a type error since #2390) | `VarLen.lean` |
@@ -133,7 +134,7 @@ The project imports `proofs/graphblas_wrappers` and `proofs/versioned_matrix` (t
 
 ## Coverage
 
-Line numbers are pinned to main 5e475e6c9. No traversal operator changed since fb3d516d0; #2383 changed the index scans (a list now reaches the index as one `InList`, `canUse_inListV_eq_or`), #3436 only replaced `g.borrow()` with `graph()`, and #2899 / #2954 shifted the `eval.rs` rows.
+Line numbers are pinned to main 5e475e6c9 (index scans and `graph/src/index/mod.rs` `in_list`/`can_be_served`/`is_indexable`: PR #2975 head d564b4f40). No traversal operator changed since fb3d516d0; #2383 changed the index scans (a list now reaches the index as one `InList`, `canUse_inListV_eq_or`), #3436 only replaced `g.borrow()` with `graph()`, and #2899 / #2954 shifted the `eval.rs` rows.
 
 `COVERAGE.tsv` has 84 rows:
 

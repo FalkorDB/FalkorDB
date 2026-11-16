@@ -46,7 +46,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 | Theorem | In plain words | File |
 |---|---|---|
-| `utilize_sound` | On single-label scans with Null/Int/String values and the listed filter shapes, the index rewrite selects exactly what the filter does | `IndexPipeline.lean` |
+| `utilize_sound`, `utilize_sound_all` | On single-label scans (any stored values since #2975) and the listed filter shapes, the index rewrite selects exactly what the filter does | `IndexPipeline.lean` |
 | `sel_eq`, `sel_range`, `sel_inList`, `sel_and2`, `sel_merge` | The pieces: equality, ranges, `IN`, AND, merged ranges | `IndexSound.lean` |
 | `trySingle_spec`, `pushAnd_spec`, `pushOr_spec` | Each branch of the index pushdown selects the right condition | `IndexSound.lean`, `IndexPipeline.lean` |
 | `edge_utilize_sound` | EdgeByIndexScan plus the bound-endpoint filter equals Filter → CondTraverse | `EdgeInline.lean` |
@@ -64,11 +64,11 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 ### How `utilize_sound` is proved
 
-1. **Model the values and the index.** A node has labels and properties. Values are Null, Int, String, plus Bool and Date for the counterexamples. `Faithful n` says every stored value is Null, Int or String. Literals must be `goodV`: a String, or an Int the index can store without losing precision (`lossy` excludes the large ones).
+1. **Model the values and the index.** A node has labels and properties. Values are Null, Bool, Int, String, Date and lists. `Faithful n` says every stored value is represented faithfully; since #2975 (Bool has its own TAG key) that is every value (`faithful_all`). Range literals must be `goodV`: a String, or an Int the index can store without losing precision (`lossy` excludes the large ones); equality and `IN` literals must be `eqV`, which also admits Bool.
 2. **Model RediSearch as definitions.** `build` turns an index query into a node predicate: numeric range, exact tag, lexical range, union skips null, intersection is null on null. These are *definitions* of what RediSearch does, not proven against RediSearch.
 3. **Model the rewrite.** `utilize` follows `utilize_index.rs`: `trySingle` for one atom, `pushAnd` and `pushOr` for AND and OR, `mergeRange` for two bounds on one property. `reference` is the original `Filter → NodeByLabelScan`.
 4. **Split on the filter shape.** `goodF` lists the allowed shapes; AND additionally excludes a strict string bound. For a node without the label both sides are false. For a node with it, each atom reduces to one of the `sel_*` lemmas, and AND and OR reduce to `pushAnd_spec` and `pushOr_spec`.
-5. **Hypotheses.** `goodF` and `Faithful` are real restrictions, and each one is needed: the counterexamples in `IndexCex.lean` break the theorem when it is dropped. The strict-string-bound exclusion was needed before #3072 and could now be weakened.
+5. **Hypotheses.** `goodF` is a real restriction (`Faithful` is now always met), and each one is needed: the counterexamples in `IndexCex.lean` break the theorem when it is dropped. The strict-string-bound exclusion was needed before #3072 and could now be weakened.
 
 ## Bugs found
 
@@ -85,7 +85,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 | W7-scan-1 | `vl_leaf_fires_over_filter`, `vl_leaf_drops_filter` | The var-length leaf rewrite prunes a Filter wrapper: `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2})` returns an extra row | **Open** |
 | — | `IdSeek.lean` examples on `g5` | `id(n) > -1` returns 0 rows, and non-integer bounds error. Reported as bugs 3–4 of [`../optimizer_rewrites`](../optimizer_rewrites) | **Open** |
 
-The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): a folded `date()` constant returns every node (C3); `IN [.., date()]` drops the item (C9); multi-label AND/OR (C5, C6); Bool/Int conflation (C1, shared with C). C2 (temporals indexed as numbers, #3076), C10 (array-contains inside AND, shared with C, #3736) and C11 (`n.v > 'B' AND n.v < 'B'`, #3072) are fixed; their examples now state agreement.
+The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): multi-label AND/OR (C5, C6). A folded `date()` constant returning every node (C3), `IN [.., date()]` dropping the item (C9), Bool/Int conflation (C1), computed lossy constants (C4) and an array-contains branch of an OR (C10) are fixed by #2975 (`fixed2975_*`; last revision with them 343e077f2). C2 (temporals indexed as numbers, #3076), C10 (array-contains inside AND, shared with C, #3736) and C11 (`n.v > 'B' AND n.v < 'B'`, #3072) are fixed; their examples now state agreement.
 
 **Hazard, not a confirmed bug:** `utilize_node_by_id` calls `parent().unwrap()` on the scan it rewrites. W4-plan-4's repro (`CALL db.labels() YIELD label MATCH (n)`) is rejected by validation since #3297 (and had stopped crashing before that, because the scan has a parent), but the `unwrap` remains. [`../optimizer_rewrites`](../optimizer_rewrites) models it as `root_scan_has_no_parent`.
 
@@ -100,7 +100,7 @@ There are no CONDITIONAL rows in this project.
 | `Index.lean` | The value and node model, index encoding, query nodes (`build`), `utilize_index`'s helpers and rewrite (`utilize`) |
 | `IndexSound.lean` | `sel_*` lemmas for each query node, `trySingle_spec` |
 | `IndexPipeline.lean` | The AND/OR pushdown, `goodF`, and the headline `utilize_sound` |
-| `IndexCex.lean` | The `decide`d counterexamples C1–C11 (namespace `Cex`) |
+| `IndexCex.lean` | The `decide`d counterexamples C1–C11 (namespace `Cex`; the ones #2975 fixed are `fixed2975_*` theorems) |
 | `EdgeInline.lean` | Edge index scans, `distance()` scans, `NodeByIndexScanOp`, the pre-#2390 inline-attribute path as history |
 | `Cleanup.lean` | BFS walkers, `prune_all_node_scan_child`, `add_to_labels_filter`, the fixed-point driver, `IncludePending` handling, `utilizeIndex_sound` |
 | `ScanOrder.lean` | Hop orientation and ordering, filter placement (`place`, `runScoped`), `reorder_labels`, the primary label |

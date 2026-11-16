@@ -152,17 +152,17 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-agg-5**: an aggregate inside a list literal `return`s out of the whole stack machine (`eval.rs:877`). `[min(x),max(x)]` gives 2 where C gives `[1,2]`. **Fixed by #2951 (0912f4500; closes #2945)**: `evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 
 ### Wrong results: index layer (`proofs/index_layer/repro.py`)
-- **W2-index-1**: `n.v = date(..)` returns every node of the label (`utilize_index.rs:631` drops the filter and `node_by_index_scan.rs:252` falls back). C ✓.
-- **W2-index-2**: `n.v = point(..)` returns [] (`index/mod.rs:1660`). C ✓.
-- **W2-index-3**: `n.v IN [date(..), 2]` drops the date item (`node_by_index_scan.rs:221-236`). C ✓. Still open after #2383: the scan ops now build one `InList` but drop non-scalar members first (filter at about node_by_index_scan.rs:221-236). #2383 itself is behaviour-preserving (`canUse_inListV_eq_or`).
+- **W2-index-1**: `n.v = date(..)` returns every node of the label (`utilize_index.rs:631` drops the filter and `node_by_index_scan.rs:252` falls back). C ✓. **Fixed by #2975**: `is_non_indexable_subexpr` is an allow-list (`is_exact_index_literal`), so a folded Date (and any arithmetic constant, optimizer_scan bug 3 / C4) keeps the Filter. optimizer_scan `IndexCex.fixed2975_C3`, `fixed2975_C4`, `Cleanup.nonIdxD_spec` (last revision with the counterexamples: 343e077f2).
+- **W2-index-2**: `n.v = point(..)` returns [] (`index/mod.rs:1660`). C ✓. **Fixed by #2975**: a Point is not `is_indexable` (`mod.rs:309`), so the scan falls back under the kept Filter (and points moved to a `:geo` sub-field). index_layer `Bugs.fixed2975_point_equality` (last revision with `bug_point_equality`: 343e077f2).
+- **W2-index-3**: `n.v IN [date(..), 2]` drops the date item (`node_by_index_scan.rs:221-236`). C ✓. Still open after #2383: the scan ops now build one `InList` but drop non-scalar members first (filter at about node_by_index_scan.rs:221-236). #2383 itself is behaviour-preserving (`canUse_inListV_eq_or`). **Fixed by #2975**: `IndexQuery::in_list` drops only Null, so `can_be_served` refuses a list with a Date and the scan falls back under the kept Filter. optimizer_scan `IndexCex.fixed2975_C9`, `EdgeInline.evalIQ_inList`; index_layer `Bugs.fixed2975_in_list_keeps_item`.
 - **W2-index-4**: for multi-label `(n:A:B)`, conditions on B's indexed property are pushed into A's index (`utilize_index.rs:503`, `:521`; `mod.rs:1547`, `:1564`). C ✓.
 - **W2-index-5**: `n.v > 0` returns dates, which are stored as numbers (`mod.rs:785`). C ✓.
 - **W2-index-6**: `n.v > 'a' AND n.v < 'a'` returns `'a'`, because the equal-bounds shortcut ignores exclusivity (`mod.rs:1418`). C ✓.
 - Shared with C:
-  - the TAG encoding breaks string order for bytes ≤ 0x20, `\` and `_` (`mod.rs:565`);
-  - Bool is indexed as 1/0;
+  - the TAG encoding breaks string order for bytes ≤ 0x20, `\` and `_` (`mod.rs:565`) (**fixed by #2975**: order-preserving escape; index_layer `tagEnc_lexLt`, `strRange_exact`, `Bugs.fixed2975_string_range_order`/`_gt`; last revision with the counterexamples: 343e077f2);
+  - Bool is indexed as 1/0 (**fixed by #2975** in the default build: a Bool has its own TAG key; optimizer_scan `IndexCex.fixed2975_C1`, `IndexSound.faithful_all`; index_layer `Bugs.fixed2975_bool_ne_int`, `equal_exact_gen`. The same conflation in the numeric array field let `1 IN n.arr OR …` drop its Filter and match `arr: [true]`; #2975's `pushed_needs_post_filter` keeps it, `IndexCex.fixed2975_C10_or`);
   - an open bound becomes an exclusive ±inf, which misses a stored +inf;
-  - `n.v = ''` returns [];
+  - `n.v = ''` returns [] (**fixed by #2975**: `''` is the key `0x21`; index_layer `Bugs.fixed2975_empty_string_indexed`);
   - an undirected edge-index scan returns each edge once instead of twice;
   - a geo radius above ±85° returns nothing.
 
