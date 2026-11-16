@@ -19,8 +19,7 @@ and `Re-pinned to …` states only the offsets).
 `nth_live_id` (:1485: rank/select on the deleted-id `RoaringTreemap`) and `take(count)`s, instead of
 `window … (max count 1)`; `Encode for RoaringTreemap::encode_with_range` (serialization.rs:180) seeks
 with `select`/`advance_to` instead of `skip`. The old model `Content.encode_spec` stays as the
-pre-#3438 statement; interior `file:line` cites in these four files are the PR branch (2fabe1a8a), at
-most 3 lines off main.
+pre-#3438 statement; every `file:line` cite in these four files was re-read against main.
 
 | Module | Rust | Theorems |
 | --- | --- | --- |

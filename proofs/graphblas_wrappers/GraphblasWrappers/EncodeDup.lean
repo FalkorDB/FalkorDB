@@ -11,7 +11,7 @@ GxB_Container_free(&c);                                    // frees the arrays u
 /* end of fn: `copy` dropped → Handle::drop → GrB_Matrix_free(copy) */
 ```
 
-main (9212add39 :519-571) unloaded `self.inner()` and loaded it back at the end.
+Pre-#3438 main (9212add39 :519-571) unloaded `self.inner()` and loaded it back at the end.
 
 **(a) Payload.** graphblas_wrappers models main's encoder as `GBWGlue.encodeM unload load`
 with the C-spec hypotheses `UnloadLoad` (load ∘ unload = id) and `PtrBlind`

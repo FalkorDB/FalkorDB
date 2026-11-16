@@ -26,8 +26,8 @@ module-doc invariants, incl. promotion completeness `multi_me`/`single_me`) and
 
 | here | there |
 | --- | --- |
-| `mainTriples`/`mainBase` | main's `f_rows/f_cols/f_vals` and `fm.build` (or `empty` when no triple) (tensor.rs:1499-1530 PR / 9212add39 :1485-1515) |
-| `mainMulti`  | the `multi` list main fills (:1505-1513) |
+| `mainTriples`/`mainBase` | main's `f_rows/f_cols/f_vals` and `fm.build` (or `empty` when no triple) (tensor.rs:1498-1528; pre-#3438 9212add39 :1485-1515) |
+| `mainMulti`  | the `multi` list main fills (:1504-1513) |
 | `fastBase`   | the content of `self.m`: `id` inline, `MULTI_EDGE = u64::MAX` for a promoted pair |
 | `fastCond`   | `dp.nvals() == 0 && dm.nvals() == 0 && !has_multi_edge()` (:1492) |
 | `encMain`/`encPR` | the logical payload: base content, `edge_count()`, `multi` (the two deltas are `empty` in both) |
