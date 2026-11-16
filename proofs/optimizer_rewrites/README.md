@@ -34,7 +34,7 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 - **Below Sort, yes:** same rows, still sorted (`push_sort_perm`, `push_sort_sorted`).
 - **Below LIMIT or SKIP, no.** It changes which rows the LIMIT keeps (`limit_not_transparent`, `skip_not_transparent`). The exclusion list in `push_filters_down.rs` does not exclude them (`limit_skip_not_excluded`). Rust and C both return the wrong count here, so it is a shared spec bug, not a Rust regression. The only safe case is a conjunct whose verdict is the same on every row (`push_limit_const`).
 - **Routing by variable id and scope is sound** (`routesScoped_sound`): it only pushes where the variable is bound.
-- **Main routes by bare id, not scope** (#3352): `bug3352_routes_unbound` and `bug3352_slot_collision_drops_match`.
+- **Main routes by bare id, not scope** (#3352): `bug3352_routes_unbound` and `pre3281_bug3352_slot_collision_drops_match` (fixed by #3281: `bug3352_fixed_main`).
 - **A variable-free conjunct enters every child, including the rows that feed a write** (#748, #997): `bug748_merge_skipped`, `bug997_create_skipped`.
 - **Re-ordering a traversal chain can land an inline filter below the hop that binds its variable** (#2556, in `select_scan_node`): `bug2556_filter_below_binding`.
 
