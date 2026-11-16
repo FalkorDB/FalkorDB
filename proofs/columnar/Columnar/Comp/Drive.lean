@@ -1,19 +1,19 @@
-import Pr3437Review.ChunkedSound
+import Columnar.Comp.ChunkedSound
 
 /-!
 # PR #3437: chunk loop, chunking, and the three evaluators end to end
 
 | Lean | Rust |
 | --- | --- |
-| `chunkStep` | `list_loop_chunk` (eval.rs:1456-1547); `useCol` = `self.runtime.is_some() && lp.vector_plan(env).is_some()` (:1467-1469), any value |
-| `prRun` | the chunk loops (eval.rs:1347-1356, :1408-1418, :1425-1427) |
-| `chunksOf` | `<[Value]>::chunks(LIST_LOOP_CHUNK)` (eval.rs:1347, :1425) |
-| `streamLoop` | the streaming buffer (eval.rs:1405-1418) |
-| `Source`, `prListComp`, `mainListComp`, `mainSize` | `eval_list_comprehension` (eval.rs:1372-1449) vs *main*'s `ListComprehension` arm (eval.rs:1041-1085) and `size` (functions/list.rs:61-68) |
-| `prQuant`, `mainQuant` | `ExprEval::eval_quantifier` (eval.rs:1310-1363) vs *main*'s `Quantifier` arm (eval.rs:1001-1037) |
+| `chunkStep` | `list_loop_chunk` (eval.rs:1491-1595); `useCol` = `self.runtime.is_some() && lp.vector_plan(env).is_some()` (:1502-1504), any value |
+| `prRun` | the chunk loops (eval.rs:1375-1384, :1443-1453, :1460-1462) |
+| `chunksOf` | `<[Value]>::chunks(LIST_LOOP_CHUNK)` (eval.rs:1375, :1460) |
+| `streamLoop` | the streaming buffer (eval.rs:1440-1453) |
+| `Source`, `prListComp`, `mainListComp`, `mainSize` | `eval_list_comprehension` (eval.rs:1400-1484) vs *main*'s `ListComprehension` arm (eval.rs:1046-1093) and `size` (functions/list.rs:61-68) |
+| `prQuant`, `mainQuant` | `ExprEval::eval_quantifier` (eval.rs:1338-1391) vs *main*'s `Quantifier` arm (eval.rs:1007-1046) |
 -/
 
-namespace Pr3437.ListLoop
+namespace Columnar.Comp.ListLoop
 open FalkorCore FalkorStrList
 
 variable {F : Type}
@@ -81,7 +81,7 @@ theorem chunksOf_flatten (n : Nat) (hn : 0 < n) (l : List α) : (chunksOf n l).f
         simp; omega
       rw [ih _ this (l.drop n) rfl, List.take_append_drop]
 
-/-- The streaming buffer: push, flush when full, flush the rest at the end (eval.rs:1405-1418). -/
+/-- The streaming buffer: push, flush when full, flush the rest at the end (eval.rs:1440-1453). -/
 def streamLoop (n : Nat) : List α → List α → List (List α)
   | buf, [] => [buf]
   | buf, x :: xs => if (buf ++ [x]).length = n then (buf ++ [x]) :: streamLoop n [] xs
@@ -107,7 +107,7 @@ inductive Source (F : Type) where
 
 def listMismatch (v : V F) : String := "Type mismatch: expected List or Null but was " ++ v.name
 
-/-- *main* eval.rs:1041-1085. -/
+/-- *main* eval.rs:1046-1093. -/
 def mainListComp (pe pj : V F → Except String (V F)) : Source F → Except String (V F)
   | .stream r => r >>= fun o => match o with
     | none => .ok (.list [])
@@ -129,7 +129,7 @@ def sinkOut (count : Bool) : Sink F → V F
   | .tally n => .int n
   | .count .. => .null
 
-/-- `eval_list_comprehension(node, env, _, count)` (eval.rs:1372-1449). -/
+/-- `eval_list_comprehension(node, env, _, count)` (eval.rs:1400-1484). -/
 def prListComp (b : Body F) (c : Col F) (useCol : List (V F) → Bool) (count : Bool) :
     Source F → Except String (V F)
   | .stream r => r >>= fun o => match o with
@@ -214,7 +214,7 @@ def kToV : K → V F | .t => .bool true | .f => .bool false | .n => .null
 
 def quantRes (q : QType) (r : Nat × Nat × Nat) : V F := kToV (evalQuantifier q r.1 r.2.1 r.2.2)
 
-/-- *main* eval.rs:1001-1037. -/
+/-- *main* eval.rs:1007-1046. -/
 def mainQuant (pe : V F → Except String (V F)) (q : QType) (r : Except String (V F)) : Except String (V F) :=
   r >>= fun v => match v with
   | .list l => (mainQuantLoop pe 0 0 0 l).map (quantRes q)
@@ -225,8 +225,8 @@ def countOut (q : QType) : Sink F → V F
   | .count t f n => quantRes q (t, f, n)
   | _ => .null
 
-/-- `ExprEval::eval_quantifier` (eval.rs:1310-1363): a short list runs main's loop
-verbatim (:1325-1341); a longer one goes through `ListLoop` with no projection (:1345). -/
+/-- `ExprEval::eval_quantifier` (eval.rs:1338-1391): a short list runs main's loop
+verbatim (:1356-1370); a longer one goes through `ListLoop` with no projection (:1376). -/
 def prQuant (b : Body F) (c : Col F) (useCol : List (V F) → Bool) (q : QType) (r : Except String (V F)) :
     Except String (V F) :=
   r >>= fun v => match v with
@@ -252,4 +252,4 @@ theorem quantifier_eq_main (b : Body F) (c : Col F) (useCol : List (V F) → Boo
     · rw [prRun_eq b c useCol hd hc, chunksOf_flatten 1024 (by decide), ref_count_eq_main]
       cases mainQuantLoop b.pe 0 0 0 l <;> rfl
 
-end Pr3437.ListLoop
+end Columnar.Comp.ListLoop

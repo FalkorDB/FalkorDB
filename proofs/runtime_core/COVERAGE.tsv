@@ -93,5 +93,4 @@ graph/src/runtime/ops/batched_result_emitter.rs	batch	772	NOT COVERED	trivial ac
 graph/src/runtime/ops/batched_result_emitter.rs	new	786	MODELLED	Emitter.initCeiling via with_binding
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	796	MODELLED	Emitter.initCeiling via with_binding (no bound column)
 graph/src/runtime/runtime.rs	from	128	NOT COVERED	(#3432): not modelled yet
-graph/src/runtime/runtime.rs	materialize_node_property_exact	1685	NOT COVERED	(#3432): not modelled yet; equivalence to the per-element path proved in proofs/pr3437_review (ExactProp.exact_eq_main, rows kept commented there until merge; models a739b990f)
 graph/src/runtime/ops/batched_result_emitter.rs	size_hint	488	NOT COVERED	(#3432): not modelled yet

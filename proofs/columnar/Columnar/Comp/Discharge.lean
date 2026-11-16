@@ -1,16 +1,16 @@
 import FalkorExprSemantics.EvalArms
-import Pr3437Review.ListLoop
-import Pr3437Review.Classifier
-import Pr3437Review.Bridge
+import Columnar.Comp.ListLoop
+import Columnar.Comp.Classifier
+import Columnar.Comp.Bridge
 
 /-!
 # PR #3437: the per-element body over proofs/expr_semantics' `ExprEval`
 
 The per-element evaluator is proofs/expr_semantics' `FalkorExpr.Eval.evalNode`
-(`ExprEval::eval_node`, eval.rs:503 on the PR) over its tree `E`, with the row as
+(`ExprEval::eval_node`, eval.rs:517 on the PR) over its tree `E`, with the row as
 `env : Nat → Option V` (`RowView::value_at`). Values are the engine's `V F`.
 
-* **`Body.Drops` — discharged** (`newBody_drops`). `ListLoop::new` (eval.rs:323-338) drops a
+* **`Body.Drops` — discharged** (`newBody_drops`). `ListLoop::new` (eval.rs:328-343) drops a
   predicate that is the literal `true` and a projection that is the loop variable; on the
   owned row `env + {var: v}` the owner's evaluator gives `Bool(true)` and `v` for them.
 * **`toBT`**: an `E` tree as `collect_body_vars` sees it (children in `ExprIR` order), with
@@ -23,8 +23,8 @@ The per-element evaluator is proofs/expr_semantics' `FalkorExpr.Eval.evalNode`
   (`and_short_circuits`).
 -/
 
-namespace Pr3437.Discharge
-open FalkorCore FalkorExpr.Eval Pr3437.ListLoop Pr3437.Classifier
+namespace Columnar.Comp.Discharge
+open FalkorCore FalkorExpr.Eval Columnar.Comp.ListLoop Columnar.Comp.Classifier
 
 variable {F : Type}
 
@@ -77,7 +77,7 @@ theorem newBody_drops (env : Nat → Option (V F)) (vid : Nat) (pred proj : E (V
 -- arm; `isBad t` says whether arm `t` is one `collect_body_vars` rejects (a nested binder,
 -- nested plan, pattern, aggregate call): it maps to a rejected kind, everything else to
 -- `other`. A `func` node is a non-aggregate call, rejected iff it writes; `distinct` is `Distinct`.
-open Pr3437.ClassifierPre (BK BT varsOf varsAll) in
+open Columnar.Comp.ClassifierPre (BK BT varsOf varsAll) in
 mutual
 def toBT (isBad : Nat → Bool) : E (V F) → BT
   | .var id _ => .mk (.var id) []
@@ -104,7 +104,7 @@ theorem varsAll_append : ∀ a b : List ClassifierPre.BT,
   | [], _ => rfl
   | x :: xs, b => by simp [ClassifierPre.varsAll, varsAll_append xs b]
 
-open Pr3437.ClassifierPre (varsOf varsAll) in
+open Columnar.Comp.ClassifierPre (varsOf varsAll) in
 mutual
 theorem varsOf_toBT (isBad : Nat → Bool) : ∀ e : E (V F), varsOf (toBT isBad e) = e.vars
   | .var id _ => by simp [toBT, varsOf, varsAll, E.vars]
@@ -180,9 +180,9 @@ theorem lookup_of_mem {V' : Type} (outer : List (Nat × V')) (valueAt : Nat → 
 -- The batch row, `RowAgree` and `Col.Sound` on the real chunk batch: `Concrete.lean`
 -- (`Concrete.rowAgree`, `Concrete.colOf_sound`), over `ChunkBatch.chunkBatch`.
 
-end Pr3437.Discharge
+end Columnar.Comp.Discharge
 
-namespace Pr3437.Discharge
+namespace Columnar.Comp.Discharge
 open FalkorCore FalkorExpr.Eval
 
 /-- An eager catch-all: the children evaluated left to right first, then a value-only
@@ -197,4 +197,4 @@ theorem and_short_circuits {F : Type} (O : Ops (V F)) (ev : Ev (V F)) (c : Compo
     evalNode O ev c env (.and [.const a, bad]) = .ok (O.bool false) :=
   and_false_short_circuits O ev c env a ha [bad]
 
-end Pr3437.Discharge
+end Columnar.Comp.Discharge

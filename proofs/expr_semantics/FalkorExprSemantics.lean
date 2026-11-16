@@ -12,6 +12,15 @@ import FalkorCore.Range
 # Expression evaluation: the columnar path agrees with the per-row path, and
 # where the per-row path itself departs from openCypher / C FalkorDB
 
+**#3437 — negated numeric literals fold at parse time (`NegFold.lean`, folded in from
+pr3437_review; cites are to the `perf/list-comprehension` branch).** The unary level of
+`parse_expr_inner` (cypher.rs) turns `Negate(Constant(Int | Float))` into a constant.
+`NegFold.fold_eq_eval` / `fold_eq_evalParam`: the folded tree evaluates, under `eval_node` and
+`evaluate_param`, to what the unfolded one does (same value, float bits included, or same
+error); `fold_never_min`: the fold never meets `i64::MIN`; `paren_min_not_folded`,
+`neg_zero_literal`, `bare_min_refused`. NegFold imports this root, so it is a separate glob in
+`lakefile.toml`. The listing of the same row in proofs/parser_grammar covers the tree shape.
+
 **2026-10-21 — every arm a list-comprehension body can reach (`Eval.lean`, `Frame.lean`,
 `EvalArms.lean`; `evaluate_param` moved to `EvalParam.lean`).** The expression tree `E` now has
 a faithful constructor for each `ExprIR` arm `eval_node` / `eval_compound` / `eval_case`

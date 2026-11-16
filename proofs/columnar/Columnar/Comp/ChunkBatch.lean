@@ -1,9 +1,9 @@
-import Pr3437Review.Bridge
+import Columnar.Comp.Bridge
 import Columnar.BatchMisc
 import Columnar.Row
 
 /-!
-# PR #3437: the chunk batch of `list_loop_columnar` (eval.rs:1560-1564)
+# PR #3437: the chunk batch of `list_loop_columnar` (eval.rs:1608-1612)
 
 `chunkBatch`: `Batch::new(0)`, then `set_column(var.id, loop_var_column(chunk))` and
 `set_column(id, broadcast_column(value, len))` for every outer binding of the plan, in order —
@@ -14,17 +14,17 @@ chunk element at the loop variable and the outer value at every broadcast variab
 are distinct and differ from the loop variable: `vector_plan` dedups and filters them).
 -/
 
-namespace Pr3437.ChunkBatch
+namespace Columnar.Comp.ChunkBatch
 open FalkorCore (V)
 open Columnar (Batch Column viewAt)
 open Columnar.Batch (normCol)
-open Pr3437.Bridge (loopVarColumn broadcastColumn loopVar_get broadcast_get)
+open Columnar.Comp.Bridge (loopVarColumn broadcastColumn loopVar_get broadcast_get)
 
 variable {F : Type} [Columnar.FloatModel F]
 
 set_option linter.unusedSectionVars false
 
-/-- eval.rs:1560-1564. -/
+/-- eval.rs:1608-1612. -/
 def chunkBatch (vid : Nat) (outer : List (Nat × V F)) (chunk : List (V F)) : Batch F :=
   outer.foldl (fun b p => b.setColumn p.1 (broadcastColumn p.2 chunk.length))
     ((Batch.new0 0).setColumn vid (loopVarColumn chunk))
@@ -202,4 +202,4 @@ theorem chunkBatch_space (vid : Nat) (outer : List (Nat × V F)) (chunk : List (
   refine ⟨?_, h2⟩
   unfold chunkBatch; omega
 
-end Pr3437.ChunkBatch
+end Columnar.Comp.ChunkBatch

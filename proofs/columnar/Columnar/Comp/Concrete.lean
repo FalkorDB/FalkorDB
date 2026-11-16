@@ -1,13 +1,13 @@
-import Pr3437Review.PRArms
-import Pr3437Review.ChunkBatch
-import Pr3437Review.Discharge
-import Pr3437Review.Drive
+import Columnar.Comp.PRArms
+import Columnar.Comp.ChunkBatch
+import Columnar.Comp.Discharge
+import Columnar.Comp.Drive
 import Columnar.HasLabelsFn
 
 /-!
 # PR #3437: `Col.Sound` for the PR's real `VectorEval` over the real chunk batch
 
-`colOf` is what `list_loop_columnar` (eval.rs:1550-1652) calls: the PR's `VectorEval`
+`colOf` is what `list_loop_columnar` (eval.rs:1598-1710) calls: the PR's `VectorEval`
 (`PRArms.armsPR`) over `ChunkBatch.chunkBatch` — `ve.eval(predicate, &batch, &all)`,
 `ve.eval(projection, &batch, &passed)`, `ve.eval_values(projection, &batch, &passed)` — with the
 columns read back as the loop reads them (`toChunkEC`). The per-element evaluator is
@@ -31,16 +31,16 @@ What it rests on, stated as premises of the final theorems:
   the shape of the trees the parser builds (`get_functions().get("hasLabels")`).
 -/
 
-namespace Pr3437.Concrete
+namespace Columnar.Comp.Concrete
 open FalkorCore (V)
 open FalkorExpr.Eval (E Ev Compound Fn evalNode Agree evalNode_frame)
 open Columnar (Batch Column EC FloatModel viewAt)
 open Columnar.CoreOps (RT coreOps)
 open Columnar.CoreBridge (rowSem PropReads env propertyValues)
-open Pr3437.PRArms (armsPR withStore NodeStore lawfulPR)
-open Pr3437.ChunkBatch (chunkBatch)
-open Pr3437.ListLoop (Col Body)
-open Pr3437.Classifier (vectorPlan)
+open Columnar.Comp.PRArms (armsPR withStore NodeStore lawfulPR)
+open Columnar.Comp.ChunkBatch (chunkBatch)
+open Columnar.Comp.ListLoop (Col Body)
+open Columnar.Comp.Classifier (vectorPlan)
 
 variable {F : Type} [FloatModel F]
 
@@ -89,7 +89,7 @@ theorem mapM_pairs_fst {V' : Type} (valueAt : Nat → Option V') : ∀ (ids : Li
       simp [mapM_pairs_fst valueAt xs ys hys]
 
 /-- The plan's outer ids are distinct and are not the loop variable (`sort_unstable` +
-`dedup`, `filter(id != var.id)`, eval.rs:356-362). -/
+`dedup`, `filter(id != var.id)`, eval.rs:361-367). -/
 theorem plan_ids (vid : Nat) (bodies : List ClassifierPre.BT) (envAt : Nat → Option (V F))
     (outer : List (Nat × V F)) (h : vectorPlan vid bodies envAt = some outer) :
     (outer.map Prod.fst).Nodup ∧ vid ∉ outer.map Prod.fst := by
@@ -139,7 +139,7 @@ section
 variable (rt : RT F) (c : Compound (V F)) (st : NodeStore F) (isLC : Nat → Bool) (vid : Nat)
   (outer : List (Nat × V F)) (pred proj : E (V F))
 
-/-- What `list_loop_columnar` calls (eval.rs:1569, :1630, :1643) over the chunk batch. -/
+/-- What `list_loop_columnar` calls (eval.rs:1617, :1688, :1701) over the chunk batch. -/
 noncomputable def colOf : Col F where
   colP chunk := (Columnar.VecEval.eval (armsPR rt c (chunkBatch vid outer chunk) st isLC) pred
     (List.range chunk.length)).map (toChunkEC chunk.length)
@@ -302,4 +302,4 @@ theorem colOf_sound (envAt : Nat → Option (V F)) (okP : Ok rt st vid outer env
 
 end
 
-end Pr3437.Concrete
+end Columnar.Comp.Concrete

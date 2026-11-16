@@ -1,4 +1,4 @@
-import Pr3437Review.PRArms
+import Columnar.Comp.PRArms
 import Columnar.RuntimeReads
 
 /-!
@@ -7,7 +7,7 @@ import Columnar.RuntimeReads
 proofs/columnar `RuntimeReads` models the runtime's attribute reads (per row and bulk) over a
 state `St` and proves the bulk fetch is the per-row read (`matNode_eq`, `matRel_eq`,
 `propReads`). The PR's `materialize_node_property_exact` (`ExactProp.exactPR`) reads the node
-store as packed entries (`PackedAttr`, attribute_store.rs:257-278); `PSt` is that state with
+store as packed entries (`PackedAttr`, attribute_store.rs:259-280); `PSt` is that state with
 the node store given packed, `toSt` the same state as `RuntimeReads` sees it
 (`get_attr_by_idx` = `data.get(key)?.get(idx)` unpacked, `Block::unpack`), and `nodeStore` the
 `PRArms.NodeStore` the exact fetch reads. **`nodeStore_matValues`**: its
@@ -15,12 +15,12 @@ the node store given packed, `toSt` the same state as `RuntimeReads` sees it
 PR's arms see is `RuntimeReads.rtOf` of the state, for which `PropReads` is proved.
 -/
 
-namespace Pr3437.Runtime
+namespace Columnar.Comp.Runtime
 open FalkorCore (V)
 open Columnar (FloatModel)
 open Columnar.CoreOps (RT)
 open Columnar.RuntimeReads (St matNode hasNodeAttrs pendGetN byIdxN rtOf)
-open Pr3437.PRArms (NodeStore withStore)
+open Columnar.Comp.PRArms (NodeStore withStore)
 
 variable {F : Type}
 
@@ -36,7 +36,7 @@ def PSt.toSt (p : PSt F) : St F :=
 
 variable (p : PSt F)
 
-/-- What `materialize_node_property_exact` reads (runtime.rs:1566-1587). -/
+/-- What `materialize_node_property_exact` reads (runtime.rs:1685-1706). -/
 def nodeStore : NodeStore F where
   entry a k := match p.st.attrId a with
     | some i => p.packedN k i
@@ -83,4 +83,4 @@ theorem withStore_rtOf (rt : RT F) : withStore (rtOf p.toSt rt) (nodeStore p) = 
 theorem propReads_withStore (rt : RT F) : Columnar.CoreBridge.PropReads (withStore (rtOf p.toSt rt) (nodeStore p)) := by
   rw [withStore_rtOf]; exact Columnar.RuntimeReads.propReads p.toSt rt
 
-end Pr3437.Runtime
+end Columnar.Comp.Runtime

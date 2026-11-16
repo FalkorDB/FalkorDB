@@ -22,11 +22,11 @@ This module is the `Dispatch` (`Kind`/`Node`) form of the bridge; the concrete o
 columnar's `VecEval` and the PR's real arms, is `PRArms` / `Concrete` / `Final`.
 
 The PR's one change to `VectorEval::eval` — `!counts_comprehension(node)` on the function
-arm (vector_expr.rs:255-257) — sends `size(<comprehension>)` to `eval_per_row`; `armsPR`
+arm (vector_expr.rs:252-254) — sends `size(<comprehension>)` to `eval_per_row`; `armsPR`
 instantiates columnar's `Arms` with that guard and `lawful_pr` shows `eval_sound` survives it.
 -/
 
-namespace Pr3437.Bridge
+namespace Columnar.Comp.Bridge
 open Columnar.Dispatch
 
 variable {Val C : Type}
@@ -60,7 +60,7 @@ theorem eval_rows_mapM (A : Arms Val C) (S : RowSem Val C) (L : Lawful A S) (n :
     exact hs i hi)
   simpa using this
 
-/-- The predicate over the whole chunk (`all = (0..len)`, eval.rs:1565): `Col.Sound.pred`. -/
+/-- The predicate over the whole chunk (`all = (0..len)`, eval.rs:1613): `Col.Sound.pred`. -/
 theorem colSound_pred (A : Arms Val C) (S : RowSem Val C) (L : Lawful A S) (n : Node Val)
     (pe : Val → Except String Val) (xs : List Val) (d : Val)
     (hrow : ∀ r, r < xs.length → S.rowEval n r = pe (xs.getD r d))
@@ -73,9 +73,9 @@ theorem colSound_pred (A : Arms Val C) (S : RowSem Val C) (L : Lawful A S) (n : 
     · intro i h1 h2; simp at h1; simp [List.getElem?_eq_getElem h1]
   rw [hx, List.length_range] at this; exact this
 
-/-! ## The PR's `VectorEval::eval` guard (vector_expr.rs:253-269) -/
+/-! ## The PR's `VectorEval::eval` guard (vector_expr.rs:250-266) -/
 
-/-- `counts_comprehension(node)` (eval.rs:315-320); `isLC` recognises
+/-- `counts_comprehension(node)` (eval.rs:320-325); `isLC` recognises
 `ExprIR::ListComprehension` (an `other` kind in columnar's `Kind`). -/
 def countsComprehension (isLC : Kind Val → Bool) : Node Val → Bool
   | .mk (.func name _ _ _) [.mk k _] => isLC k && name == "size"
@@ -115,7 +115,7 @@ theorem counted_goes_per_row (A : Arms Val C) (isLC : Kind Val → Bool) (k : Ki
 
 open FalkorCore (V)
 
-/-- `loop_var_column` (eval.rs:405-414), as a columnar `Column` (batch.rs:321). -/
+/-- `loop_var_column` (eval.rs:419-428), as a columnar `Column` (batch.rs:321). -/
 def loopVarColumn {F : Type} (chunk : List (V F)) : Columnar.Column F :=
   match allNodes chunk with
   | some ids => .nodeIds ids
@@ -126,7 +126,7 @@ where
     | .node id :: vs => (allNodes vs).map (id :: ·)
     | _ :: _ => none
 
-/-- `broadcast_column` (eval.rs:417-428). -/
+/-- `broadcast_column` (eval.rs:431-442). -/
 def broadcastColumn {F : Type} (v : V F) (len : Nat) : Columnar.Column F :=
   match v with
   | .node id => .nodeIds (List.replicate len id)
@@ -172,4 +172,4 @@ theorem broadcast_get {F : Type} (v : V F) (len : Nat) :
   cases v <;> simp [broadcastColumn, Columnar.Column.get?, Columnar.Column.isUnbound, Columnar.Column.len,
     List.getElem?_replicate]
 
-end Pr3437.Bridge
+end Columnar.Comp.Bridge

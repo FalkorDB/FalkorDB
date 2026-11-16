@@ -1,24 +1,24 @@
-import Pr3437Review.ListLoop
+import Columnar.Comp.ListLoop
 
 /-!
 # PR #3437: the columnar half and the chunk loop (`list_loop_columnar`, `list_loop_chunk`)
 
-`columnar` is `list_loop_columnar` (eval.rs:1550-1652) with the vector evaluator abstracted
-to `Col` over the chunk's batch: `colP chunk` = `ve.eval(predicate, &batch, &all)` (:1569),
-`colJ chunk passed` = `ve.eval(projection, &batch, &passed)` (:1630), `colJv chunk passed` =
-`ve.eval_values(projection, &batch, &passed)` (:1643) — `passed` the row indices that passed
-(`passedIdx`, :1617-1628), as in Rust (since 2026-10-21; the model used to hand the
+`columnar` is `list_loop_columnar` (eval.rs:1598-1710) with the vector evaluator abstracted
+to `Col` over the chunk's batch: `colP chunk` = `ve.eval(predicate, &batch, &all)` (:1617),
+`colJ chunk passed` = `ve.eval(projection, &batch, &passed)` (:1688), `colJv chunk passed` =
+`ve.eval_values(projection, &batch, &passed)` (:1701) — `passed` the row indices that passed
+(`passedIdx`, :1675-1686), as in Rust (since 2026-10-21; the model used to hand the
 projection the passed *elements*). Its only assumption is `Col.Sound`: a column the vector evaluator *returns* holds,
 row by row, what the per-element evaluator returns (`Bridge.lean` derives it from columnar's
 `Dispatch.eval_sound`). Nothing is assumed when it errors: `chunkStep` then re-runs the
 chunk per element, which is main's loop (`perElem_eq`).
 
-Every `?` in `list_loop_columnar` precedes the write to `sink` it guards (:1604-1606 counts
-into `local` first; :1632-1634, :1642-1645 evaluate before `+=`/`extend`), so an `Err` leaves
+Every `?` in `list_loop_columnar` precedes the write to `sink` it guards (:1662-1664 counts
+into `local` first; :1690-1692, :1700-1703 evaluate before `+=`/`extend`), so an `Err` leaves
 `sink` as it was: `columnar` returns a new sink or an error, never a partial write.
 -/
 
-namespace Pr3437.ListLoop
+namespace Columnar.Comp.ListLoop
 open FalkorCore FalkorStrList
 
 variable {F : Type}
@@ -54,7 +54,7 @@ structure Col.Sound (c : Col F) (pe pj : V F → Except String (V F)) : Prop whe
 def filterPass (chunk ps : List (V F)) : List (V F) :=
   ((chunk.zip ps).filter fun q => isTrue q.2).map (·.1)
 
-/-- One quantifier count step on a predicate value (eval.rs:1585-1594). -/
+/-- One quantifier count step on a predicate value (eval.rs:1643-1652). -/
 def cstep : Nat × Nat × Nat → V F → Except String (Nat × Nat × Nat)
   | (t, f, n), v =>
     match kOf v with
@@ -63,7 +63,7 @@ def cstep : Nat × Nat × Nat → V F → Except String (Nat × Nat × Nat)
     | some .n => .ok (t, f, n + 1)
     | none => .error (boolMismatch v)
 
-/-- `local` (eval.rs:1573-1597). -/
+/-- `local` (eval.rs:1631-1655). -/
 def countLocal (len : Nat) : Option (EC F) → Except String (Nat × Nat × Nat)
   | none => .ok (len, 0, 0)
   | some (.bools cs) =>
@@ -72,19 +72,19 @@ def countLocal (len : Nat) : Option (EC F) → Except String (Nat × Nat × Nat)
       if q.2 then (t, f, n + 1) else if q.1 then (t + 1, f, n) else (t, f + 1, n)) (0, 0, 0))
   | some (.vals vs) => vs.foldlM cstep (0, 0, 0)
 
-/-- eval.rs:1604-1615. -/
+/-- eval.rs:1662-1673. -/
 def tallyNoProj (len : Nat) : Option (EC F) → Nat
   | none => len
   | some (.bools cs) => (cs.filter fun q => q.1 && !q.2).length
   | some (.vals vs) => (vs.filter isTrue).length
 
-/-- `passed` as elements (`passed.iter().map(|&i| chunk[i])`, eval.rs:1639). -/
+/-- `passed` as elements (`passed.iter().map(|&i| chunk[i])`, eval.rs:1697). -/
 def passedOf (chunk : List (V F)) : Option (EC F) → List (V F)
   | none => chunk
   | some (.bools cs) => ((chunk.zip cs).filter fun q => q.2.1 && !q.2.2).map (·.1)
   | some (.vals vs) => filterPass chunk vs
 
-/-- `passed` (eval.rs:1617-1628): `all.retain(|&i| mask[i] && !nulls.is_null(i))` /
+/-- `passed` (eval.rs:1675-1686): `all.retain(|&i| mask[i] && !nulls.is_null(i))` /
 `all.retain(|&i| matches!(column.get(i), Value::Bool(true)))`. -/
 def passedIdx (len : Nat) : Option (EC F) → List Nat
   | none => List.range len
@@ -93,9 +93,17 @@ def passedIdx (len : Nat) : Option (EC F) → List Nat
     | none => false
   | some (.vals vs) => (List.range len).filter fun i => isTrue (vs.getD i .null)
 
-/-- `list_loop_columnar` (eval.rs:1550-1652). -/
+/-- The type check `list_loop_columnar` makes on a non-`Bools` predicate column before it
+touches the sink (eval.rs:1618-1628, `check_predicate_result` on every cell): a cell that is
+neither a boolean nor null is the type error. A `Bools` lane holds only booleans and nulls. -/
+def checkPred : Option (EC F) → Except String Unit
+  | some (.vals vs) => if vs.all predOk then pure () else throw "Type mismatch: expected Boolean"
+  | _ => pure ()
+
+/-- `list_loop_columnar` (eval.rs:1598-1710). -/
 def columnar (b : Body F) (c : Col F) (s : Sink F) (chunk : List (V F)) : Except String (Sink F) :=
   (if b.hasPred then (c.colP chunk).map some else pure none) >>= fun tested =>
+  checkPred tested >>= fun _ =>
   match s with
   | .count t f n =>
     (countLocal chunk.length tested).map fun r => .count (t + r.1) (f + r.2.1) (n + r.2.2)
@@ -137,12 +145,15 @@ theorem mapM_length {f : V F → Except String (V F)} : ∀ {xs ys : List (V F)}
     simp [mapM_length h']
 
 theorem ref_collect_pre : ∀ (chunk ps acc : List (V F)), chunk.mapM pe = .ok ps →
+    (∀ p ∈ ps, predOk p = true) →
     ref pe pj (.collect acc) chunk = ((filterPass chunk ps).mapM pj).map fun ys => .collect (acc ++ ys)
-  | [], ps, acc, h => by
+  | [], ps, acc, h, _ => by
     simp [pure, Except.pure] at h; subst h; simp [ref_nil, filterPass, pure, Except.pure, Except.map]
-  | v :: vs, ps, acc, h => by
+  | v :: vs, ps, acc, h, hk => by
     obtain ⟨p, ps', rfl, hp, hvs⟩ := mapM_cons_ok pe h
-    rw [ref_cons]; simp only [refStep, hp, bind, Except.bind]
+    have hkp : predOk p = true := hk p (by simp)
+    have hk' : ∀ q ∈ ps', predOk q = true := fun q hq => hk q (by simp [hq])
+    rw [ref_cons]; simp only [refStep, hp, bind, Except.bind, hkp, ite_true]
     by_cases ht : isTrue p = true
     · simp only [ht, ite_true, filterPass, List.zip_cons_cons, List.filter_cons, List.map_cons,
         List.mapM_cons]
@@ -150,22 +161,25 @@ theorem ref_collect_pre : ∀ (chunk ps acc : List (V F)), chunk.mapM pe = .ok p
       | error e => simp [bind, Except.bind, Except.map]
       | ok y =>
         simp only [pure, Except.pure, bind, Except.bind]
-        rw [ref_collect_pre vs ps' (acc ++ [y]) hvs]
+        rw [ref_collect_pre vs ps' (acc ++ [y]) hvs hk']
         simp only [filterPass]
         cases (List.map (·.1) (List.filter (fun q => isTrue q.2) (vs.zip ps'))).mapM pj <;>
           simp [Except.map]
     · simp only [ht, Bool.false_eq_true, ite_false, pure, Except.pure, filterPass, List.zip_cons_cons,
         List.filter_cons]
-      exact ref_collect_pre vs ps' acc hvs
+      exact ref_collect_pre vs ps' acc hvs hk'
 
 theorem ref_tally_pre : ∀ (chunk ps : List (V F)) (k : Nat), chunk.mapM pe = .ok ps →
+    (∀ p ∈ ps, predOk p = true) →
     ref pe pj (.tally k) chunk =
       ((filterPass chunk ps).mapM pj).map fun _ => .tally (k + (filterPass chunk ps).length)
-  | [], ps, k, h => by
+  | [], ps, k, h, _ => by
     simp [pure, Except.pure] at h; subst h; simp [ref_nil, filterPass, pure, Except.pure, Except.map]
-  | v :: vs, ps, k, h => by
+  | v :: vs, ps, k, h, hk => by
     obtain ⟨p, ps', rfl, hp, hvs⟩ := mapM_cons_ok pe h
-    rw [ref_cons]; simp only [refStep, hp, bind, Except.bind]
+    have hkp : predOk p = true := hk p (by simp)
+    have hk' : ∀ q ∈ ps', predOk q = true := fun q hq => hk q (by simp [hq])
+    rw [ref_cons]; simp only [refStep, hp, bind, Except.bind, hkp, ite_true]
     by_cases ht : isTrue p = true
     · simp only [ht, ite_true, filterPass, List.zip_cons_cons, List.filter_cons, List.map_cons,
         List.mapM_cons, List.length_cons]
@@ -173,13 +187,13 @@ theorem ref_tally_pre : ∀ (chunk ps : List (V F)) (k : Nat), chunk.mapM pe = .
       | error e => simp [bind, Except.bind, Except.map]
       | ok y =>
         simp only [pure, Except.pure, bind, Except.bind]
-        rw [ref_tally_pre vs ps' (k + 1) hvs]
+        rw [ref_tally_pre vs ps' (k + 1) hvs hk']
         simp only [filterPass]
         cases (List.map (·.1) (List.filter (fun q => isTrue q.2) (vs.zip ps'))).mapM pj <;>
           simp [Except.map]; omega
     · simp only [ht, Bool.false_eq_true, ite_false, pure, Except.pure, filterPass, List.zip_cons_cons,
         List.filter_cons]
-      exact ref_tally_pre vs ps' k hvs
+      exact ref_tally_pre vs ps' k hvs hk'
 
 theorem cstep_fold_shift : ∀ (ps : List (V F)) (t f n : Nat),
     ps.foldlM cstep (t, f, n) = (ps.foldlM cstep (0, 0, 0)).map fun r => (t + r.1, f + r.2.1, n + r.2.2)
@@ -301,4 +315,4 @@ theorem tally_bools : ∀ (chunk : List (V F)) (cs : List (Bool × Bool)), chunk
 
 end
 
-end Pr3437.ListLoop
+end Columnar.Comp.ListLoop

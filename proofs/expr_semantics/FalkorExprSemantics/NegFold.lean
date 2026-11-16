@@ -4,10 +4,10 @@ import FalkorCore.Int64
 import FalkorExprSemantics
 
 /-!
-# PR #3437: a negated numeric literal is folded at parse time (cypher.rs:2558-2572)
+# PR #3437: a negated numeric literal is folded at parse time (cypher.rs:2588-2602)
 
-The unary level of `parse_expr_inner` (cypher.rs:2547-2580) sees the operand `res` it built
-under one optional `-` (cypher.rs:2230-2246: a single `Dash`, so `--1` never parses and
+The unary level of `parse_expr_inner` (cypher.rs:2577-2610) sees the operand `res` it built
+under one optional `-` (cypher.rs:2238-2276: a single `Dash`, so `--1` never parses and
 `-(…)` keeps a `Paren` child). On main it has two special cases; the PR inserts a third
 between them:
 
@@ -18,11 +18,11 @@ between them:
 | Lean | Rust |
 | --- | --- |
 | `E` | the `ExprIR` tree under the unary level (`paren`/`other` are any other shape) |
-| `level9Main`, `level9PR` | cypher.rs:2547-2580 on main / on the PR |
+| `level9Main`, `level9PR` | cypher.rs:2577-2610 on main / on the PR |
 | `rustNegI` | `-i` on `i64` in release (`[profile.release]` has no `overflow-checks`: wraps; debug panics) |
 | `negF` | `-f` on `f64` (`Neg for f64`: flips the sign bit, NaN payload kept) |
-| `evalE` | `ExprEval` on `Constant` / `Negate` (eval.rs:895-907, `checkedNeg` from proofs/expr_semantics) |
-| `evalParam` | `evaluate_param`'s `Negate` (eval.rs:2277-2286) |
+| `evalE` | `ExprEval` on `Constant` / `Negate` (eval.rs:913-925, `checkedNeg` from proofs/expr_semantics) |
+| `evalParam` | `evaluate_param`'s `Negate` (eval.rs:2335-2344) |
 
 **`fold_eq_eval`**: for every tree, the PR's level-9 result evaluates to what main's does
 (`Except`-equal: same value — float bits included — or same error), under both evaluators.
@@ -30,7 +30,7 @@ between them:
 the wrapping `-i` is never at its overflow point and debug builds cannot panic there.
 -/
 
-namespace Pr3437.NegFold
+namespace FalkorExprSemantics.NegFold
 open FalkorCore
 open FalkorExpr (checkedNeg neg_eq_sub_zero)
 
@@ -63,13 +63,13 @@ inductive E where
 
 def overflowMsg : String := "Integer overflow '9223372036854775808'"
 
-/-- main, cypher.rs:2547-2580 without the PR's branch. -/
+/-- main, cypher.rs:2577-2610 without the PR's branch. -/
 def level9Main : E → Except String E
   | .neg (.const (.int i)) => if i = I64MIN then .ok (.const (.int I64MIN)) else .ok (.neg (.const (.int i)))
   | .const (.int i) => if i = I64MIN then .error overflowMsg else .ok (.const (.int i))
   | res => .ok res
 
-/-- The PR, cypher.rs:2547-2580. -/
+/-- The PR, cypher.rs:2577-2610. -/
 def level9PR : E → Except String E
   | .neg (.const (.int i)) =>
     if i = I64MIN then .ok (.const (.int I64MIN)) else .ok (.const (.int (rustNegI i)))
@@ -89,7 +89,7 @@ def evalE (evOther : E → Except String (FalkorCore.V F)) : E → Except String
     | w => .error ("Type mismatch: expected Integer, Float, or Null but was " ++ w.name)
   | e => evOther e
 
-/-- `evaluate_param` (eval.rs:2277-2286): a negated non-number is `Null`. -/
+/-- `evaluate_param` (eval.rs:2335-2344): a negated non-number is `Null`. -/
 def evalParam (evOther : E → Except String (FalkorCore.V F)) : E → Except String (FalkorCore.V F)
   | .const v => .ok v
   | .neg e => evalParam evOther e >>= fun v => match v with
@@ -178,4 +178,4 @@ theorem bare_min_refused : level9PR (.const (.int I64MIN) : E) = .error overflow
     level9Main (.const (.int I64MIN) : E) = .error overflowMsg := by
   simp [level9PR, level9Main]
 
-end Pr3437.NegFold
+end FalkorExprSemantics.NegFold

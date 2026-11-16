@@ -20,6 +20,20 @@ import Columnar.LaneWF
 import Columnar.CoreBridge
 import Columnar.RuntimeReads
 import Columnar.EvalBatch
+import Columnar.Comp.ListLoop
+import Columnar.Comp.Chunked
+import Columnar.Comp.ChunkedSound
+import Columnar.Comp.Drive
+import Columnar.Comp.ClassifierPre
+import Columnar.Comp.Classifier
+import Columnar.Comp.Bridge
+import Columnar.Comp.ChunkBatch
+import Columnar.Comp.ExactProp
+import Columnar.Comp.PRArms
+import Columnar.Comp.Runtime
+import Columnar.Comp.Discharge
+import Columnar.Comp.Concrete
+import Columnar.Comp.Final
 
 /-
 # Columnar batch layer: every columnar operation = its row-at-a-time definition
@@ -43,6 +57,37 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
 | `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` (`/` is `checked_div` since #3603: `i64::MIN / -1` errors and the int lane refuses it; `%` still wraps to 0) |
 | `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |
+
+| `Comp.*` | #3437: list comprehensions / quantifiers over the list in chunks (`eval.rs` `ListLoop`, `list_loop_chunk`, `list_loop_columnar`, `eval_list_comprehension`, `eval_quantifier`), the `size(<comprehension>)` guard of `VectorEval::eval`, and the exact property fetch (`materialize_node_property_exact`); table below |
+
+## #3437: chunked list comprehensions equal the per-element loop (`Comp/`)
+
+Folded in from the review project pr3437_review; cites are to the PR branch
+(`perf/list-comprehension`). Lean names are `Columnar.Comp.<Module>`; the verdicts hold for
+main's loop as it is on the branch's base (a non-boolean predicate is a type error, #3261).
+
+| module | Rust |
+| --- | --- |
+| `ListLoop` | main's per-element comprehension / quantifier loops (*main* eval.rs:1078-1093, :1017-1035); `LoopSink`, `ListLoop` (eval.rs:290-316); the per-element half of `list_loop_chunk` (:1529-1594); `check_predicate_result` (:1584) as `predOk` |
+| `Chunked`, `ChunkedSound` | `list_loop_columnar` (eval.rs:1598-1710), its predicate type check (`checkPred`), the projection over the passed row indices (`passedIdx`) |
+| `Drive` | `list_loop_chunk` (:1491-1595), the chunk loops, `eval_list_comprehension` (:1400-1484), `ExprEval::eval_quantifier` (:1338-1391), `size` (functions/list.rs:61) |
+| `Classifier` (`ClassifierPre`: historical) | `collect_body_vars` (eval.rs:386-415), `ListLoop::vector_plan` (:349-376) |
+| `Bridge`, `ChunkBatch`, `PRArms`, `Concrete`, `Runtime` | `VectorEval` over the chunk batch vs `Dispatch.eval_sound`; `counts_comprehension` (eval.rs:320) and its guard in `VectorEval::eval`; `loop_var_column` (:419), `broadcast_column` (:431); `colOf_sound` discharges the vector evaluator's contract |
+| `Discharge` | `ListLoop::new` over expr_semantics' `E` (`newBody_drops`); the classifier's view of `E` (`toBT`) |
+| `ExactProp` | `materialize_node_property_exact` (runtime.rs:1685), `get_node_int_attributes_by_idx` (graph.rs:2686), `get_int_attrs_by_idx_batch_into` (attribute_store.rs:1188) |
+| `Final` | the headline theorems with only `hreg` (every `hasLabels` call is the registered one) assumed |
+
+* **Chunked = per-element**: `Final.pr_comprehension_eq_main`, `pr_quantifier_eq_main`,
+  `pr_size_eq_main`, `pr_chunkStep_eq`, `pr_columnar_sound` (`Except`-equal: same list, order,
+  or error). A chunk whose columnar evaluation errors (including a non-boolean predicate cell,
+  `checkPred`) is re-run per element, which is main's loop.
+* **Classifier**: `collect_rejects_iff`, `vectorPlan_no_bad`, `vectorPlan_broadcasts`. The model
+  rejects writing / aggregating calls and nested binders; the PR also rejects UDF, procedure and
+  non-deterministic calls (e1d37442e), which the model (every call pure) accepts, so the
+  theorems cover a superset of the bodies Rust sends columnar.
+* **Exact property fetch**: `ExactProp.exact_eq_main`, `PRArms.evalPropertyPR_eq`.
+* Negated-literal folding is expr_semantics' `NegFold`; `value_of_type(List, List(Any))` is
+  value_order's `ValueOfType`.
 
 ## 2026-10-21: `VectorEval` is `ExprEval`, row by row, over the full engine value
 

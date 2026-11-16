@@ -38,7 +38,7 @@ graph/src/runtime/value.rs	CompareValue::compare_value	1250	PROVEN	Glue.CompareV
 graph/src/runtime/value.rs	PartialEq::eq	1257	PROVEN	eqV: nan_eq_irreflexive, hash_not_consistent_with_eq, cmp_sane_eq_key (Value::eq is not an equivalence; GroupKey::eq no longer uses it since #2917)
 graph/src/runtime/value.rs	CompareValue::compare_value	1266	PROVEN	cmpV: cmp_sane_eq_key, sane_refl/sane_swap/sane_le_trans; nan_breaks_antisymmetry, mixed_numeric_not_transitive (compare_value is not a total order; sorting no longer uses it since #2912); Str=Nat; Path/Rel/temporal arms not modelled
 graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1316	PROVEN	Glue.ValueTypeOf class / W.valueOfType: valueTypeOf_eq, valueOfType_any, valueOfType_self
-graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1323	NOT COVERED	type test; not modelled
+graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1323	PROVEN	ValueOfType vtPR (#3437: the List(Any) early arm): vtPR_eq (= W.valueOfType for every value and type), listFirst_eq, unionAll_eq, size_arg_list
 graph/src/runtime/value.rs	ValueGetType::get_type	1367	PROVEN	Glue.ValueGetType class / W.getType: valueGetType_eq, getType_concrete
 graph/src/runtime/value.rs	ValueGetType::get_type	1371	NOT COVERED	type reflection; not modelled
 graph/src/runtime/value.rs	Value::name	1397	PROVEN	Glue.W.name (Edge/Vectorf32 since #2954): name_eq_iff_order_eq (name is a bijective function of the variant)

@@ -19,7 +19,7 @@ bodies with none of them, and it broadcasts every variable the bodies read that 
 not bind themselves, with the environment's value (`vectorPlan_broadcasts`).
 -/
 
-namespace Pr3437.ClassifierPre
+namespace Columnar.Comp.ClassifierPre
 
 /-- Node kinds as `collect_body_vars` sees them. `func write agg`: a `FuncInvocation`
 with `func.write` / `FnType::Aggregation`. -/
@@ -258,4 +258,4 @@ theorem vectorPlan_broadcasts {V : Type} (varId : Nat) (bodies : List BT) (value
       | none => simp [hv] at hp
       | some v => simp only [hv, Option.map_some, Option.some.injEq] at hp; subst hp; exact ⟨v, rfl, hpo⟩
 
-end Pr3437.ClassifierPre
+end Columnar.Comp.ClassifierPre
