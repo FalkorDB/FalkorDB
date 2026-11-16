@@ -1,11 +1,11 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/functions/temporal.rs	int_component	133	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	int_component	133	PROVEN	Fns.intComponent (only Int; null/string/float error): date_null_component_errors, mapComponents_exact, structInts_rewrite
 graph/src/runtime/functions/temporal.rs	check_range	159	PROVEN	checkRange/inRange (None passes): used by quarterPath/weekPath; quarter_doq_errors, quarter_errors, week_huge_errors, dateFromComponents_total
 graph/src/runtime/functions/temporal.rs	date_from_components	178	PROVEN	dateFromComponents/weekPath/quarterPath/ymdPath: dateFromComponents_total (never panics, every input; #2950 737dfb5da), weekPath_ok, quarterPath_ok, week_huge_errors, quarter_doq_errors, ymd_no_truncation, week_edge_errors, dayOfWeek_seven_is_sunday, dayOfWeek_zero_rejected (ISO dayOfWeek, #2988); W2-temporal-1,-2 fixed (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412)
-graph/src/runtime/functions/temporal.rs	date_from_values	226	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	time_from_components	250	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	time_from_values	267	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	struct_ints	233	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
+graph/src/runtime/functions/temporal.rs	date_from_values	226	PROVEN	Fns.dateFromValues (int_components, then dateFromComponents as parameter dfc): dateStruct_eq_map, ldt_map_date_error
+graph/src/runtime/functions/temporal.rs	time_from_components	250	PROVEN	Fns.timeFromComponents (u32::try_from since #3607): timeFromComponents_ok, u32Of_spec, timeFromComponents_no_wrap (historical pre3607_u32_wrap)
+graph/src/runtime/functions/temporal.rs	time_from_values	267	PROVEN	Fns.timeFromValues: timeFromValues_ok, localtimeStruct_eq_map
+graph/src/runtime/functions/temporal.rs	struct_ints	233	PROVEN	Fns.structInts/siLoop (mask = last arg): structInts_rewrite, siLoop_eq_icLoop (= int_components of struct_components), ldt_struct_hour_error
 graph/src/runtime/functions/temporal.rs	parse_date_string	273	PROVEN	Parse.parseDate (chrono/parse in Chrono structure): parseDate_ok (soundness), parseDate_negative, parseDate_compact_rejects, parseDate_compact_ok_allDigits, compact_junk_examples, parseDate_week_first (#3125 1ea868116)
 graph/src/runtime/functions/temporal.rs	parse_week_date	368	PROVEN	weekSlice (rest.len() <= 2 branch and split_at_checked, #2950): weekSlice_err_iff, weekSlice_short_ok, week_slice_errors, sliceOk_ascii; W2-temporal-3 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/runtime/functions/temporal.rs	parse_time_string	408	PROVEN	Parse.parseTime: parseTime_ok (result < 86400), parseTime_compact_rejects (#3125 1ea868116)
@@ -15,28 +15,28 @@ graph/src/runtime/functions/temporal.rs	days_from_civil	571	PROVEN	daysFromCivil
 graph/src/runtime/functions/temporal.rs	construct_duration_secs	587	PROVEN	constructDuration (ends in checkDateRange since #2746): construct_decompose, construct_ym_s
 graph/src/runtime/functions/temporal.rs	check_date_range	641	PROVEN	Duration.checkDateRange: checkDateRange_iff (accepts exactly years within +-MAX_DATE_YEAR), checkDateRange_boundary, minDateDays_val, maxDateDays_val
 graph/src/runtime/functions/temporal.rs	decompose_duration	649	PROVEN	decomposeDuration: construct_decompose, decompose_monthsDur, neg_days_encoding
-graph/src/runtime/functions/temporal.rs	date_pure	667	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	localtime_pure	684	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	localdatetime_pure	708	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	duration_pure	726	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	duration_struct_pure	845	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	date_struct_pure	850	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	localtime_struct_pure	858	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	localdatetime_struct_pure	867	NOT COVERED	(#3295): body rewritten (components validated in one pass, float durations); not modelled yet
-graph/src/runtime/functions/temporal.rs	register	876	PROVEN	Pure.registered/pureFns/structSlots: register_wf, register_nondet
+graph/src/runtime/functions/temporal.rs	date_pure	667	PROVEN	Pure.datePure: datePure_midnight, pure_not_unreachable, pure_null, dateStruct_eq_map, date_null_component_errors, date_unknown_key_errors
+graph/src/runtime/functions/temporal.rs	localtime_pure	684	PROVEN	Pure.localtimePure: localtimePure_range, pure_not_unreachable, pure_null, localtimeStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localdatetime_pure	708	PROVEN	Pure.localdatetimePure (date built before the time components are validated): pure_not_unreachable, pure_null, ldt_map_date_error; COUNTEREXAMPLE pr3607_localdatetime_map_ne_struct (map form != struct form)
+graph/src/runtime/functions/temporal.rs	duration_pure	726	PROVEN	Pure.durationPure/durationFromValues/dvLoop (cds, cdsF parameters): pure_not_unreachable, pure_null, durationStruct_eq_map, durationFromValues_ints
+graph/src/runtime/functions/temporal.rs	duration_struct_pure	845	PROVEN	Pure.durationStructPure: durationStruct_eq_map (rewriteArgs: slots + presence mask)
+graph/src/runtime/functions/temporal.rs	date_struct_pure	850	PROVEN	Pure.dateStructPure: dateStruct_eq_map, date_null_component_errors
+graph/src/runtime/functions/temporal.rs	localtime_struct_pure	858	PROVEN	Pure.localtimeStructPure: localtimeStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localdatetime_struct_pure	867	PROVEN	Pure.localdatetimeStructPure (all ten components validated first): ldt_struct_hour_error; COUNTEREXAMPLE pr3607_localdatetime_map_ne_struct (differs from localdatetime_pure on {month: 13, hour: null})
+graph/src/runtime/functions/temporal.rs	register	876	PROVEN	Pure.registered/pureFns/structSlots/structMasked: register_wf, register_nondet, register_masked
 graph/src/runtime/functions/temporal.rs	timestamp_fn	882	PROVEN	Pure.timestampFn (clock as argument): definitional (returns Int(nowMs))
-graph/src/runtime/functions/temporal.rs	date_fn	898	NOT COVERED	(#3295): forwards to the rewritten constructors; not modelled yet
-graph/src/runtime/functions/temporal.rs	localtime_fn	919	NOT COVERED	(#3295): forwards to the rewritten constructors; not modelled yet
-graph/src/runtime/functions/temporal.rs	localdatetime_fn	942	NOT COVERED	(#3295): forwards to the rewritten constructors; not modelled yet
-graph/src/runtime/functions/temporal.rs	duration_fn	958	NOT COVERED	(#3295): forwards to the rewritten constructors; not modelled yet
+graph/src/runtime/functions/temporal.rs	date_fn	898	PROVEN	Pure.dateFn (clock as argument): clock_fns_shape, fns_with_args
+graph/src/runtime/functions/temporal.rs	localtime_fn	919	PROVEN	Pure.localtimeFn: clock_fns_shape, fns_with_args
+graph/src/runtime/functions/temporal.rs	localdatetime_fn	942	PROVEN	Pure.localdatetimeFn: fns_with_args
+graph/src/runtime/functions/temporal.rs	duration_fn	958	PROVEN	Pure.durationFn: definitional (= durationPure)
 graph/src/runtime/functions/temporal.rs	date_transaction_fn	968	PROVEN	Pure.dateTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localtime_transaction_fn	980	PROVEN	Pure.localtimeTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localdatetime_transaction_fn	994	PROVEN	Pure.localdatetimeTransactionFn: transaction_consistent
-graph/src/runtime/functions/temporal.rs	map_components	67	NOT COVERED	(#3295): not modelled yet
-graph/src/runtime/functions/temporal.rs	struct_components	117	NOT COVERED	(#3295): not modelled yet
-graph/src/runtime/functions/temporal.rs	int_components	144	NOT COVERED	(#3295): not modelled yet
-graph/src/runtime/functions/temporal.rs	duration_from_values	787	NOT COVERED	(#3295): not modelled yet
-graph/src/runtime/functions/temporal.rs	construct_duration_secs_float	822	NOT COVERED	(#3295): not modelled yet
+graph/src/runtime/functions/temporal.rs	map_components	67	PROVEN	Fns.mapComponents/mcLoop/badValues (ieq = eq_ignore_ascii_case): mapComponents_exact, date_unknown_key_errors
+graph/src/runtime/functions/temporal.rs	struct_components	117	PROVEN	Fns.structComponents/splitMask/bitAt: structComponents_rewrite, bitAt_maskFor
+graph/src/runtime/functions/temporal.rs	int_components	144	PROVEN	Fns.intComponents/icLoop: structInts_rewrite, siLoop_eq_icLoop
+graph/src/runtime/functions/temporal.rs	duration_from_values	787	PROVEN	Pure.durationFromValues/dvLoop: durationStruct_eq_map, durationFromValues_ints
+graph/src/runtime/functions/temporal.rs	construct_duration_secs_float	822	NOT COVERED	f32/f64 arithmetic (as f32 casts, trunc, 365.25/30.44 day fractions); a parameter (cdsF) of Pure.durationFromValues
 graph/src/runtime/value.rs	Point::distance	153	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite_coords (finite for finite coordinates), distance_finite, distance_not_nan (hypothesis-free apart from the binary64 laws of the Flt/NanLaws structures, as for chrono and simsimd); W2-temporal-4 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/runtime/value.rs	Value::format_datetime	261	PROVEN	Components.formatDatetime: formatDatetime_spec, format_extremes (total, no chrono since #2986)
 graph/src/runtime/value.rs	Value::format_date	281	PROVEN	Components.formatDate: formatDate_spec, pushDate_eq, format_extremes, format_wide_years, formatDate_wide_distinct (#2986/#2746 fixed)

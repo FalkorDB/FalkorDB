@@ -4,11 +4,11 @@
 | here | there |
 | --- | --- |
 | `Val`, `FD`, `FE`, `insertKV`, `ev` | `Value`, bound `ExprIR` payloads/trees, `OrderMap::insert` (ordermap.rs:76-89), runtime eval of constants / `List` / `Map` (eval.rs:349-359) |
-| `nodeToValue`, `exprTreeToValue` | `expr_tree_to_value` / `node_to_value` binder.rs:2448-2477 |
-| `collectConstArgs` | `collect_constant_args` binder.rs:2480-2489 |
-| `foldCall` | the folding step of `bind_expr_node` binder.rs:2114-2126 |
-| `rewriteStruct` | `rewrite_struct_constructor` binder.rs:2498-2553 |
-| `rewriteRegex` | `rewrite_compiled_regex` binder.rs:2563-2592 |
+| `nodeToValue`, `exprTreeToValue` | `expr_tree_to_value` / `node_to_value` binder.rs:2463-2491 |
+| `collectConstArgs` | `collect_constant_args` binder.rs:2495-2503 |
+| `foldCall` | the folding step of `bind_expr_node` binder.rs:2123-2140 |
+| `rewriteStruct`, `maskOf` | `rewrite_struct_constructor` binder.rs:2516-2581 (presence mask since #3607) |
+| `rewriteRegex` | `rewrite_compiled_regex` binder.rs:2589-2618 |
 
 * `nodeToValue_sound`: a tree that folds evaluates to the folded value
   (duplicate map keys: last value wins, first position kept, as at runtime);
@@ -17,7 +17,8 @@
   arguments gives what the runtime call would (when `pure_fn` agrees with the
   runtime function on those arguments — the registration contract).
 * `rewriteStruct_*`: positional slots are filled from the literal map (last
-  duplicate wins, missing → `Null`), unknown keys bail out; under the
+  duplicate wins, missing → `Null`, then the presence mask when masked: `maskOf_bit`),
+  unknown keys bail out; under the
   constructor contract (`struct_fn` on slots = map function on the map) the
   call's value is unchanged (`rewriteStruct_sound`).
 * `rewriteRegex_*`: a constant, compilable pattern is moved into the operator;
@@ -229,7 +230,7 @@ theorem collectConstArgs_spec (cs : List FE) (vs : List Val) (h : collectConstAr
         refine ⟨by simp [hl], ?_⟩
         simp [evL, nodeToValue_sound ρ c x h1, he]
 
-/-- The fold of `bind_expr_node` (binder.rs:2114-2126): when the call is pure,
+/-- The fold of `bind_expr_node` (binder.rs:2123-2140): when the call is pure,
 its arguments are all constant, their number and types fit, and `pure_fn`
 succeeds, the call is replaced by its value. -/
 def foldCall (pureFn : Option (List Val → Except String Val)) (arity : Nat) (typeOk : List Val → Bool)
@@ -280,34 +281,44 @@ def entriesOf : List FE → Option (List (String × FE))
 def lastLookup (es : List (String × FE)) (k : String) : Option FE :=
   (es.reverse.find? (·.1 == k)).map Prod.snd
 
-/-- The rewritten children: one per slot, `Constant(Null)` if absent. `none`
-if the call is left alone (not a single literal map, or unknown keys). -/
-def rewriteStruct (slots : List String) (cs : List FE) : Option (List FE) :=
+/-- The presence mask (`mask |= 1 << i` for every slot `i` the literal wrote; the bits
+are distinct, so `|` is `+`). -/
+def maskOf (es : List (String × FE)) : List String → Int
+  | [] => 0
+  | s :: ss => (if (lastLookup es s).isSome then 1 else 0) + 2 * maskOf es ss
+
+/-- The rewritten children: one per slot, `Constant(Null)` if absent, then (for a masked
+constructor, #3607) `Constant(Int(mask))`. `none` if the call is left alone (not a single
+literal map, or unknown keys). -/
+def rewriteStruct (slots : List String) (masked : Bool) (cs : List FE) : Option (List FE) :=
   match cs with
   | [.node .map entries] =>
     match entriesOf entries with
     | none => none
     | some es =>
       if es.all (fun kv => slots.contains kv.1) then
-        some (slots.map fun s => (lastLookup es s).getD (.node (.const .null) []))
+        some (slots.map (fun s => (lastLookup es s).getD (.node (.const .null) [])) ++
+          (if masked then [.node (.const (.int (maskOf es slots))) []] else []))
       else none
   | _ => none
 
-theorem rewriteStruct_slots (slots : List String) (cs out : List FE) (h : rewriteStruct slots cs = some out) :
-    out.length = slots.length := by
+theorem rewriteStruct_slots (slots : List String) (masked : Bool) (cs out : List FE)
+    (h : rewriteStruct slots masked cs = some out) :
+    out.length = slots.length + (if masked then 1 else 0) := by
   unfold rewriteStruct at h
   split at h
   · split at h
     · simp at h
     · split at h
-      · simp at h; subst h; simp
+      · simp at h; subst h; cases masked <;> simp
       · simp at h
   · simp at h
 
 /-- Unknown keys: no rewrite (the map function reports them). -/
-theorem rewriteStruct_unknown (slots : List String) (entries : List FE) (es : List (String × FE))
+theorem rewriteStruct_unknown (slots : List String) (masked : Bool) (entries : List FE)
+    (es : List (String × FE))
     (he : entriesOf entries = some es) (k : String) (hk : k ∈ es.map Prod.fst) (hs : k ∉ slots) :
-    rewriteStruct slots [.node .map entries] = none := by
+    rewriteStruct slots masked [.node .map entries] = none := by
   simp only [rewriteStruct, he]
   have : es.all (fun kv => slots.contains kv.1) = false := by
     rw [List.all_eq_false]
@@ -316,13 +327,15 @@ theorem rewriteStruct_unknown (slots : List String) (entries : List FE) (es : Li
   rw [this]; rfl
 
 /-- What the rewrite produces: each slot's (last) entry, `Null` when absent, all
-keys known. Under the constructor contract (`struct_fn` applied to these slot
-values = the map-taking function applied to the literal map) the call's value
-is unchanged. -/
-theorem rewriteStruct_shape (slots : List String) (cs out : List FE) (h : rewriteStruct slots cs = some out) :
+keys known, then the presence mask when masked. Under the constructor contract
+(`struct_fn` applied to these slot values = the map-taking function applied to the
+literal map) the call's value is unchanged. -/
+theorem rewriteStruct_shape (slots : List String) (masked : Bool) (cs out : List FE)
+    (h : rewriteStruct slots masked cs = some out) :
     ∃ entries es, cs = [.node .map entries] ∧ entriesOf entries = some es ∧
       (∀ kv ∈ es, slots.contains kv.1 = true) ∧
-      out = slots.map fun s => (lastLookup es s).getD (.node (.const .null) []) := by
+      out = slots.map (fun s => (lastLookup es s).getD (.node (.const .null) [])) ++
+        (if masked then [.node (.const (.int (maskOf es slots))) []] else []) := by
   unfold rewriteStruct at h
   split at h
   · rename_i entries
@@ -331,10 +344,38 @@ theorem rewriteStruct_shape (slots : List String) (cs out : List FE) (h : rewrit
     · rename_i es hes
       split at h
       · rename_i hall
-        simp at h; subst h
+        simp only [Option.some.injEq] at h; subst h
         exact ⟨entries, es, rfl, hes, fun kv hkv => by simpa using List.all_eq_true.1 hall kv hkv, rfl⟩
       · simp at h
   · simp at h
+
+/-- `mask >> i & 1` (arithmetic shift = floor halving). -/
+def bitAt (mask : Int) : Nat → Bool
+  | 0 => mask % 2 == 1
+  | i + 1 => bitAt (mask / 2) i
+
+/-- The mask's bit `i` is set iff the literal wrote slot `i` (#3607: an explicit
+`null` entry is written, an absent key is not). -/
+theorem maskOf_bit (es : List (String × FE)) :
+    ∀ (slots : List String) (i : Nat),
+      bitAt (maskOf es slots) i = (slots[i]?.any fun s => (lastLookup es s).isSome)
+  | [], i => by
+    cases i <;> simp [maskOf, bitAt]
+    rename_i i
+    induction i with
+    | zero => rfl
+    | succ j ih => simp [bitAt, ih]
+  | s :: ss, 0 => by
+    simp only [maskOf, bitAt, List.getElem?_cons_zero, Option.any_some]
+    cases (lastLookup es s).isSome
+    · simp
+    · have : (1 + 2 * maskOf es ss) % 2 = 1 := by omega
+      simp [this]
+  | s :: ss, i + 1 => by
+    simp only [maskOf, bitAt, List.getElem?_cons_succ]
+    rw [← maskOf_bit es ss i]
+    congr 1
+    split <;> omega
 
 /-! ## `rewrite_compiled_regex` -/
 

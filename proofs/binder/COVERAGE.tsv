@@ -33,7 +33,7 @@ graph/src/planner/binder.rs	Binder::expr_may_return_entity	2390	PROVEN	Types.may
 graph/src/planner/binder.rs	expr_tree_to_value	2463	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
 graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2465	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
 graph/src/planner/binder.rs	collect_constant_args	2495	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
-graph/src/planner/binder.rs	rewrite_struct_constructor	2516	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
+graph/src/planner/binder.rs	rewrite_struct_constructor	2516	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown, maskOf_bit (presence mask, #3607)
 graph/src/planner/binder.rs	rewrite_compiled_regex	2589	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
 graph/src/planner/binder.rs	replace_agg_subtrees	2623	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
 graph/src/planner/binder.rs	raw_exprs_structurally_equal	2653	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_wrong_aggregate (CONFIRMED bug), order_by_int_distinguished

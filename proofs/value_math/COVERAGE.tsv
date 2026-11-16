@@ -107,9 +107,9 @@ graph/src/runtime/functions/mod.rs	can_return_entity	579	PROVEN	Registry.Ty.canR
 graph/src/runtime/functions/mod.rs	is_compatible_with	590	PROVEN	isCompatibleWith_refl, isCompatibleWith_any, isCompatibleWith_union_mem
 graph/src/runtime/functions/mod.rs	fmt	611	PROVEN	unionDisplay_one/two/three
 graph/src/runtime/functions/mod.rs	fmt	702	PROVEN	Registry.GraphFn.dbg: dbg_fields
-graph/src/runtime/functions/mod.rs	new	719	PROVEN	Registry.GraphFn.new: new_fields
-graph/src/runtime/functions/mod.rs	new_procedure	745	PROVEN	Registry.GraphFn.newProcedure: newProcedure_call
-graph/src/runtime/functions/mod.rs	new_udf	771	PROVEN	Registry.GraphFn.newUdf: newUdf_fields
+graph/src/runtime/functions/mod.rs	new	719	PROVEN	Registry.GraphFn.new: new_fields, new_unmasked
+graph/src/runtime/functions/mod.rs	new_procedure	745	PROVEN	Registry.GraphFn.newProcedure: newProcedure_call, new_unmasked
+graph/src/runtime/functions/mod.rs	new_udf	771	PROVEN	Registry.GraphFn.newUdf: newUdf_fields, new_unmasked
 graph/src/runtime/functions/mod.rs	is_aggregate	790	PROVEN	Registry.GraphFn.isAggregate (tag = Aggregation): definitional + dbg_iff_tag
 graph/src/runtime/functions/mod.rs	validate	794	PROVEN	validate_fixed_iff, validate_varLength (built-in ≥1, UDF any), coalesce_zero_args_rejected (#2956 fixed 648b41c5c), udf_zero_args_ok
 graph/src/runtime/functions/mod.rs	validate_args_type	835	PROVEN	validateArgsType_go_none, numeric_body_cases
@@ -120,7 +120,7 @@ graph/src/runtime/functions/mod.rs	add	930	PROVEN	Registry.add: add_spec (lookup
 graph/src/runtime/functions/mod.rs	add_procedure	958	PROVEN	Registry.addProcedure: addProcedure_spec
 graph/src/runtime/functions/mod.rs	add_var_len	986	PROVEN	Registry.addVarLen: addVarLen_name (stores lowered name)
 graph/src/runtime/functions/mod.rs	set_pure_fn	1016	PROVEN	Registry.setPureFn/update: setPureFn_spec, update_spec, update_none
-graph/src/runtime/functions/mod.rs	set_struct_fn	1038	PROVEN	Registry.setStructFn/update: setStructFn_spec
+graph/src/runtime/functions/mod.rs	set_struct_fn	1038	PROVEN	Registry.setStructFn/update (masked flag, #3607): setStructFn_spec, setStructFn_masked
 graph/src/runtime/functions/mod.rs	get	1057	PROVEN	TypeCheck regGet: regGet_builtin_ci (built-ins case-insensitive), regGet_udf_case_sensitive (#3066)
 graph/src/runtime/functions/mod.rs	iter	1084	PROVEN	Registry.iter: iter_mem
 graph/src/runtime/functions/mod.rs	is_aggregate	1089	PROVEN	isAggregate_case_sensitive (latent, no caller)

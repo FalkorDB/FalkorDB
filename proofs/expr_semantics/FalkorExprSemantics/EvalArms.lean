@@ -172,6 +172,24 @@ theorem func_common (params : String → Option V) (f : Fn V) (hs : f.structFn =
       (evalList O (Ev.fromRuntime params) c env cs) >>= callFn O f := by
   simp [evalNode, Ev.fromRuntime, Ev.rt, hs, bind, Except.bind]
 
+/-- The struct-constructor path (eval.rs:931-947): with a struct form, the guard is the slot
+count plus the presence-mask child when masked (#3607); the slots are then evaluated in
+place and passed to `struct_fn`. -/
+theorem func_struct (params : String → Option V) (f : Fn V) (sf : List V → Except String V)
+    (hs : f.structFn = some sf) (hn : f.structSlots ≠ 0) (cs : List (E V))
+    (hl : cs.length = f.structSlots + (if f.structMasked then 1 else 0)) :
+    evalNode O (Ev.fromRuntime params) c env (.func f cs) =
+      (evalSlots O (Ev.fromRuntime params) c env cs) >>= sf := by
+  simp [evalNode, Ev.fromRuntime, Ev.rt, hs, hn, hl, bind, Except.bind]
+
+/-- A constant child (the presence mask, or any non-null constant) is its value. -/
+theorem evalSlots_const (v : V) (cs : List (E V)) :
+    evalSlots O ev c env (.const v :: cs) =
+      (evalSlots O ev c env cs) >>= fun r => .ok ((if O.isNull v then O.null else v) :: r) := by
+  simp only [evalSlots, isNullConst]
+  rcases Bool.eq_false_or_eq_true (O.isNull v) with h | h <;>
+    simp only [h, Bool.false_eq_true, ↓reduceIte, evalNode, bind, Except.bind]
+
 /-! ## IN, subscripts -/
 
 theorem in_spec (a l : E V) (v lv : V) (ha : evalNode O ev c env a = .ok v) (hl : evalNode O ev c env l = .ok lv) :
