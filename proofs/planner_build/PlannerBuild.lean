@@ -177,14 +177,19 @@ Open issues #2311, #2727, #2737, #2743, #2744, #2725 were missed: `nodeOnly_boun
 bound node-only branch (mod.rs:1915-1962) but no property said a named path gets built, and the MATCH
 arm's Apply decision was not modelled. Now: the property `E.BindsAllPaths` (every named path of a
 MATCH / OPTIONAL MATCH pattern is bound by the plan) and `Plan.argIsLeaf` (no `Argument` has a child);
-root causes `nodeOnly_bound_no_paths` (the bound branch never emits `PathBuilder`) and
-`planMatchArm_path_unwrapped` (`all_visited`, mod.rs:3067, counts the new path variable, so the plan is
+root causes `pre3526_nodeOnly_bound_no_paths` (the bound branch never emits `PathBuilder`) and
+`pre3526_planMatchArm_path_unwrapped` (`all_visited`, mod.rs:3067, counts the new path variable, so the plan is
 not Apply-wrapped and stitching puts the previous clauses under its `Argument`, which the runtime never
 runs: `argument_fill_ignores_input`). Counterexamples mirroring the live repros (Rust 9d3869aa8 vs C):
-`bug2311_optional_path_null`, `bug2737_optional_path_null` (OPTIONAL: path null),
-`bug2743_bound_path_drops_rows` (count 0 vs 1), `bug2744_bound_path_unfed_argument`,
-`bug2727_alias_path_drops_rows` (0 rows vs 1), `bug2725_call_then_bound_path_loses_var` (one empty row:
+`pre3526_bug2311_optional_path_null`, `pre3526_bug2737_optional_path_null` (OPTIONAL: path null),
+`pre3526_bug2743_bound_path_drops_rows` (count 0 vs 1), `pre3526_bug2744_bound_path_unfed_argument`,
+`pre3526_bug2727_alias_path_drops_rows` (0 rows vs 1), `pre3526_bug2725_call_then_bound_path_loses_var` (one empty row:
 `Variable n0 not found`). `unbound_path_built`: the unbound branch satisfies the property.
+**Fixed by #3526**: the bound branch now ends in `PathBuilder` and adds `n IS NOT NULL` to the bound
+filters (`nodeOnly_binds_paths`, `nodeOnly_bound_not_null`, `boundNode_path_built`), and `all_visited`
+reads only nodes and relationships (`planMatchArm_bound_wrapped`). The counterexamples above are kept on
+the pre-#3526 model (`nodeOnlyPre3526`, `planMatchArmPre3526`) as `pre3526_*`; `bug2311_fixed`,
+`bug2737_fixed`, `bug2743_fixed`, `bug2744_fixed`, `bug2727_fixed`, `bug2725_fixed` give the openCypher rows.
 Not in this project: #2502 (the parser's `parse_pattern`, cypher.rs:1562-1572, called for a WHERE pattern
 predicate at cypher.rs:2119, swallows a following `MATCH` keyword and merges that clause's pattern into the
 predicate — `MATCH (a:A) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → `'m' not defined`), and

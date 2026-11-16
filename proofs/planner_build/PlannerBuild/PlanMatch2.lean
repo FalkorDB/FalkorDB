@@ -171,34 +171,40 @@ theorem boundLabelFilters_visited (st : MSt) (rels : List QR) :
   | nil => intro; rfl
   | cons n ns ih => intro acc; simp only [List.foldl_cons]; rw [ih, labelStep_visited]
 
-/-! ## Node-only components (mod.rs:1913-1990) -/
+/-! ## Node-only components (mod.rs:1921-2010) -/
 
 def u32max : Nat := 4294967295
 
+/-- `PathBuilder(paths)` over `m` when the component names paths (mod.rs:2003-2007). -/
+def wrapP (paths : List (V × List V)) (m : MP) : MP := if paths.isEmpty then m else .pathB paths m
+
+/-- mod.rs:1921-2010. Since #3526 the bound branch also builds the component's paths
+(`PathBuilder` over its `Argument` / `ExpandInto(Argument)`) and adds `n IS NOT NULL`
+to the bound filters when there is a path (mod.rs:1935-1939). -/
 def nodeOnly (st : MSt) (lw : LW) (n : QN) (paths : List (V × List V)) : MP × MSt × List Ex × LW :=
   if st.bound n.alias then
     let (af, lw) := lowerN lw n
-    let bf := af.toList
-    if n.labels.isEmpty then (.arg, st, bf, lw)
+    let bf := af.toList ++ (if paths.isEmpty then [] else [isNotNullFilter n.alias])
+    if n.labels.isEmpty then (wrapP paths .arg, st, bf, lw)
     else
       let rel : QR := { alias := ⟨u32max - n.alias.id, n.alias.scope⟩, named := false,
                         frm := { alias := n.alias, ptr := 0 }, to := { alias := n.alias, labels := n.labels, ptr := 0 }, ptr := 0 }
-      (.expandInto rel false [.arg], markLabels st n.alias n.labels, bf, lw)
+      (wrapP paths (.expandInto rel false [.arg]), markLabels st n.alias n.labels, bf, lw)
   else
     let (af, lw) := lowerN lw n
     let res := withF af (scanOf (stripNode n))
     let st' := markLabels { st with visited := st.visited ++ [n.alias] } n.alias n.labels
-    (if paths.isEmpty then res else .pathB paths res, st', [], lw)
+    (wrapP paths res, st', [], lw)
 
 theorem nodeOnly_bound_plain (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
-    (hb : st.bound n.alias = true) (hl : n.labels = []) : (nodeOnly st lw n ps).1 = .arg := by
+    (hb : st.bound n.alias = true) (hl : n.labels = []) : (nodeOnly st lw n ps).1 = wrapP ps .arg := by
   simp [nodeOnly, hb, hl]
 
 /-- Extra labels on a bound node: a synthetic self-loop `ExpandInto` whose
 edge id is `u32::MAX - id` (mod.rs:1936-1941) checks them. -/
 theorem nodeOnly_bound_labels (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
     (hb : st.bound n.alias = true) (hl : n.labels ≠ []) :
-    ∃ r, (nodeOnly st lw n ps).1 = .expandInto r false [.arg] ∧
+    ∃ r, (nodeOnly st lw n ps).1 = wrapP ps (.expandInto r false [.arg]) ∧
       r.alias = ⟨u32max - n.alias.id, n.alias.scope⟩ ∧ r.frm.alias = n.alias ∧ r.to.alias = n.alias ∧
       r.to.labels = n.labels ∧ r.frm.labels = [] := by
   have : n.labels.isEmpty = false := by cases h : n.labels <;> simp_all
@@ -206,9 +212,11 @@ theorem nodeOnly_bound_labels (st : MSt) (lw : LW) (n : QN) (ps : List (V × Lis
            frm := { alias := n.alias, ptr := 0 }, to := { alias := n.alias, labels := n.labels, ptr := 0 }, ptr := 0 },
     by simp [nodeOnly, hb, this], rfl, rfl, rfl, rfl, rfl⟩
 
-/-- A bound node's map becomes a bound filter, at most once per (alias, map). -/
+/-- A bound node's map becomes a bound filter, at most once per (alias, map); with a
+named path, `n IS NOT NULL` follows it (#3526). -/
 theorem nodeOnly_bound_filter (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
-    (hb : st.bound n.alias = true) : (nodeOnly st lw n ps).2.2.1 = (lowerN lw n).1.toList := by
+    (hb : st.bound n.alias = true) : (nodeOnly st lw n ps).2.2.1 =
+      (lowerN lw n).1.toList ++ (if ps.isEmpty then [] else [isNotNullFilter n.alias]) := by
   unfold nodeOnly; simp only [hb, ↓reduceIte]; split <;> rfl
 
 theorem nodeOnly_unbound (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
@@ -218,17 +226,17 @@ theorem nodeOnly_unbound (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
          else .pathB ps (withF (lowerN lw n).1 (scanOf (stripNode n)))) ∧
       (nodeOnly st lw n ps).2.1.bound n.alias = true := by
   constructor
-  · unfold nodeOnly; simp only [hb, Bool.false_eq_true, ↓reduceIte]
+  · unfold nodeOnly wrapP; simp only [hb, Bool.false_eq_true, ↓reduceIte]
     split <;> simp [core_withF, MP.core, scanOf] <;> split <;> rfl
   · simp only [nodeOnly, hb, Bool.false_eq_true, ↓reduceIte]
     unfold markLabels; split <;> simp [MSt.bound]
 
 theorem nodeOnly_stripped (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V)) :
     (nodeOnly st lw n ps).1.stripped = true := by
-  unfold nodeOnly
+  unfold nodeOnly wrapP
   by_cases hb : st.bound n.alias
   · simp only [hb, ↓reduceIte]
-    split <;> simp [MP.stripped, MP.stripped.strippedL]
+    split <;> split <;> simp [MP.stripped, MP.stripped.strippedL]
   · simp only [hb, Bool.false_eq_true, ↓reduceIte]
     split <;> simp [MP.stripped, stripped_withF, scanOf_stripNode]
 

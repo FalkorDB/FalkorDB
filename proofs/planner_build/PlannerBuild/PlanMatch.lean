@@ -15,7 +15,7 @@ import PlannerBuild.Expr
 | `opRel`, `edgePred`, `topFilters` | mod.rs:2032-2043 (and 2201-2212); the edge Filter :2162-2169 / 2295-2301; both endpoints :2182-2187 / 2310-2315 |
 | `firstOp`/`firstRel`, `chainOp`/`chainRel` | first relationship mod.rs:2044-2196, the others mod.rs:2199-2321 |
 | `MP.stripped` | the invariant `optimizer/references.rs` relies on (scan / fixed-length operators carry no inline map) |
-| `nodeOnly` | node-only component mod.rs:1913-1990 |
+| `nodeOnly` | node-only component mod.rs:1921-2010 |
 | `boundLabelFilters` | mod.rs:1858-1872 |
 | `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs:1853-2403 |
 

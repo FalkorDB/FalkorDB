@@ -18,6 +18,7 @@ themselves are not re-modelled).
 | `needsExtraction` | `extract_filter_comprehensions::needs_extraction` mod.rs:1369-1382 |
 | `inlineAttrsToFilter` | `inline_attrs_to_filter` mod.rs:543-571 |
 | `hasLabelsFilter` | `has_labels_filter` mod.rs:696-709 |
+| `isNotNullFilter`, `isNullFn` | `is_not_null_filter` mod.rs:711-720; the internal `is_null` fn (runtime/functions/internal.rs:86-97) |
 | `patternExprVariables` | `Planner::pattern_expr_variables` mod.rs:1250-1282 |
 -/
 namespace PlannerBuild.E
@@ -429,6 +430,24 @@ theorem hasLabelsFilter_shape (v : V) (labels : List String) :
   induction labels with
   | nil => rfl
   | cons l ls ih => simp [nodesL, nodes, ih]
+
+/-- `var IS NOT NULL` as the parser emits it (`is_not_null_filter`, mod.rs:711-720):
+the internal `is_null(true, var)`. -/
+def isNotNullFilter (v : V) : Ex :=
+  .node (.func "is_null") [tt, Ex.v v]
+
+theorem isNotNullFilter_shape (v : V) :
+    nodes (isNotNullFilter v) = [.func "is_null", .const (.bool true), .var v] := rfl
+
+/-- The internal `is_null(is_not, x)` (runtime/functions/internal.rs:86-97), `x = none`
+for `Null`: `!is_not` on null, `is_not` otherwise. -/
+def isNullFn {α : Type} (isNot : Bool) : Option α → Bool
+  | none => !isNot
+  | some _ => isNot
+
+/-- `is_not_null_filter` keeps exactly the rows whose variable is not null. -/
+theorem isNotNullFilter_passes {α : Type} (x : Option α) : isNullFn true x = x.isSome := by
+  cases x <;> rfl
 
 /-! ## `pattern_expr_variables` (mod.rs:1250-1282)
 

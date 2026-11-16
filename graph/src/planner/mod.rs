@@ -707,6 +707,18 @@ fn has_labels_filter(
     )
 }
 
+/// `var IS NOT NULL`, the same internal call the parser emits.
+fn is_not_null_filter(var: &Variable) -> DynTree<ExprIR<Variable>> {
+    let is_null_fn = get_functions()
+        .get("is_null", &FnType::Internal)
+        .expect("is_null function must exist");
+    tree!(
+        ExprIR::FuncInvocation(is_null_fn),
+        tree!(ExprIR::Constant(Value::Bool(true))),
+        tree!(ExprIR::Variable(var.clone()))
+    )
+}
+
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
 ///
 /// The planner maintains state across clauses:
@@ -1912,7 +1924,7 @@ impl Planner {
                 let nodes = component.nodes();
                 debug_assert_eq!(nodes.len(), 1);
                 let node = nodes[0].clone();
-                if self.visited.contains(&(node.alias.id, node.alias.scope_id)) {
+                let mut res = if self.visited.contains(&(node.alias.id, node.alias.scope_id)) {
                     // Already bound: check for inline property constraints and
                     // additional labels that need verifying.
                     let attr_filter =
@@ -1920,8 +1932,13 @@ impl Planner {
                     if let Some(filter_expr) = attr_filter {
                         bound_filters.push(filter_expr);
                     }
+                    // A node an earlier OPTIONAL MATCH left null is not a path:
+                    // the pattern matches nothing for that row.
+                    if !component.paths().is_empty() {
+                        bound_filters.push(is_not_null_filter(&node.alias));
+                    }
                     if node.labels.is_empty() {
-                        vec.push(tree!(IR::Argument(None)));
+                        tree!(IR::Argument(None))
                     } else {
                         // Additional labels on an already-bound node: create a
                         // synthetic self-loop ExpandInto to verify them.
@@ -1951,15 +1968,15 @@ impl Planner {
                             None,
                             None,
                         ));
-                        vec.push(tree!(
+                        self.mark_labels_verified(&node.alias, node.labels.iter());
+                        tree!(
                             IR::ExpandInto {
                                 relationship: rel,
                                 emit_relationship: false,
                                 sibling_edges: vec![],
                             },
                             tree!(IR::Argument(None))
-                        ));
-                        self.mark_labels_verified(&node.alias, node.labels.iter());
+                        )
                     }
                 } else {
                     let attr_filter =
@@ -1980,12 +1997,15 @@ impl Planner {
                     }
                     self.visited.insert((node.alias.id, node.alias.scope_id));
                     self.mark_labels_verified(&node.alias, node.labels.iter());
-                    let paths = component.paths();
-                    if !paths.is_empty() {
-                        res = tree!(IR::PathBuilder(paths.to_vec()), res);
-                    }
-                    vec.push(res);
+                    res
+                };
+                // `p = (n)` is the one-node path, whether or not `n` was bound
+                // before this pattern.
+                let paths = component.paths();
+                if !paths.is_empty() {
+                    res = tree!(IR::PathBuilder(paths.to_vec()), res);
                 }
+                vec.push(res);
                 continue;
             };
             // Plan the first relationship in this connected component.
@@ -3064,8 +3084,14 @@ impl Planner {
                         tree!(IR::Optional(optional_vars), match_plan)
                     }
                 } else {
+                    // Paths are left out: a path is built from its nodes and
+                    // relationships, so `p = (n)` over a bound `n` binds
+                    // nothing new and still has to run once per incoming row.
                     let all_visited = pattern
-                        .variables()
+                        .nodes()
+                        .iter()
+                        .map(|n| &n.alias)
+                        .chain(pattern.relationships().iter().map(|r| &r.alias))
                         .all(|v| self.visited.contains(&(v.id, v.scope_id)));
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
