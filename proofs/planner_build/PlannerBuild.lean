@@ -20,7 +20,8 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
 | `Op`, `Plan` | `enum IR` mod.rs:65-328, `DynTree<IR>` |
 | `ev`, `evUnion`, `evRights`, `evAny` | `Runtime::build_batch_op` / `children_to_recurse` runtime/runtime.rs:654-1180 (child-0 input, `pop_or_once`, CP right branches materialised on the argument row) |
 | `forRows` | openCypher "for each record" |
-| `walkFirst` / `walkLoop` | insertion-point walks mod.rs:2743-2753 / 2817-2834 |
+| `walkFirst` / `walkLoop` | insertion-point walks mod.rs:2743-2753 / 2817-2834 (`walkFirst` steps over `PathBuilder` since #3101, mod.rs:2759-2770 there; `walkFirstPre3101` the old list) |
+| `stepOverPB`, `bodySlot` | `step_over_path_builder` mod.rs:962-972 and the FOREACH body walk mod.rs:3467-3484 (#3101) |
 | `projDescend`, `applyChain` | mod.rs:2756-2769, 2764-2768 |
 | `descendOne`, `descendClause`, `satChain`, `saturated` | mod.rs:969-1012, 953-958 |
 | `insertStep`, `stitchLoop`, `rustStitch` | mod.rs:2774-2850 (`push_sibling_tree(Left)` / `push_child_tree`, Apply-wrap of a CartesianProduct) |
@@ -99,8 +100,12 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
 * Helpers (Misc/Fmt/Rename): `subtreeContains_iff`, `addArgs_leaves`, `stitchBelow_get`/`_ev`,
   `ensureInput_ev_local`/`_saturates`, `setIP_scansLeaf`, `redundant_optional_identity`, `renameProj_*`,
   `inlineAttrs_passes`, EXPLAIN strings.
-* Counterexamples backing the bugs: `merge_path_last_misplaced`, `merge_path_last_skips_merge`,
-  `create_path_last_misplaced`, `create_path_last_skips_create`,
+* #3101: `merge_path_first_correct`, `create_path_first_correct` (a MERGE/CREATE with a named path
+  is correct as the last clause), `bodySlot_merge_path`/`body_merge_path_fill`,
+  `bodySlot_create_path`/`body_create_path_fill`, `bodySlot_other`, `stepOverPB_*` (FOREACH body).
+* Counterexamples backing the bugs: `pre3101_merge_path_last_misplaced`, `pre3101_merge_path_last_skips_merge`,
+  `pre3101_create_path_last_misplaced`, `pre3101_create_path_last_skips_create`,
+  `pre3101_body_merge_path_misplaced` (historical, on `walkFirstPre3101`/`bodySlotPre3101`),
   `selfloop_ignores_chain`, `cp_stitch_shape` + `cp_stitch_loses_correlation` (by `decide`),
   `where_scan_indistinguishable`.
 
@@ -114,7 +119,8 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    Also `UNWIND [1,2] AS i MERGE p=(x:X {v:i})`, `… CALL { WITH a MERGE p=… }`,
    `FOREACH (i IN [1] | CREATE (y:Y) MERGE p=(y)-[:T]->(:X))`. Adding `RETURN …` works.
    Fix: add `IR::PathBuilder(_)` to the first walk's list (and the FOREACH body walk), or reuse the
-   loop walk. Tests `bug_merge_named_path_as_last_clause`, `…_last_in_call_body`, `…_last_in_foreach_body`.
+   loop walk. FIXED by #3101: `merge_path_first_correct`, `body_merge_path_fill`; history
+   `pre3101_merge_path_last_misplaced`. Tests `bug_merge_named_path_as_last_clause`, `…_last_in_call_body`, `…_last_in_foreach_body`.
 2. **A `MATCH … WHERE` followed by a multi-component MATCH is cross-joined, not correlated**:
    `needs_apply_wrapping` (mod.rs:2874-2894) treats a Filter-over-scan as a plain CP branch and
    mod.rs:2809-2813 prepends it; the component that mentions the earlier variable was planned as if it
@@ -169,8 +175,8 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    release vs C): `MATCH (a:A) CREATE p=(a)-[:R]->(:B)` → Rust `Variable _anon_0 not found`, nothing
    created; C creates 1 node + 1 edge; the pre-#2829 Rust build created them too. Same for
    `UNWIND [1,2] AS x CREATE p=(:N {x:x})` (Rust error, C 2 nodes). With `RETURN p` (not last) it works:
-   `create_loop_correct`. Lean `create_path_last_misplaced`, `create_path_last_skips_create`.
-   Fix: the bug 1 fix (#3101 adds `PathBuilder` to the first walk) covers this too.
+   `create_loop_correct`. Lean `pre3101_create_path_last_misplaced`, `pre3101_create_path_last_skips_create`.
+   FIXED by #3101 (adds `PathBuilder` to the first walk): `create_path_first_correct`.
 
 ## Gap closed 2026-10-20: named paths over an already-bound node (PathBind.lean)
 Open issues #2311, #2727, #2737, #2743, #2744, #2725 were missed: `nodeOnly_bound_*` described the
@@ -205,7 +211,8 @@ C 0. The binder half (`node_labels`) is in proofs/binder `RemoveLabels.lean`.
 
 ## Open PRs touching planner/mod.rs (model = origin/main)
 * #3101 (MERGE p=… as last clause): adds `PathBuilder` to the first walk and steps over it in the FOREACH /
-  CALL body walk — fixes bug 1 (`merge_path_last_misplaced` no longer applies: `walkFirst` would pass it).
+  CALL body walk — fixes bugs 1 and 8; modelled: `firstPass` lists `PathBuilder`, `merge_path_first_correct`,
+  `create_path_first_correct`, `bodySlot_*`; the old walk is `walkFirstPre3101` (`pre3101_*` theorems).
 * #3100 (correlate MATCH … WHERE with the next CP): Apply-wraps when the CP subtree reads a variable the
   previous plan binds (`reads_plan_variables`) — fixes bug 2 (`cp_stitch_sound` is the remaining CP case).
 * #3102 merged (61284ea4f), see bug 4 and HopOrder.lean.
