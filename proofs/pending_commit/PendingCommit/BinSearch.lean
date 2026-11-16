@@ -22,7 +22,7 @@ inductive Res where
 
 /-- The `while size > 1` loop; returns the final `base`. -/
 def loop (ks : List Nat) (k base size : Nat) : Nat :=
-  if h : size > 1 then
+  if _h : size > 1 then
     let half := size / 2
     let mid := base + half
     let base' := if ks.getD mid 0 > k then base else mid   -- `cmp == Greater`

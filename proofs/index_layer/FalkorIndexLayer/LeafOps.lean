@@ -7,7 +7,7 @@ namespace IndexLayer.Leaf
 
 /-- `slice::chunks(n)`. -/
 def chunks (n : Nat) (l : List P) : List (List P) :=
-  if h : n = 0 then [l] else
+  if _h : n = 0 then [l] else
   if l = [] then [] else l.take n :: chunks n (l.drop n)
 termination_by l.length
 decreasing_by

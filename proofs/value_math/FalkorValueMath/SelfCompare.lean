@@ -54,7 +54,7 @@ def firstDiff : List F → List F → Ordering
 
 /-- `compare_vecf32`'s block loop (value.rs:1841-1848) for equal lengths. -/
 def chunked (a b : List F) : Ordering :=
-  if h : 16 ≤ a.length then
+  if _h : 16 ≤ a.length then
     if ((a.take 16).zip (b.take 16)).any (fun p => fc.ne p.1 p.2) then firstDiff fc (a.take 16) (b.take 16)
     else chunked (a.drop 16) (b.drop 16)
   else firstDiff fc a b

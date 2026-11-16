@@ -155,7 +155,7 @@ theorem ix_isEmpty_get (ix : Ix) (h : ix.len = 0) (i : Nat) : ix.get i = none :=
 /-- `Paged::from_slots(it, len)` (:234): while `left > 0`, take `min(left, P)` items as
 one page. -/
 def fromSlots (P : Nat) (hP : 0 < P) (it : List α) (left : Nat) : List (List α) :=
-  if h : left = 0 then [] else
+  if _h : left = 0 then [] else
   it.take (min left P) :: fromSlots P hP (it.drop (min left P)) (left - min left P)
 termination_by left
 decreasing_by have : 0 < min left P := Nat.lt_min.2 ⟨by omega, hP⟩; omega
