@@ -4,7 +4,6 @@
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
-#[cfg(feature = "index-falkordb")]
 use super::falkordb::{cch::CchDirty, pending_writes::PendingIndexWrites};
 
 /// Edge documents to remove, keyed by relationship type: `type_id -> { edge_id
@@ -16,7 +15,7 @@ use super::falkordb::{cch::CchDirty, pending_writes::PendingIndexWrites};
 pub type EdgeDocRemovals = FxHashMap<u64, FxHashMap<u64, (u64, u64)>>;
 
 /// The index changes a unit of work produced: RediSearch documents in both directions and for
-/// both entity kinds, and, with the `index-falkordb` feature, the native index's staged tuples.
+/// both entity kinds, and the native index's staged tuples.
 ///
 /// One type rather than parallel maps, and used for both the per-commit set and the deferred
 /// one it folds into. They have to stay in correspondence — a document added to the wrong half
@@ -37,11 +36,9 @@ pub struct IndexDocs {
     /// private version they were staged against, before the RediSearch documents are published;
     /// RediSearch's own folding and publishing ([`absorb`](Self::absorb), `commit`) never touch
     /// it.
-    #[cfg(feature = "index-falkordb")]
     pub native: PendingIndexWrites,
     /// What the unit's writes touched that a CCH index might care about, staged by the same
     /// write methods as [`native`](Self::native) and flushed by the same owner into rebuilt
     /// indexes on the private version (#3214). Empty for a graph with no CCH index.
-    #[cfg(feature = "index-falkordb")]
     pub cch: CchDirty,
 }

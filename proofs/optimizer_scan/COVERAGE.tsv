@@ -46,7 +46,7 @@ graph/src/planner/optimizer/utilize_index.rs	list_has_nested_list	582	PROVEN	Cle
 graph/src/planner/optimizer/utilize_index.rs	try_in_filter_scan	602	PROVEN	Index.trySingle inn arm; sel_inList, trySingle_spec; IndexCex C7/C8/C9 counterexamples
 graph/src/planner/optimizer/utilize_index.rs	try_single_filter_scan	658	PROVEN	Index.trySingle; trySingle_spec
 graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	727	PROVEN	Index.tryPushdown/pushAnd/pushOr; pushAnd_spec, pushOr_spec, utilize_sound (an array-contains conjunct keeps its filter since #3736: C10 now states agreement)
-graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	802	PROVEN	Index.needsPost; used in utilize_sound (¬keep ⇒ canUtilize); IndexCex C3/C4 (Date/computed constants)
+graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	802	NOT COVERED	(#3750): an OR holding an array probe (x IN <expr over a property>) now always keeps the filter; Index.needsPost does not model that guard yet
 graph/src/planner/optimizer/utilize_index.rs	is_non_indexable_subexpr	855	PROVEN	Cleanup.nonIdxD_spec
 graph/src/planner/optimizer/utilize_index.rs	rewrite_until_stable	881	PROVEN	Cleanup.untilStable_preserves, untilStable_stable
 graph/src/planner/optimizer/utilize_index.rs	governing_filter	920	PROVEN	Cleanup.governingFilter: governingFilter_spec (parent Filter, or grandparent across one single-child IncludePending ⇒ over_pending)
@@ -64,11 +64,10 @@ graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown/array-contains	
 graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	IdSeek.getIdFilter: getIdFilter_spec, getIdFilter_other_scope ((id, scope) since #2390), flip_correct, flip_flip
 graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	IdSeek.collectFilters + seek_sound (with runtime.rs evaluate_id_filter; empty graph since #3394); counterexamples negative/float/null; hazard: parent().unwrap() at line 106 (W4-plan-4 repro rejected by validation since #3297)
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	ScanOrder.reorderLabels_sound, sortBy_perm
-graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	1428	PROVEN	IdSeek.evalIdFilter/evalIdFilterMain; step_none, step_some, step_nonempty, fold_none, fold_some, go_eq_fold, seek_sound, empty_graph_seek_none (#3394 fixes #3353 / W2-scan-2; history pre3394_seek_sound)
-graph/src/index/mod.rs	build_query_node (support, not a target file)	1481	MODELLED	Index.build; sel_eq, sel_range, sel_and2 (RediSearch node semantics as definitions)
-graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query	100	PROVEN	EdgeInline.evalIQE_ok, evalIQE_inList_err, evalIQ_inList
-graph/src/runtime/ops/node_by_index_scan.rs	new	58	PROVEN	EdgeInline.extraLabels_spec, scanRow_eq_sel
-graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	263	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge, canUtilize_inList_eq_or (InList arm, #2383: same terms as the old Or)
-graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	266	PROVEN	EdgeInline.isIndexable_spec
-graph/src/runtime/ops/node_by_index_scan.rs	next	312	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound
-graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query/native-in-list	100	NOT COVERED	the index-falkordb IN-list branch (#3743): keeps a point, and keeps the list whole when a member no kind holds is in it; not modelled (the PROVEN theorem covers the default build)
+graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	1425	PROVEN	IdSeek.evalIdFilter/evalIdFilterMain; step_none, step_some, step_nonempty, fold_none, fold_some, go_eq_fold, seek_sound, empty_graph_seek_none (#3394 fixes #3353 / W2-scan-2; history pre3394_seek_sound)
+graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query	98	PROVEN	EdgeInline.evalIQE_ok, evalIQE_inList_err, evalIQ_inList
+graph/src/runtime/ops/node_by_index_scan.rs	new	56	PROVEN	EdgeInline.extraLabels_spec, scanRow_eq_sel
+graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	261	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge, canUtilize_inList_eq_or (InList arm, #2383: same terms as the old Or)
+graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	264	PROVEN	EdgeInline.isIndexable_spec
+graph/src/runtime/ops/node_by_index_scan.rs	next	310	NOT COVERED	#3750: native index only, with a checked scan on a decline; not re-modelled yet
+graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query/native-in-list	98	NOT COVERED	the native index IN-list branch (#3743): keeps a point, and keeps the list whole when a member no kind holds is in it; not modelled

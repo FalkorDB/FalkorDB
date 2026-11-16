@@ -16,15 +16,13 @@ the check commands.
 
 ```bash
 CXX=${CXX:-clang++} cargo clippy --fix --allow-dirty --workspace --all-targets
-CXX=${CXX:-clang++} cargo clippy --fix --allow-dirty -p falkordb-rs -p graph --all-targets --features index-falkordb
 cargo clippy --fix --allow-dirty --all-targets --manifest-path native-deps/Cargo.toml
 cargo fmt --all
 cargo fmt --all --manifest-path native-deps/Cargo.toml
 ```
 
 `--fix` rewrites source in place; review the diff (its `map_or` rewrites can
-delete comments inside match arms). Run it for both feature sets: code under
-`index-falkordb` is only seen by the second run.
+delete comments inside match arms).
 
 ## When --fix rolls back ("errors present after applying fixes")
 

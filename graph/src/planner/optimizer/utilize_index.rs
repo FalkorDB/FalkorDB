@@ -817,6 +817,25 @@ fn needs_post_filter(
             // filtered out).
             _ => false,
         });
+    // An OR holding an array probe (`x IN n.prop`) can be declined by the index, and the scan it
+    // falls back to accepts a scalar `n.prop` as "holds nothing". A plain scan raises the List
+    // type error there, so the filter has to stay to raise it.
+    let or_with_array_probe = filter
+        .root()
+        .indices::<Bfs>()
+        .any(|i| matches!(filter.node(i).data(), ExprIR::Or))
+        && filter.root().indices::<Bfs>().any(|i| {
+            let node = filter.node(i);
+            matches!(node.data(), ExprIR::In)
+                && node.num_children() == 2
+                && filter
+                    .node(node.child(1).idx())
+                    .indices::<Bfs>()
+                    .any(|j| matches!(filter.node(j).data(), ExprIR::Property(_)))
+        });
+    if or_with_array_probe {
+        return true;
+    }
     let skip_descendants: std::collections::HashSet<_> = if rhs_is_scalar_literal_list {
         filter.node(rhs.idx()).indices::<Bfs>().collect()
     } else {

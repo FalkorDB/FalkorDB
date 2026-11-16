@@ -294,23 +294,6 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertGreater(res.indices_sz_mb, 0)
         self.env.assertGreater(res.total_graph_sz_mb, 0)
 
-    def _native_index_build(self):
-        """whether the module has the native index (`index-falkordb`). Asked of a probe graph,
-           not of GRAPH.MEMORY USAGE, whose reply is what the caller checks"""
-
-        g = self.db.select_graph("native_probe")
-        create_node_range_index(g, 'P', 'v', sync=True)
-        try:
-            # A predicate the native index cannot serve is an error there, as in
-            # test_index_updates' testNativeOnlyFeedFlow; a union with a range member is one.
-            g.query("MATCH (n:P) WHERE n.v = 1 OR n.v > 7 RETURN n")
-            return False
-        except ResponseError as e:
-            self.env.assertContains("native index cannot serve", str(e))
-            return True
-        finally:
-            g.delete()
-
     def _used_memory(self):
         """the server's used_memory once it stops moving, so memory still being freed from an
            earlier step does not land in the next one"""
@@ -325,8 +308,8 @@ class testGraphMemoryUsage(FlowTestsBase):
         return cur
 
     def test_native_indices_memory_usage(self):
-        """a build with the native index counts its columns in indices_sz_mb, in agreement with
-           what CREATE INDEX costs the server, and the reply is C's nine pairs on every build"""
+        """the native index's columns count in indices_sz_mb, in agreement with what CREATE INDEX
+           costs the server, and the reply is C's nine pairs"""
 
         c_fields = ['total_graph_sz_mb', 'label_matrices_sz_mb', 'relation_matrices_sz_mb',
                     'amortized_node_block_sz_mb', 'amortized_node_attributes_by_label_sz_mb',
@@ -337,13 +320,6 @@ class testGraphMemoryUsage(FlowTestsBase):
             res = self.conn.execute_command("GRAPH.MEMORY", "USAGE", GRAPH_ID)
             return res[0::2], dict(zip(res[0::2], res[1::2]))
 
-        if not self._native_index_build():
-            # Without the native index the reply is C's, field for field.
-            self.graph.query("UNWIND range(0, 999) AS x CREATE (:N {v: x})")
-            create_node_range_index(self.graph, 'N', 'v', sync=True)
-            self.env.assertEqual(fields()[0], c_fields)
-            return
-
         n = 1000000
         self.graph.query("UNWIND range(0, $n - 1) AS x CREATE (:N {v: x})", {'n': n})
         self.graph.query("MATCH (a:N) CREATE (a)-[:E {w: a.v}]->(a)")
@@ -352,8 +328,8 @@ class testGraphMemoryUsage(FlowTestsBase):
         # ints stay 16 bytes a tuple, and a batch into an empty column packs 256 to a page: 4096
         # bytes, which with its 16-byte Arc header is a 4112-byte request. The allocator rounds
         # that up to its next size class, 5120 bytes on both jemalloc and macOS's libc malloc
-        # (+25%); glibc rounds less. The rest is fixed, under 1 MiB: a RediSearch spec that holds
-        # no documents, the schema, the column's map entry. And the reply truncates to whole MiB.
+        # (+25%); glibc rounds less. The rest is fixed, under 1 MiB: the schema and the column's
+        # map entry. And the reply truncates to whole MiB.
         mib = 1 << 20
         rounding = 0.25
         slack = mib
