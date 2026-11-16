@@ -56,6 +56,9 @@ thin-vec = "0.2.18"
 thiserror = "2"
 zstd = { version = "0.14.0", default-features = false, features = ["arrays", "legacy", "zdict_builder"] }
 crc32fast = "1.4"
+# Geometry for the native geo kind (`index::falkordb::geo`): haversine destination
+# points and rectangle containment/intersection for the cell cover. Default features
+# off, since the kind uses none of them.
 geo = { version = "0.33", default-features = false }
 stacker = "0.1.25"
 

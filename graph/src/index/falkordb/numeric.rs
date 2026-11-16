@@ -182,7 +182,12 @@ impl KeySet {
             Self::Point(k) => *k == key,
             Self::Range(lo, hi) => (*lo..=*hi).contains(&key),
             Self::Keys(keys) => keys.binary_search(&key).is_ok(),
-            Self::Windows(windows) => windows.iter().any(|&(lo, hi)| (lo..=hi).contains(&key)),
+            Self::Windows(windows) => {
+                // Sorted and disjoint: the only window that can hold `key` is the last one
+                // starting at or below it.
+                let after = windows.partition_point(|&(lo, _)| lo <= key);
+                after > 0 && key <= windows[after - 1].1
+            }
         }
     }
 
@@ -191,6 +196,13 @@ impl KeySet {
     /// [`Range`](Self::Range) (a [`Point`](Self::Point) if it holds one key).
     #[must_use]
     pub fn of_windows(mut windows: Vec<(u64, u64)>) -> Self {
+        debug_assert!(
+            windows.iter().all(|&(lo, hi)| lo <= hi)
+                && windows
+                    .windows(2)
+                    .all(|w| w[0].1.saturating_add(1) < w[1].0),
+            "windows are non-empty, sorted, disjoint and not adjacent: {windows:?}"
+        );
         match windows.len() {
             0 => Self::Empty,
             1 => {
@@ -427,7 +439,7 @@ impl EncodedTuples {
         doc: u64,
     ) {
         match (kind, key) {
-            (KeyKind::Scalar | KeyKind::Array, ColumnKey::Encoded(key)) => {
+            (KeyKind::Scalar | KeyKind::Array | KeyKind::Geo, ColumnKey::Encoded(key)) => {
                 self[kind].push((key, doc));
             }
             (KeyKind::Tag | KeyKind::TagArray, ColumnKey::Tag(s)) => {
@@ -768,6 +780,18 @@ mod tests {
     use super::*;
     use crate::index::IndexQuery;
     use std::iter::once;
+
+    /// Every kind's encoded tuple lands in its own slot, geo included: `push` panicked on a
+    /// geo tuple, so writing or building any point under the native index crashed the server.
+    #[test]
+    fn push_routes_a_geo_tuple_to_the_geo_slot() {
+        let mut tuples = EncodedTuples::default();
+        tuples.push(KeyKind::Geo, ColumnKey::Encoded(7), 3);
+        tuples.push(KeyKind::Scalar, ColumnKey::Encoded(8), 4);
+        assert_eq!(tuples[KeyKind::Geo], vec![(7, 3)]);
+        assert_eq!(tuples[KeyKind::Scalar], vec![(8, 4)]);
+        assert_eq!(tuples[KeyKind::Array].len(), 0);
+    }
 
     /// A union across columns reads its streams one after another and yields each doc once,
     /// holding only what it has yielded: `LIMIT 1` reads one row of the first stream.

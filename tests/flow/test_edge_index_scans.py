@@ -956,8 +956,7 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
             create_edge_range_index(g, "T", "v", sync=True)
 
             for q, want in zip(queries, expected):
-                if "]->(" in q:
-                    self.env.assertContains("Edge By Index Scan", str(g.explain(q, params)))
+                self.env.assertContains("Edge By Index Scan", str(g.explain(q, params)))
                 self.env.assertEqual(g.query(q, params).result_set, want)
         finally:
             g.delete()
