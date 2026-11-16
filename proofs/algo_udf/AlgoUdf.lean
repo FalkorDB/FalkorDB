@@ -31,6 +31,9 @@ Every `bug_*` test asserts C's answer and fails today.
 | `AlgoUdf.PathDispatch`/`PathSeed` | `parse_sp_config`, `parse_ss_config`, `to_numeric_value`, `algo_sp_paths`, `algo_ss_paths`, `run_path_algo` |
 | `AlgoUdf.AlgoGlue`   | `new_msg`, `msg_to_string`, `msf_score` + its GraphBLAS callbacks, `node_value`, `collect_node_ids`, `active_node_set`, LAGraph graph create/delete ownership, `cmp_found_path`, `parse_config` |
 | `AlgoUdf.AlgoBfsReg` | `algo_bfs` result assembly, `register` and every `register_*` |
+| `AlgoUdf.BfsDist`/`PushPull`/`PushPullFuel`/`PushPullAlloc` | #3435 `bfs_levels_push_pull` (algo_procedures.rs:1115-1224): BFS distances, the push/pull loop for every heuristic (`GBSpec` FFI hypothesis), its fuel / exits / `k: i64`, allocation, checked source and `fail` cleanup |
+| `AlgoUdf.BfsPaths`   | #3435 `algo_bfs` path selection (:1256-1367): lent bases vs extracted copy, push/pull vs LAGraph (`LagSpec`), `many_expected`; the level-only `nodes` is path independent (uses versioned_matrix `VMClean`) |
+| `AlgoUdf.PushPullModel` | the `GBSpec` / `LagSpec` hypotheses are satisfiable (`gbModel_spec`, `lagModel_spec`) + `decide` runs |
 | `AlgoUdf.UdfTraverse`| `js_traverse_impl` (`graph.traverse`) |
 | `AlgoUdf.UdfClasses` | `CURRENT_GRAPH` slot, `create_js_node/edge/path`, `getNodeById`, `iterateNodes/Edges`, the native entry points |
 | `AlgoUdf.UdfNodeView` | #3454 (fixed by #3464): which view (`Runtime` vs committed `Graph`) `create_js_node` reads labels/attributes from; `set_node_labels`, `set_node_attrs` |
@@ -288,3 +291,9 @@ import AlgoUdf.UdfRepoOps
 import AlgoUdf.Betweenness
 import AlgoUdf.CostProp
 import AlgoUdf.LagContract
+import AlgoUdf.BfsDist
+import AlgoUdf.PushPull
+import AlgoUdf.PushPullFuel
+import AlgoUdf.PushPullAlloc
+import AlgoUdf.BfsPaths
+import AlgoUdf.PushPullModel

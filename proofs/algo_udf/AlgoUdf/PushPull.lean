@@ -1,22 +1,25 @@
-import Pr3435Review.Dist
+import AlgoUdf.BfsDist
 /-! # Claim 2: `bfs_levels_push_pull` computes BFS levels, for every push/pull choice
 
-PR branch a76e66420 (28ab35368 + the review fix), `graph/src/runtime/functions/algo_procedures.rs`:
+PR head d14a9f467 (28ab35368, the review fix a76e66420, every GraphBLAS call checked
+since 3b59f521f), `graph/src/runtime/functions/algo_procedures.rs`:
 
 | here | there |
 | --- | --- |
-| `GB`, `GBSpec` | the GraphBLAS calls `GrB_vxm` :1141, `GrB_mxv` :1144, `GrB_Vector_nvals` :1150, `GrB_Vector_assign_INT64` :1155 (FFI, hypothesis structure; C API spec below) |
-| `Heur`        | the switching heuristic :1116-1138 — `avg_degree`, `edges_unexplored`, `alpha`/`beta`, `frontier_edges`; **arbitrary** here |
+| `GB`, `GBSpec` | the GraphBLAS calls `GrB_vxm` :1201, `GrB_mxv` :1203, `GrB_Vector_nvals` :1209, `GrB_Vector_assign_INT64` :1216 (FFI, hypothesis structure; C API spec below) |
+| `Heur`        | the switching heuristic :1170-1192 — `avg_degree`, `edges_unexplored`, `alpha`/`beta`, `frontier_edges`; **arbitrary** here |
 | `rustHeur`    | that heuristic over an abstract float type (`Fl`), showing it is one instance |
-| `init`        | the loop's start state after :1100-1114 succeeded (`v(src) = 0`, `q(src) = true`); the allocation / source-check prologue is `Alloc.bfsFull` |
-| `run`         | the `loop` :1127-1160 (exit `k > max_level` :1128, step :1139-1148, `last_nq`/`nvals` :1149-1150, exit `nq == 0` :1151, `edges_unexplored -=` :1154, assign :1155-1158, `k += 1` :1159) |
-| `wrap64`      | `k += 1` on `k: i64` (:1126, :1159) in a release build (wrapping; debug panics); never wraps (`step_inv` needs only `n ≤ 2^60`) |
-| `bfsLevelsPushPull` | the loop from `init` (fuel `n + 1`); the whole fn `bfs_levels_push_pull` :1066-1163 is `Alloc.bfsFull` |
+| `init`        | the loop's start state after :1149-1168 succeeded (`v(src) = 0`, `q(src) = true`); the allocation / source-check prologue is `Alloc.bfsFull` |
+| `run`         | the `loop` :1181-1221 (exit `k > max_level` :1182, step :1193-1207, `last_nq`/`nvals` :1208-1211, exit `nq == 0` :1212, `edges_unexplored -=` :1215, assign :1216-1219, `k += 1` :1220) |
+| `wrap64`      | `k += 1` on `k: i64` (:1180, :1220) in a release build (wrapping; debug panics); never wraps (`step_inv` needs only `n ≤ 2^60`) |
+| `bfsLevelsPushPull` | the loop from `init` (fuel `n + 1`); the whole fn `bfs_levels_push_pull` :1115-1224 is `Alloc.bfsFull` |
 
-`GxB_Vector_Option_set_INT32(.., GxB_SPARSITY_CONTROL, ..)` (:1107, :1140, :1143)
+`GxB_Vector_Option_set_INT32(.., GxB_SPARSITY_CONTROL, ..)` (:1156-1161, :1193-1199)
 is a storage hint and does not change a vector's contents (SuiteSparse user
-guide, "sparsity control"); it is not modelled. A failing step or assign returns
-`Err` through `fail` (:1089-1097, frees each non-null vector) (:1146-1148, :1156-1158); `run` returns the same
+guide, "sparsity control"); only its return code is modelled (`GB.vSparsity`,
+`GB.sparsity`), as is `GrB_Vector_nvals`'s (`GB.nvalsOk`, :1209-1211): since
+3b59f521f a failure of either returns `Err`. A failing step or assign returns
+`Err` through `fail` (:1138-1146, frees each non-null vector) (:1205-1207, :1217-1219); `run` returns the same
 `Err` string (allocation and cleanup: `Alloc.lean`). The Rust `loop` has no fuel; `run` takes fuel and
 `run_fuel_stable` / `run_fuel_any` (`PushPullFuel.lean`) show any fuel `≥ n` is never observed.
 
@@ -32,13 +35,21 @@ guide, "sparsity control"); it is not modelled. A failing step or assign returns
 * `GrB_Vector_nvals(&nq, q)`: the number of stored entries.
 * Input aliasing (`q` as both output and input) is allowed by the C API.
 -/
-namespace Pr3435.Bfs
+namespace AlgoUdf.Bfs
 
 structure GB where
   vxm : BVec → LVec → Pat → Option BVec
   mxv : BVec → LVec → Pat → Option BVec
   assign : LVec → BVec → Int → Option LVec
   nvals : BVec → Nat
+  /-- `GrB_Vector_nvals` succeeded (checked since 3b59f521f, :1209-1211). -/
+  nvalsOk : BVec → Bool
+  /-- The frontier's `GxB_Vector_Option_set_INT32(q, SPARSITY, push ? SPARSE : BITMAP)`
+  succeeded (checked, :1193-1199). Only its success matters: it is a storage hint. -/
+  sparsity : BVec → Bool → Bool
+  /-- The level vector's `GxB_Vector_Option_set_INT32(v, SPARSITY, BITMAP)` succeeded
+  (checked, :1156-1161; used by `Alloc.bfsFull`). -/
+  vSparsity : Bool
 
 /-- The C API behaviour of the four calls on size-`n` vectors (FFI hypothesis). -/
 structure GBSpec (n : Nat) (g : GB) : Prop where
@@ -78,7 +89,7 @@ structure Fl where
   sub : T → T → T
   lt : T → T → Bool
 
-/-- The Rust heuristic (:1116-1138, :1154) over any float model: `h` is
+/-- The Rust heuristic (:1170-1192, :1215) over any float model: `h` is
 `edges_unexplored`. -/
 def rustHeur (F : Fl) (n nvals : Nat) : Heur F.T :=
   let avg := F.div (F.ofNat nvals) (F.ofNat (max n 1))
@@ -116,15 +127,17 @@ structure St (H : Type) where
 section
 variable {H : Type} (g : GB) (hr : Heur H) (A AT : Pat) (maxLevel : Int)
 
-/-- The `loop` (:1127-1160). -/
+/-- The `loop` (:1181-1221). -/
 def run : Nat → St H → Except String LVec
   | 0, _ => .error "fuel"
   | f + 1, s =>
     if 0 ≤ maxLevel ∧ maxLevel < s.k then .ok s.v else
     let push := hr.choose s.h s.nq s.lastNq s.push
+    if g.sparsity s.q push = false then .error "BFS frontier sparsity failed" else
     match (if push then g.vxm s.q s.v A else g.mxv s.q s.v AT) with
     | none => .error "BFS step failed"
     | some q' =>
+      if g.nvalsOk q' = false then .error "BFS frontier nvals failed" else
       let nq' := g.nvals q'
       if nq' = 0 then .ok s.v else
       match g.assign s.v q' s.k with
@@ -133,7 +146,7 @@ def run : Nat → St H → Except String LVec
 
 end
 
-/-- The state after the two `setElement`s. At a76e66420 (:1110-1114) they are
+/-- The state after the two `setElement`s. At a76e66420 (:1164-1168) they are
 checked, so the loop only starts when `src < n`; the `src < n` conjunct keeps the
 pre-a76e664 behaviour (28ab35368 :1098-1099 ignored the codes, leaving both
 vectors empty for `src ≥ n`) for `pre_a76e664_pushPull_src_out_of_range`. -/
@@ -210,9 +223,10 @@ theorem step_frontier {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) {A AT : Pa
 def Levels (A : Pat) (src : Nat) (maxLevel : Int) (w : LVec) : Prop :=
   ∀ j l, w j = some l ↔ ∃ d : Nat, l = (d : Int) ∧ IsDist A src j d ∧ (maxLevel < 0 ∨ (d : Int) ≤ maxLevel)
 
-/-- The result is `Ok`, or one of the two GraphBLAS-failure errors — never fuel. -/
+/-- The result is `Ok`, or one of the loop's GraphBLAS-failure errors — never fuel. -/
 def NoFuel (r : Except String LVec) : Prop :=
-  (∃ w, r = .ok w) ∨ r = .error "BFS step failed" ∨ r = .error "BFS level assign failed"
+  (∃ w, r = .ok w) ∨ r = .error "BFS step failed" ∨ r = .error "BFS level assign failed" ∨
+    r = .error "BFS frontier sparsity failed" ∨ r = .error "BFS frontier nvals failed"
 
 /-- **Main lemma.** From any state satisfying the invariant at level `K`, with
 enough fuel, `run` returns `Ok` only with the exact BFS levels, and never runs
@@ -244,11 +258,19 @@ theorem run_correct {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H
         exact ⟨d, by rcases hc with hc | hc <;> omega, rfl, hD⟩
     · rw [if_neg hx]
       generalize hp : hr.choose s.h s.nq s.lastNq s.push = push
+      by_cases hsp : g.sparsity s.q push = false
+      · rw [if_pos hsp]
+        exact ⟨fun w hw => (by cases hw), Or.inr (Or.inr (Or.inr (Or.inl rfl)))⟩
+      rw [if_neg hsp]
       generalize hq : (if push then g.vxm s.q s.v A else g.mxv s.q s.v AT) = res
       cases res with
       | none => exact ⟨fun w hw => (by cases hw), Or.inr (Or.inl rfl)⟩
       | some q' =>
         simp only
+        by_cases hnv : g.nvalsOk q' = false
+        · rw [if_pos hnv]
+          exact ⟨fun w hw => (by cases hw), Or.inr (Or.inr (Or.inr (Or.inr rfl)))⟩
+        rw [if_neg hnv]
         have hfr := step_frontier hg hT hb hs hI push hq
         by_cases h0 : g.nvals q' = 0
         · -- `nq == 0`: no node at distance `K`, so none at any distance `≥ K`.
@@ -277,7 +299,7 @@ theorem run_correct {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H
         · rw [if_neg h0]
           generalize ha : g.assign s.v q' s.k = ra
           cases ra with
-          | none => exact ⟨fun w hw => (by cases hw), Or.inr (Or.inr rfl)⟩
+          | none => exact ⟨fun w hw => (by cases hw), Or.inr (Or.inr (Or.inl rfl))⟩
           | some v' =>
             simp only
             have hv' := hg.assign _ _ _ _ ha
@@ -402,9 +424,8 @@ theorem pushPull_ok_of_total {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr
     (hn : n ≤ GRB_DIM_MAX) (ml : Int)
     (hok : ∀ r, bfsLevelsPushPull g hr h0 A AT n src ml ≠ .error r) :
     ∃ w, bfsLevelsPushPull g hr h0 A AT n src ml = .ok w ∧ Levels A src ml w := by
-  rcases (pushPull_correct hg hr h0 hT hb hs hn ml).2 with ⟨w, hw⟩ | h | h
+  rcases (pushPull_correct hg hr h0 hT hb hs hn ml).2 with ⟨w, hw⟩ | h | h | h | h
   · exact ⟨w, hw, (pushPull_correct hg hr h0 hT hb hs hn ml).1 w hw⟩
-  · exact absurd h (hok _)
-  · exact absurd h (hok _)
+  all_goals exact absurd h (hok _)
 
-end Pr3435.Bfs
+end AlgoUdf.Bfs

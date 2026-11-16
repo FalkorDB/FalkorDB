@@ -1,14 +1,21 @@
-import VersionedMatrix
+import VersionedMatrix.Delta
+import VersionedMatrix.DeltaProofs
+import VersionedMatrix.TensorOps
+import VersionedMatrix.TensorResize
+import VersionedMatrix.CowGlue
+import VersionedMatrix.CountRows
+import VersionedMatrix.IterSeek
+import VersionedMatrix.VMOps
 /-! # Claim 1: `Tensor::clean_fwd` / `Tensor::clean_bwd` (PR #3435)
 
-PR branch `perf/bfs-pushpull` a76e66420 (tensor.rs unchanged since 28ab35368), `graph/src/graph/graphblas/tensor.rs`:
+PR #3435 (perf/bfs-pushpull), `graph/src/graph/graphblas/tensor.rs`:
 
 | here | there |
 | --- | --- |
-| `cleanFwd`   | `clean_fwd` :989-992 — `wait_fwd()`, then `Some(&m)` iff `dp.nvals() == 0 && dm.nvals() == 0` |
-| `cleanBwd`   | `clean_bwd` :997-1000 — `mt.wait()`, then `Some(mt.m())` iff `mt.dp().nvals() == 0 && mt.dm().nvals() == 0` |
+| `cleanFwd`   | `clean_fwd` :995-998 — `wait_fwd()`, then `Some(&m)` iff `dp.nvals() == 0 && dm.nvals() == 0` |
+| `cleanBwd`   | `clean_bwd` :1003-1006 — `mt.wait()`, then `Some(mt.m())` iff `mt.dp().nvals() == 0 && mt.dm().nvals() == 0` |
 | `mPattern`   | the stored pattern of the committed base `m` (:272) |
-| `VMTensorOps.extract` | `extract` :1006 (owner: versioned_matrix, `mem_extract`) |
+| `VMTensorOps.extract` | `extract` :1012 (`mem_extract`) |
 
 The forward tensor is the owner's whole-tensor model `VMTensorOps.TT`
 (versioned_matrix `TensorBlocks.lean`): a support `ps` and one `PairSt` per pair
@@ -22,7 +29,7 @@ three-layer `VM.VM` (versioned_matrix `Delta.lean`): stored pattern lists `m`,
 a duplicate-free layer. `VersionedMatrix::wait` only latches fold decisions
 (owner: `Op.wait`, "never moves an entry"), so it is the identity on layers.
 -/
-namespace Pr3435.Clean
+namespace VMClean
 open VMTensor VMTensorOps
 
 abbrev Pair := Nat × Nat
@@ -30,7 +37,7 @@ abbrev Pair := Nat × Nat
 /-- The stored pattern of the committed forward base `m`. -/
 def mPattern (t : TT) : List Pair := t.ps.filter (fun p => (t.st p).m.isSome)
 
-/-- `clean_fwd` (tensor.rs:989-992). -/
+/-- `clean_fwd` (tensor.rs:995-998). -/
 def cleanFwd (t : TT) : Option (List Pair) :=
   let t' := waitFwd t
   if dpCount t' = 0 ∧ dmCount t' = 0 then some (mPattern t') else none
@@ -78,7 +85,7 @@ theorem cleanFwd_some_deltas_empty {t : TT} {a : List Pair} (h : cleanFwd t = so
 exactly the effective forward structure `(m ∖ dm) ∪ dp` that `extract`
 materializes — equal as lists, in the same order. So BFS over the lent base
 sees the same edge set as BFS over `extract()` (= `build_adjacency_matrix` for
-one type, graph.rs:4731-4736). -/
+one type, graph.rs:4956-4962). -/
 theorem cleanFwd_eq_extract {t : TT} {a : List Pair} (h : cleanFwd t = some a) :
     a = extract t := by
   have hd := cleanFwd_some_deltas_empty h
@@ -102,7 +109,7 @@ theorem cleanFwd_mem {t : TT} {a : List Pair} (h : cleanFwd t = some a) (p : Pai
 
 /-! ## `clean_bwd` -/
 
-/-- `clean_bwd` (tensor.rs:997-1000). `mt.wait()` leaves every layer as it is. -/
+/-- `clean_bwd` (tensor.rs:1003-1006). `mt.wait()` leaves every layer as it is. -/
 def cleanBwd (mt : VM.VM) : Option (List Pair) :=
   if mt.dp.length = 0 ∧ mt.dm.length = 0 then some mt.m else none
 
@@ -155,7 +162,7 @@ owner models: `Tensor::new`, a per-pair add (`set_all_from_slices`, owner
 `addBatch_correct`, precondition `AddOk`: fresh, distinct edge ids — the caller's
 id allocator) or remove (`remove_all`, slow `removeBatch` / fast `removeFast`,
 precondition `RemOk`), `flush`, `fold_latched`, `fold_oversized`, `resize`, `dup`,
-`wait`, and decode followed by `rebuild_backward` (graph.rs:1002; decode's
+`wait`, and decode followed by `rebuild_backward` (graph.rs:1060; decode's
 checks give every invariant but `mt_eff`, which the rebuild restores). -/
 
 def setPair (t : TT) (p : Pair) (s : PairSt) : TT :=
@@ -210,4 +217,4 @@ theorem clean_transpose_reach {t : TT} {mt : VM.VM} {a b : List Pair}
     (hr : MtRepr t mt) (i j : Nat) : (j, i) ∈ b ↔ (i, j) ∈ a :=
   clean_transpose hf hb hr hR.allInv i j
 
-end Pr3435.Clean
+end VMClean
