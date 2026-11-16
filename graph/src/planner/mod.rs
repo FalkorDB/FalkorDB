@@ -40,6 +40,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::planner::binder::removed_node_labels;
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
 use crate::planner::optimizer::collect_expr_variables;
 use crate::runtime::functions::{FnType, Type, get_functions};
@@ -731,6 +732,9 @@ pub struct Planner {
     /// clause-local labels from an OPTIONAL MATCH on a bound alias) must be
     /// re-verified with a hasLabels filter.
     verified_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    /// Labels a `REMOVE` in this plan (or a UNION branch's) stripped; they
+    /// are no longer verified for any variable.
+    removed_labels: OrderSet<Arc<String>>,
     /// Plans for the `ExprIR::NestedPlan`s minted so far, by id; `finish`
     /// hangs them under the plan's root.
     nested_plans: Vec<DynTree<IR>>,
@@ -811,6 +815,7 @@ impl Planner {
             visited: HashSet::new(),
             scope_vars,
             verified_labels: HashMap::new(),
+            removed_labels: OrderSet::default(),
             nested_plans: vec![],
             loop_vars: vec![],
             pattern_vars: vec![],
@@ -3210,6 +3215,21 @@ impl Planner {
                 res.expect("SET has at least one item")
             }
             QueryIR::Remove(mut items) => {
+                // The REMOVE strips the labels from the node, so a later
+                // operator reading it must check them again. Dropped for
+                // every variable, since the node may be bound under several.
+                for item in &items {
+                    if let Some(labels) = removed_node_labels(item) {
+                        for label in &labels {
+                            self.removed_labels.insert(label.clone());
+                        }
+                        for verified in self.verified_labels.values_mut() {
+                            for label in &labels {
+                                verified.remove(label);
+                            }
+                        }
+                    }
+                }
                 let chain = self.extract_clause_expr_comprehensions(&mut items, None);
                 let mut res = tree!(IR::Remove(items));
                 if let Some(chain) = chain {
@@ -3320,6 +3340,16 @@ impl Planner {
                     planner.nested_plans = std::mem::take(&mut self.nested_plans);
                     let plan = planner.plan(branch);
                     self.nested_plans = std::mem::take(&mut planner.nested_plans);
+                    // A branch's REMOVE strips its labels for what follows the
+                    // UNION, whichever branch ran.
+                    for verified in self.verified_labels.values_mut() {
+                        for label in planner.removed_labels.iter() {
+                            verified.remove(label);
+                        }
+                    }
+                    for label in planner.removed_labels.iter() {
+                        self.removed_labels.insert(label.clone());
+                    }
                     plan
                 }));
                 if !all {

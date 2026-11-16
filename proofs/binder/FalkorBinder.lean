@@ -39,6 +39,11 @@ label is written by that MATCH or still held, point-in-time via `held`); `specSt
 satisfies it, `bug3450_remove_label_kept_across_with` refutes it on main: `MATCH (a:A) REMOVE a:A WITH a
 MATCH (a)-[:R]->(b)` stamps `(a:A)` — Rust 0 rows, C 1. (RemoveLabels.lean; the planner half is in
 proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not reproduce.)
+**PR #3457** (75d5cdfd2) fixes it: `removed_labels` (filled by the REMOVE arm via `removed_node_labels`,
+merged from UNION branches) is subtracted by `carry_node_labels` (:1020-1034) at every projection.
+`rsStamp` is that code (`rsStampPre3457` the old one); `rsStamp_held` proves `StampedLabelsHeld` on
+comprehension-free clause lists for any query-wide removed set, `fixed3457_remove_label_dropped`,
+`rsStamp_no_remove` (identical without REMOVE); `rsStamp_comprehension_leak` is root cause 5, unchanged.
 
 ## Lean ↔ Rust
 

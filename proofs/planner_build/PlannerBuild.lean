@@ -202,6 +202,10 @@ verified label is on the node in the graph the next operator reads) and the prop
 alone, so `MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH (a:A)-[:R]->(b)` plans the bound `a` with no
 `hasLabels` filter (`boundLabelFilters`, mod.rs:1840-1856 / `unverified_labels` :1793): Rust 1 row,
 C 0. The binder half (`node_labels`) is in proofs/binder `RemoveLabels.lean`.
+**PR #3457** (75d5cdfd2) fixes it: the REMOVE arm (mod.rs:3217-3238) strips each item's labels
+(`removed_node_labels`, modelled `removedNodeLabels`) from every variable's verified set and the UNION
+arm (:3343-3352) strips each branch's `removed_labels`: `rsRemove_sound`, `rsUnionStrip_sound`,
+`fixed3457_remove_rechecks_label`; the old arm is `rsRemovePre3457`.
 
 ## Open PRs touching planner/mod.rs (model = origin/main)
 * #3101 (MERGE p=… as last clause): adds `PathBuilder` to the first walk and steps over it in the FOREACH /
