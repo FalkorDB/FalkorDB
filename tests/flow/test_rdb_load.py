@@ -463,8 +463,6 @@ class testRestoreCorrupt():
             ("dimension:2, similarityFunction:'cosine', %s" % opt, "must be at most 1048576")
             for opt in ("efRuntime:1048577", "M:1048577", "efConstruction:1048577")
         ]
-        refused.append(("dimension:16777217, similarityFunction:'cosine'",
-                        "dimension must be at most 16777216"))
         for options, message in refused:
             try:
                 g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) OPTIONS {%s}" % options)
@@ -477,6 +475,23 @@ class testRestoreCorrupt():
         payload = capture_restore_payload(self.conn, "src", "dst")
         self.conn.flushall()
         self.env.assertTrue(self.restore(payload))
+
+    def test_vector_index_of_any_dimension_survives_restore(self):
+        # The dimension has no limit, at creation or on load, as in C: an index
+        # declaring more dimensions than any stored vector costs nothing, and a
+        # graph that holds one must restore.
+        for dim in (2**24 + 1, 2**63 - 1):
+            self.conn.flushall()
+            g = self.db.select_graph("src")
+            g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
+                    "OPTIONS {dimension:%d, similarityFunction:'euclidean'}" % dim)
+            g.query("CREATE (:V {v: vecf32([1.0, 2.0])})")
+            payload = capture_restore_payload(self.conn, "src", "dst")
+            self.conn.flushall()
+            self.conn.execute_command("GRAPH.RESTORE", "x", payload)
+            res = self.db.select_graph("x").query(
+                "CALL db.indexes() YIELD options RETURN options")
+            self.env.assertEqual(res.result_set[0][0]["v"]["dimension"], dim)
 
     def test_restore_refuses_an_unknown_vector_similarity_function(self):
         # The word after the three graph parameters of a vector index entry

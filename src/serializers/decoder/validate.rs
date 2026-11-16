@@ -20,9 +20,6 @@ use crate::serializers::{Header, Schema};
 /// billion ids, beyond any graph that fits in memory); 2^36 would be 128 MiB.
 pub const MAX_ID_BOUND: u64 = 1 << 34;
 
-/// Most labels, relationship types or payload sections a header may declare.
-pub const MAX_SCHEMAS: u64 = 1 << 20;
-
 /// What `Header::decode` leaves for the caller to vouch for: the counts are in
 /// range, and the id bounds they imply are the [`DecodeLimits`] for the rest of
 /// the payload.
@@ -38,14 +35,10 @@ pub fn check_header(hdr: &Header) -> Result<DecodeLimits, String> {
     };
     let node_bound = bound("node", hdr.node_count, hdr.deleted_node_count)?;
     let edge_bound = bound("edge", hdr.edge_count, hdr.deleted_edge_count)?;
-    for (what, n) in [
-        ("label", hdr.label_count),
-        ("relationship type", hdr.relationship_count),
-    ] {
-        if n > MAX_SCHEMAS {
-            return Err(format!("{what} count {n} is out of range"));
-        }
-    }
+    // The label and relationship type counts have no fixed cap: a graph may
+    // have any number of either, and its own encoding must decode. They bound
+    // only the sections that follow, which are checked against the bytes left
+    // (label_matrix_count, tensor_count) or stop at the end of the input.
     Ok(DecodeLimits {
         node_bound,
         edge_bound,
@@ -187,9 +180,29 @@ mod tests {
             check_header(&hdr).is_err(),
             "live + deleted overflows the bound"
         );
+    }
+
+    /// A graph may have any number of labels and relationship types, so the
+    /// header does not cap them (a cap of 2^20 refused a graph's own encoding).
+    /// What a count then drives is checked against the bytes left.
+    #[test]
+    fn schema_counts_are_bounded_by_the_payload_not_a_fixed_cap() {
         let mut hdr = header(1, 1);
+        hdr.label_count = (1 << 20) + 1;
+        hdr.relationship_count = (1 << 20) + 1;
+        assert!(check_header(&hdr).is_ok());
+
         hdr.relationship_count = u64::MAX;
-        assert!(check_header(&hdr).is_err());
+        let bytes = [0u8; 64];
+        let r = BufferedReader::from_slice(&bytes);
+        let err = tensor_count(&r, &hdr).unwrap_err();
+        assert!(err.contains("exceeds"), "unexpected error: {err}");
+
+        let mut w = VecWriter::new();
+        w.write_unsigned((1 << 20) + 2); // more label matrices than the header's labels
+        let bytes = w.into_vec();
+        let mut r = BufferedReader::from_slice(&bytes);
+        assert!(label_matrix_count(&mut r, &hdr).is_err());
     }
 
     #[test]

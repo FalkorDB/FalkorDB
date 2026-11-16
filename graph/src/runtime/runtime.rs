@@ -42,7 +42,7 @@ use crate::{
     graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
-    index::vector_index_options::{MAX_VECTOR_DIMENSION, MAX_VECTOR_GRAPH_PARAM},
+    index::vector_index_options::MAX_VECTOR_GRAPH_PARAM,
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
     runtime::{
@@ -2183,11 +2183,7 @@ pub fn map_to_index_options(
             };
             // The same limits a persisted index is held to on load, so that a graph
             // that was accepted here is one that RDB load, COPY and RESTORE accept.
-            if dimension > MAX_VECTOR_DIMENSION {
-                return Err(format!(
-                    "Invalid vector index configuration: dimension must be at most {MAX_VECTOR_DIMENSION}"
-                ));
-            }
+            // The dimension is not limited, here or on load, as in C.
             for (name, value) in [
                 ("M", m),
                 ("efConstruction", ef_construction),

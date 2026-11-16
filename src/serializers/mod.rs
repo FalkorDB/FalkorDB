@@ -21,8 +21,7 @@ use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
-use crate::serializers::decoder::validate::MAX_SCHEMAS;
-use graph::index::vector_index_options::{MAX_VECTOR_DIMENSION, MAX_VECTOR_GRAPH_PARAM};
+use graph::index::vector_index_options::MAX_VECTOR_GRAPH_PARAM;
 
 use graph::graph::graphblas::serialization::check_count_fits;
 
@@ -182,14 +181,11 @@ impl Decode<19> for Header {
         let deleted_edge_count = r.read_unsigned()?;
         let label_count = r.read_unsigned()?;
         let relationship_count = r.read_unsigned()?;
-        // One flag per relationship type: refuse a count no graph reaches, and
-        // one the remaining bytes cannot hold, before reading and pushing flags
-        // (check_header holds the same limit for the rest of the header).
-        if relationship_count > MAX_SCHEMAS {
-            return Err(format!(
-                "relationship type count {relationship_count} is out of range"
-            ));
-        }
+        // One flag per relationship type: refuse a count the remaining bytes
+        // cannot hold before reading and pushing flags. There is no fixed cap:
+        // a graph may have any number of types, and its own encoding must
+        // decode. Where the length is unknown (RDB) the loop stops at the end of
+        // the input, and the flag list's capacity is bounded by decode_capacity.
         check_count_fits(r, "relationship type", relationship_count, 9)?;
 
         let mut multi_edge = Vec::with_capacity(decode_capacity(relationship_count));
@@ -687,18 +683,18 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), S
         let ef_construction = r.read_unsigned()? as usize;
         let ef_runtime = r.read_unsigned()? as usize;
         let sim_func = r.read_unsigned()?;
-        // The index is rebuilt from these, and they size its graph and its
-        // vectors. A real index never nears these; a corrupted one must not
-        // reach the vector library with them.
+        // The index is rebuilt from these, and M / EF size its graph. A real
+        // index never nears these; a corrupted one must not reach the vector
+        // library with them. The dimension is not limited (as in C, and as at
+        // creation): it costs nothing until a vector that long is stored.
         // Zero is kept: `OPTIONS {dimension:0}` is accepted at creation and the
         // index retains it, so it has to round-trip.
         // A zero-dimension index is never configured in the vector library, so
         // its graph parameters reach nothing and are kept as they were saved.
-        if dimension > MAX_VECTOR_DIMENSION
-            || (dimension > 0
-                && (m > MAX_VECTOR_GRAPH_PARAM
-                    || ef_construction > MAX_VECTOR_GRAPH_PARAM
-                    || ef_runtime > MAX_VECTOR_GRAPH_PARAM))
+        if dimension > 0
+            && (m > MAX_VECTOR_GRAPH_PARAM
+                || ef_construction > MAX_VECTOR_GRAPH_PARAM
+                || ef_runtime > MAX_VECTOR_GRAPH_PARAM)
         {
             return Err(format!(
                 "invalid vector index options for attribute {name}: dimension {dimension}, \
@@ -904,10 +900,10 @@ mod tests {
     }
 
     /// The header's relationship count sizes the flag list: refuse one beyond
-    /// the limit, or beyond the bytes that are left, before reading any flag.
+    /// the bytes that are left before reading any flag.
     #[test]
     fn header_refuses_a_relationship_count_the_payload_cannot_hold() {
-        for count in [MAX_SCHEMAS + 1, u64::MAX, 1000] {
+        for count in [(1 << 20) + 1, u64::MAX, 1000] {
             let mut w = VecWriter::new();
             w.write_buffer(&null_terminated("g"));
             for v in [1, 1, 0, 0, 0, count] {
@@ -974,7 +970,9 @@ mod tests {
         assert!(load(&encode(4, MAX_VECTOR_GRAPH_PARAM as u64)).is_ok());
         assert!(load(&encode(4, over)).is_err_and(|e| e.contains(&format!("EF_RUNTIME {over}"))));
         assert!(load(&encode(0, over)).is_ok());
-        assert!(load(&encode(MAX_VECTOR_DIMENSION + 1, 10)).is_err());
+        // any dimension loads, as C's does and as creation accepts
+        assert!(load(&encode((1 << 24) + 1, 10)).is_ok());
+        assert!(load(&encode(u64::MAX, 10)).is_ok());
     }
 
     #[test]
