@@ -10,7 +10,7 @@ import FalkorEffectsEmitApply.CancelGap
 
 Target: `graph/src/effects/v3/emit.rs`, `graph/src/effects/v3/apply.rs`, and the
 gate in front of the emitter (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1958`). Coverage per Rust fn:
+`Pending::effects_count` at `runtime/pending.rs:1990`). Coverage per Rust fn:
 `COVERAGE.tsv` (36 rows, all PROVEN). Repros:
 `graph/tests/lean_effects_emit_apply.rs`
 (`cargo test -p graph --test lean_effects_emit_apply -- --nocapture --test-threads=1`).
@@ -27,7 +27,7 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 | `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs:60`                       |
 | `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:395`                           |
 | `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:323` (opcode granularity)       |
-| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1958`                 |
+| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1990`                 |
 | `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
 | `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:532,552`        |
 | `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:210`                    |
@@ -61,8 +61,10 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
   `wf_updateNode_live`, `wf_setLabels_live` — with a liveness check each node
   arm preserves well-formedness (the fix, proved).
 * Counterexamples (all by `decide`, all reproduced in Rust):
-  `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`,
-  `cancelled_edge_attr_dropped`. The ones fixed by #3022 (`18fc277b9`) were removed after 17ccc5412, the last commit that holds them.
+  `gate_drops_schema_only`, `next_payload_refused`. The cancelled half was fixed by
+  #3030 (`effects_count` sums `cancelled_nodes`): `gate_ships_cancelled_nodes`,
+  `gate_ships_cancelled`, `cancelled_edge_attr_ships`; history `pre3030_gate_drops_cancelled`,
+  `pre3030_cancelled_edge_attr_dropped`. The ones fixed by #3022 (`18fc277b9`) were removed after 17ccc5412, the last commit that holds them.
 
 ## #3022 (`Liveness.lean`): every record that acts on an entity checks it is live
 

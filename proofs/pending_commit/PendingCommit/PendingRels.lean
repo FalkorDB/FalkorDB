@@ -117,7 +117,9 @@ def rmStep (p : P) (x : (Nat × Nat × Nat) × Nat) : P :=
     | none => p.relsByType
   { p with relTypes := frem p.relTypes e.1, relsByType := rb, newR := frem p.newR e.1,
            deletedR := p.deletedR.filter (· != e.1), taken := p.taken.filter (· != e.1),
-           cancelledR := p.cancelledR ++ [(e.1, t, e.2.1, e.2.2)] }
+           cancelledR := p.cancelledR ++ [(e.1, t, e.2.1, e.2.2)],
+           -- `cancelled_properties += attrs.as_deref().map_or(0, count_set)` (:955, #3030)
+           cancelledP := p.cancelledP + ((fget p.newR e.1).map countSet).getD 0 }
 
 def removeRels (p : P) (id : Nat) : P := (collect p id).foldl rmStep p
 
@@ -291,5 +293,30 @@ theorem removeRels_none_incident (p : P) (h : RelInv p) (hk : (p.relsByType.map 
     (e : Nat × Nat × Nat) (he : e ∈ grp (removeRels p id) t) : incident id e = false := by
   rw [(removeRels_spec p h hk id).2.1 t] at he
   simpa using (List.mem_filter.1 he).2
+
+/-! ## `cancelled_properties` (#3030) -/
+
+/-- What one cascaded relationship adds to `cancelled_properties`: `count_set` of its
+staged `new_relationships_attrs`, 0 when it has none. -/
+def relProps (p : P) (x : (Nat × Nat × Nat) × Nat) : Nat := ((fget p.newR x.1.1).map countSet).getD 0
+
+/-- **`foldl_rmStep_cancelledP`**: the cascade adds exactly `count_set` of every
+cascaded relationship's staged attributes (read before the cascade), each once. -/
+theorem foldl_rmStep_cancelledP : ∀ (L : List ((Nat × Nat × Nat) × Nat)) (p : P), (Rids L).Nodup →
+    (L.foldl rmStep p).cancelledP = p.cancelledP + (L.map (relProps p)).sum
+  | [], p, _ => by simp
+  | x :: L, p, h => by
+    simp only [Rids, List.map_cons, List.nodup_cons] at h
+    simp only [List.foldl_cons, List.map_cons, List.sum_cons]
+    rw [foldl_rmStep_cancelledP L _ h.2]
+    have hm : L.map (relProps (rmStep p x)) = L.map (relProps p) := List.map_congr_left (fun y hy => by
+      have hne : y.1.1 ≠ x.1.1 := fun e => h.1 (e ▸ List.mem_map_of_mem hy)
+      obtain ⟨e, t⟩ := x
+      simp only [relProps, rmStep, fget_frem]
+      rw [if_neg hne])
+    rw [hm]
+    obtain ⟨e, t⟩ := x
+    simp only [rmStep, relProps]
+    omega
 
 end PendingCommit.PS

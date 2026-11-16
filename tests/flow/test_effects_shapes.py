@@ -779,3 +779,20 @@ class testEffects_03_CompoundSequences(_EffectsBase):
         self.env.assertEqual(self.count_in(window, 'GRAPH.QUERY'), 0)
         self.assert_graph_eq()
 
+    def test09_a_write_that_only_cancels_entities_still_replicates(self):
+        """`CREATE (a) DELETE a` reports a node created and deleted, as C does,
+        so the write counts as a modification and must ship a buffer: the
+        create/delete pair is what moves the replica's id space over the id.
+        Without one the primary logs "modified but produced no effects payload".
+        """
+        self.set_effects_config()
+        self.monitor_mark()
+
+        res = self.query_and_sync("CREATE (a {only_cancelled: 1}) DELETE a")
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
+
+        window = self.monitor_mark()
+        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
+        self.assert_agree("MATCH (n) WHERE n.only_cancelled IS NOT NULL RETURN count(n)", [[0]])
+        self.assert_graph_eq()

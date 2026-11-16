@@ -108,6 +108,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-pending-1**: #2876 is wider than filed. The id-keyed deleted-entity maps (`runtime.rs:159`, read by every accessor at `:1460-1790`) shadow any live entity that reuses the id, even when nothing can reach the deleted one. `MERGE` then creates a duplicate node, which is persistent damage. Reads of labels, properties, type and endpoints of relationships are wrong too. C ✓.
 - **W2-scan-2**: an id seek on a graph that has never held a node returns a phantom node 0 (`graph.rs:1495` `max_node_id`, `node_by_id_seek.rs:67`). `SET` on it leaks into the next `CREATE`, and `DELETE` errors. C ✓. **Fixed by #3394 (9212add39; closes #3353)**: `evaluate_id_filter` returns `Ok(None)` when `node_count() == 0` (`runtime.rs:1364-1369`). optimizer_scan `seek_sound` (no `nodeCount ≠ 0` hypothesis; `G.wf`), `empty_graph_seek_none`; history `pre3394_seek`, `pre3394_seek_sound` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **W2-effects-1**: a write that only registers a name or only cancels entities ships no payload (`commit.rs:108`, `pending.rs:1688` `effects_count`). Examples: `CREATE (a:A {p:1}) DELETE a`, `OPTIONAL MATCH (n:Nope) SET n:L6`. The next payload is refused, which forces a full resync, and during AOF load the server exits. `CREATE (a)-[:T1 {p4:1}]->(b) DELETE a,b` makes the replica silently miss attribute `p4`. 134/200 random seeds diverge.
+  - #3030 (6e9ce3722) fixes the cancelled half: `effects_count` sums `cancelled_nodes` (`Emit.gate_ships_cancelled_nodes`, `gate_ships_cancelled`, `cancelled_edge_attr_ships`; history `pre3030_gate_drops_cancelled`, `pre3030_cancelled_edge_attr_dropped`). The schema-only half (`gate_drops_schema_only`) is still open.
 - **W2-effects-2**: UPDATE_NODE, UPDATE_EDGE, SET_LABELS and REMOVE_LABELS in `apply.rs:283,327,346,357` never check liveness. Sent through a client `GRAPH.EFFECT`, the next entity that reuses the id inherits the property or label.
 - **W2-effects-3**: DELETE_NODE of a node that still has edges is accepted (`apply.rs:374`). The edge dangles and the next node inherits it. Related to #2924.
 - **W2-effects-4**: a refused buffer's CREATE_INDEX is not rolled back, because the Indexer is shared by `Arc` across versions (`apply.rs:72`, `graph.rs:3214`).
@@ -187,6 +188,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 
 ### Stats (write-statistics counters)
 - **W2-pending-2**: entities created and deleted in the same segment vanish from the stats (`pending.rs:677`, counters at `:1141`, `:1147`, `:1226`).
+  - Fixed by #3030 (6e9ce3722, #2966): `Pending::commit` adds the cancelled nodes/relationships as created and deleted and their `cancelled_properties` as set (`PC.commit_spec`, `PC.stCancelled_spec`, `Stats.rust3030_eq_c`, `PS.deletePendingNode_cancelledP`).
 - **W2-pending-3**: writes to a deleted relationship are applied and counted (`remove.rs`; `set.rs:230` misses a DETACH cascade).
 - Policy question: Rust counts property changes net at commit, C counts per clause. Decide which to match.
 

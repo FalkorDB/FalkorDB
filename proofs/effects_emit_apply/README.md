@@ -22,10 +22,10 @@ The full Lean↔Rust mapping is in the header of [`FalkorEffectsEmitApply.lean`]
 
 The counterexamples are concrete queries:
 
-- `CREATE (a:A {p:1}) DELETE a` registers label `A` and attribute `p` on the master and ships nothing (`gate_drops_cancelled`);
+- `CREATE (a:A {p:1}) DELETE a` registered label `A` and attribute `p` on the master and shipped nothing (`pre3030_gate_drops_cancelled`; fixed by #3030: `gate_ships_cancelled`, `gate_ships_cancelled_nodes`);
 - `OPTIONAL MATCH (n:Nope) SET n:L6` registers `L6` and ships nothing (`gate_drops_schema_only`);
 - the next write's `ADD_SCHEMA 1 "K6"` is then refused by the replica, which would assign id 0 (`next_payload_refused`). That forces a full resync, and during AOF load the server exits;
-- `CREATE (a)-[:T1 {p4:1}]->(b) DELETE a, b` is worse: no error at all, but the replica's attribute dictionary is missing `p4` (`cancelled_edge_attr_dropped`).
+- `CREATE (a)-[:T1 {p4:1}]->(b) DELETE a, b` was worse: no error at all, but the replica's attribute dictionary was missing `p4` (`pre3030_cancelled_edge_attr_dropped`; fixed by #3030: `cancelled_edge_attr_ships`).
 
 **2. Can a payload that the replica accepts leave its graph broken?**
 
@@ -82,7 +82,7 @@ All four were reproduced in Rust and against a live server (see [`../FINDINGS.md
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-effects-1 | `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`, `cancelled_edge_attr_dropped` | A write that only registers a name or only cancels entities ships nothing. The next payload is refused (full resync; AOF load exits), or the replica silently misses an attribute name. 134 of 200 random seeds diverge | **Open**: the gate at `commit.rs:107-108` is unchanged on 1d15bf713; no issue or PR yet |
+| W2-effects-1 | `pre3030_gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`, `pre3030_cancelled_edge_attr_dropped` | A write that only registers a name or only cancels entities ships nothing. The next payload is refused (full resync; AOF load exits), or the replica silently misses an attribute name. 134 of 200 random seeds diverge | **Partly fixed by #3030**: the cancelled-only half ships (`effects_count` sums `cancelled_nodes`); the schema-only half (`gate_drops_schema_only`) is still open |
 | W2-effects-2 | removed (17ccc5412) | `UPDATE_NODE`/`UPDATE_EDGE`/`SET_LABELS`/`REMOVE_LABELS` on a dead id were accepted; the next node to recycle the id inherited the property or label | Fixed by #3022 (`wf_updateNode_live`, `wf_setLabels_live`, `apply_wf`) |
 | W2-effects-3 | removed (17ccc5412) | `DELETE_NODE` of a node with edges was accepted; the edge dangled and the next node with that id inherited it | Fixed by #3022 (`wf_deleteNode`, `apply_wf`) |
 | #3247 | removed (17ccc5412) | A `CREATE_NODE` naming the same id twice (`[2, 3, 2]`) applied: the id set created one node where the record named two, and the repeated id's row had no node of its own | Fixed by #3298 (`2bb51088b`): `createNode_repeat_refused`, `createNode_ok_nodup`, `a_repeated_node_id_in_one_create_is_refused` |

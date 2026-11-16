@@ -19,16 +19,15 @@ import PendingCommit.PendingDeg
 * `end_segment` (:1885, was `clear` before #2846): both branches (background
   drop or in place) give the same state — every per-commit field empty,
   `published`, `deferred_docs` and the schema baseline untouched
-  (`clear_spec`) — and the graph's id batches are rolled in the same call
+  (`clear_spec`; `cancelled_properties` back to 0, #3030) — and the graph's id batches are rolled in the same call
   (`endSegment_spec`).
 * #3307: `IndexDocs` also carries the native index's staged changes (`native`, feature
   `index-falkordb`). `absorb` only `debug_assert!`s it is empty (`Pending::commit` applies
   it first, `apply_index_writes` call :1465, defined graph.rs:3890) and never touches it; `end_segment` clears it with
   the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
   modelled here are unchanged.
-* `effects_count` (:1958) is the documented sum; it does not count
-  `cancelled_*` (`effects_ignores_cancelled`, the suspicion noted in the root
-  file).
+* `effects_count` (:1990) is the documented sum; since #3030 it counts
+  `cancelled_nodes` (`effects_counts_cancelled`; before, `pre3030_effects_ignores_cancelled`).
 * `new`/`default` (:517, :510), `set_schema_baseline` (:547): field-level
   equations. (`node_id_space`, `rel_id_space`, `issued_*`,
   `open_id_boundaries` were removed by #2846.)
@@ -361,8 +360,9 @@ def newFull : Full := ⟨PS.P0, ⟨Docs.empty, Docs.empty, Docs.empty⟩, [], []
 
 theorem new_spec : newFull.st.created = [] ∧ newFull.st.relsByType = [] ∧ newFull.st.deletedN = [] ∧
     newFull.st.cancelledN = [] ∧ newFull.st.newN = [] ∧ newFull.st.setL = [] ∧ newFull.logs.published = Docs.empty ∧
-    newFull.st.taken = [] ∧ newFull.schema = (0, 0, 0, 0) := by
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    newFull.st.taken = [] ∧ newFull.schema = (0, 0, 0, 0) ∧ newFull.st.cancelledR = [] ∧
+    newFull.st.cancelledP = 0 := by
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `set_schema_baseline` (:547): the four dictionary sizes. -/
 def setSchemaBaseline (f : Full) (labels types nattrs rattrs : Nat) : Full := { f with schema := (labels, types, nattrs, rattrs) }
@@ -381,7 +381,7 @@ def clearBranch (f : Full) (offload : Bool) : Full :=
   -- `std::mem::take` (offload) or `.clear()` (in place): both leave the maps empty
   let st1 : PS.P := if offload then clearMaps f.st else clearMaps f.st
   let st2 : PS.P := { st1 with created := [], relTypes := [], deletedN := [], deletedR := [], cancelledN := [] }
-  let st3 : PS.P := { st2 with taken := [], cancelledR := [] }
+  let st3 : PS.P := { st2 with taken := [], cancelledR := [], cancelledP := 0 }
   { f with st := st3, endpoints := [], nodeLabels := [], logs := { f.logs with docs := Docs.empty } }
 
 def bigEntries (f : Full) : Nat :=
@@ -400,10 +400,10 @@ theorem clear_spec (f : Full) :
     c.st.cancelledN = [] ∧ c.st.cancelledR = [] ∧ c.st.taken = [] ∧ c.st.newN = [] ∧ c.st.existN = [] ∧
     c.st.newR = [] ∧ c.st.existR = [] ∧ c.st.setL = [] ∧ c.st.remL = [] ∧ c.endpoints = [] ∧
     c.nodeLabels = [] ∧ c.logs.docs = Docs.empty ∧ c.logs.published = f.logs.published ∧
-    c.logs.deferred = f.logs.deferred ∧ c.schema = f.schema := by
+    c.logs.deferred = f.logs.deferred ∧ c.schema = f.schema ∧ c.st.cancelledP = 0 := by
   refine ⟨by simp [clearBranch], ?_⟩
   unfold clear clearBranch; cases decide (bigEntries f ≥ 4096) <;>
-    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `end_segment` (:1885): the reset above, then `g.roll_id_batches()`
 (graph.rs:1611; `roll` here, `none` = its `Err`). The `Pending` reset happens
@@ -419,15 +419,32 @@ stale log over a fresh boundary. -/
 theorem endSegment_spec {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) :
     (endSegment roll f g).1 = clear f ∧ (endSegment roll f g).2 = roll g := ⟨rfl, rfl⟩
 
-/-- `effects_count` (:1958). -/
+/-- `effects_count` (:1990); since #3030 it sums `cancelled_nodes` (:2000). -/
 def effectsCount (p : PS.P) : Nat :=
+  p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length + p.cancelledN.length +
+    p.newN.length + p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
+    (p.remL.map (·.2.length)).sum
+
+/-- `effects_count` before #3030 (:1960 at 343e077f2): no `cancelled_nodes` term. -/
+def effectsCountPre3030 (p : PS.P) : Nat :=
   p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length + p.newN.length +
     p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
     (p.remL.map (·.2.length)).sum
 
-/-- `CREATE (a) DELETE a` leaves only `cancelled_nodes = {a}`: `effects_count`
-is 0, although the id went through the master's recycle bin (the suspicion
-recorded in the root file; not confirmed against a replica). -/
-theorem effects_ignores_cancelled : effectsCount { PS.P0 with cancelledN := [0] } = 0 := rfl
+/-- **`pre3030_effects_ignores_cancelled`** (historical; fixed by #3030, `6e9ce3722`):
+`CREATE (a) DELETE a` leaves only `cancelled_nodes = {a}`, and the old `effects_count`
+was 0 although the id went through the master's recycle bin. -/
+theorem pre3030_effects_ignores_cancelled : effectsCountPre3030 { PS.P0 with cancelledN := [0] } = 0 := rfl
+
+/-- **`effects_counts_cancelled`** (#3030): `effects_count` = the old sum + `|cancelled_nodes|`,
+so a segment that cancelled a node is never empty to the effects gate; for
+`CREATE (a) DELETE a` it is 1. -/
+theorem effects_counts_cancelled (p : PS.P) :
+    effectsCount p = effectsCountPre3030 p + p.cancelledN.length ∧
+    (p.cancelledN ≠ [] → 0 < effectsCount p) ∧
+    effectsCount { PS.P0 with cancelledN := [0] } = 1 := by
+  refine ⟨by unfold effectsCount effectsCountPre3030; omega, fun h => ?_, rfl⟩
+  have := List.length_pos_iff.2 h
+  unfold effectsCount; omega
 
 end PendingCommit.PD
