@@ -13,38 +13,38 @@ graph/src/planner/binder.rs	Binder::bind_call_subquery	716	PROVEN	BindIR.bindCal
 graph/src/planner/binder.rs	Binder::bind_call_body	824	PROVEN	callBody_query_disjoint, callBody_union_disjoint (#3027: UNION branches start above the outer scopes); #2845 entry projection (CallBoundary, from pr2845_review): Pr2845.bodyNew_entry, branchNew_entry, bodyNew_eq_old, body_own_unbound, body_import_value; union_branch_label_fixed (#3027)
 graph/src/planner/binder.rs	Binder::build_import_projections	984	PROVEN	BindIR.importProjections_covers (fresh inner ids), sortProj_spec (sorted by name, permutation); Pr2845.importProj_spec, entry_ids_below
 graph/src/planner/binder.rs	Binder::validate_import_with	1008	PROVEN	validateImport_ok, validateImport_rejects_expr
-graph/src/planner/binder.rs	Binder::bind_projection	1064	PROVEN	bindProjection: projectItems_keys, with_plain, orderBy_leaks, where_copy_removed, where_copy_id_reused, orderBy_old_name_of_projected, agg_orderBy_by_name, agg_orderBy_rejects (WITH * branch not modelled)
-graph/src/planner/binder.rs	Binder::bind_graph	1333	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_rejects, node_attr_on_own_rel, rel_attr_forward_node, self_reference_ok; defineName_ignores_parent
-graph/src/planner/binder.rs	Binder::bind_graph_create	1561	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak
-graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1686	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct
-graph/src/planner/binder.rs	Binder::bind_set_items	1704	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
-graph/src/planner/binder.rs	Binder::bind_expr	1729	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
-graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1736	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
-graph/src/planner/binder.rs	Binder::bind_expr_node	1750	PROVEN	BindExpr.bindNode: bindNode_covers (pattern-free exprs keep table covering), loop_var_shadows, bind_iterable_outer, reduce_same_name, prop_on_path, exists_pattern, func_arg_mismatch; Scopes.comprehension_cleanup_breaks; Fold.foldCall_sound; #3335: NE.paren/andOr, flatB — bind_paren ((x) binds like x: same tree, state, errors), prop_on_paren_path, bind_andOr_paren + flatB_assoc ((a AND b) AND c binds flat), flatB_eq_body, flatB_many, spliceB_other, bindL_append; Pattern arm: PatternPredDeclaresNothing refuted by bug1334_pattern_predicate_declares_var (BUG #1334)
-graph/src/planner/binder.rs	Binder::define_name_in_scope	2159	PROVEN	defineName: defineName_ignores_parent; ensureType_table
-graph/src/planner/binder.rs	Binder::project_name	2181	PROVEN	projectName_new_covers, projectName_present_uncovered
-graph/src/planner/binder.rs	Binder::resolve_name	2191	PROVEN	resolve: resolve_ok_iff, resolve_innermost, resolve_covers
-graph/src/planner/binder.rs	Binder::fresh_var	2259	PROVEN	freshVar: fresh_not_used, mint_new_covers
-graph/src/planner/binder.rs	Binder::ensure_type	2275	PROVEN	ensureType_table, ensureType_accepts_any_binding
-graph/src/planner/binder.rs	Binder::validate_boolean_operands	2296	NOT COVERED	(#3293): rewritten by this PR, model not updated yet; was PROVEN: Types.validate_logical, validate_nonlogical
-graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2300	NOT COVERED	(#3293): rewritten by this PR, model not updated yet; was PROVEN: Types.validate (recursive), validate_logical/nonlogical
-graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2322	PROVEN	Types.mayBool_sound_except; getElement_rejected (CONFIRMED bug binder.rs:2347), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
-graph/src/planner/binder.rs	Binder::expr_may_return_entity	2390	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
-graph/src/planner/binder.rs	expr_tree_to_value	2463	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
-graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2465	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
-graph/src/planner/binder.rs	collect_constant_args	2495	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
-graph/src/planner/binder.rs	rewrite_struct_constructor	2513	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
-graph/src/planner/binder.rs	rewrite_compiled_regex	2578	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
-graph/src/planner/binder.rs	replace_agg_subtrees	2612	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
-graph/src/planner/binder.rs	raw_exprs_structurally_equal	2642	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_wrong_aggregate (CONFIRMED bug), order_by_int_distinguished
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2646	PROVEN	AggEq.isAggPlaceholder_iff
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2650	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2680	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause: the `_ =>` discriminant fallback, binder.rs:2695)
-graph/src/planner/binder.rs	sorted_scope_vars	2701	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
-graph/src/planner/binder.rs	merge_scope_vars	2709	PROVEN	mergeSV_ge, mergeSV_covers
+graph/src/planner/binder.rs	Binder::bind_projection	1064	PROVEN	bindProjection: projectItems_keys, with_plain, orderBy_leaks, where_copy_removed, where_copy_id_reused, orderBy_old_name_of_projected, agg_orderBy_by_name, agg_orderBy_rejects, orderBy_bool_check (#3293: ORDER BY operand check, PExpr.obOk = Types.validateOB) (WITH * branch not modelled)
+graph/src/planner/binder.rs	Binder::bind_graph	1337	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_rejects, node_attr_on_own_rel, rel_attr_forward_node, self_reference_ok; defineName_ignores_parent
+graph/src/planner/binder.rs	Binder::bind_graph_create	1565	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak
+graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1690	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct
+graph/src/planner/binder.rs	Binder::bind_set_items	1708	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
+graph/src/planner/binder.rs	Binder::bind_expr	1733	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
+graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1740	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
+graph/src/planner/binder.rs	Binder::bind_expr_node	1754	PROVEN	BindExpr.bindNode: bindNode_covers (pattern-free exprs keep table covering), loop_var_shadows, bind_iterable_outer, reduce_same_name, prop_on_path, exists_pattern, func_arg_mismatch; Scopes.comprehension_cleanup_breaks; Fold.foldCall_sound; #3335: NE.paren/andOr, flatB — bind_paren ((x) binds like x: same tree, state, errors), prop_on_paren_path, bind_andOr_paren + flatB_assoc ((a AND b) AND c binds flat), flatB_eq_body, flatB_many, spliceB_other, bindL_append; Pattern arm: PatternPredDeclaresNothing refuted by bug1334_pattern_predicate_declares_var (BUG #1334)
+graph/src/planner/binder.rs	Binder::define_name_in_scope	2172	PROVEN	defineName: defineName_ignores_parent; ensureType_table
+graph/src/planner/binder.rs	Binder::project_name	2194	PROVEN	projectName_new_covers, projectName_present_uncovered
+graph/src/planner/binder.rs	Binder::resolve_name	2204	PROVEN	resolve: resolve_ok_iff, resolve_innermost, resolve_covers
+graph/src/planner/binder.rs	Binder::fresh_var	2272	PROVEN	freshVar: fresh_not_used, mint_new_covers
+graph/src/planner/binder.rs	Binder::ensure_type	2288	PROVEN	ensureType_table, ensureType_accepts_any_binding
+graph/src/planner/binder.rs	Binder::validate_boolean_operands	2309	PROVEN	Types.validate (= validateF false true): validate_logical, validate_nonlogical, projection_int_rejected, arith_const_rejected, arith_runtime_accepted, getElement_rejected
+graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2325	PROVEN	Types.validateF/validateCh (recursive, in_filter/check_shape): validate_logical, validate_nonlogical, validate_predScope, validate_inFilter_logical, validateCh_value, filter_operands_unchecked, quant_operands_unchecked, opOk_shape_stronger
+graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2495	PROVEN	Types.mayBool_sound_except; getElement_rejected (CONFIRMED bug binder.rs:2347), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
+graph/src/planner/binder.rs	Binder::expr_may_return_entity	2563	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
+graph/src/planner/binder.rs	expr_tree_to_value	2636	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
+graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2638	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
+graph/src/planner/binder.rs	collect_constant_args	2668	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
+graph/src/planner/binder.rs	rewrite_struct_constructor	2686	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
+graph/src/planner/binder.rs	rewrite_compiled_regex	2751	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
+graph/src/planner/binder.rs	replace_agg_subtrees	2785	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
+graph/src/planner/binder.rs	raw_exprs_structurally_equal	2815	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_wrong_aggregate (CONFIRMED bug), order_by_int_distinguished
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2819	PROVEN	AggEq.isAggPlaceholder_iff
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2823	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2853	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause: the `_ =>` discriminant fallback, binder.rs:2695)
+graph/src/planner/binder.rs	sorted_scope_vars	2874	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
+graph/src/planner/binder.rs	merge_scope_vars	2882	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	838	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)
-graph/src/planner/binder.rs	Binder::validate_order_by_boolean_operands	2317	NOT COVERED	(#3293): not modelled yet
-graph/src/planner/binder.rs	Binder::non_boolean_operand_type	2379	NOT COVERED	(#3293): not modelled yet
-graph/src/planner/binder.rs	Binder::type_name	2408	NOT COVERED	(#3293): not modelled yet
-graph/src/planner/binder.rs	Binder::constant_value	2432	NOT COVERED	(#3293): not modelled yet
-graph/src/planner/binder.rs	Binder::constant_arithmetic	2472	NOT COVERED	(#3293): not modelled yet
+graph/src/planner/binder.rs	Binder::validate_order_by_boolean_operands	2317	PROVEN	Types.validateOB (= validateF false false): orderBy_getElement_accepted, orderBy_func_rejected, opOk_shape_stronger
+graph/src/planner/binder.rs	Binder::non_boolean_operand_type	2379	PROVEN	Types.nbType: nbType_notBN, nbType_sound, arith_const_rejected, arith_runtime_accepted
+graph/src/planner/binder.rs	Binder::type_name	2408	PROVEN	Types.FT.typeName: typeName_not_bool, typeName_optional, typeName_union
+graph/src/planner/binder.rs	Binder::constant_value	2432	PROVEN	Types.constVal/constAll/mapAll (Value arithmetic by kind: CEval parameter): nbType_notBN, arith_const_rejected, arith_runtime_accepted
+graph/src/planner/binder.rs	Binder::constant_arithmetic	2472	PROVEN	Types.constVal arith arm (CEval.ar = try_fold of the op by kind): arith_const_rejected, arith_runtime_accepted

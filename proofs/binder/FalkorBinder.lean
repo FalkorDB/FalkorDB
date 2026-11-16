@@ -65,7 +65,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | `BSt`, `sortedScopeVars`, `updNode` (Stack.lean) | `env_stack` & co., `default` :74, `scope_vars` :114, `current_env(_mut)` :239/245, `push_scope` :251, `commit_scope` :256, `sorted_scope_vars` :2703, `update_graph_labels` :160 |
 | `NE`/`BE`, `bindNode`, `bindSetItems`, `selfRef` (BindExpr.lean) | `bind_expr_node` :1751, `bind_expr(_with_locals)` :1730/1737, `bind_set_items` :1705, `check_unbound_self_referential` :1687 |
 | `RC`, `bindIR`, `shortestOk`, `mergeOk`, `yieldLoop`, `bindYield`, `bindCallSubquery`, `importProjections`, `createCheck` (BindIR.lean) | `bind_ir` :262, `bind_call_subquery` :716, `build_import_projections` :984, `bind_graph_create` :1562 |
-| `mayBool`, `mayEntity`, `validate` (Types.lean) | `expr_may_return_boolean` :2323, `expr_may_return_entity` :2392, `validate_boolean_operands(_impl)` :2297/2301 |
+| `mayBool`, `mayEntity`, `validate`/`validateOB`/`validateF`, `nbType`, `constVal`, `FT.typeName` (Types.lean) | `expr_may_return_boolean` :2495, `expr_may_return_entity` :2563, `validate_boolean_operands` :2309, `validate_order_by_boolean_operands` :2317, `_impl` :2325 (#3293), `non_boolean_operand_type` :2379, `constant_value` :2432, `constant_arithmetic` :2472, `type_name` :2408 |
 | `nodeToValue`, `collectConstArgs`, `foldCall`, `rewriteStruct`, `rewriteRegex` (Fold.lean) | `expr_tree_to_value` :2465, `collect_constant_args` :2497, folding :2124, `rewrite_struct_constructor` :2515, `rewrite_compiled_regex` :2580 |
 | `exprIrEq`, `strip`/`eqS`, `structEq`, `replaceAgg` (AggEq.lean) | `expr_ir_eq` :2682, `nodes_eq` :2652, `raw_exprs_structurally_equal` :2644, `replace_agg_subtrees` :2614 |
 

@@ -1,6 +1,6 @@
 import FalkorBinder.Resolve
 /-
-# WITH / RETURN: `bind_projection` (binder.rs:1059-1301)
+# WITH / RETURN: `bind_projection` (binder.rs:1064-1305)
 
 An expression is abstracted to the names it mentions (in DFS order), whether
 it is an aggregation, and whether it is a bare variable (the case that
@@ -13,6 +13,9 @@ structure PExpr where
   agg   : Bool := false
   /-- the expression is exactly `ExprIR::Variable` (binder.rs:1156) -/
   bare  : Bool := false
+  /-- `validate_order_by_boolean_operands` accepts it (binder.rs:1221;
+  `Types.validateOB` on the bound tree), when it is an ORDER BY expression -/
+  obOk  : Bool := true
   deriving Repr, DecidableEq
 
 instance {α} [DecidableEq α] : DecidableEq (Except String α) := fun a b =>
@@ -75,9 +78,13 @@ def bindProjection (st : St) (p : Proj) : Except String St := do
   let st ← projectItems (pushScope st) [] bound
   -- 3. grouping names (binder.rs:1177-1192)
   let groupBy := (p.items.filter (fun ie => !ie.2.agg)).flatMap (fun ie => ie.2.vars)
-  -- 4. ORDER BY, with the parent scope visible (binder.rs:1212-1215)
+  -- 4. ORDER BY, with the parent scope visible; each expression is bound,
+  --    then its logical operands are checked (binder.rs:1217-1225, #3293)
   let (st, _) ← p.orderBy.foldlM (init := (st, ([] : List Var)))
-    fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
+    fun (st, acc) e => do
+      let (st, vs) ← resolveAll st e.vars
+      if !e.obOk then throw "Type mismatch: expected Boolean or Null"
+      pure (st, acc ++ vs)
   -- 5. aggregation: copies must be grouping names (binder.rs:1230-1241)
   if p.items.any (·.2.agg) && st.cfp.any (fun c => !groupBy.contains c.1) then
     throw "ORDER BY cannot reference variables not projected"
@@ -149,14 +156,23 @@ ORDER BY n.v` is accepted (C and openCypher reject — `n.v` is not a grouping
 key, so the order is not determined by the group). -/
 theorem agg_orderBy_by_name :
     (bindProjection st0
-      { items := [("k", { vars := ["n"] }), ("c", (PExpr.mk [] true false))], orderBy := [{ vars := ["n"] }] }).map keys = .ok ["k", "c", "n"] := by
+      { items := [("k", { vars := ["n"] }), ("c", { vars := [], agg := true })], orderBy := [{ vars := ["n"] }] }).map keys = .ok ["k", "c", "n"] := by
   decide
 
 /-- and it does reject an ORDER BY name that is in no grouping key. -/
 theorem agg_orderBy_rejects :
     (bindProjection st0
-      { items := [("c", (PExpr.mk ["n"] true false))], orderBy := [{ vars := ["n"] }] }).map keys =
+      { items := [("c", { vars := ["n"], agg := true })], orderBy := [{ vars := ["n"] }] }).map keys =
       .error "ORDER BY cannot reference variables not projected" := by
+  decide
+
+/-- #3293: an ORDER BY expression whose logical operands fail the check
+rejects the projection (`RETURN 1 AS k ORDER BY true AND 1`), after it is
+bound; a valid one binds as before (`orderBy_old_name_of_projected`). -/
+theorem orderBy_bool_check :
+    (bindProjection st0
+      { items := [("k", { vars := [] })], orderBy := [{ vars := [], obOk := false }] }).map keys =
+      .error "Type mismatch: expected Boolean or Null" := by
   decide
 
 theorem Env.has_iff (e : Env) (k : Name) : e.has k = true ↔ k ∈ e.map (·.1) := by
