@@ -32,7 +32,7 @@ asserts C's answer and FAILS today).
 | `Correlated.semiBatched`                  | `SemiApplyOp::next` (`semi_apply.rs:66`) |
 | `Correlated.orApply`                      | `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73`) |
 | `Correlated.canBatchApply/Optional`       | `can_batch` in `ApplyOp::new` (`apply.rs:119`), `OptionalOp::new` (`optional.rs:104`) |
-| `Correlated.vhj`                          | `ValueHashJoinOp::next` (`value_hash_join.rs:366-446`) |
+| `Correlated.vhj`                          | `ValueHashJoinOp::next` (`value_hash_join.rs:509-616`) |
 | `Union.next`, `Union.St`                  | `UnionOp::next` (`union.rs:68`), `current`/`current_child` |
 | `ForEach.chunks`, `execList`, `runChunks` | `ForEachOp::execute_list` (`foreach.rs:86`) |
 | `ForEach.inner`, `go`, `next`             | `ForEachOp::next` (`foreach.rs:124`) |
