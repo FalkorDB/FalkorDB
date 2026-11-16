@@ -63,7 +63,7 @@ mod utilize_node_by_id;
 
 use std::collections::{HashMap, HashSet};
 
-use orx_tree::{Bfs, DynTree, NodeRef};
+use orx_tree::{Bfs, DynTree, NodeRef, Traversal};
 
 use crate::{
     graph::graph::Graph,
@@ -90,9 +90,19 @@ use utilize_node_by_id::utilize_node_by_id;
 
 /// Collects all variable IDs referenced in an expression tree.
 pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<u32> {
+    collect_expr_variables_with(expr, &mut Traversal.bfs())
+}
+
+/// [`collect_expr_variables`] walking with a caller-owned traverser, so a pass
+/// that calls it per conjunct reuses one queue instead of allocating one per
+/// call — the reuse orx-tree documents for repeated walks (`walk_with`).
+pub(crate) fn collect_expr_variables_with(
+    expr: &DynTree<ExprIR<Variable>>,
+    traverser: &mut Bfs,
+) -> HashSet<u32> {
     let mut vars = HashSet::new();
-    for idx in expr.root().indices::<Bfs>() {
-        if let ExprIR::Variable(var) = expr.node(idx).data() {
+    for data in expr.root().walk_with(traverser) {
+        if let ExprIR::Variable(var) = data {
             vars.insert(var.id);
         }
     }
@@ -137,33 +147,40 @@ pub fn optimize(
         return root;
     }
     let mut optimized_plan = plan.clone();
+    // One breadth-first traverser shared by every pass: orx-tree's
+    // `indices::<Bfs>()` / `walk::<Bfs>()` build a fresh traverser, and so a
+    // fresh queue, on every walk, while `indices_with` / `walk_with` reuse
+    // this one's. The passes walk the plan, and every expression they inspect,
+    // many times over, and `optimize()` runs on every execution — a
+    // plan-cache hit included.
+    let mut traverser = Traversal.bfs();
 
-    reduce_count(&mut optimized_plan, graph);
-    reduce_expand_into(&mut optimized_plan);
-    reduce_var_len_path(&mut optimized_plan);
-    eliminate_true_filters(&mut optimized_plan, params);
-    select_scan_node(&mut optimized_plan, graph);
-    push_filters_down(&mut optimized_plan);
-    fuse_anonymous_traverse(&mut optimized_plan);
-    replace_cartesian_with_hash_join(&mut optimized_plan);
-    absorb_edge_filters_into_vlt(&mut optimized_plan);
+    reduce_count(&mut optimized_plan, graph, &mut traverser);
+    reduce_expand_into(&mut optimized_plan, &mut traverser);
+    reduce_var_len_path(&mut optimized_plan, &mut traverser);
+    eliminate_true_filters(&mut optimized_plan, params, &mut traverser);
+    select_scan_node(&mut optimized_plan, graph, &mut traverser);
+    push_filters_down(&mut optimized_plan, &mut traverser);
+    fuse_anonymous_traverse(&mut optimized_plan, &mut traverser);
+    replace_cartesian_with_hash_join(&mut optimized_plan, &mut traverser);
+    absorb_edge_filters_into_vlt(&mut optimized_plan, &mut traverser);
     // Re-run path reduction: folding an edge-only filter into a
     // CondVarLenTraverse can remove the last ancestor that consumed the path
     // alias, so a path kept by the first pass may now be skippable. Safe here
     // because `ir_references_variable` inspects `ValueHashJoin` keys, the only
     // path consumer `replace_cartesian_with_hash_join` adds in between.
-    reduce_var_len_path(&mut optimized_plan);
-    utilize_index(&mut optimized_plan, graph);
-    utilize_node_by_id(&mut optimized_plan);
+    reduce_var_len_path(&mut optimized_plan, &mut traverser);
+    utilize_index(&mut optimized_plan, graph, &mut traverser);
+    utilize_node_by_id(&mut optimized_plan, &mut traverser);
 
-    reorder_labels(&mut optimized_plan, graph);
+    reorder_labels(&mut optimized_plan, graph, &mut traverser);
 
     // Runs last so no earlier pass has to reason about optional traverses.
-    fuse_optional_traverse(&mut optimized_plan);
+    fuse_optional_traverse(&mut optimized_plan, &mut traverser);
 
     // After every pass that rebuilds a CondTraverse or moves its ancestors, so
     // the "does anything read this edge" answer is the final plan's.
-    reduce_bound_edge(&mut optimized_plan);
+    reduce_bound_edge(&mut optimized_plan, &mut traverser);
 
     optimized_plan
 }

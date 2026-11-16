@@ -102,12 +102,15 @@ fn fused_traverse(sub: &DynNode<IR>) -> IR {
     }
 }
 
-pub(super) fn fuse_optional_traverse(plan: &mut DynTree<IR>) {
+pub(super) fn fuse_optional_traverse(
+    plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
+) {
     loop {
         // (fuse target idx, traverse node idx, intermediate Optional idx to
         // prune when the target is an Apply).
         let mut target = None;
-        for idx in plan.root().indices::<Bfs>() {
+        for idx in plan.root().indices_with(traverser) {
             let node = plan.node(idx);
             match node.data() {
                 // Standalone Optional: child 0 = input, child 1 = sub-plan.

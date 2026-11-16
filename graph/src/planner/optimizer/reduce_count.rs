@@ -35,7 +35,7 @@
 
 use std::sync::Arc;
 
-use orx_tree::{DynTree, NodeRef};
+use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
@@ -54,11 +54,12 @@ use super::super::IR;
 pub(super) fn reduce_count(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) {
     // Walk the plan looking for Aggregate nodes.
     let indices = optimized_plan
         .root()
-        .indices::<orx_tree::Bfs>()
+        .indices_with(traverser)
         .collect::<Vec<_>>();
 
     for idx in indices {
