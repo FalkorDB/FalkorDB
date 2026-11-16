@@ -122,7 +122,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-binder-3**: deleted scope-table entries let ids be reused. WHERE/SKIP/LIMIT parent copies (`binder.rs:1231-1239`) and comprehension or pattern locals (`:1893`, `:2068`) are removed while their ids are still in use. The results are wrong rows, extra rows, and "Invalid node id for 'to'".
 - **W2-binder-4**: UNION branches inside `CALL {}` start at scope 0, shared with the outer query (`binder.rs:868-876`). *Fixed by #3027 (d42d121c6; closes #3025), see Merged 2026-11-01.*
 - **W2-binder-5**: ORDER BY copies leak past WITH/RETURN (the snapshot at `binder.rs:1216`). This causes a spurious "already declared", and `RETURN *` also returns ORDER BY-only variables.
-- **W2-binder-6**: labels from CREATE and from pattern comprehensions tighten an earlier MATCH scan (`binder.rs:1645`, `:1847-1904`): 0 or 1 rows where C returns 3.
+- **W2-binder-6**: labels from CREATE and from pattern comprehensions tighten an earlier MATCH scan (`binder.rs:1645`, `:1847-1904`): 0 or 1 rows where C returns 3. **Fixed by PR #3049** (`with_node_labels_rolled_back`): binder `scanLabels_match_only`, `labels_no_leak`.
 - **W2-binder-7**: a pattern predicate in WITH … WHERE rebinds a parent variable as a fresh one (`define_name_in_scope`, `binder.rs:2121`): 3 rows where C returns 1.
 
 ### Wrong results: optimizer
