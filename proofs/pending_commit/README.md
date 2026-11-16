@@ -56,7 +56,7 @@ Since #3334, a `UNIQUE` check looks each affected member's key up through the co
 | `commit_spec` | A successful `Pending::commit` grows each counter (nodes and relationships created, labels removed, nodes deleted, relationships deleted including the implicit ones) by exactly the staged changes, and the constraints hold afterwards | `PendingCommitOp.lean` |
 | `uniqueViolated_spec`, `uniqueViolated_agrees` | The #3334 index-lookup UNIQUE check is right, and agrees with the old label scan | `UniqueIndex.lean` |
 | `sound_under_Good`, `deferred_preserves_Good` | Snapshot reads are right while no snapshotted id is live; deferring id reuse keeps that | `Snapshot.lean` |
-| `c_eq_rust_plus_cancelled` | C's created/deleted counts = Rust's + the entities created and deleted in the same segment | `Stats.lean` |
+| `c_eq_rust_plus_cancelled`, `rust3030_eq_c` | C's created/deleted counts = pre-#3030 Rust's + the entities created and deleted in the same segment; since #3030 Rust's equal C's | `Stats.lean` |
 
 ### How `mergeSpan_correct` is proved
 
@@ -73,7 +73,7 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | #2876 / W2-pending-1 | `rust_reads_dead_entity` | A deleted entity's snapshot is keyed by id, and a `CREATE` later in the query reuses the id, so the new entity reads the deleted one's labels and properties. `MERGE` then creates a duplicate node (persistent damage). Same for relationships. Confirmed live: `MATCH (n) DELETE n WITH count(*) AS c CREATE (m {v:2}) WITH m MATCH (x) RETURN x.v` over `(:A {v:1})` gives Rust `1`, C `2` | **Open** (#2876). Fix proposed in open PR #2964 (`evict_preserves_Good`, `evict_reads_live_entity`) |
-| W2-pending-2 | `cancel_example`, `c_eq_rust_plus_cancelled` | Entities created and deleted in the same segment vanish from the statistics: `CREATE (a:L {v:1, w:2}) DELETE a` reports only `Labels added`; C reports `Nodes created: 1, Properties set: 2, Nodes deleted: 1` | **Open** |
+| W2-pending-2 | `cancel_example`, `c_eq_rust_plus_cancelled` | Entities created and deleted in the same segment vanish from the statistics: `CREATE (a:L {v:1, w:2}) DELETE a` reports only `Labels added`; C reports `Nodes created: 1, Properties set: 2, Nodes deleted: 1` | **Fixed by #3030** (`rust3030_eq_c`, `PC.stCancelled_spec`, `PS.deletePendingNode_cancelledP`) |
 | W2-pending-3 | (no Lean theorem; found while modelling) | Writes to a deleted relationship are applied and counted: `REMOVE r.v` after `DELETE r`, and `SET r.v` after a `DETACH DELETE` cascade | **Open** |
 | #2769 | `fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted` (was `deg_panics_on_pending_deleted`) | `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b)` asked the committed graph for the endpoints of an edge that was never committed, and panicked. Now the edge created and deleted in the query is skipped by `pending_deleted_*degree` and not counted by `pending_*degree`; `0`, as C | **Fixed** by #3520 (9ffa9ab04) |
 | #2776 | removed (17ccc5412); `fixed3524_replace_clears_staged`, `replace_reads_src` | `SET x = m` / `SET r = {…}` kept attributes staged earlier in the query instead of replacing them | Fixed by #3524 (af45ca776) |
@@ -104,7 +104,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_reads_src` |
 | `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `rust_reads_dead_entity`, `deferred_preserves_Good` |
 | `EvictPR2964.lean` | **Models open PR #2964, not main**: `evict_preserves_Good` |
-| `Stats.lean` | Write statistics: `c_eq_rust_plus_cancelled`, `cancel_example` |
+| `Stats.lean` | Write statistics: `c_eq_rust_plus_cancelled`, `cancel_example`, `rust3030_eq_c`, `cancel_example_3030` |
 | `PendingAttrs.lean`, `PendingState.lean`, `PendingRels.lean`, `PendingDeg.lean`, `PendingDocs.lean` | All of `pending.rs`: validation, staging, reads, created relationships, degrees (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`), `IndexDocs`, `clear`, `effects_count` |
 | `PendingCommitOp.lean` | `Pending::commit` and constraint enforcement: `commit_spec`, `check_spec`, `enforce_spec` |
 | `UniqueIndex.lean` | #3334's index-lookup UNIQUE check: `uniqueViolated_spec`, `uniqueViolated_agrees`, `checkUnique_spec` |

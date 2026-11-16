@@ -77,8 +77,8 @@ No function this project models changed: #3250 touches only `rebuild_derived_mat
 | Lean | Rust |
 | --- | --- |
 | `PS.P` (no `nodeEntry`/`relEntry`) | `struct Pending` (pending.rs:307): the boundary fields and the id-space builders are gone |
-| `PS.rmStep` (+ `taken` removal), `removeRelsG` | `remove_pending_relationships_for_node(id, g)` (:902): `taken_relationship_ids.remove` + `g.cancel_relationship_id(rel_id)?` (:944-947) |
-| `PS.deletePendingNode` | `delete_pending_node(id, g)` (:851): unwinds and hands the id back via `g.cancel_node_id(id)?` (:888) |
+| `PS.rmStep` (+ `taken` removal), `removeRelsG` | `remove_pending_relationships_for_node(id, g)` (:917): `cancelled_properties += count_set` (:955), `taken_relationship_ids.remove` + `g.cancel_relationship_id(rel_id)?` (:960-962) |
+| `PS.deletePendingNode`, `takeAttrs`, `countSet` | `delete_pending_node(id, g)` (:865): `cancelled_properties += count_set(&attrs)` (:895, `count_set` :154), unwinds and hands the id back via `g.cancel_node_id(id)?` (:903) |
 | `PD.endSegment`, `clear` | `end_segment` (:1885), which replaced `clear` + `open_id_boundaries` |
 | `CommitOpNext.*` | `CommitOp::next` (ops/commit.rs:69) with `end_segment` (:139) |
 
@@ -98,8 +98,11 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
   CREATE (m {v:2}) WITH m MATCH (x) RETURN id(x), x.v, labels(x)` over `(:A {v:1})`:
   Rust `0|1|[A]`, C `0|2|[]`; the MERGE shape still creates 2 nodes (C 1).
   `rust_reads_dead_entity` stands: `reserve` still reclaims the free set first.
-* W2-pending-2 — **still present**: `CREATE (a) DELETE a` Rust no counters, C
-  `Nodes created: 1, Nodes deleted: 1` (`c_eq_rust_plus_cancelled`).
+* W2-pending-2 — **fixed by #3030** (6e9ce3722): `CREATE (a) DELETE a` used to report no
+  counters, C `Nodes created: 1, Nodes deleted: 1` (`c_eq_rust_plus_cancelled`); now
+  `Pending::commit` adds the cancelled sets and `cancelled_properties`
+  (`PC.commit_spec`, `PC.stCancelled_spec`, `Stats.rust3030_eq_c`,
+  `PS.deletePendingNode_cancelledP`).
 * #2769 — **fixed by #3520** (9ffa9ab04): `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b), a.o =
   outdegree(a) RETURN b.d, a.o` used to panic `relationship 0 not found`; now `0|0` as C
   (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`).
@@ -134,7 +137,7 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1571-1999: `get_node_attribute` to `get_node_outdegree_by_type`) |
 | `Snapshot.del/commit/createRust`  | `delete_nodes_bulk`/`delete_entity` (ops/delete.rs), `CommitOp` (ops/commit.rs), `IdSpace::reserve` bin-first |
 | `Snapshot.createDeferred`         | the fix proposed in #2876 |
-| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:851), commit counters (:1344-1415) |
+| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:865), commit counters (:1362-1450) |
 
 Hypotheses (the AXIOMATISED rows): GraphBLAS `set_all`/`remove` on the label
 matrices behave as set insert/delete, so commit is `(C ∪ set) \ remove`
@@ -212,8 +215,8 @@ Wave-4 findings:
   `deferred_reads_live_entity` — snapshot reads are correct as long as no
   snapshotted id is live, and deferring id reuse to query end (the #2876
   proposal) maintains that across delete/commit/create.
-* `c_eq_rust_plus_cancelled` — C's `Nodes created/deleted` = Rust's +
-  |cancelled| on every well-formed segment.
+* `c_eq_rust_plus_cancelled` — C's `Nodes created/deleted` = the old Rust's +
+  |cancelled| on every well-formed segment; `rust3030_eq_c` — since #3030 they are equal.
 
 ## Counterexamples (Lean) → confirmed bugs (Rust, and vs C on live servers)
 
@@ -235,7 +238,8 @@ Wave-4 findings:
    Consequence for the fix: "refuse the query when a *reachable* snapshotted id
    is reclaimed" is not enough (the unreachable case); deferring reuse, or
    dropping snapshot entries no binding references, is.
-2. **Cancelled entities vanish from statistics** (`cancel_example`).
+2. **Cancelled entities vanish from statistics** (`cancel_example`). **Fixed by #3030**
+   (`rust3030_eq_c`, `cancel_example_3030`, `PC.stCancelled_spec`).
    `CREATE (a:L {v:1, w:2}) DELETE a`: Rust reports nothing but `Labels added`;
    C `Nodes created: 1, Properties set: 2, Nodes deleted: 1`.
    `CREATE (a)-[:R]->(b) DELETE a`: Rust `Nodes created: 1`; C 2/1 nodes, 1/1 edges.
@@ -262,10 +266,10 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
 
 ## Suspicions (not confirmed)
 
-* `effects_count` (pending.rs:1958) ignores `cancelled_nodes`, so a query that
-  only cancels (`CREATE (a) DELETE a`) ships no effect although its id went to
-  the master's bin; the replica's boundary is then one lower. By hand this
-  self-heals on the next create; not run against a replica.
+* `effects_count` (pending.rs:1958) ignored `cancelled_nodes`, so a query that
+  only cancels (`CREATE (a) DELETE a`) shipped no effect although its id went to
+  the master's bin. Fixed by #3030 (pending.rs:2000; `PD.effects_counts_cancelled`,
+  history `PD.pre3030_effects_ignores_cancelled`).
 * `decode_with_count` does not deduplicate attribute ids before `set_span`, which
   assumes a strictly sorted null-free span; reachable only via a malformed RDB.
   (`import_attrs_resolved` deduplicates since #3063; its GRAPH.BULK callers drop

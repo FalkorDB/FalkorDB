@@ -23,10 +23,12 @@ import RuntimeCore.Accessors
 * `affected_spec`, `enforce_spec` — `enforce_constraints` (:1484): affected =
   (created ∪ staged-attr ∪ staged-label nodes) \ deleted, edges likewise; the
   query fails iff some *operational* constraint's check fails.
-* `commit_spec` — `Pending::commit` (:1338), graph operations uninterpreted
+* `commit_spec` — `Pending::commit` (:1354), graph operations uninterpreted
   (`GOps`): the statistics it adds are `|created_nodes|`,
   `|created_rel_types|`, `Σ|remove_labels|`, the attribute writers' counts,
-  `|deleted_nodes|` and the implicit + actually-deleted explicit edges;
+  `|deleted_nodes|` and the implicit + actually-deleted explicit edges, plus
+  (#3030, `stCancelled_spec`) `|cancelled_nodes|` created and deleted,
+  `|cancelled_relationships|` created and deleted and `cancelled_properties` set;
   `deleted_relationships` becomes the implicit ∪ actually-deleted edges, the
   explicit set is handed to both deleters, and the batch's index documents are
   absorbed into the deferred set.
@@ -281,6 +283,18 @@ structure CS (G : Type) where
 
 variable {G : Type}
 
+/-- #3030 (:1359-1370): entities created and deleted within the segment never reach the
+graph, but are counted as C does — created and deleted, and the properties they were
+created with — before any graph write. -/
+def stCancelled (p : P) (c : CS G) : CS G :=
+  if p.cancelledN = [] ∧ p.cancelledR = [] then c
+  else { c with s := { c.s with
+    nodesCreated := c.s.nodesCreated + p.cancelledN.length,
+    nodesDeleted := c.s.nodesDeleted + p.cancelledN.length,
+    relsCreated := c.s.relsCreated + p.cancelledR.length,
+    relsDeleted := c.s.relsDeleted + p.cancelledR.length,
+    propsSet := c.s.propsSet + p.cancelledP } }
+
 def stCreate (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   if p.created = [] then some c
   else (o.createNodes c.g p.created).map fun g => { c with g := g, s := { c.s with nodesCreated := c.s.nodesCreated + p.created.length } }
@@ -333,8 +347,26 @@ def finish (o : GOps G) (p : P) (c : CS G) : Option (P × G × Stats) :=
   if o.constraintsOk g' p' then some (p', g', c.s) else none
 
 def commit (o : GOps G) (p : P) (g0 : G) (s0 : Stats) : Option (P × G × Stats) :=
-  (stCreate o p ⟨g0, s0, [], []⟩).bind fun c1 => (stRels o p c1).bind fun c2 => (stLabels o p c2).bind fun c3 =>
+  (stCreate o p (stCancelled p ⟨g0, s0, [], []⟩)).bind fun c1 => (stRels o p c1).bind fun c2 => (stLabels o p c2).bind fun c3 =>
     (stAttrs o p c3).bind fun c4 => (stDelete o p c4).bind (finish o p)
+
+/-- **`stCancelled_spec`** (#3030): the cancelled entities' statistics; the counter
+additions are unconditional in effect (an empty set adds 0), `Properties set` gains
+`cancelled_properties` whenever something was cancelled. -/
+theorem stCancelled_spec (p : P) (c : CS G) :
+    (stCancelled p c).s.nodesCreated = c.s.nodesCreated + p.cancelledN.length ∧
+    (stCancelled p c).s.nodesDeleted = c.s.nodesDeleted + p.cancelledN.length ∧
+    (stCancelled p c).s.relsCreated = c.s.relsCreated + p.cancelledR.length ∧
+    (stCancelled p c).s.relsDeleted = c.s.relsDeleted + p.cancelledR.length ∧
+    (stCancelled p c).s.labelsRemoved = c.s.labelsRemoved ∧
+    (stCancelled p c).s.propsRemoved = c.s.propsRemoved ∧
+    (stCancelled p c).s.propsSet =
+      c.s.propsSet + (if p.cancelledN = [] ∧ p.cancelledR = [] then 0 else p.cancelledP) ∧
+    (stCancelled p c).g = c.g ∧ (stCancelled p c).imp = c.imp ∧ (stCancelled p c).act = c.act := by
+  unfold stCancelled
+  split
+  · rename_i h; obtain ⟨h1, h2⟩ := h; simp [h1, h2]
+  · rename_i h; simp [h]
 
 theorem stCreate_s (o : GOps G) (p : P) (c c' : CS G) (h : stCreate o p c = some c') :
     c'.s = { c.s with nodesCreated := c.s.nodesCreated + p.created.length } ∧ c'.imp = c.imp ∧ c'.act = c.act := by
@@ -411,12 +443,12 @@ theorem stDelete_s (o : GOps G) (p : P) (c c' : CS G) (h : stDelete o p c = some
 /-- **`commit_spec`**. -/
 theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × Stats)
     (h : commit o p g0 s0 = some r) :
-    r.2.2.nodesCreated = s0.nodesCreated + p.created.length ∧
-    r.2.2.relsCreated = s0.relsCreated + p.relTypes.length ∧
+    r.2.2.nodesCreated = s0.nodesCreated + p.cancelledN.length + p.created.length ∧
+    r.2.2.relsCreated = s0.relsCreated + p.cancelledR.length + p.relTypes.length ∧
     r.2.2.labelsRemoved = s0.labelsRemoved + (p.remL.map (·.2.length)).sum ∧
-    r.2.2.nodesDeleted = s0.nodesDeleted + p.deletedN.length ∧
+    r.2.2.nodesDeleted = s0.nodesDeleted + p.cancelledN.length + p.deletedN.length ∧
     (∃ imp act : List Nat, r.1.deletedR = imp.foldl sins [] ++ act ∧
-      r.2.2.relsDeleted = s0.relsDeleted + imp.length + act.length) ∧
+      r.2.2.relsDeleted = s0.relsDeleted + p.cancelledR.length + imp.length + act.length) ∧
     r.1.deletedN = p.deletedN ∧ r.1.created = p.created ∧ o.constraintsOk r.2.1 r.1 = true := by
   unfold commit at h
   obtain ⟨c1, h1, h⟩ := Option.bind_eq_some_iff.1 h
@@ -424,20 +456,22 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
   obtain ⟨c3, h3, h⟩ := Option.bind_eq_some_iff.1 h
   obtain ⟨c4, h4, h⟩ := Option.bind_eq_some_iff.1 h
   obtain ⟨c5, h5, h6⟩ := Option.bind_eq_some_iff.1 h
+  obtain ⟨k1, k2, k3, k4, k5, -, -, -, k9, k10⟩ := stCancelled_spec p (⟨g0, s0, [], []⟩ : CS G)
   obtain ⟨e1, i1, a1⟩ := stCreate_s o p _ c1 h1
   obtain ⟨e2, i2, a2⟩ := stRels_s o p _ c2 h2
   obtain ⟨e3, i3, a3⟩ := stLabels_s o p _ c3 h3
   obtain ⟨f1, f2, f3, f4, f5, i4, a4⟩ := stAttrs_s o p _ c4 h4
-  have hi : c4.imp = [] := by rw [i4, i3, i2, i1]
-  have ha : c4.act = [] := by rw [a4, a3, a2, a1]
+  have hi : c4.imp = [] := by rw [i4, i3, i2, i1, k9]
+  have ha : c4.act = [] := by rw [a4, a3, a2, a1, k10]
   obtain ⟨d1, d2, d3, d4, d5⟩ := stDelete_s o p _ c5 h5 hi ha
   unfold finish at h6
   dsimp only at h6
   split at h6
   · rename_i hok; cases h6
     simp only [e1, e2, e3] at f1 f2 f3 f4 f5
-    refine ⟨by simp [d1, f1, e3, e2, e1], by simp [d2, f2, e3, e2], by simp [d3, f3, e3], by simp [d4, f4, e3, e2, e1],
-      ⟨c5.imp, c5.act, rfl, by simp [d5, f5, e3, e2, e1]⟩, rfl, rfl, hok⟩
+    refine ⟨by simp [d1, f1, e3, e2, e1, k1], by simp [d2, f2, e3, e2, k3], by simp [d3, f3, e3, k5],
+      by simp [d4, f4, e3, e2, e1, k2],
+      ⟨c5.imp, c5.act, rfl, by simp [d5, f5, e3, e2, e1, k4]⟩, rfl, rfl, hok⟩
   · cases h6
 
 /-! ## `node_has_changes` (#3464, pending.rs:784)
@@ -496,7 +530,7 @@ label changes nothing but still trips it. -/
 theorem nodeHasChanges_overapprox :
     ∃ p : P, nodeHasChanges p 0 = true ∧
       ∀ l, Labels.overlay (fun _ => true) ⟨(fget p.setL 0).getD [], (fget p.remL 0).getD []⟩ l = true := by
-  refine ⟨(⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], []⟩ : P), by decide, ?_⟩
+  refine ⟨(⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], [], 0⟩ : P), by decide, ?_⟩
   intro l; simp [Labels.overlay, fget]
 
 /-- `(fget m id).isSome` is key membership. -/

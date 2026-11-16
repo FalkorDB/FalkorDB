@@ -230,10 +230,22 @@ structure Pending where
   baseline          : Schema
 deriving Repr
 
-/-- `Pending::effects_count` (`runtime/pending.rs:1958-1977`), term for term.
-    Note what is **not** summed: `cancelled_nodes`, `cancelled_relationships`,
-    and the schema registered since `baseline`. -/
+/-- `Pending::effects_count` (`runtime/pending.rs:1990-2008`), term for term.
+    Since #3030 it sums `cancelled_nodes` (a cancelled relationship is only
+    cascaded from a cancelled node or from a committed node this segment
+    deletes, so `cancelled_relationships` is not summed). Still **not** summed:
+    the schema registered since `baseline`. -/
 def effectsCount (p : Pending) : Nat :=
+  p.createdNodes.length + p.createdRelTypes.length + p.deletedNodes.length
+  + p.deletedRels.length + p.cancelledNodes.length
+  + p.newNodesAttrs.length + p.existingNodesAttrs.length
+  + p.newRelsAttrs.length + p.existingRelsAttrs.length
+  + (p.setLabels.map (fun q => q.2.length)).sum
+  + (p.removeLabels.map (fun q => q.2.length)).sum
+
+/-- `effects_count` before #3030 (`pending.rs:1958-1977` at 343e077f2): no
+    `cancelled_nodes` term. Kept for the `pre3030_` history below. -/
+def effectsCountPre3030 (p : Pending) : Nat :=
   p.createdNodes.length + p.createdRelTypes.length + p.deletedNodes.length
   + p.deletedRels.length + p.newNodesAttrs.length + p.existingNodesAttrs.length
   + p.newRelsAttrs.length + p.existingRelsAttrs.length
@@ -289,6 +301,10 @@ def forEachRecord (p : Pending) (g : Schema) : List Rec :=
 /-- `CommitOp` (`runtime/ops/commit.rs:108`): `if estimated > 0 { buf.build(..) }`. -/
 def commitShips (p : Pending) (g : Schema) : List Rec :=
   if effectsCount p > 0 then forEachRecord p g else []
+
+/-- The gate before #3030, on `effectsCountPre3030`. -/
+def commitShipsPre3030 (p : Pending) (g : Schema) : List Rec :=
+  if effectsCountPre3030 p > 0 then forEachRecord p g else []
 
 /-! ## What the gate drops -/
 
@@ -358,12 +374,32 @@ def pCancelled : Pending :=
 
 def gCancelled : Schema := ⟨["A"], [], ["p"]⟩
 
-theorem gate_drops_cancelled :
-    effectsCount pCancelled = 0 ∧
+/-- **`pre3030_gate_drops_cancelled`** (historical, W2-effects-1 cancelled half; fixed by
+    #3030, `6e9ce3722`): before #3030 the gate dropped this payload. -/
+theorem pre3030_gate_drops_cancelled :
+    effectsCountPre3030 pCancelled = 0 ∧
     forEachRecord pCancelled gCancelled =
       [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] ∧
-    commitShips pCancelled gCancelled = [] := by
+    commitShipsPre3030 pCancelled gCancelled = [] := by
   refine ⟨rfl, ?_, rfl⟩
+  decide
+
+/-- **`gate_ships_cancelled_nodes`** (#3030): a segment that cancelled a node always
+    passes the gate, so the commit ships exactly what the emitter writes. -/
+theorem gate_ships_cancelled_nodes (p : Pending) (g : Schema) (h : p.cancelledNodes ≠ []) :
+    commitShips p g = forEachRecord p g := by
+  have : 0 < p.cancelledNodes.length := List.length_pos_iff.2 h
+  unfold commitShips effectsCount
+  rw [if_pos (by omega)]
+
+/-- **`gate_ships_cancelled`** (#3030): `CREATE (a:A {p: 1}) DELETE a` now ships its
+    schema additions and the cancelled pair. -/
+theorem gate_ships_cancelled :
+    effectsCount pCancelled = 1 ∧
+    commitShips pCancelled gCancelled =
+      [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] := by
+  refine ⟨rfl, ?_⟩
+  rw [gate_ships_cancelled_nodes _ _ (by decide)]
   decide
 
 /-- `OPTIONAL MATCH (n:Nope) SET n:L6`: `L6` registered, nothing else. -/
@@ -397,17 +433,28 @@ theorem next_payload_refused :
 
 /-- A cancelled edge of an unregistered type, whose attribute name is new
     (`CREATE (a)-[:T1 {p4: 1}]->(b) DELETE a, b`): the master's attribute
-    dictionary grows by `p4`, nothing ships, and the next payload that names no
+    dictionary grows by `p4`, nothing ships (before #3030), and the next payload that names no
     attribute is *accepted* — a silent divergence
     (`cancelled_edge_attribute_is_a_silent_dictionary_divergence`). Here even an
     un-gated emitter would say nothing about `T1`'s edges, since the type has no
     id (`emit.rs:448-454`), but it would still announce `p4`. -/
-theorem cancelled_edge_attr_dropped :
+theorem pre3030_cancelled_edge_attr_dropped :
     let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
     let g : Schema := ⟨[], [], ["p4"]⟩
-    effectsCount p = 0 ∧ commitShips p g = [] ∧
+    effectsCountPre3030 p = 0 ∧ commitShipsPre3030 p g = [] ∧
     forEachRecord p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
   refine ⟨rfl, rfl, ?_⟩
+  decide
+
+/-- **`cancelled_edge_attr_ships`** (#3030): the same write now ships `p4` with the
+    cancelled pair (fixed by #3030; historical form `pre3030_cancelled_edge_attr_dropped`). -/
+theorem cancelled_edge_attr_ships :
+    let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
+    let g : Schema := ⟨[], [], ["p4"]⟩
+    effectsCount p = 2 ∧
+    commitShips p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
+  refine ⟨rfl, ?_⟩
+  rw [gate_ships_cancelled_nodes _ _ (by decide)]
   decide
 
 end FalkorEA

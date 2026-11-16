@@ -2,8 +2,8 @@ import PendingCommit.PendingDocs
 /-
 # Unwinding a pending node, paired with the graph's id space (#2846)
 
-Since #2846 `delete_pending_node` (pending.rs:851) and
-`remove_pending_relationships_for_node` (:902) take `g: &mut Graph` and hand
+Since #2846 `delete_pending_node` (pending.rs:865) and
+`remove_pending_relationships_for_node` (:917) take `g: &mut Graph` and hand
 every unwound id back through `Graph::cancel_node_id` /
 `cancel_relationship_id` (graph.rs:1549/:1562) themselves, instead of
 leaving `ops/delete.rs` to call `return_*_id` afterwards. Each call is `?`:
@@ -24,6 +24,9 @@ owns it, and proofs/graph_queries states it as `IdSpaceContract.cancel_ok`.
   its staged labels/attrs are dropped, and its id and every cascaded edge id
   are free in the graph — no id is unwound on one side only.
 * `deletePendingNode_refused`: a refused graph cancel is an error.
+* `deletePendingNode_cancelledP` (#3030): `cancelled_properties` grows by `count_set` of
+  the node's staged attributes and of each cascaded relationship's
+  (`foldl_rmStep_cancelledP`), i.e. what committing them would have counted.
 -/
 namespace PendingCommit.PS
 open PA
@@ -34,9 +37,9 @@ structure CancelSpec {Gr : Type} (free other : Gr → List Nat) (cancel : Gr →
   ok : ∀ g id g', cancel g id = some g' →
     id ∈ free g' ∧ (∀ x ∈ free g, x ∈ free g') ∧ ∀ x ∈ other g, x ∈ other g'
 
-/-- `remove_pending_relationships_for_node` (:902): the second loop (:925-955),
+/-- `remove_pending_relationships_for_node` (:917): the second loop (:940-978),
 each iteration the `Pending` removals (`rmStep`) then
-`g.cancel_relationship_id(rel_id)?` (:947). -/
+`g.cancel_relationship_id(rel_id)?` (:962). -/
 def rmStepG {Gr : Type} (cancelR : Gr → Nat → Option Gr) (pg : P × Gr)
     (x : (Nat × Nat × Nat) × Nat) : Option (P × Gr) :=
   (cancelR pg.2 x.1.1).map (fun g' => (rmStep pg.1 x, g'))
@@ -90,18 +93,29 @@ theorem removeRelsG_spec {Gr : Type} (freeN freeR : Gr → List Nat) (cancelR : 
   rw [e1]; rw [foldl_rmStep_taken]
   simp [hr]
 
-/-- `delete_pending_node` (:851), its effect on `Pending` and the graph:
-`created_nodes.remove(id)` (:869), `set_labels.remove` (:873), the staged
-attrs taken from `new_nodes_attrs`, else `existing_nodes_attrs` (:877-879),
-`remove_pending_relationships_for_node(id, g)?` (:882),
-`cancelled_nodes.insert(id)` (:886), `g.cancel_node_id(id)?` (:888). -/
+/-- The first half of `delete_pending_node` (:865): `created_nodes.remove(id)` (:880),
+`set_labels.remove` (:884), the staged attrs taken from `new_nodes_attrs`, else
+`existing_nodes_attrs`, else none (:888-892), and (#3030) `cancelled_properties +=
+count_set(&attrs)` (:895). -/
+def takeAttrs (p : P) (id : Nat) : P :=
+  let p1 : P := { p with created := p.created.filter (· != id), setL := frem p.setL id }
+  match fget p1.newN id with
+  | some a => { p1 with newN := frem p1.newN id, cancelledP := p1.cancelledP + countSet a }
+  | none => { p1 with existN := frem p1.existN id,
+                      cancelledP := p1.cancelledP + countSet ((fget p1.existN id).getD []) }
+
+/-- The staged attributes `delete_pending_node` takes for the node (:888-892). -/
+def nodeAttrs (p : P) (id : Nat) : List Entry :=
+  match fget p.newN id with
+  | some a => a
+  | none => (fget p.existN id).getD []
+
+/-- `delete_pending_node` (:865), its effect on `Pending` and the graph:
+`takeAttrs`, then `remove_pending_relationships_for_node(id, g)?` (:897),
+`cancelled_nodes.insert(id)` (:901), `g.cancel_node_id(id)?` (:903). -/
 def deletePendingNode {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (p : P) (g : Gr)
     (id : Nat) : Option (P × Gr) :=
-  let p1 : P := { p with created := p.created.filter (· != id), setL := frem p.setL id }
-  let p2 : P := match fget p1.newN id with
-    | some _ => { p1 with newN := frem p1.newN id }
-    | none => { p1 with existN := frem p1.existN id }
-  match removeRelsG cancelR p2 g id with
+  match removeRelsG cancelR (takeAttrs p id) g id with
   | none => none
   | some (p3, g3) =>
     let p4 : P := { p3 with cancelledN := sins p3.cancelledN id }
@@ -137,20 +151,10 @@ theorem deletePendingNode_spec {Gr : Type} (freeN freeR : Gr → List Nat) (canc
       obtain ⟨rfl, rfl⟩ := h
       obtain ⟨e1, e2, e3, e4⟩ := removeRelsG_spec freeN freeR cancelR hr _ g id p3 g3 hrm
       obtain ⟨c1, c2, c3⟩ := hn.ok _ _ _ hcn
-      have hcol : ∀ q : P, q.relsByType = p.relsByType → collect q id = collect p id :=
-        fun q hq => collect_congr q p hq id
-      have hc2 : collect (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
-              newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
-              existN := frem p.existN id } : P)) id = collect p id := by
-        apply hcol; split <;> rfl
-      have hcr : (removeRels (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
-              newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
-              existN := frem p.existN id } : P)) id).created = p.created.filter (· != id) := by
-        unfold removeRels; rw [(foldl_rmStep_created _ _).1]; split <;> rfl
+      have hc2 : collect (takeAttrs p id) id = collect p id := by
+        apply collect_congr; unfold takeAttrs; dsimp only; split <;> rfl
+      have hcr : (removeRels (takeAttrs p id) id).created = p.created.filter (· != id) := by
+        unfold removeRels; rw [(foldl_rmStep_created _ _).1]; unfold takeAttrs; dsimp only; split <;> rfl
       rw [hc2] at e2
       refine ⟨?_, by simp [mem_sins], c1, fun r hr' => ⟨c3 r (e2 r hr').1, (e2 r hr').2⟩,
         fun x hx => c2 x (e4 x hx), fun x hx => c3 x (e3 x hx)⟩
@@ -159,13 +163,38 @@ theorem deletePendingNode_spec {Gr : Type} (freeN freeR : Gr → List Nat) (canc
 /-- **`deletePendingNode_refused`**: a refused node cancel fails the unwind. -/
 theorem deletePendingNode_refused {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (p : P) (g : Gr)
     (id : Nat) (p3 : P) (g3 : Gr)
-    (hrm : removeRelsG cancelR (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
-              newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
-              existN := frem p.existN id } : P)) g id = some (p3, g3))
+    (hrm : removeRelsG cancelR (takeAttrs p id) g id = some (p3, g3))
     (hcn : cancelN g3 id = none) :
     deletePendingNode cancelN cancelR p g id = none := by
-  unfold deletePendingNode; simp only; rw [hrm]; simp [hcn]
+  unfold deletePendingNode; rw [hrm]; simp [hcn]
+
+/-- **`deletePendingNode_cancelledP`** (#3030): a successful unwind adds to
+`cancelled_properties` exactly `count_set` of the node's staged attributes plus that of
+every cascaded relationship's — what committing them would have reported as
+`Properties set` (`countSet_eq_commitNew`). The cascaded ids are distinct (`RelInv`). -/
+theorem deletePendingNode_cancelledP {Gr : Type} (freeN freeR : Gr → List Nat)
+    (cancelN cancelR : Gr → Nat → Option Gr) (hr : CancelSpec freeR freeN cancelR)
+    (p : P) (g : Gr) (id : Nat) (hnd : (Rids (collect p id)).Nodup)
+    (p' : P) (g' : Gr) (h : deletePendingNode cancelN cancelR p g id = some (p', g')) :
+    p'.cancelledP = p.cancelledP + countSet (nodeAttrs p id) + ((collect p id).map (relProps p)).sum := by
+  unfold deletePendingNode at h
+  split at h
+  · cases h
+  · rename_i p3 g3 hrm
+    cases hcn : cancelN g3 id with
+    | none => simp [hcn] at h
+    | some g4 =>
+      simp only [hcn, Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      obtain ⟨e1, -⟩ := removeRelsG_spec freeN freeR cancelR hr _ g id p3 g3 hrm
+      have hc2 : collect (takeAttrs p id) id = collect p id := by
+        apply collect_congr; unfold takeAttrs; dsimp only; split <;> rfl
+      have hrp : relProps (takeAttrs p id) = relProps p := by
+        funext x; unfold relProps takeAttrs; dsimp only; split <;> rfl
+      have htp : (takeAttrs p id).cancelledP = p.cancelledP + countSet (nodeAttrs p id) := by
+        unfold takeAttrs nodeAttrs; dsimp only; split <;> rename_i hn <;> simp [hn]
+      show p3.cancelledP = _
+      rw [e1]; unfold removeRels
+      rw [foldl_rmStep_cancelledP _ _ (by rw [hc2]; exact hnd), hc2, hrp, htp]
 
 end PendingCommit.PS
