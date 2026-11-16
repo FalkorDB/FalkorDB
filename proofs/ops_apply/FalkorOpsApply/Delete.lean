@@ -17,7 +17,9 @@ pending `deleted_nodes` (`pd`), the graph's deleted/recycled node set (`gd`, whi
 `delete_pending_node` extends through `Graph::cancel_node_id` since #2846), and the same
 three for relationships. This file is the model with every id-space cancel accepted;
 DeleteCancel.lean has the fallible versions and proves them equal to these on success. Snapshot records
-(`deleted_nodes`/`deleted_relationships` maps) only serve later reads and are not modelled.
+(`deleted_nodes`/`deleted_relationships` maps) only serve later reads and are not modelled;
+since #3051 every relationship snapshot goes through `record_deleted_relationship`, which also
+clears the id's reissued mark (pending_commit `Snapshot.delR`, runtime_core `RelAccessors.recordDel`).
 -/
 namespace Delete
 

@@ -14,8 +14,8 @@ definitions, so the agreement needs no premise.
 | `St` | the state a read sees: `Runtime.deleted_{nodes,relationships}` (association lists: `get` = `lookup`, `is_empty` = `[]`), whether `Pending.{new,existing}_*_attrs` are empty (`pendingN`/`pendingR` are the map lookups of `Pending::get_*_attribute`), the committed stores' `get_attr_by_idx` (`byIdxN`/`byIdxR`, attribute_store.rs:1171), and attribute-id resolution `node_attr_id`/`rel_attr_id` (runtime.rs:1544-1569: memoized `Graph::get_node_attr_id` / `get_rel_attr_id` = `attrs_name.get_index_of(attr) as u16`, graph.rs:1988 / :2006; the memo answers the lookup, proofs/runtime_core `attrIdM_correct`) |
 | `pendGetN` / `pendGetR` | `Pending::get_node_attribute` / `get_relationship_attribute` (pending.rs:614-630, :963-979): `None` unless `has_*_attrs()` (:603-611) |
 | `getNodeAttribute` | `Runtime::get_node_attribute` + `_no_delete_check` (runtime.rs:1571-1587, `_no_delete_check` :1591-1602) |
-| `getRelAttribute` | `Runtime::get_relationship_attribute` (runtime.rs:1622-1647); its committed fallback `g.get_relationship_attribute(id, attr)` is `attr_by_name` (graph.rs:3574: `get_index_of(attr)? as u16`, then `get_attr_by_idx`) |
-| `matNode` / `matRel` | `materialize_{node,relationship}_property_values` (runtime.rs:1668-1710, :1728-1770); the hot path's `get_{node,relationship}_attributes_by_idx` (graph.rs:2671, :3514) is `get_attrs_by_idx_batch_into` (attribute_store.rs:1182-1193), the same lookup per key with `Null` as default |
+| `getRelAttribute` | `Runtime::get_relationship_attribute` (runtime.rs:1641-1667); its committed fallback `g.get_relationship_attribute(id, attr)` is `attr_by_name` (graph.rs:3574: `get_index_of(attr)? as u16`, then `get_attr_by_idx`). Since #3051 the snapshot is skipped for an id in `reissued_relationships` (`reR`, `is_reissued_relationship` runtime.rs:1694): `snapR` |
+| `matNode` / `matRel` | `materialize_{node,relationship}_property_values` (runtime.rs:1668-1710, :1802-1846; the relationship overlay path skips a reissued id's snapshot too); the hot path's `get_{node,relationship}_attributes_by_idx` (graph.rs:2671, :3514) is `get_attrs_by_idx_batch_into` (attribute_store.rs:1182-1193), the same lookup per key with `Null` as default |
 
 **`matNode_eq`**, **`matRel_eq`**: the bulk read is, id for id, the per-row read (or `Null`),
 on the read-only fast path and on the deleted / pending path alike; **`propReads`**: the
@@ -41,8 +41,14 @@ structure St (F : Type) where
   /-- `node_attrs.get_attr_by_idx(key, idx)` = `data.get(key)?.get(idx)` (attribute_store.rs:1171) -/
   byIdxN : Nat → Nat → Option (V F)
   byIdxR : Nat → Nat → Option (V F)
+  /-- `reissued_relationships.contains(id)` (#3051): the id's snapshot belongs to its previous owner -/
+  reR : Nat → Bool
 
 variable (s : St F)
+
+/-- The relationship snapshot a read consults: none for a reissued id (#3051). -/
+def snapR (id : Nat) : Option (List (String × V F)) :=
+  if s.reR id then none else s.delRels.lookup id
 
 def byIdxN (id i : Nat) : Option (V F) := s.byIdxN id i
 def byIdxR (id i : Nat) : Option (V F) := s.byIdxR id i
@@ -68,9 +74,9 @@ def getNodeAttribute (id : Nat) (a : String) : Option (V F) :=
   | some attrs => attrs.lookup a
   | none => noDeleteN s id a
 
-/-- `Runtime::get_relationship_attribute` (runtime.rs:1622). -/
+/-- `Runtime::get_relationship_attribute` (runtime.rs:1641). -/
 def getRelAttribute (id : Nat) (a : String) : Option (V F) :=
-  match (if s.delRels.isEmpty then none else s.delRels.lookup id) with
+  match (if s.delRels.isEmpty then none else snapR s id) with
   | some attrs => attrs.lookup a
   | none =>
     match (s.attrId a).bind (fun i => pendGetR s id i) with
@@ -90,14 +96,14 @@ def matNode (ids : List Nat) (a : String) : List (V F) :=
         | none => byIdxN s id i).getD .null
     | some attrs => (attrs.lookup a).getD .null
 
-/-- `materialize_relationship_property_values` (runtime.rs:1728). -/
+/-- `materialize_relationship_property_values` (runtime.rs:1802). -/
 def matRel (ids : List Nat) (a : String) : List (V F) :=
   if s.delRels.isEmpty && !hasRelAttrs s then
     match s.attrId a with
     | some i => ids.map fun id => (byIdxR s id i).getD .null
     | none => ids.map fun _ => .null
   else ids.map fun id =>
-    match s.delRels.lookup id with
+    match snapR s id with
     | none => ((s.attrId a).bind fun i => match pendGetR s id i with
         | some v => some v
         | none => byIdxR s id i).getD .null
@@ -154,11 +160,30 @@ theorem matRel_eq (ids : List Nat) (a : String) :
     simp only [getRelAttribute]
     cases he : s.delRels.isEmpty
     · simp only [Bool.false_eq_true, ite_false]
-      cases s.delRels.lookup id with
+      cases snapR s id with
       | some attrs => rfl
       | none => cases hai : s.attrId a <;> simp [hai] <;> split <;> simp_all
-    · simp only [ite_true, lookup_nil_isEmpty s.delRels he id]
+    · have hs : snapR s id = none := by simp [snapR, lookup_nil_isEmpty s.delRels he id]
+      simp only [ite_true, hs]
       cases hai : s.attrId a <;> simp [hai] <;> split <;> simp_all
+
+/-- **#3051**: a relationship id the query deleted and then reissued to a new relationship
+reads the new one (pending, else committed), not the old owner's snapshot; an id that was not
+reissued reads its snapshot as before. -/
+theorem getRelAttribute_reissued (id : Nat) (a : String) :
+    (s.reR id = true →
+      getRelAttribute s id a = match (s.attrId a).bind (fun i => pendGetR s id i) with
+        | some v => some v
+        | none => (s.attrId a).bind (byIdxR s id)) ∧
+    (s.reR id = false → ∀ attrs, s.delRels.lookup id = some attrs →
+      getRelAttribute s id a = attrs.lookup a) := by
+  refine ⟨fun h => ?_, fun h attrs hl => ?_⟩
+  · simp only [getRelAttribute, snapR, h, ite_true, ite_self]
+  · have hne : s.delRels.isEmpty = false := by
+      cases hd : s.delRels with
+      | nil => rw [hd] at hl; cases hl
+      | cons _ _ => rfl
+    simp [getRelAttribute, snapR, h, hne, hl]
 
 /-! ## The runtime built from the state -/
 

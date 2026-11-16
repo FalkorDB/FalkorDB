@@ -37,8 +37,8 @@ graph/src/runtime/ops/create.rs	build_attr_template	55	PROVEN	CreateAttrs.tplSet
 graph/src/runtime/ops/create.rs	resolve_map_attrs	84	PROVEN	CreateAttrs.resolveMap: resolveMap_spec
 graph/src/runtime/ops/create.rs	new	102	PROVEN	CreateBatch.CreateSt.new: createNew_spec
 graph/src/runtime/ops/create.rs	next	121	PROVEN	CreateBatch.createNext: createNext_spec; RowWrites.pipeline/step: PartitionInvariant refuted by bug2729_batch_split_flips_endpoint_check (streams per batch against pending deletes)
-graph/src/runtime/ops/create.rs	create_batch	139	PROVEN	CreateBatch.createBatch/createNode/createRel: createNode_spec, createRel_spec, createRel_gone, endpoint_spec, setAttrs_prefix
-graph/src/runtime/ops/create.rs	resolve_pattern	353	PROVEN	CreateAttrs.resolveLabels/resolveNodes: resolveLabels_spec, resolveLabels_length, resolveNodes_shape
+graph/src/runtime/ops/create.rs	create_batch	139	PROVEN	CreateBatch.createBatch/createNode/createRel: createNode_spec, createRel_spec, createRel_gone, endpoint_spec, setAttrs_prefix (#3051 note_relationship_created: pending_commit Snapshot.createR)
+graph/src/runtime/ops/create.rs	resolve_pattern	354	PROVEN	CreateAttrs.resolveLabels/resolveNodes: resolveLabels_spec, resolveLabels_length, resolveNodes_shape
 graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	PROVEN	Delete.attrsToMap: attrsToMap_spec
 graph/src/runtime/ops/delete.rs	rel_attrs_to_map	50	PROVEN	Delete.attrsToMap: attrsToMap_spec
 graph/src/runtime/ops/delete.rs	snapshot_required	70	PROVEN	Delete.snapshotRequired: snapshotRequired_spec
@@ -46,19 +46,19 @@ graph/src/runtime/ops/delete.rs	new	94	PROVEN	Delete.DeleteSt.new: deleteNew_spe
 graph/src/runtime/ops/delete.rs	next	116	PROVEN	Delete.deleteNext: deleteNext_spec; RowWrites.pipeline/step: PartitionInvariant refuted by bug2729_batch_split_flips_endpoint_check
 graph/src/runtime/ops/delete.rs	delete_batch	130	PROVEN	Delete.deleteBatch/scan: deleteBatch_vars, scan_nodes, deleteBatch_mismatch; DeleteCancel.deleteBatchE/scanE: deleteBatchE_ok, scanE_ok
 graph/src/runtime/ops/delete.rs	delete_nodes_bulk	213	PROVEN	Delete.delNodesBulk/bulkScan: delNodesBulk_spec, bulkScan_spec; DeleteCancel.delNodesBulkE/bulkScanE/markCommitted: delNodesBulkE_ok, bulkScanE_ok, markCommitted_ok
-graph/src/runtime/ops/delete.rs	delete_relationships_bulk	319	PROVEN	Delete.delRelsBulk/relScan: delRelsBulk_spec, relScan_cls, foldl_delRel
-graph/src/runtime/ops/delete.rs	delete_entity	415	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	323	PROVEN	Delete.delRelsBulk/relScan: delRelsBulk_spec, relScan_cls, foldl_delRel
+graph/src/runtime/ops/delete.rs	delete_entity	418	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
 graph/src/runtime/ops/set.rs	new	40	PROVEN	SetRemove.SetSt.new: setNew_spec
 graph/src/runtime/ops/set.rs	next	59	PROVEN	SetRemove.opNext: opNext_spec
-graph/src/runtime/ops/set.rs	set_batch	76	PROVEN	SetRemove.perRow: perRow_spec
-graph/src/runtime/ops/set.rs	resolve_set_items	96	PROVEN	SetRemove.resolveItems: resolveItems_length, resolveItems_attr
-graph/src/runtime/ops/set.rs	set_inner	151	PROVEN	SetRemove.setAttrItem/setProp/setFrom/clearForReplace/setLabelItem: setProp_spec, setAll_get, setFrom_replace, setFrom_merge_keeps, setAttrItem_replace_shapes (#3524: every branch clears; all six shapes), setAttrItem_spec, setLabelItem_live; fixed by #3524 af45ca776: fixed3524_clears_pending
-graph/src/runtime/ops/set.rs	clear_node_attrs_for_replace	125	PROVEN	SetRemove.clearForReplace: setFrom_replace (staged and committed keys gone before the source is written), fixed3524_clears_pending
-graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	138	PROVEN	SetRemove.clearForReplace: setFrom_replace, setAttrItem_replace_shapes (relationship targets), fixed3524_clears_pending
+graph/src/runtime/ops/set.rs	set_batch	76	PROVEN	SetRemove.perRow/skipDeleteChecks: perRow_spec, skipDeleteChecks_sound (#3051: deleted relationships disable the skip)
+graph/src/runtime/ops/set.rs	resolve_set_items	99	PROVEN	SetRemove.resolveItems: resolveItems_length, resolveItems_attr
+graph/src/runtime/ops/set.rs	set_inner	154	PROVEN	SetRemove.setAttrItem/setProp/setFrom/clearForReplace/setLabelItem: setProp_spec, setAll_get, setFrom_replace, setFrom_merge_keeps, setAttrItem_replace_shapes (#3524: every branch clears; all six shapes), setAttrItem_spec, setLabelItem_live, setAttrItem_rel_deleted (#3051: gone = Runtime::is_relationship_deleted for relationships); fixed by #3524 af45ca776: fixed3524_clears_pending
+graph/src/runtime/ops/set.rs	clear_node_attrs_for_replace	128	PROVEN	SetRemove.clearForReplace: setFrom_replace (staged and committed keys gone before the source is written), fixed3524_clears_pending
+graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	141	PROVEN	SetRemove.clearForReplace: setFrom_replace, setAttrItem_replace_shapes (relationship targets), fixed3524_clears_pending
 graph/src/runtime/ops/remove.rs	new	30	PROVEN	SetRemove.RemoveSt.new: removeNew_spec
 graph/src/runtime/ops/remove.rs	next	48	PROVEN	SetRemove.opNext: opNext_spec
-graph/src/runtime/ops/remove.rs	remove_batch	62	PROVEN	SetRemove.perRow: perRow_spec
-graph/src/runtime/ops/remove.rs	remove	74	PROVEN	SetRemove.removeItem: removeItem_spec
+graph/src/runtime/ops/remove.rs	remove_batch	62	PROVEN	SetRemove.perRow/skipDeleteChecks: perRow_spec, skipDeleteChecks_sound (#3051: deleted relationships disable the skip)
+graph/src/runtime/ops/remove.rs	remove	74	PROVEN	SetRemove.removeItem: removeItem_spec, removeItem_rel (#3051: deleted relationships skipped)
 graph/src/runtime/ops/cartesian_product.rs	RightSide::new	80	PROVEN	CartVhj.rsNew: rs_spec
 graph/src/runtime/ops/cartesian_product.rs	RightSide::is_empty	94	PROVEN	CartVhj.rsEmpty: rs_spec
 graph/src/runtime/ops/cartesian_product.rs	RightSide::advance	105	PROVEN	CartVhj.adv (odometer): adv_valid, adv_wrap, orbit_valid, allTuples_mem, allTuples_length

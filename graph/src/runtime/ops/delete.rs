@@ -252,15 +252,19 @@ impl Runtime<'_> {
                 for (src, dst, rel) in incident {
                     // An edge between two deleted nodes is reached from both ends,
                     // and one already snapshotted by an earlier batch must keep
-                    // that snapshot — it holds the pre-delete data.
-                    if self.deleted_relationships.borrow().contains_key(&rel) {
+                    // that snapshot — it holds the pre-delete data. A snapshot
+                    // of a reissued id belongs to the id's previous owner.
+                    if self.deleted_relationships.borrow().contains_key(&rel)
+                        && !self.reissued_relationships.borrow().contains(&rel)
+                    {
                         continue;
                     }
                     let type_name = self.get_relationship_type(rel).unwrap();
                     let attrs = self.get_relationship_attrs(rel);
-                    self.deleted_relationships
-                        .borrow_mut()
-                        .insert(rel, DeletedRelationship::new(src, dst, type_name, attrs));
+                    self.record_deleted_relationship(
+                        rel,
+                        DeletedRelationship::new(src, dst, type_name, attrs),
+                    );
                 }
             }
         }
@@ -280,7 +284,7 @@ impl Runtime<'_> {
                         .map_err(|e| e.to_string())?;
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
                         let attrs = rel_attrs_to_map(&self.graph(), attrs.unwrap_or_default());
-                        self.deleted_relationships.borrow_mut().insert(
+                        self.record_deleted_relationship(
                             rel_id,
                             DeletedRelationship::new(src, dest, type_name, attrs),
                         );
@@ -382,7 +386,6 @@ impl Runtime<'_> {
                     }
                 }
 
-                let mut deleted_rels = self.deleted_relationships.borrow_mut();
                 for &rel_id in &committed {
                     let type_idx = edge_type_map
                         .get(&u64::from(rel_id))
@@ -397,7 +400,7 @@ impl Runtime<'_> {
                     pending.update_relationship_attrs(rel_id, &mut actual, &g);
 
                     pending.deleted_relationship(rel_id);
-                    deleted_rels.insert(
+                    self.record_deleted_relationship(
                         rel_id,
                         DeletedRelationship::new(src, dst, type_name, actual),
                     );
@@ -438,7 +441,7 @@ impl Runtime<'_> {
                     for (rel_id, src, dest, type_name, rel_attrs) in pending_rels {
                         let rel_attrs =
                             rel_attrs_to_map(&self.graph(), rel_attrs.unwrap_or_default());
-                        self.deleted_relationships.borrow_mut().insert(
+                        self.record_deleted_relationship(
                             rel_id,
                             DeletedRelationship::new(src, dest, type_name, rel_attrs),
                         );
@@ -462,7 +465,7 @@ impl Runtime<'_> {
                         let type_name = self.get_relationship_type(rel_id).unwrap();
                         let attrs = self.get_relationship_attrs(rel_id);
                         let (src_node, dest_node) = (src, dest);
-                        self.deleted_relationships.borrow_mut().insert(
+                        self.record_deleted_relationship(
                             rel_id,
                             DeletedRelationship::new(src_node, dest_node, type_name, attrs),
                         );
@@ -475,7 +478,7 @@ impl Runtime<'_> {
                         .map_err(|e| e.to_string())?;
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
                         let attrs = rel_attrs_to_map(&self.graph(), attrs.unwrap_or_default());
-                        self.deleted_relationships.borrow_mut().insert(
+                        self.record_deleted_relationship(
                             rel_id,
                             DeletedRelationship::new(src, dest, type_name, attrs),
                         );
@@ -512,9 +515,10 @@ impl Runtime<'_> {
                     let attrs = self.get_relationship_attrs(*rel);
                     let (src, dst) = self.get_relationship_endpoints(*rel);
                     self.pending.borrow_mut().deleted_relationship(*rel);
-                    self.deleted_relationships
-                        .borrow_mut()
-                        .insert(*rel, DeletedRelationship::new(src, dst, type_name, attrs));
+                    self.record_deleted_relationship(
+                        *rel,
+                        DeletedRelationship::new(src, dst, type_name, attrs),
+                    );
                 }
             }
             Value::Path(values) => {

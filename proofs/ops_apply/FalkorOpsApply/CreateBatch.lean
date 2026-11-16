@@ -12,6 +12,8 @@ query lends only what it still holds (`reserveN`/`reserveR` read the log: the cr
 not-yet-cancelled ids); cancelled ids are excluded by the space itself. The per-row attribute evaluator (template or map path,
 CreateAttrs.lean), property validation, and the "endpoint gone" predicate
 (`g.is_node_deleted && !pending.is_node_created || pending.is_node_deleted`).
+`note_relationship_created` (create.rs:293, #3051) only marks a reissued id for later reads
+(pending_commit `Snapshot.createR`, runtime_core `RelAccessors.noteCreated`); not modelled here.
 -/
 namespace CreateBatch
 
