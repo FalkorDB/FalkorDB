@@ -19,9 +19,18 @@ import OpsTraverse.PathVlt
 import OpsTraverse.ExpandIntoPending
 import OpsTraverse.UnionStream
 import OpsTraverse.UnionGlue
+import OpsTraverse.BwdGlue
 
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
+
+**PR #3591** (7c91c6fd2): `build_transposed_iter` (`cond_traverse.rs:381`) no longer transposes the
+adjacency matrix for an untyped destination-bound expansion when the graph has at most
+`MAX_STREAMED_BWD_TYPES` (16) relationship types: it merges every type's `matrix_t` through `UnionIter`,
+behind the new `BwdIter` (`One`/`Union`, `seek` :349, `next` :364). `BwdGlue`: `buildTransposed_spec`,
+`buildTransposed_eq_old`, `one_seek_drain`, `union_seek_drain`, `untyped_bwd_pairs` (each pair once, exactly
+the edges into the bound node), `union_eq_adjacency` (same pairs, same order as the adjacency transpose).
+`expand_row` seeks before every read, so `UnionIter`'s empty heads are never read; its model is unchanged.
 
 **Re-targeted to main ee21013d6** (from e860645bb): #3112 (fixes #3108) flips the allShortestPaths
 edge list to src→dst for cycles too (`all_shortest_paths.rs:283-289`: `if !reverse { path.reverse() }`, no
@@ -90,6 +99,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `UnionStream.new`, `seek`, `next`, `drain` | `UnionIter::new` / `seek` / `next` (`cond_traverse.rs:245`, `:250`, `:265`) |
 | `UnionStream.layerStream` | the per-type `versioned_matrix::Iter` merge of `m`, `dp`, `dm` (`VMIter`), keyed by row-major position |
 | `UnionGlue.relationshipTensors`, `buildUnion`, `pickMatrix`, `deltaInto`, `expandUnionRow` | `relationship_tensors` (:288), `build_union_iter` (:317), the `TraversalMatrix` selection (:615-680), `delta_lmxm_into` (:86), `expand_union_row` (:1121) |
+| `BwdGlue.buildTransposed`, `BwdSt.seek`, `BwdSt.next` | `build_transposed_iter` (:381), `BwdIter::seek` (:349), `BwdIter::next` (:364) |
 | `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:155`) |
 | `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
