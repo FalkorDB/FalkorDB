@@ -75,7 +75,7 @@ Each was reproduced live with `proofs/index_layer/repro.py`, which runs each que
 |---|---|---|---|
 | 1 (W2-index-1) | `bug_folded_temporal_constant` | `n.v = date('2020-01-01')` returns **every** node of the label: the constant is folded and treated as indexable, the filter is dropped, then the index refuses it and falls back to a label scan. C correct | **Open** |
 | 2 (W2-index-2) | `bug_point_equality` | `n.v = point({latitude:1.0, longitude:2.0})` returns `[]`. C correct | **Open** |
-| 3 (W2-index-3) | `bug_in_list_drops_item` | `n.v IN [date('2020-01-01'), 2]` drops the date row. C correct | **Open** |
+| 3 (W2-index-3) | `bug_in_list_drops_item` | `n.v IN [date('2020-01-01'), 2]` drops the date row. C correct | **Fixed by #3064** (`in_list` keeps the date, the scan falls back; ops_traverse `inList_unservable_falls_back`) |
 | 4 (W2-index-4) | `bug_multilabel_and`, `bug_multilabel_or` | On `(n:A:B)` with A indexing `x` and B indexing `y`, `n.x = 1 AND n.y = 2` returns `[]`, and the `OR` loses rows. C correct | **Open** |
 | 5 (W2-index-5) | removed (17ccc5412) | `n.v > 0` matched a stored date | Fixed by #3076 (issue #2959): `fixed3076_temporal_in_numeric_range`, `temporal_not_indexed` |
 | 6 (W2-index-6) | removed (17ccc5412) | `n.v > 'a' AND n.v < 'a'` returned `'a'` | Fixed by #3072 (issue #2961): `fixed3072_exclusive_equal_bounds` |

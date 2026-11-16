@@ -97,7 +97,7 @@ src/commands/delete.rs	graph_delete	37	PROVEN	Mvcc Ev.delete on main thread with
 graph/src/index/mod.rs	make_arr_names	122	PROVEN	Search.arrNames used by range_never_vector_or_text
 graph/src/index/mod.rs	new	138	MODELLED	Search.Field
 graph/src/index/mod.rs	new_with_vector_options	155	MODELLED	Search.Field.vdim (vector_options.map dimension)
-graph/src/index/mod.rs	set	785	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
+graph/src/index/mod.rs	set	789	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
 graph/src/index/mod.rs	add_document	1979	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
 graph/src/index/mod.rs	register_fields	1253	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
 graph/src/index/mod.rs	bump_id	1121	PROVEN	Tickets.bump_inv, stale_release_isolated

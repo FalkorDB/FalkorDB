@@ -52,8 +52,10 @@ were removed in bbee75955 (the last revision that has them is 17ccc5412); `expan
 edge index scans now hand the evaluated list to the index as ONE `InList` instead of an `Or` of `Equal`s
 (`IndexScan.evalIQ_inList`, new `IQ.inListV`); `can_utilize_index` gained an `InList` arm (non-empty and every
 member indexable), proved to decide exactly as the `Or` of `Equal`s it replaced (`canUse_inListV_eq_or`,
-`canUseE_inListV_eq_or`, so `IN [NULL]` still falls back to a label scan). W2-index-3 (`IN [date, 2]` drops the
-date member before the index is asked) is unchanged and still open. `node_by_index_scan.rs` `can_utilize_index` /
+so `IN [NULL]` still falls back to a label scan). #3064 moves the check to `IndexQuery::can_be_served`
+(`index/mod.rs:291`, `canUse`, now shared by the edge op: `canUseE` is gone; lossy/null `ArrayContains` and
+`Point` values refused) and `IndexQuery::in_list` keeps every non-null item, so W2-index-3 (`IN [date, 2]`
+dropped the date member) is fixed: `inList_unservable_falls_back`. `node_by_index_scan.rs` `can_utilize_index` /
 `is_indexable` / `next` re-pinned :251/:254/:300, `edge_by_index_scan.rs` `next` :316. #3436 (`rt.g.borrow()` ->
 `rt.graph()`) touches `cond_traverse`, `cond_var_len_traverse`, `all_shortest_paths`, `expand_into`, the label/id
 scans and `eval_shortest_path` without changing what they compute; no other pin moved.

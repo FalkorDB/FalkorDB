@@ -34,7 +34,7 @@ graph/src/index/mod.rs	drop	710	PROVEN	Iter.DocLife.freed_once (consumed gate: e
 graph/src/index/mod.rs	new	726	PROVEN	nodeKey; decodeId_nodeKey, nodeKey_injective
 graph/src/index/mod.rs	new_edge	753	PROVEN	edgeKey; decode_edgeKey
 graph/src/index/mod.rs	id	781	PROVEN	Meta.Idx.idOf_spec (Document.id = id/edge_id; Iter.delKey_spec)
-graph/src/index/mod.rs	set	785	PROVEN	setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int; temporals not indexed since #3076 (e20300436): Temporal.temporal_not_indexed, temporal_numRange_exact, temporal_equal_exact, fixed3076_temporal_in_numeric_range; vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams
+graph/src/index/mod.rs	set	789	PROVEN	setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int; temporals not indexed since #3076 (e20300436): Temporal.temporal_not_indexed, temporal_numRange_exact, temporal_equal_exact, fixed3076_temporal_in_numeric_range; vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams
 graph/src/index/mod.rs	from_owned	998	PROVEN	Iter.RC.create/RC.clone (NULL => None), RC.create_inv
 graph/src/index/mod.rs	as_ptr	1003	PROVEN	Iter.RC (transient handle; not_freed while owned)
 graph/src/index/mod.rs	try_clone	1009	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
