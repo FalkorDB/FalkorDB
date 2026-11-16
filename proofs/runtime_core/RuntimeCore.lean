@@ -53,7 +53,9 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
   `edge_already_used` ≡ ∃ other sibling bound to this edge; vector index options refuse
   every negative integer and, since #3094 (fe619ac5f, fixes #3091), require `dimension` and
   `similarityFunction` and store the latter lower-cased (`vector_requires_dimension`,
-  `vector_requires_similarity`, `vector_similarity_lowered`); fulltext refuses the first key
+  `vector_requires_similarity`, `vector_similarity_lowered`), and since #3257 refuse an unknown
+  similarity name whatever the dimension (`vector_unknown_similarity_refused`,
+  `vector_similarity_known`); fulltext refuses the first key
   outside `FULLTEXT_OPTIONS` (`fulltextUnknown_none_iff`); phonetic yields only "dm:en" or "".
 
 ## CONFIRMED bugs (Rust repro in `graph/tests/lean_runtime_core.rs`, C = `bin/macos-arm64v8-release/falkordb.so`)

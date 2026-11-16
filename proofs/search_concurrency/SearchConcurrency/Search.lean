@@ -342,11 +342,14 @@ def parseNatOpt (m : Opts) (k : String) : Except String (Option Nat) :=
   | none => .ok none
   | some _ => .error (k ++ " must be an integer")
 
-/-- `similarityFunction` arm (runtime.rs:2120-2133): **required**, and stored as
-`s.to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only, so it is that). -/
+/-- `similarityFunction` arm (runtime.rs:2136-2156): **required**, stored as
+`s.to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only, so it is that), and since
+#3257 refused unless the lowered name is `euclidean`, `cosine` or `ip`. -/
 def parseSim (m : Opts) : Except String (Option String) :=
   match get m "similarityFunction" with
-  | some (.str s) => .ok (some s.toLower)
+  | some (.str s) =>
+    if ["euclidean", "cosine", "ip"].contains s.toLower then .ok (some s.toLower)
+    else .error ("unknown similarityFunction '" ++ s ++ "'")
   | none => .error "similarityFunction is required"
   | some _ => .error "similarityFunction must be a string"
 
@@ -415,9 +418,28 @@ theorem parseDimension_missing (m : Opts) (h : get m "dimension" = none) :
 theorem parseSim_missing (m : Opts) (h : get m "similarityFunction" = none) :
     parseSim m = .error "similarityFunction is required" := by
   simp [parseSim, h]
-theorem parseSim_lower (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s)) :
+theorem parseSim_lower (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s))
+    (hk : ["euclidean", "cosine", "ip"].contains s.toLower = true) :
     parseSim m = .ok (some s.toLower) := by
-  simp [parseSim, h]
+  simp only [parseSim, h, hk, ite_true]
+
+/-- #3257: an unknown name is refused at parse time, whatever the dimension. -/
+theorem parseSim_unknown (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s))
+    (hk : ["euclidean", "cosine", "ip"].contains s.toLower = false) :
+    parseSim m = .error ("unknown similarityFunction '" ++ s ++ "'") := by
+  simp only [parseSim, h, hk]; rfl
+
+/-- Whatever `parseSim` accepts, it stores lower-cased, and it is a known name. -/
+theorem parseSim_ok_lower (m : Opts) (o : Option String) (h : parseSim m = .ok o) :
+    ∃ s, get m "similarityFunction" = some (.str s) ∧ o = some s.toLower ∧
+      ["euclidean", "cosine", "ip"].contains s.toLower = true := by
+  unfold parseSim at h
+  split at h
+  · rename_i s hs
+    split at h
+    · cases h; exact ⟨s, hs, rfl, by assumption⟩
+    · cases h
+  all_goals cases h
 
 /-- Without either required key no vector index is created (the old half-created
 index of W5-idx-2 needed `dimension` absent ⇒ `0` ⇒ `register_fields` skipped). -/
@@ -450,10 +472,10 @@ theorem metricOf_toBool (s : String) :
       simp only [not_or] at h
       simp [h.1, h.2.1, h.2.2]
 
-/-- **Rust now agrees with C** (#3091 fixed by #3094) on every options map with a
-positive `dimension` and no malformed HNSW key: same required keys, same
-case-insensitive name. -/
-theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → n ≠ 0)
+/-- **Rust agrees with C on every dimension** (#3257): with the similarity name checked at
+parse time, `dimension: 0` no longer skips it, so the old `dimension ≠ 0` premise of
+`rust_eq_c` is gone. Still assumes no malformed HNSW key. -/
+theorem rust_eq_c_all (m : Opts)
     (hM : ∀ v, get m "M" = some v → ∃ n, v = .int n ∧ 0 ≤ n)
     (hC : ∀ v, get m "efConstruction" = some v → ∃ n, v = .int n ∧ 0 ≤ n)
     (hR : ∀ v, get m "efRuntime" = some v → ∃ n, v = .int n ∧ 0 ≤ n) :
@@ -475,24 +497,38 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
   | some v =>
     cases v with
     | int n =>
-      have hn0 := hd n hg
       by_cases hneg : n < 0
       · have : ¬ (0 ≤ n) := by omega
         cases hs : get m "similarityFunction" with
-        | none => simp [parseDimension, hg, hs, hneg, bind, Except.bind]
-        | some w => cases w <;> simp [parseDimension, hg, hs, hneg, this, bind, Except.bind]
+        | none => simp [parseDimension, hg, hneg, bind, Except.bind]
+        | some w => cases w <;> simp [parseDimension, hg, hneg, this, bind, Except.bind]
       · cases hs : get m "similarityFunction" with
         | none => simp [parseDimension, parseSim, hg, hs, hneg, bind, Except.bind]
         | some w =>
           cases w with
           | str s =>
-            simp only [parseDimension, parseSim, hg, hs, hneg, h1, h2, h3, bind, Except.bind,
-              pure, Except.pure, ite_false]
-            have hpos : n.toNat > 0 := by omega
-            simp only [hpos, ite_true, metricOf_toBool]
-            simp; omega
+            cases hk : ["euclidean", "cosine", "ip"].contains s.toLower
+            · simp only [parseDimension, parseSim, hg, hs, hneg, hk, bind, Except.bind, ite_false]
+              simp [hk]
+            · simp only [parseDimension, parseSim, hg, hs, hneg, h1, h2, h3, hk, bind, Except.bind,
+                pure, Except.pure, ite_false, ite_true]
+              have h0 : decide (n ≥ 0) = true := by simp; omega
+              rw [h0]
+              by_cases hpos : n.toNat > 0
+              · simp only [hpos, ite_true, metricOf_toBool]; simpa using hk
+              · simp [hpos, hk]
           | _ => simp [parseDimension, parseSim, hg, hs, hneg, bind, Except.bind]
     | _ => simp [parseDimension, hg, bind, Except.bind]
+
+/-- **Rust now agrees with C** (#3091 fixed by #3094) on every options map with a
+positive `dimension` and no malformed HNSW key: same required keys, same
+case-insensitive name. Since #3257 a corollary of `rust_eq_c_all`. -/
+theorem rust_eq_c (m : Opts) (_hd : ∀ n, get m "dimension" = some (.int n) → n ≠ 0)
+    (hM : ∀ v, get m "M" = some v → ∃ n, v = .int n ∧ 0 ≤ n)
+    (hC : ∀ v, get m "efConstruction" = some v → ∃ n, v = .int n ∧ 0 ≤ n)
+    (hR : ∀ v, get m "efRuntime" = some v → ∃ n, v = .int n ∧ 0 ≤ n) :
+    rustAccepts m = cAccepts m :=
+  rust_eq_c_all m hM hC hR
 
 -- Executable checks, re-run against fe619ac5f. Historical (2c874022a, #3091): missing `dimension`
 -- or `similarityFunction` was accepted by Rust and `'Euclidean'` refused; C the reverse. Now both agree:
@@ -528,11 +564,12 @@ theorem rust_keys_ok_imp_c (m : Opts) (h : fulltextUnknown m = none) : cFulltext
     simp only [List.isEmpty_cons, Bool.false_or, List.any_eq_true]
     exact ⟨kv, List.mem_cons_self .., hall kv (List.mem_cons_self ..)⟩
 
--- Remaining differences, both reproduced live (Rust fe619ac5f vs C):
--- (a) `dimension: 0` skips the metric check in Rust (`register_fields` only runs it for `> 0`):
---     `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust creates the index, C refuses.
-#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = true
+-- Historical (fe619ac5f, fixed by #3257): `dimension: 0` skipped the metric check in Rust, so
+-- `OPTIONS {dimension:0, similarityFunction:'bogus'}` created the index; C refuses. Now both refuse:
+#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = false
 #guard cAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = false
+#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "Cosine")] = true
+-- Remaining difference, reproduced live (Rust fe619ac5f vs C):
 -- (b) a known key beside an unknown one: `OPTIONS {weight:1.0, foo:true}` C creates, Rust refuses.
 #guard fulltextUnknown [("weight", .float), ("foo", .bool true)] = some "foo"
 #guard cFulltextKeysOk [("weight", .float), ("foo", .bool true)] = true

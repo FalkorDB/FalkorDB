@@ -498,6 +498,7 @@ Confirmed bug found by these reviews (pre-existing on main, not caused by any of
   - `OPTIONS {dimension:0, similarityFunction:'bogus'}` creates the index (C refuses), and with `dimension:0` a node with a 3-dim vector drops out of its label's range index (= W3 conc-3; PR #3087 guards the drop);
   - fulltext `OPTIONS {weight:1.0, foo:true}` is refused (C creates it; C only refuses a non-empty map with no known key);
   - `SAMPLES` error text has an `ERR ` prefix (C does not).
+  - (PR #3257 fixes the first and the third: the similarity name is checked at parse time, `rust_eq_c_all`; `GRAPH.MEMORY` errors use C's texts, `memArgs_samples_err`/`memArgs_subcmd_err`/`memArgs_kw_err`.)
 - Still open: `SET (n.x) = 5` is accepted (W4-parse-4).
 - 2026-10-05: #3087 merged (main 49f698d22), fixing W3-conc-3 / #3075; re-checked live for dimension mismatch, dimension 0 and no options. W5-idx-2 is fully fixed (#3094 plus the #3087 guard). Proofs re-targeted: `index/mod.rs` 94/94 PROVEN, 2444 PROVEN of 3739, 34 projects green. The counterexamples are now theorems: `docSet_vector_sound`, `other_fields_never_dropped`, `setVector_sound`. Still differs from C (DDL only): `{dimension:0, similarityFunction:'bogus'}` is accepted (C refuses), and it no longer drops nodes.
 - #2916 (v3 encoder refuses records its own reader rejects; closes #2914) merged to main as 2c874022a (2026-10-04). The effects_codec counterexamples are now correctness theorems (`encRecord_ok_shape`, `readRecord_encRecord_wf`).
