@@ -1,14 +1,21 @@
-import VersionedMatrix
+import VersionedMatrix.Delta
+import VersionedMatrix.DeltaProofs
+import VersionedMatrix.TensorOps
+import VersionedMatrix.TensorResize
+import VersionedMatrix.CowGlue
+import VersionedMatrix.CountRows
+import VersionedMatrix.IterSeek
+import VersionedMatrix.VMOps
 /-! # Claim 1: `Tensor::clean_fwd` / `Tensor::clean_bwd` (PR #3435)
 
-PR head d14a9f467 (`clean_fwd`/`clean_bwd` unchanged since 28ab35368), `graph/src/graph/graphblas/tensor.rs`:
+PR #3435 (perf/bfs-pushpull), `graph/src/graph/graphblas/tensor.rs`:
 
 | here | there |
 | --- | --- |
 | `cleanFwd`   | `clean_fwd` :995-998 — `wait_fwd()`, then `Some(&m)` iff `dp.nvals() == 0 && dm.nvals() == 0` |
 | `cleanBwd`   | `clean_bwd` :1003-1006 — `mt.wait()`, then `Some(mt.m())` iff `mt.dp().nvals() == 0 && mt.dm().nvals() == 0` |
 | `mPattern`   | the stored pattern of the committed base `m` (:272) |
-| `VMTensorOps.extract` | `extract` :1012 (owner: versioned_matrix, `mem_extract`) |
+| `VMTensorOps.extract` | `extract` :1012 (`mem_extract`) |
 
 The forward tensor is the owner's whole-tensor model `VMTensorOps.TT`
 (versioned_matrix `TensorBlocks.lean`): a support `ps` and one `PairSt` per pair
@@ -22,7 +29,7 @@ three-layer `VM.VM` (versioned_matrix `Delta.lean`): stored pattern lists `m`,
 a duplicate-free layer. `VersionedMatrix::wait` only latches fold decisions
 (owner: `Op.wait`, "never moves an entry"), so it is the identity on layers.
 -/
-namespace Pr3435.Clean
+namespace VMClean
 open VMTensor VMTensorOps
 
 abbrev Pair := Nat × Nat
@@ -210,4 +217,4 @@ theorem clean_transpose_reach {t : TT} {mt : VM.VM} {a b : List Pair}
     (hr : MtRepr t mt) (i j : Nat) : (j, i) ∈ b ↔ (i, j) ∈ a :=
   clean_transpose hf hb hr hR.allInv i j
 
-end Pr3435.Clean
+end VMClean

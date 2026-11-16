@@ -15,6 +15,12 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
 - `TensorBlocks`/`TensorOps`/`TensorResize` whole-tensor model: me blocks,
                widening, multi_pairs, degrees (no `unreachable!`), fold/dup/wait,
                encode's MSB values, `Iter::new/seek`.
+- `Clean`      #3435: `Tensor::clean_fwd` / `clean_bwd` (tensor.rs:995/:1003) lend a
+               tensor's base instead of copying it: `cleanFwd_isSome_iff`,
+               `cleanFwd_eq_extract` (the lent base's pattern is `extract`'s),
+               `cleanBwd_eff`, `clean_transpose_reach`; `Reach.allInv` discharges
+               `Inv.mt_eff` for every modelled tensor history. Consumer: algo_udf
+               `BfsPaths` (`algo_bfs` over the lent bases).
 - **W4-matrix-1, fixed by #3250 (history):** `Tensor::resize` shrink never trimmed `me`
   (0f45a8685 tensor.rs:814-828; counterexample removed in bbee75955; the last revision that has them is 17ccc5412); repro then
   `cargo test -p graph --test lean_versioned_matrix tensor_shrink_keeps_orphan_me_rows`
@@ -79,3 +85,4 @@ import VersionedMatrix.TensorOps
 import VersionedMatrix.TensorResize
 import VersionedMatrix.CowGlue
 import VersionedMatrix.CountRows
+import VersionedMatrix.Clean

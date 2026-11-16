@@ -1,4 +1,4 @@
-import Pr3435Review.AlgoBfs
+import AlgoUdf.BfsPaths
 /-! # The FFI hypotheses are satisfiable (no vacuous theorems)
 
 `gbModel n` is a reference implementation of the four GraphBLAS calls on
@@ -7,8 +7,8 @@ push/pull over `gbModel`, always pushing) meets `LagSpec n` for every `n ≤ GRB
 `decide` checks run the loop with an always-push, an always-pull and an
 alternating heuristic and get the same levels.
 -/
-namespace Pr3435.Model
-open Pr3435.Bfs Pr3435.Algo
+namespace AlgoUdf.PushPullModel
+open AlgoUdf.Bfs AlgoUdf.BfsPaths
 
 def gbModel (n : Nat) : GB where
   vxm q v A := some (fun j => decide (j < n) && (v j).isNone && (List.range n).any (fun i => q i && A i j))
@@ -70,4 +70,4 @@ example : levelsOf alternate (-1) = [some 0, some 1, some 2, some 1, none] := by
 example : levelsOf pullAlways 1 = [some 0, some 1, none, some 1, none] := by decide
 example : levelsOf alternate 0 = [some 0, none, none, none, none] := by decide
 
-end Pr3435.Model
+end AlgoUdf.PushPullModel

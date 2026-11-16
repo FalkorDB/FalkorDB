@@ -1,4 +1,4 @@
-import Pr3435Review.Dist
+import AlgoUdf.BfsDist
 /-! # Claim 2: `bfs_levels_push_pull` computes BFS levels, for every push/pull choice
 
 PR head d14a9f467 (28ab35368, the review fix a76e66420, every GraphBLAS call checked
@@ -35,7 +35,7 @@ guide, "sparsity control"); only its return code is modelled (`GB.vSparsity`,
 * `GrB_Vector_nvals(&nq, q)`: the number of stored entries.
 * Input aliasing (`q` as both output and input) is allowed by the C API.
 -/
-namespace Pr3435.Bfs
+namespace AlgoUdf.Bfs
 
 structure GB where
   vxm : BVec → LVec → Pat → Option BVec
@@ -428,4 +428,4 @@ theorem pushPull_ok_of_total {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr
   · exact ⟨w, hw, (pushPull_correct hg hr h0 hT hb hs hn ml).1 w hw⟩
   all_goals exact absurd h (hok _)
 
-end Pr3435.Bfs
+end AlgoUdf.Bfs

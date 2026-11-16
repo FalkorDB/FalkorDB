@@ -6,7 +6,7 @@ values), walks of exactly `d` steps (`R`), the shortest-path distance
 (`IsDist`), and the facts a level-synchronous BFS needs. `count n f` is
 `GrB_Vector_nvals` of a size-`n` vector whose pattern is `f`.
 -/
-namespace Pr3435.Bfs
+namespace AlgoUdf.Bfs
 
 abbrev BVec := Nat → Bool
 abbrev LVec := Nat → Option Int
@@ -160,4 +160,4 @@ theorem dist_lt {n j d : Nat} (hb : Bounded A n) (hs : src < n) (h : IsDist A sr
 
 end
 
-end Pr3435.Bfs
+end AlgoUdf.Bfs

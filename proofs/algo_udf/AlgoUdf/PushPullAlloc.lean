@@ -1,4 +1,4 @@
-import Pr3435Review.PushPullFuel
+import AlgoUdf.PushPullFuel
 /-! # The whole of `bfs_levels_push_pull`: allocation, source check, cleanup
 
 PR head d14a9f467, `graph/src/runtime/functions/algo_procedures.rs`:
@@ -16,7 +16,7 @@ memory may happen), with `GrB_Vector_new` refusing a size above
 size-`n` vector fails (`GrB_INVALID_INDEX`) iff `src ≥ n`. On failure SuiteSparse
 leaves the output handle `NULL`, which is what `fail`'s null checks rely on.
 -/
-namespace Pr3435.Bfs
+namespace AlgoUdf.Bfs
 
 structure Live where
   v : Bool
@@ -127,4 +127,4 @@ theorem pre_a76e664_frontier_alloc_leaks {H : Type} (g : GB) (hr : Heur H) (h0 :
     bfsFullPre true false g hr h0 A AT n src ml = (.error "BFS frontier alloc failed", ⟨true, false⟩) := by
   simp [bfsFullPre]
 
-end Pr3435.Bfs
+end AlgoUdf.Bfs

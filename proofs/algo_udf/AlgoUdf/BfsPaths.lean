@@ -1,5 +1,5 @@
-import Pr3435Review.Clean
-import Pr3435Review.Alloc
+import VersionedMatrix.Clean
+import AlgoUdf.PushPullAlloc
 import AlgoUdf.AlgoBfsReg
 /-! # Claim 3: `algo_bfs`'s level-only `nodes` list does not depend on the path
 
@@ -28,8 +28,8 @@ reads no values, so a UINT64 or BOOL `A` with one pattern give one answer).
 template, "if (many_expected)"), so the spec holds for both values. The C code
 refuses `src ≥ n` (`GrB_INVALID_INDEX`).
 -/
-namespace Pr3435.Algo
-open Pr3435.Bfs Pr3435.Clean VMTensorOps
+namespace AlgoUdf.BfsPaths
+open AlgoUdf.Bfs VMClean VMTensorOps
 
 /-- A stored pattern as an adjacency predicate. -/
 def patOf (l : List (Nat × Nat)) : Pat := fun i j => decide ((i, j) ∈ l)
@@ -296,4 +296,4 @@ theorem pre_a76e664_pushPull_src_out_of_range {H : Type} {n : Nat} {g : GB} (hg 
     simp only [hnv, h0', ite_true, Bool.true_eq_false, ite_false]
     exact ⟨_, rfl, hv⟩
 
-end Pr3435.Algo
+end AlgoUdf.BfsPaths

@@ -1,4 +1,4 @@
-import Pr3435Review.PushPull
+import AlgoUdf.PushPull
 /-! # Claim 2, continued: the loop's exits, its fuel, and `k: i64`
 
 * `step_visited` — each level that does not end the loop adds `nq ≥ 1` new
@@ -12,7 +12,7 @@ import Pr3435Review.PushPull
 * `exit_conditions` — the loop's two exits are exactly `k > max_level`
   (with `max_level ≥ 0`) and an empty next level.
 -/
-namespace Pr3435.Bfs
+namespace AlgoUdf.Bfs
 
 theorem step_visited {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) {A AT : Pat}
     (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
@@ -204,4 +204,4 @@ theorem ffi_failure_exits {H : Type} (g : GB) (hr : Heur H) (A AT : Pat) (ml : I
   · simp only [run]; rw [if_neg hx]; simp [hsp]
   · simp only [run]; rw [if_neg hx]; simp [hsp, hq, hnv]
 
-end Pr3435.Bfs
+end AlgoUdf.Bfs
