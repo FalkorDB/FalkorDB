@@ -238,11 +238,14 @@ theorem deltaInto_union_singleton (n : Nat) (F : Pat) (v : VM.VM) :
 /-! ## `expand_union_row` -/
 
 /-- `expand_row`'s two blocks over an arbitrary pair stream: forward, then (undirected) the
-reverse block over non-loop pairs. -/
+reverse block over non-loop pairs, minus (collapse mode, #3111) the reverse results the
+forward block already gave (`drop_reverse_duplicates`, `cond_traverse.rs:1093-1099`; in
+`expand_union_row` `:1284-1288`). -/
 def expandRowP (g : Graph) (ps : List (Nat × Nat)) (bidir emit : Bool) (r : RowIn) :
     List (Nat × Nat × Nat) :=
   processPairs g ps false r emit ++
-    (if bidir then processPairs g (ps.filter fun p => p.1 != p.2) true r emit else [])
+    (if bidir then revKept emit (processPairs g ps false r emit)
+      (processPairs g (ps.filter fun p => p.1 != p.2) true r emit) else [])
 
 /-- The single-type expansion is the pair stream `pairs g`. -/
 theorem expandRow_eq_expandRowP (g : Graph) (bidir emit : Bool) (r : RowIn) :
@@ -334,7 +337,7 @@ theorem union_emit_bidir_iff {S : Graph → List (Nat × Nat)} (hS : StructIter 
   have hf : ∀ s d, (s, d) ∈ (unionStream S gs (fun _ => true)).filter (fun q => q.1 != q.2) ↔
       (∃ x ∈ gs.flatten, x.src = s ∧ x.dst = d) ∧ s ≠ d := by
     intro s d; simp [List.mem_filter, hs]
-  simp only [expandUnionRow, expandRowP, if_true, List.mem_append]
+  simp only [expandUnionRow, expandRowP, revKept, if_true, List.mem_append]
   rw [mem_processPairs (fun _ _ => True) (fun s d => by rw [hs]; simp),
     mem_processPairs (fun s d => s ≠ d) hf]
   simp only [Bool.false_eq_true, if_false, if_true]
@@ -353,6 +356,24 @@ theorem union_collapse_directed_keys_nodup {S : Graph → List (Nat × Nat)} (hS
     ((expandUnionRow S gs p false false r).map fun x => (x.1, x.2.1)).Nodup := by
   simp only [expandUnionRow, expandRowP, Bool.false_eq_true, if_false, List.append_nil]
   exact (unionStream_spec hS gs p).2.1.sublist (collapse_keys_sublist gs.flatten r _)
+
+/-- Undirected collapse over any duplicate-free pair stream: the `(from, to)` keys are
+duplicate-free (#3111). -/
+theorem expandRowP_collapse_bidir_keys_nodup (g : Graph) (ps : List (Nat × Nat)) (hps : ps.Nodup)
+    (r : RowIn) : ((expandRowP g ps true false r).map rowKey).Nodup := by
+  simp only [expandRowP, revKept, if_true, Bool.false_eq_true, if_false]
+  apply nodup_dropRev
+  · have hm : (ps.map fun p => (pf false p, pt false p)) = ps := by simp [pf, pt]
+    exact List.Nodup.sublist (collapse_keys_sublist_gen g false r ps) (by rw [hm]; exact hps)
+  · exact List.Nodup.sublist (collapse_keys_sublist_gen g true r _)
+      (nodup_map_swap _ (hps.sublist List.filter_sublist))
+
+/-- **Multi-type, undirected, collapse mode (#3111)**: one row per pattern pair, even when
+the pair is joined in both directions by edges of the pattern's types. -/
+theorem union_collapse_bidir_keys_nodup {S : Graph → List (Nat × Nat)} (hS : StructIter S)
+    (gs : List Graph) (p : Nat × Nat → Bool) (r : RowIn) :
+    ((expandUnionRow S gs p true false r).map rowKey).Nodup :=
+  expandRowP_collapse_bidir_keys_nodup _ _ (unionStream_spec hS gs p).2.1 r
 
 /-- The per-type *transposed* iterator (`Tensor::matrix_t`): dst-major, `(dst, src)` ascending. -/
 structure StructIterT (S : Graph → List (Nat × Nat)) : Prop where

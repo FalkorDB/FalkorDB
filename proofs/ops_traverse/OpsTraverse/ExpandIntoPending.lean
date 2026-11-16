@@ -47,15 +47,15 @@ structure Pending where
   delRels  : List Nat
 deriving DecidableEq, Repr
 
-/-- `ExpandIntoOp::expand_row` (relationship mode) with `Pending` as it was
-before #3463: no endpoint check. -/
+/-- `ExpandIntoOp::expand_row` (relationship mode) with `Pending`, without the #3463
+endpoint check (the operator before #3463; collapse mode as of #3111: the first candidate
+over both directions, `expand_into.rs:201-209`). -/
 def expandIntoPre (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
     (used : List Nat) : List Nat :=
   let ps := if bidir && src != dst then [(src, dst), (dst, src)] else [(src, dst)]
-  ps.flatMap fun q =>
-    let es := (edgesBetween g q.1 q.2).filter fun e =>
+  let all := ps.flatMap fun q => (edgesBetween g q.1 q.2).filter fun e =>
       !(p.delRels.contains e) && !(used.contains e)
-    if emit then es else es.take 1
+  if emit then all else all.take 1
 
 /-- `ExpandIntoOp::expand_row` (relationship mode) on main (`expand_into.rs:158-235`):
 `is_node_deleted(src) || is_node_deleted(dst)` ⇒ no row (#3463). -/
@@ -84,13 +84,13 @@ theorem mem_expandIntoPre {g : Graph} {p : Pending} {b em : Bool} {s d e : Nat}
     e ∉ p.delRels ∧ e ∉ u ∧ ∃ x ∈ g, x.id = e ∧
       ((x.src = s ∧ x.dst = d) ∨ (x.src = d ∧ x.dst = s)) := by
   unfold expandIntoPre at h
-  simp only [List.mem_flatMap] at h
-  obtain ⟨q, hq, he⟩ := h
-  have he' : e ∈ (edgesBetween g q.1 q.2).filter fun e =>
-      !(p.delRels.contains e) && !(u.contains e) := by
+  have h' : e ∈ (if b && s != d then [(s, d), (d, s)] else [(s, d)]).flatMap fun q =>
+      (edgesBetween g q.1 q.2).filter fun e => !(p.delRels.contains e) && !(u.contains e) := by
     cases em
-    · exact List.mem_of_mem_take he
-    · exact he
+    · exact List.mem_of_mem_take h
+    · exact h
+  simp only [List.mem_flatMap] at h'
+  obtain ⟨q, hq, he'⟩ := h'
   simp only [List.mem_filter, Bool.and_eq_true, Bool.not_eq_true',
     List.contains_eq_mem, decide_eq_false_iff_not] at he'
   obtain ⟨hb, hdr, hu⟩ := he'

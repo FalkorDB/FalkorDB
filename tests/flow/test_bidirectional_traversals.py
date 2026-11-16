@@ -322,3 +322,49 @@ class testBidirectionalTraversals(FlowTestsBase):
                            ['v3', 'v3']]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
+
+    def test14_anonymous_undirected_one_row_per_pair(self):
+        # an anonymous undirected edge collapses to one row per pattern pair,
+        # as in C, even when edges are stored in both directions
+        g = self.db.select_graph("both_directions")
+        g.query("CREATE (a:A {id:1})-[:R]->(b:B {id:2}), (b)-[:R]->(a), (a)-[:R]->(b)")
+
+        # CondTraverse
+        result = g.query("MATCH (a)-[]-(b) RETURN a.id, b.id ORDER BY a.id, b.id")
+        self.env.assertEqual(result.result_set, [[1, 2], [2, 1]])
+        result = g.query("MATCH (a:A)-[]-(b) RETURN a.id, b.id")
+        self.env.assertEqual(result.result_set, [[1, 2]])
+
+        # ExpandInto (both endpoints bound)
+        result = g.query("MATCH (a:A), (b:B) WITH a, b MATCH (a)-[]-(b) RETURN a.id, b.id")
+        self.env.assertEqual(result.result_set, [[1, 2]])
+
+        # a named edge still returns one row per relationship
+        result = g.query("MATCH (a:A)-[r]-(b) RETURN count(r)")
+        self.env.assertEqual(result.result_set, [[3]])
+
+        # a pattern expression yields one path per relationship, not per pair,
+        # in either direction (C: 2 and 3)
+        result = g.query("MATCH (a:A) RETURN size((a)-->()), size((a)--())")
+        self.env.assertEqual(result.result_set, [[2, 3]])
+        # as a predicate it is still just an existence check
+        result = g.query("MATCH (a:A) WHERE (a)--() RETURN count(a)")
+        self.env.assertEqual(result.result_set, [[1]])
+        # but size() of a pattern counts paths in a predicate too
+        result = g.query("MATCH (a:A) WHERE size((a)--()) = 3 RETURN count(a)")
+        self.env.assertEqual(result.result_set, [[1]])
+        result = g.query("MATCH (a:A) WHERE size((a)--()) > 1 AND size((a)-->()) = 2 RETURN count(a)")
+        self.env.assertEqual(result.result_set, [[1]])
+
+    def test15_multi_type_undirected_one_row_per_pair(self):
+        # several types stream through the union iterators; the collapse to one
+        # row per pattern pair must hold there too
+        g = self.db.select_graph("both_directions_multi")
+        g.query("CREATE (a:A {id:1})-[:R]->(b:B {id:2}), (b)-[:S]->(a), (a)-[:R]->(b)")
+
+        result = g.query("MATCH (a)-[:R|S]-(b) RETURN a.id, b.id ORDER BY a.id, b.id")
+        self.env.assertEqual(result.result_set, [[1, 2], [2, 1]])
+        result = g.query("MATCH (a:A)-[:R|S]-(b) RETURN a.id, b.id")
+        self.env.assertEqual(result.result_set, [[1, 2]])
+        result = g.query("MATCH (a:A)-[r:R|S]-(b) RETURN count(r)")
+        self.env.assertEqual(result.result_set, [[3]])

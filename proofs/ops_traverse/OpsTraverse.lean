@@ -114,7 +114,9 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
   (`mem_expandInto_emit`).
 * Collapse (anonymous edge) only emits rows emit mode would, one per matrix
   pair when directed (`collapse_sub_emit`, `collapse_directed_iff`,
-  `collapse_directed_keys_nodup`).
+  `collapse_directed_keys_nodup`), one per pattern pair when undirected since #3111
+  (`collapse_bidir_keys_nodup`, `collapse_bidir_iff`, `UnionGlue.union_collapse_bidir_keys_nodup`;
+  ExpandInto: `expandInto_collapse_eq_take`, `expandInto_collapse_length_le_one`).
 * Batched F·A path = per-row collapse, duplicate-free; a fused chain returns
   `(row,dst)` iff a walk through the chain's matrices exists — for *any* mxm
   meeting the GraphBLAS spec (`batched_eq_collapse`, `fused_chain_semantics`,
@@ -173,7 +175,10 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 3. **Undirected anonymous collapse is per direction, not per pair**
    (`cond_traverse.rs:985-1082`, `expand_into.rs:183-222`): `a→b, b→a, a→b`,
    `MATCH (a)-[]-(b) RETURN a.id, b.id` Rust 4 rows, C 2.
-   Lean `bidir_collapse_duplicates_pair`. Still present on 8743953a8 (live: 4 rows vs C 2).
+   Lean `pre3111_bidir_collapse_duplicates_pair`, `pre3111_expandInto_bidir_collapse_two_rows`
+   (on the historical `expandRowPre3111` / `expandIntoPre3111`). **Fixed by #3111**
+   (`drop_reverse_duplicates`, `cond_traverse.rs:1138`; `expand_into.rs:201-209`):
+   `bidir_collapse_one_row_per_pair`, `collapse_bidir_keys_nodup`.
 4. **Consecutive MATCH clauses are merged into one pattern**
    (`parser/cypher.rs:1549-1556`, outside the target files but it decides
    uniqueness scope): `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)` Rust 2 rows, C 4
