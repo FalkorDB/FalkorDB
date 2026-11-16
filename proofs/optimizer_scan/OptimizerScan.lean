@@ -218,13 +218,16 @@ optimizer's own inline paths are gone. Model changes (every citation re-mapped):
 - `IdSeek`: `get_id_filter` compares `(id, scope_id)` and asks `subtree_references_variable`
   (`getIdFilter_spec`, `getIdFilter_other_scope`).
 
-NEW CONFIRMED BUG (pre-existing; present before and after #2390): `select_var_len_scan_node`'s leaf
+CONFIRMED BUG W7-scan-1, FIXED by #3593 (pre-existing; present before and after #2390): `select_var_len_scan_node`'s leaf
 rewrite prunes the whole child subtree (`select_scan_node.rs:661`), including a `Filter` wrapper that
 `planner_scan_alias` looked through. `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2})
 RETURN a.v, b.w` on `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` returns
 `[1,2],[5,2]` (should be `[1,2]`; the fixed-length `-[:R]->` form is right) on builds 88e92ae25
 and b3582e34a. `ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. Fix: refuse the leaf
 rewrite when the wrapper holds a `Filter`, or salvage it above the traverse with `filters_of`.
+#3593 does the former (`vl_leaf_refuses_filter`, `vl_leaf_fixed_on_bug`; old model `vlLeafPre3593`),
+keeps every child of the old scan under the new one, refuses an edge predicate reading an endpoint
+(`vlNonLeaf_keeps_from`), and lets an undirected walk reverse (`vl_reverse_sound_bidir`).
 -/
 import OptimizerScan.IdSeek
 import OptimizerScan.Index

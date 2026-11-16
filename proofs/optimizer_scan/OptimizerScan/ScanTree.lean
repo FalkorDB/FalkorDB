@@ -7,7 +7,7 @@ path (child indices from the root), which is exactly what `node_path` computes.
 | here | there |
 | --- | --- |
 | `IRk`, `PT`, `getAt` | `IR`, `DynTree<IR>`, `plan.node(idx)` |
-| `scoreEndpoint` | `score_endpoint` 98 |
+| `scoreEndpoint`, `endpointScanScore` | `score_endpoint` 101, `endpoint_scan_score` (optimizer/mod.rs:162) |
 | `collectFilteredVars`, `spineVars`, `filteredVars` | `collect_filtered_vars` 156 (`above` / `all`), its `collect` 160 (= `filterVars`) |
 | `makeScanSubtree`, `filtersOf` | `make_scan_subtree` 214, `filters_of` 250 |
 | `argumentLeafOf` | `argument_leaf_of` 276 |
@@ -16,7 +16,7 @@ path (child indices from the root), which is exactly what `node_path` computes.
 | `collectOutputAliases` | `collect_output_aliases` 391 |
 | `nodePath`, `resolvePath` | `node_path` 442, `resolve_path` 459 |
 | `childSubtreeBinds` | `child_subtree_binds` 475 |
-| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 510 |
+| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound`, `vl_reverse_sound_bidir` | `select_var_len_scan_node` 508 |
 -/
 namespace OptimizerScan.ScanTree
 
@@ -66,7 +66,7 @@ structure FV where
   above : List Var
   all : List Var
 
-/-- `score_endpoint` (`select_scan_node.rs:98-132`): `(score, filter_runs_late, cardinality)`. -/
+/-- `score_endpoint` (`select_scan_node.rs:101-129`): `(score, filter_runs_late, cardinality)`. -/
 def scoreEndpoint (n : EP) (fv : FV) (bound : List Nat) (count : Nat → Nat) : Nat × Bool × Nat :=
   ((if n.alias.1 ∈ bound then 3 else 0) + (if n.alias ∈ fv.all then 2 else 0) +
    (if n.labels.isEmpty then 0 else 1),
@@ -92,6 +92,17 @@ theorem scoreEndpoint_spec (n : EP) (fv : FV) (b : List Nat) (c : Nat → Nat) :
   · simp only [h, ite_true]; omega
   · have : n.labels.isEmpty = false := by cases hl : n.labels <;> simp_all
     simp only [this]; simp
+
+/-- `endpoint_scan_score` (`optimizer/mod.rs:162`), which `score_endpoint` adds since #3593. -/
+def endpointScanScore (filtered labelled : Bool) : Nat :=
+  (if filtered then 2 else 0) + (if labelled then 1 else 0)
+
+/-- **PROVEN** (#3593 refactor): the score is the bound bonus plus `endpoint_scan_score`. -/
+theorem scoreEndpoint_eq_endpointScanScore (n : EP) (fv : FV) (b : List Nat) (c : Nat → Nat) :
+    (scoreEndpoint n fv b c).1 =
+      (if n.alias.1 ∈ b then 3 else 0) + endpointScanScore (decide (n.alias ∈ fv.all)) (!n.labels.isEmpty) := by
+  unfold scoreEndpoint endpointScanScore
+  by_cases h : n.alias ∈ fv.all <;> cases n.labels.isEmpty <;> simp [h] <;> omega
 
 /-- **PROVEN**: since #2390 a bound endpoint is never outscored by an unbound one (an unbound
 endpoint scores at most 2 + 1 = 3), as the doc comment says. -/
@@ -540,7 +551,20 @@ theorem vl_reverse_sound (R : Nat → Nat → Prop) (Lf Lt : Nat → Prop) (lo h
   · rintro ⟨h1, h2, k, hk1, hk2, hr⟩; exact ⟨h2, h1, k, hk1, hk2, Reach.reverse hr⟩
   · rintro ⟨h1, h2, k, hk1, hk2, hr⟩; exact ⟨h2, h1, k, hk1, hk2, (reach_reverse_iff R k a b).mpr hr⟩
 
-/-- What `select_var_len_scan_node` (`select_scan_node.rs:510-666`) inspects. -/
+/-- **PROVEN** (#3593: an undirected walk reverses too): an undirected var-length hop walks the
+symmetric closure `S a b := R a b ∨ R b a`, which its own transpose is, so scanning `to` and walking
+back from it binds exactly the `(from, to)` pairs of the original plan. -/
+theorem tr_sym (R : Nat → Nat → Prop) : tr (fun a b => R a b ∨ R b a) = fun a b => R a b ∨ R b a := by
+  funext a b; apply propext; unfold tr; exact ⟨Or.symm, Or.symm⟩
+
+theorem vl_reverse_sound_bidir (R : Nat → Nat → Prop) (Lf Lt : Nat → Prop) (lo hi : Nat) (a b : Nat) :
+    (Lf a ∧ Lt b ∧ ∃ k, lo ≤ k ∧ k ≤ hi ∧ Reach (fun x y => R x y ∨ R y x) k a b) ↔
+    (Lt b ∧ Lf a ∧ ∃ k, lo ≤ k ∧ k ≤ hi ∧ Reach (fun x y => R x y ∨ R y x) k b a) := by
+  have := vl_reverse_sound (fun x y => R x y ∨ R y x) Lf Lt lo hi a b
+  rwa [tr_sym] at this
+
+/-- What `select_var_len_scan_node` (`select_scan_node.rs:508-702`) inspects. `bidirectional` is
+    kept as an input: since #3593 the code no longer looks at it. -/
 structure VLCase where
   expandInto : Bool
   bidirectional : Bool
@@ -556,32 +580,60 @@ structure VLCase where
   argOpaque : Bool
   fromScore : Nat
   toScore : Nat
+  attrsReadFrom : Bool := false  -- the edge attrs read `from` (`attrs_read_from`, line 552)
+  attrsReadTo : Bool := false    -- the edge attrs read `to` (`attrs_read_to`, line 554)
 
 def vlGuards (c : VLCase) : Bool :=
-  !c.expandInto && !c.bidirectional && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan
+  !c.expandInto && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan
 
-/-- The non-leaf rewrite (`select_scan_node.rs:574-617`): drop the planner's scan *and its wrapper
-    chain*, keeping what is under the scan. Since #2390 a `Filter` in the wrapper refuses it. -/
+/-- The non-leaf rewrite (`select_scan_node.rs:609-628`): drop the planner's scan *and its wrapper
+    chain*, keeping what is under the scan. Since #2390 a `Filter` in the wrapper refuses it; since
+    #3593 an edge predicate reading `from` does too (dropping the scan unbinds `from`). -/
 def vlNonLeaf (c : VLCase) : Bool :=
-  vlGuards c && !c.wrapperHasPending && !c.wrapperHasFilter && c.childBindsTo && c.scanHasChildren
+  vlGuards c && !c.wrapperHasPending && !c.wrapperHasFilter && !c.attrsReadFrom && c.childBindsTo &&
+    c.scanHasChildren
 
-/-- The leaf rewrite (`select_scan_node.rs:619-665`): scan `to` instead, replacing the *whole* child
-    subtree (`node_mut(child_idx).prune()`, line 661) — wrapper chain included. -/
+/-- The leaf rewrite (`select_scan_node.rs:630-702`): scan `to` instead, under all of the old scan's
+    children (`kept`), replacing the child subtree. Since #3593 it refuses a wrapper `Filter` and an
+    edge predicate reading either endpoint. -/
 def vlLeaf (c : VLCase) : Bool :=
-  vlGuards c && !vlNonLeaf c && !c.argOpaque && !c.argBindsTo && decide (c.fromScore < c.toScore)
+  vlGuards c && !vlNonLeaf c && !c.attrsReadFrom && !c.attrsReadTo && !c.argOpaque && !c.argBindsTo &&
+    !c.wrapperHasFilter && decide (c.fromScore < c.toScore)
 
 /-- **PROVEN** (#2390): the non-leaf rewrite never drops a `Filter` (nor an `IncludePending`). -/
 theorem vlNonLeaf_keeps_wrappers (c : VLCase) (h : vlNonLeaf c = true) :
     c.wrapperHasFilter = false ∧ c.wrapperHasPending = false := by
-  simp [vlNonLeaf] at h; exact ⟨h.1.1.2, h.1.1.1.2⟩
+  simp [vlNonLeaf] at h; exact ⟨h.1.1.1.2, h.1.1.1.1.2⟩
 
-/-- The leaf rewrite fires only when every guard holds (ties keep the direction). -/
+/-- **PROVEN** (#3593): the non-leaf rewrite never unbinds a `from` the edge predicate reads. -/
+theorem vlNonLeaf_keeps_from (c : VLCase) (h : vlNonLeaf c = true) : c.attrsReadFrom = false := by
+  simp [vlNonLeaf] at h; exact h.1.1.2
+
+/-- The leaf rewrite fires only when every guard holds (ties keep the direction). Since #3593 an
+    undirected walk may reverse (`vl_reverse_sound_bidir`), so `bidirectional = false` is no longer a
+    guard; the edge-predicate and wrapper-`Filter` guards are new. -/
 theorem vlLeaf_guards (c : VLCase) (h : vlLeaf c = true) :
-    c.expandInto = false ∧ c.bidirectional = false ∧ c.allShortest = false ∧ c.sameEnds = false ∧
-    c.childIsFromScan = true ∧ c.argBindsTo = false ∧ c.argOpaque = false ∧ c.fromScore < c.toScore := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp_all [vlLeaf, vlGuards]
+    c.expandInto = false ∧ c.allShortest = false ∧ c.sameEnds = false ∧
+    c.childIsFromScan = true ∧ c.argBindsTo = false ∧ c.argOpaque = false ∧ c.fromScore < c.toScore ∧
+    c.attrsReadFrom = false ∧ c.attrsReadTo = false ∧ c.wrapperHasFilter = false := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp_all [vlLeaf, vlGuards]
 
-/-! ### CONFIRMED BUG (pre-existing, not fixed by #2390): the leaf rewrite drops a wrapper `Filter`
+/-- **PROVEN** (W7-scan-1 fixed by #3593): the leaf rewrite never prunes a wrapper `Filter`. -/
+theorem vl_leaf_refuses_filter (c : VLCase) (h : vlLeaf c = true) : c.wrapperHasFilter = false :=
+  (vlLeaf_guards c h).2.2.2.2.2.2.2.2.2
+
+/-- The model before #3593 (historical, for the bug below). -/
+def vlGuardsPre3593 (c : VLCase) : Bool :=
+  !c.expandInto && !c.bidirectional && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan
+
+def vlNonLeafPre3593 (c : VLCase) : Bool :=
+  vlGuardsPre3593 c && !c.wrapperHasPending && !c.wrapperHasFilter && c.childBindsTo && c.scanHasChildren
+
+def vlLeafPre3593 (c : VLCase) : Bool :=
+  vlGuardsPre3593 c && !vlNonLeafPre3593 c && !c.argOpaque && !c.argBindsTo &&
+    decide (c.fromScore < c.toScore)
+
+/-! ### CONFIRMED BUG W7-scan-1 (pre-existing, fixed by #3593): the leaf rewrite dropped a wrapper `Filter`
 
 `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2}) RETURN a.v, b.w`: clause 1's
 `Filter(a.v = 1) → AllNodeScan(a)` is stitched in as the var-length traverse's child, which
@@ -591,8 +643,8 @@ lowered `{w:2}` Filter above the traverse), so the leaf rewrite scans `b` and wa
 pruned child took `a.v = 1` with it. Live (Rust built from main's planner, b3582e34a; also on the
 pre-#2390 build 88e92ae25): graph `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` returns
 `[1, 2], [5, 2]`; the right answer (and the fixed-length `-[:R]->` form, which salvages the Filter via
-`filters_of`) is `[1, 2]`. Fix: refuse the leaf rewrite when the wrapper chain holds a `Filter`
-(as the non-leaf path now does), or salvage it with `filters_of` above the traverse. -/
+`filters_of`) is `[1, 2]`. #3593 refuses the leaf rewrite when the wrapper chain holds a `Filter`
+(`vl_leaf_refuses_filter`, `vl_leaf_fixed_on_bug`); `vlLeafPre3593` is the old model. -/
 
 def vlBugCase : VLCase :=
   { expandInto := false, bidirectional := false, allShortest := false, sameEnds := false, oneChild := true,
@@ -601,9 +653,12 @@ def vlBugCase : VLCase :=
     fromScore := (scoreEndpoint ⟨(0, 0), []⟩ ⟨[(1, 0)], [(1, 0), (0, 0)]⟩ [] (fun _ => 1)).1,
     toScore := (scoreEndpoint ⟨(1, 0), [7]⟩ ⟨[(1, 0)], [(1, 0), (0, 0)]⟩ [] (fun _ => 1)).1 }
 
-/-- The rewrite fires on the repro although the wrapper holds `a.v = 1`. -/
-theorem vl_leaf_fires_over_filter : vlLeaf vlBugCase = true ∧ vlBugCase.wrapperHasFilter = true := by
+/-- Before #3593 the rewrite fired on the repro although the wrapper holds `a.v = 1`. -/
+theorem vl_leaf_fires_over_filter : vlLeafPre3593 vlBugCase = true ∧ vlBugCase.wrapperHasFilter = true := by
   decide
+
+/-- **PROVEN** (#3593): it no longer fires on the repro. -/
+theorem vl_leaf_fixed_on_bug : vlLeaf vlBugCase = false := by decide
 
 /-- What the rewritten plan selects (`Lt b`, `Lf a`, the backward walk) differs from the original
     (which also tests the dropped `F a`) exactly on the rows where `F a` is false — `(a.v = 5, b)`. -/

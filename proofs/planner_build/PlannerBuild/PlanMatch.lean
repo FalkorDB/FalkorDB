@@ -1,4 +1,4 @@
-import PlannerBuild.Expr
+import PlannerBuild.Anchor
 /-
 # `plan_match`: per-component operator choice (mod.rs:1832-2403)
 
@@ -7,7 +7,8 @@ import PlannerBuild.Expr
 | `QN`, `QR`, `Comp` | `QueryNode`, `QueryRelationship`, a connected component (ast.rs:470-640) |
 | `MSt` | `Planner.visited` / `verified_labels` |
 | `markLabels`, `unverified` | `mark_labels_verified` mod.rs:1787-1805, `unverified_labels` mod.rs:1809-1821 |
-| `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1877-1909 (stable) |
+| `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1970-2006 (stable) |
+| `leadingWalk`, `leadOrder`, `outward` | `leading_walk` mod.rs:1884-1967 and the outward reorder mod.rs:2012-2034 (#3593) |
 | `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2002-2011; `emit_rel(r) \|\| edge_pred.is_some()` |
 | `scanOf`, `withF` | `AllNodeScan`/`NodeByLabelScan` choice; optional inline-attribute `Filter` |
 | `LW`, `lowerInline` | `lowered_attrs` mod.rs:1852, `lower_inline_attrs` mod.rs:598-607 |
@@ -305,20 +306,23 @@ def tier (r : QR) : Nat :=
   | .varLen => 1
   | .shortest => 2
 
-/-- `(base, has_bound, unfiltered)`; `has_bound` is 0 when an endpoint is
-bound; `unfiltered` only distinguishes hops leaving a bound node. -/
-def relKey (st : MSt) (filterVars : List Nat) (r : QR) : Nat × Nat × Nat :=
+/-- `(base, has_bound, unfiltered)` (mod.rs:1970-2006), `base` shifted by one so it is a `Nat`:
+the promoted walk `lead` (`leading_walk`, base `-1`) 0, fixed 1, var-length 2, shortest 3;
+`has_bound` is 0 when an endpoint is bound; `unfiltered` only distinguishes hops leaving a
+bound node. `filterVars` is `filter_vars`, keyed by `(scope_id, id)` since #3593. -/
+def relKey (st : MSt) (filterVars : List V) (lead : Option V) (r : QR) : Nat × Nat × Nat :=
+  let base := if r.kind = .shortest then 3 else if lead = some r.alias then 0 else tier r + 1
   let hb := if st.bound r.frm.alias || st.bound r.to.alias then 0 else 1
   let unf := if hb = 0 then
-      (if [r.frm, r.to].any (fun n => !n.attrs.isEmpty || filterVars.contains n.alias.id) then 0 else 1)
+      (if [r.frm, r.to].any (fun n => !n.attrs.isEmpty || filterVars.contains n.alias) then 0 else 1)
     else 0
-  (tier r, hb, unf)
+  (base, hb, unf)
 
 def keyLe (a b : Nat × Nat × Nat) : Bool :=
   a.1 < b.1 || (a.1 == b.1 && (a.2.1 < b.2.1 || (a.2.1 == b.2.1 && a.2.2 ≤ b.2.2)))
 
-def sortRels (st : MSt) (fv : List Nat) (rs : List QR) : List QR :=
-  rs.mergeSort fun a b => keyLe (relKey st fv a) (relKey st fv b)
+def sortRels (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) : List QR :=
+  rs.mergeSort fun a b => keyLe (relKey st fv lead a) (relKey st fv lead b)
 
 theorem keyLe_trans (a b c : Nat × Nat × Nat) (h1 : keyLe a b = true) (h2 : keyLe b c = true) :
     keyLe a c = true := by
@@ -331,23 +335,54 @@ theorem keyLe_total (a b : Nat × Nat × Nat) : (keyLe a b || keyLe b a) = true 
   simp only [keyLe, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq]
   omega
 
-/-- The order is a permutation, sorted by key: fixed-length hops first, then
-variable-length, then shortest paths; within a tier, hops touching a bound
-node first (mod.rs:1877-1909). -/
-theorem sortRels_spec (st : MSt) (fv : List Nat) (rs : List QR) :
-    (sortRels st fv rs).Perm rs ∧
-    (sortRels st fv rs).Pairwise (fun a b => keyLe (relKey st fv a) (relKey st fv b) = true) := by
+/-- The order is a permutation, sorted by key: the promoted walk (if any), then fixed-length
+hops, then variable-length, then shortest paths; within a tier, hops touching a bound
+node first (mod.rs:1970-2006). -/
+theorem sortRels_spec (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) :
+    (sortRels st fv lead rs).Perm rs ∧
+    (sortRels st fv lead rs).Pairwise
+      (fun a b => keyLe (relKey st fv lead a) (relKey st fv lead b) = true) := by
   refine ⟨List.mergeSort_perm _ _, ?_⟩
   exact List.pairwise_mergeSort
-    (fun a b c h1 h2 => keyLe_trans (relKey st fv a) (relKey st fv b) (relKey st fv c) h1 h2)
-    (fun a b => keyLe_total (relKey st fv a) (relKey st fv b)) rs
+    (fun a b c h1 h2 => keyLe_trans (relKey st fv lead a) (relKey st fv lead b) (relKey st fv lead c) h1 h2)
+    (fun a b => keyLe_total (relKey st fv lead a) (relKey st fv lead b)) rs
 
-theorem sortRels_tiers (st : MSt) (fv : List Nat) (rs : List QR) :
-    (sortRels st fv rs).Pairwise (fun a b => tier a ≤ tier b) := by
-  apply (sortRels_spec st fv rs).2.imp
+/-- With no promoted walk (`leading_walk = None`, the pre-#3593 order): fixed-length hops
+first, then variable-length, then shortest paths. -/
+theorem relKey_none_base (st : MSt) (fv : List V) (r : QR) : (relKey st fv none r).1 = tier r + 1 := by
+  unfold relKey tier
+  cases h : r.kind <;> simp
+
+theorem keyLe_fst (a b : Nat × Nat × Nat) (h : keyLe a b = true) : a.1 ≤ b.1 := by
+  obtain ⟨a1, a2, a3⟩ := a; obtain ⟨b1, b2, b3⟩ := b
+  simp only [keyLe, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at h
+  simp only; omega
+
+theorem sortRels_tiers (st : MSt) (fv : List V) (rs : List QR) :
+    (sortRels st fv none rs).Pairwise (fun a b => tier a ≤ tier b) := by
+  apply (sortRels_spec st fv none rs).2.imp
   intro a b h
-  simp only [keyLe, relKey, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at h
+  have := keyLe_fst _ _ h
+  rw [relKey_none_base, relKey_none_base] at this
   omega
+
+/-- With a promoted walk: it sorts before every other hop (base `-1`). -/
+theorem sortRels_lead_first (st : MSt) (fv : List V) (l : V) (rs : List QR) :
+    (sortRels st fv (some l) rs).Pairwise
+      (fun a b => b.alias = l → b.kind ≠ .shortest → a.alias = l ∧ a.kind ≠ .shortest) := by
+  apply (sortRels_spec st fv (some l) rs).2.imp
+  intro a b h hb hs
+  have h1 := keyLe_fst _ _ h
+  have hb0 : (relKey st fv (some l) b).1 = 0 := by simp [relKey, hs, hb]
+  by_cases hsa : a.kind = .shortest
+  · have : (relKey st fv (some l) a).1 = 3 := by simp [relKey, hsa]
+    omega
+  · by_cases hla : a.alias = l
+    · exact ⟨hla, hsa⟩
+    · have : (relKey st fv (some l) a).1 = tier a + 1 := by
+        have : ¬ (l = a.alias) := fun h => hla h.symm
+        simp [relKey, hsa, this]
+      omega
 
 /-! ## The first relationship of a component -/
 
