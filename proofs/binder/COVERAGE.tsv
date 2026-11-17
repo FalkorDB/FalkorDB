@@ -16,7 +16,7 @@ graph/src/planner/binder.rs	Binder::validate_import_with	1107	PROVEN	validateImp
 graph/src/planner/binder.rs	Binder::bind_projection	1163	NOT COVERED	(#3302): not modelled yet
 graph/src/planner/binder.rs	Binder::bind_graph	1433	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_rejects, node_attr_on_own_rel, rel_attr_forward_node, self_reference_ok; defineName_ignores_parent
 graph/src/planner/binder.rs	Binder::bind_graph_create	1652	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, createCheck_anon, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak
-graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1777	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct
+graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1777	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct, selfRef_leaf_prop
 graph/src/planner/binder.rs	Binder::bind_set_items	1795	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
 graph/src/planner/binder.rs	Binder::bind_expr	1820	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
 graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1827	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
