@@ -3,7 +3,6 @@ import os
 import re
 import socket
 import struct
-import subprocess
 import tempfile
 import time
 
@@ -455,10 +454,9 @@ class testRdbLoad():
 class testRdbLoadRefusesCch():
     """A server whose RDB file holds a graph with a CCH index does not start.
 
-    Starts a server of its own, from the same binary and module RLTest uses, so
-    it runs only where RLTest spawns servers locally (flow.sh without
-    FALKORDB_TEST_IMAGE: local runs and CI's artifact lanes). The image lanes
-    have no local binary to start."""
+    Starts a server of its own (`start_local_server`), so it runs only where
+    the binary and module are local: flow.sh without FALKORDB_TEST_IMAGE, i.e.
+    local runs and CI's artifact lanes."""
 
     def __init__(self):
         if os.getenv("FALKORDB_TEST_IMAGE"):
@@ -466,30 +464,11 @@ class testRdbLoadRefusesCch():
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
 
-    def _start_server(self, rdb, workdir):
-        """Start a server with `rdb` as its RDB file; return (process, log path)."""
+    @staticmethod
+    def _start(workdir, rdb):
         with open(os.path.join(workdir, "dump.rdb"), "wb") as f:
             f.write(rdb)
-        runner = self.env.envRunner
-        module = runner.modulePath
-        module = module[0] if isinstance(module, list) else module
-        log = os.path.join(workdir, "server.log")
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
-        proc = subprocess.Popen(
-            [runner.redisBinaryPath, "--port", str(port), "--bind", "127.0.0.1",
-             "--dir", workdir,
-             "--dbfilename", "dump.rdb", "--logfile", log, "--loadmodule", module],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return proc, log
-
-    @staticmethod
-    def _log_has(log, text):
-        if not os.path.exists(log):
-            return False
-        with open(log) as f:
-            return text in f.read()
+        return start_local_server(workdir, listen=True)
 
     def test_a_cch_index_in_the_rdb_file_stops_the_server_starting(self):
         self.conn.execute_command("CONFIG", "SET", "rdbcompression", "no")
@@ -499,29 +478,22 @@ class testRdbLoadRefusesCch():
         with tempfile.TemporaryDirectory() as workdir:
             # The same file without the CCH index loads: what stops the
             # server below is the index, not how the file is written.
-            proc, log = self._start_server(rdb_file(b"g", dump[1:-10]), workdir)
+            proc, log = self._start(workdir, rdb_file(b"g", dump[1:-10]))
             try:
                 deadline = time.monotonic() + 30
-                while not self._log_has(log, "Done loading RDB"):
+                while "Done loading RDB" not in read_log(log):
                     if proc.poll() is not None or time.monotonic() > deadline:
-                        with open(log) as f:
-                            raise AssertionError(
-                                f"the file without a CCH index did not load: {f.read()}")
+                        raise AssertionError(
+                            f"the file without a CCH index did not load: {read_log(log)}")
                     time.sleep(0.05)
             finally:
                 proc.kill()
                 proc.wait()
             os.remove(log)
 
-            proc, log = self._start_server(rdb_file(b"g", with_cch_index(dump)), workdir)
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                self.env.assertTrue(False, message="the server started with a CCH index")
-            with open(log) as f:
-                text = f.read()
+            proc, log = self._start(workdir, rdb_file(b"g", with_cch_index(dump)))
+            self.env.assertIsNotNone(wait_for_exit(proc, 30),
+                                     message="the server started with a CCH index")
             self.env.assertContains(
                 "RDB v20 graph with CCH indexes: this module does not support CCH indexes",
-                text)
+                read_log(log))
