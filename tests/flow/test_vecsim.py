@@ -365,6 +365,8 @@ class testVecsim():
         # Population runs in the background, 10k entities per batch. This many
         # keeps each index UNDER CONSTRUCTION for about a second, orders of
         # magnitude longer than it takes to issue the first query after CREATE.
+        # (There is no hook to pause population; if it ever finished before the
+        # first query, the refused > 0 check below fails loudly, never silently.)
         g.query("""UNWIND range(1, 100000) AS i
                    CREATE (:V {e: vecf32([toFloat(i), 1.0])})-[:R {e: vecf32([toFloat(i), 1.0])}]->(:W)""")
 
@@ -379,15 +381,15 @@ class testVecsim():
             refused = 0
             deadline = time.time() + 120
             while constructing(label):
-                self.env.assertLess(time.time(), deadline,
-                                    message=f"{name}: index still under construction after 120s")
                 if time.time() >= deadline:
-                    return
+                    self.env.assertTrue(False, message=f"{name}: index still under construction after 120s")
+                    raise TimeoutError(f"{name}: index still under construction after 120s")
                 try:
                     g.ro_query(q)
                 except Exception as e:
-                    self.env.assertContains(f"Invalid arguments for procedure '{name}'", str(e))
+                    self.env.assertContains(f"The vector index on '{label}' is under construction", str(e))
                     refused += 1
+                    time.sleep(0.01)
                     continue
                 # answered: only acceptable if population finished meanwhile
                 self.env.assertFalse(constructing(label),

@@ -9,10 +9,10 @@ import RedisLayer.TelemetryReg
 | `deleteStreamKey`  | `delete_stream` `:336` |
 | `runningRow`, `waitingRow` | `running_queries_reply` `:543`, `waiting_queries_reply` `:567` |
 | `distinctAlive`    | `hold_batch_graphs` `:758` |
-| `releaseSpawns`    | `release_batch_graphs` `:789` |
-| `keyHolds`         | `key_holds_graph` `:808` |
+| `releaseSpawns`    | `release_batch_graphs` `:801` |
+| `keyHolds`         | `key_holds_graph`, `redis_type.rs:577` (moved there by #3819) |
 | `Flusher`, `start`, `stopped` | `start_flusher_thread` `:950`, `shutdown_flusher_thread` `:1003` |
-| `iter`             | one iteration of `flusher_loop` `:1038` after the batch is collected |
+| `iter`             | one iteration of `flusher_loop` `:1024` after the batch is collected |
 | `setReplica`       | `set_is_replica` `:945` |
 -/
 namespace RedisLayer.Telemetry

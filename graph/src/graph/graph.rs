@@ -1067,11 +1067,26 @@ impl Graph {
         }
     }
 
+    /// Everything a version does once, after its last mutation and before it is
+    /// published. Called once at MVCC commit; add new end-of-version cleanups
+    /// here rather than at the call site.
+    pub fn finish_version(&mut self) {
+        self.trim_attr_stores();
+        self.end_id_quarantine();
+    }
+
     /// Reclaim attribute-arena growth slop on blocks touched by this version.
-    /// Called once at MVCC commit.
-    pub fn trim_attr_stores(&mut self) {
+    fn trim_attr_stores(&mut self) {
         self.node_attrs.trim();
         self.relationship_attrs.trim();
+    }
+
+    /// The query that owned this version is done: ids it freed may be handed out
+    /// again by the next one, and the set that held them back is not carried
+    /// into a published version. Called once at MVCC commit.
+    fn end_id_quarantine(&mut self) {
+        self.node_ids.end_quarantine();
+        self.relationship_ids.end_quarantine();
     }
 
     #[must_use]
@@ -1589,6 +1604,17 @@ impl Graph {
             .open_batch()
             .map_err(NodeOpError::relationship)?;
         Ok(())
+    }
+
+    /// Test stand-in for one whole query starting: open its batch and let
+    /// what an earlier query freed be reissued, as `MvccGraph` does when it
+    /// publishes. Not folded into [`Self::open_id_batches`]: that also runs
+    /// mid-query (via [`Self::roll_id_batches`]), where ending the quarantine
+    /// would let the same query reuse an id it freed.
+    #[cfg(test)]
+    fn begin_query_ids(&mut self) {
+        self.open_id_batches().expect("a consistent space");
+        self.end_id_quarantine();
     }
 
     /// Close the open batch and begin the next one where it left the boundary.
@@ -4377,10 +4403,11 @@ impl Graph {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<impl Iterator<Item = (NodeId, f64)> + use<>, String> {
-        // Like C, refuse to answer from a half-built index (#3382).
+        // Like C, refuse to answer from a half-built index (#3382). C reports
+        // its generic "Invalid arguments for procedure"; this names the cause.
         if !self.node_indexer.is_operational(label) {
-            return Err(String::from(
-                "Invalid arguments for procedure 'db.idx.vector.queryNodes'",
+            return Err(format!(
+                "The vector index on '{label}' is under construction"
             ));
         }
         let attr = Arc::new(field.to_string());
@@ -4443,10 +4470,11 @@ impl Graph {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId, f64)> + use<>, String> {
-        // Like C, refuse to answer from a half-built index (#3382).
+        // Like C, refuse to answer from a half-built index (#3382). C reports
+        // its generic "Invalid arguments for procedure"; this names the cause.
         if !self.edge_indexer.is_operational(label) {
-            return Err(String::from(
-                "Invalid arguments for procedure 'db.idx.vector.queryRelationships'",
+            return Err(format!(
+                "The vector index on '{label}' is under construction"
             ));
         }
         let attr = Arc::new(field.to_string());
@@ -5544,7 +5572,7 @@ mod reservation_tests {
     impl Query {
         /// Opening a query opens the graph's batch, exactly as `Commit` does.
         fn new(g: &mut Graph) -> Self {
-            g.open_id_batches().expect("a consistent space");
+            g.begin_query_ids();
             Self {
                 created: RoaringTreemap::new(),
                 cancelled: RoaringTreemap::new(),
@@ -5777,6 +5805,7 @@ mod reservation_tests {
         // One in the bin, two live, so three ids handed out.
         // A fresh batch, so nothing is outstanding: the first one committed.
         g.open_id_batches().expect("a consistent space");
+        g.end_id_quarantine();
         let ids = g
             .relationship_id_space()
             .reserve(2, &RoaringTreemap::new())

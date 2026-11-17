@@ -159,7 +159,7 @@ theorem insertSorted_length (f : FP) (l : List FP) : (insertSorted f l).length =
   | cons y t ih => simp only [insertSorted]; split <;> simp [ih]
 
 theorem getLast!_mem {l : List FP} (h : l ≠ []) : l.getLast! ∈ l := by
-  rw [List.getLast!_eq_getLast?_getD, List.getLast?_eq_getLast h]
+  rw [List.getLast!_eq_getLast?_getD, List.getLast?_eq_some_getLast h]
   exact List.getLast_mem h
 
 /-- Kept paths are old ones or the new one. -/
@@ -230,7 +230,7 @@ theorem recordB_bound (res : List FP) (f : FP) (k : Nat) (b : Option Nat) :
 theorem recordB_length (res : List FP) (f : FP) (k : Nat) (b : Option Nat) (hk : 2 ≤ k)
     (h : res.length ≤ k) : (recordB res f k b).1.length ≤ k := by
   unfold recordB
-  rw [if_neg (by omega), if_neg (by omega)]
+  rw [ite_eq_right (by omega), ite_eq_right (by omega)]
   split
   · split
     · dsimp only; rw [insertSorted_length, List.length_dropLast]; omega

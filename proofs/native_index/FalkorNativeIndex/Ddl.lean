@@ -134,7 +134,7 @@ theorem edgeLoop_all (budget : Nat) (index : Nat → EncodedTuples → EncodedTu
       subst hes
       simp [edgeLoop, hr, h1, hidx]
     · have := ih (read + 1) (index eid out) (by omega)
-      simp only [edgeLoop, hr, h1, if_true, if_false]
+      simp only [edgeLoop, hr, h1, ite_true, ite_false]
       refine ⟨this.1, ?_⟩
       rw [this.2, hidx]; simp [List.append_assoc]
 
@@ -216,7 +216,7 @@ theorem entry_setEntry (x : FalkorDbIndex) (e e' : EntityType) (k : IndexKey) (e
   unfold FalkorDbIndex.setEntry FalkorDbIndex.columnsMut FalkorDbIndex.entry
   rw [columns_setColumns]
   by_cases h : e = e'
-  · subst h; simp only [if_true, true_and, hmGet_update]
+  · subst h; simp only [ite_true, true_and, hmGet_update]
     by_cases hk : k = (l', a')
     · subst hk; simp
     · simp [hk]
@@ -267,16 +267,16 @@ theorem buildInOneBatch_entry (g : G) (hf : g.Fits) (e : EntityType) (label attr
   show (g.idx.createBuilding e label attr |>.setEntry e (label, attr) _).entry e' l a = _
   rw [entry_setEntry]
   by_cases hk : e = e' ∧ (label, attr) = (l, a)
-  · rw [if_pos hk, if_pos hk]
+  · rw [ite_eq_left hk, ite_eq_left hk]
     have hh : (g.idx.createBuilding e label attr).entry e label attr =
         some ⟨.numeric NumericIndex.new, .building (BuildCursor.new e)⟩ := entry_createBuilding _ _ _ _
     simp only [hh, Option.map_some]
     congr 1
     simp only [IndexColumn.addEncoded, NumericIndex.addEncoded, EncodedTuples.sortDedup, sortDedup_idem,
-      NumericIndex.new, tIsEmpty, List.isEmpty_nil, if_true, tFromSorted, NumericIndex.fromEntries]
-  · rw [if_neg hk, if_neg hk]
+      NumericIndex.new, tIsEmpty, List.isEmpty_nil, ite_true, tFromSorted, NumericIndex.fromEntries]
+  · rw [ite_eq_right hk, ite_eq_right hk]
     unfold FalkorDbIndex.createBuilding
-    rw [entry_insertColumn, if_neg hk]
+    rw [entry_insertColumn, ite_eq_right hk]
 
 theorem createIndex_nonrange (g : G) (t : FalkorDbIndex.IndexType) (h : t ≠ .range) (e l attrs) :
     createIndex g t e l attrs = g := by simp [createIndex, h]

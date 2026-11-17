@@ -111,7 +111,7 @@ theorem parse_ok_iff (tmax : Int) (args : List Bytes) :
     · simp at h
     · exact ⟨by omega, by omega, scan_ok_grammar tmax _ _ _ h⟩
   · rintro ⟨h1, h2, g⟩
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     exact grammar_scan_ok tmax g {}
 
 /-! ## The documented rendering and its meaning -/
@@ -186,7 +186,7 @@ theorem parse_documented (tmax : Int) (cmd key q : Bytes) (fs : List Flag)
     (hok : ∀ x ∈ fs, x.ok tmax) (hlen : (renderAll fs).length ≤ 5) :
     parseQueryFlags tmax (cmd :: key :: q :: renderAll fs) = .ok (specFlags fs {}) := by
   unfold parseQueryFlags maxArgs
-  rw [if_neg (by simp; omega)]
+  rw [ite_eq_right (by simp; omega)]
   exact scan_documented tmax fs hok {}
 
 /-! ## #3009: the pre-`557f18868` divergences, now agreement

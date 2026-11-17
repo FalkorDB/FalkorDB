@@ -37,7 +37,7 @@ use graph::{
 };
 use orx_tree::{Bfs, Collection, NodeRef};
 use parking_lot::RwLock;
-use std::{os::raw::c_char, sync::Arc};
+use std::{collections::HashSet, os::raw::c_char, sync::Arc};
 use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw};
 
 #[inline]
@@ -154,12 +154,18 @@ fn record_mut(
         raw::reply_with_string_buffer(ctx.ctx, node.as_ptr().cast::<c_char>(), node.len());
         let vars = plan.node(idx).get_variables();
         raw::reply_with_array(ctx.ctx, vars.len() as _);
+        // The display form keeps unnamed variables distinct (`as_str` is `?`
+        // for all of them); a user may still backquote an unnamed entity's
+        // display name, so a repeated label gets the variable's id appended
+        // and a recording's bindings never share a key.
+        let mut labels = HashSet::new();
         for var in vars {
-            raw::reply_with_string_buffer(
-                ctx.ctx,
-                var.as_str().as_ptr().cast::<c_char>(),
-                var.as_str().len(),
-            );
+            let mut label = var.to_string();
+            if !labels.insert(label.clone()) {
+                label = format!("{label}#{}", var.id);
+                labels.insert(label.clone());
+            }
+            raw::reply_with_string_buffer(ctx.ctx, label.as_ptr().cast::<c_char>(), label.len());
         }
     }
     Ok(ValkeyValue::NoReply)

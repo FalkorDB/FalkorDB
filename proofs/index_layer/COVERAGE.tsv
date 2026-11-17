@@ -50,7 +50,7 @@ graph/src/index/mod.rs	bump_id	1053	PROVEN	Slots.bump; bump_total, bump_fresh, o
 graph/src/index/mod.rs	clone_for_update	1072	PROVEN	Meta.Idx.cloneForUpdate_eq
 graph/src/index/mod.rs	has_rs_index	1092	PROVEN	Meta.Idx.hasRsIndex_spec
 graph/src/index/mod.rs	rs_ptr	1099	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
-graph/src/index/mod.rs	create_rs_index	1105	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
+graph/src/index/mod.rs	create_rs_index	1105	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err_cleanLabel (FFI create = fresh handle; #3274 counterexample createRsIndex_lang_err_fails: label NUL now reported before unsupported language); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
 graph/src/index/mod.rs	register_fields	1185	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text
 graph/src/index/text_index_options.rs	phonetic_enabled	48	PROVEN	Meta.TextOpts.phoneticEnabled: phoneticEnabled_off_spellings, phoneticEnabled_code, phoneticEnabled_iff_ne_no; fixed3514_phonetic_no_is_off (#3514)
 graph/src/index/mod.rs	value_to_numeric	1361	PROVEN	valueToNumeric; equal_exact, numRange_exact

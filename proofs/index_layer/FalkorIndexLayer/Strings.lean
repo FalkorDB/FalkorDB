@@ -71,10 +71,10 @@ theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
   · simp at hb
   · -- only an upper bound
     have eb : tagEnc b = b := tagEnc_id b (hhi b rfl)
-    simp only [indexHit, buildQ, Option.map, isStrVal, strBound, Bool.or_true, Bool.true_or,
+    simp only [indexHit, buildQ, Option.map, isStrVal, strBound, Bool.or_true,
       ite_true, buildStrRange, hf]
     cases hpk : p k with
-    | none => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
+    | none => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf]
     | some v =>
       cases hp v hpk with
       | int i => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
@@ -82,13 +82,13 @@ theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
       | str t ht htb =>
         have et : tagEnc t = t := tagEnc_id t (hps t hpk)
         have ht' : (t = []) = False := by simp [ht]
-        cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange, hf, et, eb, ht', inLex, beq_bytes]
+        cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, setRange, hf, et, eb, ht', inLex, beq_bytes]
   · -- only a lower bound
     have ea : tagEnc a = a := tagEnc_id a (hlo a rfl)
-    simp only [indexHit, buildQ, Option.map, isStrVal, strBound, Bool.or_true, Bool.true_or,
+    simp only [indexHit, buildQ, Option.map, isStrVal, strBound, Bool.true_or,
       ite_true, buildStrRange, hf]
     cases hpk : p k with
-    | none => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
+    | none => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf]
     | some v =>
       cases hp v hpk with
       | int i => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
@@ -96,10 +96,10 @@ theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
       | str t ht htb =>
         have et : tagEnc t = t := tagEnc_id t (hps t hpk)
         have ht' : (t = []) = False := by simp [ht]
-        cases imn <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange, hf, et, ea, ht', inLex, beq_bytes]
+        cases imn <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, setRange, hf, et, ea, ht', inLex, beq_bytes]
   · have ea : tagEnc a = a := tagEnc_id a (hlo a rfl)
     have eb : tagEnc b = b := tagEnc_id b (hhi b rfl)
-    simp only [indexHit, buildQ, Option.map, isStrVal, strBound, Bool.or_true, Bool.true_or,
+    simp only [indexHit, buildQ, Option.map, isStrVal, strBound, Bool.or_true,
       ite_true, buildStrRange, hf]
     by_cases hab : a = b
     · subst hab
@@ -123,7 +123,7 @@ theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
       obtain ⟨rfl, rfl⟩ := Classical.not_not.1 hboth
       simp only [ite_true, Bool.and_self, Bool.not_true, Bool.false_eq_true, ite_false]
       cases hpk : p k with
-      | none => simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
+      | none => simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf]
       | some v =>
         cases hp v hpk with
         | int i => simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
@@ -142,7 +142,7 @@ theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
             · simp [lexLt_asymm t a h, h, hta, Ne.symm hta]
     · simp only [hab, ite_false]
       cases hpk : p k with
-      | none => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
+      | none => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf]
       | some v =>
         cases hp v hpk with
         | int i => cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
@@ -150,6 +150,6 @@ theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
         | str t ht htb =>
           have et : tagEnc t = t := tagEnc_id t (hps t hpk)
           have ht' : (t = []) = False := by simp [ht]
-          cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange, hf, et, ea, eb, ht', inLex, beq_bytes]
+          cases imn <;> cases imx <;> simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, setRange, hf, et, ea, eb, ht', inLex, beq_bytes]
 
 end IndexLayer

@@ -94,7 +94,7 @@ theorem bitlenAux_lt : ∀ (fuel n : Nat), n < fuel → n < 2 ^ bitlenAux fuel n
     unfold bitlenAux
     by_cases hn : n = 0
     · simp [hn]
-    · simp only [hn, if_false]
+    · simp only [hn, ite_false]
       have ih := bitlenAux_lt fuel (n / 2) (by omega)
       rw [Nat.pow_add, Nat.pow_one]
       omega

@@ -49,27 +49,27 @@ theorem fmtQuant_spec : fmtQuant 0 = "all" ∧ fmtQuant 1 = "any" ∧ fmtQuant 2
     fmtQuant 3 = "single" := ⟨rfl, rfl, rfl, rfl⟩
 
 /-- `impl Display for QueryNode` (ast.rs:481-491). -/
-def fmtNode (n : QNode Nat) : String :=
+def fmtNode (n : QNode Alias) : String :=
   if n.labels.isEmpty then "(" ++ toString n.alias ++ ")"
   else "(" ++ toString n.alias ++ ":" ++ joinSep ":" (n.labels.map toString) ++ ")"
-theorem fmtNode_nolabel (n : QNode Nat) (h : n.labels = []) : fmtNode n = "(" ++ toString n.alias ++ ")" := by
+theorem fmtNode_nolabel (n : QNode Alias) (h : n.labels = []) : fmtNode n = "(" ++ toString n.alias ++ ")" := by
   simp [fmtNode, h]
 
 /-- `impl Display for QueryRelationship` (ast.rs:542-566). -/
-def fmtRel (r : QRel Nat) : String :=
+def fmtRel (r : QRel Alias) : String :=
   let dir := if r.bidir then "" else ">"
   if r.types.isEmpty then
     "(" ++ toString r.src.alias ++ ")-[" ++ toString r.alias ++ "]-" ++ dir ++ "(" ++ toString r.dst.alias ++ ")"
   else
     "(" ++ toString r.src.alias ++ ")-[" ++ toString r.alias ++ ":" ++ joinSep "|" (r.types.map toString) ++
       "]-" ++ dir ++ "(" ++ toString r.dst.alias ++ ")"
-theorem fmtRel_untyped_undirected (r : QRel Nat) (ht : r.types = []) (hb : r.bidir = true) :
+theorem fmtRel_untyped_undirected (r : QRel Alias) (ht : r.types = []) (hb : r.bidir = true) :
     fmtRel r = "(" ++ toString r.src.alias ++ ")-[" ++ toString r.alias ++ "]-(" ++ toString r.dst.alias ++ ")" := by
   simp [fmtRel, ht, hb, String.append_assoc]
 
 /-- `impl Display for QueryGraph` (ast.rs:640-660): every node, relationship
 and path variable followed by `", "`. -/
-def fmtGraph (g : QG Nat) : String :=
+def fmtGraph (g : QG Alias) : String :=
   String.join (g.nodes.map (fun n => fmtNode n ++ ", ")) ++
   String.join (g.rels.map (fun r => fmtRel r ++ ", ")) ++
   String.join (g.paths.map (fun p => toString p.var ++ ", "))
@@ -102,7 +102,7 @@ theorem fmtIR_return (fe : ET → String) (p : Proj) (w : Bool) :
 /-- `add_pattern_node` (cypher.rs:1359-1370): a new alias is added; a
 repeated one is merged into the existing node in MATCH and ignored in
 CREATE / MERGE. -/
-theorem addPatNode_spec (cl : CK) (g : QG Nat) (seen : List Nat) (n : QNode Nat) :
+theorem addPatNode_spec (cl : CK) (g : QG Alias) (seen : List Alias) (n : QNode Alias) :
     (n.alias ∉ seen → addPatNode cl (g, seen) n = ((g.addNode n).2, seen ++ [n.alias])) ∧
     (n.alias ∈ seen → cl = .match_ → addPatNode cl (g, seen) n = (g.mergeNode n, seen)) ∧
     (n.alias ∈ seen → cl ≠ .match_ → addPatNode cl (g, seen) n = (g, seen)) := by

@@ -8,8 +8,9 @@ environment, never through a shell command line.
   resolve   Who asked, and may the bot act? Replies and stops when not. Finds the
             latest successful proof-impact run for the PR's current head.
   apply     Reads that run's `proof-gate` artifact (downloaded by the workflow into
-            GATE_DIR), checks it again, and only when its gate status is `pass`
-            commits the patch on top of the PR head and pushes it as a plain
+            GATE_DIR), checks it again, and only when both gates passed (status
+            `pass`, or `held` for review: asking to apply is that review) commits
+            the patch on top of the PR head and pushes it as a plain
             fast-forward. Never forces; a moved head changes nothing.
 
 Both talk to GitHub through the `gh` CLI (GH_TOKEN). Tests put a fake `gh` first on PATH.
@@ -35,6 +36,8 @@ BOT_EMAIL = "falkordb-proof-bot@users.noreply.github.com"
 TRAILER = "Proof-Bot-Run"
 LABEL = "proofs:apply"
 COMMAND = re.compile(r"\A[ \t]*/proofs[ \t]+apply[ \t]*\Z")
+# The first line of a gate's gates.md when both gates passed (proof_gate.sh).
+GATES_PASSED = re.compile(r"\AGates: `lean_ci\.sh` \*\*pass\*\*; `coverage\.sh --unmatched` \*\*pass\*\*")
 APP_NOTE = (
     "CI does not run on this commit: it was pushed with `GITHUB_TOKEN`, which GitHub never "
     "lets start workflows. Push an empty commit (`git commit --allow-empty`) or close and reopen the "
@@ -219,10 +222,15 @@ def apply():
     # The artifact must be about the head we were asked about.
     if (read("head_sha") or "").strip() != sha:
         refuse(repo, pr, f"Not applied: the [run]({run_url})'s artifact is not for `{sha[:9]}`.")
-    if status != "pass":
-        reason = (read("gates.md") or "").strip()[:2000]
-        refuse(repo, pr, f"Not applied: the gate result is **{status}**, and a patch that is not "
-                         f"`pass` is never committed by the bot. See the [run]({run_url}).\n\n{reason}")
+    gates = (read("gates.md") or "").strip()
+    # `held` means "a theorem statement or a coverage row changed: a person should look";
+    # someone with write access asking to apply is that look. What is never committed is
+    # a patch whose proofs did not build or whose coverage gate failed (an UNBUILT held
+    # patch skipped the build, so its gates.md does not say both passed).
+    if not (status in ("pass", "held") and GATES_PASSED.match(gates)):
+        refuse(repo, pr, f"Not applied: the proofs in this patch are not verified (gate result "
+                         f"**{status}**), so it is not committed. Why, from the [run]({run_url}):"
+                         f"\n\n{gates[:2000]}")
     patch = os.path.join(gate, "proofs.patch")
     if not os.path.exists(patch) or os.path.getsize(patch) == 0:
         refuse(repo, pr, f"Nothing to apply: the [run]({run_url}) needed no proof change.")
@@ -259,7 +267,8 @@ def apply():
 
     msg = (f"proofs: update the Lean proofs for this change (proof-impact bot)\n\n"
            f"Verified patch of the proof-impact run {run_url}\n"
-           f"at {sha}, applied on request of {actor}.\n\n"
+           f"at {sha}, applied on request of {actor}"
+           f"{' (held items reviewed)' if status == 'held' else ''}.\n\n"
            f"{TRAILER}: {run_url}\n")
     git(work, "-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}", "commit", "-q", "-m", msg)
     new = git(work, "rev-parse", "HEAD").stdout.strip()
