@@ -82,6 +82,7 @@ Several passes collapse an edge, a bound edge or a variable-length path when nob
 |---|---|---|
 | `push_cp_left`, `push_cp_right`, `push_extend`, `push_sort_perm` | Push-down is exact below CP, per-row operators and Sort, for conjuncts that do not error (`NoErr`) | `Basic.lean` |
 | `merge_child_first_row` | Merging stacked filters is exact when the inner conjunct runs first | `Basic.lean` |
+| `merge_rust_same` | #3006's merge (`mergeRust`, child first) gives the stacked outcome when the inner verdict is boolean | `Basic.lean` |
 | `constEval_sound`, `constTrue_filter`, `andLoop_drop_constTrue` | The plan-time constant verdict is the runtime verdict on every row, so removing a constant-true filter or conjunct is exact | `ConstEval.lean` |
 | `flat_passes` | Rebuilding a filter with `and_of` gives the same verdict, errors included | `AndOf.lean` |
 | `refsNew_complete`, `refsNew_sound` | The #2390 "is this variable read?" oracle is exact per operator | `References.lean` |
