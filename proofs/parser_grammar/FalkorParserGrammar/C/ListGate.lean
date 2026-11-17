@@ -516,11 +516,11 @@ theorem listLitRest_lit (o : Oracle) (hs : o.Safe) (F : Nat) (forb : Bool) (save
         pure (leaf .list, !rb) : P (ET × Bool)) s0 = listLitLit saved s0 := by
     simp only [run_bind, run_setS, peek]
     by_cases hl : saved.cur = .lparen
-    · simp only [hl, if_true]
+    · simp only [hl, ite_true]
       rcases attempt_none_or_fuel (np none saved) (hf.2 hl) with h | h
       · rw [h]; exact .inr rfl
       · rw [h]; exact .inl rfl
-    · simp only [hl, if_false, run_pure]; exact .inr rfl
+    · simp only [hl, ite_false, run_pure]; exact .inr rfl
   unfold listLitRest
   simp only [run_bind, run_setS, tryIdent]
   cases hv : identOf saved.cur with
@@ -528,14 +528,14 @@ theorem listLitRest_lit (o : Oracle) (hs : o.Safe) (F : Nat) (forb : Bool) (save
   | some v =>
     simp only [opt, peek]
     by_cases he : saved.adv.cur = .eq
-    · simp only [he, if_true]
+    · simp only [he, ite_true]
       by_cases hl : saved.adv.adv.cur = .lparen
       · simp only [hl]
         rcases attempt_none_or_fuel (np (some v) saved.adv.adv) (hf.1 v hv he hl) with h | h
         · rw [h]; exact alt3
         · rw [h]; exact .inl rfl
       · cases hc : saved.adv.adv.cur <;> simp only [run_pure] <;> first | exact alt3 | exact absurd hc hl
-    · simp only [he, if_false]
+    · simp only [he, ite_false]
       cases hc : saved.adv.cur <;> simp only [run_pure] <;> exact alt3
 
 /-- **#3104 does not change the parse** — given that the expression and map
@@ -576,8 +576,8 @@ theorem listLitP_eq_ungated (o : Oracle) (hs : o.Safe) (hb : o.Bal) (F : Nat) (h
     | some v =>
       simp only [optK, opt] at hnf ⊢
       by_cases hin : s2.cur = .kw .in_
-      · simp only [hin, if_true]
-      · simp only [hin, if_false] at hnf ⊢
+      · simp only [hin, ite_true]
+      · simp only [hin, ite_false] at hnf ⊢
         exact hrest s2 hnf
   | _ => rfl
 

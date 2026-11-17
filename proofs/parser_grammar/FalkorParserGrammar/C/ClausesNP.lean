@@ -225,7 +225,7 @@ theorem np_mut (F : Nat) : ∀ n, MutNP o F n
       generalize hc : s.cur = c at hg ⊢
       cases c <;> simp only [isWriteKw, Bool.false_eq_true] at hg
       rename_i k
-      cases k <;> simp only [isWriteKw, Bool.false_eq_true] at hg <;> dsimp only <;>
+      cases k <;> simp only [Bool.false_eq_true] at hg <;> dsimp only <;>
         (refine NP.run ?_ s; np_go)
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, hwp, ?_, ?_, ?_⟩
     · unfold queryP; np_go

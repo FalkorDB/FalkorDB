@@ -90,7 +90,7 @@ theorem upsert_twice (cs : List Constraint) (ctr : Nat) (ct : CType) (et : EType
       obtain ⟨hi, h1, h2⟩ := h
       refine ⟨by simpa using hi, ?_, ?_⟩
       · simp only [List.getElem_modify, ite_true]; simpa [sameKey] using h1
-      · intro j hj; simp only [List.getElem_modify]; rw [if_neg (Nat.ne_of_gt hj)]
+      · intro j hj; simp only [List.getElem_modify]; rw [ite_eq_right (Nat.ne_of_gt hj)]
         exact h2 j hj
     simp only [upsert, h]; rw [this]; simp
   | none =>
@@ -131,7 +131,7 @@ theorem lookup_compute (val : Constraint → Bool) :
     simp only [List.map_cons, List.nodup_cons] at hn
     simp only [computePending, List.filter_cons] at *
     rcases List.mem_cons.1 hm with rfl | hm'
-    · simp [hu, List.lookup]
+    · simp [hu]
     · have hne : d.id ≠ c.id := fun h => hn.1 (h ▸ List.mem_map_of_mem hm')
       have ih := lookup_compute val cs c hn.2 hm' hu
       have hb : (c.id == d.id) = false := by simp [Ne.symm hne]

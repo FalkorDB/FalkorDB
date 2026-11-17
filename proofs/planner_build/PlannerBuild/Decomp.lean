@@ -229,7 +229,7 @@ theorem collect_noPat : ∀ (st : CSt) ce e, hasPatternExpr e = false → collec
     cases d <;> simp only [collect, ih] <;> simp_all [hasPatternExpr]
     case not =>
       cases h' : notPat cs with
-      | none => simp [ih]
+      | none => simp
       | some g =>
         match cs, h' with
         | .node (.pat g') _ :: _, _ => simp [hasPatternExprL, hasPatternExpr] at hL
@@ -335,7 +335,7 @@ theorem collect_value : ∀ (st : CSt) (e : Ex), shapeOK e = true →
         | .node (.pat g') _, hp =>
           simp [notPat] at hp; subst hp
           refine ⟨?_, rfl⟩
-          simp [tv, Ex.v, lk_mint ι st _ hg, tvL]
+          simp [tv, Ex.v, lk_mint ι st _ hg]
       | none =>
         simp only [collect, hp] at hg ⊢
         simp only [collectL] at hg ⊢

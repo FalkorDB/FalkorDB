@@ -49,10 +49,10 @@ theorem dfs_sound {g : Graph} {b : Bool} {minH : Nat} :
     obtain ⟨⟨e, n⟩, hp, hm⟩ := h
     by_cases hu : e ∈ used
     · simp [hu] at hm
-    · simp only [hu, if_false, List.mem_append] at hm
+    · simp only [hu, ite_false, List.mem_append] at hm
       rcases hm with hm | hm
       · by_cases hmin : minH ≤ depth + 1
-        · simp only [hmin, if_true, List.mem_singleton, Prod.mk.injEq] at hm
+        · simp only [hmin, ite_true, List.mem_singleton, Prod.mk.injEq] at hm
           obtain ⟨rfl, rfl⟩ := hm
           refine ⟨[e], rfl, by simp, Walk.cons hp (Walk.nil _), ?_, by simp, by simpa using hmin,
             by simp⟩
@@ -84,7 +84,7 @@ theorem dfs_complete {g : Graph} {b : Bool} {minH : Nat} :
         simp only [dfs, List.mem_flatMap]
         refine ⟨(e, n), hp, ?_⟩
         have hu : e ∉ used := hfresh e (List.mem_cons_self ..)
-        simp only [hu, if_false, List.mem_append]
+        simp only [hu, ite_false, List.mem_append]
         cases es with
         | nil =>
           cases hw'
@@ -115,7 +115,7 @@ theorem varLen_sound {g : Graph} {b : Bool} {start minH maxH : Nat} {es : List N
   simp only [varLen, List.mem_append] at h
   rcases h with h | h
   · by_cases h0 : minH = 0
-    · rw [if_pos h0] at h
+    · rw [ite_eq_left h0] at h
       simp only [List.mem_singleton, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
       exact ⟨Walk.nil _, by simp, by simp [h0], by simp⟩

@@ -108,7 +108,7 @@ theorem toEC_exact' (vs : List (V F)) :
         obtain ⟨x, hx', hv⟩ := this
         simp [hx', hv]
     | none =>
-      simp only [ne_eq, reduceCtorEq, not_false_eq_true, ite_true, hf]
+      simp only [ne_eq, reduceCtorEq, not_false_eq_true, ite_true]
       refine ⟨rfl, fun i hlt => ?_⟩
       simp [toEC, EC.get, List.getElem?_eq_getElem hlt]
 

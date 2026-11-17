@@ -13,16 +13,9 @@ graph/src/graph/graphblas/serialization.rs	decode	252	NOT COVERED	trait declarat
 graph/src/graph/graphblas/serialization.rs	decode_with_count	264	NOT COVERED	trait default (unimplemented!)
 graph/src/graph/graphblas/serialization.rs	from_u64	143	MODELLED	payload directory state tags; exercised via live roundtrip
 graph/src/graph/graphblas/serialization.rs	encode	276	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
-graph/src/graph/graphblas/serialization.rs	encode_with_range	283	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip
+graph/src/graph/graphblas/serialization.rs	encode_with_range	283	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip; #3438's select/advance_to/take seek = skip/take: PendingCommit SaveLayout.encRoarPR_eq (imports graph_persist)
 graph/src/graph/graphblas/serialization.rs	decode	304	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
 graph/src/graph/graphblas/serialization.rs	decode_with_count	325	NOT COVERED	(#3588): body rewritten; not modelled yet
-graph/src/graph/graphblas/serialization.rs	remaining	64	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/serialization.rs	decode_capacity	80	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/serialization.rs	check_count_fits	171	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/serialization.rs	scope	222	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/serialization.rs	current	228	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/serialization.rs	max_dim	234	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/serialization.rs	drop	245	NOT COVERED	(#3588): not modelled yet
 src/redis_type.rs	io_cache_size	71	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
 src/redis_type.rs	io_key_name	86	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
 src/redis_type.rs	graph_rdb_load	99	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1)
@@ -61,10 +54,10 @@ graph/src/graph/mvcc_graph.rs	publish	354	NOT COVERED	(the compare-and-swap and 
 graph/src/graph/mvcc_graph.rs	drop	370	NOT COVERED	cancel indexing
 src/redis_type.rs	wrong_type_compat	906	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
 graph/src/graph/graph.rs	rebuild_derived_matrices	1078	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
-graph/src/graph/graph.rs	create_constraint	4626	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
-graph/src/graph/graph.rs	validate_mandatory_constraint	4801	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4840	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4895	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+graph/src/graph/graph.rs	create_constraint	4652	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4827	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4866	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4921	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
 src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip
@@ -82,9 +75,16 @@ src/serializers/decoder/mod.rs	load_graph_from_reader	455	PROVEN	Persist.loadFro
 graph/src/runtime/runtime.rs	publish	585	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
 graph/src/runtime/runtime.rs	QueryGraph::from	120	NOT COVERED	enum constructor
 graph/src/runtime/runtime.rs	QueryGraph::from	126	NOT COVERED	enum constructor
-src/serializers/decoder/validate.rs	check_header	29	NOT COVERED	(#3588): not modelled yet
-src/serializers/decoder/validate.rs	check_directory	57	NOT COVERED	(#3588): not modelled yet
-src/serializers/decoder/validate.rs	label_matrix_count	79	NOT COVERED	(#3588): not modelled yet
-src/serializers/decoder/validate.rs	tensor_count	97	NOT COVERED	(#3588): not modelled yet
-src/serializers/decoder/validate.rs	check_deleted	107	NOT COVERED	(#3588): not modelled yet
-src/serializers/decoder/validate.rs	check_assembled	122	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/serialization.rs	remaining	64	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/serialization.rs	decode_capacity	80	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/serialization.rs	check_count_fits	171	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/serialization.rs	scope	222	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/serialization.rs	current	228	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/serialization.rs	max_dim	234	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/serialization.rs	drop	245	NOT COVERED	(#3588): not modelled yet
+src/serializers/decoder/validate.rs	check_header	26	NOT COVERED	(#3588): not modelled yet
+src/serializers/decoder/validate.rs	check_directory	50	NOT COVERED	(#3588): not modelled yet
+src/serializers/decoder/validate.rs	label_matrix_count	72	NOT COVERED	(#3588): not modelled yet
+src/serializers/decoder/validate.rs	tensor_count	90	NOT COVERED	(#3588): not modelled yet
+src/serializers/decoder/validate.rs	check_deleted	100	NOT COVERED	(#3588): not modelled yet
+src/serializers/decoder/validate.rs	check_assembled	115	NOT COVERED	(#3588): not modelled yet

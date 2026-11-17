@@ -466,8 +466,8 @@ theorem sortProj_spec (ps : List (Var × Var)) :
     (sortProj ps).Perm ps ∧ (sortProj ps).Pairwise (fun a b => a.1.name.getD "" ≤ b.1.name.getD "") := by
   refine ⟨List.mergeSort_perm _ _, ?_⟩
   have := List.pairwise_mergeSort (le := fun a b : Var × Var => decide (a.1.name.getD "" ≤ b.1.name.getD ""))
-    (fun a b c h1 h2 => by simp at *; exact String.le_trans h1 h2)
-    (fun a b => by simp; exact String.le_total _ _) ps
+    (fun a b c h1 h2 => by simp at *; exact Std.le_trans h1 h2)
+    (fun a b => by simp; exact Std.le_total) ps
   exact this.imp (fun h => by simpa using h)
 
 /-! ## `bind_graph_create` -/
@@ -528,12 +528,12 @@ theorem createCheck_fresh (env : Env) (nodes rels endpoints : List Alias) (h : �
 /-- `MATCH (a) CREATE (a:L)`: a bare node reusing a bound name is rejected. -/
 theorem createCheck_bare_bound (env : Env) (a : Name) (hb : env.has a = true) :
     createCheck env [.named a] [] [] = .error s!"The bound variable '{a}' can't be redeclared in a CREATE clause" := by
-  simp [createCheck, createStepN, createStepR, hb]
+  simp [createCheck, createStepN, hb]
 
 /-- …but as a relationship endpoint it is a reference (`CREATE (a)-[:R]->(b)`). -/
 theorem createCheck_endpoint (env : Env) (a : Name) :
     createCheck env [.named a] [] [.named a] = .ok () := by
-  simp [createCheck, createStepN, createStepR]
+  simp [createCheck, createStepN]
 
 /-- An unnamed entity is never a redeclaration (#3303): `MATCH (a) CREATE ()` passes. -/
 theorem createCheck_anon (env : Env) (k : Nat) (eps : List Alias) :

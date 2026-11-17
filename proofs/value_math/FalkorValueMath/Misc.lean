@@ -456,7 +456,7 @@ theorem readVec_vecBytes (v : List F) (hl : v.length < 2 ^ 32) : readVec co (vec
     simp [List.take_left' (le4_length _)]
   have hd : (le4 v.length ++ (v.map (fun x => le4 (co.bits x))).flatten).drop 4 =
       (v.map (fun x => le4 (co.bits x))).flatten := List.drop_left' (le4_length _)
-  rw [if_neg (by omega), ht, hd, fromLe4_le4 _ hl, if_neg (by rw [chunks_length]; omega)]
+  rw [ite_eq_right (by omega), ht, hd, fromLe4_le4 _ hl, ite_eq_right (by rw [chunks_length]; omega)]
   congr 1
   apply List.ext_getElem (by simp)
   intro i h1 h2
@@ -490,7 +490,7 @@ theorem pre3339_decode_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F))
     | str s => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, co.lossy_utf8]
     | list l =>
       simp only [Storable] at hst
-      simp only [encode, List.append_assoc, List.cons_append, List.nil_append]
+      simp only [encode, List.cons_append, List.nil_append]
       simp only [pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
       simp [hN l rest (by simp at hs; omega) hst]
     | point la lo =>
@@ -511,7 +511,7 @@ theorem pre3339_decode_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F))
     | null =>
       simp only [encode, List.cons_append, List.nil_append]
       unfold pre3339_decode
-      simp only [if_pos (show T_NULL = T_NULL from rfl), if_true]
+      simp only [ite_true]
     | map _ => simp [Storable] at hst
     | node _ => simp [Storable] at hst
     | rel _ => simp [Storable] at hst

@@ -258,7 +258,7 @@ theorem nodePathAux_spec : ∀ (n : Nat) (p acc : List Nat), p.length = n → no
   | n + 1, p, acc, h => by
     have hne : p ≠ [] := by intro e; subst e; simp at h
     obtain ⟨q, i, rfl⟩ := List.eq_nil_or_concat p |>.resolve_left hne
-    rw [nodePathAux, dif_neg (by simp)]
+    rw [nodePathAux, dite_eq_right (by simp)]
     rw [nodePathAux_spec n (q.concat i).dropLast _ (by simp at h ⊢; omega)]
     simp
 

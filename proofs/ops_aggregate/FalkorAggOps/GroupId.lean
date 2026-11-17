@@ -50,7 +50,7 @@ theorem gid_append_new (a : List K) (k : K) (h : k ∉ a) : gid (a ++ [k]) k = a
   | cons x xs ih =>
     have hx : x ≠ k := fun e => h (by simp [e])
     have hk : k ∉ xs := fun e => h (by simp [e])
-    simp only [List.cons_append, gid, hx, if_false, List.length_cons]
+    simp only [List.cons_append, gid, hx, ite_false, List.length_cons]
     rw [ih hk]; omega
 
 /-- A new group gets id = the number of groups so far (`next_group_id = groups.len()`). -/
