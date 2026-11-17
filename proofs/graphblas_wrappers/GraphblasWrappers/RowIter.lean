@@ -87,7 +87,7 @@ theorem filter_over_max (maxRow : Nat) :
     intro hs hall
     have ha : a.1 > maxRow := hall a (by simp)
     have hbad : (decide (a.1 ≤ maxRow)) = false := by rw [decide_eq_false_iff_not]; omega
-    simp only [List.filter_cons, hbad, if_false]
+    simp only [List.filter_cons, hbad]
     exact ih (rowSorted_tail hs) (fun e he => hall e (List.mem_cons.mpr (Or.inr he)))
 
 /-- The drive loop over a row-sorted remaining list yields exactly its entries
@@ -108,8 +108,8 @@ theorem drainL_eq_filter :
         simp only [depletedFor, decide_eq_false_iff_not]; omega
       have h2 : (e :: rest).filter (fun e => decide (e.1 ≤ maxRow))
               = e :: rest.filter (fun e => decide (e.1 ≤ maxRow)) := by
-        simp [List.filter_cons, he]
-      rw [drainL, h1, if_neg (by simp), h2, key]
+        simp [he]
+      rw [drainL, h1, ite_eq_right (by simp), h2, key]
     · have h1 : depletedFor (e :: rest) maxRow = true := by
         simp only [depletedFor, decide_eq_true_eq]; omega
       have h2 : (e :: rest).filter (fun e => decide (e.1 ≤ maxRow)) = [] := by
@@ -118,7 +118,7 @@ theorem drainL_eq_filter :
         rcases List.mem_cons.mp hf with h | h
         · subst h; omega
         · have := rowSorted_head_min hs f h; omega
-      rw [drainL, h1, if_pos (by simp), h2]
+      rw [drainL, h1, ite_eq_left (by simp), h2]
 
 /-- `filter` preserves the `rowSorted` shape. -/
 theorem rowSorted_filter (p : Entry → Bool) :
@@ -130,7 +130,7 @@ theorem rowSorted_filter (p : Entry → Bool) :
     intro h
     rw [List.filter_cons]
     by_cases hp : p a
-    · rw [if_pos hp]
+    · rw [ite_eq_left hp]
       have htail := ih (rowSorted_tail h)
       -- prepend a: a.1 ≤ every remaining row
       cases hfl : t.filter p with
@@ -140,7 +140,7 @@ theorem rowSorted_filter (p : Entry → Bool) :
         have hc : c ∈ t.filter p := by rw [hfl]; simp
         have hcmem : c ∈ t := (List.mem_filter.mp hc).1
         exact rowSorted_head_min h c hcmem
-    · rw [if_neg hp]; exact ih (rowSorted_tail h)
+    · rw [ite_eq_right hp]; exact ih (rowSorted_tail h)
 
 /-- **Row iteration is its specification.** For a row-sorted stored-entry list,
 `seek` then drain yields exactly the entries with `minRow ≤ row ≤ maxRow`, in
@@ -154,7 +154,7 @@ theorem drain_seek_eq_spec (entries : List Entry) (minRow maxRow : Nat)
   apply List.filter_congr
   intro e _
   by_cases h1 : minRow ≤ e.1 <;> by_cases h2 : e.1 ≤ maxRow <;>
-    simp [h1, h2, Bool.and_eq_true, decide_eq_true_eq] <;> omega
+    simp [h1, h2] <;> omega
 
 /-- Corollary: **exactly once**. No entry in range is dropped or repeated —
 `drain` is the filtered sublist, so per-entry counts match one-for-one. -/

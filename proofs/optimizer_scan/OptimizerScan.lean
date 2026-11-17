@@ -5,7 +5,7 @@ Targets: `graph/src/planner/optimizer/select_scan_node.rs`, `utilize_index.rs`,
 `utilize_node_by_id.rs`, `reorder_labels.rs`, plus the runtime pieces their rewrites hand
 work to (`Runtime::evaluate_id_filter`, `NodeByIndexScanOp`, `Index::build_query_node`).
 
-Build: `lake build` (Lean 4.35, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
+Build: `lake build` (Lean 4.36, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
 `utilize_sound` and `seek_sound` depend only on `propext`, `Quot.sound`, `Classical.choice`.
 77 theorems, 36 `decide`d examples (counterexamples and sanity checks).
 Coverage per Rust function: `COVERAGE.tsv`. Rust repros: `graph/tests/lean_optimizer_scan.rs`
@@ -225,6 +225,15 @@ RETURN a.v, b.w` on `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` r
 `[1,2],[5,2]` (should be `[1,2]`; the fixed-length `-[:R]->` form is right) on builds 88e92ae25
 and b3582e34a. `ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. Fix: refuse the leaf
 rewrite when the wrapper holds a `Filter`, or salvage it above the traverse with `filters_of`.
+
+## PR #3821 (f71981fa3: equality-pinned endpoint tie-break)
+`score_endpoint` returns `(score, has_equality, filter_runs_late, cardinality)`;
+`collect_filtered_vars` also fills `equality` via the new `collect_equalities` (top-level `AND`
+conjuncts `v.p = <variable-free expr>`, either side). `ScanTree.scoreEndpoint_spec` (re-stated with
+the new flag), `collectEqualities_sub`/`_other`/`_examples`, `filteredVars_equality_sub_all`
+(equality ⊆ all, so `score_equality_filtered`: the flag only breaks ties between filtered
+endpoints), `equality_beats_late` (the comparator key `startKeyLt`). Start choice affects cost only;
+`ScanOrder`'s soundness theorems hold for any start, so they are unchanged.
 -/
 import OptimizerScan.IdSeek
 import OptimizerScan.Index

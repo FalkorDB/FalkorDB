@@ -44,7 +44,7 @@ usage exceeds a positive capacity; capacity `≤ 0` or no usage function disable
 theorem checkMem_spec (cap : Int) (u : Nat) (hu : u < 2 ^ 63) :
     checkMem cap (some u) = true ↔ 0 < cap ∧ cap < u := by
   have h1 : u % 2 ^ 64 = u := Nat.mod_eq_of_lt (by omega)
-  simp only [checkMem, asI64, h1, if_pos hu, Bool.and_eq_true, decide_eq_true_eq]
+  simp only [checkMem, asI64, h1, ite_eq_left hu, Bool.and_eq_true, decide_eq_true_eq]
 
 theorem checkMem_disabled (cap : Int) (usage : Option Nat) (h : cap ≤ 0 ∨ usage = none) :
     checkMem cap usage = false := by

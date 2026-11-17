@@ -44,7 +44,7 @@ def pendingDeg (p : P) (sel : Nat × Nat × Nat → Bool) (types : List Nat) : N
 
 theorem pendingDegRaw_spec (p : P) (sel : Nat × Nat × Nat → Bool) (types : List Nat) (h : types ≠ []) :
     pendingDegRaw p sel types = (types.map (fun t => (grp p t).countP sel)).sum := by
-  unfold pendingDegRaw; rw [if_neg h]
+  unfold pendingDegRaw; rw [ite_eq_right h]
   clear h
   induction types with
   | nil => simp
@@ -103,7 +103,7 @@ theorem deletedDeg_aux (ep : Nat → Option (Nat × Nat)) (ty : Nat → Nat) (ty
       by_cases hall : (rs.all fun r => (ep r).isSome) = true
       · simp only [hall, ite_true]
         by_cases hc : (if useDst = true then t else f) = node ∧ (types = [] ∨ ty r ∈ types)
-        · simp only [hc, ite_true, decide_true]; simp; omega
+        · simp only [hc]; simp; omega
         · simp only [hc, ite_false, decide_false]; simp
       · simp [hall]
 
@@ -118,7 +118,7 @@ theorem deletedDeg_some (p : P) (ep : Nat → Option (Nat × Nat)) (ty : Nat →
     simp only [List.all_eq_true, List.mem_filter]
     intro r ⟨hr, hc⟩
     exact h r hr (by simpa using hc)
-  rw [if_pos this]; simp
+  rw [ite_eq_left this]; simp
 
 /-- **`deletedDeg_none`**: one deleted, committed-side id without committed endpoints = panic. Only reachable
 for an id that is neither created since the last commit nor committed (a stale id). -/
@@ -130,7 +130,7 @@ theorem deletedDeg_none (p : P) (ep : Nat → Option (Nat × Nat)) (ty : Nat →
   have : ¬ (p.deletedR.filter (fun r => !(fget p.relTypes r).isSome)).all (fun r => (ep r).isSome) = true := by
     simp only [List.all_eq_true, List.mem_filter]; intro hall
     have := hall r ⟨hr, by simp [hc]⟩; simp [he] at this
-  rw [if_neg this]
+  rw [ite_eq_right this]
 
 /-- **`deletedDeg_skips_created`** (#3520): an edge created since the last commit contributes nothing, and its
 endpoints are never asked for: if the only deleted edges were created here, the answer is `some 0` for any

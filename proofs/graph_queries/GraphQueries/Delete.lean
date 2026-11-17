@@ -98,7 +98,7 @@ theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
   · simp only at h
     split at h
     · cases h
-    · cases h; simp [setRelIds, Mat.removeMask, Ne.symm hw]
+    · cases h; simp [Mat.removeMask, Ne.symm hw]
 
 /-- **`type_cleared_after_registration`** (#3277 fixed): registering a type through
 `get_type_id_mut` (constraint creation, a replica's schema record) no longer narrows
@@ -251,7 +251,7 @@ theorem deleteImplicit_freed (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V)
     · rename_i sp hsp
       cases hok
       obtain ⟨h1, -⟩ := hC.release_ok _ _ _ _ hsp
-      simp only [setRelIds, h1, union, List.mem_append, List.mem_filter, decide_eq_true_eq, relIds]
+      simp only [setRelIds, h1, union, List.mem_append, List.mem_filter, relIds]
       by_cases hh : y.1 ∈ g.delRels
       · exact Or.inl hh
       · exact Or.inr ⟨(toSet_mem _ _).2 (List.mem_map.2 ⟨y, hy, rfl⟩), decide_eq_true hh⟩

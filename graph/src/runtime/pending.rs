@@ -944,6 +944,13 @@ impl Pending {
             // The graph's half of the same event. Paired here so a caller cannot
             // unwind the pending side and leave the id unreturned.
             g.cancel_relationship_id(rel_id)?;
+            // The id stays held back for the rest of the query, so a later
+            // relationship takes the next one. The replica is told about the
+            // cancelled id as a create/delete pair of its type, which needs the
+            // type to exist: a type whose every edge was cancelled would
+            // otherwise never be registered and the pair skipped, leaving a
+            // hole before the next id that the replica refuses.
+            g.get_type_id_mut(&type_name);
             // The one durable record that this id was ever handed out, the same
             // role `cancelled_nodes` plays for the node above.
             self.cancelled_relationships.push(CancelledRelationship {

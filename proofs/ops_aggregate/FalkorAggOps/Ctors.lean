@@ -111,8 +111,8 @@ theorem packCeiling_bounds (cap : Option Nat) :
   | some k =>
     simp only
     by_cases h : k < 1024
-    · simp only [h, if_true]; omega
-    · simp only [h, if_false]; omega
+    · simp only [h, ite_true]; omega
+    · simp only [h, ite_false]; omega
 
 structure EmitterSt (B : Type) where
   binding : B

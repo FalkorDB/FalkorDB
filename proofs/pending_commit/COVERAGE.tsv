@@ -112,7 +112,8 @@ graph/src/graph/attribute_store.rs	insert_attrs	1317	PROVEN	Content.insertAttrs_
 graph/src/graph/attribute_store.rs	import_attrs	1353	PROVEN	Content.importAttrs_spec
 graph/src/graph/attribute_store.rs	import_attrs_resolved	1390	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed
 graph/src/graph/attribute_store.rs	structural_memory_usage	1416	PROVEN	Content.structural_partition
-graph/src/graph/attribute_store.rs	encode_with_range	1427	PROVEN	Content.encode_spec, encode_decode_roundtrip
+graph/src/graph/attribute_store.rs	encode_with_range	1427	PROVEN	Content.encode_spec (models the pre-#3438 `window … (max count 1)`), encode_decode_roundtrip; #3438 (`take count`, nth_live_id seek): SaveSlice.prEncode_spec, prEncode_eq_main (= pre-#3438 Content.encode for count > 0), count_zero_differs / count_zero_witness (count 0: new code writes nothing, old one entity; unreachable: SaveSlice.encoder_counts_pos), pr_encode_decode_roundtrip, walk_spec; roaring as SaveSlice.RSet (owners' abstraction; crate checked by the randomized test lean3438_roaring_contract)
+graph/src/graph/attribute_store.rs	nth_live_id	1485	PROVEN	SaveNthLive.nthLive_spec (n-th live id of 0..=max_id or None), nthLive_drop, nthLive_empty_deleted, nthLive_past_end, bsearch_spec, mid_bounds (no u64 overflow), rank_le / liveThrough_no_overflow (no u128 under/overflow); RSet.rank (SaveRoaring)
 graph/src/graph/attribute_store.rs	decode	1509	PROVEN	Content.decode_unimplemented
 graph/src/graph/attribute_store.rs	decode_with_count	1519	PROVEN	Content.decode_spec, encode_decode_roundtrip
 graph/src/runtime/pending.rs	flatten_label_map	61	PROVEN	PA.flatten_spec
@@ -187,3 +188,4 @@ graph/src/runtime/pending.rs	resync_published_indexes	1792	PROVEN	PD.resync_spec
 graph/src/runtime/pending.rs	commit_deferred_indexes	1846	PROVEN	PD.commitDeferred_spec
 graph/src/runtime/pending.rs	effects_count	1960	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
 graph/src/runtime/pending.rs	end_segment	1887	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err
+graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	SaveLayout.encRoarPR_eq (select/advance_to/take seek = skip/take = graph_persist encRoar, every count/offset), encRoarMain_eq; encodeGraphPR_eq, load_encode_pr, multi_load_pr (whole stream = pre-#3438's, so graph_persist's round trips hold); RSet.select/iterFrom (SaveRoaring)

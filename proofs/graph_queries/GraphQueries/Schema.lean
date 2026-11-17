@@ -152,9 +152,9 @@ theorem growStep_small (chunk cap : Nat) (h : nextMul chunk (cap + max (cap / 4)
   have := nextMul_ge chunk (cap + max (cap / 4) chunk)
   have hg : grbMax < 2 ^ 64 := by unfold grbMax; omega
   unfold growStep ckAdd
-  rw [if_pos (by omega)]
+  rw [ite_eq_left (by omega)]
   simp only [Option.bind_some, ckNextMul]
-  rw [if_pos (by omega)]
+  rw [ite_eq_left (by omega)]
   exact Nat.min_eq_left h
 
 -- The Rust tests `grow_cap_tests` (the `mod grow_cap_tests` at the end of graph.rs), `chunk = DEFAULT_NODE_CREATION_BUFFER = 16384`.
