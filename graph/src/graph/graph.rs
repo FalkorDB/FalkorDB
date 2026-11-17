@@ -105,6 +105,7 @@ use crate::{
             versioned_matrix::{self, VersionedMatrix},
         },
         id_space::{IdSpace, IdSpaceError},
+        schema_hash::{LabelChain, TypeChain, schema_hash},
     },
     index::{
         Field,
@@ -486,6 +487,11 @@ pub struct Graph {
     node_labels_index: FxHashMap<String, LabelId>,
     /// Relationship type names (ID → name mapping)
     relationship_types: Vec<Arc<String>>,
+    /// The schema-hash chain over `node_labels`, extended by `intern_label`.
+    label_chain: LabelChain,
+    /// The schema-hash chain over `relationship_types`, extended by
+    /// `register_relationship_type`.
+    type_chain: TypeChain,
     /// LRU cache for query plans
     cache: Arc<Mutex<LruCache<String, Arc<PlanTree>>>>,
     /// Graph constraints (unique, mandatory)
@@ -901,6 +907,8 @@ impl Graph {
             node_labels: Vec::new(),
             node_labels_index: FxHashMap::default(),
             relationship_types: Vec::new(),
+            label_chain: LabelChain::default(),
+            type_chain: TypeChain::default(),
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
@@ -1012,6 +1020,10 @@ impl Graph {
                 .enumerate()
                 .map(|(i, l)| (l.as_str().to_string(), LabelId(i)))
                 .collect(),
+            // Rebuilt from the lists, as their writers would have built them: the RDB
+            // carries no hash.
+            label_chain: LabelChain::of(node_labels.iter().map(|l| l.as_str())),
+            type_chain: TypeChain::of(relationship_types.iter().map(|t| t.as_str())),
             node_labels,
             relationship_types,
             cache: Arc::new(Mutex::new(LruCache::new(
@@ -1131,6 +1143,8 @@ impl Graph {
             node_labels: self.node_labels.clone(),
             node_labels_index: self.node_labels_index.clone(),
             relationship_types: self.relationship_types.clone(),
+            label_chain: self.label_chain,
+            type_chain: self.type_chain,
             cache: self.cache.clone(),
             constraints: self.constraints.clone(),
             version: self.version + 1,
@@ -1252,8 +1266,16 @@ impl Graph {
         self.attrs_name.iter()
     }
 
+    /// The schema hash of this version: one value for [`Self::get_labels`],
+    /// [`Self::get_types`] and [`Self::get_attrs`], in id order. See
+    /// [`crate::graph::schema_hash`].
+    #[must_use]
+    pub const fn schema_hash(&self) -> u64 {
+        schema_hash(self.label_chain, self.type_chain, self.attrs_name.chain())
+    }
+
     /// Register `label`, or return the id it already has. The only writer of
-    /// `node_labels` and `node_labels_index`, so the two stay in step.
+    /// `node_labels`, `node_labels_index` and `label_chain`, so the three stay in step.
     fn intern_label(
         &mut self,
         label: &Arc<String>,
@@ -1262,6 +1284,7 @@ impl Graph {
             return id;
         }
         let id = LabelId(self.node_labels.len());
+        self.label_chain.push(label);
         self.node_labels.push(label.clone());
         self.node_labels_index
             .insert(label.as_str().to_string(), id);
@@ -1381,6 +1404,7 @@ impl Graph {
         &mut self,
         relationship_type: Arc<String>,
     ) -> TypeId {
+        self.type_chain.push(&relationship_type);
         self.relationship_types.push(relationship_type);
         let id = self.relationship_types.len() - 1;
         self.relationship_matrices
@@ -6248,5 +6272,65 @@ mod restore_tests {
         let mut edges: Vec<_> = t.iter_edges().collect();
         edges.sort_unstable();
         assert_eq!(edges, vec![(0, 1, 0), (0, 1, 1)]);
+    }
+
+    /// Each list's writer extends its schema-hash chain, a version carries its own hash,
+    /// and an RDB load rebuilds the same value, so a restart or a full sync never
+    /// changes it (#3757).
+    #[test]
+    fn schema_hash_follows_the_name_lists() {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "schema_hash");
+        assert_eq!(g.schema_hash(), 0, "an empty schema hashes to 0");
+
+        // Interleaved across the three lists, through every writer.
+        g.get_label_id_mut("Person");
+        g.get_or_create_node_attr_id(&Arc::new("name".to_string()));
+        g.get_type_id_mut("LIVES_IN");
+        g.get_label_id_mut("City");
+        g.add_rel_attribute_name("age");
+        // Names already interned extend nothing.
+        g.get_label_id_mut("Person");
+        g.get_type_id_mut("LIVES_IN");
+        g.add_node_attribute_name("name");
+        // The value `schema_hash::tests::golden_values` pins for these lists.
+        assert_eq!(g.schema_hash(), 17_300_287_264_737_141_393);
+
+        let mut next = g.new_version();
+        assert_eq!(next.schema_hash(), g.schema_hash());
+        next.get_label_id_mut("Extra");
+        assert_ne!(next.schema_hash(), g.schema_hash());
+        assert_eq!(
+            g.schema_hash(),
+            17_300_287_264_737_141_393,
+            "a later version's name changed an earlier version's hash"
+        );
+
+        let mut attrs = AttrNameMap::default();
+        for name in g.get_attrs() {
+            attrs.insert(name.clone());
+        }
+        let restored = Graph::restore(
+            "schema_hash",
+            1,
+            0,
+            0,
+            RoaringTreemap::new(),
+            RoaringTreemap::new(),
+            VersionedMatrix::<bool>::new(16, 16),
+            VersionedMatrix::<bool>::new(16, 2),
+            VersionedMatrix::<bool>::new(0, 0),
+            vec![
+                VersionedMatrix::<bool>::new(16, 16),
+                VersionedMatrix::<bool>::new(16, 16),
+            ],
+            vec![Tensor::new(16, 16)],
+            g.get_labels().to_vec(),
+            g.get_types().to_vec(),
+            attrs,
+            AttributeStore::new(),
+            AttributeStore::new(),
+        );
+        assert_eq!(restored.schema_hash(), g.schema_hash());
     }
 }

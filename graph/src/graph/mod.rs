@@ -68,3 +68,4 @@ pub mod graph;
 pub mod graphblas;
 pub mod id_space;
 pub mod mvcc_graph;
+pub mod schema_hash;

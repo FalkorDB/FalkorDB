@@ -34,7 +34,7 @@ use crate::{
         CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
         TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
     },
-    reply::{reply_compact, reply_verbose},
+    reply::{ReplyFormat, reply_query},
     slow_log::SlowLog,
     telemetry,
 };
@@ -221,7 +221,7 @@ pub fn rename_graph(
 pub struct WriteMessage {
     pub bc: BlockedClient,
     pub query: Arc<str>,
-    pub compact: bool,
+    pub format: ReplyFormat,
     pub cached: bool,
     pub key_name: Arc<str>,
     pub timeout: Option<i64>,
@@ -590,7 +590,7 @@ pub fn execute_query(
     session: &QuerySession,
     ctx: &Context,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     write: bool,
     cmd: &str,
     per_query_timeout: Option<i64>,
@@ -649,11 +649,7 @@ pub fn execute_query(
     );
     let mut result = runtime.query()?;
     result.stats.cached = cached;
-    if compact {
-        reply_compact(ctx, &runtime, &result);
-    } else {
-        reply_verbose(ctx, &runtime, &result);
-    }
+    reply_query(ctx, &runtime, &result, format);
     let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
     let execution_time_ms = result.stats.execution_time;
     session.with_graph(|tg| tg.slow_log.add(cmd, query, params_offset, latency));
@@ -739,7 +735,7 @@ pub fn execute_query_write(
     ctx: &Context,
     key_name: &Arc<str>,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     first_cached: bool,
     per_query_timeout: Option<i64>,
     profile: bool,
@@ -753,7 +749,7 @@ pub fn execute_query_write(
             ctx,
             key_name,
             query,
-            compact,
+            format,
             first_cached,
             per_query_timeout,
             profile,
@@ -789,7 +785,7 @@ fn try_query_write(
     ctx: &Context,
     key_name: &Arc<str>,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     first_cached: bool,
     per_query_timeout: Option<i64>,
     profile: bool,
@@ -861,10 +857,8 @@ fn try_query_write(
         // Everything else — effects, commit, replication — is identical to a
         // GRAPH.QUERY write.
         reply_profile(ctx, &runtime, &runtime.plan);
-    } else if compact {
-        reply_compact(ctx, &runtime, &result);
     } else {
-        reply_verbose(ctx, &runtime, &result);
+        reply_query(ctx, &runtime, &result, format);
     }
 
     let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
@@ -1014,7 +1008,7 @@ pub fn query_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     write: bool,
     track_mem: bool,
     key_name: Arc<str>,
@@ -1041,7 +1035,7 @@ pub fn query_mut(
             ctx,
             graph,
             query,
-            compact,
+            format,
             write,
             &key_name,
             per_query_timeout,
@@ -1110,7 +1104,7 @@ pub fn query_mut(
                 &session,
                 &ctx,
                 &query,
-                compact,
+                format,
                 write,
                 cmd,
                 per_query_timeout,
@@ -1145,7 +1139,7 @@ pub fn query_mut(
                         let msg = Box::new(WriteMessage {
                             bc,
                             query,
-                            compact,
+                            format,
                             cached: read_result.cached,
                             key_name,
                             timeout: per_query_timeout,
@@ -1218,7 +1212,7 @@ fn query_sync(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     write: bool,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
@@ -1251,7 +1245,7 @@ fn query_sync(
             &session,
             ctx,
             query,
-            compact,
+            format,
             write,
             cmd,
             per_query_timeout,
@@ -1274,7 +1268,7 @@ fn query_sync(
                     ctx,
                     key_name,
                     query,
-                    compact,
+                    format,
                     read_result.cached,
                     per_query_timeout,
                     false,
@@ -1403,7 +1397,7 @@ pub fn profile_mut(
                     let msg = Box::new(WriteMessage {
                         bc,
                         query,
-                        compact: false,
+                        format: ReplyFormat::default(),
                         cached: false,
                         key_name,
                         timeout: per_query_timeout,
@@ -1472,7 +1466,7 @@ fn profile_sync(
                 ctx,
                 key_name,
                 query,
-                false,
+                ReplyFormat::default(),
                 false,
                 per_query_timeout,
                 true,
@@ -1665,7 +1659,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         let WriteMessage {
             bc,
             query,
-            compact,
+            format,
             cached,
             key_name,
             timeout: per_query_timeout,
@@ -1709,7 +1703,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             &ctx,
             &key_name,
             &query,
-            compact,
+            format,
             cached,
             per_query_timeout,
             profile,

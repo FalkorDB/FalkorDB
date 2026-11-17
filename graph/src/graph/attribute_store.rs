@@ -119,6 +119,7 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
+use super::schema_hash::KeyChain;
 use crate::runtime::value::Value;
 
 /// Highest `u16`, reserved as "no attribute".
@@ -141,6 +142,8 @@ pub const MAX_ATTRIBUTES: usize = ATTRIBUTE_ID_NONE as usize;
 pub struct AttrNameMap {
     vec: Vec<Arc<String>>,
     index: FxHashMap<Arc<String>, u16>,
+    /// The schema-hash chain over `vec`, extended wherever a name is minted.
+    chain: KeyChain,
 }
 
 impl<'a> IntoIterator for &'a AttrNameMap {
@@ -199,6 +202,7 @@ impl AttrNameMap {
             return;
         }
         let idx = self.vec.len() as u16;
+        self.chain.push(&name);
         self.vec.push(name.clone());
         self.index.insert(name, idx);
     }
@@ -234,9 +238,16 @@ impl AttrNameMap {
             return ATTRIBUTE_ID_NONE;
         }
         let idx = self.vec.len() as u16;
+        self.chain.push(name);
         self.vec.push(Arc::clone(name));
         self.index.insert(Arc::clone(name), idx);
         idx
+    }
+
+    /// The schema-hash chain over the names, in id order.
+    #[must_use]
+    pub const fn chain(&self) -> KeyChain {
+        self.chain
     }
 }
 
