@@ -290,7 +290,7 @@ theorem cmpKey_total (desc : Bool) (a b d : V) (wa : wf a = true) (wb : wf b = t
   have r1 := (scMain_total a b d wa wb wd).1
   cases desc
   · exact scMain_total a b d wa wb wd
-  · simp only [cmpKey, if_true]
+  · simp only [cmpKey, ite_true]
     refine ⟨by rw [r1]; rfl, by rw [sw b a wb wa]; cases scMain a b <;> rfl, ?_⟩
     rw [sw a b wa wb, sw b d wb wd, sw a d wa wd]
     intro h1 h2
@@ -427,7 +427,7 @@ theorem point_nans_one_key (s s' : Bool) (p p' : Nat) (y : F) :
   refine ⟨?_, ?_⟩
   · simp only [scMain, sc, scF32_refl, thn_eq]
     simp [scF32, fpcmp, F.nkey, isNaN, cmpB, cmpN, cmpI]
-  · simp [hwords, f32HashBits, isNaN, F.nkey]
+  · simp [hwords, f32HashBits, F.nkey]
 
 /-- Signed zeros nested in a list stay apart too. -/
 theorem signed_zeros_apart_nested :

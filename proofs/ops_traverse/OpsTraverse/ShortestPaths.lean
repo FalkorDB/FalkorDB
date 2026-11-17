@@ -161,12 +161,12 @@ theorem back_sound {g : Graph} {b : Bool} {st : St} {src : Nat} (hok : PredOK g 
   | fuel + 1, node, acc, res, h => by
     unfold back at h
     by_cases hc : (node == src && !acc.isEmpty) = true
-    · rw [if_pos hc] at h
+    · rw [ite_eq_left hc] at h
       simp only [List.mem_singleton] at h
       subst h
       simp only [Bool.and_eq_true, beq_iff_eq] at hc
       exact ⟨[], by simp, by rw [hc.1]; exact Walk.nil _⟩
-    · rw [if_neg hc] at h
+    · rw [ite_eq_right hc] at h
       simp only [List.mem_flatMap] at h
       obtain ⟨⟨u, e⟩, hp, hr⟩ := h
       obtain ⟨w, rfl, hw⟩ := back_sound hok fuel u _ _ hr
@@ -191,7 +191,7 @@ theorem asp_sound {g : Graph} {b : Bool} {src dst minH maxH fuel : Nat} (hne : s
   simp only [hsd] at h
   split at h
   · simp at h
-  · simp only [Bool.false_eq_true, if_false, List.mem_map] at h
+  · simp only [Bool.false_eq_true, ite_false, List.mem_map] at h
     obtain ⟨res, hres, rfl⟩ := h
     have hok := bfs_ok (g := g) (b := b) (src := src) (dst := dst) (minH := minH) (maxH := maxH)
       (isCycle := false) fuel (st0 src) (by intro v u e h; simp [st0] at h)
@@ -291,7 +291,7 @@ theorem buildNodes_walk {g : Graph} {b : Bool} (hwf : g.WF) :
       · simp [h1, h2]
       · have : (s == x.src) = false := by
           simp only [beq_eq_false_iff_ne]; exact fun h => h1 h.symm
-        simp only [this, Bool.false_eq_true, if_false]; exact h2
+        simp only [this, Bool.false_eq_true, ite_false]; exact h2
     simp only [buildNodes, hn, lastOr, List.getLastD_cons]
     exact ih
 

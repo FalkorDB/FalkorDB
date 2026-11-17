@@ -130,7 +130,7 @@ theorem mergeRow_eq_lookup :
       by_cases hk : k = a
       · subst hk
         dsimp only
-        rw [if_pos rfl]
+        rw [ite_eq_left rfl]
         simp only [List.cons.injEq]
         refine ⟨by rw [← key k (Nat.le_refl k)]; simp [lookupAttr], ?_⟩
         rw [ih rest has' hrest]
@@ -140,7 +140,7 @@ theorem mergeRow_eq_lookup :
         have : ¬ k = b := by omega
         simp [lookupAttr, this]
       · dsimp only
-        rw [if_neg hk]
+        rw [ite_eq_right hk]
         simp only [List.cons.injEq]
         have hka : a < k := by have := hhead k v rest rfl; omega
         have hrk : ∀ q ∈ rest, a < q.1 := by

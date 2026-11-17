@@ -63,7 +63,7 @@ theorem evalParam_neg (i : Int) :
       if i = -2^63 then .error "ArgumentError: integer overflow in unary minus" else .ok (.int (-i)) := by
   by_cases h : i = -2^63
   · subst h; rfl
-  · simp only [evalParam, checkedNeg, h, if_false, bind, Except.bind]
+  · simp only [evalParam, checkedNeg, h, ite_false, bind, Except.bind]
 
 theorem evalParam_neg_null : evalParam (.neg (.const (.str "x"))) = .ok .null := rfl
 

@@ -437,7 +437,7 @@ theorem canReturnBoolean_of_accepts : ∀ (t : Ty) (v : V F), Accepts v t →
     cases ha
     all_goals first
       | rfl
-      | (rcases hv with hv | ⟨b, rfl⟩ <;> (try cases v) <;> simp_all [V.isNull, tagMatch, canReturnBoolean])
+      | (rcases hv with hv | ⟨b, rfl⟩ <;> (try cases v) <;> simp_all [V.isNull, tagMatch])
 
 /-! ## `Display for Type` (mod.rs:610): "A", "A or B", "A, B, or C" -/
 

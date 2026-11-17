@@ -189,7 +189,7 @@ theorem string2ll_dec (n : Nat) (h : n ≤ i64Max) :
     rw [hd] at hv hl ⊢
     simp only [List.length_cons] at hl
     unfold string2ll
-    rw [if_neg (by simp; omega), if_neg (by intro heq; simp at heq; omega)]
+    rw [ite_eq_right (by simp; omega), ite_eq_right (by intro heq; simp at heq; omega)]
     simp [show d ≠ 45 by omega, show 49 ≤ d by omega, h2, hv]
     exact ⟨n, ⟨rfl, h⟩, rfl⟩
 
@@ -230,14 +230,14 @@ theorem fallback_spec (c : TCfg) (w : Bool) (t : Nat) (h : fallback c w = .ok (s
       (c.timeoutDefault ≤ 0 → c.timeoutMax > 0 → (t : Int) = c.timeoutMax) := by
   unfold fallback at h
   by_cases h1 : c.timeoutDefault > 0
-  · rw [if_pos h1] at h; simp at h; omega
-  · rw [if_neg h1] at h
+  · rw [ite_eq_left h1] at h; simp at h; omega
+  · rw [ite_eq_right h1] at h
     by_cases h2 : c.timeoutMax > 0
-    · rw [if_pos h2] at h; simp at h; omega
-    · rw [if_neg h2] at h
+    · rw [ite_eq_left h2] at h; simp at h; omega
+    · rw [ite_eq_right h2] at h
       by_cases h3 : c.legacy > 0 ∧ w = false
-      · rw [if_pos h3] at h; simp at h; omega
-      · rw [if_neg h3] at h; simp at h
+      · rw [ite_eq_left h3] at h; simp at h; omega
+      · rw [ite_eq_right h3] at h; simp at h
 
 /-- Under the configuration invariant `GRAPH.CONFIG SET` maintains
 (`TIMEOUT_DEFAULT ≤ TIMEOUT_MAX` when both are set, see `Config.lean`), no query ever
@@ -252,11 +252,11 @@ theorem rustTimeout_le_max (c : TCfg) (pq : Option Int) (w : Bool) (t : Nat)
   | some p =>
     simp only [rustTimeout] at h
     by_cases h1 : c.timeoutMax > 0 ∧ p > c.timeoutMax
-    · rw [if_pos h1] at h; simp at h
-    · rw [if_neg h1] at h
+    · rw [ite_eq_left h1] at h; simp at h
+    · rw [ite_eq_right h1] at h
       by_cases h2 : p > 0 ∧ (w = false ∨ timeoutRw c = true)
-      · rw [if_pos h2] at h; simp at h; omega
-      · rw [if_neg h2] at h
+      · rw [ite_eq_left h2] at h; simp at h; omega
+      · rw [ite_eq_right h2] at h
         have := fallback_spec c w t h
         by_cases hd : c.timeoutDefault > 0 <;> omega
 
@@ -268,11 +268,11 @@ theorem rustTimeout_pos (c : TCfg) (pq : Option Int) (w : Bool) (t : Nat)
   | some p =>
     simp only [rustTimeout] at h
     by_cases h1 : c.timeoutMax > 0 ∧ p > c.timeoutMax
-    · rw [if_pos h1] at h; simp at h
-    · rw [if_neg h1] at h
+    · rw [ite_eq_left h1] at h; simp at h
+    · rw [ite_eq_right h1] at h
       by_cases h2 : p > 0 ∧ (w = false ∨ timeoutRw c = true)
-      · rw [if_pos h2] at h; simp at h; omega
-      · rw [if_neg h2] at h; exact (fallback_spec c w t h).1
+      · rw [ite_eq_left h2] at h; simp at h; omega
+      · rw [ite_eq_right h2] at h; exact (fallback_spec c w t h).1
 
 /-- Negative per-query timeout on a read: `compute_effective_timeout` alone falls back to
 the global value. Since #3010 (`557f18868`) no command can hand it a negative value:

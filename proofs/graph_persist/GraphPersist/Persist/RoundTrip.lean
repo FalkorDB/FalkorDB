@@ -11,7 +11,7 @@ theorem length_filter_split (p : Nat → Bool) (l : List Nat) :
     (l.filter p).length + (l.filter fun x => !p x).length = l.length := by
   induction l with
   | nil => rfl
-  | cons x xs ih => by_cases h : p x <;> simp [List.filter_cons, h] <;> omega
+  | cons x xs ih => by_cases h : p x <;> simp [h] <;> omega
 
 /-- `encode_with_range` walks exactly `count` live ids: the deleted ids are distinct and
 all below `count + |deleted|`. -/
@@ -126,7 +126,7 @@ theorem kind_store (limit n : Nat) (del : List Nat) (S : Store) (hl : limit ≤ 
   funext j
   by_cases h : j ∈ live n del ∧ S j ≠ none
   · simp [h]
-  · rw [if_neg h]
+  · rw [ite_eq_right h]
     cases hs : S j with
     | none => rfl
     | some sp => exact absurd ⟨(hk.2.2.2 j sp hs).1, by simp [hs]⟩ h
