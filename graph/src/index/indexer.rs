@@ -421,15 +421,21 @@ impl Indexer {
         Some((before - after, after))
     }
 
-    /// Remove the whole per-label index entry.
+    /// Remove the per-label index entry a `DROP INDEX` left without fields.
+    ///
+    /// Only if it still has none. This runs later than the drop that asked for
+    /// it, on the query pool, and a `CREATE INDEX` on the label can get in
+    /// first: it lands on the fieldless entry and gives it a field again.
+    /// Removed regardless, that new index was gone after `CREATE INDEX` had
+    /// answered `Indices created: 1`.
     ///
     /// Caller must hold [`Self::write_lock`] (see `drop_index_bg`).
-    pub fn remove(
+    pub fn remove_if_empty(
         &self,
         label: &Arc<String>,
     ) {
         let map = self.index.load_full();
-        if !map.contains_key(label) {
+        if map.get(label).is_none_or(|index| index.index_count() != 0) {
             return;
         }
         let mut new_map = (*map).clone();
