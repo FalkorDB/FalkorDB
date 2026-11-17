@@ -29,8 +29,9 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | Lean | Rust |
 | --- | --- |
 | `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:52-92, 106-119` |
-| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1415-1469` (`id as u64` at 1428) |
-| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1470-1480` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
+| `IdSeek.bounds`, `step`, `evalIdFilter` | `runtime/runtime.rs:1473-1512` (PR #3017: `i128` bounds, float ceil/floor, `Ok(None)` for null/NaN/non-numeric) |
+| `IdSeek.search`, `firstIdGe`, `lastIdLe`, `castF64` | `first_id_where`/`first_id_ge`/`last_id_le`, `runtime/runtime.rs:437-464`; `i128 as f64` |
+| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1516-1522` (#3394: `node_count() == 0 → Ok(None)`) |
 | `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1783` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
 | `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
@@ -47,9 +48,11 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 
 Id seeks (`IdSeek.lean`):
 - `flip_correct`, `flip_flip`: the `id()`-on-the-right flip table is right.
-- `step_none`, `step_some`: each `evaluate_id_filter` arm keeps exactly the ids of the running range that satisfy it.
+- `step_none`, `step_some`: each `evaluate_id_filter` arm keeps exactly the ids of the running range that satisfy it (read through the bound's `(ceil, floor)`).
+- `search_spec`, `firstIdGe_spec`, `lastIdLe_spec`, `cast_exact`/`cast_large`/`cast_neg_large`, `bounds_exact` (PR #3017): `first_id_ge`/`last_id_le` are the exact ceil/floor ids of a float for every id below 2^53 (`±inf` included), and each bound decides `id(n) op v` as Cypher does; null/NaN/non-numeric bounds empty the seek.
 - `step_nonempty`: the running `min ≤ max` invariant holds, so `insert_range(min..=max)` is never inverted.
-- `fold_none`, `fold_some`, `go_eq_fold`, `asU64_of_small`: the whole fold is exact for operands in `[0, 2^63)`.
+- `fold_none`, `fold_some`, `fold_nonempty`, `go_eq_fold`: the whole fold is exact for every operand (PR #3017; before, only for operands in `[0, 2^63)`).
+- `seek_sound_all` (PR #3017): for any operands (negative ints, floats, `±inf`, NaN, null, strings) on a well-formed graph with ids below 2^53, `NodeByIdSeek` = `Filter(id(n) op v …)` over `AllNodeScan`; `seek_sound_int`: any `i64` operands, any graph size.
 - `seek_sound` (main b84473a7f, #3394): on any well-formed graph (`G.wf`: `node_count` counts the live ids), including one that never held a node, with non-negative integer operands, `NodeByIdSeek` = `Filter(id(n) op v …)` over `AllNodeScan`. `empty_graph_seek_none`: a never-populated graph seeks nothing. Before #3394 the seek theorem needed `nodeCount ≠ 0`; that version survives only as `pre3394_seek_sound` in `IdSeek.lean`, the stepping stone of `seek_sound` (the other pre-#3394 counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412).
 
 Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`):
