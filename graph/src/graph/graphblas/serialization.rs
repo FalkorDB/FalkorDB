@@ -138,7 +138,11 @@ pub enum EncodeState {
     RelationMatrices = 7,
     AdjMatrix = 8,
     LblsMatrix = 9,
-    Final = 10,
+    /// Graph-level CCH path-index definitions (encoding version 20). This module has no CCH
+    /// index: the decoder refuses a key that lists this payload rather than misread it.
+    CchIndices = 10,
+    /// Never saved to an RDB.
+    Final = 11,
 }
 
 impl EncodeState {
@@ -155,7 +159,8 @@ impl EncodeState {
             7 => Some(Self::RelationMatrices),
             8 => Some(Self::AdjMatrix),
             9 => Some(Self::LblsMatrix),
-            10 => Some(Self::Final),
+            10 => Some(Self::CchIndices),
+            11 => Some(Self::Final),
             _ => None,
         }
     }
@@ -340,5 +345,20 @@ mod tests {
         let res = bitmap.decode_with_count(&mut OneBuffer(Some(Vec::new())), 1 << 61, 0);
         let err = res.expect_err("overflowing count accepted");
         assert!(err.contains("out of range"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn state_numbers_match_c() {
+        assert_eq!(EncodeState::CchIndices as u64, 10);
+        assert_eq!(EncodeState::Final as u64, 11);
+        assert!(matches!(
+            EncodeState::from_u64(10),
+            Some(EncodeState::CchIndices)
+        ));
+        assert!(matches!(
+            EncodeState::from_u64(9),
+            Some(EncodeState::LblsMatrix)
+        ));
+        assert!(EncodeState::from_u64(12).is_none());
     }
 }
