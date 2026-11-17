@@ -4403,6 +4403,13 @@ impl Graph {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<impl Iterator<Item = (NodeId, f64)> + use<>, String> {
+        // Like C, refuse to answer from a half-built index (#3382). C reports
+        // its generic "Invalid arguments for procedure"; this names the cause.
+        if !self.node_indexer.is_operational(label) {
+            return Err(format!(
+                "The vector index on '{label}' is under construction"
+            ));
+        }
         let attr = Arc::new(field.to_string());
         if let Some(expected) = self.node_indexer.get_vector_dimension(label, &attr)
             && expected as usize != vector.len()
@@ -4463,6 +4470,13 @@ impl Graph {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId, f64)> + use<>, String> {
+        // Like C, refuse to answer from a half-built index (#3382). C reports
+        // its generic "Invalid arguments for procedure"; this names the cause.
+        if !self.edge_indexer.is_operational(label) {
+            return Err(format!(
+                "The vector index on '{label}' is under construction"
+            ));
+        }
         let attr = Arc::new(field.to_string());
         if let Some(expected) = self.edge_indexer.get_vector_dimension(label, &attr)
             && expected as usize != vector.len()
