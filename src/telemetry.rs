@@ -376,13 +376,52 @@ pub fn strip_stream(
 /// Keys of graphs that have been freed and whose telemetry streams are still to be
 /// deleted, see [`orphan_streams_of_freed_graph`].
 ///
-/// Locked only on the main thread or under the GIL, so it is never held across a
-/// fork: [`strip_orphaned_streams`] takes it in a fork child.
-static ORPHANED_STREAMS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The list and the flag that says it is non-empty change together, through
+/// [`Self::push`] and [`Self::take`] only. The flag is what the flusher polls, so
+/// that an idle one takes neither this lock nor the GIL.
+///
+/// The lock is taken only on the main thread or under the GIL, so it is never held
+/// across a fork: [`strip_orphaned_streams`] takes it in a fork child.
+struct OrphanedStreams {
+    names: Mutex<Vec<String>>,
+    pending: AtomicBool,
+}
 
-/// Whether [`ORPHANED_STREAMS`] holds anything. What the flusher polls, so that an
-/// idle one takes neither the lock nor the GIL.
-static HAS_ORPHANED_STREAMS: AtomicBool = AtomicBool::new(false);
+impl OrphanedStreams {
+    const fn new() -> Self {
+        Self {
+            names: Mutex::new(Vec::new()),
+            pending: AtomicBool::new(false),
+        }
+    }
+
+    /// Add `names`. The flag is raised after the list is extended, so every name
+    /// is followed by a raised flag and none can be left behind by a racing
+    /// [`Self::take`].
+    fn push(
+        &self,
+        names: Vec<String>,
+    ) {
+        self.names.lock().extend(names);
+        self.pending.store(true, Ordering::Release);
+    }
+
+    /// Whether there may be names to take. One atomic load, no lock.
+    fn is_pending(&self) -> bool {
+        self.pending.load(Ordering::Acquire)
+    }
+
+    /// Remove and return every queued name, empty when there is none. The lock is
+    /// released before this returns, so the caller deletes keys without it.
+    fn take(&self) -> Vec<String> {
+        if !self.pending.swap(false, Ordering::AcqRel) {
+            return Vec::new();
+        }
+        std::mem::take(&mut *self.names.lock())
+    }
+}
+
+static ORPHANED_STREAMS: OrphanedStreams = OrphanedStreams::new();
 
 /// Queue the telemetry streams of a graph that has just been freed for deletion,
 /// given the keys it was registered under. Called from the graph type's free
@@ -409,8 +448,7 @@ pub fn orphan_streams_of_freed_graph(names: Vec<String>) {
     if names.is_empty() || !is_main_thread() {
         return;
     }
-    ORPHANED_STREAMS.lock().extend(names);
-    HAS_ORPHANED_STREAMS.store(true, Ordering::Release);
+    ORPHANED_STREAMS.push(names);
 }
 
 /// Delete the telemetry streams queued by [`orphan_streams_of_freed_graph`].
@@ -418,12 +456,7 @@ pub fn orphan_streams_of_freed_graph(names: Vec<String>) {
 /// The GIL must be held, and the caller must be somewhere a key may be deleted: not
 /// inside a type callback.
 pub fn strip_orphaned_streams(ctx: *mut raw::RedisModuleCtx) {
-    if !HAS_ORPHANED_STREAMS.swap(false, Ordering::AcqRel) {
-        return;
-    }
-    // Taken out and the lock released before any key is touched.
-    let names = std::mem::take(&mut *ORPHANED_STREAMS.lock());
-    for name in &names {
+    for name in &ORPHANED_STREAMS.take() {
         strip_stream(ctx, name);
     }
 }
@@ -1134,7 +1167,7 @@ fn flusher_loop() {
                 // Nothing to write, but a freed graph may have left a stream to
                 // delete. Not once the channel is closed: the main thread may be
                 // waiting for this one with the GIL held (see the disconnect below).
-                if HAS_ORPHANED_STREAMS.load(Ordering::Acquire) && !rx.is_disconnected() {
+                if ORPHANED_STREAMS.is_pending() && !rx.is_disconnected() {
                     let _gil = hold_gil();
                     strip_orphaned_streams(tsc);
                 }
