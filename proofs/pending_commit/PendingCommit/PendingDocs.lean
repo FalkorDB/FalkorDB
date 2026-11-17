@@ -26,9 +26,9 @@ import PendingCommit.PendingDeg
   it first, `apply_index_writes` call :1465, defined graph.rs:3890) and never touches it; `end_segment` clears it with
   the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
   modelled here are unchanged.
-* `effects_count` (:1958) is the documented sum; it does not count
-  `cancelled_*` (`effects_ignores_cancelled`, the suspicion noted in the root
-  file).
+* `effects_count` (:1970) is the documented sum; since #3461 it counts each
+  cancelled node and relationship twice (`effectsCount_eq_pre`,
+  `effects_counts_cancelled`; history `pre3461_effects_ignores_cancelled`).
 * `new`/`default` (:517, :510), `set_schema_baseline` (:547): field-level
   equations. (`node_id_space`, `rel_id_space`, `issued_*`,
   `open_id_boundaries` were removed by #2846.)
@@ -153,7 +153,7 @@ theorem absorbE_get : ∀ (L m : FMap (FMap (Nat × Nat))), (L.map (·.1)).Nodup
         | none => rfl
         | some w => exact absurd (List.mem_map_of_mem (f := (·.1)) (mem_of_fget L a w e')) hk.1
       simp only [hL, ite_true, Option.getD_none, Option.getD_some]
-      simp only [fget, Option.getD_some]
+      simp only [fget]
       rw [fextend_get inner _ (hi (a, inner) (by simp)) e]
     · simp only [hs, ite_false, Ne.symm hs]
 
@@ -419,15 +419,38 @@ stale log over a fresh boundary. -/
 theorem endSegment_spec {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) :
     (endSegment roll f g).1 = clear f ∧ (endSegment roll f g).2 = roll g := ⟨rfl, rfl⟩
 
-/-- `effects_count` (:1958). -/
+/-- `effects_count` (:1970): since #3461 a cancelled node or relationship counts
+twice (its create and its delete). -/
 def effectsCount (p : PS.P) : Nat :=
+  p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length +
+    2 * p.cancelledN.length + 2 * p.cancelledR.length + p.newN.length +
+    p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
+    (p.remL.map (·.2.length)).sum
+
+/-- `effects_count` before #3461 (:1958 on 343e077f2): the cancelled sets were not summed. -/
+def effectsCountPre3461 (p : PS.P) : Nat :=
   p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length + p.newN.length +
     p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
     (p.remL.map (·.2.length)).sum
 
-/-- `CREATE (a) DELETE a` leaves only `cancelled_nodes = {a}`: `effects_count`
-is 0, although the id went through the master's recycle bin (the suspicion
-recorded in the root file; not confirmed against a replica). -/
-theorem effects_ignores_cancelled : effectsCount { PS.P0 with cancelledN := [0] } = 0 := rfl
+/-- History (fixed by #3461, f203972c5): `CREATE (a) DELETE a` left only
+`cancelled_nodes = {a}` and `effects_count` was 0. -/
+theorem pre3461_effects_ignores_cancelled : effectsCountPre3461 { PS.P0 with cancelledN := [0] } = 0 := rfl
+
+/-- **#3461**: `effects_count` is the old sum plus two per cancelled entity, so a
+segment that cancelled anything has a positive count. -/
+theorem effectsCount_eq_pre (p : PS.P) :
+    effectsCount p = effectsCountPre3461 p + 2 * p.cancelledN.length + 2 * p.cancelledR.length := by
+  unfold effectsCount effectsCountPre3461; omega
+
+theorem effects_counts_cancelled (p : PS.P) (h : p.cancelledN ≠ [] ∨ p.cancelledR ≠ []) :
+    effectsCount p > 0 := by
+  rw [effectsCount_eq_pre]
+  rcases h with h | h
+  · have := List.length_pos_iff.mpr h; omega
+  · have := List.length_pos_iff.mpr h; omega
+
+/-- `CREATE (a) DELETE a`: the count is now 2. -/
+theorem effects_cancelled_node : effectsCount { PS.P0 with cancelledN := [0] } = 2 := rfl
 
 end PendingCommit.PD

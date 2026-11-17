@@ -72,8 +72,8 @@ theorem walkBack_ok {g : G} {src tgt : Nat} {st : St} (I : Inv g src tgt noEx st
     intro cur acc hc ho
     unfold walkBack
     by_cases hcs : cur = src
-    · subst hcs; simp only [if_pos]; exact ⟨[], by simp, by simp [D]; exact .nil _⟩
-    · rw [if_neg hcs]
+    · subst hcs; simp only [ite_eq_left]; exact ⟨[], by simp, by simp [D]; exact .nil _⟩
+    · rw [ite_eq_right hcs]
       cases hl : st.labels cur with
       | none => exact absurd hl (I.setLbl cur hc hcs)
       | some l =>
@@ -97,7 +97,7 @@ theorem dijkstra_correct (g : G) (src tgt : Nat) (st : St)
   unfold finish
   cases hd : st.done with
   | true =>
-    simp only [if_true]
+    simp only [ite_true]
     have hts : st.settled tgt = true := T.mpr hd
     obtain ⟨es, hwb, hw⟩ := walkBack_ok I (st.clock + 1) tgt [] hts (by have := I.ordLt _ hts; omega)
     rw [hwb]
@@ -109,7 +109,7 @@ theorem dijkstra_correct (g : G) (src tgt : Nat) (st : St)
       have hD : D src st.labels tgt = l.w := D_lbl (Ne.symm hne) hl
       refine ⟨hD ▸ hw, fun es' W' hw' => hD ▸ I.opt tgt es' W' hts hw', by simp⟩
   | false =>
-    simp only [Bool.false_eq_true, if_false]
+    simp only [Bool.false_eq_true, ite_false]
     have hh : st.heap = [] := by rcases hT with h | h; rw [hd] at h; cases h; exact h
     intro es W hw
     have hs : st.settled src = true := by

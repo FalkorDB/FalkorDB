@@ -30,7 +30,7 @@ def truncate (s : List Char) : List Char :=
   if STR_MAX_LEN < s.length then s.take STR_MAX_LEN ++ "...".toList else s
 
 theorem truncate_short (s : List Char) (h : s.length ≤ STR_MAX_LEN) : truncate s = s := by
-  unfold truncate; rw [if_neg (by omega)]
+  unfold truncate; rw [ite_eq_right (by omega)]
 
 theorem truncate_len (s : List Char) : (truncate s).length ≤ STR_MAX_LEN + 3 := by
   unfold truncate; split

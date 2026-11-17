@@ -317,7 +317,7 @@ theorem find?_eq_head?_filter {α} (p : α → Bool) : ∀ (l : List α), l.find
   | [] => rfl
   | a :: l => by
     by_cases hp : p a = true
-    · simp [List.find?_cons, List.filter_cons, hp]
+    · simp [hp]
     · simp only [List.find?_cons, List.filter_cons, hp, Bool.false_eq_true, ↓reduceIte]
       exact find?_eq_head?_filter p l
 

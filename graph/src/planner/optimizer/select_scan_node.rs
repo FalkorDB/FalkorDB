@@ -94,13 +94,21 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// scanned first, and without this it would win on the chain-position tiebreak
 /// purely for being nearer the leaf.
 ///
+/// `has_equality` ranks above `filter_runs_late`: an endpoint pinned by a
+/// conjunct `x.p = <constant or parameter>` is typically far more selective
+/// than one held by a range or other predicate, and an equality is what a
+/// later index or id seek turns into a point lookup. Without it, `MATCH (s:L
+/// {id: $id})-->()-->()-->(n:L) WHERE n.age >= 18` started from a full label
+/// scan of `n` (whose WHERE runs late) instead of seeking `s` (whose inline
+/// filter the planner parks after the first hop): >20 s instead of ms.
+///
 /// When those are equal, the endpoint with fewer label nodes is preferred.
 fn score_endpoint(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     filtered_vars: &FilteredVars,
     bound_vars: &HashSet<u32>,
     graph: &Graph,
-) -> (u32, bool, u64) {
+) -> (u32, bool, bool, u64) {
     let key = (node.alias.id, node.alias.scope_id);
     let mut score = 0u32;
     if bound_vars.contains(&node.alias.id) {
@@ -113,6 +121,7 @@ fn score_endpoint(
     if filtered_vars.all.contains(&key) {
         score += 2;
     }
+    let has_equality = filtered_vars.equality.contains(&key);
     let filter_runs_late = filtered_vars.above.contains(&key);
     if !node.labels.is_empty() {
         score += 1;
@@ -128,7 +137,7 @@ fn score_endpoint(
             .min()
             .unwrap_or(u64::MAX)
     };
-    (score, filter_runs_late, cardinality)
+    (score, has_equality, filter_runs_late, cardinality)
 }
 
 /// Collects the variables referenced by Filter nodes that are ancestors of the
@@ -151,6 +160,52 @@ struct FilteredVars {
     /// `above` plus the variables referenced by Filters between the chain's
     /// own operators, whose predicates already run mid-traversal.
     all: HashSet<(u32, u32)>,
+    /// Subset of `all`: variables with a top-level conjunct
+    /// `v.prop = <expression free of variables>` (either operand order).
+    equality: HashSet<(u32, u32)>,
+}
+
+/// Records `v` when `idx` is `v.prop = e` (or `e = v.prop`) and `e`
+/// references no variable — a constant or parameter — descending only through
+/// `AND`, since an equality under `OR`/`NOT` no longer pins the variable.
+fn collect_equalities(
+    filter: &crate::parser::ast::QueryExpr<Variable>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    out: &mut HashSet<(u32, u32)>,
+) {
+    let node = filter.node(idx);
+    match node.data() {
+        ExprIR::And => {
+            for i in 0..node.num_children() {
+                collect_equalities(filter, node.child(i).idx(), out);
+            }
+        }
+        ExprIR::Eq if node.num_children() == 2 => {
+            let var_free = |side: NodeIdx<Dyn<ExprIR<Variable>>>| {
+                !filter
+                    .node(side)
+                    .indices::<Bfs>()
+                    .any(|i| matches!(filter.node(i).data(), ExprIR::Variable(_)))
+            };
+            let property_var = |side: NodeIdx<Dyn<ExprIR<Variable>>>| {
+                let prop = filter.node(side);
+                if !matches!(prop.data(), ExprIR::Property(_)) || prop.num_children() != 1 {
+                    return None;
+                }
+                match prop.child(0).data() {
+                    ExprIR::Variable(v) => Some((v.id, v.scope_id)),
+                    _ => None,
+                }
+            };
+            let (lhs, rhs) = (node.child(0).idx(), node.child(1).idx());
+            if let Some(v) = property_var(lhs).filter(|_| var_free(rhs)) {
+                out.insert(v);
+            } else if let Some(v) = property_var(rhs).filter(|_| var_free(lhs)) {
+                out.insert(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn collect_filtered_vars(
@@ -160,7 +215,9 @@ fn collect_filtered_vars(
     fn collect(
         filter: &crate::parser::ast::QueryExpr<Variable>,
         vars: &mut HashSet<(u32, u32)>,
+        equality: &mut HashSet<(u32, u32)>,
     ) {
+        collect_equalities(filter, filter.root().idx(), equality);
         for idx in filter.root().indices::<Bfs>() {
             if let ExprIR::Variable(v) = filter.node(idx).data() {
                 vars.insert((v.id, v.scope_id));
@@ -169,10 +226,11 @@ fn collect_filtered_vars(
     }
 
     let mut above = HashSet::new();
+    let mut equality = HashSet::new();
     let mut current = start_idx;
     while let Some(parent) = plan.node(current).parent() {
         match parent.data() {
-            IR::Filter(filter) => collect(filter, &mut above),
+            IR::Filter(filter) => collect(filter, &mut above, &mut equality),
             // Walk through transparent operators to find filters higher up
             IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
             _ => break,
@@ -190,7 +248,7 @@ fn collect_filtered_vars(
     let mut node = plan.node(start_idx);
     loop {
         match node.data() {
-            IR::Filter(filter) => collect(filter, &mut all),
+            IR::Filter(filter) => collect(filter, &mut all, &mut equality),
             IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
             _ => break,
         }
@@ -199,7 +257,11 @@ fn collect_filtered_vars(
         }
         node = node.child(0);
     }
-    FilteredVars { above, all }
+    FilteredVars {
+        above,
+        all,
+        equality,
+    }
 }
 
 /// Creates a scan subtree for the given node. Shape:
@@ -660,8 +722,8 @@ fn select_var_len_scan_node(
         // lose the predicate, because it lives in a Filter above this traverse
         // and `push_filters_down` lands it back on the new scan.
         let bound = HashSet::new();
-        let (from_score, _, _) = score_endpoint(&from, &filtered_vars, &bound, graph);
-        let (to_score, _, _) = score_endpoint(&to, &filtered_vars, &bound, graph);
+        let (from_score, _, _, _) = score_endpoint(&from, &filtered_vars, &bound, graph);
+        let (to_score, _, _, _) = score_endpoint(&to, &filtered_vars, &bound, graph);
         // A tie keeps the pattern's own direction.
         if to_score <= from_score {
             continue;
@@ -869,12 +931,15 @@ pub(super) fn select_scan_node(
 
         // Score each candidate and find the best.
         let best = candidates.iter().max_by(|a, b| {
-            let (score_a, late_a, card_a) =
+            let (score_a, eq_a, late_a, card_a) =
                 score_endpoint(&a.0, &filtered_vars, &bound_vars, graph);
-            let (score_b, late_b, card_b) =
+            let (score_b, eq_b, late_b, card_b) =
                 score_endpoint(&b.0, &filtered_vars, &bound_vars, graph);
             score_a
                 .cmp(&score_b)
+                // Equally constrained: an equality-pinned endpoint is the
+                // more selective start (and the one an index can seek).
+                .then_with(|| eq_a.cmp(&eq_b))
                 // Equally constrained: prefer the one whose predicate runs last
                 // today, since scanning from it moves that filter to the front.
                 .then_with(|| late_a.cmp(&late_b))
@@ -1050,7 +1115,8 @@ pub(super) fn select_scan_node(
                         return Some((i, 1u8, u32::MAX, 0u64));
                     }
                     let dest = if from_bound { &rel.to } else { &rel.from };
-                    let (score, _, card) = score_endpoint(dest, &filtered_vars, &bound_vars, graph);
+                    let (score, _, _, card) =
+                        score_endpoint(dest, &filtered_vars, &bound_vars, graph);
                     Some((i, 0u8, score, card))
                 })
                 .max_by(|a, b| {
