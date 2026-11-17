@@ -402,10 +402,7 @@ fn fmt_rel_with_labels_dir(
     let from_str = rel.from.alias.to_string();
     let to_str = fmt_node(&rel.to);
 
-    let alias_str = rel.alias.to_string();
-    let is_anon = alias_str.starts_with("_anon");
-
-    if is_anon {
+    if rel.alias.is_unnamed() {
         format!("({from_str}){left_arrow}-{right_arrow}({to_str})")
     } else if rel.types.is_empty() {
         let alias = &rel.alias;
@@ -842,7 +839,7 @@ impl Planner {
     ) -> Variable {
         let id = self.scope_vars[scope_id as usize].len() as u32;
         let var = Variable {
-            name: None,
+            alias: None,
             id,
             scope_id,
             ty,
@@ -1706,7 +1703,7 @@ impl Planner {
                     // record for inline handling via expr_to_plan.
                     let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
-                        name: None,
+                        alias: None,
                         id: self.scope_vars[current_scope as usize].len() as u32,
                         scope_id: current_scope,
                         ty: Type::Bool,
@@ -1731,7 +1728,7 @@ impl Planner {
                     // recognize the negation and use AntiSemiApply.
                     let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
-                        name: None,
+                        alias: None,
                         id: self.scope_vars[current_scope as usize].len() as u32,
                         scope_id: current_scope,
                         ty: Type::Bool,
@@ -1949,7 +1946,7 @@ impl Planner {
                             Arc::new(tree!(ExprIR::Map)),
                         ));
                         let edge_alias = Variable {
-                            name: None,
+                            alias: None,
                             id: u32::MAX - node.alias.id,
                             scope_id: node.alias.scope_id,
                             ty: Type::Relationship,
@@ -2012,10 +2009,7 @@ impl Planner {
             // (named edge or edge referenced in a named path). When false,
             // the runtime may collapse multi-edges into one row per (src, dst).
             let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
-                !rel.alias
-                    .name
-                    .as_ref()
-                    .is_some_and(|n| n.starts_with("_anon"))
+                !rel.alias.is_unnamed()
                     || component
                         .paths()
                         .iter()
@@ -2023,16 +2017,11 @@ impl Planner {
             };
             // Collect edge alias IDs for relationship uniqueness checking.
             // Only named (non-anonymous) edges participate in uniqueness constraints;
-            // anonymous edges (`_anon*`) are excluded so the same physical edge
+            // unnamed edges are excluded so the same physical edge
             // can be traversed by different anonymous bindings (matches FalkorDB C).
             let sibling_edges: Vec<u32> = relationships
                 .iter()
-                .filter(|r| {
-                    !r.alias
-                        .name
-                        .as_ref()
-                        .is_some_and(|n| n.starts_with("_anon"))
-                })
+                .filter(|r| !r.alias.is_unnamed())
                 .map(|r| r.alias.id)
                 .collect();
             // Inline attrs are lowered to Filters below; the operator embeds the
@@ -2979,7 +2968,7 @@ impl Planner {
                 let yield_by_field = |field: &str| -> Option<Variable> {
                     named_outputs
                         .iter()
-                        .find(|v| v.name.as_ref().is_some_and(|n| n.as_str() == field))
+                        .find(|v| v.name().is_some_and(|n| n.as_str() == field))
                         .cloned()
                 };
                 // Pattern comprehensions in the arguments get their own

@@ -167,7 +167,7 @@ The project has no Lake dependencies.
 | NOT COVERED | 16 |
 | AXIOMATISED | 11 |
 
-- **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` and `key_holds_graph` (Redis module API); `rebuild_derived_matrices` (GraphBLAS).
+- **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`, since #3819 moved it); `rebuild_derived_matrices` (GraphBLAS).
 - **MODELLED:** `from_u64` (the payload-directory state tags, exercised by the live round trips) and `MvccGraph::from_graph` (the RDB load path, checked live).
 - **NOT COVERED:** four trait declarations or `unimplemented!` defaults in `serialization.rs`; nine `MvccGraph` functions (`new`, `read`, `fork`, `commit`, `is_stale`, `commit_indexer_batch`, `prepare`, `publish`, `drop`) whose concurrency is not modelled here; and three in `runtime.rs` (`publish` and two `QueryGraph::from` constructors). The validated `commit` is proven in `search_concurrency` and `versioned_matrix`; `bash proofs/coverage.sh` counts each function once, in its best bucket.
 

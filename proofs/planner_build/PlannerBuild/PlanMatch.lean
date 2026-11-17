@@ -102,7 +102,7 @@ theorem unverified_after_mark (st : MSt) (n : QN) (h : n.labels ≠ []) :
   simp only [this, Bool.false_eq_true, ↓reduceIte, lookupV_cons_self]
   rw [List.filter_eq_nil_iff]
   intro l hl
-  by_cases hc : (lookupV st.verified n.alias).contains l <;> simp [hc, hl]
+  by_cases hc : (lookupV st.verified n.alias).contains l <;> simp [hl]
 
 /-- …and what was verified stays verified. -/
 theorem markLabels_mono (st : MSt) (v w : V) (ls : List String) (l : String)

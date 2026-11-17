@@ -92,14 +92,14 @@ theorem getById_insertById (r : Row β) (id j : Nat) (v : Option β) :
     · rw [List.getElem?_append]
       by_cases hl : j < r.values.length
       · simp [hl]
-      · simp only [hl, dite_false, ite_false, List.getElem?_replicate]
+      · simp only [hl, ite_false, List.getElem?_replicate]
         by_cases hji : j < id
         · simp [hji]; omega
         · simp [hji]; omega
     · by_cases hl : j < r.values.length
       · simp [hl]
       · have : r.values[j]? = none := by rw [List.getElem?_eq_none_iff]; omega
-        simp [hl, this]; omega
+        simp [hl]; omega
 
 theorem isBound_insertById (r : Row β) (id j : Nat) (v : Option β) :
     isBound (insertById r id v) j = (isBound r j || decide (j = id)) := by
@@ -195,7 +195,7 @@ theorem hashed_pad (r : Row β) (n : Nat)
     rw [List.getElem?_append_right (by omega)]
     have e : r.values.length + k - r.values.length = k := by omega
     have hp := hpad (r.values.length + k) (by omega)
-    simp [e, List.getElem?_replicate, hk, hp]
+    simp [e, hk, hp]
   rw [this, List.append_nil]
   suffices ∀ l : List Nat, (∀ i ∈ l, i < r.values.length) →
       l.filterMap (fun i => match (r.values ++ List.replicate n none)[i]? with

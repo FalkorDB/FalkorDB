@@ -87,7 +87,7 @@ theorem parseSp_missing (args : List Val) (m : List (String × Val)) (hm : parse
       lookup m "sourceNode" = some .null ∨ lookup m "targetNode" = some .null) :
     parseSp args = .error "sourceNode and targetNode are required" := by
   unfold parseSp; rw [hm]; dsimp only
-  rw [if_pos]
+  rw [ite_eq_left]
   rcases h with h | h | h | h <;> simp [h, present]
 
 theorem parseSp_not_node (args : List Val) (m : List (String × Val)) (hm : parseConfig args = .ok m)
@@ -97,7 +97,7 @@ theorem parseSp_not_node (args : List Val) (m : List (String × Val)) (hm : pars
   unfold parseSp; rw [hm]; dsimp only
   have hp : present (lookup m "sourceNode") = true := by
     rw [hv]; cases v <;> simp_all [present]
-  rw [if_neg (by simp [hp, ht]), hv]
+  rw [ite_eq_right (by simp [hp, ht]), hv]
   cases v <;> simp_all
 
 theorem parseSs_ok (args : List Val) (s : Nat) (m : List (String × Val)) :

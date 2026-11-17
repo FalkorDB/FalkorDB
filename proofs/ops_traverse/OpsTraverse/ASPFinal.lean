@@ -98,7 +98,7 @@ theorem back_has {g : Graph} {b : Bool} {src dst maxH : Nat} {st : St} (hi : Inv
       have hacc : acc ≠ [] := by simpa using hne
       unfold back
       have : (src == src && !acc.isEmpty) = true := by cases acc <;> simp_all
-      rw [if_pos this]; simp
+      rw [ite_eq_left this]; simp
   | _, _, @PredWalk.snoc _ _ es w m e hp hm, acc, fuel, hf, _ => by
       obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by simp at hf; omega⟩
       unfold back
@@ -118,11 +118,11 @@ theorem back_len {g : Graph} {b : Bool} {src dst maxH : Nat} {st : St} (hi : Inv
   | fuel + 1, node, acc, res, dn, hd, h => by
       unfold back at h
       by_cases hc : (node == src && !acc.isEmpty) = true
-      · rw [if_pos hc] at h
+      · rw [ite_eq_left hc] at h
         simp only [List.mem_singleton] at h; subst h
         simp only [Bool.and_eq_true, beq_iff_eq] at hc
         rw [hc.1, hi.src_d] at hd; cases hd; simp
-      · rw [if_neg hc] at h
+      · rw [ite_eq_right hc] at h
         simp only [List.mem_flatMap] at h
         obtain ⟨⟨u, e⟩, hp, hr⟩ := h
         simp only [predsOf, List.mem_map, List.mem_filter, beq_iff_eq] at hp

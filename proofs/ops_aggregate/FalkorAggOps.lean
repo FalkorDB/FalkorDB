@@ -18,7 +18,7 @@ import FalkorAggOps.IncludePendingExact
 /-!
 # FalkorAggOps — Aggregate, Distinct, Sort, Skip, Limit, Project, Unwind, aggregation functions
 
-Build: `cd proofs/ops_aggregate && lake build` (Lean 4.35.0, core only, no Mathlib).
+Build: `cd proofs/ops_aggregate && lake build` (Lean 4.36.0, core only, no Mathlib).
 No `sorry` / `admit` / `axiom`. 243 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
 Repros: the `bug_*` / `agrees_*` Rust tests named below live in `graph/tests/lean_ops_aggregate.rs`,
 which is kept locally and NOT committed (see README); the bug entries below are also reproduced as
