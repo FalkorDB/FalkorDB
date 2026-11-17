@@ -452,29 +452,36 @@ class testRestoreCorrupt():
         self.env.assertEqual(options["v"]["dimension"], 0)
         self.env.assertEqual(options["v"]["similarityFunction"], "euclidean")
 
-    def test_vector_index_options_accepted_at_creation_survive_restore(self):
-        # Creation and load hold to the same limits: an option too large for the
-        # vector library is refused when the index is created, so no saved graph
-        # carries one that RDB load, COPY and RESTORE would refuse.
+    def test_vector_index_graph_parameters_of_any_size_survive_restore(self):
+        # M, efConstruction and efRuntime are not limited on load, as in C: a
+        # graph saved with any of them restores. Large EF values are accepted at
+        # creation and the index keeps working after the restore.
         self.conn.flushall()
         g = self.db.select_graph("src")
-        g.query("CREATE (:V {v: vecf32([1.0, 2.0])})")
-        refused = [
-            ("dimension:2, similarityFunction:'cosine', %s" % opt, "must be at most 1048576")
-            for opt in ("efRuntime:1048577", "M:1048577", "efConstruction:1048577")
-        ]
-        for options, message in refused:
-            try:
-                g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) OPTIONS {%s}" % options)
-                self.env.assertTrue(False, message="accepted: " + options)
-            except redis.ResponseError as e:
-                self.env.assertContains(message, str(e))
-        # at the limit it is accepted and round-trips
-        g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
-                "OPTIONS {dimension:0, similarityFunction:'cosine', efRuntime:1048576}")
+        g.query("CREATE (:V {v: vecf32([1.0, 2.0])}), (:V {v: vecf32([3.0, 4.0])})")
+        g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) OPTIONS {dimension:2, "
+                "similarityFunction:'euclidean', M:4091, "
+                "efConstruction:1099511627776, efRuntime:1099511627776}")
         payload = capture_restore_payload(self.conn, "src", "dst")
         self.conn.flushall()
-        self.env.assertTrue(self.restore(payload))
+        self.conn.execute_command("GRAPH.RESTORE", "x", payload)
+        x = self.db.select_graph("x")
+        options = x.query("CALL db.indexes() YIELD options RETURN options").result_set[0][0]["v"]
+        self.env.assertEqual(options["efConstruction"], 1099511627776)
+        self.env.assertEqual(options["efRuntime"], 1099511627776)
+        res = x.query("CALL db.idx.vector.queryNodes('V', 'v', 1, vecf32([1.0, 2.0])) "
+                      "YIELD node RETURN node.v")
+        self.env.assertEqual(len(res.result_set), 1)
+
+        # An M the vector library cannot hold (C writes M 2000000 when asked
+        # for it; this build refuses it at creation) still restores the graph.
+        marker = bytes([TYPE_UNSIGNED]) + (4091).to_bytes(8, "little")
+        self.env.assertEqual(payload.count(marker), 1)
+        patched = payload.replace(marker, bytes([TYPE_UNSIGNED]) + (2000000).to_bytes(8, "little"))
+        self.conn.flushall()
+        self.conn.execute_command("GRAPH.RESTORE", "x", patched)
+        res = x.query("MATCH (n:V) RETURN count(n)")
+        self.env.assertEqual(res.result_set[0][0], 2)
 
     def test_vector_index_of_any_dimension_survives_restore(self):
         # The dimension has no limit, at creation or on load, as in C: an index

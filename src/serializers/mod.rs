@@ -21,7 +21,6 @@ use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
-use graph::index::vector_index_options::MAX_VECTOR_GRAPH_PARAM;
 
 use graph::graph::graphblas::serialization::check_count_fits;
 
@@ -683,24 +682,11 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), S
         let ef_construction = r.read_unsigned()? as usize;
         let ef_runtime = r.read_unsigned()? as usize;
         let sim_func = r.read_unsigned()?;
-        // The index is rebuilt from these, and M / EF size its graph. A real
-        // index never nears these; a corrupted one must not reach the vector
-        // library with them. The dimension is not limited (as in C, and as at
-        // creation): it costs nothing until a vector that long is stored.
+        // None of these is limited here, as in C and as at creation: the vector
+        // library refuses an M it cannot hold when the index is rebuilt, which
+        // drops that index but keeps the graph, and EF only bounds a search.
         // Zero is kept: `OPTIONS {dimension:0}` is accepted at creation and the
         // index retains it, so it has to round-trip.
-        // A zero-dimension index is never configured in the vector library, so
-        // its graph parameters reach nothing and are kept as they were saved.
-        if dimension > 0
-            && (m > MAX_VECTOR_GRAPH_PARAM
-                || ef_construction > MAX_VECTOR_GRAPH_PARAM
-                || ef_runtime > MAX_VECTOR_GRAPH_PARAM)
-        {
-            return Err(format!(
-                "invalid vector index options for attribute {name}: dimension {dimension}, \
-                 M {m}, EF_CONSTRUCTION {ef_construction}, EF_RUNTIME {ef_runtime}"
-            ));
-        }
         // Inverse of the VecSimMetric encoding above; spellings match what
         // `map_to_index_options` accepts so a rebuilt index round-trips.
         let similarity_function = match sim_func {
@@ -948,31 +934,38 @@ mod tests {
         }
     }
 
-    /// Graph parameters of a vector index that reach the vector library are
-    /// bounded, and creation holds to the same bounds, so a saved graph reloads;
-    /// a zero-dimension index never reaches the library and keeps what it was saved with.
+    /// A vector index's dimension and graph parameters are not limited on load,
+    /// as in C and as at creation, so a graph that C or an earlier build saved
+    /// with any of them reloads.
     #[test]
-    fn vector_index_parameter_limits_match_creation_and_spare_zero_dimension() {
-        let encode = |dimension: u64, ef_runtime: u64| {
+    fn vector_index_parameters_of_any_size_load() {
+        let encode = |dimension: u64, m: u64, ef_construction: u64, ef_runtime: u64| {
             let mut w = VecWriter::new();
             w.write_buffer(&null_terminated("v"));
             w.write_unsigned(INDEX_FLD_VECTOR);
             w.write_double(2.0);
             w.write_unsigned(1);
             w.write_buffer(&null_terminated("dm:en"));
-            for v in [dimension, 16, 200, ef_runtime, 1] {
+            for v in [dimension, m, ef_construction, ef_runtime, 1] {
                 w.write_unsigned(v);
             }
             w.into_vec()
         };
         let load = |bytes: &[u8]| decode_index_field(&mut BufferedReader::from_slice(bytes));
-        let over = MAX_VECTOR_GRAPH_PARAM as u64 + 1;
-        assert!(load(&encode(4, MAX_VECTOR_GRAPH_PARAM as u64)).is_ok());
-        assert!(load(&encode(4, over)).is_err_and(|e| e.contains(&format!("EF_RUNTIME {over}"))));
-        assert!(load(&encode(0, over)).is_ok());
-        // any dimension loads, as C's does and as creation accepts
-        assert!(load(&encode((1 << 24) + 1, 10)).is_ok());
-        assert!(load(&encode(u64::MAX, 10)).is_ok());
+        for (dimension, m, ef_c, ef_r) in [
+            (4, 16, 200, 10),
+            (4, 2_000_000, 200, 10),
+            (4, 16, 1 << 40, 10),
+            (4, 16, 200, u64::MAX),
+            (0, u64::MAX, u64::MAX, u64::MAX),
+            ((1 << 24) + 1, 16, 200, 10),
+            (u64::MAX, 16, 200, 10),
+        ] {
+            assert!(
+                load(&encode(dimension, m, ef_c, ef_r)).is_ok(),
+                "dimension {dimension} M {m} efC {ef_c} efR {ef_r} was refused"
+            );
+        }
     }
 
     #[test]
