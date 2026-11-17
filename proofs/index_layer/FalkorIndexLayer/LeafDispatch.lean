@@ -19,7 +19,7 @@ def LeafV.key : LeafV → Nat → Nat
   | .aos b => aosKey b | .compact b => cKey b | .indexed b => ciKey b
 def LeafV.doc : LeafV → Nat → Nat
   | .aos b => aosDoc b | .compact b => cDoc b | .indexed b => ciDoc b
-/-- `doc_layout`: `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)` for AoS (`leaf/mod.rs:215`), here at `DOC_BYTES = 8`
+/-- `doc_layout`: `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)` for AoS (`leaf/mod.rs:216`), here at `DOC_BYTES = 8`
 (general `D`: `docLayoutD`, `LeafAosD.lean`). -/
 def LeafV.docLayout : LeafV → Nat × Nat × Nat
   | .aos _ => (8, 16, 8) | .compact b => cDocLayout b | .indexed b => ciDocLayout b

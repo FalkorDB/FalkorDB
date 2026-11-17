@@ -122,7 +122,7 @@ theorem sorted_cut (ps : List E) (hs : Sorted ps) (mid : Nat) (hm : mid < ps.len
   · omega
   · have := (sorted_cons.1 sd).1 e he; omega
 
-/-- **`Leaf::insert` (`leaf/mod.rs:372`)**: absent ⇒ a sorted page with the entry added, split at the
+/-- **`Leaf::insert` (`leaf/mod.rs:373`)**: absent ⇒ a sorted page with the entry added, split at the
     midpoint on overflow into two non-empty, `>= LEAF_MAX / 2`-full halves bounded by the separator. -/
 theorem leafInsert_spec (c : Cfg) (es : List E) (x : E) (hs : Sorted es) (hl : es.length ≤ c.L) :
     match leafInsert c es x with
@@ -156,7 +156,7 @@ theorem leafInsert_spec (c : Cfg) (es : List E) (x : E) (hs : Sorted es) (hl : e
       · intro h0; have := congrArg List.length h0; rw [List.length_drop, List.length_nil] at this; omega
       all_goals simp only [List.length_take, List.length_drop]; omega
 
-/-- **`Leaf::remove` (`leaf/mod.rs:432`)**: present ⇒ a sorted page without it, one shorter, with
+/-- **`Leaf::remove` (`leaf/mod.rs:433`)**: present ⇒ a sorted page without it, one shorter, with
     the underflow flag `new_count < LEAF_MAX / 2`; absent ⇒ `None`. -/
 theorem leafRemove_spec (c : Cfg) (es : List E) (x : E) (hs : Sorted es) :
     match leafRemove c es x with

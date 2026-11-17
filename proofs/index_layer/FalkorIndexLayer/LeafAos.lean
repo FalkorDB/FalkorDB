@@ -14,7 +14,7 @@ this model at `DOC_BYTES = 8`. `aosRead` is the old `AosLeaf::read` helper, inli
 | `aosEnc`, `aosBuild` | `AosLeaf::build` `aos.rs:39` |
 | `aosCount`, `aosRead`, `aosKey`, `aosDoc` | `count` 18, (`read`, inlined), `key` 23, `doc` 31 |
 | `aosMerge` | `AosLeaf::merge_batch` 51 (via `merge_walk`) |
-| `pairsOf` | `Leaf::iter` / `to_pairs` (`leaf/mod.rs:233,238`) |
+| `pairsOf` | `Leaf::iter` / `to_pairs` (`leaf/mod.rs:234,238`) |
 -/
 namespace IndexLayer.Leaf
 

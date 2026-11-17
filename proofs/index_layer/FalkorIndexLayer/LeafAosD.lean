@@ -4,19 +4,19 @@ import FalkorIndexLayer.LeafTree
 # The narrowable doc width `DOC_BYTES` (#2278, 3597b3a82)
 
 `AosLeaf<DOC_BYTES>` (`cow_btree/leaf/aos.rs`) stores `key:8 + doc:DOC_BYTES` per entry; the doc is
-written by `doc_le_bytes` (`cow_btree/mod.rs:65-74`, `assert!` that the dropped high bytes are zero)
+written by `doc_le_bytes` (`cow_btree/mod.rs:71-80`, `assert!` that the dropped high bytes are zero)
 and read back by `read_width(.., DOC_BYTES)` (`aos.rs:31-36`, `mod.rs:94-110`). `Leaf::doc_layout`
-reports `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)` (`leaf/mod.rs:213-219`) and `from_pairs` sizes AoS as
-`count * (FIELD + DOC_BYTES)` (`leaf/mod.rs:287`).
+reports `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)` (`leaf/mod.rs:214-220`) and `from_pairs` sizes AoS as
+`count * (FIELD + DOC_BYTES)` (`leaf/mod.rs:288`).
 
 | Lean | Rust |
 | --- | --- |
-| `docLeBytes` | `doc_le_bytes` `cow_btree/mod.rs:65` |
+| `docLeBytes` | `doc_le_bytes` `cow_btree/mod.rs:71` |
 | `aosEncD`, `aosBuildD` | `AosLeaf::build` `aos.rs:39` (`None` = the `doc_le_bytes` panic) |
 | `aosCountD`, `aosKeyD`, `aosDocD` | `AosLeaf::count` 18, `key` 23, `doc` 31 |
 | `aosMergeD` | `AosLeaf::merge_batch` 51 |
-| `docLayoutD` | `Leaf::doc_layout` AoS arm `leaf/mod.rs:215` |
-| `fromPairsD`, `toPairsD` | `Leaf::from_pairs` `leaf/mod.rs:260` with `aos_size = count * (FIELD + DOC_BYTES)` |
+| `docLayoutD` | `Leaf::doc_layout` AoS arm `leaf/mod.rs:216` |
+| `fromPairsD`, `toPairsD` | `Leaf::from_pairs` `leaf/mod.rs:261` with `aos_size = count * (FIELD + DOC_BYTES)` |
 
 Proven: `docLeBytes_spec` (the assert passes iff `doc < 256^DOC_BYTES`, and then the bytes are
 `le DOC_BYTES doc`), `docLeBytes_lossless` (narrowing is lossless), `aos_roundtripD` and
@@ -36,7 +36,7 @@ namespace IndexLayer.Leaf
 
 /-! ## `doc_le_bytes` -/
 
-/-- `doc_le_bytes::<D>(doc)` (`cow_btree/mod.rs:65-74`): `none` is the `assert!` panic. -/
+/-- `doc_le_bytes::<D>(doc)` (`cow_btree/mod.rs:71-80`): `none` is the `assert!` panic. -/
 def docLeBytes (D d : Nat) : Option (List Nat) :=
   if ((le 8 d).drop D).all (· == 0) then some ((le 8 d).take D) else none
 
@@ -180,7 +180,7 @@ theorem aosMergeD_spec (D : Nat) (hD : W D) (ps batch : List P) (hu : AllU64 ps)
   unfold aosMergeD
   rw [(aos_roundtripD D hD ps hu hf).2.2, mergeW_fst lexLe ps batch none]
 
-/-- `Leaf::doc_layout`'s AoS arm (`leaf/mod.rs:215`): `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)`. -/
+/-- `Leaf::doc_layout`'s AoS arm (`leaf/mod.rs:216`): `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)`. -/
 def docLayoutD (D : Nat) : Nat × Nat × Nat := (8, 8 + D, D)
 
 /-- The cursor's cached layout reads exactly `AosLeaf::doc` (`cursor.rs:197-200`). -/
@@ -204,7 +204,7 @@ theorem aosD8_layout : docLayoutD 8 = (8, 16, 8) := rfl
 
 /-! ## `from_pairs` with the AoS size `count * (8 + DOC_BYTES)` -/
 
-/-- `Leaf::<_, D>::from_pairs` (`leaf/mod.rs:260-312`); `none` is a `doc_le_bytes` panic in the AoS arm. -/
+/-- `Leaf::<_, D>::from_pairs` (`leaf/mod.rs:261-313`); `none` is a `doc_le_bytes` panic in the AoS arm. -/
 def fromPairsD (D : Nat) (ps : List P) : Option LeafV :=
   match ps.getLast? , ps.head? with
   | some last, some first =>
