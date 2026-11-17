@@ -66,8 +66,8 @@ theorem construct_ym_s (Y M S : Int) (h1 : I64 (Y * 12)) (h2 : I64 (Y * 12 + M))
       some (daysFromCivil (1970 + (Y * 12 + M) / 12) ((Y * 12 + M) % 12 + 1) 1 * 86400 + S) := by
   have z : I64 0 := by unfold I64; decide
   unfold constructDuration chkMul chkAdd
-  simp only [Int.zero_mul, Int.zero_add, Int.mul_zero, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
-    chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind, checkDateRange, h7, and_self, if_true]
+  simp only [Int.zero_mul, Int.zero_add, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
+    chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind, checkDateRange, h7, and_self, ite_true]
 
 /-- `decompose_duration` (`temporal.rs:539-549`) as built in release (i32 wrap). -/
 def decomposeDuration (dur : Int) : Int × Int × Int :=
@@ -315,9 +315,9 @@ theorem checkDateRange_iff (ts : Int) :
   rw [← e2] at k4
   unfold checkDateRange
   by_cases h : minDateDays ≤ ts / 86400 ∧ ts / 86400 ≤ maxDateDays
-  · simp only [h, and_self, if_true, Option.isSome_some, true_iff]
+  · simp only [h, and_self, ite_true, Option.isSome_some, true_iff]
     omega
-  · simp only [h, if_false, Option.isSome_none, Bool.false_eq_true, false_iff]
+  · simp only [h, ite_false, Option.isSome_none, Bool.false_eq_true, false_iff]
     omega
 
 /-- The year bound keeps every `i32` step in `shift_months` and its callers exact. -/
@@ -337,13 +337,13 @@ theorem shiftMonthsR_eq (ts years months : Int) (h : -(MAX_DATE_YEAR + 1) ≤ ad
     adjYear ts years months ≤ MAX_DATE_YEAR + 1) :
     shiftMonthsR ts years months = some (shiftMonths ts years months) := by
   unfold shiftMonthsR
-  rw [if_neg]; unfold MAX_DATE_YEAR at *; omega
+  rw [ite_eq_right]; unfold MAX_DATE_YEAR at *; omega
 
 theorem shiftMonthsR_out_of_range (ts years months : Int)
     (h : MAX_DATE_YEAR + 1 < adjYear ts years months ∨ adjYear ts years months < -(MAX_DATE_YEAR + 1)) :
     shiftMonthsR ts years months = none := by
   unfold shiftMonthsR
-  rw [if_pos]; unfold MAX_DATE_YEAR at *; omega
+  rw [ite_eq_left]; unfold MAX_DATE_YEAR at *; omega
 
 /-- No wrap: whenever `shift_months` answers, `adj_year` (and the `adj_year + 1` of the
 roll-over) fits an `i32`, so the narrowing `as i32` is exact. -/
@@ -381,7 +381,7 @@ theorem addDur_eq_raw (ts dur : Int)
     have e : shiftMonthsR ts y m = some (shiftMonths ts y m) := by
       unfold shiftMonthsR at hs ⊢; split at hs
       · cases hs
-      · rw [if_neg ‹_›]
+      · rw [ite_eq_right ‹_›]
     rw [e] at hs; cases hs
     simp only [Option.bind]
     cases hc : checkDateRange ((shiftMonths ts y m).1 * 86400 + (shiftMonths ts y m).2 + r) with

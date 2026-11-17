@@ -196,12 +196,12 @@ theorem idFilter_correct (maxId : Nat) (fs : List (Int × IdOp))
     cases hst : step lo hi (wrap c) op with
     | none =>
       rw [hst] at hs
-      simp only [hst, inRange] at hs ⊢
+      simp only [inRange] at hs ⊢
       rw [← Bool.and_assoc, ← hs, Bool.false_and]
     | some st =>
       obtain ⟨lo', hi'⟩ := st
       rw [hst] at hs
-      simp only [hst]
+      simp only
       rw [ih (fun p hp => hfs p (by simp [hp])) lo' hi']
       simp only [inRange] at hs
       rw [hs, Bool.and_assoc]

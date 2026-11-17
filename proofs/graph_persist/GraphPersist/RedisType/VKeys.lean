@@ -13,7 +13,7 @@ import GraphPersist.Persist.Payload
 | `deleteStaleGraphmeta`    | `delete_stale_graphmeta_keys` (:591-617) |
 | `deleteStaleVirtual`      | `delete_stale_virtual_keys` (:625-640) |
 
-`key_holds_graph` (:569) and `delete_key` (:549) are `RedisModule_*` calls (inputs / effects);
+`key_holds_graph` (:577, `RedisLayer.Telemetry.keyHolds` in proofs/redis_layer) is an input and `delete_key` (:547) a `RedisModule_*` effect;
 `build_multi_key_payloads` is the proved `buildMulti`, abstracted here as `layout`.
 
 * `save_main` / `save_vkey` / `save_single` — with distinct names, a graph needing `K ≥ 2`
@@ -185,7 +185,7 @@ theorem save_main (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry
         subst this
         have e := hreg_uniq _ hreg rfl
         simp only [Prod.mk.injEq] at e; obtain ⟨_, rfl⟩ := e
-        simp only [vkInserts, hh, hK, true_and, decide_true, ite_true, List.mem_cons, List.mem_map,
+        simp only [vkInserts, hh, hK, true_and, ite_true, List.mem_cons, List.mem_map,
           List.mem_range] at hpi
         rcases hpi with hpi | ⟨i, _, hpi⟩
         · exact hpi
@@ -226,7 +226,7 @@ theorem save_vkey (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry
     apply lookup_unique
     · simp only [createVKeys, List.mem_flatMap]
       refine ⟨(g, gr), hg, ?_⟩
-      simp only [vkInserts, hh, hK, true_and, decide_true, ite_true, List.mem_cons, List.mem_map, List.mem_range]
+      simp only [vkInserts, hh, hK, true_and, ite_true, List.mem_cons, List.mem_map, List.mem_range]
       right
       exact ⟨i - 1, by omega, by rw [Nat.sub_add_cancel hi]⟩
     · intro p hp hpg
@@ -240,7 +240,7 @@ theorem save_vkey (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry
         obtain ⟨rfl, rfl⟩ := hn.vname_inj _ _ _ _ h3
         have e := hreg_uniq _ hreg rfl
         simp only [Prod.mk.injEq] at e; obtain ⟨_, rfl⟩ := e
-        simp only [vkInserts, hh, hK, true_and, decide_true, ite_true, List.mem_cons, List.mem_map,
+        simp only [vkInserts, hh, hK, true_and, ite_true, List.mem_cons, List.mem_map,
           List.mem_range] at hpi
         rcases hpi with hpi | ⟨k, _, hpi⟩
         · rw [hpi] at hpg; exact absurd hpg.symm (hn.vname_fresh _ _ _ hg)

@@ -56,7 +56,7 @@ def get (o : Obj) (k : String) : Option JV := (o.find? (·.1 == k)).map (·.2)
 
 theorem get_set_same (o : Obj) (k : String) (v : JV) (hk : k ≠ "__proto__") :
     get (set o k v) k = some v := by
-  unfold get set; rw [if_neg hk]
+  unfold get set; rw [ite_eq_right hk]
   rw [List.find?_append]
   have : (o.filter (·.1 != k)).find? (·.1 == k) = none := by
     rw [List.find?_eq_none]; intro x hx; simp at hx ⊢; exact hx.2
@@ -237,7 +237,7 @@ def nodeById (nodeCount maxId : Nat) (deleted : Nat → Bool) (arg : Option JNum
 theorem nodeById_spec (nodeCount maxId : Nat) (deleted : Nat → Bool) (id : Nat) :
     nodeById nodeCount maxId deleted (some (.int id)) =
       .ok (if id ∈ AlgoGlue.activeNodes nodeCount maxId deleted then some id else none) := by
-  simp only [nodeById, nodeIdArg, Int.natCast_nonneg, if_true, Int.toNat_natCast]
+  simp only [nodeById, nodeIdArg, Int.natCast_nonneg, ite_true, Int.toNat_natCast]
   congr 2
   rw [AlgoGlue.mem_activeNodes]; simp only [eq_iff_iff]
   constructor <;> rintro ⟨a, b, c⟩ <;> exact ⟨by omega, b, c⟩

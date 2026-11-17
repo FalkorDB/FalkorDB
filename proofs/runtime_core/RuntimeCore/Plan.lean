@@ -60,7 +60,7 @@ theorem getVariables_spec (bfs : List IRK) :
   induction bfs with
   | nil => rfl
   | cons k ks ih =>
-    cases k <;> simp [getVariables, isProject, ih, nodeVars, List.takeWhile_cons, List.dropWhile_cons]
+    cases k <;> simp [getVariables, isProject, ih, nodeVars]
 
 /-- Nothing after the first `Project` (in BFS order) is collected. -/
 theorem getVariables_stops (pre post : List IRK) (ns : List Nat) (hp : ∀ k ∈ pre, isProject k = false) :

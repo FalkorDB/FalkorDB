@@ -594,14 +594,14 @@ theorem padSet_lt {l : List (Option Slot)} {e : Nat} (h : e < l.length) (x) :
 
 theorem set_mid {P M S : List (Option Slot)} {at_ : Nat} (h : at_ < M.length) (x) :
     (P ++ M ++ S).set (P.length + at_) x = P ++ M.set at_ x ++ S := by
-  rw [List.append_assoc, List.set_append, if_neg (by omega), Nat.add_sub_cancel_left,
-    List.set_append, if_pos h, List.append_assoc]
+  rw [List.append_assoc, List.set_append, ite_eq_right (by omega), Nat.add_sub_cancel_left,
+    List.set_append, ite_eq_left h, List.append_assoc]
 
 theorem pad_append (P M : List (Option Slot)) {at_ : Nat} (h : M.length ≤ at_) (x) :
     P ++ (M ++ List.replicate (at_ + 1 - M.length) none).set at_ x =
       padSet (P ++ M) (P.length + at_) x := by
   unfold padSet
-  rw [List.length_append, List.append_assoc, List.set_append (s := P), if_neg (by omega),
+  rw [List.length_append, List.append_assoc, List.set_append (s := P), ite_eq_right (by omega),
     Nat.add_sub_cancel_left]
   rw [show P.length + at_ + 1 - (P.length + M.length) = at_ + 1 - M.length by omega]
 
@@ -744,7 +744,7 @@ theorem view_clear (ix : Ix) (hwf : WF ix) (e : Nat) :
       rw [tierLen_eq] at hat; simpa [viewT] using hat
     have hview : view (ix.withTier r (vacate r at_)) = (view ix).set e none := by
       rw [view_withTier _ hr, splice ix hr, he]
-      simp only [vacate, if_pos hv, List.map_set, decode_empty]
+      simp only [vacate, ite_eq_left hv, List.map_set, decode_empty]
       exact (set_mid (by simpa [viewT] using hv) _).symm
     refine ⟨fun i => ?_, ?_⟩
     · rw [hview]
@@ -755,7 +755,7 @@ theorem view_clear (ix : Ix) (hwf : WF ix) (e : Nat) :
       · simp [hie, Ne.symm hie]
     · refine wf_setTier hwf hr ?_
       intro p hp
-      simp only [Option.getD_some, vacate, if_pos hv] at hp
+      simp only [Option.getD_some, vacate, ite_eq_left hv] at hp
       rcases mem_set_or hp with h | h
       · exact tier_ok _ hwf hr p h
       · exact h ▸ ok_empty _
@@ -764,7 +764,7 @@ theorem view_clear (ix : Ix) (hwf : WF ix) (e : Nat) :
     refine ⟨fun i => ?_, hwf⟩
     by_cases hie : i = e
     · subst hie
-      simp only [if_true, lk]
+      simp only [ite_true, lk]
       rw [List.getElem?_eq_none (by rw [← len_view]; omega)]
       rfl
     · simp [hie]
@@ -1069,8 +1069,8 @@ theorem ensurePages_spec {α} (P : Nat) (hP : 0 < P) (fill : α) (pages : List (
     slots ≤ (ensurePages P fill pages slots).flatten.length := by
   unfold ensurePages
   by_cases h0 : slots = 0
-  · simp only [h0, if_true]; exact ⟨hs, ⟨0, by simp⟩, Nat.zero_le _⟩
-  simp only [h0, if_false]
+  · simp only [h0, ite_true]; exact ⟨hs, ⟨0, by simp⟩, Nat.zero_le _⟩
+  simp only [h0, ite_false]
   generalize hw : (slots + P - 1) / P = want
   have hd1 : (slots + P - 1) / P * P ≤ slots + P - 1 := Nat.div_mul_le_self _ _
   have hd2 : slots + P - 1 < (slots + P - 1) / P * P + P := Nat.lt_div_mul_add hP
@@ -1091,7 +1091,7 @@ theorem ensurePages_spec {α} (P : Nat) (hP : 0 < P) (fill : α) (pages : List (
   rcases List.eq_nil_or_concat pages with rfl | ⟨ps, l, rfl⟩
   all_goals try rw [List.concat_eq_append] at hs ⊢
   · have hlt : ([] : List (List α)).length < want := by simp; omega
-    rw [if_pos hlt]
+    rw [ite_eq_left hlt]
     simp only [List.getLast?_nil, List.length_nil, Nat.sub_zero]
     refine ⟨(shape_concat _ _ _).2 ⟨hfullrep _, by simp; omega⟩, ⟨(want - 1) * P +
       (slots - (want - 1) * P), ?_⟩, ?_⟩
@@ -1102,7 +1102,7 @@ theorem ensurePages_spec {α} (P : Nat) (hP : 0 < P) (fill : α) (pages : List (
     simp only [List.getLast?_concat, List.dropLast_concat, List.length_append, List.length_cons,
       List.length_nil]
     by_cases hlt : ps.length + (0 + 1) < want
-    · rw [if_pos hlt]
+    · rw [ite_eq_left hlt]
       have hl' : (if l.length < P then ps ++ [regrow fill l P] else ps ++ [l]) =
           ps ++ [l ++ List.replicate (P - l.length) fill] := by
         split
@@ -1127,7 +1127,7 @@ theorem ensurePages_spec {α} (P : Nat) (hP : 0 < P) (fill : α) (pages : List (
         have e2 : (ps.length + 1) * P = ps.length * P + P := Nat.succ_mul _ _
         have e3 : (ps.length + 1) * P ≤ (want - 1) * P := Nat.mul_le_mul_right _ (by omega)
         omega
-    · rw [if_neg hlt]
+    · rw [ite_eq_right hlt]
       split
       · rename_i hlt2
         rw [regrow_ext _ _ (by omega)]

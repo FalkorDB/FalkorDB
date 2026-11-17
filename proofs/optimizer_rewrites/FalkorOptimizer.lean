@@ -237,8 +237,9 @@ binds what it reads).
 * #2918 — `variable_read_outside` for the three `reduce_*` passes (its per-operator
   oracle is superseded by #2390's references.rs): modelled as `readOutside`
   (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
-* #3006 — `push_filters_down.rs:122` merges `[child_filter, filter]`: the
-  `merge_child_first_row` order; fixes bug 2.
+* #3006 — `push_filters_down.rs:128` merges `[child_filter, filter]`: the
+  `merge_child_first_row` order (`mergeRust`); fixes bug 2 (`merge_rust_fixed_example`,
+  `merge_rust_same`: stacked outcome whenever the inner verdict is boolean).
 * #2981 — `push_filters_down` routes with `branch_visible_variables` (below an
   env-resetting operator only its outputs survive; ids of the subtree minus its
   children's) instead of `collect_subtree_variables` for the Apply left side —
