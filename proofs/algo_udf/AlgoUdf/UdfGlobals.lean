@@ -142,7 +142,7 @@ theorem rRun_keys (lib : String) (hl : lib ≠ "") :
       · unfold rRegister at hr
         split at hr
         · cases hr
-          simp only [hl, if_false, List.map_append, List.mem_append, List.mem_map, List.mem_filter,
+          simp only [hl, ite_false, List.map_append, List.mem_append, List.mem_map, List.mem_filter,
             List.map_cons, List.map_nil, List.mem_singleton] at h1
           rcases h1 with ⟨q, ⟨hq, _⟩, rfl⟩ | h1
           · exact Or.inl (List.mem_map_of_mem hq)

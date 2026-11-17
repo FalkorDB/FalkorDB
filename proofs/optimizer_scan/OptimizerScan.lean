@@ -5,7 +5,7 @@ Targets: `graph/src/planner/optimizer/select_scan_node.rs`, `utilize_index.rs`,
 `utilize_node_by_id.rs`, `reorder_labels.rs`, plus the runtime pieces their rewrites hand
 work to (`Runtime::evaluate_id_filter`, `NodeByIndexScanOp`, `Index::build_query_node`).
 
-Build: `lake build` (Lean 4.35, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
+Build: `lake build` (Lean 4.36, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
 `utilize_sound` and `seek_sound` depend only on `propext`, `Quot.sound`, `Classical.choice`.
 77 theorems, 36 `decide`d examples (counterexamples and sanity checks).
 Coverage per Rust function: `COVERAGE.tsv`. Rust repros: `graph/tests/lean_optimizer_scan.rs`
@@ -61,6 +61,7 @@ Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`):
 - `sel_and2`: an index `And` is the intersection (a null child nulls both sides).
 - `sel_merge`, `rangeOK_merge`, `cu_merge`: `merge_range_queries` selects the conjunction and stays well-formed and usable.
 - `trySingle_spec`: `try_single_filter_scan` on covered atoms is exact, on `L`, well-formed, usable unless `IN`.
+- `trySingle_inn_bare` (#3068): an `IN` is pushed only when its index side is the bare property (`n.k IN [...]` or `x IN n.k`).
 - `pushAnd_spec`, `pushOr_spec`, `buildSome_any`: the AND / OR branches of `try_filter_pushdown` select the conjunction and disjunction.
 - `utilize_sound` (headline): single-label scan, Null/Int/String values, atoms `n.k op lit`, `lit op n.k`,
   `n.k IN [lits]`, unindexable conjuncts, combined by AND (no strict string bound) or OR — rewritten plan = original.
@@ -115,10 +116,11 @@ Scan selection (`ScanOrder.lean`):
    `[1],[2]`, C `[1],[2]`; `toString(n.a) IN ['1']` → Rust `[]`, C `[1]`;
    `n.a + 1 IN [2]` → Rust `[]`, without index `[1]` (C errors). Fix: require
    `ExprIR::Property` of the scanned alias as the whole left side (as the comparison path does at 693).
+   **Fixed by #3068** (`bare_property_of`): C7/C7' now agree; `trySingle_inn_bare`.
 5. **`x IN [n.a, n.b]` becomes array-contains on `n.a`** — same function, `(false, true)`
    arm with a list literal on the right. Lean C8. `2 IN [n.a, n.b]` → Rust `[]`, C `[3]`;
    `-1 IN [n.a]` → Rust `[]`, without index `[2]`. Fix: array-contains only when the right
-   side *is* `Property(scanned alias)`.
+   side *is* `Property(scanned alias)`. **Fixed by #3068**: C8 now agrees.
 
 6. **`select_scan_node` salvages a filter whose variable the pruned child bound (`Unwind`/`WITH`)** (W2-scan-6, #2972, fixed by open PR #3099) —
    `is_planner_scan_subtree` (`:315`) accepts a scan with *any* child; `argument_leaf_of` (`:276`)
@@ -228,6 +230,15 @@ RETURN a.v, b.w` on `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` r
 `[1,2],[5,2]` (should be `[1,2]`; the fixed-length `-[:R]->` form is right) on builds 88e92ae25
 and b3582e34a. `ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. Fix: refuse the leaf
 rewrite when the wrapper holds a `Filter`, or salvage it above the traverse with `filters_of`.
+
+## PR #3821 (f71981fa3: equality-pinned endpoint tie-break)
+`score_endpoint` returns `(score, has_equality, filter_runs_late, cardinality)`;
+`collect_filtered_vars` also fills `equality` via the new `collect_equalities` (top-level `AND`
+conjuncts `v.p = <variable-free expr>`, either side). `ScanTree.scoreEndpoint_spec` (re-stated with
+the new flag), `collectEqualities_sub`/`_other`/`_examples`, `filteredVars_equality_sub_all`
+(equality ⊆ all, so `score_equality_filtered`: the flag only breaks ties between filtered
+endpoints), `equality_beats_late` (the comparator key `startKeyLt`). Start choice affects cost only;
+`ScanOrder`'s soundness theorems hold for any start, so they are unchanged.
 -/
 import OptimizerScan.IdSeek
 import OptimizerScan.Index

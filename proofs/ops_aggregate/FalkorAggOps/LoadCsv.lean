@@ -119,7 +119,7 @@ def erRun (r : ER) : List (Nat × Nat) → Except String Nat
 within the budget. -/
 theorem erRun_le (rs : List (Nat × Nat)) : ∀ (r : ER) (n : Nat), erRun r rs = .ok n → n < r.remaining ∨ n = 0 := by
   induction rs with
-  | nil => intro r n h; simp [erRun, pure, Except.pure] at h; omega
+  | nil => intro r n h; simp [erRun] at h; omega
   | cons x xs ih =>
     intro r n h
     obtain ⟨w, a⟩ := x

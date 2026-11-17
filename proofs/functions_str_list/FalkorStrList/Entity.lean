@@ -347,7 +347,7 @@ theorem deleteNode_preserves_all (r : RT) (n : Nat) (hnd : r.delNodes n = none) 
       ∀ s, EV.str s ∈ ls' ↔ EV.str s ∈ ls) ∧
     (∀ l, (deleteNode r n).hasLabel n l = r.hasLabel n l) := by
   have h : (deleteNode r n).labels n = r.labels n := by simp [RT.labels, deleteNode, hnd]
-  refine ⟨⟨_, _, rfl, rfl, fun s => by simp [labels, h]⟩, fun l => by simp [RT.hasLabel, h]⟩
+  refine ⟨⟨_, _, rfl, rfl, fun s => by simp [h]⟩, fun l => by simp [RT.hasLabel, h]⟩
 
 /-- `hasLabels` with all-string labels is "every label is in `labels(n)`". -/
 theorem hasLabels_all (r : RT) (n : Nat) (ls : List String) :

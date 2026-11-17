@@ -55,17 +55,17 @@ theorem encLoop_spec (d : D) (deleted : Nat → Bool) (count : Nat) : ∀ (ids :
       exact encLoop_spec d deleted count ids sk enc
     · simp only [hd, Bool.false_eq_true, ite_false, List.filter_cons, Bool.not_false, ite_true]
       by_cases hs : sk > 0
-      · rw [if_pos hs, encLoop_spec d deleted count ids (sk - 1) enc]
+      · rw [ite_eq_left hs, encLoop_spec d deleted count ids (sk - 1) enc]
         obtain ⟨k, rfl⟩ : ∃ k, sk = k + 1 := ⟨sk - 1, by omega⟩
         simp
-      · rw [if_neg hs]
+      · rw [ite_eq_right hs]
         have : sk = 0 := by omega
         subst this
         by_cases hc : enc + 1 ≥ count
-        · rw [if_pos hc]
+        · rw [ite_eq_left hc]
           have : max (count - enc) 1 = 1 := by omega
           simp [this]
-        · rw [if_neg hc, encLoop_spec d deleted count ids 0 (enc + 1)]
+        · rw [ite_eq_right hc, encLoop_spec d deleted count ids 0 (enc + 1)]
           have : max (count - enc) 1 = max (count - (enc + 1)) 1 + 1 := by omega
           simp [this]
 
@@ -115,7 +115,7 @@ theorem decode_spec (d : D) (h : SInv d) (limit : Nat) (m : List (Nat × List En
     · have h0 := (sortById_nil _).2 hf
       show after _ _ (if sortById (ps.filter (keep limit)) = [] then none else some _) =
         if ps.filter (keep limit) = [] then dread d id else _
-      rw [if_pos h0, if_pos hf]; rfl
+      rw [ite_eq_left h0, ite_eq_left hf]; rfl
     · have h0 : ¬ sortById (ps.filter (keep limit)) = [] := fun e => hf ((sortById_nil _).1 e)
       simp [hf, h0, after]
 

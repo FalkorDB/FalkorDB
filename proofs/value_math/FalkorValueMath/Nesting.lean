@@ -256,7 +256,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
         | list l => exact absurd rfl (hv l)
         | _ => simp [capped, within, hd']
       unfold decodeValue pre3339_decode
-      rw [if_neg hd]
+      rw [ite_eq_right hd]
       split
       · rename_i tag rest
         by_cases t1 : tag = T_NULL
@@ -283,7 +283,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
             | error e =>
               rw [hq] at this
               cases hq' : pre3339_decode.decodeN co f len r with
-              | none => simp [hq, hq', capped, Except.map, Except.toOption]
+              | none => simp [hq', capped, Except.map, Except.toOption]
               | some q =>
                 obtain ⟨l, r'⟩ := q
                 rw [hq'] at this
@@ -292,7 +292,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
                   cases hwx : withinL (d + 1) l
                   · rfl
                   · simp [hwx] at this
-                simp [hq, hq', capped, within, hwl, Except.map, Except.toOption]
+                simp [hq', capped, within, hwl, Except.map, Except.toOption]
             | ok q =>
               obtain ⟨l, r'⟩ := q
               rw [hq] at this
@@ -305,7 +305,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
                 by_cases hwl : withinL (d + 1) l' = true
                 · simp only [hwl, ite_true, Option.some.injEq, Prod.mk.injEq] at this
                   obtain ⟨rfl, rfl⟩ := this
-                  simp [hq, hq', capped, within, hwl, hd', Except.map, Except.toOption]
+                  simp [hq', capped, within, hwl, hd', Except.map, Except.toOption]
                 · simp [hwl] at this
           · simp [Except.toOption, capped]
         simp only [t6, ite_false]
@@ -382,7 +382,7 @@ theorem decodeValue_encode_deep : ∀ (fuel d : Nat) (v : V F) (rest : List (Tok
     | list l =>
       simp only [Storable] at hst
       have hwl : withinL (d + 1) l = false := by simpa [within, hd'] using hw
-      simp only [encode, List.append_assoc, List.cons_append, List.nil_append]
+      simp only [encode, List.cons_append, List.nil_append]
       unfold decodeValue
       simp [hd, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         hN (d + 1) l rest (by simp at hs; omega) hst hwl, Except.map]
@@ -644,7 +644,7 @@ theorem validateProperty_depth (v : V F) (h : validateProperty v = .ok ()) :
     · cases h
     · rename_i hd
       have := validateItem_ok (sizeOf (V.list l : V F) + 1) (.list l) 0 (by omega)
-        (by simp only [validateItem]; rw [if_neg (by omega)]; exact h)
+        (by simp only [validateItem]; rw [ite_eq_right (by omega)]; exact h)
       rcases this with h1 | h1
       · omega
       · exact absurd rfl (h1 l)
@@ -690,7 +690,7 @@ theorem validateItems_nest (k d : Nat) (x : V F) (hx : ∀ l, x ≠ .list l) (hp
     by_cases h : d + 1 > MAX_VALUE_NESTING
     · have : ¬ d + (k + 1) ≤ MAX_VALUE_NESTING := by omega
       simp [h, this]
-    · rw [if_neg h, ih (d + 1) (by omega), show d + 1 + k = d + (k + 1) by omega]
+    · rw [ite_eq_right h, ih (d + 1) (by omega), show d + 1 + k = d + (k + 1) by omega]
       by_cases h2 : d + (k + 1) ≤ MAX_VALUE_NESTING <;> simp [h2, validateItems]
 
 /-- A property of `k` lists around a primitive is accepted iff `k ≤ MAX`; past it the
@@ -698,7 +698,7 @@ error is the nesting message. -/
 theorem validateProperty_nest (k : Nat) (x : V F) (hx : ∀ l, x ≠ .list l) (hp : isValidProperty x false = true) :
     validateProperty (nest (k + 1) x) = if k + 1 ≤ MAX_VALUE_NESTING then .ok () else .error .nesting := by
   simp only [nest, validateProperty, validateListProperty]
-  rw [if_neg (by decide), validateItems_nest k 1 x hx hp (by decide), Nat.add_comm 1 k]
+  rw [ite_eq_right (by decide), validateItems_nest k 1 x hx hp (by decide), Nat.add_comm 1 k]
 
 /-! ## The decoder past the cap -/
 

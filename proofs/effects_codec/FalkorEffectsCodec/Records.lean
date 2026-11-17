@@ -99,7 +99,7 @@ theorem readN_u32 (ls : List Nat) (h : ∀ x ∈ ls, x < 2 ^ 32) (rest : Bytes) 
   | cons x xs ih =>
     simp only [List.length_cons, readN, List.flatMap_cons, List.append_assoc, bind_apply]
     rw [u32_w32 (h x (by simp))]
-    simp only [bind_apply]
+    simp only
     rw [ih (fun y hy => h y (by simp [hy]))]
     rfl
 
@@ -110,7 +110,7 @@ theorem readN_u16 (ls : List Nat) (h : ∀ x ∈ ls, x < 2 ^ 16) (rest : Bytes) 
   | cons x xs ih =>
     simp only [List.length_cons, readN, List.flatMap_cons, List.append_assoc, bind_apply]
     rw [u16_w16 (h x (by simp))]
-    simp only [bind_apply]
+    simp only
     rw [ih (fun y hy => h y (by simp [hy]))]
     rfl
 
@@ -134,7 +134,7 @@ theorem readN_decodeV (xs : List Val) (bs rest : Bytes) (h : encL I xs = .ok bs)
     simp only [WFL] at hw
     simp only [List.length_cons, readN, List.append_assoc, bind_apply]
     rw [decodeV_encV utf8 I x a _ ha hw.1]
-    simp only [bind_apply]
+    simp only
     rw [ih b' hb hw.2]
     rfl
 
@@ -184,21 +184,21 @@ theorem readRec_createNode (ids : C.T) (ls as : List Nat) (rows : List Val) (idb
   rw [u32_w32 hc32]
   simp only [Nat.pos_iff_ne_zero.mp hc, ite_false, rLabelSet, bind_apply]
   rw [u16_w16 hl]
-  simp only [bind_apply, guardCount, flatMap_w32_length]
-  rw [if_neg (by simp only [List.length_append, e1, e2, w16, w32, le_length]; omega)]
+  simp only [guardCount]
+  rw [ite_eq_right (by simp only [List.length_append, e1, e2, w16, le_length]; omega)]
   simp only
   rw [readN_u32 ls hls]
   simp only [rAttrIds, bind_apply]
   rw [u16_w16 ha]
-  simp only [bind_apply, guardCount, flatMap_w16_length]
-  rw [if_neg (by simp only [List.length_append, e1, e2, w16, w32, le_length]; omega)]
+  simp only [guardCount]
+  rw [ite_eq_right (by simp only [List.length_append, e2]; omega)]
   simp only
   rw [readN_u16 as has]
-  simp only [bind_apply]
+  simp only
   rw [C.roundtrip ids idb _ hid]
   simp only [rRows, bind_apply, guardCount]
   have hlen := (encL_len I rows rb hrb).2
-  rw [if_neg (by simp [MIN_VALUE_BYTES]; omega)]
+  rw [ite_eq_right (by simp [MIN_VALUE_BYTES]; omega)]
   simp only
   rw [← hrows, readN_decodeV utf8 I rows rb rest hrb hw]
   rfl
@@ -212,7 +212,7 @@ theorem readRec_addAttribute (id : Nat) (name rest : Bytes) (hid : id < 2 ^ 16)
   rw [u32_w32 (by decide)]
   simp only [OP_CREATE_NODE, OP_ADD_ATTRIBUTE, Nat.reduceEqDiff, ↓reduceIte, bind_apply]
   rw [u16_w16 hid]
-  simp only [bind_apply]
+  simp only
   rw [rString_wString utf8 name rest hn hv]
   rfl
 
@@ -247,7 +247,7 @@ theorem readAll_concat :
     have hb := h (b, x) (by simp)
     have ih := readAll_concat items (fun p hp => h p (by simp [hp])) f (by simp at hf; omega)
     simp only [List.map_cons, List.flatten_cons, readAll]
-    rw [if_neg (by simp [hb.1])]
+    rw [ite_eq_right (by simp [hb.1])]
     rw [hb.2]
     simp only [ih]
 

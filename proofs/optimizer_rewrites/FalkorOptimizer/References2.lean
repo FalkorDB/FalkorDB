@@ -106,7 +106,7 @@ theorem anyRead_plug (refs : IR → Var → Bool) (v : Var) (ctx : Ctx) (t : Pla
     have : (Plan.node f.parent (t :: f.others)).anyRead v refs =
         (refs f.parent v || t.anyRead v refs || f.others.any (fun s => s.anyRead v refs)) := by
       simp only [Plan.anyRead]
-      cases h1 : refs f.parent v <;> simp [List.attach_cons, Bool.or_assoc]
+      cases h1 : refs f.parent v <;> simp [List.attach_cons]
     rw [this]
     simp only [readOutside, List.any_cons]
     cases refs f.parent v <;> cases t.anyRead v refs <;>
