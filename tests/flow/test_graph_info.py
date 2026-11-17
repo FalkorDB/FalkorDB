@@ -669,9 +669,13 @@ class testGraphInfo():
         self.env.assertFalse(self.conn.exists(stream))
 
     def test13_removing_the_key_removes_the_stream(self):
-        """a graph takes its telemetry stream with it however its key goes, and
-           in the same command: the persistence strip finds streams through the
-           graphs, so a stream that outlived its graph would be saved"""
+        """a graph takes its telemetry stream with it however its key goes: the
+           persistence strip finds streams through the graphs, so a stream that
+           outlived its graph would be saved
+
+           GRAPH.DELETE deletes the stream itself; the others free the graph from
+           inside the server's own key removal, where a second key cannot be
+           deleted, so the stream follows within a flush interval"""
 
         removals = {
             "GRAPH.DELETE": lambda key: self.conn.execute_command("GRAPH.DELETE", key),
@@ -690,7 +694,7 @@ class testGraphInfo():
                 message=f"no telemetry stream to remove by {how}")
 
             remove(key)
-            self.env.assertFalse(self.conn.exists(stream),
+            self.env.assertTrue(_wait_for(lambda: not self.conn.exists(stream)),
                 message=f"the telemetry stream outlived its graph, removed by {how}")
             self.conn.delete(key)
 
@@ -1011,13 +1015,25 @@ class testGraphInfoReplication():
         self.master  = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
 
+        # where each server is reached by the other one, for REPLICAOF: the
+        # master's address is the one the replica already follows, and the
+        # replica's is a sibling container under a CI image run, or the port
+        # RLTest spawned it on locally
+        info = self.replica.info("replication")
+        self.master_address = (info["master_host"], info["master_port"])
+        if hasattr(self.env, "replica_host"):
+            self.replica_address = (self.env.replica_host, self.env.replica_port)
+        else:
+            self.replica_address = ("localhost", self.env.envRunner.slavePort)
+
     def tearDown(self):
         # test02 swaps the roles; put them back, so that whatever shares this
-        # environment next does not inherit a read-only server
-        if self.master.info("replication")["role"] != "master":
+        # environment next does not inherit a read-only server, or a replica
+        # that a failed test left detached
+        if (self.master.info("replication")["role"] != "master" or
+                self.replica.info("replication")["role"] != "slave"):
             self.master.execute_command("REPLICAOF", "NO", "ONE")
-            self.replica.execute_command("REPLICAOF", "localhost",
-                    self._port(self.master))
+            self.replica.execute_command("REPLICAOF", *self.master_address)
             _wait_for(lambda:
                 self.replica.info("replication")["master_link_status"] == "up",
                 timeout=30)
@@ -1037,10 +1053,9 @@ class testGraphInfoReplication():
             replica.info("replication")["master_link_status"] == "up", timeout=30))
         return master, replica
 
-    def _port(self, conn):
-        """the port of the server conn is connected to"""
-        runner = self.env.envRunner
-        return runner.port if conn is self.master else runner.slavePort
+    def _address(self, conn):
+        """the (host, port) another server reaches conn's server at"""
+        return self.master_address if conn is self.master else self.replica_address
 
     def test01_streams_are_node_local(self):
         """each node logs only the queries it serves: the master its writes,
@@ -1124,7 +1139,7 @@ class testGraphInfoReplication():
         #-----------------------------------------------------------------------
 
         replica.execute_command("REPLICAOF", "NO", "ONE")
-        master.execute_command("REPLICAOF", "localhost", self._port(replica))
+        master.execute_command("REPLICAOF", *self._address(replica))
         master, replica = replica, master
         self.env.assertTrue(_wait_for(lambda:
             replica.info("replication")["master_link_status"] == "up", timeout=30))
@@ -1144,7 +1159,7 @@ class testGraphInfoReplication():
         # a full sync from the promoted node loads on the demoted node too
         sync_full = master.info("stats")["sync_full"]
         replica.execute_command("REPLICAOF", "NO", "ONE")
-        replica.execute_command("REPLICAOF", "localhost", self._port(master))
+        replica.execute_command("REPLICAOF", *self._address(master))
         self.env.assertTrue(_wait_for(lambda:
             master.info("stats")["sync_full"] > sync_full and
             replica.info("replication")["master_link_status"] == "up", timeout=30))

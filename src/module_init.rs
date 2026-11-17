@@ -506,16 +506,12 @@ extern "C" fn info_func(
     }
 }
 
-/// Flush event callback. Tells telemetry a flush is under way, so that a graph freed
-/// by it does not try to delete its stream out of the database being emptied (see
-/// `telemetry::delete_streams_of_freed_graph`).
-unsafe extern "C" fn on_flush(
+const unsafe extern "C" fn on_flush(
     _ctx: *mut RedisModuleCtx,
     _eid: RedisModuleEvent,
-    subevent: u64,
+    _subevent: u64,
     _data: *mut c_void,
 ) {
-    telemetry::set_flush_in_progress(subevent == raw::REDISMODULE_SUBEVENT_FLUSHDB_START);
 }
 
 /// Shutdown event handler — runs only under `RS_GLOBAL_DTORS` (sanitizer

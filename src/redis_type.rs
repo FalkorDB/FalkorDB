@@ -415,10 +415,11 @@ pub unsafe extern "C" fn on_persistence(
 /// Delete the telemetry stream of every registered graph, so that none reaches the
 /// snapshot about to be written. See [`telemetry::strip_stream`] for why.
 ///
-/// The graphs come from `GRAPH_REGISTRY`, as in [`create_virtual_keys`], which is
-/// why a graph has to take its stream with it when it leaves the registry
-/// (`graph_free`): a stream whose graph is gone is one this pass cannot see.
+/// The graphs come from `GRAPH_REGISTRY`, as in [`create_virtual_keys`]. A graph
+/// that has left the registry is not there to be found, so `graph_free` queues its
+/// stream and this pass deletes what is queued as well.
 unsafe fn strip_telemetry_streams(ctx: *mut RedisModuleCtx) {
+    telemetry::strip_orphaned_streams(ctx);
     // Names copied out and the lock released before any key is touched: deleting a
     // key calls back into the module (keyspace events), and nothing done under the
     // registry lock should be able to come back for it.
