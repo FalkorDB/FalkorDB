@@ -220,6 +220,32 @@ impl QuerySession {
         }
     }
 
+    /// Begin the run that follows a stale one: a **writer** before it forks.
+    ///
+    /// A write that forks as a reader loses its version to any writer that commits
+    /// while it matches, and is run again. Run again the same way it can lose again,
+    /// and nothing bounds how often: a steady stream of inline writes (`MULTI`/`EXEC`,
+    /// a replication stream) kept one queued write re-running for as long as the
+    /// stream lasted, where C answers it at once. So the run after a stale one takes
+    /// the GIL and the write lock first and forks under them ([`Self::write_version`]
+    /// is then current from the start): nothing can commit before it does, and a
+    /// write is run at most twice.
+    ///
+    /// The locks are taken through [`Self::upgrade_to_write`], so the wait for them
+    /// is the sliced one that keeps the server answering, and the write is
+    /// authorized as any escalation is. What this run gives up is matching beside
+    /// other queries: it holds both locks from its first step to its commit, as an
+    /// inline write does. That is paid only by a write an inline writer has already
+    /// overtaken once.
+    pub fn begin_rerun(
+        graph: &Arc<RwLock<ThreadedGraph>>,
+        facts: WriteFacts,
+    ) -> Result<Self, WriteAbort> {
+        let session = Self::begin_with(graph, facts);
+        session.upgrade_to_write(None)?;
+        Ok(session)
+    }
+
     /// The facts this session was begun with, to begin another for the same
     /// write.
     pub const fn facts(&self) -> WriteFacts {

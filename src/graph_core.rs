@@ -732,7 +732,9 @@ pub fn execute_profile(
 ///
 /// A write that started as a reader and lost its version to a writer that
 /// committed while it was matching ([`QuerySession::is_stale`]) has mutated and
-/// replied nothing, so it is run again from the start on a fresh session.
+/// replied nothing, so it is run again from the start on a fresh session — one
+/// that is a writer before it forks ([`QuerySession::begin_rerun`]), so the
+/// second run cannot be overtaken and there is never a third.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_query_write(
     session: QuerySession,
@@ -758,7 +760,9 @@ pub fn execute_query_write(
             per_query_timeout,
             profile,
         ) {
-            Err(WriteAttempt::Stale) => session = QuerySession::begin_with(&graph, facts),
+            Err(WriteAttempt::Stale) => {
+                session = QuerySession::begin_rerun(&graph, facts).map_err(|e| e.to_string())?;
+            }
             Err(WriteAttempt::Failed(err)) => return Err(err),
             Ok(done) => return Ok(done),
         }

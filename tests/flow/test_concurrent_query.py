@@ -1,5 +1,6 @@
 import random
 import asyncio
+import threading
 import time
 from common import *
 from long_read_utils import *
@@ -892,3 +893,53 @@ class testWriteLockWaitFlow(FlowTestsBase):
         # the write did not land
         res = self.graph.ro_query("MATCH (n:N {v:2}) RETURN count(n)")
         self.env.assertEqual(res.result_set[0][0], 0)
+
+    def test_07_inline_writes_do_not_starve_queued_write(self):
+        # a queued write forks the graph while it matches and checks the fork
+        # when it escalates. an inline write (MULTI/EXEC runs on the main
+        # thread) that commits in between makes the fork stale, and the write is
+        # run again. run again the same way, it lost to the next inline write
+        # too, for as long as they kept coming: a 40 ms write waited 14.5 s
+        # behind a 15 s stream of them, where C answers in its usual 130 ms.
+        # the run after a stale one now takes the write lock before it forks,
+        # so it cannot lose twice
+        self.graph.query("CREATE (:Seed)")
+        slow = "UNWIND range(1, 3000000) AS x WITH count(x) AS c CREATE (:Slow {c: c})"
+        stream_seconds = 20     # cut short as soon as the write replies
+        replied = threading.Event()
+        inline = [0]
+
+        def stream():
+            conn = redis.Redis(self.env.host, self.env.port,
+                               socket_timeout=SOCKET_TIMEOUT, retry=NO_RETRY)
+            deadline = time.monotonic() + stream_seconds
+            while not replied.is_set() and time.monotonic() < deadline:
+                pipe = conn.pipeline(transaction=True)
+                pipe.execute_command("GRAPH.QUERY", GRAPH_ID, "CREATE (:M)")
+                pipe.execute()
+                inline[0] += 1
+
+        writer = threading.Thread(target=stream)
+        writer.start()
+        time.sleep(0.5)         # the stream is flowing
+        # on its own connection with a timeout past the stream's end, so a
+        # starved write is measured rather than cut off and sent again
+        conn = redis.Redis(self.env.host, self.env.port,
+                           socket_timeout=stream_seconds * 2, retry=NO_RETRY)
+        start = time.monotonic()
+        try:
+            conn.execute_command("GRAPH.QUERY", GRAPH_ID, slow)
+        finally:
+            elapsed = time.monotonic() - start
+            replied.set()
+            writer.join()
+
+        # the stream was still flowing when the write replied: starved, it
+        # replies only once the stream has ended
+        self.env.assertLess(elapsed, stream_seconds / 4)
+        self.env.assertGreater(inline[0], 0)
+        # every write landed, the queued one once
+        res = self.graph.ro_query("MATCH (s:Slow) RETURN count(s)")
+        self.env.assertEqual(res.result_set[0][0], 1)
+        res = self.graph.ro_query("MATCH (m:M) RETURN count(m)")
+        self.env.assertEqual(res.result_set[0][0], inline[0])

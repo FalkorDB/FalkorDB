@@ -935,8 +935,18 @@ pub fn graph_bulk_insert(
             // when this block ends — before the client is unblocked below.
             // A loop only to run the insert again if an inline writer commits while
             // phase 1 builds (see the escalation below); every other path breaks.
+            // The second run builds as a writer from the start, so it cannot be
+            // overtaken and there is never a third (`QuerySession::begin_rerun`).
+            let mut overtaken = false;
             let result: Result<(), String> = 'phase: loop {
-                let session = QuerySession::begin_with(&graph, facts);
+                let session = if overtaken {
+                    match QuerySession::begin_rerun(&graph, facts) {
+                        Ok(session) => session,
+                        Err(e) => break 'phase Err(e.to_string()),
+                    }
+                } else {
+                    QuerySession::begin_with(&graph, facts)
+                };
                 // Phase 1: build the new version as a reader, GIL-free, into a private
                 // fork. Forking takes nothing, so an inline writer is never refused
                 // because this insert is building; phase 2's escalation checks whether
@@ -964,6 +974,7 @@ pub fn graph_bulk_insert(
                     // An inline writer committed while phase 1 built: nothing was
                     // published, so build again on top of its version.
                     if session.is_stale() {
+                        overtaken = true;
                         continue 'phase;
                     }
                     break 'phase Err(e.to_string());
