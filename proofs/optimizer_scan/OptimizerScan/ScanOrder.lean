@@ -314,7 +314,7 @@ theorem place_wellScoped : ∀ (placed B : List Nat) (hs : List Hop) fs,
     (∀ v ∈ placed, v ∈ B) → wellScoped B (place placed hs fs).1
   | _, _, [], _, _ => trivial
   | placed, B, h :: hs, fs, hpl => by
-    simp only [place, wellScoped]
+    simp only [place]
     apply wellScoped_filts
     · intro f hf v hv
       have := (List.mem_filter.mp hf).2

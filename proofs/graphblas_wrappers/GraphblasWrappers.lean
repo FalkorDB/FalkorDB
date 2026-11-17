@@ -1,6 +1,15 @@
 /-
 # GraphBLAS FFI wrappers (`graph/src/graph/graphblas/{matrix,vector,mod}.rs`, `tensor.rs` decode/iter)
 
+Folded from `pr3438_review` (#3438, merged as 2b6902217): `EncodeDup` models `Encode<19> for
+Matrix<T>` (matrix.rs:527) unloading a private `dup()` instead of `self` (the #3434 window where a
+lock-free reader saw `nvals = 0`). `decode_pr` (decode-equivalent under `UnloadLoad` + `PtrBlind` +
+`DupSpec`; NOT byte-equal: `pr3438_bytes_can_differ`, live 4096 vs 2400 byte `x` array for a 300-entry
+matrix), `encodePR_bytes_eq`, `pr_self_never_unloaded`, `pr_no_leak_no_double_free`,
+`pr_writes_self_content`, `pr_panic_after_dup`, `pr_no_heap_addresses` (#3097 kept). `GBWGlue.encodeM_spec`
+(`.2 = m`, self restored) is the pre-#3438 model. FFI: `UnloadLoad`, `PtrBlind`, `DupSpec`, and `step`'s
+per-call C contract.
+
 **Re-targeted to main e860645bb** (from ca36bfa15): #3492 (a3a99bdbc) rewrites `Matrix::delta_lmxm`
 (then matrix.rs:1520) and adds `GrB_GT_UINT64` / `GrB_VALUEEQ_BOOL` / `GrB_Matrix_select_BOOL` imports (+3 lines before :1520,
 +55 after, so every `matrix.rs` pin moved). It is now modelled (`DeltaLmxm.lean`) and PROVEN, no longer a
@@ -141,3 +150,4 @@ import GraphblasWrappers.Glue
 import GraphblasWrappers.Serial
 import GraphblasWrappers.Bulk
 import GraphblasWrappers.DeltaLmxm
+import GraphblasWrappers.EncodeDup

@@ -184,7 +184,7 @@ theorem waitFwd_latch_mono (t : TT) (h : t.dpB.fold = true) : (waitFwd t).dpB.fo
 theorem waitFwd_exact (t : TT) (h : (t.dpB.synced && t.dmB.synced) = false) :
     (waitFwd t).dpB.count = dpCount t ∧ (waitFwd t).dmB.count = dmCount t := by
   have hc : ∀ (b : Bk) d, (latchB b d).count = b.count := by intro b d; unfold latchB; split <;> rfl
-  unfold waitFwd; rw [if_neg (by simp [h])]; exact ⟨hc _ _, hc _ _⟩
+  unfold waitFwd; rw [ite_eq_right (by simp [h])]; exact ⟨hc _ _, hc _ _⟩
 
 def syncAll (me : List MeB) : List MeB := me.map (fun e => { e with synced := true })
 

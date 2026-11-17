@@ -106,9 +106,9 @@ theorem sets_spec (p : P) (ids : List Nat) (id y : Nat) :
     (isRelCreated p y = true ↔ (getRelType p y).isSome) := by
   refine ⟨foldl_sins _ _ _, mem_sins _ _ _, mem_sins _ _ _, foldl_sins _ _ _, by simp [isNodeCreated],
     by simp [isNodeDeleted], by simp [isRelDeleted], rfl, ?_, ?_, ?_, by simp [isRelCreated, getRelType]⟩
-  · simp [hasDeletedNodes, List.isEmpty_iff]
-  · simp [hasDeletedRels, List.isEmpty_iff]
-  · simp [hasCreatedRels, List.isEmpty_iff]
+  · simp [hasDeletedNodes]
+  · simp [hasDeletedRels]
+  · simp [hasCreatedRels]
 
 /-! ## Attribute staging, generic over the (new, existing) pair -/
 
@@ -263,7 +263,7 @@ theorem oget_orem (m : OM) (s t : String) : oget (orem m s) t = if t = s then no
       · simp [ht, Ne.symm ht]
     · simp only [List.filter_cons, bne_iff_ne, ne_eq, ha, not_false_eq_true, ite_true, oget, ih]
       by_cases ht : a = t
-      · subst ht; simp [ha, Ne.symm ha]
+      · subst ht; simp [ha]
       · simp [ht]
 
 /-- One staged entry applied (`update_node_attrs` loop body, :673-681). -/

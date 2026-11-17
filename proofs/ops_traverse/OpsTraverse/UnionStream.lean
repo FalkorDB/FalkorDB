@@ -127,13 +127,13 @@ theorem minHead_some : ∀ {hs : List (Option P)} {m : P}, minHead hs = some m �
       have ih := minHead_some hm
       unfold minP at h
       by_cases hlt : lt b a
-      · rw [if_pos hlt] at h; subst h
+      · rw [ite_eq_left hlt] at h; subst h
         refine ⟨List.mem_cons_of_mem _ ih.1, fun x hx => ?_⟩
         rcases List.mem_cons.1 hx with h | h
         · simp only [Option.some.injEq] at h; subst h
           intro hxb; exact lt_irrefl _ (lt_trans hxb hlt)
         · exact ih.2 x h
-      · rw [if_neg hlt] at h; subst h
+      · rw [ite_eq_right hlt] at h; subst h
         refine ⟨List.mem_cons_self, fun x hx => ?_⟩
         rcases List.mem_cons.1 hx with h | h
         · simp only [Option.some.injEq] at h; subst h; exact lt_irrefl _
@@ -281,7 +281,7 @@ theorem next_some {st st' : List Cur} {m : P} (hg : AllGood st) (h : next st = (
       simp only [List.mem_map] at hc'
       obtain ⟨c, hc, rfl⟩ := hc'
       by_cases hch : c.head = some m'
-      · simp only [hch, if_true]
+      · simp only [hch, ite_true]
         obtain ⟨h1, h2⟩ := pop_stream hch (hg c hc).1
         refine ⟨by rw [h1]; have := (hg c hc).1; rw [h2] at this; exact this.tail, ?_⟩
         intro hnone
@@ -289,21 +289,21 @@ theorem next_some {st st' : List Cur} {m : P} (hg : AllGood st) (h : next st = (
         simp only [Cur.pop, this]
         have hr : c.rem = [] := by cases hr : c.rem <;> simp_all
         simp [hr]
-      · simp only [hch, if_false]; exact hg c hc
+      · simp only [hch, ite_false]; exact hg c hc
     · intro k
       constructor
       · rintro ⟨c', hc', hk⟩
         simp only [List.mem_map] at hc'
         obtain ⟨c, hc, rfl⟩ := hc'
         by_cases hch : c.head = some m'
-        · simp only [hch, if_true] at hk
+        · simp only [hch, ite_true] at hk
           obtain ⟨h1, h2⟩ := pop_stream hch (hg c hc).1
           rw [h1] at hk
           have hs := (hg c hc).1; rw [h2] at hs
           refine ⟨⟨c, hc, by rw [h2]; exact List.mem_cons_of_mem _ hk⟩, ?_⟩
           rintro rfl
           exact lt_irrefl _ ((List.pairwise_cons.1 hs).1 _ hk)
-        · simp only [hch, if_false] at hk
+        · simp only [hch, ite_false] at hk
           exact ⟨⟨c, hc, hk⟩, fun e => hnot c hc hch (e ▸ hk)⟩
       · rintro ⟨⟨c, hc, hk⟩, hne⟩
         by_cases hch : c.head = some m'
@@ -311,19 +311,19 @@ theorem next_some {st st' : List Cur} {m : P} (hg : AllGood st) (h : next st = (
           rw [h2] at hk
           rcases List.mem_cons.1 hk with e | hk
           · exact absurd e hne
-          · exact ⟨_, List.mem_map.2 ⟨c, hc, rfl⟩, by simp only [hch, if_true]; rw [h1]; exact hk⟩
-        · exact ⟨_, List.mem_map.2 ⟨c, hc, rfl⟩, by simp only [hch, if_false]; exact hk⟩
+          · exact ⟨_, List.mem_map.2 ⟨c, hc, rfl⟩, by simp only [hch, ite_true]; rw [h1]; exact hk⟩
+        · exact ⟨_, List.mem_map.2 ⟨c, hc, rfl⟩, by simp only [hch, ite_false]; exact hk⟩
     · unfold meas
       rw [List.map_map]
       apply sum_lt st (fun c => if c.head = some m' then c.pop else c)
       · intro c hc
         by_cases hch : c.head = some m'
         · obtain ⟨h1, h2⟩ := pop_stream hch (hg c hc).1
-          simp only [hch, if_true, h1, h2]; simp
+          simp only [hch, ite_true, h1, h2]; simp
         · simp [hch]
       · refine ⟨c0, hc0, ?_⟩
         obtain ⟨h1, h2⟩ := pop_stream hh0 (hg c0 hc0).1
-        simp only [hh0, if_true, h1, h2]; simp
+        simp only [hh0, ite_true, h1, h2]; simp
 
 theorem next_none {st st' : List Cur} (hg : AllGood st) (h : next st = (none, st')) :
     ∀ k, ¬ inU st k := by

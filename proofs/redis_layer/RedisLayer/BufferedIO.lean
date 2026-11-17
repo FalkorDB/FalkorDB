@@ -179,7 +179,7 @@ theorem writeAll_flatten (xs : List W) :
   unfold writeAll G finish
   have h3 : (flush (List.foldl (write B) ⟨[], []⟩ xs)).buf = [] := by
     unfold flush; split <;> simp_all
-  simp [flat, h3] at h2; rw [h2, this]
+  simp [flat] at h2; rw [h2, this]
 
 /-- An extra flush anywhere changes nothing in the byte stream either. -/
 theorem flat_extra_flush (w : BW) (xs ys : List W) :

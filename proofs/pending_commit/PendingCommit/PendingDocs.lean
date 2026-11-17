@@ -153,7 +153,7 @@ theorem absorbE_get : ∀ (L m : FMap (FMap (Nat × Nat))), (L.map (·.1)).Nodup
         | none => rfl
         | some w => exact absurd (List.mem_map_of_mem (f := (·.1)) (mem_of_fget L a w e')) hk.1
       simp only [hL, ite_true, Option.getD_none, Option.getD_some]
-      simp only [fget, Option.getD_some]
+      simp only [fget]
       rw [fextend_get inner _ (hi (a, inner) (by simp)) e]
     · simp only [hs, ite_false, Ne.symm hs]
 

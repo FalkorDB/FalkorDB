@@ -54,10 +54,10 @@ theorem specRemove_sound : RemoveKeepsVerifiedSound specRemove := by
   by_cases hw : w = v
   · subst hw
     simp only [specRemove, lookupV_cons_self, List.mem_filter] at hl
-    rw [if_pos rfl, List.mem_filter]
+    rw [ite_eq_left rfl, List.mem_filter]
     exact ⟨h _ _ hl.1, hl.2⟩
   · rw [specRemove, lookupV_cons_other _ _ _ _ hw] at hl
-    simp only [if_neg hw]
+    simp only [ite_eq_right hw]
     exact h _ _ hl
 
 /-- `plan_project`'s `carried_verified` for variables projected as-is (`(old, new)`). -/

@@ -38,14 +38,14 @@ theorem chunks_nil (B : Nat) (hB : 0 < B) : chunks B hB ([] : List ι) = [] := b
 theorem chunks_flatten (B : Nat) (hB : 0 < B) (l : List ι) : (chunks B hB l).flatten = l := by
   induction l using chunks.induct B hB with
   | case1 => simp [chunks_nil]
-  | case2 l h ih => rw [chunks, dif_neg h]; simp [ih]
+  | case2 l h ih => rw [chunks, dite_eq_right h]; simp [ih]
 
 theorem chunks_size (B : Nat) (hB : 0 < B) (l : List ι) :
     ∀ c ∈ chunks B hB l, 0 < c.length ∧ c.length ≤ B := by
   induction l using chunks.induct B hB with
   | case1 => simp [chunks_nil]
   | case2 l h ih =>
-    rw [chunks, dif_neg h]
+    rw [chunks, dite_eq_right h]
     intro c hc
     simp only [List.mem_cons] at hc
     rcases hc with rfl | hc
@@ -328,10 +328,10 @@ theorem go_ok (h : NoErr E) (emitted input : List α) (builder : List α) (st : 
       · rename_i hch
         simp only [finish]
         cases hb : builder.isEmpty
-        · simp only [Bool.false_eq_true, if_false]
+        · simp only [Bool.false_eq_true, ite_false]
           have hne : builder ≠ [] := by cases builder <;> simp_all
           exact ⟨builder, Or.inr ⟨rfl, hne⟩, I3, I1, I2, I5, by simp⟩
-        · simp only [if_true]
+        · simp only [ite_true]
           have h0 : builder = [] := by cases builder <;> simp_all
           subst h0
           refine ⟨[], Or.inl ⟨rfl, rfl⟩, by simp, ?_, ?_, I5, ?_⟩

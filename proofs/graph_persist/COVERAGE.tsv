@@ -13,7 +13,7 @@ graph/src/graph/graphblas/serialization.rs	decode	64	NOT COVERED	trait declarati
 graph/src/graph/graphblas/serialization.rs	decode_with_count	76	NOT COVERED	trait default (unimplemented!)
 graph/src/graph/graphblas/serialization.rs	from_u64	146	MODELLED	payload directory state tags; exercised via live roundtrip
 graph/src/graph/graphblas/serialization.rs	encode	173	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
-graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip
+graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip; #3438's select/advance_to/take seek = skip/take: PendingCommit SaveLayout.encRoarPR_eq (imports graph_persist)
 graph/src/graph/graphblas/serialization.rs	decode	195	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
 graph/src/graph/graphblas/serialization.rs	decode_with_count	216	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
 src/redis_type.rs	io_cache_size	71	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)

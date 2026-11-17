@@ -325,8 +325,8 @@ theorem push_cp_left (p : Expr) (xs ys : List Row) (hc : Covers p xs) :
     have hx : ∀ y, passB p (x ++ y) = passB p x :=
       fun y => passB_append_left p x y (hc x (by simp))
     cases h : passB p x
-    · simp [List.filter_map, hx, h, Function.comp_def, List.filter_eq_self.mpr]
-    · simp [List.filter_map, hx, h, Function.comp_def, List.filter_eq_self.mpr]
+    · simp [List.filter_map, hx, h, Function.comp_def]
+    · simp [hx, h, List.filter_eq_self.mpr]
 
 /-- **push_filters_down, CP right child**: needs the other branch not to bind
 any variable the conjunct reads (rows of distinct branches are disjoint). -/
@@ -345,7 +345,7 @@ theorem push_cp_right (p : Expr) (xs ys : List Row)
     congr 1
     apply List.filter_congr
     intro y _
-    simp [Function.comp_def, passB_append_right p x y (hdis x (by simp))]
+    simp [passB_append_right p x y (hdis x (by simp))]
 
 /-- **push_filters_down through a per-row operator** (Unwind, CondTraverse,
 Apply, ProcedureCall …): conjunct covered by the input. -/
@@ -361,8 +361,8 @@ theorem push_extend (p : Expr) (g : Row → List Row) (xs : List Row) (hc : Cove
     have hx : ∀ y, passB p (x ++ y) = passB p x :=
       fun y => passB_append_left p x y (hc x (by simp))
     cases h : passB p x
-    · simp [List.filter_map, hx, h, Function.comp_def, List.filter_eq_self.mpr]
-    · simp [List.filter_map, hx, h, Function.comp_def, List.filter_eq_self.mpr]
+    · simp [List.filter_map, hx, h, Function.comp_def]
+    · simp [hx, h, List.filter_eq_self.mpr]
 
 /-- Pushing below `Sort` keeps the multiset … -/
 theorem push_sort_perm (p : Expr) (le : Row → Row → Bool) (xs : List Row) :

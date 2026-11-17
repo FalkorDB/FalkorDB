@@ -232,7 +232,7 @@ theorem row?_isSome_of_wf (c : Csr) (hwf : c.isWellFormed = true) (u : Nat) (hu 
   obtain ⟨b, hb⟩ : ∃ b, c.p[u + 1]? = some b := ⟨c.p[u + 1]'(by omega), List.getElem?_eq_getElem (by omega)⟩
   have hab : a ≤ b := hm u a b ha hb
   have hbn : b ≤ c.i.length := mono_le c.p hm c.n (u + 1) b c.i.length (by omega) hb hn
-  exact ⟨_, by rw [row?_spec c u a b ha hb, if_pos ⟨hab, hbn⟩]⟩
+  exact ⟨_, by rw [row?_spec c u a b ha hb, ite_eq_left ⟨hab, hbn⟩]⟩
 
 /-- `row` read after the shape check: the panic case does not arise for `u < n` (`row?_isSome_of_wf`). -/
 def Csr.rowD (c : Csr) (u : Nat) : List Nat := (c.row? u).getD []
