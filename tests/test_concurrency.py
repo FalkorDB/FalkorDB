@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 import common
 from falkordb import FalkorDB
@@ -195,6 +196,9 @@ def test_index_scan_write_concurrent_with_writes():
     common.g.query("CREATE INDEX FOR (n:Node) ON (n.id)")
     _hammer_under_write_load(_index_scan_write)
 
+_counter_lock = threading.Lock()
+
+
 def _multi_write_loop(stop, counter, errors):
     # Inline (MULTI/EXEC) writers commit on the main thread whenever they like,
     # making any queued write that is still matching stale. A writer that dies
@@ -209,7 +213,8 @@ def _multi_write_loop(stop, counter, errors):
             p = r.pipeline(transaction=True)
             p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
             p.execute()
-            counter[0] += 1
+            with _counter_lock:
+                counter[0] += 1
     except Exception as e:
         errors.append(e)
 
@@ -228,15 +233,13 @@ def test_queued_write_not_starved_by_inline_writers():
     # underneath it. Every retry loses to the next commit, so under a steady stream
     # of inline writes it never finished (C finishes it in one pass, holding the
     # write lock throughout). After a few stale runs it must run as a writer.
-    import threading
-
     common.g.query("UNWIND range(1, 500000) AS i CREATE (:Big {v: i})")
     common.g.query("CREATE (:Marker {c: 0})")
     slow = (
         "MATCH (n:Big) WHERE n.v % 7 = 3 WITH count(n) AS c "
         "MATCH (m:Marker) SET m.c = c RETURN c"
     )
-    expected = len([v for v in range(1, 500001) if v % 7 == 3])
+    expected = len(range(3, 500001, 7))  # the v with v % 7 == 3
 
     stop = threading.Event()
     counter = [0]
@@ -267,13 +270,33 @@ def test_queued_write_not_starved_by_inline_writers():
     assert counter[0] > 0
     res = common.g.query("MATCH (m:Marker) RETURN m.c")
     assert res.result_set[0][0] == expected
+    _assert_telemetry_counts_retries(r, "MATCH (m:Marker) SET m.c = c")
+
+
+def _assert_telemetry_counts_retries(r, needle):
+    # Execution duration spans the stale runs and the wait for the write lock, as the
+    # wall clock does. Otherwise `report = wall - exec` charges the time the retries
+    # took to serializing the reply, which for this one-row result takes next to none.
+    deadline = time.time() + 15
+    entries = []
+    while not entries and time.time() < deadline:
+        entries = [
+            fields
+            for _, fields in r.xrange("telemetry{test}")
+            if needle in fields[b"Query"].decode()
+        ]
+        time.sleep(0.1)
+    assert entries, "the write never reached the telemetry stream"
+    for fields in entries:
+        exec_ms = float(fields[b"Execution duration"])
+        report_ms = float(fields[b"Report duration"])
+        assert report_ms < 0.25 * exec_ms, (exec_ms, report_ms)
 
 
 def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
     # GRAPH.BULK builds its batch as a reader and builds it again when an inline
     # writer commits underneath it, so the same unbounded retry applied. After a few
     # stale builds it must build as a writer.
-    import threading
     from click.testing import CliRunner
     from falkordb_bulk_loader.bulk_insert import bulk_insert
 
@@ -302,7 +325,8 @@ def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
                 p = r.pipeline(transaction=True)
                 p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
                 p.execute()
-                counter[0] += 1
+                with _counter_lock:
+                    counter[0] += 1
         except Exception as e:
             errors.append(e)
 
@@ -346,7 +370,6 @@ def test_queued_write_timeout_spans_stale_retries():
     # that loses its version and runs again only gets what the first run left.
     # One run fits the budget, two do not, so resetting the budget on a retry
     # would let the write finish.
-    import threading
 
     common.g.query("UNWIND range(1, 500000) AS i CREATE (:Big {v: i})")
     common.g.query("CREATE (:Marker {c: 0})")
@@ -362,6 +385,8 @@ def test_queued_write_timeout_spans_stale_retries():
     )
 
     # A write timeout is only enforced once TIMEOUT_MAX / TIMEOUT_DEFAULT is set.
+    # Restore what the server had: the module shares one server.
+    old_timeout_max = r.execute_command("GRAPH.CONFIG", "GET", "TIMEOUT_MAX")[1]
     r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", 600000)
     stop = threading.Event()
     counter = [0]
@@ -392,11 +417,11 @@ def test_queued_write_timeout_spans_stale_retries():
         stop.set()
         for t in threads:
             t.join()
-        r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", 0)
+        r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", old_timeout_max)
     assert not errors, errors
     assert timed_out, f"finished within {budget_ms} ms although one run is {one_run_ms:.0f} ms"
     # the aborted write left nothing behind
     assert common.g.query("MATCH (m:Marker) RETURN m.c").result_set[0][0] == 0
     # and the next write is not affected
     res = common.g.query(slow)
-    assert res.result_set[0][0] == len([v for v in range(1, 500001) if v % 7 == 3])
+    assert res.result_set[0][0] == len(range(3, 500001, 7))

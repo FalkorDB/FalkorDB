@@ -954,11 +954,13 @@ pub fn graph_bulk_insert(
                 } else {
                     QuerySession::begin_with(&graph, facts)
                 };
-                // Phase 1: build the new version as a reader, GIL-free, into a private
-                // fork. Forking takes nothing, so an inline writer is never refused
-                // because this insert is building; phase 2's escalation checks whether
-                // one committed meanwhile. Every early exit below drops the fork with
-                // the session — there is nothing else to release.
+                // Phase 1: build the new version into a private fork. As a reader (every
+                // run but an escalated one) that is GIL-free, and forking takes nothing,
+                // so an inline writer is never refused because this insert is building;
+                // phase 2's escalation checks whether one committed meanwhile. An
+                // escalated run is already a writer and builds under the GIL and the
+                // write lock, so there is nothing to check. Every early exit below drops
+                // the fork with the session — there is nothing else to release.
                 let mut fork = session.write_version();
                 let mut docs = IndexDocs::default();
                 let tokens: Vec<&[u8]> = token_data.iter().map(std::vec::Vec::as_slice).collect();
@@ -996,9 +998,10 @@ pub fn graph_bulk_insert(
                 // cannot resolve against its own snapshot.
                 //
                 // Every token has succeeded by now, so nothing reaches the index for an
-                // insert that later rolls back. The cost is a GIL hold proportional to
-                // the number of indexed rows — paid only when the graph actually has an
-                // index, since `docs` is otherwise empty.
+                // insert that later rolls back. For a run that built as a reader the cost
+                // is a GIL hold proportional to the number of indexed rows — paid only
+                // when the graph actually has an index, since `docs` is otherwise empty;
+                // an escalated run holds the GIL for the whole build anyway.
                 //
                 // Validated before publishing, as on the inline path above and
                 // for the same reason: RediSearch is not MVCC, so a document

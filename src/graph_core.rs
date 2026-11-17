@@ -728,7 +728,8 @@ pub fn execute_profile(
 /// long-lived `&ThreadedGraph` would be invalidated mid-query; every access here is a
 /// short-lived `session.with_graph` borrow instead.
 ///
-/// Returns `(params_offset, execution_time_ms)` for telemetry.
+/// Returns `(params_offset, execution_time_ms)` for telemetry. The execution time spans
+/// every attempt and the wait for the write lock, as the caller's wall clock does.
 ///
 /// A write that started as a reader and lost its version to a writer that
 /// committed while it was matching ([`QuerySession::is_stale`]) has mutated and
@@ -736,9 +737,10 @@ pub fn execute_profile(
 ///
 /// Retrying is bounded. Every retry loses to the next writer that commits during
 /// its matching window, so under a steady stream of writes it could run forever
-/// while C finishes in one pass. After [`MAX_STALE_RETRIES`] stale runs the write
-/// runs once more as a writer, holding the write lock from the start like C does,
-/// which no one can make stale. All attempts share one clock and one timeout,
+/// while C finishes in one pass. After [`MAX_STALE_RETRIES`] stale runs, or at once
+/// after a stale run that took [`SLOW_STALE_RUN`] or longer, the write runs again
+/// as a writer, holding the write lock from the start like C does, which no one
+/// can make stale. All attempts share one clock and one timeout,
 /// resolved on the first attempt, so `TIMEOUT` and the slow log count from the
 /// first attempt, and a config change during a retry cannot move the deadline.
 #[allow(clippy::too_many_arguments)]
@@ -755,7 +757,7 @@ pub fn execute_query_write(
     let graph = session.graph_arc();
     let facts = session.facts();
     let started = Instant::now();
-    let mut timeout = None;
+    let mut timeout = WriteTimeout::Unresolved;
     let mut stale_runs = 0;
     let mut session = session;
     loop {
@@ -783,7 +785,13 @@ pub fn execute_query_write(
                 };
             }
             Err(WriteAttempt::Failed(err)) => return Err(err),
-            Ok(done) => return Ok(done),
+            Ok((params_offset, exec_ms)) => {
+                // The caller's wall clock spans every attempt and the wait for the lock, so
+                // the execution time reported with it does too: only the reply is left to
+                // `wall - exec`, as for a write that ran once.
+                let before_last = attempt_start.duration_since(started).as_secs_f64() * 1000.0;
+                return Ok((params_offset, before_last + exec_ms));
+            }
         }
     }
 }
@@ -812,13 +820,22 @@ impl From<String> for WriteAttempt {
     }
 }
 
+/// The timeout of one write, resolved by its first run and kept for the retries.
+enum WriteTimeout {
+    /// No run has resolved it yet.
+    Unresolved,
+    /// Resolved: the write has no timeout.
+    Unlimited,
+    /// Resolved: the whole write, retries included, has this many milliseconds.
+    Total(u64),
+}
+
 /// One run of [`execute_query_write`]. `timeout` is the write's resolved timeout,
 /// set by the first run and kept for the retries.
 #[allow(
     clippy::too_many_arguments,
     clippy::needless_pass_by_value,
-    clippy::option_option,
-    reason = "the session is consumed: dropping it releases the locks; the timeout is unresolved, none or some"
+    reason = "the session is consumed: dropping it releases the locks"
 )]
 fn try_query_write(
     session: QuerySession,
@@ -828,7 +845,7 @@ fn try_query_write(
     compact: bool,
     first_cached: bool,
     per_query_timeout: Option<i64>,
-    timeout: &mut Option<Option<u64>>,
+    timeout: &mut WriteTimeout,
     profile: bool,
     wall_start: Instant,
 ) -> Result<(usize, f64), WriteAttempt> {
@@ -845,19 +862,19 @@ fn try_query_write(
     )));
 
     // The budget is for the whole write, so a retry gets what the earlier runs left.
-    let total = match *timeout {
-        Some(total) => total,
-        None => *timeout.insert(compute_effective_timeout(per_query_timeout, true)?),
-    };
-    let timeout_ms = match total {
-        Some(total) => {
+    if matches!(timeout, WriteTimeout::Unresolved) {
+        *timeout = compute_effective_timeout(per_query_timeout, true)?
+            .map_or(WriteTimeout::Unlimited, WriteTimeout::Total);
+    }
+    let timeout_ms = match *timeout {
+        WriteTimeout::Total(total) => {
             let spent = u64::try_from(wall_start.elapsed().as_millis()).unwrap_or(u64::MAX);
             if spent >= total {
                 return Err(WriteAttempt::Failed("Query timed out".to_string()));
             }
             Some(total - spent)
         }
-        None => None,
+        WriteTimeout::Unlimited | WriteTimeout::Unresolved => None,
     };
 
     // The private COW version to build into. Forking takes nothing, so an

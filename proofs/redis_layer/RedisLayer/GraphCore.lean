@@ -12,8 +12,8 @@ import RedisLayer.Resp
 | `profileDepth`, `profileOps`| `reply_profile` `:884` (all ops, plain depth, since #2390) |
 | `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:587` / `execute_profile` `:674` write detection and `admission.take()` |
 | `writeSteps`                | `try_query_write` `:783`, `finish_write` `:1512`, `abandon_write` `:1537`, `commit_and_replicate` `:1553` |
-| `executeWrite`, `Attempt`   | `execute_query_write` `:740` (retry loop, #3290), `WriteAttempt::from` `:805` |
-| `loopW`, `escalateNext`, `MAX_STALE_RETRIES` | `execute_query_write` `:740` bounded retry (#3559), `MAX_STALE_RETRIES` `:788`, `SLOW_STALE_RUN` `:795`; `graph_bulk_insert`'s phase loop (`bulk_insert.rs:945-987`) |
+| `executeWrite`, `Attempt`   | `execute_query_write` `:747` (retry loop, #3290), `WriteAttempt::from` `:805` |
+| `loopW`, `escalateNext`, `MAX_STALE_RETRIES` | `execute_query_write` `:747` bounded retry (#3559), `MAX_STALE_RETRIES` `:801`, `SLOW_STALE_RUN` `:808`; `graph_bulk_insert`'s phase loop (`bulk_insert.rs:947-989`) |
 | `resolveTimeout`, `budget`  | `try_query_write` `:818` timeout resolved once, budget from the write's start (`:843-856`) |
 | `admitQ`, `dispatch`        | `admit` `:1000`, `query_mut` `:1011` (#3014) |
 | `syncOutcome`               | `query_sync` `:1215`, `profile_sync` `:1445`, `profile_mut` `:1344` |
@@ -252,11 +252,11 @@ theorem stale_run_silent (w m b : Bool) :
 
 /-! ### Bounded retry (#3559)
 
-`execute_query_write` (`:740`) counts stale runs; after `MAX_STALE_RETRIES` (`:788`) of them, or
-after one that took `SLOW_STALE_RUN` (`:795`) or longer, it begins the next run with
-`QuerySession::begin_writer_checked` (writer from the start, so never stale:
+`execute_query_write` (`:747`) counts stale runs; after `MAX_STALE_RETRIES` (`:801`) of them, or
+after one that took `SLOW_STALE_RUN` (`:808`) or longer, it begins the next run with
+`QuerySession::begin_writer_checked` (`begin_with` then `escalate`: a writer from the start, so never stale:
 `QuerySession.writer_never_stale`), whose refusal ends the write with that error; otherwise
-`begin_with` (a reader). `graph_bulk_insert`'s phase loop (`bulk_insert.rs:945-987`) is the same
+`begin_with` (a reader). `graph_bulk_insert`'s phase loop (`bulk_insert.rs:947-989`) is the same
 loop: `as_writer` is `escalateNext`, a refused `begin_writer_checked` breaks with its error. -/
 
 def MAX_STALE_RETRIES : Nat := 3
