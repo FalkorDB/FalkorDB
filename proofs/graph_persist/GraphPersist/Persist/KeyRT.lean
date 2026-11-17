@@ -1,7 +1,7 @@
 import GraphPersist.Persist.MultiKey
 /-! # One RDB key of a multi-key graph reads back its slices
 
-`rdb_load_graph` (decoder/mod.rs:44-66) reads header, schema and directory, then — with
+`rdb_load_graph` (decoder/mod.rs:112-128) checks the encoding version, reads header, schema and directory, then — with
 `key_count > 1` — `decode_payloads_into_pending` (:260-307) reads the payloads into the
 pending graph. `rdbKey` is that read; `key_rt` says every key `build_multi_key_payloads`
 lays out (entity slices `(offset, count)` and, on key 0, the matrices) reads back as the
@@ -37,6 +37,12 @@ def prOfE (g : G M Tn Nm Ix Cn) (e : Entry) : PR M Tn :=
 /-- A directory entry a multi-key layout can hold. -/
 def EntryOK (g : G M Tn Nm Ix Cn) (e : Entry) : Prop :=
   (IsEntity e.st ∧ 0 < e.count ∧ e.offset + e.count ≤ kindTotal g e.st) ∨ e ∈ matrixEntries g
+
+theorem EntryOK.accepted (g : G M Tn Nm Ix Cn) (e : Entry) (h : EntryOK g e) : e.st.accepted = true := by
+  rcases h with ⟨hst, _⟩ | he
+  · rcases hst with h | h | h | h <;> rw [h] <;> rfl
+  · simp only [matrixEntries, List.mem_append, List.mem_cons, List.mem_nil_iff, or_false] at he
+    rcases he with (he | he) | he | he <;> (try (split at he <;> simp at he)) <;> subst he <;> rfl
 
 theorem slice_rt (limit n : Nat) (del : List Nat) (S : Store) (hl : limit ≤ 65536)
     (hk : KindWF limit n del S) (off cnt : Nat) (hc : 0 < cnt) (ho : off + cnt ≤ n) :
@@ -140,7 +146,8 @@ theorem key_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (K
       (es.flatMap (encPayload C g) ++ []) (hdrOf g g.name K, g.sch, es.map (prOfE g)) :=
     RT_bind hseq (RT_pure _)
   have hdir : RT (kKeySch C (hdrOf g g.name K) g.sch) (encDir es ++ (es.flatMap (encPayload C g) ++ []))
-      (hdrOf g g.name K, g.sch, es.map (prOfE g)) := RT_bind (decDir_rt es hn hc) hfin
+      (hdrOf g g.name K, g.sch, es.map (prOfE g)) :=
+    RT_bind (decDir_rt es hn hc (fun e he => EntryOK.accepted g e (hes e he))) hfin
   have hsch : RT (kKeyHdr C (hdrOf g g.name K))
       (C.S.enc g.sch ++ (encDir es ++ (es.flatMap (encPayload C g) ++ [])))
       (hdrOf g g.name K, g.sch, es.map (prOfE g)) := RT_bind (C.S.rt _ hw.sch) hdir
@@ -149,5 +156,36 @@ theorem key_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (K
       (C.S.enc g.sch ++ (encDir es ++ (es.flatMap (encPayload C g) ++ []))) := by
     simp only [encodeGraph, List.append_assoc, List.append_nil]
   rw [e]; exact hall
+
+/-! ## The encoding-version gate (#3793) -/
+
+/-- `check_encoding_version` (decoder/mod.rs:82): `DECODE_MIN_VERSION = 19 ≤ encver ≤
+ENCODING_VERSION = 20` (serializers/mod.rs). -/
+def checkVer (encver : Int) : Bool := decide (19 ≤ encver) && decide (encver ≤ 20)
+
+/-- `rdb_load_graph(rdb, encver, ..)` (:112): the gate, then `rdbKey`, before any read. -/
+def rdbLoad (C : Codecs M Tn Nm Ix Cn) (encver : Int) : Dec (Hdr Nm × Sch Nm Ix Cn × List (PR M Tn)) :=
+  if checkVer encver then rdbKey C else Dec.fail
+
+theorem checkVer_iff (v : Int) : checkVer v = true ↔ v = 19 ∨ v = 20 := by
+  simp only [checkVer, Bool.and_eq_true, decide_eq_true_eq]; omega
+
+/-- A version-19 or -20 key reads back exactly as `key_rt` says. -/
+theorem key_rt_ver (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (K : Nat)
+    (hH : C.H.good (hdrOf g g.name K)) (es : List Entry) (hes : ∀ e ∈ es, EntryOK g e)
+    (hn : es.length < 2 ^ 64) (hc : ∀ e ∈ es, e.count < 2 ^ 64) (v : Int) (hv : v = 19 ∨ v = 20) :
+    RT (rdbLoad C v) (encodeGraph C g g.name es K) (hdrOf g g.name K, g.sch, es.map (prOfE g)) := by
+  have : checkVer v = true := (checkVer_iff v).2 hv
+  simp only [rdbLoad, this, if_true]
+  exact key_rt C g hw K hH es hes hn hc
+
+/-- Any other version fails without reading a word. -/
+theorem rdbLoad_refuses (C : Codecs M Tn Nm Ix Cn) (v : Int) (hv : ¬ (v = 19 ∨ v = 20)) (s : Stream) :
+    rdbLoad C v s = .err := by
+  have : checkVer v = false := by
+    cases h : checkVer v
+    · rfl
+    · exact absurd ((checkVer_iff v).1 h) hv
+  simp only [rdbLoad, this]; rfl
 
 end GraphPersist.Persist
