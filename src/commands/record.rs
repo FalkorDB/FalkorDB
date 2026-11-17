@@ -98,7 +98,13 @@ fn record_mut(
         // or how a failed one is undone.
         match &outcome {
             Err(_) => abandon_write(&session, &runtime),
-            Ok(result) => finish_write(&session, ctx, key_name, &runtime, &result.stats),
+            Ok(result) => {
+                // Refused because no key holds the graph any more: undone like a
+                // failed write. The trace below is still what the operators did.
+                if finish_write(&session, ctx, key_name, &runtime, &result.stats).is_err() {
+                    abandon_write(&session, &runtime);
+                }
+            }
         }
     }
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();

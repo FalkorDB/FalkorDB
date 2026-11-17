@@ -367,3 +367,57 @@ class testReplication(FlowTestsBase):
                 env.assertEqual(node_count(src, label), expected)
                 env.assertEqual(node_count(replica, label), expected)
 
+    # a queued write is admitted under the key the client named and commits
+    # later, from a worker. a RENAME in between moves the graph to another key.
+    # the write was replicated under the key it was admitted at, which the
+    # replica no longer had: GRAPH.EFFECT made a graph there, so the master kept
+    # the new key with the write and the replica kept the old key with it and
+    # the new key without. C replicates under the key the graph lives at
+    def test_rename_during_queued_write(self):
+        import threading
+        from redis.backoff import NoBackoff
+        from redis.retry import Retry
+
+        env = self.env
+        source_con = env.getConnection()
+        replica_con = env.getSlaveConnection()
+        old, new = "rename_during_write_a", "rename_during_write_b"
+        source_con.delete(old, new)
+        source_con.execute_command("WAIT", "1", "0")
+        sync_full_before = source_con.info("stats")["sync_full"]
+
+        # long enough to still be matching when the RENAME lands
+        slow = "UNWIND range(1, 20000000) AS x WITH count(x) AS c CREATE (:Slow {c: c})"
+        reply = []
+
+        def write():
+            con = redis.Redis(env.host, env.port, socket_timeout=120,
+                              retry=Retry(NoBackoff(), 0))
+            reply.append(con.execute_command("GRAPH.QUERY", old, slow))
+
+        writer = threading.Thread(target=write)
+        writer.start()
+        # admission creates the key, on the main thread, before the write runs
+        deadline = time.time() + 10
+        while not source_con.exists(old) and time.time() < deadline:
+            time.sleep(0.001)
+        env.assertTrue(source_con.rename(old, new))
+        writer.join()
+        env.assertEqual(len(reply), 1)
+
+        # until the replica has applied everything the master propagated
+        target = source_con.info("replication")["master_repl_offset"]
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if replica_con.info("replication").get("slave_repl_offset", -1) >= target:
+                break
+            time.sleep(0.05)
+
+        # the write landed on the renamed graph, on both sides, and reached the
+        # replica as a replicated command, not through a forced resync
+        for con in (source_con, replica_con):
+            env.assertEqual(con.exists(old), 0)
+            env.assertEqual(con.exists(new), 1)
+            res = Graph(con, new).ro_query("MATCH (n:Slow) RETURN count(n)")
+            env.assertEqual(res.result_set[0][0], 1)
+        env.assertEqual(source_con.info("stats")["sync_full"], sync_full_before)
