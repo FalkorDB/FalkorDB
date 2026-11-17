@@ -56,10 +56,12 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 
 ## Proven (headline theorems)
 
-* `rust_c_agree` (QueryArgsAgree) — for **every** argument vector, under the
-  GRAPH.CONFIG invariant, `parse_query_flags` and C's `_read_flags` accept the same
-  vectors, fail with the corresponding error, and read the same compact flag, version
-  and timeout; `rust_c_same_accept`. `parse_ok_iff` (QueryArgsSpec) — the parser accepts
+* `rust_c_agree_except_schema` (QueryArgsAgree) — for **every** argument vector, under the
+  GRAPH.CONFIG invariant, unless Rust refuses a `SCHEMA_HASH` value (#3757),
+  `parse_query_flags` and C's `_read_flags` accept the same vectors, fail with the
+  corresponding error, and read the same compact flag, version and timeout;
+  `rust_ok_c_ok`. COUNTEREXAMPLE (#3757): `rust_c_agree_refuted` /
+  `rust_c_same_accept_refuted` — `SCHEMA_HASH abc` is refused by Rust, skipped by C. `parse_ok_iff` (QueryArgsSpec) — the parser accepts
   exactly 3..8 arguments whose tail is in `Grammar`; `parse_total`; `parse_documented`
   — every documented command line is accepted with its documented meaning;
   `four_commands_share` — QUERY, RO_QUERY, PROFILE, EXPLAIN reject the same vectors and
@@ -92,7 +94,8 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    PROFILE ignored a garbage/missing timeout; `version 4294967296` accepted; no arity cap.
    Now one parser mirrors C: `nonutf8_keeps_compact`, `timeout_noncanonical_rejected`,
    `garbage_timeout_rejected`, `version_above_uint_rejected`, `arity_capped`, and the
-   general `rust_c_agree`.
+   general `rust_c_agree` (since #3757 `rust_c_agree_except_schema`; the unrestricted
+   statement is refuted by `rust_c_agree_refuted`).
 2. **FIXED by #3000 (`2e8172d76`, issue #2998)** — formerly writes ignored the per-query
    TIMEOUT: with TIMEOUT_MAX = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1`
    created 300000 nodes on Rust; C times out and creates none

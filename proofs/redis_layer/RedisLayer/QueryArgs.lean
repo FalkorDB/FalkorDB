@@ -8,12 +8,13 @@ Since #3010 (`557f18868`, fixes #3009) the four query commands share
 
 | here | there |
 | --- | --- |
-| `upToNul`         | `up_to_nul`, `query_args.rs:82-84` |
-| `scanFlags`       | the `while let Some(arg) = rest.next()` loop, `:48-78` |
-| `parseQueryFlags` | `parse_query_flags`, `:44-79` (arity `:45-47`, `MAX_ARGS` `:25`) |
-| `QErr.msg`        | `RedisError::WrongArity`, `TIMEOUT_ERR`/`VERSION_ERR`/`TIMEOUT_MAX_ERR` `:27-30` |
-| `queryFront`      | `graph_query` `query.rs:46-51` |
-| `roQueryFront`    | `graph_ro_query` `ro_query.rs:34-39` |
+| `upToNul`         | `up_to_nul`, `query_args.rs:112-114` |
+| `scanFlags`       | the `while let Some(arg) = rest.next()` loop, `:58-90` |
+| `parseSchemaHash` | `parse_schema_hash`, `:98-109` (#3757) |
+| `parseQueryFlags` | `parse_query_flags`, `:52-93` (arity `:53-55`, `MAX_ARGS` `:30`) |
+| `QErr.msg`        | `ValkeyError::WrongArity`, `TIMEOUT_ERR`/`VERSION_ERR`/`SCHEMA_ERR`/`TIMEOUT_MAX_ERR` `:32-36` |
+| `queryFront`      | `graph_query` `query.rs:47-54` |
+| `roQueryFront`    | `graph_ro_query` `ro_query.rs:35-42` |
 | `profileFront`    | `graph_profile` `profile.rs:22` (only `timeout` is used) |
 | `explainFront`    | `graph_explain` `explain.rs:65` (validated, result dropped) |
 | `cScan`/`cReadFlags` | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`, `master`) |
@@ -23,10 +24,12 @@ argument is no longer special. `parse_integer` is `RedisModule_StringToLongLong`
 Redis `string2ll` on the whole byte string (`Args.string2ll`). `TIMEOUT_MAX.load` is
 the parameter `tmax`.
 
-Headline: `rust_c_agree` — under the `GRAPH.CONFIG` invariant, Rust and C accept the
-same argument vectors, fail with the corresponding error, and read the same compact
-flag, version and timeout. `four_commands_share` — the four commands reject exactly
-the same vectors and read the same flags.
+Headline: `rust_c_agree_except_schema` — under the `GRAPH.CONFIG` invariant, Rust and C
+fail with the corresponding error or read the same compact flag, version and timeout,
+on every vector Rust does not refuse with the Rust-only `SCHEMA_HASH` error (#3757).
+`rust_c_agree_refuted` — the unrestricted `RustCAgree` (true before #3757) no longer
+holds: `SCHEMA_HASH abc` is refused by Rust and skipped by C. `four_commands_share` —
+the four commands reject exactly the same vectors and read the same flags.
 -/
 
 namespace RedisLayer
@@ -35,36 +38,53 @@ abbrev Bytes := List Nat
 
 /-! ## Rust (`src/commands/query_args.rs`) -/
 
-/-- `up_to_nul` (`:82-84`): `s.iter().position(|&b| b == 0).map_or(s, |end| &s[..end])`. -/
+/-- `up_to_nul` (`:112-114`): `s.iter().position(|&b| b == 0).map_or(s, |end| &s[..end])`. -/
 def upToNul (s : Bytes) : Bytes :=
   match s.findIdx? (· == 0) with
   | some e => s.take e
   | none => s
 
-/-- `MAX_ARGS` (`:25`). -/
+/-- `MAX_ARGS` (`:30`). -/
 def maxArgs : Nat := 8
 
 inductive QErr where
-  | wrongArity | timeoutParse | timeoutMax | versionParse
+  | wrongArity | timeoutParse | timeoutMax | versionParse | schemaParse
   deriving DecidableEq, Repr
 
-/-- The reply text (`:27-30`; `WrongArity` is Redis' standard arity error). -/
+/-- The reply text (`:32-36`; `WrongArity` is Redis' standard arity error). -/
 def QErr.msg : QErr → String
   | .wrongArity => "wrong number of arguments"
   | .timeoutParse => "Failed to parse query timeout value"
   | .versionParse => "Failed to parse graph version value"
+  | .schemaParse => "Failed to parse schema hash value"
   | .timeoutMax =>
     "The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value"
 
-/-- `QueryFlags` (`:34-39`); `version` is `u64::from(u32)`. -/
+/-- `QueryFlags` (`:39-47`); `version` is `u64::from(u32)`, `schema` a `u64`. -/
 structure QFlags where
   compact : Bool := false
   track : Bool := false
   timeout : Option Int := none
   version : Option Nat := none
+  schema : Option Nat := none
   deriving DecidableEq, Repr
 
-/-- The flag loop (`:49-77`). -/
+/-- `i64::cast_unsigned`: the same 64 bits as a `u64`. -/
+def castUnsigned (s : Int) : Nat := (s % (2 ^ 64 : Int)).toNat
+
+/-- `parse_schema_hash` (`:98-109`, #3757): `string2ll` (`parse_integer`) cast to `u64`;
+else a canonical unsigned decimal (`[1-9][0-9]*`, `str::parse::<u64>`, so ≤ `u64::MAX`). -/
+def parseSchemaHash (v : Bytes) : Option Nat :=
+  match string2ll v with
+  | some s => some (castUnsigned s)
+  | none =>
+    match v with
+    | [] => none
+    | d :: _ =>
+      if (49 ≤ d ∧ d ≤ 57) ∧ v.all isDig = true then (digitsVal v).filter (· ≤ u64Max)
+      else none
+
+/-- The flag loop (`:58-90`). -/
 def scanFlags (tmax : Int) : List Bytes → QFlags → Except QErr QFlags
   | [], f => .ok f
   | a :: rest, f =>
@@ -90,9 +110,16 @@ def scanFlags (tmax : Int) : List Bytes → QFlags → Except QErr QFlags
           if 0 ≤ n ∧ n ≤ (uintMax : Int) then                          -- `u32::try_from`, `:73`
             scanFlags tmax rest' { f with version := some n.toNat }
           else .error .versionParse
+    else if eqIC (upToNul a) (b "schema_hash") then                   -- `:84-89` (#3757)
+      match rest with
+      | [] => .error .schemaParse
+      | v :: rest' =>
+        match parseSchemaHash v with
+        | none => .error .schemaParse
+        | some h => scanFlags tmax rest' { f with schema := some h }
     else scanFlags tmax rest f                                        -- unknown: skipped
 
-/-- `parse_query_flags` (`:44-79`); `args` includes the command name. -/
+/-- `parse_query_flags` (`:52-93`); `args` includes the command name. -/
 def parseQueryFlags (tmax : Int) (args : List Bytes) : Except QErr QFlags :=
   if args.length < 3 ∨ args.length > maxArgs then .error .wrongArity
   else scanFlags tmax (args.drop 3) {}
@@ -122,11 +149,11 @@ theorem four_commands_share (tmax : Int) (args : List Bytes) (e : QErr) :
     simp [Except.map]
 
 /-- Totality, with the exact outcome set: every argument vector is either accepted with
-some flags or rejected with one of the four errors (no panic, no other reply). -/
+some flags or rejected with one of the five errors (no panic, no other reply). -/
 theorem parse_total (tmax : Int) (args : List Bytes) :
     (∃ r, parseQueryFlags tmax args = .ok r) ∨
     (∃ e, parseQueryFlags tmax args = .error e ∧
-      e ∈ [QErr.wrongArity, .timeoutParse, .timeoutMax, .versionParse]) := by
+      e ∈ [QErr.wrongArity, .timeoutParse, .timeoutMax, .versionParse, .schemaParse]) := by
   cases h : parseQueryFlags tmax args with
   | ok r => exact .inl ⟨r, rfl⟩
   | error e => exact .inr ⟨e, rfl, by cases e <;> simp⟩
@@ -178,7 +205,13 @@ theorem scan_bounded (tmax : Int) : ∀ (l : List Bytes) (f r : QFlags),
                   refine ⟨hf.1, ?_⟩
                   intro v' hv'; simp at hv'; subst hv'; omega
                 · simp at h
-          · exact scan_bounded tmax rest f r hf h
+          · split at h
+            · split at h
+              · simp at h
+              · split at h
+                · simp at h
+                · exact scan_bounded tmax _ _ r (by exact ⟨hf.1, hf.2⟩) h
+            · exact scan_bounded tmax rest f r hf h
 
 /-- Every accepted timeout is non-negative and within `TIMEOUT_MAX` (when set); every
 accepted version fits a C `uint`. So `compute_effective_timeout` never sees a negative

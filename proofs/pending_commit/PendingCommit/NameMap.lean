@@ -155,4 +155,58 @@ theorem getOrCreate_prefix (m : M) (n : String) (i : Nat) (hi : i < m.vec.length
 theorem uncapped_aliases_zero (m : M) (h : m.vec.length = 65536) (n : String) :
     (push m n).2 = 0 := by simp [push, asU16, h]
 
+/-! ## The schema-hash key chain (#3757, attribute_store.rs:194-252)
+
+`AttrNameMap.chain` is pushed (`KeyChain::push`, abstract `cp` here — xxh3, see
+graph_queries `GQ.SchemaHash.push`) exactly where `vec` is pushed. `ChainInv`: the
+chain is `of` the names in id order; `insertC_inv` / `getOrCreateC_inv` keep it,
+and both do to `vec`/`index` exactly what `insert`/`getOrCreate` do (`*_model`). -/
+
+structure MC where
+  m : M
+  chain : Nat
+
+def ChainInv (cp : Nat → String → Nat) (c : MC) : Prop := c.chain = c.m.vec.foldl cp 0
+
+/-- `insert` (:194) with `self.chain.push(&name)`. -/
+def insertC (cp : Nat → String → Nat) (c : MC) (n : String) : MC :=
+  if (c.m.index n).isSome then c
+  else if c.m.vec.length ≥ MAX then c
+  else ⟨(push c.m n).1, cp c.chain n⟩
+
+/-- `get_or_create` (:230) with `self.chain.push(name)`. -/
+def getOrCreateC (cp : Nat → String → Nat) (c : MC) (n : String) : MC × Nat :=
+  match c.m.index n with
+  | some i => (c, i)
+  | none => if c.m.vec.length ≥ MAX then (c, NONE) else
+      let r := push c.m n; (⟨r.1, cp c.chain n⟩, r.2)
+
+theorem insertC_model (cp : Nat → String → Nat) (c : MC) (n : String) :
+    (insertC cp c n).m = insert c.m n := by
+  unfold insertC insert; split <;> (try split) <;> simp_all
+
+theorem getOrCreateC_model (cp : Nat → String → Nat) (c : MC) (n : String) :
+    (getOrCreateC cp c n).1.m = (getOrCreate c.m n).1 ∧
+      (getOrCreateC cp c n).2 = (getOrCreate c.m n).2 := by
+  unfold getOrCreateC getOrCreate; split <;> (try split) <;> simp_all
+
+theorem default_chainInv (cp : Nat → String → Nat) (idx : String → Option Nat) :
+    ChainInv cp ⟨⟨[], idx⟩, 0⟩ := rfl
+
+theorem insertC_inv (cp : Nat → String → Nat) (c : MC) (n : String) (h : ChainInv cp c) :
+    ChainInv cp (insertC cp c n) := by
+  unfold insertC; split
+  · exact h
+  · split
+    · exact h
+    · simp [ChainInv, push, List.foldl_append]; rw [h]
+
+theorem getOrCreateC_inv (cp : Nat → String → Nat) (c : MC) (n : String) (h : ChainInv cp c) :
+    ChainInv cp (getOrCreateC cp c n).1 := by
+  unfold getOrCreateC; split
+  · exact h
+  · split
+    · exact h
+    · simp [ChainInv, push, List.foldl_append]; rw [h]
+
 end PendingCommit.NameMap

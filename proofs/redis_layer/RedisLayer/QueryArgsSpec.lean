@@ -6,10 +6,11 @@ import RedisLayer.QueryArgsAgree
 * `parse_ok_iff` — the parser succeeds **iff** the vector has 3..8 arguments and its
   tail is in `Grammar`: a sequence of tokens, each either a non-keyword argument
   (`--compact`, `--track-memory`, or anything unknown: skipped), `TIMEOUT t` with `t` a
-  canonical (`string2ll`) integer in `0..=TIMEOUT_MAX`, or `version v` with `v` a canonical
-  integer in `0..=u32::MAX`. Keywords match ASCII case-insensitively up to the first NUL.
+  canonical (`string2ll`) integer in `0..=TIMEOUT_MAX`, `version v` with `v` a canonical
+  integer in `0..=u32::MAX`, or `SCHEMA_HASH h` (#3757) with `h` accepted by
+  `parseSchemaHash`. Keywords match ASCII case-insensitively up to the first NUL.
 * `parse_documented` — the documented rendering
-  `GRAPH.<CMD> key query [--compact] [TIMEOUT ms] [version v] [--track-memory]`
+  `GRAPH.<CMD> key query [--compact] [TIMEOUT ms] [version v] [SCHEMA_HASH h] [--track-memory]`
   is accepted with the documented meaning (last timeout/version wins).
 * The #3009 regressions: each pre-`557f18868` divergence from C, now agreement.
 -/
@@ -20,6 +21,7 @@ inductive Grammar (tmax : Int) : List Bytes → Prop
   | nil : Grammar tmax []
   | other {a : Bytes} {rest : List Bytes} :
       eqIC (upToNul a) (b "timeout") = false → eqIC (upToNul a) (b "version") = false →
+      eqIC (upToNul a) (b "schema_hash") = false →
       Grammar tmax rest → Grammar tmax (a :: rest)
   | timeout {a v : Bytes} {rest : List Bytes} (t : Int) :
       eqIC (upToNul a) (b "timeout") = true → string2ll v = some t → 0 ≤ t →
@@ -27,19 +29,22 @@ inductive Grammar (tmax : Int) : List Bytes → Prop
   | version {a v : Bytes} {rest : List Bytes} (n : Int) :
       eqIC (upToNul a) (b "version") = true → string2ll v = some n → 0 ≤ n → n ≤ (uintMax : Int) →
       Grammar tmax rest → Grammar tmax (a :: v :: rest)
+  | schema {a v : Bytes} {rest : List Bytes} (h : Nat) :
+      eqIC (upToNul a) (b "schema_hash") = true → parseSchemaHash v = some h →
+      Grammar tmax rest → Grammar tmax (a :: v :: rest)
 
 theorem grammar_scan_ok (tmax : Int) {l : List Bytes} (g : Grammar tmax l) :
     ∀ f, ∃ r, scanFlags tmax l f = .ok r := by
   induction g with
   | nil => exact fun f => ⟨f, rfl⟩
-  | @other a rest hT hV _ ih =>
+  | @other a rest hT hV hS _ ih =>
     intro f
     unfold scanFlags
     by_cases h1 : eqIC (upToNul a) (b "--compact") = true
     · simp only [h1, ↓reduceIte]; exact ih _
     by_cases h2 : eqIC (upToNul a) (b "--track-memory") = true
     · simp only [h1, h2, ↓reduceIte, Bool.false_eq_true]; exact ih _
-    simp only [h1, h2, hT, hV, Bool.false_eq_true, ↓reduceIte]; exact ih f
+    simp only [h1, h2, hT, hV, hS, Bool.false_eq_true, ↓reduceIte]; exact ih f
   | @timeout a v rest t hT hp h0 hm _ ih =>
     intro f
     have h1 := eqIC_excl hT k4
@@ -55,6 +60,16 @@ theorem grammar_scan_ok (tmax : Int) {l : List Bytes} (g : Grammar tmax l) :
     unfold scanFlags
     simp only [h1, h2, h3, hV, hp, h0, hu, and_self, Bool.false_eq_true, ↓reduceIte]
     exact ih _
+  | @schema a v rest h hS hp _ ih =>
+    intro f
+    have h1 := eqIC_excl hS k15
+    have h2 : eqIC (upToNul a) (b "--track-memory") = false := by
+      simp only [eqIC, beq_iff_eq] at hS ⊢; rw [hS]; decide
+    have h3 := eqIC_excl hS k16
+    have h4 := eqIC_excl hS k17
+    unfold scanFlags
+    simp only [h1, h2, h3, h4, hS, hp, Bool.false_eq_true, ↓reduceIte]
+    exact ih _
 
 theorem scan_ok_grammar (tmax : Int) : ∀ (l : List Bytes) (f r : QFlags),
     scanFlags tmax l f = .ok r → Grammar tmax l
@@ -63,10 +78,12 @@ theorem scan_ok_grammar (tmax : Int) : ∀ (l : List Bytes) (f r : QFlags),
     unfold scanFlags at h
     by_cases h1 : eqIC (upToNul a) (b "--compact") = true
     · simp only [h1, ↓reduceIte] at h
-      exact .other (eqIC_excl h1 k8) (eqIC_excl h1 k9) (scan_ok_grammar tmax rest _ _ h)
+      exact .other (eqIC_excl h1 k8) (eqIC_excl h1 k9) (eqIC_excl h1 k11)
+        (scan_ok_grammar tmax rest _ _ h)
     by_cases h2 : eqIC (upToNul a) (b "--track-memory") = true
     · simp only [h1, h2, ↓reduceIte, Bool.false_eq_true] at h
-      exact .other (eqIC_excl h2 k2) (eqIC_excl h2 k3) (scan_ok_grammar tmax rest _ _ h)
+      exact .other (eqIC_excl h2 k2) (eqIC_excl h2 k3) (eqIC_excl h2 k12)
+        (scan_ok_grammar tmax rest _ _ h)
     by_cases h3 : eqIC (upToNul a) (b "timeout") = true
     · simp only [h1, h2, h3, ↓reduceIte, Bool.false_eq_true] at h
       cases rest with
@@ -97,8 +114,20 @@ theorem scan_ok_grammar (tmax : Int) : ∀ (l : List Bytes) (f r : QFlags),
           · simp only [hn, and_self, ↓reduceIte] at h
             exact .version n h4 hp hn.1 hn.2 (scan_ok_grammar tmax rest' _ _ h)
           · simp [hn] at h
-    · simp only [h1, h2, h3, h4, ↓reduceIte, Bool.false_eq_true] at h
-      exact .other (by simpa using h3) (by simpa using h4) (scan_ok_grammar tmax rest _ _ h)
+    by_cases h5 : eqIC (upToNul a) (b "schema_hash") = true
+    · simp only [h1, h2, h3, h4, h5, ↓reduceIte, Bool.false_eq_true] at h
+      cases rest with
+      | nil => simp at h
+      | cons v rest' =>
+        simp only at h
+        cases hp : parseSchemaHash v with
+        | none => simp [hp] at h
+        | some hv =>
+          simp only [hp] at h
+          exact .schema hv h5 hp (scan_ok_grammar tmax rest' _ _ h)
+    · simp only [h1, h2, h3, h4, h5, ↓reduceIte, Bool.false_eq_true] at h
+      exact .other (by simpa using h3) (by simpa using h4) (by simpa using h5)
+        (scan_ok_grammar tmax rest _ _ h)
 
 /-- **The parser accepts exactly the grammar** (and is total: `parse_total`). -/
 theorem parse_ok_iff (tmax : Int) (args : List Bytes) :
@@ -121,6 +150,7 @@ inductive Flag where
   | track
   | timeout (ms : Nat)
   | version (v : Nat)
+  | schema (h : Nat)
   deriving DecidableEq, Repr
 
 def Flag.render : Flag → List Bytes
@@ -128,12 +158,14 @@ def Flag.render : Flag → List Bytes
   | .track => [b "--track-memory"]
   | .timeout n => [b "TIMEOUT", dec n]
   | .version n => [b "version", dec n]
+  | .schema h => [b "SCHEMA_HASH", dec h]
 
 def renderAll (fs : List Flag) : List Bytes := fs.flatMap Flag.render
 
 def Flag.ok (tmax : Int) : Flag → Prop
   | .timeout n => n ≤ i64Max ∧ (tmax > 0 → (n : Int) ≤ tmax)
   | .version n => n ≤ uintMax
+  | .schema h => h ≤ u64Max
   | _ => True
 
 def Flag.apply (f : QFlags) : Flag → QFlags
@@ -141,6 +173,7 @@ def Flag.apply (f : QFlags) : Flag → QFlags
   | .track => { f with track := true }
   | .timeout n => { f with timeout := some n }
   | .version n => { f with version := some n }
+  | .schema h => { f with schema := some h }
 
 def specFlags (fs : List Flag) (f : QFlags) : QFlags := fs.foldl Flag.apply f
 
@@ -154,6 +187,39 @@ private theorem d7 : eqIC (upToNul (b "version")) (b "version") = true := by dec
 private theorem d8 : eqIC (upToNul (b "--compact")) (b "--compact") = true := by decide
 private theorem d9 : eqIC (upToNul (b "--track-memory")) (b "--compact") = false := by decide
 private theorem d10 : eqIC (upToNul (b "--track-memory")) (b "--track-memory") = true := by decide
+
+private theorem d11 : eqIC (upToNul (b "SCHEMA_HASH")) (b "--compact") = false := by decide
+private theorem d12 : eqIC (upToNul (b "SCHEMA_HASH")) (b "--track-memory") = false := by decide
+private theorem d13 : eqIC (upToNul (b "SCHEMA_HASH")) (b "timeout") = false := by decide
+private theorem d14 : eqIC (upToNul (b "SCHEMA_HASH")) (b "version") = false := by decide
+private theorem d15 : eqIC (upToNul (b "SCHEMA_HASH")) (b "schema_hash") = true := by decide
+
+theorem dec_length_u64 (n : Nat) (h : n ≤ u64Max) : (dec n).length ≤ 20 :=
+  dec_length_le n 20 (by unfold u64Max at h; omega) (by omega)
+
+/-- Every `u64` a client renders in decimal is read back as itself: through `string2ll`
+up to `i64::MAX`, through the unsigned branch above it. -/
+theorem parseSchemaHash_dec (h : Nat) (hh : h ≤ u64Max) : parseSchemaHash (dec h) = some h := by
+  by_cases hi : h ≤ i64Max
+  · simp only [parseSchemaHash, string2ll_dec h hi, castUnsigned, Option.some.injEq]
+    unfold i64Max at hi
+    simp only [Int.ofNat_eq_natCast]
+    omega
+  · have hl := dec_length_u64 h hh
+    obtain ⟨d, ds, hd, h1, h2, h3⟩ := dec_head h
+    have h3 := h3 (by unfold i64Max at hi; omega)
+    have hv := digitsVal_dec h
+    have hs : string2ll (dec h) = none := by
+      unfold string2ll
+      rw [hd] at hl ⊢; rw [hd] at hv
+      have : d :: ds ≠ [48] := by intro e; simp at e; omega
+      simp only [this, show d ≠ 45 by omega, hv, ↓reduceIte]
+      simp only [List.length_cons] at hl
+      simp [show ¬ (ds.length + 1 ≥ 21) by omega, show 49 ≤ d by omega, h2] <;> omega
+    unfold parseSchemaHash
+    rw [hs]; rw [hd] at hv ⊢
+    have hall : (d :: ds).all isDig = true := hd ▸ dec_all_dig h
+    simp [hall, hv, hh, show 49 ≤ d by omega, h2]
 
 theorem scan_step (tmax : Int) (x : Flag) (hx : x.ok tmax) (rest : List Bytes) (f : QFlags) :
     scanFlags tmax (x.render ++ rest) f = scanFlags tmax rest (x.apply f) := by
@@ -170,6 +236,9 @@ theorem scan_step (tmax : Int) (x : Flag) (hx : x.ok tmax) (rest : List Bytes) (
     have hu : (n : Int) ≤ (uintMax : Int) := by unfold Flag.ok at hx; omega
     rw [Flag.render, List.cons_append, List.singleton_append, scanFlags.eq_def]
     simp [d4, d5, d6, d7, string2ll_dec n hn, hu, Flag.apply]
+  | schema h =>
+    rw [Flag.render, List.cons_append, List.singleton_append, scanFlags.eq_def]
+    simp [d11, d12, d13, d14, d15, parseSchemaHash_dec h hx, Flag.apply]
 
 theorem scan_documented (tmax : Int) (fs : List Flag) (hok : ∀ x ∈ fs, x.ok tmax) (f : QFlags) :
     scanFlags tmax (renderAll fs) f = .ok (specFlags fs f) := by
@@ -261,6 +330,18 @@ theorem write_timeout_agrees :
     rustTimeout c (some 1) true = .ok (some 1) ∧
     (cReadFlags c (pre ++ [b "TIMEOUT", b "1"])).map (fun f => (f.timeout, f.timeoutRw))
       = .ok (1, true) := by
+  decide
+
+/-- **#3757**: `SCHEMA_HASH` takes the reply's signed form and the unsigned form of the
+same 64 bits; a missing or malformed value is refused (C skips both tokens: see
+`rust_c_agree_refuted`). -/
+theorem schema_hash_parsed :
+    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "-1"]) = .ok { schema := some u64Max } ∧
+    parseQueryFlags 0 (pre ++ [b "schema_hash", b "18446744073709551615"]) =
+      .ok { schema := some u64Max } ∧
+    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "18446744073709551616"]) = .error .schemaParse ∧
+    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "abc"]) = .error .schemaParse ∧
+    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH"]) = .error .schemaParse := by
   decide
 
 end RedisLayer

@@ -8,7 +8,8 @@ import RedisLayer.RespCompact
 | `fmtS` / `fmtList` / `fmtMap` | `format_value_to_string` `:49-111` |
 | `encVb`, `specVb`, `pointStr` | `reply_verbose_value` `:357-541` (top-level point `:531-540`, #3043) |
 | `statCalls`, `statLines`      | `reply_stats` `:543-630` |
-| `resultCalls`                 | `reply_result::<COMPACT>` `:632-679`, `reply_verbose` `:681`, `reply_compact` `:689` |
+| `resultCalls`                 | `reply_result::<COMPACT>` `:685-740`, `reply_query` `:743-754` (#3757: `ReplyFormat`) |
+| `Schema`, `schemaCalls`, `i64OfU64` | `reply_schema` `:644-674` (#3757), `u64::cast_signed` |
 | `E.fmt` (`Compact.Env`)       | `format_g(x, 15)` `:123-142` (libc `snprintf`, AXIOMATISED as an abstract function) |
 
 Number/temporal formatting is abstract (`Fmt`): `{:.6}`, `%.15g`, `Value::format_*`.
@@ -276,18 +277,78 @@ theorem stats_emits (st : Stats F) (version : Nat) :
   rw [List.length_map, ← statsLen_eq] at h
   exact h
 
-/-! ## Whole replies (`reply_result`, `:632-679`) -/
+/-! ## The `SCHEMA_HASH` element (`reply_schema`, `:644-674`, #3757) -/
+
+/-- What `reply_schema` reads from the graph version the query ran on: `schema_hash()`
+(a `u64`) and the three name lists, in id order. -/
+structure Schema where
+  hash : Nat
+  labels : List String
+  types : List String
+  keys : List String
+
+/-- `u64::cast_signed`: the same 64 bits as an `i64` (RESP has no unsigned integer). -/
+def i64OfU64 (h : Nat) : Int := if h < 2 ^ 63 then h else (h : Int) - 2 ^ 64
+
+def strsCalls (ls : List String) : List (Call F) := .arr ls.length :: ls.map Call.str
+
+/-- `reply_schema` (`:644-674`). `reply_with_map(n)` is RESP2's flat `2n`-array (the RESP
+framing this model uses); `property_key_count()` is `attrs_name.len()`, i.e. `keys.length`. -/
+def schemaCalls (sc : Schema) (client : Nat) : List (Call F) :=
+  if sc.hash = client then [.arr 2, .str "hash", .ll (i64OfU64 sc.hash)]
+  else [.arr 8, .str "hash", .ll (i64OfU64 sc.hash), .str "labels"] ++ strsCalls sc.labels
+    ++ [.str "relationshipTypes"] ++ strsCalls sc.types ++ [.str "propertyKeys"] ++ strsCalls sc.keys
+
+/-- The element `reply_schema` sends: `[hash, S]` when the client's hash is current, else
+the flat map with the three complete lists. -/
+def schemaR (sc : Schema) (client : Nat) : R :=
+  if sc.hash = client then .arr [.bulk "hash", .int (i64OfU64 sc.hash)]
+  else .arr [.bulk "hash", .int (i64OfU64 sc.hash),
+    .bulk "labels", .arr (sc.labels.map R.bulk),
+    .bulk "relationshipTypes", .arr (sc.types.map R.bulk),
+    .bulk "propertyKeys", .arr (sc.keys.map R.bulk)]
+
+theorem strs_emits (ls : List String) :
+    Emits E.vfmt (strsCalls (F := F) ls) [.arr (ls.map R.bulk)] := by
+  have h := (emits_strList E ls).array
+  rw [List.length_map] at h
+  exact h
+
+/-- **`schema_emits`**: `reply_schema` sends exactly one well-formed element, `schemaR`. -/
+theorem schema_emits (sc : Schema) (client : Nat) :
+    Emits E.vfmt (schemaCalls (F := F) sc client) [schemaR sc client] := by
+  unfold schemaCalls schemaR
+  split
+  · exact (emits_cons E (Emits.leaf_str _ "hash") (Emits.leaf_ll _ _)).array
+  · have h := ((((((((Emits.leaf_str E.vfmt "hash").append _ (Emits.leaf_ll _ (i64OfU64 sc.hash))).append _
+      (Emits.leaf_str _ "labels")).append _ (strs_emits E sc.labels)).append _
+      (Emits.leaf_str _ "relationshipTypes")).append _ (strs_emits E sc.types)).append _
+      (Emits.leaf_str _ "propertyKeys")).append _ (strs_emits E sc.keys)).array
+    simpa using h
+
+/-- The signed form is the unsigned value's bits: `i64OfU64 h ≡ h (mod 2^64)`, in `i64`. -/
+theorem i64OfU64_spec (h : Nat) (hh : h < 2 ^ 64) :
+    -2 ^ 63 ≤ i64OfU64 h ∧ i64OfU64 h < 2 ^ 63 ∧ (i64OfU64 h - h) % 2 ^ 64 = 0 := by
+  unfold i64OfU64; split <;> omega
+
+/-! ## Whole replies (`reply_result`, `:685-740`) -/
 
 def rowCalls (compact : Bool) (row : List (V F)) : List (Call F) :=
   .arr row.length :: (row.map fun v => if compact then .arr 2 :: encC E v else encVb E M v).flatten
 
+/-- `reply_result::<COMPACT>` (`:685-740`) as `reply_query` calls it with `format.schema`
+(`:743-754`): `schema = some (graph, client_hash)` appends `reply_schema` (#3757). -/
 def resultCalls (compact : Bool) (names : List String) (rows : List (List (V F)))
-    (st : Stats F) (version : Nat) : List (Call F) :=
-  if names = [] then .arr 1 :: statCalls M st version
-  else [.arr 3, .arr names.length]
+    (st : Stats F) (version : Nat) (schema : Option (Schema × Nat)) : List (Call F) :=
+  let k := if schema.isSome then 1 else 0
+  let tail := match schema with
+    | none => []
+    | some (sc, client) => schemaCalls sc client
+  if names = [] then .arr (1 + k) :: statCalls M st version ++ tail
+  else [.arr (3 + k), .arr names.length]
     ++ (names.map fun n => if compact then [Call.arr 2, .ll 1, .str n] else [.str n]).flatten
     ++ [.arr rows.length] ++ (rows.map (rowCalls E M compact)).flatten
-    ++ statCalls M st version
+    ++ statCalls M st version ++ tail
 
 theorem emits_flatten {α} (l : List α) (f : α → List (Call F)) (g : α → List R)
     (h : ∀ a ∈ l, Emits E.vfmt (f a) (g a)) :
@@ -315,7 +376,7 @@ theorem flat_single {α β} (l : List α) (f : α → β) : (l.map fun a => [f a
 (`batch.value_at(name.id, row)` for each name, `:666-675`). -/
 theorem compact_reply (names : List String) (rows : List (List (V F))) (st : Stats F)
     (version : Nat) (hn : names ≠ []) :
-    Emits E.vfmt (resultCalls E M true names rows st version)
+    Emits E.vfmt (resultCalls E M true names rows st version none)
       [encReply E names (rows.map (·.map proj)) (statLines M st version)] := by
   have hh := (emits_flatten1 E names (fun n => [Call.arr 2, .ll 1, .str n])
       (fun n => R.arr [.int 1, .bulk n])
@@ -337,7 +398,7 @@ theorem compact_reply (names : List String) (rows : List (List (V F))) (st : Sta
 
 /-- A query without `RETURN` gets `[stats]` only (`:637-642`). -/
 theorem noreturn_reply (compact : Bool) (rows : List (List (V F))) (st : Stats F) (version : Nat) :
-    Emits E.vfmt (resultCalls E M compact [] rows st version)
+    Emits E.vfmt (resultCalls E M compact [] rows st version none)
       [.arr [.arr ((statLines M st version).map R.bulk)]] := by
   have := (stats_emits E M st version).array
   simpa [resultCalls] using this
@@ -345,7 +406,7 @@ theorem noreturn_reply (compact : Bool) (rows : List (List (V F))) (st : Stats F
 /-- **Verbose reply** shape. -/
 theorem verbose_reply (names : List String) (rows : List (List (V F))) (st : Stats F)
     (version : Nat) (hn : names ≠ []) :
-    Emits E.vfmt (resultCalls E M false names rows st version)
+    Emits E.vfmt (resultCalls E M false names rows st version none)
       [.arr [.arr (names.map R.bulk), .arr (rows.map fun row => .arr (row.map (specVb E M))),
              .arr ((statLines M st version).map R.bulk)]] := by
   have hh := (emits_strList E names).array
@@ -359,6 +420,62 @@ theorem verbose_reply (names : List String) (rows : List (List (V F))) (st : Sta
         simpa [rowCalls] using this)).array
   rw [List.length_map] at hr
   have := (((hh.append _ hr).append _ (stats_emits E M st version))).array
+  simpa [resultCalls, hn, flat_single] using this
+
+/-- **#3757, no RETURN**: `[stats, schema]` with `SCHEMA_HASH h`. -/
+theorem noreturn_schema_reply (compact : Bool) (rows : List (List (V F))) (st : Stats F)
+    (version : Nat) (sc : Schema) (client : Nat) :
+    Emits E.vfmt (resultCalls E M compact [] rows st version (some (sc, client)))
+      [.arr [.arr ((statLines M st version).map R.bulk), schemaR sc client]] := by
+  have := ((stats_emits E M st version).append _ (schema_emits E sc client)).array
+  simpa [resultCalls] using this
+
+/-- **#3757, compact**: with `SCHEMA_HASH h` the compact reply is the three elements of
+`Compact.encReply` followed by the schema element; without it, `compact_reply` (unchanged). -/
+theorem compact_schema_reply (names : List String) (rows : List (List (V F))) (st : Stats F)
+    (version : Nat) (hn : names ≠ []) (sc : Schema) (client : Nat) :
+    Emits E.vfmt (resultCalls E M true names rows st version (some (sc, client)))
+      [.arr [.arr (names.map fun n => .arr [.int 1, .bulk n]),
+             .arr ((rows.map (·.map proj)).map fun row => .arr (row.map (Compact.encV E))),
+             .arr ((statLines M st version).map R.bulk), schemaR sc client]] := by
+  have hh := (emits_flatten1 E names (fun n => [Call.arr 2, .ll 1, .str n])
+      (fun n => R.arr [.int 1, .bulk n])
+      (fun n _ => (emits_cons E (Emits.leaf_ll _ 1) (Emits.leaf_str _ n)).array)).array
+  rw [List.length_map] at hh
+  have hr := (emits_flatten1 E rows (rowCalls E M true)
+      (fun row => R.arr (row.map (Compact.encV E ∘ proj)))
+      (fun row _ => by
+        have := (emits_flatten1 E row (fun v => Call.arr 2 :: encC E v)
+          (fun v => Compact.encV E (proj v))
+          (fun v _ => by
+            have h := (compact_emits E v).array
+            rw [encPair_len2] at h; exact h)).array
+        rw [List.length_map] at this
+        simpa [rowCalls, Function.comp_def] using this)).array
+  rw [List.length_map] at hr
+  have := ((((hh.append _ hr).append _ (stats_emits E M st version)).append _
+    (schema_emits E sc client))).array
+  simpa [resultCalls, hn, encReply, Function.comp_def, List.map_map] using this
+
+/-- **#3757, verbose**: with `SCHEMA_HASH h`, `verbose_reply`'s three elements and then the
+schema element. -/
+theorem verbose_schema_reply (names : List String) (rows : List (List (V F))) (st : Stats F)
+    (version : Nat) (hn : names ≠ []) (sc : Schema) (client : Nat) :
+    Emits E.vfmt (resultCalls E M false names rows st version (some (sc, client)))
+      [.arr [.arr (names.map R.bulk), .arr (rows.map fun row => .arr (row.map (specVb E M))),
+             .arr ((statLines M st version).map R.bulk), schemaR sc client]] := by
+  have hh := (emits_strList E names).array
+  rw [List.length_map] at hh
+  have hr := (emits_flatten1 E rows (rowCalls E M false)
+      (fun row => R.arr (row.map (specVb E M)))
+      (fun row _ => by
+        have := (emits_flatten1 E row (encVb E M) (specVb E M)
+          (fun v _ => verbose_emits E M v)).array
+        rw [List.length_map] at this
+        simpa [rowCalls] using this)).array
+  rw [List.length_map] at hr
+  have := ((((hh.append _ hr).append _ (stats_emits E M st version)).append _
+    (schema_emits E sc client))).array
   simpa [resultCalls, hn, flat_single] using this
 
 /-! ## Agreement with C's `%f` (#3043) -/
