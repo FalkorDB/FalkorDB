@@ -3,6 +3,12 @@
 
 use std::sync::Arc;
 
+use creusot_std::prelude::{
+    Int, Snapshot, ensures, logic, proof_assert, requires, snapshot, trusted,
+};
+#[cfg(creusot)]
+use creusot_std::prelude::{Seq, pearlite, variant};
+
 use super::leaf::{AosLeaf, Leaf, LeafInsert};
 use super::{FIELD, read_u64, read_width};
 
@@ -198,6 +204,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     Branch<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
 {
     /// Index of the child that an entry `(key, doc)` routes into — the number of separators `<=` it.
+    #[ensures(result@ <= self.seps@.len())]
     pub(super) fn child_index(
         &self,
         key: u64,
@@ -318,10 +325,31 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     ///
     /// Returns `(inserted, split)`: `inserted` is `false` when the tuple was already present (a no-op
     /// on content), so callers can maintain an exact live count; `split` is `Some` when the node split.
+    ///
+    /// Creusot spike, stage 3: `h` is a ghost height bound (erased at compile time; a signature change).
+    /// The returned flag is specified one way only: proving "true ⇒ was absent" needs the ordering
+    /// invariant (the entry can only be in the child it routes to), which this stage does not model.
+    #[cfg_attr(
+        not(creusot),
+        allow(
+            unused_variables,
+            reason = "`h` and `all` are ghost values read only by the Creusot specs"
+        )
+    )]
+    #[requires(shaped(*self, *h))]
+    #[ensures(shaped(^self, *h))]
+    #[ensures(!result.0 ==> mem_node(*self, *h, (key@, doc@)))]
+    #[ensures(match result.1 {
+        None => forall<y: (Int, Int)> mem_node(^self, *h, y) == (mem_node(*self, *h, y) || y == (key@, doc@)),
+        Some(s) => shaped(s.right, *h)
+            && forall<y: (Int, Int)> (mem_node(^self, *h, y) || mem_node(s.right, *h, y))
+                == (mem_node(*self, *h, y) || y == (key@, doc@)),
+    })]
     pub(super) fn insert_one(
         &mut self,
         key: u64,
         doc: u64,
+        h: Snapshot<Int>,
     ) -> (bool, Option<Split<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>) {
         match self {
             // The leaf owns the encoding-specific work (an AoS leaf splices its bytes; see [`Leaf::insert`]).
@@ -345,7 +373,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
             Self::Branch(branch_arc) => {
                 let branch = make_private(branch_arc); // CoW: clone the shared branch, mutate the copy
                 let child_idx = branch.child_index(key, doc);
-                let (inserted, child_split) = branch.children[child_idx].insert_one(key, doc);
+                let (inserted, child_split) =
+                    branch.children[child_idx].insert_one(key, doc, snapshot!(*h - 1));
                 let Some(Split { sep, right }) = child_split else {
                     return (inserted, None); // absorbed below — nothing to insert here
                 };
@@ -360,7 +389,11 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                     // This branch overflowed in turn: keep the left half, promote the middle
                     // separator (it moves up, into neither side), hand the right half up.
                     let mid = branch.children.len() / 2;
+                    let all = snapshot!(branch.children@); // ghost: erased at compile time
                     let right_children = branch.children.split_off(mid);
+                    proof_assert!(forall<j: Int> mid@ <= j && j < all.len()
+                        ==> right_children@[j - mid@] == all[j]);
+                    proof_assert!(forall<j: Int> 0 <= j && j < mid@ ==> branch.children@[j] == all[j]);
                     let right_seps = branch.seps.split_off(mid);
                     let promoted = branch.seps.pop().unwrap(); // the separator between the two halves
                     (
@@ -560,6 +593,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// Repair under-full children of a node a batch-path [`Node::combine`] just produced (see
     /// [`merge_underfull`]). A no-op for a leaf, and for a branch whose children are all min-full,
     /// so a repair only recurses down the seam where an under-full node was carried in.
+    #[trusted] // Creusot spike, change 4/4: breaks the merge_underfull <-> merge_underfull_below cycle
     fn merge_underfull_below(&mut self) {
         if let Self::Branch(branch_arc) = self
             && branch_arc.children.iter().any(Self::is_underfull)
@@ -592,6 +626,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
 /// every branch it touches must be copied to keep the committed version immutable for any concurrent
 /// reader. (We deliberately drop `make_mut`'s in-place path: it only ever fires on a re-touch of a node
 /// already privatized within one transaction, and the batch digest path never re-touches.)
+// Creusot spike, stage 3: trusted — `Arc` sharing is not modelled (Lean makes the same cut).
+#[trusted]
+#[ensures(*result == **arc)]
+#[ensures(^result == *(^arc))]
 fn make_private<T: Clone>(arc: &mut Arc<T>) -> &mut T {
     *arc = Arc::new((**arc).clone());
     Arc::get_mut(arc).expect("uniquely owned right after the clone")
@@ -623,6 +661,45 @@ pub(super) mod cow_gate {
             while !RELEASE.load(SeqCst) {
                 std::hint::spin_loop();
             }
+        }
+    }
+}
+
+// ---- Creusot spike, stage 3: the model -------------------------------------------------------------
+
+/// `y` is an entry of the subtree `n`, reading branches down at most `h` levels (a leaf is height 0).
+/// The height is explicit because recursion through `Arc` and `Vec` is not structural for Creusot.
+#[logic]
+#[variant(h)]
+pub fn mem_node<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    n: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
+    h: Int,
+    y: (Int, Int),
+) -> bool {
+    pearlite! {
+        match n {
+            Node::Leaf(l) => l@.contains(y),
+            Node::Branch(b) => h > 0
+                && exists<j: Int> 0 <= j && j < (*b).children@.len()
+                    && mem_node((*b).children@[j], h - 1, y),
+        }
+    }
+}
+
+/// Every branch within `h` levels has one more child than separators (the shape `child_index`
+/// relies on to index `children`), and no branch sits below level `h`.
+#[logic]
+#[variant(h)]
+pub fn shaped<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    n: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
+    h: Int,
+) -> bool {
+    pearlite! {
+        match n {
+            Node::Leaf(_) => true,
+            Node::Branch(b) => h > 0
+                && (*b).children@.len() == (*b).seps@.len() + 1
+                && forall<j: Int> 0 <= j && j < (*b).children@.len() ==> shaped((*b).children@[j], h - 1),
         }
     }
 }

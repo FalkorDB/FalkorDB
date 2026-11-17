@@ -36,6 +36,7 @@ index-falkordb = ["dep:feral-metis"]
 
 [dependencies]
 ahash = "0.8"
+creusot-std = "0.15.0" # Creusot spike: the annotations in cow_btree (erased outside `cargo creusot`)
 arc-swap = "1"
 chrono = "0.4.45"
 crossfire = "3.1.19"

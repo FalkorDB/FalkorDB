@@ -19,7 +19,7 @@ use super::{merge_walk, partition_point};
 fn gallop_lower_bound(
     start: usize,
     count: usize,
-    mut predicate: impl FnMut(usize) -> bool,
+    predicate: impl Fn(usize) -> bool, // Creusot spike: FnMut -> Fn (its one caller passes a non-mutating closure)
 ) -> usize {
     let mut step = 1;
     while start + step < count && predicate(start + step) {
@@ -27,10 +27,7 @@ fn gallop_lower_bound(
     }
     // The answer is in `[start + step/2, min(start + step, count))`: `predicate` held at the previous probe
     // (`start + step/2`, or `start` itself) and fails at `start + step` (or that probe ran past `count`).
-    partition_point(
-        (start + step / 2)..(start + step).min(count),
-        &mut predicate,
-    )
+    partition_point((start + step / 2)..(start + step).min(count), &predicate)
 }
 
 /// A compact leaf page **with** a dedup index: a tag-free `Arc<[u8]>` of `[header][distinct values][index][docs]`,

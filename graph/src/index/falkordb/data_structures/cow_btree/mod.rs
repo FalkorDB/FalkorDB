@@ -208,10 +208,14 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         if pairs.is_empty() {
             return Self::default();
         }
-        let leaves: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> = pairs
-            .chunks(LEAF_MAX)
-            .map(|chunk| Node::Leaf(Leaf::from_pairs(chunk)))
-            .collect();
+        // Creusot spike, change 8/8: `chunks` has no IteratorSpec.
+        let mut leaves: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> = Vec::new();
+        let mut start = 0usize;
+        while start < pairs.len() {
+            let end = pairs.len().min(start + LEAF_MAX);
+            leaves.push(Node::Leaf(Leaf::from_pairs(&pairs[start..end])));
+            start = end;
+        }
         Self {
             root: build_root(leaves),
         }
@@ -225,7 +229,11 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         key: u64,
         doc: u64,
     ) -> bool {
-        let (inserted, split) = self.root.insert_one(key, doc);
+        // Creusot spike, stage 3: the top level is not attempted; this placeholder height makes its
+        // precondition unprovable for any tree with a branch.
+        let (inserted, split) = self
+            .root
+            .insert_one(key, doc, creusot_std::prelude::snapshot!(0));
         if let Some(Split { sep, right }) = split {
             // The root split — grow a fresh level above the two halves.
             let left = std::mem::replace(&mut self.root, Node::Leaf(Leaf::from_pairs(&[])));
@@ -483,5 +491,47 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         let mut v = Vec::new();
         walk(&self.root, &mut v);
         v
+    }
+}
+
+// ---- Creusot spike: crate-level specs (only compiled under `cargo creusot`) --------------------
+
+/// Creusot only allows a recursive type through `Box`, `&`, or a type declared "positive". `Rc` is
+/// declared so in creusot-std; `Arc` and `Vec` are not, and `Node` → `Arc<Branch>` → `Vec<Node>` needs
+/// both. Trusted, not proven.
+#[cfg(creusot)]
+mod creusot_positivity {
+    use creusot_std::prelude::*;
+    use std::sync::Arc;
+    extern_spec! {
+        #[trusted(positive(T))]
+        type Arc<T>;
+    }
+    extern_spec! {
+        #[trusted(positive(T))]
+        type Vec<T>;
+    }
+}
+
+/// Std functions creusot-std has no contract for. Trusted (std's documented behaviour), not proven.
+#[cfg(creusot)]
+mod creusot_std_gaps {
+    use creusot_std::prelude::*;
+    use std::alloc::Allocator;
+    extern_spec! {
+        impl<T, A: Allocator + Clone> Vec<T, A> {
+            #[requires(at@ <= self@.len())]
+            #[ensures((^self)@ == self@.subsequence(0, at@))]
+            #[ensures(result@ == self@.subsequence(at@, self@.len()))]
+            fn split_off(&mut self, at: usize) -> Vec<T, A>;
+        }
+    }
+    extern_spec! {
+        impl<T> [T] {
+            #[ensures(result@ <= self@.len())]
+            fn partition_point<P>(&self, pred: P) -> usize
+            where
+                P: FnMut(&T) -> bool;
+        }
     }
 }

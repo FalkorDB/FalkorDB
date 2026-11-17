@@ -207,3 +207,46 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize, E: 
         }
     }
 }
+
+// Creusot spike, change 3/4: Creusot requires an `IteratorSpec` for every `Iterator` impl. This is the
+// weakest sound one ("it may produce anything"), enough to compile; it says nothing about range scans.
+#[cfg(creusot)]
+mod creusot_iter_spec {
+    use super::{Extract, RangeIter};
+    use creusot_std::prelude::*;
+
+    impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize, E: Extract>
+        IteratorSpec for RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES, E>
+    {
+        #[logic(open, prophetic)]
+        fn completed(&mut self) -> bool {
+            true
+        }
+
+        #[logic(open)]
+        fn produces(
+            self,
+            _visited: Seq<E::Item>,
+            _o: Self,
+        ) -> bool {
+            true
+        }
+
+        #[logic(law)]
+        #[ensures(self.produces(Seq::empty(), self))]
+        fn produces_refl(self) {}
+
+        #[logic(law)]
+        #[requires(a.produces(ab, b))]
+        #[requires(b.produces(bc, c))]
+        #[ensures(a.produces(ab.concat(bc), c))]
+        fn produces_trans(
+            a: Self,
+            ab: Seq<E::Item>,
+            b: Self,
+            bc: Seq<E::Item>,
+            c: Self,
+        ) {
+        }
+    }
+}

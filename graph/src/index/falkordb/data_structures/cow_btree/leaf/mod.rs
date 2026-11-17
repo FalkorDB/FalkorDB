@@ -2,7 +2,25 @@
 
 use std::sync::Arc;
 
+use creusot_std::prelude::*;
+// Creusot spike: the prelude also exports its own `Clone`/`PartialEq` derives and `vec!`; keep std's.
+use std::{clone::Clone, cmp::PartialEq, vec};
+
 use super::{FIELD, doc_le_bytes};
+
+// ---- Creusot spike, stage 2: logic definitions ------------------------------------------------
+
+/// Every element is `<=` every later one.
+#[logic(open)]
+pub fn sorted(s: Seq<(Int, Int)>) -> bool {
+    pearlite! { forall<a: Int, b: Int> 0 <= a && a < b && b < s.len() ==> s[a] <= s[b] }
+}
+
+/// Every element is `<` every later one (sorted, no duplicates).
+#[logic(open)]
+pub fn strictly_sorted(s: Seq<(Int, Int)>) -> bool {
+    pearlite! { forall<a: Int, b: Int> 0 <= a && a < b && b < s.len() ==> s[a] < s[b] }
+}
 
 mod aos;
 mod compact;
@@ -18,7 +36,7 @@ use compact_indexed::CompactIndexedLeaf;
 /// in [`CowBTree::leaves`]. The byte buffers themselves are **tag-free** — pure
 /// data — so a tree may hold a mix of both formats, each read by its own
 /// variant type.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, DeepModel)] // Creusot spike, change 2/4: + DeepModel
 pub enum LeafFormat {
     /// `[(key:8, doc:8) × n]` — contiguous array-of-structs tuples, 16 B/entry (see [`AosLeaf`]).
     Aos,
@@ -47,12 +65,41 @@ const fn pow2_bytes_for(x: u64) -> usize {
 /// present in both — or repeated within either — appears once). One allocation, `O(a.len() + b.len())`, no
 /// sort: the callers always hold two already-sorted runs (a leaf's entries and a sorted batch), which a
 /// two-pointer merge handles far faster than concatenate-and-sort.
+#[cfg_attr(
+    not(creusot),
+    allow(
+        unused_variables,
+        reason = "`old_out` is a ghost value read only by the Creusot specs"
+    )
+)]
+#[requires(lhs@.len() + rhs@.len() <= usize::MAX@)]
+#[requires(sorted(lhs.deep_model()))]
+#[requires(sorted(rhs.deep_model()))]
+#[ensures(strictly_sorted(result.deep_model()))]
+#[ensures(forall<x: (Int, Int)> result.deep_model().contains(x)
+    == (lhs.deep_model().contains(x) || rhs.deep_model().contains(x)))]
 fn merge_sorted(
     lhs: &[(u64, u64)],
     rhs: &[(u64, u64)],
 ) -> Vec<(u64, u64)> {
     let mut out = Vec::with_capacity(lhs.len() + rhs.len());
     let (mut i, mut j) = (0usize, 0usize);
+    #[invariant(i@ <= lhs@.len() && j@ <= rhs@.len())]
+    #[invariant(strictly_sorted(out.deep_model()))]
+    #[invariant(out@.len() == 0 ==> i@ == 0 && j@ == 0)]
+    // Everything in `out` came from a consumed prefix ...
+    #[invariant(forall<a: Int> 0 <= a && a < out@.len() ==>
+        (exists<k: Int> 0 <= k && k < i@ && out.deep_model()[a] == lhs.deep_model()[k])
+        || (exists<k: Int> 0 <= k && k < j@ && out.deep_model()[a] == rhs.deep_model()[k]))]
+    // ... and every consumed entry is in `out`.
+    #[invariant(forall<k: Int> 0 <= k && k < i@ ==>
+        exists<a: Int> 0 <= a && a < out@.len() && out.deep_model()[a] == lhs.deep_model()[k])]
+    #[invariant(forall<k: Int> 0 <= k && k < j@ ==>
+        exists<a: Int> 0 <= a && a < out@.len() && out.deep_model()[a] == rhs.deep_model()[k])]
+    #[invariant(out@.len() > 0 ==> forall<k: Int> i@ <= k && k < lhs@.len()
+        ==> out.deep_model()[out@.len() - 1] <= lhs.deep_model()[k])]
+    #[invariant(out@.len() > 0 ==> forall<k: Int> j@ <= k && k < rhs@.len()
+        ==> out.deep_model()[out@.len() - 1] <= rhs.deep_model()[k])]
     while i < lhs.len() || j < rhs.len() {
         let take_lhs = i < lhs.len() && (j >= rhs.len() || lhs[i] <= rhs[j]);
         let next = if take_lhs {
@@ -67,18 +114,40 @@ fn merge_sorted(
         if out.last() == Some(&next) {
             continue; // collapse an exact `(key, doc)` duplicate
         }
+        let old_out = snapshot!(out); // ghost: erased at compile time
         out.push(next);
+        proof_assert!(forall<a: Int> 0 <= a && a < old_out@.len()
+            ==> out.deep_model()[a] == old_out.deep_model()[a]);
+        proof_assert!(out.deep_model()[old_out@.len()] == next.deep_model());
     }
     out
 }
 
 /// Index of the first position in `range` for which `predicate` is false (the standard binary-search
 /// lower bound). `predicate` must be monotone over `range` (true… then false…).
+///
+/// Creusot spike: `impl FnMut` → `impl Fn` (every caller passes a non-mutating closure), so "monotone"
+/// can be stated over one fixed predicate.
+#[requires(range.start@ <= range.end@)]
+#[requires(forall<i: usize> range.start@ <= i@ && i@ < range.end@ ==> predicate.precondition((i,)))]
+#[requires(forall<i: usize, j: usize, bi: bool, bj: bool>
+    range.start@ <= i@ && i@ <= j@ && j@ < range.end@
+    && predicate.postcondition((i,), bi) && predicate.postcondition((j,), bj) && bj ==> bi)]
+#[ensures(range.start@ <= result@ && result@ <= range.end@)]
+#[ensures(forall<i: usize, b: bool> range.start@ <= i@ && i@ < result@
+    && predicate.postcondition((i,), b) ==> b)]
+#[ensures(forall<i: usize, b: bool> result@ <= i@ && i@ < range.end@
+    && predicate.postcondition((i,), b) ==> !b)]
 fn partition_point(
     range: std::ops::Range<usize>,
-    mut predicate: impl FnMut(usize) -> bool,
+    predicate: impl Fn(usize) -> bool,
 ) -> usize {
     let (mut lo, mut hi) = (range.start, range.end);
+    #[invariant(range.start@ <= lo@ && lo@ <= hi@ && hi@ <= range.end@)]
+    #[invariant(forall<i: usize, b: bool> range.start@ <= i@ && i@ < lo@
+        && predicate.postcondition((i,), b) ==> b)]
+    #[invariant(forall<i: usize, b: bool> hi@ <= i@ && i@ < range.end@
+        && predicate.postcondition((i,), b) ==> !b)]
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         if predicate(mid) {
@@ -164,6 +233,16 @@ pub(super) enum LeafInsert<const LEAF_MAX: usize, const DOC_BYTES: usize> {
     },
 }
 
+// Creusot spike, stage 3: a leaf's logical model is the sorted entry list it decodes to. Opaque: the byte
+// layouts are not modelled here (Lean makes the same cut and proves the bytes in proofs/index_layer).
+impl<const LEAF_MAX: usize, const DOC_BYTES: usize> View for Leaf<LEAF_MAX, DOC_BYTES> {
+    type ViewTy = Seq<(Int, Int)>;
+    #[logic(opaque)]
+    fn view(self) -> Seq<(Int, Int)> {
+        dead
+    }
+}
+
 impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
     /// This leaf's serialized encoding (carried out of band, see [`LeafFormat`]). The two compact in-RAM
     /// types share one on-disk format — index presence lives in the buffer — so both map to `Compact`.
@@ -230,7 +309,14 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
     /// Iterate the leaf's `(key, doc)` pairs in stored order. Used by `to_pairs` (mutation rebuilds) and
     /// tests — a cold path; the range cursor has its own decode. Re-derives offsets per entry (no cached
     /// scan state), which is fine off the hot path and lets one method serve all three formats.
+    #[cfg(not(creusot))]
     pub(super) fn iter(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+        (0..self.count()).map(move |i| (self.key(i), self.doc(i)))
+    }
+
+    // Creusot spike, change 5/5: an opaque `impl Iterator` hides its `IteratorSpec`; same body.
+    #[cfg(creusot)]
+    pub(super) fn iter(&self) -> impl creusot_std::prelude::IteratorSpec<Item = (u64, u64)> + '_ {
         (0..self.count()).map(move |i| (self.key(i), self.doc(i)))
     }
 
@@ -269,11 +355,14 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
         // final run, which has no boundary after it. Cheaper than `max`-ing every entry on low-card data.
         let mut distinct_count = 1usize;
         let mut max_doc = 0;
-        for window in pairs.windows(2) {
-            if window[0].0 != window[1].0 {
+        // Creusot spike, change 6/8: `windows` has no IteratorSpec (and the orphan rule forbids adding one).
+        let mut w = 1usize;
+        while w < count {
+            if pairs[w - 1].0 != pairs[w].0 {
                 distinct_count += 1;
-                max_doc = max_doc.max(window[0].1); // window[0] = the ending value's last (= max) doc
+                max_doc = max_doc.max(pairs[w - 1].1); // pairs[w - 1] = the ending value's last (= max) doc
             }
+            w += 1;
         }
         max_doc = max_doc.max(pairs[count - 1].1); // the final run has no boundary; fold in its last entry
         let min_value = pairs[0].0;
@@ -369,6 +458,17 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
     /// directly in its bytes** — no decode/re-encode. The overflow case and every [`CompactLeaf`] go
     /// through [`Leaf::to_pairs`] + [`Leaf::from_pairs`], which also re-selects the format (so an
     /// AoS→compact migration happens at the next split, not on every insert).
+    ///
+    /// Creusot spike, stage 3: trusted — the body works on the byte layouts, which are not modelled here.
+    #[trusted]
+    #[ensures(match result {
+        None => self@.contains((key@, doc@)),
+        Some(LeafInsert::Fit(l)) => !self@.contains((key@, doc@))
+            && forall<y: (Int, Int)> l@.contains(y) == (self@.contains(y) || y == (key@, doc@)),
+        Some(LeafInsert::Split { left, sep: _, right }) => !self@.contains((key@, doc@))
+            && forall<y: (Int, Int)> (left@.contains(y) || right@.contains(y))
+                == (self@.contains(y) || y == (key@, doc@)),
+    })]
     pub(super) fn insert(
         &self,
         key: u64,
@@ -498,6 +598,14 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
         // removal) rather than concat + sort — a swept micro-benchmark put this ~3.5x ahead of `sort()` and
         // ~5x ahead of `sort_unstable()` (pdqsort can't exploit pre-sorted runs). Then re-chunk.
         let merged = merge_sorted(&self.to_pairs(), batch);
-        merged.chunks(LEAF_MAX).map(Self::from_pairs).collect()
+        // Creusot spike, change 7/8: `chunks` has no IteratorSpec.
+        let mut out = Vec::new();
+        let mut start = 0usize;
+        while start < merged.len() {
+            let end = merged.len().min(start + LEAF_MAX);
+            out.push(Self::from_pairs(&merged[start..end]));
+            start = end;
+        }
+        out
     }
 }

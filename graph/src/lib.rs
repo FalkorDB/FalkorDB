@@ -1,3 +1,5 @@
+// Creusot spike: the `Vec::split_off` extern spec in cow_btree names `Allocator` (nightly-only).
+#![cfg_attr(creusot, feature(allocator_api))]
 #![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::module_inception)]

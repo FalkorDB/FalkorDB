@@ -19,7 +19,7 @@ missing_panics_doc = "allow"
 doc_markdown = "allow"
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)', 'cfg(creusot)'] }
 
 [package]
 name = "falkordb-rs"

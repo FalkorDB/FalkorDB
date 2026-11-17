@@ -313,6 +313,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "creusot-std"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c258fc3bed45edeb0509fce569f66565cae19b583d24a827faaa4e1abe51d2b"
+dependencies = [
+ "creusot-std-proc",
+]
+
+[[package]]
+name = "creusot-std-proc"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "848b1d0c5b674f9eb80e144602ab64d8ddcef5033d60a07a5be112b1c931d029"
+dependencies = [
+ "pearlite-syn",
+ "proc-macro2",
+ "quote 1.0.46",
+ "syn 2.0.118",
+ "uuid",
+]
+
+[[package]]
 name = "crossfire"
 version = "3.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -551,6 +573,7 @@ dependencies = [
  "atomic_refcell",
  "chrono",
  "crc32fast",
+ "creusot-std",
  "crossfire",
  "csv",
  "feral-metis",
@@ -1124,6 +1147,17 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "pearlite-syn"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff7afb8267bb550980a04ce048a1f1592af3741fab76d1b364678696efbe2570"
+dependencies = [
+ "proc-macro2",
+ "quote 1.0.46",
+ "syn 2.0.118",
+]
 
 [[package]]
 name = "percent-encoding"
@@ -1776,6 +1810,17 @@ name = "utf8-zero"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
+
+[[package]]
+name = "uuid"
+version = "1.29.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
+dependencies = [
+ "getrandom 0.4.3",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "valkey-module"
