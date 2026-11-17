@@ -22,7 +22,6 @@ use crate::{
     },
     graph_core::{ThreadedGraph, query_mut, up_to_nul},
     redis_type::{GRAPH_TYPE, wrong_type_compat},
-    reply::ReplyFormat,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -33,13 +32,11 @@ pub fn graph_ro_query(
     args: Vec<ValkeyString>,
 ) -> ValkeyResult {
     let QueryFlags {
-        compact,
+        format,
         track_memory,
         timeout,
         version: version_check,
-        schema,
     } = parse_query_flags(&args)?;
-    let format = ReplyFormat { compact, schema };
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     // C ends the query at its first NUL byte; see `up_to_nul`.

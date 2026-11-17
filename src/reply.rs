@@ -10,12 +10,12 @@
 //!   header columns,
 //!   result rows,
 //!   execution statistics,
-//!   schema                  (only for SCHEMA_HASH h)
+//!   schema                  (only for --compact SCHEMA_HASH h)
 //! ]
 //! ```
 //!
 //! A query without RETURN replies `[execution statistics, schema]`, the schema again
-//! only for `SCHEMA_HASH h`. See [`reply_schema`].
+//! only for `--compact SCHEMA_HASH h`. See [`reply_schema`].
 //!
 //! ## Compact vs verbose
 //! - Compact: each value is tagged with a numeric type code for efficient
@@ -674,12 +674,17 @@ fn reply_schema(
 
 /// How a `GRAPH.QUERY` or `GRAPH.RO_QUERY` reply is shaped, from the command's flags.
 #[derive(Clone, Copy, Default)]
-pub struct ReplyFormat {
+pub enum ReplyFormat {
+    /// Values with their names: labels, relationship types and property keys as strings.
+    #[default]
+    Verbose,
     /// `--compact`: values as type codes and ids rather than names.
-    pub compact: bool,
-    /// `SCHEMA_HASH h`: the client's cached schema hash. `Some` appends the schema element;
-    /// `None` leaves the reply as it was before the argument existed.
-    pub schema: Option<u64>,
+    Compact {
+        /// `SCHEMA_HASH h`: the client's cached schema hash. `Some` appends the schema
+        /// element, whose names decode the ids; `None` leaves the reply as it was before
+        /// the argument existed.
+        schema: Option<u64>,
+    },
 }
 
 fn reply_result<const COMPACT: bool>(
@@ -746,9 +751,8 @@ pub fn reply_query(
     result: &ResultSummary<'_>,
     format: ReplyFormat,
 ) {
-    if format.compact {
-        reply_result::<true>(ctx, runtime, result, format.schema);
-    } else {
-        reply_result::<false>(ctx, runtime, result, format.schema);
+    match format {
+        ReplyFormat::Compact { schema } => reply_result::<true>(ctx, runtime, result, schema),
+        ReplyFormat::Verbose => reply_result::<false>(ctx, runtime, result, None),
     }
 }

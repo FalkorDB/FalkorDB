@@ -5,6 +5,8 @@
 //! GRAPH.<CMD> key query [--compact] [TIMEOUT ms] [version v] [SCHEMA_HASH h] [--track-memory]
 //! ```
 //!
+//! The flags may come in any order; `SCHEMA_HASH` requires `--compact` (below).
+//!
 //! Mirrors C's `_validate_command_arity` + `_read_flags` (`cmd_dispatcher.c`), which
 //! all four commands go through:
 //! - 3 to 8 arguments (command name included), otherwise a wrong-arity error;
@@ -18,11 +20,13 @@
 //! `--track-memory` and `SCHEMA_HASH` are Rust-only. `SCHEMA_HASH h` (#3757) is parsed for all
 //! four commands, and only `GRAPH.QUERY` and `GRAPH.RO_QUERY` act on it. Its value is a
 //! 64-bit schema hash, in either form a client may hold: the signed integer the reply
-//! sends it as, or the unsigned one with the same bits. Older servers skip it as an
-//! unknown flag, which is why it fits within [`MAX_ARGS`] with the flags a client sends
-//! alongside it: a client that sent more would get an arity error from them.
+//! sends it as, or the unsigned one with the same bits. It requires `--compact`, in any
+//! position: the names it returns decode a compact reply's ids, and a verbose reply
+//! carries the names already. Older servers skip it as an unknown flag, which is why it
+//! fits within [`MAX_ARGS`] with the flags a client sends alongside it: a client that
+//! sent more would get an arity error from them.
 
-use crate::config::TIMEOUT_MAX;
+use crate::{config::TIMEOUT_MAX, reply::ReplyFormat};
 use std::sync::atomic::Ordering;
 use valkey_module::{ValkeyError, ValkeyString};
 
@@ -32,18 +36,18 @@ const MAX_ARGS: usize = 8;
 const TIMEOUT_ERR: &str = "Failed to parse query timeout value";
 const VERSION_ERR: &str = "Failed to parse graph version value";
 const SCHEMA_ERR: &str = "Failed to parse schema hash value";
+const SCHEMA_VERBOSE_ERR: &str = "SCHEMA_HASH requires --compact";
 const TIMEOUT_MAX_ERR: &str =
     "The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value";
 
 /// Flags that follow the key and the query.
 #[derive(Default)]
 pub struct QueryFlags {
-    pub compact: bool,
+    /// `--compact`, and with it `SCHEMA_HASH h`.
+    pub format: ReplyFormat,
     pub track_memory: bool,
     pub timeout: Option<i64>,
     pub version: Option<u64>,
-    /// `SCHEMA_HASH h`: the client's cached schema hash.
-    pub schema: Option<u64>,
 }
 
 /// Checks the arity of a query command and parses its flags (`args[3..]`).
@@ -54,11 +58,13 @@ pub fn parse_query_flags(args: &[ValkeyString]) -> Result<QueryFlags, ValkeyErro
         return Err(ValkeyError::WrongArity);
     }
     let mut flags = QueryFlags::default();
+    let mut compact = false;
+    let mut schema = None;
     let mut rest = args[3..].iter();
     while let Some(arg) = rest.next() {
         let arg = up_to_nul(arg.as_slice());
         if arg.eq_ignore_ascii_case(b"--compact") {
-            flags.compact = true;
+            compact = true;
         } else if arg.eq_ignore_ascii_case(b"--track-memory") {
             flags.track_memory = true;
         } else if arg.eq_ignore_ascii_case(b"timeout") {
@@ -86,9 +92,14 @@ pub fn parse_query_flags(args: &[ValkeyString]) -> Result<QueryFlags, ValkeyErro
                 .next()
                 .and_then(parse_schema_hash)
                 .ok_or(ValkeyError::Str(SCHEMA_ERR))?;
-            flags.schema = Some(h);
+            schema = Some(h);
         }
     }
+    flags.format = match (compact, schema) {
+        (true, schema) => ReplyFormat::Compact { schema },
+        (false, None) => ReplyFormat::Verbose,
+        (false, Some(_)) => return Err(ValkeyError::Str(SCHEMA_VERBOSE_ERR)),
+    };
     Ok(flags)
 }
 

@@ -5,7 +5,7 @@
 //!
 //! ## Execution flow
 //! ```text
-//! GRAPH.QUERY key query [--compact] [SCHEMA_HASH h] [--track-memory]
+//! GRAPH.QUERY key query [--compact] [--track-memory]
 //!        |
 //!        +--> parse flags
 //!        +--> open writable key
@@ -26,7 +26,6 @@ use crate::{
         reply_invalid_graph_version, up_to_nul,
     },
     redis_type::{GRAPH_TYPE, wrong_type_compat},
-    reply::ReplyFormat,
 };
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -45,13 +44,11 @@ pub fn graph_query(
     args: Vec<ValkeyString>,
 ) -> ValkeyResult {
     let QueryFlags {
-        compact,
+        format,
         track_memory,
         timeout,
         version: version_check,
-        schema,
     } = parse_query_flags(&args)?;
-    let format = ReplyFormat { compact, schema };
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
     // C ends the query at its first NUL byte; see `up_to_nul`.

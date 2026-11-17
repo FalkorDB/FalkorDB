@@ -199,10 +199,10 @@ class testGraphVersioning(FlowTestsBase):
         self.env.assertTrue(isinstance(element, list) and len(element) % 2 == 0)
         return dict(zip(element[::2], element[1::2]))
 
-    def _schema(self, con, key, h, q="RETURN 1", cmd="GRAPH.RO_QUERY", *flags):
+    def _schema(self, con, key, h, q="RETURN 1", cmd="GRAPH.RO_QUERY"):
         """The schema element of a reply: always the last top-level element."""
         resp2 = self._client(con, 2)
-        res = resp2.execute_command(cmd, key, q, *flags, "SCHEMA_HASH", h)
+        res = resp2.execute_command(cmd, key, q, "--compact", "SCHEMA_HASH", h)
         resp2.close()
         return self._as_map(res[-1])
 
@@ -217,7 +217,8 @@ class testGraphVersioning(FlowTestsBase):
         con = self._client(self.master, 2)
 
         # A query creates the graph: an empty schema hashes to 0, so h = 0 is current.
-        res = con.execute_command("GRAPH.QUERY", key, "RETURN 1", "SCHEMA_HASH", 0)
+        res = con.execute_command("GRAPH.QUERY", key, "RETURN 1", "--compact",
+                                  "SCHEMA_HASH", 0)
         self.env.assertEqual(len(res), 4)
         self.env.assertEqual(res[-1], ["hash", 0])
         # Any other h gets the hash and three empty lists.
@@ -227,7 +228,7 @@ class testGraphVersioning(FlowTestsBase):
 
         # A write without RETURN: [stats, schema], with the names it added itself.
         res = con.execute_command("GRAPH.QUERY", key, "CREATE (:L {k: 1})-[:R]->()",
-                                  "SCHEMA_HASH", 0)
+                                  "--compact", "SCHEMA_HASH", 0)
         self.env.assertEqual(len(res), 2)
         self.env.assertTrue(all(isinstance(line, str) for line in res[0]))
         schema = self._as_map(res[1])
@@ -236,19 +237,24 @@ class testGraphVersioning(FlowTestsBase):
         self.env.assertEqual(schema, {"labels": ["L"], "relationshipTypes": ["R"],
                                       "propertyKeys": ["k"]})
 
-        # h = S: the hash alone, compact or not, on both query commands.
+        # h = S: the hash alone, on both query commands, with --compact anywhere.
         for cmd in ["GRAPH.QUERY", "GRAPH.RO_QUERY"]:
-            for flags in [(), ("--compact",), ("--compact", "TIMEOUT", "1000")]:
-                res = con.execute_command(cmd, key, "MATCH (n:L) RETURN n.k", *flags,
-                                          "SCHEMA_HASH", s)
+            for flags in [("--compact", "SCHEMA_HASH", s),
+                          ("--compact", "TIMEOUT", "1000", "SCHEMA_HASH", s),
+                          ("SCHEMA_HASH", s, "TIMEOUT", "1000", "--compact")]:
+                res = con.execute_command(cmd, key, "MATCH (n:L) RETURN n.k", *flags)
                 self.env.assertEqual(len(res), 4)
+                self.env.assertEqual(res[1], [[[3, 1]]])
                 self.env.assertEqual(res[-1], ["hash", s])
+        # (Without --compact the argument is refused: test_query_validation test17b.)
 
         # RESP3 has maps, and gets a real one.
         resp3 = self._client(self.master, 3)
-        res = resp3.execute_command("GRAPH.RO_QUERY", key, "RETURN 1", "SCHEMA_HASH", s)
+        res = resp3.execute_command("GRAPH.RO_QUERY", key, "RETURN 1", "--compact",
+                                    "SCHEMA_HASH", s)
         self.env.assertEqual(res[-1], {"hash": s})
-        res = resp3.execute_command("GRAPH.QUERY", key, "CREATE ()", "SCHEMA_HASH", 0)
+        res = resp3.execute_command("GRAPH.QUERY", key, "CREATE ()", "--compact",
+                                    "SCHEMA_HASH", 0)
         self.env.assertEqual(res[-1], {"hash": s, "labels": ["L"],
                                        "relationshipTypes": ["R"], "propertyKeys": ["k"]})
         resp3.close()
@@ -261,18 +267,33 @@ class testGraphVersioning(FlowTestsBase):
         res = con.execute_command("GRAPH.QUERY", key, "CREATE ()")
         self.env.assertEqual(len(res), 1)
         self.env.assertTrue(all(isinstance(line, str) for line in res[0]))
+        res = con.execute_command("GRAPH.QUERY", key, "MATCH (n:L) RETURN n.k", "--compact")
+        self.env.assertEqual(len(res), 3)
+        self.env.assertEqual(res[1], [[[3, 1]]])
+        self.env.assertTrue(all(isinstance(line, str) for line in res[2]))
+        res = con.execute_command("GRAPH.QUERY", key, "CREATE ()", "--compact")
+        self.env.assertEqual(len(res), 1)
+        self.env.assertTrue(all(isinstance(line, str) for line in res[0]))
 
         # EXPLAIN and PROFILE take the argument and ignore it.
-        res = con.execute_command("GRAPH.EXPLAIN", key, "RETURN 1", "SCHEMA_HASH", 0)
-        self.env.assertTrue(all(isinstance(line, str) for line in res))
-        res = con.execute_command("GRAPH.PROFILE", key, "RETURN 1", "SCHEMA_HASH", 0)
-        self.env.assertTrue(all(isinstance(line, str) for line in res))
+        for cmd in ["GRAPH.EXPLAIN", "GRAPH.PROFILE"]:
+            res = con.execute_command(cmd, key, "RETURN 1", "--compact", "SCHEMA_HASH", 0)
+            self.env.assertTrue(all(isinstance(line, str) for line in res))
 
-        # Inside MULTI the query runs inline, on another path to the reply.
+        # A write that returns rows, on both write paths to the reply: inline inside
+        # MULTI, and queued for the write thread outside it. The rows stay compact.
         pipe = con.pipeline(transaction=True)
-        pipe.execute_command("GRAPH.QUERY", key, "CREATE (:M)", "SCHEMA_HASH", s)
+        pipe.execute_command("GRAPH.QUERY", key, "CREATE (:M) RETURN 1", "--compact",
+                             "SCHEMA_HASH", s)
         res = pipe.execute()[0]
+        self.env.assertEqual(len(res), 4)
+        self.env.assertEqual(res[1], [[[3, 1]]])
         self.env.assertEqual(self._as_map(res[-1])["labels"], ["L", "M"])
+        res = con.execute_command("GRAPH.QUERY", key, "CREATE (:N) RETURN 1", "--compact",
+                                  "SCHEMA_HASH", s)
+        self.env.assertEqual(len(res), 4)
+        self.env.assertEqual(res[1], [[[3, 1]]])
+        self.env.assertEqual(self._as_map(res[-1])["labels"], ["L", "M", "N"])
         con.close()
 
     def test06_schema_hash_value_round_trip(self):
