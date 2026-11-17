@@ -381,7 +381,32 @@ impl Runtime<'_> {
                             {
                                 continue;
                             }
+                            // Count Labels-added per label that isn't already
+                            // on this node — including labels staged by an
+                            // earlier clause in this same query, so a repeated
+                            // `SET n:L` or a `SET n:L:L` counts once.
+                            // This node is live, so ask the pending state
+                            // and then the committed matrix. Not
+                            // `Runtime::node_has_label_id`: that answers from
+                            // `deleted_nodes` first, which would read the
+                            // labels of an earlier node whose ID this one
+                            // reuses.
+                            let mut new_assignments = 0usize;
+                            {
+                                let pending = self.pending.borrow();
+                                let g = self.graph();
+                                for label in labels.iter() {
+                                    if !pending.constraint_node_has_label(
+                                        &g,
+                                        id.into(),
+                                        usize::from(*label) as u64,
+                                    ) {
+                                        new_assignments += 1;
+                                    }
+                                }
+                            }
                             self.pending.borrow_mut().set_node_labels(id, labels);
+                            self.stats.borrow_mut().labels_added += new_assignments;
                         }
                         Some(Value::Null) => {}
                         _ => {

@@ -5,13 +5,13 @@ graph/src/runtime/ops/create.rs	build_attr_template	55	NOT COVERED	pattern/attr 
 graph/src/runtime/ops/create.rs	resolve_map_attrs	84	NOT COVERED	pattern/attr resolution
 graph/src/runtime/ops/create.rs	new	102	NOT COVERED	pattern/attr resolution
 graph/src/runtime/ops/create.rs	next	121	NOT COVERED	pattern/attr resolution
-graph/src/runtime/ops/create.rs	create_batch	139	MODELLED	Snapshot.createRust / Stats.step create
+graph/src/runtime/ops/create.rs	create_batch	139	MODELLED	Snapshot.createRust / Stats.step create; #3587 labels_added = ids×labels: Labels.createCount_eq
 graph/src/runtime/ops/create.rs	resolve_pattern	353	NOT COVERED	pattern/attr resolution
 graph/src/runtime/ops/set.rs	new	40	NOT COVERED	operator plumbing
 graph/src/runtime/ops/set.rs	next	59	NOT COVERED	operator plumbing
 graph/src/runtime/ops/set.rs	set_batch	76	MODELLED	per-row set_inner
 graph/src/runtime/ops/set.rs	resolve_set_items	96	NOT COVERED	operator plumbing
-graph/src/runtime/ops/set.rs	set_inner	151	MODELLED	Props.replaceFrom: replace_reads_src (#3524: every `SET e = …` branch clears the staged attributes; reads = the source's last write), fixed3524_replace_clears_staged (fixed by #3524 af45ca776); the full per-item model is ops_apply SetRemove
+graph/src/runtime/ops/set.rs	set_inner	151	MODELLED	Props.replaceFrom: replace_reads_src (#3524: every `SET e = …` branch clears the staged attributes; reads = the source's last write), fixed3524_replace_clears_staged (fixed by #3524 af45ca776); #3587 `SET n:…` labels_added: Labels.addCount_flips, PC.addCount_eq_constraintHas; the full per-item model is ops_apply SetRemove
 graph/src/runtime/ops/set.rs	clear_node_attrs_for_replace	125	PROVEN	Props.replaceFrom: replace_reads_src
 graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	138	PROVEN	Props.replaceFrom: replace_reads_src
 graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	NOT COVERED	operator plumbing / snapshot map building
@@ -27,7 +27,7 @@ graph/src/runtime/ops/delete.rs	delete_entity	415	MODELLED	Snapshot.del, Stats.s
 graph/src/runtime/ops/remove.rs	new	30	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	next	48	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	remove_batch	62	NOT COVERED	operator plumbing
-graph/src/runtime/ops/remove.rs	remove	74	MODELLED	Labels.removeOp (filter to present labels), removeOp_no_dup_push
+graph/src/runtime/ops/remove.rs	remove	74	MODELLED	Labels.removeOp (filter to present labels), removeOp_no_dup_push; #3587 labels_removed counted here: Labels.remCount, remCount_flips, count_examples
 graph/src/graph/graph.rs	node_id_bound	1701	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
 graph/src/graph/graph.rs	relationship_id_bound	1707	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
 graph/src/graph/graph.rs	create_nodes	1740	MODELLED	Snapshot.createRust (bin-first) (proved in proofs/graph_queries Ids)
@@ -178,9 +178,9 @@ graph/src/runtime/pending.rs	pending_indegree	1230	PROVEN	PS.pendingDeg_spec, pe
 graph/src/runtime/pending.rs	pending_outdegree	1256	PROVEN	PS.pendingDeg_spec, pendingDeg_skips_deleted (#3520: an edge created and deleted since the last commit is not counted)
 graph/src/runtime/pending.rs	pending_deleted_indegree	1283	PROVEN	PS.deletedDeg_some, deletedDeg_none (only an id neither created here nor committed), deletedDeg_skips_created, fixed2769_created_deleted (#2769 fixed by #3520: created edges are skipped, no panic)
 graph/src/runtime/pending.rs	pending_deleted_outdegree	1313	PROVEN	PS.deletedDeg_some, deletedDeg_none (only an id neither created here nor committed), deletedDeg_skips_created, fixed2769_created_deleted (#2769 fixed by #3520: created edges are skipped, no panic)
-graph/src/runtime/pending.rs	commit	1337	PROVEN	PC.commit_spec (stats, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled
+graph/src/runtime/pending.rs	commit	1337	PROVEN	PC.commit_spec (stats — since #3587 labels_removed untouched —, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled
 graph/src/runtime/pending.rs	enforce_constraints	1483	PROVEN	PC.enforce_spec, affected_spec
-graph/src/runtime/pending.rs	constraint_node_has_label	1555	PROVEN	PC.constraintHas_eq
+graph/src/runtime/pending.rs	constraint_node_has_label	1554	PROVEN	PC.constraintHas_eq
 graph/src/runtime/pending.rs	check_node_constraint	1579	CONDITIONAL	UQ.checkNode2 (#3334, #3547; is_candidate = `!deleted_nodes.contains(n)` ∧ PC.constraintHas): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_nodes`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live nodes not written by this commit that carries the key; plus hScan: the label matrix lists every live member
 graph/src/runtime/pending.rs	check_edge_constraint	1671	CONDITIONAL	UQ.checkEdge2 (#3334, #3547; membership PC.edgeMember_spec; is_candidate = `!deleted_relationships.contains(e)`): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_edges`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live edges not written by this commit that carries the key; plus hScan: the tensor lists every live member
 graph/src/runtime/pending.rs	take_deferred_indexes	1770	PROVEN	PD.commitDeferred_spec (takeDeferred)

@@ -225,8 +225,9 @@ Wave-4 findings:
 * `overlay_eq_ref`, `nodeHas_eq_ref`, `commit_eq_ref`, `run_disjoint` — for any
   sequence of `SET n:…`/`REMOVE n:…` the query reads, and commit stores, the
   last clause's verdict per label; add/remove sets stay disjoint;
-  `removeOp_no_dup_push` — REMOVE never stages a label twice, so
-  `labels_removed` counts each once.
+  `removeOp_no_dup_push` — REMOVE never stages a label twice;
+  `addCount_flips`, `remCount_flips`, `createCount_eq` (#3587) — `Labels added` /
+  `Labels removed` count, per clause, the labels it turns on / off.
 * `stage_sorted_lastWrite` — staged properties stay strictly sorted and hold
   the last write per attribute; `read_your_writes_existing`,
   `read_your_writes_new` — what the query read before Commit is exactly what

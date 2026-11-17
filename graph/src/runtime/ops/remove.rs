@@ -138,6 +138,12 @@ impl Runtime<'_> {
                             .filter_map(|l| self.graph_mut().get_label_id(l.as_str()))
                             .filter(|l| current_labels.contains(l))
                             .collect::<Vec<_>>();
+                        // Counted here, one per label actually on the node
+                        // (the filter above), not at commit from what is still
+                        // staged then: a later `SET n:L` cancels the staged
+                        // removal, and `REMOVE n:L SET n:L` must still report the
+                        // removal, as C does.
+                        self.stats.borrow_mut().labels_removed += labels.len();
                         self.pending.borrow_mut().remove_node_labels(node, &labels);
                     }
                 }

@@ -19,7 +19,7 @@ Yes, for properties and labels.
 
 - Staged properties stay strictly sorted by attribute id and hold the last write per attribute (`stage_sorted_lastWrite`); `rustUpsert_eq` shows the Rust binary-search upsert is that model.
 - `read_your_writes_existing` and `read_your_writes_new` prove that what the query reads before `Commit` is exactly what the store holds after it, for existing and newly created entities.
-- For labels, `overlay_eq_ref` and `commit_eq_ref` prove that for any sequence of `SET n:L` / `REMOVE n:L`, the query reads, and commit stores, the verdict of the last clause that mentions each label. `removeOp_no_dup_push` shows `REMOVE` never stages a label twice, so `Labels removed` counts each once.
+- For labels, `overlay_eq_ref` and `commit_eq_ref` prove that for any sequence of `SET n:L` / `REMOVE n:L`, the query reads, and commit stores, the verdict of the last clause that mentions each label. `removeOp_no_dup_push` shows `REMOVE` never stages a label twice. Since #3587 `Labels added` / `Labels removed` count per clause the labels it turns on / off (`addCount_flips`, `remCount_flips`, `createCount_eq`, `count_examples`).
 
 **2. Is the attribute store's span merge correct on all three code paths?**
 
@@ -100,7 +100,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `NameMap.lean` | `AttrNameMap` and its `u16` cap: `getOrCreate_spec` |
 | `Store.lean`, `StoreFold.lean`, `StoreApi.lean` | `DataBlock` radix directory and every `AttributeStore` method: `runOps_spec`, `insertAttrs_spec`, `importResolved_spec` |
 | `StoreCodec.lean`, `StoreMem.lean` | RDB codec, `trim`, memory accounting: `encode_decode_roundtrip`, `structural_partition` |
-| `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push` |
+| `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push`; label stats `addCount_flips`, `remCount_flips`, `createCount_eq` |
 | `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_reads_src` |
 | `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `rust_reads_dead_entity`, `deferred_preserves_Good` |
 | `EvictPR2964.lean` | **Models open PR #2964, not main**: `evict_preserves_Good` |

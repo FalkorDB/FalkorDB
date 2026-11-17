@@ -225,11 +225,92 @@ theorem deleted_snapshot_examples :
      stagedLabelIds C (run C [.rem [1]]) 1 = false) := by decide
 
 /-- **`removeOp_nodup`**: because REMOVE stages only labels the node currently
-has, `remove_labels` never holds a label twice — so the commit's
-`labels_removed += rows.len()` (pending.rs:1376) counts each removed label once. -/
+has, `remove_labels` never holds a label twice. (Before #3587 the commit counted
+`labels_removed += rows.len()` from it; now REMOVE counts, `remCount`.) -/
 theorem removeOp_no_dup_push (C : Nat → Bool) (s : St) (ls : List Nat) (l : Nat)
     (h : s.remL.contains l = true) : (ls.filter (overlay C s)).contains l = false := by
   rw [contains_filter]; have hm : l ∈ s.remL := by simpa using h
   simp [overlay, hm]
+
+/-! ## `Labels added` / `Labels removed` (#3587)
+
+Since #3587 the statistics count label *assignments* per clause, as C does, not label
+types registered in the schema (`Runtime::query` no longer diffs `labels_count`) nor what
+is still staged at commit (`Pending::commit` no longer adds `|remove_labels|`).
+`ls` is the clause's `OrderSet` of label ids, so it has no duplicates. -/
+
+/-- `SET n:…` (set.rs:384-409): one per label `constraint_node_has_label` says the node
+lacks; that read is `overlay` (`PC.addCount_eq_constraintHas`). -/
+def addCount (C : Nat → Bool) (s : St) (ls : List Nat) : Nat :=
+  (ls.filter (fun l => !overlay C s l)).length
+
+/-- `REMOVE n:…` (remove.rs:136-146): `labels_removed += labels.len()` after filtering to the
+labels the node currently has. -/
+def remCount (C : Nat → Bool) (s : St) (ls : List Nat) : Nat :=
+  (ls.filter (overlay C s)).length
+
+/-- `(labels_added, labels_removed)` a clause adds. -/
+def stepCount (C : Nat → Bool) (s : St) : Op → Nat × Nat
+  | .add ls => (addCount C s ls, 0)
+  | .rem ls => (0, remCount C s ls)
+
+/-- Totals over a sequence of clauses on one node. -/
+def runCount (C : Nat → Bool) : St → List Op → Nat × Nat
+  | _, [] => (0, 0)
+  | s, op :: ops =>
+    let a := stepCount C s op; let b := runCount C (step C s op) ops
+    (a.1 + b.1, a.2 + b.2)
+
+/-- `create_batch` (create.rs:170-176): `node_ids.len() * node.labels.len()`. -/
+def createCount (ids ls : List Nat) : Nat := ids.length * ls.length
+
+theorem overlay_after_add (C : Nat → Bool) (s : St) (ls : List Nat) (l : Nat) (h : l ∈ ls) :
+    overlay C (step C s (.add ls)) l = true := by
+  rw [step_overlay]; simp [refStep, List.contains_iff_mem, h]
+
+theorem overlay_after_rem (C : Nat → Bool) (s : St) (ls : List Nat) (l : Nat) (h : l ∈ ls) :
+    overlay C (step C s (.rem ls)) l = false := by
+  rw [step_overlay]; simp [refStep, List.contains_iff_mem, h]
+
+/-- **`addCount_flips`**: `SET n:…` counts exactly the labels it turns on for the node
+(absent before the clause, present after). -/
+theorem addCount_flips (C : Nat → Bool) (s : St) (ls : List Nat) :
+    addCount C s ls =
+      (ls.filter (fun l => !overlay C s l && overlay C (step C s (.add ls)) l)).length := by
+  unfold addCount; congr 1
+  apply List.filter_congr; intro l hl; rw [overlay_after_add C s ls l hl]; simp
+
+/-- **`remCount_flips`**: `REMOVE n:…` counts exactly the labels it turns off for the node. -/
+theorem remCount_flips (C : Nat → Bool) (s : St) (ls : List Nat) :
+    remCount C s ls =
+      (ls.filter (fun l => overlay C s l && !overlay C (step C s (.rem ls)) l)).length := by
+  unfold remCount; congr 1
+  apply List.filter_congr; intro l hl; rw [overlay_after_rem C s ls l hl]; simp
+
+/-- A clause never counts a label twice (its labels are an `OrderSet`). -/
+theorem count_le (C : Nat → Bool) (s : St) (ls : List Nat) :
+    addCount C s ls ≤ ls.length ∧ remCount C s ls ≤ ls.length :=
+  ⟨List.length_filter_le _ _, List.length_filter_le _ _⟩
+
+/-- **`createCount_eq`**: CREATE's product count is `SET`'s count on fresh nodes (no committed
+label, nothing staged): every label is an assignment on every node. -/
+theorem createCount_eq (ids ls : List Nat) :
+    createCount ids ls = (ids.map fun _ => addCount (fun _ => false) ⟨[], []⟩ ls).sum := by
+  have : addCount (fun _ => false) ⟨[], []⟩ ls = ls.length := by
+    unfold addCount; congr 1; rw [List.filter_eq_self]; intro l _; simp [overlay]
+  rw [this, createCount]
+  induction ids with
+  | nil => simp
+  | cons _ ids ih => simp [ih, Nat.succ_mul, Nat.add_comm]
+
+/-- The #3587 regressions (label 1 = A, committed `{A}`): `REMOVE n:A SET n:A` reports one
+removal and one addition and keeps `A`; `SET n:W REMOVE n:W SET n:W` (label 2) reports two
+additions and one removal; a repeated `SET n:A` on a node that has `A` reports nothing. -/
+theorem count_examples :
+    (let C : Nat → Bool := fun l => l == 1
+     runCount C ⟨[], []⟩ [.rem [1], .add [1]] = (1, 1) ∧
+     commitLabels C (run C [.rem [1], .add [1]]) 1 = true ∧
+     runCount C ⟨[], []⟩ [.add [2], .rem [2], .add [2]] = (2, 1) ∧
+     runCount C ⟨[], []⟩ [.add [1], .add [1]] = (0, 0)) := by decide
 
 end PendingCommit.Labels
