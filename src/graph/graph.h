@@ -170,17 +170,17 @@ void Graph_CreateNode
 bool Graph_ClaimNodeIds
 (
 	Graph *g,
-	const uint64_t *ids,  // ids the primary stated
-	uint32_t n,           // how many
-	void **items          // out: 'n' storage slots, caller allocated
+	IdCursor *ids  // ascending walk over the ids the primary stated
 );
 
 // create nodes into slots already claimed by Graph_ClaimNodeIds
+//
+// the slot is looked up from each node's own id rather than passed alongside:
+// an array of them would be one more allocation sized by a wire count
 void Graph_CreateNodesAtIds
 (
 	Graph *g,            // graph
 	Node **nodes,        // array of nodes to create; each carries its id
-	void **items,        // storage slots from Graph_ClaimNodeIds
 	AttributeSet *sets,  // nodes attributes
 	uint node_count,     // number of nodes
 	LabelID *labels,     // labels, same set applied to all nodes
@@ -266,18 +266,17 @@ void Graph_CreateEdges
 bool Graph_ClaimEdgeIds
 (
 	Graph *g,
-	const uint64_t *ids,  // ids the primary stated
-	uint32_t n,           // how many
-	void **items          // out: 'n' storage slots, caller allocated
+	IdCursor *ids  // ascending walk over the ids the primary stated
 );
 
 // create edges into slots already claimed by Graph_ClaimEdgeIds
+//
+// see Graph_CreateNodesAtIds - the slot comes from the edge's own id
 void Graph_CreateEdgesAtIds
 (
 	Graph *g,           // graph on which to operate
 	RelationID r,       // relationship type
 	Edge **edges,       // edges to create; each edge's id is the id to use
-	void **items,       // storage slots from Graph_ClaimEdgeIds
 	AttributeSet *sets  // [optional] attribute sets
 );
 

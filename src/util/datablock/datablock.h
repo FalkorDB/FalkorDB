@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include "../block.h"
 #include "./datablock_iterator.h"
+#include "./id_cursor.h"
 
 typedef void (*fpDestructor)(void *);
 
@@ -97,8 +98,7 @@ uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n);
 // return a pointer to the newly allocated item.
 void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
 
-// Claim a BATCH of specific indices for live allocation, maintaining the free
-// list.
+// Claim a BATCH of specific ids for live allocation, maintaining the free list.
 //
 // DataBlock_AllocateItemOutOfOrder (oo_datablock.h) requires that the id is NOT
 // on the free list - it never touches it. That holds for its RDB callers, where
@@ -107,18 +107,39 @@ void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
 // maintains the list instead: claimed ids are removed from it, and any id
 // skipped past the high-water mark is pushed onto it.
 //
-// A batch rather than one at a time because the free list is a flat array:
+// A BATCH rather than one at a time because the free list is a flat array:
 // claiming one id means scanning it, so n claims cost O(n*k). This walks it
 // once. See the definition for the measurement.
 //
-// Nothing is claimed when it returns false. Returns false if any id is already
-// live, or if the batch names one id twice.
-bool DataBlock_AllocateItemsAtIdx
+// A CURSOR rather than an array because the batch size comes off the wire. The
+// ids are walked twice and held once - by whatever decoded them - so nothing
+// here is proportional to how many there are.
+//
+// NOTHING IS CLAIMED, and no capacity is added, when this returns false, so a
+// caller is free to refuse the payload without unwinding. It returns false if
+// any id is already live, if the walk is not strictly ascending - which is how
+// a repeated id is caught - if the walk disagrees with the count it stated, or
+// if an id is UINT64_MAX, which is no entity's id and is where the capacity
+// arithmetic wraps.
+//
+// It does NOT bound how far the ids reach. A record's ids are legitimately
+// sparse - see the definition - so the block grows to cover the highest one it
+// is given.
+bool DataBlock_ClaimIds
 (
 	DataBlock *dataBlock,
-	const uint64_t *ids,  // ids to claim
-	uint32_t n,           // how many
-	void **items          // out: 'n' item pointers, caller allocated
+	IdCursor *ids  // ascending walk over the ids to claim
+);
+
+// The storage slot of an id this DataBlock has already claimed.
+//
+// Takes no array and returns one slot, because the slot was always just the
+// id's item data: handing them all back at once was the only reason claiming
+// needed an array proportional to the batch.
+void *DataBlock_ClaimedItem
+(
+	const DataBlock *dataBlock,
+	uint64_t id
 );
 
 // Removes item at position idx.

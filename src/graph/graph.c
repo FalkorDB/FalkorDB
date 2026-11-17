@@ -673,10 +673,16 @@ void Graph_CreateNode
 
 // shared body for the two node-creation entry points
 //
-// 'items' decides where each node's storage comes from: NULL allocates an id
-// per node the ordinary way, non-NULL uses slots already claimed at the ids the
-// nodes carry. Everything after that - label matrices, statistics - is
+// 'claimed' decides where each node's storage comes from: false allocates an id
+// per node the ordinary way, true takes the slot already claimed at the id the
+// node carries. Everything after that - label matrices, statistics - is
 // identical, and is shared rather than copied so the two cannot drift.
+//
+// The claimed slot is LOOKED UP from the node's own id rather than passed in
+// beside it. An array of slots would be a second allocation sized by the wire's
+// entity count, which is the whole thing the cursor-based claim exists to
+// avoid, and it would be redundant: every node here already carries the id the
+// slot belongs to.
 static void _Graph_CreateNodes
 (
 	Graph *g,            // graph
@@ -685,7 +691,7 @@ static void _Graph_CreateNodes
 	uint node_count,     // number of nodes
 	LabelID *labels,     // labels, same set of labels applied to all nodes
 	uint label_count,    // number of labels
-	void **items         // pre-claimed storage slots, or NULL to allocate ids
+	bool claimed         // true: take the slot already claimed at the node's id
 ) {
 	ASSERT (g     != NULL) ;
 	ASSERT (sets  != NULL) ;
@@ -706,8 +712,9 @@ static void _Graph_CreateNodes
 		NodeID id = n->id ;  // save node ID
 
 		// set attributes
-		if (items != NULL) {
-			n->attributes = (AttributeSet *)items[i] ;
+		if (claimed) {
+			n->attributes =
+				(AttributeSet *)DataBlock_ClaimedItem (g->nodes, n->id) ;
 		} else {
 			n->attributes = DataBlock_AllocateItem (g->nodes, &n->id) ;
 		}
@@ -717,7 +724,7 @@ static void _Graph_CreateNodes
 		//
 		// only meaningful when the id was allocated here: when the id came
 		// from the wire there is no local reservation to settle
-		if (items == NULL && id != INVALID_ENTITY_ID) {
+		if (!claimed && id != INVALID_ENTITY_ID) {
 			// NodeID was preallocated via reservation
 			// so now that it’s used we decrement the counter
 			ASSERT (id == n->id) ;
@@ -757,7 +764,7 @@ void Graph_CreateNodes
 	uint label_count     // number of labels
 ) {
 	_Graph_CreateNodes (g, nodes, sets, node_count, labels, label_count,
-			NULL) ;
+			false) ;
 }
 
 // claim storage for 'n' node ids stated by a primary
@@ -773,12 +780,10 @@ void Graph_CreateNodes
 bool Graph_ClaimNodeIds
 (
 	Graph *g,
-	const uint64_t *ids,  // ids the primary stated
-	uint32_t n,           // how many
-	void **items          // out: 'n' storage slots, caller allocated
+	IdCursor *ids  // ascending walk over the ids the primary stated
 ) {
 	ASSERT (g != NULL) ;
-	return DataBlock_AllocateItemsAtIdx (g->nodes, ids, n, items) ;
+	return DataBlock_ClaimIds (g->nodes, ids) ;
 }
 
 // create multiple nodes AT THE IDS THE CALLER STATES
@@ -792,20 +797,18 @@ bool Graph_ClaimNodeIds
 // What is still checked is LIVENESS, which is a property of this graph rather
 // than a guess about the other one.
 //
-// 'items' are the slots Graph_ClaimNodeIds already returned for these ids
+// the storage slots come from Graph_ClaimNodeIds, looked up by each node's id
 void Graph_CreateNodesAtIds
 (
 	Graph *g,            // graph
 	Node **nodes,        // array of nodes to create; each carries its id
-	void **items,        // storage slots from Graph_ClaimNodeIds
 	AttributeSet *sets,  // nodes attributes
 	uint node_count,     // number of nodes
 	LabelID *labels,     // labels, same set of labels applied to all nodes
 	uint label_count     // number of labels
 ) {
-	ASSERT (items != NULL) ;
 	_Graph_CreateNodes (g, nodes, sets, node_count, labels, label_count,
-			items) ;
+			true) ;
 }
 
 // label node with each label in 'lbls'
@@ -991,17 +994,18 @@ static int _edge_src_dest_cmp
 // create multiple edges
 // shared body for the two edge-creation entry points
 //
-// 'items' decides where each edge's storage comes from: NULL allocates an id
-// per edge the ordinary way, non-NULL uses slots already claimed at the ids the
-// edges carry. The rest - adjacency, the relation tensor, the statistics - is
-// identical, and is shared rather than copied so the two cannot drift.
+// 'claimed' decides where each edge's storage comes from: false allocates an id
+// per edge the ordinary way, true takes the slot already claimed at the id the
+// edge carries, looked up from the edge rather than passed in beside it. The
+// rest - adjacency, the relation tensor, the statistics - is identical, and is
+// shared rather than copied so the two cannot drift.
 static void _Graph_CreateEdges
 (
 	Graph *g,            // graph on which to operate
 	RelationID r,        // relationship type
 	Edge **edges,        // edges to create
 	AttributeSet *sets,  // [optional] attribute sets
-	void **items         // pre-claimed storage slots, or NULL to allocate ids
+	bool claimed         // true: take the slot already claimed at the edge's id
 ) {
 	ASSERT (g != NULL) ;
 	ASSERT (r < Graph_RelationTypeCount (g)) ;
@@ -1031,7 +1035,13 @@ static void _Graph_CreateEdges
 #endif
 
 	// make sure we have room for 'edge_count' edges
-	DataBlock_Accommodate (g->edges, edge_count) ;
+	//
+	// not when the slots are already claimed: claiming grew the block to cover
+	// every id in the record and counted them, so this would reserve a chunk's
+	// worth a second time
+	if (!claimed) {
+		DataBlock_Accommodate (g->edges, edge_count) ;
+	}
 
 
 
@@ -1048,8 +1058,8 @@ static void _Graph_CreateEdges
 
 		// TODO: switch to batch allocation of items
 		AttributeSet *set ;
-		if (items != NULL) {
-			set = (AttributeSet *)items[i] ;
+		if (claimed) {
+			set = (AttributeSet *)DataBlock_ClaimedItem (g->edges, e->id) ;
 		} else {
 			set = DataBlock_AllocateItem (g->edges, &e->id) ;
 		}
@@ -1086,7 +1096,7 @@ void Graph_CreateEdges
 	Edge **edges,       // edges to create
 	AttributeSet *sets  // [optional] attribute sets
 ) {
-	_Graph_CreateEdges (g, r, edges, sets, NULL) ;
+	_Graph_CreateEdges (g, r, edges, sets, false) ;
 }
 
 // claim storage for 'n' edge ids stated by a primary
@@ -1096,12 +1106,10 @@ void Graph_CreateEdges
 bool Graph_ClaimEdgeIds
 (
 	Graph *g,
-	const uint64_t *ids,  // ids the primary stated
-	uint32_t n,           // how many
-	void **items          // out: 'n' storage slots, caller allocated
+	IdCursor *ids  // ascending walk over the ids the primary stated
 ) {
 	ASSERT (g != NULL) ;
-	return DataBlock_AllocateItemsAtIdx (g->edges, ids, n, items) ;
+	return DataBlock_ClaimIds (g->edges, ids) ;
 }
 
 // create edges AT THE IDS THE CALLER STATES
@@ -1110,17 +1118,15 @@ bool Graph_ClaimEdgeIds
 // reason: a replica accepts the primary's ids rather than allocating its own
 // and checking the guess. See that function for why the two engines disagree.
 //
-// 'items' are the slots Graph_ClaimEdgeIds already returned for these ids
+// the storage slots come from Graph_ClaimEdgeIds, looked up by each edge's id
 void Graph_CreateEdgesAtIds
 (
 	Graph *g,           // graph on which to operate
 	RelationID r,       // relationship type
 	Edge **edges,       // edges to create; each edge's id is the id to use
-	void **items,       // storage slots from Graph_ClaimEdgeIds
 	AttributeSet *sets  // [optional] attribute sets
 ) {
-	ASSERT (items != NULL) ;
-	_Graph_CreateEdges (g, r, edges, sets, items) ;
+	_Graph_CreateEdges (g, r, edges, sets, true) ;
 }
 
 // forward declaration

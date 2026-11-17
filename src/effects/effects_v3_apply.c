@@ -4,6 +4,7 @@
  */
 
 #include "RG.h"
+#include "effects_v3_id_cursor.h"
 #include "effects_v3.h"
 #include "effects_v3_stream.h"
 #include "effects_internal.h"
@@ -533,7 +534,25 @@ static bool _ApplyCreateNode
 	const uint32_t count = rec->create_node.count ;
 
 	//--------------------------------------------------------------------------
-	// collect the ids the primary stated
+	// open the id list
+	//--------------------------------------------------------------------------
+	//
+	// EVERYTHING THAT CAN FAIL FAILS HERE, before the graph is touched. The
+	// cursor opens every Set blob and checks each against the cardinality
+	// decode recorded, so the two walks below - ascending to claim, wire order
+	// to write - cannot run short afterwards. They could not be refused if
+	// they did: by the second one the ids are live.
+	EffectsV3IdCursor cur ;
+
+	if (!EffectsV3IdCursor_Init (&cur, &rec->create_node.ids, count)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_NODE id list does not hold the ids its "
+				"count states") ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// claim the ids the primary stated, ONCE for the whole record
 	//--------------------------------------------------------------------------
 	//
 	// ACCEPT THE PRIMARY'S IDS, do not re-derive them. C reuses the most
@@ -542,54 +561,35 @@ static bool _ApplyCreateNode
 	// after every delete-then-create cycle. What is checked is liveness, which
 	// is a property of THIS graph: an id already live here cannot be created
 	// again.
-	uint64_t *ids = rm_malloc (sizeof (uint64_t) * count) ;
-
-	IdIter it ;
-	_IdIter_Init (&it, &rec->create_node.ids) ;
-
-	uint32_t got = 0 ;
-	uint64_t id ;
-	while (got < count && _IdIter_Next (&it, &id) == ID_ITER_OK) {
-		ids[got++] = id ;
-	}
-
-	const bool broken = it.status == ID_ITER_BROKEN ;
-	_IdIter_Free (&it) ;
-
-	if (broken || got != count) {
-		// decode has already checked the segments total the record's count, so
-		// a short list here is a decoder bug rather than a wire problem
-		RedisModule_Log (NULL, "warning",
-				"GRAPH.EFFECT CREATE_NODE id list is shorter than its count") ;
-		rm_free (ids) ;
-		return false ;
-	}
-
-	//--------------------------------------------------------------------------
-	// claim them, ONCE for the whole record
-	//--------------------------------------------------------------------------
 	//
-	// Claiming walks the free list, so claiming per chunk walks it once per
-	// chunk - quadratic again, just divided by the chunk size. One walk per
-	// record costs two arrays of 8 bytes per node, freed before returning.
+	// FROM A CURSOR, NOT AN ARRAY OF THEM. The count is a wire u32 and one
+	// Range segment describes billions of ids in about seven bytes, so an
+	// array indexed by that count is memory the payload never paid for - 28
+	// bytes of record reached 2,229 MB on an earlier build.
 	//
-	// It also means the graph is untouched until every id is known to be free,
-	// so a divergent record is refused with nothing to unwind.
-	void **items = rm_malloc (sizeof (void *) * count) ;
+	// ONCE FOR THE RECORD, not per chunk: claiming walks the free list, so per
+	// chunk is the same quadratic in a smaller coat. It also means the graph
+	// is untouched until every id is known to be free, so a divergent record
+	// is refused with nothing to unwind.
+	const bool claimed = Graph_ClaimNodeIds (g, &cur.base) ;
 
-	if (!Graph_ClaimNodeIds (g, ids, count, items)) {
+	if (!claimed) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_NODE names a node id that is already live "
-				"on this replica, or names one twice"
-				" - node id space has diverged") ;
-		rm_free (ids) ;
-		rm_free (items) ;
+				"on this replica, names one twice, or names one past the id "
+				"space a record creating %u nodes could reach"
+				" - node id space has diverged", count) ;
+		EffectsV3IdCursor_Free (&cur) ;
 		return false ;
 	}
 
 	//--------------------------------------------------------------------------
 	// write them, in bounded chunks
 	//--------------------------------------------------------------------------
+	//
+	// IN WIRE ORDER, which is why this is a second walk rather than the one
+	// above: row k's attributes belong to the k-th id AS WRITTEN, and claiming
+	// sorted them.
 	//
 	// Chunked at APPLY_BATCH so a record describing a very large batch costs a
 	// bounded amount of stack, and so the label matrices are written in bulk.
@@ -598,37 +598,43 @@ static bool _ApplyCreateNode
 	Node        **batch = arr_new (Node *, APPLY_BATCH) ;
 	AttributeSet *sets  = arr_new (AttributeSet, APPLY_BATCH) ;
 
-	uint32_t n = 0 ;              // nodes in the current chunk
-	uint32_t chunk_start = 0 ;    // index of the chunk's first node
+	uint32_t n = 0 ;  // nodes in the current chunk
+	uint32_t k = 0 ;  // the row this id belongs to
+	uint64_t id ;
 
-	for (uint32_t k = 0 ; k < count ; k++) {
+	EffectsV3IdCursor_RewindWire (&cur) ;
+
+	while (k < count && EffectsV3IdCursor_NextWire (&cur, &id)) {
 		storage[n]    = GE_NEW_NODE () ;
-		storage[n].id = ids[k] ;
+		storage[n].id = id ;
 
 		arr_append (batch, storage + n) ;
 		arr_append (sets, _RowAttributes (rec->create_node.attr_ids,
 					rec->create_node.n_attrs, rec->create_node.values, k)) ;
 		n++ ;
+		k++ ;
 
 		if (n == APPLY_BATCH) {
-			GraphHub_CreateNodesAtIds (gc, batch, items + chunk_start, sets, n,
+			GraphHub_CreateNodesAtIds (gc, batch, sets, n,
 					rec->create_node.labels, rec->create_node.n_labels) ;
 			arr_clear (batch) ;
 			arr_clear (sets) ;
-			chunk_start = k + 1 ;
 			n = 0 ;
 		}
 	}
 
 	if (n > 0) {
-		GraphHub_CreateNodesAtIds (gc, batch, items + chunk_start, sets, n,
+		GraphHub_CreateNodesAtIds (gc, batch, sets, n,
 				rec->create_node.labels, rec->create_node.n_labels) ;
 	}
 
+	// the two walks are over the same list and the claim already matched it
+	// against 'count', so the write cannot have come up short
+	ASSERT (k == count) ;
+
 	arr_free (batch) ;
 	arr_free (sets) ;
-	rm_free (ids) ;
-	rm_free (items) ;
+	EffectsV3IdCursor_Free (&cur) ;
 
 	return true ;
 }
@@ -651,7 +657,31 @@ static bool _ApplyCreateEdge
 	const uint32_t count = rec->create_edge.count ;
 
 	//--------------------------------------------------------------------------
-	// collect and validate, before anything is claimed
+	// open the three id lists
+	//--------------------------------------------------------------------------
+	//
+	// All three, unconditionally, so all three are safe to free. Each checks
+	// its own segments against 'count', which is what makes the three
+	// positionally aligned below.
+	EffectsV3IdCursor cur_ids, cur_srcs, cur_dsts ;
+
+	const bool ok_ids  =
+		EffectsV3IdCursor_Init (&cur_ids,  &rec->create_edge.ids, count) ;
+	const bool ok_srcs =
+		EffectsV3IdCursor_Init (&cur_srcs, &rec->create_edge.src, count) ;
+	const bool ok_dsts =
+		EffectsV3IdCursor_Init (&cur_dsts, &rec->create_edge.dst, count) ;
+
+	bool ok = ok_ids && ok_srcs && ok_dsts ;
+
+	if (!ok) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_EDGE id or endpoint list does not hold "
+				"the ids its count states") ;
+	}
+
+	//--------------------------------------------------------------------------
+	// check the endpoints, before anything is claimed
 	//--------------------------------------------------------------------------
 	//
 	// The endpoint check has to happen BEFORE the ids are claimed. Claiming
@@ -659,68 +689,25 @@ static bool _ApplyCreateEdge
 	// would leave claimed slots holding no edge - a leak that only shows up
 	// later as a wrong id. Nothing is touched until the whole record is known
 	// to be applicable.
-	uint64_t *ids  = rm_malloc (sizeof (uint64_t) * count) ;
-	uint64_t *srcs = rm_malloc (sizeof (uint64_t) * count) ;
-	uint64_t *dsts = rm_malloc (sizeof (uint64_t) * count) ;
+	if (ok) {
+		EffectsV3IdCursor_RewindWire (&cur_srcs) ;
+		EffectsV3IdCursor_RewindWire (&cur_dsts) ;
 
-	IdIter it_ids, it_srcs, it_dsts ;
-	_IdIter_Init (&it_ids,  &rec->create_edge.ids) ;
-	_IdIter_Init (&it_srcs, &rec->create_edge.src) ;
-	_IdIter_Init (&it_dsts, &rec->create_edge.dst) ;
+		uint64_t src, dst ;
 
-	bool ok = true ;
-	uint32_t got = 0 ;
-	uint64_t id, src, dst ;
-
-	while (ok && got < count && _IdIter_Next (&it_ids, &id) == ID_ITER_OK) {
-		// the three lists are positionally aligned by construction, and decode
-		// has already checked all three total the record's count - so a short
-		// one here is a decoder bug, not a wire problem
-		if (_IdIter_Next (&it_srcs, &src) != ID_ITER_OK ||
-			_IdIter_Next (&it_dsts, &dst) != ID_ITER_OK) {
-			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT CREATE_EDGE endpoint lists are shorter than "
-					"its id list") ;
-			ok = false ;
-			break ;
+		while (EffectsV3IdCursor_NextWire (&cur_srcs, &src) &&
+			   EffectsV3IdCursor_NextWire (&cur_dsts, &dst)) {
+			// endpoints must exist before an edge can join them. Checked here
+			// because the bulk path only asserts it, and ASSERT compiles out.
+			if (!Graph_HasNode (g, src) || !Graph_HasNode (g, dst)) {
+				RedisModule_Log (NULL, "warning",
+						"GRAPH.EFFECT CREATE_EDGE references nodes %" PRIu64
+						" -> %" PRIu64 ", at least one of which doesn't exist "
+						"locally", src, dst) ;
+				ok = false ;
+				break ;
+			}
 		}
-
-		// endpoints must exist before an edge can join them. Checked here
-		// because the bulk path only asserts it, and ASSERT compiles out.
-		if (!Graph_HasNode (g, src) || !Graph_HasNode (g, dst)) {
-			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT CREATE_EDGE references nodes %" PRIu64
-					" -> %" PRIu64 ", at least one of which doesn't exist "
-					"locally", src, dst) ;
-			ok = false ;
-			break ;
-		}
-
-		ids[got]  = id ;
-		srcs[got] = src ;
-		dsts[got] = dst ;
-		got++ ;
-	}
-
-	if (ok && (it_ids.status  == ID_ITER_BROKEN ||
-			   it_srcs.status == ID_ITER_BROKEN ||
-			   it_dsts.status == ID_ITER_BROKEN)) {
-		ok = false ;
-	}
-
-	_IdIter_Free (&it_ids) ;
-	_IdIter_Free (&it_srcs) ;
-	_IdIter_Free (&it_dsts) ;
-
-	if (ok && got != count) {
-		RedisModule_Log (NULL, "warning",
-				"GRAPH.EFFECT CREATE_EDGE id list is shorter than its count") ;
-		ok = false ;
-	}
-
-	if (!ok) {
-		rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ;
-		return false ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -729,14 +716,19 @@ static bool _ApplyCreateEdge
 	//
 	// see _ApplyCreateNode: per chunk would walk the free list once per chunk,
 	// which is the quadratic this shape exists to avoid
-	void **items = rm_malloc (sizeof (void *) * count) ;
-
-	if (!Graph_ClaimEdgeIds (g, ids, count, items)) {
+	if (ok && !Graph_ClaimEdgeIds (g, &cur_ids.base)) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_EDGE names an edge id that is already live "
-				"on this replica, or names one twice"
-				" - edge id space has diverged") ;
-		rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ; rm_free (items) ;
+				"on this replica, names one twice, or names one past the id "
+				"space a record creating %u edges could reach"
+				" - edge id space has diverged", count) ;
+		ok = false ;
+	}
+
+	if (!ok) {
+		EffectsV3IdCursor_Free (&cur_ids) ;
+		EffectsV3IdCursor_Free (&cur_srcs) ;
+		EffectsV3IdCursor_Free (&cur_dsts) ;
 		return false ;
 	}
 
@@ -748,44 +740,59 @@ static bool _ApplyCreateEdge
 	// matrix, which forces a GB_wait against the pending tuples of every edge
 	// already written in this record - measured at 91x on 8k edges. The whole
 	// chunk still goes over in one call.
+	//
+	// All three lists are walked in WIRE order, from the start, which is what
+	// keeps row k's id, endpoints and attributes together.
 	Edge          storage[APPLY_BATCH] ;
 	Edge        **batch = arr_new (Edge *, APPLY_BATCH) ;
 	AttributeSet *sets  = arr_new (AttributeSet, APPLY_BATCH) ;
 
 	uint32_t n = 0 ;
-	uint32_t chunk_start = 0 ;
+	uint32_t k = 0 ;
+	uint64_t id, src, dst ;
 
-	for (uint32_t k = 0 ; k < count ; k++) {
+	EffectsV3IdCursor_RewindWire (&cur_ids) ;
+	EffectsV3IdCursor_RewindWire (&cur_srcs) ;
+	EffectsV3IdCursor_RewindWire (&cur_dsts) ;
+
+	while (k < count                                  &&
+		   EffectsV3IdCursor_NextWire (&cur_ids,  &id)  &&
+		   EffectsV3IdCursor_NextWire (&cur_srcs, &src) &&
+		   EffectsV3IdCursor_NextWire (&cur_dsts, &dst)) {
 		// the bulk call reads the endpoints off the Edge rather than taking
 		// them as arguments, so they are set here
 		storage[n] = GE_NEW_LABELED_EDGE (rel_name, rec->create_edge.relation_id) ;
-		storage[n].id = ids[k] ;
-		Edge_SetSrcNodeID  (storage + n, srcs[k]) ;
-		Edge_SetDestNodeID (storage + n, dsts[k]) ;
+		storage[n].id = id ;
+		Edge_SetSrcNodeID  (storage + n, src) ;
+		Edge_SetDestNodeID (storage + n, dst) ;
 
 		arr_append (batch, storage + n) ;
 		arr_append (sets, _RowAttributes (rec->create_edge.attr_ids,
 					rec->create_edge.n_attrs, rec->create_edge.values, k)) ;
 		n++ ;
+		k++ ;
 
 		if (n == APPLY_BATCH) {
-			GraphHub_CreateEdgesAtIds (gc, batch, items + chunk_start,
+			GraphHub_CreateEdgesAtIds (gc, batch,
 					rec->create_edge.relation_id, sets) ;
 			arr_clear (batch) ;
 			arr_clear (sets) ;
-			chunk_start = k + 1 ;
 			n = 0 ;
 		}
 	}
 
 	if (n > 0) {
-		GraphHub_CreateEdgesAtIds (gc, batch, items + chunk_start,
+		GraphHub_CreateEdgesAtIds (gc, batch,
 				rec->create_edge.relation_id, sets) ;
 	}
 
+	ASSERT (k == count) ;
+
 	arr_free (batch) ;
 	arr_free (sets) ;
-	rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ; rm_free (items) ;
+	EffectsV3IdCursor_Free (&cur_ids) ;
+	EffectsV3IdCursor_Free (&cur_srcs) ;
+	EffectsV3IdCursor_Free (&cur_dsts) ;
 
 	return true ;
 }

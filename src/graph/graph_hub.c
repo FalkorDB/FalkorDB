@@ -70,7 +70,6 @@ void GraphHub_CreateNodesAtIds
 (
 	GraphContext *gc,
 	Node **nodes,        // nodes to create; each carries the id to use
-	void **items,        // storage slots from Graph_ClaimNodeIds
 	AttributeSet *sets,  // nodes attributes
 	uint node_count,
 	LabelID *labels,
@@ -83,7 +82,7 @@ void GraphHub_CreateNodesAtIds
 		return ;
 	}
 
-	Graph_CreateNodesAtIds (GraphContext_GetGraph (gc), nodes, items, sets,
+	Graph_CreateNodesAtIds (GraphContext_GetGraph (gc), nodes, sets,
 			node_count, labels, label_count) ;
 
 	// collect the schemas that actually have indexes, once, rather than
@@ -285,15 +284,13 @@ void GraphHub_CreateEdgesAtIds
 (
 	GraphContext *gc,
 	Edge **edges,        // each edge's id is the id to create it at
-	void **items,        // storage slots from Graph_ClaimEdgeIds
 	RelationID r,
 	AttributeSet *sets
 ) {
 	ASSERT (gc    != NULL) ;
 	ASSERT (edges != NULL) ;
 
-	Graph_CreateEdgesAtIds (GraphContext_GetGraph (gc), r, edges, items,
-			sets) ;
+	Graph_CreateEdgesAtIds (GraphContext_GetGraph (gc), r, edges, sets) ;
 
 	Schema *s = GraphContext_GetSchemaByID (gc, r, SCHEMA_EDGE) ;
 	ASSERT (s != NULL) ;

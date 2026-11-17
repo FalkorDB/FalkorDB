@@ -37,7 +37,6 @@ void GraphHub_CreateNodesAtIds
 (
 	GraphContext *gc,
 	Node **nodes,        // nodes to create; each carries the id to use
-	void **items,        // storage slots from Graph_ClaimNodeIds
 	AttributeSet *sets,  // nodes attributes
 	uint node_count,
 	LabelID *labels,
@@ -97,7 +96,6 @@ void GraphHub_CreateEdgesAtIds
 (
 	GraphContext *gc,
 	Edge **edges,        // each edge's id is the id to create it at
-	void **items,        // storage slots from Graph_ClaimEdgeIds
 	RelationID r,
 	AttributeSet *sets
 );
