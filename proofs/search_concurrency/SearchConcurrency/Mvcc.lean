@@ -565,7 +565,7 @@ theorem unchecked_fork_cannot_write {valid : List W → Bool} {s : S} (h : Reach
     have hne := hi o fv b p hc
     have hot : o ≠ t := fun e => hne (hft.trans e.symm)
     simp only [step, hc, hot]
-    refine ⟨by simp [hot], by simp [hot], ?_⟩
+    refine ⟨by simp, by simp, ?_⟩
     split
     · rename_i o'' p0 o3 fv3 b3 p3 hld hcc
       simp at hcc; obtain ⟨rfl, -, -, -⟩ := hcc

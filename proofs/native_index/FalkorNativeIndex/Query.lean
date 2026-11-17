@@ -95,7 +95,7 @@ theorem queryNumeric_building (x : FalkorDbIndex) (e : EntityType) (l : String) 
     (hb : en.isBuilding = true) :
     x.queryNumeric e l q = (NumericIndex.keysOf q).map (fun ks => .error ⟨key, ks⟩) := by
   rw [queryNumeric_spec, hk]
-  simp only [hen, Option.bind_some, hb, if_true]
+  simp only [hen, Option.bind_some, hb, ite_true]
   try (cases NumericIndex.keysOf q <;> rfl)
 
 /-- ... and a `Ready` column answers the shape from its tree. -/
@@ -137,7 +137,7 @@ theorem queryNumeric_ok (x : FalkorDbIndex) (e : EntityType) (l : String) (q : I
         by_cases hb : en.isBuilding = true
         · simp [hk, hen, hks, hb] at h
         · have hb' : en.isBuilding = false := by simpa using hb
-          simp only [hk, hen, hks, hb', Option.bind_some, Option.map_some, Bool.false_eq_true, if_false,
+          simp only [hk, hen, hks, hb', Option.bind_some, Option.map_some, Bool.false_eq_true, ite_false,
             Option.some.injEq, Except.ok.injEq] at h
           exact ⟨key, en, ks, rfl, hen, hb', rfl, h.symm⟩
 
@@ -156,7 +156,7 @@ theorem queryNumeric_error (x : FalkorDbIndex) (e : EntityType) (l : String) (q 
       | none => simp [hk, hen, hks] at h
       | some ks =>
         by_cases hb : en.isBuilding = true
-        · simp only [hk, hen, hks, hb, Option.bind_some, Option.map_some, if_true, Option.some.injEq,
+        · simp only [hk, hen, hks, hb, Option.bind_some, Option.map_some, ite_true, Option.some.injEq,
             Except.error.injEq] at h
           subst h
           exact ⟨key, en, rfl, hen, hb, rfl, rfl⟩
@@ -202,9 +202,9 @@ theorem queryNumeric_of_ready (x : FalkorDbIndex) (e : EntityType) (l : String) 
     by_cases hb : en.isBuilding = true
     · simp [hb] at hc
     · have hb' : en.isBuilding = false := by simpa using hb
-      simp only [hb', Bool.false_eq_true, if_false, Option.some.injEq] at hc
+      simp only [hb', Bool.false_eq_true, ite_false, Option.some.injEq] at hc
       rw [queryNumeric_spec, hk]
-      simp only [hen, Option.bind_some, hb', Bool.false_eq_true, if_false, hc, NumericIndex.query]
+      simp only [hen, Option.bind_some, hb', Bool.false_eq_true, ite_false, hc, NumericIndex.query]
       cases NumericIndex.keysOf q <;> rfl
 
 /-- **`= null` and a null range bound hold for nothing**: a `Ready` column answers them with no rows
@@ -267,7 +267,7 @@ theorem equalCandidates_some (x : FalkorDbIndex) (e : EntityType) (l a : String)
     by_cases hb : en.isBuilding = true
     · simp [hb]
     · have hb' : en.isBuilding = false := by simpa using hb
-      simp only [hb', Bool.false_eq_true, if_false, Option.map_eq_some_iff, Option.some.injEq]
+      simp only [hb', Bool.false_eq_true, ite_false, Option.map_eq_some_iff, Option.some.injEq]
       constructor
       · rintro ⟨k, hk, rfl⟩; exact ⟨en, rfl, hb', hk, rfl⟩
       · rintro ⟨en', he', _, hk, hc⟩
@@ -304,7 +304,7 @@ theorem equalCandidates_complete (x : FalkorDbIndex) (e : EntityType) (l a : Str
     by_cases hbld : IndexEntry.isBuilding ⟨.numeric col, st⟩ = true
     · simp [hbld] at hcol
     · have hb' : IndexEntry.isBuilding ⟨.numeric col, st⟩ = false := by simpa using hbld
-      simp only [hb', Bool.false_eq_true, if_false, Option.some.injEq, IndexColumn.ix] at hcol
+      simp only [hb', Bool.false_eq_true, ite_false, Option.some.injEq, IndexColumn.ix] at hcol
       subst hcol
       refine ⟨⟨e, l, a, .numeric (NumericIndex.fromEntries entries), kb⟩, ?_, ?_⟩
       · simp [FalkorDbIndex.equalCandidates, hen, hb', IndexColumn.encodeValue, hkb]

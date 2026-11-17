@@ -242,7 +242,7 @@ theorem match_last_rejected (p : QG Alias) (hp : vInlined p = .ok) :
 ("Query cannot conclude with WITH …"), as in C. -/
 theorem with_last_rejected (p : Proj) (f : Option ET) (w : Bool) :
     validate (.query [.with_ p f w] false) = .err := by
-  simp [validate, vClause, V.andThen]
+  simp [validate, vClause]
 
 /-- **PROVEN** (#3297): a MATCH-terminated tail is rejected after a CALL as
 well (`CALL db.labels() YIELD label MATCH (n)`; C rejects it too). -/

@@ -13,6 +13,29 @@ Line numbers are current main (`5c7af54f2`), as are the COVERAGE.tsv rows, excep
 heading names an older commit (the `Re-target to …` sections keep the numbers of the commit they name,
 and `Re-pinned to …` states only the offsets).
 
+## Folded from `pr3438_review` (#3438, merged as 2b6902217): SAVE walks attributes by seek
+
+`AttributeStore::encode_with_range` (attribute_store.rs:1427) now finds its first live id with
+`nth_live_id` (:1485: rank/select on the deleted-id `RoaringTreemap`) and `take(count)`s, instead of
+`window … (max count 1)`; `Encode for RoaringTreemap::encode_with_range` (serialization.rs:180) seeks
+with `select`/`advance_to` instead of `skip`. The old model `Content.encode_spec` stays as the
+pre-#3438 statement; every `file:line` cite in these four files was re-read against main.
+
+| Module | Rust | Theorems |
+| --- | --- | --- |
+| `SaveRoaring` | roaring 0.11.5 `rank`/`select`/`advance_to` as definitions on `RSet` (the owners' abstraction) | `RSet.rank_spec`, `select_spec`, `iterFrom_spec` |
+| `SaveNthLive` | `nth_live_id` :1485 | `nthLive_spec`, `nthLive_drop`, `nthLive_empty_deleted`, `nthLive_past_end`, `bsearch_spec`, `mid_bounds`, `rank_le`, `liveThrough_no_overflow` |
+| `SaveSlice` | `encode_with_range` :1427 | `prEncode_spec`, `prEncode_eq_main` (= pre-#3438 `Content.encode` for `count > 0`), `count_zero_differs` / `count_zero_witness`, `pr_encode_decode_roundtrip`, `walk_spec` |
+| `SaveLayout` | serialization.rs:180, `Graph::encode_payload` graph.rs:5173, `encode_graph` encoder/mod.rs:68 | `encRoarPR_eq` (every `count`/`offset`), `encoder_counts_pos` (`count = 0` unreachable), `chunk_concat`, `encodeGraphPR_eq`, `load_encode_pr`, `multi_load_pr` |
+
+`SaveLayout` needs graph_persist's layout, so pending_commit now requires `../graph_persist`
+(graph_persist requires nothing: no cycle; pending_commit already sat above it for `SaveSlice`).
+Trust: the roaring crate implements the `RSet` abstraction, the same level as the owners'
+`contains`/`iter` (checked by the randomized scratch test `lean3438_roaring_contract`: 3000 sets over
+four 2^32 high keys, all pass). Live: 300 random stores, every `offset`/`count`: PR = old for
+`count > 0`; Redis with `VKEY_MAX_ENTITY_COUNT 3`: `SAVE` + `DEBUG RELOAD` = before. The tensor and
+matrix halves of #3438 are in versioned_matrix `TensorSave` and graphblas_wrappers `EncodeDup`.
+
 ## Re-target to 53d694496 (from 5b18b9cab): #3547 / #2386, unique enforcement through `query_for` + `lookup`
 
 `unique_violated` (pending.rs:217) no longer takes `indexed: bool` and `lookup(IndexQuery)`; it takes
@@ -343,3 +366,7 @@ import PendingCommit.CancelRust
 import PendingCommit.CommitOpNext
 import PendingCommit.StagedBugs
 import PendingCommit.Hold
+import PendingCommit.SaveRoaring
+import PendingCommit.SaveNthLive
+import PendingCommit.SaveSlice
+import PendingCommit.SaveLayout

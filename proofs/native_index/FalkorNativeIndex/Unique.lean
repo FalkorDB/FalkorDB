@@ -42,7 +42,7 @@ theorem nativeUniqueQuery_some (x : FalkorDbIndex) (e : EntityType) (label : Str
   cases L with
   | nil => simp
   | cons c cs =>
-    simp only [List.isEmpty_cons, Bool.false_eq_true, if_false, Option.some.injEq]
+    simp only [List.isEmpty_cons, Bool.false_eq_true, ite_false, Option.some.injEq]
     constructor
     · rintro rfl; exact ⟨rfl, by simp⟩
     · rintro ⟨rfl, _⟩; rfl
@@ -109,7 +109,7 @@ theorem minAcc_const (m : List Nat) (rs : List (List Nat)) (h : ∀ r ∈ rs, m.
   | nil => rfl
   | cons r rs ih =>
     have : ¬ r.length < m.length := by have := h r (by simp); omega
-    simp only [minAcc, this, if_false]
+    simp only [minAcc, this, ite_false]
     exact ih m (fun q hq => h q (List.mem_cons_of_mem _ hq))
 
 theorem minAcc_split (pre : List (List Nat)) (r : List Nat) (post : List (List Nat)) :
@@ -118,15 +118,15 @@ theorem minAcc_split (pre : List (List Nat)) (r : List Nat) (post : List (List N
   induction pre with
   | nil =>
     intro m hm _ hpost
-    simp only [List.nil_append, minAcc, hm, if_true]
+    simp only [List.nil_append, minAcc, hm, ite_true]
     exact minAcc_const r post hpost
   | cons q pre ih =>
     intro m hm hpre hpost
     simp only [List.cons_append, minAcc]
     apply ih
     · by_cases h : q.length < m.length
-      · simp only [h, if_true]; exact hpre q (by simp)
-      · simp only [h, if_false]; exact hm
+      · simp only [h, ite_true]; exact hpre q (by simp)
+      · simp only [h, ite_false]; exact hm
     · exact fun q' hq' => hpre q' (List.mem_cons_of_mem _ hq')
     · exact hpost
 
@@ -148,11 +148,11 @@ theorem minAcc_mem1 (rs : List (List Nat)) : ∀ m : List Nat, minAcc m rs ∈ m
     intro m
     simp only [minAcc]
     by_cases hlt : r.length < m.length
-    · simp only [hlt, if_true]
+    · simp only [hlt, ite_true]
       have := ih r
       simp only [List.mem_cons] at this ⊢
       exact Or.inr this
-    · simp only [hlt, if_false]
+    · simp only [hlt, ite_false]
       have := ih m
       simp only [List.mem_cons] at this ⊢
       rcases this with h | h
@@ -167,11 +167,11 @@ theorem minAcc_le (rs : List (List Nat)) :
     intro m q hq
     simp only [minAcc]
     by_cases hlt : r.length < m.length
-    · simp only [hlt, if_true]
+    · simp only [hlt, ite_true]
       rcases List.mem_cons.1 hq with rfl | hq
       · have := ih r r (by simp); omega
       · exact ih r q hq
-    · simp only [hlt, if_false]
+    · simp only [hlt, ite_false]
       rcases List.mem_cons.1 hq with rfl | hq
       · exact ih q q (by simp)
       · rcases List.mem_cons.1 hq with rfl | hq

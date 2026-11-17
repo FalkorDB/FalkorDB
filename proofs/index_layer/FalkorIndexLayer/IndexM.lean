@@ -347,7 +347,7 @@ theorem insertField_inv (x : Idx) (a : String) (f : Field) (h : Inv x) : Inv (x.
   by_cases hs : a ∈ AMap.keys x.fields
   · have e1 : (x.insertField a f).order = x.order := by simp [insertField, hk.mpr hs]
     have e2 : AMap.keys (x.insertField a f).fields = AMap.keys x.fields := by
-      simp only [insertField]; rw [AMap.keys_upd, if_pos hs]
+      simp only [insertField]; rw [AMap.keys_upd, ite_eq_left hs]
     refine ⟨?_, ?_, fun b => ?_⟩
     · rw [e2]; exact h1
     · rw [e1]; exact h2
@@ -358,7 +358,7 @@ theorem insertField_inv (x : Idx) (a : String) (f : Field) (h : Inv x) : Inv (x.
       · exact absurd (hk.mp hh) hs
     have e1 : (x.insertField a f).order = x.order ++ [a] := by simp [insertField, hn]
     have e2 : AMap.keys (x.insertField a f).fields = AMap.keys x.fields ++ [a] := by
-      simp only [insertField]; rw [AMap.keys_upd, if_neg hs]
+      simp only [insertField]; rw [AMap.keys_upd, ite_eq_right hs]
     refine ⟨?_, ?_, fun b => ?_⟩
     · rw [e2]; exact List.nodup_append.mpr ⟨h1, by simp, by simp; intro y hy hya; subst hya; exact hs hy⟩
     · rw [e1]; exact List.nodup_append.mpr ⟨h2, by simp, by simp; intro y hy hya; subst hya; exact hs ((h3 y).mp hy)⟩

@@ -27,7 +27,7 @@ def isTooDeep (e : String) : Bool := tooDeepPrefix.toList.isPrefixOf e.toList
 theorem isPrefixOf_append_self (a b : List Char) : a.isPrefixOf (a ++ b) = true := by
   induction a with
   | nil => rfl
-  | cons x a ih => simp [List.isPrefixOf, ih]
+  | cons x a ih => simp [ih]
 /-- Every `too_deep` message is recognised by `is_too_deep` (so it survives
 the parameter-error summary, cypher.rs:401-407). `format_error` wraps the
 message; that wrapper is `proofs/lexer`'s `format_error`, which keeps the

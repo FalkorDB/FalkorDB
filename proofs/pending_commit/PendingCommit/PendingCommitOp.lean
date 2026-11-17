@@ -86,9 +86,9 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
     have hs' : ∀ p ∈ seen, p.2 ∉ xs := fun p hp hm => hs p hp (List.mem_cons_of_mem _ hm)
     simp only [scan]
     by_cases hk : key x = []
-    · rw [if_pos hk, scan_gen key xs seen hnd.2 hs']
+    · rw [ite_eq_left hk, scan_gen key xs seen hnd.2 hs']
       simp [hk]
-    · rw [if_neg hk]
+    · rw [ite_eq_right hk]
       have hs2 : ∀ p ∈ (key x, x) :: seen, p.2 ∉ xs := by
         intro p hp; simp at hp; rcases hp with rfl | hp
         · exact hnd.1
@@ -101,7 +101,7 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
       | none =>
         rw [scan_gen key xs _ hnd.2 hs2]
         simp only [List.filter_cons, ne_eq, hk, not_false_eq_true, decide_true, ite_true, List.map_cons,
-          List.nodup_cons, List.mem_cons, forall_eq_or_imp, hl, true_and]
+          List.nodup_cons, List.mem_cons, forall_eq_or_imp, hl]
         have e : ∀ y, lookupK ((key x, x) :: seen) (key y) = if key x = key y then some x else lookupK seen (key y) :=
           fun y => rfl
         constructor
@@ -110,14 +110,14 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
           · obtain ⟨y, hy, hky⟩ := List.mem_map.1 hm
             have hy' := List.mem_filter.1 hy
             have := hall y hy'.1 (by simpa using hy'.2)
-            rw [e, if_pos hky.symm] at this; cases this
+            rw [e, ite_eq_left hky.symm] at this; cases this
           · have := hall a ha hka; rw [e] at this
             split at this
             · cases this
             · exact this
         · rintro ⟨⟨hnm, hn⟩, -, hall⟩
           refine ⟨hn, fun y hy hky => ?_⟩
-          rw [e, if_neg ?_]
+          rw [e, ite_eq_right ?_]
           · exact hall y hy hky
           · intro heq; exact hnm (List.mem_map.2 ⟨y, List.mem_filter.2 ⟨hy, by simpa using hky⟩, heq.symm⟩)
 
@@ -436,8 +436,8 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
   split at h6
   · rename_i hok; cases h6
     simp only [e1, e2, e3] at f1 f2 f3 f4 f5
-    refine ⟨by simp [d1, f1, e3, e2, e1], by simp [d2, f2, e3, e2], by simp [d3, f3, e3], by simp [d4, f4, e3, e2, e1],
-      ⟨c5.imp, c5.act, rfl, by simp [d5, f5, e3, e2, e1]⟩, rfl, rfl, hok⟩
+    refine ⟨by simp [d1, f1], by simp [d2, f2], by simp [d3, f3], by simp [d4, f4],
+      ⟨c5.imp, c5.act, rfl, by simp [d5, f5]⟩, rfl, rfl, hok⟩
   · cases h6
 
 /-! ## `node_has_changes` (#3464, pending.rs:784)

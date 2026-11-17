@@ -231,7 +231,7 @@ theorem dec_enc : ∀ v : Val F, dec E (encV E v) = some (spec E v)
   | .map kvs => by simp [encV, encPair, dec, spec, decMap_enc kvs]
   | .node id ls ps => by
     simp only [encV, encPair, dec, decLabels_enc, decProps_enc ps, spec]
-    simp [map_eq_nil_iff']
+    simp
   | .edge id ty s d ps => by simp [encV, encPair, dec, spec, decProps_enc ps]
   | .path ns es => by
     have h1 := dec_enc_list ns

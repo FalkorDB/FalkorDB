@@ -83,7 +83,7 @@ theorem push_wf (m : M) (h : WF m) (n : String) (hn : m.index n = none) (hc : m.
       · rename_i hge
         by_cases he : i - m.vec.length = 0
         · omega
-        · simp [List.getElem?_singleton, he] at hi
+        · simp [he] at hi
   · simp only [hx, ite_false]
     rw [h.iff x i, List.getElem?_append]
     split

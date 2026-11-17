@@ -459,8 +459,8 @@ theorem inv3014_step (max : Nat) (s t : P3014) (h : Inv3014 max s) (ht : t ∈ s
   by_cases c1 : s.pending > 0 <;> by_cases c2 : s.count < max <;>
     by_cases c3 : (s.queue > 0 ∧ s.running + s.matching < w) <;> by_cases c4 : s.matching > 0 <;>
     by_cases c5 : s.writeQ > 0 <;> by_cases c6 : s.running > 0 <;>
-    simp only [succ3014, c1, c2, c3, c4, c5, c6, if_true, if_false, List.mem_append, List.mem_cons,
-      List.mem_nil_iff, or_false, false_or, and_self, ite_true, ite_false, true_and] at ht <;>
+    simp only [succ3014, c1, c2, c3, c4, c5, c6, ite_true, ite_false, List.mem_append, List.mem_cons,
+      List.mem_nil_iff, or_false, false_or, and_self, ite_true, ite_false] at ht <;>
     (repeat' (rcases ht with ht | ht)) <;>
     (subst_vars; constructor <;> simp <;> omega)
 

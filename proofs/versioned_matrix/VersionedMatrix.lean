@@ -24,6 +24,16 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
   from Cypher: the only shrink caller, `rebuild_derived_matrices`, keeps
   `node_cap` ≥ every node id.
 
+Folded from `pr3438_review` (#3438, merged as 2b6902217): `TensorSave` models `Encode for Tensor`'s
+fast path (tensor.rs:1472-1561): with `dp`/`dm` empty and no multi-edge id it writes the committed `m`
+and two empty matrices instead of rebuilding. `fast_base_eq` (same pattern and values as the rebuild,
+and the rebuild's `multi` list is empty, from `AllInv`/`BlkInv`), `encPR_eq_encMain` (the pre-#3438
+rebuild is `encMain`), `encode_one_state` (check, write and `edge_count` read one state),
+`decode_same` (FFI hypothesis `MatrixRT`). The fast path passes the shared committed `m` itself to
+`Matrix::encode`, so it depends on graphblas_wrappers `EncodeDup.pr_self_never_unloaded`. Live: 16
+fast-path tensors decode as the rebuild (15 byte-identical).
+
+
 Re-target to main 73077bb4a (#3033, #3086): no model change here. #3033 makes
 `Tensor::decode` (tensor.rs:1553) refuse a payload that breaks promotion
 completeness (`single_me`/`multi_me`); proved in graphblas_wrappers
@@ -79,3 +89,4 @@ import VersionedMatrix.TensorOps
 import VersionedMatrix.TensorResize
 import VersionedMatrix.CowGlue
 import VersionedMatrix.CountRows
+import VersionedMatrix.TensorSave

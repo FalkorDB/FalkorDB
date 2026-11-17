@@ -274,7 +274,7 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
     have hsel : ∀ q, (Plan.idxScan [L] L q).sel idx opq n =
         (if canUtilize (evalIQ q) then qsem idx L q n else true) := by
       intro q
-      simp [Plan.sel, hasAll_single, hL, qsem, hasAll]
+      simp [Plan.sel, hL, qsem, hasAll]
     have href : (reference [L] f).sel idx opq n = evalF opq n f := by
       simp [reference, Plan.sel, hasAll_single, hL]
     rw [href]
@@ -349,11 +349,11 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
       have sel_filter : ∀ (g : F) (p : Plan), (Plan.filter g p).sel idx opq n =
           (p.sel idx opq n && evalF opq n g) := fun _ _ => rfl
       cases hk : needsPost f <;> cases hr : rem.isEmpty <;>
-        simp only [hk, hr, ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
-      · rw [if_pos (hcu hk)]; exact hs
+        simp only [ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
+      · rw [ite_eq_left (hcu hk)]; exact hs
       · have : rem = [] := List.isEmpty_iff.mp hr
         subst this
-        rw [if_pos (hcu hk)]; simpa using hs
+        rw [ite_eq_left (hcu hk)]; simpa using hs
       · split <;> cases hq : qsem idx L' q n <;> cases hf' : evalF opq n f <;> simp_all
       · split <;> cases hq : qsem idx L' q n <;> cases hf' : evalF opq n f <;> simp_all
 
