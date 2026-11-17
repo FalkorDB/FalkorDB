@@ -53,6 +53,7 @@ use parking_lot::RwLock;
 use std::ffi::CString;
 use std::sync::Arc;
 use std::{os::raw::c_void, ptr::null_mut};
+use valkey_module::key::KeyFlags;
 use valkey_module::logging::{log_notice, log_warning};
 use valkey_module::raw::{
     self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
@@ -60,7 +61,7 @@ use valkey_module::raw::{
 };
 use valkey_module::{
     Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleEvent, RedisModuleTypeMethods,
-    ValkeyError, native_types::ValkeyType,
+    ValkeyError, ValkeyString, native_types::ValkeyType,
 };
 
 /// The configured `CACHE_SIZE`, for a graph an RDB callback is building.
@@ -97,12 +98,14 @@ unsafe fn io_key_name(rdb: *mut RedisModuleIO) -> String {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graph_rdb_load(
     rdb: *mut RedisModuleIO,
-    _encver: i32,
+    encver: i32,
 ) -> *mut c_void {
     // Get the key name for looking up finalized graphs.
     let key_name = unsafe { io_key_name(rdb) };
 
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
+    match serializers::decoder::rdb_load_graph(rdb, encver, &key_name, unsafe {
+        io_cache_size(rdb)
+    }) {
         Ok(LoadedKey::Graph(graph)) => {
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(*graph);
@@ -438,7 +441,7 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
             // a key it does not occupy, and the graph's own key -- which Redis
             // does save -- would carry only a slice of it. Leave it whole
             // instead; `graph_rdb_save` writes a single-key graph unaided.
-            if !key_holds_graph(ctx, graph_name, graph_ref) {
+            if !key_holds_graph(&context, graph_name.as_bytes(), graph_ref) {
                 continue;
             }
 
@@ -563,25 +566,29 @@ unsafe fn delete_key(
 /// registry entry naming a key that no longer exists -- or that never
 /// addressed this graph, because the real key name is not valid UTF-8 -- is
 /// rejected.
-unsafe fn key_holds_graph(
-    ctx: *mut RedisModuleCtx,
-    key_name: &str,
+///
+/// This asks the server's keyspace, not the registry
+/// [`graph_is_registered`](crate::graph_core::graph_is_registered) asks, and the
+/// two can disagree in other ways too. `graph_free` is the module type's free
+/// callback, so when a flushed database is freed in the background (`FLUSHALL
+/// ASYNC`, and a plain `FLUSHALL` on Valkey and Redis 8, #3792) it runs on the
+/// lazyfree thread, arbitrarily later than the key left the keyspace. `MOVE` and
+/// `SWAPDB` never reach the registry. A key of another type, or holding another
+/// module's value, is rejected too. The GIL must be held. Opened `NOTOUCH`, so the
+/// check does not update the key's LRU/LFU.
+pub fn key_holds_graph(
+    ctx: &Context,
+    key_name: &[u8],
     graph: &Arc<RwLock<ThreadedGraph>>,
 ) -> bool {
-    unsafe {
-        let rm_str =
-            raw::RedisModule_CreateString.unwrap()(ctx, key_name.as_ptr().cast(), key_name.len());
-        let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::READ.bits());
-        let value = raw::RedisModule_ModuleTypeGetValue.unwrap()(key);
-        let holds = !value.is_null()
-            && std::ptr::eq(
-                (*value.cast::<Arc<RwLock<ThreadedGraph>>>()).data_ptr(),
-                graph.data_ptr(),
-            );
-        raw::RedisModule_CloseKey.unwrap()(key);
-        raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
-        holds
-    }
+    // NULL context, so Redis does not tie the string to an auto-memory pool that
+    // outlives the call.
+    let rm_str = ValkeyString::create_from_slice(null_mut(), key_name);
+    let key = ctx.open_key_with_flags(&rm_str, KeyFlags::NOTOUCH);
+    matches!(
+        key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE),
+        Ok(Some(held)) if held.data_ptr() == graph.data_ptr()
+    )
 }
 
 /// Delete every graphmeta key -- virtual keys some earlier load or save left behind.
@@ -907,7 +914,7 @@ pub fn wrong_type_compat(err: ValkeyError) -> ValkeyError {
 
 pub static GRAPH_TYPE: ValkeyType = ValkeyType::new(
     "graphdata",
-    19,
+    serializers::ENCODING_VERSION,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graph_rdb_load),
@@ -948,10 +955,12 @@ pub static GRAPH_TYPE: ValkeyType = ValkeyType::new(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graphmeta_rdb_load(
     rdb: *mut RedisModuleIO,
-    _encver: i32,
+    encver: i32,
 ) -> *mut c_void {
     let key_name = unsafe { io_key_name(rdb) };
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
+    match serializers::decoder::rdb_load_graph(rdb, encver, &key_name, unsafe {
+        io_cache_size(rdb)
+    }) {
         Ok(_) => {
             // Return a non-null dummy value. Redis needs non-null for successful load.
             Box::into_raw(Box::new(0u8)).cast()
@@ -1005,7 +1014,7 @@ unsafe extern "C" fn graphmeta_aux_load(
 
 pub static GRAPHMETA_TYPE: ValkeyType = ValkeyType::new(
     "graphmeta",
-    19,
+    serializers::ENCODING_VERSION,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graphmeta_rdb_load),

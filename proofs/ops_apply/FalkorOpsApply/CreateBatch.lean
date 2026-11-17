@@ -222,11 +222,11 @@ theorem createRel_spec {W L A : Type} (c : Ctx W L A) (skip : Bool) (log : List 
           refine ⟨ids, eps, hids, hl, fun k h1 h2 => ?_, ⟨ext, by simp [he]⟩, rfl⟩
           have := hg k h1 h2
           cases hep : endpoint rows[k] r.src r.dst with
-          | error e => simp [hep, bind, Except.bind] at this
+          | error e => simp [hep] at this
           | ok ab =>
             obtain ⟨a, b⟩ := ab
             have hab := (endpoint_spec _ _ _ a b).mp hep
-            simp only [hep, bind, Except.bind] at this
+            simp only [hep] at this
             split at this
             · cases this
             · rename_i hg'

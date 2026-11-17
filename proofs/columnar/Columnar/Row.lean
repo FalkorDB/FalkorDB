@@ -54,25 +54,25 @@ theorem pad_getElem? (l : List (V F)) (id j : Nat) :
     (if l.length ≤ id then l ++ List.replicate (id + 1 - l.length) V.null else l)[j]? =
       if j < l.length then l[j]? else if j ≤ id then some .null else none := by
   by_cases h : l.length ≤ id
-  · rw [if_pos h]
+  · rw [ite_eq_left h]
     by_cases hj : j < l.length
-    · rw [if_pos hj, List.getElem?_append_left hj]
-    · rw [if_neg hj, List.getElem?_append_right (by omega), List.getElem?_replicate]
+    · rw [ite_eq_left hj, List.getElem?_append_left hj]
+    · rw [ite_eq_right hj, List.getElem?_append_right (by omega), List.getElem?_replicate]
       by_cases hj2 : j ≤ id
-      · rw [if_pos hj2, if_pos (by omega)]
-      · rw [if_neg hj2, if_neg (by omega)]
-  · rw [if_neg h]
+      · rw [ite_eq_left hj2, ite_eq_left (by omega)]
+      · rw [ite_eq_right hj2, ite_eq_right (by omega)]
+  · rw [ite_eq_right h]
     by_cases hj : j < l.length
-    · rw [if_pos hj]
-    · rw [if_neg hj, if_neg (by omega)]
+    · rw [ite_eq_left hj]
+    · rw [ite_eq_right hj, ite_eq_right (by omega)]
       exact List.getElem?_eq_none (by omega)
 
 theorem pad_length (l : List (V F)) (id : Nat) :
     (if l.length ≤ id then l ++ List.replicate (id + 1 - l.length) V.null else l).length =
       max l.length (id + 1) := by
   by_cases h : l.length ≤ id
-  · rw [if_pos h]; simp; omega
-  · rw [if_neg h]; omega
+  · rw [ite_eq_left h]; simp; omega
+  · rw [ite_eq_right h]; omega
 
 theorem insert_length (r : Row F) (id : Nat) (v : V F) :
     (r.insert id v).values.length = max r.values.length (id + 1) := by
@@ -85,14 +85,14 @@ theorem insert_get (r : Row F) (id : Nat) (v : V F) (j : Nat) :
   simp only [insert, get]
   by_cases h : j = id
   · subst h
-    rw [if_pos rfl, List.getElem?_set_self (by rw [pad_length]; omega)]
-  · rw [if_neg h, List.getElem?_set_ne (Ne.symm h), pad_getElem?]
+    rw [ite_eq_left rfl, List.getElem?_set_self (by rw [pad_length]; omega)]
+  · rw [ite_eq_right h, List.getElem?_set_ne (Ne.symm h), pad_getElem?]
     by_cases hj : j < r.values.length
-    · rw [if_pos hj, if_pos hj]
-    · rw [if_neg hj, if_neg hj]
+    · rw [ite_eq_left hj, ite_eq_left hj]
+    · rw [ite_eq_right hj, ite_eq_right hj]
       by_cases h2 : j < id
-      · rw [if_pos (by omega), if_pos h2]
-      · rw [if_neg (by omega), if_neg h2]
+      · rw [ite_eq_left (by omega), ite_eq_left h2]
+      · rw [ite_eq_right (by omega), ite_eq_right h2]
 
 theorem insert_bound (r : Row F) (id : Nat) (v : V F) (k : Nat) :
     (r.insert id v).bound k = if k = id then true else r.bound k := rfl
@@ -201,7 +201,7 @@ theorem fillRow_spec (f : Nat → Option (V F × Bool)) (acc : Row F) :
             rcases Nat.lt_or_ge j (fillRow n f acc).values.length with h' | h'
             · exact h'
             · simp [Row.get, List.getElem?_eq_none h'] at g
-          rw [if_neg hjn, if_pos hjl, if_neg hjn]
+          rw [ite_eq_right hjn, ite_eq_left hjl, ite_eq_right hjn]
           exact ⟨g, bnd⟩
         · have : j = n := by omega
           subst this
@@ -210,15 +210,15 @@ theorem fillRow_spec (f : Nat → Option (V F × Bool)) (acc : Row F) :
           simp
       · have hjn : j ≠ n := by intro e; subst e; rw [hn (by omega)] at hfn; simp at hfn
         obtain ⟨u1, u2, u3⟩ := ihu (fun hj => hn (by omega))
-        rw [fillStep_get, fillStep_bound, insert_get, if_neg hjn, if_neg hjn]
+        rw [fillStep_get, fillStep_bound, insert_get, ite_eq_right hjn, ite_eq_right hjn]
         refine ⟨fun hl => ?_, ?_, u3⟩
-        · rw [if_pos (by omega), u1 hl]
+        · rw [ite_eq_left (by omega), u1 hl]
         · by_cases hl : j < (fillRow n f acc).values.length
-          · rw [if_pos hl]; exact u2
-          · rw [if_neg hl]
+          · rw [ite_eq_left hl]; exact u2
+          · rw [ite_eq_right hl]
             by_cases h2 : j < n
-            · rw [if_pos h2]; right; rfl
-            · rw [if_neg h2]
+            · rw [ite_eq_left h2]; right; rfl
+            · rw [ite_eq_right h2]
               have : (fillRow n f acc).get j = none := by
                 simp [Row.get, List.getElem?_eq_none (Nat.le_of_not_lt hl)]
               rw [← this]; exact u2
@@ -239,7 +239,7 @@ theorem merge_spec (a b : Row F) (j : Nat) :
   obtain ⟨-, hf, hu⟩ := fillRow_spec (fun id => if b.bound id then some ((b.get id).getD .null, true) else none)
     a b.values.length j
   refine ⟨fun ⟨hl, hb⟩ => ?_, fun hn hl => ?_⟩
-  · have hf' := hf ((b.get j).getD .null) true hl (by rw [if_pos hb])
+  · have hf' := hf ((b.get j).getD .null) true hl (by rw [ite_eq_left hb])
     refine ⟨?_, hf'.2⟩
     unfold merge
     rw [hf'.1]
@@ -302,12 +302,12 @@ theorem pushSlots_spec (b : Batch F) (r : Nat) : ∀ n,
       simp only [Row.get] at hgi ⊢
       simp only [Row.pushSlot, hl]
       by_cases h2 : i < n
-      · rw [List.getElem?_append_left (by omega), hgi, if_pos h2, if_pos (by omega)]
+      · rw [List.getElem?_append_left (by omega), hgi, ite_eq_left h2, ite_eq_left (by omega)]
       · by_cases hi : i = n
         · subst hi
           rw [List.getElem?_append_right (by omega), hl]; simp
         · rw [List.getElem?_append_right (by omega), List.getElem?_eq_none (by simp; omega),
-            if_neg (by omega)]
+            ite_eq_right (by omega)]
     · have hbi := hb i
       have key : (slotOf b r n).2 = true ∨ (slotOf b r n).2 = false := by cases (slotOf b r n).2 <;> simp
       by_cases hi : i = n
@@ -315,12 +315,12 @@ theorem pushSlots_spec (b : Batch F) (r : Nat) : ∀ n,
         have h0 : (pushSlots b r i).bound i = false := by rw [hb i]; simp
         rcases key with hs | hs <;> simp [Row.pushSlot, hs, hl, h0]
       · rcases key with hs | hs
-        · simp only [Row.pushSlot, hs, hl, if_true, if_neg hi]
+        · simp only [Row.pushSlot, hs, hl, ite_true, ite_eq_right hi]
           rw [hbi]
           by_cases h2 : i < n
           · simp [h2, show i < n + 1 by omega]
           · simp [h2, show ¬ i < n + 1 by omega]
-        · simp only [Row.pushSlot, hs, hl, Bool.false_eq_true, if_false]
+        · simp only [Row.pushSlot, hs, hl, Bool.false_eq_true, ite_false]
           rw [hbi]
           by_cases h2 : i < n
           · simp [h2, show i < n + 1 by omega]
@@ -364,7 +364,7 @@ theorem toOwned_bound_slot {b : Batch F} (h : b.WF) {r i : Nat} (hr : r ∈ b.ac
   rw [ho]
   refine ⟨?_, ?_⟩
   · simp only [Row.get] at hg ⊢
-    rw [hg i, if_pos hi]; simp [slotOf, hu, hget, viewAt, hv]
+    rw [hg i, ite_eq_left hi]; simp [slotOf, hu, hget, viewAt, hv]
   · simp only [] at hb ⊢
     rw [hb i]; simp [slotOf, hu, hi]
 

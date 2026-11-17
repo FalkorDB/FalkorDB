@@ -86,9 +86,9 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
     have hs' : ∀ p ∈ seen, p.2 ∉ xs := fun p hp hm => hs p hp (List.mem_cons_of_mem _ hm)
     simp only [scan]
     by_cases hk : key x = []
-    · rw [if_pos hk, scan_gen key xs seen hnd.2 hs']
+    · rw [ite_eq_left hk, scan_gen key xs seen hnd.2 hs']
       simp [hk]
-    · rw [if_neg hk]
+    · rw [ite_eq_right hk]
       have hs2 : ∀ p ∈ (key x, x) :: seen, p.2 ∉ xs := by
         intro p hp; simp at hp; rcases hp with rfl | hp
         · exact hnd.1
@@ -101,7 +101,7 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
       | none =>
         rw [scan_gen key xs _ hnd.2 hs2]
         simp only [List.filter_cons, ne_eq, hk, not_false_eq_true, decide_true, ite_true, List.map_cons,
-          List.nodup_cons, List.mem_cons, forall_eq_or_imp, hl, true_and]
+          List.nodup_cons, List.mem_cons, forall_eq_or_imp, hl]
         have e : ∀ y, lookupK ((key x, x) :: seen) (key y) = if key x = key y then some x else lookupK seen (key y) :=
           fun y => rfl
         constructor
@@ -110,14 +110,14 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
           · obtain ⟨y, hy, hky⟩ := List.mem_map.1 hm
             have hy' := List.mem_filter.1 hy
             have := hall y hy'.1 (by simpa using hy'.2)
-            rw [e, if_pos hky.symm] at this; cases this
+            rw [e, ite_eq_left hky.symm] at this; cases this
           · have := hall a ha hka; rw [e] at this
             split at this
             · cases this
             · exact this
         · rintro ⟨⟨hnm, hn⟩, -, hall⟩
           refine ⟨hn, fun y hy hky => ?_⟩
-          rw [e, if_neg ?_]
+          rw [e, ite_eq_right ?_]
           · exact hall y hy hky
           · intro heq; exact hnm (List.mem_map.2 ⟨y, List.mem_filter.2 ⟨hy, by simpa using hky⟩, heq.symm⟩)
 
@@ -258,6 +258,8 @@ structure Stats where
 structure GOps (G : Type) where
   createNodes : G → List Nat → Option G
   createRels : G → FMap (List (Nat × Nat × Nat)) → Option G
+  /-- `Graph::get_type_id_mut` (graph.rs): get-or-create a relationship type; infallible. -/
+  registerType : G → Nat → G
   setLabels : G → List Nat → List Nat → G
   removeLabels : G → List Nat → List Nat → G
   importNodeAttrs : G → FMap (List Entry) → G × Nat
@@ -288,6 +290,16 @@ def stCreate (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
 def stRels (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   if p.relTypes = [] then some c
   else (o.createRels c.g p.relsByType).map fun g => { c with g := g, s := { c.s with relsCreated := c.s.relsCreated + p.relTypes.length } }
+
+/-- The types of `cancelled_relationships`, each once, in first-seen order
+(the `FxHashSet` at pending.rs:1366). -/
+def cancelledTypes (p : P) : List Nat :=
+  p.cancelledR.foldl (fun seen c => if c.2.1 ∈ seen then seen else seen ++ [c.2.1]) []
+
+/-- #3461 (pending.rs:1360-1371): register the type of every cancelled edge, so a
+type whose every edge a cascade cancelled is still in the schema. -/
+def stCancelTypes (o : GOps G) (p : P) (c : CS G) : CS G :=
+  { c with g := (cancelledTypes p).foldl o.registerType c.g }
 
 def stLabels (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   let g3 := if p.setL = [] then c.g else o.setLabels c.g (flatten p.setL).1 (flatten p.setL).2
@@ -333,7 +345,8 @@ def finish (o : GOps G) (p : P) (c : CS G) : Option (P × G × Stats) :=
   if o.constraintsOk g' p' then some (p', g', c.s) else none
 
 def commit (o : GOps G) (p : P) (g0 : G) (s0 : Stats) : Option (P × G × Stats) :=
-  (stCreate o p ⟨g0, s0, [], []⟩).bind fun c1 => (stRels o p c1).bind fun c2 => (stLabels o p c2).bind fun c3 =>
+  (stCreate o p ⟨g0, s0, [], []⟩).bind fun c1 => (stRels o p c1).bind fun c2 =>
+    (stLabels o p (stCancelTypes o p c2)).bind fun c3 =>
     (stAttrs o p c3).bind fun c4 => (stDelete o p c4).bind (finish o p)
 
 theorem stCreate_s (o : GOps G) (p : P) (c c' : CS G) (h : stCreate o p c = some c') :
@@ -427,6 +440,7 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
   obtain ⟨e1, i1, a1⟩ := stCreate_s o p _ c1 h1
   obtain ⟨e2, i2, a2⟩ := stRels_s o p _ c2 h2
   obtain ⟨e3, i3, a3⟩ := stLabels_s o p _ c3 h3
+  simp only [stCancelTypes] at e3 i3 a3
   obtain ⟨f1, f2, f3, f4, f5, i4, a4⟩ := stAttrs_s o p _ c4 h4
   have hi : c4.imp = [] := by rw [i4, i3, i2, i1]
   have ha : c4.act = [] := by rw [a4, a3, a2, a1]
@@ -436,9 +450,76 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
   split at h6
   · rename_i hok; cases h6
     simp only [e1, e2, e3] at f1 f2 f3 f4 f5
-    refine ⟨by simp [d1, f1, e3, e2, e1], by simp [d2, f2, e3, e2], by simp [d3, f3, e3], by simp [d4, f4, e3, e2, e1],
-      ⟨c5.imp, c5.act, rfl, by simp [d5, f5, e3, e2, e1]⟩, rfl, rfl, hok⟩
+    refine ⟨by simp [d1, f1], by simp [d2, f2], by simp [d3, f3], by simp [d4, f4],
+      ⟨c5.imp, c5.act, rfl, by simp [d5, f5]⟩, rfl, rfl, hok⟩
   · cases h6
+
+theorem mem_foldl_cancelledTypes (l : List (Nat × Nat × Nat × Nat)) (seen : List Nat) (t : Nat) :
+    t ∈ l.foldl (fun seen c => if c.2.1 ∈ seen then seen else seen ++ [c.2.1]) seen ↔
+      t ∈ seen ∨ ∃ c ∈ l, c.2.1 = t := by
+  induction l generalizing seen with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.foldl_cons]; rw [ih]
+    split
+    · constructor
+      · rintro (h | ⟨c, hc, rfl⟩)
+        · exact .inl h
+        · exact .inr ⟨c, List.mem_cons_of_mem _ hc, rfl⟩
+      · rintro (h | ⟨c, hc, rfl⟩)
+        · exact .inl h
+        · rcases List.mem_cons.mp hc with rfl | hc
+          · exact .inl (by assumption)
+          · exact .inr ⟨c, hc, rfl⟩
+    · simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false]
+      constructor
+      · rintro ((h | rfl) | ⟨c, hc, rfl⟩)
+        · exact .inl h
+        · exact .inr ⟨x, .inl rfl, rfl⟩
+        · exact .inr ⟨c, .inr hc, rfl⟩
+      · rintro (h | ⟨c, (rfl | hc), rfl⟩)
+        · exact .inl (.inl h)
+        · exact .inl (.inr rfl)
+        · exact .inr ⟨c, hc, rfl⟩
+
+/-- Every cancelled relationship's type is in `cancelledTypes`. -/
+theorem cancelledTypes_complete (p : P) (c : Nat × Nat × Nat × Nat) (hc : c ∈ p.cancelledR) :
+    c.2.1 ∈ cancelledTypes p :=
+  (mem_foldl_cancelledTypes p.cancelledR [] c.2.1).mpr (.inr ⟨c, hc, rfl⟩)
+
+theorem foldl_registers (o : GOps G) (reg : G → Nat → Prop)
+    (hreg : ∀ g t, reg (o.registerType g t) t) (hmono : ∀ g t u, reg g u → reg (o.registerType g t) u) :
+    ∀ (ts : List Nat) (g : G) (u : Nat), (reg g u ∨ u ∈ ts) → reg (ts.foldl o.registerType g) u := by
+  intro ts
+  induction ts with
+  | nil => intro g u h; simpa using h
+  | cons t ts ih =>
+    intro g u h
+    apply ih
+    rcases h with h | h
+    · exact .inl (hmono _ _ _ h)
+    · rcases List.mem_cons.mp h with rfl | h
+      · exact .inl (hreg _ _)
+      · exact .inr h
+
+/-- **`stCancelTypes_registers`** (#3461, fix of #3447 `CancelledTypeRegistered`):
+given get-or-create semantics for `get_type_id_mut` (it registers its type and
+keeps every registered one), after the step every cancelled relationship's type
+is registered, whether or not a surviving edge of that type exists. -/
+theorem stCancelTypes_registers (o : GOps G) (reg : G → Nat → Prop)
+    (hreg : ∀ g t, reg (o.registerType g t) t) (hmono : ∀ g t u, reg g u → reg (o.registerType g t) u)
+    (p : P) (c : CS G) : ∀ x ∈ p.cancelledR, reg (stCancelTypes o p c).g x.2.1 := fun x hx =>
+  foldl_registers o reg hreg hmono _ _ _ (.inr (cancelledTypes_complete p x hx))
+
+/-- The step keeps every type already registered (by `create_relationships_bulk`). -/
+theorem stCancelTypes_mono (o : GOps G) (reg : G → Nat → Prop)
+    (hmono : ∀ g t u, reg g u → reg (o.registerType g t) u) (p : P) (c : CS G) (u : Nat)
+    (h : reg c.g u) : reg (stCancelTypes o p c).g u := by
+  unfold stCancelTypes
+  generalize cancelledTypes p = ts
+  induction ts generalizing c with
+  | nil => exact h
+  | cons t ts ih => exact ih { c with g := o.registerType c.g t } (hmono _ _ _ h)
 
 /-! ## `node_has_changes` (#3464, pending.rs:784)
 

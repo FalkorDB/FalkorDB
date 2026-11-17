@@ -150,7 +150,7 @@ theorem rowMain_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) (r : α)
     have href : refRow cl rst r =
         ⟨rst.g, rst.next, rst.out ++ (m :: ms).map (fun m => (r, some m.id))⟩ := by
       simp only [refRow, hg, hcur, hom]
-      simp [foldl_applySet_none, applySet, foldl_const_self]
+      simp [applySet, foldl_const_self]
     have hrow : rowMain cl false st (r, m :: ms) =
         { st with out := st.out ++ (m :: ms).map (fun m => (r, some m.id)) } := by
       simp only [rowMain, hom, applySet, Bool.false_or]

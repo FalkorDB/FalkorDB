@@ -7,10 +7,11 @@ import RedisLayer.Telemetry
 | here | there |
 | --- | --- |
 | `validIdent`              | `constraint.rs` `is_valid_identifier` `:19` |
-| `consArgs`, `string2ll`   | `graph_constraint` argument parsing `:415-511`; `parse_integer` = `RedisModule_StringToLongLong` = Redis `string2ll` (util.c) |
+| `consArgs`, `string2ll`   | `graph_constraint` `:384`, argument parsing `:388-475`; `parse_integer` = `RedisModule_StringToLongLong` = Redis `string2ll` (util.c) |
 | `registerSchema`          | `register_constraint_schema` `:63` |
 | `findStatus`              | `find_status` `:82` |
-| `settle`, `attempt`       | `settle_constraint` `:171`, `attempt_settle` `:282` |
+| `settle`, `attempt`       | `settle_constraint` `:178`, `attempt_settle` `:284` |
+| `applyCons`, `consWorker` | `apply_constraint` `:599`; `graph_constraint` pool path `:547-585` (#3819) |
 | `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:173` |
 | `copyOut`                 | `copy.rs` `graph_copy` `:27` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
 | `bulkFlow`, `heldReplicate`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:218-1045` |
@@ -242,6 +243,81 @@ theorem settle_permanent (os : List (Option Abort)) (b : Nat) :
     settle (some .invalid :: os) b = (1, false) :=
   ⟨rfl, rfl, rfl⟩
 
+/-! ### Applying (`apply_constraint` :599, the pool path of `graph_constraint` :547-585, #3819) -/
+
+/-- What `apply_constraint` does: its reply (`PENDING`/`OK` or an error message), whether it
+spawns the validation thread, and whether it announces (replicates a `GRAPH.EFFECT`). -/
+structure ApplyOut where
+  reply : Except String String
+  spawn : Bool
+  announce : Bool
+  deriving DecidableEq, Repr
+
+/-- `apply_constraint` (:599-766). `result` is `create_constraint` (`Ok needs_background_validation`)
+or `drop_constraint` (`Ok false`); `commit` is `tg.graph.commit`'s refusal, passed on by
+`map_err(WriteAbort::from)?` (`abortMsg` = `WriteAbort`'s `Display`); `statusFound` is
+`find_status` read back on an inline create; `buildOk` is `build_constraint`. -/
+def applyCons (abortMsg : Abort → String) (isCreate isReplayed : Bool)
+    (result : Except String Bool) (commit : Option Abort) (statusFound buildOk : Bool) : ApplyOut :=
+  match result with
+  | .ok bg =>
+    match commit with
+    | some a => ⟨.error (abortMsg a), false, false⟩
+    | none =>
+      ⟨.ok (if isCreate then "PENDING" else "OK"), bg,
+       !isReplayed && (!isCreate || bg || statusFound) && buildOk⟩
+  | .error e =>
+    if isReplayed && e == "Constraint already exists" then ⟨.ok "OK", false, false⟩
+    else ⟨.error e, false, false⟩
+
+/-- A replayed command (v2-era AOF) never announces. -/
+theorem applyCons_replayed_silent (m : Abort → String) (c : Bool) (r : Except String Bool)
+    (k : Option Abort) (s b : Bool) : (applyCons m c true r k s b).announce = false := by
+  unfold applyCons; split <;> (try split) <;> (try split) <;> rfl
+/-- A refused commit replies the abort and neither spawns nor announces. -/
+theorem applyCons_commit_refused (m : Abort → String) (c p : Bool) (bg : Bool) (a : Abort)
+    (s b : Bool) : applyCons m c p (.ok bg) (some a) s b = ⟨.error (m a), false, false⟩ := rfl
+/-- The second copy of a v2-era AOF pair loads as `OK`. -/
+theorem applyCons_aof_duplicate (m : Abort → String) (c : Bool) (k : Option Abort) (s b : Bool) :
+    (applyCons m c true (.error "Constraint already exists") k s b).reply = .ok "OK" := rfl
+/-- A committed create replies `PENDING`, a drop `OK`; a validated create spawns the thread. -/
+theorem applyCons_ok (m : Abort → String) (c p bg s b : Bool) :
+    (applyCons m c p (.ok bg) none s b).reply = .ok (if c then "PENDING" else "OK") ∧
+    (applyCons m c p (.ok bg) none s b).spawn = bg := ⟨rfl, rfl⟩
+
+/-- The pool path of `graph_constraint` (:547-585): the reply, and whether the key is
+signalled modified. `upgrade` is `upgrade_to_write`'s abort, `keyHolds` is
+`key_holds_graph` on the key holding the graph (`Telemetry.keyHolds`), `apply` is
+`applyCons` under the write lock. `must_run_inline` contexts call `apply` directly (:528-531). -/
+def consWorker (abortMsg : Abort → String) (upgrade : Option Abort) (keyHolds : Bool)
+    (apply : ApplyOut) : ApplyOut × Bool :=
+  match upgrade with
+  | some a => (⟨.error (abortMsg a), false, false⟩, false)
+  | none =>
+    if keyHolds then (apply, match apply.reply with | .ok _ => true | .error _ => false)
+    else (⟨.error (abortMsg .unregistered), false, false⟩, false)
+
+/-- Nothing is applied, announced or signalled unless the write lock was taken and the
+addressed key still holds the graph (no announcement for a moved/flushed key). -/
+theorem consWorker_announce (m : Abort → String) (u : Option Abort) (k : Bool) (a : ApplyOut)
+    (h : (consWorker m u k a).1.announce = true) : u = none ∧ k = true ∧ a.announce = true := by
+  unfold consWorker at h; split at h
+  · simp at h
+  · split at h
+    · rename_i hk; exact ⟨rfl, hk, h⟩
+    · simp at h
+/-- The key is signalled modified exactly when the constraint was applied with an `Ok` reply. -/
+theorem consWorker_signal (m : Abort → String) (u : Option Abort) (k : Bool) (a : ApplyOut) :
+    (consWorker m u k a).2 = true ↔ u = none ∧ k = true ∧ ∃ s, a.reply = .ok s := by
+  unfold consWorker; split
+  · simp
+  · split
+    · rename_i hk; split <;> simp_all
+    · simp_all
+/-- A key that no longer holds the graph is refused as unregistered. -/
+theorem consWorker_key_gone (m : Abort → String) (a : ApplyOut) :
+    consWorker m none false a = (⟨.error (m .unregistered), false, false⟩, false) := rfl
+
 /-! ## GRAPH.RECORD reply shape -/
 
 /-- `record_mut`'s reply: `[records, plan]`, one record `[op_index, ok, payload]` per
@@ -307,7 +383,7 @@ theorem sync_is_yield_without_yields (n r : List Nat) :
       have h2 : noYield BOp.yield = false := rfl
       simp [List.filter, h1, h2]
   unfold processTokens
-  simp only [Bool.false_eq_true, if_false, if_true, List.filter_append]
+  simp only [Bool.false_eq_true, ite_false, ite_true, List.filter_append]
   rw [← h BOp.node n (fun t => by simp), ← h BOp.edge r (fun t => by simp)]
   rfl
 
@@ -382,7 +458,8 @@ def getNames : List String :=
    "THREAD_COUNT", "INDEX_WORKER_THREADS", "RESULTSET_SIZE", "VKEY_MAX_ENTITY_COUNT",
    "MAX_QUEUED_QUERIES", "QUERY_MEM_CAPACITY", "DELTA_MAX_PENDING_CHANGES", "NODE_CREATION_BUFFER",
    "CMD_INFO", "MAX_INFO_QUERIES", "EFFECTS_COMPRESSION", "EFFECTS_THRESHOLD", "BOLT_PORT",
-   "DELAY_INDEXING", "IMPORT_FOLDER", "TEMP_FOLDER", "JS_HEAP_SIZE", "JS_STACK_SIZE"]
+   "DELAY_INDEXING", "IMPORT_FOLDER", "TEMP_FOLDER", "JS_HEAP_SIZE", "JS_STACK_SIZE",
+   "WRITE_LOCK_POLL_INTERVAL"]   -- #3816
 
 /-- Every documented name can be read back… -/
 theorem get_covers_documented : ModuleInit.documented.all (· ∈ getNames) = true := by decide

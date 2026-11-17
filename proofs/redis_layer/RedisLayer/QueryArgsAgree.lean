@@ -144,7 +144,7 @@ theorem rust_c_agree (c : TCfg) (hc : CfgOk c) (args : List Bytes) :
     · refine ⟨?_, rfl, ?_, ?_⟩ <;> unfold cInit <;> split <;> rfl
     · intro hz
       unfold cInit
-      rw [if_pos (Or.inl hz)]
+      rw [ite_eq_left (Or.inl hz)]
       exact dflt_le c hc hz
 
 /-- Corollary: the two engines accept exactly the same argument vectors. -/

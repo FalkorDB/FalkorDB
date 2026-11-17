@@ -47,12 +47,12 @@ theorem header_read (h : Hdr) (hok : h.ok) (B : List Nat) :
   · unfold readU64
     rw [rd_app_right' _ _ _ _ (by simp [le_length]), rd_app_left _ _ _ 8 (by simp [le_length])]
     simp only [le_length]; exact rd_le 8 _ (u64_256 _ hm)
-  · simp [byteAt, List.getD, le, le_length]
+  · simp [byteAt, List.getD, le]
   · unfold readU16
     rw [rd_app_right' _ _ _ _ (by simp [le_length]), rd_app_right' _ _ _ _ (by simp [le_length]),
       rd_app_right' _ _ _ _ (by simp [le_length]), rd_app_left _ _ _ 2 (by simp [le_length])]
     simp only [le_length, List.length_singleton]; exact rd_le 2 _ (by simpa using hd)
-  · simp [byteAt, List.getD, le, le_length]
+  · simp [byteAt, List.getD, le]
 
 /-! ## Non-indexed compact pages -/
 

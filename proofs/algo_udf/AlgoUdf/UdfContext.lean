@@ -182,7 +182,7 @@ theorem rebuild_fail (low : String → String) (l : Lib) (rest : List Lib) (ev :
     (raw : List String) (v : Nat) (c : Caught) (h : ev l = .error c) :
     rebuild low (l :: rest) ev raw v =
       .error ("Failed to load UDF library '" ++ l.name ++ "': " ++ String.ofList (errMsg c true)) := by
-  simp [rebuild, List.findSome?_cons, h]
+  simp [rebuild, h]
 
 /-! ## call_udf_bridge -/
 
