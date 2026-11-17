@@ -105,7 +105,12 @@ impl<'a> Iterator for CommitOp<'a> {
             {
                 let pending = self.runtime.pending.borrow();
                 let estimated = pending.effects_count();
-                if estimated > 0 {
+                // A commit that changed no entity can still have registered a
+                // name, and then it still has a payload to build. Shipped
+                // nothing, the replica's next payload names a label one id
+                // past what the replica has: it is refused and the replica
+                // resyncs in full, and a master replaying its own AOF exits.
+                if estimated > 0 || pending.schema_grew(&self.runtime.graph()) {
                     if self.runtime.build_effects.get() {
                         let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
                         let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
