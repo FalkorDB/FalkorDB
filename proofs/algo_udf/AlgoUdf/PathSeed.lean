@@ -90,7 +90,7 @@ theorem ext_of_simple (g : G) (cfg : Cfg) :
             apply hmid n
             cases ns' with
             | nil => exact absurd rfl hns
-            | cons a t => simp only [List.dropLast_cons₂]; exact List.mem_cons_of_mem _ hn)
+            | cons a t => simp only [List.dropLast_cons_cons]; exact List.mem_cons_of_mem _ hn)
         rw [costSum_cons, ← Nat.add_assoc]
         exact .more hmem hv1 hwr hcost1 hnt (by simp at hl; omega) hsub
 
@@ -99,7 +99,7 @@ theorem nodup_dropLast_last {ns : List Nat} {t : Nat} (hnd : ns.Nodup) (hl : ns.
   intro hm
   have hne : ns ≠ [] := by intro h; subst h; simp at hl
   have hsplit : ns = ns.dropLast ++ [t] := by
-    have h1 := List.getLast?_eq_getLast hne
+    have h1 := List.getLast?_eq_some_getLast hne
     rw [hl] at h1; cases h1
     exact (List.dropLast_concat_getLast hne).symm
   rw [hsplit] at hnd

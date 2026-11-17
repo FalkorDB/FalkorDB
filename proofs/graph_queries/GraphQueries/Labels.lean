@@ -94,7 +94,7 @@ theorem removeLabels_spec (g : G V) (pairs : List (Nat × Nat)) (hc : LabCons g)
     LabCons (removeLabels g pairs) ∧ ∀ p ∈ pairs, p ∉ (removeLabels g pairs).nodeLabels.ents := by
   refine ⟨fun n l => ?_, fun p hp => by simp [removeLabels, hp]⟩
   have h0 := hc n l
-  simp only [LabCons, lm, removeLabels] at h0 ⊢
+  simp only [lm, removeLabels] at h0 ⊢
   rw [lm_mapIdx]
   cases hm : g.labelMs[l]? with
   | none =>

@@ -116,7 +116,7 @@ theorem test_eq_wordAt (s : BitSet) (b : Nat) :
     · simp [hl, and_two_pow_ne_zero]
     · have : s.overflow[b / 64 - 1]? = none := by
         rw [List.getElem?_eq_none_iff]; omega
-      simp [hl, this]
+      simp [hl]
 
 theorem getElem?_resizeZ (l : List Nat) (n j : Nat) (hn : l.length ≤ n) :
     (resizeZ l n)[j]? = if j < l.length then l[j]? else if j < n then some 0 else none := by
@@ -132,7 +132,7 @@ theorem getElem?_resizeZ (l : List Nat) (n j : Nat) (hn : l.length ≤ n) :
     rw [List.getElem?_append]
     by_cases hj : j < l.length
     · simp [hj]
-    · simp only [hj, ite_false, dite_false]
+    · simp only [hj, ite_false]
       rw [List.getElem?_replicate]
       by_cases hj2 : j < n
       · simp [hj2]; omega
@@ -216,7 +216,7 @@ theorem wordAt_clear (s : BitSet) (b n : Nat) :
       · simp only [hn, ite_false]
         by_cases hnb : n = b / 64
         · have : s.overflow[n - 1]? = none := by rw [List.getElem?_eq_none_iff]; omega
-          simp [hnb, this]
+          simp [hnb]
           rw [List.getElem?_eq_none_iff.mpr (by omega)]
           simp
         · simp [hnb]

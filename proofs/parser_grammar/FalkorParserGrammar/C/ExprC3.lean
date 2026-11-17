@@ -11,7 +11,7 @@ variable (o : Oracle)
 
 /-- `oC_RelationshipsPattern` chain inside a pattern comprehension. The graph carries the
 `repeated` flag: set once a relationship alias was already in the pattern (#3289). -/
-inductive GPcChain (F : Nat) : QNode Nat → QG Nat × Bool → PS → QG Nat × Bool → PS → Prop
+inductive GPcChain (F : Nat) : QNode Alias → QG Alias × Bool → PS → QG Alias × Bool → PS → Prop
   | nil {left g s} : GPcChain F left g s g s
   | cons {left g s rr s1 out s'} : GRel o Ext.rust left s rr s1 →
       GPcChain F rr.2 (((g.1.addNode rr.2).2.addRel rr.1).2,

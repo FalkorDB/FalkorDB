@@ -117,7 +117,7 @@ theorem pipeLoad_frame (c : Bytes) (cs : List Bytes) (t : Bytes)
     simpa using List.drop_left (l₁ := le 8 c.length) (l₂ := (c ++ ((cs.map fun c => le 8 c.length ++ c).flatten ++ t)))
   rw [e1, e2, hlen]
   simp [hne]
-  rw [if_neg (by omega), if_neg (by omega)]
+  rw [ite_eq_right (by omega), ite_eq_right (by omega)]
 
 /-- End of stream: the terminator makes the next `load_chunk` fail cleanly. -/
 theorem pipeLoad_end (t : Bytes) : pipeLoad (le 8 0 ++ t) = .err := by

@@ -562,7 +562,7 @@ theorem inListKeys_isSome_iff (items : List Value) :
   cases items with
   | nil => simp
   | cons v vs =>
-    simp only [List.isEmpty_cons, Bool.false_eq_true, if_false, Option.isSome_map, encodeAll_isSome]
+    simp only [List.isEmpty_cons, Bool.false_eq_true, ite_false, Option.isSome_map, encodeAll_isSome]
     simp
 
 theorem inList_isSome_iff (ix : NumericIndex) (items : List Value) :
@@ -579,7 +579,7 @@ theorem inList_agrees (entries : List (Value × Nat))
     id ∈ r ↔ ∃ v, (v, id) ∈ entries ∧ ∃ b ∈ items, cmpPred .eq v b = some true := by
   unfold NumericIndex.inList NumericIndex.inListKeys at hr
   cases hne : items.isEmpty
-  · simp only [hne, Bool.false_eq_true, if_false] at hr
+  · simp only [hne, Bool.false_eq_true, ite_false] at hr
     cases hall : encodeAll items with
     | none => simp [hall] at hr
     | some ks =>
@@ -629,7 +629,7 @@ theorem unionGo_spec (cs : List IndexQuery) : ∀ (attr : Option String) (keys o
       simp only [hm] at h
       by_cases hk : attr.getD k ≠ k
       · simp [hk] at h
-      · simp only [hk, if_false] at h
+      · simp only [hk, ite_false] at h
         cases he : encodeAll (nonNull vs) with
         | none => simp [he] at h
         | some ks1 =>
@@ -676,7 +676,7 @@ theorem union_agrees (entries : List (Value × Nat))
   unfold NumericIndex.union NumericIndex.unionKeys at hr
   by_cases hc : cs.isEmpty = true
   · simp [hc] at hr
-  · simp only [hc, Bool.false_eq_true, if_false] at hr
+  · simp only [hc, Bool.false_eq_true, ite_false] at hr
     cases hg : unionGo none [] cs with
     | none => simp [hg] at hr
     | some keys =>
@@ -893,9 +893,9 @@ theorem addEncoded_spec (ix : NumericIndex) (tuples : EncodedTuples) (e : Nat) :
   unfold NumericIndex.addEncoded
   by_cases h : tIsEmpty ix.tree = true
   · have : ix.tree = [] := by simpa [tIsEmpty] using h
-    simp only [h, if_true, tFromSorted, EncodedTuples.sortDedup]
+    simp only [h, ite_true, tFromSorted, EncodedTuples.sortDedup]
     simp [this, (sortDedup_spec _).2]
-  · simp only [h, if_false, EncodedTuples.sortDedup]
+  · simp only [h, ite_false, EncodedTuples.sortDedup]
     simp [mem_insertBatch, (sortDedup_spec _).2]
 
 /-- Both branches (a bulk build into an empty tree, a merge into a non-empty one) keep the tree
@@ -904,8 +904,8 @@ theorem addEncoded_sorted (ix : NumericIndex) (hs : Sorted ix.tree) (tuples : En
     Sorted (ix.addEncoded tuples).1.tree := by
   unfold NumericIndex.addEncoded
   by_cases h : tIsEmpty ix.tree = true
-  · simp only [h, if_true, tFromSorted]; exact (sortDedup_spec _).1
-  · simp only [h, if_false]; exact sorted_insertBatch _ _ hs
+  · simp only [h, ite_true, tFromSorted]; exact (sortDedup_spec _).1
+  · simp only [h, ite_false]; exact sorted_insertBatch _ _ hs
 
 /-- The tuples a call hands back are its sorted, deduplicated input. -/
 theorem addEncoded_tuples (ix : NumericIndex) (tuples : EncodedTuples) :

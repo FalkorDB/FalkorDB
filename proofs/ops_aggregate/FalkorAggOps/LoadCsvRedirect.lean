@@ -98,7 +98,7 @@ theorem validateU_matches_validateRemote
       by_cases h2 : (dns u.host).any ipForbidden = true
       · simp [h1', h2, throw, throwThe, MonadExceptOf.throw, Except.toOption]
       · have h2' : (dns u.host).any ipForbidden = false := by simpa using h2
-        simp [h1', h2', throw, throwThe, MonadExceptOf.throw]
+        simp [h1', h2']
   · rw [hsc] at hs
     simp [hs, throw, throwThe, MonadExceptOf.throw, bind, Except.bind]
 

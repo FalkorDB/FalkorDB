@@ -57,7 +57,7 @@ theorem inlineErr_spec (u : String → Bool) (msg : String) (r : Except String E
 `repeated`: whether some relationship alias was already in it. Since #3289 a repeat does not stop
 the loop (`repeated.get_or_insert(e)`): the parse goes on, and the caller reports it once the whole
 comprehension has parsed. -/
-def pcChain (o : Oracle) (F : Nat) : Nat → QNode Nat → QG Nat × Bool → P (QG Nat × Bool)
+def pcChain (o : Oracle) (F : Nat) : Nat → QNode Alias → QG Alias × Bool → P (QG Alias × Bool)
   | 0, _, _ => fuelP
   | n + 1, left, g => do
     let c ← peek

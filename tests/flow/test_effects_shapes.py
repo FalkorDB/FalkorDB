@@ -222,15 +222,40 @@ class testEffects_01_Shapes(_EffectsBase):
         self.env.assertEqual(res.nodes_deleted, 1)
         self.wait_for_replica_offset()
 
-        # The primary kept exactly one node, on the recycled id 0.
+        # The primary kept exactly one node. It is on a fresh id, not the freed
+        # 0: a query never reissues an id it freed itself (#3164), because a
+        # row may still hold the old node. So the primary no longer emits the
+        # create/delete/create-of-one-id shape this test was written to hand
+        # the replica; the replica's handling of it stays covered by the id
+        # space unit tests, and what is checked here is that both sides agree.
         self.env.assertEqual(
             m.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set,
-            [[1, "Reborn", 0]])
+            [[1, "Reborn", 1]])
         # And the replica must hold the same. Refusing the recreate discards the
         # whole payload, so the failure here is an empty graph, not a wrong one.
         self.env.assertEqual(
             r.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set,
             m.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set)
+        self.env.assertTrue(graph_eq(m, r))
+
+    def test07b_cancelled_edge_of_an_unregistered_type_leaves_no_id_hole(self):
+        # The edge `:R` is created and cancelled by the DETACH DELETE in the same
+        # segment, so on a fresh graph type R is never registered. The id it
+        # held is now held back for the rest of the query, so `:S` takes the
+        # next id. The replica must still be told about the cancelled id, or it
+        # sees relationship id 1 with no id 0 before it and refuses the payload.
+        fresh = "effects_cancelled_unregistered_type"
+        m = Graph(self.master, fresh)
+        r = Graph(self.replica, fresh)
+
+        res = m.query("CREATE (a)-[:R]->(b) DETACH DELETE a "
+                      "WITH b CREATE (b)-[:S]->(:X)")
+        self.env.assertEqual(res.relationships_created, 1)
+        self.wait_for_replica_offset()
+
+        q = "MATCH ()-[r]->() RETURN type(r), ID(r)"
+        self.env.assertEqual(m.ro_query(q).result_set, [["S", 1]])
+        self.env.assertEqual(r.ro_query(q).result_set, [["S", 1]])
         self.env.assertTrue(graph_eq(m, r))
 
     def test08_everything_still_agrees(self):

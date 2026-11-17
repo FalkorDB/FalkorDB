@@ -56,7 +56,7 @@ theorem redisearchQuery_and (exact : V → Bool) (props : List Nat) (vals : List
     (hn : (props.zip vals).length ≠ 1) (hv : vals.all exact = true) :
     redisearchQuery exact true props vals = some (.and (props.zip vals)) := by
   unfold redisearchQuery
-  rw [if_neg (by simp [hv])]
+  rw [ite_eq_right (by simp [hv])]
   congr 1
   split
   · rename_i k v h; rw [h] at hn; simp at hn

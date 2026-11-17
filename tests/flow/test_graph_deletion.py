@@ -403,7 +403,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
         self.env.assertEqual(res.nodes_created, 11)
 
-        # expecting IDs to be reused
+        # IDs freed by a query are not handed out again by the same query, as
+        # `WITH *` keeps the deleted nodes in scope and a later clause may still
+        # name them (#3164): fresh IDs here...
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
@@ -413,8 +415,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEqual(res.nodes_deleted, 11)
         self.env.assertEqual(res.nodes_created, 11)
-        self.env.assertEqual(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+        self.env.assertEqual(res.result_set, [[i] for i in range(11, 22)])
 
+        # ...and expecting them to be reused by the next query
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
@@ -442,7 +445,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEqual(res.nodes_deleted, 10)
         self.env.assertEqual(res.nodes_created, 10)
-        self.env.assertEqual(res.result_set, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9]])
+        self.env.assertEqual(res.result_set, [[i + 10, i] for i in range(10)])
 
         res = self.graph.query("""
             MATCH (a:A)
@@ -1096,6 +1099,102 @@ class testGraphDeletionFlow(FlowTestsBase):
         for q in ["MATCH (s {n:'s'})-[:A]->()-[:A]->(t) RETURN t.n",
                   "MATCH (s {n:'s'})-[:A|B]->()-[:A|B]->(t) RETURN t.n"]:
             self.env.assertEqual(self.graph.query(q).result_set, [], message=q)
+
+
+    def test_deleted_node_id_is_not_reused_while_a_row_holds_it(self):
+        """#3164: `WITH *` / `WITH a` keep a deleted node in scope; a node
+        created after that must not take its id, or `SET a.x` / a second
+        `DELETE a` would hit the new node. Deleting a deleted node is a no-op,
+        counted once."""
+        self.graph.delete()
+        self.graph.query("CREATE (:N {id: 1}), (:N {id: 2})")
+
+        res = self.graph.query(
+            """MATCH (a:N {id: 1}) DELETE a
+               WITH *
+               CREATE (b:New {v: 1})
+               DELETE a
+               SET a.x = 5
+               RETURN b.v, b.x""")
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.result_set, [[1, None]])
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (n) RETURN labels(n), properties(n) ORDER BY n.id").result_set,
+            [[["N"], {"id": 2}], [["New"], {"v": 1}]])
+
+
+    def test_deleted_id_is_not_reused_in_the_same_query(self):
+        # A node deleted before a WITH used to hand its id to a node created
+        # after it, in the same query. The deleted node's snapshot stayed keyed
+        # by that id and shadowed the live node through every accessor: it read
+        # the dead node's labels and properties, WHERE filtered it out, and
+        # MERGE did not see it and created a duplicate. A query no longer
+        # reuses an id it freed, so the new node gets a fresh one.
+        # https://github.com/FalkorDB/FalkorDB/issues/2876
+        # https://github.com/FalkorDB/FalkorDB/issues/2759
+        def fresh(q):
+            self.graph.delete()
+            self.graph.query(q)
+
+        fresh("CREATE (:A {v:1})")
+        res = self.graph.query("""MATCH (n) DELETE n WITH count(*) AS c
+                                  CREATE (m {v:2}) WITH m
+                                  MATCH (x) RETURN id(x), x.v, labels(x)""")
+        self.env.assertEqual(res.result_set, [[1, 2, []]])
+
+        fresh("CREATE (:A {v:1})")
+        res = self.graph.query("""MATCH (n) DELETE n WITH count(*) AS c
+                                  CREATE (m:B {v:2}) WITH m
+                                  MATCH (x) WHERE x.v = 2 RETURN count(x)""")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        fresh("CREATE (:A {v:1})")
+        res = self.graph.query("""MATCH (n) DELETE n WITH count(*) AS c
+                                  CREATE (m:B) RETURN labels(m), m:B, m:A""")
+        self.env.assertEqual(res.result_set, [[["B"], True, False]])
+
+        fresh("CREATE (:A {v:1})")
+        res = self.graph.query("""MATCH (n) DELETE n WITH count(*) AS c
+                                  CREATE (m {v:2}) SET m.v = 3 RETURN m.v""")
+        self.env.assertEqual(res.result_set, [[3]])
+
+        # MERGE must find the node the CREATE just made, not write a duplicate
+        fresh("CREATE (:L {v:1})")
+        res = self.graph.query("""MATCH (n) DELETE n WITH count(*) AS c
+                                  CREATE (m:L {v:2}) WITH m
+                                  MERGE (z:L {v:2}) RETURN id(z)""")
+        self.env.assertEqual(res.nodes_created, 1)
+        res = self.graph.query("MATCH (z:L {v:2}) RETURN count(z)")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        # a variable still bound to the deleted node keeps naming it: the new
+        # node does not take its id
+        fresh("CREATE ({v:1})")
+        res = self.graph.query("""MATCH (n) DELETE n WITH n AS k
+                                  CREATE (m {v:2}) RETURN id(k), id(m), m.v""")
+        self.env.assertEqual(res.result_set, [[0, 1, 2]])
+
+        # the next query may reuse the freed id
+        res = self.graph.query("CREATE (m {v:3}) RETURN id(m)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        # the id came from a node created and deleted in the same query
+        self.graph.delete()
+        res = self.graph.query("""CREATE (d) DELETE d WITH 1 AS dummy
+                                  CREATE (n:V {id: 1, k1: 2})
+                                  RETURN n.k1, labels(n), properties(n), id(n)""")
+        # `d` took id 0 and freed it; `n` must not be handed it back
+        self.env.assertEqual(res.result_set, [[2, ["V"], {"id": 1, "k1": 2}, 1]])
+
+        # relationships: property, type and endpoints of the new edge
+        fresh("CREATE (:X)-[:R {v:1}]->(:Y), (:P), (:Q)")
+        res = self.graph.query("""MATCH ()-[r]->() DELETE r WITH count(*) AS c
+                                  MATCH (p:P), (q:Q) CREATE (p)-[m:S {v:2}]->(q)
+                                  RETURN m.v, type(m), labels(startNode(m)),
+                                         labels(endNode(m))""")
+        self.env.assertEqual(res.result_set, [[2, "S", ["P"], ["Q"]]])
 
 
 class testGraphBulkDeletion(FlowTestsBase):
