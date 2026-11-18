@@ -20,7 +20,7 @@ computes it, so both families are visible.
 | `excluded` | the child exclusion list (`push_filters_down.rs:181-200`; before #3582 without the write kinds) |
 | `isWriteOp`, `locked` | `is_write` (:86-99) and `holds_write`/`locked` (:213-223, used at :306), #3582 (`Cfg.pr3582`) |
 | `pushAt` | one Filter's routing (`push_filters_down.rs:138-364`): grandchild variable sets (:176-185), Case 1 (:196-201), Case 2 inherited (`inh`, :210-244), augmentation of `Argument` subtrees (:247-257), the `all` test over ids (:264-276) |
-| `childInh` | Case 2's ancestor walk, top-down: below an `Apply`'s right child the left subtree's ids, below its left child nothing, below `Merge` nothing (:212-243) |
+| `childInh` | Case 2's ancestor walk, top-down: below an `Apply`'s right child the left subtree's visible ids (`bv`, `branch_visible_variables` :88-104, #2981), below its left child nothing, below `Merge` nothing (:237-268) |
 | `sweep`, `pushFilters` | the restart loop (:103-370), as a top-down sweep that follows each pushed filter |
 | `Cfg.main` | before #3582: ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs:92-110`), no write barrier |
 | `Cfg.pr3582` | Rust at 7c04fa598 (#3582): ids only, write kinds excluded, siblings of a writing branch locked; the CP split's `!holds_write` guard (:322) is not modelled (no CP split here) |
@@ -240,6 +240,63 @@ def branchOut : Op → Option (List Var)
   | .aggregate keys cnt _ => some (aggNames keys cnt)
   | _ => none
 
+/-- The ids of `xs` that are not ids of `ys` (`HashSet<u32>::difference`). -/
+def idsMinus (xs ys : List Var) : List Var := xs.filter fun v => !ys.any (·.id == v.id)
+
+/-- `branch_visible_variables` (push_filters_down.rs:88-104, #2981): an env-resetting
+operator's outputs; otherwise the ids the operator itself adds (its `get_variables` minus its
+children's) and, recursively, what its children's rows carry. -/
+def bv : Op → List Var
+  | .argument | .unit => []
+  | .project bs _ => bs.map Prod.fst
+  | .aggregate keys cnt _ => aggNames keys cnt
+  | .filter _ c | .commit c => bv c
+  | .unwind v _ c | .allNodeScan v c | .labelScan v _ c | .create v c | .merge v c => idsMinus [v] (gv c) ++ bv c
+  | .condTraverse e fr to _ c => idsMinus [e, fr, to] (gv c) ++ bv c
+  | .hop e fr to _ c => idsMinus [e, fr.v, to.v] (gv c) ++ bv c
+  | .optional vs c => idsMinus vs (gv c) ++ bv c
+  | .apply l r => bv l ++ bv r
+
+/-- Every id `bv` reports is one `get_variables` reports: Case 2 inherits no more than before. -/
+theorem bv_sub_gv : ∀ (op : Op), ∀ v ∈ bv op, v ∈ gv op := by
+  intro op
+  induction op with
+  | argument | unit => simp [bv]
+  | project bs c _ => simp [bv, gv]
+  | aggregate k n c _ => intro x hx; simp only [bv] at hx; simp [gv, hx]
+  | filter p c ih => simpa [bv, gv] using ih
+  | commit c ih => simpa [bv, gv] using ih
+  | unwind v xs c ih | allNodeScan v c ih | labelScan v l c ih | create v c ih | merge v c ih =>
+    intro x hx
+    simp only [bv, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp at h; simp [gv, h]
+    · simp [gv, ih x h]
+  | condTraverse e fr to l c ih =>
+    intro x hx
+    simp only [bv, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp only [gv, List.mem_append]; exact Or.inl h
+    · simp [gv, ih x h]
+  | hop e fr to tr c ih =>
+    intro x hx
+    simp only [bv, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp only [gv, List.mem_append]; exact Or.inl h
+    · simp [gv, ih x h]
+  | optional vs c ih =>
+    intro x hx
+    simp only [bv, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp only [gv, List.mem_append]; exact Or.inl h
+    · simp [gv, ih x h]
+  | apply l r ihl ihr =>
+    intro x hx
+    simp only [bv, List.mem_append] at hx
+    rcases hx with h | h
+    · simp [gv, ihl x h]
+    · simp [gv, ihr x h]
+
 /-- `subtree_contains(…, Argument)` (planner/mod.rs:333). -/
 def hasArg : Op → Bool
   | .argument => true
@@ -332,10 +389,11 @@ def pushAt (cfg : Cfg) (inh : List Var) (p : Expr) (c : Op) : Op :=
   if rs.any id then setKids c ((ks.zip rs).map (fun kb => if kb.2 then .filter p kb.1 else kb.1))
   else .filter p c
 
-/-- Case 2, top-down (:212-243). -/
+/-- Case 2, top-down (:237-268); since #2981 the Apply's left side contributes
+`branch_visible_variables` (`bv`), before it `collect_subtree_variables` (`gv`). -/
 def childInh (op : Op) (i : Nat) (inh : List Var) : List Var :=
   match op with
-  | .apply l _ => if i = 0 then [] else gv l
+  | .apply l _ => if i = 0 then [] else bv l
   | .merge _ _ => []
   | _ => inh
 
@@ -501,11 +559,15 @@ def plan3352 : Op :=
   .project [(nOut, .var nV), (eOut, .var r)]
     (.apply agg3352 (.optional [r, e1] (.filter revoked (.condTraverse e1 r p' RULE .argument))))
 
-/-- The live Rust EXPLAIN: `Optional → Conditional Traverse → Filter → Argument`. -/
-theorem bug3352_plan :
-    pushFilters .main plan3352 =
-      .project [(nOut, .var nV), (eOut, .var r)]
-        (.apply agg3352 (.optional [r, e1] (.condTraverse e1 r p' RULE (.filter revoked .argument)))) := rfl
+/-- **#3352 fixed by #2981.** Before #2981 the live Rust EXPLAIN was `Optional →
+Conditional Traverse → Filter → Argument` (Case 2 inherited `gv agg3352`, which walks
+through the `Aggregate`). Case 2 now inherits `branch_visible_variables` (`bv`), the
+`Aggregate`'s outputs `p, n` only, so the filter on `r` stays above the traverse. -/
+theorem fixed3352_plan : pushFilters .main plan3352 = plan3352 := rfl
+
+/-- What Case 2 inherits now: the outputs of the `Aggregate`, no pre-WITH id. -/
+theorem fixed3352_inherits_outputs :
+    bv agg3352 = [p', nV] ∧ routes .main revoked (bv agg3352) = false := ⟨rfl, rfl⟩
 
 /-- Why: what the routing test sees at the `Argument` contains id 2 (the
 pre-WITH `_anon` edge), while by `(id, scope)` only `p, n` of scope 1 arrive
@@ -519,18 +581,11 @@ theorem bug3352_routes_unbound :
   have := h r (by simp [revoked, Expr.vars])
   simp [aggNames, gv, r, p', nV] at this
 
-/-- **#3352.** Before: `n = 1, e = 1` (the revoked rule; C: `e = 123`). After:
-`n = 1, e = null` (Rust main, live). The graph is unchanged, so this is a
-row difference: `pushFilters .main` is not even `RowSound`. -/
-theorem bug3352_slot_collision_drops_match :
+/-- **#3352.** `n = 1, e = 1` (the revoked rule; C: `e = 123`). Before #2981 Rust
+returned `n = 1, e = null`; now the rows are kept. -/
+theorem fixed3352_rows_kept :
     run [] plan3352 g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) ∧
-    run [] (pushFilters .main plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) ∧
-    ¬ RowSound (pushFilters .main) := by
-  refine ⟨rfl, rfl, fun h => ?_⟩
-  have := h plan3352 g3352
-  rw [show run [] (pushFilters .main plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) from rfl,
-      show run [] plan3352 g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) from rfl] at this
-  simp [Same, Except.map] at this
+    run [] (pushFilters .main plan3352) g3352 = run [] plan3352 g3352 := ⟨rfl, rfl⟩
 
 /-- Routing by `(id, scope)` keeps the filter above the traverse. -/
 theorem bug3352_fixed :
@@ -541,7 +596,8 @@ theorem bug3352_fixed :
 
 The PR keeps main's id-only routing (`Cfg.pr3582`) and adds the write lock.
 #748 and #997 are fixed: the filter lands on the write-bearing branch's output,
-never on the rows that feed it. #3352 is untouched (a routing bug, no write). -/
+never on the rows that feed it. #3352 is a routing bug with no write, untouched by the lock;
+#2981 fixes it (`pr3582_3352_fixed`). -/
 
 /-- At an `Apply` whose right branch writes, the left branch is never filtered:
 the Filter either stays or goes onto the right branch only. -/
@@ -586,17 +642,15 @@ theorem pr3582_controls :
     run [] (pushFilters .pr3582 plan748star) g0 = .ok ([], ⟨1, [], []⟩) ∧
     run [] (pushFilters .pr3582 (plan997With caseX)) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
 
-/-- #3352 is still open with #3582 (no write below, so the lock never fires):
-the push-down is still not `RowSound`. -/
-theorem pr3582_3352_open :
+/-- #3352 under #3582 and #2981 (the Rust of this branch): no write below, so the lock never
+fires, and Case 2 inherits `branch_visible_variables`, so the filter on `r` stays above the
+traverse and the row is kept. (On main before #2981 this was `pr3582_3352_open`: `e = null`,
+not `RowSound`.) -/
+theorem pr3582_3352_fixed :
     pushFilters .pr3582 plan3352 = pushFilters .main plan3352 ∧
-    run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) ∧
-    ¬ RowSound (pushFilters .pr3582) := by
-  refine ⟨rfl, rfl, fun h => ?_⟩
-  have := h plan3352 g3352
-  rw [show run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) from rfl,
-      show run [] plan3352 g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) from rfl] at this
-  simp [Same, Except.map] at this
+    pushFilters .pr3582 plan3352 = plan3352 ∧
+    run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) :=
+  ⟨rfl, rfl, rfl⟩
 
 /-! ## A general fact the fix can build on -/
 
