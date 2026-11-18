@@ -153,7 +153,7 @@ pub fn rdb_load_graph(
             // reloaded (#2457).
             let mut attrs_name = AttrNameMap::default();
             for name in &schema.attribute_names {
-                attrs_name.insert(name.clone());
+                attrs_name.insert(name);
             }
 
             let pg = PendingGraph {
@@ -242,7 +242,7 @@ pub fn rdb_load_graph(
     // One dictionary, shared by both stores — see the multi-key path above.
     let mut attrs_name = AttrNameMap::default();
     for name in &schema.attribute_names {
-        attrs_name.insert(name.clone());
+        attrs_name.insert(name);
     }
 
     let mut deleted_nodes = RoaringTreemap::new();
@@ -514,7 +514,7 @@ fn load_graph_from_reader(
     // One dictionary, shared by both stores — see the other decode paths above.
     let mut attrs_name = AttrNameMap::default();
     for name in &schema.attribute_names {
-        attrs_name.insert(name.clone());
+        attrs_name.insert(name);
     }
 
     let mut deleted_nodes = RoaringTreemap::new();

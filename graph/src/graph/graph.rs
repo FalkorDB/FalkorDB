@@ -105,7 +105,7 @@ use crate::{
             versioned_matrix::{self, VersionedMatrix},
         },
         id_space::{IdSpace, IdSpaceError},
-        schema_hash::{LabelChain, TypeChain, schema_hash},
+        schema::{NameMap, Schema},
     },
     index::{
         Field,
@@ -457,16 +457,9 @@ pub struct Graph {
     /// and it has no ceiling, where the previous `(src << 32) | dst` packing
     /// refused any node id past 2^32.
     edge_endpoints: Arc<EndpointIndex>,
-    /// The graph's one attribute-name dictionary: name → id and id → name, shared by
-    /// both stores below so an id means the same attribute everywhere it appears — in a
-    /// span, the RDB, a `GRAPH.EFFECT`, or a compact reply.
-    ///
-    /// Deliberately *not* per store. Two dictionaries numbered the same name
-    /// differently for nodes and relationships, and because effects put a bare id on
-    /// the wire, an RDB-seeded replica resolved it against different numbering and wrote
-    /// to the wrong attribute (#2457). C has the same shape: one `attributes` array on
-    /// `GraphContext`, two `DataBlock`s.
-    attrs_name: AttrNameMap,
+    /// The label, relationship-type and property-key names. The property keys are one
+    /// dictionary shared by both stores below (see [`Schema::property_keys`]).
+    schema: Schema,
     /// Node property storage
     node_attrs: AttributeStore,
     /// Relationship property storage
@@ -475,23 +468,6 @@ pub struct Graph {
     node_indexer: Indexer,
     /// Index manager for edge property indexes
     edge_indexer: Indexer,
-    /// Label names (ID → name mapping)
-    node_labels: Vec<Arc<String>>,
-    /// Label name → ID, the reverse of `node_labels`.
-    ///
-    /// A label test is a per-row operation (`n:Person` for every row of a scan),
-    /// so resolving the name must not walk the whole schema: with 500 labels
-    /// registered, `MATCH (n) WHERE n:Person RETURN count(n)` over 10k nodes
-    /// measured 2.1x the same query on a one-label schema, all of it in the
-    /// walk. Maintained only by `intern_label`, so it cannot drift.
-    node_labels_index: FxHashMap<String, LabelId>,
-    /// Relationship type names (ID → name mapping)
-    relationship_types: Vec<Arc<String>>,
-    /// The schema-hash chain over `node_labels`, extended by `intern_label`.
-    label_chain: LabelChain,
-    /// The schema-hash chain over `relationship_types`, extended by
-    /// `register_relationship_type`.
-    type_chain: TypeChain,
     /// LRU cache for query plans
     cache: Arc<Mutex<LruCache<String, Arc<PlanTree>>>>,
     /// Graph constraints (unique, mandatory)
@@ -899,16 +875,11 @@ impl Graph {
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Arc::new(EndpointIndex::default()),
-            attrs_name: AttrNameMap::default(),
+            schema: Schema::default(),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
-            node_labels: Vec::new(),
-            node_labels_index: FxHashMap::default(),
-            relationship_types: Vec::new(),
-            label_chain: LabelChain::default(),
-            type_chain: TypeChain::default(),
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
@@ -1010,22 +981,17 @@ impl Graph {
             labels_matices,
             relationship_matrices,
             edge_endpoints: Arc::new(edge_endpoints),
-            attrs_name,
+            // The lookups and the hash chains are rebuilt from the lists: the RDB
+            // carries neither.
+            schema: Schema {
+                labels: NameMap::from_names(node_labels),
+                relationship_types: NameMap::from_names(relationship_types),
+                property_keys: attrs_name,
+            },
             node_attrs,
             relationship_attrs,
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
-            node_labels_index: node_labels
-                .iter()
-                .enumerate()
-                .map(|(i, l)| (l.as_str().to_string(), LabelId(i)))
-                .collect(),
-            // Rebuilt from the lists, as their writers would have built them: the RDB
-            // carries no hash.
-            label_chain: LabelChain::of(node_labels.iter().map(|l| l.as_str())),
-            type_chain: TypeChain::of(relationship_types.iter().map(|t| t.as_str())),
-            node_labels,
-            relationship_types,
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
@@ -1064,7 +1030,7 @@ impl Graph {
         self.resize_node_matrices();
         let rc = self.relationship_cap;
         self.relationship_type_matrix
-            .resize(rc, self.relationship_types.len() as u64);
+            .resize(rc, self.schema.relationship_types.len() as u64);
 
         // Rebuild relationship_type_matrix and tensor backward matrices
         for (type_idx, tensor) in self.relationship_matrices.iter_mut().enumerate() {
@@ -1103,8 +1069,6 @@ impl Graph {
 
     #[must_use]
     pub fn new_version(&self) -> Self {
-        // One dictionary clone per version instead of the two the split tables cost.
-        let attrs_name = self.attrs_name.clone();
         let node_attrs = self.node_attrs.new_version();
         let relationship_attrs = self.relationship_attrs.new_version();
 
@@ -1135,16 +1099,12 @@ impl Graph {
                 .collect(),
             relationship_matrices,
             edge_endpoints: self.edge_endpoints.clone(),
-            attrs_name,
+            // One property-key dictionary per version, not the two the split tables cost.
+            schema: self.schema.clone(),
             node_attrs,
             relationship_attrs,
             node_indexer: self.node_indexer.clone(),
             edge_indexer: self.edge_indexer.clone(),
-            node_labels: self.node_labels.clone(),
-            node_labels_index: self.node_labels_index.clone(),
-            relationship_types: self.relationship_types.clone(),
-            label_chain: self.label_chain,
-            type_chain: self.type_chain,
             cache: self.cache.clone(),
             constraints: self.constraints.clone(),
             version: self.version + 1,
@@ -1218,7 +1178,7 @@ impl Graph {
     /// became the same table twice.
     #[must_use]
     pub const fn property_key_count(&self) -> usize {
-        self.attrs_name.len()
+        self.schema.property_keys.len()
     }
 
     #[must_use]
@@ -1228,12 +1188,12 @@ impl Graph {
 
     #[must_use]
     pub const fn labels_count(&self) -> usize {
-        self.node_labels.len()
+        self.schema.labels.len()
     }
 
     #[must_use]
     pub fn get_labels(&self) -> &[Arc<String>] {
-        &self.node_labels
+        self.schema.labels.names()
     }
 
     #[must_use]
@@ -1241,12 +1201,12 @@ impl Graph {
         &self,
         id: LabelId,
     ) -> Arc<String> {
-        self.node_labels[id.0].clone()
+        self.schema.labels[id.0].clone()
     }
 
     #[must_use]
     pub fn get_types(&self) -> &[Arc<String>] {
-        &self.relationship_types
+        self.schema.relationship_types.names()
     }
 
     #[must_use]
@@ -1254,7 +1214,7 @@ impl Graph {
         &self,
         id: TypeId,
     ) -> Option<Arc<String>> {
-        self.relationship_types.get(id.0).cloned()
+        self.schema.relationship_types.get(id.0).cloned()
     }
 
     /// The graph's attribute names in id order; position is the id.
@@ -1263,7 +1223,13 @@ impl Graph {
     /// relationship reply path. With one dictionary it is a plain iteration and the
     /// per-call `HashSet` is gone.
     pub fn get_attrs(&self) -> impl Iterator<Item = &Arc<String>> + '_ {
-        self.attrs_name.iter()
+        self.schema.property_keys.iter()
+    }
+
+    /// This version's label, relationship-type and property-key names.
+    #[must_use]
+    pub const fn schema(&self) -> &Schema {
+        &self.schema
     }
 
     /// The schema hash of this version: one value for [`Self::get_labels`],
@@ -1271,24 +1237,18 @@ impl Graph {
     /// [`crate::graph::schema_hash`].
     #[must_use]
     pub const fn schema_hash(&self) -> u64 {
-        schema_hash(self.label_chain, self.type_chain, self.attrs_name.chain())
+        self.schema.hash()
     }
 
-    /// Register `label`, or return the id it already has. The only writer of
-    /// `node_labels`, `node_labels_index` and `label_chain`, so the three stay in step.
+    /// Register `label`, or return the id it already has.
     fn intern_label(
         &mut self,
         label: &Arc<String>,
     ) -> LabelId {
-        if let Some(&id) = self.node_labels_index.get(label.as_str()) {
-            return id;
-        }
-        let id = LabelId(self.node_labels.len());
-        self.label_chain.push(label);
-        self.node_labels.push(label.clone());
-        self.node_labels_index
-            .insert(label.as_str().to_string(), id);
-        id
+        self.schema
+            .labels
+            .get_or_insert(label)
+            .expect("label ids never run out")
     }
 
     pub fn get_label_id_mut(
@@ -1315,17 +1275,14 @@ impl Graph {
         &self,
         label: &str,
     ) -> Option<LabelId> {
-        self.node_labels_index.get(label).copied()
+        self.schema.labels.id_of(label)
     }
 
     pub fn get_type_id(
         &self,
         relationship_type: &str,
     ) -> Option<TypeId> {
-        self.relationship_types
-            .iter()
-            .position(|t| t.as_str() == relationship_type)
-            .map(TypeId)
+        self.schema.relationship_types.id_of(relationship_type)
     }
 
     /// Check if a node has a specific label.
@@ -1382,16 +1339,11 @@ impl Graph {
         &mut self,
         relationship_type: &str,
     ) -> TypeId {
-        if let Some(pos) = self
-            .relationship_types
-            .iter()
-            .position(|t| t.as_str() == relationship_type)
-            .map(TypeId)
-        {
-            return pos;
+        if let Some(id) = self.get_type_id(relationship_type) {
+            return id;
         }
 
-        self.register_relationship_type(Arc::new(relationship_type.to_string()))
+        self.register_relationship_type(&Arc::new(relationship_type.to_string()))
     }
 
     /// Append a new relationship type: its name, its tensor, and the extra
@@ -1400,17 +1352,25 @@ impl Graph {
     /// registered with no edge (a constraint, a replica's `ADD_SCHEMA`) used to
     /// leave the matrix a column short, and every later edge delete built a
     /// removal mask the matrix refused, keeping the deleted edge's type (#3244).
+    ///
+    /// A type already registered gets its id back and nothing else, so its tensor
+    /// is never displaced.
     fn register_relationship_type(
         &mut self,
-        relationship_type: Arc<String>,
+        relationship_type: &Arc<String>,
     ) -> TypeId {
-        self.type_chain.push(&relationship_type);
-        self.relationship_types.push(relationship_type);
-        let id = self.relationship_types.len() - 1;
-        self.relationship_matrices
-            .insert(id, Tensor::new(self.node_cap, self.node_cap));
-        self.resize();
-        TypeId(id)
+        let known = self.schema.relationship_types.len();
+        let id = self
+            .schema
+            .relationship_types
+            .get_or_insert(relationship_type)
+            .expect("relationship type ids never run out");
+        if self.schema.relationship_types.len() > known {
+            self.relationship_matrices
+                .insert(id.0, Tensor::new(self.node_cap, self.node_cap));
+            self.resize();
+        }
+        id
     }
 
     pub fn get_plan(
@@ -1509,15 +1469,10 @@ impl Graph {
         &mut self,
         relationship_type: &Arc<String>,
     ) -> &mut Tensor {
-        if !self.relationship_types.contains(relationship_type) {
-            self.register_relationship_type(relationship_type.clone());
-        }
-
-        self.relationship_types
-            .iter()
-            .position(|l| l.as_str() == relationship_type.as_str())
-            .map(|i| &mut self.relationship_matrices[i])
-            .expect("relationship type was just inserted")
+        let id = self
+            .get_type_id(relationship_type)
+            .unwrap_or_else(|| self.register_relationship_type(relationship_type));
+        &mut self.relationship_matrices[id.0]
     }
 
     #[must_use]
@@ -1525,14 +1480,8 @@ impl Graph {
         &self,
         relationship_type: &Arc<String>,
     ) -> Option<&Tensor> {
-        if !self.relationship_types.contains(relationship_type) {
-            return None;
-        }
-
-        self.relationship_types
-            .iter()
-            .position(|l| l.as_str() == relationship_type.as_str())
-            .map(|i| &self.relationship_matrices[i])
+        self.get_type_id(relationship_type)
+            .map(|id| &self.relationship_matrices[id.0])
     }
 
     #[must_use]
@@ -1540,12 +1489,12 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.attrs_name.get_index_of(attr)
+        self.schema.property_keys.get_index_of(attr)
     }
 
     #[must_use]
     pub const fn node_attribute_count(&self) -> usize {
-        self.attrs_name.len()
+        self.schema.property_keys.len()
     }
 
     #[must_use]
@@ -1553,7 +1502,7 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.attrs_name.get_index_of(attr)
+        self.schema.property_keys.get_index_of(attr)
     }
 
     /// The id for `attr`, or `None` if this graph has never seen the name.
@@ -1566,7 +1515,7 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.attrs_name.get_index_of(attr)
+        self.schema.property_keys.get_index_of(attr)
     }
 
     /// Hand a reserved node id back, unused.
@@ -1883,13 +1832,14 @@ impl Graph {
 
         if self.node_indexer.has_indices() {
             for &label_id in label_ids {
-                let Some(label) = self.node_labels.get(label_id as usize) else {
+                let Some(label) = self.schema.labels.get(label_id as usize) else {
                     continue;
                 };
                 // Once per (label, attribute) for the whole record, rather than
                 // once per (node, label, attribute).
                 let indexed = attr_ids.iter().any(|&attr_id| {
-                    self.attrs_name
+                    self.schema
+                        .property_keys
                         .get(attr_id as usize)
                         .is_some_and(|key| self.node_indexer.has_indexed_attr(label, key))
                 });
@@ -1917,9 +1867,9 @@ impl Graph {
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
                 for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
-                    let label = &self.node_labels[label_id as usize];
+                    let label = &self.schema.labels[label_id as usize];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.schema.property_keys.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -1958,9 +1908,9 @@ impl Graph {
                     continue;
                 };
                 for &label_id in label_ids {
-                    let label = &self.node_labels[label_id as usize];
+                    let label = &self.schema.labels[label_id as usize];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.schema.property_keys.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -2001,9 +1951,9 @@ impl Graph {
         if self.node_indexer.has_indices() {
             for (id, attrs) in data.iter() {
                 for label_id in label_ids {
-                    let label = &self.node_labels[label_id.0];
+                    let label = &self.schema.labels[label_id.0];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.schema.property_keys.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -2024,7 +1974,7 @@ impl Graph {
         &mut self,
         attr: &Arc<String>,
     ) -> u16 {
-        self.attrs_name.get_or_create(attr)
+        self.schema.property_keys.get_or_create(attr)
     }
 
     /// Resolve a node attribute name to its index, if it exists.
@@ -2033,7 +1983,10 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<u16> {
-        self.attrs_name.get_index_of(attr).map(|i| i as u16)
+        self.schema
+            .property_keys
+            .get_index_of(attr)
+            .map(|i| i as u16)
     }
 
     /// Node attribute name for an index.
@@ -2042,7 +1995,7 @@ impl Graph {
         &self,
         attr_id: u16,
     ) -> Option<Arc<String>> {
-        self.attrs_name.get(attr_id as usize).cloned()
+        self.schema.property_keys.get(attr_id as usize).cloned()
     }
 
     /// Resolve a relationship attribute name to its index, if it exists.
@@ -2051,7 +2004,10 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<u16> {
-        self.attrs_name.get_index_of(attr).map(|i| i as u16)
+        self.schema
+            .property_keys
+            .get_index_of(attr)
+            .map(|i| i as u16)
     }
 
     /// Relationship attribute name for an index.
@@ -2060,7 +2016,7 @@ impl Graph {
         &self,
         attr_id: u16,
     ) -> Option<Arc<String>> {
-        self.attrs_name.get(attr_id as usize).cloned()
+        self.schema.property_keys.get(attr_id as usize).cloned()
     }
 
     /// Import pre-resolved relationship attributes directly into the cache.
@@ -2093,7 +2049,7 @@ impl Graph {
         &mut self,
         attr: &Arc<String>,
     ) -> u16 {
-        self.attrs_name.get_or_create(attr)
+        self.schema.property_keys.get_or_create(attr)
     }
 
     pub fn import_relationship_attrs(
@@ -2131,10 +2087,10 @@ impl Graph {
         if !self.edge_indexer.has_indices() {
             return;
         }
-        let type_name = &self.relationship_types[type_id.0];
+        let type_name = &self.schema.relationship_types[type_id.0];
         for (id, attrs) in attrs {
             for (attr_id, _) in attrs {
-                let Some(key) = self.attrs_name.get(*attr_id as usize) else {
+                let Some(key) = self.schema.property_keys.get(*attr_id as usize) else {
                     continue;
                 };
                 if self.edge_indexer.has_indexed_attr(type_name, key) {
@@ -2157,9 +2113,9 @@ impl Graph {
         }
         for (id, attrs) in attrs {
             let type_id = self.get_relationship_type_id(RelationshipId(*id));
-            let type_name = &self.relationship_types[type_id.0];
+            let type_name = &self.schema.relationship_types[type_id.0];
             for (attr_id, _) in attrs {
-                let Some(key) = self.attrs_name.get(*attr_id as usize) else {
+                let Some(key) = self.schema.property_keys.get(*attr_id as usize) else {
                     continue;
                 };
                 if self.edge_indexer.has_indexed_attr(type_name, key) {
@@ -2196,18 +2152,19 @@ impl Graph {
 
         // Which labels are indexed, decided once per label rather than once per
         // pair. Collected before the mutations below so the immutable borrows
-        // of `node_labels` and `node_indexer` end first.
+        // of `schema` and `node_indexer` end first.
         let indexed: Vec<u64> = label_ids
             .iter()
             .copied()
             .filter(|&lid| {
-                self.node_labels
+                self.schema
+                    .labels
                     .get(lid as usize)
                     .is_some_and(|label| self.node_indexer.has_index(label))
             })
             .collect();
         for lid in indexed {
-            let label = self.node_labels[lid as usize].clone();
+            let label = self.schema.labels[lid as usize].clone();
             for &id in ids {
                 // The node has to hold an attribute this label *indexes*, not
                 // merely some attribute.
@@ -2282,7 +2239,7 @@ impl Graph {
         for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             by_label[label_id as usize].push(id);
 
-            let label = &self.node_labels[label_id as usize];
+            let label = &self.schema.labels[label_id as usize];
             if self.node_indexer.has_index(label) && self.node_attrs.has_attributes(id) {
                 index_add_docs.entry(label_id).or_default().insert(id);
             }
@@ -2323,7 +2280,7 @@ impl Graph {
         for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             self.node_labels_matrix.remove(id, label_id);
             self.labels_matices[label_id as usize].remove(id, id);
-            let label = &self.node_labels[label_id as usize];
+            let label = &self.schema.labels[label_id as usize];
             if self.node_indexer.has_index(label) {
                 remove_docs.entry(label_id).or_default().insert(id);
             }
@@ -2413,7 +2370,7 @@ impl Graph {
         {
             let lid = label_id as usize;
 
-            let label = &self.node_labels[lid];
+            let label = &self.schema.labels[lid];
             if self.node_indexer.has_index(label) {
                 for attr in self.attr_names(&self.node_attrs, node_id) {
                     if self.node_indexer.has_indexed_attr(label, &attr) {
@@ -2691,7 +2648,7 @@ impl Graph {
         id: NodeId,
     ) -> impl Iterator<Item = Arc<String>> {
         self.get_node_label_ids(id)
-            .map(move |label_id| self.node_labels[label_id.0].clone())
+            .map(move |label_id| self.schema.labels[label_id.0].clone())
     }
 
     #[must_use]
@@ -2792,11 +2749,7 @@ impl Graph {
         }
 
         self.get_relationship_matrix_mut(type_name);
-        let type_idx = self
-            .relationship_types
-            .iter()
-            .position(|t| t.as_str() == type_name.as_str())
-            .unwrap();
+        let type_idx = self.get_type_id(type_name).unwrap().0;
 
         self.resize();
 
@@ -3068,7 +3021,7 @@ impl Graph {
             // Stage index document removals for indexed relationship types.
             if self
                 .edge_indexer
-                .has_index(&self.relationship_types[type_idx])
+                .has_index(&self.schema.relationship_types[type_idx])
             {
                 let docs = index_remove_edge_docs.entry(type_id).or_default();
                 for &(edge_id, src, dst) in type_rels {
@@ -3093,8 +3046,10 @@ impl Graph {
 
         // Remove every deleted edge from relationship_type_matrix in one masked op.
         if !tm_rows.is_empty() {
-            let mut type_mask =
-                Matrix::<bool>::new(self.relationship_cap, self.relationship_types.len() as u64);
+            let mut type_mask = Matrix::<bool>::new(
+                self.relationship_cap,
+                self.schema.relationship_types.len() as u64,
+            );
             type_mask.build(&tm_rows, &tm_cols);
             self.relationship_type_matrix.remove_mask(&type_mask);
         }
@@ -3203,12 +3158,14 @@ impl Graph {
             let type_id = type_idx as u64;
             let tm_rows: Vec<u64> = rels.iter().map(|&(id, _, _)| id).collect();
             let tm_cols: Vec<u64> = vec![type_id; rels.len()];
-            let mut type_mask =
-                Matrix::<bool>::new(self.relationship_cap, self.relationship_types.len() as u64);
+            let mut type_mask = Matrix::<bool>::new(
+                self.relationship_cap,
+                self.schema.relationship_types.len() as u64,
+            );
             type_mask.build(&tm_rows, &tm_cols);
 
             let del_keys: RoaringTreemap = rels.iter().map(|&(id, _, _)| id).collect();
-            let type_name = &self.relationship_types[type_idx];
+            let type_name = &self.schema.relationship_types[type_idx];
             let is_indexed = self.edge_indexer.has_index(type_name);
             for &(edge_id, src, dst) in &rels {
                 all_implicit.push(DeletedEdge {
@@ -3325,7 +3282,7 @@ impl Graph {
         types: &[Arc<String>],
     ) -> impl Iterator<Item = RelationshipId> + use<> {
         let iters: Vec<_> = if types.is_empty() {
-            &self.relationship_types
+            self.schema.relationship_types.names()
         } else {
             types
         }
@@ -3587,8 +3544,10 @@ impl Graph {
     }
 
     fn resize_relationship_matrices(&mut self) {
-        self.relationship_type_matrix
-            .resize(self.relationship_cap, self.relationship_types.len() as u64);
+        self.relationship_type_matrix.resize(
+            self.relationship_cap,
+            self.schema.relationship_types.len() as u64,
+        );
     }
 
     fn resize(&mut self) {
@@ -3607,9 +3566,11 @@ impl Graph {
             self.resize_relationship_matrices();
         }
 
-        if self.relationship_types.len() as u64 > self.relationship_type_matrix.ncols() {
-            self.relationship_type_matrix
-                .resize(self.relationship_cap, self.relationship_types.len() as u64);
+        if self.schema.relationship_types.len() as u64 > self.relationship_type_matrix.ncols() {
+            self.relationship_type_matrix.resize(
+                self.relationship_cap,
+                self.schema.relationship_types.len() as u64,
+            );
         }
     }
 
@@ -3627,7 +3588,7 @@ impl Graph {
         key: u64,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        let idx = self.attrs_name.get_index_of(attr)? as u16;
+        let idx = self.schema.property_keys.get_index_of(attr)? as u16;
         store.get_attr_by_idx(key, idx)
     }
 
@@ -3639,7 +3600,7 @@ impl Graph {
     ) -> impl Iterator<Item = Arc<String>> + 'a {
         store
             .get_attr_ids(key)
-            .filter_map(move |id| self.attrs_name.get(id as usize).cloned())
+            .filter_map(move |id| self.schema.property_keys.get(id as usize).cloned())
     }
 
     /// Name/value pairs for an entity in `store`, in one storage pass.
@@ -3651,7 +3612,10 @@ impl Graph {
         store
             .get_all_attrs_by_id(key)
             .filter_map(move |(id, value)| {
-                self.attrs_name.get(id as usize).map(|n| (n.clone(), value))
+                self.schema
+                    .property_keys
+                    .get(id as usize)
+                    .map(|n| (n.clone(), value))
             })
     }
 
@@ -4027,7 +3991,7 @@ impl Graph {
 
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
-            let name = &self.relationship_types[type_id as usize];
+            let name = &self.schema.relationship_types[type_id as usize];
             let fields = redisearch_fields(indexer.get_fields(name));
             if fields.is_empty() {
                 // Every field is served natively. Skipping here also skips the endpoint
@@ -4083,7 +4047,7 @@ impl Graph {
         // `src/index/index_edge.c`.
         let mut remove: HashMap<Arc<String>, HashMap<u64, (u64, u64)>> = HashMap::new();
         for (type_id, edges) in remove_edge_docs.drain() {
-            let name = &self.relationship_types[type_id as usize];
+            let name = &self.schema.relationship_types[type_id as usize];
             remove.insert(name.clone(), edges.into_iter().collect());
         }
 
@@ -4106,7 +4070,11 @@ impl Graph {
         }
 
         let (indexer, names, attr_store) = match kind {
-            IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
+            IndexKind::Node => (
+                &self.node_indexer,
+                self.schema.labels.names(),
+                &self.node_attrs,
+            ),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
         };
 
@@ -5114,7 +5082,7 @@ impl Graph {
         let mut seen = vec![false; self.node_cap() as usize];
         let mut total_labeled: u64 = 0;
 
-        for (label_idx, label_name) in self.node_labels.iter().enumerate() {
+        for (label_idx, label_name) in self.schema.labels.iter().enumerate() {
             let label_matrix = &self.labels_matices[label_idx];
             let total_for_label = label_matrix.nvals();
             if total_for_label == 0 {
@@ -5179,7 +5147,7 @@ impl Graph {
 
         // --- edge attributes by type (sampling) ---
         let mut edge_attr_by_type: Vec<(Arc<String>, usize)> = Vec::new();
-        for (type_idx, type_name) in self.relationship_types.iter().enumerate() {
+        for (type_idx, type_name) in self.schema.relationship_types.iter().enumerate() {
             let tensor = &self.relationship_matrices[type_idx];
             let total_for_type = tensor.edge_count();
             if total_for_type == 0 {
@@ -5292,13 +5260,13 @@ impl Graph {
     /// Get node attribute names.
     #[must_use]
     pub fn get_node_attribute_names(&self) -> Vec<Arc<String>> {
-        self.attrs_name.iter().cloned().collect()
+        self.schema.property_keys.iter().cloned().collect()
     }
 
     /// Get relationship attribute names.
     #[must_use]
     pub fn get_relationship_attribute_names(&self) -> Vec<Arc<String>> {
-        self.attrs_name.iter().cloned().collect()
+        self.schema.property_keys.iter().cloned().collect()
     }
 
     /// Register a node attribute name (get-or-create). Used by effect
@@ -5308,8 +5276,8 @@ impl Graph {
         name: &str,
     ) {
         let arc = Arc::new(name.to_string());
-        if self.attrs_name.get_index_of(&arc).is_none() {
-            self.attrs_name.insert(arc);
+        if self.schema.property_keys.get_index_of(&arc).is_none() {
+            self.schema.property_keys.insert(&arc);
         }
     }
 
@@ -5323,7 +5291,9 @@ impl Graph {
         // are kept because the effects wire still carries an ATTR_NODE/ATTR_REL
         // discriminator, which is vestigial from here on and is removed with the
         // `EFFECTS_VERSION` bump in #2419.
-        self.attrs_name.insert(Arc::new(name.to_string()));
+        self.schema
+            .property_keys
+            .insert(&Arc::new(name.to_string()));
     }
 
     /// The graph's attribute names, in id order — index *is* the id.
@@ -5332,7 +5302,7 @@ impl Graph {
     /// simply that dictionary's contents, and the RDB's flat table is the same list.
     #[must_use]
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
-        self.attrs_name.iter().cloned().collect()
+        self.schema.property_keys.iter().cloned().collect()
     }
 
     /// [`Self::indexer_prepare`] of the first `Building` column. For tests of one column.
@@ -6322,7 +6292,7 @@ mod restore_tests {
 
         let mut attrs = AttrNameMap::default();
         for name in g.get_attrs() {
-            attrs.insert(name.clone());
+            attrs.insert(name);
         }
         let restored = Graph::restore(
             "schema_hash",
@@ -6346,5 +6316,20 @@ mod restore_tests {
             AttributeStore::new(),
         );
         assert_eq!(restored.schema_hash(), g.schema_hash());
+    }
+
+    /// Registering a type that is already there hands its id back and adds no tensor,
+    /// so no type's edges move to another type's id.
+    #[test]
+    fn registering_a_known_type_keeps_every_tensor_in_place() {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "register_twice");
+        let r = Arc::new("R".to_string());
+        let s = Arc::new("S".to_string());
+        assert_eq!(g.register_relationship_type(&r), TypeId(0));
+        assert_eq!(g.register_relationship_type(&s), TypeId(1));
+        assert_eq!(g.register_relationship_type(&r), TypeId(0));
+        assert_eq!(g.get_types().len(), 2);
+        assert_eq!(g.relationship_matrices.len(), 2);
     }
 }

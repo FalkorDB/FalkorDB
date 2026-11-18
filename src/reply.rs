@@ -655,20 +655,17 @@ fn reply_schema(
     if current {
         return;
     }
+    let schema = graph.schema();
     for (key, names) in [
-        ("labels", graph.get_labels()),
-        ("relationshipTypes", graph.get_types()),
+        ("labels", schema.labels.names()),
+        ("relationshipTypes", schema.relationship_types.names()),
+        ("propertyKeys", schema.property_keys.names()),
     ] {
         reply_with_str(ctx, key);
         raw::reply_with_array(ctx.ctx, names.len() as _);
         for name in names {
             reply_with_str(ctx, name);
         }
-    }
-    reply_with_str(ctx, "propertyKeys");
-    raw::reply_with_array(ctx.ctx, graph.property_key_count() as _);
-    for name in graph.get_attrs() {
-        reply_with_str(ctx, name);
     }
 }
 

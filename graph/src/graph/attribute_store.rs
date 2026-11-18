@@ -119,7 +119,7 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
-use super::schema_hash::KeyChain;
+use super::schema::{NameMap, PropertyKeys};
 use crate::runtime::value::Value;
 
 /// Highest `u16`, reserved as "no attribute".
@@ -133,57 +133,18 @@ pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
 /// [`ATTRIBUTE_ID_NONE`] is reserved: ids run `0..MAX_ATTRIBUTES`.
 pub const MAX_ATTRIBUTES: usize = ATTRIBUTE_ID_NONE as usize;
 
-/// Insertion-ordered map of attribute names to attribute indices.
-///
-/// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
-/// deterministic iteration order) and a `FxHashMap<Arc<String>, u16>` for
-/// O(1) name → index resolution on the hot read path.
-#[derive(Default, Clone)]
-pub struct AttrNameMap {
-    vec: Vec<Arc<String>>,
-    index: FxHashMap<Arc<String>, u16>,
-    /// The schema-hash chain over `vec`, extended wherever a name is minted.
-    chain: KeyChain,
-}
-
-impl<'a> IntoIterator for &'a AttrNameMap {
-    type Item = &'a Arc<String>;
-    type IntoIter = std::slice::Iter<'a, Arc<String>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
+/// The property-key names, one list for the whole graph (see
+/// [`Schema::property_keys`](super::schema::Schema::property_keys)): position is the
+/// id, and ids are `u16`.
+pub type AttrNameMap = NameMap<PropertyKeys>;
 
 impl AttrNameMap {
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.vec.len()
-    }
-
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.vec.is_empty()
-    }
-
-    #[must_use]
-    pub fn get(
-        &self,
-        idx: usize,
-    ) -> Option<&Arc<String>> {
-        self.vec.get(idx)
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<'_, Arc<String>> {
-        self.vec.iter()
-    }
-
     #[must_use]
     pub fn get_index_of(
         &self,
         name: &Arc<String>,
     ) -> Option<usize> {
-        self.index.get(name).map(|&i| i as usize)
+        self.id_of(name).map(usize::from)
     }
 
     /// Intern `name`, doing nothing if the dictionary is already full.
@@ -193,28 +154,18 @@ impl AttrNameMap {
     /// `get_or_create` and compare against [`ATTRIBUTE_ID_NONE`].
     pub fn insert(
         &mut self,
-        name: Arc<String>,
+        name: &Arc<String>,
     ) {
-        if self.index.contains_key(&name) {
-            return;
-        }
-        if self.vec.len() >= MAX_ATTRIBUTES {
-            return;
-        }
-        let idx = self.vec.len() as u16;
-        self.chain.push(&name);
-        self.vec.push(name.clone());
-        self.index.insert(name, idx);
+        self.get_or_insert(name);
     }
 
     /// Resolve `name` to its id, interning it if this graph has not seen it.
     ///
-    /// The single place ids are minted. There is exactly one of these tables per
-    /// graph — shared by the node and relationship stores — so an id means the same
-    /// attribute wherever it appears: in a span, in the RDB, in a `GRAPH.EFFECT`, or
-    /// in a compact reply. Per-store tables would number the same name differently
-    /// for nodes and relationships, and a bare id on the wire would then land on the
-    /// wrong attribute on a replica (#2457).
+    /// There is exactly one of these tables per graph — shared by the node and
+    /// relationship stores — so an id means the same attribute wherever it appears: in
+    /// a span, in the RDB, in a `GRAPH.EFFECT`, or in a compact reply. Per-store tables
+    /// would number the same name differently for nodes and relationships, and a bare
+    /// id on the wire would then land on the wrong attribute on a replica (#2457).
     ///
     /// Matches C, whose `GraphContext_FindOrAddAttribute` likewise takes no entity
     /// type and mints from one array.
@@ -222,43 +173,18 @@ impl AttrNameMap {
     /// Returns [`ATTRIBUTE_ID_NONE`] once [`MAX_ATTRIBUTES`] names are interned,
     /// as C's `GraphContext_FindOrAddAttribute` does when its table is full. The
     /// id space is `u16`, so without the cap the 65,537th distinct name would take
-    /// `self.vec.len() as u16` == 0 and **alias attribute 0** — reads of an
-    /// unrelated, long-established property would start returning the new one's
-    /// values. Refusing to mint keeps the failure confined to the name that could
-    /// not be added: `ATTRIBUTE_ID_NONE` resolves to no entry, so the property
-    /// reads as absent, and `decode_with_count` already rejects it on the wire.
+    /// `len as u16` == 0 and **alias attribute 0** — reads of an unrelated,
+    /// long-established property would start returning the new one's values. Refusing
+    /// to mint keeps the failure confined to the name that could not be added:
+    /// `ATTRIBUTE_ID_NONE` resolves to no entry, so the property reads as absent, and
+    /// `decode_with_count` already rejects it on the wire. The cap is
+    /// [`PropertyKeys::id`](super::schema::PropertyKeys), which numbers no position at
+    /// or past it.
     pub fn get_or_create(
         &mut self,
         name: &Arc<String>,
     ) -> u16 {
-        if let Some(&idx) = self.index.get(name) {
-            return idx;
-        }
-        if self.vec.len() >= MAX_ATTRIBUTES {
-            return ATTRIBUTE_ID_NONE;
-        }
-        let idx = self.vec.len() as u16;
-        self.chain.push(name);
-        self.vec.push(Arc::clone(name));
-        self.index.insert(Arc::clone(name), idx);
-        idx
-    }
-
-    /// The schema-hash chain over the names, in id order.
-    #[must_use]
-    pub const fn chain(&self) -> KeyChain {
-        self.chain
-    }
-}
-
-impl std::ops::Index<usize> for AttrNameMap {
-    type Output = Arc<String>;
-
-    fn index(
-        &self,
-        idx: usize,
-    ) -> &Arc<String> {
-        &self.vec[idx]
+        self.get_or_insert(name).unwrap_or(ATTRIBUTE_ID_NONE)
     }
 }
 
@@ -2150,7 +2076,7 @@ mod tests {
         );
 
         let mut dict = AttrNameMap::default();
-        dict.insert(Arc::new("a".to_string()));
+        dict.insert(&Arc::new("a".to_string()));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
@@ -2204,7 +2130,7 @@ mod tests {
         // Fill the dictionary to capacity, then ask for one more name.
         let mut dict = AttrNameMap::default();
         for i in 0..MAX_ATTRIBUTES {
-            dict.insert(Arc::new(format!("a{i}")));
+            dict.insert(&Arc::new(format!("a{i}")));
         }
         assert_eq!(dict.len(), MAX_ATTRIBUTES);
 
@@ -2218,7 +2144,7 @@ mod tests {
              GraphContext_FindOrAddAttribute does"
         );
         // What the cap prevents, in the order it would go wrong without it:
-        // `self.vec.len() as u16` is ATTRIBUTE_ID_NONE at 65_535 entries — a real
+        // `len as u16` is ATTRIBUTE_ID_NONE at 65_535 entries — a real
         // name minted onto the reserved sentinel, which `decode_with_count` then
         // rejects on the wire — and 0 at 65_536, aliasing attribute 0 so that reads
         // of a long-established property return the new one's values. The guard
@@ -2234,7 +2160,7 @@ mod tests {
             "the refused name must not be resolvable to any id"
         );
 
-        dict.insert(Arc::clone(&overflow));
+        dict.insert(&overflow);
         assert_eq!(
             dict.len(),
             MAX_ATTRIBUTES,
@@ -2249,7 +2175,7 @@ mod tests {
 
         // A dictionary holding a single name: id 0 is real, id 5 resolves to nothing.
         let mut dict = AttrNameMap::default();
-        dict.insert(Arc::new("a".to_string()));
+        dict.insert(&Arc::new("a".to_string()));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(

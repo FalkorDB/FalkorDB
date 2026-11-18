@@ -17,8 +17,8 @@
 //! S      = h_labels + h_types + h_keys                mod 2^64
 //! ```
 //!
-//! `tag` is one byte: 0 for labels, 1 for relationship types, 2 for property keys. An
-//! empty schema is 0. Ids are positions, so order counts: labels `[X, Y]` and `[Y, X]`
+//! `tag` is one byte, the list's [`SchemaList::TAG`]: 0 for labels, 1 for relationship
+//! types, 2 for property keys. An empty schema is 0. Ids are positions, so order counts: labels `[X, Y]` and `[Y, X]`
 //! give different values.
 //!
 //! `S` depends on nothing but the three lists, so a primary and its replicas agree, and
@@ -26,23 +26,21 @@
 //! upgrade, for as long as this definition holds. `golden_values` below pins it with
 //! values computed by a separate XXH3 implementation (Python's `xxhash`).
 //!
-//! A chain is extended where its list grows (each list has one writer) and rebuilt from
-//! the list on RDB load. Both give the same value, so no hash is stored in the RDB.
+//! A list's [`NameMap`](super::schema::NameMap) extends its chain as it adds a name,
+//! and rebuilds it from the list on RDB load. Both give the same value, so no hash is
+//! stored in the RDB.
+
+use std::marker::PhantomData;
 
 use xxhash_rust::xxh3::Xxh3Default;
 
-/// The chain over one list of names; `TAG` says which list.
+use super::schema::{Labels, PropertyKeys, RelationshipTypes, SchemaList};
+
+/// The chain over one list of names; `L` says which list, and with it the tag.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub struct NameChain<const TAG: u8>(u64);
+pub struct NameChain<L>(u64, PhantomData<L>);
 
-/// The chain over the label names.
-pub type LabelChain = NameChain<0>;
-/// The chain over the relationship-type names.
-pub type TypeChain = NameChain<1>;
-/// The chain over the property-key names.
-pub type KeyChain = NameChain<2>;
-
-impl<const TAG: u8> NameChain<TAG> {
+impl<L: SchemaList> NameChain<L> {
     /// Extend the chain by `name`, the next name appended to its list.
     pub fn push(
         &mut self,
@@ -51,7 +49,7 @@ impl<const TAG: u8> NameChain<TAG> {
         // Streamed, so no heap buffer is built for the input: XXH3 gives the same value
         // as hashing the concatenation in one call.
         let mut hasher = Xxh3Default::new();
-        hasher.update(&[TAG]);
+        hasher.update(&[L::TAG]);
         hasher.update(&self.0.to_le_bytes());
         hasher.update(&(name.len() as u64).to_le_bytes());
         hasher.update(name.as_bytes());
@@ -71,9 +69,9 @@ impl<const TAG: u8> NameChain<TAG> {
 /// `S`, the schema hash, from the three chains.
 #[must_use]
 pub const fn schema_hash(
-    labels: LabelChain,
-    types: TypeChain,
-    keys: KeyChain,
+    labels: NameChain<Labels>,
+    types: NameChain<RelationshipTypes>,
+    keys: NameChain<PropertyKeys>,
 ) -> u64 {
     labels.0.wrapping_add(types.0).wrapping_add(keys.0)
 }
@@ -81,6 +79,10 @@ pub const fn schema_hash(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type LabelChain = NameChain<Labels>;
+    type TypeChain = NameChain<RelationshipTypes>;
+    type KeyChain = NameChain<PropertyKeys>;
 
     fn hash(
         labels: &[&str],
