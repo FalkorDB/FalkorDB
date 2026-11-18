@@ -367,12 +367,6 @@ class testReplication(FlowTestsBase):
                 env.assertEqual(node_count(src, label), expected)
                 env.assertEqual(node_count(replica, label), expected)
 
-    # a queued write is admitted under the key the client named and commits
-    # later, from a worker. a RENAME in between moves the graph to another key.
-    # the write was replicated under the key it was admitted at, which the
-    # replica no longer had: GRAPH.EFFECT made a graph there, so the master kept
-    # the new key with the write and the replica kept the old key with it and
-    # the new key without. C replicates under the key the graph lives at
     # start `cmd` on `key` in a thread and return once it has been admitted and is
     # still running: admission creates the key on the main thread, before the
     # write runs on a worker
@@ -382,8 +376,12 @@ class testReplication(FlowTestsBase):
         from redis.retry import Retry
 
         env = self.env
-        # long enough to still be matching when the caller acts on the key
-        slow = "UNWIND range(1, 20000000) AS x WITH count(x) AS c CREATE (:Slow {c: c})"
+        # about a second of work inside one expression, so the write is still
+        # matching when the caller acts on the key, while every operator emits
+        # one row: GRAPH.RECORD keeps a trace entry per operator output row
+        slow = ("WITH reduce(s = 0, i IN range(1, 8000) | "
+                "s + reduce(t = 0, j IN range(1, 5000) | t + j)) AS c "
+                "CREATE (:Slow {c: c})")
 
         def write():
             con = redis.Redis(env.host, env.port, socket_timeout=120,
@@ -395,25 +393,44 @@ class testReplication(FlowTestsBase):
 
         writer = threading.Thread(target=write)
         writer.start()
-        con = env.getConnection()
-        deadline = time.time() + 10
-        while not con.exists(key) and time.time() < deadline:
-            time.sleep(0.001)
-        env.assertEqual(con.exists(key), 1)
-        # admitted and still running, so the caller's change overlaps the write
-        env.assertTrue(writer.is_alive())
+        try:
+            con = env.getConnection()
+            deadline = time.monotonic() + 10
+            while not con.exists(key) and time.monotonic() < deadline:
+                time.sleep(0.001)
+            env.assertEqual(con.exists(key), 1)
+            # admitted and still running, so the caller's change overlaps the write
+            env.assertTrue(writer.is_alive())
+        except BaseException:
+            # the caller never gets the writer to join: do it here
+            writer.join()
+            raise
         return writer
 
-    # until the replica has applied everything the master propagated
+    # until the replica has applied everything the master propagated. Each INFO
+    # goes through a connection with a short socket timeout, so a replica that
+    # stops answering fails the test at the deadline instead of hanging on the
+    # harness's socket timeout
     def _wait_replica_caught_up(self, source_con, replica_con):
+        kw = replica_con.connection_pool.connection_kwargs
+        poll = redis.Redis(kw["host"], kw["port"], socket_timeout=5)
         target = source_con.info("replication")["master_repl_offset"]
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            if replica_con.info("replication").get("slave_repl_offset", -1) >= target:
-                return
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                if poll.info("replication").get("slave_repl_offset", -1) >= target:
+                    return
+            except redis.TimeoutError:
+                pass
             time.sleep(0.05)
         self.env.assertTrue(False, message=f"replica did not reach offset {target} in 30 s")
 
+    # a queued write is admitted under the key the client named and commits
+    # later, from a worker. a RENAME in between moves the graph to another key.
+    # the write was replicated under the key it was admitted at, which the
+    # replica no longer had: GRAPH.EFFECT made a graph there, so the master kept
+    # the new key with the write and the replica kept the old key with it and
+    # the new key without. C replicates under the key the graph lives at
     def test_rename_during_queued_write(self):
         env = self.env
         source_con = env.getConnection()
