@@ -813,6 +813,18 @@ impl Indexer {
             .map_or_default(|index| index.fields().clone())
     }
 
+    /// The label's index language as a C string, for `Document::new*`.
+    /// `None` when the label has no language (RediSearch then uses its default).
+    #[must_use]
+    pub fn get_language(
+        &self,
+        label: &ArcStr,
+    ) -> Option<CString> {
+        let index = self.index.load();
+        let lang = index.get(label)?.language()?;
+        CString::new(lang.as_bytes()).ok()
+    }
+
     /// Get fields for all labels.
     #[must_use]
     pub fn get_all_fields(&self) -> Vec<(ArcStr, HashMap<ArcStr, Vec<Arc<Field>>>)> {
