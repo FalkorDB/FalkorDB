@@ -353,3 +353,27 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             self.env.assertEqual(res.result_set, [[2]], depth=1)
         finally:
             g.delete()
+
+    def test18_every_occurrence_of_a_repeated_node_is_checked(self):
+        # A node alias repeated in one MATCH must satisfy the inline properties
+        # of every occurrence, also when one occurrence is a relationship
+        # endpoint with properties of its own. The planner lowers only the
+        # endpoints' maps for such a node, and they used to hold only their
+        # own entries, so `b.v = a.v` (or `b.w = 1`) was never checked.
+        g = self.db.select_graph("multi_pattern_repeated_node_attrs")
+        self.env.cmd("DEL", g.name)
+        g.query("""CREATE (:A {v:1}),
+                          (:B {v:1, w:1})-[:R]->(:C),
+                          (:B {v:2, w:1})-[:R]->(:C),
+                          (:B {v:1, w:2})-[:R]->(:C)""")
+        cases = [
+            ("MATCH (a:A), (b:B {v:a.v}), (b {w:1})-[:R]->(c) RETURN b.v, b.w", [[1, 1]]),
+            ("MATCH (a:A), (b {w:1})-[:R]->(c), (b:B {v:a.v}) RETURN b.v, b.w", [[1, 1]]),
+            ("MATCH (a:A), (b:B {v:a.v})-[:R]->(c), (b {w:1}) RETURN b.v, b.w", [[1, 1]]),
+            ("MATCH (a:A), (b {v:a.v})-[:R]->(c), (b:B {w:1})-[:R]->(d) RETURN b.v, b.w", [[1, 1]]),
+            ("MATCH (b:B {w:1}), (b {v:1})-[:R]->(c) RETURN b.v, b.w", [[1, 1]]),
+            ("MATCH (b {v:1})-[:R]->(c), (b {w:2}) RETURN b.v, b.w", [[1, 2]]),
+        ]
+        for q, expected in cases:
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        g.delete()

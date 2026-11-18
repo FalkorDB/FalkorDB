@@ -449,7 +449,7 @@ impl Binder {
                         ));
                     }
                 }
-                let pattern_result = self.bind_graph(&pattern, false);
+                let pattern_result = self.bind_graph(&pattern, false, true);
                 if let Some(saved) = saved_labels {
                     self.node_labels = saved;
                 }
@@ -534,7 +534,7 @@ impl Binder {
                     }
                 }
 
-                let pattern = self.bind_graph(&pattern, false)?;
+                let pattern = self.bind_graph(&pattern, false, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
                 Ok(QueryIR::Merge {
@@ -1467,10 +1467,22 @@ impl Binder {
     ///   - `false` (MATCH / MERGE) — an alias may shadow an outer-scope
     ///     definition (e.g. `MATCH (n) MATCH (n)` re-uses `n`).
     ///   - `true`  — redeclaration is an error.
+    ///
+    /// `merged_occurrences` says the parser folded every occurrence of a
+    /// repeated node alias into its `nodes()` entry (MATCH and pattern
+    /// predicates, see `Parser::add_pattern_node`). Then that entry's attrs
+    /// are every predicate on the node, and a relationship endpoint that
+    /// repeats the alias with attrs of its own shares that map instead of
+    /// carrying only its own entries: the planner lowers only the endpoints'
+    /// maps for a node that has relationships, so an entry written on another
+    /// occurrence would otherwise never be checked. CREATE, MERGE and pattern
+    /// comprehensions keep the first occurrence only, so their endpoints keep
+    /// their own maps.
     fn bind_graph(
         &mut self,
         graph: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
         is_create: bool,
+        merged_occurrences: bool,
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
 
@@ -1564,7 +1576,11 @@ impl Binder {
                     .any(|l| !bound_node.labels.contains(l));
                 let has_extra_attrs = relationship.from.attrs.root().num_children() > 0;
                 if has_extra_labels || has_extra_attrs {
-                    let from_attrs = self.bind_expr(&relationship.from.attrs)?;
+                    let from_attrs = if merged_occurrences {
+                        bound_node.attrs.clone()
+                    } else {
+                        self.bind_expr(&relationship.from.attrs)?
+                    };
                     let mut merged_labels = bound_node.labels.clone();
                     for l in relationship.from.labels.iter() {
                         if !merged_labels.contains(l) {
@@ -1615,7 +1631,11 @@ impl Binder {
                     .any(|l| !bound_node.labels.contains(l));
                 let has_extra_attrs = relationship.to.attrs.root().num_children() > 0;
                 if has_extra_labels || has_extra_attrs {
-                    let to_attrs = self.bind_expr(&relationship.to.attrs)?;
+                    let to_attrs = if merged_occurrences {
+                        bound_node.attrs.clone()
+                    } else {
+                        self.bind_expr(&relationship.to.attrs)?
+                    };
                     let mut merged_labels = bound_node.labels.clone();
                     for l in relationship.to.labels.iter() {
                         if !merged_labels.contains(l) {
@@ -1821,7 +1841,7 @@ impl Binder {
         }
 
         // Bind the pattern - allow reuse since we've already validated
-        self.bind_graph(pattern, false)
+        self.bind_graph(pattern, false, false)
     }
 
     /// Checks whether an entity's unbound inline attrs contain a property
@@ -2060,7 +2080,7 @@ impl Binder {
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
-                let bound_graph = self.bind_graph(graph, false)?;
+                let bound_graph = self.bind_graph(graph, false, false)?;
 
                 let children = node_ref
                     .children()
@@ -2242,7 +2262,7 @@ impl Binder {
                         // (e.g. in WHERE clause OR branches) don't leak into
                         // the outer MATCH pattern's label accumulation.
                         let saved_labels = self.node_labels.clone();
-                        let result = self.bind_graph(&pattern, false);
+                        let result = self.bind_graph(&pattern, false, true);
                         self.node_labels = saved_labels;
 
                         // Remove pattern-local aliases so they don't leak into
