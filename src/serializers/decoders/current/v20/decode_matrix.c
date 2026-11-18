@@ -389,6 +389,27 @@ void RdbLoadRelationMatrices_v20
 		// (a short read jumps to the landing pad)
 		uint64_t r = SerializerIO_TryReadUnsigned (rdb) ;
 
+		// encoders up to 4.22.3 wrote "no tensors" as three zeros (total, M
+		// count, DP count) instead of one for a relation flagged multi-edge
+		// without any tensor, so the previous relation's section is followed
+		// by two stray zeros; skip them when the id after them is the expected
+		// one. if the stray zeros follow the last relation they precede the
+		// adjacency matrix instead, which this does not recover
+		if (r == 0 && i > 0) {
+			uint64_t z = SerializerIO_TryReadUnsigned (rdb) ;
+			uint64_t id = SerializerIO_TryReadUnsigned (rdb) ;
+			if (z != 0 || id != (uint64_t) i) {
+				// not the legacy encoding, some other malformed data
+				SerializerIO_SetError (rdb, EMSG_DECODE_MATRIX_ORDER,
+						"relation") ;
+				return ;
+			}
+
+			RedisModule_Log (NULL, "warning", "skipped a malformed empty "
+					"tensor section before relation matrix %d", i) ;
+			r = id ;
+		}
+
 		// relation matrices are encoded in id order
 		if (r != (uint64_t) i) {
 			SerializerIO_SetError (rdb, EMSG_DECODE_MATRIX_ORDER, "relation") ;
