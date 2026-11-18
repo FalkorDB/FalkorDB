@@ -17,11 +17,13 @@ computes it, so both families are visible.
 | `run` | the runtime ops, eager: `apply.rs:102-340` (right branch re-run per left row with `Argument` = that row), `optional.rs:91-292` (one null row when the branch is empty), `aggregate.rs:288` (no keys → one row even on empty input), `create.rs:101-160`, `merge.rs:67-300` (match else create), `filter.rs:48-80` (`Basic.filterRows`), `unwind.rs`, `node_by_label_scan.rs`, `cond_traverse.rs` (bound destination) |
 | `gv` | `GetVariables::get_variables` (`runtime/runtime.rs:212-330`): `Aggregate` adds `names` and keeps walking, `Project` adds its outputs and `break`s |
 | `branchOut` | `branch_output_variables` (`optimizer/push_filters_down.rs:59-79`) |
-| `excluded` | the child exclusion list (`push_filters_down.rs:161-175`) |
+| `excluded` | the child exclusion list (`push_filters_down.rs:181-200`; before #3582 without the write kinds) |
+| `isWriteOp`, `locked` | `is_write` (:86-99) and `holds_write`/`locked` (:213-223, used at :306), #3582 (`Cfg.pr3582`) |
 | `pushAt` | one Filter's routing (`push_filters_down.rs:138-364`): grandchild variable sets (:176-185), Case 1 (:196-201), Case 2 inherited (`inh`, :210-244), augmentation of `Argument` subtrees (:247-257), the `all` test over ids (:264-276) |
 | `childInh` | Case 2's ancestor walk, top-down: below an `Apply`'s right child the left subtree's ids, below its left child nothing, below `Merge` nothing (:212-243) |
 | `sweep`, `pushFilters` | the restart loop (:103-370), as a top-down sweep that follows each pushed filter |
-| `Cfg.main` | ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs:92-110`), no write barrier |
+| `Cfg.main` | before #3582: ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs:92-110`), no write barrier |
+| `Cfg.pr3582` | Rust at 7c04fa598 (#3582): ids only, write kinds excluded, siblings of a writing branch locked; the CP split's `!holds_write` guard (:322) is not modelled (no CP split here) |
 
 The property each bug violates is `EffectSound`: a rewrite keeps the rows
 **and** the graph the query leaves behind. `RowSound` is the old criterion,
@@ -204,13 +206,21 @@ child's variable set, and whether a write blocks the push. -/
 structure Cfg where
   eqv : Var → Var → Bool
   writeBarrier : Bool
+  /-- #3582: write operators (`Create`, `Commit`, …) join the exclusion list,
+  and a grandchild is locked when a sibling subtree writes (`is_write`,
+  `holds_write`/`locked`, push_filters_down.rs:86-99, :213-223, :306). -/
+  lockSiblings : Bool
 
-/-- Rust main: ids only, no barrier. -/
-def Cfg.main : Cfg := ⟨fun a b => a.id == b.id, false⟩
+/-- Rust before #3582: ids only, no barrier. -/
+def Cfg.main : Cfg := ⟨fun a b => a.id == b.id, false, false⟩
 
 /-- A candidate fix: `(id, scope)` matching and no push below an operator whose
 subtree writes (`Merge`/`Create`). -/
-def Cfg.fixed : Cfg := ⟨fun a b => a == b, true⟩
+def Cfg.fixed : Cfg := ⟨fun a b => a == b, true, false⟩
+
+/-- Rust with #3582 (7c04fa598): ids only, write operators excluded, siblings
+of a writing branch locked. -/
+def Cfg.pr3582 : Cfg := ⟨fun a b => a.id == b.id, false, true⟩
 
 /-- `get_variables` (runtime.rs:212-330). -/
 def gv : Op → List Var
@@ -247,9 +257,16 @@ def hasWrite : Op → Bool
     hasWrite c
   | .apply l r => hasWrite l || hasWrite r
 
-/-- push_filters_down.rs:161-175 (the kinds that occur here). -/
+/-- push_filters_down.rs:181-200 before #3582 (the kinds that occur here). -/
 def excluded : Op → Bool
   | .project _ _ | .aggregate _ _ _ | .merge _ _ | .argument | .optional _ _ => true
+  | _ => false
+
+/-- `is_write` (push_filters_down.rs:86-99), the kinds that occur here; #3582
+adds `Create`/`Commit` (and `Delete`/`Set`/`Remove`/`ForEach`, not modelled)
+to the exclusion list (:188-193). -/
+def isWriteOp : Op → Bool
+  | .create _ _ | .merge _ _ | .commit _ => true
   | _ => false
 
 def kid (c : Op) : List Op := match c with | .unit => [] | c => [c]
@@ -299,12 +316,19 @@ def avail (inh : List Var) (k : Op) : List Var :=
   let (vs, reset) := info k
   if !inh.isEmpty && !reset && hasArg k then vs ++ inh else vs
 
+/-- `locked[i]` (push_filters_down.rs:217-223): some other grandchild's subtree
+writes (`subtree_contains(…, is_write)`; in the model a `Commit` always wraps a
+`Create`/`Merge`, so `hasWrite` is that test). -/
+def locked (cfg : Cfg) (ks : List Op) (i : Nat) : Bool :=
+  cfg.lockSiblings && (ks.zipIdx.any (fun kj => hasWrite kj.1 && kj.2 != i))
+
 /-- One Filter `p` over `c`, with Case-2 inherited variables `inh`. -/
 def pushAt (cfg : Cfg) (inh : List Var) (p : Expr) (c : Op) : Op :=
   let ks := kids c
-  if excluded c || ks.isEmpty || (cfg.writeBarrier && hasWrite c) then .filter p c else
+  if excluded c || (cfg.lockSiblings && isWriteOp c) || ks.isEmpty || (cfg.writeBarrier && hasWrite c) then
+    .filter p c else
   let inh := (if isApply c then ((ks.head?.map info).map Prod.fst).getD [] else []) ++ inh
-  let rs := ks.map (fun k => routes cfg p (avail inh k))
+  let rs := ks.zipIdx.map (fun ki => !locked cfg ks ki.2 && routes cfg p (avail inh ki.1))
   if rs.any id then setKids c ((ks.zip rs).map (fun kb => if kb.2 then .filter p kb.1 else kb.1))
   else .filter p c
 
@@ -512,6 +536,67 @@ theorem bug3352_slot_collision_drops_match :
 theorem bug3352_fixed :
     pushFilters .fixed plan3352 = plan3352 ∧
     run [] (pushFilters .fixed plan3352) g3352 = run [] plan3352 g3352 := ⟨rfl, rfl⟩
+
+/-! ## #3582: write operators excluded, siblings of a write locked
+
+The PR keeps main's id-only routing (`Cfg.pr3582`) and adds the write lock.
+#748 and #997 are fixed: the filter lands on the write-bearing branch's output,
+never on the rows that feed it. #3352 is untouched (a routing bug, no write). -/
+
+/-- At an `Apply` whose right branch writes, the left branch is never filtered:
+the Filter either stays or goes onto the right branch only. -/
+theorem pr3582_left_untouched (inh : List Var) (p : Expr) (l r : Op) (hr : hasWrite r = true) :
+    pushAt .pr3582 inh p (.apply l r) = .filter p (.apply l r) ∨
+    pushAt .pr3582 inh p (.apply l r) = .apply l (.filter p r) := by
+  unfold pushAt
+  simp only [kids, excluded, isWriteOp, Cfg.pr3582, locked, List.zipIdx_cons, List.zipIdx_nil]
+  by_cases h : routes Cfg.pr3582 p (avail ((if isApply (.apply l r) then
+      (([l, r].head?.map info).map Prod.fst).getD [] else []) ++ inh) r) = true <;>
+    simp_all [Cfg.pr3582, setKids]
+
+/-- The filter over a write operator itself stays put (`Create`, `Commit`, `Merge`). -/
+theorem pr3582_write_excluded (inh : List Var) (p : Expr) (c : Op) (hc : isWriteOp c = true) :
+    pushAt .pr3582 inh p c = .filter p c := by
+  unfold pushAt; simp [hc, Cfg.pr3582]
+
+/-- #748 under #3582: `false` lands above the MERGE body only; the MERGE runs. -/
+theorem pr3582_748_plan :
+    pushFilters .pr3582 plan748 =
+      .project [(col, .lit (.int 0))]
+        (.allNodeScan a1 (.apply (.project [(n0, .lit (.int 0))] .unit) (.filter fls body748))) := rfl
+
+theorem pr3582_748_fixed :
+    run [] (pushFilters .pr3582 plan748) g0 = .ok ([], ⟨1, [], []⟩) ∧
+    run [] (pushFilters .pr3582 plan748) g0 = run [] plan748 g0 := ⟨rfl, rfl⟩
+
+/-- #997 under #3582: the `Argument` stays unfiltered; the CREATE runs. -/
+theorem pr3582_997_plan :
+    pushFilters .pr3582 plan997 =
+      .project [(col, .lit (.int 0))]
+        (.allNodeScan a1 (.unwind x [.int 0]
+          (.apply .argument
+            (.filter fls (.aggregate [] none (.commit (.create c0 (.project [] .argument)))))))) := rfl
+
+theorem pr3582_997_fixed :
+    run [] (pushFilters .pr3582 plan997) g0 = .ok ([], ⟨1, [], []⟩) ∧
+    run [] (pushFilters .pr3582 plan997) g0 = run [] plan997 g0 := ⟨rfl, rfl⟩
+
+/-- The controls are unchanged by #3582. -/
+theorem pr3582_controls :
+    run [] (pushFilters .pr3582 plan748star) g0 = .ok ([], ⟨1, [], []⟩) ∧
+    run [] (pushFilters .pr3582 (plan997With caseX)) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
+
+/-- #3352 is still open with #3582 (no write below, so the lock never fires):
+the push-down is still not `RowSound`. -/
+theorem pr3582_3352_open :
+    pushFilters .pr3582 plan3352 = pushFilters .main plan3352 ∧
+    run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) ∧
+    ¬ RowSound (pushFilters .pr3582) := by
+  refine ⟨rfl, rfl, fun h => ?_⟩
+  have := h plan3352 g3352
+  rw [show run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) from rfl,
+      show run [] plan3352 g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) from rfl] at this
+  simp [Same, Except.map] at this
 
 /-! ## A general fact the fix can build on -/
 
@@ -874,5 +959,8 @@ theorem bug2556_fixed :
 /-- `push_filters_down` is not the cause: on the planner's plan it leaves
 `t.id = 100` above `t`'s hop (the only child of that hop binds no `t`, by id). -/
 theorem bug2556_push_not_cause : pushFilters .main plan2556 = plan2556 := rfl
+
+/-- #2556's control is unchanged too. -/
+theorem pr3582_2556_push_not_cause : pushFilters .pr3582 plan2556 = plan2556 := rfl
 
 end Falkor.Opt.PushPlan

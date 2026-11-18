@@ -530,6 +530,19 @@ impl Indexer {
         Ok(super::ScoredEdgeTripleIter::empty())
     }
 
+    /// Whether the index on `label` has no pending changes. A label with no
+    /// index has none to wait for, so it counts as operational.
+    #[must_use]
+    pub fn is_operational(
+        &self,
+        label: &Arc<String>,
+    ) -> bool {
+        self.index
+            .load()
+            .get(label)
+            .is_none_or(|index| index.is_operational())
+    }
+
     /// Execute a KNN vector query against the per-label index and
     /// yield `(entity_id, distance)` pairs ordered by ascending
     /// distance. Returns an empty iterator if no index exists for

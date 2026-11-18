@@ -66,18 +66,19 @@ example : agree [0, 1] (.and [.cmp .eq (.prop 1) (.lit (.i 1)), .cmp .eq (.prop 
 example : agree [0, 1] (.or [.cmp .eq (.prop 1) (.lit (.i 1)), .cmp .eq (.prop 2) (.lit (.i 9))])
     (node [0, 1] [(1, .i 5), (2, .i 9)]) = false := by decide
 
-/-- C7: `n.a + 1 IN [2]` is pushed as `a IN [2]` (the IN path only asks that the left side
-*contain* a property). -/
+/-- C7 — FIXED by #3068. `n.a + 1 IN [2]` used to be pushed as `a IN [2]` (the IN path only
+asked that the left side *contain* a property). `bare_property_of` now requires `n.a` itself:
+the Filter stays and the scan agrees. -/
 example : agree [0] (.atom (.inn (.add (.prop 1) (.lit (.i 1))) (.list [.lit (.i 2)])))
-    (node [0] [(1, .i 1)]) = false := by decide
+    (node [0] [(1, .i 1)]) = true := by decide
 
-/-- C7': `abs(n.a) IN [1]` is pushed as `a IN [1]` — misses `a = -1`. -/
+/-- C7' — FIXED by #3068. `abs(n.a) IN [1]` used to be pushed as `a IN [1]`, missing `a = -1`. -/
 example : agree [0] (.atom (.inn (.abs (.prop 1)) (.list [.lit (.i 1)])))
-    (node [0] [(1, .i (-1))]) = false := by decide
+    (node [0] [(1, .i (-1))]) = true := by decide
 
-/-- C8: `2 IN [n.a, n.b]` becomes an array-contains query on `a`. -/
+/-- C8 — FIXED by #3068. `2 IN [n.a, n.b]` used to become an array-contains query on `a`. -/
 example : agree [0] (.atom (.inn (.lit (.i 2)) (.list [.prop 1, .prop 2])))
-    (node [0] [(1, .i 2), (2, .i 7)]) = false := by decide
+    (node [0] [(1, .i 2), (2, .i 7)]) = true := by decide
 
 /-- C9: `n.v IN [1, date(...)]`: the runtime drops the Date item from the `Or`, the index
 never returns the node, the retained Filter cannot add it back. -/

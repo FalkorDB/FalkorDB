@@ -213,7 +213,7 @@ src/telemetry.rs	waiting_queries_reply	579	PROVEN	Telemetry.waitingRow: waitingR
 src/telemetry.rs	resolve_current_names	694	PROVEN	Telemetry.resolve/pass1/pass2Step/retain: retain_sound, retain_drops, pass1_unmoved, pass1_rebound, pass2Step_sound
 src/telemetry.rs	hold_batch_graphs	770	PROVEN	Telemetry.distinctAlive: distinctAlive_nodup, distinctAlive_complete
 src/telemetry.rs	release_batch_graphs	801	PROVEN	Telemetry.releaseSpawns: releaseSpawns_len
-src/redis_type.rs	key_holds_graph	577	PROVEN	Telemetry.keyHolds: keyHolds_iff (moved from telemetry.rs by #3819; get_value::<_>(&GRAPH_TYPE) = keyValue input)
+src/redis_type.rs	key_holds_graph	579	PROVEN	Telemetry.keyHolds: keyHolds_iff (moved from telemetry.rs by #3819; get_value::<_>(&GRAPH_TYPE) = keyValue input)
 src/telemetry.rs	drain_queued	817	PROVEN	Telemetry.drain: drain_bound, drain_conserves
 src/telemetry.rs	enqueue_entry	877	PROVEN	Telemetry.enqueueOk: enqueue_off, enqueue_replica, enqueue_full
 src/telemetry.rs	set_is_replica	930	PROVEN	Telemetry.setReplica: setReplica_eq

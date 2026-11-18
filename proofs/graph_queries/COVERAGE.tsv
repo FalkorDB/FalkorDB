@@ -1,4 +1,5 @@
 file	function	line	bucket	lean_name_or_reason
+# Online index build (#2355): fns the background builder added, not modelled yet.
 graph/src/graph/graph.rs	from_str	216	PROVEN	Queries.dirOfStr_spec
 graph/src/graph/graph.rs	from	227	PROVEN	Accessors newtype identity (LabelId.0)
 graph/src/graph/graph.rs	from	233	PROVEN	Accessors newtype identity (TypeId.0)
@@ -149,37 +150,37 @@ graph/src/graph/graph.rs	get_indexed_edges	4356	AXIOMATISED	RediSearch Indexer::
 graph/src/graph/graph.rs	get_all_edges	4371	PROVEN	Queries.allEdges_unknown
 graph/src/graph/graph.rs	fulltext_query_nodes	4384	AXIOMATISED	RediSearch fulltext_query delegation
 graph/src/graph/graph.rs	fulltext_query_edges	4399	AXIOMATISED	RediSearch fulltext_query_edges delegation
-graph/src/graph/graph.rs	vector_query_nodes	4423	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp, #3085)
-graph/src/graph/graph.rs	vector_query_edges	4483	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
-graph/src/graph/graph.rs	index_info	4536	PROVEN	Index.indexInfo_length
-graph/src/graph/graph.rs	constraints	4615	PROVEN	Constraints.two_phase_eq (constraints projection)
-graph/src/graph/graph.rs	constraints_mut	4619	PROVEN	Constraints.upsert_twice (constraints_mut projection)
-graph/src/graph/graph.rs	create_constraint	4632	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
-graph/src/graph/graph.rs	add_constraint_raw	4686	PROVEN	Accessors.addRaw_spec
-graph/src/graph/graph.rs	upsert_constraint_raw	4702	PROVEN	Constraints.upsert_twice
-graph/src/graph/graph.rs	get_constraint_entity_count	4724	PROVEN	Constraints.entityCount, Schema.labelNodeCount_eq
-graph/src/graph/graph.rs	validate_constraint	4736	PROVEN	Constraints.validate / two_phase_eq
-graph/src/graph/graph.rs	validate_pending_constraints	4747	PROVEN	Constraints.two_phase_eq
-graph/src/graph/graph.rs	compute_pending_constraint_results	4776	PROVEN	Constraints.lookup_compute, two_phase_eq
-graph/src/graph/graph.rs	apply_constraint_validation_results	4788	PROVEN	Constraints.two_phase_eq
-graph/src/graph/graph.rs	validate_mandatory_constraint	4807	PROVEN	see proofs/graph_persist Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4846	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4901	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
-graph/src/graph/graph.rs	drop_constraint	4919	PROVEN	Constraints.dropC_length, swapRemove_length
-graph/src/graph/graph.rs	has_supporting_index	4942	PROVEN	Constraints.hasSupporting_nil
-graph/src/graph/graph.rs	constraint_depends_on_index	4961	PROVEN	Constraints.drop_blocked
-graph/src/graph/graph.rs	cancel_indexing	4980	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
-graph/src/graph/graph.rs	set_indexer_graph	4988	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
-graph/src/graph/graph.rs	build_adjacency_matrix	5000	PROVEN	Queries.adjMatrix_single
-graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	5028	PROVEN	Queries.symAdj_symm
-graph/src/graph/graph.rs	memory_usage_report	5044	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
-graph/src/graph/graph.rs	estimate_entity_attr_size	5214	PROVEN	Accessors.estimateSize_eq
-graph/src/graph/graph.rs	encode_payload	5223	PROVEN	Index.encodeOp_nodes
-graph/src/graph/graph.rs	get_node_attribute_names	5280	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	get_relationship_attribute_names	5286	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	add_node_attribute_name	5292	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
-graph/src/graph/graph.rs	add_rel_attribute_name	5304	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
-graph/src/graph/graph.rs	build_global_attrs	5320	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	vector_query_nodes	4423	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row, not_operational_refused (#3088 clamp, #3085, #3382 gate)
+graph/src/graph/graph.rs	vector_query_edges	4490	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, not_operational_refused (vectorQueryEdges, relationship_count clamp, #3382 gate)
+graph/src/graph/graph.rs	index_info	4550	PROVEN	Index.indexInfo_length
+graph/src/graph/graph.rs	constraints	4629	PROVEN	Constraints.two_phase_eq (constraints projection)
+graph/src/graph/graph.rs	constraints_mut	4633	PROVEN	Constraints.upsert_twice (constraints_mut projection)
+graph/src/graph/graph.rs	create_constraint	4646	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
+graph/src/graph/graph.rs	add_constraint_raw	4700	PROVEN	Accessors.addRaw_spec
+graph/src/graph/graph.rs	upsert_constraint_raw	4716	PROVEN	Constraints.upsert_twice
+graph/src/graph/graph.rs	get_constraint_entity_count	4738	PROVEN	Constraints.entityCount, Schema.labelNodeCount_eq
+graph/src/graph/graph.rs	validate_constraint	4750	PROVEN	Constraints.validate / two_phase_eq
+graph/src/graph/graph.rs	validate_pending_constraints	4761	PROVEN	Constraints.two_phase_eq
+graph/src/graph/graph.rs	compute_pending_constraint_results	4790	PROVEN	Constraints.lookup_compute, two_phase_eq
+graph/src/graph/graph.rs	apply_constraint_validation_results	4802	PROVEN	Constraints.two_phase_eq
+graph/src/graph/graph.rs	validate_mandatory_constraint	4821	PROVEN	see proofs/graph_persist Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4860	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4915	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
+graph/src/graph/graph.rs	drop_constraint	4933	PROVEN	Constraints.dropC_length, swapRemove_length
+graph/src/graph/graph.rs	has_supporting_index	4956	PROVEN	Constraints.hasSupporting_nil
+graph/src/graph/graph.rs	constraint_depends_on_index	4975	PROVEN	Constraints.drop_blocked
+graph/src/graph/graph.rs	cancel_indexing	4994	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
+graph/src/graph/graph.rs	set_indexer_graph	5002	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
+graph/src/graph/graph.rs	build_adjacency_matrix	5014	PROVEN	Queries.adjMatrix_single
+graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	5042	PROVEN	Queries.symAdj_symm
+graph/src/graph/graph.rs	memory_usage_report	5058	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
+graph/src/graph/graph.rs	estimate_entity_attr_size	5228	PROVEN	Accessors.estimateSize_eq
+graph/src/graph/graph.rs	encode_payload	5237	PROVEN	Index.encodeOp_nodes
+graph/src/graph/graph.rs	get_node_attribute_names	5294	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	get_relationship_attribute_names	5300	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	add_node_attribute_name	5306	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	add_rel_attribute_name	5318	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	build_global_attrs	5334	PROVEN	Accessors.node_rel_same_id
 graph/src/graph/constraint.rs	fmt	14	PROVEN	Constraints.str_spec
 graph/src/graph/constraint.rs	fmt	34	PROVEN	Constraints.str_spec
 graph/src/graph/constraint.rs	new	60	PROVEN	Constraints.cnew_fresh
@@ -198,9 +199,8 @@ graph/src/graph/graph.rs	relationship_id_space	1743	PROVEN	Ids.openRelSpace_eq
 graph/src/graph/graph.rs	grow_for_nodes	1809	PROVEN	Ids.growForNodes_spec
 graph/src/graph/graph.rs	first_node_with_relationships	2468	CONDITIONAL	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022) || CONDITIONAL on AdjExact (adjacency = union of relation tensors; the graph.rs mutators' invariant, not proven preserved)
 graph/src/graph/graph.rs	edge_has_type_id	1370	PROVEN	Schema.edgeHasTypeId_iff (#3567: the matrix read edge_has_type used inline); edgeHasType_iff
-# Online index build (#2355): fns the background builder added, not modelled yet.
-graph/src/graph/graph.rs	Graph::add_native_build	4560	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/graph/graph.rs	Graph::native_build_total	4596	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/graph/graph.rs	Graph::add_native_build	4574	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/graph/graph.rs	Graph::native_build_total	4610	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/graph/graph.rs	end_id_quarantine	1099	NOT COVERED	(#3164): not modelled yet
 graph/src/graph/graph.rs	finish_version	1085	NOT COVERED	(#3164): end-of-version tail calling trim_attr_stores and end_id_quarantine; the quarantine half is not modelled yet
 graph/src/graph/schema_hash.rs	push	47	PROVEN	SchemaHash.push (xxh3_64 over tag ‖ h ‖ len ‖ name; xxh3 an abstract parameter): chainOf_snoc (push_matches_of), internLabelC_inv, registerRelTypeC_inv

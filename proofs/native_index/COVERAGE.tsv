@@ -148,11 +148,11 @@ graph/src/index/falkordb/versioned.rs	Graph::rebase_index	533	PROVEN	Rebase.EN.r
 graph/src/index/falkordb/graph_writes.rs	entity_tuples	445	PROVEN	Rebase.entityTuples: entityTuples_spec (the tuple of each id whose label or type holds, none otherwise)
 graph/src/graph/mvcc_graph.rs	MvccGraph::rebase_onto_indexer_batches	171	PROVEN	Rebase.mvccRebase: mvccRebase_noop (nothing overtaken: Ok, fork untouched), mvccRebase_unborrowed (an escalating writer's fork always succeeds), mvccRebase_borrowed_release/_debug (Err(Stale) / panic); V.rebased_keeps_data, V.rebased_not_stale (no data version change); the fork is now a plain Graph taken by &mut, so the borrowed arms (mvccRebase_borrowed_*) describe code that is gone and mvccRebase_noop/_unborrowed are the whole function
 graph/src/graph/graph.rs	Graph::build_place	3929	PROVEN	Rebase.BuildCursor.fromId (with the version's edge endpoints): fromId_spec
-graph/src/graph/graph.rs	Graph::create_cch_index	5355	PROVEN	Cch.graphCreateCchIndex: graphCreateCchIndex_panics (unimplemented!, #3212; nothing calls it)
-graph/src/graph/graph.rs	Graph::drop_cch_index	5367	PROVEN	Cch.graphDropCchIndex: graphDropCchIndex_panics (through FalkorDbIndex::drop_cch, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::cch_indexes	5378	PROVEN	Cch.graphCchIndexes: graphCchIndexes_panics (through FalkorDbIndex::cch_defs, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::cch_index	5388	PROVEN	Cch.graphCchIndex: graphCchIndex_panics (through FalkorDbIndex::cch_index, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::rebuild_cch_indexes	5404	PROVEN	Cch.graphRebuildCchIndexes: graphRebuildCchIndexes_panics (unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::create_cch_index	5369	PROVEN	Cch.graphCreateCchIndex: graphCreateCchIndex_panics (unimplemented!, #3212; nothing calls it)
+graph/src/graph/graph.rs	Graph::drop_cch_index	5381	PROVEN	Cch.graphDropCchIndex: graphDropCchIndex_panics (through FalkorDbIndex::drop_cch, unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::cch_indexes	5392	PROVEN	Cch.graphCchIndexes: graphCchIndexes_panics (through FalkorDbIndex::cch_defs, unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::cch_index	5402	PROVEN	Cch.graphCchIndex: graphCchIndex_panics (through FalkorDbIndex::cch_index, unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::rebuild_cch_indexes	5418	PROVEN	Cch.graphRebuildCchIndexes: graphRebuildCchIndexes_panics (unimplemented!, #3212)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_index	967	PROVEN	Cch.indexCchIndex: indexCchIndex_panics (unimplemented!, #3212)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_defs	975	PROVEN	Cch.indexCchDefs: indexCchDefs_panics (unimplemented! before the `std::iter::empty()` that only pins the return type)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_cch	987	PROVEN	Cch.indexDropCch: indexDropCch_panics (unimplemented!, #3212)
