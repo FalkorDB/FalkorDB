@@ -892,3 +892,18 @@ class testTraversalConstruction():
         self.env.assertNotContains("Node By Label Scan | (a:A)", plan)
         self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
         g.delete()
+
+    # An earlier clause that binds the walk's `to` behind a pattern predicate
+    # (a SemiApply over an opaque Argument) keeps the planner's direction: a
+    # fresh scan of `to` on top of it would rebind `b` for every row and
+    # count the `b` that has no :X edge.
+    def test_var_len_reversal_keeps_to_bound_by_pattern_predicate(self):
+        g = self.db.select_graph("VarLenToBoundByPredicate")
+        g.query("CREATE (:A)-[:R]->(:B {v: 2}), (:B {v: 1})-[:X]->(:C)")
+        for q, expected in [
+            ("MATCH (b:B) WHERE (b)-[:X]->() MATCH (a)-[:R*1..2]->(b:B) RETURN count(*)", 0),
+            ("MATCH (b:B) WHERE NOT (b)-[:X]->() MATCH (a)-[:R*1..2]->(b:B) RETURN count(*)", 1),
+            ("MATCH (b:B) MATCH (a)-[:R*1..2]->(b:B) RETURN count(*)", 1),
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+        g.delete()

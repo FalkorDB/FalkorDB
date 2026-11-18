@@ -560,6 +560,28 @@ fn child_subtree_binds(
     binds
 }
 
+/// Whether anything below the planner scan at `scan_idx` may bind `alias`:
+/// one of its children binds it, or contains an `Argument(None)`, which is
+/// opaque about what it carries. Unlike `child_subtree_binds`, an opaque
+/// `Argument` counts as binding, since the caller is about to scan `alias`
+/// on top of these children and must not rebind it.
+fn subtree_may_bind(
+    plan: &DynTree<IR>,
+    scan_idx: NodeIdx<Dyn<IR>>,
+    alias: &Variable,
+) -> bool {
+    use crate::runtime::runtime::GetVariables;
+    plan.node(scan_idx).children().any(|child| {
+        child
+            .walk::<Bfs>()
+            .any(|ir| matches!(ir, IR::Argument(None)))
+            || child
+                .get_variables()
+                .iter()
+                .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+    })
+}
+
 /// Picks which endpoint of a leaf `CondVarLenTraverse` to scan.
 ///
 /// The planner always scans the pattern's `from` endpoint. When `to` is the
@@ -715,6 +737,16 @@ fn select_var_len_scan_node(
         // chain would drop the predicate (`MATCH (a) WHERE a.id = 99
         // MATCH (a)-[:R*1..2]->(b:B {id: 1})`).
         if has_filter {
+            continue;
+        }
+        // The new scan of `to` sits on top of everything kept below, so if
+        // that already binds `to` (an earlier clause, or a pattern predicate's
+        // `SemiApply` that scans it: `MATCH (b:B) WHERE (b)-[:X]->()
+        // MATCH (a)-[:R*1..2]->(b:B)`), the scan would rebind it for every
+        // input row and lose the correlation. The non-leaf rewrite above
+        // handles a provable binding; anything it could not prove stays as
+        // planned.
+        if subtree_may_bind(optimized_plan, scan_idx, &to.alias) {
             continue;
         }
         // Whatever sits below the scan feeds it rows (an earlier clause, an
