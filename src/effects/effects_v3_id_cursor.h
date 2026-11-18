@@ -122,11 +122,27 @@ bool EffectsV3IdCursor_NextWire
 // Here rather than beside the appliers because this is a question about an
 // EffectsV3IdList, and this file is where one is interpreted.
 //
-// AS A SET COMPARED WITH THE COUNT, not by looking for a repeat. A record's
-// segments are not required to be sorted or disjoint, so a repeat has three
-// places to hide - inside one Repeat segment, across two segments that
-// overlap, and between a bitmap and a range covering the same id - and no
-// comparison between neighbouring segments finds all three.
+// NOT BY LOOKING FOR A REPEAT. A record's segments are not required to be
+// sorted or disjoint, so a repeat has three places to hide - inside one Repeat
+// segment, across two segments that overlap, and between a bitmap and a range
+// covering the same id.
+//
+// TWO STAGES, because the cheap question settles every list a conforming
+// encoder produces. Each segment is checked on its own - a Repeat of more than
+// one is its own duplicate, a bitmap must hold as many ids as it claims, a
+// range must fit in the id space - the positions are totalled against 'count',
+// and the segments' spans are sorted and scanned for any overlap. Sorted by
+// lowest id, an overlap anywhere shows up between neighbours, so one pass
+// answers it. No overlap plus those per-segment facts IS distinctness, and
+// nothing is built to prove it.
+//
+// An overlap is handed to a union of every id instead of settled in place.
+// Settling it needs an EXACT answer, since a bitmap's span can enclose a
+// neighbour it shares no id with, and once a pair can come back clean the scan
+// loses the right to skip non-adjacent pairs - {0,50}, [10..20], {50,60} hides
+// a repeated 50 that way. Comparing every pair still in reach is quadratic in
+// a segment count that comes off the wire; the union reads each segment once
+// and compares none of them.
 //
 // The create path does not need this: it walks the ids ascending to claim
 // storage, and DataBlock_ClaimIds refuses a walk that does not strictly
@@ -160,13 +176,17 @@ bool EffectsV3IdCursor_NextWire
 // can be built - the unit tests build them directly - so it does not inherit
 // the precondition it depends on.
 //
-// Cost is bounded by what the caller has already bounded. A range becomes one
-// roaring container per 65,536 ids it spans (roaring64 keys on the high 48
-// bits), so a span is NOT free in the way a wire Range is - but every caller
-// refuses a count larger than the local graph first, and the positions must
-// total that count, so the span a record can ask for is bounded by entities
-// that actually exist. A bulk delete of a million nodes becomes about sixteen
-// containers.
+// COST. The first stage builds nothing for a Range or a Repeat, whatever it
+// spans - a bulk delete of a million nodes is one Range and allocates only the
+// per-segment array. A Set segment is deserialized there, because its span and
+// its true size cannot be known without opening it; that is one blob at a
+// time, freed before the next, and the blob is already on the wire.
+//
+// The union, when it runs, builds one roaring container per 65,536 ids spanned
+// (roaring64 keys on the high 48 bits). Bounded by what the caller has already
+// bounded: every call site refuses a count larger than the local graph, and
+// the positions must total that count, so the span a record can ask for is
+// bounded by entities that actually exist.
 //
 // False also when a Set segment's blob will not open, or when a range's span
 // would leave the id space, which the caller cannot tell apart from a repeat:

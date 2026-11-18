@@ -545,6 +545,117 @@ void test_cursor_refuses_a_segment_naming_the_invalid_id() {
 	EffectsV3IdCursor_Free(&cur);
 }
 
+void test_distinct_falls_back_when_spans_overlap() {
+	// THE CASE THAT DECIDES THE SHAPE OF THIS CHECK.
+	//
+	// Sorted by lowest id: {0,50}, [10..20], {50,60}. Comparing only ADJACENT
+	// pairs asks ({0,50}, [10..20]) - spans overlap, no shared id, clean - and
+	// then ([10..20], {50,60}) - spans apart, clean - and never asks
+	// ({0,50}, {50,60}), which share 50.
+	//
+	// Adjacent-only is sound when OVERLAPPING SPANS ARE THEMSELVES the
+	// refusal, because sorted by start an overlap always shows up between
+	// neighbours. It stops being sound as soon as an overlapping pair can come
+	// back clean, which is exactly what makes the bitmap case above correct.
+	char b1[512], b2[512];
+	const uint64_t lo[2] = {0, 50};
+	const uint64_t hi[2] = {50, 60};
+	const uint32_t n1 = _Blob(lo, 2, b1, sizeof(b1));
+	const uint32_t n2 = _Blob(hi, 2, b2, sizeof(b2));
+
+	EffectsV3IdListSegment segs[3] = {
+		{ .kind = EFFECTS_V3_SEG_SET_ASCENDING,
+		  .set_ascending = { .blob = (unsigned char *)b1, .n = n1, .cardinality = 2 } },
+		{ .kind = EFFECTS_V3_SEG_RANGE_ASCENDING,
+		  .range_ascending = { .base = 10, .len = 11 } },
+		{ .kind = EFFECTS_V3_SEG_SET_ASCENDING,
+		  .set_ascending = { .blob = (unsigned char *)b2, .n = n2, .cardinality = 2 } },
+	};
+	EffectsV3IdList list = { .segments = segs, .n = 3 };
+
+	TEST_ASSERT_(EffectsV3IdList_AreDistinct(&list, 15) == false,
+			"50 is in the first and last segments, and a scan comparing only "
+			"neighbours never puts them side by side - which is why an "
+			"overlap is handed to the union rather than settled in place");
+}
+
+void test_distinct_pins_the_descending_span_against_an_overlap() {
+	// THE DIRECTION HAS TO BE PINNED WHERE IT COSTS SOMETHING TO GET WRONG.
+	// A descending range read from the wrong end is caught by the test above
+	// only if the mistake WIDENS the span - a widened span overlaps, hands the
+	// list to the union, and the union's own arithmetic answers correctly.
+	// A NARROWED span is the dangerous one: it hides a real overlap, the fast
+	// path sees nothing touching, and the list is called distinct.
+	//
+	// 7,8,9 descending against 7,8 ascending: five positions, three ids.
+	EffectsV3IdListSegment segs[2] = {
+		{ .kind = EFFECTS_V3_SEG_RANGE_DESCENDING,
+		  .range_descending = { .base = 9, .len = 3 } },   // 9,8,7
+		{ .kind = EFFECTS_V3_SEG_RANGE_ASCENDING,
+		  .range_ascending = { .base = 7, .len = 2 } },    // 7,8
+	};
+	EffectsV3IdList list = { .segments = segs, .n = 2 };
+
+	TEST_ASSERT_(EffectsV3IdList_AreDistinct(&list, 5) == false,
+			"reading the descending base as anything but the HIGHEST id "
+			"narrows the span to [9,9], which misses the overlap at 7 and 8");
+
+	// and the same two shapes, moved apart, are legitimate
+	segs[1].range_ascending.base = 20;
+	TEST_ASSERT(EffectsV3IdList_AreDistinct(&list, 5) == true);
+}
+
+void test_distinct_refuses_a_set_whose_blob_disagrees_with_its_count() {
+	// THE CHECK THAT LICENSES THE FAST PATH FOR A SET. Spans alone say a
+	// bitmap occupies [min, max]; only this says it holds 'card' different
+	// ids in there. Without it a blob of three passes as five.
+	const uint64_t members[3] = {1, 2, 3};
+	char buf[512];
+	const uint32_t n = _Blob(members, 3, buf, sizeof(buf));
+
+	EffectsV3IdListSegment seg = {
+		.kind = EFFECTS_V3_SEG_SET_ASCENDING,
+		.set_ascending = { .blob = (unsigned char *)buf, .n = n,
+						   .cardinality = 5 },
+	};
+	EffectsV3IdList list = { .segments = &seg, .n = 1 };
+
+	TEST_ASSERT_(EffectsV3IdList_AreDistinct(&list, 5) == false,
+			"the blob holds three ids and the segment claims five");
+
+	// corrected, the same blob is fine
+	seg.set_ascending.cardinality = 3;
+	TEST_ASSERT(EffectsV3IdList_AreDistinct(&list, 3) == true);
+}
+
+void test_distinct_opens_a_set_that_claims_to_be_empty() {
+	// A Range or a Repeat stating zero names nothing and there is nothing left
+	// to ask. A SET states its size beside a blob that has its own, and if the
+	// segment is stepped over as empty that disagreement is never found - the
+	// blob's two ids would travel unexamined.
+	const uint64_t members[2] = {100, 101};
+	char buf[512];
+	const uint32_t n = _Blob(members, 2, buf, sizeof(buf));
+
+	EffectsV3IdListSegment segs[2] = {
+		{ .kind = EFFECTS_V3_SEG_SET_ASCENDING,
+		  .set_ascending = { .blob = (unsigned char *)buf, .n = n,
+							 .cardinality = 0 } },
+		{ .kind = EFFECTS_V3_SEG_RANGE_ASCENDING,
+		  .range_ascending = { .base = 1, .len = 3 } },
+	};
+	EffectsV3IdList list = { .segments = segs, .n = 2 };
+
+	TEST_ASSERT_(EffectsV3IdList_AreDistinct(&list, 3) == false,
+			"a set claiming nothing while its blob holds two ids is refused, "
+			"not stepped over");
+
+	// a set that IS empty, and says so, names nothing and is stepped over
+	const uint32_t e = _Blob(NULL, 0, buf, sizeof(buf));
+	segs[0].set_ascending.n = e;
+	TEST_ASSERT(EffectsV3IdList_AreDistinct(&list, 3) == true);
+}
+
 TEST_LIST = {
 	{"cursor_sorts_segments_the_wire_left_unsorted", test_cursor_sorts_segments_the_wire_left_unsorted},
 	{"cursor_interleaves_two_segments", test_cursor_interleaves_two_segments},
@@ -565,5 +676,9 @@ TEST_LIST = {
 	{"distinct_counts_an_empty_segment_as_nothing", test_distinct_counts_an_empty_segment_as_nothing},
 	{"distinct_refuses_a_segment_kind_it_does_not_know", test_distinct_refuses_a_segment_kind_it_does_not_know},
 	{"cursor_refuses_a_segment_naming_the_invalid_id", test_cursor_refuses_a_segment_naming_the_invalid_id},
+	{"distinct_falls_back_when_spans_overlap", test_distinct_falls_back_when_spans_overlap},
+	{"distinct_pins_the_descending_span_against_an_overlap", test_distinct_pins_the_descending_span_against_an_overlap},
+	{"distinct_refuses_a_set_whose_blob_disagrees_with_its_count", test_distinct_refuses_a_set_whose_blob_disagrees_with_its_count},
+	{"distinct_opens_a_set_that_claims_to_be_empty", test_distinct_opens_a_set_that_claims_to_be_empty},
 	{NULL, NULL}
 };

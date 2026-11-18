@@ -517,7 +517,12 @@ bool EffectsV3IdCursor_NextWire
 // distinctness
 //------------------------------------------------------------------------------
 
-bool EffectsV3IdList_AreDistinct
+// the exact answer, by building the set
+//
+// Flat in the segment count, because every segment is read once and never
+// compared with another. That is what makes it the right thing to hand an
+// overlapping list to - see the caller.
+static bool _AreDistinctUnion
 (
 	const EffectsV3IdList *ids,  // list to measure
 	uint64_t               count // ids it states it holds
@@ -635,5 +640,209 @@ bool EffectsV3IdList_AreDistinct
 	}
 
 	roaring64_bitmap_free (seen) ;
+	return ok ;
+}
+
+//------------------------------------------------------------------------------
+// distinctness
+//------------------------------------------------------------------------------
+
+// one segment reduced to what the comparison needs
+typedef struct {
+	uint64_t min ;
+	uint64_t max ;
+	roaring64_bitmap_t *bitmap ;  // Set kinds only, freed by the caller
+} SegSpan ;
+
+static int _CmpSegSpan (const void *a, const void *b) {
+	const uint64_t x = ((const SegSpan *)a)->min ;
+	const uint64_t y = ((const SegSpan *)b)->min ;
+	return (x < y) ? -1 : (x > y) ? 1 : 0 ;
+}
+
+bool EffectsV3IdList_AreDistinct
+(
+	const EffectsV3IdList *ids,
+	uint64_t               count
+) {
+	ASSERT (ids != NULL) ;
+
+	const uint32_t n = ids->n ;
+
+	if (n == 0) {
+		return count == 0 ;
+	}
+
+	SegSpan *segs = rm_calloc (n, sizeof (SegSpan)) ;
+
+	bool     ok    = true ;
+	uint64_t total = 0 ;
+	uint32_t live  = 0 ;   // segments that actually hold an id
+
+	//--------------------------------------------------------------------------
+	// reduce each segment, and refuse one that repeats inside itself
+	//--------------------------------------------------------------------------
+	for (uint32_t i = 0 ; ok && i < n ; i++) {
+		const EffectsV3IdListSegment *s = ids->segments + i ;
+		const uint64_t card = _SegmentCardinality (s) ;
+
+		// THE KIND IS CHECKED BEFORE THE EMPTY-SEGMENT SKIP below, because an
+		// unknown kind has no cardinality - _SegmentCardinality answers 0 for
+		// one - so skipping it as empty would let a segment this build cannot
+		// read pass as a segment that holds nothing.
+		const bool is_set = (s->kind == EFFECTS_V3_SEG_SET_ASCENDING ||
+							 s->kind == EFFECTS_V3_SEG_SET_DESCENDING) ;
+
+		switch (s->kind) {
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+			case EFFECTS_V3_SEG_REPEAT:
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+			case EFFECTS_V3_SEG_SET_DESCENDING:
+				break ;
+			default:
+				ok = false ;
+				break ;
+		}
+		if (!ok) { break ; }
+
+		if (card > UINT64_MAX - total) { ok = false ; break ; }
+		total += card ;
+
+		// AN EMPTY SET IS STILL OPENED. A Range or a Repeat stating zero names
+		// nothing and there is nothing left to check, but a Set states its
+		// size beside a blob that has its own - and this is the one place that
+		// disagreement is caught, since nothing below runs for a segment that
+		// claims to be empty. Skipping it would take the blob's word for the
+		// count on the way past, which is what the rest of this function
+		// exists not to do.
+		if (card == 0 && !is_set) {
+			continue ;
+		}
+
+		SegSpan *out = segs + live ;
+
+		switch (s->kind) {
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+				if (s->range_ascending.base > UINT64_MAX - (card - 1)) {
+					ok = false ; break ;
+				}
+				out->min = s->range_ascending.base ;
+				out->max = s->range_ascending.base + (card - 1) ;
+				break ;
+
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+				if (card - 1 > s->range_descending.base) { ok = false ; break ; }
+				out->min = s->range_descending.base - (card - 1) ;
+				out->max = s->range_descending.base ;
+				break ;
+
+			case EFFECTS_V3_SEG_REPEAT:
+				// A REPEAT IS ITS OWN DUPLICATE. No neighbour is involved, so
+				// no comparison between segments can reach this - it has to be
+				// asked of the segment alone.
+				if (card > 1) { ok = false ; break ; }
+				out->min = out->max = s->repeat.id ;
+				break ;
+
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+			case EFFECTS_V3_SEG_SET_DESCENDING: {
+				const bool desc = (s->kind == EFFECTS_V3_SEG_SET_DESCENDING) ;
+				const unsigned char *blob =
+					desc ? s->set_descending.blob : s->set_ascending.blob ;
+				const uint32_t blob_n =
+					desc ? s->set_descending.n : s->set_ascending.n ;
+
+				out->bitmap = roaring64_bitmap_portable_deserialize_safe (
+						(const char *)blob, blob_n) ;
+				if (out->bitmap == NULL) { ok = false ; break ; }
+
+				// a bitmap holds each value once, so its members are distinct
+				// by construction - but it must hold as many as it claims, or
+				// the positions it contributes are not the ids it contributes
+				// THE BLOB MUST HOLD WHAT THE SEGMENT CLAIMS. This is what
+				// licenses the fast path for a Set: that its members are
+				// 'card' different ids, all inside [min, max]. Without it a
+				// blob of three ids claiming five passes as five.
+				if (roaring64_bitmap_get_cardinality (out->bitmap) != card) {
+					ok = false ; break ;
+				}
+
+				if (card == 0) {
+					// agreed to be empty: it names nothing, and an empty
+					// bitmap has no minimum to take
+					roaring64_bitmap_free (out->bitmap) ;
+					out->bitmap = NULL ;
+					continue ;
+				}
+
+				out->min = roaring64_bitmap_minimum (out->bitmap) ;
+				out->max = roaring64_bitmap_maximum (out->bitmap) ;
+				break ;
+			}
+
+			default:
+				// unreachable - the kind was accepted above. It stays so that
+				// a kind added to one of these two switches and not the other
+				// is refused rather than given a silent span of [0, 0]
+				ok = false ;
+				break ;
+		}
+
+		live++ ;
+	}
+
+	if (ok) {
+		ok = (total == count) ;
+	}
+
+	//--------------------------------------------------------------------------
+	// sort by lowest id, and look for any two spans that touch
+	//--------------------------------------------------------------------------
+	//
+	// ADJACENT PAIRS ARE ENOUGH FOR THIS QUESTION and only for this question.
+	// Sorted by start, if any two spans overlap then some adjacent pair does:
+	// if i and j overlap with j past i+1, then start[i+1] <= start[j] <= end[i].
+	//
+	// It stops being enough the moment the comparison becomes exact. A bitmap
+	// whose span encloses its neighbour while sharing no id with it comes back
+	// clean, the scan moves on, and a LATER segment inside that same span is
+	// never put beside it - {0,50}, [10..20], {50,60} hides a repeated 50 that
+	// way. So an overlap is not answered here; it is handed over.
+	bool spans_touch = false ;
+
+	if (ok && live > 1) {
+		qsort (segs, live, sizeof (SegSpan), _CmpSegSpan) ;
+
+		for (uint32_t i = 1 ; i < live ; i++) {
+			if (segs[i].min <= segs[i - 1].max) {
+				spans_touch = true ;
+				break ;
+			}
+		}
+	}
+
+	for (uint32_t i = 0 ; i < live ; i++) {
+		if (segs[i].bitmap != NULL) {
+			roaring64_bitmap_free (segs[i].bitmap) ;
+		}
+	}
+	rm_free (segs) ;
+
+	// THE FALLBACK, AND WHY IT IS A FALLBACK. Comparing spans pairwise cannot
+	// settle an overlap exactly without comparing every pair that reaches
+	// every other, which is quadratic in the segment count - and the segment
+	// count comes off the wire. Measured: 3,200 bitmaps whose spans all cover
+	// each other while their members interleave take 66 ms to settle that way
+	// and under 2 ms as a union, and the gap grows with the square.
+	//
+	// So the union answers the overlapping case, where it is flat, and never
+	// runs for a list whose segments are disjoint - which is every list a
+	// conforming encoder produces, since the whole point of a segment is to
+	// describe a run of ids no other segment describes.
+	if (ok && spans_touch) {
+		return _AreDistinctUnion (ids, count) ;
+	}
+
 	return ok ;
 }
