@@ -246,7 +246,7 @@ theorem scans_stream {C R : Type} (pack : C → List (List R)) (cs : List C) :
 
 /-! ## Edge index scan (edge_by_index_scan.rs) -/
 
-/-- edge_by_index_scan.rs:265-301: as `canUse`, except `ArrayContains` also refuses integers that
+/-- edge_by_index_scan.rs:541-586: as `canUse`, except `ArrayContains` also refuses integers that
 lose precision as `f64`. -/
 def canUseE : IQ V → Bool
   | .arr _ v => match v with
@@ -279,7 +279,7 @@ theorem canUseE_spec (k : String) (v : V) (lo hi : Option V) (a b : Bool) :
     canUseE (.arr k (.int (2 ^ 60))) = false ∧ canUse (.arr k (.int (2 ^ 60))) = true := by
   refine ⟨by simp [canUseE], by simp [canUseE], by simp only [canUseE]; decide, rfl⟩
 
-/-- edge_by_index_scan.rs:78-112: `to` is not bound separately for a self-loop alias. -/
+/-- edge_by_index_scan.rs:346-390: `to` is not bound separately for a self-loop alias. -/
 structure EdgeCfg where
   fromA : Nat
   toA : Option Nat
@@ -294,14 +294,14 @@ theorem edgeIxNew_spec (f t e : Nat) (tr : Bool) :
     ((edgeIxNew f t e tr).toA = none ↔ t = f) ∧ (edgeIxNew f t e tr).cap = none := by
   refine ⟨by by_cases h : t = f <;> simp [edgeIxNew, h], rfl⟩
 
-/-- edge_by_index_scan.rs:355-366 (#3081, `ff3d24ba7`): an undirected pattern
+/-- edge_by_index_scan.rs:654-665 (#3081, `ff3d24ba7`): an undirected pattern
 (`rp.bidirectional`) sees each edge the index yields once, `src -> dst`, in both
 orientations — a self-loop once — as `CondTraverse` does. -/
 def orient (bidir : Bool) (base : List (Nat × Nat × Nat)) : List (Nat × Nat × Nat) :=
   if bidir then base.flatMap fun (s, d, e) => (s, d, e) :: (if s ≠ d then [(d, s, e)] else [])
   else base
 
-/-- edge_by_index_scan.rs:317-403: the index answer (or the cached full edge list), oriented
+/-- edge_by_index_scan.rs:645-693 (`indexed_edges` :145 / `scan_type` :105): the index answer (or the cached full edge list), oriented
 (`orient`), then the bound-endpoint and same-alias filter (orientation by `transposed`). -/
 def edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
     (bFrom bTo : Option Nat) (sameAlias transposed bidir : Bool) : List (Nat × Nat × Nat) :=
@@ -368,6 +368,173 @@ theorem orient_length (base : List (Nat × Nat × Nat)) :
     by_cases h : s = d
     · simp [h]; omega
     · simp [h]; omega
+
+/-! ### The hit cache (#3376): edge_by_index_scan.rs:187-308, 592-693 -/
+
+/-- edge_by_index_scan.rs:195-216 `collect_hits`, from an accumulator `acc`: append each hit
+oriented as `orient` does, refusing (`none`) before an append that would pass `max`. -/
+def collectHits (bidir : Bool) (max : Nat) :
+    List (Nat × Nat × Nat) → List (Nat × Nat × Nat) → Option (List (Nat × Nat × Nat))
+  | acc, [] => some acc
+  | acc, (s, d, e) :: t =>
+    if acc.length = max then none
+    else if bidir && s ≠ d then
+      if acc.length + 1 = max then none else collectHits bidir max (acc ++ [(s, d, e), (d, s, e)]) t
+    else collectHits bidir max (acc ++ [(s, d, e)]) t
+
+theorem orient_cons (b : Bool) (s d e : Nat) (t : List (Nat × Nat × Nat)) :
+    orient b ((s, d, e) :: t) = (s, d, e) :: ((if b && s ≠ d then [(d, s, e)] else []) ++ orient b t) := by
+  cases b <;> by_cases h : s = d <;> simp [orient, h]
+
+theorem collectHits_acc (bidir : Bool) (max : Nat) (hs acc : List (Nat × Nat × Nat))
+    (hacc : acc.length ≤ max) :
+    collectHits bidir max acc hs =
+      if acc.length + (orient bidir hs).length ≤ max then some (acc ++ orient bidir hs) else none := by
+  induction hs generalizing acc with
+  | nil => simp [collectHits, orient, hacc]
+  | cons hd t ih =>
+    obtain ⟨s, d, e⟩ := hd
+    rw [orient_cons]
+    have hcol : collectHits bidir max acc ((s, d, e) :: t) =
+        if acc.length = max then none
+        else if (bidir && s ≠ d) = true then
+          (if acc.length + 1 = max then none
+           else collectHits bidir max (acc ++ [(s, d, e), (d, s, e)]) t)
+        else collectHits bidir max (acc ++ [(s, d, e)]) t := rfl
+    rw [hcol]
+    by_cases hb : (bidir && s ≠ d) = true
+    · rw [if_pos hb, if_pos hb]
+      have hl : (acc ++ (s, d, e) :: ([(d, s, e)] ++ orient bidir t)).length =
+          acc.length + 2 + (orient bidir t).length := by simp <;> omega
+      have ha : acc ++ (s, d, e) :: ([(d, s, e)] ++ orient bidir t) =
+          acc ++ [(s, d, e), (d, s, e)] ++ orient bidir t := by simp
+      rw [List.length_append] at hl
+      rw [hl, ha]
+      by_cases h0 : acc.length = max
+      · rw [if_pos h0, if_neg (by omega)]
+      · rw [if_neg h0]
+        by_cases h1 : acc.length + 1 = max
+        · rw [if_pos h1, if_neg (by omega)]
+        · rw [if_neg h1, ih _ (by simp; omega)]
+          simp only [List.length_append, List.length_cons, List.length_nil]
+          all_goals
+            by_cases hm : acc.length + 2 + (orient bidir t).length ≤ max
+            · rw [if_pos (by omega), if_pos hm]
+            · rw [if_neg (by omega), if_neg hm]
+    · rw [if_neg hb, if_neg hb]
+      have hl : (acc ++ (s, d, e) :: ([] ++ orient bidir t)).length =
+          acc.length + 1 + (orient bidir t).length := by simp <;> omega
+      have ha : acc ++ (s, d, e) :: ([] ++ orient bidir t) = acc ++ [(s, d, e)] ++ orient bidir t := by
+        simp
+      rw [List.length_append] at hl
+      rw [hl, ha]
+      by_cases h0 : acc.length = max
+      · rw [if_pos h0, if_neg (by omega)]
+      · rw [if_neg h0, ih _ (by simp; omega)]
+        simp only [List.length_append, List.length_cons, List.length_nil]
+        all_goals
+          by_cases hm : acc.length + 1 + (orient bidir t).length ≤ max
+          · rw [if_pos (by omega), if_pos hm]
+          · rw [if_neg (by omega), if_neg hm]
+
+/-- `collect_hits` keeps exactly the oriented hits when they fit in `max`, else refuses: the
+cache never holds more than `MAX_CACHED_HITS`, and what it holds is `orient`'s list. -/
+theorem collectHits_spec (bidir : Bool) (max : Nat) (hs : List (Nat × Nat × Nat)) :
+    collectHits bidir max [] hs =
+      if (orient bidir hs).length ≤ max then some (orient bidir hs) else none := by
+  rw [collectHits_acc bidir max hs [] (Nat.zero_le _)]; simp
+
+/-- The per-hit test of `next`'s filter (edge_by_index_scan.rs:633-641 and 680-689). -/
+def keepHit (bFrom bTo : Option Nat) (sameAlias transposed : Bool) (h : Nat × Nat × Nat) : Bool :=
+  let (s, d, _) := h
+  let (f, t) := if transposed then (d, s) else (s, d)
+  (bFrom.all (· == f)) && (bTo.all (· == t)) && (!sameAlias || f == t)
+
+/-- edge_by_index_scan.rs:289-291: the pattern-side endpoint (`from` when `wantFrom`) of a hit. -/
+def endpointOf (transposed wantFrom : Bool) (h : Nat × Nat × Nat) : Nat :=
+  if wantFrom == transposed then h.2.1 else h.1
+
+/-- edge_by_index_scan.rs:292-307: the bucket of the bound `from` (else `to`): the kept hits whose
+endpoint is that id, in list order (the `HashMap` groups `all` by endpoint, pushing in order). -/
+def bucket (all : List (Nat × Nat × Nat)) (bFrom bTo : Option Nat) (transposed : Bool) :
+    List (Nat × Nat × Nat) :=
+  match bFrom, bTo with
+  | some id, _ => all.filter fun h => endpointOf transposed true h == id
+  | none, some id => all.filter fun h => endpointOf transposed false h == id
+  | none, none => []
+
+/-- edge_by_index_scan.rs:243-308 `HitCache::lookup`: `none` (stream) on a write query, a
+row-dependent query, a cache over budget, no bound endpoint, or the first bound row (`seen = 0`);
+otherwise the bucket of the hits `built` (`collect_hits`, `none` when over budget). -/
+def lookup (write rowInv overBudget : Bool) (seen : Nat) (built : Option (List (Nat × Nat × Nat)))
+    (bFrom bTo : Option Nat) (transposed : Bool) : Option (List (Nat × Nat × Nat)) :=
+  if write || !rowInv || overBudget || (bFrom.isNone && bTo.isNone) then none
+  else if seen = 0 then none
+  else (built.map fun all => bucket all bFrom bTo transposed)
+
+/-- edge_by_index_scan.rs:592-693, one input row: a usable query tries the hit cache (built from
+the index answer for the row's query; a row-invariant query is the same on every row, so the
+same answer as the row that built it), else streams `edgeRow`. -/
+def edgeNextRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
+    (bFrom bTo : Option Nat) (sameAlias transposed bidir : Bool)
+    (write rowInv overBudget : Bool) (seen max : Nat) : List (Nat × Nat × Nat) :=
+  if canUseE q then
+    match lookup write rowInv overBudget seen (collectHits bidir max [] (idx q)) bFrom bTo transposed with
+    | some b => b.filter (keepHit bFrom bTo sameAlias transposed)
+    | none => edgeRow idx all q bFrom bTo sameAlias transposed bidir
+  else edgeRow idx all q bFrom bTo sameAlias transposed bidir
+
+/-- A bucket filtered by the row's test is the whole hit list filtered by it: the bucket key is
+one conjunct of the test. -/
+theorem bucket_filter (all : List (Nat × Nat × Nat)) (bf bt : Option Nat) (sa tr : Bool)
+    (hb : bf.isSome || bt.isSome) :
+    (bucket all bf bt tr).filter (keepHit bf bt sa tr) = all.filter (keepHit bf bt sa tr) := by
+  match bf, bt with
+  | none, none => simp at hb
+  | some id, _ =>
+    simp only [bucket, List.filter_filter]
+    apply List.filter_congr
+    intro ⟨s, d, e⟩ _
+    cases tr <;> by_cases h1 : s = id <;> by_cases h2 : d = id <;>
+      simp only [keepHit, endpointOf] <;> simp [h1, h2] <;> intro hx <;> subst hx <;> simp_all
+  | none, some id =>
+    simp only [bucket, List.filter_filter]
+    apply List.filter_congr
+    intro ⟨s, d, e⟩ _
+    cases tr <;> by_cases h1 : s = id <;> by_cases h2 : d = id <;>
+      simp only [keepHit, endpointOf] <;> simp [h1, h2] <;> intro hx <;> subst hx <;> simp_all
+
+/-- **The hit cache changes no row** (#3376): every input row emits exactly what the
+streaming scan `edgeRow` emits, in the same order, whatever the cache state. -/
+theorem edgeNextRow_eq_edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (q : IQ V) (bf bt : Option Nat) (sa tr bd write rowInv over : Bool) (seen max : Nat) :
+    edgeNextRow idx all q bf bt sa tr bd write rowInv over seen max =
+      edgeRow idx all q bf bt sa tr bd := by
+  unfold edgeNextRow
+  split
+  · rename_i hq
+    split
+    · rename_i b hl
+      unfold lookup at hl
+      split at hl
+      · simp at hl
+      · rename_i hg
+        split at hl
+        · simp at hl
+        · rw [collectHits_spec] at hl
+          split at hl
+          · simp only [Option.map_some, Option.some.injEq] at hl
+            subst hl
+            have hb : (bf.isSome || bt.isSome) = true := by
+              cases bf <;> cases bt <;> simp_all
+            rw [bucket_filter _ _ _ _ _ hb]
+            simp only [edgeRow, hq, hb, if_true, Bool.true_or]
+            apply List.filter_congr
+            intro ⟨s, d, e⟩ _
+            cases tr <;> rfl
+          · simp at hl
+    · rfl
+  · rfl
 
 /-! ## Fulltext scans and the edge vector scan -/
 

@@ -78,8 +78,15 @@ graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::new	47	PROV
 graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::next	78	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, scans_stream
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::new	40	PROVEN	IndexScan.ftNew/VecSt.new: ftNew_spec
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::next	75	PROVEN	IndexScan.edgeVecRow/vecArgs: edgeVecRow_spec, vecArgs_ok
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	80	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	118	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	267	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
-graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	270	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	346	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	392	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	541	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
+graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	544	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	592	PROVEN	IndexScan.edgeNextRow/edgeRow/orient: edgeNextRow_eq_edgeRow (#3376 hit cache emits exactly the streamed rows, in order; the cache is built from the row's own query, which query_is_row_invariant makes every row's), edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
+graph/src/runtime/ops/edge_by_index_scan.rs	Bucket::next	69	PROVEN	IndexScan.bucket (walks the shared bucket slice in order): bucket_filter, edgeNextRow_eq_edgeRow
+graph/src/runtime/ops/edge_by_index_scan.rs	expr_is_row_invariant	78	NOT COVERED	orx_tree AST walk (Constant/Parameter/List/Map only); its claim, that such an expression evaluates the same on every row, is ExprEval's (expr_semantics), not modelled here
+graph/src/runtime/ops/edge_by_index_scan.rs	query_is_row_invariant	87	NOT COVERED	conjunction of expr_is_row_invariant over the IndexQuery arms; see expr_is_row_invariant
+graph/src/runtime/ops/edge_by_index_scan.rs	scan_type	105	PROVEN	IndexScan.edgeRow `all` (the type's edges, read once into the op cache): edgeRow_sound, edgeNextRow_eq_edgeRow
+graph/src/runtime/ops/edge_by_index_scan.rs	indexed_edges	145	MODELLED	IndexScan.edgeRow `idx` (get_indexed_edges = RediSearch FFI; query_index_edges = native index, see native_index row for next)
+graph/src/runtime/ops/edge_by_index_scan.rs	collect_hits	195	PROVEN	IndexScan.collectHits: collectHits_spec (exactly orient's list when it fits in max, else None), collectHits_acc, orient_cons
+graph/src/runtime/ops/edge_by_index_scan.rs	HitCache::lookup	243	PROVEN	IndexScan.lookup/bucket/endpointOf: bucket_filter, edgeNextRow_eq_edgeRow (stream on write/row-dependent/over budget/unbound/first bound row)
