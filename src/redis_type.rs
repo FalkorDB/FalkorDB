@@ -98,12 +98,14 @@ unsafe fn io_key_name(rdb: *mut RedisModuleIO) -> String {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graph_rdb_load(
     rdb: *mut RedisModuleIO,
-    _encver: i32,
+    encver: i32,
 ) -> *mut c_void {
     // Get the key name for looking up finalized graphs.
     let key_name = unsafe { io_key_name(rdb) };
 
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
+    match serializers::decoder::rdb_load_graph(rdb, encver, &key_name, unsafe {
+        io_cache_size(rdb)
+    }) {
         Ok(LoadedKey::Graph(graph)) => {
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(*graph);
@@ -912,7 +914,7 @@ pub fn wrong_type_compat(err: ValkeyError) -> ValkeyError {
 
 pub static GRAPH_TYPE: ValkeyType = ValkeyType::new(
     "graphdata",
-    19,
+    serializers::ENCODING_VERSION,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graph_rdb_load),
@@ -953,10 +955,12 @@ pub static GRAPH_TYPE: ValkeyType = ValkeyType::new(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graphmeta_rdb_load(
     rdb: *mut RedisModuleIO,
-    _encver: i32,
+    encver: i32,
 ) -> *mut c_void {
     let key_name = unsafe { io_key_name(rdb) };
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
+    match serializers::decoder::rdb_load_graph(rdb, encver, &key_name, unsafe {
+        io_cache_size(rdb)
+    }) {
         Ok(_) => {
             // Return a non-null dummy value. Redis needs non-null for successful load.
             Box::into_raw(Box::new(0u8)).cast()
@@ -1010,7 +1014,7 @@ unsafe extern "C" fn graphmeta_aux_load(
 
 pub static GRAPHMETA_TYPE: ValkeyType = ValkeyType::new(
     "graphmeta",
-    19,
+    serializers::ENCODING_VERSION,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graphmeta_rdb_load),
