@@ -10,6 +10,7 @@
 #include "src/util/rmalloc.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 
 void setup() {
@@ -230,12 +231,327 @@ void test_dataBlockOutOfOrderBuilding() {
 	DataBlockIterator_Free(it);
 }
 
+
+//------------------------------------------------------------------------------
+// claiming ids a peer stated
+//------------------------------------------------------------------------------
+
+// a cursor over a plain array, for driving DataBlock_ClaimIds from a test
+//
+// The real one walks decoded wire segments; this one exists so the claim can
+// be tested on its own, including with a cursor that LIES - yields fewer ids
+// than it states, or yields them out of order - which the wire cursor cannot
+// be made to do.
+typedef struct {
+	IdCursor        base;
+	const uint64_t *ids;
+	uint64_t        n;   // how many the array actually holds
+	uint64_t        at;
+} ArrayCursor;
+
+static void _ArrayCursor_Reset(IdCursor *self) {
+	((ArrayCursor *)self)->at = 0;
+}
+
+static bool _ArrayCursor_Next(IdCursor *self, uint64_t *id) {
+	ArrayCursor *c = (ArrayCursor *)self;
+	if(c->at >= c->n) return false;
+	*id = c->ids[c->at++];
+	return true;
+}
+
+// 'stated' is what the cursor claims to hold, which a test can make disagree
+// with what it yields
+static void _ArrayCursor_Init(ArrayCursor *c, const uint64_t *ids, uint64_t n,
+		uint64_t stated) {
+	c->base.reset = _ArrayCursor_Reset;
+	c->base.next  = _ArrayCursor_Next;
+	c->base.count = stated;
+	c->ids        = ids;
+	c->n          = n;
+	c->at         = 0;
+}
+
+// a refusal must leave the block exactly as it was - not only unclaimed, but
+// un-grown, since growing is the damage an unbounded id would do
+typedef struct {
+	uint64_t itemCount;
+	uint64_t itemCap;
+	uint     deleted;
+} BlockState;
+
+static BlockState _Snapshot(const DataBlock *db) {
+	BlockState st = { db->itemCount, db->itemCap, arr_len(db->deletedIdx) };
+	return st;
+}
+
+static void _AssertUnchanged(const DataBlock *db, BlockState before) {
+	TEST_ASSERT(db->itemCount        == before.itemCount);
+	TEST_ASSERT(db->itemCap          == before.itemCap);
+	TEST_ASSERT(arr_len(db->deletedIdx) == before.deleted);
+}
+
+void test_dataBlockClaimIds() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	const uint64_t ids[] = {0, 1, 2};
+	ArrayCursor cur;
+	_ArrayCursor_Init(&cur, ids, 3, 3);
+
+	TEST_ASSERT(DataBlock_ClaimIds(db, &cur.base) == true);
+	TEST_ASSERT(db->itemCount == 3);
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 0);
+
+	// the claimed slots are live and addressable
+	for(int i = 0; i < 3; i++) {
+		int *v = (int *)DataBlock_ClaimedItem(db, ids[i]);
+		TEST_ASSERT(v != NULL);
+		*v = i * 10;
+	}
+	for(int i = 0; i < 3; i++) {
+		TEST_ASSERT(*(int *)DataBlock_GetItem(db, ids[i]) == i * 10);
+	}
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimTakesIdsOffTheFreeList() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	for(int i = 0; i < 5; i++) {
+		uint64_t idx;
+		DataBlock_AllocateItem(db, &idx);
+	}
+	DataBlock_DeleteItem(db, 1);
+	DataBlock_DeleteItem(db, 3);
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 2);
+	TEST_ASSERT(db->itemCount == 3);
+
+	// reuse is the ORDINARY case for a replica, and the free list has to be
+	// maintained or the next allocation hands the same id out twice
+	const uint64_t ids[] = {1, 3};
+	ArrayCursor cur;
+	_ArrayCursor_Init(&cur, ids, 2, 2);
+
+	TEST_ASSERT(DataBlock_ClaimIds(db, &cur.base) == true);
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 0);
+	TEST_ASSERT(db->itemCount == 5);
+
+	// nothing is handed out twice: the next ordinary allocation must be a
+	// fresh id, not one this batch just claimed
+	uint64_t idx;
+	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(idx != 1 && idx != 3);
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimRefusesALiveId() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	for(int i = 0; i < 4; i++) {
+		uint64_t idx;
+		DataBlock_AllocateItem(db, &idx);
+	}
+	DataBlock_DeleteItem(db, 2);
+
+	// id 0 is live - that is divergence, not reuse
+	const uint64_t ids[] = {0, 2};
+	ArrayCursor cur;
+	_ArrayCursor_Init(&cur, ids, 2, 2);
+
+	BlockState before = _Snapshot(db);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &cur.base) == false);
+	_AssertUnchanged(db, before);
+
+	// and id 2, which WAS claimable, is still on the free list
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 1);
+	TEST_ASSERT(DataBlock_GetItem(db, 2) == NULL);  // still deleted
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimRefusesARepeatedId() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	// naming one id twice would put two entities on one slot
+	const uint64_t ids[] = {0, 1, 1};
+	ArrayCursor cur;
+	_ArrayCursor_Init(&cur, ids, 3, 3);
+
+	BlockState before = _Snapshot(db);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &cur.base) == false);
+	_AssertUnchanged(db, before);
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimRefusesIdsOutOfOrder() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	// the contract is ascending: out of order, the duplicate check and the
+	// gap fill below are both wrong, so it is refused rather than sorted
+	const uint64_t ids[] = {2, 0, 1};
+	ArrayCursor cur;
+	_ArrayCursor_Init(&cur, ids, 3, 3);
+
+	BlockState before = _Snapshot(db);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &cur.base) == false);
+	_AssertUnchanged(db, before);
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimAcceptsTheSparseRecordsGroupingProduces() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	// A RECORD'S IDS ARE NOT DENSE, and no bound taken from the record's own
+	// count can accept them. CREATE (:A), (:B), (:A) allocates 0,1,2 and
+	// travels as TWO records, because v3 sends one per shape: ':A' holding
+	// {0, 2} and ':B' holding {1}. An earlier version of this function
+	// refused the first of them on the grounds that a record creating two
+	// entities could not reach id 2 - which is true of a whole payload and
+	// false of one record.
+	const uint64_t a_ids[] = {0, 2};
+	ArrayCursor a;
+	_ArrayCursor_Init(&a, a_ids, 2, 2);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &a.base) == true);
+
+	// slot 1 is skipped, so it is FREE rather than lost - which is precisely
+	// what lets the second record have it
+	TEST_ASSERT(db->itemCount == 2);
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 1);
+	TEST_ASSERT(db->deletedIdx[0] == 1);
+
+	const uint64_t b_ids[] = {1};
+	ArrayCursor b;
+	_ArrayCursor_Init(&b, b_ids, 1, 1);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &b.base) == true);
+
+	// and the pair lands exactly where the primary is: three live, none free
+	TEST_ASSERT(db->itemCount == 3);
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 0);
+	for(int i = 0; i < 3; i++) TEST_ASSERT(DataBlock_GetItem(db, i) != NULL);
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimAcceptsAWholeInterleavedShapeGroup() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	// the same thing at the scale an edge create produces: four of
+	// CREATE (:A)-[:R]->(:B) allocates 0..7, and the ':A' record holds every
+	// even id while ':B' holds every odd one
+	const uint64_t evens[] = {0, 2, 4, 6};
+	ArrayCursor a;
+	_ArrayCursor_Init(&a, evens, 4, 4);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &a.base) == true);
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 3);  // 1, 3, 5
+
+	const uint64_t odds[] = {1, 3, 5, 7};
+	ArrayCursor b;
+	_ArrayCursor_Init(&b, odds, 4, 4);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &b.base) == true);
+
+	TEST_ASSERT(db->itemCount == 8);
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 0);
+	for(int i = 0; i < 8; i++) TEST_ASSERT(DataBlock_GetItem(db, i) != NULL);
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimRefusesTheInvalidId() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	// THE ONE ID THAT IS REFUSED, and not as a guess about what the peer could
+	// have reached: UINT64_MAX is INVALID_ENTITY_ID, so no entity carries it,
+	// and it is where DataBlock_Ensure's (1 + idx) wraps to zero and the write
+	// lands off the end of the block
+	const uint64_t ids[] = {UINT64_MAX};
+	ArrayCursor cur;
+	_ArrayCursor_Init(&cur, ids, 1, 1);
+
+	BlockState before = _Snapshot(db);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &cur.base) == false);
+	_AssertUnchanged(db, before);
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimFreesTheIdsItSkips() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	for(int i = 0; i < 4; i++) {
+		uint64_t idx;
+		DataBlock_AllocateItem(db, &idx);
+	}
+	DataBlock_DeleteItem(db, 1);
+	// live: 0, 2, 3   free: 1   high water: 4
+
+	// one id off the free list and one past the high-water mark, which leaves
+	// slot 4 behind. A SKIPPED SLOT MUST BECOME FREE: leaked, it would make
+	// this replica's own allocation diverge the first time it allocates.
+	const uint64_t ids[] = {1, 5};
+	ArrayCursor cur;
+	_ArrayCursor_Init(&cur, ids, 2, 2);
+
+	TEST_ASSERT(DataBlock_ClaimIds(db, &cur.base) == true);
+	TEST_ASSERT(db->itemCount == 5);
+
+	// 1 was taken off the list, 4 was put on it
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 1);
+	TEST_ASSERT(db->deletedIdx[0] == 4);
+	TEST_ASSERT(DataBlock_GetItem(db, 4) == NULL);  // marked deleted, not lost
+
+	// so the next ordinary allocation reuses it rather than losing it
+	uint64_t idx;
+	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(idx == 4);
+
+	DataBlock_Free(db);
+}
+
+void test_dataBlockClaimRefusesAWalkThatDisagreesWithItsCount() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	// states three, yields two. Left unchecked the caller would write three
+	// rows into two claimed slots and report success.
+	const uint64_t ids[] = {0, 1};
+	ArrayCursor cur;
+	_ArrayCursor_Init(&cur, ids, 2, 3);
+
+	BlockState before = _Snapshot(db);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &cur.base) == false);
+	_AssertUnchanged(db, before);
+
+	// and the other way round: states two, yields three
+	ArrayCursor over;
+	const uint64_t more[] = {0, 1, 2};
+	_ArrayCursor_Init(&over, more, 3, 2);
+
+	before = _Snapshot(db);
+	TEST_ASSERT(DataBlock_ClaimIds(db, &over.base) == false);
+	_AssertUnchanged(db, before);
+
+	DataBlock_Free(db);
+}
+
 TEST_LIST = {
 	{"dataBlockNew", test_dataBlockNew},
 	{"dataBlockAddItem", test_dataBlockAddItem },
 	{"dataBlockScan", test_dataBlockScan},
 	{"dataBlockRemoveItem", test_dataBlockRemoveItem},
 	{"dataBlockOutOfOrderBuilding", test_dataBlockOutOfOrderBuilding},
+	{"dataBlockClaimIds", test_dataBlockClaimIds},
+	{"dataBlockClaimTakesIdsOffTheFreeList", test_dataBlockClaimTakesIdsOffTheFreeList},
+	{"dataBlockClaimRefusesALiveId", test_dataBlockClaimRefusesALiveId},
+	{"dataBlockClaimRefusesARepeatedId", test_dataBlockClaimRefusesARepeatedId},
+	{"dataBlockClaimRefusesIdsOutOfOrder", test_dataBlockClaimRefusesIdsOutOfOrder},
+	{"dataBlockClaimAcceptsTheSparseRecordsGroupingProduces", test_dataBlockClaimAcceptsTheSparseRecordsGroupingProduces},
+	{"dataBlockClaimAcceptsAWholeInterleavedShapeGroup", test_dataBlockClaimAcceptsAWholeInterleavedShapeGroup},
+	{"dataBlockClaimRefusesTheInvalidId", test_dataBlockClaimRefusesTheInvalidId},
+	{"dataBlockClaimFreesTheIdsItSkips", test_dataBlockClaimFreesTheIdsItSkips},
+	{"dataBlockClaimRefusesAWalkThatDisagreesWithItsCount", test_dataBlockClaimRefusesAWalkThatDisagreesWithItsCount},
 	{NULL, NULL}
 };
 

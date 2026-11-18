@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "../util/wire_string.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
@@ -77,13 +78,28 @@ bool ApplyDropConstraint
 	int label_id ;
 	fread_assert (&label_id, sizeof (label_id), stream) ;
 
-	size_t l ;
-	fread_assert (&l, sizeof (l), stream) ;
-	char label [l] ;
-	fread_assert (label, l, stream) ;
+	// BOUNDED. This used to be `size_t l; fread_assert(&l,...); char label[l];`
+	// - a stack array sized by a length off the wire, read with a macro whose
+	// ASSERT compiles to nothing in release. See ReadWireString.
+	char *label = ReadWireString (stream) ;
+	if (label == NULL) {
+		return false ;
+	}
 
 	uint8_t n ;
 	fread_assert (&n, sizeof (n), stream) ;
+
+	// a constraint is identified by its property list, so a drop naming none
+	// cannot name the constraint it means. Schema_GetConstraint would simply
+	// find nothing, which reports a divergence that is really a malformed
+	// record - refused here so the log says which it was.
+	if (n == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT DROP_CONSTRAINT on '%s' names no properties",
+				label) ;
+		rm_free (label) ;
+		return false ;
+	}
 
 	AttributeID attr_ids [n] ;
 	char *props [n] ;
@@ -117,6 +133,8 @@ bool ApplyDropConstraint
 	for (uint8_t i = 0; i < n; i++) {
 		rm_free (props [i]) ;
 	}
+
+	rm_free (label) ;
 
 	return result ;
 }

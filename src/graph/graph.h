@@ -156,6 +156,38 @@ void Graph_CreateNode
 	uint label_count  // number of labels
 );
 
+// create multiple nodes at the ids the caller states, rather than allocating
+//
+// used by effects apply: the replica accepts the primary's ids instead of
+// inferring them and checking the guess. A batch rather than one at a time
+// because the ids are claimed off the free list in one pass.
+//
+// Claiming is SEPARATE from creation so the free list is walked once per
+// record rather than once per chunk.
+//
+// Returns false if any stated id is already live, or the batch names one
+// twice - either is divergence.
+bool Graph_ClaimNodeIds
+(
+	Graph *g,
+	IdCursor *ids  // ascending walk over the ids the primary stated
+);
+
+// create nodes into slots already claimed by Graph_ClaimNodeIds
+//
+// the slot is looked up from each node's own id rather than passed alongside:
+// an array of them would be one more allocation sized by a wire count
+void Graph_CreateNodesAtIds
+(
+	Graph *g,            // graph
+	Node **nodes,        // array of nodes to create; each carries its id
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // labels, same set applied to all nodes
+	uint label_count     // number of labels
+);
+
+
 // create multiple nodes
 // all nodes share the same set of labels
 void Graph_CreateNodes
@@ -223,6 +255,31 @@ void Graph_CreateEdges
 	Edge **edges,       // edges to create
 	AttributeSet *sets  // [optional] attribute sets
 );
+
+// claim storage for edge ids stated by a primary
+//
+// see Graph_ClaimNodeIds - separate from creation so the free list is walked
+// once per record rather than once per chunk.
+//
+// Returns false if any stated id is already live, or the batch names one
+// twice - either is divergence.
+bool Graph_ClaimEdgeIds
+(
+	Graph *g,
+	IdCursor *ids  // ascending walk over the ids the primary stated
+);
+
+// create edges into slots already claimed by Graph_ClaimEdgeIds
+//
+// see Graph_CreateNodesAtIds - the slot comes from the edge's own id
+void Graph_CreateEdgesAtIds
+(
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create; each edge's id is the id to use
+	AttributeSet *sets  // [optional] attribute sets
+);
+
 
 // deletes nodes from the graph
 void Graph_DeleteNodes

@@ -80,32 +80,50 @@ SIValue SIVector_Clone
 }
 
 // creates a vector from its binary representation
-SIValue SIVector_FromBinary
+bool SIVector_FromBinary
 (
 	FILE *stream, // binary stream
-	SIType t      // vector type
+	SIType t,     // vector type
+	SIValue *out  // [output] vector read
 ) {
 	// format:
 	// number of elements
 	// elements
 
 	ASSERT(stream != NULL);
+	ASSERT(out    != NULL);
 	ASSERT(t & T_VECTOR);
+
+	*out = SI_NullVal();
 
 	// read vector dimension from stream
 	uint32_t dim;
-	fread_assert(&dim, sizeof(uint32_t), stream);
+	if (!fread_checked (&dim, sizeof (uint32_t), stream)) {
+		return false;
+	}
+
+	size_t elem_size = sizeof(float);
+
+	// the dimension is off the wire, so reject one whose elements can't be
+	// backed by the bytes remaining before allocating for it
+	long remaining = fstream_remaining (stream);
+	if (remaining < 0 || (uint64_t)dim * elem_size > (uint64_t)remaining) {
+		return false;
+	}
 
 	// create vector
 	SIValue v = SIVectorf32_New(dim);
-	size_t elem_size = sizeof(float);
 
 	// set vector's elements
 	if(dim > 0) {
-		fread_assert(SIVector_Elements(v), dim * elem_size, stream);
+		if (!fread_checked (SIVector_Elements (v), dim * elem_size, stream)) {
+			SIValue_Free (v);
+			return false;
+		}
 	}
 
-	return v;
+	*out = v;
+	return true;
 }
 
 // compares two vectors

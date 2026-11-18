@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "../util/wire_string.h"
 #include "../util/arr.h"
 #include "../graph/graph_hub.h"
 #include "../index/indexer.h"
@@ -89,22 +90,35 @@ bool ApplyCreateIndex
 	int label_id ;
 	fread_assert (&label_id, sizeof (label_id), stream) ;
 
-	size_t l ;
-	fread_assert (&l, sizeof (l), stream) ;
-	char label [l] ;
-	fread_assert (label, l, stream) ;
+	// BOUNDED - see ReadWireString. These were stack arrays sized by a length
+	// off the wire, read with a macro whose ASSERT compiles out in release.
+	char *label = ReadWireString (stream) ;
+	if (label == NULL) {
+		return false ;
+	}
 
 	AttributeID attr_id ;
 	fread_assert (&attr_id, sizeof (attr_id), stream) ;
 
-	fread_assert (&l, sizeof (l), stream) ;
-	char attr [l] ;
-	fread_assert (attr, l, stream) ;
+	char *attr = ReadWireString (stream) ;
+	if (attr == NULL) {
+		rm_free (label) ;
+		return false ;
+	}
 
 	IndexFieldType t ;
 	fread_assert (&t, sizeof (t), stream) ;
 
-	SIValue options = SIValue_FromBinary (stream) ;
+	SIValue options = SI_NullVal () ;
+	if (!SIValue_FromBinary (stream, &options)) {
+		rm_free (label) ;
+		rm_free (attr) ;
+		return false ;
+	}
+
+	// single exit from here: 'options', 'label' and 'attr' are all owned by
+	// this frame and are released on every path below
+	bool res = false ;
 
 	//--------------------------------------------------------------------------
 	// verify label & attribute against local state
@@ -112,13 +126,11 @@ bool ApplyCreateIndex
 
 	Schema *s = VerifySchema (gc, st, label_id, label) ;
 	if (s == NULL) {
-		SIValue_Free (options) ;
-		return false ;
+		goto cleanup ;
 	}
 
 	if (!VerifyAttribute (gc, attr_id, attr)) {
-		SIValue_Free (options) ;
-		return false ;
+		goto cleanup ;
 	}
 
 	GraphEntityType et = (st == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
@@ -133,8 +145,7 @@ bool ApplyCreateIndex
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_INDEX failed to create index field "
 				"'%s' on '%s'", attr, label) ;
-		SIValue_Free (options) ;
-		return false ;
+		goto cleanup ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -165,8 +176,12 @@ bool ApplyCreateIndex
 	Index_Disable (idx) ;
 	Indexer_PopulateIndex (gc, s, idx) ;
 
-	SIValue_Free (options) ;
+	res = true ;
 
-	return true ;
+cleanup:
+	SIValue_Free (options) ;
+	rm_free (label) ;
+	rm_free (attr) ;
+	return res ;
 }
 

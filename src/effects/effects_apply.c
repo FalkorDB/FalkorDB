@@ -8,6 +8,9 @@
 #include "effects.h"
 #include "../util/arr.h"
 #include "effects_internal.h"
+#include "effects_v3.h"
+#include "effects_v3_stream.h"
+#include "../util/wire_string.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
@@ -27,10 +30,27 @@ static inline EffectType ReadEffectType
 	return t;
 }
 
-static AttributeSet ReadAttributeSet
+// read an AttributeSet off the stream
+//
+// TWO OUTCOMES THAT USED TO SHARE ONE NULL. A record stating zero attributes
+// is a propertyless entity and perfectly legal; a value that will not decode
+// is a payload this build cannot interpret. Returning NULL for both made the
+// second indistinguishable from the first at every call site, so a truncated
+// value applied as an entity with no properties and Effects_Apply still
+// reported success - silent divergence, which is the one outcome the
+// divergence guard exists to prevent.
+//
+// So the verdict is the return value and the set is an out-param: false means
+// refuse the payload, true with *out == NULL means the record said zero.
+static bool ReadAttributeSet
 (
-	FILE *stream
+	FILE *stream,
+	AttributeSet *out  // the set read, NULL when the record states none
 ) {
+	ASSERT (out != NULL) ;
+
+	*out = NULL ;
+
 	//--------------------------------------------------------------------------
 	// effect format:
 	// attribute count
@@ -44,7 +64,7 @@ static AttributeSet ReadAttributeSet
 	uint16_t attr_count;
 	fread_assert(&attr_count, sizeof(attr_count), stream);
 	if (attr_count == 0) {
-		return NULL ;
+		return true ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -59,16 +79,22 @@ static AttributeSet ReadAttributeSet
 		fread_assert(ids + i, sizeof(AttributeID), stream);
 		
 		// read attribute value
-		values[i] = SIValue_FromBinary(stream);
+		if (!SIValue_FromBinary (stream, values + i)) {
+			// forced by the shared codec's signature; the surrounding v2 reads
+			// are hardened separately
+			for (uint16_t j = 0; j < i; j++) SIValue_Free (values[j]);
+			return false;
+		}
 	}
 
 	AttributeSet attr_set = NULL;
 	AttributeSet_Add (&attr_set, ids, values, attr_count, false) ;
 
-	return attr_set;
+	*out = attr_set;
+	return true;
 }
 
-static void ApplyCreateNode
+static bool ApplyCreateNode
 (
 	FILE *stream,     // effects stream
 	GraphContext *gc  // graph to operate on
@@ -101,7 +127,13 @@ static void ApplyCreateNode
 	// read attributes
 	//--------------------------------------------------------------------------
 
-	AttributeSet attr_set = ReadAttributeSet (stream) ;
+	AttributeSet attr_set = NULL ;
+	if (!ReadAttributeSet (stream, &attr_set)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_NODE carries an attribute value this "
+				"build cannot decode") ;
+		return false ;
+	}
 
 	//--------------------------------------------------------------------------
 	// create node
@@ -109,6 +141,8 @@ static void ApplyCreateNode
 
 	Node n = GE_NEW_NODE () ;
 	GraphHub_CreateNode (gc, &n, labels, lbl_count, attr_set, false) ;
+
+	return true ;
 }
 
 static inline void FlushEdges
@@ -147,7 +181,7 @@ static inline void FlushEdges
 //
 // multiple edges of the same relation type are batched together
 // for efficient insertion
-static void ApplyCreateEdge
+static bool ApplyCreateEdge
 (
 	FILE *stream,      // effects stream
 	GraphContext *gc,  // graph to operate on
@@ -170,6 +204,8 @@ static void ApplyCreateEdge
 
 	Edge **batch = arr_new (Edge *, 1) ;  // batch, points to edges
 	AttributeSet *sets = arr_new (AttributeSet, 1) ;  // attribute-sets
+
+	bool ok = true ;  // cleared when a value will not decode
 
 	RelationID r      = GRAPH_UNKNOWN_RELATION ;  // current edge relation id
 	RelationID prev_r = GRAPH_UNKNOWN_RELATION ;  // last processed relation id
@@ -206,7 +242,16 @@ static void ApplyCreateEdge
 		// read attributes
 		//----------------------------------------------------------------------
 
-		arr_append (sets, ReadAttributeSet(stream)) ;
+		AttributeSet set = NULL ;
+		if (!ReadAttributeSet (stream, &set)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_EDGE carries an attribute value this "
+					"build cannot decode") ;
+			ok = false ;
+			break ;
+		}
+
+		arr_append (sets, set) ;
 
 		//----------------------------------------------------------------------
 		// add edge to batch
@@ -241,12 +286,23 @@ static void ApplyCreateEdge
 		}
 	}
 
-	// flush last batch
-	FlushEdges (gc, batch, sets, r, &i) ;
+	if (ok) {
+		// flush last batch
+		FlushEdges (gc, batch, sets, r, &i) ;
+	} else {
+		// the batch is abandoned, so nothing takes over the sets already read:
+		// GraphHub_CreateEdges is what consumes them, and it is not reached
+		uint32_t n = arr_len (sets) ;
+		for (uint32_t k = 0 ; k < n ; k++) {
+			AttributeSet_Free (sets + k) ;
+		}
+	}
 
 	// clean up
 	arr_free (sets) ;
 	arr_free (batch) ;
+
+	return ok ;
 }
 
 // returns false if the effect references graph state that doesn't exist
@@ -399,13 +455,13 @@ static bool ApplyAddSchema
 	fread_assert(&t, sizeof(t), stream);
 
 	// read schema name
-	// read string length
-	size_t l;
-	fread_assert(&l, sizeof(l), stream);
-
-	// read string
-	char schema_name[l];
-	fread_assert(schema_name, l, stream);
+	//
+	// BOUNDED - see ReadWireString. This was a stack array sized by a length
+	// off the wire, read with a macro whose ASSERT compiles out in release.
+	char *schema_name = ReadWireString (stream) ;
+	if (schema_name == NULL) {
+		return false ;
+	}
 
 	// create schema
 	bool created = false ;
@@ -414,9 +470,11 @@ static bool ApplyAddSchema
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_SCHEMA targets schema '%s' which already "
 				"exists locally", schema_name) ;
+		rm_free (schema_name) ;
 		return false ;
 	}
 
+	rm_free (schema_name) ;
 	return true ;
 }
 
@@ -433,25 +491,27 @@ static bool ApplyAddAttribute
 	// attribute name
 	//--------------------------------------------------------------------------
 
-	// read attribute name length
-	size_t l ;
-	fread_assert (&l, sizeof (l), stream) ;
-
 	// read attribute name
-	char attr[l] ;
-	fread_assert (attr, l, stream) ;
+	//
+	// BOUNDED - see ReadWireString
+	char *attr = ReadWireString (stream) ;
+	if (attr == NULL) {
+		return false ;
+	}
 
 	// attr should not exist
 	if (GraphContext_GetAttributeID (gc, attr) != ATTRIBUTE_ID_NONE) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_ATTRIBUTE targets attribute '%s' which "
 				"already exists locally", attr) ;
+		rm_free (attr) ;
 		return false ;
 	}
 
 	// add attribute
 	GraphHub_FindOrAddAttribute (gc, attr, false) ;
 
+	rm_free (attr) ;
 	return true ;
 }
 
@@ -675,6 +735,29 @@ static bool ApplyDeleteEdge
 }
 
 // returns false in case of effect encode/decode version mismatch
+// why a v3 buffer was refused, for the log line
+//
+// LOCAL ON PURPOSE. The shared contract declares the status enum but no longer
+// declares a stringifier, and this is its only caller - putting a prototype
+// back in effects_v3.h would re-conflict on every move of the base branch for
+// the sake of one log line. A missing case is a compile warning here rather
+// than a silent "unknown", which is the point of switching rather than
+// indexing a table.
+static const char *_V3StatusStr
+(
+	EffectsV3Status s
+) {
+	switch (s) {
+		case EFFECTS_V3_OK:                  return "ok" ;
+		case EFFECTS_V3_TRUNCATED:           return "truncated" ;
+		case EFFECTS_V3_MALFORMED:           return "malformed" ;
+		case EFFECTS_V3_UNSUPPORTED_VERSION: return "unsupported version" ;
+		case EFFECTS_V3_UNSUPPORTED_FLAGS:   return "unsupported flags" ;
+		case EFFECTS_V3_UNIMPLEMENTED:       return "unimplemented record" ;
+	}
+	return "unknown status" ;
+}
+
 static bool ValidateVersion
 (
 	FILE *stream,  // effects stream
@@ -722,6 +805,80 @@ bool Effects_Apply
 		return false ;
 	}
 
+	//--------------------------------------------------------------------------
+	// v3 is decoded ONE RECORD AT A TIME
+	//--------------------------------------------------------------------------
+	//
+	// v1 and v2 walk the buffer straight into the graph. v3 splits decode from
+	// apply (see effects_v3.h): the payload carries a flags byte the older
+	// versions have no room for, and decode produces a record model as a plain
+	// value so it can be round-tripped and fuzzed without a graph. So the v3
+	// branch takes the whole buffer rather than the stream.
+	//
+	// It used to decode the whole payload and then walk it, which cost peak
+	// memory proportional to the payload. Now each record is decoded, applied
+	// and freed in turn - see effects_v3_stream.h for why the all-or-nothing
+	// property that gave up is worth less than it sounds, and for the return
+	// path a mid-stream refusal takes to the divergence guard.
+	if (version == 3) {
+		fclose (stream) ;
+
+		EffectsV3Reader r ;
+		EffectsV3Status status = EffectsV3_ReaderOpen (effects_buff, l, &r) ;
+
+		// 'applied' counts records that applied cleanly BEFORE any refusal, and
+		// it is in the log line deliberately. Streaming decode introduces
+		// exactly one case that could not happen before: a refusal raised after
+		// records 1..k are already in the graph. Without k in the log, a test
+		// for that case cannot tell it apart from a payload refused before
+		// anything applied - both raise sync_full and both converge.
+		uint32_t applied = 0 ;
+		bool     ok      = true ;
+
+		if (status == EFFECTS_V3_OK) {
+			EffectsV3Record rec ;
+			while (EffectsV3_ReaderNext (&r, &rec)) {
+				// the record is ours once the reader hands it over, so it is
+				// freed on BOTH paths - applied or refused. Peak memory stays
+				// one record, which is the point of streaming.
+				ok = EffectsV3_ApplyRecord (gc, &rec) ;
+				EffectsV3_RecordFree (&rec) ;
+
+				if (!ok) {
+					break ;  // the remaining bytes are not read
+				}
+
+				applied++ ;
+			}
+
+			status = EffectsV3_ReaderStatus (&r) ;
+		}
+
+		EffectsV3_ReaderClose (&r) ;
+
+		// THE BYTES AND THE VERDICT ARE REPORTED SEPARATELY. A decode status
+		// describes the payload; 'ok' describes what the graph made of it. Both
+		// end at the same 'return false' - and therefore at the same
+		// DivergenceGuard_OnFailure - but calling a refused-but-well-formed
+		// payload corrupt would send an operator hunting a wire problem that
+		// does not exist.
+		if (status != EFFECTS_V3_OK) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT v3 payload refused: %s, after applying %u "
+					"record(s)", _V3StatusStr (status), applied) ;
+			return false ;
+		}
+
+		if (!ok) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT v3 payload refused: a record could not be "
+					"applied, after applying %u record(s)", applied) ;
+			return false ;
+		}
+
+		return true ;
+	}
+
 	bool ok = true ;
 
 	// as long as there's data in stream
@@ -746,11 +903,11 @@ bool Effects_Apply
 				break ;
 
 			case EFFECT_CREATE_NODE:
-				ApplyCreateNode (stream, gc) ;
+				ok = ApplyCreateNode (stream, gc) ;
 				break ;
 
 			case EFFECT_CREATE_EDGE:
-				ApplyCreateEdge (stream, gc, l) ;
+				ok = ApplyCreateEdge (stream, gc, l) ;
 				break ;
 
 			case EFFECT_SET_LABELS:

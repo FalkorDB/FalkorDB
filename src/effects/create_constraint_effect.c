@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "../util/wire_string.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
@@ -83,13 +84,30 @@ bool ApplyCreateConstraint
 	int label_id ;
 	fread_assert (&label_id, sizeof (label_id), stream) ;
 
-	size_t l ;
-	fread_assert (&l, sizeof (l), stream) ;
-	char label [l] ;
-	fread_assert (label, l, stream) ;
+	// BOUNDED. This used to be `size_t l; fread_assert(&l,...); char label[l];`
+	// - a stack array sized by a length off the wire, read with a macro whose
+	// ASSERT compiles to nothing in release. See ReadWireString.
+	char *label = ReadWireString (stream) ;
+	if (label == NULL) {
+		return false ;
+	}
 
 	uint8_t n ;
 	fread_assert (&n, sizeof (n), stream) ;
+
+	// A CONSTRAINT OVER NO PROPERTIES IS NOT A CONSTRAINT. Refused here rather
+	// than carried into GraphHub_AddConstraint, whose ASSERT (n > 0) is a
+	// no-op in release. cmd_constraint.c bounds a client statement at 1..255,
+	// so no statement produces this - a wire record does, and GRAPH.EFFECT is
+	// registered "write deny-script" with no master-link check, so any client
+	// that may write the key can send one.
+	if (n == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' names no properties",
+				label) ;
+		rm_free (label) ;
+		return false ;
+	}
 
 	AttributeID attr_ids [n] ;
 	char *props [n] ;
@@ -142,6 +160,8 @@ bool ApplyCreateConstraint
 	for (uint8_t i = 0; i < n; i++) {
 		rm_free (props [i]) ;
 	}
+
+	rm_free (label) ;
 
 	return result ;
 }
