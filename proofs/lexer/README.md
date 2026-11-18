@@ -105,16 +105,16 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 89 rows: all of `lexer.rs` and `string_escape.rs`, plus the functions of `cypher.rs`.
+`COVERAGE.tsv` has 92 rows: all of `lexer.rs` and `string_escape.rs`, plus the functions of `cypher.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 21 |
+| PROVEN | 23 |
 | MODELLED | 9 |
-| NOT COVERED | 59 |
+| NOT COVERED | 60 |
 
-- **PROVEN:** all 14 `lexer.rs` functions, `cypher_unescape` and `cypher_escape`, and in `cypher.rs` `check_depth`, `nested`, `parse_literal`, `parse_expr` and `parse_expr_inner`.
-- **MODELLED:** `cypher.rs` functions of which this project models only a fragment: the hop-bound cast in `parse_shortest_path_expr` and `parse_relationship_pattern`, the property-target loop of `parse_set_items`/`parse_remove_items`, the recursion shape of `parse_foreach_clause`, the integer arm of `parse_unsigned_literal`, the per-constructor shape check of `parse_primary_expr` (`primary_levels`), and the height helpers `with_child_height` and `tree_height` (the iterative walk is not proved equal to `height`).
+- **PROVEN:** all 14 `lexer.rs` functions, `cypher_unescape` and `cypher_escape`, and in `cypher.rs` `check_depth`, `nested`, `parse_literal`, `parse_expr`, `parse_expr_inner`, `hop_bound` and `hop_literal`.
+- **MODELLED:** `cypher.rs` functions of which this project models only a fragment: the hop-bound parsing in `parse_shortest_path_expr` and `parse_relationship_pattern`, the property-target loop of `parse_set_items`/`parse_remove_items`, the recursion shape of `parse_foreach_clause`, the integer arm of `parse_unsigned_literal`, the per-constructor shape check of `parse_primary_expr` (`primary_levels`), and the height helpers `with_child_height` and `tree_height` (the iterative walk is not proved equal to `height`).
 - **NOT COVERED:** the rest of the parser routines in `cypher.rs`, which are the grammar, not the lexer. They are covered by [`../parser_grammar`](../parser_grammar); `bash proofs/coverage.sh` counts each function once, in its best bucket.
 
 ## What the model does not cover
