@@ -984,8 +984,11 @@ impl Graph {
             // The lookups and the hash chains are rebuilt from the lists: the RDB
             // carries neither.
             schema: Schema {
-                labels: NameMap::from_names(node_labels),
-                relationship_types: NameMap::from_names(relationship_types),
+                labels: NameMap::from_names(NameMap::Labels, node_labels),
+                relationship_types: NameMap::from_names(
+                    NameMap::RelationshipTypes,
+                    relationship_types,
+                ),
                 property_keys: attrs_name,
             },
             node_attrs,
@@ -1245,10 +1248,12 @@ impl Graph {
         &mut self,
         label: &Arc<String>,
     ) -> LabelId {
-        self.schema
-            .labels
-            .get_or_insert(label)
-            .expect("label ids never run out")
+        LabelId(
+            self.schema
+                .labels
+                .get_or_insert(label)
+                .expect("label ids never run out"),
+        )
     }
 
     pub fn get_label_id_mut(
@@ -1275,14 +1280,17 @@ impl Graph {
         &self,
         label: &str,
     ) -> Option<LabelId> {
-        self.schema.labels.id_of(label)
+        self.schema.labels.id_of(label).map(LabelId)
     }
 
     pub fn get_type_id(
         &self,
         relationship_type: &str,
     ) -> Option<TypeId> {
-        self.schema.relationship_types.id_of(relationship_type)
+        self.schema
+            .relationship_types
+            .id_of(relationship_type)
+            .map(TypeId)
     }
 
     /// Check if a node has a specific label.
@@ -1360,11 +1368,12 @@ impl Graph {
         relationship_type: &Arc<String>,
     ) -> TypeId {
         let known = self.schema.relationship_types.len();
-        let id = self
-            .schema
-            .relationship_types
-            .get_or_insert(relationship_type)
-            .expect("relationship type ids never run out");
+        let id = TypeId(
+            self.schema
+                .relationship_types
+                .get_or_insert(relationship_type)
+                .expect("relationship type ids never run out"),
+        );
         if self.schema.relationship_types.len() > known {
             self.relationship_matrices
                 .insert(id.0, Tensor::new(self.node_cap, self.node_cap));
@@ -6189,7 +6198,7 @@ mod falkordb_index_tests;
 #[cfg(test)]
 mod restore_tests {
     use super::*;
-    use crate::graph::graphblas::test_init::ensure_init;
+    use crate::graph::{graphblas::test_init::ensure_init, schema::NameList};
 
     /// A load must not shrink the matrices it decodes (#3246).
     ///
@@ -6221,7 +6230,7 @@ mod restore_tests {
             vec![tensor],
             vec![Arc::new("L".to_string())],
             vec![Arc::new("R".to_string())],
-            AttrNameMap::default(),
+            AttrNameMap::PropertyKeys(NameList::default()),
             AttributeStore::new(),
             AttributeStore::new(),
         );
@@ -6290,7 +6299,7 @@ mod restore_tests {
             "a later version's name changed an earlier version's hash"
         );
 
-        let mut attrs = AttrNameMap::default();
+        let mut attrs = AttrNameMap::PropertyKeys(NameList::default());
         for name in g.get_attrs() {
             attrs.insert(name);
         }

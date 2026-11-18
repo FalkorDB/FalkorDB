@@ -119,7 +119,7 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
-use super::schema::{NameMap, PropertyKeys};
+use super::schema::NameMap;
 use crate::runtime::value::Value;
 
 /// Highest `u16`, reserved as "no attribute".
@@ -134,9 +134,9 @@ pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
 pub const MAX_ATTRIBUTES: usize = ATTRIBUTE_ID_NONE as usize;
 
 /// The property-key names, one list for the whole graph (see
-/// [`Schema::property_keys`](super::schema::Schema::property_keys)): position is the
-/// id, and ids are `u16`.
-pub type AttrNameMap = NameMap<PropertyKeys>;
+/// [`Schema::property_keys`](super::schema::Schema::property_keys)): a
+/// [`NameMap::PropertyKeys`], whose ids fit a `u16`.
+pub type AttrNameMap = NameMap;
 
 impl AttrNameMap {
     #[must_use]
@@ -144,7 +144,7 @@ impl AttrNameMap {
         &self,
         name: &Arc<String>,
     ) -> Option<usize> {
-        self.id_of(name).map(usize::from)
+        self.id_of(name)
     }
 
     /// Intern `name`, doing nothing if the dictionary is already full.
@@ -177,14 +177,15 @@ impl AttrNameMap {
     /// long-established property would start returning the new one's values. Refusing
     /// to mint keeps the failure confined to the name that could not be added:
     /// `ATTRIBUTE_ID_NONE` resolves to no entry, so the property reads as absent, and
-    /// `decode_with_count` already rejects it on the wire. The cap is
-    /// [`PropertyKeys::id`](super::schema::PropertyKeys), which numbers no position at
-    /// or past it.
+    /// `decode_with_count` already rejects it on the wire. The cap is the property-key
+    /// list's capacity, which [`NameMap::get_or_insert`] enforces.
     pub fn get_or_create(
         &mut self,
         name: &Arc<String>,
     ) -> u16 {
-        self.get_or_insert(name).unwrap_or(ATTRIBUTE_ID_NONE)
+        self.get_or_insert(name)
+            .and_then(|id| u16::try_from(id).ok())
+            .unwrap_or(ATTRIBUTE_ID_NONE)
     }
 }
 
@@ -1495,6 +1496,7 @@ impl Decode<19> for AttributeStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::schema::NameList;
 
     fn name(s: &str) -> Arc<String> {
         Arc::new(s.to_string())
@@ -1506,7 +1508,7 @@ mod tests {
     /// across versions — not where the dictionary lives, so pairing the two here keeps
     /// them in their original shape. `Deref` forwards everything that does not need the
     /// dictionary; the handful of methods that do are shadowed below.
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct TestStore {
         names: AttrNameMap,
         store: AttributeStore,
@@ -1514,7 +1516,10 @@ mod tests {
 
     impl TestStore {
         fn new() -> Self {
-            Self::default()
+            Self {
+                names: AttrNameMap::PropertyKeys(NameList::default()),
+                store: AttributeStore::new(),
+            }
         }
 
         /// Clones the dictionary alongside the store, which is what `Graph::new_version`
@@ -2075,7 +2080,7 @@ mod tests {
             ],
         );
 
-        let mut dict = AttrNameMap::default();
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
         dict.insert(&Arc::new("a".to_string()));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
@@ -2128,7 +2133,7 @@ mod tests {
     #[test]
     fn minting_stops_at_the_id_space_rather_than_wrapping() {
         // Fill the dictionary to capacity, then ask for one more name.
-        let mut dict = AttrNameMap::default();
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
         for i in 0..MAX_ATTRIBUTES {
             dict.insert(&Arc::new(format!("a{i}")));
         }
@@ -2174,7 +2179,7 @@ mod tests {
         let mut r = span_stream(7, &[(0, Value::Int(10)), (5, Value::Int(20))]);
 
         // A dictionary holding a single name: id 0 is real, id 5 resolves to nothing.
-        let mut dict = AttrNameMap::default();
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
         dict.insert(&Arc::new("a".to_string()));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 

@@ -3,15 +3,9 @@
 //! Each list is a [`NameMap`]: the names in id order (position is the id), the map from
 //! a name back to its id, and the list's schema-hash chain ([`super::schema_hash`]).
 //! [`Schema`] holds the three and computes the hash over them.
-//!
-//! The lists are told apart by type: [`Labels`], [`RelationshipTypes`] and
-//! [`PropertyKeys`] each implement [`SchemaList`], which gives the list's chain tag and
-//! id type. A `NameMap<Labels>` hands out [`LabelId`]s, and its chain can't be passed
-//! where the relationship types' is expected.
 
 use std::{
     borrow::Borrow,
-    fmt::Debug,
     hash::{Hash, Hasher},
     ops::Index,
     sync::Arc,
@@ -20,66 +14,9 @@ use std::{
 use rustc_hash::FxHashMap;
 
 use super::{
-    attribute_store::{ATTRIBUTE_ID_NONE, AttrNameMap},
-    graph::{LabelId, TypeId},
-    schema_hash::{NameChain, schema_hash},
+    attribute_store::{AttrNameMap, MAX_ATTRIBUTES},
+    schema_hash::{chain_of, extend_chain, schema_hash},
 };
-
-/// One of a schema's three name lists.
-///
-/// The supertraits let [`NameChain`] and [`NameMap`] derive theirs: a derive asks the
-/// same of `L`.
-pub trait SchemaList: Copy + Default + Eq + Debug {
-    /// The byte the list's chain hashes before each name; see [`super::schema_hash`].
-    const TAG: u8;
-    /// What a name in this list is known by.
-    type Id: Copy;
-    /// The id of the name at `position`, or `None` if this list's ids can't reach it.
-    fn id(position: usize) -> Option<Self::Id>;
-}
-
-/// The node labels.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub struct Labels;
-
-impl SchemaList for Labels {
-    const TAG: u8 = 0;
-    type Id = LabelId;
-
-    fn id(position: usize) -> Option<LabelId> {
-        Some(LabelId(position))
-    }
-}
-
-/// The relationship types.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub struct RelationshipTypes;
-
-impl SchemaList for RelationshipTypes {
-    const TAG: u8 = 1;
-    type Id = TypeId;
-
-    fn id(position: usize) -> Option<TypeId> {
-        Some(TypeId(position))
-    }
-}
-
-/// The property keys, one list for nodes and relationships alike.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub struct PropertyKeys;
-
-impl SchemaList for PropertyKeys {
-    const TAG: u8 = 2;
-    type Id = u16;
-
-    /// A `u16` other than [`ATTRIBUTE_ID_NONE`], so the list is full at
-    /// `MAX_ATTRIBUTES` names; [`AttrNameMap::get_or_create`] says why.
-    fn id(position: usize) -> Option<u16> {
-        u16::try_from(position)
-            .ok()
-            .filter(|&id| id != ATTRIBUTE_ID_NONE)
-    }
-}
 
 /// A name as a map key, looked up by `&str` so a lookup needn't build an `Arc`.
 #[derive(Clone, PartialEq, Eq)]
@@ -101,85 +38,120 @@ impl Borrow<str> for Key {
     }
 }
 
-/// One list of names in id order, with the map from a name back to its id and the
-/// list's schema-hash chain.
-///
-/// [`Self::get_or_insert`] is the only way to add a name, and it updates all three, so
-/// they can't drift apart.
-#[derive(Clone)]
-pub struct NameMap<L: SchemaList> {
+/// One list's names in id order, with the map from a name back to its id and the
+/// list's schema-hash chain. Only [`NameMap`] changes it, so the three can't drift
+/// apart.
+#[derive(Clone, Default)]
+pub struct NameList {
     names: Vec<Arc<String>>,
     /// The reverse of `names`. A label test runs per row (`n:Person` for every row of
     /// a scan), so finding a name must not walk the list: with 500 labels registered,
     /// `MATCH (n) WHERE n:Person RETURN count(n)` over 10k nodes measured 2.1x the same
     /// query on a one-label schema, all of it in the walk.
-    ids: FxHashMap<Key, L::Id>,
-    chain: NameChain<L>,
+    ids: FxHashMap<Key, usize>,
+    chain: u64,
 }
 
-/// By hand: a derive would also ask `L::Id: Default`, which an empty map doesn't need.
-impl<L: SchemaList> Default for NameMap<L> {
-    fn default() -> Self {
-        Self {
-            names: Vec::new(),
-            ids: FxHashMap::default(),
-            chain: NameChain::default(),
-        }
-    }
+/// One of a schema's three name lists. The variant decides the list's tag in the
+/// schema hash and how many names it can hold; an empty list is, for example,
+/// `NameMap::Labels(NameList::default())`.
+///
+/// [`Self::get_or_insert`] is the only way to add a name.
+#[derive(Clone)]
+pub enum NameMap {
+    Labels(NameList),
+    RelationshipTypes(NameList),
+    PropertyKeys(NameList),
 }
 
-impl<L: SchemaList> NameMap<L> {
-    /// The map over `names`, in id order, as an RDB load reads them.
+impl NameMap {
+    /// The list `list` makes, holding `names` in id order, as an RDB load reads them:
+    /// `NameMap::from_names(NameMap::Labels, names)`.
     ///
     /// Only a malformed RDB lists a name twice. Both positions are kept, so ids still
     /// line up with the saved matrices, and the name is found at its first, as C's
     /// `GraphContext_GetSchema` finds it. The chain covers every position. Names past
-    /// the last id the list has are dropped, as [`Self::get_or_insert`] would refuse
-    /// them.
+    /// what the list can hold are dropped, as [`Self::get_or_insert`] would refuse them.
     #[must_use]
-    pub fn from_names(mut names: Vec<Arc<String>>) -> Self {
-        let mut ids = FxHashMap::default();
-        ids.reserve(names.len());
-        let mut end = names.len();
-        for (position, name) in names.iter().enumerate() {
-            let Some(id) = L::id(position) else {
-                end = position;
-                break;
-            };
-            ids.entry(Key(Arc::clone(name))).or_insert(id);
+    pub fn from_names(
+        list: fn(NameList) -> Self,
+        mut names: Vec<Arc<String>>,
+    ) -> Self {
+        let mut map = list(NameList::default());
+        names.truncate(map.capacity());
+        let tag = map.tag();
+        let inner = map.inner_mut();
+        inner.ids.reserve(names.len());
+        for (id, name) in names.iter().enumerate() {
+            inner.ids.entry(Key(Arc::clone(name))).or_insert(id);
         }
-        names.truncate(end);
-        let chain = NameChain::of(names.iter().map(|name| name.as_str()));
-        Self { names, ids, chain }
+        inner.chain = chain_of(tag, names.iter().map(|name| name.as_str()));
+        inner.names = names;
+        map
+    }
+
+    /// The list's tag in the schema hash.
+    const fn tag(&self) -> u8 {
+        match self {
+            Self::Labels(_) => 0,
+            Self::RelationshipTypes(_) => 1,
+            Self::PropertyKeys(_) => 2,
+        }
+    }
+
+    /// How many names the list can hold. Property-key ids are `u16`s other than
+    /// `ATTRIBUTE_ID_NONE` ([`AttrNameMap::get_or_create`] says why); the other lists
+    /// have no limit.
+    const fn capacity(&self) -> usize {
+        match self {
+            Self::PropertyKeys(_) => MAX_ATTRIBUTES,
+            Self::Labels(_) | Self::RelationshipTypes(_) => usize::MAX,
+        }
+    }
+
+    const fn inner(&self) -> &NameList {
+        match self {
+            Self::Labels(names) | Self::RelationshipTypes(names) | Self::PropertyKeys(names) => {
+                names
+            }
+        }
+    }
+
+    const fn inner_mut(&mut self) -> &mut NameList {
+        match self {
+            Self::Labels(names) | Self::RelationshipTypes(names) | Self::PropertyKeys(names) => {
+                names
+            }
+        }
     }
 
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.names.len()
+        self.inner().names.len()
     }
 
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.names.is_empty()
+        self.inner().names.is_empty()
     }
 
     /// The names in id order: position is the id.
     #[must_use]
     pub fn names(&self) -> &[Arc<String>] {
-        &self.names
+        &self.inner().names
     }
 
-    /// The name at `position`.
+    /// The name with id `id`.
     #[must_use]
     pub fn get(
         &self,
-        position: usize,
+        id: usize,
     ) -> Option<&Arc<String>> {
-        self.names.get(position)
+        self.inner().names.get(id)
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, Arc<String>> {
-        self.names.iter()
+        self.inner().names.iter()
     }
 
     /// The id of `name`, if the list has it.
@@ -187,8 +159,8 @@ impl<L: SchemaList> NameMap<L> {
     pub fn id_of(
         &self,
         name: &str,
-    ) -> Option<L::Id> {
-        self.ids.get(name).copied()
+    ) -> Option<usize> {
+        self.inner().ids.get(name).copied()
     }
 
     /// The id of `name`, appending it first if the list hasn't got it. `None` if the
@@ -196,36 +168,41 @@ impl<L: SchemaList> NameMap<L> {
     pub fn get_or_insert(
         &mut self,
         name: &Arc<String>,
-    ) -> Option<L::Id> {
+    ) -> Option<usize> {
         if let Some(id) = self.id_of(name) {
             return Some(id);
         }
-        let id = L::id(self.names.len())?;
-        self.chain.push(name);
-        self.names.push(Arc::clone(name));
-        self.ids.insert(Key(Arc::clone(name)), id);
+        if self.len() >= self.capacity() {
+            return None;
+        }
+        let tag = self.tag();
+        let inner = self.inner_mut();
+        let id = inner.names.len();
+        inner.chain = extend_chain(tag, inner.chain, name);
+        inner.names.push(Arc::clone(name));
+        inner.ids.insert(Key(Arc::clone(name)), id);
         Some(id)
     }
 
     /// The schema-hash chain over the names, in id order.
     #[must_use]
-    pub const fn chain(&self) -> NameChain<L> {
-        self.chain
+    pub const fn chain(&self) -> u64 {
+        self.inner().chain
     }
 }
 
-impl<L: SchemaList> Index<usize> for NameMap<L> {
+impl Index<usize> for NameMap {
     type Output = Arc<String>;
 
     fn index(
         &self,
-        position: usize,
+        id: usize,
     ) -> &Arc<String> {
-        &self.names[position]
+        &self.inner().names[id]
     }
 }
 
-impl<'a, L: SchemaList> IntoIterator for &'a NameMap<L> {
+impl<'a> IntoIterator for &'a NameMap {
     type Item = &'a Arc<String>;
     type IntoIter = std::slice::Iter<'a, Arc<String>>;
 
@@ -235,10 +212,10 @@ impl<'a, L: SchemaList> IntoIterator for &'a NameMap<L> {
 }
 
 /// A graph's names: its labels, relationship types and property keys, each in id order.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Schema {
-    pub labels: NameMap<Labels>,
-    pub relationship_types: NameMap<RelationshipTypes>,
+    pub labels: NameMap,
+    pub relationship_types: NameMap,
     /// One list for the whole graph, shared by the node and relationship stores, so an
     /// id names the same property wherever it appears: in a span, the RDB, a
     /// `GRAPH.EFFECT`, or a compact reply.
@@ -249,6 +226,16 @@ pub struct Schema {
     /// to the wrong attribute (#2457). C has the same shape: one `attributes` array on
     /// `GraphContext`, two `DataBlock`s.
     pub property_keys: AttrNameMap,
+}
+
+impl Default for Schema {
+    fn default() -> Self {
+        Self {
+            labels: NameMap::Labels(NameList::default()),
+            relationship_types: NameMap::RelationshipTypes(NameList::default()),
+            property_keys: NameMap::PropertyKeys(NameList::default()),
+        }
+    }
 }
 
 impl Schema {
@@ -267,7 +254,6 @@ impl Schema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::attribute_store::MAX_ATTRIBUTES;
 
     fn names(list: &[&str]) -> Vec<Arc<String>> {
         list.iter()
@@ -277,22 +263,22 @@ mod tests {
 
     #[test]
     fn get_or_insert_numbers_by_position_and_extends_the_chain_once() {
-        let mut labels = NameMap::<Labels>::default();
+        let mut labels = NameMap::Labels(NameList::default());
         let person = Arc::new("Person".to_string());
         let city = Arc::new("City".to_string());
-        assert_eq!(labels.get_or_insert(&person), Some(LabelId(0)));
-        assert_eq!(labels.get_or_insert(&city), Some(LabelId(1)));
+        assert_eq!(labels.get_or_insert(&person), Some(0));
+        assert_eq!(labels.get_or_insert(&city), Some(1));
         let chain = labels.chain();
         // A name already in the list adds nothing, to the names or to the chain.
-        assert_eq!(labels.get_or_insert(&person), Some(LabelId(0)));
+        assert_eq!(labels.get_or_insert(&person), Some(0));
         assert_eq!(labels.len(), 2);
         assert_eq!(labels.chain(), chain);
-        assert_eq!(labels.id_of("City"), Some(LabelId(1)));
+        assert_eq!(labels.id_of("City"), Some(1));
         assert_eq!(labels.id_of("Nowhere"), None);
         assert_eq!(labels.names(), names(&["Person", "City"]));
         // What an RDB load of the same list builds.
         assert_eq!(
-            NameMap::<Labels>::from_names(names(&["Person", "City"])).chain(),
+            NameMap::from_names(NameMap::Labels, names(&["Person", "City"])).chain(),
             chain
         );
     }
@@ -301,26 +287,26 @@ mod tests {
     /// matrices, and a name listed twice is found at its first, as C finds it.
     #[test]
     fn from_names_keeps_every_position_and_finds_the_first() {
-        let types = NameMap::<RelationshipTypes>::from_names(names(&["R", "S", "R"]));
+        let types = NameMap::from_names(NameMap::RelationshipTypes, names(&["R", "S", "R"]));
         assert_eq!(types.len(), 3);
         assert_eq!(types[2].as_str(), "R");
-        assert_eq!(types.id_of("R"), Some(TypeId(0)));
-        assert_eq!(types.id_of("S"), Some(TypeId(1)));
-        assert_eq!(types.chain(), NameChain::of(["R", "S", "R"]));
+        assert_eq!(types.id_of("R"), Some(0));
+        assert_eq!(types.id_of("S"), Some(1));
+        assert_eq!(types.chain(), chain_of(1, ["R", "S", "R"]));
     }
 
-    /// A list longer than its ids reach keeps only the names it can number, so every
-    /// name has an id and the chain matches what `get_or_insert` would have built.
+    /// A list longer than it can hold keeps only what fits, so every name has an id and
+    /// the chain matches what `get_or_insert` would have built.
     #[test]
-    fn from_names_drops_names_past_the_last_id() {
+    fn from_names_drops_names_past_the_capacity() {
         let all: Vec<Arc<String>> = (0..=MAX_ATTRIBUTES)
             .map(|i| Arc::new(format!("k{i}")))
             .collect();
-        let keys = AttrNameMap::from_names(all.clone());
+        let keys = NameMap::from_names(NameMap::PropertyKeys, all.clone());
         assert_eq!(keys.len(), MAX_ATTRIBUTES);
         assert_eq!(keys.get(MAX_ATTRIBUTES), None);
         assert_eq!(keys.id_of(&format!("k{MAX_ATTRIBUTES}")), None);
-        let mut inserted = AttrNameMap::default();
+        let mut inserted = NameMap::PropertyKeys(NameList::default());
         for name in &all {
             inserted.insert(name);
         }

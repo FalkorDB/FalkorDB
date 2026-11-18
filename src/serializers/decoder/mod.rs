@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
 use graph::entity_type::EntityType;
-use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Decode, Reader};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
+use graph::graph::{
+    attribute_store::{AttrNameMap, AttributeStore},
+    schema::NameList,
+};
 use graph::index::IndexInfo;
 use roaring::RoaringTreemap;
 use valkey_module::raw::RedisModuleIO;
@@ -151,7 +154,7 @@ pub fn rdb_load_graph(
             // the id. Previously this seeded a copy into each store, which is what gave an
             // RDB-loaded replica different numbering from a master that had never been
             // reloaded (#2457).
-            let mut attrs_name = AttrNameMap::default();
+            let mut attrs_name = AttrNameMap::PropertyKeys(NameList::default());
             for name in &schema.attribute_names {
                 attrs_name.insert(name);
             }
@@ -240,7 +243,7 @@ pub fn rdb_load_graph(
     let mut rel_attrs = AttributeStore::new();
 
     // One dictionary, shared by both stores — see the multi-key path above.
-    let mut attrs_name = AttrNameMap::default();
+    let mut attrs_name = AttrNameMap::PropertyKeys(NameList::default());
     for name in &schema.attribute_names {
         attrs_name.insert(name);
     }
@@ -512,7 +515,7 @@ fn load_graph_from_reader(
     let mut rel_attrs = AttributeStore::new();
 
     // One dictionary, shared by both stores — see the other decode paths above.
-    let mut attrs_name = AttrNameMap::default();
+    let mut attrs_name = AttrNameMap::PropertyKeys(NameList::default());
     for name in &schema.attribute_names {
         attrs_name.insert(name);
     }

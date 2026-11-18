@@ -17,9 +17,9 @@
 //! S      = h_labels + h_types + h_keys                mod 2^64
 //! ```
 //!
-//! `tag` is one byte, the list's [`SchemaList::TAG`]: 0 for labels, 1 for relationship
-//! types, 2 for property keys. An empty schema is 0. Ids are positions, so order counts: labels `[X, Y]` and `[Y, X]`
-//! give different values.
+//! `tag` is one byte, set by the list's [`NameMap`](super::schema::NameMap) variant: 0
+//! for labels, 1 for relationship types, 2 for property keys. An empty schema is 0. Ids are positions, so order counts: labels
+//! `[X, Y]` and `[Y, X]` give different values.
 //!
 //! `S` depends on nothing but the three lists, so a primary and its replicas agree, and
 //! so do a server before and after a restart, and the old and new servers of a rolling
@@ -30,59 +30,53 @@
 //! and rebuilds it from the list on RDB load. Both give the same value, so no hash is
 //! stored in the RDB.
 
-use std::marker::PhantomData;
-
 use xxhash_rust::xxh3::Xxh3Default;
 
-use super::schema::{Labels, PropertyKeys, RelationshipTypes, SchemaList};
+/// `chain` extended by `name`, the next name of the list whose tag is `tag`.
+#[must_use]
+pub fn extend_chain(
+    tag: u8,
+    chain: u64,
+    name: &str,
+) -> u64 {
+    // Streamed, so no heap buffer is built for the input: XXH3 gives the same value as
+    // hashing the concatenation in one call.
+    let mut hasher = Xxh3Default::new();
+    hasher.update(&[tag]);
+    hasher.update(&chain.to_le_bytes());
+    hasher.update(&(name.len() as u64).to_le_bytes());
+    hasher.update(name.as_bytes());
+    hasher.digest()
+}
 
-/// The chain over one list of names; `L` says which list, and with it the tag.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub struct NameChain<L>(u64, PhantomData<L>);
-
-impl<L: SchemaList> NameChain<L> {
-    /// Extend the chain by `name`, the next name appended to its list.
-    pub fn push(
-        &mut self,
-        name: &str,
-    ) {
-        // Streamed, so no heap buffer is built for the input: XXH3 gives the same value
-        // as hashing the concatenation in one call.
-        let mut hasher = Xxh3Default::new();
-        hasher.update(&[L::TAG]);
-        hasher.update(&self.0.to_le_bytes());
-        hasher.update(&(name.len() as u64).to_le_bytes());
-        hasher.update(name.as_bytes());
-        self.0 = hasher.digest();
-    }
-
-    /// The chain over a whole list: what pushing its names one by one gives.
-    pub fn of<'a>(names: impl IntoIterator<Item = &'a str>) -> Self {
-        let mut chain = Self::default();
-        for name in names {
-            chain.push(name);
-        }
-        chain
-    }
+/// The chain over a whole list: what extending it by each name in turn gives.
+#[must_use]
+pub fn chain_of<'a>(
+    tag: u8,
+    names: impl IntoIterator<Item = &'a str>,
+) -> u64 {
+    names
+        .into_iter()
+        .fold(0, |chain, name| extend_chain(tag, chain, name))
 }
 
 /// `S`, the schema hash, from the three chains.
 #[must_use]
 pub const fn schema_hash(
-    labels: NameChain<Labels>,
-    types: NameChain<RelationshipTypes>,
-    keys: NameChain<PropertyKeys>,
+    labels: u64,
+    types: u64,
+    keys: u64,
 ) -> u64 {
-    labels.0.wrapping_add(types.0).wrapping_add(keys.0)
+    labels.wrapping_add(types).wrapping_add(keys)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    type LabelChain = NameChain<Labels>;
-    type TypeChain = NameChain<RelationshipTypes>;
-    type KeyChain = NameChain<PropertyKeys>;
+    const LABELS: u8 = 0;
+    const TYPES: u8 = 1;
+    const KEYS: u8 = 2;
 
     fn hash(
         labels: &[&str],
@@ -90,9 +84,9 @@ mod tests {
         keys: &[&str],
     ) -> u64 {
         schema_hash(
-            LabelChain::of(labels.iter().copied()),
-            TypeChain::of(types.iter().copied()),
-            KeyChain::of(keys.iter().copied()),
+            chain_of(LABELS, labels.iter().copied()),
+            chain_of(TYPES, types.iter().copied()),
+            chain_of(KEYS, keys.iter().copied()),
         )
     }
 
@@ -103,9 +97,9 @@ mod tests {
     #[test]
     fn golden_values() {
         assert_eq!(hash(&[], &[], &[]), 0);
-        assert_eq!(LabelChain::of(["X"]).0, 0xb12c_4238_bffd_bebf);
-        assert_eq!(TypeChain::of(["X"]).0, 0x6648_e68c_fdf9_384f);
-        assert_eq!(KeyChain::of(["X"]).0, 0xb04e_4cf3_ee86_6a17);
+        assert_eq!(chain_of(LABELS, ["X"]), 0xb12c_4238_bffd_bebf);
+        assert_eq!(chain_of(TYPES, ["X"]), 0x6648_e68c_fdf9_384f);
+        assert_eq!(chain_of(KEYS, ["X"]), 0xb04e_4cf3_ee86_6a17);
         assert_eq!(hash(&["Person"], &[], &["name"]), 145_606_067_124_355_331);
         // Above i64::MAX: the reply sends it as the negative i64 with the same bits.
         assert_eq!(
@@ -135,10 +129,8 @@ mod tests {
     }
 
     #[test]
-    fn push_matches_of() {
-        let mut chain = KeyChain::default();
-        chain.push("name");
-        chain.push("age");
-        assert_eq!(chain, KeyChain::of(["name", "age"]));
+    fn extending_matches_chain_of() {
+        let chain = extend_chain(KEYS, extend_chain(KEYS, 0, "name"), "age");
+        assert_eq!(chain, chain_of(KEYS, ["name", "age"]));
     }
 }
