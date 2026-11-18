@@ -12,8 +12,9 @@ import RedisLayer.Resp
 | `invalidVersionBytes`       | `reply_invalid_graph_version` `:1038` |
 | `profileDepth`, `profileOps`| `reply_profile` `:936` (all ops, plain depth, since #2390) |
 | `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:636` / `execute_profile` `:722` write detection and `admission.take()` |
-| `writeSteps`                | `try_query_write` `:834`, `finish_write` `:1568`, `abandon_write` `:1603`, `commit_and_replicate` `:1619` |
-| `executeWrite`, `Attempt`   | `execute_query_write` `:784` (retry loop, #3290), `WriteAttempt::from` `:823` |
+| `writeSteps`                | `try_query_write` `:886`, `finish_write` `:1633`, `abandon_write` `:1668`, `commit_and_replicate` `:1684` |
+| `executeWrite`, `Attempt`   | `execute_query_write` `:793` (retry loop, #3290), `WriteAttempt::from` `:863` |
+| `loopW`, `escalateNext`, `Run` | `execute_query_write` `:793` bounded retry (#3559), `MAX_STALE_RETRIES` `:847`, `SLOW_STALE_RUN` `:854` |
 | `admitQ`, `dispatch`        | `admit` `:1052`, `query_mut` `:1063` (#3014) |
 | `syncOutcome`               | `query_sync` `:1267`, `profile_sync` `:1497`, `profile_mut` `:1396` |
 | `loopExit`                  | `process_write_queued_query` `:1697` |
@@ -296,12 +297,13 @@ theorem unescalated_silent (k h m b : Bool) :
 
 `try_query_write` returns `WriteAttempt::Stale` only from the error arm after
 `abandon_write` when `session.is_stale()` — nothing mutated, published or replied — and the
-loop re-runs on a fresh session (`QuerySession::begin_with`). -/
+loop re-runs on a fresh session (`QuerySession::begin_with`, or `begin_writer_checked` once the
+bounded retry below escalates, #3559). -/
 
 inductive Attempt | stale | failed (e : String) | ok
   deriving DecidableEq, Repr
 
-/-- `impl From<String> for WriteAttempt` (`:823`): every other error is `Failed`. -/
+/-- `impl From<String> for WriteAttempt` (`:863`): every other error is `Failed`. -/
 def Attempt.ofString (e : String) : Attempt := .failed e
 theorem ofString_not_stale (e : String) : Attempt.ofString e ≠ .stale := by simp [Attempt.ofString]
 
@@ -322,6 +324,149 @@ theorem executeWrite_first (k : Nat) (a : Attempt) (rest : List Attempt) (h : a 
 nothing, and it committed and replied nothing. -/
 theorem stale_run_silent (w k m b : Bool) :
     writeSteps false w k false m b = [] := by simp [writeSteps, abandonSteps]
+
+/-! ### The bounded retry (#3559)
+
+`execute_query_write` (`:793`) counts stale runs; after `MAX_STALE_RETRIES` (`:847`) of them, or
+at once after a stale run that took `SLOW_STALE_RUN` (`:854`, 10 ms) or longer, the next run
+begins as a writer (`QuerySession::begin_writer_checked`) instead of a reader
+(`begin_with`). A run is a function of the mode it begins in; a refused
+`begin_writer_checked` is that run's `failed` outcome (`map_err(…)?`). Times are nanoseconds. -/
+
+def maxStaleRetries : Nat := 3
+def slowStaleRun : Nat := 10000000
+
+/-- `stale_runs >= MAX_STALE_RETRIES || wasted >= SLOW_STALE_RUN`, after the increment. -/
+def escalateNext (staleRuns wasted : Nat) : Bool :=
+  decide (maxStaleRetries ≤ staleRuns) || decide (slowStaleRun ≤ wasted)
+
+/-- One run's report: its outcome and how long it took. -/
+structure Run where
+  a : Attempt
+  wasted : Nat
+
+/-- The loop: `s` stale runs so far, `w` whether this run begins as a writer; `runs` the
+successive runs, each given the mode it begins in. Returns the result (`none`: still
+running) and the mode of every run taken. -/
+def loopW (s : Nat) (w : Bool) : List (Bool → Run) → Option Attempt × List Bool
+  | [] => (none, [])
+  | f :: rest =>
+    match (f w).a with
+    | .stale =>
+      let p := loopW (s + 1) (escalateNext (s + 1) (f w).wasted) rest
+      (p.1, w :: p.2)
+    | a => (some a, [w])
+
+theorem escalate_after_max (n t : Nat) (h : maxStaleRetries ≤ n) : escalateNext n t = true := by
+  simp [escalateNext, h]
+
+theorem reader_before_max (n t : Nat) (h : n < maxStaleRetries) (ht : t < slowStaleRun) :
+    escalateNext n t = false := by
+  simp [escalateNext]; omega
+
+/-- **Still the first run that was not stale** (as `executeWrite_first`), each run taken in the
+mode the loop chose for it. -/
+theorem loopW_first (s : Nat) (w : Bool) (runs : List (Bool → Run)) :
+    (loopW s w runs).1 =
+      executeWrite (List.zipWith (fun f m => (f m).a) runs (loopW s w runs).2) := by
+  induction runs generalizing s w with
+  | nil => simp [loopW, executeWrite]
+  | cons f rest ih =>
+    cases ha : (f w).a <;> simp [loopW, ha, executeWrite, ih]
+
+/-- A stale run is never the result. -/
+theorem loopW_not_stale (s : Nat) (w : Bool) (runs : List (Bool → Run)) :
+    (loopW s w runs).1 ≠ some .stale := by
+  induction runs generalizing s w with
+  | nil => simp [loopW]
+  | cons f rest ih =>
+    cases ha : (f w).a <;> simp [loopW, ha, ih]
+
+/-- **Bounded**: at most `MAX_STALE_RETRIES` runs begin as readers, whatever the outcomes. -/
+theorem loopW_readers (s : Nat) (w : Bool) (runs : List (Bool → Run)) :
+    ((loopW s w runs).2.filter (· = false)).length ≤
+      (if w then 0 else 1) + (maxStaleRetries - 1 - s) := by
+  induction runs generalizing s w with
+  | nil => simp [loopW]
+  | cons f rest ih =>
+    cases ha : (f w).a
+    case stale =>
+      have h1 := ih (s + 1) (escalateNext (s + 1) (f w).wasted)
+      simp only [loopW, ha]
+      cases he : escalateNext (s + 1) (f w).wasted
+      · have hlt : s + 1 < maxStaleRetries := by
+          refine Nat.lt_of_not_le fun hc => ?_
+          rw [escalate_after_max _ _ hc] at he; cases he
+        rw [he] at h1
+        simp only [maxStaleRetries] at hlt h1 ⊢
+        cases w <;> simp at h1 ⊢ <;> omega
+      · rw [he] at h1
+        simp only [maxStaleRetries] at h1 ⊢
+        cases w <;> simp at h1 ⊢ <;> omega
+    all_goals cases w <;> simp [loopW, ha]
+
+/-- The number of runs the loop takes when writer runs are never stale. -/
+theorem loopW_length (s : Nat) (w : Bool) (runs : List (Bool → Run))
+    (hw : ∀ f ∈ runs, (f true).a ≠ .stale) :
+    (loopW s w runs).2.length ≤ (if w then 1 else max 2 (maxStaleRetries + 1 - s)) := by
+  induction runs generalizing s w with
+  | nil => cases w <;> simp [loopW]
+  | cons f rest ih =>
+    have hrest : ∀ g ∈ rest, (g true).a ≠ .stale := fun g hg => hw g (by simp [hg])
+    cases ha : (f w).a
+    case stale =>
+      cases w
+      · have h1 := ih (s + 1) (escalateNext (s + 1) (f false).wasted) hrest
+        simp only [loopW, ha, List.length_cons]
+        cases he : escalateNext (s + 1) (f false).wasted
+        · have hlt : s + 1 < maxStaleRetries := by
+            refine Nat.lt_of_not_le fun hc => ?_
+            rw [escalate_after_max _ _ hc] at he; cases he
+          rw [he] at h1
+          simp only [maxStaleRetries] at hlt h1 ⊢
+          simp at h1 ⊢; omega
+        · rw [he] at h1; simp at h1 ⊢; omega
+      · exact absurd ha (hw f (by simp))
+    all_goals cases w <;> simp [loopW, ha] <;> omega
+
+/-- Writer runs are never stale (`QuerySession.writer_never_stale`), so the loop takes at most
+`MAX_STALE_RETRIES + 1` runs from a reader start, at most `MAX_STALE_RETRIES` of them readers. -/
+theorem loopW_bounded (runs : List (Bool → Run)) (hw : ∀ f ∈ runs, (f true).a ≠ .stale) :
+    (loopW 0 false runs).2.length ≤ maxStaleRetries + 1 ∧
+    ((loopW 0 false runs).2.filter (· = false)).length ≤ maxStaleRetries := by
+  refine ⟨?_, ?_⟩
+  · have := loopW_length 0 false runs hw; simp [maxStaleRetries] at this ⊢; omega
+  · have := loopW_readers 0 false runs; simpa [maxStaleRetries] using this
+
+/-- The loop has its result once it has as many runs as `loopW_length` bounds. -/
+theorem loopW_has_result (s : Nat) (w : Bool) (runs : List (Bool → Run))
+    (hw : ∀ f ∈ runs, (f true).a ≠ .stale)
+    (hl : (if w then 1 else max 2 (maxStaleRetries + 1 - s)) ≤ runs.length) :
+    (loopW s w runs).1.isSome := by
+  induction runs generalizing s w with
+  | nil => simp at hl; split at hl <;> omega
+  | cons f rest ih =>
+    have hrest : ∀ g ∈ rest, (g true).a ≠ .stale := fun g hg => hw g (by simp [hg])
+    cases ha : (f w).a
+    case stale =>
+      cases w
+      · simp only [loopW, ha]
+        apply ih _ _ hrest
+        simp only [List.length_cons, Bool.false_eq_true, ite_false] at hl
+        cases he : escalateNext (s + 1) (f false).wasted
+        · have hlt : s + 1 < maxStaleRetries := by
+            refine Nat.lt_of_not_le fun hc => ?_
+            rw [escalate_after_max _ _ hc] at he; cases he
+          simp only [maxStaleRetries] at hlt hl ⊢
+          simp; omega
+        · simp only [maxStaleRetries] at hl ⊢; simp; omega
+      · exact absurd ha (hw f (by simp))
+    all_goals simp [loopW, ha]
+
+/-- **Decided**: given `MAX_STALE_RETRIES + 1` runs, the loop has its result. -/
+theorem loopW_decided (runs : List (Bool → Run)) (hw : ∀ f ∈ runs, (f true).a ≠ .stale)
+    (hl : maxStaleRetries + 1 ≤ runs.length) : (loopW 0 false runs).1.isSome :=
+  loopW_has_result 0 false runs hw (by simp [maxStaleRetries] at hl ⊢; omega)
 
 /-- The refusal `try_query_write` returns (`WriteAttempt::Failed(abort.to_string())`) is not
 `Stale`: `execute_query_write` surfaces it instead of re-running. -/
