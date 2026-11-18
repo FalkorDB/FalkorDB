@@ -84,7 +84,10 @@ def defRels (scope : List Alias) (p : List Elem) : List Alias :=
   ((split p).2.filter (fun e => e.alias.isNamed)).foldl (fun s e => grow s e.alias) scope
 
 /-- `bind_graph` (binder.rs:1470): named relationship aliases, then nodes, then
-relationships (#2981; before it, nodes then relationships). -/
+relationships (#2981; before it, nodes then relationships). A node `Elem`'s attrs are
+those of every occurrence of its alias (`Parser::add_pattern_node` merges them for MATCH), so
+a repeated endpoint that shares the node's bound map (`merged_occurrences`, binder.rs:1579,
+1634) checks no name the node step did not already check. -/
 def rustBind (scope : List Alias) (p : List Elem) : Except String (List Alias) :=
   do stepAll (← stepAll (defRels scope p) (split p).1) (split p).2
 
