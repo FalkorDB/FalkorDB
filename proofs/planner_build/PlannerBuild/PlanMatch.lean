@@ -1,4 +1,4 @@
-import PlannerBuild.Anchor
+import PlannerBuild.Expr
 /-
 # `plan_match`: per-component operator choice (mod.rs:1832-2403)
 
@@ -7,9 +7,8 @@ import PlannerBuild.Anchor
 | `QN`, `QR`, `Comp` | `QueryNode`, `QueryRelationship`, a connected component (ast.rs:470-640) |
 | `MSt` | `Planner.visited` / `verified_labels` |
 | `markLabels`, `unverified` | `mark_labels_verified` mod.rs:1787-1805, `unverified_labels` mod.rs:1809-1821 |
-| `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1970-2006 (stable) |
-| `leadingWalk`, `leadOrder`, `outward` | `leading_walk` mod.rs:1884-1967 and the outward reorder mod.rs:2012-2034 (#3593) |
-| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2002-2011; `emit_rel(r) \|\| edge_pred.is_some()` |
+| `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1877-1909 (stable) |
+| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2187-2197; `emit_rel(r) \|\| edge_pred.is_some()` |
 | `scanOf`, `withF` | `AllNodeScan`/`NodeByLabelScan` choice; optional inline-attribute `Filter` |
 | `LW`, `lowerInline` | `lowered_attrs` mod.rs:1852, `lower_inline_attrs` mod.rs:598-607 |
 | `stripNode`, `stripRel`, `stripEndpoints` | `strip_node_attrs` mod.rs:623-634, `strip_rel_attrs` :644-667, `strip_endpoint_attrs` :673-693 |
@@ -18,7 +17,8 @@ import PlannerBuild.Anchor
 | `MP.stripped` | the invariant `optimizer/references.rs` relies on (scan / fixed-length operators carry no inline map) |
 | `nodeOnly` | node-only component mod.rs:1913-1990 |
 | `boundLabelFilters` | mod.rs:1858-1872 |
-| `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs:1853-2403 |
+| `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs:1997-2590 |
+| `QR.lifted` | `lifted_rels` mod.rs:2016 (set by `liftPattern`, Lift.lean, #2981) |
 
 Theorems added for #2390 (d2c42e032): `lowerInline_once` (a map is lowered at most once —
 the `And(p, p)` duplicate is gone), `lowerInline_two_maps` (two maps on one alias are both
@@ -56,6 +56,9 @@ structure QR where
   kind : Kind := .fixed
   attrs : List (String × Ex) := []
   ptr : Nat
+  /-- In `lifted_rels` (mod.rs:2016): `lift_cross_entity_attrs` moved part of this edge's map
+  into a Filter above the pattern (#2981). Set by `liftPattern`, never by a pattern literal. -/
+  lifted : Bool := false
 
 structure Comp where
   nodes : List QN
@@ -102,7 +105,7 @@ theorem unverified_after_mark (st : MSt) (n : QN) (h : n.labels ≠ []) :
   simp only [this, Bool.false_eq_true, ↓reduceIte, lookupV_cons_self]
   rw [List.filter_eq_nil_iff]
   intro l hl
-  by_cases hc : (lookupV st.verified n.alias).contains l <;> simp [hc, hl]
+  by_cases hc : (lookupV st.verified n.alias).contains l <;> simp [hl]
 
 /-- …and what was verified stays verified. -/
 theorem markLabels_mono (st : MSt) (v w : V) (ls : List String) (l : String)
@@ -141,9 +144,10 @@ def withF : Option Ex → MP → MP
   | some e, c => .filter e c
   | none, c => c
 
-/-- `emit_relationship`: a named edge, or one a named path lists (by id only, mod.rs:2003-2011). -/
+/-- `emit_relationship`: a named edge, one whose attrs were lifted (#2981), or one a named path
+lists (by id only, mod.rs:2186-2197). -/
 def emitRel (c : Comp) (r : QR) : Bool :=
-  r.named || c.paths.any fun p => p.2.any fun v => v.id == r.alias.id
+  r.named || r.lifted || c.paths.any fun p => p.2.any fun v => v.id == r.alias.id
 
 /-- Strip the inline-attribute filters: the operator actually chosen. -/
 def MP.core : MP → MP
@@ -306,23 +310,20 @@ def tier (r : QR) : Nat :=
   | .varLen => 1
   | .shortest => 2
 
-/-- `(base, has_bound, unfiltered)` (mod.rs:1970-2006), `base` shifted by one so it is a `Nat`:
-the promoted walk `lead` (`leading_walk`, base `-1`) 0, fixed 1, var-length 2, shortest 3;
-`has_bound` is 0 when an endpoint is bound; `unfiltered` only distinguishes hops leaving a
-bound node. `filterVars` is `filter_vars`, keyed by `(scope_id, id)` since #3593. -/
-def relKey (st : MSt) (filterVars : List V) (lead : Option V) (r : QR) : Nat × Nat × Nat :=
-  let base := if r.kind = .shortest then 3 else if lead = some r.alias then 0 else tier r + 1
+/-- `(base, has_bound, unfiltered)`; `has_bound` is 0 when an endpoint is
+bound; `unfiltered` only distinguishes hops leaving a bound node. -/
+def relKey (st : MSt) (filterVars : List Nat) (r : QR) : Nat × Nat × Nat :=
   let hb := if st.bound r.frm.alias || st.bound r.to.alias then 0 else 1
   let unf := if hb = 0 then
-      (if [r.frm, r.to].any (fun n => !n.attrs.isEmpty || filterVars.contains n.alias) then 0 else 1)
+      (if [r.frm, r.to].any (fun n => !n.attrs.isEmpty || filterVars.contains n.alias.id) then 0 else 1)
     else 0
-  (base, hb, unf)
+  (tier r, hb, unf)
 
 def keyLe (a b : Nat × Nat × Nat) : Bool :=
   a.1 < b.1 || (a.1 == b.1 && (a.2.1 < b.2.1 || (a.2.1 == b.2.1 && a.2.2 ≤ b.2.2)))
 
-def sortRels (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) : List QR :=
-  rs.mergeSort fun a b => keyLe (relKey st fv lead a) (relKey st fv lead b)
+def sortRels (st : MSt) (fv : List Nat) (rs : List QR) : List QR :=
+  rs.mergeSort fun a b => keyLe (relKey st fv a) (relKey st fv b)
 
 theorem keyLe_trans (a b c : Nat × Nat × Nat) (h1 : keyLe a b = true) (h2 : keyLe b c = true) :
     keyLe a c = true := by
@@ -335,54 +336,23 @@ theorem keyLe_total (a b : Nat × Nat × Nat) : (keyLe a b || keyLe b a) = true 
   simp only [keyLe, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq]
   omega
 
-/-- The order is a permutation, sorted by key: the promoted walk (if any), then fixed-length
-hops, then variable-length, then shortest paths; within a tier, hops touching a bound
-node first (mod.rs:1970-2006). -/
-theorem sortRels_spec (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) :
-    (sortRels st fv lead rs).Perm rs ∧
-    (sortRels st fv lead rs).Pairwise
-      (fun a b => keyLe (relKey st fv lead a) (relKey st fv lead b) = true) := by
+/-- The order is a permutation, sorted by key: fixed-length hops first, then
+variable-length, then shortest paths; within a tier, hops touching a bound
+node first (mod.rs:1877-1909). -/
+theorem sortRels_spec (st : MSt) (fv : List Nat) (rs : List QR) :
+    (sortRels st fv rs).Perm rs ∧
+    (sortRels st fv rs).Pairwise (fun a b => keyLe (relKey st fv a) (relKey st fv b) = true) := by
   refine ⟨List.mergeSort_perm _ _, ?_⟩
   exact List.pairwise_mergeSort
-    (fun a b c h1 h2 => keyLe_trans (relKey st fv lead a) (relKey st fv lead b) (relKey st fv lead c) h1 h2)
-    (fun a b => keyLe_total (relKey st fv lead a) (relKey st fv lead b)) rs
+    (fun a b c h1 h2 => keyLe_trans (relKey st fv a) (relKey st fv b) (relKey st fv c) h1 h2)
+    (fun a b => keyLe_total (relKey st fv a) (relKey st fv b)) rs
 
-/-- With no promoted walk (`leading_walk = None`, the pre-#3593 order): fixed-length hops
-first, then variable-length, then shortest paths. -/
-theorem relKey_none_base (st : MSt) (fv : List V) (r : QR) : (relKey st fv none r).1 = tier r + 1 := by
-  unfold relKey tier
-  cases h : r.kind <;> simp
-
-theorem keyLe_fst (a b : Nat × Nat × Nat) (h : keyLe a b = true) : a.1 ≤ b.1 := by
-  obtain ⟨a1, a2, a3⟩ := a; obtain ⟨b1, b2, b3⟩ := b
-  simp only [keyLe, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at h
-  simp only; omega
-
-theorem sortRels_tiers (st : MSt) (fv : List V) (rs : List QR) :
-    (sortRels st fv none rs).Pairwise (fun a b => tier a ≤ tier b) := by
-  apply (sortRels_spec st fv none rs).2.imp
+theorem sortRels_tiers (st : MSt) (fv : List Nat) (rs : List QR) :
+    (sortRels st fv rs).Pairwise (fun a b => tier a ≤ tier b) := by
+  apply (sortRels_spec st fv rs).2.imp
   intro a b h
-  have := keyLe_fst _ _ h
-  rw [relKey_none_base, relKey_none_base] at this
+  simp only [keyLe, relKey, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at h
   omega
-
-/-- With a promoted walk: it sorts before every other hop (base `-1`). -/
-theorem sortRels_lead_first (st : MSt) (fv : List V) (l : V) (rs : List QR) :
-    (sortRels st fv (some l) rs).Pairwise
-      (fun a b => b.alias = l → b.kind ≠ .shortest → a.alias = l ∧ a.kind ≠ .shortest) := by
-  apply (sortRels_spec st fv (some l) rs).2.imp
-  intro a b h hb hs
-  have h1 := keyLe_fst _ _ h
-  have hb0 : (relKey st fv (some l) b).1 = 0 := by simp [relKey, hs, hb]
-  by_cases hsa : a.kind = .shortest
-  · have : (relKey st fv (some l) a).1 = 3 := by simp [relKey, hsa]
-    omega
-  · by_cases hla : a.alias = l
-    · exact ⟨hla, hsa⟩
-    · have : (relKey st fv (some l) a).1 = tier a + 1 := by
-        have : ¬ (l = a.alias) := fun h => hla h.symm
-        simp [relKey, hsa, this]
-      omega
 
 /-! ## The first relationship of a component -/
 

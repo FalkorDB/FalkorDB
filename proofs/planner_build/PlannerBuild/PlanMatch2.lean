@@ -1,4 +1,5 @@
 import PlannerBuild.PlanMatch
+import PlannerBuild.Lift
 import PlannerBuild.HopOrder
 /-
 # `plan_match`: components, bound-label filters, path elision, joining
@@ -11,7 +12,10 @@ enforced gets exactly a `hasLabels(alias, missing)` filter, after which none
 are missing), `nodeOnly_*`, `planMatch_join`, `elide_spec`,
 `buildPatternSubPlan_restores`. #2390: `chainRel_lowers_from`/`_to`, `chainRel_edge_pred`,
 `nodeOnly_bound_filter`, the `stripped` invariant (`bindPath_stripped`, `elide_stripped`,
-`planComp_stripped`, `planMatch_stripped`).
+`planComp_stripped`, `planMatch_stripped`). #2981: `planMatch` = `planFrom` (the component loop)
+on `liftPattern`'s rewritten components, the lifted filters first (`planMatch_nolift`,
+`planMatch_join`, `planMatch_join_nolift`); `q2923_unlifted` / `q2923_lifted`,
+`q2923_bound_not_lifted`, `lifted_rel_emitted`.
 -/
 namespace PlannerBuild.E
 
@@ -144,7 +148,7 @@ theorem unverified_mark_self (st : MSt) (n : QN) : unverified (markLabels st n.a
     intro l hl
     by_cases hc : (lookupV st.verified n.alias).contains l
     · simp only [List.contains_iff_mem] at hc; simp [hc]
-    · simp [hc, hl]
+    · simp [hl]
 
 /-- After the filter, no label of that endpoint is missing. -/
 theorem labelStep_verifies (acc : MSt × List Ex) (n : QN) (hb : acc.1.bound n.alias = true) :
@@ -303,248 +307,34 @@ def planRels (c : Comp) : List QR → MP → MSt → LW → MP × MSt × LW
     let x := chainRel st c lw res r
     planRels c rs x.1 (visit st r) x.2
 
-/-- The `HopShape` closure (mod.rs:2042-2047): nodes are `(id, scope_id)`; `self_loop`
+/-- The `HopShape` closure (mod.rs:1919-1924): nodes are `(id, scope_id)`; `self_loop`
 compares ids only; `fixed` = neither var-length nor shortest. -/
 def hopShape (r : QR) : HopOrder.HopShape V :=
   { frm := r.frm.alias, to := r.to.alias, selfLoop := r.frm.alias.id == r.to.alias.id,
     fixed := r.kind == .fixed }
 
-/-! ### The promoted var-length walk (#2558, PR #3593, mod.rs:1884-2034) -/
+/-- `sort_by_key` then `self_loops_after_binders(…, |node| self.visited.contains(node))`
+(mod.rs:1880-1926, #3102). -/
+def orderRels (st : MSt) (fv : List Nat) (rs : List QR) : List QR :=
+  HopOrder.selfLoopsAfterBinders (sortRels st fv rs) hopShape st.bound
 
-/-- `references_variable` (mod.rs:1917-1922): the edge's or an endpoint's inline map reads a variable. -/
-def attrsRead (a : List (String × Ex)) : Bool := a.any fun kv => !(scopedVars kv.2).isEmpty
-
-def referencesVariable (r : QR) : Bool := attrsRead r.attrs || attrsRead r.frm.attrs || attrsRead r.to.attrs
-
-/-- `is_constrained` / `anchored` (mod.rs:1884-1890). -/
-def isConstrained (wi : WI) (n : QN) : Bool := !n.attrs.isEmpty || wi.anchors.contains n.alias
-
-def anchored (wi : WI) (r : QR) : Bool := isConstrained wi r.frm || isConstrained wi r.to
-
-/-- `where_visible` (mod.rs:1930-1931): the clause's only component, and a tree. -/
-def whereVisible (wi : WI) (c : Comp) : Bool := wi.single && c.rels.length + 1 == c.nodes.length
-
-/-- `scan_score` (mod.rs:1932-1938). -/
-def scanScore (wi : WI) (c : Comp) (n : QN) : Nat :=
-  endpointScanScore (!n.attrs.isEmpty || (whereVisible wi c && wi.fv.contains n.alias)) (!n.labels.isEmpty)
-
-/-- `is_anchored_end` (mod.rs:1939-1942). -/
-def isAnchoredEnd (wi : WI) (c : Comp) (n : QN) : Bool :=
-  !n.attrs.isEmpty || (whereVisible wi c && wi.anchors.contains n.alias)
-
-/-- `leads_from_anchor` (mod.rs:1943-1950): the end `select_var_len_scan_node` will scan is anchored. -/
-def leadsFromAnchor (wi : WI) (c : Comp) (r : QR) : Bool :=
-  isAnchoredEnd wi c (if walkScansTo (scanScore wi c r.frm) (scanScore wi c r.to) then r.to else r.frm)
-
-/-- `var_len_anchor_leads && walks_can_move` (mod.rs:1911-1916, 1955-1957). -/
-def mayLead (wi : WI) (c : Comp) : Bool :=
-  !wi.boundBefore && !(c.rels.any fun r => r.kind == .fixed && anchored wi r) &&
-  c.rels.all fun r => r.kind != .shortest && !referencesVariable r
-
-/-- `leading_walk` (mod.rs:1958-1967): the first var-length hop with distinct endpoint ids that
-leads from its anchor. -/
-def leadingWalk (wi : WI) (c : Comp) : Option V :=
-  if mayLead wi c then
-    (c.rels.find? fun r => r.kind == .varLen && r.frm.alias.id != r.to.alias.id && leadsFromAnchor wi c r).map (·.alias)
-  else none
-
-/-- **PROVEN** (when a walk leads): nothing was bound before the clause, no hop is an
-allShortestPaths or reads a variable in an inline map, no fixed-length hop is anchored, and
-the lead is a var-length hop of the component, not a self-loop, whose scanned end is anchored. -/
-theorem leadingWalk_spec (wi : WI) (c : Comp) (l : V) (h : leadingWalk wi c = some l) :
-    wi.boundBefore = false ∧
-    (∀ r ∈ c.rels, r.kind ≠ .shortest ∧ referencesVariable r = false ∧
-      (r.kind = .fixed → anchored wi r = false)) ∧
-    ∃ r ∈ c.rels, r.alias = l ∧ r.kind = .varLen ∧ r.frm.alias.id ≠ r.to.alias.id ∧
-      leadsFromAnchor wi c r = true := by
-  unfold leadingWalk at h
-  split at h
-  · rename_i hm
-    simp only [mayLead, Bool.and_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true, List.any_eq_false,
-      List.all_eq_true] at hm
-    obtain ⟨⟨hb, hfix⟩, hall⟩ := hm
-    obtain ⟨r, hf, rfl⟩ := Option.map_eq_some_iff.1 h
-    have hr := List.mem_of_find?_eq_some hf
-    have hp := List.find?_some hf
-    simp only [Bool.and_eq_true, beq_iff_eq, bne_iff_ne, ne_eq] at hp
-    refine ⟨hb, fun r' hr' => ?_, r, hr, rfl, hp.1.1, hp.1.2, hp.2⟩
-    have := hall r' hr'
-    simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, Bool.not_eq_eq_eq_not, Bool.not_true] at this
-    refine ⟨this.1, this.2, fun hk => ?_⟩
-    have := hfix r' hr'
-    simpa [hk] using this
-  · cases h
-
-/-- `Vec::remove(position(p))`: the first element satisfying `p` and the rest, in order. -/
-def splitFirst {α : Type} (p : α → Bool) : List α → Option (α × List α)
-  | [] => none
-  | x :: xs => if p x then some (x, xs) else (splitFirst p xs).map fun y => (y.1, x :: y.2)
-
-theorem splitFirst_some {α : Type} (p : α → Bool) : ∀ (l : List α) (x : α) (l' : List α),
-    splitFirst p l = some (x, l') → p x = true ∧ (x :: l').Perm l
-  | [], _, _, h => by simp [splitFirst] at h
-  | y :: ys, x, l', h => by
-    simp only [splitFirst] at h
-    split at h
-    · cases h; exact ⟨by assumption, .refl _⟩
-    · obtain ⟨⟨z, zs⟩, hz, he⟩ := Option.map_eq_some_iff.1 h
-      cases he
-      obtain ⟨h1, h2⟩ := splitFirst_some p ys z zs hz
-      exact ⟨h1, (List.Perm.swap y z zs).trans (h2.cons y)⟩
-
-theorem splitFirst_none {α : Type} (p : α → Bool) : ∀ (l : List α), splitFirst p l = none → ∀ x ∈ l, p x = false
-  | [], _, x, hx => by simp at hx
-  | y :: ys, h, x, hx => by
-    simp only [splitFirst] at h
-    split at h
-    · cases h
-    · rename_i hy
-      rcases List.mem_cons.1 hx with rfl | hx
-      · simpa using hy
-      · exact splitFirst_none p ys (by simpa using h) x hx
-
-/-- A hop touches what is bound so far (`bound.contains(from) || bound.contains(to)`). -/
-def touches (b : List V) (r : QR) : Bool := b.contains r.frm.alias || b.contains r.to.alias
-
-/-- The next hop (mod.rs:2025-2031): the first touching `b`, else the first left. -/
-def pickNext (b : List V) (rest : List QR) : Option (QR × List QR) :=
-  match splitFirst (touches b) rest with
-  | some x => some x
-  | none => match rest with
-    | [] => none
-    | x :: xs => some (x, xs)
-
-/-- The `while let` loop (mod.rs:2021-2032), with fuel `rest.len()`. -/
-def outward : Nat → List V → QR → List QR → List QR
-  | 0, _, r, rest => r :: rest
-  | n + 1, b, r, rest =>
-    let b' := b ++ [r.frm.alias, r.to.alias]
-    r :: match pickNext b' rest with
-      | none => []
-      | some (r', rest') => outward n b' r' rest'
-
-/-- The reorder after the sort (mod.rs:2012-2034): the lead first, then outward from it. -/
-def leadOrder (lead : Option V) (sorted : List QR) : List QR :=
-  match lead with
-  | none => sorted
-  | some l => match splitFirst (fun r => r.alias == l) sorted with
-    | none => sorted   -- unreachable: `expect("the leading walk is one of the component's hops")`
-    | some (r, rest) => outward rest.length [] r rest
-
-theorem pickNext_some (b : List V) (rest : List QR) (r : QR) (rest' : List QR) (h : pickNext b rest = some (r, rest')) :
-    (r :: rest').Perm rest ∧ (touches b r = true ∨ ∀ x ∈ rest', touches b x = false) := by
-  unfold pickNext at h
-  split at h
-  · cases h; rename_i hs; exact ⟨(splitFirst_some _ _ _ _ hs).2, Or.inl (splitFirst_some _ _ _ _ hs).1⟩
-  · rename_i hs
-    split at h
-    · cases h
-    · cases h
-      exact ⟨.refl _, Or.inr fun x hx => splitFirst_none _ _ hs x (List.mem_cons_of_mem _ hx)⟩
-
-theorem pickNext_none (b : List V) (rest : List QR) (h : pickNext b rest = none) : rest = [] := by
-  unfold pickNext at h
-  split at h
-  · cases h
-  · split at h
-    · rfl
-    · cases h
-
-theorem outward_perm : ∀ (n : Nat) (b : List V) (r : QR) (rest : List QR), (outward n b r rest).Perm (r :: rest)
-  | 0, _, _, _ => .refl _
-  | n + 1, b, r, rest => by
-    simp only [outward]
-    apply List.Perm.cons
-    split
-    · rename_i h; rw [pickNext_none _ _ h]
-    · rename_i r' rest' h
-      exact (outward_perm n _ r' rest').trans (pickNext_some _ _ _ _ h).1
-
-theorem leadOrder_perm (lead : Option V) (sorted : List QR) : (leadOrder lead sorted).Perm sorted := by
-  unfold leadOrder
-  split
-  · exact .refl _
-  · split
-    · exact .refl _
-    · rename_i r rest hs
-      exact (outward_perm _ _ _ _).trans (splitFirst_some _ _ _ _ hs).2
-
-/-- The walk is outward: every hop touches a node an earlier hop bound, unless none of the hops
-left does (a disconnected rest — not reachable in a connected component). -/
-inductive Outward : List V → List QR → Prop
-  | nil (b : List V) : Outward b []
-  | cons (b : List V) (r : QR) (rs : List QR) :
-      (touches b r = true ∨ ∀ x ∈ rs, touches b x = false) →
-      Outward (b ++ [r.frm.alias, r.to.alias]) rs → Outward b (r :: rs)
-
-theorem outward_outward : ∀ (n : Nat) (b : List V) (r : QR) (rest : List QR), rest.length ≤ n →
-    (touches b r = true ∨ ∀ x ∈ rest, touches b x = false) → Outward b (outward n b r rest)
-  | 0, b, r, rest, hl, hr => by
-    have : rest = [] := List.eq_nil_of_length_eq_zero (by omega)
-    subst this
-    exact .cons b r [] (Or.inr (by simp)) (.nil _)
-  | n + 1, b, r, rest, hl, hr => by
-    simp only [outward]
-    split
-    · rename_i h
-      rw [pickNext_none _ _ h] at hr
-      exact .cons b r [] (Or.inr (by simp)) (.nil _)
-    · rename_i r' rest' h
-      obtain ⟨hp, ht⟩ := pickNext_some _ _ _ _ h
-      have hlen := hp.length_eq
-      simp only [List.length_cons] at hlen
-      refine .cons b r _ ?_ (outward_outward n _ r' rest' (by omega) ht)
-      rcases hr with hr | hr
-      · exact Or.inl hr
-      · refine Or.inr fun x hx => hr x ?_
-        exact hp.mem_iff.1 ((outward_perm n _ r' rest').mem_iff.1 hx)
-
-/-- **PROVEN** (#3593's reorder): with a lead that is one of the hops, the order starts with the
-lead and walks outward from it (`Outward`), and it is a permutation of the sorted hops. -/
-theorem leadOrder_spec (l : V) (sorted : List QR) (hl : ∃ r ∈ sorted, r.alias = l) :
-    ∃ r rs, leadOrder (some l) sorted = r :: rs ∧ r.alias = l ∧ Outward [] (r :: rs) ∧
-      (r :: rs).Perm sorted := by
-  simp only [leadOrder]
-  split
-  · rename_i hs
-    obtain ⟨r, hr, he⟩ := hl
-    have := splitFirst_none _ _ hs r hr
-    simp [he] at this
-  · rename_i r rest hs
-    obtain ⟨h1, h2⟩ := splitFirst_some _ _ _ _ hs
-    have ho := outward_outward rest.length [] r rest (Nat.le_refl _) (Or.inr (by simp [touches]))
-    obtain ⟨rs, hw⟩ : ∃ rs, outward rest.length [] r rest = r :: rs := by
-      cases rest.length with
-      | zero => exact ⟨rest, rfl⟩
-      | succ k => exact ⟨_, rfl⟩
-    rw [hw] at ho ⊢
-    refine ⟨r, rs, rfl, by simpa using h1, ho, ?_⟩
-    rw [← hw]; exact (outward_perm _ _ _ _).trans h2
-
-/-- `sort_by_key`, the lead reorder, then `self_loops_after_binders(…, |node|
-self.visited.contains(node))` (mod.rs:1970-2049, #3102, #3593). -/
-def orderRels (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) : List QR :=
-  HopOrder.selfLoopsAfterBinders (leadOrder lead (sortRels st fv lead rs)) hopShape st.bound
-
-theorem orderRels_perm (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) :
-    (orderRels st fv lead rs).Perm rs :=
-  (HopOrder.selfLoops_perm _ _ _).trans ((leadOrder_perm _ _).trans (sortRels_spec st fv lead rs).1)
+theorem orderRels_perm (st : MSt) (fv : List Nat) (rs : List QR) : (orderRels st fv rs).Perm rs :=
+  (HopOrder.selfLoops_perm _ _ _).trans (sortRels_spec st fv rs).1
 
 /-- The planner discharges `HopOrder.WF` when each alias id names one variable (`(id, scope)`
 pairs with equal ids are equal) — so on such patterns `orderRels` is the pre-#3102 loop. -/
-theorem orderRels_eq_reference (st : MSt) (fv : List V) (lead : Option V) (rs : List QR)
+theorem orderRels_eq_reference (st : MSt) (fv : List Nat) (rs : List QR)
     (hid : ∀ r ∈ rs, r.frm.alias.id = r.to.alias.id → r.frm.alias = r.to.alias) :
-    orderRels st fv lead rs =
-      HopOrder.pre3102_reference hopShape st.bound (leadOrder lead (sortRels st fv lead rs)) := by
+    orderRels st fv rs = HopOrder.pre3102_reference hopShape st.bound (sortRels st fv rs) := by
   apply HopOrder.eq_reference
   intro x hx hl
-  have := hid x (((leadOrder_perm _ _).trans (sortRels_spec st fv lead rs).1).mem_iff.1 hx)
+  have := hid x ((sortRels_spec st fv rs).1.mem_iff.1 hx)
   simp [hopShape] at hl ⊢
   exact this hl
 
-def planComp (st : MSt) (wi : WI) (lw : LW) (c : Comp) : MP × MSt × List Ex × LW :=
+def planComp (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) : MP × MSt × List Ex × LW :=
   let lb := boundLabelFilters st c.rels
-  match orderRels lb.1 wi.fv (leadingWalk wi c) c.rels with
+  match orderRels lb.1 fv c.rels with
   | [] => match c.nodes with
     | n :: _ => let x := nodeOnly lb.1 lw n c.paths; (x.1, x.2.1, lb.2 ++ x.2.2.1, x.2.2.2)
     | [] => (.arg, lb.1, lb.2, lw)
@@ -582,10 +372,10 @@ theorem planRels_binds (c : Comp) (rs : List QR) (res : MP) (st : MSt) (lw : LW)
 
 /-- After a component with relationships, every endpoint and every edge alias
 is bound for the clauses that follow (mod.rs:2189-2196, 2317-2324). -/
-theorem planComp_binds (st : MSt) (fv : WI) (lw : LW) (c : Comp) (r : QR) (hr : r ∈ c.rels) (v : V)
+theorem planComp_binds (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) (r : QR) (hr : r ∈ c.rels) (v : V)
     (hv : v = r.frm.alias ∨ v = r.to.alias ∨ v = r.alias) : (planComp st fv lw c).2.1.bound v = true := by
-  have hp := orderRels_perm (boundLabelFilters st c.rels).1 fv.fv (leadingWalk fv c) c.rels
-  cases hs : orderRels (boundLabelFilters st c.rels).1 fv.fv (leadingWalk fv c) c.rels with
+  have hp := orderRels_perm (boundLabelFilters st c.rels).1 fv c.rels
+  cases hs : orderRels (boundLabelFilters st c.rels).1 fv c.rels with
   | nil => rw [hs] at hp; have := hp.mem_iff.2 hr; simp at this
   | cons r0 rs =>
     have e : (planComp st fv lw c).2.1 =
@@ -691,11 +481,11 @@ theorem planRels_stripped (c : Comp) (rs : List QR) (res : MP) (st : MSt) (lw : 
 
 /-- **Planner invariant (#2390)**: no scan or fixed-length operator of a component's plan carries
 an inline map, and a walk carries only its edge's. The predicates live in Filters. -/
-theorem planComp_stripped (st : MSt) (fv : WI) (lw : LW) (c : Comp) :
+theorem planComp_stripped (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) :
     (planComp st fv lw c).1.stripped = true := by
   unfold planComp
   dsimp only
-  cases orderRels (boundLabelFilters st c.rels).1 fv.fv (leadingWalk fv c) c.rels with
+  cases orderRels (boundLabelFilters st c.rels).1 fv c.rels with
   | nil =>
     cases c.nodes with
     | nil => rfl
@@ -704,16 +494,12 @@ theorem planComp_stripped (st : MSt) (fv : WI) (lw : LW) (c : Comp) :
 
 /-! ## The whole pattern -/
 
-/-- `bound_before_clause` and `single_component` (mod.rs:1849-1855) for this clause. -/
-def WI.forMatch (wi : WI) (st : MSt) (comps : List Comp) : WI :=
-  { wi with boundBefore := !st.visited.isEmpty, single := comps.length == 1 && !wi.patternWhere }
-
-def planMatch (st : MSt) (fv0 : WI) (comps : List Comp) (pf : Option (MP → MP)) : MP × MSt :=
-  let fv := fv0.forMatch st comps
+/-- The component loop from the lifted filters `pre` (`bound_filters`' initial content). -/
+def planFrom (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP → MP)) (pre : List Ex) : MP × MSt :=
   let step := fun (acc : List MP × MSt × List Ex × LW) (c : Comp) =>
     let x := planComp acc.2.1 fv acc.2.2.2 c
     (acc.1 ++ [x.1], x.2.1, acc.2.2.1 ++ x.2.2.1, x.2.2.2)
-  let x := comps.foldl step ([], st, [], [])
+  let x := comps.foldl step ([], st, pre, [])
   let res := match x.1 with
     | [p] => p
     | ps => .cp ps
@@ -725,61 +511,104 @@ def planMatch (st : MSt) (fv0 : WI) (comps : List Comp) (pf : Option (MP → MP)
     | fs => .filter (andOf fs) res   -- `ExprIR::and_of(bound_filters)` (#3335)
   (res, x.2.1)
 
-/-- #2558: `MATCH (a:A)-[:R]->(b)-[:S*1..3]->(c {id: 1})`. Before #3593 the fixed hop came first,
-scanned from every `:A`, and the walk ran from every `b` it reached; now the walk leads (it is
-anchored on `c`, which `select_var_len_scan_node` scans), and the fixed hop follows from `b`. -/
-def ex2558A : QN := { alias := ⟨0, 0⟩, labels := ["A"], ptr := 0 }
-def ex2558B : QN := { alias := ⟨1, 0⟩, ptr := 0 }
-def ex2558C : QN := { alias := ⟨2, 0⟩, attrs := [("id", .node (.const (.int 1)) [])], ptr := 1 }
-def ex2558F : QR := { alias := ⟨3, 0⟩, named := false, frm := ex2558A, to := ex2558B, ptr := 0 }
-def ex2558W : QR := { alias := ⟨4, 0⟩, named := false, frm := ex2558B, to := ex2558C, kind := .varLen, ptr := 0 }
-def ex2558 : Comp := { nodes := [ex2558A, ex2558B, ex2558C], rels := [ex2558F, ex2558W] }
-def ex2558St : MSt := { visited := [], verified := [] }
+/-- `plan_match`: lift the cross-entity inline attrs (#2981, mod.rs:2014-2019), then plan the
+rewritten components with the lifted filters first in `bound_filters`. -/
+def planMatch (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP → MP)) : MP × MSt :=
+  planFrom st fv (liftPattern st comps).1 pf (liftPattern st comps).2
 
+/-- With nothing to lift, `plan_match` is the component loop on the pattern as written. -/
+theorem planMatch_nolift (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP → MP))
+    (h : liftPattern st comps = (comps, [])) : planMatch st fv comps pf = planFrom st fv comps pf [] := by
+  simp [planMatch, h]
 
-theorem ex2558_sort_lead : sortRels ex2558St [] (some ⟨4, 0⟩) ex2558.rels = [ex2558W, ex2558F] := by
-  have : keyLe (relKey ex2558St [] (some ⟨4, 0⟩) ex2558F) (relKey ex2558St [] (some ⟨4, 0⟩) ex2558W) = false := by decide
-  simp [sortRels, ex2558, this]
-theorem ex2558_sort_nolead : sortRels ex2558St [] none ex2558.rels = [ex2558F, ex2558W] := by
-  have : keyLe (relKey ex2558St [] none ex2558F) (relKey ex2558St [] none ex2558W) = true := by decide
-  simp [sortRels, ex2558, this]
-/-- **PROVEN** (#2558): the walk is promoted and planned first; without a lead the fixed hop
-would come first. -/
-theorem ex2558_walk_leads : leadingWalk (WI.forMatch {} ex2558St [ex2558]) ex2558 = some ⟨4, 0⟩ ∧
-    (orderRels ex2558St [] (leadingWalk (WI.forMatch {} ex2558St [ex2558]) ex2558) ex2558.rels).map (·.alias) =
-      [⟨4, 0⟩, ⟨3, 0⟩] ∧
-    (orderRels ex2558St [] none ex2558.rels).map (·.alias) = [⟨3, 0⟩, ⟨4, 0⟩] := by
-  have hl : leadingWalk (WI.forMatch {} ex2558St [ex2558]) ex2558 = some ⟨4, 0⟩ := by decide
-  rw [hl, orderRels, orderRels, ex2558_sort_lead, ex2558_sort_nolead]
-  exact ⟨rfl, by decide, by decide⟩
-/-- With anything bound before the clause (`MATCH (x) MATCH …`), no walk leads. -/
-theorem ex2558_bound_before_no_lead :
-    leadingWalk (WI.forMatch {} { visited := [⟨9, 0⟩], verified := [] } [ex2558]) ex2558 = none := by
-  decide
+/-! ### #2923 / #2981: an inline map that reads another component -/
+
+section lift2923
+set_option linter.unusedSimpArgs false
+
+def v2923b : V := ⟨1, 0⟩
+def v2923c : V := ⟨2, 0⟩
+/-- `b.v` -/
+def bDotV : Ex := .node (.prop "v") [Ex.v v2923b]
+/-- `MATCH (b), (c {v: b.v})`: two components. -/
+def q2923c : Comp := { nodes := [{ alias := v2923c, attrs := [("v", bDotV)], ptr := 1 }], rels := [] }
+def q2923 : List Comp := [{ nodes := [{ alias := v2923b, ptr := 0 }], rels := [] }, q2923c]
+
+/-- Before #2981 (the components planned as written): `c.v = b.v` is a Filter inside the
+second CartesianProduct branch, where `b` is not bound, so no row passes. -/
+theorem q2923_unlifted :
+    (planFrom ⟨[], []⟩ [] q2923 none []).1 =
+      .cp [.allScan { alias := v2923b, ptr := 0 } [],
+           .filter (andOf [attrEq v2923c ("v", bDotV)]) (.allScan { alias := v2923c, ptr := 1 } [])] := by
+  simp [planFrom, planComp, q2923, q2923c, boundLabelFilters, orderRels, sortRels, HopOrder.selfLoopsAfterBinders, nodeOnly, lowerN, lowerInline, lwKey, MSt.bound, withF, scanOf, stripNode, inlineAttrsToFilter, markLabels, v2923b, v2923c, rewriteComp, keepNode, keepAttrs, readsPending, bDotV, nodes, nodesL, Ex.v]
+
+/-- Since #2981 the entry is lifted above the product, where both are bound. -/
+theorem q2923_lifted :
+    (planMatch ⟨[], []⟩ [] q2923 none).1 =
+      .filter (attrEq v2923c ("v", bDotV))
+        (.cp [.allScan { alias := v2923b, ptr := 0 } [], .allScan { alias := v2923c, ptr := 1 } []]) := by
+  simp only [planMatch, liftPattern, pendingOf, patVars, liftOrder]
+  simp [planFrom, planComp, q2923, q2923c, boundLabelFilters, orderRels, sortRels, HopOrder.selfLoopsAfterBinders, nodeOnly, lowerN, lowerInline, lwKey, MSt.bound, withF, scanOf, stripNode, inlineAttrsToFilter, markLabels, v2923b, v2923c, rewriteComp, keepNode, keepAttrs, readsPending, bDotV, nodes, nodesL, Ex.v,
+    liftItems, liftItem]
+  simp only [andOf]
+  rw [flat_single _ _ _ (by decide), flat_single _ _ _ (by decide)]
+
+/-- With `b` bound by an earlier clause the entry is not lifted: it reads no pending variable. -/
+theorem q2923_bound_not_lifted :
+    liftPattern ⟨[v2923b], []⟩ [q2923c] = ([q2923c], []) := by
+  rfl
+
+/-- `MATCH (c), (a)-[r:R {w: c.v}]->(b)` with `r` anonymous: the edge's entry is lifted
+and the edge is emitted (`lifted_rels`), so the Filter sees every parallel edge. -/
+def r2981 : QR :=
+  { alias := ⟨5, 0⟩, named := false, frm := { alias := ⟨3, 0⟩, ptr := 0 }, to := { alias := ⟨4, 0⟩, ptr := 0 },
+    attrs := [("w", .node (.prop "v") [Ex.v v2923c])], ptr := 2 }
+def q2981c : Comp := { nodes := [r2981.frm, r2981.to], rels := [r2981] }
+def q2981rel : List Comp := [{ nodes := [{ alias := v2923c, ptr := 0 }], rels := [] }, q2981c]
+
+theorem lifted_rel_emitted :
+    let L := liftPattern ⟨[], []⟩ q2981rel
+    L.2 = [andOf [attrEq r2981.alias ("w", .node (.prop "v") [Ex.v v2923c])]] ∧
+    ((L.1.getD 1 q2981c).rels.map fun r => (r.attrs.length, emitRel (L.1.getD 1 q2981c) r)) = [(0, true)] ∧
+    emitRel q2981c r2981 = false := by
+  refine ⟨rfl, rfl, rfl⟩
+
+end lift2923
 
 /-- One component: its plan; several: a CartesianProduct of them in order
-(mod.rs:2391-2395); bound-label/attr filters on top (mod.rs:2404-2412). -/
-theorem planMatch_join (st : MSt) (fv : WI) (c : Comp) :
+(mod.rs:2567-2571); the lifted (#2981) then bound-label/attr filters on top (mod.rs:2584-2587). -/
+theorem planMatch_join (st : MSt) (fv : List Nat) (c : Comp) :
     (planMatch st fv [c] none).1 =
-      match (planComp st (fv.forMatch st [c]) [] c).2.2.1 with
-      | [] => (planComp st (fv.forMatch st [c]) [] c).1
-      | fs => .filter (andOf fs) (planComp st (fv.forMatch st [c]) [] c).1 := by
-  simp [planMatch]
+      let c' := rewriteComp (pendingOf st [c]) c
+      match (liftPattern st [c]).2 ++ (planComp st fv [] c').2.2.1 with
+      | [] => (planComp st fv [] c').1
+      | fs => .filter (andOf fs) (planComp st fv [] c').1 := by
+  simp [planMatch, planFrom, liftPattern]
 
-theorem planMatch_cp (st : MSt) (fv : WI) (c1 c2 : Comp)
-    (h1 : (planComp st (fv.forMatch st [c1, c2]) [] c1).2.2.1 = [])
-    (h2 : (planComp (planComp st (fv.forMatch st [c1, c2]) [] c1).2.1 (fv.forMatch st [c1, c2]) (planComp st (fv.forMatch st [c1, c2]) [] c1).2.2.2 c2).2.2.1 = []) :
+/-- The same, for a component with nothing to lift (the pre-#2981 statement). -/
+theorem planMatch_join_nolift (st : MSt) (fv : List Nat) (c : Comp)
+    (hl : liftPattern st [c] = ([c], [])) :
+    (planMatch st fv [c] none).1 =
+      match (planComp st fv [] c).2.2.1 with
+      | [] => (planComp st fv [] c).1
+      | fs => .filter (andOf fs) (planComp st fv [] c).1 := by
+  rw [planMatch_nolift _ _ _ _ hl]; simp [planFrom]
+
+theorem planMatch_cp (st : MSt) (fv : List Nat) (c1 c2 : Comp)
+    (hl : liftPattern st [c1, c2] = ([c1, c2], []))
+    (h1 : (planComp st fv [] c1).2.2.1 = [])
+    (h2 : (planComp (planComp st fv [] c1).2.1 fv (planComp st fv [] c1).2.2.2 c2).2.2.1 = []) :
     (planMatch st fv [c1, c2] none).1 =
-      .cp [(planComp st (fv.forMatch st [c1, c2]) [] c1).1, (planComp (planComp st (fv.forMatch st [c1, c2]) [] c1).2.1 (fv.forMatch st [c1, c2]) (planComp st (fv.forMatch st [c1, c2]) [] c1).2.2.2 c2).1] := by
-  simp [planMatch, h1, h2]
+      .cp [(planComp st fv [] c1).1, (planComp (planComp st fv [] c1).2.1 fv (planComp st fv [] c1).2.2.2 c2).1] := by
+  rw [planMatch_nolift _ _ _ _ hl]; simp [planFrom, h1, h2]
 
 /-- The whole MATCH plan (without the WHERE, a parameter) is stripped. -/
-theorem planMatch_stripped (st : MSt) (fv : WI) (comps : List Comp) :
+theorem planMatch_stripped (st : MSt) (fv : List Nat) (comps : List Comp) :
     (planMatch st fv comps none).1.stripped = true := by
   have hf : ∀ (cs : List Comp) (acc : List MP × MSt × List Ex × LW),
       MP.stripped.strippedL acc.1 = true →
       MP.stripped.strippedL (cs.foldl (fun (acc : List MP × MSt × List Ex × LW) (c : Comp) =>
-        let x := planComp acc.2.1 (fv.forMatch st comps) acc.2.2.2 c
+        let x := planComp acc.2.1 fv acc.2.2.2 c
         (acc.1 ++ [x.1], x.2.1, acc.2.2.1 ++ x.2.2.1, x.2.2.2)) acc).1 = true := by
     intro cs
     induction cs with
@@ -797,9 +626,12 @@ theorem planMatch_stripped (st : MSt) (fv : WI) (comps : List Comp) :
           simp only [List.cons_append, MP.stripped.strippedL, Bool.and_eq_true] at hl ⊢
           exact ⟨hl.1, ihl hl.2 hm⟩
       exact hl _ _ h (planComp_stripped _ _ _ _)
-  have h0 := hf comps ([], st, [], []) rfl
   simp only [planMatch]
-  generalize (comps.foldl _ ([], st, [], [])) = x at h0 ⊢
+  generalize (liftPattern st comps).2 = pre
+  generalize (liftPattern st comps).1 = comps
+  have h0 := hf comps ([], st, pre, []) rfl
+  simp only [planFrom]
+  generalize (comps.foldl _ ([], st, pre, [])) = x at h0 ⊢
   have hr : (match x.1 with | [p] => p | ps => MP.cp ps).stripped = true := by
     split
     · rename_i p heq; rw [heq] at h0; simpa [MP.stripped.strippedL] using h0
@@ -808,12 +640,12 @@ theorem planMatch_stripped (st : MSt) (fv : WI) (comps : List Comp) :
 
 /-! ## `build_pattern_sub_plan` (mod.rs:1038-1049) -/
 
-def buildPatternSubPlan (st : MSt) (fv : WI) (comps : List Comp) (addArgs : MP → MP) : MP × MSt :=
+def buildPatternSubPlan (st : MSt) (fv : List Nat) (comps : List Comp) (addArgs : MP → MP) : MP × MSt :=
   ((addArgs (planMatch st fv comps none).1), st)
 
 /-- The sub-plan of a pattern predicate leaves `visited` and `verified_labels`
 as they were: its variables are not bound for the clauses that follow. -/
-theorem buildPatternSubPlan_restores (st : MSt) (fv : WI) (comps : List Comp) (aa : MP → MP) :
+theorem buildPatternSubPlan_restores (st : MSt) (fv : List Nat) (comps : List Comp) (aa : MP → MP) :
     (buildPatternSubPlan st fv comps aa).2 = st ∧
     (buildPatternSubPlan st fv comps aa).1 = aa (planMatch st fv comps none).1 := ⟨rfl, rfl⟩
 

@@ -52,8 +52,8 @@ theorem next_some {it it' : RowIter β} {x : β} (h : it.next = (some x, it')) :
     it.toList = x :: it'.toList := by
   cases it with
   | one y => cases y <;> simp_all [RowIter.next, RowIter.toList] <;> (obtain ⟨rfl, rfl⟩ := h; rfl)
-  | spread xs => cases xs <;> simp_all [RowIter.next, RowIter.toList] <;> (obtain ⟨rfl, rfl⟩ := h; simp [RowIter.toList])
-  | many xs => cases xs <;> simp_all [RowIter.next, RowIter.toList] <;> (obtain ⟨rfl, rfl⟩ := h; simp [RowIter.toList])
+  | spread xs => cases xs <;> simp_all [RowIter.next, RowIter.toList] <;> (obtain ⟨rfl, rfl⟩ := h; simp)
+  | many xs => cases xs <;> simp_all [RowIter.next, RowIter.toList] <;> (obtain ⟨rfl, rfl⟩ := h; simp)
 
 structure St (β : Type) where
   rows : List Nat

@@ -152,7 +152,7 @@ theorem refresh_mem (c : IndexColumn) (st : BuildState) (ws : List Nat) (frm to 
     · have : ws = [] := by simpa using hW
       subst this
       simp [IndexColumn.refresh, IndexColumn.ix]
-    · simp only [IndexColumn.refresh, hW, Bool.false_eq_true, if_false, IndexColumn.removeEncoded,
+    · simp only [IndexColumn.refresh, hW, Bool.false_eq_true, ite_false, IndexColumn.removeEncoded,
         IndexColumn.addEncoded, IndexColumn.ix, addEncoded_spec, removeEncoded_spec]
       have hr : ∀ t, t ∈ (rawTuples (.numeric ix) frm ws) ↔ ∃ id ∈ ws, t ∈ tupleOf (.numeric ix) frm.attr id :=
         rawTuples_spec _ _ _
@@ -676,7 +676,7 @@ theorem insertedOnto_eq_caughtUpOnto {R : Type} (ours pub : V R) (g : SE → SE 
     (o p : SE) (ho : ours.entry = some o) (hp : pub.entry = some p)
     (hg : o.generation = p.generation) (hb : p.en.isBuilding = true) :
     V.insertedOnto ours pub g = V.caughtUpOnto ours pub g := by
-  simp only [V.insertedOnto, V.caughtUpOnto, V.newBuildVersion, V.newVersion, ho, hp, hb, if_true]
+  simp only [V.insertedOnto, V.caughtUpOnto, V.newBuildVersion, V.newVersion, ho, hp, hb, ite_true]
   cases o with | mk oen og oc => cases oen; simp_all
 
 /-! `CatchUp`, `REFRESH_COST` and `catchUpBy` (`versioned.rs:149-191`) are in `Batch.lean`, where `indexerFit`

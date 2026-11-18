@@ -43,6 +43,7 @@ use std::{
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
 use crate::planner::optimizer::collect_expr_scoped_variables;
 use crate::planner::optimizer::collect_single_variable_conjuncts;
+use crate::planner::optimizer::references::ir_references_variable;
 use crate::planner::optimizer::{endpoint_scan_score, walk_scans_to_endpoint};
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
@@ -404,10 +405,7 @@ fn fmt_rel_with_labels_dir(
     let from_str = rel.from.alias.to_string();
     let to_str = fmt_node(&rel.to);
 
-    let alias_str = rel.alias.to_string();
-    let is_anon = alias_str.starts_with("_anon");
-
-    if is_anon {
+    if rel.alias.is_unnamed() {
         format!("({from_str}){left_arrow}-{right_arrow}({to_str})")
     } else if rel.types.is_empty() {
         let alias = &rel.alias;
@@ -570,6 +568,185 @@ pub(super) fn inline_attrs_to_filter(
     } else {
         Some(ExprIR::and_of(filters))
     }
+}
+
+/// Splits an inline-attribute map into the entries that may be checked where
+/// `alias` is matched and the rest, returned as an equality filter.
+///
+/// An entry stays inline unless its value reads a variable in `pending`, the
+/// variables this pattern binds that are not bound when `alias` is matched
+/// (`local` lists the ones that are). The planner orders scans and traversals
+/// freely, so only the variables bound before the pattern, the entity itself
+/// and, for a relationship, its endpoints are known to be bound there.
+fn split_inline_attrs(
+    alias: &Variable,
+    attrs: &QueryExpr<Variable>,
+    pending: &HashSet<(u32, u32)>,
+    local: &[&Variable],
+    lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+    seen: &mut HashSet<(u32, u32, usize)>,
+) -> Option<QueryExpr<Variable>> {
+    let reads_pending = |entry: &DynNode<ExprIR<Variable>>| {
+        entry.walk::<Bfs>().any(|data| {
+            matches!(
+                data,
+                ExprIR::Variable(v) if pending.contains(&(v.id, v.scope_id))
+                    && !local.iter().any(|l| l.id == v.id && l.scope_id == v.scope_id)
+            )
+        })
+    };
+    let moves: Vec<bool> = attrs
+        .root()
+        .children()
+        .map(|entry| reads_pending(&entry))
+        .collect();
+    if !moves.contains(&true) {
+        return None;
+    }
+    let mut kept = tree!(ExprIR::Map);
+    let mut moved = tree!(ExprIR::Map);
+    for (entry, moves) in attrs.root().children().zip(moves) {
+        let target = if moves { &mut moved } else { &mut kept };
+        target.root_mut().push_child_tree(entry.as_cloned_subtree());
+    }
+    // The binder clones an endpoint for each occurrence that writes its own
+    // attrs, but the clones share the map: lift each map's filter once, as
+    // `lower_inline_attrs` does, or a non-deterministic predicate runs twice.
+    if seen.insert((alias.id, alias.scope_id, Arc::as_ptr(attrs) as usize)) {
+        lifted.extend(inline_attrs_to_filter(alias, &moved));
+    }
+    Some(Arc::new(kept))
+}
+
+/// Whether an inline-attribute map of `pattern` reads a variable in `visited`.
+fn pattern_attrs_read_visited(
+    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    visited: &HashSet<(u32, u32)>,
+) -> bool {
+    let reads = |attrs: &QueryExpr<Variable>| {
+        attrs.root().walk::<Bfs>().any(
+            |data| matches!(data, ExprIR::Variable(v) if visited.contains(&(v.id, v.scope_id))),
+        )
+    };
+    pattern.nodes().iter().any(|n| reads(&n.attrs))
+        || pattern.relationships().iter().any(|r| reads(&r.attrs))
+}
+
+/// Takes the inline-attribute entries that read another variable of the same
+/// pattern out of `pattern` and appends them to `lifted` as filters.
+///
+/// `(b), (c {v: b.v})` (one clause, two components) is planned as separate
+/// components joined by a Cartesian product, and `(a {v: b.v})-->(b)` may be scanned from
+/// either end. Checked inline, `c.v = b.v` would run where `b` is not bound
+/// yet, and no row would pass. Applied above the whole pattern, like `WHERE`,
+/// it sees every variable, and the optimizer can still push it down or turn
+/// it into a hash join. Variable-length and shortest-path relationships keep
+/// their attrs: those are per-edge predicates, not a property of one entity.
+///
+/// Returns `None` when no entry has to move.
+fn lift_cross_entity_attrs(
+    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    visited: &HashSet<(u32, u32)>,
+    lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+    lifted_rels: &mut HashSet<(u32, u32)>,
+) -> Option<QueryGraph<Arc<String>, Arc<String>, Variable>> {
+    let pending: HashSet<(u32, u32)> = pattern
+        .variables()
+        .map(|v| (v.id, v.scope_id))
+        .filter(|key| !visited.contains(key))
+        .collect();
+    let before = lifted.len();
+    // The same node is shared by `nodes()` and the endpoints of its
+    // relationships; rewrite each occurrence once so its filter is not
+    // emitted twice.
+    let mut rewritten: HashMap<*const QueryNode<Arc<String>, Variable>, _> = HashMap::new();
+    let mut seen: HashSet<(u32, u32, usize)> = HashSet::new();
+    let mut rewrite_node = |node: &Arc<QueryNode<Arc<String>, Variable>>,
+                            lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+                            seen: &mut HashSet<(u32, u32, usize)>| {
+        rewritten
+            .entry(Arc::as_ptr(node))
+            .or_insert_with(|| {
+                split_inline_attrs(
+                    &node.alias,
+                    &node.attrs,
+                    &pending,
+                    &[&node.alias],
+                    lifted,
+                    seen,
+                )
+                .map_or_else(
+                    || node.clone(),
+                    |attrs| {
+                        Arc::new(QueryNode::new(
+                            node.alias.clone(),
+                            node.labels.clone(),
+                            attrs,
+                        ))
+                    },
+                )
+            })
+            .clone()
+    };
+    // Like the planner, lift an endpoint's attrs from the relationship that
+    // carries it, and from `nodes()` only a node no relationship touches: the
+    // binder gives the relationship's endpoint its own copy of the map, and
+    // reading both would apply one predicate twice.
+    let endpoints: HashSet<(u32, u32)> = pattern
+        .relationships()
+        .iter()
+        .flat_map(|rel| [&rel.from, &rel.to])
+        .map(|n| (n.alias.id, n.alias.scope_id))
+        .collect();
+    let mut hops = Vec::new();
+    for rel in pattern.relationships() {
+        let from = rewrite_node(&rel.from, lifted, &mut seen);
+        let to = rewrite_node(&rel.to, lifted, &mut seen);
+        let attrs = if rel.min_hops.is_none() && rel.all_shortest_paths == AllShortestPaths::No {
+            split_inline_attrs(
+                &rel.alias,
+                &rel.attrs,
+                &pending,
+                &[&rel.alias, &rel.from.alias, &rel.to.alias],
+                lifted,
+                &mut seen,
+            )
+        } else {
+            None
+        };
+        if attrs.is_some() {
+            lifted_rels.insert((rel.alias.id, rel.alias.scope_id));
+        }
+        hops.push((from, to, attrs));
+    }
+    let mut res = QueryGraph::default();
+    let mut dropped = Vec::new();
+    for node in pattern.nodes() {
+        let target = if endpoints.contains(&(node.alias.id, node.alias.scope_id)) {
+            &mut dropped
+        } else {
+            &mut *lifted
+        };
+        res.add_node(rewrite_node(node, target, &mut seen));
+    }
+    for (rel, (from, to, attrs)) in pattern.relationships().iter().zip(hops) {
+        let mut new_rel = QueryRelationship::new(
+            rel.alias.clone(),
+            rel.types.clone(),
+            attrs.unwrap_or_else(|| rel.attrs.clone()),
+            from,
+            to,
+            rel.bidirectional,
+            rel.min_hops,
+            rel.max_hops,
+        );
+        new_rel.all_shortest_paths = rel.all_shortest_paths;
+        res.add_relationship(Arc::new(new_rel));
+    }
+    for path in pattern.paths() {
+        res.add_path(path.clone());
+    }
+    (lifted.len() > before).then_some(res)
 }
 
 /// Lowers a MATCH pattern element's inline attributes to a predicate, at most
@@ -844,7 +1021,7 @@ impl Planner {
     ) -> Variable {
         let id = self.scope_vars[scope_id as usize].len() as u32;
         let var = Variable {
-            name: None,
+            alias: None,
             id,
             scope_id,
             ty,
@@ -1695,7 +1872,7 @@ impl Planner {
                     // record for inline handling via expr_to_plan.
                     let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
-                        name: None,
+                        alias: None,
                         id: self.scope_vars[current_scope as usize].len() as u32,
                         scope_id: current_scope,
                         ty: Type::Bool,
@@ -1720,7 +1897,7 @@ impl Planner {
                     // recognize the negation and use AntiSemiApply.
                     let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
-                        name: None,
+                        alias: None,
                         id: self.scope_vars[current_scope as usize].len() as u32,
                         scope_id: current_scope,
                         ty: Type::Bool,
@@ -1839,6 +2016,12 @@ impl Planner {
         // filters rather than as plan components, so they don't interfere
         // with stitching.
         let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
+        // Relationships whose attrs were lifted: the Filter reads the edge, so
+        // the traversal must emit every parallel edge for it to test.
+        let mut lifted_rels: HashSet<(u32, u32)> = HashSet::new();
+        let lifted =
+            lift_cross_entity_attrs(pattern, &self.visited, &mut bound_filters, &mut lifted_rels);
+        let pattern = lifted.as_ref().unwrap_or(pattern);
         // Inline attrs already lowered to a Filter in this clause, keyed by
         // (alias, attrs map identity). See `lower_inline_attrs`.
         let mut lowered_attrs: HashSet<(u32, u32, usize)> = HashSet::new();
@@ -2077,7 +2260,7 @@ impl Planner {
                             Arc::new(tree!(ExprIR::Map)),
                         ));
                         let edge_alias = Variable {
-                            name: None,
+                            alias: None,
                             id: u32::MAX - node.alias.id,
                             scope_id: node.alias.scope_id,
                             ty: Type::Relationship,
@@ -2140,10 +2323,8 @@ impl Planner {
             // (named edge or edge referenced in a named path). When false,
             // the runtime may collapse multi-edges into one row per (src, dst).
             let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
-                !rel.alias
-                    .name
-                    .as_ref()
-                    .is_some_and(|n| n.starts_with("_anon"))
+                !rel.alias.is_unnamed()
+                    || lifted_rels.contains(&(rel.alias.id, rel.alias.scope_id))
                     || component
                         .paths()
                         .iter()
@@ -2151,16 +2332,11 @@ impl Planner {
             };
             // Collect edge alias IDs for relationship uniqueness checking.
             // Only named (non-anonymous) edges participate in uniqueness constraints;
-            // anonymous edges (`_anon*`) are excluded so the same physical edge
+            // unnamed edges are excluded so the same physical edge
             // can be traversed by different anonymous bindings (matches FalkorDB C).
             let sibling_edges: Vec<u32> = relationships
                 .iter()
-                .filter(|r| {
-                    !r.alias
-                        .name
-                        .as_ref()
-                        .is_some_and(|n| n.starts_with("_anon"))
-                })
+                .filter(|r| !r.alias.is_unnamed())
                 .map(|r| r.alias.id)
                 .collect();
             // Inline attrs are lowered to Filters below; the operator embeds the
@@ -2869,11 +3045,39 @@ impl Planner {
         // `visited` untouched, which is correct: every variable the clause
         // mentions is already bound.
         let mut plans = Vec::with_capacity(q.len());
+        let mut prev_is_match = false;
         for ir in q {
             if self.is_redundant_optional_match(&ir) {
                 continue;
             }
-            plans.push(self.plan(ir));
+            // A MATCH right after another MATCH that shares no variable with
+            // anything bound so far is a Cartesian Product with it. Stitching
+            // would instead hang the earlier clause under this clause's scan,
+            // which drops it when the scan is later re-selected. Wrapping the
+            // plan in a one-branch Cartesian Product makes the stitcher add
+            // the earlier clause as a second branch, the plan the two clauses
+            // had when the parser still folded them into one pattern.
+            let bound = self.visited.clone();
+            let disjoint_match = prev_is_match
+                && matches!(
+                    &ir,
+                    QueryIR::Match { pattern, optional: false, .. }
+                        if !pattern
+                            .variables()
+                            .any(|v| bound.contains(&(v.id, v.scope_id)))
+                );
+            prev_is_match = matches!(
+                &ir,
+                QueryIR::Match {
+                    optional: false,
+                    ..
+                }
+            );
+            let mut plan = self.plan(ir);
+            if disjoint_match {
+                Self::join_as_cartesian_branch(&mut plan, &bound);
+            }
+            plans.push(plan);
         }
         // Stitch plans together in reverse: start from the last clause's plan
         // (the root), then insert each preceding plan at the deepest input slot.
@@ -3006,6 +3210,53 @@ impl Planner {
         res
     }
 
+    /// Make `plan`, a `MATCH` clause that binds none of `bound`, the one branch
+    /// of a Cartesian Product, below the filters that sit on top of it (its
+    /// `WHERE`, which may read the variables of the clause stitched in as the
+    /// other branch). Left as it is when an operator below those filters reads
+    /// one of `bound`: that one needs the earlier clause's rows as its input.
+    fn join_as_cartesian_branch(
+        plan: &mut DynTree<IR>,
+        bound: &HashSet<(u32, u32)>,
+    ) {
+        let mut idx = plan.root().idx();
+        // A WHERE pattern comprehension adds a saturated Apply above the
+        // pattern, as `plan_query` also steps through.
+        while (matches!(
+            plan.node(idx).data(),
+            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+        ) && plan.node(idx).num_children() > 0)
+            || Self::is_saturated_apply(plan, idx)
+        {
+            idx = plan.node(idx).child(0).idx();
+        }
+        let reads_bound = plan.node(idx).indices::<Bfs>().any(|i| {
+            bound
+                .iter()
+                .any(|&(id, scope)| ir_references_variable(plan.node(i).data(), id, scope))
+        });
+        if !reads_bound {
+            plan.node_mut(idx).push_parent(IR::CartesianProduct);
+        }
+    }
+
+    /// Does this `MATCH` plan join several components, i.e. is its operator
+    /// below any filters a Cartesian Product?
+    fn joins_components(plan: &DynTree<IR>) -> bool {
+        let mut idx = plan.root().idx();
+        // A WHERE pattern comprehension adds a saturated Apply above the
+        // pattern, as `plan_query` also steps through.
+        while (matches!(
+            plan.node(idx).data(),
+            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+        ) && plan.node(idx).num_children() > 0)
+            || Self::is_saturated_apply(plan, idx)
+        {
+            idx = plan.node(idx).child(0).idx();
+        }
+        matches!(plan.node(idx).data(), IR::CartesianProduct)
+    }
+
     /// Returns true if a plan `n` being stitched into a CartesianProduct
     /// requires Apply wrapping. Plans from data-producing clauses (LOAD CSV,
     /// UNWIND, WITH/RETURN projections) produce variables that may be referenced
@@ -3107,7 +3358,7 @@ impl Planner {
                 let yield_by_field = |field: &str| -> Option<Variable> {
                     named_outputs
                         .iter()
-                        .find(|v| v.name.as_ref().is_some_and(|n| n.as_str() == field))
+                        .find(|v| v.name().is_some_and(|n| n.as_str() == field))
                         .cloned()
                 };
                 // Pattern comprehensions in the arguments get their own
@@ -3208,14 +3459,36 @@ impl Planner {
                     let all_visited = pattern
                         .variables()
                         .all(|v| self.visited.contains(&(v.id, v.scope_id)));
+                    // A variable read only by an inline attr (`(x {v: a.v})`) is
+                    // not one the pattern binds, but it is as much a read of
+                    // the earlier clause.
+                    let any_visited = pattern
+                        .variables()
+                        .any(|v| self.visited.contains(&(v.id, v.scope_id)))
+                        || pattern_attrs_read_visited(&pattern, &self.visited);
+                    // Taken before `plan_match` adds the pattern's own variables
+                    // to `visited`: the Argument rows bind only these.
+                    let bound: Vec<(u32, u32)> = self.visited.iter().copied().collect();
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
                     // Apply so each incoming row feeds the inner plan via
                     // set_argument_batch (Argument leaves are runtime-only
                     // leaf nodes that don't pull from children).
-                    if all_visited {
+                    //
+                    // The same holds when the clause has several components and
+                    // reads a variable an earlier clause bound: stitching would
+                    // otherwise make the earlier clause one more Cartesian
+                    // Product branch, and the components would rebind that
+                    // variable on their own instead of reading it.
+                    //
+                    // Passing the bound variables lets the scan-selection pass see
+                    // that a component sharing none of them is uncorrelated and
+                    // needs a scan of its own, instead of expanding from the
+                    // Argument row over every edge of its type.
+                    if all_visited || (any_visited && Self::joins_components(&match_plan)) {
                         let mut inner = match_plan;
-                        Self::add_argument_to_leaves(&mut inner, None);
+                        let argument_vars = if all_visited { None } else { Some(bound) };
+                        Self::add_argument_to_leaves(&mut inner, argument_vars.as_deref());
                         tree!(IR::Apply, inner)
                     } else {
                         match_plan

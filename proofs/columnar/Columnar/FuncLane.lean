@@ -231,12 +231,12 @@ theorem hasLabelsLane_sound (rt : RT F) (c : Compound (V F)) (b : Batch F) (hwf 
           simp only [Option.some.injEq] at h; subst h
           refine ⟨by simp [EC.WF, Bits.none], fun i hi => ?_⟩
           rw [hper i hi, all_labels_none rt _ names hnone]
-          simp [EC.get, Bits.isNull, Bits.none, List.getElem?_replicate, hi]
+          simp [EC.get, Bits.isNull, Bits.none, hi]
         · rename_i ls hls
           simp only [Option.some.injEq] at h; subst h
           refine ⟨by simp [EC.WF, Bits.none], fun i hi => ?_⟩
           rw [hper i hi, ← all_labels rt _ names ls hls]
-          simp [EC.get, Bits.isNull, Bits.none, List.getElem?_replicate, hi]
+          simp [EC.get, Bits.isNull, Bits.none, hi]
     · simp at h
   · simp at h
 

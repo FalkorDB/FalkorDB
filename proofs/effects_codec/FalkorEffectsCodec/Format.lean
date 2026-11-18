@@ -112,9 +112,9 @@ theorem describe_spec {E A} (flags : Nat) (recs : List (Except E A)) (hf : Fused
   have hm : min 0 DESCRIBE_RECORD_LIMIT = 0 := by simp
   rw [hm] at h2
   by_cases hc : nOk recs > DESCRIBE_RECORD_LIMIT
-  · rw [if_pos hc, if_pos hc]; simp only [List.length_append, List.length_cons, List.length_nil]
+  · rw [ite_eq_left hc, ite_eq_left hc]; simp only [List.length_append, List.length_cons, List.length_nil]
     cases he <;> simp at h2 ⊢ <;> omega
-  · rw [if_neg hc, if_neg hc]
+  · rw [ite_eq_right hc, ite_eq_right hc]
     cases he <;> simp at h2 ⊢ <;> omega
 
 /-! ### `build` (`format.rs:113`): encode every record, count them, stop at the first failure -/

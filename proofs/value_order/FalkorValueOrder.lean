@@ -109,7 +109,8 @@ still disagree and the value hash join uses them (see finding 5), so it is open 
 * Non-integral floats are `frac lo r` (between `lo` and `lo+1`, ranked by `r`);
   their `to_bits` is some function of the value, not the IEEE layout. (Until
   2026-10-11 floats were only NaN or integral, with no `-0.0` and one NaN: that
-  hid the #2917 vector/point hash bug — see FINDINGS.md "Wave 9".)
+  hid the #2917 vector/point hash bug — see the "Wave 9" section of
+  `git show 5261abd4f:proofs/FINDINGS.md`.)
 * Strings are `Nat`s compared numerically (Rust: byte order; any total order
   gives the same laws). Their hash words are abstracted.
 * Path, Relationship and the temporals appear only as `Tag`s for the type order;

@@ -187,7 +187,7 @@ theorem abs_agree_except (v : V FC) (h1 : v ≠ .float .nzero) (h2 : v ≠ .int 
     have : n ≠ I64MIN := fun e => h2 (by rw [e])
     have hr := h3 n rfl
     unfold InI64 at hr
-    simp only [mAbs, cAbs, this, if_false, cAbsInt]
+    simp only [mAbs, cAbs, this, ite_false, cAbsInt]
     unfold wMul wrap
     split
     · congr 2; omega

@@ -41,7 +41,7 @@ def resolveAll (st : St) : List Name → Except String (St × List Var)
 /-- `push_scope` (binder.rs:251) as seen by name resolution. -/
 def pushScope (st : St) : St :=
   { cur := [], parent := st.cur, depth := st.depth + 1, useParent := true,
-    p2c := [], cfp := [] }
+    p2c := [], cfp := [], matchRels := st.matchRels }
 
 structure Proj where
   items   : List (Name × PExpr)
@@ -59,7 +59,10 @@ def projectItems (st : St) (seen : List Name) :
     else
       let (cur, bv) := projectName st.cur st.depth a .any
       let p2c := match e.isVar, vs with
-        | some _, [v] => st.p2c.insert v.name bv
+        -- `var_name.name.as_ref().unwrap()` (binder.rs:1231): a projected variable is named
+        | some _, [v] => match v.name with
+          | some n => st.p2c.insert n bv
+          | none => st.p2c
         | _, _ => st.p2c
       projectItems { st with cur, p2c } (a :: seen) rest
 
@@ -82,7 +85,7 @@ def bindProjection (st : St) (p : Proj) : Except String St := do
   if p.items.any (·.2.agg) && st.cfp.any (fun c => !groupBy.contains c.1) then
     throw "ORDER BY cannot reference variables not projected"
   -- 6. snapshot, then WHERE / SKIP / LIMIT (binder.rs:1245-1255)
-  let before := st.cur.map (·.1)
+  let before := st.cur.keys
   let (st, _) ← p.tail.foldlM (init := (st, ([] : List Var)))
     fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
   -- 7. remove the copies made only by WHERE / SKIP / LIMIT (binder.rs:1260-1268)
@@ -94,10 +97,10 @@ def bindProjection (st : St) (p : Proj) : Except String St := do
 /-- The spec: the scope after `WITH`/`RETURN` is exactly its aliases. -/
 def specProjectionScope (p : Proj) : List Name := p.items.map (·.1)
 
-def keys (st : St) : List Name := st.cur.map (·.1)
+def keys (st : St) : List Name := st.cur.keys
 
 def st0 : St :=
-  { cur := [("n", ⟨"n", 0, 0, .node⟩)], parent := [], depth := 0,
+  { cur := [("n", ⟨"n", 0, 0, .node, none⟩)], parent := [], depth := 0,
     useParent := false, p2c := [], cfp := [] }
 
 /-- `MATCH (n) WITH n.v AS k RETURN …`: the scope is `[k]`, as specified. -/
@@ -127,7 +130,7 @@ theorem where_copy_removed :
 the next clause mints from has length 1 (**root cause 2**): the next
 variable of the scope (`x` in `MATCH (x)-->(y)`) gets id 1 too. -/
 theorem where_copy_id_reused :
-    (do let st ← projectItems (pushScope st0) [] [("k", { vars := ["n"] }, [⟨"n", 0, 0, .node⟩])]
+    (do let st ← projectItems (pushScope st0) [] [("k", { vars := ["n"] }, [⟨"n", 0, 0, .node, none⟩])]
         let (_, v) ← resolve st [] "n"
         pure v.id : Except String Nat) = .ok 1 ∧
     ((bindProjection st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map
@@ -159,8 +162,14 @@ theorem agg_orderBy_rejects :
       .error "ORDER BY cannot reference variables not projected" := by
   decide
 
-theorem Env.has_iff (e : Env) (k : Name) : e.has k = true ↔ k ∈ e.map (·.1) := by
-  simp [Env.has, List.any_eq_true]
+theorem Env.has_iff (e : Env) (k : Name) : e.has k = true ↔ k ∈ e.keys := by
+  simp only [Env.has, Env.keys, List.any_eq_true, List.mem_filterMap, Key.beq_eq, decide_eq_true_eq]
+  constructor
+  · rintro ⟨⟨k', v⟩, hm, rfl⟩; exact ⟨_, hm, rfl⟩
+  · rintro ⟨⟨k', v⟩, hm, h⟩
+    cases k' with
+    | nm n => simp at h; subst h; exact ⟨_, hm, rfl⟩
+    | un => simp at h
 
 /-- Whatever ORDER BY references, the projection scope starts with every
 alias, in order, each under a fresh id (binder.rs:1147-1171). -/
@@ -186,7 +195,7 @@ theorem projectItems_keys (st : St) (seen : List Name) (items : List (Name × PE
       have hk' : ∀ p2c, keys { st with cur := (projectName st.cur st.depth a Ty.any).1, p2c := p2c }
           = keys st ++ [a] := by
         intro p2c
-        simp only [keys, projectName, Env.insert_new_eq hn, List.map_append]; rfl
+        simp only [keys, projectName, Env.insert_new_eq hn, Env.keys, List.filterMap_append]; rfl
       have := ih _ _ (by rw [hk', hks]; simp) h
       rw [this, hk']; simp
 

@@ -113,11 +113,11 @@ theorem fold_char (g : G M Tn Nm Ix Cn) (limit : Nat) (hl : limit ≤ 65536)
         simp [h1, h2, h3]
     | delN l => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, insAll_spec, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf, Bool.or_assoc]) <;> (try rfl)
     | delE l => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, insAll_spec, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf, Bool.or_assoc]) <;> (try rfl)
-    | lm ms => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, insAll_spec, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf, Bool.or_assoc]) <;> (try rfl)
-    | rt ts => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, insAll_spec, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf, Bool.or_assoc]) <;> (try rfl)
-    | adj m => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, insAll_spec, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf, Bool.or_assoc]) <;> (try rfl)
-    | lbls m => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, insAll_spec, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf, Bool.or_assoc]) <;> (try rfl)
-    | skip => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, insAll_spec, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf, Bool.or_assoc]) <;> (try rfl)
+    | lm ms => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf]) <;> (try rfl)
+    | rt ts => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf]) <;> (try rfl)
+    | adj m => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf]) <;> (try rfl)
+    | lbls m => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf]) <;> (try rfl)
+    | skip => apply Acc.ext <;> (try funext j) <;> (try simp [applyPR, nodeIds, edgeIds, delNIds, delEIds, lmsOf, tnsOf, adjOf, lblsOf]) <;> (try rfl)
 
 /-! ## Order does not matter -/
 

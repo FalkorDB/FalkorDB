@@ -84,7 +84,7 @@ theorem unique_index {w : List Nat} {p j : Nat} (hp : p < w.length) (hj : j < w.
   rw [h1] at hc
   have : w[p] ∈ w.set p (w[p] + 1) := by
     rw [List.mem_iff_getElem]
-    exact ⟨j, by simpa using hj, by rw [List.getElem_set, if_neg (Ne.symm hne)]; exact hjp⟩
+    exact ⟨j, by simpa using hj, by rw [List.getElem_set, ite_eq_right (Ne.symm hne)]; exact hjp⟩
   have := List.count_pos_iff.2 this
   omega
 
@@ -117,7 +117,7 @@ theorem copy_spec (H : Heap β) (w : List Nat) (os : List (List Nat)) (p : Nat) 
     · subst hc
       have e1 : (w[p] == H.next) = false := by simp [hab]
       simp [e1, hnw, hnc]
-    · rw [if_neg hc]
+    · rw [ite_eq_right hc]
       by_cases hca : c = w[p]
       · subst hca
         have e2 : (H.next == w[p]) = false := by simp [Ne.symm hab]
@@ -127,7 +127,7 @@ theorem copy_spec (H : Heap β) (w : List Nat) (os : List (List Nat)) (p : Nat) 
         omega
       · have e1 : (w[p] == c) = false := by simp [Ne.symm hca]
         have e2 : (H.next == c) = false := by simp [Ne.symm hc]
-        rw [if_neg hca, hrc c, cnt_cons]
+        rw [ite_eq_right hca, hrc c, cnt_cons]
         simp [e1, e2]
   · intro v hv a ha
     show a < H.next + 1
@@ -146,7 +146,7 @@ theorem copy_spec (H : Heap β) (w : List Nat) (os : List (List Nat)) (p : Nat) 
       simp only [contents, List.getElem_map, List.getElem_set, upd]
       by_cases hj : p = j
       · subst hj; simp
-      · rw [if_neg hj, if_neg hj]
+      · rw [ite_eq_right hj, ite_eq_right hj]
         have hjl : j < w.length := by simpa [contents] using h1'
         simp [hb w (by simp) _ (List.getElem_mem hjl)]
 
@@ -184,7 +184,7 @@ theorem pageMut_spec (H : Heap β) (w : List Nat) (os : List (List Nat)) (p : Na
         simp only [contents, List.getElem_map, List.getElem_set, upd]
         by_cases hj : p = j
         · subst hj; simp
-        · rw [if_neg hj]
+        · rw [ite_eq_right hj]
           have hjl : j < w.length := by simpa [contents] using h1'
           have : w[j] ≠ w[p] := fun e => hj (unique_index hp hjl hw1 e).symm
           simp [this]
@@ -222,7 +222,7 @@ theorem pushFresh_spec (H : Heap β) (w : List Nat) (os : List (List Nat)) (c : 
     simp only [upd]
     by_cases h : a = H.next
     · subst h; simp [hnw, hnc]
-    · rw [if_neg h, hrc a, cnt_cons]
+    · rw [ite_eq_right h, hrc a, cnt_cons]
       have : ([H.next].count a) = 0 := by simp [Ne.symm h]
       omega
   · show a < H.next + 1
@@ -236,7 +236,7 @@ theorem pushFresh_spec (H : Heap β) (w : List Nat) (os : List (List Nat)) (c : 
     rw [List.map_append]
     simp only [List.map_cons, List.map_nil, upd, ite_true]
     congr 1
-    apply List.map_congr_left; intro a ha; exact if_neg (hb w (by simp) a ha)
+    apply List.map_congr_left; intro a ha; exact ite_eq_right (hb w (by simp) a ha)
 
 /-- `regrow`'s `*page = Arc::from(next)`: pointer `p` now names fresh contents `c`; the
 page it replaced loses one count and stays intact for any snapshot still holding it. -/

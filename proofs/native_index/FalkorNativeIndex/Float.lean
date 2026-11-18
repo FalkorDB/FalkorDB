@@ -134,7 +134,7 @@ theorem encodeF64_eq (x : Nat) (hx : x < W) : encodeF64 x = ek x := by
   by_cases hz : x % SIGN = 0
   · have : isZero x = true := (isZero_iff x hx).2 hz
     simp only [this, ite_true, hz]
-    rw [if_pos ((and_sign 0 (by decide)).2 (by decide)), or_sign 0 (by decide)]
+    rw [ite_eq_left ((and_sign 0 (by decide)).2 (by decide)), or_sign 0 (by decide)]
     rfl
   · have : isZero x = false := by
       cases h : isZero x
@@ -142,8 +142,8 @@ theorem encodeF64_eq (x : Nat) (hx : x < W) : encodeF64 x = ek x := by
       · exact absurd ((isZero_iff x hx).1 h) hz
     simp only [this, hz, Bool.false_eq_true, ite_false]
     by_cases hs : x < SIGN
-    · rw [if_pos ((and_sign x hx).2 hs), or_sign x hs, if_pos hs]
-    · rw [if_neg (fun h => hs ((and_sign x hx).1 h)), u64not_eq x hx, if_neg hs]
+    · rw [ite_eq_left ((and_sign x hx).2 hs), or_sign x hs, ite_eq_left hs]
+    · rw [ite_eq_right (fun h => hs ((and_sign x hx).1 h)), u64not_eq x hx, ite_eq_right hs]
 
 /-- Case split of a `u64` encoding into the three closed-form regimes. -/
 theorem ek_cases (x : Nat) :
