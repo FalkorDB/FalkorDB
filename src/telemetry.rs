@@ -7,7 +7,7 @@
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::{Mutex, RwLock};
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -387,8 +387,9 @@ pub fn strip_stream(
 /// deleted, see [`queue_streams_of_freed_graph`].
 ///
 /// The list and the flag that says it is non-empty change together, through
-/// [`Self::push`] and [`Self::take`] only. The flag is what the flusher polls, so
-/// that an idle one takes neither this lock nor the GIL.
+/// [`Self::push`] and [`Self::take`] only. The flag is also how a burst of frees
+/// asks the server for one delete rather than one each: [`Self::push`] reports
+/// whether it was the one to raise it.
 ///
 /// The lock is taken only on the main thread or under the GIL, so it is never held
 /// across a fork: [`delete_streams_of_freed_graphs`] takes it in a fork child.
@@ -405,20 +406,17 @@ impl FreedGraphStreams {
         }
     }
 
-    /// Add `names`. The flag is raised after the list is extended, so every name
-    /// is followed by a raised flag and none can be left behind by a racing
+    /// Add `names`, and say whether the list had nothing pending before: `true`
+    /// means no delete has been asked for since the last [`Self::take`], so the
+    /// caller asks for one. The flag is raised after the list is extended, so every
+    /// name is followed by a raised flag and none can be left behind by a racing
     /// [`Self::take`].
     fn push(
         &self,
         names: Vec<String>,
-    ) {
+    ) -> bool {
         self.names.lock().extend(names);
-        self.pending.store(true, Ordering::Release);
-    }
-
-    /// Whether there may be names to take. One atomic load, no lock.
-    fn is_pending(&self) -> bool {
-        self.pending.load(Ordering::Acquire)
+        !self.pending.swap(true, Ordering::AcqRel)
     }
 
     /// Remove and return every queued name, empty when there is none. The lock is
@@ -451,13 +449,19 @@ pub fn set_flush_in_progress(in_progress: bool) {
 /// `_GraphContextType_Free`: the server calls the free callback part-way through
 /// removing the graph's own key, and deleting a second key out of the same table at
 /// that point corrupts it (seen as a heap-corruption abort on a later allocation).
-/// Two things empty the queue, both through [`delete_streams_of_freed_graphs`]:
+/// Three things empty the queue, all through [`delete_streams_of_freed_graphs`]:
 ///
+/// * the server itself, on the next turn of its event loop: the first free since
+///   the queue was last emptied asks for [`delete_streams_one_shot`], which runs on
+///   the main thread once the command that freed the graph has finished. This is
+///   the one that normally does the work;
 /// * the persistence strip, synchronously at the start of every save, so that no
 ///   snapshot can hold a stream whose graph is gone — the property C deletes
-///   synchronously for;
-/// * the flusher, within one [`FLUSH_INTERVAL`], and before it writes anything, so a
-///   graph recreated under the same key cannot have entries in the stream by then.
+///   synchronously for. A `SAVE` from another client can already be waiting in the
+///   same turn of the loop, ahead of the one-shot;
+/// * the flusher, before it writes anything, so a graph recreated under the same
+///   key cannot have entries in the stream by then. It can be handed the GIL
+///   ahead of the one-shot too.
 ///
 /// Only for a free on a thread that holds the GIL. That is the main thread, and also
 /// a worker whose key lookup made the server expire the graph there and then (the
@@ -476,7 +480,31 @@ pub fn queue_streams_of_freed_graph(names: Vec<String>) {
     if names.is_empty() || !holds_gil() || FLUSH_IN_PROGRESS.load(Ordering::Relaxed) {
         return;
     }
-    FREED_GRAPH_STREAMS.push(names);
+    if FREED_GRAPH_STREAMS.push(names) {
+        // Callable from any thread, and it needs no context — the free callback is
+        // given none. A server without the API (before Redis 7.0) leaves the queue
+        // to the other two.
+        if let Some(add_one_shot) = unsafe { raw::RedisModule_EventLoopAddOneShot } {
+            unsafe { add_one_shot(Some(delete_streams_one_shot), ptr::null_mut()) };
+        }
+    }
+}
+
+/// Run by the server on its main thread, between commands, after
+/// [`queue_streams_of_freed_graph`] asked for it. Nothing of the server's is
+/// part-way through a change to the keyspace here, which is what the free callback
+/// could not offer.
+///
+/// The main thread holds the GIL throughout its event handlers, so the detached
+/// context is used without locking it, as the persistence strip uses its own.
+unsafe extern "C" fn delete_streams_one_shot(_user_data: *mut c_void) {
+    unsafe {
+        let ctx = raw::RedisModule_GetThreadSafeContext.expect("RedisModule_GetThreadSafeContext")(
+            ptr::null_mut(),
+        );
+        delete_streams_of_freed_graphs(ctx);
+        raw::RedisModule_FreeThreadSafeContext.expect("RedisModule_FreeThreadSafeContext")(ctx);
+    }
 }
 
 /// Delete the telemetry streams queued by [`queue_streams_of_freed_graph`]: one
@@ -1193,16 +1221,7 @@ fn flusher_loop() {
                 QUEUED.fetch_sub(1, Ordering::Relaxed);
                 batch.push(first);
             }
-            Err(crossfire::RecvTimeoutError::Timeout) => {
-                // Nothing to write, but a freed graph may have left a stream to
-                // delete. Not once the channel is closed: the main thread may be
-                // waiting for this one with the GIL held (see the disconnect below).
-                if FREED_GRAPH_STREAMS.is_pending() && !rx.is_disconnected() {
-                    let _gil = hold_gil();
-                    delete_streams_of_freed_graphs(tsc);
-                }
-                continue;
-            }
+            Err(crossfire::RecvTimeoutError::Timeout) => continue,
             Err(crossfire::RecvTimeoutError::Disconnected) => break,
         }
         // Take what is already queued *before* deciding to wait. A full batch is
@@ -1264,13 +1283,6 @@ fn flusher_loop() {
         // never reaches the point of acquiring the GIL to write nothing.
         batch.retain(|pe| pe.graph.strong_count() > 0);
         if batch.is_empty() {
-            // The graphs that just emptied this batch are the ones most likely to
-            // have left a stream behind, and with entries still arriving the
-            // timeout above may not come round to it.
-            if FREED_GRAPH_STREAMS.is_pending() {
-                let _gil = hold_gil();
-                delete_streams_of_freed_graphs(tsc);
-            }
             continue;
         }
 
