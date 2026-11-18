@@ -394,11 +394,13 @@ class testReplication(FlowTestsBase):
         writer = threading.Thread(target=write)
         writer.start()
         try:
-            con = env.getConnection()
             deadline = time.monotonic() + 10
-            while not con.exists(key) and time.monotonic() < deadline:
-                time.sleep(0.001)
-            env.assertEqual(con.exists(key), 1)
+            admitted = False
+            while not admitted and time.monotonic() < deadline:
+                admitted = self._bounded(env.getConnection(), deadline).exists(key) == 1
+                if not admitted:
+                    time.sleep(0.001)
+            env.assertTrue(admitted)
             # admitted and still running, so the caller's change overlaps the write
             env.assertTrue(writer.is_alive())
         except BaseException:
@@ -407,21 +409,30 @@ class testReplication(FlowTestsBase):
             raise
         return writer
 
-    # until the replica has applied everything the master propagated. Each INFO
-    # goes through a connection with a short socket timeout, so a replica that
-    # stops answering fails the test at the deadline instead of hanging on the
-    # harness's socket timeout
+    # a client for `con`'s server whose every command gives up at `deadline`:
+    # the socket timeout is the time left (at most 5 s) and nothing is retried,
+    # so no single command can outlast the caller's deadline
+    @staticmethod
+    def _bounded(con, deadline):
+        kw = con.connection_pool.connection_kwargs
+        left = max(0.1, min(5.0, deadline - time.monotonic()))
+        return redis.Redis(kw["host"], kw["port"], socket_timeout=left,
+                           socket_connect_timeout=left, retry=NO_RETRY)
+
+    # until the replica has applied everything the master propagated, within
+    # 30 s: every INFO, the primary's included, is bounded by that deadline
     def _wait_replica_caught_up(self, source_con, replica_con):
-        kw = replica_con.connection_pool.connection_kwargs
-        poll = redis.Redis(kw["host"], kw["port"], socket_timeout=5)
-        target = source_con.info("replication")["master_repl_offset"]
         deadline = time.monotonic() + 30
+        target = self._bounded(source_con, deadline).info("replication")["master_repl_offset"]
         while time.monotonic() < deadline:
             try:
-                if poll.info("replication").get("slave_repl_offset", -1) >= target:
+                info = self._bounded(replica_con, deadline).info("replication")
+                if info.get("slave_repl_offset", -1) >= target:
                     return
-            except redis.TimeoutError:
-                pass
+            except (redis.TimeoutError, redis.ConnectionError):
+                # the replica did not answer in the time left: poll again
+                # until the deadline, then fail below
+                continue
             time.sleep(0.05)
         self.env.assertTrue(False, message=f"replica did not reach offset {target} in 30 s")
 
