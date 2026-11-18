@@ -112,3 +112,67 @@ bool EffectsV3IdCursor_NextWire
 	EffectsV3IdCursor *cur,
 	uint64_t          *id
 );
+
+//------------------------------------------------------------------------------
+// distinctness
+//------------------------------------------------------------------------------
+
+// does this list name 'count' DIFFERENT ids?
+//
+// Here rather than beside the appliers because this is a question about an
+// EffectsV3IdList, and this file is where one is interpreted.
+//
+// AS A SET COMPARED WITH THE COUNT, not by looking for a repeat. A record's
+// segments are not required to be sorted or disjoint, so a repeat has three
+// places to hide - inside one Repeat segment, across two segments that
+// overlap, and between a bitmap and a range covering the same id - and no
+// comparison between neighbouring segments finds all three.
+//
+// The create path does not need this: it walks the ids ascending to claim
+// storage, and DataBlock_ClaimIds refuses a walk that does not strictly
+// increase. The paths that do not claim have no such walk, and what a repeat
+// costs them differs by record, which is worth stating because only one of
+// them is silent:
+//
+//   DELETE_NODE   the slot is NOT deleted twice - DataBlock_DeleteItem returns
+//                 early on an already-deleted item, so the free list and the
+//                 item count are safe. What is counted twice is the LABEL
+//                 STATISTIC: graph_delete_nodes.c walks each array entry's
+//                 label row before any label matrix is cleared, so a repeated
+//                 node increments encountered_labels twice and
+//                 GraphStatistics_DecNodeCount over-subtracts. Permanent,
+//                 silent, and apply reports success
+//   UPDATE_NODE   two rows land on one entity, last write wins, success
+//   UPDATE_EDGE   the (id -> row) table runs short of the count, so row 0 is
+//                 applied and the record is THEN refused - a partial apply
+//                 reported as a refusal
+//   SET/REMOVE_LABELS
+//                 nothing: the ids accumulate into a GrB_Vector before
+//                 anything is applied, and setting an element twice is
+//                 idempotent. The check is defensive on that path
+//
+// NOT FOR AN ENDPOINT COLUMN: ten edges off one node is that node's id ten
+// times, so a repeat is the ordinary case on src and dst.
+//
+// IT ANSWERS BOTH HALVES ITSELF: that the segments describe exactly 'count'
+// positions, and that those positions hold 'count' different ids. Decode
+// establishes the first already, but this is reachable from anywhere a list
+// can be built - the unit tests build them directly - so it does not inherit
+// the precondition it depends on.
+//
+// Cost is bounded by what the caller has already bounded. A range becomes one
+// roaring container per 65,536 ids it spans (roaring64 keys on the high 48
+// bits), so a span is NOT free in the way a wire Range is - but every caller
+// refuses a count larger than the local graph first, and the positions must
+// total that count, so the span a record can ask for is bounded by entities
+// that actually exist. A bulk delete of a million nodes becomes about sixteen
+// containers.
+//
+// False also when a Set segment's blob will not open, or when a range's span
+// would leave the id space, which the caller cannot tell apart from a repeat:
+// all three refuse the record, and none of them is a thing to carry on past.
+bool EffectsV3IdList_AreDistinct
+(
+	const EffectsV3IdList *ids,  // list to measure
+	uint64_t               count // ids it states it holds
+);

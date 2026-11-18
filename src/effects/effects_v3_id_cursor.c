@@ -28,29 +28,34 @@ static inline uint64_t _Head
 static void _SiftDown
 (
 	EffectsV3IdCursor *cur,
-	uint32_t i
+	uint32_t parent
 ) {
-	for (;;) {
-		// 64-bit so the child index cannot wrap on the way to the bounds
-		// check that would have rejected it
-		const uint64_t l = (uint64_t)i * 2 + 1 ;
-		const uint64_t r = l + 1 ;
-		uint32_t m = i ;
+	while (true) {
+		// 64-bit so a child index cannot wrap on the way to the bounds check
+		// that would have rejected it
+		const uint64_t left  = (uint64_t)parent * 2 + 1 ;
+		const uint64_t right = left + 1 ;
 
-		if (l < cur->n_heap && _Head (cur, (uint32_t)l) < _Head (cur, m)) {
-			m = (uint32_t)l ;
+		uint32_t lowest = parent ;
+
+		if (left < cur->n_heap &&
+			_Head (cur, (uint32_t)left) < _Head (cur, lowest)) {
+			lowest = (uint32_t)left ;
 		}
-		if (r < cur->n_heap && _Head (cur, (uint32_t)r) < _Head (cur, m)) {
-			m = (uint32_t)r ;
+		if (right < cur->n_heap &&
+			_Head (cur, (uint32_t)right) < _Head (cur, lowest)) {
+			lowest = (uint32_t)right ;
 		}
-		if (m == i) {
+
+		if (lowest == parent) {
 			return ;
 		}
 
-		const uint32_t t = cur->heap[i] ;
-		cur->heap[i] = cur->heap[m] ;
-		cur->heap[m] = t ;
-		i = m ;
+		const uint32_t swap = cur->heap[parent] ;
+		cur->heap[parent]   = cur->heap[lowest] ;
+		cur->heap[lowest]   = swap ;
+
+		parent = lowest ;
 	}
 }
 
@@ -227,9 +232,30 @@ bool EffectsV3IdCursor_Init
 		const EffectsV3IdListSegment *s = list->segments + i ;
 		const uint64_t card = _SegmentCardinality (s) ;
 
+		// the greatest id this segment names, or 0 for an empty one - which
+		// names nothing and so cannot name the sentinel
+		uint64_t highest = 0 ;
+
 		switch (s->kind) {
 			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+				// the mirror of the descending check below: the walk ends at
+				// base + (len - 1), which would run past the top of the id
+				// space. Decode checks this too, and it is re-checked for the
+				// same reason - a list can be built by something other than
+				// the decoder, and the tests already do exactly that.
+				if (card > 0) {
+					if (s->range_ascending.base > UINT64_MAX - (card - 1)) {
+						EffectsV3IdCursor_Free (cur) ;
+						return false ;
+					}
+					highest = s->range_ascending.base + (card - 1) ;
+				}
+				break ;
+
 			case EFFECTS_V3_SEG_REPEAT:
+				if (card > 0) {
+					highest = s->repeat.id ;
+				}
 				break ;
 
 			case EFFECTS_V3_SEG_RANGE_DESCENDING:
@@ -241,6 +267,10 @@ bool EffectsV3IdCursor_Init
 				if (card > 0 && card - 1 > s->range_descending.base) {
 					EffectsV3IdCursor_Free (cur) ;
 					return false ;
+				}
+				// a descending range's base IS its highest id
+				if (card > 0) {
+					highest = s->range_descending.base ;
 				}
 				break ;
 
@@ -280,6 +310,10 @@ bool EffectsV3IdCursor_Init
 					EffectsV3IdCursor_Free (cur) ;
 					return false ;
 				}
+
+				if (card > 0) {
+					highest = roaring64_bitmap_maximum (cur->seg[i].bitmap) ;
+				}
 				break ;
 			}
 
@@ -287,6 +321,19 @@ bool EffectsV3IdCursor_Init
 				// a kind this build does not know
 				EffectsV3IdCursor_Free (cur) ;
 				return false ;
+		}
+
+		// NO ENTITY CARRIES THE SENTINEL, so a segment that names it is
+		// refused here rather than downstream. This is the cursor's half of
+		// that rule: the claim refuses it for the entity-id column
+		// (DataBlock_ClaimIds), but an edge record's endpoint columns are
+		// never claimed - they are walked in wire order and handed to
+		// Graph_HasNode, whose own contract says the sentinel is invalid and
+		// whose debug assertion is the only thing that says so. Refusing it at
+		// the one place that sees every segment of every column covers both.
+		if (highest == UINT64_MAX) {   // == INVALID_ENTITY_ID
+			EffectsV3IdCursor_Free (cur) ;
+			return false ;
 		}
 
 		if (card > UINT64_MAX - total) {
@@ -464,4 +511,129 @@ bool EffectsV3IdCursor_NextWire
 	}
 
 	return true ;
+}
+
+//------------------------------------------------------------------------------
+// distinctness
+//------------------------------------------------------------------------------
+
+bool EffectsV3IdList_AreDistinct
+(
+	const EffectsV3IdList *ids,  // list to measure
+	uint64_t               count // ids it states it holds
+) {
+	ASSERT (ids != NULL) ;
+
+	roaring64_bitmap_t *seen = roaring64_bitmap_create () ;
+	if (seen == NULL) {
+		return false ;
+	}
+
+	bool ok = true ;
+	uint64_t total = 0 ;   // POSITIONS the segments describe, not members
+
+	for (uint32_t i = 0 ; ok && i < ids->n ; i++) {
+		const EffectsV3IdListSegment *s = ids->segments + i ;
+		const uint64_t card = _SegmentCardinality (s) ;
+
+		switch (s->kind) {
+			// A ZERO-LENGTH SEGMENT contributes nothing and is stepped over
+			// rather than turned into a span. The spans are validated here
+			// rather than taken on trust: decode makes the same checks
+			// (effects_v3_decode.c:181-192), but a list can be built by
+			// something other than the decoder and the tests do exactly that.
+			// Without them a wrapped span reaches add_range_closed with
+			// min > max, which returns silently and makes the segment vanish -
+			// an accidental 'false' instead of a stated one.
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+				if (card > 0) {
+					if (s->range_ascending.base > UINT64_MAX - (card - 1)) {
+						ok = false ;
+						break ;
+					}
+					roaring64_bitmap_add_range_closed (seen,
+							s->range_ascending.base,
+							s->range_ascending.base + (card - 1)) ;
+				}
+				break ;
+
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+				// a descending range's base is its HIGHEST id, so its span
+				// runs down from there
+				if (card > 0) {
+					if (card - 1 > s->range_descending.base) {
+						ok = false ;
+						break ;
+					}
+					roaring64_bitmap_add_range_closed (seen,
+							s->range_descending.base - (card - 1),
+							s->range_descending.base) ;
+				}
+				break ;
+
+			case EFFECTS_V3_SEG_REPEAT:
+				// THE SEGMENT THIS EXISTS FOR. It names one id 'count' times
+				// and contributes exactly one member, so the cardinality falls
+				// short by every repetition past the first
+				if (card > 0) {
+					roaring64_bitmap_add (seen, s->repeat.id) ;
+				}
+				break ;
+
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+			case EFFECTS_V3_SEG_SET_DESCENDING: {
+				// one wire kind read two ways: a set has no direction, so both
+				// arms deserialize the same blob and the union is the same
+				const bool descending =
+					(s->kind == EFFECTS_V3_SEG_SET_DESCENDING) ;
+				const unsigned char *blob = descending
+					? s->set_descending.blob : s->set_ascending.blob ;
+				const uint32_t blob_n = descending
+					? s->set_descending.n : s->set_ascending.n ;
+
+				roaring64_bitmap_t *b =
+					roaring64_bitmap_portable_deserialize_safe (
+							(const char*)blob, blob_n) ;
+				if (b == NULL) {
+					ok = false ;
+					break ;
+				}
+
+				roaring64_bitmap_or_inplace (seen, b) ;
+				roaring64_bitmap_free (b) ;
+				break ;
+			}
+
+			default:
+				// a kind this build does not know is refused, not counted
+				ok = false ;
+				break ;
+		}
+
+		if (ok) {
+			if (card > UINT64_MAX - total) {
+				ok = false ;
+			} else {
+				total += card ;
+			}
+		}
+	}
+
+	// BOTH, and neither alone is the question asked.
+	//
+	// 'total' is how many POSITIONS the segments describe; the cardinality is
+	// how many DIFFERENT ids they hold. Comparing only the cardinality calls a
+	// list distinct whenever a repeat is offset by a segment list that is also
+	// short of the count - Range{10,2} + Repeat{12,2} against count 3 holds
+	// three different ids and names four, and 12 twice. Comparing only the
+	// total misses the repeat entirely. Decode happens to establish the first
+	// of these, but this is reachable from anywhere a list can be built, so it
+	// establishes its own preconditions rather than inheriting them.
+	if (ok) {
+		ok = (total == count) &&
+			 (roaring64_bitmap_get_cardinality (seen) == count) ;
+	}
+
+	roaring64_bitmap_free (seen) ;
+	return ok ;
 }

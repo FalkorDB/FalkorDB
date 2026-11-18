@@ -145,7 +145,7 @@ static inline IdIterStatus _IdIter_Done
 // ID_ITER_OK leaves the id in '*id'. ID_ITER_END is the ordinary end of the
 // walk. ID_ITER_BROKEN is a refusal: the caller must not treat what it already
 // collected as a complete list.
-static IdIterStatus _IdIter_Next
+static IdIterStatus _IdIter_NextRaw
 (
 	IdIter *it,
 	uint64_t *id
@@ -254,6 +254,40 @@ static IdIterStatus _IdIter_Next
 	}
 
 	return _IdIter_Done (it, ID_ITER_END) ;
+}
+
+// yield the next id, refusing the sentinel
+//
+// ON THE WALK rather than in each segment arm and rather than in each applier:
+// INVALID_ENTITY_ID is UINT64_MAX, every segment kind can name it, and a kind
+// added later would have to remember.
+//
+// THERE ARE TWO WALKS over a decoded id list and each refuses it once. This is
+// IdIter's, used by the appliers that change an existing entity. The other is
+// EffectsV3IdCursor, used by the creates, which refuses a segment naming the
+// sentinel in its Init - it has to be there rather than here, because the
+// cursor's wire-order walk carries an edge record's ENDPOINT columns straight
+// to Graph_HasNode without ever passing through a claim.
+//
+// What the sentinel reaches otherwise is Graph_HasNode and Graph_GetEdge,
+// whose debug contracts state it is invalid. Release survives it - both
+// resolve through DataBlock_GetItem, which bounds-checks and returns NULL - so
+// the outcome today is a divergence on a release replica and an abort on a
+// debug one. REFUSING MAKES BOTH THE SAME ANSWER, which is the point: a
+// malformed payload should not be the one input whose handling depends on the
+// build.
+static IdIterStatus _IdIter_Next
+(
+	IdIter *it,
+	uint64_t *id
+) {
+	const IdIterStatus status = _IdIter_NextRaw (it, id) ;
+
+	if (status == ID_ITER_OK && *id == INVALID_ENTITY_ID) {
+		return _IdIter_Done (it, ID_ITER_BROKEN) ;
+	}
+
+	return status ;
 }
 
 //------------------------------------------------------------------------------
@@ -371,6 +405,30 @@ static bool _VerifyCountAgainstGraph
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT %s declares %" PRIu64 " %s but only %" PRIu64
 				" exist locally", op, count, what, local) ;
+		return false ;
+	}
+	return true ;
+}
+
+// refuse an entity-id column that names the same entity twice
+//
+// The measuring is EffectsV3IdList_AreDistinct's (effects_v3_id_cursor.h),
+// which says why a set is the way to ask. This adds the log line and the
+// record's name, which is all an applier needs from it.
+//
+// NOT CALLED ON AN ENDPOINT COLUMN - src and dst repeat legitimately - and not
+// called on the create paths, where DataBlock_ClaimIds refuses a repeat as
+// part of claiming.
+static bool _VerifyDistinctIds
+(
+	const EffectsV3IdList *ids,  // the record's entity-id column
+	uint64_t count,              // entities the record states it names
+	const char *op               // for the log line
+) {
+	if (!EffectsV3IdList_AreDistinct (ids, count)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT %s names %" PRIu64 " ids that are not all "
+				"distinct; an id names one entity", op, count) ;
 		return false ;
 	}
 	return true ;
@@ -812,7 +870,8 @@ static bool _ApplyUpdateNode
 				"UPDATE_NODE", "nodes")                ||
 		!_VerifyLabels (gc, rec->update_node.labels, rec->update_node.n_labels, "UPDATE_NODE")        ||
 		!_VerifyAttrIds (gc, rec->update_node.attr_ids, rec->update_node.n_attrs, "UPDATE_NODE")       ||
-		!_VerifyValues (rec->update_node.values, rec->update_node.n_values, "UPDATE_NODE")) {
+		!_VerifyValues (rec->update_node.values, rec->update_node.n_values, "UPDATE_NODE")  ||
+		!_VerifyDistinctIds (&rec->update_node.ids, rec->update_node.count, "UPDATE_NODE")) {
 		return false ;
 	}
 
@@ -824,7 +883,8 @@ static bool _ApplyUpdateNode
 	uint64_t k = 0 ;
 
 	while (ok && _IdIter_Next (&it, &id) == ID_ITER_OK) {
-		if (id == INVALID_ENTITY_ID || !Graph_HasNode (g, id)) {
+		// no sentinel check here: _IdIter_Next refuses it for every walk
+		if (!Graph_HasNode (g, id)) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT UPDATE_NODE references node %" PRIu64
 					" which doesn't exist locally", id) ;
@@ -924,7 +984,8 @@ static bool _ApplyUpdateEdge
 
 	if (!_VerifyCountAgainstGraph (rec->update_edge.count, local, "UPDATE_EDGE", "edges") ||
 		!_VerifyAttrIds (gc, rec->update_edge.attr_ids, rec->update_edge.n_attrs, "UPDATE_EDGE")                              ||
-		!_VerifyValues (rec->update_edge.values, rec->update_edge.n_values, "UPDATE_EDGE")) {
+		!_VerifyValues (rec->update_edge.values, rec->update_edge.n_values, "UPDATE_EDGE")  ||
+		!_VerifyDistinctIds (&rec->update_edge.ids, rec->update_edge.count, "UPDATE_EDGE")) {
 		return false ;
 	}
 
@@ -1044,7 +1105,8 @@ static bool _ApplyDeleteNode
 
 	if (!_VerifyCountAgainstGraph (rec->delete_node.count, Graph_NodeCount (g),
 				"DELETE_NODE", "nodes")                ||
-		!_VerifyLabels (gc, rec->delete_node.labels, rec->delete_node.n_labels, "DELETE_NODE")) {
+		!_VerifyLabels (gc, rec->delete_node.labels, rec->delete_node.n_labels, "DELETE_NODE")  ||
+		!_VerifyDistinctIds (&rec->delete_node.ids, rec->delete_node.count, "DELETE_NODE")) {
 		return false ;
 	}
 
@@ -1098,7 +1160,9 @@ static bool _ApplyDeleteEdge
 
 	if (!_VerifyCountAgainstGraph (rec->delete_edge.count,
 				Graph_RelationEdgeCount (g, rec->delete_edge.relation_id),
-				"DELETE_EDGE", "edges")) {
+				"DELETE_EDGE", "edges")  ||
+		!_VerifyDistinctIds (&rec->delete_edge.ids, rec->delete_edge.count,
+				"DELETE_EDGE")) {
 		return false ;
 	}
 
@@ -1243,6 +1307,12 @@ static bool _ApplyLabels
 	// on that accident holding.
 	if (n_labels == 0) {
 		return true ;
+	}
+
+	// after the no-op gate, for the same reason the gate does not validate ids:
+	// a record that changes nothing is refused over nothing
+	if (!_VerifyDistinctIds (ids, count, op)) {
+		return false ;
 	}
 
 	if (!_VerifyLabels (gc, labels, n_labels, op)) {

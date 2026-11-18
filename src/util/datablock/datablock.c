@@ -413,10 +413,12 @@ bool DataBlock_ClaimIds
 			return false ;
 		}
 
-		// STRICTLY ascending, which IS the duplicate check: the cursor's
-		// contract is ascending order, so a repeated id is the one before it.
-		// An id list repeating a single id - which a create must refuse, since
-		// it would put two entities on one slot - is caught right here.
+		// STRICTLY ascending, which IS the duplicate check and the only place
+		// it happens. A cursor promises non-decreasing and no more - a Repeat
+		// segment names one id several times - so this is not a second opinion
+		// on something already guaranteed. In order a repeated id is the one
+		// before it, and a create must refuse it: two entities cannot share a
+		// slot.
 		if (seen > 0 && id <= prev) {
 			return false ;
 		}

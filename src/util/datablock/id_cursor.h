@@ -18,7 +18,20 @@
 // supplies the walk instead of the ids, and claiming restarts it rather than
 // remembering what it saw.
 //
-// ASCENDING, STRICTLY, and that is not a convenience:
+// NON-DECREASING is what a cursor promises. STRICTLY ascending is what
+// DataBlock_ClaimIds demands, and the difference between the two is where
+// duplicates are caught:
+//
+//   * a cursor cannot promise strictness. EffectsV3IdCursor walks a decoded
+//     wire record, where a Repeat segment names one id several times and two
+//     segments may overlap - shapes a peer can put on the wire, malformed or
+//     not, and which this interface has no way to forbid
+//   * so the claim's adjacent-id comparison is not a second opinion on a
+//     promise already kept above. IT IS THE DUPLICATE CHECK. Deleting it as
+//     redundant does not tighten anything; it removes the only place a
+//     repeated id is refused
+//
+// ORDER is what both sides rest on, and that much a cursor does promise:
 //
 //   * claiming has to push every slot it skips past the high-water mark onto
 //     the free list EXACTLY ONCE, which is only well defined in order
@@ -43,7 +56,10 @@ struct IdCursor {
 	// allocating - at construction time, where it can still fail.
 	void (*reset) (IdCursor *self);
 
-	// next id, ascending; false when the walk is spent
+	// next id, never below the one before it; false when the walk is spent
+	//
+	// NOT guaranteed to be above it. A caller that needs strictness checks for
+	// it and decides what a repeat means to it - for claiming, divergence.
 	bool (*next) (IdCursor *self, uint64_t *id);
 
 	// how many ids the walk states it holds, known before it starts
