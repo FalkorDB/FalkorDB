@@ -44,7 +44,7 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
 | `E.chainOf`, `extractClause`, `extractFilter` (Nested2.lean) | `extract_clause_expr_comprehensions` / `extract_list_expr_comprehensions` / `extract_filter_comprehensions` |
 | `E.QN`, `QR`, `Comp`, `MSt`, `MP`, `firstRel`, `chainRel`, `nodeOnly`, `planComp`, `planMatch` (PlanMatch*.lean) | `plan_match` mod.rs:1819-2544, `mark_labels_verified`, `unverified_labels`, `build_pattern_sub_plan` |
 | `HopOrder.selfLoopsAfterBinders`, `step`, `flush`, `deferP`; `pre3102_reference` (HopOrder.lean); `E.hopShape`, `E.orderRels` | `self_loops_after_binders` hop_order.rs:25-62; `tests::reference` :84; the call mod.rs:2040-2049 |
-| `E.varsOf`, `scopedVars`, `singleVarConj`, `endpointScanScore`, `walkScansTo`, `WI` (Anchor.lean); `E.leadingWalk`, `leadOrder`, `outward` (PlanMatch2.lean) | `collect_expr_scoped_variables` optimizer/mod.rs:105, `collect_single_variable_conjuncts` :122 / `walk` :125, `endpoint_scan_score` :162, `walk_scans_to_endpoint` :173; the leading walk and outward reorder mod.rs:1880-2034 (#3593) |
+| `E.varsOf`, `scopedVars`, `singleVarConj`, `endpointScanScore`, `walkScansTo`, `WI` (Anchor.lean); `leadingWalk`, `leadOrder`, `Outward`, `WI.forClause` (PlanMatch2.lean) | `collect_expr_scoped_variables` optimizer/mod.rs:105, `collect_single_variable_conjuncts` :122 / `walk` :125, `endpoint_scan_score` :162, `walk_scans_to_endpoint` :173; the leading walk and outward reorder mod.rs:2032-2039, 2064-2219 (#3593) |
 | `E.lowerInline`, `stripNode`, `stripRel`, `stripEndpoints`, `MP.stripped` (PlanMatch.lean) | `lower_inline_attrs` mod.rs:598, `strip_node_attrs` :623, `strip_rel_attrs` :644, `strip_endpoint_attrs` :673 |
 | `subtreeContains`, `stitchBelow`, `ensureInput`, `setIP`, `isRedundantOptional` (Misc.lean) | `subtree_contains` :333, `stitch_below_apply_chain` :1017, `ensure_apply_has_input` :2911, `set_include_pending_on_scans` :904, `is_redundant_optional_match` :2687 |
 | `Fmt.*` | EXPLAIN text mod.rs:341-536 |
@@ -87,7 +87,7 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (
   `extractFilter_clean` (feeds `plan_filter` its precondition).
 * `plan_match` (PlanMatch*): operator tables `firstRel_core`/`chainRel_core`, `sortRels_spec`/`sortRels_tiers`
   (fixed < var-length < shortest, stable permutation), #3593's leading walk `leadingWalk_spec`,
-  `sortRels_lead_first`, `leadOrder_spec`/`outward_outward` (lead first, then outward from the bound
+  `sortRels_lead_first`, `leadOrder_spec`/`outwardGo_outward`/`planOrder_lead` (lead first, then outward from the bound
   set), `orderRels_perm`, `ex2558_walk_leads`, `planComp_binds`, bound-label filters
   `labelStep_spec`/`labelStep_verifies`, `nodeOnly_*` (synthetic self-loop id `u32::MAX - id`), path elision
   `elide_*`, joining `planMatch_join`/`planMatch_cp`, `buildPatternSubPlan_restores`.
