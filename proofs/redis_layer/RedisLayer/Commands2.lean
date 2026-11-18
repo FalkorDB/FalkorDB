@@ -1,6 +1,7 @@
 import RedisLayer.Commands
 import RedisLayer.ModuleInit
 import RedisLayer.Telemetry
+import RedisLayer.GraphCore
 /-!
 # Constraint, record, copy, bulk and config-get handlers (`src/commands/*.rs`, `origin/main`)
 
@@ -14,7 +15,7 @@ import RedisLayer.Telemetry
 | `applyCons`, `consWorker` | `apply_constraint` `:599`; `graph_constraint` pool path `:547-585` (#3819) |
 | `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:180` |
 | `copyOut`                 | `copy.rs` `graph_copy` `:27` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
-| `bulkFlow`, `heldReplicate`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:218-1045` |
+| `bulkFlow`, `heldReplicate`, `heldRekey`, `bulkArgv`, `discardCreated`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:247-1125` (#3863: `discard_created_graph` `:296`, `HeldArgs::rekey` `:396`, the worker's `key_of_write` `:1026`) |
 | `getNames`, `getOne`, `asI64`, `asU64` | `config_cmd.rs` `config_get_one` `:57`, `ConfigValue::as_i64/as_u64` `:294-306` |
 -/
 namespace RedisLayer.Commands
@@ -396,6 +397,27 @@ def heldReplicate (argv : List String) : Option (String × List String) :=
 theorem heldReplicate_verbatim (c : String) (rest : List String) :
     heldReplicate (c :: rest) = some (c, rest) := rfl
 
+/-- `HeldArgs::rekey` (`:396`, #3863): argument 1 (the graph key) is replaced by `key`. -/
+def heldRekey (argv : List String) (key : String) : List String :=
+  match argv with
+  | c :: _ :: rest => c :: key :: rest
+  | _ => argv
+
+/-- The worker's replicated vector (`:1092-1096`): rekeyed only when `key_of_write`'s `live`
+differs from the `admitted` key. -/
+def bulkArgv (admitted live : String) (argv : List String) : List String :=
+  if live ≠ admitted then heldRekey argv live else argv
+
+/-- Not renamed: the client's own arguments, verbatim (as before #3863). -/
+theorem bulkArgv_admitted (a : String) (argv : List String) : bulkArgv a a argv = argv := by
+  simp [bulkArgv]
+
+/-- Renamed: the batch reaches the replica under the key the graph lives at now, the rest of
+the arguments unchanged. -/
+theorem bulkArgv_renamed (a l c k : String) (rest : List String) :
+    heldReplicate (bulkArgv a l (c :: k :: rest)) = some (c, (if l ≠ a then l else k) :: rest) := by
+  unfold bulkArgv; by_cases h : l ≠ a <;> simp [h, heldRekey, heldReplicate]
+
 /-- The publish step of `graph_bulk_insert` (`g.commit_index_docs(&mut docs)`, :830 / :952;
 `BulkIndexDocs::publish` before #3307): bulk only adds, so `node_removes`/`edge_removes` are
 empty and `commit_index_docs` (graph.rs:3785, `GQ.commitIndexDocs` in proofs/graph_queries)
@@ -418,11 +440,41 @@ theorem edgeRecords_bound (r : Nat) (rs : List (List (Option Nat))) (out : List 
   unfold edgeRecords at h; split at h; · simp at h
   · cases h; simp; omega
 
-/-- `discard_created_graph`: stream then key. -/
-def discardOps (name : List Char) : List String := ["DEL " ++ String.ofList (Telemetry.streamName name), "delete key"]
+/-- `discard_created_graph`: stream then key. Since #3863 the key deleted is `live`, the one
+`key_of_write` finds holding the graph; the stream stays named after C's `name`. -/
+def discardOps (name live : List Char) : List String :=
+  ["DEL " ++ String.ofList (Telemetry.streamName name), "delete key " ++ String.ofList live]
 
-theorem discardOps_stream_first (n : List Char) :
-    (discardOps n).head? = some ("DEL " ++ String.ofList (Telemetry.streamName n)) := rfl
+/-- `discard_created_graph` (`:296`, #3863): `key_of_write` first; `Err` deletes nothing. -/
+def discardCreated (main : Bool) (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat)
+    (name : List Char) : List String :=
+  match GraphCore.keyOfWrite main ks reg g name with
+  | some live => discardOps name live
+  | none => []
+
+theorem discardOps_stream_first (n l : List Char) :
+    (discardOps n l).head? = some ("DEL " ++ String.ofList (Telemetry.streamName n)) := rfl
+
+/-- Inline (main thread): the addressed key, as before #3863. -/
+theorem discardCreated_main (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n : List Char) :
+    discardCreated true ks reg g n = discardOps n n := by
+  simp [discardCreated, GraphCore.keyOfWrite_main]
+
+/-- Worker, graph still at its key: that key. -/
+theorem discardCreated_admitted (m : Bool) (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat)
+    (n : List Char) (h : ks n = some g) : discardCreated m ks reg g n = discardOps n n := by
+  simp [discardCreated, GraphCore.keyOfWrite_admitted m ks reg g n h]
+
+/-- Worker, graph renamed: the renamed key is deleted, not whatever now sits at the old one. -/
+theorem discardCreated_renamed (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n r : List Char)
+    (ha : ks n ≠ some g) (hr : reg.find? (·.2 = g) = some (r, g)) (hn : ks r = some g) :
+    discardCreated false ks reg g n = discardOps n r := by
+  simp [discardCreated, GraphCore.keyOfWrite_renamed ks reg g n r ha hr hn]
+
+/-- Worker, no key holds the graph (flushed, deleted, moved): nothing is deleted. -/
+theorem discardCreated_unheld (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n : List Char)
+    (hu : '\uFFFD' ∉ n) (h : ∀ k, ks k ≠ some g) : discardCreated false ks reg g n = [] := by
+  simp [discardCreated, GraphCore.keyOfWrite_unheld ks reg g n hu h]
 theorem maybeYield_null : maybeYield true = [] := rfl
 theorem publishOps_empty : publishOps true true = ["apply_index_writes"] := rfl
 /-- Nothing collected: no RediSearch indexer is called. -/
@@ -436,9 +488,12 @@ theorem publishOps_nonempty (a b : Bool) :
 validated *before* the index documents are published, then committed; a refusal of
 either joins the token error, so a failed `BEGIN` load removes the graph it created
 and no RediSearch document outlives the discarded fork. -/
-def bulkFlow (begin ok : Bool) (valid : Bool := true) : List String :=
-  if ok && valid then ["validate", "publish", "commit", "replicate", "reply"]
-  else (if ok then ["validate"] else []) ++
+/- `keyed` (#3863): the worker's `key_of_write` (`:1026`), asked after escalation and before
+`validate`; `false` = `Err`, the batch is refused. The inline path is on the main thread, where
+`key_of_write` always answers (`GraphCore.keyOfWrite_main`), so it is `true` there. -/
+def bulkFlow (begin ok : Bool) (valid : Bool := true) (keyed : Bool := true) : List String :=
+  if ok && keyed && valid then ["validate", "publish", "commit", "replicate", "reply"]
+  else (if ok && keyed then ["validate"] else []) ++
     ((if begin then ["discard"] else []) ++ ["error"])
 
 theorem bulk_begin_failure_discards : "discard" ∈ bulkFlow true false := by decide
@@ -450,6 +505,17 @@ theorem bulk_invalid_discards : "discard" ∈ bulkFlow true true false ∧ "publ
 /-- Documents are published only after validation and before the commit. -/
 theorem bulk_publish_after_validate :
     bulkFlow true true true = ["validate", "publish", "commit", "replicate", "reply"] := rfl
+/-- #3863: a batch whose graph no key holds any more publishes, commits and replicates
+nothing; a `BEGIN` still runs its (then empty, `discardCreated_unheld`) cleanup. -/
+theorem bulk_unkeyed_refused (b v : Bool) :
+    "publish" ∉ bulkFlow b true v false ∧ "commit" ∉ bulkFlow b true v false ∧
+    "replicate" ∉ bulkFlow b true v false ∧ "error" ∈ bulkFlow b true v false := by
+  cases b <;> cases v <;> decide
+/-- The worker's `keyed` is `key_of_write`'s answer: a flushed/deleted graph is refused. -/
+theorem bulk_flushed_refused (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (a : List Char)
+    (b v : Bool) (hu : '\uFFFD' ∉ a) (h : ∀ k, ks k ≠ some g) :
+    bulkFlow b true v (GraphCore.keyOfWrite false ks reg g a).isSome = (if b then ["discard"] else []) ++ ["error"] := by
+  rw [GraphCore.keyOfWrite_unheld ks reg g a hu h]; cases b <;> cases v <;> rfl
 
 /-! ## GRAPH.CONFIG GET (`config_get_one`) -/
 
