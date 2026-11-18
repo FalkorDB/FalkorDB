@@ -29,7 +29,7 @@
 //! A chain is extended where its list grows (each list has one writer) and rebuilt from
 //! the list on RDB load. Both give the same value, so no hash is stored in the RDB.
 
-use xxhash_rust::xxh3::xxh3_64;
+use xxhash_rust::xxh3::Xxh3Default;
 
 /// The chain over one list of names; `TAG` says which list.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -48,13 +48,14 @@ impl<const TAG: u8> NameChain<TAG> {
         &mut self,
         name: &str,
     ) {
-        let name = name.as_bytes();
-        let mut input = Vec::with_capacity(1 + 8 + 8 + name.len());
-        input.push(TAG);
-        input.extend_from_slice(&self.0.to_le_bytes());
-        input.extend_from_slice(&(name.len() as u64).to_le_bytes());
-        input.extend_from_slice(name);
-        self.0 = xxh3_64(&input);
+        // Streamed, so no heap buffer is built for the input: XXH3 gives the same value
+        // as hashing the concatenation in one call.
+        let mut hasher = Xxh3Default::new();
+        hasher.update(&[TAG]);
+        hasher.update(&self.0.to_le_bytes());
+        hasher.update(&(name.len() as u64).to_le_bytes());
+        hasher.update(name.as_bytes());
+        self.0 = hasher.digest();
     }
 
     /// The chain over a whole list: what pushing its names one by one gives.

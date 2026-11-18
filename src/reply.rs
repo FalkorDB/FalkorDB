@@ -687,12 +687,17 @@ pub enum ReplyFormat {
     },
 }
 
-fn reply_result<const COMPACT: bool>(
+/// Reply with a query's result set, shaped by `format`.
+pub fn reply_query(
     ctx: &Context,
     runtime: &Runtime<'_>,
     result: &ResultSummary<'_>,
-    client_schema: Option<u64>,
+    format: ReplyFormat,
 ) {
+    let (compact, client_schema) = match format {
+        ReplyFormat::Compact { schema } => (true, schema),
+        ReplyFormat::Verbose => (false, None),
+    };
     let schema_len = i64::from(client_schema.is_some());
     if runtime.return_names.is_empty() {
         // No RETURN clause — send only stats (matches C FalkorDB behavior).
@@ -706,7 +711,7 @@ fn reply_result<const COMPACT: bool>(
     raw::reply_with_array(ctx.ctx, 3 + schema_len);
     raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
     for name in &runtime.return_names {
-        if COMPACT {
+        if compact {
             raw::reply_with_array(ctx.ctx, 2);
             raw::reply_with_long_long(ctx.ctx, 1);
             raw::reply_with_string_buffer(
@@ -729,7 +734,7 @@ fn reply_result<const COMPACT: bool>(
             raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
             for name in &runtime.return_names {
                 let value = batch.value_at(name.id, row).unwrap();
-                if COMPACT {
+                if compact {
                     raw::reply_with_array(ctx.ctx, 2);
                     reply_compact_value(ctx, runtime, &value);
                 } else {
@@ -741,18 +746,5 @@ fn reply_result<const COMPACT: bool>(
     reply_stats(ctx, &result.stats, runtime.graph().version);
     if let Some(client_hash) = client_schema {
         reply_schema(ctx, &runtime.graph(), client_hash);
-    }
-}
-
-/// Reply with a query's result set, shaped by `format`.
-pub fn reply_query(
-    ctx: &Context,
-    runtime: &Runtime<'_>,
-    result: &ResultSummary<'_>,
-    format: ReplyFormat,
-) {
-    match format {
-        ReplyFormat::Compact { schema } => reply_result::<true>(ctx, runtime, result, schema),
-        ReplyFormat::Verbose => reply_result::<false>(ctx, runtime, result, None),
     }
 }
