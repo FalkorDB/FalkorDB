@@ -100,9 +100,18 @@ fn record_mut(
             Err(_) => abandon_write(&session, &runtime),
             Ok(result) => {
                 // Refused because no key holds the graph any more: undone like a
-                // failed write. The trace below is still what the operators did.
-                if finish_write(&session, ctx, key_name, &runtime, &result.stats).is_err() {
+                // failed write. Every operator succeeded, so the trace alone would
+                // read as a committed write; end it with `GRAPH.QUERY`'s error on
+                // the root, as when the same refusal comes at escalation (the
+                // write is then an `Err` outcome whose error the root records).
+                if let Err(abort) = finish_write(&session, ctx, key_name, &runtime, &result.stats) {
                     abandon_write(&session, &runtime);
+                    if let Some(root) = plan.root().indices::<Bfs>().next() {
+                        runtime
+                            .record
+                            .borrow_mut()
+                            .push((root, Err(abort.to_string())));
+                    }
                 }
             }
         }

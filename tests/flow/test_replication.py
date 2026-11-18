@@ -373,45 +373,68 @@ class testReplication(FlowTestsBase):
     # replica no longer had: GRAPH.EFFECT made a graph there, so the master kept
     # the new key with the write and the replica kept the old key with it and
     # the new key without. C replicates under the key the graph lives at
-    def test_rename_during_queued_write(self):
+    # start `cmd` on `key` in a thread and return once it has been admitted and is
+    # still running: admission creates the key on the main thread, before the
+    # write runs on a worker
+    def _start_slow_write(self, cmd, key, reply):
         import threading
         from redis.backoff import NoBackoff
         from redis.retry import Retry
 
         env = self.env
-        source_con = env.getConnection()
-        replica_con = env.getSlaveConnection()
-        old, new = "rename_during_write_a", "rename_during_write_b"
-        source_con.delete(old, new)
-        source_con.execute_command("WAIT", "1", "0")
-        sync_full_before = source_con.info("stats")["sync_full"]
-
-        # long enough to still be matching when the RENAME lands
+        # long enough to still be matching when the caller acts on the key
         slow = "UNWIND range(1, 20000000) AS x WITH count(x) AS c CREATE (:Slow {c: c})"
-        reply = []
 
         def write():
             con = redis.Redis(env.host, env.port, socket_timeout=120,
                               retry=Retry(NoBackoff(), 0))
-            reply.append(con.execute_command("GRAPH.QUERY", old, slow))
+            try:
+                reply.append(con.execute_command(cmd, key, slow))
+            except redis.ResponseError as e:
+                reply.append(e)
 
         writer = threading.Thread(target=write)
         writer.start()
-        # admission creates the key, on the main thread, before the write runs
+        con = env.getConnection()
         deadline = time.time() + 10
-        while not source_con.exists(old) and time.time() < deadline:
+        while not con.exists(key) and time.time() < deadline:
             time.sleep(0.001)
-        env.assertTrue(source_con.rename(old, new))
-        writer.join()
-        env.assertEqual(len(reply), 1)
+        env.assertEqual(con.exists(key), 1)
+        # admitted and still running, so the caller's change overlaps the write
+        env.assertTrue(writer.is_alive())
+        return writer
 
-        # until the replica has applied everything the master propagated
+    # until the replica has applied everything the master propagated
+    def _wait_replica_caught_up(self, source_con, replica_con):
         target = source_con.info("replication")["master_repl_offset"]
         deadline = time.time() + 30
         while time.time() < deadline:
             if replica_con.info("replication").get("slave_repl_offset", -1) >= target:
-                break
+                return
             time.sleep(0.05)
+        self.env.assertTrue(False, message=f"replica did not reach offset {target} in 30 s")
+
+    def test_rename_during_queued_write(self):
+        env = self.env
+        source_con = env.getConnection()
+        replica_con = env.getSlaveConnection()
+        old, new = "rename_during_write_a", "rename_during_write_b"
+        source_con.delete(old, new)
+        # bounded: an unbounded WAIT never returns if the replica dropped
+        env.assertEqual(source_con.execute_command("WAIT", "1", "10000"), 1)
+        sync_full_before = source_con.info("stats")["sync_full"]
+
+        reply = []
+        writer = self._start_slow_write("GRAPH.QUERY", old, reply)
+        try:
+            env.assertTrue(source_con.rename(old, new))
+        finally:
+            # joined even if RENAME raised, so the write cannot outlive the test
+            writer.join()
+        env.assertEqual(len(reply), 1)
+        env.assertFalse(isinstance(reply[0], Exception))
+
+        self._wait_replica_caught_up(source_con, replica_con)
 
         # the write landed on the renamed graph, on both sides, and reached the
         # replica as a replicated command, not through a forced resync
@@ -421,3 +444,36 @@ class testReplication(FlowTestsBase):
             res = Graph(con, new).ro_query("MATCH (n:Slow) RETURN count(n)")
             env.assertEqual(res.result_set[0][0], 1)
         env.assertEqual(source_con.info("stats")["sync_full"], sync_full_before)
+
+    # a GRAPH.RECORD write whose key is deleted while it runs is undone, like the
+    # same GRAPH.QUERY, and its trace ends with that refusal on the root. (A DEL
+    # here is refused when the write escalates; `finish_write` refuses with the
+    # same error and the same trace shape when only the keyspace has let go,
+    # under a background flush, which a test cannot time reliably.)
+    def test_record_refused_after_delete(self):
+        env = self.env
+        source_con = env.getConnection()
+        replica_con = env.getSlaveConnection()
+        key = "record_delete_during_write"
+        source_con.delete(key)
+        env.assertEqual(source_con.execute_command("WAIT", "1", "10000"), 1)
+
+        reply = []
+        writer = self._start_slow_write("GRAPH.RECORD", key, reply)
+        try:
+            env.assertEqual(source_con.delete(key), 1)
+        finally:
+            writer.join()
+        env.assertEqual(len(reply), 1)
+        env.assertFalse(isinstance(reply[0], Exception))
+        trace = reply[0][0]
+        # [operator, ok, value]: the last entry is the refusal, on the root
+        env.assertEqual(trace[-1][0], 0)
+        env.assertEqual(trace[-1][1], 0)
+        env.assertContains("graph was deleted or replaced while the query was running",
+                           trace[-1][2].decode())
+
+        # nothing was published: no key on either side
+        self._wait_replica_caught_up(source_con, replica_con)
+        for con in (source_con, replica_con):
+            env.assertEqual(con.exists(key), 0)
