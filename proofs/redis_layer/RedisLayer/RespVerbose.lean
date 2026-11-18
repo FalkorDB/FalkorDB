@@ -6,10 +6,11 @@ import RedisLayer.RespCompact
 | --- | --- |
 | `wf`                          | `write_f` `:36-45` (#3043) |
 | `fmtS` / `fmtList` / `fmtMap` | `format_value_to_string` `:49-111` |
-| `encVb`, `specVb`, `pointStr` | `reply_verbose_value` `:357-541` (top-level point `:531-540`, #3043) |
-| `statCalls`, `statLines`      | `reply_stats` `:543-630` |
-| `resultCalls`                 | `reply_result::<COMPACT>` `:685-740`, `reply_query` `:743-754` (#3757: `ReplyFormat`) |
-| `Schema`, `schemaCalls`, `i64OfU64` | `reply_schema` `:644-674` (#3757), `u64::cast_signed` |
+| `encVb`, `specVb`, `pointStr` | `reply_verbose_value` `:364-546` (top-level point `:536-545`, #3043) |
+| `statCalls`, `statLines`      | `reply_stats` `:548-635` |
+| `resultCalls`                 | `reply_query` `:688-747` on `(compact, client_schema)` (`:694-697`) |
+| `ReplyFormat`, `queryCalls`   | `enum ReplyFormat` `:672-685`, `reply_query` `:688-747` (#3757) |
+| `Schema`, `schemaCalls`, `i64OfU64` | `reply_schema` `:644-670` (#3757), `u64::cast_signed` |
 | `E.fmt` (`Compact.Env`)       | `format_g(x, 15)` `:123-142` (libc `snprintf`, AXIOMATISED as an abstract function) |
 
 Number/temporal formatting is abstract (`Fmt`): `{:.6}`, `%.15g`, `Value::format_*`.
@@ -79,7 +80,7 @@ def pointStr (a o : F) : String :=
   "point({latitude:" ++ M.f6 a ++ ", longitude:" ++ M.f6 o ++ "})"
 
 mutual
-/-- `reply_verbose_value` (`:357-541`). -/
+/-- `reply_verbose_value` (`:364-546`). -/
 def encVb : V F → List (Call F)
   | .null => [.null]
   | .bool x => [.str (if x then "true" else "false")]
@@ -213,7 +214,7 @@ theorem vprops_emits : ∀ ps : List (Nat × V F), Emits E.vfmt (encVbProps E M 
     simpa [encVbProps, specVbProps] using this
 end
 
-/-! ## Statistics (`reply_stats`, `:543-630`) -/
+/-! ## Statistics (`reply_stats`, `:548-635`) -/
 
 structure Stats (F : Type) where
   labelsAdded : Nat
@@ -277,7 +278,7 @@ theorem stats_emits (st : Stats F) (version : Nat) :
   rw [List.length_map, ← statsLen_eq] at h
   exact h
 
-/-! ## The `SCHEMA_HASH` element (`reply_schema`, `:644-674`, #3757) -/
+/-! ## The `SCHEMA_HASH` element (`reply_schema`, `:644-670`, #3757) -/
 
 /-- What `reply_schema` reads from the graph version the query ran on: `schema_hash()`
 (a `u64`) and the three name lists, in id order. -/
@@ -292,8 +293,8 @@ def i64OfU64 (h : Nat) : Int := if h < 2 ^ 63 then h else (h : Int) - 2 ^ 64
 
 def strsCalls (ls : List String) : List (Call F) := .arr ls.length :: ls.map Call.str
 
-/-- `reply_schema` (`:644-674`). `reply_with_map(n)` is RESP2's flat `2n`-array (the RESP
-framing this model uses); `property_key_count()` is `attrs_name.len()`, i.e. `keys.length`. -/
+/-- `reply_schema` (`:644-670`). `reply_with_map(n)` is RESP2's flat `2n`-array (the RESP
+framing this model uses); the lists are `graph.schema()`'s three `NameMap::names()`. -/
 def schemaCalls (sc : Schema) (client : Nat) : List (Call F) :=
   if sc.hash = client then [.arr 2, .str "hash", .ll (i64OfU64 sc.hash)]
   else [.arr 8, .str "hash", .ll (i64OfU64 sc.hash), .str "labels"] ++ strsCalls sc.labels
@@ -331,13 +332,14 @@ theorem i64OfU64_spec (h : Nat) (hh : h < 2 ^ 64) :
     -2 ^ 63 ≤ i64OfU64 h ∧ i64OfU64 h < 2 ^ 63 ∧ (i64OfU64 h - h) % 2 ^ 64 = 0 := by
   unfold i64OfU64; split <;> omega
 
-/-! ## Whole replies (`reply_result`, `:685-740`) -/
+/-! ## Whole replies (`reply_query`, `:688-747`) -/
 
 def rowCalls (compact : Bool) (row : List (V F)) : List (Call F) :=
   .arr row.length :: (row.map fun v => if compact then .arr 2 :: encC E v else encVb E M v).flatten
 
-/-- `reply_result::<COMPACT>` (`:685-740`) as `reply_query` calls it with `format.schema`
-(`:743-754`): `schema = some (graph, client_hash)` appends `reply_schema` (#3757). -/
+/-- `reply_query` (`:688-747`) on the pair `(compact, client_schema)` it reads from its
+`ReplyFormat` (`:694-697`): `schema = some (graph, client_hash)` appends `reply_schema`
+(#3757). `queryCalls` is the `ReplyFormat` entry point. -/
 def resultCalls (compact : Bool) (names : List String) (rows : List (List (V F)))
     (st : Stats F) (version : Nat) (schema : Option (Schema × Nat)) : List (Call F) :=
   let k := if schema.isSome then 1 else 0
@@ -458,7 +460,8 @@ theorem compact_schema_reply (names : List String) (rows : List (List (V F))) (s
   simpa [resultCalls, hn, encReply, Function.comp_def, List.map_map] using this
 
 /-- **#3757, verbose**: with `SCHEMA_HASH h`, `verbose_reply`'s three elements and then the
-schema element. -/
+schema element. A property of `resultCalls`; since `a908d8a23` `reply_query` never reaches it
+(`ReplyFormat::Verbose` has no schema, `query_verbose_reply`; `parse_ok_format`). -/
 theorem verbose_schema_reply (names : List String) (rows : List (List (V F))) (st : Stats F)
     (version : Nat) (hn : names ≠ []) (sc : Schema) (client : Nat) :
     Emits E.vfmt (resultCalls E M false names rows st version (some (sc, client)))
@@ -477,6 +480,60 @@ theorem verbose_schema_reply (names : List String) (rows : List (List (V F))) (s
   have := ((((hh.append _ hr).append _ (stats_emits E M st version)).append _
     (schema_emits E sc client))).array
   simpa [resultCalls, hn, flat_single] using this
+
+/-! ## `ReplyFormat` (`:672-685`, #3757) -/
+
+/-- `enum ReplyFormat`: `Verbose` (the default) or `Compact { schema }`, the client's
+cached hash when it sent `SCHEMA_HASH h`. -/
+inductive ReplyFormat where
+  | verbose
+  | compact (schema : Option Nat)
+
+/-- `reply_query(ctx, runtime, result, format)` (`:688-747`): `Compact { schema }` is
+`(true, schema)`, `Verbose` is `(false, None)` (`:694-697`); `sc` is the graph version
+the query ran on, which `reply_schema` reads. -/
+def queryCalls (fmt : ReplyFormat) (sc : Schema) (names : List String)
+    (rows : List (List (V F))) (st : Stats F) (version : Nat) : List (Call F) :=
+  match fmt with
+  | .verbose => resultCalls E M false names rows st version none
+  | .compact schema => resultCalls E M true names rows st version (schema.map (sc, ·))
+
+/-- **#3757**: a verbose reply never carries the schema element; it is exactly
+`verbose_reply`'s three elements (or `noreturn_reply`'s `[stats]`). -/
+theorem query_verbose_reply (sc : Schema) (names : List String) (rows : List (List (V F)))
+    (st : Stats F) (version : Nat) (hn : names ≠ []) :
+    Emits E.vfmt (queryCalls E M .verbose sc names rows st version)
+      [.arr [.arr (names.map R.bulk), .arr (rows.map fun row => .arr (row.map (specVb E M))),
+             .arr ((statLines M st version).map R.bulk)]] :=
+  verbose_reply E M names rows st version hn
+
+theorem query_verbose_noreturn (sc : Schema) (rows : List (List (V F))) (st : Stats F)
+    (version : Nat) :
+    Emits E.vfmt (queryCalls E M .verbose sc [] rows st version)
+      [.arr [.arr ((statLines M st version).map R.bulk)]] :=
+  noreturn_reply E M false rows st version
+
+/-- `--compact` without `SCHEMA_HASH`: exactly `Compact.encReply`, as before #3757. -/
+theorem query_compact_reply (sc : Schema) (names : List String) (rows : List (List (V F)))
+    (st : Stats F) (version : Nat) (hn : names ≠ []) :
+    Emits E.vfmt (queryCalls E M (.compact none) sc names rows st version)
+      [encReply E names (rows.map (·.map proj)) (statLines M st version)] :=
+  compact_reply E M names rows st version hn
+
+/-- `--compact SCHEMA_HASH h`: `Compact.encReply`'s elements, then `reply_schema`'s. -/
+theorem query_compact_schema_reply (sc : Schema) (client : Nat) (names : List String)
+    (rows : List (List (V F))) (st : Stats F) (version : Nat) (hn : names ≠ []) :
+    Emits E.vfmt (queryCalls E M (.compact (some client)) sc names rows st version)
+      [.arr [.arr (names.map fun n => .arr [.int 1, .bulk n]),
+             .arr ((rows.map (·.map proj)).map fun row => .arr (row.map (Compact.encV E))),
+             .arr ((statLines M st version).map R.bulk), schemaR sc client]] :=
+  compact_schema_reply E M names rows st version hn sc client
+
+theorem query_schema_noreturn (fmt : ReplyFormat) (sc : Schema) (client : Nat)
+    (rows : List (List (V F))) (st : Stats F) (version : Nat) (h : fmt = .compact (some client)) :
+    Emits E.vfmt (queryCalls E M fmt sc [] rows st version)
+      [.arr [.arr ((statLines M st version).map R.bulk), schemaR sc client]] := by
+  subst h; exact noreturn_schema_reply E M true rows st version sc client
 
 /-! ## Agreement with C's `%f` (#3043) -/
 

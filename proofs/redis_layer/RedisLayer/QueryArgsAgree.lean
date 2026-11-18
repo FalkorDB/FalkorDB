@@ -14,20 +14,27 @@ version, same timeout, where C's `TIMEOUT 0` → default substitution is the one
 or non-integer value (`Failed to parse schema hash value`); C skips both tokens as
 unknown flags. `rust_c_agree_refuted` proves `¬ RustCAgree` on
 `GRAPH.QUERY g "RETURN 1" SCHEMA_HASH abc`; `rust_c_same_accept_refuted` likewise.
-`rust_c_agree_except_schema` proves that this error is the only divergence: on every
-vector Rust does not refuse with `schemaParse`, the two agree exactly (a valid
-`SCHEMA_HASH h` is read by Rust and skipped, value included, by C).
+Since `SCHEMA_HASH requires --compact` (#3757, `a908d8a23`) Rust also refuses a well-formed
+`SCHEMA_HASH h` sent without `--compact` (`schemaVerbose`), which C skips too:
+`rust_c_agree_except_schemaParse_refuted` proves that the first #3757 form of the headline
+(only `schemaParse` excepted) no longer holds, on `GRAPH.QUERY g "RETURN 1" SCHEMA_HASH 5`.
+`rust_c_agree_except_schema` proves that these two Rust-only `SCHEMA_HASH` errors are the
+only divergence: on every vector Rust does not refuse with `schemaParse` or
+`schemaVerbose`, the two agree exactly (a valid `SCHEMA_HASH h` is read by Rust and
+skipped, value included, by C).
 -/
 
 namespace RedisLayer
 
-/-- C's error for a Rust error; `schemaParse` (#3757) has none: C never refuses there. -/
+/-- C's error for a Rust error; `schemaParse` and `schemaVerbose` (#3757) have none: C
+never refuses there. -/
 def QErr.toC : QErr → Option CErr
   | .wrongArity => some .wrongArity
   | .timeoutParse => some .badTimeout
   | .timeoutMax => some .exceedsMax
   | .versionParse => some .badVersion
   | .schemaParse => none
+  | .schemaVerbose => none
 
 /-- What a Rust flag record means in C terms. -/
 def Rel (c : TCfg) (r : QFlags) (g : CFlags) : Prop :=
@@ -255,29 +262,44 @@ def RustCAgree : Prop :=
   ∀ (c : TCfg), CfgOk c → ∀ (args : List Bytes),
     Agree c (parseQueryFlags c.timeoutMax args) (cReadFlags c args)
 
-/-- **Rust = C on every argument vector Rust does not refuse with the Rust-only
-`SCHEMA_HASH` error** (`557f18868`, #3010; `SCHEMA_HASH h` #3757). -/
+/-- **Rust = C on every argument vector Rust does not refuse with a Rust-only
+`SCHEMA_HASH` error** (`557f18868`, #3010; `SCHEMA_HASH h` #3757: a malformed value,
+`schemaParse`, or no `--compact`, `schemaVerbose`). -/
 theorem rust_c_agree_except_schema (c : TCfg) (hc : CfgOk c) (args : List Bytes)
-    (hs : parseQueryFlags c.timeoutMax args ≠ .error .schemaParse) :
+    (hs : parseQueryFlags c.timeoutMax args ≠ .error .schemaParse)
+    (hv : parseQueryFlags c.timeoutMax args ≠ .error .schemaVerbose) :
     Agree c (parseQueryFlags c.timeoutMax args) (cReadFlags c args) := by
-  unfold parseQueryFlags at hs ⊢; unfold cReadFlags maxArgs at *
+  unfold parseQueryFlags at hs hv ⊢; unfold cReadFlags maxArgs at *
   split
   · rfl
   · rename_i hl
-    simp only [hl, ↓reduceIte] at hs
-    apply scan_agree c hc
-    · refine ⟨?_, rfl, ?_, ?_⟩ <;> unfold cInit <;> split <;> rfl
-    · intro hz
+    simp only [hl, ↓reduceIte] at hs hv
+    have hi : Rel c {} (cInit c) := by
+      refine ⟨?_, rfl, ?_, ?_⟩ <;> unfold cInit <;> split <;> rfl
+    have hm : c.timeoutMax ≠ 0 → (cInit c).timeout ≤ c.timeoutMax := by
+      intro hz
       unfold cInit
       rw [ite_eq_left (Or.inl hz)]
       exact dflt_le c hc hz
-    · exact hs
+    cases hsc : scanFlags c.timeoutMax (args.drop 3) {} with
+    | error e =>
+      have := scan_agree c hc _ {} (cInit c) hi hm (by rw [hsc]; rintro ⟨⟩; simp [Except.bind, hsc] at hs)
+      rw [hsc] at this
+      simpa [Except.bind] using this
+    | ok r =>
+      have := scan_agree c hc _ {} (cInit c) hi hm (by rw [hsc]; simp)
+      rw [hsc] at this
+      rw [hsc] at hv
+      simp only [Except.bind, checkFormat] at hv ⊢
+      split
+      · rename_i hf; simp [hf] at hv
+      · exact this
 
 /-- Every vector Rust accepts, C accepts with the same flags. -/
 theorem rust_ok_c_ok (c : TCfg) (hc : CfgOk c) (args : List Bytes) (r : QFlags)
     (h : parseQueryFlags c.timeoutMax args = .ok r) :
     ∃ g, cReadFlags c args = .ok g ∧ Rel c r g := by
-  have := rust_c_agree_except_schema c hc args (by rw [h]; simp)
+  have := rust_c_agree_except_schema c hc args (by rw [h]; simp) (by rw [h]; simp)
   rw [h] at this
   revert this
   cases cReadFlags c args <;> simp [Agree]
@@ -312,5 +334,30 @@ theorem rust_c_same_accept_refuted : ¬ RustCSameAccept := by
   rw [show cfg0.timeoutMax = 0 from rfl, schemaGarbage_rust] at this
   obtain ⟨r, hr⟩ := this
   cases hr
+
+/-- The first #3757 form of the headline (`55d2271e9`), as a proposition: Rust = C on
+every vector Rust does not refuse with `schemaParse`. -/
+def RustCAgreeExceptSchemaParse : Prop :=
+  ∀ (c : TCfg), CfgOk c → ∀ (args : List Bytes),
+    parseQueryFlags c.timeoutMax args ≠ .error .schemaParse →
+      Agree c (parseQueryFlags c.timeoutMax args) (cReadFlags c args)
+
+def schemaVerboseArgs : List Bytes := [b "GRAPH.QUERY", b "g", b "RETURN 1", b "SCHEMA_HASH", b "5"]
+
+theorem schemaVerbose_rust : parseQueryFlags 0 schemaVerboseArgs = .error .schemaVerbose := by decide
+theorem schemaVerbose_c :
+    cReadFlags cfg0 schemaVerboseArgs = .ok { compact := false, timeout := 0, timeoutRw := false, hash := -1 } := by
+  decide
+
+/-- **#3757 (`a908d8a23`, by design)**: `SCHEMA_HASH requires --compact` is a second
+Rust-only refusal. `GRAPH.QUERY g "RETURN 1" SCHEMA_HASH 5`: Rust replies `SCHEMA_HASH
+requires --compact`; C skips both tokens and runs the query. So excepting `schemaParse`
+alone no longer suffices; `rust_c_agree_except_schema` excepts both. -/
+theorem rust_c_agree_except_schemaParse_refuted : ¬ RustCAgreeExceptSchemaParse := by
+  intro h
+  have := h cfg0 cfg0_ok schemaVerboseArgs (by
+    rw [show cfg0.timeoutMax = 0 from rfl, schemaVerbose_rust]; simp)
+  simp only [show cfg0.timeoutMax = 0 from rfl, schemaVerbose_rust, schemaVerbose_c, Agree,
+    QErr.toC] at this
 
 end RedisLayer

@@ -6,16 +6,16 @@ import GraphQueries.Ids
 | --- | --- |
 | `xxh` (parameter) | `xxhash_rust::xxh3::xxh3_64` (seed 0; an abstract function, like `format_g`) |
 | `le64`, `nameBytes` | `u64::to_le_bytes`, `str::as_bytes` (UTF-8) |
-| `push`            | `NameChain::<TAG>::push`, schema_hash.rs:47-58 |
-| `chainOf`         | `NameChain::<TAG>::of`, :61-67 |
-| `schemaHash`      | `schema_hash`, :72-78 (`wrapping_add` twice = sum mod 2^64) |
-| `GC`, `Inv`       | `Graph`'s `label_chain`/`type_chain` fields (graph.rs:491-494) |
-| `newGC`           | `Graph::new` (:882), chains `default()` = 0 |
-| `restoreGC`       | `Graph::restore` (:929), chains rebuilt with `of` (:1023-1026) |
-| `newVersionGC`    | `new_version` (:1105), chains copied (:1146-1147) |
-| `internLabelC`    | `intern_label` (:1279-1292): `label_chain.push` with the list push |
-| `registerRelTypeC`| `register_relationship_type` (:1403-1415): `type_chain.push` with the list push |
-| `graphSchemaHash` | `Graph::schema_hash` (:1273-1275), key chain from `AttrNameMap::chain` |
+| `push`            | `extend_chain(tag, chain, name)`, schema_hash.rs:37-50 |
+| `chainOf`         | `chain_of(tag, names)`, :54-61 |
+| `schemaHash`      | `schema_hash`, :65-71 (`wrapping_add` twice = sum mod 2^64); `Schema::hash`, schema.rs:245 |
+| `GC`, `Inv`       | `Graph::schema` (graph.rs:462): the `labels`/`relationship_types` `NameMap`s' `chain` (schema.rs:189) |
+| `newGC`           | `Graph::new` (:858), `Schema::default()` (schema.rs:232): chains 0 |
+| `restoreGC`       | `Graph::restore` (:900), `NameMap::from_names` (:987-991, schema.rs:76): chains rebuilt with `chain_of` |
+| `newVersionGC`    | `new_version` (:1074), `schema` cloned (:1106) |
+| `internLabelC`    | `intern_label` (:1247-1257): `get_or_insert` extends the chain with the list push (schema.rs:168-186) |
+| `registerRelTypeC`| `register_relationship_type` (:1366-1384): `get_or_insert`, a known type unchanged |
+| `graphSchemaHash` | `Graph::schema_hash` (:1242-1244) = `Schema::hash` (schema.rs:245), key chain from `property_keys.chain()` |
 
 Headlines: `chainOf_snoc` (`push_matches_of`: pushing names one by one = `of` the list);
 every writer keeps `Inv` (each chain is `chainOf` of its list): `newGC_inv`,
@@ -38,14 +38,15 @@ def le64 (x : Nat) : List Nat := (List.range 8).map fun i => x / 256 ^ i % 256
 /-- `str::as_bytes`. -/
 def nameBytes (s : String) : List Nat := s.toUTF8.data.toList.map UInt8.toNat
 
-/-- `NameChain::<TAG>::push` (schema_hash.rs:47-58): `xxh3_64(tag ‖ h ‖ len ‖ name)`. -/
+/-- `extend_chain(tag, chain, name)` (schema_hash.rs:37-50): `xxh3_64(tag ‖ h ‖ len ‖ name)`,
+streamed (XXH3 of the concatenation). -/
 def push (tag : Nat) (c : Nat) (s : String) : Nat :=
   xxh ([tag] ++ le64 c ++ le64 (nameBytes s).length ++ nameBytes s)
 
-/-- `NameChain::<TAG>::of` (:61-67): `default()` (0), then `push` each name. -/
+/-- `chain_of(tag, names)` (:54-61): a fold of `extend_chain` from 0. -/
 def chainOf (tag : Nat) (l : List String) : Nat := l.foldl (push xxh tag) 0
 
-/-- `schema_hash` (:72-78). -/
+/-- `schema_hash` (:65-71). -/
 def schemaHash (lc tc kc : Nat) : Nat := (lc + tc + kc) % 2 ^ 64
 
 /-- `S` as a function of the three lists only (the module-doc definition). -/
@@ -65,7 +66,8 @@ theorem empty_hash : listsHash xxh [] [] [] = 0 := by
 
 /-! ## The chains on `Graph` -/
 
-/-- `Graph` with its two chain fields. -/
+/-- `Graph` with its label and type `NameMap` chains (`schema.labels.chain()`,
+`schema.relationship_types.chain()`). -/
 structure GC (V : Type) where
   g : G V
   lc : Nat
@@ -74,19 +76,19 @@ structure GC (V : Type) where
 /-- Each chain is the chain of its list. -/
 def Inv (gc : GC V) : Prop := gc.lc = chainOf xxh 0 gc.g.labels ∧ gc.tc = chainOf xxh 1 gc.g.types
 
-/-- `Graph::new` (:882; chains at :910-911). -/
+/-- `Graph::new` (:858; `Schema::default()` at :878). -/
 def newGC (n e version : Nat) (name : String) : GC V := ⟨newG n e version name, 0, 0⟩
 
 theorem newGC_inv (n e v : Nat) (name : String) : Inv xxh (newGC (V := V) n e v name) := by
   simp [Inv, newGC, newG, chainOf_nil]
 
-/-- `Graph::restore` (:929): whatever graph it builds from the RDB's lists, the chains are
-`of` those lists (:1023-1026). -/
+/-- `Graph::restore` (:900): whatever graph it builds from the RDB's lists, the chains are
+`chain_of` those lists (`NameMap::from_names`, :987-991). -/
 def restoreGC (g : G V) : GC V := ⟨g, chainOf xxh 0 g.labels, chainOf xxh 1 g.types⟩
 
 theorem restoreGC_inv (g : G V) : Inv xxh (restoreGC xxh g) := ⟨rfl, rfl⟩
 
-/-- `new_version` (:1105): chains copied (:1146-1147). -/
+/-- `new_version` (:1074): `schema` cloned (:1106), chains included. -/
 def newVersionGC (gc : GC V) : GC V := { gc with g := newVersion gc.g }
 
 theorem newVersionGC_model (gc : GC V) : (newVersionGC gc).g = newVersion gc.g := rfl
@@ -94,7 +96,8 @@ theorem newVersionGC_model (gc : GC V) : (newVersionGC gc).g = newVersion gc.g :
 theorem newVersionGC_inv (gc : GC V) (h : Inv xxh gc) : Inv xxh (newVersionGC gc) := by
   simpa [Inv, newVersionGC, newVersion, setNodeIds, setRelIds] using h
 
-/-- `intern_label` (:1279-1292): a new label pushes the chain, then the list. -/
+/-- `intern_label` (:1247-1257): `get_or_insert` on a new label extends the chain, then
+pushes the list. -/
 def internLabelC (gc : GC V) (s : String) : GC V × Nat :=
   match gc.g.labelsIndex s with
   | some id => (gc, id)
@@ -115,26 +118,39 @@ theorem internLabelC_inv (gc : GC V) (s : String) (h : Inv xxh gc) :
       exact chainOf_snoc xxh 0 _ s
     · simp only [internLabel, hs]; exact h.2
 
-/-- `register_relationship_type` (:1403-1415): push the chain, then the list. -/
+/-- `register_relationship_type` (:1366-1384): `get_or_insert` returns a known type's id
+and changes nothing (#3757); a new one extends the chain, then pushes the list. -/
 def registerRelTypeC (chunk : Nat) (hc : 0 < chunk) (gc : GC V) (s : String) : GC V × Nat :=
-  let r := registerRelType chunk hc gc.g s
-  (⟨r.1, gc.lc, push xxh 1 gc.tc s⟩, r.2)
+  match idx gc.g.types s with
+  | some p => (gc, p)
+  | none =>
+    let r := registerRelType chunk hc gc.g s
+    (⟨r.1, gc.lc, push xxh 1 gc.tc s⟩, r.2)
 
 theorem registerRelTypeC_model (chunk : Nat) (hc : 0 < chunk) (gc : GC V) (s : String) :
     (registerRelTypeC xxh chunk hc gc s).1.g = (registerRelType chunk hc gc.g s).1 ∧
-      (registerRelTypeC xxh chunk hc gc s).2 = (registerRelType chunk hc gc.g s).2 := ⟨rfl, rfl⟩
+      (registerRelTypeC xxh chunk hc gc s).2 = (registerRelType chunk hc gc.g s).2 := by
+  unfold registerRelTypeC
+  split
+  · rename_i p hp; rw [registerRelType_known chunk hc gc.g s p hp]; exact ⟨rfl, rfl⟩
+  · exact ⟨rfl, rfl⟩
 
 theorem registerRelTypeC_inv (chunk : Nat) (hc : 0 < chunk) (gc : GC V) (s : String)
     (h : Inv xxh gc) : Inv xxh (registerRelTypeC xxh chunk hc gc s).1 := by
+  unfold registerRelTypeC
+  split
+  · exact h
+  rename_i hs
   obtain ⟨k1, -, -, k4, -⟩ := resize_keeps chunk hc
     ({ gc.g with types := gc.g.types ++ [s],
                  relMs := vecInsert gc.g.relMs ((gc.g.types ++ [s]).length - 1) [] } : G V)
   refine ⟨?_, ?_⟩
-  · simp only [registerRelTypeC, registerRelType, k1]; exact h.1
-  · simp only [registerRelTypeC, registerRelType, k4, h.2]
+  · simp only [registerRelType, hs, k1]; exact h.1
+  · simp only [registerRelType, hs, k4, h.2]
     exact chainOf_snoc xxh 1 _ s
 
-/-- `Graph::schema_hash` (:1273-1275); `kc` is `attrs_name.chain()`. -/
+/-- `Graph::schema_hash` (:1242-1244) = `Schema::hash` (schema.rs:245); `kc` is
+`property_keys.chain()`. -/
 def graphSchemaHash (gc : GC V) (kc : Nat) : Nat := schemaHash gc.lc gc.tc kc
 
 /-- **`schema_hash()` depends on the three lists only**: under `Inv` and the key chain's

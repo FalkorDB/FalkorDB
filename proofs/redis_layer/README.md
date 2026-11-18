@@ -84,7 +84,7 @@ Yes:
 
 | Theorem | In plain words | File |
 |---|---|---|
-| `rust_c_agree_except_schema` | For every argument vector, unless Rust refuses a `SCHEMA_HASH` value, Rust's query-flag parser and C's agree on success or failure and on every flag; `rust_c_agree_refuted` (#3757) shows the exception is real | `QueryArgsAgree.lean` |
+| `rust_c_agree_except_schema` | For every argument vector, unless Rust refuses a `SCHEMA_HASH` value or a `SCHEMA_HASH` without `--compact`, Rust's query-flag parser and C's agree on success or failure and on every flag; `rust_c_agree_refuted` (#3757) shows the exception is real, `rust_c_agree_except_schemaParse_refuted` that the second one is needed | `QueryArgsAgree.lean` |
 | `parse_ok_iff`, `parse_documented`, `four_commands_share` | What the parser accepts, exactly; the four query commands share it | `QueryArgsSpec.lean`, `QueryArgs.lean` |
 | `rustTimeout_le_max`, `rustTimeout_rw_uniform` | The effective timeout is bounded and, once configured, applies to writes as to reads | `Args.lean` |
 | `rustSet_inv` | `GRAPH.CONFIG SET` keeps `TIMEOUT_DEFAULT ≤ TIMEOUT_MAX` | `Config.lean` |

@@ -8,10 +8,13 @@ import RedisLayer.QueryArgsAgree
   (`--compact`, `--track-memory`, or anything unknown: skipped), `TIMEOUT t` with `t` a
   canonical (`string2ll`) integer in `0..=TIMEOUT_MAX`, `version v` with `v` a canonical
   integer in `0..=u32::MAX`, or `SCHEMA_HASH h` (#3757) with `h` accepted by
-  `parseSchemaHash`. Keywords match ASCII case-insensitively up to the first NUL.
+  `parseSchemaHash`, and (#3757, `SCHEMA_HASH requires --compact`) a `SCHEMA_HASH`
+  token only with a `--compact` token (`flagSeen`). Keywords match ASCII
+  case-insensitively up to the first NUL.
 * `parse_documented` — the documented rendering
   `GRAPH.<CMD> key query [--compact] [TIMEOUT ms] [version v] [SCHEMA_HASH h] [--track-memory]`
-  is accepted with the documented meaning (last timeout/version wins).
+  (any order, `SCHEMA_HASH` with `--compact`) is accepted with the documented meaning
+  (last timeout/version wins).
 * The #3009 regressions: each pre-`557f18868` divergence from C, now agreement.
 -/
 
@@ -129,19 +132,116 @@ theorem scan_ok_grammar (tmax : Int) : ∀ (l : List Bytes) (f r : QFlags),
       exact .other (by simpa using h3) (by simpa using h4) (by simpa using h5)
         (scan_ok_grammar tmax rest _ _ h)
 
-/-- **The parser accepts exactly the grammar** (and is total: `parse_total`). -/
+/-- Which of `--compact` / `SCHEMA_HASH` the loop meets as a flag token (a value after
+`TIMEOUT`/`version`/`SCHEMA_HASH` is skipped, as the loop's `rest.next()` consumes it). -/
+def flagSeen : List Bytes → Bool × Bool
+  | [] => (false, false)
+  | a :: rest =>
+    if eqIC (upToNul a) (b "--compact") then (true, (flagSeen rest).2)
+    else if eqIC (upToNul a) (b "--track-memory") then flagSeen rest
+    else if eqIC (upToNul a) (b "timeout") || eqIC (upToNul a) (b "version") then
+      match rest with
+      | [] => (false, false)
+      | _ :: rest' => flagSeen rest'
+    else if eqIC (upToNul a) (b "schema_hash") then
+      match rest with
+      | [] => (false, true)
+      | _ :: rest' => ((flagSeen rest').1, true)
+    else flagSeen rest
+
+/-- The loop's `compact`/`schema` locals are what it started with or-ed with `flagSeen`. -/
+theorem scan_seen (tmax : Int) : ∀ (l : List Bytes) (f r : QFlags),
+    scanFlags tmax l f = .ok r →
+      r.compact = (f.compact || (flagSeen l).1) ∧ r.schema.isSome = (f.schema.isSome || (flagSeen l).2)
+  | [], f, r, h => by simp [scanFlags] at h; subst h; simp [flagSeen]
+  | a :: rest, f, r, h => by
+    unfold scanFlags at h
+    by_cases h1 : eqIC (upToNul a) (b "--compact") = true
+    · simp only [h1, ↓reduceIte] at h
+      have := scan_seen tmax rest _ r h
+      unfold flagSeen; simp only [h1, ↓reduceIte]; simpa using this
+    by_cases h2 : eqIC (upToNul a) (b "--track-memory") = true
+    · simp only [h1, h2, ↓reduceIte, Bool.false_eq_true] at h
+      have := scan_seen tmax rest _ r h
+      unfold flagSeen; simp only [h1, h2, ↓reduceIte, Bool.false_eq_true]
+      simpa using this
+    by_cases h3 : eqIC (upToNul a) (b "timeout") = true
+    · simp only [h1, h2, h3, ↓reduceIte, Bool.false_eq_true] at h
+      cases rest with
+      | nil => simp at h
+      | cons v rest' =>
+        simp only at h
+        cases hp : string2ll v with
+        | none => simp [hp] at h
+        | some t =>
+          simp only [hp] at h
+          by_cases hm : tmax > 0 ∧ t > tmax
+          · simp [hm] at h
+          · by_cases hn : t < 0
+            · simp [hm, hn] at h
+            · simp only [hm, hn, ↓reduceIte] at h
+              have := scan_seen tmax rest' _ r h
+              unfold flagSeen; simp only [h1, h2, h3, Bool.true_or, ↓reduceIte, Bool.false_eq_true]
+              simpa using this
+    by_cases h4 : eqIC (upToNul a) (b "version") = true
+    · simp only [h1, h2, h3, h4, ↓reduceIte, Bool.false_eq_true] at h
+      cases rest with
+      | nil => simp at h
+      | cons v rest' =>
+        simp only at h
+        cases hp : string2ll v with
+        | none => simp [hp] at h
+        | some n =>
+          simp only [hp] at h
+          by_cases hn : 0 ≤ n ∧ n ≤ (uintMax : Int)
+          · simp only [hn, and_self, ↓reduceIte] at h
+            have := scan_seen tmax rest' _ r h
+            unfold flagSeen; simp only [h1, h2, h4, Bool.or_true, ↓reduceIte, Bool.false_eq_true]
+            simpa using this
+          · simp [hn] at h
+    by_cases h5 : eqIC (upToNul a) (b "schema_hash") = true
+    · simp only [h1, h2, h3, h4, h5, ↓reduceIte, Bool.false_eq_true] at h
+      cases rest with
+      | nil => simp at h
+      | cons v rest' =>
+        simp only at h
+        cases hp : parseSchemaHash v with
+        | none => simp [hp] at h
+        | some hv =>
+          simp only [hp] at h
+          have := scan_seen tmax rest' _ r h
+          unfold flagSeen; simp only [h1, h2, h3, h4, h5, Bool.or_self, ↓reduceIte, Bool.false_eq_true]
+          simpa using this
+    · simp only [h1, h2, h3, h4, h5, ↓reduceIte, Bool.false_eq_true] at h
+      have := scan_seen tmax rest _ r h
+      unfold flagSeen; simp only [h1, h2, h3, h4, h5, Bool.or_self, ↓reduceIte, Bool.false_eq_true]
+      simpa using this
+
+/-- **The parser accepts exactly the grammar** (and is total: `parse_total`); since #3757
+(`SCHEMA_HASH requires --compact`) a `SCHEMA_HASH` token needs a `--compact` token. -/
 theorem parse_ok_iff (tmax : Int) (args : List Bytes) :
     (∃ r, parseQueryFlags tmax args = .ok r) ↔
-      3 ≤ args.length ∧ args.length ≤ 8 ∧ Grammar tmax (args.drop 3) := by
-  unfold parseQueryFlags maxArgs
+      3 ≤ args.length ∧ args.length ≤ 8 ∧ Grammar tmax (args.drop 3) ∧
+        ((flagSeen (args.drop 3)).2 = true → (flagSeen (args.drop 3)).1 = true) := by
   constructor
   · rintro ⟨r, h⟩
-    split at h
-    · simp at h
-    · exact ⟨by omega, by omega, scan_ok_grammar tmax _ _ _ h⟩
-  · rintro ⟨h1, h2, g⟩
-    rw [ite_eq_right (by omega)]
-    exact grammar_scan_ok tmax g {}
+    obtain ⟨h1, h2, hs, hf⟩ := parse_ok_scan tmax args r h
+    have := scan_seen tmax _ {} r hs
+    simp at this
+    refine ⟨h1, h2, scan_ok_grammar tmax _ _ _ hs, fun hx => ?_⟩
+    rw [← this.1]; exact hf (by rw [this.2]; exact hx)
+  · rintro ⟨h1, h2, g, hf⟩
+    obtain ⟨r, hr⟩ := grammar_scan_ok tmax g {}
+    have := scan_seen tmax _ {} r hr
+    simp at this
+    refine ⟨r, ?_⟩
+    unfold parseQueryFlags maxArgs
+    rw [ite_eq_right (by omega), hr]
+    simp only [Except.bind, checkFormat]
+    rw [ite_eq_right_iff.mpr (fun h => absurd h ?_)]
+    rintro ⟨hc, hs⟩
+    rw [this.1] at hc; rw [this.2] at hs
+    rw [hf hs] at hc; cases hc
 
 /-! ## The documented rendering and its meaning -/
 
@@ -240,6 +340,31 @@ theorem scan_step (tmax : Int) (x : Flag) (hx : x.ok tmax) (rest : List Bytes) (
     rw [Flag.render, List.cons_append, List.singleton_append, scanFlags.eq_def]
     simp [d11, d12, d13, d14, d15, parseSchemaHash_dec h hx, Flag.apply]
 
+theorem spec_compact (fs : List Flag) (f : QFlags) (h : Flag.compact ∈ fs ∨ f.compact = true) :
+    (specFlags fs f).compact = true := by
+  induction fs generalizing f with
+  | nil => simpa [specFlags] using h
+  | cons x xs ih =>
+    simp only [specFlags, List.foldl_cons] at ih ⊢
+    apply ih
+    rcases h with h | h
+    · rcases List.mem_cons.1 h with rfl | h
+      · exact .inr rfl
+      · exact .inl h
+    · right; cases x <;> simp [Flag.apply, h]
+
+theorem spec_schema (fs : List Flag) (f : QFlags) (h : (specFlags fs f).schema.isSome = true) :
+    (∃ hh, Flag.schema hh ∈ fs) ∨ f.schema.isSome = true := by
+  induction fs generalizing f with
+  | nil => exact .inr h
+  | cons x xs ih =>
+    simp only [specFlags, List.foldl_cons] at ih h
+    rcases ih _ h with ⟨hh, hm⟩ | hs
+    · exact .inl ⟨hh, List.mem_cons_of_mem _ hm⟩
+    · cases x with
+      | schema hh => exact .inl ⟨hh, by simp⟩
+      | _ => exact .inr (by simpa [Flag.apply] using hs)
+
 theorem scan_documented (tmax : Int) (fs : List Flag) (hok : ∀ x ∈ fs, x.ok tmax) (f : QFlags) :
     scanFlags tmax (renderAll fs) f = .ok (specFlags fs f) := by
   induction fs generalizing f with
@@ -250,13 +375,22 @@ theorem scan_documented (tmax : Int) (fs : List Flag) (hok : ∀ x ∈ fs, x.ok 
     exact ih (fun y hy => hok y (List.mem_cons_of_mem _ hy)) _
 
 /-- **Every documented command line is accepted with its documented meaning**, for any
-command name, key and query bytes, as long as it fits C's 8-argument cap. -/
+command name, key and query bytes, as long as it fits C's 8-argument cap and (#3757)
+sends `SCHEMA_HASH` only with `--compact`, as the documentation requires. -/
 theorem parse_documented (tmax : Int) (cmd key q : Bytes) (fs : List Flag)
-    (hok : ∀ x ∈ fs, x.ok tmax) (hlen : (renderAll fs).length ≤ 5) :
+    (hok : ∀ x ∈ fs, x.ok tmax) (hlen : (renderAll fs).length ≤ 5)
+    (hsc : (∃ h, Flag.schema h ∈ fs) → Flag.compact ∈ fs) :
     parseQueryFlags tmax (cmd :: key :: q :: renderAll fs) = .ok (specFlags fs {}) := by
   unfold parseQueryFlags maxArgs
   rw [ite_eq_right (by simp; omega)]
-  exact scan_documented tmax fs hok {}
+  simp only [List.drop_succ_cons, List.drop_zero]
+  rw [scan_documented tmax fs hok {}]
+  simp only [Except.bind, checkFormat]
+  rw [ite_eq_right_iff.mpr (fun h => absurd h ?_)]
+  rintro ⟨hc, hs⟩
+  rcases spec_schema fs {} hs with hm | hm
+  · rw [spec_compact fs {} (.inl (hsc hm))] at hc; cases hc
+  · cases hm
 
 /-! ## #3009: the pre-`557f18868` divergences, now agreement
 
@@ -334,14 +468,28 @@ theorem write_timeout_agrees :
 
 /-- **#3757**: `SCHEMA_HASH` takes the reply's signed form and the unsigned form of the
 same 64 bits; a missing or malformed value is refused (C skips both tokens: see
-`rust_c_agree_refuted`). -/
+`rust_c_agree_refuted`). The accepted forms are sent with `--compact`, which
+`SCHEMA_HASH` requires (`schema_hash_requires_compact`). -/
 theorem schema_hash_parsed :
-    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "-1"]) = .ok { schema := some u64Max } ∧
-    parseQueryFlags 0 (pre ++ [b "schema_hash", b "18446744073709551615"]) =
-      .ok { schema := some u64Max } ∧
+    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "-1", b "--compact"]) =
+      .ok { compact := true, schema := some u64Max } ∧
+    parseQueryFlags 0 (pre ++ [b "--compact", b "schema_hash", b "18446744073709551615"]) =
+      .ok { compact := true, schema := some u64Max } ∧
     parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "18446744073709551616"]) = .error .schemaParse ∧
     parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "abc"]) = .error .schemaParse ∧
     parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH"]) = .error .schemaParse := by
+  decide
+
+/-- **#3757 (`a908d8a23`)**: `SCHEMA_HASH` requires `--compact`, before or after it; a
+malformed value is still reported first, as the loop runs before the format check. -/
+theorem schema_hash_requires_compact :
+    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "5"]) = .error .schemaVerbose ∧
+    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "5", b "--compact"]) =
+      .ok { compact := true, schema := some 5 } ∧
+    parseQueryFlags 0 (pre ++ [b "--COMPACT", b "SCHEMA_HASH", b "5"]) =
+      .ok { compact := true, schema := some 5 } ∧
+    parseQueryFlags 0 (pre ++ [b "SCHEMA_HASH", b "abc"]) = .error .schemaParse ∧
+    QErr.schemaVerbose.msg = "SCHEMA_HASH requires --compact" := by
   decide
 
 end RedisLayer

@@ -8,13 +8,14 @@ Since #3010 (`557f18868`, fixes #3009) the four query commands share
 
 | here | there |
 | --- | --- |
-| `upToNul`         | `up_to_nul`, `query_args.rs:112-114` |
-| `scanFlags`       | the `while let Some(arg) = rest.next()` loop, `:58-90` |
-| `parseSchemaHash` | `parse_schema_hash`, `:98-109` (#3757) |
-| `parseQueryFlags` | `parse_query_flags`, `:52-93` (arity `:53-55`, `MAX_ARGS` `:30`) |
-| `QErr.msg`        | `ValkeyError::WrongArity`, `TIMEOUT_ERR`/`VERSION_ERR`/`SCHEMA_ERR`/`TIMEOUT_MAX_ERR` `:32-36` |
-| `queryFront`      | `graph_query` `query.rs:47-54` |
-| `roQueryFront`    | `graph_ro_query` `ro_query.rs:35-42` |
+| `upToNul`         | `up_to_nul`, `query_args.rs:123-125` |
+| `scanFlags`       | the `while let Some(arg) = rest.next()` loop, `:64-97` |
+| `parseSchemaHash` | `parse_schema_hash`, `:109-120` (#3757) |
+| `checkFormat`     | `flags.format = match (compact, schema)`, `:98-102` (#3757: `SCHEMA_HASH requires --compact`) |
+| `parseQueryFlags` | `parse_query_flags`, `:56-104` (arity `:57-59`, `MAX_ARGS` `:34`) |
+| `QErr.msg`        | `ValkeyError::WrongArity`, `TIMEOUT_ERR`/`VERSION_ERR`/`SCHEMA_ERR`/`SCHEMA_VERBOSE_ERR`/`TIMEOUT_MAX_ERR` `:36-41` |
+| `queryFront`      | `graph_query` `query.rs:46-51` |
+| `roQueryFront`    | `graph_ro_query` `ro_query.rs:34-39` |
 | `profileFront`    | `graph_profile` `profile.rs:22` (only `timeout` is used) |
 | `explainFront`    | `graph_explain` `explain.rs:65` (validated, result dropped) |
 | `cScan`/`cReadFlags` | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`, `master`) |
@@ -24,9 +25,15 @@ argument is no longer special. `parse_integer` is `RedisModule_StringToLongLong`
 Redis `string2ll` on the whole byte string (`Args.string2ll`). `TIMEOUT_MAX.load` is
 the parameter `tmax`.
 
+`QFlags.compact`/`.schema` together are `QueryFlags::format`: `ReplyFormat::Verbose` is
+`compact = false, schema = none`, `ReplyFormat::Compact { schema }` is `compact = true`;
+`checkFormat` refuses the one pair `ReplyFormat` cannot hold (`SCHEMA_HASH` without
+`--compact`, `parse_ok_format`).
+
 Headline: `rust_c_agree_except_schema` — under the `GRAPH.CONFIG` invariant, Rust and C
 fail with the corresponding error or read the same compact flag, version and timeout,
-on every vector Rust does not refuse with the Rust-only `SCHEMA_HASH` error (#3757).
+on every vector Rust does not refuse with one of the two Rust-only `SCHEMA_HASH` errors
+(#3757: a malformed value, or `SCHEMA_HASH` without `--compact`).
 `rust_c_agree_refuted` — the unrestricted `RustCAgree` (true before #3757) no longer
 holds: `SCHEMA_HASH abc` is refused by Rust and skipped by C. `four_commands_share` —
 the four commands reject exactly the same vectors and read the same flags.
@@ -48,19 +55,21 @@ def upToNul (s : Bytes) : Bytes :=
 def maxArgs : Nat := 8
 
 inductive QErr where
-  | wrongArity | timeoutParse | timeoutMax | versionParse | schemaParse
+  | wrongArity | timeoutParse | timeoutMax | versionParse | schemaParse | schemaVerbose
   deriving DecidableEq, Repr
 
-/-- The reply text (`:32-36`; `WrongArity` is Redis' standard arity error). -/
+/-- The reply text (`:36-41`; `WrongArity` is Redis' standard arity error). -/
 def QErr.msg : QErr → String
   | .wrongArity => "wrong number of arguments"
   | .timeoutParse => "Failed to parse query timeout value"
   | .versionParse => "Failed to parse graph version value"
   | .schemaParse => "Failed to parse schema hash value"
+  | .schemaVerbose => "SCHEMA_HASH requires --compact"
   | .timeoutMax =>
     "The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value"
 
-/-- `QueryFlags` (`:39-47`); `version` is `u64::from(u32)`, `schema` a `u64`. -/
+/-- `QueryFlags` (`:45-51`); `version` is `u64::from(u32)`. `compact`/`schema` are the
+locals `compact`/`schema` of the loop (`:61-62`), which `checkFormat` turns into `format`. -/
 structure QFlags where
   compact : Bool := false
   track : Bool := false
@@ -72,7 +81,7 @@ structure QFlags where
 /-- `i64::cast_unsigned`: the same 64 bits as a `u64`. -/
 def castUnsigned (s : Int) : Nat := (s % (2 ^ 64 : Int)).toNat
 
-/-- `parse_schema_hash` (`:98-109`, #3757): `string2ll` (`parse_integer`) cast to `u64`;
+/-- `parse_schema_hash` (`:109-120`, #3757): `string2ll` (`parse_integer`) cast to `u64`;
 else a canonical unsigned decimal (`[1-9][0-9]*`, `str::parse::<u64>`, so ≤ `u64::MAX`). -/
 def parseSchemaHash (v : Bytes) : Option Nat :=
   match string2ll v with
@@ -84,7 +93,7 @@ def parseSchemaHash (v : Bytes) : Option Nat :=
       if (49 ≤ d ∧ d ≤ 57) ∧ v.all isDig = true then (digitsVal v).filter (· ≤ u64Max)
       else none
 
-/-- The flag loop (`:58-90`). -/
+/-- The flag loop (`:64-97`). -/
 def scanFlags (tmax : Int) : List Bytes → QFlags → Except QErr QFlags
   | [], f => .ok f
   | a :: rest, f =>
@@ -110,7 +119,7 @@ def scanFlags (tmax : Int) : List Bytes → QFlags → Except QErr QFlags
           if 0 ≤ n ∧ n ≤ (uintMax : Int) then                          -- `u32::try_from`, `:73`
             scanFlags tmax rest' { f with version := some n.toNat }
           else .error .versionParse
-    else if eqIC (upToNul a) (b "schema_hash") then                   -- `:84-89` (#3757)
+    else if eqIC (upToNul a) (b "schema_hash") then                   -- `:90-95` (#3757)
       match rest with
       | [] => .error .schemaParse
       | v :: rest' =>
@@ -119,10 +128,46 @@ def scanFlags (tmax : Int) : List Bytes → QFlags → Except QErr QFlags
         | some h => scanFlags tmax rest' { f with schema := some h }
     else scanFlags tmax rest f                                        -- unknown: skipped
 
-/-- `parse_query_flags` (`:52-93`); `args` includes the command name. -/
+/-- `flags.format = match (compact, schema)` (`:98-102`, #3757): `SCHEMA_HASH` without
+`--compact` is refused; every other pair is a `ReplyFormat`. -/
+def checkFormat (r : QFlags) : Except QErr QFlags :=
+  if r.compact = false ∧ r.schema.isSome = true then .error .schemaVerbose else .ok r
+
+/-- `parse_query_flags` (`:56-104`); `args` includes the command name. -/
 def parseQueryFlags (tmax : Int) (args : List Bytes) : Except QErr QFlags :=
   if args.length < 3 ∨ args.length > maxArgs then .error .wrongArity
-  else scanFlags tmax (args.drop 3) {}
+  else (scanFlags tmax (args.drop 3) {}).bind checkFormat
+
+/-- An accepted vector passed the arity check and the loop, and its flags are a
+`ReplyFormat`: a schema hash only with `--compact`. -/
+theorem parse_ok_scan (tmax : Int) (args : List Bytes) (r : QFlags)
+    (h : parseQueryFlags tmax args = .ok r) :
+    3 ≤ args.length ∧ args.length ≤ maxArgs ∧ scanFlags tmax (args.drop 3) {} = .ok r ∧
+      (r.schema.isSome = true → r.compact = true) := by
+  unfold parseQueryFlags at h
+  split at h
+  · simp at h
+  · rename_i hl
+    cases hs : scanFlags tmax (args.drop 3) {} with
+    | error e => rw [hs] at h; simp [Except.bind] at h
+    | ok r' =>
+      rw [hs] at h
+      simp only [Except.bind, checkFormat] at h
+      split at h
+      · simp at h
+      · rename_i hc
+        simp only [Except.ok.injEq] at h
+        subst h
+        refine ⟨by omega, by omega, rfl, fun hs' => ?_⟩
+        cases hr : r'.compact
+        · exact absurd ⟨hr, hs'⟩ hc
+        · rfl
+
+/-- **`parse_ok_format`** (#3757): every accepted vector is a `ReplyFormat`: `SCHEMA_HASH`
+is only ever read together with `--compact`. -/
+theorem parse_ok_format (tmax : Int) (args : List Bytes) (r : QFlags)
+    (h : parseQueryFlags tmax args = .ok r) : r.schema.isSome = true → r.compact = true :=
+  (parse_ok_scan tmax args r h).2.2.2
 
 /-! ## The four commands' front ends -/
 
@@ -149,11 +194,12 @@ theorem four_commands_share (tmax : Int) (args : List Bytes) (e : QErr) :
     simp [Except.map]
 
 /-- Totality, with the exact outcome set: every argument vector is either accepted with
-some flags or rejected with one of the five errors (no panic, no other reply). -/
+some flags or rejected with one of the six errors (no panic, no other reply). -/
 theorem parse_total (tmax : Int) (args : List Bytes) :
     (∃ r, parseQueryFlags tmax args = .ok r) ∨
     (∃ e, parseQueryFlags tmax args = .error e ∧
-      e ∈ [QErr.wrongArity, .timeoutParse, .timeoutMax, .versionParse, .schemaParse]) := by
+      e ∈ [QErr.wrongArity, .timeoutParse, .timeoutMax, .versionParse, .schemaParse,
+        .schemaVerbose]) := by
   cases h : parseQueryFlags tmax args with
   | ok r => exact .inl ⟨r, rfl⟩
   | error e => exact .inr ⟨e, rfl, by cases e <;> simp⟩
@@ -218,11 +264,8 @@ accepted version fits a C `uint`. So `compute_effective_timeout` never sees a ne
 or over-the-max per-query value from a command (`Args.neg_timeout_falls_back` and
 `Args.rustTimeout_exceeds` are now unreachable from QUERY/RO_QUERY/PROFILE). -/
 theorem parse_timeout_nonneg (tmax : Int) (args : List Bytes) (r : QFlags)
-    (h : parseQueryFlags tmax args = .ok r) : Bounded tmax r := by
-  unfold parseQueryFlags at h
-  split at h
-  · simp at h
-  · exact scan_bounded tmax _ {} r ⟨by simp, by simp⟩ h
+    (h : parseQueryFlags tmax args = .ok r) : Bounded tmax r :=
+  scan_bounded tmax _ {} r ⟨by simp, by simp⟩ (parse_ok_scan tmax args r h).2.2.1
 
 /-! ## C (`cmd_dispatcher.c`: `_validate_command_arity` + `_read_flags`) -/
 
