@@ -246,3 +246,16 @@ def test_struct_constructor_accepted_arities():
     # duration decodes to a relativedelta, which compares cleanly to its parts
     duration = common.g.query("RETURN duration({days: 1, hours: 2})").result_set[0][0]
     assert (duration.days, duration.hours) == (1, 2)
+
+def test_list_argument_type_check_is_not_per_row_linear():
+    """A function taking `List<Any>` (size, head, last, ...) must not walk the
+    list to type-check it: every element is accepted, and the walk made each
+    call O(len), so reading one large list variable per row was quadratic.
+    100k elements x 100k rows took tens of seconds before the fix and
+    milliseconds after; the 10s ceiling is generous."""
+    import time
+    for expr in ["size(ns)", "head(ns)", "last(ns)"]:
+        q = f"WITH range(0, 99999) AS ns UNWIND range(0, 99999) AS i RETURN count({expr})"
+        start = time.monotonic()
+        assert common.g.query(q).result_set == [[100000]], q
+        assert time.monotonic() - start < 10, f"{expr} per row is quadratic"
