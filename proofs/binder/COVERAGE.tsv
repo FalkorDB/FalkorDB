@@ -28,7 +28,7 @@ graph/src/planner/binder.rs	Binder::validate_import_with	1144	PROVEN	validateImp
 graph/src/planner/binder.rs	Binder::bind_projection	1200	NOT COVERED	(#3302): not modelled yet
 graph/src/planner/binder.rs	Binder::bind_graph	1481	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_accepts, node_attr_on_own_rel_accepts, node_attr_later_rel, node_attr_later_node_rejected, foldGrow_mono, q2923_fixed, defRels_named_only (#2981 defRels: named relationship aliases defined first; Elem aliases are Table.Alias), rel_attr_forward_node, self_reference_ok; defineName_ignores_parent; merged_occurrences (endpoint shares the node's merged attrs) abstracted: Elem.node carries every occurrence's attrs
 graph/src/planner/binder.rs	Binder::bind_graph_create	1727	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, createCheck_anon, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak
-graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1852	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct
+graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1852	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct, selfRef_leaf_prop
 graph/src/planner/binder.rs	Binder::bind_set_items	1870	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
 graph/src/planner/binder.rs	Binder::bind_expr	1895	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
 graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1902	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
