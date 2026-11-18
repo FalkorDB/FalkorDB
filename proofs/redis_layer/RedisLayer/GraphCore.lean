@@ -4,20 +4,21 @@ import RedisLayer.Resp
 
 | here | there (`origin/main`) |
 | --- | --- |
-| `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:87`, `c_graph_name` `:104`, `c_graph_key` `:119` |
-| `Reg.*`                     | `register_graph` `:140`, `graph_is_registered` `:188`, `rename_graph` `:202`, `graph_free` `:1761` |
-| `modified`                  | `WriteQueryOk::new` `:256` |
-| `sanitise`                  | `ffi::sanitise_error` `:318` |
-| `invalidVersionBytes`       | `reply_invalid_graph_version` `:986` |
-| `profileDepth`, `profileOps`| `reply_profile` `:884` (all ops, plain depth, since #2390) |
-| `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:587` / `execute_profile` `:674` write detection and `admission.take()` |
-| `writeSteps`                | `try_query_write` `:783`, `finish_write` `:1512`, `abandon_write` `:1537`, `commit_and_replicate` `:1553` |
-| `executeWrite`, `Attempt`   | `execute_query_write` `:737` (retry loop, #3290), `WriteAttempt::from` `:776` |
-| `admitQ`, `dispatch`        | `admit` `:1000`, `query_mut` `:1011` (#3014) |
-| `syncOutcome`               | `query_sync` `:1215`, `profile_sync` `:1445`, `profile_mut` `:1344` |
-| `loopExit`                  | `process_write_queued_query` `:1599` |
-| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1748` |
-| `TG`                        | `ThreadedGraph::new` `:553`, `from_mvcc` `:569` (unbounded write channel since #3014) |
+| `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:92`, `c_graph_name` `:106`, `c_graph_key` `:121` |
+| `Reg.*`                     | `register_graph` `:142`, `graph_is_registered` `:190`, `rename_graph` `:250`, `graph_free` `:1858` |
+| `keyOfWrite`                | `key_of_write` `:220` (#3850/#3851) |
+| `modified`                  | `WriteQueryOk::new` `:303` |
+| `sanitise`                  | `ffi::sanitise_error` `:362` |
+| `invalidVersionBytes`       | `reply_invalid_graph_version` `:1038` |
+| `profileDepth`, `profileOps`| `reply_profile` `:936` (all ops, plain depth, since #2390) |
+| `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:636` / `execute_profile` `:722` write detection and `admission.take()` |
+| `writeSteps`                | `try_query_write` `:834`, `finish_write` `:1568`, `abandon_write` `:1603`, `commit_and_replicate` `:1619` |
+| `executeWrite`, `Attempt`   | `execute_query_write` `:784` (retry loop, #3290), `WriteAttempt::from` `:823` |
+| `admitQ`, `dispatch`        | `admit` `:1052`, `query_mut` `:1063` (#3014) |
+| `syncOutcome`               | `query_sync` `:1267`, `profile_sync` `:1497`, `profile_mut` `:1396` |
+| `loopExit`                  | `process_write_queued_query` `:1697` |
+| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1845` |
+| `TG`                        | `ThreadedGraph::new` `:600`, `from_mvcc` `:617` (unbounded write channel since #3014) |
 -/
 namespace RedisLayer.GraphCore
 
@@ -145,6 +146,61 @@ theorem rename_moves (r : Reg) (o n : List Char) (g : Nat) (h : r.get o = some g
     congr 2; congr 1; funext p; simp [Bool.and_comm]
   rw [e, get_filter_self]
 
+/-! ## `key_of_write` (`:220`, #3850/#3851): the key a write is published under
+
+`ks k` is the graph allocation the keyspace holds at key `k` (`key_holds_graph`, `redis_type.rs:577`,
+is `ks k = some g`: TelemetryLoop `keyHolds_iff`). `main` is `is_main_thread()`. The registry
+lookup is `GRAPH_REGISTRY.iter().find(data_ptr = target)`; `'\uFFFD' ∈ admitted` is
+`admitted.contains(char::REPLACEMENT_CHARACTER)` (a lossily decoded, non-UTF-8 key). `none` is
+`Err(WriteAbort::GraphUnregistered)`. -/
+def keyOfWrite (main : Bool) (ks : List Char → Option Nat) (reg : Reg) (g : Nat)
+    (admitted : List Char) : Option (List Char) :=
+  if main || ks admitted == some g then some admitted
+  else match reg.find? (·.2 = g) with
+    | some (name, _) =>
+      if ks name == some g then some name
+      else if '\uFFFD' ∈ admitted then some admitted else none
+    | none => none
+
+/-- An inline (main-thread) write is published under the key the client named. -/
+theorem keyOfWrite_main (ks : List Char → Option Nat) (reg : Reg) (g : Nat) (a : List Char) :
+    keyOfWrite true ks reg g a = some a := by simp [keyOfWrite]
+
+/-- The admitted key still holds the graph: that key. -/
+theorem keyOfWrite_admitted (m : Bool) (ks : List Char → Option Nat) (reg : Reg) (g : Nat)
+    (a : List Char) (h : ks a = some g) : keyOfWrite m ks reg g a = some a := by
+  simp [keyOfWrite, h]
+
+/-- **Renamed**: the admitted key no longer holds the graph, the registry's key does — the
+write (and its `GRAPH.EFFECT`) goes to the key the graph lives at now. -/
+theorem keyOfWrite_renamed (ks : List Char → Option Nat) (reg : Reg) (g : Nat) (a n : List Char)
+    (ha : ks a ≠ some g) (hr : reg.find? (·.2 = g) = some (n, g)) (hn : ks n = some g) :
+    keyOfWrite false ks reg g a = some n := by
+  simp [keyOfWrite, ha, hr, hn]
+
+/-- **Sound for UTF-8 keys**: a queued write is only ever published under a key that holds
+its graph. -/
+theorem keyOfWrite_holds (ks : List Char → Option Nat) (reg : Reg) (g : Nat) (a k : List Char)
+    (hu : '\uFFFD' ∉ a) (h : keyOfWrite false ks reg g a = some k) : ks k = some g := by
+  unfold keyOfWrite at h
+  by_cases ha : ks a = some g
+  · simp [ha] at h; exact h ▸ ha
+  · simp only [Bool.false_or, ha, beq_iff_eq, ite_false] at h
+    split at h
+    · rename_i name _ _
+      by_cases hn : ks name = some g
+      · simp [hn] at h; exact h ▸ hn
+      · simp [hn, hu] at h
+    · simp at h
+
+/-- **Refused**: no key holds the graph (deleted, flushed — even before the lazy-free thread
+reaches `graph_free`): `GraphUnregistered`, whatever the registry still says. -/
+theorem keyOfWrite_unheld (ks : List Char → Option Nat) (reg : Reg) (g : Nat) (a : List Char)
+    (hu : '\uFFFD' ∉ a) (h : ∀ k, ks k ≠ some g) : keyOfWrite false ks reg g a = none := by
+  cases e : keyOfWrite false ks reg g a with
+  | none => rfl
+  | some k => exact absurd (keyOfWrite_holds ks reg g a k hu e) (h k)
+
 /-! ## Write bookkeeping -/
 
 structure Stats where
@@ -174,7 +230,7 @@ inductive Step | commit | signal | replicate | warnNoEffects | resync | release 
 def commitSteps (mod : Bool) (hasBuf : Bool) : List Step :=
   [.commit, .signal] ++ (if !mod then [] else if hasBuf then [.replicate] else [.warnNoEffects])
 
-/-- `commit_and_replicate` (graph_core.rs:1553) since #2846: `MvccGraph::commit` validates
+/-- `commit_and_replicate` (graph_core.rs:1619) since #2846: `MvccGraph::commit` validates
 (and since #3657 refuses a stale fork too: `unreachable!` in `current_not_stale`, see
 SearchConcurrency `Mvcc`), and a refusal here is `unreachable!()` — the panic step. The
 argument it rests on: every write query ends its last segment through
@@ -187,7 +243,7 @@ def commitStepsV (valid mod hasBuf : Bool) : Option (List Step) :=
 theorem commitStepsV_valid (mod buf : Bool) : commitStepsV true mod buf = some (commitSteps mod buf) := rfl
 theorem commitStepsV_refused (mod buf : Bool) : commitStepsV false mod buf = none := rfl
 
-/-- `abandon_write` (`:1537`) since #3657: resync the index only if the session's version is
+/-- `abandon_write` (`:1603`) since #3657: resync the index only if the session's version is
 current (`version_is_current`: a version still matching, stale or refused at escalation
 published no document), and nothing else: the version is dropped with the runtime, so there
 is no slot to release and nothing to roll back. -/
@@ -195,27 +251,46 @@ def abandonSteps (cur : Bool) : List Step := if cur then [.resync] else []
 
 /-- `try_query_write` from `runtime.query()` on: abandon on error; else `finish_write`
 (`commit_and_replicate` if the session escalated; otherwise nothing, the version drops with
-the runtime), release locks, then reply. -/
-def writeSteps (ok writer cur mod hasBuf : Bool) : List Step :=
+the runtime), release locks, then reply. Since #3850/#3851 an escalated `finish_write` first
+asks `key_of_write` (`keyed` = `keyOfWrite … ≠ none`); refused, nothing is published and the
+caller abandons the write (`abandon_write`) and returns `WriteAttempt::Failed`. A session still
+in reader mode skips the check (`with_graph_mut` … `.unwrap_or(Ok(()))`). `record_mut` takes
+the same two paths. -/
+def writeSteps (ok writer keyed cur mod hasBuf : Bool) : List Step :=
   if !ok then abandonSteps cur
+  else if writer && !keyed then abandonSteps cur
   else (if writer then commitSteps mod hasBuf else []) ++ [.release, .reply]
 
 /-- The client is answered only after the commit is published and the locks are gone. -/
 theorem reply_after_commit (h mod buf : Bool) :
-    writeSteps true true h mod buf = commitSteps mod buf ++ [.release, .reply] := by
+    writeSteps true true true h mod buf = commitSteps mod buf ++ [.release, .reply] := by
   simp [writeSteps]
+
+/-- The same, for every input: an escalated write that replies has committed first. -/
+theorem reply_only_after_commit (ok k h mod buf : Bool)
+    (hr : .reply ∈ writeSteps ok true k h mod buf) :
+    writeSteps ok true k h mod buf = commitSteps mod buf ++ [.release, .reply] := by
+  cases ok <;> cases k <;> cases h <;> simp_all [writeSteps, abandonSteps]
 
 /-- A failed write never commits and never replies here (the caller sends the error, or
 re-runs a stale one); it resyncs the index only for a current version. -/
-theorem failed_no_commit (w h m b : Bool) :
-    .commit ∉ writeSteps false w h m b ∧ .reply ∉ writeSteps false w h m b ∧
-    (.resync ∈ writeSteps false w h m b ↔ h = true) := by
+theorem failed_no_commit (w k h m b : Bool) :
+    .commit ∉ writeSteps false w k h m b ∧ .reply ∉ writeSteps false w k h m b ∧
+    (.resync ∈ writeSteps false w k h m b ↔ h = true) := by
+  cases h <;> simp [writeSteps, abandonSteps]
+
+/-- **#3850/#3851**: an escalated write whose graph no key holds is undone like a failed
+one: no commit, no `GRAPH.EFFECT`, no reply here (the caller sends `GraphUnregistered`). -/
+theorem unkeyed_refused (h m b : Bool) :
+    writeSteps true true false h m b = abandonSteps h ∧
+    .commit ∉ writeSteps true true false h m b ∧ .replicate ∉ writeSteps true true false h m b ∧
+    .reply ∉ writeSteps true true false h m b := by
   cases h <;> simp [writeSteps, abandonSteps]
 
 /-- A write that never escalated (`LIMIT 0` short-circuits above `Commit`) publishes and
 replicates nothing: the session answers and the version is dropped. -/
-theorem unescalated_silent (h m b : Bool) :
-    writeSteps true false h m b = [.release, .reply] := by simp [writeSteps]
+theorem unescalated_silent (k h m b : Bool) :
+    writeSteps true false k h m b = [.release, .reply] := by simp [writeSteps]
 
 /-! ### `execute_query_write`'s retry (#3290)
 
@@ -226,7 +301,7 @@ loop re-runs on a fresh session (`QuerySession::begin_with`). -/
 inductive Attempt | stale | failed (e : String) | ok
   deriving DecidableEq, Repr
 
-/-- `impl From<String> for WriteAttempt` (`:776`): every other error is `Failed`. -/
+/-- `impl From<String> for WriteAttempt` (`:823`): every other error is `Failed`. -/
 def Attempt.ofString (e : String) : Attempt := .failed e
 theorem ofString_not_stale (e : String) : Attempt.ofString e ≠ .stale := by simp [Attempt.ofString]
 
@@ -245,8 +320,14 @@ theorem executeWrite_first (k : Nat) (a : Attempt) (rest : List Attempt) (h : a 
 
 /-- A stale run took no write step a client could see: it is not `current`, so it resyncs
 nothing, and it committed and replied nothing. -/
-theorem stale_run_silent (w m b : Bool) :
-    writeSteps false w false m b = [] := by simp [writeSteps, abandonSteps]
+theorem stale_run_silent (w k m b : Bool) :
+    writeSteps false w k false m b = [] := by simp [writeSteps, abandonSteps]
+
+/-- The refusal `try_query_write` returns (`WriteAttempt::Failed(abort.to_string())`) is not
+`Stale`: `execute_query_write` surfaces it instead of re-running. -/
+def unregisteredAttempt : Attempt :=
+  .failed "graph was deleted or replaced while the query was running, aborting"
+theorem unregistered_not_stale : unregisteredAttempt ≠ .stale := by simp [unregisteredAttempt]
 
 /-- Every modified commit either replicates or logs that it could not. -/
 theorem modified_replicates_or_warns (buf : Bool) :
@@ -332,7 +413,7 @@ def executeQuery (plan : List Op) (writeAllowed : Bool) : QOut :=
 theorem ro_write_rejected (plan : List Op) (h : isWrite plan) : executeQuery plan false = .roError := by
   simp [executeQuery, h]
 
-/-! ## `admit` and `query_mut` dispatch (`:1007`, `:1018-1210`, #3014) -/
+/-! ## `admit` and `query_mut` dispatch (`:1052`, `:1063-1265`, #3014) -/
 
 /-- `admit`: `QueueSlot::try_acquire(MAX_QUEUED_QUERIES)` (the count after admission), or
 the reply "Max pending queries exceeded" (`none`). Never waits. -/
@@ -361,7 +442,7 @@ theorem capped (s p m : Nat) (h : m ≤ p) : dispatch none s false p m = .maxPen
   simp [dispatch, admitQ]; omega
 
 /-- Which admission slot a job still holds after `execute_query`/`execute_profile`
-(`slot.filter(..)`, `:1126`, `:1390`): only a write keeps it, to carry into the write queue. -/
+(`slot.filter(..)`, `:1171`, `:1434`): only a write keeps it, to carry into the write queue. -/
 def admissionKept (ok isWrite : Bool) : Bool := ok && isWrite
 theorem read_releases_admission (ok : Bool) : admissionKept ok false = false := by simp [admissionKept]
 
@@ -392,7 +473,7 @@ theorem profile_write_runs_as_write (w : Bool) :
     profileOutcome true .write w = (if w then .writeTelemetry else .writeErr) := rfl
 theorem profile_read_replied (w : Bool) : profileOutcome true .readReplied w = .profileRead := rfl
 
-/-! ## `process_write_queued_query` exit protocol (`:1615-1660`) -/
+/-! ## `process_write_queued_query` exit protocol (`:1697`) -/
 
 /-- After `try_recv` finds nothing: release the flag, then return only if the queue is
 still empty or another thread won the flag back; otherwise loop again as owner. -/
