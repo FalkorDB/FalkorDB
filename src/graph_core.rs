@@ -50,6 +50,7 @@ use graph::{
     graph::{graph::Plan, mvcc_graph::MvccGraph},
     planner::IR,
     runtime::runtime::{QueryStatistics, Runtime},
+    thread_id::is_main_thread,
     threadpool::{QueueSlot, spawn},
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
@@ -75,7 +76,8 @@ use crate::dispatch::must_run_inline;
 use crate::divergence_guard;
 #[cfg(feature = "index-falkordb")]
 use crate::query_session::hold_gil;
-use crate::query_session::{QuerySession, WriterGate};
+use crate::query_session::{QuerySession, WriteAbort, WriterGate};
+use crate::redis_type::key_holds_graph;
 
 /// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
 ///
@@ -191,6 +193,54 @@ pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
         .lock()
         .values()
         .any(|registered| registered.data_ptr() as usize == target)
+}
+
+/// The key a write on `graph` is published under, or why it must not be published.
+///
+/// A queued write is admitted on the main thread under the key the client named,
+/// and commits later, from a worker. By then that key may no longer hold the graph,
+/// and [`graph_is_registered`] cannot tell: it asks the module's registry, which a
+/// `RENAME` re-keys but keeps, and which a background flush (`FLUSHALL ASYNC`, and a
+/// plain `FLUSHALL` on Valkey and Redis 8) empties only when the lazy-free thread
+/// gets to `graph_free`. So this asks the keyspace, under the GIL the write holds
+/// until it has committed and replicated:
+///
+/// * the admitted key still holds the graph: that key;
+/// * the graph was renamed: the key it lives at now. Replicated under the admitted
+///   key instead, the write went to a key the replica no longer had, and
+///   `GRAPH.EFFECT` created a graph there: the master kept `b` with the write, the
+///   replica kept `a` with it and `b` without. C follows the rename;
+/// * no key holds it: [`WriteAbort::GraphUnregistered`]. Committed anyway, the write
+///   was answered OK into a graph no key held, and its payload resurrected the key
+///   on the replica. C refuses it ("Encountered an empty key").
+///
+/// A key that is not valid UTF-8 is the exception. `admitted` is the lossy rendering
+/// of its bytes, so nothing here can open it, and it is taken as it was before this
+/// check existed, on the registry's word.
+///
+/// `GRAPH.BULK` asks the same question of a batch it built on a worker, and of a
+/// failed `BEGIN` batch before taking its graph back out of the keyspace.
+pub fn key_of_write(
+    ctx: &Context,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    admitted: &Arc<str>,
+) -> Result<Arc<str>, WriteAbort> {
+    // An inline command runs in one main-thread turn, so nothing can have moved its
+    // key — and a graph it is creating is stored at its key only after it returns.
+    if is_main_thread() || key_holds_graph(ctx, admitted.as_bytes(), graph) {
+        return Ok(Arc::clone(admitted));
+    }
+    let target = graph.data_ptr() as usize;
+    let registered = GRAPH_REGISTRY
+        .lock()
+        .iter()
+        .find(|(_, held)| held.data_ptr() as usize == target)
+        .map(|(name, _)| name.clone());
+    match registered {
+        Some(name) if key_holds_graph(ctx, name.as_bytes(), graph) => Ok(Arc::from(name)),
+        Some(_) if admitted.contains(char::REPLACEMENT_CHARACTER) => Ok(Arc::clone(admitted)),
+        _ => Err(WriteAbort::GraphUnregistered),
+    }
 }
 
 /// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
@@ -849,7 +899,10 @@ fn try_query_write(
 
     // Commit → signal WATCH → replicate, the last work that needs the GIL.
     let graph = session.graph_arc();
-    finish_write(&session, ctx, key_name, &runtime, &result.stats);
+    if let Err(abort) = finish_write(&session, ctx, key_name, &runtime, &result.stats) {
+        abandon_write(&session, &runtime);
+        return Err(WriteAttempt::Failed(abort.to_string()));
+    }
     session.release_locks();
 
     // Writer window is closed. Serializing the reply reads this query's own MVCC
@@ -1511,20 +1564,34 @@ fn profile_sync(
 /// publish it identically. Both carried a copy of this, and of
 /// [`abandon_write`] below, which is how the effects decision came to be made
 /// in two places.
+///
+/// Refused when no key holds the graph any more ([`key_of_write`]): nothing was
+/// published, and the caller undoes the write as it would a failed one
+/// ([`abandon_write`]).
 pub fn finish_write(
     session: &QuerySession,
     ctx: &Context,
     key_name: &Arc<str>,
     runtime: &Runtime<'_>,
     stats: &QueryStatistics,
-) {
+) -> Result<(), WriteAbort> {
     let wq = WriteQueryOk::new(runtime, stats);
+    let graph = session.graph_arc();
     // `with_graph_mut` skips the closure for a session still in reader mode:
     // it never escalated, so the plan's `Commit` never ran and nothing was
     // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There is
     // nothing to publish or replicate, and the private version goes with the
     // runtime.
-    session.with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, runtime, wq));
+    session
+        .with_graph_mut(|tg| {
+            // Writer mode: the GIL has been held since the write was authorized,
+            // so what the keyspace says now is what it said then, and stays so
+            // until the commit and its payload are out.
+            let key_name = key_of_write(ctx, &graph, key_name)?;
+            commit_and_replicate(tg, ctx, &key_name, runtime, wq);
+            Ok(())
+        })
+        .unwrap_or(Ok(()))
 }
 
 /// Discard a write that failed, leaving the published state as it was.

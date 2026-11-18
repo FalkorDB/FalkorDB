@@ -47,7 +47,7 @@ pub fn graph_delete(
     // The stream is named after the graph's C name (`telemetry{%s}` of
     // `gc->graph_name`), which is the key truncated at its first NUL.
     let key_name = c_graph_name(&key);
-    let key = ctx.open_key_writable(&key);
+    let key = ctx.open_key_writable(&key)?;
     if key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
         .map_err(wrong_type_compat)?
