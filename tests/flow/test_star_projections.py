@@ -117,7 +117,8 @@ class testStarProjections():
 
         query = """UNWIND range(1, 2) AS x UNWIND range(3, 4) AS y WITH * ORDER BY x SKIP 1 LIMIT 2 WHERE x > 1 RETURN *"""
         actual_result = self.graph.query(query)
-        expected = [[2, 4]]
+        # SKIP 1 LIMIT 2 keeps (1, 4) and (2, 3); the WHERE runs after them
+        expected = [[2, 3]]
         self.env.assertEqual(actual_result.result_set, expected)
 
         query = """UNWIND range(5, 0, -1) AS x WITH x ORDER BY x SKIP 2 LIMIT 3 RETURN *"""
