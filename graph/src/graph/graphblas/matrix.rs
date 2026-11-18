@@ -67,10 +67,9 @@ use std::{
 
 use parking_lot::Mutex;
 
-use crate::graph::graphblas::{
-    lagraph_bindings::{LAGraph_Finalize, LAGraph_Init},
-    serialization::{Decode, Encode, Reader, Writer},
-};
+use lagraph_sys::{LAGraph_Finalize, LAGraph_Init};
+
+use crate::graph::graphblas::serialization::{Decode, Encode, Reader, Writer};
 
 /// Size of the `GxB_Container_struct` in bytes.
 const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();

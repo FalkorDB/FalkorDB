@@ -36,6 +36,7 @@ index-falkordb = ["dep:feral-metis"]
 
 [dependencies]
 graphblas-sys = { path = "../crates/graphblas-sys" }
+lagraph-sys = { path = "../crates/lagraph-sys" }
 ahash = "0.8"
 arc-swap = "1"
 chrono = "0.4.45"

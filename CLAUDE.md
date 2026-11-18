@@ -227,7 +227,9 @@ maintainer updates those proofs by hand (or from a same-repo branch).
   (see `src/commands/explain.rs`)
 - The parser (`cypher.rs`) is hand-written, not generated from Cypher.g4 grammar file
 - GraphBLAS FFI bindings are in `crates/graphblas-sys/src/bindings.rs` (auto-generated, do not edit;
-  its header comment has the command). `graph/src/graph/graphblas/mod.rs` re-exports them
+  its header comment has the command). `graph/src/graph/graphblas/mod.rs` re-exports them.
+  LAGraph's are in `crates/lagraph-sys/src/bindings.rs` the same way; the engine calls them
+  as `lagraph_sys::...`
 - Keep clippy clean under the strict set: pedantic, nursery and cargo, from
   `[workspace.lints]` in `Cargo.toml`, which CI enforces with `-D warnings`.
   Check it before every commit, in both feature sets:

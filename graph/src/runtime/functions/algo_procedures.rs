@@ -73,7 +73,6 @@ use crate::{
     graph::{
         attribute_store::AttributeStore,
         graph::{EdgeDirection, Graph, NodeId, RelationshipId},
-        graphblas::lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
     },
     runtime::{
         batch::{Batch, Column, classify_stored_column},
@@ -82,6 +81,7 @@ use crate::{
         value::Value,
     },
 };
+use lagraph_sys::{LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -377,7 +377,7 @@ unsafe fn create_lagraph_graph(
     let mut g: LAGraph_Graph = null_mut();
     let mut msg = new_msg();
     let mut adj_mut = adj;
-    let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
+    let info = lagraph_sys::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
     if info != 0 {
         // `LAGraph_New` only fails before taking the matrix, so the handle is
         // still live here. Free it when this call owned it; leave it alone when
@@ -396,7 +396,7 @@ unsafe fn create_lagraph_graph(
 /// Free an LAGraph_Graph.
 unsafe fn delete_lagraph_graph(g: &mut LAGraph_Graph) {
     let mut msg = new_msg();
-    lagraph_bindings::LAGraph_Delete(g, msg.as_mut_ptr());
+    lagraph_sys::LAGraph_Delete(g, msg.as_mut_ptr());
 }
 
 /// Free an LAGraph_Graph whose adjacency matrix is borrowed: detach `G->A`
@@ -609,7 +609,7 @@ unsafe fn cache_transpose(
     g: LAGraph_Graph,
     msg: *mut std::os::raw::c_char,
 ) {
-    lagraph_bindings::LAGraph_Cached_AT(g, msg);
+    lagraph_sys::LAGraph_Cached_AT(g, msg);
     if let Some(graph) = g.as_ref()
         && !graph.AT.is_null()
     {
@@ -792,7 +792,7 @@ fn register_pagerank(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
+                    GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
                     GrB_Vector_free,
                 };
 
@@ -836,12 +836,12 @@ fn register_pagerank(funcs: &mut Functions) {
                 // Cache AT and OutDegree (required for PageRank)
                 let mut msg = new_msg();
                 cache_transpose(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
+                lagraph_sys::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
 
                 // Run PageRank
                 let mut centrality: GrB_Vector = null_mut();
                 let mut iters: i32 = 0;
-                let info = lagraph_bindings::LAGr_PageRank(
+                let info = lagraph_sys::LAGr_PageRank(
                     &raw mut centrality,
                     &raw mut iters,
                     lag_g,
@@ -908,7 +908,7 @@ fn register_wcc(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
+                    GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
                     GrB_Vector_free,
                 };
 
@@ -948,7 +948,7 @@ fn register_wcc(funcs: &mut Functions) {
 
                 // Run connected components
                 let mut component: GrB_Vector = null_mut();
-                let info = lagraph_bindings::LAGr_ConnectedComponents(
+                let info = lagraph_sys::LAGr_ConnectedComponents(
                     &raw mut component,
                     lag_g,
                     msg.as_mut_ptr(),
@@ -1035,7 +1035,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
+                    GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
                     GrB_Vector_free,
                 };
 
@@ -1067,7 +1067,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
                 let mut msg = new_msg();
                 cache_transpose(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
+                lagraph_sys::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
 
                 // Select source nodes for sampling (all from compact matrix)
                 let n_nodes = compact_to_id.as_ref().map_or_else(
@@ -1098,7 +1098,7 @@ fn register_betweenness(funcs: &mut Functions) {
                 };
 
                 let mut centrality: GrB_Vector = null_mut();
-                let info = lagraph_bindings::LAGr_Betweenness(
+                let info = lagraph_sys::LAGr_Betweenness(
                     &raw mut centrality,
                     lag_g,
                     sources.as_ptr(),
@@ -1180,7 +1180,7 @@ fn register_bfs(funcs: &mut Functions) {
             let want_edges = yields & 0b10 != 0;
 
             unsafe {
-                use crate::graph::graphblas::{GrB_Vector, GrB_Vector_free, lagraphx_bindings};
+                use crate::graph::graphblas::{GrB_Vector, GrB_Vector_free};
 
                 // Run directly on full adjacency; no compaction needed for BFS.
                 // `adj` is freshly built and uniquely owned, so lend its handle
@@ -1200,7 +1200,7 @@ fn register_bfs(funcs: &mut Functions) {
 
                 // Use the extended BFS with max_level
                 let max_level = if max_depth < 0 { -1i64 } else { max_depth };
-                let info = lagraphx_bindings::LAGr_BreadthFirstSearch_Extended(
+                let info = lagraph_sys::LAGr_BreadthFirstSearch_Extended(
                     &raw mut level,
                     if want_edges { &raw mut parent } else { null_mut() },
                     lag_g,
@@ -1330,8 +1330,7 @@ fn register_cdlp(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    GrB_Matrix, GrB_Matrix_resize, GrB_Vector, lagraphx_bindings,
-                    GrB_Vector_free,
+                    GrB_Matrix, GrB_Matrix_resize, GrB_Vector, GrB_Vector_free,
                 };
 
                 // Match C implementation fast path for unfiltered run.
@@ -1368,7 +1367,7 @@ fn register_cdlp(funcs: &mut Functions) {
                 lag_g_ref.is_symmetric_structure = LAGraph_Boolean::LAGraph_TRUE;
 
                 let mut cdlp: GrB_Vector = null_mut();
-                let info = lagraphx_bindings::LAGraph_cdlp(
+                let info = lagraph_sys::LAGraph_cdlp(
                     &raw mut cdlp,
                     lag_g,
                     max_iterations,
@@ -1473,7 +1472,7 @@ fn register_msf(funcs: &mut Functions) {
             // For unweighted: use 1.0 for all entries
             // For weighted: use the attribute value
             unsafe {
-                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extract, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_reduce_Monoid, GrB_Matrix_select_UINT64, GrB_Matrix_wait, GrB_Monoid, GrB_Monoid_free, GrB_Monoid_new_UDT, GrB_IDENTITY_UINT64, GrB_SECOND_UINT64, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_VALUENE_UINT64, GrB_Vector, GrB_Vector_extractTuples_UDT, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals, GrB_WaitMode, lagraphx_bindings};
+                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extract, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_reduce_Monoid, GrB_Matrix_select_UINT64, GrB_Matrix_wait, GrB_Monoid, GrB_Monoid_free, GrB_Monoid_new_UDT, GrB_IDENTITY_UINT64, GrB_SECOND_UINT64, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_VALUENE_UINT64, GrB_Vector, GrB_Vector_extractTuples_UDT, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals, GrB_WaitMode};
 
                 let active_set: FxHashSet<u64> = active_nodes.iter().copied().collect();
 
@@ -1864,7 +1863,7 @@ fn register_msf(funcs: &mut Functions) {
                 let mut component_id: GrB_Vector = null_mut();
                 let mut msg = new_msg();
 
-                let info = lagraphx_bindings::LAGraph_msf(
+                let info = lagraph_sys::LAGraph_msf(
                     &raw mut forest_edges,
                     &raw mut component_id,
                     weighted_adj,
@@ -2791,7 +2790,6 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
         procedure: ["node", "score", "reachable"],
         fn algo_harmonic_centrality(runtime, args) {
             use crate::graph::graphblas::{
-                lagraphx_bindings,
                 GrB_ALL,
                 GrB_BOOL,
                 GrB_Vector,
@@ -2902,7 +2900,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
 
                 let mut scores: GrB_Vector = null_mut();
                 let mut reachable_nodes: GrB_Vector = null_mut();
-                let info = lagraphx_bindings::LAGr_HarmonicCentrality(
+                let info = lagraph_sys::LAGr_HarmonicCentrality(
                     &raw mut scores,
                     &raw mut reachable_nodes,
                     lag_g,
@@ -3281,9 +3279,7 @@ fn register_maxflow(funcs: &mut Functions) {
                 use crate::graph::graphblas::{
                     GrB_FP64, GrB_Index, GrB_MAX_FP64, GrB_Matrix, GrB_Matrix_build_FP64,
                     GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new,
-                    GrB_Matrix_nvals, GrB_Matrix_wait, GrB_WaitMode, lagraph_bindings,
-                    lagraphx_bindings,
-                };
+                    GrB_Matrix_nvals, GrB_Matrix_wait, GrB_WaitMode, };
 
                 let mut cap_mtx: GrB_Matrix = null_mut();
                 GrB_Matrix_new(&raw mut cap_mtx, GrB_FP64, total_nodes as u64, total_nodes as u64);
@@ -3324,11 +3320,11 @@ fn register_maxflow(funcs: &mut Functions) {
                 )?;
                 let mut msg = new_msg();
                 cache_transpose(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_EMin(lag_g, msg.as_mut_ptr());
+                lagraph_sys::LAGraph_Cached_EMin(lag_g, msg.as_mut_ptr());
 
                 let mut lag_max_flow: f64 = 0.0;
                 let mut flow_mtx: GrB_Matrix = null_mut();
-                let info = lagraphx_bindings::LAGr_MaxFlow(
+                let info = lagraph_sys::LAGr_MaxFlow(
                     &raw mut lag_max_flow,
                     &raw mut flow_mtx,
                     null_mut(),
