@@ -6,7 +6,7 @@ import RedisLayer.Resp
 | --- | --- |
 | `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:92`, `c_graph_name` `:106`, `c_graph_key` `:121` |
 | `Reg.*`                     | `register_graph` `:142`, `graph_is_registered` `:190`, `rename_graph` `:250`, `graph_free` `:1858` |
-| `keyOfWrite`                | `key_of_write` `:220` (#3850/#3851) |
+| `keyOfWrite`                | `key_of_write` `:223` (#3850/#3851) |
 | `modified`                  | `WriteQueryOk::new` `:303` |
 | `sanitise`                  | `ffi::sanitise_error` `:362` |
 | `invalidVersionBytes`       | `reply_invalid_graph_version` `:1038` |
@@ -146,7 +146,7 @@ theorem rename_moves (r : Reg) (o n : List Char) (g : Nat) (h : r.get o = some g
     congr 2; congr 1; funext p; simp [Bool.and_comm]
   rw [e, get_filter_self]
 
-/-! ## `key_of_write` (`:220`, #3850/#3851): the key a write is published under
+/-! ## `key_of_write` (`:223`, #3850/#3851): the key a write is published under
 
 `ks k` is the graph allocation the keyspace holds at key `k` (`key_holds_graph`, `redis_type.rs:577`,
 is `ks k = some g`: TelemetryLoop `keyHolds_iff`). `main` is `is_main_thread()`. The registry

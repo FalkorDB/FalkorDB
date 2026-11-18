@@ -217,7 +217,10 @@ pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
 /// A key that is not valid UTF-8 is the exception. `admitted` is the lossy rendering
 /// of its bytes, so nothing here can open it, and it is taken as it was before this
 /// check existed, on the registry's word.
-fn key_of_write(
+///
+/// `GRAPH.BULK` asks the same question of a batch it built on a worker, and of a
+/// failed `BEGIN` batch before taking its graph back out of the keyspace.
+pub fn key_of_write(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     admitted: &Arc<str>,
