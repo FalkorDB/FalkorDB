@@ -289,8 +289,9 @@ fn discard_created_graph(
     // The graph was created under C's name, so that — not the addressed key — is
     // what has to be taken back out of the keyspace.
     telemetry::delete_stream(ctx, &c_graph_name(key_str));
-    let key = ctx.open_key_writable(&c_graph_key(ctx, key_str));
-    let _ = key.delete();
+    if let Ok(key) = ctx.open_key_writable(&c_graph_key(ctx, key_str)) {
+        let _ = key.delete();
+    }
 }
 
 /// A command, held so a worker thread can replicate it after the calling context is
@@ -742,7 +743,7 @@ pub fn graph_bulk_insert(
     // creation below — and `discard_created_graph` on the failure paths — can re-open the
     // key without a second live handle to it.
     let existing = {
-        let key = ctx.open_key_writable(&key_str);
+        let key = ctx.open_key_writable(&key_str)?;
         let found = key
             .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
             .map_err(wrong_type_compat)?
@@ -824,7 +825,7 @@ pub fn graph_bulk_insert(
     } else {
         // Created under C's name and stored at the key rebuilt from it, not at
         // the key the command addressed — see `c_graph_key`.
-        let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
         let name = c_graph_name(&key_str);
         let g = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,

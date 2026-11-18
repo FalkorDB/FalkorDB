@@ -2980,6 +2980,43 @@ updating clause.")
         self.env.assertEqual(res.nodes_deleted, 2)
         self.get_res_and_assertEquals("MATCH (p:Person) RETURN count(p)", [[1]])
 
+    def test_54_1_where_after_a_write_does_not_starve_it(self):
+        """A WHERE of a later MATCH filters the rows after the CALL {} body
+        wrote, never before: the filter was pushed onto the rows feeding the
+        write, so a constant-false WHERE skipped the write altogether
+        (#748, #997). The node count must not depend on the predicate."""
+
+        queries = [
+            # https://github.com/FalkorDB/FalkorDB/issues/997
+            "CALL { CREATE () } UNWIND 0 AS x MATCH () WHERE false RETURN 0",
+            "CALL { CREATE () } UNWIND 0 AS x MATCH () WHERE (CASE WHEN true THEN false ELSE x END) RETURN 0",
+            # https://github.com/FalkorDB/FalkorDB/issues/748
+            "WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0",
+            "WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } WITH * MATCH () WHERE false RETURN 0",
+        ]
+        for i, q in enumerate(queries):
+            g = self.db.select_graph(f"where_after_write_{i}")
+            res = g.query(q)
+            self.env.assertEqual(res.nodes_created, 1, message=q)
+            self.env.assertEqual(res.result_set, [], message=q)
+
+        # A predicate on the outer rows runs after the writes of every row
+        g = self.db.select_graph("where_after_write_outer")
+        g.query("CREATE (:Z {v: 1}), (:Z {v: 2})")
+        res = g.query("""UNWIND [1, 2] AS x
+                                  CALL { CREATE (:T) }
+                                  MATCH (n:Z) WHERE x = 2
+                                  RETURN count(*)""")
+        self.env.assertEqual(res.nodes_created, 2)
+        self.env.assertEqual(res.result_set, [[2]])
+
+        res = g.query("""MATCH (a:Z)
+                                  CALL { WITH a SET a.w = 1 }
+                                  MATCH (b:Z) WHERE a.v = 5
+                                  RETURN count(*)""")
+        self.env.assertEqual(res.properties_set, 2)
+        self.env.assertEqual(res.result_set, [[0]])
+
     def test_55_body_variables_do_not_alias_the_imported_row(self):
         """A subquery body without an explicit `WITH` import must still be
         isolated from the outer row, not evaluate its own predicates against
