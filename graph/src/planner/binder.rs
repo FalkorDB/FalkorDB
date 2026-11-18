@@ -154,6 +154,10 @@ pub struct Binder {
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
     varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
+    /// Named relationships that a MATCH pattern bound, as (id, scope_id). A
+    /// later MATCH must not name one again (as C rejects): the repeat would
+    /// not join on the bound edge but bind a second, unrelated one.
+    match_rel_vars: std::collections::HashSet<(u32, u32)>,
     /// Scope tables no longer on `env_stack`: the scopes of a CALL body,
     /// popped when the body closes, and those of UNION branches, each bound
     /// by its own binder. The planner mints fresh variables at
@@ -172,6 +176,7 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
+            match_rel_vars: std::collections::HashSet::new(),
             retired_scope_vars: vec![],
         }
     }
@@ -433,11 +438,28 @@ impl Binder {
                 } else {
                     None
                 };
-                let pattern_result = self.bind_graph(&pattern, false);
+                for rel in pattern.relationships() {
+                    if let Some(name) = rel.alias.name()
+                        && let Some(var) = self.current_env().get(name)
+                        && self.match_rel_vars.contains(&(var.id, var.scope_id))
+                    {
+                        return Err(format!(
+                            "Cannot use the same relationship variable '{}' for multiple patterns.",
+                            rel.alias
+                        ));
+                    }
+                }
+                let pattern_result = self.bind_graph(&pattern, false, true);
                 if let Some(saved) = saved_labels {
                     self.node_labels = saved;
                 }
                 let pattern = pattern_result?;
+                for rel in pattern.relationships() {
+                    if !rel.alias.is_unnamed() {
+                        self.match_rel_vars
+                            .insert((rel.alias.id, rel.alias.scope_id));
+                    }
+                }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 if let Some(ref f) = filter
                     && !Self::expr_may_return_boolean(f.root())
@@ -512,7 +534,7 @@ impl Binder {
                     }
                 }
 
-                let pattern = self.bind_graph(&pattern, false)?;
+                let pattern = self.bind_graph(&pattern, false, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
                 Ok(QueryIR::Merge {
@@ -846,6 +868,10 @@ impl Binder {
             (saved_env_stack_len as u32..self.env_stack.len() as u32).collect();
         self.node_labels
             .retain(|&(scope_id, _), _| !inner_scope_ids.contains(&scope_id));
+        // Likewise the relationships the body's MATCH clauses bound: a later
+        // scope with the same id must not see them as already matched.
+        self.match_rel_vars
+            .retain(|&(_, scope_id)| !inner_scope_ids.contains(&scope_id));
 
         // 3. Capture subquery output, restore outer scope
         let subquery_env = self.current_env().clone();
@@ -1015,6 +1041,7 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
+                        match_rel_vars: std::collections::HashSet::new(),
                         retired_scope_vars: vec![],
                     };
 
@@ -1419,8 +1446,8 @@ impl Binder {
     /// numeric `Variable` IDs and checking that every referenced name is in
     /// scope.
     ///
-    /// The function walks the pattern in two groups (nodes, then
-    /// relationships).  For each entity it:
+    /// The function first defines every named relationship alias, then walks
+    /// the nodes and the relationships.  For each entity it:
     ///   1. Defines the alias in the current scope via `define_name_in_scope`.
     ///   2. Binds the inline property expression (`attrs`).
     ///
@@ -1440,10 +1467,22 @@ impl Binder {
     ///   - `false` (MATCH / MERGE) — an alias may shadow an outer-scope
     ///     definition (e.g. `MATCH (n) MATCH (n)` re-uses `n`).
     ///   - `true`  — redeclaration is an error.
+    ///
+    /// `merged_occurrences` says the parser folded every occurrence of a
+    /// repeated node alias into its `nodes()` entry (MATCH and pattern
+    /// predicates, see `Parser::add_pattern_node`). Then that entry's attrs
+    /// are every predicate on the node, and a relationship endpoint that
+    /// repeats the alias with attrs of its own shares that map instead of
+    /// carrying only its own entries: the planner lowers only the endpoints'
+    /// maps for a node that has relationships, so an entry written on another
+    /// occurrence would otherwise never be checked. CREATE, MERGE and pattern
+    /// comprehensions keep the first occurrence only, so their endpoints keep
+    /// their own maps.
     fn bind_graph(
         &mut self,
         graph: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
         is_create: bool,
+        merged_occurrences: bool,
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
 
@@ -1454,6 +1493,24 @@ impl Binder {
         for raw_path in graph.paths() {
             self.define_alias_in_scope(&raw_path.var, Type::Path, true)?;
             named_path_names.insert(raw_path.var.clone());
+        }
+
+        // Define the named relationship aliases before binding any node attrs.
+        // The parts of one MATCH clause are one pattern, so in
+        // `MATCH (a)-[r]->(b), (c {v: id(r)})` the node `c` is bound here
+        // together with `r`, and must see it as it sees `a`. The planner
+        // checks such attrs once every variable they read is bound. Nodes
+        // are still defined one by one, so a node's attrs cannot read a node
+        // that only appears later in the pattern.
+        for relationship in graph.relationships() {
+            if relationship.alias.name().is_some() {
+                let ty = if relationship.min_hops.is_some() {
+                    Type::Path
+                } else {
+                    Type::Relationship
+                };
+                self.define_alias_in_scope(&relationship.alias, ty, !is_create)?;
+            }
         }
 
         // Bind all nodes in the graph, merging duplicates by alias.
@@ -1519,7 +1576,11 @@ impl Binder {
                     .any(|l| !bound_node.labels.contains(l));
                 let has_extra_attrs = relationship.from.attrs.root().num_children() > 0;
                 if has_extra_labels || has_extra_attrs {
-                    let from_attrs = self.bind_expr(&relationship.from.attrs)?;
+                    let from_attrs = if merged_occurrences {
+                        bound_node.attrs.clone()
+                    } else {
+                        self.bind_expr(&relationship.from.attrs)?
+                    };
                     let mut merged_labels = bound_node.labels.clone();
                     for l in relationship.from.labels.iter() {
                         if !merged_labels.contains(l) {
@@ -1570,7 +1631,11 @@ impl Binder {
                     .any(|l| !bound_node.labels.contains(l));
                 let has_extra_attrs = relationship.to.attrs.root().num_children() > 0;
                 if has_extra_labels || has_extra_attrs {
-                    let to_attrs = self.bind_expr(&relationship.to.attrs)?;
+                    let to_attrs = if merged_occurrences {
+                        bound_node.attrs.clone()
+                    } else {
+                        self.bind_expr(&relationship.to.attrs)?
+                    };
                     let mut merged_labels = bound_node.labels.clone();
                     for l in relationship.to.labels.iter() {
                         if !merged_labels.contains(l) {
@@ -1776,7 +1841,7 @@ impl Binder {
         }
 
         // Bind the pattern - allow reuse since we've already validated
-        self.bind_graph(pattern, false)
+        self.bind_graph(pattern, false, false)
     }
 
     /// Checks whether an entity's unbound inline attrs contain a property
@@ -2019,7 +2084,7 @@ impl Binder {
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
-                let bound_graph = self.bind_graph(graph, false)?;
+                let bound_graph = self.bind_graph(graph, false, false)?;
 
                 let children = node_ref
                     .children()
@@ -2201,7 +2266,7 @@ impl Binder {
                         // (e.g. in WHERE clause OR branches) don't leak into
                         // the outer MATCH pattern's label accumulation.
                         let saved_labels = self.node_labels.clone();
-                        let result = self.bind_graph(&pattern, false);
+                        let result = self.bind_graph(&pattern, false, true);
                         self.node_labels = saved_labels;
 
                         // Remove pattern-local aliases so they don't leak into
