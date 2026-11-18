@@ -367,3 +367,37 @@ class testReplication(FlowTestsBase):
                 env.assertEqual(node_count(src, label), expected)
                 env.assertEqual(node_count(replica, label), expected)
 
+    # a write can register a label with no entity to carry it: OPTIONAL MATCH
+    # finds nothing, and SET n:L has interned L by then. the commit shipped no
+    # payload, so the replica never heard of L. the next payload numbers its
+    # labels from the master's dictionary, one past what the replica has: it
+    # was refused, the replica resynced in full, and a master replaying its own
+    # AOF exited on that record
+    def test_schema_only_write_is_replicated(self):
+        env = self.env
+        source_con = env.getConnection()
+        replica_con = env.getSlaveConnection()
+        graphname = "schema_only_write"
+        src = Graph(source_con, graphname)
+        replica = Graph(replica_con, graphname)
+
+        def labels(graph):
+            return sorted(row[0] for row in graph.ro_query("CALL db.labels()").result_set)
+
+        src.query("CREATE (:A)")
+        source_con.execute_command("WAIT", "1", "0")
+        sync_full_before = source_con.info("stats")["sync_full"]
+
+        src.query("OPTIONAL MATCH (n:Nope) SET n:OnlyRegistered")
+        source_con.execute_command("WAIT", "1", "0")
+        env.assertContains("OnlyRegistered", labels(src))
+        env.assertEqual(labels(replica), labels(src))
+
+        # its label is numbered after OnlyRegistered on the master
+        src.query("CREATE (:B)")
+        source_con.execute_command("WAIT", "1", "0")
+        env.assertEqual(labels(replica), labels(src))
+        res = replica.ro_query("MATCH (n:B) RETURN count(n)")
+        env.assertEqual(res.result_set[0][0], 1)
+        # as replicated commands, not through a forced resync
+        env.assertEqual(source_con.info("stats")["sync_full"], sync_full_before)
