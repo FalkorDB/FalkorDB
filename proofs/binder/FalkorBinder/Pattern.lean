@@ -14,8 +14,8 @@ fails with "'r' not defined".
 * Before #2981 `bind_graph` defined and bound **all nodes** (with their inline
   attrs) before **any relationship**, so a node's attrs could only see
   relationships of *earlier clauses*. Since #2981 it first defines every named
-  relationship alias (binder.rs:1380-1395), then the nodes (1404-1418), then
-  the relationships (1421-1557): a node's attrs see every relationship of the
+  relationship alias (binder.rs:1486-1502), then the nodes (1511-1525), then
+  the relationships (1527-1706): a node's attrs see every relationship of the
   pattern, and the planner checks such attrs once all they read is bound
   (`lift_cross_entity_attrs`).
 
@@ -25,12 +25,22 @@ left, and itself.
 -/
 namespace FalkorBinder
 
+/-- A written name stands for its `Alias::Named` (the test patterns below name every entity). -/
+instance : Coe Name Alias := ⟨Alias.named⟩
+
+/-- `Alias::name(..).is_some()` (ast.rs:97-102). -/
+def Alias.isNamed : Alias → Bool
+  | .named _ => true
+  | .anon _ => false
+
+/-- A pattern element: its `Alias` (a written name, or the parser's number for an unnamed
+entity, which no attr can mention) and the names its inline property map reads. -/
 inductive Elem
-  | node (alias : Name) (attrs : List Name)
-  | rel  (alias : Name) (attrs : List Name)
+  | node (alias : Alias) (attrs : List Name)
+  | rel  (alias : Alias) (attrs : List Name)
   deriving Repr, DecidableEq
 
-def Elem.alias : Elem → Name
+def Elem.alias : Elem → Alias
   | .node a _ => a
   | .rel a _ => a
 
@@ -47,35 +57,35 @@ order and `relationships()` in textual order — the interleaving is lost. -/
 def split (p : List Elem) : List Elem × List Elem :=
   (p.filter (·.isNode), p.filter (fun e => !e.isNode))
 
-def grow (scope : List Name) (a : Name) : List Name :=
+def grow (scope : List Alias) (a : Alias) : List Alias :=
   if scope.contains a then scope else scope ++ [a]
 
-theorem mem_grow {scope : List Name} {n : Name} (a : Name) (h : n ∈ scope) : n ∈ grow scope a := by
+theorem mem_grow {scope : List Alias} {n : Alias} (a : Alias) (h : n ∈ scope) : n ∈ grow scope a := by
   unfold grow; split <;> simp [h]
 
 /-- Scope checking of one element (`define_name_in_scope`, then `bind_expr`
 of its attrs): define its alias, then its attrs must be visible. -/
-def step (scope : List Name) (e : Elem) : Except String (List Name) :=
+def step (scope : List Alias) (e : Elem) : Except String (List Alias) :=
   let s := grow scope e.alias
-  if e.attrs.all (fun n => s.contains n) then .ok s
-  else .error s!"'{(e.attrs.find? (fun n => !s.contains n)).getD ""}' not defined"
+  if e.attrs.all (fun n => s.contains (.named n)) then .ok s
+  else .error s!"'{(e.attrs.find? (fun n => !s.contains (.named n))).getD ""}' not defined"
 
-def stepAll (scope : List Name) : List Elem → Except String (List Name)
+def stepAll (scope : List Alias) : List Elem → Except String (List Alias)
   | [] => .ok scope
   | e :: es => do stepAll (← step scope e) es
 
 /-- C / spec: textual order. -/
-def specBind (scope : List Name) (p : List Elem) : Except String (List Name) :=
+def specBind (scope : List Alias) (p : List Elem) : Except String (List Alias) :=
   stepAll scope p
 
-/-- The named relationship aliases `bind_graph` defines first (binder.rs:1387-1395; an
-`_anon` alias is skipped). -/
-def defRels (scope : List Name) (p : List Elem) : List Name :=
-  ((split p).2.filter (fun e => !e.alias.startsWith "_anon")).foldl (fun s e => grow s e.alias) scope
+/-- The named relationship aliases `bind_graph` defines first (binder.rs:1493-1502; an
+unnamed one, `alias.name()` = `None`, is skipped). -/
+def defRels (scope : List Alias) (p : List Elem) : List Alias :=
+  ((split p).2.filter (fun e => e.alias.isNamed)).foldl (fun s e => grow s e.alias) scope
 
-/-- `bind_graph` (binder.rs:1364): named relationship aliases, then nodes, then
+/-- `bind_graph` (binder.rs:1470): named relationship aliases, then nodes, then
 relationships (#2981; before it, nodes then relationships). -/
-def rustBind (scope : List Name) (p : List Elem) : Except String (List Name) :=
+def rustBind (scope : List Alias) (p : List Elem) : Except String (List Alias) :=
   do stepAll (← stepAll (defRels scope p) (split p).1) (split p).2
 
 /-- #2923's shape inside one MATCH: `(a)-[r]->(b), (c {v: id(r)})`. -/
@@ -102,6 +112,14 @@ theorem node_attr_later_rel :
     specBind [] [.node "a" ["r"], .rel "r" [], .node "b" []] = .error "'r' not defined" := by
   decide
 
+/-- Only named relationships are defined first (`alias.name().is_some()`): an unnamed one is
+left to the relationship loop, and a written name is a name whatever its spelling, so
+`(a {v: id(_anon_0)})-[_anon_0]->(b)` is accepted like any other later relationship. -/
+theorem defRels_named_only :
+    defRels [] [.node "a" [], .rel (.anon 0) [], .rel "_anon_0" [], .node "b" []] = [.named "_anon_0"] ∧
+    (rustBind [] [.node "a" ["_anon_0"], .rel "_anon_0" [], .node "b" []]).isOk = true := by
+  decide
+
 /-- Nodes are still defined one by one: a node's attrs cannot read a node later in the pattern
 (`(a {v: b.v})-[r]->(b)`), in Rust as in C. -/
 theorem node_attr_later_node_rejected :
@@ -121,15 +139,15 @@ theorem self_reference_ok :
     (rustBind [] [.node "a" ["a"]]).isOk = true ∧ (specBind [] [.node "a" ["a"]]).isOk = true := by
   decide
 
-theorem step_ok_of_outer {scope : List Name} {e : Elem} (h : ∀ n ∈ e.attrs, n ∈ scope) :
+theorem step_ok_of_outer {scope : List Alias} {e : Elem} (h : ∀ n ∈ e.attrs, Alias.named n ∈ scope) :
     step scope e = .ok (grow scope e.alias) := by
   unfold step
   have : e.attrs.all (fun n => (grow scope e.alias).contains n) = true := by
     rw [List.all_eq_true]; intro x hx; simpa using mem_grow e.alias (h x hx)
   simp only [this, ite_true]
 
-theorem stepAll_ok_of_outer (scope : List Name) (p : List Elem)
-    (h : ∀ e ∈ p, ∀ n ∈ e.attrs, n ∈ scope) : (stepAll scope p).isOk = true := by
+theorem stepAll_ok_of_outer (scope : List Alias) (p : List Elem)
+    (h : ∀ e ∈ p, ∀ n ∈ e.attrs, Alias.named n ∈ scope) : (stepAll scope p).isOk = true := by
   induction p generalizing scope with
   | nil => rfl
   | cons e es ih =>
@@ -139,7 +157,7 @@ theorem stepAll_ok_of_outer (scope : List Name) (p : List Elem)
     intro e' he' n hn
     exact mem_grow _ (h e' (by simp [he']) n hn)
 
-theorem foldGrow_mono : ∀ (l : List Elem) (scope : List Name) (n : Name), n ∈ scope →
+theorem foldGrow_mono : ∀ (l : List Elem) (scope : List Alias) (n : Alias), n ∈ scope →
     n ∈ l.foldl (fun s e => grow s e.alias) scope
   | [], _, _, h => h
   | e :: es, scope, n, h => foldGrow_mono es _ n (mem_grow _ h)
@@ -147,8 +165,8 @@ theorem foldGrow_mono : ∀ (l : List Elem) (scope : List Name) (n : Name), n �
 /-- **Agreement.** When every property map only mentions variables bound
 *before* the clause, the two orders accept the same patterns — so the
 divergence is exactly intra-pattern references. -/
-theorem agree_on_outer_refs (scope : List Name) (p : List Elem)
-    (h : ∀ e ∈ p, ∀ n ∈ e.attrs, n ∈ scope) :
+theorem agree_on_outer_refs (scope : List Alias) (p : List Elem)
+    (h : ∀ e ∈ p, ∀ n ∈ e.attrs, Alias.named n ∈ scope) :
     (rustBind scope p).isOk = true ∧ (specBind scope p).isOk = true := by
   refine ⟨?_, stepAll_ok_of_outer scope p h⟩
   unfold rustBind
@@ -164,7 +182,7 @@ theorem agree_on_outer_refs (scope : List Name) (p : List Elem)
     exact stepAll_ok_of_outer s1 _ (fun e he n hn =>
       hsub n (h e ((List.mem_filter.1 he).1) n hn))
 where
-  stepAll_mono (scope : List Name) (p : List Elem) (s : List Name)
+  stepAll_mono (scope : List Alias) (p : List Elem) (s : List Alias)
       (hs : stepAll scope p = .ok s) : ∀ n ∈ scope, n ∈ s := by
     induction p generalizing scope with
     | nil => simp [stepAll] at hs; subst hs; exact fun _ h => h
@@ -202,11 +220,11 @@ def fold : List RawClause → List RawClause
     | c, r => c :: r
 
 /-- Clause-by-clause scope checking with a pattern binder. -/
-def bindClauses (bindPat : List Name → List Elem → Except String (List Name))
-    (scope : List Name) : List RawClause → Except String (List Name)
+def bindClauses (bindPat : List Alias → List Elem → Except String (List Alias))
+    (scope : List Alias) : List RawClause → Except String (List Alias)
   | [] => .ok scope
   | .match_ p _ :: rest => do bindClauses bindPat (← bindPat scope p) rest
-  | .with_ items :: rest => bindClauses bindPat items rest
+  | .with_ items :: rest => bindClauses bindPat (items.map Alias.named) rest
 
 def q2923 : List RawClause :=
   [.match_ [.node "a" [], .rel "r" [], .node "b" []] false, .match_ [.node "c" ["r"]] false]

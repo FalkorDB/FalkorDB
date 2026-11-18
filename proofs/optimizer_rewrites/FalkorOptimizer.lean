@@ -176,7 +176,7 @@ node, labels, relationships and attributes are not written); `RowSound` is the o
    `bug748_with_star_control`, `bug997_case_control`; `bug748_fixed`/`bug997_fixed` for a write barrier.
    **Fixed by #3582** (write kinds excluded, siblings of a writing branch locked, `Cfg.pr3582`):
    `pr3582_748_fixed`, `pr3582_997_fixed`, `pr3582_left_untouched`, `pr3582_write_excluded`,
-   `pr3582_controls`; #3352 below is still open there (`pr3582_3352_open`).
+   `pr3582_controls`; #3352 below is fixed there too by #2981 (`pr3582_3352_fixed`).
 10. **#3352: filter push-down mistakes a pre-WITH variable for `r`** — Case 2
    (`push_filters_down.rs:233-236`) inherits `collect_subtree_variables` of the Apply's
    left subtree, and `get_variables` (`runtime.rs:319-323`) walks through `Aggregate`

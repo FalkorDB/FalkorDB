@@ -596,7 +596,8 @@ theorem bug3352_fixed :
 
 The PR keeps main's id-only routing (`Cfg.pr3582`) and adds the write lock.
 #748 and #997 are fixed: the filter lands on the write-bearing branch's output,
-never on the rows that feed it. #3352 is untouched (a routing bug, no write). -/
+never on the rows that feed it. #3352 is a routing bug with no write, untouched by the lock;
+#2981 fixes it (`pr3582_3352_fixed`). -/
 
 /-- At an `Apply` whose right branch writes, the left branch is never filtered:
 the Filter either stays or goes onto the right branch only. -/
@@ -641,17 +642,15 @@ theorem pr3582_controls :
     run [] (pushFilters .pr3582 plan748star) g0 = .ok ([], ⟨1, [], []⟩) ∧
     run [] (pushFilters .pr3582 (plan997With caseX)) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
 
-/-- #3352 is still open with #3582 (no write below, so the lock never fires):
-the push-down is still not `RowSound`. -/
-theorem pr3582_3352_open :
+/-- #3352 under #3582 and #2981 (the Rust of this branch): no write below, so the lock never
+fires, and Case 2 inherits `branch_visible_variables`, so the filter on `r` stays above the
+traverse and the row is kept. (On main before #2981 this was `pr3582_3352_open`: `e = null`,
+not `RowSound`.) -/
+theorem pr3582_3352_fixed :
     pushFilters .pr3582 plan3352 = pushFilters .main plan3352 ∧
-    run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) ∧
-    ¬ RowSound (pushFilters .pr3582) := by
-  refine ⟨rfl, rfl, fun h => ?_⟩
-  have := h plan3352 g3352
-  rw [show run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) from rfl,
-      show run [] plan3352 g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) from rfl] at this
-  simp [Same, Except.map] at this
+    pushFilters .pr3582 plan3352 = plan3352 ∧
+    run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) :=
+  ⟨rfl, rfl, rfl⟩
 
 /-! ## A general fact the fix can build on -/
 

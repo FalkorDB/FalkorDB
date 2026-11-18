@@ -15,7 +15,7 @@ reads as the Rust computes them, and decides the premise.
 | `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`, `:979-986`) and the preserved `Argument` leaf (`preserved_argument`, `:952`, `:1181`) |
 | `salvagedSteps`                        | `salvaged_filters` wrapped above the chain (`:1240-1246`, `:1156-1176`) |
 | `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` (`:214`) |
-| `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981, `:1286-1390`) |
+| `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981, `:1402-1477`) |
 
 Result: the premise is **not** a fact about the Rust. `is_planner_scan_subtree` accepts a scan
 with *any* child, but `argument_leaf_of` keeps only an `Argument`; a child such as `Unwind`
@@ -156,7 +156,7 @@ theorem salvage_loses_row :
   simp [wellScoped, exSteps, salvagedSteps, filtersOf, exChild, seedBound, b, k, argVars,
     argumentLeafOf] at hw
 
-/-! ### The no-swap leaf rewrite (#2981, `select_scan_node.rs:1286-1390`)
+/-! ### The no-swap leaf rewrite (#2981, `select_scan_node.rs:1402-1477`)
 
 When the bottom traverse keeps its direction (`effectively_leaf`) and its child is a planner scan,
 the scan is pruned and `make_scan_subtree(from, ..)` scans the traverse's `from`. Before #2981 the
@@ -164,7 +164,7 @@ spine's filters always went inside the new scan subtree (`salvaged_filters`), so
 pruned scan's own node, when that node is the traverse's *other* endpoint (an earlier clause stitched
 in, `MATCH (a {v: 1}) MATCH (a)<-[]-(b {v: 0})`), was evaluated before anything bound it. Now, when
 `planner_scan_alias(child) ≠ (from.id, from.scope)`, they go above the traverse (`filters_above`,
-:1323-1336, :1366-1388). -/
+:1412-1426, :1454-1477). -/
 
 /-- The chain this branch builds from the seed (the new scan's node and the `Argument`): the
 salvaged filters inside the scan subtree (below the hop), or, when the pruned scan was for another

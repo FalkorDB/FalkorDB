@@ -52,7 +52,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | `defineName`, `ensureType` | `define_name_in_scope` :2160, `ensure_type` :2276 |
 | `projectName` | `project_name` :2182 |
 | `bindProjection`, `projectItems` | `bind_projection` :1064-1306 (non-`*` form) |
-| `rustBind` / `specBind`, `Elem`, `split` | `bind_graph` :1333 (nodes 1356, then rels 1373) / C's textual order |
+| `rustBind` / `specBind`, `defRels`, `Elem`, `split` | `bind_graph` :1470 (named rels 1493, nodes 1511, then rels 1527) / C's textual order |
 | `fold`, `bindClauses` | `parse_pattern` part separator parser/cypher.rs:1565-1582 (and :2117 for predicates) |
 | `mergeSV`, `lenAt` | `merge_scope_vars` :2711, `Binder::bind` :99 |
 | `foreachRestore` | FOREACH arm of `bind_ir` :673-709 |
