@@ -20,9 +20,11 @@ import RuntimeCore.Accessors
   `uniqueViolated_agrees` shows it equals this label-scan spec under the
   constraint's pre-commit invariant; `check` stays as that reference spec, and
   `UQ.checkMandatory_eq_old` shows MANDATORY is unchanged.
-* `affected_spec`, `enforce_spec` — `enforce_constraints` (:1484): affected =
+* `affected_spec`, `enforce_spec` — `enforce_constraints` (:1500): affected =
   (created ∪ staged-attr ∪ staged-label nodes) \ deleted, edges likewise; the
-  query fails iff some *operational* constraint's check fails.
+  query fails iff some constraint that is not FAILED (OPERATIONAL or, since
+  #3854, UNDER CONSTRUCTION) has a failing check (`enforce_operational`,
+  `enforce_underConstruction`, `enforce_skips_failed`).
 * `commit_spec` — `Pending::commit` (:1338), graph operations uninterpreted
   (`GOps`): the statistics it adds are `|created_nodes|`,
   `|created_rel_types|`, `Σ|remove_labels|`, the attribute writers' counts,
@@ -222,26 +224,57 @@ theorem affected_spec (p : P) (n : Nat) :
   · rintro ⟨(((h | h) | h) | h), hd⟩ <;> simp_all
   · rintro ⟨(h | h | h | h), hd⟩ <;> simp_all
 
+/-- `ConstraintStatus` (graph/constraint.rs:27). -/
+inductive CStatus where
+  | underConstruction
+  | operational
+  | failed
+  deriving DecidableEq
+
 structure Constraint where
-  operational : Bool
+  status : CStatus
   isNode : Bool
   ok : Bool   -- the value of `checkNode` / `check_edge_constraint` for it
 
-/-- `enforce_constraints` (:1484): no constraints ⇒ `Ok`; otherwise every
-operational constraint's check, in order, `?` on the first failure. -/
-def enforce (cs : List Constraint) : Bool := cs.all fun c => !c.operational || c.ok
+/-- `enforce_constraints` (:1500): no constraints ⇒ `Ok`; otherwise the check of
+every constraint that has not failed, in order, `?` on the first failure. Since
+#3854 an UNDER CONSTRUCTION constraint binds writes too (C's
+`Schema_EnforceConstraints` skips only `CT_FAILED`); before, only OPERATIONAL
+ones were checked. -/
+def enforce (cs : List Constraint) : Bool := cs.all fun c => c.status == .failed || c.ok
 
 theorem enforce_spec (cs : List Constraint) :
-    enforce cs = true ↔ ∀ c ∈ cs, c.operational = true → c.ok = true := by
-  simp only [enforce, List.all_eq_true, Bool.or_eq_true, Bool.not_eq_true']
+    enforce cs = true ↔ ∀ c ∈ cs, c.status ≠ .failed → c.ok = true := by
+  simp only [enforce, List.all_eq_true, Bool.or_eq_true, beq_iff_eq]
   constructor
-  · intro h c hc ho; rcases h c hc with h | h
-    · rw [ho] at h; cases h
+  · intro h c hc hf; rcases h c hc with h | h
+    · exact absurd h hf
     · exact h
   · intro h c hc
-    cases ho : c.operational
-    · exact .inl rfl
-    · exact .inr (h c hc ho)
+    by_cases hf : c.status = .failed
+    · exact .inl hf
+    · exact .inr (h c hc hf)
+
+/-- The pre-#3854 guarantee still holds: a failing OPERATIONAL constraint fails the query. -/
+theorem enforce_operational (cs : List Constraint) (h : enforce cs = true) :
+    ∀ c ∈ cs, c.status = .operational → c.ok = true := fun c hc ho =>
+  (enforce_spec cs).1 h c hc (by rw [ho]; decide)
+
+/-- #3854: a failing UNDER CONSTRUCTION constraint now fails the query, closing the
+window in which a write committed between the settle's read and its publish was
+checked by neither side. -/
+theorem enforce_underConstruction (cs : List Constraint) (h : enforce cs = true) :
+    ∀ c ∈ cs, c.status = .underConstruction → c.ok = true := fun c hc hu =>
+  (enforce_spec cs).1 h c hc (by rw [hu]; decide)
+
+/-- A FAILED constraint never blocks a write. -/
+theorem enforce_skips_failed (cs : List Constraint) :
+    enforce cs = enforce (cs.filter (·.status ≠ .failed)) := by
+  apply Bool.eq_iff_iff.2
+  rw [enforce_spec, enforce_spec]
+  constructor
+  · intro h c hc hf; exact h c (List.mem_filter.1 hc).1 hf
+  · intro h c hc hf; exact h c (List.mem_filter.2 ⟨hc, by simpa using hf⟩) hf
 
 /-! ## `Pending::commit` -/
 
