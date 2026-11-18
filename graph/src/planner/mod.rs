@@ -2202,12 +2202,12 @@ impl Planner {
                     .expect("the leading walk is one of the component's hops");
                 let mut next = Some(rest.remove(first));
                 while let Some(r) = next {
-                    bound.insert((r.from.alias.id, r.from.alias.scope_id));
-                    bound.insert((r.to.alias.id, r.to.alias.scope_id));
+                    bound.insert((r.from.alias.scope_id, r.from.alias.id));
+                    bound.insert((r.to.alias.scope_id, r.to.alias.id));
                     ordered.push(r);
                     let pos = rest.iter().position(|r| {
-                        bound.contains(&(r.from.alias.id, r.from.alias.scope_id))
-                            || bound.contains(&(r.to.alias.id, r.to.alias.scope_id))
+                        bound.contains(&(r.from.alias.scope_id, r.from.alias.id))
+                            || bound.contains(&(r.to.alias.scope_id, r.to.alias.id))
                     });
                     next = pos
                         .or_else(|| (!rest.is_empty()).then_some(0))

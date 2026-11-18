@@ -60,17 +60,17 @@ graph/src/parser/ast.rs	ExprIR::and_of	428	PROVEN	E.andOf = flat .and true (Expr
 graph/src/parser/ast.rs	ExprIR::or_of	434	PROVEN	E.orOf = flat .or false; AndOf.tv_orOf (three-valued value = Kleene OR of the operands); with runtime errors: optimizer_rewrites AndOf.flat_eval (o = true)
 graph/src/parser/ast.rs	ExprIR::flat	441	PROVEN	E.flat/flatBody/spliceOp: flat_eq_body (early return is a shortcut), flat_nil (identity), flat_single, flat_single_same, flat_many (splice in order, take_out keeps position), spliceOp_other (other operators never merged); optimizer_rewrites AndOf.flatT_eq_body, scL_splice (associativity with errors/nulls/short-circuit), flat_eval
 graph/src/parser/ast.rs	ExprIR::fmt	472	PROVEN	Ast2.exprFmt (every variant), exprFmt_ops_distinct, exprFmt_param, exprFmt_func
-graph/src/parser/ast.rs	QuantifierType::fmt	472	PROVEN	Ast2.quantFmt, quantFmt_injective
+graph/src/parser/ast.rs	QuantifierType::fmt	566	PROVEN	Ast2.quantFmt, quantFmt_injective
 graph/src/parser/ast.rs	SupportAggregation::is_aggregation	583	PROVEN	Ast.isAggregation (trait method = any aggregate call in the tree): isAggregation_root/_child/_leaf
-graph/src/parser/ast.rs	is_aggregation	583	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf
-graph/src/parser/ast.rs	is_aggregation	583	PROVEN	Ast.isAggregation (raw-name impl, same DFS any)
-graph/src/parser/ast.rs	QueryNode::fmt	566	PROVEN	Ast.fmtNode, fmtNode_plain
+graph/src/parser/ast.rs	is_aggregation	587	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf
+graph/src/parser/ast.rs	is_aggregation	598	PROVEN	Ast.isAggregation (raw-name impl, same DFS any)
+graph/src/parser/ast.rs	QueryNode::fmt	623	PROVEN	Ast.fmtNode, fmtNode_plain
 graph/src/parser/ast.rs	QueryNode::new	636	PROVEN	Ast.new_spec
-graph/src/parser/ast.rs	QueryRelationship::fmt	623	PROVEN	Ast.fmtRel, fmtRel_untyped
-graph/src/parser/ast.rs	QueryRelationship::new	636	PROVEN	Ast.new_spec (all_shortest_paths = No)
-graph/src/parser/ast.rs	QueryPath::new	636	PROVEN	Ast.new_spec
+graph/src/parser/ast.rs	QueryRelationship::fmt	684	PROVEN	Ast.fmtRel, fmtRel_untyped
+graph/src/parser/ast.rs	QueryRelationship::new	712	PROVEN	Ast.new_spec (all_shortest_paths = No)
+graph/src/parser/ast.rs	QueryPath::new	749	PROVEN	Ast.new_spec
 graph/src/parser/ast.rs	QueryGraph::default	772	PROVEN	Ast.new_spec (empty nodes/rels/paths)
-graph/src/parser/ast.rs	QueryGraph::fmt	684	PROVEN	Ast.fmtGraph, fmtGraph_empty
+graph/src/parser/ast.rs	QueryGraph::fmt	785	PROVEN	Ast.fmtGraph, fmtGraph_empty
 graph/src/parser/ast.rs	merge_attr_maps	808	PROVEN	Ast.mergeAttrs_eq (entries concatenated, duplicates kept)
 graph/src/parser/ast.rs	QueryGraph::add_node	826	PROVEN	Ast.addNode_spec
 graph/src/parser/ast.rs	QueryGraph::merge_node	846	PROVEN	Ast.mergeNode_present (labels unioned via extendLabels_mem, attrs concatenated, same position), mergeNode_absent
@@ -87,7 +87,7 @@ graph/src/parser/ast.rs	QueryGraph::filter_visited	936	PROVEN	Ast.filterVisited_
 graph/src/parser/ast.rs	QueryGraph::connected_components	964	PROVEN	Ast2.components_cover (every node visited / in some component), dfs_mono
 graph/src/parser/ast.rs	QueryGraph::dfs	985	PROVEN	Ast2.dfs (one id-only visited set for nodes, rels, paths): dfs_mono, dfs_marks, relStep_mono
 graph/src/parser/ast.rs	SetItem::fmt	1040	PROVEN	Ast2.setItemFmt_replace, setItemFmt_merge
-graph/src/parser/ast.rs	QueryIR::fmt	1040	PROVEN	Ast2.clauseFmt, clauseFmt_union, clauseFmt_match
+graph/src/parser/ast.rs	QueryIR::fmt	1185	PROVEN	Ast2.clauseFmt, clauseFmt_union, clauseFmt_match
 graph/src/parser/ast.rs	QueryIR::validate	1294	PROVEN	Ast.validate: call_then_match_rejected, call_then_unwind_rejected, call_then_create_multi_type_rejected (#3297), with_last_rejected (#3291), validate_ends
 graph/src/parser/ast.rs	QueryIR::inner_validate	1300	PROVEN	Ast.innerValidate: call_validates_rest, call_transparent (#3297 fixes W4-plan-4), with_last_rejected (#3291), validate_ends, create_multi_type
 graph/src/parser/ast.rs	validate_set_items	1478	PROVEN	Ast.setItemsOk_spec
