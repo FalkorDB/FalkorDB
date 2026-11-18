@@ -1882,7 +1882,7 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // now, in the same callback, or a save could persist a stream nothing
         // will strip again. Queued, not deleted: the server is part-way through
         // removing this graph's key.
-        telemetry::orphan_streams_of_freed_graph(names);
+        telemetry::queue_streams_of_freed_graph(names);
         // Drop off the main Redis thread so Index::drop routes through the
         // GIL-acquiring path (see register_graph for the rationale).
         std::thread::spawn(move || {

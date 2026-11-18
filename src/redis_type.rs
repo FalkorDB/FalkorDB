@@ -419,7 +419,7 @@ pub unsafe extern "C" fn on_persistence(
 /// that has left the registry is not there to be found, so `graph_free` queues its
 /// stream and this pass deletes what is queued as well.
 unsafe fn strip_telemetry_streams(ctx: *mut RedisModuleCtx) {
-    telemetry::strip_orphaned_streams(ctx);
+    telemetry::delete_streams_of_freed_graphs(ctx);
     // Names copied out and the lock released before any key is touched: deleting a
     // key calls back into the module (keyspace events), and nothing done under the
     // registry lock should be able to come back for it.

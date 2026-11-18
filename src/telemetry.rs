@@ -6,7 +6,6 @@
 
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
-use graph::thread_id::is_main_thread;
 use parking_lot::{Mutex, RwLock};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
@@ -20,7 +19,7 @@ use valkey_module::{Context, ValkeyString, ValkeyValue, raw};
 
 use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
 use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, up_to_nul};
-use crate::query_session::hold_gil;
+use crate::query_session::{hold_gil, holds_gil};
 use crate::redis_type::key_holds_graph;
 
 /// Maximum stored string length for query/params in telemetry entries.
@@ -346,7 +345,7 @@ fn stream_entries(
 /// lose its stream because the master saved.
 ///
 /// The GIL must be held, and the caller must not be inside a type callback (see
-/// [`orphan_streams_of_freed_graph`]). Safe in a fork child: it takes no lock of
+/// [`queue_streams_of_freed_graph`]). Safe in a fork child: it takes no lock of
 /// this module's.
 pub fn strip_stream(
     ctx: *mut raw::RedisModuleCtx,
@@ -374,20 +373,20 @@ pub fn strip_stream(
 }
 
 /// Keys of graphs that have been freed and whose telemetry streams are still to be
-/// deleted, see [`orphan_streams_of_freed_graph`].
+/// deleted, see [`queue_streams_of_freed_graph`].
 ///
 /// The list and the flag that says it is non-empty change together, through
 /// [`Self::push`] and [`Self::take`] only. The flag is what the flusher polls, so
 /// that an idle one takes neither this lock nor the GIL.
 ///
 /// The lock is taken only on the main thread or under the GIL, so it is never held
-/// across a fork: [`strip_orphaned_streams`] takes it in a fork child.
-struct OrphanedStreams {
+/// across a fork: [`delete_streams_of_freed_graphs`] takes it in a fork child.
+struct FreedGraphStreams {
     names: Mutex<Vec<String>>,
     pending: AtomicBool,
 }
 
-impl OrphanedStreams {
+impl FreedGraphStreams {
     const fn new() -> Self {
         Self {
             names: Mutex::new(Vec::new()),
@@ -421,7 +420,7 @@ impl OrphanedStreams {
     }
 }
 
-static ORPHANED_STREAMS: OrphanedStreams = OrphanedStreams::new();
+static FREED_GRAPH_STREAMS: FreedGraphStreams = FreedGraphStreams::new();
 
 /// Queue the telemetry streams of a graph that has just been freed for deletion,
 /// given the keys it was registered under. Called from the graph type's free
@@ -432,7 +431,7 @@ static ORPHANED_STREAMS: OrphanedStreams = OrphanedStreams::new();
 /// `_GraphContextType_Free`: the server calls the free callback part-way through
 /// removing the graph's own key, and deleting a second key out of the same table at
 /// that point corrupts it (seen as a heap-corruption abort on a later allocation).
-/// Two things empty the queue, both through [`strip_orphaned_streams`]:
+/// Two things empty the queue, both through [`delete_streams_of_freed_graphs`]:
 ///
 /// * the persistence strip, synchronously at the start of every save, so that no
 ///   snapshot can hold a stream whose graph is gone — the property C deletes
@@ -440,23 +439,27 @@ static ORPHANED_STREAMS: OrphanedStreams = OrphanedStreams::new();
 /// * the flusher, within one [`FLUSH_INTERVAL`], and before it writes anything, so a
 ///   graph recreated under the same key cannot have entries in the stream by then.
 ///
-/// Only for a free on the main thread. Off it the caller is the server's lazy-free
-/// thread: the graph type reports no free effort, so `UNLINK` frees inline like
-/// `DEL`, and the only values freed lazily are those of a database flushed
-/// asynchronously — whose streams went with it.
-pub fn orphan_streams_of_freed_graph(names: Vec<String>) {
-    if names.is_empty() || !is_main_thread() {
+/// Only for a free on a thread that holds the GIL. That is the main thread, and also
+/// a worker whose key lookup made the server expire the graph there and then (the
+/// flusher's own `key_holds_graph` can). The one caller without the GIL is the
+/// server's lazy-free thread: the graph type reports no free effort, so `UNLINK`
+/// frees inline like `DEL`, and the only values freed lazily are those of a
+/// database flushed asynchronously — whose streams went with it.
+pub fn queue_streams_of_freed_graph(names: Vec<String>) {
+    if names.is_empty() || !holds_gil() {
         return;
     }
-    ORPHANED_STREAMS.push(names);
+    FREED_GRAPH_STREAMS.push(names);
 }
 
-/// Delete the telemetry streams queued by [`orphan_streams_of_freed_graph`].
+/// Delete the telemetry streams queued by [`queue_streams_of_freed_graph`]: one
+/// stream per graph freed since the last call, and nothing else. No key is scanned
+/// for, and with nothing queued this is one atomic load.
 ///
 /// The GIL must be held, and the caller must be somewhere a key may be deleted: not
 /// inside a type callback.
-pub fn strip_orphaned_streams(ctx: *mut raw::RedisModuleCtx) {
-    for name in &ORPHANED_STREAMS.take() {
+pub fn delete_streams_of_freed_graphs(ctx: *mut raw::RedisModuleCtx) {
+    for name in &FREED_GRAPH_STREAMS.take() {
         strip_stream(ctx, name);
     }
 }
@@ -1167,9 +1170,9 @@ fn flusher_loop() {
                 // Nothing to write, but a freed graph may have left a stream to
                 // delete. Not once the channel is closed: the main thread may be
                 // waiting for this one with the GIL held (see the disconnect below).
-                if ORPHANED_STREAMS.is_pending() && !rx.is_disconnected() {
+                if FREED_GRAPH_STREAMS.is_pending() && !rx.is_disconnected() {
                     let _gil = hold_gil();
-                    strip_orphaned_streams(tsc);
+                    delete_streams_of_freed_graphs(tsc);
                 }
                 continue;
             }
@@ -1234,6 +1237,13 @@ fn flusher_loop() {
         // never reaches the point of acquiring the GIL to write nothing.
         batch.retain(|pe| pe.graph.strong_count() > 0);
         if batch.is_empty() {
+            // The graphs that just emptied this batch are the ones most likely to
+            // have left a stream behind, and with entries still arriving the
+            // timeout above may not come round to it.
+            if FREED_GRAPH_STREAMS.is_pending() {
+                let _gil = hold_gil();
+                delete_streams_of_freed_graphs(tsc);
+            }
             continue;
         }
 
@@ -1260,7 +1270,7 @@ fn flusher_loop() {
             let ctx = Context::new(tsc);
             // Before any write: a stream left by a freed graph must be gone before a
             // graph recreated under the same key gets its first entry.
-            strip_orphaned_streams(tsc);
+            delete_streams_of_freed_graphs(tsc);
             // Written whatever this instance's role is, and through a replica pause too:
             // the stream is node-local. `stream_entries` writes through the key API, which
             // propagates nothing, so there is no replication traffic to hold back and no

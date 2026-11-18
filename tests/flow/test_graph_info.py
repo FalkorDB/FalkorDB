@@ -682,6 +682,7 @@ class testGraphInfo():
             "DEL":          lambda key: self.conn.delete(key),
             "UNLINK":       lambda key: self.conn.unlink(key),
             "overwrite":    lambda key: self.conn.set(key, "not a graph"),
+            "expiry":       lambda key: self.conn.pexpire(key, 50),
         }
 
         for how, remove in removals.items():
@@ -935,6 +936,8 @@ class testGraphInfoAof():
         try:
             self.conn.config_set("appendonly", "no")
         except Exception:
+            # best effort: a server that a failed test left unreachable must not
+            # turn the teardown into a second, misleading failure
             pass
         self.conn.flushall()
 
@@ -1156,6 +1159,11 @@ class testGraphInfoReplication():
         self.env.assertTrue(master.ping())
         self.env.assertFalse(master.exists(stream))
 
+        # the promoted node logs again, so there is a stream for the snapshot of
+        # the full sync below to leave out
+        Graph(master, "failover").ro_query("MATCH (n) RETURN count(n)")
+        self.env.assertTrue(_wait_for(lambda: master.exists(stream)))
+
         # a full sync from the promoted node loads on the demoted node too
         sync_full = master.info("stats")["sync_full"]
         replica.execute_command("REPLICAOF", "NO", "ONE")
@@ -1164,3 +1172,9 @@ class testGraphInfoReplication():
             master.info("stats")["sync_full"] > sync_full and
             replica.info("replication")["master_link_status"] == "up", timeout=30))
         self.env.assertTrue(replica.ping())
+
+        # the snapshot was stripped in the fork child: the source keeps its
+        # stream, and the receiver, whose own stream went with its old dataset,
+        # was sent none
+        self.env.assertTrue(master.exists(stream))
+        self.env.assertFalse(replica.exists(stream))
