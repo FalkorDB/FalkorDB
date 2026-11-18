@@ -56,24 +56,24 @@ src/graph_core.rs	replicate_argv	544	AXIOMATISED	Redis module API FFI wrapper (r
 src/graph_core.rs	new	603	PROVEN	unbounded write channel (#3014); Locks.never_stuck_3014 (send never waits)
 src/graph_core.rs	from_mvcc	620	MODELLED	as new
 src/graph_core.rs	execute_query	639	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
-src/graph_core.rs	execute_profile	725	MODELLED	as execute_query
-src/graph_core.rs	execute_query_write	787	PROVEN	Mvcc fork/checkFork (#3290/#3657): inline_write_ok, stale_then_rerun, checkFork_on_committed (retry sees the inline write) (BUG 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
-src/graph_core.rs	reply_profile	939	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
-src/graph_core.rs	new	976	AXIOMATISED	RM_BlockClient FFI
-src/graph_core.rs	drop	984	AXIOMATISED	RM_UnblockClient FFI
-src/graph_core.rs	compute_effective_timeout	1002	NOT COVERED	config arithmetic, not concurrency
-src/graph_core.rs	reply_invalid_graph_version	1041	NOT COVERED	reply formatting
-src/graph_core.rs	admit	1055	PROVEN	Pool.acquireLoop/acquire_bounded; Locks.succ3014 dispatch (reject, never wait): main_never_blocks, inv3014_step
-src/graph_core.rs	query_mut	1066	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); drain producer (send then CAS)
-src/graph_core.rs	query_sync	1270	PROVEN	Mvcc.inline_write_ok (inline writer = escalate 0 then forkCur; never refused by a matching queued write, #3290)
-src/graph_core.rs	profile_mut	1399	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
-src/graph_core.rs	profile_sync	1500	MODELLED	as query_sync
-src/graph_core.rs	finish_write	1571	PROVEN	Mvcc Ev.commit (session in writer mode, key_of_write found its key) / Ev.abandon (never escalated: the version just drops with the runtime; or refused by key_of_write, #3850/#3851, and abandoned by the caller)
-src/graph_core.rs	abandon_write	1606	PROVEN	Mvcc Ev.abandon (the fork is dropped, nothing to roll back); index resync not modelled
-src/graph_core.rs	commit_and_replicate	1622	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
-src/graph_core.rs	process_write_queued_query	1700	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
-src/graph_core.rs	replicate	1848	AXIOMATISED	RM_Replicate FFI
-src/graph_core.rs	graph_free	1861	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
+src/graph_core.rs	execute_profile	721	MODELLED	as execute_query
+src/graph_core.rs	execute_query_write	783	PROVEN	Mvcc fork/checkFork (#3290/#3657): inline_write_ok, stale_then_rerun, checkFork_on_committed (retry sees the inline write) (BUG 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+src/graph_core.rs	reply_profile	933	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
+src/graph_core.rs	new	970	AXIOMATISED	RM_BlockClient FFI
+src/graph_core.rs	drop	978	AXIOMATISED	RM_UnblockClient FFI
+src/graph_core.rs	compute_effective_timeout	996	NOT COVERED	config arithmetic, not concurrency
+src/graph_core.rs	reply_invalid_graph_version	1035	NOT COVERED	reply formatting
+src/graph_core.rs	admit	1049	PROVEN	Pool.acquireLoop/acquire_bounded; Locks.succ3014 dispatch (reject, never wait): main_never_blocks, inv3014_step
+src/graph_core.rs	query_mut	1060	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); drain producer (send then CAS)
+src/graph_core.rs	query_sync	1264	PROVEN	Mvcc.inline_write_ok (inline writer = escalate 0 then forkCur; never refused by a matching queued write, #3290)
+src/graph_core.rs	profile_mut	1393	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
+src/graph_core.rs	profile_sync	1494	MODELLED	as query_sync
+src/graph_core.rs	finish_write	1565	PROVEN	Mvcc Ev.commit (session in writer mode, key_of_write found its key) / Ev.abandon (never escalated: the version just drops with the runtime; or refused by key_of_write, #3850/#3851, and abandoned by the caller)
+src/graph_core.rs	abandon_write	1600	PROVEN	Mvcc Ev.abandon (the fork is dropped, nothing to roll back); index resync not modelled
+src/graph_core.rs	commit_and_replicate	1616	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
+src/graph_core.rs	process_write_queued_query	1694	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
+src/graph_core.rs	replicate	1842	AXIOMATISED	RM_Replicate FFI
+src/graph_core.rs	graph_free	1855	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
 src/query_session.rs	begin	178	MODELLED	reader mode (graphR acquire)
 src/query_session.rs	begin_with	185	MODELLED	Locks.gateReaderProg ordered (gate_programs_ordered, #3816 read_past_gate); reader mode
 src/query_session.rs	begin_writer	205	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
@@ -102,14 +102,14 @@ graph/src/index/mod.rs	make_arr_names	122	PROVEN	Search.arrNames used by range_n
 graph/src/index/mod.rs	new	138	MODELLED	Search.Field
 graph/src/index/mod.rs	new_with_vector_options	155	MODELLED	Search.Field.vdim (vector_options.map dimension)
 graph/src/index/mod.rs	set	717	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
-graph/src/index/mod.rs	add_document	1911	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
-graph/src/index/mod.rs	register_fields	1185	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
+graph/src/index/mod.rs	add_document	1918	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
+graph/src/index/mod.rs	register_fields	1192	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
 graph/src/index/mod.rs	bump_id	1053	PROVEN	Tickets.bump_inv, stale_release_isolated
-graph/src/index/mod.rs	increment_pending_for_generation	2115	PROVEN	Tickets.inc_inv
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2133	PROVEN	Tickets.dec_inv, release_exact
-graph/src/index/mod.rs	pending_count_for_generation	2155	PROVEN	Tickets.pendingFor
-graph/src/index/mod.rs	pending_count	2169	PROVEN	Tickets.operational_iff
-graph/src/index/mod.rs	is_operational	2088	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	increment_pending_for_generation	2122	PROVEN	Tickets.inc_inv
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2140	PROVEN	Tickets.dec_inv, release_exact
+graph/src/index/mod.rs	pending_count_for_generation	2162	PROVEN	Tickets.pendingFor
+graph/src/index/mod.rs	pending_count	2176	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	is_operational	2095	PROVEN	Tickets.operational_iff
 graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.store (73077bb4a: bump_id when the label has fields; Rust bumps whenever the entry exists, which also covers the window after drop_index leaves a 0-field entry until drop_index_bg removes it: not modelled, an extra bump only makes older tickets stale); main_operational_complete, main_lost_order_complete (BUG 2, fixed by #3086; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/index/indexer.rs	acquire_population_ticket	637	PROVEN	Tickets.inc_inv
 graph/src/index/indexer.rs	acquire_population_snapshot	655	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
@@ -118,10 +118,10 @@ graph/src/index/indexer.rs	release_population_ticket	699	PROVEN	Tickets.dec_inv
 graph/src/index/indexer.rs	is_ticket_current	711	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
 graph/src/index/indexer.rs	ticket_pending_changes	723	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
 graph/src/index/indexer.rs	enabled	733	PROVEN	Tickets.operational_iff
-graph/src/graph/graph.rs	populate_index_batch	595	PROVEN	Tickets.batch; inv_batch, main_operational_complete
-graph/src/graph/graph.rs	vector_query_nodes	4373	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412); #3382 gate (opOk): not_operational_refused, ok_imp_operational
-graph/src/graph/graph.rs	vector_query_edges	4439	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp); #3382 gate (opOk): not_operational_refused, ok_imp_operational
-graph/src/runtime/runtime.rs	map_to_index_options	2021	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
+graph/src/graph/graph.rs	populate_index_batch	577	PROVEN	Tickets.batch; inv_batch, main_operational_complete
+graph/src/graph/graph.rs	vector_query_nodes	4400	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412); #3382 gate (opOk): not_operational_refused, ok_imp_operational
+graph/src/graph/graph.rs	vector_query_edges	4467	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp); #3382 gate (opOk): not_operational_refused, ok_imp_operational
+graph/src/runtime/runtime.rs	map_to_index_options	2037	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
 graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered
 # Online index build (#2355): fns the background builder added, not modelled yet.
