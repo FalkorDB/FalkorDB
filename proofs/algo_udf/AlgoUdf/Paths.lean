@@ -77,7 +77,7 @@ theorem recordK_length (res : List Found) (f : Found) (k : Nat) (hk : 1 ≤ k)
     (h : res.length ≤ k) : (recordK res f k).length ≤ k := by
   unfold recordK
   by_cases he : res.length = k
-  · simp only [he, if_true]
+  · simp only [he, ite_true]
     split
     · rw [insertSorted_length, List.length_dropLast]; omega
     · omega

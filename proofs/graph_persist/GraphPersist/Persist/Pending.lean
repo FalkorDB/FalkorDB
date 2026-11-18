@@ -60,7 +60,7 @@ def metaOf (h : Hdr Nm) (items : List (Nm × List (PR M Tn))) : List Nm :=
 
 theorem metaOf_cons (h : Hdr Nm) (kn : Nm) (prs : List (PR M Tn)) (rest : List (Nm × List (PR M Tn))) :
     metaOf h ((kn, prs) :: rest) = (if kn ≠ h.name then [kn] else []) ++ metaOf h rest := by
-  by_cases hk : kn = h.name <;> simp [metaOf, List.filter_cons, hk]
+  by_cases hk : kn = h.name <;> simp [metaOf, hk]
 
 /-- Later keys: each decrements, the last finalizes. -/
 theorem run_later (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) :
@@ -76,7 +76,7 @@ theorem run_later (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) :
     simp only [List.length_cons] at hr
     by_cases hz : rest = []
     · subst hz
-      simp only [hr, Nat.add_sub_cancel, ite_true, List.flatMap_cons, List.flatMap_nil, List.append_nil,
+      simp only [hr, Nat.add_sub_cancel, List.flatMap_cons, List.flatMap_nil, List.append_nil,
         runKeys, metaOf_cons]
       congr 1
       by_cases hk : kn = h.name <;> simp [hk, metaOf]

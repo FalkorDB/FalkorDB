@@ -97,7 +97,7 @@ theorem encRecord_rowShape_refused (ids src dst : C.T) (ls as : List Nat) (rel :
     (checkEndpoints C ids src dst = .ok () →
       encRecord C utf8 I (.createEdge ids rel src dst as rows) = .error .rowShapeMismatch) := by
   have hc : checkRowShape C ids as rows = .error .rowShapeMismatch := by
-    unfold checkRowShape; rw [if_neg (fun e => hr e.symm)]
+    unfold checkRowShape; rw [ite_eq_right (fun e => hr e.symm)]
   refine ⟨?_, ?_, ?_, fun he => ?_⟩
   · simp [encRecord, thenE, hc]
   · simp [encRecord, thenE, hc]

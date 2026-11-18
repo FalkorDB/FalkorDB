@@ -38,7 +38,7 @@ use super::super::IR;
 /// the same predicate, relocated — they reference variables exactly as they did
 /// while they were Filters. A fixed-length traverse's edge predicate stays in
 /// `IR::Filter`, the only place it is evaluated.
-pub(super) fn ir_references_variable(
+pub(in crate::planner) fn ir_references_variable(
     ir: &IR,
     var_id: u32,
     scope_id: u32,
@@ -299,7 +299,7 @@ mod tests {
         scope_id: u32,
     ) -> QueryExpr<Variable> {
         Arc::new(DynTree::new(ExprIR::Variable(Variable {
-            name: None,
+            alias: None,
             id,
             scope_id,
             ty: Type::Any,

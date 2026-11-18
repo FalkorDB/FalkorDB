@@ -253,7 +253,7 @@ theorem lookup_omInsert (m : List (String × V F)) (k k' : String) (v : V F) :
     simp only [omInsert]
     by_cases h : k0 = k
     · subst h; by_cases h2 : k0 = k' <;> simp [lookup, h2]
-    · simp only [h, if_false, lookup, ih]
+    · simp only [h, ite_false, lookup, ih]
       by_cases h2 : k0 = k'
       · subst h2; simp [Ne.symm h]
       · simp [h2]
@@ -295,16 +295,16 @@ theorem keys_omInsert (m : List (String × V F)) (k : String) (v : V F) :
     simp only [omInsert]
     by_cases h : k0 = k
     · subst h; simp
-    · simp only [h, if_false, List.map_cons, ih]
+    · simp only [h, ite_false, List.map_cons, ih]
       by_cases hm : k ∈ rest.map Prod.fst
       · have : k ∈ k0 :: rest.map Prod.fst := List.mem_cons_of_mem _ hm
-        rw [if_pos hm, if_pos this]
+        rw [ite_eq_left hm, ite_eq_left this]
       · have : k ∉ k0 :: rest.map Prod.fst := by
           intro hc
           rcases List.mem_cons.1 hc with e | e
           · exact h e.symm
           · exact hm e
-        rw [if_neg hm, if_neg this]; rfl
+        rw [ite_eq_right hm, ite_eq_right this]; rfl
 
 /-- Map merge never duplicates a key. -/
 theorem nodup_omInsert (m : List (String × V F)) (k : String) (v : V F)

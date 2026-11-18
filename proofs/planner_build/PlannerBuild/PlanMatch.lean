@@ -8,7 +8,7 @@ import PlannerBuild.Expr
 | `MSt` | `Planner.visited` / `verified_labels` |
 | `markLabels`, `unverified` | `mark_labels_verified` mod.rs:1787-1805, `unverified_labels` mod.rs:1809-1821 |
 | `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1877-1909 (stable) |
-| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2002-2011; `emit_rel(r) \|\| edge_pred.is_some()` |
+| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2187-2197; `emit_rel(r) \|\| edge_pred.is_some()` |
 | `scanOf`, `withF` | `AllNodeScan`/`NodeByLabelScan` choice; optional inline-attribute `Filter` |
 | `LW`, `lowerInline` | `lowered_attrs` mod.rs:1852, `lower_inline_attrs` mod.rs:598-607 |
 | `stripNode`, `stripRel`, `stripEndpoints` | `strip_node_attrs` mod.rs:623-634, `strip_rel_attrs` :644-667, `strip_endpoint_attrs` :673-693 |
@@ -17,7 +17,8 @@ import PlannerBuild.Expr
 | `MP.stripped` | the invariant `optimizer/references.rs` relies on (scan / fixed-length operators carry no inline map) |
 | `nodeOnly` | node-only component mod.rs:1913-1990 |
 | `boundLabelFilters` | mod.rs:1858-1872 |
-| `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs:1853-2403 |
+| `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs:1997-2590 |
+| `QR.lifted` | `lifted_rels` mod.rs:2016 (set by `liftPattern`, Lift.lean, #2981) |
 
 Theorems added for #2390 (d2c42e032): `lowerInline_once` (a map is lowered at most once —
 the `And(p, p)` duplicate is gone), `lowerInline_two_maps` (two maps on one alias are both
@@ -55,6 +56,9 @@ structure QR where
   kind : Kind := .fixed
   attrs : List (String × Ex) := []
   ptr : Nat
+  /-- In `lifted_rels` (mod.rs:2016): `lift_cross_entity_attrs` moved part of this edge's map
+  into a Filter above the pattern (#2981). Set by `liftPattern`, never by a pattern literal. -/
+  lifted : Bool := false
 
 structure Comp where
   nodes : List QN
@@ -101,7 +105,7 @@ theorem unverified_after_mark (st : MSt) (n : QN) (h : n.labels ≠ []) :
   simp only [this, Bool.false_eq_true, ↓reduceIte, lookupV_cons_self]
   rw [List.filter_eq_nil_iff]
   intro l hl
-  by_cases hc : (lookupV st.verified n.alias).contains l <;> simp [hc, hl]
+  by_cases hc : (lookupV st.verified n.alias).contains l <;> simp [hl]
 
 /-- …and what was verified stays verified. -/
 theorem markLabels_mono (st : MSt) (v w : V) (ls : List String) (l : String)
@@ -140,9 +144,10 @@ def withF : Option Ex → MP → MP
   | some e, c => .filter e c
   | none, c => c
 
-/-- `emit_relationship`: a named edge, or one a named path lists (by id only, mod.rs:2003-2011). -/
+/-- `emit_relationship`: a named edge, one whose attrs were lifted (#2981), or one a named path
+lists (by id only, mod.rs:2186-2197). -/
 def emitRel (c : Comp) (r : QR) : Bool :=
-  r.named || c.paths.any fun p => p.2.any fun v => v.id == r.alias.id
+  r.named || r.lifted || c.paths.any fun p => p.2.any fun v => v.id == r.alias.id
 
 /-- Strip the inline-attribute filters: the operator actually chosen. -/
 def MP.core : MP → MP

@@ -256,6 +256,7 @@ import PlannerBuild.Nested
 import PlannerBuild.Nested2
 import PlannerBuild.Misc
 import PlannerBuild.PlanMatch
+import PlannerBuild.Lift
 import PlannerBuild.PlanMatch2
 import PlannerBuild.RemoveVerified
 import PlannerBuild.HopOrder

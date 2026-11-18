@@ -32,7 +32,7 @@ def documented : List String :=
    "RESULTSET_SIZE", "OMP_THREAD_COUNT", "VKEY_MAX_ENTITY_COUNT", "MAX_QUEUED_QUERIES",
    "QUERY_MEM_CAPACITY", "DELTA_MAX_PENDING_CHANGES", "NODE_CREATION_BUFFER", "CMD_INFO",
    "MAX_INFO_QUERIES", "EFFECTS_THRESHOLD", "DELAY_INDEXING", "IMPORT_FOLDER", "TEMP_FOLDER",
-   "JS_HEAP_SIZE", "JS_STACK_SIZE"]
+   "JS_HEAP_SIZE", "JS_STACK_SIZE", "WRITE_LOCK_POLL_INTERVAL"]
 
 inductive Kind | i64 (dflt lo hi : Int) | str (dflt : String) | bool (dflt : Bool)
   deriving DecidableEq, Repr
