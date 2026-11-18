@@ -354,21 +354,32 @@ pub fn strip_stream(
     let key_name =
         ValkeyString::create_from_slice(ptr::null_mut(), stream_name(graph_name).as_bytes());
     unsafe {
-        let key = raw::RedisModule_OpenKey.expect("RedisModule_OpenKey")(
-            ctx,
-            key_name.inner,
-            raw::REDISMODULE_WRITE as c_int,
-        );
+        let open_key = raw::RedisModule_OpenKey.expect("RedisModule_OpenKey");
+        let key_type = raw::RedisModule_KeyType.expect("RedisModule_KeyType");
+        let close_key = raw::RedisModule_CloseKey.expect("RedisModule_CloseKey");
+
+        // Looked at read-only first. Closing a key opened for writing tells the
+        // server it was modified, whether or not it was, and that aborts any
+        // transaction watching it: a save would do so for every graph with no
+        // stream, and for a key of another type that only shares the name. The GIL
+        // is held across both opens, so the answer cannot change between them.
+        let key = open_key(ctx, key_name.inner, raw::REDISMODULE_READ as c_int);
         if key.is_null() {
             return false;
         }
-        let is_stream = raw::RedisModule_KeyType.expect("RedisModule_KeyType")(key)
-            == raw::REDISMODULE_KEYTYPE_STREAM as c_int;
-        if is_stream {
-            raw::RedisModule_DeleteKey.expect("RedisModule_DeleteKey")(key);
+        let is_stream = key_type(key) == raw::REDISMODULE_KEYTYPE_STREAM as c_int;
+        close_key(key);
+        if !is_stream {
+            return false;
         }
-        raw::RedisModule_CloseKey.expect("RedisModule_CloseKey")(key);
-        is_stream
+
+        let key = open_key(ctx, key_name.inner, raw::REDISMODULE_WRITE as c_int);
+        if key.is_null() {
+            return false;
+        }
+        raw::RedisModule_DeleteKey.expect("RedisModule_DeleteKey")(key);
+        close_key(key);
+        true
     }
 }
 
@@ -422,6 +433,15 @@ impl FreedGraphStreams {
 
 static FREED_GRAPH_STREAMS: FreedGraphStreams = FreedGraphStreams::new();
 
+/// Set between the start and the end of a database flush, see
+/// [`queue_streams_of_freed_graph`].
+static FLUSH_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Record that a flush has started or ended. Called from the `FlushDB` server event.
+pub fn set_flush_in_progress(in_progress: bool) {
+    FLUSH_IN_PROGRESS.store(in_progress, Ordering::Relaxed);
+}
+
 /// Queue the telemetry streams of a graph that has just been freed for deletion,
 /// given the keys it was registered under. Called from the graph type's free
 /// callback, which is how `DEL`, `UNLINK`, expiry, eviction and an overwrite all
@@ -445,8 +465,15 @@ static FREED_GRAPH_STREAMS: FreedGraphStreams = FreedGraphStreams::new();
 /// server's lazy-free thread: the graph type reports no free effort, so `UNLINK`
 /// frees inline like `DEL`, and the only values freed lazily are those of a
 /// database flushed asynchronously — whose streams went with it.
+///
+/// Not during a flush either, synchronous as it may be. The stream is flushed with
+/// its graph, so there is nothing to delete; and a flush is how `DEBUG RELOAD` and a
+/// replica's full sync make room for the dataset they load next, whose keys have
+/// the same names. A name queued here would be deleted out of *that* dataset: a
+/// snapshot that wrongly carried a telemetry stream would have it quietly removed
+/// on load, which is exactly what the tests of the persistence strip look for.
 pub fn queue_streams_of_freed_graph(names: Vec<String>) {
-    if names.is_empty() || !holds_gil() {
+    if names.is_empty() || !holds_gil() || FLUSH_IN_PROGRESS.load(Ordering::Relaxed) {
         return;
     }
     FREED_GRAPH_STREAMS.push(names);

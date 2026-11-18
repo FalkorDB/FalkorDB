@@ -942,9 +942,15 @@ class testGraphInfoAof():
         self.conn.flushall()
 
     def _wait_for_aof_rewrite(self):
-        self.env.assertTrue(_wait_for(lambda:
-            self.conn.info("persistence").get("aof_rewrite_in_progress", 0) == 0,
-            timeout=30))
+        # scheduled as well as in progress: with a save already running, the
+        # rewrite waits its turn and is not "in progress" yet
+        def settled():
+            info = self.conn.info("persistence")
+            return (info.get("aof_rewrite_in_progress", 0) == 0 and
+                    info.get("aof_rewrite_scheduled", 0) == 0)
+        self.env.assertTrue(_wait_for(settled, timeout=30))
+        self.env.assertEqual(
+            self.conn.info("persistence").get("aof_last_bgrewrite_status", "ok"), "ok")
 
     def _start_empty_aof(self):
         # a fresh AOF whose base is an empty dataset, so DEBUG LOADAOF replays
