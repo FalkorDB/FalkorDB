@@ -12,7 +12,7 @@ import RedisLayer.Telemetry
 | `findStatus`              | `find_status` `:82` |
 | `settle`, `attempt`       | `settle_constraint` `:178`, `attempt_settle` `:284` |
 | `applyCons`, `consWorker` | `apply_constraint` `:599`; `graph_constraint` pool path `:547-585` (#3819) |
-| `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:173` |
+| `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:180` |
 | `copyOut`                 | `copy.rs` `graph_copy` `:27` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
 | `bulkFlow`, `heldReplicate`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:218-1045` |
 | `getNames`, `getOne`, `asI64`, `asU64` | `config_cmd.rs` `config_get_one` `:57`, `ConfigValue::as_i64/as_u64` `:294-306` |
