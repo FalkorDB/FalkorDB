@@ -329,6 +329,12 @@ commit/replay was never stated. Properties and refutations:
   `stCancelTypes_registers`); effects_emit_apply `relIdsCovered_after_commit`.
 No existing definition or theorem changed.
 
+## #3854: UNDER CONSTRUCTION constraints bind writes
+`enforce_constraints` (pending.rs:1500) now skips only FAILED constraints (as C's
+`Schema_EnforceConstraints`), not every non-OPERATIONAL one. `PC.Constraint.operational : Bool`
+became `status : CStatus`; `enforce_spec` now reads "passes iff every non-FAILED constraint's check
+passes"; added `enforce_operational`, `enforce_underConstruction`, `enforce_skips_failed`.
+
 ## Re-pinned to 5e475e6c9 (#3436, #3462)
 Re-pin only; no theorem added or changed. `Pending::commit`, `end_segment`, `enforce_constraints`
 now take `&mut Graph` / `&Graph` (#3436), so `pending.rs` pins moved by -1 or -2 up to `commit` and
