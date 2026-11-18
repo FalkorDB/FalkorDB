@@ -15,7 +15,7 @@ not bridged by a theorem.
 | `decF`, `lossy` | `String::from_utf8_lossy` (Rust `core`: each maximal invalid subpart becomes one U+FFFD) |
 | `encCp`, `utf8Bytes` | `str::as_bytes` of the resulting `String` |
 | `storedKey`  | existing graph: the addressed key (`query.rs:72`); created graph: `c_graph_key` bytes (`query.rs:144`, `graph_core.rs:119-130`) |
-| `rustReplicatedKey` | `key_name` = `key_str.to_string()` (`query.rs:73`; `RedisString: Display` is `to_string_lossy`, redismodule-rs `redismodule.rs:323-327`) or `c_graph_name` (`query.rs:113-114`), then `signal_modified_key(ctx, key_name.as_bytes())` (`graph_core.rs:1591`) and `buf.replicate(.., key_name.as_bytes())` (`graph_core.rs:1612`) |
+| `rustReplicatedKey` | `key_name` = `key_str.to_string()` (`query.rs:73`; `RedisString: Display` is `to_string_lossy`, redismodule-rs `redismodule.rs:323-327`) or `c_graph_name` (`query.rs:113-114`), then `signal_modified_key(ctx, key_name.as_bytes())` (`graph_core.rs:1642`) and `buf.replicate(.., key_name.as_bytes())` (`graph_core.rs:1663`; since #3850/#3851 `key_name` is `key_of_write`'s key, the admitted one unless the graph was renamed: `GraphCore.keyOfWrite_admitted`) |
 | `cReplicatedKey` | C replicates with the command's own `RedisModuleString` (bytes unchanged) |
 -/
 namespace RedisLayer.KeyName
