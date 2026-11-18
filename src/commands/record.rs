@@ -180,7 +180,7 @@ pub fn graph_record(
     // C ends the query at its first NUL byte; see `up_to_nul`.
     let query = up_to_nul(args.next_str()?);
 
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
 
     // `key_name` is the key the graph lives at, not C's name for it — see `graph_query`.
     // An existing graph is at the key the command named; one created here lands at the
@@ -197,7 +197,7 @@ pub fn graph_record(
             &name,
         )));
         // Stored under C's key, as GRAPH.QUERY does — see `c_graph_key`.
-        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
         create_key
             .set_value(&GRAPH_TYPE, graph.clone())
             .map_err(wrong_type_compat)?;
