@@ -132,7 +132,7 @@ theorem caseArms_spec (other : V F → V F → Ordering × Flag) (subject : Opti
   | (w, t) :: rest, out, un, pos => by
     simp only [caseArms]
     refine Eq.trans (caseArms_spec other subject rows els rest _ _ pos) ?_
-    simp only [caseArm, List.mem_filter, caseRow]
+    simp only [List.mem_filter, caseRow]
     by_cases hu : pos ∈ un <;>
       by_cases hm : caseMatch other (subject.map (· (rows[pos]?.getD 0))) (w (rows[pos]?.getD 0)) <;>
       simp [hu, hm]
@@ -150,7 +150,7 @@ theorem caseCol_agree (other : V F → V F → Ordering × Flag) (subject : Opti
     have := caseArms_spec other subject rows els arms (fun _ => .null) (List.range rows.length) k
     simp only at this
     rw [this]
-    simp [h, List.getElem?_eq_getElem h]
+    simp [h]
   · rw [List.getElem?_eq_none (by simpa using h), List.getElem?_eq_none (by simpa using h)]
 
 /-- Laziness: a `THEN` is only ever read at a row whose `WHEN` matched (so

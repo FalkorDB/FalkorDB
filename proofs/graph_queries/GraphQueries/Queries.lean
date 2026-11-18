@@ -92,9 +92,9 @@ theorem sum_len {α} (f : α → List β) : ∀ (l : List α), (l.map (fun t => 
   | [] => rfl
   | a :: l => by simp only [List.map_cons, List.sum_cons, List.flatMap_cons, List.length_append, sum_len f l]
 
-theorem selMats_nil (g : G V) : selMats g [] = g.relMs := if_pos rfl
+theorem selMats_nil (g : G V) : selMats g [] = g.relMs := ite_eq_left rfl
 theorem selMats_ne (g : G V) (types : List String) (h : types ≠ []) :
-    selMats g types = types.filterMap (getRelMat g) := if_neg h
+    selMats g types = types.filterMap (getRelMat g) := ite_eq_right h
 
 /-- Degrees count exactly the edges the incident-edge scans enumerate. -/
 theorem inDeg_eq (g : G V) (n : Nat) : inDeg g n = (nodeRelsByType g n [] .incoming).length := by
@@ -118,7 +118,7 @@ def getNodesAll (g : G V) (lo : Nat) : List Nat :=
 theorem getNodesAll_mem (g : G V) (lo n : Nat) (h : g.nodeCount ≠ 0) :
     n ∈ getNodesAll g lo ↔ lo ≤ n ∧ n < nodeBound g ∧ n ∉ g.delNodes := by
   have := maxNodeId_lt g h
-  simp only [getNodesAll, h, if_false, List.mem_filter, List.mem_range, decide_eq_true_eq]
+  simp only [getNodesAll, h, ite_false, List.mem_filter, List.mem_range, decide_eq_true_eq]
   rw [this]
   constructor
   · rintro ⟨⟨a, b⟩, c⟩; exact ⟨b, a, c⟩
@@ -251,7 +251,7 @@ theorem relMatrix_mem (g : G V) (types srcL dstL : List String) (sm dm : List Ma
   by_cases hh : types.filterMap (getRelMat g) = []
   · simp [ht, hh]
   · have hne : ¬(types ≠ [] ∧ types.filterMap (getRelMat g) = []) := fun h => hh h.2
-    rw [if_neg hne]
+    rw [ite_eq_right hne]
     simp only [List.mem_filter, Bool.and_eq_true, Bool.or_eq_true, diagAll, List.all_eq_true,
       decide_eq_true_eq]
     rw [relBase_mem g types hh]

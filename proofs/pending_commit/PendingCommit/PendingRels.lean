@@ -40,13 +40,13 @@ theorem createdRel_spec (p : P) (h : RelInv p) (rid f to t : Nat) (hf : fget p.r
       simp [createdRel]
     rw [e1]
     by_cases hr : r = rid
-    · subst hr; rw [if_pos rfl]
+    · subst hr; rw [ite_eq_left rfl]
       by_cases ht : t' = t
       · subst ht; simp
-      · rw [if_neg ht]; constructor
+      · rw [ite_eq_right ht]; constructor
         · intro e; cases e; exact absurd rfl ht
         · intro hm; exact absurd hm (hfresh t')
-    · rw [if_neg hr, h.1 r t']
+    · rw [ite_eq_right hr, h.1 r t']
       by_cases ht : t' = t
       · subst ht; simp [hr]
       · simp [ht]
@@ -194,7 +194,7 @@ theorem fget_of_mem {V : Type} : ∀ (m : FMap V), (m.map (·.1)).Nodup → ∀ 
     rcases h with ⟨rfl, rfl⟩ | h
     · simp
     · have : a ≠ t := fun e => hnd.1 (e ▸ List.mem_map_of_mem (f := (·.1)) h)
-      rw [if_neg this]; exact fget_of_mem m hnd.2 t es h
+      rw [ite_eq_right this]; exact fget_of_mem m hnd.2 t es h
 
 theorem mem_of_fget {V : Type} : ∀ (m : FMap V) t es, fget m t = some es → (t, es) ∈ m
   | [], _, _, h => by simp [fget] at h

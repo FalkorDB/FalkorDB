@@ -23,9 +23,9 @@ def Ext.g4 : Ext := ⟨false, false⟩
 def Ext.rust : Ext := ⟨false, true⟩
 
 /-- `( oC_Variable SP? )?` with the fresh-name action for an absent one. -/
-inductive GOptVar : PS → Nat → PS → Prop
-  | named {s v} : identOf s.cur = some v → GOptVar s v s.adv
-  | anon {s} : identOf s.cur = none → GOptVar s (anonName s.2) (s.1, s.2 + 1)
+inductive GOptVar : PS → Alias → PS → Prop
+  | named {s v} : identOf s.cur = some v → GOptVar s (.named v) s.adv
+  | anon {s} : identOf s.cur = none → GOptVar s (.anon s.2) (s.1, s.2 + 1)
 
 /-- `oC_NodeLabels?` (Cypher.g4:257-261), accumulated as a set. -/
 inductive GLabels : PS → List Nat → List Nat → PS → Prop
@@ -40,7 +40,7 @@ inductive GProps (o : Oracle) : PS → ET → PS → Prop
   | map {s m s'} : s.cur = .lbrace → o.pmap s = .ok m s' → GProps o s m s'
 
 /-- `oC_NodePattern` (Cypher.g4:233-234). -/
-inductive GNode (o : Oracle) : PS → QNode Nat → PS → Prop
+inductive GNode (o : Oracle) : PS → QNode Alias → PS → Prop
   | mk {s a s1 ls s2 m s3} : s.cur = .lparen → GOptVar s.adv a s1 → GLabels s1 [] ls s2 →
       GProps o s2 m s3 → s3.cur = .rparen → GNode o s ⟨a, ls, m⟩ s3.adv
 
@@ -73,11 +73,11 @@ theorem propsP_sound (o : Oracle) (s : PS) m s' (h : propsP o s = .ok m s') : GP
   case lbrace => exact .map hc h
   all_goals (obtain ⟨rfl, rfl⟩ := pure_ok h; exact .none)
 
-theorem optVar_sound {a : Option Nat} {s s1 s2 : PS} {al : Nat}
+theorem optVar_sound {a : Option Nat} {s s1 s2 : PS} {al : Alias}
     (h1 : tryIdent s = .ok a s1) (h2 : aliasOr a s1 = .ok al s2) :
     GOptVar s al s2 := by
   rcases tryIdent_ok h1 with ⟨v, rfl, hv, rfl⟩ | ⟨rfl, hv, rfl⟩
-  · obtain ⟨rfl, rfl⟩ := pure_ok (show (pure v : P Nat) s.adv = _ from h2); exact .named hv
+  · obtain ⟨rfl, rfl⟩ := pure_ok (show (pure (Alias.named v) : P Alias) s.adv = _ from h2); exact .named hv
   · simp only [aliasOr, anonFresh, R.ok.injEq] at h2; obtain ⟨rfl, rfl⟩ := h2; exact .anon hv
 
 /-- **parse_node_pattern is sound**: an accepted node pattern is an
@@ -199,7 +199,7 @@ theorem varLenP_sound (s : PS) r s' (h : varLenP s = .ok r s') : GRange s r s' :
 
 /-- `oC_RelationshipDetail` (Cypher.g4:246-247) after `[`, with the
 `[*1..1]` → single hop normalisation (cypher.rs:3112-3116). -/
-inductive GDetail (o : Oracle) (x : Ext) : PS → Nat × List Nat × ET × Option (Nat × Option Nat) → PS → Prop
+inductive GDetail (o : Oracle) (x : Ext) : PS → Alias × List Nat × ET × Option (Nat × Option Nat) → PS → Prop
   | mk {s a s1 ts s2 r s3 m s4} : GOptVar s a s1 →
       (ts = [] ∧ s2 = s1 ∨ s1.cur = .colon ∧ GTypes x s1.adv [] ts s2) →
       GRange s2 r s3 → GProps o s3 m s4 → s4.cur = .rbrack →
@@ -207,12 +207,12 @@ inductive GDetail (o : Oracle) (x : Ext) : PS → Nat × List Nat × ET × Optio
 
 /-- The arrows of `oC_RelationshipPattern` (Cypher.g4:239-244): `<`? `-`
 detail? `-` `>`?; the relationship reads right-to-left only for `<-...-`. -/
-inductive GRel (o : Oracle) (x : Ext) : QNode Nat → PS → QRel Nat × QNode Nat → PS → Prop
+inductive GRel (o : Oracle) (x : Ext) : QNode Alias → PS → QRel Alias × QNode Alias → PS → Prop
   | mk {src s inc s1 d s2 out s3 dst s4} :
       (inc = true ∧ s.cur = .lt ∧ s1 = s.adv.adv ∨ inc = false ∧ s1 = s.adv) →
       (inc = true → s.adv.cur = .dash) → (inc = false → s.cur = .dash) →
       (s1.cur = .lbrack ∧ GDetail o x s1.adv d s2 ∨
-        d = (anonName s1.2, [], leaf .map, none) ∧ s2 = (s1.1, s1.2 + 1)) →
+        d = (Alias.anon s1.2, [], leaf .map, none) ∧ s2 = (s1.1, s1.2 + 1)) →
       s2.cur = .dash →
       (out = true ∧ s2.adv.cur = .gt ∧ s3 = s2.adv.adv ∨ out = false ∧ s3 = s2.adv) →
       GNode o s3 dst s4 →
@@ -251,7 +251,7 @@ theorem detailP_sound (o : Oracle) (F : Nat) (cl : CK) (s : PS) d s'
 /-- **parse_relationship_pattern is sound**: an accepted relationship
 pattern is an `oC_PatternElementChain` step (with `[:A:B]` as the only
 extension) and the relationship built is the rule's. -/
-theorem relP_sound (o : Oracle) (F : Nat) (cl : CK) (src : QNode Nat) (s : PS) rr s'
+theorem relP_sound (o : Oracle) (F : Nat) (cl : CK) (src : QNode Alias) (s : PS) rr s'
     (h : relP o F cl src s = .ok rr s') : GRel o Ext.rust src s rr s' := by
   unfold relP at h
   peel h => inc s1 h1
@@ -269,7 +269,7 @@ theorem relP_sound (o : Oracle) (F : Nat) (cl : CK) (src : QNode Nat) (s : PS) r
     · have := (opt_eq h1).2 rfl; subst this; exact ⟨.inr ⟨rfl, rfl⟩, by simp, fun _ => hd2⟩
     · obtain ⟨hl, rfl⟩ := (opt_eq h1).1 rfl; exact ⟨.inl ⟨rfl, hl, rfl⟩, fun _ => hd2, by simp⟩
   have gd : s1.adv.cur = .lbrack ∧ GDetail o Ext.rust s1.adv.adv d s4 ∨
-      d = (anonName s1.adv.2, [], leaf .map, none) ∧ s4 = (s1.adv.1, s1.adv.2 + 1) := by
+      d = (Alias.anon s1.adv.2, [], leaf .map, none) ∧ s4 = (s1.adv.1, s1.adv.2 + 1) := by
     cases det
     · have := (opt_eq h3).2 rfl; subst this
       simp only [Bool.false_eq_true, ite_false] at h4

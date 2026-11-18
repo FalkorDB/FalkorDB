@@ -153,13 +153,13 @@ theorem pos_i64 (i : Int) (hi : I64 i) :
   refine ⟨fun h => by subst h; decide, fun h => ?_, fun h => ?_⟩
   · have hne : i ≠ 0 := by omega
     have := magBits_finite i.toNat (by omega) (by omega)
-    simp only [i64ToF64, hne, h, if_false, if_true, pos, INF, SIGN] at *
-    rw [if_pos (by omega)]
+    simp only [i64ToF64, hne, h, ite_false, ite_true, pos, INF, SIGN] at *
+    rw [ite_eq_left (by omega)]
   · have hne : i ≠ 0 := by omega
     have hn : ¬ 0 < i := by omega
     have := magBits_finite (-i).toNat (by omega) (by omega)
-    simp only [i64ToF64, hne, hn, if_false, pos, INF, SIGN, W] at *
-    rw [if_neg (by omega)]
+    simp only [i64ToF64, hne, hn, ite_false, pos, INF, SIGN, W] at *
+    rw [ite_eq_right (by omega)]
     omega
 
 theorem cmpI_congr {a b : Int} {c d : Nat} (h1 : a < b ↔ c < d) (h2 : a = b ↔ c = d) :

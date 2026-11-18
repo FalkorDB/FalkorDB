@@ -224,7 +224,7 @@ theorem where_scan_indistinguishable (φ s t : Nat) :
       isPlannerScanSubtree prev = true := by
   refine ⟨?_, rfl⟩
   have : slotLoop (Plan.node (.hop .condTraverse t) []) = [] := by
-    simp [slotLoop, slotWith, walkLoop, Plan.get, projDescend, descendClause_nil, descendOne]
+    simp [slotLoop, slotWith, walkLoop, Plan.get, projDescend]
     exact descendClause_nil _ rfl
   rw [this, fillAt, insertStep_nonCP _ [] _ _ [] rfl (by simp)]; rfl
 

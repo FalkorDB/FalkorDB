@@ -148,7 +148,7 @@ theorem unverified_mark_self (st : MSt) (n : QN) : unverified (markLabels st n.a
     intro l hl
     by_cases hc : (lookupV st.verified n.alias).contains l
     · simp only [List.contains_iff_mem] at hc; simp [hc]
-    · simp [hc, hl]
+    · simp [hl]
 
 /-- After the filter, no label of that endpoint is missing. -/
 theorem labelStep_verifies (acc : MSt × List Ex) (n : QN) (hb : acc.1.bound n.alias = true) :

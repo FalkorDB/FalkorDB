@@ -159,7 +159,7 @@ theorem Rd.takeN_refines (r : Rd) (k count : Nat) (hr : r.remaining < 2 ^ 64 - 1
     have hl : (List.take (count * k) r.rest).length = count * k := by simp; omega
     have := readN_take_chunks k count (List.take (count * k) r.rest) (List.drop (count * k) r.rest) hl
     rw [List.take_append_drop] at this
-    rw [this]; simp [Rd.rest, List.drop_drop, Nat.add_comm]
+    rw [this]; simp [Rd.rest, List.drop_drop]
 
 /-! ### `EffectWrite` (`graph/src/effects/writer.rs`) -/
 

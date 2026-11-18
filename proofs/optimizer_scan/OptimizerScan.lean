@@ -5,7 +5,7 @@ Targets: `graph/src/planner/optimizer/select_scan_node.rs`, `utilize_index.rs`,
 `utilize_node_by_id.rs`, `reorder_labels.rs`, plus the runtime pieces their rewrites hand
 work to (`Runtime::evaluate_id_filter`, `NodeByIndexScanOp`, `Index::build_query_node`).
 
-Build: `lake build` (Lean 4.35, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
+Build: `lake build` (Lean 4.36, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
 `utilize_sound` and `seek_sound` depend only on `propext`, `Quot.sound`, `Classical.choice`.
 77 theorems, 36 `decide`d examples (counterexamples and sanity checks).
 Coverage per Rust function: `COVERAGE.tsv`. Rust repros: `graph/tests/lean_optimizer_scan.rs`
@@ -40,7 +40,7 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-801` |
 | `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:308-335` |
 | `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
-| `ScanOrder.place`, `runScoped` | `select_scan_node.rs:979-986, 1185-1235` |
+| `ScanOrder.place`, `runScoped`, `initialBound` | `select_scan_node.rs:983-986, 1185-1235` |
 | `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
 
 ## Proven (plain English)
@@ -61,6 +61,7 @@ Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`):
 - `sel_and2`: an index `And` is the intersection (a null child nulls both sides).
 - `sel_merge`, `rangeOK_merge`, `cu_merge`: `merge_range_queries` selects the conjunction and stays well-formed and usable.
 - `trySingle_spec`: `try_single_filter_scan` on covered atoms is exact, on `L`, well-formed, usable unless `IN`.
+- `trySingle_inn_bare` (#3068): an `IN` is pushed only when its index side is the bare property (`n.k IN [...]` or `x IN n.k`).
 - `pushAnd_spec`, `pushOr_spec`, `buildSome_any`: the AND / OR branches of `try_filter_pushdown` select the conjunction and disjunction.
 - `utilize_sound` (headline): single-label scan, Null/Int/String values, atoms `n.k op lit`, `lit op n.k`,
   `n.k IN [lits]`, unindexable conjuncts, combined by AND (no strict string bound) or OR — rewritten plan = original.
@@ -70,6 +71,7 @@ Scan selection (`ScanOrder.lean`):
 - `run_perm`, `run_append`: reordering or re-sequencing tests keeps the selected rows.
 - `pick_perm`, `order_sound`, `order_length`: the greedy hop ordering keeps every hop exactly once, oriented soundly.
 - `runScoped_wellScoped`, `place_wellScoped`, `wellScoped_filts`: filter re-placement is sound **iff** the seed bound set is honest.
+- `initialBound_wellScoped`, `initialBound_keeps_row` (#3523): `initial_bound` is honest — `{best_node}` only without a kept child, else the child's variables — so re-placement is well-scoped; the former counterexample finds its row.
 - `hasAll_perm`, `sortBy_perm`, `insertBy_perm`, `reorderLabels_sound`: `reorder_labels` cannot change a scan.
 - `withPrimary_sound`, `primary_split`: putting the indexed label first + checking the rest = the full label set.
 
@@ -86,6 +88,8 @@ Scan selection (`ScanOrder.lean`):
    Test `bug_select_scan_node_places_filter_before_its_variable_is_bound`.
    STILL PRESENT at 8743953a8 (re-checked live on a build of main's planner, b3582e34a: Rust 0,
    expected 1; the EXPLAIN shows the `c` Filter right after `(b)<-(d)`).
+   **FIXED by #3523** (`select_scan_node.rs:983-986`: the suggested fix). Lean `initialBound_wellScoped`,
+   `initialBound_keeps_row`.
 2. **`NodeByIdSeek` returned a node that never existed, and writes to it persisted** — **FIXED by #3394**
    (9212add39, closes #3353; main b84473a7f: `evaluate_id_filter` returns `Ok(None)` when
    `node_count() == 0`, `runtime.rs:1470-1475`; Lean `seek_sound` without `nodeCount ≠ 0`,
@@ -112,10 +116,11 @@ Scan selection (`ScanOrder.lean`):
    `[1],[2]`, C `[1],[2]`; `toString(n.a) IN ['1']` → Rust `[]`, C `[1]`;
    `n.a + 1 IN [2]` → Rust `[]`, without index `[1]` (C errors). Fix: require
    `ExprIR::Property` of the scanned alias as the whole left side (as the comparison path does at 693).
+   **Fixed by #3068** (`bare_property_of`): C7/C7' now agree; `trySingle_inn_bare`.
 5. **`x IN [n.a, n.b]` becomes array-contains on `n.a`** — same function, `(false, true)`
    arm with a list literal on the right. Lean C8. `2 IN [n.a, n.b]` → Rust `[]`, C `[3]`;
    `-1 IN [n.a]` → Rust `[]`, without index `[2]`. Fix: array-contains only when the right
-   side *is* `Property(scanned alias)`.
+   side *is* `Property(scanned alias)`. **Fixed by #3068**: C8 now agrees.
 
 6. **`select_scan_node` salvages a filter whose variable the pruned child bound (`Unwind`/`WITH`)** (W2-scan-6, #2972, fixed by open PR #3099) —
    `is_planner_scan_subtree` (`:315`) accepts a scan with *any* child; `argument_leaf_of` (`:276`)
@@ -225,6 +230,19 @@ RETURN a.v, b.w` on `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` r
 `[1,2],[5,2]` (should be `[1,2]`; the fixed-length `-[:R]->` form is right) on builds 88e92ae25
 and b3582e34a. `ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. Fix: refuse the leaf
 rewrite when the wrapper holds a `Filter`, or salvage it above the traverse with `filters_of`.
+FIXED by PR #3264 (0615f92a7): the leaf rewrite now refuses a `Filter` in the wrapper chain and any
+operator under the scan other than a childless `Argument` (`select_scan_node.rs:623-641`). Model:
+`VLCase.scanOnlyArgBelow`, `vlLeaf` (new) vs `vlLeafPre` (history); `vlLeaf_keeps_filter`,
+`vl_never_drops_filter`, `vlLeaf_eq_pre`, `vl_leaf_bug_case_fixed`.
+
+## PR #3821 (f71981fa3: equality-pinned endpoint tie-break)
+`score_endpoint` returns `(score, has_equality, filter_runs_late, cardinality)`;
+`collect_filtered_vars` also fills `equality` via the new `collect_equalities` (top-level `AND`
+conjuncts `v.p = <variable-free expr>`, either side). `ScanTree.scoreEndpoint_spec` (re-stated with
+the new flag), `collectEqualities_sub`/`_other`/`_examples`, `filteredVars_equality_sub_all`
+(equality ⊆ all, so `score_equality_filtered`: the flag only breaks ties between filtered
+endpoints), `equality_beats_late` (the comparator key `startKeyLt`). Start choice affects cost only;
+`ScanOrder`'s soundness theorems hold for any start, so they are unchanged.
 -/
 import OptimizerScan.IdSeek
 import OptimizerScan.Index

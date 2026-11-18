@@ -249,7 +249,7 @@ theorem asciiPre_succ {cs : List Char} {n : Nat} {c : Char} (h : AsciiPre cs n) 
     rcases Nat.lt_or_ge n cs.length with h | h
     · exact h
     · simp [List.getElem?_eq_none h] at hc
-  rw [List.take_succ, List.mem_append] at hx
+  rw [List.take_add_one, List.mem_append] at hx
   rcases hx with hx | hx
   · exact h x hx
   · rw [List.getElem?_eq_getElem hlt] at hc hx
@@ -578,7 +578,7 @@ theorem unesc_escC (c : Char) (rest : List Char) (f : Nat) :
   · subst_vars; simp [unescF, simpleEsc]
   · rename_i h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
     simp only [List.singleton_append]
-    simp only [unescF, if_neg h8]
+    simp only [unescF, ite_eq_right h8]
 
 /-- **`cypher_unescape` inverts `cypher_escape`** on every string. -/
 theorem unesc_escape : ∀ (s : List Char) (f : Nat), 2 * s.length < f → unescF f (esc s) = .ok s
