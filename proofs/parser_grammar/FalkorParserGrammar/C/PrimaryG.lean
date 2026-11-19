@@ -188,7 +188,7 @@ theorem identArm_sound (s : PS) r s' (hq : isQuantKw s.cur = false)
       · rename_i hs; subst hs
         peel h => t s5 h5
         obtain ⟨rfl, rfl⟩ := pure_ok h
-        exact .shortest hq hv hn gd hl (shortestP_sound o.pmap F _ _ _ h5)
+        exact .shortest hq hv hn gd hl (shortestP_sound F _ _ _ h5)
       · rename_i hs
         split at h
         · simp at h

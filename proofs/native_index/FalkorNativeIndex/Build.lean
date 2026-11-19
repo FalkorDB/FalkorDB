@@ -195,7 +195,7 @@ theorem dropWhile_head {α} (p : α → Bool) : ∀ (l : List α) (h : α) (r : 
   | [], h, r, hh => by simp at hh
   | x :: xs, h, r, hh => by
     by_cases hp : p x = true
-    · simp only [List.dropWhile_cons, hp, if_true] at hh; exact dropWhile_head p xs h r hh
+    · simp only [List.dropWhile_cons, hp, ite_true] at hh; exact dropWhile_head p xs h r hh
     · simp only [List.dropWhile_cons, hp] at hh
       simp at hh
       obtain ⟨rfl, _⟩ := hh
@@ -226,7 +226,7 @@ theorem edgeLoop_spec (budget : Nat) (index : Nat → EncodedTuples → EncodedT
         let same := fun (e : Nat × Nat × Nat) => decide (e.1 = s ∧ e.2.1 = d)
         have hloop : edgeLoop budget index read ((s, d, eid) :: es) out =
             ((es.takeWhile same).foldl (fun o e => index e.2.2 o) (index eid out), es.dropWhile same) := by
-          simp only [edgeLoop, hr, hb, if_true]
+          simp only [edgeLoop, hr, hb, ite_true]
           rfl
         refine ⟨(s, d, eid) :: es.takeWhile same, ?_⟩
         rw [hloop]
@@ -258,7 +258,7 @@ theorem edgeLoop_spec (budget : Nat) (index : Nat → EncodedTuples → EncodedT
         obtain ⟨c, h1, h2, h3, h4⟩ := ih hs' (read + 1) (index eid out)
         have hloop : edgeLoop budget index read ((s, d, eid) :: es) out =
             edgeLoop budget index (read + 1) es (index eid out) := by
-          simp only [edgeLoop, hr, hb, if_true, if_false]
+          simp only [edgeLoop, hr, hb, ite_true, ite_false]
         refine ⟨(s, d, eid) :: c, ?_⟩
         rw [hloop]
         refine ⟨by simp [h1], ?_, fun _ _ => by simp, ?_⟩

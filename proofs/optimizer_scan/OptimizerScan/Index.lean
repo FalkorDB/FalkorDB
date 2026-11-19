@@ -23,7 +23,7 @@ their `sel` agree on every node of the graph.
 | `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr`, `utilize_index.rs:855-873` |
 | `needsPost`                | `needs_post_filter`, `utilize_index.rs:802-848` |
 | `buildOp`                  | `build_op_query`, `utilize_index.rs:315-355` |
-| `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` + `extract_attribute_and_expression_from_filter`, `utilize_index.rs:376-418, 602-704` |
+| `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` (+ `bare_property_of`, #3068) + `extract_attribute_and_expression_from_filter`, `utilize_index.rs:360-379, 400-442, 626-751` |
 | `mergeRange`               | `merge_range_queries`, `utilize_index.rs:481-544` |
 | `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs:727-783` |
 | `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs:973-1046` |
@@ -416,18 +416,21 @@ def nestedList : R → Bool
 
 def anyPropR : R → Bool := hasR
 
-/-- `try_single_filter_scan` / `try_in_filter_scan` (`utilize_index.rs:602-704`). -/
+/-- `try_single_filter_scan` / `try_in_filter_scan` (`utilize_index.rs:626-751`). Since #3068 the
+`IN` arm needs the index side to be the bare property (`bare_property_of`, `:360`). -/
 def trySingle (idx : Nat → List Nat) (ls : List Nat) : A → Option (Nat × IQ)
   | .inn l r =>
     match hasT l, hasR r with
-    | true, false => do
-      let k ← firstP l
-      let L ← findLabel idx ls k
-      if nestedList r || anyPropR r then none else some (L, .inList k r)
-    | false, true => do
-      let k ← firstR r
-      let L ← findLabel idx ls k
-      some (L, .contains k l)
+    | true, false => match l with
+      | .prop k => do
+        let L ← findLabel idx ls k
+        if nestedList r || anyPropR r then none else some (L, .inList k r)
+      | _ => none                -- `bare_property_of` (#3068): the side must be `n.k` itself
+    | false, true => match r with
+      | .term (.prop k) => do
+        let L ← findLabel idx ls k
+        some (L, .contains k l)
+      | _ => none
     | _, _ => none
   | .cmp op l r =>
     match hasT l, hasT r with

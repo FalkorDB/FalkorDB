@@ -441,6 +441,8 @@ jobs:
             note="Suggested proof update: comment \`/proofs apply\` to commit this patch (people with write access; it is committed only while the PR head is still \`${HEAD:0:9}\`), or download \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) and apply it yourself (\`git apply proofs.patch\`)."
           elif [[ "$GATES" == pass ]]; then
             note="No proof change was needed."
+          elif [[ "$GATES" == held && -s out/proofs.patch ]] && head -n 1 out/gates.md | grep -q '^Gates: `lean_ci.sh` \*\*pass\*\*; `coverage.sh --unmatched` \*\*pass\*\*'; then
+            note="Both gates passed; held only so someone looks at the changed statements or coverage rows above. Comment \`/proofs apply\` to commit this patch (people with write access; only while the PR head is still \`${HEAD:0:9}\`), or apply \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) yourself."
           else
             note="Gates: **${GATES:-did not run}**, so the patch is not suggested as is; it and the logs are in the [run's \`proof-gate\` artifact]($RUN_URL)."
           fi

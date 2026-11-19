@@ -80,8 +80,8 @@ authoritative line list.
 ## Gap closed 2026-10-20: #2502
 
 `C.PredicateBugs`: the property `PredEndsBeforeClause` (a WHERE pattern
-predicate stops before a clause keyword) and `bug2502_pred_swallows_match`,
-`bug2502_where_match_merged`: `parse_pattern(&Keyword::Match)` for a predicate
+predicate stops before a clause keyword) and, since #2981, `fixed2502_pred_stops_at_match`,
+`fixed2502_where_match_split` (pre-#2981 `bug2502_pred_swallows_match`, `bug2502_where_match_merged`): `parse_pattern(&Keyword::Match)` for a predicate
 (cypher.rs:2119 at `fb3d516d0`) continues on `MATCH` (1562-1579), so
 `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to two
 clauses. Live: Rust `'m' not defined`, C returns the rows (observed by hand during the open-bug
@@ -96,7 +96,7 @@ module with the C module (`bin/macos-arm64v8-release/falkordb.so`).
 
 | Lean | Rust | test |
 | --- | --- | --- |
-| `skipFilter_eof_diverges` | **Fixed by #3019**: `shortestPath((a)-[{` at end of input: the filter-skip loop (cypher.rs:1835-1870 at 343e077f2) never ended; a worker thread spun forever, and 11 such queries stopped all graph queries. C: syntax error. Now the filter is parsed (`$p` one token, `{...}` by `parse_map`, cypher.rs:1838-1848): `C.shortestP_param_eof_err`, `C.shortestP_filter_eof_err`. | `bug_shortest_path_filter_skip_loops_forever_at_eof` |
+| `skipFilter_eof_diverges` | `shortestPath((a)-[{` at end of input: the filter-skip loop (cypher.rs:1833-1858) never ends; a worker thread spins forever, and 11 such queries stop all graph queries. C: syntax error. | `bug_shortest_path_filter_skip_loops_forever_at_eof` |
 | — | Pattern predicate in a projection swallows the `,` (2103 → parse_pattern's comma loop 1546-1548). Live: `RETURN (a)-->(b), 1` is a syntax error; `RETURN (a)-->(b), (b)-->(a)` returns ONE column; C returns two. Same root cause as W2-binder-1. | `bug_pattern_predicate_swallows_projection_comma` |
 | `sign_sequences` | `+-1` accepted, `- -1` / `-+1` rejected; the grammar allows one sign. `- -1` is #2309. | — |
 
@@ -116,7 +116,7 @@ regression test (`nested_pattern_comprehension_attempts_are_not_exponential`, wh
 | `patCompP_pipe` | given `Oracle.Bal` (expression and map parsers consume bracket-balanced runs with no top-level `\|`/`,`), a pattern comprehension that parses implies the gate is open — through `parse_node_pattern` / `parse_relationship_pattern` (`cn_nodeP`, `cn_relP`, …) |
 | `listLitP_eq_ungated` | CONDITIONAL on `Oracle.Bal` and `MemoSound`: the merged parser returns exactly what the pre-#3104 one (`listLitPU`) returned, wherever that one does not run out of model fuel |
 | (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412) | History (fixed by #3041): **`Oracle.Bal` was false for the Rust**: with the swallowed slice bound, `[1][(1..2]` consumed an unclosed `(` that hid the `\|`. CONFIRMED live: `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] \| b]` was a pattern comprehension before #3104 and `Invalid input 'WHERE'` after (C: syntax error, so the new answer is C's). Since #3041 `[1][(1..2]` is refused (`slice_unclosed_paren_refused`) and the fragment satisfies the premise on every input checked (`bounded_bal`); `Oracle.Bal` for the whole expression parser is unproven, not refuted |
-| `memoRun_sound` | if an attempt's outcome is a function of its key (`AttemptDet`), the memo only holds failing keys (= `MemoSound`). Not discharged: the key omits `anon_counter`, and an attempt can read anonymous names (`_anon_N` vs a user-written `_anon_N` in `parse_pattern`'s duplicate-relationship check); no input was found where the same key recurs with a different counter and outcome |
+| `memoRun_sound` | if an attempt's outcome is a function of its key (`AttemptDet`), the memo only holds failing keys (= `MemoSound`). Not discharged: the key omits `anon_counter`, and an attempt can read anonymous aliases (`Alias::Anon(N)` in `parse_pattern`'s duplicate-relationship check); no input was found where the same key recurs with a different counter and outcome |
 | `memoRun_nodup`, `failed_attempts_linear` | each key fails at most once, so any visit list of the abstract `memoRun` model with `pos ≤ n` and depth ≤ `MAX_NESTING` has at most `808·(n+1)` failed attempts (not linked to actual parser runs; the premises on a whole parse are by inspection). Successful attempts are not memoised and not bounded here |
 
 ### Fixed by #3041 (`2023af648`, closes #3036) — the slice bound
@@ -145,7 +145,7 @@ extension flags (`CExt`); `GArgsE`/`GArgs` now demand an expression after every 
 | Lean | Rust | live result |
 | --- | --- | --- |
 | `call_validates_rest`, `call_transparent`, `match_last_after_call_rejected` | **Fixed by #3297** (b774fdfad; main b84473a7f): `inner_validate`'s CALL arm used to return `Ok(())` without validating the clauses after it (ast.rs:1167-1201 at b6567cb97); it now continues with `iter.next().map_or(Ok(()), …)` (ast.rs:1262-1263). | Before the fix `CALL db.labels() YIELD label MATCH (n)` and `CALL db.labels() YIELD label CREATE ()-[r]->() RETURN label` **crashed the server** (panic at planner/optimizer/utilize_node_by_id.rs:118), `... MERGE ()-[:R\|S]->()` created an edge, `... UNWIND [1] AS x` was accepted. C rejects all four; so does main (flow `test_procedures.py`). |
-| `anon_name_collides` | Anonymous entities are named `_anon_N` (cypher.rs:3037, 3085, 3154), a name the user can write; `add_pattern_node` then merges the two nodes. | `CREATE (:A), (:B)` then `MATCH (_anon_0:A), (:B) RETURN count(*)`: Rust 0, C 1. |
+| `fixed3303_anon_name_distinct` | **Fixed by #3303**: anonymous entities were named `_anon_N`, a name the user can write, and `add_pattern_node` merged the two nodes; they are now `Alias::Anon(N)` (cypher.rs:3064-3075), which no identifier equals. | `CREATE (:A), (:B)` then `MATCH (_anon_0:A), (:B) RETURN count(*)`: Rust was 0, now 1 as in C. |
 | `create_named_path_dup_rel_rejected` | **Fixed by #3289** (`d15d38a10`): every relationship goes through `add_pattern_relationship` (cypher.rs:1378), which rejects a repeated alias in every clause. It was rejected only for MATCH in a named path (cypher.rs:1533-1541 at b02266c2b). | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` is now "The bound variable 'r' can't be redeclared in a CREATE clause" (was 4 nodes, 1 relationship; C: "Variable `r` already declared"). |
 | `merge_dup_rel_rejected` | **Fixed by #3289**: same, for MERGE (it used to drop the repeat, cypher.rs:1554-1567 at b02266c2b). Pattern comprehensions too: `pattern_comprehension_repeated_rel_refused`. | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` is now "can't be redeclared in a MERGE clause" (was 3 nodes, 1 relationship; C: same error). |
 | `set_paren_target_refused`, `set_paren_needs_dot` | **Fixed by #3300** (`f680bb9f2`): `expect_property_after_paren` (cypher.rs:3409) lets a parenthesised SET/REMOVE target open only `(n).x`. The `=` arm used to take any primary (cypher.rs:3352-3366 at b02266c2b). | `SET (n.x) = 5`, `SET (n) = {..}`, `SET (n):L`, `REMOVE (n):L` are now syntax errors (as in C); `SET (n).x = 5` still works. |
@@ -218,7 +218,7 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
 | `C.pipeScan`, `C.gateOK`, `C.listLitP`, `C.listLitPU`, `Oracle.seen` | `list_has_top_level_pipe` (2892-2912), the #3104 gate (2845-2878), the merged / pre-#3104 `parse_list_literal_or_comprehension`, `not_pattern_comprehension` |
 | `listOp` | `parse_list_operator_expression` (2136-2165) |
 | `parseMap`, `mapProj*`, `labels` | `parse_map` (3202), `parse_map_projection` (3234), `parse_labels` (3193) |
-| `skipFilter` | `parse_shortest_path_expr`'s pre-#3019 filter skipper (1835-1870 at 343e077f2; historical) |
+| `skipFilter` | `parse_shortest_path_expr`'s filter skipper (1833-1858) |
 | `setTarget`, `rejectUnparen` | `parse_set_items` / `parse_remove_items` targets (3336, 3432), `reject_unparenthesized_target` (3395) |
 | `G.*` | `oC_Expression` … `oC_Atom` (Cypher.g4:275-560) |
 | `C.CT`, `C.CK`, `C.P`, `tok`/`opt`/`ident`/`tryIdent` | `Token`, `Keyword` (lexer.rs:63-156), the parser, `match_token!` / `optional_match_token!` (macro.rs:51-113), `parse_ident` / `try_parse_ident` |

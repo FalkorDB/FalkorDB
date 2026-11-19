@@ -87,7 +87,7 @@ theorem drain_eq (st : St ε β) (fuel : Nat) (h : (pendingItems st).length < fu
     | cons x xs =>
       obtain ⟨h1, h2⟩ := hs
       rcases hn : next st with ⟨o, st'⟩
-      rw [hn] at h1 h2; simp only [Option.some.injEq] at h1; subst h1; simp only
+      rw [hn] at h1 h2; simp only at h1; subst h1; simp only
       rw [ih _ (by rw [h2]; simp at h; omega), h2]
 
 /-- **UNION ALL = concatenation.**  Starting state of a fresh `UnionOp`

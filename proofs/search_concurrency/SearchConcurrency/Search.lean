@@ -426,7 +426,7 @@ theorem rust_refuses_missing (m : Opts)
   unfold rustAccepts parseVector
   rcases h with h | h
   · simp [parseDimension_missing m h, bind, Except.bind]
-  · cases hd : parseDimension m <;> simp [hd, parseSim_missing m h, bind, Except.bind]
+  · cases hd : parseDimension m <;> simp [parseSim_missing m h, bind, Except.bind]
 
 /-- The metric match is total on the three documented names and rejects all else. -/
 theorem metricOf_ok_iff (s : String) :
@@ -479,8 +479,8 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
       by_cases hneg : n < 0
       · have : ¬ (0 ≤ n) := by omega
         cases hs : get m "similarityFunction" with
-        | none => simp [parseDimension, hg, hs, hneg, bind, Except.bind]
-        | some w => cases w <;> simp [parseDimension, hg, hs, hneg, this, bind, Except.bind]
+        | none => simp [parseDimension, hg, hneg, bind, Except.bind]
+        | some w => cases w <;> simp [parseDimension, hg, hneg, this, bind, Except.bind]
       · cases hs : get m "similarityFunction" with
         | none => simp [parseDimension, parseSim, hg, hs, hneg, bind, Except.bind]
         | some w =>

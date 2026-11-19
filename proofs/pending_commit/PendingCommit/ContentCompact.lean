@@ -209,14 +209,14 @@ theorem get_at (es : List Entry) (h : Sorted es) : ∀ p, p < es.length →
         apply List.rel_of_pairwise_cons h
         simp only [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hp', Option.getD_some]
         exact List.getElem_mem hp'
-      simp only [get]; rw [if_neg (by omega)]; exact ih (List.Pairwise.of_cons h) p hp'
+      simp only [get]; rw [ite_eq_right (by omega)]; exact ih (List.Pairwise.of_cons h) p hp'
 
 theorem get_none_of_not_mem (es : List Entry) (k : Nat) (h : k ∉ es.map (·.1)) : get es k = none := by
   induction es with
   | nil => rfl
   | cons e es ih =>
     simp only [List.map_cons, List.mem_cons, not_or] at h
-    simp only [get]; rw [if_neg (fun e' => h.1 e'), ih h.2]
+    simp only [get]; rw [ite_eq_right (fun e' => h.1 e'), ih h.2]
 
 /-- **`spanGet_eq`**: the binary search returns the first-match lookup. -/
 theorem spanGet_eq (es : List Entry) (h : Sorted es) (k : Nat) : spanGet es k = get es k := by

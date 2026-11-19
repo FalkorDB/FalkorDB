@@ -1,8 +1,7 @@
 /-
-# Soundness of `parse_shortest_path_expr` (cypher.rs:1768-1925)
+# Soundness of `parse_shortest_path_expr` (cypher.rs:1753-1940)
 -/
 import FalkorParserGrammar.C.ExprC4
-import FalkorParserGrammar.C.Oracle0
 
 namespace FalkorParserGrammar.C
 
@@ -65,7 +64,7 @@ is the Neo4j `shortestPath` pattern with bound end nodes, at most one hop
 minimum and no relationship filter, and the tree records exactly its
 types, bounds and direction (the left node is the source unless the arrow
 points left only). -/
-theorem shortestP_sound (pmap : P ET) (F : Nat) (s : PS) t s' (h : shortestP pmap F s = .ok t s') : GShortest s t s' := by
+theorem shortestP_sound (F : Nat) (s : PS) t s' (h : shortestP F s = .ok t s') : GShortest s t s' := by
   unfold shortestP at h
   peel h => c0 s1 h1
   obtain ⟨hc0, hs⟩ := peek_ok h1; subst hc0; subst s1
@@ -136,23 +135,17 @@ theorem shortestP_sound (pmap : P ET) (F : Nat) (s : PS) t s' (h : shortestP pma
                     generalize hfv : isFilter s20.cur = fv at h9
                     cases fv
                     case true =>
+                      rw [ite_eq_left rfl] at h9
                       peel h9 => u s22 h22
                       peel h9 => u s23 h23
                       obtain ⟨rfl, rfl⟩ := pure_ok h9
                       simp at hf
+                    rw [ite_eq_right (by decide)] at h9
                     have hnf : isFilter s20.cur = false := hfv
                     have hnp : ∀ p, s20.cur ≠ .param p := by
                       intro p hp; rw [hp] at hnf; simp [isFilter] at hnf
                     have hnl : s20.cur ≠ .lbrace := by
                       intro hp; rw [hp] at hnf; simp [isFilter] at hnf
-                    peel h9 => u s22 h22
-                    have e22 : s22 = s20 := by
-                      revert h22
-                      cases hc : s20.cur with
-                      | param p => exact absurd hc (hnp p)
-                      | lbrace => exact absurd hc hnl
-                      | _ => intro h22; exact (pure_ok h22).2.symm
-                    subst e22
                     peel h9 => u s23 h23; obtain ⟨hrb, rfl⟩ := tok_ok h23
                     obtain ⟨rfl, rfl⟩ := pure_ok h9
                     have gv : identOf s7.adv.cur ≠ none ∧ s17 = s7.adv.adv ∨
@@ -182,33 +175,5 @@ theorem shortestP_sound (pmap : P ET) (F : Nat) (s : PS) t s' (h : shortestP pma
                   exact this
         · simp at h
     · simp at h
-
-/-! ## #3019: an edge filter that runs to the end of input is a syntax error
-
-Before #3019 the filter was skipped token by token and the skipper never
-stopped at end of input (`skipP_eof`, `skipFilter_eof_diverges`):
-`RETURN shortestPath((a)-[$p` / `RETURN shortestPath((a)-[{` hung a worker.
-Now `$p` is one token and `{...}` goes through `parse_map`, so both end in an
-error. -/
-
-/-- `shortestPath((a)-[$p` at end of input: an error, whatever `parse_map` does. -/
-theorem shortestP_param_eof_err (pmap : P ET) (F : Nat) (a p k : Nat) :
-    shortestP pmap F ([.lparen, .ident a, .rparen, .dash, .lbrack, .param p], k) = .err := by
-  cases F <;> rfl
-
-/-- `shortestPath((a)-[{` at end of input: an error, given that `parse_map` at
-`{` followed by end of input fails (cypher.rs:3226-3242: `parse_ident()?` on
-`EndOfFile`). -/
-theorem shortestP_filter_eof_err (pmap : P ET) (F : Nat) (a k : Nat)
-    (hm : ∀ s : PS, s.cur = .lbrace → s.adv.cur = .eof → pmap s = .err) :
-    shortestP pmap F ([.lparen, .ident a, .rparen, .dash, .lbrack, .lbrace], k) = .err := by
-  have h := hm ([.lbrace], k) rfl rfl
-  cases F <;> simp [shortestP, run_bind, peek, PS.cur, PS.adv, tok, opt, tryIdent, identOf, spRangeP,
-    isFilter, h]
-
-/-- The same with the example oracle's `parse_map`. -/
-theorem shortestP_filter_eof_err0 (F : Nat) (a k : Nat) :
-    shortestP o0.pmap F ([.lparen, .ident a, .rparen, .dash, .lbrack, .lbrace], k) = .err :=
-  shortestP_filter_eof_err _ F a k (fun s h1 h2 => by simp [o0, pmap0, h2])
 
 end FalkorParserGrammar.C

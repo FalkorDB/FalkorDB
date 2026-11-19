@@ -6,7 +6,7 @@ import FalkorParserGrammar.Model
 
 namespace FalkorParserGrammar
 
-/-! ## `parse_shortest_path_expr`'s filter skipper before #3019 (cypher.rs:1835-1870 at 343e077f2; historical: #3019 parses the filter with `parse_map` instead, see `C.shortestP_filter_eof_err`)
+/-! ## `parse_shortest_path_expr`'s filter skipper (cypher.rs:1833-1858)
 
 ```rust
 let mut depth = 0i32;
