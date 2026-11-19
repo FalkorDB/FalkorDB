@@ -12,8 +12,8 @@ import FalkorOptimizer.Basic
 | `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
 | `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
 | `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
-| `isAnon`, `attrsEmpty` | `is_anon`, `rel_attrs_empty` fuse_anonymous_traverse.rs:36-51 (`node_attrs_empty` removed by #2390) |
-| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-192 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
+| `isUnnamed`, `attrsEmpty` | `Variable::is_unnamed` ast.rs:209-211 (#3303: `name.is_none()`, replacing the `_anon` prefix test `is_anon`), `rel_attrs_empty` fuse_anonymous_traverse.rs:37-47 (`node_attrs_empty` removed by #2390) |
+| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:78-187 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
 | `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
 | `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-87 |
 -/
@@ -204,7 +204,10 @@ theorem countVar_spec (e : X) (i : Nat) :
 
 /-! ## `fuse_anonymous_traverse` preconditions -/
 
-def isAnon (name : Option String) : Bool := name.any (·.startsWith "_anon")
+/-- `Variable::is_unnamed` (ast.rs:209-211, #3303): an unnamed pattern entity has no name.
+Before #3303 the test was the `_anon` prefix of the name (`is_anon`), which a user name such
+as `_anon_x` also passed. -/
+def isUnnamed (name : Option String) : Bool := name.isNone
 
 /-- An inline attribute map is "empty" iff it is a `Map` with no entries. -/
 def attrsEmpty : X → Bool
@@ -216,8 +219,9 @@ theorem attrsEmpty_iff (a : X) : attrsEmpty a = true ↔ a = .node .map [] := by
   · intro h; match a, h with | .node .map [], _ => rfl
   · rintro rfl; rfl
 
-theorem isAnon_none : isAnon none = false := rfl
-theorem isAnon_some (n : String) : isAnon (some n) = n.startsWith "_anon" := rfl
+theorem isUnnamed_none : isUnnamed none = true := rfl
+/-- No written name, `_anon…` included, counts as unnamed (#3303). -/
+theorem isUnnamed_some (n : String) : isUnnamed (some n) = false := rfl
 
 /-- What `can_fuse` reads of a CondTraverse. -/
 structure CT where
@@ -242,10 +246,10 @@ structure CT where
 reference check sees) and added the two edges to the reference check (:181-185). -/
 def canFuse (p c : CT) (unread : Var → Bool) : Bool :=
   p.bind && c.bind && !p.optional && !c.optional && !p.transposed && !c.transposed &&
-  isAnon p.edgeName && isAnon c.edgeName && !p.emit && !c.emit &&
+  isUnnamed p.edgeName && isUnnamed c.edgeName && !p.emit && !c.emit &&
   p.siblings.isEmpty && c.siblings.isEmpty && !p.bidirectional && !c.bidirectional &&
   !p.varLen && !c.varLen && attrsEmpty p.edgeAttrs && attrsEmpty c.edgeAttrs &&
-  p.fromV == c.toV && isAnon p.fromName && p.fromLabels.isEmpty &&
+  p.fromV == c.toV && isUnnamed p.fromName && p.fromLabels.isEmpty &&
   unread p.fromV && unread p.edgeV && unread c.edgeV
 
 /-- Fusion only happens on two plain, storage-direction, anonymous, unfiltered,
@@ -254,8 +258,8 @@ edges — read by no operator of the plan (its inline map, if any, is a Filter t
 it) — the preconditions of `fuse_same_support` (Passes.lean). -/
 theorem canFuse_spec (p c : CT) (u : Var → Bool) (h : canFuse p c u = true) :
     p.optional = false ∧ c.optional = false ∧ p.emit = false ∧ c.emit = false ∧
-    isAnon p.edgeName = true ∧ isAnon c.edgeName = true ∧ p.fromV = c.toV ∧
-    isAnon p.fromName = true ∧ p.fromLabels = [] ∧
+    isUnnamed p.edgeName = true ∧ isUnnamed c.edgeName = true ∧ p.fromV = c.toV ∧
+    isUnnamed p.fromName = true ∧ p.fromLabels = [] ∧
     p.edgeAttrs = .node .map [] ∧ c.edgeAttrs = .node .map [] ∧ p.varLen = false ∧ c.varLen = false ∧
     p.siblings = [] ∧ c.siblings = [] ∧ u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
   simp only [canFuse, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff] at h

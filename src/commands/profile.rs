@@ -41,7 +41,7 @@ pub fn graph_profile(
 
     // Graph doesn't exist - open writable key to create it.
     drop(read_key);
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
     if let Some(graph) = key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
         .map_err(wrong_type_compat)?
@@ -57,9 +57,10 @@ pub fn graph_profile(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
         &name,
     )));
+    // Stored under C's key, not the addressed one — see `c_graph_key`. Opened before
+    // the profile runs, for the reason given in `graph_query`.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
     let result = profile_mut(ctx, &graph, query, &key_name, timeout);
-    // Stored under C's key, not the addressed one — see `c_graph_key`.
-    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
     drop(key);
     create_key
         .set_value(&GRAPH_TYPE, graph.clone())

@@ -89,6 +89,6 @@ theorem distance_none_iff (m : Option String) (a b : List F32) :
     · subst h2; simp [cosine, checked, h]
     by_cases h3 : s = "ip"
     · subst h3; simp [innerProduct, checked, h]
-    simp [h, h1, h2, h3]
+    simp [h]
 
 end FalkorTemporal.VecDist

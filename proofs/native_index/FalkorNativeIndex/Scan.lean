@@ -230,7 +230,7 @@ theorem redisearchFields_mem (fields : List (String × List Field)) (k : String)
   · rintro ⟨⟨k', l⟩, hm, h⟩
     by_cases he : (l.filter (fun f => !(f.ty == .range))).isEmpty = true
     · simp [he] at h
-    · simp only [he, Bool.false_eq_true, if_false, Option.some.injEq, Prod.mk.injEq] at h
+    · simp only [he, Bool.false_eq_true, ite_false, Option.some.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
       exact ⟨l, hm, rfl, by intro h0; simp [h0] at he⟩
   · rintro ⟨l, hm, rfl, hne⟩
@@ -283,12 +283,12 @@ theorem redisearchFields_idem (fields : List (String × List Field)) :
     obtain ⟨k, l⟩ := kf
     simp only [List.filterMap_cons]
     by_cases he : (l.filter (fun f => !(f.ty == .range))).isEmpty = true
-    · simp only [he, if_true]; exact ih
-    · simp only [he, Bool.false_eq_true, if_false, List.filterMap_cons]
+    · simp only [he, ite_true]; exact ih
+    · simp only [he, Bool.false_eq_true, ite_false, List.filterMap_cons]
       have hf : ((l.filter (fun f => !(f.ty == .range))).filter (fun f => !(f.ty == .range))) =
           l.filter (fun f => !(f.ty == .range)) := by
         rw [List.filter_filter]; congr 1; funext f; simp
-      simp only [hf, he, Bool.false_eq_true, if_false, ih]
+      simp only [hf, he, Bool.false_eq_true, ite_false, ih]
 
 /-- **Range is the native index's alone**: an attribute with a Range field is built natively by
     `populate` (from every field, `native_attrs`), and the Range fields are never fed to RediSearch (an attribute

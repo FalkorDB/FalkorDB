@@ -165,7 +165,7 @@ theorem runLevels_nodes (es : List E) (c : TCfg) (hn : c.retEdges = false) :
     have hnext : (level es c fr st).next = add := by simpa [level] using h2
     have hnd' : (st.visited ++ add).Nodup := by
       rw [List.nodup_append]; exact ⟨hnd, h4, fun a ha b hb hab => by subst hab; exact h3 a hb ha⟩
-    simp only [runLevels, hn, Bool.false_eq_true, if_false]
+    simp only [runLevels, hn, Bool.false_eq_true, ite_false]
     split
     · rw [hnext, ← hv]; exact hnd'
     · apply ih _ _ _ (by rw [hvis]; exact hnd') (by rw [hvis, hv, hnext])
@@ -217,7 +217,7 @@ theorem visitEdge_J (es : List E) (c : TCfg) (hr : c.retEdges = true)
       else { st' with visited := st'.visited ++ [far nid e], next := st'.next ++ [far nid e] }).seen = st'.seen := by
     intro st'; split <;> exact ⟨rfl, rfl⟩
   unfold visitEdge
-  simp only [hr, hdd, if_true]
+  simp only [hr, hdd, ite_true]
   split
   · exact hj
   · split
@@ -287,7 +287,7 @@ theorem runLevels_J (es : List E) (c : TCfg) (hr : c.retEdges = true)
     intro fr st acc h
     have hl := level_J es c hr hu acc.2 fr { st with next := [], out := [] }
       (J_of h rfl (by simp))
-    simp only [runLevels, hr, if_true]
+    simp only [runLevels, hr, ite_true]
     split
     · exact hl.1
     · exact ih _ _ _ hl

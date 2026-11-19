@@ -100,7 +100,7 @@ theorem countBatch_spec (acc : Int) (xs : List V) :
     · simp only [h, ite_true]
       rw [show skipFold countStep acc xs = countBatch acc xs from rfl, ih]; simp [List.filter, h]
     · have h' : x.isNull = false := by simpa using h
-      simp only [h', Bool.false_eq_true, if_false]
+      simp only [h', Bool.false_eq_true, ite_false]
       rw [show skipFold countStep (countStep acc x) xs = countBatch (countStep acc x) xs from rfl, ih]
       simp [List.filter, h, countStep]; omega
 
@@ -133,7 +133,7 @@ theorem collectBatch_spec (acc xs : List V) :
     · simp only [h, ite_true]
       rw [show skipFold collectStep acc xs = collectBatch acc xs from rfl, ih]; simp [List.filter, h]
     · have h' : x.isNull = false := by simpa using h
-      simp only [h', Bool.false_eq_true, if_false]
+      simp only [h', Bool.false_eq_true, ite_false]
       rw [show skipFold collectStep (collectStep acc x) xs
           = collectBatch (collectStep acc x) xs from rfl, ih]
       simp [List.filter, h, collectStep]
@@ -245,7 +245,7 @@ theorem avg_count (acc : AvgS) (xs : List V) :
     · simp only [h, ite_true]
       rw [show skipFold avgStep acc xs = avgBatch acc xs from rfl, ih]; simp [List.filter, h]
     · have h' : x.isNull = false := by simpa using h
-      simp only [h', Bool.false_eq_true, if_false]
+      simp only [h', Bool.false_eq_true, ite_false]
       rw [show skipFold avgStep (avgStep acc x) xs = avgBatch (avgStep acc x) xs from rfl, ih]
       have : (avgStep acc x).count = acc.count + 1 := by
         simp only [avgStep]; split <;> rfl

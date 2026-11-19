@@ -137,7 +137,7 @@ theorem VIter.drain_eq (es : List α) :
         ⟨rfl, by show s.pos + 1 ≤ es.length; omega⟩ (by show es.length - (s.pos + 1) < f; omega)
       have hn : s.next es = (some es[s.pos], ⟨s.pos + 1, cExhausted es (s.pos + 1)⟩) := by
         unfold VIter.next
-        rw [if_neg (by simpa using hd'), List.getElem?_eq_getElem hlt]
+        rw [ite_eq_right (by simpa using hd'), List.getElem?_eq_getElem hlt]
       rw [VIter.drain, hn]
       show es[s.pos] :: VIter.drain es f ⟨s.pos + 1, cExhausted es (s.pos + 1)⟩ = _
       rw [ih]

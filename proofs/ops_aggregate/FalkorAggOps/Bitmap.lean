@@ -38,11 +38,11 @@ theorem bit_test (w : BitVec 64) (a : Nat) (ha : a < 64) :
     ((w >>> a) &&& 1) != 0 ↔ w.getLsbD a = true := by
   have key : ∀ (v : BitVec 64), (v &&& 1) != 0 ↔ v.getLsbD 0 = true := by
     intro v; simp only [bne_iff_ne, ne_eq]; bv_decide
-  rw [key]; simp [BitVec.getLsbD_ushiftRight]
+  rw [key]; simp
 
 theorem getLsbD_one_shl (a b : Nat) (ha : a < 64) (hb : b < 64) :
     ((1 : BitVec 64) <<< a).getLsbD b = (a == b) := by
-  simp [BitVec.getLsbD_shiftLeft, hb]
+  simp [hb]
   by_cases h : a = b
   · subst h; simp
   · have : b - a ≠ 0 ∨ b < a := by omega
@@ -124,7 +124,7 @@ theorem foldl_setIf_isNull (p : Nat → Bool) (j : Nat) : ∀ (xs : List Nat) (b
     rw [foldl_setIf_isNull p j xs]
     by_cases hx : x = j
     · subst hx
-      cases hp : p x <;> simp [hp, set_isNull]
+      cases hp : p x <;> simp [set_isNull]
     · have e1 : decide (j = x) = false := by simp [Ne.symm hx]
       have e2 : (x == j) = false := by simp [hx]
       cases hp : p x <;> simp [set_isNull, e1, e2, List.mem_cons]

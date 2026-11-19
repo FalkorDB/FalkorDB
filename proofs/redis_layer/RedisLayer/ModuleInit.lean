@@ -32,7 +32,7 @@ def documented : List String :=
    "RESULTSET_SIZE", "OMP_THREAD_COUNT", "VKEY_MAX_ENTITY_COUNT", "MAX_QUEUED_QUERIES",
    "QUERY_MEM_CAPACITY", "DELTA_MAX_PENDING_CHANGES", "NODE_CREATION_BUFFER", "CMD_INFO",
    "MAX_INFO_QUERIES", "EFFECTS_THRESHOLD", "DELAY_INDEXING", "IMPORT_FOLDER", "TEMP_FOLDER",
-   "JS_HEAP_SIZE", "JS_STACK_SIZE"]
+   "JS_HEAP_SIZE", "JS_STACK_SIZE", "WRITE_LOCK_POLL_INTERVAL"]
 
 inductive Kind | i64 (dflt lo hi : Int) | str (dflt : String) | bool (dflt : Bool)
   deriving DecidableEq, Repr
@@ -88,12 +88,13 @@ theorem graphInitArgs_ok {ε α : Type} (a : α) : graphInitArgs (.ok a : Except
 
 /-! ## Event handlers -/
 
-/-- `on_role_change` (`:466`): replica flag, sticky consumer latch, promotion work. -/
-def onRoleChange (subevent : Nat) : Bool × Bool × Bool :=
-  (subevent == 1, true, subevent == 0)
+/-- `on_role_change` (`:549`): sticky consumer latch, promotion work. Since #3844 it no
+longer sets a replica flag (telemetry does not ask about the role). -/
+def onRoleChange (subevent : Nat) : Bool × Bool :=
+  (true, subevent == 0)
 
-theorem onRoleChange_promote : onRoleChange 0 = (false, true, true) := rfl
-theorem onRoleChange_demote : onRoleChange 1 = (true, true, false) := rfl
+theorem onRoleChange_promote : onRoleChange 0 = (true, true) := rfl
+theorem onRoleChange_demote : onRoleChange 1 = (true, false) := rfl
 
 /-- `on_replica_change` (`:564`): always latches. -/
 def onReplicaChange (_subevent : Nat) : Bool := true
@@ -105,9 +106,12 @@ def onLoading (subevent : Nat) : Bool := subevent == 3 || subevent == 4
 theorem onLoading_only_end (s : Nat) : onLoading s = true ↔ s = 3 ∨ s = 4 := by
   simp [onLoading]
 
-/-- `on_flush` (`:438`): nothing. -/
-def onFlush {σ} (s : σ) : σ := s
-theorem onFlush_id {σ} (s : σ) : onFlush s = s := rfl
+/-- `on_flush` (`:511`, #3844): the new `FLUSH_IN_PROGRESS`, raised by
+`REDISMODULE_SUBEVENT_FLUSHDB_START` (0) and lowered by `..._END` (1)
+(see `Telemetry.queue_flushing`). -/
+def onFlush (subevent : Nat) : Bool := subevent == 0
+theorem onFlush_start : onFlush 0 = true := rfl
+theorem onFlush_end : onFlush 1 = false := rfl
 
 /-- `on_shutdown` (`:465`): the teardown order. With the native index (`nativeIndex`) the index
 builder is stopped before the pool, and GraphBLAS and RediSearch are torn down only if every
