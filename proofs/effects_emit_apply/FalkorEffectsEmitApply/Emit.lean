@@ -5,7 +5,7 @@ import FalkorEffectsEmitApply.Basic
 
 Models `graph/src/effects/v3/emit.rs` (`for_each_record` and its digests) and
 the gate that decides whether it runs at all (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1958`).
+`Pending::effects_count` at `runtime/pending.rs:2013`).
 -/
 
 namespace FalkorEA
@@ -228,12 +228,14 @@ structure Pending where
   cancelledNodes    : List Nat
   cancelledRels     : List (Name × Nat)         -- (type name, id)
   baseline          : Schema
+  /-- `staged_labels_removed` (#3459): removals that only cancelled a staged add. -/
+  stagedLabelsRemoved : Nat := 0
 deriving Repr
 
-/-- `Pending::effects_count` (`runtime/pending.rs:1970-1993`), term for term.
+/-- `Pending::effects_count` (`runtime/pending.rs:2013-2040`), term for term.
     Since #3461 (f203972c5) a cancelled node or relationship counts twice (its
-    create and its delete). Note what is still **not** summed: the schema
-    registered since `baseline`. -/
+    create and its delete); since #3459 `staged_labels_removed` is added. Note
+    what is still **not** summed: the schema registered since `baseline`. -/
 def effectsCount (p : Pending) : Nat :=
   p.createdNodes.length + p.createdRelTypes.length + p.deletedNodes.length
   + p.deletedRels.length
@@ -242,6 +244,7 @@ def effectsCount (p : Pending) : Nat :=
   + p.newRelsAttrs.length + p.existingRelsAttrs.length
   + (p.setLabels.map (fun q => q.2.length)).sum
   + (p.removeLabels.map (fun q => q.2.length)).sum
+  + p.stagedLabelsRemoved
 
 /-- `effects_count` before #3461 (pending.rs:1958-1977 on 343e077f2): the
     cancelled sets were not summed. History for the `pre3461_*` theorems. -/
@@ -456,6 +459,15 @@ theorem cancelled_edge_attr_ships :
     effectsCount p = 6 ∧
     commitShips p g = [.addRelType 0 "T1", .addAttribute 0 "p4", .createNode [0, 1] [],
       .createEdge [0] 0, .deleteEdge [0], .deleteNode [0, 1] []] := by
+  decide
+
+/-- #3459: a removal that only cancelled a staged add is counted, so `MATCH (n) SET n:L6 REMOVE n:L6`
+on a committed node without `L6` (nothing else staged, `L6` newly registered) still ships `L6`'s
+registration. -/
+theorem gate_keeps_staged_removal :
+    let p : Pending := { pSchemaOnly with stagedLabelsRemoved := 1 }
+    effectsCount p = 1 ∧ commitShips p gSchemaOnly = [.addLabel 0 "L6"] := by
+  refine ⟨rfl, ?_⟩
   decide
 
 end FalkorEA
