@@ -17,12 +17,12 @@ Since #3657 (34a708cfa) there is no write slot: a writer forks a private version
 | `Ev.checkFork`             | `QuerySession::check_fork` (`:247`) → `MvccGraph::is_stale` (`mvcc_graph.rs:144`): `published.version + 1 != fork.version` ⇒ `Version::Stale` + `Err(Stale)`, else `Current`; called from `upgrade_to_write` (`:332`, the call at `:348`) in writer mode. Since #3567 (b18530683) it also rebases the fork onto the indexer batches published since (`MvccGraph::rebase_onto_indexer_batches`, `mvcc_graph.rs:165`): index progress only, data version and data untouched, so the verdict and the model are unchanged (native_index `Rebase.lean`: `V.rebased_keeps_data`, `V.rebased_not_stale`, `rebase_progress`). Its one `Err(Stale)` (a release build, a fork still borrowed) cannot happen to an escalating writer, whose fork its owner has stopped reading; a debug build panics on it |
 | `Ev.abandon`               | dropping the session/runtime: an uncommitted version (`Unchecked`, `Current` or `Stale`) is just dropped |
 | `Ev.mutate`                | any mutation on the private version (runtime `Commit` op) — requires writer mode |
-| `Ev.commit`                | `commit_and_replicate` → `MvccGraph::commit` → `commit_version(.., true)` (`src/graph_core.rs:1553`, `mvcc_graph.rs:205`, `:261`) up to the swap: loads the published pointer (`S.pid` into `S.ld`), `is_stale` ⇒ `Err(Stale)`; `Graph::validate` (`valid`) refused ⇒ `Err(Invalid)`. A refusal publishes nothing and the version is dropped |
+| `Ev.commit`                | `commit_and_replicate` → `MvccGraph::commit` → `commit_version(.., true)` (`src/graph_core.rs:1619`, `mvcc_graph.rs:205`, `:261`) up to the swap: loads the published pointer (`S.pid` into `S.ld`), `is_stale` ⇒ `Err(Stale)`; `Graph::validate` (`valid`) refused ⇒ `Err(Invalid)`. A refusal publishes nothing and the version is dropped |
 | `Ev.swap`                  | the publish, `self.graph.compare_and_swap(&published, new)` (#3545, `mvcc_graph.rs:327-331`): installs the version only if the published pointer is still the one `Ev.commit` loaded (`S.pid = p0`), else `Err(Stale)` ("another version was published while this commit ran") and nothing is published. With the host's global lock nothing publishes between the two (`cas_current_commit_publishes`); a publisher without it, e.g. an unlocked `Ev.batch`, makes the swap fail (`cas_refuses_overtaken_commit`) |
 | `Ev.batch`                 | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:235`) → `commit_version(.., false)` (`:261`): publishes a version at the *same* data version (`new_build_version`), changes no data, bumps `batches_published` (`S.bver`) and installs a new published pointer (`S.pid`). Its own swap is atomic here and enabled at any time (it may run without the global lock, the adversarial case for a writer's swap); its CAS refusal is native_index `Batch.commit_cas_stale` |
-| `S.gil`, `Ev.escalate`     | `QuerySession::escalate` (`query_session.rs:358`): drop read lock, `Gil::acquire`, `write_arc` |
-| `S.registered`             | `GRAPH_REGISTRY` membership (`graph_core.rs:140`, `graph_is_registered` `:188`) |
-| `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs:37`) → `graph_free` (`graph_core.rs:1777`), main thread, GIL held |
+| `S.gil`, `Ev.escalate`     | `QuerySession::escalate` (`query_session.rs:399`): drop read lock, then `acquire_write` (`:460`): `Gil::acquire`, the write lock (#3816: in GIL-free slices off the main thread; a missed slice changes no state here, so it is not an event) |
+| `S.registered`             | `GRAPH_REGISTRY` membership (`graph_core.rs:142`, `graph_is_registered` `:190`) |
+| `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs:37`) → `graph_free` (`graph_core.rs:1858`), main thread, GIL held |
 | `Ev.fork`                  | BGSAVE `fork()` on the main thread with the GIL (`redis_type.rs:350` `pre_fork_prepare`, `module_init.rs:118` `on_fork_child`) |
 
 **#3657 (34a708cfa).** `MvccGraph::write`/`claim`/`rollback` and the `AtomicBool` are gone.
@@ -565,7 +565,7 @@ theorem unchecked_fork_cannot_write {valid : List W → Bool} {s : S} (h : Reach
     have hne := hi o fv b p hc
     have hot : o ≠ t := fun e => hne (hft.trans e.symm)
     simp only [step, hc, hot]
-    refine ⟨by simp [hot], by simp [hot], ?_⟩
+    refine ⟨by simp, by simp, ?_⟩
     split
     · rename_i o'' p0 o3 fv3 b3 p3 hld hcc
       simp at hcc; obtain ⟨rfl, -, -, -⟩ := hcc

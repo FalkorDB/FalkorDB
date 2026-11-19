@@ -143,7 +143,7 @@ theorem leafInsert_spec (c : Cfg) (es : List E) (x : E) (hs : Sorted es) (hl : e
     generalize insAt es (lowerBoundEntry es x) x = ps at hsrt hlen hmem ⊢
     by_cases hfit : ps.length ≤ c.L
     · simp only [hfit, ↓reduceIte]
-      exact ⟨hsrt, hmem, by simp [hfit], hlen⟩
+      exact ⟨hsrt, hmem, by simp, hlen⟩
     · simp only [hfit, ↓reduceIte]
       have hmid : ps.length / 2 < ps.length := by omega
       obtain ⟨hc1, hc2⟩ := sorted_cut ps hsrt _ hmid

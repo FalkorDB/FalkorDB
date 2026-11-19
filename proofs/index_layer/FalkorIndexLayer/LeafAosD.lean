@@ -116,14 +116,14 @@ theorem aosBuildD_some (D : Nat) (hD : D ≤ 8) (ps : List P) (hu : AllU64 ps) (
     aosBuildD D ps = some (ps.flatMap (aosEncD D)) := by
   unfold aosBuildD
   rw [mapM_some _ (fun p => aosEncD D p) ps (fun p hp => by
-    rw [docLeBytes_spec D p.2 hD (hu p hp).2, if_pos (hf p hp)]; rfl)]
+    rw [docLeBytes_spec D p.2 hD (hu p hp).2, ite_eq_left (hf p hp)]; rfl)]
   simp [List.flatMap]
 
 /-- A doc that does not fit panics (Rust: the `doc_le_bytes` assert). -/
 theorem aosBuildD_none (D : Nat) (hD : D ≤ 8) (ps : List P) (p : P) (hp : p ∈ ps) (hu : U64 p.2)
     (hn : ¬ p.2 < 256 ^ D) : aosBuildD D ps = none := by
   unfold aosBuildD
-  rw [mapM_none _ ps p hp (by rw [docLeBytes_spec D p.2 hD hu, if_neg hn]; rfl)]
+  rw [mapM_none _ ps p hp (by rw [docLeBytes_spec D p.2 hD hu, ite_eq_right hn]; rfl)]
   rfl
 
 /-- The page holds `count * (8 + DOC_BYTES)` bytes (the `heap_bytes` leaf term, `proofs/cow_btree`

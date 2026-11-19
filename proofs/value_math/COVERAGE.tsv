@@ -41,33 +41,33 @@ graph/src/runtime/value.rs	compare_value	1250	NOT COVERED	trait method declarati
 graph/src/runtime/value.rs	eq	1257	PROVEN	proofs/value_order: eqV; isNeverEqual_iff
 graph/src/runtime/value.rs	compare_value	1266	PROVEN	mayFail_sound; proofs/value_order: cmp_sane_eq_key, sane_le_trans
 graph/src/runtime/value.rs	value_of_type	1316	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	value_of_type	1323	PROVEN	valueOfType_none_iff
-graph/src/runtime/value.rs	get_type	1365	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	get_type	1369	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
-graph/src/runtime/value.rs	name	1395	MODELLED	V.name (used in error-message theorems)
-graph/src/runtime/value.rs	to_json_string	1417	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	fmt	1427	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	compare_list	1442	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
-graph/src/runtime/value.rs	compare_map	1515	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
-graph/src/runtime/value.rs	is_never_equal	1645	PROVEN	isNeverEqual_iff
-graph/src/runtime/value.rs	may_fail_self_match	1668	PROVEN	mayFail_sound
-graph/src/runtime/value.rs	fmt_json	1696	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
-graph/src/runtime/value.rs	write_json_string	1818	NOT COVERED	json_escape crate (trusted)
-graph/src/runtime/value.rs	write_node_json	1830	NOT COVERED	runtime graph accessors + formatting
-graph/src/runtime/value.rs	contains	1870	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	contains	1877	PROVEN	proofs/functions_str_list Contains
-graph/src/runtime/value.rs	partial_cmp	1902	PROVEN	partialCmp_null
-graph/src/runtime/value.rs	compare_floats	1915	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
-graph/src/runtime/value.rs	compare_vecf32	2005	PROVEN	chunked_eq_firstDiff
-graph/src/runtime/value.rs	first_difference	2009	PROVEN	firstDiff_append, firstDiff_self
-graph/src/runtime/value.rs	with_capacity	2047	NOT COVERED	constructor
-graph/src/runtime/value.rs	is_seen	2057	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
-graph/src/runtime/value.rs	has_hash	2068	PROVEN	dedup_second_seen
-graph/src/runtime/value.rs	check_and_insert_hash	2075	PROVEN	dedup_second_seen, dedup_first_unseen
+graph/src/runtime/value.rs	value_of_type	1323	PROVEN	valueOfType_none_iff, vot_list_any
+graph/src/runtime/value.rs	get_type	1369	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	get_type	1373	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
+graph/src/runtime/value.rs	name	1399	MODELLED	V.name (used in error-message theorems)
+graph/src/runtime/value.rs	to_json_string	1421	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	fmt	1431	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	compare_list	1446	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
+graph/src/runtime/value.rs	compare_map	1519	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
+graph/src/runtime/value.rs	is_never_equal	1649	PROVEN	isNeverEqual_iff
+graph/src/runtime/value.rs	may_fail_self_match	1672	PROVEN	mayFail_sound
+graph/src/runtime/value.rs	fmt_json	1700	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
+graph/src/runtime/value.rs	write_json_string	1822	NOT COVERED	json_escape crate (trusted)
+graph/src/runtime/value.rs	write_node_json	1834	NOT COVERED	runtime graph accessors + formatting
+graph/src/runtime/value.rs	contains	1874	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	contains	1881	PROVEN	proofs/functions_str_list Contains
+graph/src/runtime/value.rs	partial_cmp	1906	PROVEN	partialCmp_null
+graph/src/runtime/value.rs	compare_floats	1919	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
+graph/src/runtime/value.rs	compare_vecf32	2009	PROVEN	chunked_eq_firstDiff
+graph/src/runtime/value.rs	first_difference	2013	PROVEN	firstDiff_append, firstDiff_self
+graph/src/runtime/value.rs	with_capacity	2051	NOT COVERED	constructor
+graph/src/runtime/value.rs	is_seen	2061	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
+graph/src/runtime/value.rs	has_hash	2072	PROVEN	dedup_second_seen
+graph/src/runtime/value.rs	check_and_insert_hash	2079	PROVEN	dedup_second_seen, dedup_first_unseen
 graph/src/runtime/value.rs	value_nesting_error	76	PROVEN	Nesting.valueNestingError_text (decoder message; decodeValue_refuses_past_cap, decode_nest_deep); the property validator's own message (`validate_list_property`, "Property values can only be nested up to N levels deep") is a different string and its text is not proved
-graph/src/runtime/value.rs	encode	2087	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
-graph/src/runtime/value.rs	decode	2173	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
-graph/src/runtime/value.rs	decode_value	2185	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
+graph/src/runtime/value.rs	encode	2091	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
+graph/src/runtime/value.rs	decode	2177	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
+graph/src/runtime/value.rs	decode_value	2189	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
 graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
 graph/src/runtime/functions/math.rs	abs	46	PROVEN	abs_agree_except, abs_min_diverges, abs_nzero_diverges, unary_no_panic
 graph/src/runtime/functions/math.rs	ceil	63	PROVEN	int_rounding_identity, unary_no_panic
@@ -173,12 +173,12 @@ graph/src/runtime/functions/procedures.rs	db_vector_query_relationships	388	PROV
 graph/src/runtime/functions/procedures.rs	db_constraints	398	PROVEN	Procedures dbConstraints: yields_constraints; live vs C (same rows, order differs)
 graph/src/runtime/functions/procedures.rs	dbms_procedures	432	PROVEN	Procedures dbmsProcedures: yields_procedures, dbmsProcedures_sorted (sorted + permutation); live = C
 graph/src/runtime/functions/procedures.rs	dbms_functions	464	PROVEN	Procedures dbmsFunctions/mergePicks: mergePicks_eq (= List.merge), dbmsFunctions_merge_sorted, mergePicks_nil, keepUdf_spec
-graph/src/runtime/functions/procedures.rs	build_columns	552	PROVEN	Procedures buildColumns: yields_buildColumns, buildRow_reducible
-graph/src/runtime/functions/procedures.rs	type_to_dbms_value	611	PROVEN	Procedures tyValue: tyValue_eq (interning invisible), any_string
-graph/src/runtime/functions/procedures.rs	type_to_dbms_string	644	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_is_c (#3280: strictly C-ordered, same members), canon_eq_of, union_perm_invariant, union_point_null, union_tofloat, union_nested, union_any
-graph/src/runtime/functions/procedures.rs	collect_dbms_types	703	PROVEN	Procedures collectTys/collectTysL: collectTys_mem (members in the 17 C names), union_nested, union_any
-graph/src/runtime/functions/procedures.rs	format_union	715	PROVEN	Procedures formatUnion: any_string, examples
-graph/src/runtime/functions/procedures.rs	format_union_strings	727	PROVEN	Procedures formatUnion_strings_eq
+graph/src/runtime/functions/procedures.rs	build_columns	556	PROVEN	Procedures buildColumns: yields_buildColumns, buildRow_reducible
+graph/src/runtime/functions/procedures.rs	type_to_dbms_value	615	PROVEN	Procedures tyValue: tyValue_eq (interning invisible), any_string
+graph/src/runtime/functions/procedures.rs	type_to_dbms_string	648	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_is_c (#3280: strictly C-ordered, same members), canon_eq_of, union_perm_invariant, union_point_null, union_tofloat, union_nested, union_any
+graph/src/runtime/functions/procedures.rs	collect_dbms_types	707	PROVEN	Procedures collectTys/collectTysL: collectTys_mem (members in the 17 C names), union_nested, union_any
+graph/src/runtime/functions/procedures.rs	format_union	719	PROVEN	Procedures formatUnion: any_string, examples
+graph/src/runtime/functions/procedures.rs	format_union_strings	731	PROVEN	Procedures formatUnion_strings_eq
 graph/src/runtime/functions/path.rs	register	25	PROVEN	Procedures pathSigs + path_no_panic (validated Path|Null never hits unreachable!)
 graph/src/runtime/functions/path.rs	nodes	29	PROVEN	Procedures pathNodes: path_split, path_lengths, path_null, path_no_panic
 graph/src/runtime/functions/path.rs	relationships	52	PROVEN	Procedures pathRels: path_split, path_lengths, path_null, path_no_panic

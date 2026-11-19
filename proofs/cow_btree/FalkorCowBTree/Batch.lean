@@ -380,7 +380,7 @@ theorem stripEmpty_content (h : Nat) : ∀ (seps : List E) (cs : List Node) (i :
   intro seps cs i
   induction seps, cs, i using stripEmpty.induct with
   | case1 seps cs i hi he ih =>
-    rw [stripEmpty, dif_pos hi, if_pos he]
+    rw [stripEmpty, dite_eq_left hi, ite_eq_left he]
     simp only [dite_eq_ite] at ih
     obtain ⟨ih1, ih2⟩ := ih
     have hsp := split_at cs i hi
@@ -402,7 +402,7 @@ theorem stripEmpty_content (h : Nat) : ∀ (seps : List E) (cs : List Node) (i :
         · exact List.mem_of_mem_take hk
         · exact List.mem_of_mem_drop hk
   | case2 seps cs i hi he ih =>
-    rw [stripEmpty, dif_pos hi, if_neg he]
+    rw [stripEmpty, dite_eq_left hi, ite_eq_right he]
     obtain ⟨ih1, ih2⟩ := ih
     refine ⟨ih1, fun k hk => ?_⟩
     rcases ih2 k hk with hk | hk
@@ -414,7 +414,7 @@ theorem stripEmpty_content (h : Nat) : ∀ (seps : List E) (cs : List Node) (i :
         exact Or.inr ⟨List.getElem_mem _, by simpa using he⟩
     · exact Or.inr hk
   | case3 seps cs i hi =>
-    rw [stripEmpty, dif_neg hi]
+    rw [stripEmpty, dite_eq_right hi]
     refine ⟨rfl, fun k hk => Or.inl ?_⟩
     rwa [List.take_of_length_le (by omega)]
 

@@ -493,6 +493,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuzz-support"
+version = "0.1.0"
+dependencies = [
+ "graph",
+ "libc",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -623,6 +631,7 @@ dependencies = [
  "thin-vec",
  "thiserror",
  "ureq",
+ "xxhash-rust",
  "zstd",
 ]
 
@@ -630,6 +639,7 @@ dependencies = [
 name = "graph-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fuzz-support",
  "graph",
  "libc",
  "libfuzzer-sys",
@@ -1544,6 +1554,7 @@ name = "runtime-fuzz-target"
 version = "0.1.0"
 dependencies = [
  "afl",
+ "fuzz-support",
  "graph",
 ]
 
@@ -1932,8 +1943,9 @@ checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "valkey-module"
-version = "0.1.15"
-source = "git+https://github.com/valkey-io/valkeymodule-rs?rev=e4df023371ad4a5f532ef88407847f2bde287482#e4df023371ad4a5f532ef88407847f2bde287482"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66d546548a73a13a7c6112dcc75b5785767d29c7128332695a995c97aa853423"
 dependencies = [
  "backtrace",
  "bindgen 0.70.1",
@@ -1955,8 +1967,9 @@ dependencies = [
 
 [[package]]
 name = "valkey-module-macros-internals"
-version = "0.1.15"
-source = "git+https://github.com/valkey-io/valkeymodule-rs?rev=e4df023371ad4a5f532ef88407847f2bde287482#e4df023371ad4a5f532ef88407847f2bde287482"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d926ba165007e2f198927582bc01b04edc7807261f0cefa1d0b9de1ca7b6d383"
 dependencies = [
  "lazy_static",
  "proc-macro2",
@@ -2200,6 +2213,12 @@ name = "xdg"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb433233f2df9344722454bc7e96465c9d03bff9d77c248f9e7523fe79585b5"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40de123dbb523ebcc00d61ec01840ad192578afc378d859f3429caa38308fad5"
 
 [[package]]
 name = "zerocopy"

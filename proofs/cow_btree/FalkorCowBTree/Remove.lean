@@ -294,7 +294,7 @@ theorem setAt_window_last {α} (cs : List α) (j : Nat) (hi : j + 1 < cs.length)
   have ht : cs.take (j + 1) = cs.take j ++ [cs[j]] := by
     rw [List.take_add_one, List.getElem?_eq_getElem (by omega : j < cs.length)]; rfl
   rw [setAt, ht, getD_eq_getElem _ _ _ (by omega)]
-  simp only [List.append_assoc, List.singleton_append, List.cons_append]
+  simp only [List.append_assoc, List.cons_append]
   rfl
 
 theorem flat_setAt (f : Node → List E) (cs : List Node) (i : Nat) (hi : i + 1 < cs.length) (x : Node) :

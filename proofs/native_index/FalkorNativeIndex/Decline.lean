@@ -134,13 +134,13 @@ theorem oneKey_eq_some (ms : List (String × Bool)) (k : String) :
   | some k0 =>
     by_cases hall : ms.all (fun m => m.1 == k0) = true
     · have hall' : ∀ m ∈ ms, m.1 = k0 := fun m hm => by simpa using List.all_eq_true.1 hall m hm
-      simp only [Option.filter, hall, if_true, Option.some.injEq]
+      simp only [Option.filter, hall, ite_true, Option.some.injEq]
       constructor
       · rintro rfl; exact ⟨rfl, hall'⟩
       · rintro ⟨h, _⟩; exact h
     · have : ¬ ∀ m ∈ ms, m.1 = k0 := by
         intro h; apply hall; rw [List.all_eq_true]; intro m hm; simpa using h m hm
-      simp only [Option.filter, hall, Bool.false_eq_true, if_false, reduceCtorEq, false_iff]
+      simp only [Option.filter, hall, Bool.false_eq_true, ite_false, reduceCtorEq, false_iff]
       intro ⟨h1, h2⟩
       have hk : k0 = k := Option.some.inj h1
       subst hk
@@ -191,7 +191,7 @@ theorem unionMembers_sameAttr (a : String) : ∀ (cs : List Pred), SameAttr a (P
         simp only [Pred.toQuery, unionMember] at hvs
         by_cases he : items.isEmpty = true
         · simp [he] at hvs
-        · simp only [he, Bool.false_eq_true, if_false, Option.some.injEq, Prod.mk.injEq] at hvs
+        · simp only [he, Bool.false_eq_true, ite_false, Option.some.injEq, Prod.mk.injEq] at hvs
           obtain ⟨rfl, _⟩ := hvs
           simp [unionMembers, ih hrest top]
     | range k mn mx a' b' => simp [Pred.toQuery, unionMember] at hvs
@@ -212,7 +212,7 @@ theorem unionKeys_served (cs : List Pred) (ks : KeySet) (h : NumericIndex.unionK
   · exfalso; apply hne; cases cs with
     | nil => rfl
     | cons c cs => simp [Pred.toQueries] at hc
-  · simp only [hc, Bool.false_eq_true, if_false] at h
+  · simp only [hc, Bool.false_eq_true, ite_false] at h
     obtain ⟨out, hg⟩ : ∃ out, unionGo none [] (Pred.toQueries cs) = some out := by
       cases hg : unionGo none [] (Pred.toQueries cs) with
       | none => simp [hg] at h
@@ -254,7 +254,7 @@ theorem describe_empty_in_misreported (v : Value) :
     describe (.or [.equal "a" v, .inList "a" (some [])]) = .orNotAllNumeric 2 "a" ∧
     NumericIndex.unionKeys (Pred.toQueries [.equal "a" v, .inList "a" (some [])]) = none := by
   refine ⟨by simp [describe, unionMembers, oneKey, Option.filter], ?_⟩
-  simp only [Pred.toQueries, Pred.toQuery, NumericIndex.unionKeys, List.isEmpty_cons, Bool.false_eq_true, if_false]
+  simp only [Pred.toQueries, Pred.toQuery, NumericIndex.unionKeys, List.isEmpty_cons, Bool.false_eq_true, ite_false]
   cases hh : encodeAll (nonNull [v]) <;> simp [unionGo, unionMember, hh]
 
 end NI

@@ -94,9 +94,9 @@ theorem contains_filter (p : Nat → Bool) (ls : List Nat) (l : Nat) :
   | nil => simp
   | cons x xs ih =>
     by_cases hx : l = x
-    · subst hx; cases hp : p l <;> simp [List.filter_cons, hp, ih]
+    · subst hx; cases hp : p l <;> simp [hp]
     · have : (x == l) = false := by simp; omega
-      cases hp : p x <;> simp [List.filter_cons, hp, ih, hx] <;> cases p l <;> simp
+      cases hp : p x <;> simp [hp, hx] <;> cases p l <;> simp
 
 def Disjoint (s : St) : Prop := ∀ l, s.remL.contains l = true → s.setL.contains l = false
 
@@ -111,8 +111,8 @@ theorem removeLabels_closed (s : St) (ls : List Nat) :
     have := ih (removeOne s x)
     simp only [removeLabels, List.foldl_cons] at this ⊢
     refine ⟨fun l => ?_, fun l => ?_⟩
-    · rw [this.1]; simp [removeOne]; by_cases h : l = x <;> simp [h, Bool.or_comm, Bool.or_assoc]
-    · rw [this.2]; simp [removeOne, List.contains_iff_mem, List.mem_filter]
+    · rw [this.1]; simp [removeOne]; by_cases h : l = x <;> simp [h, Bool.or_comm]
+    · rw [this.2]; simp [removeOne, List.mem_filter]
       by_cases h : l = x <;> simp [h]
 
 theorem step_disjoint (C : Nat → Bool) (s : St) (op : Op) (h : Disjoint s) :
@@ -120,8 +120,8 @@ theorem step_disjoint (C : Nat → Bool) (s : St) (op : Op) (h : Disjoint s) :
   intro l hl
   cases op with
   | add ls =>
-    simp [step, stage, List.contains_iff_mem, List.mem_filter] at hl ⊢
-    exact ⟨by have := h l; simp [List.contains_iff_mem] at this; exact this hl.1, hl.2⟩
+    simp [step, stage, List.mem_filter] at hl ⊢
+    exact ⟨by have := h l; simp at this; exact this hl.1, hl.2⟩
   | rem ls =>
     simp only [step, removeOp] at hl ⊢
     have ⟨h1, h2⟩ := removeLabels_closed s (ls.filter (overlay C s))
@@ -136,10 +136,10 @@ theorem step_overlay (C : Nat → Bool) (s : St) (op : Op) (l : Nat) :
   | add ls =>
     simp only [step, stage, overlay, refStep]
     by_cases hl : ls.contains l = true
-    · simp [hl, List.contains_iff_mem, List.mem_filter] at *
+    · simp [List.mem_filter] at *
       simp [hl]
     · simp at hl
-      simp [List.contains_iff_mem, List.mem_filter, hl]
+      simp [List.mem_filter, hl]
   | rem ls =>
     simp only [step, removeOp, refStep]
     have hFc : ∀ l, (ls.filter (overlay C s)).contains l = (ls.contains l && overlay C s l) :=
