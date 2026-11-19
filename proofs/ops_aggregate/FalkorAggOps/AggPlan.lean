@@ -5,15 +5,15 @@ Aggregate operator: expression analysis, accumulator zeroing/unbinding, `GroupKe
 | here | there |
 | --- | --- |
 | `Ex`, `Fn`, `Cst`            | `ExprIR<Variable>` tree (`DynNode`), `GraphFn`, `ExprIR::Constant` |
-| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs:181) |
-| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs:511) |
-| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs:438) |
-| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs:1242) |
+| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs:182) |
+| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs:614) |
+| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs:541) |
+| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs:1355) |
 | `unbindAcc` / `unbindAccL`   | history: `unbind_agg_accumulators` (aggregate.rs:1251 at 343e077f2, removed by #3579) |
-| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs:99, :115) |
+| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs:100, :116) |
 | `hashU64` (history)          | `HashU64::hash_u64` (removed by #2977; was aggregate.rs:1254/:1258) |
-| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs:324) |
-| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs:402) |
+| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs:432) |
+| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs:506) |
 
 `is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs:783), and the
 `initial` value lives in that variant, so a function is aggregate iff `init = some z`.
@@ -47,7 +47,7 @@ def isAggNode : Ex Z → Bool
   | .func f _ => f.init.isSome
   | _ => false
 
-/-! ## `subtree_has_aggregate` (aggregate.rs:181) -/
+/-! ## `subtree_has_aggregate` (aggregate.rs:182) -/
 
 mutual
 def hasAgg : Ex Z → Bool
@@ -88,7 +88,7 @@ aggregate call. -/
 theorem hasAgg_iff (e : Ex Z) : hasAgg e = true ↔ ∃ n ∈ nodes e, isAggNode n = true := by
   rw [hasAgg_spec]; simp
 
-/-! ## `analyze_agg_tree` (aggregate.rs:511) -/
+/-! ## `analyze_agg_tree` (aggregate.rs:614) -/
 
 inductive Input (Z : Type) where
   | var (v : Nat)
@@ -275,14 +275,14 @@ theorem multi_extra (f : Fn Z) (z : Z) (v acc : Nat) (cs : List Cst) (hf : f.ini
   unfold aggBody
   simp only [hd, hcs, multiArg]
 
-/-! ## `analyze` (aggregate.rs:438) -/
+/-! ## `analyze` (aggregate.rs:541) -/
 
 inductive KeyKind (Z : Type) where
   | var (v : Nat)
   | prop (v : Nat) (attr : Nat)
   | computed (e : Ex Z)
 
-/-- One key (aggregate.rs:444-491). `none` = the whole operator bails. -/
+/-- One key (aggregate.rs:547-594). `none` = the whole operator bails. -/
 def analyzeKey (e : Ex Z) : Option (KeyKind Z) :=
   match e with
   | .var v => some (.var v)
@@ -294,9 +294,9 @@ def analyzeKey (e : Ex Z) : Option (KeyKind Z) :=
     | _ => none
   | _ => if hasAgg e then none else some (.computed e)
 
-/-- `analyze` (aggregate.rs:438-509). `implicit` is the operator's implicit grouping keys
-(`self.implicit`, computed by `implicit_keys` in `new`); since #3579 any of them sends the whole
-operator to the per-row path (:440-442). -/
+/-- `analyze` (aggregate.rs:541-612). `implicit` is the operator's implicit grouping keys
+(`self.implicit.keys`, computed by `implicit_keys` in `new`); since #3579 any of them sends the whole
+operator to the per-row path (:543-545). -/
 def analyze {I : Type} (implicit : List I) (keys aggs : List (Ex Z)) :
     Option (List (KeyKind Z) × List (VAgg Z)) :=
   if !implicit.isEmpty then none else
@@ -317,7 +317,7 @@ theorem analyze_spec {I : Type} (implicit : List I) (keys aggs : List (Ex Z)) (k
 
 /-- **Implicit grouping keys never take the vectorized path (#3579)**: their values are computed
 per row only, so the fallback `consume_batch_per_row` call of the vectorized path may pass none
-(aggregate.rs:683-685). -/
+(aggregate.rs:786-788). -/
 theorem analyze_implicit_none {I : Type} (i : I) (is : List I) (keys aggs : List (Ex Z)) :
     analyze (i :: is) keys aggs = none := rfl
 

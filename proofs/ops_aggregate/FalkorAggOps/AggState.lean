@@ -24,7 +24,7 @@ def outerL : List (Ex Z) → List (Fn Z × List (Ex Z))
   | e :: es => outer e ++ outerL es
 end
 
-/-! ## `set_agg_expr_zero` (aggregate.rs:1242) — `none` = the `unreachable!()` / underflow panic -/
+/-! ## `set_agg_expr_zero` (aggregate.rs:1355) — `none` = the `unreachable!()` / underflow panic -/
 
 mutual
 def setZero : Ex Z → Env Z → Option (Env Z)
@@ -290,7 +290,7 @@ theorem hashU64_spec {R S : Type} (d : S) (rh : S → R → S) (fin : S → Nat)
     hashU64 d rh fin r₁ = fin (rh d r₁) := by
   simp [hashU64, heq]
 
-/-! ## `VectorizableAgg::args_for` (aggregate.rs:324) -/
+/-! ## `VectorizableAgg::args_for` (aggregate.rs:432) -/
 
 def argsFor (vt vd : List Z → Except String Unit) (value : Z) (extra : List Z) :
     Except String (List Z) := do
@@ -312,10 +312,13 @@ theorem argsFor_spec (vt vd : List Z → Except String Unit) (v : Z) (extra : Li
   cases h1 : vt (v :: extra) <;> cases h2 : vd (v :: extra) <;>
     simp [h1, h2, bind, Except.bind, pure, Except.pure]
 
-/-! ## `AggregateOp::new` (aggregate.rs:402) -/
+/-! ## `AggregateOp::new` (aggregate.rs:506) -/
 
-/-- Since #3579 the operator also stores its implicit grouping keys (`implicit`: item index and
-node, abstracted to `I`) and the variables they read (`implicit_vars`). -/
+/-- Since #3579 the operator also stores its implicit grouping keys (`ImplicitKeys`,
+aggregate.rs:211-221): the keys (`implicit`: item index, node and optional slot, abstracted to
+`I`), the variables the unslotted (under-`CASE`) keys read (`lazy_vars`, here `implicitVars`), and
+the aggregation items with every slotted key replaced by a read of its slot (`items`; `none` when no
+key has a slot). -/
 structure AggSt (C E G A : Type) (Z : Type) (I : Type := Nat × Nat) where
   child : Option C
   defaultAcc : Option (Env Z)
@@ -324,14 +327,17 @@ structure AggSt (C E G A : Type) (Z : Type) (I : Type := Nat × Nat) where
   vectorized : Option A
   implicit : List I
   implicitVars : List Nat
+  items : Option (List (Ex Z))
 
-/-- `AggregateOp::new` (aggregate.rs:402-430). `ik` is `implicit_keys` (aggregate.rs:202; not
-modelled here), applied once to the aggregation expressions (:414). -/
-def AggSt.new {C E G A I : Type} (ik : List (Ex Z) → List I × List Nat) (child : C)
-    (aggs : List (Ex Z)) : Option (AggSt C E G A Z I) :=
+/-- `AggregateOp::new` (aggregate.rs:506-536). `ik` is `implicit_keys` (aggregate.rs:257; not
+modelled here), applied once to the key and the aggregation expressions (:518): it reads the keys
+only to number the slots above every id they read. -/
+def AggSt.new {C E G A I : Type} (ik : List (Ex Z) → List (Ex Z) → List I × List Nat × Option (List (Ex Z)))
+    (child : C) (keys aggs : List (Ex Z)) : Option (AggSt C E G A Z I) :=
   match aggs.foldlM (fun env t => setZero t env) (fun _ => none) with
   | some acc => some { child := some child, defaultAcc := some acc, errors := [], groups := [],
-                       vectorized := none, implicit := (ik aggs).1, implicitVars := (ik aggs).2 }
+                       vectorized := none, implicit := (ik keys aggs).1,
+                       implicitVars := (ik keys aggs).2.1, items := (ik keys aggs).2.2 }
   | none => none
 
 theorem foldlM_setZero (aggs : List (Ex Z)) (env : Env Z) :
@@ -348,23 +354,26 @@ theorem foldlM_setZero (aggs : List (Ex Z)) (env : Env Z) :
 /-- The built operator has not consumed its child, has no errors or groups, has not run the
 analysis, and its default accumulator row is exactly the zeroing of every outermost aggregate
 of every aggregation expression. -/
-theorem aggNew_spec {C E G A I : Type} (ik : List (Ex Z) → List I × List Nat) (c : C)
-    (aggs : List (Ex Z)) (s : AggSt C E G A Z I)
-    (h : AggSt.new ik c aggs = some s) :
+theorem aggNew_spec {C E G A I : Type}
+    (ik : List (Ex Z) → List (Ex Z) → List I × List Nat × Option (List (Ex Z))) (c : C)
+    (keys aggs : List (Ex Z)) (s : AggSt C E G A Z I)
+    (h : AggSt.new ik c keys aggs = some s) :
     s.child = some c ∧ s.errors = [] ∧ s.groups = [] ∧ s.vectorized = none ∧
     s.defaultAcc = (outerL aggs).foldlM stepZ (fun _ => none) ∧
-    s.implicit = (ik aggs).1 ∧ s.implicitVars = (ik aggs).2 := by
+    s.implicit = (ik keys aggs).1 ∧ s.implicitVars = (ik keys aggs).2.1 ∧
+    s.items = (ik keys aggs).2.2 := by
   unfold AggSt.new at h
   have hfold := foldlM_setZero aggs (fun _ => none)
   split at h
-  · rename_i acc hacc; cases h; rw [← hfold, hacc]; exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · rename_i acc hacc; cases h; rw [← hfold, hacc]; exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
   · cases h
 
 /-- **`new` fails only on zeroing (#3579 adds no failure)**: computing the implicit keys never
 makes `new` fail, so it succeeds exactly when it did before. -/
-theorem aggNew_isSome {C E G A I : Type} (ik : List (Ex Z) → List I × List Nat) (c : C)
-    (aggs : List (Ex Z)) :
-    (AggSt.new (E := E) (G := G) (A := A) ik c aggs).isSome =
+theorem aggNew_isSome {C E G A I : Type}
+    (ik : List (Ex Z) → List (Ex Z) → List I × List Nat × Option (List (Ex Z))) (c : C)
+    (keys aggs : List (Ex Z)) :
+    (AggSt.new (E := E) (G := G) (A := A) ik c keys aggs).isSome =
       (aggs.foldlM (fun env t => setZero t env) (fun _ => none)).isSome := by
   unfold AggSt.new; split <;> simp_all
 

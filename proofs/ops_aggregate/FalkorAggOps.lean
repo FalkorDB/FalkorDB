@@ -29,7 +29,7 @@ fail, the 3 `agrees_*` pass; `bug_list_literal_of_aggregates_collapses` passes s
 ## Model (here | there, all under graph/src/runtime/)
 | Lean | Rust |
 |---|---|
-| `skipFold`, `rowDriver`, `batchDriver` | kernels' null-skipping loop; `run_agg_expr` ops/aggregate.rs:998 / `fold` :243; keyless fast path `consume_input_vectorized` :523-694 |
+| `skipFold`, `rowDriver`, `batchDriver` | kernels' null-skipping loop; `run_agg_expr` ops/aggregate.rs:1254 / `fold` :453; keyless fast path `consume_input_vectorized` :741-1011 |
 | `countBatch`/`countStarBatch`, `sumBatch`, `collectBatch`, `mmBatch`, `avgBatch`+`aboutToOverflow`+`finalizeAvg`, `stdevBatch`+`finalizeStdev`, `pctFold` | functions/aggregation.rs:350, :394, :371, :421/:498, :451/:338/:599, :565/:683, :531 (8621212fc) |
 | `maxScalar` | aggregation.rs:119 (scalar max body; NaN comparisons ignored since #2917) |
 | `limitOp`, `skipOp` | ops/limit.rs:52, ops/skip.rs:50 |
@@ -142,9 +142,9 @@ them as bound is merge.rs, not modelled here). Controls that agree with live: `a
 `agree3333_controls`.
 
 ## Re-target to #3579 (03babd3fa): implicit grouping keys, old-scope evaluation
-`next` (aggregate.rs:1271) evaluates every aggregation over `evalEnv` (the old-scope accumulator
-row plus the bare key aliases, :1305-1323), never writes outputs back and emits the key row plus
-the outputs only (:1324-1355); `unbind_agg_accumulators` is gone. `finishGroup` is that body (the
+`next` (aggregate.rs:1384) evaluates every aggregation over `evalEnv` (the old-scope accumulator
+row plus the bare key aliases, :1418-1435), never writes outputs back and emits the key row plus
+the outputs only (:1436-1470); `unbind_agg_accumulators` is gone. `finishGroup` is that body (the
 343e077f2 one is `pre3579FinishGroup`): `finishGroup_eval`, `finishGroup_only_scope`,
 `outputsOwnScope_main`, `emitsOnlyScope_main`, `fixed3375_sum`, `fixed3375_avg`,
 `fixed3333_alias_not_emitted`, `fixed3369_no_count_acc_left`; the old counterexamples are kept as
@@ -152,7 +152,12 @@ history `pre3579_bug*`. Implicit grouping keys (#3571): `AggSt.new` stores them 
 `analyze` refuses them (`analyze_implicit_none`), `perRowGroups` pre-inserts the keyless group only
 without them (`perRowGroups_keyless`, `implicit_empty_input_no_group`), the group key is explicit
 ++ implicit values (`rowKey_implicit_eq`) and a new group's accumulator row is seeded with the
-first row's implicit variables (`seedAcc_var`, `seedAcc_other`).
+first row's implicit variables (`seedAcc_var`, `seedAcc_other`). Since 446a5ba01 an implicit key
+outside a `CASE` gets a slot above every old-scope id: the group stores the value it grouped by
+there and the item reads it (`seedNew_slot`, `seedSlots_slot`); one under a `CASE` groups with an
+error read as `null` (`implicitVal_guarded_err`, `implicitVal_slotted_err`) and is evaluated at
+finalize from the first row's variables (`seedNew_var`, `seedNew_other`); `implicit_keys` also
+reads the explicit keys, to number the slots (`AggSt.new` takes them, `aggNew_spec`).
 
 ## Wave-5 additions
 | Lean | Rust |
