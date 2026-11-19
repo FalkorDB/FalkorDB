@@ -150,26 +150,62 @@ impl StrSel {
     }
 
     /// The strings both select: a conjunction of string predicates on one attribute.
+    ///
+    /// A set is filtered by the other side. Two selections with a window in them are intersected
+    /// as the disjoint, ordered key ranges they select, in one pass over both: distributing each
+    /// member of a union over the other side would grow with the product of their sizes, and a
+    /// conjunction of `k` two-window unions on one attribute would build `2^k` windows.
     #[must_use]
     pub fn intersect(
         self,
         other: Self,
     ) -> Self {
         match (self, other) {
-            (Self::Any(members), b) | (b, Self::Any(members)) => Self::Any(
-                members
-                    .into_iter()
-                    .map(|member| member.intersect(b.clone()))
-                    .collect(),
-            ),
             (Self::Set(a), b) | (b, Self::Set(a)) => {
                 Self::Set(a.into_iter().filter(|s| b.contains(s)).collect())
             }
             (Self::Window((alo, ahi)), Self::Window((blo, bhi))) => {
                 Self::Window((cmp::max_by(alo, blo, cmp_lo), cmp::min_by(ahi, bhi, cmp_hi)))
             }
+            (a, b) => {
+                let mut windows = intersect_ranges(&a.ranges(), &b.ranges());
+                match windows.len() {
+                    0 => Self::none(),
+                    1 => Self::Window(windows.remove(0)),
+                    _ => Self::Any(windows.into_iter().map(Self::Window).collect()),
+                }
+            }
         }
     }
+}
+
+/// The ranges both `a` and `b` select, each given as disjoint ranges in key order, and the result
+/// in the same form.
+fn intersect_ranges(
+    a: &[StrBounds],
+    b: &[StrBounds],
+) -> Vec<StrBounds> {
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while let (Some((alo, ahi)), Some((blo, bhi))) = (a.get(i), b.get(j)) {
+        let window = (
+            cmp::max_by(alo.clone(), blo.clone(), cmp_lo),
+            cmp::min_by(ahi.clone(), bhi.clone(), cmp_hi),
+        );
+        if !is_empty_window(&window) {
+            out.push(window);
+        }
+        // The range that ends first cannot meet anything further on the other side.
+        match cmp_hi(ahi, bhi) {
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
+            Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out
 }
 
 /// Whether no string lies in `window`. An inverted window is not a valid range for a cursor, so
@@ -570,6 +606,48 @@ mod tests {
         assert_eq!(
             window("a", "c").intersect(open),
             StrSel::window(Some(s("a")), Some(s("c")), false, false)
+        );
+    }
+
+    /// A conjunction of unions on one attribute stays the size of its answer: each union is
+    /// intersected as ordered ranges, not distributed over the result (which doubled it per
+    /// union, so 25 of them were 2^25 windows).
+    #[test]
+    fn intersecting_many_unions_does_not_multiply_them() {
+        // How many windows the selection is made of, before any merging.
+        fn leaves(sel: &StrSel) -> usize {
+            match sel {
+                StrSel::Any(members) => members.iter().map(leaves).sum(),
+                _ => 1,
+            }
+        }
+        let window = |min: &str, max: &str| StrSel::window(Some(s(min)), Some(s(max)), true, false);
+        let union = || window("a", "m").or(window("n", "z"));
+        let mut all = union();
+        for _ in 0..24 {
+            all = all.intersect(union());
+        }
+        assert_eq!(leaves(&all), 2);
+        assert_eq!(all.ranges().len(), 2);
+        assert!(all.contains(&s("bob")) && all.contains(&s("nick")) && !all.contains(&s("m")));
+        // Staggered unions meet in the pieces they share.
+        let low = window("a", "d").or(window("f", "k"));
+        let high = window("c", "g").or(window("j", "p"));
+        let both = low.intersect(high);
+        assert_eq!(
+            both.ranges(),
+            vec![
+                (Bound::Included(s("c")), Bound::Excluded(s("d"))),
+                (Bound::Included(s("f")), Bound::Excluded(s("g"))),
+                (Bound::Included(s("j")), Bound::Excluded(s("k"))),
+            ]
+        );
+        // Disjoint unions select nothing.
+        assert!(
+            window("a", "b")
+                .or(window("c", "d"))
+                .intersect(window("e", "f").or(window("g", "h")))
+                .is_empty()
         );
     }
 

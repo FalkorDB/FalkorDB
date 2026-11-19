@@ -1,4 +1,5 @@
 import string
+import time
 import random
 from common import *
 from common import _db_handle
@@ -377,6 +378,19 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertContains("Edge By Index Scan", str(g.explain(query)))
         self.env.assertEqual(g.query(query).result_set, expected)
 
+    def _build_while_writing(self, g, acked, create):
+        # Starts the build once the writer has had a mutation acknowledged and waits for it to
+        # finish; returns how many more were acknowledged in between, so a test can tell that
+        # writes really raced a build and did not run entirely before or after it.
+        deadline = time.monotonic() + 60
+        while not acked:
+            self.env.assertLess(time.monotonic(), deadline, message="the writer made no progress")
+            time.sleep(0.01)
+        create()
+        before = len(acked)
+        wait_for_indices_to_sync(g, timeout=300)
+        return len(acked) - before
+
     def test14_concurrent_writes_during_index_population(self):
         # Writes that race background index population must not leave stale
         # documents: population reads the committed graph, while a writer
@@ -387,9 +401,11 @@ class testIndexUpdatesFlow(FlowTestsBase):
         n = 200000
         g.query("UNWIND range(0, $n - 1) AS k CREATE (:PW {k: k, v: 0})", {'n': n})
 
+        overlapped = 0
         for _ in range(3):
             stop = threading.Event()
             errors = []
+            acked = []
 
             def writer():
                 try:
@@ -403,6 +419,7 @@ class testIndexUpdatesFlow(FlowTestsBase):
                         k = i % 1000
                         wg.query("MATCH (n:PW {k: $k}) DELETE n", {'k': k})
                         wg.query("CREATE (:PW {k: $k, v: 0})", {'k': k})
+                        acked.append(i)
                         i += 1
                 except Exception as e:
                     errors.append(e)
@@ -410,7 +427,8 @@ class testIndexUpdatesFlow(FlowTestsBase):
             t = threading.Thread(target=writer)
             t.start()
             try:
-                create_node_range_index(g, 'PW', 'v', sync=True)
+                overlapped += self._build_while_writing(
+                    g, acked, lambda: create_node_range_index(g, 'PW', 'v'))
             finally:
                 stop.set()
                 t.join(timeout=60)
@@ -426,6 +444,8 @@ class testIndexUpdatesFlow(FlowTestsBase):
                 self.env.assertEqual(actual, expected, message=f"v = {v}")
 
             g.query("DROP INDEX FOR (n:PW) ON (n.v)")
+        # Without it the rounds above could all have run before or after the build.
+        self.env.assertGreater(overlapped, 0, message="no write was acknowledged during a build")
         g.delete()
 
     def test15_concurrent_edge_writes_during_index_population(self):
@@ -437,9 +457,11 @@ class testIndexUpdatesFlow(FlowTestsBase):
         n = 100000
         g.query("UNWIND range(0, $n - 1) AS k CREATE (:PE)-[:PR {k: k, v: 0}]->(:PE)", {'n': n})
 
+        overlapped = 0
         for _ in range(3):
             stop = threading.Event()
             errors = []
+            acked = []
 
             def writer():
                 try:
@@ -450,6 +472,7 @@ class testIndexUpdatesFlow(FlowTestsBase):
                         k = i % 1000
                         wg.query("MATCH ()-[r:PR {k: $k}]->() DELETE r", {'k': k})
                         wg.query("CREATE (:PE)-[:PR {k: $k, v: 0}]->(:PE)", {'k': k})
+                        acked.append(i)
                         i += 1
                 except Exception as e:
                     errors.append(e)
@@ -457,7 +480,8 @@ class testIndexUpdatesFlow(FlowTestsBase):
             t = threading.Thread(target=writer)
             t.start()
             try:
-                create_edge_range_index(g, 'PR', 'v', sync=True)
+                overlapped += self._build_while_writing(
+                    g, acked, lambda: create_edge_range_index(g, 'PR', 'v'))
             finally:
                 stop.set()
                 t.join(timeout=60)
@@ -473,6 +497,7 @@ class testIndexUpdatesFlow(FlowTestsBase):
                 self.env.assertEqual(actual, expected, message=f"v = {v}")
 
             drop_edge_range_index(g, 'PR', 'v')
+        self.env.assertGreater(overlapped, 0, message="no write was acknowledged during a build")
         g.delete()
 
 class testNativeOnlyFeedFlow(FlowTestsBase):
@@ -518,10 +543,14 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
 
         answers(written)
 
-        # A predicate the native index declines is answered by a scan, not an error: a union with
-        # a range member is one today (the native union serves only equalities and `IN` lists).
-        res = g.query("MATCH (n:NF) WHERE n.v = 1 OR n.v > 7 RETURN count(n)")
-        self.env.assertEqual(res.result_set, [[1 + 50000 - 7]])
+        # A predicate the native index does not answer is answered by a scan, not an error: a union
+        # with a member on an attribute that has no index (`u`, set on one node, so the member
+        # selects something). The native index does serve a union with a range member on its own
+        # attribute (`n.v = 1 OR n.v > 7`), so that shape would not reach the scan.
+        g.query("MATCH (n:NF {v: 7}) SET n.u = 3")
+        declined = "MATCH (n:NF) WHERE n.v = 1 OR n.u = 3 RETURN count(n)"
+        self.env.assertContains("Node By Label Scan", str(g.explain(declined)))
+        self.env.assertEqual(g.query(declined).result_set, [[2]])
 
         # The build after CREATE INDEX: the data exists before the indexes.
         g.query("UNWIND range(1, 50000) AS i CREATE (:NB {v: i})")

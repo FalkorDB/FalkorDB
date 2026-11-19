@@ -330,25 +330,26 @@ graph/src/index/falkordb/tag.rs	StrSel::set	52	NOT COVERED	tag kind (#3742): not
 graph/src/index/falkordb/tag.rs	StrSel::none	60	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/tag.rs	StrSel::is_empty	83	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/tag.rs	StrSel::contains	141	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	is_empty_window	177	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	StrSel::intersect	154	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::tree	265	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::tree_mut	279	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::rows_at	294	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::for_each_stored_key	336	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::add_encoded	354	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::remove_encoded	366	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::is_empty	378	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::memory_usage	383	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::scalars	389	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::lists_holding	397	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::is_scalar_in	404	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::is_list_holding	411	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	is_empty_window	213	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	StrSel::intersect	159	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	intersect_ranges	184	NOT COVERED	Range as the default (#3751 review): the disjoint ordered ranges two selections share, one pass; not modelled (tag kind, #3742)
+graph/src/index/falkordb/tag.rs	TagIndex::tree	301	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::tree_mut	315	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::rows_at	330	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::for_each_stored_key	372	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::add_encoded	390	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::remove_encoded	402	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::is_empty	414	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::memory_usage	419	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::scalars	425	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::lists_holding	433	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::is_scalar_in	440	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::is_list_holding	447	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/numeric.rs	EncodedTuples::tags	424	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
 graph/src/index/falkordb/numeric.rs	EncodedTuples::tag_slot	449	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
 graph/src/index/falkordb/numeric.rs	EncodedTuples::retain_docs	477	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
 graph/src/index/falkordb/tag.rs	StrSel::ranges	125	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/tag.rs	sorted_keys	322	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
+graph/src/index/falkordb/tag.rs	sorted_keys	358	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::empty	19	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::build	23	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::count	26	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
@@ -450,12 +451,12 @@ graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::labels_with_columns	65
 graph/src/index/falkordb/numeric.rs	KeySet::or	224	NOT COVERED	Range as the default (#3750): unions of ranges and values served kind by kind; not modelled yet
 graph/src/index/falkordb/range.rs	Scalars::or	211	NOT COVERED	Range as the default (#3750): unions of ranges and values served kind by kind; not modelled yet
 graph/src/index/falkordb/tag.rs	StrSel::or	94	NOT COVERED	Range as the default (#3750): unions of ranges and values served kind by kind; not modelled yet
-graph/src/index/falkordb/tag.rs	merge_ranges	220	NOT COVERED	Range as the default (#3750): the disjoint key ranges of a union of string selections; not modelled yet
+graph/src/index/falkordb/tag.rs	merge_ranges	256	NOT COVERED	Range as the default (#3750): the disjoint key ranges of a union of string selections; not modelled yet
 graph/src/index/falkordb/numeric.rs	EncodedTuples::push	432	NOT COVERED	tag kind (#3742): files a tuple by its key, a number or a string; not modelled yet
 graph/src/index/falkordb/pending_writes.rs	last_write_wins::tuple	180	NOT COVERED	tag kind (#3742): the (kind, key, id) a staged change collapses on; part of last_write_wins, re-target pending
 graph/src/index/falkordb/tag.rs	StrSel::window	66	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	cmp_lo	188	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	cmp_hi	203	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	cmp_lo	224	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	cmp_hi	239	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/page.rs	Combined::map	99	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::holds	414	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
 graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::key_heap_bytes	75	NOT COVERED	tag kind (#3742): not modelled yet

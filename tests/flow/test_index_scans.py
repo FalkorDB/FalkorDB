@@ -1605,24 +1605,44 @@ class testIndexScanFlow():
         wait_for_indices_to_sync(g)
         g.query(create)
         for q, want in zip(queries + edge_queries, expected):
-            self.env.assertEqual(g.query(q).result_set, want, message=q)
+            # The plan must be the index scan whose own fallback is under test: a plain label
+            # or relationship scan would pass on result parity alone.
+            plan = str(g.explain(q))
+            self.env.assertContains("Index Scan", plan, message=f"{q}\n{plan}")
+            self.env.assertEqual(g.query(q).result_set, want, message=f"{q}\n{plan}")
         g.delete()
 
     def test_46_declined_shapes_match_a_scan(self):
-        # Shapes the native index declines: a union with a range member, a
-        # conjunction holding a union across other attributes, and a union
-        # with a member on an attribute that has no index. The planner has
-        # already dropped the filter it pushed down, so the scan op falls back
-        # to the label and checks the predicate itself. It has to keep exactly
-        # the rows a plain scan keeps, nodes and relationships alike.
-        node_queries = [
-            "MATCH (n:Q) WHERE n.a = 1 OR n.a > 7 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
-            "MATCH (n:Q) WHERE n.a = 1 AND (n.b = 2 OR n.c = 3) RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
-            "MATCH (n:Q) WHERE n.a IN [1, 2] OR n.a >= 'x' RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
-            "MATCH (n:Q) WHERE n.a < 3 OR n.a = 'y' OR n.b = 5 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
-            "MATCH (n:Q) WHERE n.a = 1 OR n.d = 4 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+        # Shapes the native index declines: a union across two indexed
+        # attributes, a conjunction holding a union across other attributes,
+        # and a union with a member on an attribute that has no index. (A union
+        # on one attribute with a range member is not one: the native index
+        # serves `n.a = 1 OR n.a > 7`.) Where the plan is an index scan, the
+        # planner has already dropped the filter it pushed down, so the scan op
+        # falls back to the label and checks the predicate itself. It has to
+        # keep exactly the rows a plain scan keeps, nodes and relationships
+        # alike. Each shape is paired with the scan the plan must start from,
+        # so the parity below is not between two plain scans.
+        node_shapes = [
+            ("MATCH (n:Q) WHERE n.a = 1 OR n.b = 1 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+             "Node By Index Scan"),
+            ("MATCH (n:Q) WHERE n.a = 1 AND (n.b = 2 OR n.c = 3) RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+             "Node By Index Scan"),
+            ("MATCH (n:Q) WHERE n.a IN [1, 2] OR n.a >= 'x' RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+             "Node By Index Scan"),
+            ("MATCH (n:Q) WHERE n.a < 3 OR n.a = 'y' OR n.b = 5 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+             "Node By Index Scan"),
+            ("MATCH (n:Q) WHERE n.a = 1 OR n.d = 4 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+             "Node By Label Scan"),
         ]
+        node_queries = [q for q, _ in node_shapes]
         edge_queries = [q.replace("(n:Q)", "()-[n:QR]->()") for q in node_queries]
+        # An edge pattern with an unindexed member has no relationship scan to
+        # start from: it traverses out of every node.
+        scans = [scan for _, scan in node_shapes] + [
+            "Conditional Traverse" if "Label" in scan else scan.replace("Node", "Edge")
+            for _, scan in node_shapes
+        ]
         create = ("UNWIND range(0, 9) AS i "
                   "CREATE (x:Q {a: i, b: i % 3, c: i % 4, d: i % 5})"
                   "-[:QR {a: i, b: i % 3, c: i % 4, d: i % 5}]->(x) "
@@ -1642,8 +1662,9 @@ class testIndexScanFlow():
             g.create_edge_range_index('QR', attr)
         wait_for_indices_to_sync(g)
         g.query(create)
-        for q, want in zip(node_queries + edge_queries, expected):
+        for q, want, scan in zip(node_queries + edge_queries, expected, scans):
             plan = str(g.explain(q))
+            self.env.assertContains(scan, plan, message=f"{q}\n{plan}")
             self.env.assertEqual(g.query(q).result_set, want, message=f"{q}\n{plan}")
         g.delete()
 
@@ -1679,9 +1700,15 @@ class testIndexScanFlow():
         g.create_edge_range_index('APR', 'a')
         wait_for_indices_to_sync(g)
         g.query(create)
-        for q, want in zip(queries, expected):
-            # The index scan stays under the retained Filter that raises the error.
-            self.env.assertContains("Index Scan", str(g.explain(q)))
+        # A probe of the bare property pushes down to the index scan, which stays under the
+        # retained Filter that raises the error. A probe of an expression that merely contains
+        # the property (`n.a + 0`) is not the indexed value, so the planner no longer pushes it:
+        # the label scan under the same Filter raises it.
+        scans = ["Node By Index Scan", "Edge By Index Scan", "Node By Label Scan", "Conditional Traverse"]
+        for q, want, scan in zip(queries, expected, scans):
+            plan = str(g.explain(q))
+            self.env.assertContains(scan, plan, message=f"{q}\n{plan}")
+            self.env.assertContains("Filter", plan, message=f"{q}\n{plan}")
             self.env.assertEqual(outcome(g, q), want, message=q)
         g.delete()
 
