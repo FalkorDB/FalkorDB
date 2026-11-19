@@ -160,7 +160,7 @@ theorem typedScan_spec (i : Nat) :
   | b :: bs, kind, k, h => by
     unfold typedScan at h
     by_cases h0 : b.activeLen = 0
-    · rw [if_pos h0] at h
+    · rw [ite_eq_left h0] at h
       obtain ⟨h1, h2, h3⟩ := typedScan_spec i bs kind k h
       refine ⟨h1, fun hk => ?_, ?_⟩
       · obtain ⟨b', hb', hp⟩ := h2 hk; exact ⟨b', by simp [hb'], hp⟩
@@ -168,10 +168,10 @@ theorem typedScan_spec (i : Nat) :
         rcases List.mem_cons.mp hb' with rfl | hb'
         · omega
         · exact h3 b' hb' hp
-    · rw [if_neg h0] at h
+    · rw [ite_eq_right h0] at h
       by_cases hv : b.vo i = true
-      · rw [if_pos hv] at h; simp at h
-      · rw [if_neg hv] at h
+      · rw [ite_eq_left hv] at h; simp at h
+      · rw [ite_eq_right hv] at h
         cases hkb : kindOf (b.column i) with
         | none => rw [hkb] at h; simp at h
         | some k0 =>
@@ -190,7 +190,7 @@ theorem typedScan_spec (i : Nat) :
           | some p =>
             simp only at h
             by_cases hp : p = k0
-            · rw [if_pos hp] at h
+            · rw [ite_eq_left hp] at h
               obtain ⟨h1, -, h3⟩ := typedScan_spec i bs (some p) k h
               have hpk : p = k := by rcases h1 with h1 | h1 <;> simp_all
               subst hpk; subst hp
@@ -199,7 +199,7 @@ theorem typedScan_spec (i : Nat) :
               rcases List.mem_cons.mp hb' with rfl | hb'
               · exact ⟨by simpa using hv, hkb⟩
               · exact h3 b' hb' hq
-            · rw [if_neg hp] at h; simp at h
+            · rw [ite_eq_right hp] at h; simp at h
 
 /-- A typed lane's active slice, embedded as values, is the fallback's `rowVals`. -/
 theorem extendActive_rowVals {α : Type} {b : Batch F} (hw : b.WF) {i : Nat} {v : List α}
@@ -291,7 +291,7 @@ theorem concatCol_obs_generic {bs : List (Batch F)} (hw : ∀ b ∈ bs, b.WF) (i
         simp [this, hvo, hp0]
       have hbu : (buildTyped bs i kd).isUnbound = false := by
         rcases kd with _ | _ | _ | kd <;> rfl
-      simp only [colObs, concatGeneric, hbound, if_true, hbu, classifyStored_isUnbound,
+      simp only [colObs, concatGeneric, hbound, ite_true, hbu, classifyStored_isUnbound,
         Column.get?_eq_toValues hv, classifyStored_get?]
 
 /-! ## The fallback is the per-row builder when no batch is empty -/
@@ -342,7 +342,7 @@ theorem perRow_anyBound (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat
     intro r hr
     have := (toOwned_slot (hw b hb) hr i).2.1
     simp only [Function.comp] at this ⊢
-    rw [this]; simp [hpos, Bool.and_assoc]
+    rw [this]; simp [hpos]
 
 theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat) :
     (perRowRows bs).any (fun r => match r.get i with
@@ -364,7 +364,7 @@ theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat)
     intro r hr
     have := (toOwned_slot (hw b hb) hr i).2.2
     simp only [Function.comp] at this ⊢
-    rw [this]; simp [hpos, Bool.and_assoc]
+    rw [this]; simp [hpos]
 
 /-- **`concat` = per-row concat** (every slot, every row: value and bound bit), for any list
 of well-formed batches, empty ones included (#3059). -/

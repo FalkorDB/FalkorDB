@@ -86,7 +86,8 @@ structure CtCfg where
 
 def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : List Bool)
     (child : Option ChildCT) : CtCfg :=
-  let anon := rp.fromName.any (·.startsWith "_anon")
+  -- cond_traverse.rs:401 `rp.from.alias.is_unnamed()` (#3303: no name; was the `_anon` prefix)
+  let anon := rp.fromName.isNone
   let (dedup, src) :=
     if !emitRel && rp.bidir && anon then
       match child with
@@ -106,17 +107,18 @@ sibling-free hops whose chain hops are all directed; a self-loop
 binds one endpoint column. -/
 theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (ch : Option ChildCT) :
     let c := ctNew rp er sib cb ch
-    (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName.any (·.startsWith "_anon") = true ∧
+    (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName = none ∧
       ∃ x, ch = some x ∧ x.emitRel = false ∧ x.bidir = true) ∧
     (c.dedup = true → c.dedupSrc = ch.map (·.fromAlias)) ∧
     (c.eligible = true → er = false ∧ rp.bidir = false ∧ sib = [] ∧ ∀ b ∈ cb, b = false) ∧
     (c.toCol = none ↔ rp.toAlias = rp.fromAlias) ∧ c.produced = 0 := by
   simp only [ctNew]
   refine ⟨?_, ?_, ?_, ?_, by first | rfl | trivial⟩
-  · by_cases h : (!er && rp.bidir && rp.fromName.any (·.startsWith "_anon")) = true
+  · by_cases h : (!er && rp.bidir && rp.fromName.isNone) = true
     · simp only [h, ite_true]
       simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
       obtain ⟨⟨h1, h2⟩, h3⟩ := h
+      rw [Option.isNone_iff_eq_none] at h3
       cases ch with
       | none => simp
       | some x => by_cases hx : (!x.emitRel && x.bidir) = true

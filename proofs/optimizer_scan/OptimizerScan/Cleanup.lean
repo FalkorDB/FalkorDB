@@ -283,11 +283,11 @@ theorem prune_sound (N : List Nat) (E : List Ed) (hN : N.Nodup) (hcov : ∀ e �
     List.map_congr_left (fun n _ => by
       simp only [Function.comp]
       by_cases h : e.src = n
-      · rw [if_pos h, List.count_filter (by simp [h])]
-      · rw [if_neg h]; exact List.count_eq_zero.mpr (by simp [h]))
+      · rw [ite_eq_left h, List.count_filter (by simp [h])]
+      · rw [ite_eq_right h]; exact List.count_eq_zero.mpr (by simp [h]))
   rw [hm, sum_ite_single _ _ N hN]
   by_cases he : e ∈ E
-  · rw [if_pos (hcov e he)]
+  · rw [ite_eq_left (hcov e he)]
   · rw [List.count_eq_zero.mpr he]; simp
 
 /-! ## Endpoint label filter -/
@@ -491,7 +491,7 @@ theorem idxScan_filter_sound (idx : Nat → List Nat) (opq : Nat → Node → Bo
   · cases hsc : (Plan.idxScan [L] L' q).sel idx opq n
     · -- the index scan rejects `n` although `f` holds: the reference rejects it too
       rw [hfv] at hu
-      simp only [Bool.false_and, Bool.and_true]
+      simp only [Bool.and_true]
       have hF : ∀ X, Plan.sel idx opq (.filter X (.idxScan [L] L' q)) n =
           ((Plan.idxScan [L] L' q).sel idx opq n && evalF opq n X) := fun X => rfl
       split at hu <;> (try split at hu) <;> (simp only [hF, hsc, Bool.false_and, Bool.and_true] at hu; exact hu)

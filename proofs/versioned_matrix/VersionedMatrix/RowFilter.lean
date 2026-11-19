@@ -113,7 +113,7 @@ theorem mayHold_sound {F : RF} {r minr maxr : Nat}
   | empty => exact absurd h id
   | bits f =>
     simp only [mayHold]
-    rw [if_neg (show ¬ maxr < minr by omega)]
+    rw [ite_eq_right (show ¬ maxr < minr by omega)]
     split
     · rfl
     · rw [List.any_eq_true]

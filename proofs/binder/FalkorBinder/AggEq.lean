@@ -105,7 +105,7 @@ theorem exprIrEq_refl (hf : ∀ x, feq x x = true) (d : RD) : exprIrEq feq d d =
 
 theorem exprIrEq_symm (hf : ∀ x y, feq x y = feq y x) (a b : RD) : exprIrEq feq a b = exprIrEq feq b a := by
   cases a <;> cases b <;> (try rename_i v w; cases v <;> cases w) <;>
-    simp [exprIrEq, disc, hf, eq_comm, Bool.beq_comm] <;> omega
+    simp [exprIrEq, disc, hf, Bool.beq_comm] <;> omega
 
 mutual
 theorem eqS_refl (hf : ∀ x, feq x x = true) : ∀ a, eqS feq a a = true

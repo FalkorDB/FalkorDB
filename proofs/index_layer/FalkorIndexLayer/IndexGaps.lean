@@ -206,6 +206,32 @@ theorem vectorQueryGuarded_requires_operational (c n i : Bool) (res : List (Key 
   refine ⟨"Invalid arguments for procedure", ?_⟩
   simp [vectorQueryGuarded, route, hx, hop]
 
+/-- `Indexer::is_operational` (`indexer.rs:536-544`, PR #3581): no index on the label ⇒
+`true` (`is_none_or`), else `Index::is_operational` (`mod.rs:2088`, `operational`). -/
+def isOperational (I : Ixr) (l : String) : Bool :=
+  match I.route l with
+  | some x => operational x
+  | none => true
+
+theorem isOperational_none (I : Ixr) (l : String) (h : I.map.get l = none) :
+    isOperational I l = true := by
+  simp [isOperational, route, h]
+
+theorem isOperational_some (I : Ixr) (l : String) (x : Idx) (h : I.map.get l = some x) :
+    isOperational I l = operational x := by
+  simp [isOperational, route, h]
+
+/-- PR #3581's gate in `Graph::vector_query_nodes`/`_edges` (`graph.rs:4381,4447`):
+`if !indexer.is_operational(label) { Err } else indexer.vector_query ..` is exactly the
+fix shape `vectorQueryGuarded`, so it satisfies `VectorQueryRequiresOperational`. -/
+theorem vectorQueryGuarded_eq_isOperational (I : Ixr) (l a : String) (c n i : Bool)
+    (res : List (Key × Nat)) :
+    vectorQueryGuarded I l a c n i res =
+      (if isOperational I l then vectorQuery I l a c n i res
+       else .error "Invalid arguments for procedure") := by
+  unfold vectorQueryGuarded isOperational
+  cases route I l <;> simp
+
 /-- `CREATE VECTOR INDEX FOR (n:V) ON (n.e) OPTIONS {dimension:2, similarityFunction:'euclidean'}`,
 then `populate_index` takes its ticket for the entry's generation. -/
 def I3382 : Ixr :=

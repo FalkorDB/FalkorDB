@@ -1,9 +1,9 @@
 /-!
 # Compact result encoding vs the falkordb-py decoder
 
-* `encPair` / `encV` — `reply_compact_value` (`src/reply.rs:145-355`): a value is emitted
+* `encPair` / `encV` — `reply_compact_value` (`src/reply.rs:152-361`): a value is emitted
   as its type tag followed by its payload; every caller wraps the two in a 2-array
-  (`reply_result`, `reply.rs:632-679`; list elements `reply.rs:196`; map values
+  (`reply_query`, `reply.rs:688-747`; list elements `reply.rs:196`; map values
   `reply.rs:208`), and entity properties are 3-arrays `[attr_id, tag, payload]`.
 * `dec` — `falkordb/query_result.py:parse_scalar` and its `__parse_*` helpers
   (falkordb-py 1.x, the version pinned in `tests/requirements.txt`), which look labels,
@@ -231,7 +231,7 @@ theorem dec_enc : ∀ v : Val F, dec E (encV E v) = some (spec E v)
   | .map kvs => by simp [encV, encPair, dec, spec, decMap_enc kvs]
   | .node id ls ps => by
     simp only [encV, encPair, dec, decLabels_enc, decProps_enc ps, spec]
-    simp [map_eq_nil_iff']
+    simp
   | .edge id ty s d ps => by simp [encV, encPair, dec, spec, decProps_enc ps]
   | .path ns es => by
     have h1 := dec_enc_list ns
@@ -262,7 +262,7 @@ theorem decProps_enc : ∀ ps : List (Nat × Val F), decProps E (encProps E ps) 
     simp [encProps, decProps, specProps, h, decProps_enc ps]
 end
 
-/-- The whole compact reply (`reply_result::<true>`, `reply.rs:632-679`): a header of
+/-- The whole compact reply (`reply_query` on `ReplyFormat::Compact`, `reply.rs:688-747`): a header of
 `[1, name]` pairs, rows of 2-arrays, statistics strings. -/
 def encReply (names : List String) (rows : List (List (Val F))) (stats : List String) : R :=
   .arr [.arr (names.map fun n => .arr [.int 1, .bulk n]),

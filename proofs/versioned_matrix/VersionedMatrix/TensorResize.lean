@@ -53,8 +53,8 @@ def resizeT (t : TT) (r c : Nat) : TT :=
 theorem resizeT_eq (t : TT) (r c : Nat) :
     resizeT t r c = { t with nrows := max r t.nrows, ncols := max c t.ncols } := by
   by_cases h : max r t.nrows = t.nrows ∧ max c t.ncols = t.ncols
-  · simp only [resizeT, if_pos h]; rw [h.1, h.2]
-  · simp only [resizeT, if_neg h]
+  · simp only [resizeT, ite_eq_left h]; rw [h.1, h.2]
+  · simp only [resizeT, ite_eq_right h]
 
 /-- Nothing but the dimensions changes: every pair state and every `me` block
 is kept. -/
@@ -193,7 +193,7 @@ forward value (`iterBwd_eff_get_isSome`). -/
 theorem iterBwd_eff_get_isSome {t : TT} (hi : AllInv t) (lo hi' : Nat) :
     ∀ pv ∈ baseStream t true lo hi', pv.2.isSome = true := by
   intro pv h
-  simp only [baseStream, if_pos] at h
+  simp only [baseStream, ite_eq_left] at h
   obtain ⟨p, hp, hpv⟩ := List.mem_map.1 h
   subst hpv
   have := (List.mem_filter.1 hp).2

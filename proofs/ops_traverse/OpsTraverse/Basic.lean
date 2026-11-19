@@ -27,7 +27,7 @@ theorem mem_dedup {α : Type} [DecidableEq α] {a : α} :
   | b :: l => by
     unfold dedup
     by_cases h : b ∈ l
-    · rw [if_pos h, mem_dedup, List.mem_cons]
+    · rw [ite_eq_left h, mem_dedup, List.mem_cons]
       constructor
       · intro h'; exact Or.inr h'
       · rintro (rfl | h'); exact h; exact h'
@@ -38,8 +38,8 @@ theorem nodup_dedup {α : Type} [DecidableEq α] : ∀ (l : List α), (dedup l).
   | b :: l => by
     unfold dedup
     by_cases h : b ∈ l
-    · rw [if_pos h]; exact nodup_dedup l
-    · rw [if_neg h]
+    · rw [ite_eq_left h]; exact nodup_dedup l
+    · rw [ite_eq_right h]
       exact List.nodup_cons.2 ⟨fun hm => h (mem_dedup.1 hm), nodup_dedup l⟩
 
 structure Edge where
@@ -78,7 +78,7 @@ theorem mem_insertAsc {x a : Nat} : ∀ {l : List Nat}, x ∈ insertAsc a l ↔ 
     unfold insertAsc
     by_cases h : a ≤ b
     · simp [h]
-    · simp only [h, if_false, List.mem_cons, mem_insertAsc]
+    · simp only [h, ite_false, List.mem_cons, mem_insertAsc]
       constructor
       · rintro (h | h | h)
         · exact Or.inr (Or.inl h)
