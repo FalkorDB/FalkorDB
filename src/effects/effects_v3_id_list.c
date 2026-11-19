@@ -630,6 +630,14 @@ EffectsV3IdList EffectsV3IdListBuilder_ToIdList
 					? &o->set_descending.cardinality
 					: &o->set_ascending.cardinality;
 
+				// THE WIRE STATES A BLOB'S LENGTH IN FOUR BYTES. Truncating
+				// here would announce a short length for a full allocation,
+				// and a decoder would read the remainder as the segments
+				// following it. ToIdList returns a list rather than a status,
+				// so there is nothing to refuse upward.
+				RELEASE_ASSERT(n <= UINT32_MAX &&
+						"a roaring blob larger than the wire can state");
+
 				*blob = rm_malloc(n);
 				*bn   = (uint32_t)n;
 				*card = s->bitmap.len;

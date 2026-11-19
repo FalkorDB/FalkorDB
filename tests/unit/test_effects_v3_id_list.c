@@ -43,9 +43,30 @@ static EffectsV3IdListBuilder *_build(const uint64_t *ids, size_t n) {
 
 // the ids a builder's segments describe, in order, so a test can assert on the
 // sequence rather than on the segmentation where the sequence is what matters
+//
+// THE SEGMENTS' OWN TOTAL IS CHECKED FIRST, against the number of ids pushed.
+// The expansion below still sizes and clamps to the pushed count - that is
+// what the check makes safe, not something it replaces.
+//
+// Without it, an OVER-describing segment is invisible: a range or a bitmap
+// covering more ids than were pushed has its surplus dropped at the clamp, and
+// every assertion downstream then compares only the ids that fit, so the
+// sequence matches and the count matches. The failure that hides there is a
+// payload naming entities nobody wrote.
 static uint64_t *_expand(const EffectsV3IdListBuilder *b, uint64_t *out_n) {
 	uint32_t n_segs = EffectsV3IdListBuilder_SegmentCount(b);
 	uint64_t total  = EffectsV3IdListBuilder_Len(b);
+
+	uint64_t described = 0;
+	for(uint32_t i = 0; i < n_segs; i++) {
+		described += EffectsV3Seg_Len(EffectsV3IdListBuilder_Segment(b, i));
+	}
+
+	TEST_ASSERT_(described == total,
+			"the segments describe %llu ids but %llu were pushed - a surplus "
+			"here would be silently dropped by the expansion below",
+			(unsigned long long)described, (unsigned long long)total);
+
 	uint64_t *out   = malloc(sizeof(uint64_t) * (total > 0 ? total : 1));
 	uint64_t k      = 0;
 
@@ -67,6 +88,9 @@ static uint64_t *_expand(const EffectsV3IdListBuilder *b, uint64_t *out_n) {
 		} else {
 			// a bitmap is a set read in the header's direction
 			uint64_t card = roaring64_bitmap_get_cardinality(s->bitmap.bitmap);
+			TEST_ASSERT_(card == len,
+					"a Set segment states %u ids and its bitmap holds %llu",
+					len, (unsigned long long)card);
 			uint64_t *buf = malloc(sizeof(uint64_t) * (card > 0 ? card : 1));
 			roaring64_bitmap_to_uint64_array(s->bitmap.bitmap, buf);
 			for(uint64_t j = 0; j < card && k < total; j++) {

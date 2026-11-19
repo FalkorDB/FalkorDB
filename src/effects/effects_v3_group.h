@@ -107,10 +107,13 @@ void EffectsV3Grouping_AddEdge
 // staged per entity and folded into a group at emission, once the query stops
 // producing attributes for it.
 //
-// The value is encoded IMMEDIATELY, because the SIValue belongs to the caller
-// and will not outlive the call. The tagged blobs are concatenated in
-// attribute-id order at the flush, which is what lets attributes arrive in any
-// order and still produce one canonical shape.
+// The value is CLONED here and encoded at the flush. The SIValue belongs to
+// the caller and will not outlive the call, so a copy is taken - and taken
+// unconditionally, because the accumulator frees everything it holds and a
+// value that already owned its memory would otherwise be freed out from under
+// whoever passed it. The encodings are concatenated in attribute-id order at
+// the flush, which is what lets attributes arrive in any order and still
+// produce one canonical shape.
 //
 // A T_NULL value is a removal and is staged like any other: the attribute is
 // part of the shape and the null is what instructs the replica to drop it.

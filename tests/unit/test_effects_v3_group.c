@@ -274,12 +274,59 @@ void test_effectsV3Group_recordsAreSortedByKey(void) {
 
 	// CREATE_EDGE: u32 opcode, u32 count, i32 relation_id, u16 n_attrs,
 	// u16 attr_id, then ids/src/dst as three IdLists of one Range each, then
-	// one value. Rather than parse that, check the first record's relation id
-	// and that the payload as a whole is ordered by walking the three.
-	TEST_ASSERT_(_u32(p + 8) == 1,
-			"the first record should carry relationship type 1, got %u - "
-			"records were emitted in arrival order rather than key order",
-			_u32(p + 8));
+	// one value.
+	//
+	// ALL THREE ARE CHECKED, not just the first. Asserting only that record 0
+	// carries type 1 passes an emission order of 1, 3, 2 - which is not sorted
+	// and is exactly what a partial sort or an unstable comparison produces.
+	//
+	// The three records are the same shape with single-byte ids, so they are
+	// the same length and record k begins at k * (n / 3). That assumption is
+	// asserted rather than assumed: if a future change makes the records
+	// differ in length this fails here instead of reading a relation id out of
+	// the middle of a value.
+	TEST_ASSERT_(n % 3 == 0,
+			"expected three equal-length records, got %zu bytes", n);
+
+	const size_t rec = n / 3;
+	TEST_ASSERT_(_u32(p) == _u32(p + rec) && _u32(p) == _u32(p + 2 * rec),
+			"the three records should start with the same opcode; if they do "
+			"not, the equal-length assumption below is wrong");
+
+	for(uint32_t k = 0; k < 3; k++) {
+		TEST_ASSERT_(_u32(p + k * rec + 8) == k + 1,
+				"record %u should carry relationship type %u, got %u - "
+				"records were not emitted in key order", k, k + 1,
+				_u32(p + k * rec + 8));
+	}
+
+	free(p);
+	EffectsV3Grouping_Free(g);
+
+	// ARRIVAL STARTING AT THE SMALLEST KEY, which is the case that separates
+	// "sorted" from "record 0 happens to be right". Added 1, 3, 2: an emitter
+	// that does not sort at all leaves them in that order, and record 0 still
+	// carries type 1.
+	g = EffectsV3Grouping_New();
+	const int arrival[] = { 1, 3, 2 };
+	for(int i = 0; i < 3; i++) {
+		EffectsV3Grouping_AddEdge(g, EFFECT_CREATE_EDGE, arrival[i],
+				10 + arrival[i], 1, 2, attrs, &v, 1);
+	}
+
+	n = 0;
+	p = _encode(g, &n);
+	TEST_ASSERT_(n % 3 == 0, "expected three equal-length records");
+
+	const size_t rec2 = n / 3;
+	TEST_ASSERT_(_u32(p) == _u32(p + rec2) && _u32(p) == _u32(p + 2 * rec2),
+			"the three records should start with the same opcode; if they do "
+			"not, the equal-length assumption below is wrong");
+	for(uint32_t k = 0; k < 3; k++) {
+		TEST_ASSERT_(_u32(p + k * rec2 + 8) == k + 1,
+				"arriving 1, 3, 2 must still emit 1, 2, 3: record %u carries "
+				"type %u", k, _u32(p + k * rec2 + 8));
+	}
 
 	free(p);
 	EffectsV3Grouping_Free(g);
@@ -830,6 +877,97 @@ void test_effectsV3Group_valuesFollowTheirAttributes(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// the accumulator must hold its OWN copy of a staged value
+//
+// SIValue_Persist clones an M_VOLATILE value and leaves every other kind
+// alone, while _update_release frees exactly M_SELF - so an owned value used
+// to be stored as the caller's pointer and then freed out from under it. The
+// accumulator's own bookkeeping stayed consistent either way, which is why
+// nothing here saw it.
+//
+// ASSERTED WITHOUT A SANITIZER, by mutating the caller's buffer after staging
+// and before the flush. A copy encodes what was staged; the caller's pointer
+// encodes what the buffer says now. The difference is visible in the bytes,
+// so this fails on a build that stores the pointer rather than needing a
+// double free to be detected.
+void test_effectsV3Group_stagedValueIsCopiedFromTheCaller(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	LabelID labels[] = { 1 };
+
+	// M_SELF: owns its own heap string, which is the case Persist left alone.
+	// A literal cannot stand in here - SI_ConstStringVal is M_CONST and
+	// SIValue_Free ignores it, so the bug is unreachable with one.
+	SIValue owned = SI_DuplicateStringVal("ORIGINAL");
+	TEST_ASSERT_(owned.allocation == M_SELF,
+			"this test needs an owned value; got allocation %d",
+			(int)owned.allocation);
+
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+			7, owned);
+
+	// same length, so nothing reallocates: only the content changes
+	memcpy(owned.stringval, "MUTATED!", 8);
+
+	size_t n = 0;
+	unsigned char *buf = _encode(g, &n);
+
+	bool saw_original = false;
+	bool saw_mutated  = false;
+	for(size_t i = 0; i + 8 <= n; i++) {
+		if(memcmp(buf + i, "ORIGINAL", 8) == 0) saw_original = true;
+		if(memcmp(buf + i, "MUTATED!", 8) == 0) saw_mutated  = true;
+	}
+
+	TEST_ASSERT_(saw_original && !saw_mutated,
+			"the staged value must be the accumulator's own copy: "
+			"original in payload=%d, caller's later edit in payload=%d",
+			(int)saw_original, (int)saw_mutated);
+
+	free(buf);
+	EffectsV3Grouping_Free(g);
+
+	// and the caller still owns what it passed - freeing it here is the only
+	// free of this allocation
+	SIValue_Free(owned);
+
+	// THE REPLACEMENT BRANCH IS A SECOND PLACE TO GET THIS WRONG, and it is
+	// not reached above: staging a second value for an attribute already
+	// staged frees the old one and stores the new, and that store had the same
+	// defect. The existing last-value-wins test walks this branch with
+	// SI_LongVal, which is M_NONE and cannot show it.
+	g = EffectsV3Grouping_New();
+
+	SIValue first  = SI_DuplicateStringVal("FIRSTVAL");
+	SIValue second = SI_DuplicateStringVal("SECONDVL");
+	TEST_ASSERT(first.allocation == M_SELF && second.allocation == M_SELF);
+
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+			7, first);
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+			7, second);   // same attribute: replaces
+
+	memcpy(second.stringval, "EDITED!!", 8);
+
+	n = 0;
+	buf = _encode(g, &n);
+
+	bool saw_second = false, saw_edit = false;
+	for(size_t i = 0; i + 8 <= n; i++) {
+		if(memcmp(buf + i, "SECONDVL", 8) == 0) saw_second = true;
+		if(memcmp(buf + i, "EDITED!!", 8) == 0) saw_edit   = true;
+	}
+
+	TEST_ASSERT_(saw_second && !saw_edit,
+			"the replacement must be copied too: replacement in payload=%d, "
+			"caller's later edit in payload=%d",
+			(int)saw_second, (int)saw_edit);
+
+	free(buf);
+	EffectsV3Grouping_Free(g);
+	SIValue_Free(first);
+	SIValue_Free(second);
+}
+
 TEST_LIST = {
 	{ "EffectsV3Group:attributeOrderDoesNotSplit",
 		test_effectsV3Group_attributeOrderDoesNotSplit },
@@ -851,6 +989,8 @@ TEST_LIST = {
 		test_effectsV3Group_stagedUpdateLabelsAreASet },
 	{ "EffectsV3Group:recordsAreSortedByKey",
 		test_effectsV3Group_recordsAreSortedByKey },
+	{ "EffectsV3Group:stagedValueIsCopiedFromTheCaller",
+		test_effectsV3Group_stagedValueIsCopiedFromTheCaller },
 	{ "EffectsV3Group:insertionOrderDoesNotChangeBytes",
 		test_effectsV3Group_insertionOrderDoesNotChangeBytes },
 	{ "EffectsV3Group:attributeAnnouncedOncePerPayload",

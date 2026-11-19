@@ -355,7 +355,12 @@ static void _encode_record
 		case EFFECT_CREATE_CCH:
 		case EFFECT_DROP_CCH:
 		case EFFECT_UNKNOWN:
-			ASSERT(false && "unknown v3 record opcode");
+			// RELEASE_ASSERT, not ASSERT: this arm writes the opcode and
+			// nothing else, so compiled out it emits a TRUNCATED record rather
+			// than failing - and the bytes that follow are read as the next
+			// record. ASSERT is empty unless RG_DEBUG, which is a Debug build
+			// only.
+			RELEASE_ASSERT(false && "unknown v3 record opcode");
 			break;
 	}
 }
