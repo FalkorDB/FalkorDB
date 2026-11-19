@@ -436,7 +436,9 @@ class testTemporalLocalDateTime(FlowTestsBase):
         # a year past 9999 keeps every digit, as in C (%Y); it used to lose the
         # leading digits (1e9 days gave 9933-01-03)
         cases = [
-            ("date('2026-01-01') + duration({days: 1000000000})", '2739933-01-03'),
+            # 1e9 days after 2026-01-01 is the 4th: a duration keeps its days
+            # apart from its seconds, so the sum is exact
+            ("date('2026-01-01') + duration({days: 1000000000})", '2739933-01-04'),
             ("date('9999-12-31') + duration({days: 1})", '10000-01-01'),
             ("date('9999-12-31') + duration({years: 20})", '10019-12-31'),
         ]
@@ -768,8 +770,14 @@ class testTemporalDuration(FlowTestsBase):
         res = self.graph.query("""WITH duration('P1DT-9223372036854775808S') AS d
                                   RETURN d - d = duration({})""").result_set
         self.env.assertEqual(res[0][0], True)
-        self.graph.query("""WITH duration('P1DT-9223372036854775808S') AS d
-                            RETURN (localdatetime('1970-01-01T00:00:00') - d) > localdatetime('2000-01-01T00:00:00')""")
+        # The result fits an i64 but is far outside the supported date range:
+        # an error, not an overflow.
+        try:
+            self.graph.query("""WITH duration('P1DT-9223372036854775808S') AS d
+                                RETURN localdatetime('1970-01-01T00:00:00') - d""")
+            self.env.assertTrue(False, message="a date past the range was accepted")
+        except ResponseError as e:
+            self.env.assertContains("Date out of range", str(e))
 
     def test_duration_add(self):
         #-----------------------------------------------------------------------

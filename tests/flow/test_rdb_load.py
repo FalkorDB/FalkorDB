@@ -126,6 +126,14 @@ def _crc64(data):
     return crc
 
 
+def with_rdb_version(dump, version):
+    """`dump` with the RDB version in its trailer set to `version` and the CRC
+    recomputed: a DUMP made by an older server carries a version the server
+    running now may not load."""
+    body = dump[:-10] + struct.pack("<H", version)
+    return body + struct.pack("<Q", _crc64(body))
+
+
 def with_module_encver(dump, encver):
     """`dump` (one module value, as DUMP returns it) with its module type's
     encoding version set to `encver`, and the CRC recomputed.
@@ -389,7 +397,7 @@ class testRdbLoad():
     def test_restore_a_dump_from_before_duration_components(self):
         self.conn.flushall()
         self.env.assertEqual(module_encver(LEGACY_DUMP), 19)
-        self.conn.restore("legacy", 0, LEGACY_DUMP)
+        self.conn.restore("legacy", 0, with_rdb_version(LEGACY_DUMP, 11))
         self.env.assertEqual(self._durations("legacy"),
                              [LEGACY_DURATIONS, LEGACY_EDGE_DURATION])
 
@@ -564,13 +572,13 @@ class testRdbLoad():
     def test_restore_v19_and_v20_without_cch_indexes(self):
         # C's encoding version 20 adds one payload, the CCH index definitions,
         # written only for a graph that has a CCH index: any other v20 value is
-        # a v19 value stamped 20. This module writes 20 and loads both.
+        # a v19 value stamped 20. This module writes 21 (above C's 20) and loads 19 to 21.
         self.conn.flushall()
         src = self.db.select_graph("src")
         src.query("CREATE INDEX FOR (a:A) ON (a.v)")
         src.query("CREATE (:A {v: 1})-[:R {w: 2}]->(:B {v: 3})")
         dump = self.conn.dump("src")
-        self.env.assertEqual(module_encver(dump), 20)
+        self.env.assertEqual(module_encver(dump), ENCODING_VERSION)
 
         q = "MATCH (a:A)-[e:R]->(b:B) RETURN a.v, e.w, b.v"
         for encver in (19, 20, ENCODING_VERSION):

@@ -2770,7 +2770,7 @@ mod sort_cmp_tests {
 mod nesting_tests {
     use super::{MAX_VALUE_NESTING, Value, value_nesting_error};
     use crate::graph::graphblas::serialization::{
-        Decode, ENCODING_VERSION, ENCVER_DURATION_COMPONENTS, Encode, Reader, Writer, si_type,
+        Decode, ENCVER_DURATION_COMPONENTS, Encode, Reader, Writer, si_type,
     };
     use std::{collections::VecDeque, sync::Arc};
     use thin_vec::thin_vec;
