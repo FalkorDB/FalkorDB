@@ -149,7 +149,8 @@ pub struct Binder {
     /// n's (scope_id, variable ID) → {N, O} so the planner can create a single
     /// NodeByLabelScan with the full label set.
     node_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
-    /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
+    /// Variables bound from variable-length relationship patterns (e.g. `[r*]`),
+    /// as (scope_id, id).
     /// These are typed as `Type::Path` but represent a list of edges, so
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
@@ -861,9 +862,10 @@ impl Binder {
             self.update_all_node_labels(&mut bound_body);
         }
 
-        // 2c. Remove inner-scope entries from node_labels so that a
-        // subsequent CALL body (which reuses the same scope_id range)
-        // doesn't inherit stale labels from this body.
+        // 2c. Remove inner-scope entries from node_labels so that a later
+        // scope with one of these ids (one the outer query's later WITH or
+        // RETURN opens, or a later CALL body) doesn't inherit stale labels
+        // from this body.
         let inner_scope_ids: Vec<u32> =
             (saved_env_stack_len as u32..self.env_stack.len() as u32).collect();
         self.node_labels
@@ -872,6 +874,10 @@ impl Binder {
         // scope with the same id must not see them as already matched.
         self.match_rel_vars
             .retain(|&(_, scope_id)| !inner_scope_ids.contains(&scope_id));
+        // And the body's variable-length relationships: a named path that
+        // later gets the same (scope_id, id) must still reject `p.prop`.
+        self.varlen_rel_var_ids
+            .retain(|&(scope_id, _)| !inner_scope_ids.contains(&scope_id));
 
         // 3. Capture subquery output, restore outer scope
         let subquery_env = self.current_env().clone();
