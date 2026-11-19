@@ -144,13 +144,13 @@ theorem gather_none : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
         have e : (ms.filterMap key ++ vals :: keys).Nodup ↔ (vals ∉ ms.filterMap key ++ keys ∧
             (ms.filterMap key ++ keys).Nodup) := by
           rw [List.perm_middle.nodup_iff, List.nodup_cons]
-        rw [if_neg hv]
+        rw [ite_eq_right hv]
         by_cases hu : ui = true
-        · rw [if_pos hu]
+        · rw [ite_eq_left hu]
           cases hq : qf vals with
           | some q => dsimp only; rw [gather_none ms _ _ _ h', e]
           | none => dsimp only; rw [gather_none ms _ _ _ h', e]
-        · rw [if_neg hu, gather_none ms _ _ _ h', e]
+        · rw [ite_eq_right hu, gather_none ms _ _ _ h', e]
 
 /-- Invariant: while the index is still in use, every key gathered has its query queued. -/
 def GInv (keys : List (List V)) (lk : List Q) (ui : Bool) : Prop :=
@@ -173,8 +173,8 @@ theorem gather_some : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
     | some vals =>
       rw [hk] at h; simp only at h
       by_cases hv : vals ∈ keys
-      · rw [if_pos hv] at h; cases h
-      rw [if_neg hv] at h
+      · rw [ite_eq_left hv] at h; cases h
+      rw [ite_eq_right hv] at h
       have fin : ∀ lk' ui', GInv qf (vals :: keys) lk' ui' →
           gather props attr qf ms (vals :: keys) lk' ui' = some r → (ui' = true → ui = true) →
           (∀ k, k ∈ r.1 ↔ k ∈ keys ∨ k ∈ vals :: ms.filterMap key) ∧ GInv qf r.1 r.2.1 r.2.2 ∧
@@ -186,7 +186,7 @@ theorem gather_some : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
         · rintro ((h | h) | h) <;> simp_all
         · rintro (h | h | h) <;> simp_all
       by_cases hu : ui = true
-      · rw [if_pos hu] at h
+      · rw [ite_eq_left hu] at h
         cases hq : qf vals with
         | some q =>
           rw [hq] at h; dsimp only at h
@@ -213,7 +213,7 @@ theorem gather_some : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
             · rintro ⟨-, h2⟩
               obtain ⟨q, hq'⟩ := h2 vals (by simp)
               rw [hq] at hq'; cases hq'
-      · rw [if_neg hu] at h
+      · rw [ite_eq_right hu] at h
         obtain ⟨a, b, c, d⟩ := gather_some ms (vals :: keys) lk false r (fun h => by cases h) h
         refine ⟨?_, b, fun h => absurd (c h) (by simp), ?_⟩
         · intro k; rw [a k]; simp only [List.mem_cons]; constructor

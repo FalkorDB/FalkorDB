@@ -118,8 +118,8 @@ theorem pushLeftOf_spec (c : CB F) (base : Batch F) (id row : Nat) :
   | some col =>
     simp only [Option.getD_some]
     cases hu : col.isUnbound
-    · cases hv : base.vo id <;> simp [CB.pushBound, hu, hv]
-    · simp [hu]
+    · cases hv : base.vo id <;> simp [CB.pushBound]
+    · simp
 
 /-! ## `MergePlan` (batch.rs:499, :520) -/
 
@@ -432,7 +432,7 @@ theorem mergeOverInput_bound [FloatModel F] (out input : Batch F) (origins : Lis
     cases hg : (input.column x).gather origins with
     | none => simp [hg] at hm
     | some c =>
-      simp only [hg, Option.map_some, Option.bind_some] at hm
+      simp only [hg, Option.map_some] at hm
       rw [ih _ (fun h' => hn (List.mem_cons_of_mem _ h')) hm, column_setColumn]
       have : id ≠ x := fun e => hn (e ▸ List.mem_cons_self ..)
       simp [this]

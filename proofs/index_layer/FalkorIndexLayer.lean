@@ -189,6 +189,12 @@ every range query on `n.s` is built against the fulltext field `s` instead of `r
 (live, ports 18850 Rust / 18851 C). Fix: pick the field with `ty == IndexType::Range`.
 Suspected, unconfirmed: `create_rs_index` returns `Err` on a NUL in a stopword/language/label
 after `RediSearch_CreateIndexOptions` without `RediSearch_FreeIndexOptions` (leak only).
+#3274 fixes that leak by running every `CString::new` (stopwords, language, label) before
+the options block is allocated and freeing it on the unsupported-language return. Side
+effect: the label NUL check now precedes the unsupported-language check, so
+`createRsIndex_lang_err` is false on the new code (`createRsIndex_lang_err_fails`; label
+``L\0`` with `language: 'x'` reports the NUL error instead of `Language is not supported: x`);
+`createRsIndex_lang_err_cleanLabel` proves the message for NUL-free labels.
 
 ## Re-target to 49f698d22 (#3087)
 `Document::set` now adds a `VecF32` only if

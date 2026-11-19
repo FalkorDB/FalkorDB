@@ -237,7 +237,7 @@ theorem next_spec (s : St α) (h : Good s) :
       right
       refine ⟨d, ⟨[], D', ps⟩, rfl, ?_, ⟨List.Pairwise.nil, hDr, (List.pairwise_cons.1 hP).2⟩, ?_⟩
       · simp [spec, live, mergeW]
-      · simp [meas]; omega
+      · simp; omega
   | cons m ms =>
     have hmD := hhead m ms rfl
     have hms : Sorted ms := (List.pairwise_cons.1 hMr).2
@@ -249,7 +249,7 @@ theorem next_spec (s : St α) (h : Good s) :
       refine ⟨m, ⟨ms, D', []⟩, rfl, ?_, ⟨hms, hDr, List.Pairwise.nil⟩, ?_⟩
       · simp only [spec]
         cases live ms D' <;> simp [mergeW]
-      · simp [meas]; omega
+      · simp; omega
     | cons d ps =>
       have hps : Sorted ps := (List.pairwise_cons.1 hP).2
       by_cases hle : d.1 ≤ m.1
@@ -257,10 +257,10 @@ theorem next_spec (s : St α) (h : Good s) :
         · rw [mergeW_cons_le hle]; simp only [spec]
           by_cases he : d.1 = m.1 <;> simp [he, live_cons_of_not_mem hmD]
         · by_cases he : d.1 = m.1 <;> simp [he, hms, hMr]
-        · simp only [meas]; by_cases he : d.1 = m.1 <;> simp [he] <;> omega
+        · simp only; by_cases he : d.1 = m.1 <;> simp [he] <;> omega
       · refine ⟨m, ⟨ms, D', d :: ps⟩, by simp [hle], ?_, ⟨hms, hDr, hP⟩, ?_⟩
         · rw [mergeW_cons_gt hle]; rfl
-        · simp [meas]; omega
+        · simp; omega
 
 /-- **The iterator yields exactly the specification.** Any budget of at least
 `|M| + |P| + 1` calls drains it. -/

@@ -75,7 +75,10 @@ use crate::{
 };
 
 use super::super::IR;
-use super::{collect_expr_variables, collect_subtree_variables};
+use super::{
+    collect_expr_scoped_variables, collect_expr_variables, collect_subtree_variables,
+    endpoint_scan_score, walk_scans_to_endpoint,
+};
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
@@ -94,13 +97,21 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// scanned first, and without this it would win on the chain-position tiebreak
 /// purely for being nearer the leaf.
 ///
+/// `has_equality` ranks above `filter_runs_late`: an endpoint pinned by a
+/// conjunct `x.p = <constant or parameter>` is typically far more selective
+/// than one held by a range or other predicate, and an equality is what a
+/// later index or id seek turns into a point lookup. Without it, `MATCH (s:L
+/// {id: $id})-->()-->()-->(n:L) WHERE n.age >= 18` started from a full label
+/// scan of `n` (whose WHERE runs late) instead of seeking `s` (whose inline
+/// filter the planner parks after the first hop): >20 s instead of ms.
+///
 /// When those are equal, the endpoint with fewer label nodes is preferred.
 fn score_endpoint(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     filtered_vars: &FilteredVars,
     bound_vars: &HashSet<u32>,
     graph: &Graph,
-) -> (u32, bool, u64) {
+) -> (u32, bool, bool, u64) {
     let key = (node.alias.id, node.alias.scope_id);
     let mut score = 0u32;
     if bound_vars.contains(&node.alias.id) {
@@ -110,13 +121,9 @@ fn score_endpoint(
     // the planner and stripped from the pattern, so they arrive here through
     // `filtered_vars` like any other predicate rather than being counted
     // separately — which used to score such an endpoint twice.
-    if filtered_vars.all.contains(&key) {
-        score += 2;
-    }
+    score += endpoint_scan_score(filtered_vars.all.contains(&key), !node.labels.is_empty());
+    let has_equality = filtered_vars.equality.contains(&key);
     let filter_runs_late = filtered_vars.above.contains(&key);
-    if !node.labels.is_empty() {
-        score += 1;
-    }
     // Cardinality: minimum label node count (lower is better).
     // For nodes with no labels, use u64::MAX so labeled nodes win ties.
     let cardinality = if node.labels.is_empty() {
@@ -128,7 +135,7 @@ fn score_endpoint(
             .min()
             .unwrap_or(u64::MAX)
     };
-    (score, filter_runs_late, cardinality)
+    (score, has_equality, filter_runs_late, cardinality)
 }
 
 /// Collects the variables referenced by Filter nodes that are ancestors of the
@@ -151,6 +158,52 @@ struct FilteredVars {
     /// `above` plus the variables referenced by Filters between the chain's
     /// own operators, whose predicates already run mid-traversal.
     all: HashSet<(u32, u32)>,
+    /// Subset of `all`: variables with a top-level conjunct
+    /// `v.prop = <expression free of variables>` (either operand order).
+    equality: HashSet<(u32, u32)>,
+}
+
+/// Records `v` when `idx` is `v.prop = e` (or `e = v.prop`) and `e`
+/// references no variable — a constant or parameter — descending only through
+/// `AND`, since an equality under `OR`/`NOT` no longer pins the variable.
+fn collect_equalities(
+    filter: &crate::parser::ast::QueryExpr<Variable>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    out: &mut HashSet<(u32, u32)>,
+) {
+    let node = filter.node(idx);
+    match node.data() {
+        ExprIR::And => {
+            for i in 0..node.num_children() {
+                collect_equalities(filter, node.child(i).idx(), out);
+            }
+        }
+        ExprIR::Eq if node.num_children() == 2 => {
+            let var_free = |side: NodeIdx<Dyn<ExprIR<Variable>>>| {
+                !filter
+                    .node(side)
+                    .indices::<Bfs>()
+                    .any(|i| matches!(filter.node(i).data(), ExprIR::Variable(_)))
+            };
+            let property_var = |side: NodeIdx<Dyn<ExprIR<Variable>>>| {
+                let prop = filter.node(side);
+                if !matches!(prop.data(), ExprIR::Property(_)) || prop.num_children() != 1 {
+                    return None;
+                }
+                match prop.child(0).data() {
+                    ExprIR::Variable(v) => Some((v.id, v.scope_id)),
+                    _ => None,
+                }
+            };
+            let (lhs, rhs) = (node.child(0).idx(), node.child(1).idx());
+            if let Some(v) = property_var(lhs).filter(|_| var_free(rhs)) {
+                out.insert(v);
+            } else if let Some(v) = property_var(rhs).filter(|_| var_free(lhs)) {
+                out.insert(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn collect_filtered_vars(
@@ -160,7 +213,9 @@ fn collect_filtered_vars(
     fn collect(
         filter: &crate::parser::ast::QueryExpr<Variable>,
         vars: &mut HashSet<(u32, u32)>,
+        equality: &mut HashSet<(u32, u32)>,
     ) {
+        collect_equalities(filter, filter.root().idx(), equality);
         for idx in filter.root().indices::<Bfs>() {
             if let ExprIR::Variable(v) = filter.node(idx).data() {
                 vars.insert((v.id, v.scope_id));
@@ -169,10 +224,11 @@ fn collect_filtered_vars(
     }
 
     let mut above = HashSet::new();
+    let mut equality = HashSet::new();
     let mut current = start_idx;
     while let Some(parent) = plan.node(current).parent() {
         match parent.data() {
-            IR::Filter(filter) => collect(filter, &mut above),
+            IR::Filter(filter) => collect(filter, &mut above, &mut equality),
             // Walk through transparent operators to find filters higher up
             IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
             _ => break,
@@ -190,7 +246,7 @@ fn collect_filtered_vars(
     let mut node = plan.node(start_idx);
     loop {
         match node.data() {
-            IR::Filter(filter) => collect(filter, &mut all),
+            IR::Filter(filter) => collect(filter, &mut all, &mut equality),
             IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
             _ => break,
         }
@@ -199,7 +255,11 @@ fn collect_filtered_vars(
         }
         node = node.child(0);
     }
-    FilteredVars { above, all }
+    FilteredVars {
+        above,
+        all,
+        equality,
+    }
 }
 
 /// Creates a scan subtree for the given node. Shape:
@@ -334,11 +394,13 @@ fn is_planner_scan_subtree(
 fn planner_scan_alias(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
-) -> Option<u32> {
+) -> Option<(u32, u32)> {
     let mut node = plan.node(idx);
     loop {
         match node.data() {
-            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => return Some(n.alias.id),
+            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => {
+                return Some((n.alias.id, n.alias.scope_id));
+            }
             IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
                 node = node.child(0);
             }
@@ -498,6 +560,28 @@ fn child_subtree_binds(
     binds
 }
 
+/// Whether anything below the planner scan at `scan_idx` may bind `alias`:
+/// one of its children binds it, or contains an `Argument(None)`, which is
+/// opaque about what it carries. Unlike `child_subtree_binds`, an opaque
+/// `Argument` counts as binding, since the caller is about to scan `alias`
+/// on top of these children and must not rebind it.
+fn subtree_may_bind(
+    plan: &DynTree<IR>,
+    scan_idx: NodeIdx<Dyn<IR>>,
+    alias: &Variable,
+) -> bool {
+    use crate::runtime::runtime::GetVariables;
+    plan.node(scan_idx).children().any(|child| {
+        child
+            .walk::<Bfs>()
+            .any(|ir| matches!(ir, IR::Argument(None)))
+            || child
+                .get_variables()
+                .iter()
+                .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+    })
+}
+
 /// Picks which endpoint of a leaf `CondVarLenTraverse` to scan.
 ///
 /// The planner always scans the pattern's `from` endpoint. When `to` is the
@@ -539,20 +623,30 @@ fn select_var_len_scan_node(
         };
         // Nothing to choose between: both endpoints are already bound, both
         // ends are the same variable, or the runtime has no backwards walk for
-        // this pattern (bidirectional / allShortestPaths).
+        // this pattern (allShortestPaths).
         if *expand_into
-            || relationship.bidirectional
             || relationship.all_shortest_paths != AllShortestPaths::No
             || relationship.from.alias.id == relationship.to.alias.id
         {
             continue;
         }
+        // The edge attributes are evaluated per edge, before the walk binds
+        // anything: one that reads an endpoint sees it bound only when that
+        // end is the one scanned (or bound by an input). Dropping the `from`
+        // scan unbinds `from`; rescanning `to` flips which end is bound.
+        let attr_vars = collect_expr_scoped_variables(&relationship.attrs);
+        let attrs_read_from =
+            attr_vars.contains(&(relationship.from.alias.scope_id, relationship.from.alias.id));
+        let attrs_read_to =
+            attr_vars.contains(&(relationship.to.alias.scope_id, relationship.to.alias.id));
         // Only rewrite when the planner put its own scan for `from` here.
         if node.num_children() != 1 {
             continue;
         }
         let child_idx = node.child(0).idx();
-        if planner_scan_alias(optimized_plan, child_idx) != Some(relationship.from.alias.id) {
+        if planner_scan_alias(optimized_plan, child_idx)
+            != Some((relationship.from.alias.id, relationship.from.alias.scope_id))
+        {
             continue;
         }
         let from = relationship.from.clone();
@@ -587,19 +681,24 @@ fn select_var_len_scan_node(
         //    an optimization, and losing a predicate is not a trade worth making.
         let scan_idx = planner_scan_idx(optimized_plan, child_idx)
             .expect("planner_scan_alias matched, so a scan is there");
-        let wrapper_ok = {
+        let (has_filter, has_include_pending) = {
             let mut node = optimized_plan.node(child_idx);
-            let mut ok = true;
+            let (mut filter, mut include_pending) = (false, false);
             while node.idx() != scan_idx {
-                if matches!(node.data(), IR::IncludePending { .. } | IR::Filter(_)) {
-                    ok = false;
-                    break;
+                match node.data() {
+                    IR::Filter(_) => filter = true,
+                    IR::IncludePending { .. } => include_pending = true,
+                    _ => {}
                 }
                 node = node.child(0);
             }
-            ok
+            (filter, include_pending)
         };
-        if wrapper_ok && child_subtree_binds(optimized_plan, scan_idx, &to.alias) {
+        let wrapper_ok = !has_filter && !has_include_pending;
+        if wrapper_ok
+            && !attrs_read_from
+            && child_subtree_binds(optimized_plan, scan_idx, &to.alias)
+        {
             let kept: Vec<DynTree<IR>> = optimized_plan
                 .node(scan_idx)
                 .children()
@@ -618,6 +717,9 @@ fn select_var_len_scan_node(
             }
         }
 
+        if attrs_read_from || attrs_read_to {
+            continue;
+        }
         // A correlated sub-plan may already bind `to` from its outer context;
         // scanning it here would rebind it. `Argument(None)` is opaque about
         // what it carries, so treat it as binding everything.
@@ -629,6 +731,32 @@ fn select_var_len_scan_node(
             }
             _ => {}
         }
+        // A `Filter` in the wrapper chain is an earlier clause's predicate: the
+        // planner no longer emits one around its own scan, so this is outer
+        // context that happens to start with a scan of `from`. Rebuilding the
+        // chain would drop the predicate (`MATCH (a) WHERE a.id = 99
+        // MATCH (a)-[:R*1..2]->(b:B {id: 1})`).
+        if has_filter {
+            continue;
+        }
+        // The new scan of `to` sits on top of everything kept below, so if
+        // that already binds `to` (an earlier clause, or a pattern predicate's
+        // `SemiApply` that scans it: `MATCH (b:B) WHERE (b)-[:X]->()
+        // MATCH (a)-[:R*1..2]->(b:B)`), the scan would rebind it for every
+        // input row and lose the correlation. The non-leaf rewrite above
+        // handles a provable binding; anything it could not prove stays as
+        // planned.
+        if subtree_may_bind(optimized_plan, scan_idx, &to.alias) {
+            continue;
+        }
+        // Whatever sits below the scan feeds it rows (an earlier clause, an
+        // `UNWIND`, an `Argument`): the new scan keeps all of it, so their
+        // multiplicity and bindings survive the reversal.
+        let kept: Vec<DynTree<IR>> = optimized_plan
+            .node(scan_idx)
+            .children()
+            .map(|c| c.clone_as_tree())
+            .collect();
 
         // This used to refuse the reversal unless every endpoint carrying
         // inline attrs also had a Filter above the traverse — a cross-check
@@ -638,10 +766,10 @@ fn select_var_len_scan_node(
         // lose the predicate, because it lives in a Filter above this traverse
         // and `push_filters_down` lands it back on the new scan.
         let bound = HashSet::new();
-        let (from_score, _, _) = score_endpoint(&from, &filtered_vars, &bound, graph);
-        let (to_score, _, _) = score_endpoint(&to, &filtered_vars, &bound, graph);
+        let (from_score, _, _, _) = score_endpoint(&from, &filtered_vars, &bound, graph);
+        let (to_score, _, _, _) = score_endpoint(&to, &filtered_vars, &bound, graph);
         // A tie keeps the pattern's own direction.
-        if to_score <= from_score {
+        if !walk_scans_to_endpoint(from_score, to_score) {
             continue;
         }
 
@@ -651,9 +779,9 @@ fn select_var_len_scan_node(
         } else {
             DynTree::new(IR::NodeByLabelScan { node: to.clone() })
         };
-        if let Some(arg) = argument {
+        for t in kept {
             let root_idx = scan.root().idx();
-            scan.node_mut(root_idx).push_child(arg);
+            scan.node_mut(root_idx).push_child_tree(t);
         }
         if in_merge {
             scan = tree!(IR::IncludePending { node: to }, scan);
@@ -847,12 +975,15 @@ pub(super) fn select_scan_node(
 
         // Score each candidate and find the best.
         let best = candidates.iter().max_by(|a, b| {
-            let (score_a, late_a, card_a) =
+            let (score_a, eq_a, late_a, card_a) =
                 score_endpoint(&a.0, &filtered_vars, &bound_vars, graph);
-            let (score_b, late_b, card_b) =
+            let (score_b, eq_b, late_b, card_b) =
                 score_endpoint(&b.0, &filtered_vars, &bound_vars, graph);
             score_a
                 .cmp(&score_b)
+                // Equally constrained: an equality-pinned endpoint is the
+                // more selective start (and the one an index can seek).
+                .then_with(|| eq_a.cmp(&eq_b))
                 // Equally constrained: prefer the one whose predicate runs last
                 // today, since scanning from it moves that filter to the front.
                 .then_with(|| late_a.cmp(&late_b))
@@ -976,14 +1107,14 @@ pub(super) fn select_scan_node(
         // Order greedily instead: repeatedly take a hop with an endpoint
         // already bound, orient it to start from that endpoint, and mark its
         // other end bound. The chain is left alone if no such order exists.
-        let initial_bound: HashSet<u32> = {
-            let mut b = HashSet::new();
-            b.insert(best_node.alias.id);
-            if let Some(child) = &existing_child {
-                b.extend(collect_subtree_variables(&child.root()));
-            }
-            b
-        };
+        // `best_node` is bound only by the scan built for it. A kept child gets
+        // no such scan, so only what the child binds counts: seeding
+        // `best_node` anyway would place a filter on it before the hop that
+        // binds it.
+        let initial_bound: HashSet<u32> = existing_child.as_ref().map_or_else(
+            || HashSet::from([best_node.alias.id]),
+            |child| collect_subtree_variables(&child.root()),
+        );
         let mut bound = initial_bound.clone();
         // Hops still to be placed, in pattern order. Each round removes the
         // one it picks, so what is left is both the candidate set and the
@@ -1028,7 +1159,8 @@ pub(super) fn select_scan_node(
                         return Some((i, 1u8, u32::MAX, 0u64));
                     }
                     let dest = if from_bound { &rel.to } else { &rel.from };
-                    let (score, _, card) = score_endpoint(dest, &filtered_vars, &bound_vars, graph);
+                    let (score, _, _, card) =
+                        score_endpoint(dest, &filtered_vars, &bound_vars, graph);
                     Some((i, 0u8, score, card))
                 })
                 .max_by(|a, b| {
@@ -1307,14 +1439,30 @@ pub(super) fn select_scan_node(
                     } else {
                         None
                     };
-                    // Not a swap: the rebuilt scan is for the same node the
-                    // pruned one scanned, so its Filters can go straight back
-                    // inside the new subtree — their variable is bound there.
-                    let salvaged_filters = if has_planner_scan || arg_transparent {
+                    // Not a swap, but the pruned scan is not always for the
+                    // node the new one scans: an earlier clause stitched in
+                    // as this traverse's child scans *its* node (`MATCH (a
+                    // {v: 1}) MATCH (a)<-[]-(b {v: 0})` hangs `Filter(a.v) ->
+                    // Scan(a)` under a traverse that starts from `b`). When
+                    // the node is the same, the Filters go straight back
+                    // inside the new subtree, their variable is bound there.
+                    // When it is not, that variable is bound only by the
+                    // traverse, so they go above it and `push_filters_down`
+                    // lowers them as far as is legal.
+                    let (salvaged_filters, filters_above) = if has_planner_scan || arg_transparent {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                        filters_of(optimized_plan, child_idx)
+                        let filters = filters_of(optimized_plan, child_idx);
+                        if has_planner_scan
+                            && planner_scan_alias(optimized_plan, child_idx).is_some_and(|alias| {
+                                alias != (scan_node.alias.id, scan_node.alias.scope_id)
+                            })
+                        {
+                            (vec![], filters)
+                        } else {
+                            (filters, vec![])
+                        }
                     } else {
-                        vec![]
+                        (vec![], vec![])
                     };
 
                     let ct_idx = if has_planner_scan || arg_transparent {
@@ -1333,8 +1481,7 @@ pub(super) fn select_scan_node(
                         salvaged_filters,
                     );
 
-                    let mut op = optimized_plan.node_mut(ct_idx);
-                    *op.data_mut() = IR::CondTraverse {
+                    let new_ct = IR::CondTraverse {
                         relationship: new_rel,
                         emit_relationship: emit,
                         sibling_edges: edges,
@@ -1344,7 +1491,30 @@ pub(super) fn select_scan_node(
                         bind_relationship: true,
                     };
 
-                    op.push_child_tree(scan_subtree);
+                    if filters_above.is_empty() {
+                        let mut op = optimized_plan.node_mut(ct_idx);
+                        *op.data_mut() = new_ct;
+                        op.push_child_tree(scan_subtree);
+                    } else {
+                        // The old child was pruned above, so this node has no
+                        // children left to preserve. Innermost first, so the
+                        // original nesting order survives.
+                        let mut wrapped = tree!(new_ct, scan_subtree);
+                        for filter in filters_above.into_iter().rev() {
+                            wrapped = tree!(filter, wrapped);
+                        }
+                        debug_assert_eq!(
+                            optimized_plan.node(ct_idx).num_children(),
+                            0,
+                            "the old child was pruned above"
+                        );
+                        let root = wrapped.root();
+                        *optimized_plan.node_mut(ct_idx).data_mut() = root.data().clone();
+                        for child in root.children() {
+                            let child_tree: DynTree<IR> = child.clone_as_tree();
+                            optimized_plan.node_mut(ct_idx).push_child_tree(child_tree);
+                        }
+                    }
                 }
             }
         }

@@ -177,18 +177,18 @@ theorem intLane_eq (op : Op) (rows : List (Int × Int × Bool)) :
       · have := h r (by simp) hn
         cases hv : valueArith op r.1 r.2.1 with
         | none => simp [hv] at this
-        | some v => simp [hv]
+        | some v => simp
       · simp
   cases op
   case div | rem =>
     unfold intLane
     by_cases hall : (rows.all fun r => r.2.1 != 0 || r.2.2) = true
-    · rw [if_pos hall]
+    · rw [ite_eq_left hall]
       apply gen; intro r hr hn
       have := List.all_eq_true.mp hall r hr
       simp only [hn, Bool.or_false, bne_iff_ne, ne_eq] at this
       simp [valueArith, this]
-    · rw [if_neg hall]
+    · rw [ite_eq_right hall]
   all_goals (unfold intLane; apply gen; intro r _ _; simp [valueArith])
 
 end FalkorTemporal.VExpr

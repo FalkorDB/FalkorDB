@@ -90,8 +90,6 @@ static RedisModuleEvent_Shutdown: RedisModuleEvent = RedisModuleEvent { id: 5, d
 
 /// Subevent: this instance is now a master.
 const REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER: u64 = 0;
-/// Subevent: this instance is now a replica.
-const REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA: u64 = 1;
 
 unsafe extern "C" {
     fn pthread_atfork(
@@ -420,11 +418,8 @@ pub fn graph_init(
     // `enqueue_entry` reads the live value straight off the main thread.
     telemetry::start_flusher_thread();
 
-    // Initialize cached replica state and subscribe to role-change events so
-    // telemetry is suppressed when this instance is a replica: a replica must not
-    // create keys of its own, and its stream is the master's, brought over by the
-    // last full resync.
-    telemetry::set_is_replica(ctx.get_flags().contains(ContextFlags::SLAVE));
+    // Subscribe to role-change events. Telemetry does not ask about the role: the
+    // streams are node-local, and a replica logs the reads it serves.
     unsafe {
         let res = RedisModule_SubscribeToServerEvent.unwrap()(
             ctx.ctx,
@@ -511,12 +506,15 @@ extern "C" fn info_func(
     }
 }
 
-const unsafe extern "C" fn on_flush(
+/// Flush event callback. Tells telemetry a flush is under way, so that a graph freed
+/// by it queues no stream deletion (see `telemetry::queue_streams_of_freed_graph`).
+unsafe extern "C" fn on_flush(
     _ctx: *mut RedisModuleCtx,
     _eid: RedisModuleEvent,
-    _subevent: u64,
+    subevent: u64,
     _data: *mut c_void,
 ) {
+    telemetry::set_flush_in_progress(subevent == raw::REDISMODULE_SUBEVENT_FLUSHDB_START);
 }
 
 /// Shutdown event handler — runs only under `RS_GLOBAL_DTORS` (sanitizer
@@ -554,7 +552,6 @@ unsafe extern "C" fn on_role_change(
     subevent: u64,
     _data: *mut c_void,
 ) {
-    telemetry::set_is_replica(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA);
     // A role change means a replication topology exists (or is being set
     // up); keep building effects buffers from here on.
     crate::graph_core::REPLICATION_CONSUMERS.store(true, std::sync::atomic::Ordering::Relaxed);

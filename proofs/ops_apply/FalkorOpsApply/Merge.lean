@@ -222,7 +222,7 @@ theorem lookup_cons_self (c : Cache) (h : Nat × Nat) (v id : Nat) :
 theorem lookup_cons_other (c : Cache) (h h' : Nat × Nat) (e : Nat) (e' : Nat) (hne : h' ≠ h) :
     lookup ((h, (e, e')) :: c) h' = lookup c h' := by
   have : (h == h') = false := by simp; exact fun e => hne e.symm
-  simp [lookup, List.find?_cons, this]
+  simp [lookup, this]
 
 theorem mem_matches {g : Graph} {k : Nat} {n : Node} : n ∈ matchesK g k ↔ n ∈ g ∧ n.k = k := by
   simp [matchesK]
@@ -246,12 +246,12 @@ theorem phaseA_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
   induction rows with
   | nil =>
     intro st rst hJ hg hn hlt
-    simp only [List.map_nil, phaseA, refMerge, List.foldl_nil]
+    simp only [List.map_nil, phaseA, List.foldl_nil]
     exact ⟨hg, hn, hJ, hlt, [], by simp, by simp, by simp, trivial⟩
   | cons r rows ih =>
     intro st rst hJ hg hn hlt
     obtain ⟨hoc, hom⟩ := hs
-    simp only [List.map_cons, refMerge, List.foldl_cons]
+    simp only [List.map_cons, List.foldl_cons]
     -- the reference sees the current graph; relate to g0
     obtain ⟨created, hgc, hcr⟩ := hJ.ext
     cases hm0 : matchesK g0 (cl.key r) with
@@ -321,7 +321,7 @@ theorem phaseA_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
         rw [href]
         have := ih { st with out := st.out ++ [(r, bindCached cl (v, id))] }
                    ⟨rst.g, rst.next, rst.out ++ [(r, some id)]⟩ hJ hg hn hlt
-        simp only [bindCached, hv, beq_self_eq_true, if_true] at this ⊢
+        simp only [bindCached, hv, beq_self_eq_true, ite_true] at this ⊢
         obtain ⟨a1, a2, a3, a4, Ls, b1, b2, b3, _⟩ := this
         refine ⟨a1, a2, a3, a4, [(r, some id)] :: Ls, ?_, ?_, ?_, trivial⟩
         · rw [b1]; simp
@@ -340,7 +340,7 @@ theorem phaseA_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
       have href : refRow cl rst r =
           ⟨rst.g, rst.next, rst.out ++ (m :: ms).map (fun m => (r, some m.id))⟩ := by
         simp only [refRow, hg, hcur, hom]
-        simp [foldl_applySet_none, applySet, foldl_const_self]
+        simp [applySet, foldl_const_self]
       rw [href]
       have := ih { st with out := st.out ++ [(r, some m.id)] }
                  ⟨rst.g, rst.next, rst.out ++ (m :: ms).map (fun m => (r, some m.id))⟩ hJ hg hn hlt
@@ -457,7 +457,7 @@ theorem rust_eq_ref_noSet (cl : Clause α) (hs : NoSet cl) :
 theorem batches_flatten (B : Nat) (hB : 0 < B) (l : List α) : (batches B hB l).flatten = l := by
   induction l using batches.induct B hB with
   | case1 => rw [batches]; simp
-  | case2 l h ih => rw [batches, dif_neg h]; simp [ih]
+  | case2 l h ih => rw [batches, dite_eq_right h]; simp [ih]
 
 /-- The `BATCH_SIZE` instance, fresh query (empty cache). -/
 theorem merge_noSet_any_batch_size (cl : Clause α) (hs : NoSet cl) (B : Nat) (hB : 0 < B)
