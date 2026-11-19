@@ -695,6 +695,21 @@ class testTraversalConstruction():
             q = f"UNWIND [2, 3] AS x {dropped}{chain}"
             self.env.assertEqual(g.query(q).result_set, [[2]], message=q)
 
+    # The scan goes between the traverse and an earlier clause that only
+    # supplies rows; that clause keeps its own WHERE. Copying the WHERE above
+    # the new scan ran it again past `WITH 0 AS z`, where `i`'s id slot holds
+    # `z`, so `0 > 1` dropped every row.
+    def test_traverse_after_projection_keeps_earlier_where_once(self):
+        g = self.db.select_graph("TraverseAfterProjection")
+        g.query("CREATE (:L)-[:R]->()")
+        for q in ["UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L)-[:R]->() RETURN count(*)",
+                  "UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 MATCH (d:L)-[:R]->() RETURN count(*)",
+                  "UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L)-[:R]->() WHERE z = 0 RETURN count(*)"]:
+            plan = str(g.explain(q))
+            self.env.assertEqual(plan.count("Filter"), 1 if "z = 0" not in q else 2, message=plan)
+            self.env.assertEqual(g.query(q).result_set, [[2]], message=q)
+        g.delete()
+
     # A variable-length hop anchored on an indexed endpoint must start the plan
     # even when the same MATCH has a second, fixed-length pattern on the other
     # endpoint (#2558). Otherwise the planner starts from the unrelated label

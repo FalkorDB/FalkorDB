@@ -1570,8 +1570,13 @@ pub(super) fn select_scan_node(
                     // inside the new subtree, their variable is bound there.
                     // When it is not, that variable is bound only by the
                     // traverse, so they go above it and `push_filters_down`
-                    // lowers them as far as is legal.
-                    let (salvaged_filters, filters_above) = if has_planner_scan || arg_transparent {
+                    // lowers them as far as is legal. A transparent child is
+                    // not discarded: it rides whole beneath the new scan and
+                    // keeps its own Filters, so copying them out would run them
+                    // twice, the copy above a projection that may have reused
+                    // their variable's id (`... WITH i WHERE i > 1 WITH 0 AS z
+                    // MATCH (d:L)-[:R]->()` read `z` as `i`).
+                    let (salvaged_filters, filters_above) = if has_planner_scan {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                         let filters = filters_of(optimized_plan, child_idx);
                         if has_planner_scan
