@@ -2026,3 +2026,35 @@ class test_udf_javascript():
             res = self.graph.query(f"MATCH (a {{id:7}}) RETURN lib_tre.te(a, '{d}')").result_set[0][0]
             self.env.assertEqual(len(res), len(set(res)), message=f"{d}: {res}")
             self.env.assertEqual(len(res), 3, message=f"{d}: {res}")
+
+    def test_traverse_edges_each_reachable_edge_once(self):
+        """
+        returnType 'edges' reports every edge the traversal crosses exactly
+        once: opposite edges between the same two nodes are both reported, an
+        edge between two nodes of the same depth is reported once, and so is a
+        self-loop.
+        """
+
+        script = """
+        falkor.register('te', function(n, d) {
+            return graph.traverse([n], {direction: d, returnType: 'edges', maxDepth: 3})[0].map(function(e) { return e.id; });
+        });
+        """
+        self.db.udf_load("lib_treo", script)
+        self.graph.query("CREATE (a {id:11})-[:R]->(b {id:12}), (b)-[:R]->(a), "
+                         "(a)-[:R]->(c {id:13}), (b)-[:R]->(c), (c)-[:R]->(c)")
+
+        def edge_ids(pattern):
+            rows = self.graph.query(f"MATCH {pattern} WHERE a.id IN [11, 12, 13] "
+                                    "AND b.id IN [11, 12, 13] RETURN id(r)").result_set
+            return sorted(row[0] for row in rows)
+
+        every_edge = edge_ids("(a)-[r]->(b)")
+        self.env.assertEqual(len(every_edge), 5)
+        # incoming from a: b->a, then a->b into b; c is never reached
+        into_a_or_b = edge_ids("(a)-[r]->(b {id:11})") + edge_ids("(a {id:11})-[r]->(b {id:12})")
+        expected = {'outgoing': every_edge, 'incoming': sorted(into_a_or_b), 'both': every_edge}
+
+        for d in ['outgoing', 'incoming', 'both']:
+            res = self.graph.query(f"MATCH (a {{id:11}}) RETURN lib_treo.te(a, '{d}')").result_set[0][0]
+            self.env.assertEqual(sorted(res), expected[d], message=f"{d}: {res}")
