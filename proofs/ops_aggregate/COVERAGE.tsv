@@ -126,8 +126,8 @@ graph/src/runtime/batch.rs	to_owned_row	1439	NOT COVERED	columnar representation
 graph/src/runtime/batch.rs	next	1471	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
 graph/src/runtime/batch.rs	size_hint	1494	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
 graph/src/runtime/batch.rs	set_argument_batch	1603	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	inspect_context	1735	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	next	1784	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	inspect_context	1738	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	next	1787	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
 graph/src/runtime/ops/commit.rs	new	45	PROVEN	CommitSt.new: commit_new_ro, commit_new_write
 graph/src/runtime/ops/filter.rs	new	39	PROVEN	StreamOps.FilterSt.new: filterNew_spec
 graph/src/runtime/ops/filter.rs	eval	57	PROVEN	StreamOps.filterEval: filterEval_bools, filter_mem, filterEval_empty, filterEval_type_error

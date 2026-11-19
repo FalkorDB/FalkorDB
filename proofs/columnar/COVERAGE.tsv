@@ -63,8 +63,8 @@ graph/src/runtime/batch.rs	to_owned_row	1439	PROVEN	Row toOwned_bound_slot, toOw
 graph/src/runtime/batch.rs	next	1471	PROVEN	Batch.active (active_lt)
 graph/src/runtime/batch.rs	size_hint	1494	PROVEN	sizeHint: sizeHint_spec
 graph/src/runtime/batch.rs	set_argument_batch	1603	PROVEN	OpTree.setArg: setArg_args, setArg_resets
-graph/src/runtime/batch.rs	inspect_context	1735	PROVEN	inspectCtx: inspectCtx_spec
-graph/src/runtime/batch.rs	next	1784	PROVEN	opNext/leafNext: opNext_spec
+graph/src/runtime/batch.rs	inspect_context	1738	PROVEN	inspectCtx: inspectCtx_spec
+graph/src/runtime/batch.rs	next	1787	PROVEN	opNext/leafNext: opNext_spec
 graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	PROVEN	Dispatch fromExprIR: fromExprIR_isSome, fromExprIR_sem, flip_sem, eval_cmp
 graph/src/runtime/vectorized.rs	flip	84	PROVEN	VExpr icmp_flip, fcmp_flip
 graph/src/runtime/vectorized.rs	compare_i64_column	105	PROVEN	VExpr kernelI_get, icmp_agree
