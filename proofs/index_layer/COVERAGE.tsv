@@ -101,7 +101,7 @@ graph/src/index/indexer.rs	field_options	127	PROVEN	Meta.IdxOptions.spec
 graph/src/index/indexer.rs	vector_options	147	PROVEN	Meta.IdxOptions.spec
 graph/src/index/indexer.rs	has_indices	253	PROVEN	Meta.Ixr.hasIndices_iff
 graph/src/index/indexer.rs	memory_usage	258	PROVEN	Meta.Ixr.memoryUsage_spec
-graph/src/index/indexer.rs	create_index	262	PROVEN	Meta.Ixr.createIndex_validates, createIndex_textopts_err, createIndex_ok, createIndex_regen, createIndex_old_ticket_stale, createIndex_old_ticket_stale_ne, createIndex_old_release_noop, createIndex_new_entry, specStep_ok, specStep_slots, finish_fields, finish_slots, x0Of_share (#3680: fork_for_ddl, fresh spec unless fields are shared, population owed); IndexGaps.createIndex_keeps_stopwords, fix3166_stopwords_applied (#3166 fixed)
+graph/src/index/indexer.rs	create_index	262	PROVEN	Meta.Ixr.createIndex_validates, createIndex_textopts_err, createIndex_ok, createIndex_regen, createIndex_old_ticket_stale, createIndex_old_ticket_stale_ne, createIndex_old_release_noop, createIndex_new_entry, createIndex_entry, specStep_ok, specStep_slots, finish_fields, finish_slots, x0Of_share, shareSpec_rs (#3680: fork_for_ddl, fresh spec unless fields are shared, population owed); IndexGaps.createIndex_keeps_stopwords, fix3166_stopwords_applied (#3166 fixed)
 graph/src/index/indexer.rs	drop_index	458	PROVEN	Meta.Ixr.dropIndex_spec, dropIndex_rebuilt, dropAttrs_wf, dropAttrs_slots (#3680: fork-private: the label leaves the map, or a fresh spec is rebuilt over the remaining fields, owing its population)
 graph/src/index/indexer.rs	has_field_for_label	584	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
 graph/src/index/indexer.rs	is_label_indexed	597	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
@@ -280,7 +280,7 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	block
 graph/src/runtime/pending.rs	resync_published_indexes	1844	MODELLED	edge arm keyed by (src, dst, id): EdgeResync.resyncEdgeKeys/resyncEdges; property RollbackRestoresEdgeIndex refuted by bug2781_rollback_not_restored / bug2781_orphan_edge_doc (OPEN); fix shape resyncEdgesFixed_restores (node arm and full spec: proofs/pending_commit PD.resync_spec)
 graph/src/graph/graph.rs	commit_edge_index_locked	3995	MODELLED	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.resyncEdgeKeys (.1); PROVEN in proofs/graph_queries Index.commitEdgeDocs_mem
 graph/src/index/mod.rs	drop	1045	PROVEN	Iter.RC.dropDoomed_inv, RC.doomed_not_freed (DoomedSpec::drop releases the creation ref SpecHandle::drop handed over)
-graph/src/index/mod.rs	fork_for_ddl	1118	PROVEN	Meta.Idx.forkForDdl_spec, Ixr.x0Of_share, createIndex_regen
+graph/src/index/mod.rs	fork_for_ddl	1118	PROVEN	Meta.Idx.forkForDdl_spec, forkForDdl_unshared, Ixr.x0Of_share, createIndex_regen
 graph/src/index/indexer.rs	changes_since	525	NOT COVERED	#3680 (index DDL versioned with the graph): replaces remove: diff of two version maps (owed populations); not modelled
 graph/src/index/indexer.rs	is_cancelled	221	PROVEN	Meta.Ixr.misc (IndexerHandle::is_cancelled, the same shared cancel flag)
 graph/src/index/indexer.rs	owed_population_snapshot	562	NOT COVERED	#3680 (index DDL versioned with the graph): replaces Indexer::recreate_index: field snapshot and ticket of an owed population; not modelled
@@ -290,9 +290,9 @@ graph/src/index/indexer.rs	default	183	NOT COVERED	#3680 (index DDL versioned wi
 graph/src/index/indexer.rs	clone	196	NOT COVERED	#3680 (index DDL versioned with the graph): a fork: Arc clone of the map and of the shared part; not modelled
 graph/src/index/indexer.rs	is_empty	243	NOT COVERED	#3680 (index DDL versioned with the graph): IndexChanges accessor; not modelled
 graph/src/index/indexer.rs	handle	579	NOT COVERED	#3680 (index DDL versioned with the graph): accessor; not modelled
-graph/src/index/mod.rs	owe_population	1172	PROVEN	Meta.Idx.owePopulation_spec; Ixr.finish_slots
+graph/src/index/mod.rs	owe_population	1172	PROVEN	Meta.Idx.owePopulation_spec; Ixr.owe_fields, createIndex_regen
 graph/src/index/mod.rs	take_population_owed	1180	PROVEN	Meta.Idx.takePopulationOwed_once
-graph/src/index/mod.rs	register_all_fields	1300	PROVEN	Meta.Idx.registerAllFields (= registerFields over orderedFields), Ixr.registerAllFields_ok, Idx.orderedFields_complete
+graph/src/index/mod.rs	register_all_fields	1300	PROVEN	Meta.Idx.registerAllFields (= registerAll over orderedFields), Idx.registerAllFields_ok, Idx.orderedFields_complete
 graph/src/index/indexer.rs	register_deferred_fields	549	PROVEN	Meta.Idx.registerDeferredFields_spec (on the label's entry, if any)
 graph/src/index/mod.rs	defer_fields	1149	PROVEN	Meta.Idx.deferFields_spec; Ixr.specStep (share branch)
 graph/src/index/mod.rs	register_deferred_fields	1159	PROVEN	Meta.Idx.registerDeferredFields_spec
