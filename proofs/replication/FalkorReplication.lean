@@ -1737,8 +1737,8 @@ theorem deleteOne_refines (σ : GState) (s : FalkorFaithful.Ids)
     omega
   · simp only [deleteOne, FalkorFaithful.Ids.release1]
     by_cases e : i = id
-    · subst e; simp [List.contains_iff_mem, FalkorFaithful.insAsc_mem]
-    · simp [e, hf i, List.contains_iff_mem, FalkorFaithful.insAsc_mem]
+    · subst e; simp [FalkorFaithful.insAsc_mem]
+    · simp [e, hf i, FalkorFaithful.insAsc_mem]
   · simp only [FalkorFaithful.Ids.release1]
     exact propext (FalkorFaithful.insAsc_nodup id s.bin hnf)
 

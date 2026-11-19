@@ -189,6 +189,12 @@ every range query on `n.s` is built against the fulltext field `s` instead of `r
 (live, ports 18850 Rust / 18851 C). Fix: pick the field with `ty == IndexType::Range`.
 Suspected, unconfirmed: `create_rs_index` returns `Err` on a NUL in a stopword/language/label
 after `RediSearch_CreateIndexOptions` without `RediSearch_FreeIndexOptions` (leak only).
+#3274 fixes that leak by running every `CString::new` (stopwords, language, label) before
+the options block is allocated and freeing it on the unsupported-language return. Side
+effect: the label NUL check now precedes the unsupported-language check, so
+`createRsIndex_lang_err` is false on the new code (`createRsIndex_lang_err_fails`; label
+``L\0`` with `language: 'x'` reports the NUL error instead of `Language is not supported: x`);
+`createRsIndex_lang_err_cleanLabel` proves the message for NUL-free labels.
 
 ## Re-target to 49f698d22 (#3087)
 `Document::set` now adds a `VecF32` only if
@@ -257,30 +263,6 @@ Fixed by #3087 (W3-conc-3 / #3075 and the W5-idx-2 no-options shape; counterexam
   never misses a field) is `SC.Tickets.main_operational_complete` in `proofs/search_concurrency`.
 - #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
 
-## Re-target to e801e420a (#3680: index DDL versioned with the graph)
-- `Indexer::create_index` (`indexer.rs:262`) works on the version's own copy: the entry is
-  `fork_for_ddl` (`Idx.forkForDdl`: new generation, counters `⟨id,0,0⟩`, nothing owed; the spec is
-  kept only when fields are shared into it, `Ixr.shareSpec`, and then deferred with `defer_fields`),
-  else a fresh spec built with the options and every field (`register_all_fields`,
-  `Idx.registerAllFields`); then language/stopwords/progress and, for `Graph::create_index`,
-  `owe_population` (`ow`). `Ixr.regen`, `Idx.cloneForUpdate`, `Ixr.remove`, `Ixr.recreate` are gone
-  with their Rust fns. Re-proved with the same statements (plus `ow`): `createIndex_validates`,
-  `createIndex_textopts_err`, `createIndex_ok`, `createIndex_old_ticket_stale(_ne)`,
-  `bug_range_after_fulltext`; `createIndex_regen` now gives the exact counters
-  `⟨regenTo, if ow then 1 else 0, 0⟩` (counters are per entry: an old ticket's release on the new
-  entry is a no-op, `createIndex_old_release_noop`). New: `forkForDdl_spec`, `owePopulation_spec`,
-  `takePopulationOwed_once`, `deferFields_spec`, `registerDeferredFields_spec`, `specStep_ok`,
-  `registerAllFields_ok`, `orderedFields_complete`, `recreateIndex_ok_all`, `createRsIndex_english`.
-- `Indexer::drop_index` (`indexer.rs:458`) returns a `Result`: the label leaves the map, or a fresh
-  spec is rebuilt over the remaining fields and owes its population: `dropIndex_spec`,
-  `dropIndex_rebuilt`.
-- #3166 is fixed: every create builds a fresh spec with the options, so `createIndex_keeps_stopwords`
-  proves `CreateIndexKeepsStopwords` for every environment; `fix3166_stopwords_applied` replays the
-  repro. The pre-#3680 path is kept as `Pre3680` with `pre3680_bug3166_*`.
-- `SpecHandle::drop` hands the creation ref to a `DoomedSpec` (freed by a pool job or in place):
-  `RC.doomed` with `RC.doom_inv`, `RC.dropDoomed_inv`, `RC.doomed_not_freed`; `RC.dropSpec` is the two
-  steps, `RC.not_freed` unchanged.
-
 ## Re-target to a0ba12950 (#3514)
 - #3514 (fix #3484, phonetic part) adds `TextIndexOptions::phonetic_enabled` (`text_index_options.rs:48`)
   and `register_fields` now asks it (`mod.rs:1245`) instead of "any non-empty code": C's `"no"`
@@ -299,8 +281,7 @@ matching the live repro (ports 6640 Rust / 6641 C):
 - #3166 (`IndexGaps.lean`). `Idx.rsStop` records the stopwords the RediSearch spec was
   created with (`mod.rs:1119-1133`); `register_fields` never changes them. Property
   `StopwordsAgree` / `CreateIndexKeepsStopwords`: what `db.indexes()` reports is what
-  RediSearch applies. `pre3680_bug3166_stopwords_not_applied`, `pre3680_bug3166_violates`
-  (on the historical model `Pre3680`; fixed by #3680, see below): a range index
+  RediSearch applies. `bug3166_stopwords_not_applied`, `bug3166_violates`: a range index
   first, then a fulltext index with `stopwords: ['router']` only registers the field on
   the existing spec (`indexer.rs:300-313`) and records `['router']` (`:341-343`); Rust
   matches 'router' (1 row), C does not (0). `createIndex_fresh_stopwords_agree`: the

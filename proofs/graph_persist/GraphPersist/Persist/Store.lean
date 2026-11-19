@@ -198,7 +198,7 @@ theorem fold_ents (limit : Nat) (hl : limit ≤ 65536) (S : Store) (ids : List N
         have hk : ∀ kv ∈ sp, kv.1 < limit ∧ kv.2.isNull = false :=
           fun kv h => ⟨(hgs.2.2 kv h).1, (hgs.2.2 kv h).2.1⟩
         simp only [applyEnt, Option.getD_some, filterMap_keep limit sp hk hl, insSort_sorted sp hgs.2.1,
-          if_neg hgs.1]
+          ite_eq_right hgs.1]
         funext j; simp
     rw [hstep]
     funext j

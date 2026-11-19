@@ -269,7 +269,7 @@ theorem point_ok_iff (lat lon : SV F F32) (p : SV F F32) :
       ∃ la lo, numeric R lat = some la ∧ numeric R lon = some lo ∧ R.inLat la = true ∧
         R.inLon lo = true ∧ p = .point (Point.new (L.ofF64 la) (L.ofF64 lo)) := by
   unfold pointFromMapEntries
-  rw [if_neg (by decide)]
+  rw [ite_eq_right (by decide)]
   rcases ha : numeric R lat with _ | la
   · simp [ha]
   rcases hb : numeric R lon with _ | lo

@@ -79,8 +79,7 @@ impl<'a> ProcedureCallOp<'a> {
         for (yield_pos, output) in name_outputs.iter().enumerate() {
             output_var_ids.push(output.id);
             let source_pos = output
-                .name
-                .as_ref()
+                .name()
                 .and_then(|name| schema_outputs.iter().position(|s| s == name.as_ref()))
                 .unwrap_or(yield_pos);
             output_source_positions.push(source_pos);

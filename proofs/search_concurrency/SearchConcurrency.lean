@@ -138,6 +138,8 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `graph.rs:4375,4434` clamp `k` to
    `node_count().max(1)` / `relationship_count().max(1)` and `:4391,4450` size by results (main 5c7af54f2):
    `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
+   #3382 (PR #3581): both fns now refuse while the index is not OPERATIONAL (`graph.rs:4381,4447`):
+   `Knn.not_operational_refused`, `ok_imp_operational`.
 5. **FIXED by #3290 (66d4d9d40)** — HISTORICAL (#3093, 4a4f2a72f): **Inline (MULTI/EXEC) write fails with "another write is in progress"**
    (`src/graph_core.rs:748` slot claimed as a reader, before escalation). A queued
    write in its match phase + `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC`: Rust
@@ -238,6 +240,7 @@ import SearchConcurrency.Knn
 #print axioms SC.Tickets.main_operational_complete
 #print axioms SC.Knn.alloc_bounded
 #print axioms SC.Knn.rows_length_topk
+#print axioms SC.Knn.not_operational_refused
 #print axioms SC.Mvcc.one_commit_per_version
 #print axioms SC.Mvcc.checkFork_on_committed
 #print axioms SC.Pool.release_exactly_once

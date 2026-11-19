@@ -17,7 +17,8 @@ pre-segment state* accepts. Two properties, both refuted on main:
   (`Pending::commit` registers only `created_rels_by_type` keys via
   `create_relationships_bulk` → `get_type_id_mut`, pending.rs:1236-1249,
   graph.rs:2610/:1265; proofs/pending_commit `bug3447_cascade_drops_type_key`).
-  `bug3447_cancelled_edge_id_gap`: live repro `CREATE ()-[:EXISTING]->()` then
+  `pre3461_bug3447_cancelled_edge_id_gap` (fixed by #3461, which registers every
+  cancelled type at commit: `relIdsCovered_after_commit`): live repro `CREATE ()-[:EXISTING]->()` then
   `CREATE (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a`; the
   payload carries `CreateEdge{ids:[2]}` and nothing for 1, the replica's verify
   refuses (`verifyRange`), the master's passes. `relIdsCovered_of_registered`:
@@ -58,11 +59,22 @@ def allocated (p : Pending) : List Nat := p.createdRelTypes.flatMap (·.2) ++ p.
 /-- **Property `RelIdsCovered`**. -/
 def RelIdsCovered (p : Pending) (g : Schema) : Prop := ∀ i ∈ allocated p, i ∈ edgeIds (forEachRecord p g)
 
-/-- The relationship-type dictionary after `Pending::commit`: each
-`created_rels_by_type` key is get-or-created (pending.rs:1236-1249); cancelled
-types are not looked at. -/
+/-- Get-or-create of one name (`get_type_id_mut`, graph.rs). -/
+def regName (ts : List Name) (n : Name) : List Name := if n ∈ ts then ts else ts ++ [n]
+
+/-- The relationship-type dictionary after `Pending::commit` before #3461:
+each `created_rels_by_type` key is get-or-created (pending.rs:1236-1249 on
+343e077f2); cancelled types are not looked at. -/
+def typesAfterCommitPre3461 (base : List Name) (p : Pending) : List Name :=
+  p.createdRelTypes.foldl (fun ts q => regName ts q.1) base
+
+/-- The relationship-type dictionary after `Pending::commit` (pending.rs:1345-1371,
+#3461): each `created_rels_by_type` key is get-or-created by
+`create_relationships_bulk`, then the type of every `cancelled_relationships`
+entry by `get_type_id_mut` (the `FxHashSet` only skips repeats, which
+get-or-create ignores anyway). -/
 def typesAfterCommit (base : List Name) (p : Pending) : List Name :=
-  p.createdRelTypes.foldl (fun ts q => if q.1 ∈ ts then ts else ts ++ [q.1]) base
+  p.cancelledRels.foldl (fun ts q => regName ts q.1) (typesAfterCommitPre3461 base p)
 
 /-- `CREATE (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a` after
 `CREATE ()-[:EXISTING]->()` (nodes 0,1 and edge 0 committed): `a` = 2 is
@@ -74,14 +86,15 @@ def pGap : Pending :=
     setLabels := [], removeLabels := [], cancelledNodes := [2], cancelledRels := [("NEW_TYPE", 1)],
     baseline := ⟨[], ["EXISTING"], []⟩ }
 
-def gGap : Schema := ⟨[], typesAfterCommit ["EXISTING"] pGap, []⟩
+def gGap : Schema := ⟨[], typesAfterCommitPre3461 ["EXISTING"] pGap, []⟩
 
-/-- **#3447**: `NEW_TYPE` is never registered, so the cancelled edge 1 is not
+/-- History (fixed by #3461, f203972c5; now `relIdsCovered_after_commit`).
+**#3447**: `NEW_TYPE` is never registered, so the cancelled edge 1 is not
 in the payload; the master's relationship id space `{0, 1, 2}` (entry bound 1)
 verifies, the replica's `{0} ∪ {2}` has a hole and is refused
 (live: "effects buffer allocated relationship ids 1..=2 but created only 1 of
 them … forced full resync"; C stays in sync). -/
-theorem bug3447_cancelled_edge_id_gap :
+theorem pre3461_bug3447_cancelled_edge_id_gap :
     gGap.types = ["EXISTING"] ∧
     forEachRecord pGap gGap = [.createNode [3, 4, 5] [], .createEdge [2] 0, .createNode [2] [], .deleteNode [2] []] ∧
     ¬ RelIdsCovered pGap gGap ∧
@@ -150,6 +163,57 @@ theorem relIdsCovered_of_registered (p : Pending) (g : Schema)
     unfold forEachRecord
     simp only [List.mem_append]
     simp [hmem]
+
+theorem regName_mem (ts : List Name) (n : Name) : n ∈ regName ts n := by
+  unfold regName; split
+  · assumption
+  · simp
+
+theorem regName_mono (ts : List Name) (n m : Name) (h : m ∈ ts) : m ∈ regName ts n := by
+  unfold regName; split
+  · exact h
+  · simp [h]
+
+theorem foldl_regName_mono {α} (f : α → Name) (l : List α) (ts : List Name) (m : Name) (h : m ∈ ts) :
+    m ∈ l.foldl (fun ts q => regName ts (f q)) ts := by
+  induction l generalizing ts with
+  | nil => exact h
+  | cons x xs ih => exact ih _ (regName_mono _ _ _ h)
+
+theorem foldl_regName_mem {α} (f : α → Name) (l : List α) (ts : List Name) (q : α) (hq : q ∈ l) :
+    f q ∈ l.foldl (fun ts q => regName ts (f q)) ts := by
+  induction l generalizing ts with
+  | nil => cases hq
+  | cons x xs ih =>
+    rcases List.mem_cons.mp hq with rfl | hq
+    · exact foldl_regName_mono f xs _ _ (regName_mem _ _)
+    · exact ih _ hq
+
+theorem idxOf_isSome_of_mem (l : List Name) (n : Name) (h : n ∈ l) : (idxOf l n).isSome := by
+  unfold idxOf
+  have : (l.findIdx? (· == n)).isSome := by
+    rw [List.findIdx?_isSome, List.any_eq_true]; exact ⟨n, h, by simp⟩
+  revert this; cases l.findIdx? (· == n) <;> simp
+
+/-- **#3461 fix of #3447 (`RelIdsCovered`)**: with the dictionary `Pending::commit`
+now leaves, every relationship id the segment allocated (created or cancelled)
+reaches a `CREATE_EDGE`, whatever the graph's types were before. -/
+theorem relIdsCovered_after_commit (p : Pending) (ls base as : List Name) :
+    RelIdsCovered p ⟨ls, typesAfterCommit base p, as⟩ := by
+  apply relIdsCovered_of_registered
+  · intro q hq
+    exact idxOf_isSome_of_mem _ _
+      (foldl_regName_mono _ _ _ _ (foldl_regName_mem (·.1) _ base q hq))
+  · intro q hq
+    exact idxOf_isSome_of_mem _ _ (foldl_regName_mem (·.1) _ _ q hq)
+
+/-- The #3447 repro on the #3461 commit: `NEW_TYPE` is registered (id 1), the
+cancelled edge 1 is paired, and the replica's id space verifies. -/
+theorem fixed3447_cancelled_edge_id_gap :
+    typesAfterCommit ["EXISTING"] pGap = ["EXISTING", "NEW_TYPE"] ∧
+    RelIdsCovered pGap ⟨[], typesAfterCommit ["EXISTING"] pGap, []⟩ ∧
+    verifyRange 1 ([0] ++ edgeIds (forEachRecord pGap ⟨[], typesAfterCommit ["EXISTING"] pGap, []⟩)) = true :=
+  ⟨by decide, relIdsCovered_after_commit _ _ _ _, by decide⟩
 
 /-! ## #3448: a label removal on a cancelled node -/
 

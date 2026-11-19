@@ -207,7 +207,7 @@ theorem drop_ok (s : St G B) (g' : G) (k : Nat) (hw : s.write = true) (hu : D.up
     (hg : D.gDrop s.g = .ok (g', k)) :
     (dropIndex D s).2.dropped = s.dropped + k ∧ (dropIndex D s).2.created = s.created ∧
     (dropIndex D s).2.g = g' := by
-  simp only [dropIndex, hw, hu, hg, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [dropIndex, hw, hu, hg, Bool.not_true, Bool.false_eq_true, ite_false]
   have := emit_frame D ({ s with writer := true, g := g', dropped := s.dropped + k }) false none
   simp_all
 

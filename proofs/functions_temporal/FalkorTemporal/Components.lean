@@ -1,5 +1,6 @@
 import FalkorTemporal.Pure
 import FalkorTemporal.CalendarLaws
+import FalkorTemporal.PadAux
 /-!
 # Temporal accessors and formatting (value.rs:261-607)
 
@@ -137,15 +138,6 @@ Since #2986/#3575 `format_datetime` and `format_date` no longer go through chron
 persisted timestamp has its real year) and `push_date`. They are total: no
 `<invalid timestamp>` branch. `format_time` still uses chrono. -/
 
-/-- `{:02}` / `{:04}` of a non-negative number: left-pad with `0` (no truncation). -/
-def pad (w : Nat) (n : Nat) : String :=
-  let s := toString n
-  String.ofList (List.replicate (w - s.length) '0') ++ s
-
-/-- `write_two_digits` (value.rs:853): `v / 10 % 10` and `v % 10` as ASCII digits. -/
-def twoDigits (v : Nat) : String :=
-  String.ofList [Char.ofNat (48 + v / 10 % 10), Char.ofNat (48 + v % 10)]
-
 /-- `push_date` (value.rs:828): years `0..=9999` through `write_two_digits` (4 digits), any
 other year as `{sign}{:04}` of its magnitude, so no digit is lost and a negative year keeps
 its `-`. -/
@@ -170,10 +162,6 @@ def formatDatetime (t : Int) : String :=
 theorem twoDigits_eq_pad (v : Nat) (h : v < 100) : twoDigits v = pad 2 v := by
   revert v h; decide
 
-theorem fourDigits_aux :
-    ∀ a, a < 100 → ∀ b, b < 100 → twoDigits a ++ twoDigits b = pad 4 (a * 100 + b) := by
-  decide +kernel
-
 theorem fourDigits_eq_pad (y : Nat) (h : y ≤ 9999) :
     twoDigits (y / 100) ++ twoDigits (y % 100) = pad 4 y := by
   have := fourDigits_aux (y / 100) (by omega) (y % 100) (by omega)
@@ -189,7 +177,7 @@ theorem pushDate_eq (y : Int) (m d : Nat) (hm : m < 100) (hd : d < 100) :
     have e : y.natAbs = y.toNat := by omega
     have h1 : ¬ y < 0 := by omega
     have := fourDigits_eq_pad y.toNat (by omega)
-    rw [e, if_neg h1, ← this, twoDigits_eq_pad m hm, twoDigits_eq_pad d hd]
+    rw [e, ite_eq_right h1, ← this, twoDigits_eq_pad m hm, twoDigits_eq_pad d hd]
     simp [String.append_assoc]
   · rfl
 
@@ -252,7 +240,7 @@ theorem pad2_length : ∀ n, n < 100 → (pad 2 n).length = 2 := by decide
 /-- `format_time` of a valid timestamp is exactly `HH:MM:SS` (8 characters). -/
 theorem formatTime_length (t : Int) (h : K.valid t = true) : (formatTime K t).length = 8 := by
   have r := clock_ranges t
-  simp only [formatTime, h, if_true, String.length_append]
+  simp only [formatTime, h, ite_true, String.length_append]
   rw [pad2_length _ (by omega), pad2_length _ (by omega), pad2_length _ (by omega)]
   rfl
 

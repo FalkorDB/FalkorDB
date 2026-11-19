@@ -412,7 +412,7 @@ theorem udfLoad_nonempty (args : List String) (r : Bool) (l c : String)
       · simp [h1] at h
       · by_cases h2 : c' = ""
         · simp [h1, h2] at h
-        · simp only [h1, h2, if_false, Except.ok.injEq, Udf.load.injEq] at h
+        · simp only [h1, h2, ite_false, Except.ok.injEq, Udf.load.injEq] at h
           obtain ⟨_, rfl, rfl⟩ := h
           exact ⟨h1, h2⟩
     | delete _ => simp [udfLoadCheck] at h
@@ -447,7 +447,7 @@ theorem tz_ge (j : Nat) : ∀ k s, j ≤ k → (j ≤ tz k s ↔ s % 2^j = 0) :=
     obtain ⟨k', rfl⟩ : ∃ k', k = k' + 1 := ⟨k - 1, by omega⟩
     simp only [tz]
     by_cases hs : s % 2 = 1
-    · simp only [hs, if_true]
+    · simp only [hs, ite_true]
       constructor
       · intro h; omega
       · intro h
@@ -456,7 +456,7 @@ theorem tz_ge (j : Nat) : ∀ k s, j ≤ k → (j ≤ tz k s ↔ s % 2^j = 0) :=
           rw [← this, h]
         omega
     · have he : s % 2 = 0 := by omega
-      simp only [hs, if_false]
+      simp only [hs, ite_false]
       rw [show j + 1 ≤ 1 + tz k' (s / 2) ↔ j ≤ tz k' (s / 2) by omega, ih k' (s / 2) (by omega)]
       have hs2 : s = 2 * (s / 2) := by omega
       conv => rhs; rw [hs2, Nat.pow_succ, Nat.mul_comm (2^j) 2, Nat.mul_mod_mul_left]

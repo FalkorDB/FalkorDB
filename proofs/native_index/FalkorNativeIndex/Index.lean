@@ -288,7 +288,7 @@ theorem entry_insertColumn (x : FalkorDbIndex) (e e' : EntityType) (l a l' a' : 
   unfold insertColumn columnsMut entry
   rw [columns_setColumns]
   by_cases h : e = e'
-  · subst h; simp only [if_true, true_and, hmGet_insert]
+  · subst h; simp only [ite_true, true_and, hmGet_insert]
     by_cases h2 : (l, a) = (l', a') <;> simp [h2, IndexEntry.new]
   · simp [h]
 
@@ -298,8 +298,8 @@ theorem numeric_createBuilding (x : FalkorDbIndex) (e e' : EntityType) (l a l' a
   unfold createBuilding numeric
   rw [entry_insertColumn]
   by_cases h : e = e' ∧ (l, a) = (l', a')
-  · simp only [if_pos h, Option.map_some]; rfl
-  · simp only [if_neg h]
+  · simp only [ite_eq_left h, Option.map_some]; rfl
+  · simp only [ite_eq_right h]
 
 /-- A fresh column is `Building` from the start of its entity's build order. -/
 theorem entry_createBuilding (x : FalkorDbIndex) (e : EntityType) (l a : String) :
@@ -317,8 +317,8 @@ theorem numeric_createNumeric (x : FalkorDbIndex) (e e' : EntityType) (l a l' a'
   unfold createNumeric numeric
   rw [entry_insertColumn]
   by_cases h : e = e' ∧ (l, a) = (l', a')
-  · simp only [if_pos h, Option.map_some]; rfl
-  · simp only [if_neg h]
+  · simp only [ite_eq_left h, Option.map_some]; rfl
+  · simp only [ite_eq_right h]
 
 theorem numeric_dropColumn (x : FalkorDbIndex) (e e' : EntityType) (l a l' a' : String) :
     (x.dropColumn e l a).numeric e' l' a' =
@@ -326,7 +326,7 @@ theorem numeric_dropColumn (x : FalkorDbIndex) (e e' : EntityType) (l a l' a' : 
   unfold dropColumn columnsMut numeric entry
   rw [columns_setColumns]
   by_cases h : e = e'
-  · subst h; simp only [if_true, true_and, hmGet_remove]
+  · subst h; simp only [ite_true, true_and, hmGet_remove]
     by_cases h2 : (l, a) = (l', a') <;> simp [h2]
   · simp [h]
 
@@ -341,7 +341,7 @@ theorem setNumeric_numeric (x : FalkorDbIndex) (e e' : EntityType) (l a l' a' : 
   unfold setNumeric columnsMut numeric entry
   rw [columns_setColumns]
   by_cases h : e = e'
-  · subst h; simp only [if_true, true_and, hmGet_update]
+  · subst h; simp only [ite_true, true_and, hmGet_update]
     by_cases h2 : (l, a) = (l', a') <;> simp [h2, Option.map_map, IndexColumn.ix]
     · rfl
   · simp [h]
@@ -352,7 +352,7 @@ theorem setNumeric_state (x : FalkorDbIndex) (e e' : EntityType) (l a l' a' : St
   unfold setNumeric columnsMut entry
   rw [columns_setColumns]
   by_cases h : e = e'
-  · subst h; simp only [if_true, hmGet_update]
+  · subst h; simp only [ite_true, hmGet_update]
     by_cases h2 : (l, a) = (l', a') <;> simp [h2, Option.map_map, Function.comp_def]
   · simp [h]
 
@@ -413,7 +413,7 @@ theorem dropIndex_nonrange (x : FalkorDbIndex) (t : IndexType) (h : t ≠ .range
 theorem dropIndex_removes (x : FalkorDbIndex) (e : EntityType) (l : String) :
     ∀ (attrs : List String) (a : String), a ∈ attrs → (x.dropIndex .range e l attrs).numeric e l a = none := by
   intro attrs
-  unfold dropIndex; simp only [if_true]
+  unfold dropIndex; simp only [ite_true]
   induction attrs generalizing x with
   | nil => intro a h; simp at h
   | cons b bs ih =>
@@ -436,7 +436,7 @@ theorem createUnpopulated_creates (x : FalkorDbIndex) (e : EntityType) (l : Stri
     ∀ (attrs : List String) (a : String), a ∈ attrs →
       (x.createUnpopulated .range e l attrs).numeric e l a = some NumericIndex.new := by
   intro attrs
-  unfold createUnpopulated; simp only [if_true]
+  unfold createUnpopulated; simp only [ite_true]
   induction attrs generalizing x with
   | nil => intro a h; simp at h
   | cons b bs ih =>

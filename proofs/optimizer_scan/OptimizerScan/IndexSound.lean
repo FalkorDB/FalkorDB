@@ -280,5 +280,29 @@ theorem trySingle_spec (opq : Nat → Node → Bool) (a : A) (L' : Nat) (q : IQ)
     · cases h; rfl
   | .opq i, _ => simp [trySingle] at h
 
+/-- **PROVEN** (#3068, `bare_property_of`): `try_in_filter_scan` pushes an `IN` only when its
+index side is the scanned property itself — `n.k IN [...]` (`inList`) or `x IN n.k`
+(`contains`); `abs(n.a) IN [1]`, `n.a + 1 IN [2]`, `2 IN [n.a, n.b]` are not pushed. -/
+theorem trySingle_inn_bare (ls : List Nat) (l : T) (r : R) (L' : Nat) (q : IQ)
+    (h : trySingle idx ls (.inn l r) = some (L', q)) :
+    (∃ k, l = .prop k ∧ q = .inList k r) ∨ (∃ k, r = .term (.prop k) ∧ q = .contains k l) := by
+  simp only [trySingle, Option.bind_eq_bind] at h
+  split at h
+  · split at h
+    · rename_i k _
+      cases hf : findLabel idx ls k <;> simp only [hf, Option.bind] at h
+      · cases h
+      · split at h
+        · cases h
+        · cases h; exact .inl ⟨k, rfl, rfl⟩
+    · cases h
+  · split at h
+    · rename_i k _
+      cases hf : findLabel idx ls k <;> simp only [hf, Option.bind] at h
+      · cases h
+      · cases h; exact .inr ⟨k, rfl, rfl⟩
+    · cases h
+  · cases h
+
 end
 end OptimizerScan.Index

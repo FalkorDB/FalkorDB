@@ -167,7 +167,7 @@ tie at +1024 goes to the even significand 2^52). -/
 theorem roundNat_window {n : Nat} (h1 : 2 ^ 63 ≤ n) (h2 : n ≤ 2 ^ 63 + 1024) : roundNat n = 2 ^ 63 := by
   unfold roundNat
   rw [bitLen_of_range h1 (by omega)]
-  simp only [show ¬ (64 ≤ 53) by omega, if_false, show 64 - 53 = 11 by rfl, show 11 - 1 = 10 by rfl]
+  simp only [show ¬ (64 ≤ 53) by omega, ite_false, show 64 - 53 = 11 by rfl, show 11 - 1 = 10 by rfl]
   have hq : n / 2 ^ 11 = 2 ^ 52 ∨ (n = 2 ^ 63 + 1024 ∧ n / 2 ^ 11 = 2 ^ 52) := by left; omega
   have hq' : n / 2 ^ 11 = 2 ^ 52 := by omega
   rw [hq']
@@ -302,7 +302,7 @@ structure ConvOps (F : Type) where
   floorToInt : F → Option Int          -- `if !finite null else floor as i64`
   strToInt : String → Option Int       -- the String arm of `value_to_integer`
   ofInt : Int → F
-  display : F → String                 -- `format!("{f}")`
+  display : F → String                 -- `float_to_string(f)` (FloatToString, PR #3609)
   pointStr : F → F → String
   fmtDatetime : Int → String
   fmtDate : Int → String
@@ -330,7 +330,7 @@ def toFloat : V F → V F
   | .int i => .float (c.ofInt i)
   | _ => .null
 
-/-- `value_to_string` (conversion.rs:125) on a non-empty argument list. -/
+/-- `value_to_string` (conversion.rs:126) on a non-empty argument list. -/
 def toStr : V F → V F
   | .str s => .str s
   | .int i => .str (toString i)
@@ -417,6 +417,6 @@ def isEmpty : V F → Option (V F)
 theorem isEmpty_no_panic (v : V F) (h : Accepts v (.union [.map, .list .any, .string, .null])) :
     (isEmpty v).isSome := by
   rw [← valueOfType_none_iff] at h
-  cases v <;> simp_all [isEmpty, vot_union, unionLoop, valueOfType, tagMatch, Ty.isAny, listLoop_none, vot_any]
+  cases v <;> simp_all [isEmpty, vot_union, unionLoop, valueOfType, tagMatch, Ty.isAny]
 
 end ValueMath

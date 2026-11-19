@@ -27,10 +27,10 @@ its dotted name. -/
 inductive IR
   | call (f : List Nat) (args : List ET) (yields : List Nat) (aliases : List (Option Nat))
       (filter : Option ET) (explicit : Bool)
-  | match_ (p : QG Nat) (filter : Option ET) (optional : Bool)
+  | match_ (p : QG Alias) (filter : Option ET) (optional : Bool)
   | unwind (e : ET) (v : Nat)
-  | merge (p : QG Nat) (onCreate onMatch : List SetItem)
-  | create (p : QG Nat)
+  | merge (p : QG Alias) (onCreate onMatch : List SetItem)
+  | create (p : QG Alias)
   | delete (es : List ET) (detach : Bool)
   | set (items : List SetItem)
   | remove (items : List ET)
@@ -71,13 +71,13 @@ def vSetItems : List SetItem → V
     | _ => .err
 
 /-- `validate_inlined_properties` (ast.rs:1348-1367). -/
-def vInlined (p : QG Nat) : V :=
+def vInlined (p : QG Alias) : V :=
   if p.nodes.all (fun n => n.attrs.root == .map) && p.rels.all (fun r => r.attrs.root == .map)
   then .ok else .err
 
 /-- `validate_inlined_properties`: every node and relationship property part
 is a map literal (a `$param` is rejected, as in C). -/
-theorem vInlined_spec (p : QG Nat) :
+theorem vInlined_spec (p : QG Alias) :
     vInlined p = .ok ↔ (∀ n ∈ p.nodes, n.attrs.root = .map) ∧ (∀ r ∈ p.rels, r.attrs.root = .map) := by
   unfold vInlined
   split <;> simp_all
@@ -105,7 +105,7 @@ def vCall (f : List Nat) (args : List ET) : V :=
     (if f = procFTDrop ∧ !(match args with | .node (.str _) _ :: _ => true | _ => false) then .err
      else .ok)
 
-def relTypesOne (p : QG Nat) : Bool := p.rels.all (fun r => r.types.length == 1)
+def relTypesOne (p : QG Alias) : Bool := p.rels.all (fun r => r.types.length == 1)
 
 mutual
 /-- `return_column_names` (ast.rs:1370-1392). -/
@@ -206,7 +206,7 @@ def simpleClause : IR → Bool
   | .match_ _ _ _ | .unwind _ _ | .with_ _ _ _ | .return_ _ _ => true
   | _ => false
 
-theorem vClause_simple (p : QG Nat) (hp : vInlined p = .ok) :
+theorem vClause_simple (p : QG Alias) (hp : vInlined p = .ok) :
     ∀ (c : IR) (rest : List IR), (∀ x ∈ c :: rest, simpleClause x = true) →
       (∀ x ∈ c :: rest, ∀ q f o, x = .match_ q f o → q = p) →
       (vClause c rest = .ok ↔ canConclude ((c :: rest).getLast (by simp)) = true)
@@ -234,7 +234,7 @@ theorem call_transparent (f : List Nat) (args : List ET) ys as fl ex (rest : Lis
     (h : vCall f args = .ok) : vClause (.call f args ys as fl ex) rest = vNext rest := by
   rw [call_validates_rest, h]; rfl
 
-theorem match_last_rejected (p : QG Nat) (hp : vInlined p = .ok) :
+theorem match_last_rejected (p : QG Alias) (hp : vInlined p = .ok) :
     validate (.query [.match_ p none false] false) = .err := by
   simp [validate, vClause, hp, V.andThen]
 
@@ -242,11 +242,11 @@ theorem match_last_rejected (p : QG Nat) (hp : vInlined p = .ok) :
 ("Query cannot conclude with WITH …"), as in C. -/
 theorem with_last_rejected (p : Proj) (f : Option ET) (w : Bool) :
     validate (.query [.with_ p f w] false) = .err := by
-  simp [validate, vClause, V.andThen]
+  simp [validate, vClause]
 
 /-- **PROVEN** (#3297): a MATCH-terminated tail is rejected after a CALL as
 well (`CALL db.labels() YIELD label MATCH (n)`; C rejects it too). -/
-theorem match_last_after_call_rejected (p : QG Nat) (hp : vInlined p = .ok) :
+theorem match_last_after_call_rejected (p : QG Alias) (hp : vInlined p = .ok) :
     validate (.query [.call [5] [] [] [] none true, .match_ p none false] false) = .err := by
   simp [validate, vClause, vCall, vNext, procCNI, procFTDrop, hp, V.andThen]
 

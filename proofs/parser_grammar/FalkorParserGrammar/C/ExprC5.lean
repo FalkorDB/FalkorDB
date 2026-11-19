@@ -64,7 +64,7 @@ is the Neo4j `shortestPath` pattern with bound end nodes, at most one hop
 minimum and no relationship filter, and the tree records exactly its
 types, bounds and direction (the left node is the source unless the arrow
 points left only). -/
-theorem shortestP_sound (F : Nat) (s : PS) t s' (h : shortestP F s = .ok t s') : GShortest s t s' := by
+theorem shortestP_sound (pmap : P ET) (F : Nat) (s : PS) t s' (h : shortestP pmap F s = .ok t s') : GShortest s t s' := by
   unfold shortestP at h
   peel h => c0 s1 h1
   obtain ⟨hc0, hs⟩ := peek_ok h1; subst hc0; subst s1
@@ -135,12 +135,12 @@ theorem shortestP_sound (F : Nat) (s : PS) t s' (h : shortestP F s = .ok t s') :
                     generalize hfv : isFilter s20.cur = fv at h9
                     cases fv
                     case true =>
-                      rw [if_pos rfl] at h9
+                      rw [ite_eq_left rfl] at h9
                       peel h9 => u s22 h22
                       peel h9 => u s23 h23
                       obtain ⟨rfl, rfl⟩ := pure_ok h9
                       simp at hf
-                    rw [if_neg (by decide)] at h9
+                    rw [ite_eq_right (by decide)] at h9
                     have hnf : isFilter s20.cur = false := hfv
                     have hnp : ∀ p, s20.cur ≠ .param p := by
                       intro p hp; rw [hp] at hnf; simp [isFilter] at hnf

@@ -137,12 +137,12 @@ graph/src/runtime/ops/include_pending.rs	capture_argument	77	PROVEN	StreamOps.ca
 graph/src/runtime/ops/include_pending.rs	init_pending_state	88	PROVEN	StreamOps.initPending: initPending_spec (#3467: the pending nodes go into the skip-set `extra`); the PROVEN claim is the per-phase initPending_spec; the composition with Pending (IncludePendingExact.lean), includePendingMain_exact (#3453 fixed by #3467), is additionally conditional on Pending state hypotheses (g.nodes.Nodup, created ids apart from committed, unique set_labels/remove_labels keys, set_labels naming only committed-or-created nodes), none discharged here, and covers an uncorrelated scan only; repros: fixed3453_deleted_node, fixed3453_duplicate_row, fixed3453_split_multilabel
 graph/src/runtime/ops/include_pending.rs	emit_pending_batch	115	PROVEN	StreamOps.pendingRows: includePending_spec
 graph/src/runtime/ops/include_pending.rs	next	166	PROVEN	StreamOps.childRows (skips deleted, label-removed and `extra` nodes) + endChild (skip-set becomes the emission queue) + pendingRows: includePending_spec, endChild_spec; the PROVEN claim is these per-phase theorems; composed Phase1+Phase2: includePendingMain_exact (every live node whose effective labels contain the pattern, once) is additionally conditional on the same undischarged Pending hypotheses (see init_pending_state) and covers an uncorrelated scan only
-graph/src/runtime/ops/procedure_call.rs	new	59	PROVEN	StreamOps.pcNew/srcPosOf/maskOf: pcNew_spec, srcPos_named
-graph/src/runtime/ops/procedure_call.rs	reset_state	115	PROVEN	StreamOps.pcReset: pcReset_spec
-graph/src/runtime/ops/procedure_call.rs	emit_pending_rows	125	PROVEN	StreamOps.pcRows: pcRows_ok
-graph/src/runtime/ops/procedure_call.rs	remap_procedure_batch	153	PROVEN	StreamOps.remap: remap_spec
-graph/src/runtime/ops/procedure_call.rs	next_input_row	192	PROVEN	StreamOps.nextInput: nextInput_ok
-graph/src/runtime/ops/procedure_call.rs	next	228	PROVEN	StreamOps.pcRows: pcRows_ok
+graph/src/runtime/ops/procedure_call.rs	new	59	NOT COVERED	(#3302): not modelled yet
+graph/src/runtime/ops/procedure_call.rs	reset_state	114	PROVEN	StreamOps.pcReset: pcReset_spec
+graph/src/runtime/ops/procedure_call.rs	emit_pending_rows	124	PROVEN	StreamOps.pcRows: pcRows_ok
+graph/src/runtime/ops/procedure_call.rs	remap_procedure_batch	152	PROVEN	StreamOps.remap: remap_spec
+graph/src/runtime/ops/procedure_call.rs	next_input_row	191	PROVEN	StreamOps.nextInput: nextInput_ok
+graph/src/runtime/ops/procedure_call.rs	next	227	PROVEN	StreamOps.pcRows: pcRows_ok
 graph/src/runtime/ops/load_csv.rs	ipv4_is_forbidden	48	PROVEN	LoadCsv.v4Forbidden: v4Forbidden_examples
 graph/src/runtime/ops/load_csv.rs	validate_remote_url	81	PROVEN	LoadCsv.validateRemote (DNS = FFI parameter): validateRemote_spec
 graph/src/runtime/ops/load_csv.rs	new	153	PROVEN	LoadCsv.erNew: erNew_spec

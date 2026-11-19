@@ -213,7 +213,7 @@ theorem dropIndex_protects (dependsOn : String → Bool) (fieldsOfType : List St
     (a : String) (ha : a ∈ (if attrs = [] then fieldsOfType else attrs)) (hd : dependsOn a = true) :
     dropIndex dependsOn fieldsOfType label attrs res = .error "Index supports constraint" := by
   unfold dropIndex
-  rw [if_pos (List.any_eq_true.2 ⟨a, ha, hd⟩)]
+  rw [ite_eq_left (List.any_eq_true.2 ⟨a, ha, hd⟩)]
 
 /-- **#3280 (fixed)**: dropping an index that does not exist (no constraint in the way)
 reports `Unable to drop index on :L: no such index.` when no attribute was named, as C. -/

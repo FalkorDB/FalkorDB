@@ -174,13 +174,17 @@ node, labels, relationships and attributes are not written); `RowSound` is the o
    `bug748_merge_skipped`, `bug997_create_skipped` (`¬ EffectSound`), `bug748_rows_only_blind`
    / `bug997_rows_only_blind` (the rows-only criterion holds on them), controls
    `bug748_with_star_control`, `bug997_case_control`; `bug748_fixed`/`bug997_fixed` for a write barrier.
+   **Fixed by #3582** (write kinds excluded, siblings of a writing branch locked, `Cfg.pr3582`):
+   `pr3582_748_fixed`, `pr3582_997_fixed`, `pr3582_left_untouched`, `pr3582_write_excluded`,
+   `pr3582_controls`; #3352 below is fixed there too by #2981 (`pr3582_3352_fixed`).
 10. **#3352: filter push-down mistakes a pre-WITH variable for `r`** — Case 2
    (`push_filters_down.rs:233-236`) inherits `collect_subtree_variables` of the Apply's
    left subtree, and `get_variables` (`runtime.rs:319-323`) walks through `Aggregate`
    into the pre-WITH plan, so id 2 of scope 0 (the `_anon` edge) is taken for `r`
    (id 2 of scope 1, `binder.rs:2257-2268`) and `r.status = 'revoked'` lands on the
-   Argument → `n = 1, e = null` (C 123). Lean `bug3352_plan`, `bug3352_routes_unbound`
-   (`¬ RoutesBound`), `bug3352_slot_collision_drops_match` (`¬ RowSound`); `bug3352_fixed`
+   Argument → `n = 1, e = null` (C 123). Lean `bug3352_routes_unbound`
+   (`¬ RoutesBound` under the old `gv` inheritance); **fixed by #2981**: Case 2 inherits
+   `branch_visible_variables` (`bv`), `fixed3352_plan`, `fixed3352_inherits_outputs`, `fixed3352_rows_kept`; `bug3352_fixed`
    for `(id, scope)` routing. Live: three pre-WITH ids `{0,1,2}` → wrong, two → right.
 
 ## Gap closed 2026-10-20 (#2556) — `PushPlan`, select_scan_node chain re-ordering
@@ -234,9 +238,10 @@ binds what it reads).
 * #2918 — `variable_read_outside` for the three `reduce_*` passes (its per-operator
   oracle is superseded by #2390's references.rs): modelled as `readOutside`
   (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
-* #3006 — `push_filters_down.rs:122` merges `[child_filter, filter]`: the
-  `merge_child_first_row` order; fixes bug 2.
-* #2981 — `push_filters_down` routes with `branch_visible_variables` (below an
+* #3006 — `push_filters_down.rs:128` merges `[child_filter, filter]`: the
+  `merge_child_first_row` order (`mergeRust`); fixes bug 2 (`merge_rust_fixed_example`,
+  `merge_rust_same`: stacked outcome whenever the inner verdict is boolean).
+* #2981 (modelled: `PushPlan.bv`, `Sequence.guardHJ`) — `push_filters_down` routes with `branch_visible_variables` (below an
   env-resetting operator only its outputs survive; ids of the subtree minus its
   children's) instead of `collect_subtree_variables` for the Apply left side —
   narrows `id_only_routing_unsound`'s collision window (still ids only).
