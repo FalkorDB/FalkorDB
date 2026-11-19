@@ -87,7 +87,8 @@ vanish on reload — is identical in C (both write only operational ones).
 | `Persist.Store` — `encRoar`/`decRoar`, `encEnt`/`decEnt`, `applyEnt`, `fold_ents` | `RoaringTreemap` codec (serialization.rs:172-241), `AttributeStore::encode_with_range`/`decode_with_count` (attribute_store.rs:1409-1497) |
 | `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs:4926), `load_graph_from_reader` |
 | `Persist.MultiKey` — `fillKey`, `keysFrom`, `buildMulti` | `build_multi_key_payloads` (encoder/mod.rs:95-189) |
-| `Persist.KeyRT`, `Fold`, `Pending`, `MultiLoad*` — `rdbKey`, `stepKey`, `runKeys`, `fold_char` | `rdb_load_graph` (decoder/mod.rs:44-174), `decode_payloads_into_pending`, `finalize_pending_graph`, `DECODE_STATE` |
+| `Persist.KeyRT`, `Fold`, `Pending`, `MultiLoad*` — `rdbKey`, `stepKey`, `runKeys`, `fold_char` | `rdb_load_graph` (decoder/mod.rs:118), `decode_payloads_into_pending` (:341), `finalize_pending_graph` (:391), `DECODE_STATE` |
+| `Persist.Checks` — `checkHeader`, `checkDir`, `AsmOK` refusals | decoder/validate.rs (#3643), `Graph::restore`/`id_bound` (graph.rs:903,1037) |
 | `Persist.Indexes` — `rebuild` | `rebuild_indexes` (decoder/mod.rs:345-400) |
 | `RedisType.AuxData`, `Uuid`, `VKeys`, `Load` | `redis_type.rs`: aux save/load, `on_persistence`, `pre_fork_prepare`, `uuid_v4`, virtual keys, `graph_rdb_save`, `graph_rdb_load`, `finalize_pending_graphs`, `install_graph`, `graphmeta_*` |
 
@@ -103,6 +104,15 @@ Headline theorems:
   and `Final` (now 11) before any payload (`decDirEntry_refuses`, `decDir_refuses_cch`),
   which no encoded directory lists (`buildPayloads_accepted`, `EntryOK.accepted`);
   `rdb_load_graph` loads only versions 19 and 20 (`key_rt_ver`, `rdbLoad_refuses`).
+* #3643 (refuse a corrupted `GRAPH.RESTORE` payload; `Persist.Checks`, validate.rs):
+  `checkHeader`, `checkDir`, `decEnt`'s id bound / `MAX_ATTRIBUTES`, `label_matrix_count`,
+  `tensor_count` and `AsmOK` (`check_assembled` + fallible `Graph::restore`) are in the
+  decoders; `load_encode`/`key_rt`/`multi_load` still hold (`encoder_passes_checks`,
+  `multi_key_passes_checks`; `WF` adds `attrMax`, `idMax`, `lmSch`, `tnSch`, `tnEdges`),
+  and each check refuses its target (`loadFromReader_refuses_header`/`_dir`,
+  `rdbKey_refuses_header`/`_dir`, `decPayload_refuses_labels`, `decEnt_refuses_id`/`_attrs`,
+  `kDir_refuses`, `asm_refuses_*`, `run_keys_refuses`); `finalize_pending_graphs`' `Err`
+  arm installs nothing (`finalize_pending_err`).
 * `multi_key_tiles`, `multi_key_bound`, `multi_key_all_placed`, `multi_key_matrices` — the
   multi-key layout tiles each entity kind once, in order, ≤ `vkey_max` per key, matrices on
   key 0 only.

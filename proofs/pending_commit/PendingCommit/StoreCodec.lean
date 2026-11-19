@@ -8,12 +8,17 @@ import PendingCommit.Pack
   `max(count, 1)` (the `break` follows the write; every caller passes
   `count > 0`, src/serializers/encoder/mod.rs:139-196), each as `(id, len,
   entries)`.
-* `decode_spec` — `decode_with_count` (:1460) stores, per entity, the entries
+* `decode_spec` — `decode_with_count` (:1474) stores, per entity, the entries
   whose wire id fits `u16` (`try_from`, not `as`) and the dictionary, minus
   nulls, sorted by id; nothing for an entity left empty.
 * **`encode_decode_roundtrip`** — decoding what was encoded into an empty
   store restores exactly the encoded entities' spans (sorted null-free spans,
   ids below the dictionary size).
+* #3643 checks (`decode_with_count`, :1474): `decLoop` refuses an entity id at
+  or past `id_bound` (`with_id_bound`, :1106) and more than 65535 attributes
+  (`decLoop_refuses_id`, `decLoop_refuses_attrs`); `decLoop_eq` (success iff
+  every entity passes, then = `decode`), `decLoop_spec`, `decLoop_roundtrip`
+  (an encoded window below the bound always passes).
 * `decode_unimplemented` — `Decode::decode` (:1450) is `unimplemented!()`.
 * `dtrim_ok` — `DataBlock::trim` (:1038) only compacts exclusively-owned
   blocks and preserves every read and `SInv`.
@@ -164,5 +169,127 @@ theorem encode_decode_roundtrip (d : D) (h : SInv d) (hs : SOK d) (limit : Nat)
     · simp [hz, he]
     · simp [hz]
   · simp [hi, he]
+
+/-! ## The checked loop (#3643)
+
+`decode_with_count` (attribute_store.rs:1474) as the PR has it: before an entity
+is read, `check_count_fits` refuses a count the bytes left cannot hold (each
+entity is at least two 9-byte words, so it refuses only what the loop would run
+out of anyway; the model's entity list is what was read). Per entity, an id at
+or past `id_bound` (`AttributeStore::with_id_bound`, :1106; `None` for
+`AttributeStore::new`) and an attribute count above `MAX_ATTRIBUTES` (65535: a
+span length is a `u16`) are an `Err`. Otherwise the entries are filtered,
+sorted and stored as before. `none` is the `Err`: the restore is abandoned. -/
+
+/-- One entity passes the two new checks. -/
+def entOk (bound : Option Nat) (p : Nat × List Entry) : Bool :=
+  !(bound.any fun b => decide (b ≤ p.1)) && decide (p.2.length ≤ 65535)
+
+/-- The loop of `decode_with_count`, literally: check the id, check the count,
+then store the filtered sorted span when it is nonempty. -/
+def decLoop (bound : Option Nat) (limit : Nat) : D → List (Nat × List Entry) → Option D
+  | d, [] => some d
+  | d, (id, es) :: L =>
+    if bound.any (fun b => decide (b ≤ id)) then none
+    else if es.length > 65535 then none
+    else
+      let ps := sortById (es.filter (keep limit))
+      decLoop bound limit (if ps.isEmpty then d else dsetSpan d id ps) L
+
+theorem decode_cons (d : D) (limit id : Nat) (es : List Entry) (L : List (Nat × List Entry)) :
+    decode d limit ((id, es) :: L) =
+      decode (if (sortById (es.filter (keep limit))).isEmpty then d
+        else dsetSpan d id (sortById (es.filter (keep limit)))) limit L := by
+  by_cases h : (sortById (es.filter (keep limit))).isEmpty
+  · simp [decode, h]
+  · simp [decode, h, runOps]
+
+/-- **`decLoop_eq`**: the checked loop succeeds iff every entity passes both
+checks, and then stores exactly what the unchecked `decode` stores. -/
+theorem decLoop_eq (bound : Option Nat) (limit : Nat) :
+    ∀ (L : List (Nat × List Entry)) (d : D),
+      decLoop bound limit d L = if L.all (entOk bound) then some (decode d limit L) else none
+  | [], d => by simp [decLoop, decode, runOps]
+  | (id, es) :: L, d => by
+    rw [decode_cons]
+    simp only [decLoop, List.all_cons, entOk]
+    by_cases hb : bound.any (fun b => decide (b ≤ id)) = true
+    · simp [hb]
+    · by_cases hl : es.length > 65535
+      · have : ¬ es.length ≤ 65535 := by omega
+        simp [hb, hl, this]
+      · have : es.length ≤ 65535 := by omega
+        simp only [hb, hl, this, ite_false, Bool.false_eq_true, Bool.not_false, decide_true,
+          Bool.and_self, Bool.true_and]
+        exact decLoop_eq bound limit L _
+
+/-- **`decLoop_spec`**: `decode_spec` for the PR's loop — on success the
+store holds, per entity, its kept entries sorted by id; the `≤ 65535`
+hypothesis of `decode_spec` is now checked by the code, not assumed. -/
+theorem decLoop_spec (d : D) (h : SInv d) (bound : Option Nat) (limit : Nat)
+    (m : List (Nat × List Entry)) (hnd : (m.map (·.1)).Nodup) (d' : D)
+    (hr : decLoop bound limit d m = some d') :
+    SInv d' ∧ ∀ id, dread d' id = match lk m id with
+      | some ps => (if ps.filter (keep limit) = [] then dread d id else sortById (ps.filter (keep limit)))
+      | none => dread d id := by
+  rw [decLoop_eq] at hr
+  by_cases ha : m.all (entOk bound) = true
+  · simp only [ha, ite_true, Option.some.injEq] at hr
+    subst hr
+    exact decode_spec d h limit m hnd (fun p hp => by
+      have := List.all_eq_true.1 ha p hp
+      simp only [entOk, Bool.and_eq_true, decide_eq_true_eq] at this
+      exact this.2)
+  · simp [ha] at hr
+
+/-- **`decLoop_refuses_id`**: an entity id at or past the bound is an `Err`,
+whatever else the payload holds. -/
+theorem decLoop_refuses_id (b limit : Nat) (d : D) (m : List (Nat × List Entry))
+    (p : Nat × List Entry) (hp : p ∈ m) (hid : b ≤ p.1) : decLoop (some b) limit d m = none := by
+  rw [decLoop_eq]
+  have : m.all (entOk (some b)) = false := by
+    rw [List.all_eq_false]; exact ⟨p, hp, by simp [entOk, Option.any, hid]⟩
+  simp [this]
+
+/-- **`decLoop_refuses_attrs`**: an entity with more than `MAX_ATTRIBUTES`
+entries is an `Err` (before #3643 its `u16` span length wrapped and the
+entity's attributes were silently lost). -/
+theorem decLoop_refuses_attrs (bound : Option Nat) (limit : Nat) (d : D) (m : List (Nat × List Entry))
+    (p : Nat × List Entry) (hp : p ∈ m) (hlen : 65535 < p.2.length) : decLoop bound limit d m = none := by
+  rw [decLoop_eq]
+  have : m.all (entOk bound) = false := by
+    rw [List.all_eq_false]; exact ⟨p, hp, by simp [entOk]; omega⟩
+  simp [this]
+
+/-- **`decLoop_roundtrip`**: the encoded window passes both checks whenever the
+bound exceeds `max_id` (the header's live + deleted count does, see
+graph_persist), so decoding it into a fresh bounded store
+(`AttributeStore::with_id_bound`) succeeds and restores exactly what
+`encode_decode_roundtrip` says. -/
+theorem decLoop_roundtrip (d : D) (h : SInv d) (hs : SOK d) (limit : Nat)
+    (hlim : ∀ id, ∀ e ∈ dread d id, e.1 < limit ∧ e.1 < 65536) (hfit : ∀ id, (dread d id).length ≤ 65535)
+    (deleted : Nat → Bool) (maxId count offset : Nat) (bound : Option Nat)
+    (hb : ∀ b, bound = some b → maxId < b) :
+    ∃ d', decLoop bound limit emptyD (encode d deleted maxId count offset) = some d' ∧
+      ∀ id, dread d' id = if id ∈ window deleted maxId count offset then dread d id else [] := by
+  refine ⟨decode emptyD limit (encode d deleted maxId count offset), ?_,
+    encode_decode_roundtrip d h hs limit hlim hfit deleted maxId count offset⟩
+  rw [decLoop_eq]
+  have : (encode d deleted maxId count offset).all (entOk bound) = true := by
+    rw [List.all_eq_true]
+    intro p hp
+    rw [encode_spec] at hp
+    obtain ⟨i, hi, rfl⟩ := List.mem_map.1 hp
+    have hir : i < maxId + 1 := by
+      have h1 := (List.take_sublist _ _).subset hi
+      have h2 := (List.drop_sublist _ _).subset h1
+      exact List.mem_range.1 (List.mem_filter.1 h2).1
+    cases hbd : bound with
+    | none => simp [entOk, Option.any, hfit i]
+    | some b =>
+      have := hb b hbd
+      have : ¬ b ≤ i := by omega
+      simp [entOk, Option.any, this, hfit i]
+  simp [this]
 
 end PendingCommit.Content

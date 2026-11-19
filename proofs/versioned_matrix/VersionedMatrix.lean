@@ -42,6 +42,10 @@ decode moved +20 lines; the `mvcc_graph.rs` rows were re-pointed to the post-#32
 lines (new :89, commit :186, rollback :268, drop :274; #3290's `fork`/`claim` are
 covered by other projects; #3290 left `write`'s semantics and `commit`/`rollback`/`drop`
 unchanged, so `sstep` stands).
+#3643: no model change here. `Tensor::decode` (now tensor.rs:1565) also refuses a
+multi-edge id at or past `DecodeLimits::edge_bound`; graphblas_wrappers generalises the
+check to `Decode.decodeCheckB` (bound `none` = the #3033 model, whose theorems stand)
+with `decodeCheckB_ok_iff` / `decodeCheckB_accepts_encoded`.
 
 Re-target to main 1d15bf713 (#3250, #2905): `Tensor::resize` (tensor.rs:823) never
 shrinks; `resizeT` clamps to `max` and keeps every pair state and `me` row:

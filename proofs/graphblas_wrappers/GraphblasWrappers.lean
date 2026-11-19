@@ -31,19 +31,30 @@ matrix.rs line +24..+31, see `COVERAGE.tsv`). #3026 touches only `bulk_insert.rs
 line +24, earlier ones +1 for the import) and makes `Tensor::decode` enforce
 promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here).
 
+**Re-checked against #3643** ("refuse corrupted GRAPH.RESTORE payload"): `Matrix::decode`
+(matrix.rs:708) parses the header (`ContainerHeader::parse` :478), reads and structure-checks
+the five components before any load, and holds the container in `ContainerGuard` (Drop :453)
+— modelled in `MatrixDecode.lean`: error paths before the loads no longer leak, the success
+path still leaks five vectors (bug 3, still CONFIRMED). `Tensor::decode` (tensor.rs:1565)
+refuses a multi-edge id at or past `DecodeLimits::edge_bound` (`Decode.decodeCheckB`, bound
+`none` = the old model). The vector decodes go through `deserialize_untrusted` (vector.rs:417)
+/ `Component::read`+`load` (:574/:623) and still return every GraphBLAS failure as `Err`
+(`Codes`, unchanged). `Iter::drop`/`next`, `from_u64`, `decode_with_count` only moved.
+
 ## Lean ↔ Rust
 
 | here | there |
 | --- | --- |
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
-| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:373 behind `Arc<Handle>` (`Matrix::clone` :405), `Iter::drop` :1851 then its `Arc<Handle>` field (#3090) |
+| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:373 behind `Arc<Handle>` (`Matrix::clone` :405), `Iter::drop` :2197 then its `Arc<Handle>` field (#3090) |
 | `Own.step`/`run`/`validTraces` | pre-#3090 `Matrix::drop`/`Iter::drop` (`Arc::get_mut` then Arc drop) |
 | `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1934, `Iter::next` :1967 |
-| `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` |
-| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1564-1573 (#2996) |
+| `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:483` `Vector<u64>::decode` (both via `deserialize_untrusted` :417), `:720` `Vector<bool>::decode` (`Component::read` :574 + `load` :623) |
+| `MatrixDecode.ops3643`/`leaked`, `step .containerFree`, `parseCheck`, `indexWidth` | `Matrix::decode` matrix.rs:708, `ContainerGuard::drop` :453, `ContainerHeader::parse` :478, `index_width` :523 (#3643) |
+| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1565; layer-size check :1576-1585 (#2996) |
 | `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1266 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
-| `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1617, per-entry check :1632-1636, final count check :1665-1670 (#3033) |
+| `Decode.tensorLoopB`/`decodeCheckB` (`tensorLoop`/`decodeCheck` = bound `none`), `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1629, `DecodeLimits::current()` :1631, per-entry check :1645-1649, id bound :1665-1670 (#3643), final count check :1682-1688 (#3033) |
 | `Misc.grownOk`, `iterExpand`, `iterEdges`, `VIter` | `Matrix::grown` matrix.rs:739, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `Tensor::iter_edges` :1293, `vector::Iter::new`/`next` vector.rs:603-655 (cursor state machine; the C iterator contract is the model `cExhausted`) |
 | `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:526, header pointers nulled :550-558 (#3097) |
 | `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1631-1768 (#3492: `F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
@@ -72,7 +83,15 @@ marker pair and the `me` rows are promotion complete),
 `decodeCheck_refuses_incomplete`, `decodeCheck_ok_complete`,
 `decodeCheck_ok_edgeCount_no_panic`, **`decodeCheck_accepts_encoded`**, main's
 tests `orphan_row_refused`, `single_pair_ids_refused`,
-`marker_without_ids_refused`;
+`marker_without_ids_refused`; #3643 edge bound: `tensorLoopB_ok_iff`, **`decodeCheckB_ok_iff`**,
+`decodeCheckB_refuses_out_of_range`, `decodeCheckB_refuses_incomplete`, `decodeCheckB_ok_complete`,
+`decodeCheckB_ok_edgeCount_no_panic`, **`decodeCheckB_accepts_encoded`**, `edge_bound_test_accepts`,
+`edge_bound_test_refuses`; #3643 `MatrixDecode`: `containerFree_frees_held`,
+**`decode3643_no_leak_before_load`**, `decode3643_load_error_leaks`, `decode3643_no_double_free`,
+`decode3643_vs_pre`, **`bug_matrix_decode_still_leaks_container_components`**, `fixed_no_leak`,
+`pre3643_leaks_container_components`, `pre3643_leaks_on_error_path`, `parseCheck_ok_iff`,
+`parseCheck_none_accepts`, `parseCheck_accepts_capacity`, `indexWidth_ok_iff`,
+`indexWidth_covers_load_types`;
 `grown_rejects_shrink`, `resize_clamp_grownOk`, `resize_clamp_not_shrink` (#3250), `VIter.new_inv`, `VIter.next_inv`, `VIter.next_depleted`, **`VIter.drain_new`**
 (a fresh vector iterator drains to exactly the stored entries, once each, ascending), `iterExpand_eq_flatMap`,
 `iterExpand_length`, `iterExpand_all_single`, `iterEdges_count`, `iterEdges_length`, `iterEdges_all_single`; plus GrbInfo helper lemmas.
@@ -101,13 +120,24 @@ entries in the selected rows — the double-counting argument over columns), `co
    `iter_edges` yields a phantom edge (7,9,3). Test
    `bug_tensor_decode_accepts_orphan_me_row_then_edge_count_panics`. Fix: in
    decode, require the pair's forward value to be a multi-edge marker.
-3. **`Matrix::decode` leaks 5 heap blocks per matrix** (matrix.rs:467):
-   `copy_nonoverlapping` overwrites the p/h/b/i/x vectors `GxB_Container_new`
-   allocated. Every RDB load / RESTORE / full sync. 8 blocks per call on the `?`
-   error paths (container + decoded components). Tests
+3. **`Matrix::decode` leaks 5 heap blocks per matrix — still CONFIRMED after #3643 on the
+   success path; error paths before the loads FIXED** (`MatrixDecode.lean`). The five
+   component vectors `GxB_Container_new` allocates (GraphBLAS v10.5.0
+   `GxB_Container_new_arena.c`) are overwritten without a free: pre-#3643 by
+   `copy_nonoverlapping` + nulling (then matrix.rs:467), now by
+   `(*container).x = ManuallyDrop::new(x.load()?).ptr()` etc. (matrix.rs:763-767).
+   `bug_matrix_decode_still_leaks_container_components`: 5 vector headers per successful
+   decode, every RDB load / RESTORE / full sync, as before
+   (`pre3643_leaks_container_components`). #3643's `ContainerGuard` (Drop :453,
+   `containerFree_frees_held`) frees the container and the vectors it holds on every
+   exit: a header/component/structure refusal leaks nothing
+   (`decode3643_no_leak_before_load`, against `pre3643_leaks_on_error_path`: 6+k blocks
+   at the k-th component, the old test's 8.00/call), a failed k-th `load` leaks the k
+   originals already overwritten (`decode3643_load_error_leaks`). Historical tests
    `bug_matrix_decode_leaks_container_components` (5.00/call),
-   `bug_matrix_decode_leaks_on_error_path` (8.00/call). Fix: free the fresh
-   components first (or copy only scalar fields); free on error.
+   `bug_matrix_decode_leaks_on_error_path` (8.00/call). Fix: `GrB_Vector_free(&mut
+   (*container).x)` before each assignment (`fixed_no_leak`: no leak on any exit, no
+   double free).
 4. **Concurrent drop of two `Matrix` clones leaked the GrB_Matrix — FIXED by
    #3090 on main e45be4965** (`arc_frees_once`, `arc_every_interleaving_frees_once`;
    text below is the pre-#3090 state). `Matrix::drop` (then
@@ -145,6 +175,7 @@ import GraphblasWrappers.Own
 import GraphblasWrappers.RowIter
 import GraphblasWrappers.Codes
 import GraphblasWrappers.Decode
+import GraphblasWrappers.MatrixDecode
 import GraphblasWrappers.Misc
 import GraphblasWrappers.Glue
 import GraphblasWrappers.Serial

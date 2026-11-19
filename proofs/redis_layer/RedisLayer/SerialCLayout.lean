@@ -31,13 +31,14 @@ variable (U : Utf8)
 def maskOf (r ft v : Bool) : Nat :=
   (if r then RANGEW else 0) ||| (if ft then FULLTEXT else 0) ||| (if v then VECTOR else 0)
 
-/-- C's vector option words: dimension, M, efConstruction, efRuntime, metric code. -/
+/-- C's vector option words: dimension, M, efConstruction, efRuntime, metric code (a
+`VecSimMetric`: L2 0, IP 1, Cosine 2). -/
 structure VWords where
   dim : Nat
   m : Nat
   efc : Nat
   efr : Nat
-  sc : Nat
+  sc : Fin 3
   deriving DecidableEq, Repr
 
 /-- `_RdbSaveIndexField`: name, type mask, weight, nostem, phonetic, then the vector
@@ -45,14 +46,14 @@ options iff the VECTOR bit is set. -/
 def encFieldC (attr : Bytes) (r ft v : Bool) (w ns : Nat) (ph : Bytes) (vw : VWords) :
     List W :=
   [.buf (nullTerm attr), .u (maskOf r ft v), .d w, .u ns, .buf (nullTerm ph)]
-  ++ (if v then [.u vw.dim, .u vw.m, .u vw.efc, .u vw.efr, .u vw.sc] else [])
+  ++ (if v then [.u vw.dim, .u vw.m, .u vw.efc, .u vw.efr, .u vw.sc.val] else [])
 
 /-- The fields an entry stands for, in `db.indexes()` order. -/
 def cFields (r ft v : Bool) (w ns : Nat) (ph : Bytes) (vw : VWords) : List Fld :=
   (if r then [⟨.range, none, none, none, none⟩] else [])
   ++ (if ft then [⟨.fulltext, some w, some (ns ≠ 0), some (phonNorm ph), none⟩] else [])
   ++ (if v then [⟨.vector, none, none, none,
-        some ⟨vw.dim, some vw.m, some vw.efc, some vw.efr, some (simName vw.sc)⟩⟩] else [])
+        some ⟨vw.dim, some vw.m, some vw.efc, some vw.efr, some (simName vw.sc.val)⟩⟩] else [])
 
 /-! ## History: the pre-#3514 decoder keeps one type -/
 
@@ -63,8 +64,9 @@ theorem decField_encFieldC (attr ph : Bytes) (ha : U.valid attr) (hp : U.valid p
     (r ft v : Bool) (hne : r ∨ ft ∨ v) (w ns : Nat) (vw : VWords) (ts : List W) :
     decField U (encFieldC attr r ft v w ns ph vw ++ ts)
       = some ((attr, cFields r ft v w ns ph vw), ts) := by
+  have hs : vw.sc.val ≤ 2 := Nat.le_of_lt_succ vw.sc.isLt
   cases r <;> cases ft <;> cases v <;> simp at hne <;>
-  simp [decField, encFieldC, cFields, maskOf, Dec.bind, rdB, rdU, rdD, pure',
+  simp [decField, encFieldC, cFields, maskOf, Dec.bind, rdB, rdU, rdD, pure', hs,
     strip_nullTerm U attr ha, strip_nullTerm U ph hp, ANYW, RANGEW, NUMERIC, STR, GEO,
     VECTOR, FULLTEXT]
 

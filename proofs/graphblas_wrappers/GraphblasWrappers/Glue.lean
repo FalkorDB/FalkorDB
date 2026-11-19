@@ -182,8 +182,9 @@ def UnloadLoad {M α : Type} (unload : M → Container α) (load : Container α 
   ∀ m, load (unload m) = m
 
 /-- C-side contract the decode relies on (data, not an axiom):
-`Matrix::decode` (matrix.rs:430) re-populates `x,h,p,i,b` from the payload
-and nulls `Y`, and `GxB_load_Matrix_from_Container` reads no other pointer
+`Matrix::decode` (matrix.rs:708; #3643: only the scalar fields `ContainerHeader::parse`
+reads are taken from the payload, every pointer stays as `GxB_Container_new` made it,
+`Y` null) re-populates `x,h,p,i,b` from the payload, and `GxB_load_Matrix_from_Container` reads no other pointer
 field (the `*_future` arrays are reserved), so the loaded matrix does not
 depend on the pointer fields of the header. -/
 def PtrBlind {M α : Type} (load : Container α → M) : Prop :=

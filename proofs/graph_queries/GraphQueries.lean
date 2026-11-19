@@ -38,7 +38,7 @@ contract-taking theorem at it (`*_rust`). Removed fns (`return_*_id`,
 | Schema      | `grow_cap`, `resize*`, label/type tables (`intern_label`, `get_label_id(_mut)`, `get_type_id(_mut)`, `get_*_matrix(_mut)`), `node_has_label*`, `edge_has_type`, counts |
 | Attrs       | attribute dictionary (`get_or_create`, u16 cap), name↔id, store reads, index-update tracking |
 | IdContract  | `IdSpace` readers (verbatim) and the `IdSpaceContract` hypothesis |
-| Ids         | bounds, `max_*_id`, `node_id_space`, `cancel_*_id`, `open/roll/verify_id_batches`, `validate`, `grow_for_nodes`, `create_nodes`, `new`, `restore`, `new_version`, `rebuild_derived_matrices`, `trim_attr_stores` |
+| Ids         | bounds, `max_*_id`, `node_id_space`, `cancel_*_id`, `open/roll/verify_id_batches`, `validate`, `grow_for_nodes`, `create_nodes`, `new`, `restore` (refusals: RestoreCheck), `new_version`, `rebuild_derived_matrices`, `trim_attr_stores` |
 | Queries     | incident edges, degrees, `get_nodes`, label lookups, relationship/adjacency matrix builders |
 | Delete      | `delete_relationships`, `delete_implicit_edges`, `create_relationships_bulk` |
 | Labels      | `set_node_labels_product`, `set_nodes_labels_bulk`, `remove_nodes_labels`, `delete_nodes` |
@@ -158,3 +158,4 @@ import GraphQueries.FirstRel
 import GraphQueries.IdRust
 import GraphQueries.IdRustUse
 import GraphQueries.SchemaHash
+import GraphQueries.RestoreCheck

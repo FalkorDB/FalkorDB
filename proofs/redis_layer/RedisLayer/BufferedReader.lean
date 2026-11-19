@@ -5,8 +5,8 @@ import RedisLayer.BufferedIO
 `BufferedReader` (`buffered_io.rs:170-331`) and `PipeReader` (`:437-559`) share their
 read logic and differ only in where a chunk comes from: `Src.load` is `load_chunk`
 (`:212` / `:498`) and `Src.blob` is the `TYPE_BLOB` arm of `read_buffer` (`:307-325` /
-`:474-479`). `Res.crash` is a Rust panic or UB (indexing `buf[pos]` of an empty chunk,
-`load_string_buffer(NULL)`).
+`:474-479`). `Res.crash` is a Rust panic or UB (indexing `buf[pos]` of an empty chunk); since #3643 no
+source hands out an empty chunk, so no read crashes (`readW_no_crash`).
 -/
 namespace RedisLayer.BufferedIO
 
@@ -42,7 +42,8 @@ def readTag (e : Nat) (r : Rd σ) : Res (Rd σ) :=
     | [] => .crash
     | t :: rs => if t = e then .ok ⟨rs, r.src⟩ else .err
 
-/-- `read_bytes` (`:246` / `:538`). -/
+/-- `read_bytes` (`:265` / `:557`). `pos + n ≤ len` over `Nat` never overflows; `PipeReader`
+writes it as `pos.checked_add(n)` since #3643, which is the same test. -/
 def readBytes (n : Nat) (r : Rd σ) : Res (Bytes × Rd σ) :=
   if n ≤ r.rest.length then .ok (r.rest.take n, ⟨r.rest.drop n, r.src⟩) else .err
 
@@ -75,12 +76,14 @@ def readSeq : List W → Rd σ → Res (List W × Rd σ)
 /-! ## Sources -/
 
 /-- `BufferedReader::new` (`rdb` live) / `from_slice` (`rdb` NULL): chunks are the RDB's
-string buffers. `load_string_buffer(NULL)` is UB (`crash`); the blob arm checks NULL first
-and errors (`:310-314`). -/
+string buffers. `load_chunk` (`:220`, #3643) refuses a NULL handle (no next chunk: the
+payload ended early) and an empty chunk; before #3643 it called `load_string_buffer(NULL)`
+(UB) and handed an empty chunk to `buf[pos]` (panic). The blob arm checks NULL first and
+errors (`:329-333`). -/
 def listSrc (null : Bool) : Src (List Bytes) where
-  load := fun l => if null then .crash else match l with
+  load := fun l => if null then .err else match l with
     | [] => .err
-    | c :: cs => .ok (c, cs)
+    | c :: cs => if c = [] then .err else .ok (c, cs)
   blob := fun l => if null then .err else match l with
     | [] => .err
     | c :: cs => .ok (c, cs)

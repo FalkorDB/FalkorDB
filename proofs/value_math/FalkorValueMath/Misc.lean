@@ -294,7 +294,7 @@ theorem dedup_first_unseen (seen : List Nat) (h : Nat) (hn : h ∉ seen) : (dedu
   simp [dedupStep, hn]
 
 /-! ## v19 value codec (`Encode<19>` value.rs:2068; `Decode<19>` before #3339 — the current
-decoder `decode_value` value.rs:2166 is `decodeValue` in Nesting.lean) -/
+decoder `decode_value` value.rs:2191 is `decodeValue` in Nesting.lean) -/
 
 def T_NULL : Nat := 2 ^ 15
 def T_BOOL : Nat := 2 ^ 12
@@ -363,7 +363,20 @@ def encodeList : List (V F) → List (Tok F)
   | x :: xs => encode x ++ encodeList xs
 end
 
+/-- The `T_VECTOR_F32` arm of `decode_value` (value.rs:2240-2268 since #3643): a short
+buffer, a `dim` its buffer cannot hold, and (new in #3643) a buffer longer than
+`4 + 4 * dim` are refused. The per-float `off + 4 > len` check can no longer fire. -/
 def readVec (bytes : List Nat) : Option (List F) :=
+  if bytes.length < 4 then none else
+  let dim := fromLe4 (bytes.take 4)
+  let body := bytes.drop 4
+  if dim > body.length / 4 then none
+  else if bytes.length ≠ 4 + 4 * dim then none
+  else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
+
+/-- The vector reader before #3643: a buffer longer than `4 + 4 * dim` decoded to its
+first `dim` floats. Kept only to state what #3643 changed (`readVec_refuses_trailing`). -/
+def readVecPre3643 (bytes : List Nat) : Option (List F) :=
   if bytes.length < 4 then none else
   let dim := fromLe4 (bytes.take 4)
   let body := bytes.drop 4
@@ -372,6 +385,8 @@ def readVec (bytes : List Nat) : Option (List F) :=
 
 /- Historical `Decode<19>` before #3339 (b080a44c1; value.rs:2131 at 4a4f2a72f): no depth
 bound, so `GRAPH.RESTORE` input recursed once per `T_ARRAY` header. Fuel bounds the nesting.
+Its vector arm uses today's `readVec` (#3643), so it is "the current decoder without the
+depth cap" and `decodeValue_agrees` isolates the cap; the old lenient reader is `readVecPre3643`.
 The current decoder is `decodeValue` (Nesting.lean). -/
 def pre3339_decode : Nat → List (Tok F) → Option (V F × List (Tok F))
   | 0, _ => none
@@ -456,12 +471,58 @@ theorem readVec_vecBytes (v : List F) (hl : v.length < 2 ^ 32) : readVec co (vec
     simp [List.take_left' (le4_length _)]
   have hd : (le4 v.length ++ (v.map (fun x => le4 (co.bits x))).flatten).drop 4 =
       (v.map (fun x => le4 (co.bits x))).flatten := List.drop_left' (le4_length _)
-  rw [ite_eq_right (by omega), ht, hd, fromLe4_le4 _ hl, ite_eq_right (by rw [chunks_length]; omega)]
+  rw [ite_eq_right (by omega), ht, hd, fromLe4_le4 _ hl, ite_eq_right (by rw [chunks_length]; omega),
+    ite_eq_right (by rw [hlen]; simp)]
   congr 1
   apply List.ext_getElem (by simp)
   intro i h1 h2
   simp only [List.getElem_map, List.getElem_range]
   rw [chunks_get co v i h2, fromLe4_le4 _ (co.bits_lt _), co.ofBits_bits]
+
+/-- **#3643, new refusal**: a vector buffer with bytes after its `dim` floats (e.g. one more
+float, `4 + 4 * dim + 4` bytes) is refused. -/
+theorem readVec_refuses_trailing (v : List F) (extra : List Nat) (hl : v.length < 2 ^ 32)
+    (he : extra ≠ []) : readVec co (vecBytes co v ++ extra) = none := by
+  have hne : extra.length ≠ 0 := by simpa using he
+  have hd : (vecBytes co v ++ extra).drop 4 = (v.map (fun x => le4 (co.bits x))).flatten ++ extra := by
+    unfold vecBytes; rw [List.append_assoc]; exact List.drop_left' (le4_length _)
+  have ht : (vecBytes co v ++ extra).take 4 = le4 v.length := by
+    unfold vecBytes; rw [List.append_assoc]; exact List.take_left' (le4_length _)
+  have hlen : (vecBytes co v ++ extra).length = 4 + 4 * v.length + extra.length := by
+    unfold vecBytes; rw [List.length_append, List.length_append, le4_length, chunks_length]
+  unfold readVec
+  rw [hd, ht, hlen, fromLe4_le4 _ hl]
+  simp only [List.length_append, chunks_length]
+  split
+  · rfl
+  split
+  · rfl
+  rw [ite_cond_eq_true _ _ (by simp; omega)]
+
+/-- Before #3643 the same buffer decoded to the first `dim` floats. -/
+theorem readVecPre3643_trailing (v : List F) (extra : List Nat) (hl : v.length < 2 ^ 32) :
+    readVecPre3643 co (vecBytes co v ++ extra) = some v := by
+  have hd : (vecBytes co v ++ extra).drop 4 = (v.map (fun x => le4 (co.bits x))).flatten ++ extra := by
+    unfold vecBytes; rw [List.append_assoc]; exact List.drop_left' (le4_length _)
+  have ht : (vecBytes co v ++ extra).take 4 = le4 v.length := by
+    unfold vecBytes; rw [List.append_assoc]; exact List.take_left' (le4_length _)
+  have hlen : (vecBytes co v ++ extra).length = 4 + 4 * v.length + extra.length := by
+    unfold vecBytes; rw [List.length_append, List.length_append, le4_length, chunks_length]
+  unfold readVecPre3643
+  rw [hd, ht, hlen, fromLe4_le4 _ hl]
+  simp only [List.length_append, chunks_length]
+  split
+  · omega
+  split
+  · omega
+  congr 1
+  apply List.ext_getElem (by simp)
+  intro i h1 h2
+  simp only [List.getElem_map, List.getElem_range]
+  have hc := chunks_length co v
+  rw [List.drop_append_of_le_length (by omega),
+    List.take_append_of_le_length (by rw [List.length_drop]; omega),
+    chunks_get co v i h2, fromLe4_le4 _ (co.bits_lt _), co.ofBits_bits]
 
 /-- **Codec roundtrip**: every storable value decodes to itself, leaving the rest of
 the stream untouched (fuel: any bound above the value's size). -/

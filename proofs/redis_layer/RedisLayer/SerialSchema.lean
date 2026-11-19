@@ -3,8 +3,8 @@ import RedisLayer.Serial
 # Schema block of the v19 encoding (`src/serializers/mod.rs:262-743`)
 
 Faithful to the token layout; the index/constraint structures keep only what is written.
-`sim` is the similarity *code* the encoder computes (`:416-424`, `eq_ignore_ascii_case`
-abstracted as `simCode`), weights are `f64` bit patterns (`one` = `1.0`).
+`sim` is the similarity *code* the encoder computes (`:437-442`, `eq_ignore_ascii_case`
+abstracted as `simCode`, which only yields 0, 1 or 2: `Fin 3`), weights are `f64` bit patterns (`one` = `1.0`).
 
 Findings proven here:
 * Field-prefix loss (counterexample removed in bbee75955; the last revision that has them is 17ccc5412; **fixed by #3252**, cfe6e7945) — an index on an
@@ -58,7 +58,7 @@ def fieldType : Ty → Nat
   | .range => NUMERIC ||| STR ||| GEO
   | .vector => VECTOR
 
-variable (one : Nat) (simCode : Option Bytes → Nat)
+variable (one : Nat) (simCode : Option Bytes → Fin 3)
 
 /-- The phonetic string written (`:402-406`, #3514): an absent or empty code is written as
 C's `"no"` (`PHONETIC_OFF`), because C enables phonetic matching for any other string, an empty
@@ -72,10 +72,12 @@ def encField (attr : Bytes) (f : Fld) : List W :=
   ++ (if fieldType f.ty &&& VECTOR ≠ 0 then
         match f.vopts with
         | some v => [.u v.dim, .u (v.m.getD 16), .u (v.efc.getD 200), .u (v.efr.getD 10),
-                     .u (simCode v.sim)]
+                     .u (simCode v.sim).val]
         | none => []
       else [])
 
+/-- The similarity name of a metric code (`:700-703`); `decField` refuses any code above 2
+(#3643), so only `0` reaches the last arm. -/
 def simName : Nat → Bytes
   | 1 => "ip".toUTF8.toList.map (·.toNat)
   | 2 => "cosine".toUTF8.toList.map (·.toNat)
@@ -96,10 +98,12 @@ def failD {α} : Dec α := fun _ => none
 /-- `phonetic == PHONETIC_OFF → clear` (`:650-653`). -/
 def phonNorm (p : Bytes) : Bytes := if p = PHON_OFF then [] else p
 
-/-- **`decode_index_field` on main** (`:637-724`, #3514): the type word is a bitmask and every
+/-- **`decode_index_field`** (`:654-760`, #3514, #3643): the type word is a bitmask and every
 set type becomes its own field, in `db.indexes()` order (range, fulltext, vector); a word with
 no type or an unknown bit is an error (`:655-660`; the mask test `(ft ||| ANYW) ≠ ANYW` is exact for every `Nat`, not only
-the bits below 2^64); C's phonetic `"no"` comes back as our explicit off (`:650-653`). The attribute is the name verbatim (#3252). -/
+the bits below 2^64); C's phonetic `"no"` comes back as our explicit off (`:650-653`). The attribute is the name verbatim (#3252).
+A similarity code other than 0/1/2 is refused (#3643, `:700-708`; it used to read as euclidean);
+dimension, M and EF are kept as read, 0 included. -/
 def decField : Dec (Bytes × List Fld) :=
   Dec.bind rdB fun nb => Dec.bind rdU fun ft => Dec.bind rdD fun w =>
   Dec.bind rdU fun ns => Dec.bind rdB fun pb =>
@@ -113,8 +117,10 @@ def decField : Dec (Bytes × List Fld) :=
   if isV then
     Dec.bind rdU fun dim => Dec.bind rdU fun m => Dec.bind rdU fun efc =>
     Dec.bind rdU fun efr => Dec.bind rdU fun sc =>
-    pure' (strip U nb, rest ++ [⟨.vector, none, none, none,
-      some ⟨dim, some m, some efc, some efr, some (simName sc)⟩⟩])
+    if sc ≤ 2 then
+      pure' (strip U nb, rest ++ [⟨.vector, none, none, none,
+        some ⟨dim, some m, some efc, some efr, some (simName sc)⟩⟩])
+    else failD
   else pure' (strip U nb, rest)
 
 /-- What a field is after a round trip: text options materialised with their defaults
@@ -128,7 +134,7 @@ def normField (f : Fld) : Fld :=
   | .vector => match f.vopts with
     | some v => ⟨.vector, none, none, none,
         some ⟨v.dim, some (v.m.getD 16), some (v.efc.getD 200), some (v.efr.getD 10),
-              some (simName (simCode v.sim))⟩⟩
+              some (simName (simCode v.sim).val)⟩⟩
     | none => ⟨.vector, none, none, none, none⟩   -- see `vector_without_opts`
 
 /-- The attribute name the decoder recovers: the encoded one (#3252). -/
@@ -168,8 +174,18 @@ theorem decField_encField (attr : Bytes) (f : Fld) (ha : U.valid attr)
     cases vo with
     | none => simp at hv
     | some v =>
+      have hs : (simCode v.sim).val ≤ 2 := Nat.le_of_lt_succ (simCode v.sim).isLt
       simp [decField, encField, Dec.bind, rdB, rdU, rdD, pure', fieldType, attrBack, normField,
-        strip_nullTerm U attr ha, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR, FULLTEXT]
+        strip_nullTerm U attr ha, hs, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR, FULLTEXT]
+
+/-- #3643: an unknown similarity code is refused (`:704-708`); before, it read as euclidean. -/
+theorem decField_unknown_sim_refused (attr ph : Bytes) (w ns dim m efc efr sc : Nat) (hsc : 2 < sc)
+    (ts : List W) :
+    decField U ([.buf (nullTerm attr), .u VECTOR, .d w, .u ns, .buf (nullTerm ph),
+      .u dim, .u m, .u efc, .u efr, .u sc] ++ ts) = none := by
+  have : ¬ sc ≤ 2 := by omega
+  simp [decField, Dec.bind, rdB, rdU, rdD, failD, this, ANYW, RANGEW, NUMERIC, STR, GEO,
+    VECTOR, FULLTEXT]
 
 /-- **`field_name_kept`** (#3252): every attribute name survives the reload, `range:x`
 and `vector:x` included — `decField_encField` returns exactly the encoded name. -/
