@@ -4,16 +4,16 @@ import RedisLayer.TelemetryReg
 
 | here | there |
 | --- | --- |
-| `nextIds`          | `next_id` `:354` (`fetch_add(1)`) |
-| `writable`, `streamOps` | `stream_entries` `:268-327` |
-| `deleteStreamKey`  | `delete_stream` `:336` |
-| `runningRow`, `waitingRow` | `running_queries_reply` `:543`, `waiting_queries_reply` `:567` |
-| `distinctAlive`    | `hold_batch_graphs` `:758` |
-| `releaseSpawns`    | `release_batch_graphs` `:801` |
-| `keyHolds`         | `key_holds_graph`, `redis_type.rs:577` (moved there by #3819) |
-| `Flusher`, `start`, `stopped` | `start_flusher_thread` `:950`, `shutdown_flusher_thread` `:1003` |
-| `iter`             | one iteration of `flusher_loop` `:1024` after the batch is collected |
-| `setReplica`       | `set_is_replica` `:945` |
+| `nextIds`          | `next_id` `:519` (`fetch_add(1)`) |
+| `writable`, `streamOps` | `stream_entries` `:269-328` |
+| `deleteStreamKey`  | `delete_stream` `:501` |
+| `runningRow`, `waitingRow` | `running_queries_reply` `:721`, `waiting_queries_reply` `:745` |
+| `distinctAlive`    | `hold_batch_graphs` `:930` |
+| `releaseSpawns`    | `release_batch_graphs` `:961` |
+| `keyHolds`         | `key_holds_graph`, `redis_type.rs:608` (moved there by #3819) |
+| `Flusher`, `start`, `stopped` | `start_flusher_thread` `:1080`, `shutdown_flusher_thread` `:1133` |
+| `iter`, `iterSteps` | one iteration of `flusher_loop` `:1169` (#3844: no role/pause check; freed streams deleted first) |
+| `Pre3844.*`        | historical: the replica/pause branches and `set_is_replica`, removed by #3844 |
 -/
 namespace RedisLayer.Telemetry
 
@@ -166,14 +166,62 @@ theorem shutdown_frees_on_stop (f : Flusher) (w : Wait) (h : stopped (some w)) :
 theorem shutdown_closes_sender (f : Flusher) (e : Option Wait) : (shutdown f e).sender = false := by
   unfold shutdown; split <;> rfl
 
-/-! ## One flusher iteration (`:1102-1238`) -/
+/-! ## One flusher iteration (`flusher_loop` `:1169-1352`, since #3844) -/
 
 inductive Act
   | exitNoWrite          -- disconnected: leave without taking the GIL
   | skip                 -- nothing alive to write
-  | discard              -- became a replica: drop the held batch
-  | hold                 -- replica traffic paused: keep for later
-  | write                -- resolve, group, `stream_entries`
+  | write                -- delete freed streams, resolve, group, `stream_entries`
+  deriving DecidableEq, Repr
+
+/-- After the batch is collected. Since #3844 there is no role or pause check: the stream
+is node-local and written through the key API, which propagates nothing. -/
+def iter (disconnected anyAlive : Bool) : Act :=
+  if disconnected then .exitNoWrite
+  else if !anyAlive then .skip
+  else .write
+
+/-- Shutdown cannot deadlock on the GIL: a disconnected flusher never writes. -/
+theorem iter_disconnected (a : Bool) : iter true a = .exitNoWrite := rfl
+/-- Writing happens only connected, with a live graph — whatever the role. -/
+theorem iter_write_iff (d a : Bool) :
+    iter d a = .write ↔ d = false ∧ a = true := by
+  cases d <;> cases a <;> decide
+
+/-- What one iteration does under the GIL. -/
+inductive Step | gil | deleteFreed | resolve | write
+  deriving DecidableEq, Repr
+
+/-- `timeout`: `recv_timeout` timed out (`:1196-1205`); then only the freed-stream queue is
+served, and not once the channel is closed. Otherwise the batch arm (`:1252-1343`).
+`pending` is `FREED_GRAPH_STREAMS.is_pending()`. -/
+def iterSteps (timeout disconnected anyAlive pending : Bool) : List Step :=
+  if timeout then (if pending && !disconnected then [.gil, .deleteFreed] else [])
+  else match iter disconnected anyAlive with
+    | .exitNoWrite => []
+    | .skip => if pending then [.gil, .deleteFreed] else []
+    | .write => [.gil, .deleteFreed, .resolve, .write]
+
+/-- A disconnected flusher never takes the GIL (shutdown holds it while it waits). -/
+theorem iterSteps_disconnected (t a p : Bool) : Step.gil ∉ iterSteps t true a p := by
+  cases t <;> cases a <;> cases p <;> decide
+
+/-- Queued freed streams are deleted before any write of the same GIL section, so a graph
+recreated under a freed graph's key never has its new entries deleted. -/
+theorem iterSteps_delete_before_write (t d a p : Bool) (h : Step.write ∈ iterSteps t d a p) :
+    iterSteps t d a p = [.gil, .deleteFreed, .resolve, .write] := by
+  cases t <;> cases d <;> cases a <;> cases p <;> simp_all [iterSteps, iter]
+
+/-- A connected flusher that takes the GIL with streams pending deletes them. -/
+theorem iterSteps_serves_pending (t a : Bool) :
+    Step.deleteFreed ∈ iterSteps t false a true := by
+  cases t <;> cases a <;> decide
+
+namespace Pre3844
+/-- Historical (before #3844): the iteration also discarded the batch on a replica and held
+it through a replica pause. -/
+inductive Act
+  | exitNoWrite | skip | discard | hold | write
   deriving DecidableEq, Repr
 
 def iter (disconnected anyAlive isSlave paused : Bool) : Act :=
@@ -183,18 +231,12 @@ def iter (disconnected anyAlive isSlave paused : Bool) : Act :=
   else if paused then .hold
   else .write
 
-/-- Shutdown cannot deadlock on the GIL: a disconnected flusher never writes. -/
-theorem iter_disconnected (a s p : Bool) : iter true a s p = .exitNoWrite := rfl
-/-- A replica never gets stream keys of its own. -/
 theorem iter_replica_never_writes (d a p : Bool) : iter d a true p ≠ .write := by
   unfold iter; split <;> (try split) <;> simp_all
-/-- Writing happens only as master, unpaused, connected, with a live graph. -/
-theorem iter_write_iff (d a s p : Bool) :
-    iter d a s p = .write ↔ d = false ∧ a = true ∧ s = false ∧ p = false := by
-  cases d <;> cases a <;> cases s <;> cases p <;> decide
 
-/-- `set_is_replica`. -/
+/-- `set_is_replica` (removed by #3844). -/
 def setReplica (_old : Bool) (b : Bool) : Bool := b
 theorem setReplica_eq (o b : Bool) : setReplica o b = b := rfl
+end Pre3844
 
 end RedisLayer.Telemetry

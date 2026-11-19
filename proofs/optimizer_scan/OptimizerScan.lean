@@ -235,6 +235,14 @@ operator under the scan other than a childless `Argument` (`select_scan_node.rs:
 `VLCase.scanOnlyArgBelow`, `vlLeaf` (new) vs `vlLeafPre` (history); `vlLeaf_keeps_filter`,
 `vl_never_drops_filter`, `vlLeaf_eq_pre`, `vl_leaf_bug_case_fixed`.
 
+## PR #3593 (var-length leaf rewrite keeps children, allows undirected walks)
+`select_var_len_scan_node` (`select_scan_node.rs:594`) no longer refuses an undirected walk (the
+runtime now reverses it: `vlLeaf_bidir`, sound by `vl_reverse_sound_symm`), keeps every child of the
+old scan under the new `to` scan (`leafScan_keeps_below`, `vlLeaf_over_input`), and refuses when the
+edge attrs read an endpoint (`vlNonLeaf_attrs`) or a kept child may bind `to` (`subtree_may_bind`
+:568, `subtreeMayBind_spec`, `childSubtreeBinds_mayBind`, `vl_leaf_never_rebinds_to`). The #3264
+guards are `vlGuards3264`/`vlLeaf3264` (history; `vlLeaf3264_guards`, `vlLeaf_eq_3264`).
+
 ## PR #3821 (f71981fa3: equality-pinned endpoint tie-break)
 `score_endpoint` returns `(score, has_equality, filter_runs_late, cardinality)`;
 `collect_filtered_vars` also fills `equality` via the new `collect_equalities` (top-level `AND`

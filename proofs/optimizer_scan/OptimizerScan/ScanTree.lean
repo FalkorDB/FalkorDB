@@ -17,7 +17,7 @@ path (child indices from the root), which is exactly what `node_path` computes.
 | `collectOutputAliases` | `collect_output_aliases` 453 |
 | `nodePath`, `resolvePath` | `node_path` 504, `resolve_path` 521 |
 | `childSubtreeBinds` | `child_subtree_binds` 537 |
-| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 572 |
+| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 594; `subtreeMayBind`: `subtree_may_bind` 568 |
 
 Table lines re-mapped to PR #3821 (f71981fa3), which adds `collect_equalities` and the
 `has_equality` tie-break; line ranges inside older docstrings cite the revision they were written for.
@@ -755,7 +755,42 @@ theorem vl_reverse_sound (R : Nat → Nat → Prop) (Lf Lt : Nat → Prop) (lo h
   · rintro ⟨h1, h2, k, hk1, hk2, hr⟩; exact ⟨h2, h1, k, hk1, hk2, Reach.reverse hr⟩
   · rintro ⟨h1, h2, k, hk1, hk2, hr⟩; exact ⟨h2, h1, k, hk1, hk2, (reach_reverse_iff R k a b).mpr hr⟩
 
-/-- What `select_var_len_scan_node` (`select_scan_node.rs:510-666`) inspects. -/
+/-- Undirected walks (#3593): the pattern relation is symmetric, so walking it backwards is
+walking it forwards — `CondVarLenTraverseOp` reverses an undirected walk too (proofs/ops_traverse
+`VarLen.varLen_bidir_reverse_iff`), and the rewrite is sound for it as for a directed one. -/
+theorem vl_reverse_sound_symm (R : Nat → Nat → Prop) (hs : ∀ a b, R a b → R b a)
+    (Lf Lt : Nat → Prop) (lo hi : Nat) (a b : Nat) :
+    (Lf a ∧ Lt b ∧ ∃ k, lo ≤ k ∧ k ≤ hi ∧ Reach R k a b) ↔
+    (Lt b ∧ Lf a ∧ ∃ k, lo ≤ k ∧ k ≤ hi ∧ Reach R k b a) := by
+  have htr : tr R = R := by
+    funext x y; apply propext; exact ⟨hs y x, hs x y⟩
+  have := vl_reverse_sound R Lf Lt lo hi a b
+  rwa [htr] at this
+
+/-! ### `subtree_may_bind` (#3593) -/
+
+/-- `subtree_may_bind` (`select_scan_node.rs:568-583`): some child of the scan holds an opaque
+`Argument(None)` or binds `alias` (its `GetVariables`, full `(id, scope)` pair). -/
+def subtreeMayBind (getVars : PT → List Var) (t : PT) (alias : Var) : Bool :=
+  t.cs.any fun c => c.walk.contains (.argument none) || (getVars c).contains alias
+
+/-- **PROVEN**: `subtree_may_bind` is true iff a child holds an `Argument(None)` or binds `alias`. -/
+theorem subtreeMayBind_spec (gv : PT → List Var) (t : PT) (a : Var) :
+    subtreeMayBind gv t a = true ↔ ∃ c ∈ t.cs, IRk.argument none ∈ c.walk ∨ a ∈ gv c := by
+  simp [subtreeMayBind]
+
+/-- **PROVEN**: whatever `child_subtree_binds` proves binding, `subtree_may_bind` counts too; and an
+opaque `Argument` counts for `subtree_may_bind` where `child_subtree_binds` gives up. -/
+theorem childSubtreeBinds_mayBind (gv : PT → List Var) (t : PT) (a : Var)
+    (h : childSubtreeBinds gv t a = true) : subtreeMayBind gv t a = true := by
+  obtain ⟨_, c, hc, ha⟩ := (childSubtreeBinds_spec gv t a).1 h
+  exact (subtreeMayBind_spec gv t a).2 ⟨c, hc, Or.inr ha⟩
+
+/-! ### The rewrite decision -/
+
+/-- What `select_var_len_scan_node` (`select_scan_node.rs:594-791`) inspects. `bidirectional` and
+`scanOnlyArgBelow` are read only by the history (`vlGuards3264`, `vlLeaf3264`): #3593 dropped both
+refusals. -/
 structure VLCase where
   expandInto : Bool
   bidirectional : Bool
@@ -772,43 +807,94 @@ structure VLCase where
   argOpaque : Bool
   fromScore : Nat
   toScore : Nat
+  attrsReadFrom : Bool := false   -- the edge attributes read `from` (#3593, :634-639)
+  attrsReadTo : Bool := false     -- the edge attributes read `to`
+  belowMayBindTo : Bool := false  -- `subtree_may_bind(scan, to)` (#3593, :749)
 
+/-- Since #3593 an undirected walk is no longer refused (:624-630). -/
 def vlGuards (c : VLCase) : Bool :=
+  !c.expandInto && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan
+
+/-- The non-leaf rewrite (`select_scan_node.rs:698-718`): drop the planner's scan *and its wrapper
+    chain*, keeping what is under the scan. A `Filter` in the wrapper refuses it (#2390), and since
+    #3593 so do edge attributes reading `from` (which the drop unbinds). -/
+def vlNonLeaf (c : VLCase) : Bool :=
+  vlGuards c && !c.wrapperHasPending && !c.wrapperHasFilter && !c.attrsReadFrom && c.childBindsTo &&
+    c.scanHasChildren
+
+/-- The leaf rewrite (`select_scan_node.rs:720-791`): scan `to` instead, re-hanging *every* child of
+    the planner's scan under the new scan (`kept`, :755-759 and :782-785). Refused when the edge
+    attributes read an endpoint, the `Argument` leaf is opaque or binds `to`, the wrapper chain holds
+    a `Filter`, or anything below may bind `to` (`subtree_may_bind`). -/
+def vlLeaf (c : VLCase) : Bool :=
+  vlGuards c && !vlNonLeaf c && !c.attrsReadFrom && !c.attrsReadTo && !c.argOpaque && !c.argBindsTo &&
+    !c.wrapperHasFilter && !c.belowMayBindTo && decide (c.fromScore < c.toScore)
+
+/-- The scan the leaf rewrite builds (:776-788): `to`'s scan over the old scan's children, wrapped in
+`IncludePending` inside MERGE. -/
+def leafScan (to : Var) (labels : List Nat) (kept : List PT) (inMerge : Bool) : PT :=
+  let scan := if labels.isEmpty then PT.node (.allNodeScan to) kept else PT.node (.labelScan to labels) kept
+  if inMerge then .node .includePending [scan] else scan
+
+/-- The scan under the (optional) `IncludePending`. -/
+def leafScanCore (t : PT) : PT :=
+  match t with
+  | .node .includePending [s] => s
+  | t => t
+
+/-- **PROVEN** (#3593): the new scan keeps every child of the planner's scan, in order — nothing that
+fed the old scan (an earlier clause, an `UNWIND`, an `Argument`) is pruned. -/
+theorem leafScan_keeps_below (to : Var) (labels : List Nat) (kept : List PT) (m : Bool) :
+    (leafScanCore (leafScan to labels kept m)).cs = kept := by
+  cases m <;> cases labels <;> simp [leafScan, leafScanCore, PT.cs]
+
+/-! #### History: the rewrite as of #3264 (before #3593) -/
+
+def vlGuards3264 (c : VLCase) : Bool :=
   !c.expandInto && !c.bidirectional && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan
 
-/-- The non-leaf rewrite (`select_scan_node.rs:574-617`): drop the planner's scan *and its wrapper
-    chain*, keeping what is under the scan. Since #2390 a `Filter` in the wrapper refuses it. -/
-def vlNonLeaf (c : VLCase) : Bool :=
-  vlGuards c && !c.wrapperHasPending && !c.wrapperHasFilter && c.childBindsTo && c.scanHasChildren
+def vlNonLeaf3264 (c : VLCase) : Bool :=
+  vlGuards3264 c && !c.wrapperHasPending && !c.wrapperHasFilter && c.childBindsTo && c.scanHasChildren
 
-/-- The leaf rewrite (`select_scan_node.rs:623-686`): scan `to` instead, replacing the *whole* child
-    subtree (`node_mut(child_idx).prune()`, line 684) — wrapper chain included. Since #3264 it is
-    refused when the wrapper chain holds a `Filter` or the scan has anything but a childless
-    `Argument` under it (`select_scan_node.rs:630-641`). -/
-def vlLeaf (c : VLCase) : Bool :=
-  vlGuards c && !vlNonLeaf c && !c.wrapperHasFilter && c.scanOnlyArgBelow &&
+/-- The leaf rewrite as of #3264: carried over only a childless `Argument`. -/
+def vlLeaf3264 (c : VLCase) : Bool :=
+  vlGuards3264 c && !vlNonLeaf3264 c && !c.wrapperHasFilter && c.scanOnlyArgBelow &&
     !c.argOpaque && !c.argBindsTo && decide (c.fromScore < c.toScore)
 
 /-- The leaf rewrite before #3264 (history, base 343e077f2): no `Filter` / below-scan check. -/
 def vlLeafPre (c : VLCase) : Bool :=
-  vlGuards c && !vlNonLeaf c && !c.argOpaque && !c.argBindsTo && decide (c.fromScore < c.toScore)
+  vlGuards3264 c && !vlNonLeaf3264 c && !c.argOpaque && !c.argBindsTo && decide (c.fromScore < c.toScore)
 
 /-- **PROVEN** (#2390): the non-leaf rewrite never drops a `Filter` (nor an `IncludePending`). -/
 theorem vlNonLeaf_keeps_wrappers (c : VLCase) (h : vlNonLeaf c = true) :
     c.wrapperHasFilter = false ∧ c.wrapperHasPending = false := by
-  simp [vlNonLeaf] at h; exact ⟨h.1.1.2, h.1.1.1.2⟩
+  simp [vlNonLeaf] at h; exact ⟨h.1.1.1.2, h.1.1.1.1.2⟩
 
-/-- The leaf rewrite fires only when every guard holds (ties keep the direction). -/
+/-- **PROVEN** (#3593): the non-leaf rewrite unbinds `from`, so it never fires when the edge attributes
+read `from`. -/
+theorem vlNonLeaf_attrs (c : VLCase) (h : vlNonLeaf c = true) : c.attrsReadFrom = false := by
+  simp [vlNonLeaf] at h; exact h.1.1.2
+
+/-- The leaf rewrite fires only when every guard holds (ties keep the direction). Since #3593 an
+undirected walk is no longer a refusal (`vlLeaf_bidir`, sound by `vl_reverse_sound_symm`); the
+history statement is `vlLeaf3264_guards`. -/
 theorem vlLeaf_guards (c : VLCase) (h : vlLeaf c = true) :
+    c.expandInto = false ∧ c.allShortest = false ∧ c.sameEnds = false ∧
+    c.childIsFromScan = true ∧ c.argBindsTo = false ∧ c.argOpaque = false ∧ c.fromScore < c.toScore ∧
+    c.attrsReadFrom = false ∧ c.attrsReadTo = false ∧ c.belowMayBindTo = false := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp_all [vlLeaf, vlGuards]
+
+/-- History (#3264): the leaf rewrite as it stood refused an undirected walk. -/
+theorem vlLeaf3264_guards (c : VLCase) (h : vlLeaf3264 c = true) :
     c.expandInto = false ∧ c.bidirectional = false ∧ c.allShortest = false ∧ c.sameEnds = false ∧
     c.childIsFromScan = true ∧ c.argBindsTo = false ∧ c.argOpaque = false ∧ c.fromScore < c.toScore := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp_all [vlLeaf, vlGuards]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp_all [vlLeaf3264, vlGuards3264]
 
-/-- **PROVEN** (#3264): the leaf rewrite never prunes a `Filter` wrapper, nor an operator under the
-    planner's scan other than a childless `Argument` (which it carries over). -/
+/-- **PROVEN** (#3264, #3593): the leaf rewrite never prunes a `Filter` wrapper and never rescans `to`
+over a subtree that may bind it; everything under the old scan is kept (`leafScan_keeps_below`). -/
 theorem vlLeaf_keeps_filter (c : VLCase) (h : vlLeaf c = true) :
-    c.wrapperHasFilter = false ∧ c.scanOnlyArgBelow = true := by
-  cases hf : c.wrapperHasFilter <;> cases ho : c.scanOnlyArgBelow <;> simp_all [vlLeaf]
+    c.wrapperHasFilter = false ∧ c.belowMayBindTo = false := by
+  cases hf : c.wrapperHasFilter <;> cases ho : c.belowMayBindTo <;> simp_all [vlLeaf]
 
 /-- **PROVEN** (#3264): neither rewrite of `select_var_len_scan_node` drops a `Filter` wrapper. -/
 theorem vl_never_drops_filter (c : VLCase) (h : vlNonLeaf c = true ∨ vlLeaf c = true) :
@@ -817,11 +903,55 @@ theorem vl_never_drops_filter (c : VLCase) (h : vlNonLeaf c = true ∨ vlLeaf c 
   · exact (vlNonLeaf_keeps_wrappers c h).1
   · exact (vlLeaf_keeps_filter c h).1
 
-/-- The new rewrite is the old one plus the two #3264 refusals. -/
+/-- History (#3264): that rewrite was the pre-#3264 one plus the two #3264 refusals. -/
 theorem vlLeaf_eq_pre (c : VLCase) :
-    vlLeaf c = (vlLeafPre c && !c.wrapperHasFilter && c.scanOnlyArgBelow) := by
-  simp only [vlLeaf, vlLeafPre]; cases vlGuards c <;> cases vlNonLeaf c <;> cases c.wrapperHasFilter <;>
-    cases c.scanOnlyArgBelow <;> cases c.argOpaque <;> cases c.argBindsTo <;> simp
+    vlLeaf3264 c = (vlLeafPre c && !c.wrapperHasFilter && c.scanOnlyArgBelow) := by
+  simp only [vlLeaf3264, vlLeafPre]; cases vlGuards3264 c <;> cases vlNonLeaf3264 c <;>
+    cases c.wrapperHasFilter <;> cases c.scanOnlyArgBelow <;> cases c.argOpaque <;> cases c.argBindsTo <;>
+    simp
+
+/-- **PROVEN** (#3593 conservative on what #3264 rewrote): on a directed walk whose edge attributes
+read neither endpoint, with only a childless `Argument` under the scan (so `subtree_may_bind` is
+that `Argument` being opaque or binding `to`), the rewrite decides exactly as #3264's did. -/
+theorem vlLeaf_eq_3264 (c : VLCase) (hb : c.bidirectional = false) (hf : c.attrsReadFrom = false)
+    (ht : c.attrsReadTo = false) (ho : c.scanOnlyArgBelow = true)
+    (hm : c.belowMayBindTo = (c.argOpaque || c.argBindsTo)) :
+    vlLeaf c = vlLeaf3264 c := by
+  simp only [vlLeaf, vlLeaf3264, vlNonLeaf, vlNonLeaf3264, vlGuards, vlGuards3264, hb, hf, ht, ho, hm]
+  cases c.expandInto <;> cases c.allShortest <;> cases c.sameEnds <;> cases c.oneChild <;>
+    cases c.childIsFromScan <;> cases c.wrapperHasPending <;> cases c.wrapperHasFilter <;>
+    cases c.childBindsTo <;> cases c.scanHasChildren <;> cases c.argOpaque <;> cases c.argBindsTo <;> simp
+
+/-- **PROVEN** (#3593): the leaf rewrite now reverses an undirected walk, which #3264 refused. -/
+def vlBidirCase : VLCase :=
+  { expandInto := false, bidirectional := true, allShortest := false, sameEnds := false,
+    oneChild := true, childIsFromScan := true, wrapperHasPending := false, wrapperHasFilter := false,
+    childBindsTo := false, scanHasChildren := false, scanOnlyArgBelow := true, argBindsTo := false,
+    argOpaque := false, fromScore := 0, toScore := 1 }
+
+theorem vlLeaf_bidir : vlLeaf vlBidirCase = true ∧ vlLeaf3264 vlBidirCase = false := by
+  decide
+
+/-- **PROVEN** (#3593): an operator under the scan (an earlier clause, an `UNWIND`) no longer
+refuses the leaf rewrite; it is kept under the new scan (`leafScan_keeps_below`). -/
+def vlInputCase : VLCase :=
+  { expandInto := false, bidirectional := false, allShortest := false, sameEnds := false,
+    oneChild := true, childIsFromScan := true, wrapperHasPending := false, wrapperHasFilter := false,
+    childBindsTo := false, scanHasChildren := true, scanOnlyArgBelow := false, argBindsTo := false,
+    argOpaque := false, fromScore := 0, toScore := 1 }
+
+theorem vlLeaf_over_input : vlLeaf vlInputCase = true ∧ vlLeaf3264 vlInputCase = false := by
+  decide
+
+/-- **PROVEN** (#3593): `MATCH (b:B) WHERE (b)-[:X]->() MATCH (a)-[:R*1..2]->(b:B)`: the pattern
+predicate's sub-plan under the scan binds `b` but holds an opaque `Argument`, so
+`child_subtree_binds` cannot prove it and the non-leaf rewrite is out; `subtree_may_bind` counts it,
+so the leaf rewrite does not rescan `b` over it (which would lose the correlation). -/
+theorem vl_leaf_never_rebinds_to (gv : PT → List Var) (t : PT) (to : Var)
+    (c : VLCase) (hm : c.belowMayBindTo = subtreeMayBind gv t to)
+    (hb : ∃ ch ∈ t.cs, IRk.argument none ∈ ch.walk ∨ to ∈ gv ch) : vlLeaf c = false := by
+  have : c.belowMayBindTo = true := by rw [hm]; exact (subtreeMayBind_spec gv t to).2 hb
+  simp [vlLeaf, this]
 
 /-! ### CONFIRMED BUG (pre-existing, not fixed by #2390; FIXED by #3264): the leaf rewrite drops a wrapper `Filter`
 
@@ -847,7 +977,8 @@ def vlBugCase : VLCase :=
 theorem vl_leaf_fires_over_filter : vlLeafPre vlBugCase = true ∧ vlBugCase.wrapperHasFilter = true := by
   decide
 
-/-- **PROVEN** (#3264 fixes it): the leaf rewrite now refuses the repro and keeps `a.v = 1`. -/
+/-- **PROVEN** (#3264 fixes it, still so after #3593): the leaf rewrite refuses the repro and keeps
+`a.v = 1`. -/
 theorem vl_leaf_bug_case_fixed : vlLeaf vlBugCase = false := by
   decide
 

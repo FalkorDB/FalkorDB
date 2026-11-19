@@ -41,8 +41,10 @@ use std::{
 };
 
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
-use crate::planner::optimizer::collect_expr_variables;
+use crate::planner::optimizer::collect_expr_scoped_variables;
+use crate::planner::optimizer::collect_single_variable_conjuncts;
 use crate::planner::optimizer::references::ir_references_variable;
+use crate::planner::optimizer::{endpoint_scan_score, walk_scans_to_endpoint};
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
 use crate::tree;
@@ -54,7 +56,7 @@ use crate::{
     index::indexer::{IndexQuery, IndexType},
     parser::ast::{
         AllShortestPaths, BoundQueryIR, ExprIR, NestedPlanRef, QueryExpr, QueryGraph, QueryIR,
-        QueryNode, QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable,
+        QueryNode, QueryPath, QueryRelationship, SetItem, SupportAggregation, VarKey, Variable,
     },
     runtime::functions::GraphFn,
     runtime::orderset::OrderSet,
@@ -69,12 +71,12 @@ pub enum IR {
     /// Receives input from parent operator.
     ///
     /// The payload lists the variables the argument rows are known to bind,
-    /// as `(id, scope_id)` pairs: `Some(vars)` means the incoming rows bind
+    /// by their `VarKey`: `Some(vars)` means the incoming rows bind
     /// exactly these variables, `None` means unknown (optimizers must stay
     /// conservative). The scope must be carried — `fresh_var` numbers ids
     /// per scope (`id = scope_vars[scope_id].len()`), so a bare id is
     /// ambiguous across scopes.
-    Argument(Option<Vec<(u32, u32)>>),
+    Argument(Option<Vec<VarKey>>),
     /// OPTIONAL MATCH - returns nulls if no match
     Optional(Vec<Variable>),
     /// CALL procedure with arguments, yielding outputs
@@ -579,17 +581,17 @@ pub(super) fn inline_attrs_to_filter(
 fn split_inline_attrs(
     alias: &Variable,
     attrs: &QueryExpr<Variable>,
-    pending: &HashSet<(u32, u32)>,
+    pending: &HashSet<VarKey>,
     local: &[&Variable],
     lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
-    seen: &mut HashSet<(u32, u32, usize)>,
+    seen: &mut HashSet<(VarKey, usize)>,
 ) -> Option<QueryExpr<Variable>> {
     let reads_pending = |entry: &DynNode<ExprIR<Variable>>| {
         entry.walk::<Bfs>().any(|data| {
             matches!(
                 data,
-                ExprIR::Variable(v) if pending.contains(&(v.id, v.scope_id))
-                    && !local.iter().any(|l| l.id == v.id && l.scope_id == v.scope_id)
+                ExprIR::Variable(v) if pending.contains(&v.key())
+                    && !local.iter().any(|l| l.key() == v.key())
             )
         })
     };
@@ -610,7 +612,7 @@ fn split_inline_attrs(
     // The binder clones an endpoint for each occurrence that writes its own
     // attrs, but the clones share the map: lift each map's filter once, as
     // `lower_inline_attrs` does, or a non-deterministic predicate runs twice.
-    if seen.insert((alias.id, alias.scope_id, Arc::as_ptr(attrs) as usize)) {
+    if seen.insert((alias.key(), Arc::as_ptr(attrs) as usize)) {
         lifted.extend(inline_attrs_to_filter(alias, &moved));
     }
     Some(Arc::new(kept))
@@ -619,12 +621,13 @@ fn split_inline_attrs(
 /// Whether an inline-attribute map of `pattern` reads a variable in `visited`.
 fn pattern_attrs_read_visited(
     pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
-    visited: &HashSet<(u32, u32)>,
+    visited: &HashSet<VarKey>,
 ) -> bool {
     let reads = |attrs: &QueryExpr<Variable>| {
-        attrs.root().walk::<Bfs>().any(
-            |data| matches!(data, ExprIR::Variable(v) if visited.contains(&(v.id, v.scope_id))),
-        )
+        attrs
+            .root()
+            .walk::<Bfs>()
+            .any(|data| matches!(data, ExprIR::Variable(v) if visited.contains(&v.key())))
     };
     pattern.nodes().iter().any(|n| reads(&n.attrs))
         || pattern.relationships().iter().any(|r| reads(&r.attrs))
@@ -644,13 +647,13 @@ fn pattern_attrs_read_visited(
 /// Returns `None` when no entry has to move.
 fn lift_cross_entity_attrs(
     pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
-    visited: &HashSet<(u32, u32)>,
+    visited: &HashSet<VarKey>,
     lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
-    lifted_rels: &mut HashSet<(u32, u32)>,
+    lifted_rels: &mut HashSet<VarKey>,
 ) -> Option<QueryGraph<Arc<String>, Arc<String>, Variable>> {
-    let pending: HashSet<(u32, u32)> = pattern
+    let pending: HashSet<VarKey> = pattern
         .variables()
-        .map(|v| (v.id, v.scope_id))
+        .map(|v| v.key())
         .filter(|key| !visited.contains(key))
         .collect();
     let before = lifted.len();
@@ -658,10 +661,10 @@ fn lift_cross_entity_attrs(
     // relationships; rewrite each occurrence once so its filter is not
     // emitted twice.
     let mut rewritten: HashMap<*const QueryNode<Arc<String>, Variable>, _> = HashMap::new();
-    let mut seen: HashSet<(u32, u32, usize)> = HashSet::new();
+    let mut seen: HashSet<(VarKey, usize)> = HashSet::new();
     let mut rewrite_node = |node: &Arc<QueryNode<Arc<String>, Variable>>,
                             lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
-                            seen: &mut HashSet<(u32, u32, usize)>| {
+                            seen: &mut HashSet<(VarKey, usize)>| {
         rewritten
             .entry(Arc::as_ptr(node))
             .or_insert_with(|| {
@@ -690,11 +693,11 @@ fn lift_cross_entity_attrs(
     // carries it, and from `nodes()` only a node no relationship touches: the
     // binder gives the relationship's endpoint its own copy of the map, and
     // reading both would apply one predicate twice.
-    let endpoints: HashSet<(u32, u32)> = pattern
+    let endpoints: HashSet<VarKey> = pattern
         .relationships()
         .iter()
         .flat_map(|rel| [&rel.from, &rel.to])
-        .map(|n| (n.alias.id, n.alias.scope_id))
+        .map(|n| n.alias.key())
         .collect();
     let mut hops = Vec::new();
     for rel in pattern.relationships() {
@@ -713,14 +716,14 @@ fn lift_cross_entity_attrs(
             None
         };
         if attrs.is_some() {
-            lifted_rels.insert((rel.alias.id, rel.alias.scope_id));
+            lifted_rels.insert(rel.alias.key());
         }
         hops.push((from, to, attrs));
     }
     let mut res = QueryGraph::default();
     let mut dropped = Vec::new();
     for node in pattern.nodes() {
-        let target = if endpoints.contains(&(node.alias.id, node.alias.scope_id)) {
+        let target = if endpoints.contains(&node.alias.key()) {
             &mut dropped
         } else {
             &mut *lifted
@@ -773,11 +776,11 @@ fn lift_cross_entity_attrs(
 /// property template from them and `runtime/ops/merge.rs` builds the merge
 /// lookup hash key — and those patterns never pass through here.
 fn lower_inline_attrs(
-    lowered: &mut HashSet<(u32, u32, usize)>,
+    lowered: &mut HashSet<(VarKey, usize)>,
     alias: &Variable,
     attrs: &QueryExpr<Variable>,
 ) -> Option<DynTree<ExprIR<Variable>>> {
-    if !lowered.insert((alias.id, alias.scope_id, Arc::as_ptr(attrs) as usize)) {
+    if !lowered.insert((alias.key(), Arc::as_ptr(attrs) as usize)) {
         return None;
     }
     inline_attrs_to_filter(alias, attrs)
@@ -895,10 +898,10 @@ fn has_labels_filter(
 ///   during pattern-predicate decomposition without collisions.
 #[derive(Default)]
 pub struct Planner {
-    /// Variable (id, scope_id) pairs that are already bound in the current
+    /// Keys of the variables that are already bound in the current
     /// execution stream.  Tracking scope alongside id prevents inner-scope
     /// variables from shadowing outer-scope variables with the same id.
-    visited: HashSet<(u32, u32)>,
+    visited: HashSet<VarKey>,
     /// Binder-assigned variables grouped by scope ID.
     /// Used to derive fresh variable IDs within each scope.
     scope_vars: Vec<Vec<Variable>>,
@@ -907,7 +910,7 @@ pub struct Planner {
     /// an already-bound variable that are missing from this set (e.g.
     /// clause-local labels from an OPTIONAL MATCH on a bound alias) must be
     /// re-verified with a hasLabels filter.
-    verified_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    verified_labels: HashMap<VarKey, OrderSet<Arc<String>>>,
     /// Plans for the `ExprIR::NestedPlan`s minted so far, by id; `finish`
     /// hangs them under the plan's root.
     nested_plans: Vec<DynTree<IR>>,
@@ -1041,7 +1044,7 @@ impl Planner {
     /// runtime creates an inline Argument for the input.
     fn add_argument_to_leaves(
         tree: &mut DynTree<IR>,
-        bound_vars: Option<&[(u32, u32)]>,
+        bound_vars: Option<&[VarKey]>,
     ) {
         let mut leaves = Vec::new();
 
@@ -1375,11 +1378,8 @@ impl Planner {
         comprehension: ExtractedComprehension,
         extracted: &mut Vec<ExtractedComprehension>,
     ) -> DynTree<ExprIR<Variable>> {
-        let is_loop_var = |v: &Variable, loop_vars: &[Variable]| {
-            loop_vars
-                .iter()
-                .any(|l| l.id == v.id && l.scope_id == v.scope_id)
-        };
+        let is_loop_var =
+            |v: &Variable, loop_vars: &[Variable]| loop_vars.iter().any(|l| l.key() == v.key());
         let reads = Self::pattern_expr_variables(node);
         if !reads.iter().any(|v| is_loop_var(v, &self.loop_vars)) {
             let var = comprehension.var.clone();
@@ -1392,7 +1392,7 @@ impl Planner {
         // the outer stream.
         let saved = self.visited.clone();
         for v in self.loop_vars.iter().chain(&self.pattern_vars) {
-            self.visited.insert((v.id, v.scope_id));
+            self.visited.insert(v.key());
         }
         let plan = self.build_pattern_comprehension_plan(&comprehension);
         // What the nested plan reads from the row: variables bound outside
@@ -1400,7 +1400,7 @@ impl Planner {
         // expression uses see them.
         let free: Vec<Variable> = reads
             .into_iter()
-            .filter(|v| self.visited.contains(&(v.id, v.scope_id)))
+            .filter(|v| self.visited.contains(&v.key()))
             .collect();
         self.visited = saved;
 
@@ -1422,10 +1422,7 @@ impl Planner {
     fn pattern_expr_variables(node: &DynNode<ExprIR<Variable>>) -> Vec<Variable> {
         let mut vars: Vec<Variable> = vec![];
         let mut add = |v: &Variable| {
-            if !vars
-                .iter()
-                .any(|w| w.id == v.id && w.scope_id == v.scope_id)
-            {
+            if !vars.iter().any(|w| w.key() == v.key()) {
                 vars.push(v.clone());
             }
         };
@@ -1508,7 +1505,7 @@ impl Planner {
             });
         }
         for c in &extracted {
-            self.visited.insert((c.var.id, c.var.scope_id));
+            self.visited.insert(c.var.key());
         }
         chain
     }
@@ -1568,7 +1565,7 @@ impl Planner {
             .map(|c| self.build_pattern_comprehension_plan(c))
             .collect();
         for c in &extracted {
-            self.visited.insert((c.var.id, c.var.scope_id));
+            self.visited.insert(c.var.key());
         }
         (Arc::new(rebuilt), sub_plans)
     }
@@ -1955,10 +1952,7 @@ impl Planner {
         if labels.peek().is_none() {
             return;
         }
-        let entry = self
-            .verified_labels
-            .entry((var.id, var.scope_id))
-            .or_default();
+        let entry = self.verified_labels.entry(var.key()).or_default();
         for l in labels {
             if !entry.contains(l) {
                 entry.insert(l.clone());
@@ -1972,9 +1966,7 @@ impl Planner {
         &self,
         node: &QueryNode<Arc<String>, Variable>,
     ) -> Vec<Arc<String>> {
-        let verified = self
-            .verified_labels
-            .get(&(node.alias.id, node.alias.scope_id));
+        let verified = self.verified_labels.get(&node.alias.key());
         node.labels
             .iter()
             .filter(|l| !verified.is_some_and(|v| v.contains(*l)))
@@ -2000,9 +1992,15 @@ impl Planner {
         let mut vec = vec![];
         // Variables the WHERE predicate constrains. Used below to order the
         // hops of a component so constrained endpoints are reached first.
-        let filter_vars: HashSet<u32> = filter
+        let filter_vars: HashSet<VarKey> = filter
             .as_ref()
-            .map_or_default(|f| collect_expr_variables(f));
+            .map_or_default(|f| collect_expr_scoped_variables(f));
+        // The subset of those a promoted walk can start from: variables a WHERE
+        // conjunct constrains by itself, evaluable as soon as the endpoint is
+        // scanned (`p.id = length(r)` waits for the path, so it anchors nothing).
+        let anchor_vars: HashSet<VarKey> = filter
+            .as_ref()
+            .map_or_default(|f| collect_single_variable_conjuncts(f));
         // Collect extra filters for bound variables with new constraints
         // (labels or inline properties). These are applied as top-level
         // filters rather than as plan components, so they don't interfere
@@ -2010,14 +2008,25 @@ impl Planner {
         let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
         // Relationships whose attrs were lifted: the Filter reads the edge, so
         // the traversal must emit every parallel edge for it to test.
-        let mut lifted_rels: HashSet<(u32, u32)> = HashSet::new();
+        let mut lifted_rels: HashSet<VarKey> = HashSet::new();
         let lifted =
             lift_cross_entity_attrs(pattern, &self.visited, &mut bound_filters, &mut lifted_rels);
         let pattern = lifted.as_ref().unwrap_or(pattern);
         // Inline attrs already lowered to a Filter in this clause, keyed by
         // (alias, attrs map identity). See `lower_inline_attrs`.
-        let mut lowered_attrs: HashSet<(u32, u32, usize)> = HashSet::new();
-        for component in pattern.connected_components() {
+        let mut lowered_attrs: HashSet<(VarKey, usize)> = HashSet::new();
+        // Whether an earlier clause bound anything. Reversing a promoted walk
+        // rebuilds its scan, which would drop an earlier clause's input if one
+        // sits underneath. Components of this clause are independent of each
+        // other, so what they bind does not count.
+        let bound_before_clause = !self.visited.is_empty();
+        // Computed once: the decomposition is a graph walk.
+        let components = pattern.connected_components();
+        let single_component = components.len() == 1
+            && !filter
+                .as_ref()
+                .is_some_and(|f| Self::has_pattern_expr(&f.root()));
+        for component in components {
             let relationships = component.relationships();
             // Endpoints already bound by earlier clauses may carry labels
             // that were never enforced by a scan or traversal (e.g.
@@ -2025,10 +2034,7 @@ impl Planner {
             // Verify them with an explicit hasLabels filter.
             for rel in relationships {
                 for endpoint in [&rel.from, &rel.to] {
-                    if self
-                        .visited
-                        .contains(&(endpoint.alias.id, endpoint.alias.scope_id))
-                    {
+                    if self.visited.contains(&endpoint.alias.key()) {
                         let missing = self.unverified_labels(endpoint);
                         if !missing.is_empty() {
                             bound_filters.push(has_labels_filter(&endpoint.alias, &missing));
@@ -2042,9 +2048,101 @@ impl Planner {
             // traversals (especially self-loops / ExpandInto) are planned as
             // leaves and variable-length traversals sit above them.
             let mut sorted_rels: Vec<_> = relationships.to_vec();
+            // An endpoint the query constrains (inline attributes, or a WHERE
+            // predicate) is a cheap place to start: an index lookup or a short
+            // scan rather than every node of a label.
+            let is_constrained = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                n.attrs.root().num_children() > 0 || anchor_vars.contains(&n.alias.key())
+            };
+            let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                is_constrained(&r.from) || is_constrained(&r.to)
+            };
+            // A variable-length hop on an anchored endpoint leads the component
+            // when no fixed-length hop is anchored and nothing is bound yet.
+            // Planned last, as the sort below does by default, it would sit
+            // above a fixed-length hop that `select_scan_node` then starts from
+            // an unrelated label scan, and the var-length expansion runs from
+            // every candidate that scan finds (#2558).
+            //
+            // Only a walk that can start the plan leads, and the hops after it
+            // follow the pattern outward (see below), so each one has a bound
+            // endpoint when its turn comes:
+            //   - no walk in the component reads a variable in its endpoint or
+            //     edge attributes, so moving it loses no match;
+            //   - the endpoint `select_var_len_scan_node` will scan is the
+            //     anchored one. That pass scans the endpoint with the higher
+            //     `endpoint_scan_score` (the `to` side only when strictly
+            //     higher, since the walk can run either way), so the decision is
+            //     made here with the same score and a predicate that mentions
+            //     an endpoint at all (`a.x = c.x`) counts for it, anchored or not.
+            // Otherwise a walk keeps its place after the fixed-length hops,
+            // where its endpoints are bound by the hops before it.
+            let var_len_anchor_leads = !bound_before_clause
+                && !relationships.iter().any(|r| {
+                    r.min_hops.is_none()
+                        && r.all_shortest_paths == AllShortestPaths::No
+                        && anchored(r)
+                });
+            let references_variable =
+                |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                    [&r.attrs, &r.from.attrs, &r.to.attrs]
+                        .into_iter()
+                        .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
+                };
+            // The WHERE sits above everything the clause plans. Scan selection
+            // reads the Filters directly above the component (through its own
+            // traversals), so a predicate is only visible to it when the
+            // component is the clause's only one (no CartesianProduct between)
+            // and is a tree (a cycle or self-loop plans an `ExpandInto`, which
+            // hides it), and the WHERE holds no pattern (that plans an `Apply`
+            // between). Otherwise only the inline attributes count here.
+            let where_visible =
+                single_component && relationships.len() + 1 == component.nodes().len();
+            let scan_score = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                endpoint_scan_score(
+                    n.attrs.root().num_children() > 0
+                        || (where_visible && filter_vars.contains(&n.alias.key())),
+                    !n.labels.is_empty(),
+                )
+            };
+            let is_anchored_end = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                n.attrs.root().num_children() > 0
+                    || (where_visible && anchor_vars.contains(&n.alias.key()))
+            };
+            let leads_from_anchor = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                let lead = if walk_scans_to_endpoint(scan_score(&r.from), scan_score(&r.to)) {
+                    &r.to
+                } else {
+                    &r.from
+                };
+                is_anchored_end(lead)
+            };
+            // Every hop must be free to move: none reads a variable some other
+            // hop binds (a fixed hop's edge filter or an endpoint's attrs would
+            // run before the hop that binds it), and none is an allShortestPaths
+            // (which needs both ends).
+            let walks_can_move = relationships
+                .iter()
+                .all(|r| r.all_shortest_paths == AllShortestPaths::No && !references_variable(r));
+            let leading_walk = if var_len_anchor_leads && walks_can_move {
+                relationships
+                    .iter()
+                    .find(|r| {
+                        r.min_hops.is_some()
+                            && r.from.alias.id != r.to.alias.id
+                            && leads_from_anchor(r)
+                    })
+                    .map(|r| r.alias.key())
+            } else {
+                None
+            };
             sorted_rels.sort_by_key(|r| {
                 let base = if r.all_shortest_paths == AllShortestPaths::No {
-                    i32::from(r.min_hops.is_some())
+                    if leading_walk == Some(r.alias.key()) {
+                        -1
+                    } else {
+                        i32::from(r.min_hops.is_some())
+                    }
                 } else {
                     2
                 };
@@ -2052,10 +2150,8 @@ impl Planner {
                 // touch an already-bound variable so that traversals start
                 // from the known node (matches FalkorDB C behaviour).
                 let has_bound = i32::from(
-                    !(self
-                        .visited
-                        .contains(&(r.from.alias.id, r.from.alias.scope_id))
-                        || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))),
+                    !(self.visited.contains(&r.from.alias.key())
+                        || self.visited.contains(&r.to.alias.key())),
                 );
                 // Among the hops leaving that known node, prefer the one that
                 // reaches a constrained endpoint, so its filter runs right
@@ -2067,13 +2163,40 @@ impl Planner {
                 // the filters land.
                 let unfiltered = if has_bound == 0 {
                     i32::from(![&r.from, &r.to].iter().any(|n| {
-                        n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.id)
+                        n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.key())
                     }))
                 } else {
                     0
                 };
                 (base, has_bound, unfiltered)
             });
+            // A promoted walk starts the plan, and every hop after it must touch
+            // what is bound already, as in a walk outward from the anchor: a hop
+            // sorted by tier alone could come first with neither end bound
+            // (a second walk would then start from every node). The runtime
+            // runs a walk from whichever end is bound, so the order is free.
+            if let Some(lead) = leading_walk {
+                let mut ordered = Vec::with_capacity(sorted_rels.len());
+                let mut bound: HashSet<VarKey> = HashSet::new();
+                let mut rest = sorted_rels;
+                let first = rest
+                    .iter()
+                    .position(|r| r.alias.key() == lead)
+                    .expect("the leading walk is one of the component's hops");
+                let mut next = Some(rest.remove(first));
+                while let Some(r) = next {
+                    bound.insert(r.from.alias.key());
+                    bound.insert(r.to.alias.key());
+                    ordered.push(r);
+                    let pos = rest.iter().position(|r| {
+                        bound.contains(&r.from.alias.key()) || bound.contains(&r.to.alias.key())
+                    });
+                    next = pos
+                        .or_else(|| (!rest.is_empty()).then_some(0))
+                        .map(|i| rest.remove(i));
+                }
+                sorted_rels = ordered;
+            }
             // Past the first hop, a fixed-length self-loop on a node nothing
             // has bound yet could only scan that node again and cross it with
             // the hops before it (the var-length hop that reaches it was
@@ -2082,8 +2205,8 @@ impl Planner {
             let sorted_rels = self_loops_after_binders(
                 sorted_rels,
                 |r| HopShape {
-                    from: (r.from.alias.id, r.from.alias.scope_id),
-                    to: (r.to.alias.id, r.to.alias.scope_id),
+                    from: r.from.alias.key(),
+                    to: r.to.alias.key(),
                     self_loop: r.from.alias.id == r.to.alias.id,
                     fixed: r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No,
                 },
@@ -2095,7 +2218,7 @@ impl Planner {
                 let nodes = component.nodes();
                 debug_assert_eq!(nodes.len(), 1);
                 let node = nodes[0].clone();
-                if self.visited.contains(&(node.alias.id, node.alias.scope_id)) {
+                if self.visited.contains(&node.alias.key()) {
                     // Already bound: check for inline property constraints and
                     // additional labels that need verifying.
                     let attr_filter =
@@ -2161,7 +2284,7 @@ impl Planner {
                     if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                     }
-                    self.visited.insert((node.alias.id, node.alias.scope_id));
+                    self.visited.insert(node.alias.key());
                     self.mark_labels_verified(&node.alias, node.labels.iter());
                     let paths = component.paths();
                     if !paths.is_empty() {
@@ -2183,7 +2306,7 @@ impl Planner {
             // the runtime may collapse multi-edges into one row per (src, dst).
             let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
                 !rel.alias.is_unnamed()
-                    || lifted_rels.contains(&(rel.alias.id, rel.alias.scope_id))
+                    || lifted_rels.contains(&rel.alias.key())
                     || component
                         .paths()
                         .iter()
@@ -2222,10 +2345,7 @@ impl Planner {
                 // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
                 // Build scan child for the from-node when it's not yet visited
                 // (i.e. this CVLT is the leaf of a component).
-                let scan_child = if self
-                    .visited
-                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                {
+                let scan_child = if self.visited.contains(&relationship.from.alias.key()) {
                     None
                 } else {
                     // No inline-attr Filter here: the endpoint blocks below
@@ -2246,9 +2366,7 @@ impl Planner {
                 // verifies reachability between two known nodes.
                 let expand_into = scan_child.is_none()
                     && relationship.from.alias.id != relationship.to.alias.id
-                    && self
-                        .visited
-                        .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));
+                    && self.visited.contains(&relationship.to.alias.key());
                 scan_child.map_or_else(
                     || {
                         tree!(IR::CondVarLenTraverse {
@@ -2276,9 +2394,7 @@ impl Planner {
                 // Self-loop with fixed-length edge: scan + ExpandInto.
                 // If the node is already bound (visited), don't rescan — the
                 // Argument from the surrounding Apply will provide the binding.
-                let already_bound = self
-                    .visited
-                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
+                let already_bound = self.visited.contains(&relationship.from.alias.key());
                 if already_bound {
                     tree!(IR::ExpandInto {
                         relationship: rel,
@@ -2302,12 +2418,8 @@ impl Planner {
                         scan
                     )
                 }
-            } else if self
-                .visited
-                .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                && self
-                    .visited
-                    .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
+            } else if self.visited.contains(&relationship.from.alias.key())
+                && self.visited.contains(&relationship.to.alias.key())
             {
                 // Both endpoints already bound; their inline attrs are lowered
                 // by the endpoint blocks below, which no longer skip visited
@@ -2361,12 +2473,9 @@ impl Planner {
                     res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                 }
             }
-            self.visited
-                .insert((relationship.from.alias.id, relationship.from.alias.scope_id));
-            self.visited
-                .insert((relationship.to.alias.id, relationship.to.alias.scope_id));
-            self.visited
-                .insert((relationship.alias.id, relationship.alias.scope_id));
+            self.visited.insert(relationship.from.alias.key());
+            self.visited.insert(relationship.to.alias.key());
+            self.visited.insert(relationship.alias.key());
             self.mark_labels_verified(&relationship.from.alias, relationship.from.labels.iter());
             self.mark_labels_verified(&relationship.to.alias, relationship.to.labels.iter());
             // Chain remaining relationships in the component, each one
@@ -2389,13 +2498,8 @@ impl Planner {
                     tree!(IR::AllShortestPaths(rel), res)
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
-                        && self.visited.contains(&(
-                            relationship.from.alias.id,
-                            relationship.from.alias.scope_id,
-                        ))
-                        && self
-                            .visited
-                            .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));
+                        && self.visited.contains(&relationship.from.alias.key())
+                        && self.visited.contains(&relationship.to.alias.key());
                     tree!(
                         IR::CondVarLenTraverse {
                             relationship: rel,
@@ -2407,9 +2511,7 @@ impl Planner {
                         res
                     )
                 } else if relationship.from.alias.id == relationship.to.alias.id {
-                    let already_bound = self
-                        .visited
-                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
+                    let already_bound = self.visited.contains(&relationship.from.alias.key());
                     if already_bound {
                         tree!(
                             IR::ExpandInto {
@@ -2442,12 +2544,8 @@ impl Planner {
                             scan
                         )
                     }
-                } else if self
-                    .visited
-                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                    && self
-                        .visited
-                        .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
+                } else if self.visited.contains(&relationship.from.alias.key())
+                    && self.visited.contains(&relationship.to.alias.key())
                 {
                     tree!(
                         IR::ExpandInto {
@@ -2494,12 +2592,9 @@ impl Planner {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                     }
                 }
-                self.visited
-                    .insert((relationship.from.alias.id, relationship.from.alias.scope_id));
-                self.visited
-                    .insert((relationship.to.alias.id, relationship.to.alias.scope_id));
-                self.visited
-                    .insert((relationship.alias.id, relationship.alias.scope_id));
+                self.visited.insert(relationship.from.alias.key());
+                self.visited.insert(relationship.to.alias.key());
+                self.visited.insert(relationship.alias.key());
                 self.mark_labels_verified(
                     &relationship.from.alias,
                     relationship.from.labels.iter(),
@@ -2641,13 +2736,13 @@ impl Planner {
         // projected (and copied) variables are in scope.
         self.visited.clear();
         for expr in &exprs {
-            self.visited.insert((expr.0.id, expr.0.scope_id));
+            self.visited.insert(expr.0.key());
         }
         for (new_var, _) in &copy_from_parent {
-            self.visited.insert((new_var.id, new_var.scope_id));
+            self.visited.insert(new_var.key());
         }
         for (var, _) in &apply_plans {
-            self.visited.insert((var.id, var.scope_id));
+            self.visited.insert(var.key());
         }
 
         // Carry verified labels through the projection for node variables
@@ -2655,14 +2750,14 @@ impl Planner {
         let mut carried_verified = HashMap::new();
         for (new_var, expr) in &exprs {
             if let ExprIR::Variable(old) = expr.root().data()
-                && let Some(v) = self.verified_labels.get(&(old.id, old.scope_id))
+                && let Some(v) = self.verified_labels.get(&old.key())
             {
-                carried_verified.insert((new_var.id, new_var.scope_id), v.clone());
+                carried_verified.insert(new_var.key(), v.clone());
             }
         }
         for (new_var, old_var) in &copy_from_parent {
-            if let Some(v) = self.verified_labels.get(&(old_var.id, old_var.scope_id)) {
-                carried_verified.insert((new_var.id, new_var.scope_id), v.clone());
+            if let Some(v) = self.verified_labels.get(&old_var.key()) {
+                carried_verified.insert(new_var.key(), v.clone());
             }
         }
         self.verified_labels = carried_verified;
@@ -2826,7 +2921,7 @@ impl Planner {
         let outer = |v: &Variable| {
             remap
                 .iter()
-                .find(|(inner, _)| inner.id == v.id && inner.scope_id == v.scope_id)
+                .find(|(inner, _)| inner.key() == v.key())
                 .map(|(_, outer)| outer.clone())
         };
         let idx = plan.root().idx();
@@ -2878,7 +2973,7 @@ impl Planner {
             && pattern
                 .nodes()
                 .iter()
-                .all(|n| self.visited.contains(&(n.alias.id, n.alias.scope_id)))
+                .all(|n| self.visited.contains(&n.alias.key()))
     }
 
     /// Assemble a multi-clause query plan from individual clause plans.
@@ -2923,7 +3018,7 @@ impl Planner {
                     QueryIR::Match { pattern, optional: false, .. }
                         if !pattern
                             .variables()
-                            .any(|v| bound.contains(&(v.id, v.scope_id)))
+                            .any(|v| bound.contains(&v.key()))
                 );
             prev_is_match = matches!(
                 &ir,
@@ -3076,7 +3171,7 @@ impl Planner {
     /// one of `bound`: that one needs the earlier clause's rows as its input.
     fn join_as_cartesian_branch(
         plan: &mut DynTree<IR>,
-        bound: &HashSet<(u32, u32)>,
+        bound: &HashSet<VarKey>,
     ) {
         let mut idx = plan.root().idx();
         // A WHERE pattern comprehension adds a saturated Apply above the
@@ -3092,7 +3187,7 @@ impl Planner {
         let reads_bound = plan.node(idx).indices::<Bfs>().any(|i| {
             bound
                 .iter()
-                .any(|&(id, scope)| ir_references_variable(plan.node(i).data(), id, scope))
+                .any(|&key| ir_references_variable(plan.node(i).data(), key))
         });
         if !reads_bound {
             plan.node_mut(idx).push_parent(IR::CartesianProduct);
@@ -3228,7 +3323,7 @@ impl Planner {
                 // The yielded columns are bound from here on, for the YIELD
                 // ... WHERE predicate and the clauses that follow.
                 for v in &named_outputs {
-                    self.visited.insert((v.id, v.scope_id));
+                    self.visited.insert(v.key());
                 }
                 let mut res = match proc.name.as_str() {
                     "db.idx.fulltext.queryNodes" => tree!(IR::NodeByFulltextScan {
@@ -3292,11 +3387,9 @@ impl Planner {
                     // so we know which variables to null-pad when no match is found.
                     let optional_vars: Vec<Variable> = pattern
                         .variables()
-                        .filter(|v| !self.visited.contains(&(v.id, v.scope_id)))
+                        .filter(|v| !self.visited.contains(&v.key()))
                         .collect();
-                    let any_visited = pattern
-                        .variables()
-                        .any(|v| self.visited.contains(&(v.id, v.scope_id)));
+                    let any_visited = pattern.variables().any(|v| self.visited.contains(&v.key()));
                     // Label checks made inside an OPTIONAL MATCH only hold
                     // within its subplan (unmatched rows flow past them), so
                     // they are discarded once the clause is planned.
@@ -3315,19 +3408,15 @@ impl Planner {
                         tree!(IR::Optional(optional_vars), match_plan)
                     }
                 } else {
-                    let all_visited = pattern
-                        .variables()
-                        .all(|v| self.visited.contains(&(v.id, v.scope_id)));
+                    let all_visited = pattern.variables().all(|v| self.visited.contains(&v.key()));
                     // A variable read only by an inline attr (`(x {v: a.v})`) is
                     // not one the pattern binds, but it is as much a read of
                     // the earlier clause.
-                    let any_visited = pattern
-                        .variables()
-                        .any(|v| self.visited.contains(&(v.id, v.scope_id)))
+                    let any_visited = pattern.variables().any(|v| self.visited.contains(&v.key()))
                         || pattern_attrs_read_visited(&pattern, &self.visited);
                     // Taken before `plan_match` adds the pattern's own variables
                     // to `visited`: the Argument rows bind only these.
-                    let bound: Vec<(u32, u32)> = self.visited.iter().copied().collect();
+                    let bound: Vec<VarKey> = self.visited.iter().copied().collect();
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
                     // Apply so each incoming row feeds the inner plan via
@@ -3360,7 +3449,7 @@ impl Planner {
                 // since the comprehension resolves against the incoming stream.
                 let (expr, apply_chain) =
                     self.extract_list_expr_comprehensions(expr, alias.scope_id);
-                self.visited.insert((alias.id, alias.scope_id));
+                self.visited.insert(alias.key());
                 let mut res = tree!(IR::Unwind { expr, var: alias });
                 if let Some(chain) = apply_chain {
                     res.root_mut().push_child_tree(chain);
@@ -3380,7 +3469,7 @@ impl Planner {
                 // variables to `visited`, which are NOT bound by the
                 // incoming Argument rows. Keep the scope on each entry —
                 // ids are only unique within a scope.
-                let bound: Vec<(u32, u32)> = self.visited.iter().copied().collect();
+                let bound: Vec<VarKey> = self.visited.iter().copied().collect();
                 let mut match_branch = self.plan_match(&pattern, None);
                 Self::set_include_pending_on_scans(&mut match_branch);
                 // The Argument rows bind exactly the variables visited so
@@ -3415,7 +3504,7 @@ impl Planner {
                 // Add created variables to visited so subsequent clauses
                 // (e.g. FOREACH body) know they're already bound.
                 for v in pattern.variables() {
-                    self.visited.insert((v.id, v.scope_id));
+                    self.visited.insert(v.key());
                 }
                 let create = tree!(IR::Create(Box::new(filtered)));
                 if paths.is_empty() {
@@ -3500,7 +3589,7 @@ impl Planner {
                 // row, so their pattern comprehensions are applied below.
                 let chain =
                     self.extract_clause_expr_comprehensions([&mut file_path, &mut delimiter], None);
-                self.visited.insert((var.id, var.scope_id));
+                self.visited.insert(var.key());
                 let mut res = tree!(IR::LoadCsv {
                     file_path,
                     headers,
@@ -3622,12 +3711,12 @@ impl Planner {
                         match inner_plan.root().data() {
                             IR::Project { exprs: vars, .. } => {
                                 for (var, _) in vars {
-                                    self.visited.insert((var.id, var.scope_id));
+                                    self.visited.insert(var.key());
                                 }
                             }
                             IR::Aggregate { names, .. } => {
                                 for var in names {
-                                    self.visited.insert((var.id, var.scope_id));
+                                    self.visited.insert(var.key());
                                 }
                             }
                             _ => {}
@@ -3642,7 +3731,7 @@ impl Planner {
                         // FalkorDB C's plan shape).
                         let renamed = Self::rename_projection_outputs(&mut inner_plan, &remap);
                         for (_, outer_var) in &remap {
-                            self.visited.insert((outer_var.id, outer_var.scope_id));
+                            self.visited.insert(outer_var.key());
                         }
                         if renamed {
                             tree!(IR::Apply, inner_plan)
@@ -3708,7 +3797,7 @@ impl Planner {
                 // stay there past the restore: their Apply sub-plans run below
                 // the ForEach, on the outer stream.
                 let saved_visited = self.visited.clone();
-                self.visited.insert((var.id, var.scope_id));
+                self.visited.insert(var.key());
 
                 // Plan the body clauses as a sub-plan
                 let body_plans: Vec<DynTree<IR>> =

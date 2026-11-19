@@ -1,5 +1,4 @@
 file	function	line	bucket	lean_name_or_reason
-# Online index build (#2355): fns the background builder added, not modelled yet.
 graph/src/threadpool.rs	new	70	PROVEN	Pool.new_spec, shutdown_drains; PoolWithin.spawnNames_none (`with_names(size, None)`: unnamed workers); unbounded queue (#3014): Pool.spawn_never_blocks (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/threadpool.rs	named	76	PROVEN	PoolWithin.spawnNames_length, spawnNames_get (`with_names(size, Some(name))`: worker i is `{name}-{i}`; #3502)
 graph/src/threadpool.rs	with_names	83	PROVEN	PoolWithin.spawnNames_length/spawnNames_get/spawnNames_none (names), Pool.new_spec (size workers); Builder::spawn failure -> `.expect` panic, sender dropped, started workers exit (header; std primitive); #3816: each worker marks itself with set_pool_thread before its first job (Once.pool_thread_spec)
@@ -12,7 +11,7 @@ graph/src/threadpool.rs	shutdown	216	PROVEN	Pool.global_spec (gShutdown no-op un
 graph/src/threadpool.rs	try_acquire	245	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
 graph/src/threadpool.rs	try_acquire_in	249	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
 graph/src/threadpool.rs	drop	265	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
-graph/src/locks.rs	upgrade_to_write	55	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order)
+graph/src/locks.rs	upgrade_to_write	43	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order)
 graph/src/thread_id.rs	set_main_thread	15	PROVEN	Once.thread_id_spec
 graph/src/thread_id.rs	is_main_thread	25	PROVEN	Once.thread_id_spec
 graph/src/thread_id.rs	set_pool_thread	39	PROVEN	Once.setPoolThread: pool_thread_spec
@@ -23,16 +22,16 @@ graph/src/storage/registry.rs	register_index_backend	31	PROVEN	Once.registry_spe
 graph/src/storage/registry.rs	index_backend	43	PROVEN	Once.registry_spec
 graph/src/storage/registry.rs	register_attr_backend	52	PROVEN	Once.registry_spec
 graph/src/storage/registry.rs	attr_backend	62	PROVEN	Once.registry_spec
-graph/src/graph/mvcc_graph.rs	new	106	MODELLED	Mvcc.init
-graph/src/graph/mvcc_graph.rs	from_graph	118	MODELLED	Mvcc.init (arbitrary pub)
-graph/src/graph/mvcc_graph.rs	read	129	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
-graph/src/graph/mvcc_graph.rs	fork	141	PROVEN	Mvcc Ev.forkW/forkCur (takes nothing; version ver+1, base = published): one_commit_per_version, inline_write_ok, current_not_stale, private_on_committed (#3657)
-graph/src/graph/mvcc_graph.rs	is_stale	155	PROVEN	Mvcc Ev.checkFork (published.version + 1 != fork.version ⇒ stale, no Current version made): checkFork_stale, checkFork_on_committed, stale_then_rerun, batch_then_check
-graph/src/graph/mvcc_graph.rs	commit	205	PROVEN	Mvcc.no_lost_writes/history_linear/one_commit_per_version (Ev.commit, ver+1), commit_publishes (commit then swap), refused_commit_publishes_nothing, stale_commit_publishes_nothing, current_not_stale; #3545 compare-and-swap: Ev.commit loads and checks, Ev.swap is the CAS: swap_overtaken_publishes_nothing (Stale: nothing published), swap_unchanged_publishes, in_flight_blocks_mutate, cas_refuses_overtaken_commit, cas_current_commit_publishes; schema_version/trim/fold_oversized_deltas not modelled
-graph/src/graph/mvcc_graph.rs	commit_indexer_batch	262	PROVEN	Mvcc Ev.batch (writer=false: same data version, no data change): batch_keeps_forks, batch_then_check, batch_does_not_stale (#3566); the fit decision (Same/Swap/Discarded) is native_index IndexerFit
-graph/src/graph/mvcc_graph.rs	prepare	293	PROVEN	(the checks and last changes of the former commit_version) Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale
-graph/src/graph/mvcc_graph.rs	publish	354	PROVEN	(the compare-and-swap and set_indexer_graph of the former commit_version) Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale
-graph/src/graph/mvcc_graph.rs	drop	370	NOT COVERED	cancel_indexing on drop
+graph/src/graph/mvcc_graph.rs	new	115	MODELLED	Mvcc.init
+graph/src/graph/mvcc_graph.rs	from_graph	129	MODELLED	Mvcc.init (arbitrary pub)
+graph/src/graph/mvcc_graph.rs	read	142	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
+graph/src/graph/mvcc_graph.rs	fork	154	PROVEN	Mvcc Ev.forkW/forkCur (takes nothing; version ver+1, base = published): one_commit_per_version, inline_write_ok, current_not_stale, private_on_committed (#3657)
+graph/src/graph/mvcc_graph.rs	is_stale	168	PROVEN	Mvcc Ev.checkFork (published.version + 1 != fork.version ⇒ stale, no Current version made): checkFork_stale, checkFork_on_committed, stale_then_rerun, batch_then_check
+graph/src/graph/mvcc_graph.rs	commit	217	PROVEN	Mvcc.no_lost_writes/history_linear/one_commit_per_version (Ev.commit, ver+1), commit_publishes (commit then swap), refused_commit_publishes_nothing, stale_commit_publishes_nothing, current_not_stale; #3545 compare-and-swap: Ev.commit loads and checks, Ev.swap is the CAS: swap_overtaken_publishes_nothing (Stale: nothing published), swap_unchanged_publishes, in_flight_blocks_mutate, cas_refuses_overtaken_commit, cas_current_commit_publishes; schema_version/trim/fold_oversized_deltas not modelled
+graph/src/graph/mvcc_graph.rs	commit_indexer_batch	274	PROVEN	Mvcc Ev.batch (writer=false: same data version, no data change): batch_keeps_forks, batch_then_check, batch_does_not_stale (#3566); the fit decision (Same/Swap/Discarded) is native_index IndexerFit
+graph/src/graph/mvcc_graph.rs	prepare	305	PROVEN	(the checks and last changes of the former commit_version) Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale
+graph/src/graph/mvcc_graph.rs	publish	366	PROVEN	(the compare-and-swap and set_indexer_graph of the former commit_version) Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale
+graph/src/graph/mvcc_graph.rs	drop	382	NOT COVERED	cancel_indexing on drop
 src/graph_core.rs	up_to_nul	92	NOT COVERED	string helper, not concurrency
 src/graph_core.rs	c_graph_name	106	NOT COVERED	string helper
 src/graph_core.rs	c_graph_key	121	NOT COVERED	string helper
@@ -67,14 +66,14 @@ src/graph_core.rs	reply_invalid_graph_version	1103	NOT COVERED	reply formatting
 src/graph_core.rs	admit	1117	PROVEN	Pool.acquireLoop/acquire_bounded; Locks.succ3014 dispatch (reject, never wait): main_never_blocks, inv3014_step
 src/graph_core.rs	query_mut	1128	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); drain producer (send then CAS)
 src/graph_core.rs	query_sync	1332	PROVEN	Mvcc.inline_write_ok (inline writer = escalate 0 then forkCur; never refused by a matching queued write, #3290)
-src/graph_core.rs	profile_mut	1461	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
-src/graph_core.rs	profile_sync	1562	MODELLED	as query_sync
-src/graph_core.rs	finish_write	1633	PROVEN	Mvcc Ev.commit (session in writer mode, key_of_write found its key) / Ev.abandon (never escalated: the version just drops with the runtime; or refused by key_of_write, #3850/#3851, and abandoned by the caller)
-src/graph_core.rs	abandon_write	1668	PROVEN	Mvcc Ev.abandon (the fork is dropped, nothing to roll back); index resync not modelled
-src/graph_core.rs	commit_and_replicate	1684	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
-src/graph_core.rs	process_write_queued_query	1762	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
-src/graph_core.rs	replicate	1910	AXIOMATISED	RM_Replicate FFI
-src/graph_core.rs	graph_free	1923	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
+src/graph_core.rs	profile_mut	1468	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
+src/graph_core.rs	profile_sync	1569	MODELLED	as query_sync
+src/graph_core.rs	finish_write	1640	PROVEN	Mvcc Ev.commit (session in writer mode, key_of_write found its key) / Ev.abandon (never escalated: the version just drops with the runtime; or refused by key_of_write, #3850/#3851, and abandoned by the caller)
+src/graph_core.rs	abandon_write	1675	PROVEN	Mvcc Ev.abandon (the fork is dropped, nothing to roll back); index resync not modelled
+src/graph_core.rs	commit_and_replicate	1691	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
+src/graph_core.rs	process_write_queued_query	1769	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
+src/graph_core.rs	replicate	1917	AXIOMATISED	RM_Replicate FFI
+src/graph_core.rs	graph_free	1930	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
 src/query_session.rs	begin	178	MODELLED	reader mode (graphR acquire)
 src/query_session.rs	begin_with	185	MODELLED	Locks.gateReaderProg ordered (gate_programs_ordered, #3816 read_past_gate); reader mode
 src/query_session.rs	begin_writer	205	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
@@ -102,7 +101,7 @@ src/commands/delete.rs	graph_delete	37	PROVEN	Mvcc Ev.delete on main thread with
 graph/src/index/mod.rs	make_arr_names	122	PROVEN	Search.arrNames used by range_never_vector_or_text
 graph/src/index/mod.rs	new	138	MODELLED	Search.Field
 graph/src/index/mod.rs	new_with_vector_options	155	MODELLED	Search.Field.vdim (vector_options.map dimension)
-graph/src/index/mod.rs	set	721	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
+graph/src/index/mod.rs	set	717	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
 graph/src/index/mod.rs	add_document	1918	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
 graph/src/index/mod.rs	register_fields	1192	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
 graph/src/index/mod.rs	bump_id	1053	PROVEN	Tickets.bump_inv, stale_release_isolated
@@ -125,4 +124,5 @@ graph/src/graph/graph.rs	vector_query_edges	4467	PROVEN	Knn.alloc_bounded, no_ab
 graph/src/runtime/runtime.rs	map_to_index_options	2037	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
 graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered
+# Online index build (#2355): fns the background builder added, not modelled yet.
 src/query_session.rs	QuerySession::begin_writer_checked	235	PROVEN	Locks.retryWriterProg ordered (retry_writer_ordered, retry_writer_ordered_3816): begin_with, then escalate

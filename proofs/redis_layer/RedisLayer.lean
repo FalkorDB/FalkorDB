@@ -11,6 +11,7 @@ import RedisLayer.SerialProof
 import RedisLayer.SerialCLayout
 import RedisLayer.RespVerbose
 import RedisLayer.TelemetryLoop
+import RedisLayer.TelemetryFreed
 import RedisLayer.ModuleInit
 import RedisLayer.ConfigRewrite
 import RedisLayer.QuerySession
@@ -144,7 +145,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field` `:637-725`, `encField`/`encPh` = field loop `:383-427`) |
 | `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); pre-#3514 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
-| `Telemetry`, `TelemetryReg`, `TelemetryLoop` | `src/telemetry.rs` |
+| `Telemetry`, `TelemetryReg`, `TelemetryLoop`, `TelemetryFreed` | `src/telemetry.rs`; `TelemetryFreed`: the #3844 persistence strip (`strip_stream`, the freed-graph queue, `redis_type.rs` `strip_telemetry_streams`) |
 | `ModuleInit` | `src/module_init.rs`, `src/lib.rs` config table, `src/config.rs` |
 | `ConfigRewrite` | `CONFIG REWRITE` of the `lib.rs:97-116` native configs vs. what `GRAPH.CONFIG SET` / load arguments store (#3419) |
 | `QuerySession` | `src/query_session.rs` |
@@ -166,9 +167,12 @@ Headline theorems:
   tree; `compact_reply` lands on `Compact.encReply`, which `decReply_enc` decodes;
   `bytes_of_emits` gives the RESP2 bytes; `postponed_wrong_len` shows a wrong count breaks.
 * Telemetry: `streamName_key_name`/`streamName_inj`/`stream_same_slot`, registry placement and
-  transitions, `WaitingEntry` guard laws, `drain_conserves`, `capDeferred_suffix`,
+  transitions, `WaitingEntry` guard laws, `drain_conserves`,
   `retain_sound`/`pass2Step_sound` (re-keying), `group_keeps_order` (per-graph arrival order
-  survives the sort), `iter_replica_never_writes`.
+  survives the sort), `iterSteps_delete_before_write`; since #3844 telemetry is node-local:
+  `GraphCore.sync_unserved_silent` (replicated / AOF-replayed queries are not logged),
+  `freed_stream_stripped`/`stripAll_covers` (no stream reaches a snapshot); the old replica
+  rule is kept as history (`Pre3844.enqueue_replica`, `Pre3844.iter_replica_never_writes`).
 * `LoadArgs.rust_c_same_accept` (#3328) — module-load arguments accepted exactly as C's
   `Config_Init` (modulo leading whitespace and Rust-only names, both confirmed live; for
   arguments without embedded NUL, since C reads C strings; given `FsOk`, i.e. `File::create`

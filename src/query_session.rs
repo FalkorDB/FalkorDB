@@ -699,7 +699,7 @@ pub fn hold_gil() -> impl Drop {
 /// Whether this thread holds the GIL. Two ways it can: the main thread holds it
 /// implicitly for the whole command callback, and any other thread holds it while
 /// its own context is in [`GIL_CTX`].
-fn holds_gil() -> bool {
+pub fn holds_gil() -> bool {
     is_main_thread() || GIL_CTX.get().is_some()
 }
 

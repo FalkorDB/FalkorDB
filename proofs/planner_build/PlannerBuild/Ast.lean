@@ -52,6 +52,21 @@ def AV.hashKey (v : AV) : Nat := v.id
 
 def AV.asStr (v : AV) : String := v.name.getD "?"
 
+/-- `Variable::key` (ast.rs:214-219): the `VarKey { id, scope_id }` naming the variable's identity. -/
+def AV.key (v : AV) : Nat × Nat := (v.id, v.scope)
+
+/-- Two variables share a `VarKey` exactly when both id and scope agree. -/
+theorem AV.key_eq_iff (a b : AV) : a.key = b.key ↔ a.id = b.id ∧ a.scope = b.scope := by
+  simp [AV.key]
+
+/-- A shared `VarKey` implies `Variable` equality (which compares ids only). -/
+theorem AV.key_eq_eqv (a b : AV) (h : a.key = b.key) : a.eqv b = true := by
+  simp [AV.key, AV.eqv] at *; exact h.1
+
+/-- Unlike `Eq`, the key separates equal ids in different scopes. -/
+theorem AV.key_other_scope : AV.key ⟨some "a", none, 3, 0⟩ ≠ AV.key ⟨some "b", none, 3, 1⟩ := by
+  decide
+
 theorem AV.fmt_named (n : String) (a : Option Nat) (i s : Nat) : AV.fmt ⟨some n, a, i, s⟩ = n := rfl
 /-- A nameless variable that is not a pattern entity (a planner temporary) prints `?<id>`. -/
 theorem AV.fmt_anon (i s : Nat) : AV.fmt ⟨none, none, i, s⟩ = "?" ++ toString i := rfl
@@ -284,6 +299,9 @@ theorem accessors (g : QG) (ns : List QN) (rs : List QR) :
 /-! ## `filter_visited` -/
 
 def notVisited (vis : List (Nat × Nat)) (v : AV) : Bool := !vis.contains (v.id, v.scope)
+
+/-- `filter_visited` tests `visited.contains(&alias.key())`. -/
+theorem notVisited_key (vis : List (Nat × Nat)) (v : AV) : notVisited vis v = !vis.contains v.key := rfl
 
 def filterVisited (g : QG) (vis : List (Nat × Nat)) : QG :=
   let g1 := (g.nodes.filter (fun n => notVisited vis n.alias)).foldl (fun acc n => (addNode eqv acc n).1) QG.default
