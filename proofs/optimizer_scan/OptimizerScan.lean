@@ -32,6 +32,7 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1415-1469` (`id as u64` at 1428) |
 | `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1470-1480` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
 | `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1783` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
+| `IdSeek.idMax` (`pre2979_seek` before PR #2979) | `runtime/runtime.rs:1439`: the loop starts at `node_id_bound().saturating_sub(1)`; `seek_eq_pre2979` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
 | `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-295` |
