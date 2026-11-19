@@ -371,9 +371,7 @@ fn bare_property_of(
     };
     // `Variable` equality is by id only; ids repeat across scopes.
     match node.get_child(0).map(|c| c.data()) {
-        Some(ExprIR::Variable(v)) if v.id == alias.id && v.scope_id == alias.scope_id => {
-            Some(attr.clone())
-        }
+        Some(ExprIR::Variable(v)) if v.key() == alias.key() => Some(attr.clone()),
         _ => None,
     }
 }
@@ -1103,11 +1101,10 @@ fn prune_all_node_scan_child(
     let IR::AllNodeScan(child_node) = child.data() else {
         return false;
     };
-    let (child_alias_id, child_scope_id) = (child_node.alias.id, child_node.alias.scope_id);
     let child_idx = child.idx();
     // Safety: don't drop the scan that binds the child alias if the
     // edge-index query still depends on it.
-    if index_query_references_variable(&query, child_alias_id, child_scope_id) {
+    if index_query_references_variable(&query, child_node.alias.key()) {
         return false;
     }
     plan.node_mut(child_idx).prune();

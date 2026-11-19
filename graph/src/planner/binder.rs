@@ -28,7 +28,7 @@
 use crate::parser::ast::{
     Alias, AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode,
     QueryPath, QueryRelationship, RawQueryIR, ReduceVars, RegexFn, RegexFnKind, SetItem,
-    SupportAggregation, Variable,
+    SupportAggregation, VarKey, Variable,
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
@@ -146,14 +146,18 @@ pub struct Binder {
     copy_from_parent: HashMap<Arc<String>, (Variable, Variable)>,
     /// Accumulated labels for each node variable across all MATCH clauses.
     /// When `MATCH (n:N) ... MATCH (n:O)` is encountered, this maps
-    /// n's (scope_id, variable ID) → {N, O} so the planner can create a single
+    /// n's `VarKey` → {N, O} so the planner can create a single
     /// NodeByLabelScan with the full label set.
-    node_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    node_labels: HashMap<VarKey, OrderSet<Arc<String>>>,
     /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
     /// These are typed as `Type::Path` but represent a list of edges, so
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
-    varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
+    varlen_rel_var_ids: std::collections::HashSet<VarKey>,
+    /// Named relationships that a MATCH pattern bound, by `VarKey`. A
+    /// later MATCH must not name one again (as C rejects): the repeat would
+    /// not join on the bound edge but bind a second, unrelated one.
+    match_rel_vars: std::collections::HashSet<VarKey>,
     /// Scope tables no longer on `env_stack`: the scopes of a CALL body,
     /// popped when the body closes, and those of UNION branches, each bound
     /// by its own binder. The planner mints fresh variables at
@@ -172,6 +176,7 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
+            match_rel_vars: std::collections::HashSet::new(),
             retired_scope_vars: vec![],
         }
     }
@@ -252,7 +257,7 @@ impl Binder {
     /// clause-local optional labels are preserved.
     fn update_graph_labels(
         graph: &mut QueryGraph<Arc<String>, Arc<String>, Variable>,
-        node_labels: &HashMap<(u32, u32), OrderSet<Arc<String>>>,
+        node_labels: &HashMap<VarKey, OrderSet<Arc<String>>>,
         union: bool,
     ) {
         let merged_labels = |own: &OrderSet<Arc<String>>,
@@ -271,7 +276,7 @@ impl Binder {
             }
         };
         for node in graph.nodes_mut() {
-            let key = (node.alias.scope_id, node.alias.id);
+            let key = node.alias.key();
             if let Some(labels) = node_labels.get(&key) {
                 let new_labels = merged_labels(&node.labels, labels);
                 if node.labels != new_labels {
@@ -284,8 +289,8 @@ impl Binder {
             }
         }
         for rel in graph.relationships_mut() {
-            let from_key = (rel.from.alias.scope_id, rel.from.alias.id);
-            let to_key = (rel.to.alias.scope_id, rel.to.alias.id);
+            let from_key = rel.from.alias.key();
+            let to_key = rel.to.alias.key();
             let from_new = node_labels
                 .get(&from_key)
                 .map(|l| merged_labels(&rel.from.labels, l));
@@ -433,11 +438,27 @@ impl Binder {
                 } else {
                     None
                 };
-                let pattern_result = self.bind_graph(&pattern, false);
+                for rel in pattern.relationships() {
+                    if let Some(name) = rel.alias.name()
+                        && let Some(var) = self.current_env().get(name)
+                        && self.match_rel_vars.contains(&var.key())
+                    {
+                        return Err(format!(
+                            "Cannot use the same relationship variable '{}' for multiple patterns.",
+                            rel.alias
+                        ));
+                    }
+                }
+                let pattern_result = self.bind_graph(&pattern, false, true);
                 if let Some(saved) = saved_labels {
                     self.node_labels = saved;
                 }
                 let pattern = pattern_result?;
+                for rel in pattern.relationships() {
+                    if !rel.alias.is_unnamed() {
+                        self.match_rel_vars.insert(rel.alias.key());
+                    }
+                }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 if let Some(ref f) = filter
                     && !Self::expr_may_return_boolean(f.root())
@@ -473,7 +494,7 @@ impl Binder {
                 for node in pattern.nodes() {
                     self.bind_expr(&node.attrs)?;
                     if let Some(existing) = self.lookup_alias(&node.alias) {
-                        let key = (existing.scope_id, existing.id);
+                        let key = existing.key();
                         if let Some(existing_labels) = self.node_labels.get(&key) {
                             for label in node.labels.iter() {
                                 if !existing_labels.contains(label) {
@@ -497,7 +518,7 @@ impl Binder {
                     }
                     for endpoint in [&relationship.from, &relationship.to] {
                         if let Some(existing) = self.lookup_alias(&endpoint.alias) {
-                            let key = (existing.scope_id, existing.id);
+                            let key = existing.key();
                             if let Some(existing_labels) = self.node_labels.get(&key) {
                                 for label in endpoint.labels.iter() {
                                     if !existing_labels.contains(label) {
@@ -512,7 +533,7 @@ impl Binder {
                     }
                 }
 
-                let pattern = self.bind_graph(&pattern, false)?;
+                let pattern = self.bind_graph(&pattern, false, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
                 Ok(QueryIR::Merge {
@@ -831,7 +852,7 @@ impl Binder {
         // A UNION body is the exception: each branch is bound by its own binder
         // (scope ids restart at 0) and was labelled from that binder's own
         // `node_labels` already. Applying this binder's labels on top would
-        // match the branch's inner `(scope, id)` keys against the OUTER
+        // match the branch's inner `VarKey`s against the OUTER
         // query's entries and relabel a branch node that imports nothing —
         // `MATCH (a:N) CALL { RETURN 0 AS x UNION CREATE (:New) RETURN 1 AS x }`
         // created the node as `:N`.
@@ -845,7 +866,11 @@ impl Binder {
         let inner_scope_ids: Vec<u32> =
             (saved_env_stack_len as u32..self.env_stack.len() as u32).collect();
         self.node_labels
-            .retain(|&(scope_id, _), _| !inner_scope_ids.contains(&scope_id));
+            .retain(|key, _| !inner_scope_ids.contains(&key.scope_id));
+        // Likewise the relationships the body's MATCH clauses bound: a later
+        // scope with the same id must not see them as already matched.
+        self.match_rel_vars
+            .retain(|key| !inner_scope_ids.contains(&key.scope_id));
 
         // 3. Capture subquery output, restore outer scope
         let subquery_env = self.current_env().clone();
@@ -1015,6 +1040,7 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
+                        match_rel_vars: std::collections::HashSet::new(),
                         retired_scope_vars: vec![],
                     };
 
@@ -1099,13 +1125,9 @@ impl Binder {
             let inner_var = self.project_name(name, outer_var.ty.clone());
             // Carry forward node_labels for Node-typed imports
             if outer_var.ty == Type::Node
-                && let Some(labels) = self
-                    .node_labels
-                    .get(&(outer_var.scope_id, outer_var.id))
-                    .cloned()
+                && let Some(labels) = self.node_labels.get(&outer_var.key()).cloned()
             {
-                self.node_labels
-                    .insert((inner_var.scope_id, inner_var.id), labels);
+                self.node_labels.insert(inner_var.key(), labels);
             }
             let outer_expr = Arc::new(DynTree::new(ExprIR::Variable(outer_var.clone())));
             projections.push((inner_var, outer_expr));
@@ -1219,10 +1241,9 @@ impl Binder {
                 let bound_var = self.project_name(&name, var.ty.clone());
                 // Carry forward labels for projected node variables.
                 if var.ty == Type::Node
-                    && let Some(labels) = self.node_labels.get(&(var.scope_id, var.id)).cloned()
+                    && let Some(labels) = self.node_labels.get(&var.key()).cloned()
                 {
-                    self.node_labels
-                        .insert((bound_var.scope_id, bound_var.id), labels);
+                    self.node_labels.insert(bound_var.key(), labels);
                 }
                 let expr = Arc::new(DynTree::new(ExprIR::Variable(var)));
                 projected.push((bound_var, expr));
@@ -1246,13 +1267,9 @@ impl Binder {
                         .insert(var_name.name().unwrap().clone(), bound_var.clone());
                     // Carry forward node_labels for projected node variables.
                     if var_name.ty == Type::Node
-                        && let Some(labels) = self
-                            .node_labels
-                            .get(&(var_name.scope_id, var_name.id))
-                            .cloned()
+                        && let Some(labels) = self.node_labels.get(&var_name.key()).cloned()
                     {
-                        self.node_labels
-                            .insert((bound_var.scope_id, bound_var.id), labels);
+                        self.node_labels.insert(bound_var.key(), labels);
                     }
                 }
                 projected.push((bound_var, expr));
@@ -1273,13 +1290,9 @@ impl Binder {
                         .insert(var_name.name().unwrap().clone(), bound_var.clone());
                     // Carry forward node_labels for projected node variables.
                     if var_name.ty == Type::Node
-                        && let Some(labels) = self
-                            .node_labels
-                            .get(&(var_name.scope_id, var_name.id))
-                            .cloned()
+                        && let Some(labels) = self.node_labels.get(&var_name.key()).cloned()
                     {
-                        self.node_labels
-                            .insert((bound_var.scope_id, bound_var.id), labels);
+                        self.node_labels.insert(bound_var.key(), labels);
                     }
                 }
                 projected.push((bound_var, expr));
@@ -1419,8 +1432,8 @@ impl Binder {
     /// numeric `Variable` IDs and checking that every referenced name is in
     /// scope.
     ///
-    /// The function walks the pattern in two groups (nodes, then
-    /// relationships).  For each entity it:
+    /// The function first defines every named relationship alias, then walks
+    /// the nodes and the relationships.  For each entity it:
     ///   1. Defines the alias in the current scope via `define_name_in_scope`.
     ///   2. Binds the inline property expression (`attrs`).
     ///
@@ -1440,10 +1453,22 @@ impl Binder {
     ///   - `false` (MATCH / MERGE) — an alias may shadow an outer-scope
     ///     definition (e.g. `MATCH (n) MATCH (n)` re-uses `n`).
     ///   - `true`  — redeclaration is an error.
+    ///
+    /// `merged_occurrences` says the parser folded every occurrence of a
+    /// repeated node alias into its `nodes()` entry (MATCH and pattern
+    /// predicates, see `Parser::add_pattern_node`). Then that entry's attrs
+    /// are every predicate on the node, and a relationship endpoint that
+    /// repeats the alias with attrs of its own shares that map instead of
+    /// carrying only its own entries: the planner lowers only the endpoints'
+    /// maps for a node that has relationships, so an entry written on another
+    /// occurrence would otherwise never be checked. CREATE, MERGE and pattern
+    /// comprehensions keep the first occurrence only, so their endpoints keep
+    /// their own maps.
     fn bind_graph(
         &mut self,
         graph: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
         is_create: bool,
+        merged_occurrences: bool,
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
 
@@ -1454,6 +1479,24 @@ impl Binder {
         for raw_path in graph.paths() {
             self.define_alias_in_scope(&raw_path.var, Type::Path, true)?;
             named_path_names.insert(raw_path.var.clone());
+        }
+
+        // Define the named relationship aliases before binding any node attrs.
+        // The parts of one MATCH clause are one pattern, so in
+        // `MATCH (a)-[r]->(b), (c {v: id(r)})` the node `c` is bound here
+        // together with `r`, and must see it as it sees `a`. The planner
+        // checks such attrs once every variable they read is bound. Nodes
+        // are still defined one by one, so a node's attrs cannot read a node
+        // that only appears later in the pattern.
+        for relationship in graph.relationships() {
+            if relationship.alias.name().is_some() {
+                let ty = if relationship.min_hops.is_some() {
+                    Type::Path
+                } else {
+                    Type::Relationship
+                };
+                self.define_alias_in_scope(&relationship.alias, ty, !is_create)?;
+            }
         }
 
         // Bind all nodes in the graph, merging duplicates by alias.
@@ -1468,10 +1511,7 @@ impl Binder {
             let attrs = self.bind_expr(&node.attrs)?;
 
             // Accumulate labels across MATCH clauses for this node variable.
-            let labels = self
-                .node_labels
-                .entry((alias.scope_id, alias.id))
-                .or_default();
+            let labels = self.node_labels.entry(alias.key()).or_default();
             labels.extend(node.labels.iter().cloned());
             let all_labels = labels.clone();
 
@@ -1497,7 +1537,7 @@ impl Binder {
                 !is_create,
             )?;
             if relationship.min_hops.is_some() {
-                self.varlen_rel_var_ids.insert((alias.scope_id, alias.id));
+                self.varlen_rel_var_ids.insert(alias.key());
             }
             let attrs = self.bind_expr(&relationship.attrs)?;
 
@@ -1519,7 +1559,11 @@ impl Binder {
                     .any(|l| !bound_node.labels.contains(l));
                 let has_extra_attrs = relationship.from.attrs.root().num_children() > 0;
                 if has_extra_labels || has_extra_attrs {
-                    let from_attrs = self.bind_expr(&relationship.from.attrs)?;
+                    let from_attrs = if merged_occurrences {
+                        bound_node.attrs.clone()
+                    } else {
+                        self.bind_expr(&relationship.from.attrs)?
+                    };
                     let mut merged_labels = bound_node.labels.clone();
                     for l in relationship.from.labels.iter() {
                         if !merged_labels.contains(l) {
@@ -1531,7 +1575,7 @@ impl Binder {
                     // later overwrite this enriched endpoint with the stale
                     // accumulation and drop the extra labels.
                     self.node_labels
-                        .entry((bound_node.alias.scope_id, bound_node.alias.id))
+                        .entry(bound_node.alias.key())
                         .or_default()
                         .extend(merged_labels.iter().cloned());
                     Arc::new(QueryNode::new(
@@ -1546,10 +1590,7 @@ impl Binder {
                 let from_alias =
                     self.define_alias_in_scope(&relationship.from.alias, Type::Node, !is_create)?;
                 let from_attrs = self.bind_expr(&relationship.from.attrs)?;
-                let labels = self
-                    .node_labels
-                    .entry((from_alias.scope_id, from_alias.id))
-                    .or_default();
+                let labels = self.node_labels.entry(from_alias.key()).or_default();
                 labels.extend(relationship.from.labels.iter().cloned());
                 let all_labels = labels.clone();
                 let bound_node = Arc::new(QueryNode::new(from_alias, all_labels, from_attrs));
@@ -1570,7 +1611,11 @@ impl Binder {
                     .any(|l| !bound_node.labels.contains(l));
                 let has_extra_attrs = relationship.to.attrs.root().num_children() > 0;
                 if has_extra_labels || has_extra_attrs {
-                    let to_attrs = self.bind_expr(&relationship.to.attrs)?;
+                    let to_attrs = if merged_occurrences {
+                        bound_node.attrs.clone()
+                    } else {
+                        self.bind_expr(&relationship.to.attrs)?
+                    };
                     let mut merged_labels = bound_node.labels.clone();
                     for l in relationship.to.labels.iter() {
                         if !merged_labels.contains(l) {
@@ -1580,7 +1625,7 @@ impl Binder {
                     // See the 'from' endpoint above: keep the accumulated set
                     // in sync so the labels survive `update_graph_labels`.
                     self.node_labels
-                        .entry((bound_node.alias.scope_id, bound_node.alias.id))
+                        .entry(bound_node.alias.key())
                         .or_default()
                         .extend(merged_labels.iter().cloned());
                     Arc::new(QueryNode::new(
@@ -1595,10 +1640,7 @@ impl Binder {
                 let to_alias =
                     self.define_alias_in_scope(&relationship.to.alias, Type::Node, !is_create)?;
                 let to_attrs = self.bind_expr(&relationship.to.attrs)?;
-                let labels = self
-                    .node_labels
-                    .entry((to_alias.scope_id, to_alias.id))
-                    .or_default();
+                let labels = self.node_labels.entry(to_alias.key()).or_default();
                 labels.extend(relationship.to.labels.iter().cloned());
                 let all_labels = labels.clone();
                 let bound_node = Arc::new(QueryNode::new(to_alias, all_labels, to_attrs));
@@ -1776,7 +1818,7 @@ impl Binder {
         }
 
         // Bind the pattern - allow reuse since we've already validated
-        self.bind_graph(pattern, false)
+        self.bind_graph(pattern, false, false)
     }
 
     /// Checks whether an entity's unbound inline attrs contain a property
@@ -1792,8 +1834,12 @@ impl Binder {
             return Ok(());
         };
         for idx in attrs.root().indices::<Dfs>() {
-            if let ExprIR::Property(_) = attrs.node(idx).data()
-                && let ExprIR::Variable(var_name) = attrs.node(idx).child(0).data()
+            // `Property` is a leaf (no operand) when it is a map-projection
+            // selector such as the `.a` of `x {.a}`, so the operand is optional.
+            let node = attrs.node(idx);
+            if let ExprIR::Property(_) = node.data()
+                && let Some(operand) = node.get_child(0)
+                && let ExprIR::Variable(var_name) = operand.data()
                 && var_name == entity_alias
             {
                 return Err(format!("'{entity_alias}' not defined; undefined attribute"));
@@ -2015,7 +2061,7 @@ impl Binder {
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
-                let bound_graph = self.bind_graph(graph, false)?;
+                let bound_graph = self.bind_graph(graph, false, false)?;
 
                 let children = node_ref
                     .children()
@@ -2108,7 +2154,7 @@ impl Binder {
                         if let Some(first_child) = children.first()
                             && let ExprIR::Variable(v) = first_child.root().data()
                             && v.ty == Type::Path
-                            && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
+                            && !self.varlen_rel_var_ids.contains(&v.key())
                         {
                             return Err("Type mismatch: expected Map, Node, Edge, \
                                          Datetime, Date, Time, Duration, Null, \
@@ -2197,7 +2243,7 @@ impl Binder {
                         // (e.g. in WHERE clause OR branches) don't leak into
                         // the outer MATCH pattern's label accumulation.
                         let saved_labels = self.node_labels.clone();
-                        let result = self.bind_graph(&pattern, false);
+                        let result = self.bind_graph(&pattern, false, true);
                         self.node_labels = saved_labels;
 
                         // Remove pattern-local aliases so they don't leak into

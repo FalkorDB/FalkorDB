@@ -113,7 +113,7 @@ Headline theorems:
 * `rebuild_calls`, `rebuild_entity`, `rebuild_meta_first` — index replay.
 * `save_main`, `save_vkey`, `save_single`, `createdKeys_spec`, `deleteVKeys_spec` — SAVE
   writes the graph's key + `K - 1` virtual keys with slices `0..K`, `key_count = K`, and
-  deletes exactly those virtual keys afterwards; `onPersistence_spec` (BGSAVE never splits).
+  deletes exactly those virtual keys afterwards; `onPersistence_spec` (BGSAVE never splits); `onPersistence_strip` (#3844: every persistence start strips the telemetry streams).
 * `load_main_last`, `load_main_first` — whatever the position of the graph's own key in the
   load order, the registered `Arc` and the key's value coincide and hold the finished graph;
   no virtual key is registered; placeholders are dropped.

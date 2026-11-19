@@ -475,7 +475,7 @@ pub fn graph_constraint(
     }
 
     // Open or create graph. `graph_key` is the key that holds it.
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
     let (graph, graph_key) = if let Some(g) = key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
         .map_err(wrong_type_compat)?
@@ -496,7 +496,7 @@ pub fn graph_constraint(
         // rebuilt from that name (`GraphContext_SetKey`) — not at the key the
         // command addressed, which differs once it holds a NUL.
         let created_at = c_graph_key(ctx, &key_str);
-        let create_key = ctx.open_key_writable(&created_at);
+        let create_key = ctx.open_key_writable(&created_at)?;
         create_key
             .set_value(&GRAPH_TYPE, g.clone())
             .map_err(wrong_type_compat)?;

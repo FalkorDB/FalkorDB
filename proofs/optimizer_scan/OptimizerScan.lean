@@ -40,7 +40,7 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-801` |
 | `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:308-335` |
 | `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
-| `ScanOrder.place`, `runScoped` | `select_scan_node.rs:979-986, 1185-1235` |
+| `ScanOrder.place`, `runScoped`, `initialBound` | `select_scan_node.rs:983-986, 1185-1235` |
 | `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
 
 ## Proven (plain English)
@@ -71,6 +71,7 @@ Scan selection (`ScanOrder.lean`):
 - `run_perm`, `run_append`: reordering or re-sequencing tests keeps the selected rows.
 - `pick_perm`, `order_sound`, `order_length`: the greedy hop ordering keeps every hop exactly once, oriented soundly.
 - `runScoped_wellScoped`, `place_wellScoped`, `wellScoped_filts`: filter re-placement is sound **iff** the seed bound set is honest.
+- `initialBound_wellScoped`, `initialBound_keeps_row` (#3523): `initial_bound` is honest — `{best_node}` only without a kept child, else the child's variables — so re-placement is well-scoped; the former counterexample finds its row.
 - `hasAll_perm`, `sortBy_perm`, `insertBy_perm`, `reorderLabels_sound`: `reorder_labels` cannot change a scan.
 - `withPrimary_sound`, `primary_split`: putting the indexed label first + checking the rest = the full label set.
 
@@ -87,6 +88,8 @@ Scan selection (`ScanOrder.lean`):
    Test `bug_select_scan_node_places_filter_before_its_variable_is_bound`.
    STILL PRESENT at 8743953a8 (re-checked live on a build of main's planner, b3582e34a: Rust 0,
    expected 1; the EXPLAIN shows the `c` Filter right after `(b)<-(d)`).
+   **FIXED by #3523** (`select_scan_node.rs:983-986`: the suggested fix). Lean `initialBound_wellScoped`,
+   `initialBound_keeps_row`.
 2. **`NodeByIdSeek` returned a node that never existed, and writes to it persisted** — **FIXED by #3394**
    (9212add39, closes #3353; main b84473a7f: `evaluate_id_filter` returns `Ok(None)` when
    `node_count() == 0`, `runtime.rs:1470-1475`; Lean `seek_sound` without `nodeCount ≠ 0`,
@@ -227,6 +230,18 @@ RETURN a.v, b.w` on `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` r
 `[1,2],[5,2]` (should be `[1,2]`; the fixed-length `-[:R]->` form is right) on builds 88e92ae25
 and b3582e34a. `ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. Fix: refuse the leaf
 rewrite when the wrapper holds a `Filter`, or salvage it above the traverse with `filters_of`.
+FIXED by PR #3264 (0615f92a7): the leaf rewrite now refuses a `Filter` in the wrapper chain and any
+operator under the scan other than a childless `Argument` (`select_scan_node.rs:623-641`). Model:
+`VLCase.scanOnlyArgBelow`, `vlLeaf` (new) vs `vlLeafPre` (history); `vlLeaf_keeps_filter`,
+`vl_never_drops_filter`, `vlLeaf_eq_pre`, `vl_leaf_bug_case_fixed`.
+
+## PR #3593 (var-length leaf rewrite keeps children, allows undirected walks)
+`select_var_len_scan_node` (`select_scan_node.rs:594`) no longer refuses an undirected walk (the
+runtime now reverses it: `vlLeaf_bidir`, sound by `vl_reverse_sound_symm`), keeps every child of the
+old scan under the new `to` scan (`leafScan_keeps_below`, `vlLeaf_over_input`), and refuses when the
+edge attrs read an endpoint (`vlNonLeaf_attrs`) or a kept child may bind `to` (`subtree_may_bind`
+:568, `subtreeMayBind_spec`, `childSubtreeBinds_mayBind`, `vl_leaf_never_rebinds_to`). The #3264
+guards are `vlGuards3264`/`vlLeaf3264` (history; `vlLeaf3264_guards`, `vlLeaf_eq_3264`).
 
 ## PR #3821 (f71981fa3: equality-pinned endpoint tie-break)
 `score_endpoint` returns `(score, has_equality, filter_runs_late, cardinality)`;

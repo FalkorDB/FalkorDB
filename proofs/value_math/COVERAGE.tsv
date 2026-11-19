@@ -41,33 +41,33 @@ graph/src/runtime/value.rs	compare_value	1250	NOT COVERED	trait method declarati
 graph/src/runtime/value.rs	eq	1257	PROVEN	proofs/value_order: eqV; isNeverEqual_iff
 graph/src/runtime/value.rs	compare_value	1266	PROVEN	mayFail_sound; proofs/value_order: cmp_sane_eq_key, sane_le_trans
 graph/src/runtime/value.rs	value_of_type	1316	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	value_of_type	1323	PROVEN	valueOfType_none_iff
-graph/src/runtime/value.rs	get_type	1365	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	get_type	1369	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
-graph/src/runtime/value.rs	name	1395	MODELLED	V.name (used in error-message theorems)
-graph/src/runtime/value.rs	to_json_string	1417	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	fmt	1427	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	compare_list	1442	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
-graph/src/runtime/value.rs	compare_map	1515	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
-graph/src/runtime/value.rs	is_never_equal	1645	PROVEN	isNeverEqual_iff
-graph/src/runtime/value.rs	may_fail_self_match	1668	PROVEN	mayFail_sound
-graph/src/runtime/value.rs	fmt_json	1696	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
-graph/src/runtime/value.rs	write_json_string	1818	NOT COVERED	json_escape crate (trusted)
-graph/src/runtime/value.rs	write_node_json	1830	NOT COVERED	runtime graph accessors + formatting
-graph/src/runtime/value.rs	contains	1870	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	contains	1877	PROVEN	proofs/functions_str_list Contains
-graph/src/runtime/value.rs	partial_cmp	1902	PROVEN	partialCmp_null
-graph/src/runtime/value.rs	compare_floats	1915	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
-graph/src/runtime/value.rs	compare_vecf32	2005	PROVEN	chunked_eq_firstDiff
-graph/src/runtime/value.rs	first_difference	2009	PROVEN	firstDiff_append, firstDiff_self
-graph/src/runtime/value.rs	with_capacity	2047	NOT COVERED	constructor
-graph/src/runtime/value.rs	is_seen	2057	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
-graph/src/runtime/value.rs	has_hash	2068	PROVEN	dedup_second_seen
-graph/src/runtime/value.rs	check_and_insert_hash	2075	PROVEN	dedup_second_seen, dedup_first_unseen
+graph/src/runtime/value.rs	value_of_type	1323	PROVEN	valueOfType_none_iff, vot_list_any
+graph/src/runtime/value.rs	get_type	1369	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	get_type	1373	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
+graph/src/runtime/value.rs	name	1399	MODELLED	V.name (used in error-message theorems)
+graph/src/runtime/value.rs	to_json_string	1421	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	fmt	1431	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	compare_list	1446	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
+graph/src/runtime/value.rs	compare_map	1519	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
+graph/src/runtime/value.rs	is_never_equal	1649	PROVEN	isNeverEqual_iff
+graph/src/runtime/value.rs	may_fail_self_match	1672	PROVEN	mayFail_sound
+graph/src/runtime/value.rs	fmt_json	1700	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
+graph/src/runtime/value.rs	write_json_string	1822	NOT COVERED	json_escape crate (trusted)
+graph/src/runtime/value.rs	write_node_json	1834	NOT COVERED	runtime graph accessors + formatting
+graph/src/runtime/value.rs	contains	1874	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	contains	1881	PROVEN	proofs/functions_str_list Contains
+graph/src/runtime/value.rs	partial_cmp	1906	PROVEN	partialCmp_null
+graph/src/runtime/value.rs	compare_floats	1919	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
+graph/src/runtime/value.rs	compare_vecf32	2009	PROVEN	chunked_eq_firstDiff
+graph/src/runtime/value.rs	first_difference	2013	PROVEN	firstDiff_append, firstDiff_self
+graph/src/runtime/value.rs	with_capacity	2051	NOT COVERED	constructor
+graph/src/runtime/value.rs	is_seen	2061	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
+graph/src/runtime/value.rs	has_hash	2072	PROVEN	dedup_second_seen
+graph/src/runtime/value.rs	check_and_insert_hash	2079	PROVEN	dedup_second_seen, dedup_first_unseen
 graph/src/runtime/value.rs	value_nesting_error	76	PROVEN	Nesting.valueNestingError_text (decoder message; decodeValue_refuses_past_cap, decode_nest_deep); the property validator's own message (`validate_list_property`, "Property values can only be nested up to N levels deep") is a different string and its text is not proved
-graph/src/runtime/value.rs	encode	2087	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
-graph/src/runtime/value.rs	decode	2173	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
-graph/src/runtime/value.rs	decode_value	2185	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
+graph/src/runtime/value.rs	encode	2091	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
+graph/src/runtime/value.rs	decode	2177	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
+graph/src/runtime/value.rs	decode_value	2189	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
 graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
 graph/src/runtime/functions/math.rs	abs	46	PROVEN	abs_agree_except, abs_min_diverges, abs_nzero_diverges, unary_no_panic
 graph/src/runtime/functions/math.rs	ceil	63	PROVEN	int_rounding_identity, unary_no_panic
@@ -85,17 +85,18 @@ graph/src/runtime/functions/math.rs	sqrt	225	PROVEN	sqrt_float_eq_ieee, sqrt_int
 graph/src/runtime/functions/math.rs	range	251	PROVEN	proofs/functions_str_list range
 graph/src/runtime/functions/math.rs	coalesce	314	PROVEN	coalesce_spec, eq_null_iff; coalesce_zero_args_rejected (#2956 fixed 648b41c5c: zero args rejected at validate)
 graph/src/runtime/functions/math.rs	apply_pow	328	PROVEN	MathFns.applyPow (#2904: non-numeric non-null operand is a type error): pow_nonnumeric_base_errors, pow_nonnumeric_exp_errors, pow_bool_errors, pow_null, pow_numeric_unchanged
-graph/src/runtime/functions/conversion.rs	register	40	PROVEN	ConvReg convSigs: convSigs_lower_nodup, orNull_aliases, orNull_accepts
-graph/src/runtime/functions/conversion.rs	value_to_integer	44	PROVEN	toInteger_int_literal_agrees_c (all signed-digit strings = C strtoll), toInteger_neg_overflow_null (#2955 fixed ac5c27b76), toInteger_int_literals_agree, toInteger_pos_overflow, leading_space, exp_literal, toInteger_nonfinite_diverges
-graph/src/runtime/functions/conversion.rs	value_to_float	103	PROVEN	ConvReg toFloat_ret, toFloat_arms, toFloatArgs_spec, toFloat_unsupported (f64 parse = ConvOps.parseF parameter)
-graph/src/runtime/functions/conversion.rs	value_to_string	125	PROVEN	ConvReg toStr_no_panic, arity_one, toStr_ret, toStr_unsupported (float Display = ConvOps.display parameter)
-graph/src/runtime/functions/conversion.rs	to_json	161	PROVEN	ConvReg toJson_spec, toJson_ret (to_json_string = parameter)
-graph/src/runtime/functions/conversion.rs	is_empty	175	PROVEN	isEmpty_no_panic
-graph/src/runtime/functions/conversion.rs	to_boolean	189	PROVEN	toBoolean_roundtrip, toBooleanStr examples
-graph/src/runtime/functions/conversion.rs	to_boolean_list	219	PROVEN	toBooleanList_eq
-graph/src/runtime/functions/conversion.rs	to_float_list	246	PROVEN	toFloatList_eq
-graph/src/runtime/functions/conversion.rs	to_integer_list	265	PROVEN	toIntegerList_eq
-graph/src/runtime/functions/conversion.rs	to_string_list	281	PROVEN	toStringList_eq
+graph/src/runtime/functions/conversion.rs	register	41	PROVEN	ConvReg convSigs: convSigs_lower_nodup, orNull_aliases, orNull_accepts
+graph/src/runtime/functions/conversion.rs	value_to_integer	45	PROVEN	toInteger_int_literal_agrees_c (all signed-digit strings = C strtoll), toInteger_neg_overflow_null (#2955 fixed ac5c27b76), toInteger_int_literals_agree, toInteger_pos_overflow, leading_space, exp_literal, toInteger_nonfinite_diverges
+graph/src/runtime/functions/conversion.rs	value_to_float	104	PROVEN	ConvReg toFloat_ret, toFloat_arms, toFloatArgs_spec, toFloat_unsupported (f64 parse = ConvOps.parseF parameter)
+graph/src/runtime/functions/conversion.rs	value_to_string	126	PROVEN	ConvReg toStr_no_panic, arity_one, toStr_ret, toStr_unsupported (float arm = ConvOps.display = float_to_string: FloatToString.toStr_float)
+graph/src/runtime/functions/conversion.rs	to_json	160	PROVEN	ConvReg toJson_spec, toJson_ret (to_json_string = parameter)
+graph/src/runtime/functions/conversion.rs	is_empty	174	PROVEN	isEmpty_no_panic
+graph/src/runtime/functions/conversion.rs	to_boolean	188	PROVEN	toBoolean_roundtrip, toBooleanStr examples
+graph/src/runtime/functions/conversion.rs	to_boolean_list	218	PROVEN	toBooleanList_eq
+graph/src/runtime/functions/conversion.rs	to_float_list	245	PROVEN	toFloatList_eq
+graph/src/runtime/functions/conversion.rs	to_integer_list	264	PROVEN	toIntegerList_eq
+graph/src/runtime/functions/conversion.rs	to_string_list	280	PROVEN	toStringList_eq
+graph/src/runtime/functions/conversion.rs	float_to_string	299	PROVEN	FloatToString.floatToString (std formatters/parse = FmtOps parameters): fts_plain, fts_nonfinite, fts_sci_spec, sciFixed_spec, fts_sci_has_fraction, splitOnce_append; plain-decimal half-even tie case (conversion.rs:303) open, not modelled as Java-equal
 graph/src/runtime/functions/mod.rs	empty_procedure_batch	419	PROVEN	Registry.emptyProcedureBatch: emptyProcedureBatch_rows
 graph/src/runtime/functions/mod.rs	call	436	PROVEN	Registry.RuntimeFn.call (QuickJS bridge = argument): call_arms
 graph/src/runtime/functions/mod.rs	call_procedure_batch	451	PROVEN	Registry.RuntimeFn.callProcBatch: call_arms

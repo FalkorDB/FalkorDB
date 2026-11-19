@@ -62,7 +62,7 @@ Yes:
 
 - `save_main`, `save_vkey`, `save_single`: SAVE writes the graph's own key plus K − 1 virtual keys holding slices `0..K`, with `key_count = K`;
 - `deleteVKeys_spec`: the virtual keys are deleted afterwards;
-- `onPersistence_spec`: BGSAVE never splits a graph;
+- `onPersistence_spec`: BGSAVE never splits a graph; `onPersistence_strip`: every persistence start strips the telemetry streams (#3844);
 - `metaSave_stale`: since #3161 virtual keys have the `graphmeta` type, and a leftover one writes nothing;
 - `load_main_first`, `load_main_last`: whatever position the graph's own key has in the load order, the registered graph and the key's value end up as the same finished graph.
 
