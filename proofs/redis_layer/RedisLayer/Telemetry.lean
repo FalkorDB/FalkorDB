@@ -10,11 +10,11 @@ Line numbers: `origin/main` (`3fec7d7c9`).
 | `hashTag`              | Redis Cluster `keyHashSlot` tag rule (documentation of the key scheme) |
 | `Reg`, `register*` … `snapshot*` | `shard_for` `:404`, `register_running` `:409` … `snapshot_waiting` `:534` |
 | `WE.*`                 | `WaitingEntry::register/promote/drop` `:481-502` |
-| `enqueueOk`            | `enqueue_entry` gates `:892-937` |
-| `drain`                | `drain_queued` `:832` |
-| `capDeferred`          | `deferred.drain(..len - DEFERRED_XADD_MAX)` (`flusher_loop`) |
-| `resolve`              | `resolve_current_names` `:682-742` |
-| `groupOrder`           | `deferred.sort_by(graph_name)` + `chunk_by` (`flusher_loop`) |
+| `enqueueOk`            | `enqueue_entry` gates `:1038-1077` (no role check since #3844) |
+| `drain`                | `drain_queued` `:977` |
+| `Pre3844.capDeferred`  | historical: `deferred.drain(..len - DEFERRED_XADD_MAX)` (removed by #3844) |
+| `resolve`              | `resolve_current_names` `:854-914` |
+| `groupOrder`           | `batch.sort_by(graph_name)` + `chunk_by` (`flusher_loop`) |
 | `fieldValues`          | `StreamTemplate::add` value array `:176-201` |
 | `failMsg`              | `StreamTemplate::report_failures` `:228-240` |
 -/

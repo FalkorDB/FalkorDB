@@ -75,7 +75,10 @@ use crate::{
 };
 
 use super::super::IR;
-use super::{collect_expr_variables, collect_subtree_variables};
+use super::{
+    collect_expr_scoped_variables, collect_expr_variables, collect_subtree_variables,
+    endpoint_scan_score, walk_scans_to_endpoint,
+};
 use crate::runtime::runtime::GetVariables;
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
@@ -119,14 +122,9 @@ fn score_endpoint(
     // the planner and stripped from the pattern, so they arrive here through
     // `filtered_vars` like any other predicate rather than being counted
     // separately — which used to score such an endpoint twice.
-    if filtered_vars.all.contains(&key) {
-        score += 2;
-    }
+    score += endpoint_scan_score(filtered_vars.all.contains(&key), !node.labels.is_empty());
     let has_equality = filtered_vars.equality.contains(&key);
     let filter_runs_late = filtered_vars.above.contains(&key);
-    if !node.labels.is_empty() {
-        score += 1;
-    }
     // Cardinality: minimum label node count (lower is better).
     // For nodes with no labels, use u64::MAX so labeled nodes win ties.
     let cardinality = if node.labels.is_empty() {
@@ -600,6 +598,28 @@ fn child_subtree_binds(
     binds
 }
 
+/// Whether anything below the planner scan at `scan_idx` may bind `alias`:
+/// one of its children binds it, or contains an `Argument(None)`, which is
+/// opaque about what it carries. Unlike `child_subtree_binds`, an opaque
+/// `Argument` counts as binding, since the caller is about to scan `alias`
+/// on top of these children and must not rebind it.
+fn subtree_may_bind(
+    plan: &DynTree<IR>,
+    scan_idx: NodeIdx<Dyn<IR>>,
+    alias: &Variable,
+) -> bool {
+    use crate::runtime::runtime::GetVariables;
+    plan.node(scan_idx).children().any(|child| {
+        child
+            .walk::<Bfs>()
+            .any(|ir| matches!(ir, IR::Argument(None)))
+            || child
+                .get_variables()
+                .iter()
+                .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+    })
+}
+
 /// Picks which endpoint of a leaf `CondVarLenTraverse` to scan.
 ///
 /// The planner always scans the pattern's `from` endpoint. When `to` is the
@@ -641,14 +661,22 @@ fn select_var_len_scan_node(
         };
         // Nothing to choose between: both endpoints are already bound, both
         // ends are the same variable, or the runtime has no backwards walk for
-        // this pattern (bidirectional / allShortestPaths).
+        // this pattern (allShortestPaths).
         if *expand_into
-            || relationship.bidirectional
             || relationship.all_shortest_paths != AllShortestPaths::No
             || relationship.from.alias.id == relationship.to.alias.id
         {
             continue;
         }
+        // The edge attributes are evaluated per edge, before the walk binds
+        // anything: one that reads an endpoint sees it bound only when that
+        // end is the one scanned (or bound by an input). Dropping the `from`
+        // scan unbinds `from`; rescanning `to` flips which end is bound.
+        let attr_vars = collect_expr_scoped_variables(&relationship.attrs);
+        let attrs_read_from =
+            attr_vars.contains(&(relationship.from.alias.scope_id, relationship.from.alias.id));
+        let attrs_read_to =
+            attr_vars.contains(&(relationship.to.alias.scope_id, relationship.to.alias.id));
         // Only rewrite when the planner put its own scan for `from` here.
         if node.num_children() != 1 {
             continue;
@@ -705,7 +733,10 @@ fn select_var_len_scan_node(
             (filter, include_pending)
         };
         let wrapper_ok = !has_filter && !has_include_pending;
-        if wrapper_ok && child_subtree_binds(optimized_plan, scan_idx, &to.alias) {
+        if wrapper_ok
+            && !attrs_read_from
+            && child_subtree_binds(optimized_plan, scan_idx, &to.alias)
+        {
             let kept: Vec<DynTree<IR>> = optimized_plan
                 .node(scan_idx)
                 .children()
@@ -724,26 +755,9 @@ fn select_var_len_scan_node(
             }
         }
 
-        // The leaf rewrite below replaces the whole subtree with a fresh scan
-        // of `to`, carrying over only an `Argument` leaf (and re-adding
-        // `IncludePending` inside MERGE). Anything else there is an earlier
-        // clause that `plan_query` stitched under the traverse: a `Filter`
-        // (`MATCH (a) WHERE a.v = 1 MATCH (a)-[*]->(b)`) or an operator below
-        // the scan (`UNWIND … MATCH (a)-[*]->(b)`). Dropping it would lose a
-        // predicate or rows, so keep the planner's direction instead.
-        let scan_node = optimized_plan.node(scan_idx);
-        let only_argument_below = match scan_node.num_children() {
-            0 => true,
-            1 => {
-                let below = scan_node.child(0);
-                matches!(below.data(), IR::Argument(_)) && below.num_children() == 0
-            }
-            _ => false,
-        };
-        if has_filter || !only_argument_below {
+        if attrs_read_from || attrs_read_to {
             continue;
         }
-
         // A correlated sub-plan may already bind `to` from its outer context;
         // scanning it here would rebind it. `Argument(None)` is opaque about
         // what it carries, so treat it as binding everything.
@@ -755,6 +769,32 @@ fn select_var_len_scan_node(
             }
             _ => {}
         }
+        // A `Filter` in the wrapper chain is an earlier clause's predicate: the
+        // planner no longer emits one around its own scan, so this is outer
+        // context that happens to start with a scan of `from`. Rebuilding the
+        // chain would drop the predicate (`MATCH (a) WHERE a.id = 99
+        // MATCH (a)-[:R*1..2]->(b:B {id: 1})`).
+        if has_filter {
+            continue;
+        }
+        // The new scan of `to` sits on top of everything kept below, so if
+        // that already binds `to` (an earlier clause, or a pattern predicate's
+        // `SemiApply` that scans it: `MATCH (b:B) WHERE (b)-[:X]->()
+        // MATCH (a)-[:R*1..2]->(b:B)`), the scan would rebind it for every
+        // input row and lose the correlation. The non-leaf rewrite above
+        // handles a provable binding; anything it could not prove stays as
+        // planned.
+        if subtree_may_bind(optimized_plan, scan_idx, &to.alias) {
+            continue;
+        }
+        // Whatever sits below the scan feeds it rows (an earlier clause, an
+        // `UNWIND`, an `Argument`): the new scan keeps all of it, so their
+        // multiplicity and bindings survive the reversal.
+        let kept: Vec<DynTree<IR>> = optimized_plan
+            .node(scan_idx)
+            .children()
+            .map(|c| c.clone_as_tree())
+            .collect();
 
         // This used to refuse the reversal unless every endpoint carrying
         // inline attrs also had a Filter above the traverse — a cross-check
@@ -767,7 +807,7 @@ fn select_var_len_scan_node(
         let (from_score, _, _, _) = score_endpoint(&from, &filtered_vars, &bound, graph);
         let (to_score, _, _, _) = score_endpoint(&to, &filtered_vars, &bound, graph);
         // A tie keeps the pattern's own direction.
-        if to_score <= from_score {
+        if !walk_scans_to_endpoint(from_score, to_score) {
             continue;
         }
 
@@ -777,9 +817,9 @@ fn select_var_len_scan_node(
         } else {
             DynTree::new(IR::NodeByLabelScan { node: to.clone() })
         };
-        if let Some(arg) = argument {
+        for t in kept {
             let root_idx = scan.root().idx();
-            scan.node_mut(root_idx).push_child(arg);
+            scan.node_mut(root_idx).push_child_tree(t);
         }
         if in_merge {
             scan = tree!(IR::IncludePending { node: to }, scan);

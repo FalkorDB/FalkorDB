@@ -162,7 +162,7 @@ C-side bugs seen along the way: C crashes on some malformed bulk tokens, and cou
 | `KeyName.lean` | #2653: key names as bytes, a concrete `from_utf8_lossy`, the replicated key |
 | `ErrorText.lean` | #3428: `str_as_legal_resp_string` (error and simple-string reply text) on bytes; history pre-#3428 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) |
 | `Commands.lean`, `Commands2.lean` | The smaller command handlers: constraint, record, copy, bulk, memory, config get, and others |
-| `Telemetry.lean`, `TelemetryReg.lean`, `TelemetryLoop.lean` | `telemetry.rs`: stream names, the query registry, batching, the flusher |
+| `Telemetry.lean`, `TelemetryReg.lean`, `TelemetryLoop.lean`, `TelemetryFreed.lean` | `telemetry.rs`: stream names, the query registry, batching, the flusher, the #3844 persistence strip and freed-graph stream queue |
 | `SlowLog.lean` | `slow_log.rs` (incl. #3442, fixed by #3456: `MinCache`, `SlowestKept`, `add`) |
 | `RelLookup.lean` | #3447 (open) / #3449 (fixed by #3462): the relationship lookups behind the reply encoders (endpoints, type id/name over graph, snapshots and pending), the cascade commit and `GRAPH.RECORD` |
 | `Allocator.lean` | `allocator.rs`: per-thread allocation counters |

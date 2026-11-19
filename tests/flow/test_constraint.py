@@ -1892,3 +1892,47 @@ class testConstraintWriteLockStateChanges(ConstraintBehindLongReads):
         # the graph lives on in the other database
         with redis.Redis(host=self.env.host, port=self.env.port, db=1) as db1:
             self.env.assertEqual(db1.exists(WRITE_LOCK_GRAPH_ID), 1)
+
+# a constraint on a large label is validated in the background: the settle reads
+# one version of the graph and publishes its verdict on whatever version is
+# current by then. a write that committed in between was not looked at by the
+# settle, and was not enforced either while only OPERATIONAL constraints bound
+# writes — so the constraint went OPERATIONAL over data that violates it (17 of
+# 20 tries on a million-node label; never on C, which enforces a constraint from
+# the moment it is created)
+class testConstraintSettleRace():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.g = self.db.select_graph("constraint_settle_race")
+        # above the size a constraint is validated inline at
+        self.g.query("UNWIND range(0, 499999) AS x CREATE (:L {v: x})")
+        create_node_range_index(self.g, "L", "v", sync=True)
+
+    def _race(self, ct_type, create, violating_write, violations):
+        con = self.env.getConnection()
+        for _ in range(5):
+            create(self.g, "L", "v")
+            try:
+                # refused, unless it gets in before the constraint is created
+                self.g.query(violating_write)
+            except ResponseError as e:
+                self.env.assertContains("constraint violation", str(e))
+            wait_on_constraint(self.g, ct_type, "NODE", "L", "v")
+            c = get_constraint(self.g, ct_type, "NODE", "L", "v")
+            bad = self.g.ro_query(violations).result_set[0][0]
+            # OPERATIONAL means the data satisfies it
+            self.env.assertFalse(c.status == "OPERATIONAL" and bad > 0,
+                                 message=f"{ct_type} is OPERATIONAL over {bad} violating nodes")
+            drop_constraint(self.g, ct_type, "NODE", "L", "v")
+            con.execute_command("GRAPH.QUERY", "constraint_settle_race",
+                                "MATCH (n:L) WHERE n.w = 1 DELETE n")
+
+    def test01_mandatory(self):
+        self._race("MANDATORY", create_mandatory_node_constraint,
+                   "CREATE (:L {w: 1})",
+                   "MATCH (n:L) WHERE n.v IS NULL RETURN count(n)")
+
+    def test02_unique(self):
+        self._race("UNIQUE", create_unique_node_constraint,
+                   "CREATE (:L {v: 0, w: 1})",
+                   "MATCH (n:L) WITH n.v AS v, count(*) AS c WHERE c > 1 RETURN count(v)")
