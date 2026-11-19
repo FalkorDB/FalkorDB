@@ -14,6 +14,7 @@ import RedisLayer.Resp
 | `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:636` / `execute_profile` `:722` write detection and `admission.take()` |
 | `writeSteps`                | `try_query_write` `:886`, `finish_write` `:1633`, `abandon_write` `:1668`, `commit_and_replicate` `:1684` |
 | `executeWrite`, `Attempt`   | `execute_query_write` `:793` (retry loop, #3290), `WriteAttempt::from` `:863` |
+| `WTimeout`, `resolveT`, `runBudget` | `try_query_write` `:886` one timeout for all runs (`WriteTimeout` `:870`, #3559) |
 | `loopW`, `escalateNext`, `Run` | `execute_query_write` `:793` bounded retry (#3559), `MAX_STALE_RETRIES` `:847`, `SLOW_STALE_RUN` `:854` |
 | `admitQ`, `dispatch`        | `admit` `:1052`, `query_mut` `:1063` (#3014) |
 | `syncOutcome`, `logsTelemetry` | `query_sync` `:1264` (`log_query`, #3844), `dispatch::logs_telemetry` `dispatch.rs:63`, `profile_sync` `:1501`, `profile_mut` `:1400` |
@@ -467,6 +468,47 @@ theorem loopW_has_result (s : Nat) (w : Bool) (runs : List (Bool → Run))
 theorem loopW_decided (runs : List (Bool → Run)) (hw : ∀ f ∈ runs, (f true).a ≠ .stale)
     (hl : maxStaleRetries + 1 ≤ runs.length) : (loopW 0 false runs).1.isSome :=
   loopW_has_result 0 false runs hw (by simp [maxStaleRetries] at hl ⊢; omega)
+
+/-! ### One timeout for every run (#3559)
+
+`try_query_write` (`:886`) resolves `WriteTimeout` on the first run only
+(`compute_effective_timeout`, here its answer `cfg`) and keeps it for the retries; each run then
+gets what is left since `started` (`spent` ms), or fails with `Query timed out` before forking. -/
+
+inductive WTimeout | unresolved | unlimited | total (ms : Nat)
+  deriving DecidableEq, Repr
+
+/-- `if matches!(timeout, Unresolved) { *timeout = cfg.map_or(Unlimited, Total) }`. -/
+def resolveT (t : WTimeout) (cfg : Option Nat) : WTimeout :=
+  match t with
+  | .unresolved => match cfg with | some n => .total n | none => .unlimited
+  | t => t
+
+/-- The run's `timeout_ms`: `.inl ()` is the `Query timed out` failure, `.inr` the budget. -/
+def runBudget (t : WTimeout) (spent : Nat) : Unit ⊕ Option Nat :=
+  match t with
+  | .total total => if total ≤ spent then .inl () else .inr (some (total - spent))
+  | _ => .inr none
+
+/-- Once resolved, a config change during a retry cannot move the timeout. -/
+theorem resolveT_kept (t : WTimeout) (cfg cfg' : Option Nat) :
+    resolveT (resolveT t cfg) cfg' = resolveT t cfg := by
+  cases t <;> try rfl
+  cases cfg <;> rfl
+
+/-- A run never gets more than the whole budget less what earlier runs spent, and is refused
+exactly when the budget is gone. -/
+theorem runBudget_le (total spent : Nat) :
+    (runBudget (.total total) spent = .inl () ↔ total ≤ spent) ∧
+    ∀ b, runBudget (.total total) spent = .inr (some b) → b + spent = total := by
+  unfold runBudget
+  constructor
+  · by_cases h : total ≤ spent <;> simp [h]
+  · intro b hb
+    by_cases h : total ≤ spent <;> simp [h] at hb; omega
+
+/-- With no timeout configured, no retry is ever refused for time. -/
+theorem runBudget_unlimited (spent : Nat) : runBudget .unlimited spent = .inr none := rfl
 
 /-- The refusal `try_query_write` returns (`WriteAttempt::Failed(abort.to_string())`) is not
 `Stale`: `execute_query_write` surfaces it instead of re-running. -/
