@@ -66,13 +66,16 @@ graph/src/runtime/ops/cartesian_product.rs	RightSide::rewind	117	PROVEN	CartVhj.
 graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::new	123	PROVEN	CartVhj.CpSt.new: cpNew_spec
 graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::materialize_right	144	PROVEN	CartVhj.materialize: materialize_ok
 graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::next	162	PROVEN	CartVhj.cpRows (+ Columnar.BB.pushPlanned): cpRows_length, orbit_valid
-graph/src/runtime/ops/value_hash_join.rs	JoinHashTable::is_empty	96	PROVEN	CartVhj.jtEmpty: jtEmpty_spec
-graph/src/runtime/ops/value_hash_join.rs	hash_value	118	PROVEN	CartVhj.hashValue: hashValue_det
-graph/src/runtime/ops/value_hash_join.rs	keys_match	137	PROVEN	CartVhj.keysMatch: keysMatch_spec
-graph/src/runtime/ops/value_hash_join.rs	key_as_i64	153	PROVEN	CartVhj.keyAsI64: keyAsI64_spec (W2-rewrites-3: exact-int keying vs `=`)
-graph/src/runtime/ops/value_hash_join.rs	insert_value	176	PROVEN	CartVhj.insertValue/addRef: insertValue_spec, probe_insert_fresh
-graph/src/runtime/ops/value_hash_join.rs	promote_int_table	196	PROVEN	CartVhj.promote: promote_bucket
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	228	PROVEN	CartVhj.VhjSt.new: vhjNew_spec
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	256	PROVEN	CartVhj.build: build_int
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	324	PROVEN	CartVhj.fillMatches/probe: fillMatches_int, probe_insert_fresh
-graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	366	PROVEN	CartVhj.vhjRows: vhjRows_spec
+graph/src/runtime/ops/value_hash_join.rs	JoinHashTable::is_empty	98	PROVEN	CartVhj.jtEmpty: jtEmpty_spec
+graph/src/runtime/ops/value_hash_join.rs	hash_value	120	PROVEN	CartVhj.hashValue: hashValue_det
+graph/src/runtime/ops/value_hash_join.rs	keys_match	218	PROVEN	CartVhj.keysMatch: keysMatch_spec
+graph/src/runtime/ops/value_hash_join.rs	key_as_i64	242	PROVEN	CartVhj.keyAsI64: keyAsI64_spec, keyAsI64_large, keyAsI64_bound, keyAsI64_sound (W2-rewrites-3 fixed by #3034; keyAsI64Old_unsound)
+graph/src/runtime/ops/value_hash_join.rs	insert_value	289	PROVEN	CartVhj.insertValue/addRef: insertValue_spec, probe_insert_fresh
+graph/src/runtime/ops/value_hash_join.rs	promote_int_table	309	PROVEN	CartVhj.promote: promote_bucket
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	341	PROVEN	CartVhj.VhjSt.new: vhjNew_spec
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	369	PROVEN	CartVhj.build: build_int, build_int_bounded
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	442	PROVEN	CartVhj.fillMatches/probe: fillMatches_int, fillMatches_int_large, probe_insert_fresh, probe_merges
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	509	PROVEN	CartVhj.vhjRows: vhjRows_spec
+graph/src/runtime/ops/value_hash_join.rs	JoinKey::hash	136	NOT COVERED	(#3034): the join hash is modelled as an arbitrary function (CartVhj.hashValue); its agreement with `=` across Int/Float above 2^53, nested lists/maps/paths and f32 NaN/signed zeros needs a bit-level f64/aHash model
+graph/src/runtime/ops/value_hash_join.rs	f32_join_bits	193	NOT COVERED	(#3034): f32 bit patterns are not modelled (only feeds JoinKey::hash, itself NOT COVERED)
+graph/src/runtime/ops/value_hash_join.rs	same_build_key	259	PROVEN	CartVhj.sameBuildKey: sameBuildKey_int_float, sameBuildKey_sound, numEq_not_transitive (lists/maps/paths abstracted into `other`)
