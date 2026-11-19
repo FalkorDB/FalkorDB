@@ -1101,11 +1101,10 @@ fn prune_all_node_scan_child(
     let IR::AllNodeScan(child_node) = child.data() else {
         return false;
     };
-    let child_key = child_node.alias.key();
     let child_idx = child.idx();
     // Safety: don't drop the scan that binds the child alias if the
     // edge-index query still depends on it.
-    if index_query_references_variable(&query, child_key.id, child_key.scope_id) {
+    if index_query_references_variable(&query, child_node.alias.key()) {
         return false;
     }
     plan.node_mut(child_idx).prune();

@@ -100,7 +100,7 @@ pub(in crate::planner) fn ir_references_variable(
         }
         // Predicates relocated out of a Filter by an optimizer pass.
         IR::NodeByIndexScan { query, .. } | IR::EdgeByIndexScan { query, .. } => {
-            index_query_references_variable(query, key.id, key.scope_id)
+            index_query_references_variable(query, key)
         }
         IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => filter
             .iter()
@@ -185,13 +185,8 @@ pub(in crate::planner) fn ir_references_variable(
 /// `x`.
 pub(super) fn index_query_references_variable(
     query: &IndexQuery<QueryExpr<Variable>>,
-    var_id: u32,
-    scope_id: u32,
+    key: VarKey,
 ) -> bool {
-    let key = VarKey {
-        id: var_id,
-        scope_id,
-    };
     let refs = |e: &QueryExpr<Variable>| expr_references_variable(e, key);
     // An explicit stack rather than recursion: `And` and `Or` nest to whatever
     // depth the query's predicates do.
@@ -271,7 +266,7 @@ mod tests {
 
     use super::index_query_references_variable;
     use crate::index::indexer::IndexQuery;
-    use crate::parser::ast::{ExprIR, QueryExpr, Variable};
+    use crate::parser::ast::{ExprIR, QueryExpr, VarKey, Variable};
     use crate::runtime::functions::Type;
 
     fn var(
@@ -284,6 +279,13 @@ mod tests {
             scope_id,
             ty: Type::Any,
         })))
+    }
+
+    fn key(
+        id: u32,
+        scope_id: u32,
+    ) -> VarKey {
+        VarKey { id, scope_id }
     }
 
     fn eq(value: QueryExpr<Variable>) -> IndexQuery<QueryExpr<Variable>> {
@@ -304,12 +306,12 @@ mod tests {
                 IndexQuery::And(vec![eq(var(3, 0)), eq(var(7, 1))]),
             ]),
         ]);
-        assert!(index_query_references_variable(&deep, 7, 1));
-        assert!(index_query_references_variable(&deep, 1, 0));
+        assert!(index_query_references_variable(&deep, key(7, 1)));
+        assert!(index_query_references_variable(&deep, key(1, 0)));
         assert!(
-            !index_query_references_variable(&deep, 7, 0),
+            !index_query_references_variable(&deep, key(7, 0)),
             "same id, other scope"
         );
-        assert!(!index_query_references_variable(&deep, 9, 0));
+        assert!(!index_query_references_variable(&deep, key(9, 0)));
     }
 }
