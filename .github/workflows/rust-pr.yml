@@ -381,8 +381,8 @@ jobs:
 
   # The macOS module, falkordb-macos-arm64v8.so: built natively, checked to
   # stand alone, tested, and uploaded. In the merge queue, so every commit that
-  # lands on a trunk has one, and the release and the edge prerelease publish
-  # that file instead of rebuilding it (#3893). A pull request runs it only when
+  # lands on a trunk has one, and a release publishes that file instead of
+  # rebuilding it (#3893). A pull request runs it only when
   # labelled `ci-macos` (read from the event, so push after adding the label).
   macos:
     if: ${{ github.event_name == 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci-macos') }}
