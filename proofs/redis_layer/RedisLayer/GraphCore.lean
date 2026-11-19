@@ -5,7 +5,7 @@ import RedisLayer.Resp
 | here | there (`origin/main`) |
 | --- | --- |
 | `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:92`, `c_graph_name` `:106`, `c_graph_key` `:121` |
-| `Reg.*`                     | `register_graph` `:142`, `graph_is_registered` `:190`, `rename_graph` `:250`, `graph_free` `:1858` |
+| `Reg.*`                     | `register_graph` `:142`, `graph_is_registered` `:190`, `rename_graph` `:250`, `graph_free` `:1862` (stream queue: `Telemetry.graphFree`) |
 | `keyOfWrite`                | `key_of_write` `:223` (#3850/#3851) |
 | `modified`                  | `WriteQueryOk::new` `:303` |
 | `sanitise`                  | `ffi::sanitise_error` `:362` |
@@ -15,7 +15,7 @@ import RedisLayer.Resp
 | `writeSteps`                | `try_query_write` `:834`, `finish_write` `:1568`, `abandon_write` `:1603`, `commit_and_replicate` `:1619` |
 | `executeWrite`, `Attempt`   | `execute_query_write` `:784` (retry loop, #3290), `WriteAttempt::from` `:823` |
 | `admitQ`, `dispatch`        | `admit` `:1052`, `query_mut` `:1063` (#3014) |
-| `syncOutcome`               | `query_sync` `:1267`, `profile_sync` `:1497`, `profile_mut` `:1396` |
+| `syncOutcome`, `logsTelemetry` | `query_sync` `:1264` (`log_query`, #3844), `dispatch::logs_telemetry` `dispatch.rs:63`, `profile_sync` `:1501`, `profile_mut` `:1400` |
 | `loopExit`                  | `process_write_queued_query` `:1697` |
 | `EFFECT_COMMAND`            | `CtxSink::replicate` `:1845` |
 | `TG`                        | `ThreadedGraph::new` `:600`, `from_mvcc` `:617` (unbounded write channel since #3014) |
@@ -449,18 +449,40 @@ theorem read_releases_admission (ok : Bool) : admissionKept ok false = false := 
 /-! ## Sync paths (`query_sync`, `profile_sync`, `profile_mut`) -/
 
 inductive Out | errNoTelemetry | readTelemetry | writeTelemetry | writeErr | profileRead
+  | readUnlogged | writeUnlogged
   deriving DecidableEq
+
+/-- `dispatch::logs_telemetry` (`dispatch.rs:63`, #3844): a query is this node's to log
+unless it came from the master (`REPLICATED`) or from AOF replay (`LOADING`). -/
+def logsTelemetry (replicated loading : Bool) : Bool := !(replicated || loading)
+
+theorem logsTelemetry_iff (r l : Bool) : logsTelemetry r l = true ↔ r = false ∧ l = false := by
+  cases r <;> cases l <;> decide
 
 /-- `query_sync`: read errors return without telemetry; reads log a read entry; writes run
 under `begin_writer` and log a write entry with zero wait, or fail through the divergence
-guard. -/
-def syncOutcome (readOk isWrite writeOk : Bool) : Out :=
+guard. Since #3844 an entry is enqueued only if `log_query` (`logsTelemetry` of the
+context, `:1287`); the reply is the same either way. -/
+def syncOutcome (readOk isWrite writeOk logQuery : Bool) : Out :=
   if !readOk then .errNoTelemetry
-  else if !isWrite then .readTelemetry
-  else if writeOk then .writeTelemetry else .writeErr
+  else if !isWrite then (if logQuery then .readTelemetry else .readUnlogged)
+  else if writeOk then (if logQuery then .writeTelemetry else .writeUnlogged) else .writeErr
 
-theorem sync_write_logs : syncOutcome true true true = .writeTelemetry := rfl
-theorem sync_err (w o : Bool) : syncOutcome false w o = .errNoTelemetry := rfl
+theorem sync_write_logs : syncOutcome true true true true = .writeTelemetry := rfl
+theorem sync_read_logs : syncOutcome true false true true = .readTelemetry := rfl
+theorem sync_err (w o l : Bool) : syncOutcome false w o l = .errNoTelemetry := rfl
+
+/-- #3844: a replicated or replayed query is never logged on this node. -/
+theorem sync_unserved_silent (rd w o r l : Bool) (h : r = true ∨ l = true) :
+    syncOutcome rd w o (logsTelemetry r l) ≠ .readTelemetry ∧
+    syncOutcome rd w o (logsTelemetry r l) ≠ .writeTelemetry := by
+  cases r <;> cases l <;> simp at h <;> cases rd <;> cases w <;> cases o <;> decide
+
+/-- …and the decision does not change what is executed: same outcome up to logging. -/
+theorem sync_log_only (rd w o : Bool) :
+    (syncOutcome rd w o true = .readTelemetry ↔ syncOutcome rd w o false = .readUnlogged) ∧
+    (syncOutcome rd w o true = .writeTelemetry ↔ syncOutcome rd w o false = .writeUnlogged) := by
+  cases rd <;> cases w <;> cases o <;> decide
 
 /-- `profile_sync`/`profile_mut`: same detection, write plans run with `profile = true`. -/
 def profileOutcome (detectOk : Bool) (d : Detect) (writeOk : Bool) : Out :=
