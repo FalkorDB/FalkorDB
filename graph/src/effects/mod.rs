@@ -75,9 +75,11 @@ pub trait ReplicationSink {
 /// the buffer that carries them, which is where the version actually lives —
 /// the header names it, and whether the bytes are compressed is a property of
 /// the payload rather than of any record in it. The version is a parameter for
-/// the same reason it is on those two: so that a v4 is `impl EffectsFormat<4>
-/// for EffectsPayload` beside the v3 impl and the compiler picks between them,
-/// rather than a module name a caller has to spell.
+/// the same reason it is on those two: so that a version is
+/// `impl EffectsFormat<N> for EffectsPayload` and the compiler picks between
+/// them, rather than a module name a caller has to spell. Only the version this
+/// build writes has an impl; it also reads the one before it, because v3 and
+/// v4 differ in one value tag and the header says which to decode.
 ///
 /// Nothing outside this crate implements or names it, and `pub(crate)` is
 /// what says so — the sentence used to be a claim the compiler did not check. The entry points are
@@ -204,7 +206,8 @@ pub(crate) trait EffectsFormat<const VERSION: u8> {
 /// which is not the same set and is not meant to be: a rolling upgrade runs a
 /// new primary against old replicas and an old primary against new ones, so a
 /// build that could only read its own output could never be deployed without
-/// downtime. Today the two coincide because v3 is the only version that exists.
+/// downtime. They differ now: this build writes 4 and still applies 3 — the
+/// two differ only in how a `T_DURATION` value is laid out.
 pub const WIRE_VERSION: u8 = v3::EFFECTS_VERSION;
 
 /// How much of a diverged payload the log reproduces in hex.
@@ -247,7 +250,7 @@ impl EffectsPayload {
         match buf.first() {
             // Not a payload at all. The line above already said so.
             None => return out,
-            Some(&v3::EFFECTS_VERSION) => {
+            Some(&(v3::EFFECTS_VERSION | v3::EFFECTS_VERSION_V3)) => {
                 <Self as EffectsFormat<{ v3::EFFECTS_VERSION }>>::describe(buf, &mut out);
             }
             Some(&other) => out.push(format!(
@@ -298,7 +301,10 @@ impl EffectsPayload {
             return Ok(());
         };
         match version {
-            v3::EFFECTS_VERSION => {
+            // One impl reads both: the header names the version and the codec
+            // decodes in it, so there is no second `EffectsFormat` to write for
+            // a version nothing sends any more.
+            v3::EFFECTS_VERSION | v3::EFFECTS_VERSION_V3 => {
                 <Self as EffectsFormat<{ v3::EFFECTS_VERSION }>>::apply(graph, buf)
             }
             other => Err(DecodeError::UnsupportedVersion(other).into()),
@@ -309,13 +315,13 @@ impl EffectsPayload {
 /// Types that can write themselves into an effects payload of a given version.
 ///
 /// Mirrors `serialization::Encode<VERSION>` on the RDB side, and for the same
-/// reason: the version belongs in the type system rather than in a module name,
-/// so a v4 lands as `impl EffectEncode<4> for Record` beside the v3 impl and the
-/// compiler picks between them.
+/// reason: the version belongs in the type system rather than in a module name.
+/// Writing is v4 only, so there is one impl per type; reading is where versions
+/// coexist (see [`EffectDecode`]).
 ///
 /// Blocks implement it too, so the version is stated once per block rather than
-/// left to the module path. A v4 impl beside a v3 one makes every unannotated
-/// `.encode(buf)` ambiguous, and the compiler then names each site that has to
+/// left to the module path. A second encoding version beside this one would make
+/// every unannotated `.encode(buf)` ambiguous, and the compiler would name each site that has to
 /// choose — which a free function in a `v3/` directory could never do.
 pub trait EffectEncode<const VERSION: u8> {
     /// # Errors
@@ -352,8 +358,8 @@ pub trait EffectDecode<const VERSION: u8>: Sized {
 /// the middle of them.
 ///
 /// So both directions take the same context and state the same version, and a
-/// v4 whose options layout differs lands as `impl EffectEncodeSized<4>` beside
-/// this one with the compiler choosing between them.
+/// version whose options layout differs gets its own `EffectEncodeSized` impl
+/// with the compiler choosing between them.
 pub trait EffectEncodeSized<const VERSION: u8> {
     /// What the surrounding record states, which this block is shaped by.
     type Size;

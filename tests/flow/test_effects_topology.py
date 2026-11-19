@@ -126,7 +126,7 @@ class testEffects_01_DivergenceForcesResync(_EffectsBase):
         # A v3 buffer whose opcode is nonsense: refused by the decoder.
         try:
             self.master.execute_command(
-                "GRAPH.EFFECT", self.GRAPH_ID, b"\x03\x00\xff\xff\xff\xff")
+                "GRAPH.EFFECT", self.GRAPH_ID, b"\x04\x00\xff\xff\xff\xff")
             self.env.assertTrue(False, message="a malformed effect must be refused")
         except ResponseError:
             pass

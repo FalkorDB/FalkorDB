@@ -172,4 +172,13 @@ theorem isLeap_tmod (y : Int) :
       rw [beq_eq_false_iff_ne.mpr h, beq_eq_false_iff_ne.mpr t]
   rw [b4, b100', b400]
 
+/-- A duration since #3610: the signed (months, days, seconds) that `Dur::components`
+(`temporal.rs:555`) returns, the only way the code reads one. The packed `u64` word
+behind it is modelled in `Duration.lean` (`DurRepr`). -/
+structure Dur where
+  months : Int
+  days : Int
+  secs : Int
+deriving DecidableEq, Repr, Inhabited
+
 end FalkorTemporal

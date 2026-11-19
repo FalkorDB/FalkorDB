@@ -25,7 +25,7 @@ def fmtReplicate (Z : Codec) (minBytes : Nat) (buf : Bytes) : Bytes := (maybeCom
 /-- What the replica receives opens to exactly the records the master built
 (any length since #3278). -/
 theorem fmtReplicate_transparent (Z : Codec) (hZ : CodecOK Z) (m : Nat) (body : Bytes) :
-    openPayload Z (fmtReplicate Z m (fmtNewBuffer ++ body)) = .ok (body, []) :=
+    openPayload Z (fmtReplicate Z m (fmtNewBuffer ++ body)) = .ok ((body, EFFECTS_VERSION), []) :=
   openPayload_maybeCompress Z hZ body m
 
 /-- `compression_min_bytes` (`v3/mod.rs`): `usize::try_from(i64).unwrap_or(0)` —
@@ -38,11 +38,15 @@ theorem compressionMinBytes_neg (v : Int) (h : v < 0) : compressionMinBytes v = 
 theorem seal_disabled (Z : Codec) (buf : Bytes) : maybeCompress Z buf 0 = (buf, false) := by
   simp [maybeCompress]
 
-/-! ### `describe` (`format.rs:44`) -/
+/-! ### `describe` (`format.rs:45`)
+
+#3610: both lines name the **header's** version (`buf.first()`), not this build's —
+a v3 payload is described as v3; `recs` is `payload.records()`, which decodes in
+that version (`payloadRecords`). -/
 
 inductive Line where
-  | unreadable (flags : Nat)
-  | header (flags : Nat) (compressed : Bool) (decoded : Nat) (stopped : Bool)
+  | unreadable (version flags : Nat)
+  | header (version flags : Nat) (compressed : Bool) (decoded : Nat) (stopped : Bool)
   | record (i : Nat)
   | bad (i : Nat)
   | more (n : Nat)
@@ -57,11 +61,11 @@ def describeLoop {E A} : List (Except E A) → Nat → Bool → List Line → (N
     describeLoop rs (decoded + 1) stopped (if decoded < DESCRIBE_RECORD_LIMIT then lines ++ [.record decoded] else lines)
   | .error _ :: rs, decoded, _, lines => describeLoop rs decoded true (lines ++ [.bad decoded])
 
-def describe {E A} (flags : Nat) (opened : Bool) (recs : List (Except E A)) : List Line :=
-  if !opened then [.unreadable flags] else
+def describe {E A} (version flags : Nat) (opened : Bool) (recs : List (Except E A)) : List Line :=
+  if !opened then [.unreadable version flags] else
   let (decoded, stopped, lines) := describeLoop recs 0 false []
   let lines := if decoded > DESCRIBE_RECORD_LIMIT then lines ++ [.more (decoded - DESCRIBE_RECORD_LIMIT)] else lines
-  .header flags (flags % 2 = 1) decoded stopped :: lines
+  .header version flags (flags % 2 = 1) decoded stopped :: lines
 
 /-- `Records` fuses: what it yields is some `ok`s, then at most one error. -/
 def Fused {E A} : List (Except E A) → Prop
@@ -91,10 +95,11 @@ theorem describeLoop_spec {E A} : ∀ (rs : List (Except E A)) (d : Nat) (st : B
   | .error _ :: _ :: _, _, _, _, hf => by simp [Fused] at hf
 
 /-- **`describe` reports every record it decoded and where it stopped**: the
-header carries the true count; at most 16 record lines, one error line iff
-decoding stopped, one "more" line iff over 16. -/
-theorem describe_spec {E A} (flags : Nat) (recs : List (Except E A)) (hf : Fused recs) :
-    ∃ stopped rest, describe flags true recs = .header flags (flags % 2 = 1) (nOk recs) stopped :: rest ∧
+header carries the header's version and the true count; at most 16 record lines,
+one error line iff decoding stopped, one "more" line iff over 16. -/
+theorem describe_spec {E A} (version flags : Nat) (recs : List (Except E A)) (hf : Fused recs) :
+    ∃ stopped rest, describe version flags true recs =
+        .header version flags (flags % 2 = 1) (nOk recs) stopped :: rest ∧
       rest.length = min (nOk recs) DESCRIBE_RECORD_LIMIT +
         (if recs.any (fun r => match r with | .error _ => true | .ok _ => false) then 1 else 0) +
         (if nOk recs > DESCRIBE_RECORD_LIMIT then 1 else 0) := by
@@ -117,7 +122,11 @@ theorem describe_spec {E A} (flags : Nat) (recs : List (Except E A)) (hf : Fused
   · rw [ite_eq_right hc, ite_eq_right hc]
     cases he <;> simp at h2 ⊢ <;> omega
 
-/-! ### `build` (`format.rs:113`): encode every record, count them, stop at the first failure -/
+/-- An unreadable header is one line, naming the header's version and flags. -/
+theorem describe_unreadable {E A} (version flags : Nat) (recs : List (Except E A)) :
+    describe version flags false recs = [.unreadable version flags] := rfl
+
+/-! ### `build` (`format.rs:118`): encode every record, count them, stop at the first failure -/
 
 def buildLoop {Rec} (enc : Rec → Except EErr Bytes) : List Rec → Bytes → Nat → Option EErr → (Bytes × Nat × Option EErr)
   | [], buf, n, failed => (buf, n, failed)

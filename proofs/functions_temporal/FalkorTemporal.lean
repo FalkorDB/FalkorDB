@@ -1,6 +1,7 @@
 import FalkorTemporal.Calendar
 import FalkorTemporal.EraAll
 import FalkorTemporal.CalendarLaws
+import FalkorTemporal.DurationPre3610
 import FalkorTemporal.Duration
 import FalkorTemporal.Constructors
 import FalkorTemporal.VectorExpr
@@ -38,12 +39,14 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 | `daysFromCivil` | `days_from_civil` `value.rs:784` |
 | `daysFromCivilT` | `days_from_civil` `temporal.rs:463` (second copy, truncating i32 `/`) |
 | `civilFromDaysI` / `civilFromDays` | `civil_from_days_wide` `value.rs:812` (i64 year) / `civil_from_days` `value.rs:804` (with `y as i32`) |
-| `constructDuration` | `construct_duration_secs` `temporal.rs:479` (ends in `check_date_range`, #2746) |
-| `MAX_DATE_YEAR`, `checkDateRange` | `MAX_DATE_YEAR` `temporal.rs:523`, `check_date_range` `temporal.rs:531` (#2746) |
-| `decomposeDuration` | `decompose_duration` `temporal.rs:539` |
-| `shiftMonths` / `shiftMonthsR` | `shift_months` `value.rs:725` (shared by `+`/`-` since #2984); arithmetic / with the `MAX_DATE_YEAR` guard |
-| `addDur` / `subDur` (`addDurRaw` / `subDurRaw`: the unchecked arithmetic) | `add_duration_to_timestamp` `value.rs:701` / `sub_duration_from_timestamp` `value.rs:711` (range-checked since #2746) |
-| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1063` / `Sub` `value.rs:1105` (#2985) |
+| `Dur`, `durNew`, `DurWord`/`durNewW`/`packBits`/`unpackInline`/`wordComponents`/`inlineBits`/`fromInlineBits` | `Dur` and `Dur::new`/`components`/`unpack_inline`/`inline_bits`/`from_inline_bits` `temporal.rs:504-590` (#3610: months/days/seconds) |
+| `constructDuration` | `construct_duration` `temporal.rs:663` (#3610; before: `construct_duration_secs`, `Pre3610.constructDuration`) |
+| `toLegacy` / `fromLegacy` (`legacyParts`) | `duration_to_legacy` `temporal.rs:745` / `duration_from_legacy` `temporal.rs:719` (replays `Pre3610.decomposeDuration`) |
+| `MAX_DATE_YEAR`, `checkDateRange` | `MAX_DATE_YEAR` `temporal.rs:693`, `check_date_range` `temporal.rs:706` (#2746) |
+| `shiftMonths` / `shiftMonthsC` | `shift_months` `value.rs:725`: arithmetic / checked `i32` (#3610: no `MAX_DATE_YEAR` guard; `Pre3610.shiftMonthsR` had it) |
+| `shiftTs`, `addDur` / `subDur` (`addDurRaw` / `subDurRaw`: the arithmetic) | `shift_timestamp` `value.rs:665`, `add_duration_to_timestamp` `value.rs:645` / `sub_duration_from_timestamp` `value.rs:653` |
+| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:973` / `Sub::sub` `value.rs:1085` (seconds component) |
+| `combineDurations`, `durationCmp` | `combine_durations` `value.rs:701`, `duration_cmp` `value.rs:685` |
 | `dateFromComponents`, `weekPath`, `quarterPath`, `ymdPath` | `date_from_components` `temporal.rs:82` (range-checked since #2950) |
 | `checkRange`, `inRange`, `i32Ok`, `u32Ok` | `check_range` `temporal.rs:63`, `i32::try_from`/`u32::try_from` |
 | `checkedAddDays`, `tdDaysOk`, `chronoYearOk` | chrono 0.4.45 `checked_add_signed` / `NaiveDate + TimeDelta`, `TimeDelta::days`, `MIN_YEAR`/`MAX_YEAR` |
@@ -63,22 +66,25 @@ Calendar: `dfc_civil` (days_from_civil ∘ civil_from_days = id on all Int),
 `daysFromCivilT_eq` (the two Rust copies agree), `daysFromCivil_day`, `isLeap_add400`,
 `isLeap_tmod` (Rust's truncating `%` is fine), `civilFromDays_exact` (i32 cast exact when
 the year fits), `dim_link`, `era_fwd`/`era_bwd`/`dfcEra_range`/`dfcEra_of`/`yoe_bounds`.
-Durations: `construct_decompose` (construct ∘ decompose = id — the law `Duration ±
-Duration` relies on), `construct_ym_s`, `decompose_monthsDur`, `add_sub_months`
-(`(d + PnM) − PnM = d` for day ≤ 28), Date/Time/Duration ordering is a total order
-(`temporal_order_*`, `dateTs_mono_day`). Constructors: `dateFromComponents_total` (#2950: no
+Durations (#3610, three components): `durNew_iff`, `components_new` / `unpack_pack` (the
+inline word round-trips), `fromInlineBits_inlineBits`, `constructDuration_eq`,
+`toLegacy_fromLegacy` (every stored legacy `i64` loads and keeps its offset),
+`legacy_add_compat` (and its date arithmetic), `subDur_eq_add_neg`, `add_sub_months`
+(`(d + PnM) − PnM = d` for day ≤ 28), `combine_comm`, `combine_sub_self`,
+`durationCmp_eq_iff`/`durationCmp_swap`, `dateTs_mono_day`; the pre-#3610 model and its
+theorems (`construct_decompose`, `decompose_monthsDur`, …) are kept in `FalkorTemporal.Pre3610`. Constructors: `dateFromComponents_total` (#2950: no
 input of `date_from_components` panics), `weekPath_total`, `quarterPath_total`,
 `weekPath_ok`, `quarterPath_ok`,
 `weekSlice_err_iff`, `weekSlice_short_ok`, `sliceOk_ascii` (the split step errors exactly for a
 long `rest` whose byte 2 is not a char boundary; the no-panic guarantee itself is the `Option`
 type of `split_at_checked`).
-Dates (#2746, #2986, #3301): `checkDateRange_iff`, `checkDateRange_boundary`, `shiftMonthsR_eq`, `shiftMonthsR_out_of_range`, `shiftMonthsR_no_wrap`, `shift_past_limit_errors`, `addDur_eq_raw`, `addDur_in_range`, `subDur_in_range`; `formatDate_spec`, `formatDatetime_spec`, `pushDate_eq`, `format_extremes` (the unit test's four `i64::MIN/MAX` strings), `format_wide_years`, `formatDate_wide_distinct`; `pointFromMapEntries`: `point_key_count`, `point_ok_iff`, `point_nan_refused`, `point_range_msgs`.
+Dates (#2746, #2986, #3301): `checkDateRange_iff`, `checkDateRange_boundary`, `shiftMonthsC_eq`, `shiftMonthsC_some` (no wrapped year), `shift_past_limit_errors`, `far_shift_identity`, `addDur_eq_raw`, `addDur_in_range`, `subDur_in_range`; `formatDate_spec`, `formatDatetime_spec`, `pushDate_eq`, `format_extremes` (the unit test's four `i64::MIN/MAX` strings), `format_wide_years`, `formatDate_wide_distinct`; `pointFromMapEntries`: `point_key_count`, `point_ok_iff`, `point_nan_refused`, `point_range_msgs`.
 Columnar: `colEval_eq` (columnar AND/OR with row narrowing = per-row Kleene AND/OR; batch
 fails iff some row fails), `rowEval_short`, `intLane_eq` (int lane = `Value` arithmetic,
 incl. the divide-by-zero fallback), `mapM_bind_mapM`, `colEval_rows`, `rowK_eq`.
 `shiftMonths_total`, `sub_eq_add_neg_months` (`ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M`, #2984),
 `subDur_eq_shift`.
-Counterexamples as theorems: `neg_days_encoding`, `civilFromDays_trunc`
+Counterexamples as theorems: `Pre3610.neg_days_encoding` (fixed by #3610), `civilFromDays_trunc`
 (the ones for the fixed bugs were removed in bbee75955; the last revision that has them is 17ccc5412).
 Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors`.
 
@@ -150,7 +156,7 @@ Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `da
 Shared with C (not Rust-specific, openCypher divergence): negative day/second durations
 are encoded as an instant before 1970 and decompose as `P-1Y11M30D…`, so
 `date('2020-03-01') + duration({days:-1})` = 2020-03-02 (spec: 2020-02-29) —
-`neg_days_encoding`. C also accepts 2021-02-29 (normalises to 03-01); Rust errors (spec).
+`Pre3610.neg_days_encoding`; FIXED by #3610 (`neg_days_encoding`: 2020-02-29). C also accepts 2021-02-29 (normalises to 03-01); Rust errors (spec).
 C's `date('2021-01-03').dayOfQuarter` is 4 (Rust 3, correct).
 
 ## Suspected, not confirmed

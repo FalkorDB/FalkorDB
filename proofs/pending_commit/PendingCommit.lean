@@ -170,14 +170,14 @@ matrices behave as set insert/delete, so commit is `(C ∪ set) \ remove`
 | --- | --- |
 | `BinSearch` | std `binary_search_by` (rustc 1.98.1 `core/src/slice/mod.rs:2976`), used by every sorted lookup |
 | `NameMap` | `AttrNameMap` (attribute_store.rs:131-252), the `MAX_ATTRIBUTES` cap and `as u16` mint |
-| `Pack` | `Tag`/`PackedAttr`/`heap_index`, `pack_value`, `store_packed_value`, `unpack`, `release_*`, `compact`'s heap remap, `SpanRef::heap_bytes` (:256-532, :806-816, :883) |
+| `Pack` | `Tag`/`PackedAttr`/`heap_index`, `pack_value`, `store_packed_value`, `unpack`, `release_*`, `compact`'s heap remap, `SpanRef::heap_bytes` (:196-485, :747-763, :828); #3610 `Value::Duration(Dur)`: inline word as `Tag::Duration`, else heap (`unpack_inline_dur`, `heapPut_unpack`, `pack_hinv_heap`) |
 | `Content`, `ContentMerge`, `ContentCompact` | `Block` with contents: `grow_slots`, `set_span`, `free_span`, `merge_span`, `compact`, `maybe_compact`, `SpanRef` (:560-872) |
 | `Store`, `StoreFold`, `StoreApi`, `StoreCodec`, `StoreMem` | `DataBlock` radix directory and every `AttributeStore` method, RDB encode/decode, `trim`, memory accounting (:896-1497) |
 | `PendingAttrs`, `PendingState`, `PendingRels`, `PendingDeg`, `PendingDocs`, `PendingCommitOp` | all of `pending.rs`: validation, staging, reads, created/cancelled relationships, degrees, label scans, `IndexDocs`, `clear`, `effects_count`, constraints, `commit` |
 | `EvictPR2964` | **models open PR #2964, not `main`**: evict-on-reissue for #2876 |
 
 Headline theorems: `bsearch_ok_iff`/`bsearch_err`; `getOrCreate_spec`;
-`pack_unpack`, `pack_hinv`, `release_hinv`, `compactHeap_unpack`;
+`pack_unpack` (inline and out-of-line durations included, #3610), `pack_hinv`, `pack_hinv_heap`, `release_hinv`, `compactHeap_unpack`;
 `setSpanC_ok`, `mergeSpanC_ok`, `compactC_ok` (each slot reads exactly the
 intended span, every other slot is unchanged, `CInv` holds); `dsetSpan_ok`,
 `dmergeSpan_ok`, `dremove_ok`, `dtrim_ok`; `runOps_spec` →

@@ -119,7 +119,7 @@ pub fn rdb_load_graph(
     cache_size: usize,
 ) -> Result<LoadedKey, String> {
     check_encoding_version(encver)?;
-    let mut r = BufferedReader::new(rdb);
+    let mut r = BufferedReader::new(rdb, u64::try_from(encver).unwrap_or(u64::MAX));
 
     // --- Header ---
     let hdr = Header::decode(&mut r)?;
@@ -481,14 +481,13 @@ pub fn pipe_load_graph(
 
 /// Decode a graph from a byte buffer (for GRAPH.RESTORE on replicas).
 ///
-/// Uses `BufferedReader::from_slice` to read the v19-encoded data produced by
-/// `vec_save_graph`.
+/// Reads what `vec_save_graph` produced, from this build or an older one.
 pub fn vec_load_graph(
     data: &[u8],
     cache_size: usize,
     dest_name: &str,
 ) -> Result<Graph, String> {
-    let mut r = BufferedReader::from_slice(data);
+    let mut r = BufferedReader::from_blob(data)?;
     load_graph_from_reader(&mut r, cache_size, dest_name)
 }
 
@@ -609,14 +608,15 @@ mod tests {
         w.into_vec()
     }
 
-    /// v19 and v20 load; a newer version, which may lay its payloads out differently, and an
-    /// older one, which predates the v19 layout, are refused before anything is read.
+    /// v19, v20 and v21 load; a newer version, which may lay its payloads out differently, and
+    /// an older one, which predates the v19 layout, are refused before anything is read.
     #[test]
-    fn only_versions_19_and_20_load() {
-        assert_eq!(ENCODING_VERSION, 20);
+    fn only_versions_19_to_21_load() {
+        assert_eq!(ENCODING_VERSION, 21);
         assert!(check_encoding_version(19).is_ok());
         assert!(check_encoding_version(20).is_ok());
-        let newer = check_encoding_version(21).unwrap_err();
+        assert!(check_encoding_version(21).is_ok());
+        let newer = check_encoding_version(22).unwrap_err();
         assert!(newer.contains("not forward compatible"), "{newer}");
         let older = check_encoding_version(18).unwrap_err();
         assert!(older.contains("older than the oldest"), "{older}");
@@ -668,7 +668,7 @@ mod tests {
     fn a_v20_value_with_a_cch_index_is_refused_at_the_directory() {
         let name = |s: &str| Arc::new(s.to_string());
         let mut w = VecWriter::new();
-        Encode::<19>::encode(
+        Encode::<21>::encode(
             &Header {
                 graph_name: "g".to_string(),
                 node_count: 2,
@@ -682,7 +682,7 @@ mod tests {
             },
             &mut w,
         );
-        Encode::<19>::encode(
+        Encode::<21>::encode(
             &Schema {
                 attribute_names: vec![name("time")],
                 node_labels: vec![name("N")],

@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 use super::v3::BadFieldType;
-use super::v3::EFFECTS_VERSION;
+use super::v3::{EFFECTS_VERSION, EFFECTS_VERSION_V3};
 
 // ── encode errors ──
 
@@ -158,7 +158,9 @@ pub enum DecodeError {
     BadString,
 
     /// A buffer whose version byte this build cannot read.
-    #[error("effects buffer is version {0}, this build reads {EFFECTS_VERSION}")]
+    #[error(
+        "effects buffer is version {0}, this build reads {EFFECTS_VERSION_V3} and {EFFECTS_VERSION}"
+    )]
     UnsupportedVersion(u8),
 
     /// An opcode with no record shape.

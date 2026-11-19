@@ -7,9 +7,10 @@ import FalkorCore.Value
 come from an `FOps F` record (IEEE semantics is *not* assumed unless a theorem says so).
 `Arc`s are transparent (`Arc::try_unwrap` success and failure branches are the same
 function in the model — `add_slow`'s fast/slow copies are proved to agree by being one
-definition). Temporal helpers (`decompose_duration`, `construct_duration_secs`,
-`add_duration_to_timestamp`, `sub_duration_from_timestamp`) are parameters: they are
-modelled and proved in `proofs/functions_temporal`.
+definition). Temporal helpers (`combine_durations`, `add_duration_to_timestamp`,
+`sub_duration_from_timestamp`; before #3610 `decompose_duration`/`construct_duration_secs`)
+are parameters: they are modelled and proved in `proofs/functions_temporal`. A duration is
+a `Dur` (months, days, seconds) since #3610.
 -/
 
 namespace ValueMath
@@ -30,12 +31,12 @@ structure FOps (F : Type) where
   rem : F → F → F
   fmt6 : F → String
 
-/-- The temporal helpers of value.rs:696-750 and temporal.rs (proved elsewhere). -/
+/-- The temporal helpers of value.rs:645-760 (proved in proofs/functions_temporal:
+`combineDurations`, `addDur`, `subDur`). -/
 structure TOps where
-  decompose : Int → Except String (Int × Int × Int)
-  construct : Int → Int → Int → Except String Int
-  addTs : Int → Int → Except String Int
-  subTs : Int → Int → Except String Int
+  combine : Dur → Dur → Bool → Except String Dur
+  addTs : Int → Dur → Except String Int
+  subTs : Int → Dur → Except String Int
 
 /-- `OrderMap::insert` (ordermap.rs:76): replace in place, else push. -/
 def omInsert (m : List (String × V F)) (k : String) (v : V F) : List (String × V F) :=
@@ -55,24 +56,21 @@ def lookup (m : List (String × V F)) (k : String) : Option (V F) :=
 
 def boolStr (b : Bool) : String := if b then "true" else "false"
 
-/-- `Duration + Duration` (value.rs:1008-1019), `ya + yb` etc. in `i32` in Rust; the
-year/month sums are exact here (overflow only for year-wrapped durations, see the
-functions_temporal header). -/
-def durAdd (t : TOps) (a b : Int) (sign : Int) : Except String (V F) := do
-  let (ya, ma, sa) ← t.decompose a
-  let (yb, mb, sb) ← t.decompose b
-  let totalMonths := (ya + sign * yb) * 12 + (ma + sign * mb)
-  let ts ← t.construct (Int.tdiv totalMonths 12) (Int.tmod totalMonths 12) (sa + sign * sb)
-  pure (.duration ts)
+/-- `Duration ± Duration` (value.rs:1055, :1097, #3610): `combine_durations(&a, &b, sub)`. -/
+def durAdd (t : TOps) (a b : Dur) (sub : Bool) : Except String (V F) :=
+  .duration <$> t.combine a b sub
 
 /-- `Time ± Duration` since #2985 (#2933, value.rs:1059, :1104): a time has no date,
 so only the time of day survives — `(t.rem_euclid(86400) ± dur.rem_euclid(86400))
 .rem_euclid(86400)`. `rem_euclid` by a positive divisor is `Int.emod`; the inner
 sum/difference is in `(-86400, 172800)`, so the `i64` arithmetic cannot wrap. Before
 #2985 both arms went through `add/sub_duration_from_timestamp` (`t.addTs`/`t.subTs`),
-which kept the date part and could fail. -/
-def timeAddDur (t dur : Int) : Int := (t % 86400 + dur % 86400) % 86400
-def timeSubDur (t dur : Int) : Int := (t % 86400 - dur % 86400) % 86400
+which kept the date part and could fail. Since #3610 the duration's part is its seconds
+component (`dur.components().2`); months and days do not move a time. -/
+def timeAddSecs (t s : Int) : Int := (t % 86400 + s % 86400) % 86400
+def timeSubSecs (t s : Int) : Int := (t % 86400 - s % 86400) % 86400
+def timeAddDur (t : Int) (dur : Dur) : Int := timeAddSecs t dur.secs
+def timeSubDur (t : Int) (dur : Dur) : Int := timeSubSecs t dur.secs
 
 /-- `Value::add_slow` (value.rs:928-1045), arms in source order. -/
 def addSlow (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
@@ -91,7 +89,7 @@ def addSlow (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .bool b, .str s => .ok (.str (boolStr b ++ s))
   | .map _, _ => .error "Cannot merge a map with a non-map value"
   | _, .map _ => .error "Cannot merge a map with a non-map value"
-  | .duration a, .duration b => durAdd t a b 1
+  | .duration a, .duration b => durAdd t a b false
   | .date d, .duration dur => .date <$> t.addTs d dur
   | .duration dur, .date d => .date <$> t.addTs d dur
   | .datetime d, .duration dur => .datetime <$> t.addTs d dur
@@ -116,7 +114,7 @@ def sub (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .float a, .float b => .ok (.float (o.sub a b))
   | .float a, .int b => .ok (.float (o.sub a (o.ofInt b)))
   | .int a, .float b => .ok (.float (o.sub (o.ofInt a) b))
-  | .duration a, .duration b => durAdd t a b (-1)
+  | .duration a, .duration b => durAdd t a b true
   | .date d, .duration dur => .date <$> t.subTs d dur
   | .datetime d, .duration dur => .datetime <$> t.subTs d dur
   | .time d, .duration dur => .ok (.time (timeSubDur d dur))
@@ -346,40 +344,47 @@ theorem add_bool_int (b : Bool) (i : Int) :
 
 /-! ## Temporal: `+ Duration` is symmetric, `Duration - temporal` rejected -/
 
-theorem add_date_dur_comm (d dur : Int) : add o t (.date d) (.duration dur) = add o t (.duration dur) (.date d) := rfl
-theorem add_datetime_dur_comm (d dur : Int) : add o t (.datetime d) (.duration dur) = add o t (.duration dur) (.datetime d) := rfl
-theorem add_time_dur_comm (d dur : Int) : add o t (.time d) (.duration dur) = add o t (.duration dur) (.time d) := rfl
+theorem add_date_dur_comm (d : Int) (dur : Dur) : add o t (.date d) (.duration dur) = add o t (.duration dur) (.date d) := rfl
+theorem add_datetime_dur_comm (d : Int) (dur : Dur) : add o t (.datetime d) (.duration dur) = add o t (.duration dur) (.datetime d) := rfl
+theorem add_time_dur_comm (d : Int) (dur : Dur) : add o t (.time d) (.duration dur) = add o t (.duration dur) (.time d) := rfl
 
 /-- #2985: `Time + Duration` never fails and is always a time of day, `[0, 86400)`. -/
-theorem add_time_dur_in_day (d dur : Int) :
+theorem add_time_dur_in_day (d : Int) (dur : Dur) :
     add o t (.time d) (.duration dur) = .ok (.time (timeAddDur d dur)) ∧
       0 ≤ timeAddDur d dur ∧ timeAddDur d dur < 86400 := by
   refine ⟨rfl, Int.emod_nonneg _ (by decide), Int.emod_lt_of_pos _ (by decide)⟩
 
 /-- #2985: `Time - Duration` never fails and is always a time of day, `[0, 86400)`. -/
-theorem sub_time_dur_in_day (d dur : Int) :
+theorem sub_time_dur_in_day (d : Int) (dur : Dur) :
     sub o t (.time d) (.duration dur) = .ok (.time (timeSubDur d dur)) ∧
       0 ≤ timeSubDur d dur ∧ timeSubDur d dur < 86400 := by
   refine ⟨rfl, Int.emod_nonneg _ (by decide), Int.emod_lt_of_pos _ (by decide)⟩
 
 /-- #2985: adding then subtracting the same duration gives back the time of day. -/
-theorem time_sub_add_dur (d dur : Int) : timeSubDur (timeAddDur d dur) dur = d % 86400 := by
-  unfold timeSubDur timeAddDur
+theorem time_sub_add_dur (d : Int) (dur : Dur) : timeSubDur (timeAddDur d dur) dur = d % 86400 := by
+  unfold timeSubDur timeAddDur timeSubSecs timeAddSecs
   omega
 
 /-- #2985: a whole number of days does not move a time (`localtime + duration({days:1})`). -/
-theorem time_add_whole_days (d k : Int) : timeAddDur d (86400 * k) = d % 86400 := by
-  unfold timeAddDur
+theorem time_add_whole_days (d k : Int) (dur : Dur) (h : dur.secs = 86400 * k) :
+    timeAddDur d dur = d % 86400 := by
+  unfold timeAddDur timeAddSecs
   omega
+
+/-- #3610: the months and days components never move a time (`localtime('01:00') +
+duration({months:1, days:1})` is `01:00`). -/
+theorem time_add_dur_secs_only (d : Int) (a b : Dur) (h : a.secs = b.secs) :
+    timeAddDur d a = timeAddDur d b ∧ timeSubDur d a = timeSubDur d b := by
+  unfold timeAddDur timeSubDur; rw [h]; exact ⟨rfl, rfl⟩
 
 /-- #2985: the result depends only on the time of day of each operand, never on the
 date part the pre-#2985 `add_duration_to_timestamp` path carried along. -/
-theorem time_add_dur_mod (d dur : Int) :
-    timeAddDur d dur = timeAddDur (d % 86400) (dur % 86400) := by
-  unfold timeAddDur
+theorem time_add_dur_mod (d : Int) (dur : Dur) :
+    timeAddDur d dur = timeAddSecs (d % 86400) (dur.secs % 86400) := by
+  unfold timeAddDur timeAddSecs
   omega
 
-theorem sub_dur_date (a d : Int) : sub o t (.duration a) (.date d) =
+theorem sub_dur_date (a : Dur) (d : Int) : sub o t (.duration a) (.date d) =
     .error "Type mismatch: cannot subtract a temporal value from a duration" := rfl
 
 /-! ## `*`: the result is an error exactly when a non-null operand is not a number -/

@@ -214,11 +214,12 @@ theorem load_encode (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C 
   rw [e]
   exact hhdr
 
-/-- **#2537, generalised.** Any payload `vec_save_graph` produces, cut at any word
+/-- **#2537, generalised.** Any payload `encode_graph` produces, cut at any word
 boundary short of its end, makes `load_graph_from_reader` ask for another word. Behind
-`vec_load_graph` the reader is `BufferedReader::from_slice` (`rdb = NULL`), whose
+`vec_load_graph` the reader is `BufferedReader::from_blob` (`rdb = NULL`), whose
 `ensure_available → load_chunk` then calls `RedisModule_LoadStringBuffer(NULL)`
-(`buffered_io.rs:212-224`; redis_layer `from_slice_past_end`): a crash, not an `Err`. -/
+(`buffered_io.rs:257-272`; redis_layer `from_slice_past_end`): a crash, not an `Err`.
+`vec_blob_eof` is the same for the whole (prefixed) blob. -/
 theorem truncated_payload_eof (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm)
     (p : Stream) (hp : StrictPre p (encodeGraph C g g.name (buildPayloads g) 1)) :
     loadFromReader C dest p = .eof :=
@@ -228,5 +229,79 @@ theorem truncated_payload_eof (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (
 theorem empty_payload_eof (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm)
     (hne : encodeGraph C g g.name (buildPayloads g) 1 ≠ []) : loadFromReader C dest [] = .eof :=
   truncated_payload_eof C g hw dest [] ⟨_, hne, rfl⟩
+
+/-! ## Versioned `GRAPH.RESTORE` blobs (#3610)
+
+`vec_save_graph` (encoder/mod.rs:63) writes `write_unsigned(ENCODING_VERSION)` before
+`encode_graph`; `vec_load_graph` (decoder/mod.rs:485) opens the blob with
+`BufferedReader::from_blob` (buffered_io.rs:228), which consumes that prefix as the reader's
+`encver`, and then runs `load_graph_from_reader`. -/
+
+/-- `graphblas::serialization::ENCODING_VERSION` (serialization.rs:38). -/
+def ENCODING_VERSION : Nat := 21
+
+/-- `Reader::encver`'s default (serialization.rs:76): every reader but the RDB/blob one
+(`PipeReader` for `GRAPH.COPY`, in-process copies) reports `ENCODING_VERSION`. -/
+def readerEncverDefault : Nat := ENCODING_VERSION
+
+theorem readerEncverDefault_eq : readerEncverDefault = 21 := rfl
+
+/-- `vec_save_graph(graph)` as words. -/
+def vecSave (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) : Stream :=
+  encU ENCODING_VERSION ++ encodeGraph C g g.name (buildPayloads g) 1
+
+/-- `BufferedReader::from_blob` on words: a leading unsigned is the version (refused above 21);
+anything else is an unprefixed blob from an older build, read from its first word at 19. -/
+def fromBlob : Dec Nat
+  | .u v :: r => if ENCODING_VERSION < v.toNat then .err else .ok v.toNat r
+  | s => .ok 19 s
+
+/-- `vec_load_graph(data, dest)`. -/
+def vecLoad (C : Codecs M Tn Nm Ix Cn) (dest : Nm) : Dec (Restore M Tn Nm Ix Cn) :=
+  fromBlob.bind fun _ => loadFromReader C dest
+
+theorem encodeGraph_ne_nil (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (es : List Entry) (K : Nat) :
+    encodeGraph C g g.name es K ≠ [] := by
+  simp [encodeGraph, encDir, encU]
+
+theorem fromBlob_prefix (r : Stream) : fromBlob (encU ENCODING_VERSION ++ r) = .ok 21 r := by
+  simp [fromBlob, encU, ENCODING_VERSION]
+
+/-- **`vec_load_graph ∘ vec_save_graph = id`, with truncation.** The prefixed blob reads back
+to `Graph::restore` of the graph (`from_blob` takes version 21 and stops right after the prefix),
+and every word-boundary cut of it — including the empty blob and the bare prefix — asks for one
+more word. -/
+theorem vec_blob_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm) :
+    RT (vecLoad C dest) (vecSave C g) (restoreOf g dest) := by
+  have hl := load_encode C g hw dest
+  refine ⟨fun r => ?_, fun p hp => ?_⟩
+  · simp only [vecSave, List.append_assoc, vecLoad, Dec.bind, fromBlob_prefix, hl.1 r]
+  · obtain ⟨q, hq, hpq⟩ := hp
+    cases p with
+    | nil =>
+      have := hl.2 [] ⟨_, encodeGraph_ne_nil C g _ 1, rfl⟩
+      simp only [vecLoad, Dec.bind, fromBlob]; exact this
+    | cons t p' =>
+      simp only [vecSave, encU, List.cons_append, List.nil_append, List.cons.injEq] at hpq
+      obtain ⟨rfl, hpq⟩ := hpq
+      have := hl.2 p' ⟨q, hq, hpq⟩
+      simp only [vecLoad, Dec.bind, fromBlob, ENCODING_VERSION]
+      simpa using this
+
+/-- Truncated blobs (#2537) still reach `load_chunk(NULL)` rather than an `Err`. -/
+theorem vec_blob_eof (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm)
+    (p : Stream) (hp : StrictPre p (vecSave C g)) : vecLoad C dest p = .eof :=
+  (vec_blob_rt C g hw dest).2 p hp
+
+/-- A prefix above 21 (a newer build's blob) is refused before any graph word is read. -/
+theorem vec_blob_newer (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (v : UInt64)
+    (hv : ENCODING_VERSION < v.toNat) (r : Stream) : vecLoad C dest (.u v :: r) = .err := by
+  simp [vecLoad, Dec.bind, fromBlob, hv]
+
+/-- An older build's blob (no prefix: its first word is the header's graph-name buffer) is
+handed to `load_graph_from_reader` whole, as before #3610. -/
+theorem vec_blob_old (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (b : List UInt8) (r : Stream) :
+    vecLoad C dest (.bytes b :: r) = loadFromReader C dest (.bytes b :: r) := by
+  simp [vecLoad, Dec.bind, fromBlob]
 
 end GraphPersist.Persist

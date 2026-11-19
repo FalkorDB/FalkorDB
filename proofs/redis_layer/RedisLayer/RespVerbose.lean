@@ -33,7 +33,7 @@ structure Fmt (F : Type) where
   dt : Int → String          -- `Value::format_datetime`
   date : Int → String
   time : Int → String
-  dur : Int → String
+  dur : Temporal.Dur → String  -- `Value::format_duration(&Dur)` (#3610)
   label : Nat → String       -- `get_label_by_id` / `get_node_labels`
   prop : Nat → String        -- attribute name
   rel : Nat → String         -- `get_type(type_id).unwrap_or("")`
@@ -59,7 +59,7 @@ def fmtS : V F → String
   | .datetime t => M.dt t
   | .date t => M.date t
   | .time t => M.time t
-  | .duration t => M.dur t
+  | .duration d => M.dur d
   | .list xs => "[" ++ joinSep (fmtList xs) ++ "]"
   | .path xs => "[" ++ joinSep (fmtList xs) ++ "]"
   | .map kvs => "{" ++ joinSep (fmtMap kvs) ++ "}"
@@ -90,7 +90,7 @@ def encVb : V F → List (Call F)
   | .datetime t => [.str (M.dt t)]
   | .date t => [.str (M.date t)]
   | .time t => [.str (M.time t)]
-  | .duration t => [.str (M.dur t)]
+  | .duration d => [.str (M.dur d)]
   | .list xs => [.str (fmtS M (.list xs))]
   | .map kvs => [.str (fmtS M (.map kvs))]
   | .path xs => [.str (fmtS M (.path xs))]
@@ -124,7 +124,7 @@ def specVb : V F → R
   | .datetime t => .bulk (M.dt t)
   | .date t => .bulk (M.date t)
   | .time t => .bulk (M.time t)
-  | .duration t => .bulk (M.dur t)
+  | .duration d => .bulk (M.dur d)
   | .list xs => .bulk (fmtS M (.list xs))
   | .map kvs => .bulk (fmtS M (.map kvs))
   | .path xs => .bulk (fmtS M (.path xs))

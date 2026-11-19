@@ -12,7 +12,7 @@ Coverage per Rust fn: `COVERAGE.tsv`. Repro: `graph/tests/lean_graph_persist.rs`
 
 | Lean | Rust |
 | --- | --- |
-| `Codec.Tok`, `Val.encode/decode`, `decOne` | `BufferedWriter/Reader` tagged words; `impl Encode/Decode<19> for Value` (value.rs:2084,2170) |
+| `Codec.Tok`, `Val.encode/decode`, `decOne`, `decOneAt`, `durArm` | `BufferedWriter/Reader` tagged words; `impl Encode/Decode<21> for Value` (value.rs:2085,2177; duration arms :2155, :2254-2262) |
 | `Codec.nulTerm/stripNul` | `null_terminated`/`strip_null_terminator` (serializers/mod.rs:245,253), `save_string_nul`/`strip_trailing_nul` (redis_type.rs:248,266) |
 | `Layout.chunkType`, `covered` | `build_multi_key_payloads` entity loop (encoder/mod.rs:95-153) + `encode_with_range` offsets (attribute_store.rs:1425) |
 | `Layout.roaringRT` | `Encode/Decode<19> for RoaringTreemap` (serialization.rs:172-241) |
@@ -83,7 +83,8 @@ vanish on reload — is identical in C (both write only operational ones).
 
 | Lean | Rust |
 | --- | --- |
-| `Persist.Reader` — `Out`, `RT`, `RT_bind`, `RT_rep`, `readU`, `decV` | `BufferedReader` words; `Value::decode` (value.rs:2170) as an `Out` reader |
+| `Persist.Reader` — `Out`, `RT`, `RT_bind`, `RT_rep`, `readU`, `decV` | `BufferedReader` words; `Value::decode` (value.rs:2177) as an `Out` reader |
+| `Persist.RoundTrip` — `vecSave`, `fromBlob`, `vecLoad`, `readerEncverDefault` | `vec_save_graph` (encoder/mod.rs:63), `BufferedReader::from_blob` (buffered_io.rs:228), `vec_load_graph` (decoder/mod.rs:485), `Reader::encver` (serialization.rs:76) |
 | `Persist.Store` — `encRoar`/`decRoar`, `encEnt`/`decEnt`, `applyEnt`, `fold_ents` | `RoaringTreemap` codec (serialization.rs:172-241), `AttributeStore::encode_with_range`/`decode_with_count` (attribute_store.rs:1409-1497) |
 | `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs:4926), `load_graph_from_reader` |
 | `Persist.MultiKey` — `fillKey`, `keysFrom`, `buildMulti` | `build_multi_key_payloads` (encoder/mod.rs:95-189) |
@@ -102,7 +103,15 @@ Headline theorems:
 * #3793 (encoding v20): `decode_payload_directory` refuses `CchIndices` (tag 10), `Init`
   and `Final` (now 11) before any payload (`decDirEntry_refuses`, `decDir_refuses_cch`),
   which no encoded directory lists (`buildPayloads_accepted`, `EntryOK.accepted`);
-  `rdb_load_graph` loads only versions 19 and 20 (`key_rt_ver`, `rdbLoad_refuses`).
+  `rdb_load_graph` loads only versions 19 to 21 (`key_rt_ver`, `rdbLoad_accepts_legacy`,
+  `rdbLoad_refuses`).
+* #3610 (encoding v21): a duration is three signed words (`Codec.decOne_encode` with
+  `RedisLayer.Temporal.Dur`); below 21 one legacy offset read through `duration_from_legacy`
+  (`decOneAt_legacy`; every other value reads the same at any version, `decOneAt_agree`).
+  `GRAPH.RESTORE` blobs carry the version up front: `vec_blob_rt` (`vec_load_graph ∘
+  vec_save_graph`, with every truncation `.eof`, `vec_blob_eof`), `vec_blob_newer` (a newer
+  version is refused), `vec_blob_old` (an unprefixed older blob loads as before);
+  `readerEncverDefault_eq` (`Reader::encver`'s default, serialization.rs:76).
 * `multi_key_tiles`, `multi_key_bound`, `multi_key_all_placed`, `multi_key_matrices` — the
   multi-key layout tiles each entity kind once, in order, ≤ `vkey_max` per key, matrices on
   key 0 only.
