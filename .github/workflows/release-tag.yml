@@ -143,16 +143,18 @@ jobs:
   # image job's :latest decision reads the published-release list, which must
   # include this one.
   #
-  # After macos-from-queue, which takes seconds: when the queue's macOS file is
-  # missing, nothing is published (no release, no image tags) rather than a
-  # release with no assets. On a rebuild_macos dispatch that job is skipped,
-  # which lets this through.
+  # After the macOS file is in hand -- macos-from-queue, which takes seconds,
+  # or macos-rebuild on a rebuild_macos dispatch: when it is missing or the
+  # rebuild fails, nothing is published (no release, no image tags) rather
+  # than a release with no assets. One of the two is always skipped, so this
+  # and every job after it state their conditions instead of relying on the
+  # default success(), which a skipped job upstream would turn false.
   create-release:
-    needs: [guard, macos-from-queue]
+    needs: [guard, macos-from-queue, macos-rebuild]
     if: >-
       !cancelled() &&
       needs.guard.result == 'success' &&
-      needs.macos-from-queue.result != 'failure'
+      (needs.macos-from-queue.result == 'success' || needs.macos-rebuild.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -237,7 +239,9 @@ jobs:
           compression-level: 0
 
   # The rebuild path, only on request: builds and tests the tagged commit on
-  # macOS and uploads the same artifact name.
+  # macOS and uploads the same artifact name. It runs the tagged tree's build
+  # scripts (build/build-server-macos.sh, build/check-server-pins.sh), so it
+  # works for commits that carry them, not for releases cut before them.
   macos-rebuild:
     needs: guard
     if: ${{ inputs.rebuild_macos }}
@@ -308,6 +312,7 @@ jobs:
   # otherwise rebuild from source with release-image.yml.
   image:
     needs: [guard, create-release]
+    if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -357,12 +362,12 @@ jobs:
   # pushed by digest with no tag of their own. No latest-<os> tag: these are
   # pinned by version.
   publish-images:
-    needs: [guard, build-artifacts, macos-from-queue]
-    # Held back with create-release when the queue's macOS file is missing.
+    needs: [guard, build-artifacts, macos-from-queue, macos-rebuild]
+    # Held back with create-release until the macOS file is in hand.
     if: >-
       !cancelled() &&
       needs.build-artifacts.result == 'success' &&
-      needs.macos-from-queue.result != 'failure'
+      (needs.macos-from-queue.result == 'success' || needs.macos-rebuild.result == 'success')
     # Pinned: the push needs podman and skopeo, which this image ships
     # (4.9.3 and 1.13.3); ubuntu-latest moving on could take them away.
     runs-on: ubuntu-24.04
@@ -415,6 +420,7 @@ jobs:
   # PUBLISHED image.
   browser-tests:
     needs: [guard, image]
+    if: ${{ !cancelled() && needs.image.result == 'success' }}
     uses: ./.github/workflows/browser-tests-trigger.yml
     permissions:
       contents: read
