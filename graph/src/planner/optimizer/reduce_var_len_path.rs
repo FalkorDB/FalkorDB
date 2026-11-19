@@ -27,12 +27,12 @@ use super::references::ir_references_variable;
 pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
     for idx in indices {
-        let (alias_id, alias_scope_id) = match plan.node(idx).data() {
+        let alias = match plan.node(idx).data() {
             IR::CondVarLenTraverse {
                 emit_path: true,
                 relationship,
                 ..
-            } => (relationship.alias.id, relationship.alias.scope_id),
+            } => relationship.alias.key(),
             _ => continue,
         };
 
@@ -40,7 +40,7 @@ pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), alias_id, alias_scope_id) {
+            if ir_references_variable(parent.data(), alias.id, alias.scope_id) {
                 referenced = true;
                 break;
             }
