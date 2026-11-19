@@ -70,7 +70,7 @@ use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    parser::ast::{AllShortestPaths, ExprIR, QueryNode, QueryRelationship, Variable},
+    parser::ast::{AllShortestPaths, ExprIR, QueryNode, QueryRelationship, VarKey, Variable},
     tree,
 };
 
@@ -112,7 +112,7 @@ fn score_endpoint(
     bound_vars: &HashSet<u32>,
     graph: &Graph,
 ) -> (u32, bool, bool, u64) {
-    let key = (node.alias.id, node.alias.scope_id);
+    let key = node.alias.key();
     let mut score = 0u32;
     if bound_vars.contains(&node.alias.id) {
         score += 3;
@@ -141,10 +141,10 @@ fn score_endpoint(
 /// Collects the variables referenced by Filter nodes that are ancestors of the
 /// given node index, up to the first non-Filter/non-CondTraverse ancestor.
 ///
-/// Keyed on the full `(id, scope_id)` pair. Today the walk cannot leave the
+/// Keyed on the full `VarKey`. Today the walk cannot leave the
 /// traverse's own scope — every scope boundary (`Project` for `WITH`, `Apply`
 /// for `CALL {}`, `Unwind`, `Aggregate`) falls into the `_ => break` arm below,
-/// so bare ids would be unambiguous in practice. The pair is kept because two
+/// so bare ids would be unambiguous in practice. The full key is kept because two
 /// callers use this set to prove an endpoint's inline attributes are still
 /// enforced above before removing a scan that carried them, and `Variable::id`
 /// is only an index into its own scope's env: that proof should not silently
@@ -154,13 +154,13 @@ fn score_endpoint(
 struct FilteredVars {
     /// Referenced by a Filter *above* the chain: the predicate runs only after
     /// the whole traversal.
-    above: HashSet<(u32, u32)>,
+    above: HashSet<VarKey>,
     /// `above` plus the variables referenced by Filters between the chain's
     /// own operators, whose predicates already run mid-traversal.
-    all: HashSet<(u32, u32)>,
+    all: HashSet<VarKey>,
     /// Subset of `all`: variables with a top-level conjunct
     /// `v.prop = <expression free of variables>` (either operand order).
-    equality: HashSet<(u32, u32)>,
+    equality: HashSet<VarKey>,
 }
 
 /// Records `v` when `idx` is `v.prop = e` (or `e = v.prop`) and `e`
@@ -169,7 +169,7 @@ struct FilteredVars {
 fn collect_equalities(
     filter: &crate::parser::ast::QueryExpr<Variable>,
     idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-    out: &mut HashSet<(u32, u32)>,
+    out: &mut HashSet<VarKey>,
 ) {
     let node = filter.node(idx);
     match node.data() {
@@ -191,7 +191,7 @@ fn collect_equalities(
                     return None;
                 }
                 match prop.child(0).data() {
-                    ExprIR::Variable(v) => Some((v.id, v.scope_id)),
+                    ExprIR::Variable(v) => Some(v.key()),
                     _ => None,
                 }
             };
@@ -212,13 +212,13 @@ fn collect_filtered_vars(
 ) -> FilteredVars {
     fn collect(
         filter: &crate::parser::ast::QueryExpr<Variable>,
-        vars: &mut HashSet<(u32, u32)>,
-        equality: &mut HashSet<(u32, u32)>,
+        vars: &mut HashSet<VarKey>,
+        equality: &mut HashSet<VarKey>,
     ) {
         collect_equalities(filter, filter.root().idx(), equality);
         for idx in filter.root().indices::<Bfs>() {
             if let ExprIR::Variable(v) = filter.node(idx).data() {
-                vars.insert((v.id, v.scope_id));
+                vars.insert(v.key());
             }
         }
     }
@@ -394,12 +394,12 @@ fn is_planner_scan_subtree(
 fn planner_scan_alias(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
-) -> Option<(u32, u32)> {
+) -> Option<VarKey> {
     let mut node = plan.node(idx);
     loop {
         match node.data() {
             IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => {
-                return Some((n.alias.id, n.alias.scope_id));
+                return Some(n.alias.key());
             }
             IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
                 node = node.child(0);
@@ -488,9 +488,9 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
         // Only the id is kept: this set feeds `score_endpoint`'s `bound_vars`,
         // a preference heuristic that never decides plan validity. The
         // scope-sensitive decision — whether the Argument is transparent —
-        // compares full pairs.
+        // compares full `VarKey`s.
         IR::Argument(Some(vars)) => {
-            aliases.extend(vars.iter().map(|(id, _)| *id));
+            aliases.extend(vars.iter().map(|key| key.id));
         }
         _ => {}
     }
@@ -549,11 +549,7 @@ fn child_subtree_binds(
         }
         // `id` alone is ambiguous: it is an index into its own scope's env, so
         // the same number names different variables in different scopes.
-        if child
-            .get_variables()
-            .iter()
-            .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
-        {
+        if child.get_variables().iter().any(|v| v.key() == alias.key()) {
             binds = true;
         }
     }
@@ -575,10 +571,7 @@ fn subtree_may_bind(
         child
             .walk::<Bfs>()
             .any(|ir| matches!(ir, IR::Argument(None)))
-            || child
-                .get_variables()
-                .iter()
-                .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+            || child.get_variables().iter().any(|v| v.key() == alias.key())
     })
 }
 
@@ -635,18 +628,14 @@ fn select_var_len_scan_node(
         // end is the one scanned (or bound by an input). Dropping the `from`
         // scan unbinds `from`; rescanning `to` flips which end is bound.
         let attr_vars = collect_expr_scoped_variables(&relationship.attrs);
-        let attrs_read_from =
-            attr_vars.contains(&(relationship.from.alias.scope_id, relationship.from.alias.id));
-        let attrs_read_to =
-            attr_vars.contains(&(relationship.to.alias.scope_id, relationship.to.alias.id));
+        let attrs_read_from = attr_vars.contains(&relationship.from.alias.key());
+        let attrs_read_to = attr_vars.contains(&relationship.to.alias.key());
         // Only rewrite when the planner put its own scan for `from` here.
         if node.num_children() != 1 {
             continue;
         }
         let child_idx = node.child(0).idx();
-        if planner_scan_alias(optimized_plan, child_idx)
-            != Some((relationship.from.alias.id, relationship.from.alias.scope_id))
-        {
+        if planner_scan_alias(optimized_plan, child_idx) != Some(relationship.from.alias.key()) {
             continue;
         }
         let from = relationship.from.clone();
@@ -726,7 +715,7 @@ fn select_var_len_scan_node(
         let argument = argument_leaf_of(optimized_plan, child_idx);
         match &argument {
             Some(IR::Argument(None)) => continue,
-            Some(IR::Argument(Some(vars))) if vars.contains(&(to.alias.id, to.alias.scope_id)) => {
+            Some(IR::Argument(Some(vars))) if vars.contains(&to.alias.key()) => {
                 continue;
             }
             _ => {}
@@ -923,7 +912,7 @@ pub(super) fn select_scan_node(
         // set: when it binds none of the chain's endpoints, the Argument only
         // replays outer rows for correlation/multiplicity and a scan can be
         // inserted between the CT and the Argument.
-        let child_argument_vars: Option<Vec<(u32, u32)>> = if is_leaf {
+        let child_argument_vars: Option<Vec<VarKey>> = if is_leaf {
             None
         } else {
             match optimized_plan.node(bottom_idx).child(0).data() {
@@ -958,7 +947,7 @@ pub(super) fn select_scan_node(
         let arg_transparent = child_argument_vars.as_ref().is_some_and(|vars| {
             candidates
                 .iter()
-                .all(|(node, _, _)| !vars.contains(&(node.alias.id, node.alias.scope_id)))
+                .all(|(node, _, _)| !vars.contains(&node.alias.key()))
         });
         let effectively_leaf = effectively_leaf || arg_transparent;
         // Any scan this pass builds inside a MERGE match branch must see
@@ -1453,9 +1442,8 @@ pub(super) fn select_scan_node(
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                         let filters = filters_of(optimized_plan, child_idx);
                         if has_planner_scan
-                            && planner_scan_alias(optimized_plan, child_idx).is_some_and(|alias| {
-                                alias != (scan_node.alias.id, scan_node.alias.scope_id)
-                            })
+                            && planner_scan_alias(optimized_plan, child_idx)
+                                .is_some_and(|alias| alias != scan_node.alias.key())
                         {
                             (vec![], filters)
                         } else {
