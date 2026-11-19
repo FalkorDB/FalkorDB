@@ -800,6 +800,12 @@ static PendingUpdate *_update_for
 //               meant freeing the caller's memory at the flush. This is the
 //               defect; SIValue_Persist does not cover it, because it clones
 //               M_VOLATILE and leaves every other kind alone.
+//
+//               NOT THEORETICAL: a runtime-computed string is M_SELF, and
+//               `SET n.s = n.s + '!'` killed the server on a build without
+//               this. `SET n.s = 'b'` did not - constant folding makes that
+//               M_CONST, and nothing frees an M_CONST, which is the same
+//               reason this leaves them alone below.
 //   M_VOLATILE  copied, as before: it will not outlive the call.
 //   M_CONST     TAKEN AS IT IS, and deliberately. Cloning one would be safe,
 //               but an interned string's clone rents from the global string
