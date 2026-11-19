@@ -195,7 +195,7 @@ Scan selection (`ScanOrder.lean`):
   outscores a bare bound one (3), contrary to the "bound has highest priority" doc comment.
 - Hazard (resolved by #3594): `prune_all_node_scan_child` pruned the AllNodeScan *subtree*;
   `prune_sound` assumed the scan is a leaf. #3594 re-attaches the scan's children beneath the edge
-  scan (`utilize_index.rs:1086-1097`); `Cleanup.prune_sound_rows` proves the rows are kept per input row.
+  scan (`utilize_index.rs:1113-1124`); `Cleanup.prune_sound_rows` proves the rows are kept per input row.
 
 ## PR #3594 (traversal after UNWIND/WITH scans its start node per row)
 - `make_scan_subtree` takes a whole subtree beneath the scan (`ScanTree.makeScanSubtree` with
@@ -203,9 +203,12 @@ Scan selection (`ScanOrder.lean`):
 - `projected_outputs`/`collect_output_pairs` (new) and `collect_output_aliases`: a copy `(old, new)`
   outputs `new`, an aggregation its names and copies (`collectOutputAliases_spec`,
   `collectOutputAliases_aggregate`, `collectOutputAliases_projected`, `collectOutputPairs_spec`).
-- `select_scan_node`'s outer-context child moved beneath the new scan only adds, to the seed, ids
-  that subtree binds beneath the scan (minus the chain's ids), so `place_wellScoped`'s honest-seed
-  premise is as before; the ScanOrder/Salvage theorems are unchanged.
+- `select_scan_node`'s outer-context child moved beneath the new scan (`transparent_child`, lines
+  1001-1053) only adds, to the seed, ids that subtree binds beneath the scan (minus the chain's ids
+  when transparent, lines 1213-1239): `ScanOrder.initialBoundOuter`, `initialBoundOuter_none`,
+  `outerSeed_transparent_no_chain`, `initialBoundOuter_wellScoped`. The planner-scan path (`has_planner_scan`)
+  is untouched, so `Salvage.premise_fails`/`salvage_loses_row` (#2972) still describe it
+  (`rebuilt_drops_unwind` now with `argument_leaf_of(..).map(tree!)`).
 
 ## Re-target to 8743953a8 (#2390 d2c42e032: plan an inline property map once)
 The planner now lowers inline attributes to `IR::Filter`s and strips them from the pattern; the

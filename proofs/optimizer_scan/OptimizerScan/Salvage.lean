@@ -112,7 +112,8 @@ theorem exChild_shape :
 /-- The rebuilt scan subtree (`make_scan_subtree` with the preserved Argument leaf, none here) has
 no `Unwind`: the operator that bound `k` is pruned with the scan. -/
 theorem rebuilt_drops_unwind :
-    hasUnwind (makeScanSubtree b [0] false (argumentLeafOf exChild) []) = false := by decide
+    hasUnwind (makeScanSubtree b [0] false ((argumentLeafOf exChild).map (fun a => PT.node a [])) []) = false := by
+      decide
 
 /-- The rebuilt chain `(b)-[10]->(c)` from the seed `[b]`. -/
 def exSteps : List Step := [.hop ⟨1, 3, 10, 0, false⟩]
