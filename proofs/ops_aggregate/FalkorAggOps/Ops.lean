@@ -391,7 +391,7 @@ theorem groupAll_spec {K A : Type} [DecidableEq K] (rows : List (K × A)) (k : K
   simpa [groupAll, lookupG] using this []
 
 /-- Keyed aggregation over no rows has no groups; keyless aggregation
-pre-inserts the single empty-key group (aggregate.rs:533-540, :891-898), so it always
+pre-inserts the single empty-key group (aggregate.rs:751-759, :1111-1119), so it always
 emits one row of initial accumulators (`count`=0, `sum`=0.0, `avg`=null,
 `collect`=[] …; checked in `agrees_empty_input_aggregates`). -/
 theorem keyed_empty {K A : Type} [DecidableEq K] : groupAll ([] : List (K × A)) = [] := rfl
@@ -400,6 +400,186 @@ def keylessGroups {A : Type} (rows : List A) : List (Unit × List A) :=
   [((), rows)]
 
 theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length = 1 := rfl
+
+/-! ### Per-row grouping with implicit keys (#3579; aggregate.rs:1104-1252)
+
+`consume_input_per_row` pre-inserts the empty-key group only when there are neither explicit
+nor implicit keys (:1113); `consume_batch_per_row` groups by the explicit key values followed by
+the implicit key values (:1166-1188; a slotted key's error fails the row, an unslotted one under a
+`CASE` groups as `null`, `implicitVal`), and seeds a new group's accumulator row with each slotted
+key's grouped value at its slot, then the first row's values of the unslotted keys' variables
+(`lazy_vars`, :1207-1228, `seedNew`). -/
+
+/-- `consume_input_per_row` + `consume_batch_per_row` grouping: `keyless` is
+`keys.is_empty() && implicit.is_empty()`. -/
+def perRowGroups {V A : Type} [DecidableEq V] (keyless : Bool) (rows : List (List V × A)) :
+    List (List V × List A) :=
+  rows.foldl (fun g r => groupInsert r.1 r.2 g) (if keyless then [([], [])] else [])
+
+/-- The per-row group key: explicit key values, then implicit key values (:1166-1188). -/
+def rowKey {V : Type} (explicit implicit : List V) : List V := explicit ++ implicit
+
+/-- With keys, every group still holds exactly the rows with its key (bag semantics). -/
+theorem perRowGroups_spec {V A : Type} [DecidableEq V] (rows : List (List V × A)) (k : List V) :
+    perRowGroups false rows = groupAll rows ∧
+    (lookupG k (perRowGroups false rows)).getD [] = (rows.filter (fun r => r.1 = k)).map Prod.snd :=
+  ⟨rfl, groupAll_spec rows k⟩
+
+/-- Without explicit or implicit keys every row has the empty key: exactly one group, holding all
+rows (one output row even for an empty input). -/
+theorem perRowGroups_keyless {V A : Type} [DecidableEq V] (rows : List (List V × A))
+    (h : ∀ r ∈ rows, r.1 = []) : perRowGroups true rows = [([], rows.map Prod.snd)] := by
+  unfold perRowGroups
+  simp only [if_true]
+  suffices ∀ (acc : List A), rows.foldl (fun g r => groupInsert r.1 r.2 g) [([], acc)] =
+      [([], acc ++ rows.map Prod.snd)] by simpa using this []
+  induction rows with
+  | nil => intro acc; simp
+  | cons r rows ih =>
+    intro acc
+    have hr : r.1 = [] := h r (by simp)
+    simp only [List.foldl, groupInsert, hr, if_true]
+    rw [ih (fun r' hr' => h r' (by simp [hr']))]
+    simp
+
+/-- **Implicit keys are keys (#3571)**: with an implicit key and no input row there is no group,
+so `MATCH (n) RETURN n.v + count(*)` on an empty graph emits no row (it emitted one before). -/
+theorem implicit_empty_input_no_group {V A : Type} [DecidableEq V] :
+    perRowGroups false ([] : List (List V × A)) = [] := rfl
+
+/-- Rows of one group agree on every implicit key value: the explicit parts have one length
+(one value per key), so equal group keys have equal implicit parts. -/
+theorem rowKey_implicit_eq {V : Type} (e₁ e₂ i₁ i₂ : List V) (hl : e₁.length = e₂.length)
+    (h : rowKey e₁ i₁ = rowKey e₂ i₂) : e₁ = e₂ ∧ i₁ = i₂ :=
+  List.append_inj h hl
+
+/-- The lazy-variable step of a new group's accumulator row: each variable of `lazy_vars` bound in
+the first row is written (:1222-1226). -/
+def seedAcc {V : Type} (vars : List Nat) (row acc : Nat → Option V) : Nat → Option V :=
+  vars.foldl (fun a v => match row v with
+    | some x => fun j => if j = v then some x else a j
+    | none => a) acc
+
+/-- Slots that are not implicit variables keep the default accumulator. -/
+theorem seedAcc_other {V : Type} (vars : List Nat) (row acc : Nat → Option V) (j : Nat)
+    (hj : j ∉ vars) : seedAcc vars row acc j = acc j := by
+  induction vars generalizing acc with
+  | nil => rfl
+  | cons v vs ih =>
+    simp only [seedAcc, List.foldl] at ih ⊢
+    have hv : j ≠ v := fun h => hj (by simp [h])
+    rw [ih _ (fun h => hj (by simp [h]))]
+    cases row v <;> simp [hv]
+
+/-- An implicit variable bound in the first row holds that row's value. -/
+theorem seedAcc_var {V : Type} (vars : List Nat) (row acc : Nat → Option V) (j : Nat) (x : V)
+    (hj : j ∈ vars) (hx : row j = some x) : seedAcc vars row acc j = some x := by
+  induction vars generalizing acc with
+  | nil => simp at hj
+  | cons v vs ih =>
+    simp only [seedAcc, List.foldl] at ih ⊢
+    by_cases hin : j ∈ vs
+    · exact ih _ hin
+    · have hv : j = v := by simpa [hin] using hj
+      subst hv
+      have := seedAcc_other vs row (fun i => if i = j then some x else acc i) j hin
+      simp only [seedAcc] at this
+      rw [hx]; simp [this]
+
+/-- One implicit key's group value (aggregate.rs:1177-1187): a slotted key (`slotted = true`)
+propagates its evaluation error (`value?`, the row fails); an unslotted one, under a `CASE`, reads an
+error as `null` (`value.unwrap_or(Value::Null)`). -/
+def implicitVal {V E : Type} (null : V) (slotted : Bool) (r : Except E V) : Except E V :=
+  if slotted then r else match r with
+    | .ok v => .ok v
+    | .error _ => .ok null
+
+theorem implicitVal_ok {V E : Type} (null : V) (slotted : Bool) (v : V) :
+    implicitVal null slotted (.ok v : Except E V) = .ok v := by
+  cases slotted <;> rfl
+
+theorem implicitVal_slotted_err {V E : Type} (null : V) (e : E) :
+    implicitVal null true (.error e : Except E V) = .error e := rfl
+
+/-- **An implicit key under a `CASE` never fails grouping (#3579)**: its error groups as `null`. -/
+theorem implicitVal_guarded_err {V E : Type} (null : V) (e : E) :
+    implicitVal null false (.error e : Except E V) = .ok null := rfl
+
+/-- The slot step (aggregate.rs:1213-1217): each implicit key with a slot writes the value the row
+grouped by (the matching implicit part of the group key) at its slot. -/
+def seedSlots {V : Type} : List (Option Nat) → List V → (Nat → Option V) → Nat → Option V
+  | some j :: ss, x :: xs, acc => seedSlots ss xs (fun i => if i = j then some x else acc i)
+  | none :: ss, _ :: xs, acc => seedSlots ss xs acc
+  | _, _, acc => acc
+
+/-- A new group's accumulator row (aggregate.rs:1209-1227): `default_acc`, the slotted keys'
+grouped values at their slots, then the lazy variables from the first row. -/
+def seedNew {V : Type} (slots : List (Option Nat)) (ivals : List V) (lazy : List Nat)
+    (row acc : Nat → Option V) : Nat → Option V :=
+  seedAcc lazy row (seedSlots slots ivals acc)
+
+theorem seedSlots_other {V : Type} (slots : List (Option Nat)) (ivals : List V)
+    (acc : Nat → Option V) (j : Nat) (hj : some j ∉ slots) : seedSlots slots ivals acc j = acc j := by
+  induction slots generalizing ivals acc with
+  | nil => cases ivals <;> rfl
+  | cons s ss ih =>
+    cases ivals with
+    | nil => cases s <;> rfl
+    | cons x xs =>
+      have hss : some j ∉ ss := fun h => hj (List.mem_cons_of_mem _ h)
+      cases s with
+      | none => exact ih xs acc hss
+      | some k =>
+        have hk : j ≠ k := fun h => hj (by simp [h])
+        simp only [seedSlots]; rw [ih xs _ hss]; simp [hk]
+
+/-- **A slotted key reports the value it grouped by (#3579)**: with distinct slots, a slot holds
+the grouped value of its key (the item then reads that slot, so a volatile subtree such as `rand()`
+is not drawn again at finalize). -/
+theorem seedSlots_slot {V : Type} (slots : List (Option Nat)) (ivals : List V)
+    (acc : Nat → Option V) (n j : Nat) (x : V) (hnd : (slots.filterMap id).Nodup)
+    (hs : slots[n]? = some (some j)) (hx : ivals[n]? = some x) :
+    seedSlots slots ivals acc j = some x := by
+  induction slots generalizing ivals acc n with
+  | nil => simp at hs
+  | cons s ss ih =>
+    cases ivals with
+    | nil => simp at hx
+    | cons y ys =>
+      cases n with
+      | zero =>
+        simp at hs hx; subst hs; subst hx
+        have hnot : some j ∉ ss := by
+          intro hm
+          have : j ∈ ss.filterMap id := List.mem_filterMap.mpr ⟨some j, hm, rfl⟩
+          simp at hnd; exact hnd.1 (by simpa using this)
+        simp only [seedSlots]; rw [seedSlots_other _ _ _ _ hnot]; simp
+      | succ m =>
+        simp at hs hx
+        cases s with
+        | none => exact ih ys acc m (by simpa using hnd) hs hx
+        | some k =>
+          simp only [seedSlots]
+          exact ih ys _ m (by simp at hnd; exact hnd.2) hs hx
+
+/-- With slots above every lazy variable's id (aggregate.rs:350-357: slot ids exceed every id the
+key and aggregation trees read), the lazy step does not touch a slot. -/
+theorem seedNew_slot {V : Type} (slots : List (Option Nat)) (ivals : List V) (lazy : List Nat)
+    (row acc : Nat → Option V) (n j : Nat) (x : V) (hnd : (slots.filterMap id).Nodup)
+    (hs : slots[n]? = some (some j)) (hx : ivals[n]? = some x) (hj : j ∉ lazy) :
+    seedNew slots ivals lazy row acc j = some x := by
+  unfold seedNew; rw [seedAcc_other _ _ _ _ hj]; exact seedSlots_slot _ _ _ _ _ _ hnd hs hx
+
+theorem seedNew_var {V : Type} (slots : List (Option Nat)) (ivals : List V) (lazy : List Nat)
+    (row acc : Nat → Option V) (j : Nat) (x : V) (hj : j ∈ lazy) (hx : row j = some x) :
+    seedNew slots ivals lazy row acc j = some x :=
+  seedAcc_var _ _ _ _ _ hj hx
+
+/-- Every other slot (the accumulators) keeps `default_acc`. -/
+theorem seedNew_other {V : Type} (slots : List (Option Nat)) (ivals : List V) (lazy : List Nat)
+    (row acc : Nat → Option V) (j : Nat) (hl : j ∉ lazy) (hs : some j ∉ slots) :
+    seedNew slots ivals lazy row acc j = acc j := by
+  unfold seedNew; rw [seedAcc_other _ _ _ _ hl, seedSlots_other _ _ _ _ hs]
 
 /-! ## DISTINCT state keyed by a hash (history: distinct.rs:79, aggregate.rs:724/:968 at ca36bfa15)
 

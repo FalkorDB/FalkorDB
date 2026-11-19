@@ -72,7 +72,7 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `dedup_injective` | `DISTINCT` is correct when its hash is injective (`dedup_collision_drops` is one counterexample for a collision, not the converse) | `Ops.lean` |
 | `drain_all` | The aggregate's `next` emits every group once, 1024 per batch | `AggNext.lean` |
 | `finishGroup_outputs` | Output bindings of a finished group take precedence | `AggNext.lean` |
-| `bug3375_output_overwrites_next_acc` … `bug3368_count_acc_in_merge_slot` | With the ids the binder really assigns, `next` breaks `AggRowSpec` in four open issues (#3375, #3333, #3368, #3369) | `SlotReuse.lean` |
+| `outputsOwnScope_main`, `emitsOnlyScope_main`, `fixed3375_sum`, `fixed3375_avg`, `fixed3333_alias_not_emitted`, `fixed3369_no_count_acc_left` | Since #3579, `next` evaluates over the old-scope accumulators plus the bare key aliases and emits only the new scope, so `OutputsOwnAcc` and `EmitsOnlyScope` hold. The history theorems `pre3579_bug3375_output_overwrites_next_acc` … `pre3579_bug3368_count_acc_in_merge_slot` show the four issues on the 343e077f2 model | `SlotReuse.lean` |
 | `unbind_after_zero` | Every accumulator the aggregate zeroes is unbound again afterwards | `AggState.lean` |
 | `pctCmp_total` | The percentile sort comparator is a total preorder, so it cannot panic on NaN | `Ops.lean` |
 | `pct_first_wins`, `pct_stable` | A per-row percentile argument is taken from the first non-null row and never overwritten, as in C (#3007) | `Agg.lean` |
@@ -102,11 +102,11 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 | W2-agg-3 | removed (17ccc5412) | `percentileDisc`/`percentileCont` sorted with `partial_cmp().unwrap_or(Equal)`, which is not transitive with NaN; the sort panicked and the server crashed | Fixed by #2912 (`pctCmp_total`) |
 | W2-agg-4 | removed (17ccc5412) | A per-row percentile argument was overwritten by every row, so the last row won. `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Low severity | Fixed by #3007 (`pct_first_wins`, `pct_stable`, `pct_repro_first_row`; main's test `test_row_dependent_percentile_uses_first_row`) |
 | W2-agg-5 | removed (17ccc5412) | An aggregate inside a list literal `return`ed out of the expression stack machine (`eval.rs:886-889` before #2951). `[min(x), max(x)]` gave `2` where C gives `[1,2]`; `size([count(x)])` was a type error | Fixed by #2951 (`evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`, `main_count_lit_list`, `main_size_singleton_agg`; main's test `test_list_literal_of_aggregates`) |
-| #3375 | `bug3375_output_overwrites_next_acc`, `bug3375_avg_panics` (property `OutputsOwnAcc`) | The binder gives `count(x)`'s output the same id as `sum(x)`'s accumulator, and `next` writes the output into `combined` before `sum` reads it. `UNWIND [1,2,3] AS x RETURN 'a', 'b', count(x), sum(x)`: Rust 3, 3; C 3, 6. With `avg` the server panics (`finalize_avg expects a list`) | **Open** (PR #3374) |
+| #3375 | `pre3579_bug3375_output_overwrites_next_acc`, `pre3579_bug3375_avg_panics` (property `OutputsOwnAcc`) | The binder gives `count(x)`'s output the same id as `sum(x)`'s accumulator, and `next` writes the output into `combined` before `sum` reads it. `UNWIND [1,2,3] AS x RETURN 'a', 'b', count(x), sum(x)`: Rust 3, 3; C 3, 6. With `avg` the server panics (`finalize_avg expects a list`) | **Fixed by #3579**: `outputsOwnScope_main`, `fixed3375_sum`, `fixed3375_avg` |
 | #3150 | removed (17ccc5412) (property `KeysBound`) | `RETURN null AS x, count(1)`: the accumulator had id 0, the id of `x`; unbinding it unbound `x`, the null column was dropped and `reply.rs:655` panicked. With `'a' AS x` the value survived unbound, so the reply still printed it | **Fixed by #3522** (accumulators are unbound before the keys are written): `finishGroup_keys_bound`, `keysBound_main`, `fixed3522_null_key_bound`, `keysBound_swap_3522` |
-| #3333 | `bug3333_alias_binds_next_var` (property `EmitsOnlyScope`) | `… (x)-[:R]->(m) WITH m, count(*) AS c1 MATCH (m)-[r]->(b …)`: the pre-projection alias of `m` (id 2) is bound on the emitted row, and `b` gets id 2, so `b` starts bound to `m`. Rust `[]`, C `[3,1,4]` | **Open** |
-| #3369 | `bug3369_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Two `count(*)` accumulators are left, unbound but present, at the ids of the next segments' MERGE nodes (2 and 3). The MERGE that then treats them as bound is in `merge.rs`, which this project does not model | **Open** |
-| #3368 | `bug3368_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Same cause as #3369: the counts are left at id 2, which is `b` in the second segment and `c` in the last. Rust returns `[B] b1` for `c`; C `[C] c1` | **Open** |
+| #3333 | `pre3579_bug3333_alias_binds_next_var` (property `EmitsOnlyScope`) | `… (x)-[:R]->(m) WITH m, count(*) AS c1 MATCH (m)-[r]->(b …)`: the pre-projection alias of `m` (id 2) is bound on the emitted row, and `b` gets id 2, so `b` starts bound to `m`. Rust `[]`, C `[3,1,4]` | **Fixed by #3579**: `emitsOnlyScope_main`, `fixed3333_alias_not_emitted` |
+| #3369 | `pre3579_bug3369_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Two `count(*)` accumulators are left, unbound but present, at the ids of the next segments' MERGE nodes (2 and 3). The MERGE that then treats them as bound is in `merge.rs`, which this project does not model | **Fixed by #3579**: `emitsOnlyScope_main`, `fixed3369_no_count_acc_left` |
+| #3368 | `pre3579_bug3368_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Same cause as #3369: the counts are left at id 2, which is `b` in the second segment and `c` in the last. Rust returns `[B] b1` for `c`; C `[C] c1` | **Fixed by #3579**: `emitsOnlyScope_main` |
 | #3443 | removed (17ccc5412) (property `EachHopValidated`) | ureq followed redirects (default `max_redirects = 10`), but `PinnedResolver` ignores the URI and returns the first host's addresses, and `https_only` was off. A cross-host redirect connected to the first host's IP (live: TLS "certificate not valid for name"); a redirect to `http://` was attempted (live: `http status: 400`). C follows no redirect | **Fixed by #3458** (`https_only(true)`, `max_redirects(0)`, a 3xx is an error): `fixed3443_eachHopValidated`, `fixed3443_redirect_is_error` |
 | #3453 | `fixed3453_deleted_node`, `fixed3453_duplicate_row`, `fixed3453_split_multilabel` (property `IncludePendingExact`, `includePendingMain_exact`) | MERGE's pending-node scan used to read `set_labels` only: a deleted node was matched, a re-`SET` committed label yielded the node twice, and `MERGE (m:A:B)` missed a node with `A` committed and `B` staged. All three now match C | **Fixed** by #3467 (a477d9aa3) |
 | — | `dedup_collision_drops` | `DISTINCT`, `count(DISTINCT)` and the MERGE cache keep only a 64-bit FxHash; a collision drops a row | **Present on main** (#2780 closed as not planned) |
@@ -151,16 +151,20 @@ This project depends on [`../value_order`](../value_order) (a Lake path dependen
 
 ## Coverage
 
-`COVERAGE.tsv` has 155 rows:
+`COVERAGE.tsv` has 158 rows:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 84 |
+| PROVEN | 83 |
 | CONDITIONAL | 1 |
 | MODELLED | 13 |
-| NOT COVERED | 57 |
+| NOT COVERED | 61 |
 
-All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.rs`, `project.rs`, `unwind.rs`, `load_csv.rs`, `filter.rs`, `include_pending.rs`, `procedure_call.rs`, `commit.rs`) are fully PROVEN, with one caveat: `AggregateOp::next` is proven against the per-group model (`drain_all`, `finishGroup_outputs`) but refutes `AggRowSpec` under the binder's slot ids until the open slot-reuse bugs (#3375, #3333, #3368, #3369) are fixed (`SlotReuse.lean`). The rest:
+All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.rs`, `project.rs`, `unwind.rs`, `load_csv.rs`, `filter.rs`, `include_pending.rs`, `procedure_call.rs`, `commit.rs`) are fully PROVEN, except in `aggregate.rs`:
+
+- **NOT COVERED, `aggregate.rs` (4 rows):** `implicit_keys` (#3571, #3579) and its helpers `binds`, `variables` and `walk` are a syntactic walk over the expression IR. `AggSt.new` takes its result as a parameter, and how the operator uses it is proved: `analyze_implicit_none`, `perRowGroups_*`, `rowKey_implicit_eq`, `seedAcc_*` and `finishGroup_eval`.
+
+The rest:
 
 - **NOT COVERED, `batch.rs` (47 rows):** the model treats a batch as its list of active rows, so the typed columns, builders, `concat` and `gather` are abstracted away. `compare_at` and `compare_rows_at` are proven in `value_order` and `columnar` instead.
 - **MODELLED, `batch.rs` (11 rows):** accessors such as `active_indices`, `value_at` and the row iterators are what "a batch is its active rows" stands for; the `agrees_*` Rust tests exercise them.
