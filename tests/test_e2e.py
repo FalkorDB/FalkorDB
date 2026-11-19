@@ -1533,6 +1533,46 @@ def test_aggregation_item_implicit_grouping_keys():
     assert res.result_set == [[12], [21]]
 
 
+def test_aggregation_item_implicit_key_value_is_the_grouped_value():
+    # A group reports the value its implicit key grouped by. A volatile key
+    # used to be drawn again when the item was computed, so both groups could
+    # report the same first element and a count could sit beside the wrong key.
+    res = query(
+        "UNWIND range(1, 1000) AS x "
+        "RETURN [toInteger(rand() * 2) + 0 * x, count(*)] AS r",
+        compare_results=False,
+    )
+    assert sorted(row[0][0] for row in res.result_set) == [0, 1]
+    assert sum(row[0][1] for row in res.result_set) == 1000
+
+
+def test_aggregation_item_implicit_key_under_case_is_lazy():
+    # CASE takes only the branch that holds, so an implicit key in a branch
+    # that is not taken cannot fail the query.
+    res = query(
+        "UNWIND [0] AS x "
+        "RETURN CASE WHEN x = 0 THEN 1 WHEN false THEN 1 / x ELSE count(*) END AS v"
+    )
+    assert res.result_set == [[1]]
+    res = query(
+        "UNWIND [1] AS x "
+        "RETURN CASE WHEN count(*) > 0 THEN count(*) ELSE x.foo END AS v"
+    )
+    assert res.result_set == [[1]]
+    # The branch is still evaluated, and still raises, when it is taken.
+    query_exception(
+        "UNWIND [1] AS x "
+        "RETURN CASE WHEN count(*) < 0 THEN count(*) ELSE x.foo END AS v",
+        "Type mismatch",
+    )
+    # A key under a CASE still groups.
+    res = query(
+        "UNWIND [1, 2, 3] AS x "
+        "RETURN CASE WHEN count(*) > 0 THEN x + count(*) ELSE 0 END AS v ORDER BY v"
+    )
+    assert res.result_set == [[2], [3], [4]]
+
+
 def test_pipelined_match_after_aggregating_with():
     # #3372: a path split by an aggregating WITH, joined on the middle node.
     query(
