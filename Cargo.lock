@@ -554,6 +554,7 @@ dependencies = [
  "crossfire",
  "csv",
  "feral-metis",
+ "graphblas-sys",
  "itertools 0.15.0",
  "json-escape",
  "lru",

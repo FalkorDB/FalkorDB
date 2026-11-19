@@ -83,25 +83,25 @@ use super::{
     GrB_DESC_RST1, GrB_DESC_RT0, GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC,
     GrB_DESC_SCT0, GrB_DESC_SCT0T1, GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1,
     GrB_DESC_T0, GrB_DESC_T0T1, GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32,
-    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_assign_BOOL, GrB_Matrix_build_BOOL,
-    GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp,
-    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
-    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
-    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
-    GrB_Matrix_resize, GrB_Matrix_select_UINT64, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
-    GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
-    GrB_VALUEEQ_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
-    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_build_Scalar,
-    GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type,
-    GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_PAIR_UINT64, GxB_Print_Level,
-    GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
+    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_assign_BOOL, GrB_Matrix_build_UINT64,
+    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseMult_Semiring,
+    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
+    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
+    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_select_UINT64, GrB_Matrix_set_INT32,
+    GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode,
+    GrB_Orientation, GrB_SECOND_UINT64, GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new,
+    GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64, GrB_VALUEEQ_UINT64, GrB_WaitMode, GrB_mxm,
+    GrB_mxv, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_BITMAP,
+    GxB_Container_free, GxB_Container_new, GxB_FULL, GxB_Global_Option_set_INT32, GxB_HYPERSPARSE,
+    GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control,
+    GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
+    GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_PAIR_UINT64,
+    GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
     GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
     GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
     GxB_unload_Matrix_into_Container,
 };
+#[cfg(test)]
 use super::{
     GrB_FP64, GrB_Matrix_build_FP64, GrB_Matrix_extractTuples_FP64, GrB_Matrix_select_INT64,
     GrB_Matrix_setElement_FP64, GrB_OFFDIAG,
@@ -305,8 +305,8 @@ impl MatrixType for bool {
     fn new_matrix(
         nrows: u64,
         ncols: u64,
-    ) -> Matrix<bool> {
-        Matrix::<bool>::new(nrows, ncols)
+    ) -> Matrix<Self> {
+        Matrix::<Self>::new(nrows, ncols)
     }
 }
 
@@ -314,8 +314,8 @@ impl MatrixType for u64 {
     fn new_matrix(
         nrows: u64,
         ncols: u64,
-    ) -> Matrix<u64> {
-        Matrix::<u64>::new(nrows, ncols)
+    ) -> Matrix<Self> {
+        Matrix::<Self>::new(nrows, ncols)
     }
 }
 
@@ -928,7 +928,7 @@ impl<T> Matrix<T> {
                 32,
                 GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT as i32,
             );
-            (r as i32, c as i32)
+            (r.0, c.0)
         }
     }
 
@@ -947,7 +947,7 @@ impl<T> Matrix<T> {
                 32,
                 GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT as i32,
             );
-            (r as i32, c as i32)
+            (r.0, c.0)
         }
     }
 
@@ -980,6 +980,10 @@ impl<T> Matrix<T> {
     /// `GrB_OFFDIAG`, whose thunk 0 names the main diagonal), in place.
     /// So far only the CCH test kit uses it, to drop a weight matrix's self-loops.
     #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "its one caller, the CCH test kit, is behind the `index-falkordb` feature"
+    )]
     pub(crate) fn drop_diagonal(&mut self) {
         let info = unsafe {
             GrB_Matrix_select_INT64(
@@ -1038,7 +1042,7 @@ impl<T> Matrix<T> {
                 mask.map_or(null_mut(), Matrix::inner),
                 null_mut(),
                 T::add_op(),
-                a.map_or_else(|| self.inner(), Matrix::inner),
+                a.map_or_else(|| self.inner(), Self::inner),
                 b.map_or_else(|| self.inner(), Matrix::inner),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
@@ -1177,6 +1181,10 @@ impl<T> Matrix<T> {
     /// choice decides whether `GrB_Matrix_resize` can take its no-wait fast
     /// path, which needs sparse or hypersparse.
     #[must_use]
+    #[allow(
+        non_upper_case_globals,
+        reason = "the patterns are the C API's constants, under its names"
+    )]
     pub fn sparsity_status(&self) -> &'static str {
         let mut sparsity: i32 = 0;
         let info = unsafe {
@@ -1448,7 +1456,7 @@ impl Matrix<f64> {
     ) {
         unsafe {
             let info = GrB_Matrix_setElement_FP64(self.inner(), value, i, j);
-            assert!((info as i32) >= 0, "GrB_Matrix_setElement_FP64: {info:?}");
+            assert!(info.0 >= 0, "GrB_Matrix_setElement_FP64: {info:?}");
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
@@ -1660,7 +1668,7 @@ impl Matrix<bool> {
         &mut self,
         m: &Matrix<TV>,
         dp: &Matrix<TV>,
-        dm: &Matrix<bool>,
+        dm: &Self,
     ) {
         // The delta layers arrive raw from a shared snapshot and may hold
         // pending work; a GrB op would finish it internally (a mutation),
@@ -1693,7 +1701,7 @@ impl Matrix<bool> {
         // `self * dm` does, so those are counted at the masked positions only
         // and added back.
         let mut mask: Option<Matrix<u64>> = None;
-        let mut restored: Option<Matrix<bool>> = None;
+        let mut restored: Option<Self> = None;
         if dm_nvals > 0 {
             let dm_paths = Matrix::<u64>::new(nrows, ncols);
             unsafe {
@@ -1710,7 +1718,7 @@ impl Matrix<bool> {
             }
             if dm_paths.nvals() > 0 {
                 let m_paths = Matrix::<u64>::new(nrows, ncols);
-                let live = Matrix::<bool>::new(nrows, ncols);
+                let live = Self::new(nrows, ncols);
                 unsafe {
                     let info = GrB_mxm(
                         m_paths.inner(),
@@ -1750,9 +1758,9 @@ impl Matrix<bool> {
             }
         }
 
-        let mut accum: Option<Matrix<bool>> = None;
+        let mut accum: Option<Self> = None;
         if dp_nvals > 0 {
-            let mut ac = Matrix::<bool>::new(nrows, ncols);
+            let ac = Self::new(nrows, ncols);
             unsafe {
                 let info = GrB_mxm(
                     ac.inner(),
