@@ -307,6 +307,36 @@ and `falkordb/numeric.rs`, which belong to `native_index`. It also rewrote the `
 `indexable` and `canUtilize` in the table above model: that model needs a re-check against the
 new `InList` arm (not redone in this pass). `indexer.rs`, `index/mod.rs` and the RediSearch wrapper are
 unchanged.
+
+## Re-target to d55dbbaad (#3680: index DDL versioned with the graph)
+- `Indexer` is a per-version value (`Arc<IndexMap>`, clone = fork); `create_index` /
+  `drop_index` change only this version's map, on a private `Index::fork_for_ddl` copy
+  (`Idx.forkForDdl`: fresh counters, new generation, spec shared only when `share_spec`).
+  `Idx` gains `owed` (`population_owed`) and `deferred` (`deferred_fields`); new
+  `deferFields`, `owePopulation`, `takePopulationOwed`, `registerAllFields` (declaration
+  order, `orderedFields`), `registerDeferredFields`. `cloneForUpdate`, `Ixr.remove`,
+  `Ixr.recreate` are gone with the Rust fns.
+- `IndexerM.createIndex` takes `owes` (`owes_population`); `build` = `x0Of` (fork or
+  default) → `addAttrs` → `specStep` (defer if shared, else a fresh spec with every field)
+  → `finish` (explicit language/stopwords always recorded) → `owe`. `createIndex_regen` is
+  restated: the entry's counters are now its own (`⟨regenTo, owes ? 1 : 0, 0⟩`; old
+  tickets are no longer carried as stale, they stay on the published entry), with
+  `createIndex_old_release_noop` (an old job's release is a no-op on the new entry).
+  `createIndex_ok`, `_validates`, `_old_ticket_stale(_ne)`, `_new_entry`,
+  `bug_range_after_fulltext` re-proved.
+- `dropIndex` returns `Except` and the label leaves the map when no field is left (what
+  `drop_index_bg` did before); `dropIndex_spec` restated with that case, `dropIndex_rebuilt`
+  (fresh spec, generation `bumpTo`, one owed ticket), `dropAttrs_slots`.
+- `create_rs_index` no longer passes an English language (`createRsIndex_english`);
+  `createRsIndex_lang_err_cleanLabel` now assumes the FFI fact `EnglishOk`.
+  `recreateIndex_ok` registers `orderedFields`; `recreateIndex_ok_all` gives every field
+  under `Inv` (`orderedFields_complete`).
+- `SpecHandle::drop` hands the creation ref to a `DoomedSpec` freed by a pool job:
+  `RC.doom` / `RC.dropDoomed` (`dropSpec` = both), `RC.Inv` counts the doomed ref;
+  `doom_inv`, `dropDoomed_inv`, `doomed_not_freed`, `not_freed` extended.
+- #3166 FIXED: `IndexGaps.createIndex_keeps_stopwords` proves `CreateIndexKeepsStopwords`
+  for every `Env`; `fix3166_stopwords_applied` is the old repro (the
+  `bug3166_*` counterexamples are removed). `I3382` uses the owed ticket.
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs

@@ -11,8 +11,10 @@
 | `bump`                  | `mod.rs:1049` `bump_id` (from `recreate_index`, and since #3086 from `create_index` whenever the label already has an entry, `indexer.rs:359-361`) |
 | `acquire`/`release`     | `indexer.rs:642` `acquire_population_snapshot`, `:686` `release_population_ticket` |
 | `batch`                 | `graph/src/graph/graph.rs:594-817` `populate_index_batch` (the three exits: `is_ticket_current` `:625`, `ticket_pending_changes > 1` `:637`, exhausted `:789`, releasing at `:799-800`) |
-| `store`                 | `indexer.rs:181` `create_index` @ 73077bb4a (fields appended, then `bump_id` if `existing.is_some()`); the model bumps iff the label already has fields, Rust iff the entry exists, which differs only in the window after `drop_index` leaves a 0-field entry until `drop_index_bg` removes it (`graph.rs:834`), not modelled |
-| `MState`/`step`/`Reach` | `graph.rs:3670` `Graph::create_index`: `create_index` (store) then `populate_index` (acquire), on the serialized writer |
+| `store`                 | `indexer.rs:262` `create_index` since #3680: the version's entry is a fresh spec (`fork_for_ddl`, `mod.rs:1118`: new id, counters `⟨id,0,0⟩`) with the field appended, and the creation ticket is taken at once (`owe_population`, `mod.rs:1172`: `⟨id,1,0⟩`). Tickets of older workers point at the retired entry, whose counters no reader of the new one sees: their releases hit the (saturating) stale counter here |
+| `acquire`               | `graph.rs:570` `populate_owed_index` after publish (`publish_indexes` `:4956`): `take_population_owed` + `owed_population_snapshot` (`indexer.rs:562`): a worker with the current field snapshot, the ticket already counted |
+| `MState`/`step`/`Reach` | `graph.rs:3676` `Graph::create_index` (store, `owes_population = true`), then, once the version is published, the owed population (acquire), on the serialized writer; a second `CREATE INDEX` may come before it |
+| `pre3680_store`/`pre3680_acquire` | the same two steps @ 343e077f (before #3680): store bumps with pending 0, `populate_index` takes the ticket |
 | `pre3086_createRange`   | `create_index` @ 1d15bf713 (`indexer.rs:319-331`): `register_fields`, no `bump_id` |
 
 The counters are `i32` in Rust; `2^31` outstanding tickets is not reachable (one
@@ -195,16 +197,28 @@ acquires a ticket of the current generation with the current field snapshot
 arbitrarily with both. `NEXT_INDEX_ID` is a monotone static counter, so the bumped
 generation is fresh; `gen + 1` stands for its next value. -/
 
-/-- `Indexer::create_index` @ 73077bb4a: the store, with the #3086 bump. -/
-def store (s : PState) (attr : String) : PState :=
+/-- HISTORICAL (`Indexer::create_index` @ 73077bb4a … 343e077f, before #3680): the store,
+with the #3086 bump and no ticket. -/
+def pre3680_store (s : PState) (attr : String) : PState :=
   { s with fields := s.fields ++ [attr],
            slots := if s.fields = [] then s.slots else bump s.slots (s.slots.gen + 1) }
 
-/-- `populate_index` → `acquire_population_snapshot`: one ticket of the current
-generation and the current field set, in one critical section. -/
-def acquire (s : PState) : PState :=
+/-- HISTORICAL (before #3680): `populate_index` → `acquire_population_snapshot`: one
+ticket of the current generation and the current field set, in one critical section. -/
+def pre3680_acquire (s : PState) : PState :=
   { s with slots := inc s.slots s.slots.gen,
            workers := s.workers ++ [{ gen := s.slots.gen, attrs := s.fields, cursor := 0 }] }
+
+/-- `Indexer::create_index` since #3680: a fresh entry (`fork_for_ddl`, new generation,
+counters reset) with the field appended, owing its population (`owe_population` takes the
+ticket: pending 1). -/
+def store (s : PState) (attr : String) : PState :=
+  { s with fields := s.fields ++ [attr], slots := ⟨s.slots.gen + 1, 1, 0⟩ }
+
+/-- `populate_owed_index` since #3680: the owed population starts with the current field
+snapshot; its ticket was counted by `store`. -/
+def acquire (s : PState) : PState :=
+  { s with workers := s.workers ++ [{ gen := s.slots.gen, attrs := s.fields, cursor := 0 }] }
 
 structure MState where
   p : PState
@@ -217,7 +231,7 @@ inductive Ev
   | batch (i : Nat)
 
 def step (nb : Nat) (m : MState) : Ev → Option MState
-  | .create a => if m.owed then none else some ⟨store m.p a, true⟩
+  | .create a => some ⟨store m.p a, true⟩
   | .populate => if m.owed then some ⟨acquire m.p, false⟩ else none
   | .batch i => some ⟨batch nb m.p i, m.owed⟩
 
@@ -242,13 +256,14 @@ structure MInv (nb : Nat) (m : MState) : Prop where
   uniq : ∀ (i j : Nat) (wi wj : Worker), m.p.workers[i]? = some wi → m.p.workers[j]? = some wj →
     Live m.p wi → Live m.p wj → i = j
   cur_live : ∀ (i : Nat) (w : Worker), m.p.workers[i]? = some w → Live m.p w → m.p.slots.cur = 1
-  cur_none : NoLive m.p → m.p.slots.cur = 0
+  cur_none : m.owed = false → NoLive m.p → m.p.slots.cur = 0
   live_ok : ∀ (i : Nat) (w : Worker), m.p.workers[i]? = some w → Live m.p w →
     w.attrs = m.p.fields ∧ ∀ j, j < w.cursor → Full m.p j
   owed_none : m.owed = true → NoLive m.p
   owed_fields : m.owed = true → m.p.fields ≠ []
   empty : m.p.fields = [] → m.p.workers = []
   done : m.owed = false → NoLive m.p → ∀ j, j < nb → Full m.p j
+  owed_cur : m.owed = true → m.p.slots.cur = 1
 
 theorem dget_setAt_mono (l : List (List String)) (i j : Nat) (x : List String) {f : String}
     (h : f ∈ dget l j) : f ∈ dget (setAt l i (· ++ x)) j := by
@@ -324,7 +339,7 @@ theorem lt_of_getElem?_some {α : Type} {l : List α} {i : Nat} {a : α} (h : l[
   · rw [List.getElem?_eq_none (by omega)] at h; cases h
 
 theorem inv_init (nb : Nat) : MInv nb ⟨init nb, false⟩ := by
-  refine ⟨by simp [init], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [init, NoLive, Full]
+  refine ⟨by simp [init], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [init, NoLive, Full]
 
 /-- Changes that keep the field set, the documents, the generation and its
 counter, and every live worker in place, adding no live worker. -/
@@ -334,18 +349,18 @@ theorem inv_transfer {nb : Nat} {m m' : MState} (h : MInv nb m) (hf : m'.p.field
     (hfw : ∀ (j : Nat) (v : Worker), m'.p.workers[j]? = some v → v.gen ≤ m.p.slots.gen ∧ (Live m'.p v → m.p.workers[j]? = some v))
     (hbw : ∀ (j : Nat) (v : Worker), m.p.workers[j]? = some v → Live m.p v → m'.p.workers[j]? = some v)
     (hem : m.p.fields ≠ []) : MInv nb m' := by
-  obtain ⟨hlen, hle, huq, hcl, hcn, hlo, hon, hof, -, hdn⟩ := h
+  obtain ⟨hlen, hle, huq, hcl, hcn, hlo, hon, hof, -, hdn, hoc⟩ := h
   have hL : ∀ v, Live m'.p v ↔ Live m.p v := by intro v; simp [Live, hg]
   have hN : NoLive m'.p ↔ NoLive m.p := by
     constructor
     · intro hn j v hv hl; exact hn j v (hbw j v hv hl) ((hL v).2 hl)
     · intro hn j v hv hl; exact hn j v ((hfw j v hv).2 hl) ((hL v).1 hl)
   have hF : ∀ j, Full m'.p j ↔ Full m.p j := by intro j; simp [Full, hf, hd]
-  refine ⟨hd ▸ hlen, fun j v hv => hg ▸ (hfw j v hv).1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨hd ▸ hlen, fun j v hv => hg ▸ (hfw j v hv).1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro a b va vb ha hb hla hlb
     exact huq a b va vb ((hfw a va ha).2 hla) ((hfw b vb hb).2 hlb) ((hL _).1 hla) ((hL _).1 hlb)
   · intro j v hv hl; rw [hc]; exact hcl j v ((hfw j v hv).2 hl) ((hL _).1 hl)
-  · intro hn; rw [hc]; exact hcn (hN.1 hn)
+  · intro hw hn; rw [hc]; exact hcn (ho ▸ hw) (hN.1 hn)
   · intro j v hv hl
     obtain ⟨h1, h2⟩ := hlo j v ((hfw j v hv).2 hl) ((hL _).1 hl)
     exact ⟨hf ▸ h1, fun k hk => (hF k).2 (h2 k hk)⟩
@@ -353,6 +368,7 @@ theorem inv_transfer {nb : Nat} {m m' : MState} (h : MInv nb m) (hf : m'.p.field
   · intro hw; rw [hf]; exact hof (ho ▸ hw)
   · intro h0; exact absurd (hf ▸ h0) hem
   · intro hw hn k hk; exact (hF k).2 (hdn (ho ▸ hw) (hN.1 hn) k hk)
+  · intro hw; rw [hc]; exact hoc (ho ▸ hw)
 
 theorem inv_batch {nb : Nat} {m : MState} (h : MInv nb m) (i : Nat) :
     MInv nb ⟨batch nb m.p i, m.owed⟩ := by
@@ -389,7 +405,7 @@ theorem inv_batch {nb : Nat} {m : MState} (h : MInv nb m) (i : Nat) :
       · simp [Live] at hlv
       · exact hji (h.uniq j i v w hv hw (by simpa [Live, dec, hg] using hlv) hl)
     rw [hb] at hnl ⊢
-    refine ⟨by simp [length_setAt, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨by simp [length_setAt, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro j v hv
       simp only [dec, hg, ite_true]
       rcases getElem?_set_cases hv with ⟨rfl, rfl⟩ | ⟨-, hv⟩
@@ -397,7 +413,7 @@ theorem inv_batch {nb : Nat} {m : MState} (h : MInv nb m) (i : Nat) :
       · exact h.gen_le _ _ hv
     · intro a b va vb ha' _ hla _; exact absurd hla (hnl a va ha')
     · intro a va ha' hla; exact absurd hla (hnl a va ha')
-    · intro _; simp [dec, hg, hc1]
+    · intro _ _; simp [dec, hg, hc1]
     · intro a va ha' hla; exact absurd hla (hnl a va ha')
     · intro ho; simp [hown] at ho
     · intro ho; simp [hown] at ho
@@ -409,6 +425,7 @@ theorem inv_batch {nb : Nat} {m : MState} (h : MInv nb m) (i : Nat) :
       · have : j = w.cursor := by omega
         subst this
         exact dget_setAt_hit _ _ _ (by omega) (hat ▸ hf)
+    · intro ho; simp [hown] at ho
   · -- middle batch: write it, advance the cursor; `w` stays the only live worker
     have hl : Live m.p w := ⟨ha, hg⟩
     have hc1 := h.cur_live i w hw hl
@@ -426,7 +443,7 @@ theorem inv_batch {nb : Nat} {m : MState} (h : MInv nb m) (i : Nat) :
       · exact ⟨rfl, rfl⟩
       · exact absurd (h.uniq j i v w hv hw hlv hl) hji
     rw [hb]
-    refine ⟨by simp [length_setAt, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨by simp [length_setAt, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro j v hv
       rcases getElem?_set_cases hv with ⟨rfl, rfl⟩ | ⟨-, hv⟩
       · exact h.gen_le _ w hw
@@ -434,7 +451,7 @@ theorem inv_batch {nb : Nat} {m : MState} (h : MInv nb m) (i : Nat) :
     · intro a b va vb ha' hb' hla hlb
       rw [(honly a va ha' hla).1, (honly b vb hb' hlb).1]
     · intro _ _ _ _; exact hc1
-    · intro hn; exact (hn i { w with cursor := w.cursor + 1 } (by simp [hil]) ⟨ha, hg⟩).elim
+    · intro _ hn; exact (hn i { w with cursor := w.cursor + 1 } (by simp [hil]) ⟨ha, hg⟩).elim
     · intro j v hv hlv
       obtain ⟨rfl, rfl⟩ := honly j v hv hlv
       refine ⟨hat, fun k hk f hf => ?_⟩
@@ -447,40 +464,36 @@ theorem inv_batch {nb : Nat} {m : MState} (h : MInv nb m) (i : Nat) :
     · intro ho; simp [hown] at ho
     · intro h0; exact absurd h0 hne
     · intro _ hn; exact (hn i { w with cursor := w.cursor + 1 } (by simp [hil]) ⟨ha, hg⟩).elim
+    · intro ho; simp [hown] at ho
 
-theorem inv_create {nb : Nat} {m : MState} (h : MInv nb m) (_ho : m.owed = false) (a : String) :
+theorem inv_create {nb : Nat} {m : MState} (h : MInv nb m) (a : String) :
     MInv nb ⟨store m.p a, true⟩ := by
-  by_cases h0 : m.p.fields = []
-  · have hw := h.empty h0
-    have hc := h.cur_none (by intro j v hv; simp [hw] at hv)
-    refine ⟨by simp [store, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
-      simp [store, hw, h0, hc, NoLive]
-  · have hnl : NoLive (store m.p a) := by
-      intro j v hv hl
-      have := h.gen_le j v (by simpa [store] using hv)
-      simp [Live, store, h0, bump] at hl; omega
-    refine ⟨by simp [store, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-    · intro j v hv
-      have := h.gen_le j v (by simpa [store] using hv)
-      simp [store, h0, bump]; omega
-    · intro x y vx vy hx _ hlx _; exact absurd hlx (hnl x vx hx)
-    · intro x vx hx hlx; exact absurd hlx (hnl x vx hx)
-    · intro _; simp [store, h0, bump]
-    · intro x vx hx hlx; exact absurd hlx (hnl x vx hx)
-    · intro _; exact hnl
-    · intro _; simp [store]
-    · intro h1; simp [store] at h1
-    · intro h1; simp at h1
+  have hnl : NoLive (store m.p a) := by
+    intro j v hv hl
+    have := h.gen_le j v (by simpa [store] using hv)
+    simp [Live, store] at hl; omega
+  refine ⟨by simp [store, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · intro j v hv
+    have := h.gen_le j v (by simpa [store] using hv)
+    simp [store]; omega
+  · intro x y vx vy hx _ hlx _; exact absurd hlx (hnl x vx hx)
+  · intro x vx hx hlx; exact absurd hlx (hnl x vx hx)
+  · intro h1; simp at h1
+  · intro x vx hx hlx; exact absurd hlx (hnl x vx hx)
+  · intro _; exact hnl
+  · intro _; simp [store]
+  · intro h1; simp [store] at h1
+  · intro h1; simp at h1
+  · intro _; simp [store]
 
 theorem inv_populate {nb : Nat} {m : MState} (h : MInv nb m) (ho : m.owed = true) :
     MInv nb ⟨acquire m.p, false⟩ := by
   have hn := h.owed_none ho
-  have hc := h.cur_none hn
   have hne := h.owed_fields ho
   let nw : Worker := { gen := m.p.slots.gen, attrs := m.p.fields, cursor := 0 }
   have hws : (acquire m.p).workers = m.p.workers ++ [nw] := rfl
-  have hgen : (acquire m.p).slots.gen = m.p.slots.gen := by simp [acquire, inc]
-  have hcur : (acquire m.p).slots.cur = 1 := by simp [acquire, inc, hc]
+  have hgen : (acquire m.p).slots.gen = m.p.slots.gen := rfl
+  have hcur : (acquire m.p).slots.cur = 1 := h.owed_cur ho
   have hnew : (acquire m.p).workers[m.p.workers.length]? = some nw := by
     rw [hws, List.getElem?_append_right (by omega)]; simp
   have honly : ∀ j v, (acquire m.p).workers[j]? = some v → Live (acquire m.p) v →
@@ -491,7 +504,7 @@ theorem inv_populate {nb : Nat} {m : MState} (h : MInv nb m) (ho : m.owed = true
     · exact absurd (by simpa [Live, hgen] using hl) (hn j v hv)
     · exact hv
   have hlnw : Live (acquire m.p) nw := ⟨rfl, hgen.symm⟩
-  refine ⟨by simp [acquire, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨by simp [acquire, h.len], ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro j v hv
     rw [hgen]; rw [hws] at hv
     rcases getElem?_append_one hv with hv | ⟨-, rfl⟩
@@ -499,7 +512,7 @@ theorem inv_populate {nb : Nat} {m : MState} (h : MInv nb m) (ho : m.owed = true
     · exact Nat.le_refl _
   · intro a b va vb ha hb hla hlb; rw [(honly a va ha hla).1, (honly b vb hb hlb).1]
   · intro _ _ _ _; exact hcur
-  · intro hn'; exact absurd hlnw (hn' _ _ hnew)
+  · intro _ hn'; exact absurd hlnw (hn' _ _ hnew)
   · intro j v hv hl
     obtain ⟨-, rfl⟩ := honly j v hv hl
     exact ⟨rfl, fun k hk => absurd hk (Nat.not_lt_zero _)⟩
@@ -507,6 +520,7 @@ theorem inv_populate {nb : Nat} {m : MState} (h : MInv nb m) (ho : m.owed = true
   · intro h1; simp at h1
   · intro h1; exact absurd h1 (by simpa [acquire] using hne)
   · intro _ hn'; exact absurd hlnw (hn' _ _ hnew)
+  · intro h1; simp at h1
 
 theorem reach_inv {nb : Nat} {m : MState} (h : Reach nb m) : MInv nb m := by
   induction h with
@@ -514,9 +528,7 @@ theorem reach_inv {nb : Nat} {m : MState} (h : Reach nb m) : MInv nb m := by
   | step e _ hs ih =>
     cases e with
     | create a =>
-      simp only [step] at hs; split at hs
-      · cases hs
-      · next ho => cases hs; exact inv_create ih (by simpa using ho) a
+      simp only [step] at hs; cases hs; exact inv_create ih a
     | populate =>
       simp only [step] at hs; split at hs
       · next ho => cases hs; exact inv_populate ih ho
@@ -526,7 +538,7 @@ theorem reach_inv {nb : Nat} {m : MState} (h : Reach nb m) : MInv nb m := by
 /-- **#3086, main never reports an unpopulated field as OPERATIONAL.** Over every
 interleaving of `CREATE INDEX` on one label (any number, any attributes) and the
 batches of every populate job, whenever no creation is between its store and its
-`populate_index`, an operational index has every field in every batch. -/
+owed population, an operational index has every field in every batch. -/
 theorem main_operational_complete {nb : Nat} {m : MState} (h : Reach nb m)
     (ho : m.owed = false) (hop : operational m.p = true) : complete m.p = true := by
   have hi := reach_inv h
@@ -545,6 +557,17 @@ theorem main_operational_complete {nb : Nat} {m : MState} (h : Reach nb m)
   simp only [dget, hj, Option.getD_some] at this
   exact List.contains_iff_mem.mpr this
 
+/-- **#3680: no window at all.** The entry is stored owing its population, with the ticket
+already counted, so an operational index has every field in every batch in *every*
+reachable state, including between `CREATE INDEX` and the start of its population (the
+`owed = false` hypothesis of `main_operational_complete` is no longer needed). -/
+theorem operational_complete_always {nb : Nat} {m : MState} (h : Reach nb m)
+    (hop : operational m.p = true) : complete m.p = true := by
+  cases ho : m.owed
+  · exact main_operational_complete h ho hop
+  · have := (reach_inv h).owed_cur ho
+    simp [operational, this] at hop
+
 /-- The interleaving that lost `b` before #3086, on
 main: P2 runs first and no longer bails, P1 fails `is_ticket_current`. -/
 def mainLostOrder : PState :=
@@ -560,16 +583,24 @@ theorem main_lost_order_complete :
     operational mainLostOrder = true ∧ complete mainLostOrder = true ∧
     mainLostOrder.docs = [["a", "a", "b"], ["a", "b"], ["a", "b"]] := by decide
 
-/-- The hypothesis `owed = false` is needed: between `Indexer::create_index`
-storing the entry (bumped, pending 0) and `populate_index` acquiring its ticket,
-the entry is OPERATIONAL with the new field in no document. A concurrent reader's
-`is_label_indexed` (indexer.rs:454) can plan an index scan in that window. -/
+/-- HISTORICAL (before #3680): the hypothesis `owed = false` was needed: between
+`Indexer::create_index` storing the entry (bumped, pending 0) and `populate_index`
+acquiring its ticket, the entry was OPERATIONAL with the new field in no document. A
+concurrent reader's `is_label_indexed` could plan an index scan in that window. -/
 def storeWindow : PState :=
+  let s := pre3680_acquire (pre3680_store (init 3) "a")
+  let s := batch 3 (batch 3 (batch 3 s 0) 0) 0
+  pre3680_store s "b"
+
+theorem store_window_operational_incomplete :
+    operational storeWindow = true ∧ complete storeWindow = false := by decide
+
+/-- The same trace since #3680: the new entry owes its population and is not operational. -/
+def storeWindowFixed : PState :=
   let s := acquire (store (init 3) "a")
   let s := batch 3 (batch 3 (batch 3 s 0) 0) 0
   store s "b"
 
-theorem store_window_operational_incomplete :
-    operational storeWindow = true ∧ complete storeWindow = false := by decide
+theorem store_window_fixed : operational storeWindowFixed = false := by decide
 
 end SC.Tickets

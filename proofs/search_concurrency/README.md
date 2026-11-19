@@ -40,7 +40,7 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, fork a private versio
 
 - **Before #3086, not a second one on the same label.** After `CREATE INDEX … (n.a)` and then `(n.b)` on a label, the new job saw two pending tickets and bailed, the old job finished with its `{a}` field list, and the index reported OPERATIONAL with `b` in no document (Bug 2 below; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **On main, yes.** `create_index` now bumps the generation whenever the label already has an index, so the old job fails `is_ticket_current` at its next batch and the new job indexes everything. `main_operational_complete` proves, over every interleaving of any number of `CREATE INDEX`es on a label with the batches of every populate job, that an OPERATIONAL index has every field in every batch. The proof is an inductive invariant (`MInv`, `reach_inv`): at most one job owns the current generation, it holds the current field list, and the batches before its cursor are complete. `main_lost_order_complete` replays the interleaving that used to lose `b`.
-- **One remaining window.** The theorem excludes the moment between `Indexer::create_index` storing the entry and `populate_index` taking its ticket. In that window the entry has no pending ticket, so it looks OPERATIONAL while the new field is in no document (`store_window_operational_incomplete`). The window is a few instructions long and has not been seen on a live server.
+- **The store-to-ticket window is closed (#3680).** Before #3680 the theorem excluded the moment between `Indexer::create_index` storing the entry and `populate_index` taking its ticket: the entry looked OPERATIONAL while the new field was in no document (`store_window_operational_incomplete`, on the historical `pre3680_store`/`pre3680_acquire`). Since #3680 `create_index` builds a fresh entry that owes its population with the ticket already counted, so `operational_complete_always` holds in every reachable state (`store_window_fixed`).
 
 The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv`, `release_exact`, `operational_iff`, `stale_release_isolated`).
 
@@ -67,7 +67,8 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
 | `unchecked_fork_cannot_write` | In every reachable state a thread with an unchecked fork can neither mutate nor commit | `Mvcc.lean` |
-| `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, except the store-to-ticket window (the theorem assumes `owed = false`; see "One remaining window", `store_window_operational_incomplete`) | `Tickets.lean` |
+| `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, outside the store-to-ticket window (`owed = false`) | `Tickets.lean` |
+| `operational_complete_always` | Since #3680 the same with no window: an entry owing its population is never OPERATIONAL (`store_window_fixed`) | `Tickets.lean` |
 | `within_in_time`, `detached_workers_exit` | `threadpool.rs` after #3502: named workers; `shutdown_within` returns in time and detaches stuck workers without leaking them; two bugs stay open (`second_call_true_despite_straggler`, `within_blocks_behind_shutdown`) | `PoolWithin.lean` |
 | `never_stuck_3014`, `main_never_blocks` | Since #3014 the main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
@@ -118,20 +119,20 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 120 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
+`COVERAGE.tsv` has 121 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 69 |
+| PROVEN | 70 |
 | CONDITIONAL | 1 |
 | AXIOMATISED | 20 |
 | MODELLED | 17 |
-| NOT COVERED | 13 |
+| NOT COVERED | 14 |
 
 - **CONDITIONAL:** `QuerySession::check_fork`: `Mvcc.checkFork` is exact, but the Rust also rebases the fork onto indexer batches (`MvccGraph::rebase_onto_indexer_batches`), which refuses a fork that is still borrowed. That the escalating writer's fork is never borrowed is a runtime lifecycle invariant this project does not prove.
 - **AXIOMATISED:** thin wrappers over the Redis module API (blocking and unblocking clients, thread-safe contexts, the GIL lock and unlock, replication, string helpers), and `Index::add_document`, whose RediSearch behaviour is the `RediSearch` hypothesis structure in `Search.lean` (a whole document is rejected or accepted).
 - **MODELLED:** functions that appear as a step of the transition system without a theorem of their own: `MvccGraph::new`/`from_graph` (`init`), `register_graph`, `execute_query`/`execute_profile`/`profile_sync` (a read on a snapshot), the `QuerySession` constructors, lock release and drop order, `must_run_inline`, and the `Field` constructors, and `CommitOp::next` (its lock path only, #3226).
-- **NOT COVERED:** string and reply-formatting helpers, config arithmetic (`compute_effective_timeout`), `rename_graph` (RENAME is not modelled), `reauthorize_write` (Redis pause and role flags), borrow helpers, and `MvccGraph::drop`. `reply_profile` is proven in `redis_layer`.
+- **NOT COVERED:** string and reply-formatting helpers, config arithmetic (`compute_effective_timeout`), `rename_graph` (RENAME is not modelled), `reauthorize_write` (Redis pause and role flags), borrow helpers, and `MvccGraph::drop`. `reply_profile` is proven in `redis_layer`. Also `try_spawn` (#3680), the pool spawn that a retired RediSearch spec's deferred free uses.
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across projects.
 

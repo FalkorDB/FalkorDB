@@ -51,9 +51,9 @@ graph/src/graph/mvcc_graph.rs	is_stale	155	NOT COVERED	version-number comparison
 graph/src/graph/mvcc_graph.rs	commit_indexer_batch	262	NOT COVERED	proofs/search_concurrency Mvcc.batch_keeps_forks; fit decision in native_index
 graph/src/graph/mvcc_graph.rs	prepare	293	NOT COVERED	(the checks and last changes of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
 graph/src/graph/mvcc_graph.rs	publish	354	NOT COVERED	(the compare-and-swap and set_indexer_graph of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
-graph/src/graph/mvcc_graph.rs	drop	370	NOT COVERED	cancel indexing
+graph/src/graph/mvcc_graph.rs	drop	373	NOT COVERED	cancel indexing
 src/redis_type.rs	wrong_type_compat	933	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
-graph/src/graph/graph.rs	rebuild_derived_matrices	1015	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
+graph/src/graph/graph.rs	rebuild_derived_matrices	1021	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
 graph/src/graph/graph.rs	create_constraint	4623	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
 graph/src/graph/graph.rs	validate_mandatory_constraint	4798	PROVEN	Constraint.mandatory_agrees
 graph/src/graph/graph.rs	validate_unique_constraint	4837	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
@@ -70,10 +70,10 @@ src/serializers/decoder/mod.rs	check_encoding_version	85	PROVEN	Persist.checkVer
 src/serializers/decoder/mod.rs	rdb_load_graph	115	PROVEN	Persist.rdbLoad (version gate checkVer) + rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build; key_rt_ver, rdbLoad_refuses
 src/serializers/decoder/mod.rs	decode_payloads_into_pending	325	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
 src/serializers/decoder/mod.rs	finalize_pending_graph	375	PROVEN	Persist.finalizePG: run_keys, multi_load
-src/serializers/decoder/mod.rs	rebuild_indexes	410	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
-src/serializers/decoder/mod.rs	pipe_load_graph	471	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
-src/serializers/decoder/mod.rs	vec_load_graph	486	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
-src/serializers/decoder/mod.rs	load_graph_from_reader	496	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
+src/serializers/decoder/mod.rs	rebuild_indexes	410	PROVEN	Persist.Indexes.rebuildB_expand (batched calls expand to rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta), takeRun_nodup, exec_retry (#3680 batching and one-by-one retry)
+src/serializers/decoder/mod.rs	pipe_load_graph	512	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/decoder/mod.rs	vec_load_graph	527	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
+src/serializers/decoder/mod.rs	load_graph_from_reader	537	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
 graph/src/runtime/runtime.rs	publish	600	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
 graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
 graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor

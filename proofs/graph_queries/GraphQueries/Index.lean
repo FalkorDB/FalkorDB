@@ -8,14 +8,12 @@ for *any* indexer behaviour.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `populateStart`   | `populate_index` :560 |
-| `dropBg`          | `drop_index_bg` :819 |
-| `createIndex`     | `create_index` :3670 / `create_index_sync` :3717 |
+| `createIndex`     | `create_index` :3676 / `create_index_sync` :3723 |
 | `syncDocs`        | `populate_indexes_sync` :3764 (one label/type) |
 | `commitDocs`      | `commit_index_kind` :4043 (via `commit_index` :3927, `commit_index_locked` :3940) |
 | `commitEdgeDocs`  | `commit_edge_index_locked` :3962 (via `commit_edge_index` :3950) |
 | `commitIndexDocs` | `commit_index_docs` :3913 (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
-| `dropIndex`, `noSuchIndexMsg` | `drop_index` :4090 (message :4160-4177) |
+| `dropIndex`, `noSuchIndexMsg` | `drop_index` :4100 (message :4167-4180) |
 | `indexInfo`       | `index_info` :4468 |
 | `memEstimate`, `labelPass` | `memory_usage_report` :4919 sampling arithmetic and seen-dedup |
 | `encodeOp`        | `encode_payload` :5093 dispatch |
@@ -23,17 +21,6 @@ for *any* indexer behaviour.
 -/
 namespace GQ
 variable {V : Type}
-
-/-- `populate_index`: no snapshot → nothing; else batch 0 at the default cursor. -/
-def populateStart (snap : Option Nat) : Option (Nat × Nat × Option Nat × Option Nat) :=
-  snap.map (fun _ => (0, 0, none, none))
-theorem populateStart_spec (t : Nat) : populateStart (some t) = some (0, 0, none, none) ∧
-    populateStart none = none := ⟨rfl, rfl⟩
-
-/-- `drop_index_bg`: the label leaves the indexer's map (under its lock). -/
-def dropBg (idxLabels : List String) (l : String) : List String := idxLabels.filter (· != l)
-theorem dropBg_spec (idxLabels : List String) (l : String) : l ∉ dropBg idxLabels l := by
-  simp [dropBg]
 
 /-- `create_index` / `create_index_sync`: register the label (or type),
 ask the indexer (`res`), then on success register the attribute names.
@@ -202,7 +189,7 @@ theorem commitEdgeDocs_mem (tn : Ten) (ids : List Nat) (s d e : Nat) (hnd : (tn.
       · have : y.2.2 ≠ e := fun h => hnd.1 (h ▸ List.mem_map_of_mem hm')
         simp [this, ih hnd.2 hm']
 
-/-- The "no such index" text (graph.rs:4160-4177): `:L` when no attribute is named
+/-- The "no such index" text (graph.rs:4167-4180): `:L` when no attribute is named
 (`db.idx.fulltext.drop('L')`, #3280, as C), else `:L(a, b)`. -/
 def noSuchIndexMsg (label : String) (attrs : List String) : String :=
   let attrList := ", ".intercalate attrs
@@ -210,17 +197,21 @@ def noSuchIndexMsg (label : String) (attrs : List String) : String :=
   "Unable to drop index on :" ++ label ++ a ++ ": no such index."
 
 /-- `drop_index`: empty attrs expand to the index type's fields; a UNIQUE
-constraint over any of them blocks the drop; otherwise the indexer decides. -/
+constraint over any of them blocks the drop; otherwise the indexer decides.
+`res` is the indexer's answer (#3680: `Indexer::drop_index` returns a `Result`,
+propagated by `?`; `.ok d` is the number of fields dropped, 0 when none / no index). -/
 def dropIndex (dependsOn : String → Bool) (fieldsOfType : List String) (label : String)
-    (attrs : List String) (dropped : Nat) : Except String Nat :=
+    (attrs : List String) (res : Except String Nat) : Except String Nat :=
   let eff := if attrs = [] then fieldsOfType else attrs
   if eff.any dependsOn then .error "Index supports constraint"
-  else if dropped > 0 then .ok dropped else .error (noSuchIndexMsg label attrs)
+  else match res with
+    | .error e => .error e
+    | .ok dropped => if dropped > 0 then .ok dropped else .error (noSuchIndexMsg label attrs)
 
 theorem dropIndex_protects (dependsOn : String → Bool) (fieldsOfType : List String) (label : String)
-    (attrs : List String) (dropped : Nat)
+    (attrs : List String) (res : Except String Nat)
     (a : String) (ha : a ∈ (if attrs = [] then fieldsOfType else attrs)) (hd : dependsOn a = true) :
-    dropIndex dependsOn fieldsOfType label attrs dropped = .error "Index supports constraint" := by
+    dropIndex dependsOn fieldsOfType label attrs res = .error "Index supports constraint" := by
   unfold dropIndex
   rw [ite_eq_left (List.any_eq_true.2 ⟨a, ha, hd⟩)]
 
@@ -228,9 +219,19 @@ theorem dropIndex_protects (dependsOn : String → Bool) (fieldsOfType : List St
 reports `Unable to drop index on :L: no such index.` when no attribute was named, as C. -/
 theorem dropIndex_none_noattr (dependsOn : String → Bool) (fieldsOfType : List String)
     (label : String) (h : fieldsOfType.any dependsOn = false) :
-    dropIndex dependsOn fieldsOfType label [] 0 =
+    dropIndex dependsOn fieldsOfType label [] (.ok 0) =
       .error ("Unable to drop index on :" ++ label ++ ": no such index.") := by
   simp [dropIndex, h, noSuchIndexMsg]
+
+/-- #3680: an indexer error (rebuilding the remaining fields failed) is the reply; a
+positive count is returned as is. -/
+theorem dropIndex_indexer (dependsOn : String → Bool) (fieldsOfType : List String) (label : String)
+    (attrs : List String) (h : (if attrs = [] then fieldsOfType else attrs).any dependsOn = false) :
+    (∀ e, dropIndex dependsOn fieldsOfType label attrs (.error e) = .error e) ∧
+    (∀ d, 0 < d → dropIndex dependsOn fieldsOfType label attrs (.ok d) = .ok d) := by
+  refine ⟨fun e => ?_, fun d hd => ?_⟩
+  · unfold dropIndex; simp only at h ⊢; rw [if_neg (by simp [h])]
+  · unfold dropIndex; simp only at h ⊢; rw [if_neg (by simp [h])]; simp [hd]
 
 /-- With attributes named, the message lists them all: `:L(a, b)`. -/
 example : noSuchIndexMsg "L" ["a", "b"] = "Unable to drop index on :L(a, b): no such index." := by

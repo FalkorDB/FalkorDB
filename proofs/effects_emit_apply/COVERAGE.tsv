@@ -19,19 +19,19 @@ graph/src/effects/v3/apply.rs	apply_effects	58	PROVEN	ApplyHelpers.applyEffects 
 graph/src/effects/v3/apply.rs	from	107	PROVEN	ApplyHelpers.fromNodeOp (impl From<NodeOpError> for ApplyError, replaces node_op since #2846): fromNodeOp_spec, applyEffects_validate_refused; DanglingRelationship arm (#3022)
 graph/src/effects/v3/apply.rs	id_space_error_map	121	PROVEN	ApplyHelpers.idSpaceErrorMap: idSpaceErrorMap_injective (divergences), idSpaceErrorMap_internal (Inconsistent/AlreadyTaken -> Graph), idSpaceErrorMap_divergence_not_graph
 graph/src/effects/v3/apply.rs	apply_record	164	PROVEN	Liveness.applyRec (checked arms since #3022; CREATE_NODE refuses a repeated id since #3298): applyRec_binv, applyAll_binv, wf_of_validate, apply_wf (whole buffer keeps the replica WF), edge_to_dead_refused (#2924), cancelled_pair, updates_on_dead_refused (W2-effects-2), delete_with_edges_refused (W2-effects-3), detach_delete_applies; store writes Apply.wf_createOne/wf_deleteNode/wf_updateNode_live/wf_setLabels_live; #3298 createNode_repeat_refused, createNode_ok_nodup, a_repeated_node_id_in_one_create_is_refused
-graph/src/effects/v3/apply.rs	apply_add_schema	560	PROVEN	ApplyHelpers.applyAddSchema/intern: applyAddSchema_eq_applyAddName; Emit.next_payload_refused
-graph/src/effects/v3/apply.rs	verify_id	586	PROVEN	ApplyHelpers.verifyId: verifyId_ok
-graph/src/effects/v3/apply.rs	verify_schema	609	PROVEN	ApplyHelpers.verifySchema: verifySchema_ok, buildIndexRec_verifies
-graph/src/effects/v3/apply.rs	verify_attribute	633	PROVEN	ApplyHelpers.verifyAttribute: verifyAttribute_ok
-graph/src/effects/v3/apply.rs	resolved	645	PROVEN	ApplyHelpers.resolved: resolved_ok
-graph/src/effects/v3/apply.rs	resolve_type	667	PROVEN	ApplyHelpers.resolveType: checkedTypeId_ok
-graph/src/effects/v3/apply.rs	require_live	685	PROVEN	ApplyHelpers.requireLive: requireLive_ok, requireLive_notLive; Liveness.needLive: needLive_ok (#3022)
-graph/src/effects/v3/apply.rs	checked_type_id	712	PROVEN	ApplyHelpers.checkedTypeId: checkedTypeId_ok
-graph/src/effects/v3/apply.rs	checked_label_ids	728	PROVEN	ApplyHelpers.checkedLabelIds: checkedLabelIds_ok
-graph/src/effects/v3/apply.rs	check_attr_shape	758	PROVEN	ApplyHelpers.checkAttrShape: checkAttrShape_ok; Emit.gatherRows_length
-graph/src/effects/v3/apply.rs	attr_map	802	PROVEN	ApplyHelpers.attrMap: attrMap_row
-graph/src/effects/v3/apply.rs	index_options	845	PROVEN	ApplyHelpers.indexOptions: indexOptions_spec
-graph/src/effects/v3/apply.rs	single_index_label	876	PROVEN	ApplyHelpers.singleIndexLabel: singleIndexLabel_ok
+graph/src/effects/v3/apply.rs	apply_add_schema	559	PROVEN	ApplyHelpers.applyAddSchema/intern: applyAddSchema_eq_applyAddName; Emit.next_payload_refused
+graph/src/effects/v3/apply.rs	verify_id	585	PROVEN	ApplyHelpers.verifyId: verifyId_ok
+graph/src/effects/v3/apply.rs	verify_schema	608	PROVEN	ApplyHelpers.verifySchema: verifySchema_ok, buildIndexRec_verifies
+graph/src/effects/v3/apply.rs	verify_attribute	632	PROVEN	ApplyHelpers.verifyAttribute: verifyAttribute_ok
+graph/src/effects/v3/apply.rs	resolved	644	PROVEN	ApplyHelpers.resolved: resolved_ok
+graph/src/effects/v3/apply.rs	resolve_type	666	PROVEN	ApplyHelpers.resolveType: checkedTypeId_ok
+graph/src/effects/v3/apply.rs	require_live	684	PROVEN	ApplyHelpers.requireLive: requireLive_ok, requireLive_notLive; Liveness.needLive: needLive_ok (#3022)
+graph/src/effects/v3/apply.rs	checked_type_id	711	PROVEN	ApplyHelpers.checkedTypeId: checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_label_ids	727	PROVEN	ApplyHelpers.checkedLabelIds: checkedLabelIds_ok
+graph/src/effects/v3/apply.rs	check_attr_shape	757	PROVEN	ApplyHelpers.checkAttrShape: checkAttrShape_ok; Emit.gatherRows_length
+graph/src/effects/v3/apply.rs	attr_map	801	PROVEN	ApplyHelpers.attrMap: attrMap_row
+graph/src/effects/v3/apply.rs	index_options	844	PROVEN	ApplyHelpers.indexOptions: indexOptions_spec
+graph/src/effects/v3/apply.rs	single_index_label	875	PROVEN	ApplyHelpers.singleIndexLabel: singleIndexLabel_ok
 graph/src/runtime/pending.rs	effects_count	2013	PROVEN	Emit.effectsCount (counts 2 per cancelled node/relationship since #3461), Emit.gate_zero_stream, Emit.gate_ships_of_cancelled, Emit.gate_ships_cancelled, Emit.cancelled_edge_attr_ships, Emit.gate_keeps_staged_removal (#3459: + staged_labels_removed), Emit.gate_drops_schema_only (BUG W2-effects-1: the cancelled half fixed by #3461, history pre3461_gate_drops_cancelled/pre3461_cancelled_edge_attr_dropped; schema-only writes still dropped)
 graph/src/runtime/ops/commit.rs	CommitOp::next (effects gate)	69	PROVEN	Emit.commitShips, Emit.commitShips_eq_iff (BUG W2-effects-1, still present at 2c874022a)
 graph/src/effects/v3/emit.rs	wire_index_options	2082	PROVEN	EmitDDL.wireIndexOptions: wireIndexOptions_spec
