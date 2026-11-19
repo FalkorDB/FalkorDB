@@ -71,6 +71,10 @@
 /// | `internal,`             | internal operator     | `Internal`              |
 /// | `procedure:`            | read-only procedure   | `Procedure(yields)`     |
 /// | `write procedure:`      | write procedure       | `Procedure(yields)`     |
+///
+/// Each generated function is checked by `clippy::too_many_lines` on its own,
+/// even when the enclosing `register` function allows that lint. A long one
+/// takes its allow as an attribute before its `fn`, which the macro passes on.
 macro_rules! cypher_fn {
     // ── Non-deterministic scalar function (fixed args) ──
     ($funcs:ident, $name:expr,
@@ -80,6 +84,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
@@ -107,6 +112,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
@@ -133,6 +139,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
@@ -159,6 +166,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
@@ -187,6 +195,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
@@ -220,6 +229,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
@@ -251,6 +261,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
@@ -278,6 +289,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
@@ -305,6 +317,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
@@ -332,6 +345,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat, $yields:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
@@ -359,6 +373,7 @@ macro_rules! cypher_fn {
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
+        #[warn(clippy::too_many_lines)]
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,

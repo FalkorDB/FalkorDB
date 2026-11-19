@@ -92,6 +92,7 @@ pub fn register(funcs: &mut Functions) {
         args: [],
         ret: Type::Any,
         procedure: ["label", "properties", "types", "options", "language", "stopwords", "entitytype", "status", "info"],
+        #[allow(clippy::too_many_lines, reason = "predates the length check")]
         fn db_indexes(runtime, _args) {
             let infos = runtime.graph().index_info();
             let mut col_label = Vec::with_capacity(infos.len());

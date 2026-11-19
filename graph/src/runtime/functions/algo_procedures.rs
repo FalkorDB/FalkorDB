@@ -954,6 +954,7 @@ fn register_betweenness(funcs: &mut Functions) {
         args: [Type::Optional(Box::new(Type::Any))],
         ret: Type::Any,
         procedure: ["node", "score"],
+        #[allow(clippy::too_many_lines, reason = "predates the length check")]
         fn algo_betweenness(runtime, args) {
             let config = parse_config(args)?;
             if !config.is_empty() {
@@ -1107,6 +1108,7 @@ fn register_bfs(funcs: &mut Functions) {
         args: [Type::Any, Type::Any, Type::Any],
         ret: Type::Any,
         procedure: ["nodes", "edges"],
+        #[allow(clippy::too_many_lines, reason = "predates the length check")]
         fn algo_bfs(runtime, args, yields) {
             // arg 0: source node (Node or Null)
             let source_id = match &args[0] {
@@ -1377,6 +1379,7 @@ fn register_msf(funcs: &mut Functions) {
         args: [Type::Optional(Box::new(Type::Any))],
         ret: Type::Any,
         procedure: ["nodes", "edges"],
+        #[allow(clippy::too_many_lines, reason = "predates the length check")]
         fn algo_msf(runtime, args) {
             let config = parse_config(args)?;
             if !config.is_empty() {
@@ -2752,6 +2755,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
         args: [Type::Optional(Box::new(Type::Any))],
         ret: Type::Any,
         procedure: ["node", "score", "reachable"],
+        #[allow(clippy::too_many_lines, reason = "predates the length check")]
         fn algo_harmonic_centrality(runtime, args) {
             use crate::graph::graphblas::{
                 lagraphx_bindings,
@@ -2922,6 +2926,7 @@ fn register_maxflow(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::Any,
         procedure: ["nodes", "edges", "edgeFlows", "maxFlow"],
+        #[allow(clippy::too_many_lines, reason = "predates the length check")]
         fn algo_maxflow(runtime, args) {
 
             let config = match &args[0] {
