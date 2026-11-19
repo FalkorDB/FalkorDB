@@ -1857,8 +1857,12 @@ impl Binder {
             return Ok(());
         };
         for idx in attrs.root().indices::<Dfs>() {
-            if let ExprIR::Property(_) = attrs.node(idx).data()
-                && let ExprIR::Variable(var_name) = attrs.node(idx).child(0).data()
+            // `Property` is a leaf (no operand) when it is a map-projection
+            // selector such as the `.a` of `x {.a}`, so the operand is optional.
+            let node = attrs.node(idx);
+            if let ExprIR::Property(_) = node.data()
+                && let Some(operand) = node.get_child(0)
+                && let ExprIR::Variable(var_name) = operand.data()
                 && var_name == entity_alias
             {
                 return Err(format!("'{entity_alias}' not defined; undefined attribute"));
