@@ -756,17 +756,20 @@ fn js_traverse_impl<'js>(
             let inner_results =
                 Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
             let mut result_idx = 0;
-            // The start node is not pre-marked: an edge back to it (a
-            // self-loop at depth 1) reports it, as C does.
+            // BFS rule: the start node is depth 0 and is not reported by
+            // walking back to it. The one exception is a self-loop, which
+            // makes it its own depth-1 neighbour, as in C. C ignores
+            // `distance` and has no `maxDepth`, so the behaviour past depth 1
+            // is our own design.
             let mut visited: HashSet<u64> = HashSet::new();
+            visited.insert(start_id);
+            let mut start_reported = false;
 
             // Track seen relationship IDs per source node to avoid emitting
-            // the same edge twice when returnType == "edges". With direction
-            // "both", an edge A->B discovered from A at depth N would otherwise
-            // be rediscovered from B at depth N+1; and since the start node can
-            // re-enter the frontier (self-loop or cycle back to it), a directed
-            // edge out of it would be re-emitted at the next depth.
-            let dedup_edges = return_type == "edges";
+            // the same edge twice when direction == "both" and returnType == "edges".
+            // An edge A->B discovered from A at depth N would otherwise be
+            // rediscovered from B at depth N+1.
+            let dedup_edges = return_type == "edges" && direction == "both";
             let mut seen_edges: HashMap<u64, HashSet<u64>> = HashMap::new();
 
             let mut frontier = vec![start_id];
@@ -780,6 +783,7 @@ fn js_traverse_impl<'js>(
                 }
 
                 let mut next_frontier = Vec::new();
+                let mut self_neighbour = false;
                 let mut edges_to_create: Vec<(u64, u64, u64)> = Vec::new();
 
                 {
@@ -810,8 +814,9 @@ fn js_traverse_impl<'js>(
                             }
 
                             if return_type == "edges" {
-                                // De-dup edges so that an edge found once isn't
-                                // re-emitted when rediscovered at a later depth.
+                                // When direction is "both", de-dup edges so that
+                                // an edge A->B found from A isn't re-emitted when
+                                // discovered from B at the next depth.
                                 if dedup_edges {
                                     let source_seen = seen_edges.entry(nid).or_default();
                                     if source_seen.insert(rel_id) {
@@ -830,6 +835,12 @@ fn js_traverse_impl<'js>(
 
                             if visited.insert(neighbor_id) {
                                 next_frontier.push(neighbor_id);
+                            } else if neighbor_id == start_id && nid == start_id && !start_reported
+                            {
+                                // A self-loop on the start node: it is its own
+                                // neighbour. Reported once, not expanded again.
+                                start_reported = true;
+                                self_neighbour = true;
                             }
                         }
                     }
@@ -843,7 +854,11 @@ fn js_traverse_impl<'js>(
                 }
 
                 if return_type == "nodes" {
-                    for &nid in &next_frontier {
+                    let reported = self_neighbour
+                        .then_some(start_id)
+                        .into_iter()
+                        .chain(next_frontier.iter().copied());
+                    for nid in reported {
                         let js_node = create_js_node(ctx, nid, graph, None)?;
                         inner_results
                             .set(result_idx, js_node)
