@@ -195,7 +195,7 @@ Scan selection (`ScanOrder.lean`):
   outscores a bare bound one (3), contrary to the "bound has highest priority" doc comment.
 - Hazard (resolved by #3594): `prune_all_node_scan_child` pruned the AllNodeScan *subtree*;
   `prune_sound` assumed the scan is a leaf. #3594 re-attaches the scan's children beneath the edge
-  scan (`utilize_index.rs:1113-1124`); `Cleanup.prune_sound_rows` proves the rows are kept per input row.
+  scan (`utilize_index.rs:1113-1122`); `Cleanup.prune_sound_rows` proves the rows are kept per input row.
 
 ## PR #3594 (traversal after UNWIND/WITH scans its start node per row)
 - `make_scan_subtree` takes a whole subtree beneath the scan (`ScanTree.makeScanSubtree` with
@@ -204,13 +204,13 @@ Scan selection (`ScanOrder.lean`):
   outputs `new`, an aggregation its names and copies (`collectOutputAliases_spec`,
   `collectOutputAliases_aggregate`, `collectOutputAliases_projected`, `collectOutputPairs_spec`).
 - `select_scan_node`'s outer-context child moved beneath the new scan (`transparent_child`, lines
-  1001-1053) only adds, to the seed, ids that subtree binds beneath the scan (minus the chain's ids
-  when transparent, lines 1213-1239): `ScanOrder.initialBoundOuter`, `initialBoundOuter_none`,
+  1005-1057) only adds, to the seed, ids that subtree binds beneath the scan (minus the chain's ids
+  when transparent, lines 1198-1224): `ScanOrder.initialBoundOuter`, `initialBoundOuter_none`,
   `outerSeed_transparent_no_chain`, `initialBoundOuter_wellScoped`. The planner-scan path (`has_planner_scan`)
   is untouched, so `Salvage.premise_fails`/`salvage_loses_row` (#2972) still describe it
   (`rebuilt_drops_unwind` now with `argument_leaf_of(..).map(tree!)`).
 - The no-swap leaf rewrite salvages Filters only from a discarded planner scan (`if has_planner_scan`,
-  `select_scan_node.rs:1579`, `17547791c`); a transparent child keeps its own beneath the new scan:
+  `select_scan_node.rs:1564`, `17547791c`); a transparent child keeps its own beneath the new scan:
   `Salvage.leafSteps3594`, `leafSteps3594_planner`, `leafSteps3594_transparent_wellScoped`,
   `transparent_filters_once` (before, `UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z
   MATCH (d:L)-[:R]->() RETURN count(*)` ran the copied filter on `z`: 0 rows instead of 2).
