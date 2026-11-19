@@ -38,6 +38,7 @@ use super::super::IR;
 /// the same predicate, relocated — they reference variables exactly as they did
 /// while they were Filters. A fixed-length traverse's edge predicate stays in
 /// `IR::Filter`, the only place it is evaluated.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub(in crate::planner) fn ir_references_variable(
     ir: &IR,
     var_id: u32,

@@ -54,9 +54,6 @@ use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, V
 
 const MB: usize = 1 << 20;
 
-/// Take the graph read lock, sample the attribute stores, build the flat key-value
-/// reply array. Runs on a worker thread, or synchronously for MULTI/REPLICATED.
-#[allow(clippy::too_many_lines)]
 /// A schema name as `GRAPH.MEMORY` replies it: ended at its first NUL, and
 /// length-framed.
 ///
@@ -70,6 +67,8 @@ fn c_schema_name(name: &str) -> ValkeyValue {
     ValkeyValue::StringBuffer(up_to_nul(name).as_bytes().to_vec())
 }
 
+/// Take the graph read lock, sample the attribute stores, build the flat key-value
+/// reply array. Runs on a worker thread, or synchronously for MULTI/REPLICATED.
 fn memory_report(
     graph: &Arc<RwLock<ThreadedGraph>>,
     samples: usize,

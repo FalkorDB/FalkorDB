@@ -573,6 +573,7 @@ impl Block {
     /// semantics; the counts feed the query's `properties set` / `properties
     /// removed` statistics. `scratch` is a reusable snapshot buffer of the
     /// old span.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn merge_span(
         &mut self,
         slot_idx: usize,

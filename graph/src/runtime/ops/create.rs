@@ -136,6 +136,7 @@ impl<'a> Iterator for CreateOp<'a> {
 }
 
 impl Runtime<'_> {
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn create_batch(
         &self,
         pattern: &QueryGraph<Arc<String>, LabelId, Variable>,

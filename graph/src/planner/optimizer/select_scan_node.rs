@@ -591,6 +591,7 @@ fn subtree_may_bind(
 /// the pattern still binds exactly the same rows. This mirrors what the
 /// `CondTraverse` chain logic does, and matches FalkorDB C — which likewise
 /// only reverses on selectivity, never on label cardinality.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn select_var_len_scan_node(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
@@ -806,6 +807,10 @@ fn select_var_len_scan_node(
 /// For chains of CondTraverse operators, walks up to find the best endpoint
 /// across the entire chain. If the best endpoint is not at the bottom, reverses
 /// the chain direction.
+#[allow(
+    clippy::too_many_lines,
+    reason = "predates the length check; tracked in #3873"
+)]
 pub(super) fn select_scan_node(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,

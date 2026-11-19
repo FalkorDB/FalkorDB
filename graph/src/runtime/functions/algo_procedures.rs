@@ -948,6 +948,7 @@ fn register_wcc(funcs: &mut Functions) {
 
 // ── algo.betweenness ────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn register_betweenness(funcs: &mut Functions) {
     cypher_fn!(funcs, "algo.betweenness",
         args: [Type::Optional(Box::new(Type::Any))],
@@ -1100,6 +1101,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
 // ── algo.BFS ────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn register_bfs(funcs: &mut Functions) {
     cypher_fn!(funcs, "algo.BFS",
         args: [Type::Any, Type::Any, Type::Any],
@@ -1369,6 +1371,7 @@ fn register_cdlp(funcs: &mut Functions) {
 
 // ── algo.MSF ────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn register_msf(funcs: &mut Functions) {
     cypher_fn!(funcs, "algo.MSF",
         args: [Type::Optional(Box::new(Type::Any))],
@@ -2743,6 +2746,7 @@ fn register_ss_paths(funcs: &mut Functions) {
 
 // ── algo.HarmonicCentrality ─────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn register_harmonic_centrality(funcs: &mut Functions) {
     cypher_fn!(funcs, "algo.HarmonicCentrality",
         args: [Type::Optional(Box::new(Type::Any))],
@@ -2912,6 +2916,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
 
 // ── algo.maxFlow ────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn register_maxflow(funcs: &mut Functions) {
     cypher_fn!(funcs, "algo.maxFlow",
         args: [Type::Any],

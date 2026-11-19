@@ -1057,6 +1057,7 @@ fn admit(ctx: &Context) -> Option<QueueSlot> {
 
 #[inline]
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn query_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
@@ -1261,6 +1262,7 @@ pub fn query_mut(
 
 /// Execute a query synchronously on the calling thread.
 /// Used when inside MULTI/EXEC where blocking is not allowed.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn query_sync(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,

@@ -120,6 +120,7 @@ fn value_to_js_at<'js>(
 }
 
 /// The body of [`value_to_js_at`], run on a stack with room for it.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn value_to_js_level<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
@@ -266,6 +267,7 @@ fn js_to_value_at(
 }
 
 /// The body of [`js_to_value_at`], run on a stack with room for it.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn js_to_value_level(
     val: JsValue<'_>,
     depth: usize,

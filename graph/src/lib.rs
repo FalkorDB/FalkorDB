@@ -10,8 +10,6 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_lossless)]
-// Functions in this codebase are often long due to match arms over IR/AST variants.
-#![allow(clippy::too_many_lines)]
 // Significant-drop false positives on moved/consumed values in nursery lint.
 #![allow(clippy::significant_drop_tightening)]
 // Raw pointer casts used in GraphBLAS FFI.

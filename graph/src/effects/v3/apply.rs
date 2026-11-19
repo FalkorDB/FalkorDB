@@ -161,6 +161,7 @@ fn id_space_error_map(
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn apply_record(
     g: &mut Graph,
     record: Record,

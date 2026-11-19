@@ -265,6 +265,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
     /// each projection and of each `(source, output)` copy. Variable ids
     /// restart in every scope, so a variable hidden below a `WITH` would
     /// otherwise pass for the later variable that reuses its id.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn get_variables(&self) -> Vec<Variable> {
         let mut vars = vec![];
         let mut queue = VecDeque::from([self.clone()]);
@@ -875,6 +876,7 @@ impl<'a> Runtime<'a> {
 
     /// Constructs a single `BatchOp` for `idx`, consuming the already-built
     /// children that were produced by `run_batch`'s postorder walk.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn build_batch_op(
         &'a self,
         idx: NodeIdx<Dyn<IR>>,
@@ -2034,6 +2036,7 @@ impl<'a> Runtime<'a> {
 /// options map on the wire (v2 dropped it), and the replica has to turn it back
 /// into the same `IndexOptions` the master built, not a re-derived
 /// approximation.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn map_to_index_options(
     index_type: &IndexType,
     kv_map: &OrderMap<Arc<String>, Value>,

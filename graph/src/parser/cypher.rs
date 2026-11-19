@@ -572,7 +572,10 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3877"
+    )]
     #[allow(clippy::cognitive_complexity)]
     fn parse_index_ops(&mut self) -> Result<Option<RawQueryIR>, String> {
         if optional_match_token!(self.lexer => Create) {
@@ -803,6 +806,10 @@ impl<'a> Parser<'a> {
     /// This handles the reading/writing clause loops and WITH/RETURN
     /// projection.  Called once for standalone queries and once per branch
     /// in a UNION query.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3877"
+    )]
     fn parse_single_query(&mut self) -> Result<RawQueryIR, String> {
         let mut clauses = Vec::new();
         let mut write = false;
@@ -1407,6 +1414,10 @@ impl<'a> Parser<'a> {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3877"
+    )]
     fn parse_pattern(
         &mut self,
         clause: &Keyword,
@@ -1760,6 +1771,10 @@ impl<'a> Parser<'a> {
 
     /// Parses `shortestPath((src)-[rel:TYPE*min..max]->(dst))` after the
     /// opening `(`.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3877"
+    )]
     fn parse_shortest_path_expr(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let fn_name = "shortestPath";
 
@@ -1941,7 +1956,10 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3877"
+    )]
     fn parse_primary_expr(
         &mut self,
         allow_pattern_predicate: bool,
@@ -2193,7 +2211,10 @@ impl<'a> Parser<'a> {
         Ok(res)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3877"
+    )]
     #[allow(clippy::cognitive_complexity)]
     fn parse_expr_inner(
         &mut self,
@@ -3097,7 +3118,10 @@ impl<'a> Parser<'a> {
         Ok(types)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3877"
+    )]
     fn parse_relationship_pattern(
         &mut self,
         src: Arc<QueryNode<Arc<String>, Arc<String>>>,

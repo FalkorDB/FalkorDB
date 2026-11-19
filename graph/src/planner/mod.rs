@@ -419,6 +419,7 @@ fn fmt_rel_with_labels_dir(
 
 #[cfg_attr(tarpaulin, skip)]
 impl Display for IR {
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -1235,6 +1236,7 @@ impl Planner {
     ///
     /// `mode` decides what happens to bare existential `Pattern` nodes; see
     /// [`PatternMode`].  Pattern comprehensions are always extracted.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn extract_pattern_comprehensions(
         &mut self,
         node: &DynNode<ExprIR<Variable>>,
@@ -1993,6 +1995,10 @@ impl Planner {
     ///
     /// The `visited` set is updated as variables are bound, so subsequent clauses
     /// know which variables are already available in the stream.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3874"
+    )]
     fn plan_match(
         &mut self,
         pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
@@ -2729,6 +2735,7 @@ impl Planner {
     /// The `visited` set is reset to only the projected variables, since
     /// WITH/RETURN starts a new scope.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn plan_project(
         &mut self,
         exprs: Vec<(Variable, QueryExpr<Variable>)>,
@@ -3033,6 +3040,7 @@ impl Planner {
     /// (Sort, Skip, Limit, Distinct, Filter, semi-apply variants) and past
     /// Project/Aggregate → Commit, to find the spot where the preceding
     /// clause's output should feed in.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn plan_query(
         &mut self,
         q: Vec<QueryIR<Variable>>,
@@ -3321,7 +3329,10 @@ impl Planner {
     /// Each `QueryIR` variant maps to one or more IR operators.  Compound
     /// queries (`QueryIR::Query`) are handled by `plan_query`, which stitches
     /// multiple clause plans together.
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3875"
+    )]
     #[must_use]
     pub fn plan(
         &mut self,

@@ -347,7 +347,7 @@ impl<'a> Lexer<'a> {
     }
 
     #[inline]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn get_token(
         str: &'a str,
         pos: usize,
@@ -520,7 +520,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn lex_numeric(
         str: &'a str,
         mut chars: Chars,

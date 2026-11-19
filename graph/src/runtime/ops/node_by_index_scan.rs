@@ -97,6 +97,7 @@ impl<'a> NodeByIndexScanOp<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn evaluate_index_query<R: crate::runtime::row::RowView + ?Sized>(
         runtime: &Runtime,
         query: &IndexQuery<QueryExpr<Variable>>,

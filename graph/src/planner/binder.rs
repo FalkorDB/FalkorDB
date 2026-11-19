@@ -356,7 +356,10 @@ impl Binder {
         self.parent_to_child_scope.clear();
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3876"
+    )]
     fn bind_ir(
         &mut self,
         ir: RawQueryIR,
@@ -956,6 +959,10 @@ impl Binder {
     /// Rust's `Apply` is batched and needs the `Argument` to carry cardinality
     /// and `origin_row` correlation, so it takes the projection route for
     /// every body.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3876"
+    )]
     fn bind_call_body(
         &mut self,
         body: RawQueryIR,
@@ -1197,6 +1204,10 @@ impl Binder {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3876"
+    )]
     fn bind_projection(
         &mut self,
         kind: ProjectionKind,
@@ -1478,6 +1489,10 @@ impl Binder {
     /// occurrence would otherwise never be checked. CREATE, MERGE and pattern
     /// comprehensions keep the first occurrence only, so their endpoints keep
     /// their own maps.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "predates the length check; tracked in #3876"
+    )]
     fn bind_graph(
         &mut self,
         graph: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
@@ -1912,10 +1927,10 @@ impl Binder {
         Ok(Arc::new(self.bind_expr_node(expr, &root, locals)?))
     }
 
+    #[allow(clippy::only_used_in_recursion, clippy::needless_pass_by_value)]
     #[allow(
-        clippy::only_used_in_recursion,
         clippy::too_many_lines,
-        clippy::needless_pass_by_value
+        reason = "predates the length check; tracked in #3876"
     )]
     fn bind_expr_node(
         &mut self,

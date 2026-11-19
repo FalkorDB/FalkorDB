@@ -616,6 +616,7 @@ pub enum Record {
 }
 
 /// Read one record, whatever its opcode.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
     let opcode = Opcode::try_from(r.u32()?)?;
 
@@ -922,6 +923,7 @@ fn write_constraint_tail<W: EffectWrite + ?Sized>(
 /// nothing checking that they did. Two adjacent `&[u32]` arguments transpose
 /// silently; two named fields do not.
 impl EffectEncode<3> for Record {
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -1662,6 +1664,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn every_record_type_round_trips() {
         let mut buf = new_buffer();
         Record::AddRelType {
@@ -2041,6 +2044,7 @@ mod tests {
     /// one value too long left that value to be read as the next record's
     /// opcode.
     #[test]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn a_record_its_own_reader_would_refuse_is_not_written() {
         let one = || (7..8).collect::<IdList>();
         let two = || (7..9).collect::<IdList>();

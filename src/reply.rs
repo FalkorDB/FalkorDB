@@ -148,7 +148,7 @@ pub fn format_g(
         .to_owned()
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn reply_compact_value(
     ctx: &Context,
     runtime: &Runtime<'_>,
@@ -360,7 +360,7 @@ pub fn reply_compact_value(
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn reply_verbose_value(
     ctx: &Context,
     runtime: &Runtime<'_>,

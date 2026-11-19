@@ -1656,6 +1656,7 @@ impl Matrix<bool> {
     /// Accepts layers of any element type: the `ANY_PAIR_BOOL` semiring only
     /// inspects the sparsity pattern, so a UINT64 relationship matrix (inline
     /// edge-id values) traverses identically to a BOOL one.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn delta_lmxm<TV>(
         &mut self,
         m: &Matrix<TV>,

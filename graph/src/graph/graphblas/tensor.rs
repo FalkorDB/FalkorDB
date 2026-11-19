@@ -625,6 +625,7 @@ impl Tensor {
     /// Each entry in `rels` is `(edge_id, src, dst)`.
     /// Returns the list of `(src, dst)` pairs that became completely empty
     /// in this tensor (no remaining edges of this type between those nodes).
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn remove_all(
         &mut self,
         rels: &[(u64, u64, u64)],

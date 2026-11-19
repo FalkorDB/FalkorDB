@@ -39,6 +39,7 @@ use rand::RngExt;
 use std::sync::Arc;
 use thin_vec::thin_vec;
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "abs",
         args: [Type::union([Type::Int, Type::Float, Type::Null])],

@@ -381,6 +381,7 @@ fn js_get_neighbors_entry<'js>(
 }
 
 /// Implementation of node.getNeighbors(config?)
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn js_get_neighbors<'js>(
     ctx: &Ctx<'js>,
     node_id: u64,
@@ -689,6 +690,7 @@ pub fn js_traverse<'js>(
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn js_traverse_impl<'js>(
     ctx: &Ctx<'js>,
     nodes: &Array<'js>,

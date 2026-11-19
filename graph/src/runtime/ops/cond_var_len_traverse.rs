@@ -192,7 +192,7 @@ impl VarLenIter<'_> {
     /// not per frame. The borrow is released on return — always before a
     /// yield. A WHERE-filter evaluation error is parked in
     /// [`error`](Self::error) and halts the traversal.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn advance(&mut self) {
         let rt = self.runtime;
         let g = rt.graph();

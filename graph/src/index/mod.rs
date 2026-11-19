@@ -718,6 +718,7 @@ impl Document {
         clippy::match_same_arms,
         reason = "temporal values and vectors are skipped for different reasons, each commented"
     )]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn set(
         &mut self,
         field: &Field,
@@ -1189,6 +1190,7 @@ impl Index {
     }
 
     /// Register fields in the RediSearch index. Must be called after `create_rs_index`.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn register_fields(
         &self,
         fields: &HashMap<Arc<String>, Vec<Arc<Field>>>,
@@ -1485,6 +1487,7 @@ impl Index {
         root
     }
 
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn build_query_node(
         &self,
         query: IndexQuery<Value>,

@@ -82,6 +82,7 @@ impl<'a> AllShortestPathsOp<'a> {
     /// emitter packs, never materializing the full path set. Callers pass the
     /// op's fields explicitly so this runs inside the emitter closure without
     /// borrowing the emitter through `&self`.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn expand_row(
         runtime: &Runtime,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,

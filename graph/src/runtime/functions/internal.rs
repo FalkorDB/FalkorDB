@@ -28,6 +28,7 @@
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "starts_with",
         args: [

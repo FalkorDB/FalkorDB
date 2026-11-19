@@ -33,6 +33,7 @@ use crate::runtime::{runtime::Runtime, value::Value};
 use std::sync::Arc;
 use thin_vec::ThinVec;
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "labels",
         args: [Type::union([Type::Node, Type::Null])],

@@ -1162,6 +1162,7 @@ fn any_batch_size_builds_the_one_pass_column() {
 /// and a range with a null bound, hold for nothing, and are answered with no rows rather than
 /// declined.
 #[test]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     let (mut g, label, v, ty, w) = scan_fixture();
     let int = Value::Int;
@@ -2179,6 +2180,7 @@ fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
     clippy::many_single_char_names,
     reason = "g, v, w, ty: the graph, values and type every test here uses"
 )]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
     // (which edge is deleted, its id's new endpoints, the column after both commits as
     // (edge, value) pairs)
@@ -2330,6 +2332,7 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
     clippy::many_single_char_names,
     reason = "g, v, w, ty: the graph, values and type every test here uses"
 )]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_order() {
     // Batch first; or writer first, the batch catching up by insert, or by refresh when it reads
     // `extra` more edges.
@@ -2721,6 +2724,7 @@ type OrderedWrite = fn(&mut Graph, &[u64]);
 /// 3 * [`REFRESH_COST`] more nodes in every batch, more than refreshing the at most 3 entities a
 /// pair of writes changes in a column costs, every batch refreshes.
 #[test]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
     const NODES: usize = 12;
     const BATCH: usize = 5;
@@ -3118,6 +3122,7 @@ fn check_column(
     clippy::many_single_char_names,
     reason = "v, w, x name the written values; ty, g as elsewhere in these tests"
 )]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
     use parking_lot::{Mutex, RwLock};
     use rand::rngs::StdRng;

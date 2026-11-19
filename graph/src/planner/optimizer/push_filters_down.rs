@@ -144,6 +144,7 @@ const fn is_write(ir: &IR) -> bool {
 /// Each conjunct is routed to the child whose variables fully cover the
 /// conjunct's referenced variables. Conjuncts that span multiple children
 /// remain at the current level.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
     loop {
         let mut changed = false;

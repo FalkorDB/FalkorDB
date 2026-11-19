@@ -381,6 +381,7 @@ fn attempt_settle(
         .expect("writer mode after upgrade_to_write")
 }
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn graph_constraint(
     ctx: &Context,
     args: Vec<ValkeyString>,
@@ -596,6 +597,7 @@ struct ConstraintRequest {
 
 /// Create or drop the constraint, commit, and announce it. The caller holds the
 /// GIL and the graph's write lock, which `tg` is borrowed from.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn apply_constraint(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,

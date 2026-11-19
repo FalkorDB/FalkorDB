@@ -38,6 +38,7 @@ use crate::{
 use std::sync::{Arc, LazyLock};
 use thin_vec::{ThinVec, thin_vec};
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn register(funcs: &mut Functions) {
     // ── db.labels ──────────────────────────────────────────────────────
     cypher_fn!(funcs, "db.labels",

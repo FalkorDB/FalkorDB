@@ -1696,7 +1696,7 @@ impl Value {
 }
 
 impl DisplayJson for Value {
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn fmt_json(
         &self,
         f: &mut fmt::Formatter<'_>,

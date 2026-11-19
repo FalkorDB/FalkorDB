@@ -46,6 +46,7 @@ use crate::runtime::{
 use std::{cmp::Ordering, sync::Arc};
 use thin_vec::thin_vec;
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "collect",
         args: [Type::Any],

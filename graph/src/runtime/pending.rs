@@ -1339,6 +1339,7 @@ impl Pending {
             .count()
     }
 
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn commit(
         &mut self,
         g: &mut Graph,

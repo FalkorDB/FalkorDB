@@ -1309,6 +1309,7 @@ mod tests {
     /// that reaches the entity. The batch that reaches the end flips the column `Ready`, and from
     /// then on a batch changes nothing.
     #[test]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn building_column_gates_reads_until_finished() {
         let (label, attr) = (arc("Person"), arc("age"));
         let column: IndexKey = (label.clone(), attr.clone());

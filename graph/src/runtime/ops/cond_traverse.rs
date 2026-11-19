@@ -596,6 +596,7 @@ impl<'a> CondTraverseOp<'a> {
     /// (`self.batched_eligible`); callers must not invoke this for ineligible
     /// ops. State-level eligibility (matrix existence) is checked here and
     /// returns `false` to signal "fall back to slow path for this batch".
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn expand_batch(
         &self,
         batch: &Batch<'a>,
@@ -902,6 +903,7 @@ impl<'a> CondTraverseOp<'a> {
     /// into `out`. Callers pass the op's fields explicitly so this can run inside
     /// the emitter closure without borrowing the emitter through `&self`.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn expand_row(
         runtime: &Runtime,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,

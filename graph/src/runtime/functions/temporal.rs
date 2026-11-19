@@ -757,6 +757,7 @@ pub fn localdatetime_struct_pure(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Datetime(dt.and_utc().timestamp()))
 }
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn register(funcs: &mut Functions) {
     // ── timestamp() ──
     cypher_fn!(funcs, "timestamp",

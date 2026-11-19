@@ -41,6 +41,7 @@ use std::{collections::HashSet, os::raw::c_char, sync::Arc};
 use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw};
 
 #[inline]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn record_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,

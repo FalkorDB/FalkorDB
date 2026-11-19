@@ -147,7 +147,7 @@ impl Runtime<'_> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn set_inner<R: RowView + ?Sized>(
         &self,
         items: &Vec<SetItem<LabelId, Variable>>,

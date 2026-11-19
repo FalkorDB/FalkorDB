@@ -1182,6 +1182,7 @@ pub enum QueryIR<TVar: VarKind> {
 
 #[cfg_attr(tarpaulin, skip)]
 impl<TVar: VarKind + Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -1295,7 +1296,7 @@ impl<TVar: VarKind + Eq + Hash + Display> QueryIR<TVar> {
         self.inner_validate(std::iter::empty())
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     #[allow(clippy::cognitive_complexity)]
     fn inner_validate<'a, T>(
         &self,

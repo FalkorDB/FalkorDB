@@ -50,6 +50,7 @@ fn remove_span(
     Some((normalized as usize, end))
 }
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "size",
         args: [Type::union([

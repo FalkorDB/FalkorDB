@@ -1600,6 +1600,7 @@ impl<'a> BatchOp<'a> {
     /// Propagates a batch down to `Argument` leaves in the operator tree.
     /// Each operator delegates to its child(ren) until an `Argument` leaf
     /// is reached, where the batch is installed.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn set_argument_batch(
         &mut self,
         batch: Batch<'a>,

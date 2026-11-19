@@ -111,7 +111,7 @@ pub fn check_encoding_version(encver: i32) -> Result<(), String> {
 /// Returns [`LoadedKey::Graph`] for single-key graphs (key_count == 1), or
 /// [`LoadedKey::Partial`] when the key data has been accumulated into
 /// `DECODE_STATE` for multi-key graphs (key_count > 1).
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn rdb_load_graph(
     rdb: *mut RedisModuleIO,
     encver: i32,

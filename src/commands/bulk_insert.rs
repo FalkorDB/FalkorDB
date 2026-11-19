@@ -742,6 +742,7 @@ fn max_records(
     Ok(token.len().saturating_sub(idx) / per_record)
 }
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn graph_bulk_insert(
     ctx: &Context,
     args: Vec<ValkeyString>,

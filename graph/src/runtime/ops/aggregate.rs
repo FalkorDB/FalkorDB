@@ -520,6 +520,7 @@ impl<'a> AggregateOp<'a> {
     // -----------------------------------------------------------------------
 
     /// Consumes all input using the vectorized fast path.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn consume_input_vectorized(
         &mut self,
         analysis: &AggAnalysis,

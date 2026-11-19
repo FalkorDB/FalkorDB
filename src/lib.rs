@@ -36,7 +36,6 @@
 #![allow(clippy::multiple_crate_versions)]
 // Pedantic style lints with low signal in this codebase.
 #![allow(clippy::similar_names)]
-#![allow(clippy::too_many_lines)]
 
 mod allocator;
 mod commands;

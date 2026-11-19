@@ -115,6 +115,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn evaluate_index_query<R: crate::runtime::row::RowView + ?Sized>(
         runtime: &Runtime,
         query: &IndexQuery<QueryExpr<Variable>>,
@@ -315,6 +316,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
 impl<'a> Iterator for EdgeByIndexScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             // One (endpoint-filtered) edge iterator per active parent row, built

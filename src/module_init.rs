@@ -200,6 +200,7 @@ unsafe fn sync_deepbind_environ() {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 pub fn graph_init(
     ctx: &Context,
     args: &[ValkeyString],

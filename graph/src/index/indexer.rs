@@ -178,6 +178,7 @@ impl Indexer {
             .sum()
     }
 
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn create_index(
         &self,
         index_type: &IndexType,

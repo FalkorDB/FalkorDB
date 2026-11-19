@@ -338,6 +338,7 @@ impl<'a> ExprEval<'a> {
     }
 
     #[inline]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn eval_node<R: RowView + ?Sized>(
         &self,
         node: &ExprNode<'_>,
@@ -537,6 +538,7 @@ impl<'a> ExprEval<'a> {
     /// compound expressions. Kept separate so `eval_node`'s leaf/simple
     /// dispatch stays small enough to inline into hot per-row loops without
     /// dragging the stack machine's code (and stack frame) along.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     fn eval_compound<R: RowView + ?Sized>(
         &self,
         node: &ExprNode<'_>,

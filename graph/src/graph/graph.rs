@@ -574,6 +574,7 @@ fn populate_index(
 /// Node and edge indexes share this loop; the only kind-specific bits
 /// are which matrix we walk (label matrix vs relationship tensor) and
 /// which attribute store we read.
+#[allow(clippy::too_many_lines, reason = "predates the length check")]
 fn populate_index_batch(
     kind: IndexKind,
     label: Arc<String>,
@@ -3099,6 +3100,7 @@ impl Graph {
     /// it describes an edge between whichever nodes take the ids next (#2771).
     /// Returns the list of implicitly deleted edges as `(edge_id, src, dst)`
     /// so the caller can record them for effects/replication.
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn delete_implicit_edges(
         &mut self,
         deleted_nodes: &RoaringTreemap,
@@ -5032,6 +5034,7 @@ impl Graph {
     /// `samples` controls how many entities are sampled per label/type when
     /// estimating attribute memory.  Clamped to \[1, 10000\].
     #[must_use]
+    #[allow(clippy::too_many_lines, reason = "predates the length check")]
     pub fn memory_usage_report(
         &self,
         samples: usize,
