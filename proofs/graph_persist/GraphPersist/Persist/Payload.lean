@@ -155,6 +155,9 @@ structure Codecs (M Tn Nm Ix Cn : Type) where
   Mx : Codec M
   Tx : Codec Tn
   m0 : M
+  /-- `Tensor::iter_edges`: the `(src, dst, edge_id)` triples a tensor holds (trusted,
+  like the matrix codecs; `Graph::restore` walks them, graph.rs:937-949). -/
+  edges : Tn → List (Nat × Nat × Nat)
 
 /-- What a `Graph` contributes to its payload. -/
 structure G (M Tn Nm Ix Cn : Type) where
@@ -232,15 +235,55 @@ inductive PR (M Tn : Type) where
   | lbls (m : M)
   | skip
 
-/-- The payload `match` of `rdb_load_graph` (:193-228), `decode_payloads_into_pending`
-(:266-305) and `load_graph_from_reader` (:473-508) — the three are the same arms. -/
-def decPayload (C : Codecs M Tn Nm Ix Cn) (relCount : Nat) : St × Nat → Dec (PR M Tn)
-  | (.nodes, c) => (rep decEnt c).bind fun es => Dec.pure (.nodes es)
+/-! ## The #3643 checks (decoder/validate.rs) -/
+
+theorem RT_if {α : Type} {c : Prop} {_ : Decidable c} {d e : Dec α} {t : Stream} {a : α} (hc : c)
+    (h : RT d t a) : RT (if c then d else e) t a := by rw [if_pos hc]; exact h
+
+theorem RT_pure_eq {α : Type} {x y : α} (h : x = y) : RT (Dec.pure x) [] y := h ▸ RT_pure x
+
+/-- `MAX_ID_BOUND` (validate.rs): `2^34` ids per entity kind. -/
+def MAX_ID_BOUND : Nat := 2 ^ 34
+
+/-- `DecodeLimits::node_bound` / `edge_bound`: `count + deleted_count`. -/
+def Hdr.nodeBound (h : Hdr Nm) : Nat := h.nodeCount + h.delNodeCount
+def Hdr.edgeBound (h : Hdr Nm) : Nat := h.edgeCount + h.delEdgeCount
+
+/-- `check_header` (validate.rs:26): both `checked_add`s exist and are `<= MAX_ID_BOUND`
+(the sum of two `u64`s never overflows a `Nat`; anything above `2^34` is refused, which
+covers every `u64` overflow). -/
+def checkHeader (h : Hdr Nm) : Bool :=
+  decide (h.nodeBound ≤ MAX_ID_BOUND) && decide (h.edgeBound ≤ MAX_ID_BOUND)
+
+/-- The per-state cap of `check_directory` (validate.rs:50); `none` = unlimited. -/
+def dirCap (h : Hdr Nm) : St → Option Nat
+  | .nodes => some h.nodeCount
+  | .delNodes => some h.delNodeCount
+  | .edges => some h.edgeCount
+  | .delEdges => some h.delEdgeCount
+  | _ => none
+
+/-- `check_directory` (validate.rs:50): every entity section's count is at most the
+header's. -/
+def checkDir (h : Hdr Nm) (dir : List (St × Nat)) : Bool :=
+  dir.all fun e => match dirCap h e.1 with
+    | some m => decide (e.2 ≤ m)
+    | none => true
+
+/-- The payload `match` of `rdb_load_graph` (:257-290), `decode_payloads_into_pending`
+(:341) and `load_graph_from_reader` (:520) — the three are the same arms, held to the
+header `h` of the key being read: the stores are built `with_id_bound` (`decEnt`),
+`label_matrix_count` (validate.rs:72) refuses a count above `h.labelCount`, and
+`tensor_count` (validate.rs:90) reads `h.relCount` tensors (its `check_count_fits` and
+`decode_capacity` only cap allocations: no-ops on a word list). -/
+def decPayload (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) : St × Nat → Dec (PR M Tn)
+  | (.nodes, c) => (rep (decEnt h.nodeBound) c).bind fun es => Dec.pure (.nodes es)
   | (.delNodes, c) => (decRoar c).bind fun l => Dec.pure (.delN l)
-  | (.edges, c) => (rep decEnt c).bind fun es => Dec.pure (.edges es)
+  | (.edges, c) => (rep (decEnt h.edgeBound) c).bind fun es => Dec.pure (.edges es)
   | (.delEdges, c) => (decRoar c).bind fun l => Dec.pure (.delE l)
-  | (.labelsM, _) => readU.bind fun n => (decIdx C.Mx.dec n).bind fun ms => Dec.pure (.lm ms)
-  | (.relM, _) => (decIdx C.Tx.dec relCount).bind fun ts => Dec.pure (.rt ts)
+  | (.labelsM, _) => readU.bind fun n =>
+      if n ≤ h.labelCount then (decIdx C.Mx.dec n).bind fun ms => Dec.pure (.lm ms) else Dec.fail
+  | (.relM, _) => (decIdx C.Tx.dec h.relCount).bind fun ts => Dec.pure (.rt ts)
   | (.adj, _) => C.Mx.dec.bind fun m => Dec.pure (.adj m)
   | (.lblsM, _) => C.Mx.dec.bind fun m => Dec.pure (.lbls m)
   | _ => Dec.pure .skip
@@ -309,20 +352,48 @@ def finish (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (nc ec : Nat) (s : Sch Nm Ix C
   ⟨dest, nc, ec, prs.foldl (applyPR s.attrs.length) (acc0 C), s.labels, s.types, s.attrs, s.indexes,
     s.constraints⟩
 
-/-- After the directory: one payload per entry, then `Graph::restore`. -/
-def kDir (C : Codecs M Tn Nm Ix Cn) (rc : Nat) (dest : Nm) (nc ec : Nat) (s : Sch Nm Ix Cn)
+/-- A deleted-id set as `check_assembled` (`len() == declared`, validate.rs:115) and
+`Graph::id_bound` (`max() < live + len()`, graph.rs:1037) see it, for `live` live ids
+and `dc` declared deletions: every member is below `live + dc` and exactly `dc` of the
+ids below it are members (for the finite sets the decoder builds, this is
+`len() = dc ∧ max() < live + dc`). -/
+def DelOK (p : Nat → Bool) (live dc : Nat) : Prop :=
+  (∀ j, p j = true → j < live + dc) ∧ ((List.range (live + dc)).filter p).length = dc
+
+/-- Everything `check_assembled` (validate.rs:115) and the now fallible `Graph::restore`
+(graph.rs:903-958) demand of the assembled locals, for header `h` and schema `s`:
+deleted sets as declared and inside the id space, one label matrix per schema label,
+one tensor per schema type, exactly `h.edgeCount` edges in the tensors, every edge id
+below the edge bound and every endpoint below the node bound. -/
+structure AsmOK (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) (a : Acc M Tn) : Prop where
+  dn : DelOK a.delN h.nodeCount h.delNodeCount
+  de : DelOK a.delE h.edgeCount h.delEdgeCount
+  lm : a.lms.length = s.labels.length
+  tn : a.tns.length = s.types.length
+  ec : (a.tns.flatMap C.edges).length = h.edgeCount
+  eb : ∀ x ∈ a.tns.flatMap C.edges, x.2.2 < h.edgeBound ∧ x.1 < h.nodeBound ∧ x.2.1 < h.nodeBound
+
+open Classical in
+/-- After the directory: one payload per entry, then `check_assembled` and the fallible
+`Graph::restore` (`?`). -/
+noncomputable def kDir (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (dest : Nm) (s : Sch Nm Ix Cn)
     (dir : List (St × Nat)) : Dec (Restore M Tn Nm Ix Cn) :=
-  (seqD (decPayload C rc) dir).bind fun prs => Dec.pure (finish C dest nc ec s prs)
+  (seqD (decPayload C h) dir).bind fun prs =>
+    if AsmOK C h s (finish C dest h.nodeCount h.edgeCount s prs).acc then
+      Dec.pure (finish C dest h.nodeCount h.edgeCount s prs)
+    else Dec.fail
 
-def kSch (C : Codecs M Tn Nm Ix Cn) (rc : Nat) (dest : Nm) (nc ec : Nat) (s : Sch Nm Ix Cn) :
+/-- The directory, then `check_directory`. -/
+noncomputable def kSch (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (dest : Nm) (s : Sch Nm Ix Cn) :
     Dec (Restore M Tn Nm Ix Cn) :=
-  decDir.bind (kDir C rc dest nc ec s)
+  decDir.bind fun dir => if checkDir h dir then kDir C h dest s dir else Dec.fail
 
-/-- `if hdr.key_count != 1 { return Err(..) }` (:438). -/
-def kHdr (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (h : Hdr Nm) : Dec (Restore M Tn Nm Ix Cn) :=
-  if h.keyCount ≠ 1 then Dec.fail else C.S.dec.bind (kSch C h.relCount dest h.nodeCount h.edgeCount)
+/-- `check_header` (:526), then `if hdr.key_count != 1 { return Err(..) }` (:529). -/
+noncomputable def kHdr (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (h : Hdr Nm) : Dec (Restore M Tn Nm Ix Cn) :=
+  if checkHeader h = false then Dec.fail
+  else if h.keyCount ≠ 1 then Dec.fail else C.S.dec.bind (kSch C h dest)
 
-def loadFromReader (C : Codecs M Tn Nm Ix Cn) (dest : Nm) : Dec (Restore M Tn Nm Ix Cn) :=
+noncomputable def loadFromReader (C : Codecs M Tn Nm Ix Cn) (dest : Nm) : Dec (Restore M Tn Nm Ix Cn) :=
   C.H.dec.bind (kHdr C dest)
 
 /-- What a well-formed graph restores to. -/
@@ -348,5 +419,53 @@ structure WF (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) : Prop where
   lm : g.labelMats.length < 2 ^ 64 ∧ ∀ m ∈ g.labelMats, C.Mx.good m
   tn : g.tensors.length < 2 ^ 64 ∧ ∀ t ∈ g.tensors, C.Tx.good t
   mx : C.Mx.good g.adj ∧ C.Mx.good g.lbls
+  /-- A graph has at most 65535 attribute names (ids are `u16`, `u16::MAX` is
+  `ATTRIBUTE_ID_NONE`), so no entity carries more than `MAX_ATTRIBUTES`. -/
+  attrMax : g.sch.attrs.length ≤ MAX_ATTRIBUTES
+  /-- The id spaces fit `MAX_ID_BOUND` (#3643's cap; a larger graph's payload is refused,
+  `kHdr_refuses_bound`). -/
+  idMax : g.nodeCount + g.delNodes.length ≤ MAX_ID_BOUND ∧ g.edgeCount + g.delEdges.length ≤ MAX_ID_BOUND
+  /-- One label matrix per label, one tensor per relationship type (`get_label_id_mut`
+  pushes a matrix with each new label, `register_relationship_type` a tensor per type). -/
+  lmSch : g.labelMats.length = g.sch.labels.length
+  tnSch : g.tensors.length = g.sch.types.length
+  /-- The tensors hold exactly the live edges, with ids and endpoints inside the id spaces. -/
+  tnEdges : (g.tensors.flatMap C.edges).length = g.edgeCount ∧
+    ∀ x ∈ g.tensors.flatMap C.edges, x.2.2 < g.edgeCount + g.delEdges.length ∧
+      x.1 < g.nodeCount + g.delNodes.length ∧ x.2.1 < g.nodeCount + g.delNodes.length
+
+/-! ## A well-formed graph passes every #3643 check -/
+
+theorem delOK_of (n : Nat) (del : List Nat) (hnd : del.Nodup) (hlt : ∀ d ∈ del, d < n + del.length) :
+    DelOK (fun j => decide (j ∈ del)) n del.length := by
+  refine ⟨fun j hj => hlt j (by simpa using hj), ?_⟩
+  have hL : ((List.range (n + del.length)).filter fun j => decide (j ∈ del)).Nodup :=
+    List.nodup_range.filter _
+  have h1 := List.Nodup.length_le_of_subset hL (fun x hx => by simp at hx; exact hx.2)
+  have h2 := List.Nodup.length_le_of_subset hnd (fun x hx => List.mem_filter.2
+    ⟨List.mem_range.2 (hlt x hx), decide_eq_true hx⟩)
+  omega
+
+theorem asmOK_restoreOf (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (name : Nm) (k : Nat)
+    (dest : Nm) : AsmOK C (hdrOf g name k) g.sch (restoreOf g dest).acc where
+  dn := delOK_of _ _ hw.nk.2.1 hw.nk.2.2.1
+  de := delOK_of _ _ hw.ek.2.1 hw.ek.2.2.1
+  lm := hw.lmSch
+  tn := hw.tnSch
+  ec := hw.tnEdges.1
+  eb := hw.tnEdges.2
+
+theorem checkHeader_hdrOf (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (name : Nm) (k : Nat) :
+    checkHeader (hdrOf g name k) = true := by
+  simp [checkHeader, Hdr.nodeBound, Hdr.edgeBound, hdrOf, hw.idMax.1, hw.idMax.2]
+
+/-- `check_directory` accepts a directory whose entity counts are at most the totals. -/
+theorem checkDir_of (h : Hdr Nm) (es : List Entry) (hes : ∀ e ∈ es, ∀ m, dirCap h e.st = some m → e.count ≤ m) :
+    checkDir h (es.map fun e => (e.st, e.count)) = true := by
+  simp only [checkDir, List.all_map, List.all_eq_true, Function.comp_apply]
+  intro e he
+  cases hc : dirCap h e.st with
+  | none => rfl
+  | some m => simpa using hes e he m hc
 
 end GraphPersist.Persist

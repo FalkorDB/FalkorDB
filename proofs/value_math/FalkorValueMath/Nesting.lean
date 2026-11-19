@@ -5,8 +5,8 @@ import FalkorValueMath.Misc
 | Lean | Rust |
 | --- | --- |
 | `MAX_VALUE_NESTING`, `valueNestingError` | value.rs:62, `value_nesting_error` :67 |
-| `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs:2166-2233 (the `for _ in 0..len` loop = `decodeN`) |
-| `decode` | `Decode<19>::decode` value.rs:2154 (= `decode_value(r, 0)`) |
+| `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs:2191-2275 (the `for _ in 0..len` loop = `decodeN`) |
+| `decode` | `Decode<19>::decode` value.rs:2179 (= `decode_value(r, 0)`) |
 | `isValidProperty`, `validateListProperty`, `validateProperty` | pending.rs:69, :98, :115 (copied from proofs/pending_commit `PA`, here over `V F` so the codec theorems apply) |
 
 `depth` is the doc-comment's measure (`[]` and `{}` are 1, `[[]]` is 2, a scalar 0).
@@ -49,7 +49,8 @@ inductive DErr | nesting | other
 
 variable (co : CodecOps F)
 
-/-- `decode_value(r, depth)` (value.rs:2166): the depth check first, then the old
+/-- `decode_value(r, depth)` (value.rs:2191; #3643's array `check_count_fits` /
+`decode_capacity` only refuse arrays the token list cannot hold, so they are abstracted): the depth check first, then the old
 decoder with `depth + 1` for array elements. -/
 def decodeValue : Nat → Nat → List (Tok F) → Except DErr (V F × List (Tok F))
   | 0, depth, _ => if depth > MAX_VALUE_NESTING then .error .nesting else .error .other
@@ -96,7 +97,7 @@ where
     | .ok (x, r') => (decodeN fuel depth n r').map (fun (xs, r'') => (x :: xs, r''))
     | .error e => .error e
 
-/-- `Decode<19>::decode` (value.rs:2154). -/
+/-- `Decode<19>::decode` (value.rs:2179). -/
 def decode (fuel : Nat) (toks : List (Tok F)) : Except DErr (V F × List (Tok F)) :=
   decodeValue co fuel 0 toks
 

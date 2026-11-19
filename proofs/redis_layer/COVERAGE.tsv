@@ -30,9 +30,10 @@ src/serializers/buffered_io.rs	BufferedReader::read_unsigned	177	PROVEN	Buffered
 src/serializers/buffered_io.rs	BufferedReader::read_signed	181	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
 src/serializers/buffered_io.rs	BufferedReader::read_double	185	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
 src/serializers/buffered_io.rs	BufferedReader::read_buffer	189	PROVEN	readW .buf (inline + blob): readW_inline, readW_blob, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedReader::remaining	193	PROVEN	BufferedIO.remaining (from_slice: bytes left; stream: None): remaining_bounds_reads (n records of ≥ 9 bytes read ⇒ 9n ≤ remaining), remaining_stream
 src/serializers/buffered_io.rs	BufferedReader::new	203	PROVEN	listSrc false: rdb_roundtrip, rdb_roundtrip_256k
-src/serializers/buffered_io.rs	BufferedReader::from_slice	211	PROVEN	listSrc true: vec_roundtrip; from_slice_past_end (reads past the end call LoadStringBuffer(NULL), root cause of #2537)
-src/serializers/buffered_io.rs	BufferedReader::load_chunk	220	NOT COVERED	(#3588): body rewritten; not modelled yet
+src/serializers/buffered_io.rs	BufferedReader::from_slice	211	PROVEN	listSrc true: vec_roundtrip; from_slice_past_end_err (#3643: a read past the end is Err, no longer LoadStringBuffer(NULL), #2537)
+src/serializers/buffered_io.rs	BufferedReader::load_chunk	220	PROVEN	listSrc.load (#3643: NULL handle and empty chunk refused): rdb_roundtrip (writer chunks are non-empty: G_bound), from_slice_past_end_err, rdb_empty_chunk_err, listSrc_no_crash
 src/serializers/buffered_io.rs	BufferedReader::ensure_available	240	PROVEN	BufferedIO.ensure: ensure_cons, load_head
 src/serializers/buffered_io.rs	BufferedReader::read_tag	248	PROVEN	BufferedIO.readTag: readW_inline
 src/serializers/buffered_io.rs	BufferedReader::read_bytes	265	PROVEN	BufferedIO.readBytes: readW_inline
@@ -58,7 +59,7 @@ src/serializers/buffered_io.rs	PipeReader::new	507	PROVEN	readW over pipeSrc: pi
 src/serializers/buffered_io.rs	PipeReader::load_chunk	517	PROVEN	pipeLoad: pipeLoad_frame, pipeLoad_end (zero length = end of stream)
 src/serializers/buffered_io.rs	PipeReader::ensure_available	534	PROVEN	readW over pipeSrc: pipe_roundtrip
 src/serializers/buffered_io.rs	PipeReader::read_tag	541	PROVEN	readW over pipeSrc: pipe_roundtrip
-src/serializers/buffered_io.rs	PipeReader::read_bytes	557	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_bytes	557	PROVEN	readW over pipeSrc: pipe_roundtrip (readBytes tests n ≤ rest over Nat = checked_add, #3643), pipeSrc_no_crash
 src/serializers/buffered_io.rs	PipeReader::close	578	AXIOMATISED	drops the OwnedFd (close(2)); no logic
 src/serializers/buffered_io.rs	VecWriter::new	599	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
 src/serializers/buffered_io.rs	VecWriter::into_vec	604	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
@@ -74,16 +75,16 @@ src/serializers/mod.rs	DecodeState::new	113	PROVEN	Serial.DS.new: DS.new_empty
 src/serializers/mod.rs	DecodeState::clear	123	PROVEN	Serial.DS.clear: DS.clear_eq_new
 src/serializers/mod.rs	Header::encode	148	PROVEN	Serial.encH: decH_encH
 src/serializers/mod.rs	Header::null_terminated	152	PROVEN	Serial.nullTerm: strip_nullTerm
-src/serializers/mod.rs	Header::decode	177	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
+src/serializers/mod.rs	Header::decode	177	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero; check_count_fits(_, _, rc, 9) refuses only unreadable counts: BufferedIO.remaining_bounds_reads, remaining_stream (decode_capacity: Vec capacity only)
 src/serializers/mod.rs	Header::from_graph	231	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
 src/serializers/mod.rs	null_terminated	263	PROVEN	Serial.nullTerm: strip_nullTerm
 src/serializers/mod.rs	strip_null_terminator	271	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
 src/serializers/mod.rs	Schema::encode	280	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
 src/serializers/mod.rs	encode_schema_index_block	356	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
 src/serializers/mod.rs	encode_constraint_block	462	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
-src/serializers/mod.rs	Schema::decode	490	NOT COVERED	(#3588): body rewritten; not modelled yet
-src/serializers/mod.rs	decode_schema_entry	552	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	654	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
+src/serializers/mod.rs	Schema::decode	490	PROVEN	Serial.decSchema: decSchema_encSchema (decode_capacity: Vec capacity only)
+src/serializers/mod.rs	decode_schema_entry	552	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc (decode_capacity: Vec capacity only)
+src/serializers/mod.rs	decode_index_field	654	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950); #3643: unknown similarity code refused (decField_unknown_sim_refused; encoder codes are Fin 3)
 src/serializers/mod.rs	Schema::from_graph	754	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	write_f	43	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
 src/reply.rs	format_value_to_string	56	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
@@ -304,7 +305,7 @@ src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_qu
 src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51, ReplyFormat): four_commands_share, rust_c_agree_except_schema, rust_ok_c_ok, COUNTEREXAMPLES rust_c_agree_refuted (#3757: SCHEMA_HASH abc refused, C skips it) and rust_c_agree_except_schemaParse_refuted (SCHEMA_HASH without --compact refused, C skips it), parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
 src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps: a refused finish_write is abandoned, unkeyed_refused; write_version: QuerySession.writeVersion_takes_nothing); rendering of recorded rows: RelLookup.recordDelete/s3449abort, #3449 fixed by #3462 (inspect || snapshot_required): fixed3449_record_snapshot, fixed3449_record_abort
 src/commands/record.rs	graph_record	189	PROVEN	Commands.recordKey: recordKey_creates
-src/commands/restore.rs	graph_restore	14	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
+src/commands/restore.rs	graph_restore	14	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end_err
 src/commands/ro_query.rs	graph_ro_query	30	PROVEN	QueryArgs.roQueryFront (parse_query_flags, ro_query.rs:34-39, ReplyFormat): four_commands_share (SCHEMA_HASH included, #3757), garbage_timeout_rejected (#3009 fixed 557f18868); RoQuery.ro_never_writes
 src/commands/query_args.rs	parse_query_flags	56	PROVEN	QueryArgs.parseQueryFlags/scanFlags/checkFormat: parse_total, parse_arity, parse_ok_scan, parse_ok_format (accepted flags are a ReplyFormat: SCHEMA_HASH only with --compact), parse_ok_iff (accepts exactly 3..8 args + Grammar + SCHEMA_HASH only with --compact, flagSeen/scan_seen), parse_documented, parse_timeout_nonneg, schema_hash_parsed, schema_hash_requires_compact (#3757 a908d8a23), rust_c_agree_except_schema (= C _read_flags on every vector unless Rust refuses a SCHEMA_HASH value or SCHEMA_HASH without --compact), rust_ok_c_ok, COUNTEREXAMPLES rust_c_agree_refuted / rust_c_same_accept_refuted / rust_c_agree_except_schemaParse_refuted (#3757), four_commands_share, #3009 regressions (nonutf8_keeps_compact, timeout_noncanonical_rejected, garbage_timeout_rejected, version_above_uint_rejected, arity_capped)
 src/commands/query_args.rs	parse_schema_hash	109	PROVEN	QueryArgs.parseSchemaHash (string2ll cast_unsigned, else canonical u64): parseSchemaHash_dec, schema_hash_parsed, parse_documented (SCHEMA_HASH)
@@ -318,4 +319,3 @@ src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filte
 src/graph_core.rs	RedisBuildHost::publish	1684	NOT COVERED	online index build (#2355): not modelled yet
 src/graph_core.rs	RedisBuildHost::warn	1693	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)
-src/serializers/buffered_io.rs	remaining	193	NOT COVERED	(#3588): not modelled yet

@@ -212,8 +212,9 @@ New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, 
     redismodule-rs `find_config_value` is case-sensitive and bools are `== "yes"`).
 11. `GRAPH.BULK` success reply said `relations created`, C `edges created` (FIXED by #3301
     dd333fe32; now `Commands.bulk_reply_c`).
-Also seen: #2537's root cause is general — any truncated GRAPH.RESTORE payload makes
-`BufferedReader::from_slice` call `RedisModule_LoadStringBuffer(NULL)` (`from_slice_past_end`).
+Also seen: #2537's root cause was general — any truncated GRAPH.RESTORE payload made
+`BufferedReader::from_slice` call `RedisModule_LoadStringBuffer(NULL)`. **Fixed by #3643**:
+`from_slice_past_end_err` (see the #3643 section below).
 Model correction: compact vector elements use `RedisModule_ReplyWithDouble` (`Env.vfmt`), not
 `%.15g` (same as C).
 
@@ -331,7 +332,20 @@ The MVCC write slot is gone. `QuerySession`: `Slot`/`claimFork`/`releaseSlot`/`c
 `slotFree` input; `Commands2`: `attempt` takes `commit`'s refusal instead of a slot flag
 (`attempt_stale`, `attempt_invalid`; the retry arm is `paused | stale`); `bulkFlow` has no
 rollback step. Counterexamples and theorems about the slot are gone with it.
+
+## Re-target to #3643 (refuse a corrupted GRAPH.RESTORE payload)
+`BufferedReader::load_chunk` (`:220`) refuses a NULL handle and an empty chunk (`listSrc`):
+`from_slice_past_end_err` replaces the crash witness `from_slice_past_end` (#2537),
+`rdb_empty_chunk_err`, and no read of `BufferedReader` or `PipeReader` crashes
+(`listSrc_no_crash`, `pipeSrc_no_crash`). `Reader::remaining` (`:193`) is `remaining`;
+`check_count_fits(_, _, n, 9)` only refuses what reading `n` records would refuse
+(`remaining_bounds_reads`), so `Header::decode` (`decH`) is unchanged on word lists.
+`decode_index_field` refuses a similarity code above 2 (`decField_unknown_sim_refused`); the
+encoders' codes are `Fin 3`, so `decField_encField` and `decField_encFieldC` hold as before.
 -/
 #print axioms RedisLayer.Serial.decField_encFieldC
+#print axioms RedisLayer.Serial.decField_unknown_sim_refused
+#print axioms RedisLayer.BufferedIO.listSrc_no_crash
+#print axioms RedisLayer.BufferedIO.remaining_bounds_reads
 #print axioms RedisLayer.Serial.decField_encField
 #print axioms RedisLayer.Serial.encPh_c_on_iff

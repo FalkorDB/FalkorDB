@@ -73,9 +73,17 @@ whether or not the id is usable. -/
 def decAttr : Dec (Option Nat × Val) :=
   readU.bind fun k => decV.bind fun v => Dec.pure (if k < 65536 then some k else none, v)
 
-/-- One entity: id, count, then that many raw attributes. -/
-def decEnt : Dec (Nat × List (Option Nat × Val)) :=
-  readU.bind fun i => readU.bind fun n => (rep decAttr n).bind fun es => Dec.pure (i, es)
+/-- `MAX_ATTRIBUTES` (attribute_store.rs): attribute ids are `u16` and `u16::MAX` is
+`ATTRIBUTE_ID_NONE`, so no entity carries more than 65535 attributes. -/
+def MAX_ATTRIBUTES : Nat := 65535
+
+/-- One entity of `AttributeStore::decode_with_count` on a store built
+`with_id_bound(bound)` (#3643): id (refused unless `< bound`), count (refused above
+`MAX_ATTRIBUTES`), then that many raw attributes. -/
+def decEnt (bound : Nat) : Dec (Nat × List (Option Nat × Val)) :=
+  readU.bind fun i => if i < bound then readU.bind fun n =>
+    if n ≤ MAX_ATTRIBUTES then (rep decAttr n).bind fun es => Dec.pure (i, es) else Dec.fail
+  else Dec.fail
 
 /-- Keep `(id, v)` iff the id fits `u16`, is inside the dictionary, and `v` is not NULL. -/
 def keep (limit : Nat) : Option Nat × Val → Option (Nat × Val)
@@ -130,15 +138,15 @@ theorem filterMap_keep (limit : Nat) (sp : Span) (h : ∀ kv ∈ sp, kv.1 < limi
     rw [ih (fun kv hkv => h kv (by simp [hkv]))]
 
 /-- One entity reads back as its span with every id `some`. -/
-theorem decEnt_rt (S : Store) (i : Nat) (hi : i < 2 ^ 64) (limit : Nat) (hl : limit ≤ 65536)
-    (hS : ∀ sp, S i = some sp → GoodSpan limit sp) :
-    RT decEnt (encEnt S i) (i, ((S i).getD []).map fun kv => ((some kv.1 : Option Nat), kv.2)) := by
+theorem decEnt_rt (S : Store) (i : Nat) (hi : i < 2 ^ 64) (limit : Nat) (hl : limit ≤ 65535)
+    (hS : ∀ sp, S i = some sp → GoodSpan limit sp) (bound : Nat) (hb : i < bound) :
+    RT (decEnt bound) (encEnt S i) (i, ((S i).getD []).map fun kv => ((some kv.1 : Option Nat), kv.2)) := by
   have hsp : ∀ kv ∈ (S i).getD [], kv.1 < limit ∧ kv.2.isNull = false ∧ kv.2.isScalar = true := by
     intro kv hkv
     cases hs : S i with
     | none => simp [hs] at hkv
     | some sp => rw [hs] at hkv; exact (hS sp hs).2.2 kv hkv
-  have hlen : ((S i).getD []).length < 2 ^ 64 := by
+  have hlen : ((S i).getD []).length ≤ MAX_ATTRIBUTES := by
     -- a span's ids are distinct and below `limit ≤ 65536`
     cases hs : S i with
     | none => simp
@@ -151,7 +159,7 @@ theorem decEnt_rt (S : Store) (i : Nat) (hi : i < 2 ^ 64) (limit : Nat) (hl : li
       have hsub : (sp.map Prod.fst) ⊆ List.range limit := by
         intro k hk; obtain ⟨kv, hkv, rfl⟩ := List.mem_map.1 hk; simpa using (hg.2.2 kv hkv).1
       have := List.Nodup.length_le_of_subset hnd hsub
-      simp at this ⊢; omega
+      simp [MAX_ATTRIBUTES] at this ⊢; omega
   -- the attribute pairs
   have hattr : ∀ kv ∈ (S i).getD [],
       RT decAttr (encU kv.1 ++ kv.2.encode) ((some kv.1 : Option Nat), kv.2) := by
@@ -170,12 +178,26 @@ theorem decEnt_rt (S : Store) (i : Nat) (hi : i < 2 ^ 64) (limit : Nat) (hl : li
       simpa using hattr kv hkv)
     (((S i).getD []).map fun kv => ((some kv.1 : Option Nat), kv.2))
     (by intro ra hra; obtain ⟨kv, hkv, rfl⟩ := List.mem_map.1 hra; exact ⟨kv, hkv, rfl⟩)
-  have := RT_bind (readU_rt i hi)
-    (f := fun i => readU.bind fun n => (rep decAttr n).bind fun es => Dec.pure (i, es))
-    (RT_bind (readU_rt _ hlen)
-      (f := fun n => (rep decAttr n).bind fun es => Dec.pure (i, es))
-      (RT_bind (by simpa using hrep) (f := fun es => Dec.pure (i, es)) (RT_pure _)))
-  simpa [decEnt, encEnt, List.flatMap_map, List.append_assoc] using this
+  have hin : RT (rep decAttr ((S i).getD []).length) (((S i).getD []).flatMap fun kv => encU kv.1 ++ kv.2.encode)
+      (((S i).getD []).map fun kv => ((some kv.1 : Option Nat), kv.2)) := by
+    simpa [List.flatMap_map] using hrep
+  have h2 : RT (if ((S i).getD []).length ≤ MAX_ATTRIBUTES then
+        (rep decAttr ((S i).getD []).length).bind fun es => Dec.pure (i, es) else Dec.fail)
+      ((((S i).getD []).flatMap fun kv => encU kv.1 ++ kv.2.encode) ++ [])
+      (i, ((S i).getD []).map fun kv => ((some kv.1 : Option Nat), kv.2)) := by
+    rw [if_pos hlen]; exact RT_bind hin (RT_pure _)
+  have h3 := RT_bind (readU_rt _ (by simp [MAX_ATTRIBUTES] at hlen; omega))
+    (f := fun n => if n ≤ MAX_ATTRIBUTES then (rep decAttr n).bind fun es => Dec.pure (i, es) else Dec.fail) h2
+  have h4 : RT (if i < bound then readU.bind fun n =>
+        if n ≤ MAX_ATTRIBUTES then (rep decAttr n).bind fun es => Dec.pure (i, es) else Dec.fail
+      else Dec.fail) (encU ((S i).getD []).length ++
+        ((((S i).getD []).flatMap fun kv => encU kv.1 ++ kv.2.encode) ++ []))
+      (i, ((S i).getD []).map fun kv => ((some kv.1 : Option Nat), kv.2)) := by
+    rw [if_pos hb]; exact h3
+  have := RT_bind (readU_rt i hi) (f := fun i => if i < bound then readU.bind fun n =>
+        if n ≤ MAX_ATTRIBUTES then (rep decAttr n).bind fun es => Dec.pure (i, es) else Dec.fail
+      else Dec.fail) h4
+  simpa [decEnt, encEnt, List.append_assoc] using this
 
 /-- **Store round trip.** Decoding the entities of `ids` into a store `S0` leaves each
 `j ∈ ids` that has a span with exactly that span and everything else as it was. -/

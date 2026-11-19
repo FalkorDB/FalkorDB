@@ -14,7 +14,7 @@ graph/src/graph/graphblas/matrix.rs	from	324	PROVEN	GBWGlue.descOf: descOf_injec
 graph/src/graph/graphblas/matrix.rs	drop	376	PROVEN	Handle::drop (#3090): Own.arc_frees_once (freed at most once, iff count reaches 0), arc_all_drop_frees_once, arc_every_interleaving_frees_once; fixed the Matrix::drop Arc::get_mut leak (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/graph/graphblas/matrix.rs	clone	408	PROVEN	Own.arcStep .clone (Arc<Handle> fetch_add): arc_frees_once (any n, any interleaving of clones and drops)
 graph/src/graph/graphblas/matrix.rs	pin_sparse	425	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	decode	708	PROVEN	Codes.matrix_decode_internal_new_ok; component decode propagates; CONFIRMED leak bug_matrix_decode_leaks_container_components / _on_error_path
+graph/src/graph/graphblas/matrix.rs	decode	708	PROVEN	MatrixDecode (#3643 ContainerGuard): decode3643_no_leak_before_load (header/component/structure refusals leak nothing), decode3643_load_error_leaks, decode3643_no_double_free, decode3643_vs_pre; CONFIRMED leak still on success: bug_matrix_decode_still_leaks_container_components (5 vectors GxB_Container_new made, overwritten at :763-767), fixed_no_leak (free each field first); history pre3643_leaks_container_components / pre3643_leaks_on_error_path; Codes.matrix_decode_internal_new_ok; component decode propagates
 graph/src/graph/graphblas/matrix.rs	encode	842	PROVEN	#3438 (encode unloads a private dup(), self never touched): GBWSave.decode_pr (GBWGlue UnloadLoad + PtrBlind + DupSpec: decode-equivalent, not byte-equal: pr3438_bytes_can_differ), encodePR_bytes_eq, pr_self_never_unloaded, pr_no_leak_no_double_free, pr_writes_self_content, pr_panic_after_dup, pr_no_heap_addresses (#3097); GBWGlue.encodeM: encodeM_spec / decodeC_encodeM model the pre-#3438 unload-self-and-reload (#3434 window, counterexample removed in bbee75955), encodeM_no_heap_addresses / scrub_scalars
 graph/src/graph/graphblas/matrix.rs	into_hyper	908	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	hyper_vector_count	946	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
@@ -82,11 +82,11 @@ graph/src/graph/graphblas/vector.rs	from_sorted_indices	149	PROVEN	GBWBulk.fromS
 graph/src/graph/graphblas/vector.rs	ptr	174	PROVEN	GBWGlue.VecH.ptr: ptr_vecFrom
 graph/src/graph/graphblas/vector.rs	iter	180	PROVEN	Misc.VIter.new_inv, VIter.drain_new (= Iter::new); Iter carries no borrow (report: UAF)
 graph/src/graph/graphblas/vector.rs	encode_blob	191	PROVEN	Index.blob_copy_in_bounds (u64->usize lossless on 64-bit)
-graph/src/graph/graphblas/vector.rs	decode_blob	211	NOT COVERED	(#3588): body rewritten; not modelled yet
+graph/src/graph/graphblas/vector.rs	decode_blob	211	PROVEN	Codes.decodeBlob_never_dies / decodeBlob_safe_on_reachable / decodeBlob_rejects_invalid_object (#2996 fix; #3643 via deserialize_untrusted :417, still propagate)
 graph/src/graph/graphblas/vector.rs	encode	490	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/vector.rs	decode	483	NOT COVERED	(#3588): body rewritten; not modelled yet
+graph/src/graph/graphblas/vector.rs	decode	483	PROVEN	Codes.decodeU64_never_dies (#2996 fix; #3643 via deserialize_untrusted :417, still propagate)
 graph/src/graph/graphblas/vector.rs	encode	462	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/vector.rs	decode	720	NOT COVERED	(#3588): body rewritten; not modelled yet
+graph/src/graph/graphblas/vector.rs	decode	720	PROVEN	Codes.decodeBool_safe / decodeBool_never_dies; Index.blob_copy_in_bounds (#3643: Component::read :574 n_bytes check :593, then load :623)
 graph/src/graph/graphblas/vector.rs	new	871	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	set	829	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	iter	755	PROVEN	Misc.VIter.new_inv, VIter.drain_new (= Iter::new); Iter carries no borrow (report: UAF)
@@ -1203,32 +1203,32 @@ graph/src/graph/graphblas/tensor.rs	resize	821	PROVEN	Misc.resize_clamp_grownOk 
 graph/src/graph/graphblas/tensor.rs	edge_count	1229	PROVEN	Decode.edgeCount_no_panic / edgeCount_value (checked u64 adds and subs, under Wf incl. the two u64 bounds; also VM count_correct)
 graph/src/graph/graphblas/tensor.rs	iter_edges	1291	PROVEN	Misc.iterEdges (filter-then-chain, singles then every me id): iterEdges_count/iterEdges_length (same ids as iterExpand), iterEdges_all_single; order differs from the per-pair Iter::next once a MULTI_EDGE pair precedes a single
 graph/src/graph/graphblas/tensor.rs	iter	1308	PROVEN	Misc.iterExpand_eq_flatMap
-graph/src/graph/graphblas/tensor.rs	decode	1565	NOT COVERED	(#3588): body rewritten; not modelled yet
+graph/src/graph/graphblas/tensor.rs	decode	1565	PROVEN	Decode.checkLayers_ok_iff / checkLayers_merge_in_bounds (#2996 layer sizes); Codes.decodeBlob_never_dies; #3033 promotion completeness + #3643 edge bound (bound none = old model): Decode.decodeCheckB_ok_iff / decodeCheckB_refuses_out_of_range / decodeCheckB_refuses_incomplete / decodeCheckB_ok_complete / decodeCheckB_ok_edgeCount_no_panic / decodeCheckB_accepts_encoded, decodeCheck_ok_iff / decodeCheck_refuses_incomplete / decodeCheck_ok_complete / decodeCheck_ok_edgeCount_no_panic / decodeCheck_accepts_encoded, edge_bound_test_accepts / edge_bound_test_refuses
 graph/src/graph/graphblas/tensor.rs	next	1717	PROVEN	Misc.expand (EdgeIds = inline or me row)
 graph/src/graph/graphblas/tensor.rs	next	1801	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_length
 graph/src/graph/graphblas/serialization.rs	encode	34	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
 graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	GBWSerial.encodeWithRangeDefault: defaults_panic
 graph/src/graph/graphblas/serialization.rs	decode	257	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
-graph/src/graph/graphblas/serialization.rs	decode_with_count	269	NOT COVERED	(#3588): body rewritten; not modelled yet
+graph/src/graph/graphblas/serialization.rs	decode_with_count	269	PROVEN	GBWSerial.decodeWithCountDefault: defaults_panic
 graph/src/graph/graphblas/serialization.rs	from_u64	147	PROVEN	GBWSerial.fromU64: fromU64_disc, fromU64_some, fromU64_none, fromU64_cch
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::new	1730	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320), only the test kit's oracle uses it
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::set	1757	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::build	1777	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::extract_tuples	1805	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
-graph/src/graph/graphblas/vector.rs	blob_i64	244	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/vector.rs	check_blob_header	259	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/vector.rs	deserialize_untrusted	417	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/vector.rs	read	574	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/vector.rs	type_name	619	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/vector.rs	load	623	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	drop	453	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	parse	478	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	at	482	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	index_width	523	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	index_at	540	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	check_structure	567	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	from_le	634	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	from_le	639	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	from_le	646	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	typed	653	NOT COVERED	(#3588): not modelled yet
-graph/src/graph/graphblas/matrix.rs	check_rows	672	NOT COVERED	(#3588): not modelled yet
+graph/src/graph/graphblas/vector.rs	blob_i64	244	NOT COVERED	(#3643) little-endian i64 read of a serialized-blob header field; not modelled
+graph/src/graph/graphblas/vector.rs	check_blob_header	259	NOT COVERED	(#3643) GraphBLAS blob header sanity check before GxB_Vector_deserialize; not modelled (Codes keeps any GraphBLAS failure an Err either way)
+graph/src/graph/graphblas/vector.rs	deserialize_untrusted	417	PROVEN	Codes.decodeBlob / decodeU64 disposition .propagate (decodeBlob_never_dies, decodeU64_never_dies): non-success GxB_Vector_deserialize and nvals > capacity are Err; check_blob_header not modelled
+graph/src/graph/graphblas/vector.rs	read	574	PROVEN	Index.blob_copy_in_bounds (n_bytes == arr_data.len() at :593); Codes.decodeBool_never_dies (type and size failures are Err)
+graph/src/graph/graphblas/vector.rs	type_name	619	NOT COVERED	(#3643) accessor: the type-name bytes of a read component; not modelled
+graph/src/graph/graphblas/vector.rs	load	623	PROVEN	Codes.decodeBoolHardened disposition .propagate (decodeBool_safe / decodeBool_never_dies)
+graph/src/graph/graphblas/matrix.rs	drop	453	PROVEN	ContainerGuard::drop (#3643): MatrixDecode.containerFree_frees_held (GxB_Container_free frees the container and the vectors its fields hold, nothing else); decode3643_no_double_free
+graph/src/graph/graphblas/matrix.rs	parse	478	PROVEN	MatrixDecode.parseCheck_ok_iff (sparse/hypersparse, row/col orientation, dims <= max_dim min MAX_DIM), parseCheck_none_accepts, parseCheck_accepts_capacity; byte reads at offset_of! not modelled
+graph/src/graph/graphblas/matrix.rs	at	482	NOT COVERED	(#3643) fixed-offset byte slice read inside ContainerHeader::parse (bytes.len() >= CONTAINER_STRUCT_SIZE checked by decode first); not modelled, parseCheck takes the read fields
+graph/src/graph/graphblas/matrix.rs	index_width	523	PROVEN	MatrixDecode.indexWidth_ok_iff, indexWidth_covers_load_types
+graph/src/graph/graphblas/matrix.rs	index_at	540	NOT COVERED	(#3643) little-endian read of entry k of a w-byte index array; not modelled
+graph/src/graph/graphblas/matrix.rs	check_structure	567	NOT COVERED	(#3643) sparse/hyper structure check over raw index arrays (p monotone, i sorted in range, h, b, x sizes); not modelled: MatrixDecode treats it as one refusal point (decode3643_no_leak_before_load)
+graph/src/graph/graphblas/matrix.rs	from_le	634	NOT COVERED	(#3643) FromLe impl: little-endian decode of one integer; not modelled
+graph/src/graph/graphblas/matrix.rs	from_le	639	NOT COVERED	(#3643) FromLe impl: little-endian decode of one integer; not modelled
+graph/src/graph/graphblas/matrix.rs	from_le	646	NOT COVERED	(#3643) FromLe impl: little-endian decode of one integer; not modelled
+graph/src/graph/graphblas/matrix.rs	typed	653	NOT COVERED	(#3643) reinterprets a component buffer as typed slice; not modelled
+graph/src/graph/graphblas/matrix.rs	check_rows	672	NOT COVERED	(#3643) per-row index check of check_structure; not modelled (see check_structure)

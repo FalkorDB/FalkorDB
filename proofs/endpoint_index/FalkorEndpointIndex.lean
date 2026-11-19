@@ -39,7 +39,7 @@ endpoints no longer fit.
 | `Ix.clear`                      | `clear` (:692) |
 | `Ix.prepare`                    | `prepare` (:520) — `reserve_exact` has no semantic effect and is dropped |
 | `Ix.prepareTiers`, `clampStarts` | `prepare_tiers` (:605), its clamp (:610-614, #2905) |
-| `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs:2694`; `prepare` at `:2765`, then `set` per edge), `delete_relationships` (`graph.rs:2953`) and `delete_implicit_edges` (`graph.rs:3088`) via `clear_edge_endpoint` (`graph.rs:3448`), `Graph::restore` (`graph.rs:927`; `prepare_tiers` at `:985`, then `set`) |
+| `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs:2754`; `prepare` at `:2821`, then `set` per edge), `delete_relationships` (`graph.rs:3009`) and `delete_implicit_edges` (`graph.rs:3146`) via `clear_edge_endpoint` (`graph.rs:3508`), `Graph::restore` (`graph.rs:903`; `prepare_tiers` at `:982`, then `set`) |
 
 ## What is proved (all without `sorry`; see `#print axioms` at the end)
 
@@ -263,7 +263,7 @@ theorem clampStarts_mono (s1 s2 s3 len : Nat) :
   simp only [clampStarts]; omega
 
 /-- Already-ordered starts (what `Graph::restore` passes, its own clamp: the
-"clamped monotone" loop at graph.rs:976-981) are left unchanged: the clamp is a no-op on the restore path. -/
+"clamped monotone" loop at graph.rs:975-979) are left unchanged: the clamp is a no-op on the restore path. -/
 theorem clampStarts_ordered {s1 s2 s3 len : Nat} (h : s1 ≤ s2 ∧ s2 ≤ s3 ∧ s3 ≤ len) :
     clampStarts s1 s2 s3 len = (s1, s2, s3) := by
   simp only [clampStarts, Prod.mk.injEq]; omega
@@ -952,7 +952,7 @@ theorem snapshot_isolated (ops₁ ops₂ : List Op) (hv₁ : ∀ op ∈ ops₁, 
     snap.get i = refRun (fun _ => none) ops₁ i :=
   fresh_refines ops₁ hv₁ i
 
-/-- `Graph::restore` (`graph.rs:927`, `prepare_tiers` at `:985`): `prepare_tiers` with any boundaries,
+/-- `Graph::restore` (`graph.rs:903`, `prepare_tiers` at `:982`): `prepare_tiers` with any boundaries,
 then `set` for every edge of every tensor. The index answers exactly the
 restored edge set (the last `set` of an id wins, which cannot matter since a
 tensor holds each edge id once). -/

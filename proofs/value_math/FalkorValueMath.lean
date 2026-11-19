@@ -79,6 +79,7 @@ arms are dead after validation), `sqrt_float_eq_ieee`, `sqrt_nan_iff`,
 `may_fail_self_match` pre-filter is sound), `isNeverEqual_iff`,
 **`chunked_eq_firstDiff`** (16-lane block scan = first-difference scan). Misc:
 `pre3339_decode_encode` (v19 codec roundtrip, old decoder), `readVec_vecBytes`,
+`readVec_refuses_trailing` (#3643: trailing vector bytes refused; `readVecPre3643_trailing` accepted them),
 **`heap_le_amortized`**, `shares_le`, `fmtDuration_fields`.
 
 ## #3339 value nesting (Nesting.lean; b080a44c1, GHSA-mwvh-8fq5-x2j8, issue #2722)

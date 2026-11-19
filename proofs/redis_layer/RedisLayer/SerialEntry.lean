@@ -12,7 +12,7 @@ only `Operational` constraints, grouped under their label/type, all loading as
 namespace RedisLayer.Serial
 open RedisLayer.BufferedIO (W Bytes)
 
-variable (U : Utf8) (one : Nat) (simCode : Option Bytes → Nat)
+variable (U : Utf8) (one : Nat) (simCode : Option Bytes → Fin 3)
 
 structure Info where
   label : Bytes

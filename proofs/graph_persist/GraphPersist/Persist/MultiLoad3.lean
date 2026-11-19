@@ -301,10 +301,13 @@ theorem multi_load [DecidableEq Nm] (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix
     exact key_rt C g hw _ hH _ h1 h2 h3
   · have hlen : (ord.map fun k => (names k, (keyAt (buildMulti g vmax) k).map (prOfE g))).length =
         (buildMulti g vmax).length := by simp [hord.length_eq]
-    rw [run_keys C _ g.sch _ (by simp [hdrOf, hlen]) (by omega)]
     have hacc := multi_acc C g hw vmax ht (by omega) ord hord
-    simp only [List.flatMap_map] at hacc ⊢
-    rw [hacc]
+    have hacc' : ((ord.map fun k => (names k, (keyAt (buildMulti g vmax) k).map (prOfE g))).flatMap
+        Prod.snd).foldl (applyPR g.sch.attrs.length) (acc0 C) = (restoreOf g g.name).acc := by
+      simp only [List.flatMap_map]; exact hacc
+    rw [run_keys C _ g.sch _ (by simp [hdrOf, hlen]) (by omega)
+      (hacc' ▸ asmOK_restoreOf C g hw g.name _ g.name)]
+    rw [hacc']
     rfl
 
 /-- With the graph's own key named after it and every virtual key not, the meta keys are

@@ -106,7 +106,7 @@ theorem len_cast_lossless (n : Nat) (h : n < 2 ^ 64) : (n % 2 ^ 64) = n := Nat.m
 /-! ### `u64 → usize` blob-size casts (`vector.rs`)
 
 `n_bytes as usize`, `blob_size as usize`. On 64-bit this is the identity. The
-`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs:365)
+`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs:593, `Component::read`)
 before the cast drives `copy_nonoverlapping`, so even under truncation the copy
 length matches the source buffer. This is the check that makes it safe. -/
 
