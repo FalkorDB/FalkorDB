@@ -19,7 +19,7 @@ Yes, for properties and labels.
 
 - Staged properties stay strictly sorted by attribute id and hold the last write per attribute (`stage_sorted_lastWrite`); `rustUpsert_eq` shows the Rust binary-search upsert is that model.
 - `read_your_writes_existing` and `read_your_writes_new` prove that what the query reads before `Commit` is exactly what the store holds after it, for existing and newly created entities.
-- For labels, `overlay_eq_ref` and `commit_eq_ref` prove that for any sequence of `SET n:L` / `REMOVE n:L`, the query reads, and commit stores, the verdict of the last clause that mentions each label. `removeOp_no_dup_push` shows `REMOVE` never stages a label twice, so `Labels removed` counts each once; `removeLabelsC_count` that a removal which only cancels a staged add (counted in `staged_labels_removed`, #3459) is still counted once.
+- For labels, `overlay_eq_ref` and `commit_eq_ref` prove that for any sequence of `SET n:L` / `REMOVE n:L`, the query reads, and commit stores, the verdict of the last clause that mentions each label. `removeOp_no_dup_push` shows `REMOVE` never stages a label twice, so `Labels removed` counts each once.
 
 **2. Is the attribute store's span merge correct on all three code paths?**
 
@@ -79,7 +79,7 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 | #2776 | removed (17ccc5412); `fixed3524_replace_clears_staged`, `replace_reads_src` | `SET x = m` / `SET r = {…}` kept attributes staged earlier in the query instead of replacing them | Fixed by #3524 (af45ca776) |
 | setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a GRAPH.BULK header with that many columns or a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | Bulk side fixed by #3063 (`normResolved_fits`); the malformed-RDB side remains, not reproduced |
 | #3063 | removed (17ccc5412) | A GRAPH.BULK header naming a property twice stored two entries for one id | Fixed by #3063 (`resolved_duplicate_fixed`: the first column wins, as in C) |
-| #3448 | `fixed3448_run_remL_committed`, `fixed3448_remove_of_staged_label` (property `RemLCommitted`), `fixed3448_cancelled_node_clears_remL` (property `RemLLive`) | `remove_node_labels` staged the removal of a label the node only had staged (a created node, an earlier `SET`), and `delete_pending_node` kept the node's `remove_labels`. `CREATE (n:Foo) REMOVE n:Foo DELETE n` then shipped `RemoveLabels` before the node's `CreateNode` and the replica forced a full resync (effects_emit_apply) | Fixed by #3459 |
+| #3448 | `bug3448_remove_of_staged_label` (property `RemLCommitted`), `bug3448_cancelled_node_keeps_remL` (property `RemLLive`) | `remove_node_labels` stages the removal of a label the node only had staged (a created node, an earlier `SET`), and `delete_pending_node` keeps the node's `remove_labels`. `CREATE (n:Foo) REMOVE n:Foo DELETE n` then ships `RemoveLabels` before the node's `CreateNode` and the replica forces a full resync (effects_emit_apply). The `Labels removed` statistic is also inflated by the removals of labels that were never committed | **Open** (#3448) |
 | #3453 | `pendingWithLabels_live` (property `PendingWithLabelsLive`), `fixed3453_*` | `get_pending_nodes_with_labels` ignored deletion and committed labels. Now it takes the graph and returns the live nodes gaining a pattern label. The composed MERGE scan property is in ops_aggregate | **Fixed** by #3467 (a477d9aa3) |
 | #3447 | `bug3447_cascade_drops_type_key` (property `CancelledTypeRegistered`) | A pending edge of a new type cascaded by `DETACH DELETE` empties its `created_rels_by_type` group, which is dropped, so commit never registers the type; the replica then sees an id gap (effects_emit_apply) | **Open** (#3447) |
 | #3339 | removed (17ccc5412) | Property validation accepted lists nested to any depth | Fixed by #3339 (`validate_depth`: accepted values have depth ≤ 4096) |
@@ -100,7 +100,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `NameMap.lean` | `AttrNameMap` and its `u16` cap: `getOrCreate_spec` |
 | `Store.lean`, `StoreFold.lean`, `StoreApi.lean` | `DataBlock` radix directory and every `AttributeStore` method: `runOps_spec`, `insertAttrs_spec`, `importResolved_spec` |
 | `StoreCodec.lean`, `StoreMem.lean` | RDB codec, `trim`, memory accounting: `encode_decode_roundtrip`, `structural_partition` |
-| `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push`, `removeLabels_closed`, `removeLabelsC_count`, `removeOp_committed` |
+| `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push` |
 | `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_reads_src` |
 | `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `rust_reads_dead_entity`, `deferred_preserves_Good` |
 | `EvictPR2964.lean` | **Models open PR #2964, not main**: `evict_preserves_Good` |
@@ -110,7 +110,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `UniqueIndex.lean` | #3334's index-lookup UNIQUE check: `uniqueViolated_spec`, `uniqueViolated_agrees`, `checkUnique_spec` |
 | `PendingCancel.lean`, `CancelRust.lean` | Unwinding a pending node and handing ids back to the graph: `deletePendingNode_spec_rust`, `cancelN_spec` |
 | `CommitOpNext.lean` | `CommitOp::next` with `end_segment`: `commitNext_ok` |
-| `StagedBugs.lean` | Staged label/type state that outlives its entity: #3447 counterexample, #3448's `fixed3448_*` (fixed by #3459), #3453's `fixed3453_*` repros (fixed by #3467), `deletePendingNode_clears_remL` |
+| `StagedBugs.lean` | Staged label/type state that outlives its entity: #3447 and #3448 counterexamples, #3453's `fixed3453_*` repros (fixed by #3467), `deletePendingNode_keeps_remL` |
 | `Hold.lean` | #3436/#3439-era borrow holding: a caller-held `graph_mut()` / `graph()` across `Pending::commit`, `end_segment`, `IndexDocs::commit` equals main's sequential borrows (`commit_same`, `single_mut_same`, `single_rd_same`), on `runtime_core`'s `RuntimeCore.Cell` borrow-word model |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

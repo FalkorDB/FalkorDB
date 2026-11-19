@@ -5,7 +5,7 @@ import FalkorEffectsEmitApply.Basic
 
 Models `graph/src/effects/v3/emit.rs` (`for_each_record` and its digests) and
 the gate that decides whether it runs at all (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1987`).
+`Pending::effects_count` at `runtime/pending.rs:1958`).
 -/
 
 namespace FalkorEA
@@ -130,7 +130,7 @@ theorem mergeRow_eq_lookup :
       by_cases hk : k = a
       · subst hk
         dsimp only
-        rw [if_pos rfl]
+        rw [ite_eq_left rfl]
         simp only [List.cons.injEq]
         refine ⟨by rw [← key k (Nat.le_refl k)]; simp [lookupAttr], ?_⟩
         rw [ih rest has' hrest]
@@ -140,7 +140,7 @@ theorem mergeRow_eq_lookup :
         have : ¬ k = b := by omega
         simp [lookupAttr, this]
       · dsimp only
-        rw [if_neg hk]
+        rw [ite_eq_right hk]
         simp only [List.cons.injEq]
         have hka : a < k := by have := hhead k v rest rfl; omega
         have hrk : ∀ q ∈ rest, a < q.1 := by
@@ -228,20 +228,29 @@ structure Pending where
   cancelledNodes    : List Nat
   cancelledRels     : List (Name × Nat)         -- (type name, id)
   baseline          : Schema
-  /-- `staged_labels_removed` (#3459): removals that only cancelled a staged add. -/
-  stagedLabelsRemoved : Nat := 0
 deriving Repr
 
-/-- `Pending::effects_count` (`runtime/pending.rs:1987-2009`), term for term.
-    Note what is **not** summed: `cancelled_nodes`, `cancelled_relationships`,
-    and the schema registered since `baseline`. -/
+/-- `Pending::effects_count` (`runtime/pending.rs:1970-1993`), term for term.
+    Since #3461 (f203972c5) a cancelled node or relationship counts twice (its
+    create and its delete). Note what is still **not** summed: the schema
+    registered since `baseline`. -/
 def effectsCount (p : Pending) : Nat :=
+  p.createdNodes.length + p.createdRelTypes.length + p.deletedNodes.length
+  + p.deletedRels.length
+  + 2 * p.cancelledNodes.length + 2 * p.cancelledRels.length
+  + p.newNodesAttrs.length + p.existingNodesAttrs.length
+  + p.newRelsAttrs.length + p.existingRelsAttrs.length
+  + (p.setLabels.map (fun q => q.2.length)).sum
+  + (p.removeLabels.map (fun q => q.2.length)).sum
+
+/-- `effects_count` before #3461 (pending.rs:1958-1977 on 343e077f2): the
+    cancelled sets were not summed. History for the `pre3461_*` theorems. -/
+def effectsCountPre3461 (p : Pending) : Nat :=
   p.createdNodes.length + p.createdRelTypes.length + p.deletedNodes.length
   + p.deletedRels.length + p.newNodesAttrs.length + p.existingNodesAttrs.length
   + p.newRelsAttrs.length + p.existingRelsAttrs.length
   + (p.setLabels.map (fun q => q.2.length)).sum
   + (p.removeLabels.map (fun q => q.2.length)).sum
-  + p.stagedLabelsRemoved
 
 def suffixRecs (mk : Nat → Name → Rec) (base : Nat) : List Name → List Rec
   | []      => []
@@ -293,6 +302,10 @@ def forEachRecord (p : Pending) (g : Schema) : List Rec :=
 def commitShips (p : Pending) (g : Schema) : List Rec :=
   if effectsCount p > 0 then forEachRecord p g else []
 
+/-- The gate before #3461, over `effectsCountPre3461`. -/
+def commitShipsPre3461 (p : Pending) (g : Schema) : List Rec :=
+  if effectsCountPre3461 p > 0 then forEachRecord p g else []
+
 /-! ## What the gate drops -/
 
 theorem sum_zero_nil : ∀ l : List (Nat × List Nat),
@@ -323,6 +336,8 @@ theorem gate_zero_stream (p : Pending) (g : Schema) (h : effectsCount p = 0) :
   have h2 : p.createdRelTypes = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h3 : p.deletedNodes = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h4 : p.deletedRels = [] := List.eq_nil_of_length_eq_zero (by omega)
+  have h11 : p.cancelledNodes = [] := List.eq_nil_of_length_eq_zero (by omega)
+  have h12 : p.cancelledRels = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h6 : p.existingNodesAttrs = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h8 : p.existingRelsAttrs = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h9 := sum_zero_nil p.setLabels (by omega)
@@ -361,13 +376,33 @@ def pCancelled : Pending :=
 
 def gCancelled : Schema := ⟨["A"], [], ["p"]⟩
 
-theorem gate_drops_cancelled :
-    effectsCount pCancelled = 0 ∧
+/-- History: before #3461 the gate dropped a fully cancelled write (fixed by
+    #3461, f203972c5; now `gate_ships_cancelled`). -/
+theorem pre3461_gate_drops_cancelled :
+    effectsCountPre3461 pCancelled = 0 ∧
     forEachRecord pCancelled gCancelled =
       [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] ∧
-    commitShips pCancelled gCancelled = [] := by
+    commitShipsPre3461 pCancelled gCancelled = [] := by
   refine ⟨rfl, ?_, rfl⟩
   decide
+
+/-- **#3461**: the same write now ships its whole stream. -/
+theorem gate_ships_cancelled :
+    effectsCount pCancelled = 2 ∧
+    commitShips pCancelled gCancelled =
+      [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] := by
+  decide
+
+/-- **#3461**: any segment that cancelled a node or a relationship passes the
+    gate, so its cancelled pairs (and the schema it registered) ship. -/
+theorem gate_ships_of_cancelled (p : Pending) (g : Schema)
+    (h : p.cancelledNodes ≠ [] ∨ p.cancelledRels ≠ []) : commitShips p g = forEachRecord p g := by
+  have hpos : effectsCount p > 0 := by
+    unfold effectsCount
+    rcases h with h | h
+    · have := List.length_pos_iff.mpr h; omega
+    · have := List.length_pos_iff.mpr h; omega
+  simp [commitShips, hpos]
 
 /-- `OPTIONAL MATCH (n:Nope) SET n:L6`: `L6` registered, nothing else. -/
 def pSchemaOnly : Pending := { pCancelled with cancelledNodes := [] }
@@ -405,21 +440,22 @@ theorem next_payload_refused :
     (`cancelled_edge_attribute_is_a_silent_dictionary_divergence`). Here even an
     un-gated emitter would say nothing about `T1`'s edges, since the type has no
     id (`emit.rs:448-454`), but it would still announce `p4`. -/
-theorem cancelled_edge_attr_dropped :
+theorem pre3461_cancelled_edge_attr_dropped :
     let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
     let g : Schema := ⟨[], [], ["p4"]⟩
-    effectsCount p = 0 ∧ commitShips p g = [] ∧
+    effectsCountPre3461 p = 0 ∧ commitShipsPre3461 p g = [] ∧
     forEachRecord p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
   refine ⟨rfl, rfl, ?_⟩
   decide
 
-/-- #3459: a removal that only cancelled a staged add is counted, so `MATCH (n) SET n:L REMOVE n:L`
-on a committed node without `L` (nothing else staged, `L` newly registered) still ships `L`'s
-registration. -/
-theorem gate_keeps_staged_removal :
-    let p : Pending := { pSchemaOnly with stagedLabelsRemoved := 1 }
-    effectsCount p = 1 ∧ commitShips p gSchemaOnly = [.addLabel 0 "L6"] := by
-  refine ⟨rfl, ?_⟩
+/-- **#3461**: the same write, with `T1` now registered at commit, ships `T1`,
+    `p4` and the cancelled edge pair. -/
+theorem cancelled_edge_attr_ships :
+    let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
+    let g : Schema := ⟨[], ["T1"], ["p4"]⟩
+    effectsCount p = 6 ∧
+    commitShips p g = [.addRelType 0 "T1", .addAttribute 0 "p4", .createNode [0, 1] [],
+      .createEdge [0] 0, .deleteEdge [0], .deleteNode [0, 1] []] := by
   decide
 
 end FalkorEA

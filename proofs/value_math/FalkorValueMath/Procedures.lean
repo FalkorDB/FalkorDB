@@ -512,8 +512,8 @@ theorem dbmsProcedures_sorted (fns : List Ent) :
     (sortByName (fns.filter isProc)).Pairwise (fun a b => nameLe a b = true) ∧
     (sortByName (fns.filter isProc)).Perm (fns.filter isProc) := by
   refine ⟨List.pairwise_mergeSort ?_ ?_ _, List.mergeSort_perm _ _⟩
-  · intro a b c h1 h2; simp only [nameLe, decide_eq_true_eq] at *; exact String.le_trans h1 h2
-  · intro a b; simp only [nameLe, Bool.or_eq_true, decide_eq_true_eq]; exact String.le_total _ _
+  · intro a b c h1 h2; simp only [nameLe, decide_eq_true_eq] at *; exact Std.le_trans h1 h2
+  · intro a b; simp only [nameLe, Bool.or_eq_true, decide_eq_true_eq]; exact Std.le_total
 
 /-- The hand-written merge is `List.merge` with "builtin first unless the UDF is strictly
 smaller" … -/
@@ -522,11 +522,11 @@ theorem mergePicks_eq (bs us : List Ent) : mergePicks bs us = bs.merge us nameLe
   | case1 us => cases us <;> simp [mergePicks]
   | case2 bs h => cases bs <;> simp_all [mergePicks]
   | case3 b bs u us h ih =>
-    have hn : ¬ (b.name ≤ u.name) := String.not_le.2 h
-    rw [mergePicks, if_pos h, ih, List.cons_merge_cons]; simp [nameLe, hn]
+    have hn : ¬ (b.name ≤ u.name) := Std.not_le.2 h
+    rw [mergePicks, ite_eq_left h, ih, List.cons_merge_cons]; simp [nameLe, hn]
   | case4 b bs u us h ih =>
-    have hn : b.name ≤ u.name := String.not_lt.1 h
-    rw [mergePicks, if_neg h, ih, List.cons_merge_cons]; simp [nameLe, hn]
+    have hn : b.name ≤ u.name := Std.not_lt.1 h
+    rw [mergePicks, ite_eq_right h, ih, List.cons_merge_cons]; simp [nameLe, hn]
 
 /-- … so `dbms.functions` rows are sorted by name and are exactly built-ins ⊎ surviving UDFs. -/
 theorem dbmsFunctions_merge_sorted (bs us : List Ent)
@@ -534,8 +534,8 @@ theorem dbmsFunctions_merge_sorted (bs us : List Ent)
     (mergePicks bs us).Pairwise (fun a b => nameLe a b = true) ∧ (mergePicks bs us).Perm (bs ++ us) := by
   rw [mergePicks_eq]
   refine ⟨List.pairwise_merge ?_ ?_ _ _ hb hu, List.merge_perm_append _⟩
-  · intro a b c h1 h2; simp only [nameLe, decide_eq_true_eq] at *; exact String.le_trans h1 h2
-  · intro a b; simp only [nameLe, Bool.or_eq_true, decide_eq_true_eq]; exact String.le_total _ _
+  · intro a b c h1 h2; simp only [nameLe, decide_eq_true_eq] at *; exact Std.le_trans h1 h2
+  · intro a b; simp only [nameLe, Bool.or_eq_true, decide_eq_true_eq]; exact Std.le_total
 
 /-- The early return (:485) is the merge with no UDFs. -/
 theorem mergePicks_nil (bs : List Ent) : mergePicks bs [] = bs := by cases bs <;> simp [mergePicks]
@@ -595,8 +595,8 @@ theorem mem_dedupAdj : ∀ (l : List String) (x : String), x ∈ dedupAdj l ↔ 
   | a :: b :: t, x => by
       unfold dedupAdj
       by_cases h : a = b
-      · subst h; simp only [if_true, mem_dedupAdj (a :: t) x]; simp
-      · simp only [h, if_false, List.mem_cons, mem_dedupAdj (b :: t) x]
+      · subst h; simp only [ite_true, mem_dedupAdj (a :: t) x]; simp
+      · simp only [h, ite_false, List.mem_cons, mem_dedupAdj (b :: t) x]
 
 theorem dedupAdj_strict : ∀ (l : List String), (∀ x ∈ l, x ∈ anyNames) →
     l.Pairwise (fun a b => typePos a ≤ typePos b) →
@@ -611,7 +611,7 @@ theorem dedupAdj_strict : ∀ (l : List String), (∀ x ∈ l, x ∈ anyNames) �
       have ih := dedupAdj_strict (b :: t) hm' hbt
       by_cases h : a = b
       · simp [h]; exact ih
-      · simp only [h, if_false]
+      · simp only [h, ite_false]
         refine List.pairwise_cons.2 ⟨?_, ih⟩
         intro x hx
         rw [mem_dedupAdj] at hx

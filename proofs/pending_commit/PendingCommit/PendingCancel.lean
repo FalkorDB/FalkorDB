@@ -91,13 +91,13 @@ theorem removeRelsG_spec {Gr : Type} (freeN freeR : Gr → List Nat) (cancelR : 
   simp [hr]
 
 /-- `delete_pending_node` (:851), its effect on `Pending` and the graph:
-`created_nodes.remove(id)` (:893), `set_labels.remove` (:896), `remove_labels.remove`
-(:897, #3459), the staged attrs taken from `new_nodes_attrs`, else `existing_nodes_attrs`
-(:900-904), `remove_pending_relationships_for_node(id, g)?` (:906),
-`cancelled_nodes.insert(id)` (:910), `g.cancel_node_id(id)?` (:912). -/
+`created_nodes.remove(id)` (:869), `set_labels.remove` (:873), the staged
+attrs taken from `new_nodes_attrs`, else `existing_nodes_attrs` (:877-879),
+`remove_pending_relationships_for_node(id, g)?` (:882),
+`cancelled_nodes.insert(id)` (:886), `g.cancel_node_id(id)?` (:888). -/
 def deletePendingNode {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (p : P) (g : Gr)
     (id : Nat) : Option (P × Gr) :=
-  let p1 : P := { p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id }
+  let p1 : P := { p with created := p.created.filter (· != id), setL := frem p.setL id }
   let p2 : P := match fget p1.newN id with
     | some _ => { p1 with newN := frem p1.newN id }
     | none => { p1 with existN := frem p1.existN id }
@@ -139,16 +139,16 @@ theorem deletePendingNode_spec {Gr : Type} (freeN freeR : Gr → List Nat) (canc
       obtain ⟨c1, c2, c3⟩ := hn.ok _ _ _ hcn
       have hcol : ∀ q : P, q.relsByType = p.relsByType → collect q id = collect p id :=
         fun q hq => collect_congr q p hq id
-      have hc2 : collect (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
+      have hc2 : collect (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
+          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
               newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
+          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
               existN := frem p.existN id } : P)) id = collect p id := by
         apply hcol; split <;> rfl
-      have hcr : (removeRels (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
+      have hcr : (removeRels (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
+          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
               newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
+          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
               existN := frem p.existN id } : P)) id).created = p.created.filter (· != id) := by
         unfold removeRels; rw [(foldl_rmStep_created _ _).1]; split <;> rfl
       rw [hc2] at e2
@@ -159,10 +159,10 @@ theorem deletePendingNode_spec {Gr : Type} (freeN freeR : Gr → List Nat) (canc
 /-- **`deletePendingNode_refused`**: a refused node cancel fails the unwind. -/
 theorem deletePendingNode_refused {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (p : P) (g : Gr)
     (id : Nat) (p3 : P) (g3 : Gr)
-    (hrm : removeRelsG cancelR (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
+    (hrm : removeRelsG cancelR (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
+          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
               newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
+          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
               existN := frem p.existN id } : P)) g id = some (p3, g3))
     (hcn : cancelN g3 id = none) :
     deletePendingNode cancelN cancelR p g id = none := by

@@ -258,7 +258,7 @@ theorem rowsOfLabels_mem (hasIdx : Bool) (indexed : String → String → Bool) 
     · rintro ⟨hn, hl, lab, hlab, a, ha, k, hka, hk⟩
       refine ⟨l, hl, ?_⟩
       simp only [hlab]
-      rw [ite_cond_eq_true _ _ (eq_true (List.any_eq_true.2 ⟨a, ha, by simp [hka, hk]⟩))]
+      rw [ite_eq_left_of_eq_true _ _ (eq_true (List.any_eq_true.2 ⟨a, ha, by simp [hka, hk]⟩))]
       exact List.mem_map.2 ⟨n, hn, rfl⟩
 
 end GQ

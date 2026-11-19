@@ -108,7 +108,7 @@ graph/src/graph/graphblas/tensor.rs	Tensor::wait_base	1422	PROVEN	VMTensorOps.wa
 graph/src/graph/graphblas/tensor.rs	Tensor::wait_all	1431	PROVEN	VMTensorOps.waitAll: waitAll_synced, waitAll_st
 graph/src/graph/graphblas/tensor.rs	Tensor::is_synced	1444	PROVEN	VMTensorOps.isSyncedT: waitAll_synced
 graph/src/graph/graphblas/tensor.rs	Tensor::memory_usage	1453	PROVEN	VMTensorOps.memoryUsage: memoryUsage_eq
-graph/src/graph/graphblas/tensor.rs	Tensor::encode	1472	PROVEN	VMTensorOps.encVal: encVal_roundtrip, msb_or (+ count_correct for the total)
+graph/src/graph/graphblas/tensor.rs	Tensor::encode	1472	PROVEN	VMTensorOps.encVal: encVal_roundtrip, msb_or (+ count_correct for the total) for the rebuild branch; #3438 fast path (no dp/dm/multi-edge: write the committed m + two empties): TensorSave.fast_base_eq, encPR_eq_encMain (= the pre-#3438 rebuild under AllInv/BlkInv), encode_one_state (no TOCTOU), decode_same (FFI hypothesis MatrixRT)
 graph/src/graph/graphblas/tensor.rs	Tensor::decode	1565	PROVEN	graphblas_wrappers Decode.checkLayers_merge_in_bounds (#2996); Decode.decodeCheck_ok_iff / decodeCheck_accepts_encoded: promotion completeness (single_me/multi_me) enforced on decode (#3033)
 graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1709	PROVEN	graphblas_wrappers Misc.expand
 graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1716	PROVEN	VMTensorOps.sizeHint: sizeHint_sound

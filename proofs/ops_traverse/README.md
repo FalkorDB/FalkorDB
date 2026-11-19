@@ -60,6 +60,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `twoHop_emit_iff` | Two chained hops return the openCypher match set with distinct relationships | `CondTraverse.lean` |
 | `batched_eq_collapse`, `fused_chain_semantics` | The matrix-multiply path equals per-row expansion, for any multiply meeting the GraphBLAS spec | `CondTraverse.lean` |
 | `varLen_iff` | Variable-length returns exactly the trails with length in `[min, max]` | `VarLen.lean` |
+| `varLen_bidir_reverse_iff` | An undirected variable-length walk started from the bound `to` (reversed, #3593) returns the same trails read backwards | `VarLen.lean` |
 | `asp_sound`, `asp_minimal`, `asp_complete'`, `asp_nodup` | allShortestPaths (source ≠ destination) returns every shortest path, once, and nothing else | `ShortestPaths.lean`, `ASPMain.lean`, `ASPFuel.lean` |
 | `fin_drained` | The allShortestPaths BFS terminates within `|univ| + 1` steps (`univ` = source and every edge endpoint, repeats included, an upper bound on the node count) | `ASPFuel.lean` |
 | `buildNodes_walk` | PathBuilder's "other endpoint" rule rebuilds a walk's nodes, given unique edge ids | `ShortestPaths.lean` |

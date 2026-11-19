@@ -60,18 +60,16 @@ def restR : List CT :=
   [.lparen, .ident 1, .rparen, .dash, .lbrack, .colon, .ident 6, .rbrack, .dash, .gt,
    .lparen, .ident 2, .rparen, .kw .return_, .ident 2]
 
-/-- **#2502 (main violates `PredEndsBeforeClause`).** `(a)-[:Q]->()` alone is a
-pattern predicate, but followed by `MATCH (a)-[:R]->(m) RETURN m` the arm eats
-`MATCH` and the next pattern and stops only at `RETURN`. -/
-theorem bug2502_pred_swallows_match : ¬ PredEndsBeforeClause (parenArm o0 30 true) := by
-  intro h
-  have h1 : parenArm o0 30 true (predQ, 0) = .ok (leaf .pattern, false) ([], 2) := rfl
-  obtain ⟨t', _, h2⟩ := h predQ restR .match_ 0 2 (leaf .pattern) false rfl rfl h1
-  have h3 := congrArg R.st? h2
-  have h4 : (parenArm o0 30 true (predQ ++ .kw .match_ :: restR, 0)).st? =
-      some ([.kw .return_, .ident 2], 3) := by decide
-  rw [h4] at h3
-  simp [R.st?] at h3
+/-- **#2502 fixed by #2981** (`sepP` no longer continues on the clause keyword,
+cypher.rs:1581-1587). `(a)-[:Q]->()` followed by `MATCH (a)-[:R]->(m) RETURN m`
+is the same pattern predicate and stops right before `MATCH`: the instance of
+`PredEndsBeforeClause` that main refuted before (`bug2502_pred_swallows_match`,
+pre-#2981: the arm ate `MATCH` and stopped only at `RETURN`, state
+`([RETURN, m], 3)`). -/
+theorem fixed2502_pred_stops_at_match :
+    ∃ t', t'.root = .pattern ∧
+      parenArm o0 30 true (predQ ++ .kw .match_ :: restR, 0) = .ok (t', false) (.kw .match_ :: restR, 2) :=
+  ⟨leaf .pattern, rfl, rfl⟩
 
 /-- An oracle whose `parse_expr(allow)` is `parse_primary_expr(allow)` with
 the real `(` arm (`primaryC`): enough for a WHERE that is one pattern
@@ -88,15 +86,15 @@ def shape : R IR → Option (Nat × Bool)
       | _ => false)
   | _ => none
 
-/-- **#2502, the whole query** (`Parser::parse`, `parseP`): `MATCH (a) WHERE
-(a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to TWO clauses — the
-second MATCH has vanished into the WHERE predicate, so `m` is never bound
-(live: Rust `'m' not defined`, C returns the two `m` rows). With a
-non-pattern WHERE (`WHERE a`) the same query has its three clauses. -/
-theorem bug2502_where_match_merged :
+/-- **#2502, the whole query, fixed by #2981** (`Parser::parse`, `parseP`):
+`MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to its three
+clauses, as with a non-pattern WHERE (`WHERE a`). Pre-#2981
+(`bug2502_where_match_merged`) it parsed to TWO: the second MATCH vanished into
+the WHERE predicate (live: Rust `'m' not defined`, C the two `m` rows). -/
+theorem fixed2502_where_match_split :
     shape (run (parseP oPred 40 40)
       (.kw .match_ :: .lparen :: .ident 1 :: .rparen :: .kw .where_ :: predQ ++ .kw .match_ :: restR))
-      = some (2, true) ∧
+      = some (3, true) ∧
     shape (run (parseP oPred 40 40)
       (.kw .match_ :: .lparen :: .ident 1 :: .rparen :: .kw .where_ :: .ident 1 :: .kw .match_ :: restR))
       = some (3, true) := by

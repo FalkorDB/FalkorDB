@@ -20,10 +20,12 @@ import RuntimeCore.Accessors
   `uniqueViolated_agrees` shows it equals this label-scan spec under the
   constraint's pre-commit invariant; `check` stays as that reference spec, and
   `UQ.checkMandatory_eq_old` shows MANDATORY is unchanged.
-* `affected_spec`, `enforce_spec` — `enforce_constraints` (:1484): affected =
+* `affected_spec`, `enforce_spec` — `enforce_constraints` (:1500): affected =
   (created ∪ staged-attr ∪ staged-label nodes) \ deleted, edges likewise; the
-  query fails iff some *operational* constraint's check fails.
-* `commit_spec` — `Pending::commit` (:1362), graph operations uninterpreted
+  query fails iff some constraint that is not FAILED (OPERATIONAL or, since
+  #3854, UNDER CONSTRUCTION) has a failing check (`enforce_operational`,
+  `enforce_underConstruction`, `enforce_skips_failed`).
+* `commit_spec` — `Pending::commit` (:1338), graph operations uninterpreted
   (`GOps`): the statistics it adds are `|created_nodes|`,
   `|created_rel_types|`, `Σ|remove_labels|`, the attribute writers' counts,
   `|deleted_nodes|` and the implicit + actually-deleted explicit edges;
@@ -86,9 +88,9 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
     have hs' : ∀ p ∈ seen, p.2 ∉ xs := fun p hp hm => hs p hp (List.mem_cons_of_mem _ hm)
     simp only [scan]
     by_cases hk : key x = []
-    · rw [if_pos hk, scan_gen key xs seen hnd.2 hs']
+    · rw [ite_eq_left hk, scan_gen key xs seen hnd.2 hs']
       simp [hk]
-    · rw [if_neg hk]
+    · rw [ite_eq_right hk]
       have hs2 : ∀ p ∈ (key x, x) :: seen, p.2 ∉ xs := by
         intro p hp; simp at hp; rcases hp with rfl | hp
         · exact hnd.1
@@ -101,7 +103,7 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
       | none =>
         rw [scan_gen key xs _ hnd.2 hs2]
         simp only [List.filter_cons, ne_eq, hk, not_false_eq_true, decide_true, ite_true, List.map_cons,
-          List.nodup_cons, List.mem_cons, forall_eq_or_imp, hl, true_and]
+          List.nodup_cons, List.mem_cons, forall_eq_or_imp, hl]
         have e : ∀ y, lookupK ((key x, x) :: seen) (key y) = if key x = key y then some x else lookupK seen (key y) :=
           fun y => rfl
         constructor
@@ -110,14 +112,14 @@ theorem scan_gen (key : Nat → List Nat) : ∀ (l : List Nat) (seen : List (Lis
           · obtain ⟨y, hy, hky⟩ := List.mem_map.1 hm
             have hy' := List.mem_filter.1 hy
             have := hall y hy'.1 (by simpa using hy'.2)
-            rw [e, if_pos hky.symm] at this; cases this
+            rw [e, ite_eq_left hky.symm] at this; cases this
           · have := hall a ha hka; rw [e] at this
             split at this
             · cases this
             · exact this
         · rintro ⟨⟨hnm, hn⟩, -, hall⟩
           refine ⟨hn, fun y hy hky => ?_⟩
-          rw [e, if_neg ?_]
+          rw [e, ite_eq_right ?_]
           · exact hall y hy hky
           · intro heq; exact hnm (List.mem_map.2 ⟨y, List.mem_filter.2 ⟨hy, by simpa using hky⟩, heq.symm⟩)
 
@@ -222,26 +224,57 @@ theorem affected_spec (p : P) (n : Nat) :
   · rintro ⟨(((h | h) | h) | h), hd⟩ <;> simp_all
   · rintro ⟨(h | h | h | h), hd⟩ <;> simp_all
 
+/-- `ConstraintStatus` (graph/constraint.rs:27). -/
+inductive CStatus where
+  | underConstruction
+  | operational
+  | failed
+  deriving DecidableEq
+
 structure Constraint where
-  operational : Bool
+  status : CStatus
   isNode : Bool
   ok : Bool   -- the value of `checkNode` / `check_edge_constraint` for it
 
-/-- `enforce_constraints` (:1484): no constraints ⇒ `Ok`; otherwise every
-operational constraint's check, in order, `?` on the first failure. -/
-def enforce (cs : List Constraint) : Bool := cs.all fun c => !c.operational || c.ok
+/-- `enforce_constraints` (:1500): no constraints ⇒ `Ok`; otherwise the check of
+every constraint that has not failed, in order, `?` on the first failure. Since
+#3854 an UNDER CONSTRUCTION constraint binds writes too (C's
+`Schema_EnforceConstraints` skips only `CT_FAILED`); before, only OPERATIONAL
+ones were checked. -/
+def enforce (cs : List Constraint) : Bool := cs.all fun c => c.status == .failed || c.ok
 
 theorem enforce_spec (cs : List Constraint) :
-    enforce cs = true ↔ ∀ c ∈ cs, c.operational = true → c.ok = true := by
-  simp only [enforce, List.all_eq_true, Bool.or_eq_true, Bool.not_eq_true']
+    enforce cs = true ↔ ∀ c ∈ cs, c.status ≠ .failed → c.ok = true := by
+  simp only [enforce, List.all_eq_true, Bool.or_eq_true, beq_iff_eq]
   constructor
-  · intro h c hc ho; rcases h c hc with h | h
-    · rw [ho] at h; cases h
+  · intro h c hc hf; rcases h c hc with h | h
+    · exact absurd h hf
     · exact h
   · intro h c hc
-    cases ho : c.operational
-    · exact .inl rfl
-    · exact .inr (h c hc ho)
+    by_cases hf : c.status = .failed
+    · exact .inl hf
+    · exact .inr (h c hc hf)
+
+/-- The pre-#3854 guarantee still holds: a failing OPERATIONAL constraint fails the query. -/
+theorem enforce_operational (cs : List Constraint) (h : enforce cs = true) :
+    ∀ c ∈ cs, c.status = .operational → c.ok = true := fun c hc ho =>
+  (enforce_spec cs).1 h c hc (by rw [ho]; decide)
+
+/-- #3854: a failing UNDER CONSTRUCTION constraint now fails the query, closing the
+window in which a write committed between the settle's read and its publish was
+checked by neither side. -/
+theorem enforce_underConstruction (cs : List Constraint) (h : enforce cs = true) :
+    ∀ c ∈ cs, c.status = .underConstruction → c.ok = true := fun c hc hu =>
+  (enforce_spec cs).1 h c hc (by rw [hu]; decide)
+
+/-- A FAILED constraint never blocks a write. -/
+theorem enforce_skips_failed (cs : List Constraint) :
+    enforce cs = enforce (cs.filter (·.status ≠ .failed)) := by
+  apply Bool.eq_iff_iff.2
+  rw [enforce_spec, enforce_spec]
+  constructor
+  · intro h c hc hf; exact h c (List.mem_filter.1 hc).1 hf
+  · intro h c hc hf; exact h c (List.mem_filter.2 ⟨hc, by simpa using hf⟩) hf
 
 /-! ## `Pending::commit` -/
 
@@ -258,6 +291,8 @@ structure Stats where
 structure GOps (G : Type) where
   createNodes : G → List Nat → Option G
   createRels : G → FMap (List (Nat × Nat × Nat)) → Option G
+  /-- `Graph::get_type_id_mut` (graph.rs): get-or-create a relationship type; infallible. -/
+  registerType : G → Nat → G
   setLabels : G → List Nat → List Nat → G
   removeLabels : G → List Nat → List Nat → G
   importNodeAttrs : G → FMap (List Entry) → G × Nat
@@ -289,13 +324,21 @@ def stRels (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   if p.relTypes = [] then some c
   else (o.createRels c.g p.relsByType).map fun g => { c with g := g, s := { c.s with relsCreated := c.s.relsCreated + p.relTypes.length } }
 
+/-- The types of `cancelled_relationships`, each once, in first-seen order
+(the `FxHashSet` at pending.rs:1366). -/
+def cancelledTypes (p : P) : List Nat :=
+  p.cancelledR.foldl (fun seen c => if c.2.1 ∈ seen then seen else seen ++ [c.2.1]) []
+
+/-- #3461 (pending.rs:1360-1371): register the type of every cancelled edge, so a
+type whose every edge a cascade cancelled is still in the schema. -/
+def stCancelTypes (o : GOps G) (p : P) (c : CS G) : CS G :=
+  { c with g := (cancelledTypes p).foldl o.registerType c.g }
+
 def stLabels (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   let g3 := if p.setL = [] then c.g else o.setLabels c.g (flatten p.setL).1 (flatten p.setL).2
-  -- `labels_removed += self.staged_labels_removed` (pending.rs:1398, #3459)
-  let s3 : Stats := { c.s with labelsRemoved := c.s.labelsRemoved + p.stagedRem }
-  if p.remL = [] then some { c with g := g3, s := s3 }
+  if p.remL = [] then some { c with g := g3 }
   else some { c with g := o.removeLabels g3 (flatten p.remL).1 (flatten p.remL).2,
-                     s := { s3 with labelsRemoved := s3.labelsRemoved + (flatten p.remL).1.length } }
+                     s := { c.s with labelsRemoved := c.s.labelsRemoved + (flatten p.remL).1.length } }
 
 def stNewN (o : GOps G) (p : P) (c : CS G) : CS G :=
   if p.newN = [] then c else
@@ -326,7 +369,7 @@ def stExplicit (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
 def stDelete (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   (stDelNodes o p c).bind fun c9 => (stImplicit o p c9).bind (stExplicit o p)
 
-/-- `Pending::commit` (:1362): once every write is done, `apply_index_writes` (:1465, once
+/-- `Pending::commit` (:1338): once every write is done, `apply_index_writes` (:1465, once
 for the whole `Commit`, since #3307) and then `enforce_constraints` (:1471, fn :1484) on that graph;
 the index-document absorb (:1478) is `PD.absorb_spec`. -/
 def finish (o : GOps G) (p : P) (c : CS G) : Option (P × G × Stats) :=
@@ -335,7 +378,8 @@ def finish (o : GOps G) (p : P) (c : CS G) : Option (P × G × Stats) :=
   if o.constraintsOk g' p' then some (p', g', c.s) else none
 
 def commit (o : GOps G) (p : P) (g0 : G) (s0 : Stats) : Option (P × G × Stats) :=
-  (stCreate o p ⟨g0, s0, [], []⟩).bind fun c1 => (stRels o p c1).bind fun c2 => (stLabels o p c2).bind fun c3 =>
+  (stCreate o p ⟨g0, s0, [], []⟩).bind fun c1 => (stRels o p c1).bind fun c2 =>
+    (stLabels o p (stCancelTypes o p c2)).bind fun c3 =>
     (stAttrs o p c3).bind fun c4 => (stDelete o p c4).bind (finish o p)
 
 theorem stCreate_s (o : GOps G) (p : P) (c c' : CS G) (h : stCreate o p c = some c') :
@@ -351,7 +395,7 @@ theorem stRels_s (o : GOps G) (p : P) (c c' : CS G) (h : stRels o p c = some c')
   · obtain ⟨g, -, rfl⟩ := Option.map_eq_some_iff.1 h; exact ⟨rfl, rfl, rfl⟩
 
 theorem stLabels_s (o : GOps G) (p : P) (c c' : CS G) (h : stLabels o p c = some c') :
-    c'.s = { c.s with labelsRemoved := c.s.labelsRemoved + p.stagedRem + (p.remL.map (·.2.length)).sum } ∧
+    c'.s = { c.s with labelsRemoved := c.s.labelsRemoved + (p.remL.map (·.2.length)).sum } ∧
       c'.imp = c.imp ∧ c'.act = c.act := by
   have hf := (flatten_spec p.remL).1
   unfold stLabels at h; dsimp only at h; split at h
@@ -415,7 +459,7 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
     (h : commit o p g0 s0 = some r) :
     r.2.2.nodesCreated = s0.nodesCreated + p.created.length ∧
     r.2.2.relsCreated = s0.relsCreated + p.relTypes.length ∧
-    r.2.2.labelsRemoved = s0.labelsRemoved + p.stagedRem + (p.remL.map (·.2.length)).sum ∧
+    r.2.2.labelsRemoved = s0.labelsRemoved + (p.remL.map (·.2.length)).sum ∧
     r.2.2.nodesDeleted = s0.nodesDeleted + p.deletedN.length ∧
     (∃ imp act : List Nat, r.1.deletedR = imp.foldl sins [] ++ act ∧
       r.2.2.relsDeleted = s0.relsDeleted + imp.length + act.length) ∧
@@ -429,6 +473,7 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
   obtain ⟨e1, i1, a1⟩ := stCreate_s o p _ c1 h1
   obtain ⟨e2, i2, a2⟩ := stRels_s o p _ c2 h2
   obtain ⟨e3, i3, a3⟩ := stLabels_s o p _ c3 h3
+  simp only [stCancelTypes] at e3 i3 a3
   obtain ⟨f1, f2, f3, f4, f5, i4, a4⟩ := stAttrs_s o p _ c4 h4
   have hi : c4.imp = [] := by rw [i4, i3, i2, i1]
   have ha : c4.act = [] := by rw [a4, a3, a2, a1]
@@ -438,9 +483,76 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
   split at h6
   · rename_i hok; cases h6
     simp only [e1, e2, e3] at f1 f2 f3 f4 f5
-    refine ⟨by simp [d1, f1, e3, e2, e1], by simp [d2, f2, e3, e2], by simp [d3, f3, e3], by simp [d4, f4, e3, e2, e1],
-      ⟨c5.imp, c5.act, rfl, by simp [d5, f5, e3, e2, e1]⟩, rfl, rfl, hok⟩
+    refine ⟨by simp [d1, f1], by simp [d2, f2], by simp [d3, f3], by simp [d4, f4],
+      ⟨c5.imp, c5.act, rfl, by simp [d5, f5]⟩, rfl, rfl, hok⟩
   · cases h6
+
+theorem mem_foldl_cancelledTypes (l : List (Nat × Nat × Nat × Nat)) (seen : List Nat) (t : Nat) :
+    t ∈ l.foldl (fun seen c => if c.2.1 ∈ seen then seen else seen ++ [c.2.1]) seen ↔
+      t ∈ seen ∨ ∃ c ∈ l, c.2.1 = t := by
+  induction l generalizing seen with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.foldl_cons]; rw [ih]
+    split
+    · constructor
+      · rintro (h | ⟨c, hc, rfl⟩)
+        · exact .inl h
+        · exact .inr ⟨c, List.mem_cons_of_mem _ hc, rfl⟩
+      · rintro (h | ⟨c, hc, rfl⟩)
+        · exact .inl h
+        · rcases List.mem_cons.mp hc with rfl | hc
+          · exact .inl (by assumption)
+          · exact .inr ⟨c, hc, rfl⟩
+    · simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false]
+      constructor
+      · rintro ((h | rfl) | ⟨c, hc, rfl⟩)
+        · exact .inl h
+        · exact .inr ⟨x, .inl rfl, rfl⟩
+        · exact .inr ⟨c, .inr hc, rfl⟩
+      · rintro (h | ⟨c, (rfl | hc), rfl⟩)
+        · exact .inl (.inl h)
+        · exact .inl (.inr rfl)
+        · exact .inr ⟨c, hc, rfl⟩
+
+/-- Every cancelled relationship's type is in `cancelledTypes`. -/
+theorem cancelledTypes_complete (p : P) (c : Nat × Nat × Nat × Nat) (hc : c ∈ p.cancelledR) :
+    c.2.1 ∈ cancelledTypes p :=
+  (mem_foldl_cancelledTypes p.cancelledR [] c.2.1).mpr (.inr ⟨c, hc, rfl⟩)
+
+theorem foldl_registers (o : GOps G) (reg : G → Nat → Prop)
+    (hreg : ∀ g t, reg (o.registerType g t) t) (hmono : ∀ g t u, reg g u → reg (o.registerType g t) u) :
+    ∀ (ts : List Nat) (g : G) (u : Nat), (reg g u ∨ u ∈ ts) → reg (ts.foldl o.registerType g) u := by
+  intro ts
+  induction ts with
+  | nil => intro g u h; simpa using h
+  | cons t ts ih =>
+    intro g u h
+    apply ih
+    rcases h with h | h
+    · exact .inl (hmono _ _ _ h)
+    · rcases List.mem_cons.mp h with rfl | h
+      · exact .inl (hreg _ _)
+      · exact .inr h
+
+/-- **`stCancelTypes_registers`** (#3461, fix of #3447 `CancelledTypeRegistered`):
+given get-or-create semantics for `get_type_id_mut` (it registers its type and
+keeps every registered one), after the step every cancelled relationship's type
+is registered, whether or not a surviving edge of that type exists. -/
+theorem stCancelTypes_registers (o : GOps G) (reg : G → Nat → Prop)
+    (hreg : ∀ g t, reg (o.registerType g t) t) (hmono : ∀ g t u, reg g u → reg (o.registerType g t) u)
+    (p : P) (c : CS G) : ∀ x ∈ p.cancelledR, reg (stCancelTypes o p c).g x.2.1 := fun x hx =>
+  foldl_registers o reg hreg hmono _ _ _ (.inr (cancelledTypes_complete p x hx))
+
+/-- The step keeps every type already registered (by `create_relationships_bulk`). -/
+theorem stCancelTypes_mono (o : GOps G) (reg : G → Nat → Prop)
+    (hmono : ∀ g t u, reg g u → reg (o.registerType g t) u) (p : P) (c : CS G) (u : Nat)
+    (h : reg c.g u) : reg (stCancelTypes o p c).g u := by
+  unfold stCancelTypes
+  generalize cancelledTypes p = ts
+  induction ts generalizing c with
+  | nil => exact h
+  | cons t ts ih => exact ih { c with g := o.registerType c.g t } (hmono _ _ _ h)
 
 /-! ## `node_has_changes` (#3464, pending.rs:784)
 
@@ -498,7 +610,7 @@ label changes nothing but still trips it. -/
 theorem nodeHasChanges_overapprox :
     ∃ p : P, nodeHasChanges p 0 = true ∧
       ∀ l, Labels.overlay (fun _ => true) ⟨(fget p.setL 0).getD [], (fget p.remL 0).getD []⟩ l = true := by
-  refine ⟨(⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], [], 0⟩ : P), by decide, ?_⟩
+  refine ⟨(⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], []⟩ : P), by decide, ?_⟩
   intro l; simp [Labels.overlay, fget]
 
 /-- `(fget m id).isSome` is key membership. -/

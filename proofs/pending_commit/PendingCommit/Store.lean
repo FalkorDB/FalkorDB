@@ -101,7 +101,7 @@ theorem blockAt_set (d : D) (h : DInv d) (bi bj : Nat) (B : CB) :
       by_cases hs : bj = bi
       · subst hs; simp [List.getElem?_set_self (by omega : bj % 64 < P.length)]
       · have hm : bj % 64 ≠ bi % 64 := by omega
-        rw [if_neg hs, List.getElem?_set_ne (Ne.symm hm)]
+        rw [ite_eq_right hs, List.getElem?_set_ne (Ne.symm hm)]
         rw [← hP]
         simp only [List.getD_eq_getElem?_getD] at hRget ⊢
         rw [← hd]
@@ -111,7 +111,7 @@ theorem blockAt_set (d : D) (h : DInv d) (bi bj : Nat) (B : CB) :
           | none => simp only [Option.getD_some, Option.getD_none]; exact rep_none _ _
           | some pg => rfl
     · have hs : bj ≠ bi := fun e => hd (by rw [e])
-      rw [if_neg hs]
+      rw [ite_eq_right hs]
       simp only [List.getD_eq_getElem?_getD, List.getElem?_set_ne (Ne.symm hd)]
       have := hRget (bj / 64)
       simp only [List.getD_eq_getElem?_getD] at this
@@ -181,9 +181,9 @@ theorem write_frame (d : D) (h : SInv d) (id : Nat) (B : CB) (hB : CInv B)
   · intro id' hne
     simp only [dread, blockOf, (hs (id' / 64) B).2]
     by_cases hb : id' / 64 = id / 64
-    · rw [if_pos hb]; simp only [Option.getD_some]
+    · rw [ite_eq_left hb]; simp only [Option.getD_some]
       rw [hb]; apply hother; omega
-    · rw [if_neg hb]
+    · rw [ite_eq_right hb]
 
 /-- **`dremove_ok`**. -/
 theorem dremove_ok (d : D) (h : SInv d) (id : Nat) :

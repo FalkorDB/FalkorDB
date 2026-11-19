@@ -164,14 +164,14 @@ theorem lwwGo_spec : ∀ (s : List IndexWrite), SortedTup s → ∀ (e : Nat) (b
     unfold lwwGo
     rw [lastOp_cons]
     by_cases heq : w'.tup = w.tup
-    · simp only [heq, if_true, ih]
+    · simp only [heq, ite_true, ih]
       by_cases he : w.tup = e
       · have : lastOp (w' :: r) e ≠ none := by rw [← he, ← heq]; exact lastOp_head w' r
         cases h : lastOp (w' :: r) e
         · exact absurd h this
         · simp
       · cases lastOp (w' :: r) e <;> simp [he]
-    · simp only [heq, if_false, List.mem_cons, exists_eq_or_imp]
+    · simp only [heq, ite_false, List.mem_cons, exists_eq_or_imp]
       have hlt : ∀ x ∈ w' :: r, w.tup < x.tup := by
         intro x hx
         have h1 := hle x hx
@@ -184,7 +184,7 @@ theorem lwwGo_spec : ∀ (s : List IndexWrite), SortedTup s → ∀ (e : Nat) (b
       · have hn : lastOp (w' :: r) e = none :=
           lastOp_none _ e (by intro x hx; have := hlt x hx; omega)
         rw [hn] at ih ⊢
-        simp only [he, if_true, true_and, Option.some.injEq]
+        simp only [he, ite_true, true_and, Option.some.injEq]
         constructor
         · rintro (h | ⟨x, hx, h1, h2⟩)
           · exact h
@@ -238,11 +238,11 @@ theorem step_mem (t : List Nat) (h : Sorted t) (T e : Nat) (A : Bool) :
     cases A
     · simp [tRemove, mem_erase_sorted _ _ h]
     · simp [tInsert, mem_sins]
-  · rw [if_neg hw]
+  · rw [ite_eq_right hw]
     cases A
-    · simp only [Bool.false_eq_true, if_false, tRemove, mem_erase_sorted _ _ h]
+    · simp only [Bool.false_eq_true, ite_false, tRemove, mem_erase_sorted _ _ h]
       exact ⟨fun h1 => h1.1, fun h1 => ⟨h1, Ne.symm hw⟩⟩
-    · simp only [if_true, tInsert, mem_sins]
+    · simp only [ite_true, tInsert, mem_sins]
       exact ⟨fun h1 => h1.elim id (fun h2 => absurd h2.symm hw), Or.inl⟩
 
 theorem mem_seqTree (log : List IndexWrite) : ∀ (t : List Nat), Sorted t → ∀ e,
@@ -264,8 +264,8 @@ theorem mem_seqTree (log : List IndexWrite) : ∀ (t : List Nat), Sorted t → �
     | none =>
       have key := step_mem t h w.tup e w.add
       by_cases hw : w.tup = e
-      · rw [if_pos hw] at key ⊢; exact key
-      · rw [if_neg hw] at key ⊢; exact key
+      · rw [ite_eq_left hw] at key ⊢; exact key
+      · rw [ite_eq_right hw] at key ⊢; exact key
 
 /-- The `log.retain(..)` of `writer_record` (`falkordb_index.rs:184-189`), `Building` only: keep every
     removal, and an addition only for an entity `place` puts below the cursor (`precedes next`);
@@ -412,7 +412,7 @@ def ColsSorted (x : FalkorDbIndex) (e : EntityType) : Prop :=
 theorem entry_setColumns_insert (x : FalkorDbIndex) (e : EntityType) (k : IndexKey) (en : IndexEntry) (l a : String) :
     (x.setColumns e (hmInsert (x.columns e) k en)).entry e l a =
       if k = (l, a) then some en else x.entry e l a := by
-  simp only [FalkorDbIndex.entry, columns_setColumns, if_true, hmGet_insert]
+  simp only [FalkorDbIndex.entry, columns_setColumns, ite_true, hmGet_insert]
 
 theorem numeric_setColumns_insert (x : FalkorDbIndex) (e : EntityType) (k : IndexKey) (en : IndexEntry) (l a : String) :
     (x.setColumns e (hmInsert (x.columns e) k en)).numeric e l a =
@@ -536,7 +536,7 @@ theorem hmGet_pushWrite (m : ColumnWrites) (k k' : IndexKey) (w : IndexWrite) :
     · subst hk
       rw [Option.map_eq_none_iff] at h
       simp [h]
-    · simp only [hk, if_false]
+    · simp only [hk, ite_false]
       cases hf : List.find? (fun p => p.1 == k') m <;> simp [hk]
 
 /-- After `extend`, a column's log is its old log followed by this write's changes to it, in order. -/

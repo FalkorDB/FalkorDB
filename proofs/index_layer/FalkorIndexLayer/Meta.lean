@@ -178,7 +178,7 @@ theorem keys_erase (m : AMap β) (a : String) : keys (erase m a) = (keys m).filt
 
 theorem get_cons (p : String × β) (m : AMap β) (a : String) :
     get (p :: m) a = if p.1 = a then some p.2 else get m a := by
-  by_cases h : p.1 = a <;> simp [get, List.find?_cons, h]
+  by_cases h : p.1 = a <;> simp [get, h]
 
 theorem get_isSome (m : AMap β) (a : String) : (get m a).isSome ↔ a ∈ keys m := by
   induction m with
@@ -257,13 +257,13 @@ theorem get_erase (m : AMap β) (a b : String) :
   | nil => simp [erase, get]
   | cons p m ih =>
     by_cases h1 : p.1 = a
-    · have e : erase (p :: m) a = erase m a := by simp [erase, List.filter_cons, h1]
+    · have e : erase (p :: m) a = erase m a := by simp [erase, h1]
       rw [e, ih, get_cons]
       by_cases h2 : b = a
       · simp [h2]
       · have : ¬ p.1 = b := fun h => h2 (h.symm.trans h1)
         simp [h2, this]
-    · have e : erase (p :: m) a = p :: erase m a := by simp [erase, List.filter_cons, h1]
+    · have e : erase (p :: m) a = p :: erase m a := by simp [erase, h1]
       rw [e, get_cons, ih, get_cons]
       by_cases h2 : p.1 = b
       · have : ¬ b = a := fun h => h1 (h2.trans h)

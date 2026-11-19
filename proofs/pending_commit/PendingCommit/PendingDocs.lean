@@ -26,9 +26,9 @@ import PendingCommit.PendingDeg
   it first, `apply_index_writes` call :1465, defined graph.rs:3890) and never touches it; `end_segment` clears it with
   the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
   modelled here are unchanged.
-* `effects_count` (:1958) is the documented sum; it does not count
-  `cancelled_*` (`effects_ignores_cancelled`, the suspicion noted in the root
-  file).
+* `effects_count` (:1970) is the documented sum; since #3461 it counts each
+  cancelled node and relationship twice (`effectsCount_eq_pre`,
+  `effects_counts_cancelled`; history `pre3461_effects_ignores_cancelled`).
 * `new`/`default` (:517, :510), `set_schema_baseline` (:547): field-level
   equations. (`node_id_space`, `rel_id_space`, `issued_*`,
   `open_id_boundaries` were removed by #2846.)
@@ -153,7 +153,7 @@ theorem absorbE_get : ∀ (L m : FMap (FMap (Nat × Nat))), (L.map (·.1)).Nodup
         | none => rfl
         | some w => exact absurd (List.mem_map_of_mem (f := (·.1)) (mem_of_fget L a w e')) hk.1
       simp only [hL, ite_true, Option.getD_none, Option.getD_some]
-      simp only [fget, Option.getD_some]
+      simp only [fget]
       rw [fextend_get inner _ (hi (a, inner) (by simp)) e]
     · simp only [hs, ite_false, Ne.symm hs]
 
@@ -356,13 +356,13 @@ structure Full where
   nodeLabels : List (Nat × Nat)
   schema : Nat × Nat × Nat × Nat
 
-/-- `Pending::new` / `Default` (:522, :515). -/
+/-- `Pending::new` / `Default` (:517, :510). -/
 def newFull : Full := ⟨PS.P0, ⟨Docs.empty, Docs.empty, Docs.empty⟩, [], [], (0, 0, 0, 0)⟩
 
 theorem new_spec : newFull.st.created = [] ∧ newFull.st.relsByType = [] ∧ newFull.st.deletedN = [] ∧
     newFull.st.cancelledN = [] ∧ newFull.st.newN = [] ∧ newFull.st.setL = [] ∧ newFull.logs.published = Docs.empty ∧
-    newFull.st.taken = [] ∧ newFull.schema = (0, 0, 0, 0) ∧ newFull.st.remL = [] ∧ newFull.st.stagedRem = 0 := by
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    newFull.st.taken = [] ∧ newFull.schema = (0, 0, 0, 0) := by
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `set_schema_baseline` (:547): the four dictionary sizes. -/
 def setSchemaBaseline (f : Full) (labels types nattrs rattrs : Nat) : Full := { f with schema := (labels, types, nattrs, rattrs) }
@@ -371,7 +371,7 @@ theorem accessors_spec (f : Full) (a b c d : Nat) :
     (setSchemaBaseline f a b c d).schema = (a, b, c, d) ∧ (setSchemaBaseline f a b c d).st = f.st :=
   ⟨rfl, rfl⟩
 
-/-- The per-segment reset half of `end_segment` (:1913-1970). `offload` is
+/-- The per-segment reset half of `end_segment` (:1885-1954). `offload` is
 the `big_entries >= OFFLOAD_THRESHOLD` branch (maps moved to a background
 thread instead of cleared in place). -/
 def clearMaps (p : PS.P) : PS.P :=
@@ -380,8 +380,7 @@ def clearMaps (p : PS.P) : PS.P :=
 def clearBranch (f : Full) (offload : Bool) : Full :=
   -- `std::mem::take` (offload) or `.clear()` (in place): both leave the maps empty
   let st1 : PS.P := if offload then clearMaps f.st else clearMaps f.st
-  let st2 : PS.P :=
-    { st1 with created := [], relTypes := [], deletedN := [], deletedR := [], cancelledN := [], stagedRem := 0 }
+  let st2 : PS.P := { st1 with created := [], relTypes := [], deletedN := [], deletedR := [], cancelledN := [] }
   let st3 : PS.P := { st2 with taken := [], cancelledR := [] }
   { f with st := st3, endpoints := [], nodeLabels := [], logs := { f.logs with docs := Docs.empty } }
 
@@ -401,12 +400,12 @@ theorem clear_spec (f : Full) :
     c.st.cancelledN = [] ∧ c.st.cancelledR = [] ∧ c.st.taken = [] ∧ c.st.newN = [] ∧ c.st.existN = [] ∧
     c.st.newR = [] ∧ c.st.existR = [] ∧ c.st.setL = [] ∧ c.st.remL = [] ∧ c.endpoints = [] ∧
     c.nodeLabels = [] ∧ c.logs.docs = Docs.empty ∧ c.logs.published = f.logs.published ∧
-    c.logs.deferred = f.logs.deferred ∧ c.schema = f.schema ∧ c.st.stagedRem = 0 := by
+    c.logs.deferred = f.logs.deferred ∧ c.schema = f.schema := by
   refine ⟨by simp [clearBranch], ?_⟩
   unfold clear clearBranch; cases decide (bigEntries f ≥ 4096) <;>
-    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- `end_segment` (:1913): the reset above, then `g.roll_id_batches()`
+/-- `end_segment` (:1885): the reset above, then `g.roll_id_batches()`
 (graph.rs:1611; `roll` here, `none` = its `Err`). The `Pending` reset happens
 whether or not the roll succeeds; the error is returned to `CommitOp`. -/
 def endSegment {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) : Full × Option Gr :=
@@ -420,20 +419,38 @@ stale log over a fresh boundary. -/
 theorem endSegment_spec {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) :
     (endSegment roll f g).1 = clear f ∧ (endSegment roll f g).2 = roll g := ⟨rfl, rfl⟩
 
-/-- `effects_count` (:1987); `staged_labels_removed` summed since #3459. -/
+/-- `effects_count` (:1970): since #3461 a cancelled node or relationship counts
+twice (its create and its delete). -/
 def effectsCount (p : PS.P) : Nat :=
+  p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length +
+    2 * p.cancelledN.length + 2 * p.cancelledR.length + p.newN.length +
+    p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
+    (p.remL.map (·.2.length)).sum
+
+/-- `effects_count` before #3461 (:1958 on 343e077f2): the cancelled sets were not summed. -/
+def effectsCountPre3461 (p : PS.P) : Nat :=
   p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length + p.newN.length +
     p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
-    (p.remL.map (·.2.length)).sum + p.stagedRem
+    (p.remL.map (·.2.length)).sum
 
-/-- `CREATE (a) DELETE a` leaves only `cancelled_nodes = {a}`: `effects_count`
-is 0, although the id went through the master's recycle bin (the suspicion
-recorded in the root file; not confirmed against a replica). -/
-theorem effects_ignores_cancelled : effectsCount { PS.P0 with cancelledN := [0] } = 0 := rfl
+/-- History (fixed by #3461, f203972c5): `CREATE (a) DELETE a` left only
+`cancelled_nodes = {a}` and `effects_count` was 0. -/
+theorem pre3461_effects_ignores_cancelled : effectsCountPre3461 { PS.P0 with cancelledN := [0] } = 0 := rfl
 
-/-- #3459: `CREATE (n:Foo) REMOVE n:Foo` leaves only the node and `staged_labels_removed = 1`; a removal
-that only cancelled a staged add still counts, so a segment of only such removals (on a committed
-node) keeps the gate open for the label it may have registered. -/
-theorem effects_counts_staged_removal : effectsCount { PS.P0 with stagedRem := 1 } = 1 := rfl
+/-- **#3461**: `effects_count` is the old sum plus two per cancelled entity, so a
+segment that cancelled anything has a positive count. -/
+theorem effectsCount_eq_pre (p : PS.P) :
+    effectsCount p = effectsCountPre3461 p + 2 * p.cancelledN.length + 2 * p.cancelledR.length := by
+  unfold effectsCount effectsCountPre3461; omega
+
+theorem effects_counts_cancelled (p : PS.P) (h : p.cancelledN ≠ [] ∨ p.cancelledR ≠ []) :
+    effectsCount p > 0 := by
+  rw [effectsCount_eq_pre]
+  rcases h with h | h
+  · have := List.length_pos_iff.mpr h; omega
+  · have := List.length_pos_iff.mpr h; omega
+
+/-- `CREATE (a) DELETE a`: the count is now 2. -/
+theorem effects_cancelled_node : effectsCount { PS.P0 with cancelledN := [0] } = 2 := rfl
 
 end PendingCommit.PD
