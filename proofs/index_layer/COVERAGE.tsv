@@ -104,7 +104,7 @@ graph/src/index/indexer.rs	has_indices	168	PROVEN	Meta.Ixr.hasIndices_iff
 graph/src/index/indexer.rs	memory_usage	173	PROVEN	Meta.Ixr.memoryUsage_spec
 graph/src/index/indexer.rs	create_index	181	PROVEN	Meta.Ixr.createIndex_validates, createIndex_ok, createIndex_textopts_err, bug_range_after_fulltext (NEW BUG); #3086 bump: createIndex_regen, createIndex_old_ticket_stale, createIndex_new_entry; #3166: createIndex_fresh_stopwords_agree (new label), property CreateIndexKeepsStopwords refuted by bug3166_stopwords_not_applied / bug3166_violates (OPEN)
 graph/src/index/indexer.rs	drop_index	375	PROVEN	Meta.Ixr.dropIndex_spec, dropAttrs_wf, retain_nonempty
-graph/src/index/indexer.rs	remove_if_empty	433	NOT COVERED	renamed from remove (#3856): removes the entry only while it still has no fields (a CREATE INDEX may have re-filled it); Meta.Ixr.remove_spec modelled the unconditional remove; model left to the proof bot
+graph/src/index/indexer.rs	remove_if_empty	433	PROVEN	Meta.Ixr.removeIfEmpty_spec, removeIfEmpty_keeps_filled (#3856: a CREATE INDEX that re-filled the entry survives), dropIndex_removeIfEmpty_erases (renamed from remove; old remove_spec contract on the no-race drop path)
 graph/src/index/indexer.rs	has_field_for_label	447	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
 graph/src/index/indexer.rs	is_label_indexed	460	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
 graph/src/index/indexer.rs	is_attr_indexed	475	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
