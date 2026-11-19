@@ -237,8 +237,20 @@ maintainer updates those proofs by hand (or from a same-repo branch).
   ```
   Fix every warning. Where a lint is wrong or the shape is deliberate, put a
   scoped `#[allow(clippy::<lint>, reason = "...")]` on the narrowest item it
-  covers (a bench/test module at most), never a crate-wide allow. Review
+  covers (a bench/test module at most), never a crate-wide allow. A deliberate
+  shape does not justify a `too_many_lines` allow: a new function, and each
+  function an existing one is split into, stays under the limit. The existing
+  "predates the length check" allows are not a precedent for new code. Review
   `--fix` output: its `map_or` rewrites can delete comments inside match arms.
+- Before writing a helper, search for one that already does the job, in
+  sibling modules and in every crate of the repository. Reuse or extend it; a
+  second implementation of the same concept is a review finding.
+- Keep change history in the commit message, not in comments. A comment
+  describes the code as it is and why. One that compares the code with an
+  earlier version of itself ("used to", "no longer", "as on main", "before X
+  became") goes in the commit message; the same words about runtime state
+  ("the reader no longer sees it") are fine. Citing the issue behind the code,
+  as "(#N)", is fine when it says why the code exists, not what it replaced.
 
 ## Configuration
 
