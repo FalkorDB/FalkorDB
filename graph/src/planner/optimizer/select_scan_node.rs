@@ -549,11 +549,7 @@ fn child_subtree_binds(
         }
         // `id` alone is ambiguous: it is an index into its own scope's env, so
         // the same number names different variables in different scopes.
-        if child
-            .get_variables()
-            .iter()
-            .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
-        {
+        if child.get_variables().iter().any(|v| v.key() == alias.key()) {
             binds = true;
         }
     }
@@ -575,10 +571,7 @@ fn subtree_may_bind(
         child
             .walk::<Bfs>()
             .any(|ir| matches!(ir, IR::Argument(None)))
-            || child
-                .get_variables()
-                .iter()
-                .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+            || child.get_variables().iter().any(|v| v.key() == alias.key())
     })
 }
 

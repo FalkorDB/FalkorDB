@@ -37,7 +37,7 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), edge.id, edge.scope_id) {
+            if ir_references_variable(parent.data(), edge) {
                 referenced = true;
                 break;
             }

@@ -40,7 +40,7 @@ pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), alias.id, alias.scope_id) {
+            if ir_references_variable(parent.data(), alias) {
                 referenced = true;
                 break;
             }

@@ -591,7 +591,7 @@ fn split_inline_attrs(
             matches!(
                 data,
                 ExprIR::Variable(v) if pending.contains(&v.key())
-                    && !local.iter().any(|l| l.id == v.id && l.scope_id == v.scope_id)
+                    && !local.iter().any(|l| l.key() == v.key())
             )
         })
     };
@@ -1378,11 +1378,8 @@ impl Planner {
         comprehension: ExtractedComprehension,
         extracted: &mut Vec<ExtractedComprehension>,
     ) -> DynTree<ExprIR<Variable>> {
-        let is_loop_var = |v: &Variable, loop_vars: &[Variable]| {
-            loop_vars
-                .iter()
-                .any(|l| l.id == v.id && l.scope_id == v.scope_id)
-        };
+        let is_loop_var =
+            |v: &Variable, loop_vars: &[Variable]| loop_vars.iter().any(|l| l.key() == v.key());
         let reads = Self::pattern_expr_variables(node);
         if !reads.iter().any(|v| is_loop_var(v, &self.loop_vars)) {
             let var = comprehension.var.clone();
@@ -1425,10 +1422,7 @@ impl Planner {
     fn pattern_expr_variables(node: &DynNode<ExprIR<Variable>>) -> Vec<Variable> {
         let mut vars: Vec<Variable> = vec![];
         let mut add = |v: &Variable| {
-            if !vars
-                .iter()
-                .any(|w| w.id == v.id && w.scope_id == v.scope_id)
-            {
+            if !vars.iter().any(|w| w.key() == v.key()) {
                 vars.push(v.clone());
             }
         };
@@ -2927,7 +2921,7 @@ impl Planner {
         let outer = |v: &Variable| {
             remap
                 .iter()
-                .find(|(inner, _)| inner.id == v.id && inner.scope_id == v.scope_id)
+                .find(|(inner, _)| inner.key() == v.key())
                 .map(|(_, outer)| outer.clone())
         };
         let idx = plan.root().idx();
@@ -3193,7 +3187,7 @@ impl Planner {
         let reads_bound = plan.node(idx).indices::<Bfs>().any(|i| {
             bound
                 .iter()
-                .any(|key| ir_references_variable(plan.node(i).data(), key.id, key.scope_id))
+                .any(|&key| ir_references_variable(plan.node(i).data(), key))
         });
         if !reads_bound {
             plan.node_mut(idx).push_parent(IR::CartesianProduct);

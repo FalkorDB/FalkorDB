@@ -371,9 +371,7 @@ fn bare_property_of(
     };
     // `Variable` equality is by id only; ids repeat across scopes.
     match node.get_child(0).map(|c| c.data()) {
-        Some(ExprIR::Variable(v)) if v.id == alias.id && v.scope_id == alias.scope_id => {
-            Some(attr.clone())
-        }
+        Some(ExprIR::Variable(v)) if v.key() == alias.key() => Some(attr.clone()),
         _ => None,
     }
 }
