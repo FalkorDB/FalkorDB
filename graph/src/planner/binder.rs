@@ -860,9 +860,10 @@ impl Binder {
             self.update_all_node_labels(&mut bound_body);
         }
 
-        // 2c. Remove inner-scope entries from node_labels so that a
-        // subsequent CALL body (which reuses the same scope_id range)
-        // doesn't inherit stale labels from this body.
+        // 2c. Remove inner-scope entries from node_labels so that a later
+        // scope with one of these ids (one the outer query's later WITH or
+        // RETURN opens, or a later CALL body) doesn't inherit stale labels
+        // from this body.
         let inner_scope_ids: Vec<u32> =
             (saved_env_stack_len as u32..self.env_stack.len() as u32).collect();
         self.node_labels
@@ -870,6 +871,10 @@ impl Binder {
         // Likewise the relationships the body's MATCH clauses bound: a later
         // scope with the same id must not see them as already matched.
         self.match_rel_vars
+            .retain(|key| !inner_scope_ids.contains(&key.scope_id));
+        // And the body's variable-length relationships: a named path that
+        // later gets the same `VarKey` must still reject `p.prop`.
+        self.varlen_rel_var_ids
             .retain(|key| !inner_scope_ids.contains(&key.scope_id));
 
         // 3. Capture subquery output, restore outer scope
