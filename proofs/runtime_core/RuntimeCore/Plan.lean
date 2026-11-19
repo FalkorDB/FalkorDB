@@ -3,8 +3,8 @@ Plan-shape helpers and constructors of `Runtime` (graph/src/runtime/runtime.rs).
 
 | here | there |
 | --- | --- |
-| `IRK`, `nodeVars`, `getVariables` | `GetVariables` trait (:209) and its `DynNode` impl (:213-330) |
-| `PT`, `returnNames`  | `ReturnNames` trait (:335) and its impl (:339-380) |
+| `IRK`, `VT`, `nodeVars`, `expand`, `getVariables`, `visible` | `GetVariables` trait (:256) and its `DynNode` impl (:260-396) |
+| `PT`, `returnNames`  | `ReturnNames` trait (:398) and its impl (:402-) |
 | `inspectBatch`       | `Runtime::inspect_batch` (:384) |
 | `RtInit`, `rtNew`    | `Runtime::new` (:406-463) |
 | `writeEscalation`, `resyncPublished`, `commitDeferred` | `write_escalation` (:494), `resync_published_indexes` (:500), `commit_deferred_indexes` (:510) |
@@ -15,7 +15,7 @@ Plan-shape helpers and constructors of `Runtime` (graph/src/runtime/runtime.rs).
 -/
 namespace RuntimeCore.Plan
 
-/-! ## `get_variables` (:213) -/
+/-! ## `get_variables` (:257-396) -/
 
 /-- The variable-bearing payload of each IR variant, as `get_variables` reads it. -/
 inductive IRK where
@@ -24,54 +24,144 @@ inductive IRK where
   | unwind (v : Nat)
   | createOrMerge (nodes rels paths : List Nat)
   | forEachOrLoadCsv (v : Nat)
-  | silent                     -- Delete, Argument, Set, Remove, Filter, products, applies, Sort, Skip, …
+  | silent                     -- Delete, Argument, Set, Remove, Filter, products, Apply, Sort, Skip, …
+  | semi                       -- SemiApply, AntiSemiApply, OrApplyMultiplexer (:320-323)
   | scan (node : Nat)          -- label/all/index/label-and-id scans, id seek
   | scored (ent : Nat) (score : Option Nat)  -- fulltext / vector scans
   | rel (r f t : Nat)          -- CondTraverse, EdgeByIndexScan, AllShortestPaths, ExpandInto
   | varLen (r f t : Nat) (path : Option Nat)
   | pathBuilder (vars : List Nat)
-  | aggregate (names : List Nat)
-  | project (names : List Nat)
+  | aggregate (names projOuts : List Nat)  -- `names`, then each projection's output (:379-385)
+  | project (exprs copyOuts : List Nat)    -- each expr's variable, then each copy's output (:386-390)
 
 def nodeVars : IRK → List Nat
-  | .optional vs | .procCall vs | .pathBuilder vs | .aggregate vs | .project vs => vs
+  | .optional vs | .procCall vs | .pathBuilder vs => vs
+  | .aggregate ns ps | .project ns ps => ns ++ ps
   | .unwind v | .forEachOrLoadCsv v | .scan v => [v]
   | .createOrMerge ns rs ps => ns ++ rs ++ ps
-  | .silent => []
+  | .silent | .semi => []
   | .scored e s => e :: s.toList
   | .rel r f t => [r, f, t]
   | .varLen r f t p => [r, f, t] ++ p.toList
 
-/-- The BFS walk (:214-327): collect each node's variables; the first `Project` ends the
-walk after contributing its names (`break`). `bfs` = the subtree in `walk::<Bfs>` order. -/
-def getVariables : List IRK → List Nat
+/-- A plan subtree (`DynNode<IR>`): its IR payload and its children, in order. -/
+inductive VT where
+  | node (k : IRK) (kids : List VT)
+
+/-- The children the walk enqueues after a node: none below `Project`/`Aggregate`
+(`continue`, :384, :389), only child 0 (the input) of an existence check (:321), all
+children otherwise (:392). -/
+def expand : IRK → List VT → List VT
+  | .project .., _ | .aggregate .., _ => []
+  | .semi, kids => kids.take 1
+  | _, kids => kids
+
+theorem sizeOf_append (a b : List VT) : sizeOf (a ++ b) + 1 = sizeOf a + sizeOf b := by
+  induction a with
+  | nil => simp; omega
+  | cons x a ih => simp [List.cons_append]; omega
+
+theorem one_le_sizeOf (l : List VT) : 1 ≤ sizeOf l := by
+  cases l <;> simp <;> omega
+
+theorem sizeOf_expand (k : IRK) (kids : List VT) : sizeOf (expand k kids) ≤ sizeOf kids := by
+  cases k <;> cases kids <;> simp [expand] <;> first | omega | exact one_le_sizeOf _
+
+/-- The BFS queue (:270-394): pop the front, collect its variables, enqueue `expand`.
+`get_variables` on a node `t` is `getVariables [t]`. -/
+def getVariables : List VT → List Nat
+  | [] => []
+  | .node k kids :: q => nodeVars k ++ getVariables (q ++ expand k kids)
+termination_by q => sizeOf q
+decreasing_by
+  have h1 := sizeOf_append q (expand k kids)
+  have h2 := sizeOf_expand k kids
+  simp
+  omega
+
+/-- The node kinds whose variables reach the rows leaving `t`: `t` itself, then (depth
+first) what is visible in the children `expand` keeps. -/
+def visible : VT → List IRK
+  | .node k kids => k :: match k with
+    | .project .. | .aggregate .. => []
+    | .semi => match kids with
+      | [] => []
+      | c :: _ => visible c
+    | _ => kids.flatMap visible
+
+theorem visible_node (k : IRK) (kids : List VT) :
+    visible (.node k kids) = k :: (expand k kids).flatMap visible := by
+  cases k <;> cases kids <;> simp [visible, expand]
+
+/-- One step of the walk, and what `expand` keeps. -/
+theorem getVariables_spec (k : IRK) (kids q : List VT) :
+    getVariables [] = [] ∧
+    getVariables (.node k kids :: q) = nodeVars k ++ getVariables (q ++ expand k kids) ∧
+    (∀ ns ps, expand (.project ns ps) kids = [] ∧ expand (.aggregate ns ps) kids = []) ∧
+    expand .semi kids = kids.take 1 ∧
+    (k ≠ .semi → (∀ ns ps, k ≠ .project ns ps) → (∀ ns ps, k ≠ .aggregate ns ps) →
+      expand k kids = kids) := by
+  refine ⟨by simp [getVariables], by rw [getVariables], fun _ _ => ⟨rfl, rfl⟩, rfl, ?_⟩
+  intro h1 h2 h3
+  cases k <;> simp_all [expand]
+
+/-- A variable is collected iff some visible node of some queued subtree carries it. -/
+theorem getVariables_mem (q : List VT) (v : Nat) :
+    v ∈ getVariables q ↔ ∃ t ∈ q, ∃ k ∈ visible t, v ∈ nodeVars k := by
+  induction q using getVariables.induct with
+  | case1 => simp [getVariables]
+  | case2 k kids q ih =>
+    rw [getVariables, List.mem_append, ih]
+    constructor
+    · rintro (h | ⟨t, ht, k', hk', hv⟩)
+      · exact ⟨.node k kids, List.mem_cons_self .., k, by simp [visible_node], h⟩
+      · rcases List.mem_append.1 ht with ht | ht
+        · exact ⟨t, List.mem_cons_of_mem _ ht, k', hk', hv⟩
+        · exact ⟨.node k kids, List.mem_cons_self .., k', by
+            rw [visible_node]; exact List.mem_cons_of_mem _ (List.mem_flatMap.2 ⟨t, ht, hk'⟩), hv⟩
+    · rintro ⟨t, ht, k', hk', hv⟩
+      rcases List.mem_cons.1 ht with rfl | ht
+      · rw [visible_node] at hk'
+        rcases List.mem_cons.1 hk' with rfl | hk'
+        · exact Or.inl hv
+        · obtain ⟨t', ht', hk''⟩ := List.mem_flatMap.1 hk'
+          exact Or.inr ⟨t', List.mem_append.2 (Or.inr ht'), k', hk'', hv⟩
+      · exact Or.inr ⟨t, List.mem_append.2 (Or.inl ht), k', hk', hv⟩
+
+/-- Nothing below a `Project`/`Aggregate` is collected: the subtree's variables are
+exactly the names it outputs, whatever its children bind. An existence check reports
+only its input (child 0); its branches are never collected. -/
+theorem getVariables_stops (ns ps : List Nat) (kids : List VT) (c : VT) (rest : List VT) :
+    getVariables [.node (.project ns ps) kids] = ns ++ ps ∧
+    getVariables [.node (.aggregate ns ps) kids] = ns ++ ps ∧
+    getVariables [.node .semi (c :: rest)] = getVariables [c] := by
+  refine ⟨?_, ?_, ?_⟩ <;> simp [getVariables, expand, nodeVars]
+
+/-- A scope boundary hides only its own subtree: a sibling branch queued after it is
+still collected (the walk no longer `break`s). -/
+theorem getVariables_sibling (ns ps : List Nat) (kids : List VT) (x : Nat) :
+    getVariables [.node .silent [.node (.project ns ps) kids, .node (.scan x) []]] =
+      ns ++ ps ++ [x] := by
+  simp [getVariables, expand, nodeVars]
+
+/-- Before #3521 (`walk::<Bfs>` with `break` at the first `Project`, Aggregate walked
+through, every SemiApply branch walked): the walk over the BFS order. Kept as a note. -/
+def pre3521_getVariables : List IRK → List Nat
   | [] => []
   | k :: ks => match k with
-    | .project names => names
-    | _ => nodeVars k ++ getVariables ks
+    | .project ns _ => ns
+    | _ => nodeVars k ++ pre3521_getVariables ks
 
-def isProject : IRK → Bool | .project _ => true | _ => false
+/-- The old walk reported variables hidden below an `Aggregate` (and dropped the
+sibling after a `Project`): `WITH count(*) AS c` over `MATCH (a)` still reported `a`'s
+id, which a later scope reuses (#2557). Fixed by #3521. -/
+theorem pre3521_hidden_reported :
+    pre3521_getVariables [.aggregate [0] [], .scan 0] = [0, 0] ∧
+    getVariables [.node (.aggregate [1] []) [.node (.scan 0) []]] = [1] ∧
+    pre3521_getVariables [.silent, .project [1] [], .scan 2] = [1] := by
+  simp [pre3521_getVariables, getVariables, expand, nodeVars]
 
-theorem getVariables_spec (bfs : List IRK) :
-    getVariables bfs = ((bfs.takeWhile (!isProject ·)).flatMap nodeVars) ++
-      (match bfs.dropWhile (!isProject ·) with
-       | .project ns :: _ => ns
-       | _ => []) := by
-  induction bfs with
-  | nil => rfl
-  | cons k ks ih =>
-    cases k <;> simp [getVariables, isProject, ih, nodeVars]
-
-/-- Nothing after the first `Project` (in BFS order) is collected. -/
-theorem getVariables_stops (pre post : List IRK) (ns : List Nat) (hp : ∀ k ∈ pre, isProject k = false) :
-    getVariables (pre ++ .project ns :: post) = pre.flatMap nodeVars ++ ns := by
-  induction pre with
-  | nil => rfl
-  | cons k ks ih =>
-    have hk := hp k (List.mem_cons_self ..)
-    cases k <;> simp_all [getVariables, isProject]
-
-/-! ## `get_return_names` (:339) -/
+/-! ## `get_return_names` (:403) -/
 
 inductive RK where
   | project (names : List Nat)

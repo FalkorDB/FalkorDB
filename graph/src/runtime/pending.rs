@@ -1542,9 +1542,18 @@ impl Pending {
             affected_edge_ids.remove(rel_id);
         }
 
-        // Check each OPERATIONAL constraint
+        // Check each constraint that has not failed: one UNDER CONSTRUCTION
+        // binds writes too, as in C (`Schema_EnforceConstraints` skips only
+        // `CT_FAILED`). The settle validates the version it read and publishes
+        // the result on whatever version is current by then, without looking
+        // at what was committed in between. Enforced only once OPERATIONAL, a
+        // write that committed in that window was checked by neither side, and
+        // the constraint went OPERATIONAL over data that violates it — 17 of
+        // 20 tries with a million-node label, never on C. Enforcing from
+        // creation closes the window from the writer's side, so the settle
+        // has only the data that predates the constraint left to judge.
         for constraint in constraints {
-            if constraint.status != ConstraintStatus::Operational {
+            if constraint.status == ConstraintStatus::Failed {
                 continue;
             }
 

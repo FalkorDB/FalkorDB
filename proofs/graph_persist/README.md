@@ -62,7 +62,7 @@ Yes:
 
 - `save_main`, `save_vkey`, `save_single`: SAVE writes the graph's own key plus K − 1 virtual keys holding slices `0..K`, with `key_count = K`;
 - `deleteVKeys_spec`: the virtual keys are deleted afterwards;
-- `onPersistence_spec`: BGSAVE never splits a graph;
+- `onPersistence_spec`: BGSAVE never splits a graph; `onPersistence_strip`: every persistence start strips the telemetry streams (#3844);
 - `metaSave_stale`: since #3161 virtual keys have the `graphmeta` type, and a leftover one writes nothing;
 - `load_main_first`, `load_main_last`: whatever position the graph's own key has in the load order, the registered graph and the key's value end up as the same finished graph.
 
@@ -158,14 +158,14 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 77 rows: `redis_type.rs` (28), `graphblas/serialization.rs` (17), `mvcc_graph.rs` (10), the encoder and decoder (7 each), `graph.rs` (5), `runtime.rs` (3).
+`COVERAGE.tsv` has 78 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (17), `mvcc_graph.rs` (10), the decoder (9), the encoder (7), `graph.rs` (5), `runtime.rs` (3).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 48 |
+| PROVEN | 50 |
 | MODELLED | 2 |
 | NOT COVERED | 16 |
-| AXIOMATISED | 11 |
+| AXIOMATISED | 10 |
 
 - **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`, since #3819 moved it); `rebuild_derived_matrices` (GraphBLAS).
 - **MODELLED:** `from_u64` (the payload-directory state tags, exercised by the live round trips) and `MvccGraph::from_graph` (the RDB load path, checked live).
