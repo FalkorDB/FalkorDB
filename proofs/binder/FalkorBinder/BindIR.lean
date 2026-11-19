@@ -15,7 +15,7 @@ import FalkorBinder.Scopes
 | `RC`, `bindIR` | the dispatcher `bind_ir` binder.rs:267-740 (sub-binders as parameters) |
 | `subqueryReturns`, `bindCallSubquery` | `bind_call_subquery` binder.rs:742-821 |
 | `pruneMatchRels` | its step 2c for `match_rel_vars` binder.rs:870-874 (#2981) |
-| `pruneVarlen` | its step 2c for `varlen_rel_var_ids` binder.rs:879-880 (#3891) |
+| `pruneVarlen` | its step 2c for `varlen_rel_var_ids` binder.rs:877-878 (#3891) |
 | `importProjections` | `build_import_projections` binder.rs:979-1001 |
 | `createCheck`, `bindGraphCreate` | `bind_graph_create` binder.rs:1557-1680 |
 -/
@@ -475,7 +475,7 @@ theorem pruneMatchRels_spec (mr : List (Nat × Nat)) (lo hi : Nat) (k : Nat × N
   simp only [pruneMatchRels, List.mem_filter, Bool.not_eq_true', Bool.and_eq_false_iff,
     decide_eq_false_iff_not, Nat.not_le, Nat.not_lt]
 
-/-- Step 2c of `bind_call_subquery` for `varlen_rel_var_ids` (binder.rs:879-880, #3891): its keys
+/-- Step 2c of `bind_call_subquery` for `varlen_rel_var_ids` (binder.rs:877-878, #3891): its keys
 are `(scope_id, id)`, so the body's scopes `[lo, hi)` are matched on the first component. -/
 def pruneVarlen (vl : List (Nat × Nat)) (lo hi : Nat) : List (Nat × Nat) :=
   vl.filter fun k => !(decide (lo ≤ k.1) && decide (k.1 < hi))
