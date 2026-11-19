@@ -88,29 +88,6 @@ jobs:
       - name: Install Rust stable
         run: rustup update stable --no-self-update && rustup default stable && rustc --version
 
-      - name: Install Valkey and Redis
-        if: ${{ !inputs.deps_only }}
-        run: |
-          set -euo pipefail
-          # The two formulae conflict (both install redis-* binaries; valkey's
-          # redis-server is Valkey), so Redis stays unlinked and is started by
-          # its Cellar path.
-          brew install valkey
-          brew install --skip-link redis
-          REDIS_SERVER=$(find "$(brew --cellar redis)" -path '*/bin/redis-server' | sort | tail -1)
-          # tests/common.py spawns /usr/local/bin/<server>-server.
-          sudo mkdir -p /usr/local/bin
-          sudo ln -sf "$(brew --prefix valkey)/bin/valkey-server" /usr/local/bin/valkey-server
-          sudo ln -sf "$REDIS_SERVER" /usr/local/bin/redis-server
-          for SERVER in valkey redis; do
-            VERSION=$("/usr/local/bin/${SERVER}-server" --version)
-            echo "${SERVER}-server: $VERSION"
-            case "$SERVER:$VERSION" in
-              "valkey:Valkey server"* | "redis:Redis server"*) ;;
-              *) echo "::error::/usr/local/bin/${SERVER}-server is not ${SERVER}: $VERSION"; exit 1 ;;
-            esac
-          done
-
       # Entries inside the cache directory are content-addressed by native-deps,
       # so restoring an older cache through restore-keys is safe: whatever no
       # longer matches is rebuilt, the rest is reused.
@@ -181,6 +158,70 @@ jobs:
             ${{ runner.temp }}/libomp
             ${{ runner.temp }}/native-deps-cache
           key: ${{ steps.deps-key.outputs.key }}
+
+      # The servers the module is tested on, at the versions every Dockerfile
+      # pins: build/check-server-pins.sh prints them, and fails here if the
+      # Dockerfiles disagree. Built from source and cached under the two
+      # versions and the recipe, so a pin bump or a recipe change rebuilds
+      # them. Like the native dependencies, the cache is written only by the
+      # deps_only run on main; the queue builds them when the cache misses.
+      # After the native-deps steps, so a failed server build on main cannot
+      # keep the dependency cache from being saved.
+      - name: Read the server pins
+        id: servers
+        run: |
+          set -euo pipefail
+          PINS=$(build/check-server-pins.sh)
+          REDIS_VERSION=$(sed -n 's/^REDIS_VERSION=//p' <<<"$PINS")
+          VALKEY_VERSION=$(sed -n 's/^VALKEY_VERSION=//p' <<<"$PINS")
+          if [ -z "$REDIS_VERSION" ] || [ -z "$VALKEY_VERSION" ]; then
+            echo "::error::build/check-server-pins.sh printed no pins: $PINS"; exit 1
+          fi
+          echo "REDIS_VERSION=$REDIS_VERSION" | tee -a "$GITHUB_ENV"
+          echo "VALKEY_VERSION=$VALKEY_VERSION" | tee -a "$GITHUB_ENV"
+          echo "key=macos-servers-${{ runner.arch }}-redis${REDIS_VERSION}-valkey${VALKEY_VERSION}-${{ hashFiles('build/build-server-macos.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the servers
+        id: servers-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: ${{ runner.temp }}/servers
+          key: ${{ steps.servers.outputs.key }}
+          # main only needs to know whether to build and save.
+          lookup-only: ${{ inputs.deps_only }}
+
+      - name: Build Valkey ${{ env.VALKEY_VERSION }} and Redis ${{ env.REDIS_VERSION }}
+        if: steps.servers-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          build/build-server-macos.sh valkey "$VALKEY_VERSION" "$RUNNER_TEMP/servers"
+          build/build-server-macos.sh redis "$REDIS_VERSION" "$RUNNER_TEMP/servers"
+
+      - name: Save the servers
+        if: inputs.deps_only && steps.servers-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: ${{ runner.temp }}/servers
+          key: ${{ steps.servers.outputs.key }}
+
+      - name: Put the servers in place
+        if: ${{ !inputs.deps_only }}
+        run: |
+          set -euo pipefail
+          # valkey-cli for the smoke test.
+          echo "$RUNNER_TEMP/servers/bin" >> "$GITHUB_PATH"
+          # tests/common.py spawns /usr/local/bin/<server>-server.
+          sudo mkdir -p /usr/local/bin
+          for PAIR in "valkey:Valkey:$VALKEY_VERSION" "redis:Redis:$REDIS_VERSION"; do
+            IFS=: read -r SERVER NAME PIN <<<"$PAIR"
+            sudo ln -sf "$RUNNER_TEMP/servers/bin/${SERVER}-server" "/usr/local/bin/${SERVER}-server"
+            VERSION=$("/usr/local/bin/${SERVER}-server" --version)
+            echo "${SERVER}-server: $VERSION"
+            case "$VERSION" in
+              "$NAME server v=$PIN "*) ;;
+              *) echo "::error::/usr/local/bin/${SERVER}-server is not ${NAME} ${PIN}: $VERSION"; exit 1 ;;
+            esac
+          done
 
       - name: Build libfalkordb.dylib
         if: ${{ !inputs.deps_only }}
