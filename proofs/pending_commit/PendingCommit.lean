@@ -285,10 +285,8 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
 
 ## Suspicions (not confirmed)
 
-* `effects_count` (pending.rs:1958) ignores `cancelled_nodes`, so a query that
-  only cancels (`CREATE (a) DELETE a`) ships no effect although its id went to
-  the master's bin; the replica's boundary is then one lower. By hand this
-  self-heals on the next create; not run against a replica.
+* ~~`effects_count` ignores `cancelled_nodes`~~: fixed by #3461 (pending.rs:1970
+  counts 2 per cancelled entity; `PD.effects_counts_cancelled`).
 * `decode_with_count` does not deduplicate attribute ids before `set_span`, which
   assumes a strictly sorted null-free span; reachable only via a malformed RDB.
   (`import_attrs_resolved` deduplicates since #3063; its GRAPH.BULK callers drop
@@ -326,8 +324,16 @@ commit/replay was never stated. Properties and refutations:
 * **#3447** `CancelledTypeRegistered`: `bug3447_cascade_drops_type_key`
   (`remove_pending_relationships_for_node` :902-960 drops the emptied group, so `commit`
   :1348-1361 never registers the type; main 5c7af54f2); replica id gap in effects_emit_apply
-  `bug3447_cancelled_edge_id_gap`.
+  `pre3461_bug3447_cancelled_edge_id_gap`. **Fixed by #3461** (f203972c5): `Pending::commit`
+  (:1360-1371) registers every cancelled relationship's type (`PC.stCancelTypes`,
+  `stCancelTypes_registers`); effects_emit_apply `relIdsCovered_after_commit`.
 No existing definition or theorem changed.
+
+## #3854: UNDER CONSTRUCTION constraints bind writes
+`enforce_constraints` (pending.rs:1500) now skips only FAILED constraints (as C's
+`Schema_EnforceConstraints`), not every non-OPERATIONAL one. `PC.Constraint.operational : Bool`
+became `status : CStatus`; `enforce_spec` now reads "passes iff every non-FAILED constraint's check
+passes"; added `enforce_operational`, `enforce_underConstruction`, `enforce_skips_failed`.
 
 ## Re-pinned to 5e475e6c9 (#3436, #3462)
 Re-pin only; no theorem added or changed. `Pending::commit`, `end_segment`, `enforce_constraints`

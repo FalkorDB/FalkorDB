@@ -46,6 +46,7 @@ use crate::serializers;
 use crate::serializers::decoder::LoadedKey;
 use crate::serializers::encoder::build_multi_key_payloads;
 use crate::serializers::{DECODE_STATE, VKEY_STATE};
+use crate::telemetry;
 use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
@@ -98,12 +99,14 @@ unsafe fn io_key_name(rdb: *mut RedisModuleIO) -> String {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graph_rdb_load(
     rdb: *mut RedisModuleIO,
-    _encver: i32,
+    encver: i32,
 ) -> *mut c_void {
     // Get the key name for looking up finalized graphs.
     let key_name = unsafe { io_key_name(rdb) };
 
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
+    match serializers::decoder::rdb_load_graph(rdb, encver, &key_name, unsafe {
+        io_cache_size(rdb)
+    }) {
         Ok(LoadedKey::Graph(graph)) => {
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(*graph);
@@ -366,8 +369,15 @@ pub unsafe extern "C" fn pre_fork_prepare() {
     }
 }
 
-/// Called by Redis persistence events. Creates virtual keys before RDB save,
-/// deletes them after save completes or fails.
+/// Called by Redis persistence events. Before a save it creates the virtual keys
+/// and strips the telemetry streams; after the save completes or fails it deletes
+/// the virtual keys.
+///
+/// The strip runs at every kind of start, which is C's `_IsEventPersistenceStart`:
+/// in the fork child of a BGSAVE, a diskless sync or an AOF rewrite it deletes the
+/// child's copy only, so the live server keeps its telemetry; in a synchronous
+/// `SAVE` or `DEBUG RELOAD` there is no copy, and the node's telemetry goes — which
+/// is acceptable for a stream that is trimmed, best-effort and local.
 ///
 /// # Safety
 /// Called by Redis internals with a valid module context.
@@ -381,12 +391,16 @@ pub unsafe extern "C" fn on_persistence(
         match subevent {
             raw::REDISMODULE_SUBEVENT_PERSISTENCE_SYNC_RDB_START => {
                 create_virtual_keys(ctx);
+                strip_telemetry_streams(ctx);
             }
-            raw::REDISMODULE_SUBEVENT_PERSISTENCE_RDB_START => {
-                // BGSAVE fork child: skip create_virtual_keys entirely.
-                // The fork child must avoid Rust heap allocations because
-                // glibc malloc arena locks may be held by parent threads
-                // that no longer exist in the child, causing deadlock.
+            raw::REDISMODULE_SUBEVENT_PERSISTENCE_RDB_START
+            | raw::REDISMODULE_SUBEVENT_PERSISTENCE_AOF_START
+            | raw::REDISMODULE_SUBEVENT_PERSISTENCE_SYNC_AOF_START => {
+                // No virtual keys here: a graph saved without them is written whole
+                // under its own key (`graph_rdb_save`). The first two run in a fork
+                // child, where the registry lock the strip takes is the one
+                // `on_fork_child` has already taken and released.
+                strip_telemetry_streams(ctx);
             }
             raw::REDISMODULE_SUBEVENT_PERSISTENCE_ENDED
             | raw::REDISMODULE_SUBEVENT_PERSISTENCE_FAILED => {
@@ -395,6 +409,23 @@ pub unsafe extern "C" fn on_persistence(
             #[allow(clippy::match_same_arms)]
             _ => {}
         }
+    }
+}
+
+/// Delete the telemetry stream of every registered graph, so that none reaches the
+/// snapshot about to be written. See [`telemetry::strip_stream`] for why.
+///
+/// The graphs come from `GRAPH_REGISTRY`, as in [`create_virtual_keys`]. A graph
+/// that has left the registry is not there to be found, so `graph_free` queues its
+/// stream and this pass deletes what is queued as well.
+unsafe fn strip_telemetry_streams(ctx: *mut RedisModuleCtx) {
+    telemetry::delete_streams_of_freed_graphs(ctx);
+    // Names copied out and the lock released before any key is touched: deleting a
+    // key calls back into the module (keyspace events), and nothing done under the
+    // registry lock should be able to come back for it.
+    let names: Vec<String> = GRAPH_REGISTRY.lock().keys().cloned().collect();
+    for name in &names {
+        telemetry::strip_stream(ctx, name);
     }
 }
 
@@ -912,7 +943,7 @@ pub fn wrong_type_compat(err: ValkeyError) -> ValkeyError {
 
 pub static GRAPH_TYPE: ValkeyType = ValkeyType::new(
     "graphdata",
-    19,
+    serializers::ENCODING_VERSION,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graph_rdb_load),
@@ -953,10 +984,12 @@ pub static GRAPH_TYPE: ValkeyType = ValkeyType::new(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graphmeta_rdb_load(
     rdb: *mut RedisModuleIO,
-    _encver: i32,
+    encver: i32,
 ) -> *mut c_void {
     let key_name = unsafe { io_key_name(rdb) };
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
+    match serializers::decoder::rdb_load_graph(rdb, encver, &key_name, unsafe {
+        io_cache_size(rdb)
+    }) {
         Ok(_) => {
             // Return a non-null dummy value. Redis needs non-null for successful load.
             Box::into_raw(Box::new(0u8)).cast()
@@ -1010,7 +1043,7 @@ unsafe extern "C" fn graphmeta_aux_load(
 
 pub static GRAPHMETA_TYPE: ValkeyType = ValkeyType::new(
     "graphmeta",
-    19,
+    serializers::ENCODING_VERSION,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graphmeta_rdb_load),

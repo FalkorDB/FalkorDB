@@ -456,6 +456,21 @@ def test_match_node_by_id():
     assert res1.result_set == res2.result_set == [[1000]]
     assert res1.run_time_ms < res2.run_time_ms
 
+def test_stacked_filters_keep_their_order():
+    # The optimizer merges the second MATCH's filter into the first's. The
+    # first one must still run first: it is what keeps `1 / (n.v - 1)` from
+    # dividing by zero.
+    query("UNWIND range(1, 5) AS i CREATE (:N {v: i})", write=True)
+    res = query(
+        "MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1 / (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[15]]
+    res = query(
+        "MATCH (n:N) WHERE n.v > 1 WITH n MATCH (m:N) WHERE m.v % (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[9]]
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
@@ -2183,6 +2198,39 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_var_len_traverse_keeps_earlier_clause_below_it():
+    """Reversing a variable-length traverse to scan its more selective end
+    must not drop an earlier clause stitched under it: a MATCH … WHERE
+    filter or an UNWIND (#2972, variable-length shape)."""
+    query(
+        "CREATE (:S {v: 1})-[:R]->(:B {w: 2}), (:S {v: 0})-[:R]->(:B {w: 2}),"
+        " (:S {v: 0})-[:R]->(:X)-[:R]->(:B {w: 2})",
+        write=True,
+    )
+
+    res = query(
+        "MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN a.v, b.w"
+    )
+    assert res.result_set == [[1, 2]]
+
+    res = query(
+        "UNWIND [1, 2] AS i MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN count(*)"
+    )
+    assert res.result_set == [[2]]
+
+    res = query("UNWIND [1, 2] AS i MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    assert res.result_set == [[8]]
+
+    # A single MATCH still scans the selective end.
+    res = query("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    assert res.result_set == [[2]]
+
+    plan = str(
+        common.g.explain("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    )
+    assert "Node By Label Scan | (b:B)" in plan, plan
 
 
 def test_variable_named_like_an_anonymous_entity():

@@ -29,7 +29,9 @@ committed or replayed. Line numbers are current main (5c7af54f2).
   (ops/create.rs:353-400) registers labels eagerly but not types. Property
   `CancelledTypeRegistered`. Refuted: `bug3447_cascade_drops_type_key`; the
   emitter consequence (an id gap on the replica) is proofs/effects_emit_apply
-  `CancelGap.lean`.
+  `CancelGap.lean`. **Fixed by #3461** (f203972c5) at commit, not here: the group
+  is still dropped (the theorem still holds), but `Pending::commit` now registers
+  every `cancelled_relationships` type (`PC.stCancelTypes_registers`).
 -/
 namespace PendingCommit.PS
 open PA

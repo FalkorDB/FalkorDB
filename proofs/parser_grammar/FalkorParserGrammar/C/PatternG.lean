@@ -13,13 +13,14 @@ namespace FalkorParserGrammar.C
 /-- Places where the Rust parser accepts more than Cypher.g4. -/
 structure Ext where
   /-- `MATCH a MATCH b` / `CREATE a CREATE b`: the next clause's keyword
-  continues the same pattern (cypher.rs:1571-1576, W2-binder-1). -/
+  continues the same pattern (W2-binder-1). Off in Rust since #2981: the
+  keyword ends the pattern (cypher.rs:1581-1587), and starts a new clause. -/
   fold : Bool
   /-- `p = allShortestPaths(...)` in MATCH (Neo4j syntax, not in Cypher.g4). -/
   asp : Bool
 
 def Ext.g4 : Ext := ⟨false, false⟩
-def Ext.rust : Ext := ⟨true, true⟩
+def Ext.rust : Ext := ⟨false, true⟩
 
 /-- `( oC_Variable SP? )?` with the fresh-name action for an absent one. -/
 inductive GOptVar : PS → Alias → PS → Prop

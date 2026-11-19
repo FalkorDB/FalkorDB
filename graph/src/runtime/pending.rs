@@ -926,11 +926,9 @@ impl Pending {
             self.created_rel_types.remove(&rel_id);
             if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
                 entries.retain(|(rid, _, _)| *rid != rel_id);
-                // And drop the group once it is empty. A type whose every edge
-                // was cascaded away was never registered on the graph — nothing
-                // of that type reached `create_relationships_bulk` — so leaving
-                // the key behind hands the effects emitter a type name it
-                // cannot resolve.
+                // And drop the group once it is empty, so commit creates no
+                // edges for it. The type itself is still registered at commit,
+                // from `cancelled_relationships`.
                 if entries.is_empty() {
                     self.created_rels_by_type.remove(&type_name);
                 }
@@ -1366,6 +1364,18 @@ impl Pending {
                     .map_err(|e| e.to_string())?;
             }
         }
+        // A type whose every edge a cascade cancelled never reached the loop
+        // above, yet it was named by this segment: the snapshot a reply reads
+        // states it by id, and so does the cancelled pair the effects carry to
+        // the replica. Register it, as C does when the edge is created.
+        // Once per type: a bulk cascade cancels many edges of the same few
+        // types, and each lookup scans the schema.
+        let mut cancelled_types: FxHashSet<&Arc<String>> = FxHashSet::default();
+        for r in &self.cancelled_relationships {
+            if cancelled_types.insert(&r.type_name) {
+                g.get_type_id_mut(&r.type_name);
+            }
+        }
         if !self.set_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.set_labels);
             // Pairs for nodes created in this transaction cannot already be
@@ -1532,9 +1542,18 @@ impl Pending {
             affected_edge_ids.remove(rel_id);
         }
 
-        // Check each OPERATIONAL constraint
+        // Check each constraint that has not failed: one UNDER CONSTRUCTION
+        // binds writes too, as in C (`Schema_EnforceConstraints` skips only
+        // `CT_FAILED`). The settle validates the version it read and publishes
+        // the result on whatever version is current by then, without looking
+        // at what was committed in between. Enforced only once OPERATIONAL, a
+        // write that committed in that window was checked by neither side, and
+        // the constraint went OPERATIONAL over data that violates it — 17 of
+        // 20 tries with a million-node label, never on C. Enforcing from
+        // creation closes the window from the writer's side, so the settle
+        // has only the data that predates the constraint left to judge.
         for constraint in constraints {
-            if constraint.status != ConstraintStatus::Operational {
+            if constraint.status == ConstraintStatus::Failed {
                 continue;
             }
 
@@ -1969,6 +1988,11 @@ impl Pending {
             + self.created_rel_types.len() as u64
             + self.deleted_nodes.len()
             + self.deleted_relationships.len()
+            // A cancelled entity is emitted as a create and a delete, and its
+            // type (registered at commit) as a schema addition: a commit holding
+            // nothing else must still build its buffer.
+            + 2 * self.cancelled_nodes.len()
+            + 2 * self.cancelled_relationships.len() as u64
             + self.new_nodes_attrs.len() as u64
             + self.existing_nodes_attrs.len() as u64
             + self.new_relationships_attrs.len() as u64
