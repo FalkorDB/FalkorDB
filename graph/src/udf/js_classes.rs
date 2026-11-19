@@ -53,7 +53,7 @@
 //!   enforcement via the UDF deadline.
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -760,14 +760,19 @@ fn js_traverse_impl<'js>(
             // self-loop at depth 1) reports it, as C does.
             let mut visited: HashSet<u64> = HashSet::new();
 
-            // Track seen relationship IDs per source node to avoid emitting
-            // the same edge twice when returnType == "edges". With direction
-            // "both", an edge A->B discovered from A at depth N would otherwise
-            // be rediscovered from B at depth N+1; and since the start node can
-            // re-enter the frontier (self-loop or cycle back to it), a directed
-            // edge out of it would be re-emitted at the next depth.
-            let dedup_edges = return_type == "edges";
-            let mut seen_edges: HashMap<u64, HashSet<u64>> = HashMap::new();
+            // Nodes whose edges have been collected. Each node is expanded
+            // once: the start node can re-enter the frontier (it is reported
+            // when an edge reaches it) but is not expanded a second time, so a
+            // directed traversal emits each edge once, from its source.
+            //
+            // With direction "both" an edge is listed at both of its
+            // endpoints. Expanding a node emits all of its edges, so an edge
+            // to a node that is already expanded was emitted then, and is
+            // skipped. A node joins the set only after its own edges are
+            // done, which keeps its self-loops.
+            let mut expanded: HashSet<u64> = HashSet::new();
+            let return_edges = return_type == "edges";
+            let both_directions = direction == "both";
 
             let mut frontier = vec![start_id];
 
@@ -784,6 +789,9 @@ fn js_traverse_impl<'js>(
 
                 {
                     for &nid in &frontier {
+                        if expanded.contains(&nid) {
+                            continue;
+                        }
                         let mut neighbor_edges = collect_edges(graph, nid, &direction);
 
                         if !type_filters.is_empty() {
@@ -809,29 +817,16 @@ fn js_traverse_impl<'js>(
                                 }
                             }
 
-                            if return_type == "edges" {
-                                // De-dup edges so that an edge found once isn't
-                                // re-emitted when rediscovered at a later depth.
-                                if dedup_edges {
-                                    let source_seen = seen_edges.entry(nid).or_default();
-                                    if source_seen.insert(rel_id) {
-                                        // Also mark in the neighbor's set so it
-                                        // won't be emitted again from the other side.
-                                        seen_edges.entry(neighbor_id).or_default().insert(rel_id);
-                                        edges_to_create.push((rel_id, src_id, dst_id));
-                                    } else {
-                                        // Already emitted from this source — but
-                                        // it was from the other endpoint; skip.
-                                    }
-                                } else {
-                                    edges_to_create.push((rel_id, src_id, dst_id));
-                                }
+                            if return_edges && !(both_directions && expanded.contains(&neighbor_id))
+                            {
+                                edges_to_create.push((rel_id, src_id, dst_id));
                             }
 
                             if visited.insert(neighbor_id) {
                                 next_frontier.push(neighbor_id);
                             }
                         }
+                        expanded.insert(nid);
                     }
                 }
 
