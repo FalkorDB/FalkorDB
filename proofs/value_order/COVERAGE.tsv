@@ -66,7 +66,7 @@ graph/src/runtime/value.rs	Decode::decode	2177	NOT COVERED	serialisation; outsid
 graph/src/runtime/ops/sort.rs	OrderedKey::cmp_key	76	PROVEN	Main.cmpKey (sort_cmp, DESC = swap; #2912 b033aecc6): Main.cmpKey_total (total preorder either direction)
 graph/src/runtime/batch.rs	Column::compare_at	401	PROVEN	Main.compareAt (Ints cmpI, Floats sort_cmp_f64, Values/ids sort_cmp): Main.compareAt_eq_scMain (every lane = sort_cmp on get), Main.scMain_total
 graph/src/runtime/ops/distinct.rs	DistinctOp::next	62	PROVEN	rowHash: fx_row_collision, fx_collision_general (bug: second colliding row dropped); set insert not modelled
-graph/src/runtime/functions/aggregation.rs	min_batch	498	PROVEN	minFold (NaN and null comparisons ignored, #2917): min_nan_ignored, minFold_step_int
+graph/src/runtime/functions/aggregation.rs	min_batch	499	PROVEN	minFold (NaN and null comparisons ignored, #2917): min_nan_ignored, minFold_step_int
 graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	NOT COVERED	op mapping; not modelled
 graph/src/runtime/vectorized.rs	CmpOp::flip	84	NOT COVERED	operand flip; not modelled
 graph/src/runtime/vectorized.rs	compare_i64_column	105	NOT COVERED	typed-column fast path; not modelled
@@ -81,4 +81,4 @@ graph/src/runtime/value.rs	sort_cmp_f32	1947	PROVEN	Main.scF32: Main.scF32_key (
 graph/src/runtime/value.rs	f32_hash_bits	1961	PROVEN	f32HashBits (Model): Main.f32HashBits_of_eq, Main.main_nans_one_key
 graph/src/runtime/value.rs	sort_cmp_int_float	1973	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
 graph/src/runtime/batch.rs	Batch::compare_rows_at	1289	PROVEN	Main.compareRowsAt: Main.compareRowsAt_eq_scMain (Unbound ties, else sort_cmp)
-graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Main.listSort (sort_by(Value::sort_cmp)): Main.listSort_perm, Main.listSort_sorted (output pairwise sort_cmp-ordered, well-formed input), Main.scMain_total (total order: W2-strlist-1 panic fixed by #2912)
+graph/src/runtime/functions/list.rs	list_sort	198	PROVEN	Main.listSort (sort_by(Value::sort_cmp)): Main.listSort_perm, Main.listSort_sorted (output pairwise sort_cmp-ordered, well-formed input), Main.scMain_total (total order: W2-strlist-1 panic fixed by #2912)

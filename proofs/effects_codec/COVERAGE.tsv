@@ -35,19 +35,19 @@ graph/src/effects/v3/records.rs	IndexFields::decode	354	PROVEN	RecArms.bFields (
 graph/src/effects/v3/records.rs	IndexSchemas::encode	396	PROVEN	RecArms.bSchemas (sorts by id): bSchemas_enc_sorted, bSchemas.rt
 graph/src/effects/v3/records.rs	IndexSchemas::decode	429	PROVEN	RecArms.bSchemas (EmptyIndexSchemaList on 0): bSchemas.rt, readN_length
 graph/src/effects/v3/records.rs	check_index_record	464	PROVEN	RecFull.checkIndex: checkIndex_ok
-graph/src/effects/v3/records.rs	read_record	619	PROVEN	RecFull.readRecord/arm: readRecord_encRecord (all 14 opcodes), readRecord_encRecord_wf, readRecord_empty, readRecord_batched, readRecord_single
-graph/src/effects/v3/records.rs	read_constraint_props	826	PROVEN	RecArms.bProps (u8 count, guard 11): bItems.rt
-graph/src/effects/v3/records.rs	check_endpoint_columns	846	PROVEN	RecFull.checkEndpoints: checkEndpoints_ok
-graph/src/effects/v3/records.rs	check_row_shape	872	PROVEN	RecFull.checkRowShape (checked_mul == Some(len)): checkRowShape_ok, encRecord_rowShape_refused, encRecord_ok_shape (#2916)
-graph/src/effects/v3/records.rs	write_constraint_tail	891	PROVEN	RecFull.bodyConstraint tail (schema_id, string, u8 props; >255 = panic): readRecord_encRecord
-graph/src/effects/v3/records.rs	Record::encode	925	PROVEN	RecFull.encRecord: readRecord_encRecord, readRecord_encRecord_wf (no shape hypothesis since #2916), encRecord_ok_shape, encRecord_rowShape_refused, encRecord_empty_refused/never_ok; Records.encRec_refuses_shape
-graph/src/effects/v3/records.rs	Record::decode	1194	PROVEN	= readRecord: readRecord_encRecord
-graph/src/effects/v3/records.rs	Payload::deref	1219	PROVEN	Payload.openPayload result bytes: openPayload_plain, openPayload_maybeCompress
-graph/src/effects/v3/records.rs	Payload::records	1227	CONDITIONAL	Payload.readAllRecords from the start: records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
-graph/src/effects/v3/records.rs	Records::next	1250	CONDITIONAL	Payload.readAllRecords (stop at end, fuse on error): records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
-graph/src/effects/v3/records.rs	open_payload	1269	PROVEN	Payload.openPayload: openPayload_plain, openPayload_maybeCompress (zstd/crc as CodecOK hypothesis)
-graph/src/effects/v3/records.rs	maybe_compress	1369	PROVEN	Payload.maybeCompress (#3278: u32::try_from guard, frame_prefix): openPayload_maybeCompress (transparent for records of any length), maybeCompress_shrinks, seal_disabled
-graph/src/effects/v3/records.rs	frame_prefix	1419	PROVEN	Payload.framePrefix: framePrefix_some, framePrefix_none (a length >= 2^32 is refused, not truncated), framePrefix_length; used by openPayload_maybeCompress
+graph/src/effects/v3/records.rs	read_record	620	PROVEN	RecFull.readRecord/arm: readRecord_encRecord (all 14 opcodes), readRecord_encRecord_wf, readRecord_empty, readRecord_batched, readRecord_single
+graph/src/effects/v3/records.rs	read_constraint_props	827	PROVEN	RecArms.bProps (u8 count, guard 11): bItems.rt
+graph/src/effects/v3/records.rs	check_endpoint_columns	847	PROVEN	RecFull.checkEndpoints: checkEndpoints_ok
+graph/src/effects/v3/records.rs	check_row_shape	873	PROVEN	RecFull.checkRowShape (checked_mul == Some(len)): checkRowShape_ok, encRecord_rowShape_refused, encRecord_ok_shape (#2916)
+graph/src/effects/v3/records.rs	write_constraint_tail	892	PROVEN	RecFull.bodyConstraint tail (schema_id, string, u8 props; >255 = panic): readRecord_encRecord
+graph/src/effects/v3/records.rs	Record::encode	927	PROVEN	RecFull.encRecord: readRecord_encRecord, readRecord_encRecord_wf (no shape hypothesis since #2916), encRecord_ok_shape, encRecord_rowShape_refused, encRecord_empty_refused/never_ok; Records.encRec_refuses_shape
+graph/src/effects/v3/records.rs	Record::decode	1196	PROVEN	= readRecord: readRecord_encRecord
+graph/src/effects/v3/records.rs	Payload::deref	1221	PROVEN	Payload.openPayload result bytes: openPayload_plain, openPayload_maybeCompress
+graph/src/effects/v3/records.rs	Payload::records	1229	CONDITIONAL	Payload.readAllRecords from the start: records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
+graph/src/effects/v3/records.rs	Records::next	1252	CONDITIONAL	Payload.readAllRecords (stop at end, fuse on error): records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
+graph/src/effects/v3/records.rs	open_payload	1271	PROVEN	Payload.openPayload: openPayload_plain, openPayload_maybeCompress (zstd/crc as CodecOK hypothesis)
+graph/src/effects/v3/records.rs	maybe_compress	1371	PROVEN	Payload.maybeCompress (#3278: u32::try_from guard, frame_prefix): openPayload_maybeCompress (transparent for records of any length), maybeCompress_shrinks, seal_disabled
+graph/src/effects/v3/records.rs	frame_prefix	1421	PROVEN	Payload.framePrefix: framePrefix_some, framePrefix_none (a length >= 2^32 is refused, not truncated), framePrefix_length; used by openPayload_maybeCompress
 graph/src/effects/v3/blocks.rs	RelType::encode	29	PROVEN	RecBlocks.bU32 via schemaId: relType_rt, schemaId_roundtrip
 graph/src/effects/v3/blocks.rs	RelType::decode	39	PROVEN	RecBlocks.bU32: relType_rt; used in bodyUpdEdge/bodyCrEdge/bodyDelEdge
 graph/src/effects/writer.rs	EffectWrite::schema_id	95	PROVEN	Cursor.schemaId: schemaId_roundtrip
