@@ -66,7 +66,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-traverse-1**: an unreferenced named edge is collapsed even though a sibling traverse still reads it for uniqueness (`reduce_expand_into.rs:118-143`): 1 where C gives 2. Check against PR #2918.
 
 ### Wrong results: runtime operators
-- **W2-apply-1**: a ValueHashJoin inside a batched Apply or Optional joins rows from different outer rows, because it is missing from the `can_batch` blacklists (`apply.rs:119-133`, `optional.rs:104-106`): 16 where C gives 8.
+- **W2-apply-1**: a ValueHashJoin inside a batched Apply or Optional joined rows from different outer rows (16 where C gives 8). **FIXED by #3035 (closes #3012)**: the join keeps one hash table per `origin_row` and probes with the left row's origin, so the join stays in the batched sub-plan. The Lean model of the old origin-blind join (`vhj_not_separable`, `canBatchApply_admits_vhj`) is kept as the historical counterexample; the proof bot maintains the Lean side.
 - **W2-apply-4**: the all-bound MERGE shortcut drops matches visible to a path variable (`merge.rs:368-400`): `count(p)` is 1 where C gives 2.
 - **W2-apply-5** (low): batched Optional moves the NULL rows after the matched rows, which `collect()` exposes.
 - **W2-traverse-2**: the bidirectional dedup (`cond_traverse.rs:273-299`, `947-968`, `1267`) ignores other columns, keys on an intermediate node at 3 or more hops, and resets per batch.
