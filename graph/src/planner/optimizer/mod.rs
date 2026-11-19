@@ -72,7 +72,7 @@ use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    parser::ast::{ExprIR, Variable},
+    parser::ast::{ExprIR, VarKey, Variable},
     runtime::value::Value,
 };
 
@@ -105,32 +105,30 @@ pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSe
     vars
 }
 
-/// Collects the `(scope_id, id)` of every variable an expression references.
+/// Collects the `VarKey` of every variable an expression references.
 /// Variable ids are only unique within a scope, so callers that mix scopes
 /// (a pattern next to a `WHERE` with comprehension variables) key on both.
-pub(crate) fn collect_expr_scoped_variables(
-    expr: &DynTree<ExprIR<Variable>>
-) -> HashSet<(u32, u32)> {
+pub(crate) fn collect_expr_scoped_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<VarKey> {
     let mut vars = HashSet::new();
     for idx in expr.root().indices::<Bfs>() {
         if let ExprIR::Variable(var) = expr.node(idx).data() {
-            vars.insert((var.scope_id, var.id));
+            vars.insert(var.key());
         }
     }
     vars
 }
 
-/// Collects the `(scope_id, id)` of every variable that a top-level `AND`
+/// Collects the `VarKey` of every variable that a top-level `AND`
 /// conjunct of `expr` reads on its own: a conjunct over a single variable can
 /// run as soon as that variable is bound, one that also reads another
 /// (a path, a second node) has to wait for it. A conjunct holding a pattern
 /// is left out: the aliases the pattern reads are not in the expression tree.
 pub(crate) fn collect_single_variable_conjuncts(
     expr: &DynTree<ExprIR<Variable>>
-) -> HashSet<(u32, u32)> {
+) -> HashSet<VarKey> {
     fn walk(
         node: &DynNode<ExprIR<Variable>>,
-        out: &mut HashSet<(u32, u32)>,
+        out: &mut HashSet<VarKey>,
     ) {
         match node.data() {
             ExprIR::And | ExprIR::Paren => {
@@ -144,7 +142,7 @@ pub(crate) fn collect_single_variable_conjuncts(
                 for data in node.walk::<Bfs>() {
                     match data {
                         ExprIR::Variable(var) => {
-                            vars.insert((var.scope_id, var.id));
+                            vars.insert(var.key());
                         }
                         ExprIR::Pattern(_) | ExprIR::PatternComprehension(_) => has_pattern = true,
                         _ => {}
