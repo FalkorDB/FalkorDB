@@ -209,6 +209,11 @@ Scan selection (`ScanOrder.lean`):
   `outerSeed_transparent_no_chain`, `initialBoundOuter_wellScoped`. The planner-scan path (`has_planner_scan`)
   is untouched, so `Salvage.premise_fails`/`salvage_loses_row` (#2972) still describe it
   (`rebuilt_drops_unwind` now with `argument_leaf_of(..).map(tree!)`).
+- The no-swap leaf rewrite salvages Filters only from a discarded planner scan (`if has_planner_scan`,
+  `select_scan_node.rs:1579`, `17547791c`); a transparent child keeps its own beneath the new scan:
+  `Salvage.leafSteps3594`, `leafSteps3594_planner`, `leafSteps3594_transparent_wellScoped`,
+  `transparent_filters_once` (before, `UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z
+  MATCH (d:L)-[:R]->() RETURN count(*)` ran the copied filter on `z`: 0 rows instead of 2).
 
 ## Re-target to 8743953a8 (#2390 d2c42e032: plan an inline property map once)
 The planner now lowers inline attributes to `IR::Filter`s and strips them from the pattern; the
