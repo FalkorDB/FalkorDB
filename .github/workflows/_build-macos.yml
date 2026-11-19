@@ -1,0 +1,325 @@
+# Reusable workflow: build the falkordb module natively on macOS arm64, check
+# that it stands alone, test it, and upload it as `falkordb-macos-arm64v8.so`.
+#
+# Hosted macOS runners have no Docker, so this is a native `cargo build`, not
+# the Dockerfile `artifact` target the Linux cells in _build-artifacts.yml use.
+# The Mach-O dylib keeps the `.so` name the C releases used, which is the name
+# falkordblite, falkordblite-ts and falkordb-bin-py download (Redis loads a
+# module by path, whatever its extension).
+#
+# Callers:
+#   rust-pr.yml           in the merge queue (and on a PR labelled `ci-macos`):
+#                         build, check, test, upload. The release and the edge
+#                         prerelease publish the file a merge_group run uploaded
+#                         for their commit (#3893), so this is where the shipped
+#                         macOS module is built.
+#   macos-deps-cache.yml  on `main`, with `deps_only`: build the native
+#                         dependencies and save them to the Actions cache the
+#                         queue restores. Only that trusted caller writes the
+#                         cache; the queue reads it and never writes it (a queue
+#                         run's cache would be scoped to its own
+#                         gh-readonly-queue ref anyway, which nothing else reads).
+
+name: Build macOS (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      deps_only:
+        description: >-
+          Build only the static libomp and the native dependencies, and save
+          them to the cache. For the trusted `main` push; never for code under
+          review.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # The C module's minimum (`minos 12.0` in its LC_BUILD_VERSION). cmake and
+  # rustc both read it from the environment, and native-deps puts it in its
+  # cache key.
+  MACOSX_DEPLOYMENT_TARGET: "12.0"
+  SUFFIX: macos-arm64v8
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    # Pinned rather than macos-latest: the image decides the Homebrew LLVM the
+    # dependency cache is keyed on, and a silent image move would turn every
+    # run into a cold build.
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      # The tree may be a pull request's (label path) or a queue candidate.
+      # `persist-credentials: false` and read-only `permissions` mean the job
+      # holds no write token, callers pass no secrets, and the cache is written
+      # only under `deps_only`, which only the `main` push sets.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # native-deps builds the submodules in place and never clones them.
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install the toolchain
+        run: |
+          set -euo pipefail
+          brew install llvm cmake openssl@3
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          # RediSearch's build.sh takes clang/clang++ from PATH on macOS.
+          echo "${LLVM_PREFIX}/bin" >> "$GITHUB_PATH"
+          {
+            echo "CC=${LLVM_PREFIX}/bin/clang"
+            echo "CXX=${LLVM_PREFIX}/bin/clang++"
+            echo "LLVM_VERSION=$(brew list --versions llvm | awk '{print $2}')"
+            # graph/build.rs links libomp statically when this prefix holds a
+            # libomp.a; build/libomp.sh fills it below.
+            echo "LIBOMP_PREFIX=${RUNNER_TEMP}/libomp"
+            echo "FALKORDB_DEPS_CACHE=${RUNNER_TEMP}/native-deps-cache"
+          } >> "$GITHUB_ENV"
+
+      # `main` may already need a stable release newer than the image's.
+      - name: Install Rust stable
+        run: rustup update stable --no-self-update && rustup default stable && rustc --version
+
+      # Entries inside the cache directory are content-addressed by native-deps,
+      # so restoring an older cache through restore-keys is safe: whatever no
+      # longer matches is rebuilt, the rest is reused.
+      - name: Compute the native-deps cache key
+        id: deps-key
+        run: |
+          echo "key=macos-native-deps-${MACOSX_DEPLOYMENT_TARGET}-llvm${LLVM_VERSION}-${{ hashFiles('deps/native-deps.lock', 'native-deps/Cargo.lock', 'native-deps/build.rs', 'native-deps/src/**', 'build/graphblas/**', 'build/libomp.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "prefix=macos-native-deps-${MACOSX_DEPLOYMENT_TARGET}-llvm${LLVM_VERSION}-" >> "$GITHUB_OUTPUT"
+
+      - name: Look up the exact cache
+        id: exact
+        if: inputs.deps_only
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            ${{ runner.temp }}/libomp
+            ${{ runner.temp }}/native-deps-cache
+          key: ${{ steps.deps-key.outputs.key }}
+          lookup-only: true
+
+      - name: Stop when the cache is already current
+        id: current
+        if: inputs.deps_only && steps.exact.outputs.cache-hit == 'true'
+        run: echo "Cache ${{ steps.deps-key.outputs.key }} exists; nothing to build."
+
+      - name: Restore the native-deps cache
+        if: steps.current.outcome == 'skipped'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            ${{ runner.temp }}/libomp
+            ${{ runner.temp }}/native-deps-cache
+          key: ${{ steps.deps-key.outputs.key }}
+          restore-keys: ${{ steps.deps-key.outputs.prefix }}
+
+      # native-deps keys a static libomp by its prefix alone, so a libomp.a
+      # restored from an older cache would be reused whatever changed in
+      # build/libomp.sh. The stamp says what built it; on a mismatch libomp is
+      # rebuilt and the dependencies compiled against the old one are dropped.
+      - name: Build the static libomp
+        if: steps.current.outcome == 'skipped'
+        run: |
+          set -euo pipefail
+          STAMP="llvm=${LLVM_VERSION} min=${MACOSX_DEPLOYMENT_TARGET} script=$(shasum -a 256 build/libomp.sh | cut -d' ' -f1)"
+          if [ -f "$LIBOMP_PREFIX/lib/libomp.a" ] && [ "$(cat "$LIBOMP_PREFIX/stamp" 2>/dev/null || true)" = "$STAMP" ]; then
+            echo "libomp.a restored from the cache ($STAMP)"
+          else
+            rm -rf "$LIBOMP_PREFIX" "$FALKORDB_DEPS_CACHE"
+            PREFIX="$LIBOMP_PREFIX" SRC_DIR="$RUNNER_TEMP/llvm-project" ./build/libomp.sh
+            echo "$STAMP" > "$LIBOMP_PREFIX/stamp"
+          fi
+
+      - name: Build the native dependencies
+        if: steps.current.outcome == 'skipped'
+        run: cargo run --release --manifest-path native-deps/Cargo.toml
+
+      # Drop the entries this tree no longer uses, so a cache restored through
+      # restore-keys does not carry them into the next save.
+      - name: Prune the native-deps cache
+        if: inputs.deps_only && steps.current.outcome == 'skipped'
+        run: cargo run --release --manifest-path native-deps/Cargo.toml -- prune --days 0
+
+      - name: Save the native-deps cache
+        if: inputs.deps_only && steps.current.outcome == 'skipped'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            ${{ runner.temp }}/libomp
+            ${{ runner.temp }}/native-deps-cache
+          key: ${{ steps.deps-key.outputs.key }}
+
+      # The servers the module is tested on, at the versions every Dockerfile
+      # pins: build/check-server-pins.sh prints them, and fails here if the
+      # Dockerfiles disagree. Built from source and cached under the two
+      # versions and the recipe, so a pin bump or a recipe change rebuilds
+      # them. Like the native dependencies, the cache is written only by the
+      # deps_only run on main; the queue builds them when the cache misses.
+      # After the native-deps steps, so a failed server build on main cannot
+      # keep the dependency cache from being saved.
+      - name: Read the server pins
+        id: servers
+        run: |
+          set -euo pipefail
+          PINS=$(build/check-server-pins.sh)
+          REDIS_VERSION=$(sed -n 's/^REDIS_VERSION=//p' <<<"$PINS")
+          VALKEY_VERSION=$(sed -n 's/^VALKEY_VERSION=//p' <<<"$PINS")
+          if [ -z "$REDIS_VERSION" ] || [ -z "$VALKEY_VERSION" ]; then
+            echo "::error::build/check-server-pins.sh printed no pins: $PINS"; exit 1
+          fi
+          echo "REDIS_VERSION=$REDIS_VERSION" | tee -a "$GITHUB_ENV"
+          echo "VALKEY_VERSION=$VALKEY_VERSION" | tee -a "$GITHUB_ENV"
+          echo "key=macos-servers-${{ runner.arch }}-redis${REDIS_VERSION}-valkey${VALKEY_VERSION}-${{ hashFiles('build/build-server-macos.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the servers
+        id: servers-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: ${{ runner.temp }}/servers
+          key: ${{ steps.servers.outputs.key }}
+          # main only needs to know whether to build and save.
+          lookup-only: ${{ inputs.deps_only }}
+
+      - name: Build Valkey ${{ env.VALKEY_VERSION }} and Redis ${{ env.REDIS_VERSION }}
+        if: steps.servers-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          build/build-server-macos.sh valkey "$VALKEY_VERSION" "$RUNNER_TEMP/servers"
+          build/build-server-macos.sh redis "$REDIS_VERSION" "$RUNNER_TEMP/servers"
+
+      - name: Save the servers
+        if: inputs.deps_only && steps.servers-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: ${{ runner.temp }}/servers
+          key: ${{ steps.servers.outputs.key }}
+
+      - name: Put the servers in place
+        if: ${{ !inputs.deps_only }}
+        run: |
+          set -euo pipefail
+          # valkey-cli for the smoke test.
+          echo "$RUNNER_TEMP/servers/bin" >> "$GITHUB_PATH"
+          # tests/common.py spawns /usr/local/bin/<server>-server.
+          sudo mkdir -p /usr/local/bin
+          for PAIR in "valkey:Valkey:$VALKEY_VERSION" "redis:Redis:$REDIS_VERSION"; do
+            IFS=: read -r SERVER NAME PIN <<<"$PAIR"
+            sudo ln -sf "$RUNNER_TEMP/servers/bin/${SERVER}-server" "/usr/local/bin/${SERVER}-server"
+            VERSION=$("/usr/local/bin/${SERVER}-server" --version)
+            echo "${SERVER}-server: $VERSION"
+            case "$VERSION" in
+              "$NAME server v=$PIN "*) ;;
+              *) echo "::error::/usr/local/bin/${SERVER}-server is not ${NAME} ${PIN}: $VERSION"; exit 1 ;;
+            esac
+          done
+
+      - name: Build libfalkordb.dylib
+        if: ${{ !inputs.deps_only }}
+        run: cargo build --release
+
+      # The module has to load into a server the user installed however they
+      # liked, so nothing from Homebrew may be linked dynamically: only the
+      # system's own libraries. Its load command must also carry the deployment
+      # target.
+      - name: Stage and check the module
+        if: ${{ !inputs.deps_only }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/dist/falkordb-${SUFFIX}.so"
+          mkdir -p "$(dirname "$OUT")"
+          cp target/release/libfalkordb.dylib "$OUT"
+          install_name_tool -id "@rpath/falkordb.so" "$OUT"
+          codesign --force --sign - "$OUT"
+          echo "=== otool -L"; otool -L "$OUT"
+          FOREIGN=$(otool -L "$OUT" | tail -n +3 | awk '{print $1}' | grep -v -E '^(/usr/lib/|/System/Library/)' || true)
+          if [ -n "$FOREIGN" ]; then
+            echo "::error::falkordb-${SUFFIX}.so links libraries outside the system: $FOREIGN"; exit 1
+          fi
+          MINOS=$(otool -l "$OUT" | awk '/LC_BUILD_VERSION/ {f=1} f && $1=="minos" {print $2; exit}')
+          if [ "$MINOS" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
+            echo "::error::falkordb-${SUFFIX}.so has minos '$MINOS', expected $MACOSX_DEPLOYMENT_TARGET"; exit 1
+          fi
+          ARCHS=$(lipo -archs "$OUT")
+          if [ "$ARCHS" != "arm64" ]; then
+            echo "::error::falkordb-${SUFFIX}.so is '$ARCHS', expected arm64"; exit 1
+          fi
+          ( cd "$(dirname "$OUT")" && shasum -a 256 "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
+          echo "MODULE=$OUT" >> "$GITHUB_ENV"
+          echo "Built falkordb-${SUFFIX}.so ($(du -h "$OUT" | cut -f1)), minos $MINOS, $ARCHS"
+
+      # Load the staged file, not target/, into each server and ask it
+      # something: this is the file that ships.
+      - name: Smoke-test on Valkey and Redis
+        if: ${{ !inputs.deps_only }}
+        run: |
+          set -euo pipefail
+          answers() { valkey-cli -p "$1" ping >/dev/null 2>&1; }
+          for SERVER in valkey redis; do
+            PORT=26379
+            LOG="$RUNNER_TEMP/${SERVER}-smoke.log"
+            # A server still on the port would answer for this one.
+            if answers "$PORT"; then echo "::error::port $PORT is already in use"; exit 1; fi
+            "/usr/local/bin/${SERVER}-server" --port "$PORT" --save '' --daemonize yes \
+              --logfile "$LOG" --loadmodule "$MODULE"
+            for _ in $(seq 1 30); do
+              if [ "$(valkey-cli -p "$PORT" ping 2>/dev/null || true)" = "PONG" ]; then break; fi
+              sleep 1
+            done
+            MODULES=$(valkey-cli -p "$PORT" MODULE LIST || true)
+            if ! grep -qx graph <<<"$MODULES"; then
+              cat "$LOG"; echo "::error::the graph module did not load into ${SERVER}-server"; exit 1
+            fi
+            GOT=$(valkey-cli -p "$PORT" GRAPH.QUERY smoke "UNWIND range(1, 10) AS x RETURN sum(x)" | sed -n 2p)
+            valkey-cli -p "$PORT" shutdown nosave >/dev/null 2>&1 || true
+            for _ in $(seq 1 10); do answers "$PORT" || break; sleep 1; done
+            if answers "$PORT"; then echo "::error::${SERVER}-server did not shut down"; exit 1; fi
+            if [ "$GOT" != "55" ]; then
+              cat "$LOG"; echo "::error::${SERVER}-server: expected 55, got '$GOT'"; exit 1
+            fi
+            echo "OK: $("/usr/local/bin/${SERVER}-server" --version | cut -d' ' -f1-3) loads the module and answers"
+          done
+
+      # Release, not test, profile: it reuses the dependencies the module build
+      # just compiled, and the macOS-only miscompile this would have caught
+      # (#2922) existed only with optimisations on.
+      - name: Rust unit tests
+        if: ${{ !inputs.deps_only }}
+        run: cargo test --release -p graph
+
+      - name: E2E and function tests
+        if: ${{ !inputs.deps_only }}
+        env:
+          RELEASE: "1"
+          TARGET: ${{ env.MODULE }}
+          PORT: "26379"
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          . "$RUNNER_TEMP/venv/bin/activate"
+          pip install -q -r tests/requirements.txt
+          for SERVER in valkey redis; do
+            echo "=== $SERVER"
+            FALKORDB_SERVER="$SERVER" pytest tests/test_e2e.py tests/test_functions.py -q -p no:cacheprovider
+          done
+
+      - name: Upload falkordb-${{ env.SUFFIX }}.so
+        if: ${{ !inputs.deps_only }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: falkordb-${{ env.SUFFIX }}.so
+          path: ${{ runner.temp }}/dist/falkordb-${{ env.SUFFIX }}.so*
+          if-no-files-found: error
+          # Long enough for a release cut weeks after the merge: release-tag.yml
+          # publishes this file instead of rebuilding it (#3893).
+          retention-days: 90
+          compression-level: 0
