@@ -111,13 +111,13 @@ graph/src/index/mod.rs	pending_count_for_generation	2281	PROVEN	Tickets.pendingF
 graph/src/index/mod.rs	pending_count	2295	PROVEN	Tickets.operational_iff
 graph/src/index/mod.rs	is_operational	2214	PROVEN	Tickets.operational_iff
 graph/src/index/indexer.rs	create_index	262	PROVEN	Tickets.store (#3680: fresh entry, new generation, the creation ticket counted at once by owe_population; the store is the publish of the version): inv_create, operational_complete_always, store_window_fixed; before #3680: pre3680_store, store_window_operational_incomplete
-graph/src/index/indexer.rs	acquire_population_ticket	780	PROVEN	Tickets.inc_inv
-graph/src/index/indexer.rs	acquire_population_snapshot	798	PROVEN	Slots.inc (Tickets.inc_inv; the pre-#3680 populate_index step is Tickets.pre3680_acquire); Worker.attrs snapshot (main_operational_complete)
-graph/src/index/indexer.rs	acquire_population_snapshots	820	PROVEN	Tickets.inc_inv
-graph/src/index/indexer.rs	release_population_ticket	841	PROVEN	Tickets.dec_inv
-graph/src/index/indexer.rs	is_ticket_current	853	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
-graph/src/index/indexer.rs	ticket_pending_changes	864	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
-graph/src/index/indexer.rs	enabled	874	PROVEN	Tickets.operational_iff
+graph/src/index/indexer.rs	acquire_population_ticket	779	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	acquire_population_snapshot	797	PROVEN	Slots.inc (Tickets.inc_inv; the pre-#3680 populate_index step is Tickets.pre3680_acquire); Worker.attrs snapshot (main_operational_complete)
+graph/src/index/indexer.rs	acquire_population_snapshots	819	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	release_population_ticket	840	PROVEN	Tickets.dec_inv
+graph/src/index/indexer.rs	is_ticket_current	852	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
+graph/src/index/indexer.rs	ticket_pending_changes	863	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
+graph/src/index/indexer.rs	enabled	873	PROVEN	Tickets.operational_iff
 graph/src/graph/graph.rs	populate_index_batch	593	PROVEN	Tickets.batch (#3680: the batch reads the committed version's entry; its ticket was counted at create, Tickets.acquire adds the worker): inv_batch, main_operational_complete, operational_complete_always
 graph/src/graph/graph.rs	vector_query_nodes	4400	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412); #3382 gate (opOk): not_operational_refused, ok_imp_operational
 graph/src/graph/graph.rs	vector_query_edges	4467	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp); #3382 gate (opOk): not_operational_refused, ok_imp_operational
