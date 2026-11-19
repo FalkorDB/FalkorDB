@@ -67,6 +67,15 @@ pub fn build(
     if let Some(cxx) = &ctx.toolchain.cxx {
         cmake_args.push_str(&format!(" -DCMAKE_CXX_COMPILER={cxx}"));
     }
+    // On macOS RediSearch adds OpenSSL's include dir globally. Left to itself,
+    // FindOpenSSL resolves the linked keg to `$(brew --prefix)/include`, which
+    // also exposes every other Homebrew header -- notably a newer libuv that
+    // shadows RediSearch's bundled one and breaks its build. Pin the keg.
+    if cfg!(target_os = "macos")
+        && let Some(openssl) = capture_opt("brew", &["--prefix", "openssl@3"])
+    {
+        cmake_args.push_str(&format!(" -DOPENSSL_ROOT_DIR={}", openssl.trim()));
+    }
 
     let mut env = BTreeMap::new();
     env.insert("CMAKE_ARGS".to_owned(), cmake_args);

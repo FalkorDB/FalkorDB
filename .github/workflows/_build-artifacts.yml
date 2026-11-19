@@ -20,6 +20,11 @@
 # `falkordb-server-<os>-<server>-<arch>.tar` per server, for the release to
 # push as multi-arch `<version>-<os>-<server>` tags. x64/arm64v8 have no such
 # step: the merge queue builds the Debian images.
+#
+# Cells marked `native` (macos-arm64v8) have no Dockerfile: they build with
+# cargo directly on a macOS runner, against Homebrew LLVM and a static libomp
+# from build/libomp.sh, and smoke-test the .so by loading it into a Homebrew
+# redis-server.
 
 
 name: Build artifacts (reusable)
@@ -77,7 +82,7 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           set -euo pipefail
-          # {suffix, os, arch, platform, runner, dockerfile, build_image, cxx, image, servers}.
+          # {suffix, os, arch, platform, runner, dockerfile, build_image, cxx, image, servers, native}.
           # `dockerfile` provides the `artifact` target; `build_image` is the
           # chef/builder base (Debian toolchain image) or "" for self-contained
           # per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder;
@@ -86,7 +91,8 @@ jobs:
           # falkordb-server-<os>-<server>-<arch>; `os` is "" unless `image`, and
           # an image cell's suffix is <os>-<arch>. The per-OS
           # images a release publishes are build/publish_tags.py's PER_OS, on
-          # both architectures.
+          # both architectures. `native` cells build on the runner itself, with
+          # no Dockerfile (`dockerfile`, `platform`, `build_image` are "").
           ALL='[
             {"suffix":"x64","os":"","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"servers":[]},
             {"suffix":"arm64v8","os":"","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"servers":[]},
@@ -95,7 +101,8 @@ jobs:
             {"suffix":"amazonlinux2023-x64","os":"amazonlinux2023","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true,"servers":["redis","valkey"]},
             {"suffix":"amazonlinux2023-arm64v8","os":"amazonlinux2023","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true,"servers":["redis","valkey"]},
             {"suffix":"alpine-x64","os":"alpine","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"]},
-            {"suffix":"alpine-arm64v8","os":"alpine","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"]}
+            {"suffix":"alpine-arm64v8","os":"alpine","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"]},
+            {"suffix":"macos-arm64v8","os":"","arch":"arm64v8","platform":"","runner":"macos-15","dockerfile":"","build_image":"","cxx":"","image":false,"servers":[],"native":true}
           ]'
           if [ -z "${PLATFORMS// /}" ] || [ "$PLATFORMS" = "all" ]; then
             CELLS=$(printf '%s' "$ALL" | jq -c .)
@@ -143,8 +150,10 @@ jobs:
           persist-credentials: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: ${{ !matrix.native }}
 
       - name: Login to GHCR
+        if: ${{ !matrix.native }}
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -157,6 +166,7 @@ jobs:
       # a successful build is also the authoritative dependency check — run in the
       # correct target-arch context, unlike a host-side ldd.
       - name: Build falkordb-${{ matrix.suffix }}.so
+        if: ${{ !matrix.native }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         env:
           # Don't upload the buildx build-record (.dockerbuild) artifact — keep
@@ -184,6 +194,7 @@ jobs:
           cache-to: ${{ inputs.trusted_revision && format('type=gha,mode=max,scope=artifact-{0}', matrix.suffix) || '' }}
 
       - name: Stage + checksum
+        if: ${{ !matrix.native }}
         env:
           SUFFIX: ${{ matrix.suffix }}
         run: |
@@ -196,6 +207,92 @@ jobs:
           ( cd "$DIST" && sha256sum "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
           echo "Built falkordb-${SUFFIX}.so ($(du -h "$DIST/falkordb-${SUFFIX}.so" | cut -f1))"
           cat "$DIST/falkordb-${SUFFIX}.so.sha256"
+
+      # ---- native (macOS) cells: no Docker, cargo on the runner ----
+      # Homebrew LLVM is required: Apple clang has no OpenMP, and GraphBLAS
+      # would silently build single-threaded. libc++/libc++abi and OpenSSL are
+      # linked statically from Homebrew by graph/build.rs; libomp is built
+      # static by build/libomp.sh (LIBOMP_PREFIX) so the .so has no Homebrew
+      # runtime dependency.
+      - name: Install macOS toolchain
+        if: matrix.native
+        run: |
+          set -euo pipefail
+          brew install llvm libomp openssl@3 cmake redis
+          rustup update stable --no-self-update
+          rustup default stable
+          LLVM="$(brew --prefix llvm)"
+          {
+            echo "CC=$LLVM/bin/clang"
+            echo "CXX=$LLVM/bin/clang++"
+            echo "LIBOMP_PREFIX=$RUNNER_TEMP/libomp"
+          } >> "$GITHUB_ENV"
+          "$LLVM/bin/clang" --version
+
+      # native-deps keys its own cache on submodule revisions, recipes and the
+      # compiler version, so a restored entry built by another compiler is
+      # simply not used. Untrusted revisions restore but never save.
+      - name: Restore native-deps cache
+        if: matrix.native
+        id: native-deps-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/falkordb/native-deps
+          key: native-deps-${{ matrix.suffix }}-${{ hashFiles('deps/native-deps.lock', 'native-deps/**', 'build/graphblas/**') }}
+
+      - name: Build falkordb-${{ matrix.suffix }}.so (native)
+        if: matrix.native
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+          # The Homebrew archives linked statically target the runner's macOS.
+          MACOSX_DEPLOYMENT_TARGET: "15.0"
+        run: |
+          set -euo pipefail
+          PREFIX="$LIBOMP_PREFIX" ./build/libomp.sh
+          test -f "$LIBOMP_PREFIX/lib/libomp.a" || { echo "::error::static libomp missing"; exit 1; }
+          cargo build --release
+          SO=target/release/libfalkordb.dylib
+          # Single-.so contract, as the Dockerfile builder stage enforces on
+          # Linux: only system libraries, nothing from Homebrew or OpenMP.
+          # `otool -L` lists the dylib's own install name first; skip it.
+          echo "=== otool -L ==="; otool -L "$SO"
+          ID=$(otool -D "$SO" | tail -n +2)
+          BAD=$(otool -L "$SO" | tail -n +2 | awk '{print $1}' | grep -vxF "$ID" | grep -vE '^(/usr/lib/|/System/Library/)' || true)
+          if [ -n "$BAD" ]; then echo "::error::falkordb.so links non-system libraries: $BAD"; exit 1; fi
+          if nm -u "$SO" | grep -E '(^|[[:space:]])_*(omp_|GOMP_|__kmpc_)'; then
+            echo "::error::falkordb.so leaves OpenMP symbols undefined"; exit 1
+          fi
+          DIST="$RUNNER_TEMP/dist"
+          mkdir -p "$DIST"
+          cp "$SO" "$DIST/falkordb-${SUFFIX}.so"
+          ( cd "$DIST" && shasum -a 256 "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
+          echo "Built falkordb-${SUFFIX}.so ($(du -h "$DIST/falkordb-${SUFFIX}.so" | cut -f1))"
+          cat "$DIST/falkordb-${SUFFIX}.so.sha256"
+
+      - name: Save native-deps cache
+        if: matrix.native && inputs.trusted_revision && steps.native-deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/falkordb/native-deps
+          key: ${{ steps.native-deps-cache.outputs.cache-primary-key }}
+
+      - name: Smoke-test falkordb-${{ matrix.suffix }}.so (native)
+        if: matrix.native
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          PORT=6399
+          trap 'redis-cli -p $PORT shutdown nosave >/dev/null 2>&1 || true; cat "$RUNNER_TEMP/redis.log" 2>/dev/null || true' EXIT
+          redis-server --port "$PORT" --daemonize yes --logfile "$RUNNER_TEMP/redis.log" \
+            --loadmodule "$RUNNER_TEMP/dist/falkordb-${SUFFIX}.so"
+          for _ in $(seq 1 30); do
+            if [ "$(redis-cli -p "$PORT" ping 2>/dev/null || true)" = "PONG" ]; then break; fi
+            sleep 1
+          done
+          GOT=$(redis-cli -p "$PORT" GRAPH.QUERY smoke "UNWIND range(1, 10) AS x RETURN sum(x)" | sed -n 2p)
+          if [ "$GOT" != "55" ]; then echo "::error::expected 55, got '$GOT'"; exit 1; fi
+          echo "OK: falkordb-${SUFFIX}.so loads into redis-server and answers"
 
       - name: Upload artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
