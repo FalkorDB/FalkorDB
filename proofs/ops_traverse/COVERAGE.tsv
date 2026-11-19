@@ -25,11 +25,11 @@ graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::expand_row	125	PROVEN	CondTra
 graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::next	251	PROVEN	Drive.capDrive: eiNext_stream, capDrive_flatten
 graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::path_value	139	PROVEN	VarLenGlue.pathValue: pathValue_spec, Alt.reverse
 graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::begin_start_node	152	PROVEN	VarLen.varLen 0-hop branch: varLen_sound, varLen_complete, zero_zero
-graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::advance	196	PROVEN	VarLen.dfs: dfs_sound, dfs_complete, varLen_iff (trails, min..max); absorbed edge filter verdict edgeVerdict_eq_filterEval (= FilterOp, #2390)
-graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::next	402	PROVEN	VarLenGlue.vlStep/run: run_complete, run_err
-graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::new	455	PROVEN	VarLenGlue.VlSt.new/findPrev: vlNew_spec
-graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::expand_row	518	PROVEN	VarLenGlue.rowPlan: rowPlan_spec; VarLen.varLen (no_sibling_uniqueness)
-graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::next	629	PROVEN	Drive.driveE: vlOpNext_stream, driveE_ok, driveE_child_err
+graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::advance	196	PROVEN	VarLen.dfs: dfs_sound, dfs_complete, varLen_iff (trails, min..max); absorbed edge filter verdict edgeVerdict_eq_filterEval (= FilterOp, #2390); #3593: an undirected step no longer depends on `reversed` (= step g true; varLen_bidir_reverse_iff)
+graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::next	410	PROVEN	VarLenGlue.vlStep/run: run_complete, run_err
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::new	463	PROVEN	VarLenGlue.VlSt.new/findPrev: vlNew_spec
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::expand_row	526	PROVEN	VarLenGlue.rowPlan: rowPlan_spec (#3593: reversed whenever only `to` is a node, directed or not); VarLen.varLen_bidir_reverse_iff, Walk.reverse_bidir, step_bidir_symm (an undirected walk reversed binds the same trails); VarLen.varLen (no_sibling_uniqueness)
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::next	639	PROVEN	Drive.driveE: vlOpNext_stream, driveE_ok, driveE_child_err
 graph/src/runtime/ops/node_by_label_scan.rs	NodeByLabelScanOp::new	56	PROVEN	CTGlue.labelScanNew: ctors_spec
 graph/src/runtime/ops/node_by_label_scan.rs	NodeByLabelScanOp::next	77	PROVEN	Scans.labelScan: mem_labelScan, length_labelScan (get_nodes axiomatised as sorted list)
 graph/src/runtime/ops/node_by_id_seek.rs	NodeByIdSeekOp::new	32	PROVEN	CTGlue.idSeekNew: ctors_spec

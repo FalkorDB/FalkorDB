@@ -11,6 +11,7 @@ import RedisLayer.SerialProof
 import RedisLayer.SerialCLayout
 import RedisLayer.RespVerbose
 import RedisLayer.TelemetryLoop
+import RedisLayer.TelemetryFreed
 import RedisLayer.ModuleInit
 import RedisLayer.ConfigRewrite
 import RedisLayer.QuerySession
@@ -34,7 +35,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 
 | here | there |
 | --- | --- |
-| `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`up_to_nul`, `src/commands/query_args.rs:44-84` (#3010, `557f18868`) |
+| `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`up_to_nul`, `src/commands/query_args.rs:56-125` (#3010, `557f18868`; #3757 `SCHEMA_HASH`) |
 | `QueryArgs.queryFront`/`roQueryFront`/`profileFront`/`explainFront` | `query.rs:46-51`, `ro_query.rs:34-39`, `profile.rs:22`, `explain.rs:65` |
 | `Args.rustParseI64`     | `str::parse::<i64>` (GRAPH.CONFIG) |
 | `Args.string2ll`        | Redis `string2ll` (`RedisModule_StringToLongLong`, `parse_integer`) |
@@ -43,7 +44,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:114-202`, `:210-242`, `:251-291`, `:342-390` (as of #3021) |
 | `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:308-343` (#3021) |
 | `Config.cSet`           | C `_Config_set` (`cmd_config.c`) |
-| `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_result::<true>`, `src/reply.rs:145-355`, `:632-679` |
+| `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_query` (`ReplyFormat::Compact`), `src/reply.rs:152-361`, `:688-747` |
 | `Compact.dec/decReply`  | falkordb-py `query_result.py` `parse_scalar`, `__parse_records` |
 | `Ro.plan`               | parser `write` flag (`graph/src/parser/cypher.rs:780-910`) + Commit insertion (`planner/mod.rs:2416`, `:2749`) |
 | `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:597-608`; guards `runtime/eval.rs:936,956` |
@@ -56,11 +57,15 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 
 ## Proven (headline theorems)
 
-* `rust_c_agree` (QueryArgsAgree) — for **every** argument vector, under the
-  GRAPH.CONFIG invariant, `parse_query_flags` and C's `_read_flags` accept the same
-  vectors, fail with the corresponding error, and read the same compact flag, version
-  and timeout; `rust_c_same_accept`. `parse_ok_iff` (QueryArgsSpec) — the parser accepts
-  exactly 3..8 arguments whose tail is in `Grammar`; `parse_total`; `parse_documented`
+* `rust_c_agree_except_schema` (QueryArgsAgree) — for **every** argument vector, under the
+  GRAPH.CONFIG invariant, unless Rust refuses a `SCHEMA_HASH` value or a `SCHEMA_HASH`
+  without `--compact` (#3757; `rust_c_agree_except_schemaParse_refuted`),
+  `parse_query_flags` and C's `_read_flags` accept the same vectors, fail with the
+  corresponding error, and read the same compact flag, version and timeout;
+  `rust_ok_c_ok`. COUNTEREXAMPLE (#3757): `rust_c_agree_refuted` /
+  `rust_c_same_accept_refuted` — `SCHEMA_HASH abc` is refused by Rust, skipped by C. `parse_ok_iff` (QueryArgsSpec) — the parser accepts
+  exactly 3..8 arguments whose tail is in `Grammar` and sends `SCHEMA_HASH` only with
+  `--compact` (`schema_hash_requires_compact`); `parse_total`; `parse_documented`
   — every documented command line is accepted with its documented meaning;
   `four_commands_share` — QUERY, RO_QUERY, PROFILE, EXPLAIN reject the same vectors and
   read the same flags; `parse_timeout_nonneg` — accepted timeouts are in `0..=TIMEOUT_MAX`.
@@ -92,7 +97,8 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    PROFILE ignored a garbage/missing timeout; `version 4294967296` accepted; no arity cap.
    Now one parser mirrors C: `nonutf8_keeps_compact`, `timeout_noncanonical_rejected`,
    `garbage_timeout_rejected`, `version_above_uint_rejected`, `arity_capped`, and the
-   general `rust_c_agree`.
+   general `rust_c_agree` (since #3757 `rust_c_agree_except_schema`; the unrestricted
+   statement is refuted by `rust_c_agree_refuted`).
 2. **FIXED by #3000 (`2e8172d76`, issue #2998)** — formerly writes ignored the per-query
    TIMEOUT: with TIMEOUT_MAX = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1`
    created 300000 nodes on Rust; C times out and creates none
@@ -139,7 +145,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field` `:637-725`, `encField`/`encPh` = field loop `:383-427`) |
 | `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); pre-#3514 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
-| `Telemetry`, `TelemetryReg`, `TelemetryLoop` | `src/telemetry.rs` |
+| `Telemetry`, `TelemetryReg`, `TelemetryLoop`, `TelemetryFreed` | `src/telemetry.rs`; `TelemetryFreed`: the #3844 persistence strip (`strip_stream`, the freed-graph queue, `redis_type.rs` `strip_telemetry_streams`) |
 | `ModuleInit` | `src/module_init.rs`, `src/lib.rs` config table, `src/config.rs` |
 | `ConfigRewrite` | `CONFIG REWRITE` of the `lib.rs:97-116` native configs vs. what `GRAPH.CONFIG SET` / load arguments store (#3419) |
 | `QuerySession` | `src/query_session.rs` |
@@ -161,9 +167,12 @@ Headline theorems:
   tree; `compact_reply` lands on `Compact.encReply`, which `decReply_enc` decodes;
   `bytes_of_emits` gives the RESP2 bytes; `postponed_wrong_len` shows a wrong count breaks.
 * Telemetry: `streamName_key_name`/`streamName_inj`/`stream_same_slot`, registry placement and
-  transitions, `WaitingEntry` guard laws, `drain_conserves`, `capDeferred_suffix`,
+  transitions, `WaitingEntry` guard laws, `drain_conserves`,
   `retain_sound`/`pass2Step_sound` (re-keying), `group_keeps_order` (per-graph arrival order
-  survives the sort), `iter_replica_never_writes`.
+  survives the sort), `iterSteps_delete_before_write`; since #3844 telemetry is node-local:
+  `GraphCore.sync_unserved_silent` (replicated / AOF-replayed queries are not logged),
+  `freed_stream_stripped`/`stripAll_covers` (no stream reaches a snapshot); the old replica
+  rule is kept as history (`Pre3844.enqueue_replica`, `Pre3844.iter_replica_never_writes`).
 * `LoadArgs.rust_c_same_accept` (#3328) — module-load arguments accepted exactly as C's
   `Config_Init` (modulo leading whitespace and Rust-only names, both confirmed live; for
   arguments without embedded NUL, since C reads C strings; given `FsOk`, i.e. `File::create`

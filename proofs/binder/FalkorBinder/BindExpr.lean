@@ -636,7 +636,7 @@ def selfRefL (a : Name) : List NE → Bool
   | c :: cs => selfRef a c || selfRefL a cs
 end
 
-/-- `check_unbound_self_referential` (binder.rs:1772-1788) takes the entity's `Alias` (#3303):
+/-- `check_unbound_self_referential` (binder.rs:1777-1797) takes the entity's `Alias` (#3303):
 an unnamed entity has no name its attributes could mention. -/
 def checkSelfRef (a : Alias) (attrs : NE) : Except String Unit :=
   match a with
@@ -655,6 +655,13 @@ theorem checkSelfRef_iff (a : Alias) (attrs : NE) :
 theorem selfRef_direct (a k : Name) :
     checkSelfRef (.named a) (.other 0 [.prop k [.var a]]) =
       .error s!"'{a}' not defined; undefined attribute" := by
+  simp [checkSelfRef, selfRef, selfRefL]
+
+/-- #3841: a map-projection selector (the `.a` of `x {.a}`) is a childless `Property`; it has no
+operand, so it is never a self-reference (before #3841 the Rust indexed the missing operand and
+panicked: `CREATE (a {f: 1 {.a}})`). -/
+theorem selfRef_leaf_prop (a b k : Name) (n : Nat) :
+    checkSelfRef (.named a) (.other n [.var b, .prop k []]) = .ok () := by
   simp [checkSelfRef, selfRef, selfRefL]
 
 

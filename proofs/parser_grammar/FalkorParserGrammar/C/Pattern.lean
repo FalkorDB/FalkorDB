@@ -262,18 +262,17 @@ def partP (o : Oracle) (F : Nat) (clause : CK) (gs : QG Alias × List Alias) :
     let gs' ← chainA o F clause F left (addPatNode clause gs left)
     pure (.sep, gs')
 
-/-- The part separator (cypher.rs:1567-1580): MERGE takes one part; `,`
-continues; *the clause's own keyword also continues* (folding
-`MATCH a MATCH b` into one pattern). -/
+/-- The part separator (cypher.rs:1573-1588): MERGE takes one part; `,`
+continues; anything else ends the pattern. Since #2981 the clause's own
+keyword ends it too (`MATCH a MATCH b` is two clauses, no longer folded). -/
 def sepP (clause : CK) : P Bool := do
   if clause = .merge then pure false else do
   let c ← peek
   match c with
   | .comma => do next; pure true
-  | .kw k => if k = clause then do next; pure true else pure false
   | _ => pure false
 
-/-- `parse_pattern` (cypher.rs:1372-1582). -/
+/-- `parse_pattern` (cypher.rs:1410-1592). -/
 def patternLoop (o : Oracle) (F : Nat) (clause : CK) : Nat → QG Alias × List Alias → P (QG Alias)
   | 0, _ => fuelP
   | n + 1, gs => do

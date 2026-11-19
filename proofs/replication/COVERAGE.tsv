@@ -7,14 +7,14 @@ graph/src/effects/v3/emit.rs	index_field_flags	204	PROVEN	faithful: proofs/effec
 graph/src/effects/v3/emit.rs	build_index_buffer	226	PROVEN	faithful: proofs/effects_emit_apply buildIndexRec_verifies, encodeAll_ok
 graph/src/effects/v3/emit.rs	for_each_record	323	PROVEN	emit = engine loops: emit_refines; emit_apply, stream_simulation; gate: proofs/effects_emit_apply commitShips_eq_iff
 graph/src/effects/v3/emit.rs	digest_cancelled	395	PROVEN	faithful: proofs/effects_emit_apply digestCancelled_pairs
-graph/src/effects/v3/emit.rs	digest_created_nodes	494	PROVEN	memo loop = groupBy: memo_refines_groupBy, emit_refines; createBatch_perm, specsOf_group, emit_apply
-graph/src/effects/v3/emit.rs	digest_created_edges	571	PROVEN	faithful: proofs/effects_emit_apply digestCreatedEdges_perm, digestCreatedEdges_keyed, mkEdgeRec_shape
-graph/src/effects/v3/emit.rs	digest_deleted_edges	631	PROVEN	faithful: proofs/effects_emit_apply digestDeletedEdges_perm
-graph/src/effects/v3/emit.rs	digest_updates	682	PROVEN	faithful: proofs/effects_emit_apply digestUpdates_perm, digestUpdates_shape
-graph/src/effects/v3/emit.rs	digest_deleted_nodes	787	PROVEN	memo loop = groupBy: memo_refines_groupBy, emit_refines; deleteBatch_perm, emit_apply
-graph/src/effects/v3/emit.rs	digest_labels	849	PROVEN	faithful: proofs/effects_emit_apply digestLabels_perm, digestLabels_nonempty
-graph/src/effects/v3/emit.rs	gather_rows	917	PROVEN	gatherRows: specsOf_group, chunk_flatMap, lookup_row; faithful merge: proofs/effects_emit_apply mergeRow_eq_lookup, gatherRows_length
-graph/src/effects/v3/emit.rs	wire_index_options	2082	PROVEN	faithful: proofs/effects_emit_apply wireIndexOptions_spec
+graph/src/effects/v3/emit.rs	digest_created_nodes	497	PROVEN	memo loop = groupBy: memo_refines_groupBy, emit_refines; createBatch_perm, specsOf_group, emit_apply
+graph/src/effects/v3/emit.rs	digest_created_edges	574	PROVEN	faithful: proofs/effects_emit_apply digestCreatedEdges_perm, digestCreatedEdges_keyed, mkEdgeRec_shape
+graph/src/effects/v3/emit.rs	digest_deleted_edges	634	PROVEN	faithful: proofs/effects_emit_apply digestDeletedEdges_perm
+graph/src/effects/v3/emit.rs	digest_updates	685	PROVEN	faithful: proofs/effects_emit_apply digestUpdates_perm, digestUpdates_shape
+graph/src/effects/v3/emit.rs	digest_deleted_nodes	790	PROVEN	memo loop = groupBy: memo_refines_groupBy, emit_refines; deleteBatch_perm, emit_apply
+graph/src/effects/v3/emit.rs	digest_labels	852	PROVEN	faithful: proofs/effects_emit_apply digestLabels_perm, digestLabels_nonempty
+graph/src/effects/v3/emit.rs	gather_rows	920	PROVEN	gatherRows: specsOf_group, chunk_flatMap, lookup_row; faithful merge: proofs/effects_emit_apply mergeRow_eq_lookup, gatherRows_length
+graph/src/effects/v3/emit.rs	wire_index_options	2085	PROVEN	faithful: proofs/effects_emit_apply wireIndexOptions_spec
 graph/src/effects/v3/apply.rs	ApplyError::from	48	PROVEN	faithful: proofs/effects_emit_apply ofString_spec
 graph/src/effects/v3/apply.rs	apply_effects	58	PROVEN	applyPayload (records, then Batch.verify = g.validate()): emit_apply, stream_simulation; faithful: proofs/effects_emit_apply applyEffects_ok, applyEffects_validate_refused
 graph/src/effects/v3/apply.rs	ApplyError::from	107	PROVEN	From<NodeOpError> (replaces node_op, #2846): okCreate/okDelete refusals surface as ApplyError; faithful: proofs/effects_emit_apply fromNodeOp_spec, idSpaceErrorMap_internal
@@ -42,17 +42,17 @@ graph/src/effects/v3/format.rs	EffectsPayload::build_index	142	PROVEN	faithful: 
 graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	152	PROVEN	faithful: proofs/effects_codec fmtBuildConstraint_eq, proofs/effects_emit_apply buildConstraintRec_verifies
 graph/src/runtime/ops/commit.rs	CommitOp::new	45	NOT COVERED	operator constructor; not in this abstract model (PROVEN in proofs/pending_commit)
 graph/src/runtime/ops/commit.rs	CommitOp::next	69	MODELLED	drives commit (abstract); end_segment -> roll_id_batches since #2846 (assumption 4 in header); faithful: proofs/pending_commit; effects gate proofs/effects_emit_apply commitShips_eq_iff
-graph/src/runtime/pending.rs	Pending::commit	1342	MODELLED	abstract commit (node create/delete + schema): emit_apply; faithful model PROVEN in proofs/pending_commit (pending.rs is that project's target)
-graph/src/graph/graph.rs	Graph::get_label_id_mut	1315	PROVEN	intern = faithful get-or-create: intern_refines, intern_fresh, intern_id_lt
-graph/src/graph/graph.rs	Graph::node_id_bound	1771	PROVEN	GState.bound = IdSpace::bound = live + recycled.len(): absIds, createOne_refines, deleteOne_refines (Faithful.Ids.bound)
-graph/src/graph/graph.rs	Graph::create_nodes	1810	PROVEN	createOne (id-space half) = IdSpace::create on one id: createOne_refines (Faithful.Ids.create1); refusals = okCreate; matrix sizing (grow_for_nodes) outside the abstract state
-graph/src/graph/graph.rs	Graph::delete_nodes	2364	PROVEN	deleteOne (id-space half) = IdSpace::release({id},{id}): deleteOne_refines (Faithful.Ids.release1); refusals = okDelete; label/attr/index removal = deleteOne fields
-graph/src/graph/id_space.rs	IdSpace::reserve	516	PROVEN	idsOf = reserve on a fresh batch (taken = issued = {}): idsOf_refines; faithful: proofs/id_space reserve_spec, reserve_fresh
-graph/src/graph/id_space.rs	IdSpace::refuse_recycled	590	PROVEN	okDelete (!free); faithful: proofs/id_space refuseRecycled_ok, release_spec
-graph/src/graph/id_space.rs	IdSpace::create	621	PROVEN	okCreate (free or (>= entry and not taken); every id < ID_LIMIT, #2911) + createOne_refines, emit_apply (PendingWF.inLimit); faithful: proofs/id_space create_spec, create_out_of_range, create_succeeds
-graph/src/graph/id_space.rs	IdSpace::release	739	CONDITIONAL	okDelete + deleteOne_refines; faithful: proofs/id_space release_spec, release_succeeds, release_no_underflow; CONDITIONAL like proofs/id_space: the model subtracts with Nat, Rust with u64, and they agree only under the undischarged caller contract freed ⊆ requested (debug_assert! at id_space.rs:711)
-graph/src/graph/id_space.rs	IdSpace::refuse_undeletable	677	PROVEN	okDelete (< entry or taken); faithful: proofs/id_space refuseUndeletable_ok
-graph/src/graph/id_space.rs	IdSpace::verify	773	PROVEN	Batch.verify (created = [entry, bound)); faithful: proofs/id_space verify_ok_iff (checked + same interval statement)
+graph/src/runtime/pending.rs	Pending::commit	1335	MODELLED	abstract commit (node create/delete + schema): emit_apply; faithful model PROVEN in proofs/pending_commit (pending.rs is that project's target)
+graph/src/graph/graph.rs	Graph::get_label_id_mut	1303	PROVEN	intern = faithful get-or-create: intern_refines, intern_fresh, intern_id_lt
+graph/src/graph/graph.rs	Graph::node_id_bound	1753	PROVEN	GState.bound = IdSpace::bound = live + recycled.len(): absIds, createOne_refines, deleteOne_refines (Faithful.Ids.bound)
+graph/src/graph/graph.rs	Graph::create_nodes	1792	PROVEN	createOne (id-space half) = IdSpace::create on one id: createOne_refines (Faithful.Ids.create1); refusals = okCreate; matrix sizing (grow_for_nodes) outside the abstract state
+graph/src/graph/graph.rs	Graph::delete_nodes	2354	PROVEN	deleteOne (id-space half) = IdSpace::release({id},{id}): deleteOne_refines (Faithful.Ids.release1); refusals = okDelete; label/attr/index removal = deleteOne fields
+graph/src/graph/id_space.rs	IdSpace::reserve	483	PROVEN	idsOf = reserve on a fresh batch (taken = issued = {}): idsOf_refines; faithful: proofs/id_space reserve_spec, reserve_fresh
+graph/src/graph/id_space.rs	IdSpace::refuse_recycled	550	PROVEN	okDelete (!free); faithful: proofs/id_space refuseRecycled_ok, release_spec
+graph/src/graph/id_space.rs	IdSpace::create	623	PROVEN	okCreate (free or (>= entry and not taken); every id < ID_LIMIT, #2911) + createOne_refines, emit_apply (PendingWF.inLimit); faithful: proofs/id_space create_spec, create_out_of_range, create_succeeds
+graph/src/graph/id_space.rs	IdSpace::release	699	CONDITIONAL	okDelete + deleteOne_refines; faithful: proofs/id_space release_spec, release_succeeds, release_no_underflow; CONDITIONAL like proofs/id_space: the model subtracts with Nat, Rust with u64, and they agree only under the undischarged caller contract freed ⊆ requested (debug_assert! at id_space.rs:711)
+graph/src/graph/id_space.rs	IdSpace::refuse_undeletable	637	PROVEN	okDelete (< entry or taken); faithful: proofs/id_space refuseUndeletable_ok
+graph/src/graph/id_space.rs	IdSpace::verify	733	PROVEN	Batch.verify (created = [entry, bound)); faithful: proofs/id_space verify_ok_iff (checked + same interval statement)
 src/divergence_guard.rs	is_replayed	41	PROVEN	Guard.isReplayed: isReplayed_iff, onFailure_client_noop
 src/divergence_guard.rs	on_failure	53	PROVEN	Guard.onFailure: onFailure_client_noop, onFailure_loading_exits, onFailure_replicated_resyncs, onFailure_logs_payload_only_when_replayed; guardReplica_spec, stepNode_failure_matches_guard, guard_loading_halts (Redis ctx flags/timer/exit are inputs/effects)
 src/divergence_guard.rs	force_full_resync	104	PROVEN	Guard.forceFullResync: forceFullResync_exit_iff, forceFullResync_no_one_first, forceFullResync_success (ctx.call result is an input)

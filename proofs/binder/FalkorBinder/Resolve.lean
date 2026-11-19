@@ -22,6 +22,8 @@ structure St where
   p2c : Env
   /-- `copy_from_parent`: name ↦ (parent variable, its copy in `cur`) -/
   cfp : List (Name × (Var × Var))
+  /-- `match_rel_vars` (#2981): the `(id, scope_id)` of every named relationship a MATCH bound -/
+  matchRels : List (Nat × Nat) := []
   /-- `anon_vars` (binder.rs:156, #3303): the variable each unnamed pattern entity is bound to -/
   anon : List (Nat × Var) := []
 
