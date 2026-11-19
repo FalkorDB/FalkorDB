@@ -133,8 +133,9 @@ pub mod si_type {
     pub const T_DATETIME: u64 = 1 << 5;
     pub const T_DATE: u64 = 1 << 7;
     pub const T_TIME: u64 = 1 << 8;
-    /// Duration. The payload depends on the stream's version, never on the tag:
-    /// before [`ENCVER_DURATION_COMPONENTS`](super::ENCVER_DURATION_COMPONENTS)
+    /// Duration.
+    ///
+    /// The payload depends on the stream's version, never on the tag: before [`ENCVER_DURATION_COMPONENTS`](super::ENCVER_DURATION_COMPONENTS)
     /// (RDB) and effects v4, one signed epoch offset (the C engine's `time_t`,
     /// which cannot hold a negative component); from there on, three signed
     /// values — months, days, seconds (`temporal::Dur`).

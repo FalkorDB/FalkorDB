@@ -551,13 +551,19 @@ impl Dur {
 
     /// The signed (months, days, seconds). The one way to read a duration.
     #[inline]
-    pub fn components(&self) -> (i64, i64, i64) {
+    #[must_use]
+    pub const fn components(&self) -> (i64, i64, i64) {
         if self.0 & 1 == 1 {
             Self::unpack_inline(self.0)
         } else {
             // SAFETY: bit 0 clear means a live `Arc<[i64; 3]>` pointer.
             let a = unsafe { &*(self.0 as usize as *const [i64; 3]) };
-            (a[0], a[1], a[2])
+            #[allow(
+                clippy::tuple_array_conversions,
+                reason = "`From` is not const, and this is a const fn"
+            )]
+            let c = (a[0], a[1], a[2]);
+            c
         }
     }
 
@@ -572,6 +578,7 @@ impl Dur {
 
     /// The word, when the duration is stored inline (for the attribute store).
     #[inline]
+    #[must_use]
     pub const fn inline_bits(&self) -> Option<u64> {
         if self.0 & 1 == 1 { Some(self.0) } else { None }
     }
@@ -579,6 +586,7 @@ impl Dur {
     /// Rebuild a duration from `inline_bits`. An even word would be taken for
     /// an owning pointer, so it is refused in release builds too.
     #[inline]
+    #[must_use]
     pub const fn from_inline_bits(bits: u64) -> Self {
         assert!(bits & 1 == 1, "Dur::from_inline_bits needs the inline tag");
         Self(bits)
@@ -587,6 +595,7 @@ impl Dur {
     /// How many holders share the out-of-line allocation, or `None` for an
     /// inline duration (which owns no heap memory).
     #[inline]
+    #[must_use]
     pub fn heap_holders(&self) -> Option<usize> {
         if self.0 & 1 == 1 {
             return None;
@@ -701,10 +710,12 @@ pub fn check_date_range(ts: i64) -> Result<i64, String> {
     Ok(ts)
 }
 
-/// Convert a duration stored with the legacy encoding (seconds from the Unix
-/// epoch of `epoch + years/months + days + time`, as written by the C engine
-/// and by earlier Rust versions) into components. The legacy decomposition is
-/// replayed exactly, so a stored value reads back as it did.
+/// Convert a duration stored with the legacy encoding into components.
+///
+/// The legacy encoding is seconds from the Unix epoch of
+/// `epoch + years/months + days + time`, as written by the C engine and by
+/// earlier Rust versions. The legacy decomposition is replayed exactly, so a
+/// stored value reads back as it did.
 pub fn duration_from_legacy(legacy: i64) -> Result<Dur, String> {
     let days = legacy.div_euclid(86400);
     let time_of_day = legacy.rem_euclid(86400);
@@ -725,10 +736,13 @@ pub fn duration_from_legacy(legacy: i64) -> Result<Dur, String> {
         )
 }
 
-/// Encode a duration in the legacy epoch-offset form (what the compact
-/// result-set protocol carries, and what C writes). Components that cannot be
-/// expressed non-negatively borrow exactly as the C engine does.
-pub fn duration_to_legacy(dur: &Dur) -> i64 {
+/// Encode a duration in the legacy epoch-offset form.
+///
+/// This is what the compact result-set protocol carries, and what C writes.
+/// Components that cannot be expressed non-negatively borrow exactly as the C
+/// engine does.
+#[must_use]
+pub const fn duration_to_legacy(dur: &Dur) -> i64 {
     let (months, days, seconds) = dur.components();
     let base_year = 1970i32.saturating_add(months.div_euclid(12) as i32);
     let base_month = (months.rem_euclid(12) + 1) as u32;
@@ -1339,7 +1353,7 @@ mod duration_tests {
                 ] {
                     let x = dur(m, d, s);
                     assert_eq!(x.components(), (m, d, s));
-                    assert_eq!(x.clone().components(), (m, d, s));
+                    assert_eq!(x.components(), (m, d, s));
                     let fits = m.abs() <= 4095 && d.abs() <= 131_071 && s.abs() <= 2_147_483_647;
                     assert_eq!(is_inline(&x), fits, "{m} {d} {s}");
                 }
@@ -1412,9 +1426,7 @@ mod duration_tests {
         // big - big that fits is the packed value, equal and hashing alike
         let big_a = v(0, 0, 3_000_000_000);
         let big_b = v(0, 0, 3_000_000_000 - 90);
-        let Ok(diff) = big_a.clone() - big_b else {
-            panic!()
-        };
+        let Ok(diff) = big_a - big_b else { panic!() };
         let packed = v(0, 0, 90);
         assert!(matches!(&diff, Value::Duration(d) if is_inline(d)));
         assert_eq!(diff, packed);
@@ -1476,7 +1488,7 @@ mod duration_tests {
             dur(1, 0, 86_399),
         ] {
             let legacy = duration_to_legacy(&p);
-            assert_eq!(duration_from_legacy(legacy), Ok(p.clone()));
+            assert_eq!(duration_from_legacy(legacy), Ok(p));
         }
         assert_eq!(duration_from_legacy(86_400), Ok(dur(0, 1, 0)));
     }
@@ -1498,7 +1510,7 @@ mod duration_tests {
     fn month_and_day_offsets_cancel_before_the_range_is_checked() {
         // 1,000,000 years is exactly 2,500 Gregorian 400-year cycles.
         let cancel = v(12_000_000, -365_242_500, 0);
-        assert_eq!(Value::Datetime(0) + cancel.clone(), Ok(Value::Datetime(0)));
+        assert_eq!(Value::Datetime(0) + cancel, Ok(Value::Datetime(0)));
         assert_eq!(
             Value::Datetime(0) - v(-12_000_000, 365_242_500, 0),
             Ok(Value::Datetime(0))

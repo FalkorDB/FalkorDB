@@ -665,6 +665,7 @@ impl RangeIndex {
 mod tests {
     use super::*;
     use crate::graph::graph::{NodeId, RelationshipId};
+    use crate::runtime::functions::temporal::Dur;
     use crate::runtime::value::Point;
     use thin_vec::ThinVec;
 
@@ -920,7 +921,7 @@ mod tests {
             Value::Datetime(1),
             Value::Date(1),
             Value::Time(1),
-            Value::Duration(1),
+            Value::Duration(Dur::new(0, 0, 1).unwrap()),
         ];
         for value in &values {
             match value {

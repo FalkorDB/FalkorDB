@@ -69,10 +69,11 @@ use crate::{
     index::IndexType,
 };
 
-/// Buffer header: the version this build **writes**. C accepts any version
-/// `<= its own` and branches per version, so raising this is its established
-/// mechanism rather than a break — but C must be raised to match before it can
-/// read what we write.
+/// Buffer header: the version this build **writes**.
+///
+/// C accepts any version `<= its own` and branches per version, so raising this
+/// is its established mechanism rather than a break — but C must be raised to
+/// match before it can read what we write.
 ///
 /// 4 differs from 3 in one place: `T_DURATION` carries three `i64`s (months,
 /// days, seconds) instead of one epoch offset. Nothing else changed, which is
