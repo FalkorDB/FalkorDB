@@ -681,7 +681,6 @@ impl Indexer {
         label: &Arc<String>,
     ) -> bool {
         self.index
-            .load()
             .get(label)
             .is_none_or(|index| index.is_operational())
     }
