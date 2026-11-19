@@ -3,7 +3,7 @@ ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 # build/runtime/Dockerfile (build/check-server-pins.sh enforces it).
 ARG SERVER=redis
 ARG REDIS_VERSION=8.10.2
-ARG VALKEY_VERSION=9.1.2
+ARG VALKEY_VERSION=9.2.0
 
 # Stage 1: the ASAN-instrumented server, built from source. Not
 # build/build-server.sh: that builds the release flavour. Both servers'
