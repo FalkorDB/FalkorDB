@@ -96,7 +96,7 @@ graph/src/runtime/functions/conversion.rs	to_boolean_list	218	PROVEN	toBooleanLi
 graph/src/runtime/functions/conversion.rs	to_float_list	245	PROVEN	toFloatList_eq
 graph/src/runtime/functions/conversion.rs	to_integer_list	264	PROVEN	toIntegerList_eq
 graph/src/runtime/functions/conversion.rs	to_string_list	280	PROVEN	toStringList_eq
-graph/src/runtime/functions/conversion.rs	float_to_string	299	PROVEN	FloatToString.floatToString (std formatters/parse = FmtOps parameters): fts_plain, fts_nonfinite, fts_sci_spec, sciFixed_spec, fts_sci_has_fraction, splitOnce_append
+graph/src/runtime/functions/conversion.rs	float_to_string	299	PROVEN	FloatToString.floatToString (std formatters/parse = FmtOps parameters): fts_plain, fts_nonfinite, fts_sci_spec, sciFixed_spec, fts_sci_has_fraction, splitOnce_append; plain-decimal half-even tie case (conversion.rs:303) open, not modelled as Java-equal
 graph/src/runtime/functions/mod.rs	empty_procedure_batch	419	PROVEN	Registry.emptyProcedureBatch: emptyProcedureBatch_rows
 graph/src/runtime/functions/mod.rs	call	436	PROVEN	Registry.RuntimeFn.call (QuickJS bridge = argument): call_arms
 graph/src/runtime/functions/mod.rs	call_procedure_batch	451	PROVEN	Registry.RuntimeFn.callProcBatch: call_arms
