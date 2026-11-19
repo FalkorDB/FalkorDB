@@ -114,7 +114,6 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 ### Server crash / hang / data loss
 - **W3-parser-1**: the shortestPath filter-skip loop never ends at EOF (`cypher.rs:1819-1845`). `RETURN shortestPath((a)-[{` spins a worker forever, and a handful of these block all graph queries.
 - **W3-conc-4**: a huge `k` in `db.idx.vector.queryNodes` runs `Vec::with_capacity(k)` and SIGSEGVs (`graph.rs:3744`, `:3799`).
-- **W3-algo-1**: forged `__falkor_type` entity markers in a UDF result are trusted (`type_convert.rs:229-236`). This panics the reply or creates a dangling edge.
 - **W3-algo-2**: SHUTDOWN after a main-thread UDF aborts, because ThreadJsState drop order frees the QuickJS runtime first (`js_context.rs:129-136`).
 - **W3-runtime-1/2**: the LIMIT/SKIP budget is pushed through hard-cap traversals (`runtime.rs:594-626`), so traverse→traverse under LIMIT, and stacked SKIPs, silently lose rows.
 
@@ -158,7 +157,6 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - `db.idx.fulltext.queryNodes(1,2)` errors (C returns empty).
   - Output differences: `db.indexes` and `db.constraints` row order; `db.indexes` `info` holds only field names (C returns full RediSearch info and `_src_id`/`_dest_id` for edge indexes).
 - **W5-udf-2** — `graph.traverse([a])` leaves `a` out when it is its own neighbour, because the start node is pre-marked visited (`js_classes.rs:744`): Rust `[1]`, C `[0,1]`.
-- **W5-udf-3** — `node.getNeighbors()` with no argument throws "Error converting from js 'undefined'" (`js_classes.rs:195`, `:352`); C returns the neighbours.
 - **W6-opt-1** (found reviewing PR #2845, pre-existing on main 89d68334a) — filter push-down gives an OPTIONAL MATCH inside a `CALL {}` body the outer query's variable ids, so the filter on `n` is pushed onto a row where that slot is unbound (`push_filters_down.rs:217`, `:238`). `MATCH (x:A:B) CALL { OPTIONAL MATCH (n:A:B {id:3}) RETURN n.id AS nid } RETURN x.id, nid` → Rust "Variable n not found", C `[[1,3],[2,3],[3,3]]`; four variants fail the same way. Possibly related to #2728. Lean `filter_pushed_through_boundary` (binder `CallBoundary.lean`). A trial fix (match `IR::Apply | IR::Optional(_)` and inherit `branch_output_variables(left)`) makes all five match C, and 166/166 related flow tests pass.
 - **W4-index-1** — a range index on an attribute that already has a fulltext index is never queried correctly. `build_query_node` takes the attribute's first field whatever its type (`index/mod.rs:1386,1411,1459,1471,1529,1590`). After `CREATE FULLTEXT INDEX … ON (n.s)` then `CREATE INDEX … ON (n.s)`, `n.s='foo'`, `n.s > 'c'`, `{s:'bar'}` and `n.s IN [...]` all return `[]` (C returns the rows). Fix: pick the field whose type is `IndexType::Range`. Lean `IndexerM.bug_range_after_fulltext`.
 - Unconfirmed: `create_rs_index` leaks index options on its NUL-byte error path.

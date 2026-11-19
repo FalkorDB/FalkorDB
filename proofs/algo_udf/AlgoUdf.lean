@@ -81,10 +81,10 @@ Every `bug_*` test asserts C's answer and fails today.
 6. `graph.traverse([a])` omits `a` when it is its own neighbour (start pre-marked
    visited, js_classes.rs:744). C `[0,1]`, Rust `[1]` (Rust's `getNeighbors` gives
    `[0,1]`). `traverse_drops_self_neighbour`; `bug_udf_traverse_omits_self_loop_neighbour`.
-7. `node.getNeighbors()` without an argument throws "Error converting from js
-   'undefined' into type 'object'" (js_classes.rs:195 forwards `undefined` to an
-   `Opt<Object>`, :352). C returns the neighbours.
-   `UdfClasses.getNeighbors_no_arg_errors`; `bug_udf_get_neighbors_without_config_throws`.
+7. **FIXED by #2976**: `node.getNeighbors()` without an argument threw "Error converting
+   from js 'undefined' into type 'object'" (the method forwarded `undefined` to an
+   `Opt<Object>`); it now forwards the caller's arguments as given (js_classes.rs:251).
+   `UdfClasses.pre2976_getNeighbors_no_arg_errors` → `getNeighbors_no_arg_ok`.
 8. `GRAPH.UDF LOAD "" …` is accepted (src/commands/udf.rs:117 checks only the max
    length) and its functions are uncallable ("UDF function '.f' not found in JS
    context": repository.rs:105 qualifies `.f`, js_globals.rs:125 stores `f`).
@@ -111,7 +111,7 @@ Every `bug_*` test asserts C's answer and fails today.
 * `Paths.far_*`, `recordK_length`, `record1_min`, `record0_ties`, `nextNode_far`,
   `dijkstra_never_src_eq_dst`.
 * `MsfFlow.keepMin_comm`, `identity_neutral`, `flowAlign_aligned`, `superFresh`.
-* `Marshal.int_roundtrip`, `float_rt_iff`, `node_rt`, `rel_rt`, `point_rt`,
+* `Marshal.int_roundtrip`, `float_rt_iff`, `node_rt`, `rel_rt`, `path_rt`, `point_rt`,
   `datetime_rt`, `vecf32_finite_rt`, `unesc_esc`, `keep_esc`, `map_never_marked`.
 * `Repo.delete_preserves` (under the missing `KeysUnique` check).
 * `Neighbors.outgoing_ok` (no self-loop), `string_types_filter`.
@@ -123,8 +123,8 @@ Known before this wave (counterexamples added):
 * HarmonicCentrality source vector sized `node_count` not `node_id_bound` — **FIXED by #3045**
   (`Compact.harmonic_complete`, `unfiltered_keeps_high_ids`).
 * pageRank with an unknown label errors — **FIXED by #3058** (`pagerank_unknown_label_empty`).
-* Forged `__falkor_type` markers accepted (type_convert.rs:351-358) —
-  `Marshal.forged_node_marker`, `forged_edge_marker`.
+* Forged `__falkor_type` markers accepted — **FIXED by #2976** (entities are `JsEntity` class
+  instances, type_convert.rs:352): `Marshal.forged_node_marker_is_map`, `forged_edge_marker_is_map`.
 * -0.0 → Int 0 — **FIXED by #3074** (see "Fixed on main").
 * Qualified-name collision / case folding (repository.rs:94-137, functions/mod.rs:1121) — **FIXED by #3066**
   (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412; `dotted_collision` stays as the reason the check compares qualified names).
