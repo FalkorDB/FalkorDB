@@ -139,12 +139,14 @@ class testHashJoin(FlowTestsBase):
     def test_join_inside_batched_subplan_keeps_outer_rows_apart(self):
         # Under a batched Apply / Optional the join's argument batch holds
         # every outer row; a left row must only join right rows of its own
-        # outer row. It joined across all of them (#3012).
+        # outer row. It joined across all of them (#3012). The planner now keeps
+        # a Cartesian Product + Filter for a branch fed by an Argument (#2981),
+        # so these pin the results whichever join the plan uses; the join itself
+        # keeps outer rows apart too (per-origin tables), should one be planned.
         g = self.graph
         g.query("UNWIND [1, 2] AS i CREATE (:A {v: 1, w: i}), (:B {v: 1, w: i})")
 
         q = "UNWIND [1, 2] AS x MATCH (a:A), (b:B) WHERE a.v = b.v RETURN count(*)"
-        self.env.assertContains("Value Hash Join", str(g.explain(q)))
         res = g.query(q)
         self.env.assertEqual(res.result_set, [[8]])
 
@@ -158,7 +160,6 @@ class testHashJoin(FlowTestsBase):
         q = """UNWIND range(1, 3000) AS x
                MATCH (a:C {w: x}), (b:C) WHERE b.v = a.v AND b.w <= 20
                RETURN count(*)"""
-        self.env.assertContains("Value Hash Join", str(g.explain(q)))
         res = g.query(q)
         self.env.assertEqual(res.result_set, [[6000]])
 
@@ -172,7 +173,6 @@ class testHashJoin(FlowTestsBase):
                OPTIONAL MATCH (a:M), (b:N)
                WHERE a.k = b.k AND (a.k = x OR a.k = toString(x))
                RETURN x, count(b) ORDER BY x"""
-        self.env.assertContains("Value Hash Join", str(g.explain(q)))
         res = g.query(q)
         self.env.assertEqual(res.result_set, [[1, 2], [2, 2]])
 
@@ -184,6 +184,5 @@ class testHashJoin(FlowTestsBase):
                WHERE a.k = b.k AND (a.k = x OR a.k = toString(x))
                  AND (b.k = x OR (x = 2 AND b.k = toString(x)))
                RETURN x, count(b) ORDER BY x"""
-        self.env.assertContains("Value Hash Join", str(g.explain(q)))
         res = g.query(q)
         self.env.assertEqual(res.result_set, [[1, 1], [2, 2]])
