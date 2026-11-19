@@ -9,7 +9,7 @@ for *any* indexer behaviour.
 | here | there (graph.rs) |
 | --- | --- |
 | `populateStart`   | `populate_index` :560 |
-| `dropBg`          | `drop_index_bg` :819 |
+| `dropBg`          | `drop_index_bg` :795 (`Indexer::remove_if_empty`, #3856) |
 | `createIndex`     | `create_index` :3670 / `create_index_sync` :3717 |
 | `syncDocs`        | `populate_indexes_sync` :3764 (one label/type) |
 | `commitDocs`      | `commit_index_kind` :4043 (via `commit_index` :3927, `commit_index_locked` :3940) |
@@ -30,10 +30,35 @@ def populateStart (snap : Option Nat) : Option (Nat × Nat × Option Nat × Opti
 theorem populateStart_spec (t : Nat) : populateStart (some t) = some (0, 0, none, none) ∧
     populateStart none = none := ⟨rfl, rfl⟩
 
-/-- `drop_index_bg`: the label leaves the indexer's map (under its lock). -/
-def dropBg (idxLabels : List String) (l : String) : List String := idxLabels.filter (· != l)
-theorem dropBg_spec (idxLabels : List String) (l : String) : l ∉ dropBg idxLabels l := by
-  simp [dropBg]
+/-- `drop_index_bg` (under the indexer lock): `remove_if_empty` drops the
+label's entry only while it has no fields (#3856). The indexer map is
+`(label, index_count)` pairs. -/
+def dropBg (idx : List (String × Nat)) (l : String) : List (String × Nat) :=
+  idx.filter (fun e => !(e.1 == l && e.2 == 0))
+
+/-- **PROVEN**: no fieldless entry for the label is left. -/
+theorem dropBg_spec (idx : List (String × Nat)) (l : String) :
+    ∀ e ∈ dropBg idx l, e.1 = l → e.2 ≠ 0 := by
+  intro e he h1 h2; simp [dropBg, h1, h2] at he
+
+/-- **PROVEN**: on the drop path with no racing `CREATE INDEX` (`drop_index`
+reported `remaining = 0`), the label leaves the indexer's map. -/
+theorem dropBg_after_drop (idx : List (String × Nat)) (l : String)
+    (h : ∀ n, (l, n) ∈ idx → n = 0) : l ∉ (dropBg idx l).map (·.1) := by
+  simp only [dropBg, List.mem_map, List.mem_filter, not_exists, not_and]
+  rintro ⟨l', n⟩ ⟨hm, hb⟩ rfl
+  simp [h n hm] at hb
+
+/-- **PROVEN** (#3856): an entry a `CREATE INDEX` re-filled before the
+background drop ran is kept. -/
+theorem dropBg_keeps_filled (idx : List (String × Nat)) (l : String) (n : Nat)
+    (hm : (l, n) ∈ idx) (hn : n ≠ 0) : (l, n) ∈ dropBg idx l := by
+  simp [dropBg, hm, hn]
+
+/-- **PROVEN**: other labels are untouched. -/
+theorem dropBg_other (idx : List (String × Nat)) (l l' : String) (n : Nat) (hl : l' ≠ l) :
+    (l', n) ∈ dropBg idx l ↔ (l', n) ∈ idx := by
+  simp [dropBg, hl]
 
 /-- `create_index` / `create_index_sync`: register the label (or type),
 ask the indexer (`res`), then on success register the attribute names.

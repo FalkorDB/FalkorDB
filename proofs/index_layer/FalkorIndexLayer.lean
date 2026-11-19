@@ -165,7 +165,7 @@ New modules, all `sorry`-free:
 - `Meta`, `IndexM`: `Field` and the `Index` metadata (field map as an association list,
   `field_order` invariant `Inv` preserved by insert/remove/add/retain), RS spec lifecycle
   (`create_rs_index`, `register_fields`, `recreate_index`) with FFI results as parameters.
-- `IndexerM`: `Indexer` (create/drop/remove/lookups/vector metadata/index_info/progress/
+- `IndexerM`: `Indexer` (create/drop/remove_if_empty (#3856: `removeIfEmpty_spec`, `removeIfEmpty_keeps_filled`, `dropIndex_removeIfEmpty_erases`)/lookups/vector metadata/index_info/progress/
   cancel/graph slot/recreate). `createIndex_validates`, `createIndex_ok`, `dropIndex_spec`
   (a well-formed entry never keeps an empty field list), `indexInfo_spec` (sorted permutation).
 - `Iter`: result iterators (`drain_next`), RS refcounting (`RC.not_freed`: no use-after-free

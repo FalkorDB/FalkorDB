@@ -798,8 +798,8 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
-            // Indexer lock only, never the global lock: `Indexer::remove` swaps the
-            // index map, and the `Index` it drops takes no lock either. Reaching for
+            // Indexer lock only, never the global lock: `Indexer::remove_if_empty` swaps
+            // the index map, and the `Index` it drops takes no lock either. Reaching for
             // the global lock *under* the indexer lock is the AB-BA that hung
             // `test_index_create` for six hours (issue #726).
             //
@@ -807,7 +807,7 @@ fn drop_index_bg(
             // a whole batch, so the populate worker can't be mid-batch here.
             let lock = node_indexer.write_lock();
             let _guard = lock.lock();
-            node_indexer.remove(&label);
+            node_indexer.remove_if_empty(&label);
         },
         Some(0),
     );

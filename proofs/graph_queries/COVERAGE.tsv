@@ -11,7 +11,7 @@ graph/src/graph/graph.rs	new	264	PROVEN	Accessors.planNew_spec
 graph/src/graph/graph.rs	from	402	PROVEN	Accessors.nodeOpErrorOf_spec
 graph/src/graph/graph.rs	populate_index	543	PROVEN	Index.populateStart_spec
 graph/src/graph/graph.rs	populate_index_batch	577	PROVEN	see proofs/search_concurrency Tickets.batch
-graph/src/graph/graph.rs	drop_index_bg	795	PROVEN	Index.dropBg_spec
+graph/src/graph/graph.rs	drop_index_bg	795	PROVEN	Index.dropBg_spec, dropBg_after_drop, dropBg_keeps_filled, dropBg_other (#3856 remove_if_empty)
 graph/src/graph/graph.rs	grow_cap	842	PROVEN	Schema.growCap/growStep: growCap_ge_needed (needed <= GrB_INDEX_MAX), growCap_le_max, growCap_reaches, growCap_ge_cap, growCap_noop, growCap_chunked, growStep_small (#2911 checked/clamped step; total)
 graph/src/graph/graph.rs	new	858	PROVEN	Ids.newG_spec; chains (#3757): SchemaHash.newGC_inv
 graph/src/graph/graph.rs	restore	900	PROVEN	Ids.restore_ids, restoreCap_covers, clampTiers_mono, restore_LInv, restore_LInv_any (NameMap::from_names index, first position wins, #3757: fromNamesIdx_spec), fillEndpoints_spec; chains rebuilt with chain_of (#3757): SchemaHash.restoreGC_inv, restore_same_hash
