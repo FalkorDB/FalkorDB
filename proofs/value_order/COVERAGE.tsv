@@ -82,6 +82,3 @@ graph/src/runtime/value.rs	f32_hash_bits	1956	PROVEN	f32HashBits (Model): Main.f
 graph/src/runtime/value.rs	sort_cmp_int_float	1968	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
 graph/src/runtime/batch.rs	Batch::compare_rows_at	1289	PROVEN	Main.compareRowsAt: Main.compareRowsAt_eq_scMain (Unbound ties, else sort_cmp)
 graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Main.listSort (sort_by(Value::sort_cmp)): Main.listSort_perm, Main.listSort_sorted (output pairwise sort_cmp-ordered, well-formed input), Main.scMain_total (total order: W2-strlist-1 panic fixed by #2912)
-graph/src/runtime/value.rs	shift_timestamp	665	NOT COVERED	(#3610): duration components; not modelled yet
-graph/src/runtime/value.rs	duration_cmp	685	NOT COVERED	(#3610): duration components; not modelled yet
-graph/src/runtime/value.rs	combine_durations	701	NOT COVERED	(#3610): duration components; not modelled yet

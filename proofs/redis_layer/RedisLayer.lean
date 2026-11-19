@@ -7,6 +7,8 @@ import RedisLayer.Compact
 import RedisLayer.RoQuery
 import RedisLayer.Bulk
 import RedisLayer.RoundTrip
+import RedisLayer.BlobVersion
+import RedisLayer.Dur
 import RedisLayer.SerialProof
 import RedisLayer.SerialCLayout
 import RedisLayer.RespVerbose
@@ -142,6 +144,8 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | here | there |
 | --- | --- |
 | `BufferedIO.*`, `BufferedReader`, `RoundTrip` | `src/serializers/buffered_io.rs` (all 55 fns) |
+| `BlobVersion` — `BR`, `brNew`, `fromSliceAt`, `fromBlob`, `rdbEncver` (#3610) | `BufferedReader::encver` `:179`, `new` `:202`, `from_blob` `:228`, `from_slice_at` `:244`; `rdb_load_graph`'s encver (decoder/mod.rs:122) |
+| `Dur` — `Temporal.Dur`, `durNew`, `toLegacy`, `fromLegacy`, `inlineBits`, `ofInlineBits` (#3610) | `graph/src/runtime/functions/temporal.rs` `Dur::new` `:515`, `inline_bits` `:582`, `from_inline_bits` `:590`, `duration_from_legacy` `:719`, `duration_to_legacy` `:745` |
 | `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field` `:637-725`, `encField`/`encPh` = field loop `:383-427`) |
 | `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); pre-#3514 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
@@ -214,6 +218,13 @@ New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, 
     dd333fe32; now `Commands.bulk_reply_c`).
 Also seen: #2537's root cause is general — any truncated GRAPH.RESTORE payload makes
 `BufferedReader::from_slice` call `RedisModule_LoadStringBuffer(NULL)` (`from_slice_past_end`).
+#3610 (durations as three components, encoding version 21): the compact reply sends
+`duration_to_legacy(dur)`, and a duration loaded from an older stream's offset `x` is sent as
+`x` again (`Compact.compact_duration_legacy`, from `Temporal.fromLegacy_toLegacy`; `toLegacy_eq`:
+the wrapping ops never wrap); `GRAPH.RESTORE` blobs carry the version (`vec_blob_roundtrip`),
+an older unprefixed blob reads at 19 from byte 0 (`fromBlob_old_blob`), no blob that loaded
+before is read differently (`prefixed_was_invalid`), a newer version is refused
+(`fromBlob_newer`), a short prefix is an `Err` (`fromBlob_short`). No counterexample.
 Model correction: compact vector elements use `RedisModule_ReplyWithDouble` (`Env.vfmt`), not
 `%.15g` (same as C).
 

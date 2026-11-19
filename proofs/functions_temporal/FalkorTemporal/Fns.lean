@@ -34,7 +34,7 @@ structure Num (F : Type) where
 inductive TV (F : Type) where
   | null | int (i : Int) | float (f : F) | str (s : String)
   | map (kvs : List (String × TV F)) | other (name : String)
-  | date (t : Int) | time (t : Int) | datetime (t : Int) | duration (t : Int)
+  | date (t : Int) | time (t : Int) | datetime (t : Int) | duration (t : Dur)
 
 variable {F : Type} (N : Num F)
 

@@ -62,9 +62,9 @@ graph/src/graph/attribute_store.rs	value	328	PROVEN	Content.attrUpdates_view (sl
 graph/src/graph/attribute_store.rs	len	346	PROVEN	Content.attrUpdates_view (RowUpdates)
 graph/src/graph/attribute_store.rs	id	350	PROVEN	Content.attrUpdates_view (RowUpdates)
 graph/src/graph/attribute_store.rs	value	357	PROVEN	Content.attrUpdates_view (RowUpdates)
-graph/src/graph/attribute_store.rs	pack_value	371	PROVEN	Pack.pack_unpack, Pack.pack_hinv
+graph/src/graph/attribute_store.rs	pack_value	371	PROVEN	Pack.pack (Dur: inline -> Tag::Duration word, else heapPut, #3610): Pack.pack_unpack, Pack.unpack_inline_dur, Pack.heapPut_unpack, Pack.pack_hinv, Pack.pack_hinv_heap, Pack.pack_heap
 graph/src/graph/attribute_store.rs	store_packed_value	414	PROVEN	Pack.store_get
-graph/src/graph/attribute_store.rs	unpack	429	PROVEN	Pack.pack_unpack, le64_roundtrip, le32_roundtrip
+graph/src/graph/attribute_store.rs	unpack	429	PROVEN	Pack.unpack (Tag::Duration -> from_inline_bits = Temporal.ofInlineBits): Pack.pack_unpack, Pack.unpack_inline_dur, le64_roundtrip, le32_roundtrip; RedisLayer.Temporal.inline_roundtrip
 graph/src/graph/attribute_store.rs	release_heap_value	455	PROVEN	Pack.release_hinv
 graph/src/graph/attribute_store.rs	release_span_values	467	PROVEN	Pack.releaseSpan_hinv
 graph/src/graph/attribute_store.rs	retire_span	480	PROVEN	Arena.retire_ok
@@ -182,7 +182,7 @@ graph/src/runtime/pending.rs	resync_published_indexes	1844	PROVEN	PD.resync_spec
 graph/src/runtime/pending.rs	commit_deferred_indexes	1898	PROVEN	PD.commitDeferred_spec
 graph/src/runtime/pending.rs	effects_count	2013	PROVEN	PD.effectsCount_eq_pre, PD.effects_counts_cancelled, PD.effects_cancelled_node, PD.effects_counts_staged_removal (definition = documented sum + 2 per cancelled entity, #3461, + staged_labels_removed, #3459; history pre3461_effects_ignores_cancelled)
 graph/src/runtime/pending.rs	end_segment	1939	PROVEN	PD.clear_spec (incl. staged_labels_removed = 0), endSegment_spec; CommitOpNext.commitNext_endSegment_err
-graph/src/graph/graphblas/serialization.rs	encode_with_range	213	PROVEN	SaveLayout.encRoarPR_eq (select/advance_to/take seek = skip/take = graph_persist encRoar, every count/offset), encRoarMain_eq; encodeGraphPR_eq, load_encode_pr, multi_load_pr (whole stream = pre-#3438's, so graph_persist's round trips hold); RSet.select/iterFrom (SaveRoaring)
+graph/src/graph/graphblas/serialization.rs	encode_with_range	214	PROVEN	SaveLayout.encRoarPR_eq (select/advance_to/take seek = skip/take = graph_persist encRoar, every count/offset), encRoarMain_eq; encodeGraphPR_eq, load_encode_pr, multi_load_pr (whole stream = pre-#3438's, so graph_persist's round trips hold); RSet.select/iterFrom (SaveRoaring)
 graph/src/graph/schema.rs	hash	27	MODELLED	NameMap.M.index is keyed by the name itself: Key's Hash hashes the str it Borrows as (std HashMap plumbing, no logic to prove)
 graph/src/graph/schema.rs	borrow	36	MODELLED	NameMap.M.index keyed by String (Key borrows as its str); see Key::hash
 graph/src/graph/schema.rs	from_names	76	PROVEN	NameMap.fromNames (truncate to capacity, entry().or_insert = first position, chain_of): fromNames_first, fromNames_vec, fromNames_chainInv, fromNames_eq_inserts; graph_queries Ids.restore_LInv_any

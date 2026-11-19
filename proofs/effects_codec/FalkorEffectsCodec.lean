@@ -42,6 +42,29 @@ quadratic list reservation — **fixed by #3267**; ≥ 4 GiB compressed frame �
 No model change. `graph/src/effects/mod.rs` and `v3/format.rs` build entry points take `&Graph`
 instead of `&AtomicRefCell<Graph>` (a read query borrows its graph once, #3436); every
 `COVERAGE.tsv` row is re-pinned (mod.rs -1 line from the removed import, format.rs -2).
+
+## PR #3610 (durations carry months, days, seconds; effects wire v4, v3 still read)
+No counterexample. Model changes (Lean file:line ↔ Rust file:line):
+| Lean | Rust | change |
+|---|---|---|
+| `Value.lean:129` `encV` | `v3/value.rs:38` encode | `Val.duration m d s` → `T_DURATION · i64 m · i64 d · i64 s` (28 bytes ≥ `MIN_VALUE_BYTES`, so `encV_len`, `capTrace_linear`, `decode_reserves_linear` keep their statements) |
+| `Value.lean:201` `durNewOk` | `temporal.rs:515` `Dur::new` | months/days fit `i32`, the legacy sum fits `i64` |
+| `Value.lean:237` `durationFromLegacy` | `temporal.rs:719` | decomposition, `duration_to_legacy` check, fallbacks; `durationFromLegacy_some` (never fails) |
+| `Value.lean:293` `readOne` (`lg`) | `v3/value.rs:243` read_one (`legacy_duration`) | v3: one `i64` via `durationFromLegacy`; v4: three `i64`, `Dur::new` refusal = `BadValueType(T_DURATION)` |
+| `Value.lean:369/372/374` `decodeV`/`decodeV3`/`decodeV4` | `v3/value.rs:197/148/155` | `decode_value(r, legacy)` and its two impls |
+| `RecFull.lean:152` `readRecord … lg` | `v3/records.rs:619` `read_record::<VERSION>` | `lg = (VERSION = 3)`, threaded through `rRows`/`bRows`/bodies/`RecOk` |
+| `Payload.lean:47` `openPayload` | `v3/records.rs:1308` | accepts 4 or 3, returns `(bytes, version)` |
+| `Payload.lean:241` `payloadRecords` | `v3/records.rs:1255/1282` | `Records::next` decodes in the payload's version |
+| `Payload.lean` `newBuffer` | `v3/mod.rs:486` | `[4, 0]` |
+| `Format.lean:64` `describe` | `v3/format.rs:45` | lines carry the header's version |
+| `ModRs.lean:29/57` `describeTop`/`applyTop` | `effects/mod.rs:248/294` | version 4 or 3 |
+New theorems: `decodeV4_encV`, `decodeV3_encV`, `encV_duration`, `readOne_v3_duration` (v3 reads exactly 8
+bytes; the duration's legacy offset is the stored one), `decodeV3_duration`, `readOne_v4_duration`,
+`openPayload_versions` (3, 4 accepted; anything else `UnsupportedVersion`), `payloadRecords_maybeCompress`,
+`describe_unreadable`, `describeTop_versions`. Re-proved on the new model: `decodeV_encV`, `decodeV_safe`,
+`capTrace_linear`, `readOne_*`, `readRecord_encRecord(_wf)`, `records_concat`, `openPayload_*`,
+`describe_spec`, `applyTop_spec`. `WF utf8 true (.duration …)` is `False`: a v3 reader never sees a
+v4 duration (no encoder writes v3 any more). `v3/mod.rs` rows re-pinned +1.
 -/
 import FalkorEffectsCodec.Prim
 import FalkorEffectsCodec.Value
@@ -64,3 +87,21 @@ open FalkorCodec in
 #print axioms capTrace_linear
 open FalkorCodec in
 #print axioms openPayload_maybeCompress
+open FalkorCodec in
+#print axioms readOne_v3_duration
+open FalkorCodec in
+#print axioms readOne_v4_duration
+open FalkorCodec in
+#print axioms decodeV3_duration
+open FalkorCodec in
+#print axioms decodeV4_encV
+open FalkorCodec in
+#print axioms openPayload_versions
+open FalkorCodec in
+#print axioms payloadRecords_maybeCompress
+open FalkorCodec in
+#print axioms describe_spec
+open FalkorCodec in
+#print axioms applyTop_spec
+open FalkorCodec in
+#print axioms records_concat

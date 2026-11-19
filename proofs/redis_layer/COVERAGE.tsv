@@ -30,8 +30,8 @@ src/serializers/buffered_io.rs	BufferedReader::read_unsigned	183	PROVEN	Buffered
 src/serializers/buffered_io.rs	BufferedReader::read_signed	187	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
 src/serializers/buffered_io.rs	BufferedReader::read_double	191	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
 src/serializers/buffered_io.rs	BufferedReader::read_buffer	195	PROVEN	readW .buf (inline + blob): readW_inline, readW_blob, rdb_roundtrip
-src/serializers/buffered_io.rs	BufferedReader::new	202	PROVEN	listSrc false: rdb_roundtrip, rdb_roundtrip_256k
-src/serializers/buffered_io.rs	BufferedReader::from_slice	216	PROVEN	listSrc true: vec_roundtrip; from_slice_past_end (reads past the end call LoadStringBuffer(NULL), root cause of #2537)
+src/serializers/buffered_io.rs	BufferedReader::new	202	PROVEN	BufferedIO.brNew (encver field; byte layer = listSrc false): encver_new, rdb_roundtrip_ver, rdb_roundtrip, rdb_roundtrip_256k
+src/serializers/buffered_io.rs	BufferedReader::from_slice	216	PROVEN	test-only (cfg(test)) since #3610: BufferedIO.fromSlice = fromSliceAt data ENCODING_VERSION; listSrc true: vec_roundtrip; from_slice_past_end (reads past the end call LoadStringBuffer(NULL), root cause of #2537)
 src/serializers/buffered_io.rs	BufferedReader::load_chunk	257	PROVEN	listSrc.load: rdb_roundtrip (writer chunks are non-empty: G_bound)
 src/serializers/buffered_io.rs	BufferedReader::ensure_available	266	PROVEN	BufferedIO.ensure: ensure_cons, load_head
 src/serializers/buffered_io.rs	BufferedReader::read_tag	274	PROVEN	BufferedIO.readTag: readW_inline
@@ -86,11 +86,11 @@ src/serializers/mod.rs	decode_schema_entry	551	PROVEN	Serial.decEntry/decIdx/dec
 src/serializers/mod.rs	decode_index_field	653	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
 src/serializers/mod.rs	Schema::from_graph	743	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	write_f	44	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
-src/reply.rs	format_value_to_string	57	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
+src/reply.rs	format_value_to_string	57	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf; duration = M.dur of the Dur, #3610): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
 src/reply.rs	reply_with_str	121	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
 src/reply.rs	format_g	131	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
-src/reply.rs	reply_compact_value	153	PROVEN	Resp.encC call stream given the entity lookups: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed. Lookups: RelLookup.compactRel; OPEN BUG #3447 deleted edge of an unregistered type panics at :260 (bug3447_compact_cancelled_new_type_panics; replyTotal_of_registered under RegisteredTypes)
-src/reply.rs	reply_verbose_value	365	PROVEN	Resp.encVb: verbose_emits given the entity lookups (node/edge postponed arrays closed with exact counts); lookups RelLookup.verboseRel (deleted -> pending -> graph via Runtime::get_relationship_type since #3462; verboseRelFixed_total, fixed3449_record_abort); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
+src/reply.rs	reply_compact_value	153	PROVEN	Resp.encC call stream given the entity lookups: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); duration = duration_to_legacy(dur) (#3610): Compact.compact_duration_legacy, Temporal.toLegacy_eq, fromLegacy_toLegacy; postponed label array closed by Emits.postponed. Lookups: RelLookup.compactRel; OPEN BUG #3447 deleted edge of an unregistered type panics at :260 (bug3447_compact_cancelled_new_type_panics; replyTotal_of_registered under RegisteredTypes)
+src/reply.rs	reply_verbose_value	365	PROVEN	Resp.encVb (duration = format_duration(&Dur) as M.dur, #3610): verbose_emits given the entity lookups (node/edge postponed arrays closed with exact counts); lookups RelLookup.verboseRel (deleted -> pending -> graph via Runtime::get_relationship_type since #3462; verboseRelFixed_total, fixed3449_record_abort); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
 src/reply.rs	reply_stats	549	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
 src/reply.rs	reply_query	689	PROVEN	Resp.queryCalls (ReplyFormat::Verbose = (false, None), Compact{schema} = (true, schema), #3757) over Resp.resultCalls: query_verbose_reply, query_verbose_noreturn (verbose never sends the schema element), query_compact_reply + Compact.decReply_enc, query_compact_schema_reply, query_schema_noreturn; resultCalls: compact_reply, verbose_reply, noreturn_reply, noreturn_schema_reply, compact_schema_reply, verbose_schema_reply; bytes_of_emits (RESP2 bytes)
 src/reply.rs	reply_schema	645	PROVEN	Resp.schemaCalls (#3757): schema_emits (hash alone, or hash + labels/relationshipTypes/propertyKeys as a 2n-element map), i64OfU64_spec (u64 hash sent as its i64 bit pattern)
@@ -319,6 +319,6 @@ src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filte
 src/graph_core.rs	RedisBuildHost::publish	1684	NOT COVERED	online index build (#2355): not modelled yet
 src/graph_core.rs	RedisBuildHost::warn	1693	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)
-src/serializers/buffered_io.rs	BufferedReader::encver	179	NOT COVERED	(#3610): duration components; not modelled yet
-src/serializers/buffered_io.rs	BufferedReader::from_blob	228	NOT COVERED	(#3610): duration components; not modelled yet
-src/serializers/buffered_io.rs	BufferedReader::from_slice_at	244	NOT COVERED	(#3610): duration components; not modelled yet
+src/serializers/buffered_io.rs	BufferedReader::encver	179	PROVEN	BufferedIO.BR.encverOf: encver_new, encver_fromSliceAt, fromBlob_prefix, vec_blob_roundtrip (consumer: graph_persist Codec.decOneAt)
+src/serializers/buffered_io.rs	BufferedReader::from_blob	228	PROVEN	BufferedIO.fromBlob: vec_blob_roundtrip, fromBlob_prefix, fromBlob_newer, fromBlob_unversioned, fromBlob_old_blob, prefixed_was_invalid, fromBlob_short
+src/serializers/buffered_io.rs	BufferedReader::from_slice_at	244	PROVEN	BufferedIO.fromSliceAt (rdb = NULL, buf = data): encver_fromSliceAt, fromBlob_unversioned; byte layer vec_roundtrip, from_slice_past_end

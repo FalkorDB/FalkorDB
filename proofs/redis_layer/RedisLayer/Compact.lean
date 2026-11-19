@@ -1,3 +1,4 @@
+import RedisLayer.Dur
 /-!
 # Compact result encoding vs the falkordb-py decoder
 
@@ -19,9 +20,15 @@ Floats are abstract: `fmt` is `format_g(x, 15)` (`reply.rs:123`, libc `%.15g`) a
 (`reply.rs:341`, same as C), i.e. Redis's own double formatting `vfmt`, not `%.15g`. The round trip is exact *modulo* `parseF ∘ fmt`, which
 is not the identity on `f64` (`0.1 + 0.2` → `"0.3"`); C emits the same `%.15g`
 (`_ResultSet_ReplyWithRoundedDouble`), so this is shared behaviour, not a divergence.
+
+**#3610.** A duration is a `Temporal.Dur` (three components); the compact reply still sends one
+integer, `duration_to_legacy(dur)` (`reply.rs:195`), which the client receives as
+`Py.duration`. `compact_duration_legacy`: a duration `duration_from_legacy` rebuilt from an
+older stream's offset `x` (all the old code could hold) is sent as exactly `x`.
 -/
 
 namespace RedisLayer.Compact
+open RedisLayer.Temporal (Dur toLegacy)
 
 /-- A RESP reply tree. `bulk` carries a byte string, `dbl` a RESP double. -/
 inductive R where
@@ -40,7 +47,7 @@ inductive Val (F : Type) where
   | int (i : Int)
   | float (x : F)
   | str (s : String)
-  | datetime (t : Int) | date (t : Int) | time (t : Int) | duration (t : Int)
+  | datetime (t : Int) | date (t : Int) | time (t : Int) | duration (d : Dur)
   | list (xs : List (Val F))
   | map (kvs : List (String × Val F))
   | node (id : Nat) (labels : List Nat) (props : List (Nat × Val F))
@@ -86,7 +93,7 @@ def encPair : Val F → List R
   | .datetime t => [.int 13, .int t]
   | .date t => [.int 14, .int t]
   | .time t => [.int 15, .int t]
-  | .duration t => [.int 16, .int t]
+  | .duration d => [.int 16, .int (toLegacy d)]
   | .list xs => [.int 6, .arr (encList xs)]
   | .map kvs => [.int 10, .arr (encMap kvs)]
   | .node id ls ps => [.int 8, .arr [.int id, .arr (ls.map fun (l : Nat) => .int (l : Int)), .arr (encProps ps)]]
@@ -181,7 +188,7 @@ def spec : Val F → Py F
   | .datetime t => .datetime t
   | .date t => .date t
   | .time t => .time t
-  | .duration t => .duration t
+  | .duration d => .duration (toLegacy d)
   | .list xs => .list (specList xs)
   | .map kvs => .dict (specMap kvs)
   | .node id ls ps => .node id (if ls = [] then none else some (ls.map E.label)) (specProps ps)
@@ -226,7 +233,7 @@ theorem dec_enc : ∀ v : Val F, dec E (encV E v) = some (spec E v)
   | .datetime t => by simp [encV, encPair, dec, spec]
   | .date t => by simp [encV, encPair, dec, spec]
   | .time t => by simp [encV, encPair, dec, spec]
-  | .duration t => by simp [encV, encPair, dec, spec]
+  | .duration d => by simp [encV, encPair, dec, spec]
   | .list xs => by simp [encV, encPair, dec, spec, decList_enc xs]
   | .map kvs => by simp [encV, encPair, dec, spec, decMap_enc kvs]
   | .node id ls ps => by
@@ -296,6 +303,14 @@ theorem decReply_enc (names : List String) (rows : List (List (Val F))) (stats :
         | cons v vs ihv => simp [List.mapM_cons, dec_enc, ihv]
       simp [List.mapM_cons, hr, ih]
   simp [h1, h2]
+
+/-- **#3610: same integer as before.** Every duration the old code could hold was an `i64`
+offset `x`; the new code holds `duration_from_legacy(x)` (RDB / blob below version 21, effects
+v3) and its compact reply decodes to `x` again. -/
+theorem compact_duration_legacy (x : Int) (hx : Temporal.FitsI64 x) :
+    ∃ d, Temporal.fromLegacy x = some d ∧ dec E (encV E (.duration d)) = some (.duration x) := by
+  obtain ⟨d, h1, h2⟩ := Temporal.fromLegacy_toLegacy x hx
+  exact ⟨d, h1, by rw [dec_enc]; simp [spec, h2]⟩
 
 /-! ## Where the round trip loses information on purpose -/
 

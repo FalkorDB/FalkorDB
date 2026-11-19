@@ -3,7 +3,7 @@ import FalkorTemporal.Parse
 # Temporal constructors: `*_pure`, `*_struct_pure`, the clock `*_fn`s and `register`
 (functions/temporal.rs:557-873)
 
-`construct_duration_secs` (PROVEN in Duration.lean as `constructDuration`) and
+`construct_duration` (PROVEN in Duration.lean as `constructDuration`, since #3610 a `Dur`) and
 `date_from_components` (Constructors.lean) are parameters. `unreachable!()` is the result
 `Res.unreachable`; the theorems show it is dead for every argument the declared type
 admits. The clock is an argument (`now`, seconds; `nowMs`, milliseconds).
@@ -19,8 +19,8 @@ def ofExcept {α β : Type} (f : α → β) : Except String α → Res β
 
 variable {F : Type} (N : Num F) (C : Chrono) (dfc : DFC)
 
-/-- `construct_duration_secs` signature (PROVEN as `constructDuration`). -/
-abbrev CDS := Int → Int → Int → Int → Int → Int → Int → Except String Int
+/-- `construct_duration` signature (PROVEN as `constructDuration`; #3610: returns a `Dur`). -/
+abbrev CDS := Int → Int → Int → Int → Int → Int → Int → Except String Dur
 
 /-- `date.and_hms_opt(0,0,0).unwrap().and_utc().timestamp()`: midnight of day `d`
 (`unwrap` cannot fail: 00:00:00 is always valid). -/
@@ -62,10 +62,10 @@ def durLoop : List (String × TV F) → (String → Int) → (String → Int)
     | none => durLoop kvs acc
     | some n => durLoop kvs (if k ∈ durKeys then (fun k' => if k' = k then n else acc k') else acc)
 
-def applyCds (cds : CDS) (f : String → Int) : Except String Int :=
+def applyCds (cds : CDS) (f : String → Int) : Except String Dur :=
   cds (f "years") (f "months") (f "weeks") (f "days") (f "hours") (f "minutes") (f "seconds")
 
-/-- `duration_pure` (temporal.rs:610). -/
+/-- `duration_pure` (temporal.rs:814). -/
 def durationPure (cds : CDS) : List (TV F) → Res (TV F)
   | .map m :: _ => ofExcept .duration (applyCds cds (durLoop N m fun _ => 0))
   | .str s :: _ =>
@@ -78,7 +78,7 @@ def durationPure (cds : CDS) : List (TV F) → Res (TV F)
 /-- Slot `i` read with `slot_to_int` (missing slots are `Null`). -/
 def slot (args : List (TV F)) (i : Nat) : Option Int := slotToInt N (args.getD i .null)
 
-/-- `duration_struct_pure` (temporal.rs:690). -/
+/-- `duration_struct_pure` (temporal.rs:894). -/
 def durationStructPure (cds : CDS) (args : List (TV F)) : Res (TV F) :=
   ofExcept .duration (cds ((slot N args 0).getD 0) ((slot N args 1).getD 0) ((slot N args 2).getD 0)
     ((slot N args 3).getD 0) ((slot N args 4).getD 0) ((slot N args 5).getD 0) ((slot N args 6).getD 0))

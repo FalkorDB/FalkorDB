@@ -56,7 +56,7 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 | `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:44-285; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
 | `splitOnce`, `digitCount`, `sciFixed`, `floatToString`, `toStr_float` (FloatToString) | conversion.rs:299 `float_to_string` (PR #3609; std formatters/`parse` = `FmtOps` parameters) |
 | `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1224, :1399, :1472, :1817, :1821, :1554, :1531 |
-| `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode`/`pre3339_decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:296, :342, :388, :439, :458, :608, :2068 (decode before #3339), :1887, :1591 |
+| `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponent`, `encode`/`pre3339_decode`/`decDur`, `dedupStep`, `jsonFloat` (Misc) | value.rs:302, :346, :394, :447, :615, :2086 (decode before #3339), :2074, :1695 |
 | `MAX_VALUE_NESTING`, `valueNestingError`, `decodeValue`, `decode`, `validateProperty`/`validateListProperty`/`isValidProperty` (Nesting) | value.rs:62, :67, :2166, :2154; pending.rs:69-131 |
 
 ## Main theorems
@@ -80,6 +80,18 @@ arms are dead after validation), `sqrt_float_eq_ieee`, `sqrt_nan_iff`,
 **`chunked_eq_firstDiff`** (16-lane block scan = first-difference scan). Misc:
 `pre3339_decode_encode` (v19 codec roundtrip, old decoder), `readVec_vecBytes`,
 **`heap_le_amortized`**, `shares_le`, `fmtDuration_fields`.
+
+## #3610 three-component Duration (`FalkorCore.Dur`)
+
+`V.duration` now carries a `Dur` (months, days, seconds; the validity check of
+`Dur::new` is a field, as in Rust). `fmtDuration` prints Neo4j-style per-component
+(`fmtDuration_neo4j`: 90000 s is `PT25H`, was `P1DT1H`; old model `pre3610_fmtDuration`).
+Encode writes three signed values (ENCODING_VERSION 21); `decDur` reads them at encver >= 21
+and one legacy `i64` below it (`decDur_legacy`, `decode_legacy_duration`). The roundtrips
+take `DurReadable co v` (vacuous for values without durations; `durReadable_current` at
+encver >= 21, giving `stored_roundtrip_current`). `Time + Duration` uses only `dur.secs`
+(`time_add_dur_secs_only`). compare's duration arm is `durationCmp` (reflexive).
+No counterexample.
 
 ## #3339 value nesting (Nesting.lean; b080a44c1, GHSA-mwvh-8fq5-x2j8, issue #2722)
 
