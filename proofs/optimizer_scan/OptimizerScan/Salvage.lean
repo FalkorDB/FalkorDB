@@ -16,6 +16,7 @@ reads as the Rust computes them, and decides the premise.
 | `salvagedSteps`                        | `salvaged_filters` wrapped above the chain (`:1240-1246`, `:1156-1176`) |
 | `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` (`:214`) |
 | `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981, `:1402-1477`) |
+| `leafSteps3594`                        | the same rewrite since #3594: filters salvaged only `if has_planner_scan` (`:1579`); a transparent child keeps its own |
 
 Result: the premise is **not** a fact about the Rust. `is_planner_scan_subtree` accepts a scan
 with *any* child, but `argument_leaf_of` keeps only an `Argument`; a child such as `Unwind`
@@ -112,7 +113,8 @@ theorem exChild_shape :
 /-- The rebuilt scan subtree (`make_scan_subtree` with the preserved Argument leaf, none here) has
 no `Unwind`: the operator that bound `k` is pruned with the scan. -/
 theorem rebuilt_drops_unwind :
-    hasUnwind (makeScanSubtree b [0] false (argumentLeafOf exChild) []) = false := by decide
+    hasUnwind (makeScanSubtree b [0] false ((argumentLeafOf exChild).map (fun a => PT.node a [])) []) = false := by
+      decide
 
 /-- The rebuilt chain `(b)-[10]->(c)` from the seed `[b]`. -/
 def exSteps : List Step := [.hop ⟨1, 3, 10, 0, false⟩]
@@ -227,5 +229,45 @@ theorem fixed2981_filter_above_hop :
       (by intro vs hvs v hv; simp [filtersOf, child] at hvs; subst hvs; simp at hv; exact Or.inl hv)
 
 end Leaf2981
+
+/-! ### The no-swap leaf rewrite over a transparent child (#3594, `select_scan_node.rs:1564-1577`)
+
+Since #3594 the bottom traverse's child may be an outer subtree (`transparent_child`: an `Unwind`,
+a `Project`, an earlier clause's plan) that binds none of the chain's variables. It is not discarded:
+it rides whole beneath the new scan (`make_argument()`, `make_scan_subtree(.., Some(child), ..)`),
+keeping its own Filters. Filters are salvaged (inside, or `filters_above`) only when the child is a
+discarded planner scan (`if has_planner_scan`); otherwise none are. -/
+
+/-- The chain the no-swap leaf rewrite builds since #3594: the #2981 placement over a planner scan,
+and the bare hop otherwise (a transparent child keeps its Filters beneath the new scan). -/
+def leafSteps3594 (hasPlanner : Bool) (fr : Var) (child : PT) (h : Hop)
+    (pred : List Var → (Nat → Nat) → Bool) : List Step :=
+  if hasPlanner then leafSteps false fr child h pred else [.hop h]
+
+/-- **PROVEN** (#3594): over a planner scan the rewrite is the #2981 one, so `leafSteps_same`,
+`leafSteps_other_wellScoped` and `Leaf2981.fixed2981_filter_above_hop` still describe it. -/
+theorem leafSteps3594_planner (fr : Var) (child : PT) (h : Hop) pred :
+    leafSteps3594 true fr child h pred = leafSteps false fr child h pred := rfl
+
+/-- **PROVEN** (#3594, `17547791c`): over a transparent child nothing is salvaged, so the chain is
+the bare hop, well-scoped from any seed. -/
+theorem leafSteps3594_transparent_wellScoped (fr : Var) (child : PT) (h : Hop) pred (B : List Nat) :
+    leafSteps3594 false fr child h pred = [.hop h] ∧
+    wellScoped B (leafSteps3594 false fr child h pred) := by
+  simp [leafSteps3594, wellScoped]
+
+/-- **PROVEN** (#3594, `17547791c`): the subtree the transparent rewrite builds carries each of the
+child's own Filters exactly once (beneath the new scan, where its variables are bound), not a second
+copy outside it. Before `17547791c` the child's spine Filters were also salvaged
+(`filtersOf_makeScanSubtree_tree` with `fs := filtersOf t` gives them twice); the copy above a later
+projection that reused the variable's id read the wrong value:
+`UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L)-[:R]->() RETURN count(*)`. -/
+theorem transparent_filters_once (alias : Var) (labels : List Nat) (pend : Bool) (t : PT) :
+    filtersOf (makeScanSubtree alias labels pend (some t) []) = filtersOf t ∧
+    filtersOf (makeScanSubtree alias labels pend (some t) (filtersOf t)) =
+      filtersOf t ++ filtersOf t := by
+  constructor
+  · simpa using filtersOf_makeScanSubtree_tree alias labels pend t []
+  · exact filtersOf_makeScanSubtree_tree alias labels pend t (filtersOf t)
 
 end OptimizerScan.Salvage
