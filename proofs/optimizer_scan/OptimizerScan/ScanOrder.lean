@@ -418,7 +418,7 @@ theorem initialBound_wellScoped (best : Nat) (child : Option (List Nat)) (B : Li
   | none => intro v hv; simp [initialBound] at hv; subst hv; exact hbest rfl
   | some vs => intro v hv; exact hchild vs rfl v hv
 
-/-! #### The outer subtree beneath the new scan (#3594, `select_scan_node.rs:1213-1239`)
+/-! #### The outer subtree beneath the new scan (#3594, `select_scan_node.rs:1198-1224`)
 
 When the new scan carries `preserved_argument` (an `Argument` leaf, or since #3594 a whole outer
 `Unwind`/`Project` subtree that binds none of the chain's variables), the seed also takes the ids

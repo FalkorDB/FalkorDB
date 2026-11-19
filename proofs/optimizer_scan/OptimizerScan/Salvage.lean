@@ -230,7 +230,7 @@ theorem fixed2981_filter_above_hop :
 
 end Leaf2981
 
-/-! ### The no-swap leaf rewrite over a transparent child (#3594, `select_scan_node.rs:1579-1592`)
+/-! ### The no-swap leaf rewrite over a transparent child (#3594, `select_scan_node.rs:1564-1577`)
 
 Since #3594 the bottom traverse's child may be an outer subtree (`transparent_child`: an `Unwind`,
 a `Project`, an earlier clause's plan) that binds none of the chain's variables. It is not discarded:

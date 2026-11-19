@@ -300,7 +300,7 @@ edge scan, which emits every index edge once per row they supply. -/
 def rowsPruned {R : Type} (rows : List R) (E : List Ed) : List (R × Ed) :=
   rows.flatMap (fun r => E.map (fun e => (r, e)))
 
-/-- **PROVEN** (#3594, `prune_all_node_scan_child` with a non-leaf scan, `utilize_index.rs:1113-1124`):
+/-- **PROVEN** (#3594, `prune_all_node_scan_child` with a non-leaf scan, `utilize_index.rs:1113-1122`):
 dropping only the `AllNodeScan` and re-attaching what was beneath it (the rows an earlier `UNWIND`/`WITH`
 supplies) keeps the row multiset, under `prune_sound`'s premises. A leaf scan is `rows = [()]`. -/
 theorem prune_sound_rows {R : Type} (rows : List R) (N : List Nat) (E : List Ed) (hN : N.Nodup)
