@@ -54,9 +54,35 @@ def identOf : CT → Option Nat
   | .kw k => some (kwId k)
   | _ => none
 
-/-- The name `format!("_anon_{n}")` (cypher.rs:3037, 3085, 3154) as a name id.
-A user may spell the same identifier (`_anon_0` is a valid name). -/
-def anonName (k : Nat) : Nat := 2000000 + k
+/-- `parser::ast::Alias` (ast.rs:86-92, #3303): what names a pattern entity before binding —
+a name the query wrote (`Named`), or the parser's number for an unnamed node, relationship or
+path (`Anon`). No identifier, backquoted or not, is an `Anon`. -/
+inductive Alias
+  | named (n : Nat)
+  | anon (k : Nat)
+  deriving DecidableEq, Repr
+
+/-- `impl Display for Alias` (ast.rs:112-122) with `write_anon` (ast.rs:125-130). -/
+def Alias.fmt : Alias → String
+  | .named n => toString n
+  | .anon k => "@anon_" ++ toString k
+
+instance : ToString Alias := ⟨Alias.fmt⟩
+
+/-- `Alias::name` (ast.rs:97-102): the written name, `None` for an unnamed entity. -/
+def Alias.name : Alias → Option Nat
+  | .named n => some n
+  | .anon _ => none
+
+theorem Alias.name_spec (n k : Nat) :
+    (Alias.named n).name = some n ∧ (Alias.anon k).name = none := ⟨rfl, rfl⟩
+theorem Alias.fmt_spec (n k : Nat) :
+    toString (Alias.named n) = toString n ∧ toString (Alias.anon k) = "@anon_" ++ toString k :=
+  ⟨rfl, rfl⟩
+/-- `impl From<Arc<String>> for Alias` (ast.rs:105-109) is `Named`. -/
+theorem Alias.from_spec (n : Nat) : (Alias.named n).name = some n := rfl
+/-- A written name never equals an unnamed entity's alias (the point of #3303). -/
+theorem Alias.named_ne_anon (n k : Nat) : Alias.named n ≠ Alias.anon k := by simp
 
 /-! ## Expression trees (`ExprIR`, ast.rs) as far as the clause level looks into them -/
 

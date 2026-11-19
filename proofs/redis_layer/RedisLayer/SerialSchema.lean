@@ -157,13 +157,13 @@ theorem decField_encField (attr : Bytes) (f : Fld) (ha : U.valid attr)
   have hn := phonNorm_encPh ⟨ty, w, ns, ph, vo⟩
   cases ty with
   | range =>
-    simp [decField, encField, Dec.bind, rdB, rdU, rdD, pure', fieldType, attrBack, normField,
+    simp [decField, encField, Dec.bind, rdB, rdU, rdD, fieldType, attrBack, normField,
       strip_nullTerm U attr ha, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR, FULLTEXT]
   | fulltext =>
     have e1 := strip_nullTerm U attr ha
     have e2 := strip_nullTerm U _ hq
-    simp [decField, encField, Dec.bind, rdB, rdU, rdD, pure', fieldType, attrBack, normField,
-      e1, e2, hn, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR, FULLTEXT, failD]
+    simp [decField, encField, Dec.bind, rdB, rdU, rdD, fieldType, attrBack, normField,
+      e1, e2, hn, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR, FULLTEXT]
   | vector =>
     cases vo with
     | none => simp at hv

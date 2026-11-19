@@ -66,7 +66,7 @@ theorem framePrefix_some {p c k : Nat} (hp : p < 2 ^ 32) (hc : c < 2 ^ 32) :
 
 /-- **A length that does not fit is refused, not truncated.** -/
 theorem framePrefix_none {p c k : Nat} (h : 2 ^ 32 ≤ p ∨ 2 ^ 32 ≤ c) : framePrefix p c k = none := by
-  unfold framePrefix; rw [if_neg (by omega)]
+  unfold framePrefix; rw [ite_eq_right (by omega)]
 
 /-- The prefix is `COMPRESSED_PREFIX` bytes whenever it exists (`[u8; 12]`). -/
 theorem framePrefix_length {p c k : Nat} {b : Bytes} (h : framePrefix p c k = some b) :
@@ -176,8 +176,8 @@ theorem maybeCompress_shrinks (Z : Codec) (buf : Bytes) (m : Nat) (h : (maybeCom
   · simp only [a2, ite_true] at h; cases h
   simp only [a2, ite_false] at h ⊢
   by_cases b : (buf[1]!.toNat &&& FLAG_COMPRESSED) ≠ 0
-  · rw [if_pos b] at h; cases h
-  rw [if_neg b] at h ⊢
+  · rw [ite_eq_left b] at h; cases h
+  rw [ite_eq_right b] at h ⊢
   cases hc : Z.compress (buf.drop 2) with
   | none => simp only [hc] at h; cases h
   | some frame =>
@@ -219,7 +219,7 @@ theorem records_concat (C : IdCodec) (utf8 I : Bytes → Bool) :
     have hb := h (b, x) (by simp)
     have ih := records_concat C utf8 I items (fun p hp => h p (by simp [hp])) f (by simp at hf; omega)
     simp only [List.map_cons, List.flatten_cons, readAllRecords]
-    rw [if_neg (by simp [hb.1])]
+    rw [ite_eq_right (by simp [hb.1])]
     rw [readRecord_encRecord C utf8 I x b _ hb.2.1 hb.2.2]
     simp only [ih]
 

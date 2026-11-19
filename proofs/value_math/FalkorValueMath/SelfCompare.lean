@@ -54,7 +54,7 @@ def firstDiff : List F → List F → Ordering
 
 /-- `compare_vecf32`'s block loop (value.rs:1841-1848) for equal lengths. -/
 def chunked (a b : List F) : Ordering :=
-  if h : 16 ≤ a.length then
+  if _h : 16 ≤ a.length then
     if ((a.take 16).zip (b.take 16)).any (fun p => fc.ne p.1 p.2) then firstDiff fc (a.take 16) (b.take 16)
     else chunked (a.drop 16) (b.drop 16)
   else firstDiff fc a b
@@ -70,7 +70,7 @@ theorem firstDiff_append (x y x' y' : List F) (hl : x.length = x'.length) :
     firstDiff fc (x ++ y) (x' ++ y') =
       if (x.zip x').any (fun p => fc.ne p.1 p.2) then firstDiff fc x x' else firstDiff fc y y' := by
   induction x generalizing x' with
-  | nil => cases x' <;> simp_all [firstDiff]
+  | nil => cases x' <;> simp_all
   | cons a as ih =>
     cases x' with
     | nil => simp at hl
@@ -92,7 +92,7 @@ theorem chunked_eq_firstDiff (a b : List F) (hl : a.length = b.length) :
   induction n with
   | zero =>
     intro a b ha hl
-    rw [chunked, dif_neg (by omega)]
+    rw [chunked, dite_eq_right (by omega)]
   | succ n ih0 =>
     intro a b ha hl
     have ih : ∀ m, m < a.length → ∀ (a' b' : List F), a'.length = b'.length → a'.length = m →
@@ -285,12 +285,12 @@ theorem mayFail_sound : ∀ (n : Nat) (v : V F), sizeOf v < n → mayFail fc v =
       simp only [mayFail] at hm
       have hall := hlist items (by simp at hs; omega) hm
       rw [cmpV, cmpList, listLoop2_self fc items hall]
-      by_cases h0 : items.length = 0 <;> simp [h0, compare_self_eq]
+      by_cases h0 : items.length = 0 <;> simp [h0]
     | path items =>
       simp only [mayFail] at hm
       have hall := hlist items (by simp at hs; omega) hm
       rw [cmpV, cmpList, listLoop2_self fc items hall]
-      by_cases h0 : items.length = 0 <;> simp [h0, compare_self_eq]
+      by_cases h0 : items.length = 0 <;> simp [h0]
     | map entries =>
       simp only [mayFail] at hm
       have hall : ∀ p ∈ entries, cmpV fc p.2 p.2 = (.eq, .none) := by

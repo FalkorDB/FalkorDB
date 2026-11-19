@@ -32,7 +32,7 @@ pub fn graph_ro_query(
     args: Vec<ValkeyString>,
 ) -> ValkeyResult {
     let QueryFlags {
-        compact,
+        format,
         track_memory,
         timeout,
         version: version_check,
@@ -54,7 +54,7 @@ pub fn graph_ro_query(
             ctx,
             graph,
             query,
-            compact,
+            format,
             false,
             track_memory,
             key_name,

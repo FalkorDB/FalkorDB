@@ -207,7 +207,7 @@ theorem forRows_filter (k : Nat) (rows : List (Rec V)) (g : G) :
   congr 1
   induction rows with
   | nil => rfl
-  | cons x xs ih => by_cases h : S.test k x g <;> simp_all [List.filter_cons]
+  | cons x xs ih => by_cases h : S.test k x g <;> simp_all
 
 theorem forRows_project (k : Nat) (rows : List (Rec V)) (g : G) :
     forRows (S.step (.project k)) rows g = (rows.map fun row => S.proj k row g, g) := by
@@ -393,8 +393,8 @@ theorem merge_path_last_misplaced (p k : Nat) (m q y : Plan) :
   have hslot : slotFirst (planMerge p m (some k)) = [] := by
     show slotWith walkFirst (.node (.pathBuilder k) [.node (.merge p) [m]]) = []
     unfold slotWith
-    simp only [walkFirst, firstPass, isApply, Bool.false_or, Bool.and_false, Bool.false_eq_true,
-      ite_false, Plan.get, List.nil_append, projDescend]
+    simp only [walkFirst, firstPass, isApply, Bool.false_or,
+      projDescend]
     exact descendClause_nil _ rfl
   rw [hslot, show planMerge p m (some k) = .node (.pathBuilder k) [.node (.merge p) [m]] from rfl,
     refill, insertStep_nonCP _ [] q _ _ rfl (by simp)]
@@ -466,8 +466,8 @@ theorem create_path_last_misplaced (p k : Nat) (q y : Plan) :
   have hslot : slotFirst (planCreate p (some k)) = [] := by
     show slotWith walkFirst (.node (.pathBuilder k) [.node (.create p) []]) = []
     unfold slotWith
-    simp only [walkFirst, firstPass, isApply, Bool.false_or, Bool.and_false, Bool.false_eq_true,
-      ite_false, Plan.get, List.nil_append, projDescend]
+    simp only [walkFirst, firstPass, isApply, Bool.false_or,
+      projDescend]
     exact descendClause_nil _ rfl
   rw [hslot, show planCreate p (some k) = .node (.pathBuilder k) [.node (.create p) []] from rfl,
     refill, insertStep_nonCP _ [] q _ _ rfl (by simp)]

@@ -43,7 +43,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 
 **5. Are `MATCH` patterns planned with the right hops?**
 
-- `sortRels_spec`: hops are sorted fixed-length, then variable-length, then shortest-path, as a stable permutation. `planComp_binds`: each component binds its variables.
+- `sortRels_spec`: hops are sorted fixed-length, then variable-length, then shortest-path, as a stable permutation; with #3593's promoted walk (`leadingWalk_spec`) it sorts first (`sortRels_lead_first`) and the rest follow outward from it (`leadOrder_spec`). `planComp_binds`: each component binds its variables.
 - **Self-loops, fixed by #3102.** Before it, `MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)` dropped the first hop (`[null,2,3]`; C `[1,2,3]`). Now `self_loops_after_binders` places a self-loop after the hop that binds its node: `selfLoops_perm`, `deferred_after_binder`, and `eq_reference` (equals the pre-#3102 loop whenever a self-loop really has `from = to`).
 - **Inline property maps, since #2390, are lowered once.** `lowerInline_once` proves there is one Filter per (alias, map). `planMatch_stripped` proves no scan or fixed-length operator carries an inline map afterwards; [`../optimizer_rewrites`](../optimizer_rewrites) relies on that.
 

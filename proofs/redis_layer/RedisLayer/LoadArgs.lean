@@ -51,7 +51,7 @@ inductive N where
   | threadCount | timeout | timeoutDefault | timeoutMax | ompThreadCount | vkeyMax | cacheSize
   | resultsetSize | maxQueued | queryMemCapacity | deltaMax | nodeCreationBuffer | asyncDelete
   | cmdInfo | maxInfo | effectsThreshold | delayIndexing | importFolder | tempFolder
-  | jsHeap | jsStack
+  | jsHeap | jsStack | writeLockPoll
   -- Rust only
   | indexWorkerThreads | boltPort | effectsCompression
   deriving DecidableEq, Repr
@@ -67,13 +67,14 @@ def N.str : N → List Nat
   | .effectsThreshold => b "EFFECTS_THRESHOLD" | .delayIndexing => b "DELAY_INDEXING"
   | .importFolder => b "IMPORT_FOLDER" | .tempFolder => b "TEMP_FOLDER"
   | .jsHeap => b "JS_HEAP_SIZE" | .jsStack => b "JS_STACK_SIZE"
+  | .writeLockPoll => b "WRITE_LOCK_POLL_INTERVAL"
   | .indexWorkerThreads => b "INDEX_WORKER_THREADS" | .boltPort => b "BOLT_PORT"
   | .effectsCompression => b "EFFECTS_COMPRESSION"
 
 /-- C's `Config_Contains_field` chain, in its order. -/
 def cList : List N :=
   [.threadCount, .timeout, .timeoutDefault, .timeoutMax, .ompThreadCount, .vkeyMax, .cacheSize,
-   .resultsetSize, .maxQueued, .queryMemCapacity, .deltaMax, .nodeCreationBuffer, .asyncDelete,
+   .resultsetSize, .maxQueued, .queryMemCapacity, .deltaMax, .nodeCreationBuffer, .writeLockPoll, .asyncDelete,
    .cmdInfo, .maxInfo, .effectsThreshold, .delayIndexing, .importFolder, .tempFolder, .jsHeap, .jsStack]
 
 def rustOnly : List N := [.indexWorkerThreads, .boltPort, .effectsCompression]
@@ -145,7 +146,8 @@ is the #3021 model `Config.validate` of one member of the arm. `none` = no liter
 def validateConfigSet (n : Option N) (v : List Nat) : Except LErr Int :=
   match n with
   | some .timeout | some .timeoutDefault | some .timeoutMax | some .queryMemCapacity
-  | some .deltaMax | some .effectsCompression | some .effectsThreshold => mapE (validate .timeout v)
+  | some .deltaMax | some .effectsCompression | some .effectsThreshold
+  | some .writeLockPoll => mapE (validate .timeout v)   -- #3816
   | some .asyncDelete | some .cmdInfo | some .delayIndexing => mapE (validate .cmdInfo v)
   | some .resultsetSize => mapE (validate .resultsetSize v)
   | some .maxQueued => mapE (validate .maxQueued v)
@@ -260,7 +262,8 @@ def cSet (fs : FS) (td tm : Int) (n : N) (v : List Nat) : Option (Int × Int) :=
     | none => none
     | some x => if x ≠ tm then (if x ≠ 0 ∧ td > x then none else some (td, x)) else some (td, tm)
   | .resultsetSize => keep int
-  | .vkeyMax | .queryMemCapacity | .deltaMax | .nodeCreationBuffer | .maxInfo | .effectsThreshold => keep nn
+  | .vkeyMax | .queryMemCapacity | .deltaMax | .nodeCreationBuffer | .maxInfo | .effectsThreshold
+  | .writeLockPoll => keep nn
   | .asyncDelete | .cmdInfo | .delayIndexing => keep (cYesNo v)
   | .importFolder => some (td, tm)
   | .tempFolder => if fs.exists_ v && fs.isDir v && fs.writable v then some (td, tm) else none
@@ -401,52 +404,43 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < td <;> by_cases a2 : 0 < tm <;> by_cases a3 : tm < td <;> by_cases a4 : td = 0 <;> by_cases a5 : tm = 0 <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case timeoutDefault =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
       by_cases a2 : x = td
       · subst a2
-        by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : tm = 0 <;>
-          by_cases a4 : 0 < tm <;> by_cases a5 : tm < x <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
-      · by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : tm = 0 <;>
-          by_cases a4 : 0 < tm <;> by_cases a5 : tm < x <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+        simp [Option.filter, TOk] at * <;> grind
+      · simp [Option.filter, TOk] at * <;> grind
   case timeoutMax =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
       by_cases a2 : x = tm
       · subst a2
-        by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : td = 0 <;>
-          by_cases a4 : 0 < td <;> by_cases a5 : x < td <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
-      · by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : td = 0 <;>
-          by_cases a4 : 0 < td <;> by_cases a5 : x < td <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+        simp [Option.filter, TOk] at * <;> grind
+      · simp [Option.filter, TOk] at * <;> grind
   case threadCount =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case ompThreadCount =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case cacheSize =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case maxQueued =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case vkeyMax =>
     cases rustParseI64 v with
     | none => simp
@@ -460,6 +454,12 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
       by_cases a0 : x < 0 <;> by_cases a1 : 0 ≤ x <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
         simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
   case deltaMax =>
+    cases rustParseI64 v with
+    | none => simp
+    | some x =>
+      by_cases a0 : x < 0 <;> by_cases a1 : 0 ≤ x <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
+        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+  case writeLockPoll =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
@@ -487,23 +487,20 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < td <;> by_cases a2 : 0 < tm <;> by_cases a3 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [TOk] at * <;> grind
   case jsHeap =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : 1048576 ≤ x <;> by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
-        simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case jsStack =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : 1048576 ≤ x <;> by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
-        simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case asyncDelete | cmdInfo | delayIndexing =>
     cases y : eqIC v (b "yes") <;> cases z : eqIC v (b "no") <;>
-      simp only [y, z, Bool.false_eq_true, ite_false, ite_true] <;>
+      simp only [Bool.false_eq_true, ite_false, ite_true] <;>
       by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
       simp [TOk, *] at * <;> first | omega | (exfalso; omega)
   case importFolder =>
@@ -523,6 +520,7 @@ def toN : Name → N
   | .timeout => .timeout | .timeoutDefault => .timeoutDefault | .timeoutMax => .timeoutMax
   | .resultsetSize => .resultsetSize | .maxQueued => .maxQueued | .vkeyMax => .vkeyMax
   | .maxInfo => .maxInfo | .jsHeap => .jsHeap | .cmdInfo => .cmdInfo | .cacheSize => .cacheSize
+  | .writeLockPoll => .writeLockPoll
 
 theorem fold_td (vs : List (Name × Int)) (c : Cfg) :
     (vs.foldl apply1 c).timeoutDefault =
@@ -569,13 +567,13 @@ theorem cross_eq (c : Cfg) (vs : List (Name × Int)) :
   rw [← fold_td, ← fold_tm, h1, h2]
   by_cases a : (vs.any (·.1 == .timeout) = true ∧
       ((vs.foldl apply1 c).timeoutDefault > 0 ∨ (vs.foldl apply1 c).timeoutMax > 0))
-  · simp only [a, if_true]; rfl
-  · simp only [a, if_false]
+  · simp only [a]; rfl
+  · simp only [a, ite_false]
     by_cases b' : ((vs.foldl apply1 c).timeoutDefault > 0 ∧ (vs.foldl apply1 c).timeoutMax > 0 ∧
         (vs.foldl apply1 c).timeoutDefault > (vs.foldl apply1 c).timeoutMax)
-    · simp only [b', if_true]
+    · simp only [b']
       cases vs.any (·.1 == Name.timeoutDefault) <;> rfl
-    · simp only [b', if_false]; rfl
+    · simp only [b', ite_false]; rfl
 
 /-! ## The whole load -/
 
@@ -624,8 +622,8 @@ theorem rust_c_same_accept (fs : FS) (hfs : FsOk fs) (args : List (List Nat))
     (match applyModuleArgs fs 0 0 args with | .ok _ => true | .error _ => false) = cInit fs args := by
   unfold applyModuleArgs cInit
   by_cases hp : args.length % 2 = 1
-  · simp only [hp, if_true]
-  · simp only [hp, if_false]
+  · simp only [hp, ite_true]
+  · simp only [hp, ite_false]
     rw [← loop_agree fs hfs (pairs args) 0 0 false false ⟨by omega, by omega, by omega⟩ hv hz hr]
     cases loop fs 0 0 false false (pairs args) with
     | error e => rfl

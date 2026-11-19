@@ -85,7 +85,7 @@ theorem readRecord_encRecord (r : Record C.T) (bs rest : Bytes)
   | updateNode ids ls as rows =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 1) (by omega) (thenE_ok h)
     rw [List.append_assoc, readRecord_batched C utf8 I 1 _ (by omega) ⟨hw.1, hc⟩]
-    simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyNode C utf8 I _).rt _ b rest hw.2 hb]; rfl
+    simp only [arm, ↓reduceIte, bind_apply]; rw [(bodyNode C utf8 I _).rt _ b rest hw.2 hb]; rfl
   | updateEdge ids rel as rows =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 2) (by omega) (thenE_ok h)
     rw [List.append_assoc, readRecord_batched C utf8 I 2 _ (by omega) ⟨hw.1, hc⟩]

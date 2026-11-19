@@ -21,7 +21,7 @@
 //!   <child>
 //! ```
 //!
-//! The intermediate variable `b` must be anonymous (`_anon*` prefix), have no
+//! The intermediate variable `b` must be anonymous (unnamed), have no
 //! labels (the v1 runtime does not apply mid-chain label filters), have no
 //! inline attribute predicates, and not be referenced by any ancestor of the
 //! outer CT. Both edges must be anonymous, non-bidirectional, non-variable-
@@ -33,11 +33,6 @@ use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
 use super::references::ir_references_variable;
-
-fn is_anon(name_opt: Option<&std::sync::Arc<String>>) -> bool {
-    name_opt.is_some_and(|n| n.starts_with("_anon"))
-}
-
 /// True when the QueryRelationship's inline-attrs tree is the empty `{}` map.
 fn rel_attrs_empty(
     rel: &crate::parser::ast::QueryRelationship<
@@ -123,7 +118,7 @@ fn can_fuse(
     }
     // Anonymous edges only (criteria for skipping edge binding mid-chain and
     // for matching C's `_should_populate_edge` gate).
-    if !is_anon(p_rel.alias.name.as_ref()) || !is_anon(c_rel.alias.name.as_ref()) {
+    if !p_rel.alias.is_unnamed() || !c_rel.alias.is_unnamed() {
         return false;
     }
     // emit_relationship must be off on both — non-anonymous edges aren't
@@ -155,7 +150,7 @@ fn can_fuse(
     }
     // Intermediate node anonymous, no labels, no inline attrs.
     let intermediate = &p_rel.from;
-    if !is_anon(intermediate.alias.name.as_ref()) {
+    if !intermediate.alias.is_unnamed() {
         return false;
     }
     if !intermediate.labels.is_empty() {

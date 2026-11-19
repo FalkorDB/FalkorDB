@@ -8,6 +8,8 @@ import FalkorTemporal.Spatial
 import FalkorTemporal.Fns
 import FalkorTemporal.Parse
 import FalkorTemporal.Pure
+import FalkorTemporal.PadDefs
+import FalkorTemporal.PadAux
 import FalkorTemporal.Components
 import FalkorTemporal.SpatialFns
 import FalkorTemporal.VecDistance

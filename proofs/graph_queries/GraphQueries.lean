@@ -157,3 +157,4 @@ import GraphQueries.Accessors
 import GraphQueries.FirstRel
 import GraphQueries.IdRust
 import GraphQueries.IdRustUse
+import GraphQueries.SchemaHash
