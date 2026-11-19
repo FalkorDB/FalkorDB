@@ -74,7 +74,16 @@ use crate::udf::type_convert;
 /// create an instance, so a plain object that merely copies the visible
 /// `__falkor_type` / `__falkor_*_id` properties stays a Map, and changing
 /// those properties on a real entity object has no effect.
-pub struct JsEntity(Value);
+///
+/// The entity is only valid for the UDF invocation that created it: the JS
+/// context outlives the call, so a script can keep an entity in a global, and a
+/// later call may run against another graph, or after the entity was deleted.
+/// Each outermost [`with_graph`] starts a new epoch, and [`entity_value`] only
+/// honours an entity of the current one.
+pub struct JsEntity {
+    value: Value,
+    epoch: u64,
+}
 
 unsafe impl JsLifetime<'_> for JsEntity {
     type Changed<'to> = Self;
@@ -102,16 +111,25 @@ fn new_entity_object<'js>(
     ctx: &Ctx<'js>,
     entity: Value,
 ) -> Result<Object<'js>, String> {
-    Class::instance(ctx.clone(), JsEntity(entity))
-        .map(|cls| Object::clone(&cls))
-        .map_err(|e| format!("JS object error: {e}"))
+    let epoch = CALL_EPOCH.with(Cell::get);
+    Class::instance(
+        ctx.clone(),
+        JsEntity {
+            value: entity,
+            epoch,
+        },
+    )
+    .map(|cls| Object::clone(&cls))
+    .map_err(|e| format!("JS object error: {e}"))
 }
 
 /// The entity behind a JS object created by [`create_js_node`],
 /// [`create_js_edge`] or [`create_js_path`], or `None` for any other object.
 #[must_use]
 pub fn entity_value(obj: &Object<'_>) -> Option<Value> {
-    Class::<JsEntity>::from_object(obj).map(|cls| cls.borrow().0.clone())
+    let cls = Class::<JsEntity>::from_object(obj)?;
+    let entity = cls.borrow();
+    (entity.epoch == CALL_EPOCH.with(Cell::get)).then(|| entity.value.clone())
 }
 
 fn node_id_of(value: &JsValue<'_>) -> Option<u64> {
@@ -124,6 +142,8 @@ fn node_id_of(value: &JsValue<'_>) -> Option<u64> {
 thread_local! {
     /// The graph lent by the innermost [`with_graph`] on this thread, or null.
     static CURRENT_GRAPH: Cell<*const Graph> = const { Cell::new(std::ptr::null()) };
+    /// Counts the outermost [`with_graph`] calls on this thread; see [`JsEntity`].
+    static CALL_EPOCH: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Run `f` with `graph` lent to the JS helpers on this thread
@@ -139,7 +159,11 @@ pub fn with_graph<R>(
             CURRENT_GRAPH.with(|g| g.set(self.0));
         }
     }
-    let _restore = Restore(CURRENT_GRAPH.with(|g| g.replace(graph)));
+    let previous = CURRENT_GRAPH.with(|g| g.replace(graph));
+    if previous.is_null() {
+        CALL_EPOCH.with(|e| e.set(e.get().wrapping_add(1)));
+    }
+    let _restore = Restore(previous);
     f()
 }
 

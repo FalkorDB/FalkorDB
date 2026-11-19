@@ -2016,17 +2016,49 @@ class test_udf_javascript():
             for q in [f"MATCH (a {{id:0}}) WITH protoforge.{f}(a) AS n "
                       "MATCH (b {id:1}) CREATE (b)-[:R]->(n)",
                       f"MATCH (a {{id:0}}) RETURN startNode(protoforge.{f}(a))"]:
-                try:
+                # a forged object is not an entity: each of these is refused
+                with self.env.assertResponseError():
                     self.graph.query(q)
-                except ResponseError:
-                    # A forged object is refused (or is just a Map the query
-                    # rejects); whichever error it is, what the test pins is
-                    # the graph check below.
-                    pass
 
         # the server is alive and the graph is unchanged
         self.env.assertEqual(self.graph.query("MATCH ()-[r]->() RETURN count(r)").result_set, [[1]])
         self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[2]])
+
+    def test_stale_entity_kept_in_global(self):
+        """
+        A UDF may keep a node/edge in a JS global, and the context outlives the
+        call. A later call must not be able to use that stale reference (here
+        the edge was deleted since): it must be refused, not crash the server.
+        """
+
+        script = """
+        function stash(a) { globalThis.se = a.getNeighbors({returnType: 'edges'})[0]; return 1; }
+        function stashN(a) { globalThis.sn = a; return 1; }
+        function edge(x) { return globalThis.se; }
+        function nb(x) { return globalThis.sn.getNeighbors().length; }
+        falkor.register('stash', stash);
+        falkor.register('stashN', stashN);
+        falkor.register('edge', edge);
+        falkor.register('nb', nb);
+        """
+        self.db.udf_load("stale", script)
+        self.graph.query("CREATE (:A {id:5})-[:R]->(:A {id:6})")
+        # the calls run on a pool of threads, each with its own JS context:
+        # repeat so that the later calls reach a context holding the stash
+        for _ in range(60):
+            self.graph.query("MATCH (a {id:5}) RETURN stale.stash(a), stale.stashN(a)")
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:A {id:7})")
+
+        for q in ["RETURN startNode(stale.edge(1))", "RETURN stale.nb(1)"]:
+            for _ in range(60):
+                try:
+                    self.graph.query(q)
+                except ResponseError:
+                    pass
+
+        # the server is alive
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[1]])
 
     def test_forged_entity_markers(self):
         """
@@ -2057,11 +2089,8 @@ class test_udf_javascript():
                   "WITH forge.fn(7) AS n MATCH (a {id:0}) CREATE (a)-[:R]->(n)",
                   "MATCH (a {id:0}) RETURN forge.nb(a)",
                   "MATCH (a {id:0}) RETURN forge.tr(a)"]:
-            try:
+            with self.env.assertResponseError():
                 self.graph.query(q)
-                assert False, f"Expected error for {q}"
-            except ResponseError:
-                pass
 
         # the server is alive and the graph is unchanged
         res = self.graph.query("MATCH (a)-[r]->(b) RETURN count(r), max(id(b))").result_set
