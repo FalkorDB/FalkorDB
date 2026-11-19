@@ -74,7 +74,7 @@ Yes. The algorithms run on a compact adjacency matrix (index 0..n) and map resul
 | `lifecycle_frees_once` | The LAGraph adjacency handle is freed exactly once on every path, success or failure | `AlgoGlue.lean` |
 | `fromJs_frames`, `toJs_frames`, `fromJs_past_cap`, `toJs_past_cap` | UDF value conversion is depth-bounded in both directions; past the cap it errors | `MarshalCap.lean` |
 | `float_rt_iff`, `neg_zero_rt`, `vecf32_inf_rt`, `constructor_key_roundtrips` | Values round-trip through JavaScript | `MarshalThm.lean`, `Marshal.lean` |
-| `traverse_nodes_nodup`, `traverse_both_edges_nodup` | `graph.traverse` never lists a node twice, nor an edge twice in `both` mode | `UdfTraverse.lean` |
+| `traverse_nodes_nodup`, `traverse_start_needs_self_loop`, `traverse_both_edges_nodup` | `graph.traverse` never lists a node twice, lists the start only through a self-loop, nor an edge twice in `both` mode | `UdfTraverse.lean` |
 | `deserialize_atomic`, `serialize_roundtrip` | The UDF repository saves and loads as a unit | `UdfRepoOps.lean` |
 | `validate_runtime_same_globals` | Since #3079 the validation context and the runtime context define the same globals, `graph` included | `UdfGlobals.lean` |
 
@@ -106,8 +106,8 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 11 | removed (17ccc5412) | Unbounded recursion in UDF value conversion overflowed the stack | Fixed by #3336, GHSA-frmf-ffvc-mxx5 (`fromJs_frames`, `toJs_frames`) |
 | 12 | `dotted_collision`; rest removed (17ccc5412) | Library and function names could collide after qualification or case folding, and deleting one library could break another | Fixed by #3066 (#3065): `Repo.collision_rejected`, `dotted_collision_rejected`, `load_preserves_crossFold`, `delete_preserves_after3066`, `case_sensitive` |
 | 13 | `self_loop_twice` | `node.getNeighbors()` lists a self-loop's neighbour twice (W4-graph-2) | **Open** (#3083; PR #3084) |
-| 14 | `traverse_self_loop_twice` | `graph.traverse([a], {returnType:'edges'})` returns a self-loop twice: Rust `[1,0,1]`, C `[1,0]` (W5-udf-1) | **Open** |
-| 15 | `traverse_drops_self_neighbour` | `graph.traverse([a])` leaves `a` out when it is its own neighbour: Rust `[1]`, C `[0,1]` (W5-udf-2) | **Open** |
+| 14 | `traverse_self_loop_once` | `graph.traverse([a], {returnType:'edges'})` returned a self-loop twice: Rust `[1,0,1]`, C `[1,0]` (W5-udf-1) | Fixed (`collect_edges` → `get_node_relationships_by_type`) |
+| 15 | `traverse_keeps_self_neighbour` | `graph.traverse([a])` left `a` out when it is its own neighbour: Rust `[1]`, C `[0,1]` (W5-udf-2) | Fixed by #3253 |
 | 16 | `getNeighbors_no_arg_errors` | `node.getNeighbors()` with no argument throws "Error converting from js 'undefined'"; C returns the neighbours (W5-udf-3) | **Open** |
 | 17 | `empty_lib_name_mismatch` | `GRAPH.UDF LOAD ""` is accepted, but its functions can never be called (registered as `.f`, stored as `f`); C refuses the empty name (W5-udf-4) | **Open** |
 | 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
