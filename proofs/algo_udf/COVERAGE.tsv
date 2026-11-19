@@ -81,7 +81,7 @@ graph/src/udf/js_classes.rs	js_iterate_nodes_impl	574	PROVEN	UdfClasses.iterNode
 graph/src/udf/js_classes.rs	js_iterate_edges	622	PROVEN	UdfClasses.iter_errors
 graph/src/udf/js_classes.rs	js_iterate_edges_impl	629	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
 graph/src/udf/js_classes.rs	js_traverse	674	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
-graph/src/udf/js_classes.rs	js_traverse_impl	692	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
+graph/src/udf/js_classes.rs	js_traverse_impl	692	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_start_needs_self_loop, traverse_nodes_nodup_no_self_loop, traverse_both_edges_nodup, traverse_self_loop_once, traverse_keeps_self_neighbour, traverse_cycle_skips_start (self-loop bugs fixed)
 graph/src/udf/js_context.rs	caught_error_message	70	PROVEN	UdfContext.norm_example, norm_quoted, norm_other, norm_idem_example, errMsg_name, errMsg_plain_error
 graph/src/udf/js_context.rs	compute_effective_js_timeout_ms	130	PROVEN	UdfContext.effTimeout_bounds, effTimeout_spec
 graph/src/udf/js_context.rs	validate_script	154	PROVEN	UdfContext.validateScript_spec, validateTimeout_bounds (QuickJS eval AXIOMATISED oracle)
