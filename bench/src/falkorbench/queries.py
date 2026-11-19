@@ -587,6 +587,13 @@ QUERIES = [
     # Chain reversal (select_scan_node): selective scan at the END of the
     # chain, whole chain reversed with transposed traversals.
     Q("reversed 2hop chain",  False, "MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c:Person {id: 1}) RETURN count(a)", cg=True),
+    # Start-point tie (select_scan_node): `s` (inline equality) and `n`
+    # (WHERE range) score the same, and the scan must start from the
+    # equality-pinned `s`, which the index then seeks. Starting from `n`
+    # instead label-scans every :Person and walks three hops backwards: on a
+    # 100k-node Pokec graph this query (`aggregate_expansion_3_with_filter`)
+    # went from ms to a 60 s timeout (#3822).
+    Q("seek beats late range filter", False, "MATCH (s:Person {id: 500})-->()-->()-->(n:Person) WHERE n.age >= 18 RETURN DISTINCT n.id", cg=True),
     # Same, with a mid-chain filter reinserted at the correct hop.
     Q("reversed chain mid filter", False, "MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c:Person {id: 1}) WHERE b.id > 0 RETURN count(a)"),
     # Fused consecutive anonymous bidirectional traverses with cross-row

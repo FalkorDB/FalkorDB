@@ -78,7 +78,7 @@ theorem andOr_kleene (sc : Bool) : ∀ (cs : List (E V)) (vs : List V) (bs : Lis
         | some b =>
           by_cases hbs : b = sc
           · subst hbs; simp [kleeneSpec, ofOB]
-          · simp only [hbs, if_false]
+          · simp only [hbs, ite_false]
             rw [andOr_kleene sc cs ws bs' n hr hbs']
             have hne : ¬ sc = b := fun h => hbs h.symm
             simp [kleeneSpec, hne]

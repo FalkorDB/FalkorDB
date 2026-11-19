@@ -10,11 +10,11 @@ allowed-tools: Bash, Read, Edit, Write
 `binder`, `pending_commit`, `index_layer`, …). Each models the Rust code it
 covers line by line and proves properties about that model. Lean 4 only, no
 Mathlib. The toolchain comes from each project's `lean-toolchain`
-(all pin `leanprover/lean4:v4.35.0`).
+(all pin `leanprover/lean4:v4.36.0`).
 
 - `proofs/<area>/<Root>.lean` — the header is the report: Lean↔Rust `file:line` table, theorems, bugs, gaps.
 - `proofs/<area>/COVERAGE.tsv` — one row per Rust fn: bucket PROVEN / CONDITIONAL / AXIOMATISED / MODELLED / NOT COVERED.
-- `proofs/FINDINGS.md` — the bug ledger. Each bug is confirmed by a repro unless its entry is marked Lean-only, Unconfirmed or a model note; later notes record which commits fixed it.
+- `proofs/FINDINGS.md` — the bug ledger. Each bug is confirmed by a repro unless its entry is marked Lean-only, Unconfirmed or a model note; a fixed bug is deleted from the ledger (the file's git history keeps it).
 - `proofs/lean_ci.sh`, `proofs/coverage.sh` — the two gates. `.github/workflows/lean-proofs.yml` (check name `Lean proofs`) reports on every pull request, so it can be a required check: the job itself skips, with a summary line, a PR that touches none of `proofs/**`, `graph/src/**`, `src/**` or the workflow file, and otherwise (and on pushes to `main`) runs both (a separate check, not in `ci-gate`).
 
 ## Quick start

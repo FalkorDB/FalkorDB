@@ -328,7 +328,7 @@ theorem readN_f32s (xs : List (BitVec 32)) (rest : Bytes) :
   | cons x xs ih =>
     simp only [List.length_cons, readN, f32s, List.flatMap_cons, List.append_assoc, bind_apply]
     rw [f32_w32]
-    simp only [bind_apply]
+    simp only
     rw [show List.flatMap (fun f => w32 f.toNat) xs = f32s xs from rfl, ih]
     rfl
 
@@ -748,7 +748,7 @@ theorem deliver_ok : ∀ (v : Val) (st : List Frame), FramesOk st →
     have hf : 1 ≤ f.left := h f (by simp)
     have hst : FramesOk st := fun g hg => h g (by simp [hg])
     simp only [deliver]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     split
     · rename_i hgt
       refine ⟨by simp, ?_⟩

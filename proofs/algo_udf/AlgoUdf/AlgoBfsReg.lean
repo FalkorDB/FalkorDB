@@ -205,8 +205,8 @@ theorem addProc_spec (fs : List Entry) (e : Entry) :
   · split <;> simp_all
 
 theorem register_empty : register [] = some table := by
-  simp only [register, registerPagerank, registerWcc, registerBetweenness, registerBfs, registerCdlp,
-    registerMsf, registerSpPaths, registerSsPaths, registerHarmonic, registerMaxflow]
+  simp only [register, registerPagerank,
+    ]
   decide
 
 end AlgoUdf.AlgoBfsReg

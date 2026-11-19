@@ -64,7 +64,7 @@ theorem np_detailP (F : Nat) (cl : CK) : NP (detailP o F cl) := by
   have := np_aliasOr o ho; have := np_typesP; have := np_varLenP; have := np_propsP o ho
   unfold detailP; np_go
 
-theorem np_relP (F : Nat) (cl : CK) (src : QNode Nat) : NP (relP o F cl src) := by
+theorem np_relP (F : Nat) (cl : CK) (src : QNode Alias) : NP (relP o F cl src) := by
   have := np_detailP o ho F cl; have := np_nodeP o ho F
   unfold relP; np_go
 
@@ -78,13 +78,13 @@ theorem np_chainN (F : Nat) (cl : CK) (p : Nat) : ∀ n left vars gs, NP (chainN
   | n + 1, left, vars, gs => by
     unfold chainN; have := np_chainN F cl p n; have := np_relP o ho F cl; np_go
 
-theorem np_aspLoop (F : Nat) (cl : CK) (la : Nat) :
+theorem np_aspLoop (F : Nat) (cl : CK) (la : Alias) :
     ∀ n prev found vars gs, NP (aspLoop o F cl la n prev found vars gs)
   | 0, _, _, _, _ => np_fuelP
   | n + 1, prev, found, vars, gs => by
     unfold aspLoop; have := np_aspLoop F cl la n; have := np_relP o ho F cl; np_go
 
-theorem np_partP (F : Nat) (cl : CK) (gs : QG Nat × List Nat) : NP (partP o F cl gs) := by
+theorem np_partP (F : Nat) (cl : CK) (gs : QG Alias × List Alias) : NP (partP o F cl gs) := by
   have := np_nodeP o ho F; have := np_chainA o ho F cl; have := np_chainN o ho F cl
   have := np_aspLoop o ho F cl
   unfold partP aspPart; np_go
@@ -225,7 +225,7 @@ theorem np_mut (F : Nat) : ∀ n, MutNP o F n
       generalize hc : s.cur = c at hg ⊢
       cases c <;> simp only [isWriteKw, Bool.false_eq_true] at hg
       rename_i k
-      cases k <;> simp only [isWriteKw, Bool.false_eq_true] at hg <;> dsimp only <;>
+      cases k <;> simp only [Bool.false_eq_true] at hg <;> dsimp only <;>
         (refine NP.run ?_ s; np_go)
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, hwp, ?_, ?_, ?_⟩
     · unfold queryP; np_go

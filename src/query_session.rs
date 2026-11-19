@@ -19,12 +19,33 @@
 //! [`hold_gil`] (telemetry's flush thread, and the native index builder's host). That
 //! is what makes the ordering rule enforceable rather than merely documented — the
 //! `graph` crate cannot reach it at all.
+//!
+//! ## Waiting for the write lock
+//!
+//! A writer waits for the write lock until every read already running on the graph
+//! has ended, and it waits holding the GIL, because GIL-then-write-lock is the order
+//! the inline main-thread commands have (#726). Waiting in one go would keep the
+//! server from answering anything, PING included, for as long as the longest of
+//! those reads (#3613). So a writer off the main thread waits in slices of
+//! `WRITE_LOCK_POLL_INTERVAL` ms and gives the GIL back between them
+//! ([`acquire_write`]), and readers that would slip in during those hand-offs wait
+//! at the graph's [`WriterGate`] instead. This is C's `QueryCtx_AcquireWriteLock`
+//! (#3422, #3685).
 
-use crate::graph_core::{ThreadedGraph, ffi};
+use crate::config::WRITE_LOCK_POLL_INTERVAL;
+use crate::graph_core::{ThreadedGraph, ffi, graph_is_registered};
 use graph::graph::{graph::Graph, mvcc_graph::CommitError};
 use graph::locks::WriteEscalation;
-use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
-use std::{cell::Cell, cell::RefCell, marker::PhantomData, ptr::NonNull, sync::Arc};
+use graph::thread_id::{is_main_thread, is_pool_thread};
+use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock, RwLockWriteGuard};
+use std::{
+    cell::Cell,
+    cell::RefCell,
+    marker::PhantomData,
+    ptr::NonNull,
+    sync::{Arc, atomic::Ordering},
+    time::Duration,
+};
 use valkey_module::{Context, ContextFlags, raw};
 
 /// Which lock(s) a query holds.
@@ -165,9 +186,10 @@ impl QuerySession {
         graph: &Arc<RwLock<ThreadedGraph>>,
         facts: WriteFacts,
     ) -> Self {
+        let guard = read_past_gate(graph);
         Self {
             graph: Arc::clone(graph),
-            mode: RefCell::new(Some(Mode::Reader(RwLock::read_arc(graph)))),
+            mode: RefCell::new(Some(Mode::Reader(guard))),
             facts,
             version: RefCell::new(Version::None),
         }
@@ -176,14 +198,20 @@ impl QuerySession {
     /// Enter **writer** mode immediately — GIL, then the per-graph write lock — for
     /// callers that write for the whole query and have nothing to escalate. On the
     /// main thread the GIL acquire is the no-op it must be.
+    ///
+    /// Main thread only: it waits for the write lock in one go, which off the main
+    /// thread would hold the GIL for the whole wait. A worker becomes a writer
+    /// through [`Self::upgrade_to_write`] instead.
     pub fn begin_writer(graph: &Arc<RwLock<ThreadedGraph>>) -> Self {
+        debug_assert!(
+            holds_gil(),
+            "begin_writer holds the GIL while it waits for the write lock: main thread only"
+        );
         let gil = Gil::acquire();
+        let guard = RwLock::write_arc(graph);
         Self {
             graph: Arc::clone(graph),
-            mode: RefCell::new(Some(Mode::Writer {
-                guard: RwLock::write_arc(graph),
-                _gil: gil,
-            })),
+            mode: RefCell::new(Some(Mode::Writer { guard, _gil: gil })),
             // Moot: already a writer, so `escalate` never runs and this is never read.
             // These are the inline main-thread paths anyway, where Redis's own dispatch
             // gated the command and no pause or role-change window can open mid-command.
@@ -331,59 +359,223 @@ impl QuerySession {
 
     /// Become a writer, if not one already.
     ///
-    /// Idempotent. The brief window holding no per-graph lock is safe: the query
-    /// has not yet touched the shared index, so a reader entering the window sees
-    /// a consistent older state; and a writer that commits in it (an inline one,
-    /// which holds the GIL and the write lock throughout) makes this query's
-    /// version stale, which the check below detects before any mutation is
-    /// published.
+    /// Idempotent. While it waits for the write lock the query holds no per-graph
+    /// lock, and between slices not the GIL either, so the wait can be as long as
+    /// the longest read already running on the graph. That is safe: the query has
+    /// not yet touched the shared index, so a reader sees a consistent older
+    /// state; a writer that commits meanwhile makes this query's version stale,
+    /// which the check below detects before anything is published; and the key,
+    /// the role and the pause state are re-checked under the same GIL hold the
+    /// lock is finally taken under ([`acquire_write`]).
     ///
     /// `fork` is the version from [`Self::write_version`], if the session took
     /// one: it is checked against the published graph here.
+    ///
+    /// Refused before the lock is taken, the session is a reader again, so
+    /// calling this again runs every check again. Refused by the fork check, it
+    /// is a writer holding both locks, and the caller drops it.
     pub fn upgrade_to_write(
         &self,
         fork: Option<&mut Graph>,
     ) -> Result<(), WriteAbort> {
-        if self.escalate() {
-            // The key could have been deleted in the window where we held no
-            // per-graph lock, so re-verify the graph is still reachable before
-            // mutating it — as C does by re-opening the key under WRITE. The locks
-            // stay held; the caller aborts the query and `Drop` releases them.
-            if !crate::graph_core::graph_is_registered(&self.graph) {
-                return Err(WriteAbort::GraphUnregistered);
-            }
-            // Same window, the other half of what C re-validates here: this instance
-            // may no longer be allowed to originate a write at all.
-            reauthorize_write(self.facts)?;
+        if self.escalate()? {
             // Only now, under the write lock, find out whether an inline writer
-            // committed in the window, making the version built while matching
-            // stale. Here rather than at commit: the caller publishes index
-            // documents next, which dropping a stale fork cannot take back.
+            // committed while this query waited, making the version built while
+            // matching stale. Here rather than at commit: the caller publishes
+            // index documents next, which dropping a stale fork cannot take back.
             self.check_fork(fork)?;
         }
         Ok(())
     }
 
-    /// Release the read lock, take the GIL, take the write lock — in that order.
-    /// `false` if this query was already a writer, so there was nothing to do.
+    /// Release the read lock, then take the GIL and the write lock through
+    /// [`acquire_write`], with [`authorize_write`] as the check before each try.
+    /// `Ok(false)` if this query was already a writer, so there was nothing to do.
     ///
-    /// Separate from [`Self::upgrade_to_write`] so the `mode` borrow ends here, by
-    /// scope, instead of spanning that method's call out to the graph registry.
-    fn escalate(&self) -> bool {
+    /// On a refusal the read lock is taken back, as C's `QueryCtx_AcquireWriteLock`
+    /// does, so the session still holds what [`Self::with_graph`] needs. Directly, as
+    /// in C, not through the gate: every caller drops the session next, and a refused
+    /// write should not wait behind another writer's gate just to report the refusal.
+    fn escalate(&self) -> Result<bool, WriteAbort> {
         let mut mode = self.mode.borrow_mut();
         if matches!(*mode, Some(Mode::Writer { .. })) {
-            return false;
+            return Ok(false);
         }
+        let Some(Mode::Reader(guard)) = mode.take() else {
+            unreachable!("session holds no lock");
+        };
+        // The wait below holds no lock to reach the gate through, so it keeps its own
+        // handle: the one `Arc` clone a write pays for the gate.
+        let gate = Arc::clone(&guard.writer_gate);
         // Drop the read lock FIRST: holding it across the GIL acquire below is the
-        // #726 inversion, and this assignment is what guarantees we never do.
-        *mode = None;
+        // #726 inversion, and this drop is what guarantees we never do.
+        drop(guard);
 
-        // GIL, then the write lock — the order every inline main-thread command
-        // already has.
+        match acquire_write(&self.graph, &gate, || {
+            authorize_write(&self.graph, self.facts)
+        }) {
+            Ok((guard, gil)) => {
+                *mode = Some(Mode::Writer { guard, _gil: gil });
+                Ok(true)
+            }
+            Err(abort) => {
+                *mode = Some(Mode::Reader(RwLock::read_arc(&self.graph)));
+                Err(abort)
+            }
+        }
+    }
+}
+
+/// Missed slices after which a waiting writer closes the gate. C's `GATE_THRESHOLD`.
+const GATE_AFTER_SLICES: u32 = 2;
+
+/// How long a writer that missed a slice sleeps, holding nothing, before it tries
+/// again. The sleep is the hand-off: without it this thread would usually take the
+/// GIL straight back before the main thread, blocked on it, could. C's 1 ms
+/// `nanosleep`.
+const GIL_HANDOFF: Duration = Duration::from_millis(1);
+
+/// Take the GIL and then `graph`'s write lock, holding the GIL for at most one
+/// slice of the wait at a time.
+///
+/// Each attempt takes the GIL, runs `check_before_try` under it, and waits up to
+/// `WRITE_LOCK_POLL_INTERVAL` ms for the lock. The check runs on every attempt
+/// because the GIL was given back since the last one, so whatever it checks may
+/// have changed; its error ends the wait. On a miss the GIL is given back and the
+/// thread sleeps [`GIL_HANDOFF`] so the main thread can serve commands. On success
+/// the GIL has been held since the check, so it still holds, and both locks are
+/// returned for the session to keep.
+///
+/// What the writer waits for is the reads already running. New ones are held back
+/// by the lock itself during a slice, but when a slice ends without the lock,
+/// parking_lot wakes every reader it held back, and a steady flow of reads would
+/// keep the writer out indefinitely. So after [`GATE_AFTER_SLICES`] misses the
+/// writer closes the [`WriterGate`], and the gate opens again when the writer has
+/// the lock or gives up. Closing it only after a few misses keeps it out of the
+/// common short wait, as C's #3685 does.
+///
+/// A thread that already holds the GIL — the main thread, or one inside
+/// [`hold_gil`] — cannot give it back mid-wait, so it waits in one go. So does every
+/// writer when the interval is 0, which is C's way back to that behaviour.
+fn acquire_write(
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    gate: &WriterGate,
+    mut check_before_try: impl FnMut() -> Result<(), WriteAbort>,
+) -> Result<(ArcRwLockWriteGuard<RawRwLock, ThreadedGraph>, Gil), WriteAbort> {
+    let interval = WRITE_LOCK_POLL_INTERVAL.load(Ordering::Relaxed);
+    if interval <= 0 || holds_gil() {
         let gil = Gil::acquire();
-        let guard = RwLock::write_arc(&self.graph);
-        *mode = Some(Mode::Writer { guard, _gil: gil });
-        true
+        check_before_try()?;
+        return Ok((RwLock::write_arc(graph), gil));
+    }
+
+    let slice = Duration::from_millis(interval as u64);
+    let mut missed = 0;
+    let mut closed = None;
+    loop {
+        let gil = Gil::acquire();
+        check_before_try()?;
+        if let Some(guard) = RwLock::try_write_arc_for(graph, slice) {
+            // `closed` drops on the way out: the gate opens with the lock taken,
+            // so the readers it held go on to queue behind this write.
+            return Ok((guard, gil));
+        }
+        drop(gil);
+        missed += 1;
+        if closed.is_none() && missed >= GATE_AFTER_SLICES {
+            // Holds no lock here, so it can wait for another writer to open the
+            // gate.
+            closed = Some(gate.close());
+        }
+        std::thread::sleep(GIL_HANDOFF);
+    }
+}
+
+/// What a write must still be allowed to do, checked under the GIL it takes the
+/// write lock under.
+fn authorize_write(
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    facts: WriteFacts,
+) -> Result<(), WriteAbort> {
+    // The key could have been deleted or replaced while this query held no
+    // per-graph lock, so re-verify the graph is still reachable before mutating
+    // it — as C does by re-opening the key under WRITE.
+    if !graph_is_registered(graph) {
+        return Err(WriteAbort::GraphUnregistered);
+    }
+    // The other half of what C re-validates here: this instance may no longer be
+    // allowed to originate a write at all.
+    reauthorize_write(facts)
+}
+
+/// Take `graph`'s read lock as a reader, first waiting out a writer that closed the
+/// gate.
+///
+/// The gate is checked after the lock is taken rather than before, because it lives
+/// inside the lock: parking_lot's `Arc` guards need the `RwLock` to be all of the
+/// `Arc`, so there is nowhere outside it to keep a gate. A reader that finds the
+/// gate closed lets go of the lock at once and waits, holding nothing, so the
+/// writer's next slice does not wait for it. With no writer kept waiting, the cost
+/// is an atomic load; only a reader that waits clones the gate's `Arc`, to hold it
+/// once it has let go of the lock.
+///
+/// Only a thread that [`may_wait_at_gate`] waits; any other takes the lock as it
+/// finds it.
+fn read_past_gate(
+    graph: &Arc<RwLock<ThreadedGraph>>
+) -> ArcRwLockReadGuard<RawRwLock, ThreadedGraph> {
+    loop {
+        let guard = RwLock::read_arc(graph);
+        if !guard.writer_gate.is_closed() || !may_wait_at_gate() {
+            return guard;
+        }
+        let gate = Arc::clone(&guard.writer_gate);
+        drop(guard);
+        gate.wait_until_open();
+    }
+}
+
+/// Whether this thread can wait at a writer gate without stopping the writer: a
+/// pool worker that does not hold the GIL.
+///
+/// The writer needs the GIL for every slice, so a reader that waits holding it
+/// waits forever. A pool worker holds the GIL only inside a [`Gil`] of its own,
+/// which [`holds_gil`] sees. Any other thread may hold it unseen: the main thread
+/// does for every command, and another module's thread can take it and call a
+/// graph command, which then runs on that thread. Such a call can read; a write
+/// there reaches [`Gil::acquire`], which cannot see that GIL either. C, likewise,
+/// gates only the queries its reader pool runs.
+fn may_wait_at_gate() -> bool {
+    is_pool_thread() && !holds_gil()
+}
+
+/// Where a graph's readers wait while a writer is being kept from its write lock.
+///
+/// A lock of its own. A writer that has missed [`GATE_AFTER_SLICES`] slices
+/// ([`acquire_write`]) closes the gate by holding its write guard, and drops it once
+/// it has the graph's lock or gives up; being a guard, it cannot be left shut by an
+/// early return or a panic. A reader waits at the gate by taking a read guard, which
+/// it gets once no writer holds the gate or is queued for it ahead of the reader.
+///
+/// Two writers can wait on the same graph at once: the write queue and a
+/// constraint settling, say. Only one holds the gate. The other blocks in
+/// [`Self::close`], holding no lock, until the first lets go, and closes the gate
+/// again as soon as it runs; the readers queued behind it wait for it too.
+#[derive(Default)]
+pub struct WriterGate(RwLock<()>);
+
+impl WriterGate {
+    /// One atomic load: what a reader pays when no writer is being kept waiting.
+    fn is_closed(&self) -> bool {
+        self.0.is_locked_exclusive()
+    }
+
+    fn close(&self) -> RwLockWriteGuard<'_, ()> {
+        self.0.write()
+    }
+
+    fn wait_until_open(&self) {
+        drop(self.0.read());
     }
 }
 
@@ -483,6 +675,13 @@ pub fn hold_gil() -> impl Drop {
     Gil::acquire()
 }
 
+/// Whether this thread holds the GIL. Two ways it can: the main thread holds it
+/// implicitly for the whole command callback, and any other thread holds it while
+/// its own context is in [`GIL_CTX`].
+pub fn holds_gil() -> bool {
+    is_main_thread() || GIL_CTX.get().is_some()
+}
+
 /// RAII guard for the host's global lock: Redis's module GIL.
 ///
 /// `need_release` records whether *this* guard is the one that took the GIL — a
@@ -497,12 +696,10 @@ struct Gil {
 
 impl Gil {
     #[must_use]
-    /// Take the GIL, unless this thread already holds it — the module GIL is not
-    /// recursive, so re-acquiring would self-deadlock. Two ways it can already be
-    /// held: the main thread holds it implicitly for the whole command callback, and a
-    /// nested acquire finds our own context in [`GIL_CTX`].
+    /// Take the GIL, unless this thread already holds it ([`holds_gil`]) — the module
+    /// GIL is not recursive, so re-acquiring would self-deadlock.
     fn acquire() -> Self {
-        if graph::thread_id::is_main_thread() || GIL_CTX.get().is_some() {
+        if holds_gil() {
             return Self {
                 need_release: false,
                 _not_send: PhantomData,
