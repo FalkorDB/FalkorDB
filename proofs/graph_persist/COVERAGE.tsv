@@ -68,12 +68,12 @@ src/serializers/encoder/mod.rs	build_payloads	197	PROVEN	Persist.buildPayloads: 
 src/serializers/decoder/mod.rs	decode_payload_directory	51	PROVEN	Persist.decDir/decDirEntry/St.accepted: decDir_rt (with buildPayloads_accepted, EntryOK.accepted), decDirEntry_refuses, decDir_refuses_cch
 src/serializers/decoder/mod.rs	check_encoding_version	85	PROVEN	Persist.checkVer: checkVer_iff, key_rt_ver, rdbLoad_refuses
 src/serializers/decoder/mod.rs	rdb_load_graph	115	PROVEN	Persist.rdbLoad (version gate checkVer) + rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build; key_rt_ver, rdbLoad_refuses
-src/serializers/decoder/mod.rs	decode_payloads_into_pending	326	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
-src/serializers/decoder/mod.rs	finalize_pending_graph	376	PROVEN	Persist.finalizePG: run_keys, multi_load
-src/serializers/decoder/mod.rs	rebuild_indexes	411	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
-src/serializers/decoder/mod.rs	pipe_load_graph	472	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
-src/serializers/decoder/mod.rs	vec_load_graph	486	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
-src/serializers/decoder/mod.rs	load_graph_from_reader	496	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
+src/serializers/decoder/mod.rs	decode_payloads_into_pending	325	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
+src/serializers/decoder/mod.rs	finalize_pending_graph	375	PROVEN	Persist.finalizePG: run_keys, multi_load
+src/serializers/decoder/mod.rs	rebuild_indexes	410	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
+src/serializers/decoder/mod.rs	pipe_load_graph	471	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/decoder/mod.rs	vec_load_graph	485	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
+src/serializers/decoder/mod.rs	load_graph_from_reader	495	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
 graph/src/runtime/runtime.rs	publish	600	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
 graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
 graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor

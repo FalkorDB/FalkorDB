@@ -145,10 +145,10 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Arena.retire/resize/grow`        | `retire_span` (:535), `resize_span_slack` (:548), `grow_slots` (:560) |
 | `Arena.setSpan/freeSpan/mergeSpan`| `Block::set_span` (:573), `free_span` (:616), `merge_span` slot effects |
 | `Arena.compact`, `live`           | `Block::compact` (:798) and its `debug_assert_eq!` (:821) |
-| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:691), `remove_node_labels` (:729), `node_has_label` (:755), `update_node_labels` (:806) |
+| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:691), `remove_node_labels` (:741), `node_has_label` (:778), `update_node_labels` (:806) |
 | `Labels.stagedNodeLabels/updateNodeLabels/stagedLabelIds` | `staged_node_labels` (pending.rs:824), `update_node_labels` over it, `Runtime::staged_label_ids` (ops/delete.rs:196), #3288 |
-| `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-142) |
-| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1362-1378) |
+| `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-145) |
+| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1405-1421) |
 | `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:595, :1005) |
 | `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1591) + evaluator's null |
 | `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1898, attribute_store.rs:1351) |
@@ -226,7 +226,9 @@ Wave-4 findings:
   sequence of `SET n:…`/`REMOVE n:…` the query reads, and commit stores, the
   last clause's verdict per label; add/remove sets stay disjoint;
   `removeOp_no_dup_push` — REMOVE never stages a label twice, so
-  `labels_removed` counts each once.
+  `labels_removed` counts each once; `removeLabels_closed`, `removeLabelsC_count` —
+  since #3459 a removal that only cancels a staged add bumps
+  `staged_labels_removed` instead, and every removed label is still counted once.
 * `stage_sorted_lastWrite` — staged properties stay strictly sorted and hold
   the last write per attribute; `read_your_writes_existing`,
   `read_your_writes_new` — what the query read before Commit is exactly what
@@ -312,12 +314,13 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
 The query-time views were proven (`overlay_eq_ref`, `pendingWithLabels_spec`,
 `deletePendingNode_spec`); that the staged maps only name entities existing at
 commit/replay was never stated. Properties and refutations:
-* **#3448** `RemLCommitted` (a staged removal is of a committed label):
-  `bug3448_remove_of_staged_label` (`CREATE (n:Foo) REMOVE n:Foo`, `SET n:B REMOVE n:B`:
-  `remove_node_labels`, pending.rs:729-746, pushes an only-staged label). `RemLLive` (no
-  created/cancelled node in `remove_labels`): `deletePendingNode_keeps_remL` (general),
-  `bug3448_cancelled_node_keeps_remL` (+ `_reached`); replica consequence in
-  effects_emit_apply `bug3448_removeLabels_before_create_refused`.
+* **#3448** (*fixed by #3459*) `RemLCommitted` (a staged removal is of a committed label):
+  proven for every run, `fixed3448_run_remL_committed` (via `Labels.removeOp_committed`);
+  repro `fixed3448_remove_of_staged_label` (`CREATE (n:Foo) REMOVE n:Foo`: `remove_labels`
+  stays empty, before #3459 `[0]`). `RemLLive` (no created/cancelled node in
+  `remove_labels`): `delete_pending_node` now clears the entry, `deletePendingNode_clears_remL`,
+  `fixed3448_cancelled_node_clears_remL` (+ `_reached`); replica side in effects_emit_apply
+  `fixed3448_replay_applies` (before: `bug3448_removeLabels_before_create_refused`).
 * **#3453** `PendingWithLabelsLive` (*fixed by #3467*): `pendingWithLabels_live`; `fixed3453_*` replace the
   refutation (`get_pending_nodes_with_labels` now takes the graph, skips deleted nodes and nodes whose
   pattern labels are all committed). Composed property `IncludePendingExact` in ops_aggregate.
