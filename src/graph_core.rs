@@ -72,7 +72,7 @@ use valkey_module::{
 use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
 };
-use crate::dispatch::must_run_inline;
+use crate::dispatch::{logs_telemetry, must_run_inline};
 use crate::divergence_guard;
 #[cfg(feature = "index-falkordb")]
 use crate::query_session::hold_gil;
@@ -1282,6 +1282,9 @@ fn query_sync(
     }
 
     let received_at = telemetry::unix_now_secs();
+    // This is the only path a replicated or replayed command takes, so it is the only
+    // one that has to ask whether the query is this node's to log.
+    let log_query = logs_telemetry(ctx);
     let cmd = if write {
         "GRAPH.QUERY"
     } else {
@@ -1347,7 +1350,9 @@ fn query_sync(
                             is_write: true,
                             timed_out: false,
                         };
-                        telemetry::enqueue_entry(key_name, graph, entry);
+                        if log_query {
+                            telemetry::enqueue_entry(key_name, graph, entry);
+                        }
                     }
                     Err(err) => {
                         // execute_query_write already discarded the private
@@ -1379,7 +1384,9 @@ fn query_sync(
                     is_write: false,
                     timed_out: read_result.timed_out,
                 };
-                telemetry::enqueue_entry(key_name, graph, entry);
+                if log_query {
+                    telemetry::enqueue_entry(key_name, graph, entry);
+                }
             }
         }
         Err(err) => {
@@ -1860,16 +1867,22 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // registry entry whose clone shares this inner allocation is removed.
         let boxed = Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>());
         let data_ptr = boxed.data_ptr() as usize;
-        let removed: Vec<Arc<RwLock<ThreadedGraph>>> = {
+        let (names, removed): (Vec<String>, Vec<Arc<RwLock<ThreadedGraph>>>) = {
             let mut reg = GRAPH_REGISTRY.lock();
-            #[allow(clippy::needless_collect)]
             let keys: Vec<String> = reg
                 .iter()
                 .filter(|(_, arc)| arc.data_ptr() as usize == data_ptr)
                 .map(|(k, _)| k.clone())
                 .collect();
-            keys.into_iter().filter_map(|k| reg.remove(&k)).collect()
+            let removed = keys.iter().filter_map(|k| reg.remove(k)).collect();
+            (keys, removed)
         };
+        // The graph has just left the registry, and the registry is what the
+        // persistence strip walks: its telemetry stream is queued for deletion
+        // now, in the same callback, or a save could persist a stream nothing
+        // will strip again. Queued, not deleted: the server is part-way through
+        // removing this graph's key.
+        telemetry::queue_streams_of_freed_graph(names);
         // Drop off the main Redis thread so Index::drop routes through the
         // GIL-acquiring path (see register_graph for the rationale).
         std::thread::spawn(move || {
