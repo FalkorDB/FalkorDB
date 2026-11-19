@@ -58,4 +58,4 @@ graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2890	PROVEN
 graph/src/planner/binder.rs	denotes	2912	NOT COVERED	(#3302): not modelled yet
 graph/src/planner/binder.rs	sorted_scope_vars	2919	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2927	PROVEN	mergeSV_ge, mergeSV_covers
-graph/src/planner/mod.rs	Planner::fresh_var	1015	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/mod.rs	Planner::fresh_var	1017	NOT COVERED	(#3302): not modelled yet
