@@ -84,10 +84,10 @@ graph/src/udf/js_classes.rs	js_traverse	674	PROVEN	UdfClasses.traverseEntry_spec
 graph/src/udf/js_classes.rs	js_traverse_impl	692	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
 graph/src/udf/js_context.rs	caught_error_message	70	PROVEN	UdfContext.norm_example, norm_quoted, norm_other, norm_idem_example, errMsg_name, errMsg_plain_error
 graph/src/udf/js_context.rs	compute_effective_js_timeout_ms	130	PROVEN	UdfContext.effTimeout_bounds, effTimeout_spec
-graph/src/udf/js_context.rs	validate_script	154	PROVEN	UdfContext.validateScript_spec, validateTimeout_bounds (QuickJS eval AXIOMATISED oracle)
-graph/src/udf/js_context.rs	ensure_context_current	187	PROVEN	UdfContext.ensureCurrent_version
-graph/src/udf/js_context.rs	rebuild_context	204	PROVEN	UdfContext.rebuild_keys, rebuild_fail; Repo.keys
-graph/src/udf/js_context.rs	call_udf_bridge	281	PROVEN	UdfContext.bridge_clears, bridge_timeout, bridge_not_found
+graph/src/udf/js_context.rs	validate_script	158	PROVEN	UdfContext.validateScript_spec, validateTimeout_bounds (QuickJS eval AXIOMATISED oracle)
+graph/src/udf/js_context.rs	ensure_context_current	191	PROVEN	UdfContext.ensureCurrent_version
+graph/src/udf/js_context.rs	rebuild_context	208	PROVEN	UdfContext.rebuild_keys, rebuild_fail, threadJsState_drop_safe; Repo.keys
+graph/src/udf/js_context.rs	call_udf_bridge	280	PROVEN	UdfContext.bridge_clears, bridge_timeout, bridge_not_found
 graph/src/udf/js_globals.rs	setup_validate_globals	45	PROVEN	UdfGlobals.validate_names_nodup, vRegister_rejects, validate_runtime_same_globals (#3079: also calls setup_graph_global) (the eval-ed JS register body; global install AXIOMATISED)
 graph/src/udf/js_globals.rs	collect_validate_names	98	PROVEN	UdfGlobals.collectNames_ok
 graph/src/udf/js_globals.rs	setup_runtime_globals	111	PROVEN	UdfGlobals.runtime_keys_eq_qualified, empty_lib_name_mismatch (BUG), validate_runtime_same_globals
