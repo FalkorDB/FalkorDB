@@ -696,6 +696,8 @@ fn populate_index_batch(
                 }
 
                 let mut batch: Vec<Document> = Vec::with_capacity(scanned_count);
+                let lang = indexer.get_language(&label);
+                let lang = lang.as_deref();
 
                 // Build a document for `id`, allocating the RSDoc only once we
                 // know the entity has at least one indexed field. Populating an
@@ -731,7 +733,9 @@ fn populate_index_batch(
                     IndexKind::Node => {
                         let last_id = ids.last().copied();
                         for id in ids {
-                            if let Some(doc) = build_doc(id, false, &graph, &|| Document::new(id)) {
+                            if let Some(doc) =
+                                build_doc(id, false, &graph, &|| Document::new(id, lang))
+                            {
                                 batch.push(doc);
                             }
                         }
@@ -746,9 +750,9 @@ fn populate_index_batch(
                     IndexKind::Edge => {
                         let last_pos = edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
-                            if let Some(doc) =
-                                build_doc(eid, true, &graph, &|| Document::new_edge(src, dst, eid))
-                            {
+                            if let Some(doc) = build_doc(eid, true, &graph, &|| {
+                                Document::new_edge(src, dst, eid, lang)
+                            }) {
                                 batch.push(doc);
                             }
                         }
@@ -3803,6 +3807,8 @@ impl Graph {
                     })
                     .collect();
 
+                let lang = self.node_indexer.get_language(&label);
+                let lang = lang.as_deref();
                 let mut batch = Vec::new();
                 for (n, _) in lm.iter(0, u64::MAX) {
                     // Allocate the RSDoc only once a field is present — nodes
@@ -3811,7 +3817,7 @@ impl Graph {
                     let mut doc: Option<Document> = None;
                     for (attr_idx, fields) in &resolved_attrs {
                         if let Some(value) = self.get_node_attribute_by_idx(NodeId(n), *attr_idx) {
-                            let doc = doc.get_or_insert_with(|| Document::new(n));
+                            let doc = doc.get_or_insert_with(|| Document::new(n, lang));
                             for field in fields {
                                 doc.set(field, &value);
                             }
@@ -3834,7 +3840,7 @@ impl Graph {
         }
 
         // Edge indexes: symmetric to the node path, but walk the
-        // relationship tensor and emit `Document::new_edge(src, dst, eid)`
+        // relationship tensor and emit `Document::new_edge(src, dst, eid, lang)`
         // so RediSearch keys stay the 24-byte `[src, dst, edge_id]`
         // triple that `Index_RemoveEdge` expects on delete. Stream
         // the tensor iterator directly so we don't materialize every
@@ -3849,6 +3855,8 @@ impl Graph {
             if !attrs.is_empty()
                 && let Some(tensor) = self.get_relationship_matrix(&type_name)
             {
+                let lang = self.edge_indexer.get_language(&type_name);
+                let lang = lang.as_deref();
                 let mut batch = Vec::new();
                 for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
                     // Allocate the RSDoc only once a field is present — edges
@@ -3858,7 +3866,8 @@ impl Graph {
                     for (attr, fields) in &attrs {
                         if let Some(value) = self.attr_by_name(&self.relationship_attrs, eid, attr)
                         {
-                            let doc = doc.get_or_insert_with(|| Document::new_edge(src, dst, eid));
+                            let doc =
+                                doc.get_or_insert_with(|| Document::new_edge(src, dst, eid, lang));
                             for field in fields {
                                 doc.set(field, &value);
                             }
@@ -4007,6 +4016,7 @@ impl Graph {
                 // resolution below, which is a scan over the type's tensor.
                 continue;
             }
+            let lang = indexer.get_language(name);
 
             // Resolve `(src, dst)` only for the edge ids we actually
             // need, instead of materializing the full tensor every
@@ -4037,7 +4047,7 @@ impl Graph {
                     // nothing to index.
                     continue;
                 };
-                let mut doc = Document::new_edge(src, dst, id);
+                let mut doc = Document::new_edge(src, dst, id, lang.as_deref());
                 for (key, fields) in &fields {
                     if let Some(value) = self.attr_by_name(&self.relationship_attrs, id, key) {
                         for field in fields {
@@ -4094,9 +4104,10 @@ impl Graph {
             if fields.is_empty() {
                 continue; // every field of this label is served natively
             }
+            let lang = indexer.get_language(name);
             let mut docs = vec![];
             for id in ids {
-                let mut doc = Document::new(id);
+                let mut doc = Document::new(id, lang.as_deref());
                 for (key, fields) in &fields {
                     if let Some(value) = self.attr_by_name(attr_store, id, key) {
                         for field in fields {

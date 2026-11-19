@@ -58,7 +58,7 @@ use std::{
     ffi::{CStr, CString},
     hash::Hash,
     os::raw::{c_char, c_int, c_void},
-    ptr::null_mut,
+    ptr::{null, null_mut},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -655,7 +655,10 @@ impl Drop for Document {
 
 impl Document {
     #[must_use]
-    pub fn new(id: u64) -> Self {
+    pub fn new(
+        id: u64,
+        lang: Option<&CStr>,
+    ) -> Self {
         let mut key = [0u8; NODE_DOC_KEY_LEN];
         hex_encode_into(&id.to_le_bytes(), &mut key);
         Self {
@@ -668,7 +671,7 @@ impl Document {
                     NODE_DOC_KEY_LEN,
                     null_mut(),
                     1.0,
-                    null_mut(),
+                    lang.map_or(null(), CStr::as_ptr),
                 );
                 debug_assert!(!doc.is_null(), "Failed to create RediSearch document");
                 doc
@@ -686,6 +689,7 @@ impl Document {
         src: u64,
         dst: u64,
         edge_id: u64,
+        lang: Option<&CStr>,
     ) -> Self {
         let mut key = [0u8; EDGE_DOC_KEY_LEN];
         hex_encode_into(&src.to_le_bytes(), &mut key[0..16]);
@@ -701,7 +705,7 @@ impl Document {
                     EDGE_DOC_KEY_LEN,
                     null_mut(),
                     1.0,
-                    null_mut(),
+                    lang.map_or(null(), CStr::as_ptr),
                 );
                 debug_assert!(!doc.is_null(), "Failed to create RediSearch document");
                 doc
