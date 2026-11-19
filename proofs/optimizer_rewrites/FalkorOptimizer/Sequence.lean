@@ -3,7 +3,7 @@
 
 | here | there |
 | --- | --- |
-| `passes`, `optimize` | `optimize` optimizer/mod.rs:125-168 (pass order; NestedPlans recursion) |
+| `passes`, `optimize` | `optimize` optimizer/mod.rs:207-252 (pass order; NestedPlans recursion) |
 | `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs:80-97 |
 | `guardHJ`, `T.anyD` | its `!reads_argument_rows(&child)` guard (:84) / `reads_argument_rows` :105-109 (#2981) |
 | `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs:389-466 |
@@ -31,22 +31,32 @@ namespace Falkor.Opt.Seq
 
 inductive Pass
   | reduceCount | reduceExpandInto | reduceVarLenPath | eliminateTrueFilters | selectScanNode
-  | pushFiltersDown | fuseAnonymousTraverse | replaceCartesianWithHashJoin | absorbEdgeFiltersIntoVlt
+  | pushFiltersDown | fuseAnonymousTraverse | replaceCartesianWithIndexSeek
+  | replaceCartesianWithHashJoin | absorbEdgeFiltersIntoVlt
   | utilizeIndex | utilizeNodeById | reorderLabels | fuseOptionalTraverse | reduceBoundEdge
   deriving DecidableEq, Repr
 
-/-- mod.rs:135-164, in order. -/
+/-- mod.rs:223-245, in order (#3889 adds replace_cartesian_with_index_seek before the hash join). -/
 def passes : List Pass :=
   [.reduceCount, .reduceExpandInto, .reduceVarLenPath, .eliminateTrueFilters, .selectScanNode,
-   .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
+   .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithIndexSeek,
+   .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
    .reduceVarLenPath, .utilizeIndex, .utilizeNodeById, .reorderLabels, .fuseOptionalTraverse,
    .reduceBoundEdge]
 
 theorem passes_order :
-    passes.length = 15 ∧ passes.count .reduceVarLenPath = 2 ∧
+    passes.length = 16 ∧ passes.count .reduceVarLenPath = 2 ∧
     passes.head? = some .reduceCount ∧ passes.getLast? = some .reduceBoundEdge ∧
-    passes.idxOf .absorbEdgeFiltersIntoVlt < 9 ∧ passes[9]? = some .reduceVarLenPath ∧
-    passes.idxOf .fuseOptionalTraverse = 13 := by decide
+    passes.idxOf .absorbEdgeFiltersIntoVlt < 10 ∧ passes[10]? = some .reduceVarLenPath ∧
+    passes.idxOf .fuseOptionalTraverse = 14 := by decide
+
+/-- #3889: the index-seek rewrite runs once, after push_filters_down and right before the
+hash-join rewrite (so it gets first pick of a CartesianProduct), and before utilize_index. -/
+theorem passes_index_seek_order :
+    passes.count .replaceCartesianWithIndexSeek = 1 ∧
+    passes.idxOf .pushFiltersDown < passes.idxOf .replaceCartesianWithIndexSeek ∧
+    passes.idxOf .replaceCartesianWithIndexSeek + 1 = passes.idxOf .replaceCartesianWithHashJoin ∧
+    passes.idxOf .replaceCartesianWithIndexSeek < passes.idxOf .utilizeIndex := by decide
 
 /-- A plan tree whose root may be `NestedPlans`. -/
 inductive OPlan (P : Type)
