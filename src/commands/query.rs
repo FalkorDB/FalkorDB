@@ -25,15 +25,15 @@ use crate::{
         ThreadedGraph, c_graph_key, c_graph_name, query_mut, register_graph,
         reply_invalid_graph_version, up_to_nul,
     },
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString};
 use std::sync::Arc;
 #[cfg(feature = "fuzz")]
 use std::sync::atomic::{AtomicI32, Ordering};
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
+use valkey_module::{Context, NextArg, ValkeyResult, ValkeyString, ValkeyValue};
 
 #[cfg(feature = "fuzz")]
 static FILE_ID: AtomicI32 = AtomicI32::new(0);
@@ -41,10 +41,10 @@ static FILE_ID: AtomicI32 = AtomicI32::new(0);
 #[allow(unused_imports)]
 pub fn graph_query(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     let QueryFlags {
-        compact,
+        format,
         track_memory,
         timeout,
         version: version_check,
@@ -72,14 +72,17 @@ pub fn graph_query(
     let read_key = ctx.open_key(&key_str);
     let key_name: Arc<str> = Arc::from(key_str.to_string());
 
-    if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    if let Some(graph) = read_key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         let graph = graph.clone();
         drop(read_key);
         return query_mut(
             ctx,
             &graph,
             query,
-            compact,
+            format,
             true,
             track_memory,
             key_name,
@@ -90,15 +93,18 @@ pub fn graph_query(
 
     // Graph doesn't exist - open writable key to create it.
     drop(read_key);
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
     // Re-check: another client may have created it between our read and write open.
-    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    if let Some(graph) = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         let graph = graph.clone();
         return query_mut(
             ctx,
             &graph,
             query,
-            compact,
+            format,
             true,
             track_memory,
             key_name,
@@ -123,27 +129,31 @@ pub fn graph_query(
         && provided_version != 0
     {
         reply_invalid_graph_version(ctx, 0);
-        return Ok(redis_module::RedisValue::NoReply);
+        return Ok(ValkeyValue::NoReply);
     }
 
+    // Stored under the name, not under the key that was looked up — this is
+    // `GraphContext_SetKey`, and it is why a graph addressed as `a\0b` lands at key
+    // `a`, replacing whatever graph was there. Opened before the query runs: once
+    // `query_mut` has replied or blocked the client, a refused open could no longer
+    // be reported without a second reply.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
     let result = query_mut(
         ctx,
         &graph,
         query,
-        compact,
+        format,
         true,
         track_memory,
         key_name,
         timeout,
         None,
     );
-    // Stored under the name, not under the key that was looked up — this is
-    // `GraphContext_SetKey`, and it is why a graph addressed as `a\0b` lands at key
-    // `a`, replacing whatever graph was there. `key` is dropped unset, leaving the
-    // addressed key absent, exactly as in C.
-    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+    // `key` is dropped unset, leaving the addressed key absent, exactly as in C.
     drop(key);
-    create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+    create_key
+        .set_value(&GRAPH_TYPE, graph.clone())
+        .map_err(wrong_type_compat)?;
     register_graph(name, graph);
     result
 }

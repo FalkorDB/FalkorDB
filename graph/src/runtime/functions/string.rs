@@ -25,6 +25,7 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, string_pool, value::Value};
+use regex::NoExpand;
 use std::sync::Arc;
 use thin_vec::thin_vec;
 
@@ -450,7 +451,7 @@ pub fn register(funcs: &mut Functions) {
                         Some(Value::Null) => Ok(Value::Null),
                         // Use provided string
                         Some(Value::String(repl)) => {
-                            let replaced_text = re.replace_all(text.as_str(), repl.as_str()).into_owned();
+                            let replaced_text = re.replace_all(text.as_str(), NoExpand(repl.as_str())).into_owned();
                             Ok(Value::String(Arc::new(replaced_text)))
                         }
                         // All other types should have been caught by type checking
@@ -471,7 +472,7 @@ pub fn register(funcs: &mut Functions) {
 /// Build the `string.matchRegEx` result: one sub-list per match, containing
 /// the full match followed by all capture groups, with `Null` for
 /// non-participating optional groups to preserve index positions.
-pub(crate) fn regex_captures_list(
+pub fn regex_captures_list(
     re: &regex::Regex,
     text: &str,
 ) -> Value {

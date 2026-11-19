@@ -2,7 +2,7 @@ use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{
     ENCODING_VERSION, Encode, EncodeState, PayloadEntry, Writer,
 };
-use redis_module::raw::RedisModuleIO;
+use valkey_module::raw::RedisModuleIO;
 
 use super::buffered_io::BufferedWriter;
 use super::{Header, Schema};

@@ -208,6 +208,10 @@ struct Run {
     /// of them chose a run store — which is what selects the header flavour.
     closed_buckets: usize,
     closed_body: usize,
+    #[allow(
+        clippy::struct_field_names,
+        reason = "\"run\" is the roaring run store here, not this struct"
+    )]
     closed_has_run: bool,
 
     /// The bucket still being filled: `id >> 16`, and what has landed in it.
@@ -334,7 +338,7 @@ impl Run {
     /// Whether the bitmap has already won, so one is worth building.
     ///
     /// Both sides are exact. Nothing speculative is constructed to answer it.
-    fn prefers_bitmap(&self) -> bool {
+    const fn prefers_bitmap(&self) -> bool {
         // Below roaring's own floor there is nothing to weigh.
         self.range_bytes >= ROARING_FLOOR_BYTES
             && ASCENDING_SEGMENT_OVERHEAD + self.bitmap_bytes() < self.range_bytes
@@ -406,14 +410,14 @@ impl Run {
         }
     }
 
-    fn freeze_bucket(&mut self) {
+    const fn freeze_bucket(&mut self) {
         let (body, is_run) = bucket_body(self.bucket_ids, self.bucket_runs);
         self.closed_body += body;
         self.closed_has_run |= is_run;
         self.closed_buckets += 1;
     }
 
-    fn freeze_bitmap(&mut self) {
+    const fn freeze_bitmap(&mut self) {
         self.closed_bitmaps += BITMAP_KEY_BYTES
             + bitmap_header(self.closed_buckets, self.closed_has_run)
             + self.closed_body;
@@ -427,7 +431,7 @@ impl Run {
     /// O(1): everything but the open bucket and the open bitmap is already
     /// summed, and those two are closed out arithmetically without being
     /// committed.
-    fn bitmap_bytes(&self) -> usize {
+    const fn bitmap_bytes(&self) -> usize {
         if !self.started {
             return TREEMAP_COUNT_BYTES;
         }
@@ -800,6 +804,10 @@ pub struct IdList {
 /// says nothing about which ids the list holds, it is empty on any list that
 /// came off the wire, and at over a hundred characters it buries the segments
 /// in every test failure and every divergence log line that carries a record.
+#[allow(
+    clippy::missing_fields_in_debug,
+    reason = "`run` is build-time cost bookkeeping, not part of the list's value"
+)]
 impl fmt::Debug for IdList {
     fn fmt(
         &self,
@@ -1438,11 +1446,9 @@ mod tests {
             let mut asc = Vec::new();
             let mut v = 1_u64;
             for i in 0..40 {
+                asc.push(v);
                 if i == flip {
-                    asc.push(v);
                     asc.push(v - 1);
-                } else {
-                    asc.push(v);
                 }
                 v += 3;
             }
@@ -1451,11 +1457,9 @@ mod tests {
             let mut desc = Vec::new();
             let mut w = 500_u64;
             for i in 0..40 {
+                desc.push(w);
                 if i == flip {
-                    desc.push(w);
                     desc.push(w + 1);
-                } else {
-                    desc.push(w);
                 }
                 w -= 3;
             }
@@ -1553,9 +1557,9 @@ mod tests {
                     _ => {
                         // one step AGAINST the run: the reversal under test
                         if down {
-                            cur += 1
+                            cur += 1;
                         } else {
-                            cur -= 1
+                            cur -= 1;
                         }
                         ids.push(cur);
                         continue;
@@ -2181,7 +2185,7 @@ mod tests {
             let mut bitmap = RoaringTreemap::new();
             for &(base, len) in *ranges {
                 cost.add_range(base, len);
-                bitmap.insert_range(base..=base + len - 1);
+                bitmap.insert_range(base..(base + len));
             }
             bitmap.optimize();
             assert_eq!(
@@ -2237,7 +2241,7 @@ mod tests {
 
         let mut by_range = RoaringTreemap::new();
         for (base, len) in ranges {
-            by_range.insert_range(base..=base + len - 1);
+            by_range.insert_range(base..(base + len));
         }
         by_range.optimize();
 
@@ -2612,9 +2616,9 @@ mod pushing_onto_a_decoded_list {
         for _ in 0..2_000 {
             let mut ids = Vec::new();
             let mut id = 1 << 20;
-            for _ in 0..next(4) + 1 {
+            for _ in 0..=next(4) {
                 let kind = next(6);
-                for _ in 0..next(60) + 1 {
+                for _ in 0..=next(60) {
                     id = match kind {
                         0 => id + 1,
                         1 => id - 1,

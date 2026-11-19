@@ -151,7 +151,7 @@ impl<const VERSION: u8> EffectDecode<VERSION> for AttrIds {
 /// Rows stay row-major. Grouping values by attribute instead saves zero bytes
 /// uncompressed and changes sign with the data once compressed, which does not
 /// justify a second layout two engines must match byte-for-byte.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttrValues<S = Vec<Value>>(pub S);
 
 impl<S: AsRef<[Value]>> EffectEncode<4> for AttrValues<S> {

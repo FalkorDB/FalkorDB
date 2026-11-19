@@ -429,6 +429,11 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
         }
     }
 
+    // A trailing number with no unit (`P5`, `P1Y5`, `P-`) is not a duration.
+    if !num_buf.is_empty() {
+        return Err(format!("Duration component has no unit: {num_buf}"));
+    }
+
     // Parse time part
     if let Some(tp) = time_part {
         num_buf.clear();
@@ -450,6 +455,9 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
                     _ => return Err(format!("Unknown duration time component: {ch}")),
                 }
             }
+        }
+        if !num_buf.is_empty() {
+            return Err(format!("Duration component has no unit: {num_buf}"));
         }
     }
 
@@ -671,6 +679,26 @@ pub fn construct_duration(
         .and_then(|s| s.checked_add(seconds))
         .ok_or_else(overflow)?;
     Dur::new(total_months, total_days, total_seconds)
+}
+
+/// Largest civil year a date or duration may reach.
+///
+/// `civil_from_days` returns
+/// an `i32` year, so past this the year would silently wrap; the margin keeps
+/// the `year - 1970` and month-carry arithmetic around it inside `i32` too.
+pub const MAX_DATE_YEAR: i32 = i32::MAX - 2000;
+
+/// The day counts of the first and last supported days, taken from the
+/// Gregorian calendar itself so leap days are counted and the (asymmetric)
+/// epoch-relative range is exact.
+const MIN_DATE_DAYS: i64 = crate::runtime::value::days_from_civil(-MAX_DATE_YEAR, 1, 1);
+const MAX_DATE_DAYS: i64 = crate::runtime::value::days_from_civil(MAX_DATE_YEAR, 12, 31);
+
+pub fn check_date_range(ts: i64) -> Result<i64, String> {
+    if !(MIN_DATE_DAYS..=MAX_DATE_DAYS).contains(&ts.div_euclid(86400)) {
+        return Err("Date out of range".to_string());
+    }
+    Ok(ts)
 }
 
 /// Convert a duration stored with the legacy encoding (seconds from the Unix
@@ -916,7 +944,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Int,
         non_deterministic,
         fn timestamp_fn(_, args) {
-            debug_assert!(args.is_empty());
+            debug_assert_eq!(args, []);
             let now = Utc::now();
             Ok(Value::Int(now.timestamp_millis()))
         }
@@ -1523,11 +1551,11 @@ mod duration_tests {
             panic!("d - d must not overflow")
         };
         assert_eq!(zero, dur(0, 0, 0));
-        // 0 - (1 day + i64::MIN seconds) is representable; it must not panic.
-        let Ok(Value::Datetime(t)) = Value::Datetime(0) - d else {
-            panic!("datetime - d is in range")
-        };
-        assert_eq!(t, i64::MAX - 86_400 + 1);
+        // 0 - (1 day + i64::MIN seconds) fits an i64 but is far outside the
+        // supported date range (`check_date_range`, which
+        // main applies to every date result): an error, never a panic or a wrapped timestamp.
+        let r = Value::Datetime(0) - d;
+        assert_eq!(r, Err("Date out of range".to_string()));
     }
 
     #[test]

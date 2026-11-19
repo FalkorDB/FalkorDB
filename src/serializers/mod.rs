@@ -11,7 +11,7 @@ use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{
-    Decode, ENCODING_VERSION, Encode, Reader, Writer, index_field_type,
+    Decode, ENCODING_VERSION as GRAPH_ENCODING_VERSION, Encode, Reader, Writer, index_field_type,
 };
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
@@ -21,6 +21,25 @@ use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
+
+/// RDB encoding version written, and the newest one the decoder loads.
+///
+/// 19 is the layout both engines shared. C moved on to 20 (v19 plus a CCH index payload,
+/// which C writes only for a graph that has a CCH index) and refuses anything above it, so
+/// this build's own change, `T_DURATION` carrying three signed components
+/// ([`graph::graph::graphblas::serialization::ENCVER_DURATION_COMPONENTS`]), takes 21
+/// rather than 20, whose meaning there is C's layout. A v20 key loads as v19 does (a key
+/// carrying the CCH payload is refused, as this module has no CCH index); see
+/// `decoder::decode_payload_directory`.
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "a const that fits an i32 by inspection, equal to the graph crate's u64"
+)]
+pub const ENCODING_VERSION: i32 = GRAPH_ENCODING_VERSION as i32;
+
+/// The oldest encoding version the decoder loads: v19, the layout v20 extends. C decodes
+/// older versions with separate decoders, which this module does not have.
+pub const DECODE_MIN_VERSION: i32 = 19;
 
 /// Global state for virtual key management during RDB save.
 pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
@@ -130,7 +149,7 @@ pub struct Header {
     pub key_count: u64,
 }
 
-impl Encode<{ ENCODING_VERSION }> for Header {
+impl Encode<{ GRAPH_ENCODING_VERSION }> for Header {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -159,7 +178,7 @@ impl Encode<{ ENCODING_VERSION }> for Header {
     }
 }
 
-impl Decode<{ ENCODING_VERSION }> for Header {
+impl Decode<{ GRAPH_ENCODING_VERSION }> for Header {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let name_bytes = r.read_buffer()?;
         let graph_name = if name_bytes.last() == Some(&0) {
@@ -256,7 +275,7 @@ fn strip_null_terminator(buf: &[u8]) -> String {
     }
 }
 
-impl Encode<{ ENCODING_VERSION }> for Schema {
+impl Encode<{ GRAPH_ENCODING_VERSION }> for Schema {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -352,8 +371,7 @@ fn encode_schema_index_block(
     let stopwords: Vec<&str> = infos
         .first()
         .and_then(|info| info.stopwords.as_ref())
-        .map(|sw| sw.iter().map(|s| s.as_str()).collect())
-        .unwrap_or_default();
+        .map_or_default(|sw| sw.iter().map(|s| s.as_str()).collect());
     w.write_unsigned(stopwords.len() as u64);
     for sw in &stopwords {
         w.write_buffer(&null_terminated(sw));
@@ -467,7 +485,7 @@ fn encode_constraint_block(
     }
 }
 
-impl Decode<{ ENCODING_VERSION }> for Schema {
+impl Decode<{ GRAPH_ENCODING_VERSION }> for Schema {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         // --- Attribute keys ---
         let attr_count = r.read_unsigned()?;
@@ -794,9 +812,9 @@ mod tests {
             w.into_vec()
         };
 
-        let current = blob(Some(ENCODING_VERSION));
+        let current = blob(Some(GRAPH_ENCODING_VERSION));
         let mut r = BufferedReader::from_blob(&current).unwrap();
-        assert_eq!(r.encver(), ENCODING_VERSION);
+        assert_eq!(r.encver(), GRAPH_ENCODING_VERSION);
         // The prefix is consumed: what follows is the graph's own header.
         assert_eq!(r.read_buffer().unwrap(), b"g\0");
 
@@ -809,7 +827,7 @@ mod tests {
         // A prefix naming an older version is honoured, a newer one refused.
         let mid = blob(Some(20));
         assert_eq!(BufferedReader::from_blob(&mid).unwrap().encver(), 20);
-        let future = blob(Some(ENCODING_VERSION + 1));
+        let future = blob(Some(GRAPH_ENCODING_VERSION + 1));
         let err = BufferedReader::from_blob(&future).err().unwrap();
         assert!(err.contains("this build reads up to"), "{err}");
 

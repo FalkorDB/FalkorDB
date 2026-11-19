@@ -9,8 +9,14 @@ readme = "../README.md"
 keywords = ["graph", "database"]
 categories = ["data-structures", "database"]
 
+[lints]
+workspace = true
+
 [dependencies]
 afl = "*"
 
 [dependencies.graph]
 path = "../graph"
+
+[dependencies.fuzz-support]
+path = "../fuzz-support"

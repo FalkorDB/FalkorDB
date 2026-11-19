@@ -51,7 +51,7 @@ use crate::runtime::pending::Pending;
 /// it also ended up deciding what finishing meant.
 ///
 /// So the format says *that* the bytes are sent and what they are; the host
-/// says what sending means. One impl, over `redis_module::Context`, in the
+/// says what sending means. One impl, over `valkey_module::Context`, in the
 /// crate that owns it.
 ///
 /// The seam is a payload and the key it belongs to — deliberately not a command

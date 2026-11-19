@@ -2,8 +2,10 @@ use crate::dispatch::must_run_inline;
 use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
-    redis_type::GRAPH_TYPE,
+    graph_core::{
+        BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, key_of_write, register_graph,
+    },
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
     telemetry,
 };
 use graph::{
@@ -14,11 +16,14 @@ use graph::{
     threadpool::spawn,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::ptr::null_mut;
 use std::sync::Arc;
+use valkey_module::{
+    Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
+};
 
 // Binary property type markers (matching Python bulk loader's TYPE enum)
 const BI_NULL: u8 = 0;
@@ -278,17 +283,37 @@ fn parse_header(
 /// fails must leave no key behind, otherwise re-running the loader against a
 /// corrected input trips the "already exists" guard instead of retrying.
 ///
+/// A batch that failed on a worker is cleaned up after a `RENAME`, `MOVE`, `DEL` or
+/// `FLUSHALL` may have run, so the graph is taken out of the key that holds it now
+/// ([`key_of_write`]), not out of whatever the addressed key holds. Deleting the
+/// addressed key deleted a graph another client had created there since, and left
+/// a renamed one behind on the master alone. If no key in the client's database
+/// holds the graph, nothing is deleted: a flushed graph is gone already, and one
+/// `MOVE`d to another database is out of this context's reach.
+///
 /// Requires the GIL — the caller either runs on the main Redis thread or holds
 /// it explicitly.
 fn discard_created_graph(
     ctx: &Context,
-    key_str: &RedisString,
+    key_str: &ValkeyString,
+    graph: &Arc<RwLock<ThreadedGraph>>,
 ) {
     // The graph was created under C's name, so that — not the addressed key — is
-    // what has to be taken back out of the keyspace.
-    telemetry::delete_stream(ctx, &c_graph_name(key_str));
-    let key = ctx.open_key_writable(&c_graph_key(ctx, key_str));
-    let _ = key.delete();
+    // where it was stored, and what its telemetry stream is named after.
+    let name: Arc<str> = Arc::from(c_graph_name(key_str));
+    let Ok(live) = key_of_write(ctx, graph, &name) else {
+        return;
+    };
+    telemetry::delete_stream(ctx, &name);
+    let key = if live == name {
+        // The exact bytes, which `name` may only approximate.
+        c_graph_key(ctx, key_str)
+    } else {
+        ValkeyString::create_from_slice(ctx.get_raw(), live.as_bytes())
+    };
+    if let Ok(key) = ctx.open_key_writable(&key) {
+        let _ = key.delete();
+    }
 }
 
 /// A command, held so a worker thread can replicate it after the calling context is
@@ -321,7 +346,7 @@ impl HeldArgs {
     /// Because these are the client's own strings, whatever is propagated from them
     /// carries the client's exact bytes: nothing is re-serialized, so a count written as
     /// `010` replays as `010` rather than normalized to `10`.
-    fn hold(args: &[RedisString]) -> Self {
+    fn hold(args: &[ValkeyString]) -> Self {
         // SAFETY: called on the main thread inside the command, so the GIL is held and
         // every argument string is still alive.
         let argv = args
@@ -360,6 +385,25 @@ impl HeldArgs {
         // against the registered name to reach this handler.
         let cmd = CString::new(name).expect("a dispatched command name has no interior NUL");
         unsafe { ffi::replicate_argv(ctx, &cmd, &self.argv[1..]) };
+    }
+
+    /// Propagate under `key` instead of the key the client named: the batch's graph
+    /// was renamed to `key` while the batch was built, so that is the name the batch
+    /// has to reach the replica under.
+    ///
+    /// # Safety
+    /// The GIL must be held: the replaced string came from client command arguments.
+    unsafe fn rekey(
+        &mut self,
+        key: &[u8],
+    ) {
+        let fresh = ValkeyString::create_from_slice(null_mut(), key);
+        // SAFETY: `fresh` is valid and the GIL is held. The held reference is this
+        // struct's own; `fresh` drops its own reference when it goes out of scope.
+        let held = unsafe { ffi::hold_string(fresh.inner) };
+        // SAFETY: argument 1 came from `hold_string` and leaves the vector here, so
+        // it is freed exactly once.
+        unsafe { ffi::free_string(std::mem::replace(&mut self.argv[1], held)) };
     }
 }
 
@@ -544,7 +588,7 @@ fn process_edge_token(
 ///
 /// `docs` collects the index documents for the whole insert; the caller publishes them once, on
 /// the success path only. RediSearch is not versioned, so anything published into it cannot be
-/// undone by the MVCC rollback that a later failing token triggers — a batch that published as it
+/// undone by dropping the MVCC fork, which a later failing token does — a batch that published as it
 /// went and failed midway would leave documents behind for entities that were never committed
 /// (and whose ids may be handed to different entities later). Bulk only ever adds, so it fills
 /// only `node_adds` and `edge_adds`, plus the native index's changes, which each token applies to
@@ -593,6 +637,10 @@ fn bulk_insert_sync(
 
 /// Process bulk insert synchronously with periodic yield for PING handling. `docs` as in
 /// [`bulk_insert_sync`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the arguments of `bulk_insert_sync` plus the yield context"
+)]
 fn bulk_insert_sync_yield(
     g: &mut Graph,
     tokens: &[&[u8]],
@@ -696,10 +744,10 @@ fn max_records(
 
 pub fn graph_bulk_insert(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     if args.len() < 3 {
-        return Err(redis_module::RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     // Contexts that cannot block run inline, with RM_Yield so Redis still handles PING
@@ -736,41 +784,37 @@ pub fn graph_bulk_insert(
     // creation below — and `discard_created_graph` on the failure paths — can re-open the
     // key without a second live handle to it.
     let existing = {
-        let key = ctx.open_key_writable(&key_str);
+        let key = ctx.open_key_writable(&key_str)?;
         let found = key
-            .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+            .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+            .map_err(wrong_type_compat)?
             .cloned();
         if begin {
             if found.is_some() {
-                return Err(redis_module::RedisError::String(format!(
+                return Err(ValkeyError::String(format!(
                     "Graph with name '{key_str}' cannot be created, as key '{key_str}' already exists."
                 )));
             }
         } else if found.is_none() {
-            return Err(redis_module::RedisError::Str(
-                "ERR Invalid graph operation on empty key",
-            ));
+            return Err(ValkeyError::Str("ERR Invalid graph operation on empty key"));
         }
         found
     };
 
     // Parse counts
-    let node_count = parse_count(node_count_str)
-        .ok_or(redis_module::RedisError::Str("Error parsing node count."))?;
-    let edge_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
-        "Error parsing relation count.",
-    ))?;
-    let node_token_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
-        "Error parsing node token count.",
-    ))?;
-    let rel_token_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
-        "Error parsing relation token count.",
-    ))?;
+    let node_count =
+        parse_count(node_count_str).ok_or(ValkeyError::Str("Error parsing node count."))?;
+    let edge_count =
+        parse_count(args.next_str()?).ok_or(ValkeyError::Str("Error parsing relation count."))?;
+    let node_token_count =
+        parse_count(args.next_str()?).ok_or(ValkeyError::Str("Error parsing node token count."))?;
+    let rel_token_count = parse_count(args.next_str()?)
+        .ok_or(ValkeyError::Str("Error parsing relation token count."))?;
 
     // Collect remaining binary token args
-    let token_strings: Vec<RedisString> = args.collect();
+    let token_strings: Vec<ValkeyString> = args.collect();
     if token_strings.len() != node_token_count + rel_token_count {
-        return Err(redis_module::RedisError::Str(
+        return Err(ValkeyError::Str(
             "Bulk insert format error, token count mismatch.",
         ));
     }
@@ -790,8 +834,7 @@ pub fn graph_bulk_insert(
     //--------------------------------------------------------------------------
     // A malformed header reports exactly what it reports when the insert itself trips over
     // it below — only sooner, before any graph state exists to roll back.
-    let header_err =
-        |e: String| redis_module::RedisError::String(format!("ERR bulk insert failed: {e}"));
+    let header_err = |e: String| ValkeyError::String(format!("ERR bulk insert failed: {e}"));
     let (node_tokens, rel_tokens) = token_strings.split_at(node_token_count);
 
     let mut node_ceiling = 0usize;
@@ -799,7 +842,7 @@ pub fn graph_bulk_insert(
         node_ceiling += max_records(token.as_slice(), "Label name", 0).map_err(header_err)?;
     }
     if node_count > node_ceiling {
-        return Err(redis_module::RedisError::String(format!(
+        return Err(ValkeyError::String(format!(
             "Bulk insert format error, declared node count {node_count} exceeds the \
              {node_ceiling} node records the payload describes."
         )));
@@ -811,58 +854,48 @@ pub fn graph_bulk_insert(
             .map_err(header_err)?;
     }
     if edge_count > edge_ceiling {
-        return Err(redis_module::RedisError::String(format!(
+        return Err(ValkeyError::String(format!(
             "Bulk insert format error, declared relation count {edge_count} exceeds the \
              {edge_ceiling} edge records the payload describes."
         )));
     }
 
     // Every argument checks out, so it is safe to put a graph in the keyspace.
-    let graph = match existing {
-        Some(g) => g,
-        None => {
-            // Created under C's name and stored at the key rebuilt from it, not at
-            // the key the command addressed — see `c_graph_key`.
-            let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
-            let name = c_graph_name(&key_str);
-            let g = Arc::new(RwLock::new(ThreadedGraph::new(
-                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-                &name,
-            )));
-            key.set_value(&GRAPH_TYPE, g.clone())?;
-            register_graph(name, g.clone());
-            g
-        }
+    let graph = if let Some(g) = existing {
+        g
+    } else {
+        // Created under C's name and stored at the key rebuilt from it, not at
+        // the key the command addressed — see `c_graph_key`.
+        let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
+        let name = c_graph_name(&key_str);
+        let g = Arc::new(RwLock::new(ThreadedGraph::new(
+            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+            &name,
+        )));
+        key.set_value(&GRAPH_TYPE, g.clone())
+            .map_err(wrong_type_compat)?;
+        register_graph(name, g.clone());
+        g
     };
 
     // Run inline on this thread; `inline` is decided above, before the arguments were
     // consumed. Replication here is verbatim: this is the real command context, so
     // `ctx->client->argv` is the client's own vector.
     if inline {
-        let tokens: Vec<&[u8]> = token_strings
-            .iter()
-            .map(redis_module::RedisString::as_slice)
-            .collect();
-        let mut tg = graph.write();
-        let Some(g_arc) = tg.graph.write() else {
-            return Err(redis_module::RedisError::String(
-                "ERR another write is in progress, retry the query".to_string(),
-            ));
-        };
+        let tokens: Vec<&[u8]> = token_strings.iter().map(ValkeyString::as_slice).collect();
+        let tg = graph.write();
+        let mut fork = tg.graph.fork();
         let mut docs = IndexDocs::default();
-        let result = {
-            let mut g = g_arc.borrow_mut();
-            bulk_insert_sync_yield(
-                &mut g,
-                &tokens,
-                node_count,
-                edge_count,
-                node_token_count,
-                rel_token_count,
-                ctx.ctx,
-                &mut docs,
-            )
-        };
+        let result = bulk_insert_sync_yield(
+            &mut fork,
+            &tokens,
+            node_count,
+            edge_count,
+            node_token_count,
+            rel_token_count,
+            ctx.ctx,
+            &mut docs,
+        );
         // The commit joins the token result rather than sitting in the `Ok` arm
         // below. `commit` validates before publishing, and returning its refusal
         // straight to the caller skipped the whole error arm — so a `BEGIN` that
@@ -876,31 +909,28 @@ pub fn graph_bulk_insert(
         // document wants its src and dst (`IndexDocs::edge_removes`), which bulk
         // does not collect. Asking first costs one walk of a roaring
         // bitmap on a path that has just parsed a whole payload, and is the only
-        // ordering where a refusal leaves nothing behind.
-        //
-        // Still published before the swap rather than after it: `g_arc` is the
-        // un-published fork here, and after the swap a concurrent reader can
-        // hold the same graph, where this `borrow_mut` would panic.
+        // ordering where a refusal leaves nothing behind. (`commit` cannot find
+        // this version stale: it was forked under the write lock held here.)
         let result = result.and_then(|()| {
-            g_arc.borrow().validate().map_err(|e| e.to_string())?;
-            g_arc.borrow_mut().commit_index_docs(&mut docs);
-            tg.graph.commit(g_arc).map_err(|e| e.to_string())
+            fork.validate().map_err(|e| e.to_string())?;
+            fork.commit_index_docs(&mut docs);
+            tg.graph
+                .commit(fork)
+                .map(|_published| ())
+                .map_err(|e| e.to_string())
         });
         return match result {
             Ok(()) => {
                 ctx.replicate_verbatim();
-                let reply = format!("{node_count} nodes created, {edge_count} relations created");
-                Ok(RedisValue::SimpleString(reply))
+                let reply = format!("{node_count} nodes created, {edge_count} edges created");
+                Ok(ValkeyValue::SimpleString(reply))
             }
             Err(e) => {
-                tg.graph.rollback();
                 drop(tg);
                 if begin {
-                    discard_created_graph(ctx, &key_str);
+                    discard_created_graph(ctx, &key_str, &graph);
                 }
-                Err(redis_module::RedisError::String(format!(
-                    "ERR bulk insert failed: {e}"
-                )))
+                Err(ValkeyError::String(format!("ERR bulk insert failed: {e}")))
             }
         };
     }
@@ -934,7 +964,15 @@ pub fn graph_bulk_insert(
         .iter()
         .map(|rs| rs.as_slice().to_vec())
         .collect();
-    let held = held.expect("held on the background path, which is the only path here");
+    let mut held = held.expect("held on the background path, which is the only path here");
+    // The key the graph is stored at now, which the worker asks about again before it
+    // publishes: the addressed key for an existing graph, C's name for one this batch
+    // created (see `c_graph_key`).
+    let admitted: Arc<str> = Arc::from(if begin {
+        c_graph_name(&key_str)
+    } else {
+        key_str.to_string_lossy()
+    });
     // The cleanup path re-opens the key by name, so it also needs the exact bytes:
     // `to_string` goes through `to_string_lossy`, and a non-UTF-8 graph name would come
     // back with replacement characters and delete a *different* key than the one this
@@ -950,38 +988,29 @@ pub fn graph_bulk_insert(
             let result: Result<(), String> = 'phase: loop {
                 let session = QuerySession::begin_with(&graph, facts);
                 // Phase 1: build the new version as a reader, GIL-free, into a private
-                // fork. The MVCC write slot is claimed only when phase 2 escalates, so
-                // an inline writer is never refused because this insert is building.
-                let Ok(g_arc) = session.write_version() else {
-                    break 'phase Err(
-                        "ERR another write is in progress, retry the query".to_string()
-                    );
-                };
+                // fork. Forking takes nothing, so an inline writer is never refused
+                // because this insert is building; phase 2's escalation checks whether
+                // one committed meanwhile. Every early exit below drops the fork with
+                // the session — there is nothing else to release.
+                let mut fork = session.write_version();
                 let mut docs = IndexDocs::default();
-                let inserted = {
-                    let mut g = g_arc.borrow_mut();
-                    let tokens: Vec<&[u8]> =
-                        token_data.iter().map(std::vec::Vec::as_slice).collect();
-                    bulk_insert_sync(
-                        &mut g,
-                        &tokens,
-                        node_count,
-                        edge_count,
-                        node_token_count,
-                        rel_token_count,
-                        &mut docs,
-                    )
-                };
+                let tokens: Vec<&[u8]> = token_data.iter().map(std::vec::Vec::as_slice).collect();
+                let inserted = bulk_insert_sync(
+                    &mut fork,
+                    &tokens,
+                    node_count,
+                    edge_count,
+                    node_token_count,
+                    rel_token_count,
+                    &mut docs,
+                );
                 if let Err(e) = inserted {
-                    session.release_slot();
                     break 'phase Err(format!("ERR bulk insert failed: {e}"));
                 }
                 // Phase 2: commit + replicate as a writer, so the commit Arc-swap
                 // happens under the GIL and stays fork-safe (#452). Escalation takes
                 // the global lock before the write lock, never the reverse (#726).
-                if let Err(e) = session.upgrade_to_write() {
-                    // Drop the phase 1 fork (and the slot, if it was claimed).
-                    session.release_slot();
+                if let Err(e) = session.upgrade_to_write(Some(&mut fork)) {
                     // An inline writer committed while phase 1 built: nothing was
                     // published, so build again on top of its version.
                     if session.is_stale() {
@@ -989,6 +1018,15 @@ pub fn graph_bulk_insert(
                     }
                     break 'phase Err(e.to_string());
                 }
+                // The batch was admitted on the main thread, and a `RENAME`, `MOVE`
+                // or `FLUSHALL` may have run since; the registry check above cannot
+                // see the last two, nor tell where a renamed graph lives. Ask the
+                // keyspace, before anything is published: the index documents
+                // below cannot be taken back.
+                let live = match key_of_write(&Context::new(ts_ctx), &graph, &admitted) {
+                    Ok(live) => live,
+                    Err(abort) => break 'phase Err(abort.to_string()),
+                };
                 // Publish the index documents inside the writer scope, matching
                 // `CommitOp`: the index is not MVCC, so readers must be excluded while
                 // it is mutated, and a read query holds L1-read for its whole session.
@@ -1005,13 +1043,12 @@ pub fn graph_bulk_insert(
                 // for the same reason: RediSearch is not MVCC, so a document
                 // published here outlives the fork that `commit` would refuse,
                 // and nothing can take it back.
-                if let Err(e) = g_arc.borrow().validate() {
-                    session.release_slot();
+                if let Err(e) = fork.validate() {
                     break 'phase Err(e.to_string());
                 }
-                g_arc.borrow_mut().commit_index_docs(&mut docs);
+                fork.commit_index_docs(&mut docs);
                 if let Err(e) = session
-                    .with_graph_mut(|tg| tg.graph.commit(g_arc))
+                    .with_graph_mut(|tg| tg.graph.commit(fork))
                     .expect("writer mode after upgrade_to_write")
                 {
                     break 'phase Err(e.to_string());
@@ -1043,16 +1080,25 @@ pub fn graph_bulk_insert(
                 // Replay is deterministic — bulk assigns ids sequentially from the
                 // current reserved counts, and the replica parses identical token bytes
                 // in identical order.
+                //
+                // Under the key the graph lives at now. Replicated under the one the
+                // client named after a `RENAME`, a `BEGIN` created the graph again at
+                // that key on the replica, and an append was refused there as an
+                // empty key.
                 // SAFETY: `ts_ctx` is this worker's context, every entry of `held.argv`
                 // is a string this closure owns a reference to, and the session holds
                 // the GIL.
-                unsafe { held.replicate(ts_ctx) };
+                unsafe {
+                    if live != admitted {
+                        held.rekey(live.as_bytes());
+                    }
+                    held.replicate(ts_ctx);
+                }
                 break 'phase Ok(());
             };
             match result {
                 Ok(()) => {
-                    let reply =
-                        format!("{node_count} nodes created, {edge_count} relations created");
+                    let reply = format!("{node_count} nodes created, {edge_count} edges created");
                     let c_reply = std::ffi::CString::new(reply).expect("reply has no NUL bytes");
                     raw::reply_with_simple_string(ts_ctx, c_reply.as_ptr());
                 }
@@ -1066,8 +1112,9 @@ pub fn graph_bulk_insert(
                         // holding an interior NUL aborted the process here (#2490) —
                         // the one constructor that cannot carry the bytes this path
                         // deliberately captured. ptr+len carries them.
-                        let key_name = RedisString::create_from_slice(ts_ctx, key_bytes.as_slice());
-                        discard_created_graph(&cleanup_ctx, &key_name);
+                        let key_name =
+                            ValkeyString::create_from_slice(ts_ctx, key_bytes.as_slice());
+                        discard_created_graph(&cleanup_ctx, &key_name, &graph);
                     }
                     let cerr = ffi::sanitise_error(msg);
                     unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
@@ -1078,5 +1125,5 @@ pub fn graph_bulk_insert(
         },
         None,
     );
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }

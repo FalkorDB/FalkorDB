@@ -81,6 +81,7 @@ fn rebuild_with_hash_joins(node: &DynNode<IR>) -> DynTree<IR> {
     if let IR::Filter(filter) = node.data()
         && let Some(child) = node.get_child(0)
         && matches!(child.data(), IR::CartesianProduct)
+        && !reads_argument_rows(&child)
         && let Some(result) = try_hash_join_rewrite(filter, &child)
     {
         // Recursively apply to the result (may find more join opportunities).
@@ -94,6 +95,17 @@ fn rebuild_with_hash_joins(node: &DynNode<IR>) -> DynTree<IR> {
         new_tree.root_mut().push_child_tree(child_tree);
     }
     new_tree
+}
+
+/// Whether a branch of `cp_node` is fed by an `Argument`, i.e. runs once per
+/// row of an enclosing `Apply`/`Optional`. Those branches carry the outer row
+/// along, and a hash join keyed only on the predicate would pair branch rows
+/// that belong to different outer rows (rows of the earlier clause multiply),
+/// where the Cartesian Product pairs them per outer row.
+fn reads_argument_rows(cp_node: &DynNode<IR>) -> bool {
+    cp_node
+        .walk::<orx_tree::Bfs>()
+        .any(|data| matches!(data, IR::Argument(_)))
 }
 
 /// Attempts to find one equality conjunct in the filter that can be converted
@@ -142,25 +154,13 @@ fn try_hash_join_rewrite(
                 if lhs_vars.iter().all(|v| l_vars.contains(v))
                     && rhs_vars.iter().all(|v| r_vars.contains(v))
                 {
-                    found = Some((
-                        ci,
-                        li,
-                        ri,
-                        Arc::new(lhs_tree.clone()),
-                        Arc::new(rhs_tree.clone()),
-                    ));
+                    found = Some((ci, li, ri, Arc::new(lhs_tree), Arc::new(rhs_tree)));
                     break 'outer;
                 }
                 if rhs_vars.iter().all(|v| l_vars.contains(v))
                     && lhs_vars.iter().all(|v| r_vars.contains(v))
                 {
-                    found = Some((
-                        ci,
-                        li,
-                        ri,
-                        Arc::new(rhs_tree.clone()),
-                        Arc::new(lhs_tree.clone()),
-                    ));
+                    found = Some((ci, li, ri, Arc::new(rhs_tree), Arc::new(lhs_tree)));
                     break 'outer;
                 }
             }

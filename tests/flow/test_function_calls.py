@@ -1130,6 +1130,26 @@ class testFunctionCallsFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set[0][0], "0.9")
 
+        # integral floats keep a fractional part so they differ from Integers;
+        # shortest round-trip digits; Java Double.toString form (Neo4j) for
+        # magnitudes outside [1e-3, 1e7) (#2937)
+        for expr, want in [
+            ("1.0", "1.0"), ("-2.0", "-2.0"), ("2.3", "2.3"), ("0.0", "0.0"),
+            ("0.1+0.2", "0.30000000000000004"), ("1234567.0", "1234567.0"),
+            ("1e7", "1.0E7"), ("1e20", "1.0E20"), ("1.5e300", "1.5E300"),
+            ("1e-7", "1.0E-7"), ("0.001", "0.001"), ("0.0/0.0", "NaN"),
+            ("toFloat('5e-324')", "4.9E-324"), ("toFloat('1e-323')", "9.9E-324"),
+        ]:
+            for fn in ("toString", "toStringOrNull"):
+                res = self.graph.query(f"RETURN {fn}({expr})")
+                self.env.assertEqual(res.result_set[0][0], want)
+        res = self.graph.query("RETURN [x IN [1, 2.3, 3.0, true, 'apa'] | toString(x)]")
+        self.env.assertEqual(res.result_set[0][0], ['1', '2.3', '3.0', 'true', 'apa'])
+
+        # other #2937 rows that stay as they are
+        res = self.graph.query("RETURN toInteger('1e3'), toFloat('0x10'), toInteger('0x10')")
+        self.env.assertEqual(res.result_set[0], [1000, None, None])
+
         # boolean
         query = """RETURN toString(true)"""
         actual_result = self.graph.query(query)
@@ -2963,6 +2983,59 @@ class testFunctionCallsFlow(FlowTestsBase):
         q = "MATCH (a) RETURN exists( (a)-[r1]-(n1) )"
         self.expect_error(q,
             "traversal patterns are not allowed as arguments to exists()")
+
+        # the server is still responsive
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
+
+    # Integer / Integer is exact (not routed through double as C does), and
+    # i64::MIN / -1 is an overflow error instead of wrapping. Differences from
+    # C above 2^53 are intentional (#3242); the overflow is #3205.
+    def test99_integer_division_is_exact(self):
+        cases = [
+            ("9007199254740993 / 1", 9007199254740993),
+            ("9007199254740993 / 3", 3002399751580331),
+            ("123456789012345678 / 10", 12345678901234567),
+            ("1000000000000000001 / 7", 142857142857142857),
+            ("9223372036854775807 / 2", 4611686018427387903),
+            ("-9223372036854775807 / 1", -9223372036854775807),
+            ("4611686018427387903 / 4611686018427387904", 0),
+            ("(9007199254740993 / 3) * 3 + 9007199254740993 % 3", 9007199254740993),
+            ("-9007199254740993 / 2", -4503599627370496),
+            ("-7 / 2", -3),
+            ("7 / -2", -3),
+            ("-7 % 2", -1),
+            # not an overflow: the quotient fits
+            ("-9223372036854775807 / -1", 9223372036854775807),
+            ("(-9223372036854775807 - 1) / 1", -9223372036854775808),
+            # the remainder is representable and stays 0
+            ("(-9223372036854775807 - 1) % -1", 0),
+        ]
+        for expr, expected in cases:
+            res = self.graph.query(f"RETURN {expr}")
+            self.env.assertEqual(res.result_set, [[expected]], message=expr)
+
+        # the same values through the vectorised (per-row) path
+        res = self.graph.query(
+            "UNWIND [9007199254740993, 123456789012345678, 9223372036854775807] AS x "
+            "RETURN x / 1, x / 10, x % 10")
+        self.env.assertEqual(res.result_set, [
+            [9007199254740993, 900719925474099, 3],
+            [123456789012345678, 12345678901234567, 8],
+            [9223372036854775807, 922337203685477580, 7]])
+
+        # i64::MIN / -1 does not fit in an Integer
+        queries = [
+            "RETURN -9223372036854775808 / -1",
+            "RETURN (-9223372036854775807 - 1) / -1",
+            "UNWIND [1, -9223372036854775807 - 1] AS x RETURN x / -1",
+            "UNWIND [-9223372036854775807 - 1] AS x UNWIND [-1] AS y RETURN x / y",
+        ]
+        for q in queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False, message=q)
+            except redis.ResponseError as e:
+                self.env.assertContains("integer overflow in division", str(e))
 
         # the server is still responsive
         self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])

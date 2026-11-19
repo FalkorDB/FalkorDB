@@ -456,6 +456,21 @@ def test_match_node_by_id():
     assert res1.result_set == res2.result_set == [[1000]]
     assert res1.run_time_ms < res2.run_time_ms
 
+def test_stacked_filters_keep_their_order():
+    # The optimizer merges the second MATCH's filter into the first's. The
+    # first one must still run first: it is what keeps `1 / (n.v - 1)` from
+    # dividing by zero.
+    query("UNWIND range(1, 5) AS i CREATE (:N {v: i})", write=True)
+    res = query(
+        "MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1 / (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[15]]
+    res = query(
+        "MATCH (n:N) WHERE n.v > 1 WITH n MATCH (m:N) WHERE m.v % (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[9]]
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
@@ -1027,32 +1042,34 @@ def test_string_match_regex():
     res = query("RETURN string.matchRegEx('foo bar', '([a-z]+)\\s+([a-z]+)') AS name")
     assert res.result_set == [[[["foo bar", "foo", "bar"]]]]
 
-@pytest.mark.extra
 def test_string_replace_regex():
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '(?<first>[a-z]+)-(?<last>[a-z]+)', '$first $last') AS name"
-    )
-    assert res.result_set == [["foo bar baz qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '$1 $2') AS name"
-    )
-    assert res.result_set == [["foo bar baz qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["foo_bar baz_qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '(\\w+)-(\\w+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["foo_bar baz_qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('123', '(\\w+)-(\\w+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["123"]]
+    # the replacement is copied literally, as C does: `$` is never a group reference
+    cases = [
+        ("foo-bar baz-qux", "(?<first>[a-z]+)-(?<last>[a-z]+)", "$first $last", "$first $last $first $last"),  # named groups: Rust-only syntax
+        ("foo-bar baz-qux", "([a-z]+)-([a-z]+)", "$1 $2", "$1 $2 $1 $2"),
+        ("foo-bar baz-qux", "([a-z]+)-([a-z]+)", "${1}_${2}", "${1}_${2} ${1}_${2}"),
+        ("foo-bar baz-qux", "(\\w+)-(\\w+)", "${1}_${2}", "${1}_${2} ${1}_${2}"),
+        ("123", "(\\w+)-(\\w+)", "${1}_${2}", "123"),
+        # issue #2929
+        ("price: X", "X", "$5", "price: $5"),
+        ("abc", "b", "$0x", "a$0xc"),
+        ("abc", "b", "[$0]", "a[$0]c"),
+        ("a-b", "(a)-(b)", "$2$1", "$2$1"),
+        ("x", "x", "$$", "$$"),
+        ("a1b2", "[0-9]", "$&", "a$&b$&"),
+    ]
+    for text, pattern, repl, expected in cases:
+        res = query(
+            "RETURN string.replaceRegEx($t, $p, $r) AS name",
+            params={"t": text, "p": pattern, "r": repl},
+        )
+        assert res.result_set == [[expected]], (text, pattern, repl)
+        # bind-time compiled path (literal pattern/replacement)
+        lit = lambda x: "'" + x.replace("\\", "\\\\") + "'"
+        res = query(
+            f"RETURN string.replaceRegEx({lit(text)}, {lit(pattern)}, {lit(repl)}) AS name"
+        )
+        assert res.result_set == [[expected]], (text, pattern, repl)
 
     ## broken regex
     query_exception(
@@ -1861,6 +1878,20 @@ def test_deep_expression_nesting_is_rejected():
     assert query("RETURN 1").result_set == [[1]]
 
 
+def test_deep_clause_nesting_is_rejected():
+    # SET/REMOVE property chains and nested FOREACH were built outside the
+    # expression parser's depth guard, so a few kilobytes of either overflowed
+    # the stack and took the server down. They must come back as errors.
+    n = 5000
+    for q in [
+        f"MATCH (n) SET n{'.a' * n} = 1",
+        f"MATCH (n) REMOVE n{'.a' * n}",
+        f"{'FOREACH (x IN [1] | ' * n}CREATE (){')' * n}",
+    ]:
+        query_exception(q, "Query nesting exceeds")
+        assert query("RETURN 1").result_set == [[1]]
+
+
 def test_index():
     res = query(
         "UNWIND range(1, 100000) AS x CREATE (n:Node {vi: x, vs: tostring(x)})",
@@ -2024,6 +2055,84 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_var_len_traverse_keeps_earlier_clause_below_it():
+    """Reversing a variable-length traverse to scan its more selective end
+    must not drop an earlier clause stitched under it: a MATCH … WHERE
+    filter or an UNWIND (#2972, variable-length shape)."""
+    query(
+        "CREATE (:S {v: 1})-[:R]->(:B {w: 2}), (:S {v: 0})-[:R]->(:B {w: 2}),"
+        " (:S {v: 0})-[:R]->(:X)-[:R]->(:B {w: 2})",
+        write=True,
+    )
+
+    res = query(
+        "MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN a.v, b.w"
+    )
+    assert res.result_set == [[1, 2]]
+
+    res = query(
+        "UNWIND [1, 2] AS i MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN count(*)"
+    )
+    assert res.result_set == [[2]]
+
+    res = query("UNWIND [1, 2] AS i MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    assert res.result_set == [[8]]
+
+    # A single MATCH still scans the selective end.
+    res = query("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    assert res.result_set == [[2]]
+
+    plan = str(
+        common.g.explain("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    )
+    assert "Node By Label Scan | (b:B)" in plan, plan
+
+
+def test_variable_named_like_an_anonymous_entity():
+    # An unnamed pattern entity has no name at all, so no variable a query
+    # writes can be it - not `_anon_<n>`, not `_anonymous`, and not even the
+    # backquoted `@anon_<n>` that plans print for it.
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    res = query("MATCH (_anon_0:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (`@anon_0`:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (`@anon_1`:A), (:B), (`@anon_0`:B) RETURN count(*)")
+    assert res.result_set == [[4]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->(_anon_2) RETURN count(_anon_1)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (`@anon_0`:B)-[`@anon_1`]->(`@anon_2`) RETURN count(*)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->() RETURN labels(_anon_0), type(_anon_1)")
+    assert res.result_set == [[["B"], "R"]]
+    res = query("MATCH (_anonymous:A) RETURN count(_anonymous)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_x:A) RETURN _anon_x.v, labels(_anon_x)")
+    assert res.result_set == [[None, ["A"]]]
+
+
+def test_foreach_slot_of_an_unnamed_entity_cannot_be_named():
+    """The slot a FOREACH keeps for an unnamed entity it created is not a name
+    a query can spell."""
+    query_exception(
+        "FOREACH (i IN [] | CREATE ()) WITH _foreach_0_1 AS n RETURN n",
+        "not defined",
+    )
+
+
+def test_return_star_leaves_out_unnamed_entities():
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    # Only `a` is named: the relationship and the other node are not columns.
+    res = query("MATCH (a:B)-[]->() RETURN *")
+    assert res.header[0][1] == "a" and len(res.header) == 1
+    assert len(res.result_set) == 1
+    res = query("MATCH (a:B)-[r]->(c) RETURN *")
+    assert sorted(h[1] for h in res.header) == ["a", "c", "r"]
+    # No named variable in scope: nothing for `*` to return.
+    query_exception("MATCH (:A) RETURN *", "RETURN * is not allowed when there are no variables in scope")
+    query_exception("MATCH ()-[]->() RETURN *", "RETURN * is not allowed when there are no variables in scope")
 
 
 def test_self_loop_hop_after_other_hops_keeps_them():

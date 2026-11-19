@@ -1,19 +1,23 @@
 use std::sync::Arc;
 
 use graph::entity_type::EntityType;
-use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, ENCODING_VERSION, Reader};
+use graph::graph::graphblas::serialization::{Decode, Reader};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
+use graph::graph::{
+    attribute_store::{AttrNameMap, AttributeStore},
+    schema::NameList,
+};
 use graph::index::IndexInfo;
-use redis_module::raw::RedisModuleIO;
 use roaring::RoaringTreemap;
+use valkey_module::raw::RedisModuleIO;
 
 use super::EncodeState;
 use super::Header;
 use super::Schema;
 use super::buffered_io::BufferedReader;
+use super::{DECODE_MIN_VERSION, ENCODING_VERSION};
 use super::{DECODE_STATE, PendingGraph};
 
 /// What one RDB key turned out to hold.
@@ -30,7 +34,74 @@ pub enum LoadedKey {
     },
 }
 
-/// Decode a graph key from the RDB stream (v19 format).
+/// Read a key's payload directory: the `(EncodeState, count)` pairs it holds.
+///
+/// Encoding version 20 is version 19 plus one payload, `EncodeState::CchIndices`, which C
+/// writes only for a graph that has a CCH index; any other v20 key is a v19 key. This module
+/// has no CCH index, so it refuses a key that lists that payload: the load fails with an
+/// error naming it, before any payload is read. (Before, 10 decoded as `Final`, its payload
+/// was never read, and the load went on from the wrong place in the stream.)
+///
+/// `Init` and `Final` are never written to an RDB, by C or by this module; a directory that
+/// lists one is refused too, since no payload arm reads them and the stream would misalign
+/// the same way.
+///
+/// # Errors
+/// A truncated stream, an unknown state, `Init`, `Final`, or a CCH index payload.
+fn decode_payload_directory(r: &mut dyn Reader) -> Result<Vec<(EncodeState, u64)>, String> {
+    let payload_count = r.read_unsigned()?;
+    // No capacity from `payload_count`: it is read from the stream, unchecked.
+    let mut payloads = Vec::new();
+    for _ in 0..payload_count {
+        let state = r.read_unsigned()?;
+        let count = r.read_unsigned()?;
+        let state =
+            EncodeState::from_u64(state).ok_or_else(|| format!("unknown encode state: {state}"))?;
+        match state {
+            EncodeState::CchIndices => {
+                return Err(
+                    "RDB v20 graph with CCH indexes: this module does not support CCH indexes"
+                        .to_string(),
+                );
+            }
+            EncodeState::Init | EncodeState::Final => {
+                return Err(format!("encode state {state:?} is never saved to an RDB"));
+            }
+            _ => {}
+        }
+        payloads.push((state, count));
+    }
+    Ok(payloads)
+}
+
+/// Refuse a key whose encoding version the decoder cannot read, as C's `rdb_load` does.
+///
+/// A newer version may lay its payloads out in a way this decoder does not know, and an
+/// older one predates the v19 layout. Either would be decoded as v19 and misread, so the
+/// load fails before anything is read.
+///
+/// # Errors
+/// `encver` is above [`ENCODING_VERSION`] or below [`DECODE_MIN_VERSION`].
+pub fn check_encoding_version(encver: i32) -> Result<(), String> {
+    if encver > ENCODING_VERSION {
+        return Err(format!(
+            "RDB encoding version {encver} is newer than this module's \
+             {ENCODING_VERSION}: not forward compatible"
+        ));
+    }
+    if encver < DECODE_MIN_VERSION {
+        return Err(format!(
+            "RDB encoding version {encver} is older than the oldest this module \
+             loads, {DECODE_MIN_VERSION}"
+        ));
+    }
+    Ok(())
+}
+
+/// Decode a graph key from the RDB stream (v19 format, or v20 without CCH indexes).
+///
+/// `encver` is the key's encoding version, which Redis passes to `rdb_load`; see
+/// [`check_encoding_version`].
 ///
 /// `key_name` is the Redis key this payload arrived under. A multi-key graph
 /// spans several keys but names itself only once, in every payload's header,
@@ -43,19 +114,12 @@ pub enum LoadedKey {
 #[allow(clippy::too_many_lines)]
 pub fn rdb_load_graph(
     rdb: *mut RedisModuleIO,
+    encver: i32,
     key_name: &str,
     cache_size: usize,
-    encver: u64,
 ) -> Result<LoadedKey, String> {
-    // Redis hands every version to the module, newer than its own included, and
-    // reading one as the layout this build knows misparses it. The C engine
-    // refuses the same way (`encver > GRAPH_ENCODING_LATEST_V`).
-    if encver > ENCODING_VERSION {
-        return Err(format!(
-            "RDB encoding version {encver} is newer than this build's {ENCODING_VERSION}"
-        ));
-    }
-    let mut r = BufferedReader::new(rdb, encver);
+    check_encoding_version(encver)?;
+    let mut r = BufferedReader::new(rdb, u64::try_from(encver).unwrap_or(u64::MAX));
 
     // --- Header ---
     let hdr = Header::decode(&mut r)?;
@@ -64,15 +128,7 @@ pub fn rdb_load_graph(
     let schema = Schema::decode(&mut r)?;
 
     // --- Key Schema (payload directory) ---
-    let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
-    for _ in 0..payload_count {
-        let state = r.read_unsigned()?;
-        let count = r.read_unsigned()?;
-        let state =
-            EncodeState::from_u64(state).ok_or_else(|| format!("unknown encode state: {state}"))?;
-        payloads.push((state, count));
-    }
+    let payloads = decode_payload_directory(&mut r)?;
 
     // For multi-key graphs, check if we already have a pending graph in DECODE_STATE.
     if hdr.key_count > 1 {
@@ -98,9 +154,9 @@ pub fn rdb_load_graph(
             // the id. Previously this seeded a copy into each store, which is what gave an
             // RDB-loaded replica different numbering from a master that had never been
             // reloaded (#2457).
-            let mut attrs_name = AttrNameMap::default();
+            let mut attrs_name = AttrNameMap::PropertyKeys(NameList::default());
             for name in &schema.attribute_names {
-                attrs_name.insert(name.clone());
+                attrs_name.insert(name);
             }
 
             let pg = PendingGraph {
@@ -187,9 +243,9 @@ pub fn rdb_load_graph(
     let mut rel_attrs = AttributeStore::new();
 
     // One dictionary, shared by both stores — see the multi-key path above.
-    let mut attrs_name = AttrNameMap::default();
+    let mut attrs_name = AttrNameMap::PropertyKeys(NameList::default());
     for name in &schema.attribute_names {
-        attrs_name.insert(name.clone());
+        attrs_name.insert(name);
     }
 
     let mut deleted_nodes = RoaringTreemap::new();
@@ -385,8 +441,8 @@ fn rebuild_indexes(
                         let mut topts = field.options().cloned();
                         if text_meta_pending && field.ty == graph::index::IndexType::Fulltext {
                             let topts = topts.get_or_insert_with(Default::default);
-                            topts.language = info.language.clone();
-                            topts.stopwords = info.stopwords.clone();
+                            topts.language.clone_from(&info.language);
+                            topts.stopwords.clone_from(&info.stopwords);
                             text_meta_pending = false;
                         }
                         topts.map(graph::index::indexer::IndexOptions::Text)
@@ -452,23 +508,15 @@ fn load_graph_from_reader(
 
     let schema = Schema::decode(r)?;
 
-    let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
-    for _ in 0..payload_count {
-        let state = r.read_unsigned()?;
-        let count = r.read_unsigned()?;
-        let state =
-            EncodeState::from_u64(state).ok_or_else(|| format!("unknown encode state: {state}"))?;
-        payloads.push((state, count));
-    }
+    let payloads = decode_payload_directory(r)?;
 
     let mut node_attrs = AttributeStore::new();
     let mut rel_attrs = AttributeStore::new();
 
     // One dictionary, shared by both stores — see the other decode paths above.
-    let mut attrs_name = AttrNameMap::default();
+    let mut attrs_name = AttrNameMap::PropertyKeys(NameList::default());
     for name in &schema.attribute_names {
-        attrs_name.insert(name.clone());
+        attrs_name.insert(name);
     }
 
     let mut deleted_nodes = RoaringTreemap::new();
@@ -542,4 +590,143 @@ fn load_graph_from_reader(
     graph.populate_indexes_sync();
 
     Ok(graph)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serializers::buffered_io::VecWriter;
+    use graph::graph::graphblas::serialization::{Encode, Writer};
+
+    fn directory(entries: &[(u64, u64)]) -> Vec<u8> {
+        let mut w = VecWriter::new();
+        w.write_unsigned(entries.len() as u64);
+        for &(state, count) in entries {
+            w.write_unsigned(state);
+            w.write_unsigned(count);
+        }
+        w.into_vec()
+    }
+
+    /// v19, v20 and v21 load; a newer version, which may lay its payloads out differently, and
+    /// an older one, which predates the v19 layout, are refused before anything is read.
+    #[test]
+    fn only_versions_19_to_21_load() {
+        assert_eq!(ENCODING_VERSION, 21);
+        assert!(check_encoding_version(19).is_ok());
+        assert!(check_encoding_version(20).is_ok());
+        assert!(check_encoding_version(21).is_ok());
+        let newer = check_encoding_version(22).unwrap_err();
+        assert!(newer.contains("not forward compatible"), "{newer}");
+        let older = check_encoding_version(18).unwrap_err();
+        assert!(older.contains("older than the oldest"), "{older}");
+    }
+
+    /// A v20 key without CCH indexes lists the same payloads a v19 key does.
+    #[test]
+    fn a_directory_without_cch_decodes() {
+        let bytes = directory(&[(1, 3), (5, 1), (9, 1)]);
+        let payloads = decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap();
+        assert_eq!(
+            payloads,
+            [
+                (EncodeState::Nodes, 3),
+                (EncodeState::GraphSchema, 1),
+                (EncodeState::LblsMatrix, 1),
+            ]
+        );
+    }
+
+    /// C's v20 lists `CchIndices` (10) last, only for a graph that has a CCH index. It used
+    /// to decode as `Final` and be skipped, leaving its payload to be misread.
+    #[test]
+    fn a_directory_with_cch_is_refused() {
+        let bytes = directory(&[(1, 3), (9, 1), (10, 1)]);
+        let err = decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap_err();
+        assert!(err.contains("CCH"), "unexpected error: {err}");
+    }
+
+    /// `Final` (11, 10 before v20) and `Init` (0) are never written: no payload arm reads them,
+    /// so accepting one would leave the stream at the wrong place.
+    #[test]
+    fn a_state_never_saved_is_refused() {
+        for state in [0, 11] {
+            let bytes = directory(&[(1, 3), (state, 1)]);
+            let err =
+                decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap_err();
+            assert!(err.contains("never saved"), "state {state}: {err}");
+        }
+    }
+
+    /// A synthetic single-key value, as C's v20 lays one out for a graph with a CCH index, up to
+    /// and including the directory: header and schema (written by this module's own encoders),
+    /// then a directory ending in `CchIndices`, then only the CCH payload's words. The payloads
+    /// the directory lists before it are left out: the decoder refuses the directory before it
+    /// reads any payload. `vec_load_graph` is the `GRAPH.RESTORE` path; `pipe_load_graph`
+    /// (`GRAPH.COPY`) and `rdb_load_graph` read the directory with the same function.
+    #[test]
+    fn a_v20_value_with_a_cch_index_is_refused_at_the_directory() {
+        let name = |s: &str| Arc::new(s.to_string());
+        let mut w = VecWriter::new();
+        Encode::<21>::encode(
+            &Header {
+                graph_name: "g".to_string(),
+                node_count: 2,
+                edge_count: 1,
+                deleted_node_count: 0,
+                deleted_edge_count: 0,
+                label_count: 1,
+                relationship_count: 1,
+                multi_edge: vec![false],
+                key_count: 1,
+            },
+            &mut w,
+        );
+        Encode::<21>::encode(
+            &Schema {
+                attribute_names: vec![name("time")],
+                node_labels: vec![name("N")],
+                relationship_types: vec![name("ROAD")],
+                indexes: Vec::new(),
+                constraints: Vec::new(),
+            },
+            &mut w,
+        );
+        let directory = [
+            (EncodeState::Nodes, 2),
+            (EncodeState::Edges, 1),
+            (EncodeState::LabelsMatrices, 1),
+            (EncodeState::RelationMatrices, 1),
+            (EncodeState::AdjMatrix, 1),
+            (EncodeState::LblsMatrix, 1),
+            (EncodeState::CchIndices, 1),
+        ];
+        w.write_unsigned(directory.len() as u64);
+        for (state, count) in directory {
+            w.write_unsigned(state as u64);
+            w.write_unsigned(count);
+        }
+        // The CCH payload, as C's `RdbSaveCCH_v20` writes it: one index over relationship
+        // type 0, weighted by attribute 0. The other payloads would precede it; none is read.
+        for word in [1, 1, 0, 0] {
+            w.write_unsigned(word);
+        }
+        let Err(err) = vec_load_graph(&w.into_vec(), 0, "g") else {
+            panic!("a v20 value with a CCH index loaded");
+        };
+        assert!(
+            err.contains("this module does not support CCH indexes"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_state_is_refused() {
+        let bytes = directory(&[(12, 1)]);
+        let err = decode_payload_directory(&mut BufferedReader::from_slice(&bytes)).unwrap_err();
+        assert!(
+            err.contains("unknown encode state: 12"),
+            "unexpected error: {err}"
+        );
+    }
 }

@@ -1,9 +1,10 @@
 // Dependency version duplicates are from transitive dependencies.
 #![allow(clippy::multiple_crate_versions)]
 
+use fuzz_support::init_index_support;
 use graph::{
     graph::{
-        graph::Plan,
+        graph::{Graph, Plan},
         graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
@@ -19,7 +20,10 @@ extern crate afl;
 struct AlwaysWritable;
 
 impl graph::locks::WriteEscalation for AlwaysWritable {
-    fn upgrade_to_write(&self) -> Result<(), String> {
+    fn upgrade_to_write(
+        &self,
+        _fork: &mut Graph,
+    ) -> Result<(), String> {
         Ok(())
     }
 }
@@ -28,20 +32,20 @@ fn main() {
     unsafe {
         GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
     }
+    init_index_support();
     init_functions().expect("Failed to init functions");
     fuzz!(|data: &[u8]| {
         if let Ok(query) = std::str::from_utf8(data) {
             let g = MvccGraph::new(1024, 1024, 25, "fuzz_test");
             let Ok(Plan {
                 plan, parameters, ..
-            }) = g.read().borrow().get_plan(query)
+            }) = g.read().get_plan(query)
             else {
                 return;
             };
             let runtime = Runtime::new(
-                g.read(),
+                g.fork(),
                 parameters,
-                true,
                 plan,
                 false,
                 String::new(),

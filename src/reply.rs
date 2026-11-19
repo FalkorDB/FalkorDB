@@ -9,9 +9,13 @@
 //! [
 //!   header columns,
 //!   result rows,
-//!   execution statistics
+//!   execution statistics,
+//!   schema                  (only for --compact SCHEMA_HASH h)
 //! ]
 //! ```
+//!
+//! A query without RETURN replies `[execution statistics, schema]`, the schema again
+//! only for `--compact SCHEMA_HASH h`. See [`reply_schema`].
 //!
 //! ## Compact vs verbose
 //! - Compact: each value is tagged with a numeric type code for efficient
@@ -22,15 +26,18 @@
 //! This separation keeps wire compatibility with clients that expect either
 //! machine-oriented or human-oriented output.
 
-use graph::runtime::{
-    functions::temporal::duration_to_legacy,
-    runtime::{QueryStatistics, ResultSummary, Runtime},
-    value::Value,
+use graph::{
+    graph::graph::Graph,
+    runtime::{
+        functions::temporal::duration_to_legacy,
+        runtime::{QueryStatistics, ResultSummary, Runtime},
+        value::Value,
+    },
 };
-use redis_module::{Context, raw};
 use std::fmt::Write;
 use std::os::raw::c_char;
 use std::sync::Arc;
+use valkey_module::{Context, raw};
 
 /// C's `%f`: Rust's `{:.6}` agrees on every finite value and on `inf` / `-inf`,
 /// but spells NaN `NaN` where C prints `nan`.
@@ -628,21 +635,81 @@ pub fn reply_stats(
     reply_with_str(ctx, &str);
 }
 
-fn reply_result<const COMPACT: bool>(
+/// The `SCHEMA_HASH` element (#3757), a map: `{hash: S}` when the client's cached hash
+/// is `S`, otherwise `{hash: S, labels: [...], relationshipTypes: [...],
+/// propertyKeys: [...]}`, each list complete and in id order. RESP2 has no map, so a
+/// RESP2 client gets the same pairs as a flat array, `[key, value, ...]`.
+///
+/// `graph` is the version the query ran on, a read's snapshot or a write's commit, so
+/// `S` and the names agree with each other and include any name the query added.
+fn reply_schema(
+    ctx: &Context,
+    graph: &Graph,
+    client_hash: u64,
+) {
+    let hash = graph.schema_hash();
+    let current = hash == client_hash;
+    raw::reply_with_map(ctx.ctx, if current { 1 } else { 4 });
+    reply_with_str(ctx, "hash");
+    // RESP has no unsigned integer: the same 64 bits, as a signed one.
+    raw::reply_with_long_long(ctx.ctx, hash.cast_signed());
+    if current {
+        return;
+    }
+    let schema = graph.schema();
+    for (key, names) in [
+        ("labels", schema.labels.names()),
+        ("relationshipTypes", schema.relationship_types.names()),
+        ("propertyKeys", schema.property_keys.names()),
+    ] {
+        reply_with_str(ctx, key);
+        raw::reply_with_array(ctx.ctx, names.len() as _);
+        for name in names {
+            reply_with_str(ctx, name);
+        }
+    }
+}
+
+/// How a `GRAPH.QUERY` or `GRAPH.RO_QUERY` reply is shaped, from the command's flags.
+#[derive(Clone, Copy, Default)]
+pub enum ReplyFormat {
+    /// Values with their names: labels, relationship types and property keys as strings.
+    #[default]
+    Verbose,
+    /// `--compact`: values as type codes and ids rather than names.
+    Compact {
+        /// `SCHEMA_HASH h`: the client's cached schema hash. `Some` appends the schema
+        /// element, whose names decode the ids; `None` leaves the reply as it was before
+        /// the argument existed.
+        schema: Option<u64>,
+    },
+}
+
+/// Reply with a query's result set, shaped by `format`.
+pub fn reply_query(
     ctx: &Context,
     runtime: &Runtime<'_>,
     result: &ResultSummary<'_>,
+    format: ReplyFormat,
 ) {
+    let (compact, client_schema) = match format {
+        ReplyFormat::Compact { schema } => (true, schema),
+        ReplyFormat::Verbose => (false, None),
+    };
+    let schema_len = i64::from(client_schema.is_some());
     if runtime.return_names.is_empty() {
         // No RETURN clause — send only stats (matches C FalkorDB behavior).
-        raw::reply_with_array(ctx.ctx, 1);
+        raw::reply_with_array(ctx.ctx, 1 + schema_len);
         reply_stats(ctx, &result.stats, runtime.graph().version);
+        if let Some(client_hash) = client_schema {
+            reply_schema(ctx, &runtime.graph(), client_hash);
+        }
         return;
     }
-    raw::reply_with_array(ctx.ctx, 3);
+    raw::reply_with_array(ctx.ctx, 3 + schema_len);
     raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
     for name in &runtime.return_names {
-        if COMPACT {
+        if compact {
             raw::reply_with_array(ctx.ctx, 2);
             raw::reply_with_long_long(ctx.ctx, 1);
             raw::reply_with_string_buffer(
@@ -665,7 +732,7 @@ fn reply_result<const COMPACT: bool>(
             raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
             for name in &runtime.return_names {
                 let value = batch.value_at(name.id, row).unwrap();
-                if COMPACT {
+                if compact {
                     raw::reply_with_array(ctx.ctx, 2);
                     reply_compact_value(ctx, runtime, &value);
                 } else {
@@ -675,20 +742,7 @@ fn reply_result<const COMPACT: bool>(
         }
     }
     reply_stats(ctx, &result.stats, runtime.graph().version);
-}
-
-pub fn reply_verbose(
-    ctx: &Context,
-    runtime: &Runtime<'_>,
-    result: &ResultSummary<'_>,
-) {
-    reply_result::<false>(ctx, runtime, result);
-}
-
-pub fn reply_compact(
-    ctx: &Context,
-    runtime: &Runtime<'_>,
-    result: &ResultSummary<'_>,
-) {
-    reply_result::<true>(ctx, runtime, result);
+    if let Some(client_hash) = client_schema {
+        reply_schema(ctx, &runtime.graph(), client_hash);
+    }
 }

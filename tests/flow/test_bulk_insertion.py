@@ -797,7 +797,16 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # start bulk-insert
         start_time = time.perf_counter()
-        res = runner.invoke(bulk_insert, ['--server-url', f"redis://{self.env.host}:{self.port}",
+        # The loader builds its own redis client from the URL, and redis-py
+        # (>= 6) gives such a client a 5s socket timeout. A single GRAPH.BULK
+        # batch here is up to 64MB (millions of edges) and takes longer than
+        # that on an instrumented (coverage / ASAN) build: the loader then
+        # aborts with TimeoutError while the server is still applying the
+        # batch, leaving a partial graph (e.g. 2874998 of 4000000 edges).
+        # State the deadline in the URL instead.
+        url = (f"redis://{self.env.host}:{self.port}"
+               f"?socket_timeout={SOCKET_TIMEOUT}&socket_connect_timeout={SOCKET_TIMEOUT}")
+        res = runner.invoke(bulk_insert, ['--server-url', url,
                                           *nodes_args, *edges_args, graphname])
         # calculate the execution time
         execution_time = time.perf_counter() - start_time
@@ -811,7 +820,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertGreaterEqual(ping_count, execution_time / 2)
 
         # validate script results
-        self.env.assertEqual(res.exit_code, 0)
+        self.env.assertEqual(res.exit_code, 0, message=repr(res.exception))
         self.env.assertContains(f'{node_lbl_count} nodes created', res.output)
         self.env.assertContains(f'{edge_count} relations created', res.output)
 
@@ -991,7 +1000,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         res = self.db.execute_command("GRAPH.BULK", graphname, "BEGIN", 1, 1, 1, 1,
                                       node_token, edge_token)
         self.env.assertContains("1 nodes created", res)
-        self.env.assertContains("1 relations created", res)
+        self.env.assertContains("1 edges created", res)
 
         graph = self.db.select_graph(graphname)
         query_result = graph.query("MATCH (n:N)-[:R]->(n) RETURN n.v")
@@ -1060,3 +1069,45 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertEqual(p1, {f"p{i}": 1000000 + i if i % 2 == 0 else i for i in range(n)})
         res = graph.query("MATCH (n:L) RETURN n.p1, n.p2 ORDER BY id(n)")
         self.env.assertEqual(res.result_set, [[1000001, 2], [1, 1000002]])
+
+    # A BEGIN batch builds on a worker. If its key is deleted and created again by
+    # another client meanwhile, the batch is refused, and the graph at the key now
+    # is not the batch's to take back out of the keyspace: deleting the key the
+    # batch named deleted that client's graph.
+    def test17_failed_begin_spares_a_recreated_key(self):
+        conn = self.db.connection
+        graphname = "bulk_recreated"
+        conn.delete(graphname)
+        count = 2000000
+        token = (b"N\0" + struct.pack("=I", 1) + b"v\0" +
+                 struct.pack("=Bq", 4, 7) * count)
+
+        reply = []
+
+        def load():
+            con = redis.Redis(self.env.host, self.port, socket_timeout=120,
+                              retry=Retry(NoBackoff(), 0))
+            try:
+                reply.append(con.execute_command("GRAPH.BULK", graphname, "BEGIN",
+                                                 count, 0, 1, 0, token))
+            except Exception as e:  # a timeout too, so it reaches the assertions
+                reply.append(e)
+
+        loader = threading.Thread(target=load)
+        loader.start()
+        # blocked from admission until the worker has committed or failed
+        deadline = time.time() + 10
+        while not any(c["cmd"].lower() == "graph.bulk" and "b" in c["flags"]
+                      for c in conn.client_list()):
+            if time.time() > deadline:
+                raise AssertionError("GRAPH.BULK never ran on a worker")
+            time.sleep(0.001)
+        conn.delete(graphname)
+        self.db.select_graph(graphname).query("CREATE (:Other)")
+        loader.join()
+
+        self.env.assertIsInstance(reply[0], redis.ResponseError)
+        self.env.assertContains("deleted or replaced", str(reply[0]))
+        res = self.db.select_graph(graphname).query(
+            "MATCH (n) RETURN labels(n)[0], count(n)")
+        self.env.assertEqual(res.result_set, [["Other", 1]])

@@ -1,5 +1,4 @@
 import os
-import subprocess
 import tempfile
 from common import *
 
@@ -34,6 +33,8 @@ REFUSED = [
     ("OMP_THREAD_COUNT 0",        "Failed setting field 'OMP_THREAD_COUNT'"),
     ("MAX_QUEUED_QUERIES 0",      "Failed setting field 'MAX_QUEUED_QUERIES'"),
     ("JS_HEAP_SIZE 5",            "JS_HEAP_SIZE must be at least 1MB (1048576)"),
+    ("INDEX_BUILD_THREAD_COUNT 0",    "Failed setting field 'INDEX_BUILD_THREAD_COUNT'"),
+    ("INDEX_BUILD_THREAD_COUNT 1025", "Failed setting field 'INDEX_BUILD_THREAD_COUNT'"),
     ("FOO 1",                     "Encountered unknown configuration field 'FOO'"),
     ("CACHE_SIZE",                "FalkorDB received 1 arguments, all configurations should be key-value pairs"),
     ("CACHE_SIZE 10 THREAD_COUNT", "FalkorDB received 3 arguments, all configurations should be key-value pairs"),
@@ -64,30 +65,17 @@ DEFAULTS = {
     "TEMP_FOLDER": "/tmp",
     "JS_HEAP_SIZE": 268435456,
     "JS_STACK_SIZE": 1048576,
+    "WRITE_LOCK_POLL_INTERVAL": 5,
 }
 
 
 def _load_locally(module_args):
-    """Start redis-server with the module and `module_args`, without listening
+    """Start a server with the module and `module_args`, without listening
     on a port (so it exits right after loading the module), and return
     (exit code, or None if it did not exit, and its log)."""
-    module = Defaults.module
-    if isinstance(module, (list, tuple)):
-        module = module[0]
-    log_dir = tempfile.mkdtemp()
-    log_file = os.path.join(log_dir, "redis.log")
-    cmd = [Defaults.binary, "--port", "0", "--save", "", "--dir", log_dir,
-           "--logfile", log_file, "--loadmodule", module, *module_args.split()]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        rc = proc.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        rc = None
-    with open(log_file) as f:
-        log = f.read()
-    return rc, log
+    proc, log = start_local_server(tempfile.mkdtemp(), "--save", "",
+                                   module_args=module_args.split())
+    return wait_for_exit(proc, 20), read_log(log)
 
 
 class testModuleArgs():
@@ -145,3 +133,14 @@ class testModuleArgs():
             for name in IGNORED:
                 env.assertContains(
                     f"configuration field '{name}' is deprecated and has no effect", log)
+
+    def test05_index_build_thread_count(self):
+        """INDEX_BUILD_THREAD_COUNT, a load-time setting of this engine's own,
+        takes effect whatever the case of its name. GRAPH.CONFIG does not list
+        it (its list mirrors C's), so it is read through Redis's CONFIG."""
+        env, _ = Env(moduleArgs="index_build_thread_count 3")
+        conn = env.getConnection()
+        reply = conn.config_get("graph.INDEX_BUILD_THREAD_COUNT")
+        text = lambda s: s if isinstance(s, str) else s.decode()
+        env.assertEqual({text(k): text(v) for k, v in reply.items()},
+                        {"graph.INDEX_BUILD_THREAD_COUNT": "3"})
