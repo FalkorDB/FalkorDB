@@ -150,14 +150,14 @@ typedef struct {
 	uint32_t count;               // entities filed here
 } Group;
 
-// one attribute of a staged update, with its value already encoded
+// one attribute of a staged update, holding the VALUE and not its encoding
 typedef struct {
 	AttributeID id;
 
-	// the VALUE, not its encoding: SIValue_Persist clones a volatile value and
-	// leaves an owned one alone. Encoding here would need an arena, a scratch
-	// sink and a second copy per attribute, and would leave dead bytes behind
-	// whenever a later write superseded one. Serialised once, at the flush.
+	// OWNED HERE, a clone of whatever the caller passed. Encoding at stage
+	// time would need an arena, a scratch sink and a second copy per
+	// attribute, and would leave dead bytes behind whenever a later write
+	// superseded one - so these are serialised once, at the flush.
 	SIValue v;
 } StagedAttr;
 
@@ -791,6 +791,32 @@ static PendingUpdate *_update_for
 	return u;
 }
 
+// take a value the accumulator will own and later free
+//
+// _update_release frees exactly M_SELF, so the question this answers is which
+// values have to be copied for that to be safe:
+//
+//   M_SELF      COPIED. The caller owns this allocation, and storing it bare
+//               meant freeing the caller's memory at the flush. This is the
+//               defect; SIValue_Persist does not cover it, because it clones
+//               M_VOLATILE and leaves every other kind alone.
+//   M_VOLATILE  copied, as before: it will not outlive the call.
+//   M_CONST     TAKEN AS IT IS, and deliberately. Cloning one would be safe,
+//               but an interned string's clone rents from the global string
+//               pool and its free returns it - two trips through that mutex
+//               per staged attribute, on the write path, for a value that was
+//               already safe to borrow. _update_release will not free it.
+//   M_NONE      taken as it is; a number, a boolean or a null owns nothing.
+static SIValue _take_value(SIValue value) {
+	if(value.allocation == M_SELF) {
+		return SI_CloneValue(value);
+	}
+
+	SIValue v = value;
+	SIValue_Persist(&v);   // clones M_VOLATILE, leaves M_CONST and M_NONE
+	return v;
+}
+
 void EffectsV3Grouping_StageUpdate
 (
 	EffectsV3Grouping *g,   // accumulator
@@ -833,8 +859,7 @@ void EffectsV3Grouping_StageUpdate
 			// used to keep it as dead bytes, and a leak here shows in no byte
 			// comparison
 			SIValue_Free(u->attrs[i].v);
-			u->attrs[i].v = value;
-			SIValue_Persist(&u->attrs[i].v);
+			u->attrs[i].v = _take_value(value);
 			return;
 		}
 	}
@@ -844,10 +869,7 @@ void EffectsV3Grouping_StageUpdate
 	StagedAttr *a = &arr_tail(u->attrs);
 	a->id = attr_id;
 
-	// PERSISTED, not encoded. The caller's value does not outlive this call, so
-	// it is cloned if volatile and taken as is if it already owns its memory
-	a->v = value;
-	SIValue_Persist(&a->v);
+	a->v = _take_value(value);
 }
 
 // release everything a staged update owns
@@ -894,6 +916,27 @@ static void _flush_updates(EffectsV3Grouping *g) {
 
 		AttributeID ids[256];
 		const uint32_t n_staged = arr_len(u->attrs);
+
+		// THE WIRE STATES n_attrs IN TWO BYTES, and a cast that overflows it
+		// turns 65,536 into 0: the record would announce no attributes while
+		// the loop below still wrote all of their values, and a decoder would
+		// read those bytes as the record after this one.
+		//
+		// Nothing can reach that today - GraphContext stops issuing attribute
+		// ids at ATTRIBUTE_ID_ALL (graphcontext.c:1270), and 65,534 and 65,535
+		// are reserved, so an entity tops out at 65,534 distinct attributes,
+		// two below the field's limit. The guard is here because that ceiling
+		// lives in another file and is not what this cast depends on.
+		//
+		// RELEASE_ASSERT because there is no third option here. _flush_updates
+		// returns void, so nothing can be refused upward; skipping the record
+		// would drop a write the primary made and diverge the replica with
+		// nothing logged; and splitting it in two would emit two records each
+		// claiming to be the entity's whole attribute set, which is what the
+		// shape means. Stopping is the only outcome that is not silent.
+		RELEASE_ASSERT(n_staged <= UINT16_MAX &&
+				"an entity with more attributes than the v3 wire can state");
+
 		AttributeID *attr_ids = (n_staged <= 256)
 			? ids
 			: rm_malloc(sizeof(AttributeID) * n_staged);
