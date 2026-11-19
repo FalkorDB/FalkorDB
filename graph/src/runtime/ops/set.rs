@@ -362,9 +362,13 @@ impl Runtime<'_> {
                                 }
                             }
                         }
-                        // Silently ignore SET on Null and non-entity types
-                        // (e.g. Path), matching C FalkorDB behavior.
-                        _ => {}
+                        Value::Null => {}
+                        _ => {
+                            return Err(format!(
+                                "Type mismatch: expected Node or Relationship but was {}",
+                                entity.name()
+                            ));
+                        }
                     }
                 }
                 SetItem::Label {
