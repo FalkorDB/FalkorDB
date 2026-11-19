@@ -56,7 +56,7 @@ use std::sync::Arc;
 use orx_tree::{DynNode, DynTree, NodeRef};
 
 use crate::{
-    parser::ast::{ExprIR, QueryExpr, Variable},
+    parser::ast::{ExprIR, QueryExpr, VarKey, Variable},
     tree,
 };
 
@@ -124,7 +124,7 @@ fn try_hash_join_rewrite(
         vec![(**filter).clone()]
     };
 
-    let cp_children_vars: Vec<HashSet<u32>> = cp_node
+    let cp_children_vars: Vec<HashSet<VarKey>> = cp_node
         .children()
         .map(|c| collect_subtree_variables(&c))
         .collect();

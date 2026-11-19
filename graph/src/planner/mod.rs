@@ -41,7 +41,7 @@ use std::{
 };
 
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
-use crate::planner::optimizer::collect_expr_scoped_variables;
+use crate::planner::optimizer::collect_expr_variables;
 use crate::planner::optimizer::collect_single_variable_conjuncts;
 use crate::planner::optimizer::references::ir_references_variable;
 use crate::planner::optimizer::{endpoint_scan_score, walk_scans_to_endpoint};
@@ -890,7 +890,7 @@ fn has_labels_filter(
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
 ///
 /// The planner maintains state across clauses:
-/// - `visited` tracks which variable IDs have already been bound by earlier
+/// - `visited` tracks which variables have already been bound by earlier
 ///   scans or traversals, so we know whether a node needs a fresh scan
 ///   or can be referenced from the existing stream.
 /// - `scope_vars` holds the binder-assigned variables grouped by scope ID,
@@ -1104,14 +1104,14 @@ impl Planner {
     }
 
     /// Check whether a rebuilt expression subtree references any of the given
-    /// inline-pattern variable IDs.
+    /// inline-pattern variables.
     fn contains_inline_var(
         node: &DynNode<ExprIR<Variable>>,
-        inline_var_ids: &HashSet<u32>,
+        inline_vars: &HashSet<VarKey>,
     ) -> bool {
         let mut tr = Traversal.bfs().over_nodes();
         node.walk_with(&mut tr)
-            .any(|n| matches!(n.data(), ExprIR::Variable(v) if inline_var_ids.contains(&v.id)))
+            .any(|n| matches!(n.data(), ExprIR::Variable(v) if inline_vars.contains(&v.key())))
     }
 
     /// Does this expression tree contain a pattern comprehension or an
@@ -1676,14 +1676,14 @@ impl Planner {
     fn expr_to_plan(
         &mut self,
         node: &DynNode<ExprIR<Variable>>,
-        inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
+        inline_map: &HashMap<VarKey, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
-        let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
+        let inline_vars: HashSet<VarKey> = inline_map.keys().copied().collect();
 
         // Inline-pattern variable → SemiApply (pass if pattern exists)
         if let ExprIR::Variable(v) = node.data()
-            && let Some(graph) = inline_map.get(&v.id)
+            && let Some(graph) = inline_map.get(&v.key())
         {
             let sub_plan = self.build_pattern_sub_plan(graph);
             return tree!(IR::SemiApply, input, sub_plan);
@@ -1693,14 +1693,14 @@ impl Planner {
         if matches!(node.data(), ExprIR::Not)
             && let Some(child) = node.get_child(0)
             && let ExprIR::Variable(v) = child.data()
-            && let Some(graph) = inline_map.get(&v.id)
+            && let Some(graph) = inline_map.get(&v.key())
         {
             let sub_plan = self.build_pattern_sub_plan(graph);
             return tree!(IR::AntiSemiApply, input, sub_plan);
         }
 
         // Pure scalar (no inline var refs) → Filter
-        if !Self::contains_inline_var(node, &inline_var_ids) {
+        if !Self::contains_inline_var(node, &inline_vars) {
             let expr_tree = node.clone_as_tree();
             return tree!(IR::Filter(Arc::new(expr_tree)), input);
         }
@@ -1736,10 +1736,10 @@ impl Planner {
     fn or_expr_to_plan(
         &mut self,
         or_node: &DynNode<ExprIR<Variable>>,
-        inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
+        inline_map: &HashMap<VarKey, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
-        let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
+        let inline_vars: HashSet<VarKey> = inline_map.keys().copied().collect();
 
         // Collect OR children into owned trees so we can call &mut self freely.
         let child_trees: Vec<DynTree<ExprIR<Variable>>> =
@@ -1753,7 +1753,7 @@ impl Planner {
             let child = child_tree.root();
             // Bare pattern variable → raw pattern sub-plan (anti=false)
             if let ExprIR::Variable(v) = child.data()
-                && let Some(graph) = inline_map.get(&v.id)
+                && let Some(graph) = inline_map.get(&v.key())
             {
                 let sub_plan = self.build_pattern_sub_plan(graph);
                 other_branches.push((sub_plan, false));
@@ -1763,14 +1763,14 @@ impl Planner {
             if matches!(child.data(), ExprIR::Not)
                 && let Some(grandchild) = child.get_child(0)
                 && let ExprIR::Variable(v) = grandchild.data()
-                && let Some(graph) = inline_map.get(&v.id)
+                && let Some(graph) = inline_map.get(&v.key())
             {
                 let sub_plan = self.build_pattern_sub_plan(graph);
                 other_branches.push((sub_plan, true));
                 continue;
             }
             // Pure scalar → Filter(expr, Argument)
-            if !Self::contains_inline_var(&child, &inline_var_ids) {
+            if !Self::contains_inline_var(&child, &inline_vars) {
                 let expr_tree = child.clone_as_tree();
                 let branch = tree!(IR::Filter(Arc::new(expr_tree)), tree!(IR::Argument(None)));
                 scalar_branches.push(branch);
@@ -1802,10 +1802,10 @@ impl Planner {
     fn and_expr_to_plan(
         &mut self,
         and_node: &DynNode<ExprIR<Variable>>,
-        inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
+        inline_map: &HashMap<VarKey, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
-        let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
+        let inline_vars: HashSet<VarKey> = inline_map.keys().copied().collect();
 
         // Collect children into owned trees for borrow-safety.
         let child_trees: Vec<DynTree<ExprIR<Variable>>> =
@@ -1816,7 +1816,7 @@ impl Planner {
 
         for child_tree in &child_trees {
             let child = child_tree.root();
-            if Self::contains_inline_var(&child, &inline_var_ids) {
+            if Self::contains_inline_var(&child, &inline_vars) {
                 non_scalar_trees.push(child_tree);
             } else {
                 // Skip trivial Bool(true) from extractable pattern replacement
@@ -1865,7 +1865,7 @@ impl Planner {
         &mut self,
         node: &DynNode<ExprIR<Variable>>,
         extractable: &mut Vec<(QueryGraph<Arc<String>, Arc<String>, Variable>, bool)>,
-        inline: &mut HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
+        inline: &mut HashMap<VarKey, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         can_extract: bool,
     ) -> DynTree<ExprIR<Variable>> {
         match node.data() {
@@ -1886,7 +1886,7 @@ impl Planner {
                         ty: Type::Bool,
                     };
                     self.scope_vars[current_scope as usize].push(var.clone());
-                    inline.insert(var.id, graph.as_ref().clone());
+                    inline.insert(var.key(), graph.as_ref().clone());
                     DynTree::new(ExprIR::Variable(var))
                 }
             }
@@ -1911,7 +1911,7 @@ impl Planner {
                         ty: Type::Bool,
                     };
                     self.scope_vars[current_scope as usize].push(var.clone());
-                    inline.insert(var.id, graph.as_ref().clone());
+                    inline.insert(var.key(), graph.as_ref().clone());
                     let mut new_tree = DynTree::new(ExprIR::Not);
                     new_tree
                         .root_mut()
@@ -2007,7 +2007,7 @@ impl Planner {
         // hops of a component so constrained endpoints are reached first.
         let filter_vars: HashSet<VarKey> = filter
             .as_ref()
-            .map_or_default(|f| collect_expr_scoped_variables(f));
+            .map_or_default(|f| collect_expr_variables(f));
         // The subset of those a promoted walk can start from: variables a WHERE
         // conjunct constrains by itself, evaluable as soon as the endpoint is
         // scanned (`p.id = length(r)` waits for the path, so it anchors nothing).
@@ -2100,7 +2100,7 @@ impl Planner {
                 |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
                     [&r.attrs, &r.from.attrs, &r.to.attrs]
                         .into_iter()
-                        .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
+                        .any(|attrs| !collect_expr_variables(attrs).is_empty())
                 };
             // The WHERE sits above everything the clause plans. Scan selection
             // reads the Filters directly above the component (through its own
@@ -2141,9 +2141,7 @@ impl Planner {
                 relationships
                     .iter()
                     .find(|r| {
-                        r.min_hops.is_some()
-                            && r.from.alias.id != r.to.alias.id
-                            && leads_from_anchor(r)
+                        r.min_hops.is_some() && r.from.alias != r.to.alias && leads_from_anchor(r)
                     })
                     .map(|r| r.alias.key())
             } else {
@@ -2220,7 +2218,7 @@ impl Planner {
                 |r| HopShape {
                     from: r.from.alias.key(),
                     to: r.to.alias.key(),
-                    self_loop: r.from.alias.id == r.to.alias.id,
+                    self_loop: r.from.alias == r.to.alias,
                     fixed: r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No,
                 },
                 |node| self.visited.contains(node),
@@ -2323,7 +2321,7 @@ impl Planner {
                     || component
                         .paths()
                         .iter()
-                        .any(|p| p.vars.iter().any(|v| v.id == rel.alias.id))
+                        .any(|p| p.vars.contains(&rel.alias))
             };
             // Collect edge alias IDs for relationship uniqueness checking.
             // Only named (non-anonymous) edges participate in uniqueness constraints;
@@ -2378,7 +2376,7 @@ impl Planner {
                 // Both endpoints already bound (and distinct): the traverse only
                 // verifies reachability between two known nodes.
                 let expand_into = scan_child.is_none()
-                    && relationship.from.alias.id != relationship.to.alias.id
+                    && relationship.from.alias != relationship.to.alias
                     && self.visited.contains(&relationship.to.alias.key());
                 scan_child.map_or_else(
                     || {
@@ -2403,7 +2401,7 @@ impl Planner {
                         )
                     },
                 )
-            } else if relationship.from.alias.id == relationship.to.alias.id {
+            } else if relationship.from.alias == relationship.to.alias {
                 // Self-loop with fixed-length edge: scan + ExpandInto.
                 // If the node is already bound (visited), don't rescan — the
                 // Argument from the surrounding Apply will provide the binding.
@@ -2510,7 +2508,7 @@ impl Planner {
                 res = if relationship.all_shortest_paths != AllShortestPaths::No {
                     tree!(IR::AllShortestPaths(rel), res)
                 } else if relationship.min_hops.is_some() {
-                    let expand_into = relationship.from.alias.id != relationship.to.alias.id
+                    let expand_into = relationship.from.alias != relationship.to.alias
                         && self.visited.contains(&relationship.from.alias.key())
                         && self.visited.contains(&relationship.to.alias.key());
                     tree!(
@@ -2523,7 +2521,7 @@ impl Planner {
                         },
                         res
                     )
-                } else if relationship.from.alias.id == relationship.to.alias.id {
+                } else if relationship.from.alias == relationship.to.alias {
                     let already_bound = self.visited.contains(&relationship.from.alias.key());
                     if already_bound {
                         tree!(
@@ -2627,9 +2625,9 @@ impl Planner {
                             rel.min_hops.is_some()
                                 && rel.all_shortest_paths == AllShortestPaths::No
                                 && path.vars.len() == 3
-                                && path.vars[0].id == rel.from.alias.id
-                                && path.vars[1].id == rel.alias.id
-                                && path.vars[2].id == rel.to.alias.id
+                                && path.vars[0] == rel.from.alias
+                                && path.vars[1] == rel.alias
+                                && path.vars[2] == rel.to.alias
                         });
                     if elidable {
                         let mut bound = false;
@@ -2640,7 +2638,7 @@ impl Planner {
                                 path_var: path_var @ None,
                                 ..
                             } = res.node_mut(idx).data_mut()
-                                && relationship.alias.id == path.vars[1].id
+                                && relationship.alias == path.vars[1]
                             {
                                 *path_var = Some(path.var.clone());
                                 bound = true;
@@ -3715,8 +3713,8 @@ impl Planner {
                 // Add Argument leaves for correlated execution
                 Self::add_argument_to_leaves(&mut inner_plan, None);
 
-                // Restore visited, then add returned var IDs so subsequent
-                // clauses know these variables are bound.
+                // Restore visited, then add the returned variables so
+                // subsequent clauses know they are bound.
                 self.visited = saved_visited;
                 if is_returning {
                     if remap.is_empty() {

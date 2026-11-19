@@ -88,21 +88,8 @@ use select_scan_node::select_scan_node;
 use utilize_index::utilize_index;
 use utilize_node_by_id::utilize_node_by_id;
 
-/// Collects all variable IDs referenced in an expression tree.
-pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<u32> {
-    let mut vars = HashSet::new();
-    for idx in expr.root().indices::<Bfs>() {
-        if let ExprIR::Variable(var) = expr.node(idx).data() {
-            vars.insert(var.id);
-        }
-    }
-    vars
-}
-
 /// Collects the `VarKey` of every variable an expression references.
-/// Variable ids are only unique within a scope, so callers that mix scopes
-/// (a pattern next to a `WHERE` with comprehension variables) key on both.
-pub(crate) fn collect_expr_scoped_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<VarKey> {
+pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<VarKey> {
     let mut vars = HashSet::new();
     for idx in expr.root().indices::<Bfs>() {
         if let ExprIR::Variable(var) = expr.node(idx).data() {
@@ -175,14 +162,11 @@ pub(crate) const fn walk_scans_to_endpoint(
     to_score > from_score
 }
 
-/// Collects all variable IDs provided by a plan subtree.
-pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
+/// Collects the `VarKey` of every variable the rows leaving a plan subtree
+/// carry.
+pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet<VarKey> {
     use crate::runtime::runtime::GetVariables;
-    let mut vars = HashSet::new();
-    for var in node.get_variables() {
-        vars.insert(var.id);
-    }
-    vars
+    node.get_variables().iter().map(Variable::key).collect()
 }
 
 /// Optimizes a query execution plan.

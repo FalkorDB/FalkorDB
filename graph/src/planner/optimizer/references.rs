@@ -8,8 +8,6 @@
 //! id alone: the binder allocates ids per scope (`Variable::id` is an index into
 //! its own scope's env), so the same number names different variables in
 //! different scopes.
-//! Note that `Variable`'s `PartialEq` compares ids only, so `==` on two
-//! variables is the wrong test here.
 
 use std::sync::Arc;
 

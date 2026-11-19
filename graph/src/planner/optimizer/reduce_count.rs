@@ -39,7 +39,7 @@ use orx_tree::{DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    parser::ast::{ExprIR, Variable},
+    parser::ast::{ExprIR, VarKey, Variable},
     runtime::value::Value,
     tree,
 };
@@ -81,7 +81,7 @@ pub(super) fn reduce_count(
 
         // The aggregation expression must be a single count() function call
         // on a variable.
-        let Some(count_var_id) = extract_count_variable(agg_expr) else {
+        let Some(count_var) = extract_count_variable(agg_expr) else {
             continue;
         };
 
@@ -94,12 +94,12 @@ pub(super) fn reduce_count(
 
         let count = match child.data() {
             // MATCH (n) RETURN COUNT(n)
-            IR::AllNodeScan(node) if node.alias.id == count_var_id && child.num_children() == 0 => {
+            IR::AllNodeScan(node) if node.alias.key() == count_var && child.num_children() == 0 => {
                 Some(graph.node_count() as i64)
             }
             // MATCH (n:Label) RETURN COUNT(n)
             IR::NodeByLabelScan { node, .. }
-                if node.alias.id == count_var_id
+                if node.alias.key() == count_var
                     && child.num_children() == 0
                     && node.labels.len() == 1 =>
             {
@@ -115,7 +115,7 @@ pub(super) fn reduce_count(
                 relationship,
                 transposed,
                 ..
-            } if relationship.alias.id == count_var_id && !transposed => {
+            } if relationship.alias.key() == count_var && !transposed => {
                 // The CondTraverse can optionally have a single source scan child
                 // (AllNodeScan or NodeByLabelScan). Check that it's a simple scan pattern.
                 let has_valid_child = if child.num_children() == 0 {
@@ -188,9 +188,9 @@ pub(super) fn reduce_count(
     }
 }
 
-/// If the expression is `count(var)`, returns `Some(var.id)`.
+/// If the expression is `count(var)`, returns `Some(var.key())`.
 /// Returns `None` for any other expression shape.
-fn extract_count_variable(expr: &DynTree<ExprIR<Variable>>) -> Option<u32> {
+fn extract_count_variable(expr: &DynTree<ExprIR<Variable>>) -> Option<VarKey> {
     let ExprIR::FuncInvocation(func) = expr.root().data() else {
         return None;
     };
@@ -205,7 +205,7 @@ fn extract_count_variable(expr: &DynTree<ExprIR<Variable>>) -> Option<u32> {
     }
     let child = root.child(0);
     if let ExprIR::Variable(var) = child.data() {
-        Some(var.id)
+        Some(var.key())
     } else {
         None
     }
