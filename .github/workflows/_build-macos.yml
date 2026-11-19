@@ -13,6 +13,8 @@
 #                         prerelease publish the file a merge_group run uploaded
 #                         for their commit (#3893), so this is where the shipped
 #                         macOS module is built.
+#   release-tag.yml       only when dispatched with `rebuild_macos`, for a
+#                         commit whose queue file is gone: build the tag.
 #   macos-deps-cache.yml  on `main`, with `deps_only`: build the native
 #                         dependencies and save them to the Actions cache the
 #                         queue restores. Only that trusted caller writes the
@@ -33,6 +35,15 @@ on:
         required: false
         type: boolean
         default: false
+      revision:
+        description: >-
+          Commit to build. Empty means the caller's own commit. release-tag.yml
+          passes the tagged commit when it rebuilds the module because the
+          queue's file is gone, since a dispatched run's own commit is the
+          branch it was dispatched from.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -65,6 +76,7 @@ jobs:
         with:
           # native-deps builds the submodules in place and never clones them.
           submodules: recursive
+          ref: ${{ inputs.revision }}
           persist-credentials: false
 
       - name: Install the toolchain
