@@ -100,4 +100,4 @@ graph/src/planner/optimizer/mod.rs	collect_single_variable_conjuncts	120	PROVEN	
 graph/src/planner/optimizer/mod.rs	walk	123	PROVEN	E.singleVarConjL (Anchor.lean, the inner walk of collect_single_variable_conjuncts): singleVarConjL_sound
 graph/src/planner/optimizer/mod.rs	endpoint_scan_score	160	PROVEN	E.endpointScanScore (Anchor.lean): endpointScanScore_spec
 graph/src/planner/optimizer/mod.rs	walk_scans_to_endpoint	171	PROVEN	E.walkScansTo (Anchor.lean): walkScansTo_spec, walkScansTo_tie
-graph/src/planner/mod.rs	Planner::argument_vars	1221	NOT COVERED	(#3340): the Argument payload model (argumentVars, buildPatternSubPlanV) was dropped when merging #3890; to be re-proved
+graph/src/planner/mod.rs	Planner::argument_vars	1221	PROVEN	E.argumentVars_spec (payload = visited), buildPatternSubPlanV_payload (taps carry the outer bound vars, read after visited is restored / before plan_match; runtime ignores the payload, so addArgs row semantics unchanged)
