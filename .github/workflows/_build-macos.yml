@@ -9,10 +9,10 @@
 #
 # Callers:
 #   rust-pr.yml           in the merge queue (and on a PR labelled `ci-macos`):
-#                         build, check, test, upload. The release and the edge
-#                         prerelease publish the file a merge_group run uploaded
-#                         for their commit (#3893), so this is where the shipped
-#                         macOS module is built.
+#                         build, check, test, upload. A release publishes the
+#                         file the merge_group run uploaded for its commit
+#                         (#3893), so this is where the shipped macOS module is
+#                         built.
 #   release-tag.yml       only when dispatched with `rebuild_macos`, for a
 #                         commit whose queue file is gone: build the tag.
 #   macos-deps-cache.yml  on `main`, with `deps_only`: build the native
