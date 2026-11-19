@@ -15,6 +15,7 @@ import FalkorBinder.Scopes
 | `RC`, `bindIR` | the dispatcher `bind_ir` binder.rs:267-740 (sub-binders as parameters) |
 | `subqueryReturns`, `bindCallSubquery` | `bind_call_subquery` binder.rs:742-821 |
 | `pruneMatchRels` | its step 2c for `match_rel_vars` binder.rs:870-874 (#2981) |
+| `pruneVarlen` | its step 2c for `varlen_rel_var_ids` binder.rs:879-880 (#3891) |
 | `importProjections` | `build_import_projections` binder.rs:979-1001 |
 | `createCheck`, `bindGraphCreate` | `bind_graph_create` binder.rs:1557-1680 |
 -/
@@ -473,6 +474,30 @@ theorem pruneMatchRels_spec (mr : List (Nat × Nat)) (lo hi : Nat) (k : Nat × N
     k ∈ pruneMatchRels mr lo hi ↔ k ∈ mr ∧ (k.2 < lo ∨ hi ≤ k.2) := by
   simp only [pruneMatchRels, List.mem_filter, Bool.not_eq_true', Bool.and_eq_false_iff,
     decide_eq_false_iff_not, Nat.not_le, Nat.not_lt]
+
+/-- Step 2c of `bind_call_subquery` for `varlen_rel_var_ids` (binder.rs:879-880, #3891): its keys
+are `(scope_id, id)`, so the body's scopes `[lo, hi)` are matched on the first component. -/
+def pruneVarlen (vl : List (Nat × Nat)) (lo hi : Nat) : List (Nat × Nat) :=
+  vl.filter fun k => !(decide (lo ≤ k.1) && decide (k.1 < hi))
+
+/-- After a CALL body none of its `[r*]` marks is left; the outer ones stay. -/
+theorem pruneVarlen_spec (vl : List (Nat × Nat)) (lo hi : Nat) (k : Nat × Nat) :
+    k ∈ pruneVarlen vl lo hi ↔ k ∈ vl ∧ (k.1 < lo ∨ hi ≤ k.1) := by
+  simp only [pruneVarlen, List.mem_filter, Bool.not_eq_true', Bool.and_eq_false_iff,
+    decide_eq_false_iff_not, Nat.not_le, Nat.not_lt]
+
+/-- A named path that later gets a scope of the body (and so possibly the `(scope, id)` of a
+body's `[r*]`) still rejects `p.prop` once the body's marks are pruned. -/
+theorem pruneVarlen_prop_on_path (C : Ctx) (lo hi : Nat) (st : St) (locals : List Env) (k n : Name)
+    (v : Var) (st1 : St) (hr : resolve st locals n = .ok (st1, v)) (hp : v.ty = .path)
+    (hs : lo ≤ v.scope ∧ v.scope < hi) :
+    ∃ e, bindNode { C with varlen := pruneVarlen C.varlen lo hi } st locals
+      (.prop k [.var n]) = .error e := by
+  apply prop_on_path _ st locals k n v st1 hr hp
+  intro h
+  have := ((pruneVarlen_spec C.varlen lo hi _).1 h).2
+  simp only at this
+  omega
 
 theorem callSubquery_nonreturning (outer inner : Env) (d : Nat) :
     bindCallSubquery outer inner d false = .ok (outer, []) := rfl
