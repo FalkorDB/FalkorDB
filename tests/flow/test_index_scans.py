@@ -1456,6 +1456,59 @@ class testIndexScanFlow():
 
         g.delete()
 
+    def test_45_unwind_then_match_on_indexed_property_seeks_per_row(self):
+        # `UNWIND .. MATCH (s ..) MATCH (p:L {k: e.x})`: the second MATCH is
+        # joined to the first one by an inline property only. It used to become
+        # a Value Hash Join over a scan of the whole label (#3887), whose cost
+        # grows with the label however few rows the UNWIND produces. With an
+        # index on `k` and a small outer side each row seeks the index; a bulk
+        # batch keeps the hash join, which reads the label once.
+        g = self.db.select_graph('unwind_match_seek')
+        g.create_node_range_index('Sensor', 'id')
+        g.create_node_range_index('Reading', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 9) AS i CREATE (:Sensor {id: i})")
+        g.query("UNWIND range(0, 1999) AS i CREATE (:Reading {ts: i, nts: i})")
+        # a duplicate key, so a seek has to return every match
+        g.query("CREATE (:Reading {ts: 5, nts: 5})")
+
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}, {sid: 3, pts: 99999}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {ts: e.pts}) "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count('Node By Index Scan'), 2)
+        self.env.assertNotContains('Value Hash Join', plan)
+        self.env.assertNotContains('Label Scan', plan)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5], [2, 7]])
+
+        # a WHERE conjunct that reads the outer row too
+        q = ("UNWIND [{sid: 1, pts: 5, k: 5}, {sid: 2, pts: 7, k: 8}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {ts: e.pts}) WHERE p.nts = e.k "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertNotContains('Value Hash Join', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5]])
+
+        # many outer rows against a small label: one scan beats a lookup per row
+        q = ("UNWIND range(0, 999) AS i MATCH (s:Sensor {id: i % 10}) "
+             "MATCH (p:Reading {ts: i}) RETURN count(*)")
+        self.env.assertContains('Value Hash Join', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[1001]])
+
+        # no index on the joined property: only the hash join reads the label once
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {nts: e.pts}) "
+             "RETURN s.id, p.nts ORDER BY s.id")
+        plan = str(g.explain(q))
+        self.env.assertContains('Value Hash Join', plan)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5], [2, 7]])
+
+        # the later MATCH is a separate isomorphism scope (#2923): `p` may be `s`'s twin
+        q = ("UNWIND [5] AS x MATCH (a:Reading {ts: x}) MATCH (b:Reading {ts: x}) "
+             "RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[4]])
+
+        g.delete()
+
     def test_36_scalar_array_scalar_round_trip(self):
         # A property changing kind — scalar -> array -> scalar — must re-index
         # cleanly each time.

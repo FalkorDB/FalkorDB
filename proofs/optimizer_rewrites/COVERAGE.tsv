@@ -1,8 +1,8 @@
 file	function	line	bucket	lean_name_or_reason
 # graphblas *_bench.rs: benchmark harnesses, no production callers; listed here so the aggregator can exclude them
-graph/src/planner/optimizer/mod.rs	collect_expr_variables	92	PROVEN	Passes.routesIdOnly / id_only_routing_unsound (id-only unsound), routesScoped_sound; empty set routes everywhere: PushPlan.bug997_create_skipped
-graph/src/planner/optimizer/mod.rs	collect_subtree_variables	179	PROVEN	Helpers.mem_subtreeIds (ids of get_variables); ids only — Passes.id_only_routing_unsound; PushPlan.gv walks through Aggregate into the pre-WITH plan: bug3352_routes_unbound
-graph/src/planner/optimizer/mod.rs	optimize	201	PROVEN	Sequence.passes_order (exact order, reduce_var_len_path twice), applyAll_sound (each pass preserves R => optimize does), optimize_nested/optimize_plain
+graph/src/planner/optimizer/mod.rs	collect_expr_variables	98	PROVEN	Passes.routesIdOnly / id_only_routing_unsound (id-only unsound), routesScoped_sound; empty set routes everywhere: PushPlan.bug997_create_skipped
+graph/src/planner/optimizer/mod.rs	collect_subtree_variables	185	PROVEN	Helpers.mem_subtreeIds (ids of get_variables); ids only — Passes.id_only_routing_unsound; PushPlan.gv walks through Aggregate into the pre-WITH plan: bug3352_routes_unbound
+graph/src/planner/optimizer/mod.rs	optimize	207	PROVEN	Sequence.passes_order (exact order, reduce_var_len_path twice), passes_index_seek_order (#3889: replace_cartesian_with_index_seek right before the hash join), applyAll_sound (each pass preserves R => optimize does), optimize_nested/optimize_plain
 graph/src/planner/optimizer/absorb_edge_filters_into_vlt.rs	find_descendant_vlt	55	PROVEN	Sequence.findVlt_spec (Filter -> (PathBuilder|Filter)* -> VLT single-child chain)
 graph/src/planner/optimizer/absorb_edge_filters_into_vlt.rs	absorb_edge_filters_into_vlt	87	PROVEN	Sequence.absorb_correct (per-edge reading, C-parity, through PathBuilder/Filter), keepAll_split, absorbSplit_none; #3335 rebuilds the filter with ExprIR::and_of: AndOf.flat_passes (same Filter verdict, errors included), flat_eval
 graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	48	PROVEN	ConstEval.constTrue: constEval_sound (constant verdict = runtime verdict on every row: since #2904 every modelled arm, Pow included, propagates child errors), constTrue_eval, constTrue_filter (eliminate_whole_filter with hconst discharged), pow_var_not_constTrue; slow path (substitute_params then the same constant eval) = ConstEval.constTrue_slow (substP; parameters modelled as marked variable leaves) and Helpers.evX_subst (#2902 fixed)
@@ -83,3 +83,9 @@ graph/src/graph/graphblas/me_delta_bench.rs	per_op	43	NOT COVERED	TEST-ONLY: ben
 graph/src/graph/graphblas/me_delta_bench.rs	committed_multi	58	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_step	84	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_attach_vs_seek	140	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	replace_cartesian_with_index_seek	58	NOT COVERED	(#3889): new per-row index-seek rewrite, not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	rebuild	67	NOT COVERED	(#3889): new per-row index-seek rewrite, not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	scan_chain	93	NOT COVERED	(#3889): new per-row index-seek rewrite, not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	try_seek_rewrite	117	NOT COVERED	(#3889): new per-row index-seek rewrite, not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	estimate_rows	226	NOT COVERED	(#3889): new per-row index-seek rewrite, not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	unwound_len	273	NOT COVERED	(#3889): new per-row index-seek rewrite, not modelled yet

@@ -810,6 +810,16 @@ fn try_filter_pushdown<T: IndexSubject>(
     }
 }
 
+/// Whether `utilize_index` can serve `filter`, a predicate on `node`, from a
+/// range index of the graph.
+pub(super) fn can_seek_index(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    filter: &DynTree<ExprIR<Variable>>,
+    graph: &Graph,
+) -> bool {
+    try_filter_pushdown(node, filter, graph).is_some()
+}
+
 /// Whether `filter` is `value IN subject.prop` (array-contains): a predicate the index answers
 /// with possible false positives — a numeric key is shared by `1` and `true`, and an element it
 /// cannot index is not in its array tree at all — so its filter is always kept.
