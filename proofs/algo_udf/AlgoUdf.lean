@@ -202,7 +202,8 @@ reconstruction, js_context/js_globals glue and graph.traverse/iterate*.
   like C; `fastpath_missing_cost_one` (property `MissingCostIsOne` holds on both paths).
 * #3349 `LagContract`: the LAGraph contract now has the `LAGRAPH_INVALID_GRAPH` (-1000)
   outcome (`LAGraph_CheckGraph` rejects by-column storage; GraphBLAS stores n-by-1, hence
-  1×1, by column). `bug3349_one_node_projection_fails`; property `ProjectionTotal`.
+  1×1, by column). **FIXED by #3572**: `pin_row_major` holds the compact matrix and the cached
+  transpose by row; `projection_total`, `one_node_projection_ok` (history `pre3572_one_node_projection_fails`).
 
 ## Gap closed 2026-10-22 (#3454) — **FIXED by #3464** (see below)
 `UdfNodeView` modelled `create_js_node` reading the committed graph while `labels(n)` reads the
