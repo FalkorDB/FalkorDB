@@ -36,6 +36,12 @@ void Delta_Matrix_mulCompatible
 	const Delta_Matrix B
 ) ;
 
+typedef enum {
+	DM_TVAL_BASIC = 0, // level 0: dimensions and nnz
+	DM_TVAL_FAST  = 1, // level 1: check degree vectors
+	DM_TVAL_FULL  = 2  // level 2: this is slow. only use if needed
+} DM_validation_level ;
+
 // Check every assumption for the Delta Matrix
 //         ∅ = m  ∩ dp
 //         ∅ = dp ∩ dm
@@ -46,9 +52,9 @@ void Delta_Matrix_mulCompatible
 //    m BOOL / UINT64
 //    dp BOOL / UINT64
 //    dm BOOL
-void Delta_Matrix_validate
+bool Delta_Matrix_validate
 (
 	const Delta_Matrix C,
-	bool check_transpose
+	DM_validation_level transpose_validation
 ) ;
 
