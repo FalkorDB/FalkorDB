@@ -224,3 +224,94 @@ class testReplication(FlowTestsBase):
         replica_result = list_constraints(replica)
         env.assertEquals(replica_result, origin_result)
 
+
+    def test_wide_entity_replication(self):
+        # an entity with more properties than the writer's stack buffer holds
+        #
+        # v3 flattens an entity's attributes into arrays before handing them to
+        # the accumulator. Those were fixed at 256 with the count clamped to
+        # match, so property 257 onward never reached the wire: the master kept
+        # them, the replica held the node short, and nothing reported it - no
+        # error, no log, and no resync, because the payload was well formed and
+        # its stated count agreed with what it carried.
+        #
+        # 300 rather than 257 so the test still bites if the buffer is resized,
+        # and the count is compared rather than the values because a truncation
+        # drops a suffix that a spot check on one property would miss.
+        env = self.env
+        source_con  = env.getConnection()
+        replica_con = env.getSlaveConnection()
+        replica_con.config_set("slave-read-only", "no")
+
+        n = 300
+        props = ", ".join(f"p{i}: {i}" for i in range(n))
+
+        for version in (2, 3):
+            source_con.execute_command("GRAPH.CONFIG", "SET",
+                                       "EFFECTS_VERSION", version)
+
+            key = f"wide-{version}"
+            src     = Graph(source_con,  key)
+            replica = Graph(replica_con, key)
+
+            src.query(f"CREATE (:Wide {{{props}}})")
+            src.query(f"CREATE (:S)-[:R {{{props}}}]->(:T)")
+            source_con.execute_command("WAIT", "1", "0")
+
+            for what, q in (("node", "MATCH (n:Wide) RETURN size(keys(n))"),
+                            ("edge", "MATCH ()-[r:R]->() RETURN size(keys(r))")):
+                on_src     = src.query(q).result_set[0][0]
+                on_replica = replica.query(q).result_set[0][0]
+
+                env.assertEquals(on_src, n,
+                        message=f"v{version} {what}: master lost properties")
+                env.assertEquals(on_replica, on_src,
+                        message=f"v{version} {what}: replica has {on_replica} "
+                                f"of the master's {on_src} properties")
+
+    def test_computed_string_update_replication(self):
+        # a string the QUERY allocated, not one the parser folded
+        #
+        # v3 staged the caller's SIValue by pointer and freed it at the flush.
+        # SIValue_Persist copies only M_VOLATILE and SIValue_Free releases only
+        # M_SELF, so a heap value the query owns was neither copied nor ours -
+        # and freeing it aborted the process in malloc, on the master, with no
+        # replica involved.
+        #
+        # THE VALUE HAS TO BE COMPUTED AT RUNTIME. `SET n.s = 'b'` folds to a
+        # constant, which is M_CONST, which nothing frees - so a literal passes
+        # against the broken build and pins nothing. Each case below allocates:
+        # concatenation, a function call, and two writes to one attribute in a
+        # single statement, which is the supersede path.
+        env = self.env
+        source_con  = env.getConnection()
+        replica_con = env.getSlaveConnection()
+        replica_con.config_set("slave-read-only", "no")
+
+        for version in (2, 3):
+            source_con.execute_command("GRAPH.CONFIG", "SET",
+                                       "EFFECTS_VERSION", version)
+
+            key = f"computed-{version}"
+            src     = Graph(source_con,  key)
+            replica = Graph(replica_con, key)
+
+            src.query("CREATE (:V {s: 'a', t: 'x'})")
+
+            for q, expect in (
+                    ("MATCH (n:V) SET n.s = n.s + '!'",            "a!"),
+                    ("MATCH (n:V) SET n.s = toUpper(n.s)",         "A!"),
+                    ("MATCH (n:V) SET n.s = n.t + '?'",            "x?"),
+                    ("MATCH (n:V) SET n.s = n.s + '1', n.s = n.s + '2'", "x?2")):
+                src.query(q)
+                source_con.execute_command("WAIT", "1", "0")
+
+                on_src = src.query("MATCH (n:V) RETURN n.s").result_set[0][0]
+                env.assertEquals(on_src, expect,
+                        message=f"v{version}: {q}")
+
+                on_replica = replica.query(
+                        "MATCH (n:V) RETURN n.s").result_set[0][0]
+                env.assertEquals(on_replica, on_src,
+                        message=f"v{version}: replica has {on_replica!r}, "
+                                f"master {on_src!r} after {q}")
