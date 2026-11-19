@@ -426,8 +426,8 @@ impl Indexer {
     /// Only if it still has none. This runs later than the drop that asked for
     /// it, on the query pool, and a `CREATE INDEX` on the label can get in
     /// first: it lands on the fieldless entry and gives it a field again.
-    /// Removed regardless, that new index was gone after `CREATE INDEX` had
-    /// answered `Indices created: 1`.
+    /// Before this fix, it was removed regardless, so the new index was gone
+    /// after `CREATE INDEX` had answered `Indices created: 1`.
     ///
     /// Caller must hold [`Self::write_lock`] (see `drop_index_bg`).
     pub fn remove_if_empty(
