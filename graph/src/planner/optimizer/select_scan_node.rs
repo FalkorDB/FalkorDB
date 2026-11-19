@@ -70,7 +70,7 @@ use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    parser::ast::{AllShortestPaths, ExprIR, QueryNode, QueryRelationship, Variable},
+    parser::ast::{AllShortestPaths, ExprIR, QueryNode, QueryRelationship, VarKey, Variable},
     tree,
 };
 
@@ -113,7 +113,7 @@ fn score_endpoint(
     bound_vars: &HashSet<u32>,
     graph: &Graph,
 ) -> (u32, bool, bool, u64) {
-    let key = (node.alias.id, node.alias.scope_id);
+    let key = node.alias.key();
     let mut score = 0u32;
     if bound_vars.contains(&node.alias.id) {
         score += 3;
@@ -142,10 +142,10 @@ fn score_endpoint(
 /// Collects the variables referenced by Filter nodes that are ancestors of the
 /// given node index, up to the first non-Filter/non-CondTraverse ancestor.
 ///
-/// Keyed on the full `(id, scope_id)` pair. Today the walk cannot leave the
+/// Keyed on the full `VarKey`. Today the walk cannot leave the
 /// traverse's own scope — every scope boundary (`Project` for `WITH`, `Apply`
 /// for `CALL {}`, `Unwind`, `Aggregate`) falls into the `_ => break` arm below,
-/// so bare ids would be unambiguous in practice. The pair is kept because two
+/// so bare ids would be unambiguous in practice. The full key is kept because two
 /// callers use this set to prove an endpoint's inline attributes are still
 /// enforced above before removing a scan that carried them, and `Variable::id`
 /// is only an index into its own scope's env: that proof should not silently
@@ -155,13 +155,13 @@ fn score_endpoint(
 struct FilteredVars {
     /// Referenced by a Filter *above* the chain: the predicate runs only after
     /// the whole traversal.
-    above: HashSet<(u32, u32)>,
+    above: HashSet<VarKey>,
     /// `above` plus the variables referenced by Filters between the chain's
     /// own operators, whose predicates already run mid-traversal.
-    all: HashSet<(u32, u32)>,
+    all: HashSet<VarKey>,
     /// Subset of `all`: variables with a top-level conjunct
     /// `v.prop = <expression free of variables>` (either operand order).
-    equality: HashSet<(u32, u32)>,
+    equality: HashSet<VarKey>,
 }
 
 /// Records `v` when `idx` is `v.prop = e` (or `e = v.prop`) and `e`
@@ -170,7 +170,7 @@ struct FilteredVars {
 fn collect_equalities(
     filter: &crate::parser::ast::QueryExpr<Variable>,
     idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-    out: &mut HashSet<(u32, u32)>,
+    out: &mut HashSet<VarKey>,
 ) {
     let node = filter.node(idx);
     match node.data() {
@@ -192,7 +192,7 @@ fn collect_equalities(
                     return None;
                 }
                 match prop.child(0).data() {
-                    ExprIR::Variable(v) => Some((v.id, v.scope_id)),
+                    ExprIR::Variable(v) => Some(v.key()),
                     _ => None,
                 }
             };
@@ -213,13 +213,13 @@ fn collect_filtered_vars(
 ) -> FilteredVars {
     fn collect(
         filter: &crate::parser::ast::QueryExpr<Variable>,
-        vars: &mut HashSet<(u32, u32)>,
-        equality: &mut HashSet<(u32, u32)>,
+        vars: &mut HashSet<VarKey>,
+        equality: &mut HashSet<VarKey>,
     ) {
         collect_equalities(filter, filter.root().idx(), equality);
         for idx in filter.root().indices::<Bfs>() {
             if let ExprIR::Variable(v) = filter.node(idx).data() {
-                vars.insert((v.id, v.scope_id));
+                vars.insert(v.key());
             }
         }
     }
@@ -396,12 +396,12 @@ fn is_planner_scan_subtree(
 fn planner_scan_alias(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
-) -> Option<(u32, u32)> {
+) -> Option<VarKey> {
     let mut node = plan.node(idx);
     loop {
         match node.data() {
             IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => {
-                return Some((n.alias.id, n.alias.scope_id));
+                return Some(n.alias.key());
             }
             IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
                 node = node.child(0);
@@ -450,7 +450,7 @@ fn swap_relationship(
     Arc::new(swapped)
 }
 
-/// Adds the `(id, scope_id)` of the variables a projection or a known
+/// Adds the `VarKey` of the variables a projection or a known
 /// `Argument` writes, and nothing it merely reads: a copy `(old, new)` writes
 /// `new`, and an aggregation writes its `names` and the `new` of its
 /// projections. The one list [`collect_output_pairs`] and
@@ -458,40 +458,40 @@ fn swap_relationship(
 /// what an operator outputs.
 fn projected_outputs(
     ir: &IR,
-    out: &mut HashSet<(u32, u32)>,
+    out: &mut HashSet<VarKey>,
 ) {
     match ir {
         IR::Project { exprs, copies } => {
-            out.extend(exprs.iter().map(|(v, _)| (v.id, v.scope_id)));
-            out.extend(copies.iter().map(|(_, new)| (new.id, new.scope_id)));
+            out.extend(exprs.iter().map(|(v, _)| v.key()));
+            out.extend(copies.iter().map(|(_, new)| new.key()));
         }
         IR::Aggregate {
             names, projections, ..
         } => {
-            out.extend(names.iter().map(|v| (v.id, v.scope_id)));
-            out.extend(projections.iter().map(|(_, new)| (new.id, new.scope_id)));
+            out.extend(names.iter().map(Variable::key));
+            out.extend(projections.iter().map(|(_, new)| new.key()));
         }
         IR::Argument(Some(vars)) => out.extend(vars.iter().copied()),
         _ => {}
     }
 }
 
-/// Adds the `(id, scope_id)` of the variables an IR node outputs through a
+/// Adds the `VarKey` of the variables an IR node outputs through a
 /// projection or a known `Argument`; the scope-aware counterpart of
 /// [`collect_output_aliases`] for the operators `get_variables` does not cover.
 /// A copy's source is listed as well: it is carried, and the pair keeps its
 /// scope, so it cannot be mistaken for a variable of the chain.
 fn collect_output_pairs(
     ir: &IR,
-    out: &mut HashSet<(u32, u32)>,
+    out: &mut HashSet<VarKey>,
 ) {
     projected_outputs(ir, out);
     match ir {
         IR::Project { copies, .. } => {
-            out.extend(copies.iter().map(|(old, _)| (old.id, old.scope_id)));
+            out.extend(copies.iter().map(|(old, _)| old.key()));
         }
         IR::Aggregate { projections, .. } => {
-            out.extend(projections.iter().map(|(old, _)| (old.id, old.scope_id)));
+            out.extend(projections.iter().map(|(old, _)| old.key()));
         }
         _ => {}
     }
@@ -525,7 +525,7 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
         IR::Project { .. } | IR::Aggregate { .. } | IR::Argument(Some(_)) => {
             let mut outputs = HashSet::new();
             projected_outputs(ir, &mut outputs);
-            aliases.extend(outputs.into_iter().map(|(id, _)| id));
+            aliases.extend(outputs.into_iter().map(|key| key.id));
         }
         IR::Unwind { var, .. } => {
             aliases.insert(var.id);
@@ -587,11 +587,7 @@ fn child_subtree_binds(
         }
         // `id` alone is ambiguous: it is an index into its own scope's env, so
         // the same number names different variables in different scopes.
-        if child
-            .get_variables()
-            .iter()
-            .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
-        {
+        if child.get_variables().iter().any(|v| v.key() == alias.key()) {
             binds = true;
         }
     }
@@ -613,10 +609,7 @@ fn subtree_may_bind(
         child
             .walk::<Bfs>()
             .any(|ir| matches!(ir, IR::Argument(None)))
-            || child
-                .get_variables()
-                .iter()
-                .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+            || child.get_variables().iter().any(|v| v.key() == alias.key())
     })
 }
 
@@ -673,18 +666,14 @@ fn select_var_len_scan_node(
         // end is the one scanned (or bound by an input). Dropping the `from`
         // scan unbinds `from`; rescanning `to` flips which end is bound.
         let attr_vars = collect_expr_scoped_variables(&relationship.attrs);
-        let attrs_read_from =
-            attr_vars.contains(&(relationship.from.alias.scope_id, relationship.from.alias.id));
-        let attrs_read_to =
-            attr_vars.contains(&(relationship.to.alias.scope_id, relationship.to.alias.id));
+        let attrs_read_from = attr_vars.contains(&relationship.from.alias.key());
+        let attrs_read_to = attr_vars.contains(&relationship.to.alias.key());
         // Only rewrite when the planner put its own scan for `from` here.
         if node.num_children() != 1 {
             continue;
         }
         let child_idx = node.child(0).idx();
-        if planner_scan_alias(optimized_plan, child_idx)
-            != Some((relationship.from.alias.id, relationship.from.alias.scope_id))
-        {
+        if planner_scan_alias(optimized_plan, child_idx) != Some(relationship.from.alias.key()) {
             continue;
         }
         let from = relationship.from.clone();
@@ -764,7 +753,7 @@ fn select_var_len_scan_node(
         let argument = argument_leaf_of(optimized_plan, child_idx);
         match &argument {
             Some(IR::Argument(None)) => continue,
-            Some(IR::Argument(Some(vars))) if vars.contains(&(to.alias.id, to.alias.scope_id)) => {
+            Some(IR::Argument(Some(vars))) if vars.contains(&to.alias.key()) => {
                 continue;
             }
             _ => {}
@@ -961,7 +950,7 @@ pub(super) fn select_scan_node(
         // set: when it binds none of the chain's endpoints, the Argument only
         // replays outer rows for correlation/multiplicity and a scan can be
         // inserted between the CT and the Argument.
-        let child_argument_vars: Option<Vec<(u32, u32)>> = if is_leaf {
+        let child_argument_vars: Option<Vec<VarKey>> = if is_leaf {
             None
         } else {
             match optimized_plan.node(bottom_idx).child(0).data() {
@@ -996,7 +985,7 @@ pub(super) fn select_scan_node(
         let arg_transparent = child_argument_vars.as_ref().is_some_and(|vars| {
             candidates
                 .iter()
-                .all(|(node, _, _)| !vars.contains(&(node.alias.id, node.alias.scope_id)))
+                .all(|(node, _, _)| !vars.contains(&node.alias.key()))
         });
         // The same holds for any other outer-context child (an `Unwind`, a
         // `Project`, an earlier clause's plan) that provably binds none of the
@@ -1027,16 +1016,12 @@ pub(super) fn select_scan_node(
                 // a wrapped or projected endpoint is never mistaken for a bare
                 // row source. Scope-aware, since a variable the child dropped
                 // can share its id with a chain alias in a later scope.
-                let mut bound_here: HashSet<(u32, u32)> = child
-                    .get_variables()
-                    .iter()
-                    .map(|v| (v.id, v.scope_id))
-                    .collect();
+                let mut bound_here: HashSet<VarKey> =
+                    child.get_variables().iter().map(Variable::key).collect();
                 for ir in child.walk::<Bfs>() {
                     collect_output_pairs(ir, &mut bound_here);
                 }
-                let binds_chain =
-                    |alias: &Variable| bound_here.contains(&(alias.id, alias.scope_id));
+                let binds_chain = |alias: &Variable| bound_here.contains(&alias.key());
                 let chain_aliases_bound = chain.iter().any(|&ct_idx| {
                     matches!(
                         optimized_plan.node(ct_idx).data(),
@@ -1580,9 +1565,8 @@ pub(super) fn select_scan_node(
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                         let filters = filters_of(optimized_plan, child_idx);
                         if has_planner_scan
-                            && planner_scan_alias(optimized_plan, child_idx).is_some_and(|alias| {
-                                alias != (scan_node.alias.id, scan_node.alias.scope_id)
-                            })
+                            && planner_scan_alias(optimized_plan, child_idx)
+                                .is_some_and(|alias| alias != scan_node.alias.key())
                         {
                             (vec![], filters)
                         } else {
@@ -1697,14 +1681,11 @@ mod tests {
         for (ir, source) in [(&project, &old), (&aggregate, &old)] {
             let mut pairs = HashSet::new();
             collect_output_pairs(ir, &mut pairs);
-            assert!(
-                pairs.contains(&(source.id, source.scope_id)),
-                "source carried"
-            );
+            assert!(pairs.contains(&source.key()), "source carried");
             let ids: HashSet<u32> = pairs
                 .iter()
-                .filter(|&&p| p != (source.id, source.scope_id))
-                .map(|&(id, _)| id)
+                .filter(|&&p| p != source.key())
+                .map(|key| key.id)
                 .collect();
             assert_eq!(collect_output_aliases(ir), ids);
         }

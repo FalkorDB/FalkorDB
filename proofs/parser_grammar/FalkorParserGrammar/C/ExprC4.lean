@@ -55,8 +55,11 @@ theorem np_skipP : ∀ n d, NP (skipP n d)
 
 theorem np_spRangeP : NP spRangeP := by have := np_hopP; unfold spRangeP; np_go
 
-theorem np_shortestP (F : Nat) : NP (shortestP F) := by
-  have := np_spTypes; have := np_skipP; have := np_spRangeP
+theorem np_spFilterP (pmap : P ET) (hm : NP pmap) (c : CT) : NP (spFilterP pmap c) := by
+  unfold spFilterP; split <;> np_go
+
+theorem np_shortestP (pmap : P ET) (hm : NP pmap) (F : Nat) : NP (shortestP pmap F) := by
+  have := np_spTypes; have := np_spFilterP pmap hm; have := np_spRangeP
   unfold shortestP; np_go
 
 theorem np_caseAlts (pe : PE) (hpe : NP pe) : ∀ n acc, NP (caseAlts pe n acc)
