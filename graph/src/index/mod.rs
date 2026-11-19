@@ -999,10 +999,10 @@ impl Drop for SpecHandle {
     fn drop(&mut self) {
         // No global lock, for the same reason as `OwnedIndex::drop`: nothing here
         // stops a timer on this thread (`RediSearch_DropIndex` hands the GC stop to
-        // the main thread) or touches a shared Redis object. Load-bearing too — a reader holding the per-graph read lock
-        // can be the last holder of the spec (a concurrent `drop_index_bg` swaps the
-        // index map under it), and taking the global lock there is the #726
-        // inversion.
+        // the main thread) or touches a shared Redis object. Load-bearing too — a
+        // reader holding the per-graph read lock can be the last holder of the spec
+        // (a concurrent `drop_index_bg` swaps the index map under it), and taking
+        // the global lock there is the #726 inversion.
         //
         // `DropIndex` invalidates the spec *and* releases the creation ref, so pass
         // the raw pointer via `into_raw` to avoid a second release from `OwnedIndex`.
