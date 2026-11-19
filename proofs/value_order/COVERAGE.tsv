@@ -33,13 +33,13 @@ graph/src/runtime/value.rs	Mul::mul	1132	NOT COVERED	arithmetic; outside the ord
 graph/src/runtime/value.rs	Div::div	1161	NOT COVERED	arithmetic; outside the order model
 graph/src/runtime/value.rs	Rem::rem	1191	NOT COVERED	arithmetic; outside the order model
 graph/src/runtime/value.rs	OrderedEnum::order	1217	PROVEN	Glue.OrderedEnum class: orderedEnum_order_eq, order_null_gt
-graph/src/runtime/value.rs	OrderedEnum::order	1219	PROVEN	orderTag: order_injective, no_tag_between_int_and_float, null_not_greatest (all 16 variants)
+graph/src/runtime/value.rs	OrderedEnum::order	1217	PROVEN	orderTag: order_injective, no_tag_between_int_and_float, null_not_greatest (all 16 variants)
 graph/src/runtime/value.rs	CompareValue::compare_value	1252	PROVEN	Glue.CompareValue class + eqVia/partialCmpVia: partialCmpVia_none_iff, partialCmpVia_some
 graph/src/runtime/value.rs	PartialEq::eq	1259	PROVEN	eqV: nan_eq_irreflexive, hash_not_consistent_with_eq, cmp_sane_eq_key (Value::eq is not an equivalence; GroupKey::eq no longer uses it since #2917)
 graph/src/runtime/value.rs	CompareValue::compare_value	1268	PROVEN	cmpV: cmp_sane_eq_key, sane_refl/sane_swap/sane_le_trans; nan_breaks_antisymmetry, mixed_numeric_not_transitive (compare_value is not a total order; sorting no longer uses it since #2912); Str=Nat; Path/Rel/temporal arms not modelled
 graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1318	PROVEN	Glue.ValueTypeOf class / W.valueOfType: valueTypeOf_eq, valueOfType_any, valueOfType_self
 graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1325	NOT COVERED	type test; not modelled
-graph/src/runtime/value.rs	ValueGetType::get_type	1369	PROVEN	Glue.ValueGetType class / W.getType: valueGetType_eq, getType_concrete
+graph/src/runtime/value.rs	ValueGetType::get_type	1371	PROVEN	Glue.ValueGetType class / W.getType: valueGetType_eq, getType_concrete
 graph/src/runtime/value.rs	ValueGetType::get_type	1375	NOT COVERED	type reflection; not modelled
 graph/src/runtime/value.rs	Value::name	1401	PROVEN	Glue.W.name (Edge/Vectorf32 since #2954): name_eq_iff_order_eq (name is a bijective function of the variant)
 graph/src/runtime/value.rs	Value::to_json_string	1423	PROVEN	Json.toJsonString: toJsonString_eq

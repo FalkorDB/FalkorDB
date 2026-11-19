@@ -25,9 +25,9 @@ import RuntimeCore.Accessors
   query fails iff some constraint that is not FAILED (OPERATIONAL or, since
   #3854, UNDER CONSTRUCTION) has a failing check (`enforce_operational`,
   `enforce_underConstruction`, `enforce_skips_failed`).
-* `commit_spec` — `Pending::commit` (:1338), graph operations uninterpreted
+* `commit_spec` — `Pending::commit` (:1367), graph operations uninterpreted
   (`GOps`): the statistics it adds are `|created_nodes|`,
-  `|created_rel_types|`, `Σ|remove_labels|`, the attribute writers' counts,
+  `|created_rel_types|`, `staged_labels_removed + Σ|remove_labels|` (#3459), the attribute writers' counts,
   `|deleted_nodes|` and the implicit + actually-deleted explicit edges;
   `deleted_relationships` becomes the implicit ∪ actually-deleted edges, the
   explicit set is handed to both deleters, and the batch's index documents are
@@ -336,9 +336,11 @@ def stCancelTypes (o : GOps G) (p : P) (c : CS G) : CS G :=
 
 def stLabels (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   let g3 := if p.setL = [] then c.g else o.setLabels c.g (flatten p.setL).1 (flatten p.setL).2
-  if p.remL = [] then some { c with g := g3 }
+  -- `labels_removed += self.staged_labels_removed` (pending.rs:1398, #3459)
+  let s3 : Stats := { c.s with labelsRemoved := c.s.labelsRemoved + p.stagedRem }
+  if p.remL = [] then some { c with g := g3, s := s3 }
   else some { c with g := o.removeLabels g3 (flatten p.remL).1 (flatten p.remL).2,
-                     s := { c.s with labelsRemoved := c.s.labelsRemoved + (flatten p.remL).1.length } }
+                     s := { s3 with labelsRemoved := s3.labelsRemoved + (flatten p.remL).1.length } }
 
 def stNewN (o : GOps G) (p : P) (c : CS G) : CS G :=
   if p.newN = [] then c else
@@ -369,7 +371,7 @@ def stExplicit (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
 def stDelete (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   (stDelNodes o p c).bind fun c9 => (stImplicit o p c9).bind (stExplicit o p)
 
-/-- `Pending::commit` (:1338): once every write is done, `apply_index_writes` (:1465, once
+/-- `Pending::commit` (:1362): once every write is done, `apply_index_writes` (:1465, once
 for the whole `Commit`, since #3307) and then `enforce_constraints` (:1471, fn :1484) on that graph;
 the index-document absorb (:1478) is `PD.absorb_spec`. -/
 def finish (o : GOps G) (p : P) (c : CS G) : Option (P × G × Stats) :=
@@ -395,7 +397,7 @@ theorem stRels_s (o : GOps G) (p : P) (c c' : CS G) (h : stRels o p c = some c')
   · obtain ⟨g, -, rfl⟩ := Option.map_eq_some_iff.1 h; exact ⟨rfl, rfl, rfl⟩
 
 theorem stLabels_s (o : GOps G) (p : P) (c c' : CS G) (h : stLabels o p c = some c') :
-    c'.s = { c.s with labelsRemoved := c.s.labelsRemoved + (p.remL.map (·.2.length)).sum } ∧
+    c'.s = { c.s with labelsRemoved := c.s.labelsRemoved + p.stagedRem + (p.remL.map (·.2.length)).sum } ∧
       c'.imp = c.imp ∧ c'.act = c.act := by
   have hf := (flatten_spec p.remL).1
   unfold stLabels at h; dsimp only at h; split at h
@@ -459,7 +461,7 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
     (h : commit o p g0 s0 = some r) :
     r.2.2.nodesCreated = s0.nodesCreated + p.created.length ∧
     r.2.2.relsCreated = s0.relsCreated + p.relTypes.length ∧
-    r.2.2.labelsRemoved = s0.labelsRemoved + (p.remL.map (·.2.length)).sum ∧
+    r.2.2.labelsRemoved = s0.labelsRemoved + p.stagedRem + (p.remL.map (·.2.length)).sum ∧
     r.2.2.nodesDeleted = s0.nodesDeleted + p.deletedN.length ∧
     (∃ imp act : List Nat, r.1.deletedR = imp.foldl sins [] ++ act ∧
       r.2.2.relsDeleted = s0.relsDeleted + imp.length + act.length) ∧
@@ -610,7 +612,7 @@ label changes nothing but still trips it. -/
 theorem nodeHasChanges_overapprox :
     ∃ p : P, nodeHasChanges p 0 = true ∧
       ∀ l, Labels.overlay (fun _ => true) ⟨(fget p.setL 0).getD [], (fget p.remL 0).getD []⟩ l = true := by
-  refine ⟨(⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], []⟩ : P), by decide, ?_⟩
+  refine ⟨(⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], [], 0⟩ : P), by decide, ?_⟩
   intro l; simp [Labels.overlay, fget]
 
 /-- `(fget m id).isSome` is key membership. -/
