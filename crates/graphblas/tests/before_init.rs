@@ -3,8 +3,9 @@
 use graphblas::*;
 
 #[test]
-fn settings_fail_before_init() {
+fn constructors_fail_before_init() {
     assert!(!is_initialized());
+    assert!(Matrix::<bool>::new(1, 1).is_err());
     assert!(set_nthreads(1).is_err());
 }
 

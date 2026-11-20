@@ -1,4 +1,4 @@
-//! Element types: the Rust types a `Matrix<T>`,
+//! Element types: the Rust types a [`Matrix<T>`](crate::Matrix),
 //! `Vector<T>` or `Scalar<T>` can carry,
 //! and how each reaches the type-suffixed C entry points
 //! (`GrB_Matrix_setElement_BOOL`, `..._UDT`, ...).
