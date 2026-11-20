@@ -7,17 +7,17 @@ path (child indices from the root), which is exactly what `node_path` computes.
 | here | there |
 | --- | --- |
 | `IRk`, `PT`, `getAt` | `IR`, `DynTree<IR>`, `plan.node(idx)` |
-| `scoreEndpoint`, `startKeyLt` | `score_endpoint` 106, the start-point comparator in `select_scan_node` 911-931 |
-| `Ex`, `exprVars`, `propertyVar`, `collectEqualities` | `collect_equalities` 171 (#3821) |
-| `collectFilteredVars`, `spineVars`, `eqLoop`, `spineEqs`, `filteredVars` | `collect_filtered_vars` 211 (`above` / `all` / `equality`), its `collect` 215 (= `filterVars`, `filterEqOf`) |
-| `makeScanSubtree`, `filtersOf` | `make_scan_subtree` 276, `filters_of` 312 |
+| `scoreEndpoint`, `startKeyLt` | `score_endpoint` 110, the start-point comparator in `select_scan_node` 911-931 |
+| `Ex`, `exprVars`, `propertyVar`, `collectEqualities` | `collect_equalities` 170 (#3821) |
+| `collectFilteredVars`, `spineVars`, `eqLoop`, `spineEqs`, `filteredVars` | `collect_filtered_vars` 210 (`above` / `all` / `equality`), its `collect` 214 (= `filterVars`, `filterEqOf`) |
+| `makeScanSubtree`, `filtersOf` | `make_scan_subtree` 276 (argument a whole `DynTree` since #3594), `filters_of` 312 |
 | `argumentLeafOf` | `argument_leaf_of` 338 |
 | `inMergeMatchBranch` | `in_merge_match_branch` 357 |
-| `scanDepth`, `isPlannerScan`, `plannerScanAlias`, `plannerScanIdx` | `is_planner_scan_subtree` 377, `planner_scan_alias` 396, `planner_scan_idx` 415 |
-| `collectOutputAliases` | `collect_output_aliases` 453 |
-| `nodePath`, `resolvePath` | `node_path` 504, `resolve_path` 521 |
-| `childSubtreeBinds` | `child_subtree_binds` 537 |
-| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 594; `subtreeMayBind`: `subtree_may_bind` 568 |
+| `scanDepth`, `isPlannerScan`, `plannerScanAlias`, `plannerScanIdx` | `is_planner_scan_subtree` 377, `planner_scan_alias` 396, `planner_scan_idx` 417 |
+| `projectedOutputs`, `copiesOf`, `collectOutputPairs`, `collectOutputAliases` | `projected_outputs` 459, `collect_output_pairs` 484, `collect_output_aliases` 502 (#3594) |
+| `nodePath`, `resolvePath` | `node_path` 542, `resolve_path` 559 |
+| `childSubtreeBinds` | `child_subtree_binds` 575 |
+| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 632; `subtreeMayBind`: `subtree_may_bind` 606 |
 
 Table lines re-mapped to PR #3821 (f71981fa3), which adds `collect_equalities` and the
 `has_equality` tie-break; line ranges inside older docstrings cite the revision they were written for.
@@ -36,8 +36,8 @@ inductive IRk
   | condVarLen
   | pathBuilder
   | merge
-  | project (outs : List Var)
-  | aggregate (names : List Var)
+  | project (exprs : List Var) (copies : List (Var × Var))   -- a copy is `(old, new)`
+  | aggregate (names : List Var) (projections : List (Var × Var))
   | unwind (v : Var)
   | indexScan (alias : Var)
   | fulltextScan (node : Var) (score : Option Var)
@@ -379,12 +379,14 @@ theorem argumentLeafOf_spec : ∀ (t : PT) (a : IRk), argumentLeafOf t = some a 
 
 /-! ## `make_scan_subtree` and `filters_of` -/
 
-/-- `make_scan_subtree` (`select_scan_node.rs:214-237`): scan, optional `Argument` leaf, optional
-    `IncludePending`, then the salvaged `filters` wrapped innermost-first (`filters[0]` outermost). -/
+/-- `make_scan_subtree` (`select_scan_node.rs:276-298`): scan, optional subtree beneath it (since
+    #3594 a whole `DynTree`: an `Argument` leaf, or an outer `Unwind`/`Project` subtree, attached with
+    `push_child_tree`), optional `IncludePending`, then the salvaged `filters` wrapped innermost-first
+    (`filters[0]` outermost). -/
 def makeScanSubtree (alias : Var) (labels : List Nat) (pending : Bool)
-    (argument : Option IRk) (filters : List (List Var)) : PT :=
+    (argument : Option PT) (filters : List (List Var)) : PT :=
   let scan := if labels.isEmpty then IRk.allNodeScan alias else .labelScan alias labels
-  let s0 := PT.node scan (argument.toList.map (fun a => PT.node a []))
+  let s0 := PT.node scan argument.toList
   let s1 := if pending then PT.node .includePending [s0] else s0
   filters.foldr (fun vs t => PT.node (.filter vs) [t]) s1
 
@@ -409,7 +411,7 @@ theorem plannerScanAlias_filter (alias : Var) (vs : List Var) (t : PT) (ht : pla
 /-- **PROVEN**: `make_scan_subtree` builds exactly the shape the planner-scan walkers accept, with the
 node's alias at the bottom, whatever filters are salvaged onto it. -/
 theorem makeScanSubtree_planner (alias : Var) (labels : List Nat) (pend : Bool)
-    (arg : Option IRk) (fs : List (List Var)) :
+    (arg : Option PT) (fs : List (List Var)) :
     plannerScanAlias (makeScanSubtree alias labels pend arg fs) = some alias := by
   unfold makeScanSubtree
   have hs : ∀ cs, plannerScanAlias (PT.node (if labels.isEmpty then IRk.allNodeScan alias else .labelScan alias labels) cs) = some alias := by
@@ -428,9 +430,9 @@ theorem makeScanSubtree_planner (alias : Var) (labels : List Nat) (pend : Bool)
       exact ht
   have h1 : plannerScanAlias (if pend then PT.node .includePending
       [PT.node (if labels.isEmpty then IRk.allNodeScan alias else .labelScan alias labels)
-        (arg.toList.map (fun a => PT.node a []))] else
+        arg.toList] else
       PT.node (if labels.isEmpty then IRk.allNodeScan alias else .labelScan alias labels)
-        (arg.toList.map (fun a => PT.node a []))) = some alias := by
+        arg.toList) = some alias := by
     split
     · exact hp _ (hs _)
     · exact hs _
@@ -450,11 +452,22 @@ theorem filtersOf_wrap (fs : List (List Var)) (t : PT) :
     (the scan itself and `IncludePending` add none). -/
 theorem filtersOf_makeScanSubtree (alias : Var) (labels : List Nat) (pend : Bool) (v : Option (List Var))
     (fs : List (List Var)) :
-    filtersOf (makeScanSubtree alias labels pend (some (.argument v)) fs) = fs ∧
+    filtersOf (makeScanSubtree alias labels pend (some (.node (.argument v) [])) fs) = fs ∧
     filtersOf (makeScanSubtree alias labels pend none fs) = fs := by
   unfold makeScanSubtree
   rw [filtersOf_wrap, filtersOf_wrap]
   constructor <;> (cases pend <;> cases labels.isEmpty <;> simp [filtersOf])
+
+/-- **PROVEN** (#3594, the argument is a whole subtree): `filters_of` walks through the new scan into
+    the subtree beneath it (the scan has one child), so the rebuilt subtree's spine carries the
+    salvaged filters followed by the Filters on that subtree's own spine; the scan and
+    `IncludePending` add none. -/
+theorem filtersOf_makeScanSubtree_tree (alias : Var) (labels : List Nat) (pend : Bool) (t : PT)
+    (fs : List (List Var)) :
+    filtersOf (makeScanSubtree alias labels pend (some t) fs) = fs ++ filtersOf t := by
+  unfold makeScanSubtree
+  rw [filtersOf_wrap]
+  cases pend <;> cases labels.isEmpty <;> simp [filtersOf]
 
 /-! ## Ancestor walks -/
 
@@ -649,21 +662,81 @@ theorem inMergeLoop_spec (l : List (IRk × Nat × Nat)) :
 
 /-! ## `collect_output_aliases` and `child_subtree_binds` -/
 
+/-- `projected_outputs` (`select_scan_node.rs:459-477`, #3594): the `(id, scope)` a projection or a
+    known `Argument` writes — a `Project`'s expression aliases and each copy's `new` end, an
+    `Aggregate`'s names and each projection's `new` end, a known `Argument`'s variables. -/
+def projectedOutputs : IRk → List Var
+  | .project es cs => es ++ cs.map Prod.snd
+  | .aggregate ns ps => ns ++ ps.map Prod.snd
+  | .argument (some vs) => vs
+  | _ => []
+
+/-- `collect_output_pairs` (`select_scan_node.rs:484-498`, #3594): `projected_outputs` plus each
+    copy's source `old`, carried with its scope. -/
+def copiesOf : IRk → List (Var × Var)
+  | .project _ cs => cs
+  | .aggregate _ ps => ps
+  | _ => []
+
+def collectOutputPairs (ir : IRk) : List Var :=
+  projectedOutputs ir ++ (copiesOf ir).map Prod.fst
+
+/-- `collect_output_aliases` (`select_scan_node.rs:502-535`); since #3594 a `Project`, `Aggregate` or
+    known `Argument` contributes the ids of `projected_outputs`. -/
 def collectOutputAliases : IRk → List Nat
   | .allNodeScan a | .labelScan a _ | .indexScan a => [a.1]
   | .fulltextScan n s => n.1 :: s.toList.map (·.1)
-  | .project outs => outs.map (·.1)
-  | .aggregate names => names.map (·.1)
+  | .project es cs => (projectedOutputs (.project es cs)).map (·.1)
+  | .aggregate ns ps => (projectedOutputs (.aggregate ns ps)).map (·.1)
   | .unwind v => [v.1]
-  | .argument (some vs) => vs.map (·.1)
+  | .argument (some vs) => (projectedOutputs (.argument (some vs))).map (·.1)
   | _ => []
 
 theorem collectOutputAliases_spec (a : Var) (vs : List Var) (s : Option Var) :
     collectOutputAliases (.labelScan a []) = [a.1] ∧ collectOutputAliases (.indexScan a) = [a.1] ∧
-    collectOutputAliases (.project vs) = vs.map (·.1) ∧ collectOutputAliases (.argument none) = [] ∧
+    collectOutputAliases (.project vs []) = vs.map (·.1) ∧ collectOutputAliases (.argument none) = [] ∧
     collectOutputAliases (.argument (some vs)) = vs.map (·.1) ∧
     collectOutputAliases (.fulltextScan a s) = a.1 :: s.toList.map (·.1) ∧
-    collectOutputAliases .other = [] := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    collectOutputAliases .other = [] := by
+  simp [collectOutputAliases, projectedOutputs]
+
+/-- **PROVEN** (#3594): a copy `(old, new)` contributes its `new` end and never its source; an
+    aggregation contributes its names and its copies' `new` ends. -/
+theorem collectOutputAliases_aggregate (es ns : List Var) (cs : List (Var × Var)) :
+    collectOutputAliases (.project es cs) = es.map (·.1) ++ cs.map (·.2.1) ∧
+    collectOutputAliases (.aggregate ns cs) = ns.map (·.1) ++ cs.map (·.2.1) := by
+  simp [collectOutputAliases, projectedOutputs]
+
+/-- **PROVEN** (#3594): on every operator that projects (`Project`, `Aggregate`, known `Argument`)
+    `collect_output_aliases` is exactly the ids of `projected_outputs`, so the id helper and the
+    scoped helper cannot disagree about what such an operator outputs. -/
+theorem collectOutputAliases_projected (ir : IRk) (h : projectedOutputs ir ≠ []) :
+    collectOutputAliases ir = (projectedOutputs ir).map (·.1) := by
+  cases ir with
+  | argument v => cases v with
+    | none => simp [projectedOutputs] at h
+    | some vs => rfl
+  | project | aggregate => rfl
+  | _ => simp [projectedOutputs] at h
+
+/-- **PROVEN** (#3594): `collect_output_pairs` is `projected_outputs` plus the copies' sources, and
+    a pair it lists either is a projected output (whose id `collect_output_aliases` reports) or is the
+    source of a copy, with its scope. The Rust unit test
+    `output_aliases_cover_copies_of_projections_and_aggregations` checks one instance. -/
+theorem collectOutputPairs_spec (ir : IRk) (v : Var) :
+    (∀ w ∈ projectedOutputs ir, w ∈ collectOutputPairs ir) ∧
+    (v ∈ collectOutputPairs ir →
+      (v ∈ projectedOutputs ir ∧ (projectedOutputs ir ≠ [] → v.1 ∈ collectOutputAliases ir)) ∨
+      ∃ new : Var, (v, new) ∈ copiesOf ir) := by
+  refine ⟨fun w hw => List.mem_append_left _ hw, fun hv => ?_⟩
+  simp only [collectOutputPairs, List.mem_append] at hv
+  rcases hv with hv | hv
+  · refine Or.inl ⟨hv, fun hne => ?_⟩
+    rw [collectOutputAliases_projected ir hne]
+    exact List.mem_map.mpr ⟨v, hv, rfl⟩
+  · right
+    obtain ⟨⟨o, n⟩, hm, rfl⟩ := List.mem_map.mp hv
+    exact ⟨n, hm⟩
 
 mutual
 def PT.walk : PT → List IRk

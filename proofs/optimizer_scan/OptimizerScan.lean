@@ -32,6 +32,7 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1415-1469` (`id as u64` at 1428) |
 | `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1470-1480` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
 | `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1783` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
+| `IdSeek.idMax` (`pre2979_seek` before PR #2979) | `runtime/runtime.rs:1439`: the loop starts at `node_id_bound().saturating_sub(1)`; `seek_eq_pre2979` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
 | `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-295` |
@@ -193,8 +194,27 @@ Scan selection (`ScanOrder.lean`):
   `vl_reverse_sound` (reversing a var-length leaf binds the same pairs).
   Remark (not a bug): `score_bound_not_dominant` — a filtered+attributed+labelled endpoint (5)
   outscores a bare bound one (3), contrary to the "bound has highest priority" doc comment.
-- Hazard: `prune_all_node_scan_child` prunes the AllNodeScan *subtree*; `prune_sound` assumes
-  the scan is a leaf (no live query found where it is not).
+- Hazard (resolved by #3594): `prune_all_node_scan_child` pruned the AllNodeScan *subtree*;
+  `prune_sound` assumed the scan is a leaf. #3594 re-attaches the scan's children beneath the edge
+  scan (`utilize_index.rs:1113-1122`); `Cleanup.prune_sound_rows` proves the rows are kept per input row.
+
+## PR #3594 (traversal after UNWIND/WITH scans its start node per row)
+- `make_scan_subtree` takes a whole subtree beneath the scan (`ScanTree.makeScanSubtree` with
+  `Option PT`; `filtersOf_makeScanSubtree_tree`).
+- `projected_outputs`/`collect_output_pairs` (new) and `collect_output_aliases`: a copy `(old, new)`
+  outputs `new`, an aggregation its names and copies (`collectOutputAliases_spec`,
+  `collectOutputAliases_aggregate`, `collectOutputAliases_projected`, `collectOutputPairs_spec`).
+- `select_scan_node`'s outer-context child moved beneath the new scan (`transparent_child`, lines
+  1005-1057) only adds, to the seed, ids that subtree binds beneath the scan (minus the chain's ids
+  when transparent, lines 1198-1224): `ScanOrder.initialBoundOuter`, `initialBoundOuter_none`,
+  `outerSeed_transparent_no_chain`, `initialBoundOuter_wellScoped`. The planner-scan path (`has_planner_scan`)
+  is untouched, so `Salvage.premise_fails`/`salvage_loses_row` (#2972) still describe it
+  (`rebuilt_drops_unwind` now with `argument_leaf_of(..).map(tree!)`).
+- The no-swap leaf rewrite salvages Filters only from a discarded planner scan (`if has_planner_scan`,
+  `select_scan_node.rs:1564`, `17547791c`); a transparent child keeps its own beneath the new scan:
+  `Salvage.leafSteps3594`, `leafSteps3594_planner`, `leafSteps3594_transparent_wellScoped`,
+  `transparent_filters_once` (before, `UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z
+  MATCH (d:L)-[:R]->() RETURN count(*)` ran the copied filter on `z`: 0 rows instead of 2).
 
 ## Re-target to 8743953a8 (#2390 d2c42e032: plan an inline property map once)
 The planner now lowers inline attributes to `IR::Filter`s and strips them from the pattern; the

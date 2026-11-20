@@ -2118,3 +2118,48 @@ class test_udf_javascript():
 
         res = self.graph.query("MATCH (a {id:0}) RETURN lib_nocfg.n(a)").result_set
         self.env.assertEqual(res, [[[1]]])
+
+
+class testUDFShutdown():
+    """A UDF run on the Redis main thread (GRAPH.QUERY inside MULTI) leaves
+    the main thread's QuickJS state alive until exit. Dropping it must free
+    the cached functions before the runtime, or QuickJS aborts during
+    SHUTDOWN (signal 6)."""
+
+    def __init__(self):
+        # A moduleArgs value unique to this class, so RLTest starts a fresh
+        # server that this test is free to shut down.
+        self.env, self.db = Env(moduleArgs="MAX_INFO_QUERIES 1001")
+        self.conn = self.env.getConnection()
+
+    def test_shutdown_after_main_thread_udf(self):
+        # Only meaningful when RLTest owns the server process.
+        proc = getattr(self.env.envRunner, 'masterProcess', None)
+        if proc is None:
+            self.env.skip()
+            return
+
+        self.db.udf_load("sd", "falkor.register('f', function(x) { return x; });")
+        pipe = self.conn.pipeline(transaction=True)
+        pipe.execute_command("GRAPH.QUERY", "g", "RETURN sd.f(1)")
+        res = pipe.execute()
+        self.env.assertEqual(res[0][1][0][0], 1)
+
+        try:
+            self.conn.execute_command("SHUTDOWN", "NOSAVE")
+        except Exception:
+            # SHUTDOWN closes the socket before any reply is read; the exit
+            # status checked below is what proves the shutdown was clean.
+            pass
+
+        deadline = time.time() + 30
+        while time.time() < deadline and proc.poll() is None:
+            time.sleep(0.1)
+        if proc.poll() is None:
+            proc.kill()
+        self.env.assertEqual(proc.poll(), 0)
+
+        # The server is gone; keep RLTest from trying to talk to it on the way out.
+        self.env.envRunner.masterProcess = None
+        self.env.envRunner.envIsUp = False
+        self.env.envRunner.envIsHealthy = False

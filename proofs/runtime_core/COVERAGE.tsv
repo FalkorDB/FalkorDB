@@ -22,7 +22,7 @@ graph/src/runtime/runtime.rs	children_to_recurse	771	PROVEN	RunBatch.childrenToR
 graph/src/runtime/runtime.rs	run_nested_plan	797	PROVEN	Plan.runNested: runNested_spec
 graph/src/runtime/runtime.rs	run_batch	829	PROVEN	RunBatch.runBatch_eq_rec, RunBatch.runBatch_ok_single
 graph/src/runtime/runtime.rs	build_batch_op	862	PROVEN	Plan.buildOp/popOrOnce/popOrArgument: buildOp_spec; RunBatch.runBatch_eq_rec
-graph/src/runtime/runtime.rs	evaluate_id_filter	1428	PROVEN	reused: proofs/optimizer_scan OptimizerScan.IdSeek.fold_some, go_eq_fold, seek_sound, empty_graph_seek_none (#3394: no range on a graph with no nodes)
+graph/src/runtime/runtime.rs	evaluate_id_filter	1428	PROVEN	reused: proofs/optimizer_scan OptimizerScan.IdSeek.fold_some, go_eq_fold, seek_sound, empty_graph_seek_none, seek_eq_pre2979 (#3394: no range on a graph with no nodes; #2979: initial max = node_id_bound - 1)
 graph/src/runtime/runtime.rs	set_pending_node_attr	1496	PROVEN	RelAccessors.setPendingAttr: setPendingAttr_spec
 graph/src/runtime/runtime.rs	set_pending_relationship_attr	1515	PROVEN	RelAccessors.setPendingAttr (rel tables): setPendingAttr_spec
 graph/src/runtime/runtime.rs	memo_lookup	1532	PROVEN	Accessors.memoLookup_ok

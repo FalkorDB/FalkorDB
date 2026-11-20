@@ -12,7 +12,7 @@ use crate::error::Result;
 use crate::hash::{hash_file, hash_tree, sha256_hex};
 use crate::recipes::Ctx;
 use crate::recipes::graphblas::PREJIT_DIR;
-use crate::util::is_prejit_kernel;
+use crate::util::{env_opt, is_prejit_kernel};
 
 /// Hash of the recipe sources, embedded by build.rs, so a flag change in Rust
 /// is a key change.
@@ -62,6 +62,15 @@ impl Ctx<'_> {
         m.set("cc", &self.toolchain.cc_version);
         m.set("cxx", &self.toolchain.cxx_version);
         m.set("openmp", self.toolchain.openmp.key());
+        // The oldest macOS the archives may run on: cmake and rustc read it from
+        // the environment and stamp it into every object. Read here rather than
+        // in toolchain.rs, which feeds RECIPE_HASH: added only when set on
+        // macOS, every other key -- all of Linux -- stays what it was.
+        if cfg!(target_os = "macos")
+            && let Some(min) = env_opt("MACOSX_DEPLOYMENT_TARGET")
+        {
+            m.set("macos_deployment_target", min);
+        }
         match dep {
             Dep::GraphBlas => {
                 let patch = self.root.join("build/graphblas/GB_control.patch");

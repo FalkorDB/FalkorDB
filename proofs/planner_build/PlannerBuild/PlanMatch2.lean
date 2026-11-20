@@ -906,6 +906,32 @@ theorem buildPatternSubPlan_restores (st : MSt) (wi : WI) (comps : List Comp) (a
     (buildPatternSubPlan st wi comps aa).2 = st ∧
     (buildPatternSubPlan st wi comps aa).1 = aa (planMatch st wi comps none).1 := ⟨rfl, rfl⟩
 
+/-! ### #3340: the `Argument` payload (`argument_vars`, mod.rs:1221-1223)
+
+The runtime ignores the payload (`IR::Argument(_)`), so `addArgs` and the row
+semantics are unchanged; only `select_scan_node` reads it. Here: the payload
+is the outer row's bound variables, read with the pattern's own variables not
+yet marked visited. -/
+
+/-- `argument_vars`: everything visited so far. -/
+def argumentVars (st : MSt) : List V := st.visited
+
+theorem argumentVars_spec (st : MSt) (v : V) : v ∈ argumentVars st ↔ st.bound v = true := by
+  simp [argumentVars, MSt.bound]
+
+/-- `build_pattern_sub_plan` with the payload: `add_argument_to_leaves(plan, Some(argument_vars()))`
+after `visited` is restored. -/
+def buildPatternSubPlanV (st : MSt) (wi : WI) (comps : List Comp) (aa : List V → MP → MP) : MP × MSt :=
+  (aa (argumentVars st) (planMatch st wi comps none).1, st)
+
+/-- The sub-plan's taps carry exactly the outer bound variables (not the pattern's
+own, which `plan_match` marks visited), and `visited`/`verified_labels` are restored. -/
+theorem buildPatternSubPlanV_payload (st : MSt) (wi : WI) (comps : List Comp) (aa : List V → MP → MP) :
+    (buildPatternSubPlanV st wi comps aa).2 = st ∧
+    (buildPatternSubPlanV st wi comps aa).1 = aa st.visited (planMatch st wi comps none).1 ∧
+    (buildPatternSubPlanV st wi comps (fun _ => aa [])).1 =
+      (buildPatternSubPlan st wi comps (aa [])).1 := ⟨rfl, rfl, rfl⟩
+
 
 /-! ### #2558: `MATCH (a)-[:R]->(b)-[*]->(c {id: …})` — the walk on the anchored `c` leads -/
 
