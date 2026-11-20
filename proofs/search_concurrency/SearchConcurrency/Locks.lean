@@ -4,9 +4,10 @@
 | here | there |
 | --- | --- |
 | `Lock.gil < .graph < .indexer` | `graph/src/locks.rs:9` ordering rule; `query_session.rs:30` `Mode` |
-| `writerProg`, `pollWriterProg` | `QuerySession::escalate` (`query_session.rs:399`): release R, then `acquire_write` (`:460`): per slice GIL, timed W; since #3816 the `WriterGate` closes after two misses |
-| `gate`, `rank3816`, `gateReaderProg` | #3816: `WriterGate` (`:569-577`), `read_past_gate` (`:524`) |
+| `writerProg`, `pollWriterProg` | `QuerySession::escalate` (`query_session.rs:420`): release R, then `acquire_write` (`:481`): per slice GIL, timed W; since #3816 the `WriterGate` closes after two misses |
+| `gate`, `rank3816`, `gateReaderProg` | #3816: `WriterGate` (`:590-598`), `read_past_gate` (`:545`) |
 | `inlineWriterProg`             | `QuerySession::begin_writer` (`:205`): GIL, W |
+| `retryWriterProg`              | `QuerySession::begin_writer_checked` (`:235`, #3559) from `execute_query_write`'s / `graph_bulk_insert`'s retry: `begin_with`, then `escalate`; `authorize_write`'s registry check runs under each slice's GIL |
 | `populateProg`                 | `populate_index_batch` (`graph.rs:562`): indexer lock only |
 | `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3799`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
@@ -106,6 +107,15 @@ def badEscalateProg : List Op := [.acq graphR, .acq gil]
 theorem all_programs_ordered :
     okProg [] writerProg ∧ okProg [] inlineWriterProg ∧ okProg [] populateProg ∧
     okProg [] dropIndexBgProg ∧ okProg [] forkProg ∧ okProg [] telemetryProg := by decide
+
+/-- #3559: a queued write that keeps going stale reruns from `begin_writer_checked` on its worker:
+`begin_with` (read lock), then `escalate` — drop the read lock, GIL, `authorize_write`'s registry
+check under that GIL hold, the write lock — then the commit's indexer lock. -/
+def retryWriterProg : List Op :=
+  [.acq graphR, .rel graphR, .acq gil, .acq registry, .rel registry, .acq graphR,
+   .acq indexer, .rel indexer, .rel graphR, .rel gil]
+
+theorem retry_writer_ordered : okProg [] retryWriterProg = true := by decide
 
 theorem bad_escalate_rejected : okProg [] badEscalateProg = false := by decide
 
@@ -220,6 +230,9 @@ theorem gate_programs_ordered :
     okProgBy rank3816 [] writerProg ∧ okProgBy rank3816 [] inlineWriterProg ∧
     okProgBy rank3816 [] telemetryProg ∧ okProgBy rank3816 [] forkProg ∧
     okProgBy rank3816 [] writerClosedScanProg ∧ okProgBy rank3816 [] restoreProg := by decide
+
+/-- …and under the #3816 rank (gate first), as `escalate` with its first slice taking the lock. -/
+theorem retry_writer_ordered_3816 : okProgBy rank3816 [] retryWriterProg = true := by decide
 
 /-- A reader waiting at the closed gate holds no lock, so the gate's writer, which needs
 the GIL and the write lock, never waits on it (a gate reader cannot close a cycle). -/
