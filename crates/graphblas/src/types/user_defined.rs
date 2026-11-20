@@ -114,6 +114,8 @@ macro_rules! __user_type_impl {
         // SAFETY: the type handle is created with `size_of::<$t>()`, and
         // every method forwards to the `_UDT` entry point.
         unsafe impl $crate::GrbType for $t {
+            type Kind = Self;
+
             const NAME: &'static str = stringify!($t);
 
             fn grb_type() -> $crate::__sys::GrB_Type {

@@ -22,7 +22,7 @@ use crate::{
     sealed::{Sealed, Token},
     settings::{IntegerWidth, Sparsity},
     sys::{self, GrB_Index, GrB_Info, GrB_Vector, GxB_Option_Field},
-    types::{Accepts, BuiltinType, GrbType},
+    types::{Accepts, BuiltinType, GrbType, PassesThrough, Produces},
 };
 
 /// `GrB_Vector_size` on a raw handle.
@@ -436,11 +436,11 @@ impl<T: GrbType> fmt::Debug for Vector<T> {
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn mxv<'a, A, U, C, X, Y>(
+pub fn mxv<'a, A, U, C, X, Y, Z>(
     w: &mut Vector<C>,
     mask: Mask<'a, GrB_Vector>,
     accum: Option<&BinaryOp<C, C, C>>,
-    semiring: &Semiring<X, Y, C>,
+    semiring: &Semiring<X, Y, Z>,
     a: &Matrix<A>,
     u: U,
     desc: Desc,
@@ -451,10 +451,11 @@ where
     U: Operand<'a, C, GrB_Vector>,
     X: Accepts<A>,
     Y: Accepts<U::Elem>,
+    Z: Produces<C>,
 {
     run(w.raw, &mask, desc, |w, m, d| {
-        // SAFETY: live handles whose types match the semiring's domains;
-        // aliasing allowed.
+        // SAFETY: live handles whose types match the semiring's domains, or
+        // cast to them by GraphBLAS's rule; aliasing allowed.
         unsafe {
             sys::GrB_mxv(
                 w,
@@ -478,11 +479,11 @@ where
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn vxm<'a, U, A, C, X, Y>(
+pub fn vxm<'a, U, A, C, X, Y, Z>(
     w: &mut Vector<C>,
     mask: Mask<'a, GrB_Vector>,
     accum: Option<&BinaryOp<C, C, C>>,
-    semiring: &Semiring<X, Y, C>,
+    semiring: &Semiring<X, Y, Z>,
     u: U,
     a: &Matrix<A>,
     desc: Desc,
@@ -493,6 +494,7 @@ where
     U: Operand<'a, C, GrB_Vector>,
     X: Accepts<U::Elem>,
     Y: Accepts<A>,
+    Z: Produces<C>,
 {
     run(w.raw, &mask, desc, |w, m, d| {
         // SAFETY: as in `mxv`.
@@ -516,24 +518,26 @@ where
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn ewise_add<'a, T, X, Y, U, V>(
-    w: &mut Vector<T>,
+pub fn ewise_add<'a, U, V, C, X, Y, Z>(
+    w: &mut Vector<C>,
     mask: Mask<'a, GrB_Vector>,
-    accum: Option<&BinaryOp<T, T, T>>,
-    op: &BinaryOp<X, Y, T>,
+    accum: Option<&BinaryOp<C, C, C>>,
+    op: &BinaryOp<X, Y, Z>,
     u: U,
     v: V,
     desc: Desc,
 ) -> Result<()>
 where
-    T: GrbType,
-    U: Operand<'a, T, GrB_Vector, Elem = T>,
-    V: Operand<'a, T, GrB_Vector, Elem = T>,
-    X: Accepts<T>,
-    Y: Accepts<T>,
+    C: GrbType,
+    U: Operand<'a, C, GrB_Vector>,
+    V: Operand<'a, C, GrB_Vector>,
+    X: Accepts<U::Elem> + PassesThrough<U::Elem, Z>,
+    Y: Accepts<V::Elem> + PassesThrough<V::Elem, Z>,
+    Z: Produces<C>,
 {
     run(w.raw, &mask, desc, |w, m, d| {
-        // SAFETY: live handles of one element type; aliasing allowed.
+        // SAFETY: live handles of one element type, or cast to the
+        // operator's by GraphBLAS's rule; aliasing allowed.
         unsafe {
             sys::GrB_Vector_eWiseAdd_BinaryOp(
                 w,
@@ -554,11 +558,11 @@ where
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn ewise_mult<'a, U, V, C, X, Y>(
+pub fn ewise_mult<'a, U, V, C, X, Y, Z>(
     w: &mut Vector<C>,
     mask: Mask<'a, GrB_Vector>,
     accum: Option<&BinaryOp<C, C, C>>,
-    op: &BinaryOp<X, Y, C>,
+    op: &BinaryOp<X, Y, Z>,
     u: U,
     v: V,
     desc: Desc,
@@ -569,10 +573,11 @@ where
     V: Operand<'a, C, GrB_Vector>,
     X: Accepts<U::Elem>,
     Y: Accepts<V::Elem>,
+    Z: Produces<C>,
 {
     run(w.raw, &mask, desc, |w, m, d| {
-        // SAFETY: live handles whose types match the operator's domains;
-        // aliasing allowed.
+        // SAFETY: live handles whose types match the operator's domains, or
+        // cast to them by GraphBLAS's rule; aliasing allowed.
         unsafe {
             sys::GrB_Vector_eWiseMult_BinaryOp(
                 w,
@@ -593,11 +598,11 @@ where
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn apply<'a, U, C, X>(
+pub fn apply<'a, U, C, X, Z>(
     w: &mut Vector<C>,
     mask: Mask<'a, GrB_Vector>,
     accum: Option<&BinaryOp<C, C, C>>,
-    op: &UnaryOp<X, C>,
+    op: &UnaryOp<X, Z>,
     u: U,
     desc: Desc,
 ) -> Result<()>
@@ -605,10 +610,11 @@ where
     C: GrbType,
     U: Operand<'a, C, GrB_Vector>,
     X: Accepts<U::Elem>,
+    Z: Produces<C>,
 {
     run(w.raw, &mask, desc, |w, m, d| {
-        // SAFETY: live handles whose types match the operator's domains;
-        // aliasing allowed.
+        // SAFETY: live handles whose types match the operator's domains, or
+        // cast to them by GraphBLAS's rule; aliasing allowed.
         unsafe { sys::GrB_Vector_apply(w, m, accum_raw(accum), op.as_raw(), u.raw(w, Token), d) }
     })
 }
@@ -618,11 +624,11 @@ where
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn apply_index<'a, U, C, X, Y>(
+pub fn apply_index<'a, U, C, X, Y, Z>(
     w: &mut Vector<C>,
     mask: Mask<'a, GrB_Vector>,
     accum: Option<&BinaryOp<C, C, C>>,
-    op: &IndexUnaryOp<X, Y, C>,
+    op: &IndexUnaryOp<X, Y, Z>,
     u: U,
     y: Y,
     desc: Desc,
@@ -632,25 +638,29 @@ where
     U: Operand<'a, C, GrB_Vector>,
     X: Accepts<U::Elem>,
     Y: GrbType,
+    Z: Produces<C>,
 {
     run(w.raw, &mask, desc, |w, m, d| {
-        // SAFETY: live handles whose types match the operator's domains, `y`
-        // passed through the entry point of its own type; aliasing allowed.
+        // SAFETY: live handles whose types match the operator's domains, or
+        // cast to them by GraphBLAS's rule, `y` passed through the entry
+        // point of its own type; aliasing allowed.
         unsafe { Y::vector_apply_index(w, m, accum_raw(accum), op.as_raw(), u.raw(w, Token), y, d) }
     })
 }
 
 /// `w<mask> = accum(w, u[op(u, i, 0, y)])`: keep the entries the predicate
-/// accepts, values unchanged.
+/// accepts, values unchanged. As for
+/// [`matrix::select`](crate::matrix::select), the predicate may be
+/// `op.typecast()`.
 ///
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn select<'a, T, U, X, Y>(
+pub fn select<'a, T, U, X, Y, Z>(
     w: &mut Vector<T>,
     mask: Mask<'a, GrB_Vector>,
     accum: Option<&BinaryOp<T, T, T>>,
-    op: &IndexUnaryOp<X, Y, bool>,
+    op: &IndexUnaryOp<X, Y, Z>,
     u: U,
     y: Y,
     desc: Desc,
@@ -660,6 +670,7 @@ where
     U: Operand<'a, T, GrB_Vector, Elem = T>,
     X: Accepts<T>,
     Y: GrbType,
+    Z: Produces<bool>,
 {
     run(w.raw, &mask, desc, |w, m, d| {
         // SAFETY: as in `apply_index`.
@@ -746,16 +757,22 @@ where
 /// # Errors
 ///
 /// Out of memory.
-pub fn reduce<T: GrbType>(
-    c: &mut T,
-    accum: Option<&BinaryOp<T, T, T>>,
-    monoid: &Monoid<T>,
-    u: &Vector<T>,
+pub fn reduce<U, C, M>(
+    c: &mut C,
+    accum: Option<&BinaryOp<C, C, C>>,
+    monoid: &Monoid<M>,
+    u: &Vector<U>,
     desc: Desc,
-) -> Result<()> {
+) -> Result<()>
+where
+    C: GrbType,
+    M: Accepts<U> + Produces<C>,
+{
     let d = descriptor(MaskMode::NONE, desc);
-    // SAFETY: `c` is a valid `T`; live handles whose types are `T`.
-    check(unsafe { T::vector_reduce(c, accum_raw(accum), monoid.as_raw(), u.raw, d) })
+    // SAFETY: `c` is a valid `C`, written through the entry point of its
+    // own type; live handles whose types are the monoid's, or cast to it by
+    // GraphBLAS's rule.
+    check(unsafe { C::vector_reduce(c, accum_raw(accum), monoid.as_raw(), u.raw, d) })
 }
 
 /// `w<mask> = accum(w, (w's type) u)`: copy `u` into `w`, converting the

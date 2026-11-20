@@ -6,11 +6,17 @@
 //!
 //! * `X: Accepts<A::Elem>`: the operator's input domain is the operand's
 //!   element type, or [`Pattern`](crate::Pattern).
-//! * The output's element type is the operator's output type.
+//! * `Z: Produces<C>`: the operator's output domain is the output's element
+//!   type.
 //! * `accum` is `BinaryOp<C, C, C>` on the output type.
 //! * Operations that copy entries through unchanged ([`ewise_add`],
 //!   [`transpose`], [`select`], [`assign`], [`extract`]) require the input
 //!   and output element types to be the same.
+//!
+//! An operator passed as `op.typecast()` lifts the first two, and for
+//! [`ewise_add`] the last: GraphBLAS then casts among built-in types at
+//! that operator's edges, as [`Typecast`](crate::Typecast) describes.
+//! [`select`] is the exception and takes its predicate as declared.
 //!
 //! Inputs are [`Operand`]s: `&Matrix<T>`, or [`Output`](crate::Output) for the output
 //! itself. `C += A*B` runs in place in SuiteSparse (dot4 / saxpy5) when `C`
@@ -40,7 +46,7 @@ use crate::{
     sealed::{Sealed, Token},
     settings::{IntegerWidth, Orientation, Sparsity},
     sys::{self, GrB_Index, GrB_Info, GrB_Matrix, GrB_Vector, GxB_Option_Field},
-    types::{Accepts, BuiltinType, GrbType},
+    types::{Accepts, BuiltinType, GrbType, PassesThrough, Produces},
     vector::Vector,
 };
 
@@ -589,17 +595,18 @@ impl<T: GrbType> fmt::Debug for Matrix<T> {
 /// output), except that a `Pattern` domain takes any type. GraphBLAS would
 /// cast a mismatched built-in instead; this layer refuses (the casting rule
 /// in the crate docs), so a semiring over `f64` does not run on an `i64`
-/// matrix without a [`cast`] first. The same holds for every operation
-/// below that takes an operator.
+/// matrix as it stands. Pass `&semiring.typecast()` to let GraphBLAS cast
+/// in this call, or store a converted copy with [`cast`] first. The same
+/// holds for every operation below that takes an operator.
 ///
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn mxm<'a, A, B, C, X, Y>(
+pub fn mxm<'a, A, B, C, X, Y, Z>(
     c: &mut Matrix<C>,
     mask: Mask<'a, GrB_Matrix>,
     accum: Option<&BinaryOp<C, C, C>>,
-    semiring: &Semiring<X, Y, C>,
+    semiring: &Semiring<X, Y, Z>,
     a: A,
     b: B,
     desc: Desc,
@@ -610,10 +617,12 @@ where
     B: Operand<'a, C, GrB_Matrix>,
     X: Accepts<A::Elem>,
     Y: Accepts<B::Elem>,
+    Z: Produces<C>,
 {
     run(c.raw, &mask, desc, |c, m, d| {
-        // SAFETY: live handles whose types match the semiring's domains;
-        // GraphBLAS allows any aliasing among them.
+        // SAFETY: live handles whose types match the semiring's domains, or
+        // cast to them by GraphBLAS's rule; GraphBLAS allows any aliasing
+        // among them.
         unsafe {
             sys::GrB_mxm(
                 c,
@@ -629,34 +638,42 @@ where
 }
 
 /// `C<Mask> = accum(C, A ⊕ B)`: set union. `op` combines entries present in
-/// both; entries present in one side are copied through, which is why the
-/// inputs and the output share one element type.
+/// both; entries present in one side are copied through.
 ///
-/// For a pattern union of a *valued* matrix into a `bool` one use [`apply`]
-/// with `ONE_BOOL` and `accum = Some(&ANY_BOOL)`: an `ewise_add` would have
-/// to cast the values, and a `u64` id of `0` would land as `false`.
+/// That copy is why the inputs and the output share one element type
+/// (`X: PassesThrough`).
+///
+/// With `&op.typecast()` the inputs may be of other built-in types, for an
+/// operator that reads and writes one type ([`PassesThrough`] says why).
+/// The entries only one side has are then cast too, to the operator's type
+/// and from there to the output's, without the operator being called: a
+/// `u64` id of `0` unioned into a `bool` matrix lands as `false`. For a
+/// pattern union of a *valued* matrix into a `bool` one use [`apply`] with
+/// `ONE_BOOL` and `accum = Some(&ANY_BOOL)` instead.
 ///
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn ewise_add<'a, T, X, Y, A, B>(
-    c: &mut Matrix<T>,
+pub fn ewise_add<'a, A, B, C, X, Y, Z>(
+    c: &mut Matrix<C>,
     mask: Mask<'a, GrB_Matrix>,
-    accum: Option<&BinaryOp<T, T, T>>,
-    op: &BinaryOp<X, Y, T>,
+    accum: Option<&BinaryOp<C, C, C>>,
+    op: &BinaryOp<X, Y, Z>,
     a: A,
     b: B,
     desc: Desc,
 ) -> Result<()>
 where
-    T: GrbType,
-    A: Operand<'a, T, GrB_Matrix, Elem = T>,
-    B: Operand<'a, T, GrB_Matrix, Elem = T>,
-    X: Accepts<T>,
-    Y: Accepts<T>,
+    C: GrbType,
+    A: Operand<'a, C, GrB_Matrix>,
+    B: Operand<'a, C, GrB_Matrix>,
+    X: Accepts<A::Elem> + PassesThrough<A::Elem, Z>,
+    Y: Accepts<B::Elem> + PassesThrough<B::Elem, Z>,
+    Z: Produces<C>,
 {
     run(c.raw, &mask, desc, |c, m, d| {
-        // SAFETY: live handles of one element type; aliasing allowed.
+        // SAFETY: live handles of one element type, or cast to the
+        // operator's by GraphBLAS's rule; aliasing allowed.
         unsafe {
             sys::GrB_Matrix_eWiseAdd_BinaryOp(
                 c,
@@ -680,11 +697,11 @@ where
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn ewise_mult<'a, A, B, C, X, Y>(
+pub fn ewise_mult<'a, A, B, C, X, Y, Z>(
     c: &mut Matrix<C>,
     mask: Mask<'a, GrB_Matrix>,
     accum: Option<&BinaryOp<C, C, C>>,
-    op: &BinaryOp<X, Y, C>,
+    op: &BinaryOp<X, Y, Z>,
     a: A,
     b: B,
     desc: Desc,
@@ -695,10 +712,11 @@ where
     B: Operand<'a, C, GrB_Matrix>,
     X: Accepts<A::Elem>,
     Y: Accepts<B::Elem>,
+    Z: Produces<C>,
 {
     run(c.raw, &mask, desc, |c, m, d| {
-        // SAFETY: live handles whose types match the operator's domains;
-        // aliasing allowed.
+        // SAFETY: live handles whose types match the operator's domains, or
+        // cast to them by GraphBLAS's rule; aliasing allowed.
         unsafe {
             sys::GrB_Matrix_eWiseMult_BinaryOp(
                 c,
@@ -721,11 +739,11 @@ where
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn apply<'a, A, C, X>(
+pub fn apply<'a, A, C, X, Z>(
     c: &mut Matrix<C>,
     mask: Mask<'a, GrB_Matrix>,
     accum: Option<&BinaryOp<C, C, C>>,
-    op: &UnaryOp<X, C>,
+    op: &UnaryOp<X, Z>,
     a: A,
     desc: Desc,
 ) -> Result<()>
@@ -733,10 +751,11 @@ where
     C: GrbType,
     A: Operand<'a, C, GrB_Matrix>,
     X: Accepts<A::Elem>,
+    Z: Produces<C>,
 {
     run(c.raw, &mask, desc, |c, m, d| {
-        // SAFETY: live handles whose types match the operator's domains;
-        // aliasing allowed.
+        // SAFETY: live handles whose types match the operator's domains, or
+        // cast to them by GraphBLAS's rule; aliasing allowed.
         unsafe { sys::GrB_Matrix_apply(c, m, accum_raw(accum), op.as_raw(), a.raw(c, Token), d) }
     })
 }
@@ -747,11 +766,11 @@ where
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn apply_index<'a, A, C, X, Y>(
+pub fn apply_index<'a, A, C, X, Y, Z>(
     c: &mut Matrix<C>,
     mask: Mask<'a, GrB_Matrix>,
     accum: Option<&BinaryOp<C, C, C>>,
-    op: &IndexUnaryOp<X, Y, C>,
+    op: &IndexUnaryOp<X, Y, Z>,
     a: A,
     y: Y,
     desc: Desc,
@@ -761,10 +780,12 @@ where
     A: Operand<'a, C, GrB_Matrix>,
     X: Accepts<A::Elem>,
     Y: GrbType,
+    Z: Produces<C>,
 {
     run(c.raw, &mask, desc, |c, m, d| {
-        // SAFETY: live handles whose types match the operator's domains, `y`
-        // passed through the entry point of its own type; aliasing allowed.
+        // SAFETY: live handles whose types match the operator's domains, or
+        // cast to them by GraphBLAS's rule, `y` passed through the entry
+        // point of its own type; aliasing allowed.
         unsafe { Y::matrix_apply_index(c, m, accum_raw(accum), op.as_raw(), a.raw(c, Token), y, d) }
     })
 }
@@ -772,14 +793,17 @@ where
 /// `C<Mask> = accum(C, A[op(A, i, j, y)])`: keep the entries of `A` the
 /// predicate accepts, values unchanged.
 ///
+/// The predicate may be `op.typecast()`: a `VALUEGT_FP64` on a `u64`
+/// matrix compares each value, cast to `f64`, with the scalar.
+///
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn select<'a, T, A, X, Y>(
+pub fn select<'a, T, A, X, Y, Z>(
     c: &mut Matrix<T>,
     mask: Mask<'a, GrB_Matrix>,
     accum: Option<&BinaryOp<T, T, T>>,
-    op: &IndexUnaryOp<X, Y, bool>,
+    op: &IndexUnaryOp<X, Y, Z>,
     a: A,
     y: Y,
     desc: Desc,
@@ -789,6 +813,7 @@ where
     A: Operand<'a, T, GrB_Matrix, Elem = T>,
     X: Accepts<T>,
     Y: GrbType,
+    Z: Produces<bool>,
 {
     run(c.raw, &mask, desc, |c, m, d| {
         // SAFETY: as in `apply_index`.
@@ -917,16 +942,22 @@ where
 /// # Errors
 ///
 /// Out of memory.
-pub fn reduce<T: GrbType>(
-    c: &mut T,
-    accum: Option<&BinaryOp<T, T, T>>,
-    monoid: &Monoid<T>,
-    a: &Matrix<T>,
+pub fn reduce<A, C, M>(
+    c: &mut C,
+    accum: Option<&BinaryOp<C, C, C>>,
+    monoid: &Monoid<M>,
+    a: &Matrix<A>,
     desc: Desc,
-) -> Result<()> {
+) -> Result<()>
+where
+    C: GrbType,
+    M: Accepts<A> + Produces<C>,
+{
     let d = descriptor(MaskMode::NONE, desc);
-    // SAFETY: `c` is a valid `T`; live handles whose types are `T`.
-    check(unsafe { T::matrix_reduce(c, accum_raw(accum), monoid.as_raw(), a.raw, d) })
+    // SAFETY: `c` is a valid `C`, written through the entry point of its
+    // own type; live handles whose types are the monoid's, or cast to it by
+    // GraphBLAS's rule.
+    check(unsafe { C::matrix_reduce(c, accum_raw(accum), monoid.as_raw(), a.raw, d) })
 }
 
 /// `w<mask> = accum(w, ⊕ A(i, :))`: fold each row of `A` into `w(i)`; with
@@ -935,25 +966,32 @@ pub fn reduce<T: GrbType>(
 /// # Errors
 ///
 /// Dimension mismatch, out of memory.
-pub fn reduce_rows<T: GrbType>(
-    w: &mut Vector<T>,
+pub fn reduce_rows<A, C, M>(
+    w: &mut Vector<C>,
     mask: Mask<'_, GrB_Vector>,
-    accum: Option<&BinaryOp<T, T, T>>,
-    monoid: &Monoid<T>,
-    a: &Matrix<T>,
+    accum: Option<&BinaryOp<C, C, C>>,
+    monoid: &Monoid<M>,
+    a: &Matrix<A>,
     desc: Desc,
-) -> Result<()> {
+) -> Result<()>
+where
+    C: GrbType,
+    M: Accepts<A> + Produces<C>,
+{
     let m = mask.raw(w.as_raw());
     let d = descriptor(mask.mode(), desc);
-    // SAFETY: live handles whose types are `T`.
+    // SAFETY: live handles whose types are the monoid's, or cast to it by
+    // GraphBLAS's rule.
     w.check(unsafe {
         sys::GrB_Matrix_reduce_Monoid(w.as_raw(), m, accum_raw(accum), monoid.as_raw(), a.raw, d)
     })
 }
 
 /// `C<Mask> = accum(C, (C's type) A)`: copy `A` into `C`, converting the
-/// element type with GraphBLAS's own rules. The one place in this crate
-/// where values change type.
+/// element type with GraphBLAS's own rules.
+///
+/// The one place in this crate where a converted copy is stored;
+/// `op.typecast()` converts inside an operation without one.
 ///
 /// Implemented as `GrB_assign` over `GrB_ALL`, LAGraph's idiom for a
 /// typecast copy, which SuiteSparse routes to its whole-matrix `C = A`

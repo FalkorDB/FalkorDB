@@ -1,7 +1,7 @@
 //! The eleven built-in element types: one `builtin_type!` invocation per
 //! type, naming the type-suffixed C entry point for each operation.
 
-use super::{Accepts, BuiltinPattern, BuiltinType, GrbType, Pattern};
+use super::{Accepts, BuiltinKind, BuiltinPattern, BuiltinType, GrbType, Pattern};
 use crate::{
     sealed,
     sys::{
@@ -28,6 +28,8 @@ macro_rules! builtin_type {
         // SAFETY: `$grb` is the built-in type of the same size and layout,
         // and every method forwards to its own type-suffixed entry point.
         unsafe impl GrbType for $t {
+            type Kind = BuiltinKind;
+
             const NAME: &'static str = stringify!($grb);
 
             fn grb_type() -> GrB_Type {
