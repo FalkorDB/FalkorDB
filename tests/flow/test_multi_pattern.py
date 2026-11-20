@@ -284,6 +284,10 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # A hash join keyed only on `y.v = x.v` would pair branch rows of
         # different outer rows (x2 here: two `n0`). C and the Cartesian
         # Product plan give 18 on every form.
+        #
+        # Each form is still planned as a hash join: the join keeps one table
+        # per outer row (#3035), so it needs no fallback to the Cartesian
+        # Product, which costs O(N*M) per outer row.
         g = self.db.select_graph("multi_pattern_apply_join")
         self.env.cmd("DEL", g.name)
         g.query("CREATE (:B {v:1}), (:B {v:1}), (:A {v:1})")
@@ -294,6 +298,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             "MATCH (n0:B) CALL { WITH n0 MATCH (x {v: n0.v}), (y) WHERE y.v = x.v RETURN x, y } RETURN count(*)",
         ]:
             self.env.assertEqual(g.query(q).result_set, [[18]], message=q)
+            self.env.assertContains("Value Hash Join", str(g.explain(q)), message=q)
         # an uncorrelated join is still a hash join
         plan = g.explain("MATCH (x), (y) WHERE y.v = x.v RETURN count(*)")
         self.env.assertContains("Value Hash Join", str(plan))
