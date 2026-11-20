@@ -99,10 +99,12 @@
 //!
 //! # Thread safety
 //!
-//! Handles are `Send`, not `Sync`: GraphBLAS allows concurrent use of one
-//! object only when every use is read-only and no work is pending, an
-//! invariant the layer above this one owns. Operators and built-ins are
-//! immutable after creation and are `Send + Sync`.
+//! [`Matrix`] and [`Vector`] are `Send`, not `Sync`: GraphBLAS allows
+//! concurrent use of one object only when every use is read-only and no
+//! work is pending. [`Frozen`] is that state as a type: `freeze` gives up
+//! write access, and [`Frozen::read`] finishes the pending work once before
+//! any thread sees the object. Operators and built-ins are immutable after
+//! creation and are `Send + Sync`.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
@@ -124,6 +126,7 @@ pub use types::user_defined::UserTypeCell as __UserTypeCell;
 
 mod builtin;
 mod error;
+mod frozen;
 mod handle;
 mod index;
 mod init;
@@ -162,6 +165,7 @@ pub mod vector;
 mod tests;
 
 pub use error::{Error, ErrorKind, Result};
+pub use frozen::{Freezable, Frozen, FrozenMatrix, FrozenVector};
 pub use index::Indices;
 pub use init::{
     Allocators, JitControl, WaitMode, init, is_initialized, set_burble, set_jit, set_nthreads,

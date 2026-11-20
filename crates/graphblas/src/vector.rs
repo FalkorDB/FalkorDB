@@ -11,6 +11,7 @@ use std::{
 use crate::{
     Result, Scalar,
     error::{check, expect_success},
+    frozen::{Freezable, Frozen},
     handle::{self, run},
     index::Indices,
     init::{self, WaitMode},
@@ -18,7 +19,7 @@ use crate::{
     matrix::Matrix,
     operand::Operand,
     ops::{BinaryOp, IndexUnaryOp, Monoid, Semiring, UnaryOp, accum_raw},
-    sealed::Token,
+    sealed::{Sealed, Token},
     settings::{IntegerWidth, Sparsity},
     sys::{self, GrB_Index, GrB_Info, GrB_Vector, GxB_Option_Field},
     types::{Accepts, BuiltinType, GrbType},
@@ -43,6 +44,16 @@ pub struct Vector<T> {
 // SAFETY: a GraphBLAS handle is not tied to the thread that created it; the
 // wrapper holds nothing else. Deliberately not `Sync`.
 unsafe impl<T: Send> Send for Vector<T> {}
+
+impl<T> Sealed for Vector<T> {}
+
+// SAFETY: as for `Matrix<T>`: with nothing pending, every `&self` method and
+// every input or mask slot only reads the vector.
+unsafe impl<T: GrbType> Freezable for Vector<T> {
+    unsafe fn materialize(&self) -> Result<()> {
+        handle::wait(self.raw, WaitMode::Materialize)
+    }
+}
 
 impl<T: GrbType> Vector<T> {
     /// An empty vector of length `size`.
@@ -154,6 +165,13 @@ impl<T: GrbType> Vector<T> {
         mode: WaitMode,
     ) -> Result<()> {
         handle::wait(self.raw, mode)
+    }
+
+    /// Give up write access for a handle that can be cloned and read from
+    /// several threads; see [`Matrix::freeze`](crate::Matrix::freeze).
+    #[must_use]
+    pub fn freeze(self) -> Frozen<Self> {
+        Frozen::new(self)
     }
 
     /// Whether the vector has pending work.
