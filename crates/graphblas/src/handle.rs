@@ -1,6 +1,6 @@
-//! The raw handle kinds behind [`Matrix`](crate::Matrix) (and, later, the
-//! vector), and the calls both answer the same way, written once over
-//! [`RawHandle`].
+//! The raw handle kinds behind [`Matrix`](crate::Matrix) and
+//! `Vector`, and the calls both answer the same way, written
+//! once over [`RawHandle`].
 
 use std::os::raw::{c_char, c_int};
 
@@ -9,6 +9,7 @@ use crate::{
     error::{Error, copy_message, expect_success},
     init::WaitMode,
     mask::{Desc, Mask, descriptor},
+    settings::Sparsity,
     sys::{self, GrB_Descriptor, GrB_Info, GrB_Matrix, GrB_Vector, GxB_Option_Field},
 };
 
@@ -38,6 +39,12 @@ pub unsafe trait RawHandle: Copy {
         value: *mut i32,
         field: c_int,
     ) -> GrB_Info;
+    /// `GrB_*_set_INT32`.
+    unsafe fn set_i32(
+        h: Self,
+        value: i32,
+        field: c_int,
+    ) -> GrB_Info;
     /// `GxB_*_memoryUsage`.
     unsafe fn memory_usage(
         size: *mut usize,
@@ -51,7 +58,7 @@ pub unsafe trait RawHandle: Copy {
 }
 
 macro_rules! raw_handle {
-    ($raw:ty, $error:ident, $wait:ident, $get:ident, $mem:ident, $iso:ident) => {
+    ($raw:ty, $error:ident, $wait:ident, $get:ident, $set:ident, $mem:ident, $iso:ident) => {
         // SAFETY: each method is the C function of that name for `$raw`.
         unsafe impl RawHandle for $raw {
             fn null() -> Self {
@@ -83,6 +90,15 @@ macro_rules! raw_handle {
                 unsafe { sys::$get(h, value, field) }
             }
 
+            unsafe fn set_i32(
+                h: Self,
+                value: i32,
+                field: c_int,
+            ) -> GrB_Info {
+                // SAFETY: the caller upholds the C contract.
+                unsafe { sys::$set(h, value, field) }
+            }
+
             unsafe fn memory_usage(
                 size: *mut usize,
                 h: Self,
@@ -107,6 +123,7 @@ raw_handle!(
     GrB_Matrix_error,
     GrB_Matrix_wait,
     GrB_Matrix_get_INT32,
+    GrB_Matrix_set_INT32,
     GxB_Matrix_memoryUsage,
     GxB_Matrix_iso
 );
@@ -115,6 +132,7 @@ raw_handle!(
     GrB_Vector_error,
     GrB_Vector_wait,
     GrB_Vector_get_INT32,
+    GrB_Vector_set_INT32,
     GxB_Vector_memoryUsage,
     GxB_Vector_iso
 );
@@ -184,6 +202,16 @@ pub fn get_i32<R: RawHandle>(
     value
 }
 
+/// `GrB_set` of an integer field.
+pub fn set_i32<R: RawHandle>(
+    h: R,
+    field: GxB_Option_Field,
+    value: i32,
+) -> Result<()> {
+    // SAFETY: a live handle and an integer field.
+    check(unsafe { R::set_i32(h, value, field as c_int) }, h)
+}
+
 /// Whether the object has pending work (`GxB_WILL_WAIT`).
 pub fn is_pending<R: RawHandle>(h: R) -> bool {
     get_i32(h, GxB_Option_Field::GxB_WILL_WAIT) != 0
@@ -211,4 +239,17 @@ pub fn is_iso<R: RawHandle>(h: R) -> bool {
     let info = unsafe { R::iso(&raw mut iso, h) };
     expect_success(info, "GxB_iso");
     iso
+}
+
+/// The current storage format (`GxB_SPARSITY_STATUS`).
+pub fn sparsity<R: RawHandle>(h: R) -> Sparsity {
+    Sparsity::from_status(get_i32(h, GxB_Option_Field::GxB_SPARSITY_STATUS))
+}
+
+/// Pin or free the storage format (`GxB_SPARSITY_CONTROL`).
+pub fn set_sparsity<R: RawHandle>(
+    h: R,
+    control: Sparsity,
+) -> Result<()> {
+    set_i32(h, GxB_Option_Field::GxB_SPARSITY_CONTROL, control.raw())
 }

@@ -1,5 +1,5 @@
 //! Element types: the Rust types a [`Matrix<T>`](crate::Matrix),
-//! `Vector<T>` or `Scalar<T>` can carry,
+//! `Vector<T>` or [`Scalar<T>`](crate::Scalar) can carry,
 //! and how each reaches the type-suffixed C entry points
 //! (`GrB_Matrix_setElement_BOOL`, `..._UDT`, ...).
 //!
@@ -9,7 +9,7 @@
 //! user-defined ones. This crate behaves like the latter everywhere: an
 //! operator is applied only to the exact types it was declared for, checked
 //! by [`Accepts`]. The two named exceptions are [`Pattern`] (the operator
-//! never reads the value) and `matrix::cast` /
+//! never reads the value) and [`matrix::cast`](crate::matrix::cast) /
 //! `vector::cast` (change the type on purpose).
 
 use std::convert::Infallible;
@@ -49,7 +49,7 @@ pub struct BuiltinPattern(Infallible);
 pub trait Accepts<T> {}
 
 /// A GraphBLAS built-in type, as opposed to a user-defined one: the only
-/// types `cast` converts between.
+/// types [`cast`](crate::matrix::cast) converts between.
 pub trait BuiltinType: GrbType {}
 
 /// A Rust type with a GraphBLAS type behind it.
