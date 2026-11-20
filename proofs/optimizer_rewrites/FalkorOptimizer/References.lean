@@ -182,7 +182,8 @@ theorem any_mem_flatten (v : Var) (es : List Ex) : es.any (mem v) = true ↔ v �
 /-! ## `references.rs` -/
 
 /-- `expr_references_variable` (:317-323): a BFS for `Variable(v)` with `v.id == id &&
-v.scope_id == scope` — by `(id, scope)`, never `==` (ids only, ast.rs). With an expression
+v.scope_id == scope` — by `(id, scope)` (before #3933 `==` compared ids only; now it
+compares the same key, ast.rs:189-194). With an expression
 abstracted to the variables it mentions, that is membership (Helpers.refsVar_iff proves
 the BFS on the tree model). -/
 def exprRefs (e : Ex) (v : Var) : Bool := mem v e

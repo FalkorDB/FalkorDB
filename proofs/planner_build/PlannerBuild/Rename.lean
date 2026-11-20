@@ -97,7 +97,7 @@ theorem newPSt_spec (lens : Nat → Nat) (s : Nat) :
 variable {R : Type} (atom : Ex → R → Option Bool) (sub : QG → R → List R)
 
 /-- `(n {k1: v1, k2: v2})` passes a row iff every `n.ki = vi` is true there. -/
-theorem inlineAttrs_passes (ι : List (Nat × QG)) (alias : V) (attrs : List (String × Ex)) (f : Ex)
+theorem inlineAttrs_passes (ι : List (V × QG)) (alias : V) (attrs : List (String × Ex)) (f : Ex)
     (h : inlineAttrsToFilter alias attrs = some f) (y : R) :
     passes (tv atom sub ι f y) = attrs.all (fun kv => passes (atom (attrEq alias kv) y)) := by
   rw [inlineAttrsToFilter_eq] at h

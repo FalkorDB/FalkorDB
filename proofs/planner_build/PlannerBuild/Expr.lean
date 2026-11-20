@@ -11,7 +11,7 @@ themselves are not re-modelled).
 
 | here | there |
 | --- | --- |
-| `containsInlineVar` | `Planner::contains_inline_var` mod.rs:933-940 |
+| `containsInlineVar` | `Planner::contains_inline_var` mod.rs:1108-1115 |
 | `hasPatternExpr` | `Planner::has_pattern_expr` mod.rs:944-949 |
 | `patternExprScope` | `Planner::pattern_expr_scope` mod.rs:1345-1352 |
 | `Mode`, `Mode.descend` | `PatternMode`, `PatternMode::descend` mod.rs:782-811 |
@@ -102,16 +102,16 @@ theorem anyL_eq (p : D → Bool) : ∀ l, anyL p l = (nodesL l).any p
   | c :: cs => by simp [anyL, nodesL, anyN_eq p c, anyL_eq p cs]
 end
 
-/-! ## `contains_inline_var` (mod.rs:933-940): BFS `any` over the subtree, id only -/
+/-! ## `contains_inline_var` (mod.rs:1108-1115): BFS `any` over the subtree, by `VarKey` (#3933) -/
 
-def isInl (ids : List Nat) : D → Bool
-  | .var v => ids.contains v.id
+def isInl (ks : List V) : D → Bool
+  | .var v => ks.contains v
   | _ => false
 
-def containsInlineVar (ids : List Nat) (e : Ex) : Bool := anyN (isInl ids) e
+def containsInlineVar (ks : List V) (e : Ex) : Bool := anyN (isInl ks) e
 
-theorem containsInlineVar_iff (ids : List Nat) (e : Ex) :
-    containsInlineVar ids e = true ↔ ∃ v, D.var v ∈ nodes e ∧ v.id ∈ ids := by
+theorem containsInlineVar_iff (ks : List V) (e : Ex) :
+    containsInlineVar ks e = true ↔ ∃ v, D.var v ∈ nodes e ∧ v ∈ ks := by
   unfold containsInlineVar
   rw [anyN_eq, List.any_eq_true]
   constructor
@@ -122,13 +122,20 @@ theorem containsInlineVar_iff (ids : List Nat) (e : Ex) :
   · rintro ⟨v, hv, h⟩
     exact ⟨_, hv, by simpa [isInl] using h⟩
 
-/-- The check is by id only: a variable of another scope with the same id
-counts as an inline-pattern variable. -/
-theorem containsInlineVar_ignores_scope (i s s' : Nat) :
-    containsInlineVar [i] (Ex.v ⟨i, s'⟩) = true ∧ s ≠ s' ∨ s = s' := by
-  by_cases h : s = s'
-  · exact Or.inr h
-  · exact Or.inl ⟨by simp [containsInlineVar, Ex.v, anyN, isInl, anyL], h⟩
+/-- The check is by `VarKey` (#3933): a variable of another scope with the same
+id is not an inline-pattern variable. -/
+theorem containsInlineVar_scoped (i s s' : Nat) (h : s ≠ s') :
+    containsInlineVar [⟨i, s⟩] (Ex.v ⟨i, s'⟩) = false := by
+  simp [containsInlineVar, Ex.v, anyN, isInl, anyL, Ne.symm h]
+
+/-- Before #3933 the check was by id only (historical). -/
+def pre3933_containsInlineVar (ids : List Nat) (e : Ex) : Bool :=
+  anyN (fun | .var v => ids.contains v.id | _ => false) e
+
+/-- Historical: the id-only check counted a same-id variable of another scope. -/
+theorem pre3933_containsInlineVar_ignores_scope (i s' : Nat) :
+    pre3933_containsInlineVar [i] (Ex.v ⟨i, s'⟩) = true := by
+  simp [pre3933_containsInlineVar, Ex.v, anyN, anyL]
 
 /-! ## `has_pattern_expr` (mod.rs:944-949) -/
 

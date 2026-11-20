@@ -145,9 +145,9 @@ def withF : Option Ex → MP → MP
   | none, c => c
 
 /-- `emit_relationship`: a named edge, one whose attrs were lifted (#2981), or one a named path
-lists (by id only, mod.rs:2186-2197). -/
+lists (`p.vars.contains(&rel.alias)`, by `VarKey` since #3933; mod.rs:2316-2325). -/
 def emitRel (c : Comp) (r : QR) : Bool :=
-  r.named || r.lifted || c.paths.any fun p => p.2.any fun v => v.id == r.alias.id
+  r.named || r.lifted || c.paths.any fun p => p.2.contains r.alias
 
 /-- Strip the inline-attribute filters: the operator actually chosen. -/
 def MP.core : MP → MP
@@ -410,10 +410,10 @@ def firstOp (st : MSt) (c : Comp) (lw : LW) (r : QR) : MP :=
   | .shortest => .shortest (opRel r) []
   | .varLen =>
     if st.bound r.frm.alias then
-      .cvlt (opRel r) (r.frm.alias.id != r.to.alias.id && st.bound r.to.alias) none []
+      .cvlt (opRel r) (r.frm.alias != r.to.alias && st.bound r.to.alias) none []
     else .cvlt (opRel r) false none [scanOf (opRel r).frm]
   | .fixed =>
-    if r.frm.alias.id = r.to.alias.id then
+    if r.frm.alias = r.to.alias then
       .expandInto (opRel r) (opEmit c lw r)
         (if st.bound r.frm.alias then [] else [scanOf (opRel r).frm])
     else if st.bound r.frm.alias && st.bound r.to.alias then .expandInto (opRel r) (opEmit c lw r) []
@@ -437,13 +437,13 @@ theorem firstOp_isCtEi (st : MSt) (c : Comp) (lw : LW) (r : QR) :
     (firstOp st c lw r).isCtEi = (r.kind == .fixed) := by
   unfold firstOp
   cases hk : r.kind <;> by_cases h1 : st.bound r.frm.alias <;> by_cases h2 : st.bound r.to.alias <;>
-    by_cases h3 : r.frm.alias.id = r.to.alias.id <;> simp [h1, h2, h3, MP.isCtEi]
+    by_cases h3 : r.frm.alias = r.to.alias <;> simp [h1, h2, h3, MP.isCtEi]
 
 theorem firstOp_core (st : MSt) (c : Comp) (lw : LW) (r : QR) :
     (firstOp st c lw r).core = firstOp st c lw r := by
   unfold firstOp
   cases hk : r.kind <;> by_cases h1 : st.bound r.frm.alias <;> by_cases h2 : st.bound r.to.alias <;>
-    by_cases h3 : r.frm.alias.id = r.to.alias.id <;> simp [h1, h2, h3, MP.core]
+    by_cases h3 : r.frm.alias = r.to.alias <;> simp [h1, h2, h3, MP.core]
 
 theorem topFilters_core (lw : LW) (r : QR) (op : MP) : (topFilters lw r op).1.core = op.core := by
   unfold topFilters
@@ -473,7 +473,7 @@ theorem topFilters_peel (lw : LW) (r : QR) (op : MP) (hop : op.peel = []) :
 theorem firstOp_peel (st : MSt) (c : Comp) (lw : LW) (r : QR) : (firstOp st c lw r).peel = [] := by
   unfold firstOp
   cases hk : r.kind <;> by_cases h1 : st.bound r.frm.alias <;> by_cases h2 : st.bound r.to.alias <;>
-    by_cases h3 : r.frm.alias.id = r.to.alias.id <;> simp [h1, h2, h3, MP.peel]
+    by_cases h3 : r.frm.alias = r.to.alias <;> simp [h1, h2, h3, MP.peel]
 
 /-- **#2390's fix.** Both endpoints' inline attrs become Filters above the first hop for every
 operator kind and whether or not the endpoint was bound by an earlier clause — as long as
@@ -538,7 +538,7 @@ theorem firstRel_stripped (st : MSt) (c : Comp) (lw : LW) (r : QR) :
   have h3' : r.kind = .fixed → (opRel r).attrs = [] := fun hk => h3 (by simp [isWalk, hk])
   unfold firstOp
   cases hk : r.kind <;> by_cases hb1 : st.bound r.frm.alias <;> by_cases hb2 : st.bound r.to.alias <;>
-    by_cases h4 : r.frm.alias.id = r.to.alias.id <;>
+    by_cases h4 : r.frm.alias = r.to.alias <;>
     simp [hb1, hb2, h4, MP.stripped, MP.stripped.strippedL, h1, h2, hs, h3', hk]
 
 /-! ### Historical: before #2390 (a9377c636 mod.rs:1890-2048) -/

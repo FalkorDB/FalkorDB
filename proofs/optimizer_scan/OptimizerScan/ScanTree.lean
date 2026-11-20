@@ -7,19 +7,19 @@ path (child indices from the root), which is exactly what `node_path` computes.
 | here | there |
 | --- | --- |
 | `IRk`, `PT`, `getAt` | `IR`, `DynTree<IR>`, `plan.node(idx)` |
-| `scoreEndpoint`, `startKeyLt` | `score_endpoint` 110, the start-point comparator in `select_scan_node` 911-931 |
-| `Ex`, `exprVars`, `propertyVar`, `collectEqualities` | `collect_equalities` 170 (#3821) |
-| `collectFilteredVars`, `spineVars`, `eqLoop`, `spineEqs`, `filteredVars` | `collect_filtered_vars` 210 (`above` / `all` / `equality`), its `collect` 214 (= `filterVars`, `filterEqOf`) |
-| `makeScanSubtree`, `filtersOf` | `make_scan_subtree` 276 (argument a whole `DynTree` since #3594), `filters_of` 312 |
-| `argumentLeafOf` | `argument_leaf_of` 338 |
-| `inMergeMatchBranch` | `in_merge_match_branch` 357 |
-| `scanDepth`, `isPlannerScan`, `plannerScanAlias`, `plannerScanIdx` | `is_planner_scan_subtree` 377, `planner_scan_alias` 396, `planner_scan_idx` 417 |
-| `projectedOutputs`, `copiesOf`, `collectOutputPairs`, `collectOutputAliases` | `projected_outputs` 459, `collect_output_pairs` 484, `collect_output_aliases` 502 (#3594) |
-| `nodePath`, `resolvePath` | `node_path` 542, `resolve_path` 559 |
-| `childSubtreeBinds` | `child_subtree_binds` 575 |
-| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 632; `subtreeMayBind`: `subtree_may_bind` 606 |
+| `scoreEndpoint`, `startKeyLt` | `score_endpoint` 110 (bound by id, #3933), the start-point comparator in `select_scan_node` 911-931 |
+| `Ex`, `exprVars`, `propertyVar`, `collectEqualities` | `collect_equalities` 178 (#3821) |
+| `collectFilteredVars`, `spineVars`, `eqLoop`, `spineEqs`, `filteredVars` | `collect_filtered_vars` 218 (`above` / `all` / `equality`), its `collect` 222 (= `filterVars`, `filterEqOf`) |
+| `makeScanSubtree`, `filtersOf` | `make_scan_subtree` 284 (argument a whole `DynTree` since #3594), `filters_of` 320 |
+| `argumentLeafOf` | `argument_leaf_of` 346 |
+| `inMergeMatchBranch` | `in_merge_match_branch` 365 |
+| `scanDepth`, `isPlannerScan`, `plannerScanAlias`, `plannerScanIdx` | `is_planner_scan_subtree` 385, `planner_scan_alias` 404, `planner_scan_idx` 425 |
+| `projectedOutputs`, `copiesOf`, `collectOutputPairs`, `collectOutputAliases` | `projected_outputs` 467, `collect_output_pairs` 492, `collect_output_aliases` 510 (#3594; `VarKey`s since #3933) |
+| `nodePath`, `resolvePath` | `node_path` 544, `resolve_path` 561 |
+| `childSubtreeBinds` | `child_subtree_binds` 577 |
+| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 627; `subtreeMayBind`: `subtree_may_bind` 604 |
 
-Table lines re-mapped to PR #3821 (f71981fa3), which adds `collect_equalities` and the
+Table lines re-mapped to PR #3933 (8d80077a4); earlier to PR #3821 (f71981fa3), which adds `collect_equalities` and the
 `has_equality` tie-break; line ranges inside older docstrings cite the revision they were written for.
 -/
 namespace OptimizerScan.ScanTree
@@ -72,10 +72,12 @@ structure FV where
   all : List Var
   equality : List Var
 
-/-- `score_endpoint` (`select_scan_node.rs:106-141`):
-    `(score, has_equality, filter_runs_late, cardinality)`. -/
-def scoreEndpoint (n : EP) (fv : FV) (bound : List Nat) (count : Nat → Nat) : Nat × Bool × Bool × Nat :=
-  ((if n.alias.1 ∈ bound then 3 else 0) + (if n.alias ∈ fv.all then 2 else 0) +
+/-- `score_endpoint` (`select_scan_node.rs:110-148`):
+    `(score, has_equality, filter_runs_late, cardinality)`. Since #3933 `bound_vars` is a
+    `HashSet<VarKey>`, but it is still matched by id alone
+    (`bound_vars.iter().any(|bound| bound.id == key.id)`), deliberately, to keep main's choice. -/
+def scoreEndpoint (n : EP) (fv : FV) (bound : List Var) (count : Nat → Nat) : Nat × Bool × Bool × Nat :=
+  ((if bound.any (fun v => v.1 == n.alias.1) then 3 else 0) + (if n.alias ∈ fv.all then 2 else 0) +
    (if n.labels.isEmpty then 0 else 1),
    decide (n.alias ∈ fv.equality),
    decide (n.alias ∈ fv.above),
@@ -83,12 +85,12 @@ def scoreEndpoint (n : EP) (fv : FV) (bound : List Nat) (count : Nat → Nat) : 
    | [] => 2 ^ 64 - 1
    | l :: ls => (ls.map count).foldl min (count l))
 
-/-- **PROVEN** (score formula): bound +3, filtered anywhere around the chain +2, labelled +1; the
+/-- **PROVEN** (score formula): bound (some bound variable shares the id) +3, filtered anywhere around the chain +2, labelled +1; the
 first tie-breaker flag says the endpoint is pinned by an equality, the second that its Filter sits
 above the chain; cardinality is `u64::MAX` for an unlabelled node, else the minimum label count. -/
-theorem scoreEndpoint_spec (n : EP) (fv : FV) (b : List Nat) (c : Nat → Nat) :
+theorem scoreEndpoint_spec (n : EP) (fv : FV) (b : List Var) (c : Nat → Nat) :
     (scoreEndpoint n fv b c).1 ≤ 6 ∧
-    (n.alias.1 ∈ b → (scoreEndpoint n fv b c).1 ≥ 3) ∧
+    ((∃ v ∈ b, v.1 = n.alias.1) → (scoreEndpoint n fv b c).1 ≥ 3) ∧
     (n.alias ∈ fv.all → (scoreEndpoint n fv b c).1 ≥ 2) ∧
     (n.labels ≠ [] → (scoreEndpoint n fv b c).1 ≥ 1) ∧
     (scoreEndpoint n fv b c).2.1 = decide (n.alias ∈ fv.equality) ∧
@@ -97,24 +99,45 @@ theorem scoreEndpoint_spec (n : EP) (fv : FV) (b : List Nat) (c : Nat → Nat) :
   unfold scoreEndpoint
   refine ⟨by split <;> split <;> split <;> omega, fun h => ?_, fun h => ?_, fun h => ?_, rfl, rfl,
     fun h => by simp [h]⟩
-  · simp only [h, ite_true]; omega
+  · have : b.any (fun v => v.1 == n.alias.1) = true := by
+      obtain ⟨v, hv, he⟩ := h; exact List.any_eq_true.mpr ⟨v, hv, by simp [he]⟩
+    simp only [this, ite_true]; omega
   · simp only [h, ite_true]; omega
   · have : n.labels.isEmpty = false := by cases hl : n.labels <;> simp_all
     simp only [this]; simp
 
 /-- **PROVEN**: since #2390 a bound endpoint is never outscored by an unbound one (an unbound
 endpoint scores at most 2 + 1 = 3), as the doc comment says. -/
-theorem score_bound_dominant (n m : EP) (fv : FV) (b : List Nat) (c : Nat → Nat)
-    (hn : n.alias.1 ∈ b) (hm : m.alias.1 ∉ b) :
+theorem score_bound_dominant (n m : EP) (fv : FV) (b : List Var) (c : Nat → Nat)
+    (hn : ∃ v ∈ b, v.1 = n.alias.1) (hm : ¬ ∃ v ∈ b, v.1 = m.alias.1) :
     (scoreEndpoint m fv b c).1 ≤ (scoreEndpoint n fv b c).1 := by
+  have hn' : b.any (fun v => v.1 == n.alias.1) = true := by
+    obtain ⟨v, hv, he⟩ := hn; exact List.any_eq_true.mpr ⟨v, hv, by simp [he]⟩
+  have hm' : b.any (fun v => v.1 == m.alias.1) = false := by
+    rw [Bool.eq_false_iff]; intro h
+    obtain ⟨v, hv, he⟩ := List.any_eq_true.mp h; exact hm ⟨v, hv, by simpa using he⟩
   unfold scoreEndpoint
-  simp only [hn, hm, ite_true, ite_false]
+  simp only [hn', hm', ite_true, Bool.false_eq_true, ite_false]
   split <;> split <;> split <;> split <;> omega
+
+/-- **PROVEN** (#3933 keeps main's choice): `bound_vars` holds `VarKey`s, but the +3 is given by id
+alone, so a bound variable of another scope sharing the endpoint's id still counts (the comment at
+`select_scan_node.rs:118-125`: the planner marks a WITH copy visited under its source); a bound set
+with no such id gives nothing. -/
+theorem score_bound_by_id (n : EP) (fv : FV) (c : Nat → Nat) (s : Nat) :
+    (scoreEndpoint n fv [(n.alias.1, s)] c).1 ≥ 3 ∧
+    (∀ b : List Var, (∀ v ∈ b, v.1 ≠ n.alias.1) →
+      (scoreEndpoint n fv b c).1 = (scoreEndpoint n fv [] c).1) := by
+  refine ⟨(scoreEndpoint_spec n fv _ c).2.1 ⟨_, List.mem_singleton_self _, rfl⟩, fun b hb => ?_⟩
+  have : b.any (fun v => v.1 == n.alias.1) = false := by
+    rw [Bool.eq_false_iff]; intro h
+    obtain ⟨v, hv, he⟩ := List.any_eq_true.mp h; exact hb v hv (by simpa using he)
+  simp [scoreEndpoint, this]
 
 /-- **PROVEN** (#3821): when `equality ⊆ all` (which `collect_filtered_vars` guarantees,
 `filteredVars_equality_sub_all`), an equality-pinned endpoint always gets the +2 of a filtered one,
 so the new flag only breaks ties among filtered endpoints and never outranks the score. -/
-theorem score_equality_filtered (n : EP) (fv : FV) (b : List Nat) (c : Nat → Nat)
+theorem score_equality_filtered (n : EP) (fv : FV) (b : List Var) (c : Nat → Nat)
     (hsub : ∀ v, v ∈ fv.equality → v ∈ fv.all) (h : (scoreEndpoint n fv b c).2.1 = true) :
     (scoreEndpoint n fv b c).1 ≥ 2 := by
   have he : n.alias ∈ fv.equality := by simpa [scoreEndpoint] using h
@@ -129,7 +152,7 @@ def startKeyLt (a b : Nat × Bool × Bool × Nat) : Prop :=
 
 /-- **PROVEN** (#3821, the PR's motivating case): of two equally scored endpoints, the one pinned by
     an equality beats one that is not, whatever their late-filter flags and cardinalities. -/
-theorem equality_beats_late (x y : EP) (fv : FV) (b : List Nat) (c : Nat → Nat)
+theorem equality_beats_late (x y : EP) (fv : FV) (b : List Var) (c : Nat → Nat)
     (hs : (scoreEndpoint x fv b c).1 = (scoreEndpoint y fv b c).1)
     (hx : x.alias ∈ fv.equality) (hy : y.alias ∉ fv.equality) :
     startKeyLt (scoreEndpoint y fv b c) (scoreEndpoint x fv b c) := by
@@ -662,7 +685,7 @@ theorem inMergeLoop_spec (l : List (IRk × Nat × Nat)) :
 
 /-! ## `collect_output_aliases` and `child_subtree_binds` -/
 
-/-- `projected_outputs` (`select_scan_node.rs:459-477`, #3594): the `(id, scope)` a projection or a
+/-- `projected_outputs` (`select_scan_node.rs:467-485`, #3594): the `(id, scope)` a projection or a
     known `Argument` writes — a `Project`'s expression aliases and each copy's `new` end, an
     `Aggregate`'s names and each projection's `new` end, a known `Argument`'s variables. -/
 def projectedOutputs : IRk → List Var
@@ -671,7 +694,7 @@ def projectedOutputs : IRk → List Var
   | .argument (some vs) => vs
   | _ => []
 
-/-- `collect_output_pairs` (`select_scan_node.rs:484-498`, #3594): `projected_outputs` plus each
+/-- `collect_output_pairs` (`select_scan_node.rs:492-506`, #3594): `projected_outputs` plus each
     copy's source `old`, carried with its scope. -/
 def copiesOf : IRk → List (Var × Var)
   | .project _ cs => cs
@@ -681,37 +704,48 @@ def copiesOf : IRk → List (Var × Var)
 def collectOutputPairs (ir : IRk) : List Var :=
   projectedOutputs ir ++ (copiesOf ir).map Prod.fst
 
-/-- `collect_output_aliases` (`select_scan_node.rs:502-535`); since #3594 a `Project`, `Aggregate` or
-    known `Argument` contributes the ids of `projected_outputs`. -/
-def collectOutputAliases : IRk → List Nat
-  | .allNodeScan a | .labelScan a _ | .indexScan a => [a.1]
-  | .fulltextScan n s => n.1 :: s.toList.map (·.1)
-  | .project es cs => (projectedOutputs (.project es cs)).map (·.1)
-  | .aggregate ns ps => (projectedOutputs (.aggregate ns ps)).map (·.1)
-  | .unwind v => [v.1]
-  | .argument (some vs) => (projectedOutputs (.argument (some vs))).map (·.1)
+/-- `collect_output_aliases` (`select_scan_node.rs:510-538`); since #3594 a `Project`, `Aggregate` or
+    known `Argument` contributes `projected_outputs`, and since #3933 every arm gives the whole
+    `VarKey` (`alias.key()`), not the id. -/
+def collectOutputAliases : IRk → List Var
+  | .allNodeScan a | .labelScan a _ | .indexScan a => [a]
+  | .fulltextScan n s => n :: s.toList
+  | .project es cs => projectedOutputs (.project es cs)
+  | .aggregate ns ps => projectedOutputs (.aggregate ns ps)
+  | .unwind v => [v]
+  | .argument (some vs) => projectedOutputs (.argument (some vs))
   | _ => []
 
 theorem collectOutputAliases_spec (a : Var) (vs : List Var) (s : Option Var) :
-    collectOutputAliases (.labelScan a []) = [a.1] ∧ collectOutputAliases (.indexScan a) = [a.1] ∧
-    collectOutputAliases (.project vs []) = vs.map (·.1) ∧ collectOutputAliases (.argument none) = [] ∧
-    collectOutputAliases (.argument (some vs)) = vs.map (·.1) ∧
-    collectOutputAliases (.fulltextScan a s) = a.1 :: s.toList.map (·.1) ∧
+    collectOutputAliases (.labelScan a []) = [a] ∧ collectOutputAliases (.indexScan a) = [a] ∧
+    collectOutputAliases (.project vs []) = vs ∧ collectOutputAliases (.argument none) = [] ∧
+    collectOutputAliases (.argument (some vs)) = vs ∧
+    collectOutputAliases (.fulltextScan a s) = a :: s.toList ∧
     collectOutputAliases .other = [] := by
   simp [collectOutputAliases, projectedOutputs]
 
 /-- **PROVEN** (#3594): a copy `(old, new)` contributes its `new` end and never its source; an
     aggregation contributes its names and its copies' `new` ends. -/
 theorem collectOutputAliases_aggregate (es ns : List Var) (cs : List (Var × Var)) :
-    collectOutputAliases (.project es cs) = es.map (·.1) ++ cs.map (·.2.1) ∧
-    collectOutputAliases (.aggregate ns cs) = ns.map (·.1) ++ cs.map (·.2.1) := by
+    collectOutputAliases (.project es cs) = es ++ cs.map Prod.snd ∧
+    collectOutputAliases (.aggregate ns cs) = ns ++ cs.map Prod.snd := by
   simp [collectOutputAliases, projectedOutputs]
 
+/-- **PROVEN** (#3933, the Rust unit test `output_aliases_cover_copies_of_projections_and_aggregations`):
+    a copy `(old, new)` whose `old` has `new`'s id in the scope before, `(7, 0)` → `(7, 1)`, lists
+    `new` and not `old` — the key tells them apart where the id helper listed `7` for both. -/
+theorem collectOutputAliases_copy_scope :
+    collectOutputAliases (.project [] [((7, 0), (7, 1))]) = [(7, 1)] ∧
+    (7, 0) ∉ collectOutputAliases (.project [] [((7, 0), (7, 1))]) ∧
+    (7, 0) ∉ collectOutputAliases (.aggregate [(9, 1)] [((7, 0), (7, 1))]) ∧
+    (9, 1) ∈ collectOutputAliases (.aggregate [(9, 1)] [((7, 0), (7, 1))]) := by
+  decide
+
 /-- **PROVEN** (#3594): on every operator that projects (`Project`, `Aggregate`, known `Argument`)
-    `collect_output_aliases` is exactly the ids of `projected_outputs`, so the id helper and the
-    scoped helper cannot disagree about what such an operator outputs. -/
+    `collect_output_aliases` is exactly `projected_outputs` (since #3933 both are `VarKey` sets), so
+    the two helpers cannot disagree about what such an operator outputs. -/
 theorem collectOutputAliases_projected (ir : IRk) (h : projectedOutputs ir ≠ []) :
-    collectOutputAliases ir = (projectedOutputs ir).map (·.1) := by
+    collectOutputAliases ir = projectedOutputs ir := by
   cases ir with
   | argument v => cases v with
     | none => simp [projectedOutputs] at h
@@ -720,20 +754,20 @@ theorem collectOutputAliases_projected (ir : IRk) (h : projectedOutputs ir ≠ [
   | _ => simp [projectedOutputs] at h
 
 /-- **PROVEN** (#3594): `collect_output_pairs` is `projected_outputs` plus the copies' sources, and
-    a pair it lists either is a projected output (whose id `collect_output_aliases` reports) or is the
+    a pair it lists either is a projected output (which `collect_output_aliases` reports) or is the
     source of a copy, with its scope. The Rust unit test
     `output_aliases_cover_copies_of_projections_and_aggregations` checks one instance. -/
 theorem collectOutputPairs_spec (ir : IRk) (v : Var) :
     (∀ w ∈ projectedOutputs ir, w ∈ collectOutputPairs ir) ∧
     (v ∈ collectOutputPairs ir →
-      (v ∈ projectedOutputs ir ∧ (projectedOutputs ir ≠ [] → v.1 ∈ collectOutputAliases ir)) ∨
+      (v ∈ projectedOutputs ir ∧ (projectedOutputs ir ≠ [] → v ∈ collectOutputAliases ir)) ∨
       ∃ new : Var, (v, new) ∈ copiesOf ir) := by
   refine ⟨fun w hw => List.mem_append_left _ hw, fun hv => ?_⟩
   simp only [collectOutputPairs, List.mem_append] at hv
   rcases hv with hv | hv
   · refine Or.inl ⟨hv, fun hne => ?_⟩
     rw [collectOutputAliases_projected ir hne]
-    exact List.mem_map.mpr ⟨v, hv, rfl⟩
+    exact hv
   · right
     obtain ⟨⟨o, n⟩, hm, rfl⟩ := List.mem_map.mp hv
     exact ⟨n, hm⟩
@@ -861,14 +895,14 @@ theorem childSubtreeBinds_mayBind (gv : PT → List Var) (t : PT) (a : Var)
 
 /-! ### The rewrite decision -/
 
-/-- What `select_var_len_scan_node` (`select_scan_node.rs:594-791`) inspects. `bidirectional` and
+/-- What `select_var_len_scan_node` (`select_scan_node.rs:627-824`) inspects. `bidirectional` and
 `scanOnlyArgBelow` are read only by the history (`vlGuards3264`, `vlLeaf3264`): #3593 dropped both
 refusals. -/
 structure VLCase where
   expandInto : Bool
   bidirectional : Bool
   allShortest : Bool
-  sameEnds : Bool
+  sameEnds : Bool            -- `from.alias == to.alias` (`VarKey` equality since #3933, :662)
   oneChild : Bool
   childIsFromScan : Bool      -- `planner_scan_alias(child) == from` (looks through Filter/IncludePending)
   wrapperHasPending : Bool    -- an `IncludePending` between the child and the scan
@@ -880,7 +914,7 @@ structure VLCase where
   argOpaque : Bool
   fromScore : Nat
   toScore : Nat
-  attrsReadFrom : Bool := false   -- the edge attributes read `from` (#3593, :634-639)
+  attrsReadFrom : Bool := false   -- the edge attributes read `from` (#3593, :670-672; `collect_expr_variables` keys)
   attrsReadTo : Bool := false     -- the edge attributes read `to`
   belowMayBindTo : Bool := false  -- `subtree_may_bind(scan, to)` (#3593, :749)
 

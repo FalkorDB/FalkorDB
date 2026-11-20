@@ -807,9 +807,10 @@ impl Binder {
                 // still uses, silently aliasing two variables in the record.
                 let scope_id = self.env_stack.len() as u32 - 1;
                 let inner_env = std::mem::replace(self.current_env_mut(), saved_env);
-                let restored: HashSet<u32> = self.current_env().values().map(|v| v.id).collect();
+                let restored: HashSet<VarKey> =
+                    self.current_env().values().map(Variable::key).collect();
                 for v in inner_env.into_values() {
-                    if restored.contains(&v.id) {
+                    if restored.contains(&v.key()) {
                         continue;
                     }
                     if v.is_unnamed() {

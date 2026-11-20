@@ -149,14 +149,18 @@ impl VarKind for Variable {
 
 /// A variable in a Cypher query, either named or anonymous.
 ///
-/// Variables are assigned unique IDs during binding to distinguish between
-/// variables with the same name in different scopes.
+/// The binder numbers variables within each scope and ids restart in every
+/// scope, so `==` and `Hash` compare the `id` together with the `scope_id`
+/// (the [`VarKey`]). Scope ids are reused too once a scope ends (by the scopes
+/// after a `CALL {}` body, and by each `UNION` branch), so the pair tells
+/// apart the variables of scopes that are live at the same time.
 ///
 /// # Fields
 /// - `alias`: What the query called it: a name, or the parser's number for an
 ///   unnamed pattern entity. `None` for a planner temporary, which the query
 ///   never wrote
-/// - `id`: Unique identifier assigned during binding
+/// - `id`: The variable's slot in its scope, assigned during binding; also its
+///   slot in the rows the runtime builds for that scope
 /// - `scope_id`: The scope in which this variable was defined
 /// - `ty`: The inferred or declared type of the variable
 #[derive(Clone, Debug)]
@@ -186,7 +190,7 @@ impl PartialEq for Variable {
         &self,
         other: &Self,
     ) -> bool {
-        self.id == other.id
+        self.key() == other.key()
     }
 }
 
@@ -197,7 +201,7 @@ impl Hash for Variable {
         &self,
         state: &mut H,
     ) {
-        self.id.hash(state);
+        self.key().hash(state);
     }
 }
 
@@ -986,7 +990,7 @@ impl<T, L> QueryGraph<T, L, Variable> {
         let mut components = Vec::new();
 
         for node in &self.nodes {
-            if !visited.contains(&node.alias.id) {
+            if !visited.contains(&node.alias.key()) {
                 let mut component = Self::default();
 
                 self.dfs(node, &mut visited, &mut component);
@@ -1001,32 +1005,34 @@ impl<T, L> QueryGraph<T, L, Variable> {
     fn dfs(
         &self,
         node: &Arc<QueryNode<L, Variable>>,
-        visited: &mut HashSet<u32>,
+        visited: &mut HashSet<VarKey>,
         component: &mut Self,
     ) {
-        visited.insert(node.alias.id);
+        visited.insert(node.alias.key());
         component.add_node(node.clone());
 
         for relationship in &self.relationships {
-            if relationship.from.alias.id == node.alias.id {
-                if visited.insert(relationship.alias.id) {
+            if relationship.from.alias == node.alias {
+                if visited.insert(relationship.alias.key()) {
                     component.add_relationship(relationship.clone());
                 }
-                if !visited.contains(&relationship.to.alias.id) {
+                if !visited.contains(&relationship.to.alias.key()) {
                     self.dfs(&relationship.to, visited, component);
                 }
-            } else if relationship.to.alias.id == node.alias.id {
-                if visited.insert(relationship.alias.id) {
+            } else if relationship.to.alias == node.alias {
+                if visited.insert(relationship.alias.key()) {
                     component.add_relationship(relationship.clone());
                 }
-                if !visited.contains(&relationship.from.alias.id) {
+                if !visited.contains(&relationship.from.alias.key()) {
                     self.dfs(&relationship.from, visited, component);
                 }
             }
         }
 
         for path in &self.paths {
-            if path.vars.iter().all(|id| visited.contains(&id.id)) && visited.insert(path.var.id) {
+            if path.vars.iter().all(|var| visited.contains(&var.key()))
+                && visited.insert(path.var.key())
+            {
                 component.add_path(path.clone());
             }
         }

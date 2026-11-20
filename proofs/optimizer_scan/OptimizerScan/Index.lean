@@ -18,15 +18,15 @@ their `sel` agree on every node of the graph.
 | `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs:251-295` |
 | `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-245` (InList → one `InList` of the scalar items since #2383; an `Or` of `Equal`s before) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |
-| `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs:547-566` |
-| `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs:357-368` |
-| `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr`, `utilize_index.rs:855-873` |
-| `needsPost`                | `needs_post_filter`, `utilize_index.rs:802-848` |
+| `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs:568-587` |
+| `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs:378-389` |
+| `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr`, `utilize_index.rs:894-912` |
+| `needsPost`                | `needs_post_filter`, `utilize_index.rs:841-887` |
 | `buildOp`                  | `build_op_query`, `utilize_index.rs:315-355` |
 | `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` (+ `bare_property_of`, #3068) + `extract_attribute_and_expression_from_filter`, `utilize_index.rs:360-379, 400-442, 626-751` |
 | `mergeRange`               | `merge_range_queries`, `utilize_index.rs:481-544` |
 | `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs:727-783` |
-| `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs:973-1046` |
+| `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs:1011-1080` |
 | `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index or label-scan fallback, then extra labels), `node_by_index_scan.rs:308-335` |
 -/
 namespace OptimizerScan.Index
@@ -287,7 +287,8 @@ theorem canUtilize_inList_eq_or (k : Nat) (vs : List V) :
 inductive T
   | prop (k : Nat)              -- `n.k` on the scanned node
   | lit (v : V)                 -- a literal (after the planner's constant folding)
-  | param (v : V)               -- `$p`, or a variable bound by another operator
+  | param (v : V)               -- `$p`, or a variable bound by another operator (since #3933: any
+                                -- `Variable` whose `VarKey` differs from the scan alias's)
   | abs (t : T)                 -- a FuncInvocation (`abs(...)`, …)
   | add (a b : T)               -- `ExprIR::Add` (not a FuncInvocation!)
   deriving Repr
@@ -380,7 +381,7 @@ def scalarLit : T → Bool
   | .lit (.b _) | .lit (.s _) => true
   | _ => false
 
-/-- `needs_post_filter` (`utilize_index.rs:802-848`). -/
+/-- `needs_post_filter` (`utilize_index.rs:841-887`). -/
 def needsPost : F → Bool
   | .atom (.inn (.prop _) (.list ts)) =>
     if !ts.isEmpty && ts.all scalarLit then false else true

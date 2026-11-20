@@ -4,7 +4,7 @@
 The pattern graph a MATCH / CREATE / MERGE builds, generic over the alias
 type `V` exactly as the Rust is generic over `TVar` (`Arc<String>` before
 binding, `Variable` after). Alias equality is `==` on `V`; for `Variable`
-that is `Variable::eq`, which compares ids only (ast.rs:186-193).
+that is `Variable::eq`, which compares the `VarKey` (id and scope, ast.rs:188-195).
 -/
 import FalkorParserGrammar.C.Core
 
@@ -21,19 +21,31 @@ structure Var where
   anon : Option Nat := none
   deriving Repr
 
-/-- `impl PartialEq for Variable` (ast.rs:186-193): by id only. -/
-instance : BEq Var := ⟨fun a b => a.id == b.id⟩
+/-- `Variable::key` (ast.rs): the `VarKey { id, scope_id }`. -/
+def Var.key (a : Var) : Nat × Nat := (a.id, a.scope)
 
-/-- `Variable::eq`: two variables are equal iff their ids are. -/
-theorem Var.eq_spec (a b : Var) : (a == b) = true ↔ a.id = b.id := by
-  show (a.id == b.id) = true ↔ _; simp
+/-- `impl PartialEq for Variable` (ast.rs:188-195): `self.key() == other.key()`
+(id and scope; ids restart in every scope, PR #3933). -/
+instance : BEq Var := ⟨fun a b => a.key == b.key⟩
 
-/-- `impl Hash for Variable` (ast.rs:197-204) hashes the id alone, so equal
+/-- `Variable::eq`: two variables are equal iff their ids and scopes are. -/
+theorem Var.eq_spec (a b : Var) : (a == b) = true ↔ a.id = b.id ∧ a.scope = b.scope := by
+  show (a.key == b.key) = true ↔ _; simp [Var.key]
+
+/-- `Variable::eq` is equality of keys. -/
+theorem Var.eq_key (a b : Var) : (a == b) = true ↔ a.key = b.key := by
+  show (a.key == b.key) = true ↔ _; simp
+
+/-- Equal ids in different scopes are different variables (before #3933 they were equal). -/
+theorem Var.ne_other_scope : (({ name := none, id := 3, scope := 0 } : Var) ==
+    { name := none, id := 3, scope := 1 }) = false := by decide
+
+/-- `impl Hash for Variable` (ast.rs:199-206) hashes the key, so equal
 variables hash alike (the `Hash`/`Eq` contract). The hash is modelled as
 the hashed key. -/
-def Var.hashKey (a : Var) : Nat := a.id
+def Var.hashKey (a : Var) : Nat × Nat := a.key
 theorem Var.hash_eq (a b : Var) (h : (a == b) = true) : a.hashKey = b.hashKey :=
-  (Var.eq_spec a b).1 h
+  (Var.eq_key a b).1 h
 
 /-- `Variable::as_str` (ast.rs:214-216). Names are ids; `none` is `"?"`. -/
 def Var.asStr (a : Var) : Option Nat := a.name

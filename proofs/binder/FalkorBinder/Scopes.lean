@@ -37,13 +37,13 @@ theorem mergeSV_covers (a b : List (List Var)) (s i : Nat)
     (h : i < lenAt a s ∨ i < lenAt b s) : i < lenAt (mergeSV a b) s := by
   have := mergeSV_ge a b s; omega
 
-/-! ## FOREACH restore (binder.rs:775-796) -/
+/-! ## FOREACH restore (binder.rs:808-824) -/
 
 /-- The restored table: the saved outer table plus every inner entry whose
-id the outer table does not hold, re-keyed `_foreach_{scope}_{id}` — or, for a nameless
+key `(id, scope)` the outer table does not hold (`HashSet<VarKey>`, #3933), re-keyed `_foreach_{scope}_{id}` — or, for a nameless
 variable, pushed unnamed (#3303). -/
 def foreachRestore (saved inner : Env) (scope : Nat) : Env :=
-  saved ++ (inner.filter (fun p => !(saved.ids.contains p.2.id))).map
+  saved ++ (inner.filter (fun p => !(saved.varKeys.contains p.2.key))).map
     (fun p => if p.2.name.isNone then (Key.un, p.2) else (Key.nm s!"_foreach_{scope}_{p.2.id}", p.2))
 
 /-- When the body only *added* entries, each minted at or above the outer
@@ -55,19 +55,22 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
     (hi : (saved ++ added).Covers) :
     (foreachRestore saved (saved ++ added) scope).Covers ∧
     (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
-  have hS : saved.filter (fun p => !(saved.ids.contains p.2.id)) = [] := by
+  have hS : saved.filter (fun p => !(saved.varKeys.contains p.2.key)) = [] := by
     rw [List.filter_eq_nil_iff]
     intro p hp
-    simp [Env.ids]
-    exact ⟨p.1, p.2, hp, rfl⟩
-  have hA : added.filter (fun p => !(saved.ids.contains p.2.id)) = added := by
+    simp only [Bool.not_eq_eq_eq_not, Bool.not_true, List.contains_eq_mem,
+      decide_eq_false_iff_not, Classical.not_not, Env.varKeys]
+    exact List.mem_map.2 ⟨p, hp, rfl⟩
+  have hA : added.filter (fun p => !(saved.varKeys.contains p.2.key)) = added := by
     rw [List.filter_eq_self]
     intro p hp
     have := ha p hp
     simp only [Bool.not_eq_eq_eq_not, Bool.not_true, List.contains_eq_mem,
       decide_eq_false_iff_not]
     intro hm
-    have := hs _ hm
+    obtain ⟨q, hq, hqk⟩ := List.mem_map.1 hm
+    have hqid : q.2.id = p.2.id := congrArg Prod.fst hqk
+    have := hs q.2.id (List.mem_map.2 ⟨q, hq, rfl⟩)
     omega
   have hids : (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
     simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]

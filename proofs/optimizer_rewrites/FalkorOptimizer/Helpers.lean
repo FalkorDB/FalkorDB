@@ -10,12 +10,12 @@ import FalkorOptimizer.Basic
 | `subst`, `evX` | `substitute_params` eliminate_true_filters.rs:83-98; a parameter-aware evaluator |
 | `refsVar` | `expr_references_variable` / `subtree_references_variable` references.rs:317-334 (a BFS, by `(id, scope)`) |
 | `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
-| `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
-| `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
+| `collectVars`, `subtreeKeys` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:91-100, :165-170 (`HashSet<VarKey>` since #3933; the id-only versions are `pre3933_collectIds` / `pre3933_subtreeIds`) |
+| `countVar` | `extract_count_variable` reduce_count.rs:193-212 (`var.key()` since #3933) |
 | `isUnnamed`, `attrsEmpty` | `Variable::is_unnamed` ast.rs:209-211 (#3303: `name.is_none()`, replacing the `_anon` prefix test `is_anon`), `rel_attrs_empty` fuse_anonymous_traverse.rs:37-47 (`node_attrs_empty` removed by #2390) |
 | `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:78-187 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
 | `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
-| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-87 |
+| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:60-80 (keys, copy outputs since #3933; before: `pre3933_branchOut`) |
 -/
 namespace Falkor.Opt
 
@@ -146,7 +146,8 @@ def isVarId (i : Nat) : XD → Bool | .var w => w.id == i | _ => false
 
 /-- `expr_references_variable`: by `(id, scope)`. -/
 def refsVar (e : X) (v : Var) : Bool := anyX (isVarS v) e
-/-- `references_var` (utilize_node_by_id): `Variable ==` compares ids only. -/
+/-- Historical: a test by `Variable ==` while `==` compared ids only (before #3933, which
+made `==` compare `(id, scope)`, ast.rs:189-194). -/
 def refsVarId (e : X) (v : Var) : Bool := anyX (isVarId v.id) e
 
 theorem refsVar_iff (e : X) (v : Var) : refsVar e v = true ↔ XD.var v ∈ nodesX e := by
@@ -170,30 +171,58 @@ theorem refsVarId_other_scope :
     refsVarId (.node (.var ⟨3, 1⟩) []) ⟨3, 0⟩ = true ∧ refsVar (.node (.var ⟨3, 1⟩) []) ⟨3, 0⟩ = false := by
   decide
 
-/-- `collect_expr_variables`: the ids (only) of the variables an expression mentions. -/
-def collectIds (e : X) : List Nat :=
+/-- `collect_expr_variables` (mod.rs:91-100, #3933): the `VarKey`s `(id, scope)` of the
+variables an expression mentions (the former `collect_expr_scoped_variables`). -/
+def collectVars (e : X) : List Var :=
+  (nodesX e).filterMap fun d => match d with | .var v => some v | _ => none
+
+theorem mem_collectVars (e : X) (v : Var) : v ∈ collectVars e ↔ XD.var v ∈ nodesX e := by
+  unfold collectVars; rw [List.mem_filterMap]
+  constructor
+  · rintro ⟨d, hd, h⟩; cases d <;> simp at h; subst h; exact hd
+  · intro hv; exact ⟨_, hv, rfl⟩
+
+/-- `collect_subtree_variables` (mod.rs:165-170, #3933): the keys of what `get_variables`
+reports — the variables themselves, scope included. -/
+def subtreeKeys (getVars : List Var) : List Var := getVars
+
+theorem mem_subtreeKeys (gv : List Var) (v : Var) : v ∈ subtreeKeys gv ↔ v ∈ gv := Iff.rfl
+
+/-- Since #3933 a variable of another scope with the same id is not collected as the
+expression's (nor as the subtree's): membership is by `(id, scope)`. -/
+theorem collectVars_scoped :
+    ⟨3, 0⟩ ∉ collectVars (.node (.var ⟨3, 1⟩) []) ∧ ⟨3, 0⟩ ∉ subtreeKeys [⟨3, 1⟩] := by
+  decide
+
+/-- Historical (before #3933): `collect_expr_variables` returned ids only. -/
+def pre3933_collectIds (e : X) : List Nat :=
   (nodesX e).filterMap fun d => match d with | .var v => some v.id | _ => none
 
-theorem mem_collectIds (e : X) (i : Nat) : i ∈ collectIds e ↔ ∃ v, XD.var v ∈ nodesX e ∧ v.id = i := by
-  unfold collectIds; rw [List.mem_filterMap]
+theorem pre3933_mem_collectIds (e : X) (i : Nat) :
+    i ∈ pre3933_collectIds e ↔ ∃ v, XD.var v ∈ nodesX e ∧ v.id = i := by
+  unfold pre3933_collectIds; rw [List.mem_filterMap]
   constructor
   · rintro ⟨d, hd, h⟩; cases d <;> simp at h; exact ⟨_, hd, h⟩
   · rintro ⟨v, hv, rfl⟩; exact ⟨_, hv, rfl⟩
 
-/-- `collect_subtree_variables`: the ids of what `get_variables` reports. -/
-def subtreeIds (getVars : List Var) : List Nat := getVars.map Var.id
+/-- Historical (before #3933): `collect_subtree_variables` returned the ids of `get_variables`. -/
+def pre3933_subtreeIds (getVars : List Var) : List Nat := getVars.map Var.id
 
-theorem mem_subtreeIds (gv : List Var) (i : Nat) : i ∈ subtreeIds gv ↔ ∃ v ∈ gv, v.id = i := by
-  simp [subtreeIds]
+theorem pre3933_mem_subtreeIds (gv : List Var) (i : Nat) :
+    i ∈ pre3933_subtreeIds gv ↔ ∃ v ∈ gv, v.id = i := by
+  simp [pre3933_subtreeIds]
 
 /-! ## `extract_count_variable` -/
 
-def countVar : X → Option Nat
-  | .node (.func "count") (.node (.var v) _ :: _) => some v.id
+/-- `extract_count_variable` (reduce_count.rs:193-212): `count(var)` gives `var.key()`
+(#3933; before, `var.id` with the scope dropped). `reduce_count` compares it with the scan's /
+traverse's `alias.key()` (:97-118). -/
+def countVar : X → Option Var
+  | .node (.func "count") (.node (.var v) _ :: _) => some v
   | _ => none
 
-theorem countVar_spec (e : X) (i : Nat) :
-    countVar e = some i ↔ ∃ v cs rest, e = .node (.func "count") (.node (.var v) cs :: rest) ∧ v.id = i := by
+theorem countVar_spec (e : X) (i : Var) :
+    countVar e = some i ↔ ∃ v cs rest, e = .node (.func "count") (.node (.var v) cs :: rest) ∧ v = i := by
   constructor
   · intro h
     unfold countVar at h
@@ -307,33 +336,42 @@ theorem fusedCT_spec (c : CT) : (fusedCT c).optional = true ∧ { fusedCT c with
 
 /-! ## `branch_output_variables` -/
 
-/-- `Project.copies` holds `(old, new)` pairs (binder.rs:2234; project.rs:115
-inserts `new_var`); `branch_output_variables` reads the first component. -/
+/-- `Project.copies` and `Aggregate.projections` hold `(source, output)` pairs (binder.rs:2447-2448
+inserts `(parent var, copied var)`; `get_variables` reports the output, runtime.rs:380-389). -/
 inductive OutIR
   | project (exprs : List Var) (copies : List (Var × Var))
-  | aggregate (names projections : List Var)
+  | aggregate (names : List Var) (projections : List (Var × Var))
   | other
 
-def branchOut : OutIR → Option (List Nat)
-  | .project es cs => some (es.map Var.id ++ cs.map (·.1.id))
-  | .aggregate ns ps => some (ns.map Var.id ++ ps.map Var.id)
+/-- `branch_output_variables` since #3933: `VarKey`s, and each copy contributes its
+*output* (`.2`), the fix of #3869. -/
+def branchOut : OutIR → Option (List Var)
+  | .project es cs => some (es ++ cs.map Prod.snd)
+  | .aggregate ns ps => some (ns ++ ps.map Prod.snd)
   | .other => none
 
-/-- Above a Project/Aggregate only its outputs are visible; elsewhere `none`
-(the subtree's variables). Ids only — scope is dropped (see `id_only_routing_unsound`). -/
+/-- Above a Project/Aggregate only its outputs are visible, by `(id, scope)`: the
+expression names and the copies' outputs; elsewhere `none` (the subtree's variables). -/
 theorem branchOut_spec (o : OutIR) :
-    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOut o).getD [] ↔ ∃ v ∈ es ++ cs.map Prod.fst, v.id = i) ∧
-    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOut o).getD [] ↔ ∃ v ∈ ns ++ ps, v.id = i) ∧
+    (∀ es cs, o = .project es cs → ∀ v, v ∈ (branchOut o).getD [] ↔ v ∈ es ++ cs.map Prod.snd) ∧
+    (∀ ns ps, o = .aggregate ns ps → ∀ v, v ∈ (branchOut o).getD [] ↔ v ∈ ns ++ ps.map Prod.snd) ∧
     (o = .other → branchOut o = none) := by
   refine ⟨?_, ?_, ?_⟩
-  · rintro es cs rfl i; simp [branchOut, or_and_right, exists_or]
-  · rintro ns ps rfl i; simp [branchOut, or_and_right, exists_or]
+  · rintro es cs rfl v; simp [branchOut]
+  · rintro ns ps rfl v; simp [branchOut]
   · rintro rfl; rfl
 
-/-- The copy's *new* variable — what the Project actually outputs — is not
-reported (only the parent-scope id is). Suspected, see the root header. -/
+/-- Historical (before #3933): ids only, and each copy contributed its *source*. -/
+def pre3933_branchOut : OutIR → Option (List Nat)
+  | .project es cs => some (es.map Var.id ++ cs.map (·.1.id))
+  | .aggregate ns ps => some (ns.map Var.id ++ ps.map (·.1.id))
+  | .other => none
+
+/-- The copy's *output* — what the Project actually emits — is now reported (#3869 fixed);
+before #3933 only the parent-scope source's id was. -/
 theorem branchOut_copy_new :
-    branchOut (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
+    branchOut (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [⟨5, 1⟩] ∧
+    pre3933_branchOut (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := ⟨rfl, rfl⟩
 
 /-! ## `utilize_node_by_id`'s parent lookup -/
 

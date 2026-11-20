@@ -40,7 +40,7 @@ use std::sync::Arc;
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
-    parser::ast::{ExprIR, Variable},
+    parser::ast::{ExprIR, VarKey, Variable},
     tree,
 };
 
@@ -53,16 +53,17 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// `Project` and `Aggregate` establish a fresh environment: only the variables
 /// they name survive them, so a filter placed above one cannot see anything
 /// else — not the variables its own subtree matched, and not the variables an
-/// enclosing `Apply` propagates through `Argument`. Returns `None` for
-/// operators that pass their input environment through unchanged, where the
-/// subtree's variables are the right answer.
-fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
+/// enclosing `Apply` propagates through `Argument`. A copy `(source, output)`
+/// contributes its output. Returns `None` for operators that pass their input
+/// environment through unchanged, where the subtree's variables are the right
+/// answer.
+fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<VarKey>> {
     match node.data() {
         IR::Project { exprs, copies } => Some(
             exprs
                 .iter()
-                .map(|(v, _)| v.id)
-                .chain(copies.iter().map(|(v, _)| v.id))
+                .map(|(v, _)| v.key())
+                .chain(copies.iter().map(|(_, v)| v.key()))
                 .collect(),
         ),
         IR::Aggregate {
@@ -70,8 +71,8 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
         } => Some(
             names
                 .iter()
-                .map(|v| v.id)
-                .chain(projections.iter().map(|(v, _)| v.id))
+                .map(Variable::key)
+                .chain(projections.iter().map(|(_, v)| v.key()))
                 .collect(),
         ),
         _ => None,
@@ -81,19 +82,17 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
 /// Variables the rows leaving `node` carry.
 ///
 /// Like `collect_subtree_variables`, except that below an env-resetting
-/// operator only its named outputs survive. Variable IDs are per scope, so a
-/// variable matched below a `WITH` can share its ID with an unrelated one
-/// bound after it; counting it as visible would let a filter on the later one
-/// be pushed below the operator that binds it.
-fn branch_visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
+/// operator only its named outputs survive: a variable matched below a `WITH`
+/// never reaches the rows above it.
+fn branch_visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<VarKey> {
     if let Some(outputs) = branch_output_variables(node) {
         return outputs;
     }
-    let below: HashSet<u32> = node
+    let below: HashSet<VarKey> = node
         .children()
         .flat_map(|child| collect_subtree_variables(&child))
         .collect();
-    let mut vars: HashSet<u32> = collect_subtree_variables(node)
+    let mut vars: HashSet<VarKey> = collect_subtree_variables(node)
         .difference(&below)
         .copied()
         .collect();

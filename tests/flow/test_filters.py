@@ -399,3 +399,61 @@ class testFilters():
         ]:
             res = g.query(q)
             self.env.assertEqual(res.result_set, [[expected]], depth=1)
+
+    def test14_filter_after_scope_change_reads_its_own_variables(self):
+        # Variable ids restart in every scope, so a variable a WITH or a
+        # CALL {} body hides can share its id with one a later MATCH binds.
+        # The planner tells them apart by id and scope, so a filter on the
+        # later variable stays above the operator that binds it (#3869).
+        # Expected values are what C returns.
+        g = self.db.select_graph("filter_after_scope_change")
+        g.query("""CREATE (a1:A {v:1, w:1}), (a2:A {v:2, w:2}),
+                          (b1:B {v:1, w:3}), (b2:B {v:2, w:1}),
+                          (c1:C {v:1}), (c2:C {v:3}), (d:D {v:2}),
+                          (a1)-[:R {v:1}]->(b1), (a1)-[:R {v:2}]->(b2),
+                          (a2)-[:R {v:1}]->(b2), (b1)-[:S {v:1}]->(c1),
+                          (b2)-[:S {v:2}]->(c2), (b2)-[:S {v:1}]->(c1),
+                          (c1)-[:R {v:3}]->(a2), (a1)-[:R {v:4}]->(a1),
+                          (b2)-[:S {v:5}]->(b2), (c2)-[:R {v:1}]->(d)""")
+        for q, expected in [
+            # a projecting WITH, then a filter on an edge of a two-hop chain
+            ("""MATCH (x:A)-[e:R]->(y:B) WITH x AS k
+                MATCH (a:A)-[r:R]->(b:B)-[s:S]->(c:C) WHERE r.v = 1
+                RETURN count(b)""", 9),
+            # a filter that compares with the earlier scope's value
+            ("""MATCH (x:A), (y:B), (z:C) WITH x.v AS k
+                MATCH (a)-[r:R]->(b:B) MATCH (c:C) WHERE a.v = k
+                RETURN count(b)""", 24),
+            # an aggregating WITH after an OPTIONAL MATCH, then two MATCH
+            # clauses, the second's WHERE reading the first's variables
+            ("""OPTIONAL MATCH (x:A)-[e:R]->(y:Z) WITH count(*) AS k
+                MATCH (a)-[r:R]->(b:B) MATCH (c:C) WHERE a.v = b.v
+                RETURN count(*)""", 4),
+            # a DISTINCT WITH, then a self-loop
+            ("""MATCH (x:A)-[e:R]->(y:B) WITH DISTINCT x.v AS k
+                MATCH (a:A {v: 1})-[r]->(a) RETURN count(a)""", 2),
+            # a variable-length walk on both sides of an aggregating WITH
+            ("""MATCH (x:A)-[e*1..2]->(y) WITH count(*) AS k
+                MATCH (a)-[r:R*1..3]->(b:B) WHERE a.v < b.w
+                RETURN count(*)""", 2),
+            # a CALL {} body, then a filter on one side of a Cartesian product
+            ("""CALL { MATCH (x:A)-[e:R]->(y:B) RETURN count(*) AS k }
+                MATCH (a), (b:B) WHERE a.v = 1 RETURN count(a)""", 6),
+            # a correlated CALL {} body, then a filter on what it returned
+            ("""MATCH (x:A) CALL { WITH x MATCH (x)-[e:R]->(y:B) RETURN y.v AS k }
+                MATCH (a:B), (b:B) WHERE a.v = k RETURN count(*)""", 6),
+        ]:
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[expected]], depth=1)
+
+    def test15_with_distinct_where_on_a_carried_variable(self):
+        # A WITH's WHERE may read a variable the WITH does not project: the
+        # projection carries it as a copy. Filter push-down took the copy's
+        # source, a variable of the scope before the WITH, for what the
+        # projection outputs, so whether the filter ran before the DISTINCT
+        # depended on the two ids happening to match. C runs it first.
+        g = self.db.select_graph("with_distinct_carried")
+        g.query("CREATE (:X {x:1, y:1}), (:X {x:1, y:2}), (:X {x:2, y:2})")
+        res = g.query("""MATCH (a:X) WITH DISTINCT a.x AS x WHERE a.y = 2
+                         RETURN x ORDER BY x""")
+        self.env.assertEqual(res.result_set, [[1], [2]])

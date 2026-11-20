@@ -55,7 +55,7 @@ use crate::{
         Index,
         indexer::{IndexQuery, IndexType},
     },
-    parser::ast::{ExprIR, QueryExpr, QueryNode, Variable},
+    parser::ast::{ExprIR, QueryExpr, QueryNode, VarKey, Variable},
     runtime::functions::{FnType, get_functions},
     tree,
 };
@@ -369,9 +369,8 @@ fn bare_property_of(
     let ExprIR::Property(attr) = node.data() else {
         return None;
     };
-    // `Variable` equality is by id only; ids repeat across scopes.
     match node.get_child(0).map(|c| c.data()) {
-        Some(ExprIR::Variable(v)) if v.key() == alias.key() => Some(attr.clone()),
+        Some(ExprIR::Variable(v)) if v == alias => Some(attr.clone()),
         _ => None,
     }
 }
@@ -841,7 +840,7 @@ fn is_array_contains<T: IndexSubject>(
 /// handle the list natively, so that subtree is whitelisted.
 fn needs_post_filter(
     filter: &QueryExpr<Variable>,
-    scan_alias_id: u32,
+    scan_alias: VarKey,
 ) -> bool {
     // Whitelist the RHS subtree of `property IN [literal, ...]` only
     // when the list is non-empty *and* every direct element is a
@@ -883,22 +882,22 @@ fn needs_post_filter(
         if skip_descendants.contains(&i) {
             return false;
         }
-        is_non_indexable_subexpr(filter.node(i).data(), Some(scan_alias_id))
+        is_non_indexable_subexpr(filter.node(i).data(), Some(scan_alias))
     })
 }
 
 /// Returns true when the given `ExprIR` describes a value that the
-/// index may not be able to resolve. `scan_alias_id`, when `Some`,
+/// index may not be able to resolve. `scan_alias`, when `Some`,
 /// tolerates `Variable` references to the scan target itself (the
 /// property-access side), so only *other* variables count as runtime
 /// dependencies.
 fn is_non_indexable_subexpr(
     expr: &ExprIR<Variable>,
-    scan_alias_id: Option<u32>,
+    scan_alias: Option<VarKey>,
 ) -> bool {
     #[allow(clippy::match_same_arms)]
     match expr {
-        ExprIR::Variable(v) => scan_alias_id.is_none_or(|id| v.id != id),
+        ExprIR::Variable(v) => scan_alias.is_none_or(|key| v.key() != key),
         ExprIR::Parameter(_) => true,
         ExprIR::Constant(Value::Int(v)) => Index::int_loses_f64_precision(*v),
         // Compound / non-primitive literals: the index backing store
@@ -1023,7 +1022,7 @@ fn apply_filter_pushdown<T: IndexSubject>(
 ) {
     // `over_pending`: rows injected by `IncludePending` bypass the index, so
     // the filter has to stay and re-check them. See `governing_filter`.
-    let keep_filter = over_pending || needs_post_filter(original_filter, subject.alias().id);
+    let keep_filter = over_pending || needs_post_filter(original_filter, subject.alias().key());
     let subject = reorder_subject_labels(subject, &index);
     let scan_ir = subject.build_scan_ir(index, Arc::new(query), metadata);
     *plan.node_mut(idx).data_mut() = scan_ir;
@@ -1142,7 +1141,7 @@ fn add_to_labels_filter(
     }
     let already_filtered = plan.node(idx).parent().is_some_and(|p| {
         if let IR::Filter(f) = p.data() {
-            is_has_labels_for(f, rel.to.alias.id)
+            is_has_labels_for(f, &rel.to.alias)
         } else {
             false
         }
@@ -1184,10 +1183,10 @@ pub(super) fn utilize_index(
 }
 
 /// Returns true when `filter` is a `hasLabels(variable, [...])` call whose
-/// first argument is a `Variable` with the given id.
+/// first argument is `var`.
 fn is_has_labels_for(
     filter: &QueryExpr<Variable>,
-    var_id: u32,
+    var: &Variable,
 ) -> bool {
     let root = filter.root();
     if let ExprIR::FuncInvocation(func) = root.data()
@@ -1195,7 +1194,7 @@ fn is_has_labels_for(
         && root.num_children() >= 1
         && let ExprIR::Variable(v) = root.child(0).data()
     {
-        v.id == var_id
+        v == var
     } else {
         false
     }

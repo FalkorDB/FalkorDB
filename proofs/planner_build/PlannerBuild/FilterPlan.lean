@@ -26,7 +26,7 @@ def planFilter (lens : Nat → Nat) (e : Ex) (inp : FP) : FP × CSt :=
     else if isTT x.1 then inp else .filter x.1 inp
   (foldExt res x.2.ext, x.2)
 
-theorem foldExt_run (ι : List (Nat × QG)) (up : R → List R) :
+theorem foldExt_run (ι : List (V × QG)) (up : R → List R) :
     ∀ (es : List (QG × Bool)) (res : FP) (r : R),
     run atom sub ι up (foldExt res es) r =
       (run atom sub ι up res r).filter (fun y => es.all (sat sub y))
@@ -43,12 +43,13 @@ theorem allSat_iff (ext : List (QG × Bool)) (y : R) : AllSat sub ext y ↔ ext.
   simp [AllSat]
 
 /-- Shared hypotheses: the predicate as `extract_filter_comprehensions` leaves
-it, patterns in one scope `s0`, mentioned ids below that scope's length. -/
+it, patterns in one scope `s0`, mentioned variables of scope `s0` with ids below that
+scope's length (variables of other scopes never collide with the minted keys, #3933). -/
 structure Pre (lens : Nat → Nat) (s0 : Nat) (e : Ex) : Prop where
   shape : shapeOK e = true
   noExt : needsExtraction e .semiApply = false
   scope : SameScope s0 e
-  below : ∀ i ∈ varIds e, i < lens s0
+  below : ∀ v ∈ varIds e, v.scope = s0 → v.id < lens s0
 
 theorem pre_inv (lens : Nat → Nat) (s0 : Nat) (e : Ex) (h : Pre lens s0 e) :
     Inv s0 (lens s0) (collect (st0 lens) true e).2 :=

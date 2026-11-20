@@ -1,3 +1,4 @@
+import FalkorOptimizer.Basic
 /-
 # Pass sequencing, tree rebuilds, and edge-filter absorption
 
@@ -8,7 +9,7 @@
 | `guardHJ`, `T.anyD` | its `!reads_argument_rows(&child)` guard (:84) / `reads_argument_rows` :105-109 (#2981) |
 | `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs:389-466 |
 | `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs:58-83 |
-| `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs:90-181 |
+| `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs:87-181 (edge conjuncts by `VarKey`, #3933) |
 
 * `optimize_sound`: if every pass preserves a relation `R` (reflexive,
   transitive), so does `optimize`; `optimize_nested` — each nested plan is
@@ -239,16 +240,16 @@ inductive Tr | pathB | filter (cs : List Nat)
 
 /-- `Filter → (PathBuilder | Filter)* → CondVarLenTraverse`, every node single-child. -/
 inductive Shape
-  | vlt (edge : Nat) (ef : List Nat)
+  | vlt (edge : Var) (ef : List Nat)
   | tr (t : Tr) (child : Shape)
   | other
 
-def findVlt : Shape → Option (List Tr × Nat × List Nat)
+def findVlt : Shape → Option (List Tr × Var × List Nat)
   | .vlt e ef => some ([], e, ef)
   | .tr t c => (findVlt c).map fun (ts, e, ef) => (t :: ts, e, ef)
   | .other => none
 
-theorem findVlt_spec (s : Shape) (ts : List Tr) (e : Nat) (ef : List Nat) (h : findVlt s = some (ts, e, ef)) :
+theorem findVlt_spec (s : Shape) (ts : List Tr) (e : Var) (ef : List Nat) (h : findVlt s = some (ts, e, ef)) :
     s = ts.foldr .tr (.vlt e ef) := by
   induction s generalizing ts with
   | vlt e' ef' => simp [findVlt] at h; obtain ⟨rfl, rfl, rfl⟩ := h; rfl
@@ -259,14 +260,16 @@ theorem findVlt_spec (s : Shape) (ts : List Tr) (e : Nat) (ef : List Nat) (h : f
     rw [ih _ h1]; rfl
   | other => simp [findVlt] at h
 
-/-- Split conjuncts: those mentioning only the edge (and something) go in. -/
-def isEdgeOnly (vars : Nat → List Nat) (e c : Nat) : Bool := !(vars c).isEmpty && (vars c).all (· == e)
+/-- Split conjuncts: those mentioning only the edge (and something) go in. `vars c` is
+`collect_expr_variables` of conjunct `c` and `e` the relationship's `alias.key()`: since #3933
+both are `VarKey`s and the test is `*v == edge_alias`, i.e. `(id, scope)` equality. -/
+def isEdgeOnly (vars : Nat → List Var) (e : Var) (c : Nat) : Bool := !(vars c).isEmpty && (vars c).all (· == e)
 
-def absorbSplit (vars : Nat → List Nat) (e : Nat) (cs : List Nat) : List Nat × List Nat :=
+def absorbSplit (vars : Nat → List Var) (e : Var) (cs : List Nat) : List Nat × List Nat :=
   (cs.filter (isEdgeOnly vars e), cs.filter fun c => !isEdgeOnly vars e c)
 
 variable {R : Type} (edges : R → List Nat) (pe : Nat → Nat → Bool) (holds : Nat → R → Bool)
-  (addPath : R → R) (vars : Nat → List Nat)
+  (addPath : R → R) (vars : Nat → List Var)
 
 def keepAll (cs : List Nat) (r : R) : Bool := cs.all fun c => holds c r
 
@@ -305,7 +308,7 @@ theorem semChain_filter (h : Per edges pe holds addPath vars) (p : R → Bool)
       simp only [semTr, List.filter_filter]
       congr 1; funext r; exact Bool.and_comm _ _
 
-theorem keepAll_split (h : Per edges pe holds addPath vars) (e : Nat) (cs : List Nat) (r : R) :
+theorem keepAll_split (h : Per edges pe holds addPath vars) (e : Var) (cs : List Nat) (r : R) :
     keepAll holds cs r =
       (((absorbSplit vars e cs).1.all fun c => (edges r).all (pe c)) && keepAll holds (absorbSplit vars e cs).2 r) := by
   induction cs with
@@ -321,7 +324,7 @@ theorem keepAll_split (h : Per edges pe holds addPath vars) (e : Nat) (cs : List
 
 /-- **Absorption is exact.** `Filter(cs) → chain → VLT(e, ef)` keeps the same
 rows as `Filter(rest) → chain → VLT(e, ef ++ edgeOnly)`. -/
-theorem absorb_correct (h : Per edges pe holds addPath vars) (ts : List Tr) (e : Nat) (ef cs : List Nat)
+theorem absorb_correct (h : Per edges pe holds addPath vars) (ts : List Tr) (e : Var) (ef cs : List Nat)
     (base : List R) :
     let sp := absorbSplit vars e cs
     (semChain holds addPath ts (semVlt edges pe base ef)).filter (keepAll holds cs) =
@@ -338,10 +341,16 @@ theorem absorb_correct (h : Per edges pe holds addPath vars) (ts : List Tr) (e :
   · intro r; simp [h.pathEdges]
 
 /-- Nothing edge-only: nothing changes. -/
-theorem absorbSplit_none (e : Nat) (cs : List Nat) (h : ∀ c ∈ cs, isEdgeOnly vars e c = false) :
+theorem absorbSplit_none (e : Var) (cs : List Nat) (h : ∀ c ∈ cs, isEdgeOnly vars e c = false) :
     absorbSplit vars e cs = ([], cs) := by
   simp only [absorbSplit, List.filter_eq_nil_iff, Prod.mk.injEq]
   refine ⟨fun c hc => by simp [h c hc], ?_⟩
   rw [List.filter_eq_self]; intro c hc; simp [h c hc]
+
+/-- #3933: a conjunct over a variable that shares the edge's id but not its scope (a
+comprehension variable next to the pattern) is no longer taken for an edge-only conjunct. -/
+theorem isEdgeOnly_scoped :
+    isEdgeOnly (fun _ => [⟨3, 1⟩]) ⟨3, 0⟩ 0 = false ∧ isEdgeOnly (fun _ => [⟨3, 0⟩]) ⟨3, 0⟩ 0 = true := by
+  decide
 
 end Falkor.Opt.Seq

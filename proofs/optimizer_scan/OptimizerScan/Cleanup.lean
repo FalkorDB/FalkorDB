@@ -5,17 +5,17 @@ import OptimizerScan.EdgeInline
 
 | here | there |
 | --- | --- |
-| `D`, `Ex`, `bfs` | `ExprIR<Variable>` trees and `indices::<Bfs>()` |
-| `extractAttr` | `extract_attribute_from_subtree` 357 |
-| `hasPropOf`, `hasAnyProp`, `nestedListE` | `subtree_has_property_of` 547, `subtree_has_any_property` 569, `list_has_nested_list` 582 |
-| `nonIdxD` | `is_non_indexable_subexpr` 855 |
+| `D`, `Ex`, `bfs` | `ExprIR<Variable>` trees and `indices::<Bfs>()` (`D.var` carries the `VarKey`; lines re-mapped to #3933, 8d80077a4) |
+| `extractAttr` | `extract_attribute_from_subtree` 378 |
+| `hasPropOf`, `hasAnyProp`, `nestedListE` | `subtree_has_property_of` 568, `subtree_has_any_property` 590, `list_has_nested_list` 603 |
+| `nonIdxD` | `is_non_indexable_subexpr` 894 (scan alias a `VarKey` since #3933) |
 | `IQx` | `IndexQuery<QueryExpr<Variable>>`; the old `index_query_references_var` (1123 at a9377c636) was replaced by `references.rs::index_query_references_variable` (proven in `proofs/optimizer_rewrites`, `References.iqRefs_iff`, by `(id, scope)`) |
-| `rowsWithScan`, `prune_sound`, `rowsWithScanOver`, `rowsPruned`, `prune_sound_rows` | `prune_all_node_scan_child` 1092 (#3594: the scan's children are re-attached, 1113-1124) |
-| `hasLabelsFilter`, `isHasLabelsFor`, `addToLabels` | `build_has_labels_filter` 71, `is_has_labels_for` 1142, `add_to_labels_filter` 1084 |
-| `untilStable` | `rewrite_until_stable` 881 |
-| `governingFilter`, `matchScanWithFilter` | `governing_filter` 920, `match_scan_with_filter` 942 |
-| `utilizeP`, `pendingSel` | `apply_filter_pushdown` 973 (`keep_filter = over_pending || needs_post_filter`) |
-| `tryIndexRewrite`, `utilizeIndex` | `try_index_rewrite` 1021, `utilize_index` 1124 |
+| `rowsWithScan`, `prune_sound`, `rowsWithScanOver`, `rowsPruned`, `prune_sound_rows` | `prune_all_node_scan_child` 1089 (#3594: the scan's children are re-attached, 1112-1121) |
+| `hasLabelsFilter`, `isHasLabelsFor`, `addToLabels` | `build_has_labels_filter` 71, `is_has_labels_for` 1187, `add_to_labels_filter` 1129 (`Variable` keyed by `(id, scope)`, #3933) |
+| `untilStable` | `rewrite_until_stable` 920 |
+| `governingFilter`, `matchScanWithFilter` | `governing_filter` 959, `match_scan_with_filter` 980 |
+| `utilizeP`, `pendingSel` | `apply_filter_pushdown` 1011 (`keep_filter = over_pending || needs_post_filter`) |
+| `tryIndexRewrite`, `utilizeIndex` | `try_index_rewrite` 1055, `utilize_index` 1169 |
 -/
 namespace OptimizerScan.Cleanup
 open OptimizerScan.Index
@@ -23,7 +23,7 @@ open OptimizerScan.Index
 /-! ## Expression trees and BFS -/
 
 inductive D
-  | var (id : Nat)
+  | var (v : Nat × Nat)          -- `ExprIR::Variable`, its `VarKey` `(id, scope_id)`
   | param
   | cint (v : Int)
   | cstr (s : Nat)
@@ -157,7 +157,7 @@ theorem extractAttr_none (t : Ex) : extractAttr t = none ↔ ∀ k, D.prop k ∉
     exact h _ this
 
 /-- A `Property` node whose variable child is `alias`. -/
-def propOfAlias (alias : Nat) (t : Ex) : Bool :=
+def propOfAlias (alias : Nat × Nat) (t : Ex) : Bool :=
   match t with
   | .node (.prop _) cs => cs.any (fun c => c.d == .var alias)
   | _ => false
@@ -171,13 +171,13 @@ def Ex.subtreesL : List Ex → List Ex
 end
 
 /-- `subtree_has_property_of` (the BFS `any` is order-independent). -/
-def hasPropOf (t : Ex) (alias : Nat) : Bool := t.subtrees.any (propOfAlias alias)
+def hasPropOf (t : Ex) (alias : Nat × Nat) : Bool := t.subtrees.any (propOfAlias alias)
 /-- `subtree_has_any_property`. -/
 def hasAnyProp (t : Ex) : Bool := (bfs [t]).any (fun d => (propOf d).isSome)
 /-- `list_has_nested_list`: the root is a `List` with a direct `List` child. -/
 def nestedListE (t : Ex) : Bool := t.d == .list && t.cs.any (fun c => c.d == .list)
 
-theorem hasPropOf_iff (t : Ex) (a : Nat) :
+theorem hasPropOf_iff (t : Ex) (a : Nat × Nat) :
     hasPropOf t a = true ↔ ∃ k cs, Ex.node (.prop k) cs ∈ t.subtrees ∧ ∃ c ∈ cs, c.d = .var a := by
   unfold hasPropOf
   simp only [List.any_eq_true]
@@ -205,8 +205,9 @@ theorem nestedListE_iff (d : D) (cs : List Ex) :
     nestedListE (.node d cs) = true ↔ d = .list ∧ ∃ c ∈ cs, c.d = .list := by
   simp [nestedListE, Ex.d, Ex.cs]
 
-/-- `is_non_indexable_subexpr` (`utilize_index.rs:855-873`). -/
-def nonIdxD (lossyI : Int → Bool) (scan : Option Nat) : D → Bool
+/-- `is_non_indexable_subexpr` (`utilize_index.rs:894-912`). Since #3933 the scan alias is a
+    `VarKey` and a `Variable` is tolerated only when its key equals it (`v.key() != key`). -/
+def nonIdxD (lossyI : Int → Bool) (scan : Option (Nat × Nat)) : D → Bool
   | .var v => scan.all (· != v)
   | .param => true
   | .cint v => lossyI v
@@ -214,12 +215,20 @@ def nonIdxD (lossyI : Int → Bool) (scan : Option Nat) : D → Bool
   | .func _ => true
   | _ => false
 
-theorem nonIdxD_spec (lossyI : Int → Bool) (scan : Option Nat) (d : D) :
+theorem nonIdxD_spec (lossyI : Int → Bool) (scan : Option (Nat × Nat)) (d : D) :
     nonIdxD lossyI scan d = true ↔
       (∃ v, d = .var v ∧ scan ≠ some v) ∨ d = .param ∨ (∃ v, d = .cint v ∧ lossyI v = true) ∨
       d = .list ∨ d = .map ∨ ∃ n, d = .func n := by
   cases d <;> simp [nonIdxD]
   cases scan <;> simp
+
+/-- **PROVEN** (#3933): a variable sharing the scan alias's id but of another scope is not the scan
+    target, so it counts as a runtime dependency (the filter is kept); before #3933 the id-only test
+    tolerated it. -/
+theorem nonIdxD_other_scope (lossyI : Int → Bool) (id s s' : Nat) (h : s ≠ s') :
+    nonIdxD lossyI (some (id, s)) (.var (id, s')) = true ∧
+    nonIdxD lossyI (some (id, s)) (.var (id, s)) = false := by
+  simp [nonIdxD, h]
 
 /-! ## HISTORICAL `index_query_references_var` (removed by #2390) and `prune_all_node_scan_child`
 
@@ -237,7 +246,8 @@ inductive IQx
   | and (qs : List IQx)
   | or (qs : List IQx)
 
-def exRefs (a : Nat) (e : Ex) : Bool := (bfs [e]).any (· == .var a)
+/-- HISTORICAL: keyed by the id alone (any scope). -/
+def exRefs (a : Nat) (e : Ex) : Bool := (bfs [e]).any (fun d => match d with | .var v => v.1 == a | _ => false)
 
 def IQx.exprs : IQx → List Ex
   | .eq e | .contains e | .inList e => [e]
@@ -245,8 +255,14 @@ def IQx.exprs : IQx → List Ex
   | .point p r => [p, r]
   | .and qs | .or qs => qs.attach.flatMap (fun ⟨q, _⟩ => q.exprs)
 
-theorem exRefs_iff (a : Nat) (e : Ex) : exRefs a e = true ↔ D.var a ∈ e.nodes := by
-  simp [exRefs, mem_bfs, Ex.nodesL]
+theorem exRefs_iff (a : Nat) (e : Ex) : exRefs a e = true ↔ ∃ s, D.var (a, s) ∈ e.nodes := by
+  simp only [exRefs, List.any_eq_true, mem_bfs, Ex.nodesL, List.append_nil]
+  constructor
+  · rintro ⟨d, hd, hv⟩
+    match d, hv with
+    | .var (a', s), hv => simp at hv; subst hv; exact ⟨s, hd⟩
+  · rintro ⟨s, hs⟩
+    exact ⟨_, hs, by simp⟩
 
 /-- An edge as the scan sees it, in the direction the pattern binds `from`. -/
 structure Ed where
@@ -315,28 +331,40 @@ theorem prune_sound_rows {R : Type} (rows : List R) (N : List Nat) (E : List Ed)
 
 /-! ## Endpoint label filter -/
 
-def hasLabelsFilter (v : Nat) (labels : List Nat) : Ex :=
+def hasLabelsFilter (v : Nat × Nat) (labels : List Nat) : Ex :=
   .node (.func "hasLabels") [.node (.var v) [], .node .list (labels.map (fun l => .node (.cstr l) []))]
 
-def isHasLabelsFor (f : Ex) (v : Nat) : Bool :=
+/-- `is_has_labels_for` (`utilize_index.rs:1187-1201`): `v == var`, `VarKey` equality since #3933. -/
+def isHasLabelsFor (f : Ex) (v : Nat × Nat) : Bool :=
   match f with
   | .node (.func "hasLabels") (.node (.var v') _ :: _) => v' == v
   | _ => false
 
 /-- `add_to_labels_filter` at an `EdgeByIndexScan` whose `to` is `(toAlias, toLabels)`
 and whose parent is `parent` (`some f` = a `Filter(f)`): `some f'` = push `Filter(f')`. -/
-def addToLabels (toAlias : Nat) (toLabels : List Nat) (parent : Option (Option Ex)) : Option Ex :=
+def addToLabels (toAlias : Nat × Nat) (toLabels : List Nat) (parent : Option (Option Ex)) : Option Ex :=
   if toLabels.isEmpty then none
   else if parent.any (fun p => p.any (isHasLabelsFor · toAlias)) then none
   else some (hasLabelsFilter toAlias toLabels)
 
-theorem isHasLabelsFor_build (v : Nat) (ls : List Nat) : isHasLabelsFor (hasLabelsFilter v ls) v = true := by
+theorem isHasLabelsFor_build (v : Nat × Nat) (ls : List Nat) : isHasLabelsFor (hasLabelsFilter v ls) v = true := by
   simp [isHasLabelsFor, hasLabelsFilter]
+
+/-- **PROVEN** (#3933): a `hasLabels` filter on a variable of another scope with the same id is not
+    the `to` endpoint's, so `add_to_labels_filter` still adds the endpoint's own filter. -/
+theorem addToLabels_other_scope (id s s' : Nat) (h : s ≠ s') (ls ls' : List Nat) (hl : ls ≠ []) :
+    isHasLabelsFor (hasLabelsFilter (id, s') ls') (id, s) = false ∧
+    addToLabels (id, s) ls (some (some (hasLabelsFilter (id, s') ls'))) = some (hasLabelsFilter (id, s) ls) := by
+  have h1 : isHasLabelsFor (hasLabelsFilter (id, s') ls') (id, s) = false := by
+    simp [isHasLabelsFor, hasLabelsFilter, Ne.symm h]
+  refine ⟨h1, ?_⟩
+  have h2 : ls.isEmpty = false := by cases ls <;> simp_all
+  simp [addToLabels, h1, h2]
 
 /-- **PROVEN**: the pass adds the `hasLabels(to, labels)` filter once, and the
 re-run of the driver over the new parent is a no-op (so `rewrite_until_stable`
 terminates on this pass). -/
-theorem addToLabels_idem (v : Nat) (ls : List Nat) (p : Option (Option Ex)) (f : Ex)
+theorem addToLabels_idem (v : Nat × Nat) (ls : List Nat) (p : Option (Option Ex)) (f : Ex)
     (h : addToLabels v ls p = some f) : f = hasLabelsFilter v ls ∧ addToLabels v ls (some (some f)) = none := by
   unfold addToLabels at h
   split at h; · cases h

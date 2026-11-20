@@ -1,6 +1,6 @@
 import PlannerBuild.AndOf
 /-
-# `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` (mod.rs:1486-1656)
+# `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` (mod.rs:1676-1843; the inline map is keyed by `VarKey` since #3933)
 
 Since #3335 the binder removes every `Paren` (binder.rs:1955-1965), so
 `expr_to_plan` no longer unwraps one: a `Paren` is not a connective here
@@ -35,7 +35,7 @@ inductive FP
 variable {R : Type} (atom : Ex → R → Option Bool) (sub : QG → R → List R)
 
 mutual
-def run (ι : List (Nat × QG)) (up : R → List R) : FP → R → List R
+def run (ι : List (V × QG)) (up : R → List R) : FP → R → List R
   | .input, r => up r
   | .arg, r => [r]
   | .filter e c, r => (run ι up c r).filter (fun y => passes (tv atom sub ι e y))
@@ -43,20 +43,20 @@ def run (ι : List (Nat × QG)) (up : R → List R) : FP → R → List R
   | .semi x s, r => (run ι up x r).filter (fun y => !(run ι up s y).isEmpty)
   | .anti x s, r => (run ι up x r).filter (fun y => (run ι up s y).isEmpty)
   | .orMux fl x bs, r => (run ι up x r).filter (fun y => anyBr ι up fl bs y)
-def anyBr (ι : List (Nat × QG)) (up : R → List R) : List Bool → List FP → R → Bool
+def anyBr (ι : List (V × QG)) (up : R → List R) : List Bool → List FP → R → Bool
   | a :: fl, b :: bs, y => ((!(run ι up b y).isEmpty) != a) || anyBr ι up fl bs y
   | _, _, _ => false
 end
 
-def inlVar (ι : List (Nat × QG)) : Ex → Option QG
-  | .node (.var v) _ => lk ι v.id
+def inlVar (ι : List (V × QG)) : Ex → Option QG
+  | .node (.var v) _ => lk ι v
   | _ => none
 
-def notInl (ι : List (Nat × QG)) : Ex → Option QG
+def notInl (ι : List (V × QG)) : Ex → Option QG
   | .node .not (c :: _) => inlVar ι c
   | _ => none
 
-def keysOf (ι : List (Nat × QG)) : List Nat := ι.map Prod.fst
+def keysOf (ι : List (V × QG)) : List V := ι.map Prod.fst
 
 /-- The scalar conjunction of `and_expr_to_plan` (mod.rs:1643-1647): `Filter(and_of(scalars))`. -/
 def scalarFilter (xs : List Ex) (inp : FP) : FP :=
@@ -65,7 +65,7 @@ def scalarFilter (xs : List Ex) (inp : FP) : FP :=
   | xs => .filter (andOf xs) inp
 
 mutual
-def toPlan (ι : List (Nat × QG)) : Ex → FP → FP
+def toPlan (ι : List (V × QG)) : Ex → FP → FP
   | .node d cs, inp =>
       match inlVar ι (.node d cs) with
       | some g => .semi inp (.patSub g)
@@ -82,7 +82,7 @@ def toPlan (ι : List (Nat × QG)) : Ex → FP → FP
             | d, cs => .filter (.node d cs) inp
 /-- `or_expr_to_plan`'s branch classification (mod.rs:1574-1606): scalar
 branches, and (plan, anti) branches, each in child order. -/
-def orClass (ι : List (Nat × QG)) : List Ex → List FP × List (FP × Bool)
+def orClass (ι : List (V × QG)) : List Ex → List FP × List (FP × Bool)
   | [] => ([], [])
   | c :: cs =>
     match inlVar ι c with
@@ -93,13 +93,13 @@ def orClass (ι : List (Nat × QG)) : List Ex → List FP × List (FP × Bool)
         if containsInlineVar (keysOf ι) c = false then (.filter c .arg :: (orClass ι cs).1, (orClass ι cs).2)
         else ((orClass ι cs).1, (toPlan ι c .arg, false) :: (orClass ι cs).2)
 /-- `and_expr_to_plan`'s loop over the non-scalar conjuncts (mod.rs:1663-1667). -/
-def andFold (ι : List (Nat × QG)) : List Ex → FP → FP
+def andFold (ι : List (V × QG)) : List Ex → FP → FP
   | [], p => p
   | c :: cs, p => andFold ι cs (if containsInlineVar (keysOf ι) c then toPlan ι c p else p)
 end
 
 /-- The body of `expr_to_plan` (mod.rs:1486-1540), by connective. -/
-def toPlanGen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) : FP :=
+def toPlanGen (ι : List (V × QG)) (d : D) (cs : List Ex) (inp : FP) : FP :=
   match inlVar ι (.node d cs) with
   | some g => .semi inp (.patSub g)
   | none => match notInl ι (.node d cs) with
@@ -116,7 +116,7 @@ def toPlanGen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) : FP :=
           | [] => .filter (.node .not []) inp
         | _ => .filter (.node d cs) inp
 
-theorem toPlan_gen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) :
+theorem toPlan_gen (ι : List (V × QG)) (d : D) (cs : List Ex) (inp : FP) :
     toPlan ι (.node d cs) inp = toPlanGen ι d cs inp := by
   cases d <;> (try cases cs) <;> first | rfl | (simp only [toPlan, toPlanGen]; done)
 
@@ -124,8 +124,8 @@ theorem toPlan_gen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) :
 
 namespace Cex
 def g : QG := ⟨0, [⟨0, 0⟩], [], [], []⟩
-def ι : List (Nat × QG) := [(7, g)]
-/-- `NOT (x OR p)`: `x` an atom (say `a.v > 1`), `p` the inline pattern id 7. -/
+def ι : List (V × QG) := [(⟨7, 0⟩, g)]
+/-- `NOT (x OR p)`: `x` an atom (say `a.v > 1`), `p` the inline pattern variable (7, scope 0). -/
 def e : Ex := .node .not [.node .or [.node (.other 0) [], Ex.v ⟨7, 0⟩]]
 def at0 : Ex → Unit → Option Bool := fun _ _ => none   -- `a.v` is null
 def sub0 : QG → Unit → List Unit := fun _ _ => []       -- no `(a)-->()` match
@@ -142,14 +142,14 @@ theorem toPlan_not_null_bug :
 
 mutual
 /-- Inline variables occur only where `expr_to_plan` takes the predicate apart. -/
-def wfI (ι : List (Nat × QG)) : Ex → Bool
+def wfI (ι : List (V × QG)) : Ex → Bool
   | .node d cs =>
     !containsInlineVar (keysOf ι) (.node d cs) || (inlVar ι (.node d cs)).isSome ||
       (notInl ι (.node d cs)).isSome ||
       (match d with
        | .not | .or | .and => wfIL ι cs
        | _ => false)
-def wfIL (ι : List (Nat × QG)) : List Ex → Bool
+def wfIL (ι : List (V × QG)) : List Ex → Bool
   | [] => true
   | c :: cs => wfI ι c && wfIL ι cs
 end
@@ -174,7 +174,7 @@ theorem or3_some (l : List (Option Bool)) (h : ∀ x ∈ l, x ≠ none) : or3 l 
     revert this; generalize or3 xs = y
     rcases x with _ | _ | _ <;> rcases y with _ | _ | _ <;> simp_all
 
-variable (ι : List (Nat × QG)) (H2 : ∀ e y, atom e y ≠ none)
+variable (ι : List (V × QG)) (H2 : ∀ e y, atom e y ≠ none)
 include H2
 
 mutual
@@ -195,7 +195,7 @@ theorem tv_some : ∀ e y, tv atom sub ι e y ≠ none
       | [c], _ => exact tv_some c y
       | [], _ => exact H2 _ _
       | _ :: _ :: _, _ => exact H2 _ _
-    case var v => cases lk ι v.id <;> simp [patT, H2]
+    case var v => cases lk ι v <;> simp [patT, H2]
 theorem tvL_some : ∀ l y, ∀ x ∈ tvL atom sub ι l y, x ≠ none
   | [], _ => by simp [tvL]
   | c :: cs, y => by
