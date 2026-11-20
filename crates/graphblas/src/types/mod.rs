@@ -232,4 +232,5 @@ pub unsafe trait GrbType: Copy + Send + Sync + 'static + sealed::Sealed {
     ) -> GrB_Info;
 }
 
+mod builtins;
 pub mod user_defined;
