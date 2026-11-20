@@ -30,13 +30,14 @@ use std::{
 use crate::{
     Result, Scalar,
     error::{check, expect_success},
+    frozen::{Freezable, Frozen},
     handle::{self, run},
     index::Indices,
     init::{self, WaitMode},
     mask::{Desc, Mask, MaskMode, descriptor},
     operand::Operand,
     ops::{BinaryOp, IndexUnaryOp, Monoid, Semiring, UnaryOp, accum_raw},
-    sealed::Token,
+    sealed::{Sealed, Token},
     settings::{IntegerWidth, Orientation, Sparsity},
     sys::{self, GrB_Index, GrB_Info, GrB_Matrix, GrB_Vector, GxB_Option_Field},
     types::{Accepts, BuiltinType, GrbType},
@@ -70,7 +71,12 @@ pub(crate) fn raw_ncols(m: GrB_Matrix) -> GrB_Index {
 /// Methods that take `&self` may still finish the matrix's pending work
 /// inside GraphBLAS (`nvals`, `extract_element`, every operation that reads
 /// it). That is a write to the handle's internals; it is sound on one thread
-/// and is why this type is not `Sync`.
+/// and is why this type is not `Sync`. To read one matrix from several
+/// threads, [`freeze`](Self::freeze) it.
+///
+/// A `&self` method must do nothing but read once the matrix is
+/// materialized: [`Frozen`] hands `&Matrix<T>` to several threads on that
+/// promise (see [`Freezable`]).
 pub struct Matrix<T> {
     raw: GrB_Matrix,
     _elem: PhantomData<T>,
@@ -79,6 +85,27 @@ pub struct Matrix<T> {
 // SAFETY: a GraphBLAS handle is not tied to the thread that created it; the
 // wrapper holds nothing else. Deliberately not `Sync` (see the type docs).
 unsafe impl<T: Send> Send for Matrix<T> {}
+
+impl<T> Sealed for Matrix<T> {}
+
+// SAFETY: with nothing pending, the `&self` methods are `GrB_Matrix_nrows`,
+// `ncols`, `nvals`, `dup`, `extractElement`, `isStoredElement`,
+// `extractTuples`, `GrB_get`, `memoryUsage`, `iso` and `GrB_Matrix_error`,
+// and the input and mask slots of the operations. In SuiteSparse 10.5 none
+// of them names the matrix as its error logger (`GB_WHERE_1`, or no `Werk`
+// at all), each waits only when `GB_will_wait`, and the hyper-hash an input
+// may need was built by the materializing wait (`GrB_Matrix_wait` calls
+// `GB_hyper_hash_build`). Two things qualify "only reads". An input whose
+// count of non-empty vectors is unknown gets it cached by `dup` and `mxm`
+// (`GB_nvec_nonempty_update`): one idempotent 64-bit store, atomic where
+// the platform needs it. And "the hash was built" holds for the global
+// hyper-hash threshold in force at the wait, which this crate never
+// changes; a setter for it would have to be reconciled with this impl.
+unsafe impl<T: GrbType> Freezable for Matrix<T> {
+    unsafe fn materialize(&self) -> Result<()> {
+        handle::wait(self.raw, WaitMode::Materialize)
+    }
+}
 
 impl<T: GrbType> Matrix<T> {
     /// An empty `nrows x ncols` matrix.
@@ -199,6 +226,16 @@ impl<T: GrbType> Matrix<T> {
         mode: WaitMode,
     ) -> Result<()> {
         handle::wait(self.raw, mode)
+    }
+
+    /// Give up write access for a handle that can be cloned and read from
+    /// several threads. Does no work: pending work is finished by the first
+    /// [`Frozen::read`]. Settings that convert the storage
+    /// ([`set_sparsity`](Self::set_sparsity),
+    /// [`set_orientation`](Self::set_orientation)) have to be made before.
+    #[must_use]
+    pub fn freeze(self) -> Frozen<Self> {
+        Frozen::new(self)
     }
 
     /// Whether the matrix has pending work (`GxB_WILL_WAIT` query).
