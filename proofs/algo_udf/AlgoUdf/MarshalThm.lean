@@ -25,7 +25,7 @@ theorem classify_kind (ps : List (List Char × JsV)) (k : JsKind) (ht : tag ps =
     classify (.obj ps k) = .done (fromObjWith ps k (.ok [])) := by
   cases k with
   | plain => exact absurd rfl hk
-  | _ => simp [classify, ht]
+  | _ => simp [classify, classifyObj, ht]
 
 theorem fromJs_kind (H : Heap) (ps : List (List Char × JsV)) (k : JsKind) (ht : tag ps = none) (hk : k ≠ .plain) :
     fromJs H (.obj ps k) = fromObjWith ps k (.ok []) := by
@@ -198,10 +198,10 @@ theorem map_never_marked (kv : List (List Char × RV)) (js : List JsV) :
 
 /-- **#3074: a plain object is a map whatever its keys** — a `constructor` (or any
 other) own property can no longer make it a Date or a RegExp. -/
-theorem plain_obj_is_map (ps : List (List Char × JsV)) (h1 : tag ps ≠ some "node") (h2 : tag ps ≠ some "edge")
-    (h3 : tag ps ≠ some "path") (h4 : tag ps ≠ some "point") :
+theorem plain_obj_is_map (ps : List (List Char × JsV)) (_h1 : tag ps ≠ some "node") (_h2 : tag ps ≠ some "edge")
+    (_h3 : tag ps ≠ some "path") (h4 : tag ps ≠ some "point") :
     classify (.obj ps .plain) = .map ps := by
-  simp [classify, h1, h2, h3, h4]
+  simp [classify, classifyObj, h4]
 
 /-- `{constructor: {name: 'Date'}}` round trips as a map (C returns the map too). -/
 theorem constructor_key_roundtrips :
@@ -217,15 +217,40 @@ theorem proto_key_dropped :
 
 /-! ## JS → Rust: what is accepted that should not be -/
 
-/-- BUG (confirmed, `bug_udf_forged_edge_marker_panics`, `..._forged_node_creates_dangling_edge`):
-any JS object carrying the marker becomes an entity reference, with no liveness check. -/
-theorem forged_node_marker (id : Nat) :
-    fromJs H0 (.obj [("__falkor_type".toList, .str "node"), ("__falkor_node_id".toList, .num (ofInt id))] .plain)
-      = .ok (.node id) := by cases id <;> rfl
+theorem path_rt (ns rs : List Nat) : rt (.path ns rs) := rfl
 
-theorem forged_edge_marker :
+/-! ## Entities (#2976): read from the `JsEntity` class, never from the markers -/
+
+/-- **A current entity converts to the entity it was made for, whatever its visible properties
+are**: overwriting `__falkor_node_id` (or any marker) on a real node object has no effect. -/
+theorem fromJs_entity (H : Heap) (ps : List (List Char × JsV)) (v : RV) : fromJs H (.ent ps v true) = .ok v := rfl
+
+/-- **Fixed by #2976** (was the BUG theorem `forged_node_marker`, confirmed by
+`bug_udf_forged_edge_marker_panics` and `..._forged_node_creates_dangling_edge`: any JS object
+carrying the marker became an entity reference, with no liveness check, and converted to
+`.node id`). A plain object that copies a node's markers is now a map (as in C); its
+`__falkor_*` keys are dropped. -/
+theorem forged_node_marker_is_map (id : Nat) :
+    fromJs H0 (.obj [("__falkor_type".toList, .str "node"), ("__falkor_node_id".toList, .num (ofInt id))] .plain)
+      = .ok (.map []) := by cases id <;> rfl
+
+/-- **Fixed by #2976** (was the BUG theorem `forged_edge_marker`: it converted to `.rel 1000`). -/
+theorem forged_edge_marker_is_map :
     fromJs H0 (.obj [("__falkor_type".toList, .str "edge"), ("__falkor_edge_id".toList, .num (.integ 1000))] .plain)
-      = .ok (.rel 1000) := rfl
+      = .ok (.map []) := rfl
+
+/-- A plain object marked `"path"` is a map too (it was a path built from its `nodes` /
+`relationships` arrays). -/
+theorem forged_path_marker_is_map :
+    fromJs H0 (.obj [("__falkor_type".toList, .str "path"), ("nodes".toList, .arr [] []),
+      ("relationships".toList, .arr [] [])] .plain)
+      = .ok (.map [("nodes".toList, .list []), ("relationships".toList, .list [])]) := rfl
+
+/-- An entity kept from an earlier UDF call (stale epoch) is not honoured: it is a plain object,
+so a node object with only its markers converts to an empty map. -/
+theorem stale_node_is_map (id : Nat) :
+    fromJs H0 (.ent [("__falkor_type".toList, .str "node"), ("__falkor_node_id".toList, .num (ofInt id))] (.node id) false)
+      = .ok (.map []) := by cases id <;> rfl
 
 /-- A JS object key starting `__falkor_` (not `__falkor_esc_`) is silently dropped. -/
 theorem internal_keys_dropped :

@@ -9,14 +9,15 @@ import AlgoUdf.Nesting
 | `JsKind`              | the object's internal class, as `JS_IsDate` / `JS_IsRegExp` test it (QuickJS FFI, AXIOMATISED by construction). `date ms` / `regexp s` carry the value Rust then obtains by *calling the object's `getTime` / `toString` properties* (`obj.get("getTime")`, :412-438): those calls are an ORACLE here, so a Date or RegExp whose `getTime` / `toString` the script overrides (an own property) is outside the model: Rust returns whatever the override returns (or an `Err` if it is not a function / not a number), the model returns the internal time value / source |
 | `ctorName`            | historical only: `obj.get("constructor").name`, the pre-#3074 test |
 | `RV`                  | `runtime::value::Value` (all variants; Path as node/rel id lists) |
-| `MAX`, `nestErr`, `chk` (`Nesting.lean`) | `MAX_UDF_VALUE_NESTING` :67, `udf_nesting_error` :87, `depth >= MAX_UDF_VALUE_NESTING` |
-| `toLevel`, `toStep`, `toF` | `value_to_js_level` :124-249, `value_to_js_at` :110-122 (`f` = stack frames) |
-| `toJs`                | `value_to_js` :97 (= `value_to_js_at(.., 0)`) |
-| `classify`, `runShape`, `pathArm`, `pathLoop`, `fromLevel`, `fromStep`, `fromF` | `js_to_value_level` :270-470 (dispatch / recursive arms; array :319, path :359, plain object :443), `js_to_value_at` :262-267 |
-| `fromJs`              | `js_to_value` :252 (= `js_to_value_at(.., 0)`) |
-| `esc`, `unesc`        | key escaping :171-177 / :458-462 |
+| `MAX`, `nestErr`, `chk` (`Nesting.lean`) | `MAX_UDF_VALUE_NESTING` :68, `udf_nesting_error` :88, `depth >= MAX_UDF_VALUE_NESTING` |
+| `toLevel`, `toStep`, `toF` | `value_to_js_level` :125-250, `value_to_js_at` :111-122 (`f` = stack frames) |
+| `toJs`                | `value_to_js` :98 (= `value_to_js_at(.., 0)`) |
+| `classify`, `classifyObj`, `runShape`, `fromLevel`, `fromStep`, `fromF` | `js_to_value_level` :271-425 (dispatch / recursive arms; array :321, entity class :352, plain object :399), `js_to_value_at` :263-268 |
+| `JsV.ent`             | an instance of `js_classes::JsEntity` (#2976): `entity_value` reads the entity back, only in the call that made it |
+| `fromJs`              | `js_to_value` :253 (= `js_to_value_at(.., 0)`) |
+| `esc`, `unesc`        | key escaping :172-178 / :413-417 |
 
-`with_stack` (:80, `stacker::maybe_grow`) only switches the machine stack; `f` counts conversion
+`with_stack` (:81, `stacker::maybe_grow`) only switches the machine stack; `f` counts conversion
 levels, which is what the depth cap bounds (`MarshalCap.lean`).
 -/
 namespace AlgoUdf.Marshal
@@ -56,6 +57,15 @@ def ofInt (i : Int) : F64 := if i = 0 then .zero false else .integ i
 inductive JsKind | plain | date (ms : F64) | regexp (src : String)
   deriving DecidableEq, Repr
 
+inductive RV where
+  | null | bool (b : Bool) | int (i : Int) | float (f : F64) | str (s : String)
+  | list (xs : List RV) | map (kv : List (List Char × RV))
+  | node (id : Nat) | rel (id : Nat) | path (nodes rels : List Nat)
+  | point (lat lon : F64) | datetime (ts : Int) | date (ts : Int)
+  | vecf32 (xs : List F64)  -- the f32 elements widened by `v as f64`; `item as f32` narrows them back exactly
+  | time | duration
+  deriving Repr, Inhabited
+
 inductive JsV where
   | null | undef
   | bool (b : Bool)
@@ -65,6 +75,11 @@ inductive JsV where
   | sym
   | arr (items : List JsV) (props : List (List Char × JsV))
   | obj (props : List (List Char × JsV)) (kind : JsKind)
+  /-- an instance of the Rust class `JsEntity` (js_classes.rs :84-136, #2976): what
+  `create_js_node` / `create_js_edge` / `create_js_path` return. `props` are its visible own
+  properties, `v` the entity in its class data, `current` whether its epoch is the current
+  call's (`entity_value` :129 returns `Some v` exactly then) -/
+  | ent (props : List (List Char × JsV)) (v : RV) (current : Bool)
   /-- a reference to an array / object in the QuickJS heap -/
   | ref (a : Nat)
   deriving Repr, Inhabited
@@ -111,15 +126,6 @@ def esc (k : List Char) : List Char := if pre.isPrefixOf k then escPre ++ k else
 def unesc (k : List Char) : List Char := if escPre.isPrefixOf k then k.drop 13 else k
 def keep (k : List Char) : Bool := !pre.isPrefixOf k || escPre.isPrefixOf k
 
-inductive RV where
-  | null | bool (b : Bool) | int (i : Int) | float (f : F64) | str (s : String)
-  | list (xs : List RV) | map (kv : List (List Char × RV))
-  | node (id : Nat) | rel (id : Nat) | path (nodes rels : List Nat)
-  | point (lat lon : F64) | datetime (ts : Int) | date (ts : Int)
-  | vecf32 (xs : List F64)  -- the f32 elements widened by `v as f64`; `item as f32` narrows them back exactly
-  | time | duration
-  deriving Repr, Inhabited
-
 def i64max : Int := 9223372036854775807
 def i64min : Int := -9223372036854775808
 
@@ -131,10 +137,11 @@ def jsDateMax : Int := 8640000000000000
 /-- `new Date(ms)`: time value is NaN outside ±8.64e15 ms (ECMA-262 TimeClip). -/
 def mkDate (ms : Int) : F64 := if ms.natAbs ≤ jsDateMax.toNat then ofInt ms else .nan
 
-def nodeObj (id : Nat) : JsV := .obj [("__falkor_type".toList, .str "node"), ("__falkor_node_id".toList, .num (ofInt id))] .plain
-def relObj (id : Nat) : JsV := .obj [("__falkor_type".toList, .str "edge"), ("__falkor_edge_id".toList, .num (ofInt id))] .plain
+/-- `create_js_node` / `create_js_edge` (inside the call that converts it back, so `current`). -/
+def nodeObj (id : Nat) : JsV := .ent [("__falkor_type".toList, .str "node"), ("__falkor_node_id".toList, .num (ofInt id))] (.node id) true
+def relObj (id : Nat) : JsV := .ent [("__falkor_type".toList, .str "edge"), ("__falkor_edge_id".toList, .num (ofInt id))] (.rel id) true
 
-/-- `obj.set(esc(key), js_val)` for each converted map entry (:171-180), in order. -/
+/-- `obj.set(esc(key), js_val)` for each converted map entry (:172-181), in order. -/
 def assembleObj : List (List Char × RV) → List JsV → List (List Char × JsV)
   | (k, _) :: kvs, j :: js => if esc k = "__proto__".toList then assembleObj kvs js else (esc k, j) :: assembleObj kvs js
   | _, _ => []
@@ -144,7 +151,7 @@ def listLoop {α β} (conv : α → R β) : List α → R (List β)
   | [] => R.ok []
   | x :: xs => R.bind (conv x) fun v => R.bind (listLoop conv xs) fun vs => R.ok (v :: vs)
 
-/-- `value_to_js_level` (:124-249); `conv` converts a child (`value_to_js_at(.., depth + 1)`). -/
+/-- `value_to_js_level` (:125-250); `conv` converts a child (`value_to_js_at(.., depth + 1)`). -/
 def toLevel (conv : RV → R JsV) : RV → R JsV
   | .null => R.ok .null
   | .bool b => R.ok (.bool b)
@@ -155,15 +162,15 @@ def toLevel (conv : RV → R JsV) : RV → R JsV
   | .map kv => R.bind (listLoop conv (kv.map (·.2))) fun js => R.ok (.obj (assembleObj kv js) .plain)
   | .node id => R.ok (nodeObj id)
   | .rel id => R.ok (relObj id)
-  | .path ns rs => R.ok (.obj [("__falkor_type".toList, .str "path"),
-      ("nodes".toList, .arr (ns.map nodeObj) []), ("relationships".toList, .arr (rs.map relObj) [])] .plain)
+  | .path ns rs => R.ok (.ent [("__falkor_type".toList, .str "path"),
+      ("nodes".toList, .arr (ns.map nodeObj) []), ("relationships".toList, .arr (rs.map relObj) [])] (.path ns rs) true)
   | .point a b => R.ok (.obj [("__falkor_type".toList, .str "point"), ("latitude".toList, .num a), ("longitude".toList, .num b)] .plain)
   | .datetime ts => R.ok (.obj [("__falkor_temporal_type".toList, .str "datetime")] (.date (mkDate (wrapI64 (ts * 1000)))))
   | .date ts => R.ok (.obj [("__falkor_temporal_type".toList, .str "date")] (.date (mkDate (wrapI64 (ts * 1000)))))
   | .vecf32 xs => R.ok (.arr (xs.map .num) [("__falkor_type".toList, .str "vecf32")])
   | .time | .duration => R.err "UDF Exception: unsupported type for JS conversion"
 
-/-- `matches!(value, Value::List(_) | Value::Map(_))` (:117). -/
+/-- `matches!(value, Value::List(_) | Value::Map(_))` (:118). -/
 def needsV : RV → Bool
   | .list _ | .map _ => true
   | _ => false
@@ -174,12 +181,12 @@ def kidsV : RV → List RV
   | .map kv => kv.map (·.2)
   | _ => []
 
-/-- `value_to_js_at` at depth `d` with `f` frames left (:110-122). -/
+/-- `value_to_js_at` at depth `d` with `f` frames left (:111-122). -/
 def toF (cap : Option Nat) : Nat → Nat → RV → R JsV
   | 0, _, _ => none
   | f + 1, d, v => if needsV v && chk cap d then R.err nestErr else toLevel (toF cap f (d + 1)) v
 
-/-- `value_to_js` (:97): `value_to_js_at(.., 0)`; `MarshalCap.toJs_frames` shows `MAX + 1` frames
+/-- `value_to_js` (:98): `value_to_js_at(.., 0)`; `MarshalCap.toJs_frames` shows `MAX + 1` frames
     always suffice, so the `none` arm is unreachable. -/
 def toJs (v : RV) : Except String JsV := Rget (toF (some MAX) (MAX + 1) 0 v)
 
@@ -193,7 +200,7 @@ def numOf : JsV → Option F64
   | .num f => some f
   | _ => none
 
-/-- The non-marker object branch (:403-440): Date / RegExp by internal class
+/-- The non-marker object branch (:365-397): Date / RegExp by internal class
 (`JS_IsDate`, `JS_IsRegExp`), never by a `constructor` property; anything else is a
 map. `props` is `fromProps ps` (only used on the Map path). -/
 def fromObjWith (ps : List (List Char × JsV)) (kind : JsKind) (props : Except String (List (List Char × RV))) : Except String RV :=
@@ -207,7 +214,7 @@ def fromObjWith (ps : List (List Char × JsV)) (kind : JsKind) (props : Except S
   | .regexp s => .ok (.str s)
   | .plain => do let kv ← props; pure (.map kv)
 
-/-- vecf32 arm (:324-336): every element converts (`arr.get::<f64>`, then `as f32`;
+/-- vecf32 arm (:325-337): every element converts (`arr.get::<f64>`, then `as f32`;
 the abstract `F64` already stands for the f32 value), inf / NaN included since #3074. -/
 def fromVec : List JsV → Except String RV
   | [] => .ok (.vecf32 [])
@@ -223,15 +230,25 @@ def tag (ps : List (List Char × JsV)) : Option String :=
   | _ => none
 
 /-- How `js_to_value_level` treats a (dereferenced) value: `done` = no recursion and no depth check;
-    the other four are the arms that check the depth and then recurse. -/
+    the other three are the arms that check the depth and then recurse. -/
 inductive Shape where
   | done (r : Except String RV)
   | list (items : List JsV)
   | vec (items : List JsV)
-  | path (ps : List (List Char × JsV))
   | map (ps : List (List Char × JsV))
 
-/-- The branch structure of `js_to_value_level` (:270-470) before any recursion. -/
+/-- A non-array object that is not a current entity (:356-424): a `"point"` marker, else Date /
+    RegExp by internal class, else a map. Since #2976 a `"node"` / `"edge"` / `"path"` marker on a
+    plain object no longer makes it an entity. -/
+def classifyObj (ps : List (List Char × JsV)) (kind : JsKind) : Shape :=
+  if tag ps = some "point" then
+    .done (match (get ps "latitude".toList).bind numOf, (get ps "longitude".toList).bind numOf with
+      | some a, some b => .ok (.point a b) | _, _ => .error "bad point")
+  else match kind with
+    | .plain => .map ps
+    | kind => .done (fromObjWith ps kind (.ok []))
+
+/-- The branch structure of `js_to_value_level` (:271-421) before any recursion. -/
 def classify : JsV → Shape
   | .null | .undef => .done (.ok .null)
   | .bool b => .done (.ok (.bool b))
@@ -240,67 +257,18 @@ def classify : JsV → Shape
   | .str s => .done (.ok (.str s))
   | .sym => .done (.error "Symbol values are not supported")
   | .arr items ps => if tag ps = some "vecf32" then .vec items else .list items
-  | .obj ps kind =>
-      if tag ps = some "node" then
-        .done (match (get ps "__falkor_node_id".toList).bind asU64 with
-          | some id => .ok (.node id) | none => .error "bad node id")
-      else if tag ps = some "edge" then
-        .done (match (get ps "__falkor_edge_id".toList).bind asU64 with
-          | some id => .ok (.rel id) | none => .error "bad edge id")
-      else if tag ps = some "path" then .path ps
-      else if tag ps = some "point" then
-        .done (match (get ps "latitude".toList).bind numOf, (get ps "longitude".toList).bind numOf with
-          | some a, some b => .ok (.point a b) | _, _ => .error "bad point")
-      else match kind with
-        | .plain => .map ps
-        | kind => .done (fromObjWith ps kind (.ok []))
+  | .obj ps kind => classifyObj ps kind
+  | .ent ps v current => if current then .done (.ok v) else classifyObj ps .plain
   | .ref _ => .done (.error "Unsupported JS value type")
-
-def asNode : RV → Option Nat
-  | .node id => some id
-  | _ => none
-def asRel : RV → Option Nat
-  | .rel id => some id
-  | _ => none
-
-/-- The path loop (:377-396): node `i` (must be a `Node`), then relationship `i` (must be a
-    `Relationship`) while `i < n_rels`. -/
-def pathLoop (conv : JsV → R RV) : List JsV → List JsV → R (List Nat × List Nat)
-  | [], _ => R.ok ([], [])
-  | n :: ns, rs => R.bind (conv n) fun v =>
-      match asNode v with
-      | none => R.err "Invalid path: element at node position is not a Node"
-      | some id => match rs with
-        | [] => R.bind (pathLoop conv ns []) fun p => R.ok (id :: p.1, p.2)
-        | r :: rs' => R.bind (conv r) fun w =>
-          match asRel w with
-          | none => R.err "Invalid path: element at relationship position is not a Relationship"
-          | some rid => R.bind (pathLoop conv ns rs') fun p => R.ok (id :: p.1, rid :: p.2)
-
-/-- `obj.get::<Array>(k)`: the array's items. -/
-def getArr (H : Heap) (ps : List (List Char × JsV)) (k : String) : Option (List JsV) :=
-  match (get ps k.toList).map (deref H) with
-  | some (.arr items _) => some items
-  | _ => none
-
-/-- The `"path"` arm after its depth check (:363-397). -/
-def pathArm (H : Heap) (conv : JsV → R RV) (ps : List (List Char × JsV)) : R RV :=
-  match getArr H ps "nodes", getArr H ps "relationships" with
-  | some ns, some rs =>
-      if rs.length = ns.length - 1 then R.bind (pathLoop conv ns rs) fun p => R.ok (.path p.1 p.2)
-      else R.err "Invalid path: expected n_nodes - 1 relationships"
-  | none, _ => R.err "path nodes error"
-  | some _, none => R.err "path relationships error"
 
 /-- The kept keys of a plain object (:447-451). -/
 def keptProps (ps : List (List Char × JsV)) : List (List Char × JsV) := ps.filter (keep ·.1)
 
-/-- The recursive arms, each behind its depth check `b` (:320, :361, :443). -/
-def runShape (H : Heap) (b : Bool) (conv : JsV → R RV) : Shape → R RV
+/-- The recursive arms, each behind its depth check `b` (:321, :399). -/
+def runShape (_H : Heap) (b : Bool) (conv : JsV → R RV) : Shape → R RV
   | .done r => some r
   | .list items => if b then R.err nestErr else R.bind (listLoop conv items) fun xs => R.ok (.list xs)
   | .vec items => if b then R.err nestErr else some (fromVec items)
-  | .path ps => if b then R.err nestErr else pathArm H conv ps
   | .map ps => if b then R.err nestErr else
       R.bind (listLoop conv ((keptProps ps).map (·.2))) fun xs =>
         R.ok (.map (((keptProps ps).map (unesc ·.1)).zip xs))
@@ -309,12 +277,12 @@ def runShape (H : Heap) (b : Bool) (conv : JsV → R RV) : Shape → R RV
 def fromLevel (H : Heap) (b : Bool) (conv : JsV → R RV) (v : JsV) : R RV :=
   runShape H b conv (classify (deref H v))
 
-/-- `js_to_value_at` at depth `d` with `f` frames left (:262-267). -/
+/-- `js_to_value_at` at depth `d` with `f` frames left (:263-268). -/
 def fromF (H : Heap) (cap : Option Nat) : Nat → Nat → JsV → R RV
   | 0, _, _ => none
   | f + 1, d, v => fromLevel H (chk cap d) (fromF H cap f (d + 1)) v
 
-/-- `js_to_value` (:252): `js_to_value_at(val, 0)`; `MarshalCap.fromJs_frames` shows `MAX + 1`
+/-- `js_to_value` (:253): `js_to_value_at(val, 0)`; `MarshalCap.fromJs_frames` shows `MAX + 1`
     frames always suffice (for any heap, cyclic ones included), so the `none` arm is unreachable. -/
 def fromJs (H : Heap) (v : JsV) : Except String RV := Rget (fromF H (some MAX) (MAX + 1) 0 v)
 
