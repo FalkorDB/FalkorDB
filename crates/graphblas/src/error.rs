@@ -1,7 +1,7 @@
 //! The error a GraphBLAS call reports, and the `check` helpers that turn a
 //! `GrB_Info` into a [`Result`].
 
-use std::fmt;
+use std::{ffi::CStr, fmt};
 
 use crate::sys::GrB_Info;
 
@@ -185,4 +185,17 @@ pub fn check(info: GrB_Info) -> Result<()> {
     } else {
         Err(Error::from_info(info, String::new()))
     }
+}
+
+/// Copy the message GraphBLAS attached to an object; empty for null.
+pub fn copy_message(msg: *const std::os::raw::c_char) -> String {
+    if msg.is_null() {
+        return String::new();
+    }
+    // SAFETY: GraphBLAS hands out a NUL-terminated string that stays valid
+    // until the next call on the same object; it is copied right here.
+    unsafe { CStr::from_ptr(msg) }
+        .to_string_lossy()
+        .trim()
+        .to_owned()
 }
