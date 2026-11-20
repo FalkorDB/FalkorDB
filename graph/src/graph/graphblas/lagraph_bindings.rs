@@ -8,10 +8,7 @@
     dead_code,
     improper_ctypes
 )]
-use super::{
-    GrB_BinaryOp, GrB_Index, GrB_Info, GrB_Matrix, GrB_Mode, GrB_Monoid, GrB_Scalar, GrB_Semiring,
-    GrB_Type, GrB_UnaryOp, GrB_Vector,
-};
+use super::{GrB_BinaryOp, GrB_Index, GrB_Matrix, GrB_Mode, GrB_Scalar, GrB_Type, GrB_Vector};
 
 pub const LAGRAPH_DATE: &[u8; 13] = b"Sept 8, 2025\0";
 pub const LAGRAPH_VERSION_MAJOR: u32 = 1;
