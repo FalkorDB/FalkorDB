@@ -166,12 +166,13 @@ def addArgs : Plan → Plan
 
 /-- One insertion (mod.rs:2775-2816): returns the new tree and the path of the
 inserted plan's root. The CartesianProduct branch wraps it in `Apply` with the
-argument taps added (mod.rs:2785-2808). -/
+argument taps added: since #3934, `add_argument_to_leaves(res, idx, None)`
+walks from the CartesianProduct itself (mod.rs:3212). -/
 def insertStep (res : Plan) (idx : Path) (n : Plan) : Plan × Path :=
   match res.get idx with
   | some (.node .cartesian cs) =>
     if needsApplyWrapping n then
-      (res.modify (fun _ => .node .apply [n, .node .cartesian (cs.map addArgs)]) idx, idx ++ [0])
+      (res.modify (fun _ => .node .apply [n, addArgs (.node .cartesian cs)]) idx, idx ++ [0])
     else (insertAt res idx n, idx ++ [0])
   | _ => (insertAt res idx n, idx ++ [0])
 
@@ -201,9 +202,18 @@ theorem insertStep_CP (res : Plan) (idx : Path) (n : Plan) (cs : List Plan)
     (h : res.get idx = some (.node .cartesian cs)) :
     insertStep res idx n =
       if needsApplyWrapping n then
-        (res.modify (fun _ => .node .apply [n, .node .cartesian (cs.map addArgs)]) idx, idx ++ [0])
+        (res.modify (fun _ => .node .apply [n, addArgs (.node .cartesian cs)]) idx, idx ++ [0])
       else (insertAt res idx n, idx ++ [0]) := by
   unfold insertStep; rw [h]
+
+/-- Walking from the CartesianProduct itself (#3934) taps exactly its
+children's leaves, as the pre-#3934 walk over its children did, whenever it
+has a child (every CartesianProduct the planner builds). -/
+theorem addArgs_cartesian (cs : List Plan) (h : cs ≠ []) :
+    addArgs (.node .cartesian cs) = .node .cartesian (cs.map addArgs) := by
+  cases cs with
+  | nil => exact absurd rfl h
+  | cons c cs => simp [addArgs]
 
 /-- The same insertion as one plan-level operation: `p[x]`. -/
 def fillAt (p : Plan) (π : Path) (x : Plan) : Plan := (insertStep p π x).1
