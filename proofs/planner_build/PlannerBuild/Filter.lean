@@ -7,12 +7,13 @@ and inline map, then `expr_to_plan` (inline patterns present) or a plain
 `Filter` (unless the rebuilt predicate is the literal `true`), then one
 `SemiApply` / `AntiSemiApply` per extracted conjunct, in order.
 
-Side facts proved here: the minted inline ids are pairwise distinct and above
-every id the predicate mentions, *when the predicate's patterns all start in
-one scope `s0` and its variables' ids are below that scope's length*
-(`collect_keys`) — the planner keys `inline_map` by id only (mod.rs:1499), so
-this is exactly what keeps `Good`/`Fresh` true; and the rebuilt predicate is
-in the shape `expr_to_plan` handles (`collect_wf`).
+Side facts proved here: the minted inline variables are pairwise distinct, of
+scope `s0`, and differ from every variable the predicate mentions, *when the
+predicate's patterns all start in one scope `s0` and its variables of scope `s0`
+have ids below that scope's length* — the planner keys `inline_map` by `VarKey`
+(id and scope, #3933; by id only before), so a variable of another scope never
+collides; this is exactly what keeps `Good`/`Fresh` true; and the rebuilt
+predicate is in the shape `expr_to_plan` handles (`collect_wf`).
 
 * `planFilter_scalar_correct`: no inline pattern ⇒ exact in three-valued logic.
 * `planFilter_correct`: two-valued atoms ⇒ exact.
@@ -23,10 +24,10 @@ variable {R : Type} (atom : Ex → R → Option Bool) (sub : QG → R → List R
 
 /-! ## Inline keys -/
 
-def keys (st : CSt) : List Nat := st.inl.map Prod.fst
+def keys (st : CSt) : List V := st.inl.map Prod.fst
 
 def Inv (s0 lo : Nat) (st : CSt) : Prop :=
-  (∀ p ∈ st.inl, lo ≤ p.1 ∧ p.1 < st.lens s0) ∧ (keys st).Nodup ∧ lo ≤ st.lens s0
+  (∀ p ∈ st.inl, p.1.scope = s0 ∧ lo ≤ p.1.id ∧ p.1.id < st.lens s0) ∧ (keys st).Nodup ∧ lo ≤ st.lens s0
 
 def SameScope (s0 : Nat) (e : Ex) : Prop := ∀ g, D.pat g ∈ nodes e → scopeOf g = s0
 
@@ -39,13 +40,13 @@ theorem inv_mint (s0 lo : Nat) (st : CSt) (g : QG) (hg : scopeOf g = s0) (h : In
     simp only [mint, List.mem_cons] at hp
     simp only [mint, ↓reduceIte]
     rcases hp with rfl | hp
-    · exact ⟨h3, Nat.lt_succ_self _⟩
-    · have := h1 p hp; exact ⟨this.1, Nat.lt_succ_of_lt this.2⟩
+    · exact ⟨rfl, h3, Nat.lt_succ_self _⟩
+    · have := h1 p hp; exact ⟨this.1, this.2.1, Nat.lt_succ_of_lt this.2.2⟩
   · simp only [keys, mint, List.map_cons, List.nodup_cons]
     refine ⟨?_, h2⟩
     intro hm
     obtain ⟨p, hp, he⟩ := List.mem_map.1 hm
-    have := (h1 p hp).2; omega
+    have := (h1 p hp).2.2; rw [he] at this; simp at this
   · simp only [mint, ↓reduceIte]; omega
 
 theorem nodes_child (d : D) (c : Ex) (cs : List Ex) (hc : c ∈ cs) (x : D) (hx : x ∈ nodes c) :
@@ -94,7 +95,7 @@ theorem collectL_inv (s0 lo : Nat) : ∀ (st : CSt) ce (l : List Ex), (∀ c ∈
       (collect_inv s0 lo st ce c (hs c (by simp)) h)
 end
 
-theorem lookup_of_mem (l : List (Nat × QG)) (hn : (l.map Prod.fst).Nodup) (p : Nat × QG) (hp : p ∈ l) :
+theorem lookup_of_mem (l : List (V × QG)) (hn : (l.map Prod.fst).Nodup) (p : V × QG) (hp : p ∈ l) :
     lk l p.1 = some p.2 := by
   induction l with
   | nil => simp at hp
@@ -107,7 +108,7 @@ theorem lookup_of_mem (l : List (Nat × QG)) (hn : (l.map Prod.fst).Nodup) (p : 
       have : (p.1 == q.1) = false := by simpa using hne
       simp only [lk, List.lookup, this]; exact ih hn.2 hp
 
-theorem lookup_none (l : List (Nat × QG)) (i : Nat) (h : ∀ p ∈ l, p.1 ≠ i) : lk l i = none := by
+theorem lookup_none (l : List (V × QG)) (i : V) (h : ∀ p ∈ l, p.1 ≠ i) : lk l i = none := by
   induction l with
   | nil => rfl
   | cons q l ih =>
@@ -120,21 +121,23 @@ theorem good_final (s0 lo : Nat) (st : CSt) (h : Inv s0 lo st) : Good st.inl st 
   fun p hp => lookup_of_mem st.inl h.2.1 p hp
 
 /-- …and no variable the predicate mentions is mistaken for one. -/
-theorem fresh_final (s0 lo : Nat) (st : CSt) (h : Inv s0 lo st) (ids : List Nat) (hb : ∀ i ∈ ids, i < lo) :
-    Fresh st.inl ids :=
-  fun i hi => lookup_none _ _ (fun p hp => by have := (h.1 p hp).1; have := hb i hi; omega)
+theorem fresh_final (s0 lo : Nat) (st : CSt) (h : Inv s0 lo st) (ids : List V)
+    (hb : ∀ i ∈ ids, i.scope = s0 → i.id < lo) : Fresh st.inl ids :=
+  fun i hi => lookup_none _ _ (fun p hp e => by
+    obtain ⟨hs, hl, -⟩ := h.1 p hp
+    subst e; have := hb _ hi hs; omega)
 
 /-! ## The rebuilt predicate is what `expr_to_plan` expects -/
 
 mutual
-theorem var_mem_varIds : ∀ (e : Ex) (v : V), D.var v ∈ nodes e → v.id ∈ varIds e
+theorem var_mem_varIds : ∀ (e : Ex) (v : V), D.var v ∈ nodes e → v ∈ varIds e
   | .node d cs, v, h => by
     simp only [nodes, List.mem_cons] at h
     rcases h with h | h
     · subst h; simp [varIds]
     · have := var_mem_varIdsL cs v h
       cases d <;> simp [varIds, this]
-theorem var_mem_varIdsL : ∀ (l : List Ex) (v : V), D.var v ∈ nodesL l → v.id ∈ varIdsL l
+theorem var_mem_varIdsL : ∀ (l : List Ex) (v : V), D.var v ∈ nodesL l → v ∈ varIdsL l
   | [], _, h => by simp [nodesL] at h
   | c :: cs, v, h => by
     simp only [nodesL, List.mem_append] at h
@@ -144,7 +147,7 @@ theorem var_mem_varIdsL : ∀ (l : List Ex) (v : V), D.var v ∈ nodesL l → v.
     · exact Or.inr (var_mem_varIdsL cs v h)
 end
 
-theorem lookup_none_not_mem (l : List (Nat × QG)) (i : Nat) (h : lk l i = none) :
+theorem lookup_none_not_mem (l : List (V × QG)) (i : V) (h : lk l i = none) :
     ∀ p ∈ l, p.1 ≠ i := by
   induction l with
   | nil => simp
@@ -158,23 +161,23 @@ theorem lookup_none_not_mem (l : List (Nat × QG)) (i : Nat) (h : lk l i = none)
       · exact fun e => hq e.symm
       · exact ih h p hp
 
-theorem noInl_of_fresh (ι : List (Nat × QG)) (e : Ex) (hf : Fresh ι (varIds e)) :
+theorem noInl_of_fresh (ι : List (V × QG)) (e : Ex) (hf : Fresh ι (varIds e)) :
     containsInlineVar (keysOf ι) e = false := by
   cases h : containsInlineVar (keysOf ι) e
   · rfl
   · obtain ⟨v, hv, hk⟩ := (containsInlineVar_iff _ e).1 h
-    have h1 := lookup_none_not_mem ι v.id (hf v.id (var_mem_varIds e v hv))
+    have h1 := lookup_none_not_mem ι v (hf v (var_mem_varIds e v hv))
     obtain ⟨p, hp, he⟩ := List.mem_map.1 hk
     exact absurd he (h1 p hp)
 
-theorem wfI_v (ι : List (Nat × QG)) (v : V) (g : QG) (h : lk ι v.id = some g) : wfI ι (Ex.v v) = true := by
+theorem wfI_v (ι : List (V × QG)) (v : V) (g : QG) (h : lk ι v = some g) : wfI ι (Ex.v v) = true := by
   simp [wfI, Ex.v, inlVar, h]
 
-theorem wfI_tt (ι : List (Nat × QG)) : wfI ι tt = true :=
+theorem wfI_tt (ι : List (V × QG)) : wfI ι tt = true :=
   wfI_noInl ι tt (by simp [containsInlineVar, tt, anyN, anyL, isInl])
 
 mutual
-theorem collect_wf (ι : List (Nat × QG)) : ∀ (st : CSt) ce (e : Ex), shapeOK e = true →
+theorem collect_wf (ι : List (V × QG)) : ∀ (st : CSt) ce (e : Ex), shapeOK e = true →
     needsExtraction e .semiApply = false → Fresh ι (varIds e) → Good ι (collect st ce e).2 →
     wfI ι (collect st ce e).1 = true ∧ shapeOK (collect st ce e).1 = true
   | st, ce, .node d cs, hs, hn, hf, hg => by
@@ -217,7 +220,7 @@ theorem collect_wf (ι : List (Nat × QG)) : ∀ (st : CSt) ce (e : Ex), shapeOK
       | (have h0 := collectL_noPat st false cs (needs_other _ cs rfl rfl hn)
          simp only [collect, h0]
          exact ⟨wfI_noInl ι _ (noInl_of_fresh ι _ hf), hs⟩)
-theorem collectL_wf (ι : List (Nat × QG)) : ∀ (st : CSt) ce (l : List Ex), shapeOKL l = true →
+theorem collectL_wf (ι : List (V × QG)) : ∀ (st : CSt) ce (l : List Ex), shapeOKL l = true →
     needsExtractionL l .semiApply = false → Fresh ι (varIdsL l) → Good ι (collectL st ce l).2 →
     wfIL ι (collectL st ce l).1 = true ∧ shapeOKL (collectL st ce l).1 = true
   | st, _, [], _, _, _, _ => ⟨rfl, rfl⟩

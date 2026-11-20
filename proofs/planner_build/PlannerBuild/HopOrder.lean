@@ -21,7 +21,7 @@ Generic over the hop type `T` and the node type `N` (the planner instantiates `T
 * `single_pass` — the result is one left fold over the input (each hop is stepped exactly once,
   `length (zipIdx) = length hops`) — vs. the old loop, which revisits every hop it moves.
 * **`eq_reference`** — it equals the pre-#3102 loop (`pre3102_reference`) whenever a hop flagged
-  `self_loop` has `from = to` (`WF`; in the planner, an alias id names one variable per pattern).
+  `self_loop` has `from = to` (`WF`; the planner always satisfies it since #3933 keys `self_loop` by (id, scope)).
   `wf_needed` shows the premise matters for the generic function.
 * `early_return_sound` — the `!(1..len).any(movable)` fast path returns what the loop would.
 -/
@@ -686,8 +686,9 @@ section
 variable (hops : List T) (shape : T → HopShape N) (bound : N → Bool)
 
 /-- A hop flagged `self_loop` starts and ends at the same node. The planner sets
-`self_loop = from.id == to.id` with nodes `(id, scope_id)`; this is the premise that an alias
-id names one variable within a pattern. -/
+`self_loop = from == to` with nodes `(id, scope_id)` (key equality since #3933; `from.id == to.id`
+before, when this was the premise that an alias id names one variable within a pattern), so the
+planner's hops always satisfy it (PlanMatch2 `orderRels_eq_reference`). -/
 def WF : Prop := ∀ x ∈ hops, (shape x).selfLoop = true → (shape x).frm = (shape x).to
 
 /-- What the old loop's `rels[..i]` scan sees of `out`. -/

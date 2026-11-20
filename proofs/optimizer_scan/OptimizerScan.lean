@@ -271,6 +271,16 @@ the new flag), `collectEqualities_sub`/`_other`/`_examples`, `filteredVars_equal
 (equality ⊆ all, so `score_equality_filtered`: the flag only breaks ties between filtered
 endpoints), `equality_beats_late` (the comparator key `startKeyLt`). Start choice affects cost only;
 `ScanOrder`'s soundness theorems hold for any start, so they are unchanged.
+
+## PR #3933 (8d80077a4: variables keyed by `(id, scope)`)
+The planner's variable sets are `HashSet<VarKey>`. `ScanOrder` (hops, bound sets, `initialBound`,
+`initialBoundOuter`, `place`, `runScoped`) and `Salvage` now key variables by `VarKey := Nat × Nat`
+(rows are `VarKey → Nat`); every soundness theorem keeps its statement. `collectOutputAliases`
+returns `VarKey`s (`collectOutputAliases_copy_scope`: a copy `(7,0) → (7,1)` lists only `(7,1)`).
+`score_endpoint` still matches its bound set by id alone, deliberately (`scoreEndpoint` takes
+`List Var`, `score_bound_by_id`). In `utilize_index.rs` the expression model `Cleanup.D.var` carries
+the key: `nonIdxD_other_scope` (a same-id variable of another scope is a runtime dependency),
+`addToLabels_other_scope`; the historical id-only `exRefs` compares ids explicitly.
 -/
 import OptimizerScan.IdSeek
 import OptimizerScan.Index

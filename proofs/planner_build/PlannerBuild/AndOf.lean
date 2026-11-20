@@ -49,7 +49,7 @@ theorem and3_single (x : Option Bool) : and3 [x] = x := by
 theorem or3_single (x : Option Bool) : or3 [x] = x := by
   rcases x with _ | _ | _ <;> rfl
 
-variable {R : Type} (atom : Ex → R → Option Bool) (sub : QG → R → List R) (ι : List (Nat × QG))
+variable {R : Type} (atom : Ex → R → Option Bool) (sub : QG → R → List R) (ι : List (V × QG))
 
 /-- Splicing an AND operand into an AND does not change the AND's value. -/
 theorem and3_flat (xs : List Ex) (y : R) :

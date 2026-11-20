@@ -4,10 +4,10 @@ import PlannerBuild.Expr
 
 | here | there |
 | --- | --- |
-| `varsOf`, `scopedVars` | `collect_expr_scoped_variables` optimizer/mod.rs:105-116 (BFS, `(scope_id, id)`) |
-| `singleVarConj`, `singleVarConjL` | `collect_single_variable_conjuncts` optimizer/mod.rs:122-157 and its `walk` :125-153 |
-| `endpointScanScore` | `endpoint_scan_score` optimizer/mod.rs:162-167 |
-| `walkScansTo` | `walk_scans_to_endpoint` optimizer/mod.rs:173-178 |
+| `varsOf`, `scopedVars` | `collect_expr_variables` optimizer/mod.rs:92-100 (BFS, `VarKey` = `(id, scope_id)`; named `collect_expr_scoped_variables` before #3933, which merged it with the id-only `collect_expr_variables`) |
+| `singleVarConj`, `singleVarConjL` | `collect_single_variable_conjuncts` optimizer/mod.rs:107-141 and its `walk` :110-137 |
+| `endpointScanScore` | `endpoint_scan_score` optimizer/mod.rs:147-152 |
+| `walkScansTo` | `walk_scans_to_endpoint` optimizer/mod.rs:158-163 |
 | `WI` | what `plan_match` derives from its WHERE: `filter_vars`, `anchor_vars`, `has_pattern_expr` (mod.rs:1828-1855) |
 
 A `HashSet` is modelled by a list (membership is all the planner reads).
@@ -18,7 +18,7 @@ namespace PlannerBuild.E
 def varsOf (e : Ex) : List V :=
   (nodes e).filterMap fun d => match d with | .var v => some v | _ => none
 
-/-- `collect_expr_scoped_variables`: every variable the expression reads, keyed by
+/-- `collect_expr_variables` (`collect_expr_scoped_variables` before #3933): every variable the expression reads, keyed by
 `(scope_id, id)` (here `V`, whose equality is on both). -/
 def scopedVars (e : Ex) : List V := varsOf e
 
@@ -31,7 +31,7 @@ theorem mem_varsOf (e : Ex) (v : V) : v ∈ varsOf e ↔ D.var v ∈ nodes e := 
 /-- **PROVEN**: the set is exactly the variables of the tree, scope included. -/
 theorem mem_scopedVars (e : Ex) (v : V) : v ∈ scopedVars e ↔ D.var v ∈ nodes e := mem_varsOf e v
 
-/-- Same id, other scope: two entries (the id-only `collect_expr_variables` merges them). -/
+/-- Same id, other scope: two entries (the id-only `collect_expr_variables` that #3933 removed merged them). -/
 theorem scopedVars_keeps_scope :
     scopedVars (.node .eq [Ex.v ⟨3, 0⟩, Ex.v ⟨3, 1⟩]) = [⟨3, 0⟩, ⟨3, 1⟩] := rfl
 

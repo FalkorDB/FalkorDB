@@ -1,9 +1,10 @@
 /-
-# `QueryGraph::filter_visited`, `connected_components`, `dfs` (ast.rs:792-887)
+# `QueryGraph::filter_visited`, `connected_components`, `dfs` (ast.rs:956-1040)
 
 The bound graph (`QueryGraph<_, _, Variable>`). `visited` is one
-`HashSet<u32>` shared by node, relationship and path ids, modelled as a
-list with `insert` = "append if absent".
+`HashSet<VarKey>` shared by node, relationship and path keys `(id, scope)`
+(#3933; before, the ids alone), modelled as a list with `insert` = "append if
+absent". Endpoints are compared with `Variable::eq`, i.e. by key.
 -/
 import FalkorParserGrammar.C.Graph
 
@@ -11,46 +12,46 @@ namespace FalkorParserGrammar.C
 
 abbrev G := QG Var
 
-def vins (x : Nat) (vis : List Nat) : List Nat := if x ∈ vis then vis else vis ++ [x]
+def vins (x : Nat × Nat) (vis : List (Nat × Nat)) : List (Nat × Nat) := if x ∈ vis then vis else vis ++ [x]
 
-theorem mem_vins {x y : Nat} {vis : List Nat} : y ∈ vins x vis ↔ y ∈ vis ∨ y = x := by
+theorem mem_vins {x y : Nat × Nat} {vis : List (Nat × Nat)} : y ∈ vins x vis ↔ y ∈ vis ∨ y = x := by
   unfold vins; split <;> simp_all <;> constructor <;> intro h <;> (try rcases h with h | h) <;>
     simp_all
 
-/-- The path step at the end of `dfs` (ast.rs:878-882). -/
-def pathStep (ps : List (QPath Var)) (vis : List Nat) (c : G) : List Nat × G :=
+/-- The path step at the end of `dfs` (ast.rs:1032-1038). -/
+def pathStep (ps : List (QPath Var)) (vis : List (Nat × Nat)) (c : G) : List (Nat × Nat) × G :=
   match ps with
   | [] => (vis, c)
   | p :: ps =>
-    if p.vars.all (fun v => v.id ∈ vis) && !(p.var.id ∈ vis) then
-      pathStep ps (vis ++ [p.var.id]) (c.addPath p).2
+    if p.vars.all (fun v => v.key ∈ vis) && !(p.var.key ∈ vis) then
+      pathStep ps (vis ++ [p.var.key]) (c.addPath p).2
     else pathStep ps vis c
 
-/-- One relationship's own bookkeeping in the loop (ast.rs:854-856 / 865-867):
-`if visited.insert(relationship.alias.id) { component.add_relationship(..) }`. -/
-def relPart (r : QRel Var) (vis : List Nat) (c : G) : List Nat × G :=
-  if r.alias.id ∈ vis then (vis, c) else (vis ++ [r.alias.id], (c.addRel r).2)
+/-- One relationship's own bookkeeping in the loop (ast.rs:1016-1018 / 1023-1025):
+`if visited.insert(relationship.alias.key()) { component.add_relationship(..) }`. -/
+def relPart (r : QRel Var) (vis : List (Nat × Nat)) (c : G) : List (Nat × Nat) × G :=
+  if r.alias.key ∈ vis then (vis, c) else (vis ++ [r.alias.key], (c.addRel r).2)
 
 mutual
-/-- `QueryGraph::dfs` (ast.rs:844-883); `none` = model budget exhausted. -/
-def dfs (g : G) : Nat → QNode Var → List Nat → G → Option (List Nat × G)
+/-- `QueryGraph::dfs` (ast.rs:1005-1040); `none` = model budget exhausted. -/
+def dfs (g : G) : Nat → QNode Var → List (Nat × Nat) → G → Option (List (Nat × Nat) × G)
   | 0, _, _, _ => none
   | f + 1, n, vis, c =>
-    match dfsRels g f n g.rels (vins n.alias.id vis) (c.addNode n).2 with
+    match dfsRels g f n g.rels (vins n.alias.key vis) (c.addNode n).2 with
     | none => none
     | some p => some (pathStep g.paths p.1 p.2)
 termination_by f _ _ _ => (f, 0)
-/-- The `for relationship in &self.relationships` loop (ast.rs:852-876). -/
-def dfsRels (g : G) : Nat → QNode Var → List (QRel Var) → List Nat → G → Option (List Nat × G)
+/-- The `for relationship in &self.relationships` loop (ast.rs:1014-1030). -/
+def dfsRels (g : G) : Nat → QNode Var → List (QRel Var) → List (Nat × Nat) → G → Option (List (Nat × Nat) × G)
   | _, _, [], vis, c => some (vis, c)
   | f, n, r :: rs, vis, c =>
-    if r.src.alias.id = n.alias.id then
-      if r.dst.alias.id ∈ (relPart r vis c).1 then dfsRels g f n rs (relPart r vis c).1 (relPart r vis c).2
+    if r.src.alias.key = n.alias.key then
+      if r.dst.alias.key ∈ (relPart r vis c).1 then dfsRels g f n rs (relPart r vis c).1 (relPart r vis c).2
       else match dfs g f r.dst (relPart r vis c).1 (relPart r vis c).2 with
         | none => none
         | some p => dfsRels g f n rs p.1 p.2
-    else if r.dst.alias.id = n.alias.id then
-      if r.src.alias.id ∈ (relPart r vis c).1 then dfsRels g f n rs (relPart r vis c).1 (relPart r vis c).2
+    else if r.dst.alias.key = n.alias.key then
+      if r.src.alias.key ∈ (relPart r vis c).1 then dfsRels g f n rs (relPart r vis c).1 (relPart r vis c).2
       else match dfs g f r.src (relPart r vis c).1 (relPart r vis c).2 with
         | none => none
         | some p => dfsRels g f n rs p.1 p.2
@@ -58,11 +59,11 @@ def dfsRels (g : G) : Nat → QNode Var → List (QRel Var) → List Nat → G �
 termination_by f _ rs _ _ => (f, rs.length + 1)
 end
 
-/-- `connected_components` (ast.rs:823-842). -/
-def ccLoop (g : G) (f : Nat) : List (QNode Var) → List Nat → List G → Option (List G)
+/-- `connected_components` (ast.rs:984-1003). -/
+def ccLoop (g : G) (f : Nat) : List (QNode Var) → List (Nat × Nat) → List G → Option (List G)
   | [], _, acc => some acc
   | n :: ns, vis, acc =>
-    if n.alias.id ∈ vis then ccLoop g f ns vis acc
+    if n.alias.key ∈ vis then ccLoop g f ns vis acc
     else match dfs g f n vis QG.empty with
       | none => none
       | some (vis', c) => ccLoop g f ns vis' (acc ++ [c])
@@ -71,19 +72,19 @@ def connectedComponents (g : G) (f : Nat) : Option (List G) := ccLoop g f g.node
 
 /-! ## Specification -/
 
-def relIds (g : G) : List Nat := g.rels.map (·.alias.id)
-def pathIds (g : G) : List Nat := g.paths.map (·.var.id)
+def relIds (g : G) : List (Nat × Nat) := g.rels.map (·.alias.key)
+def pathIds (g : G) : List (Nat × Nat) := g.paths.map (·.var.key)
 /-- Where a component's nodes may come from: the node list or a relationship endpoint. -/
 def Cand (g : G) (x : QNode Var) : Prop := x ∈ g.nodes ∨ ∃ r ∈ g.rels, x = r.src ∨ x = r.dst
 
-def ids (l : List (QNode Var)) : List Nat := l.map (·.alias.id)
+def ids (l : List (QNode Var)) : List (Nat × Nat) := l.map (·.alias.key)
 
 /-- What a run of `dfs`/`dfsRels`/`pathStep` does to `(visited, component)`:
 it appends fresh, distinct, visited, candidate nodes, only ever grows
 `visited`, and every newly visited id is a new node, a relationship or a path. -/
-def Step (g : G) (vis : List Nat) (c : G) (vis' : List Nat) (c' : G) : Prop :=
+def Step (g : G) (vis : List (Nat × Nat)) (c : G) (vis' : List (Nat × Nat)) (c' : G) : Prop :=
   ∃ new : List (QNode Var), c'.nodes = c.nodes ++ new ∧ (ids new).Nodup ∧
-    (∀ x ∈ new, x.alias.id ∉ vis ∧ x.alias.id ∈ vis' ∧ Cand g x) ∧
+    (∀ x ∈ new, x.alias.key ∉ vis ∧ x.alias.key ∈ vis' ∧ Cand g x) ∧
     (∀ v ∈ vis, v ∈ vis') ∧
     (∀ v ∈ vis', v ∈ vis ∨ v ∈ ids new ∨ v ∈ relIds g ∨ v ∈ pathIds g) ∧
     (∀ r ∈ c'.rels, r ∈ c.rels ∨ r ∈ g.rels)
@@ -120,7 +121,7 @@ theorem Step.trans {g : G} {v0 c0 v1 c1 v2 c2} (h1 : Step g v0 c0 v1 c1) (h2 : S
     · exact .inr h
 
 /-- Nodes of the component are all visited. -/
-def CInv (vis : List Nat) (c : G) : Prop := ∀ x ∈ c.nodes, x.alias.id ∈ vis
+def CInv (vis : List (Nat × Nat)) (c : G) : Prop := ∀ x ∈ c.nodes, x.alias.key ∈ vis
 
 theorem Step.cinv {g : G} {v c v' c'} (h : Step g v c v' c') (hc : CInv v c) : CInv v' c' := by
   obtain ⟨new, e, _, f, s, _, _⟩ := h
@@ -157,7 +158,7 @@ theorem pathStep_step (g : G) : ∀ (ps : List (QPath Var)), (∀ p ∈ ps, p �
     · exact pathStep_step g ps hps' vis c
 
 /-- The relationship part of one `dfsRels` iteration. -/
-theorem relPart_step (g : G) (r : QRel Var) (hr : r ∈ g.rels) (vis : List Nat) (c : G) :
+theorem relPart_step (g : G) (r : QRel Var) (hr : r ∈ g.rels) (vis : List (Nat × Nat)) (c : G) :
     Step g vis c (relPart r vis c).1 (relPart r vis c).2 := by
   unfold relPart; split
   · exact Step.refl g vis c
@@ -173,9 +174,9 @@ theorem relPart_step (g : G) (r : QRel Var) (hr : r ∈ g.rels) (vis : List Nat)
 mutual
 /-- **dfs on an unvisited candidate node** emits it first, then only fresh
 candidate nodes, all visited and pairwise distinct. -/
-theorem dfs_step (g : G) : ∀ (f : Nat) (n : QNode Var) (vis : List Nat) (c : G) vis' c',
-    dfs g f n vis c = some (vis', c') → n.alias.id ∉ vis → Cand g n → CInv vis c →
-    Step g vis c vis' c' ∧ CInv vis' c' ∧ n.alias.id ∈ vis'
+theorem dfs_step (g : G) : ∀ (f : Nat) (n : QNode Var) (vis : List (Nat × Nat)) (c : G) vis' c',
+    dfs g f n vis c = some (vis', c') → n.alias.key ∉ vis → Cand g n → CInv vis c →
+    Step g vis c vis' c' ∧ CInv vis' c' ∧ n.alias.key ∈ vis'
   | 0, _, _, _, _, _, h, _, _, _ => by simp [dfs] at h
   | f + 1, n, vis, c, vis', c', h, hn, hcand, hc => by
     unfold dfs at h
@@ -188,9 +189,9 @@ theorem dfs_step (g : G) : ∀ (f : Nat) (n : QNode Var) (vis : List Nat) (c : G
         rcases QG.addNode_spec c n with ⟨h1, _⟩ | ⟨_, e2⟩
         · exfalso
           obtain ⟨m, hm, hmeq⟩ := List.any_eq_true.1 h1
-          exact hn ((Var.eq_spec _ _).1 hmeq ▸ hc m hm)
+          exact hn ((Var.eq_key _ _).1 hmeq ▸ hc m hm)
         · rw [e2]; exact ⟨rfl, rfl⟩
-      have s0 : Step g vis c (vins n.alias.id vis) (c.addNode n).2 := by
+      have s0 : Step g vis c (vins n.alias.key vis) (c.addNode n).2 := by
         refine ⟨[n], hadd.1, by simp [ids], by simp [hn, mem_vins, hcand], fun v h => mem_vins.2 (.inl h), ?_, ?_⟩
         · intro v hv; rcases mem_vins.1 hv with h | h
           · exact .inl h
@@ -204,7 +205,7 @@ theorem dfs_step (g : G) : ∀ (f : Nat) (n : QNode Var) (vis : List Nat) (c : G
       obtain ⟨_, _, _, _, s12, _, _⟩ := Step.trans s1 s2
       exact ⟨st, st.cinv hc, s12 _ (mem_vins.2 (.inr rfl))⟩
 theorem dfsRels_step (g : G) : ∀ (f : Nat) (n : QNode Var) (rs : List (QRel Var)),
-    (∀ r ∈ rs, r ∈ g.rels) → ∀ (vis : List Nat) (c : G) vis' c',
+    (∀ r ∈ rs, r ∈ g.rels) → ∀ (vis : List (Nat × Nat)) (c : G) vis' c',
     dfsRels g f n rs vis c = some (vis', c') → CInv vis c → Step g vis c vis' c' ∧ CInv vis' c'
   | _, _, [], _, vis, c, vis', c', h, hc => by
     simp [dfsRels] at h; obtain ⟨rfl, rfl⟩ := h; exact ⟨Step.refl g vis c, hc⟩
@@ -241,13 +242,13 @@ end
 /-- All nodes of a list of components, in order. -/
 def allNodes (cs : List G) : List (QNode Var) := cs.flatMap (·.nodes)
 
-theorem ccLoop_spec (g : G) (f : Nat) : ∀ (ns : List (QNode Var)) (vis : List Nat) (acc : List G) out,
+theorem ccLoop_spec (g : G) (f : Nat) : ∀ (ns : List (QNode Var)) (vis : List (Nat × Nat)) (acc : List G) out,
     (∀ n ∈ ns, n ∈ g.nodes) → ccLoop g f ns vis acc = some out →
-    (ids (allNodes acc)).Nodup → (∀ x ∈ allNodes acc, x.alias.id ∈ vis ∧ Cand g x) →
+    (ids (allNodes acc)).Nodup → (∀ x ∈ allNodes acc, x.alias.key ∈ vis ∧ Cand g x) →
     (∀ v ∈ vis, v ∈ ids (allNodes acc) ∨ v ∈ relIds g ∨ v ∈ pathIds g) →
     (ids (allNodes out)).Nodup ∧ (∀ x ∈ allNodes out, Cand g x) ∧
-    (∀ n ∈ ns, n.alias.id ∈ vis ∨ n.alias.id ∈ ids (allNodes out) ∨ n.alias.id ∈ relIds g ∨
-      n.alias.id ∈ pathIds g) ∧
+    (∀ n ∈ ns, n.alias.key ∈ vis ∨ n.alias.key ∈ ids (allNodes out) ∨ n.alias.key ∈ relIds g ∨
+      n.alias.key ∈ pathIds g) ∧
     (∀ v ∈ vis, v ∈ ids (allNodes out) ∨ v ∈ relIds g ∨ v ∈ pathIds g) ∧
     (∀ x ∈ allNodes acc, x ∈ allNodes out)
   | [], vis, acc, out, _, h, hd, hx, hv => by
@@ -278,7 +279,7 @@ theorem ccLoop_spec (g : G) (f : Nat) : ∀ (ns : List (QNode Var)) (vis : List 
           simp only [List.mem_map] at ha hb
           obtain ⟨x, hx', rfl⟩ := ha; obtain ⟨y, hy, hxy⟩ := hb
           exact (fn y hy).1 (hxy ▸ (hx x hx').1)
-        have hx' : ∀ x ∈ allNodes (acc ++ [comp]), x.alias.id ∈ vis' ∧ Cand g x := by
+        have hx' : ∀ x ∈ allNodes (acc ++ [comp]), x.alias.key ∈ vis' ∧ Cand g x := by
           rw [hall]; intro x hm; rcases List.mem_append.1 hm with h1 | h1
           · exact ⟨sn _ (hx x h1).1, (hx x h1).2⟩
           · exact ⟨(fn x h1).2.1, (fn x h1).2.2⟩
@@ -317,16 +318,16 @@ theorem ccLoop_spec (g : G) (f : Nat) : ∀ (ns : List (QNode Var)) (vis : List 
           exact List.mem_append_left _ hm
 
 /-- **connected_components** (whenever the model's budget suffices):
-the components' nodes are pairwise distinct by id (no node is in two
+the components' nodes are pairwise distinct by key (no node is in two
 components or twice in one), each is a node of the graph or an endpoint of
 one of its relationships, and every node of the graph is in some component
-*unless its id is also a relationship or path id* (`visited` is one set for
-all three kinds of id, ast.rs:827,849,855,880). -/
+*unless its key is also a relationship or path key* (`visited` is one set for
+all three kinds of key, ast.rs:993,1011,1016,1034). -/
 theorem connectedComponents_spec (g : G) (f : Nat) (out : List G)
     (h : connectedComponents g f = some out) :
     (ids (allNodes out)).Nodup ∧ (∀ x ∈ allNodes out, Cand g x) ∧
-    (∀ n ∈ g.nodes, n.alias.id ∈ ids (allNodes out) ∨ n.alias.id ∈ relIds g ∨
-      n.alias.id ∈ pathIds g) := by
+    (∀ n ∈ g.nodes, n.alias.key ∈ ids (allNodes out) ∨ n.alias.key ∈ relIds g ∨
+      n.alias.key ∈ pathIds g) := by
   obtain ⟨a, b, c, _, _⟩ := ccLoop_spec g f g.nodes [] [] out (fun _ h => h) h
     (by simp [ids, allNodes]) (by simp [allNodes]) (by simp)
   exact ⟨a, b, fun n hn => by rcases c n hn with h | h <;> simp_all⟩
@@ -338,7 +339,7 @@ def exG : G :=
   ⟨[a, b], [⟨⟨none, 2, 0, none⟩, [7], leaf .map, a, b, false, none, none, .no⟩], []⟩
 #guard ((connectedComponents exG 10).map (·.length)) == some 1
 
-/-- `QueryGraph::filter_visited` (ast.rs:795-821): keep the entities whose
+/-- `QueryGraph::filter_visited` (ast.rs:956-982): keep the entities whose
 `(id, scope_id)` is not in `visited`, re-adding them with `add_*`. -/
 def filterVisited (g : G) (vis : List (Nat × Nat)) : G :=
   let g1 := (g.nodes.filter (fun n => !((n.alias.id, n.alias.scope) ∈ vis))).foldl

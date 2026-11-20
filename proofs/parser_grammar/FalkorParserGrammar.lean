@@ -196,7 +196,8 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
   `unreachable!()`), `np_paramsP`.
 * **ast.rs**: `connectedComponents_spec` (components are node-disjoint, made
   of the graph's nodes or relationship endpoints, and cover every node whose
-  id is not also a relationship/path id), the `QueryGraph` operations,
+  key (id, scope) is not also a relationship/path key; `Variable` `==`/`Hash` by key
+  since #3933: `Var.eq_spec`, `Var.hash_eq`), the `QueryGraph` operations,
   `validate` (`vClause_simple`; `call_validates_rest`, the CALL fix of #3297), `find_aggregate_name_spec`,
   `treeHeight_spec`.
 

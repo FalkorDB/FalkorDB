@@ -24,10 +24,10 @@ scans its node on top of `res` (#3102). -/
 def chainOp (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) : MP :=
   match r.kind with
   | .shortest => .shortest (opRel r) [res]
-  | .varLen => .cvlt (opRel r) (r.frm.alias.id != r.to.alias.id && st.bound r.frm.alias && st.bound r.to.alias)
+  | .varLen => .cvlt (opRel r) (r.frm.alias != r.to.alias && st.bound r.frm.alias && st.bound r.to.alias)
       none [res]
   | .fixed =>
-    if r.frm.alias.id = r.to.alias.id then .expandInto (opRel r) (opEmit c lw r)
+    if r.frm.alias = r.to.alias then .expandInto (opRel r) (opEmit c lw r)
       (if st.bound r.frm.alias then [res] else [scanOn (opRel r).frm res])
     else if st.bound r.frm.alias && st.bound r.to.alias then .expandInto (opRel r) (opEmit c lw r) [res]
     else .condTr (opRel r) (opEmit c lw r) [res]
@@ -41,19 +41,19 @@ theorem chainOp_core (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) :
     (chainOp st c lw res r).core = chainOp st c lw res r := by
   unfold chainOp
   cases hk : r.kind <;> by_cases h1 : st.bound r.frm.alias <;> by_cases h2 : st.bound r.to.alias <;>
-    by_cases h3 : r.frm.alias.id = r.to.alias.id <;> simp [h1, h2, h3, MP.core]
+    by_cases h3 : r.frm.alias = r.to.alias <;> simp [h1, h2, h3, MP.core]
 
 theorem chainOp_peel (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) :
     (chainOp st c lw res r).peel = [] := by
   unfold chainOp
   cases hk : r.kind <;> by_cases h1 : st.bound r.frm.alias <;> by_cases h2 : st.bound r.to.alias <;>
-    by_cases h3 : r.frm.alias.id = r.to.alias.id <;> simp [h1, h2, h3, MP.peel]
+    by_cases h3 : r.frm.alias = r.to.alias <;> simp [h1, h2, h3, MP.peel]
 
 theorem chainOp_isCtEi (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) :
     (chainOp st c lw res r).isCtEi = (r.kind == .fixed) := by
   unfold chainOp
   cases hk : r.kind <;> by_cases h1 : st.bound r.frm.alias <;> by_cases h2 : st.bound r.to.alias <;>
-    by_cases h3 : r.frm.alias.id = r.to.alias.id <;> simp [h1, h2, h3, MP.isCtEi]
+    by_cases h3 : r.frm.alias = r.to.alias <;> simp [h1, h2, h3, MP.isCtEi]
 
 /-- Operator table for the later hops (attribute filters stripped). -/
 theorem chainRel_core (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) :
@@ -65,9 +65,9 @@ theorem chainRel_core (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) :
 (Match.lean `selfloop_scan_keeps_chain`). (`orderRels` also moves such a hop behind the hop that
 binds its node whenever one comes later, so this shape is now only the no-binder case.) -/
 theorem chainRel_selfloop_unbound (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
-    (hk : r.kind = .fixed) (hs : r.frm.alias.id = r.to.alias.id) (hb : st.bound r.frm.alias = false) :
+    (hk : r.kind = .fixed) (hs : r.frm.alias = r.to.alias) (hb : st.bound r.frm.alias = false) :
     (chainRel st c lw res r).1.core = .expandInto (opRel r) (opEmit c lw r) [scanOn (opRel r).frm res] := by
-  rw [chainRel_core]; simp [chainOp, hk, hs, hb]
+  rw [chainRel_core]; simp only [chainOp, hk, if_pos hs, hb, Bool.false_eq_true, ↓reduceIte]
 
 /-- **#2390**: a later hop lowers its `from` endpoint too (it used to be left on the
 CondTraverse's pattern, invisible to the optimizer), and its `to` endpoint even when bound. -/
@@ -108,7 +108,7 @@ theorem chainRel_stripped (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
   have h3' : r.kind = .fixed → (opRel r).attrs = [] := fun hk => h3 (by simp [isWalk, hk])
   unfold chainOp
   cases hk : r.kind <;> by_cases hb1 : st.bound r.frm.alias <;> by_cases hb2 : st.bound r.to.alias <;>
-    by_cases h4 : r.frm.alias.id = r.to.alias.id <;>
+    by_cases h4 : r.frm.alias = r.to.alias <;>
     simp [hb1, hb2, h4, MP.stripped, MP.stripped.strippedL, h1, h2, hs, h3', hk, hres]
 
 /-- `MATCH (a)-[:R]->(b)-[:R]->(c), (b {x:1})-[:S]->(d)`-shape: a fixed later hop leaving a bound
@@ -239,16 +239,17 @@ theorem nodeOnly_stripped (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V)
 /-! ## A component with relationships -/
 
 /-- Path elision (mod.rs:2350-2387): a named path over the single var-length
-hop `(from)-[rel]->(to)` is bound by the CondVarLenTraverse itself. -/
+hop `(from)-[rel]->(to)` is bound by the CondVarLenTraverse itself (`path.vars[i] == …`,
+key equality since #3933). -/
 def elidable (rels : List QR) (p : V × List V) : Bool :=
   match rels with
-  | [r] => r.kind == .varLen && (p.2.map V.id == [r.frm.alias.id, r.alias.id, r.to.alias.id])
+  | [r] => r.kind == .varLen && (p.2 == [r.frm.alias, r.alias, r.to.alias])
   | _ => false
 
 /-- Bind the path variable on the first CondVarLenTraverse of that relationship
-still without one (pre-order). -/
-def bindPath (rid : Nat) (pv : V) : MP → Option MP
-  | .cvlt r ei none cs => if r.alias.id = rid then some (.cvlt r ei (some pv) cs) else
+still without one (pre-order); `relationship.alias == path.vars[1]` (by key since #3933). -/
+def bindPath (rid : V) (pv : V) : MP → Option MP
+  | .cvlt r ei none cs => if r.alias = rid then some (.cvlt r ei (some pv) cs) else
       (bindPathL rid pv cs).map (.cvlt r ei none)
   | .filter e c => (bindPath rid pv c).map (.filter e)
   | .pathB ps c => (bindPath rid pv c).map (.pathB ps)
@@ -261,7 +262,7 @@ def bindPath (rid : Nat) (pv : V) : MP → Option MP
   | .labelScan n cs => (bindPathL rid pv cs).map (.labelScan n)
   | _ => none
 where
-  bindPathL (rid : Nat) (pv : V) : List MP → Option (List MP)
+  bindPathL (rid : V) (pv : V) : List MP → Option (List MP)
     | [] => none
     | c :: cs => match bindPath rid pv c with
       | some c' => some (c' :: cs)
@@ -270,7 +271,7 @@ where
 def elideStep (rels : List QR) (acc : MP × List (V × List V)) (p : V × List V) : MP × List (V × List V) :=
   if elidable rels p then
     match p.2[1]? with
-    | some rv => match bindPath rv.id p.1 acc.1 with
+    | some rv => match bindPath rv p.1 acc.1 with
       | some res' => (res', acc.2)
       | none => (acc.1, acc.2 ++ [p])
     | none => (acc.1, acc.2 ++ [p])
@@ -297,7 +298,7 @@ theorem elide_none (rels : List QR) (paths : List (V × List V)) (res : MP)
 
 /-- The single var-length hop's own path is bound on the traverse, no PathBuilder. -/
 theorem elide_varlen (r : QR) (p : V × List V) (res res' : MP) (rv : V)
-    (he : elidable [r] p = true) (h1 : p.2[1]? = some rv) (hb : bindPath rv.id p.1 res = some res') :
+    (he : elidable [r] p = true) (h1 : p.2[1]? = some rv) (hb : bindPath rv p.1 res = some res') :
     elide [r] [p] res = res' := by
   simp [elide, elideStep, he, h1, hb]
 
@@ -307,10 +308,11 @@ def planRels (c : Comp) : List QR → MP → MSt → LW → MP × MSt × LW
     let x := chainRel st c lw res r
     planRels c rs x.1 (visit st r) x.2
 
-/-- The `HopShape` closure (mod.rs:1919-1924): nodes are `(id, scope_id)`; `self_loop`
-compares ids only; `fixed` = neither var-length nor shortest. -/
+/-- The `HopShape` closure (mod.rs:2217-2223): nodes are `(id, scope_id)`; `self_loop`
+is `r.from.alias == r.to.alias` (id and scope since #3933, ids only before); `fixed` = neither
+var-length nor shortest. -/
 def hopShape (r : QR) : HopOrder.HopShape V :=
-  { frm := r.frm.alias, to := r.to.alias, selfLoop := r.frm.alias.id == r.to.alias.id,
+  { frm := r.frm.alias, to := r.to.alias, selfLoop := r.frm.alias == r.to.alias,
     fixed := r.kind == .fixed }
 
 /-! ## The promoted walk (#2558, PR #3593: mod.rs:2064-2219) -/
@@ -344,20 +346,21 @@ def leadsFromAnchor (wi : WI) (c : Comp) (r : QR) : Bool :=
 
 /-- `leading_walk` (mod.rs:2094-2152): nothing bound before the clause, no fixed hop anchored, every
 hop free to move (no allShortestPaths, no attribute map reading a variable); then the first
-var-length hop with distinct end ids that leads from an anchor. -/
+var-length hop with distinct ends (`r.from.alias != r.to.alias`, by key since #3933) that leads
+from an anchor. -/
 def leadingWalk (wi : WI) (c : Comp) : Option V :=
   let leads := !wi.boundBefore && !(c.rels.any fun r => r.kind == .fixed && anchored wi r)
   let canMove := c.rels.all fun r => r.kind != .shortest && !refsVar r
   if leads && canMove then
-    (c.rels.find? fun r => r.kind == .varLen && r.frm.alias.id != r.to.alias.id && leadsFromAnchor wi c r).map
+    (c.rels.find? fun r => r.kind == .varLen && r.frm.alias != r.to.alias && leadsFromAnchor wi c r).map
       (·.alias)
   else none
 
-/-- **PROVEN**: a promoted walk is a var-length hop of the component with distinct end ids, leading
+/-- **PROVEN**: a promoted walk is a var-length hop of the component with distinct ends, leading
 from an anchored end, in a clause nothing was bound before, where no fixed hop is anchored and every
 hop can move. -/
 theorem leadingWalk_spec (wi : WI) (c : Comp) (x : V) (h : leadingWalk wi c = some x) :
-    ∃ r ∈ c.rels, r.alias = x ∧ r.kind = .varLen ∧ r.frm.alias.id ≠ r.to.alias.id ∧
+    ∃ r ∈ c.rels, r.alias = x ∧ r.kind = .varLen ∧ r.frm.alias ≠ r.to.alias ∧
       leadsFromAnchor wi c r = true ∧ wi.boundBefore = false ∧
       (∀ q ∈ c.rels, q.kind = .fixed → anchored wi q = false) ∧
       (∀ q ∈ c.rels, q.kind ≠ .shortest ∧ refsVar q = false) := by
@@ -558,18 +561,16 @@ theorem orderRels_perm (st : MSt) (fv : List V) (lead : Option V) (rs : List QR)
     (orderRels st fv lead rs).Perm rs :=
   (HopOrder.selfLoops_perm _ _ _).trans ((leadOrder_perm _ _).trans (sortRels_spec st fv lead rs).1)
 
-/-- The planner discharges `HopOrder.WF` when each alias id names one variable (`(id, scope)`
-pairs with equal ids are equal) — so on such patterns `orderRels` is the pre-#3102 loop over the
-(#3593: lead-first) sorted hops. -/
-theorem orderRels_eq_reference (st : MSt) (fv : List V) (lead : Option V) (rs : List QR)
-    (hid : ∀ r ∈ rs, r.frm.alias.id = r.to.alias.id → r.frm.alias = r.to.alias) :
+/-- The planner always discharges `HopOrder.WF`: since #3933 `self_loop` is `from == to` on the
+whole `(id, scope)` key, so a self-loop's ends are the same node — `orderRels` is the pre-#3102
+loop over the (#3593: lead-first) sorted hops, on every pattern (before #3933 this needed alias
+ids to be unique per pattern). -/
+theorem orderRels_eq_reference (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) :
     orderRels st fv lead rs =
       HopOrder.pre3102_reference hopShape st.bound (leadOrder lead (sortRels st fv lead rs)) := by
   apply HopOrder.eq_reference
-  intro x hx hl
-  have := hid x (((leadOrder_perm _ _).trans (sortRels_spec st fv lead rs).1).mem_iff.1 hx)
-  simp [hopShape] at hl ⊢
-  exact this hl
+  intro x _ hl
+  simpa [hopShape] using hl
 
 /-- **PROVEN** (#3593): when `plan_match` promotes a walk, its component's hops start with that walk
 and the rest follow outward from it (before `self_loops_after_binders`, which moves only fixed
@@ -642,7 +643,7 @@ theorem planComp_binds (st : MSt) (wi : WI) (lw : LW) (c : Comp) (r : QR) (hr : 
 /-! ### Every operator `plan_match` emits carries a stripped pattern -/
 
 mutual
-theorem bindPath_stripped (rid : Nat) (pv : V) : (m m' : MP) → bindPath rid pv m = some m' →
+theorem bindPath_stripped (rid : V) (pv : V) : (m m' : MP) → bindPath rid pv m = some m' →
     m'.stripped = m.stripped
   | .cvlt r ei none cs, m', h => by
     simp only [bindPath] at h
@@ -688,7 +689,7 @@ theorem bindPath_stripped (rid : Nat) (pv : V) : (m m' : MP) → bindPath rid pv
     obtain ⟨cs', hcs, rfl⟩ := Option.map_eq_some_iff.1 h
     simp [MP.stripped, bindPathL_stripped rid pv cs cs' hcs]
 
-theorem bindPathL_stripped (rid : Nat) (pv : V) : (cs cs' : List MP) →
+theorem bindPathL_stripped (rid : V) (pv : V) : (cs cs' : List MP) →
     bindPath.bindPathL rid pv cs = some cs' → MP.stripped.strippedL cs' = MP.stripped.strippedL cs
   | [], _, h => by simp [bindPath.bindPathL] at h
   | c :: cs, cs', h => by

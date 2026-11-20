@@ -3,13 +3,13 @@
 
 | here | there |
 | --- | --- |
-| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:160-216 (#3303 adds `anon`) |
+| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:164-240 (#3303 adds `anon`) |
 | `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs:473-640 |
 | `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs:481-489, 542-566, 643-660 |
 | `mergeAttrs` | `merge_attr_maps` ast.rs:667-683 |
 | `addNode`, `mergeNode`, `replaceNode`, `addRel`, `addPath`, `variables`, accessors | ast.rs:685-791 |
 | `filterVisited` | `filter_visited` ast.rs:795-821 |
-| `dfs`, `components` | `dfs` ast.rs:844-883, `connected_components` ast.rs:823-842 |
+| `dfs`, `components` | `dfs` ast.rs:1005-1040, `connected_components` ast.rs:984-1003 |
 | `QC`, `innerValidate`, `validateSetItems`, `inlinedOk`, `returnColumns` | `validate` / `inner_validate` / `validate_set_items` / `validate_inlined_properties` / `return_column_names` ast.rs:1151-1393 |
 
 * FIXED by #3297 (W4-plan-4; main b84473a7f): `inner_validate`'s procedure-call arm
@@ -44,26 +44,29 @@ def AV.fmt (v : AV) : String := match v.name, v.anon with
   | none, some k => "@anon_" ++ toString k
   | none, none => "?" ++ toString v.id
 
-/-- `PartialEq for Variable`: by id only (ast.rs:186-193). -/
-def AV.eqv (a b : AV) : Bool := a.id == b.id
-
-/-- `Hash for Variable`: hashes the id only (ast.rs:197-204). -/
-def AV.hashKey (v : AV) : Nat := v.id
-
 def AV.asStr (v : AV) : String := v.name.getD "?"
 
-/-- `Variable::key` (ast.rs:214-219): the `VarKey { id, scope_id }` naming the variable's identity. -/
+/-- `Variable::key` (ast.rs:216-223): the `VarKey { id, scope_id }` naming the variable's identity. -/
 def AV.key (v : AV) : Nat × Nat := (v.id, v.scope)
+
+/-- `PartialEq for Variable` (ast.rs:188-195, #3933): `self.key() == other.key()`. -/
+def AV.eqv (a b : AV) : Bool := a.key == b.key
+
+/-- `Hash for Variable` (ast.rs:199-206, #3933): hashes `self.key()`. -/
+def AV.hashKey (v : AV) : Nat × Nat := v.key
+
+/-- Before #3933 `PartialEq` compared ids only (historical). -/
+def AV.pre3933_eqv (a b : AV) : Bool := a.id == b.id
 
 /-- Two variables share a `VarKey` exactly when both id and scope agree. -/
 theorem AV.key_eq_iff (a b : AV) : a.key = b.key ↔ a.id = b.id ∧ a.scope = b.scope := by
   simp [AV.key]
 
-/-- A shared `VarKey` implies `Variable` equality (which compares ids only). -/
+/-- A shared `VarKey` implies `Variable` equality (which compares the keys). -/
 theorem AV.key_eq_eqv (a b : AV) (h : a.key = b.key) : a.eqv b = true := by
-  simp [AV.key, AV.eqv] at *; exact h.1
+  simp [AV.eqv, h]
 
-/-- Unlike `Eq`, the key separates equal ids in different scopes. -/
+/-- The key separates equal ids in different scopes. -/
 theorem AV.key_other_scope : AV.key ⟨some "a", none, 3, 0⟩ ≠ AV.key ⟨some "b", none, 3, 1⟩ := by
   decide
 
@@ -74,11 +77,16 @@ theorem AV.fmt_anon (i s : Nat) : AV.fmt ⟨none, none, i, s⟩ = "?" ++ toStrin
 theorem AV.fmt_unnamed (k i s : Nat) : AV.fmt ⟨none, some k, i, s⟩ = "@anon_" ++ toString k := rfl
 theorem AV.asStr_spec (v : AV) : v.asStr = v.name.getD "?" := rfl
 
-/-- Equality ignores scope and name — two variables of different scopes with
-the same id are "equal" (the root of the id-only issues noted elsewhere). -/
-theorem AV.eqv_iff (a b : AV) : a.eqv b = true ↔ a.id = b.id := by simp [AV.eqv]
+/-- Equality is key equality: id and scope (name ignored, #3933). -/
+theorem AV.eqv_iff (a b : AV) : a.eqv b = true ↔ a.id = b.id ∧ a.scope = b.scope := by
+  simp [AV.eqv, AV.key]
 
-theorem AV.eqv_other_scope : AV.eqv ⟨some "a", none, 3, 0⟩ ⟨some "b", none, 3, 1⟩ = true := rfl
+/-- Same id, different scopes: no longer equal (#3933). -/
+theorem AV.eqv_other_scope : AV.eqv ⟨some "a", none, 3, 0⟩ ⟨some "b", none, 3, 1⟩ = false := by
+  decide
+
+/-- Historical: before #3933 those two variables compared equal. -/
+theorem AV.pre3933_eqv_other_scope : AV.pre3933_eqv ⟨some "a", none, 3, 0⟩ ⟨some "b", none, 3, 1⟩ = true := rfl
 
 /-- `Hash` is consistent with `Eq` (as `HashMap`/`HashSet` require). -/
 theorem AV.hash_consistent (a b : AV) (h : a.eqv b = true) : a.hashKey = b.hashKey := by
@@ -87,7 +95,7 @@ theorem AV.hash_consistent (a b : AV) (h : a.eqv b = true) : a.hashKey = b.hashK
 theorem AV.eqv_equivalence : (∀ a, AV.eqv a a = true) ∧ (∀ a b, AV.eqv a b = AV.eqv b a) ∧
     (∀ a b c, AV.eqv a b = true → AV.eqv b c = true → AV.eqv a c = true) := by
   refine ⟨fun a => by simp [AV.eqv], fun a b => by simp [AV.eqv, Bool.beq_comm], fun a b c h1 h2 => ?_⟩
-  simp [AV.eqv] at *; omega
+  simp [AV.eqv] at *; rw [h1, h2]
 
 /-! ## Expressions as far as ast.rs inspects them -/
 

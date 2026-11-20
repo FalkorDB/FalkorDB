@@ -5,18 +5,18 @@ import PlannerBuild.Expr
 Reference semantics: openCypher's three-valued WHERE. `tv ι e r` is the truth
 value (`none` = null) of a predicate on row `r`: Kleene `AND`/`OR`/`NOT`,
 `Paren` transparent, a bare pattern is `true` iff its sub-plan has a row, and a
-synthetic inline variable (id in `ι`, the `inline_map`) stands for its pattern.
+synthetic inline variable (its `VarKey` in `ι`, the `inline_map`) stands for its pattern.
 Everything else is an atom (`atom`, a parameter). A row passes a `Filter` iff
 the value is `true` (filter.rs). `tv [] e` is the meaning of the user's WHERE.
 
 | here | there |
 | --- | --- |
-| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs:1676-1768 (inline ids minted at mod.rs:1693-1700 / 1716-1723) |
+| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs:1864-1957 (inline variables minted at mod.rs:1881-1889 / 1906-1914, keyed by `VarKey`) |
 | `FP`, `run` | IR filter operators: `Filter` (filter.rs), `SemiApply`/`AntiSemiApply` (semi_apply.rs), `OrApplyMultiplexer` (or_apply_multiplexer.rs: row passes iff some branch has `has_result ^ is_anti`), `Argument` |
 | `FP.patSub g` | `build_pattern_sub_plan` mod.rs:1033-1044 (its rows are `sub g`) |
-| `toPlan` | `expr_to_plan` mod.rs:1488-1544 |
-| `orClass`, `orPlan` | `or_expr_to_plan` mod.rs:1548-1610 |
-| `andFold`, `andPlan` | `and_expr_to_plan` mod.rs:1614-1655 |
+| `toPlan` | `expr_to_plan` mod.rs:1676-1732 |
+| `orClass`, `orPlan` | `or_expr_to_plan` mod.rs:1736-1798 |
+| `andFold`, `andPlan` | `and_expr_to_plan` mod.rs:1802-1843 |
 | `planFilter` | `plan_filter` mod.rs:2597-2636 (after `extract_filter_comprehensions`) |
 
 Results: `collect_value` / `collect_passes` (the rebuild is exact, also in
@@ -89,12 +89,13 @@ theorem not3_and3 (l : List (Option Bool)) : not3 (and3 l) = or3 (l.map not3) :=
 
 variable {R : Type} (atom : Ex → R → Option Bool) (sub : QG → R → List R)
 
-def lk (ι : List (Nat × QG)) (i : Nat) : Option QG := ι.lookup i
+/-- `inline_map.get(&v.key())`: the inline map is keyed by `VarKey` (#3933). -/
+def lk (ι : List (V × QG)) (v : V) : Option QG := ι.lookup v
 
 def patT (g : QG) (r : R) : Option Bool := some !(sub g r).isEmpty
 
 mutual
-def tv (ι : List (Nat × QG)) : Ex → R → Option Bool
+def tv (ι : List (V × QG)) : Ex → R → Option Bool
   | .node d cs, r => match d with
     | .and => and3 (tvL ι cs r)
     | .or => or3 (tvL ι cs r)
@@ -105,36 +106,37 @@ def tv (ι : List (Nat × QG)) : Ex → R → Option Bool
       | [c] => tv ι c r
       | _ => atom (.node d cs) r
     | .pat g => patT sub g r
-    | .var v => match lk ι v.id with
+    | .var v => match lk ι v with
       | some g => patT sub g r
       | none => atom (.node d cs) r
     | _ => atom (.node d cs) r
-def tvL (ι : List (Nat × QG)) : List Ex → R → List (Option Bool)
+def tvL (ι : List (V × QG)) : List Ex → R → List (Option Bool)
   | [], _ => []
   | c :: cs, r => tv ι c r :: tvL ι cs r
 end
 
-theorem tvL_map (ι : List (Nat × QG)) (l : List Ex) (r : R) :
+theorem tvL_map (ι : List (V × QG)) (l : List Ex) (r : R) :
     tvL atom sub ι l r = l.map (fun c => tv atom sub ι c r) := by
   induction l with
   | nil => rfl
   | cons c cs ih => simp [tvL, ih]
 
-/-! ## `collect_patterns_and_rebuild` (mod.rs:1676-1768) -/
+/-! ## `collect_patterns_and_rebuild` (mod.rs:1864-1957) -/
 
 structure CSt where
   lens : Nat → Nat
   ext : List (QG × Bool)
-  inl : List (Nat × QG)
+  inl : List (V × QG)
 
 def scopeOf (g : QG) : Nat := (g.vars.head?.map V.scope).getD 0
 
-/-- Inline variable minted at mod.rs:1693-1700 / 1716-1723: id = current length
-of the pattern's first variable's scope table, which then grows by one. -/
-def mint (st : CSt) (g : QG) : Nat × CSt :=
+/-- Inline variable minted at mod.rs:1881-1889 / 1906-1914: id = current length
+of the pattern's first variable's scope table (which then grows by one), scope =
+that scope; `inline.insert(var.key(), graph)` keys it by `(id, scope)` (#3933). -/
+def mint (st : CSt) (g : QG) : V × CSt :=
   let s := scopeOf g
-  (st.lens s, { st with lens := fun t => if t = s then st.lens s + 1 else st.lens t,
-                        inl := (st.lens s, g) :: st.inl })
+  (⟨st.lens s, s⟩, { st with lens := fun t => if t = s then st.lens s + 1 else st.lens t,
+                             inl := (⟨st.lens s, s⟩, g) :: st.inl })
 
 /-- `NOT` directly wrapping a pattern (mod.rs:1704-1707). -/
 def notPat : List Ex → Option QG
@@ -146,11 +148,11 @@ def collect (st : CSt) (ce : Bool) : Ex → Ex × CSt
   | .node d cs => match d with
     | .pat g =>
       if ce then (tt, { st with ext := st.ext ++ [(g, false)] })
-      else ((Ex.v ⟨(mint st g).1, scopeOf g⟩), (mint st g).2)
+      else ((Ex.v (mint st g).1), (mint st g).2)
     | .not => match notPat cs with
       | some g =>
         if ce then (tt, { st with ext := st.ext ++ [(g, true)] })
-        else (.node .not [Ex.v ⟨(mint st g).1, scopeOf g⟩], (mint st g).2)
+        else (.node .not [Ex.v (mint st g).1], (mint st g).2)
       | none => (.node .not (collectL st false cs).1, (collectL st false cs).2)
     | .and => (.node .and (collectL st ce cs).1, (collectL st ce cs).2)
     | d => (.node d (collectL st false cs).1, (collectL st false cs).2)
@@ -174,22 +176,22 @@ def shapeOKL : List Ex → Bool
   | c :: cs => shapeOK c && shapeOKL cs
 end
 
-/- Variables of the predicate (real ones: no inline id is among them). -/
+/- Variables (`VarKey`s) of the predicate (real ones: no inline key is among them). -/
 mutual
-def varIds : Ex → List Nat
-  | .node (.var v) cs => v.id :: varIdsL cs
+def varIds : Ex → List V
+  | .node (.var v) cs => v :: varIdsL cs
   | .node _ cs => varIdsL cs
-def varIdsL : List Ex → List Nat
+def varIdsL : List Ex → List V
   | [] => []
   | c :: cs => varIds c ++ varIdsL cs
 end
 
-def Fresh (ι : List (Nat × QG)) (ids : List Nat) : Prop := ∀ i ∈ ids, lk ι i = none
+def Fresh (ι : List (V × QG)) (ids : List V) : Prop := ∀ i ∈ ids, lk ι i = none
 
 /-- `ι` agrees with every inline entry of `st`. -/
-def Good (ι : List (Nat × QG)) (st : CSt) : Prop := ∀ p ∈ st.inl, lk ι p.1 = some p.2
+def Good (ι : List (V × QG)) (st : CSt) : Prop := ∀ p ∈ st.inl, lk ι p.1 = some p.2
 
-theorem good_of_suffix (ι : List (Nat × QG)) (st st' : CSt) (h : ∃ l, st'.inl = l ++ st.inl)
+theorem good_of_suffix (ι : List (V × QG)) (st st' : CSt) (h : ∃ l, st'.inl = l ++ st.inl)
     (hg : Good ι st') : Good ι st := by
   obtain ⟨l, hl⟩ := h
   intro p hp; exact hg p (by rw [hl]; exact List.mem_append_right _ hp)
@@ -246,19 +248,19 @@ def sat (r : R) (p : QG × Bool) : Bool := (!(sub p.1 r).isEmpty) != p.2
 
 def AllSat (ext : List (QG × Bool)) (r : R) : Prop := ∀ p ∈ ext, sat sub r p = true
 
-theorem good_collectL_head (ι : List (Nat × QG)) (st : CSt) (ce : Bool) (c : Ex) (cs : List Ex)
+theorem good_collectL_head (ι : List (V × QG)) (st : CSt) (ce : Bool) (c : Ex) (cs : List Ex)
     (h : Good ι (collectL st ce (c :: cs)).2) : Good ι (collect st ce c).2 :=
   good_of_suffix ι _ _ (collectL_inl _ ce cs) h
 
-theorem fresh_varIds (ι : List (Nat × QG)) (d : D) (cs : List Ex)
+theorem fresh_varIds (ι : List (V × QG)) (d : D) (cs : List Ex)
     (h : Fresh ι (varIds (.node d cs))) : Fresh ι (varIdsL cs) := by
   intro i hi; apply h; cases d <;> simp [varIds, hi]
 
-theorem fresh_cons (ι : List (Nat × QG)) (c : Ex) (cs : List Ex) (h : Fresh ι (varIdsL (c :: cs))) :
+theorem fresh_cons (ι : List (V × QG)) (c : Ex) (cs : List Ex) (h : Fresh ι (varIdsL (c :: cs))) :
     Fresh ι (varIds c) ∧ Fresh ι (varIdsL cs) :=
   ⟨fun i hi => h i (by simp [varIdsL, hi]), fun i hi => h i (by simp [varIdsL, hi])⟩
 
-theorem lk_mint (ι : List (Nat × QG)) (st : CSt) (g : QG) (h : Good ι (mint st g).2) :
+theorem lk_mint (ι : List (V × QG)) (st : CSt) (g : QG) (h : Good ι (mint st g).2) :
     lk ι (mint st g).1 = some g := h ((mint st g).1, g) (by simp [mint])
 
 theorem needs_conn (d : D) (cs : List Ex) (hd : isConn d = true)
@@ -298,7 +300,7 @@ theorem shapeL_of (d : D) (cs : List Ex) (hp : isPat d = false) (h : shapeOK (.n
     shapeOKL cs = true := by
   cases d <;> simp_all [shapeOK, isPat]
 
-variable (ι : List (Nat × QG)) (r : R)
+variable (ι : List (V × QG)) (r : R)
 
 /-- Case of a non-connective, non-pattern, non-`Paren` node (`hpar : d ≠ .paren`: `tv` looks through
 `Paren`, so it is excluded): nothing below it changes. -/
@@ -308,7 +310,7 @@ theorem collect_other (st : CSt) (d : D) (cs : List Ex) (hd : isConn d = false) 
   refine ⟨collectL_noPat st false cs (needs_other d cs hd hp hn), ?_⟩
   cases d <;> simp_all [isConn, isPat, tv]
   case var v =>
-    have : lk ι v.id = none := hf v.id (by simp [varIds])
+    have : lk ι v = none := hf v (by simp [varIds])
     rw [this]; rfl
 
 mutual
@@ -387,11 +389,11 @@ theorem allSat_append (ext : List (QG × Bool)) (p : QG × Bool) :
     AllSat sub (ext ++ [p]) r ↔ AllSat sub ext r ∧ sat sub r p = true := by
   simp [AllSat, or_imp, forall_and]
 
-theorem tvL_true (ι : List (Nat × QG)) (l : List Ex) :
+theorem tvL_true (ι : List (V × QG)) (l : List Ex) :
     (∀ x ∈ tvL atom sub ι l r, x = some true) ↔ ∀ c ∈ l, tv atom sub ι c r = some true := by
   rw [tvL_map]; simp
 
-theorem tv_tt (ι : List (Nat × QG)) : tv atom sub ι tt r = atom tt r := by
+theorem tv_tt (ι : List (V × QG)) : tv atom sub ι tt r = atom tt r := by
   simp only [tt, tv]
 
 theorem collect_true_eq_false (st : CSt) (d : D) (cs : List Ex) (h1 : d ≠ .and) (h2 : d ≠ .not)

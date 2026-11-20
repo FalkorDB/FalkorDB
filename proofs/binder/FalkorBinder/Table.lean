@@ -23,8 +23,8 @@ inductive Ty
   | any | node | rel | path
   deriving DecidableEq, Repr
 
-/-- `parser::ast::Variable` (ast.rs:161-169). Equality in Rust is by `id` alone
-(ast.rs:186-193) — the record slot. `name` is `none` for an unnamed pattern entity, whose
+/-- `parser::ast::Variable` (ast.rs:165-173). Equality in Rust is by `VarKey`
+(`id`, `scope`) since #3933 (ast.rs:188-197); see `Var.key`. `name` is `none` for an unnamed pattern entity, whose
 parser number is `anon` (#3303). -/
 structure Var where
   name  : Option Name
@@ -33,6 +33,9 @@ structure Var where
   ty    : Ty
   anon  : Option Nat := none
   deriving DecidableEq, Repr
+
+/-- `Variable::key` (ast.rs:218-223): the `VarKey` `(id, scope)`. -/
+def Var.key (v : Var) : Nat × Nat := (v.id, v.scope)
 
 /-- What names a pattern entity before binding: `parser::ast::Alias` (ast.rs:86-92, #3303). -/
 inductive Alias
@@ -90,6 +93,9 @@ def named (e : Env) : List (Name × Var) := e.filterMap (fun p => match p.1 with
 def values (e : Env) : List Var := e.map (·.2)
 
 def ids (e : Env) : List Nat := e.map (·.2.id)
+
+/-- The `VarKey`s `(id, scope)` of the table (`values().map(Variable::key)`, #3933). -/
+def varKeys (e : Env) : List (Nat × Nat) := e.map (·.2.key)
 
 /-- Every id in the table is below its size: minting at `len()` is fresh. -/
 def Covers (e : Env) : Prop := ∀ i ∈ e.ids, i < e.length

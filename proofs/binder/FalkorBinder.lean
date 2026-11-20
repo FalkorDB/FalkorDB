@@ -55,7 +55,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | `rustBind` / `specBind`, `defRels`, `Elem`, `split` | `bind_graph` :1470 (named rels 1493, nodes 1511, then rels 1527) / C's textual order |
 | `fold`, `bindClauses` | `parse_pattern` part separator parser/cypher.rs:1565-1582 (and :2117 for predicates) |
 | `mergeSV`, `lenAt` | `merge_scope_vars` :2711, `Binder::bind` :99 |
-| `foreachRestore` | FOREACH arm of `bind_ir` :673-709 |
+| `foreachRestore` | FOREACH arm of `bind_ir` :787-829 (restore by `VarKey`, #3933) |
 | `compScope`/`compCleaned` | cleanup in `bind_expr_node` :1927 and :2106 |
 | `callBodyScope` | `bind_call_body` :824, stack push :845 (Query) vs UNION branch binder :903 |
 | `accumulate` / `specScanLabels` | `node_labels` accumulation :1360-1366, `update_all_node_labels` :122 |

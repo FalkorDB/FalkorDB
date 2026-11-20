@@ -57,7 +57,7 @@ Before #3104, `[(x {k: [(x {k: …})]})]` nested 18 levels deep (206 bytes) took
 
 **5. Does `connected_components` split a pattern correctly?**
 
-- **Conditionally.** `connectedComponents_spec` proves the components are node-disjoint and consist of the graph's nodes or relationship endpoints; every graph node is covered unless its id is also used by a relationship or a path (one `visited` set holds all three kinds of id), and the theorem applies only when the model returns within its fuel budget.
+- **Conditionally.** `connectedComponents_spec` proves the components are node-disjoint and consist of the graph's nodes or relationship endpoints; every graph node is covered unless its key (id, scope) is also used by a relationship or a path (one `visited` set holds all three kinds of id), and the theorem applies only when the model returns within its fuel budget.
 
 ## The headline theorems
 
@@ -74,7 +74,7 @@ Before #3104, `[(x {k: [(x {k: …})]})]` nested 18 levels deep (206 bytes) took
 | `patternP_sound`, `primaryC_sound`, `shortestP_sound`, `listLitP_sound` | The same for patterns, primaries, shortestPath and list literals | `C/PatternG2.lean`, `C/PrimaryG.lean`, `C/ExprC5.lean`, `C/ExprC3.lean` |
 | `parse_no_panic` | Given `Oracle.Safe` (question 1), the clause layer never panics | `C/Index.lean` (clause lemmas in `C/ClausesNP.lean`) |
 | `pipeScan_exact`, `failed_attempts_linear` | #3104's gate is exact on balanced input; failed attempts are linear | `C/ListGate.lean` |
-| `connectedComponents_spec` | Pattern components are disjoint and cover every node whose id is not also a relationship or path id (within the fuel budget) | `C/Components.lean` |
+| `connectedComponents_spec` | Pattern components are disjoint and cover every node whose key (id, scope) is not also a relationship or path key (within the fuel budget) | `C/Components.lean` |
 | `not_not_kept`, `is_null_then_predicate` | `NOT NOT x` keeps both NOTs; `1 IS NULL IN [false]` parses (since #3060) | `Theorems.lean` |
 
 ### How `parseExpr_no_panic` is proved

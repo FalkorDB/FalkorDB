@@ -5,8 +5,9 @@ Model of the "Case 2" inheritance in
 graph/src/planner/optimizer/push_filters_down.rs:207-249 (merged tree, and
 unchanged by the PR): from a Filter, walk the ancestors; at the first
 `Apply` whose left child does not contain the Filter, every variable id of
-that left subtree (`collect_subtree_variables`, ids only, `HashSet<u32>`)
-is "inherited"; the walk stops at the first `Apply` (inheriting its left variables, or
+that left subtree (`collect_subtree_variables`: ids only, `HashSet<u32>`, before
+#3933; `(id, scope)` keys, `HashSet<VarKey>`, since — optimizer/mod.rs:167; a `Nat` below
+is one variable identity, an id before #3933 and a key after) is "inherited"; the walk stops at the first `Apply` (inheriting its left variables, or
 nothing when the Filter sits in its left child) and at `Merge` (inheriting nothing), and at
 nothing else. Inherited
 ids are added to every child subtree that contains an `Argument` and is not
@@ -65,8 +66,17 @@ child (the scan subtree) contains an `Argument`, so `n.id = 3` is pushed
 under the scan, onto the Optional's `Argument`. -/
 def callOptAncestors : List K := [.optional [] false, .other, .apply [0] false]
 
+/-- Historical (before #3933, ids): `n` and `x` are both identity `0`. -/
 theorem filter_pushed_through_boundary :
     inherited callOptAncestors = [0] ∧ pushable [0] [] (inherited callOptAncestors) = true := by
+  decide
+
+/-- Since #3933 the sets hold `(id, scope)` keys: `x` is `(0, outer)` and `n` is `(0, body)`,
+two identities (encoded `0` and `1`). The inherited `x` no longer covers `n`, so this repro's
+conjunct stays above the scan (the walk itself is unchanged; a body variable whose key equals
+an outer one would still be believed available). -/
+theorem pr3933_keys_keep_filter :
+    inherited callOptAncestors = [0] ∧ pushable [1] [] (inherited callOptAncestors) = false := by
   decide
 
 /-- The fix keeps the conjunct above (`n` is not available there) … -/

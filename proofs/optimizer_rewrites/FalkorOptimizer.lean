@@ -34,7 +34,8 @@ Files (wave 5): `Helpers` (the syntactic helpers: parameters, variable
 references, count extraction, fusion preconditions, Project/Aggregate outputs),
 `Sequence` (`optimize` sequencing, the tree rebuilds, edge-filter absorption).
 `PushPlan` (gap closed 2026-10-20: push_filters_down on a plan tree with write
-effects and scope-blind ids; #748, #997, #3352; and select_scan_node's chain
+effects and scope-blind ids (historical; `(id, scope)` keys since #3933, `Cfg.pr3933`);
+#748, #997, #3352, #3869; and select_scan_node's chain
 re-ordering, #2556).
 `AndOf` (#3335: every rebuilt filter goes through `ExprIR::and_of`; splicing an
 AND into an AND keeps the runtime value — `scL_splice`, `flat_eval`, `flat_passes`).
@@ -88,8 +89,12 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
   `hasParam_iff`, `subst_params`, `evX_subst`; `refsVar_iff`, `refsVarId_iff`,
   `refsVar_le_refsVarId`; `countVar_spec`; `attrsEmpty_iff`, `canFuse_spec`;
   `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new`.
+  #3933 (variable sets are `(id, scope)` keys): `collectVars`/`mem_collectVars`,
+  `collectVars_scoped`, `mem_subtreeKeys`, `routesScoped_iff`, `isEdgeOnly_scoped`; the
+  id-only versions stay as historical `pre3933_*` defs.
   W6-opt-1 Case-2 walk (`CallBoundary`, from the retired pr2845_review):
-  `Pr2845.filter_pushed_through_boundary`, fix `fixed_keeps_filter`/`fixed_conservative`.
+  `Pr2845.filter_pushed_through_boundary` (ids, historical), fix `fixed_keeps_filter`/`fixed_conservative`;
+  with keys the repro's conjunct stays above (`pr3933_keys_keep_filter`).
 
 ## CONFIRMED bugs (Rust repro: `cargo test -p graph --test lean_optimizer_rewrites`;
 ## Cypher compared on live servers, Rust release module vs C `bin/macos-arm64v8-release/falkordb.so`)
@@ -177,6 +182,12 @@ node, labels, relationships and attributes are not written); `RowSound` is the o
    **Fixed by #3582** (write kinds excluded, siblings of a writing branch locked, `Cfg.pr3582`):
    `pr3582_748_fixed`, `pr3582_997_fixed`, `pr3582_left_untouched`, `pr3582_write_excluded`,
    `pr3582_controls`; #3352 below is fixed there too by #2981 (`pr3582_3352_fixed`).
+   **Still fixed on the current code** (#3933: keys, the #3582 lock, copy outputs, `get_variables`
+   stopping at `Aggregate`; `Cfg.pr3933`): `pr3933_748_fixed`, `pr3933_997_fixed`,
+   `pr3933_left_untouched`, `pr3933_write_excluded`, `pr3933_controls`, `pr3933_3352_fixed`,
+   `pr3933_routes_bound`, `pr3933_2556_push_not_cause`. #3869 (`WITH DISTINCT a.x AS x WHERE
+   a.y = 2`, the WHERE on a carried variable) is fixed by #3933: `pr3933_3869_fixed` (the filter
+   lands below the DISTINCT, C's order), `pre3933_3869_bug` (before: kept above, one row lost).
 10. **#3352: filter push-down mistakes a pre-WITH variable for `r`** — Case 2
    (`push_filters_down.rs:233-236`) inherits `collect_subtree_variables` of the Apply's
    left subtree, and `get_variables` (`runtime.rs:319-323`) walks through `Aggregate`
@@ -223,11 +234,9 @@ binds what it reads).
 
 ## Suspected, unconfirmed
 
-* `branch_output_variables` (push_filters_down.rs:65) takes `copies.0` as the
-  (Lean `branchOut_copy_new`)
-  Project's output, but `copies` is `(old, new)` (binder.rs:2234, project.rs:115) —
-  outputs are the new vars. Currently only makes push-down more conservative, but
-  with scope-blind ids it can also admit a conjunct whose id matches an old var.
+* FIXED by #3933 (#3869): `branch_output_variables` took a copy's source as the
+  Project's output; it now takes the output (push_filters_down.rs:60-80; Lean
+  `branchOut_copy_new`, `fixed3869_branchOut`, `pr3933_3869_fixed`).
 * Filters on zero-variable conjuncts (`rand() < 0.5`) are pushed into every CP/Apply branch.
 * Pushing into one CP branch evaluates the conjunct even when the other branch is
   empty, so a query can start to error (Lean `push_cp_left` needs `NoErr`).
@@ -244,10 +253,10 @@ binds what it reads).
 * #2981 (modelled: `PushPlan.bv`, `Sequence.guardHJ`) — `push_filters_down` routes with `branch_visible_variables` (below an
   env-resetting operator only its outputs survive; ids of the subtree minus its
   children's) instead of `collect_subtree_variables` for the Apply left side —
-  narrows `id_only_routing_unsound`'s collision window (still ids only).
+  narrows `id_only_routing_unsound`'s collision window (ids only until #3933, keys since).
 * #3092 — `collect_subtree_variables` stops at Project/Aggregate (their outputs
   only) instead of `get_variables` of the whole subtree — same direction as
-  #2981; `mem_subtreeIds` describes origin/main.
+  #2981; `pre3933_mem_subtreeIds` describes the pre-#3933 ids, `mem_subtreeKeys` the current keys.
 * #3100 — exports `ir_references_variable` for the planner's CP-correlation check
   (planner bug 2); no change to the oracle itself (needs a rebase onto references.rs).
 * #3054 — `reduce_expand_into` removes a collapsed (no longer emitted) edge from

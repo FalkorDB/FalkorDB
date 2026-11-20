@@ -350,11 +350,14 @@ theorem limit_skip_not_excluded :
     excludedChild .limit = false ∧ transparent .limit = false ∧
     excludedChild .skip = false ∧ transparent .skip = false := by decide
 
-/-- Routing test `conj_vars ⊆ child_vars` (push_filters_down.rs:268-280) over
-bare ids (`collect_expr_variables`, `collect_subtree_variables`, mod.rs:91-109). -/
+/-- Historical (before #3933): the routing test `conj_vars ⊆ child_vars` over bare ids
+(`collect_expr_variables`, `collect_subtree_variables` returned `HashSet<u32>`). -/
 def routesIdOnly (conj : List Var) (child : List Var) : Bool :=
   conj.all (fun v => (child.map Var.id).contains v.id)
 
+/-- The routing test `conj_vars.iter().all(|v| child_vars.contains(v))`
+(push_filters_down.rs:331-340) as Rust computes it since #3933: both sets are
+`HashSet<VarKey>`, so membership is by `(id, scope)`. -/
 def routesScoped (conj : List Var) (child : List Var) : Bool :=
   conj.all (fun v => child.contains v)
 
@@ -362,9 +365,15 @@ theorem routesScoped_sound (conj child : List Var) (h : routesScoped conj child 
     ∀ v ∈ conj, v ∈ child := by
   simpa [routesScoped] using h
 
-/-- `MATCH (o1:P) CALL { MATCH (q:P) WHERE q.v = 1 RETURN q }`: `q = (0, 1)` is
-routed onto the `Argument` that only carries the outer `o1 = (0, 0)` (inherited
-via Case 2, push_filters_down.rs:214-261). Known root cause (#2557). -/
+/-- …and complete: the key test fires exactly when every variable is in the child's set. -/
+theorem routesScoped_iff (conj child : List Var) :
+    routesScoped conj child = true ↔ ∀ v ∈ conj, v ∈ child := by
+  simp [routesScoped]
+
+/-- Historical (before #3933). `MATCH (o1:P) CALL { MATCH (q:P) WHERE q.v = 1 RETURN q }`:
+`q = (0, 1)` was routed onto the `Argument` that only carries the outer `o1 = (0, 0)`
+(inherited via Case 2). Known root cause (#2557). The key test of #3933 (`routesScoped`)
+rejects it. -/
 theorem id_only_routing_unsound :
     routesIdOnly [⟨0, 1⟩] [⟨0, 0⟩] = true ∧ routesScoped [⟨0, 1⟩] [⟨0, 0⟩] = false := by decide
 
