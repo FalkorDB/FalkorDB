@@ -12,7 +12,8 @@
 //! Each candidate endpoint is scored by (highest priority first):
 //!
 //! 1. **Bound** (score 3) -- already provided by a child operator (e.g.
-//!    Project, Aggregate, Argument from an outer Apply)
+//!    Project, Aggregate, Argument from an outer Apply), matched by id (see
+//!    `score_endpoint`)
 //! 2. **Filtered** (score 2) -- referenced by a Filter ancestor above the
 //!    chain, or has inline property attributes ({name: 'Alice'})
 //! 3. **Labeled** (score 1) -- has at least one label
@@ -83,7 +84,7 @@ use crate::runtime::runtime::GetVariables;
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
 /// Higher score = better starting point. Priority:
-/// - Bound variable (provided by child operator): score 3
+/// - Bound variable (provided by child operator, matched by id): score 3
 /// - Filtered variable (referenced by a Filter ancestor): score 2
 /// - Labeled variable: score 1
 /// - Neither: score 0
@@ -114,7 +115,15 @@ fn score_endpoint(
 ) -> (u32, bool, bool, u64) {
     let key = node.alias.key();
     let mut score = 0u32;
-    if bound_vars.contains(&key) {
+    // Matched by id alone, unlike every other variable set in the planner.
+    // The planner marks a WITH's copy of a variable as visited under the
+    // copy's source (#3061), so a pattern under the WITH's WHERE rescans the
+    // copy whenever the scan lands on it, and then matches any node. Where the
+    // scan lands rests on this bonus, which the source's id gives to whichever
+    // pattern variable shares that id. By id the scan lands where it does on
+    // main; keyed by scope it moves, mending some of those patterns and
+    // breaking others. Key it by scope once the copy itself is marked visited.
+    if bound_vars.iter().any(|bound| bound.id == key.id) {
         score += 3;
     }
     // Inline attrs (e.g. `{name: 'Nicolas Cage'}`) are lowered to Filters by
