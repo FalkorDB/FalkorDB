@@ -1,5 +1,5 @@
 //! The raw handle kinds behind [`Matrix`](crate::Matrix) and
-//! `Vector`, and the calls both answer the same way, written
+//! [`Vector`](crate::Vector), and the calls both answer the same way, written
 //! once over [`RawHandle`].
 
 use std::os::raw::{c_char, c_int};
