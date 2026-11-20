@@ -30,6 +30,21 @@ pub struct Allocators {
 }
 
 impl Allocators {
+    /// The four functions, for a library that hands them to `GxB_init`
+    /// itself (the `lagraph` crate); not part of the API.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn functions(
+        self
+    ) -> (
+        unsafe extern "C" fn(usize) -> *mut c_void,
+        unsafe extern "C" fn(usize, usize) -> *mut c_void,
+        unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void,
+        unsafe extern "C" fn(*mut c_void),
+    ) {
+        (self.malloc, self.calloc, self.realloc, self.free)
+    }
+
     /// The four functions GraphBLAS allocates through.
     ///
     /// # Safety
@@ -77,34 +92,53 @@ static STARTING: Mutex<()> = Mutex::new(());
 ///
 /// `GrB_INVALID_VALUE` when GraphBLAS is already initialised.
 pub fn init(allocators: Option<Allocators>) -> Result<()> {
+    start_with(|| {
+        let mode = sys::GrB_Mode::GrB_NONBLOCKING as c_int;
+        let info = allocators.map_or_else(
+            || {
+                // SAFETY: a plain call.
+                unsafe { sys::GrB_init(mode) }
+            },
+            |a| {
+                // SAFETY: a plain call; the allocators are function pointers,
+                // valid for the life of the process.
+                unsafe {
+                    sys::GxB_init(
+                        mode,
+                        Some(a.malloc),
+                        Some(a.calloc),
+                        Some(a.realloc),
+                        Some(a.free),
+                    )
+                }
+            },
+        );
+        check(info)
+    })
+}
+
+/// [`init`], with the call that starts GraphBLAS supplied by a library that
+/// starts it itself: `LAGr_Init` calls `GxB_init` and then sets LAGraph up.
+/// Under the same lock and checks as [`init`]; GraphBLAS counts as started
+/// only when `start` succeeds. For the `lagraph` crate; not part of the API.
+///
+/// # Errors
+///
+/// `GrB_INVALID_VALUE` when GraphBLAS is already initialised, or whatever
+/// `start` returns.
+#[doc(hidden)]
+pub fn start_with<E: From<Error>>(
+    start: impl FnOnce() -> std::result::Result<(), E>
+) -> std::result::Result<(), E> {
     let _starting = STARTING.lock().unwrap_or_else(PoisonError::into_inner);
     if is_initialized() {
         return Err(Error::from_info(
             GrB_Info::GrB_INVALID_VALUE,
-            "graphblas::init has already run".to_owned(),
-        ));
+            "GraphBLAS is already initialised".to_owned(),
+        )
+        .into());
     }
-    let mode = sys::GrB_Mode::GrB_NONBLOCKING as c_int;
-    let info = allocators.map_or_else(
-        || {
-            // SAFETY: a plain call.
-            unsafe { sys::GrB_init(mode) }
-        },
-        |a| {
-            // SAFETY: a plain call; the allocators are function pointers,
-            // valid for the life of the process.
-            unsafe {
-                sys::GxB_init(
-                    mode,
-                    Some(a.malloc),
-                    Some(a.calloc),
-                    Some(a.realloc),
-                    Some(a.free),
-                )
-            }
-        },
-    );
-    check(info)?;
+    start()?;
     INITIALIZED.store(true, Ordering::SeqCst);
     Ok(())
 }

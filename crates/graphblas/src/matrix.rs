@@ -139,6 +139,28 @@ impl<T: GrbType> Matrix<T> {
         }
     }
 
+    /// Take ownership of a raw handle if its element type is `T`'s;
+    /// otherwise hand it back untouched. For a handle another library made,
+    /// where the type is that library's promise and not this crate's.
+    ///
+    /// # Safety
+    ///
+    /// `raw` is a live, non-null matrix and nothing else uses or frees it
+    /// afterwards.
+    ///
+    /// # Errors
+    ///
+    /// `Err(raw)` when the element type is not `T`'s.
+    pub unsafe fn try_from_raw(raw: GrB_Matrix) -> std::result::Result<Self, GrB_Matrix> {
+        if handle::has_type(raw, T::grb_type()) {
+            // SAFETY: live and owned by the caller's promise; of `T`'s type
+            // by the check.
+            Ok(unsafe { Self::from_raw(raw) })
+        } else {
+            Err(raw)
+        }
+    }
+
     /// Give up ownership; the caller must free the handle with GraphBLAS.
     #[must_use]
     pub const fn into_raw(self) -> GrB_Matrix {
