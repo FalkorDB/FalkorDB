@@ -1137,6 +1137,130 @@ impl Planner {
         matches!(tree.node(idx).data(), IR::Apply) && tree.node(idx).num_children() > 1
     }
 
+    /// Follow child 0 down from `idx` while `skip` holds for the operator
+    /// there, and return the first operator it does not hold for. `skip`
+    /// must hold only for an operator that has a child 0.
+    ///
+    /// Each caller names what it steps past with one of the predicates
+    /// below, since each stops at a different kind of operator.
+    fn descend_while(
+        tree: &DynTree<IR>,
+        mut idx: NodeIdx<Dyn<IR>>,
+        skip: impl Fn(&DynTree<IR>, NodeIdx<Dyn<IR>>) -> bool,
+    ) -> NodeIdx<Dyn<IR>> {
+        while skip(tree, idx) {
+            idx = tree.node(idx).child(0).idx();
+        }
+        idx
+    }
+
+    /// Is `op` one a WHERE predicate is planned as, passing on some of
+    /// child 0's rows: a Filter, a (anti-)semi-apply or an OR multiplexer?
+    const fn is_row_filter(op: &IR) -> bool {
+        matches!(
+            op,
+            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+        )
+    }
+
+    /// Is `op` one a projection puts above itself for ORDER BY, SKIP, LIMIT
+    /// or DISTINCT?
+    const fn is_projection_modifier(op: &IR) -> bool {
+        matches!(op, IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct)
+    }
+
+    /// Is `op` one a MATCH pattern extends each input row with?
+    const fn is_pattern_extension(op: &IR) -> bool {
+        matches!(
+            op,
+            IR::CondTraverse { .. }
+                | IR::CondVarLenTraverse { .. }
+                | IR::AllShortestPaths(_)
+                | IR::ExpandInto { .. }
+                | IR::EdgeByIndexScan { .. }
+                | IR::PathBuilder(_)
+        )
+    }
+
+    /// A row filter (see [`Self::is_row_filter`]) that has its input.
+    fn is_row_filter_with_input(
+        tree: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> bool {
+        Self::is_row_filter(tree.node(idx).data()) && tree.node(idx).num_children() > 0
+    }
+
+    /// An operator a WHERE predicate puts above the pattern it filters: a
+    /// row filter with its input, or the saturated Apply of a pattern
+    /// comprehension in the predicate.
+    fn is_where_operator(
+        tree: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> bool {
+        Self::is_row_filter_with_input(tree, idx) || Self::is_saturated_apply(tree, idx)
+    }
+
+    /// An operator on top of the last clause's plan that [`Self::stitch_point`]
+    /// steps past first: ORDER BY, SKIP, LIMIT and DISTINCT, and what a WHERE
+    /// predicate is planned as. It needs no check for a child: on top of the
+    /// last clause, these always sit above its projection or clause operator.
+    fn is_above_last_clause_input(
+        tree: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> bool {
+        let op = tree.node(idx).data();
+        Self::is_projection_modifier(op)
+            || Self::is_row_filter(op)
+            || Self::is_saturated_apply(tree, idx)
+    }
+
+    /// An operator of a stitched clause's plan that [`Self::stitch_point`]
+    /// steps past first: those of [`Self::is_above_last_clause_input`] and
+    /// those of a MATCH pattern (see [`Self::is_pattern_extension`]), each
+    /// only when it has a child.
+    fn is_above_stitched_clause_input(
+        tree: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> bool {
+        let op = tree.node(idx).data();
+        (tree.node(idx).num_children() > 0
+            && (Self::is_projection_modifier(op)
+                || Self::is_row_filter(op)
+                || Self::is_pattern_extension(op)))
+            || Self::is_saturated_apply(tree, idx)
+    }
+
+    /// Is child 0 of this operator an `Apply`?
+    fn first_child_is_apply(
+        tree: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> bool {
+        tree.node(idx).num_children() > 0 && matches!(tree.node(idx).child(0).data(), IR::Apply)
+    }
+
+    /// Where the clause before the one planned at `idx` feeds in: below the
+    /// operators `skip` holds for, below a projection's Commit and the Apply
+    /// chain of its pattern comprehensions, and below a clause operator's
+    /// Apply chain (see [`Self::descend_clause_expr_applies`]).
+    fn stitch_point(
+        tree: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+        skip: impl Fn(&DynTree<IR>, NodeIdx<Dyn<IR>>) -> bool,
+    ) -> NodeIdx<Dyn<IR>> {
+        let mut idx = Self::descend_while(tree, idx, skip);
+        if matches!(
+            tree.node(idx).data(),
+            IR::Project { .. } | IR::Aggregate { .. }
+        ) && tree.node(idx).num_children() > 0
+        {
+            if matches!(tree.node(idx).child(0).data(), IR::Commit) {
+                idx = tree.node(idx).child(0).idx();
+            }
+            idx = Self::descend_while(tree, idx, Self::first_child_is_apply);
+        }
+        Self::descend_clause_expr_applies(tree, idx)
+    }
+
     /// Walk past the Apply chain a clause operator (`ForEach`, `Unwind`,
     /// `Set`, `Remove`, `Delete`, `LoadCsv`, a procedure call or index query) carries
     /// for pattern comprehensions in its expressions, so the
@@ -1164,7 +1288,7 @@ impl Planner {
 
     fn descend_one_clause_expr_chain(
         tree: &DynTree<IR>,
-        mut idx: NodeIdx<Dyn<IR>>,
+        idx: NodeIdx<Dyn<IR>>,
     ) -> NodeIdx<Dyn<IR>> {
         let min_children = match tree.node(idx).data() {
             IR::ForEach { .. } => 2,
@@ -1183,10 +1307,8 @@ impl Planner {
         if tree.node(idx).num_children() >= min_children
             && matches!(tree.node(idx).child(0).data(), IR::Apply)
         {
-            idx = tree.node(idx).child(0).idx();
-            while Self::is_saturated_apply(tree, idx) {
-                idx = tree.node(idx).child(0).idx();
-            }
+            let chain = tree.node(idx).child(0).idx();
+            return Self::descend_while(tree, chain, Self::is_saturated_apply);
         }
         idx
     }
@@ -1198,10 +1320,7 @@ impl Planner {
         mut chain: DynTree<IR>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
-        let mut idx = chain.root().idx();
-        while Self::is_saturated_apply(&chain, idx) {
-            idx = chain.node(idx).child(0).idx();
-        }
+        let idx = Self::descend_while(&chain, chain.root().idx(), Self::is_saturated_apply);
         chain
             .node_mut(idx)
             .child_mut(0)
@@ -2996,10 +3115,8 @@ impl Planner {
     /// together in reverse order: the last clause (typically RETURN) becomes
     /// the root, and earlier clauses are inserted as its deepest input.
     ///
-    /// The "insertion point" (`idx`) walks past post-processing operators
-    /// (Sort, Skip, Limit, Distinct, Filter, semi-apply variants) and past
-    /// Project/Aggregate → Commit, to find the spot where the preceding
-    /// clause's output should feed in.
+    /// The "insertion point" (`idx`), where the preceding clause's output
+    /// should feed in, is found by [`Self::stitch_point`].
     fn plan_query(
         &mut self,
         q: Vec<QueryIR<Variable>>,
@@ -3051,35 +3168,7 @@ impl Planner {
         let mut iter = plans.into_iter().rev();
         let mut res = iter.next().unwrap();
         // Walk down to find the insertion point past post-processing operators.
-        let mut idx = res.root().idx();
-        while matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
-            | IR::Limit(_)
-            | IR::Distinct
-            | IR::Filter(_)
-            | IR::SemiApply
-            | IR::AntiSemiApply
-            | IR::OrApplyMultiplexer(_))
-            || Self::is_saturated_apply(&res, idx)
-        {
-            idx = res.node(idx).child(0).idx();
-        }
-        // If we landed on a Project/Aggregate, walk past Commit and Apply
-        // children — the preceding clause feeds below them.
-        if matches!(
-            res.node(idx).data(),
-            |IR::Project { .. }| IR::Aggregate { .. }
-        ) && res.node(idx).num_children() > 0
-        {
-            if matches!(res.node(idx).child(0).data(), IR::Commit) {
-                idx = res.node(idx).child(0).idx();
-            }
-            while res.node(idx).num_children() > 0
-                && matches!(res.node(idx).child(0).data(), IR::Apply)
-            {
-                idx = res.node(idx).child(0).idx();
-            }
-        }
-        idx = Self::descend_clause_expr_applies(&res, idx);
+        let mut idx = Self::stitch_point(&res, res.root().idx(), Self::is_above_last_clause_input);
         // Insert each remaining clause plan (in reverse order) at the
         // current insertion point, then walk down again to find the next
         // insertion point for the clause before it.
@@ -3126,39 +3215,7 @@ impl Planner {
             } else {
                 idx = res.node_mut(idx).push_child_tree(n);
             }
-            while (res.node(idx).num_children() > 0
-                && matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
-                    | IR::Limit(_)
-                    | IR::Distinct
-                    | IR::Filter(_)
-                    | IR::SemiApply
-                    | IR::AntiSemiApply
-                    | IR::OrApplyMultiplexer(_)
-                    | IR::CondTraverse { .. }
-                    | IR::CondVarLenTraverse { .. }
-                    | IR::AllShortestPaths(_)
-                    | IR::ExpandInto { .. }
-                    | IR::EdgeByIndexScan { .. }
-                    | IR::PathBuilder(_)))
-                || Self::is_saturated_apply(&res, idx)
-            {
-                idx = res.node(idx).child(0).idx();
-            }
-            if matches!(
-                res.node(idx).data(),
-                |IR::Project { .. }| IR::Aggregate { .. }
-            ) && res.node(idx).num_children() > 0
-            {
-                if matches!(res.node(idx).child(0).data(), IR::Commit) {
-                    idx = res.node(idx).child(0).idx();
-                }
-                while res.node(idx).num_children() > 0
-                    && matches!(res.node(idx).child(0).data(), IR::Apply)
-                {
-                    idx = res.node(idx).child(0).idx();
-                }
-            }
-            idx = Self::descend_clause_expr_applies(&res, idx);
+            idx = Self::stitch_point(&res, idx, Self::is_above_stitched_clause_input);
         }
 
         // For write queries without an explicit WITH/RETURN commit, wrap
@@ -3186,17 +3243,7 @@ impl Planner {
         plan: &mut DynTree<IR>,
         bound: &HashSet<VarKey>,
     ) {
-        let mut idx = plan.root().idx();
-        // A WHERE pattern comprehension adds a saturated Apply above the
-        // pattern, as `plan_query` also steps through.
-        while (matches!(
-            plan.node(idx).data(),
-            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
-        ) && plan.node(idx).num_children() > 0)
-            || Self::is_saturated_apply(plan, idx)
-        {
-            idx = plan.node(idx).child(0).idx();
-        }
+        let idx = Self::descend_while(plan, plan.root().idx(), Self::is_where_operator);
         let reads_bound = plan.node(idx).indices::<Bfs>().any(|i| {
             bound
                 .iter()
@@ -3210,17 +3257,7 @@ impl Planner {
     /// Does this `MATCH` plan join several components, i.e. is its operator
     /// below any filters a Cartesian Product?
     fn joins_components(plan: &DynTree<IR>) -> bool {
-        let mut idx = plan.root().idx();
-        // A WHERE pattern comprehension adds a saturated Apply above the
-        // pattern, as `plan_query` also steps through.
-        while (matches!(
-            plan.node(idx).data(),
-            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
-        ) && plan.node(idx).num_children() > 0)
-            || Self::is_saturated_apply(plan, idx)
-        {
-            idx = plan.node(idx).child(0).idx();
-        }
+        let idx = Self::descend_while(plan, plan.root().idx(), Self::is_where_operator);
         matches!(plan.node(idx).data(), IR::CartesianProduct)
     }
 
@@ -3231,37 +3268,25 @@ impl Planner {
     /// Plans from MATCH components (scans, traversals) are just additional
     /// cross-product branches and should be inserted as CartesianProduct children.
     fn needs_apply_wrapping(n: &DynTree<IR>) -> bool {
-        // Walk to the root of n and check its type.
         // Match-produced plans have scan/traversal/filter/argument at root.
-        let mut idx = n.root().idx();
-        loop {
-            match n.node(idx).data() {
-                // Scan/traversal nodes come from MATCH — add as CP child
-                IR::NodeByLabelScan { .. }
-                | IR::AllNodeScan(_)
-                | IR::NodeByIndexScan { .. }
-                | IR::NodeByIdSeek { .. }
-                | IR::NodeByLabelAndIdScan { .. }
-                | IR::CondTraverse { .. }
-                | IR::CondVarLenTraverse { .. }
-                | IR::AllShortestPaths(_)
-                | IR::ExpandInto { .. }
-                | IR::EdgeByIndexScan { .. }
-                | IR::CartesianProduct
-                | IR::ValueHashJoin { .. }
-                | IR::Argument(_)
-                | IR::PathBuilder(_) => return false,
-                // Filter, SemiApply, etc. wrap scans — walk through
-                IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => {
-                    if n.node(idx).num_children() > 0 {
-                        idx = n.node(idx).child(0).idx();
-                    } else {
-                        return false;
-                    }
-                }
-                // Data-producing clauses need Apply wrapping
-                _ => return true,
-            }
+        // Filter, SemiApply, etc. wrap scans — walk through them.
+        let idx = Self::descend_while(n, n.root().idx(), Self::is_row_filter_with_input);
+        match n.node(idx).data() {
+            // Scan/traversal nodes come from MATCH — add as CP child
+            IR::NodeByLabelScan { .. }
+            | IR::AllNodeScan(_)
+            | IR::NodeByIndexScan { .. }
+            | IR::NodeByIdSeek { .. }
+            | IR::NodeByLabelAndIdScan { .. }
+            | IR::CartesianProduct
+            | IR::ValueHashJoin { .. }
+            | IR::Argument(_) => false,
+            // ... and so do its traversals
+            op if Self::is_pattern_extension(op) => false,
+            // A row filter with no input to walk into
+            op if Self::is_row_filter(op) => false,
+            // Data-producing clauses need Apply wrapping
+            _ => true,
         }
     }
 
