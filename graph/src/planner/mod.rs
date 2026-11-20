@@ -1031,7 +1031,8 @@ impl Planner {
         var
     }
 
-    /// Attach `Argument` nodes to every leaf in the plan tree.
+    /// Attach an `Argument` node to every leaf in the subtree rooted at
+    /// `start` that is not an `Argument` already.
     ///
     /// When a sub-plan is used inside a correlated join (Apply, SemiApply, etc.),
     /// its leaves must receive the current row from the outer stream.  `Argument`
@@ -1044,12 +1045,13 @@ impl Planner {
     /// runtime creates an inline Argument for the input.
     fn add_argument_to_leaves(
         tree: &mut DynTree<IR>,
+        start: NodeIdx<Dyn<IR>>,
         bound_vars: Option<&[VarKey]>,
     ) {
         let mut leaves = Vec::new();
 
         // DFS walk, but skip MERGE's internal match-branch sub-plan.
-        let mut stack = vec![tree.root().idx()];
+        let mut stack = vec![start];
         while let Some(idx) = stack.pop() {
             let node = tree.node(idx);
             if matches!(node.data(), IR::Merge { .. }) {
@@ -1351,7 +1353,8 @@ impl Planner {
         let mut sub_plan = self.plan_match(graph, None);
         self.visited = saved;
         self.verified_labels = saved_verified;
-        Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
+        let root = sub_plan.root().idx();
+        Self::add_argument_to_leaves(&mut sub_plan, root, Some(&self.argument_vars()));
         sub_plan
     }
 
@@ -1746,7 +1749,8 @@ impl Planner {
             sub_plan = tree!(IR::Filter(filter.clone()), sub_plan);
         }
 
-        Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
+        let root = sub_plan.root().idx();
+        Self::add_argument_to_leaves(&mut sub_plan, root, Some(&self.argument_vars()));
 
         // Build collect(result_expr) aggregation expression
         let collect_fn = get_functions()
@@ -3023,12 +3027,7 @@ impl Planner {
 
         // Apply SemiApply/AntiSemiApply for each extractable pattern
         for (graph, is_anti) in extractable {
-            let saved = self.visited.clone();
-            let saved_verified = self.verified_labels.clone();
-            let mut sub_plan = self.plan_match(&graph, None);
-            self.visited = saved;
-            self.verified_labels = saved_verified;
-            Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
+            let sub_plan = self.build_pattern_sub_plan(&graph);
             if is_anti {
                 res = tree!(IR::AntiSemiApply, res, sub_plan);
             } else {
@@ -3183,28 +3182,7 @@ impl Planner {
                 // in Apply so that bound variables from the preceding clause
                 // propagate via Argument leaves.
                 // This matches the FalkorDB C project's approach.
-                let cp_children: Vec<_> = res.node(idx).children().map(|c| c.idx()).collect();
-                let mut leaves = Vec::new();
-                let mut stack: Vec<_> = cp_children;
-                while let Some(n) = stack.pop() {
-                    let node = res.node(n);
-                    if matches!(node.data(), IR::Merge { .. }) {
-                        if node.num_children() > 1 {
-                            stack.push(node.child(0).idx());
-                        }
-                        continue;
-                    }
-                    if node.is_leaf() && !matches!(node.data(), IR::Argument(_)) {
-                        leaves.push(n);
-                    } else {
-                        for i in 0..node.num_children() {
-                            stack.push(node.child(i).idx());
-                        }
-                    }
-                }
-                for leaf in leaves {
-                    res.node_mut(leaf).push_child(IR::Argument(None));
-                }
+                Self::add_argument_to_leaves(&mut res, idx, None);
                 res.node_mut(idx).push_parent(IR::Apply);
                 idx = res.node_mut(idx).push_sibling_tree(Side::Left, n);
             } else if res.node(idx).num_children() > 0 {
@@ -3435,7 +3413,8 @@ impl Planner {
                     let argument_vars = self.argument_vars();
                     let mut match_plan = self.plan_match(&pattern, filter);
                     self.verified_labels = saved_verified;
-                    Self::add_argument_to_leaves(&mut match_plan, Some(&argument_vars));
+                    let root = match_plan.root().idx();
+                    Self::add_argument_to_leaves(&mut match_plan, root, Some(&argument_vars));
                     // If all pattern variables are already bound from a prior clause,
                     // we need an Apply (correlated join) so the inner plan re-evaluates
                     // the pattern for each incoming row.  Otherwise, the Optional node
@@ -3474,7 +3453,8 @@ impl Planner {
                     if all_visited || (any_visited && Self::joins_components(&match_plan)) {
                         let mut inner = match_plan;
                         let argument_vars = if all_visited { None } else { Some(bound) };
-                        Self::add_argument_to_leaves(&mut inner, argument_vars.as_deref());
+                        let root = inner.root().idx();
+                        Self::add_argument_to_leaves(&mut inner, root, argument_vars.as_deref());
                         tree!(IR::Apply, inner)
                     } else {
                         match_plan
@@ -3513,7 +3493,8 @@ impl Planner {
                 // The Argument rows bind exactly the variables visited so
                 // far; passing them lets the scan-selection optimizer prove
                 // when the match branch is uncorrelated and add a scan.
-                Self::add_argument_to_leaves(&mut match_branch, Some(&bound));
+                let root = match_branch.root().idx();
+                Self::add_argument_to_leaves(&mut match_branch, root, Some(&bound));
 
                 let paths = pattern.paths();
                 let merge = tree!(
@@ -3738,7 +3719,8 @@ impl Planner {
                 let mut inner_plan = self.plan(*body);
 
                 // Add Argument leaves for correlated execution
-                Self::add_argument_to_leaves(&mut inner_plan, None);
+                let root = inner_plan.root().idx();
+                Self::add_argument_to_leaves(&mut inner_plan, root, None);
 
                 // Restore visited, then add returned var IDs so subsequent
                 // clauses know these variables are bound.
@@ -3863,7 +3845,8 @@ impl Planner {
                 // across all iterations and are committed by the outer Commit
                 // after the entire FOREACH completes.
                 // Add Argument leaves so the body gets the loop env
-                Self::add_argument_to_leaves(&mut body_plan, None);
+                let root = body_plan.root().idx();
+                Self::add_argument_to_leaves(&mut body_plan, root, None);
 
                 let mut res = tree!(IR::ForEach {
                     list: list_expr,
