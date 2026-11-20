@@ -53,16 +53,17 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// `Project` and `Aggregate` establish a fresh environment: only the variables
 /// they name survive them, so a filter placed above one cannot see anything
 /// else — not the variables its own subtree matched, and not the variables an
-/// enclosing `Apply` propagates through `Argument`. Returns `None` for
-/// operators that pass their input environment through unchanged, where the
-/// subtree's variables are the right answer.
+/// enclosing `Apply` propagates through `Argument`. A copy `(source, output)`
+/// contributes its output. Returns `None` for operators that pass their input
+/// environment through unchanged, where the subtree's variables are the right
+/// answer.
 fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<VarKey>> {
     match node.data() {
         IR::Project { exprs, copies } => Some(
             exprs
                 .iter()
                 .map(|(v, _)| v.key())
-                .chain(copies.iter().map(|(v, _)| v.key()))
+                .chain(copies.iter().map(|(_, v)| v.key()))
                 .collect(),
         ),
         IR::Aggregate {
@@ -71,7 +72,7 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<VarKe
             names
                 .iter()
                 .map(Variable::key)
-                .chain(projections.iter().map(|(v, _)| v.key()))
+                .chain(projections.iter().map(|(_, v)| v.key()))
                 .collect(),
         ),
         _ => None,

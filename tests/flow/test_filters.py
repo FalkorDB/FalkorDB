@@ -445,3 +445,15 @@ class testFilters():
         ]:
             res = g.query(q)
             self.env.assertEqual(res.result_set, [[expected]], depth=1)
+
+    def test15_with_distinct_where_on_a_carried_variable(self):
+        # A WITH's WHERE may read a variable the WITH does not project: the
+        # projection carries it as a copy. Filter push-down took the copy's
+        # source, a variable of the scope before the WITH, for what the
+        # projection outputs, so whether the filter ran before the DISTINCT
+        # depended on the two ids happening to match. C runs it first.
+        g = self.db.select_graph("with_distinct_carried")
+        g.query("CREATE (:X {x:1, y:1}), (:X {x:1, y:2}), (:X {x:2, y:2})")
+        res = g.query("""MATCH (a:X) WITH DISTINCT a.x AS x WHERE a.y = 2
+                         RETURN x ORDER BY x""")
+        self.env.assertEqual(res.result_set, [[1], [2]])
