@@ -6,6 +6,7 @@ use graphblas::*;
 fn constructors_fail_before_init() {
     assert!(!is_initialized());
     assert!(Matrix::<bool>::new(1, 1).is_err());
+    assert!(Scalar::<f64>::new().is_err());
     assert!(set_nthreads(1).is_err());
 }
 
