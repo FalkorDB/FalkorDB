@@ -11,8 +11,9 @@
 use crate::{
     matrix::Matrix,
     sealed::{Handle, Token},
-    sys::GrB_Matrix,
+    sys::{GrB_Matrix, GrB_Vector},
     types::GrbType,
+    vector::Vector,
 };
 
 /// "Use the output object in this slot." Accepted wherever an input matrix
@@ -23,7 +24,7 @@ pub struct Output;
 /// An input operand of an operation whose output has element type `C` and
 /// raw handle kind `R` (`GrB_Matrix` or `GrB_Vector`).
 ///
-/// Implemented by `&Matrix<T>` (`Elem = T`) and by
+/// Implemented by `&Matrix<T>` / `&Vector<T>` (`Elem = T`) and by
 /// [`Output`] (`Elem = C`). Sealed: an implementation hands a raw handle to
 /// C.
 pub trait Operand<'a, C, R>: Handle {
@@ -40,6 +41,7 @@ pub trait Operand<'a, C, R>: Handle {
 }
 
 impl<T> Handle for &Matrix<T> {}
+impl<T> Handle for &Vector<T> {}
 impl Handle for Output {}
 
 impl<'a, T: GrbType, C> Operand<'a, C, GrB_Matrix> for &'a Matrix<T> {
@@ -50,6 +52,18 @@ impl<'a, T: GrbType, C> Operand<'a, C, GrB_Matrix> for &'a Matrix<T> {
         _output: GrB_Matrix,
         _: Token,
     ) -> GrB_Matrix {
+        self.as_raw()
+    }
+}
+
+impl<'a, T: GrbType, C> Operand<'a, C, GrB_Vector> for &'a Vector<T> {
+    type Elem = T;
+
+    fn raw(
+        self,
+        _output: GrB_Vector,
+        _: Token,
+    ) -> GrB_Vector {
         self.as_raw()
     }
 }

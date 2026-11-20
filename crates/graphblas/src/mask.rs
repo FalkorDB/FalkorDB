@@ -14,8 +14,9 @@ use crate::{
     matrix::Matrix,
     operand::Output,
     sealed::{Handle, Token},
-    sys::{self, GrB_Descriptor, GrB_Matrix},
+    sys::{self, GrB_Descriptor, GrB_Matrix, GrB_Vector},
     types::{BuiltinType, GrbType},
+    vector::Vector,
 };
 
 /// A mask source: a borrowed handle, or the output itself (`C<C> = ...`).
@@ -42,7 +43,7 @@ impl<R> MaskRef<'_, R> {
     }
 }
 
-/// What a *structural* mask can be made from: a borrowed matrix of
+/// What a *structural* mask can be made from: a borrowed matrix or vector of
 /// any element type, [`Output`], or [`AsBool`] of either. Sealed.
 pub trait AsMask<'a, R>: Handle {
     #[doc(hidden)]
@@ -61,6 +62,15 @@ impl<'a, T: GrbType> AsMask<'a, GrB_Matrix> for &'a Matrix<T> {
     }
 }
 
+impl<'a, T: GrbType> AsMask<'a, GrB_Vector> for &'a Vector<T> {
+    fn mask_ref(
+        self,
+        _: Token,
+    ) -> MaskRef<'a, GrB_Vector> {
+        MaskRef::handle(self.as_raw())
+    }
+}
+
 impl<R> AsMask<'_, R> for Output {
     fn mask_ref(
         self,
@@ -73,7 +83,7 @@ impl<R> AsMask<'_, R> for Output {
     }
 }
 
-/// Use a non-`bool` matrix as a *valued* mask, letting GraphBLAS
+/// Use a non-`bool` matrix or vector as a *valued* mask, letting GraphBLAS
 /// read each stored value as `value != 0`.
 ///
 /// Does no work: it only records, at the call site, that the cast was asked
@@ -97,7 +107,16 @@ impl<'a, T: BuiltinType> AsMask<'a, GrB_Matrix> for AsBool<&'a Matrix<T>> {
     }
 }
 
-/// What a *valued* mask can be made from: a `bool` matrix, or
+impl<'a, T: BuiltinType> AsMask<'a, GrB_Vector> for AsBool<&'a Vector<T>> {
+    fn mask_ref(
+        self,
+        _: Token,
+    ) -> MaskRef<'a, GrB_Vector> {
+        self.0.mask_ref(Token)
+    }
+}
+
+/// What a *valued* mask can be made from: a `bool` matrix or vector, or
 /// [`AsBool`] of a built-in-typed one. Sealed.
 ///
 /// GraphBLAS would cast any built-in type to `bool`; that is an implicit
@@ -107,7 +126,9 @@ impl<'a, T: BuiltinType> AsMask<'a, GrB_Matrix> for AsBool<&'a Matrix<T>> {
 /// type is not known here.
 pub trait ValuedMask<'a, R>: AsMask<'a, R> {}
 impl<'a> ValuedMask<'a, GrB_Matrix> for &'a Matrix<bool> {}
+impl<'a> ValuedMask<'a, GrB_Vector> for &'a Vector<bool> {}
 impl<'a, T: BuiltinType> ValuedMask<'a, GrB_Matrix> for AsBool<&'a Matrix<T>> {}
+impl<'a, T: BuiltinType> ValuedMask<'a, GrB_Vector> for AsBool<&'a Vector<T>> {}
 
 /// The mask of an operation, with its mode spelled out.
 ///

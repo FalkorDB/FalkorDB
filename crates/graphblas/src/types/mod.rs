@@ -1,5 +1,5 @@
 //! Element types: the Rust types a [`Matrix<T>`](crate::Matrix),
-//! `Vector<T>` or [`Scalar<T>`](crate::Scalar) can carry,
+//! [`Vector<T>`](crate::Vector) or [`Scalar<T>`](crate::Scalar) can carry,
 //! and how each reaches the type-suffixed C entry points
 //! (`GrB_Matrix_setElement_BOOL`, `..._UDT`, ...).
 //!
@@ -10,7 +10,7 @@
 //! operator is applied only to the exact types it was declared for, checked
 //! by [`Accepts`]. The two named exceptions are [`Pattern`] (the operator
 //! never reads the value) and [`matrix::cast`](crate::matrix::cast) /
-//! `vector::cast` (change the type on purpose).
+//! [`vector::cast`](crate::vector::cast) (change the type on purpose).
 
 use std::convert::Infallible;
 
