@@ -10,7 +10,7 @@ use crate::{
     init::WaitMode,
     mask::{Desc, Mask, descriptor},
     settings::Sparsity,
-    sys::{self, GrB_Descriptor, GrB_Info, GrB_Matrix, GrB_Vector, GxB_Option_Field},
+    sys::{self, GrB_Descriptor, GrB_Info, GrB_Matrix, GrB_Type, GrB_Vector, GxB_Option_Field},
 };
 
 /// A `GrB_Matrix` or `GrB_Vector`, with the entry points that differ only by
@@ -55,10 +55,24 @@ pub unsafe trait RawHandle: Copy {
         iso: *mut bool,
         h: Self,
     ) -> GrB_Info;
+    /// `GxB_*_type`.
+    unsafe fn element_type(
+        ty: *mut GrB_Type,
+        h: Self,
+    ) -> GrB_Info;
 }
 
 macro_rules! raw_handle {
-    ($raw:ty, $error:ident, $wait:ident, $get:ident, $set:ident, $mem:ident, $iso:ident) => {
+    (
+        $raw:ty,
+        $error:ident,
+        $wait:ident,
+        $get:ident,
+        $set:ident,
+        $mem:ident,
+        $iso:ident,
+        $type:ident
+    ) => {
         // SAFETY: each method is the C function of that name for `$raw`.
         unsafe impl RawHandle for $raw {
             fn null() -> Self {
@@ -114,6 +128,14 @@ macro_rules! raw_handle {
                 // SAFETY: the caller upholds the C contract.
                 unsafe { sys::$iso(iso, h) }
             }
+
+            unsafe fn element_type(
+                ty: *mut GrB_Type,
+                h: Self,
+            ) -> GrB_Info {
+                // SAFETY: the caller upholds the C contract.
+                unsafe { sys::$type(ty, h) }
+            }
         }
     };
 }
@@ -125,7 +147,8 @@ raw_handle!(
     GrB_Matrix_get_INT32,
     GrB_Matrix_set_INT32,
     GxB_Matrix_memoryUsage,
-    GxB_Matrix_iso
+    GxB_Matrix_iso,
+    GxB_Matrix_type
 );
 raw_handle!(
     GrB_Vector,
@@ -134,7 +157,8 @@ raw_handle!(
     GrB_Vector_get_INT32,
     GrB_Vector_set_INT32,
     GxB_Vector_memoryUsage,
-    GxB_Vector_iso
+    GxB_Vector_iso,
+    GxB_Vector_type
 );
 
 /// `Ok` on `GrB_SUCCESS`, else the bare status, for a call that only reads
@@ -239,6 +263,19 @@ pub fn is_iso<R: RawHandle>(h: R) -> bool {
     let info = unsafe { R::iso(&raw mut iso, h) };
     expect_success(info, "GxB_iso");
     iso
+}
+
+/// Whether the object's element type is `ty`, by handle: the same test
+/// GraphBLAS makes before it decides a typecast is needed.
+pub fn has_type<R: RawHandle>(
+    h: R,
+    ty: GrB_Type,
+) -> bool {
+    let mut actual = std::ptr::null_mut();
+    // SAFETY: a live handle and a valid out-pointer.
+    let info = unsafe { R::element_type(&raw mut actual, h) };
+    expect_success(info, "GxB_type");
+    actual == ty
 }
 
 /// The current storage format (`GxB_SPARSITY_STATUS`).

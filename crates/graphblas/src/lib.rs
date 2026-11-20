@@ -167,6 +167,8 @@ mod tests;
 pub use error::{Error, ErrorKind, Result};
 pub use frozen::{Freezable, Frozen, FrozenMatrix, FrozenVector};
 pub use index::Indices;
+#[doc(hidden)]
+pub use init::start_with as __start_with;
 pub use init::{
     Allocators, JitControl, WaitMode, init, is_initialized, set_burble, set_jit, set_nthreads,
 };

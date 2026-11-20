@@ -735,6 +735,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lagraph"
+version = "0.1.0"
+dependencies = [
+ "graphblas",
+ "lagraph-sys",
+]
+
+[[package]]
 name = "lagraph-sys"
 version = "0.1.0"
 dependencies = [

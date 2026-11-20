@@ -1,0 +1,15 @@
+[package]
+name = "lagraph"
+version = "0.1.0"
+edition = "2024"
+description = "A thin, typed, safe layer over LAGraph, on the graphblas crate"
+license = "SSPL-1.0"
+repository = "https://github.com/FalkorDB/FalkorDB"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+graphblas = { path = "../graphblas" }
+lagraph-sys = { path = "../lagraph-sys" }
