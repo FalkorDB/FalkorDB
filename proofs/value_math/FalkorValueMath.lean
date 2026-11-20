@@ -11,6 +11,7 @@ import FalkorValueMath.Misc
 import FalkorValueMath.Trig
 import FalkorValueMath.Procedures
 import FalkorValueMath.ConvReg
+import FalkorValueMath.FloatToString
 import FalkorValueMath.IndexDdl
 import FalkorValueMath.Nesting
 /-!
@@ -53,6 +54,7 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 | `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1282; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1080 |
 | `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow` (+ `pre2904_applyPow`), `cAbs` (MathFns) | math.rs:46-352; C `AR_ABS` |
 | `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:44-285; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
+| `splitOnce`, `digitCount`, `sciFixed`, `floatToString`, `toStr_float` (FloatToString) | conversion.rs:299 `float_to_string` (PR #3609; std formatters/`parse` = `FmtOps` parameters) |
 | `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1224, :1399, :1472, :1817, :1821, :1554, :1531 |
 | `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode`/`pre3339_decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:296, :342, :388, :439, :458, :608, :2068 (decode before #3339), :1887, :1591 |
 | `MAX_VALUE_NESTING`, `valueNestingError`, `decodeValue`, `decode`, `validateProperty`/`validateListProperty`/`isValidProperty` (Nesting) | value.rs:62, :67, :2166, :2154; pending.rs:69-131 |
@@ -121,7 +123,7 @@ Note (`within_nest_empty`): the decoder's cut is one level more lenient than the
 - `toFloat('0.1')` 0.1 vs C 0.100000001490116 (C uses `strtof`, float32 — C bug);
   `toFloat('16777217')` exact vs 16777216; `toFloat('1e39')` 1e39 vs null.
 - `toInteger(NaN)` null vs 0, `toInteger(inf)` null vs MAX; `toStringList([1.5])`
-  '1.5' vs '1.500000'; `toFloatList([' 3'])`/`toIntegerList([' 3'])` null vs 3.
+  '1.5' vs '1.500000' (PR #3609: `toString(1.0)` '1.0', `toString(1e20)` '1.0E20'); `toFloatList([' 3'])`/`toIntegerList([' 3'])` null vs 3.
 - `p.LATITUDE` Rust 1.5, C null (Rust component names are ASCII case-insensitive).
 - `toString(duration('PT0S'))` 'PT0S' vs C 'P' (C bug).
 - Fixed: `sign(-2.5)` Float (#2906) — fixed by #2907 (`f04c3557a`): `sign_float_is_int`

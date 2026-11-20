@@ -113,7 +113,7 @@ theorem setFrom_replace (ckeys : E → List K) (s : Store E K V) (e : E)
     get (setFrom ckeys s e true m) e k = ((m.reverse.find? (·.1 = k)).map (·.2)).getD none := by
   unfold setFrom clearForReplace
   simp only [ite_true]
-  rw [setAll_get, if_pos rfl, foldl_last, setAll_get, if_pos rfl, foldl_last]
+  rw [setAll_get, ite_eq_left rfl, foldl_last, setAll_get, ite_eq_left rfl, foldl_last]
   congr 1
   -- after clearing pending and nulling committed keys, `k` reads none
   cases hf : ((((ckeys e).map (·, (none : Option V))).reverse.find? (·.1 = k)).map (·.2)) with
@@ -142,13 +142,13 @@ theorem setFrom_merge_keeps (ckeys : E → List K) (s : Store E K V) (e : E)
     get (setFrom ckeys s e false m) e k = get s e k := by
   unfold setFrom
   simp only [Bool.false_eq_true, ite_false]
-  rw [setAll_get, if_pos rfl]
+  rw [setAll_get, ite_eq_left rfl]
   have : ∀ (init : Option V) (l : List (K × Option V)), (∀ p ∈ l, p.1 ≠ k) →
       l.foldl (fun acc kv => if kv.1 = k then kv.2 else acc) init = init := by
     intro init l; induction l generalizing init with
     | nil => intro _; rfl
     | cons p l ih =>
-      intro h; simp only [List.foldl_cons, if_neg (h p (by simp))]
+      intro h; simp only [List.foldl_cons, ite_eq_right (h p (by simp))]
       exact ih _ (fun q hq => h q (by simp [hq]))
   exact this _ m hk
 

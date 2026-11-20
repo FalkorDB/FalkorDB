@@ -427,14 +427,14 @@ theorem extractL_clean (sc : Nat) : ∀ (st : PSt) acc d bound first cm i (l : L
     simp only [extractL, needsExtractionL, Bool.or_eq_false_iff]
     refine ⟨?_, extractL_clean sc _ _ d bound first cm (i + 1) cs hp.2⟩
     by_cases hm : i = 1 ∧ isLCQ d = true
-    · rw [if_pos hm]
+    · rw [ite_eq_left hm]
       have := extract_clean sc (if inScope first i then { st with loopVars := st.loopVars ++ bound } else st)
         acc .exists_ c hp.1
       cases hn : needsExtraction (extract sc (if inScope first i then { st with loopVars := st.loopVars ++ bound } else st)
         acc .exists_ c).1 cm
       · rfl
       · rw [needs_le_exists _ cm hn] at this; exact absurd this (by simp)
-    · rw [if_neg hm]; exact extract_clean sc _ acc cm c hp.1
+    · rw [ite_eq_right hm]; exact extract_clean sc _ acc cm c hp.1
 end
 
 /-! ## `hoist_or_nest`, the comprehension sub-plan, the clause/filter wrappers -/

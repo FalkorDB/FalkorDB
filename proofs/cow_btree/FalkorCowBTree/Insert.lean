@@ -82,7 +82,7 @@ theorem insertOne_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x 
       simp only [toList]
       conv => rhs; rw [hsp]
       rw [setAt_eq]
-      simp only [mem_flat_append, mem_flat_cons, List.map_cons, List.map_nil, List.flatten_cons,
+      simp only [mem_flat_append, List.map_cons, List.map_nil, List.flatten_cons,
         List.flatten_nil, List.append_nil, hmem e, List.mem_append]
       constructor
       · rintro ((h1 | h1 | h1) | h1)
@@ -108,7 +108,7 @@ theorem insertOne_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x 
         intro e
         simp only [toList]
         conv => rhs; rw [hsp]
-        simp only [mem_flat_append, mem_flat_cons, List.map_cons, List.map_nil, List.flatten_cons,
+        simp only [mem_flat_append, List.map_cons, List.map_nil, List.flatten_cons,
           List.flatten_nil, List.append_nil, List.mem_append]
         have := hmem e
         constructor

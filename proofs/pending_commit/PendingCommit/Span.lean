@@ -163,7 +163,7 @@ theorem get_none_of_all_gt {l : List Entry} {k : Nat} (h : ∀ a ∈ l, k < a.1)
   | cons e es ih =>
     have he := h e (by simp)
     simp only [get]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     exact ih (fun a ha => h a (by simp [ha]))
 
 theorem get_none_of_lt_head {p : Entry} {ps : List Entry} (h : Sorted (p :: ps))
@@ -323,12 +323,12 @@ theorem refRemoved_cons_drop {c : Entry} {cs p : List Entry} (h : ∀ q ∈ p, q
 theorem refRemoved_cons_right (c p : List Entry) (q : Entry) :
     refRemoved c (q :: p) = (if mem c q.1 then 1 else 0) + refRemoved c p := by
   unfold refRemoved
-  by_cases h : mem c q.1 <;> simp [List.filter_cons, h] <;> omega
+  by_cases h : mem c q.1 <;> simp [h] <;> omega
 
 theorem refSet_cons (q : Entry) (p : List Entry) :
     refSet (q :: p) = (if q.2.isNull then 0 else 1) + refSet p := by
   unfold refSet
-  cases h : q.2.isNull <;> simp [List.filter_cons, h] <;> omega
+  cases h : q.2.isNull <;> simp [h] <;> omega
 
 theorem mem_none_of_lt_head {c : Entry} {cs : List Entry} (h : Sorted (c :: cs)) {k : Nat}
     (hk : k < c.1) : mem (c :: cs) k = false := by
@@ -705,8 +705,8 @@ theorem pureRemove_sublist : ∀ (old ps : List Entry), List.Sublist (pureRemove
       split
       · split
         · exact (pureRemove_sublist es _).cons e
-        · exact (pureRemove_sublist es _).cons₂ e
-      · exact (pureRemove_sublist es _).cons₂ e
+        · exact (pureRemove_sublist es _).cons_cons e
+      · exact (pureRemove_sublist es _).cons_cons e
 
 theorem pureRemove_get : ∀ (old ps : List Entry), Sorted old → Sorted ps → ∀ k,
     get (pureRemove old ps).1 k = if mem ps k then none else get old k
@@ -770,7 +770,7 @@ def cntL (old ps : List Entry) : Nat := (old.filter (fun e => mem ps e.1)).lengt
 
 theorem cntL_cons (e : Entry) (es ps : List Entry) :
     cntL (e :: es) ps = (if mem ps e.1 then 1 else 0) + cntL es ps := by
-  unfold cntL; by_cases h : mem ps e.1 <;> simp [List.filter_cons, h] <;> omega
+  unfold cntL; by_cases h : mem ps e.1 <;> simp [h] <;> omega
 
 theorem cntL_congr {es ps qs : List Entry} (h : ∀ a ∈ es, mem ps a.1 = mem qs a.1) :
     cntL es ps = cntL es qs := by

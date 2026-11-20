@@ -10,7 +10,7 @@ import FalkorEffectsEmitApply.CancelGap
 
 Target: `graph/src/effects/v3/emit.rs`, `graph/src/effects/v3/apply.rs`, and the
 gate in front of the emitter (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1958`). Coverage per Rust fn:
+`Pending::effects_count` at `runtime/pending.rs:2013`). Coverage per Rust fn:
 `COVERAGE.tsv` (36 rows, all PROVEN). Repros:
 `graph/tests/lean_effects_emit_apply.rs`
 (`cargo test -p graph --test lean_effects_emit_apply -- --nocapture --test-threads=1`).
@@ -27,7 +27,7 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 | `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs:60`                       |
 | `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:395`                           |
 | `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:323` (opcode granularity)       |
-| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1958`                 |
+| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:2013` (#3461: +2 per cancelled entity; #3459: + `staged_labels_removed`) |
 | `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
 | `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:532,552`        |
 | `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:210`                    |
@@ -61,8 +61,10 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
   `wf_updateNode_live`, `wf_setLabels_live` — with a liveness check each node
   arm preserves well-formedness (the fix, proved).
 * Counterexamples (all by `decide`, all reproduced in Rust):
-  `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`,
-  `cancelled_edge_attr_dropped`. The ones fixed by #3022 (`18fc277b9`) were removed after 17ccc5412, the last commit that holds them.
+  `gate_drops_schema_only`, `next_payload_refused`. `gate_drops_cancelled` and
+  `cancelled_edge_attr_dropped` were fixed by #3461 (f203972c5, `effects_count`
+  counts cancelled entities): kept as `pre3461_*` over `effectsCountPre3461`; the fix
+  is `gate_ships_of_cancelled`, `gate_ships_cancelled`, `cancelled_edge_attr_ships`. The ones fixed by #3022 (`18fc277b9`) were removed after 17ccc5412, the last commit that holds them.
 
 ## #3022 (`Liveness.lean`): every record that acts on an entity checks it is live
 
@@ -144,7 +146,7 @@ node) — refused since #3298 (`createNode_repeat_refused`).
 
 1. **A write that only registers schema or only cancels entities replicates
    nothing** — `runtime/ops/commit.rs:108` gates `buf.build` on
-   `effects_count() > 0` (`pending.rs:1958`), which counts neither
+   `effects_count() > 0` (`pending.rs:2013`), which counts neither
    `cancelled_nodes`/`cancelled_relationships` nor names registered since the
    `SchemaBaseline`, so `digest_cancelled` and `emit_schema_additions` never run.
    The master keeps the new label/attr and the moved id space; the next payload's
@@ -196,7 +198,7 @@ node) — refused since #3298 (`createNode_repeat_refused`).
 * ~~The documented `rel_bound` gap (`emit.rs:448-454`)~~ — **confirmed as #3447**
   (2026-10-22): when the same segment also creates a surviving edge above the
   cancelled id, the replica's relationship `IdSpace::verify` refuses the hole and
-  forces a full resync. Proven in `CancelGap.lean` (`bug3447_cancelled_edge_id_gap`).
+  forces a full resync. Proven in `CancelGap.lean` (`pre3461_bug3447_cancelled_edge_id_gap`); fixed by #3461.
 * C master (`bin/macos-arm64v8-release/falkordb.so`, Redis 8.6.2) aborts on
   `OPTIONAL MATCH (n:Nope) SET n:L6` (`blocked.c:346 'server.also_propagate.numops
   == 0'`), with or without a replica. C-side; not investigated further.
@@ -210,24 +212,27 @@ master's pre-segment state accepts. Two properties, both refuted on b84473a7f:
 | Lean | Rust (b84473a7f) |
 | --- | --- |
 | `CancelGap.verifyRange` | `IdSpace::verify`'s hole check (id_space.rs:737-790) |
-| `CancelGap.typesAfterCommit` | `Pending::commit` → `create_relationships_bulk` → `get_type_id_mut` (pending.rs:1236-1249, graph.rs:2610/:1265): only `created_rels_by_type` keys are registered |
+| `CancelGap.typesAfterCommit` | `Pending::commit` (pending.rs:1345-1371, #3461): `created_rels_by_type` keys via `create_relationships_bulk`, then every `cancelled_relationships` type via `get_type_id_mut` (`typesAfterCommitPre3461`: the keys only, before #3461) |
 | `CancelGap.toLive` | opcode records → `apply_record` arms (`RemoveLabels` `require_live`, apply.rs:359-360) |
 
 * **#3447** (property `RelIdsCovered`: every relationship id allocated in the
   segment reaches a `CREATE_EDGE`): `digest_cancelled` skips a cancelled edge
   whose type has no id (emit.rs:455), and a type whose only edges were cascaded
-  is never registered. `bug3447_cancelled_edge_id_gap` (live repro `CREATE
+  is never registered. **Fixed by #3461** (f203972c5: commit registers every
+  cancelled type): `relIdsCovered_after_commit` (for every `Pending`),
+  `fixed3447_cancelled_edge_id_gap`; history `pre3461_bug3447_cancelled_edge_id_gap` (live repro `CREATE
   (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a`): payload has
   `CreateEdge [2]` and nothing for 1; master's id space verifies, replica's has a
   hole. Fix property `relIdsCovered_of_registered` (holds for every `Pending`
   once all created and cancelled types are registered).
 * **#3448** (property `ReplayApplies`): `digest_labels(&p.remove_labels, None,
   …)` (emit.rs:370) precedes `digest_cancelled` (:374); `delete_pending_node`
-  keeps the node's `remove_labels` (pending_commit
-  `bug3448_cancelled_node_keeps_remL`). `bug3448_removeLabels_before_create_refused`:
+  kept the node's `remove_labels` before #3459. `bug3448_removeLabels_before_create_refused`:
   `CREATE (n:Foo) REMOVE n:Foo DELETE n` → `AddLabel Foo, RemoveLabels [0],
   CreateNode [0], DeleteNode [0]`, refused `NotLive node 0`; control
-  `agree3448_without_stale_remL`.
+  `agree3448_without_stale_remL`. *Fixed by #3459* (pending_commit
+  `fixed3448_cancelled_node_clears_remL`): `fixed3448_replay_applies`; the gate counts
+  `staged_labels_removed` (`gate_keeps_staged_removal`).
 
 ## Gaps / assumptions
 

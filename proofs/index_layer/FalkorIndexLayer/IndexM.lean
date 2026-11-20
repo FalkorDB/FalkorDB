@@ -68,17 +68,18 @@ def rsPtr (x : Idx) : Option Nat := x.spec
 
 def hasNul (s : String) : Bool := s.toList.contains (Char.ofNat 0)
 
-/-- `create_rs_index` (`mod.rs:1101`). Error order as in Rust: stopwords
-`CString::new` (1108), language `CString::new`/unsupported (1129-1133), label
-`CString::new` (1140). On success the spec is fresh and carries only
-`NONE_INDEXABLE_FIELDS` (1155-1163), and (#3166 gap) is created with the stopword
-list `stop` (`mod.rs:1119-1133`), recorded as `rsStop`. -/
+/-- `create_rs_index` (`mod.rs:1105`). Error order as in Rust (#3274): stopwords
+`CString::new` (1113-1120), language `CString::new` (1127-1129), label
+`CString::new` (1130), all before the options block is allocated; then
+unsupported language (1156-1160). On success the spec is fresh and carries only
+`NONE_INDEXABLE_FIELDS` (1175-1186), and (#3166 gap) is created with the stopword
+list `stop` (`mod.rs:1144-1154`), recorded as `rsStop`. -/
 def createRsIndex (x : Idx) (label : String) (stop : Option (List String)) (lang : Option String)
     (langOk : String → Bool) (fresh : Nat) : Except String Idx :=
   if (stop.getD []).any hasNul then .error "nul" else
   match lang with
-  | some l => if hasNul l then .error "nul" else if !langOk l then .error s!"Language is not supported: {l}"
-              else if hasNul label then .error "nul"
+  | some l => if hasNul l then .error "nul" else if hasNul label then .error "nul"
+              else if !langOk l then .error s!"Language is not supported: {l}"
               else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
   | none => if hasNul label then .error "nul"
             else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
@@ -210,11 +211,30 @@ theorem createRsIndex_ok (x : Idx) (label : String) (stop : Option (List String)
   · split at h; · cases h
     cases h; simp
 
-theorem createRsIndex_lang_err (x : Idx) (label : String) (stop : Option (List String)) (l : String)
-    (langOk : String → Bool) (fresh : Nat) (h1 : (stop.getD []).any hasNul = false)
-    (h2 : hasNul l = false) (h3 : langOk l = false) :
+/-- The pre-#3274 statement of `createRsIndex_lang_err`: with NUL-free stopwords
+and language, an unsupported language is always reported, whatever the label. -/
+def LangErrSpec (x : Idx) : Prop :=
+  ∀ (label : String) (stop : Option (List String)) (l : String)
+    (langOk : String → Bool) (fresh : Nat), (stop.getD []).any hasNul = false →
+    hasNul l = false → langOk l = false →
+    createRsIndex x label stop (some l) langOk fresh = .error s!"Language is not supported: {l}"
+
+/-- Counterexample (#3274): the label `CString::new` now runs before the language
+check, so a label with a NUL byte and an unsupported language `x` reports the NUL
+error, not `Language is not supported: x`. -/
+theorem createRsIndex_lang_err_fails (x : Idx) : ¬ LangErrSpec x := by
+  intro h
+  have := h "L\x00" none "x" (fun _ => false) 0 rfl (by decide) rfl
+  simp [createRsIndex, hasNul] at this
+  exact absurd this (by decide)
+
+/-- What still holds on the new code: an unsupported language is reported when
+the stopwords, language and label are all NUL-free. -/
+theorem createRsIndex_lang_err_cleanLabel (x : Idx) (label : String) (stop : Option (List String))
+    (l : String) (langOk : String → Bool) (fresh : Nat) (h1 : (stop.getD []).any hasNul = false)
+    (h2 : hasNul l = false) (h4 : hasNul label = false) (h3 : langOk l = false) :
     createRsIndex x label stop (some l) langOk fresh = .error s!"Language is not supported: {l}" := by
-  simp [createRsIndex, h1, h2, h3]
+  simp [createRsIndex, h1, h2, h3, h4]
 
 theorem metricOf_ok (sim : Option String) (m : String) (h : metricOf sim = .ok m) :
     sim.getD "euclidean" ∈ ["euclidean", "ip", "cosine"] := by
@@ -347,7 +367,7 @@ theorem insertField_inv (x : Idx) (a : String) (f : Field) (h : Inv x) : Inv (x.
   by_cases hs : a ∈ AMap.keys x.fields
   · have e1 : (x.insertField a f).order = x.order := by simp [insertField, hk.mpr hs]
     have e2 : AMap.keys (x.insertField a f).fields = AMap.keys x.fields := by
-      simp only [insertField]; rw [AMap.keys_upd, if_pos hs]
+      simp only [insertField]; rw [AMap.keys_upd, ite_eq_left hs]
     refine ⟨?_, ?_, fun b => ?_⟩
     · rw [e2]; exact h1
     · rw [e1]; exact h2
@@ -358,7 +378,7 @@ theorem insertField_inv (x : Idx) (a : String) (f : Field) (h : Inv x) : Inv (x.
       · exact absurd (hk.mp hh) hs
     have e1 : (x.insertField a f).order = x.order ++ [a] := by simp [insertField, hn]
     have e2 : AMap.keys (x.insertField a f).fields = AMap.keys x.fields ++ [a] := by
-      simp only [insertField]; rw [AMap.keys_upd, if_neg hs]
+      simp only [insertField]; rw [AMap.keys_upd, ite_eq_right hs]
     refine ⟨?_, ?_, fun b => ?_⟩
     · rw [e2]; exact List.nodup_append.mpr ⟨h1, by simp, by simp; intro y hy hya; subst hya; exact hs hy⟩
     · rw [e1]; exact List.nodup_append.mpr ⟨h2, by simp, by simp; intro y hy hya; subst hya; exact hs ((h3 y).mp hy)⟩

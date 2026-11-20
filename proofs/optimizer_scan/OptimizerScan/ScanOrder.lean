@@ -11,7 +11,7 @@ only affects cost — it is the modelling gap stated in `OptimizerScan.lean`.
 | here | there |
 | --- | --- |
 | `Hop`, `Hop.holds`         | `IR::CondTraverse { relationship, transposed, .. }` and `CondTraverseOp` reading the relation matrix, or its transpose when `transposed` (`runtime/ops/cond_traverse.rs`) |
-| `Hop.swap`                 | `swap_relationship(rel, rel.to, rel.from)` + `transposed = true`, `select_scan_node.rs:370-387, 1051-1056` |
+| `Hop.swap`                 | `swap_relationship(rel, rel.to, rel.from)` + `transposed = true`, `select_scan_node.rs:372-389, 1051-1056` |
 | `pick`, `order`            | the greedy hop ordering loop, `select_scan_node.rs:1000-1060` |
 | `hasAll`                   | label conjunction checked by `NodeByLabelScan` / `get_nodes(labels)` |
 | `reorderLabels`            | `reorder_labels` (stable sort by schema id), `optimizer/reorder_labels.rs:16-47` |
@@ -314,7 +314,7 @@ theorem place_wellScoped : ∀ (placed B : List Nat) (hs : List Hop) fs,
     (∀ v ∈ placed, v ∈ B) → wellScoped B (place placed hs fs).1
   | _, _, [], _, _ => trivial
   | placed, B, h :: hs, fs, hpl => by
-    simp only [place, wellScoped]
+    simp only [place]
     apply wellScoped_filts
     · intro f hf v hv
       have := (List.mem_filter.mp hf).2
@@ -395,9 +395,82 @@ theorem boundAfter_hop : ∀ (B : List Nat) (steps : List Step) (h : Hop), Step.
     · cases he
     · exact boundAfter_hop B rest h hm
 
-/-! #### Counterexample: the dishonest initial bound set (CONFIRMED bug, still present at 8743953a8)
+/-! #### The seed bound set `initial_bound` (`select_scan_node.rs:983-986`, #3523)
 
-`select_scan_node.rs:979-986` seeds `initial_bound` with `best_node.alias.id` *and* the
+`best_node` is bound only by the scan built for it (`make_scan_subtree`, used only when
+`existing_child` is `None`, line 1198). Since #3523 the seed is `{best_node}` without a kept
+child and exactly the kept child's variables (`collect_subtree_variables`) with one. -/
+
+/-- `initial_bound`: `child = some vs` is a kept child binding `vs`. -/
+def initialBound (best : Nat) : Option (List Nat) → List Nat
+  | none => [best]
+  | some vs => vs
+
+/-- **PROVEN** (#3523): the seed is honest — when the operators below the first hop bind the
+kept child's variables, or (no kept child) the new scan binds `best`, every filter placement
+from `initialBound` is well-scoped. -/
+theorem initialBound_wellScoped (best : Nat) (child : Option (List Nat)) (B : List Nat)
+    (hchild : ∀ vs, child = some vs → ∀ v ∈ vs, v ∈ B)
+    (hbest : child = none → best ∈ B) (hs : List Hop) fs :
+    wellScoped B (place (initialBound best child) hs fs).1 := by
+  apply place_wellScoped
+  cases child with
+  | none => intro v hv; simp [initialBound] at hv; subst hv; exact hbest rfl
+  | some vs => intro v hv; exact hchild vs rfl v hv
+
+/-! #### The outer subtree beneath the new scan (#3594, `select_scan_node.rs:1198-1224`)
+
+When the new scan carries `preserved_argument` (an `Argument` leaf, or since #3594 a whole outer
+`Unwind`/`Project` subtree that binds none of the chain's variables), the seed also takes the ids
+that subtree binds (`collect_subtree_variables` plus every operator's `collect_output_aliases`),
+less, when the subtree is a transparent row source, every id of the chain's relationships and
+endpoints (an id it shares with one is a variable it dropped). -/
+
+/-- The ids the outer subtree adds to the seed: `outer` less `chain` when `transparent`. -/
+def outerSeed (outer chain : List Nat) (transparent : Bool) : List Nat :=
+  if transparent then outer.filter (fun v => v ∉ chain) else outer
+
+/-- `initial_bound` since #3594: the #3523 seed plus, when an outer subtree is preserved beneath
+the new scan, `outerSeed` of its ids. -/
+def initialBoundOuter (best : Nat) (child : Option (List Nat)) (preserved : Option (List Nat))
+    (chain : List Nat) (transparent : Bool) : List Nat :=
+  initialBound best child ++ (preserved.map (fun o => outerSeed o chain transparent)).getD []
+
+/-- **PROVEN** (#3594): with nothing preserved beneath the new scan the seed is the #3523 one. -/
+theorem initialBoundOuter_none (best : Nat) (child : Option (List Nat)) (chain : List Nat) (t : Bool) :
+    initialBoundOuter best child none chain t = initialBound best child := by
+  simp [initialBoundOuter]
+
+/-- **PROVEN** (#3594): a transparent outer subtree never seeds a chain id, so the hop ordering
+cannot start from a chain variable the outer rows do not carry. -/
+theorem outerSeed_transparent_no_chain (outer chain : List Nat) (v : Nat)
+    (hv : v ∈ outerSeed outer chain true) : v ∉ chain := by
+  simp only [outerSeed, ite_true, List.mem_filter, decide_eq_true_eq] at hv
+  exact hv.2
+
+/-- **PROVEN** (#3594): the extended seed is honest as before — when the kept child (or the new
+scan for `best`) binds the #3523 seed, and the subtree preserved beneath the scan binds the ids it
+seeds, every filter placement from `initialBoundOuter` is well-scoped. -/
+theorem initialBoundOuter_wellScoped (best : Nat) (child preserved : Option (List Nat))
+    (chain : List Nat) (t : Bool) (B : List Nat)
+    (hchild : ∀ vs, child = some vs → ∀ v ∈ vs, v ∈ B)
+    (hbest : child = none → best ∈ B)
+    (houter : ∀ o, preserved = some o → ∀ v ∈ outerSeed o chain t, v ∈ B) (hs : List Hop) fs :
+    wellScoped B (place (initialBoundOuter best child preserved chain t) hs fs).1 := by
+  apply place_wellScoped
+  intro v hv
+  simp only [initialBoundOuter, List.mem_append] at hv
+  rcases hv with hv | hv
+  · cases child with
+    | none => simp [initialBound] at hv; subst hv; exact hbest rfl
+    | some vs => exact hchild vs rfl v hv
+  · cases preserved with
+    | none => simp at hv
+    | some o => exact houter o rfl v (by simpa using hv)
+
+/-! #### Former counterexample: the dishonest initial bound set (CONFIRMED bug, fixed by #3523)
+
+Before #3523, `select_scan_node.rs:979-986` seeded `initial_bound` with `best_node.alias.id` *and* the
 variables of an existing (outer-context) child. When that child is kept, no scan for
 `best_node` is built (`subtree = existing_child.clone().unwrap_or_else(..)`, line 1198), so
 `best_node` is not bound — yet its inline-attribute Filter is placed as soon as the first hop
@@ -416,10 +489,17 @@ def exFilter : List Nat × ((Nat → Nat) → Bool) := ([2], fun _ => true)
 /-- Honest seed `[b]` (what the Limit child binds): the filter lands after `d→c`, the run
 finds the row. -/
 example : runScoped exE exσ [0] (place [0] exHops [exFilter]).1 = true := by decide
-/-- Rust's seed `[c, b]`: the filter lands after the first hop, before `c` is bound —
+/-- The pre-#3523 seed `[c, b]`: the filter lands after the first hop, before `c` is bound —
 the row is lost. -/
 example : runScoped exE exσ [0] (place [2, 0] exHops [exFilter]).1 = false := by decide
 /-- …although generate-and-test (all hops and the filter) accepts it. -/
 example : ((place [2, 0] exHops [exFilter]).1.all (fullHolds exE exσ)) = true := by decide
+
+/-- **PROVEN** (#3523): the seed for the kept `Limit` child (binding `b`) is `[b]`, so the pass
+now finds the row of the former counterexample. -/
+theorem initialBound_keeps_row :
+    initialBound 2 (some [0]) = [0] ∧
+    runScoped exE exσ [0] (place (initialBound 2 (some [0])) exHops [exFilter]).1 = true := by
+  decide
 
 end OptimizerScan.ScanOrder

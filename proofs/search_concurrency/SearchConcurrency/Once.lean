@@ -13,11 +13,11 @@ def setOnce {α : Type} (c : Option α) (v : α) : Option α × Bool :=
 
 /-! `thread_id.rs` -/
 
-/-- `set_main_thread` (`thread_id.rs:13`): first call wins. -/
+/-- `set_main_thread` (`thread_id.rs:15`): first call wins. -/
 def setMainThread (c : Option Nat) (tid : Nat) : Option Nat := (setOnce c tid).1
-/-- `is_main_thread` (`:23`): false before registration. -/
+/-- `is_main_thread` (`:25`): false before registration. -/
 def isMainThread (c : Option Nat) (tid : Nat) : Bool := c.any (· == tid)
-/-- `set_process_is_child` / `process_is_child` (`:32,39`). -/
+/-- `set_process_is_child` / `process_is_child` (`:57,64`). -/
 def setChild (_old v : Bool) : Bool := v
 def isChild (b : Bool) : Bool := b
 
@@ -29,6 +29,18 @@ theorem thread_id_spec (t1 t2 : Nat) (b v : Bool) :
     isChild (setChild b v) = v := by
   refine ⟨by simp [isMainThread, setMainThread, setOnce], rfl, rfl, fun h => ?_, rfl⟩
   simp [isMainThread, setMainThread, setOnce]; exact h
+
+/-- `POOL_THREAD` (#3816): a thread-local `Cell<bool>`, `false` on every new thread;
+`set_pool_thread` (`thread_id.rs:39`) sets it on the calling thread only, `is_pool_thread`
+(`:50`) reads it. Threads are indices into the per-thread cells. -/
+def setPoolThread (cells : Nat → Bool) (me : Nat) : Nat → Bool := fun t => if t = me then true else cells t
+def isPoolThread (cells : Nat → Bool) (me : Nat) : Bool := cells me
+
+theorem pool_thread_spec (me other : Nat) (h : other ≠ me) :
+    isPoolThread (fun _ => false) me = false ∧
+    isPoolThread (setPoolThread (fun _ => false) me) me = true ∧
+    isPoolThread (setPoolThread (fun _ => false) me) other = false := by
+  simp [isPoolThread, setPoolThread, h]
 
 /-! `storage/registry.rs` -/
 
