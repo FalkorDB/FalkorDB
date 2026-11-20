@@ -9,6 +9,10 @@
 //! exactly like a [`user_type!`](crate::user_type). The `new` constructors
 //! underneath are the same: an operator built ad hoc also lives until the
 //! process exits, so build each one once.
+//!
+//! Every kind has a `typecast` method: the same handle, relabelled so that
+//! an operation takes operands of other built-in types and GraphBLAS casts
+//! them. [`Typecast`] has the rule, the semantics and the cost.
 
 use std::{fmt, marker::PhantomData, mem::MaybeUninit, os::raw::c_void, ptr::null_mut};
 
@@ -18,7 +22,7 @@ use crate::{
     error::{check, expect_success},
     init::ensure_initialized,
     sys::{self, GrB_BinaryOp, GrB_Index, GrB_IndexUnaryOp, GrB_Monoid, GrB_Semiring, GrB_UnaryOp},
-    types::{BuiltinPattern, GrbType, Pattern},
+    types::{BuiltinPattern, GrbType, MonoidTypecast, Pattern, Typecast, TypecastFrom},
 };
 
 /// Declare user-defined operators as statics, created on first use.
@@ -95,8 +99,9 @@ macro_rules! op_handle {
             /// # Safety
             ///
             /// `raw` is a live, non-null handle of this kind whose GraphBLAS
-            /// domains are exactly the type parameters, and it outlives every
-            /// use of the wrapper (built-ins and registered user operators do).
+            /// domains are exactly the type parameters (for a `Typecast`
+            /// label, its `Declared` side), and it outlives every use of
+            /// the wrapper (built-ins and registered user operators do).
             pub(crate) const unsafe fn from_raw(raw: $raw) -> Self {
                 Self { raw, _types: PhantomData }
             }
@@ -382,6 +387,101 @@ impl<X, Y, Z> Semiring<X, Y, Z> {
     }
 }
 
+impl<X, Z> UnaryOp<X, Z> {
+    /// This operator on an input of type `A`, writing an output of type
+    /// `C`: GraphBLAS casts `A` to `X` before the call and `Z` to `C`
+    /// after it. The handle is the same and no work is done; see
+    /// [`Typecast`]. Leave `A` and `C` to be inferred from the operands, or
+    /// write them out.
+    #[must_use]
+    pub const fn typecast<A, C>(&self) -> UnaryOp<Typecast<X, A>, Typecast<Z, C>>
+    where
+        X: TypecastFrom<A>,
+        C: GrbType + TypecastFrom<Z>,
+    {
+        // SAFETY: the same live handle. The labels keep its declared
+        // domains and add only what GraphBLAS's typecast rule allows.
+        unsafe { UnaryOp::from_raw(self.raw) }
+    }
+}
+
+impl<X, Y, Z> BinaryOp<X, Y, Z> {
+    /// This operator on inputs of types `A` and `B`, writing an output of
+    /// type `C`: GraphBLAS casts `A` to `X` and `B` to `Y` before the call
+    /// and `Z` to `C` after it. The handle is the same and no work is done;
+    /// see [`Typecast`].
+    ///
+    /// Not for the `accum` slot, which stays on the output's type. A union
+    /// (`ewise_add`) takes the result only when `X`, `Y` and `Z` are one
+    /// type; see [`PassesThrough`](crate::PassesThrough).
+    #[must_use]
+    pub const fn typecast<A, B, C>(
+        &self
+    ) -> BinaryOp<Typecast<X, A>, Typecast<Y, B>, Typecast<Z, C>>
+    where
+        X: TypecastFrom<A>,
+        Y: TypecastFrom<B>,
+        C: GrbType + TypecastFrom<Z>,
+    {
+        // SAFETY: as in `UnaryOp::typecast`.
+        unsafe { BinaryOp::from_raw(self.raw) }
+    }
+}
+
+impl<X, Y, Z> IndexUnaryOp<X, Y, Z> {
+    /// This operator on an input of type `A`, writing an output of type
+    /// `C`, for `apply_index` and `select` (where `C` is `bool`). The handle
+    /// is the same and no work is done; see [`Typecast`].
+    ///
+    /// The scalar keeps its declared type `Y`: it is a Rust value at the
+    /// call, so the caller converts it.
+    #[must_use]
+    pub const fn typecast<A, C>(&self) -> IndexUnaryOp<Typecast<X, A>, Y, Typecast<Z, C>>
+    where
+        X: TypecastFrom<A>,
+        C: GrbType + TypecastFrom<Z>,
+    {
+        // SAFETY: as in `UnaryOp::typecast`.
+        unsafe { IndexUnaryOp::from_raw(self.raw) }
+    }
+}
+
+impl<T> Monoid<T> {
+    /// This monoid folding entries of type `A` into an output of type `C`:
+    /// GraphBLAS casts each `A` to `T`, folds in `T`, and casts the result
+    /// to `C` once. The handle is the same and no work is done; see
+    /// [`Typecast`].
+    #[must_use]
+    pub const fn typecast<A, C>(&self) -> Monoid<MonoidTypecast<T, A, C>>
+    where
+        T: TypecastFrom<A>,
+        C: GrbType + TypecastFrom<T>,
+    {
+        // SAFETY: as in `UnaryOp::typecast`.
+        unsafe { Monoid::from_raw(self.raw) }
+    }
+}
+
+impl<X, Y, Z> Semiring<X, Y, Z> {
+    /// This semiring on inputs of types `A` and `B`, writing an output of
+    /// type `C`: GraphBLAS casts `A` to `X` and `B` to `Y` before each
+    /// multiply, adds in `Z`, and casts each sum to `C` once. The handle is
+    /// the same and no work is done; see [`Typecast`], which also says why
+    /// the result is not a semiring over `A`, `B` and `C`.
+    #[must_use]
+    pub const fn typecast<A, B, C>(
+        &self
+    ) -> Semiring<Typecast<X, A>, Typecast<Y, B>, Typecast<Z, C>>
+    where
+        X: TypecastFrom<A>,
+        Y: TypecastFrom<B>,
+        C: GrbType + TypecastFrom<Z>,
+    {
+        // SAFETY: as in `UnaryOp::typecast`.
+        unsafe { Semiring::from_raw(self.raw) }
+    }
+}
+
 /// `Option<&BinaryOp>` as the C `accum` argument: null when absent.
 #[allow(
     clippy::redundant_pub_crate,
@@ -479,6 +579,8 @@ builtin! {
     /// `GxB_PLUS_FIRSTJ_INT64`: `z = j`, the index of the left operand
     /// (see the positional idiom in the workspace `CLAUDE.md`).
     pub static PLUS_FIRSTJ_INT64: Semiring<Pattern, Pattern, i64> = GxB_PLUS_FIRSTJ_INT64;
+    /// `GrB_PLUS_TIMES_SEMIRING_UINT64`.
+    pub static PLUS_TIMES_SEMIRING_UINT64: Semiring<u64, u64, u64> = GrB_PLUS_TIMES_SEMIRING_UINT64;
     /// `GrB_PLUS_TIMES_SEMIRING_FP64`.
     pub static PLUS_TIMES_SEMIRING_FP64: Semiring<f64, f64, f64> = GrB_PLUS_TIMES_SEMIRING_FP64;
     /// `GrB_MIN_PLUS_SEMIRING_FP64`.

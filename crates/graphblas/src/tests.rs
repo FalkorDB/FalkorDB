@@ -1144,6 +1144,941 @@ fn user_defined_operators_are_typed_and_static() {
     assert_eq!(n.extract_element(0, 0).unwrap(), Some(42));
 }
 
+// ───────────────────────────── typecast ─────────────────────────────
+
+#[test]
+fn typecast_relabels_the_same_handle() {
+    setup();
+    assert_eq!(
+        PLUS_TIMES_SEMIRING_FP64
+            .typecast::<u64, bool, u64>()
+            .as_raw(),
+        PLUS_TIMES_SEMIRING_FP64.as_raw()
+    );
+    assert_eq!(
+        PLUS_UINT64.typecast::<bool, bool, f64>().as_raw(),
+        PLUS_UINT64.as_raw()
+    );
+    assert_eq!(
+        IDENTITY_FP64.typecast::<i64, i64>().as_raw(),
+        IDENTITY_FP64.as_raw()
+    );
+    assert_eq!(
+        VALUEGT_FP64.typecast::<u64, bool>().as_raw(),
+        VALUEGT_FP64.as_raw()
+    );
+    assert_eq!(
+        PLUS_MONOID_UINT64.typecast::<bool, f64>().as_raw(),
+        PLUS_MONOID_UINT64.as_raw()
+    );
+    // The parts of a relabelled semiring are its own, relabelled alike.
+    let semiring = PLUS_TIMES_SEMIRING_FP64.typecast::<u64, bool, u64>();
+    assert_eq!(
+        semiring.multiply().as_raw(),
+        PLUS_TIMES_SEMIRING_FP64.multiply().as_raw()
+    );
+}
+
+#[test]
+fn a_typecast_semiring_runs_on_operands_of_other_types() {
+    setup();
+    let a = matrix(2, 2, &[(0, 0, 2u64), (0, 1, 3)]);
+    let b = matrix(2, 2, &[(0, 0, true), (1, 0, true), (1, 1, false)]);
+
+    // Domains inferred from the operands: u64 x bool -> u64 through f64.
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    mxm(
+        &mut c,
+        Mask::NONE,
+        None,
+        &PLUS_TIMES_SEMIRING_FP64.typecast(),
+        &a,
+        &b,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(
+        entries(&c),
+        vec![(0, 0, 5), (0, 1, 0)],
+        "true is 1.0 and false is 0.0; the entry at (0, 1) is a stored zero"
+    );
+
+    // The same call with the domains written out, against the result of
+    // storing converted copies and running the semiring as declared.
+    let mut a_f64 = Matrix::<f64>::new(2, 2).unwrap();
+    matrix::cast(&mut a_f64, Mask::NONE, None, &a, Desc::NONE).unwrap();
+    let mut b_f64 = Matrix::<f64>::new(2, 2).unwrap();
+    matrix::cast(&mut b_f64, Mask::NONE, None, &b, Desc::NONE).unwrap();
+    let mut product = Matrix::<f64>::new(2, 2).unwrap();
+    mxm(
+        &mut product,
+        Mask::NONE,
+        None,
+        &PLUS_TIMES_SEMIRING_FP64,
+        &a_f64,
+        &b_f64,
+        Desc::NONE,
+    )
+    .unwrap();
+    let mut expected = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::cast(&mut expected, Mask::NONE, None, &product, Desc::NONE).unwrap();
+
+    let spelled = PLUS_TIMES_SEMIRING_FP64.typecast::<u64, bool, u64>();
+    let mut d = Matrix::<u64>::new(2, 2).unwrap();
+    mxm(&mut d, Mask::NONE, None, &spelled, &a, &b, Desc::NONE).unwrap();
+    assert_eq!(entries(&d), entries(&expected));
+
+    // With an accumulator the product is cast to the output's type and
+    // accumulated there.
+    mxm(
+        &mut d,
+        Mask::NONE,
+        Some(&PLUS_UINT64),
+        &spelled,
+        &a,
+        &b,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&d), vec![(0, 0, 10), (0, 1, 0)]);
+}
+
+#[test]
+fn a_typecast_semiring_adds_in_its_own_type_and_casts_the_sum_once() {
+    setup();
+    // 0.5 * 1 + -0.5 * 1 is 0.0, which is `false`. A semiring over bool
+    // would have cast each input first and found a path.
+    let a = matrix(1, 2, &[(0, 0, 0.5f64), (0, 1, -0.5)]);
+    let b = matrix(2, 1, &[(0, 0, 1.0f64), (1, 0, 1.0)]);
+    let mut reachable = Matrix::<bool>::new(1, 1).unwrap();
+    mxm(
+        &mut reachable,
+        Mask::NONE,
+        None,
+        &PLUS_TIMES_SEMIRING_FP64.typecast(),
+        &a,
+        &b,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&reachable), vec![(0, 0, false)]);
+
+    mxm(
+        &mut reachable,
+        Mask::NONE,
+        None,
+        &LOR_LAND_SEMIRING_BOOL.typecast(),
+        &a,
+        &b,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&reachable), vec![(0, 0, true)]);
+}
+
+#[test]
+fn a_positional_semiring_writes_indices_into_an_unsigned_vector() {
+    setup();
+    // The idiom of the workspace notes: each column of `a` has one entry,
+    // and FIRSTJ gives the index into `x`, the entry's row, as an i64.
+    let a = matrix(3, 3, &[(2, 0, true), (0, 1, true), (2, 2, true)]);
+    let x = vector(3, &[(0, 0u8), (1, 0), (2, 0)]);
+    let mut rows = Vector::<u64>::new(3).unwrap();
+    vxm(
+        &mut rows,
+        Mask::NONE,
+        None,
+        &PLUS_FIRSTJ_INT64.typecast(),
+        &x,
+        &a,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&rows), vec![(0, 2), (1, 0), (2, 2)]);
+
+    let mut signed = Vector::<i64>::new(3).unwrap();
+    vxm(
+        &mut signed,
+        Mask::NONE,
+        None,
+        &PLUS_FIRSTJ_INT64,
+        &x,
+        &a,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&signed), vec![(0, 2), (1, 0), (2, 2)]);
+
+    // mxv, with the matrix in the first slot.
+    let u = vector(3, &[(0, 2u64)]);
+    let mut w = Vector::<i32>::new(3).unwrap();
+    mxv(
+        &mut w,
+        Mask::NONE,
+        None,
+        &PLUS_TIMES_SEMIRING_FP64.typecast(),
+        &a,
+        &u,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&w), vec![(2, 2)]);
+}
+
+#[test]
+fn typecast_converts_as_rust_as_does_and_to_bool_as_nonzero() {
+    setup();
+    let floats = matrix(
+        1,
+        6,
+        &[
+            (0, 0, f64::NAN),
+            (0, 1, 1e300),
+            (0, 2, -1e300),
+            (0, 3, 2.9),
+            (0, 4, -2.9),
+            (0, 5, 0.0),
+        ],
+    );
+    let (_, _, values) = floats.extract_tuples().unwrap();
+
+    let mut signed = Matrix::<i64>::new(1, 6).unwrap();
+    let to_i64 = IDENTITY_FP64.typecast::<f64, i64>();
+    matrix::apply(&mut signed, Mask::NONE, None, &to_i64, &floats, Desc::NONE).unwrap();
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the truncation is what the test compares against"
+    )]
+    let expected: Vec<i64> = values.iter().map(|&x| x as i64).collect();
+    assert_eq!(expected, vec![0, i64::MAX, i64::MIN, 2, -2, 0]);
+    let (_, _, got) = signed.extract_tuples().unwrap();
+    assert_eq!(got, expected, "NaN is 0 and the range saturates");
+
+    let mut unsigned = Matrix::<u8>::new(1, 6).unwrap();
+    matrix::apply(
+        &mut unsigned,
+        Mask::NONE,
+        None,
+        &IDENTITY_FP64.typecast(),
+        &floats,
+        Desc::NONE,
+    )
+    .unwrap();
+    let (_, _, got) = unsigned.extract_tuples().unwrap();
+    assert_eq!(got, vec![0, u8::MAX, 0, 2, 0, 0]);
+
+    let mut flags = Matrix::<bool>::new(1, 6).unwrap();
+    matrix::apply(
+        &mut flags,
+        Mask::NONE,
+        None,
+        &IDENTITY_FP64.typecast(),
+        &floats,
+        Desc::NONE,
+    )
+    .unwrap();
+    let (_, _, got) = flags.extract_tuples().unwrap();
+    assert_eq!(
+        got,
+        vec![true, true, true, true, true, false],
+        "anything but zero, NaN included"
+    );
+
+    // The same conversions on the way in: each float is cast to the
+    // operator's i64 before `PLUS_INT64` sees it.
+    let zero_cells: Vec<_> = (0..6).map(|j| (0, j, 0.0f64)).collect();
+    let zeros = matrix(1, 6, &zero_cells);
+    let mut sums = Matrix::<i64>::new(1, 6).unwrap();
+    matrix::ewise_mult(
+        &mut sums,
+        Mask::NONE,
+        None,
+        &PLUS_INT64.typecast(),
+        &floats,
+        &zeros,
+        Desc::NONE,
+    )
+    .unwrap();
+    let (_, _, got) = sums.extract_tuples().unwrap();
+    assert_eq!(got, expected, "cast on the way in");
+
+    // Integer to a narrower integer wraps.
+    let wide = matrix(1, 2, &[(0, 0, 300u64), (0, 1, u64::MAX)]);
+    let mut narrow = Matrix::<u8>::new(1, 2).unwrap();
+    matrix::apply(
+        &mut narrow,
+        Mask::NONE,
+        None,
+        &IDENTITY_UINT64.typecast(),
+        &wide,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&narrow), vec![(0, 0, 44), (0, 1, 255)]);
+    let mut signed = Matrix::<i64>::new(1, 2).unwrap();
+    matrix::apply(
+        &mut signed,
+        Mask::NONE,
+        None,
+        &IDENTITY_UINT64.typecast(),
+        &wide,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&signed), vec![(0, 0, 300), (0, 1, -1)]);
+}
+
+#[test]
+fn a_typecast_union_casts_the_entries_only_one_side_has() {
+    setup();
+    let flags = matrix(1, 3, &[(0, 0, true), (0, 1, true)]);
+    let counts = matrix(1, 3, &[(0, 1, 5u64), (0, 2, 7)]);
+    let mut total = Matrix::<u64>::new(1, 3).unwrap();
+    matrix::ewise_add(
+        &mut total,
+        Mask::NONE,
+        None,
+        &PLUS_UINT64.typecast(),
+        &flags,
+        &counts,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(
+        entries(&total),
+        vec![(0, 0, 1), (0, 1, 6), (0, 2, 7)],
+        "the lone `true` at column 0 became 1 without the operator"
+    );
+
+    // Into a bool output the lone entries are cast twice over: an id of 0
+    // lands as `false`, which is what the note on `ewise_add` warns about.
+    let ids = matrix(1, 3, &[(0, 2, 0u64)]);
+    let mut seen = Matrix::<bool>::new(1, 3).unwrap();
+    matrix::ewise_add(
+        &mut seen,
+        Mask::NONE,
+        None,
+        &ANY_BOOL.typecast(),
+        &flags,
+        &ids,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(
+        entries(&seen),
+        vec![(0, 0, true), (0, 1, true), (0, 2, false)]
+    );
+
+    // The intersection calls the operator on every entry it keeps.
+    let mut both = Matrix::<f64>::new(1, 3).unwrap();
+    matrix::ewise_mult(
+        &mut both,
+        Mask::NONE,
+        None,
+        &PLUS_UINT64.typecast(),
+        &flags,
+        &counts,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&both), vec![(0, 1, 6.0)]);
+
+    // Vectors mirror the matrices.
+    let u = vector(3, &[(0, true)]);
+    let v = vector(3, &[(0, 2.5f64), (2, 1.5)]);
+    let mut w = Vector::<f64>::new(3).unwrap();
+    vector::ewise_add(
+        &mut w,
+        Mask::NONE,
+        None,
+        &PLUS_FP64.typecast(),
+        &u,
+        &v,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&w), vec![(0, 3.5), (2, 1.5)]);
+    let mut x = Vector::<i64>::new(3).unwrap();
+    vector::ewise_mult(
+        &mut x,
+        Mask::NONE,
+        None,
+        &PLUS_FP64.typecast(),
+        &u,
+        &v,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&x), vec![(0, 3)]);
+    let mut y = Vector::<u8>::new(3).unwrap();
+    vector::apply(
+        &mut y,
+        Mask::NONE,
+        None,
+        &AINV_FP64.typecast(),
+        &v,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(
+        vector_entries(&y),
+        vec![(0, 0), (2, 0)],
+        "-2.5 and -1.5 saturate at 0"
+    );
+}
+
+#[test]
+fn a_typecast_monoid_folds_entries_of_another_type() {
+    setup();
+    let flags = matrix(2, 2, &[(0, 0, true), (0, 1, true), (1, 1, false)]);
+    let mut count = 0u64;
+    matrix::reduce(
+        &mut count,
+        None,
+        &PLUS_MONOID_UINT64.typecast(),
+        &flags,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(count, 2, "the stored `false` adds 0");
+
+    // Folded in u64 and cast once: 2 as f64, accumulated twice.
+    let mut as_float = 0.0f64;
+    let spelled = PLUS_MONOID_UINT64.typecast::<bool, f64>();
+    matrix::reduce(
+        &mut as_float,
+        Some(&PLUS_FP64),
+        &spelled,
+        &flags,
+        Desc::NONE,
+    )
+    .unwrap();
+    matrix::reduce(
+        &mut as_float,
+        Some(&PLUS_FP64),
+        &spelled,
+        &flags,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert!((as_float - 4.0).abs() < f64::EPSILON);
+
+    let mut per_row = Vector::<u64>::new(2).unwrap();
+    matrix::reduce_rows(
+        &mut per_row,
+        Mask::NONE,
+        None,
+        &PLUS_MONOID_UINT64.typecast(),
+        &flags,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&per_row), vec![(0, 2), (1, 0)]);
+
+    let v = vector(3, &[(0, 1.5f64), (2, 2.5)]);
+    let mut truncated = 0u64;
+    vector::reduce(
+        &mut truncated,
+        None,
+        &PLUS_MONOID_UINT64.typecast(),
+        &v,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(truncated, 3, "each entry is cast before the fold: 1 + 2");
+    let mut summed = 0u64;
+    vector::reduce(
+        &mut summed,
+        None,
+        &PLUS_MONOID_FP64.typecast(),
+        &v,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(summed, 4, "folded in f64 and cast once: 4.0");
+}
+
+#[test]
+fn a_typecast_index_operator_writes_positions_into_another_type() {
+    setup();
+    let a = matrix(2, 2, &[(0, 0, 1u64), (0, 1, 5), (1, 1, 9)]);
+    // Positions (i64 in GraphBLAS) into a u64 matrix.
+    let mut columns = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::apply_index(
+        &mut columns,
+        Mask::NONE,
+        None,
+        &COLINDEX_INT64.typecast(),
+        &a,
+        10,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&columns), vec![(0, 0, 10), (0, 1, 11), (1, 1, 11)]);
+
+    let u = vector(3, &[(0, 1u64), (2, 9)]);
+    let mut at = Vector::<u32>::new(3).unwrap();
+    vector::apply_index(
+        &mut at,
+        Mask::NONE,
+        None,
+        &ROWINDEX_INT64.typecast::<u64, u32>(),
+        &u,
+        1,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&at), vec![(0, 1), (2, 3)]);
+}
+
+/// `m` in every storage form GraphBLAS has: each takes its own kernels.
+fn storage_forms<T: GrbType>(m: &Matrix<T>) -> Vec<Matrix<T>> {
+    let mut forms = Vec::new();
+    for orientation in [crate::Orientation::ByRow, crate::Orientation::ByCol] {
+        for sparsity in [
+            Sparsity::Hypersparse,
+            Sparsity::Sparse,
+            Sparsity::Bitmap,
+            Sparsity::Full,
+        ] {
+            let mut form = m.dup().unwrap();
+            form.set_orientation(orientation).unwrap();
+            form.set_sparsity(sparsity).unwrap();
+            form.wait(crate::WaitMode::Materialize).unwrap();
+            forms.push(form);
+        }
+    }
+    forms
+}
+
+/// The operators of one declared domain `D`, with the same arithmetic in
+/// Rust: every value is held as an `f64` that `D` represents exactly.
+struct Operators<D> {
+    semiring: Semiring<D, D, D>,
+    add_op: BinaryOp<D, D, D>,
+    monoid: Monoid<D>,
+    unary: UnaryOp<D, D>,
+    /// GraphBLAS's cast of a value into `D`.
+    declared: fn(f64) -> f64,
+    add: fn(f64, f64) -> f64,
+    multiply: fn(f64, f64) -> f64,
+    apply: fn(f64) -> f64,
+}
+
+/// The typecast paths of GraphBLAS are its less travelled ones (`select`
+/// and the union are wrong or inconsistent on one each, below), and which
+/// kernel runs depends on the operator and on how the operands are stored.
+/// So every operation that takes a typecast operator is run with operators
+/// of three domains, on every storage form of its inputs, iso-valued and
+/// not, against the same arithmetic done in Rust.
+#[test]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the conversions are what the test compares GraphBLAS against, on small exact values"
+)]
+fn typecast_agrees_with_rust_conversions_in_every_storage_form() {
+    setup();
+    let mut forms_seen = Vec::new();
+    // The float kernels are generic in the engine's build of GraphBLAS;
+    // the integer and bool ones are its factory kernels.
+    sweep(
+        &Operators {
+            semiring: *PLUS_TIMES_SEMIRING_FP64,
+            add_op: *PLUS_FP64,
+            monoid: *PLUS_MONOID_FP64,
+            unary: *AINV_FP64,
+            declared: |x| x,
+            add: |x, y| x + y,
+            multiply: |x, y| x * y,
+            apply: |x| -x,
+        },
+        &mut forms_seen,
+    );
+    sweep(
+        &Operators {
+            semiring: *PLUS_TIMES_SEMIRING_UINT64,
+            add_op: *PLUS_UINT64,
+            monoid: *PLUS_MONOID_UINT64,
+            unary: *IDENTITY_UINT64,
+            declared: |x| (x as u64) as f64,
+            add: |x, y| x + y,
+            multiply: |x, y| x * y,
+            apply: |x| x,
+        },
+        &mut forms_seen,
+    );
+    sweep(
+        &Operators {
+            semiring: *LOR_LAND_SEMIRING_BOOL,
+            add_op: LOR_MONOID_BOOL.op(),
+            monoid: *LOR_MONOID_BOOL,
+            unary: *IDENTITY_BOOL,
+            declared: |x| f64::from(u8::from(x != 0.0)),
+            add: f64::max,
+            multiply: f64::min,
+            apply: |x| x,
+        },
+        &mut forms_seen,
+    );
+    for sparsity in [
+        Sparsity::Hypersparse,
+        Sparsity::Sparse,
+        Sparsity::Bitmap,
+        Sparsity::Full,
+    ] {
+        for iso in [false, true] {
+            assert!(
+                forms_seen
+                    .iter()
+                    .any(|&(s, _, i)| (s, i) == (sparsity, iso)),
+                "no input was ever {sparsity:?} with iso = {iso}: {forms_seen:?}"
+            );
+        }
+    }
+}
+
+type Form = (Sparsity, crate::Orientation, bool);
+
+fn form<T: GrbType>(m: &Matrix<T>) -> Form {
+    (m.sparsity(), m.orientation(), m.is_iso())
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "the conversions are what the test compares GraphBLAS against, on small exact values"
+)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one sweep over the operations, sharing its inputs and their forms"
+)]
+fn sweep<D: crate::BuiltinType>(
+    domain: &Operators<D>,
+    forms_seen: &mut Vec<Form>,
+) {
+    const N: GrB_Index = 5;
+    let every_cell: Vec<(GrB_Index, GrB_Index)> =
+        (0..N).flat_map(|i| (0..N).map(move |j| (i, j))).collect();
+    let some_cells: Vec<(GrB_Index, GrB_Index)> = every_cell
+        .iter()
+        .copied()
+        .filter(|&(i, j)| (i * 3 + j * 5) % 4 == 0)
+        .collect();
+    let fold = |terms: &[f64]| terms.iter().copied().reduce(domain.add);
+    let weights = vector(N, &[(0, 2u8), (3, 1), (4, 5)]);
+    let weight = |k| match k {
+        0 => Some((domain.declared)(2.0)),
+        3 => Some((domain.declared)(1.0)),
+        4 => Some((domain.declared)(5.0)),
+        _ => None,
+    };
+
+    for cells in [&some_cells, &every_cell] {
+        let (rows, cols): (Vec<_>, Vec<_>) = cells.iter().copied().unzip();
+        for (a_iso, b_iso) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut a = Matrix::<u64>::new(N, N).unwrap();
+            let mut b = Matrix::<f32>::new(N, N).unwrap();
+            if a_iso {
+                a.build_iso(&rows, &cols, 3).unwrap();
+            } else {
+                let values: Vec<u64> = cells.iter().map(|&(i, j)| i * N + j + 1).collect();
+                a.build(&rows, &cols, &values, None).unwrap();
+            }
+            if b_iso {
+                b.build_iso(&rows, &cols, 1.5).unwrap();
+            } else {
+                // Halves: 0.5 is 0 as a u64 and `true` as a bool.
+                let values: Vec<f32> = cells
+                    .iter()
+                    .map(|&(i, j)| (j * N + i + 1) as f32 * 0.5)
+                    .collect();
+                b.build(&rows, &cols, &values, None).unwrap();
+            }
+            assert_eq!((a.is_iso(), b.is_iso()), (a_iso, b_iso));
+
+            // Each input as the operators see it, and the answers: the
+            // arithmetic in the declared domain, one `as` at the end.
+            let a_cells: Vec<_> = entries(&a)
+                .into_iter()
+                .map(|(i, j, x)| (i, j, (domain.declared)(x as f64)))
+                .collect();
+            let b_cells: Vec<_> = entries(&b)
+                .into_iter()
+                .map(|(i, j, x)| (i, j, (domain.declared)(f64::from(x))))
+                .collect();
+            let at = |cells: &[(GrB_Index, GrB_Index, f64)], i, j| {
+                cells
+                    .iter()
+                    .find(|&&(row, col, _)| (row, col) == (i, j))
+                    .map(|&(_, _, x)| x)
+            };
+            let mut product = Vec::new();
+            let mut union = Vec::new();
+            let mut intersection = Vec::new();
+            for &(i, j) in &every_cell {
+                let terms: Vec<f64> = (0..N)
+                    .filter_map(|k| {
+                        Some((domain.multiply)(at(&a_cells, i, k)?, at(&b_cells, k, j)?))
+                    })
+                    .collect();
+                if let Some(sum) = fold(&terms) {
+                    product.push((i, j, sum as i64));
+                }
+                match (at(&a_cells, i, j), at(&b_cells, i, j)) {
+                    (Some(x), Some(y)) => {
+                        union.push((i, j, (domain.add)(x, y) as i64));
+                        intersection.push((i, j, (domain.add)(x, y) as i64));
+                    }
+                    (Some(x), None) | (None, Some(x)) => union.push((i, j, x as i64)),
+                    (None, None) => {}
+                }
+            }
+            let applied: Vec<_> = a_cells
+                .iter()
+                .map(|&(i, j, x)| (i, j, (domain.apply)(x) as i64))
+                .collect();
+            let row_numbers: Vec<_> = b_cells.iter().map(|&(i, j, _)| (i, j, i + 1)).collect();
+            let all: Vec<f64> = b_cells.iter().map(|&(_, _, x)| x).collect();
+            let total = fold(&all).unwrap() as i64;
+            let row_totals: Vec<_> = (0..N)
+                .filter_map(|i| {
+                    let row: Vec<f64> = b_cells.iter().filter(|c| c.0 == i).map(|c| c.2).collect();
+                    Some((i, fold(&row)? as i64))
+                })
+                .collect();
+            let a_times_weights: Vec<_> = (0..N)
+                .filter_map(|i| {
+                    let terms: Vec<f64> = (0..N)
+                        .filter_map(|k| Some((domain.multiply)(at(&a_cells, i, k)?, weight(k)?)))
+                        .collect();
+                    Some((i, fold(&terms)? as i64))
+                })
+                .collect();
+            let weights_times_b: Vec<_> = (0..N)
+                .filter_map(|j| {
+                    let terms: Vec<f64> = (0..N)
+                        .filter_map(|k| Some((domain.multiply)(weight(k)?, at(&b_cells, k, j)?)))
+                        .collect();
+                    Some((j, fold(&terms)? as i64))
+                })
+                .collect();
+
+            let a_forms = storage_forms(&a);
+            let b_forms = storage_forms(&b);
+            let add_op = domain.add_op.typecast();
+            let monoid = domain.monoid.typecast();
+            let unary = domain.unary.typecast();
+            let row_index = ROWINDEX_INT64.typecast();
+            for form_a in &a_forms {
+                if !forms_seen.contains(&form(form_a)) {
+                    forms_seen.push(form(form_a));
+                }
+                let label = format!("{}, a {:?}", D::NAME, form(form_a));
+                let mut c = Matrix::<i64>::new(N, N).unwrap();
+                matrix::apply(&mut c, Mask::NONE, None, &unary, form_a, Desc::NONE).unwrap();
+                assert_eq!(entries(&c), applied, "apply, {label}");
+                let mut w = Vector::<i64>::new(N).unwrap();
+                mxv(
+                    &mut w,
+                    Mask::NONE,
+                    None,
+                    &domain.semiring.typecast(),
+                    form_a,
+                    &weights,
+                    Desc::NONE,
+                )
+                .unwrap();
+                assert_eq!(vector_entries(&w), a_times_weights, "mxv, {label}");
+            }
+            for form_b in &b_forms {
+                let label = format!("{}, b {:?}", D::NAME, form(form_b));
+                let mut positions = Matrix::<u64>::new(N, N).unwrap();
+                matrix::apply_index(
+                    &mut positions,
+                    Mask::NONE,
+                    None,
+                    &row_index,
+                    form_b,
+                    1,
+                    Desc::NONE,
+                )
+                .unwrap();
+                assert_eq!(entries(&positions), row_numbers, "apply_index, {label}");
+                let mut sum = -1i64;
+                matrix::reduce(&mut sum, None, &monoid, form_b, Desc::NONE).unwrap();
+                assert_eq!(sum, total, "reduce, {label}");
+                let mut sums = Vector::<i64>::new(N).unwrap();
+                matrix::reduce_rows(&mut sums, Mask::NONE, None, &monoid, form_b, Desc::NONE)
+                    .unwrap();
+                assert_eq!(vector_entries(&sums), row_totals, "reduce_rows, {label}");
+                let mut w = Vector::<i64>::new(N).unwrap();
+                vxm(
+                    &mut w,
+                    Mask::NONE,
+                    None,
+                    &domain.semiring.typecast(),
+                    &weights,
+                    form_b,
+                    Desc::NONE,
+                )
+                .unwrap();
+                assert_eq!(vector_entries(&w), weights_times_b, "vxm, {label}");
+            }
+            for form_a in &a_forms {
+                for form_b in &b_forms {
+                    let label = format!("{}, a {:?}, b {:?}", D::NAME, form(form_a), form(form_b));
+                    let mut c = Matrix::<i64>::new(N, N).unwrap();
+                    mxm(
+                        &mut c,
+                        Mask::NONE,
+                        None,
+                        &domain.semiring.typecast(),
+                        form_a,
+                        form_b,
+                        Desc::NONE,
+                    )
+                    .unwrap();
+                    assert_eq!(entries(&c), product, "mxm, {label}");
+                    matrix::ewise_add(
+                        &mut c,
+                        Mask::NONE,
+                        None,
+                        &add_op,
+                        form_a,
+                        form_b,
+                        Desc::NONE,
+                    )
+                    .unwrap();
+                    assert_eq!(entries(&c), union, "ewise_add, {label}");
+                    matrix::ewise_mult(
+                        &mut c,
+                        Mask::NONE,
+                        None,
+                        &add_op,
+                        form_a,
+                        form_b,
+                        Desc::NONE,
+                    )
+                    .unwrap();
+                    assert_eq!(entries(&c), intersection, "ewise_mult, {label}");
+                }
+            }
+        }
+    }
+}
+
+/// Why a typecast union needs an operator over one type: GraphBLAS casts
+/// a transposed operand to the operator's *input* type first, so the
+/// entries only it has take another path to the output than they do
+/// untransposed. A lone `0.5` under `GT_UINT64` (`u64` in, `bool` out) is
+/// `true` as a `bool`, but `0` as a `u64` and then `false`.
+///
+/// The specification has one answer, `(bool) 0.5`. If this test fails
+/// GraphBLAS has settled on one, and `PassesThrough` can take any
+/// relabelled operator.
+#[test]
+fn a_union_under_a_comparison_depends_on_orientation_at_this_pin() {
+    setup();
+    let b = Matrix::<bool>::new(2, 2).unwrap();
+    let mut landed = Vec::new();
+    for orientation in [crate::Orientation::ByRow, crate::Orientation::ByCol] {
+        let mut a = matrix(2, 2, &[(0, 1, 0.5f64)]);
+        a.set_orientation(orientation).unwrap();
+        a.wait(crate::WaitMode::Materialize).unwrap();
+        let c = Matrix::<u64>::new(2, 2).unwrap();
+        // SAFETY: live handles of built-in types, which the C API accepts
+        // in this combination; no mask, accumulator or descriptor.
+        let info = unsafe {
+            sys::GrB_Matrix_eWiseAdd_BinaryOp(
+                c.as_raw(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                GT_UINT64.as_raw(),
+                a.as_raw(),
+                b.as_raw(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        landed.push((a.orientation() == c.orientation(), entries(&c)));
+    }
+    assert_eq!(
+        landed,
+        vec![(true, vec![(0, 1, 1)]), (false, vec![(0, 1, 0)])],
+        "stored like the output the lone entry is (bool) 0.5; stored the \
+         other way it went through u64"
+    );
+}
+
+/// A typecast predicate compares each value cast to the operator's type.
+/// GraphBLAS before `7e74fe5f78` (10.5.0) read the scalar's bytes as the
+/// matrix's type in its factory kernels and kept nothing here: `1`, `5` and
+/// `9` are all below the bits of `4.5` read as a `u64`.
+#[test]
+fn select_with_a_typecast_predicate_compares_in_the_operators_type() {
+    setup();
+    let a = matrix(2, 2, &[(0, 0, 1u64), (0, 1, 5), (1, 1, 9)]);
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::select(
+        &mut c,
+        Mask::NONE,
+        None,
+        &VALUEGT_FP64.typecast(),
+        &a,
+        4.5,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&c), vec![(0, 1, 5), (1, 1, 9)]);
+
+    let u = vector(3, &[(0, 1u64), (2, 9)]);
+    let mut w = Vector::<u64>::new(3).unwrap();
+    vector::select(
+        &mut w,
+        Mask::NONE,
+        None,
+        &VALUEGT_FP64.typecast(),
+        &u,
+        4.5,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&w), vec![(2, 9)]);
+}
+
+#[test]
+fn a_user_defined_domain_stays_itself_under_typecast() {
+    setup();
+    // Only the output is cast: `Edge` reads as `Edge`, the f64 weight
+    // lands in an i64 matrix.
+    let a = matrix(
+        1,
+        2,
+        &[
+            (0, 0, Edge { weight: 1.5, id: 1 }),
+            (0, 1, Edge { weight: 3.0, id: 2 }),
+        ],
+    );
+    let mut weights = Matrix::<i64>::new(1, 2).unwrap();
+    matrix::apply(
+        &mut weights,
+        Mask::NONE,
+        None,
+        &EDGE_WEIGHT.typecast::<Edge, i64>(),
+        &a,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&weights), vec![(0, 0, 1), (0, 1, 3)]);
+
+    // The identity relabelling is allowed and changes nothing.
+    let mut heaviest = Edge { weight: 0.0, id: 0 };
+    matrix::reduce(&mut heaviest, None, &EDGE_MAX.typecast(), &a, Desc::NONE).unwrap();
+    assert_eq!(heaviest.id, 2);
+}
+
 // ───────────────────────────── built-ins ─────────────────────────────
 
 #[test]
