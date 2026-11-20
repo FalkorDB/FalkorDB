@@ -37,12 +37,11 @@ fn main() {
 
     assert_sanitizer_agrees(&request);
 
-    let graphblas = deps.get(Dep::GraphBlas).expect("graphblas resolved");
     let lagraph = deps.get(Dep::LaGraph).expect("lagraph resolved");
     let redisearch = deps.get(Dep::RediSearch).expect("redisearch resolved");
 
     link_openmp_search_paths();
-    link_graphblas(graphblas, lagraph);
+    link_lagraph(lagraph);
     link_cxx_and_openssl();
     link_redisearch(redisearch);
 }
@@ -136,36 +135,16 @@ fn libomp_prefix() -> String {
     std::env::var("LIBOMP_PREFIX").unwrap_or_else(|_| "/opt/libomp".to_string())
 }
 
-fn link_graphblas(
-    graphblas: &Resolved,
-    lagraph: &Resolved,
-) {
-    println!(
-        "cargo:rustc-link-search=native={}",
-        graphblas.lib().display()
-    );
+fn link_lagraph(lagraph: &Resolved) {
     println!("cargo:rustc-link-search=native={}", lagraph.lib().display());
 
     // Link order is load-bearing: GNU ld resolves static archives left-to-right,
-    // so dependents must precede dependencies -- lagraphx -> lagraph -> graphblas.
+    // so dependents must precede dependencies -- lagraphx -> lagraph -> graphblas
+    // -> omp. The last two are linked by the `graphblas-sys` crate, and rustc
+    // places a dependency's libraries after those of the crate that depends on
+    // it, so they follow these two.
     println!("cargo:rustc-link-lib=static=lagraphx");
     println!("cargo:rustc-link-lib=static=lagraph");
-    println!("cargo:rustc-link-lib=static=graphblas");
-
-    // omp must come AFTER graphblas/lagraph: GNU ld resolves static archives
-    // left-to-right, and those archives reference __kmpc_* symbols. The wrong
-    // order goes unnoticed for the cdylib (shared links tolerate undefined
-    // symbols) but breaks test executables with static libomp.
-    //
-    // Static when `${LIBOMP_PREFIX:-/opt/libomp}/lib/libomp.a` exists -- the path
-    // CI/Docker takes (build/libomp.sh installs there), which makes
-    // libfalkordb.{so,dylib} self-contained for OpenMP. Otherwise dynamic
-    // `-lomp`, resolved against apt's libomp-NN-dev or Homebrew's libomp.
-    if Path::new(&libomp_prefix()).join("lib/libomp.a").exists() {
-        println!("cargo:rustc-link-lib=static=omp");
-    } else {
-        println!("cargo:rustc-link-lib=omp");
-    }
 }
 
 fn link_cxx_and_openssl() {
