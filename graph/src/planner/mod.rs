@@ -887,6 +887,64 @@ fn has_labels_filter(
     )
 }
 
+/// A scan of the nodes that carry all of `node`'s labels (every node when it
+/// has none), stacked on `input` when there is one. The runtime's
+/// `get_nodes()` intersects all label matrices, so a multi-label node needs
+/// one `NodeByLabelScan` only.
+fn node_scan(
+    node: Arc<QueryNode<Arc<String>, Variable>>,
+    input: Option<DynTree<IR>>,
+) -> DynTree<IR> {
+    if node.labels.is_empty() {
+        tree!(IR::AllNodeScan(node); input)
+    } else {
+        tree!(IR::NodeByLabelScan { node }; input)
+    }
+}
+
+/// What every hop of one connected component reads about the component
+/// while `plan_hop` plans it.
+struct ComponentEdges<'a> {
+    /// Ids of the component's named edges, for relationship uniqueness.
+    /// Unnamed edges are left out, so the same physical edge can be
+    /// traversed by different anonymous bindings (matches FalkorDB C).
+    sibling_edges: Vec<u32>,
+    /// Relationships whose attrs were lifted into a clause-level Filter.
+    lifted_rels: &'a HashSet<VarKey>,
+    /// The component's named paths.
+    paths: &'a [Arc<QueryPath<Variable>>],
+}
+
+impl<'a> ComponentEdges<'a> {
+    fn new(
+        component: &'a QueryGraph<Arc<String>, Arc<String>, Variable>,
+        lifted_rels: &'a HashSet<VarKey>,
+    ) -> Self {
+        Self {
+            sibling_edges: component
+                .relationships()
+                .iter()
+                .filter(|r| !r.alias.is_unnamed())
+                .map(|r| r.alias.id)
+                .collect(),
+            lifted_rels,
+            paths: component.paths(),
+        }
+    }
+
+    /// Whether `rel`'s edge must be bound per edge: it is named, a lifted
+    /// Filter reads it, or a named path holds it. Otherwise the runtime may
+    /// collapse multi-edges into one row per (src, dst).
+    fn must_emit(
+        &self,
+        rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    ) -> bool {
+        !rel.alias.is_unnamed()
+            || self.lifted_rels.contains(&rel.alias.key())
+            || self.paths.iter().any(|p| p.vars.contains(&rel.alias))
+    }
+}
+
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
 ///
 /// The planner maintains state across clauses:
@@ -2223,8 +2281,9 @@ impl Planner {
                 },
                 |node| self.visited.contains(node),
             );
-            let mut iter = sorted_rels.iter();
-            let Some(relationship) = iter.next() else {
+            let edges = ComponentEdges::new(&component, &lifted_rels);
+            let mut hops = sorted_rels.iter();
+            let Some(first) = hops.next() else {
                 // Node-only component (no relationships).
                 let nodes = component.nodes();
                 debug_assert_eq!(nodes.len(), 1);
@@ -2305,312 +2364,10 @@ impl Planner {
                 }
                 continue;
             };
-            // Plan the first relationship in this connected component.
-            // The choice of operator depends on which endpoints are already bound:
-            //   - Self-loop (from == to): scan the node, then ExpandInto
-            //   - Both endpoints bound: ExpandInto (just check the edge exists)
-            //   - Variable-length path: CondVarLenTraverse (BFS)
-            //   - Otherwise: CondTraverse (fixed-length traversal)
-            //
-            // emit_relationship: true when the edge must be bound per-edge
-            // (named edge or edge referenced in a named path). When false,
-            // the runtime may collapse multi-edges into one row per (src, dst).
-            let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
-                !rel.alias.is_unnamed()
-                    || lifted_rels.contains(&rel.alias.key())
-                    || component
-                        .paths()
-                        .iter()
-                        .any(|p| p.vars.contains(&rel.alias))
-            };
-            // Collect edge alias IDs for relationship uniqueness checking.
-            // Only named (non-anonymous) edges participate in uniqueness constraints;
-            // unnamed edges are excluded so the same physical edge
-            // can be traversed by different anonymous bindings (matches FalkorDB C).
-            let sibling_edges: Vec<u32> = relationships
-                .iter()
-                .filter(|r| !r.alias.is_unnamed())
-                .map(|r| r.alias.id)
-                .collect();
-            // Inline attrs are lowered to Filters below; the operator embeds the
-            // stripped pattern so the predicate has one representation only.
-            // A var-length walk is the exception for its edge's own attrs: it
-            // keeps them on the pattern and prunes per edge with them, as on
-            // main, because above the walk `r` binds a list and a `Filter` there
-            // would test an assembled path instead.
-            let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
-                || relationship.min_hops.is_some();
-            let rel = if is_walk {
-                strip_endpoint_attrs(relationship)
-            } else {
-                strip_rel_attrs(relationship)
-            };
-            let edge_pred = if is_walk {
-                None
-            } else {
-                lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
-            };
-            let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths(rel))
-            } else if relationship.min_hops.is_some() {
-                // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
-                // Build scan child for the from-node when it's not yet visited
-                // (i.e. this CVLT is the leaf of a component).
-                let scan_child = if self.visited.contains(&relationship.from.alias.key()) {
-                    None
-                } else {
-                    // No inline-attr Filter here: the endpoint blocks below
-                    // lower both endpoints unconditionally, and
-                    // `push_filters_down` lands the predicate back on this
-                    // scan. Emitting it here too would duplicate it, and the
-                    // copy on the scan is the one `select_var_len_scan_node`
-                    // discards when it prunes and rebuilds.
-                    Some(if rel.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(rel.from.clone()))
-                    } else {
-                        tree!(IR::NodeByLabelScan {
-                            node: rel.from.clone(),
-                        })
-                    })
-                };
-                // Both endpoints already bound (and distinct): the traverse only
-                // verifies reachability between two known nodes.
-                let expand_into = scan_child.is_none()
-                    && relationship.from.alias != relationship.to.alias
-                    && self.visited.contains(&relationship.to.alias.key());
-                scan_child.map_or_else(
-                    || {
-                        tree!(IR::CondVarLenTraverse {
-                            relationship: rel.clone(),
-                            edge_filter: None,
-                            emit_path: true,
-                            path_var: None,
-                            expand_into,
-                        })
-                    },
-                    |scan| {
-                        tree!(
-                            IR::CondVarLenTraverse {
-                                relationship: rel.clone(),
-                                edge_filter: None,
-                                emit_path: true,
-                                path_var: None,
-                                expand_into,
-                            },
-                            scan
-                        )
-                    },
-                )
-            } else if relationship.from.alias == relationship.to.alias {
-                // Self-loop with fixed-length edge: scan + ExpandInto.
-                // If the node is already bound (visited), don't rescan — the
-                // Argument from the surrounding Apply will provide the binding.
-                let already_bound = self.visited.contains(&relationship.from.alias.key());
-                if already_bound {
-                    tree!(IR::ExpandInto {
-                        relationship: rel,
-                        emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                        sibling_edges: sibling_edges.clone(),
-                    })
-                } else {
-                    let scan = if rel.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(rel.from.clone()))
-                    } else {
-                        tree!(IR::NodeByLabelScan {
-                            node: rel.from.clone(),
-                        })
-                    };
-                    tree!(
-                        IR::ExpandInto {
-                            relationship: rel,
-                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                            sibling_edges: sibling_edges.clone(),
-                        },
-                        scan
-                    )
-                }
-            } else if self.visited.contains(&relationship.from.alias.key())
-                && self.visited.contains(&relationship.to.alias.key())
-            {
-                // Both endpoints already bound; their inline attrs are lowered
-                // by the endpoint blocks below, which no longer skip visited
-                // aliases.
-                tree!(IR::ExpandInto {
-                    relationship: rel,
-                    emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                    sibling_edges: sibling_edges.clone(),
-                })
-            } else {
-                tree!(IR::CondTraverse {
-                    relationship: rel,
-                    emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                    sibling_edges: sibling_edges.clone(),
-                    transposed: false,
-                    chain: Vec::new(),
-                    optional: false,
-                    bind_relationship: true,
-                })
-            };
-            // Fixed-length traverses take the predicate as a `Filter`, the one
-            // place it is evaluated. That Filter reads the edge, which is why
-            // the operator above was planned with `emit_relationship` set: it
-            // must emit every parallel edge for the Filter to test, not one
-            // representative per (src, dst) pair. The walks never get one: they
-            // keep the edge's attrs on their pattern and prune with them.
-            if let Some(filter_expr) = edge_pred
-                && matches!(
-                    res.root().data(),
-                    IR::CondTraverse { .. } | IR::ExpandInto { .. }
-                )
-            {
-                res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-            }
-            // Lower both endpoints' inline attributes (e.g. `(b {val: 'v2'})`)
-            // into Filters above the operator. Both are lowered whether or not
-            // the alias is already visited: an endpoint bound by an earlier
-            // clause can still carry attrs on this occurrence
-            // (`MATCH (a:A) MATCH (a {x:1})-[:R]->(b)`), and only `CondTraverse`
-            // re-checks them at runtime — `CondVarLenTraverse` and
-            // `AllShortestPaths` read the edge's attrs only, so skipping the
-            // lowering there dropped the predicate outright.
-            //
-            // Above the operator rather than on the scan, so the optimizer's
-            // chain reversal can see and reposition them; `push_filters_down`
-            // lands them back on the scan afterwards.
-            for endpoint in [&relationship.to, &relationship.from] {
-                let attr_filter =
-                    lower_inline_attrs(&mut lowered_attrs, &endpoint.alias, &endpoint.attrs);
-                if let Some(filter_expr) = attr_filter {
-                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                }
-            }
-            self.visited.insert(relationship.from.alias.key());
-            self.visited.insert(relationship.to.alias.key());
-            self.visited.insert(relationship.alias.key());
-            self.mark_labels_verified(&relationship.from.alias, relationship.from.labels.iter());
-            self.mark_labels_verified(&relationship.to.alias, relationship.to.labels.iter());
-            // Chain remaining relationships in the component, each one
-            // stacking on top of the previous result using the same logic.
-            for relationship in iter {
-                // As above: a walk keeps its edge's own attrs on the pattern.
-                let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
-                    || relationship.min_hops.is_some();
-                let rel = if is_walk {
-                    strip_endpoint_attrs(relationship)
-                } else {
-                    strip_rel_attrs(relationship)
-                };
-                let edge_pred = if is_walk {
-                    None
-                } else {
-                    lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
-                };
-                res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(IR::AllShortestPaths(rel), res)
-                } else if relationship.min_hops.is_some() {
-                    let expand_into = relationship.from.alias != relationship.to.alias
-                        && self.visited.contains(&relationship.from.alias.key())
-                        && self.visited.contains(&relationship.to.alias.key());
-                    tree!(
-                        IR::CondVarLenTraverse {
-                            relationship: rel,
-                            edge_filter: None,
-                            emit_path: true,
-                            path_var: None,
-                            expand_into,
-                        },
-                        res
-                    )
-                } else if relationship.from.alias == relationship.to.alias {
-                    let already_bound = self.visited.contains(&relationship.from.alias.key());
-                    if already_bound {
-                        tree!(
-                            IR::ExpandInto {
-                                relationship: rel,
-                                emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                                sibling_edges: sibling_edges.clone(),
-                            },
-                            res
-                        )
-                    } else {
-                        // The node is not bound yet: scan it once per row of
-                        // the hops planned so far, so the scan sits on top of
-                        // `res` and no earlier hop is dropped.
-                        let scan = if rel.from.clone().labels.is_empty() {
-                            tree!(IR::AllNodeScan(rel.from.clone()), res)
-                        } else {
-                            tree!(
-                                IR::NodeByLabelScan {
-                                    node: rel.from.clone(),
-                                },
-                                res
-                            )
-                        };
-                        tree!(
-                            IR::ExpandInto {
-                                relationship: rel,
-                                emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                                sibling_edges: sibling_edges.clone(),
-                            },
-                            scan
-                        )
-                    }
-                } else if self.visited.contains(&relationship.from.alias.key())
-                    && self.visited.contains(&relationship.to.alias.key())
-                {
-                    tree!(
-                        IR::ExpandInto {
-                            relationship: rel,
-                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                            sibling_edges: sibling_edges.clone(),
-                        },
-                        res
-                    )
-                } else {
-                    tree!(
-                        IR::CondTraverse {
-                            relationship: rel,
-                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                            sibling_edges: sibling_edges.clone(),
-                            transposed: false,
-                            chain: Vec::new(),
-                            optional: false,
-                            bind_relationship: true,
-                        },
-                        res
-                    )
-                };
-                // See the same block above the chained loop.
-                if let Some(filter_expr) = edge_pred
-                    && matches!(
-                        res.root().data(),
-                        IR::CondTraverse { .. } | IR::ExpandInto { .. }
-                    )
-                {
-                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                }
-                // Both endpoints, unconditionally — see the same block above the
-                // chained loop. The `from` endpoint had no lowering here at all,
-                // so in `MATCH (a)-[:R]->(b)-[:R]->(c), (b {x:1})-[:S]->(d)` the
-                // third hop's `b.x = 1` reached the plan only as `rp.from.attrs`
-                // on the CondTraverse, enforced by its per-row re-check. That
-                // still gave the right answer; it just left the predicate
-                // invisible to the optimizer.
-                for endpoint in [&relationship.to, &relationship.from] {
-                    let attr_filter =
-                        lower_inline_attrs(&mut lowered_attrs, &endpoint.alias, &endpoint.attrs);
-                    if let Some(filter_expr) = attr_filter {
-                        res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                    }
-                }
-                self.visited.insert(relationship.from.alias.key());
-                self.visited.insert(relationship.to.alias.key());
-                self.visited.insert(relationship.alias.key());
-                self.mark_labels_verified(
-                    &relationship.from.alias,
-                    relationship.from.labels.iter(),
-                );
-                self.mark_labels_verified(&relationship.to.alias, relationship.to.labels.iter());
+            // Each later hop stacks on the hops planned before it.
+            let mut res = self.plan_hop(first, None, &edges, &mut lowered_attrs);
+            for hop in hops {
+                res = self.plan_hop(hop, Some(res), &edges, &mut lowered_attrs);
             }
             let paths = component.paths();
             if !paths.is_empty() {
@@ -2681,6 +2438,149 @@ impl Planner {
             let filter_expr = ExprIR::and_of(bound_filters);
             res = tree!(IR::Filter(Arc::new(filter_expr)), res);
         }
+        res
+    }
+
+    /// Plan one hop of a component on top of `input`, the hops planned before
+    /// it (`None` for the component's first hop), and mark its variables
+    /// bound.
+    ///
+    /// The operator depends on the hop's kind and on which endpoints are
+    /// already bound:
+    ///   - allShortestPaths: `AllShortestPaths`;
+    ///   - variable-length: `CondVarLenTraverse` (BFS), even for a self-loop
+    ///     `(a)-[*0]->(a)`;
+    ///   - self-loop (from == to): `ExpandInto`, after a scan of the node if
+    ///     nothing bound it;
+    ///   - both endpoints bound: `ExpandInto` (just check the edge exists);
+    ///   - otherwise: `CondTraverse` (fixed-length traversal).
+    fn plan_hop(
+        &mut self,
+        hop: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        input: Option<DynTree<IR>>,
+        edges: &ComponentEdges,
+        lowered_attrs: &mut HashSet<(VarKey, usize)>,
+    ) -> DynTree<IR> {
+        // Inline attrs are lowered to Filters below; the operator embeds the
+        // stripped pattern so the predicate has one representation only.
+        // A var-length walk is the exception for its edge's own attrs: it
+        // keeps them on the pattern and prunes per edge with them, because
+        // above the walk `r` binds a list and a `Filter` there would test an
+        // assembled path instead.
+        let is_walk = hop.all_shortest_paths != AllShortestPaths::No || hop.min_hops.is_some();
+        let rel = if is_walk {
+            strip_endpoint_attrs(hop)
+        } else {
+            strip_rel_attrs(hop)
+        };
+        let edge_pred = if is_walk {
+            None
+        } else {
+            lower_inline_attrs(lowered_attrs, &hop.alias, &hop.attrs)
+        };
+        let from_bound = self.visited.contains(&hop.from.alias.key());
+        let to_bound = self.visited.contains(&hop.to.alias.key());
+        let self_loop = hop.from.alias == hop.to.alias;
+        // Fixed-length operators take the edge predicate as a `Filter` above
+        // them, which reads the edge: they must emit every parallel edge for
+        // it to test, not one representative per (src, dst) pair.
+        let emit_relationship = edges.must_emit(hop) || edge_pred.is_some();
+        let mut res = if hop.all_shortest_paths != AllShortestPaths::No {
+            tree!(IR::AllShortestPaths(rel); input)
+        } else if hop.min_hops.is_some() {
+            // The component's first hop scans its `from` endpoint when
+            // nothing bound it. No inline-attr Filter on that scan: the
+            // endpoint loop below lowers both endpoints unconditionally,
+            // and `push_filters_down` lands the predicate back on this scan.
+            // Emitting it here too would duplicate it, and the copy on the
+            // scan is the one `select_var_len_scan_node` discards when it
+            // prunes and rebuilds. A later hop runs on the hops before it
+            // and scans nothing.
+            let first_hop = input.is_none();
+            let input = if first_hop && !from_bound {
+                Some(node_scan(rel.from.clone(), None))
+            } else {
+                input
+            };
+            tree!(
+                IR::CondVarLenTraverse {
+                    relationship: rel,
+                    edge_filter: None,
+                    emit_path: true,
+                    path_var: None,
+                    // Both endpoints already bound (and distinct): the
+                    // traverse only verifies reachability between two known
+                    // nodes.
+                    expand_into: !self_loop && from_bound && to_bound,
+                };
+                input
+            )
+        } else if self_loop || (from_bound && to_bound) {
+            // A self-loop's node that nothing bound yet is scanned first: as
+            // the leaf on the component's first hop, and on a later hop once
+            // per row of the hops planned so far, so the scan sits on top of
+            // `input` and no earlier hop is dropped. A bound node is not
+            // rescanned: `input` carries it, or, on a first hop, whatever is
+            // stitched in underneath (an earlier clause, or an Apply's
+            // Argument). Both endpoints' inline attrs are lowered by the
+            // endpoint loop below.
+            let input = if self_loop && !from_bound {
+                Some(node_scan(rel.from.clone(), input))
+            } else {
+                input
+            };
+            tree!(
+                IR::ExpandInto {
+                    relationship: rel,
+                    emit_relationship,
+                    sibling_edges: edges.sibling_edges.clone(),
+                };
+                input
+            )
+        } else {
+            tree!(
+                IR::CondTraverse {
+                    relationship: rel,
+                    emit_relationship,
+                    sibling_edges: edges.sibling_edges.clone(),
+                    transposed: false,
+                    chain: Vec::new(),
+                    optional: false,
+                    bind_relationship: true,
+                };
+                input
+            )
+        };
+        // Fixed-length traverses take the predicate as a `Filter`, the one
+        // place it is evaluated (`edge_pred` is only set for them). The walks
+        // never get one: they keep the edge's attrs on their pattern and
+        // prune with them.
+        if let Some(filter_expr) = edge_pred {
+            res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+        }
+        // Lower both endpoints' inline attributes (e.g. `(b {val: 'v2'})`)
+        // into Filters above the operator. Both are lowered whether or not
+        // the alias is already visited: an endpoint bound by an earlier
+        // clause can still carry attrs on this occurrence
+        // (`MATCH (a:A) MATCH (a {x:1})-[:R]->(b)`), and only `CondTraverse`
+        // re-checks them at runtime — `CondVarLenTraverse` and
+        // `AllShortestPaths` read the edge's attrs only, so skipping the
+        // lowering there dropped the predicate outright.
+        //
+        // Above the operator rather than on the scan, so the optimizer's
+        // chain reversal can see and reposition them; `push_filters_down`
+        // lands them back on the scan afterwards.
+        for endpoint in [&hop.to, &hop.from] {
+            let attr_filter = lower_inline_attrs(lowered_attrs, &endpoint.alias, &endpoint.attrs);
+            if let Some(filter_expr) = attr_filter {
+                res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+            }
+        }
+        self.visited.insert(hop.from.alias.key());
+        self.visited.insert(hop.to.alias.key());
+        self.visited.insert(hop.alias.key());
+        self.mark_labels_verified(&hop.from.alias, hop.from.labels.iter());
+        self.mark_labels_verified(&hop.to.alias, hop.to.labels.iter());
         res
     }
 
