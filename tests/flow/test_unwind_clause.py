@@ -144,3 +144,24 @@ class testUnwindClause():
         self.env.assertEqual(result.nodes_created, 1)
         self.env.assertEqual(result.properties_set, 1)
 
+    def test08_unwind_range_variants(self):
+        query = "UNWIND range(0, 5) AS x RETURN collect(x)"
+        res = self.graph.query(query)
+        self.env.assertEqual(res.result_set, [[[0, 1, 2, 3, 4, 5]]])
+
+        query = "UNWIND range(5, 0, -1) AS x RETURN collect(x)"
+        res = self.graph.query(query)
+        self.env.assertEqual(res.result_set, [[[5, 4, 3, 2, 1, 0]]])
+
+        query = "UNWIND range(0, 6, 2) AS x RETURN collect(x)"
+        res = self.graph.query(query)
+        self.env.assertEqual(res.result_set, [[[0, 2, 4, 6]]])
+
+    def test09_unwind_large_range_cached_execution(self):
+        query = "UNWIND range(0, 1000000) AS x RETURN count(x)"
+        uncached = self.graph.query(query)
+        cached = self.graph.query(query)
+
+        self.env.assertFalse(uncached.cached_execution)
+        self.env.assertTrue(cached.cached_execution)
+        self.env.assertEqual(uncached.result_set, cached.result_set)
