@@ -111,6 +111,98 @@ theorem chainRel_stripped (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
     by_cases h4 : r.frm.alias = r.to.alias <;>
     simp [hb1, hb2, h4, MP.stripped, MP.stripped.strippedL, h1, h2, hs, h3', hk, hres]
 
+/-! ## #3940: one `plan_hop` for every hop (mod.rs:2461-2589), `node_scan` (:894),
+`ComponentEdges` (:907-951)
+
+`plan_match` used to plan the first hop (`firstRel`) and the later hops (`chainRel`) with two
+copies of the operator choice. `plan_hop(hop, input)` merges them: `input` is `None` for the first
+hop and `Some(res)` after it. Its edge-predicate Filter has no `CondTraverse | ExpandInto` guard
+(`topFiltersU`); `planHop_none` / `planHop_some` prove it is exactly `firstRel` / `chainRel`, so
+every theorem about those is a theorem about `plan_hop`. -/
+
+/-- `node_scan(node, input)` (mod.rs:894-903): `AllNodeScan` / `NodeByLabelScan` on `input`. -/
+def nodeScan (n : QN) : Option MP → MP
+  | none => scanOf n
+  | some res => scanOn n res
+
+theorem nodeScan_none (n : QN) : nodeScan n none = scanOf n := rfl
+theorem nodeScan_some (n : QN) (res : MP) : nodeScan n (some res) = scanOn n res := rfl
+
+/-- `ComponentEdges::new` (mod.rs:919-935): the ids of the component's named edges, in pattern
+order (`sibling_edges`; the operators' uniqueness list, which `MP` does not carry). -/
+def siblingEdges (c : Comp) : List Nat := (c.rels.filter (·.named)).map (·.alias.id)
+
+theorem siblingEdges_spec (c : Comp) (i : Nat) :
+    i ∈ siblingEdges c ↔ ∃ r ∈ c.rels, r.named = true ∧ r.alias.id = i := by
+  simp [siblingEdges, and_assoc]
+
+/-- `ComponentEdges::must_emit` (mod.rs:938-950): the former `emit_rel` closure, i.e. `emitRel`. -/
+def mustEmit (c : Comp) (r : QR) : Bool := r.named || r.lifted || c.paths.any fun p => p.2.contains r.alias
+
+theorem mustEmit_eq (c : Comp) (r : QR) : mustEmit c r = emitRel c r := rfl
+
+/-- `plan_hop`'s operator (mod.rs:2492-2557). -/
+def hopOp (st : MSt) (c : Comp) (lw : LW) (input : Option MP) (r : QR) : MP :=
+  let fb := st.bound r.frm.alias
+  let tb := st.bound r.to.alias
+  let sl := decide (r.frm.alias = r.to.alias)
+  let emit := mustEmit c r || (edgePred lw r).1.isSome
+  match r.kind with
+  | .shortest => .shortest (opRel r) input.toList
+  | .varLen =>
+    let input := if input.isNone && !fb then some (nodeScan (opRel r).frm none) else input
+    .cvlt (opRel r) (!sl && fb && tb) none input.toList
+  | .fixed =>
+    if sl || (fb && tb) then
+      let input := if sl && !fb then some (nodeScan (opRel r).frm input) else input
+      .expandInto (opRel r) emit input.toList
+    else .condTr (opRel r) emit input.toList
+
+/-- The edge Filter with no operator guard (mod.rs:2562-2564), then both endpoints (:2577-2582). -/
+def topFiltersU (lw : LW) (r : QR) (op : MP) : MP × LW :=
+  let (ep, lw) := edgePred lw r
+  let res := withF ep op
+  let (ft, lw) := lowerN lw r.to
+  let res := withF ft res
+  let (ff, lw) := lowerN lw r.frm
+  (withF ff res, lw)
+
+/-- `plan_hop(hop, input)`, before the `visited` / verified-label bookkeeping (`visit`). -/
+def planHop (st : MSt) (c : Comp) (lw : LW) (input : Option MP) (r : QR) : MP × LW :=
+  topFiltersU lw r (hopOp st c lw input r)
+
+/-- Dropping the guard changes nothing: only a fixed-length hop has an edge predicate, and its
+operator is a `CondTraverse` or an `ExpandInto`. -/
+theorem topFiltersU_eq (lw : LW) (r : QR) (op : MP) (h : op.isCtEi = (r.kind == .fixed)) :
+    topFiltersU lw r op = topFilters lw r op := by
+  unfold topFiltersU topFilters
+  by_cases hk : r.kind = .fixed
+  · simp [hk] at h; simp [h]
+  · have he : edgePred lw r = (none, lw) := by simp [edgePred, isWalk, hk]
+    simp [he, withF]
+
+theorem hopOp_none (st : MSt) (c : Comp) (lw : LW) (r : QR) : hopOp st c lw none r = firstOp st c lw r := by
+  unfold hopOp firstOp
+  cases hk : r.kind <;> by_cases h1 : st.bound r.frm.alias <;> by_cases h2 : st.bound r.to.alias <;>
+    by_cases h3 : r.frm.alias = r.to.alias <;> simp [h1, h2, h3, nodeScan, opEmit, mustEmit, emitRel]
+
+theorem hopOp_some (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) :
+    hopOp st c lw (some res) r = chainOp st c lw res r := by
+  unfold hopOp chainOp
+  cases hk : r.kind <;> by_cases h1 : st.bound r.frm.alias <;> by_cases h2 : st.bound r.to.alias <;>
+    by_cases h3 : r.frm.alias = r.to.alias <;> simp [h1, h2, h3, nodeScan, opEmit, mustEmit, emitRel]
+
+/-- **#3940**: `plan_hop` on the component's first hop is the old first-hop planning. -/
+theorem planHop_none (st : MSt) (c : Comp) (lw : LW) (r : QR) :
+    planHop st c lw none r = firstRel st c lw r := by
+  rw [planHop, firstRel, hopOp_none, topFiltersU_eq _ _ _ (firstOp_isCtEi st c lw r)]
+
+/-- **#3940**: `plan_hop` on a later hop, over the hops before it, is the old chained planning. -/
+theorem planHop_some (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) :
+    planHop st c lw (some res) r = chainRel st c lw res r := by
+  rw [planHop, chainRel, hopOp_some, topFiltersU_eq _ _ _ (chainOp_isCtEi st c lw res r)]
+
+
 /-- `MATCH (a)-[:R]->(b)-[:R]->(c), (b {x:1})-[:S]->(d)`-shape: a fixed later hop leaving a bound
 `b` with attrs. Before #2390 the CondTraverse kept `{x: 1}` on its pattern with no Filter
 (enforced only by its per-row re-check, which #2390 also removed); now it is a Filter. -/
@@ -307,6 +399,13 @@ def planRels (c : Comp) : List QR → MP → MSt → LW → MP × MSt × LW
   | r :: rs, res, st, lw =>
     let x := chainRel st c lw res r
     planRels c rs x.1 (visit st r) x.2
+
+/-- `plan_match`'s hop loop (mod.rs:2121-2125) is `planRels`: each later hop is `plan_hop` on the
+hops before it, then `visit`. -/
+theorem planRels_planHop (c : Comp) (r : QR) (rs : List QR) (res : MP) (st : MSt) (lw : LW) :
+    planRels c (r :: rs) res st lw =
+      planRels c rs (planHop st c lw (some res) r).1 (visit st r) (planHop st c lw (some res) r).2 := by
+  rw [planHop_some]; rfl
 
 /-- The `HopShape` closure (mod.rs:2217-2223): nodes are `(id, scope_id)`; `self_loop`
 is `r.from.alias == r.to.alias` (id and scope since #3933, ids only before); `fixed` = neither

@@ -887,6 +887,64 @@ fn has_labels_filter(
     )
 }
 
+/// A scan of the nodes that carry all of `node`'s labels (every node when it
+/// has none), stacked on `input` when there is one. The runtime's
+/// `get_nodes()` intersects all label matrices, so a multi-label node needs
+/// one `NodeByLabelScan` only.
+fn node_scan(
+    node: Arc<QueryNode<Arc<String>, Variable>>,
+    input: Option<DynTree<IR>>,
+) -> DynTree<IR> {
+    if node.labels.is_empty() {
+        tree!(IR::AllNodeScan(node); input)
+    } else {
+        tree!(IR::NodeByLabelScan { node }; input)
+    }
+}
+
+/// What every hop of one connected component reads about the component
+/// while `plan_hop` plans it.
+struct ComponentEdges<'a> {
+    /// Ids of the component's named edges, for relationship uniqueness.
+    /// Unnamed edges are left out, so the same physical edge can be
+    /// traversed by different anonymous bindings (matches FalkorDB C).
+    sibling_edges: Vec<u32>,
+    /// Relationships whose attrs were lifted into a clause-level Filter.
+    lifted_rels: &'a HashSet<VarKey>,
+    /// The component's named paths.
+    paths: &'a [Arc<QueryPath<Variable>>],
+}
+
+impl<'a> ComponentEdges<'a> {
+    fn new(
+        component: &'a QueryGraph<Arc<String>, Arc<String>, Variable>,
+        lifted_rels: &'a HashSet<VarKey>,
+    ) -> Self {
+        Self {
+            sibling_edges: component
+                .relationships()
+                .iter()
+                .filter(|r| !r.alias.is_unnamed())
+                .map(|r| r.alias.id)
+                .collect(),
+            lifted_rels,
+            paths: component.paths(),
+        }
+    }
+
+    /// Whether `rel`'s edge must be bound per edge: it is named, a lifted
+    /// Filter reads it, or a named path holds it. Otherwise the runtime may
+    /// collapse multi-edges into one row per (src, dst).
+    fn must_emit(
+        &self,
+        rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    ) -> bool {
+        !rel.alias.is_unnamed()
+            || self.lifted_rels.contains(&rel.alias.key())
+            || self.paths.iter().any(|p| p.vars.contains(&rel.alias))
+    }
+}
+
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
 ///
 /// The planner maintains state across clauses:
@@ -2040,12 +2098,11 @@ impl Planner {
                 .as_ref()
                 .is_some_and(|f| Self::has_pattern_expr(&f.root()));
         for component in components {
-            let relationships = component.relationships();
             // Endpoints already bound by earlier clauses may carry labels
             // that were never enforced by a scan or traversal (e.g.
             // clause-local labels from an OPTIONAL MATCH on a bound alias).
             // Verify them with an explicit hasLabels filter.
-            for rel in relationships {
+            for rel in component.relationships() {
                 for endpoint in [&rel.from, &rel.to] {
                     if self.visited.contains(&endpoint.alias.key()) {
                         let missing = self.unverified_labels(endpoint);
@@ -2056,606 +2113,25 @@ impl Planner {
                     }
                 }
             }
-            // Reorder relationships: put variable-length and AllShortestPaths
-            // relationships after fixed-length ones so that fixed-length
-            // traversals (especially self-loops / ExpandInto) are planned as
-            // leaves and variable-length traversals sit above them.
-            let mut sorted_rels: Vec<_> = relationships.to_vec();
-            // An endpoint the query constrains (inline attributes, or a WHERE
-            // predicate) is a cheap place to start: an index lookup or a short
-            // scan rather than every node of a label.
-            let is_constrained = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
-                n.attrs.root().num_children() > 0 || anchor_vars.contains(&n.alias.key())
-            };
-            let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
-                is_constrained(&r.from) || is_constrained(&r.to)
-            };
-            // A variable-length hop on an anchored endpoint leads the component
-            // when no fixed-length hop is anchored and nothing is bound yet.
-            // Planned last, as the sort below does by default, it would sit
-            // above a fixed-length hop that `select_scan_node` then starts from
-            // an unrelated label scan, and the var-length expansion runs from
-            // every candidate that scan finds (#2558).
-            //
-            // Only a walk that can start the plan leads, and the hops after it
-            // follow the pattern outward (see below), so each one has a bound
-            // endpoint when its turn comes:
-            //   - no walk in the component reads a variable in its endpoint or
-            //     edge attributes, so moving it loses no match;
-            //   - the endpoint `select_var_len_scan_node` will scan is the
-            //     anchored one. That pass scans the endpoint with the higher
-            //     `endpoint_scan_score` (the `to` side only when strictly
-            //     higher, since the walk can run either way), so the decision is
-            //     made here with the same score and a predicate that mentions
-            //     an endpoint at all (`a.x = c.x`) counts for it, anchored or not.
-            // Otherwise a walk keeps its place after the fixed-length hops,
-            // where its endpoints are bound by the hops before it.
-            let var_len_anchor_leads = !bound_before_clause
-                && !relationships.iter().any(|r| {
-                    r.min_hops.is_none()
-                        && r.all_shortest_paths == AllShortestPaths::No
-                        && anchored(r)
-                });
-            let references_variable =
-                |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
-                    [&r.attrs, &r.from.attrs, &r.to.attrs]
-                        .into_iter()
-                        .any(|attrs| !collect_expr_variables(attrs).is_empty())
-                };
-            // The WHERE sits above everything the clause plans. Scan selection
-            // reads the Filters directly above the component (through its own
-            // traversals), so a predicate is only visible to it when the
-            // component is the clause's only one (no CartesianProduct between)
-            // and is a tree (a cycle or self-loop plans an `ExpandInto`, which
-            // hides it), and the WHERE holds no pattern (that plans an `Apply`
-            // between). Otherwise only the inline attributes count here.
-            let where_visible =
-                single_component && relationships.len() + 1 == component.nodes().len();
-            let scan_score = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
-                endpoint_scan_score(
-                    n.attrs.root().num_children() > 0
-                        || (where_visible && filter_vars.contains(&n.alias.key())),
-                    !n.labels.is_empty(),
-                )
-            };
-            let is_anchored_end = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
-                n.attrs.root().num_children() > 0
-                    || (where_visible && anchor_vars.contains(&n.alias.key()))
-            };
-            let leads_from_anchor = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
-                let lead = if walk_scans_to_endpoint(scan_score(&r.from), scan_score(&r.to)) {
-                    &r.to
-                } else {
-                    &r.from
-                };
-                is_anchored_end(lead)
-            };
-            // Every hop must be free to move: none reads a variable some other
-            // hop binds (a fixed hop's edge filter or an endpoint's attrs would
-            // run before the hop that binds it), and none is an allShortestPaths
-            // (which needs both ends).
-            let walks_can_move = relationships
-                .iter()
-                .all(|r| r.all_shortest_paths == AllShortestPaths::No && !references_variable(r));
-            let leading_walk = if var_len_anchor_leads && walks_can_move {
-                relationships
-                    .iter()
-                    .find(|r| {
-                        r.min_hops.is_some() && r.from.alias != r.to.alias && leads_from_anchor(r)
-                    })
-                    .map(|r| r.alias.key())
-            } else {
-                None
-            };
-            sorted_rels.sort_by_key(|r| {
-                let base = if r.all_shortest_paths == AllShortestPaths::No {
-                    if leading_walk == Some(r.alias.key()) {
-                        -1
-                    } else {
-                        i32::from(r.min_hops.is_some())
-                    }
-                } else {
-                    2
-                };
-                // Within the same hop-type tier, prefer relationships that
-                // touch an already-bound variable so that traversals start
-                // from the known node (matches FalkorDB C behaviour).
-                let has_bound = i32::from(
-                    !(self.visited.contains(&r.from.alias.key())
-                        || self.visited.contains(&r.to.alias.key())),
-                );
-                // Among the hops leaving that known node, prefer the one that
-                // reaches a constrained endpoint, so its filter runs right
-                // after the first hop instead of after the whole pattern has
-                // been traversed (matches FalkorDB C behaviour). Components
-                // with no bound entry point are left alone: there
-                // `select_scan_node` picks the starting endpoint and reverses
-                // the chain, so the order chosen here does not decide where
-                // the filters land.
-                let unfiltered = if has_bound == 0 {
-                    i32::from(![&r.from, &r.to].iter().any(|n| {
-                        n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.key())
-                    }))
-                } else {
-                    0
-                };
-                (base, has_bound, unfiltered)
-            });
-            // A promoted walk starts the plan, and every hop after it must touch
-            // what is bound already, as in a walk outward from the anchor: a hop
-            // sorted by tier alone could come first with neither end bound
-            // (a second walk would then start from every node). The runtime
-            // runs a walk from whichever end is bound, so the order is free.
-            if let Some(lead) = leading_walk {
-                let mut ordered = Vec::with_capacity(sorted_rels.len());
-                let mut bound: HashSet<VarKey> = HashSet::new();
-                let mut rest = sorted_rels;
-                let first = rest
-                    .iter()
-                    .position(|r| r.alias.key() == lead)
-                    .expect("the leading walk is one of the component's hops");
-                let mut next = Some(rest.remove(first));
-                while let Some(r) = next {
-                    bound.insert(r.from.alias.key());
-                    bound.insert(r.to.alias.key());
-                    ordered.push(r);
-                    let pos = rest.iter().position(|r| {
-                        bound.contains(&r.from.alias.key()) || bound.contains(&r.to.alias.key())
-                    });
-                    next = pos
-                        .or_else(|| (!rest.is_empty()).then_some(0))
-                        .map(|i| rest.remove(i));
-                }
-                sorted_rels = ordered;
-            }
-            // Past the first hop, a fixed-length self-loop on a node nothing
-            // has bound yet could only scan that node again and cross it with
-            // the hops before it (the var-length hop that reaches it was
-            // sorted later). Move it to just after the first later hop that
-            // binds the node, so it becomes an ExpandInto on the bound node.
-            let sorted_rels = self_loops_after_binders(
-                sorted_rels,
-                |r| HopShape {
-                    from: r.from.alias.key(),
-                    to: r.to.alias.key(),
-                    self_loop: r.from.alias == r.to.alias,
-                    fixed: r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No,
-                },
-                |node| self.visited.contains(node),
+            let hops = self.order_hops(
+                &component,
+                &filter_vars,
+                &anchor_vars,
+                bound_before_clause,
+                single_component,
             );
-            let mut iter = sorted_rels.iter();
-            let Some(relationship) = iter.next() else {
-                // Node-only component (no relationships).
-                let nodes = component.nodes();
-                debug_assert_eq!(nodes.len(), 1);
-                let node = nodes[0].clone();
-                if self.visited.contains(&node.alias.key()) {
-                    // Already bound: check for inline property constraints and
-                    // additional labels that need verifying.
-                    let attr_filter =
-                        lower_inline_attrs(&mut lowered_attrs, &node.alias, &node.attrs);
-                    if let Some(filter_expr) = attr_filter {
-                        bound_filters.push(filter_expr);
-                    }
-                    if node.labels.is_empty() {
-                        vec.push(tree!(IR::Argument(None)));
-                    } else {
-                        // Additional labels on an already-bound node: create a
-                        // synthetic self-loop ExpandInto to verify them.
-                        let from_node = Arc::new(QueryNode::new(
-                            node.alias.clone(),
-                            OrderSet::default(),
-                            Arc::new(tree!(ExprIR::Map)),
-                        ));
-                        let to_node = Arc::new(QueryNode::new(
-                            node.alias.clone(),
-                            node.labels.clone(),
-                            Arc::new(tree!(ExprIR::Map)),
-                        ));
-                        let edge_alias = Variable {
-                            alias: None,
-                            id: u32::MAX - node.alias.id,
-                            scope_id: node.alias.scope_id,
-                            ty: Type::Relationship,
-                        };
-                        let rel = Arc::new(QueryRelationship::new(
-                            edge_alias,
-                            vec![],
-                            Arc::new(tree!(ExprIR::Map)),
-                            from_node,
-                            to_node,
-                            false,
-                            None,
-                            None,
-                        ));
-                        vec.push(tree!(
-                            IR::ExpandInto {
-                                relationship: rel,
-                                emit_relationship: false,
-                                sibling_edges: vec![],
-                            },
-                            tree!(IR::Argument(None))
-                        ));
-                        self.mark_labels_verified(&node.alias, node.labels.iter());
-                    }
-                } else {
-                    let attr_filter =
-                        lower_inline_attrs(&mut lowered_attrs, &node.alias, &node.attrs);
-                    // The binder's post-processing already set the full
-                    // accumulated label set on each QueryNode directly.
-                    let scan_node = strip_node_attrs(&node);
-                    let mut res = if node.labels.is_empty() {
-                        tree!(IR::AllNodeScan(scan_node))
-                    } else {
-                        // Multi-label node: the runtime's get_nodes()
-                        // intersects all label matrices, so we can pass
-                        // all labels directly to NodeByLabelScan.
-                        tree!(IR::NodeByLabelScan { node: scan_node })
-                    };
-                    if let Some(filter_expr) = attr_filter {
-                        res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                    }
-                    self.visited.insert(node.alias.key());
-                    self.mark_labels_verified(&node.alias, node.labels.iter());
-                    let paths = component.paths();
-                    if !paths.is_empty() {
-                        res = tree!(IR::PathBuilder(paths.to_vec()), res);
-                    }
-                    vec.push(res);
-                }
+            let Some((first, rest)) = hops.split_first() else {
+                // A component with no hop is a single node.
+                vec.push(self.plan_lone_node(&component, &mut lowered_attrs, &mut bound_filters));
                 continue;
             };
-            // Plan the first relationship in this connected component.
-            // The choice of operator depends on which endpoints are already bound:
-            //   - Self-loop (from == to): scan the node, then ExpandInto
-            //   - Both endpoints bound: ExpandInto (just check the edge exists)
-            //   - Variable-length path: CondVarLenTraverse (BFS)
-            //   - Otherwise: CondTraverse (fixed-length traversal)
-            //
-            // emit_relationship: true when the edge must be bound per-edge
-            // (named edge or edge referenced in a named path). When false,
-            // the runtime may collapse multi-edges into one row per (src, dst).
-            let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
-                !rel.alias.is_unnamed()
-                    || lifted_rels.contains(&rel.alias.key())
-                    || component
-                        .paths()
-                        .iter()
-                        .any(|p| p.vars.contains(&rel.alias))
-            };
-            // Collect edge alias IDs for relationship uniqueness checking.
-            // Only named (non-anonymous) edges participate in uniqueness constraints;
-            // unnamed edges are excluded so the same physical edge
-            // can be traversed by different anonymous bindings (matches FalkorDB C).
-            let sibling_edges: Vec<u32> = relationships
-                .iter()
-                .filter(|r| !r.alias.is_unnamed())
-                .map(|r| r.alias.id)
-                .collect();
-            // Inline attrs are lowered to Filters below; the operator embeds the
-            // stripped pattern so the predicate has one representation only.
-            // A var-length walk is the exception for its edge's own attrs: it
-            // keeps them on the pattern and prunes per edge with them, as on
-            // main, because above the walk `r` binds a list and a `Filter` there
-            // would test an assembled path instead.
-            let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
-                || relationship.min_hops.is_some();
-            let rel = if is_walk {
-                strip_endpoint_attrs(relationship)
-            } else {
-                strip_rel_attrs(relationship)
-            };
-            let edge_pred = if is_walk {
-                None
-            } else {
-                lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
-            };
-            let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths(rel))
-            } else if relationship.min_hops.is_some() {
-                // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
-                // Build scan child for the from-node when it's not yet visited
-                // (i.e. this CVLT is the leaf of a component).
-                let scan_child = if self.visited.contains(&relationship.from.alias.key()) {
-                    None
-                } else {
-                    // No inline-attr Filter here: the endpoint blocks below
-                    // lower both endpoints unconditionally, and
-                    // `push_filters_down` lands the predicate back on this
-                    // scan. Emitting it here too would duplicate it, and the
-                    // copy on the scan is the one `select_var_len_scan_node`
-                    // discards when it prunes and rebuilds.
-                    Some(if rel.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(rel.from.clone()))
-                    } else {
-                        tree!(IR::NodeByLabelScan {
-                            node: rel.from.clone(),
-                        })
-                    })
-                };
-                // Both endpoints already bound (and distinct): the traverse only
-                // verifies reachability between two known nodes.
-                let expand_into = scan_child.is_none()
-                    && relationship.from.alias != relationship.to.alias
-                    && self.visited.contains(&relationship.to.alias.key());
-                scan_child.map_or_else(
-                    || {
-                        tree!(IR::CondVarLenTraverse {
-                            relationship: rel.clone(),
-                            edge_filter: None,
-                            emit_path: true,
-                            path_var: None,
-                            expand_into,
-                        })
-                    },
-                    |scan| {
-                        tree!(
-                            IR::CondVarLenTraverse {
-                                relationship: rel.clone(),
-                                edge_filter: None,
-                                emit_path: true,
-                                path_var: None,
-                                expand_into,
-                            },
-                            scan
-                        )
-                    },
-                )
-            } else if relationship.from.alias == relationship.to.alias {
-                // Self-loop with fixed-length edge: scan + ExpandInto.
-                // If the node is already bound (visited), don't rescan — the
-                // Argument from the surrounding Apply will provide the binding.
-                let already_bound = self.visited.contains(&relationship.from.alias.key());
-                if already_bound {
-                    tree!(IR::ExpandInto {
-                        relationship: rel,
-                        emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                        sibling_edges: sibling_edges.clone(),
-                    })
-                } else {
-                    let scan = if rel.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(rel.from.clone()))
-                    } else {
-                        tree!(IR::NodeByLabelScan {
-                            node: rel.from.clone(),
-                        })
-                    };
-                    tree!(
-                        IR::ExpandInto {
-                            relationship: rel,
-                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                            sibling_edges: sibling_edges.clone(),
-                        },
-                        scan
-                    )
-                }
-            } else if self.visited.contains(&relationship.from.alias.key())
-                && self.visited.contains(&relationship.to.alias.key())
-            {
-                // Both endpoints already bound; their inline attrs are lowered
-                // by the endpoint blocks below, which no longer skip visited
-                // aliases.
-                tree!(IR::ExpandInto {
-                    relationship: rel,
-                    emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                    sibling_edges: sibling_edges.clone(),
-                })
-            } else {
-                tree!(IR::CondTraverse {
-                    relationship: rel,
-                    emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                    sibling_edges: sibling_edges.clone(),
-                    transposed: false,
-                    chain: Vec::new(),
-                    optional: false,
-                    bind_relationship: true,
-                })
-            };
-            // Fixed-length traverses take the predicate as a `Filter`, the one
-            // place it is evaluated. That Filter reads the edge, which is why
-            // the operator above was planned with `emit_relationship` set: it
-            // must emit every parallel edge for the Filter to test, not one
-            // representative per (src, dst) pair. The walks never get one: they
-            // keep the edge's attrs on their pattern and prune with them.
-            if let Some(filter_expr) = edge_pred
-                && matches!(
-                    res.root().data(),
-                    IR::CondTraverse { .. } | IR::ExpandInto { .. }
-                )
-            {
-                res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+            let edges = ComponentEdges::new(&component, &lifted_rels);
+            // Each later hop stacks on the hops planned before it.
+            let mut res = self.plan_hop(first, None, &edges, &mut lowered_attrs);
+            for hop in rest {
+                res = self.plan_hop(hop, Some(res), &edges, &mut lowered_attrs);
             }
-            // Lower both endpoints' inline attributes (e.g. `(b {val: 'v2'})`)
-            // into Filters above the operator. Both are lowered whether or not
-            // the alias is already visited: an endpoint bound by an earlier
-            // clause can still carry attrs on this occurrence
-            // (`MATCH (a:A) MATCH (a {x:1})-[:R]->(b)`), and only `CondTraverse`
-            // re-checks them at runtime — `CondVarLenTraverse` and
-            // `AllShortestPaths` read the edge's attrs only, so skipping the
-            // lowering there dropped the predicate outright.
-            //
-            // Above the operator rather than on the scan, so the optimizer's
-            // chain reversal can see and reposition them; `push_filters_down`
-            // lands them back on the scan afterwards.
-            for endpoint in [&relationship.to, &relationship.from] {
-                let attr_filter =
-                    lower_inline_attrs(&mut lowered_attrs, &endpoint.alias, &endpoint.attrs);
-                if let Some(filter_expr) = attr_filter {
-                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                }
-            }
-            self.visited.insert(relationship.from.alias.key());
-            self.visited.insert(relationship.to.alias.key());
-            self.visited.insert(relationship.alias.key());
-            self.mark_labels_verified(&relationship.from.alias, relationship.from.labels.iter());
-            self.mark_labels_verified(&relationship.to.alias, relationship.to.labels.iter());
-            // Chain remaining relationships in the component, each one
-            // stacking on top of the previous result using the same logic.
-            for relationship in iter {
-                // As above: a walk keeps its edge's own attrs on the pattern.
-                let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
-                    || relationship.min_hops.is_some();
-                let rel = if is_walk {
-                    strip_endpoint_attrs(relationship)
-                } else {
-                    strip_rel_attrs(relationship)
-                };
-                let edge_pred = if is_walk {
-                    None
-                } else {
-                    lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
-                };
-                res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(IR::AllShortestPaths(rel), res)
-                } else if relationship.min_hops.is_some() {
-                    let expand_into = relationship.from.alias != relationship.to.alias
-                        && self.visited.contains(&relationship.from.alias.key())
-                        && self.visited.contains(&relationship.to.alias.key());
-                    tree!(
-                        IR::CondVarLenTraverse {
-                            relationship: rel,
-                            edge_filter: None,
-                            emit_path: true,
-                            path_var: None,
-                            expand_into,
-                        },
-                        res
-                    )
-                } else if relationship.from.alias == relationship.to.alias {
-                    let already_bound = self.visited.contains(&relationship.from.alias.key());
-                    if already_bound {
-                        tree!(
-                            IR::ExpandInto {
-                                relationship: rel,
-                                emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                                sibling_edges: sibling_edges.clone(),
-                            },
-                            res
-                        )
-                    } else {
-                        // The node is not bound yet: scan it once per row of
-                        // the hops planned so far, so the scan sits on top of
-                        // `res` and no earlier hop is dropped.
-                        let scan = if rel.from.clone().labels.is_empty() {
-                            tree!(IR::AllNodeScan(rel.from.clone()), res)
-                        } else {
-                            tree!(
-                                IR::NodeByLabelScan {
-                                    node: rel.from.clone(),
-                                },
-                                res
-                            )
-                        };
-                        tree!(
-                            IR::ExpandInto {
-                                relationship: rel,
-                                emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                                sibling_edges: sibling_edges.clone(),
-                            },
-                            scan
-                        )
-                    }
-                } else if self.visited.contains(&relationship.from.alias.key())
-                    && self.visited.contains(&relationship.to.alias.key())
-                {
-                    tree!(
-                        IR::ExpandInto {
-                            relationship: rel,
-                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                            sibling_edges: sibling_edges.clone(),
-                        },
-                        res
-                    )
-                } else {
-                    tree!(
-                        IR::CondTraverse {
-                            relationship: rel,
-                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
-                            sibling_edges: sibling_edges.clone(),
-                            transposed: false,
-                            chain: Vec::new(),
-                            optional: false,
-                            bind_relationship: true,
-                        },
-                        res
-                    )
-                };
-                // See the same block above the chained loop.
-                if let Some(filter_expr) = edge_pred
-                    && matches!(
-                        res.root().data(),
-                        IR::CondTraverse { .. } | IR::ExpandInto { .. }
-                    )
-                {
-                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                }
-                // Both endpoints, unconditionally — see the same block above the
-                // chained loop. The `from` endpoint had no lowering here at all,
-                // so in `MATCH (a)-[:R]->(b)-[:R]->(c), (b {x:1})-[:S]->(d)` the
-                // third hop's `b.x = 1` reached the plan only as `rp.from.attrs`
-                // on the CondTraverse, enforced by its per-row re-check. That
-                // still gave the right answer; it just left the predicate
-                // invisible to the optimizer.
-                for endpoint in [&relationship.to, &relationship.from] {
-                    let attr_filter =
-                        lower_inline_attrs(&mut lowered_attrs, &endpoint.alias, &endpoint.attrs);
-                    if let Some(filter_expr) = attr_filter {
-                        res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                    }
-                }
-                self.visited.insert(relationship.from.alias.key());
-                self.visited.insert(relationship.to.alias.key());
-                self.visited.insert(relationship.alias.key());
-                self.mark_labels_verified(
-                    &relationship.from.alias,
-                    relationship.from.labels.iter(),
-                );
-                self.mark_labels_verified(&relationship.to.alias, relationship.to.labels.iter());
-            }
-            let paths = component.paths();
-            if !paths.is_empty() {
-                // A named path covering exactly one forward var-len pattern is
-                // bound directly by the CondVarLenTraverse (which already
-                // materializes the full path value), skipping PathBuilder.
-                let mut remaining = Vec::with_capacity(paths.len());
-                for path in paths {
-                    let rel = relationships.first();
-                    let elidable = relationships.len() == 1
-                        && rel.is_some_and(|rel| {
-                            rel.min_hops.is_some()
-                                && rel.all_shortest_paths == AllShortestPaths::No
-                                && path.vars.len() == 3
-                                && path.vars[0] == rel.from.alias
-                                && path.vars[1] == rel.alias
-                                && path.vars[2] == rel.to.alias
-                        });
-                    if elidable {
-                        let mut bound = false;
-                        let indices: Vec<_> = res.root().indices::<Bfs>().collect();
-                        for idx in indices {
-                            if let IR::CondVarLenTraverse {
-                                relationship,
-                                path_var: path_var @ None,
-                                ..
-                            } = res.node_mut(idx).data_mut()
-                                && relationship.alias == path.vars[1]
-                            {
-                                *path_var = Some(path.var.clone());
-                                bound = true;
-                                break;
-                            }
-                        }
-                        if bound {
-                            continue;
-                        }
-                    }
-                    remaining.push(path.clone());
-                }
-                if !remaining.is_empty() {
-                    res = tree!(IR::PathBuilder(remaining), res);
-                }
-            }
-            vec.push(res);
+            vec.push(Self::bind_component_paths(&component, res));
         }
         // Join disconnected components: single component uses its plan directly,
         // multiple components are joined via CartesianProduct.
@@ -2680,6 +2156,488 @@ impl Planner {
         if !bound_filters.is_empty() {
             let filter_expr = ExprIR::and_of(bound_filters);
             res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+        }
+        res
+    }
+
+    /// The variable-length hop that `order_hops` puts first in its
+    /// component, if any: the first walk, in pattern order, that is not a
+    /// self-loop and whose scanned endpoint is anchored. `None` when the
+    /// component must not lead with a walk (see below).
+    fn leading_walk(
+        component: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        filter_vars: &HashSet<VarKey>,
+        anchor_vars: &HashSet<VarKey>,
+        bound_before_clause: bool,
+        single_component: bool,
+    ) -> Option<VarKey> {
+        let relationships = component.relationships();
+        // An endpoint the query constrains (inline attributes, or a WHERE
+        // predicate) is a cheap place to start: an index lookup or a short
+        // scan rather than every node of a label.
+        let is_constrained = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+            n.attrs.root().num_children() > 0 || anchor_vars.contains(&n.alias.key())
+        };
+        let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+            is_constrained(&r.from) || is_constrained(&r.to)
+        };
+        // A variable-length hop on an anchored endpoint leads the component
+        // when no fixed-length hop is anchored and nothing is bound yet.
+        // Planned last, as `order_hops` sorts it by default, it would sit
+        // above a fixed-length hop that `select_scan_node` then starts from
+        // an unrelated label scan, and the var-length expansion runs from
+        // every candidate that scan finds (#2558).
+        //
+        // Only a walk that can start the plan leads, and the hops after it
+        // follow the pattern outward (see `order_hops`), so each one has a bound
+        // endpoint when its turn comes:
+        //   - no walk in the component reads a variable in its endpoint or
+        //     edge attributes, so moving it loses no match;
+        //   - the endpoint `select_var_len_scan_node` will scan is the
+        //     anchored one. That pass scans the endpoint with the higher
+        //     `endpoint_scan_score` (the `to` side only when strictly
+        //     higher, since the walk can run either way), so the decision is
+        //     made here with the same score and a predicate that mentions
+        //     an endpoint at all (`a.x = c.x`) counts for it, anchored or not.
+        // Otherwise a walk keeps its place after the fixed-length hops,
+        // where its endpoints are bound by the hops before it.
+        let var_len_anchor_leads = !bound_before_clause
+            && !relationships.iter().any(|r| {
+                r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No && anchored(r)
+            });
+        let references_variable = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+            [&r.attrs, &r.from.attrs, &r.to.attrs]
+                .into_iter()
+                .any(|attrs| !collect_expr_variables(attrs).is_empty())
+        };
+        // The WHERE sits above everything the clause plans. Scan selection
+        // reads the Filters directly above the component (through its own
+        // traversals), so a predicate is only visible to it when the
+        // component is the clause's only one (no CartesianProduct between)
+        // and is a tree (a cycle or self-loop plans an `ExpandInto`, which
+        // hides it), and the WHERE holds no pattern (that plans an `Apply`
+        // between). Otherwise only the inline attributes count here.
+        let where_visible = single_component && relationships.len() + 1 == component.nodes().len();
+        let scan_score = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+            endpoint_scan_score(
+                n.attrs.root().num_children() > 0
+                    || (where_visible && filter_vars.contains(&n.alias.key())),
+                !n.labels.is_empty(),
+            )
+        };
+        let is_anchored_end = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+            n.attrs.root().num_children() > 0
+                || (where_visible && anchor_vars.contains(&n.alias.key()))
+        };
+        let leads_from_anchor = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+            let lead = if walk_scans_to_endpoint(scan_score(&r.from), scan_score(&r.to)) {
+                &r.to
+            } else {
+                &r.from
+            };
+            is_anchored_end(lead)
+        };
+        // Every hop must be free to move: none reads a variable some other
+        // hop binds (a fixed hop's edge filter or an endpoint's attrs would
+        // run before the hop that binds it), and none is an allShortestPaths
+        // (which needs both ends).
+        let walks_can_move = relationships
+            .iter()
+            .all(|r| r.all_shortest_paths == AllShortestPaths::No && !references_variable(r));
+        if var_len_anchor_leads && walks_can_move {
+            relationships
+                .iter()
+                .find(|r| {
+                    r.min_hops.is_some() && r.from.alias != r.to.alias && leads_from_anchor(r)
+                })
+                .map(|r| r.alias.key())
+        } else {
+            None
+        }
+    }
+
+    /// The order in which `plan_match` plans the hops of one connected
+    /// component, each on top of the ones before it.
+    ///
+    /// Fixed-length hops come first and variable-length and allShortestPaths
+    /// hops after them. Within a tier, hops that touch a bound variable come
+    /// first, and among those the ones that reach a constrained endpoint.
+    /// When a variable-length hop leads (see `leading_walk`), the hops after
+    /// it follow the pattern outward from it: each is the first, in tier
+    /// order, that touches what is already bound. Last, a fixed-length
+    /// self-loop past the first hop, on a node that nothing before it binds,
+    /// moves to just after the first later hop to another node that touches
+    /// it.
+    fn order_hops(
+        &self,
+        component: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        filter_vars: &HashSet<VarKey>,
+        anchor_vars: &HashSet<VarKey>,
+        bound_before_clause: bool,
+        single_component: bool,
+    ) -> Vec<Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>> {
+        let leading_walk = Self::leading_walk(
+            component,
+            filter_vars,
+            anchor_vars,
+            bound_before_clause,
+            single_component,
+        );
+        // Reorder relationships: put variable-length and AllShortestPaths
+        // relationships after fixed-length ones so that fixed-length
+        // traversals (especially self-loops / ExpandInto) are planned as
+        // leaves and variable-length traversals sit above them.
+        let mut sorted_rels: Vec<_> = component.relationships().to_vec();
+        sorted_rels.sort_by_key(|r| {
+            let base = if r.all_shortest_paths == AllShortestPaths::No {
+                if leading_walk == Some(r.alias.key()) {
+                    -1
+                } else {
+                    i32::from(r.min_hops.is_some())
+                }
+            } else {
+                2
+            };
+            // Within the same hop-type tier, prefer relationships that
+            // touch an already-bound variable so that traversals start
+            // from the known node (matches FalkorDB C behaviour).
+            let has_bound = i32::from(
+                !(self.visited.contains(&r.from.alias.key())
+                    || self.visited.contains(&r.to.alias.key())),
+            );
+            // Among the hops leaving that known node, prefer the one that
+            // reaches a constrained endpoint, so its filter runs right
+            // after the first hop instead of after the whole pattern has
+            // been traversed (matches FalkorDB C behaviour). Components
+            // with no bound entry point are left alone: there
+            // `select_scan_node` picks the starting endpoint and reverses
+            // the chain, so the order chosen here does not decide where
+            // the filters land.
+            let unfiltered = if has_bound == 0 {
+                i32::from(![&r.from, &r.to].iter().any(|n| {
+                    n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.key())
+                }))
+            } else {
+                0
+            };
+            (base, has_bound, unfiltered)
+        });
+        // A promoted walk starts the plan, and every hop after it must touch
+        // what is bound already, as in a walk outward from the anchor: a hop
+        // sorted by tier alone could come first with neither end bound
+        // (a second walk would then start from every node). The runtime
+        // runs a walk from whichever end is bound, so the order is free.
+        if let Some(lead) = leading_walk {
+            let mut ordered = Vec::with_capacity(sorted_rels.len());
+            let mut bound: HashSet<VarKey> = HashSet::new();
+            let mut rest = sorted_rels;
+            let first = rest
+                .iter()
+                .position(|r| r.alias.key() == lead)
+                .expect("the leading walk is one of the component's hops");
+            let mut next = Some(rest.remove(first));
+            while let Some(r) = next {
+                bound.insert(r.from.alias.key());
+                bound.insert(r.to.alias.key());
+                ordered.push(r);
+                let pos = rest.iter().position(|r| {
+                    bound.contains(&r.from.alias.key()) || bound.contains(&r.to.alias.key())
+                });
+                next = pos
+                    .or_else(|| (!rest.is_empty()).then_some(0))
+                    .map(|i| rest.remove(i));
+            }
+            sorted_rels = ordered;
+        }
+        // Past the first hop, a fixed-length self-loop on a node nothing
+        // has bound yet could only scan that node again and cross it with
+        // the hops before it (the var-length hop that reaches it was
+        // sorted later). Move it to just after the first later hop that
+        // binds the node, so it becomes an ExpandInto on the bound node.
+        self_loops_after_binders(
+            sorted_rels,
+            |r| HopShape {
+                from: r.from.alias.key(),
+                to: r.to.alias.key(),
+                self_loop: r.from.alias == r.to.alias,
+                fixed: r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No,
+            },
+            |node| self.visited.contains(node),
+        )
+    }
+
+    /// Plan a component that is one node and no relationship.
+    ///
+    /// A node bound by an earlier clause needs no scan: only its inline
+    /// attributes (a Filter, added to `bound_filters`) and its labels (a
+    /// synthetic self-loop `ExpandInto`) are checked, and the component's
+    /// named paths are not built, which is a bug (#2311). An unbound node is
+    /// scanned, and the component's named paths are built above the scan.
+    fn plan_lone_node(
+        &mut self,
+        component: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        lowered_attrs: &mut HashSet<(VarKey, usize)>,
+        bound_filters: &mut Vec<DynTree<ExprIR<Variable>>>,
+    ) -> DynTree<IR> {
+        let nodes = component.nodes();
+        debug_assert_eq!(nodes.len(), 1);
+        let node = nodes[0].clone();
+        let attr_filter = lower_inline_attrs(lowered_attrs, &node.alias, &node.attrs);
+        if self.visited.contains(&node.alias.key()) {
+            // Already bound: check for inline property constraints and
+            // additional labels that need verifying.
+            if let Some(filter_expr) = attr_filter {
+                bound_filters.push(filter_expr);
+            }
+            if node.labels.is_empty() {
+                return tree!(IR::Argument(None));
+            }
+            // Additional labels on an already-bound node: create a
+            // synthetic self-loop ExpandInto to verify them.
+            let from_node = Arc::new(QueryNode::new(
+                node.alias.clone(),
+                OrderSet::default(),
+                Arc::new(tree!(ExprIR::Map)),
+            ));
+            let to_node = Arc::new(QueryNode::new(
+                node.alias.clone(),
+                node.labels.clone(),
+                Arc::new(tree!(ExprIR::Map)),
+            ));
+            let edge_alias = Variable {
+                alias: None,
+                id: u32::MAX - node.alias.id,
+                scope_id: node.alias.scope_id,
+                ty: Type::Relationship,
+            };
+            let rel = Arc::new(QueryRelationship::new(
+                edge_alias,
+                vec![],
+                Arc::new(tree!(ExprIR::Map)),
+                from_node,
+                to_node,
+                false,
+                None,
+                None,
+            ));
+            self.mark_labels_verified(&node.alias, node.labels.iter());
+            return tree!(
+                IR::ExpandInto {
+                    relationship: rel,
+                    emit_relationship: false,
+                    sibling_edges: vec![],
+                },
+                tree!(IR::Argument(None))
+            );
+        }
+        // The binder's post-processing already set the full accumulated
+        // label set on each QueryNode directly.
+        let mut res = node_scan(strip_node_attrs(&node), None);
+        if let Some(filter_expr) = attr_filter {
+            res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+        }
+        self.visited.insert(node.alias.key());
+        self.mark_labels_verified(&node.alias, node.labels.iter());
+        let paths = component.paths();
+        if !paths.is_empty() {
+            res = tree!(IR::PathBuilder(paths.to_vec()), res);
+        }
+        res
+    }
+
+    /// Plan one hop of a component on top of `input`, the hops planned before
+    /// it (`None` for the component's first hop), and mark its variables
+    /// bound.
+    ///
+    /// The operator depends on the hop's kind and on which endpoints are
+    /// already bound:
+    ///   - allShortestPaths: `AllShortestPaths`;
+    ///   - variable-length: `CondVarLenTraverse` (BFS), even for a self-loop
+    ///     `(a)-[*0]->(a)`;
+    ///   - self-loop (from == to): `ExpandInto`, after a scan of the node if
+    ///     nothing bound it;
+    ///   - both endpoints bound: `ExpandInto` (just check the edge exists);
+    ///   - otherwise: `CondTraverse` (fixed-length traversal).
+    fn plan_hop(
+        &mut self,
+        hop: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        input: Option<DynTree<IR>>,
+        edges: &ComponentEdges,
+        lowered_attrs: &mut HashSet<(VarKey, usize)>,
+    ) -> DynTree<IR> {
+        // Inline attrs are lowered to Filters below; the operator embeds the
+        // stripped pattern so the predicate has one representation only.
+        // A var-length walk is the exception for its edge's own attrs: it
+        // keeps them on the pattern and prunes per edge with them, because
+        // above the walk `r` binds a list and a `Filter` there would test an
+        // assembled path instead.
+        let is_walk = hop.all_shortest_paths != AllShortestPaths::No || hop.min_hops.is_some();
+        let rel = if is_walk {
+            strip_endpoint_attrs(hop)
+        } else {
+            strip_rel_attrs(hop)
+        };
+        let edge_pred = if is_walk {
+            None
+        } else {
+            lower_inline_attrs(lowered_attrs, &hop.alias, &hop.attrs)
+        };
+        let from_bound = self.visited.contains(&hop.from.alias.key());
+        let to_bound = self.visited.contains(&hop.to.alias.key());
+        let self_loop = hop.from.alias == hop.to.alias;
+        // Fixed-length operators take the edge predicate as a `Filter` above
+        // them, which reads the edge: they must emit every parallel edge for
+        // it to test, not one representative per (src, dst) pair.
+        let emit_relationship = edges.must_emit(hop) || edge_pred.is_some();
+        let mut res = if hop.all_shortest_paths != AllShortestPaths::No {
+            tree!(IR::AllShortestPaths(rel); input)
+        } else if hop.min_hops.is_some() {
+            // The component's first hop scans its `from` endpoint when
+            // nothing bound it. No inline-attr Filter on that scan: the
+            // endpoint loop below lowers both endpoints unconditionally,
+            // and `push_filters_down` lands the predicate back on this scan.
+            // Emitting it here too would duplicate it, and the copy on the
+            // scan is the one `select_var_len_scan_node` discards when it
+            // prunes and rebuilds. A later hop runs on the hops before it
+            // and scans nothing.
+            let first_hop = input.is_none();
+            let input = if first_hop && !from_bound {
+                Some(node_scan(rel.from.clone(), None))
+            } else {
+                input
+            };
+            tree!(
+                IR::CondVarLenTraverse {
+                    relationship: rel,
+                    edge_filter: None,
+                    emit_path: true,
+                    path_var: None,
+                    // Both endpoints already bound (and distinct): the
+                    // traverse only verifies reachability between two known
+                    // nodes.
+                    expand_into: !self_loop && from_bound && to_bound,
+                };
+                input
+            )
+        } else if self_loop || (from_bound && to_bound) {
+            // A self-loop's node that nothing bound yet is scanned first: as
+            // the leaf on the component's first hop, and on a later hop once
+            // per row of the hops planned so far, so the scan sits on top of
+            // `input` and no earlier hop is dropped. A bound node is not
+            // rescanned: `input` carries it, or, on a first hop, whatever is
+            // stitched in underneath (an earlier clause, or an Apply's
+            // Argument). Both endpoints' inline attrs are lowered by the
+            // endpoint loop below.
+            let input = if self_loop && !from_bound {
+                Some(node_scan(rel.from.clone(), input))
+            } else {
+                input
+            };
+            tree!(
+                IR::ExpandInto {
+                    relationship: rel,
+                    emit_relationship,
+                    sibling_edges: edges.sibling_edges.clone(),
+                };
+                input
+            )
+        } else {
+            tree!(
+                IR::CondTraverse {
+                    relationship: rel,
+                    emit_relationship,
+                    sibling_edges: edges.sibling_edges.clone(),
+                    transposed: false,
+                    chain: Vec::new(),
+                    optional: false,
+                    bind_relationship: true,
+                };
+                input
+            )
+        };
+        // Fixed-length traverses take the predicate as a `Filter`, the one
+        // place it is evaluated (`edge_pred` is only set for them). The walks
+        // never get one: they keep the edge's attrs on their pattern and
+        // prune with them.
+        if let Some(filter_expr) = edge_pred {
+            res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+        }
+        // Lower both endpoints' inline attributes (e.g. `(b {val: 'v2'})`)
+        // into Filters above the operator. Both are lowered whether or not
+        // the alias is already visited: an endpoint bound by an earlier
+        // clause can still carry attrs on this occurrence
+        // (`MATCH (a:A) MATCH (a {x:1})-[:R]->(b)`), and only `CondTraverse`
+        // re-checks them at runtime — `CondVarLenTraverse` and
+        // `AllShortestPaths` read the edge's attrs only, so skipping the
+        // lowering there dropped the predicate outright.
+        //
+        // Above the operator rather than on the scan, so the optimizer's
+        // chain reversal can see and reposition them; `push_filters_down`
+        // lands them back on the scan afterwards.
+        for endpoint in [&hop.to, &hop.from] {
+            let attr_filter = lower_inline_attrs(lowered_attrs, &endpoint.alias, &endpoint.attrs);
+            if let Some(filter_expr) = attr_filter {
+                res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+            }
+        }
+        self.visited.insert(hop.from.alias.key());
+        self.visited.insert(hop.to.alias.key());
+        self.visited.insert(hop.alias.key());
+        self.mark_labels_verified(&hop.from.alias, hop.from.labels.iter());
+        self.mark_labels_verified(&hop.to.alias, hop.to.labels.iter());
+        res
+    }
+
+    /// Bind the component's named paths on top of `res`, its planned hops.
+    ///
+    /// A named path covering exactly one forward var-len pattern is bound
+    /// directly by the CondVarLenTraverse (which already materializes the
+    /// full path value), skipping PathBuilder.
+    fn bind_component_paths(
+        component: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        mut res: DynTree<IR>,
+    ) -> DynTree<IR> {
+        let relationships = component.relationships();
+        let paths = component.paths();
+        if paths.is_empty() {
+            return res;
+        }
+        let mut remaining = Vec::with_capacity(paths.len());
+        for path in paths {
+            let rel = relationships.first();
+            let elidable = relationships.len() == 1
+                && rel.is_some_and(|rel| {
+                    rel.min_hops.is_some()
+                        && rel.all_shortest_paths == AllShortestPaths::No
+                        && path.vars.len() == 3
+                        && path.vars[0] == rel.from.alias
+                        && path.vars[1] == rel.alias
+                        && path.vars[2] == rel.to.alias
+                });
+            if elidable {
+                let mut bound = false;
+                let indices: Vec<_> = res.root().indices::<Bfs>().collect();
+                for idx in indices {
+                    if let IR::CondVarLenTraverse {
+                        relationship,
+                        path_var: path_var @ None,
+                        ..
+                    } = res.node_mut(idx).data_mut()
+                        && relationship.alias == path.vars[1]
+                    {
+                        *path_var = Some(path.var.clone());
+                        bound = true;
+                        break;
+                    }
+                }
+                if bound {
+                    continue;
+                }
+            }
+            remaining.push(path.clone());
+        }
+        if !remaining.is_empty() {
+            res = tree!(IR::PathBuilder(remaining), res);
         }
         res
     }
