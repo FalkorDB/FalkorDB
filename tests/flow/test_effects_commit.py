@@ -260,8 +260,8 @@ class testEffects_04_NothingSurvives(_EffectsBase):
 
         # Same entities, same ids, same dictionaries on both sides. The ids
         # are the recycled ones: every cancelled id went back to the bin, and
-        # the replica has to have put it there too. `T1` is absent on both --
-        # a type whose every edge was cancelled is never registered.
+        # the replica has to have put it there too. `T1` is registered on both,
+        # as in C: a type whose only edge was cancelled still reaches the schema.
         self.assert_graph_eq()
         self.assert_agree(
             "MATCH (n) RETURN id(n), labels(n), properties(n) ORDER BY id(n)",
@@ -275,4 +275,4 @@ class testEffects_04_NothingSurvives(_EffectsBase):
         self.assert_agree(
             "CALL db.relationshipTypes() YIELD relationshipType "
             "RETURN collect(relationshipType)",
-            [[["T2"]]])
+            [[["T1", "T2"]]])
