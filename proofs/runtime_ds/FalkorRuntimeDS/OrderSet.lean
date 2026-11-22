@@ -7,13 +7,13 @@ and returns the old one, keeping its slot.
 
 | here | there |
 | --- | --- |
-| `List α`        | `struct OrderSet<T> { vec: Vec<T> }` (orderset.rs:22); `from_vec` (orderset.rs:42) drops later duplicates since #2905 (`OrderSetExtra.fromVec`) |
-| `insertS`       | `OrderSet::insert` (orderset.rs:54) |
-| `removeS`       | `OrderSet::remove` (orderset.rs:68) — `position` then `Vec::remove` |
-| `containsS`     | `OrderSet::contains` (orderset.rs:91) |
-| `indexOf`       | `OrderSet::get_index_of` (orderset.rs:116) |
-| `fromListS`     | `FromIterator` (orderset.rs:137), `extend` (orderset.rs:103) |
-| `List` `=`      | `#[derive(PartialEq)]` (orderset.rs:21) — order-*sensitive* |
+| `List α`        | `struct OrderSet<T> { vec: Vec<T> }` (orderset.rs); `from_vec` (orderset.rs) drops later duplicates (`OrderSetExtra.fromVec`) |
+| `insertS`       | `OrderSet::insert` (orderset.rs) |
+| `removeS`       | `OrderSet::remove` (orderset.rs) — `position` then `Vec::remove` |
+| `containsS`     | `OrderSet::contains` (orderset.rs) |
+| `indexOf`       | `OrderSet::get_index_of` (orderset.rs) |
+| `fromListS`     | `FromIterator` (orderset.rs), `extend` (orderset.rs) |
+| `List` `=`      | `#[derive(PartialEq)]` (orderset.rs) — order-*sensitive* |
 
 There is no `swap_remove` in either `OrderSet` or `OrderMap`: every removal is
 an order-preserving `Vec::remove`, so the only index invalidation is the shift
@@ -26,22 +26,22 @@ variable {α : Type}
 section Defs
 variable [BEq α]
 
-/-- orderset.rs:54 -/
+/-- orderset.rs -/
 def insertS : List α → α → List α × Option α
   | [], x => ([x], none)
   | v :: t, x => if v == x then (x :: t, some v) else let r := insertS t x; (v :: r.1, r.2)
 
-/-- orderset.rs:68 -/
+/-- orderset.rs -/
 def removeS : List α → α → List α
   | [], _ => []
   | v :: t, x => if v == x then t else v :: removeS t x
 
-/-- orderset.rs:91 -/
+/-- orderset.rs -/
 def containsS : List α → α → Bool
   | [], _ => false
   | v :: t, x => if v == x then true else containsS t x
 
-/-- orderset.rs:116 -/
+/-- orderset.rs -/
 def indexOf : List α → α → Option Nat
   | [], _ => none
   | v :: t, x => if v == x then some 0 else (indexOf t x).map (· + 1)
@@ -237,10 +237,7 @@ end Props
 /-! ## Counterexamples
 
 * `containsS_removeS` needs `Nodup`: with a duplicate, `remove` drops only the
-  first copy. Before #2905 `from_vec` did not deduplicate, so it could build
-  such a set (counterexample removed in bbee75955; the last revision that has them is 17ccc5412; Rust then:
-  `graph/tests/lean_runtime_ds.rs::orderset_from_vec_duplicates`). Since #2905
-  it drops later duplicates in every build (`OrderSetExtra.fromVec_nodup`,
+  first copy. `from_vec` drops later duplicates in every build (`OrderSetExtra.fromVec_nodup`,
   `containsS_removeS_fromVec`), so every constructor yields a `Nodup` list.
 * The derived `PartialEq` is list equality, so `{a, b} ≠ {b, a}` — unlike
   `OrderMap`, whose `==` ignores order (`OrderMapModel.eqM_iff_perm`). -/

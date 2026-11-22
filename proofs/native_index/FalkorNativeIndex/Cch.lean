@@ -11,12 +11,12 @@ CCH index behaves as before), so what is checkable today is small:
 
 | Lean | Rust |
 | --- | --- |
-| `Csr`, `Csr.row?` | `Csr` (`cch/mod.rs:57`), `Csr::row` (`:71`) |
-| `Csr.isWellFormed` | `Csr::is_well_formed` (`:82`) |
-| `Csr.isSymmetricSimple` | `Csr::is_symmetric_simple` (`:97`) |
-| `CchIndexDef.new` | `CchIndexDef::new` (`:139`) |
+| `Csr`, `Csr.row?` | `Csr` (`cch/mod.rs`), `Csr::row` |
+| `Csr.isWellFormed` | `Csr::is_well_formed` |
+| `Csr.isSymmetricSimple` | `Csr::is_symmetric_simple` |
+| `CchIndexDef.new` | `CchIndexDef::new` |
 | `Res`, `unimpl` | an `unimplemented!()` / `unreachable!()` body: always panics |
-| `cchEntry` | `CchIndex`'s `VersionedIndex::entry` / `entry_mut` (`:314`, `:321`): a `BTreeMap` lookup |
+| `cchEntry` | `CchIndex`'s `VersionedIndex::entry` / `entry_mut`: a `BTreeMap` lookup |
 
 * `row?_spec`, `row?_isSome_of_wf`: `row` is the slice `i[p[u]..p[u+1]]`, and it panics iff an offset is out of range;
   a well-formed `Csr` never panics for `u < n`.
@@ -59,34 +59,34 @@ structure Def where
 /-- The `Cch`/`Def`/graph types are opaque type parameters in this file (the bodies never return), so only
     each result's *shape* is pinned to the Rust signature: `customize` returns `Result<(), CchError>`, hence
     `Res Unit`; the `Err` arm is unreachable while the body panics.
-    `Cch::build` (`:193`, `unimplemented!`, #3208). -/
+    `Cch::build` (`unimplemented!`, #3208). -/
 def cchBuild {Input Cch : Type} (_ : Input) : Res Cch := unimpl
-/-- `Cch::customize` (`:204`, #3209). -/
+/-- `Cch::customize` (#3209). -/
 def cchCustomize {Cch W : Type} (_ : Cch) (_ : W) : Res Unit := unimpl
-/-- `Cch::recustomize_scoped` (`:236`, #3217). -/
+/-- `Cch::recustomize_scoped` (#3217). -/
 def cchRecustomizeScoped {Cch S R : Type} (_ : Cch) (_ : S) : Res R := unimpl
-/-- `Cch::query` (`:249`, #3210). -/
+/-- `Cch::query` (#3210). -/
 def cchQuery {Cch Q R : Type} (_ : Cch) (_ : Q) : Res R := unimpl
-/-- `Cch::node_count` (`:260`, #3209). -/
+/-- `Cch::node_count` (#3209). -/
 def cchNodeCount {Cch : Type} (_ : Cch) : Res Nat := unimpl
-/-- `FalkorDbIndex::cch_index` (`falkordb_index.rs:967`, #3212). -/
+/-- `FalkorDbIndex::cch_index` (`falkordb_index.rs`, #3212). -/
 def indexCchIndex {X Cch : Type} (_ : X) (_ : Def) : Res (Option Cch) := unimpl
-/-- `FalkorDbIndex::cch_defs` (`:975`, #3212): the body panics before the `std::iter::empty()` that pins the type. -/
+/-- `FalkorDbIndex::cch_defs` (#3212): the body panics before the `std::iter::empty()` that pins the type. -/
 def indexCchDefs {X : Type} (_ : X) : Res (List Def) := unimpl
-/-- `FalkorDbIndex::drop_cch` (`:987`, #3212). -/
+/-- `FalkorDbIndex::drop_cch` (#3212). -/
 def indexDropCch {X : Type} (_ : X) (_ : Def) : Res Unit := unimpl
-/-- `Graph::create_cch_index` (`graph.rs:5225`, #3212). -/
+/-- `Graph::create_cch_index` (`graph.rs`, #3212). -/
 def graphCreateCchIndex {G : Type} (_ : G) (_ : Def) : Res Unit := unimpl
-/-- `Graph::rebuild_cch_indexes` (`:5274`, #3212). -/
+/-- `Graph::rebuild_cch_indexes` (#3212). -/
 def graphRebuildCchIndexes {G : Type} (_ : G) : Res Unit := unimpl
-/-- `Graph::drop_cch_index` (`:5237`): `self.falkordb_index.drop_cch(def)`. -/
+/-- `Graph::drop_cch_index`: `self.falkordb_index.drop_cch(def)`. -/
 def graphDropCchIndex {G X : Type} (g : G) (index : G → X) (d : Def) : Res Unit := indexDropCch (index g) d
-/-- `Graph::cch_indexes` (`:5248`): `self.falkordb_index.cch_defs()`. -/
+/-- `Graph::cch_indexes`: `self.falkordb_index.cch_defs()`. -/
 def graphCchIndexes {G X : Type} (g : G) (index : G → X) : Res (List Def) := indexCchDefs (index g)
-/-- `Graph::cch_index` (`:5258`): `self.falkordb_index.cch_index(def)`. -/
+/-- `Graph::cch_index`: `self.falkordb_index.cch_index(def)`. -/
 def graphCchIndex {G X Cch : Type} (g : G) (index : G → X) (d : Def) : Res (Option Cch) := indexCchIndex (index g) d
 
-/-- The `VersionedIndex for CchIndex` bodies that are `unreachable!` (`:330-413`): `writer_record`,
+/-- The `VersionedIndex for CchIndex` bodies that are `unreachable!`: `writer_record`,
     `writer_rebase`, `indexer_catch_up`, `indexer_insert`, `batch_len`, `indexer_read`, `indexer_add`,
     `memory_usage` (#3568, #3569). No `IndexId` variant dispatches to them
     until the background build; a rebase is only onto a `Building` column and every CCH entry is `Ready`. -/
@@ -110,13 +110,13 @@ theorem graphCchIndex_panics {G X Cch : Type} (g : G) (index : G → X) (d : Def
     (graphCchIndex g index d : Res (Option Cch)) = .panic := rfl
 theorem cchVersionedUnreachable_panics {α : Type} : (cchVersionedUnreachable : Res α) = .panic := rfl
 
-/-- `VersionedIndex::entry` / `entry_mut` for `CchIndex` (`cch/mod.rs:314-327`): `cch_indexes.get(def)` and
+/-- `VersionedIndex::entry` / `entry_mut` for `CchIndex` (`cch/mod.rs`): `cch_indexes.get(def)` and
     `get_mut(def)`, found by the whole definition. -/
 def cchEntry {Ent : Type} (m : Def → Option Ent) (d : Def) : Option Ent := m d
 
 theorem cchEntry_spec {Ent : Type} (m : Def → Option Ent) (d : Def) : cchEntry m d = m d := rfl
 
-/-! ## `CchIndexDef::new` (`cch/mod.rs:139-150`) -/
+/-! ## `CchIndexDef::new` (`cch/mod.rs`) -/
 
 /-- `rel_types.sort_unstable(); rel_types.dedup()`. -/
 def defNew (relTypes : List Nat) (weightAttr : Nat) : Def := ⟨sortDedup relTypes, weightAttr⟩
@@ -135,7 +135,7 @@ theorem defNew_eq_of_same_members (rts rts' : List Nat) (a : Nat) (h : ∀ x, x 
     sorted_ext h1.1 h2.1 (fun e => by rw [h1.2, h2.2]; exact h e)
   simp [defNew, this]
 
-/-! ## `Csr` (`cch/mod.rs:57-107`) -/
+/-! ## `Csr` (`cch/mod.rs`) -/
 
 /-- `Csr { n, p, i }`. -/
 structure Csr where
@@ -195,7 +195,7 @@ theorem mono_le (l : List Nat) (h : Mono l) : ∀ (j k a b : Nat), k ≤ j → l
     sorted slice. -/
 def BsSpec (bs : List Nat → Nat → Bool) : Prop := ∀ l x, l.Pairwise (· < ·) → bs l x = decide (x ∈ l)
 
-/-- `Csr::row` (`:71-77`): `i[p[u]..p[u + 1]]`; `none` is the panic (`u` or `u + 1` past `p`, `p[u] > p[u+1]`,
+/-- `Csr::row`: `i[p[u]..p[u + 1]]`; `none` is the panic (`u` or `u + 1` past `p`, `p[u] > p[u+1]`,
     or `p[u+1] > i.len()`). -/
 def Csr.row? (c : Csr) (u : Nat) : Option (List Nat) :=
   match c.p[u]?, c.p[u + 1]? with
@@ -206,7 +206,7 @@ theorem row?_spec (c : Csr) (u a b : Nat) (ha : c.p[u]? = some a) (hb : c.p[u + 
     c.row? u = if a ≤ b ∧ b ≤ c.i.length then some ((c.i.drop a).take (b - a)) else none := by
   simp [Csr.row?, ha, hb]
 
-/-- `Csr::is_well_formed` (`:82-91`): the `checked_sub`, `p[0]`, `p[n]`, `windows(2)` and `iter().all` conjuncts. -/
+/-- `Csr::is_well_formed`: the `checked_sub`, `p[0]`, `p[n]`, `windows(2)` and `iter().all` conjuncts. -/
 def Csr.isWellFormed (c : Csr) : Bool :=
   decide (c.p.length - 1 = c.n ∧ 0 < c.p.length) && (c.p[0]? == some 0) && (c.p[c.n]? == some c.i.length) &&
   (windows2 c.p).all (fun w => decide (w.1 ≤ w.2)) && c.i.all (fun v => decide (v < c.n))
@@ -232,7 +232,7 @@ theorem row?_isSome_of_wf (c : Csr) (hwf : c.isWellFormed = true) (u : Nat) (hu 
   obtain ⟨b, hb⟩ : ∃ b, c.p[u + 1]? = some b := ⟨c.p[u + 1]'(by omega), List.getElem?_eq_getElem (by omega)⟩
   have hab : a ≤ b := hm u a b ha hb
   have hbn : b ≤ c.i.length := mono_le c.p hm c.n (u + 1) b c.i.length (by omega) hb hn
-  exact ⟨_, by rw [row?_spec c u a b ha hb, if_pos ⟨hab, hbn⟩]⟩
+  exact ⟨_, by rw [row?_spec c u a b ha hb, ite_eq_left ⟨hab, hbn⟩]⟩
 
 /-- `row` read after the shape check: the panic case does not arise for `u < n` (`row?_isSome_of_wf`). -/
 def Csr.rowD (c : Csr) (u : Nat) : List Nat := (c.row? u).getD []
@@ -274,7 +274,7 @@ theorem strictWin_iff : ∀ r : List Nat, strictWin r = true ↔ r.Pairwise (· 
       obtain ⟨h1, hp'⟩ := List.pairwise_cons.1 hp
       exact ⟨h1 b (by simp), ih.2 hp'⟩
 
-/-- `Csr::is_symmetric_simple` (`:97-106`), over `bs`, the standard library's `binary_search(..).is_ok()`. -/
+/-- `Csr::is_symmetric_simple`, over `bs`, the standard library's `binary_search(..).is_ok()`. -/
 def Csr.isSymmetricSimple (bs : List Nat → Nat → Bool) (c : Csr) : Bool :=
   c.isWellFormed && (List.range c.n).all (fun u =>
     strictWin (c.rowD u) && (c.rowD u).all (fun v => v != u && bs (c.rowD v) u))

@@ -4,9 +4,9 @@ import GraphQueries.Schema
 
 | here | there |
 | --- | --- |
-| `nm : List String` | `AttrNameMap` (attribute_store.rs:139); `index` kept equal to `idx vec` by its only writers `insert`/`get_or_create` (:189,:224) |
-| `MAXA` | `MAX_ATTRIBUTES = u16::MAX` (attribute_store.rs:132) |
-| `getOrCreate` | `AttrNameMap::get_or_create` — `get_or_create_node_attr_id` / `get_or_create_rel_attr_id` (graph.rs:1979,2048) |
+| `nm : List String` | `AttrNameMap` (attribute_store.rs); `index` kept equal to `idx vec` by its only writers `insert`/`get_or_create` (:189,:224) |
+| `MAXA` | `MAX_ATTRIBUTES = u16::MAX` (attribute_store.rs) |
+| `getOrCreate` | `AttrNameMap::get_or_create` — `get_or_create_node_attr_id` / `get_or_create_rel_attr_id` (graph.rs) |
 | `nmInsert` | `AttrNameMap::insert` — `add_rel_attribute_name` (:5174); `addNodeAttrName` = `add_node_attribute_name` (:5162) |
 | `u16c` | `as u16` |
 | `getAttrIdU16` | `get_node_attr_id` / `get_rel_attr_id` (:1988,:2006) |
@@ -258,7 +258,7 @@ theorem rowsOfLabels_mem (hasIdx : Bool) (indexed : String → String → Bool) 
     · rintro ⟨hn, hl, lab, hlab, a, ha, k, hka, hk⟩
       refine ⟨l, hl, ?_⟩
       simp only [hlab]
-      rw [ite_cond_eq_true _ _ (eq_true (List.any_eq_true.2 ⟨a, ha, by simp [hka, hk]⟩))]
+      rw [ite_eq_left_of_eq_true _ _ (eq_true (List.any_eq_true.2 ⟨a, ha, by simp [hka, hk]⟩))]
       exact List.mem_map.2 ⟨n, hn, rfl⟩
 
 end GQ

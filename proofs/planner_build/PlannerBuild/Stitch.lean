@@ -1,6 +1,6 @@
 import PlannerBuild.Core
 /-
-# Clause stitching: `Planner::plan_query` (planner/mod.rs:2720-2867)
+# Clause stitching: `Planner::plan_query` (planner/mod.rs)
 
 Each clause is planned on its own; the plans are then stitched in reverse: the
 last clause's plan is the root, and each earlier plan is inserted at an
@@ -11,10 +11,10 @@ computes the nested fill `pₙ[pₙ₋₁[…p₁]]` (`stitch_eq_nest`), where `
 `p` on its output" is then a per-clause question (Clauses.lean, Match.lean).
 
 The one place where the two walks disagree on a plan a clause can end with is
-`PathBuilder`: the first walk (mod.rs:2743-2749, and the FOREACH body walk
-mod.rs:3450) does not step over it, the in-loop walk (mod.rs:2817-2830) does
+`PathBuilder`: the first walk (mod.rs, and the FOREACH body walk
+mod.rs) does not step over it, the in-loop walk (mod.rs) does
 (`walkFirst_pathBuilder`, `walkLoop_pathBuilder`). MERGE with a named path is
-planned as `PathBuilder(Merge(match))` (mod.rs:3128-3132), so when it is the
+planned as `PathBuilder(Merge(match))` (mod.rs), so when it is the
 last clause the previous clause lands beside `Merge`, under `PathBuilder`,
 which only ever runs its child 0: `merge_path_last_misplaced`.
 -/
@@ -34,7 +34,7 @@ def Plan.modify (f : Plan → Plan) : Plan → Path → Plan
   | p, [] => f p
   | .node op cs, i :: is => .node op (cs.modify i (fun c => Plan.modify f c is))
 
-/-- Rust's insertion at `idx` (mod.rs:2809-2816): if the node has children,
+/-- Rust's insertion at `idx` (mod.rs): if the node has children,
 `child_mut(0).push_sibling_tree(Side::Left, n)`, else `push_child_tree(n)`.
 Either way `n` becomes the new child 0. -/
 def Plan.push0 : Plan → Plan → Plan
@@ -47,13 +47,13 @@ def insertAt (p : Plan) (π : Path) (x : Plan) : Plan := p.modify (fun q => q.pu
 
 /-! ## The walks -/
 
-/-- Operators the first walk steps over (mod.rs:2743-2749). -/
+/-- Operators the first walk steps over (mod.rs). -/
 def firstPass : Op → Bool
   | .sort _ | .skip _ | .limit _ | .distinct | .filter _ | .semiApply | .antiSemiApply
   | .orMux => true
   | _ => false
 
-/-- Operators the in-loop walk steps over (mod.rs:2818-2830): the same, plus
+/-- Operators the in-loop walk steps over (mod.rs): the same, plus
 the traversals and `PathBuilder` (and `EdgeByIndexScan`, not built by the
 planner). -/
 def loopPass : Op → Bool
@@ -63,30 +63,30 @@ def loopPass : Op → Bool
 
 def isApply : Op → Bool | .apply => true | _ => false
 
-/-- `is_saturated_apply` (mod.rs:953-958). -/
+/-- `is_saturated_apply` (mod.rs). -/
 def saturated : Plan → Bool
   | .node .apply (_ :: _ :: _) => true
   | _ => false
 
-/-- mod.rs:2743-2753. (A childless `Sort`… would make Rust panic on
+/-- mod.rs. (A childless `Sort`… would make Rust panic on
 `child(0)`; the planner never builds one, the model stops.) -/
 def walkFirst : Plan → Path
   | .node op (c :: cs) =>
     if firstPass op || (isApply op && !cs.isEmpty) then 0 :: walkFirst c else []
   | .node _ [] => []
 
-/-- mod.rs:2817-2834. -/
+/-- mod.rs. -/
 def walkLoop : Plan → Path
   | .node op (c :: cs) =>
     if loopPass op || (isApply op && !cs.isEmpty) then 0 :: walkLoop c else []
   | .node _ [] => []
 
-/-- `while child(0) is Apply { idx = child(0) }` (mod.rs:2764-2768). -/
+/-- `while child(0) is Apply { idx = child(0) }` (mod.rs). -/
 def applyChain : Plan → Path
   | .node _ (c :: _) => if isApply c.op then 0 :: applyChain c else []
   | .node _ [] => []
 
-/-- mod.rs:2756-2769: past `Commit` and the Apply chain below a projection. -/
+/-- mod.rs: past `Commit` and the Apply chain below a projection. -/
 def projDescend : Plan → Path
   | .node (.project p) (c :: cs) =>
     if c.op == .commit then 0 :: applyChain c else applyChain (.node (.project p) (c :: cs))
@@ -95,18 +95,20 @@ def projDescend : Plan → Path
   | _ => []
 
 /-- Minimal children of clause operators whose child 0 may be an Apply chain
-(`descend_one_clause_expr_chain`, mod.rs:989-1002). -/
+(`descend_one_clause_expr_chain`; the Rust list also has `LoadCsv`, `NodeByFulltextScan`,
+`EdgeByFulltextScan`, `NodeByVectorScan` and `EdgeByVectorScan` at 1, which are not constructors of
+`Op` here — `procCall` stands for the index-scan procedures, LOAD CSV is not modelled), mod.rs). -/
 def clauseMin : Op → Option Nat
   | .forEach _ _ => some 2
   | .unwind _ _ | .set _ | .remove _ | .delete _ | .procCall _ => some 1
   | _ => none
 
-/-- Descend saturated Applies (mod.rs:1007-1009). -/
+/-- Descend saturated Applies (mod.rs). -/
 def satChain : Plan → Path
   | .node .apply (c :: _ :: _) => 0 :: satChain c
   | _ => []
 
-/-- `descend_one_clause_expr_chain` (mod.rs:985-1012). -/
+/-- `descend_one_clause_expr_chain` (mod.rs). -/
 def descendOne : Plan → Path
   | .node op (c :: cs) =>
     match clauseMin op with
@@ -114,7 +116,7 @@ def descendOne : Plan → Path
     | none => []
   | .node _ [] => []
 
-/-- `descend_clause_expr_applies` (mod.rs:969-983), with fuel = plan depth. -/
+/-- `descend_clause_expr_applies` (mod.rs), with fuel = plan depth. -/
 def descendClause : Nat → Plan → Path
   | 0, _ => []
   | fuel + 1, p =>
@@ -143,7 +145,7 @@ def slotLoop := slotWith walkLoop
 
 /-! ## `needs_apply_wrapping` and `add_argument_to_leaves` -/
 
-/-- mod.rs:2876-2907. -/
+/-- mod.rs. -/
 def needsApplyWrapping : Plan → Bool
   | .node (.scan _) _ | .node (.hop _ _) _ | .node .cartesian _ | .node .argument _
   | .node (.pathBuilder _) _ => false
@@ -152,7 +154,7 @@ def needsApplyWrapping : Plan → Bool
   | .node (.filter _) [] | .node .semiApply [] | .node .antiSemiApply [] | .node .orMux [] => false
   | _ => true
 
-/-- `add_argument_to_leaves` (mod.rs:865-899): every leaf that is not an
+/-- `add_argument_to_leaves` (mod.rs): every leaf that is not an
 `Argument` gets an `Argument` child; MERGE's match branch (last child) is
 skipped, its input (child 0, if it has two children) is descended. -/
 def addArgs : Plan → Plan
@@ -164,51 +166,20 @@ def addArgs : Plan → Plan
 
 /-! ## The stitching loop -/
 
-/-! ## `reads_plan_variables` (#3100) -/
-
-/-- What the planner can see of each operator's variables: `vars` is the
-operator's share of `GetVariables::get_variables` (runtime/runtime.rs:261-300:
-the variables it binds or names, traversal endpoints included) and `refs` is
-`ir_references_variable` (optimizer/references.rs:41; proven in
-proofs/optimizer_rewrites `References.refsNew`). Variables are `(id, scope_id)`
-pairs in Rust, one `Var` here. Every theorem below holds for every instance. -/
-class Mentions where
-  vars : Op → List Var
-  refs : Op → Var → Bool
-
-mutual
-/-- The operators of a subtree (`walk::<Bfs>()`; only membership matters). -/
-def Plan.allOps : Plan → List Op
-  | .node op cs => op :: Plan.allOpsL cs
-def Plan.allOpsL : List Plan → List Op
-  | [] => []
-  | c :: cs => Plan.allOps c ++ Plan.allOpsL cs
-end
-
-/-- `get_variables` of a whole subtree. -/
-def planVars [Mentions] (p : Plan) : List Var := p.allOps.flatMap Mentions.vars
-
-/-- `reads_plan_variables` (mod.rs:2917-2945): some variable `n` binds is
-named by an operator of the subtree `sub` at the insertion point, or read by
-an expression of one (`ir_references_variable`). -/
-def readsPlan [Mentions] (sub n : Plan) : Bool :=
-  (planVars n).any (fun v => (planVars sub).contains v) ||
-    sub.allOps.any (fun o => (planVars n).any (fun v => Mentions.refs o v))
-
-/-- One insertion (mod.rs:2776-2817): returns the new tree and the path of the
+/-- One insertion (the Rust also wraps a `ValueHashJoin` like a CartesianProduct; the planner never
+builds one, the optimizer does later) (mod.rs): returns the new tree and the path of the
 inserted plan's root. The CartesianProduct branch wraps it in `Apply` with the
-argument taps added (mod.rs:2786-2809) when `n` is a data-producing clause or,
-since #3100, when the product reads a variable `n` binds. -/
-def insertStep [Mentions] (res : Plan) (idx : Path) (n : Plan) : Plan × Path :=
+argument taps added (mod.rs). -/
+def insertStep (res : Plan) (idx : Path) (n : Plan) : Plan × Path :=
   match res.get idx with
   | some (.node .cartesian cs) =>
-    if needsApplyWrapping n || readsPlan (.node .cartesian cs) n then
+    if needsApplyWrapping n then
       (res.modify (fun _ => .node .apply [n, .node .cartesian (cs.map addArgs)]) idx, idx ++ [0])
     else (insertAt res idx n, idx ++ [0])
   | _ => (insertAt res idx n, idx ++ [0])
 
-/-- The `for n in iter` loop of `plan_query` (mod.rs:2775-2851). -/
-def stitchLoop [Mentions] : Plan → Path → List Plan → Plan
+/-- The `for n in iter` loop of `plan_query` (mod.rs). -/
+def stitchLoop : Plan → Path → List Plan → Plan
   | res, _, [] => res
   | res, idx, n :: rest =>
     let (res', idx') := insertStep res idx n
@@ -219,42 +190,42 @@ def stitchLoop [Mentions] : Plan → Path → List Plan → Plan
 
 /-- `plan_query` minus the `Commit` wrapper and `ensure_apply_has_input`:
 `plans` in clause order. -/
-def rustStitch [Mentions] (plans : List Plan) : Plan :=
+def rustStitch (plans : List Plan) : Plan :=
   match plans.reverse with
   | [] => .node .argument []
   | last :: rest => stitchLoop last (slotFirst last) rest
 
-theorem insertStep_nonCP [Mentions] (res : Plan) (idx : Path) (n : Plan) (op : Op) (cs : List Plan)
+theorem insertStep_nonCP (res : Plan) (idx : Path) (n : Plan) (op : Op) (cs : List Plan)
     (h : res.get idx = some (.node op cs)) (hc : op ≠ .cartesian) :
     insertStep res idx n = (insertAt res idx n, idx ++ [0]) := by
   unfold insertStep; rw [h]; cases op <;> simp_all
 
-theorem insertStep_CP [Mentions] (res : Plan) (idx : Path) (n : Plan) (cs : List Plan)
+theorem insertStep_CP (res : Plan) (idx : Path) (n : Plan) (cs : List Plan)
     (h : res.get idx = some (.node .cartesian cs)) :
     insertStep res idx n =
-      if needsApplyWrapping n || readsPlan (.node .cartesian cs) n then
+      if needsApplyWrapping n then
         (res.modify (fun _ => .node .apply [n, .node .cartesian (cs.map addArgs)]) idx, idx ++ [0])
       else (insertAt res idx n, idx ++ [0]) := by
   unfold insertStep; rw [h]
 
 /-- The same insertion as one plan-level operation: `p[x]`. -/
-def fillAt [Mentions] (p : Plan) (π : Path) (x : Plan) : Plan := (insertStep p π x).1
+def fillAt (p : Plan) (π : Path) (x : Plan) : Plan := (insertStep p π x).1
 
 /-- Rust decides the CartesianProduct wrapping on the plan being inserted
 *before* its own input is stitched into it; `refill p π x y` makes that
 decision on `x` and then puts the finished `y` where `x` went. -/
-def refill [Mentions] (p : Plan) (π : Path) (x y : Plan) : Plan :=
+def refill (p : Plan) (π : Path) (x y : Plan) : Plan :=
   (insertStep p π x).1.modify (fun _ => y) (insertStep p π x).2
 
 /-- Nested fill `pₙ[pₙ₋₁[…p₁]]` (reverse clause order), each earlier plan at
 the loop-walk slot of the next one. -/
-def nestLoop [Mentions] : List Plan → Plan
+def nestLoop : List Plan → Plan
   | [] => .node .argument []
   | [p] => p
   | p :: q :: rest => refill p (slotLoop p) q (nestLoop (q :: rest))
 
 /-- The whole stitch, the last clause's slot found by the first walk. -/
-def nestStitch [Mentions] (plans : List Plan) : Plan :=
+def nestStitch (plans : List Plan) : Plan :=
   match plans.reverse with
   | [] => .node .argument []
   | [p] => p
@@ -333,7 +304,7 @@ theorem get_append (p : Plan) (π ρ : Path) (q : Plan) (h : p.get π = some q) 
       · exact absurd h (by simp)
 
 /-- `insertStep` inside an embedded subtree = embedding the insertion. -/
-theorem insertStep_embed [Mentions] (res : Plan) (π ρ : Path) (sub n : Plan)
+theorem insertStep_embed (res : Plan) (π ρ : Path) (sub n : Plan)
     (h : res.get π = some sub) :
     insertStep res (π ++ ρ) n =
       (res.modify (fun _ => (insertStep sub ρ n).1) π, π ++ (insertStep sub ρ n).2) := by
@@ -448,7 +419,7 @@ theorem slotFirst_valid (p : Plan) : Valid p (slotFirst p) := slotWith_valid _ w
 theorem slotLoop_valid (p : Plan) : Valid p (slotLoop p) := slotWith_valid _ walkLoop_valid p
 
 /-- After an insertion at a real node, the inserted plan sits at the returned path. -/
-theorem insertStep_get [Mentions] (res : Plan) (idx : Path) (n : Plan) (h : Valid res idx) :
+theorem insertStep_get (res : Plan) (idx : Path) (n : Plan) (h : Valid res idx) :
     (insertStep res idx n).1.get (insertStep res idx n).2 = some n := by
   obtain ⟨q, hq⟩ := h
   unfold insertStep
@@ -498,14 +469,14 @@ theorem modify_const_self (p : Plan) (π : Path) (q : Plan) (h : p.get π = some
       · exact absurd h (by simp)
 
 /-- One loop iteration, with the inserted plan's own walk. -/
-theorem stitchLoop_cons [Mentions] (res : Plan) (idx : Path) (n : Plan) (more : List Plan)
+theorem stitchLoop_cons (res : Plan) (idx : Path) (n : Plan) (more : List Plan)
     (h : Valid res idx) :
     stitchLoop res idx (n :: more) =
       stitchLoop (insertStep res idx n).1 ((insertStep res idx n).2 ++ slotLoop n) more := by
   simp only [stitchLoop, insertStep_get res idx n h]
 
 /-- The loop only ever touches the subtree it is working in. -/
-theorem stitchLoop_embed [Mentions] (rest : List Plan) (res sub : Plan) (π ρ : Path)
+theorem stitchLoop_embed (rest : List Plan) (res sub : Plan) (π ρ : Path)
     (h : res.get π = some sub) (hv : Valid sub ρ) :
     stitchLoop res (π ++ ρ) rest = res.modify (fun _ => stitchLoop sub ρ rest) π := by
   induction rest generalizing res sub ρ with
@@ -525,7 +496,7 @@ theorem stitchLoop_embed [Mentions] (rest : List Plan) (res sub : Plan) (π ρ :
 
 /-- **Stitching = nested fill.** The Rust loop builds `pₙ[pₙ₋₁[…p₁]]`, each
 earlier plan inserted at the loop-walk slot of the plan after it. -/
-theorem stitchLoop_eq_nest [Mentions] (q : Plan) (more : List Plan) (res : Plan) (idx : Path)
+theorem stitchLoop_eq_nest (q : Plan) (more : List Plan) (res : Plan) (idx : Path)
     (h : Valid res idx) :
     stitchLoop res idx (q :: more) = refill res idx q (nestLoop (q :: more)) := by
   induction more generalizing q res idx with
@@ -541,7 +512,7 @@ theorem stitchLoop_eq_nest [Mentions] (q : Plan) (more : List Plan) (res : Plan)
     rw [ih m q (slotLoop q) hsl]
     simp only [nestLoop, refill]
 
-theorem rustStitch_eq_nestStitch [Mentions] (plans : List Plan) : rustStitch plans = nestStitch plans := by
+theorem rustStitch_eq_nestStitch (plans : List Plan) : rustStitch plans = nestStitch plans := by
   unfold rustStitch nestStitch
   split
   · rename_i h; simp [h]
@@ -552,5 +523,41 @@ theorem rustStitch_eq_nestStitch [Mentions] (plans : List Plan) : rustStitch pla
     | cons q more =>
       simp only
       exact stitchLoop_eq_nest q more last _ (slotFirst_valid last)
+
+/-! ## A disjoint MATCH after a MATCH (#2981)
+
+`plan_query` (mod.rs) wraps the plan of a non-optional MATCH that follows a
+non-optional MATCH and binds none of the variables bound so far in a one-branch
+CartesianProduct, below the filters on top of it (`join_as_cartesian_branch`,
+mod.rs): the stitcher then adds the earlier clause as its other branch.
+`joins_components` (mod.rs) walks the same way and asks whether the operator
+below the filters is a CartesianProduct. Operator payloads are spec ids here, so
+`ir_references_variable` of the bound set is a parameter `rb`. -/
+
+/-- The walk of both: Filter, SemiApply, AntiSemiApply, OrApplyMultiplexer with a child,
+or a saturated Apply (`is_saturated_apply`, mod.rs): step to child 0. -/
+def branchWalk : Plan → Path
+  | .node op (c :: cs) =>
+    if (match op with | .filter _ | .semiApply | .antiSemiApply | .orMux => true | _ => false)
+        || (isApply op && !cs.isEmpty) then 0 :: branchWalk c else []
+  | .node _ [] => []
+
+/-- `joins_components`. -/
+def joinsComponents (p : Plan) : Bool :=
+  match p.get (branchWalk p) with
+  | some (.node .cartesian _) => true
+  | _ => false
+
+/-- `join_as_cartesian_branch`: `push_parent(CartesianProduct)` at the end of the walk,
+unless that subtree reads a bound variable (`rb`). -/
+def joinAsCartesianBranch (rb : Plan → Bool) (p : Plan) : Plan :=
+  match p.get (branchWalk p) with
+  | some q => if rb q then p else p.modify (fun q => .node .cartesian [q]) (branchWalk p)
+  | none => p
+
+/-- The clause plans `plan_query` stitches: each plan with whether it is a disjoint MATCH
+after a MATCH (`disjoint_match`, decided on the IR, mod.rs). -/
+def wrapDisjoint (rb : Plan → Bool) (plans : List (Plan × Bool)) : List Plan :=
+  plans.map fun (p, d) => if d then joinAsCartesianBranch rb p else p
 
 end PlannerBuild

@@ -1,6 +1,6 @@
 import PendingCommit.Content
 /-
-# `Block::merge_span` with contents (attribute_store.rs:636-795)
+# `Block::merge_span` with contents (attribute_store.rs)
 
 `mergeSpanC` takes the same path `merge_span` takes (`old.cap != 0` guards the
 two fast paths, :646/:671), computes the merged list with the path's loop
@@ -199,10 +199,10 @@ theorem mergeL_cases (b : CB) (i : Nat) (pairs : List Entry) :
       (mergeGen (span b i) pairs).2.2, 2)) := by
   unfold mergeL
   by_cases hA : (slotAt b i).cap ≠ 0 ∧ allPresentNonNull (span b i) pairs = true
-  · exact .inl ⟨hA.1, hA.2, by rw [if_pos hA]⟩
+  · exact .inl ⟨hA.1, hA.2, by rw [ite_eq_left hA]⟩
   · by_cases hB : (slotAt b i).cap ≠ 0 ∧ allNull pairs = true
-    · exact .inr (.inl ⟨hB.1, hB.2, by rw [if_neg hA, if_pos hB]⟩)
-    · exact .inr (.inr (by rw [if_neg hA, if_neg hB]))
+    · exact .inr (.inl ⟨hB.1, hB.2, by rw [ite_eq_right hA, ite_eq_left hB]⟩)
+    · exact .inr (.inr (by rw [ite_eq_right hA, ite_eq_right hB]))
 
 /-- **`mergeSpanC_ok`**: `merge_span` leaves slot `i` reading the merged list
 `Span.mergeSpan` computes, returns its counts, keeps every other slot and
@@ -240,35 +240,35 @@ theorem mergeSpanC_ok (b0 : CB) (h0 : CInv b0) (i : Nat) (pairs : List Entry)
   · simp only at hn ⊢
     have hsub := (pureRemove_sublist (span b i) pairs).length_le
     by_cases h0 : (pureRemove (span b i) pairs).1.length = 0
-    · rw [if_pos h0]
+    · rw [ite_eq_left h0]
       have hfree : setSlot (retireTo b i) i Slot.empty = freeSpanC b i := by
         simp [freeSpanC, hc, retireTo]
       rw [hfree]
       obtain ⟨a, c, d, -⟩ := freeSpanC_ok b hg i hi
       exact ⟨a, by rw [c]; exact (List.eq_nil_of_length_eq_zero h0).symm, hfr _ d⟩
-    · rw [if_neg h0]
+    · rw [ite_eq_right h0]
       obtain ⟨a, c, d⟩ := inPlace_ok b hg i hi _ (by omega) (by omega) hn
       exact ⟨a, c, hfr _ d⟩
   · simp only at hn ⊢
     by_cases h0 : (mergeGen (span b i) pairs).1.length = 0
-    · rw [if_pos h0]
+    · rw [ite_eq_left h0]
       have hnil := (List.eq_nil_of_length_eq_zero h0).symm
       by_cases hc : (slotAt b i).cap ≠ 0
-      · rw [if_pos hc]
+      · rw [ite_eq_left hc]
         have hfree : setSlot (retireTo b i) i Slot.empty = freeSpanC b i := by
           simp [freeSpanC, hc, retireTo]
         rw [hfree]
         obtain ⟨a, c, d, -⟩ := freeSpanC_ok b hg i hi
         exact ⟨a, by rw [c]; exact hnil, hfr _ d⟩
-      · rw [if_neg hc]
+      · rw [ite_eq_right hc]
         obtain ⟨a, c, d⟩ := emptyCap0_ok b hg i hi (by omega)
         exact ⟨a, by rw [c]; exact hnil, hfr _ d⟩
-    · rw [if_neg h0]
+    · rw [ite_eq_right h0]
       by_cases hle : (mergeGen (span b i) pairs).1.length ≤ (slotAt b i).cap
-      · rw [if_pos hle]
+      · rw [ite_eq_left hle]
         obtain ⟨a, c, d⟩ := inPlace_ok b hg i hi _ (by omega) hle hn
         exact ⟨a, c, hfr _ d⟩
-      · rw [if_neg hle]
+      · rw [ite_eq_right hle]
         obtain ⟨a, c, d⟩ := reloc_ok b hg i hi _ (by omega) hn
         exact ⟨a, c, hfr _ d⟩
 
