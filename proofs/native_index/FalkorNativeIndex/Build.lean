@@ -36,10 +36,16 @@ def pushAttr (col : IndexColumn) (attrOf : Nat → Option Value) (out : EncodedT
   | some v => col.pushEncoded v id out
   | none => out
 
-/-- The tuples one entity contributes. -/
+/-- The scalar tuples one entity contributes (`encode_numeric`; none for a list value). -/
 def tupleOf (col : IndexColumn) (attrOf : Nat → Option Value) (id : Nat) : List Nat :=
   match attrOf id with
-  | some v => (match col.encodeValue v with | some k => [enc k id] | none => [])
+  | some v => (match encodeNumeric v with | some k => [enc k id] | none => [])
+  | none => []
+
+/-- The array tuples one entity contributes: a list value's numeric elements. -/
+def tupleOfArr (col : IndexColumn) (attrOf : Nat → Option Value) (id : Nat) : List Nat :=
+  match attrOf id with
+  | some v => (arrayKeys v).map (fun k => enc k id)
   | none => []
 
 theorem pushAttr_scalar (col : IndexColumn) (attrOf : Nat → Option Value) (out : EncodedTuples) (id : Nat) :
@@ -48,8 +54,16 @@ theorem pushAttr_scalar (col : IndexColumn) (attrOf : Nat → Option Value) (out
   cases attrOf id with
   | none => simp
   | some v =>
-    simp only [IndexColumn.pushEncoded]
-    cases h : col.encodeValue v <;> simp [h]
+    simp only [IndexColumn.pushEncoded, pushStored_scalar]
+    cases encodeNumeric v <;> simp
+
+theorem pushAttr_array (col : IndexColumn) (attrOf : Nat → Option Value) (out : EncodedTuples) (id : Nat) :
+    (pushAttr col attrOf out id).array = out.array ++ tupleOfArr col attrOf id := by
+  unfold pushAttr tupleOfArr
+  cases attrOf id with
+  | none => simp
+  | some v =>
+    simp only [IndexColumn.pushEncoded, pushStored_array]
 
 theorem foldPush_scalar (col : IndexColumn) (attrOf : Nat → Option Value) (ids : List Nat) :
     ∀ (out : EncodedTuples),
@@ -57,6 +71,13 @@ theorem foldPush_scalar (col : IndexColumn) (attrOf : Nat → Option Value) (ids
   induction ids with
   | nil => intro out; simp
   | cons i is ih => intro out; simp only [List.foldl_cons, ih, pushAttr_scalar, List.flatMap_cons, List.append_assoc]
+
+theorem foldPush_array (col : IndexColumn) (attrOf : Nat → Option Value) (ids : List Nat) :
+    ∀ (out : EncodedTuples),
+    (ids.foldl (pushAttr col attrOf) out).array = out.array ++ ids.flatMap (tupleOfArr col attrOf) := by
+  induction ids with
+  | nil => intro out; simp
+  | cons i is ih => intro out; simp only [List.foldl_cons, ih, pushAttr_array, List.flatMap_cons, List.append_assoc]
 
 /-! ## `scan_nodes` (`graph_writes.rs:594-619`) -/
 
@@ -84,6 +105,15 @@ theorem scanNodes_tuples (g : G) (label attr : String) (from_ budget : Nat) (col
   refine ⟨?_, ?_⟩
   · exact foldPush_scalar _ _ _ _
   · first | rfl | trivial
+
+/-- The array tuples of the nodes a batch read (a list value's numeric elements). -/
+theorem scanNodes_tuples_array (g : G) (label attr : String) (from_ budget : Nat) (col : IndexColumn)
+    (out : EncodedTuples) (lm : List Nat) (idx : Nat) (hl : g.labelNodes label = some lm)
+    (ha : g.attrId attr = some idx) :
+    (scanNodes g label attr from_ budget col out).1.array =
+      out.array ++ ((nodesFrom lm from_).take budget).flatMap (tupleOfArr col (fun n => g.nodeAttr n idx)) := by
+  simp only [scanNodes, hl, ha]
+  exact foldPush_array _ _ _ _
 
 /-- A missing label or attribute: nothing read, at the end. -/
 theorem scanNodes_missing (g : G) (label attr : String) (from_ budget : Nat) (col : IndexColumn) (out : EncodedTuples)

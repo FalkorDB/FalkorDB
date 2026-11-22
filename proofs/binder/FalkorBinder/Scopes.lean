@@ -4,7 +4,7 @@ import FalkorBinder.Pattern
 -/
 namespace FalkorBinder
 
-/-! ## `merge_scope_vars` (binder.rs:2950-2962) -/
+/-! ## `merge_scope_vars` (binder.rs:2999-3011) -/
 
 /-- Per scope, keep the longer table. Equal to the Rust loop: resizing with
 empty tables and then replacing index `i < other.len()` when `other[i]` is
@@ -37,7 +37,7 @@ theorem mergeSV_covers (a b : List (List Var)) (s i : Nat)
     (h : i < lenAt a s ∨ i < lenAt b s) : i < lenAt (mergeSV a b) s := by
   have := mergeSV_ge a b s; omega
 
-/-! ## FOREACH restore (binder.rs:810-831) -/
+/-! ## FOREACH restore (binder.rs:811-832) -/
 
 /-- The restored table: the saved outer table plus every inner entry whose
 id the outer table does not hold, re-keyed `_foreach_{scope}_{id}` — or, for a nameless
@@ -81,7 +81,7 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
   intro i hmem
   rw [hids] at hmem; rw [hlen]; exact hi i hmem
 
-/-! ## Pattern comprehension / pattern predicate cleanup (binder.rs:2113, 2291) -/
+/-! ## Pattern comprehension / pattern predicate cleanup (binder.rs:2114, 2291) -/
 
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
@@ -103,15 +103,15 @@ theorem comprehension_cleanup_breaks :
   · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
   · intro h; exact absurd (h 1 (by decide)) (by decide)
 
-/-! ## `CALL { … UNION … }` scope numbering (`bind_call_body`, binder.rs:971-1126) -/
+/-! ## `CALL { … UNION … }` scope numbering (`bind_call_body`, binder.rs:972-1127) -/
 
 /-- The `env_stack` of a plain CALL body: the `outerLen` live outer scopes (only their number
 matters here) with the body's own scope pushed on top (`self.env_stack.push(HashMap::new())`,
-binder.rs:992). -/
+binder.rs:993). -/
 def queryBodyStack (outerLen : Nat) : List Env := List.replicate outerLen [] ++ [[]]
 
 /-- The `env_stack` of a UNION branch's own `Binder` since #3027:
-`vec![HashMap::new(); self.env_stack.len() + 1]` (binder.rs:1050), the outer scopes as empty
+`vec![HashMap::new(); self.env_stack.len() + 1]` (binder.rs:1051), the outer scopes as empty
 placeholders and one more on top. (Before #3027 it was a one-scope stack, so the branch's first
 scope had the id of outer scope 0.) -/
 def unionBranchStack (outerLen : Nat) : List Env := List.replicate (outerLen + 1) []
@@ -133,24 +133,24 @@ theorem callBody_union_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen true ≠ s := by
   simp [callBodyScope, unionBranchStack]; omega
 
-/-! ## Label accumulation (binder.rs:1522-1534, 220-252; #3049 rollback :1723-1740) -/
+/-! ## Label accumulation (binder.rs:1523-1535, 220-252; #3049 rollback :1723-1740) -/
 
 inductive LClause
   | match_ (labels : List Name)        -- MATCH (n:L…)
-  | optMatch (labels : List Name)      -- OPTIONAL MATCH (n:L…): saved/restored (binder.rs:436-455)
-  | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs:2287-2289)
+  | optMatch (labels : List Name)      -- OPTIONAL MATCH (n:L…): saved/restored (binder.rs:437-456)
+  | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs:2288-2290)
   | create (labels : List Name)        -- CREATE (n:L)-[..]->(): `with_node_labels_rolled_back(true, …)` (:552)
   | comprehension (labels : List Name) -- [(n:L)-->() | …]: `with_node_labels_rolled_back(false, …)` (:2104)
   | remove (labels : List Name)        -- REMOVE n:L…: `bind_ir` QueryIR::Remove (b84473a7f :477-482)
                                        -- binds the items and leaves `node_labels` alone (#3450)
   deriving Repr, DecidableEq
 
-/-- `acc ∪ ls` as `OrderSet::extend` does it (binder.rs:1528). -/
+/-- `acc ∪ ls` as `OrderSet::extend` does it (binder.rs:1529). -/
 def addLabels (acc ls : List Name) : List Name := acc ++ ls.filter (fun l => !acc.contains l)
 
 /-- The accumulated label set of one node variable after the clauses (since #3049).
 `bound`: the variable is already in `current_env()` when the clause runs (bound by an earlier
-MATCH, OPTIONAL MATCH or CREATE). `with_node_labels_rolled_back` (binder.rs:1723-1740) restores
+MATCH, OPTIONAL MATCH or CREATE). `with_node_labels_rolled_back` (binder.rs:1724-1741) restores
 `node_labels` after a CREATE for every in-scope key and keeps only the entries of nodes the CREATE
 declared itself (`keep_new = true`); after a pattern comprehension it restores everything
 (`keep_new = false`). -/
@@ -221,12 +221,12 @@ theorem labels_leak_fixed :
   decide
 
 /-- A node the CREATE declares itself keeps its labels (`keep_new`), so a later MERGE on it
-still sees them (VariableAlreadyBound check, binder.rs:500/524). -/
+still sees them (VariableAlreadyBound check, binder.rs:501/524). -/
 theorem create_new_keeps_labels :
     accumulate [] [.create ["Z"]] = ["Z"] ∧ accumulate [] [.create ["Z"], .create ["Y"]] = ["Z"] := by
   decide
 
-/-! ## UNION column agreement (binder.rs:365-390) -/
+/-! ## UNION column agreement (binder.rs:366-391) -/
 
 def unionCheck : List (List Name) → Except String Unit
   | [] => .ok ()
@@ -246,7 +246,7 @@ theorem unionCheck_ok_iff (first : List Name) (rest : List (List Name)) :
   · rename_i h; simp only [reduceCtorEq, false_iff]; intro hall; apply h
     rw [List.all_eq_true]; intro c hc; simp [hall c hc]
 
-/-! ## CALL {} import WITH (binder.rs:1152-1205) -/
+/-! ## CALL {} import WITH (binder.rs:1153-1206) -/
 
 structure ImportItem where
   alias : Name

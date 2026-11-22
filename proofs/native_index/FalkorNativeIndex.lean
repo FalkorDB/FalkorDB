@@ -18,48 +18,60 @@ import FalkorNativeIndex.Batch
 import FalkorNativeIndex.Rebase
 import FalkorNativeIndex.Cch
 import FalkorNativeIndex.Memory
+import FalkorNativeIndex.Rows
+import FalkorNativeIndex.Bridge
+import FalkorNativeIndex.Online
+import FalkorNativeIndex.CchOrder
+import FalkorNativeIndex.CchTopo
+import FalkorNativeIndex.CchMetric
+import FalkorNativeIndex.CchPaths
+import FalkorNativeIndex.CchSearch
+import FalkorNativeIndex.CchRoute
+import FalkorNativeIndex.CchSmall
+import FalkorNativeIndex.CchSeq
 
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)
 
-Targets the worktree at origin/main 43936bab9 (re-targeted from 5c7af54f2: #3568 `bdcabd96d`, a batch that writers overtook refreshes or inserts, by cost: `Batch.lean`, `Rebase.lean`; #3569 `65654bc23`, `GRAPH.MEMORY USAGE` counts the native index: `Memory.lean`. Before that, from a477d9aa3: #3567 `b18530683`, writers rebase onto indexer batches and a batch catches up on writers: `Rebase.lean`; #3319 `1ff68d538`, the CCH path-index contract skeleton: `Cch.lean`; #3320 `5c7af54f2`, the graph test kit, test-only. Before that, from b02266c2b: #3566 `29e85ffc3`, an indexer batch commits as a version of its own: `Batch.lean`; earlier, from e860645bb: #3547 `155a246f8` (native-only
-writes: no Range field is fed to RediSearch under `index-falkordb`; `redisearch_fields`; `index_only_writes` is
-gone), #2386 `41ed78225` (no fallback under the flag: `query_numeric` answers `Option<Result<rows, ScanFilter>>`,
-a predicate the native index cannot serve is the error `unsupported_by_native_index`, a column still building is
-answered by a scan whose `ScanFilter` is built from the same `KeySet` the column looks up; `= null` and null
-bounds are answered with no rows; new `unique.rs` for the unique-constraint lookups `equal_candidates`,
-`native_unique_query`, `ReadOnce`, `fewest_candidates`). Earlier: #2351 `d1a73f65a` (a column's build state and
-the indexer batches that fill it: `versioned.rs`, `EncodedTuples`, `BuildCursor`, `scan`, `create_building`),
-#3538 `aa19b5270` (the managed index is generic over its kind), #3550 `a299692a2` (lock handover only), #2383
-`IN [...]` as a union of point lookups, #3436 `g.borrow()` → `graph()`, #3283 fixed the cow_btree invariant.)
-Files: `graph/src/index/falkordb/{encode,numeric,falkordb_index,versioned,unique,mod,
-pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/graph.rs`
-(`redisearch_fields`, `apply_index_writes`, `commit_index_docs`, `query_index_numeric_{nodes,edges}`,
-`node_matches`, `relationship_matches`, `new_version`'s fork) and the index route of
-`runtime/ops/{node,edge}_by_index_scan.rs::next`.
+Targets the worktree at origin/main 256ab4d3f (re-targeted from 43936bab9). New since then, all modelled here:
+#2453 `6b5a31c04` (list values: a second tree per column, the array tree, holding a list's numeric elements; a
+tuple is `(kind, key, doc)`; `ArrayContains` and `And` queries are served), #3736 `ea64405dd` (a Range column
+that answers with a `Selection`: `range.rs`), #3737 `a6a53fd72` (a union or conjunction across attributes is one
+column per attribute, `combine_columns`, `DistinctIter`; `ScanFilter` is `All`/`Any` over several attributes),
+#3585 `7472d6a8a` (CREATE INDEX returns before the build; `online_build.rs`: only `Sizing::batch` is modelled),
+#3856 (the background drop removes only an entry with no fields), CCH phases 1-3 (`cch/`: not modelled).
+Model changes: `Value.list` carries each element's `encode_numeric` image (all `for_each_stored_key` reads of an
+element); `EncodedTuples`/`NumericIndex` have two trees; `IndexWrite` has a `kind` and `last_write_wins` sorts by
+`(kind, key, id)`; `queryNumeric`/`keysOf`/`unionKeys` are replaced by `Selection.of`/`queryColumn`
+(`describe_or_reason_sound`, `unionKeys_served` are gone: a union across attributes is now served, so
+"spanning" is no longer a decline of the single-column union). `Rebase.lean`/`Batch.lean` model the scalar tree's
+tuples (their array tuples are not modelled: see Gaps). Earlier targets: 43936bab9 (re-targeted from 5c7af54f2): #3568 `bdcabd96d`, a batch that writers overtook refreshes or inserts, by cost: `Batch.lean`, `Rebase.lean`; #3569 `65654bc23`, `GRAPH.MEMORY USAGE` counts the native index: `Memory.lean`; and before (see git history).
+Files: `graph/src/index/falkordb/{encode,numeric,range,falkordb_index,versioned,pending_writes,graph_writes,unique,mod,online_build}.rs`, the native-index parts of `graph/src/graph/graph.rs` and the index route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 
 ## Lean ↔ Rust
 | Lean | Rust |
 | --- | --- |
-| `Float.lean`: `F64` bits, `isNaN`, `pos`, `fpcmp`, `encodeF64` | `f64::to_bits`/`partial_cmp` (IEEE 754 §3.4/§5.11), `encode.rs:50-55` |
+| `Float.lean`: `F64` bits, `isNaN`, `pos`, `fpcmp`, `encodeF64` | `f64::to_bits`/`partial_cmp` (IEEE 754 §3.4/§5.11), `encode.rs:106-111` |
 | `IntF.lean`: `roundNat`, `magBits`, `i64ToF64` | `i as f64` (proofs/core `roundNat`, imported) |
-| `Value.lean`: `Value`, `compareValue`, `cmpPred`, `encodeNumeric`, `intLosesPrecision` | `value.rs:1181-1270`, `eval.rs:446-462`, `:1665-1686`, `encode.rs:29-41`, `index/mod.rs:1371` |
+| `Value.lean`: `Value` (with `list`: each element's `encode_numeric` image), `compareValue`, `cmpPred`, `encodeNumeric`, `intLosesPrecision` | `value.rs:1181-1270`, `eval.rs:446-462`, `:1665-1686`, `encode.rs:29-41`, `index/mod.rs:1371` |
 | `Tree.lean`: `tInsert`…`tRange` (CowBTree contents; encoding/sorted lemmas imported from cow_btree) | `cow_btree/mod.rs:190-324` |
 | `Contract.lean`: `contract_fromSorted`, `contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_range` | `cow_btree/mod.rs:190-324` on every reachable tree |
-| `Numeric.lean`: `EncodedTuples.*`, `NumericIndex.*` (`addEncoded` bulk-builds into an empty tree), `KeySet` (`distinct`, `contains`, `matchesValue`), `pointKeys`, `rangeBounds`/`rangeKeys`, `lookup`, `point`, `pointKey`, `range`, `IndexQuery`, `encodeAll`, `inListKeys`, `unionMember`/`unionGo`/`unionKeys`, `keysOf`, `query`, `UState`/`unionNext` | `numeric.rs:60-95` (`KeySet`, `distinct` :77, `contains` :85), `:119` (`UnionIter::next`), `:141-170` (`EncodedTuples`), `:266` (`add_encoded`), `:295-330` (`point`, `point_key`, `range`, `query`), `:341` (`keys`), `:367` (`lookup`), `:385`/`:389` (`point_keys`/`range_keys`), `:448` (`in_list`), `:466` (`union`); `from_entries` :503 is test-only |
-| `Index.lean`: `hmGet`…, `IndexColumn.*` (`pushEncoded`, `rowsAt`), `BuildCursor`, `BuildState`, `IndexEntry.*`, `FalkorDbIndex.*` (`entry`, `insertColumn`, `createBuilding`, `applyIndexerBatch`) | `falkordb_index.rs:41-153`, `:280-322` (`BuildCursor`), `:338-632`; `versioned.rs:36-185` |
-| `Query.lean`: `ScanFilter`, `queryKey`, `queryNumeric` (three-way `Option (Except ScanFilter rows)`), `EqualCandidates`, `equalCandidates` | `falkordb_index.rs:162-182` (`EqualCandidates`), `:258-277` (`ScanFilter`), `:633-695` (`query_numeric`), `:697-715` (`equal_candidates`) |
-| `Pending.lean`: `IndexWrite`, `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `stateLog`, `IndexColumn.writerRecord`, `IndexEntry.writerRecord`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-179`, `falkordb_index.rs:215-232` (`writer_record`), `:581-632`; `versioned.rs:99-156` |
-| `Writes.lean`: `G`, `StageOp`, `stage`, `nodeAttrsSet`, `nodeRowsSet`, `newNodeAttrs`, `bulkNodeAttrs`, `labelsAdded`, `labelsProductAdded`, `labelsRemoved`, `nodesDeleted`, `edgeAttrsSetWith`/`edgeAttrsSet`/`edgeAttrsSetOfType`, `newEdgeAttrs`, `bulkEdgeAttrs`, `edgesDeleted`, `addNodeUnderLabel`, `removeNodeUnderLabel`, `nodeLabelIdsInto`, `edgeType` | `graph_writes.rs:50-380`, `:451-510` |
-| `Build.lean`: `pushAttr`, `scanNodes`, `edgeLoop`, `scanEdges`, `scan`, `G.place`, `IndexColumn.indexerRead`/`indexerAdd`, `G.prepareBatch`, `G.indexerPrepare` | `graph_writes.rs:513-620` (`scan` :513, `scan_nodes` :538, `scan_edges` :574); `falkordb_index.rs:235-250`; `versioned.rs:187-230`; `graph.rs:3858-3888` (`place`, in `apply_index_writes`) |
-| `Batch.lean`: `SE` (with `since`, `written`), `discardedAgainst`, `V` (`newBuildVersion`, `createEntry`, `setBatchesPublished`, `batchPublishedSince`, `applyBatch`, `withBatchIndex`, `insertedOnto`, `caughtUp`), `CatchUp`, `catchUpBy`, `IndexColumn.batchLen`, `indexerFit` (reads `SE.written` and `batchLen work`), `commitIndexerBatch`, `commitIndexerBatchE` | `versioned.rs:54-65`, `:173-241` (`IndexEntry`), `:248-340` (`apply_indexer_batch`, `indexer_prepare`, `indexer_fit`, `with_batch_index`, `take_index`); `falkordb_index.rs:452`, `:565`, `:575`; `graph.rs:1138` (`new_build_version`); `mvcc_graph.rs:264`, `:293-388` |
-| `Rebase.lean`: `Ver`, `tupl`, `entityTuples`, `rawTuples`, `placedBelow`, `IndexColumn.refresh`/`writerRebase`/`indexerCatchUp`, `Written`, `BS`, `EN` (`writerRecord`, `indexerApply`, `publish`, `rebase`, `catchUp`), `overtaken`, `BuildCursor.fromId`, `publishAll`, `columnNames`, `rebaseAll`, `overtakenAny`, `mvccRebase`, `V.rebased` | `falkordb_index.rs:169-244` (`refresh`, `placed_below`), `:326`, `:337`, `:437` (`from_id`), `:716`, `:724`; `versioned.rs:54-81` (`BuildState`, `Written`), `:213`, `:227`, `:280-334`, `:438-565`; `graph_writes.rs:445` (`entity_tuples`); `mvcc_graph.rs:165` (`rebase_onto_indexer_batches`); `graph.rs:3879` (`build_place`) |
-| `Memory.lean`: `NumericIndex.memoryUsage`, `IndexColumn.memoryUsage`, `EN.memoryUsage`, `memoryUsage`, `IndexColumn.batchLen_spec` (`IndexColumn.batchLen` is in `Batch.lean`) | `numeric.rs:296` (`NumericIndex::memory_usage` = `CowBTree::heap_bytes`, `cow_btree/mod.rs:419`), `falkordb_index.rs:405` (`VersionedIndex::memory_usage`), `:382` (`batch_len`), `:582` (`FalkorDbIndex::memory_usage`); `versioned.rs:307`, `:351` (`IndexEntry::memory_usage`) |
-| `Cch.lean`: `Csr` (`row?`, `isWellFormed`, `isSymmetricSimple`), `defNew`, the `unimplemented!()` bodies as always-panicking functions | `cch/mod.rs:57-107` (`Csr`), `:139` (`CchIndexDef::new`), `:193-271` (`Cch::*`), `:314-413` (`VersionedIndex for CchIndex`); `falkordb_index.rs:967-991`; `graph.rs:5225-5275` |
-| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `buildColumns`, `populate`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanOp`, `newVersion`, `runUnit` | `graph_writes.rs:394-503`; `graph.rs:1083`, `:3858`, `:3889`, `:4181`, `:4199`; `node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318` |
-| `Scan.lean`: `G.nodeMatches`/`relationshipMatches`, `nodeFilteredScan`/`edgeFilteredScan`, `nodeScanOp`/`edgeScanOp`, `redisearchFieldsAll`/`redisearchFields` | `graph.rs:4230` (`node_matches`), `:4244` (`relationship_matches`), `:144`/`:151` (`redisearch_fields`); the `Some(Err(scan_filter))` arms of `node_by_index_scan.rs:~330`, `edge_by_index_scan.rs:~375` |
-| `Unique.lean`: `nativeUniqueQuery`, `roundGo`/`fewestLoop`/`fewest`, `ReadOnce` | `unique.rs:20`, `:48`, `:69` |
-| `Decline.lean`: `Pred`, `describe`, `oneKey`, `unionMembers`, `unsupportedByNativeIndex` | `mod.rs:43` (`unsupported_by_native_index`), `:59` (`describe_predicate`), `:145` (`union_members`) |
+| `Numeric.lean`: `KeyKind`, `forEachStoredKey`, `EncodedTuples.*` (`get`, `push`, two kinds), `NumericIndex.*` (`tree`/`arrayTree`; `addTrees`/`removeTrees` = `RangeKind`; `add`/`remove`/`addBatch`/`addEncoded` = `RangeIndex`), `pushStored`, `KeySet` (`distinct`, `ofKeys`, `and`, `contains`, `matchesValue`), `pointKeys`, `rangeBounds`/`rangeKeys`, `lookup`, `listsHolding`, `lookupLists`, `lookupSel`, `IndexQuery`, `Selection` (`equal`, `equalToAny`, `range`, `listsHoldingOf`, `disjunction`, `conjunction`, `and`, `of`, `matches`), `attrsOf`, `atoms`, `onOneAttribute`, `stores`, `UState`/`unionNext` | `encode.rs:81` (`for_each_stored_key`); `numeric.rs:117-199` (`KeySet`: `distinct` :133, `of_keys` :143, `contains` :153, `and` :173), `:224` (`UnionIter::next`), `:244-301` (`EncodedTuples`), `:314-345` (`NumericIndex`, `range_keys` :345), `:427-531` (`RangeKind for NumericIndex`, `stores`); `range.rs:98-399` (`Kind`, `Selection`, `atoms`, `on_one_attribute`, `attributes_of`), `:429-616` (`RangeIndex`); `from_entries` is the specification of a built column |
+| `Index.lean`: `hmGet`…, `IndexColumn.*` (`pushEncoded`, `rowsAt`, `lookup`, `storedKeys`), `BuildCursor`, `BuildState`, `IndexEntry.*`, `FalkorDbIndex.*` (`entry`, `insertColumn`, `createBuilding`, `applyIndexerBatch`, `storedKeys`) | `falkordb_index.rs:47-186` (`IndexColumn`), `:526-598` (`BuildCursor`), `:598-1250` (`FalkorDbIndex`); `versioned.rs:45-130` |
+| `Query.lean`: `ScanFilter` (`one`, `matches`, `resolve`), `queryColumn`, `combineColumns`, `groupList`, `distinctDocs`, `interDocs`, `EqualCandidates`, `equalCandidates` | `falkordb_index.rs:288-308` (`EqualCandidates`), `:450-515` (`ScanFilter`), `:998-1150` (`query_column`, `combine_columns`), `:1159-1177` (`equal_candidates`); `numeric.rs:78-113` (`DistinctIter`) |
+| `Pending.lean`: `IndexWrite` (`kind`), `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `kindOps`/`lastOpK`/`seqOps`/`seqIndex`, `stateLog`, `IndexColumn.writerRecord`, `IndexEntry.writerRecord`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-190`, `falkordb_index.rs:342-361` (`writer_record`), `:944-996` (`apply`, `apply_writes`); `versioned.rs:99-156` |
+| `Writes.lean`: `G`, `StageOp`, `stage`, `pushL`, `lastOpS`, `nodeAttrsSet`, `nodeRowsSet`, `newNodeAttrs`, `bulkNodeAttrs`, `labelsAdded`, `labelsProductAdded`, `labelsRemoved`, `nodesDeleted`, `edgeAttrsSetWith`/`edgeAttrsSet`/`edgeAttrsSetOfType`, `newEdgeAttrs`, `bulkEdgeAttrs`, `edgesDeleted`, `addNodeUnderLabel`, `removeNodeUnderLabel`, `nodeLabelIdsInto`, `edgeType` | `graph_writes.rs:54-400`, `:469-590` |
+| `Build.lean`: `pushAttr`, `scanNodes`, `edgeLoop`, `scanEdges`, `scan`, `G.place`, `IndexColumn.indexerRead`/`indexerAdd`, `G.prepareBatch`, `G.indexerPrepare` | `graph_writes.rs:600-717` (`scan` :600, `scan_nodes` :625, `scan_edges` :661); `falkordb_index.rs:412-428`; `versioned.rs:478-503`, `:760-781`; `graph.rs:3902-3916` (`build_place`, `apply_index_writes`) |
+| `Batch.lean`: `SE` (with `since`, `written`), `discardedAgainst`, `V` (`newBuildVersion`, `createEntry`, `setBatchesPublished`, `batchPublishedSince`, `applyBatch`, `withBatchIndex`, `insertedOnto`, `caughtUp`), `CatchUp`, `catchUpBy`, `IndexColumn.batchLen`, `indexerFit` (reads `SE.written`, `batchLen work`, the catch-up limit and `read`), `commitIndexerBatch`, `commitIndexerBatchE` | `versioned.rs:64-80`, `:349-465` (`IndexEntry`), `:465-570` (`apply_indexer_batch`, `indexer_prepare`, `indexer_fit`, `with_batch_index`); `:745` (`take_index`); `falkordb_index.rs:899-918`; `graph.rs:1125` (`new_build_version`); `mvcc_graph.rs:262`, `:293-388` |
+| `Rebase.lean`: `Ver`, `tupl`, `entityTuples`, `rawTuples`, `placedBelow`, `IndexColumn.refresh`/`writerRebase`/`indexerCatchUp`, `Written`, `BS`, `EN` (`writerRecord`, `indexerApply`, `publish`, `rebase`, `catchUp`), `overtaken`, `BuildCursor.fromId`, `publishAll`, `columnNames`, `rebaseAll`, `overtakenAny`, `mvccRebase`, `V.rebased` | `falkordb_index.rs:196-285` (`refresh`, `placed_in`), `:362`, `:373`, `:559` (`from_id`), `:877`, `:885`; `versioned.rs:45-100` (`BuildState`, `Written`), `:284`, `:298`, `:374-446`, `:570-760`; `graph_writes.rs:469` (`entity_tuples`); `mvcc_graph.rs:171` (`rebase_onto_indexer_batches`); `graph.rs:3902` (`build_place`) |
+| `Memory.lean`: `NumericIndex.memoryUsage`, `IndexColumn.memoryUsage`, `EN.memoryUsage`, `memoryUsage`, `memoryUsage_two_trees`, `IndexColumn.batchLen_spec` (`IndexColumn.batchLen` is in `Batch.lean`) | `numeric.rs:474` (`NumericIndex::memory_usage` = both trees' `CowBTree::heap_bytes`), `falkordb_index.rs:429` (`VersionedIndex::memory_usage`), `:406` (`batch_len`), `:660` (`FalkorDbIndex::memory_usage`); `versioned.rs:345`, `:389` (`IndexEntry::memory_usage`) |
+| `Cch.lean`: `Csr` (`row?`, `isWellFormed`, `isSymmetricSimple`), `defNew`, the `unimplemented!()` bodies as always-panicking functions (the CCH algorithms themselves are not modelled) | `cch/mod.rs:58-142` (`Csr`), `:189` (`CchIndexDef::new`), `:286-309` (`Cch::*`), `:357-452` (`VersionedIndex for CchIndex`); `falkordb_index.rs:1228-1255`; `graph.rs:5348-5397` |
+| `CchOrder.lean`, `CchTopo.lean`, `CchMetric.lean`: `Pth`, `rowOf`/`buildRows` (the fill-in rows), `CS`/`csStep` (the loop with `first_child`/`next_sibling`), `flatRows` (offsets + neighbours), `invert`, `downRows` (`transpose`), `Topo`, `fromOrder`, `ndOrder` (backend arbitrary), `WP`/`IsMin`, `relaxA`/`relaxM`, `customizeRun`, `unpackRec` | `cch/order.rs:40-470`, `cch/nd.rs:46-125`, `cch/customize.rs:187-310`, `cch/query.rs:206-229` |
+| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `buildColumns`, `populate`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanOp`, `newVersion`, `runUnit` | `graph_writes.rs:418-536`; `graph.rs:1125`, `:3902-3950`, `:4246`, `:4264`; `node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318` |
+| `Scan.lean`: `resolveGo`/`matches_resolve`, `G.nodeMatches`/`relationshipMatches`, `nodeFilteredScan`/`edgeFilteredScan`, `NodeCond`/`EdgeCond`/`FilterHolds`, `nodeScanOp`/`edgeScanOp`, `redisearchFieldsAll`/`redisearchFields` | `graph.rs:4296` (`node_matches`), `:4308` (`relationship_matches`), `:145`/`:152` (`redisearch_fields`); `falkordb_index.rs:471-515` (`ScanFilter::resolve`/`matches`); the `Some(Err(scan_filter))` arms of `node_by_index_scan.rs:~330`, `edge_by_index_scan.rs:~375` |
+| `Unique.lean`: `nativeUniqueQuery`, `roundGo`/`fewestLoop`/`fewest`, `ReadOnce` | `unique.rs:23`, `:51`, `:72` |
+| `Decline.lean`: `Pred`, `describe`, `oneKey`, `unionMembers`, `unsupportedByNativeIndex` | `mod.rs:53` (`unsupported_by_native_index`), `:69` (`describe_predicate`), `:161` (`union_members`) |
+| `Rows.lean`: `keyset_and_contains`, `atoms_and_no_and`, `selection_and_matches`, `distinctGo`/`distinctRem`, `isReady`, `hasBuildingColumns`, `indexGeneration`, `buildingSince`, `indexesToBuildSince`, `sizingBatch`, `queryRange` | `numeric.rs:97-113`, `:173`; `range.rs:336`, `:363`, `:616`; `falkordb_index.rs:851`, `:1198`; `versioned.rs:796-844`; `online_build.rs:137` |
 
 ## Proven
 - **Encoding** (`Float.lean`, bit-level f64: both zeros, every NaN sign/payload, ±inf):
@@ -164,6 +176,23 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   private copy with its staged changes applied once; a refused unit publishes nothing),
   `newVersion_idx`.
 
+- **#2453 / #3736 / #3737, lists, `Selection`, several attributes** (`Numeric.lean`, `Query.lean`, `Pending.lean`,
+  `Scan.lean`, `Rows.lean`): `forEachStoredKey_scalar/_array` (a scalar is one key in the scalar tree, a list one key
+  per numeric element in the array tree), `add_array_spec`/`remove_array_spec`/`addEncoded_array_spec`,
+  `lookupLists_mem` (a `ListsHolding` lookup returns the lists holding every probed element),
+  **`lookupSel_fromEntries`** (for every selection, scalars and lists, the scan that stands in for a building
+  column keeps exactly what the built column returns; one value per entity), `pushEqualKeys_spec`,
+  `equalToAny_agrees`, `disjunction_agrees` (an `IN`/`OR` on one attribute is exactly the label scan + filter; a
+  `NULL` member adds no key), `of_or_nil`, `atoms_and_no_and`, `selection_and_matches`, `keyset_and_contains`,
+  `ofKeys_sorted`/`keyset_and_sorted`; `queryColumn_single` / `_building` / `_ready` / `_isSome_iff` /
+  `_range_served` / `_null_equal` / `_declined`, `combine_or_ok` / `combine_and_ok` / `combine_building`
+  (several attributes: one column each, intersected or unioned, one `Building` column makes the whole query a
+  scan), `distinctGo_spec` (`DistinctIter::next`), **`nodeFilteredScan_agrees` / `edgeFilteredScan_agrees`** (the
+  resolved `All`/`Any` scan filter equals the built columns' answer: every / some condition), `matches_resolve`;
+  `lastWriteWins_spec` (per tree: a tuple is kept iff the last staged change to it, in that tree, is of that side;
+  keys and ids `u64`), `writerRecord_eq_sequential` (both trees, `LogWF`), `lastOpS_stored` (a list value stages
+  array writes only, so the scalar-tuple staging theorems of `Writes.lean` are unaffected).
+
 ## Bugs / divergences (counterexamples, `Agree.lean`)
 1. `i64min_hole`, `i64min_window` — the guard `int_loses_f64_precision` admits `i64::MIN`
    (`unsigned_abs = 2^63` is outside the mask) but `i64::MIN+1 … i64::MIN+512` round onto it.
@@ -188,6 +217,8 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   address in the Rust; the model uses the column's slot (`rows_eq_of_id_eq`): distinct entries are distinct
   objects. `fewest` assumes at least one lookup (the Rust loops forever on none; `native_unique_query` never
   passes none).
+- **Array tuples in `Rebase.lean`**: `refresh` and `indexer_insert` push both kinds (`refresh_array_mem`, `indexerInsert_array_mem`); the invariant theorems (`Inv`, `refresh_inv`, `catchUp_inv`, `insert_inv`) are stated for the scalar tree only (their array analogues are not proven).
+- **CCH (`cch/`)**: Phases 1-3 are proven over `Nat` weights in rank space. `CchOrder.lean` (`row_iff`: the chordal rows are exactly the fill-in), `CchTopo.lean` (the loop with its linked lists, `invert_spec`, `downRows_spec`, `arcSlot_spec`, `fromOrder_*`, `ndOrder_*` for an arbitrary backend, `topoBuild_correct`), `CchMetric.lean` (`customize_correct`, `unpack_correct`), `CchPaths.lean` (up-down paths: `valley`, `updown_complete`/`updown_sound`), `CchSearch.lean` (chain, `relaxFrom`, the DP invariant `DPInv`/`dp_step`, the climb `loop_inv`, `query_core`, `shared_spec`), `CchRoute.lean` (`arcsUp_spec`, `unpack_fwd/bwd`, `eraseLoops_spec`, `query_correct`, `cch_query_end_to_end`: **`Cch::query` returns a shortest path**), `CchSmall.lean` (`gallopTo_spec`, `validate_spec`, `entries_mem`, `backendCsr_spec`, `arc_via_slots`, `queryWrap_spec`), `CchSeq.lean` (`relax_sequential`, `buildCch_correct`). Scope: pair-indexed arcs linked to the slot arrays by `arc_via_slots`; weights `Nat` (the f64 left-fold structure is not modelled); the ordering backend is an arbitrary function (its permutation is checked by `invert`); node-space and rank-space are related by `invert_spec`, not composed into one statement. Not proven: the slot writes of `seed` (`seedA` is its pair-level result).
 - **CowBTree contract** (`Tree.lean`): the tree is its content list, each op its content spec. No longer a
   hypothesis: since #3283 (799968a8b, W7-btree-1 fixed) cow_btree proves every reachable tree is
   `TreeWF` (`Reachable_wf_asserted`: `from_sorted`, `insert`, `remove`, `insert_batch`, `remove_batch`)

@@ -17,10 +17,8 @@
 `f64` is the type parameter `F` with only the operations the code uses (`n as f64`, `partial_cmp`,
 `is_finite`, `fract`, `abs`, `as i64`). `parse_config` (map from the argument) is an input.
 
-NOT modelled (precise reasons, see COVERAGE.tsv): `dijkstra_single_path` (its optimality needs exact
-addition; `f64` addition is not associative, the source comments say so), `bfs_find_bound`,
-`record_found_path`, `enumerate_paths`, `run_path_algo` (loop-invariant proofs over FxHashMap/heap
-state, not done).
+The three searches are modelled in `BfsFind` / `Dijkstra` / `Enum` (see `AlgoSearch`); the `f64` optimality
+of `dijkstra_single_path` is not provable (`+` is not associative), its exact-domain twin is `DijkstraNat`.
 -/
 namespace OpsTraverse.AlgoPaths
 

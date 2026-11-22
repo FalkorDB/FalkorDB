@@ -15,36 +15,42 @@ RediSearch to fall through to), and since #3736 / #3737 the layer asks the colum
 * `None`: any other shape, or a missing column. The caller turns it into the error
   `unsupported_by_native_index`.
 
-Modelled as `Option (Except ScanFilter (List Nat))` (`Except.ok` = `Ok`, `Except.error` = `Err`). A query
+Modelled as `Option (Except (ScanFilter String) (List Nat))` (`Except.ok` = `Ok`, `Except.error` = `Err`). A query
 over several attributes is `combine_columns`: one column per attribute, intersected for an `And`, a
 `DistinctIter` union for an `Or`.
 -/
 
 namespace NI
 
-/-- `ScanFilter<String>` (`falkordb_index.rs:446-451`): every attribute the query constrains with what the
-    built column for it selects; `all` = a conjunction, `any` = a union across attributes. -/
-inductive ScanFilter where
-  | all (conditions : List (String × Selection))
-  | any (conditions : List (String × Selection))
+/-- `ScanFilter<A>` (`falkordb_index.rs:446-451`): every attribute the query constrains with what the
+    built column for it selects; `all` = a conjunction, `any` = a union across attributes. `A` names an
+    attribute: as the query names it (`String`), or as a scan resolved it (`Nat`, the graph's id). -/
+inductive ScanFilter (A : Type) where
+  | all (conditions : List (A × Selection))
+  | any (conditions : List (A × Selection))
 
 /-- `ScanFilter::one` (`:459-465`): the filter of a query on one attribute. -/
-def ScanFilter.one (attr : String) (sel : Selection) : ScanFilter := .all [(attr, sel)]
+def ScanFilter.one (attr : String) (sel : Selection) : ScanFilter String := .all [(attr, sel)]
+
+/-- `value_of(attribute).is_some_and(|value| selection.matches(&value))` (`:503-515`). -/
+def Selection.matchesOpt (sel : Selection) : Option Value → Bool
+  | some v => sel.matches v
+  | none => false
+
+@[simp] theorem matchesOpt_none (sel : Selection) : sel.matchesOpt none = false := rfl
+@[simp] theorem matchesOpt_some (sel : Selection) (v : Value) : sel.matchesOpt (some v) = sel.matches v := rfl
 
 /-- `ScanFilter::matches` (`:503-515`): whether the built columns answer the query with an entity whose
     attributes `valueOf` reads. An entity missing an attribute does not match its condition. -/
-def ScanFilter.matches (f : ScanFilter) (valueOf : String → Option Value) : Bool :=
-  let holds : String × Selection → Bool := fun c =>
-    match valueOf c.1 with
-    | some v => c.2.matches v
-    | none => false
+def ScanFilter.matches {A : Type} (f : ScanFilter A) (valueOf : A → Option Value) : Bool :=
+  let holds : A × Selection → Bool := fun c => c.2.matchesOpt (valueOf c.1)
   match f with
   | .all cs => cs.all holds
   | .any cs => cs.any holds
 
 /-- The loop of `ScanFilter::resolve` (`:471-493`): a conjunction needs every attribute, a union only one. -/
-def resolveGo (isAll : Bool) (r : String → Option String) : List (String × Selection) →
-    Option (List (String × Selection))
+def resolveGo {A B : Type} (isAll : Bool) (r : A → Option B) : List (A × Selection) →
+    Option (List (B × Selection))
   | [] => some []
   | (a, sel) :: rest =>
     match r a with
@@ -53,7 +59,7 @@ def resolveGo (isAll : Bool) (r : String → Option String) : List (String × Se
 
 /-- `ScanFilter::resolve` (`:471-493`): the same filter with each attribute resolved; `None` when the whole
     filter therefore matches nothing. -/
-def ScanFilter.resolve (f : ScanFilter) (r : String → Option String) : Option ScanFilter :=
+def ScanFilter.resolve {A B : Type} (f : ScanFilter A) (r : A → Option B) : Option (ScanFilter B) :=
   match f with
   | .all cs => match resolveGo true r cs with
     | none => none
@@ -112,7 +118,7 @@ end
     several attributes: one column per attribute. Every column must exist and every share must translate
     before any is read; one `Building` column makes the whole query a scan. -/
 def FalkorDbIndex.combineColumns (x : FalkorDbIndex) (e : EntityType) (label : String)
-    (children : List IndexQuery) (any : Bool) : Option (Except ScanFilter (List Nat)) :=
+    (children : List IndexQuery) (any : Bool) : Option (Except (ScanFilter String) (List Nat)) :=
   match groupList any [] children with
   | none => none
   | some perAttr =>
@@ -132,7 +138,7 @@ def FalkorDbIndex.combineColumns (x : FalkorDbIndex) (e : EntityType) (label : S
     `Building` one, `None` otherwise. The selection is translated even while the column builds, so a
     shape no kind serves is `None` whatever its state. -/
 def FalkorDbIndex.queryColumn (x : FalkorDbIndex) (e : EntityType) (label : String) (q : IndexQuery) :
-    Option (Except ScanFilter (List Nat)) :=
+    Option (Except (ScanFilter String) (List Nat)) :=
   match attrsOf q with
   | none => none
   | some [] => none
@@ -198,6 +204,24 @@ theorem queryColumn_isSome_iff (x : FalkorDbIndex) (e : EntityType) (l : String)
   simp only [Option.bind_some]
   cases Selection.of q <;> simp
 
+/-- A `Ready` column found by `readyNumeric` answers a query on its attribute with its tree's rows. -/
+theorem queryColumn_of_ready (x : FalkorDbIndex) (e : EntityType) (l : String) (q : IndexQuery) (key : String)
+    (hat : attrsOf q = some [key]) (c : NumericIndex) (hc : x.readyNumeric e l key = some c) :
+    x.queryColumn e l q = (Selection.of q).map (fun sel => .ok (c.lookupSel sel)) := by
+  unfold FalkorDbIndex.readyNumeric at hc
+  cases hen : x.entry e l key with
+  | none => simp [hen] at hc
+  | some en =>
+    simp only [hen, Option.bind_some] at hc
+    by_cases hb : en.isBuilding = true
+    · simp [hb] at hc
+    · have hb' : en.isBuilding = false := by simpa using hb
+      simp only [hb', Bool.false_eq_true, ite_false, Option.some.injEq] at hc
+      subst hc
+      rw [queryColumn_single x e l q key hat, hen]
+      simp only [Option.bind_some, hb', Bool.false_eq_true, ite_false]
+      cases Selection.of q <;> simp [IndexColumn.lookup, IndexColumn.ix]
+
 /-- A missing column declines a query on one attribute. -/
 theorem queryColumn_no_column (x : FalkorDbIndex) (e : EntityType) (l : String) (q : IndexQuery) (a : String)
     (hat : attrsOf q = some [a]) (hen : x.entry e l a = none) : x.queryColumn e l q = none := by
@@ -224,7 +248,7 @@ theorem queryColumn_ok_single (x : FalkorDbIndex) (e : EntityType) (l : String) 
         exact ⟨en, sel, rfl, hb', rfl, h.symm⟩
 
 theorem queryColumn_error_single (x : FalkorDbIndex) (e : EntityType) (l : String) (q : IndexQuery) (a : String)
-    (hat : attrsOf q = some [a]) (sel : Selection) (hs : Selection.of q = some sel) (f : ScanFilter)
+    (hat : attrsOf q = some [a]) (sel : Selection) (hs : Selection.of q = some sel) (f : ScanFilter String)
     (h : x.queryColumn e l q = some (.error f)) :
     ∃ en, x.entry e l a = some en ∧ en.isBuilding = true ∧ f = ScanFilter.one a sel := by
   rw [queryColumn_single x e l q a hat] at h

@@ -71,14 +71,10 @@ structure StageOp where
 /-- What `push` appends (`pending_writes.rs:81-95`). -/
 def pushL (ix : FalkorDbIndex) (ent : EntityType) (label attr : String) (v : Value) (id : Nat) (add : Bool) :
     List (IndexKey × IndexWrite) :=
-  match ix.encodeValue ent label attr v with
-  | none => []
-  | some k => [((label, attr), ⟨k, id, add⟩)]
+  (ix.storedKeys ent label attr v).map (fun kk => ((label, attr), ⟨kk.2, id, kk.1, add⟩))
 
 theorem push_eq (c : IndexChanges) (ix : FalkorDbIndex) (l a : String) (v : Value) (id : Nat) (add : Bool) :
-    c.push ix l a v id add = { c with changes := c.changes ++ pushL ix c.entity l a v id add } := by
-  unfold IndexChanges.push pushL
-  cases ix.encodeValue c.entity l a v <;> simp
+    c.push ix l a v id add = { c with changes := c.changes ++ pushL ix c.entity l a v id add } := rfl
 
 def opChanges (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) : List (IndexKey × IndexWrite) :=
   op.labels.flatMap (fun l =>
@@ -92,13 +88,31 @@ def opsChanges (ix : FalkorDbIndex) (ent : EntityType) (ops : List StageOp) : Li
 def colLog (k : IndexKey) (cs : List (IndexKey × IndexWrite)) : List IndexWrite :=
   (cs.filter (fun kw => kw.1 = k)).map (·.2)
 
-/-! ## `lastOp` algebra -/
+/-! ## `lastOpS` algebra -/
 
-theorem lastOp_append (A B : List IndexWrite) (e : Nat) :
-    lastOp (A ++ B) e = (lastOp B e).or (lastOp A e) := by
-  unfold lastOp
+/-- The last staged change to the **scalar** tuple `e` (the tuples these staging theorems are about: a
+    list value stages array tuples, which no scalar tuple shares). -/
+def lastOpS (log : List IndexWrite) (e : Nat) : Option Bool := lastOpK log .scalar e
+
+theorem lastOpOps_append (X Y : List (Nat × Bool)) (e : Nat) :
+    lastOpOps (X ++ Y) e = (lastOpOps Y e).or (lastOpOps X e) := by
+  unfold lastOpOps
   rw [List.filter_append, List.getLast?_append]
-  cases (List.filter (fun w => decide (w.tup = e)) B).getLast? <;> simp
+  generalize (List.filter (fun o => decide (o.1 = e)) Y).getLast? = b
+  generalize (List.filter (fun o => decide (o.1 = e)) X).getLast? = c
+  cases b <;> cases c <;> simp
+
+theorem kindOps_append (kd : KeyKind) (A B : List IndexWrite) :
+    kindOps kd (A ++ B) = kindOps kd A ++ kindOps kd B := by
+  simp [kindOps, List.filter_append]
+
+theorem lastOpS_append (A B : List IndexWrite) (e : Nat) :
+    lastOpS (A ++ B) e = (lastOpS B e).or (lastOpS A e) := by
+  unfold lastOpS lastOpK
+  rw [kindOps_append, lastOpOps_append]
+
+theorem lastOpS_nil (e : Nat) : lastOpS [] e = none := by
+  simp [lastOpS, lastOpK, lastOpOps, kindOps]
 
 theorem colLog_append (k : IndexKey) (A B : List (IndexKey × IndexWrite)) :
     colLog k (A ++ B) = colLog k A ++ colLog k B := by
@@ -113,19 +127,19 @@ theorem colLog_flatMap {α} (k : IndexKey) (l : List α) (F : α → List (Index
 /-- If every item's block either leaves `e` alone or ends it at `r`, the whole list ends `e` at `r`
     iff some item touches it. -/
 theorem lastOp_flatMap_common {α} (l : List α) (F : α → List IndexWrite) (e : Nat) (r : Option Bool)
-    (h : ∀ x ∈ l, lastOp (F x) e = none ∨ lastOp (F x) e = r) :
-    lastOp (l.flatMap F) e = if ∃ x ∈ l, lastOp (F x) e ≠ none then r else none := by
+    (h : ∀ x ∈ l, lastOpS (F x) e = none ∨ lastOpS (F x) e = r) :
+    lastOpS (l.flatMap F) e = if ∃ x ∈ l, lastOpS (F x) e ≠ none then r else none := by
   induction l with
-  | nil => simp [lastOp]
+  | nil => simp [lastOpS_nil]
   | cons x xs ih =>
-    rw [List.flatMap_cons, lastOp_append, ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
+    rw [List.flatMap_cons, lastOpS_append, ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
     rcases h x List.mem_cons_self with hx | hx
     · rw [hx]
-      by_cases hc : ∃ y ∈ xs, lastOp (F y) e ≠ none
-      · have : ∃ y ∈ x :: xs, lastOp (F y) e ≠ none := by
+      by_cases hc : ∃ y ∈ xs, lastOpS (F y) e ≠ none
+      · have : ∃ y ∈ x :: xs, lastOpS (F y) e ≠ none := by
           obtain ⟨y, hy, h'⟩ := hc; exact ⟨y, List.mem_cons_of_mem _ hy, h'⟩
         simp only [hc, this, ite_true]; cases r <;> rfl
-      · have : ¬ ∃ y ∈ x :: xs, lastOp (F y) e ≠ none := by
+      · have : ¬ ∃ y ∈ x :: xs, lastOpS (F y) e ≠ none := by
           rintro ⟨y, hy, h'⟩
           rcases List.mem_cons.1 hy with rfl | hy
           · exact h' hx
@@ -133,12 +147,12 @@ theorem lastOp_flatMap_common {α} (l : List α) (F : α → List IndexWrite) (e
         simp [hc, this, hx]
     · by_cases hr : r = none
       · subst hr
-        have : ¬ ∃ y ∈ x :: xs, lastOp (F y) e ≠ none := by
+        have : ¬ ∃ y ∈ x :: xs, lastOpS (F y) e ≠ none := by
           rintro ⟨y, hy, h'⟩
           rcases h y hy with h1 | h1 <;> exact h' h1
-        have hc : ¬ ∃ y ∈ xs, lastOp (F y) e ≠ none := fun ⟨y, hy, h'⟩ => this ⟨y, List.mem_cons_of_mem _ hy, h'⟩
+        have hc : ¬ ∃ y ∈ xs, lastOpS (F y) e ≠ none := fun ⟨y, hy, h'⟩ => this ⟨y, List.mem_cons_of_mem _ hy, h'⟩
         simp [hc, this, hx]
-      · have : ∃ y ∈ x :: xs, lastOp (F y) e ≠ none := ⟨x, List.mem_cons_self, by rw [hx]; exact hr⟩
+      · have : ∃ y ∈ x :: xs, lastOpS (F y) e ≠ none := ⟨x, List.mem_cons_self, by rw [hx]; exact hr⟩
         rw [ite_eq_left this, hx]
         split <;> cases r <;> simp_all
 
@@ -148,12 +162,16 @@ theorem colLog_pushL (ix : FalkorDbIndex) (ent : EntityType) (l a : String) (v :
     (k : IndexKey) :
     colLog k (pushL ix ent l a v id add) =
       if (l, a) = k ∧ ix.hasColumn ent l a = true then
-        (match encodeNumeric v with | some kk => [⟨kk, id, add⟩] | none => []) else [] := by
+        (forEachStoredKey v).map (fun kk => (⟨kk.2, id, kk.1, add⟩ : IndexWrite)) else [] := by
   unfold pushL colLog
-  rw [encodeValue_spec]
+  rw [storedKeys_spec]
   by_cases hc : ix.hasColumn ent l a = true
   · simp only [hc, ite_true]
-    cases encodeNumeric v <;> by_cases hk : (l, a) = k <;> simp [hk]
+    by_cases hk : (l, a) = k
+    · simp [hk, List.filter_map, Function.comp_def]
+      congr 1
+      exact List.filter_eq_self.2 (fun _ _ => rfl)
+    · simp [hk, List.filter_map, Function.comp_def]
   · simp [hc]
 
 theorem enc_inj (k d k' d' : Nat) (hd : d < W) (hd' : d' < W) : enc k d = enc k' d' ↔ k = k' ∧ d = d' := by
@@ -165,6 +183,53 @@ theorem enc_inj (k d k' d' : Nat) (hd : d < W) (hd' : d' < W) : enc k d = enc k'
     exact ⟨h1, h2⟩
   · rintro ⟨rfl, rfl⟩; rfl
 
+theorem forEachStoredKey_nl (v : Value) (h : ∀ es, v ≠ .list es) :
+    forEachStoredKey v = (encodeNumeric v).toList.map (fun k => (KeyKind.scalar, k)) := by
+  cases v <;> first
+    | exact absurd rfl (h _)
+    | (simp only [forEachStoredKey]; cases hh : encodeNumeric _ <;> simp [hh])
+
+theorem lastOpOps_none_of (ops : List (Nat × Bool)) (e : Nat) (h : ∀ o ∈ ops, o.1 ≠ e) :
+    lastOpOps ops e = none := by
+  unfold lastOpOps
+  rw [List.filter_eq_nil_iff.2 (by intro x hx; simpa using h x hx)]
+  rfl
+
+/-- The scalar tuple `(kk, id0)`'s last change among the writes one value stages: only a non-list value
+    stages a scalar write, under its `encode_numeric` key. -/
+theorem lastOpS_stored (v : Value) (id : Nat) (add : Bool) (kk id0 : Nat) (hid : id < W) (hid0 : id0 < W) :
+    lastOpS ((forEachStoredKey v).map (fun kk => (⟨kk.2, id, kk.1, add⟩ : IndexWrite))) (enc kk id0) =
+      if id = id0 ∧ encodeNumeric v = some kk then some add else none := by
+  by_cases hl : ∃ es, v = .list es
+  · obtain ⟨es, rfl⟩ := hl
+    have h0 : kindOps .scalar ((forEachStoredKey (.list es)).map (fun kk => (⟨kk.2, id, kk.1, add⟩ : IndexWrite))) = [] := by
+      unfold kindOps
+      rw [List.filter_eq_nil_iff.2]
+      · rfl
+      · intro x hx
+        simp only [forEachStoredKey, List.map_map, List.mem_map] at hx
+        obtain ⟨k, _, rfl⟩ := hx
+        simp
+    unfold lastOpS lastOpK
+    rw [h0]
+    simp [lastOpOps, encodeNumeric]
+  · have hn : ∀ es, v ≠ .list es := fun es h => hl ⟨es, h⟩
+    rw [forEachStoredKey_nl v hn]
+    cases hv : encodeNumeric v with
+    | none => simp [lastOpS_nil]
+    | some k =>
+      simp only [Option.toList_some, List.map_cons, List.map_nil]
+      unfold lastOpS lastOpK
+      rw [kindOps_single]
+      by_cases hm : enc k id = enc kk id0
+      · rw [enc_inj _ _ _ _ hid hid0] at hm
+        obtain ⟨rfl, rfl⟩ := hm
+        rw [lastOpOps_single]; simp
+      · rw [lastOpOps_none_of _ _ (by intro o ho; simp at ho; subst ho; exact hm)]
+        have : ¬ (id = id0 ∧ some k = some kk) := by
+          rintro ⟨h1, h2⟩; apply hm; rw [h1, Option.some.inj h2]
+        rw [if_neg this]
+
 /-- `encode` matches key `kk`. -/
 def encIs (v : Option Value) (kk : Nat) : Bool :=
   match v with | some v => encodeNumeric v == some kk | none => false
@@ -174,7 +239,7 @@ def encIs (v : Option Value) (kk : Nat) : Bool :=
     if it does. -/
 theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : String) (kk id0 : Nat)
     (hid : op.id < W) (hid0 : id0 < W) (hcol : ix.hasColumn ent L A = true) :
-    lastOp (colLog (L, A) (opChanges ix ent op)) (enc kk id0) =
+    lastOpS (colLog (L, A) (opChanges ix ent op)) (enc kk id0) =
       if op.id = id0 ∧ op.attr = A ∧ L ∈ op.labels then
         (if encIs op.new kk then some true else if encIs op.old kk then some false else none)
       else none := by
@@ -185,43 +250,31 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
     if op.id = id0 ∧ op.attr = A then
       (if encIs op.new kk then some true else if encIs op.old kk then some false else none) else none
   have blk : ∀ l ∈ op.labels,
-      lastOp (colLog (L, A)
+      lastOpS (colLog (L, A)
         ((match op.old with | some o => pushL ix ent l op.attr o op.id false | none => []) ++
          (match op.new with | some v => pushL ix ent l op.attr v op.id true | none => []))) (enc kk id0) =
       if l = L then r else none := by
     intro l _
-    rw [colLog_append, lastOp_append]
+    rw [colLog_append, lastOpS_append]
     have one : ∀ (ov : Option Value) (add : Bool),
-        lastOp (colLog (L, A) (match ov with | some o => pushL ix ent l op.attr o op.id add | none => []))
+        lastOpS (colLog (L, A) (match ov with | some o => pushL ix ent l op.attr o op.id add | none => []))
           (enc kk id0) =
         if l = L ∧ op.attr = A ∧ op.id = id0 ∧ encIs ov kk = true then some add else none := by
       intro ov add
       cases ov with
-      | none => simp [colLog, lastOp, encIs]
+      | none => simp [colLog, lastOpS_nil, encIs]
       | some o =>
         simp only [colLog_pushL]
         by_cases hk : (l, op.attr) = (L, A)
         · simp only [Prod.mk.injEq] at hk
           obtain ⟨rfl, rfl⟩ := hk
           simp only [hcol, and_self, ite_true, true_and, encIs]
-          cases hv : encodeNumeric o with
-          | none => simp [lastOp]
-          | some k' =>
-            simp only [lastOp, IndexWrite.tup, List.filter_cons, List.filter_nil]
-            by_cases hm : enc k' op.id = enc kk id0
-            · rw [enc_inj _ _ _ _ hid hid0] at hm
-              obtain ⟨rfl, rfl⟩ := hm
-              simp
-            · have : ¬ (k' = kk ∧ op.id = id0) := fun h => hm (by rw [h.1, h.2])
-              simp only [hm, decide_false, Bool.false_eq_true, ite_false, List.getLast?_nil, Option.map_none]
-              split
-              · rename_i hh; exfalso; apply this; simp_all
-              · rfl
-        · simp only [hk, false_and, ite_false, lastOp, colLog, List.filter_nil, List.map_nil, List.getLast?_nil,
-            Option.map_none]
-          split
-          · rename_i hh; exact absurd (by rw [hh.1, hh.2.1]) hk
-          · rfl
+          rw [lastOpS_stored o op.id add kk id0 hid hid0]
+          by_cases h1 : op.id = id0 <;> by_cases h2 : encodeNumeric o = some kk <;> simp [h1, h2]
+        · have hk' : ¬ (l = L ∧ op.attr = A) := fun h => hk (by rw [h.1, h.2])
+          have hk2 : ¬ ((l, op.attr) = (L, A) ∧ ix.hasColumn ent l op.attr = true) := fun h => hk h.1
+          simp only [hk2, ite_false, List.map_nil]
+          rw [lastOpS_nil, if_neg (fun h => hk' ⟨h.1, h.2.1⟩)]
     rw [one op.old false, one op.new true]
     by_cases hl : l = L
     · subst hl
@@ -234,7 +287,7 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
   by_cases hL : L ∈ op.labels
   · by_cases hr : r = none
     · rw [hr]
-      have hl : (if (∃ x ∈ op.labels, lastOp (colLog (L, A)
+      have hl : (if (∃ x ∈ op.labels, lastOpS (colLog (L, A)
           ((match op.old with | some o => pushL ix ent x op.attr o op.id false | none => []) ++
            (match op.new with | some v => pushL ix ent x op.attr v op.id true | none => []))) (enc kk id0) ≠ none)
           then (none : Option Bool) else none) = none := ite_self _
@@ -243,7 +296,7 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
       by_cases hc : op.id = id0 ∧ op.attr = A
       · rw [ite_eq_left hc] at hr; rw [ite_eq_left ⟨hc.1, hc.2, hL⟩, hr]
       · rw [ite_eq_right (fun h => hc ⟨h.1, h.2.1⟩)]
-    · have : ∃ x ∈ op.labels, lastOp (colLog (L, A)
+    · have : ∃ x ∈ op.labels, lastOpS (colLog (L, A)
           ((match op.old with | some o => pushL ix ent x op.attr o op.id false | none => []) ++
            (match op.new with | some v => pushL ix ent x op.attr v op.id true | none => []))) (enc kk id0) ≠ none :=
         ⟨L, hL, by rw [blk L hL]; simpa using hr⟩
@@ -252,7 +305,7 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
       by_cases hc : op.id = id0 ∧ op.attr = A
       · simp [hc, hL]
       · simp [hc] at hr
-  · have : ¬ ∃ x ∈ op.labels, lastOp (colLog (L, A)
+  · have : ¬ ∃ x ∈ op.labels, lastOpS (colLog (L, A)
           ((match op.old with | some o => pushL ix ent x op.attr o op.id false | none => []) ++
            (match op.new with | some v => pushL ix ent x op.attr v op.id true | none => []))) (enc kk id0) ≠ none := by
       rintro ⟨x, hx, h'⟩
@@ -269,7 +322,7 @@ theorem lastOp_ops (ix : FalkorDbIndex) (ent : EntityType) (ops : List StageOp) 
     (r : Option Bool)
     (huniq : ∀ op ∈ ops, op.id = id0 → op.attr = A → L ∈ op.labels →
       (if encIs op.new kk then some true else if encIs op.old kk then some false else none) = r) :
-    lastOp (colLog (L, A) (opsChanges ix ent ops)) (enc kk id0) =
+    lastOpS (colLog (L, A) (opsChanges ix ent ops)) (enc kk id0) =
       if ∃ op ∈ ops, op.id = id0 ∧ op.attr = A ∧ L ∈ op.labels then r else none := by
   unfold opsChanges
   rw [colLog_flatMap]
@@ -283,10 +336,10 @@ theorem lastOp_ops (ix : FalkorDbIndex) (ent : EntityType) (ops : List StageOp) 
   · obtain ⟨op, hm, hc⟩ := hex
     by_cases hr : r = none
     · subst hr; split <;> split <;> rfl
-    · have : ∃ x ∈ ops, lastOp (colLog (L, A) (opChanges ix ent x)) (enc kk id0) ≠ none :=
+    · have : ∃ x ∈ ops, lastOpS (colLog (L, A) (opChanges ix ent x)) (enc kk id0) ≠ none :=
         ⟨op, hm, by rw [hop op hm, ite_eq_left hc, huniq op hm hc.1 hc.2.1 hc.2.2]; exact hr⟩
       rw [ite_eq_left this, ite_eq_left ⟨op, hm, hc⟩]
-  · have : ¬ ∃ x ∈ ops, lastOp (colLog (L, A) (opChanges ix ent x)) (enc kk id0) ≠ none := by
+  · have : ¬ ∃ x ∈ ops, lastOpS (colLog (L, A) (opChanges ix ent x)) (enc kk id0) ≠ none := by
       rintro ⟨x, hx, h'⟩
       rw [hop x hx] at h'
       split at h'
@@ -444,7 +497,7 @@ theorem attrName_inj (g : G) (hn : g.attrNames.Nodup) (a b : Nat) (n : String)
     · rw [List.getElem?_eq_none h] at ha; cases ha
   exact (hn.getElem?_inj hlt).1 (by rw [ha, hb])
 
-/-- The outcome `lastOp` predicts for one op on key `kk`. -/
+/-- The outcome `lastOpS` predicts for one op on key `kk`. -/
 def outcome (old new : Option Value) (kk : Nat) : Option Bool :=
   if encIs new kk then some true else if encIs old kk then some false else none
 
@@ -460,7 +513,7 @@ theorem nodeAttrsSet_hit (g : G) (hn : g.attrNames.Nodup) (attrs : List (Nat × 
     (kk id0 : Nat) (hid0 : id0 < W) (written : List (Nat × Value)) (aid : Nat) (nv : Value)
     (hmem : (id0, written) ∈ attrs) (hamem : (aid, nv) ∈ written) (hA : g.attrName aid = some A)
     (hL : L ∈ (g.nodeLabels id0).map g.labelName) :
-    lastOp (colLog (L, A) (nodeAttrsSet g attrs).changes) (enc kk id0) =
+    lastOpS (colLog (L, A) (nodeAttrsSet g attrs).changes) (enc kk id0) =
       outcome (g.nodeAttr id0 aid) (some nv) kk := by
   have hcols : g.idx.hasColumns .node = true := by
     unfold FalkorDbIndex.hasColumn FalkorDbIndex.entry at hcol; unfold FalkorDbIndex.hasColumns
@@ -497,7 +550,7 @@ theorem nodeAttrsSet_miss (g : G) (attrs : List (Nat × List (Nat × Value)))
     (kk id0 : Nat) (hid0 : id0 < W)
     (hno : ¬ ∃ written aid nv, (id0, written) ∈ attrs ∧ (aid, nv) ∈ written ∧ g.attrName aid = some A ∧
       L ∈ (g.nodeLabels id0).map g.labelName) :
-    lastOp (colLog (L, A) (nodeAttrsSet g attrs).changes) (enc kk id0) = none := by
+    lastOpS (colLog (L, A) (nodeAttrsSet g attrs).changes) (enc kk id0) = none := by
   rw [nodeAttrsSet_changes]
   split
   · have hops : ∀ op ∈ nodeAttrsSetOps g attrs, op.id < W := by
@@ -513,7 +566,7 @@ theorem nodeAttrsSet_miss (g : G) (attrs : List (Nat × List (Nat × Value)))
       subst hid hattr
       exact hno ⟨w', aid', nv', hiw, han, hattr', hl⟩)]
     split <;> rfl
-  · simp [colLog, lastOp]
+  · simp [colLog, lastOpS_nil]
 
 /-! ## The other staging functions -/
 
@@ -990,7 +1043,7 @@ theorem nodesDeleted_hit (g : G) (hn : g.attrNames.Nodup) (ids : List Nat) (hids
     (L A : String) (hcol : g.idx.hasColumn .node L A = true) (kk id0 : Nat) (hid0 : id0 < W)
     (hmem : id0 ∈ ids) (v : Value) (hv : (A, v) ∈ g.nodeAllAttrs id0)
     (hL : L ∈ (g.nodeLabels id0).map g.labelName) :
-    lastOp (colLog (L, A) (nodesDeleted g ids).changes) (enc kk id0) = outcome (some v) none kk := by
+    lastOpS (colLog (L, A) (nodesDeleted g ids).changes) (enc kk id0) = outcome (some v) none kk := by
   rw [nodesDeleted_changes g ids (hasColumns_of_hasColumn _ _ _ _ hcol)]
   have hops : ∀ op ∈ nodesDeletedOps g ids, op.id < W := by
     intro op hop; simp only [nodesDeletedOps, List.mem_flatMap, List.mem_map] at hop
@@ -1006,8 +1059,24 @@ theorem nodesDeleted_hit (g : G) (hn : g.attrNames.Nodup) (ids : List Nat) (hids
     rw [nodeAllAttrs_unique g hn _ _ _ _ hav hv]; rfl
 
 /-- A change list built only from ops without a new value never ends a tuple added. -/
+theorem lastOpS_some_mem (log : List IndexWrite) (e : Nat) (b : Bool) (h : lastOpS log e = some b) :
+    ∃ w ∈ log, w.add = b := by
+  unfold lastOpS lastOpK lastOpOps at h
+  cases hl : (List.filter (fun o => decide (o.1 = e)) (kindOps .scalar log)).getLast? with
+  | none => rw [hl] at h; simp at h
+  | some o =>
+    rw [hl] at h
+    simp only [Option.map_some, Option.some.injEq] at h
+    have := List.mem_of_getLast? hl
+    rw [List.mem_filter] at this
+    unfold kindOps at this
+    obtain ⟨hm, _⟩ := this
+    simp only [List.mem_map, List.mem_filter] at hm
+    obtain ⟨w, ⟨hw, _⟩, rfl⟩ := hm
+    exact ⟨w, hw, h⟩
+
 theorem lastOp_noadd (ix : FalkorDbIndex) (ent : EntityType) (ops : List StageOp) (k : IndexKey) (e : Nat)
-    (h : ∀ op ∈ ops, op.new = none) : lastOp (colLog k (opsChanges ix ent ops)) e ≠ some true := by
+    (h : ∀ op ∈ ops, op.new = none) : lastOpS (colLog k (opsChanges ix ent ops)) e ≠ some true := by
   have hall : ∀ w ∈ colLog k (opsChanges ix ent ops), w.add = false := by
     intro w hw
     simp only [colLog, List.mem_map, List.mem_filter, opsChanges, List.mem_flatMap, opChanges] at hw
@@ -1017,34 +1086,29 @@ theorem lastOp_noadd (ix : FalkorDbIndex) (ent : EntityType) (ops : List StageOp
     cases ho : op.old with
     | none => simp [ho] at hin
     | some o =>
-      simp only [ho, pushL] at hin
-      split at hin <;> simp at hin
-      obtain ⟨_, rfl⟩ := hin; rfl
-  unfold lastOp
+      simp only [ho, pushL, List.mem_map] at hin
+      obtain ⟨x, _, hx⟩ := hin
+      have := congrArg (fun p => p.2.add) hx
+      simpa using this.symm
   intro hc
-  cases hl : (List.filter (fun w => decide (w.tup = e)) (colLog k (opsChanges ix ent ops))).getLast? with
-  | none => rw [hl] at hc; cases hc
-  | some w =>
-    rw [hl] at hc; simp at hc
-    have := List.mem_of_getLast? hl
-    rw [List.mem_filter] at this
-    rw [hall w this.1] at hc; cases hc
+  obtain ⟨w, hw, hadd⟩ := lastOpS_some_mem _ _ _ hc
+  rw [hall w hw] at hadd; cases hadd
 
 theorem nodesDeleted_noadd (g : G) (ids : List Nat) (k : IndexKey) (e : Nat) :
-    lastOp (colLog k (nodesDeleted g ids).changes) e ≠ some true := by
+    lastOpS (colLog k (nodesDeleted g ids).changes) e ≠ some true := by
   by_cases hc : g.idx.hasColumns .node = true
   · rw [nodesDeleted_changes g ids hc]
     apply lastOp_noadd
     intro op hop; simp only [nodesDeletedOps, List.mem_flatMap, List.mem_map] at hop
     obtain ⟨_, _, _, _, rfl⟩ := hop; rfl
   · simp only [Bool.not_eq_true] at hc
-    simp [nodesDeleted, hc, IndexChanges.new, colLog, lastOp]
+    simp [nodesDeleted, hc, IndexChanges.new, colLog, lastOpS_nil]
 
 /-- **REMOVE `:L` removes the node's entries under `L`.** -/
 theorem labelsRemoved_hit (g : G) (hn : g.attrNames.Nodup) (r c : List Nat) (hids : ∀ i ∈ r, i < W)
     (L A : String) (hcol : g.idx.hasColumn .node L A = true) (kk id0 lid : Nat) (hid0 : id0 < W)
     (hmem : (id0, lid) ∈ r.zip c) (hL : g.labelName lid = L) (v : Value) (hv : (A, v) ∈ g.nodeAllAttrs id0) :
-    lastOp (colLog (L, A) (labelsRemoved g r c).changes) (enc kk id0) = outcome (some v) none kk := by
+    lastOpS (colLog (L, A) (labelsRemoved g r c).changes) (enc kk id0) = outcome (some v) none kk := by
   rw [labelsRemoved_changes g r c (hasColumns_of_hasColumn _ _ _ _ hcol)]
   have hops : ∀ op ∈ (r.zip c).flatMap (fun p => underLabelOps g p.1 p.2 false), op.id < W := by
     intro op hop; simp only [underLabelOps, List.mem_flatMap, List.mem_map, Bool.false_eq_true, ite_false] at hop
@@ -1064,7 +1128,7 @@ theorem labelsRemoved_hit (g : G) (hn : g.attrNames.Nodup) (r c : List Nat) (hid
 theorem labelsAdded_hit (g : G) (hn : g.attrNames.Nodup) (r c : List Nat) (hids : ∀ i ∈ r, i < W)
     (L A : String) (hcol : g.idx.hasColumn .node L A = true) (kk id0 lid : Nat) (hid0 : id0 < W)
     (hmem : (id0, lid) ∈ r.zip c) (hL : g.labelName lid = L) (v : Value) (hv : (A, v) ∈ g.nodeAllAttrs id0) :
-    lastOp (colLog (L, A) (labelsAdded g r c).changes) (enc kk id0) = outcome none (some v) kk := by
+    lastOpS (colLog (L, A) (labelsAdded g r c).changes) (enc kk id0) = outcome none (some v) kk := by
   rw [labelsAdded_changes g r c (hasColumns_of_hasColumn _ _ _ _ hcol)]
   have hops : ∀ op ∈ (r.zip c).flatMap (fun p => underLabelOps g p.1 p.2 true), op.id < W := by
     intro op hop; simp only [underLabelOps, List.mem_flatMap, List.mem_map, ite_true] at hop
@@ -1084,7 +1148,7 @@ theorem labelsAdded_hit (g : G) (hn : g.attrNames.Nodup) (r c : List Nat) (hids 
 theorem edgesDeleted_hit (g : G) (hn : g.attrNames.Nodup) (ids : List Nat) (hids : ∀ i ∈ ids, i < W)
     (T A : String) (hcol : g.idx.hasColumn .relationship T A = true) (kk id0 : Nat) (hid0 : id0 < W)
     (hmem : id0 ∈ ids) (v : Value) (hv : (A, v) ∈ g.relAllAttrs id0) (hT : edgeType g id0 = T) :
-    lastOp (colLog (T, A) (edgesDeleted g ids).changes) (enc kk id0) = outcome (some v) none kk := by
+    lastOpS (colLog (T, A) (edgesDeleted g ids).changes) (enc kk id0) = outcome (some v) none kk := by
   rw [edgesDeleted_changes g ids (hasColumns_of_hasColumn _ _ _ _ hcol)]
   have hops : ∀ op ∈ edgesDeletedOps g ids, op.id < W := by
     intro op hop; simp only [edgesDeletedOps, List.mem_flatMap, List.mem_map] at hop
@@ -1101,14 +1165,14 @@ theorem edgesDeleted_hit (g : G) (hn : g.attrNames.Nodup) (ids : List Nat) (hids
     rw [relAllAttrs_unique g hn _ _ _ _ hav hv]; rfl
 
 theorem edgesDeleted_noadd (g : G) (ids : List Nat) (k : IndexKey) (e : Nat) :
-    lastOp (colLog k (edgesDeleted g ids).changes) e ≠ some true := by
+    lastOpS (colLog k (edgesDeleted g ids).changes) e ≠ some true := by
   by_cases hc : g.idx.hasColumns .relationship = true
   · rw [edgesDeleted_changes g ids hc]
     apply lastOp_noadd
     intro op hop; simp only [edgesDeletedOps, List.mem_flatMap, List.mem_map] at hop
     obtain ⟨_, _, _, _, rfl⟩ := hop; rfl
   · simp only [Bool.not_eq_true] at hc
-    simp [edgesDeleted, hc, IndexChanges.new, colLog, lastOp]
+    simp [edgesDeleted, hc, IndexChanges.new, colLog, lastOpS_nil]
 
 /-- **SET on an edge replaces its entry** (same uniqueness premises as `nodeAttrsSet_hit`). -/
 theorem edgeAttrsSetWith_hit (g : G) (hn : g.attrNames.Nodup) (attrs : List (Nat × List (Nat × Value)))
@@ -1118,7 +1182,7 @@ theorem edgeAttrsSetWith_hit (g : G) (hn : g.attrNames.Nodup) (attrs : List (Nat
     (kk id0 : Nat) (hid0 : id0 < W) (written : List (Nat × Value)) (aid : Nat) (nv : Value)
     (hmem : (id0, written) ∈ attrs) (hamem : (aid, nv) ∈ written) (hA : g.attrName aid = some A)
     (hT : edgeTypeOf g typeId id0 = T) :
-    lastOp (colLog (T, A) (edgeAttrsSetWith g attrs typeId).changes) (enc kk id0) =
+    lastOpS (colLog (T, A) (edgeAttrsSetWith g attrs typeId).changes) (enc kk id0) =
       outcome (g.relAttr id0 aid) (some nv) kk := by
   rw [edgeAttrsSetWith_changes g attrs typeId (hasColumns_of_hasColumn _ _ _ _ hcol)]
   have hops : ∀ op ∈ edgeAttrsSetOps g attrs typeId, op.id < W := by
@@ -1153,7 +1217,7 @@ theorem newNodeAttrs_hit (g : G) (hn : g.attrNames.Nodup) (attrs : List (Nat × 
     (kk id0 : Nat) (hid0 : id0 < W) (written : List (Nat × Value)) (aid : Nat) (nv : Value) (lids : List Nat)
     (hmem : (id0, written) ∈ attrs) (hamem : (aid, nv) ∈ written) (hA : g.attrName aid = some A)
     (hlab : hmGet newLabels id0 = some lids) (hL : L ∈ lids.map g.labelName) :
-    lastOp (colLog (L, A) (newNodeAttrs g attrs newLabels).changes) (enc kk id0) = outcome none (some nv) kk := by
+    lastOpS (colLog (L, A) (newNodeAttrs g attrs newLabels).changes) (enc kk id0) = outcome none (some nv) kk := by
   rw [newNodeAttrs_changes g attrs newLabels (hasColumns_of_hasColumn _ _ _ _ hcol)]
   have hops : ∀ op ∈ newNodeAttrsOps g attrs newLabels, op.id < W := by
     intro op hop

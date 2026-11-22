@@ -328,9 +328,9 @@ theorem fewest_minimal (rows : List (List Nat)) (h : rows ≠ []) :
 /-! ## `ReadOnce` (`unique.rs:40-60`) -/
 
 /-- The lookups of a unique-constraint check are read at most once per set. `ids.sort_unstable()` makes
-    the id list canonical, so the `HashSet<Vec<(usize, u64)>>` holds a list up to reordering: a
+    the id list canonical, so the `HashSet<Vec<(usize, KeyKind, u64)>>` holds a list up to reordering: a
     permutation test. -/
-abbrev LookupId := (EntityType × String × String) × Nat
+abbrev LookupId := (EntityType × String × String) × KeyKind × Nat
 
 structure ReadOnce where
   seen : List (List LookupId)

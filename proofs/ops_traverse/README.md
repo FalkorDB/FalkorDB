@@ -140,15 +140,14 @@ Line numbers are pinned to main 5e475e6c9. No traversal operator changed since f
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 80 |
-| NOT COVERED | 4 |
+| PROVEN | 84 |
 
 Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled). The rest:
 
 - **`cond_traverse.rs` since #3492:** `delta_lmxm_into` is proved (`UnionGlue.deltaInto_eff`: `F * (A1 + .. + Ak)` on the pattern, via `GBWDelta.deltaLmxm_eff`); the iterator builders and the `UnionIter` merge (`UnionStream.drain_spec`) are modelled and proved. The batched path's one-hop theorems still take `MxmSpec` for the multiply.
 - **`algo_procedures.rs`, `eval.rs` (since 2026-11-22):** config parsing, the path comparator, `to_numeric_value`, `edge_numeric_attr`, `far_endpoint`, `node_successors`, the Dijkstra heap order, `build_path_batch` and the two registrations are PROVEN (`AlgoPaths`); `eval_shortest_path` is PROVEN as glue (`EvalSP`, the search is a parameter).
 - **Also PROVEN since the second pass:** `record_found_path` (`RecordFound`), `run_path_algo` (`RunAlgo`, glue over the searches), `NeighborIter::{new,new_reversed,neighbors}` (`NeighborIter`, relative to the matrices they read).
-- **NOT COVERED (4):** `dijkstra_single_path` (f64 addition is not associative; walk/cost-fold properties need the heap/label loop invariant), `bfs_find_bound`, `enumerate_paths`, and `bfs_shortest_path` (loop-invariant proofs over seen/parent/level state, not completed).
+- **The four path searches are PROVEN (2026-11-22, third pass):** `bfs_find_bound` (`BfsFind`: `None` iff unreachable within `max_len`; the bound is the fold over a shortest simple walk), `dijkstra_single_path` (`Dijkstra`: valid simple walk, cost = left fold, finite weight, any heap; f64 optimality is not provable because `+` is not associative, so optimality is `DijkstraNat.dijkstraNat_spec`, the same algorithm over `Nat`), `enumerate_paths` (`Enum`: the iterative stack loop equals the recursive DFS; `EnumSpec`: sound, and exact for a bound-preserving recorder), and `bfs_shortest_path` (`BidirBfs`: the stop rule returns a shortest path, `Null` only when none within `max_level`). `AlgoSearch` instantiates them at `node_successors` and `RunAlgo.runAlgo_ok_good` gives the end-to-end statement for `run_path_algo`; `BspWire` adds the `min_hops` filter. Scope notes are in COVERAGE.tsv.
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 

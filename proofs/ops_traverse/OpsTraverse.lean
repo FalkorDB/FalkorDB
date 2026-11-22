@@ -24,6 +24,15 @@ import OpsTraverse.EvalSP
 import OpsTraverse.NeighborIter
 import OpsTraverse.RecordFound
 import OpsTraverse.RunAlgo
+import OpsTraverse.SearchBase
+import OpsTraverse.BfsFind
+import OpsTraverse.Dijkstra
+import OpsTraverse.DijkstraNat
+import OpsTraverse.Enum
+import OpsTraverse.EnumSpec
+import OpsTraverse.BidirBfs
+import OpsTraverse.AlgoSearch
+import OpsTraverse.BspWire
 
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
@@ -66,8 +75,8 @@ scans and `eval_shortest_path` without changing what they compute; no other pin 
 **Re-synced to main 256ab4d3f (2026-11-22)**: `algo_procedures.rs` rows re-pinned (+41); new `AlgoPaths`
 (config parsing, ordering, result assembly, registration of `algo.SPpaths`/`SSpaths`: 13 rows) and `EvalSP`
 (`eval_shortest_path` glue); `record_found_path` (`RecordFound`), `run_path_algo` (`RunAlgo`, glue) and the three `NeighborIter` fns
-(`NeighborIter`, relative to the matrices they read) are PROVEN; `dijkstra_single_path`, `bfs_find_bound`,
-`enumerate_paths` and `bfs_shortest_path` stay NOT COVERED (loop invariants not proved; reasons in COVERAGE.tsv). The index scans' native-index fallback (#2453, #3736: `ScanFilter::resolve`,
+(`NeighborIter`, relative to the matrices they read) are PROVEN; `dijkstra_single_path` (`Dijkstra`, `DijkstraNat`), `bfs_find_bound` (`BfsFind`),
+`enumerate_paths` (`Enum`, `EnumSpec`) and `bfs_shortest_path` (`BidirBfs`, `BspWire`) are PROVEN with their loop invariants (`AlgoSearch` instantiates them at `node_successors`; scope in COVERAGE.tsv). The index scans' native-index fallback (#2453, #3736: `ScanFilter::resolve`,
 `query_index_nodes`) is outside the RediSearch-contract model (`proofs/native_index`).
 
 **Re-targeted to main b6567cb97** (from 737dfb5da): no change to the traversal

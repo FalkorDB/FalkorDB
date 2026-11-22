@@ -36,7 +36,7 @@ def held (acc : List Name) : List LClause → List Name
   | .optMatch _ :: r | .predicate _ :: r | .comprehension _ :: r => held acc r
 
 /-- The label set `update_all_node_labels` stamps on the first MATCH after `WITH`: the
-child inherits `accumulate [] before` (binder.rs:220-252) and the MATCH extends it
+child inherits `accumulate [] before` (binder.rs:221-253) and the MATCH extends it
 (:1360-1366). -/
 def rsStamp (before : List LClause) (own : List Name) : List Name :=
   accumulate (accumulate [] before) [.match_ own]

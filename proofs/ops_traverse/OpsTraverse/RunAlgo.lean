@@ -72,4 +72,57 @@ theorem runAlgo_spec (cfg : Cfg F) (inf : F) (leF : F → F → Bool)
     | ok b => cases b <;> rfl
   · simp [runAlgo, ht, bind, Except.bind, pure, Except.pure]
 
+/-- **PROVEN** (`run_path_algo`, what reaches `build_path_batch`): whatever the three searches are, if
+they only ever produce `Good` paths (`hdij`: the Dijkstra path, `henum`: every enumerated path) and
+`sort_by` only reorders (`hsort`), then every batch `run_path_algo` returns is `build` of a list of
+`Good` paths. With the searches instantiated by `AlgoSearch` this is the end-to-end statement. -/
+theorem runAlgo_ok_good (cfg : Cfg F) (inf : F) (leF : F → F → Bool)
+    (dij : Nat → Except String (Option P)) (bfsb : Nat → Except String (Option (F × F)))
+    (enum : F → Except String (List P)) (sortF : List P → List P) (build : List P → R) (Good : P → Prop)
+    (hdij : ∀ t f, dij t = .ok (some f) → Good f)
+    (henum : ∀ b rs, enum b = .ok rs → ∀ x ∈ rs, Good x)
+    (hsort : ∀ l x, x ∈ sortF l → x ∈ l) (out : R)
+    (h : runAlgo cfg inf leF dij bfsb enum sortF build = .ok out) :
+    ∃ L, out = build L ∧ ∀ x ∈ L, Good x := by
+  obtain ⟨h1, h2, h3⟩ := runAlgo_spec cfg inf leF dij bfsb enum sortF build
+  cases ht : cfg.target with
+  | none =>
+    rw [h3 ht] at h
+    cases he : enum inf with
+    | error e => rw [he] at h; simp [bind, Except.bind] at h
+    | ok rs =>
+      rw [he] at h
+      simp only [bind, Except.bind, Except.ok.injEq] at h
+      exact ⟨sortF rs, h.symm, fun x hx => henum _ _ he x (hsort _ x hx)⟩
+  | some t =>
+    by_cases hg : cfg.pathCount = 1 ∧ cfg.maxCost.isNone = true ∧ cfg.maxLen = u32max ∧ cfg.source ≠ t
+    · rw [h1 t ht hg.1 hg.2.1 hg.2.2.1 hg.2.2.2] at h
+      cases hd : dij t with
+      | error e => rw [hd] at h; simp [bind, Except.bind] at h
+      | ok f =>
+        rw [hd] at h
+        simp only [bind, Except.bind, Except.ok.injEq] at h
+        refine ⟨f.toList, h.symm, fun x hx => ?_⟩
+        cases f with
+        | none => simp at hx
+        | some f => simp at hx; subst hx; exact hdij t _ hd
+    · rw [h2 t ht hg] at h
+      cases hb : bfsb t with
+      | error e => rw [hb] at h; simp [bind, Except.bind] at h
+      | ok b =>
+        rw [hb] at h
+        cases b with
+        | none =>
+          simp only [bind, Except.bind, Except.ok.injEq] at h
+          exact ⟨[], h.symm, fun x hx => by simp at hx⟩
+        | some bc =>
+          obtain ⟨bw, bcost⟩ := bc
+          simp only [bind, Except.bind] at h
+          cases he : enum (if (cfg.pathCount == 0 || cfg.pathCount == 1) && (cfg.maxCost.all (fun m => leF bcost m)) then bw else inf) with
+          | error e => rw [he] at h; simp at h
+          | ok rs =>
+            rw [he] at h
+            simp only [Except.ok.injEq] at h
+            exact ⟨sortF rs, h.symm, fun x hx => henum _ _ he x (hsort _ x hx)⟩
+
 end OpsTraverse.RunAlgo

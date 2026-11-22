@@ -59,7 +59,12 @@ theorem memoryUsage_add (hb : NumericIndex → Nat) (ser : List Nat → Nat) (ns
       (ns.map (EN.memoryUsage hb ser)).sum + (es.map (EN.memoryUsage hb ser)).sum := by
   simp [memoryUsage, List.map_append, List.sum_append]
 
+/-- `NumericIndex::memory_usage` (`numeric.rs:474-476`) walks the two trees: with `ht` = `CowBTree::heap_bytes`
+    of one tree, the parameter `hb` is `ht` of the scalar tree plus `ht` of the array tree (#2453). -/
+theorem memoryUsage_two_trees (ht : List Nat → Nat) (ix : NumericIndex) :
+    ix.memoryUsage (fun i => ht i.tree + ht i.arrayTree) = ht ix.tree + ht ix.arrayTree := rfl
+
 /-- `batch_len`: the number of tuples in the batch (`EncodedTuples::len`; `IndexColumn.batchLen` is defined in `Batch.lean`, where the fit reads it). -/
-theorem IndexColumn.batchLen_spec (b : EncodedTuples) : IndexColumn.batchLen b = b.scalar.length := rfl
+theorem IndexColumn.batchLen_spec (b : EncodedTuples) : IndexColumn.batchLen b = b.scalar.length + b.array.length := rfl
 
 end NI

@@ -5,13 +5,13 @@ import FalkorBinder.Resolve
 | here | there |
 | --- | --- |
 | `NE` / `BE` | raw `ExprIR<Arc<String>>` / bound `ExprIR<Variable>` trees (the variants the binder treats specially) |
-| `reserve` | `fresh_var` + insert under `_quant_{s}_{id}` / `_lc_…` / `_reduce_acc_…` / `_reduce_iter_…` (binder.rs:2492-2506, 1796-1799, 1838-1844) |
-| `bindNode`, `bindL` | `bind_expr_node` binder.rs:1935-2345 |
-| `NE.paren`, `bindNode` on it | the `Paren` early return binder.rs:1935-2345 (#3335): `(x)` binds to `x`'s tree |
-| `NE.andOr`, `BE.andOr`, `flatB` | `And`/`Or` and the `ExprIR::and_of`/`or_of` return binder.rs:2333-2334, ast.rs:450-452 (#3335) |
-| `bindExpr`, `bindExprLocals` | `bind_expr` binder.rs:1914-1919, `bind_expr_with_locals` binder.rs:1921-1928 |
-| `bindSetItems` | `bind_set_items` binder.rs:1889-1912 |
-| `selfRef` | `check_unbound_self_referential` binder.rs:1867-1887 |
+| `reserve` | `fresh_var` + insert under `_quant_{s}_{id}` / `_lc_…` / `_reduce_acc_…` / `_reduce_iter_…` (binder.rs:2493-2507, 1796-1799, 1838-1844) |
+| `bindNode`, `bindL` | `bind_expr_node` binder.rs:1936-2346 |
+| `NE.paren`, `bindNode` on it | the `Paren` early return binder.rs:1936-2346 (#3335): `(x)` binds to `x`'s tree |
+| `NE.andOr`, `BE.andOr`, `flatB` | `And`/`Or` and the `ExprIR::and_of`/`or_of` return binder.rs:2334-2335, ast.rs:450-452 (#3335) |
+| `bindExpr`, `bindExprLocals` | `bind_expr` binder.rs:1915-1920, `bind_expr_with_locals` binder.rs:1922-1929 |
+| `bindSetItems` | `bind_set_items` binder.rs:1890-1913 |
+| `selfRef` | `check_unbound_self_referential` binder.rs:1868-1888 |
 
 `bind_graph` (for pattern predicates / comprehensions) defines each pattern
 name in the current table (`defineName … true`, Pattern.lean has the finer
@@ -98,7 +98,7 @@ def injectLocals (e : Env) (locals : List Env) : Env :=
     | .nm n => e.insert n kv.2
     | .un => e) e) e
 
-/-- The cleanup after a pattern (binder.rs:2113-2118, 2291-2296): keep the outer names; the
+/-- The cleanup after a pattern (binder.rs:2114-2119, 2291-2296): keep the outer names; the
 unnamed entries stay (`Scope::retain`, #3303 — before, every `_anon…` key stayed, a written one
 included). -/
 def cleanup (outer : List Name) (e : Env) : Env := e.retain fun k => outer.contains k
@@ -272,7 +272,7 @@ theorem func_arg_mismatch (st : St) (locals : List Env) (name n : Name) (t : Ty)
 
 /-! ## #3335: parentheses and AND/OR flattening -/
 
-/-- **`(x)` binds exactly like `x`** (binder.rs:2150-2160): same bound tree, same
+/-- **`(x)` binds exactly like `x`** (binder.rs:2151-2161): same bound tree, same
 state, same errors. -/
 theorem bind_paren (st : St) (locals : List Env) (c : NE) :
     bindNode C st locals (.paren [c]) = bindNode C st locals c := by
@@ -636,7 +636,7 @@ def selfRefL (a : Name) : List NE → Bool
   | c :: cs => selfRef a c || selfRefL a cs
 end
 
-/-- `check_unbound_self_referential` (binder.rs:1867-1887) takes the entity's `Alias` (#3303):
+/-- `check_unbound_self_referential` (binder.rs:1868-1888) takes the entity's `Alias` (#3303):
 an unnamed entity has no name its attributes could mention. -/
 def checkSelfRef (a : Alias) (attrs : NE) : Except String Unit :=
   match a with
@@ -667,7 +667,7 @@ theorem selfRef_leaf_prop (a b k : Name) (n : Nat) :
 
 /-! ## #1334: a pattern predicate may declare a new variable (gap closed 2026-10-20)
 
-The `ExprIR::Pattern` arm of `bind_expr_node` (binder.rs:1935-2345) binds the predicate with
+The `ExprIR::Pattern` arm of `bind_expr_node` (binder.rs:1936-2346) binds the predicate with
 `bind_graph(&pattern, false)`, which `define_name_in_scope`s every alias (`allow_reuse`), minting
 a fresh variable for a name that is not in scope; the cleanup then only hides it again. Nothing
 checks that a *named* alias already existed, so `WHERE () -- (n1)` with no `n1` in scope binds
@@ -683,7 +683,7 @@ def PatternPredDeclaresNothing (st : St) (locals : List Env) (vars : List Alias)
 
 /-- The binder state while `MATCH (n0) WITH * WHERE …` binds its WHERE: the projection scope
 `{n0}` (scope 1), the parent `{n0}`, `use_parent_scope` set; `WITH *` adds nothing to
-`parent_to_child_scope` (binder.rs:1236-1262). -/
+`parent_to_child_scope` (binder.rs:1237-1263). -/
 def st1334 : St :=
   { cur := [("n0", ⟨"n0", 0, 1, .node, none⟩)], parent := [("n0", ⟨"n0", 0, 0, .node, none⟩)],
     depth := 1, useParent := true, p2c := [], cfp := [] }

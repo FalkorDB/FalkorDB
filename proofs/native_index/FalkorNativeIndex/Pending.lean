@@ -37,7 +37,7 @@ structure IndexWrite where
 deriving DecidableEq, Repr
 
 /-- The tree entry a write names: `enc key id`. -/
-def IndexWrite.ent (w : IndexWrite) : Nat := enc w.key w.id
+@[irreducible] def IndexWrite.ent (w : IndexWrite) : Nat := enc w.key w.id
 
 /-- Position of the write's tree in the sort (`KeyKind`'s derived `Ord`: `Scalar < Array`). -/
 def KeyKind.rank : KeyKind → Nat
@@ -59,10 +59,15 @@ theorem enc_lt_WW (k d : Nat) (hk : k < W) (hd : d < W) : enc k d < M := by
   unfold M
   omega
 
+theorem ent_eq' (w : IndexWrite) : w.ent = enc w.key w.id := by unfold IndexWrite.ent; rfl
+
+theorem ent_lt_M (w : IndexWrite) (hw : w.key < W ∧ w.id < W) : w.ent < M := by
+  rw [ent_eq']; exact enc_lt_WW _ _ hw.1 hw.2
+
 /-- A well-formed write has the sort key of tuple `e` of tree `kd` iff it names that tuple of that tree. -/
 theorem tup_cond (w : IndexWrite) (hw : w.key < W ∧ w.id < W) (kd : KeyKind) (e : Nat) (he : e < M) :
     w.tup = kd.rank * M + e ↔ w.kind = kd ∧ w.ent = e := by
-  have h1 : w.ent < M := enc_lt_WW _ _ hw.1 hw.2
+  have h1 : w.ent < M := ent_lt_M w hw
   unfold IndexWrite.tup IndexWrite.rank
   cases hk : w.kind <;> cases kd <;> simp [KeyKind.rank] <;> omega
 
@@ -275,19 +280,21 @@ theorem kindOps_filter (log : List IndexWrite) (hwf : ∀ w ∈ log, w.key < W �
     ((log.filter (fun w => decide (w.kind = kd))).map (fun w => (w.ent, w.add))).filter
         (fun o => decide (o.1 = e)) =
       (log.filter (fun w => decide (w.tup = kd.rank * M + e))).map (fun w => (w.ent, w.add)) := by
-  rw [List.filter_map, List.filter_filter]
-  congr 1
-  apply List.filter_congr
-  intro w hw
-  have hc := tup_cond w (hwf w hw) kd e he
-  show (decide (w.ent = e) && decide (w.kind = kd)) = decide (w.tup = kd.rank * M + e)
-  by_cases h : w.kind = kd ∧ w.ent = e
-  · rw [decide_eq_true (hc.2 h), decide_eq_true h.2, decide_eq_true h.1]; rfl
-  · rw [decide_eq_false (fun x => h (hc.1 x))]
-    by_cases h1 : w.ent = e
-    · have h2 : ¬ w.kind = kd := fun x => h ⟨x, h1⟩
-      rw [decide_eq_false h2]; simp
-    · rw [decide_eq_false h1]; simp
+  induction log with
+  | nil => simp
+  | cons w ws ih =>
+    have hw := hwf w List.mem_cons_self
+    have ih' := ih (fun x hx => hwf x (List.mem_cons_of_mem _ hx))
+    have hc := tup_cond w hw kd e he
+    generalize kd.rank * M + e = t at hc ih' ⊢
+    by_cases h : w.kind = kd ∧ w.ent = e
+    · have h1 : w.tup = t := hc.2 h
+      simp [List.filter_cons, h.1, h.2, h1, ih']
+    · have h1 : ¬ w.tup = t := fun x => h (hc.1 x)
+      by_cases hk : w.kind = kd
+      · have h2 : ¬ w.ent = e := fun x => h ⟨hk, x⟩
+        simp [List.filter_cons, hk, h2, h1, ih']
+      · simp [List.filter_cons, hk, h1, ih']
 
 theorem lastOp_kind (log : List IndexWrite) (hwf : ∀ w ∈ log, w.key < W ∧ w.id < W) (kd : KeyKind)
     (e : Nat) (he : e < M) : lastOp log (kd.rank * M + e) = lastOpK log kd e := by
@@ -327,7 +334,7 @@ theorem lastWriteWins_spec (log : List IndexWrite) (hwf : ∀ w ∈ log, w.key <
     · constructor
       · rintro ⟨w, hw, _, _, h3⟩
         exfalso; apply he
-        rw [← h3]; exact enc_lt_WW _ _ (hwf' w hw).1 (hwf' w hw).2
+        rw [← h3]; exact ent_lt_M w (hwf' w hw)
       · intro h
         exfalso
         unfold lastOpK lastOpOps kindOps at h
@@ -339,7 +346,7 @@ theorem lastWriteWins_spec (log : List IndexWrite) (hwf : ∀ w ∈ log, w.key <
               (fun o => decide (o.1 = e)) := by rw [hl]; exact List.mem_cons_self
           simp only [List.mem_filter, List.mem_map, decide_eq_true_eq] at hmem
           obtain ⟨⟨w, hw, rfl⟩, ho⟩ := hmem
-          exact he (by rw [← ho]; exact enc_lt_WW _ _ (hwf w hw.1).1 (hwf w hw.1).2)
+          exact he (by rw [← ho]; exact ent_lt_M w (hwf w hw.1))
   have mem_side : ∀ (pick : IndexWrite → Bool) (e : Nat),
       e ∈ (sideTuples (lwwGo (sortLog log)) pick).get kd ↔
         ∃ w ∈ lwwGo (sortLog log), pick w = true ∧ w.kind = kd ∧ w.ent = e := by
@@ -496,10 +503,10 @@ theorem writerRecord_eq_sequential (ix : NumericIndex) (hs : Sorted ix.tree) (ha
     NumericIndex.removeTrees, EncodedTuples.sortDedup]
   have e1 := tree_step ix.tree hs (lastWriteWins (stateLog st place log) rm ad).2.1.scalar
     (lastWriteWins (stateLog st place log) rm ad).2.2.scalar (kindOps .scalar (stateLog st place log))
-    (fun e => lwS.2 e) (fun e => lwS.1 e)
+    (fun e => (lwS e).2) (fun e => (lwS e).1)
   have e2 := tree_step ix.arrayTree ha (lastWriteWins (stateLog st place log) rm ad).2.1.array
     (lastWriteWins (stateLog st place log) rm ad).2.2.array (kindOps .array (stateLog st place log))
-    (fun e => lwA.2 e) (fun e => lwA.1 e)
+    (fun e => (lwA e).2) (fun e => (lwA e).1)
   rw [e1, e2]
 
 /-- A `Ready` column takes the whole log (#3307's claim). -/
@@ -526,6 +533,20 @@ theorem stateLog_sublist (st : BuildState) (place : Nat → Option BuildCursor) 
     (stateLog st place log).Sublist log := by
   cases st <;> simp [stateLog, List.filter_sublist]
 
+theorem lastOpOps_single (x : Nat) (b : Bool) : lastOpOps [(x, b)] x = some b := by
+  unfold lastOpOps
+  rw [List.filter_cons_of_pos (by simp)]
+  simp
+
+theorem lastOpOps_two (x : Nat) (b b' : Bool) : lastOpOps [(x, b), (x, b')] x = some b' := by
+  unfold lastOpOps
+  rw [List.filter_cons_of_pos (by simp), List.filter_cons_of_pos (by simp)]
+  simp
+
+theorem kindOps_single (key id : Nat) (b : Bool) :
+    kindOps .scalar [⟨key, id, .scalar, b⟩] = [(enc key id, b)] := by
+  simp [kindOps, ent_eq']
+
 /-- **A dropped addition does not cancel an earlier removal** (`versioned.rs:27-34`, `:96-98`): within
     one unit, tuple `t` is removed and then added back for an entity at or above the cursor (as a
     reused edge id's new edge can be); the filter drops the addition *before* the collapse, so the
@@ -543,14 +564,16 @@ theorem building_reuse_removed (ix : NumericIndex) (hs : Sorted ix.tree) (ha : S
     intro w hw; simp at hw; rcases hw with rfl | rfl <;> exact ⟨hk, hid⟩
   rw [writerRecord_eq_sequential ix hs ha _ _ hwf, hlog]
   simp only [seqIndex]
-  rw [mem_seqOps _ _ hs]
-  simp [kindOps, lastOpOps, IndexWrite.ent]
+  rw [mem_seqOps _ _ hs, kindOps_single, lastOpOps_single]
+  simp
 
 /-- Without the filter order (collapse first) the same log would have *kept* `t`: the last change is
     the addition. This is why the filter runs first. -/
 theorem collapse_first_would_keep (key id : Nat) :
     lastOpK [⟨key, id, .scalar, false⟩, ⟨key, id, .scalar, true⟩] .scalar (enc key id) = some true := by
-  simp [lastOpK, lastOpOps, kindOps, IndexWrite.ent]
+  have : kindOps .scalar [(⟨key, id, .scalar, false⟩ : IndexWrite), ⟨key, id, .scalar, true⟩] =
+      [(enc key id, false), (enc key id, true)] := by simp [kindOps, ent_eq']
+  unfold lastOpK; rw [this, lastOpOps_two]
 
 /-- The same unit on a `Ready` column ends with `t` present. -/
 theorem ready_reuse_kept (ix : NumericIndex) (hs : Sorted ix.tree) (ha : Sorted ix.arrayTree)
@@ -562,8 +585,9 @@ theorem ready_reuse_kept (ix : NumericIndex) (hs : Sorted ix.tree) (ha : Sorted 
     intro w hw; simp at hw; rcases hw with rfl | rfl <;> exact ⟨hk, hid⟩
   rw [writerRecord_ready ix hs ha _ hwf]
   simp only [seqIndex]
-  rw [mem_seqOps _ _ hs]
-  simp [kindOps, lastOpOps, IndexWrite.ent]
+  have : kindOps .scalar [(⟨key, id, .scalar, false⟩ : IndexWrite), ⟨key, id, .scalar, true⟩] =
+      [(enc key id, false), (enc key id, true)] := by simp [kindOps, ent_eq']
+  rw [mem_seqOps _ _ hs, this, lastOpOps_two]
 
 /-! ## `FalkorDbIndex::apply_writes` / `apply` -/
 
@@ -788,7 +812,9 @@ theorem set_then_delete (place : Nat → Option BuildCursor) (rm ad : EncodedTup
   have h7 : 7 < W := by unfold W; decide
   have hwf : LogWF [⟨5, 7, .scalar, true⟩, ⟨5, 7, .scalar, false⟩] := by
     intro w hw; simp at hw; rcases hw with rfl | rfl <;> exact ⟨h5, h7⟩
-  rw [writerRecord_eq_sequential _ List.Pairwise.nil List.Pairwise.nil _ _ hwf]
-  simp [stateLog_ready, seqIndex, seqOps, kindOps, tInsert, tRemove, sins, IndexWrite.ent]
+  have h := writerRecord_eq_sequential ⟨[], []⟩ List.Pairwise.nil List.Pairwise.nil .ready _ hwf place rm ad
+  have h' := congrArg NumericIndex.tree h
+  rw [h']
+  simp [stateLog_ready, seqIndex, seqOps, kindOps, tInsert, tRemove, sins, ent_eq']
 
 end NI
