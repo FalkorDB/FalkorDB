@@ -126,7 +126,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - a constraint created over violating data reports OPERATIONAL.
 - **Index / concurrency**:
   - unconfirmed: between `Indexer::create_index` storing an entry and `populate_index` taking its ticket (`graph.rs:3598-3604`) the index reads OPERATIONAL with the new field unpopulated, so a concurrent reader could plan an index scan and miss rows (`store_window_operational_incomplete`); not seen live;
-  - index-option validation differs from C: `OPTIONS {dimension:0, similarityFunction:'bogus'}` creates the index (C refuses); fulltext `OPTIONS {weight:1.0, foo:true}` is refused (C creates it; C only refuses a non-empty map with no known key); the `SAMPLES` error text has an `ERR ` prefix (C does not).
+  - index-option validation differs from C: `OPTIONS {dimension:0, similarityFunction:'bogus'}` creates the index (C refuses); fulltext `OPTIONS {weight:1.0, foo:true}` is refused (C creates it; C only refuses a non-empty map with no known key); the `SAMPLES` error text has an `ERR ` prefix (C does not). PR #3257 fixes the first and the last: the similarity name is checked at parse time (`rust_eq_c_all`), and `GRAPH.MEMORY` errors use C's texts (`memArgs_samples_err`, `memArgs_subcmd_err`, `memArgs_kw_err`).
 - **GraphBLAS**:
   - unconfirmed follow-up to #3033: `Tensor::decode` still accepts a multi-edge pair with exactly one id, or one edge id under two pairs (`edge_count` stays consistent; `PairPlan` assumes >= 2 ids);
   - `Matrix::decode` leaks 5 blocks per matrix (fix open as #3080);

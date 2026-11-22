@@ -85,8 +85,8 @@ value, any field options — a vector add always has the field's own non-zero di
 `doc_always_accepted`, `other_fields_never_dropped`, `docSet_nonvector_eq_pre`,
 `vector_dim_mismatch_keeps_range_entry`, `dim0_keeps_range_entry`, `noopts_keeps_range_entry`,
 `good_vector_keeps_range_entry`; `fulltext_only_strings`,
-`range_never_vector_or_text`, `parseDimension_int/neg/missing`, `parseSim_missing/lower`,
-`rust_refuses_missing`, `rust_eq_c` (#3094), `fulltextUnknown_none_iff`, `rust_keys_ok_imp_c`, `metricOf_ok_iff`, `metricOf_toBool`,
+`range_never_vector_or_text`, `parseDimension_int/neg/missing`, `parseSim_missing/lower/ok_lower/unknown`,
+`rust_refuses_missing`, `rust_eq_c` (#3094), `rust_eq_c_all` (PR #3257), `fulltextUnknown_none_iff`, `rust_keys_ok_imp_c`, `metricOf_ok_iff`, `metricOf_toBool`,
 `phonetic_false_no_flag`, `phonetic_true_flag`,
 `capped_capacity_ok`, `evalK_accepts_huge`; plus `#guard`s for the option checks.
 
@@ -154,10 +154,10 @@ Historical (2c874022a, #3091): Rust accepted a vector index without `dimension` 
 all four cases now answer as C. W5-idx-2 (vector index with no OPTIONS half-created on error) is
 also fixed: `index_ddl.rs:61-65` refuses before anything is registered — live, `db.indexes()` lists
 only the range index and `n.v = 1` still finds the node on both servers.
-Still divergent (live, #guards): (a) `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust
-creates the index (metric only checked for `dimension > 0`, mod.rs:1270-1272), C refuses;
-(since #3087 a vector on that index no longer drops the node: `dim0_keeps_range_entry`);
-(b) fulltext `OPTIONS {weight:1.0, foo:true}` Rust refuses (`unknown option 'foo'`), C creates —
+Fixed by PR #3257 (`rust_eq_c_all`, `parseSim_unknown`): (a) `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust
+created the index (metric only checked for `dimension > 0`, mod.rs:1270-1272), C refuses; now both refuse.
+(since #3087 a vector on that index no longer drops the node: `dim0_keeps_range_entry`).
+Still divergent (live, #guard): (b) fulltext `OPTIONS {weight:1.0, foo:true}` Rust refuses (`unknown option 'foo'`), C creates —
 C refuses only a non-empty map with no known key (`cFulltextKeysOk`; `rust_keys_ok_imp_c`).
 (C itself crashed on `CREATE FULLTEXT INDEX … OPTIONS {phonetic:true}`, on `db.indexes()` after `{language:'klingon'}`,
 and on the 1400-write flood — C bugs, noted only.)

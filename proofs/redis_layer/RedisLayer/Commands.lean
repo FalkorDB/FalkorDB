@@ -12,7 +12,7 @@ Argument handling and reply shapes; key access, locks and replication calls are 
 | `explainLine`, `explainCmd`, `explainCmdA` | `explain.rs` `explain` `:36`, `graph_explain` `:60` (flags `:65`) |
 | `infoSections`, `formatAvg` | `info.rs` `graph_info` `:22`, `format_avg` `:88` |
 | `cReplyName`, `replyBytes`, `scanPage`, `scanLoop` | `list.rs` `c_reply_name` `:48`, `reply_bytes` `:59`, `graph_list` `:67` |
-| `memArgs`, `memTotal`, `cSchemaName` | `memory.rs` `graph_memory` `:181` (#3053), `memory_report` `:69`, `c_schema_name` `:65` |
+| `memArgs`, `upToNul`, `memTotal`, `cSchemaName` | `memory.rs` `graph_memory` `:185` (#3053; PR #3257 C error texts), `memory_report` `:73`, `c_schema_name` `:69` |
 | `slowlogCmd`      | `slowlog.rs` `graph_slowlog` `:19` |
 | `udfCmd`, `udfLoadArgs`, `udfListArgs` | `udf.rs` `:47-229` |
 | `exited`, `exitCode` | `copy.rs` `graph_copy` `:29` (`waitpid` status decoding) |
@@ -262,19 +262,29 @@ theorem scanLoop_page_none (p : List ScanElem) (hp : scanPage p = none) :
 
 def MB : Nat := 2^20
 
-/-- `graph_memory` argument handling (`memory.rs:181-221`): arity 2 or 4, `USAGE`, optional
+/-- `up_to_nul` (`graph_core.rs:92`): the text before the first NUL, as C's `%s` prints it. -/
+def upToNul (s : String) : String := String.ofList (s.toList.takeWhile (· ≠ '\x00'))
+
+/-- `graph_memory` argument handling (`memory.rs:185-234`): arity 2 or 4, `USAGE`, optional
 `SAMPLES n` with any non-negative `n` (#3053, `fe619ac5f`: `parse::<u64>`, `try_into` →
 `unwrap_or(usize::MAX)`, the identity on 64-bit), default 100. `parse` is `str::parse::<u64>`.
-The clamp to `1..=10000` happens later, in `memory_usage_report`. -/
+The clamp to `1..=10000` happens later, in `memory_usage_report`. Since PR #3257 the error
+texts are C's (`Graph_Memory`, cmd_memory.c): the bad word is echoed up to its first NUL, and
+the `SAMPLES` count error has no `ERR ` prefix. -/
 def memArgs (parse : String → Option Nat) (args : List String) : Except String Nat :=
   match args with
-  | [sub, _key] => if up sub = "USAGE" then .ok 100 else .error "ERR unknown subcommand"
+  | [sub, _key] =>
+    if up sub = "USAGE" then .ok 100
+    else .error ("ERR unknown subcommand '" ++ upToNul sub ++ "'. expecting GRAPH.MEMORY USAGE <key>")
   | [sub, _key, kw, cnt] =>
-    if up sub ≠ "USAGE" then .error "ERR unknown subcommand"
-    else if up kw ≠ "SAMPLES" then .error "ERR expected SAMPLES keyword"
+    if up sub ≠ "USAGE" then
+      .error ("ERR unknown subcommand '" ++ upToNul sub ++ "'. expecting GRAPH.MEMORY USAGE <key>")
+    else if up kw ≠ "SAMPLES" then
+      .error ("ERR unknown subcommand '" ++ upToNul kw ++
+        "'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>")
     else match parse cnt with
       | some n => .ok n
-      | none => .error "ERR SAMPLES must be a non-negative integer"
+      | none => .error "SAMPLES must be a non-negative integer"
   | _ => .error "wrong arity"
 
 theorem memArgs_default (p : String → Option Nat) (k : String) : memArgs p ["usage", k] = .ok 100 := by
@@ -288,11 +298,36 @@ theorem memArgs_samples (p : String → Option Nat) (k cnt : String) (n : Nat) (
   have h2 : up "SAMPLES" = "SAMPLES" := by decide
   simp [memArgs, h, h1, h2]
 
+/-- PR #3257: C's text, no `ERR ` prefix (historical: `"ERR SAMPLES must be …"` before). -/
 theorem memArgs_samples_err (p : String → Option Nat) (k cnt : String) (h : p cnt = none) :
-    memArgs p ["USAGE", k, "SAMPLES", cnt] = .error "ERR SAMPLES must be a non-negative integer" := by
+    memArgs p ["USAGE", k, "SAMPLES", cnt] = .error "SAMPLES must be a non-negative integer" := by
   have h1 : up "USAGE" = "USAGE" := by decide
   have h2 : up "SAMPLES" = "SAMPLES" := by decide
   simp [memArgs, h, h1, h2]
+
+/-- PR #3257: an unknown subcommand is echoed back (up to its first NUL), as C does. -/
+theorem memArgs_subcmd_err (p : String → Option Nat) (sub k : String) (rest : List String)
+    (hs : up sub ≠ "USAGE") (hr : rest = [] ∨ rest.length = 2) :
+    memArgs p (sub :: k :: rest) =
+      .error ("ERR unknown subcommand '" ++ upToNul sub ++ "'. expecting GRAPH.MEMORY USAGE <key>") := by
+  rcases hr with rfl | hr
+  · simp [memArgs, hs]
+  · match rest, hr with
+    | [kw, cnt], _ => simp [memArgs, hs]
+
+/-- PR #3257: a third word other than `SAMPLES` is echoed back, as C does. -/
+theorem memArgs_kw_err (p : String → Option Nat) (k kw cnt : String) (hk : up kw ≠ "SAMPLES") :
+    memArgs p ["USAGE", k, kw, cnt] =
+      .error ("ERR unknown subcommand '" ++ upToNul kw ++
+        "'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>") := by
+  have h1 : up "USAGE" = "USAGE" := by decide
+  simp [memArgs, h1, hk]
+
+-- The exact lines `tests/flow/test_memory_usage.py` reads off the wire.
+example : memArgs (fun _ => none) ["FOO", "g"] =
+    .error "ERR unknown subcommand 'FOO'. expecting GRAPH.MEMORY USAGE <key>" := by decide
+example : memArgs (fun _ => none) ["USAGE", "g", "FOO", "3"] =
+    .error "ERR unknown subcommand 'FOO'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>" := by decide
 
 /-- `memory_report`: each component floored to MB separately; the total is their sum. -/
 structure Mem where

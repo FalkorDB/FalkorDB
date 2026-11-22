@@ -7,8 +7,8 @@
 | `asI64`, `checkMem`  | `Runtime::check_mem_capacity`, `runtime/runtime.rs:540-548` (`usage_fn() as i64`) |
 | `drainPending`       | `drain_pending`, `runtime/ops/mod.rs:127-139` |
 | `edgeAlreadyUsed`    | `edge_already_used`, `runtime/ops/mod.rs:155-172` |
-| `natOpt`, `vectorOptions` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs:2100-2178` |
-| `fulltextUnknown`    | the unknown-key refusal of the `IndexType::Fulltext` arm, `runtime.rs:2021-2030` |
+| `natOpt`, `vectorOptions`, `simNames` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs:2134-2222` (PR #3257 name check `:2160`) |
+| `fulltextUnknown`    | the unknown-key refusal of the `IndexType::Fulltext` arm, `runtime.rs:2055-2064` |
 | `phonetic`           | the `phonetic` key of the `IndexType::Fulltext` arm, `runtime.rs:2051-2067` |
 -/
 namespace RuntimeCore.Misc
@@ -176,16 +176,23 @@ structure VecOpts where
   efConstruction : Option Nat
   efRuntime : Option Nat
 
-/-- The `IndexType::Vector` arm (`runtime.rs:2100-2178`, #3094 / `fe619ac5f`): `dimension`
+/-- The similarity names the vector arm accepts (`runtime.rs:2160`, PR #3257; `ip` is a Rust
+extension over C). -/
+def simNames : List String := ["euclidean", "cosine", "ip"]
+
+/-- The `IndexType::Vector` arm (`runtime.rs:2134-2222`, #3094 / `fe619ac5f`): `dimension`
 and `similarityFunction` are **required** (they used to default to 0 / `None`), and the
-similarity name is stored as `to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only). -/
+similarity name is stored as `to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only);
+since PR #3257 a lower-cased name outside `simNames` is refused here (`runtime.rs:2160`). -/
 def vectorOptions (get : String → Option V) : Except String VecOpts := do
   let d ← match get "dimension" with
     | some (.int n) => if n < 0 then throw "dimension: negative" else pure n.toNat
     | none => throw "dimension is required"
     | some _ => throw "dimension: not an integer"
   let sf ← match get "similarityFunction" with
-    | some (.str s) => pure (some s.toLower)
+    | some (.str s) =>
+      if simNames.contains s.toLower then pure (some s.toLower)
+      else throw s!"unknown similarityFunction '{s}'"
     | none => throw "similarityFunction is required"
     | some _ => throw "similarityFunction must be a string"
   let m ← natOpt "M" (get "M")
@@ -225,13 +232,39 @@ theorem vector_similarity_lowered (get : String → Option V) (o : VecOpts)
         cases dv <;> simp [hd, hs, bind, Except.bind, throw, throwThe, MonadExceptOf.throw, pure, Except.pure] at h
         split at h
         · simp at h
-        · revert h
-          cases natOpt "M" (get "M") <;> cases natOpt "efConstruction" (get "efConstruction") <;>
-            cases natOpt "efRuntime" (get "efRuntime") <;> simp
-          intro h; rw [← h]
+        · split at h
+          · revert h
+            cases natOpt "M" (get "M") <;> cases natOpt "efConstruction" (get "efConstruction") <;>
+              cases natOpt "efRuntime" (get "efRuntime") <;> simp
+            intro h; rw [← h]
+          · simp at h
       | _ =>
         cases dv <;> simp [hd, hs, bind, Except.bind, throw, throwThe, MonadExceptOf.throw, pure, Except.pure] at h
         all_goals (split at h <;> simp at h)
+
+/-- **PROVEN** (PR #3257): an unknown similarity name is refused, even with `dimension: 0`
+(`OPTIONS {dimension:0, similarityFunction:'bogus'}` used to create the index). -/
+theorem vector_unknown_similarity_refused (get : String → Option V) (s : String)
+    (hs : get "similarityFunction" = some (.str s)) (hk : s.toLower ∉ simNames) :
+    ∃ e, vectorOptions get = .error e := by
+  unfold vectorOptions
+  cases hd : get "dimension" with
+  | none => simp [bind, Except.bind, throw, throwThe, MonadExceptOf.throw]
+  | some dv =>
+    cases dv <;> simp [hs, bind, Except.bind, throw, throwThe, MonadExceptOf.throw, pure,
+      Except.pure]
+    split <;> simp
+
+/-- **PROVEN** (PR #3257): an accepted similarity name is a known one, whatever the
+dimension (`0` included). -/
+theorem vector_similarity_known (get : String → Option V) (o : VecOpts)
+    (h : vectorOptions get = .ok o) : ∃ s, o.similarity = some s ∧ s ∈ simNames := by
+  obtain ⟨s, hs, ho⟩ := vector_similarity_lowered get o h
+  refine ⟨s.toLower, ho, ?_⟩
+  apply Classical.byContradiction
+  intro hk
+  obtain ⟨e, he⟩ := vector_unknown_similarity_refused get s hs hk
+  rw [he] at h; cases h
 
 /-- `FULLTEXT_OPTIONS` (`runtime.rs:2021-2022`) and the unknown-key refusal
 (`runtime.rs:2023-2030`, #3094): the first key of the map, in order, outside it. -/

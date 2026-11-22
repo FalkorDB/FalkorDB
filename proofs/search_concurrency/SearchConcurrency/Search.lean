@@ -15,7 +15,7 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | `buildDoc`                      | the per-attribute loop in `graph.rs:4043` `commit_index_kind` / `graph.rs:729` population `build_doc` |
 | `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1907` `Index::add_document`) |
 | `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2021-2030` fulltext unknown-key refusal (#3094) |
-| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2100-2177` `map_to_index_options` (`:2008-2179`), vector branch |
+| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2134-2222` `map_to_index_options` (`:2042-2224`), vector branch (PR #3257: name checked at `:2160`) |
 | `parsePhonetic`                 | `runtime.rs:2051-2068` phonetic arm |
 | `metricOf`                      | `mod.rs:1273-1287` similarity match in `Index::register_fields` |
 | `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:143` `eval_vector_args` (k arm) |
@@ -342,11 +342,18 @@ def parseNatOpt (m : Opts) (k : String) : Except String (Option Nat) :=
   | none => .ok none
   | some _ => .error (k ++ " must be an integer")
 
-/-- `similarityFunction` arm (runtime.rs:2120-2133): **required**, and stored as
-`s.to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only, so it is that). -/
+/-- The similarity names `map_to_index_options` accepts (runtime.rs:2160, PR #3257). -/
+def simNames : List String := ["euclidean", "cosine", "ip"]
+
+/-- `similarityFunction` arm (runtime.rs:2157-2178): **required**, stored as
+`s.to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only, so it is that), and since
+PR #3257 refused at parse time unless the lower-cased name is one of `simNames`,
+whatever the dimension. -/
 def parseSim (m : Opts) : Except String (Option String) :=
   match get m "similarityFunction" with
-  | some (.str s) => .ok (some s.toLower)
+  | some (.str s) =>
+    if simNames.contains s.toLower then .ok (some s.toLower)
+    else .error ("unknown similarityFunction '" ++ s ++ "'")
   | none => .error "similarityFunction is required"
   | some _ => .error "similarityFunction must be a string"
 
@@ -415,9 +422,29 @@ theorem parseDimension_missing (m : Opts) (h : get m "dimension" = none) :
 theorem parseSim_missing (m : Opts) (h : get m "similarityFunction" = none) :
     parseSim m = .error "similarityFunction is required" := by
   simp [parseSim, h]
-theorem parseSim_lower (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s)) :
+theorem parseSim_lower (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s))
+    (hk : simNames.contains s.toLower = true) :
     parseSim m = .ok (some s.toLower) := by
-  simp [parseSim, h]
+  simp only [parseSim, h, hk, ite_true]
+
+/-- Whatever `parseSim` accepts is the lower-cased given name (no other value is stored). -/
+theorem parseSim_ok_lower (m : Opts) (o : Option String) (h : parseSim m = .ok o) :
+    ∃ s, get m "similarityFunction" = some (.str s) ∧ simNames.contains s.toLower = true ∧
+      o = some s.toLower := by
+  unfold parseSim at h
+  split at h
+  · rename_i s hs
+    split at h
+    · rename_i hk; simp at h; exact ⟨s, hs, hk, h.symm⟩
+    · simp at h
+  all_goals simp at h
+
+/-- **PR #3257**: an unknown similarity name is refused at parse time, so no dimension
+(`0` included) lets it through. -/
+theorem parseSim_unknown (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s))
+    (hk : simNames.contains s.toLower = false) : ∃ e, parseSim m = .error e := by
+  have hn : s.toLower ∉ simNames := by simpa using hk
+  simp [parseSim, h, hn]
 
 /-- Without either required key no vector index is created (the old half-created
 index of W5-idx-2 needed `dimension` absent ⇒ `0` ⇒ `register_fields` skipped). -/
@@ -489,8 +516,12 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
             simp only [parseDimension, parseSim, hg, hs, hneg, h1, h2, h3, bind, Except.bind,
               pure, Except.pure, ite_false]
             have hpos : n.toNat > 0 := by omega
-            simp only [hpos, ite_true, metricOf_toBool]
-            simp; omega
+            by_cases hk : simNames.contains s.toLower = true
+            · simp only [hk, ite_true, hpos, metricOf_toBool]
+              simp; omega
+            · simp only [hk, Bool.false_eq_true, ite_false]
+              simp only [simNames] at hk
+              simp at hk; simp [hk]
           | _ => simp [parseDimension, parseSim, hg, hs, hneg, bind, Except.bind]
     | _ => simp [parseDimension, hg, bind, Except.bind]
 
@@ -528,11 +559,53 @@ theorem rust_keys_ok_imp_c (m : Opts) (h : fulltextUnknown m = none) : cFulltext
     simp only [List.isEmpty_cons, Bool.false_or, List.any_eq_true]
     exact ⟨kv, List.mem_cons_self .., hall kv (List.mem_cons_self ..)⟩
 
--- Remaining differences, both reproduced live (Rust fe619ac5f vs C):
--- (a) `dimension: 0` skips the metric check in Rust (`register_fields` only runs it for `> 0`):
---     `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust creates the index, C refuses.
-#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = true
+/-- **PR #3257**: Rust agrees with C on every vector options map with no malformed HNSW
+key, `dimension: 0` included (historical, before PR #3257: only `register_fields` checked
+the name, and only for `dimension > 0`, so `OPTIONS {dimension:0, similarityFunction:'bogus'}`
+created the index while C refused it). -/
+theorem rust_eq_c_all (m : Opts)
+    (hM : ∀ v, get m "M" = some v → ∃ n, v = .int n ∧ 0 ≤ n)
+    (hC : ∀ v, get m "efConstruction" = some v → ∃ n, v = .int n ∧ 0 ≤ n)
+    (hR : ∀ v, get m "efRuntime" = some v → ∃ n, v = .int n ∧ 0 ≤ n) :
+    rustAccepts m = cAccepts m := by
+  have nat_ok : ∀ k, (∀ v, get m k = some v → ∃ n, v = .int n ∧ 0 ≤ n) →
+      ∃ o, parseNatOpt m k = .ok o := by
+    intro k hk
+    cases hg : get m k with
+    | none => exact ⟨none, by simp [parseNatOpt, hg]⟩
+    | some v =>
+      obtain ⟨n, rfl, hn⟩ := hk v hg
+      exact ⟨some n.toNat, by simp [parseNatOpt, hg]; omega⟩
+  obtain ⟨o1, h1⟩ := nat_ok "M" hM
+  obtain ⟨o2, h2⟩ := nat_ok "efConstruction" hC
+  obtain ⟨o3, h3⟩ := nat_ok "efRuntime" hR
+  by_cases hd : ∀ n, get m "dimension" = some (.int n) → n ≠ 0
+  · exact rust_eq_c m hd hM hC hR
+  · simp only [Classical.not_forall, Classical.not_not] at hd
+    obtain ⟨n, hg, rfl⟩ := hd
+    unfold rustAccepts cAccepts parseVector
+    cases hs : get m "similarityFunction" with
+    | none => simp [parseDimension, parseSim, hg, hs, bind, Except.bind]
+    | some w =>
+      cases w with
+      | str s =>
+        by_cases hk : simNames.contains s.toLower = true
+        · simp only [parseDimension, parseSim, hg, hs, hk, h1, h2, h3, bind, Except.bind,
+            pure, Except.pure, ite_true]
+          simp only [simNames] at hk
+          simpa using hk
+        · simp only [parseDimension, parseSim, hg, hs, hk, bind, Except.bind, Bool.false_eq_true,
+            ite_false]
+          simp only [simNames] at hk
+          simp at hk; simp [hk]
+      | _ => simp [parseDimension, parseSim, hg, hs, bind, Except.bind]
+
+-- PR #3257 closes difference (a): `OPTIONS {dimension:0, similarityFunction:'bogus'}` is now
+-- refused, as in C (`rust_eq_c_all`).
+#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = false
 #guard cAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = false
+#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "Cosine")] = true
+-- Remaining difference, reproduced live (Rust fe619ac5f vs C):
 -- (b) a known key beside an unknown one: `OPTIONS {weight:1.0, foo:true}` C creates, Rust refuses.
 #guard fulltextUnknown [("weight", .float), ("foo", .bool true)] = some "foo"
 #guard cFulltextKeysOk [("weight", .float), ("foo", .bool true)] = true
