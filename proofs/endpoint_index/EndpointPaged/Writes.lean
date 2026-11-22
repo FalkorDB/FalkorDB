@@ -7,7 +7,7 @@ variable {α : Type}
 
 /-! ## Page-level write addressing -/
 
-/-- `page_mut(at)[at % P] = x`: overwrite slot `at % P` of page `at / P`. -/
+/-- `page_mut()[at % P] = x`: overwrite slot `at % P` of page `at / P`. -/
 def pagePut (P : Nat) (pages : List (List α)) (at_ : Nat) (x : α) : List (List α) :=
   pages.modify (at_ / P) (fun pg => pg.set (at_ % P) x)
 
@@ -54,20 +54,20 @@ theorem flatten_pagePut (P : Nat) (hP : 0 < P) :
       simp only [Shape] at hs
       obtain ⟨hp, hs'⟩ := hs
       by_cases hiP : at_ < P
-      · rw [Nat.div_eq_of_lt hiP, Nat.mod_eq_of_lt hiP, List.set_append, if_pos (by omega)]
+      · rw [Nat.div_eq_of_lt hiP, Nat.mod_eq_of_lt hiP, List.set_append, ite_eq_left (by omega)]
         simp
       · have hd : at_ / P = (at_ - P) / P + 1 := by
           rw [Nat.div_eq_sub_div hP (by omega)]
         have hm : at_ % P = (at_ - P) % P := Nat.mod_eq_sub_mod (by omega)
-        rw [hd, List.modify_succ_cons, List.flatten_cons, List.set_append, if_neg (by omega), hp, hm]
+        rw [hd, List.modify_succ_cons, List.flatten_cons, List.set_append, ite_eq_right (by omega), hp, hm]
         have := ih hs' (at_ - P) x (by simp [List.length_append] at hi ⊢; omega)
         simp only [pagePut] at this
         rw [this]
 
 namespace PG
-/-- `TierOps::put` (:741): no bounds check of its own; callers pass `at < len`. -/
+/-- `TierOps::put` (:743): no bounds check of its own; callers pass `at < len`. -/
 def put (P : Nat) (g : PG α) (at_ : Nat) (x : α) : PG α := ⟨pagePut P g.pages at_ x, g.len⟩
-/-- `TierOps::vacate` (:750). -/
+/-- `TierOps::vacate` (:752). -/
 def vacate (P : Nat) (fill : α) (g : PG α) (at_ : Nat) : PG α :=
   if at_ < g.len then g.put P at_ fill else g
 end PG
@@ -90,13 +90,13 @@ theorem vacate_spec (P : Nat) (hP : 0 < P) (fill : α) (g : PG α) (hw : g.WF P 
   simp only [PG.length] at hlv
   unfold PG.vacate
   split
-  · rename_i h; rw [if_pos (by omega)]; exact put_spec P hP fill g hw at_ fill h
-  · rename_i h; rw [if_neg (by omega)]; exact ⟨hw, rfl⟩
+  · rename_i h; rw [ite_eq_left (by omega)]; exact put_spec P hP fill g hw at_ fill h
+  · rename_i h; rw [ite_eq_right (by omega)]; exact ⟨hw, rfl⟩
 
 /-! ## `grow_to`: `ensure_pages` then `len` -/
 
 namespace PG
-/-- `TierOps::grow_to` (:732). -/
+/-- `TierOps::grow_to` (:734). -/
 def growTo (P : Nat) (fill : α) (g : PG α) (n : Nat) : PG α :=
   if n > g.len then ⟨ensurePages P fill g.pages n, n⟩ else g
 end PG
@@ -113,7 +113,7 @@ theorem growTo_spec (P : Nat) (hP : 0 < P) (fill : α) (g : PG α) (hw : g.WF P 
   unfold PG.growTo
   split
   · rename_i hn
-    rw [if_pos (by omega)]
+    rw [ite_eq_left (by omega)]
     obtain ⟨hs', ⟨k, hk⟩, hcov⟩ := ensurePages_spec P hP fill g.pages n hs
     have hsplit := (List.take_append_drop g.len g.pages.flatten).symm
     rw [hd] at hsplit
@@ -134,9 +134,9 @@ theorem growTo_spec (P : Nat) (hP : 0 < P) (fill : α) (g : PG α) (hw : g.WF P 
       rw [hall, List.take_append, List.take_of_length_le (by omega), List.take_replicate, hlv]
       congr 2; omega
   · rename_i hn
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     exact ⟨⟨hs, hl, hd⟩, rfl⟩
-/-! ## `reserve_exact` (:761) -/
+/-! ## `reserve_exact` (:763) -/
 
 /-- `pages.reserve_exact((len + extra).div_ceil(P).saturating_sub(pages.len()))`, with
 `Vec::reserve_exact`'s guarantee `capacity ≥ pages.len() + additional`. -/

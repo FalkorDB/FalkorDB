@@ -76,7 +76,7 @@ structure MathOps where
 
 variable (m : MathOps)
 
-/-- `abs` (math.rs:46). -/
+/-- `abs` (math.rs). -/
 def mAbs : V FC → Res
   | .int n => if n = I64MIN then .err "ArgumentError: integer overflow in abs()" else .ok (.int n.natAbs)
   | .float f => .ok (.float (ieeeAbs f))
@@ -107,15 +107,15 @@ def fcGt0 : FC → Bool
 /-- `bool as i64` (`i64::from(b)`). -/
 def b2i (b : Bool) : Int := if b then 1 else 0
 
-/-- `sign` (math.rs:210-219, since #2907 `f04c3557a`): the Float arm is
-`Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs:214). -/
+/-- `sign` (math.rs): the Float arm is
+`Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs). -/
 def mSign : V FC → Res
   | .int n => .ok (.int (signumI n))
   | .float f => .ok (.int (b2i (fcGt0 f) - b2i (fcLt0 f)))
   | .null => .ok .null
   | _ => .panic
 
-/-- `sqrt` (math.rs:225): an explicit negative check before `f64::sqrt`. -/
+/-- `sqrt` (math.rs): an explicit negative check before `f64::sqrt`. -/
 def mSqrt : V FC → Res
   | .int n => if n < 0 then .ok (.float .nan) else .ok (.float (ieeeSqrt (fcOfInt n)))
   | .float f => if fcGe0 f then .ok (.float (ieeeSqrt f)) else .ok (.float .nan)
@@ -187,7 +187,7 @@ theorem abs_agree_except (v : V FC) (h1 : v ≠ .float .nzero) (h2 : v ≠ .int 
     have : n ≠ I64MIN := fun e => h2 (by rw [e])
     have hr := h3 n rfl
     unfold InI64 at hr
-    simp only [mAbs, cAbs, this, if_false, cAbsInt]
+    simp only [mAbs, cAbs, this, ite_false, cAbsInt]
     unfold wMul wrap
     split
     · congr 2; omega
@@ -202,9 +202,9 @@ theorem abs_min_diverges :
     mAbs (.int I64MIN) = .err "ArgumentError: integer overflow in abs()" ∧ cAbs (.int I64MIN) = .ok (.int I64MIN) :=
   ⟨rfl, by simp [cAbs, cAbs_min]⟩
 
-/-! ## `sign` (issue #2906, fixed by #2907 `f04c3557a`) -/
+/-! ## `sign` -/
 
-/-- **#2906 fixed** (#2907 `f04c3557a`): `sign` of every Float is an *Integer* — `1`
+/-- `sign` of every Float is an *Integer* — `1`
 for positive (incl. `+inf`), `-1` for negative (incl. `-inf`), `0` for `±0.0` and NaN —
 matching the declared `Integer | Null` return type and C's `AR_SIGN`. -/
 theorem sign_float_is_int (f : FC) :
@@ -226,9 +226,8 @@ theorem sign_float_agrees_int (n : Int) : mSign (.float (fcOfInt n)) = mSign (.i
     · have : n < 0 := by omega
       simp [h0, hp, this, mSign, fcGt0, fcLt0, b2i, signumI]
 
-/-- **The declared return type now holds** (`ret: Integer | Null`, math.rs:209): every
-validated `sign` call returns a value that `Integer | Null` accepts. Before #2907 a
-non-zero Float argument violated the declared return type. -/
+/-- **The declared return type holds** (`ret: Integer | Null`, math.rs): every
+validated `sign` call returns a value that `Integer | Null` accepts. -/
 theorem sign_ret (v : V FC) (h : validateArgsType (.fixed [numArg]) [v] = none) :
     ∃ r, mSign v = .ok r ∧ Accepts r (.union [.int, .null]) := by
   rcases numeric_body_cases v h with ⟨i, rfl⟩ | ⟨f, rfl⟩ | rfl
@@ -250,12 +249,12 @@ theorem log_int_nonpos (n : Int) (hn : n ≤ 0) (hz : m.ln .pzero = .ninf) (hneg
   · have : ¬ n > 0 := by omega
     simp [h, this, hneg]
 
-/-! ## `coalesce` (math.rs:314) -/
+/-! ## `coalesce` (math.rs) -/
 
-/-- `OrderedEnum::order` (value.rs:1178): proofs/core's `V.order`. -/
+/-- `OrderedEnum::order` (value.rs): proofs/core's `V.order`. -/
 def order (x : V FC) : Nat := x.order
 
-/-- `compare_value(x, Null).0` (value.rs:1224): no same-variant or Int/Float arm matches
+/-- `compare_value(x, Null).0` (value.rs): no same-variant or Int/Float arm matches
 a `Null` right operand unless `x` is `Null`, so the `(_, Null)` arm compares type
 orders. -/
 def cmpWithNull (x : V FC) : Ordering := compare (order x) (order .null)
@@ -280,7 +279,7 @@ theorem coalesce_spec (args : List (V FC)) :
       have hn : a.isNull = false := by cases a <;> simp_all [V.isNull]
       simp [coalesce, this, hn]
 
-/-! ## `randomUUID` (math.rs:143) -/
+/-! ## `randomUUID` (math.rs) -/
 
 def hi (b : Nat) : Nat := b / 16
 def lo (b : Nat) : Nat := b % 16
@@ -337,7 +336,7 @@ theorem uuid_shape (bs : List Nat) (b6 b8 : Fin 256)
   refine ⟨by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout],
     by simp [uuidLayout], by simp [uuidLayout, hv], ⟨_, hw.1, hw.2, by simp [uuidLayout]⟩⟩
 
-/-! ## `pow` / `^` (math.rs:328; #2904 fixed issue #2902) -/
+/-! ## `pow` / `^` (math.rs) -/
 
 /-- `Value::get_numeric` on a numeric value, at class level (`i as f64`). -/
 def numFC : V FC → FC
@@ -348,7 +347,7 @@ def numFC : V FC → FC
 /-- The type error `apply_pow` raises for a non-numeric, non-null operand. -/
 def powMsg (v : V FC) : String := s!"Type mismatch: expected Integer, Float, or Null but was {v.name}"
 
-/-- `apply_pow` (math.rs:328, since #2904): reject a non-numeric non-null operand
+/-- `apply_pow` (math.rs): reject a non-numeric non-null operand
 (base first), then `null` if either side is null, else `powf` of both operands
 converted to `f64` (C's `pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))`). -/
 def applyPow (powf : FC → FC → FC) (base exponent : V FC) : Res :=
@@ -356,15 +355,6 @@ def applyPow (powf : FC → FC → FC) (base exponent : V FC) : Res :=
   else if !(exponent.isNum || exponent.isNull) then .err (powMsg exponent)
   else if base.isNull || exponent.isNull then .ok .null
   else .ok (.float (powf (numFC base) (numFC exponent)))
-
-/-- `apply_pow` before #2904 (main 289c201fe): every non-numeric pair, including
-`true` or a string, silently became `null`. -/
-def pre2904_applyPow (powf : FC → FC → FC) : V FC → V FC → V FC
-  | .int a, .int b => .float (powf (fcOfInt a) (fcOfInt b))
-  | .float a, .float b => .float (powf a b)
-  | .int a, .float b => .float (powf (fcOfInt a) b)
-  | .float a, .int b => .float (powf a (fcOfInt b))
-  | _, _ => .null
 
 /-- Main: a non-numeric, non-null base is a type error naming its type, whatever
 the exponent (even `null`) — as C and `pow()` do. -/
@@ -379,12 +369,11 @@ theorem pow_nonnumeric_exp_errors (powf : FC → FC → FC) (a b : V FC)
     applyPow powf a b = .err (powMsg b) := by
   simp [applyPow, ha, hb, hn]
 
-/-- `true ^ 2` and `2 ^ true` are errors on main, `null` before #2904. -/
+/-- `true ^ 2` and `2 ^ true` are errors on main. -/
 theorem pow_bool_errors (powf : FC → FC → FC) (i : Int) :
     applyPow powf (.bool true) (.int i) = .err "Type mismatch: expected Integer, Float, or Null but was Boolean" ∧
-    applyPow powf (.int i) (.bool true) = .err "Type mismatch: expected Integer, Float, or Null but was Boolean" ∧
-    pre2904_applyPow powf (.bool true) (.int i) = .null := by
-  refine ⟨?_, ?_, rfl⟩ <;> simp [applyPow, V.isNum, V.isNull, powMsg, V.name] <;> rfl
+    applyPow powf (.int i) (.bool true) = .err "Type mismatch: expected Integer, Float, or Null but was Boolean" := by
+  refine ⟨?_, ?_⟩ <;> simp [applyPow, V.isNum, V.isNull, powMsg, V.name] <;> rfl
 
 /-- A null operand (with the other numeric or null) gives `null`. -/
 theorem pow_null (powf : FC → FC → FC) (a b : V FC)
@@ -393,19 +382,13 @@ theorem pow_null (powf : FC → FC → FC) (a b : V FC)
     applyPow powf a b = .ok .null := by
   simp [applyPow, ha, hb, h]
 
-/-- On numeric operands nothing changed: main's single `get_numeric` + `powf`
-is exactly the old four Int/Float arms. -/
-theorem pow_numeric_unchanged (powf : FC → FC → FC) (a b : V FC)
-    (ha : a.isNum = true) (hb : b.isNum = true) :
-    applyPow powf a b = .ok (pre2904_applyPow powf a b) := by
-  cases a <;> cases b <;> simp_all [applyPow, pre2904_applyPow, V.isNum, V.isNull, numFC]
-
-/-- `pow()` (math.rs:176) declares `Int | Float | Null` arguments, so the function
-form never reaches the new error: on its domain it returns `Ok`, and the value
-is the pre-#2904 one. -/
+/-- `pow()` (math.rs) declares `Int | Float | Null` arguments, so the function
+form never reaches the type error: on its domain it returns `Ok`. -/
 theorem pow_fn_in_domain (powf : FC → FC → FC) (a b : V FC)
     (ha : (a.isNum || a.isNull) = true) (hb : (b.isNum || b.isNull) = true) :
-    applyPow powf a b = .ok (pre2904_applyPow powf a b) := by
-  cases a <;> cases b <;> simp_all [applyPow, pre2904_applyPow, V.isNum, V.isNull, numFC]
+    ∃ v, applyPow powf a b = .ok v := by
+  unfold applyPow
+  simp only [ha, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+  split <;> exact ⟨_, rfl⟩
 
 end ValueMath

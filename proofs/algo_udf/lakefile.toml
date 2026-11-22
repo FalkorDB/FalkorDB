@@ -3,8 +3,3 @@ defaultTargets = ["AlgoUdf"]
 
 [[lean_lib]]
 name = "AlgoUdf"
-
-# `bfs_paths`' `clean_fwd` / `clean_bwd` lend a tensor's base: the tensor model is versioned_matrix's.
-[[require]]
-name = "falkor-versioned-matrix"
-path = "../versioned_matrix"

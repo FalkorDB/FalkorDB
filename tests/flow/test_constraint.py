@@ -1236,6 +1236,80 @@ class testCompositeUniqueConstraintNulls():
 
         self.env.assertEqual(g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0], 3)
 
+BULK_UNIQUE_GRAPH_ID = "unique_bulk_writes"
+
+class testUniqueConstraintBulkWrites():
+    """UNIQUE enforcement for write queries that touch many entities at once:
+    duplicates among the query's own entities and against existing ones are
+    caught, and enforcement is linear in the label size (it used to rescan the
+    whole label for every affected entity)."""
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(BULK_UNIQUE_GRAPH_ID)
+        self.g = self.db.select_graph(BULK_UNIQUE_GRAPH_ID)
+
+    def _rejects(self, q, msg):
+        try:
+            self.g.query(q)
+            self.env.assertTrue(False, message=q)
+        except ResponseError as e:
+            self.env.assertContains(msg, str(e))
+
+    def _assert_operational(self):
+        # a constraint that is not OPERATIONAL enforces nothing, which would
+        # make every rejection check below meaningless
+        constraints = list_constraints(self.g)
+        self.env.assertGreaterEqual(len(constraints), 1)
+        for c in constraints:
+            self.env.assertEqual(c.status, "OPERATIONAL")
+
+    def test01_nodes(self):
+        g = self.g
+        create_unique_node_constraint(g, "B", "v", sync=True)
+        self._assert_operational()
+
+        # 20k nodes in one query: seconds-to-minutes when enforcement was
+        # quadratic, tens of milliseconds now
+        start = time.time()
+        g.query("UNWIND range(1, 20000) AS x CREATE (:B {v: x, id: x})")
+        self.env.assertLess(time.time() - start, 10)
+
+        msg = "unique constraint violation on node of type B"
+        # duplicate within the query's own nodes
+        self._rejects("UNWIND [-1, -2, -1] AS x CREATE (:B {v: x})", msg)
+        # duplicate of an existing node, among many new ones
+        self._rejects("UNWIND range(20001, 21000) + [500] AS x CREATE (:B {v: x})", msg)
+        # an existing node updated to another existing node's value
+        self._rejects("MATCH (n:B {v: 1}) SET n.v = 20000", msg)
+        # the rejected SET changed nothing
+        self.env.assertEqual(g.query("MATCH (n:B {id: 1}) RETURN n.v").result_set, [[1]])
+        self.env.assertEqual(g.query("MATCH (n:B {v: 20000}) RETURN count(n)").result_set[0][0], 1)
+        # swapping two values in one query leaves no duplicate
+        g.query("MATCH (a:B {v: 1}), (b:B {v: 2}) SET a.v = 2, b.v = 1")
+        self.env.assertEqual(g.query("MATCH (n:B {id: 1}) RETURN n.v").result_set, [[2]])
+        self.env.assertEqual(g.query("MATCH (n:B {id: 2}) RETURN n.v").result_set, [[1]])
+        self.env.assertEqual(g.query("MATCH (n:B) RETURN count(n)").result_set[0][0], 20000)
+
+    def test02_edges(self):
+        g = self.g
+        create_unique_edge_constraint(g, "T", "v", sync=True)
+        self._assert_operational()
+        g.query("CREATE (:A), (:Z)")
+
+        start = time.time()
+        g.query("MATCH (a:A), (z:Z) UNWIND range(1, 20000) AS x CREATE (a)-[:T {v: x, id: x}]->(z)")
+        self.env.assertLess(time.time() - start, 10)
+
+        msg = "unique constraint violation, on edge of relationship-type T"
+        self._rejects("MATCH (a:A), (z:Z) UNWIND [-1, -2, -1] AS x CREATE (a)-[:T {v: x}]->(z)", msg)
+        self._rejects("MATCH (a:A), (z:Z) UNWIND range(20001, 21000) + [500] AS x CREATE (a)-[:T {v: x}]->(z)", msg)
+        self._rejects("MATCH ()-[e:T {v: 1}]->() SET e.v = 20000", msg)
+        # the rejected SET changed nothing
+        self.env.assertEqual(g.query("MATCH ()-[e:T {id: 1}]->() RETURN e.v").result_set, [[1]])
+        self.env.assertEqual(g.query("MATCH ()-[e:T {v: 20000}]->() RETURN count(e)").result_set[0][0], 1)
+        self.env.assertEqual(g.query("MATCH ()-[e:T]->() RETURN count(e)").result_set[0][0], 20000)
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():
@@ -1892,3 +1966,47 @@ class testConstraintWriteLockStateChanges(ConstraintBehindLongReads):
         # the graph lives on in the other database
         with redis.Redis(host=self.env.host, port=self.env.port, db=1) as db1:
             self.env.assertEqual(db1.exists(WRITE_LOCK_GRAPH_ID), 1)
+
+# a constraint on a large label is validated in the background: the settle reads
+# one version of the graph and publishes its verdict on whatever version is
+# current by then. a write that committed in between was not looked at by the
+# settle, and was not enforced either while only OPERATIONAL constraints bound
+# writes — so the constraint went OPERATIONAL over data that violates it (17 of
+# 20 tries on a million-node label; never on C, which enforces a constraint from
+# the moment it is created)
+class testConstraintSettleRace():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.g = self.db.select_graph("constraint_settle_race")
+        # above the size a constraint is validated inline at
+        self.g.query("UNWIND range(0, 499999) AS x CREATE (:L {v: x})")
+        create_node_range_index(self.g, "L", "v", sync=True)
+
+    def _race(self, ct_type, create, violating_write, violations):
+        con = self.env.getConnection()
+        for _ in range(5):
+            create(self.g, "L", "v")
+            try:
+                # refused, unless it gets in before the constraint is created
+                self.g.query(violating_write)
+            except ResponseError as e:
+                self.env.assertContains("constraint violation", str(e))
+            wait_on_constraint(self.g, ct_type, "NODE", "L", "v")
+            c = get_constraint(self.g, ct_type, "NODE", "L", "v")
+            bad = self.g.ro_query(violations).result_set[0][0]
+            # OPERATIONAL means the data satisfies it
+            self.env.assertFalse(c.status == "OPERATIONAL" and bad > 0,
+                                 message=f"{ct_type} is OPERATIONAL over {bad} violating nodes")
+            drop_constraint(self.g, ct_type, "NODE", "L", "v")
+            con.execute_command("GRAPH.QUERY", "constraint_settle_race",
+                                "MATCH (n:L) WHERE n.w = 1 DELETE n")
+
+    def test01_mandatory(self):
+        self._race("MANDATORY", create_mandatory_node_constraint,
+                   "CREATE (:L {w: 1})",
+                   "MATCH (n:L) WHERE n.v IS NULL RETURN count(n)")
+
+    def test02_unique(self):
+        self._race("UNIQUE", create_unique_node_constraint,
+                   "CREATE (:L {v: 0, w: 1})",
+                   "MATCH (n:L) WITH n.v AS v, count(*) AS c WHERE c > 1 RETURN count(v)")

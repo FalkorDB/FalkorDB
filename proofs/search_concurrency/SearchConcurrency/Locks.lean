@@ -1,19 +1,19 @@
 /-
-# Lock order, the write-loop hand-off, and the bounded-queue deadlock
+# Lock order, the write-loop hand-off, and admission
 
 | here | there |
 | --- | --- |
-| `Lock.gil < .graph < .indexer` | `graph/src/locks.rs:9` ordering rule; `query_session.rs:30` `Mode` |
-| `writerProg`, `pollWriterProg` | `QuerySession::escalate` (`query_session.rs:399`): release R, then `acquire_write` (`:460`): per slice GIL, timed W; since #3816 the `WriterGate` closes after two misses |
-| `gate`, `rank3816`, `gateReaderProg` | #3816: `WriterGate` (`:569-577`), `read_past_gate` (`:524`) |
-| `inlineWriterProg`             | `QuerySession::begin_writer` (`:205`): GIL, W |
-| `populateProg`                 | `populate_index_batch` (`graph.rs:562`): indexer lock only |
-| `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3799`): GIL, W, indexer |
-| `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
-| `rsGlobal`, `rsSpec`, `writerOpenScanProg` | gap closed 2026-10-20 (#3226): RediSearch's global `RWLOCK` and per-spec `rwlock`, held by an index scan from `handleIterCommon` (`deps/RediSearch src/redisearch_api.c:904-905`) to `ResultsIteratorFree` (:1064); `CommitOp::next` (`runtime/ops/commit.rs:93`) commits with the scan open |
-| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1615`) `write_loop` flag protocol |
-| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1007`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:67`) and write channel (`graph_core.rs:557`), slot released at execution / dequeue |
-| `Pool` (historical)            | before #3014: `bounded_blocking(1024)` pool queue + blocking `spawn` from `query_mut` on the Redis main thread |
+| `Lock.gil < .graph < .indexer` | `graph/src/locks.rs` ordering rule; `query_session.rs` `Mode` |
+| `writerProg`, `pollWriterProg` | `QuerySession::escalate` (`query_session.rs`): release R, then `acquire_write`: per slice GIL, timed W; since #3816 the `WriterGate` closes after two misses |
+| `gate`, `rank3816`, `gateReaderProg` | #3816: `WriterGate`, `read_past_gate` |
+| `inlineWriterProg`             | `QuerySession::begin_writer`: GIL, W |
+| `retryWriterProg`              | `QuerySession::begin_writer_checked` (#3559) from `execute_query_write`'s / `graph_bulk_insert`'s retry: `begin_with`, then `escalate`; `authorize_write`'s registry check runs under each slice's GIL |
+| `populateProg`                 | `populate_index_batch` (`graph.rs`): indexer lock only |
+| `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs`): GIL, W, indexer |
+| `forkProg`                     | `pre_fork_prepare` (`redis_type.rs`): GIL (main), registry mutex |
+| `rsGlobal`, `rsSpec`, `writerOpenScanProg` | gap closed 2026-10-20 (#3226): RediSearch's global `RWLOCK` and per-spec `rwlock`, held by an index scan from `handleIterCommon` (`deps/RediSearch src/redisearch_api.c:904-905`) to `ResultsIteratorFree` (:1064); `CommitOp::next` (`runtime/ops/commit.rs`, `upgrade_to_write`) commits with the scan open |
+| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs`) `write_loop` flag protocol |
+| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs`) and write channel (`graph_core.rs`, `unbounded_blocking`), slot released at execution / dequeue |
 -/
 
 namespace SC.Locks
@@ -107,6 +107,15 @@ theorem all_programs_ordered :
     okProg [] writerProg ∧ okProg [] inlineWriterProg ∧ okProg [] populateProg ∧
     okProg [] dropIndexBgProg ∧ okProg [] forkProg ∧ okProg [] telemetryProg := by decide
 
+/-- #3559: a queued write that keeps going stale reruns from `begin_writer_checked` on its worker:
+`begin_with` (read lock), then `escalate` — drop the read lock, GIL, `authorize_write`'s registry
+check under that GIL hold, the write lock — then the commit's indexer lock. -/
+def retryWriterProg : List Op :=
+  [.acq graphR, .rel graphR, .acq gil, .acq registry, .rel registry, .acq graphR,
+   .acq indexer, .rel indexer, .rel graphR, .rel gil]
+
+theorem retry_writer_ordered : okProg [] retryWriterProg = true := by decide
+
 theorem bad_escalate_rejected : okProg [] badEscalateProg = false := by decide
 
 /-! ## Gap closed 2026-10-20 (#3226): the RediSearch locks an open index scan holds
@@ -124,16 +133,16 @@ open to scan drop**, not only for the duration of a call:
   (`spec.c:2304`) and aborts the server.
 
 Both are taken by `handleIterCommon` (`src/redisearch_api.c:904-905`, every
-`RediSearch_GetResultsIterator`, i.e. `Index::query` `mod.rs:1691` and the vector and
+`RediSearch_GetResultsIterator`, i.e. `Index::query` `mod.rs` and the vector and
 full-text queries) and released only by `RediSearch_ResultsIteratorFree`
 (`redisearch_api.c:1064`), i.e. when the Rust `IndexResultsIter` drops with the scan op.
 `RediSearch_IndexAddDocument` (`redisearch_api.c:643-645`, reached from
-`Indexer::commit` `indexer.rs:730` → `Index::add_document`) takes both as a **writer**,
+`Indexer::commit` `indexer.rs` → `Index::add_document` `mod.rs`) takes both as a **writer**,
 and so do `RediSearch_CreateField` / `CreateIndex` (`redisearch_api.c:164`, …) on the
 RDB-load (`RESTORE`) path, which runs on the main thread under the GIL.
 
 They rank above the indexer lock: populate and commit take the indexer lock first and
-then call into RediSearch (`graph.rs:3828` `commit_index_locked`). -/
+then call into RediSearch (`graph.rs` `commit_index_locked`). -/
 
 def rsGlobal : Nat := 4
 def rsSpec : Nat := 5
@@ -158,7 +167,7 @@ abbrev LockOrdered (p : List Op) : Prop := okProg [] p = true
 /-- A read query's index scan, opened and drained under the per-graph read lock. -/
 def readerScanProg : List Op :=
   [.acq graphR, .acq rsGlobal, .acq rsSpec, .rel rsSpec, .rel rsGlobal, .rel graphR]
-/-- `populate_index_batch` (`graph.rs:562`): indexer lock, then `add_document`. -/
+/-- `populate_index_batch` (`graph.rs`): indexer lock, then `add_document`. -/
 def populateSpecProg : List Op :=
   [.acq indexer, .acq rsGlobal, .acq rsSpec, .rel rsSpec, .rel rsGlobal, .rel indexer]
 /-- A writer whose index scan has been **dropped** before its commit publishes
@@ -181,11 +190,11 @@ theorem spec_programs_ordered :
 
 /-! ## #3816 (af228a34f): the sliced write-lock wait and the writer gate
 
-Off the main thread `acquire_write` (`query_session.rs:460`) no longer blocks on the write
+Off the main thread `acquire_write` (`query_session.rs`) no longer blocks on the write
 lock holding the GIL: each slice takes the GIL, tries `try_write_arc_for(interval)` and on
 a miss gives the GIL back. After `GATE_AFTER_SLICES` misses it closes the graph's
-`WriterGate` (`:569-577`) and holds it until it has the lock; a pool reader in
-`read_past_gate` (`:524`) that finds the gate closed lets its read lock go and waits at the
+`WriterGate` (`close`) and holds it until it has the lock; a pool reader in
+`read_past_gate` that finds the gate closed lets its read lock go and waits at the
 gate holding nothing. The gate is a lock the writer takes *before* the GIL, so it ranks
 below it; the timed try is an acquire of `graphR` that may give up (`.rel`). -/
 
@@ -221,6 +230,9 @@ theorem gate_programs_ordered :
     okProgBy rank3816 [] telemetryProg ∧ okProgBy rank3816 [] forkProg ∧
     okProgBy rank3816 [] writerClosedScanProg ∧ okProgBy rank3816 [] restoreProg := by decide
 
+/-- …and under the #3816 rank (gate first), as `escalate` with its first slice taking the lock. -/
+theorem retry_writer_ordered_3816 : okProgBy rank3816 [] retryWriterProg = true := by decide
+
 /-- A reader waiting at the closed gate holds no lock, so the gate's writer, which needs
 the GIL and the write lock, never waits on it (a gate reader cannot close a cycle). -/
 theorem gate_waiter_holds_nothing :
@@ -235,14 +247,14 @@ theorem gate_above_gil_rejected : okProg [] pollWriterProg = false := by decide
 `MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000 RETURN count(n)`.
 The index scan is opened in reader mode (`graphR`, then `handleIterCommon` takes
 `rsGlobal` and `rsSpec` as a reader). `LIMIT` stops pulling but the scan op, and so its
-results iterator, lives until the plan drops. `CommitOp::next` (`commit.rs:93`) then
-escalates (`query_session.rs:386-391`: drop R, take the GIL, take W),
-`commit_deferred_indexes` takes the indexer lock (`pending.rs:1690` → `graph.rs:3815`),
+results iterator, lives until the plan drops. `CommitOp::next` (`commit.rs`) then
+escalates (`query_session.rs`, `escalate`: drop R, take the GIL, take W),
+`commit_deferred_indexes` takes the indexer lock (`pending.rs` → `graph.rs`),
 and `Indexer::commit` → `RediSearch_IndexAddDocument` takes `rsGlobal` and `rsSpec` as
 a writer while the same thread still holds them as a reader. -/
 def writerOpenScanProg : List Op :=
   [.acq graphR, .acq rsGlobal, .acq rsSpec,            -- index scan opened, kept open
-   .rel graphR, .acq gil, .acq graphR,                  -- escalate (commit.rs:93)
+   .rel graphR, .acq gil, .acq graphR,                  -- escalate (commit.rs)
    .acq indexer, .acq rsGlobal, .acq rsSpec,            -- Indexer::commit → IndexAddDocument
    .rel rsSpec, .rel rsGlobal, .rel indexer, .rel graphR, .rel gil,
    .rel rsSpec, .rel rsGlobal]                          -- scan dropped with the plan
@@ -342,86 +354,14 @@ def exploreBad : Nat → List D → List D
 theorem recheck_needed :
     (exploreBad 20 [drainInit 2]).any (fun s => terminal s && s.q != 0) = true := by decide +kernel
 
-/-! ## Historical: the bounded-queue deadlock (W3-conc-1, CONFIRMED live; fixed by #3014 b4634fe4b)
+/-! ## The admission protocol: admission-bounded, nothing blocks the main thread
 
-Resources that are not locks also block: the pool's job queue (capacity `cap`,
-`threadpool.rs:59`) and a graph's write channel (capacity 1024, `graph_core.rs:548`).
-The Redis main thread holds the GIL for every command callback and `spawn`s into
-the pool with a **blocking** send (`threadpool.rs:96`). A pool worker that has
-started a write escalates and waits for the GIL. So:
-
-  main (holds GIL) ⟶ waits for a pool-queue slot
-  pool-queue slots ⟶ freed only when a worker finishes a job
-  every worker ⟶ waits for the GIL (escalating writer), or on a full write channel
-                  whose only consumer is one of those GIL-waiting workers
-
-`Pool` below is that system with `w` workers and queue capacity `cap`. -/
-
-inductive Job where
-  | write   -- will need the GIL
-deriving DecidableEq, Repr
-
-structure Pool where
-  queue : Nat          -- jobs queued
-  running : Nat        -- workers executing a job (all of them will need the GIL)
-  mainBlocked : Bool   -- main thread stuck in spawn, holding the GIL
-  pendingClients : Nat -- commands not yet dispatched
-deriving DecidableEq, Repr
-
-variable (w cap : Nat)
-
-/-- Events: main dispatches a command (GIL held); a worker picks a job; a running
-worker finishes — which needs the GIL, free only when main is not in a callback. -/
-def poolSucc (s : Pool) : List Pool :=
-  (if s.pendingClients > 0 ∧ ¬ s.mainBlocked then
-    if s.queue < cap then [{ s with queue := s.queue + 1, pendingClients := s.pendingClients - 1 }]
-    else [{ s with mainBlocked := true }] else []) ++
-  (if s.queue > 0 ∧ s.running < w then
-    [{ s with queue := s.queue - 1, running := s.running + 1,
-              mainBlocked := false }]          -- a freed slot unblocks main
-   else []) ++
-  (if s.running > 0 ∧ ¬ s.mainBlocked then [{ s with running := s.running - 1 }] else [])
-
-def stuck (s : Pool) : Bool := (poolSucc w cap s).isEmpty && (s.pendingClients > 0 || s.queue > 0 || s.running > 0)
-
-/-- The adversarial schedule: the clients arrive faster than workers can take the
-GIL. With 1 worker and a 1-slot queue, 3 simultaneous writes reach a state with no
-enabled event: main holds the GIL waiting for queue space, the worker waits for the
-GIL. (Live: 11 workers, cap 1024, 1400 writes on one graph or 3000 over 16 graphs.) -/
-def deadState : Pool := { queue := 1, running := 1, mainBlocked := true, pendingClients := 1 }
-
-/-- The model above is stuck in `deadState` (kept so the pre-#3014 model stays checked). -/
-theorem deadState_stuck : stuck 1 1 deadState = true := by decide
-
-/-- The fix proposed before #3014: `spawn` from the main thread must not block (reject
-with "Max pending queries exceeded", or an unbounded queue as C's thpool has). #3014
-does both; its actual protocol is `succ3014` below. -/
-def poolSuccFixed (s : Pool) : List Pool :=
-  (if s.pendingClients > 0 then
-    if s.queue < cap then [{ s with queue := s.queue + 1, pendingClients := s.pendingClients - 1 }]
-    else [{ s with pendingClients := s.pendingClients - 1 }]   -- rejected with an error
-   else []) ++
-  (if s.queue > 0 ∧ s.running < w then [{ s with queue := s.queue - 1, running := s.running + 1 }] else []) ++
-  (if s.running > 0 then [{ s with running := s.running - 1 }] else [])
-
-theorem fixed_never_stuck (s : Pool) (hw : 0 < w) :
-    (s.pendingClients > 0 ∨ s.queue > 0 ∨ s.running > 0) → poolSuccFixed w cap s ≠ [] := by
-  intro h
-  unfold poolSuccFixed
-  rcases h with h | h | h
-  · simp [h]; split <;> simp
-  · by_cases hr : s.running > 0
-    · simp [hr]
-    · have : s.running < w := by omega
-      simp [h, this]
-  · simp [h]
-
-/-! ## The #3014 protocol: admission-bounded, nothing blocks the main thread
-
-`admit` (`graph_core.rs:1007`) takes a `QueueSlot` on the main thread or replies "Max
+`admit` (`graph_core.rs`) takes a `QueueSlot` on the main thread or replies "Max
 pending queries exceeded" — it never waits; `spawn` sends into an unbounded queue. A read
 gives its slot back when it starts executing (`admission.take()`), a write carries it into
 the graph's (unbounded) write channel and gives it back when the drainer dequeues it. -/
+
+variable (w cap : Nat)
 
 structure P3014 where
   pending : Nat    -- commands not yet dispatched
@@ -459,8 +399,8 @@ theorem inv3014_step (max : Nat) (s t : P3014) (h : Inv3014 max s) (ht : t ∈ s
   by_cases c1 : s.pending > 0 <;> by_cases c2 : s.count < max <;>
     by_cases c3 : (s.queue > 0 ∧ s.running + s.matching < w) <;> by_cases c4 : s.matching > 0 <;>
     by_cases c5 : s.writeQ > 0 <;> by_cases c6 : s.running > 0 <;>
-    simp only [succ3014, c1, c2, c3, c4, c5, c6, if_true, if_false, List.mem_append, List.mem_cons,
-      List.mem_nil_iff, or_false, false_or, and_self, ite_true, ite_false, true_and] at ht <;>
+    simp only [succ3014, c1, c2, c3, c4, c5, c6, ite_true, ite_false, List.mem_append, List.mem_cons,
+      List.mem_nil_iff, or_false, false_or, and_self, ite_true, ite_false] at ht <;>
     (repeat' (rcases ht with ht | ht)) <;>
     (subst_vars; constructor <;> simp <;> omega)
 

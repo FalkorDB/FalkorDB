@@ -17,7 +17,7 @@
 # The versions match every other Dockerfile that builds a server;
 # build/check-server-pins.sh enforces it in CI.
 ARG REDIS_VERSION=8.10.2
-ARG VALKEY_VERSION=9.1.2
+ARG VALKEY_VERSION=9.2.0
 
 FROM debian:trixie-slim AS server-builder-base
 ENV DEBIAN_FRONTEND=noninteractive

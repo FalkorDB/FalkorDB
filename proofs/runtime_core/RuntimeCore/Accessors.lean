@@ -5,17 +5,17 @@
 | --- | --- |
 | `W`                       | the state a read sees: `Runtime.deleted_nodes`, `Pending.{new,existing}_nodes_attrs`, `Pending.{set,remove}_labels`, the committed `Graph` |
 | `OM.insert/remove/lookup` | `OrderMap::{insert,remove,get}` (assoc list, unique keys) |
-| `pendingGet`              | `Pending::get_node_attribute`, `runtime/pending.rs:644-660` |
-| `memoLookup`, `memoInsert`, `attrIdM` | `Runtime::{memo_lookup,memo_insert,node_attr_id}`, `runtime/runtime.rs:1519-1555` |
-| `getNodeAttribute`        | `Runtime::get_node_attribute` + `_no_delete_check`, `runtime.rs:1571-1602` |
-| `materialize`             | `Runtime::materialize_node_property_values`, `runtime.rs:1668-1710` |
-| `updateNodeAttrs`, `getNodeAttrs` | `Pending::update_node_attrs` (`pending.rs:662-684`), `Runtime::get_node_attrs` (`runtime.rs:1866-1882`) |
-| `labelIds`, `hasLabelId`, `hasLabel` | `Runtime::get_node_labels` (`:1787-1799`), `node_has_label_id` (`:1852-1864`), `node_has_label` (`:1817-1830`); `Pending::{node_has_label,update_node_labels}` (`pending.rs:755-777`, `:806-818`) |
-| `stage`, `unstage`        | `Pending::stage_node_labels` / `remove_node_labels` (`pending.rs:691-706`, `:729-746`) |
-| `degree`                  | `Runtime::get_node_{in,out}degree{,_by_type}` (`runtime.rs:1931-1999`) |
-| `relEndpoints`, `relType` | `Runtime::get_relationship_{endpoints,type}` (`runtime.rs:1904-1929`) |
+| `pendingGet`              | `Pending::get_node_attribute`, `runtime/pending.rs` |
+| `memoLookup`, `memoInsert`, `attrIdM` | `Runtime::{memo_lookup,memo_insert,node_attr_id}`, `runtime/runtime.rs` |
+| `getNodeAttribute`        | `Runtime::get_node_attribute` + `_no_delete_check`, `runtime.rs` |
+| `materialize`             | `Runtime::materialize_node_property_values`, `runtime.rs` |
+| `updateNodeAttrs`, `getNodeAttrs` | `Pending::update_node_attrs` (`pending.rs`), `Runtime::get_node_attrs` (`runtime.rs`) |
+| `labelIds`, `hasLabelId`, `hasLabel` | `Runtime::get_node_labels`, `node_has_label_id`, `node_has_label`; `Pending::{node_has_label,update_node_labels}` (`pending.rs`) |
+| `stage`, `unstage`        | `Pending::stage_node_labels` / `remove_node_labels` (`pending.rs`) |
+| `degree`                  | `Runtime::get_node_{in,out}degree{,_by_type}` (`runtime.rs`) |
+| `relEndpoints`, `relType` | `Runtime::get_relationship_{endpoints,type}` (`runtime.rs`) |
 
-The relationship attribute accessors (`set_pending_relationship_attr` `:1502-1517`, `get_relationship_attribute{,_no_delete_check}` `:1605-1647`, `materialize_relationship_property_values` `:1728-1770`, `get_relationship_attrs` `:1884-1902`) have the
+The relationship attribute accessors (`set_pending_relationship_attr`, `get_relationship_attribute{,_no_delete_check}`, `materialize_relationship_property_values`, `get_relationship_attrs`) have the
 same shape over the relationship maps and are covered by the same theorems
 (instantiate `W` with relationship ids; `get_relationship_attribute`'s committed fallback
 is by name, which `hCommName` below equates with the by-index read).
@@ -99,7 +99,7 @@ def lookupA (a : Nat) : List (Nat × Val) → Option Val
   | [] => none
   | p :: m => if p.1 = a then some p.2 else lookupA a m
 
-/-- `Pending::get_node_attribute` (`pending.rs:644-660`). -/
+/-- `Pending::get_node_attribute` (`pending.rs`). -/
 def pendingGet (w : W) (id a : Nat) : Option Val :=
   if !w.hasAttrs then none
   else
@@ -107,7 +107,7 @@ def pendingGet (w : W) (id a : Nat) : Option Val :=
     | some v => some v
     | none => (w.exAttrs id).bind (lookupA a)
 
-/-- `get_node_attribute_no_delete_check` (`runtime.rs:1591-1602`), with the attr id
+/-- `get_node_attribute_no_delete_check` (`runtime.rs`), with the attr id
 already resolved (see `attrIdM` for the memo). -/
 def noDelete (w : W) (id : Nat) (name : String) : Option Val :=
   match w.attrId name with
@@ -117,13 +117,13 @@ def noDelete (w : W) (id : Nat) (name : String) : Option Val :=
     | some v => some v
     | none => w.committed id a
 
-/-- `Runtime::get_node_attribute` (`runtime.rs:1571-1587`). -/
+/-- `Runtime::get_node_attribute` (`runtime.rs`). -/
 def getNodeAttribute (w : W) (id : Nat) (name : String) : Option Val :=
   match (if !w.deletedEmpty then w.deleted id else none) with
   | some dn => dn.attrs.lookup name
   | none => noDelete w id name
 
-/-- `materialize_node_property_values` (`runtime.rs:1668-1710`); `bg` is the batched
+/-- `materialize_node_property_values` (`runtime.rs`); `bg` is the batched
 `get_node_attributes_by_idx`. -/
 def materialize (w : W) (bg : List Nat → Nat → List Val) (ids : List Nat) (name : String) :
     List Val :=
@@ -182,13 +182,13 @@ theorem materialize_eq (w : W) (bg : List Nat → Nat → List Val)
         simp only [noDelete]
         cases w.attrId name <;> simp
     · have := hd hde id
-      simp only [Bool.not_true, ite_false, this]
+      simp only [Bool.not_true, this]
       simp only [noDelete]
       cases w.attrId name <;> simp
 
 /-! ### `get_node_attrs` agrees with `get_node_attribute` -/
 
-/-- One step of `update_node_attrs`'s loop (`pending.rs:672-682`). -/
+/-- One step of `update_node_attrs`'s loop (`pending.rs`). -/
 def attrStep (w : W) (m : OM) (p : Nat × Val) : OM :=
   match w.attrName p.1 with
   | none => m
@@ -200,7 +200,7 @@ def updateNodeAttrs (w : W) (id : Nat) (m : OM) : OM :=
   | none => m
   | some added => added.foldl (attrStep w) m
 
-/-- `Runtime::get_node_attrs` (`runtime.rs:1866-1882`). -/
+/-- `Runtime::get_node_attrs` (`runtime.rs`). -/
 def getNodeAttrs (w : W) (id : Nat) : OM :=
   match w.deleted id with
   | some dn => dn.attrs
@@ -214,7 +214,7 @@ theorem lookupA_none (a : Nat) : ∀ (l : List (Nat × Val)), a ∉ l.map Prod.f
   | q :: qs, h => by
     simp only [List.map_cons, List.mem_cons, not_or] at h
     simp only [lookupA]
-    rw [if_neg (fun e => h.1 e.symm)]
+    rw [ite_eq_right (fun e => h.1 e.symm)]
     exact lookupA_none a qs h.2
 
 theorem fold_lookup (w : W) (hn : w.nameOk) (name : String) :
@@ -254,8 +254,8 @@ theorem fold_lookup (w : W) (hn : w.nameOk) (name : String) :
         have hk : w.attrName a = some name := (hn name a).mpr ha
         simp only [hk]
         split
-        · next hv => rw [OM.lookup_remove]; simp [hv]
-        · next hv => rw [OM.lookup_insert]; simp [hv]
+        · next hv => rw [OM.lookup_remove]; simp
+        · next hv => rw [OM.lookup_insert]; simp
       · simp only [hpa, ite_false]
         split
         · simp only [attrStep]
@@ -293,7 +293,7 @@ theorem attrs_agree (w : W) (hn : w.nameOk) (hd : w.deletedOk) (ha : w.attrsOk)
   cases hdi : w.deleted id with
   | some dn =>
     cases hde : w.deletedEmpty
-    · simp [hdi]
+    · simp
     · simp [hd hde id] at hdi
   | none =>
     simp only [ite_self]
@@ -366,7 +366,7 @@ theorem reuse_diverges :
     getNodeAttribute reuseWorld 0 "a" = some (.int 5) ∧
     OM.lookup "a" (getNodeAttrs reuseWorld 0) = none := by decide
 
-/-! ### Attribute-id memo (`runtime.rs:1519-1569`) -/
+/-! ### Attribute-id memo (`runtime.rs`) -/
 
 def ATTR_ID_MEMO_CAP : Nat := 32
 
@@ -442,17 +442,17 @@ def osRemove (s : List Nat) (x : Nat) : List Nat := s.filter (· ≠ x)
 def labelIds (w : W) (id : Nat) : List Nat :=
   (w.remL id).foldl osRemove ((w.setL id).foldl osInsert (w.committedLabels id))
 
-/-- `Pending::node_has_label` (`pending.rs:755-777`). -/
+/-- `Pending::node_has_label` (`pending.rs`). -/
 def pendingHas (w : W) (id l : Nat) : Option Bool :=
   if l ∈ w.remL id then some false else if l ∈ w.setL id then some true else none
 
-/-- `Runtime::node_has_label_id` (`runtime.rs:1852-1864`). -/
+/-- `Runtime::node_has_label_id` (`runtime.rs`). -/
 def hasLabelId (w : W) (id l : Nat) : Bool :=
   match w.deleted id with
   | some dn => decide (l ∈ dn.labels)
   | none => (pendingHas w id l).getD (decide (l ∈ w.committedLabels id))
 
-/-- `Runtime::get_node_labels` (`runtime.rs:1787-1799`), as label ids. -/
+/-- `Runtime::get_node_labels` (`runtime.rs`), as label ids. -/
 def getLabelIds (w : W) (id : Nat) : List Nat :=
   match w.deleted id with
   | some dn => dn.labels
@@ -513,7 +513,7 @@ theorem hasLabelId_iff (w : W) (id l : Nat) : hasLabelId w id l = true ↔ l ∈
       · simp [hr, hs]
       · simp [hr, hs]
 
-/-- `node_has_label(id, name)` (`runtime.rs:1817-1830`). -/
+/-- `node_has_label(id, name)` (`runtime.rs`). -/
 def hasLabel (w : W) (id : Nat) (name : String) : Bool :=
   match w.labelId name with
   | none => false
@@ -539,7 +539,7 @@ theorem hasLabel_iff (w : W) (id : Nat) (name : String)
     · rintro ⟨l', hm, he⟩
       have := hreg l' hm; rw [he, hl] at this; simp at this; subst this; exact hm
 
-/-- `stage_node_labels` (`pending.rs:691-706`) and `remove_node_labels` (`:729-746`)
+/-- `stage_node_labels` (`pending.rs`) and `remove_node_labels`
 on one node's `(set, remove)` lists. -/
 def stage (set rem : List Nat) (ls : List Nat) : List Nat × List Nat :=
   (set ++ ls, rem.filter (· ∉ ls))
@@ -570,7 +570,7 @@ theorem unstage_spec (set rem ls : List Nat) (h : Disjoint set rem) :
   · exact h x hs hr
   · exact hn hr
 
-/-! ### Degrees (`runtime.rs:1931-1999`) -/
+/-! ### Degrees (`runtime.rs`) -/
 
 structure Edge where
   id : Nat
@@ -615,7 +615,7 @@ theorem degree_exact (endp : Edge → Nat) (E C : List Edge) (D : Edge → Bool)
     | cons e L ih =>
       simp only [List.countP_cons, List.filter_cons]
       cases hD : D e <;> cases hp : (endp e = v && tyOk types e) <;>
-        simp [hp, List.countP_cons, ih] <;> omega
+        simp [hp, ih] <;> omega
   refine ⟨by rw [hsplit E]; omega, ?_⟩
   simp only [degree, Bool.false_eq_true, ite_false]
   rw [hsplit E]; omega
@@ -631,7 +631,7 @@ def relLookup {X : Type} (del : Nat → Option X) (pend : Nat → Option X) (com
 theorem relLookup_deleted {X : Type} (del pend : Nat → Option X) (com : Nat → X) (id : Nat) (x : X)
     (h : del id = some x) : relLookup del pend com id = x := by simp [relLookup, h]
 
-/-! ### `node_differs_from_committed` (#3464, `runtime.rs:1778`, `Pending::node_has_changes` `pending.rs:784`)
+/-! ### `node_differs_from_committed` (#3464, `runtime.rs`, `Pending::node_has_changes` `pending.rs`)
 
 The guard a caller (the UDF node objects, `js_classes.rs`) uses to read the committed
 graph directly instead of building the `get_node_labels` / `get_node_attrs` copies.
@@ -648,14 +648,14 @@ structure Keys where
   newK : List Nat
   exK : List Nat
 
-/-- `Pending::node_has_changes`'s inner `fn has` (`pending.rs:788`). -/
+/-- `Pending::node_has_changes`'s inner `fn has` (`pending.rs`). -/
 def hasKey (m : List Nat) (id : Nat) : Bool := !m.isEmpty && decide (id ∈ m)
 
-/-- `Pending::node_has_changes` (`pending.rs:784`). -/
+/-- `Pending::node_has_changes` (`pending.rs`). -/
 def nodeHasChanges (k : Keys) (id : Nat) : Bool :=
   hasKey k.setK id || hasKey k.remK id || hasKey k.newK id || hasKey k.exK id
 
-/-- `Runtime::node_differs_from_committed` (`runtime.rs:1778`). -/
+/-- `Runtime::node_differs_from_committed` (`runtime.rs`). -/
 def differs (w : W) (k : Keys) (id : Nat) : Bool :=
   (!w.deletedEmpty && (w.deleted id).isSome) || nodeHasChanges k id
 

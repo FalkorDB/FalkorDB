@@ -31,6 +31,8 @@
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
+use crate::parser::ast::VarKey;
+
 use super::super::IR;
 use super::references::ir_references_variable;
 /// True when the QueryRelationship's inline-attrs tree is the empty `{}` map.
@@ -47,7 +49,7 @@ fn rel_attrs_empty(
 }
 
 /// True when no operator anywhere in the plan references the variable
-/// `(var_id, scope_id)`. Reuses the per-IR-node reference check from
+/// `key`. Reuses the per-IR-node reference check from
 /// [`ir_references_variable`], which reports false for the traversal
 /// operators themselves, so the two hops being fused never veto their own
 /// intermediate.
@@ -64,13 +66,12 @@ fn rel_attrs_empty(
 /// instead of relying on the shape.
 fn intermediate_unreferenced(
     plan: &DynTree<IR>,
-    var_id: u32,
-    scope_id: u32,
+    key: VarKey,
 ) -> bool {
     !plan
         .root()
         .indices::<Bfs>()
-        .any(|idx| ir_references_variable(plan.node(idx).data(), var_id, scope_id))
+        .any(|idx| ir_references_variable(plan.node(idx).data(), key))
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)
@@ -143,9 +144,7 @@ fn can_fuse(
         return false;
     }
     // Intermediate node = parent.from = child.to. Must be the same alias.
-    if p_rel.from.alias.id != c_rel.to.alias.id
-        || p_rel.from.alias.scope_id != c_rel.to.alias.scope_id
-    {
+    if p_rel.from.alias.key() != c_rel.to.alias.key() {
         return false;
     }
     // Intermediate node anonymous, no labels, no inline attrs.
@@ -169,7 +168,7 @@ fn can_fuse(
 
     // The intermediate disappears from the binding set on fusion, so nothing
     // anywhere may still read it.
-    if !intermediate_unreferenced(plan, intermediate.alias.id, intermediate.alias.scope_id) {
+    if !intermediate_unreferenced(plan, intermediate.alias.key()) {
         return false;
     }
     // Neither may the edges. A fused chain binds no per-hop edge, so a
@@ -179,7 +178,7 @@ fn can_fuse(
     // replaces the old `rel_attrs_empty` probe, which read the attrs directly
     // back when they were still on the pattern.
     for edge in [&p_rel.alias, &c_rel.alias] {
-        if !intermediate_unreferenced(plan, edge.id, edge.scope_id) {
+        if !intermediate_unreferenced(plan, edge.key()) {
             return false;
         }
     }
