@@ -280,6 +280,14 @@ fn concat_groups(
 /// tuples) as possible; `None` if no split does. Splitting at half the tuples is not enough: one
 /// long string can make that half exceed [`LEAF_BYTES`] although every string fits on its own.
 fn balanced_split(groups: &[Group]) -> Option<(Vec<Group>, Vec<Group>)> {
+    // A string that alone overruns the budget fails every split: skip the search, which would
+    // re-encode each candidate page, long string included.
+    if groups
+        .iter()
+        .any(|g| Group::KEY_BYTES + g.key.len() + Group::DOC_BYTES > LEAF_BYTES)
+    {
+        return None;
+    }
     let total: usize = groups.iter().map(|g| g.docs.len()).sum();
     let half = total / 2;
     for distance in 0..total {
@@ -595,6 +603,13 @@ mod tests {
 
     fn all_tuples(pages: &[StrLeaf]) -> Vec<(Vec<u8>, u64)> {
         pages.iter().flat_map(StrLeaf::tuples).collect()
+    }
+
+    #[test]
+    fn an_oversized_string_declines_a_split() {
+        let mut groups = decode(&encode(&group_tuples(&long_key_then_short_keys())).blob);
+        groups[0].key = vec![b'a'; 2 * LEAF_BYTES];
+        assert!(balanced_split(&groups).is_none());
     }
 
     #[test]
