@@ -22,7 +22,7 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
 | `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:816`), `children_to_recurse` (`:758`) |
 | `Accessors.*` | entity accessors `runtime.rs:1483-1984` (attrs, memo, labels, degrees, endpoints/type) |
 | `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs:1778`) + `Pending::node_has_changes` (`pending.rs:784`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
-| `Misc.*`      | `check_timeout` (`:531`), `check_mem_capacity` (`:541`), `map_to_index_options` (`:2008`; #3094 required vector keys, fulltext unknown-key refusal), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
+| `Misc.*`      | `check_timeout` (`:531`), `check_mem_capacity` (`:541`), `map_to_index_options` (`:2042`; #3094 required vector keys, fulltext unknown-key refusal; PR #3257 similarity name check), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
 | (reused)      | `evaluate_id_filter` (`:1415-1479`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: since #3394 no range on a graph with no nodes) |
 
 ## Proven (plain English)
@@ -53,7 +53,9 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
   `edge_already_used` ≡ ∃ other sibling bound to this edge; vector index options refuse
   every negative integer and, since #3094 (fe619ac5f, fixes #3091), require `dimension` and
   `similarityFunction` and store the latter lower-cased (`vector_requires_dimension`,
-  `vector_requires_similarity`, `vector_similarity_lowered`); fulltext refuses the first key
+  `vector_requires_similarity`, `vector_similarity_lowered`), and since PR #3257 refuse an
+  unknown similarity name whatever the dimension (`vector_unknown_similarity_refused`,
+  `vector_similarity_known`); fulltext refuses the first key
   outside `FULLTEXT_OPTIONS` (`fulltextUnknown_none_iff`); phonetic yields only "dm:en" or "".
 
 ## CONFIRMED bugs (Rust repro in `graph/tests/lean_runtime_core.rs`, C = `bin/macos-arm64v8-release/falkordb.so`)
