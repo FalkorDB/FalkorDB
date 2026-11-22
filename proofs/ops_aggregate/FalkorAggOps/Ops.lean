@@ -436,6 +436,12 @@ theorem dedup_collision_drops :
     dedupBy (fun n : Nat => n % 2) [] [0, 2] = [0] ∧ dedupBy id [] [0, 2] = [0, 2] := by
   decide
 
+/-! ## DISTINCT across batches: OPEN bug #2779 (current behaviour, not a superseded model)
+
+`distinctCountBatches`, `distinct_one_batch` and `distinct_fold_clear_overcounts` describe
+`ApplyOp`'s current per-subquery clear of the runtime-wide dedup map (`apply.rs`), tracked as
+W2-agg-1 in the README and in COVERAGE.tsv. -/
+
 /-- `count(DISTINCT v)` fed batch by batch, with an optional wipe of the
 (runtime-global) dedup map between batches — what `ApplyOp`'s per-row mode
 does after every subquery (apply.rs). -/

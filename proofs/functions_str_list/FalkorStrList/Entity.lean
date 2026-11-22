@@ -1,7 +1,7 @@
 /-!
 # Graph-entity functions (functions/entity.rs) over the runtime accessor model
 
-The runtime accessors entity.rs calls (`runtime.rs`, `get_node_labels` :1787 to `get_node_outdegree_by_type` :1983) are modelled with the order
+The runtime accessors entity.rs calls (`runtime.rs`, `get_node_labels`  to `get_node_outdegree_by_type` ) are modelled with the order
 they use: **deleted-entity snapshot > pending (this query's writes) > committed graph**.
 `deleteNode` / `deleteRel` model the snapshot the DELETE operator takes
 (`staged_label_ids` `ops/delete.rs`, `delete_nodes_bulk`, `delete_entity`; the DeleteOp snapshot flag is `runtime.inspect || snapshot_required(..)` — `deleteNode`/`deleteRel` below are the `snapshot = true` case).

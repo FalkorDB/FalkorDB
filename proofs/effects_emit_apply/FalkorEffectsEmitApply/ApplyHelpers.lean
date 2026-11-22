@@ -133,7 +133,7 @@ theorem validateG_ok {G} (verifyN verifyE : G → Except IdSpaceErr Unit) (dangl
   cases verifyE g <;> simp
   cases dangling g <;> simp
 
-/-- `require_live` (, #3022): `refuse_not_live` on the kind's id space,
+/-- `require_live` (#3022): `refuse_not_live` on the kind's id space,
 refusals through `id_space_error_map`. `refuse` is `IdSpace::refuse_not_live`,
 which accepts exactly the live ids (`proofs/id_space`, `refuseNotLive_live`) and
 refuses only with `AlreadyRecycled`/`NeverCreated` (`refuseNotLive_err`). -/
@@ -402,7 +402,7 @@ spaces verified, refusals through `From<NodeOpError>`), then commit the index
 docs. Graph steps are parameters. Since #2846 the batch lives on the graph
 rather than in a local `BufferOps`. Since #3307 `D` is the whole `IndexDocs` (the
 graph's write methods fill the part they produce, including the native index's
-staged `native`) and `commit` is `g.commit_index_docs(&mut docs)` (; `Graph::commit_index_docs`, graph.rs,
+staged `native`) and `commit` is `g.commit_index_docs(&mut docs)` (`Graph::commit_index_docs`, graph.rs,
 `GQ.commitIndexDocs` in proofs/graph_queries): native apply, then the RediSearch node
 and edge documents. -/
 def applyEffects {G R D} (openP : Except AErr (List R)) (applyRec : G → D → R → Except AErr (G × D))

@@ -31,7 +31,7 @@ def argItemsP (pe : PE) : Nat → List ET → P (List ET)
     else do tok .rparen; pure (acc ++ [e])
 
 /-- `parse_expression_list(ZeroOrMoreClosedBy(RParen), allow)` (cypher.rs); #3060:
-only an empty list ends at once, so `f(1,)` is an error. -/
+only an empty list ends at once, so `f(1)` is an error. -/
 def argsP (pe : PE) (n : Nat) (acc : List ET) : P (List ET) := do
   let c ← peek
   if c = .rparen then do next; pure acc

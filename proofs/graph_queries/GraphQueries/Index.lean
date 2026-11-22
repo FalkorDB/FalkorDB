@@ -8,18 +8,18 @@ for *any* indexer behaviour.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `populateStart`   | `populate_index` :560 |
-| `dropBg`          | `drop_index_bg` :795 (`Indexer::remove_if_empty`, #3856) |
-| `createIndex`     | `create_index` :3670 / `create_index_sync` :3717 |
-| `syncDocs`        | `populate_indexes_sync` :3764 (one label/type) |
-| `commitDocs`      | `commit_index_kind` :4043 (via `commit_index` :3927, `commit_index_locked` :3940) |
-| `commitEdgeDocs`  | `commit_edge_index_locked` :3962 (via `commit_edge_index` :3950) |
-| `commitIndexDocs` | `commit_index_docs` :3913 (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
-| `dropIndex`, `noSuchIndexMsg` | `drop_index` :4090 (message :4160-4177) |
-| `indexInfo`       | `index_info` :4468 |
-| `memEstimate`, `labelPass` | `memory_usage_report` :4919 sampling arithmetic and seen-dedup |
-| `encodeOp`        | `encode_payload` :5093 dispatch |
-| `getPlan`         | `get_plan` :1383 cache decision |
+| `populateStart`   | `populate_index`  |
+| `dropBg`          | `drop_index_bg`  (`Indexer::remove_if_empty`, #3856) |
+| `createIndex`     | `create_index`  / `create_index_sync`  |
+| `syncDocs`        | `populate_indexes_sync`  (one label/type) |
+| `commitDocs`      | `commit_index_kind`  (via `commit_index` , `commit_index_locked` ) |
+| `commitEdgeDocs`  | `commit_edge_index_locked`  (via `commit_edge_index` ) |
+| `commitIndexDocs` | `commit_index_docs`  (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
+| `dropIndex`, `noSuchIndexMsg` | `drop_index`  (message :4160-4177) |
+| `indexInfo`       | `index_info`  |
+| `memEstimate`, `labelPass` | `memory_usage_report`  sampling arithmetic and seen-dedup |
+| `encodeOp`        | `encode_payload`  dispatch |
+| `getPlan`         | `get_plan`  cache decision |
 -/
 namespace GQ
 variable {V : Type}

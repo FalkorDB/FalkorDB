@@ -145,7 +145,7 @@ inductive Sub where
   | other
   deriving DecidableEq, Repr
 
-/-- `stripTelemetry` is `strip_telemetry_streams` (, #3844): delete the queued
+/-- `stripTelemetry` is `strip_telemetry_streams` (#3844): delete the queued
 streams of freed graphs, then the stream of every registered graph. -/
 inductive Act where
   | createVKeys

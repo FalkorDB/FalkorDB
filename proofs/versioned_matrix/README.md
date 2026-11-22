@@ -49,7 +49,7 @@ No. `mayHold_sound` (bit-exact over `BitVec 64`) proves `may_hold` never answers
 
 **7. Is `count_in_rows` exact?**
 
-`vmCountInRows_spec` proves `VersionedMatrix::count_in_rows` returns the number of logical entries in the selected rows, and that its `u64` subtraction cannot underflow. This is **CONDITIONAL** on `LayerCount`, the spec of `Matrix::count_in_rows` per layer. `vmCountInRows_distinct` adds that, given `dp` duplicate-free and disjoint from `m`, the counted list has no repeated coordinate, so the result is a count of distinct effective entries. `countPairsInto_spec` covers `Tensor::count_pairs_into`; `countPairsInto_distinct` adds the same for a duplicate-free pair list.
+`vmCountInRows_spec` proves `VersionedMatrix::count_in_rows` returns the number of logical entries in the selected rows, and that its `u64` subtraction cannot underflow. This is **CONDITIONAL** on `LayerCount`, the spec of `Matrix::count_in_rows` per layer, and also requires duplicate-free `m` and `dm` keys and `dm ⊆ m` (a tombstone without a base entry would make the deletion count exceed the base count). `vmCountInRows_distinct` adds that, given `dp` duplicate-free and disjoint from `m`, the counted list has no repeated coordinate, so the result is a count of distinct effective entries. `countPairsInto_spec` covers `Tensor::count_pairs_into`; `countPairsInto_distinct` adds the same for a duplicate-free pair list.
 
 ## The headline theorems
 

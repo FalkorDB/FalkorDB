@@ -128,7 +128,7 @@ theorem rename_moves (r : Reg) (o n : List Char) (g : Nat) (h : r.get o = some g
     congr 2; congr 1; funext p; simp [Bool.and_comm]
   rw [e, get_filter_self]
 
-/-! ## `key_of_write` (, #3850/#3851): the key a write is published under
+/-! ## `key_of_write` (#3850/#3851): the key a write is published under
 
 `ks k` is the graph allocation the keyspace holds at key `k` (`key_holds_graph`, `redis_type.rs`,
 is `ks k = some g`: TelemetryLoop `keyHolds_iff`). `main` is `is_main_thread()`. The registry
@@ -309,7 +309,7 @@ theorem stale_run_silent (w k m b : Bool) :
 /-! ### The bounded retry (#3559)
 
 `execute_query_write` counts stale runs; after `MAX_STALE_RETRIES` of them, or
-at once after a stale run that took `SLOW_STALE_RUN` (, 10 ms) or longer, the next run
+at once after a stale run that took `SLOW_STALE_RUN` (10 ms) or longer, the next run
 begins as a writer (`QuerySession::begin_writer_checked`) instead of a reader
 (`begin_with`). A run is a function of the mode it begins in; a refused
 `begin_writer_checked` is that run's `failed` outcome (`map_err(…)?`). Times are nanoseconds. -/
@@ -580,7 +580,7 @@ def executeQuery (plan : List Op) (writeAllowed : Bool) : QOut :=
 theorem ro_write_rejected (plan : List Op) (h : isWrite plan) : executeQuery plan false = .roError := by
   simp [executeQuery, h]
 
-/-! ## `admit` and `query_mut` dispatch (, #3014) -/
+/-! ## `admit` and `query_mut` dispatch (#3014) -/
 
 /-- `admit`: `QueueSlot::try_acquire(MAX_QUEUED_QUERIES)` (the count after admission), or
 the reply "Max pending queries exceeded" (`none`). Never waits. -/

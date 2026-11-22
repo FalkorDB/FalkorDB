@@ -14,7 +14,7 @@ What each function does to stores other projects prove is stated as what it pass
 | `Scan`, `scanStep`            | the first pass of `Graph::restore` (`graph.rs`): `max_edge_id` and `starts` over `tensor.iter_edges()` |
 | `restoreLen`, `restoreStarts` | `len`, the monotone clamp loop |
 | `restoreIndex`                | `EndpointIndex::default()` then `prepare_tiers` then `set` per edge |
-| `capOf`, `Restored`           | `node_cap`/`relationship_cap` `next_multiple_of(chunk).max(64)`, `schema_version`, `version: 0`, empty indexers/constraints, |
+| `capOf`, `boundOf`, `Restored` | `node_cap`/`relationship_cap` `next_multiple_of(chunk).max(64)` and `IdSpace::bound` (release `u64` wrap modelled), `schema_version`, `version: 0`, empty indexers/constraints, |
 | `deletedEdges`, `DE`          | the per-type collection and `all_implicit` of `Graph::delete_implicit_edges` |
 | `stagedDocs`                  | `index_remove_edge_docs.entry(type_id).or_default().insert(edge_id, (src, dst))` for an indexed type |
 | `tensorsAfter`, `emptiedPairs`, `clearedPairs` | `Tensor::remove_all` and the adjacency clearing (`dead_adj_pairs`, `check_adj_pairs`, the bulk clear) |
@@ -161,12 +161,20 @@ theorem restore_tier1_start (edges : List (Nat × Nat × Nat)) (e : Nat × Nat �
 
 /-! ### The rest of the struct -/
 
-/-- `u64::next_multiple_of`: the smallest multiple of `c` that is `≥ n`; `c = 0` panics (`none`). -/
-def nextMultipleOf (n c : Nat) : Option Nat :=
-  if c = 0 then none else some ((n + c - 1) / c * c)
+/-- `2^64`: the `u64` modulus. The release profile has no `overflow-checks`, so `u64` `+` wraps
+(a debug build panics instead). -/
+def W : Nat := 2 ^ 64
 
-/-- `bound.next_multiple_of(chunk).max(64)`: a capacity of at least 64. -/
+/-- `u64::next_multiple_of` (`match self % rhs { 0 => self, r => self + (rhs - r) }`) as the release
+build runs it: `c = 0` panics (`none`), and the addition wraps mod `2^64`. -/
+def nextMultipleOf (n c : Nat) : Option Nat :=
+  if c = 0 then none else some (if n % c = 0 then n else (n + (c - n % c)) % W)
+
+/-- `bound.next_multiple_of(chunk).max(64)`: a capacity of at least 64 (barring wrap-around). -/
 def capOf (bound chunk : Nat) : Option Nat := (nextMultipleOf bound chunk).map (max 64)
+
+/-- `IdSpace::bound`: `live + recycled.len()`, a wrapping `u64` add in release. -/
+def boundOf (live deleted : Nat) : Nat := (live + deleted) % W
 
 /-- What `restore` builds from its arguments, besides the matrices and stores it is handed. -/
 structure Restored where
@@ -179,51 +187,62 @@ structure Restored where
 deriving DecidableEq, Repr
 
 /-- The scalar fields of `Self { .. }` (`graph.rs`): `bound`s from `IdSpace::restored(count,
-deleted).bound()`, `chunk` is `NODE_CREATION_BUFFER`. `none` is the `next_multiple_of(0)` panic. -/
-def restoredFields (nodeBound relBound chunk labels types : Nat) : Option Restored := do
-  let nc ← capOf nodeBound chunk
-  let rc ← capOf relBound chunk
+deleted).bound()` (`count`, `deleted.len()` per space), `chunk` is `NODE_CREATION_BUFFER`. `none`
+is the `next_multiple_of(0)` panic. -/
+def restoredFields (nodeCount nodeDel relCount relDel chunk labels types : Nat) : Option Restored := do
+  let nc ← capOf (boundOf nodeCount nodeDel) chunk
+  let rc ← capOf (boundOf relCount relDel) chunk
   pure { nodeCap := nc, relCap := rc, schemaVersion := labels + types, version := 0,
          indexersEmpty := true, constraintsEmpty := true }
 
-theorem nextMultipleOf_spec (n c : Nat) (hc : 0 < c) :
+/-- Without wrap-around (`bound + chunk <= 2^64`, any real graph) the result is the smallest
+multiple of `c` at or above `n`. -/
+theorem nextMultipleOf_spec (n c : Nat) (hc : 0 < c) (hw : n + c ≤ W) :
     ∃ m, nextMultipleOf n c = some m ∧ n ≤ m ∧ m < n + c ∧ m % c = 0 := by
-  refine ⟨(n + c - 1) / c * c, by simp [nextMultipleOf, Nat.pos_iff_ne_zero.1 hc], ?_⟩
-  have h1 := Nat.div_add_mod (n + c - 1) c
-  have h2 := Nat.mod_lt (n + c - 1) hc
-  have h3 : (n + c - 1) / c * c % c = 0 := Nat.mul_mod_left _ _
-  refine ⟨?_, ?_, h3⟩
-  · have : (n + c - 1) / c * c + (n + c - 1) % c = n + c - 1 := by
-      rw [Nat.mul_comm]; exact h1
-    omega
-  · have : (n + c - 1) / c * c ≤ n + c - 1 := Nat.div_mul_le_self _ _
-    omega
+  have hr := Nat.mod_lt n hc
+  by_cases h0 : n % c = 0
+  · exact ⟨n, by simp [nextMultipleOf, Nat.pos_iff_ne_zero.1 hc, h0], Nat.le_refl _, by omega, h0⟩
+  · have hdiv := Nat.div_add_mod n c
+    have hm : (n + (c - n % c)) % W = n + (c - n % c) := Nat.mod_eq_of_lt (by omega)
+    refine ⟨n + (c - n % c), by simp [nextMultipleOf, Nat.pos_iff_ne_zero.1 hc, h0, hm], by omega, by omega, ?_⟩
+    have : n + (c - n % c) = c * (n / c + 1) := by
+      rw [Nat.mul_add, Nat.mul_one]; omega
+    rw [this]; exact Nat.mul_mod_right _ _
 
-/-- **The capacities** are at least the id-space bound and at least 64, and a zero `chunk` is the
-`next_multiple_of` panic. -/
+/-- **The capacities**, absent wrap-around, are at least the id-space bound and at least 64, and a
+zero `chunk` is the `next_multiple_of` panic. -/
 theorem capOf_spec (bound chunk : Nat) :
     (chunk = 0 → capOf bound chunk = none) ∧
-    (0 < chunk → ∃ r, capOf bound chunk = some r ∧ bound ≤ r ∧ 64 ≤ r ∧
+    (0 < chunk → bound + chunk ≤ W → ∃ r, capOf bound chunk = some r ∧ bound ≤ r ∧ 64 ≤ r ∧
       (r = 64 ∨ r % chunk = 0)) := by
-  refine ⟨fun h => by simp [capOf, nextMultipleOf, h], fun hc => ?_⟩
-  obtain ⟨m, hm, h1, _, h3⟩ := nextMultipleOf_spec bound chunk hc
+  refine ⟨fun h => by simp [capOf, nextMultipleOf, h], fun hc hw => ?_⟩
+  obtain ⟨m, hm, h1, _, h3⟩ := nextMultipleOf_spec bound chunk hc hw
   refine ⟨max 64 m, by simp [capOf, hm], by omega, by omega, ?_⟩
   by_cases h : 64 ≤ m
   · right; rw [Nat.max_eq_right h]; exact h3
   · left; omega
 
+/-- **Overflow is modelled, not excluded**: a bound within one chunk of `2^64` makes the release
+build's `next_multiple_of` wrap, and the capacity comes out *below* the bound (here 64 for
+`bound = 2^64 - 1`, `chunk = 1024`; a debug build panics). Reachable only from an RDB whose
+`node_count + deleted` is within `NODE_CREATION_BUFFER` of `2^64`. -/
+theorem capOf_wraps : capOf (W - 1) 1024 = some 64 := by decide
+
 /-- The other scalar fields: `schema_version` is the number of labels plus relationship types, the
-version is 0, no index or constraint is carried over (the RDB carries none). -/
-theorem restoredFields_spec (nb rb chunk labels types : Nat) (hc : 0 < chunk) :
-    ∃ r, restoredFields nb rb chunk labels types = some r ∧ r.schemaVersion = labels + types ∧
+version is 0, no index or constraint is carried over (the RDB carries none). The capacity bounds
+hold when neither id-space bound is within a chunk of `2^64` (`capOf_wraps` is the other case). -/
+theorem restoredFields_spec (nc nd rc rd chunk labels types : Nat) (hc : 0 < chunk)
+    (hn : boundOf nc nd + chunk ≤ W) (hr : boundOf rc rd + chunk ≤ W) :
+    ∃ r, restoredFields nc nd rc rd chunk labels types = some r ∧
+      r.schemaVersion = labels + types ∧
       r.version = 0 ∧ r.indexersEmpty = true ∧ r.constraintsEmpty = true ∧
-      nb ≤ r.nodeCap ∧ rb ≤ r.relCap ∧ 64 ≤ r.nodeCap ∧ 64 ≤ r.relCap := by
-  obtain ⟨a, ha, h1, h2, _⟩ := (capOf_spec nb chunk).2 hc
-  obtain ⟨b, hb, h3, h4, _⟩ := (capOf_spec rb chunk).2 hc
+      boundOf nc nd ≤ r.nodeCap ∧ boundOf rc rd ≤ r.relCap ∧ 64 ≤ r.nodeCap ∧ 64 ≤ r.relCap := by
+  obtain ⟨a, ha, h1, h2, _⟩ := (capOf_spec (boundOf nc nd) chunk).2 hc hn
+  obtain ⟨b, hb, h3, h4, _⟩ := (capOf_spec (boundOf rc rd) chunk).2 hc hr
   exact ⟨⟨a, b, labels + types, 0, true, true⟩, by simp [restoredFields, ha, hb], rfl, rfl, rfl, rfl, h1, h3, h2, h4⟩
 
-theorem restoredFields_zero_chunk (nb rb labels types : Nat) :
-    restoredFields nb rb 0 labels types = none := by
+theorem restoredFields_zero_chunk (nc nd rc rd labels types : Nat) :
+    restoredFields nc nd rc rd 0 labels types = none := by
   simp [restoredFields, capOf, nextMultipleOf]
 
 

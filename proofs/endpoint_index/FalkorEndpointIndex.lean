@@ -875,7 +875,7 @@ theorem snapshot_isolated (ops₁ ops₂ : List Op) (hv₁ : ∀ op ∈ ops₁, 
     snap.get i = refRun (fun _ => none) ops₁ i :=
   fresh_refines ops₁ hv₁ i
 
-/-- `Graph::restore` (`graph.rs`, `prepare_tiers` at): `prepare_tiers` with any boundaries,
+/-- `Graph::restore` (`graph.rs`, `prepare_tiers` ): `prepare_tiers` with any boundaries,
 then `set` for every edge of every tensor. The index answers exactly the
 restored edge set (the last `set` of an id wins, which cannot matter since a
 tensor holds each edge id once). -/

@@ -132,7 +132,7 @@ The hypotheses on `range_agrees`:
 
 - **No `Bool` data** (`NotBool`). A `Bool` shares a key with `0`/`1` (`bool_divergence`). This matches C and the RediSearch path, and is pinned in a Rust test.
 - **A guarded bound** (`GoodBound`): a non-NaN float, or an int with `|b| < 2⁵²`. The planner only routes such bounds to the index, except for `i64::MIN`.
-- **The tree contents** follow `cow_btree`'s specs. Those are proven under `TreeWF`, and every tree the API can build satisfies it (`cow_btree` `Reachable_wf_asserted`), so this is not a hypothesis: `Contract.lean` (`contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_fromSorted`, `contract_range`) proves each Rust tree operation equals its `Tree.lean` model on every reachable tree.
+- **The tree contents** follow `cow_btree`'s specs. Those are proven under `TreeWF`, and every tree the API can build satisfies it (`cow_btree` `Reachable_wf_asserted`), so well-formedness is not a hypothesis. Reachability alone is not the whole premise, though: `contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch` and `contract_range` also assume the configuration assertion `constAssert c.L c.B D = true`; the inserted key (and every batch element) must be below `HI` (`contract_removeBatch` has no key bound); `contract_insertBatch` and `contract_removeBatch` require a sorted batch (`SortedLe`); `contract_range` requires a collection bound `n` at least the tree's length; and `contract_fromSorted` requires a sorted input below `HI`. `Contract.lean` (`contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_fromSorted`, `contract_range`) proves each Rust tree operation equals its `Tree.lean` model on every reachable tree.
 
 ## Bugs found
 
@@ -165,7 +165,7 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `Scan.lean` | `nodeMatches`, `relationshipMatches`, the filtered scans, `nodeScanOp`/`edgeScanOp`, `redisearchFields` |
 | `Unique.lean` | `nativeUniqueQuery`, `fewest`, `ReadOnce` |
 | `Decline.lean` | `unsupported_by_native_index`'s `describe`, `unionMembers` |
-| `Rows.lean`, `Bridge.lean`, `Online.lean` | `Selection` row lemmas, the `sizing_batch` / `query_range` glue, and the background builder (`online_build.rs`; only `Sizing::batch` is modelled) |
+| `Rows.lean`, `Bridge.lean`, `Online.lean` | `Selection` row lemmas, the `sizing_batch` / `query_range` glue, and the background builder (`online_build.rs`: a job reads a snapshot and publishes against the entry published at publish time, `publish_stale` / `publish_valid`) |
 | `Batch.lean`, `Rebase.lean`, `Memory.lean` | Indexer batch commit and fit (#3566), rebase and catch-up (#3567, #3568), memory usage (#3569) |
 | `Cch.lean`, `CchOrder.lean`, `CchTopo.lean`, `CchMetric.lean`, `CchPaths.lean`, `CchSearch.lean`, `CchRoute.lean`, `CchSmall.lean`, `CchSeq.lean` | The CCH path-index contract skeleton and phases 1-3 |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |

@@ -432,7 +432,7 @@ theorem snapshotRequired_spec (cs : List Bool) : snapshotRequired cs = cs.any (!
   | nil => rfl
   | cons c cs ih => cases c <;> simp [snapshotRequired, ih]
 
-/-- delete.rs / :50: keep the ids that have a name, renamed, in order. -/
+/-- delete.rs: keep the ids that have a name, renamed, in order. -/
 def attrsToMap {V : Type} (name : Nat → Option String) (attrs : List (Nat × V)) : List (String × V) :=
   attrs.filterMap fun p => (name p.1).map (·, p.2)
 

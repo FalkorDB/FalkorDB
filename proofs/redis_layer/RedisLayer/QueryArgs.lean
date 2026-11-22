@@ -44,7 +44,7 @@ inductive QErr where
   | wrongArity | timeoutParse | timeoutMax | versionParse | schemaParse | schemaVerbose
   deriving DecidableEq, Repr
 
-/-- The reply text (; `WrongArity` is Redis' standard arity error). -/
+/-- The reply text (`WrongArity` is Redis' standard arity error). -/
 def QErr.msg : QErr → String
   | .wrongArity => "wrong number of arguments"
   | .timeoutParse => "Failed to parse query timeout value"
@@ -67,7 +67,7 @@ structure QFlags where
 /-- `i64::cast_unsigned`: the same 64 bits as a `u64`. -/
 def castUnsigned (s : Int) : Nat := (s % (2 ^ 64 : Int)).toNat
 
-/-- `parse_schema_hash` (, #3757): `string2ll` (`parse_integer`) cast to `u64`;
+/-- `parse_schema_hash` (#3757): `string2ll` (`parse_integer`) cast to `u64`;
 else a canonical unsigned decimal (`[1-9][0-9]*`, `str::parse::<u64>`, so ≤ `u64::MAX`). -/
 def parseSchemaHash (v : Bytes) : Option Nat :=
   match string2ll v with
@@ -114,7 +114,7 @@ def scanFlags (tmax : Int) : List Bytes → QFlags → Except QErr QFlags
         | some h => scanFlags tmax rest' { f with schema := some h }
     else scanFlags tmax rest f                                        -- unknown: skipped
 
-/-- `flags.format = match (compact, schema)` (, #3757): `SCHEMA_HASH` without
+/-- `flags.format = match (compact, schema)` (#3757): `SCHEMA_HASH` without
 `--compact` is refused; every other pair is a `ReplyFormat`. -/
 def checkFormat (r : QFlags) : Except QErr QFlags :=
   if r.compact = false ∧ r.schema.isSome = true then .error .schemaVerbose else .ok r

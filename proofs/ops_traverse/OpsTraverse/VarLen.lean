@@ -8,7 +8,7 @@ import FalkorAggOps.StreamOps
 | `step`             | `get_node_relationships_by_type(current, types, direction)` cached in `adj_cache` (`cond_var_len_traverse.rs`); `bidir` = `EdgeDirection::Both` |
 | `dfs`              | `VarLenIter::advance` (`cond_var_len_traverse.rs`): skip used edges, `will_emit = hop >= min_hops`, `will_continue = hop < max_hops`, push `(dest, used+[e], hop)` |
 | fuel               | `max_hops - depth` (`if hop > max_hops continue`) |
-| `varLen`           | `VarLenIter::begin_start_node` (, the 0-hop emission when `min_hops == 0`) + the DFS |
+| `varLen`           | `VarLenIter::begin_start_node` (the 0-hop emission when `min_hops == 0`) + the DFS |
 | `Walk`, trail      | openCypher variable-length semantics: a walk whose relationships are pairwise distinct |
 
 Modelled as a recursive DFS; the engine uses an explicit stack, which changes

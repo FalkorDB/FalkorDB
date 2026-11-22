@@ -5,7 +5,7 @@ import PendingCommit.PendingDocs
 `delete_pending_node` (pending.rs) and
 `remove_pending_relationships_for_node` (:902) take `g: &mut Graph` and hand
 every unwound id back through `Graph::cancel_node_id` /
-`cancel_relationship_id` (graph.rs/:1562) themselves. Each call is `?`:
+`cancel_relationship_id` (graph.rs) themselves. Each call is `?`:
 the first refusal aborts the unwind.
 
 The graph is abstract here (`Gr`); what is needed of its cancel is the

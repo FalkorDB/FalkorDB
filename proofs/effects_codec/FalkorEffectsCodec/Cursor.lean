@@ -30,7 +30,7 @@ def Rd.take (r : Rd) (n : Nat) : Except DErr (Bytes × Rd) :=
   if r.remaining < n then .error (.eof n r.remaining)
   else .ok ((r.buf.drop r.pos).take n, { r with pos := r.pos + n })
 
-/-- `Reader::guard_count` (, a `const fn`): `count.saturating_mul(min as u64) > remaining as u64`. -/
+/-- `Reader::guard_count` (a `const fn`): `count.saturating_mul(min as u64) > remaining as u64`. -/
 def Rd.guardCount (r : Rd) (count minEach : Nat) : Except DErr Nat :=
   let need := min (count * minEach) (2 ^ 64 - 1)
   if need > r.remaining then .error (.implausible count r.remaining) else .ok count

@@ -2,7 +2,7 @@
 # `graph/src/runtime/vec_distance.rs` (origin/main 3fec7d7c9)
 
 The simsimd 6.5.16 Rust wrappers (`rust/lib.rs`, `impl SpatialSimilarity for f32`
-:966-1006) are modelled exactly: `sqeuclidean = l2sq`, `cosine = cos`, and each of
+) are modelled exactly: `sqeuclidean = l2sq`, `cosine = cos`, and each of
 `l2sq`/`cos`/`dot` is `if a.len() != b.len() { None } else { Some(kernel(a, b)) }`, the
 kernel being the C FFI routine (`simsimd_l2sq_f32` etc.) — a parameter (`Kernels`), its
 numeric value is not modelled. `f64::sqrt` and negation are parameters too.

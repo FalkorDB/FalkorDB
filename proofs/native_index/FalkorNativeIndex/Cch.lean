@@ -59,25 +59,25 @@ structure Def where
 /-- The `Cch`/`Def`/graph types are opaque type parameters in this file (the bodies never return), so only
     each result's *shape* is pinned to the Rust signature: `customize` returns `Result<(), CchError>`, hence
     `Res Unit`; the `Err` arm is unreachable while the body panics.
-    `Cch::build` (, `unimplemented!`, #3208). -/
+    `Cch::build` (`unimplemented!`, #3208). -/
 def cchBuild {Input Cch : Type} (_ : Input) : Res Cch := unimpl
-/-- `Cch::customize` (, #3209). -/
+/-- `Cch::customize` (#3209). -/
 def cchCustomize {Cch W : Type} (_ : Cch) (_ : W) : Res Unit := unimpl
-/-- `Cch::recustomize_scoped` (, #3217). -/
+/-- `Cch::recustomize_scoped` (#3217). -/
 def cchRecustomizeScoped {Cch S R : Type} (_ : Cch) (_ : S) : Res R := unimpl
-/-- `Cch::query` (, #3210). -/
+/-- `Cch::query` (#3210). -/
 def cchQuery {Cch Q R : Type} (_ : Cch) (_ : Q) : Res R := unimpl
-/-- `Cch::node_count` (, #3209). -/
+/-- `Cch::node_count` (#3209). -/
 def cchNodeCount {Cch : Type} (_ : Cch) : Res Nat := unimpl
 /-- `FalkorDbIndex::cch_index` (`falkordb_index.rs`, #3212). -/
 def indexCchIndex {X Cch : Type} (_ : X) (_ : Def) : Res (Option Cch) := unimpl
-/-- `FalkorDbIndex::cch_defs` (, #3212): the body panics before the `std::iter::empty()` that pins the type. -/
+/-- `FalkorDbIndex::cch_defs` (#3212): the body panics before the `std::iter::empty()` that pins the type. -/
 def indexCchDefs {X : Type} (_ : X) : Res (List Def) := unimpl
-/-- `FalkorDbIndex::drop_cch` (, #3212). -/
+/-- `FalkorDbIndex::drop_cch` (#3212). -/
 def indexDropCch {X : Type} (_ : X) (_ : Def) : Res Unit := unimpl
 /-- `Graph::create_cch_index` (`graph.rs`, #3212). -/
 def graphCreateCchIndex {G : Type} (_ : G) (_ : Def) : Res Unit := unimpl
-/-- `Graph::rebuild_cch_indexes` (, #3212). -/
+/-- `Graph::rebuild_cch_indexes` (#3212). -/
 def graphRebuildCchIndexes {G : Type} (_ : G) : Res Unit := unimpl
 /-- `Graph::drop_cch_index`: `self.falkordb_index.drop_cch(def)`. -/
 def graphDropCchIndex {G X : Type} (g : G) (index : G → X) (d : Def) : Res Unit := indexDropCch (index g) d

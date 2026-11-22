@@ -4,7 +4,7 @@ import FalkorValueMath.Misc
 
 | Lean | Rust |
 | --- | --- |
-| `MAX_VALUE_NESTING`, `valueNestingError` | value.rs, `value_nesting_error` :76 |
+| `MAX_VALUE_NESTING`, `valueNestingError` | value.rs, `value_nesting_error`  |
 | `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs (the `for _ in 0..len` loop = `decodeN`) |
 | `decode` | `Decode<19>::decode` value.rs (= `decode_value(r, 0)`) |
 | `isValidProperty`, `validateListProperty`, `validateProperty` | pending.rs (copied from proofs/pending_commit `PA`, here over `V F` so the codec theorems apply) |

@@ -5,8 +5,8 @@ set_option linter.unusedSimpArgs false
 # The scan that stands in for a building column, and who feeds RediSearch (#3547, #2386)
 
 * `Graph::node_matches` / `relationship_matches` (`graph.rs`) and the filtered scans
-  the two scan ops run on `Some(Err(scan_filter))` (`node_by_index_scan.rs:~330`,
-  `edge_by_index_scan.rs:~370`): the scan keeps **exactly what the built column would answer**
+  the two scan ops run on `Some(Err(scan_filter))` (`node_by_index_scan.rs`,
+  `edge_by_index_scan.rs`): the scan keeps **exactly what the built column would answer**
   (`nodeFilteredScan_agrees`, `edgeFilteredScan_agrees`). The planner removes a predicate it hands
   to an index scan, so this filter is the only check the scanned rows get.
 * `redisearch_fields` (`graph.rs`): the identity without `index-falkordb`; with it, the

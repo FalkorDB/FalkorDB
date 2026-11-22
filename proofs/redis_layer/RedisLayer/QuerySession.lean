@@ -345,7 +345,7 @@ theorem release_order (t : Th) (hm : t.main = false) (hc : t.ctx = false) :
     (release (beginWriter t)).th.log = t.log ++ [.gilLock, .writeLock, .writeUnlock, .gilUnlock] := by
   simp [release, beginWriter, dropMode, gilAcquire, holdsGil, gilDrop, hm, hc]
 
-/-- `begin_writer_checked` (, #3559): `begin_with` (read lock), then `escalate` — the same
+/-- `begin_writer_checked` (#3559): `begin_with` (read lock), then `escalate` — the same
 wait (`acquire_write`, so off the main thread the GIL is given back between slices) and the same
 `authorize_write` check under the GIL hold the lock is taken under that `upgrade_to_write` makes.
 On a refusal the session is returned out of scope inside the `Err`, so it is dropped: the read

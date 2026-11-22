@@ -19,17 +19,17 @@ never read a missing or misaligned column.
 
 | Lean | Rust |
 | --- | --- |
-| `procRegs` | `register` :41 (name, yields, `write procedure:`) |
-| `dbLabels`, `dbTypes`, `dbProps` | `db_labels` :47, `db_types` :64, `db_properties` :81 |
-| `dbIndexes`, `typesOf`, `optionsOf`, `statusOf`, `infoNames` | `db_indexes` :97-284 |
-| `dbMetaStats` | `db_meta_stats` :292 |
+| `procRegs` | `register`  (name, yields, `write procedure:`) |
+| `dbLabels`, `dbTypes`, `dbProps` | `db_labels` , `db_types` , `db_properties`  |
+| `dbIndexes`, `typesOf`, `optionsOf`, `statusOf`, `infoNames` | `db_indexes`  |
+| `dbMetaStats` | `db_meta_stats`  |
 | `ftCreate`, `ftQueryNodes`, `ftQueryRels`, `ftDrop`, `vecQueryNodes`, `vecQueryRels` | :332 :342 :356 :366 :383 :393 |
-| `dbConstraints` | `db_constraints` :403 |
-| `dbmsProcedures` | `dbms_procedures` :437 |
-| `dbmsFunctions`, `mergePicks` | `dbms_functions` :469 (+ `BUILTIN_ENTRIES` :531, `BUILTIN_LOWER_NAMES` :543) |
-| `buildColumns` | `build_columns` :557 |
+| `dbConstraints` | `db_constraints`  |
+| `dbmsProcedures` | `dbms_procedures`  |
+| `dbmsFunctions`, `mergePicks` | `dbms_functions`  (+ `BUILTIN_ENTRIES` , `BUILTIN_LOWER_NAMES` ) |
+| `buildColumns` | `build_columns`  |
 | `tyValue`, `tyString`, `collectTys`/`collectTysL` + `canonTypes` (`DBMS_TYPE_ORDER`), `formatUnion`, `formatUnionStrings` | :613, :646, :705, :717, :729 |
-| `pathNodes`, `pathRels`, `pathSigs` | path.rs `nodes` :29, `relationships` :52, `register` :25 |
+| `pathNodes`, `pathRels`, `pathSigs` | path.rs `nodes` , `relationships` , `register`  |
 | `EntityType.fmt` | entity_type.rs |
 -/
 

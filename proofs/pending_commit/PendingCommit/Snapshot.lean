@@ -1,7 +1,7 @@
 /-
 # Deleted-entity snapshots vs. id reuse
 
-`Runtime::deleted_nodes` / `deleted_relationships` (runtime.rs/:195) are
+`Runtime::deleted_nodes` / `deleted_relationships` (runtime.rs) are
 query-lifetime maps **keyed by id** holding what a deleted entity looked like,
 so a later clause can still read it (`DELETE n WITH n RETURN n.v`). Every
 entity read consults them *first*:

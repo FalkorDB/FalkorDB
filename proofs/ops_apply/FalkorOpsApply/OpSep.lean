@@ -44,6 +44,10 @@ are not produced by the planner inside an optional sub-plan, whose body is `plan
 `Aggregate`, `ValueHashJoin`); `SemiApply`/`OrApply` have no guard at all and are fed `plan_match`
 of one path pattern.  That planner-output fact is not machine-checked here (`optionalExtra_kinds`
 lists the kinds); every kind the real shapes contain is covered by `Adm`.
+
+That last sentence is the undischarged hypothesis of the CONDITIONAL rows: `guard_admits_classified` gives each
+admitted kind a verdict, but admitted writes and bidirectional dedup have no `Adm` constructor, and nothing proves
+the planner's sub-plans are `Adm` trees.
 -/
 namespace OpSep
 open Correlated VhjSep
@@ -579,6 +583,50 @@ theorem optionalNext_perm_ref {b : Bool} (cb : Bool) (merge : ρ → ρ → γ) 
   cases cb
   · exact (optionalPerRow_eq_ref merge nullFill f xs) ▸ List.Perm.refl _
   · exact optionalBatched_perm_ref_adm merge nullFill (hadm rfl) xs
+
+/-- `ApplyOp::next` in both of its modes (`apply.rs`): `opt = none` is a plain Apply (`optional_vars` is
+`None`), `opt = some nullFill` is the Optional arm (`optional_vars` is `Some`: the sub-plan sits under an
+`IR::Optional`, and an input row with no sub-plan result is emitted once with the optional variables
+NULL, `nullFill`). The `can_batch` guard is Apply's in both modes. -/
+def applyOpNext (opt : Option (ρ → γ)) (cb : Bool) (merge : ρ → ρ → γ) (f : SubPlan ρ ρ)
+    (xs : List ρ) : List γ :=
+  match opt with
+  | none => applyNext cb merge f xs
+  | some nullFill => optionalNext cb merge nullFill f xs
+
+/-- The per-row reference for either mode: plain Apply or OPTIONAL MATCH. -/
+def applyOpRef (opt : Option (ρ → γ)) (merge : ρ → ρ → γ) (f : SubPlan ρ ρ) (xs : List ρ) : List γ :=
+  match opt with
+  | none => applyRef merge f xs
+  | some nullFill => optionalRef merge nullFill f xs
+
+/-- **`ApplyOp::next`, both modes**: whichever mode `optional_vars` selects and whichever branch
+`can_batch` picks, the rows are a permutation of the per-row reference (the per-row branch needs nothing; the
+batched branch needs the admitted sub-plan to be `Adm`, a premise about the planner's output: see the header). -/
+theorem applyOpNext_perm_ref {b : Bool} (opt : Option (ρ → γ)) (cb : Bool) (merge : ρ → ρ → γ)
+    (f : SubPlan ρ ρ) (hadm : cb = true → Adm b f) (xs : List ρ) :
+    (applyOpNext opt cb merge f xs).Perm (applyOpRef opt merge f xs) := by
+  cases opt with
+  | none => exact applyNext_perm_ref cb merge f hadm xs
+  | some nullFill => exact optionalNext_perm_ref cb merge nullFill f hadm xs
+
+/-- **The Optional arm keeps an unmatched input row**: if the sub-plan returns nothing for every input row
+(`MATCH (a:A) OPTIONAL MATCH (a)-[:R]->(b)` with no `R` edge), `ApplyOp::next` in Optional mode emits each
+input row once with the optional variables NULL (`nullFill`), in either branch. -/
+theorem applyOpNext_optional_unmatched {b : Bool} (nullFill : ρ → γ) (cb : Bool) (merge : ρ → ρ → γ)
+    (f : SubPlan ρ ρ) (hadm : cb = true → Adm b f) (xs : List ρ) (hnone : ∀ x ∈ xs, single f x = []) :
+    (applyOpNext (some nullFill) cb merge f xs).Perm (xs.map nullFill) := by
+  refine (applyOpNext_perm_ref (some nullFill) cb merge f hadm xs).trans ?_
+  have : optionalRef merge nullFill f xs = xs.map nullFill := by
+    unfold optionalRef
+    induction xs with
+    | nil => rfl
+    | cons x xs ih =>
+      simp only [List.flatMap_cons, List.map_cons, hnone x (by simp), ite_true]
+      rw [ih (fun y hy => hnone y (by simp [hy]))]
+      rfl
+  simp only [applyOpRef, this]
+  exact List.Perm.refl _
 
 /-- **`SemiApplyOp::next`** (`semi_apply.rs`): (anti-)semi-apply over an admitted
 sub-plan is exactly the per-row EXISTS filter. -/

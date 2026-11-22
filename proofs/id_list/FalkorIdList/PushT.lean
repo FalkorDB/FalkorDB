@@ -4,7 +4,7 @@ import FalkorIdList.CostProps
 
 `IdListPush.push c` takes the decision `c` as a parameter and its theorems hold
 for every `c`. Here the tally is threaded through `push` exactly where the Rust
-touches `self.run` (`restart` at; `absorb` at), and `c` *is* `prefers_bitmap()` of the tally after the absorb. So every
+touches `self.run` (`restart` at; `absorb` ), and `c` *is* `prefers_bitmap()` of the tally after the absorb. So every
 `IdListPush` theorem (`push_ok`, `pushAll_ok`, `fromIter_iter`) applies to the
 list the Rust actually builds (`pushT_st`, `pushAllT_ok`).
 -/

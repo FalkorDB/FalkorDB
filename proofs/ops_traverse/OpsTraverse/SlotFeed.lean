@@ -12,7 +12,7 @@ row the Aggregate emits, and the slot reads in CondTraverse.
 | `Val`, `Slots`, `get`, `ins` | a batch row: `Batch::value_at` (`runtime/batch.rs`) reads a column by `Variable.id` alone, never by `scope_id` |
 | `declare`, `declareAll` | `Binder::fresh_var` (`planner/binder.rs`: the id is the current scope's env length) via `define_name_in_scope` and `project_name`; a projection opens a fresh scope (`push_scope`) so its ids restart at 0; `bind_graph` declares nodes before relationships |
 | `aggRow` | `AggregateOp::next` (`runtime/ops/aggregate.rs`): agg outputs, then the *pre-projection* slot of every bare-variable key, then the projected keys |
-| `inputRow` | the endpoint reads of `CondTraverseOp::expand_row` (`runtime/ops/cond_traverse.rs`), and the same destination read on the batched path (, skip on mismatch) |
+| `inputRow` | the endpoint reads of `CondTraverseOp::expand_row` (`runtime/ops/cond_traverse.rs`), and the same destination read on the batched path (skip on mismatch) |
 | `hopOut` | `expandRow` in collapse mode (anonymous edge) on that `RowIn`, then `set_column(to_alias.id, …)` (`cond_traverse.rs`) |
 
 ## The bug

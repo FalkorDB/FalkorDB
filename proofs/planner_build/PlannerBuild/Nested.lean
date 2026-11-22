@@ -175,7 +175,7 @@ theorem fresh_frame (st : PSt) (s : Nat) : Frame st (fresh st s).2 := ⟨rfl, rf
 
 mutual
 /-- Extraction restores `visited`, `loop_vars` and `pattern_vars` (the
-truncations at mod.rs and 1374; the visited save/restore at mod.rs/1418). -/
+truncations in mod.rs; the visited save/restore at mod.rs). -/
 theorem extract_frame (sc : Nat) : ∀ (st : PSt) acc m (e : Ex), Frame st (extract sc st acc m e).2.1
   | st, acc, m, .node d cs => by
     have hL := extractL_frame sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs
@@ -334,7 +334,7 @@ theorem extract_fresh (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) (e : Ex) 
 
 mutual
 /-- `PatternComprehension` nodes carry their WHERE and result children (the parser
-always builds both, parser/cypher.rs; planner mod.rs/1283 read `child(0)`/`child(1)`). -/
+always builds both, parser/cypher.rs; planner mod.rs read `child(0)`/`child(1)`). -/
 def pcOK : Ex → Bool
   | .node (.patComp _) cs => decide (2 ≤ cs.length) && pcOKL cs
   | .node _ cs => pcOKL cs

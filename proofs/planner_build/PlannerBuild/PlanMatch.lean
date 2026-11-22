@@ -375,10 +375,10 @@ def visit (st : MSt) (r : QR) : MSt :=
 
 def isWalk (r : QR) : Bool := r.kind != .fixed
 
-/-- The pattern the operator embeds (mod.rs / 2498-2504). -/
+/-- The pattern the operator embeds (mod.rs). -/
 def opRel (r : QR) : QR := if isWalk r then stripEndpoints r else stripRel r
 
-/-- The edge predicate (mod.rs / 2505-2510): walks never get one. -/
+/-- The edge predicate (mod.rs): walks never get one. -/
 def edgePred (lw : LW) (r : QR) : Option Ex × LW :=
   if isWalk r then (none, lw) else lowerInline lw r.alias r.attrs r.ptr
 

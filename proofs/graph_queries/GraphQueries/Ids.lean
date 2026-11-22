@@ -2,29 +2,29 @@ import GraphQueries.IdContract
 /-
 # Id spaces, construction and versioning
 
-`Graph` keeps two `IdSpace`s (`node_ids`/`relationship_ids`, graph.rs/432)
+`Graph` keeps two `IdSpace`s (`node_ids`/`relationship_ids`, graph.rs)
 and no counter of its own. `nodeIds g`/`relIds g` reassemble one from `G`'s
 fields; `setNodeIds`/`setRelIds` write one back. Every mutation goes through
 `O : IdSpaceOps`, whose behaviour is the hypothesis `IdSpaceContract O`
 (IdContract.lean; proofs/id_space owns its proof). Errors carry the entity
-kind (`NodeOpError::node`/`relationship`, graph.rs/391) as `Except String`.
+kind (`NodeOpError::node`/`relationship`, graph.rs) as `Except String`.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `nodeBound`/`relBound` | `node_id_bound` :1707 / `relationship_id_bound` :1713 |
-| `maxNodeId`/`maxRelId` | `max_node_id` :1783 / `max_relationship_id` :1788 (`IdSpace::max_id`) |
-| `nodeIds`/`relIds` | `node_id_space` :1693 / `relationship_id_space` :1699 |
-| `cancelNodeId`/`cancelRelId` | `cancel_node_id` :1549 / `cancel_relationship_id` :1562 |
-| `openIdBatches` | `open_id_batches` :1592 |
-| `rollIdBatches` | `roll_id_batches` :1611 |
-| `verifyIdBatches` / `validateGraph` | `verify_id_batches` :1679 / `validate` :1629 (#3022: then `verify_created_relationships`) |
-| `verifyCreatedRels`, `nodeLive` | `verify_created_relationships` :1646 (#3022) |
-| `growForNodes` | `grow_for_nodes` :1765 |
-| `createNodes` | `create_nodes` :1746 |
-| `newG` | `Graph::new` :858 |
-| `restoreCaps`, `clampTiers`, `fromNamesIdx` | `Graph::restore` :900 (id spaces :966-967, caps :973-974, tier clamp :951-955, `NameMap::from_names` :987-991, #3757) |
-| `newVersion` | `new_version` :1084 |
-| `rebuildRelType` | `rebuild_derived_matrices` :1040 (type-matrix half; `rebuild_backward` is a GraphBLAS transpose) |
+| `nodeBound`/`relBound` | `node_id_bound`  / `relationship_id_bound`  |
+| `maxNodeId`/`maxRelId` | `max_node_id`  / `max_relationship_id`  (`IdSpace::max_id`) |
+| `nodeIds`/`relIds` | `node_id_space`  / `relationship_id_space`  |
+| `cancelNodeId`/`cancelRelId` | `cancel_node_id`  / `cancel_relationship_id`  |
+| `openIdBatches` | `open_id_batches`  |
+| `rollIdBatches` | `roll_id_batches`  |
+| `verifyIdBatches` / `validateGraph` | `verify_id_batches`  / `validate`  (#3022: then `verify_created_relationships`) |
+| `verifyCreatedRels`, `nodeLive` | `verify_created_relationships`  (#3022) |
+| `growForNodes` | `grow_for_nodes`  |
+| `createNodes` | `create_nodes`  |
+| `newG` | `Graph::new`  |
+| `restoreCaps`, `clampTiers`, `fromNamesIdx` | `Graph::restore`  (id spaces :966-967, caps :973-974, tier clamp :951-955, `NameMap::from_names` , #3757) |
+| `newVersion` | `new_version`  |
+| `rebuildRelType` | `rebuild_derived_matrices`  (type-matrix half; `rebuild_backward` is a GraphBLAS transpose) |
 -/
 namespace GQ
 variable {V : Type}

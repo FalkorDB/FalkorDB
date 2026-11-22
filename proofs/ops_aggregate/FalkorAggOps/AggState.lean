@@ -224,7 +224,7 @@ theorem one_child_not_unbound (f : Fn Z) (z : Z) (k : Nat) (env : Env Z) (hf : f
     unbindAcc (.func f [.var k]) env = env ∧ setZero (.func f [.var k]) env = some (upd env k z) := by
   simp [unbindAcc, setZero, hf]
 
-/-! ## `GroupKey` (aggregate.rs `eq`, :114 `hash`) -/
+/-! ## `GroupKey` (aggregate.rs `eq`, `hash`) -/
 
 /-- `GroupKey::eq` (aggregate.rs): same length and pairwise `veq`; on main (#2917
 7fdf06a0e) `veq a b` is `a.sort_cmp(b) == Equal` (before: `Value::eq`). Instantiated in

@@ -3,7 +3,7 @@ import RedisLayer.Serial
 # Schema block of the v19 encoding (`src/serializers/mod.rs`)
 
 Faithful to the token layout; the index/constraint structures keep only what is written.
-`sim` is the similarity *code* the encoder computes (, `eq_ignore_ascii_case`
+`sim` is the similarity *code* the encoder computes (`eq_ignore_ascii_case`
 abstracted as `simCode`), weights are `f64` bit patterns (`one` = `1.0`).
 
 Proven here:
@@ -17,7 +17,7 @@ Proven here:
   phonetic `"no"` as off, and writes off as `"no"`.
   `decField_encField` (Rust round trip), `SerialCLayout.decField_encFieldC` (every C entry).
 * `cons_unknown_prop` — a constraint property missing from the attribute table is
-  written as attribute id 0 (, `unwrap_or(0)`), i.e. reloads naming attribute 0.
+  written as attribute id 0 (`unwrap_or(0)`), i.e. reloads naming attribute 0.
 -/
 namespace RedisLayer.Serial
 open RedisLayer.BufferedIO (W Bytes)
@@ -57,7 +57,7 @@ def fieldType : Ty → Nat
 
 variable (one : Nat) (simCode : Option Bytes → Nat)
 
-/-- The phonetic string written (, #3514): an absent or empty code is written as
+/-- The phonetic string written (#3514): an absent or empty code is written as
 C's `"no"` (`PHONETIC_OFF`), because C enables phonetic matching for any other string, an empty
 one included. Before #3514 it wrote the empty string. -/
 def encPh (f : Fld) : Bytes := if f.phonetic.getD [] = [] then PHON_OFF else f.phonetic.getD []
@@ -93,9 +93,9 @@ def failD {α} : Dec α := fun _ => none
 /-- `phonetic == PHONETIC_OFF → clear`. -/
 def phonNorm (p : Bytes) : Bytes := if p = PHON_OFF then [] else p
 
-/-- **`decode_index_field` on main** (, #3514): the type word is a bitmask and every
+/-- **`decode_index_field` on main** (#3514): the type word is a bitmask and every
 set type becomes its own field, in `db.indexes()` order (range, fulltext, vector); a word with
-no type or an unknown bit is an error (; the mask test `(ft ||| ANYW) ≠ ANYW` is exact for every `Nat`, not only
+no type or an unknown bit is an error (the mask test `(ft ||| ANYW) ≠ ANYW` is exact for every `Nat`, not only
 the bits below 2^64); C's phonetic `"no"` comes back as our explicit off. The attribute is the name verbatim (#3252). -/
 def decField : Dec (Bytes × List Fld) :=
   Dec.bind rdB fun nb => Dec.bind rdU fun ft => Dec.bind rdD fun w =>

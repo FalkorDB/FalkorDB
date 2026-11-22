@@ -231,7 +231,7 @@ theorem settle_permanent (os : List (Option Abort)) (b : Nat) :
     settle (some .invalid :: os) b = (1, false) :=
   ⟨rfl, rfl, rfl⟩
 
-/-! ### Applying (`apply_constraint` :599, the pool path of `graph_constraint` :547-585, #3819) -/
+/-! ### Applying (`apply_constraint` , the pool path of `graph_constraint` , #3819) -/
 
 /-- What `apply_constraint` does: its reply (`PENDING`/`OK` or an error message), whether it
 spawns the validation thread, and whether it announces (replicates a `GRAPH.EFFECT`). -/
@@ -384,7 +384,7 @@ def heldReplicate (argv : List String) : Option (String × List String) :=
 theorem heldReplicate_verbatim (c : String) (rest : List String) :
     heldReplicate (c :: rest) = some (c, rest) := rfl
 
-/-- `HeldArgs::rekey` (, #3863): argument 1 (the graph key) is replaced by `key`. -/
+/-- `HeldArgs::rekey` (#3863): argument 1 (the graph key) is replaced by `key`. -/
 def heldRekey (argv : List String) (key : String) : List String :=
   match argv with
   | c :: _ :: rest => c :: key :: rest
@@ -410,7 +410,7 @@ theorem bulkArgv_renamed (a l c k : String) (rest : List String) :
 empty and `commit_index_docs` (graph.rs, `GQ.commitIndexDocs` in proofs/graph_queries)
 applies the native index's remainder, then commits each non-empty RediSearch batch.
 Each token already applied its native changes (`apply_index_writes` in
-`process_node_token` :405 / `process_edge_token` :480). -/
+`process_node_token`  / `process_edge_token` ). -/
 def publishOps (nodesEmpty edgesEmpty : Bool) : List String :=
   ["apply_index_writes"] ++
   (if nodesEmpty then [] else ["commit_index"]) ++
@@ -432,7 +432,7 @@ theorem edgeRecords_bound (r : Nat) (rs : List (List (Option Nat))) (out : List 
 def discardOps (name live : List Char) : List String :=
   ["DEL " ++ String.ofList (Telemetry.streamName name), "delete key " ++ String.ofList live]
 
-/-- `discard_created_graph` (, #3863): `key_of_write` first; `Err` deletes nothing. -/
+/-- `discard_created_graph` (#3863): `key_of_write` first; `Err` deletes nothing. -/
 def discardCreated (main : Bool) (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat)
     (name : List Char) : List String :=
   match GraphCore.keyOfWrite main ks reg g name with

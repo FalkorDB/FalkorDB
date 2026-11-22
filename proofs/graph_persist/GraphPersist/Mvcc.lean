@@ -14,14 +14,14 @@ Concurrency (several writers racing the swap) is proofs/search_concurrency's; he
 | here | there |
 | --- | --- |
 | `Gv` | an `Arc<Graph>`: pointer identity, `version`, `schema_version`, the four schema counts, `validate()`'s verdict, the logical data |
-| `M.fromGraph` / `M.new` | `from_graph` :118 / `new` :106 |
-| `M.read` | `read` :129 |
-| `Gv.newVersion`, `M.fork` | `Graph::new_version` (graph_queries `newVersion_spec`), `fork` :141 |
-| `M.isStale` | `is_stale` :155 |
-| `prepare` | `prepare` :293 (`fold_oversized_deltas` and `finish_version` change no logical data) |
-| `M.publish` | `publish` :354 |
-| `M.commit` | `commit` :205 (feature-gated `to_build`/`online_build::enqueue` omitted) |
-| `M.dropEvents` | `Drop` :370 |
+| `M.fromGraph` / `M.new` | `from_graph`  / `new`  |
+| `M.read` | `read`  |
+| `Gv.newVersion`, `M.fork` | `Graph::new_version` (graph_queries `newVersion_spec`), `fork`  |
+| `M.isStale` | `is_stale`  |
+| `prepare` | `prepare`  (`fold_oversized_deltas` and `finish_version` change no logical data) |
+| `M.publish` | `publish`  |
+| `M.commit` | `commit`  (feature-gated `to_build`/`online_build::enqueue` omitted) |
+| `M.dropEvents` | `Drop`  |
 
 `debug_assert!(writer || published.version == new_graph.version)` of `prepare` is a debug-build
 check on batch commits (`writer = false`, only `commit_indexer_batch` passes it); the release

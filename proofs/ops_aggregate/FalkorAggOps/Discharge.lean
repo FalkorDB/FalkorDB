@@ -68,7 +68,7 @@ theorem hc_main : ∀ s x y, veqMain x y = true → hvMain s x = hvMain s y := b
   simp only [veqMain, beq_iff_eq] at h
   simp only [hvMain, main_hash_consistent x.1 y.1 x.2 y.2 h]
 
-/-- **The `HashMap<GroupKey, _>` contract on main** (aggregate.rs/:110): equal keys hash
+/-- **The `HashMap<GroupKey, _>` contract on main** (aggregate.rs): equal keys hash
 alike. -/
 theorem gk_hash_consistent_main (st : List UInt64) (a b : List WV) (h : gkEq veqMain a b = true) :
     gkHash hvMain st a = gkHash hvMain st b :=

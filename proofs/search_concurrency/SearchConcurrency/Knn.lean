@@ -5,8 +5,8 @@ import SearchConcurrency.Search
 | here | there |
 | --- | --- |
 | `vectorQuery` (generic over the id type) | the shared body of both fns below |
-| `vectorQueryNodes`  | `graph/src/graph/graph.rs` `vector_query_nodes`, `count = node_count()` (; `node_count`) |
-| `vectorQueryEdges`  | `graph.rs` `vector_query_edges`, `count = relationship_count()` (; `relationship_count`) |
+| `vectorQueryNodes`  | `graph/src/graph/graph.rs` `vector_query_nodes`, `count = node_count()` (`node_count`) |
+| `vectorQueryEdges`  | `graph.rs` `vector_query_edges`, `count = relationship_count()` (`relationship_count`) |
 | `opOk = false`      | `graph.rs` / `!indexer.is_operational(label)` → `Err("The vector index on '{label}' is under construction")` (#3382, PR #3581; C: "Invalid arguments for procedure") |
 | `clampK`            | `graph.rs` / `k.min(count.max(1) as usize)` |
 | `KnnIndex.query`    | `node_indexer.vector_query` / `edge_indexer.vector_query_edges` (RediSearch FFI) |
@@ -43,7 +43,7 @@ structure KnnIndex (α : Type) (count : Nat) where
   query : Nat → List α
   query_spec : ∀ k, query k = ranked.take k
 
-/-- `k.min(count.max(1) as usize)` (graph.rs / :4464). -/
+/-- `k.min(count.max(1) as usize)` (graph.rs). -/
 def clampK (k count : Nat) : Nat := min k (max count 1)
 
 /-- One loop iteration: `let Value::VecF32(v) = entity else continue;` then

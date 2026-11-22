@@ -18,7 +18,7 @@ access must have a common member (per-access locksets from the RediSearch LLAPI 
 * Writer commit `Indexer::commit` → `IndexAddDocument` (`api:648-688`, RWLOCK W + spec W):
   `{gil, graphW, indexer, rsGlobal, rsSpec}`.
 * Background population `populate_index_batch` (`graph/src/graph/graph.rs` `populate_index_batch`,
-  the "Deliberately no global lock" comment at) → `IndexAddDocument`: `{indexer, rsGlobal, rsSpec}`.
+  the "Deliberately no global lock" comment ) → `IndexAddDocument`: `{indexer, rsGlobal, rsSpec}`.
 -/
 
 namespace SC.Guarded

@@ -19,7 +19,7 @@ by changing the bytes of a payload. It does not:
   `build_multi_key_payloads` emit has `count > 0`, so the `count == 0` early
   return is unreachable from `encode_payload` (its only caller,
   encoder/mod.rs; the payload lists come from those two builders only:
-  encoder/mod.rs/48/60, redis_type.rs).
+  encoder/mod.rs, redis_type.rs).
 * **`encodeGraphPR_eq`** — on any layout of such entries the PR's whole stream
   *is* main's stream; hence **`load_encode_pr`** and **`multi_load_pr`**: the
   single- and multi-key round trips hold for the PR word for word.

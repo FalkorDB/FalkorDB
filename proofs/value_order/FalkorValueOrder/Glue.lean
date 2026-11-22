@@ -13,13 +13,13 @@ are *abstract* type parameters `F`, `F32`: nothing about them is assumed in this
 | here | there |
 | --- | --- |
 | `W` | `enum Value` value.rs (16 variants) |
-| `DeletedNode`, `DeletedNode.new` | value.rs (`DeletedNode`, `new` :101) |
-| `DeletedRelationship`, `DeletedRelationship.new` | value.rs (`DeletedRelationship`, `new` :119) |
+| `DeletedNode`, `DeletedNode.new` | value.rs (`DeletedNode`, `new` ) |
+| `DeletedRelationship`, `DeletedRelationship.new` | value.rs (`DeletedRelationship`, `new` ) |
 | `W.clone` | `impl Clone for Value` value.rs |
-| `W.order`, `OrderedEnum` | trait value.rs, impl :1219 |
+| `W.order`, `OrderedEnum` | trait and impl in value.rs |
 | `CompareValue` | trait value.rs |
-| `Ty`, `W.getType`, `ValueGetType` | trait value.rs, impl :1373 |
-| `W.valueOfType`, `ValueTypeOf` | trait value.rs, impl :1323 |
+| `Ty`, `W.getType`, `ValueGetType` | trait and impl in value.rs |
+| `W.valueOfType`, `ValueTypeOf` | trait and impl in value.rs |
 | `W.name` | value.rs |
 | `Deduper`, `withCapacity`, `checkAndInsert` | value.rs |
 -/
@@ -120,7 +120,7 @@ def W.clone : W F F32 → W F F32
 
 theorem W.clone_eq (v : W F F32) : v.clone = v := by cases v <;> rfl
 
-/-! ## `OrderedEnum` (trait value.rs, impl :1219) -/
+/-! ## `OrderedEnum` (trait and impl in value.rs) -/
 
 class OrderedEnum (α : Type) where
   order : α → Nat
@@ -261,7 +261,7 @@ theorem valueOfType_self (v : W F F32) : v.valueOfType v.getType = none := by
     | cons x xs ih => simp [W.valueOfType.listFirst, valueOfType_any, ih]
   | _ => simp [W.getType, W.valueOfType]
 
-/-! ## `Contains` (trait value.rs, impl for `ThinVec<Value>` :1880) -/
+/-! ## `Contains` (trait value.rs, impl for `ThinVec<Value>` ) -/
 
 class Contains (C V : Type) where
   contains : C → V → V

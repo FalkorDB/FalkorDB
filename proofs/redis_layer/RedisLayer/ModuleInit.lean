@@ -74,7 +74,7 @@ def onLoading (subevent : Nat) : Bool := subevent == 3 || subevent == 4
 theorem onLoading_only_end (s : Nat) : onLoading s = true ↔ s = 3 ∨ s = 4 := by
   simp [onLoading]
 
-/-- `on_flush` (, #3844): the new `FLUSH_IN_PROGRESS`, raised by
+/-- `on_flush` (#3844): the new `FLUSH_IN_PROGRESS`, raised by
 `REDISMODULE_SUBEVENT_FLUSHDB_START` (0) and lowered by `..._END` (1)
 (see `Telemetry.queue_flushing`). -/
 def onFlush (subevent : Nat) : Bool := subevent == 0

@@ -11,9 +11,9 @@ definitions, so the agreement needs no premise.
 
 | here | there |
 | --- | --- |
-| `St` | the state a read sees: `Runtime.deleted_{nodes,relationships}` (association lists: `get` = `lookup`, `is_empty` = `[]`), whether `Pending.{new,existing}_*_attrs` are empty (`pendingN`/`pendingR` are the map lookups of `Pending::get_*_attribute`), the committed stores' `get_attr_by_idx` (`byIdxN`/`byIdxR`, attribute_store.rs), and attribute-id resolution `node_attr_id`/`rel_attr_id` (runtime.rs: memoized `Graph::get_node_attr_id` / `get_rel_attr_id` = `attrs_name.get_index_of(attr) as u16`, graph.rs / :2006; the memo answers the lookup, proofs/runtime_core `attrIdM_correct`) |
+| `St` | the state a read sees: `Runtime.deleted_{nodes,relationships}` (association lists: `get` = `lookup`, `is_empty` = `[]`), whether `Pending.{new,existing}_*_attrs` are empty (`pendingN`/`pendingR` are the map lookups of `Pending::get_*_attribute`), the committed stores' `get_attr_by_idx` (`byIdxN`/`byIdxR`, attribute_store.rs), and attribute-id resolution `node_attr_id`/`rel_attr_id` (runtime.rs: memoized `Graph::get_node_attr_id` / `get_rel_attr_id` = `attrs_name.get_index_of(attr) as u16`, graph.rs; the memo answers the lookup, proofs/runtime_core `attrIdM_correct`) |
 | `pendGetN` / `pendGetR` | `Pending::get_node_attribute` / `get_relationship_attribute` (pending.rs): `None` unless `has_*_attrs()` (:603-611) |
-| `getNodeAttribute` | `Runtime::get_node_attribute` + `_no_delete_check` (runtime.rs, `_no_delete_check` :1591-1602) |
+| `getNodeAttribute` | `Runtime::get_node_attribute` + `_no_delete_check` (runtime.rs, `_no_delete_check` ) |
 | `getRelAttribute` | `Runtime::get_relationship_attribute` (runtime.rs); its committed fallback `g.get_relationship_attribute(id, attr)` is `attr_by_name` (graph.rs: `get_index_of(attr)? as u16`, then `get_attr_by_idx`) |
 | `matNode` / `matRel` | `materialize_{node,relationship}_property_values` (runtime.rs); the hot path's `get_{node,relationship}_attributes_by_idx` (graph.rs) is `get_attrs_by_idx_batch_into` (attribute_store.rs), the same lookup per key with `Null` as default |
 

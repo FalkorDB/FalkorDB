@@ -20,9 +20,10 @@ def atom0 : P ET := fun s =>
 unconsumed (the caller then fails with a syntax error). That cap is a termination device of
 this example oracle (a structural recursion on the fuel), not Rust behaviour. In an expression,
 Rust's postfix `.name` lookups (`parse_property_lookup`, cypher.rs, called from the postfix
-loop at :2602) are cut off only by the nesting-depth guard (`check_depth`), never at 8; the SET
-and REMOVE item loops (:3351, :3447) call it with no depth check, so there a chain ends only at
-the end of the tokens. No example run with this oracle chains more than a few. -/
+loop of `parse_expr_inner`) are cut off only by the nesting-depth guard (`check_depth`), never at 8.
+The SET and REMOVE item loops use `parse_update_target`, which also bounds the chain: it checks
+the target's height and charges every subsequent `.name` lookup against `MAX_TREE_DEPTH`
+(`check_depth`), so a SET/REMOVE chain is depth-bounded too, not unbounded. No example run with this oracle chains more than a few. -/
 def props0 : Nat → ET → P ET
   | 0, e => pure e
   | n + 1, e => fun s =>

@@ -7,9 +7,9 @@ modelled elsewhere; the theorem states exactly what it returns.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `labelIdToUsize`… | `From` impls :227,:233,:239,:245,:251,:257; `NodeOpError::from` :400; `Plan::new` :264 |
-| `nameOf`… `constraintsOf` | `name` :1146, `node_count` :1151, `relationship_count` :1168, `property_key_count` :1197, `node_cap` :1202, `labels_count` :1207, `get_labels` :1212, `get_label_by_id` :1217, `get_types` :1225, `get_type` :1230, `get_attrs` :1242, `node_attribute_count` :1514, `deleted_*` :2911-2926, `label_matrices` :2931, `adjacency_matrix` :2936, `relationship_tensors` :2941, `relationship_matrices_iter` :2464, `relationship_attrs` :3507, `constraints(_mut)` :4484/:4488 |
-| `getNodeAttribute`… | `get_node_attribute` :2648, `_by_idx` :2660, `get_node_attributes_by_idx` :2671, relationship twins :3480/:3493/:3514, `get_node_attrs` :3608, `get_node_all_attrs` :3616, `_by_id` :3623, `get_node_attr_count` :3632, relationship twins :3639-3663, `get_*_attribute_id` :1506/:1519/:1532, `get_*_attribute_names` :5150/:5156, `build_global_attrs` :5190, `estimate_entity_attr_size` :5084 |
+| `labelIdToUsize`… | `From` impls :227,:233,:239,:245,:251,:257; `NodeOpError::from` ; `Plan::new`  |
+| `nameOf`… `constraintsOf` | `name` , `node_count` , `relationship_count` , `property_key_count` , `node_cap` , `labels_count` , `get_labels` , `get_label_by_id` , `get_types` , `get_type` , `get_attrs` , `node_attribute_count` , `deleted_*` , `label_matrices` , `adjacency_matrix` , `relationship_tensors` , `relationship_matrices_iter` , `relationship_attrs` , `constraints(_mut)` :4484/:4488 |
+| `getNodeAttribute`… | `get_node_attribute` , `_by_idx` , `get_node_attributes_by_idx` , relationship twins :3480/:3493/:3514, `get_node_attrs` , `get_node_all_attrs` , `_by_id` , `get_node_attr_count` , relationship twins :3639-3663, `get_*_attribute_id` :1506/:1519/:1532, `get_*_attribute_names` :5150/:5156, `build_global_attrs` , `estimate_entity_attr_size`  |
 -/
 namespace GQ
 variable {V : Type}

@@ -26,7 +26,7 @@ def pathStep (ps : List (QPath Var)) (vis : List Nat) (c : G) : List Nat × G :=
       pathStep ps (vis ++ [p.var.id]) (c.addPath p).2
     else pathStep ps vis c
 
-/-- One relationship's own bookkeeping in the loop (ast.rs / 865-867):
+/-- One relationship's own bookkeeping in the loop (ast.rs):
 `if visited.insert(relationship.alias.id) { component.add_relationship(..) }`. -/
 def relPart (r : QRel Var) (vis : List Nat) (c : G) : List Nat × G :=
   if r.alias.id ∈ vis then (vis, c) else (vis ++ [r.alias.id], (c.addRel r).2)

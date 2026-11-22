@@ -5,9 +5,9 @@ import OpsTraverse.VarLen
 | here | there |
 | --- | --- |
 | `St`, `relax`       | the BFS body of `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs`): cycle case, same-distance predecessor, first discovery |
-| `bfs`               | the `while let Some(current) = queue.pop_front()` loop, fuel-bounded; neighbours via `step` (, self-loop once when undirected) |
+| `bfs`               | the `while let Some(current) = queue.pop_front()` loop, fuel-bounded; neighbours via `step` (self-loop once when undirected) |
 | `back`              | the DFS backtrack iterator: push `edge` then continue at `prev`, stop at `src` with a non-empty list |
-| `asp`               | the whole row: reverse always, cycles included (#3112;), reverse again for `AllShortestPaths::Reversed` |
+| `asp`               | the whole row: reverse always, cycles included (#3112), reverse again for `AllShortestPaths::Reversed` |
 | `ends`, `buildNodes`| `PathBuilderOp`'s `Value::List` branch (`runtime/ops/path_builder.rs`): next node = the edge endpoint that differs from the previous node, via `Runtime::get_relationship_endpoints` |
 
 Edge-attribute filters are a pure pre-filter of the neighbour

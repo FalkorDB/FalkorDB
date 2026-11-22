@@ -5,10 +5,10 @@ import GraphQueries.Queries
 | here | there (graph.rs) |
 | --- | --- |
 | `resolveRels`  | `delete_relationships` phase 1 (the `Phase 1` block from :2964) |
-| `deleteRels`   | `delete_relationships` :2953 (phase 2 from :2989; `release(rels, resolved)` :2994) |
+| `deleteRels`   | `delete_relationships`  (phase 2 from :2989; `release(rels, resolved)` ) |
 | `collectImplicit` | `delete_implicit_edges` collection loop (from :3088) |
-| `deleteImplicit`  | `delete_implicit_edges` :3088 (`release(freed, freed)` :3232) |
-| `createRelsBulk`  | `create_relationships_bulk` :2694 (shape refusals :2714/:2724, `create` :2732) |
+| `deleteImplicit`  | `delete_implicit_edges`  (`release(freed, freed)` ) |
+| `createRelsBulk`  | `create_relationships_bulk`  (shape refusals :2714/:2724, `create` ) |
 
 Every id-space move goes through `O` (IdContract.lean); theorems that need
 its behaviour take `IdSpaceContract O`.

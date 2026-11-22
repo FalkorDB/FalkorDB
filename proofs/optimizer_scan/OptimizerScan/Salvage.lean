@@ -28,7 +28,7 @@ row generate-and-test keeps (`salvage_loses_row`). Query:
 operator itself is gone from the plan). `premise_of_spine` gives sufficient conditions under which the premise holds (the converse is not proved).
 
 The bound sets here are keyed on the variable id alone, as the Rust keys them: `initial_bound` and `placed_bound`
-are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (; notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
+are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
 `v.1` of each `(id, scope_id)` exactly where the Rust drops the scope; `filtersOf` still carries the pairs.
 -/
 namespace OptimizerScan.Salvage

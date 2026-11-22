@@ -10,13 +10,13 @@ of `graph/src/graph/endpoint_index.rs` (origin/main `256ab4d3f`; the `TierOps fo
 | --- | --- |
 | `u24Put`/`u24Get`, `get_put_contract` | `impl Endpoint for U24/u16/u32/u64` (:83-126) and the trait decls `Endpoint::get/put` (:64-65) |
 | `PG`, `PG.view`, `PG.WF`          | `struct Paged<T> { pages, len }` (:152-155); `WF` = every page but the last full, `len` within the pages, slack past `len` all `EMPTY` |
-| `PG.dflt`, `PG.isEmpty`, `PG.len` | `Paged::default` (:167), `is_empty` (:189), `len` (:185, `TierOps::len` :760) |
+| `PG.dflt`, `PG.isEmpty`, `PG.len` | `Paged::default` (:167), `is_empty` (:189), `len` (:185, `TierOps::len` ) |
 | `emptyPage`                       | `empty_page` (:180) |
 | `PG.at`, `PG.iter`                | `Paged::at` (:194), `iter` (:201) |
 | `allocBytes`, `usedBytes`, `sz`   | `allocated_bytes` (:206), `used_bytes` (:215), `size_of::<(T, T)>()` |
 | `fromSlots`                       | `Paged::from_slots` (:236) |
 | `promoteSlots`                    | the iterator `promote` (:338) hands `from_slots` |
-| `pagePut`, `PG.put`, `PG.vacate`  | `TierOps::put` (:743) / `vacate` (:752): `page_mut(at)[at % PAGE_SLOTS] = …` |
+| `pagePut`, `PG.put`, `PG.vacate`  | `TierOps::put` (:743) / `vacate` (:752): `page_mut()[at % PAGE_SLOTS] = …` |
 | `PG.growTo`                       | `TierOps::grow_to` (:734): `ensure_pages(len)` then `self.len = len` |
 | `reserveCap`                      | `TierOps::reserve_exact` (:763) |
 | `Heap`, `pageMut`, `cloneV`, `dropV`, `pushFresh`, `replace` | `Arc` strong counts: `page_mut` (:295, `Arc::get_mut`-or-copy), `Paged::clone` (:158, clones page pointers), drop, `empty_page`/`from_slots` (fresh `Arc::from`), `regrow` (:220, `*page = Arc::from(next)`); the same shape is `Arc::make_mut` in `with_tier` / `raise_to` (tier granularity) |

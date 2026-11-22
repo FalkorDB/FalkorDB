@@ -7,8 +7,8 @@ import AlgoUdf.UdfClasses
 runtime when `Runtime::node_differs_from_committed` says the answer can differ, and from
 the committed graph otherwise. Rust source of truth: origin/main 1c0e6c8de.
 
-Entry points with no runtime (`getNeighbors` :518, `getNodeById` :576, `iterateNodes` :630,
-`traverse` :863) call `create_js_node(.., None)`: the committed graph, unchanged.
+Entry points with no runtime (`getNeighbors` , `getNodeById` , `iterateNodes` ,
+`traverse` ) call `create_js_node(.., None)`: the committed graph, unchanged.
 
 C loses deleted-node data (differently). The property stated is Rust's own
 contract, the one `create_js_edge` already follows for the type: a UDF sees the node as

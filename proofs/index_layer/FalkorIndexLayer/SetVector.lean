@@ -18,11 +18,16 @@ The Range arm is `setRange`/`docOf` (`Model.lean`); a vector field never reaches
 
 RediSearch rejects the whole document when a vector blob is not `dim * 4` bytes or
 the field has no vector params (`RsKind.vector none`, which `registerOne` creates
-for `dimension = 0` or no options). The theorems below show that `set`
-never hands RediSearch such a blob, which is what justifies the `ht` hypothesis of
+for `dimension = 0` or no options). The theorems below show that a vector add `set`
+hands RediSearch always carries the field's own non-zero dimension, and that the field has
+vector params. They do NOT show that the dimension of the RediSearch field registered under
+that name equals it: `RsKind.vector` records no dimension, so `registerOne` cannot express the
+equality. That equality is the `Registered` premise (`rs.dimOf p.1.name = some k`) of
+`SC.Search.doc_always_accepted` (proofs/search_concurrency), the end-to-end acceptance
+theorem over the RediSearch contract, and nothing in this file discharges it. So the
+conclusion that `set` never adds an unindexable vector, and with it the `ht` hypothesis of
 `Iter.query_eq_scan_filter` (the label's table holds `docOf` of every entity) in the
-presence of vector fields. The end-to-end acceptance theorem over the RediSearch
-contract is `SC.Search.doc_always_accepted` (proofs/search_concurrency).
+presence of vector fields, holds only given that `Registered` premise.
 -/
 namespace IndexLayer.Meta
 

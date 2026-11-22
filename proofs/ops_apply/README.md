@@ -83,7 +83,7 @@ Yes:
 4. **State the condition.** `Separable f` says `f` on a tagged batch equals the concatenation of `f` on each row alone, re-tagged.
 5. **Prove by rewriting.** Rewrite `f (tag xs 0)` with `Separable`, then `lookup_tagged` shows that looking up each origin in the tagged input finds exactly the row that produced it.
 
-The hypothesis `Separable` is the whole question. It is proven for row-local operators and their pipelines, and refuted for `count(*)` (`count_not_separable`); the `ValueHashJoin` is per-origin, `CartVhj.vhjRowsPO`, and separable on the batches Apply builds: `vhjPO_sepT`). For the real child operators of each plan it is not derived from their code; that is why these rows are CONDITIONAL (see [Coverage](#coverage)).
+The hypothesis `Separable` is the whole question. It is proven for row-local operators and their pipelines, and refuted for `count(*)` (`count_not_separable`); the `ValueHashJoin` is per-origin, `CartVhj.vhjRowsPO`, and separable on the batches Apply builds: `vhjPO_sepT`). For the real child operators of each plan it is not derived from their code; that is why these rows are CONDITIONAL on the `Adm` hypothesis (see [Coverage](#coverage)).
 
 ## Bugs found
 
@@ -99,13 +99,11 @@ Every bug was reproduced against a live server and compared with C before it was
 
 ### CONDITIONAL rows
 
-Six rows rest on the hypothesis that the sub-plan is separable (four directly, and the two `next` dispatchers through `next_batched`):
+Six rows rest on one undischarged hypothesis about other Rust code: that the sub-plan the `can_batch` guard admits is an `OpSep.Adm` tree (the `cb = true -> Adm b f` premise of `applyNext_perm_ref`, `applyOpNext_perm_ref`, `optionalNext_perm_ref`; `Adm.dsep` gives separability for every tree built with `Adm`). The theorems are proofs for modelled `Adm` trees. `guard_admits_classified` only gives each IR kind the guard admits a verdict (`exact`, `permOnly`, a bug number, `mergeOnly`, `ddl`): it does not construct an `Adm` for them, and two verdicts have no `Adm` constructor at all, the admitted writing operators (#2738) and the anonymous-bidirectional `CondTraverse` dedup (#3106), kept as counterexample theorems. The planner-output to `Adm` correspondence is not machine-checked.
 
-- `ApplyOp::next_batched` and `OptionalOp::next_batched`: the join that was the known counterexample (a ValueHashJoin) is per-origin. For every other sub-plan the planner lets through, it is believed true but not proven.
-- `ApplyOp::next` and `OptionalOp::next`: a one-line dispatch on `can_batch` to `next_batched` or `next_per_row`; no dispatch theorem, so they inherit the CONDITIONAL status of `next_batched`.
-- `SemiApplyOp::next` and `OrApplyMultiplexerOp::next`: the planner only feeds them pattern sub-plans, which should be separable, but this is not proven.
-
-The per-origin ValueHashJoin removes the known counterexample but does not by itself turn these rows PROVEN: that needs a proof that every operator the blacklist admits is separable.
+- `ApplyOp::next_batched` and `OptionalOp::next_batched`: the join that was the known counterexample (a ValueHashJoin) is per-origin. For every other sub-plan the planner lets through, the premise is believed true but not proven.
+- `ApplyOp::next` and `OptionalOp::next`: the `can_batch` dispatch (`applyOpNext` models both modes of `ApplyOp`, plain and the Optional arm with `optional_vars`). The per-row branch is proven for every sub-plan; the batched branch carries the `Adm` premise.
+- `SemiApplyOp::next` and `OrApplyMultiplexerOp::next`: the planner only feeds them pattern sub-plans, which should be `Adm`, but this is not proven.
 
 ## Files
 
@@ -137,7 +135,7 @@ The project has no dependencies beyond Lean core. The id-space `reserve` it call
 | PROVEN | 71 |
 | CONDITIONAL | 6 |
 
-- **CONDITIONAL:** `ApplyOp::next_batched`, `OptionalOp::next_batched`, `SemiApplyOp::next`, `OrApplyMultiplexerOp::next`, all resting on `Separable` (above), and the dispatchers `ApplyOp::next` and `OptionalOp::next` that call `next_batched`.
+- **CONDITIONAL:** `ApplyOp::next_batched`, `OptionalOp::next_batched`, `SemiApplyOp::next`, `OrApplyMultiplexerOp::next`, all resting on the `Adm` hypothesis above, and the dispatchers `ApplyOp::next` and `OptionalOp::next` that call `next_batched`.
 - **Formerly MODELLED / AXIOMATISED, now PROVEN (`BatchRows`, `MergeSlot`):** `clone_active_rows_seq_origin` (`cloneSeq_spec`, `cloneSeq_tag` = `Correlated.tag`), `merge_over_input` (`mergeOverInput_row`: bound slots equal `Row::merge`'s; only a slot unbound on both sides differs), `origin_row`, `gather`, `BatchRow::to_owned_row` (`ofCells_slot`: one slot per column, trailing `Unbound` kept in scope), `BatchOp::set_argument_batch` (`slots_setArg`: every `Argument` leaf holds the batch, compacted below a join's right child; `per_origin = len > 1`).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.

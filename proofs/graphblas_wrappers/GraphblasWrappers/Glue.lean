@@ -4,14 +4,14 @@
 
 | here | there |
 | --- | --- |
-| `addOp`/`applyOp` | `EWiseAdd::add_op` (matrix.rs, impls :279 bool, :287 u64) |
+| `addOp`/`applyOp` | `EWiseAdd::add_op` (matrix.rs, the `bool` and `u64` impls) |
 | `newMatrix`       | `MatrixType::new_matrix` (:298, impls :305, :314) |
 | `Desc`/`descOf`   | `enum Descriptor` (:232) / `From<Descriptor> for GrB_Descriptor` (:323) |
 | `encodeM`/`scrub` | `Encode<19> for Matrix` (:528), header pointers nulled (:554-565) |
 | `MatH.inner`/`isSynced` | `inner` (:762) / `is_synced` (:874) |
 | `sparsityName`    | `sparsity_status` (:1183) |
 | `posB`/`posU`     | `IterExtract::pos` (:1826, impls :1843 bool, :1863 u64) |
-| `vecFrom`/`ptr`   | `From<GrB_Vector>` (vector.rs) / `ptr` (:174) |
+| `vecFrom`/`ptr`   | `From<GrB_Vector>` (vector.rs) / `ptr` |
 | `vIterNew`        | `vector::Iter::new` (vector.rs) |
 
 The GraphBLAS constants are named by their C meaning (`GrB_DESC_RC` =

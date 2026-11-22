@@ -106,7 +106,7 @@ theorem fromRaw_spec (values : List (Option β)) (bound : BitSet) (i : Nat) :
     getById (fromRaw values bound) i = values[i]? ∧ isBound (fromRaw values bound) i = test bound i :=
   ⟨rfl, rfl⟩
 
-/-- row.rs / :175 -/
+/-- row.rs -/
 def lenR (r : Row β) : Nat := r.values.length
 def isEmptyR (r : Row β) : Bool := r.values.isEmpty
 theorem isEmptyR_iff (r : Row β) : isEmptyR r = true ↔ lenR r = 0 := by

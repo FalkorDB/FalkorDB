@@ -7,7 +7,7 @@ variable {α : Type}
 
 /-! ## Page-level write addressing -/
 
-/-- `page_mut(at)[at % P] = x`: overwrite slot `at % P` of page `at / P`. -/
+/-- `page_mut()[at % P] = x`: overwrite slot `at % P` of page `at / P`. -/
 def pagePut (P : Nat) (pages : List (List α)) (at_ : Nat) (x : α) : List (List α) :=
   pages.modify (at_ / P) (fun pg => pg.set (at_ % P) x)
 

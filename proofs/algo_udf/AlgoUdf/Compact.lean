@@ -113,7 +113,7 @@ theorem unfiltered_rows_nodup (bound : Nat) (alive : Nat → Bool) :
     (unfilteredRows bound alive).Nodup :=
   (List.nodup_range).filter _
 
-/-- HarmonicCentrality's unfiltered source vector has length `node_id_bound()` (:2848-2860).
+/-- HarmonicCentrality's unfiltered source vector has length `node_id_bound()` (`algo_procedures.rs`, the harmonic-centrality procedure).
 `bound` is the vector length. -/
 def harmonicRows (bound : Nat) (alive : Nat → Bool) : List Nat :=
   unfilteredRows bound alive

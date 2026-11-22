@@ -35,20 +35,17 @@ def evalSP (src dst : Except String SV) (rt : Except String Unit) (minHops : Nat
     Except String SV := do
   let sv ← src
   let dv ← dst
-  let sid ← match sv with
-    | .node id => pure (some id)
-    | .null => pure none
+  match sv with
+  | .node s =>
+    match dv with
+    | .node d =>
+      rt
+      if minHops == 0 && s == d then pure (.path [s])
+      else pure (bfs s d (maxLevel maxHops) minHops directed)
+    | .null => pure .null
     | _ => throw "A shortestPath requires bound nodes"
-  let did ← match dv with
-    | .node id => pure (some id)
-    | .null => pure none
-    | _ => throw "A shortestPath requires bound nodes"
-  match sid, did with
-  | some s, some d =>
-    rt
-    if minHops == 0 && s == d then pure (.path [s])
-    else pure (bfs s d (maxLevel maxHops) minHops directed)
-  | _, _ => pure .null
+  | .null => pure .null
+  | _ => throw "A shortestPath requires bound nodes"
 
 /-- Two nodes: take the graph, answer the zero-hop case, else search. -/
 def evalSPTail (rt : Except String Unit) (s d minHops : Nat) (maxHops : Option Nat) (directed : Bool)
@@ -58,9 +55,10 @@ def evalSPTail (rt : Except String Unit) (s d minHops : Nat) (maxHops : Option N
   else pure (bfs s d (maxLevel maxHops) minHops directed)
 
 /-- **PROVEN** (`eval_shortest_path`, everything but the search): both children are evaluated first
-(an error in either propagates, the source's first); then a non-node, non-null endpoint is the error
-"A shortestPath requires bound nodes" (source checked first); a `Null` endpoint gives `Null` without
-touching the graph; with two nodes the graph is taken (`rt` error propagates), `min_hops == 0` on
+(an error in either propagates, the source's first); then the source is matched: `Null` gives `Null` at
+once (the destination's value is not looked at, though its evaluation already ran), a non-node source is the
+error "A shortestPath requires bound nodes"; then the destination: `Null` gives `Null` without touching the
+graph, a non-node is that error; with two nodes the graph is taken (`rt` error propagates), `min_hops == 0` on
 equal nodes is the one-node path, and every other case is the search with `max_level` from
 `max_hops`. -/
 theorem evalSP_spec (rt : Except String Unit) (minHops : Nat) (maxHops : Option Nat) (directed : Bool)
@@ -76,15 +74,12 @@ theorem evalSP_spec (rt : Except String Unit) (minHops : Nat) (maxHops : Option 
           | .node d => evalSPTail rt s d minHops maxHops directed bfs
           | .null => .ok .null
           | _ => .error "A shortestPath requires bound nodes") ∧
-    (∀ dv, evalSP (.ok .null) (.ok dv) rt minHops maxHops directed bfs
-        = match dv with
-          | .node _ | .null => .ok .null
-          | _ => .error "A shortestPath requires bound nodes") := by
+    (∀ dv, evalSP (.ok .null) (.ok dv) rt minHops maxHops directed bfs = .ok .null) := by
   refine ⟨fun _ _ => rfl, fun _ _ => rfl, fun dv => ?_, fun ps dv => ?_, fun s dv => ?_, fun dv => ?_⟩
   · cases dv <;> rfl
   · cases dv <;> rfl
   · cases dv <;> rfl
-  · cases dv <;> rfl
+  · rfl
 
 /-- The zero-hop case: `shortestPath((a)-[*0..]->(a))` is the single node. -/
 theorem evalSP_zero_hop (s : Nat) (maxHops : Option Nat) (directed : Bool)

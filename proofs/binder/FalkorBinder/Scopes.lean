@@ -133,7 +133,7 @@ theorem callBody_union_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen true ≠ s := by
   simp [callBodyScope, unionBranchStack]; omega
 
-/-! ## Label accumulation (binder.rs; rollback :1723-1740) -/
+/-! ## Label accumulation (binder.rs; the rollback in `with_node_labels_rolled_back`) -/
 
 inductive LClause
   | match_ (labels : List Name)        -- MATCH (n:L…)
@@ -204,7 +204,7 @@ theorem labels_leak_fixed :
   decide
 
 /-- A node the CREATE declares itself keeps its labels (`keep_new`), so a later MERGE on it
-still sees them (VariableAlreadyBound check, binder.rs/524). -/
+still sees them (VariableAlreadyBound check, binder.rs). -/
 theorem create_new_keeps_labels :
     accumulate [] [.create ["Z"]] = ["Z"] ∧ accumulate [] [.create ["Z"], .create ["Y"]] = ["Z"] := by
   decide

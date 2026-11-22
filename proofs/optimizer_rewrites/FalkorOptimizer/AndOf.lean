@@ -3,8 +3,8 @@ import FalkorOptimizer.Basic
 # `ExprIR::and_of` / `or_of` keep the runtime value (ast.rs)
 
 Every filter rebuilt by the optimizer passes goes through
-`ExprIR::and_of` (absorb_edge_filters_into_vlt.rs/145, eliminate_true_filters.rs,
-push_filters_down.rs/347/360/423, replace_cartesian_with_hash_join.rs,
+`ExprIR::and_of` (absorb_edge_filters_into_vlt.rs, eliminate_true_filters.rs,
+push_filters_down.rs, replace_cartesian_with_hash_join.rs,
 utilize_index.rs), which splices an AND operand into the new AND. This file
 shows that is invisible at run time, errors included.
 

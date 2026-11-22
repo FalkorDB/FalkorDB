@@ -9,10 +9,10 @@ are set insert/delete on logical contents (proofs/versioned_matrix
 
 | here | there (graph.rs) |
 | --- | --- |
-| `setLabelsProduct` | `set_node_labels_product` :2141 |
-| `setLabelsBulk`    | `set_nodes_labels_bulk` :2220 |
-| `removeLabels`     | `remove_nodes_labels` :2266 |
-| `deleteNodes`      | `delete_nodes` :2300 |
+| `setLabelsProduct` | `set_node_labels_product`  |
+| `setLabelsBulk`    | `set_nodes_labels_bulk`  |
+| `removeLabels`     | `remove_nodes_labels`  |
+| `deleteNodes`      | `delete_nodes`  |
 -/
 namespace GQ
 variable {V : Type}

@@ -14,7 +14,7 @@ def nmConstraint : Nat := 6000001
 else (including a float token `.1`) is an error. -/
 def dotSepP : P Unit := tok .dot
 
-/-- The entity of `FOR (...)` after `FOR (` (cypher.rs / 699-723):
+/-- The entity of `FOR (...)` after `FOR (` (cypher.rs):
 `(n:L)` or `()-[e:R]-()` / `()-[e:R]->()`. -/
 def idxEntity : P (Nat × Nat × Bool) := do
   let rp ← opt .rparen
@@ -52,14 +52,14 @@ def idxMore (nkey : Nat) : Nat → List Nat → P (List Nat)
       idxMore nkey n (acc ++ [a])
     else pure acc
 
-/-- `ident (, ident)*` of the old syntax `ON :L(a, b)` (cypher.rs). -/
+/-- `ident (ident)*` of the old syntax `ON :L(a, b)` (cypher.rs). -/
 def identList : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
     let cm ← opt .comma
     if cm then do let a ← ident; identList n (acc ++ [a]) else pure acc
 
-/-- The body of CREATE/DROP after the keyword (cypher.rs / 667-754);
+/-- The body of CREATE/DROP after the keyword (cypher.rs);
 `create` selects the OPTIONS part. `none` = "not an index command". -/
 def idxBody (o : Oracle) (F : Nat) (create : Bool) : P (Option IR) := do
   let ft ← optK .fulltext

@@ -18,7 +18,7 @@ import PlannerBuild.Clauses
 * `where_scan_indistinguishable`: `MATCH (a) WHERE φ MATCH (a)-->(b)`
   stitches into the exact tree shape `is_planner_scan_subtree`
   (optimizer/select_scan_node.rs) treats as prunable. The rebuild carries the spine's
-  Filters along (`filters_of`, select_scan_node.rs, re-wrapped by `make_scan_subtree` :214) —
+  Filters along (`filters_of`, select_scan_node.rs, re-wrapped by `make_scan_subtree` ) —
   `rebuild_keeps_where`.
 -/
 namespace PlannerBuild

@@ -316,7 +316,7 @@ def optArg (args : List JV) (i : Nat) : Except String (Option Obj) :=
   | some _ => .error "Error converting from js value into type 'object'"
 
 /-- `node.getNeighbors(...)` goes through `(h) => function(...args) { return h(this, ...args); }`
-(:251), so the user's arguments reach `js_get_neighbors_entry` :448 as given, after `this`:
+(:251), so the user's arguments reach `js_get_neighbors_entry`  as given, after `this`:
 `config` is the user's first argument (`optArg userArgs 0`), missing when omitted. rquickjs
 converts the parameters before the body runs, then the body needs `this` to be a current node
 entity (`thisNode = nodeIdOf …`, :453-455). Returns `(node id, config)`. -/

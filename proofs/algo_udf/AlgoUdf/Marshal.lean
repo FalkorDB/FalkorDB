@@ -59,10 +59,10 @@ inductive JsV where
   | sym
   | arr (items : List JsV) (props : List (List Char × JsV))
   | obj (props : List (List Char × JsV)) (kind : JsKind)
-  /-- an instance of the Rust class `JsEntity` (js_classes.rs :84-136): what
+  /-- an instance of the Rust class `JsEntity` (js_classes.rs): what
   `create_js_node` / `create_js_edge` / `create_js_path` return. `props` are its visible own
   properties, `v` the entity in its class data, `current` whether its epoch is the current
-  call's (`entity_value` :129 returns `Some v` exactly then) -/
+  call's (`entity_value`  returns `Some v` exactly then) -/
   | ent (props : List (List Char × JsV)) (v : RV) (current : Bool)
   /-- a reference to an array / object in the QuickJS heap -/
   | ref (a : Nat)

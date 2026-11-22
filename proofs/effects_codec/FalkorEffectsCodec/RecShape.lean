@@ -1,10 +1,12 @@
 import FalkorEffectsCodec.RecRT
 /-!
-# The encoder refuses exactly the shapes `read_record` rejects
+# The encoder's shape checks (`write_header`, `check_row_shape`)
 
-`read_record` refuses a batch of zero ids (`EmptyRecord`) and would misread a
-row block of the wrong length (it takes `count × attrs` values, so a longer block's
-spare value is parsed as the next opcode). `write_header` refuses a zero count and `check_row_shape` a row block that
+This file states what the encoder refuses; it does NOT claim the reader rejects exactly
+those shapes. `read_record` refuses a batch of zero ids (`EmptyRecord`), but it does not
+reject a row block of the wrong length: it consumes `count × attrs` values and leaves a
+longer block's spare value for the next opcode (so it would be misparsed, not refused).
+`write_header` refuses a zero count and `check_row_shape` a row block that
 is not `count × attrs`, so:
 
 * `encRecord_ok_shape` — a record the encoder accepts has ≥ 1 id, the right

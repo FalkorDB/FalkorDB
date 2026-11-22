@@ -21,7 +21,7 @@ never interact, so one node is modelled; `C` is the committed label set.
   written over it.
 * `stagedLabelIds` — `Runtime::staged_label_ids` (ops/delete.rs): the committed
   ids, plus the staged adds, minus the staged removes. The deleted-node snapshot
-  (`delete_nodes_bulk` :306, `delete_entity` :486) is built from it.
+  (`delete_nodes_bulk` , `delete_entity` ) is built from it.
 * `commitLabels` — `set_nodes_labels_bulk` then `remove_nodes_labels`
   (`Pending::commit`, pending.rs): `(C ∪ set) \ remove`.
 

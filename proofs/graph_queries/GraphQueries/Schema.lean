@@ -6,19 +6,19 @@ import GraphQueries.Basic
 | --- | --- |
 | `nextMul`      | `u64::next_multiple_of` (core) |
 | `grbMax`, `ckAdd`, `ckNextMul` | `GrB_INDEX_MAX` (tensor.rs), `checked_add`, `checked_next_multiple_of` |
-| `growStep`, `growCap` | `grow_cap` :842 (loop body :847-852) |
-| `resizeNodeMs`/`resizeRelMs`/`resize` | `resize_node_matrices` :3543 / `resize_relationship_matrices` :3555 / `resize` :3562 |
+| `growStep`, `growCap` | `grow_cap`  (loop body :847-852) |
+| `resizeNodeMs`/`resizeRelMs`/`resize` | `resize_node_matrices`  / `resize_relationship_matrices`  / `resize`  |
 | `idx`          | `NameMap::id_of` (schema.rs; first position, `FirstInv` in pending_commit `NameMap`) |
-| `internLabel`  | `intern_label` :1247 |
-| `getLabelId`   | `get_label_id` :1279 |
-| `getLabelIdMut`| `get_label_id_mut` :1259 |
-| `getTypeId`    | `get_type_id` :1286 |
-| `getTypeIdMut`, `registerRelType` | `get_type_id_mut` :1346, `register_relationship_type` :1366 (resizes; a known type is returned as is) |
-| `getRelMatMut` | `get_relationship_matrix_mut` :1477 |
-| `getRelMat`    | `get_relationship_matrix` :1488 |
-| `getLabelMat`/`getLabelMatMut` | `get_label_matrix` :1456 / `get_label_matrix_mut` :1464 |
-| `nodeHasLabel`/`nodeHasLabelId`/`edgeHasType`/`edgeHasTypeId` | `node_has_label` :1298 / `node_has_label_id` :1312 / `edge_has_type` :1324 / `edge_has_type_id` :1335 |
-| `labelNodeCount`/`..ByIdx`/`typeEdgeCount` | `label_node_count` :1143 / `label_node_count_by_idx` :1160 / `type_edge_count` :1169 |
+| `internLabel`  | `intern_label`  |
+| `getLabelId`   | `get_label_id`  |
+| `getLabelIdMut`| `get_label_id_mut`  |
+| `getTypeId`    | `get_type_id`  |
+| `getTypeIdMut`, `registerRelType` | `get_type_id_mut` , `register_relationship_type`  (resizes; a known type is returned as is) |
+| `getRelMatMut` | `get_relationship_matrix_mut`  |
+| `getRelMat`    | `get_relationship_matrix`  |
+| `getLabelMat`/`getLabelMatMut` | `get_label_matrix`  / `get_label_matrix_mut`  |
+| `nodeHasLabel`/`nodeHasLabelId`/`edgeHasType`/`edgeHasTypeId` | `node_has_label`  / `node_has_label_id`  / `edge_has_type`  / `edge_has_type_id`  |
+| `labelNodeCount`/`..ByIdx`/`typeEdgeCount` | `label_node_count`  / `label_node_count_by_idx`  / `type_edge_count`  |
 -/
 namespace GQ
 variable {V : Type}

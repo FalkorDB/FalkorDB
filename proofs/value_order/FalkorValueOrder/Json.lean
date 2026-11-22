@@ -1,6 +1,6 @@
 import FalkorValueOrder.Glue
 /-!
-# JSON rendering of values (value.rs trait `DisplayJson`, `to_json_string` :1421, `fmt_json` :1698-1834)
+# JSON rendering of values (value.rs trait `DisplayJson`, `to_json_string` , `fmt_json` )
 
 `DisplayJson::fmt_json` (the trait at value.rs and the `Value` impl at :1698),
 `Value::to_json_string` (:1421) and its `Display` wrapper `fmt` (:1431),

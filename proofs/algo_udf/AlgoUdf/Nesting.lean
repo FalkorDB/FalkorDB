@@ -1,6 +1,6 @@
 /-! # Depth-capped recursion with an explicit stack (`graph/src/udf/type_convert.rs`)
 
-Both UDF conversions (`value_to_js_at` :110 / `js_to_value_at` :262) have the same shape: one
+Both UDF conversions (`value_to_js_at`  / `js_to_value_at` ) have the same shape: one
 conversion level runs `step (depth >= MAX_UDF_VALUE_NESTING) (convert children at depth + 1) v`.
 `Step` abstracts that shape; `Step.run cap f d v` runs it at depth `d` with `f` stack frames left
 (`none` = the stack ran out, i.e. a process abort). `cap = some c` is the current code,

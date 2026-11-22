@@ -4,16 +4,20 @@ set_option linter.unusedSimpArgs false
 /-!
 # The background index builder as a transition system (`online_build.rs`, #2355 / #3585)
 
-A job builds one generation of one index: it reads a batch on a new build version, publishes it through the
-host's global lock, and submits itself again while the generation is `Building`. Threads are an interleaving
-parameter: the pool runs any queued job next (`PoolStep`), and what a publish does is a parameter
-(`Outcome`), so every statement holds for every interleaving. The published entry of the index is the
-model `EN` (`Rebase.lean`: generation, state, `read`), a batch's commit is `EN.indexerApply`.
+A job builds one generation of one index: it reads a batch on a new build version (a snapshot of the
+published entry), publishes it through the host's global lock, and submits itself again while the generation
+is `Building`. Threads are an interleaving parameter: the pool runs any queued job next (`PoolStep`), what
+is published when a job's publish runs is a free `World` (`mid`: writers, other commits, a drop and a
+re-create may all have happened since the read), and whether a fitted batch is too large or refused is a
+parameter (`Outcome`), so every statement holds for every interleaving. The published entry of the index is
+the model `EN` (`Rebase.lean`: generation, state, `read`), a batch's commit is `EN.indexerApply`. A batch
+carries the identity of the entry it was built on (`readPhase` returns the snapshot) and is fitted against
+the entry published at publish time (`discardedAgainst`, `Batch.lean`) before anything is applied.
 -/
 
 namespace NI
 
-/-- `Step` (`online_build.rs:~165`): what a job's batch did. -/
+/-- `Step` (`online_build.rs`): what a job's batch did. -/
 inductive Step where
   | more | tooLarge | failed | done | cancelled
 deriving DecidableEq, Repr
@@ -47,36 +51,57 @@ structure World where
   stopped : Bool
   alive : Bool
 
-/-- `Job::read`: the batch size, or the step that ends the job before reading. -/
-def readPhase (sz : Sizing) (w : World) (j : Job) : Except Step Nat :=
+/-- `Job::read`: the batch size and the snapshot entry the batch is built on (`new_build_version` then
+    `indexer_prepare`: `Never None`, the index is `Building` in this version), or the step that ends the job
+    before reading. -/
+def readPhase (sz : Sizing) (w : World) (j : Job) : Except Step (Nat × EN) :=
   if w.stopped then .error .cancelled
   else if !w.alive then .error .cancelled
   else match standing w.pub j.generation with
     | some st => .error st
-    | none => .ok (sizingBatch sz.floor ((indexBuildRead w.pub).getD 0) j.limit)
+    | none => match w.pub with
+      | some e => .ok (sizingBatch sz.floor ((indexBuildRead w.pub).getD 0) j.limit, e)
+      | none => .error .cancelled
 
-/-- What a publish does (a parameter: the host's commit): the batch was discarded as a catch-up too large, it
-    was published (another commit, or this one), or it was refused. -/
+/-- What the host's commit does with a batch whose fit against the published entry was not discarded (a
+    parameter): the catch-up was too large and the batch is discarded, it was published, or it was refused
+    (`validate`, or the compare-and-swap). -/
 inductive Outcome where
   | tooLarge | published | refused
 deriving DecidableEq, Repr
 
 /-- The entry after a published batch of `entities` that read to `next` (`commit_indexer_batch` on this
-    index: the entry's `indexer_apply`). -/
+    index: the entry's `indexer_apply`, `read` counted). -/
 def commitEntry (work : EncodedTuples) (next : Option BuildCursor) (entities : Nat) (w : World) : World :=
   { w with pub := w.pub.map (fun e => (e.indexerApply work next entities).1) }
 
-/-- `Job::step` after the read: publish holding the host's lock. After the stop, nothing is
-    published (`builder.stopped()` is checked again under the lock). -/
-def publishPhase (work : EncodedTuples) (next : Option BuildCursor) (entities : Nat) (generation : Nat)
-    (o : Outcome) (w : World) : Step × World :=
+/-- The entry the batch leaves in its build version: the snapshot with the batch applied (`indexer_prepare`). -/
+def batchEntry (snap : EN) (work : EncodedTuples) (next : Option BuildCursor) (entities : Nat) : EN :=
+  (snap.indexerApply work next entities).1
+
+/-- `Graph::indexer_fit`'s first test, `IndexEntry::discarded_against`: the batch's entry against what is
+    published now. `none` iff the entry is there at the batch's generation and no other batch committed since
+    the snapshot (`commits + 1`). -/
+def fitDiscards (snap : EN) (work : EncodedTuples) (next : Option BuildCursor) (entities : Nat)
+    (pub : Option EN) : Option Discarded :=
+  discardedAgainst (batchEntry snap work next entities).proj (pub.map EN.proj)
+
+/-- `Job::step` after the read: publish holding the host's lock, against the entry published *now* (`w`).
+    After the stop, nothing is published (`builder.stopped()` is checked again under the lock). A batch the
+    fit discards (the index dropped, created again, or another batch committed) publishes nothing and the
+    step is `standing` of what is published (`Ok(_)` arm); otherwise the outcome decides. -/
+def publishPhase (snap : EN) (work : EncodedTuples) (next : Option BuildCursor) (entities : Nat)
+    (generation : Nat) (o : Outcome) (w : World) : Step × World :=
   if w.stopped then (.cancelled, w)
-  else match o with
-    | .tooLarge => (.tooLarge, w)
-    | .published =>
-      let w' := commitEntry work next entities w
-      ((standing w'.pub generation).getD .more, w')
-    | .refused => (.failed, w)
+  else match fitDiscards snap work next entities w.pub with
+    | some _ => ((standing w.pub generation).getD .more, w)
+    | none =>
+      match o with
+      | .tooLarge => (.tooLarge, w)
+      | .published =>
+        let w' := commitEntry work next entities w
+        ((standing w'.pub generation).getD .more, w')
+      | .refused => (.failed, w)
 
 /-- The new limit. -/
 def nextLimit (sz : Sizing) (st : Step) (entities limit : Nat) : Nat :=
@@ -85,13 +110,14 @@ def nextLimit (sz : Sizing) (st : Step) (entities limit : Nat) : Nat :=
   | .tooLarge => max (entities / 2) sz.floor
   | _ => limit
 
-/-- One whole `Job::step`. -/
-def jobStep (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome) (w : World) (j : Job) :
-    Step × World × Job :=
+/-- One whole `Job::step`: it reads at `w` and publishes at `mid`, the world when the publish runs (anything:
+    other jobs, writers, a drop, a re-create happened in between; `mid` is used only if the read succeeded). -/
+def jobStep (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome) (w mid : World)
+    (j : Job) : Step × World × Job :=
   match readPhase sz w j with
   | .error st => (st, w, j)
-  | .ok entities =>
-    let r := publishPhase work next entities j.generation o w
+  | .ok (entities, snap) =>
+    let r := publishPhase snap work next entities j.generation o mid
     (r.1, r.2, { j with limit := nextLimit sz r.1 entities j.limit })
 
 /-! ## What a step does and does not do -/
@@ -99,26 +125,76 @@ def jobStep (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o 
 /-- **A job whose generation is not the index's current `Building` one reads and publishes nothing**: the index
     is dropped or recreated (`Cancelled`), or already built (`Done`); the world and the job are unchanged. -/
 theorem jobStep_standing (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome)
-    (w : World) (j : Job) (st : Step) (h : standing w.pub j.generation = some st) (hs : w.stopped = false)
-    (ha : w.alive = true) : jobStep sz work next o w j = (st, w, j) := by
+    (w mid : World) (j : Job) (st : Step) (h : standing w.pub j.generation = some st) (hs : w.stopped = false)
+    (ha : w.alive = true) : jobStep sz work next o w mid j = (st, w, j) := by
   simp [jobStep, readPhase, hs, ha, h]
 
 /-- After the stop nothing is read and nothing published. -/
 theorem jobStep_stopped (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome)
-    (w : World) (j : Job) (h : w.stopped = true) : jobStep sz work next o w j = (.cancelled, w, j) := by
+    (w mid : World) (j : Job) (h : w.stopped = true) : jobStep sz work next o w mid j = (.cancelled, w, j) := by
   simp [jobStep, readPhase, h]
 
 /-- A graph that is gone ends its job. -/
 theorem jobStep_dead (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome)
-    (w : World) (j : Job) (hs : w.stopped = false) (h : w.alive = false) :
-    jobStep sz work next o w j = (.cancelled, w, j) := by
+    (w mid : World) (j : Job) (hs : w.stopped = false) (h : w.alive = false) :
+    jobStep sz work next o w mid j = (.cancelled, w, j) := by
   simp [jobStep, readPhase, hs, h]
 
 /-- A refused or too-large batch changes the published entry not at all. -/
-theorem publish_noop (work : EncodedTuples) (next : Option BuildCursor) (entities generation : Nat) (w : World) :
-    (publishPhase work next entities generation .refused w).2 = w ∧
-    (publishPhase work next entities generation .tooLarge w).2 = w := by
-  unfold publishPhase; split <;> simp_all
+theorem publish_noop (snap : EN) (work : EncodedTuples) (next : Option BuildCursor) (entities generation : Nat)
+    (w : World) :
+    (publishPhase snap work next entities generation .refused w).2 = w ∧
+    (publishPhase snap work next entities generation .tooLarge w).2 = w := by
+  unfold publishPhase; split <;> try simp_all
+  split <;> simp_all
+
+/-- **A batch that went stale before its publish publishes nothing, and leaves what is published as it is**:
+    the index was dropped (no entry), or created again (another generation), or another batch committed on
+    it since the snapshot (`commits` moved). Whatever the replacement is, it is untouched; the step is
+    `standing` of it (`Cancelled` for a drop or a re-create). -/
+theorem publish_stale (snap : EN) (work : EncodedTuples) (next : Option BuildCursor) (entities generation : Nat)
+    (o : Outcome) (w : World) (hs : w.stopped = false) (hb : snap.isBuilding = true)
+    (hst : w.pub = none ∨ ∃ e, w.pub = some e ∧ (e.generation ≠ snap.generation ∨ e.commits ≠ snap.commits)) :
+    (publishPhase snap work next entities generation o w).2 = w ∧
+    (publishPhase snap work next entities generation o w).1 = (standing w.pub generation).getD .more := by
+  have hd : (fitDiscards snap work next entities w.pub).isSome = true := by
+    have hg : (batchEntry snap work next entities).generation = snap.generation := by
+      cases snap with | mk i st g c r => cases st <;> simp_all [batchEntry, EN.isBuilding, EN.indexerApply]
+    have hc : (batchEntry snap work next entities).commits = snap.commits + 1 := by
+      cases snap with | mk i st g c r => cases st <;> simp_all [batchEntry, EN.isBuilding, EN.indexerApply]
+    unfold fitDiscards
+    rcases hst with h | ⟨e, he, hne⟩
+    · simp [h, discardedAgainst]
+    · simp only [he, Option.map_some]
+      simp only [discardedAgainst, EN.proj, hg, hc]
+      rcases hne with h | h
+      · simp [h]
+      · by_cases h1 : e.generation = snap.generation <;> simp [h1]
+        omega
+  obtain ⟨why, hw⟩ := Option.isSome_iff_exists.1 hd
+  simp [publishPhase, hs, hw]
+
+/-- **A valid batch still advances its own generation**: when the entry published now is the one the batch
+    was built on (same generation, no other batch since: the fit passes, and it is still `Building`) and the
+    host publishes, the entry stays at the batch's generation and takes exactly one more commit. -/
+theorem publish_valid (snap : EN) (work : EncodedTuples) (next : Option BuildCursor) (entities : Nat)
+    (w : World) (e : EN) (hs : w.stopped = false) (hb : snap.isBuilding = true) (he : w.pub = some e)
+    (hg : e.generation = snap.generation) (hc : e.commits = snap.commits) (heb : e.isBuilding = true) :
+    ∃ e', (publishPhase snap work next entities snap.generation .published w).2.pub = some e' ∧
+      e'.generation = snap.generation ∧ e'.commits = snap.commits + 1 := by
+  have hg' : (batchEntry snap work next entities).generation = snap.generation := by
+    cases snap with | mk i st g c r => cases st <;> simp_all [batchEntry, EN.isBuilding, EN.indexerApply]
+  have hc' : (batchEntry snap work next entities).commits = snap.commits + 1 := by
+    cases snap with | mk i st g c r => cases st <;> simp_all [batchEntry, EN.isBuilding, EN.indexerApply]
+  have hn : fitDiscards snap work next entities w.pub = none := by
+    unfold fitDiscards
+    rw [discardedAgainst_none_iff]
+    exact ⟨e.proj, by simp [he], by simp [EN.proj, hg, hg'], by simp [EN.proj, hc, hc']⟩
+  refine ⟨(e.indexerApply work next entities).1, ?_, ?_, ?_⟩
+  · rw [he] at hn
+    simp [publishPhase, hs, hn, commitEntry, he]
+  · cases e with | mk i st g c r => cases st <;> simp_all [EN.isBuilding, EN.indexerApply]
+  · cases e with | mk i st g c r => cases st <;> simp_all [EN.isBuilding, EN.indexerApply]
 
 /-- **A step only ever changes the entry of its own generation, and only by a batch's `indexer_apply`**: when
     the job's standing check passes the entry exists and is `Building` at the job's generation; a published
@@ -131,7 +207,7 @@ theorem commitEntry_generation (work : EncodedTuples) (next : Option BuildCursor
     cases s <;> simp [EN.indexerApply]
 
 /-- The batch the read phase sizes is at least the floor and at most the larger of the limit and the floor. -/
-theorem readPhase_size (sz : Sizing) (w : World) (j : Job) (n : Nat) (h : readPhase sz w j = .ok n) :
+theorem readPhase_size (sz : Sizing) (w : World) (j : Job) (n : Nat) (e : EN) (h : readPhase sz w j = .ok (n, e)) :
     sz.floor ≤ n ∧ n ≤ max j.limit sz.floor := by
   unfold readPhase at h
   split at h
@@ -139,7 +215,8 @@ theorem readPhase_size (sz : Sizing) (w : World) (j : Job) (n : Nat) (h : readPh
   · split at h
     · cases h
     · cases hs : standing w.pub j.generation <;> simp [hs] at h
-      subst h
+      cases hp : w.pub <;> simp [hp] at h
+      obtain ⟨rfl, _⟩ := h
       exact ⟨(sizingBatch_spec _ _ _).1, (sizingBatch_spec _ _ _).2.1⟩
 
 /-- **The limit stays within `[?, cap]`**: a `More` step doubles up to the cap, a `TooLarge` one halves the
@@ -150,13 +227,13 @@ theorem nextLimit_le_cap (sz : Sizing) (hf : sz.floor ≤ sz.cap) (st : Step) (e
 
 /-- **Each worker step keeps the job's limit within the cap.** -/
 theorem jobStep_limit_le_cap (sz : Sizing) (hf : sz.floor ≤ sz.cap) (work : EncodedTuples)
-    (next : Option BuildCursor) (o : Outcome) (w : World) (j : Job) (hl : j.limit ≤ sz.cap) :
-    (jobStep sz work next o w j).2.2.limit ≤ sz.cap := by
+    (next : Option BuildCursor) (o : Outcome) (w mid : World) (j : Job) (hl : j.limit ≤ sz.cap) :
+    (jobStep sz work next o w mid j).2.2.limit ≤ sz.cap := by
   unfold jobStep
   cases hr : readPhase sz w j with
   | error st => simpa using hl
-  | ok n =>
-    obtain ⟨_, h2⟩ := readPhase_size sz w j n hr
+  | ok r =>
+    obtain ⟨_, h2⟩ := readPhase_size sz w j r.1 r.2 hr
     exact nextLimit_le_cap sz hf _ _ _ hl h2
 
 /-- A published batch that did not reach the end adds its size to the entry's `read` count (saturating), so
@@ -181,8 +258,8 @@ deriving DecidableEq
 /-- One pool step (`Job::run`): any queued job (the interleaving) runs a step; `more`/`tooLarge`
     submit it again, the others end it. -/
 def PoolStep (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome) (q : List QJob)
-    (w : World) (qj : QJob) : List QJob × World :=
-  let r := jobStep sz work next o w qj.job
+    (w mid : World) (qj : QJob) : List QJob × World :=
+  let r := jobStep sz work next o w mid qj.job
   let rest := q.erase qj
   match r.1 with
   | .more | .tooLarge => (rest ++ [⟨qj.key, r.2.2⟩], r.2.1)
@@ -192,14 +269,14 @@ def PoolStep (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o
     again under its own key; the other keys are untouched). (Each generation is started once: the commit
     hands the builder `indexesToBuildSince`, `Rows.lean`.) -/
 theorem poolStep_keys_nodup (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome)
-    (q : List QJob) (w : World) (qj : QJob) (hm : qj ∈ q) (h : (q.map (·.key)).Nodup) :
-    (((PoolStep sz work next o q w qj).1).map (·.key)).Nodup := by
+    (q : List QJob) (w mid : World) (qj : QJob) (hm : qj ∈ q) (h : (q.map (·.key)).Nodup) :
+    (((PoolStep sz work next o q w mid qj).1).map (·.key)).Nodup := by
   have hperm : (q.map (·.key)).Perm (qj.key :: (q.erase qj).map (·.key)) := by
     have := (List.perm_cons_erase hm).map (·.key)
     simpa using this
   have hn : (qj.key :: (q.erase qj).map (·.key)).Nodup := hperm.nodup_iff.1 h
   unfold PoolStep
-  cases hst : (jobStep sz work next o w qj.job).1 <;> simp only [hst]
+  cases hst : (jobStep sz work next o w mid qj.job).1 <;> simp only [hst]
   all_goals first
     | (simp only [List.map_append, List.map_cons, List.map_nil]
        exact (List.perm_append_comm.nodup_iff.2 (by simpa using hn)))
@@ -226,8 +303,8 @@ theorem enqueue_keys (sz : Sizing) (q : List QJob) (id generation : Nat)
 
 /-- **The stop is for good**: no step undoes it, and a stopped builder publishes nothing. -/
 theorem stopped_persists (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome)
-    (w : World) (j : Job) (h : w.stopped = true) : (jobStep sz work next o w j).2.1.stopped = true := by
-  rw [jobStep_stopped sz work next o w j h]; exact h
+    (w mid : World) (j : Job) (h : w.stopped = true) : (jobStep sz work next o w mid j).2.1.stopped = true := by
+  rw [jobStep_stopped sz work next o w mid j h]; exact h
 
 theorem stopWorld_stops (w : World) : (stopWorld w).stopped = true := rfl
 
@@ -235,16 +312,16 @@ theorem stopWorld_stops (w : World) : (stopWorld w).stopped = true := rfl
 
 /-- **A dropped index ends its job**: no entry, so `Cancelled`, nothing read or published. -/
 theorem jobStep_dropped (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome)
-    (w : World) (j : Job) (hs : w.stopped = false) (ha : w.alive = true) (h : w.pub = none) :
-    jobStep sz work next o w j = (.cancelled, w, j) :=
-  jobStep_standing sz work next o w j .cancelled (by simp [standing, h]) hs ha
+    (w mid : World) (j : Job) (hs : w.stopped = false) (ha : w.alive = true) (h : w.pub = none) :
+    jobStep sz work next o w mid j = (.cancelled, w, j) :=
+  jobStep_standing sz work next o w mid j .cancelled (by simp [standing, h]) hs ha
 
 /-- **An index dropped and created again is another generation, so the old job ends** (and the new one's
     job, started by the commit that created it, builds it). -/
 theorem jobStep_recreated (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome)
-    (w : World) (j : Job) (e : EN) (hs : w.stopped = false) (ha : w.alive = true) (h : w.pub = some e)
-    (hg : e.generation ≠ j.generation) : jobStep sz work next o w j = (.cancelled, w, j) := by
-  apply jobStep_standing sz work next o w j .cancelled _ hs ha
+    (w mid : World) (j : Job) (e : EN) (hs : w.stopped = false) (ha : w.alive = true) (h : w.pub = some e)
+    (hg : e.generation ≠ j.generation) : jobStep sz work next o w mid j = (.cancelled, w, j) := by
+  apply jobStep_standing sz work next o w mid j .cancelled _ hs ha
   unfold standing
   rw [h]
   simp only [Option.map_some]
@@ -252,10 +329,10 @@ theorem jobStep_recreated (sz : Sizing) (work : EncodedTuples) (next : Option Bu
 
 /-- A finished index (`Ready`, same generation) ends its job as `Done`, changing nothing. -/
 theorem jobStep_done (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome)
-    (w : World) (j : Job) (e : EN) (hs : w.stopped = false) (ha : w.alive = true) (h : w.pub = some e)
+    (w mid : World) (j : Job) (e : EN) (hs : w.stopped = false) (ha : w.alive = true) (h : w.pub = some e)
     (hg : e.generation = j.generation) (hb : e.isBuilding = false) :
-    jobStep sz work next o w j = (.done, w, j) := by
-  apply jobStep_standing sz work next o w j .done _ hs ha
+    jobStep sz work next o w mid j = (.done, w, j) := by
+  apply jobStep_standing sz work next o w mid j .done _ hs ha
   simp [standing, h, hb, hg]
 
 /-! ## Completed batches compose to the full build

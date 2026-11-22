@@ -229,7 +229,7 @@ theorem ro_never_writes (q : List Clause) (m : Nat) (h : roQuery q = .ran m) :
         · exact absurd (plan_proc q false hm) hp
 
 /-- The runtime guard is load-bearing: a query whose only mutation is a write procedure
-has a *read* plan, and only `eval.rs/984` stops it. -/
+has a *read* plan, and only `eval.rs` stops it. -/
 theorem write_proc_invisible_to_scan : isWritePlan (plan [.call true] false) = false := by
   simp [plan, isWritePlan, isW]
 

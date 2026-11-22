@@ -19,7 +19,7 @@ support `ps` of pairs, each with its `PairSt`, plus the list of `me` blocks
 | `multiPairsIn`/`multiPairs` | :1379 / :1371 |
 | `hasMultiEdge`  | :1408 |
 | `block0`/`blocksAll` | `edge_versioned_block_0` (:1188) / `edge_versioned_all` (:1195) |
-| `fwdM`/`fwdDp`/`fwdDm`/`matrixT` | `fwd_m`/`fwd_dp`/`fwd_dm` :1034-1047 |
+| `fwdM`/`fwdDp`/`fwdDm`/`matrixT` | `fwd_m`/`fwd_dp`/`fwd_dm`  |
 -/
 namespace VMTensorOps
 open VMTensor

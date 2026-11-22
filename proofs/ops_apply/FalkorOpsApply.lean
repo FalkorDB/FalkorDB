@@ -17,6 +17,12 @@ Models of `graph/src/runtime/ops/{merge,apply,optional,semi_apply,or_apply_multi
 foreach,union,create,delete,set,remove,cartesian_product,value_hash_join}.rs` and the
 argument-batch idiom of `runtime/batch.rs`, against per-row openCypher reference semantics.
 See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
+
+The Apply/Optional/SemiApply/OR-apply batching theorems are proofs for modelled `OpSep.Adm` trees. The
+premise that the sub-plan the `can_batch` guard admits is such a tree is NOT discharged: it is the hypothesis
+of the six CONDITIONAL rows. `guard_admits_classified` classifies the admitted IR kinds but admitted writes
+(#2738) and the bidirectional-dedup `CondTraverse` (#3106) have no `Adm` constructor (counterexamples), and
+the planner's output is not machine-checked to land in `Adm`.
 -/
 import FalkorOpsApply.Correlated
 import FalkorOpsApply.Union

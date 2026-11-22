@@ -29,7 +29,7 @@ Rust has a second copy of `days_from_civil` in `temporal.rs`, which uses `i32` a
 
 **2. Is `Duration + Duration` correct?**
 
-A duration is stored as "the instant 1970-01-01 plus the years and months plus the days and seconds", and its components are recovered by decomposing that instant. `construct_decompose` proves, under range hypotheses on the components (they fit `i64`/`i32`), that construct ∘ decompose is the identity. That encoding round-trip is the law `Duration ± Duration` relies on, but the `(Duration, Duration)` arm of `Add for Value` and its overflow behaviour are not proved here: only the round-trip it rests on. `add_sub_months` proves that `(d + P1M) - P1M = d` for every day of the month up to 28. `+` and `-` share `shift_months` (`shiftMonths`), and `sub_eq_add_neg_months` proves `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M` for every timestamp; `shiftMonths_total` shows the shift depends only on the total month count.
+A duration is stored as "the instant 1970-01-01 plus the years and months plus the days and seconds", and its components are recovered by decomposing that instant. `construct_decompose` proves, under range hypotheses on the components (they fit `i64`/`i32`), that construct ∘ decompose is the identity. That encoding round-trip is the law `Duration ± Duration` relies on, but the `(Duration, Duration)` arm of `Add for Value` and its overflow behaviour are not proved here: only the round-trip it rests on. `add_sub_months` proves that `(d + P1M) - P1M = d` for every day of the month up to 28. `+` and `-` share `shift_months` (`shiftMonths`), and `sub_eq_add_neg_months` proves `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M` for every timestamp, for a pure year/month duration built from a month total `t` with `-1000000 ≤ t ≤ 1000000`; `shiftMonths_total` shows the shift depends only on the total month count.
 
 **3. Is ordering of temporal values a valid sort?**
 
@@ -121,18 +121,13 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 
 ## Coverage
 
-`COVERAGE.tsv` has 104 rows: 33 in `temporal.rs`, 26 in `vector_expr.rs`, 22 in `value.rs`, 11 in `conversion.rs`, 8 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function.
+`COVERAGE.tsv` has 66 rows, all PROVEN: 33 in `temporal.rs`, 21 in `value.rs`, 8 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function. `get_duration_component` is one of the `value.rs` rows (`DurationComponent.lean`), and `format_duration` is a PROVEN row of [`../value_math`](../value_math) (`fmtDuration_*`, using this project's `decompose_duration`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 68 |
-| MODELLED | 3 |
-| NOT COVERED | 33 |
+| PROVEN | 66 |
 
-- **MODELLED:** `ExprColumn::get`, `union_nulls` and `eval_per_row`, which this project's columnar proof uses as its reference but doesn't state a theorem about.
-- **NOT COVERED (`vector_expr.rs`, 20 rows):** the rest of the columnar evaluator: dispatch, `CASE`, comparisons, the float lane and bitmap plumbing. All of these are proven in [`../columnar`](../columnar) and [`../expr_semantics`](../expr_semantics).
-- **NOT COVERED (`conversion.rs`, 11 rows):** `f64` parsing and formatting, checked live against C only. `value_math` proves most of these.
-- **NOT COVERED (`value.rs`, 2 rows):** `format_duration` and `get_duration_component`, live-tested.
+The columnar evaluator (`vector_expr.rs`) and the `f64` conversion functions (`conversion.rs`) are no longer rows of this ledger: they are covered by [`../columnar`](../columnar), [`../expr_semantics`](../expr_semantics) and [`../value_math`](../value_math).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 

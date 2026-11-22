@@ -251,7 +251,7 @@ theorem remap_spec {V : Type} (cols : List (Option (List V))) (len : Nat) (nul :
       (ov[k], ((cols[sp[k]]?).bind id).getD (List.replicate len nul)) := by
   simp [remap]
 
-/-- procedure_call.rs + :228-300: every input row (in order) is followed by one output
+/-- procedure_call.rs: every input row (in order) is followed by one output
 row per procedure result row, merged over the input row. -/
 def pcRows {R P O : Type} (call : R → Except String (List P)) (merge : R → P → O) : List R → Except String (List O)
   | [] => .ok []

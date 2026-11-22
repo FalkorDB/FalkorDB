@@ -172,7 +172,7 @@ inductive SEv
   | readStarts     -- `execute_query`/`execute_profile` run a read: `admission.take()`
   | failsOrPanics  -- an error before the write is queued: `slot.filter(..)` drops it; or unwinding
   | isWrite        -- a write: the slot moves into `WriteMessage.slot`
-  | sendOk         -- `tg.sender.send(msg)` (unbounded;)
+  | sendOk         -- `tg.sender.send(msg)` (unbounded)
   | sendFail       -- the send failed: the message and its slot are dropped
   | graphFreed     -- the graph freed with writes still queued: channel and messages dropped
   | dequeued       -- the drainer took it: `drop(slot)`

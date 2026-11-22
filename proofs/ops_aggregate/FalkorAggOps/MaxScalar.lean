@@ -16,7 +16,7 @@ Rust code (the row was CONDITIONAL). Here `c` is the real model `cmpV` (proofs/v
   and `max_batch` agree there.
 * Outside that fragment they fail (a list with a nested NaN: `[NaN]` against `[5]` is
   `(Less, None)` both ways, `value_order Main` / `compare_list`), so the two bodies can differ. The
-  scalar body is unreachable: every aggregate registers `batch_agg`, which aggregate.rs/:1061
+  scalar body is unreachable: every aggregate registers `batch_agg`, which aggregate.rs
   always prefer, so `max_batch` (covered by `Agg.minmax_hom`) is what runs.
 -/
 namespace FalkorAggOps.MaxScalar

@@ -55,7 +55,7 @@ def MAX_VALUE_NESTING : Nat := 4096
 
 variable (C : Codec)
 
-/-- `read_u32_ne` (, `w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (, `w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
+/-- `read_u32_ne` (`w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (`w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
 `data[*idx..*idx + w]` (`dec`: the core decoder, any total function) and `*idx += w`. -/
 def readNe {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat) (idx : Nat) :
     Except BErr (α × Nat) :=
@@ -339,7 +339,7 @@ theorem encRec_ne_nil (vs : List BV) (hP : vs ≠ []) : encRec C vs ≠ [] := by
 /-- **A node token imports exactly the records it encodes**: for a header with `P ≥ 1`
 properties and a body that is the concatenation of `rs` (each with `P` values), the
 record loop returns `rs`, in order — so with `node_count = rs.length` every record gets
-exactly one reserved id and none is left over (the `node_id_cursor` check at). -/
+exactly one reserved id and none is left over (the `node_id_cursor` check ). -/
 theorem records_enc (P : Nat) (hP : 1 ≤ P) (rs : List (List BV))
     (hlen : ∀ vs ∈ rs, vs.length = P) (hwf : ∀ vs ∈ rs, ∀ v ∈ vs, wf C v)
     (hdep : ∀ vs ∈ rs, ∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) (fuel : Nat)

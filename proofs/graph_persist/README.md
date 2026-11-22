@@ -153,18 +153,15 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 78 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (17), `mvcc_graph.rs` (10), the decoder (9), the encoder (7), `graph.rs` (5), `runtime.rs` (3).
+`COVERAGE.tsv` has 63 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (16), the decoder (9), the encoder (7), `graph.rs` (4).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 50 |
-| MODELLED | 2 |
-| NOT COVERED | 16 |
-| AXIOMATISED | 10 |
+| PROVEN | 54 |
+| AXIOMATISED | 9 |
 
-- **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`); `rebuild_derived_matrices` (GraphBLAS).
-- **MODELLED:** `from_u64` (the payload-directory state tags, exercised by the live round trips) and `MvccGraph::from_graph` (the RDB load path, checked live).
-- **NOT COVERED:** four trait declarations or `unimplemented!` defaults in `serialization.rs`; nine `MvccGraph` functions (`new`, `read`, `fork`, `commit`, `is_stale`, `commit_indexer_batch`, `prepare`, `publish`, `drop`) whose concurrency is not modelled here; and three in `runtime.rs` (`publish` and two `QueryGraph::from` constructors). The validated `commit` is proven in `search_concurrency` and `versioned_matrix`; `bash proofs/coverage.sh` counts each function once, in its best bucket.
+- **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`).
+- **Not rows of this ledger:** the `MvccGraph` functions (`new`, `from_graph`, `read`, `fork`, `commit`, `is_stale`, `prepare`, `publish`, `drop`) are PROVEN rows of [`../versioned_matrix`](../versioned_matrix); this project's `Mvcc.lean` models the load-publish and fork-commit entry points sequentially, which excludes races between writers; those are covered by [`../search_concurrency`](../search_concurrency). `bash proofs/coverage.sh` counts each function once, in its best bucket.
 
 ## What the model does not cover
 

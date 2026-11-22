@@ -11,7 +11,7 @@ the pending deletes the operator sees.
 | --- | --- |
 | `Pending.delNodes` | `Pending::deleted_nodes` (`runtime/pending.rs`), read by `is_node_deleted`; `DETACH DELETE` of a committed node only inserts it here (`runtime/ops/delete.rs`, `pending.rs`) and defers its incident edges to commit (`delete_implicit_edges`, `pending.rs`) |
 | `Pending.delRels`  | `Pending::deleted_relationships`, read by `is_relationship_deleted` (`pending.rs`) |
-| `expandIntoP`      | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs`): no row when `pending.is_node_deleted(src) \|\| is_node_deleted(dst)`; pairs; collapse and emit skip `pending.is_relationship_deleted(id)` and sibling-used edges |
+| `expandIntoP`      | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs`): no row when `pending.is_node_deleted(src) \|\| is_node_deleted(dst)`; pairs; collapse and emit skip `pending.is_relationship_deleted(id)` and sibling-used edges. Excludes the synthetic-label branch (a multi-label self-loop: one row with the placeholder `RelationshipId::from(0u64)`, no relationship bound), which this relationship-level model does not cover |
 | `expandIntoRows`   | the pair and edge loop after the endpoint check (the fall-through branch of `expandIntoP`) |
 
 `expandIntoP` with empty `Pending` is literally `CondTraverse.expandInto`

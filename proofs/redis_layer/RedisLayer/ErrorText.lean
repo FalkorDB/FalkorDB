@@ -74,7 +74,7 @@ theorem legalResp_clean (s : String) (h : ∀ b ∈ bytesOf s, b ≠ 13 ∧ b �
   obtain ⟨h1, h2, h3⟩ := h b hb
   simp [scrub, h1, h2, h3]
 
-/-! ### History: the byte-truncating version -/
+/-! ### Examples: current byte-for-byte behaviour -/
 
 /-- **PROVEN** (#3428): main sends `一` as its UTF-8 bytes. -/
 theorem legalResp_cjk : legalResp "一" = [0xE4, 0xB8, 0x80] := by decide

@@ -14,7 +14,7 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | `buildDoc`                      | the per-attribute loop in `graph.rs` `commit_index_kind` / `graph.rs` population `build_doc` |
 | `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs` `Index::add_document`) |
 | `fulltextUnknown`               | `graph/src/runtime/runtime.rs` fulltext unknown-key refusal  |
-| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs` `map_to_index_options`, vector branch (name checked at) |
+| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs` `map_to_index_options`, vector branch (name checked ) |
 | `parsePhonetic`                 | `runtime.rs` phonetic arm |
 | `metricOf`                      | `mod.rs` similarity match in `Index::register_fields` |
 | `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs` `eval_vector_args` (k arm) |

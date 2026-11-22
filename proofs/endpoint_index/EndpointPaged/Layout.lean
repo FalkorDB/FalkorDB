@@ -51,7 +51,7 @@ def length (g : PG α) : Nat := g.len
 def isEmpty (g : PG α) : Bool := g.len == 0
 /-- `Paged::at` (:194): `pages[at / P][at % P]` (`none` = the index would panic). -/
 def at_ (P : Nat) (g : PG α) (i : Nat) : Option α := (g.pages[i / P]?).bind (·[i % P]?)
-/-- `Paged::iter` (:201): `(0..len).map(at)`. -/
+/-- `Paged::iter` (:201): `(0..len).map()`. -/
 def iter (P : Nat) (g : PG α) : List (Option α) := (List.range g.len).map (g.at_ P)
 
 end PG

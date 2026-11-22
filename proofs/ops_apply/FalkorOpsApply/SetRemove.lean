@@ -31,7 +31,7 @@ theorem get_put (s : Store E K V) (e : E) (k : K) (v : Option V) (e' : E) (k' : 
     get (put s e k v) e' k' = if e' = e ∧ k' = k then v else get s e' k' := by
   unfold get put; by_cases h : e' = e ∧ k' = k <;> simp [h]
 
-/-- set.rs / :279-296: skip when the stored value already equals the new one. -/
+/-- set.rs: skip when the stored value already equals the new one. -/
 def setProp (s : Store E K V) (e : E) (k : K) (v : Option V) : Store E K V :=
   if get s e k = v ∧ v.isSome then s else put s e k v
 
@@ -164,7 +164,7 @@ inductive Src (E K V : Type) where
   | other
 
 /-- `SET target(.prop)? = value` for one row. `gone` = the deleted-entity check
-(set.rs node, :274-278 relationship), only consulted when `skip_delete_checks` is false. `attrsN`/`attrsR` =
+(set.rs, node and relationship arms), only consulted when `skip_delete_checks` is false. `attrsN`/`attrsR` =
 `get_node_attrs` / `get_relationship_attrs` of a source entity. -/
 def setAttrItem (ckeys : E → List K) (gone : Ent E → Bool) (skipDel : Bool)
     (attrsN attrsR : E → List (K × Option V))

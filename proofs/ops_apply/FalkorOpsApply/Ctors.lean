@@ -90,7 +90,7 @@ structure PRel (T E : Type) where
   dst : Nat
   attrs : E
 
-/-- First null-valued key of a map, if any (merge.rs / :233-239). -/
+/-- First null-valued key of a map, if any (merge.rs). -/
 def firstNull {V : Type} : List (String × Option V) → Option String
   | [] => none
   | (k, none) :: _ => some k

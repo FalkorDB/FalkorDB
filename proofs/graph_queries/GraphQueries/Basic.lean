@@ -106,7 +106,7 @@ attribute store is the map `entity → [(attr id, value)]`. Indexers are not
 part of the state; their behaviour is a parameter of each index theorem.
 
 The graph keeps no counters of its own: `node_ids` /
-`relationship_ids : IdSpace` (graph.rs/:432). Their four fields are
+`relationship_ids : IdSpace` (graph.rs). Their four fields are
 spelled out here — `nodeCount`/`delNodes` are `node_ids.live`/`.recycled`,
 `nodeEB`/`nodeTaken` its `entry_bound`/`taken` (id_space.rs) — and
 reassembled by `nodeIds`/`relIds` (Ids.lean). -/

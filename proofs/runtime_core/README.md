@@ -115,18 +115,15 @@ Its `lakefile.toml` requires [`../redis_layer`](../redis_layer) (for `Reuse.lean
 
 ## Coverage
 
-`COVERAGE.tsv` has 94 rows: 53 in `runtime.rs`, 39 in `batched_result_emitter.rs` and 2 in `ops/mod.rs`.
+`COVERAGE.tsv` has 64 rows: 52 in `runtime.rs`, 11 in `batched_result_emitter.rs` and 1 in `ops/mod.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 53 |
-| CONDITIONAL | 9 |
-| MODELLED | 7 |
-| NOT COVERED | 25 |
+| PROVEN | 60 |
+| CONDITIONAL | 4 |
 
-- **CONDITIONAL:** the nine attribute accessors listed above.
-- **MODELLED:** the `RowIter` constructors (`one`, `spread`, `many`), `start_batch`, `finish_batch` and the two emitter constructors. The model works on `(row, item)` pairs, so the column gather in these functions is abstracted away.
-- **NOT COVERED:** the 24 `GatherItem` typed-lane methods (`new_lanes`/`push_into`/`finish` for each lane) and the trivial `batch` accessor. These lanes are proven once, generically, in `columnar` (`gather_spec`).
+- **CONDITIONAL:** the four attribute accessors listed above (`get_node_attribute`, `get_node_attribute_no_delete_check`, `get_node_attrs`, `get_relationship_attrs`).
+- **Not rows of this ledger:** the `GatherItem` typed-lane methods, which are proven once, generically, in `columnar` (`gather_spec`).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 
@@ -153,4 +150,4 @@ bash proofs/coverage.sh                 # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A change to which IR variants `effective_limit` or `effective_skip` walk through changes `Anc` and the budget theorems. Fixing B1/B2 should turn the `hard_cap_unsound_*` counterexamples into `pre<PR>_` history and prove the new budget against `need`. Fixing #2876 should discharge `hdisj` and move the attribute rows from CONDITIONAL to PROVEN.
+A change to which IR variants `effective_limit` or `effective_skip` walk through changes `Anc` and the budget theorems. Fixing B1/B2 should replace the `hard_cap_unsound_*` counterexamples with a proof of the new budget against `need` (no `pre<PR>_` history is kept). Fixing #2876 should discharge `hdisj` and move the attribute rows from CONDITIONAL to PROVEN.

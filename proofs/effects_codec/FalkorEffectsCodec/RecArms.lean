@@ -122,7 +122,7 @@ def bSchemaRef (utf8 : Bytes → Bool) : Blk Ref :=
       simp only [bind_apply, List.append_assoc]; rw [u32_w32 h1]; simp only
       rw [rString_wString utf8 name rest h2 h3]; rfl }
 
-/-- `IndexFields` (`records.rs/354`): `u16` count (`BlockCountTooLarge`
+/-- `IndexFields` (`records.rs`): `u16` count (`BlockCountTooLarge`
 past it), `guard_count(n, 11)`, items. -/
 def bFields (utf8 : Bytes → Bool) : Blk (List Ref) :=
   bItems 2 11 .blockCountTooLarge (bAttrRef utf8) (by

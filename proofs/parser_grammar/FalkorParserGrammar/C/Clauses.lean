@@ -1,5 +1,5 @@
 /-
-# The clause parsers of `graph/src/parser/cypher.rs` (lines 516-1340, 2689-2738, 3199-3543)
+# The clause parsers of `graph/src/parser/cypher.rs`
 
 One model function per Rust function. All recursion (loops and the
 `CALL {}` / `FOREACH` re-entries) runs on one budget `n`: every call made by
@@ -146,7 +146,7 @@ def exprItemsR (o : Oracle) : Nat → List ET → P (List ET)
     else do tok .rparen; pure (acc ++ [e])
 
 /-- `parse_expression_list(ZeroOrMoreClosedBy(RParen))` (cypher.rs). #3060: only an
-empty list ends at once; after `,` an expression must follow (`f(1,)` is an error). -/
+empty list ends at once; after `,` an expression must follow (`f(1)` is an error). -/
 def exprListR (o : Oracle) (n : Nat) (acc : List ET) : P (List ET) := do
   let c ← peek
   if c = .rparen then do next; pure acc
@@ -169,7 +169,7 @@ def deleteP (o : Oracle) (n : Nat) (isDetach : Bool) : P IR := do
   let es ← exprList1 o n []
   deleteMore o n es isDetach
 
-/-- The `.prop.prop...` chain of a SET / REMOVE target (cypher.rs and 3444-3448). -/
+/-- The `.prop.prop...` chain of a SET / REMOVE target (cypher.rs `parse_update_target`). -/
 def dotChain : Nat → ET → P ET
   | 0, _ => fuelP
   | n + 1, e => do

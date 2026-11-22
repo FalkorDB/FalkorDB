@@ -18,7 +18,10 @@ Proven: `docLeBytes_spec` (the assert passes iff `doc < 256^DOC_BYTES`, and then
 W7-btree-2: the const asserts (`mod.rs`)
 gate `DOC_BYTES` with `is_read_width` (`mod.rs`), i.e. `DOC_BYTES ∈ {1, 2, 4, 8}`, exactly the
 widths `read_width` loads. `docBytesAssert_iff`, `admitted_doc_read`, `admitted_fromPairs_roundtrip`:
-every width a tree can be built with reads its docs back. `docBytesAssert_rejects_3`: an assert of
+every width a tree can be built with reads its docs back at the single-page level.
+`admitted_fromPairs_roundtrip` is proved for sorted input, docs that fit the width and at most
+256 entries (one page); `asserted_fromSorted_contents` does not compose it with the tree model
+(`fromSorted` ignores `D`), so there is no tree-level doc round trip here. `docBytesAssert_rejects_3`: an assert of
 `1 <= DOC_BYTES <= 8` would admit 3 (5, 6, 7), which `read_width` cannot read.
 -/
 namespace IndexLayer.Leaf

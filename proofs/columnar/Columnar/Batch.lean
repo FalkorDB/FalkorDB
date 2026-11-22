@@ -19,7 +19,7 @@ import Columnar.Column
 | `toU16` | the `as u16` cast every producer applies |
 | `Batch.setColumn` | `Batch::set_column` (`batch.rs`) |
 | `Batch.writeColumn`, `scatter` | `Batch::write_column` (`batch.rs`) |
-| `Batch.WF` | the invariants the code relies on (documented at `batch.rs`, debug-asserted at) |
+| `Batch.WF` | the invariants the code relies on (documented at `batch.rs`, debug-asserted ) |
 -/
 
 namespace Columnar

@@ -183,7 +183,7 @@ def bfsCost (g : G) (es : List Rel) : Nat := costSum g es
 
 def u32Max : Nat := 4294967295
 
-/-- `run_path_algo` :2672-2721; `bfs` is `bfs_find_bound`'s result. -/
+/-- `run_path_algo` ; `bfs` is `bfs_find_bound`'s result. -/
 def plan (g : G) (c : PCfg) (bfs : Option (Option (List Rel))) : Plan :=
   match c.tgt with
   | some t =>

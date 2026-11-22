@@ -668,7 +668,7 @@ Filter directly above the hop that binds `t`, `planner/mod.rs`).
 
 * the best endpoint is `t`: `f` scores 3 (bound by `Unwind`), `t` 3
   (filtered 2 + labelled 1), and `t` wins on label cardinality (`f` has no
-  label, so `u64::MAX`) (:849-873, `score_endpoint` :98-132);
+  label, so `u64::MAX`) (:849-873, `score_endpoint` );
 * `best_pos = 1`, so the chain is rebuilt (:1179), on top of the kept outer
   child (`Unwind`, not a planner scan, :947-970);
 * `initial_bound` is `{best} ∪ ids(child)` (:979-990). With the child kept,

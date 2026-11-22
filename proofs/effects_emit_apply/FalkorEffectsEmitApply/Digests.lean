@@ -230,7 +230,7 @@ theorem digestLabels_perm (labels : List (Nat × List Nat)) (skip : Nat → Bool
   rw [List.map_flatMap]
   exact perm_flatMap_congr fun q _ => List.mergeSort_perm _ _
 
-/-- No label record is empty (`debug_assert!` at holds). -/
+/-- No label record is empty (`debug_assert!` holds). -/
 theorem digestLabels_nonempty (labels skip) : ∀ r ∈ digestLabels labels skip, r.1 ≠ [] := by
   intro r hr
   simp only [digestLabels, List.mem_map] at hr

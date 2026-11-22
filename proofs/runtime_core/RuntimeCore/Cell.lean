@@ -13,7 +13,7 @@ Cites are to the `graph()`/`graph_mut()` version of `runtime.rs`.
 | --- | --- |
 | `B`, `borrow`, `release`, `borrowMut`, `releaseMut` | `AtomicRefCell`'s borrow word, atomic_refcell-0.1.14 `src/lib.rs`: `borrow` → `AtomicBorrowRef::try_new` (`fetch_add(1)`, panic iff HIGH_BIT set); drop (`fetch_sub(1)`); `borrow_mut` → `AtomicBorrowRefMut::try_new` (CAS `0 → HIGH_BIT`, else panic "already immutably/mutably borrowed"); drop (`store(0)`) |
 | `Heap`, `Addr`            | the `Arc<AtomicRefCell<Graph>>` allocations: an `Arc` is an address of a cell (value + borrow word) |
-| `Rt`                      | `Runtime`'s private `g` (`runtime.rs`), `write` and `read_guard: Option<HeldRead>` (; `HeldRead { guard, _owner }`). `guard = some a`: the `HeldRead`'s `_owner` is an `Arc` of cell `a` and its `guard` borrows that same cell |
+| `Rt`                      | `Runtime`'s private `g` (`runtime.rs`), `write` and `read_guard: Option<HeldRead>` (`HeldRead { guard, _owner }`). `guard = some a`: the `HeldRead`'s `_owner` is an `Arc` of cell `a` and its `guard` borrows that same cell |
 | `new`                     | `Runtime::new` (`runtime.rs-…`): `read_guard = (!write).then(‖ { owner = Arc::clone(&g); guard = owner.borrow(); HeldRead { guard, _owner: owner } })` — `owner` and `g` are the same allocation, so the guard borrows `g`'s cell |
 | `GraphRef`, `deref`       | `GraphRef::{Held, Borrowed}` + `Deref` (`runtime.rs`) |
 | `graph`, `dropRef`        | `Runtime::graph` (`runtime.rs`: `Held(&held.guard)` / `Borrowed(self.g.borrow())`); dropping a `GraphRef` |
@@ -38,7 +38,7 @@ coerce to `&Graph` by `Deref`):
   borrows the cell `graph()` reads.
 * functions that took the cell and borrowed inside now take `&mut Graph` / `&Graph`, the
   caller holding one `graph_mut()` / `graph()` across the call (`ops/commit.rs`,
-  `runtime.rs`, `index_ddl.rs:≈130`): proven equivalent in `Hold`.
+  `runtime.rs`, `index_ddl.rs`): proven equivalent in `Hold`.
 * `X.g` kept past the call → `X.graph_arc()` (`udf/js_context.rs`, `src/graph_core.rs`):
   an owned clone.
 -/

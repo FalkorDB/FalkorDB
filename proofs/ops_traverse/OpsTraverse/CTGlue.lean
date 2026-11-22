@@ -12,7 +12,7 @@ CondTraverse / ExpandInto / scan operator glue and constructors.
 | `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs) |
 | `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs) |
 | `ctPack`               | one child batch of `CondTraverseOp::next` (cond_traverse.rs) |
-| `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs), `next` (:251) |
+| `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs), `next` |
 | `EmitCfg` constructors | `NodeByLabelScanOp::new` (node_by_label_scan.rs), `NodeByIdSeekOp::new` (node_by_id_seek.rs), `NodeByLabelAndIdScanOp::new` (node_by_label_and_id_scan.rs), `PathBuilderOp::new` (path_builder.rs), `AllShortestPathsOp::new` (all_shortest_paths.rs) |
 
 GraphBLAS matrices are their entry lists (`(row, col)` pairs) with a declared shape.

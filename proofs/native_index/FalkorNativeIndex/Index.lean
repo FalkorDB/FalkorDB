@@ -100,7 +100,7 @@ def IndexColumn.addBatch (c : IndexColumn) (es : List (Value × Nat)) : IndexCol
 /-- `IndexColumn::remove_batch`. -/
 def IndexColumn.removeBatch (c : IndexColumn) (es : List (Value × Nat)) : IndexColumn × EncodedTuples :=
   match c with | .numeric ix => let r := ix.removeBatch es; (.numeric r.1, r.2)
-/-- `IndexColumn::encode_value` (, `RangeIndex::encode_value` `range.rs`): the scalar tree
+/-- `IndexColumn::encode_value` (`RangeIndex::encode_value` `range.rs`): the scalar tree
     and key `value` takes, or `None` when no kind indexes it as a scalar (a list, a temporal, a map). -/
 def IndexColumn.encodeValue (c : IndexColumn) (v : Value) : Option (KeyKind × Nat) :=
   match c with
@@ -122,7 +122,7 @@ def IndexColumn.removeEncoded (c : IndexColumn) (tuples : EncodedTuples) : Index
 /-- `IndexColumn::is_empty`. -/
 def IndexColumn.isEmpty (c : IndexColumn) : Bool :=
   match c with | .numeric ix => ix.isEmpty
-/-- `IndexColumn::rows_at` (, `RangeIndex::rows_at` `range.rs`): the ids stored under
+/-- `IndexColumn::rows_at` (`RangeIndex::rows_at` `range.rs`): the ids stored under
     `key` in the tree of `kind`. -/
 def IndexColumn.rowsAt (c : IndexColumn) (kind : KeyKind) (key : Nat) : List Nat :=
   match c with
@@ -217,7 +217,7 @@ def columnsMut (x : FalkorDbIndex) (e : EntityType) (f : List (IndexKey × Index
 def hasColumns (x : FalkorDbIndex) (e : EntityType) : Bool := !(x.columns e).isEmpty
 /-- `len`. -/
 def len (x : FalkorDbIndex) : Nat := x.nodeColumns.length + x.edgeColumns.length
-/-- `entry`; also the trait's `VersionedIndex::entry` (, `entry_mut`
+/-- `entry`; also the trait's `VersionedIndex::entry` (`entry_mut`
     names the same slot to change: `setEntry`). -/
 def entry (x : FalkorDbIndex) (e : EntityType) (label attr : String) : Option IndexEntry :=
   hmGet (x.columns e) (label, attr)

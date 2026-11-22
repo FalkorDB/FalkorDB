@@ -16,9 +16,9 @@ bit-for-bit given the same libm. Live (ports 18920/18921): 25 calls incl. `cot(0
 
 | Lean | Rust (trig.rs) |
 | --- | --- |
-| `applyUnary` | `apply_unary_float` :31 |
+| `applyUnary` | `apply_unary_float`  |
 | `tSin … tHaversin`, `tAtan2`, `tPi` | the `cypher_fn!` bodies :47 :53 :59 :65 :73 :79 :85 :94 :109 :115 :121 :130 |
-| `trigSigs` | `register` :43 (names, `args:`, `ret:`) |
+| `trigSigs` | `register`  (names, `args:`, `ret:`) |
 | `cUnary`, `cAtan2` | C `AR_*` (null check, `SI_GET_NUMERIC`) |
 -/
 

@@ -44,7 +44,7 @@ Yes:
   - names fold case only over ASCII, so `tımeout` is not `TIMEOUT` (`dotless_i_not_folded`).
 - Module-load arguments are parsed by the same rules as C's `Config_Init` (`rust_c_same_accept` in `LoadArgs.lean`), and a refused argument applies nothing (`error_applies_nothing`). The theorem assumes no embedded NUL in names and values (C reads C strings and stops at the first NUL, Rust keeps the whole string, so `CACHE_SIZE "10\0junk"` loads on C and is refused by Rust; not live-checked) and `FsOk` (`File::create` agrees with `access(W_OK)`). Two further differences remain:
   - C skips leading whitespace in numbers and Rust does not, so `CACHE_SIZE " 10"` loads on C and is refused by Rust (`leading_space_divergence`);
-  - Rust accepts `INDEX_WORKER_THREADS`, `BOLT_PORT` and `EFFECTS_COMPRESSION`, which C does not know (`rust_only_names`). These are intended.
+  - Rust accepts `INDEX_WORKER_THREADS`, `BOLT_PORT`, `EFFECTS_COMPRESSION` and `INDEX_BUILD_THREAD_COUNT` (range 1 to 1024), which C does not know (`rust_only_names`). These are intended.
 - A `VKEY_MAX_ENTITY_COUNT` value set by `GRAPH.CONFIG SET` or a module-load argument survives `CONFIG REWRITE` and a restart: the rewritten `graph.VKEY_MAX_ENTITY_COUNT` line is inside the native config's range (`0..i64::MAX`) and reads back the same value (`vkey_rewrite_reloads_config`, `vkey_rewrite_reloads_load` in `ConfigRewrite.lean`). Other native configs can still abort the next start (bug 16 below).
 
 **4. Does the compact reply decode to the right values in the client?**
@@ -105,11 +105,11 @@ Yes:
 
 ## Bugs found
 
-All confirmed live against C (`repro_live.py` in this folder, and the scripts named in [`../FINDINGS.md`](../FINDINGS.md)).
+All confirmed live against C (`repro_live.py` in this folder, and the scripts named in [`../FINDINGS.md`](../FINDINGS.md)), except row 5, which is a model result only (Lean-only, not confirmed live: `repro_live.py` has no 65,536-entry RDB case).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 5 | `slot_len_truncates` | `Slot.len = n as u16`: 65,536 properties on one entity vanish | **Open**, still reachable from a malformed RDB |
+| 5 | `slot_len_truncates` | `Slot.len = n as u16`: 65,536 properties on one entity vanish | **Open**, model-only. Reachable from a malformed RDB: `AttributeStore::decode_with_count` (`attribute_store.rs`) reads the per-entity attribute count from the stream with no bound below 65,536, does not deduplicate ids, and passes the whole vector to `set_span`, whose `n as u16` wraps the stored length. Not reachable from `GRAPH.BULK` (deduplicated, `Bulk.lean`) |
 | 10 | `leading_space_divergence` | `CACHE_SIZE " 10"` and `GRAPH.CONFIG SET RESULTSET_SIZE " 5"` succeed on C and are refused by Rust | **Open** (confirmed live, not filed) |
 | 11 | `from_slice_past_end` | Any truncated `GRAPH.RESTORE` payload calls `RedisModule_LoadStringBuffer(NULL)`; a cut at a record boundary SIGSEGVs. C crashes too | **Open** (#2537; external PR #3167) |
 | 13 | none | `CREATE (a:A) DELETE a` reports no node stats in the verbose format (minor) | **Open**, not filed |

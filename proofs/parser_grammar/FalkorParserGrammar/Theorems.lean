@@ -181,7 +181,7 @@ theorem listOp_to_err (pe : List Tok → Out) (lhs : RT) (ts e : List Tok)
 
 /-- **A trailing comma in a call is refused** (#3060, cypher.rs), as in the
 grammar and C; `f()` and `f(1)` still parse. Historical (2c874022a, `call_trailing_comma`):
-`abs(1,)` was accepted as `abs(1)`. -/
+`abs(1)` was accepted as `abs(1)`. -/
 theorem call_trailing_comma_refused :
     (∃ e, parseAll 400 [.ident 7, .lparen, .int 1, .comma, .rparen] = .err e) ∧
     (∃ e, G.all 200 [.ident 7, .lparen, .int 1, .comma, .rparen] = .err e) ∧
@@ -189,7 +189,7 @@ theorem call_trailing_comma_refused :
     parseAll 400 [.ident 7, .lparen, .int 1, .rparen] = .ok (.node (.func [7]) [lf (.int 1)]) [] := by
   refine ⟨⟨_, rfl⟩, ⟨_, rfl⟩, rfl, rfl⟩
 
-/-- An empty-argument call cannot end on a comma either: `f(,)` is refused. -/
+/-- An empty-argument call cannot end on a comma either: `f()` is refused. -/
 theorem exprList_comma_first (pe : List Tok → Out) (n : Nat) (r : List Tok)
     (h : ∀ ts, pe (.comma :: ts) = .err (.comma :: ts)) :
     exprList pe (n + 1) [] (.comma :: r) = .err (.comma :: r) := by

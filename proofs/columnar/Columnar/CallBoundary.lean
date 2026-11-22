@@ -2,11 +2,11 @@
 # #2845 (eb470521b), columnar side: `rows_only`, `has_origins`, the empty-projection
 # fast path and the emitter's gather guard
 
-Model of the merged (now origin/main a9377c636) graph/src/runtime/batch.rs (`rows_only` :853,
-`gather` :897-918, `concat` :979-1053, `origin_row` :1298, `has_origins`
-:1312, `BatchBuilder::push_row_with` :577, `BatchBuilder::finish` :750-797),
-runtime/ops/project.rs `eval` :54-147, and
-runtime/ops/batched_result_emitter.rs `start_batch` :604, `finish_batch` :651.
+Model of the merged (now origin/main a9377c636) graph/src/runtime/batch.rs (`rows_only` ,
+`gather` , `concat` , `origin_row` , `has_origins`
+, `BatchBuilder::push_row_with` , `BatchBuilder::finish` ),
+runtime/ops/project.rs `eval` , and
+runtime/ops/batched_result_emitter.rs `start_batch` , `finish_batch` :651.
 Columns are abstracted to their bound/unbound shape plus values (`Option
 (List V)`, `none` = `Column::Unbound`) — the only thing these functions
 inspect, the value-level laws being this project's.
@@ -198,7 +198,7 @@ theorem emit_len_residual :
 
 /-! ## `Batch::concat` over columnless batches -/
 
-/-- `concat` :979-1053, restricted to batches with no columns (what the
+/-- `concat` , restricted to batches with no columns (what the
 empty entry projection and its consumers produce): `total` rows, no
 columns, origins concatenated over active rows, kept iff some is non-zero. -/
 def concatColless {V : Type} (bs : List (Batch V)) : Batch V :=

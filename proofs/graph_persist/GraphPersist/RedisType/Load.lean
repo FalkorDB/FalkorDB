@@ -208,8 +208,8 @@ load callback runs under (main thread, GIL held), and `CONFIGURATION_CACHE_SIZE.
 reads the configured `CACHE_SIZE`; `configured` is that config value. -/
 def ioCacheSize (configured : Nat) : Nat := configured
 
-/-- The plan-cache size an RDB-loaded graph gets (`graph_rdb_load` :104 and its placeholder
-:148, `graphmeta_rdb_load` :863 all pass `io_cache_size(rdb)`). Graphs created by
+/-- The plan-cache size an RDB-loaded graph gets (`graph_rdb_load`  and its placeholder
+:148, `graphmeta_rdb_load`  all pass `io_cache_size(rdb)`). Graphs created by
 `GRAPH.QUERY` / `GRAPH.COPY` / effects get `CONFIGURATION_CACHE_SIZE`
 (`commands/query.rs`, `copy.rs`, `effect.rs`). -/
 def cacheOnLoad (configured : Nat) : Nat := ioCacheSize configured

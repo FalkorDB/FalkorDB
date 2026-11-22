@@ -86,7 +86,7 @@ theorem WStats.untouched_not_modified :
     (WStats.mk 0 0 0 0 0 0 0 0 0 0 0).modified = false := by decide
 
 /-- Index DDL moves no counter but replicates an effect (`effects_count`), so it is `modified`:
-the reason the predicate reads `effects_count` too (the comment at). -/
+the reason the predicate reads `effects_count` too (the comment ). -/
 theorem WStats.effect_alone_modified (n : Nat) (h : 0 < n) :
     (WStats.mk 0 0 0 0 0 0 0 0 0 0 n).modified = true := by
   simp [WStats.modified, h]
@@ -180,7 +180,7 @@ theorem execProfile_agrees_execQuery (plan : List Node) (adm tmo : Bool) :
 
 open SC.Locks in
 /-- `profile_sync` as a lock program: the detect phase takes the read lock in
-`QuerySession::begin` and drops it with the session (the block at); a write then runs
+`QuerySession::begin` and drops it with the session (the block ); a write then runs
 under `begin_writer` (GIL, write lock) and commits like an inline `GRAPH.QUERY` write. -/
 def profileSyncProg : PDetect → List Op
   | .write => [.acq graphR, .rel graphR] ++ inlineWriterProg

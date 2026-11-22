@@ -24,7 +24,7 @@ def cmpKey (cv : V → V → Ordering) (a b : OKey V) : Ordering :=
   let o := cv a.value b.value
   if a.desc then o.swap else o
 
-/-- sort.rs / :99 / :107 -/
+/-- sort.rs -/
 def okEq (cv : V → V → Ordering) (a b : OKey V) : Bool := cmpKey cv a b == .eq
 def okCmp (cv : V → V → Ordering) (a b : OKey V) : Ordering := cmpKey cv a b
 def okPartialCmp (cv : V → V → Ordering) (a b : OKey V) : Option Ordering := some (okCmp cv a b)

@@ -7,7 +7,7 @@
 | `writerProg`, `pollWriterProg` | `QuerySession::escalate` (`query_session.rs`): release R, then `acquire_write`: per slice GIL, timed W; since #3816 the `WriterGate` closes after two misses |
 | `gate`, `rank3816`, `gateReaderProg` | #3816: `WriterGate`, `read_past_gate` |
 | `inlineWriterProg`             | `QuerySession::begin_writer`: GIL, W |
-| `retryWriterProg`              | `QuerySession::begin_writer_checked` (, #3559) from `execute_query_write`'s / `graph_bulk_insert`'s retry: `begin_with`, then `escalate`; `authorize_write`'s registry check runs under each slice's GIL |
+| `retryWriterProg`              | `QuerySession::begin_writer_checked` (#3559) from `execute_query_write`'s / `graph_bulk_insert`'s retry: `begin_with`, then `escalate`; `authorize_write`'s registry check runs under each slice's GIL |
 | `populateProg`                 | `populate_index_batch` (`graph.rs`): indexer lock only |
 | `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs`): GIL (main), registry mutex |
@@ -193,7 +193,7 @@ theorem spec_programs_ordered :
 Off the main thread `acquire_write` (`query_session.rs`) no longer blocks on the write
 lock holding the GIL: each slice takes the GIL, tries `try_write_arc_for(interval)` and on
 a miss gives the GIL back. After `GATE_AFTER_SLICES` misses it closes the graph's
-`WriterGate` (, `close`) and holds it until it has the lock; a pool reader in
+`WriterGate` (`close`) and holds it until it has the lock; a pool reader in
 `read_past_gate` that finds the gate closed lets its read lock go and waits at the
 gate holding nothing. The gate is a lock the writer takes *before* the GIL, so it ranks
 below it; the timed try is an acquire of `graphR` that may give up (`.rel`). -/

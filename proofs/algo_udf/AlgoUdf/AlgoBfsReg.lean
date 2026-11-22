@@ -178,7 +178,7 @@ def registerSsPaths (fs : List Entry) := addProc fs eSs
 def registerHarmonic (fs : List Entry) := addProc fs eHarmonic
 def registerMaxflow (fs : List Entry) := addProc fs eMaxflow
 
-/-- `register` :716 in its call order. -/
+/-- `register`  in its call order. -/
 def register (fs : List Entry) : Option (List Entry) :=
   registerPagerank fs >>= registerWcc >>= registerBetweenness >>= registerBfs >>= registerCdlp >>=
     registerMsf >>= registerSpPaths >>= registerSsPaths >>= registerHarmonic >>= registerMaxflow

@@ -119,7 +119,7 @@ structure CSt where
 
 def scopeOf (g : QG) : Nat := (g.vars.head?.map V.scope).getD 0
 
-/-- Inline variable minted at mod.rs / 1906-1915: id = current length
+/-- Inline variable minted at mod.rs: id = current length
 of the pattern's first variable's scope table, which then grows by one. -/
 def mint (st : CSt) (g : QG) : Nat × CSt :=
   let s := scopeOf g

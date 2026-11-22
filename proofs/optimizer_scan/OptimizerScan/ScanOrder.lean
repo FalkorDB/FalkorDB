@@ -37,7 +37,7 @@ def Hop.holds (E : Store) (σ : Nat → Nat) (h : Hop) : Bool :=
   if h.transposed then E h.rel (σ h.dst) (σ h.src) (σ h.edge)
   else E h.rel (σ h.src) (σ h.dst) (σ h.edge)
 
-/-- `swap_relationship` + flipping `transposed` (`select_scan_node.rs`, `1001-1003`). -/
+/-- `swap_relationship` + flipping `transposed` (`select_scan_node.rs`). -/
 def Hop.swap (h : Hop) : Hop :=
   { h with src := h.dst, dst := h.src, transposed := !h.transposed }
 

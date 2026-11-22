@@ -5,13 +5,13 @@ import FalkorValueMath.Conversion
 
 | Lean | Rust (value.rs) |
 | --- | --- |
-| `fmtDuration` | `Value::format_duration` :296 |
-| `HV`, `heapSize`, `amortized` | `Value::heap_size` :342, `amortized_heap_size` :388 |
-| `getAttr`, `pointComponent`, `durationComponentPre` | `get_attr` :439, `get_point_component` :458, `get_duration_component` :608 (pre-chrono part) |
-| `partialCmp` | `PartialOrd for Value` :1788 |
-| `getNumeric` | `Value::get_numeric` :246 |
-| `Tok`, `encode`, `decodeUncapped` | `Encode<19> for Value` :2068; `Decode<19>` without the cap (current: Nesting.lean) |
-| `Deduper` | `ValuesDeduper` :1853-1896 |
+| `fmtDuration` | `Value::format_duration`  |
+| `HV`, `heapSize`, `amortized` | `Value::heap_size` , `amortized_heap_size`  |
+| `getAttr`, `pointComponent`, `durationComponentPre` | `get_attr` , `get_point_component` , `get_duration_component`  (pre-chrono part) |
+| `partialCmp` | `PartialOrd for Value`  |
+| `getNumeric` | `Value::get_numeric`  |
+| `Tok`, `encode`, `decodeUncapped` | `Encode<19> for Value` ; `Decode<19>` without the cap (current: Nesting.lean) |
+| `Deduper` | `ValuesDeduper`  |
 | `jsonFloat` | `DisplayJson` Float arm :1591 |
 -/
 

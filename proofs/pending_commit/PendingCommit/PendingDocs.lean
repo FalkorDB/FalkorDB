@@ -1,7 +1,7 @@
 import PendingCommit.PendingDeg
 /-
 # `IndexDocs`, the deferred/published document logs, `clear`, `effects_count`,
-# constructors and `end_segment` (pending.rs `impl IndexDocs` :409-507, constructors :510-560, deferred-index methods and `end_segment` :1771-1978; the `IndexDocs` struct itself now lives in `index/index_docs.rs`)
+# constructors and `end_segment` (pending.rs `impl IndexDocs` , constructors :510-560, deferred-index methods and `end_segment` ; the `IndexDocs` struct itself now lives in `index/index_docs.rs`)
 
 * `IndexDocs::is_empty`/`absorb`/`merge`/`ids_by_slot` (:413-471): per slot,
   `absorb` and `merge` make `self` the union (`absorb_spec`, `merge_spec`;

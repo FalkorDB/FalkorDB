@@ -7,7 +7,7 @@ The contract that makes remove work is the **underflow flag**: `remove_one` retu
 `Some(false)` only if the returned node is again a *full* well-formed non-root node; with
 `Some(true)` the node may be *weak* (an empty leaf, or a branch with a single child) and the parent
 must repair it (`rebalance`). The flag is computed as `count < LEAF_MAX / 2` for a leaf and
-`children < BRANCH_MAX / 2` for a branch (`node.rs`, reported at). A weak branch has one child, so the
+`children < BRANCH_MAX / 2` for a branch (`node.rs`, reported ). A weak branch has one child, so the
 contract needs `1 < BRANCH_MAX / 2`, i.e. **`BRANCH_MAX >= 4`**, which the const assert demands
 (`mod.rs`; `Assert.remove_spec_asserted`). `Assert.constAssert_rejects_B3` records
 that `BRANCH_MAX = 3` is rejected.

@@ -18,7 +18,7 @@ import VersionedMatrix.Policy
 | `layerMut`/`layerMutRow` | :507 / :518 (the mutation is passed as `f`) |
 | `mayHoldRows`  | `may_hold_rows` (:528) |
 | `erase`        | `erase` (:539) |
-| `insertB`/`insertProduct`/`tombstoneMasked` | `impl Delta<bool>` :557 / :577 / :592 |
+| `insertB`/`insertProduct`/`tombstoneMasked` | `impl Delta<bool>`  / :577 / :592 |
 | `removeAll`    | `remove_all` (:610) |
 | `insertV`      | `impl Delta<u64>::insert` (:628) |
 

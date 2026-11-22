@@ -74,7 +74,7 @@ def createNode {W L A : Type} (c : Ctx W L A) (log : List (Ev W L)) (rows : List
     ((ids.zip attrs).filterMap fun p => p.2.map (p.1, ·))
   pure (log2, (rows.zip ids).map fun p => upd p.1 n.alias (.node p.2))
 
-/-- create.rs / :260-265: both endpoints must be node values. -/
+/-- create.rs: both endpoints must be node values. -/
 def endpoint {W : Type} (r : Row W) (src dst : Nat) : Except String (Nat × Nat) :=
   match r src, r dst with
   | some (.node a), some (.node b) => .ok (a, b)

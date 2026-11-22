@@ -13,7 +13,7 @@ published version.
 | --- | --- |
 | `SE` (`en`, `generation`, `commits`) | `IndexEntry` (`index`, `state`, `generation`, `indexer_commits`; `versioned.rs`) |
 | `SE.new` | `IndexEntry::new` |
-| `SE.indexerApply` | `IndexEntry::indexer_apply` (, now bumps `indexer_commits`) |
+| `SE.indexerApply` | `IndexEntry::indexer_apply` (now bumps `indexer_commits`) |
 | `discardedAgainst` | `IndexEntry::discarded_against` |
 | `V` | the parts of a `Graph` the fit reads: `version`, `falkordb_index.{indexes_created, batches_published}`, the batch's entry |
 | `V.newVersion`, `V.newBuildVersion` | `Graph::new_version` (`graph.rs`), `Graph::new_build_version` |
@@ -276,7 +276,7 @@ inductive CommitError where
   | stale
   deriving DecidableEq, Repr
 
-/-- `MvccGraph::commit_indexer_batch` with its compare-and-swap (`commit_version`, `mvcc_graph.rs`, the swap at).
+/-- `MvccGraph::commit_indexer_batch` with its compare-and-swap (`commit_version`, `mvcc_graph.rs`, the swap ).
 `pub` is the published version the commit loaded and fitted against; `now` is what is published when the swap
 runs, and `unchanged` is `Arc::ptr_eq(&previous, &published)`: nothing else was published in between (always so
 under the host's global lock; a publisher without it breaks that). A `Discarded` fit returns before the commit,

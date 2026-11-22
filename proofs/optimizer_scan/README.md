@@ -23,7 +23,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 **2. Does the id seek return the same nodes as `WHERE id(n) …`?**
 
-- **With non-negative integer bounds, yes, on any graph.** `seek_sound` proves `NodeByIdSeek` equals `Filter(id(n) op v …)` over `AllNodeScan` on every well-formed graph (`node_count` counts the live ids), including one that never held a node.
+- **With non-negative integer bounds below 2⁶³, yes, on any well-formed graph.** `seek_sound` (hypotheses: `g.wf` and every bound `< 2^63`) proves `NodeByIdSeek` equals `Filter(id(n) op v …)` over `AllNodeScan` on every well-formed graph (`node_count` counts the live ids), including one that never held a node.
 - `step_some`, `step_none` and `step_nonempty` prove each arm of `evaluate_id_filter` keeps exactly the ids that satisfy it, and the running range never inverts.
 - On a graph that never held a node, no range is returned when `node_count() == 0` (`empty_graph_seek_none`).
 

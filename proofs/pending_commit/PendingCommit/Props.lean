@@ -10,7 +10,7 @@
   The evaluator reads `Some(Null)` and `None` both as `null`, so `normQ` folds
   them.
 * `commitExisting` — `Graph::set_nodes_attributes` → `insert_attrs` →
-  `merge_span` (pending.rs, graph.rs/:1871, attribute_store.rs).
+  `merge_span` (pending.rs, graph.rs, attribute_store.rs).
 * `commitNew` — `import_node_attrs` → `import_attrs` (pending.rs,
   graph.rs, attribute_store.rs): drop nulls, `set_span`.
 
@@ -199,7 +199,7 @@ theorem commitNew_count (pend : List Entry) : (commitNew pend).length = refSet p
 /-- `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace`
 (ops/set.rs) then the source's entries (the node-target and relationship-target arms of
 `set_inner`, set.rs; any source kind): clear the staged attributes (`clear_*_attributes`,
-pending.rs/:623), stage `null` for every *committed* key, then stage the entries. The
+pending.rs), stage `null` for every *committed* key, then stage the entries. The
 staged list `pend` is dropped by the clear, so it is not an argument. -/
 def replaceFrom (stored src : List Entry) : List Entry :=
   let p1 := stored.foldl (fun p e => upsert p e.1 .null) []

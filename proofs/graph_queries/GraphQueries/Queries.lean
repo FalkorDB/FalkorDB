@@ -4,21 +4,21 @@ import GraphQueries.Ids
 
 | here | there (graph.rs) |
 | --- | --- |
-| `nodeRels`        | `get_node_relationships` :2390 |
-| `nodeRelsByType`  | `get_node_relationships_by_type` :2472 |
-| `inDeg`/`outDeg`/`..ByType` | `get_node_indegree` :2514 / `_by_type` :2526 / `get_node_outdegree` :2540 / `_by_type` :2552 |
-| `getNodesAll`/`getNodesOne`/`getNodesMany` | the three arms of `get_nodes` :2565 |
-| `nodeLabelIds`/`nodeLabelNames` | `get_node_label_ids` :2630 / `get_node_labels` :2639 |
-| `srcDestRels`     | `get_src_dest_relationships` :3271 |
-| `relMatUnrestricted` | `build_relationship_matrix_unrestricted` :3295 (`set_pattern` = pattern union) |
-| `resolveLabelIds` | `resolve_label_ids` :3329 |
-| `relMatrix`       | `build_relationship_matrix` :3339 (`rmxm`/`lmxm` by a label diagonal = row / column restriction) |
-| `getRelationships`| `get_relationships` :3407 |
-| `relTypeId`       | `get_relationship_type_id` :3423 (`expect` = `none`) |
-| `relEndpoints`    | `endpoints_for_edge` :3439 / `get_relationship_endpoints` :3457 |
-| `relTypeIter`     | `relationship_type_matrix_iter` :3471 |
-| `allEdges`        | `get_all_edges` :4303 |
-| `adjMatrix`/`symAdj` | `build_adjacency_matrix` :4875 / `build_symmetric_adjacency_matrix` :4903 |
+| `nodeRels`        | `get_node_relationships`  |
+| `nodeRelsByType`  | `get_node_relationships_by_type`  |
+| `inDeg`/`outDeg`/`..ByType` | `get_node_indegree`  / `_by_type`  / `get_node_outdegree`  / `_by_type`  |
+| `getNodesAll`/`getNodesOne`/`getNodesMany` | the three arms of `get_nodes`  |
+| `nodeLabelIds`/`nodeLabelNames` | `get_node_label_ids`  / `get_node_labels`  |
+| `srcDestRels`     | `get_src_dest_relationships`  |
+| `relMatUnrestricted` | `build_relationship_matrix_unrestricted`  (`set_pattern` = pattern union) |
+| `resolveLabelIds` | `resolve_label_ids`  |
+| `relMatrix`       | `build_relationship_matrix`  (`rmxm`/`lmxm` by a label diagonal = row / column restriction) |
+| `getRelationships`| `get_relationships`  |
+| `relTypeId`       | `get_relationship_type_id`  (`expect` = `none`) |
+| `relEndpoints`    | `endpoints_for_edge`  / `get_relationship_endpoints`  |
+| `relTypeIter`     | `relationship_type_matrix_iter`  |
+| `allEdges`        | `get_all_edges`  |
+| `adjMatrix`/`symAdj` | `build_adjacency_matrix`  / `build_symmetric_adjacency_matrix`  |
 -/
 namespace GQ
 variable {V : Type}

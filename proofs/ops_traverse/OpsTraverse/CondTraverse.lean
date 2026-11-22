@@ -6,7 +6,7 @@ import OpsTraverse.Basic
 | --- | --- |
 | `RowIn`                  | the endpoint bindings `from_id` / `to_id` read at `cond_traverse.rs` and the sibling-edge columns read by `edge_already_used` (`runtime/ops/mod.rs`) |
 | `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
-| `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs`): forward scan, then the reverse scan with `s != d` (; the multi-type twin `expand_union_row` :1121, `UnionGlue`) for bidirectional patterns |
+| `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs`): forward scan, then the reverse scan with `s != d` (the multi-type twin `expand_union_row` , `UnionGlue`) for bidirectional patterns |
 | `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` |
 | `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`cond_traverse.rs`, `graphblas/matrix.rs`; proved in `UnionGlue.deltaInto_eff`, `GBWDelta.deltaLmxm_correct`) |
 | `mxmRef`                 | a reference implementation proving `MxmSpec` is satisfiable |

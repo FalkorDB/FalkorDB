@@ -33,7 +33,7 @@ def joinSep : List String → String
   | [s] => s
   | s :: ss => s ++ ", " ++ joinSep ss
 
-/-- `write_f` (, #3043): C's `%f` spelling of NaN, `{:.6}` otherwise. -/
+/-- `write_f` (#3043): C's `%f` spelling of NaN, `{:.6}` otherwise. -/
 def wf (x : F) : String := if M.nan x then "nan" else M.f6 x
 
 mutual
@@ -63,7 +63,7 @@ def fmtMap : List (String × V F) → List String
   | (k, v) :: kvs => (k ++ ": " ++ fmtS v) :: fmtMap kvs
 end
 
-/-- The top-level verbose point (, #3043): no space after the colons. -/
+/-- The top-level verbose point (#3043): no space after the colons. -/
 def pointStr (a o : F) : String :=
   "point({latitude:" ++ M.f6 a ++ ", longitude:" ++ M.f6 o ++ "})"
 
@@ -469,7 +469,7 @@ theorem verbose_schema_reply (names : List String) (rows : List (List (V F))) (s
     (schema_emits E sc client))).array
   simpa [resultCalls, hn, flat_single] using this
 
-/-! ## `ReplyFormat` (, #3757) -/
+/-! ## `ReplyFormat` (#3757) -/
 
 /-- `enum ReplyFormat`: `Verbose` (the default) or `Compact { schema }`, the client's
 cached hash when it sent `SCHEMA_HASH h`. -/

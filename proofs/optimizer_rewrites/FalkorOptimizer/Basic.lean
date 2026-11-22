@@ -399,15 +399,17 @@ theorem skip_not_transparent :
 /-! ## Filter merging (push_filters_down.rs)
 
 Stacked `Filter(outer p) → Filter(inner q)` is merged into one `AND`. The Rust code lists the *child* (inner) conjuncts first
-(`for f in [&child_filter, &filter]`, line 128): `mergeRust`.
+(`for f in [&child_filter, &filter]`, since #3006): `mergeRust`.
 -/
 
 def stacked (p q : Expr) (xs : List Row) : Except Err (List Row) :=
   filterRows q xs >>= filterRows p
 
 /-- The two orders give different outcomes on a concrete row: the query
-`MATCH (n) WHERE n.v <> 1 MATCH (m) WHERE 1/(n.v-1) = 0` — Rust merges to
-`AND(1/(n.v-1)=0, n.v<>1)` and fails with division by zero, C returns rows. -/
+`MATCH (n) WHERE n.v <> 1 MATCH (m) WHERE 1/(n.v-1) = 0`. HISTORICAL (pre-#3006): Rust then merged
+outer-first to `AND(1/(n.v-1)=0, n.v<>1)` and failed with division by zero, while C returned rows.
+Rust now merges child-first (`mergeRust`, `merge_rust_fixed_example`) and no longer fails here;
+the theorem keeps only the order-sensitivity of the two `AND` spellings. -/
 def qInner : Expr := .neq (.var vN) (.lit (.int 1))
 def pOuter : Expr := .eq (.div (.lit (.int 1)) (.sub (.var vN) (.lit (.int 1)))) (.lit (.int 0))
 

@@ -25,13 +25,13 @@ Rust's `slice::sort_by` requires the comparator to be a *total order*:
 
 Since Rust 1.81 the sort checks this while it runs, and it panics, killing `redis-server`, when it catches the comparator contradicting itself.
 
-The answer is yes: `Value::sort_cmp` is proven to be a total order on every value Rust can build. That includes nested lists, maps, vectors and points.
+The answer is yes: `Value::sort_cmp` is proven (`scMain_total`) to be a total order on every well-formed value of the modelled variants: null, bool, int, float, string, list, map, node, vector and point, with arbitrary nesting. The model's `V` has no relationship, path or temporal (datetime, date, time, duration) constructors, so those values, including inside lists, are outside the proof.
 
 **2. Do "equal" and "same hash" agree?**
 
 Grouping (`GroupKey`) puts rows in a `HashMap`. The `HashMap` contract is that equal keys have equal hashes. If two keys compare equal but hash differently, the same group appears twice.
 
-`main_hash_consistent` proves the contract holds on main: if `sort_cmp` says equal, the hash words are equal.
+`main_hash_consistent` proves the contract holds on main for every well-formed value of those same modelled variants: if `sort_cmp` says equal, the hash words are equal. Relationship, path and temporal values are not modelled.
 
 **3. Does DISTINCT keep exactly one row per value?**
 

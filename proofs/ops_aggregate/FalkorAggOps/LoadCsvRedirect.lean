@@ -15,8 +15,12 @@ without `CURLOPT_FOLLOWLOCATION`) does.
 Property `EachHopValidated`: every connection the fetch makes is an https
 request whose addresses were validated for *that request's* host.
 `fixed3443_eachHopValidated` proves it for
-main's `loadRemote` for every server and DNS answer; `fixed3443_redirect_is_error`
-says a redirecting first URL ends in an error, never a second connection.
+main's `loadRemote` for every server and DNS answer whose result is `.ok` (it takes
+`loadRemote ... = .ok conns`). A 3xx reply makes `loadRemote` return an error after `fetch`
+has already made its one connection, and the error carries no connection list, so that trace is
+NOT covered by this theorem: `noRedirect_single` proves `EachHopValidated` for the `fetch` trace
+itself (any server reply), and `fixed3443_redirect_is_error` says a redirecting first URL ends
+in an error, never a second connection.
 `fixed_eachHopValidated` (https_only + per-URL validate-then-pin resolver,
 any budget) and `noRedirect_single` stay as the general fix-shape lemmas.
 -/

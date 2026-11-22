@@ -10,10 +10,17 @@ the configuration separate.
 exists in the graph) or `some false` (configured, a name no entity has).
 Live (Rust vs C), `A-[:E {weight:1,cost:2}]->B-[:E2 {weight:1}]->C`:
 
+| config | Rust | C |
+| --- | --- | --- |
+| `costProp:'cost'` (fast path) | 3 | 3 |
+| no `costProp` (fast path) | 0 | 0 |
+| `costProp:'nosuch'` (fast path) | 2 (each edge lacks it) | 0 on `c.so`; see the note below for newer master |
+| `costProp:'cost', maxLen:5` (enumeration) | 3 | 3 |
 
-(origin/master's `_sum_path_cost`, since `ae9ef2a73` (#2656), charges 1 even with no `costProp`; the
-configured-but-missing case, which is what the property below states, is 1 in both C
-versions.)
+(Source-derived prediction, NOT a live result: origin/master's `_sum_path_cost`, since `ae9ef2a73`
+(#2656), charges 1 even with no `costProp`, and the configured-but-missing case, which is what the
+property below states, is 1 in the newer C version. Only the pre-`ae9ef2a73` C build (the `c.so`
+that `cFastCost` models) was run live; the newer master value was not re-run.)
 -/
 namespace AlgoUdf.CostProp
 
