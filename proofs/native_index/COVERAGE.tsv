@@ -101,7 +101,7 @@ graph/src/index/falkordb/graph_writes.rs	scan_edges	661	PROVEN	scanEdges/edgeLoo
 graph/src/index/falkordb/numeric.rs	KeySet::distinct	151	PROVEN	KeySet.distinct: distinct_mem (sorted, same members), lookup_distinct_mem, keysOf_sorted
 graph/src/index/falkordb/numeric.rs	KeySet::contains	171	PROVEN	KeySet.contains/matchesValue (Keys = binary_search over a sorted list = membership): distinct_mem, keysOf_sorted, lookup_mem, lookup_fromEntries
 graph/src/index/falkordb/numeric.rs	NumericIndex::range_keys	422	PROVEN	rangeKeys/rangeBounds (checked_add/checked_sub branches): range_eq, range_keys, rangeBounds_eq
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::rows_at	165	PROVEN	IndexColumn.rowsAt (= NumericIndex.pointKey): rows_mem
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::rows_at	165	PROVEN	IndexColumn.rowsAt (= NumericIndex.pointKey): rows_mem; #3738 delegates to RangeIndex::rows_at (tag kinds: TagSel tagIn / isHeldBy)
 graph/src/index/falkordb/falkordb_index.rs	EqualCandidates::rows	298	PROVEN	EqualCandidates.rows: rows_mem (exactly the ids whose value shares the key), equalCandidates_complete
 graph/src/index/falkordb/falkordb_index.rs	EqualCandidates::id	305	PROVEN	EqualCandidates.id (the column slot stands for its address; the tree kind and key): rows_eq_of_id_eq
 graph/src/index/falkordb/falkordb_index.rs	ScanFilter::matches	504	PROVEN	ScanFilter.matches (All = every condition, Any = some; a missing attribute fails its condition): matches_resolve, nodeFilteredScan_agrees, edgeFilteredScan_agrees
@@ -236,7 +236,7 @@ graph/src/index/falkordb/online_build.rs	stop	488	PROVEN	Online.lean stopWorld (
 graph/src/index/falkordb/online_build.rs	enqueue	498	PROVEN	free fn: Builder::enqueue if the builder was started: Online.lean enqueue
 # Numeric array elements and conjunctions (#2452): fns the array tree and the conjunction fold added, not modelled yet.
 graph/src/index/falkordb/encode.rs	for_each_stored_key	104	PROVEN	forEachStoredKey (a list: one array key per numeric element; else the scalar key): forEachStoredKey_scalar, forEachStoredKey_array, pushStored_scalar, pushStored_array
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::for_each_stored_key	110	PROVEN	IndexColumn.storedKeys: indexColumn_delegates, storedKeys_spec
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::for_each_stored_key	110	PROVEN	IndexColumn.storedKeys: indexColumn_delegates, storedKeys_spec; #3738 delegates to RangeIndex (RangeKinds.storedKeys_encoded)
 graph/src/index/falkordb/falkordb_index.rs	ScanFilter::one	460	PROVEN	ScanFilter.one: queryColumn_building (the filter of a query on one attribute)
 graph/src/index/falkordb/falkordb_index.rs	ScanFilter::resolve	472	PROVEN	ScanFilter.resolve/resolveGo: resolveGo_all, resolveGo_any, matches_resolve (resolve keeps the verdict; None = matches nothing)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::for_each_stored_key	920	PROVEN	FalkorDbIndex.storedKeys: storedKeys_spec (the staging gate: nothing without a column)
@@ -301,17 +301,17 @@ graph/src/index/falkordb/range.rs	Selection::and	445	PROVEN	TagSel.SelT.and: and
 graph/src/index/falkordb/range.rs	atoms	506	PROVEN	atoms/atomsGo: atoms_and_no_and, atoms_or_no_or, of_or_nil (an empty AND/OR names no column)
 graph/src/index/falkordb/range.rs	on_one_attribute	529	PROVEN	onOneAttribute/allSame: disjunction_attr_mismatch, disjunction_agrees (one attribute)
 graph/src/index/falkordb/range.rs	attributes_of	542	PROVEN	attrsOf/attrsOfAll (none for an empty And/Or): queryColumn_single, queryColumn_declined
-graph/src/index/falkordb/range.rs	RangeIndex::new	579	PROVEN	NumericIndex.new: new_spec
-graph/src/index/falkordb/range.rs	RangeIndex::for_each_stored_key	600	PROVEN	forEachStoredKey (IndexColumn.storedKeys): forEachStoredKey_scalar/_array
-graph/src/index/falkordb/range.rs	RangeIndex::push_encoded	612	PROVEN	pushStored: pushStored_scalar, pushStored_array
+graph/src/index/falkordb/range.rs	RangeIndex::new	579	PROVEN	NumericIndex.new: new_spec; #3738 two kinds (RangeKinds.lean): RangeKinds.new_spec
+graph/src/index/falkordb/range.rs	RangeIndex::for_each_stored_key	600	PROVEN	forEachStoredKey (IndexColumn.storedKeys): forEachStoredKey_scalar/_array; #3738 numeric then tag keys (RangeKinds.lean): RangeKinds.storedKeys_encoded (the numeric keys are the old ones), tag keys a parameter
+graph/src/index/falkordb/range.rs	RangeIndex::push_encoded	612	PROVEN	pushStored: pushStored_scalar, pushStored_array; #3738 (RangeKinds.lean): RangeKinds.pushEncoded_num (numeric share = old pushStored), RangeKinds.pushEncoded_tag
 graph/src/index/falkordb/range.rs	RangeIndex::add	622	PROVEN	NumericIndex.add: add_spec, add_array_spec, temporal_not_added
 graph/src/index/falkordb/range.rs	RangeIndex::remove	634	PROVEN	NumericIndex.remove (routes on the old value's kinds): remove_spec, remove_array_spec
 graph/src/index/falkordb/range.rs	RangeIndex::add_batch	649	PROVEN	NumericIndex.addBatch/pushAll: addBatch_spec, addBatch_array_spec, pushAll_spec
 graph/src/index/falkordb/range.rs	RangeIndex::remove_batch	662	PROVEN	NumericIndex.removeBatch: removeBatch_spec, removeBatch_array_spec
-graph/src/index/falkordb/range.rs	RangeIndex::add_encoded	676	PROVEN	NumericIndex.addEncoded (sort_dedup then the kind's add): addEncoded_spec, addEncoded_array_spec, addEncoded_sorted, addEncoded_tuples
-graph/src/index/falkordb/range.rs	RangeIndex::remove_encoded	687	PROVEN	NumericIndex.removeEncoded: removeEncoded_spec, removeEncoded_array_spec
-graph/src/index/falkordb/range.rs	RangeIndex::is_empty	699	PROVEN	NumericIndex.isEmpty: isEmpty_spec
-graph/src/index/falkordb/range.rs	RangeIndex::memory_usage	706	PROVEN	memoryUsage_two_trees
+graph/src/index/falkordb/range.rs	RangeIndex::add_encoded	676	PROVEN	NumericIndex.addEncoded (sort_dedup then the kind's add): addEncoded_spec, addEncoded_array_spec, addEncoded_sorted, addEncoded_tuples; #3738 both kinds (RangeKinds.lean): RangeKinds.addEncoded_numeric (numeric share = old addEncoded; tag tuples passed unsorted), RangeKinds.addEncoded_mem
+graph/src/index/falkordb/range.rs	RangeIndex::remove_encoded	687	PROVEN	NumericIndex.removeEncoded: removeEncoded_spec, removeEncoded_array_spec; #3738 both kinds (RangeKinds.lean): RangeKinds.removeEncoded_numeric, RangeKinds.removeEncoded_mem
+graph/src/index/falkordb/range.rs	RangeIndex::is_empty	699	PROVEN	NumericIndex.isEmpty: isEmpty_spec; #3738 numeric && tag (RangeKinds.lean): RangeKinds.isEmpty_iff, RangeKinds.isEmpty_tag_nonempty
+graph/src/index/falkordb/range.rs	RangeIndex::memory_usage	706	PROVEN	memoryUsage_two_trees; #3738 numeric + tag (RangeKinds.lean): RangeKinds.memoryUsage_kinds
 graph/src/index/falkordb/range.rs	RangeIndex::encode_value	715	PROVEN	IndexColumn.encodeValue (scalar tree and key, none for a list/temporal/map): encodeValue_numeric, encodeValue_spec; #3738 strings (Tag.lean encodeValueK): encodeValueK_string, encodeValueK_numeric, encodeValueK_none
 graph/src/index/falkordb/range.rs	RangeIndex::rows_at	729	PROVEN	IndexColumn.rowsAt (scalar: lookup (point key); array: listsHolding): rows_mem, rowsAt_array; #3738 tag kind: tagIn / isHeldBy .tag (TagSel)
 graph/src/index/falkordb/range.rs	RangeIndex::lookup	744	PROVEN	TagSel.lookupT: lookupT_lift (numbers: = old NumericIndex.lookupSel; lookupLists_mem, lookupSel_fromEntries, lookup_mem), lookupT_scalars_mem; the string trees abstracted as functions
