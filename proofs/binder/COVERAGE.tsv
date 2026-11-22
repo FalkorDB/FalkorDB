@@ -62,3 +62,4 @@ graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1724	PROVEN	Sco
 graph/src/planner/binder.rs	constants_equal	2880	PROVEN	AggEq.constEq (Int/Float exact via fint, else Value == = compare_value): constEq_refl, constEq_symm, int_float_iff
 graph/src/planner/binder.rs	Binder::removed_node_labels	204	NOT COVERED	(#3457): not modelled yet
 graph/src/planner/binder.rs	Binder::carry_node_labels	1169	NOT COVERED	(#3457): not modelled yet
+graph/src/planner/binder.rs	Binder::drop_removed_labels	307	NOT COVERED	(#3457): not modelled yet

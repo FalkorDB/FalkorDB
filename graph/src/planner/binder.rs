@@ -256,7 +256,28 @@ impl Binder {
                 Self::update_graph_labels(pattern, &self.node_labels, *optional);
             }
             QueryIR::Create(graph) | QueryIR::Merge { pattern: graph, .. } => {
-                Self::update_graph_labels(graph, &self.node_labels, false);
+                if self.removed_labels.is_empty() {
+                    Self::update_graph_labels(graph, &self.node_labels, false);
+                } else {
+                    // A label a REMOVE stripped is stamped on the clauses that
+                    // match the node, not on a CREATE/MERGE that may run after
+                    // the removal (`drop_removed_labels` left only what the
+                    // clause writes), so the stamp adds to the clause's own
+                    // labels without the removed ones.
+                    let held: HashMap<VarKey, OrderSet<Arc<String>>> = self
+                        .node_labels
+                        .iter()
+                        .map(|(key, labels)| {
+                            let kept = labels
+                                .iter()
+                                .filter(|l| !self.removed_labels.contains(*l))
+                                .cloned()
+                                .collect();
+                            (*key, kept)
+                        })
+                        .collect();
+                    Self::update_graph_labels(graph, &held, true);
+                }
             }
             QueryIR::Query { clauses, .. } => {
                 for clause in clauses {
@@ -277,6 +298,52 @@ impl Binder {
             // avoid overwriting inner labels with colliding outer scope IDs.
             _ => {}
         }
+    }
+
+    /// A MERGE after `REMOVE n:L` matches the node as it is now: the bound
+    /// pattern carries the labels accumulated for `n`, `L` among them, which
+    /// would be checked against a node that no longer has it. Drop the removed
+    /// labels from the bound pattern unless this clause writes them itself.
+    fn drop_removed_labels(
+        &self,
+        bound: &mut QueryGraph<Arc<String>, Arc<String>, Variable>,
+        raw: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+    ) {
+        if self.removed_labels.is_empty() {
+            return;
+        }
+        let mut written: HashMap<Alias, OrderSet<Arc<String>>> = HashMap::new();
+        let raw_nodes = raw.nodes().iter().map(|n| (&n.alias, &n.labels)).chain(
+            raw.relationships()
+                .iter()
+                .flat_map(|r| [(&r.from.alias, &r.from.labels), (&r.to.alias, &r.to.labels)]),
+        );
+        for (alias, labels) in raw_nodes {
+            written
+                .entry(alias.clone())
+                .or_default()
+                .extend(labels.iter().cloned());
+        }
+        let mut kept: HashMap<VarKey, OrderSet<Arc<String>>> = HashMap::new();
+        let bound_nodes = bound.nodes().iter().map(AsRef::as_ref).chain(
+            bound
+                .relationships()
+                .iter()
+                .flat_map(|r| [r.from.as_ref(), r.to.as_ref()]),
+        );
+        for node in bound_nodes {
+            let own = node.alias.alias.as_ref().and_then(|a| written.get(a));
+            let labels = node
+                .labels
+                .iter()
+                .filter(|l| {
+                    !self.removed_labels.contains(*l) || own.is_some_and(|w| w.contains(*l))
+                })
+                .cloned()
+                .collect();
+            kept.insert(node.alias.key(), labels);
+        }
+        Self::update_graph_labels(bound, &kept, false);
     }
 
     /// Replace QueryNode labels in the graph with the full accumulated set.
@@ -561,7 +628,9 @@ impl Binder {
                     }
                 }
 
-                let pattern = self.bind_graph(&pattern, false, false)?;
+                let mut bound_pattern = self.bind_graph(&pattern, false, false)?;
+                self.drop_removed_labels(&mut bound_pattern, &pattern);
+                let pattern = bound_pattern;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
                 Ok(QueryIR::Merge {

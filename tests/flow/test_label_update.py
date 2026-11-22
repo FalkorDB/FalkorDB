@@ -209,6 +209,21 @@ class testLabelUpdate():
 
         self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
 
+    def test_merge_after_remove_label_matches_existing(self):
+        # A MERGE after REMOVE a:A (no WITH between) must match the edge that
+        # exists, not be tightened to (a:A) and create a duplicate.
+        q = "MATCH (a:A), (b:B) REMOVE a:A MERGE (a)-[:R]->(b) RETURN labels(a)"
+        self.query_master_and_wait("MATCH (n) DETACH DELETE n")
+        self.query_master_and_wait("CREATE (:A)-[:R]->(:B)")
+        res = self.query_master_and_wait(q)
+        self.env.assertEqual(res.labels_removed, 1, message=q)
+        self.env.assertEqual(res.relationships_created, 0, message=q)
+        self.env.assertEqual(res.result_set, [[[]]], message=q)
+        res = self.query_master_and_wait("MATCH ()-[r:R]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+
     def test_match_after_union_branch_removes_label(self):
         # A label a CALL {} UNION branch removed is gone for the clauses after
         # it, whichever branch ran.
