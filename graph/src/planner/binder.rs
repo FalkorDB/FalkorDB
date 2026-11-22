@@ -36,6 +36,7 @@ use crate::runtime::value::{Value, ValueTypeOf};
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
+use std::mem::discriminant;
 use std::sync::Arc;
 
 /// The variables of one scope.
@@ -2869,6 +2870,25 @@ fn replace_agg_subtrees(
     new_tree
 }
 
+/// 2^63: the first float above the `i64` range, and the negation of its first
+/// float below it (`i64::MIN` is exactly `-2^63`).
+const I64_RANGE_BOUND: f64 = 9_223_372_036_854_775_808.0;
+
+/// Whether two constants are the same value. An `Int` and a `Float` match
+/// only when the float is that exact integer: `Value`'s own equality rounds the
+/// integer to `f64`, which would conflate neighbours past 2^53.
+fn constants_equal(
+    a: &Value,
+    b: &Value,
+) -> bool {
+    match (a, b) {
+        (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => {
+            f.fract() == 0.0 && *f >= -I64_RANGE_BOUND && *f < I64_RANGE_BOUND && *f as i64 == *i
+        }
+        _ => a == b,
+    }
+}
+
 /// Compare two raw (pre-bind) expression trees structurally, ignoring
 /// internal `__agg_order_by_placeholder__` variables that the parser
 /// appends to aggregate functions.
@@ -2915,15 +2935,44 @@ fn raw_exprs_structurally_equal(
         b: &ExprIR<Arc<String>>,
     ) -> bool {
         match (a, b) {
-            (ExprIR::Variable(va), ExprIR::Variable(vb)) => va == vb,
+            // Constants match when they are equal values, as in C
+            // (`SIValue_Compare`): `3` matches `3.0`, `null` matches only
+            // `null`, and values of unrelated types never match.
+            (ExprIR::Constant(va), ExprIR::Constant(vb)) => constants_equal(va, vb),
+            (ExprIR::Variable(va), ExprIR::Variable(vb))
+            | (ExprIR::ListComprehension(va), ExprIR::ListComprehension(vb)) => va == vb,
             (ExprIR::FuncInvocation(fa), ExprIR::FuncInvocation(fb)) => fa.name == fb.name,
-            (ExprIR::Constant(Value::String(sa)), ExprIR::Constant(Value::String(sb))) => sa == sb,
-            (ExprIR::Constant(Value::Int(ia)), ExprIR::Constant(Value::Int(ib))) => ia == ib,
-            (ExprIR::Constant(Value::Float(fa)), ExprIR::Constant(Value::Float(fb))) => fa == fb,
-            (ExprIR::Constant(Value::Bool(ba)), ExprIR::Constant(Value::Bool(bb))) => ba == bb,
             (ExprIR::Property(pa), ExprIR::Property(pb)) => pa == pb,
             (ExprIR::Parameter(pa), ExprIR::Parameter(pb)) => pa == pb,
-            _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+            (ExprIR::Case { has_subject: sa }, ExprIR::Case { has_subject: sb }) => sa == sb,
+            (
+                ExprIR::Quantifier {
+                    quantifier_type: qa,
+                    var: va,
+                },
+                ExprIR::Quantifier {
+                    quantifier_type: qb,
+                    var: vb,
+                },
+            ) => qa == qb && va == vb,
+            (ExprIR::Reduce(ra), ExprIR::Reduce(rb)) => {
+                ra.accumulator == rb.accumulator && ra.iterator == rb.iterator
+            }
+            (ExprIR::ShortestPath(sa), ExprIR::ShortestPath(sb)) => {
+                sa.rel_types == sb.rel_types
+                    && sa.min_hops == sb.min_hops
+                    && sa.max_hops == sb.max_hops
+                    && sa.directed == sb.directed
+            }
+            (ExprIR::CompiledRegex(ra), ExprIR::CompiledRegex(rb)) => {
+                ra.kind == rb.kind && ra.regex.as_str() == rb.regex.as_str()
+            }
+            // The remaining variants carry no payload, except the graph
+            // patterns (`Pattern`, `PatternComprehension`, `NestedPlan`),
+            // which are not compared: their anonymous elements get a fresh
+            // name per occurrence, so two copies of the same pattern would
+            // never compare equal.
+            _ => discriminant(a) == discriminant(b),
         }
     }
 
@@ -3046,6 +3095,29 @@ mod tests {
         for (parenthesised, plain) in different {
             assert_ne!(bound(parenthesised), bound(plain), "{parenthesised}");
         }
+    }
+
+    /// Mixed `Int`/`Float` constants are equal only when the float is exactly
+    /// that integer, so ids past 2^53 are not conflated.
+    #[test]
+    fn constants_equal_compares_mixed_numbers_exactly() {
+        use super::constants_equal;
+        use crate::runtime::value::Value;
+
+        assert!(constants_equal(&Value::Int(3), &Value::Float(3.0)));
+        assert!(constants_equal(&Value::Float(3.0), &Value::Int(3)));
+        assert!(!constants_equal(&Value::Int(4), &Value::Float(3.0)));
+        assert!(!constants_equal(&Value::Int(3), &Value::Float(3.5)));
+        assert!(!constants_equal(
+            &Value::Int(9_007_199_254_740_993),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        assert!(constants_equal(
+            &Value::Int(9_007_199_254_740_992),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        assert!(!constants_equal(&Value::Int(1), &Value::Float(f64::NAN)));
+        assert!(!constants_equal(&Value::Null, &Value::Int(0)));
     }
 
     /// An unnamed entity is a variable of its own: no name a query can write,
