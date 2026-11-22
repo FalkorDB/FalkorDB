@@ -1,5 +1,4 @@
 import os
-import subprocess
 import tempfile
 from common import *
 
@@ -66,30 +65,17 @@ DEFAULTS = {
     "TEMP_FOLDER": "/tmp",
     "JS_HEAP_SIZE": 268435456,
     "JS_STACK_SIZE": 1048576,
+    "WRITE_LOCK_POLL_INTERVAL": 5,
 }
 
 
 def _load_locally(module_args):
-    """Start redis-server with the module and `module_args`, without listening
+    """Start a server with the module and `module_args`, without listening
     on a port (so it exits right after loading the module), and return
     (exit code, or None if it did not exit, and its log)."""
-    module = Defaults.module
-    if isinstance(module, (list, tuple)):
-        module = module[0]
-    log_dir = tempfile.mkdtemp()
-    log_file = os.path.join(log_dir, "redis.log")
-    cmd = [Defaults.binary, "--port", "0", "--save", "", "--dir", log_dir,
-           "--logfile", log_file, "--loadmodule", module, *module_args.split()]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        rc = proc.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        rc = None
-    with open(log_file) as f:
-        log = f.read()
-    return rc, log
+    proc, log = start_local_server(tempfile.mkdtemp(), "--save", "",
+                                   module_args=module_args.split())
+    return wait_for_exit(proc, 20), read_log(log)
 
 
 class testModuleArgs():

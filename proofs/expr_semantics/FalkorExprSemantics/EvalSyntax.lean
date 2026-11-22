@@ -1,5 +1,5 @@
 /-!
-# `ExprEval`'s expression tree, operations and arm helpers (runtime/eval.rs:266-330, :1713-1812)
+# `ExprEval`'s expression tree, operations and arm helpers (runtime/eval.rs)
 
 The expression tree is `E`; values are abstract (`Ops` lists every value operation the
 code calls — `+ - * / %`, `compare_value`, `get_attr`, the runtime's attribute reads,
@@ -36,23 +36,23 @@ structure Ops (V : Type) where
   nodeAttr : Nat → String → Option V        -- `rt.get_node_attribute`
   relAttr : Nat → String → Option V         -- `rt.get_relationship_attribute`
   /- 2026-10-21: what the AND/OR/XOR/NOT/IN/list/subscript/projection/call arms read. -/
-  name : V → String                         -- `Value::name` (value.rs:1387)
+  name : V → String                         -- `Value::name` (value.rs)
   /-- `Bool(b)` ↦ `some (some b)`, `Null` ↦ `some none`, anything else `none`. -/
   boolOf : V → Option (Option Bool)
   mkList : List V → V                       -- `Value::List`
   asList : V → Option (List V)
   asInt : V → Option Int
   asMap : V → Option (List (String × V))    -- `Value::Map`'s entries, in order
-  contains : List V → V → V                 -- `Contains::contains` (value.rs:1762)
+  contains : List V → V → V                 -- `Contains::contains` (value.rs)
   debugPair : V → V → String                -- `format!("{v:?}")` of the `(arr, i)` pair
   nodeAttrs : Nat → List (String × V)       -- `rt.get_node_attrs`
   relAttrs : Nat → List (String × V)        -- `rt.get_relationship_attrs`
   distinct : List V → V                     -- `Distinct`'s dedup (runtime state; abstract)
   rtWrite : Bool                            -- `Runtime::write`
 
-/-- `GraphFn` (functions/mod.rs:662) as a `FuncInvocation(Arc<GraphFn>)` node holds it, with
+/-- `GraphFn` (functions/mod.rs) as a `FuncInvocation(Arc<GraphFn>)` node holds it, with
 the fields `eval_node` and `VectorEval::eval` read: `call` is `func.func.call(rt, args)` with
-the runtime fixed, `validate` is `validate_args_type` (mod.rs:828), `structFn`/`structSlots`
+the runtime fixed, `validate` is `validate_args_type` (mod.rs), `structFn`/`structSlots`
 the positional struct-constructor form. Aggregations are not `func` nodes (see `E`). -/
 structure Fn (V : Type) where
   name : String
@@ -63,8 +63,8 @@ structure Fn (V : Type) where
   validate : List V → Except String Unit
   call : List V → Except String V
 
-/-- Expression trees (`ExprIR<Variable>`, parser/ast.rs:155). Every arm `eval_node` /
-`eval_compound` (eval.rs:340-1134) treats specially that a list-comprehension body can reach
+/-- Expression trees (`ExprIR<Variable>`, parser/ast.rs). Every arm `eval_node` /
+`eval_compound` (eval.rs) treats specially that a list-comprehension body can reach
 has its own constructor (since 2026-10-21); `compound` is every remaining arm
 (`Length`, `GetElements`, `IsNode`, `IsRelationship`, `Negate`, `Pow`, `Add`…`Modulo` and
 `Eq`/`Neq` with other than two children, `CompiledRegex`, `ShortestPath`, aggregate calls and
@@ -111,11 +111,11 @@ abbrev Compound (V : Type) := Nat → List (Unit → Except String V) → Except
 structure Ev (V : Type) where
   runtime : Option (String → Option V)
 
-/-- `from_runtime` (eval.rs:266) and `constant` (:273). -/
+/-- `from_runtime` (eval.rs) and `constant` (:273). -/
 def Ev.fromRuntime (params : String → Option V) : Ev V := ⟨some params⟩
 def Ev.constant : Ev V := ⟨none⟩
 
-/-- `rt()` (eval.rs:278). -/
+/-- `rt()` (eval.rs). -/
 def Ev.rt (ev : Ev V) : Except String (String → Option V) :=
   match ev.runtime with
   | some r => .ok r
@@ -125,7 +125,7 @@ theorem rt_cases (p : String → Option V) :
     (Ev.fromRuntime p).rt = .ok p ∧ (Ev.constant : Ev V).rt = .error "not a constant expression" :=
   ⟨rfl, rfl⟩
 
-/-- `resolve_var` (eval.rs:287): the row's value, else "Variable {name} not found". -/
+/-- `resolve_var` (eval.rs): the row's value, else "Variable {name} not found". -/
 def resolveVar (env : Option (Nat → Option V)) (id : Nat) (name : String) : Except String V :=
   match env.bind (fun e => e id) with
   | some v => .ok v
@@ -150,13 +150,13 @@ def cmpResult (op : CmpOp) (r : Ordering × Flag) : V :=
 
 /-! ## Helpers of the 2026-10-21 arms (non-recursive) -/
 
-/-- The AND/OR/XOR/NOT operand type error (eval.rs:657-662, 680-685, 708-713, 722-726). -/
+/-- The AND/OR/XOR/NOT operand type error (eval.rs). -/
 def boolMismatchMsg (v : V) : String := s!"Type mismatch: expected Boolean or Null but was {O.name v}"
 
-/-- `logical_xor` (eval.rs:1807). -/
+/-- `logical_xor` (eval.rs). -/
 def logicalXor (a b : Bool) : Bool := (a && !b) || (!a && b)
 
-/-- The `WHEN` test of `eval_case` (eval.rs:510-519): value form `compare_value == (Equal,
+/-- The `WHEN` test of `eval_case` (eval.rs): value form `compare_value == (Equal,
 None)`; searched form anything but `false` / `null`. -/
 def caseHit (sv : Option V) (w : V) : Bool :=
   match sv with
@@ -165,14 +165,14 @@ def caseHit (sv : Option V) (w : V) : Bool :=
     | some (some false) | some none => false
     | _ => true
 
-/-- `list_contains` (eval.rs:1760). -/
+/-- `list_contains` (eval.rs). -/
 def listContains (list value : V) : Except String V :=
   match O.asList list with
   | some l => .ok (O.contains l value)
   | none => if O.isNull list then .ok O.null
     else .error s!"Type mismatch: expected List or Null but was {O.name list}"
 
-/-- The `GetElement` match (eval.rs:583-621) on the evaluated operands; `rt` is the
+/-- The `GetElement` match (eval.rs) on the evaluated operands; `rt` is the
 `self.rt()?` of the node / relationship arms. -/
 def getElem (rt : Except String Unit) (arr i : V) : Except String V :=
   match O.asList arr with
@@ -194,19 +194,19 @@ def getElem (rt : Except String Unit) (arr i : V) : Except String V :=
     | _, _, _, _ => if O.isNull arr then .ok O.null
       else .error s!"Type mismatch: unexpected types {O.debugPair arr i}"
 
-/-- The common call path of the `FuncInvocation` arm (eval.rs:963-985): validate, the
+/-- The common call path of the `FuncInvocation` arm (eval.rs): validate, the
 read-only check, call. -/
 def callFn (f : Fn V) (vs : List V) : Except String V := do
   let _ ← f.validate vs
   if !O.rtWrite && f.write then .error "graph.RO_QUERY is to be executed only on read-only queries"
   else f.call vs
 
-/-- `Constant(Value::Null)` (the struct path skips these, eval.rs:932). -/
+/-- `Constant(Value::Null)` (the struct path skips these, eval.rs). -/
 def isNullConst : E V → Bool
   | .const v => O.isNull v
   | _ => false
 
-/-- A map-projection item's value of property `a` (eval.rs:1624-1640). -/
+/-- A map-projection item's value of property `a` (eval.rs). -/
 def projGet (b : V) (a : String) : V :=
   match O.asNode b, O.asRel b, O.asMap b with
   | some id, _, _ => (O.nodeAttr id a).getD O.null
@@ -214,7 +214,7 @@ def projGet (b : V) (a : String) : V :=
   | none, none, some m => (m.lookup a).getD O.null
   | none, none, none => O.null
 
-/-- The `.*` item (eval.rs:1602-1622): every attribute / entry, in order. -/
+/-- The `.*` item (eval.rs): every attribute / entry, in order. -/
 def projAllOf (b : V) : List (String × V) :=
   match O.asNode b, O.asRel b, O.asMap b with
   | some id, _, _ => O.nodeAttrs id

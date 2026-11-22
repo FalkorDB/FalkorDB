@@ -86,9 +86,9 @@ def f64Grammar (s : List Char) : Bool :=
     | r => r
   isSpecial body || decimalBody body
 
-/-! ## `toInteger(String)` (conversion.rs:46-75) -/
+/-! ## `toInteger(String)` (conversion.rs) -/
 
-/-- `s.strip_prefix(['-', '+']).unwrap_or(s)` (conversion.rs:56): drop one leading sign. -/
+/-- `s.strip_prefix(['-', '+']).unwrap_or(s)` (conversion.rs): drop one leading sign. -/
 def stripSign : List Char → List Char
   | c :: rest => if c = '-' ∨ c = '+' then rest else c :: rest
   | [] => []
@@ -100,7 +100,7 @@ def rustToIntegerStr (f64Val : List Char → Option Int) (s : List Char) : Optio
   match parseI64 s with                                           -- :51
   | some i => some i
   | none =>
-    if allDigits (stripSign s) then none else                     -- :56-59 (#2989)
+    if allDigits (stripSign s) then none else                     -- :56-59
     match f64Val s with                                           -- :60-73
     | some fl => if fl ≥ TWO63 ∨ fl < -TWO63 then none else some fl
     | none => none
@@ -167,7 +167,7 @@ tie at +1024 goes to the even significand 2^52). -/
 theorem roundNat_window {n : Nat} (h1 : 2 ^ 63 ≤ n) (h2 : n ≤ 2 ^ 63 + 1024) : roundNat n = 2 ^ 63 := by
   unfold roundNat
   rw [bitLen_of_range h1 (by omega)]
-  simp only [show ¬ (64 ≤ 53) by omega, if_false, show 64 - 53 = 11 by rfl, show 11 - 1 = 10 by rfl]
+  simp only [show ¬ (64 ≤ 53) by omega, ite_false, show 64 - 53 = 11 by rfl, show 11 - 1 = 10 by rfl]
   have hq : n / 2 ^ 11 = 2 ^ 52 ∨ (n = 2 ^ 63 + 1024 ∧ n / 2 ^ 11 = 2 ^ 52) := by left; omega
   have hq' : n / 2 ^ 11 = 2 ^ 52 := by omega
   rw [hq']
@@ -244,7 +244,7 @@ theorem toInteger_int_literal_agrees_c (f64Val : List Char → Option Int) (s : 
           simp [cToIntegerNoDot, cStrtoll, hc, hm, hpl, hd, hout]
 
 /-- Positive overflow is null (live: `toInteger('9223372036854775808')` null in both).
-Since `ac5c27b76` the digits guard (conversion.rs:56-59) returns null before the `f64`
+Since `ac5c27b76` the digits guard (conversion.rs) returns null before the `f64`
 path; before it, the same rounding sent the value to `2^63 ≥ 2^63`, also null. -/
 theorem toInteger_pos_overflow (ds : List Char) (hd : allDigits ds = true)
     (h1 : 2 ^ 63 ≤ digitsVal ds) :
@@ -258,7 +258,7 @@ theorem toInteger_pos_overflow (ds : List Char) (hd : allDigits ds = true)
   have hp : parseI64 (c :: rest) = none := by simp [parseI64, hcm, hcp, hd, hnot]
   simp [rustToIntegerStr, hp, stripSign, hcm, hcp, hd]
 
-/-! ## `toInteger(Float)` (conversion.rs:77-84) -/
+/-! ## `toInteger(Float)` (conversion.rs) -/
 
 /-- Rust: non-finite → null, else `floor as i64` (saturating). C: `(int64_t)floor(x)`
 (arm64: NaN → 0, ±∞ saturate). At class level: -/
@@ -277,7 +277,7 @@ theorem toInteger_nonfinite_diverges :
     rustToIntegerFloatNonFinite .pinf = some none ∧ cToIntegerFloatNonFinite .pinf = some I64MAX := by
   decide
 
-/-! ## `toBoolean` (conversion.rs:189) -/
+/-! ## `toBoolean` (conversion.rs) -/
 
 def eqIgnoreAsciiCase (a b : List Char) : Bool := a.map lowerAscii == b.map lowerAscii
 
@@ -302,7 +302,7 @@ structure ConvOps (F : Type) where
   floorToInt : F → Option Int          -- `if !finite null else floor as i64`
   strToInt : String → Option Int       -- the String arm of `value_to_integer`
   ofInt : Int → F
-  display : F → String                 -- `format!("{f}")`
+  display : F → String                 -- `float_to_string(f)` (FloatToString, PR #3609)
   pointStr : F → F → String
   fmtDatetime : Int → String
   fmtDate : Int → String
@@ -315,7 +315,7 @@ def optV {α} (f : α → V F) : Option α → V F
   | some a => f a
   | none => .null
 
-/-- `value_to_integer` (conversion.rs:44): never an `Err`. -/
+/-- `value_to_integer` (conversion.rs): never an `Err`. -/
 def toInteger : V F → V F
   | .str s => optV .int (c.strToInt s)
   | .int i => .int i
@@ -323,14 +323,14 @@ def toInteger : V F → V F
   | .bool b => .int (if b then 1 else 0)
   | _ => .null
 
-/-- `value_to_float` (conversion.rs:103). -/
+/-- `value_to_float` (conversion.rs). -/
 def toFloat : V F → V F
   | .str s => optV .float (c.parseF s)
   | .float f => .float f
   | .int i => .float (c.ofInt i)
   | _ => .null
 
-/-- `value_to_string` (conversion.rs:125) on a non-empty argument list. -/
+/-- `value_to_string` (conversion.rs) on a non-empty argument list. -/
 def toStr : V F → V F
   | .str s => .str s
   | .int i => .str (toString i)
@@ -349,7 +349,7 @@ def toBooleanV : V F → V F
   | .int n => .bool (n ≠ 0)
   | _ => .null
 
-/-- `toBooleanList` element map (conversion.rs:222-234). -/
+/-- `toBooleanList` element map (conversion.rs). -/
 def toBooleanElem : V F → V F
   | .bool b => .bool b
   | .str s => if eqIgnoreAsciiCase s.toList ['t', 'r', 'u', 'e'] then .bool true
@@ -357,7 +357,7 @@ def toBooleanElem : V F → V F
   | .int n => .bool (n ≠ 0)
   | _ => .null
 
-/-- `toFloatList` element map (conversion.rs:249-254). -/
+/-- `toFloatList` element map (conversion.rs). -/
 def toFloatElem : V F → V F
   | .float f => .float f
   | .int i => .float (c.ofInt i)
@@ -406,7 +406,7 @@ theorem toString_toInteger_int (i : Int) (h : c.strToInt (toString i) = some i) 
     toInteger c (toStr c (.int i)) = .int i := by
   simp only [toStr, toInteger]; rw [h]; rfl
 
-/-- `isEmpty` (conversion.rs:175). -/
+/-- `isEmpty` (conversion.rs). -/
 def isEmpty : V F → Option (V F)
   | .null => some .null
   | .str s => some (.bool s.isEmpty)
@@ -417,6 +417,6 @@ def isEmpty : V F → Option (V F)
 theorem isEmpty_no_panic (v : V F) (h : Accepts v (.union [.map, .list .any, .string, .null])) :
     (isEmpty v).isSome := by
   rw [← valueOfType_none_iff] at h
-  cases v <;> simp_all [isEmpty, vot_union, unionLoop, valueOfType, tagMatch, Ty.isAny, listLoop_none, vot_any]
+  cases v <;> simp_all [isEmpty, vot_union, unionLoop, valueOfType, tagMatch, Ty.isAny]
 
 end ValueMath

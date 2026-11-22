@@ -18,8 +18,9 @@
 #            artifact) belongs to this PR's *current* head; a moved head means "wait
 #            for the bot's run on the new head". Replies when it refuses.
 #   apply    the only job with `contents: write`. Takes the gate artifact of that run,
-#            applies it only when its status is `pass` (a `held` or failed patch is
-#            never committed), re-checks every path against the gate's allowlist
+#            applies it only when the Lean build and the coverage gate both passed
+#            (status `pass`, or `held` for review: asking is the review); a patch
+#            that failed a gate is never committed and the reply says why, re-checks every path against the gate's allowlist
 #            (read from proof-impact.yml on the default branch), commits as
 #            falkordb-proof-bot, and pushes as a fast-forward to the head ref, with a
 #            lease on the head it built on. A head the author moved in the meantime

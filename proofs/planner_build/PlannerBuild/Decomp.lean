@@ -9,16 +9,6 @@ synthetic inline variable (id in `ι`, the `inline_map`) stands for its pattern.
 Everything else is an atom (`atom`, a parameter). A row passes a `Filter` iff
 the value is `true` (filter.rs). `tv [] e` is the meaning of the user's WHERE.
 
-| here | there |
-| --- | --- |
-| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs:1676-1768 (inline ids minted at mod.rs:1693-1700 / 1716-1723) |
-| `FP`, `run` | IR filter operators: `Filter` (filter.rs), `SemiApply`/`AntiSemiApply` (semi_apply.rs), `OrApplyMultiplexer` (or_apply_multiplexer.rs: row passes iff some branch has `has_result ^ is_anti`), `Argument` |
-| `FP.patSub g` | `build_pattern_sub_plan` mod.rs:1033-1044 (its rows are `sub g`) |
-| `toPlan` | `expr_to_plan` mod.rs:1488-1544 |
-| `orClass`, `orPlan` | `or_expr_to_plan` mod.rs:1548-1610 |
-| `andFold`, `andPlan` | `and_expr_to_plan` mod.rs:1614-1655 |
-| `planFilter` | `plan_filter` mod.rs:2597-2636 (after `extract_filter_comprehensions`) |
-
 Results: `collect_value` / `collect_passes` (the rebuild is exact, also in
 three-valued logic); `toPlan_correct` (the decomposition is exact when atoms
 are two-valued); `planFilter_scalar_correct` (no inline patterns: exact in
@@ -120,7 +110,7 @@ theorem tvL_map (ι : List (Nat × QG)) (l : List Ex) (r : R) :
   | nil => rfl
   | cons c cs ih => simp [tvL, ih]
 
-/-! ## `collect_patterns_and_rebuild` (mod.rs:1676-1768) -/
+/-! ## `collect_patterns_and_rebuild` (mod.rs) -/
 
 structure CSt where
   lens : Nat → Nat
@@ -129,14 +119,14 @@ structure CSt where
 
 def scopeOf (g : QG) : Nat := (g.vars.head?.map V.scope).getD 0
 
-/-- Inline variable minted at mod.rs:1693-1700 / 1716-1723: id = current length
+/-- Inline variable minted at mod.rs: id = current length
 of the pattern's first variable's scope table, which then grows by one. -/
 def mint (st : CSt) (g : QG) : Nat × CSt :=
   let s := scopeOf g
   (st.lens s, { st with lens := fun t => if t = s then st.lens s + 1 else st.lens t,
                         inl := (st.lens s, g) :: st.inl })
 
-/-- `NOT` directly wrapping a pattern (mod.rs:1704-1707). -/
+/-- `NOT` directly wrapping a pattern (mod.rs). -/
 def notPat : List Ex → Option QG
   | .node (.pat g) _ :: _ => some g
   | _ => none
@@ -229,7 +219,7 @@ theorem collect_noPat : ∀ (st : CSt) ce e, hasPatternExpr e = false → collec
     cases d <;> simp only [collect, ih] <;> simp_all [hasPatternExpr]
     case not =>
       cases h' : notPat cs with
-      | none => simp [ih]
+      | none => simp
       | some g =>
         match cs, h' with
         | .node (.pat g') _ :: _, _ => simp [hasPatternExprL, hasPatternExpr] at hL
@@ -263,17 +253,13 @@ theorem lk_mint (ι : List (Nat × QG)) (st : CSt) (g : QG) (h : Good ι (mint s
 
 theorem needs_conn (d : D) (cs : List Ex) (hd : isConn d = true)
     (h : needsExtraction (.node d cs) .semiApply = false) : needsExtractionL cs .semiApply = false := by
-  have hs : d ≠ .func "size" := by intro h; subst h; simp [isConn] at hd
-  have : Mode.semiApply.descend d = .semiApply := by simp [Mode.descend, hd, hs]
+  have : Mode.semiApply.descend d = .semiApply := by simp [Mode.descend, hd]
   cases d <;> simp_all [needsExtraction, isConn]
 
 theorem needs_other (d : D) (cs : List Ex) (hd : isConn d = false) (hp : isPat d = false)
     (h : needsExtraction (.node d cs) .semiApply = false) : hasPatternExprL cs = false := by
-  have hne : Mode.semiApply.descend d ≠ .semiApply := by
-    unfold Mode.descend; split
-    · simp
-    · simp [hd]
-  rw [← needsExtractionL_nonSemi cs _ hne]
+  have : Mode.semiApply.descend d = .exists_ := by simp [Mode.descend, hd]
+  rw [← needsExtractionL_exists]
   cases d <;> simp_all [needsExtraction, isConn, isPat]
 
 mutual
@@ -281,10 +267,8 @@ mutual
 theorem needs_of_exists : ∀ (e : Ex) (m : Mode), needsExtraction e .exists_ = false →
     needsExtraction e m = false
   | .node d cs, m, h => by
-    rw [needsExtraction_exists] at h
-    have hL : needsExtractionL cs .exists_ = false := by
-      rw [needsExtractionL_exists]; cases d <;> simp_all [hasPatternExpr]
-    cases d <;> simp_all [needsExtraction, hasPatternExpr] <;> exact needsL_of_exists cs _ hL
+    have hd : Mode.exists_.descend d = .exists_ := by simp [Mode.descend]
+    cases d <;> simp_all [needsExtraction] <;> exact needsL_of_exists cs _ h
 theorem needsL_of_exists : ∀ (l : List Ex) (m : Mode), needsExtractionL l .exists_ = false →
     needsExtractionL l m = false
   | [], _, _ => rfl
@@ -341,7 +325,7 @@ theorem collect_value : ∀ (st : CSt) (e : Ex), shapeOK e = true →
         | .node (.pat g') _, hp =>
           simp [notPat] at hp; subst hp
           refine ⟨?_, rfl⟩
-          simp [tv, Ex.v, lk_mint ι st _ hg, tvL]
+          simp [tv, Ex.v, lk_mint ι st _ hg]
       | none =>
         simp only [collect, hp] at hg ⊢
         simp only [collectL] at hg ⊢

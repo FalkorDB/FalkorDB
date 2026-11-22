@@ -4,14 +4,13 @@ import OpsTraverse.Basic
 
 | here | there |
 | --- | --- |
-| `RowIn`                  | the endpoint bindings `from_id` / `to_id` read at `cond_traverse.rs:915-928` and the sibling-edge columns read by `edge_already_used` (`runtime/ops/mod.rs:155`) |
-| `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs:1235-1316`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
-| `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs:900-1118`): forward scan, then the reverse scan with `s != d` (`:1050`, `:1062`; the multi-type twin `expand_union_row` :1121, `UnionGlue`) for bidirectional patterns |
-| `dropRev`, `revKept`     | `CondTraverseOp::drop_reverse_duplicates` (`cond_traverse.rs:1138-1165`), called in collapse mode after the reverse scan (`:1093-1099`, `:1284-1288`; #3111) |
-| `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs:125-250`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst`; collapse mode stops at the first pair with an edge (`:201-209`, #3111) |
-| `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`cond_traverse.rs:86-112`, `graphblas/matrix.rs:1520`; proved in `UnionGlue.deltaInto_eff`, `GBWDelta.deltaLmxm_correct`) |
+| `RowIn`                  | the endpoint bindings `from_id` / `to_id` read at `cond_traverse.rs` and the sibling-edge columns read by `edge_already_used` (`runtime/ops/mod.rs`) |
+| `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
+| `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs`): forward scan, then the reverse scan with `s != d` (the multi-type twin `expand_union_row` , `UnionGlue`) for bidirectional patterns |
+| `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` |
+| `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`cond_traverse.rs`, `graphblas/matrix.rs`; proved in `UnionGlue.deltaInto_eff`, `GBWDelta.deltaLmxm_correct`) |
 | `mxmRef`                 | a reference implementation proving `MxmSpec` is satisfiable |
-| `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs:742-747`) |
+| `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs`) |
 
 The GraphBLAS primitive is not given an `axiom`: every theorem about the
 batched path takes an arbitrary `mxm` together with a proof of `MxmSpec mxm`,
@@ -35,15 +34,15 @@ def okBound (b : Option Nat) (n : Nat) : Bool := b.all (· == n)
 /-- Pattern endpoints of matrix pair `p` (swapped on the reverse scan). -/
 def pf (isRev : Bool) (p : Nat × Nat) : Nat := if isRev then p.2 else p.1
 def pt (isRev : Bool) (p : Nat × Nat) : Nat := if isRev then p.1 else p.2
-/-- Bound-endpoint check (`cond_traverse.rs:1268-1273`). -/
+/-- Bound-endpoint check (`cond_traverse.rs`). -/
 def pcond (r : RowIn) (isRev : Bool) (p : Nat × Nat) : Bool :=
   okBound r.fromId (pf isRev p) && okBound r.toId (pt isRev p)
-/-- Unused edges on the pair (`edge_already_used`, `ops/mod.rs:155`). -/
+/-- Unused edges on the pair (`edge_already_used`, `ops/mod.rs`). -/
 def pes (g : Graph) (r : RowIn) (p : Nat × Nat) : List Nat :=
   (edgesBetween g p.1 p.2).filter fun e => !(r.used.contains e)
 
 /-- One matrix pair of `process_pairs`: every unused edge when
-`emit_relationship` (`:1302-1314`), else only the first (`:1282-1299`). -/
+`emit_relationship`, else only the first. -/
 def pairRows (g : Graph) (isRev : Bool) (r : RowIn) (emit : Bool) (p : Nat × Nat) :
     List (Nat × Nat × Nat) :=
   if pcond r isRev p then
@@ -65,51 +64,20 @@ theorem mem_pairRows {g : Graph} {isRev emit : Bool} {r : RowIn} {p : Nat × Nat
         ∃ e ∈ (if emit then pes g r p else (pes g r p).take 1), x = (pf isRev p, pt isRev p, e) := by
   unfold pairRows
   by_cases hc : pcond r isRev p = true
-  · simp only [hc, if_true, List.mem_map, true_and]
+  · simp only [hc, ite_true, List.mem_map, true_and]
     constructor
     · rintro ⟨e, he, rfl⟩; exact ⟨e, he, rfl⟩
     · rintro ⟨e, he, rfl⟩; exact ⟨e, he, rfl⟩
   · simp [hc]
 
-/-- The `(from, to)` key of a result row. -/
-def rowKey (x : Nat × Nat × Nat) : Nat × Nat := (x.1, x.2.1)
-
-/-- `CondTraverseOp::drop_reverse_duplicates` (`cond_traverse.rs:1138-1165`): keep, in scan
-order, the reverse results whose `(from, to)` is not among the forward results (the sorted
-slice or its sorted copy is only a membership test). -/
-def dropRev (fwd rev : List (Nat × Nat × Nat)) : List (Nat × Nat × Nat) :=
-  rev.filter fun x => !((fwd.map rowKey).contains (rowKey x))
-
-/-- The reverse block's results as `expand_row` keeps them: all of them in emit mode, else
-those the forward scan did not already produce (`cond_traverse.rs:1093-1099`, #3111; the
-`fwd_end > start` guard only skips a no-op). -/
-def revKept (emit : Bool) (fwd rev : List (Nat × Nat × Nat)) : List (Nat × Nat × Nat) :=
-  if emit then rev else dropRev fwd rev
-
 /-- `expand_row` (untransposed): forward scan, plus the reverse scan over
-non-loop pairs for an undirected pattern; in collapse mode a reverse result the
-forward scan already gave is dropped (#3111). -/
+non-loop pairs for an undirected pattern. -/
 def expandRow (g : Graph) (bidir emit : Bool) (r : RowIn) : List (Nat × Nat × Nat) :=
-  processPairs g (pairs g) false r emit ++
-    (if bidir then revKept emit (processPairs g (pairs g) false r emit)
-      (processPairs g ((pairs g).filter fun p => p.1 != p.2) true r emit) else [])
-
-/-- `expand_row` before #3111: no reverse de-duplication (historical; `pre3111_*`). -/
-def expandRowPre3111 (g : Graph) (bidir emit : Bool) (r : RowIn) : List (Nat × Nat × Nat) :=
   processPairs g (pairs g) false r emit ++
     (if bidir then processPairs g ((pairs g).filter fun p => p.1 != p.2) true r emit else [])
 
-/-- `ExpandIntoOp::expand_row`: both endpoints bound. Collapse mode stops at the first
-pair that yields an edge (`expand_into.rs:201-209`, #3111): one representative per
-pattern pair, i.e. the first candidate over both directions. -/
+/-- `ExpandIntoOp::expand_row`: both endpoints bound. -/
 def expandInto (g : Graph) (bidir emit : Bool) (src dst : Nat) (used : List Nat) :
-    List Nat :=
-  let ps := if bidir && src != dst then [(src, dst), (dst, src)] else [(src, dst)]
-  let all := ps.flatMap fun p => (edgesBetween g p.1 p.2).filter fun e => !(used.contains e)
-  if emit then all else all.take 1
-
-/-- `ExpandIntoOp::expand_row` before #3111: one representative per direction (historical). -/
-def expandIntoPre3111 (g : Graph) (bidir emit : Bool) (src dst : Nat) (used : List Nat) :
     List Nat :=
   let ps := if bidir && src != dst then [(src, dst), (dst, src)] else [(src, dst)]
   ps.flatMap fun p =>
@@ -125,7 +93,7 @@ theorem mem_processPairs {g : Graph} {ps : List (Nat × Nat)} {isRev : Bool} {r 
       ∃ x ∈ g, x.id = e ∧ e ∉ r.used ∧ okBound r.fromId f ∧ okBound r.toId t ∧
         Q x.src x.dst ∧
         (if isRev then x.src = t ∧ x.dst = f else x.src = f ∧ x.dst = t) := by
-  simp only [processPairs, List.mem_flatMap, mem_pairRows, if_true]
+  simp only [processPairs, List.mem_flatMap, mem_pairRows, ite_true]
   constructor
   · rintro ⟨⟨s, d⟩, hp, hc, e', he', hx⟩
     obtain ⟨⟨x, hx', hid, hs, hd⟩, hu⟩ := mem_pes.1 he'
@@ -160,9 +128,9 @@ theorem emit_directed_iff {g : Graph} {r : RowIn} {f t e : Nat} :
     (f, t, e) ∈ expandRow g false true r ↔
       ∃ x ∈ g, x.id = e ∧ x.src = f ∧ x.dst = t ∧ e ∉ r.used ∧
         okBound r.fromId f ∧ okBound r.toId t := by
-  simp only [expandRow, Bool.false_eq_true, if_false, List.append_nil]
+  simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil]
   rw [mem_processPairs (fun _ _ => True) (pairs_spec g)]
-  simp only [Bool.false_eq_true, if_false]
+  simp only [Bool.false_eq_true, ite_false]
   constructor
   · rintro ⟨x, hx, h1, h2, h3, h4, _, h5, h6⟩; exact ⟨x, hx, h1, h5, h6, h2, h3, h4⟩
   · rintro ⟨x, hx, h1, h5, h6, h2, h3, h4⟩; exact ⟨x, hx, h1, h2, h3, h4, trivial, h5, h6⟩
@@ -175,10 +143,10 @@ theorem emit_bidir_iff {g : Graph} {r : RowIn} {f t e : Nat} :
     (f, t, e) ∈ expandRow g true true r ↔
       ∃ x ∈ g, x.id = e ∧ e ∉ r.used ∧ okBound r.fromId f ∧ okBound r.toId t ∧
         ((x.src = f ∧ x.dst = t) ∨ (x.src ≠ x.dst ∧ x.src = t ∧ x.dst = f)) := by
-  simp only [expandRow, revKept, if_true, List.mem_append]
+  simp only [expandRow, ite_true, List.mem_append]
   rw [mem_processPairs (fun _ _ => True) (pairs_spec g),
     mem_processPairs (fun s d => s ≠ d) (pairs_filter_spec g)]
-  simp only [Bool.false_eq_true, if_false, if_true]
+  simp only [Bool.false_eq_true, ite_false, ite_true]
   constructor
   · rintro (⟨x, hx, h1, h2, h3, h4, _, h5⟩ | ⟨x, hx, h1, h2, h3, h4, hne, h5⟩)
     · exact ⟨x, hx, h1, h2, h3, h4, Or.inl h5⟩
@@ -193,8 +161,8 @@ theorem emit_bidir_iff {g : Graph} {r : RowIn} {f t e : Nat} :
 theorem collapse_sub_emit {g : Graph} {ps : List (Nat × Nat)} {isRev : Bool} {r : RowIn}
     {x : Nat × Nat × Nat} :
     x ∈ processPairs g ps isRev r false → x ∈ processPairs g ps isRev r true := by
-  simp only [processPairs, List.mem_flatMap, mem_pairRows, Bool.false_eq_true, if_false,
-    if_true]
+  simp only [processPairs, List.mem_flatMap, mem_pairRows, Bool.false_eq_true, ite_false,
+    ite_true]
   rintro ⟨p, hp, hc, e, he, hx⟩
   exact ⟨p, hp, hc, e, List.mem_of_mem_take he, hx⟩
 
@@ -206,12 +174,12 @@ theorem collapse_directed_iff {g : Graph} {r : RowIn} {f t : Nat} :
   constructor
   · rintro ⟨e, he⟩
     have := (emit_directed_iff (g := g)).1 (by
-      simp only [expandRow, Bool.false_eq_true, if_false, List.append_nil] at he ⊢
+      simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil] at he ⊢
       exact collapse_sub_emit he)
     obtain ⟨x, hx, rfl, h1, h2, h3, h4, h5⟩ := this
     exact ⟨x, hx, h1, h2, h3, h4, h5⟩
   · rintro ⟨x, hx, rfl, rfl, hu, hf, ht⟩
-    simp only [expandRow, Bool.false_eq_true, if_false, List.append_nil, processPairs,
+    simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil, processPairs,
       List.mem_flatMap, mem_pairRows]
     have hne : x.id ∈ pes g r (x.src, x.dst) := mem_pes.2 ⟨⟨x, hx, rfl, rfl, rfl⟩, hu⟩
     have hc : pcond r false (x.src, x.dst) = true := by simp [pcond, pf, pt, hf, ht]
@@ -231,7 +199,7 @@ theorem pairRows_keys (g : Graph) (r : RowIn) (p : Nat × Nat) :
     ((pairRows g false r false p).map fun x => (x.1, x.2.1)) = [p] := by
   unfold pairRows
   by_cases hc : pcond r false p = true
-  · simp only [hc, if_true, Bool.false_eq_true, if_false, List.map_map]
+  · simp only [hc, ite_true, Bool.false_eq_true, ite_false, List.map_map]
     cases pes g r p <;> simp [pf, pt]
   · simp [hc]
 
@@ -248,175 +216,23 @@ theorem collapse_keys_sublist (g : Graph) (r : RowIn) :
 
 theorem collapse_directed_keys_nodup (g : Graph) (r : RowIn) :
     ((expandRow g false false r).map fun x => (x.1, x.2.1)).Nodup := by
-  simp only [expandRow, Bool.false_eq_true, if_false, List.append_nil]
+  simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil]
   exact (nodup_pairs g).sublist (collapse_keys_sublist g r _)
 
-/-! ### Undirected collapse: one row per pattern pair (W2-traverse-3, fixed by #3111)
+/-! ### Counterexample: undirected collapse is one row per pair *per direction*
 
-`a→b` twice and `b→a` once. C collapses `(a)-[]-(b)` to one row per `(a,b)`.
-Before #3111 the forward and the reverse scan each contributed a representative,
-so Rust emitted `(1,2)` twice (`pre3111_*`, on the historical models). Main drops
-the reverse duplicate (`cond_traverse.rs:1093-1099`) and ExpandInto stops at the
-first direction with an edge (`expand_into.rs:206-209`). -/
+`a→b` twice and `b→a` once. C collapses `(a)-[]-(b)` to one row per `(a,b)`;
+the forward and the reverse scan each contribute a representative, so Rust
+emits `(1,2)` twice (`cond_traverse.rs`; `expand_into.rs`).
+Repro: `lean_ops_traverse::bug_undirected_anonymous_collapse_duplicates_pairs`. -/
 def gAB : Graph := [⟨0, 1, 2⟩, ⟨1, 2, 1⟩, ⟨2, 1, 2⟩]
 
-/-- Historical (pre-#3111, `cond_traverse.rs` before cc8569b90): `(1,2)` twice. -/
-theorem pre3111_bidir_collapse_duplicates_pair :
-    ((expandRowPre3111 gAB true false ⟨none, none, []⟩).map fun x => (x.1, x.2.1)).count (1, 2) = 2 := by
+theorem bidir_collapse_duplicates_pair :
+    ((expandRow gAB true false ⟨none, none, []⟩).map fun x => (x.1, x.2.1)).count (1, 2) = 2 := by
   decide
 
-/-- Historical (pre-#3111): ExpandInto gave two rows for one pattern pair. -/
-theorem pre3111_expandInto_bidir_collapse_two_rows :
-    (expandIntoPre3111 gAB true false 1 2 []).length = 2 := by decide
-
-/-- Main: the same input now yields `(1,2)` once. -/
-theorem bidir_collapse_one_row_per_pair :
-    ((expandRow gAB true false ⟨none, none, []⟩).map fun x => (x.1, x.2.1)).count (1, 2) = 1 := by
-  decide
-
-theorem expandInto_bidir_collapse_one_row :
-    (expandInto gAB true false 1 2 []).length = 1 := by decide
-
-/-- Collapse-mode ExpandInto gives at most one row per input row. -/
-theorem expandInto_collapse_length_le_one (g : Graph) (b : Bool) (s d : Nat) (u : List Nat) :
-    (expandInto g b false s d u).length ≤ 1 := by
-  simp only [expandInto, Bool.false_eq_true, if_false]
-  exact List.length_take_le _ _
-
-/-- Collapse-mode ExpandInto finds a row iff emit mode finds one (it is emit mode's first). -/
-theorem expandInto_collapse_eq_take (g : Graph) (b : Bool) (s d : Nat) (u : List Nat) :
-    expandInto g b false s d u = (expandInto g b true s d u).take 1 := by
-  simp [expandInto]
-
-/-- The keys of `processPairs` in collapse mode: a sublist of the pairs, oriented. -/
-theorem pairRows_keys_gen (g : Graph) (isRev : Bool) (r : RowIn) (p : Nat × Nat) :
-    ((pairRows g isRev r false p).map rowKey) = [] ∨
-    ((pairRows g isRev r false p).map rowKey) = [(pf isRev p, pt isRev p)] := by
-  unfold pairRows
-  by_cases hc : pcond r isRev p = true
-  · simp only [hc, if_true, Bool.false_eq_true, if_false, List.map_map]
-    cases pes g r p <;> simp [rowKey]
-  · simp [hc]
-
-theorem collapse_keys_sublist_gen (g : Graph) (isRev : Bool) (r : RowIn) :
-    ∀ ps : List (Nat × Nat),
-      ((processPairs g ps isRev r false).map rowKey).Sublist
-        (ps.map fun p => (pf isRev p, pt isRev p))
-  | [] => by simp [processPairs]
-  | p :: ps => by
-    have ih := collapse_keys_sublist_gen g isRev r ps
-    simp only [processPairs, List.flatMap_cons, List.map_append, List.map_cons] at ih ⊢
-    rcases pairRows_keys_gen g isRev r p with h | h
-    · rw [h]; exact ih.cons _
-    · rw [h]; exact ih.cons_cons _
-
-theorem nodup_map_swap : ∀ (l : List (Nat × Nat)), l.Nodup →
-    (l.map fun p => (pf true p, pt true p)).Nodup
-  | [], _ => by simp
-  | p :: l, h => by
-    rw [List.nodup_cons] at h
-    simp only [List.map_cons, List.nodup_cons]
-    refine ⟨?_, nodup_map_swap l h.2⟩
-    intro hm
-    obtain ⟨q, hq, he⟩ := List.mem_map.1 hm
-    simp only [pf, pt, if_true, Prod.mk.injEq] at he
-    have : q = p := Prod.ext he.2 he.1
-    exact h.1 (this ▸ hq)
-
-theorem nodup_dropRev {fwd rev : List (Nat × Nat × Nat)}
-    (hf : (fwd.map rowKey).Nodup) (hr : (rev.map rowKey).Nodup) :
-    ((fwd ++ dropRev fwd rev).map rowKey).Nodup := by
-  rw [List.map_append, List.nodup_append]
-  refine ⟨hf, ?_, ?_⟩
-  · exact hr.sublist ((List.filter_sublist).map rowKey)
-  · intro a ha b hb hab
-    subst hab
-    obtain ⟨x, hx, rfl⟩ := List.mem_map.1 hb
-    simp only [dropRev, List.mem_filter, Bool.not_eq_true', List.contains_eq_mem,
-      decide_eq_false_iff_not] at hx
-    exact hx.2 ha
-
-/-- **Undirected collapse (#3111): one row per pattern pair.** The `(from, to)` keys
-`expand_row` emits for an undirected anonymous hop are duplicate-free. -/
-theorem collapse_bidir_keys_nodup (g : Graph) (r : RowIn) :
-    ((expandRow g true false r).map rowKey).Nodup := by
-  simp only [expandRow, revKept, if_true, Bool.false_eq_true, if_false]
-  apply nodup_dropRev
-  · have hm : ((pairs g).map fun p => (pf false p, pt false p)) = pairs g := by simp [pf, pt]
-    exact List.Nodup.sublist (collapse_keys_sublist_gen g false r (pairs g))
-      (by rw [hm]; exact nodup_pairs g)
-  · refine List.Nodup.sublist (collapse_keys_sublist_gen g true r _) ?_
-    exact nodup_map_swap _ ((nodup_pairs g).sublist List.filter_sublist)
-
-theorem mem_dropRev_key {fwd rev : List (Nat × Nat × Nat)} {k : Nat × Nat} :
-    k ∈ (fwd ++ dropRev fwd rev).map rowKey ↔ k ∈ fwd.map rowKey ∨ k ∈ rev.map rowKey := by
-  simp only [List.map_append, List.mem_append]
-  constructor
-  · rintro (h | h)
-    · exact Or.inl h
-    · exact Or.inr ((List.filter_sublist.map rowKey).subset h)
-  · rintro (h | h)
-    · exact Or.inl h
-    · by_cases hk : k ∈ fwd.map rowKey
-      · exact Or.inl hk
-      · right
-        obtain ⟨x, hx, rfl⟩ := List.mem_map.1 h
-        exact List.mem_map.2 ⟨x, List.mem_filter.2 ⟨hx, by simpa using hk⟩, rfl⟩
-
-/-- **Undirected collapse loses no pair (#3111)**: a pattern pair has a row iff some
-unused edge joins it in either orientation (a self-loop through the forward scan),
-exactly the pairs emit mode matches. -/
-theorem collapse_bidir_iff {g : Graph} {r : RowIn} {f t : Nat} :
-    (f, t) ∈ (expandRow g true false r).map rowKey ↔
-      ∃ x ∈ g, x.id ∉ r.used ∧ okBound r.fromId f ∧ okBound r.toId t ∧
-        ((x.src = f ∧ x.dst = t) ∨ (x.src ≠ x.dst ∧ x.src = t ∧ x.dst = f)) := by
-  have hk : (f, t) ∈ (expandRow g true false r).map rowKey ↔
-      (f, t) ∈ (expandRowPre3111 g true false r).map rowKey := by
-    simp only [expandRow, revKept, expandRowPre3111, if_true, Bool.false_eq_true, if_false]
-    rw [mem_dropRev_key, List.map_append, List.mem_append]
-  rw [hk]
-  have hsub : ∀ x, x ∈ expandRowPre3111 g true false r → x ∈ expandRowPre3111 g true true r := by
-    intro x hx
-    simp only [expandRowPre3111, if_true, List.mem_append] at hx ⊢
-    rcases hx with hx | hx
-    · exact Or.inl (collapse_sub_emit hx)
-    · exact Or.inr (collapse_sub_emit hx)
-  have hemit : ∀ e, (f, t, e) ∈ expandRowPre3111 g true true r ↔
-      ∃ x ∈ g, x.id = e ∧ e ∉ r.used ∧ okBound r.fromId f ∧ okBound r.toId t ∧
-        ((x.src = f ∧ x.dst = t) ∨ (x.src ≠ x.dst ∧ x.src = t ∧ x.dst = f)) := by
-    intro e
-    have := emit_bidir_iff (g := g) (r := r) (f := f) (t := t) (e := e)
-    simpa [expandRow, revKept, expandRowPre3111] using this
-  constructor
-  · intro h
-    obtain ⟨⟨f', t', e⟩, hx, hkey⟩ := List.mem_map.1 h
-    simp only [rowKey, Prod.mk.injEq] at hkey
-    obtain ⟨rfl, rfl⟩ := hkey
-    obtain ⟨x, hx', rfl, hu, h1, h2, h3⟩ := (hemit e).1 (hsub _ hx)
-    exact ⟨x, hx', hu, h1, h2, h3⟩
-  · rintro ⟨x, hx, hu, hf, ht, hdir⟩
-    have hne : ∀ (isRev : Bool) (ps : List (Nat × Nat)) (p : Nat × Nat), p ∈ ps →
-        pcond r isRev p = true → x.id ∈ pes g r p →
-        (pf isRev p, pt isRev p) ∈ (processPairs g ps isRev r false).map rowKey := by
-      intro isRev ps p hp hc hm
-      simp only [List.mem_map, processPairs, List.mem_flatMap, mem_pairRows,
-        Bool.false_eq_true, if_false]
-      revert hm
-      cases hes : pes g r p with
-      | nil => intro hm; simp at hm
-      | cons e0 rest =>
-        intro _
-        exact ⟨(pf isRev p, pt isRev p, e0), ⟨p, hp, hc, e0, by simp [hes], rfl⟩, rfl⟩
-    have hmem : x.id ∈ pes g r (x.src, x.dst) := mem_pes.2 ⟨⟨x, hx, rfl, rfl, rfl⟩, hu⟩
-    simp only [expandRowPre3111, if_true, List.map_append, List.mem_append]
-    rcases hdir with ⟨rfl, rfl⟩ | ⟨hsd, rfl, rfl⟩
-    · left
-      exact hne false _ (x.src, x.dst) (mem_pairs.2 ⟨x, hx, rfl, rfl⟩)
-        (by simp [pcond, pf, pt, hf, ht]) hmem
-    · right
-      exact hne true _ (x.src, x.dst)
-        (List.mem_filter.2 ⟨mem_pairs.2 ⟨x, hx, rfl, rfl⟩, by simpa using hsd⟩)
-        (by simp [pcond, pf, pt, hf, ht]) hmem
+theorem expandInto_bidir_collapse_two_rows :
+    (expandInto gAB true false 1 2 []).length = 2 := by decide
 
 /-- ExpandInto in emit mode returns every unused edge between the endpoints, in
 either orientation when undirected, a self-loop once. -/
@@ -446,7 +262,7 @@ theorem mem_expandInto_emit {g : Graph} {b : Bool} {s d e : Nat} {used : List Na
 /-! ## Two hops, sibling uniqueness, and the collapse of an unreferenced edge
 
 `(a)-[r]->(x)<-[s]-(c)`: the second hop reads `r` for uniqueness
-(`edge_already_used`). `reduce_expand_into` (`planner/optimizer/reduce_expand_into.rs:30-55`)
+(`edge_already_used`). `reduce_expand_into` (`planner/optimizer/reduce_expand_into.rs`)
 collapses `r` and `s` when no ancestor *expression* names them, ignoring
 that the ancestor traverse's `sibling_edges` does. -/
 
@@ -470,14 +286,14 @@ theorem twoHop_emit_iff {g : Graph} {nodes : List Nat} {a x r c s : Nat} :
     obtain ⟨e2, he2, hid2, hu2, hb2, -, -, hdir⟩ :=
       (mem_processPairs (fun _ _ => True) (pairs_spec g)).1 h2
     simp only [okBound, Option.all_some, beq_iff_eq] at hb1 hb2
-    simp only [if_true] at hdir
+    simp only [ite_true] at hdir
     refine ⟨ha, ⟨e1, he1, hid1, hs1.trans hb1.symm, hd1⟩, ⟨e2, he2, hid2, hdir.1, hdir.2.trans hb2.symm⟩, ?_⟩
     simpa using hu2
   · rintro ⟨ha, ⟨e1, he1, rfl, rfl, rfl⟩, ⟨e2, he2, rfl, rfl, hd2⟩, hne⟩
     refine ⟨e1.src, ha, (e1.src, e1.dst, e1.id), ?_, (e1.dst, e2.src, e2.id), ?_, rfl, rfl, rfl, rfl, rfl⟩
     · exact emit_directed_iff.2 ⟨e1, he1, rfl, rfl, rfl, by simp, by simp [okBound], by simp [okBound]⟩
     · refine (mem_processPairs (fun _ _ => True) (pairs_spec g)).2
-        ⟨e2, he2, rfl, by simpa using hne, by simp [okBound, hd2], by simp [okBound], trivial, ?_⟩
+        ⟨e2, he2, rfl, by simpa using hne, by simp [okBound], by simp [okBound], trivial, ?_⟩
       simp [hd2]
 
 /-- `e1, e2 : 1→2`, `e3 : 2→3` (the repro graph). -/
@@ -497,7 +313,7 @@ abbrev Mat := List (Nat × Nat)
 /-- **Axiomatised FFI primitive** (as a hypothesis, not an `axiom`): the
 behaviour the GraphBLAS C API specifies for `GrB_mxm(C, NULL, NULL,
 GxB_ANY_PAIR_BOOL, F, A, NULL)` — used by `Matrix::delta_lmxm`
-(`cond_traverse.rs:86-112`). C(i,j) is present iff ∃k. F(i,k) ∧ A(k,j), and a
+(`cond_traverse.rs`). C(i,j) is present iff ∃k. F(i,k) ∧ A(k,j), and a
 matrix stores each coordinate at most once. -/
 structure MxmSpec (mxm : Mat → Mat → Mat) : Prop where
   mem   : ∀ F A i j, (i, j) ∈ mxm F A ↔ ∃ k, (i, k) ∈ F ∧ (k, j) ∈ A
@@ -521,7 +337,7 @@ def Reach : List Mat → Nat → Nat → Prop
   | [], a, b => a = b
   | A :: As, a, b => ∃ k, (a, k) ∈ A ∧ Reach As k b
 
-/-- `F ← F·A₀`, then every fused chain hop (`cond_traverse.rs:742-747`). -/
+/-- `F ← F·A₀`, then every fused chain hop (`cond_traverse.rs`). -/
 def chain (mxm : Mat → Mat → Mat) (F : Mat) : List Mat → Mat
   | [] => F
   | A :: As => chain mxm (mxm F A) As
@@ -555,7 +371,7 @@ theorem batched_eq_collapse {mxm : Mat → Mat → Mat} (h : MxmSpec mxm) (g : G
   simp only [Reach, mem_pairs]
   constructor
   · rintro ⟨s, hF, k, ⟨x, hx, h1, h2⟩, rfl⟩
-    exact ⟨s, hF, collapse_directed_iff.2 ⟨x, hx, h1, h2, by simp, by simp [okBound, h1], by simp [okBound]⟩⟩
+    exact ⟨s, hF, collapse_directed_iff.2 ⟨x, hx, h1, h2, by simp, by simp [okBound], by simp [okBound]⟩⟩
   · rintro ⟨s, hF, he⟩
     obtain ⟨x, hx, h1, h2, -, -, -⟩ := collapse_directed_iff.1 he
     exact ⟨s, hF, d, ⟨x, hx, h1, h2⟩, rfl⟩

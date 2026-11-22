@@ -7,19 +7,18 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 
 | here | there |
 | --- | --- |
-| `IndexType`, `Field`            | `graph/src/index/mod.rs:97` `IndexType`, `:107` `Field`, `:138` `Field::new`, `:154` `new_with_vector_options` |
-| `arrNames`                      | `mod.rs:122` `Field::make_arr_names` |
-| `docSet`                        | `mod.rs:717-872` `Document::set` @ 8743953a8 (branch for branch; vector arm `:730-744`, #3087; temporal arm `:803`, #3076) |
-| `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
-| `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:869` |
-| `buildDoc`                      | the per-attribute loop in `graph.rs:4043` `commit_index_kind` / `graph.rs:729` population `build_doc` |
-| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1907` `Index::add_document`) |
-| `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2021-2030` fulltext unknown-key refusal (#3094) |
-| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2100-2177` `map_to_index_options` (`:2008-2179`), vector branch |
-| `parsePhonetic`                 | `runtime.rs:2051-2068` phonetic arm |
-| `metricOf`                      | `mod.rs:1273-1287` similarity match in `Index::register_fields` |
-| `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:143` `eval_vector_args` (k arm) |
-| `withCapacity`                  | Rust std `Vec::with_capacity`; historical use: `graph.rs:3883` / `:3938` `Vec::with_capacity(k)` @ 49f698d22 (removed by #3088; current model in `Knn`) |
+| `IndexType`, `Field`            | `graph/src/index/mod.rs` `IndexType` `Field` `Field::new` `new_with_vector_options` |
+| `arrNames`                      | `mod.rs` `Field::make_arr_names` |
+| `docSet`                        | `mod.rs` `Document::set` (branch for branch; vector arm; temporal arm) |
+| `docSetPanics`                  | the `unreachable!()` arm, `mod.rs` |
+| `buildDoc`                      | the per-attribute loop in `graph.rs` `commit_index_kind` / `graph.rs` population `build_doc` |
+| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs` `Index::add_document`) |
+| `fulltextUnknown`               | `graph/src/runtime/runtime.rs` fulltext unknown-key refusal  |
+| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs` `map_to_index_options`, vector branch (name checked ) |
+| `parsePhonetic`                 | `runtime.rs` phonetic arm |
+| `metricOf`                      | `mod.rs` similarity match in `Index::register_fields` |
+| `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs` `eval_vector_args` (k arm) |
+| `withCapacity`                  | Rust std `Vec::with_capacity`; an earlier use was `Vec::with_capacity(k)` with the raw user `k`; current model in `Knn` |
 -/
 
 namespace SC.Search
@@ -61,14 +60,33 @@ structure Field where
   name : String
   ty : IndexType
   /-- `field.vector_options.map(|o| o.dimension)`: `none` when the field has no
-  vector options (`Field::new`, mod.rs:138), `some d` from `new_with_vector_options`
-  (mod.rs:154). -/
+  vector options (`Field::new`, mod.rs), `some d` from `new_with_vector_options`
+  (mod.rs). -/
   vdim : Option Nat := none
 deriving Repr
 
-/-- `Field::make_arr_names` (mod.rs:122): only range fields get array sub-fields. -/
+/-- `Field::make_arr_names` (mod.rs): only range fields get array sub-fields. -/
 def arrNames (f : Field) : Option (String × String) :=
   if f.ty = .range then some (f.name ++ ":numeric:arr", f.name ++ ":string:arr") else none
+
+/-- `Field::new` (mod.rs): no vector options. -/
+def Field.new (name : String) (ty : IndexType) : Field := { name, ty }
+
+/-- `Field::new_with_vector_options` (mod.rs): the options' dimension is kept. -/
+def Field.newVec (name : String) (ty : IndexType) (dim : Nat) : Field := { name, ty, vdim := some dim }
+
+/-- **Constructors**: name and type are kept, `vdim` is the options' dimension (`none` for `new`),
+and both derive the array sub-field names with `make_arr_names`, the same for a given type
+(`arrNames` reads only the name and the type). -/
+theorem Field.new_spec (n : String) (t : IndexType) (d : Nat) :
+    (Field.new n t).name = n ∧ (Field.new n t).ty = t ∧ (Field.new n t).vdim = none ∧
+    (Field.newVec n t d).name = n ∧ (Field.newVec n t d).ty = t ∧ (Field.newVec n t d).vdim = some d ∧
+    arrNames (Field.new n t) = arrNames (Field.newVec n t d) := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Only a range field gets the `:numeric:arr` / `:string:arr` sub-fields. -/
+theorem Field.new_arr (n : String) (t : IndexType) :
+    (arrNames (Field.new n t)).isSome = true ↔ t = .range := by
+  cases t <;> simp [arrNames, Field.new]
 
 def isNumeric : Val → Bool
   | .bool _ | .int _ | .float => true
@@ -78,8 +96,8 @@ def isStr : Val → Bool
   | .str _ => true
   | _ => false
 
-/-- `Document::set` (mod.rs:717-872), branch for branch. The vector arm
-(mod.rs:730-744, #3087) adds the blob only when
+/-- `Document::set` (mod.rs), branch for branch. The vector arm
+(mod.rs, #3087) adds the blob only when
 `field.vector_options.as_ref().is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`,
 mirrored literally by `Option.any`. -/
 def docSet (f : Field) (v : Val) : List RSAdd :=
@@ -93,7 +111,7 @@ def docSet (f : Field) (v : Val) : List RSAdd :=
   | .range => match v with
     | .bool _ | .int _ | .float => [.num f.name]
     | .str _ => [.tag f.name]
-    -- #3076 (`e20300436`): temporals are not indexed (mod.rs:796-803)
+    -- temporals are not indexed (mod.rs)
     | .temporal => []
     | .list xs =>
       let n := (xs.filter isNumeric).length
@@ -103,15 +121,6 @@ def docSet (f : Field) (v : Val) : List RSAdd :=
     | .vecf32 _ => []
     | .point => [.geo f.name]
     | .null | .map | .node | .rel | .path => []
-
-/-- HISTORICAL (fe619ac5f, before #3087): the vector arm wrote `vec.len() * 4` bytes
-with no dimension check (`if let Value::VecF32(vec) = value { AddFieldVector(..) }`);
-every other arm is as in `docSet` (whose temporal arm is the post-#3076 one; the
-#3087 theorems never involve temporals). Kept only to state what #3087 fixed. -/
-def docSetPre3087 (f : Field) (v : Val) : List RSAdd :=
-  match f.ty, v with
-  | .vector, .vecf32 d => [.vector f.name (d * 4)]
-  | _, _ => docSet f v
 
 /-- **#3076: a temporal value is never written to any RediSearch field**, on any
 index type, so no numeric index query can return it. -/
@@ -136,9 +145,9 @@ RediSearch (`src/document.c` `AddDocumentCtx_Submit`, vector preprocess in
 `src/vector_index.c`, "Could not add vector with blob size N (expected M)") fails the
 **whole** document when a vector field's blob cannot be indexed: either its size is not
 `dim * sizeof(float32)`, or the field was created without vector params (no
-`dimOf`, the #3087 comment at mod.rs:722-729). Under `REPLACE` the previous document
+`dimOf`, the #3087 comment at mod.rs). Under `REPLACE` the previous document
 under the same key is removed first. `dimOf` is the dimension
-`RediSearch_VectorFieldSetParams` registered (`register_fields`, mod.rs:1270-1329,
+`RediSearch_VectorFieldSetParams` registered (`register_fields`, mod.rs,
 only when `dimension > 0`). -/
 structure RediSearch where
   dimOf : String → Option Nat
@@ -151,13 +160,13 @@ if accepted, nothing otherwise (REPLACE already deleted the old one). -/
 def RediSearch.stored (rs : RediSearch) (d : List RSAdd) : List RSAdd :=
   if rs.accepts d then d else []
 
-/-- `register_fields` (mod.rs:1270-1272): a vector field gets params, of its own
+/-- `register_fields` (mod.rs): a vector field gets params, of its own
 dimension, exactly when `vector_options` is present with `dimension > 0`. Only the
 "if" half is needed for the correctness theorems. -/
 def Registered (rs : RediSearch) (fv : List (Field × Val)) : Prop :=
   ∀ p ∈ fv, p.1.ty = .vector → ∀ k, p.1.vdim = some k → k ≠ 0 → rs.dimOf p.1.name = some k
 
-/-! ### Key property (#3087): `set` never adds an unindexable vector -/
+/-! ### Key property: `set` never adds an unindexable vector -/
 
 /-- For **any** field options and **any** value, a vector add made by `Document::set`
 names the field itself and carries exactly `k * 4` bytes for the field's own, non-zero
@@ -212,17 +221,11 @@ theorem other_fields_never_dropped (rs : RediSearch) (fv : List (Field × Val))
   simp only [RediSearch.stored, doc_always_accepted rs fv hreg, ↓reduceIte]
   exact List.mem_flatMap.mpr ⟨p, hp, ha⟩
 
-/-- #3087 changed only the vector arm. -/
-theorem docSet_nonvector_eq_pre (f : Field) (v : Val) (h : f.ty ≠ .vector) :
-    docSet f v = docSetPre3087 f v := by
-  cases hty : f.ty <;> cases v <;> simp_all [docSetPre3087]
-
-/-! ### The former counterexamples, now correctness theorems
+/-! ### The shapes of the former counterexamples, as correctness theorems
 
 `CREATE INDEX FOR (n:L) ON (n.name)`, a vector index on `n.v`, then
 `CREATE (:L {name:'a', v:vecf32([1,2,3])})` and `MATCH (n:L) WHERE n.name = 'a'`
-(an index scan). Three index shapes: `{dimension:2}`, `{dimension:0}`, no options
-(W5-idx-2's half-created index). -/
+(an index scan). Three index shapes: `{dimension:2}`, `{dimension:0}`, no options. -/
 
 def nameF : Field := { name := "range:name", ty := .range }
 def vecF : Field := { name := "vector:v", ty := .vector, vdim := some 2 }
@@ -276,8 +279,6 @@ theorem good_vector_keeps_range_entry (rs : RediSearch)
   exact ⟨other_fields_never_dropped rs _ hreg (nameF, .str "a") (by simp) _ (by simp [docSet, nameF]),
     other_fields_never_dropped rs _ hreg (vecF, .vecf32 2) (by simp) _ (by simp [docSet, vecF])⟩
 
-/-! ### HISTORICAL (fe619ac5f): what the unguarded arm cost, fixed by #3087 (49f698d22) -/
-
 /-- The fixed `docSet` on those same no-params shapes adds no vector at all. -/
 theorem docSet_noparams_no_vector (f : Field) (hf : f.ty = .vector)
     (h : f.vdim = none ∨ f.vdim = some 0) (d : Nat) : docSet f (.vecf32 d) = [] := by
@@ -285,7 +286,7 @@ theorem docSet_noparams_no_vector (f : Field) (hf : f.ty = .vector)
   intro k hk
   rcases h with h | h <;> rw [h] at hk <;> cases hk; exact Or.inl rfl
 
-/-- The fulltext arm indexes strings and nothing else (mod.rs:747-759). -/
+/-- The fulltext arm indexes strings and nothing else (mod.rs). -/
 theorem fulltext_only_strings (f : Field) (v : Val) (h : f.ty = .fulltext) :
     docSet f v = (if isStr v then [.text f.name] else []) := by
   unfold docSet; rw [h]; cases v <;> rfl
@@ -300,11 +301,11 @@ theorem range_never_vector_or_text (f : Field) (v : Val) (h : f.ty = .range) :
   cases v <;> simp [docSet, h, RSAdd.isVecOrText]
   all_goals (intro a ha; rcases ha with ⟨_, rfl⟩ | ⟨_, rfl⟩ <;> rfl)
 
-/-! ## Index options (`map_to_index_options`, runtime.rs:2008-2179, lines pinned at main 5c7af54f2)
+/-! ## Index options (`map_to_index_options`, runtime.rs, lines at main 256ab4d3f)
 
-#3094 (`fe619ac5f`'s parent series, fixes #3091) made the vector branch require
+The vector branch requires
 `dimension` and `similarityFunction` (lower-casing the latter) and the fulltext
-branch refuse unknown keys — all three as C does. -/
+branch refuses unknown keys — all three as C does. -/
 
 /-- An option value as it arrives in the `OPTIONS {…}` map. -/
 inductive OptVal where
@@ -317,36 +318,43 @@ deriving Repr, DecidableEq
 
 abbrev Opts := List (String × OptVal)
 
-/-- `get` (runtime.rs:2012-2016): first entry with that key. -/
+/-- `get` (runtime.rs): first entry with that key. -/
 def get (m : Opts) (k : String) : Option OptVal := (m.find? (·.1 == k)).map (·.2)
 
-/-- `FULLTEXT_OPTIONS` (runtime.rs:2021-2022). -/
+/-- `FULLTEXT_OPTIONS` (runtime.rs). -/
 def fulltextOptions : List String := ["weight", "nostem", "phonetic", "language", "stopwords"]
 
-/-- The fulltext unknown-key refusal (runtime.rs:2023-2030): the first key, in map
+/-- The fulltext unknown-key refusal (runtime.rs): the first key, in map
 order, that is not one of `FULLTEXT_OPTIONS`. -/
 def fulltextUnknown (m : Opts) : Option String :=
   (m.find? (fun kv => !fulltextOptions.contains kv.1)).map (·.1)
 
-/-- `dimension` arm (runtime.rs:2101-2119): **required** since #3094 (it used to default to `0`). -/
+/-- `dimension` arm (runtime.rs): **required**. -/
 def parseDimension (m : Opts) : Except String Nat :=
   match get m "dimension" with
   | some (.int n) => if n < 0 then .error "dimension must be a non-negative integer" else .ok n.toNat
   | none => .error "dimension is required"
   | some _ => .error "dimension must be an integer"
 
-/-- `M` / `efConstruction` / `efRuntime` arms (runtime.rs:2134-2170). -/
+/-- `M` / `efConstruction` / `efRuntime` arms (runtime.rs). -/
 def parseNatOpt (m : Opts) (k : String) : Except String (Option Nat) :=
   match get m k with
   | some (.int n) => if n < 0 then .error (k ++ " must be a non-negative integer") else .ok (some n.toNat)
   | none => .ok none
   | some _ => .error (k ++ " must be an integer")
 
-/-- `similarityFunction` arm (runtime.rs:2120-2133): **required**, and stored as
-`s.to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only, so it is that). -/
+/-- The similarity names `map_to_index_options` accepts (runtime.rs, PR #3257). -/
+def simNames : List String := ["euclidean", "cosine", "ip"]
+
+/-- `similarityFunction` arm (runtime.rs): **required**, stored as
+`s.to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only, so it is that), and since
+PR #3257 refused at parse time unless the lower-cased name is one of `simNames`,
+whatever the dimension. -/
 def parseSim (m : Opts) : Except String (Option String) :=
   match get m "similarityFunction" with
-  | some (.str s) => .ok (some s.toLower)
+  | some (.str s) =>
+    if simNames.contains s.toLower then .ok (some s.toLower)
+    else .error ("unknown similarityFunction '" ++ s ++ "'")
   | none => .error "similarityFunction is required"
   | some _ => .error "similarityFunction must be a string"
 
@@ -354,7 +362,7 @@ inductive Metric where
   | l2 | ip | cosine
 deriving DecidableEq, Repr
 
-/-- `register_fields`' similarity match (mod.rs:1273-1287): default `"euclidean"`,
+/-- `register_fields`' similarity match (mod.rs): default `"euclidean"`,
 exact string compare — on the lower-cased name `parseSim` stored. -/
 def metricOf (s : Option String) : Except String Metric :=
   match s.getD "euclidean" with
@@ -380,8 +388,8 @@ def parseVector (m : Opts) : Except String VecOpts := do
   return { dimension := d, sim := s, m := mm, efC := c, efR := r }
 
 /-- Whether CREATE VECTOR INDEX succeeds end-to-end in Rust: parse, then the metric
-check in `register_fields` (only reached when `dimension > 0`, mod.rs:1270-1272).
-With no `OPTIONS` map at all, `create_index` now refuses (index_ddl.rs:61-65); that
+check in `register_fields` (only reached when `dimension > 0`, mod.rs).
+With no `OPTIONS` map at all, `create_index` now refuses (index_ddl.rs); that
 is `parseVector []`, an error, here. -/
 def rustAccepts (m : Opts) : Bool :=
   match parseVector m with
@@ -406,18 +414,38 @@ theorem parseDimension_neg (m : Opts) (n : Int) (h : get m "dimension" = some (.
     ∃ e, parseDimension m = .error e := by
   simp [parseDimension, h, hn]
 
-/-- **`dimension` is required** (#3094). -/
+/-- **`dimension` is required**. -/
 theorem parseDimension_missing (m : Opts) (h : get m "dimension" = none) :
     parseDimension m = .error "dimension is required" := by
   simp [parseDimension, h]
 
-/-- **`similarityFunction` is required** (#3094), and stored lower-cased. -/
+/-- **`similarityFunction` is required**, and stored lower-cased. -/
 theorem parseSim_missing (m : Opts) (h : get m "similarityFunction" = none) :
     parseSim m = .error "similarityFunction is required" := by
   simp [parseSim, h]
-theorem parseSim_lower (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s)) :
+theorem parseSim_lower (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s))
+    (hk : simNames.contains s.toLower = true) :
     parseSim m = .ok (some s.toLower) := by
-  simp [parseSim, h]
+  simp only [parseSim, h, hk, ite_true]
+
+/-- Whatever `parseSim` accepts is the lower-cased given name (no other value is stored). -/
+theorem parseSim_ok_lower (m : Opts) (o : Option String) (h : parseSim m = .ok o) :
+    ∃ s, get m "similarityFunction" = some (.str s) ∧ simNames.contains s.toLower = true ∧
+      o = some s.toLower := by
+  unfold parseSim at h
+  split at h
+  · rename_i s hs
+    split at h
+    · rename_i hk; simp at h; exact ⟨s, hs, hk, h.symm⟩
+    · simp at h
+  all_goals simp at h
+
+/-- **PR #3257**: an unknown similarity name is refused at parse time, so no dimension
+(`0` included) lets it through. -/
+theorem parseSim_unknown (m : Opts) (s : String) (h : get m "similarityFunction" = some (.str s))
+    (hk : simNames.contains s.toLower = false) : ∃ e, parseSim m = .error e := by
+  have hn : s.toLower ∉ simNames := by simpa using hk
+  simp [parseSim, h, hn]
 
 /-- Without either required key no vector index is created (the old half-created
 index of W5-idx-2 needed `dimension` absent ⇒ `0` ⇒ `register_fields` skipped). -/
@@ -426,7 +454,7 @@ theorem rust_refuses_missing (m : Opts)
   unfold rustAccepts parseVector
   rcases h with h | h
   · simp [parseDimension_missing m h, bind, Except.bind]
-  · cases hd : parseDimension m <;> simp [hd, parseSim_missing m h, bind, Except.bind]
+  · cases hd : parseDimension m <;> simp [parseSim_missing m h, bind, Except.bind]
 
 /-- The metric match is total on the three documented names and rejects all else. -/
 theorem metricOf_ok_iff (s : String) :
@@ -450,7 +478,7 @@ theorem metricOf_toBool (s : String) :
       simp only [not_or] at h
       simp [h.1, h.2.1, h.2.2]
 
-/-- **Rust now agrees with C** (#3091 fixed by #3094) on every options map with a
+/-- **Rust agrees with C** on every options map with a
 positive `dimension` and no malformed HNSW key: same required keys, same
 case-insensitive name. -/
 theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → n ≠ 0)
@@ -479,8 +507,8 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
       by_cases hneg : n < 0
       · have : ¬ (0 ≤ n) := by omega
         cases hs : get m "similarityFunction" with
-        | none => simp [parseDimension, hg, hs, hneg, bind, Except.bind]
-        | some w => cases w <;> simp [parseDimension, hg, hs, hneg, this, bind, Except.bind]
+        | none => simp [parseDimension, hg, hneg, bind, Except.bind]
+        | some w => cases w <;> simp [parseDimension, hg, hneg, this, bind, Except.bind]
       · cases hs : get m "similarityFunction" with
         | none => simp [parseDimension, parseSim, hg, hs, hneg, bind, Except.bind]
         | some w =>
@@ -489,13 +517,17 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
             simp only [parseDimension, parseSim, hg, hs, hneg, h1, h2, h3, bind, Except.bind,
               pure, Except.pure, ite_false]
             have hpos : n.toNat > 0 := by omega
-            simp only [hpos, ite_true, metricOf_toBool]
-            simp; omega
+            by_cases hk : simNames.contains s.toLower = true
+            · simp only [hk, ite_true, hpos, metricOf_toBool]
+              simp; omega
+            · simp only [hk, Bool.false_eq_true, ite_false]
+              simp only [simNames] at hk
+              simp at hk; simp [hk]
           | _ => simp [parseDimension, parseSim, hg, hs, hneg, bind, Except.bind]
     | _ => simp [parseDimension, hg, bind, Except.bind]
 
--- Executable checks, re-run against fe619ac5f. Historical (2c874022a, #3091): missing `dimension`
--- or `similarityFunction` was accepted by Rust and `'Euclidean'` refused; C the reverse. Now both agree:
+-- Executable checks, re-run against fe619ac5f: Rust and C both refuse a missing `dimension` or
+-- `similarityFunction`, and both accept `'Euclidean'`:
 #guard rustAccepts [("similarityFunction", .str "euclidean")] = false
 #guard cAccepts [("similarityFunction", .str "euclidean")] = false
 #guard rustAccepts [("dimension", .int 2)] = false
@@ -503,7 +535,7 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
 #guard rustAccepts [("dimension", .int 2), ("similarityFunction", .str "Euclidean")] = true
 #guard cAccepts [("dimension", .int 2), ("similarityFunction", .str "Euclidean")] = true
 #guard rustAccepts [] = false
--- Fulltext: a misspelt key is refused (runtime.rs:2023-2030), first unknown key in map order.
+-- Fulltext: a misspelt key is refused (runtime.rs), first unknown key in map order.
 #guard fulltextUnknown [("weight", .float), ("nostemm", .bool true), ("lang", .str "x")] = some "nostemm"
 #guard fulltextUnknown [("weight", .float), ("phonetic", .bool true)] = none
 
@@ -528,24 +560,65 @@ theorem rust_keys_ok_imp_c (m : Opts) (h : fulltextUnknown m = none) : cFulltext
     simp only [List.isEmpty_cons, Bool.false_or, List.any_eq_true]
     exact ⟨kv, List.mem_cons_self .., hall kv (List.mem_cons_self ..)⟩
 
--- Remaining differences, both reproduced live (Rust fe619ac5f vs C):
--- (a) `dimension: 0` skips the metric check in Rust (`register_fields` only runs it for `> 0`):
---     `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust creates the index, C refuses.
-#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = true
+/-- **PR #3257**: Rust agrees with C on every vector options map with no malformed HNSW
+key, `dimension: 0` included (historical, before PR #3257: only `register_fields` checked
+the name, and only for `dimension > 0`, so `OPTIONS {dimension:0, similarityFunction:'bogus'}`
+created the index while C refused it). -/
+theorem rust_eq_c_all (m : Opts)
+    (hM : ∀ v, get m "M" = some v → ∃ n, v = .int n ∧ 0 ≤ n)
+    (hC : ∀ v, get m "efConstruction" = some v → ∃ n, v = .int n ∧ 0 ≤ n)
+    (hR : ∀ v, get m "efRuntime" = some v → ∃ n, v = .int n ∧ 0 ≤ n) :
+    rustAccepts m = cAccepts m := by
+  have nat_ok : ∀ k, (∀ v, get m k = some v → ∃ n, v = .int n ∧ 0 ≤ n) →
+      ∃ o, parseNatOpt m k = .ok o := by
+    intro k hk
+    cases hg : get m k with
+    | none => exact ⟨none, by simp [parseNatOpt, hg]⟩
+    | some v =>
+      obtain ⟨n, rfl, hn⟩ := hk v hg
+      exact ⟨some n.toNat, by simp [parseNatOpt, hg]; omega⟩
+  obtain ⟨o1, h1⟩ := nat_ok "M" hM
+  obtain ⟨o2, h2⟩ := nat_ok "efConstruction" hC
+  obtain ⟨o3, h3⟩ := nat_ok "efRuntime" hR
+  by_cases hd : ∀ n, get m "dimension" = some (.int n) → n ≠ 0
+  · exact rust_eq_c m hd hM hC hR
+  · simp only [Classical.not_forall, Classical.not_not] at hd
+    obtain ⟨n, hg, rfl⟩ := hd
+    unfold rustAccepts cAccepts parseVector
+    cases hs : get m "similarityFunction" with
+    | none => simp [parseDimension, parseSim, hg, hs, bind, Except.bind]
+    | some w =>
+      cases w with
+      | str s =>
+        by_cases hk : simNames.contains s.toLower = true
+        · simp only [parseDimension, parseSim, hg, hs, hk, h1, h2, h3, bind, Except.bind,
+            pure, Except.pure, ite_true]
+          simp only [simNames] at hk
+          simpa using hk
+        · simp only [parseDimension, parseSim, hg, hs, hk, bind, Except.bind, Bool.false_eq_true,
+            ite_false]
+          simp only [simNames] at hk
+          simp at hk; simp [hk]
+      | _ => simp [parseDimension, parseSim, hg, hs, bind, Except.bind]
+
+-- `OPTIONS {dimension:0, similarityFunction:'bogus'}` is refused, as in C (`rust_eq_c_all`).
+#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = false
 #guard cAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = false
+#guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "Cosine")] = true
+-- Remaining difference, reproduced live (Rust fe619ac5f vs C):
 -- (b) a known key beside an unknown one: `OPTIONS {weight:1.0, foo:true}` C creates, Rust refuses.
 #guard fulltextUnknown [("weight", .float), ("foo", .bool true)] = some "foo"
 #guard cFulltextKeysOk [("weight", .float), ("foo", .bool true)] = true
 #guard cFulltextKeysOk [("foo", .int 1)] = false
 
-/-- `phonetic` arm (runtime.rs:2051-2068). -/
+/-- `phonetic` arm (runtime.rs). -/
 def parsePhonetic : Option OptVal → Except String (Option String)
   | some (.bool b) => .ok (some (if b then "dm:en" else ""))
   | some (.str s) => if s.toLower = "dm:en" then .ok (some "dm:en") else .error "Unsupported phonetic algorithm"
   | none => .ok none
   | some _ => .error "Phonetic must be bool or string"
 
-/-- `register_fields` sets `RSFLDOPT_TXTPHONETIC` iff the code is non-empty (mod.rs:1250). -/
+/-- `register_fields` sets `RSFLDOPT_TXTPHONETIC` iff the code is non-empty (mod.rs). -/
 def phoneticFlag (p : Option String) : Bool := p.any (· ≠ "")
 
 /-- `phonetic:false` is stored as `""` and therefore does *not* set the flag. -/
@@ -554,7 +627,7 @@ theorem phonetic_true_flag : (parsePhonetic (some (.bool true))).map phoneticFla
 
 /-! ## KNN `k` and the result buffer -/
 
-/-- `eval_vector_args`, k arm (node_by_vector_scan.rs:143-147): any positive Int. -/
+/-- `eval_vector_args`, k arm (node_by_vector_scan.rs): any positive Int. -/
 def evalK : OptVal → Except String Nat
   | .int n => if n > 0 then .ok n.toNat else .error "Invalid arguments"
   | _ => .error "Invalid arguments"
