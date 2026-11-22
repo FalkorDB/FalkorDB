@@ -4,19 +4,11 @@ import FalkorAggOps.AggNext
 
 `AggNext.finishGroup` models the per-group closure of `AggregateOp::next` over abstract slot
 ids. What it did not model is **which** ids the binder hands it: a `Row` is keyed by the bare
-`Variable.id` (row.rs:104-123, `insert_by_id`), and the binder numbers every scope from 0, so
+`Variable.id` (row.rs, `insert_by_id`), and the binder numbers every scope from 0, so
 the ids of the scope *before* a projection (pre-projection key aliases, aggregate
 accumulators) and the ids of the scope *after* it (projected names, and every variable the
 next clause mints) overlap. Nor did it model that `Row::unbind` clears only the bound bit and
-keeps the value (row.rs:160-166), which a later operator still reads.
-
-| here | there |
-| --- | --- |
-| `PItem`, `layoutGo`, `projLayout` | id minting of one projection: `bind_projection` binds every item with `bind_expr` **before** `push_scope` (binder.rs:1072-1078), so the parser's accumulator child `AggOrderByPlaceholder` (cypher.rs:2054, :2078; reserved under `AGG_SLOT_PREFIX` since #3011) gets `fresh_var` id = `len` of the pre-projection scope, kept unique under `__agg_placeholder_{id}` (binder.rs:2193-2200); the aliases then get `project_name` ids `0, 1, …` in the new scope (binder.rs:1149-1167, :2177-2185); the planner splits them into keys / aggregations in order (planner/mod.rs:2496-2512); a key whose tree is a bare variable records it as `original_var` (aggregate.rs:1160, :1199) |
-| `nextId` | the next clause's first new variable: the projection scope holds exactly its aliases (binder `projectItems_keys`), and `fresh_var` mints `len` (binder.rs:2255-2266) |
-| `finishVals` | the emitted row's stored values: `unbind` keeps the value (row.rs:160-166), so values = `finishCore` row + outputs |
-| `cell` | what a downstream operator or the reply reads at a slot of the one-row batch: `push_row` marks a column present iff the slot is bound or holds a non-null value (batch.rs:631-640), `finish` drops a non-present column (batch.rs:763-778), `value_at` returns the stored value (reply.rs:655 `unwrap`s it) |
-| `AV`, `finEv` | the values involved, and `ExprEval::eval` on an aggregate call: read the accumulator child's slot (`value_at(key.id)`, "Variable not found" if absent) and apply the finalizer (eval.rs:864-880); `finalize_avg` is `unreachable!` on a non-list accumulator (aggregation.rs:593-596) |
+keeps the value (row.rs), which a later operator still reads.
 
 The general properties a fixed `next` should satisfy are `OutputsOwnAcc`, `KeysBound` and
 `EmitsOnlyScope` (together `AggRowSpec`); each `bug…` theorem refutes one on the ids the
@@ -148,7 +140,7 @@ def finalize : Option AV → AV → Except AErr AV
   | some (.avgAcc _ _), _ => .error .avgPanic
   | _, v => .ok v
 
-/-- `ExprEval::eval` on an aggregate call after consumption (eval.rs:864-880). -/
+/-- `ExprEval::eval` on an aggregate call after consumption (eval.rs). -/
 def finEv : Ex AV → Env AV → Except AErr AV
   | .func f cs, env => match cs.getLast? with
     | some (.var k) => match env k with
@@ -200,7 +192,7 @@ theorem agree3375_one_key :
     slotAt (finishGroup finEv L.1 L.2 (upd env0 0 (.str 0)) (acc3375 (.int 6))) 2 =
       some (some (.int 6)) := by decide
 
-/-! ## #3150 (fixed by #3522): a null key shares its slot with an accumulator -/
+/-! ## A null key shares its slot with an accumulator -/
 
 /-- `RETURN null AS x, count(1) AS n`: the pre-projection scope is empty, so `count`'s
 accumulator is id 0 — the id of `x`. -/
@@ -209,15 +201,8 @@ def items3150 : List (PItem AV) := [.key none, .agg cntF [.const .int]]
 theorem layout3150 : projLayout 0 items3150 =
     ([⟨0, none⟩], [(1, .func cntF [.const .int, .var 0])]) := rfl
 
-/-- **History, before #3522 (ca36bfa15): the keys-bound property on the old order** (accumulators
-unbound after the keys were written, `preFinishGroup`). -/
-def PreKeysBound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Prop :=
-  ∀ k ∈ keys, ∀ v, key k.name = some v →
-    slotAt (preFinishGroup ev keys aggs key acc) k.name = some (some v)
-
 /-- **#3150 fixed by #3522 (ca36bfa15)**: `AggregateOp::next` unbinds the accumulators before it
-writes the keys (aggregate.rs:1192-1217), so on the same ids the null key `x` is bound to `null`
+writes the keys (aggregate.rs), so on the same ids the null key `x` is bound to `null`
 and the column is present (live: `null, 1`, as C), and `KeysBound` holds. -/
 theorem fixed3522_null_key_bound :
     let L := projLayout 0 items3150

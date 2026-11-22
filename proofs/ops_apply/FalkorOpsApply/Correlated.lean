@@ -4,11 +4,11 @@
 All five operators share one idiom (Rust `graph/src/runtime/ops/`):
 
 * the outer batch's active rows are compacted and tagged with sequential
-  origins `0..n` (`Batch::clone_active_rows_seq_origin`, `batch.rs:1163`),
+  origins `0..n` (`Batch::clone_active_rows_seq_origin`, `batch.rs`),
 * ONE instance of the right sub-plan runs over that whole multi-row argument
   batch (`run_batch` + `set_argument_batch`), and
 * every sub-plan output row is correlated back to its input row by its
-  `origin_row` tag (`merge_over_input`, `batch.rs:944`; `matched[o]`,
+  `origin_row` tag (`merge_over_input`, `batch.rs`; `matched[o]`,
   `HashSet<u32>` of origins).
 
 The reference semantics (openCypher, and what the C engine does with its
@@ -26,32 +26,29 @@ and the headline theorems are
 * `applyPerRow_eq_ref`, `optionalPerRow_eq_ref` — the per-row fallback modes are
   the reference for *every* sub-plan (no separability needed).
 
-The planner guards batching with a *syntactic* blacklist (`apply.rs:119`,
-`optional.rs:104`).  `vhj_not_separable` + `canBatchApply_admits_vhj` show the
-blacklist misses `IR::ValueHashJoin`, whose runtime operator
-(`value_hash_join.rs:376-446`) joins left and right rows without comparing
-origins; `vhj_batched_16_vs_8` is the concrete counterexample, reproduced live
-(Rust 16 rows, C 8) with
-`UNWIND [1,2] AS x MATCH (a:A),(b:B) WHERE a.v = b.v RETURN count(*)`.
+The planner guards batching with a *syntactic* blacklist (`apply.rs`,
+`optional.rs`).  `canBatchApply_admits_vhj` shows the blacklist misses
+`IR::ValueHashJoin`; the join is made separable by comparing origins (#3035,
+`VhjSep.vhjPO_sepT`).
 -/
 
 namespace Correlated
 
 /-- A sub-plan: consumes an argument batch of `(origin, row)` pairs and produces
 `(origin, output)` pairs.  Abstracts `run_batch(idx)` + `set_argument_batch` +
-draining the iterator (`BatchOp`, `batch.rs:1499`). -/
+draining the iterator (`BatchOp`, `batch.rs`). -/
 abbrev SubPlan (α β : Type) := List (Nat × α) → List (Nat × β)
 
-/-- Sequential origin tagging: `clone_active_rows_seq_origin` (`batch.rs:1163`),
+/-- Sequential origin tagging: `clone_active_rows_seq_origin` (`batch.rs`),
 row `i` of the compacted active rows gets origin `i`. (The Rust code omits the
-sidecar when `n ≤ 1`, which `origin_row` (`batch.rs:1298`) reads back as `0` —
+sidecar when `n ≤ 1`, which `origin_row` (`batch.rs`) reads back as `0` —
 identical tags.) -/
 def tag {α : Type} : List α → Nat → List (Nat × α)
   | [], _ => []
   | x :: xs, n => (n, x) :: tag xs (n + 1)
 
 /-- Running the sub-plan on one row alone (per-row mode builds a single-row
-argument batch, `apply.rs:303-305`, `optional.rs:252-254`). -/
+argument batch, `apply.rs`, `optional.rs`). -/
 def single {α β : Type} (f : SubPlan α β) (x : α) : List β :=
   (f [(0, x)]).map Prod.snd
 
@@ -87,17 +84,17 @@ theorem tag_map_snd {α : Type} (xs : List α) (n : Nat) : (tag xs n).map Prod.s
 
 /-! ## Apply (batched and per-row) — `graph/src/runtime/ops/apply.rs` -/
 
-/-- Batched Apply, flattened over output batches (`next_batched`, `apply.rs:152-232`):
+/-- Batched Apply, flattened over output batches (`next_batched`, `apply.rs`):
 the sub-plan runs once over `tag xs 0`; each output `(o, y)` is merged against
-input row `o` (`merge_over_input`, `batch.rs:944`, the columnar equivalent of
+input row `o` (`merge_over_input`, `batch.rs`, the columnar equivalent of
 `input_row.clone().merge(sub_row)`).  `gather` indexes by origin; an out-of-range
 origin would panic in Rust, modelled by dropping (it cannot happen for separable
 plans, `mem_tag`). -/
 def applyBatched {α β γ : Type} (merge : α → β → γ) (f : SubPlan α β) (xs : List α) : List γ :=
   (f (tag xs 0)).filterMap (fun p => xs[p.1]?.map (fun x => merge x p.2))
 
-/-- Per-row Apply (`next_per_row`, `apply.rs:238-337`): one fresh sub-plan per
-input row, results merged with `p.env.clone().merge(&row)` (`apply.rs:251-253`). -/
+/-- Per-row Apply (`next_per_row`, `apply.rs`): one fresh sub-plan per
+input row, results merged with `p.env.clone().merge(&row)` (`apply.rs`). -/
 def applyPerRow {α β γ : Type} (merge : α → β → γ) (f : SubPlan α β) (xs : List α) : List γ :=
   xs.flatMap (fun x => (single f x).map (merge x))
 
@@ -136,21 +133,21 @@ theorem applyBatched_eq_ref {α β γ : Type} (merge : α → β → γ) (f : Su
 /-! ## Optional — `graph/src/runtime/ops/optional.rs` and the Optional arm of Apply -/
 
 /-- Origins that produced at least one sub-plan row (`matched[o] = true`,
-`optional.rs:164-166`, `apply.rs:201-203`). -/
+`optional.rs`, `apply.rs`). -/
 def matchedOrigins {α β : Type} (f : SubPlan α β) (xs : List α) : List Nat :=
   (f (tag xs 0)).map Prod.fst
 
-/-- Batched Optional, flattened (`optional.rs:125-189`): every sub-plan batch is
+/-- Batched Optional, flattened (`optional.rs`): every sub-plan batch is
 emitted merged over the input as it arrives; only once the sub-plan is exhausted
 is ONE fallback batch emitted for all unmatched origins, gathered from
 `input_ref` in origin order with the optional variables set to NULL
-(`optional.rs:175-184`). -/
+(`optional.rs`). -/
 def optionalBatched {α β γ : Type} (merge : α → β → γ) (nullFill : α → γ)
     (f : SubPlan α β) (xs : List α) : List γ :=
   applyBatched merge f xs ++
     ((tag xs 0).filter (fun p => !(matchedOrigins f xs).contains p.1)).map (fun p => nullFill p.2)
 
-/-- Per-row Optional (`optional.rs:195-286`): per row, the sub-plan results, or
+/-- Per-row Optional (`optional.rs`): per row, the sub-plan results, or
 the NULL-filled row if there were none (`had_result`). -/
 def optionalPerRow {α β γ : Type} (merge : α → β → γ) (nullFill : α → γ)
     (f : SubPlan α β) (xs : List α) : List γ :=
@@ -261,9 +258,9 @@ theorem optionalBatched_perm_ref {α β γ : Type} (merge : α → β → γ) (n
 
 /-! ## SemiApply / AntiSemiApply — `graph/src/runtime/ops/semi_apply.rs` -/
 
-/-- `SemiApplyOp::next` (`semi_apply.rs:66-113`), one input batch: the sub-plan
+/-- `SemiApplyOp::next` (`semi_apply.rs`), one input batch: the sub-plan
 runs once over all active rows; a row passes iff `has_result ^ is_anti`
-(`semi_apply.rs:101-106`).  (An empty passing set makes the Rust loop pull the
+(`semi_apply.rs`).  (An empty passing set makes the Rust loop pull the
 next batch, which is the same as emitting nothing for this one.) -/
 def semiBatched {α β : Type} (isAnti : Bool) (f : SubPlan α β) (xs : List α) : List α :=
   ((tag xs 0).filter (fun p => (matchedOrigins f xs).contains p.1 ^^ isAnti)).map Prod.snd
@@ -298,7 +295,7 @@ theorem any_congr_mem {δ : Type} (l : List δ) {p q : δ → Bool} (h : ∀ b �
 
 /-! ## OR-apply multiplexer — `graph/src/runtime/ops/or_apply_multiplexer.rs` -/
 
-/-- `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73-129`), one input
+/-- `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs`), one input
 batch: every branch runs once over a fresh copy of the tagged rows; origin `i`
 passes iff some branch has `has_result ^ anti_flags[b]`. -/
 def orApply {α β : Type} (branches : List (SubPlan α β × Bool)) (xs : List α) : List α :=
@@ -351,33 +348,9 @@ theorem compose_separable {α β γ : Type} (f : SubPlan α β) (g : SubPlan β 
 
 /-! ## Non-separable operators and the batching guard -/
 
-/-- `ValueHashJoin` (`value_hash_join.rs:366-446`), both sides fed the same
-argument batch (`batch.rs:1678-1689`): the build side is materialised over ALL
-argument rows; each probe row is merged with every build row with an equal key —
-the origin of the merged row is the probe row's (`Row::merge` does not touch
-`origin_row`), and origins are never compared. -/
-def vhj {α a b k : Type} [BEq k] (lhs : α → List a) (rhs : α → List b)
-    (lk : a → k) (rk : b → k) : SubPlan α (a × b) :=
-  fun args =>
-    let right := args.flatMap (fun p => (rhs p.2).map (fun y => (p.1, y)))
-    (args.flatMap (fun p => (lhs p.2).map (fun y => (p.1, y)))).flatMap
-      (fun l => (right.filter (fun r => lk l.2 == rk r.2)).map (fun r => (l.1, (l.2, r.2))))
-
 /-- The live repro's data: two `:A` nodes and two `:B` nodes, all `v = 1`. -/
 def scanA (_ : Nat) : List Nat := [1, 2]
 def scanB (_ : Nat) : List Nat := [1, 2]
-def joinQ : SubPlan Nat (Nat × Nat) := vhj scanA scanB (fun _ => (1 : Nat)) (fun _ => (1 : Nat))
-
-/-- Batched Apply over `UNWIND [1,2] AS x`: 16 rows; per-row reference: 8. -/
-theorem vhj_batched_16_vs_8 :
-    (applyBatched (fun x y => (x, y)) joinQ [1, 2]).length = 16 ∧
-    (applyRef (fun x y => (x, y)) joinQ [1, 2]).length = 8 := by decide
-
-theorem vhj_not_separable : ¬ Separable joinQ := by
-  intro h
-  have := congrArg List.length (h [(0, 1), (1, 2)])
-  revert this; decide
-
 /-- Aggregate (`count(*)` over the argument batch) is not separable either, which
 is why Apply/Optional fall back to per-row mode for it. -/
 def countAll {α : Type} : SubPlan α Nat := fun args => [(0, args.length)]
@@ -387,27 +360,27 @@ theorem count_not_separable : ¬ Separable (countAll (α := Nat)) := by
   have := h [(0, 1), (1, 2)]
   revert this; decide
 
-/-- The IR kinds the guards look at (`planner/mod.rs:150-300`). -/
+/-- The IR kinds the guards look at (`planner/mod.rs`). -/
 inductive IRKind
   | scan | traverse | filter | project | unwind | pathBuilder | semiApply | orApply
   | aggregate | cartesian | valueHashJoin | optional | apply | merge | union
   | sort | limit | skip | distinct
   /- The writing operators (`IR::Create`, `IR::Delete`, `IR::Set`/`IR::Remove`, `IR::Commit`,
-  `planner/mod.rs:91,102,107,109,308`); none is on the `can_batch` blacklist (see RowWrites.lean). -/
+  `planner/mod.rs`); none is on the `can_batch` blacklist (see RowWrites.lean). -/
   | create | delete | setProps | commit
   deriving DecidableEq, Repr
 
-/-- `ApplyOp::new`'s `can_batch` (`apply.rs:119-133`). -/
+/-- `ApplyOp::new`'s `can_batch` (`apply.rs`). -/
 def canBatchApply (sub : List IRKind) : Bool :=
   !sub.any (fun k => k ∈ [.aggregate, .cartesian, .optional, .apply, .merge, .union,
                           .sort, .limit, .skip, .distinct])
 
-/-- `OptionalOp::new`'s `can_batch` (`optional.rs:104-106`). -/
+/-- `OptionalOp::new`'s `can_batch` (`optional.rs`). -/
 def canBatchOptional (sub : List IRKind) : Bool :=
   !sub.any (fun k => k ∈ [.aggregate, .cartesian])
 
-/-- The guard admits a sub-plan containing `ValueHashJoin`, which is not
-separable: batched mode is then wrong (`vhj_batched_16_vs_8`). -/
+/-- The guard admits a sub-plan containing `ValueHashJoin` (safe since #3035: the join is
+per-origin). -/
 theorem canBatchApply_admits_vhj :
     canBatchApply [.scan, .valueHashJoin, .scan] = true ∧
     canBatchOptional [.scan, .valueHashJoin, .scan] = true := by decide

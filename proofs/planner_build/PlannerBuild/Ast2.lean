@@ -2,14 +2,6 @@ import PlannerBuild.Ast
 /-
 # parser/ast.rs: connected components and the `Display` impls
 
-| here | there |
-| --- | --- |
-| `dfs`, `components` | `QueryGraph::dfs` ast.rs:844-883, `connected_components` ast.rs:823-842 |
-| `exprFmt` | `Display for ExprIR` ast.rs:392-464 |
-| `quantFmt` | `Display for QuantifierType` ast.rs:424-436 |
-| `setItemFmt` | `Display for SetItem` ast.rs:896-923 |
-| `clauseFmt` | `Display for QueryIR` ast.rs:1041-1146 |
-
 `dfs` keeps ONE visited set of ids for nodes, relationships and paths (ids
 only, as `HashSet<u32>`); the fuel bounds the recursion (each call marks a new node).
 -/
@@ -146,8 +138,6 @@ inductive EK
   | distinct | property (p : String) | func (name : String) | quant (q v : String) | listComp (v : String)
   | reduce (a i : String) | patComp | paren | pattern | nested (id : Nat) | shortestPath | mapProjection
   | regexMatches | regexMatchList | regexReplace | case_
-  /-- `AggOrderByPlaceholder` (ast.rs:298, #3011) -/
-  | aggSlot
 
 def exprFmt : EK → String
   | .null => "null" | .bool b => b | .int i => i | .float f => f | .str s => s | .otherConst d => "const(" ++ d ++ ")"
@@ -163,7 +153,6 @@ def exprFmt : EK → String
   | .pattern => "<pattern>" | .nested i => "nested plan #" ++ toString i | .shortestPath => "shortestPath()"
   | .mapProjection => "map_projection" | .regexMatches => "regex_matches()"
   | .regexMatchList => "string.matchRegEx()" | .regexReplace => "string.replaceRegEx()" | .case_ => "CASE"
-  | .aggSlot => "<aggregate order-by slot>"
 
 /-- The comparison and arithmetic operators print pairwise-distinct symbols. -/
 theorem exprFmt_ops_distinct :
@@ -176,9 +165,6 @@ theorem exprFmt_ops_distinct :
 
 theorem exprFmt_param (p : String) : exprFmt (.param p) = "@" ++ p := rfl
 theorem exprFmt_func (n : String) : exprFmt (.func n) = n ++ "()" := rfl
-/-- #3011: the aggregate ORDER BY slot is not a variable: it never prints as a name. -/
-theorem exprFmt_aggSlot : exprFmt .aggSlot = "<aggregate order-by slot>" ∧
-    ∀ v, exprFmt (.var v) = v := ⟨rfl, fun _ => rfl⟩
 
 inductive QK | all | any | none | single
 

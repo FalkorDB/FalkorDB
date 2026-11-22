@@ -1,29 +1,18 @@
 import FalkorOpsApply.Merge
 /-
-# MERGE matches every input row before it creates anything (#3067, fixes #3039)
+# MERGE matches every input row before it creates anything
 
-`Merge.lean` models `MergeOp::next` as it was at ca36bfa15: the match sub-plan ran once per
-INPUT BATCH, so a row saw the creations (and `ON CREATE SET` rewrites) of earlier batches
-but not of earlier rows of its own batch. That model is kept there as history
-(`rustBatch`/`rustMerge`/`phaseA`).
-
-Since #3067 (b47d6d6a3) `MergeOp::match_all` (merge.rs:260-297) first consumes the whole
+`MergeOp::match_all` (merge.rs) first consumes the whole
 child and runs the match sub-plan for every row, against the graph as it is before any
-creation; `next` (merge.rs:329-441) then walks the matched rows in input order. For each row:
+creation; `next` (merge.rs) then walks the matched rows in input order. For each row:
 no match → `do_create_fallback` (cache hit = the node an earlier row created); matches →
-the first inline, the rest queued, and `drain_pending` runs right after the row (merge.rs:434-437,
+the first inline, the rest queued, and `drain_pending` runs right after the row (merge.rs,
 inside the `while`), so the row's matches are emitted in order before the next row.
-
-| here | there |
-| --- | --- |
-| `matchAll` | `MergeOp::match_all` (merge.rs:260), per batch, `matched.extend` |
-| `rowMain` | one iteration of the `while` in `MergeOp::next` (merge.rs:350-437) |
-| `mainMerge` | `MergeOp::next` run to exhaustion |
 
 Theorems: `mainMerge_batch_independent` (the result does not depend on how the input is cut
 into batches), `mainMerge_noSet_eq_ref` (without SET clauses: same graph, same ids and the
 SAME ROW ORDER as the per-row openCypher reference), `fixed3067_batch_independent` (the
-filed repro now gives the same 2 nodes whether rows 1 and 2 share a batch or not, as C).
+filed repro gives the same 2 nodes whether rows 1 and 2 share a batch or not, as C).
 -/
 namespace Merge
 
@@ -34,7 +23,7 @@ concatenated in order. -/
 def matchAll (cl : Clause α) (g : Graph) (bs : List (List α)) : List (α × List Node) :=
   bs.flatMap (fun b => b.map (fun r => (r, matchesK g (cl.key r))))
 
-/-- One row of the `while` in `MergeOp::next` (merge.rs:350-437): create fallback when it
+/-- One row of the `while` in `MergeOp::next` (merge.rs): create fallback when it
 has no match; otherwise `ON MATCH` on the first match, the rest queued and drained at once
 (`drain_pending` = `phaseB`), unless the all-bound shortcut keeps only the first. -/
 def rowMain (cl : Clause α) (allBound : Bool) (st : SState (α := α)) :
@@ -58,7 +47,7 @@ theorem matchAll_eq (cl : Clause α) (g : Graph) (bs : List (List α)) :
   | nil => rfl
   | cons b bs ih => simp only [matchAll, List.flatMap_cons, List.flatten_cons, List.map_append] at ih ⊢; rw [ih]
 
-/-- **The result does not depend on the batch boundaries** (the pre-#3067 model did). -/
+/-- **The result does not depend on the batch boundaries.** -/
 theorem mainMerge_batch_independent (cl : Clause α) (allBound : Bool) (st : SState (α := α))
     (bs : List (List α)) : mainMerge cl allBound st bs = mainMerge cl allBound st [bs.flatten] := by
   simp only [mainMerge, matchAll_eq, List.flatten_cons, List.flatten_nil, List.append_nil]
@@ -150,7 +139,7 @@ theorem rowMain_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) (r : α)
     have href : refRow cl rst r =
         ⟨rst.g, rst.next, rst.out ++ (m :: ms).map (fun m => (r, some m.id))⟩ := by
       simp only [refRow, hg, hcur, hom]
-      simp [foldl_applySet_none, applySet, foldl_const_self]
+      simp [applySet, foldl_const_self]
     have hrow : rowMain cl false st (r, m :: ms) =
         { st with out := st.out ++ (m :: ms).map (fun m => (r, some m.id)) } := by
       simp only [rowMain, hom, applySet, Bool.false_or]
@@ -185,10 +174,9 @@ theorem mainRows_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
 
 /-- **MERGE without SET clauses matches openCypher after #3067, for every batching and with
 the rows in the reference's order, on the non-all-bound path (`allBound = false`).** The
-all-bound shortcut of `rowMain` (`allBoundMain`, merge.rs:378-393) keeps only the first match
-and is outside this theorem (see `Merge.allBound_path_keeps_all`). Same graph, same next id; unlike the pre-#3067 model
-(`rust_eq_ref_noSet`, output a permutation) the emitted rows are EXACTLY the reference's,
-because each row's remaining matches are drained before the next row. -/
+all-bound shortcut of `rowMain` (`allBoundMain`, merge.rs) keeps only the first match
+and is outside this theorem (see `allBound_path_keeps_all`). Same graph, same next id; the
+emitted rows are EXACTLY the reference's, because each row's remaining matches are drained before the next row. -/
 theorem mainMerge_noSet_eq_ref (cl : Clause α) (hs : NoSet cl) (st : SState (α := α))
     (hG : G cl st) (bs : List (List α)) :
     let R := mainMerge cl false st bs
@@ -206,10 +194,21 @@ theorem mainMerge_noSet_eq_ref (cl : Clause α) (hs : NoSet cl) (st : SState (α
 
 /-! ### The filed repro (#3039) -/
 
-/-- **#3067 fixes it**: the boundary no longer matters; both give 2 nodes, as C does (and as
+/-- **#3067**: the boundary does not matter; both give 2 nodes, as C does (and as
 the issue's `UNWIND range(1,N)` repro does for every N). -/
 theorem fixed3067_batch_independent :
     (mainMerge clCase false st0 [[1, 2]]).g.length = 2 ∧
     (mainMerge clCase false st0 [[1], [2]]).g.length = 2 := by decide
+
+/-- `MATCH (a),(b) MERGE p = (a)-[:R]->(b)` with two parallel matches: with the shortcut flag
+computed on main (#3055: `false` on the path shape) every match is emitted, as the reference does. -/
+def clK : Clause Unit := ⟨0, 0, fun _ => 1, none, none⟩
+def gPar : Graph := [⟨0, 1⟩, ⟨1, 1⟩]
+
+theorem path_shortcut_off : allBoundMain true pathRels = false := by decide
+
+theorem allBound_path_keeps_all :
+    (mainMerge clK (allBoundMain true pathRels) ⟨gPar, 2, [], []⟩ [[()]]).out =
+      (refMerge clK ⟨gPar, 2, []⟩ [()]).out := by decide
 
 end Merge

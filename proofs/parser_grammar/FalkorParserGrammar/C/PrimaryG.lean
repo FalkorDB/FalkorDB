@@ -45,13 +45,13 @@ theorem argsP_sound (pe : PE) (n : Nat) acc (s : PS) out s' (h : argsP pe n acc 
 /-- `oC_FunctionInvocation` after `name(`, with `count(*)` (Cypher.g4:365). -/
 inductive GCallTail (pe : PE) (fi : FnI) : PS → ET → PS → Prop
   | countStar {s} : fi.agg = true → fi.count = true → s.cur = .star → s.adv.cur = .rparen →
-      GCallTail pe fi s (.node (.func fi.id true) [leaf (.int 1), leaf .aggSlot]) s.adv.adv
+      GCallTail pe fi s (.node (.func fi.id true) [leaf (.int 1), leaf (.var nmPlaceholder)]) s.adv.adv
   | agg {s dis s1 args s2} : fi.agg = true →
       (dis = true ∧ s.cur = .kw .distinct ∧ s1 = s.adv ∨ dis = false ∧ s1 = s) → s1.cur ≠ .star →
       GArgsE pe s1 [] args s2 → fi.lo ≤ args.length → args.length ≤ fi.hi →
       (∀ a ∈ args, ¬ HasAgg a) →
       GCallTail pe fi s (.node (.func fi.id true)
-        ((if dis then [ET.node .distinct args] else args) ++ [leaf .aggSlot])) s2
+        ((if dis then [ET.node .distinct args] else args) ++ [leaf (.var nmPlaceholder)])) s2
   | plain {s dis s1 args s2} : fi.agg = false →
       (dis = true ∧ s.cur = .kw .distinct ∧ s1 = s.adv ∨ dis = false ∧ s1 = s) →
       GArgsE pe s1 [] args s2 → fi.lo ≤ args.length → args.length ≤ fi.hi →
@@ -188,7 +188,7 @@ theorem identArm_sound (s : PS) r s' (hq : isQuantKw s.cur = false)
       · rename_i hs; subst hs
         peel h => t s5 h5
         obtain ⟨rfl, rfl⟩ := pure_ok h
-        exact .shortest hq hv hn gd hl (shortestP_sound F _ _ _ h5)
+        exact .shortest hq hv hn gd hl (shortestP_sound o.pmap F _ _ _ h5)
       · rename_i hs
         split at h
         · simp at h

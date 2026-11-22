@@ -2,18 +2,6 @@ import AlgoUdf.MsfFlow
 import AlgoUdf.Config
 import AlgoUdf.Dfs
 /-! # Remaining helpers of `algo_procedures.rs`
-
-| here | there |
-| --- | --- |
-| `newMsg`, `msgToString`  | `new_msg` :101, `msg_to_string` :105 (`CStr::from_ptr`: bytes up to the first NUL) |
-| `Ctx`, `msfScore`        | `MsfWeightCtx`, `msf_score` :144 (attribute lookup as an `Option Attr`) |
-| `indexOp`, `valueOp`     | `msf_scored_edge_index_op` :176, `msf_scored_edge_value_op` :200 (null guard = no write) |
-| `scoreOf`                | `msf_score_of` :266 |
-| `nodeValue`              | `node_value` :474 |
-| `collectNodeIds`         | `collect_node_ids` :498 (label scans AXIOMATISED as `scan`; FxHashSet + `sort_unstable`) |
-| `activeNodes`            | `active_node_set` :522 / `Graph::get_nodes(∅, 0)` (graph.rs:2565) |
-| `Own`, `lifecycle`       | `create_lagraph_graph` :372, `delete_lagraph_graph` :397, `_borrowed` :404, `_maybe_borrowed` :417 under the LAGraph ownership contract |
-| `cmpKey`                 | `cmp_found_path` :2155 (= `Dfs.fpLt`) |
 -/
 namespace AlgoUdf.AlgoGlue
 open AlgoUdf
@@ -34,8 +22,8 @@ theorem msgToString_prefix (m : List Nat) : ∃ rest, m = msgToString m ++ rest 
   | nil => simp
   | cons x t ih =>
     by_cases hx : x = 0
-    · right; simp [List.dropWhile_cons, hx]
-    · simp only [List.dropWhile_cons, ne_eq, hx, not_false_eq_true, decide_true, if_true]; exact ih
+    · right; simp [hx]
+    · simp only [List.dropWhile_cons, ne_eq, hx, not_false_eq_true, decide_true, ite_true]; exact ih
 
 /-! ## MSF scoring callbacks -/
 
@@ -104,7 +92,7 @@ theorem nodeValue_spec (id : Nat) : nodeValue id = .node id := rfl
 
 /-! ## Node collection -/
 
-/-- `Graph::get_nodes(&∅, 0)` (`Graph::get_nodes`, graph.rs:2565). -/
+/-- `Graph::get_nodes(&∅, 0)` (`Graph::get_nodes`, graph.rs). -/
 def activeNodes (nodeCount maxId : Nat) (deleted : Nat → Bool) : List Nat :=
   if nodeCount = 0 then [] else (List.range (maxId + 1)).filter (fun i => !deleted i)
 
@@ -161,7 +149,7 @@ theorem collectNodeIds_spec (scan : String → List Nat) (all : List Nat) (label
     (hne : labels ≠ []) :
     let r := collectNodeIds scan all labels
     (∀ x, x ∈ r ↔ ∃ l ∈ labels, x ∈ scan l) ∧ r.Nodup ∧ r.Pairwise (· ≤ ·) := by
-  simp only [collectNodeIds, hne, if_false]
+  simp only [collectNodeIds, hne, ite_false]
   obtain ⟨hnd, hmem⟩ := foldl_insertSet (labels.flatMap scan) [] (by simp)
   refine ⟨fun x => ?_, ?_, ?_⟩
   · rw [List.mem_mergeSort, hmem]; simp

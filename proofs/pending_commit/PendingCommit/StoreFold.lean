@@ -42,7 +42,7 @@ theorem lk_none {α : Type} (L : List (Nat × α)) (id : Nat) (h : id ∉ L.map 
   | cons p L ih =>
     obtain ⟨k, a⟩ := p
     simp only [List.map_cons, List.mem_cons, not_or] at h
-    simp only [lk]; rw [if_neg h.1, ih h.2]
+    simp only [lk]; rw [ite_eq_right h.1, ih h.2]
 
 /-- **`runOps_spec`**. -/
 theorem runOps_spec {α : Type} (op : D → Nat → α → D × Nat × Nat) (f : List Entry → α → List Entry)
@@ -74,8 +74,8 @@ theorem runOps_spec {α : Type} (op : D → Nat → α → D × Nat × Nat) (f :
       simp only [runOps, lk]
       rw [r2 id]
       by_cases hid : id = k
-      · subst hid; rw [lk_none L id hnd.1, if_pos rfl]; exact hs.self d id a h hk
-      · rw [if_neg hid]
+      · subst hid; rw [lk_none L id hnd.1, ite_eq_left rfl]; exact hs.self d id a h hk
+      · rw [ite_eq_right hid]
         cases lk L id with
         | none => exact hfr id hid
         | some b => simp only [after]; rw [hfr id hid]
