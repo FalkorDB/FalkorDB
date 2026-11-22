@@ -24,5 +24,5 @@ pin = v1.3.x
 [redisearch]
 path = deps/RediSearch
 url = https://github.com/FalkorDB/RediSearch.git
-rev = 1317b41b3f1a2f68fea81e250b0b32a57dc7d6d1
+rev = 994282d3075adae126076b0aa141b1c6ac66c0bf
 pin = falkordb/llapi-extensions-8.6
