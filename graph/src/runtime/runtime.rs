@@ -68,7 +68,7 @@ use orx_tree::{Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
     cell::{Cell, OnceCell, Ref, RefCell, RefMut},
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
@@ -203,11 +203,6 @@ pub struct Runtime<'a> {
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     /// Cache of deleted relationships for result consistency
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
-    /// Ids in `deleted_relationships` that a later `CREATE` of this query
-    /// reissued to a new relationship: the snapshot describes the previous
-    /// owner, so it must not make a write to the new one look deleted. A
-    /// delete of the new relationship records a fresh snapshot and clears it.
-    pub reissued_relationships: RefCell<HashSet<RelationshipId>>,
     /// Cache for MERGE pattern matching — stores only the created entity
     /// bindings (variable id → value), keyed by the MERGE operator's plan node
     /// and the pattern hash. Per operator, like C's `unique_entities`: another
@@ -519,7 +514,6 @@ impl<'a> Runtime<'a> {
             import_folder,
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
-            reissued_relationships: RefCell::new(HashSet::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
             node_attr_id_memo: RefCell::new(Vec::new()),
             rel_attr_id_memo: RefCell::new(Vec::new()),
@@ -1666,7 +1660,6 @@ impl<'a> Runtime<'a> {
     ) -> Option<Value> {
         let deleted = self.deleted_relationships.borrow();
         if !deleted.is_empty()
-            && !self.is_reissued_relationship(id)
             && let Some(dn) = deleted.get(&id)
         {
             if let Some(value) = dn.attrs.get(attr) {
@@ -1689,56 +1682,19 @@ impl<'a> Runtime<'a> {
 
     /// Whether this query has deleted `id`, so a write to it must be skipped.
     ///
-    /// Three records between them: the graph's (deleted before this segment,
-    /// unless the id was reissued to an edge this segment created), the
-    /// segment's explicit deletes, and the snapshot map, which is the only
+    /// Three records between them: the graph's (deleted before this segment),
+    /// the segment's explicit deletes, and the snapshot map, which is the only
     /// place an edge cascaded by `DETACH DELETE` of its endpoint is recorded
-    /// before commit. The graph and snapshot records both describe the edge
-    /// that used to own the id, so neither applies to a reissued id (the
-    /// graph's is told apart by the pending-created marker, which lasts to the
-    /// next commit; the snapshot's by `reissued_relationships`).
+    /// before commit. A freed id is never reissued within the query (the id
+    /// space quarantines it), so none of the three can describe a new owner.
     pub fn is_relationship_deleted(
         &self,
         id: RelationshipId,
     ) -> bool {
         let pending = self.pending.borrow();
         pending.is_relationship_deleted(id)
-            || (self.graph().is_relationship_deleted(id) && !pending.is_relationship_created(id))
-            || (!pending.is_relationship_created(id)
-                && !self.reissued_relationships.borrow().contains(&id)
-                && self.deleted_relationships.borrow().contains_key(&id))
-    }
-
-    /// Whether `id` was deleted by this query and then given to a new
-    /// relationship: its snapshot describes the previous owner, so reads of the
-    /// id must see the new relationship, not the snapshot.
-    fn is_reissued_relationship(
-        &self,
-        id: RelationshipId,
-    ) -> bool {
-        self.reissued_relationships.borrow().contains(&id)
-    }
-
-    /// Snapshots a relationship this query deleted. The id now names that
-    /// relationship again, even if it had been reissued before.
-    pub fn record_deleted_relationship(
-        &self,
-        id: RelationshipId,
-        snapshot: DeletedRelationship,
-    ) {
-        self.reissued_relationships.borrow_mut().remove(&id);
-        self.deleted_relationships.borrow_mut().insert(id, snapshot);
-    }
-
-    /// Notes that `id` was just created. If the query had deleted an edge
-    /// with that id, the snapshot no longer speaks for the id.
-    pub fn note_relationship_created(
-        &self,
-        id: RelationshipId,
-    ) {
-        if self.deleted_relationships.borrow().contains_key(&id) {
-            self.reissued_relationships.borrow_mut().insert(id);
-        }
+            || self.graph().is_relationship_deleted(id)
+            || self.deleted_relationships.borrow().contains_key(&id)
     }
 
     /// Materializes a property column for a batch of node IDs.
@@ -1841,12 +1797,7 @@ impl<'a> Runtime<'a> {
             }
         } else {
             for &id in rel_ids {
-                let snapshot = if self.is_reissued_relationship(id) {
-                    None
-                } else {
-                    deleted.get(&id)
-                };
-                let val = snapshot.map_or_else(
+                let val = deleted.get(&id).map_or_else(
                     || {
                         attr_idx
                             .and_then(|idx| {
@@ -1985,9 +1936,7 @@ impl<'a> Runtime<'a> {
         &self,
         id: RelationshipId,
     ) -> OrderMap<Arc<String>, Value> {
-        if !self.is_reissued_relationship(id)
-            && let Some(dr) = self.deleted_relationships.borrow().get(&id)
-        {
+        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
             let attrs = dr
                 .attrs
                 .iter()
@@ -2007,9 +1956,7 @@ impl<'a> Runtime<'a> {
         &self,
         id: RelationshipId,
     ) -> (NodeId, NodeId) {
-        if !self.is_reissued_relationship(id)
-            && let Some(dr) = self.deleted_relationships.borrow().get(&id)
-        {
+        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
             return (dr.src, dr.dst);
         }
         if let Some(endpoints) = self.pending.borrow().get_created_relationship_endpoints(id) {
@@ -2022,9 +1969,7 @@ impl<'a> Runtime<'a> {
         &self,
         id: RelationshipId,
     ) -> Option<Arc<String>> {
-        if !self.is_reissued_relationship(id)
-            && let Some(dr) = self.deleted_relationships.borrow().get(&id)
-        {
+        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
             return Some(dr.type_name.clone());
         }
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
