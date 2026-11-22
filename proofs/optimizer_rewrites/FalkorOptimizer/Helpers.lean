@@ -1,21 +1,6 @@
 import FalkorOptimizer.Basic
 /-
 # Syntactic helpers of the optimizer passes
-
-| here | there |
-| --- | --- |
-| `XD`, `X` | `ExprIR<Variable>` payloads / trees (variables, parameters, constants, calls, the rest) |
-| `anyX` | a BFS `walk().any(..)` over an expression |
-| `hasParam` | `expr_has_parameter` eliminate_true_filters.rs:75-79 |
-| `subst`, `evX` | `substitute_params` eliminate_true_filters.rs:83-98; a parameter-aware evaluator |
-| `refsVar` | `expr_references_variable` / `subtree_references_variable` references.rs:317-334 (a BFS, by `(id, scope)`) |
-| `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
-| `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
-| `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
-| `isAnon`, `attrsEmpty` | `is_anon`, `rel_attrs_empty` fuse_anonymous_traverse.rs:36-51 (`node_attrs_empty` removed by #2390) |
-| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-201 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
-| `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
-| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-87 |
 -/
 namespace Falkor.Opt
 
@@ -204,7 +189,10 @@ theorem countVar_spec (e : X) (i : Nat) :
 
 /-! ## `fuse_anonymous_traverse` preconditions -/
 
-def isAnon (name : Option String) : Bool := name.any (·.startsWith "_anon")
+/-- `Variable::is_unnamed` (ast.rs, #3303): an unnamed pattern entity has no name.
+Before #3303 the test was the `_anon` prefix of the name (`is_anon`), which a user name such
+as `_anon_x` also passed. -/
+def isUnnamed (name : Option String) : Bool := name.isNone
 
 /-- An inline attribute map is "empty" iff it is a `Map` with no entries. -/
 def attrsEmpty : X → Bool
@@ -216,8 +204,36 @@ theorem attrsEmpty_iff (a : X) : attrsEmpty a = true ↔ a = .node .map [] := by
   · intro h; match a, h with | .node .map [], _ => rfl
   · rintro rfl; rfl
 
-theorem isAnon_none : isAnon none = false := rfl
-theorem isAnon_some (n : String) : isAnon (some n) = n.startsWith "_anon" := rfl
+theorem isUnnamed_none : isUnnamed none = true := rfl
+/-- No written name, `_anon…` included, counts as unnamed (#3303). -/
+theorem isUnnamed_some (n : String) : isUnnamed (some n) = false := rfl
+
+/-- `Alias` (ast.rs): a name the query wrote, or a numbered unnamed entity. -/
+inductive Alias
+  | named (n : String)
+  | anon (k : Nat)
+
+/-- `Alias::name` (ast.rs). -/
+def Alias.name : Alias → Option String
+  | .named n => some n
+  | .anon _ => none
+
+/-- `Variable::name` then `Variable::is_unnamed` (`self.name().is_none()`): the variable's
+`alias : Option<Alias>` is `None` for a planner temporary. -/
+def varIsUnnamed (alias : Option Alias) : Bool := (alias.bind Alias.name).isNone
+
+/-- **PROVEN** (`Variable::is_unnamed`, #3303): a variable is unnamed exactly when its alias is
+absent (a planner temporary) or numbered (`Anon`); a written name, `_anon_x` included, never is.
+`isUnnamed` above is the test applied to the name this yields. -/
+theorem varIsUnnamed_iff (a : Option Alias) :
+    varIsUnnamed a = true ↔ (a = none ∨ ∃ k, a = some (.anon k)) := by
+  cases a with
+  | none => simp [varIsUnnamed]
+  | some al => cases al <;> simp [varIsUnnamed, Alias.name]
+
+theorem varIsUnnamed_named (n : String) : varIsUnnamed (some (.named n)) = false := rfl
+
+theorem varIsUnnamed_eq (a : Option Alias) : varIsUnnamed a = isUnnamed (a.bind Alias.name) := rfl
 
 /-- What `can_fuse` reads of a CondTraverse. -/
 structure CT where
@@ -236,144 +252,32 @@ structure CT where
   toV : Var
   /-- The edge alias (`relationship.alias`). -/
   edgeV : Var
-  /-- `chain.is_empty()` (no hop fused into it yet; #3639). -/
-  chainEmpty : Bool
 
 /-- `can_fuse(parent, child)`; `unread` = `intermediate_unreferenced` (whole plan since #2390).
 #2390 dropped the `node_attrs_empty(intermediate)` test (its map is a Filter now, which the
-reference check sees) and added the two edges to the reference check (:195-199).
-#3639: sibling edges may name only these two hops' edges, and then neither may carry an
-already-fused chain (:137-148); the fused operator subtracts the shared self-loops
-(`hop2_distinct_add_selfLoops`). -/
+reference check sees) and added the two edges to the reference check (:181-185). -/
 def canFuse (p c : CT) (unread : Var → Bool) : Bool :=
   p.bind && c.bind && !p.optional && !c.optional && !p.transposed && !c.transposed &&
-  isAnon p.edgeName && isAnon c.edgeName && !p.emit && !c.emit &&
-  p.siblings.all (fun i => i == p.edgeV.id || i == c.edgeV.id) &&
-  c.siblings.all (fun i => i == p.edgeV.id || i == c.edgeV.id) &&
-  ((p.siblings.isEmpty && c.siblings.isEmpty) || (p.chainEmpty && c.chainEmpty)) &&
-  !p.bidirectional && !c.bidirectional &&
+  isUnnamed p.edgeName && isUnnamed c.edgeName && !p.emit && !c.emit &&
+  p.siblings.isEmpty && c.siblings.isEmpty && !p.bidirectional && !c.bidirectional &&
   !p.varLen && !c.varLen && attrsEmpty p.edgeAttrs && attrsEmpty c.edgeAttrs &&
-  p.fromV == c.toV && isAnon p.fromName && p.fromLabels.isEmpty &&
+  p.fromV == c.toV && isUnnamed p.fromName && p.fromLabels.isEmpty &&
   unread p.fromV && unread p.edgeV && unread c.edgeV
 
 /-- Fusion only happens on two plain, storage-direction, anonymous, unfiltered,
 fixed-length hops whose shared middle node is anonymous, unlabelled and — like both
 edges — read by no operator of the plan (its inline map, if any, is a Filter that reads
-it) — the preconditions of `fuse_same_support` (Passes.lean). Since #3639 their sibling
-lists hold at most each other's edge, and only on single hops (no fused chain yet). -/
+it) — the preconditions of `fuse_same_support` (Passes.lean). -/
 theorem canFuse_spec (p c : CT) (u : Var → Bool) (h : canFuse p c u = true) :
     p.optional = false ∧ c.optional = false ∧ p.emit = false ∧ c.emit = false ∧
-    isAnon p.edgeName = true ∧ isAnon c.edgeName = true ∧ p.fromV = c.toV ∧
-    isAnon p.fromName = true ∧ p.fromLabels = [] ∧
+    isUnnamed p.edgeName = true ∧ isUnnamed c.edgeName = true ∧ p.fromV = c.toV ∧
+    isUnnamed p.fromName = true ∧ p.fromLabels = [] ∧
     p.edgeAttrs = .node .map [] ∧ c.edgeAttrs = .node .map [] ∧ p.varLen = false ∧ c.varLen = false ∧
-    (∀ i ∈ p.siblings, i = p.edgeV.id ∨ i = c.edgeV.id) ∧
-    (∀ i ∈ c.siblings, i = p.edgeV.id ∨ i = c.edgeV.id) ∧
-    ((p.siblings = [] ∧ c.siblings = []) ∨ (p.chainEmpty = true ∧ c.chainEmpty = true)) ∧
-    u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
-  simp only [canFuse, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff,
-    Bool.or_eq_true, List.all_eq_true] at h
+    p.siblings = [] ∧ c.siblings = [] ∧ u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
+  simp only [canFuse, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff] at h
   simp only [← attrsEmpty_iff]
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
     first | exact h.2 | exact h.1.2 | exact h.1.1.2 | simp_all
-
-/-- #3639: `()-[a]->()-[b]->()` with `a <> b` (each lists the other as a sibling) now fuses
-when both are plain single hops. -/
-theorem canFuse_pair_siblings (p c : CT) (u : Var → Bool)
-    (hb : p.bind = true ∧ c.bind = true) (ho : p.optional = false ∧ c.optional = false)
-    (ht : p.transposed = false ∧ c.transposed = false)
-    (hn : isAnon p.edgeName = true ∧ isAnon c.edgeName = true) (he : p.emit = false ∧ c.emit = false)
-    (hs : p.siblings = [c.edgeV.id] ∧ c.siblings = [p.edgeV.id])
-    (hch : p.chainEmpty = true ∧ c.chainEmpty = true)
-    (hd : p.bidirectional = false ∧ c.bidirectional = false) (hv : p.varLen = false ∧ c.varLen = false)
-    (ha : p.edgeAttrs = .node .map [] ∧ c.edgeAttrs = .node .map [])
-    (hm : p.fromV = c.toV ∧ isAnon p.fromName = true ∧ p.fromLabels = [])
-    (hu : u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true) :
-    canFuse p c u = true := by
-  obtain ⟨p1, p2⟩ := ha
-  have hu1 : u c.toV = true := hm.1 ▸ hu.1
-  simp [canFuse, hb, ho, ht, hn, he, hs, hch, hd, hv, hm, hu, p1, p2, attrsEmpty, hu1]
-
-/-! ### Two fused hops and edge uniqueness (#3639)
-
-Edges are `(id, src, dst)` with distinct ids. `hop2 E a c true` counts the paths
-`a -e1-> m -e2-> c` with `e1 ≠ e2` (what the two unfused hops, each listing the other as a
-sibling, produce); `hop2 E a c false` counts every path (the fused product). Two such
-hops share an edge only at a self-loop on `a = c`, so the fused count minus the self-loops
-is the unfused one. -/
-
-abbrev Edge := Nat × Nat × Nat
-
-def hop2 (E : List Edge) (a c : Nat) (distinct : Bool) : Nat :=
-  ((E.filter (fun e1 => e1.2.1 == a)).map fun e1 =>
-    (E.filter (fun e2 => e1.2.2 == e2.2.1 && e2.2.2 == c && (!distinct || e2.1 != e1.1))).length).sum
-
-def selfLoops (E : List Edge) (a : Nat) : Nat := (E.filter (fun e => e.2.1 == a && e.2.2 == a)).length
-
-theorem filter_ne_id_len (P : Edge → Bool) (E : List Edge) (hnd : (E.map Prod.fst).Nodup)
-    (e : Edge) (he : e ∈ E) :
-    (E.filter (fun x => P x && x.1 != e.1)).length + (if P e then 1 else 0) = (E.filter P).length := by
-  induction E with
-  | nil => simp at he
-  | cons x xs ih =>
-    simp only [List.map_cons, List.nodup_cons, List.mem_map] at hnd
-    obtain ⟨hx, hnd⟩ := hnd
-    rcases List.mem_cons.mp he with rfl | hmem
-    · have : xs.filter (fun y => P y && y.1 != e.1) = xs.filter P := by
-        apply List.filter_congr
-        intro y hy
-        have : y.1 ≠ e.1 := fun h => hx ⟨y, hy, h⟩
-        simp [this]
-      simp only [List.filter_cons, bne_self_eq_false, Bool.and_false, this]
-      cases P e <;> simp <;> omega
-    · have hne : x.1 ≠ e.1 := fun h => hx ⟨e, hmem, h.symm⟩
-      have := ih hnd hmem
-      have hb : (x.1 != e.1) = true := by simp [hne]
-      simp only [List.filter_cons, hb, Bool.and_true]
-      cases P x <;> simp <;> omega
-
-theorem sum_map_add {α} (l : List α) (f g : α → Nat) :
-    (l.map fun x => f x + g x).sum = (l.map f).sum + (l.map g).sum := by
-  induction l with
-  | nil => rfl
-  | cons x xs ih => simp only [List.map_cons, List.sum_cons, ih]; omega
-
-theorem sum_map_ite_one {α} (l : List α) (P : α → Bool) :
-    (l.map fun x => if P x then 1 else 0).sum = (l.filter P).length := by
-  induction l with
-  | nil => rfl
-  | cons x xs ih => cases h : P x <;> simp [h, ih] <;> omega
-
-/-- The fused (all-paths) count is the edge-distinct count plus, when the walk returns
-to its start, the self-loops on it. -/
-theorem hop2_distinct_add_selfLoops (E : List Edge) (hnd : (E.map Prod.fst).Nodup) (a c : Nat) :
-    hop2 E a c true + (if a = c then selfLoops E a else 0) = hop2 E a c false := by
-  unfold hop2 selfLoops
-  have step : ∀ e1 ∈ E.filter (fun e1 => e1.2.1 == a),
-      (E.filter (fun e2 => e1.2.2 == e2.2.1 && e2.2.2 == c && (!true || e2.1 != e1.1))).length
-        + (if (e1.2.2 == e1.2.1 && e1.2.2 == c) then 1 else 0)
-      = (E.filter (fun e2 => e1.2.2 == e2.2.1 && e2.2.2 == c && (!false || e2.1 != e1.1))).length := by
-    intro e1 h1
-    have := filter_ne_id_len (fun e2 => e1.2.2 == e2.2.1 && e2.2.2 == c) E hnd e1
-      (List.mem_filter.mp h1).1
-    simpa using this
-  rw [← List.map_congr_left (fun e1 h1 => step e1 h1), sum_map_add, sum_map_ite_one,
-    List.filter_filter]
-  congr 1
-  split
-  · subst c
-    congr 1
-    apply List.filter_congr
-    intro e _
-    cases h1 : (e.2.1 == a) <;> cases h2 : (e.2.2 == a) <;> simp_all <;> omega
-  · rw [eq_comm, List.length_eq_zero_iff, List.filter_eq_nil_iff]
-    intro e _
-    simp only [Bool.and_eq_true, beq_iff_eq, not_and]
-    omega
-
-/-- The 2-hop self-loop: `(:A)-[r]->(:A)`, `MATCH (a)-[e1]->()-[e2]->(a)` with `e1 <> e2`
-has no match, but the product counts `r;r`. -/
-theorem hop2_selfLoop_example : hop2 [(0, 5, 5)] 5 5 true = 0 ∧ hop2 [(0, 5, 5)] 5 5 false = 1 := by
-  decide
 
 /-! ## `fuse_optional_traverse` -/
 
@@ -415,33 +319,91 @@ theorem fusedCT_spec (c : CT) : (fusedCT c).optional = true ∧ { fusedCT c with
 
 /-! ## `branch_output_variables` -/
 
-/-- `Project.copies` holds `(old, new)` pairs (binder.rs:2234; project.rs:115
-inserts `new_var`); `branch_output_variables` reads the first component. -/
+/-- `Project.copies` and `Aggregate.projections` hold `(old, new)` pairs
+(binder.rs; project.rs and aggregate.rs write `new_var`). Since
+#3281 `branch_output_variables(node, include_copies)` (push_filters_down.rs)
+reads the second component (the slot the copy is written to), and only when
+`include_copies` (the routing sets, :251); `branch_visible_variables` (:99) passes `false`. -/
 inductive OutIR
   | project (exprs : List Var) (copies : List (Var × Var))
-  | aggregate (names projections : List Var)
+  | aggregate (names : List Var) (projections : List (Var × Var))
   | other
 
-def branchOut : OutIR → Option (List Nat)
-  | .project es cs => some (es.map Var.id ++ cs.map (·.1.id))
-  | .aggregate ns ps => some (ns.map Var.id ++ ps.map Var.id)
+def copied (inc : Bool) (cs : List (Var × Var)) : List Nat :=
+  if inc then cs.map (·.2.id) else []
+
+def branchOut (inc : Bool) : OutIR → Option (List Nat)
+  | .project es cs => some (es.map Var.id ++ copied inc cs)
+  | .aggregate ns ps => some (ns.map Var.id ++ copied inc ps)
   | .other => none
 
-/-- Above a Project/Aggregate only its outputs are visible; elsewhere `none`
-(the subtree's variables). Ids only — scope is dropped (see `id_only_routing_unsound`). -/
-theorem branchOut_spec (o : OutIR) :
-    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOut o).getD [] ↔ ∃ v ∈ es ++ cs.map Prod.fst, v.id = i) ∧
-    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOut o).getD [] ↔ ∃ v ∈ ns ++ ps, v.id = i) ∧
-    (o = .other → branchOut o = none) := by
+/-- Above a Project/Aggregate only its outputs are visible (the named ones, and
+the copies' destinations when `inc`); elsewhere `none` (the subtree's variables).
+Ids only — scope is dropped (see `id_only_routing_unsound`). -/
+theorem branchOut_spec (inc : Bool) (o : OutIR) :
+    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOut inc o).getD [] ↔
+      ∃ v ∈ es ++ (if inc then cs.map Prod.snd else []), v.id = i) ∧
+    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOut inc o).getD [] ↔
+      ∃ v ∈ ns ++ (if inc then ps.map Prod.snd else []), v.id = i) ∧
+    (o = .other → branchOut inc o = none) := by
   refine ⟨?_, ?_, ?_⟩
-  · rintro es cs rfl i; simp [branchOut, or_and_right, exists_or]
-  · rintro ns ps rfl i; simp [branchOut, or_and_right, exists_or]
+  · rintro es cs rfl i
+    cases inc <;> simp [branchOut, copied, or_and_right, exists_or]
+    exact or_congr_right ⟨fun ⟨a, b, h1, h2⟩ => ⟨b, ⟨a, h1⟩, h2⟩, fun ⟨b, ⟨a, h1⟩, h2⟩ => ⟨a, b, h1, h2⟩⟩
+  · rintro ns ps rfl i
+    cases inc <;> simp [branchOut, copied, or_and_right, exists_or]
+    exact or_congr_right ⟨fun ⟨a, b, h1, h2⟩ => ⟨b, ⟨a, h1⟩, h2⟩, fun ⟨b, ⟨a, h1⟩, h2⟩ => ⟨a, b, h1, h2⟩⟩
   · rintro rfl; rfl
 
-/-- The copy's *new* variable — what the Project actually outputs — is not
-reported (only the parent-scope id is). Suspected, see the root header. -/
+/-- Since #3281 the copy's *new* variable — what the Project actually outputs — is
+reported for routing, and no copy is visible to a later clause. -/
 theorem branchOut_copy_new :
-    branchOut (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
+    branchOut true (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [5] ∧
+    branchOut false (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [] := ⟨rfl, rfl⟩
+
+/-! ## `branch_visible_variables` -/
+
+/-- A plan node as `branch_visible_variables` (push_filters_down.rs) sees it:
+`reset` is a `Project`/`Aggregate` with `branch_output_variables(_, false)` =
+`outs`; `semi` a `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer`; `plain` any
+other operator. `own` is `collect_subtree_variables` of the lone node. -/
+inductive VT where
+  | reset (outs : List Nat) (kids : List VT)
+  | semi (own : List Nat) (kids : List VT)
+  | plain (own : List Nat) (kids : List VT)
+
+mutual
+def visT : VT → List Nat
+  | .reset outs _ => outs
+  | .semi own [] => own
+  | .semi own (k :: _) => own ++ visT k
+  | .plain own ks => own ++ visL ks
+def visL : List VT → List Nat
+  | [] => []
+  | k :: ks => visT k ++ visL ks
+end
+
+/-- A `Project`/`Aggregate` hides everything beneath it. -/
+theorem visT_reset (outs : List Nat) (ks : List VT) : visT (.reset outs ks) = outs := by
+  simp [visT]
+
+/-- A (anti) semi-join or `OrApplyMultiplexer` exposes only its first child:
+the existence sub-plans' variables never count. -/
+theorem visT_semi_first (own : List Nat) (k : VT) (ks ks' : List VT) :
+    visT (.semi own (k :: ks)) = visT (.semi own (k :: ks')) := by
+  simp [visT]
+
+/-- Any other operator exposes its own variables and every child's. -/
+theorem visT_plain (own : List Nat) (ks : List VT) :
+    visT (.plain own ks) = own ++ visL ks := by
+  simp [visT]
+
+/-- `MATCH (x:A:B) WHERE (x)-[:R]->() CALL { OPTIONAL MATCH (n:A:B {id: 3}) … }`
+(the PR's test): the left branch is `SemiApply(Scan x, Traverse(_anon…, Argument))`;
+only `x` (id 0) is visible, not the existence sub-plan's anonymous ids 1, 2. -/
+theorem visT_pattern_predicate :
+    visT (.semi [] [.plain [0] [], .plain [1, 0, 2] [.plain [] []]]) = [0] := by
+  simp [visT, visL]
 
 /-! ## `utilize_node_by_id`'s parent lookup -/
 
@@ -450,7 +412,7 @@ def parentPath : List Nat → Option (List Nat)
   | [] => none
   | p => some p.dropLast
 
-/-- `utilize_node_by_id.rs:118` unwraps the parent of every label/all-node scan;
+/-- `utilize_node_by_id.rs` unwraps the parent of every label/all-node scan;
 a scan at the root (the plan of `CALL … YIELD … MATCH (n)`, which validation lets
 through — planner_build `call_then_match_accepted`) has none: the server panics. -/
 theorem root_scan_has_no_parent : parentPath [] = none := rfl

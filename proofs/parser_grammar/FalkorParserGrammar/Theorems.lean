@@ -99,7 +99,7 @@ theorem boolean_levels (a b c : Nat) :
 
 Each is reproduced against the Rust in `graph/tests/lean_parser_grammar.rs`. -/
 
-/-- **`NOT NOT x` keeps both `NOT`s** (#3060, `fe619ac5f`, cypher.rs:2218-2228), as the
+/-- **`NOT NOT x` keeps both `NOT`s** (#3060, `fe619ac5f`, cypher.rs), as the
 grammar does — `NOT` type-checks its operand, so `RETURN NOT NOT 1` is a type error (C
 too). Historical (2c874022a, `not_not_dropped`): the parity fold returned `x`. -/
 theorem not_not_kept :
@@ -117,7 +117,7 @@ theorem not_run_folds :
   decide
 
 /-- **A predicate after `IS NULL` is accepted** with the grammar's tree (#3060,
-cypher.rs:2435-2438 comes back to level 5). Historical (2c874022a,
+cypher.rs comes back to level 5). Historical (2c874022a,
 `is_null_then_predicate_rejected`): it returned to the parent level and was rejected. -/
 theorem is_null_then_predicate :
     parseAll 400 [.int 1, .kw .is_, .kw .null, .kw .in_, .ident 3] =
@@ -127,7 +127,7 @@ theorem is_null_then_predicate :
   decide
 
 /-- **A slice bound that fails to parse is an error** (#3041, `2023af648`, closes
-#3036; cypher.rs:2136-2165), as in the grammar and C: `x[1 + ..2]`, `x[abs()..2]`,
+#3036; cypher.rs), as in the grammar and C: `x[1 + ..2]`, `x[abs()..2]`,
 `x[(..2]`, `x[1..2 +]` and `x[1..(]` are refused. -/
 theorem slice_bound_error_reported :
     (∃ e, parseAll 400 [.ident 3, .lbrack, .int 1, .plus, .dotdot, .int 2, .rbrack] = .err e) ∧
@@ -179,7 +179,7 @@ theorem listOp_to_err (pe : List Tok → Out) (lhs : RT) (ts e : List Tok)
     · exact absurd rfl (hr _)
     · simp [h]
 
-/-- **A trailing comma in a call is refused** (#3060, cypher.rs:2769-2779), as in the
+/-- **A trailing comma in a call is refused** (#3060, cypher.rs), as in the
 grammar and C; `f()` and `f(1)` still parse. Historical (2c874022a, `call_trailing_comma`):
 `abs(1,)` was accepted as `abs(1)`. -/
 theorem call_trailing_comma_refused :
@@ -195,20 +195,45 @@ theorem exprList_comma_first (pe : List Tok → Out) (n : Nat) (r : List Tok)
     exprList pe (n + 1) [] (.comma :: r) = .err (.comma :: r) := by
   simp [exprList, cur, exprItems, h]
 
-/-- `+-x` is accepted (cypher.rs:2232-2233 reads an optional `+` then an
-optional `-`), while `- -x` and `-+x` are rejected (#2309). The grammar
-allows exactly one sign. -/
-theorem sign_sequences :
+/-- Fixed by #3525 (`56d00c3d8`, closes #2309): a run of signs parses, folded by the parity of its
+`-` as `NOT` runs are: `+-x` and `- -x` and `-+x` all parse (cypher.rs). `- -x` is
+`Negate(Negate x)` (`Negate` type-checks its operand, so it is not `x`), `---x` folds to one
+`Negate`. The grammar (`Cypher.g4:345`) allows exactly one sign, so the model and the grammar
+now differ on every run of two or more signs (`known` in `BoundedDefs`). -/
+theorem sign_runs :
     parseAll 400 [.plus, .dash, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
-    (∃ e, parseAll 400 [.dash, .dash, .int 1] = .err e) ∧
-    (∃ e, parseAll 400 [.dash, .plus, .int 1] = .err e) ∧
+    parseAll 400 [.dash, .dash, .int 1] = .ok (.node .neg [.node .neg [lf (.int 1)]]) [] ∧
+    parseAll 400 [.dash, .plus, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
+    parseAll 400 [.dash, .dash, .dash, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
+    parseAll 400 [.plus, .plus, .int 1] = .ok (lf (.int 1)) [] ∧
+    (∃ e, G.all 200 [.dash, .dash, .int 1] = .err e) ∧
     (∃ e, G.all 200 [.plus, .dash, .int 1] = .err e) := by
-  refine ⟨rfl, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
+  refine ⟨rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
+
+/-- A run of signs, however long, pushes at most two frames (so, with the `Reach.opener` height 1
+each, costs the stack and the tree nothing: `-----…5` folds). -/
+theorem signFrames_length (n : Nat) (K : List Frame) : (signFrames n K).length ≤ K.length + 2 := by
+  unfold signFrames; split
+  · simp
+  · split <;> simp
+
+/-- The sign run is consumed whole: after it the next token is not a sign. -/
+theorem countSigns_rest : ∀ ts : List Tok,
+    (countSigns ts).2.head? ≠ some .dash ∧ (countSigns ts).2.head? ≠ some .plus
+  | [] => by simp [countSigns]
+  | t :: r => by
+    by_cases hd : t = .dash
+    · subst hd; simpa [countSigns] using countSigns_rest r
+    · by_cases hp : t = .plus
+      · subst hp; simpa [countSigns] using countSigns_rest r
+      · have : countSigns (t :: r) = (0, t :: r) := by
+          unfold countSigns; split <;> simp_all
+        rw [this]; simp [hd, hp]
 
 /-- The parse is deterministic: `parse_expr` is a function of its input
 (no hidden state survives a `restore_state`; the model has none to begin
 with, `anon_counter` is saved and restored by `save_state`/`restore_state`,
-cypher.rs:357-370). -/
+cypher.rs). -/
 theorem parse_deterministic (n : Nat) (ts : List Tok) (r r' : Out)
     (h : parseAll n ts = r) (h' : parseAll n ts = r') : r = r' := h ▸ h'
 

@@ -3,12 +3,12 @@
 
 | here | there |
 | --- | --- |
-| `Anc`                 | the `IR` variants the walks distinguish, `runtime/runtime.rs:687-706`, `:716-742` |
-| `effectiveLimit`      | `Runtime::effective_limit`, `runtime/runtime.rs:694-727` (#3639: a traverse with `sibling_edges` is a barrier) |
-| `effectiveSkip`       | `Runtime::effective_skip`, `runtime/runtime.rs:716-742` |
-| `recordCap`           | `Runtime::record_cap`, `runtime/runtime.rs:748-754` |
+| `Anc`                 | the `IR` variants the walks distinguish, `runtime/runtime.rs` |
+| `effectiveLimit`      | `Runtime::effective_limit`, `runtime/runtime.rs` |
+| `effectiveSkip`       | `Runtime::effective_skip`, `runtime/runtime.rs` |
+| `recordCap`           | `Runtime::record_cap`, `runtime/runtime.rs` |
 | `Anc.sem`, `run`      | what each ancestor does to the row stream it pulls (LimitOp / SkipOp / ProjectOp / CondTraverseOp / ExpandIntoOp) |
-| `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs`: `next`'s stop `:1378-1383`, `trim_to_cap` `:1321-1340` and its call sites `:1409,1445,1458`) and `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), and SortOp's top-`limit+skip` heap (`ops/sort.rs:509-511`, `build_top_k`) |
+| `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs`: `next`'s stop, `trim_to_cap` and its call sites `:1409,1445,1458`) and `ExpandIntoOp` (`ops/expand_into.rs`: stop, trim), and SortOp's top-`limit+skip` heap (`ops/sort.rs`, `build_top_k`) |
 | `need`                | the smallest sound budget (reference) |
 
 The walks start at the *parent* of the operator (`self.plan.node(cur).parent()`), so an
@@ -16,41 +16,35 @@ ancestor list here is "nearest parent first".
 
 `Limit`/`Skip` values: the walks evaluate the expression with no row; a non-`Int` or a
 negative value makes the walk return `None`/`0`, and makes `build_batch_op` fail the
-whole query (`runtime.rs:924-954`). So on every plan that executes, each `Limit`/`Skip`
+whole query (`runtime.rs`). So on every plan that executes, each `Limit`/`Skip`
 ancestor carries a `Nat`, which is what `Anc` stores.
 
-`saturating_add` (`runtime.rs:753`): both operands are `< 2^63` (they come from a
+`saturating_add` (`runtime.rs`): both operands are `< 2^63` (they come from a
 non-negative `i64`), so the sum never saturates in `usize`; `Nat` addition is exact.
 -/
 namespace RuntimeCore.Budget
 
 /-- The ancestors the walks distinguish. `project g` is any 1:1 operator the walks treat
 as transparent (`Project`); `traverse f` is `CondTraverse`/`ExpandInto`, which map one
-input row to an arbitrary list of rows (possibly empty); `sib` is
-`!sibling_edges.is_empty()` (#3639: such a traverse is a barrier for `effective_limit`);
-`other h` is any barrier. -/
+input row to an arbitrary list of rows (possibly empty); `other h` is any barrier. -/
 inductive Anc (α : Type) where
   | limit (n : Nat)
   | skip (n : Nat)
   | project (g : α → α)
-  | condTraverse (f : α → List α) (sib : Bool := false)
-  | expandInto (f : α → List α) (sib : Bool := false)
+  | condTraverse (f : α → List α)
+  | expandInto (f : α → List α)
   | other (h : List α → List α)
 
 variable {α : Type}
 
-/-- `Runtime::effective_limit` (`runtime.rs:694-727`): `Project`/`Skip` and a
-`CondTraverse`/`ExpandInto` with empty `sibling_edges` pass; a traverse with siblings
-(#3639) and everything else is a barrier. -/
+/-- `Runtime::effective_limit` (`runtime.rs`). -/
 def effectiveLimit : List (Anc α) → Option Nat
   | [] => none
   | .limit n :: _ => some n
-  | .project _ :: r | .skip _ :: r | .condTraverse _ false :: r | .expandInto _ false :: r =>
-    effectiveLimit r
-  | .condTraverse _ true :: _ | .expandInto _ true :: _ => none
+  | .project _ :: r | .skip _ :: r | .condTraverse _ :: r | .expandInto _ :: r => effectiveLimit r
   | .other _ :: _ => none
 
-/-- `Runtime::effective_skip` (`runtime.rs:716-742`): the *first* `Skip` reached through
+/-- `Runtime::effective_skip` (`runtime.rs`): the *first* `Skip` reached through
 `Project`/`Limit`, else 0. -/
 def effectiveSkip : List (Anc α) → Nat
   | [] => 0
@@ -58,7 +52,7 @@ def effectiveSkip : List (Anc α) → Nat
   | .project _ :: r | .limit _ :: r => effectiveSkip r
   | _ :: _ => 0
 
-/-- `Runtime::record_cap` (`runtime.rs:748-754`). -/
+/-- `Runtime::record_cap` (`runtime.rs`). -/
 def recordCap (as : List (Anc α)) : Option Nat :=
   (effectiveLimit as).map (· + effectiveSkip as)
 
@@ -67,8 +61,8 @@ def Anc.sem : Anc α → List α → List α
   | .limit n, xs => xs.take n
   | .skip n, xs => xs.drop n
   | .project g, xs => xs.map g
-  | .condTraverse f _, xs => xs.flatMap f
-  | .expandInto f _, xs => xs.flatMap f
+  | .condTraverse f, xs => xs.flatMap f
+  | .expandInto f, xs => xs.flatMap f
   | .other h, xs => h xs
 
 /-- The rows reaching the top of the chain. -/
@@ -115,7 +109,7 @@ theorem need_sound : ∀ (as : List (Anc α)) (c : Nat), need as = some c →
     simp only [run, Anc.sem]
     rw [List.map_take]
     exact need_sound r c h _
-  | .condTraverse _ _ :: _, _, h, _ | .expandInto _ _ :: _, _, h, _ | .other _ :: _, _, h, _ => by
+  | .condTraverse _ :: _, _, h, _ | .expandInto _ :: _, _, h, _ | .other _ :: _, _, h, _ => by
     simp [need] at h
 
 /-- **PROVEN**: any budget at least `need` is sound too. -/
@@ -228,20 +222,5 @@ the correctness proof of that fix. On the soft consumers (`BatchedResultEmitter`
 current value is harmless — see `Emitter.emitAll_flatten`. -/
 theorem need_is_barrier_at_traverse (f : α → List α) (r : List (Anc α)) :
     need (.condTraverse f :: r) = none ∧ need (.expandInto f :: r) = none := ⟨rfl, rfl⟩
-
-/-- **PROVEN** (#3639): a traverse with sibling edges (relationship uniqueness) is a
-barrier for `effective_limit`, so `record_cap` gives the operators beneath it no cap. -/
-theorem effectiveLimit_sibling_barrier (f : α → List α) (r : List (Anc α)) :
-    effectiveLimit (.condTraverse f true :: r) = none ∧
-    effectiveLimit (.expandInto f true :: r) = none ∧
-    recordCap (.condTraverse f true :: r) = none ∧
-    recordCap (.expandInto f true :: r) = none := ⟨rfl, rfl, rfl, rfl⟩
-
-/-- **PROVEN** (#3639): beneath a traverse with sibling edges the hard cap is sound. -/
-theorem hardCap_sound_sibling_traverse (f : α → List α) (r : List (Anc α)) (xs : List α) :
-    run (.condTraverse f true :: r) (hardCap (recordCap (.condTraverse f true :: r)) xs) =
-      run (.condTraverse f true :: r) xs ∧
-    run (.expandInto f true :: r) (hardCap (recordCap (.expandInto f true :: r)) xs) =
-      run (.expandInto f true :: r) xs := ⟨rfl, rfl⟩
 
 end RuntimeCore.Budget

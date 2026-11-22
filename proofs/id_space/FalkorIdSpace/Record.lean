@@ -83,7 +83,7 @@ def IdSpace.created (N : Nat) (sp : IdSpace) (nodes : IdSet) : IdSpace :=
   { sp with recycled := sDiff sp.recycled nodes, live := sp.live + sLen N nodes,
             taken := sUnion sp.taken nodes }
 
-/-- **The `ID_LIMIT` refusal names the highest id** (#2911): `create` refuses
+/-- **The `ID_LIMIT` refusal names the highest id**: `create` refuses
 with `IdOutOfRange(max nodes)` exactly when that max is `≥ L`, and then touches
 nothing. -/
 theorem create_out_of_range (N L : Nat) (sp : IdSpace) (nodes : IdSet) (m : Nat)
@@ -232,7 +232,7 @@ def ReleaseOk (N : Nat) (sp : IdSpace) (requested : IdSet) : Prop :=
   (∀ i, i < N → ¬ (requested i = true ∧ sp.recycled i = true)) ∧
   (∀ i, i < N → requested i = true → sp.eb ≤ i → sp.taken i = true)
 
-/-- **`refuse_not_live` (#3022) passes exactly on `ReleaseOk`.** -/
+/-- **`refuse_not_live` passes exactly on `ReleaseOk`.** -/
 theorem refuseNotLive_ok (N : Nat) (sp : IdSpace) (ids : IdSet) :
     sp.refuseNotLive N ids = .ok () ↔ ReleaseOk N sp ids := by
   unfold IdSpace.refuseNotLive ReleaseOk

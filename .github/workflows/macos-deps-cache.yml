@@ -1,0 +1,34 @@
+# Keep the macOS native dependencies (static libomp, GraphBLAS, LAGraph,
+# RediSearch) in the Actions cache that the merge queue's macOS build
+# (_build-macos.yml, from rust-pr.yml) restores.
+#
+# A queue run can read a cache saved on the default branch, but not one saved
+# by another queue run, so `main` is where it is written. Dependencies only,
+# never the module, and only when the cache for this tree is missing; a new key
+# starts from the nearest older cache, so only what changed is rebuilt.
+#
+# Its own workflow rather than a job in rust-push.yml: that workflow cancels its
+# previous run on every push to main, and a dependency rebuild cancelled before
+# it saves leaves the queue building them from scratch.
+
+name: macOS deps cache
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-deps-cache
+  cancel-in-progress: false
+
+jobs:
+  deps:
+    uses: ./.github/workflows/_build-macos.yml
+    permissions:
+      contents: read
+    with:
+      deps_only: true

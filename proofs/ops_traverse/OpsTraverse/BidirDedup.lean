@@ -2,15 +2,11 @@ import OpsTraverse.Basic
 /-
 # The bidirectional (source, destination) dedup of chained anonymous undirected hops
 
-**Historical (#3639)**: the PR that made uniqueness independent of naming removed this dedup
-from `CondTraverseOp`; the cites below are to the code before it. Its replacement (rows that
-carry every edge, the counted chain) is modelled in `PathCount`.
-
 | here | there |
 | --- | --- |
-| `dedupRows`    | the `bidir_dedup` loop of `CondTraverseOp::expand_row` (`cond_traverse.rs:1087-1110`): key `(src_key, out.to)`, `swap_remove` on a repeat |
-| `dedupBatches` | `seen.clear()` on every new child batch (`cond_traverse.rs:1467-1469`) |
-| key source     | `dedup_source_alias` = the *child* CT's `from` alias (`cond_traverse.rs:397-407`) |
+| `dedupRows`    | the `bidir_dedup` loop of `CondTraverseOp::expand_row` (`cond_traverse.rs`): key `(src_key, out.to)`, `swap_remove` on a repeat |
+| `dedupBatches` | `seen.clear()` on every new child batch (`cond_traverse.rs`) |
+| key source     | `dedup_source_alias` = the *child* CT's `from` alias (`cond_traverse.rs`) |
 
 A result row is `(outer, key source, destination)`; `outer` stands for every
 other column of the row (an `UNWIND` variable, an earlier MATCH's node, or the

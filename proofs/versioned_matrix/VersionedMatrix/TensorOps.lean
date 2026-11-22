@@ -5,19 +5,19 @@ import VersionedMatrix.Policy
 
 | here | there (`tensor.rs`) |
 | --- | --- |
-| `fwdIter`/`structuralIter` | `fwd_iter` (:1057) / `structural_iter` (:1045) |
-| `meDegree`/`degLoop`/`rowDegree` | `me_degree` (:1106) / `row_degree` (:1082) |
-| `colDegree`   | `col_degree` (:1134) (`none` = the `unreachable!`) |
-| `extract`     | `extract` (:977) |
-| `rebuildBackward` | `rebuild_backward` (:998) |
-| `waitFwd`/`waitT`/`waitBase`/`waitAll`/`isSyncedT` | :421 / :1403 / :1414 / :1423 / :1436 |
-| `memoryUsage`/`derivedMem` | :1631 / `Derived::memory_usage` (:321) |
-| `flushT`/`foldLatched`/`foldOversized` | :880 / :937 / :955 |
-| `dupT`        | `dup` (:1009) |
-| `resizeT`     | `resize` (:823; model in `TensorResize.lean`) |
-| `encVal`/`decVal` | the inline value `encode` (:1464) writes / C's MSB reading of it |
-| `EdgeIds`/`sizeHint` | `enum EdgeIds` (:1648) / `size_hint` (:1663) |
-| `TIt`/`newTIt`/`seekTIt` | `Iter` (:1680) / `Iter::new` (:1691) / `Iter::seek` (:1723) |
+| `fwdIter`/`structuralIter` | `fwd_iter` (:1066) / `structural_iter` (:1054) |
+| `meDegree`/`degLoop`/`rowDegree` | `me_degree` (:1115) / `row_degree` (:1091) |
+| `colDegree`   | `col_degree` (:1143) (`none` = the `unreachable!`) |
+| `extract`     | `extract` (:986) |
+| `rebuildBackward` | `rebuild_backward` (:1007) |
+| `waitFwd`/`waitT`/`waitBase`/`waitAll`/`isSyncedT` | :420 / :1412 / :1423 / :1432 / :1445 |
+| `memoryUsage` | :1454 |
+| `flushT`/`foldLatched`/`foldOversized` | :888 / :946 / :964 |
+| `dupT`        | `dup` (:1018) |
+| `resizeT`     | `resize` (:821; model in `TensorResize.lean`) |
+| `encVal`/`decVal` | the inline value `encode` (:1473) writes / C's MSB reading of it |
+| `EdgeIds`/`sizeHint` | `enum EdgeIds` (:1702) / `size_hint` (:1717) |
+| `TIt`/`newTIt`/`seekTIt` | `Iter` (:1734) / `Iter::new` (:1745) / `Iter::seek` (:1777) |
 
 `mt`/`me` are `VersionedMatrix`es whose own `wait`/`flush`/`fold_*` never
 change their logical contents (`VMOps.wait_eff`, `DeltaProofs.flush_eff`,
@@ -28,7 +28,7 @@ open VMTensor VMPolicy
 
 def inRow (lo hi : Nat) (r : Nat) : Bool := decide (lo ≤ r) && decide (r ≤ hi)
 
-/-- `fwd_iter` (:1057): effective forward pairs in range, with their inline value. -/
+/-- `fwd_iter` (:1066): effective forward pairs in range, with their inline value. -/
 def fwdIter (t : TT) (lo hi : Nat) : List (Pair × Val) :=
   (t.ps.filter (fun p => inRow lo hi p.1)).filterMap (fun p => (effV (t.st p)).map (fun v => (p, v)))
 
@@ -52,7 +52,7 @@ theorem mem_structuralIter (t : TT) (lo hi : Nat) (p : Pair) :
 
 /-! ## Degrees -/
 
-/-- `me_degree` (:1106): the pair's `me` row length through the shared cursor
+/-- `me_degree` (:1115): the pair's `me` row length through the shared cursor
 (re-seeked when on the same block — `VMIterSeek.seek_abs` makes the reseeked
 cursor yield what a fresh one would). Returns the count and the cursor's block. -/
 def meDegree (t : TT) (cur : Option Blk) (p : Pair) : Nat × Option Blk :=
@@ -110,7 +110,7 @@ theorem rowDegree_eq {t : TT} (hb : BlkInv t) (hi : AllInv t) (r : Nat) :
     rowDegree t r = ((t.ps.filter (fun p => inRow r r p.1)).map (fun p => (edges (t.st p)).length)).sum := by
   unfold rowDegree fwdIter; rw [degLoop_eq, sum_filterMap_edges hb hi]; simp
 
-/-- `col_degree` (:1134); `none` is the `unreachable!` (mt hit without a forward value). -/
+/-- `col_degree` (:1143); `none` is the `unreachable!` (mt hit without a forward value). -/
 def colDegree (t : TT) (c : Nat) : Option Nat :=
   ((t.ps.filter (fun p => p.2 == c && (t.st p).mt)).foldl
     (fun acc p => acc.bind (fun d =>
@@ -146,7 +146,7 @@ def extract (t : TT) : List Pair := t.ps.filter (fun p => (effV (t.st p)).isSome
 theorem mem_extract (t : TT) (p : Pair) :
     p ∈ extract t ↔ p ∈ t.ps ∧ (effV (t.st p)).isSome = true := by simp [extract]
 
-/-- `rebuild_backward` (:998): `mt := from_matrix(extract().transpose())`. -/
+/-- `rebuild_backward` (:1007): `mt := from_matrix(extract().transpose())`. -/
 def rebuildBackward (t : TT) : TT :=
   { t with st := fun p => { t.st p with mt := (effV (t.st p)).isSome }, mtSynced := true }
 
@@ -167,7 +167,7 @@ def latchB (b : Bk) (d : Bool) : Bk := if d then { b with fold := true } else b
 def decideB (b : Bk) (policy : Nat → Nat → Nat → Bool) (base : Nat) : Bool :=
   b.fold || policy b.count (b.count - b.tx) base
 
-/-- `wait_fwd` (:421). -/
+/-- `wait_fwd` (:420). -/
 def waitFwd (t : TT) : TT :=
   if t.dpB.synced && t.dmB.synced then t else
   let dp : Bk := { t.dpB with count := dpCount t, synced := true }
@@ -184,15 +184,15 @@ theorem waitFwd_latch_mono (t : TT) (h : t.dpB.fold = true) : (waitFwd t).dpB.fo
 theorem waitFwd_exact (t : TT) (h : (t.dpB.synced && t.dmB.synced) = false) :
     (waitFwd t).dpB.count = dpCount t ∧ (waitFwd t).dmB.count = dmCount t := by
   have hc : ∀ (b : Bk) d, (latchB b d).count = b.count := by intro b d; unfold latchB; split <;> rfl
-  unfold waitFwd; rw [if_neg (by simp [h])]; exact ⟨hc _ _, hc _ _⟩
+  unfold waitFwd; rw [ite_eq_right (by simp [h])]; exact ⟨hc _ _, hc _ _⟩
 
 def syncAll (me : List MeB) : List MeB := me.map (fun e => { e with synced := true })
 
-/-- `Tensor::wait` (:1403). -/
+/-- `Tensor::wait` (:1412). -/
 def waitT (t : TT) : TT := { waitFwd t with mtSynced := true, me := syncAll t.me }
-/-- `wait_base` (:1414): bases only (`m`; `mt.m`, `me.m` are inside the VMs). -/
+/-- `wait_base` (:1423): bases only (`m`; `mt.m`, `me.m` are inside the VMs). -/
 def waitBase (t : TT) : TT := { t with mSynced := true }
-/-- `wait_all` (:1423). -/
+/-- `wait_all` (:1432). -/
 def waitAll (t : TT) : TT :=
   { t with mSynced := true, dpB := { t.dpB with synced := true }, dmB := { t.dmB with synced := true },
            mtSynced := true, me := syncAll t.me }
@@ -208,28 +208,13 @@ theorem waitT_st (t : TT) : (waitT t).st = t.st ∧ (waitT t).nf = t.nf := by
 theorem waitT_me_synced (t : TT) : ∀ e ∈ (waitT t).me, e.synced = true := by
   intro e he; simp [waitT, syncAll] at he; obtain ⟨a, _, rfl⟩ := he; rfl
 
-/-- `Derived::memory_usage` (tensor.rs:321, #3639): bytes of the four lazily-built
-caches (`added`, `surplus`, `surplus_t`, `merged`); `none` = not built yet (or built
-as `None`), which `OnceLock::get` reports without building it. -/
-def derivedMem (added surplus surplusT merged : Option Nat) : Nat :=
-  added.getD 0 + surplus.getD 0 + surplusT.getD 0 + merged.getD 0
-theorem derivedMem_fresh : derivedMem none none none none = 0 := rfl
-
-/-- `Tensor::memory_usage` (:1631): `fwd` = `m + dp + dm`, `mt`, every `me`, plus
-the derived caches built so far (`dv` = `derivedMem ..`, #3639). -/
-def memoryUsage (fwd mt : Nat) (meMem : MeB → Nat) (dv : Nat) (t : TT) : Nat :=
-  fwd + mt + (t.me.map meMem).sum + dv
-theorem memoryUsage_eq (fwd mt : Nat) (meMem : MeB → Nat) (dv : Nat) (t : TT) :
-    memoryUsage fwd mt meMem dv t = fwd + mt + (t.me.map meMem).sum + dv := rfl
-/-- With no cache built (a fresh `Derived`, as every mutator leaves it) the figure
-is the pre-#3639 one. -/
-theorem memoryUsage_fresh (fwd mt : Nat) (meMem : MeB → Nat) (t : TT) :
-    memoryUsage fwd mt meMem (derivedMem none none none none) t
-      = fwd + mt + (t.me.map meMem).sum := rfl
+def memoryUsage (fwd mt : Nat) (meMem : MeB → Nat) (t : TT) : Nat := fwd + mt + (t.me.map meMem).sum
+theorem memoryUsage_eq (fwd mt : Nat) (meMem : MeB → Nat) (t : TT) :
+    memoryUsage fwd mt meMem t = fwd + mt + (t.me.map meMem).sum := rfl
 
 /-! ## flush / fold_latched / fold_oversized / dup -/
 
-/-- `Tensor::flush` (:880): `take_fold` both, `foldP` every pair, clear the folded deltas. -/
+/-- `Tensor::flush` (:888): `take_fold` both, `foldP` every pair, clear the folded deltas. -/
 def flushT (t : TT) : TT :=
   if t.nf then
     let a := t.dpB.fold && decide (0 < dpCount t)
@@ -252,12 +237,12 @@ theorem flushT_me (t : TT) : (flushT t).me = t.me ∧ ∀ p, ((flushT t).st p).m
       cases t.dmB.fold && decide (0 < dmCount t) <;> rfl
   · exact ⟨rfl, fun _ => rfl⟩
 
-/-- `fold_latched` (:937). -/
+/-- `fold_latched` (:946). -/
 def foldLatched (t : TT) : TT :=
   let t := waitFwd t
   if t.dpB.fold || t.dmB.fold then flushT { t with nf := true } else t
 
-/-- `fold_oversized` (:955). -/
+/-- `fold_oversized` (:964). -/
 def foldOversized (t : TT) : TT :=
   let base := mCount t
   let a := deltaDominatesBase t.dpB.count base
@@ -284,7 +269,7 @@ theorem foldOversized_lazy (t : TT) (h1 : deltaDominatesBase t.dpB.count (mCount
     (h2 : deltaDominatesBase t.dmB.count (mCount t) = false) : foldOversized t = t := by
   simp [foldOversized, h1, h2]
 
-/-- `dup` (:1009). -/
+/-- `dup` (:1018). -/
 def dupT (t : TT) : TT :=
   let a := decideB t.dpB shouldFold (mCount t)
   let b := decideB t.dmB shouldFold (mCount t)
