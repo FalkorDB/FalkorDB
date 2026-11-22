@@ -90,9 +90,8 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committ
 | W2-binder-7 | `defineName_ignores_parent` | A pattern predicate in `WITH … WHERE` rebinds a parent variable as a fresh one: 3 rows where C returns 1 | **Open** (PR #3062 not merged) |
 | W4-plan-2 | `negate_rejected` | `RETURN true AND -null` → Rust "Type mismatch", C `null`; `Length`, `ListComprehension`, `MapProjection` are rejected the same way | **Open** |
 | #1334 | `bug1334_pattern_predicate_declares_var` (property `PatternPredDeclaresNothing`) | A WHERE pattern predicate may mint a new named variable: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds and returns every `n0`; C rejects it (issue #1334; the C error message is not recorded here) | **Open** |
-| #3450 | `bug3450_remove_label_kept_across_with` (property `StampedLabelsHeld`, `RemoveLabels.lean`) | `REMOVE a:A` leaves `A` in the accumulated label set, which `WITH a` copies and `update_all_node_labels` stamps on the next MATCH: `MATCH (a:A) REMOVE a:A WITH a MATCH (a)-[:R]->(b)` gives 0 rows, C 1. The fixed stamp `specStamp` satisfies the property (`specStamp_held`). The issue's CREATE/MERGE back-propagation half does not reproduce | **Open** |
 
-**Gap closed 2026-10-22.** `StampedLabelsHeld` (in `RemoveLabels.lean`) states that a label stamped on a MATCH node after `WITH` is one that MATCH wrote or one the node still carries (`held`: REMOVE clears); `bug3450_remove_label_kept_across_with` refutes it. The planner's half (`verified_labels`) is in [`../planner_build`](../planner_build).
+**Gap closed 2026-10-22; #3450 fixed by #3457.** `StampedLabelsHeld` (in `RemoveLabels.lean`) states that a label stamped on a MATCH node after `WITH` is one that MATCH wrote or one the node still carries (`held`: REMOVE clears); `rsStamp_held` proves it for the fixed `carry_node_labels` (accumulated labels minus the binder-wide `removed_labels`), and `merge_removed_label_written` that a MERGE after the REMOVE is stamped with a removed label only if it writes it. The planner's half (`verified_labels`) is in [`../planner_build`](../planner_build).
 
 **Gap closed 2026-10-20.** `PatternPredDeclaresNothing` (in `BindExpr.lean`) states that an accepted pattern predicate names only variables that are already visible; `bug1334_pattern_predicate_declares_var` refutes it on main. The slot-reuse family (#3333, #3369, #3375, #3368) comes from this binder's per-scope numbering, but it is modelled and refuted in [`../ops_aggregate`](../ops_aggregate) (`SlotReuse.lean`), where the colliding ids are consumed.
 
@@ -110,7 +109,7 @@ There are no CONDITIONAL rows in this project.
 | `Projection.lean` | `bindProjection` (WITH/RETURN), `projectItems`, the ORDER BY and WHERE-copy counterexamples |
 | `Pattern.lean` | Nodes-first `rustBind` vs textual `specBind` |
 | `Scopes.lean` | `mergeSV`, `foreachRestore`, comprehension cleanup, `callBodyScope`, label accumulation, `unionCheck`, `validateImport` |
-| `RemoveLabels.lean` | #3450: `held` (point-in-time label set, REMOVE clears), `rsStamp`/`specStamp`, property `StampedLabelsHeld` |
+| `RemoveLabels.lean` | #3450/#3457: `removedNodeLabels`, `recordRemoved`, `unionRemoved`, `carryNodeLabels`, `held` (point-in-time label set, REMOVE clears), `rsStamp`, property `StampedLabelsHeld`; MERGE after REMOVE (`dropLabels`, `cmStamp`) |
 | `Stack.lean` | The scope stack `BSt`, `sortedScopeVars`, label updates (`updNode`) |
 | `BindExpr.lean` | Expression binding (`NE`, `BE`, `bindNode`), comprehension locals, AND/OR flattening, `bindSetItems`, self-reference checks |
 | `BindIR.lean` | Per-clause rules of `bind_ir` (`RC`, `bindIR`): shortestPath, MERGE, YIELD, `CALL {}` subqueries, CREATE |

@@ -1,20 +1,19 @@
 import PlannerBuild.PlanMatch2
 /-
-# `verified_labels` across REMOVE and WITH (#3450) — gap closed 2026-10-22
-
-`MSt.verified` was only ever unioned (`markLabels`) and `remove_correct` treats the REMOVE
-operator's graph effect as opaque (`specWrite`), so nobody stated that a verified label is
-still on the node when a later operator reads the graph. Rust source of truth: origin/main
-b84473a7f, `graph/src/planner/mod.rs`.
+# `verified_labels` across REMOVE and WITH (#3450, fixed by #3457)
 
 Property `VerifiedSound st gl`: every label `verified_labels` records for a variable is on
 that variable's node in `gl` — the invariant `unverified_labels` silently assumes when it
 lets an `ExpandInto`/`CondTraverse` skip the label check. Planning a clause must preserve it
-(`RemoveKeepsVerifiedSound`).
+(`RemoveKeepsVerifiedSound`). Rust source of truth: `graph/src/planner/mod.rs` (PR #3457):
+the `QueryIR::Remove` arm of `Planner::plan` takes the labels of each `n:L…` item
+(`removed_node_labels`), records them in `removed_labels` and drops them from the verified
+set of *every* variable (the node may be bound under several names); the `QueryIR::Union` arm
+does the same with each branch planner's `removed_labels`.
 
-Live (main b84473a7f vs C), after `CREATE (:A)-[:R]->(:B)`:
+Repro of the fixed bug, after `CREATE (:A)-[:R]->(:B)`:
 `MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH (a:A)-[:R]->(b) RETURN labels(a), labels(b)`:
-Rust 1 row `[] [B]`, C 0 rows.
+before #3457 1 row `[] [B]`, now 0 rows as in C (`remove_unverifies_label`).
 -/
 namespace PlannerBuild.E
 
@@ -28,29 +27,82 @@ def VerifiedSound (st : MSt) (gl : NL) : Prop :=
 def removeG (gl : NL) (v : V) (ls : List String) : NL :=
   fun w => if w = v then (gl w).filter (fun l => !ls.contains l) else gl w
 
-/-- mod.rs: the planner state is unchanged. -/
-def rsRemove (st : MSt) (_v : V) (_ls : List String) : MSt := st
+/-- mod.rs `QueryIR::Remove`: the removed labels leave every variable's verified set (the
+`OrderSet::remove` per label, on `verified_labels.values_mut()`). -/
+def unverify (st : MSt) (ls : List String) : MSt :=
+  { st with verified := st.verified.map fun p => (p.1, p.2.filter (fun l => !ls.contains l)) }
 
-/-- The fix: `v`'s verified set loses the removed labels. -/
-def specRemove (st : MSt) (v : V) (ls : List String) : MSt :=
-  { st with verified := (v, (lookupV st.verified v).filter (fun l => !ls.contains l)) :: st.verified }
+def rsRemove (st : MSt) (_v : V) (ls : List String) : MSt := unverify st ls
+
+theorem lookupV_unverify (st : MSt) (ls : List String) (w : V) :
+    lookupV (unverify st ls).verified w = (lookupV st.verified w).filter (fun l => !ls.contains l) := by
+  simp only [unverify, lookupV]
+  induction st.verified with
+  | nil => rfl
+  | cons p t ih =>
+    simp only [List.map_cons, List.find?_cons]
+    by_cases hp : p.1 = w
+    · simp [hp]
+    · have : (p.1 == w) = false := by simpa using hp
+      simp only [this]
+      exact ih
 
 /-- **Property `RemoveKeepsVerifiedSound`**: planning `REMOVE v:ls` keeps `VerifiedSound`
 for the graph the REMOVE leaves behind. -/
 def RemoveKeepsVerifiedSound (plan : MSt → V → List String → MSt) : Prop :=
   ∀ st gl v ls, VerifiedSound st gl → VerifiedSound (plan st v ls) (removeG gl v ls)
 
-theorem specRemove_sound : RemoveKeepsVerifiedSound specRemove := by
+/-- **#3457 fixes #3450 (planner half)**: the REMOVE arm keeps `VerifiedSound`. -/
+theorem rsRemove_sound : RemoveKeepsVerifiedSound rsRemove := by
   intro st gl v ls h w l hl
+  rw [rsRemove, lookupV_unverify, List.mem_filter] at hl
   unfold removeG
   by_cases hw : w = v
   · subst hw
-    simp only [specRemove, lookupV_cons_self, List.mem_filter] at hl
     rw [ite_eq_left rfl, List.mem_filter]
     exact ⟨h _ _ hl.1, hl.2⟩
-  · rw [specRemove, lookupV_cons_other _ _ _ _ hw] at hl
-    simp only [ite_eq_right hw]
-    exact h _ _ hl
+  · simp only [ite_eq_right hw]
+    exact h _ _ hl.1
+
+/-- Unverifying more labels (a UNION branch's removals, or another variable's) never breaks
+soundness, for any graph. -/
+theorem unverify_sound (st : MSt) (gl : NL) (ls : List String) (h : VerifiedSound st gl) :
+    VerifiedSound (unverify st ls) gl := by
+  intro w l hl
+  rw [lookupV_unverify, List.mem_filter] at hl
+  exact h _ _ hl.1
+
+/-- The UNION arm: after the branches, every label a branch removed is unverified. -/
+def unionUnverify (st : MSt) (branchRemoved : List (List String)) : MSt :=
+  branchRemoved.foldl unverify st
+
+theorem unionUnverify_sound (st : MSt) (gl : NL) (bs : List (List String))
+    (h : VerifiedSound st gl) : VerifiedSound (unionUnverify st bs) gl := by
+  induction bs generalizing st with
+  | nil => exact h
+  | cons b r ih => exact ih _ (unverify_sound _ _ _ h)
+
+theorem unionUnverify_drops (st : MSt) (bs : List (List String)) (b : List String) (hb : b ∈ bs)
+    (l : String) (hl : l ∈ b) (w : V) : l ∉ lookupV (unionUnverify st bs).verified w := by
+  induction bs generalizing st with
+  | nil => cases hb
+  | cons c r ih =>
+    rcases List.mem_cons.1 hb with e | e
+    · subst e
+      simp only [unionUnverify, List.foldl_cons]
+      have : l ∉ lookupV (unverify st b).verified w := by
+        rw [lookupV_unverify, List.mem_filter]; simp [hl]
+      revert this
+      generalize unverify st b = s
+      intro hs
+      clear ih hb
+      induction r generalizing s with
+      | nil => exact hs
+      | cons d t ih2 =>
+        simp only [List.foldl_cons]
+        apply ih2
+        rw [lookupV_unverify, List.mem_filter]; exact fun h => hs h.1
+    · exact ih _ e
 
 /-- `plan_project`'s `carried_verified` for variables projected as-is (`(old, new)`). -/
 def project (st : MSt) (ren : List (V × V)) : MSt :=
@@ -118,19 +170,20 @@ def renAB : List (V × V) := [(aRm, a1), (bRm, b1)]
 /-- The second MATCH's relationship `(a:A)-[:R]->(b)`, both endpoints bound. -/
 def qAB : QR := { alias := ⟨2, 1⟩, named := false, frm := { alias := a1, labels := ["A"], ptr := 0 }, to := { alias := b1, ptr := 0 }, ptr := 0 }
 
-/-- **BUG #3450 (planner half)**: `MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH
-(a:A)-[:R]->(b)` — after the REMOVE the planner still has `A` verified for `a`, carries it
-through `WITH`, and plans the bound endpoint with no `hasLabels` filter, although `a` has no
-labels in the graph the `ExpandInto` reads (Rust 1 row, C 0). With `specRemove` the filter is
-planned. `rsRemove` violates `RemoveKeepsVerifiedSound`. -/
-theorem bug3450_remove_keeps_verified_label :
-    (boundLabelFilters (project (rsRemove stMatched aRm ["A"]) renAB) [qAB]).2 = [] ∧
-    projectG (removeG glMatched aRm ["A"]) renAB a1 = [] ∧
-    (boundLabelFilters (project (specRemove stMatched aRm ["A"]) renAB) [qAB]).2 =
+/-- The repro of #3450: `MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH (a:A)-[:R]->(b)`.
+After the REMOVE, `A` is no longer verified for `a`, so the bound endpoint of the second MATCH
+gets its `hasLabels` filter (before #3457 none was planned: 1 row, C 0). -/
+theorem remove_unverifies_label :
+    (boundLabelFilters (project (rsRemove stMatched aRm ["A"]) renAB) [qAB]).2 =
       [hasLabelsFilter a1 ["A"]] ∧
-    ¬ RemoveKeepsVerifiedSound rsRemove := by
-  refine ⟨rfl, by decide, rfl, fun h => ?_⟩
-  have := h stMatched glMatched aRm ["A"] matched_sound aRm "A" (by decide)
-  revert this; decide
+    projectG (removeG glMatched aRm ["A"]) renAB a1 = [] ∧
+    VerifiedSound (project (rsRemove stMatched aRm ["A"]) renAB)
+      (projectG (removeG glMatched aRm ["A"]) renAB) :=
+  ⟨rfl, by decide, project_sound _ _ _ (rsRemove_sound _ _ _ _ matched_sound)⟩
+
+/-- `WITH n AS a, n AS c, b REMOVE c:A WITH a, b MATCH (a:A)-[:R]->(b)`: removing through
+the other name unverifies `A` for `a` too. -/
+theorem remove_other_name_unverifies :
+    lookupV (rsRemove stMatched bRm ["A"]).verified aRm = [] := rfl
 
 end PlannerBuild.E
