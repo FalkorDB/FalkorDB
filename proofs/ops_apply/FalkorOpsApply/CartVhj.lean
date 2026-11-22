@@ -1,20 +1,10 @@
 /-
 CartesianProduct and ValueHashJoin (graph/src/runtime/ops/cartesian_product.rs,
 value_hash_join.rs).
-
-| here | there |
-| --- | --- |
-| `adv`, `orbit`, `allTuples` | `RightSide::advance` (cartesian_product.rs:105): the odometer |
-| `rsNew`, `rsEmpty`, `rewind` | `RightSide::new` (:80), `is_empty` (:94), `rewind` (:117) |
-| `CpSt.new`, `materialize`, `cpRows` | `CartesianProductOp::new` (:123), `materialize_right` (:144), `next` (:162) |
-| `JT`, `jtEmpty` | `JoinHashTable`, `is_empty` (value_hash_join.rs:96) |
-| `hashValue`, `keysMatch`, `keyAsI64` | `hash_value` (:118), `keys_match` (:137), `key_as_i64` (:153) |
-| `insertValue`, `promote` | `insert_value` (:176), `promote_int_table` (:196) |
-| `VhjSt.new`, `buildTable`, `fillMatches`, `vhjRows` | `ValueHashJoinOp::new` (:228), `build_hash_table` (:256), `fill_matches` (:324), `next` (:366) |
 -/
 namespace CartVhj
 
-/-! ## The odometer (cartesian_product.rs:105-115) -/
+/-! ## The odometer (cartesian_product.rs) -/
 
 /-- Rightmost position first: increment; if it overflows, reset to 0 and carry left.
 `true` = a new combination was reached; `false` = wrapped (all zeros again). -/
@@ -246,7 +236,7 @@ inductive K where
   | float (f : Int) (exact : Bool)   -- `exact` = the float is an integer value `f`
   | other (tag : Nat)
 
-/-- value_hash_join.rs:153: ints as is; a float only when it is an exact integer. -/
+/-- value_hash_join.rs: ints as is; a float only when it is an exact integer. -/
 def keyAsI64 : K → Option Int
   | .int n => some n
   | .float f true => some f
@@ -256,14 +246,14 @@ theorem keyAsI64_spec (n : Int) (f : Int) :
     keyAsI64 (.int n) = some n ∧ keyAsI64 (.float f true) = some f ∧ keyAsI64 (.float f false) = none ∧
     keyAsI64 .null = none := ⟨rfl, rfl, rfl, rfl⟩
 
-/-- value_hash_join.rs:137: equal AND not disjoint-or-null (`cv` = `compare_value`). -/
+/-- value_hash_join.rs: equal AND not disjoint-or-null (`cv` = `compare_value`). -/
 def keysMatch (cv : K → K → Ordering × Bool) (a b : K) : Bool := (cv a b).1 == .eq && !(cv a b).2
 
 theorem keysMatch_spec (cv : K → K → Ordering × Bool) (a b : K) :
     keysMatch cv a b = true ↔ (cv a b).1 = .eq ∧ (cv a b).2 = false := by
   simp [keysMatch]
 
-/-- value_hash_join.rs:118: the seeded hasher — any function of the key. -/
+/-- value_hash_join.rs: the seeded hasher — any function of the key. -/
 def hashValue (h : K → Nat) (k : K) : Nat := h k
 
 theorem hashValue_det (h : K → Nat) (a b : K) (e : a = b) : hashValue h a = hashValue h b := by rw [e]
@@ -275,7 +265,7 @@ def addRef (cv : K → K → Ordering × Bool) (key : K) (slot : Nat) : List (K 
   | [] => [(key, [slot])]
   | (k, rs) :: es => if keysMatch cv k key then (k, rs ++ [slot]) :: es else (k, rs) :: addRef cv key slot es
 
-/-- value_hash_join.rs:176-190: never-equal keys (null, NaN) are skipped. -/
+/-- value_hash_join.rs: never-equal keys (null, NaN) are skipped. -/
 def insertValue (cv : K → K → Ordering × Bool) (h : K → Nat) (neverEq : K → Bool) (t : VT) (key : K)
     (slot : Nat) : VT :=
   if neverEq key then t else fun hk => if hk = h key then addRef cv key slot (t hk) else t hk
@@ -329,7 +319,7 @@ inductive JT where
   | int (t : IT) (dom : List Int)
   | value (t : VT) (dom : List Nat)
 
-/-- value_hash_join.rs:96 (`dom` = the occupied keys / buckets). -/
+/-- value_hash_join.rs (`dom` = the occupied keys / buckets). -/
 def jtEmpty : JT → Bool
   | .int _ dom => dom.isEmpty
   | .value _ dom => dom.isEmpty
@@ -337,7 +327,7 @@ def jtEmpty : JT → Bool
 theorem jtEmpty_spec (t : IT) (v : VT) (d : List Int) (e : List Nat) :
     jtEmpty (.int t d) = d.isEmpty ∧ jtEmpty (.value v e) = e.isEmpty := ⟨rfl, rfl⟩
 
-/-- `build_hash_table` (:256-322), over the right rows' evaluated keys (`none` = null, skipped):
+/-- One origin's table in `build_hash_table` (:266-344), over the right rows' evaluated keys (`none` = null, skipped):
 start on the integer table; the first key that is not integer-valued promotes it and switches
 to the value table for the rest. -/
 def build (cv : K → K → Ordering × Bool) (h : K → Nat) (ne : K → Bool) :
@@ -379,7 +369,7 @@ theorem build_int (cv : K → K → Ordering × Bool) (h : K → Nat) (ne : K �
       · have : ¬ m = n := fun x => e x.symm
         simp [intInsert, e, hm, this]
 
-/-- `fill_matches` (:324): integer table probes `key_as_i64(key)` (a non-integer key finds
+/-- `fill_matches` (:352), once the origin's table is found: integer table probes `key_as_i64(key)` (a non-integer key finds
 nothing); value table probes the key's bucket by `keys_match`. -/
 def fillMatches (cv : K → K → Ordering × Bool) (h : K → Nat) : JT → K → List Nat
   | .int it _, key => match keyAsI64 key with
@@ -391,18 +381,21 @@ theorem fillMatches_int (cv : K → K → Ordering × Bool) (h : K → Nat) (it 
     fillMatches cv h (.int it d) (.int n) = it n ∧ fillMatches cv h (.int it d) (.float f true) = it f ∧
     fillMatches cv h (.int it d) (.float f false) = [] := ⟨rfl, rfl, rfl⟩
 
-/-- `ValueHashJoinOp::new` (:228): no table, no buffered rows. -/
+/-- `ValueHashJoinOp::new` (:237): no table, no buffered rows, one shared table (`per_origin`
+false until `set_argument_batch` sees a multi-row argument batch, batch.rs). -/
 structure VhjSt where
-  built : Option JT
+  built : Option (Nat → JT)
+  perOrigin : Bool
   leftPos : Nat
   matchPos : Nat
   found : List Nat
 
-def VhjSt.new : VhjSt := ⟨none, 0, 0, []⟩
+def VhjSt.new : VhjSt := ⟨none, false, 0, 0, []⟩
 
-theorem vhjNew_spec : VhjSt.new.built = none ∧ VhjSt.new.leftPos = 0 ∧ VhjSt.new.found = [] := ⟨rfl, rfl, rfl⟩
+theorem vhjNew_spec : VhjSt.new.built = none ∧ VhjSt.new.leftPos = 0 ∧ VhjSt.new.found = [] ∧
+    VhjSt.new.perOrigin = false := ⟨rfl, rfl, rfl, rfl⟩
 
-/-- `next` (:366): an empty table ends the stream at once; otherwise each left row (in
+/-- `next` (:398), on one table: an empty table ends the stream at once; otherwise each left row (in
 order) with a non-null key yields one merged row per matching right row, in the table's ref
 order (batches of `BATCH_SIZE`, the row stream is what is modelled). -/
 def vhjRows {L R O : Type} (cv : K → K → Ordering × Bool) (h : K → Nat) (t : JT) (rights : Nat → R)
@@ -418,5 +411,110 @@ theorem vhjRows_spec {L R O : Type} (cv : K → K → Ordering × Bool) (h : K �
       (fillMatches cv h t k).map (fun s => merge l (rights s)) ++ vhjRows cv h t rights merge rest ∧
     vhjRows cv h t rights merge ((l, none) :: rest) = vhjRows cv h t rights merge rest := by
   simp [vhjRows, hne]
+
+/-! ## Per-origin tables
+
+`build_hash_table` (:266) keys each right row by `origin = if per_origin { origin_row } else { 0 }`
+and runs the integer-then-value build above on that origin's own pair of tables; an origin
+with no table is probed as nothing (`fill_matches`, :359). An absent origin is modelled as the
+fresh table `jtNew` (empty, probes to `[]`). -/
+
+def jtNew : JT := .int (fun _ => []) []
+
+theorem build_append (cv : K → K → Ordering × Bool) (h : K → Nat) (ne : K → Bool) :
+    ∀ (xs ys : List (Option K × Nat)) (t : JT),
+      build cv h ne t (xs ++ ys) = build cv h ne (build cv h ne t xs) ys
+  | [], _, _ => rfl
+  | (none, _) :: xs, ys, t => by
+      simp only [List.cons_append, build]; exact build_append cv h ne xs ys t
+  | (some k, s) :: xs, ys, .int it dom => by
+      simp only [List.cons_append, build]
+      split <;> exact build_append cv h ne xs ys _
+  | (some k, s) :: xs, ys, .value v dom => by
+      simp only [List.cons_append, build]; exact build_append cv h ne xs ys _
+
+/-- `build_hash_table` with origins: each right row `(origin, key, slot)` updates only its
+origin's table, in build order. -/
+def buildPO (cv : K → K → Ordering × Bool) (h : K → Nat) (ne : K → Bool) :
+    (Nat → JT) → List (Nat × (Option K × Nat)) → (Nat → JT)
+  | ts, [] => ts
+  | ts, (o, r) :: rest => buildPO cv h ne (fun o' => if o' = o then build cv h ne (ts o) [r] else ts o') rest
+
+/-- **Isolation**: origin `o`'s table is exactly the single-table build over the right rows of
+origin `o` (in order); rows of other origins never reach it. -/
+theorem buildPO_origin (cv : K → K → Ordering × Bool) (h : K → Nat) (ne : K → Bool) :
+    ∀ (rows : List (Nat × (Option K × Nat))) (ts : Nat → JT) (o : Nat),
+      buildPO cv h ne ts rows o = build cv h ne (ts o) ((rows.filter fun r => r.1 = o).map (·.2))
+  | [], _, _ => rfl
+  | (o', r) :: rest, ts, o => by
+      simp only [buildPO]
+      rw [buildPO_origin cv h ne rest _ o]
+      by_cases e : o = o'
+      · subst e
+        simp only [ite_true, List.filter_cons, decide_true, List.map_cons]
+        rw [show r :: (List.filter (fun r => decide (r.1 = o)) rest).map (·.2)
+            = [r] ++ (List.filter (fun r => decide (r.1 = o)) rest).map (·.2) from rfl, build_append]
+      · have e' : ¬ o' = o := fun x => e x.symm
+        simp [e, e']
+
+/-- `fill_matches` (:352) with origins: probe the left row's origin's table. -/
+def fillMatchesPO (cv : K → K → Ordering × Bool) (h : K → Nat) (ts : Nat → JT) (o : Nat) (key : K) : List Nat :=
+  fillMatches cv h (ts o) key
+
+/-- An origin with no table (`get(&origin)` is `None`, :359) yields no match. -/
+theorem fillMatches_absent (cv : K → K → Ordering × Bool) (h : K → Nat) (key : K) :
+    fillMatches cv h jtNew key = [] := by
+  simp only [fillMatches, jtNew]; cases keyAsI64 key <;> rfl
+
+/-- **Per-origin join** on an all-integer build side: a left row of origin `o` with key `n`
+matches exactly the right rows of origin `o` whose key is `n`, in build order. -/
+theorem buildPO_int_probe (cv : K → K → Ordering × Bool) (h : K → Nat) (ne : K → Bool)
+    (rows : List (Nat × (Option K × Nat))) (o : Nat) (n : Int)
+    (hint : ∀ o' k s, (o', (some k, s)) ∈ rows → (keyAsI64 k).isSome) :
+    fillMatchesPO cv h (buildPO cv h ne (fun _ => jtNew) rows) o (.int n) =
+      ((rows.filter fun r => r.1 = o).map (·.2)).filterMap fun r => match r.1 with
+        | some k => if keyAsI64 k = some n then some r.2 else none
+        | none => none := by
+  unfold fillMatchesPO
+  rw [buildPO_origin]
+  obtain ⟨it', dom', h1, h2⟩ := build_int cv h ne ((rows.filter fun r => r.1 = o).map (·.2)) (fun _ => []) []
+    (fun k s hm => by
+      simp only [List.mem_map, List.mem_filter] at hm
+      obtain ⟨⟨o', r⟩, ⟨hr, _⟩, he⟩ := hm
+      subst he
+      exact hint o' k s hr)
+  simp only [jtNew] at h1 ⊢
+  rw [h1]; simp [fillMatches, keyAsI64, h2]
+
+/-- `next` (:398) with origins: the stream ends at once when every built table is empty
+(`os` = the origins seen on the build side); otherwise each left row `(l, origin, key)`
+probes its origin's table. -/
+def vhjRowsPO {L R O : Type} (cv : K → K → Ordering × Bool) (h : K → Nat) (ts : Nat → JT) (os : List Nat)
+    (rights : Nat → R) (merge : L → R → O) (lefts : List (L × Nat × Option K)) : List O :=
+  if os.all (fun o => jtEmpty (ts o)) then []
+  else lefts.flatMap fun lk => match lk.2.2 with
+    | none => []
+    | some k => (fillMatchesPO cv h ts lk.2.1 k).map fun s => merge lk.1 (rights s)
+
+theorem vhjRowsPO_spec {L R O : Type} (cv : K → K → Ordering × Bool) (h : K → Nat) (ts : Nat → JT)
+    (os : List Nat) (rights : Nat → R) (merge : L → R → O) (l : L) (o : Nat) (k : K)
+    (rest : List (L × Nat × Option K)) (hne : os.all (fun o => jtEmpty (ts o)) = false) :
+    vhjRowsPO cv h ts os rights merge ((l, o, some k) :: rest) =
+      (fillMatches cv h (ts o) k).map (fun s => merge l (rights s)) ++ vhjRowsPO cv h ts os rights merge rest ∧
+    vhjRowsPO cv h ts os rights merge ((l, o, none) :: rest) = vhjRowsPO cv h ts os rights merge rest := by
+  simp [vhjRowsPO, hne, fillMatchesPO]
+
+/-- With `per_origin` off every row has origin 0: the per-origin join is the single-table join
+of before #3035. -/
+theorem vhjRowsPO_single {L R O : Type} (cv : K → K → Ordering × Bool) (h : K → Nat) (ts : Nat → JT)
+    (rights : Nat → R) (merge : L → R → O) (lefts : List (L × Option K)) :
+    vhjRowsPO cv h ts [0] rights merge (lefts.map fun lk => (lk.1, 0, lk.2)) =
+      vhjRows cv h (ts 0) rights merge lefts := by
+  simp [vhjRowsPO, vhjRows, fillMatchesPO, List.flatMap_map]
+
+theorem buildPO_single (cv : K → K → Ordering × Bool) (h : K → Nat) (ne : K → Bool)
+    (rows : List (Option K × Nat)) :
+    buildPO cv h ne (fun _ => jtNew) (rows.map fun r => (0, r)) 0 = build cv h ne jtNew rows := by
+  rw [buildPO_origin]; congr 1; simp [List.filter_map, Function.comp_def]
 
 end CartVhj

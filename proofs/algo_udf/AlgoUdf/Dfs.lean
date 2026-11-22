@@ -1,17 +1,5 @@
 import AlgoUdf.Graph
-/-! # `enumerate_paths` (algo_procedures.rs:2537-2638) and `record_found_path` with its bound (:2473-2526)
-
-| here | there |
-| --- | --- |
-| `FP`                 | `FoundPath = (Vec<(RelationshipId, NodeId, NodeId)>, f64, f64)` :2144 |
-| `fpLt`               | `cmp_found_path(a, b) == Ordering::Less` :2155 (weight, cost, hops) |
-| `insertSorted`       | `results.insert(results.partition_point(|kept| cmp(kept, found) == Less), found)` :2518-2520 (linear scan; equal to the binary search on the sorted vector the k-branch keeps) |
-| `recordB`            | `record_found_path` :2473, including every `*bound = ..` update |
-| `Frame`              | one depth of the search: `levels[d]`, `nodes[d]`, and (d > 0) `edges[d-1]` with its prefix weight/cost — Rust keeps the three vectors in lock-step (push :2601-2624, pop :2630-2633) |
-| `succsRev`           | `node_successors` :2216 (reversed: `Vec::pop` takes the last) |
-| `step`               | one iteration of the `loop` :2568-2635; `none` = `break` at depth 0 |
-| `DS.log`             | ghost: every path passed to `record_found_path` (proof-only) |
-| `Cfg`                | `PathAlgoConfig` fields read here |
+/-! # `enumerate_paths` (algo_procedures.rs) and `record_found_path` with its bound (:2473-2526)
 
 Weights `G.wt` and costs `G.cost` are exact naturals (see `AlgoUdf.Graph`);
 `bound = none` is `f64::INFINITY`; `maxCost` is `Option Nat`.
@@ -159,7 +147,7 @@ theorem insertSorted_length (f : FP) (l : List FP) : (insertSorted f l).length =
   | cons y t ih => simp only [insertSorted]; split <;> simp [ih]
 
 theorem getLast!_mem {l : List FP} (h : l ≠ []) : l.getLast! ∈ l := by
-  rw [List.getLast!_eq_getLast?_getD, List.getLast?_eq_getLast h]
+  rw [List.getLast!_eq_getLast?_getD, List.getLast?_eq_some_getLast h]
   exact List.getLast_mem h
 
 /-- Kept paths are old ones or the new one. -/
@@ -230,7 +218,7 @@ theorem recordB_bound (res : List FP) (f : FP) (k : Nat) (b : Option Nat) :
 theorem recordB_length (res : List FP) (f : FP) (k : Nat) (b : Option Nat) (hk : 2 ≤ k)
     (h : res.length ≤ k) : (recordB res f k b).1.length ≤ k := by
   unfold recordB
-  rw [if_neg (by omega), if_neg (by omega)]
+  rw [ite_eq_right (by omega), ite_eq_right (by omega)]
   split
   · split
     · dsimp only; rw [insertSorted_length, List.length_dropLast]; omega
