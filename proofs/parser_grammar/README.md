@@ -47,13 +47,13 @@ The project has two layers:
 - The extensions are explicit flags (`Ext`, `GExt`, `CExt`), not silent. They include keyword folding (`MATCH … MATCH`), allShortestPaths, and FalkorDB-only constructs: index DDL, LOAD CSV, FOREACH, `CALL {}`, reduce and shortestPath.
 - Completeness is **not** claimed: the parser rejects some grammatical inputs on purpose, for example aggregates in WHERE, `SKIP 1+1`, mixed UNION / UNION ALL, and undirected CREATE.
 
-**4. Is the #3104 pattern-comprehension gate safe?**
+**4. Is the pattern-comprehension gate safe?**
 
-Before #3104, `[(x {k: [(x {k: …})]})]` nested 18 levels deep (206 bytes) took 49 s to parse. #3104 runs the pattern-comprehension attempt only behind a gate (`list_has_top_level_pipe`) and memoises failed attempts.
+The pattern-comprehension attempt runs only behind a gate (`list_has_top_level_pipe`) and failed attempts are memoised, so deeply nested `[(x {k: [(x {k: …})]})]` does not blow up exponentially.
 
 - **The gate is exact on balanced brackets** (`pipeScan_exact`).
 - **Failed attempts are linear in the abstract `memoRun` model**: for any visit list with positions ≤ `n` and depth ≤ 100, at most `808·(n+1)` failed (`failed_attempts_linear`, `memoRun_nodup`). The theorem is not linked to parser runs; that a whole parse only produces such visits is by inspection.
-- **"The gate never changes the parse" is CONDITIONAL.** `listLitP_eq_ungated` holds under two premises, `Oracle.Bal` and `MemoSound`. `Oracle.Bal` was **false** for the Rust until #3041 because of the slice-bound bug (counterexample removed in bbee75955; the last revision that has them is 17ccc5412): `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] | b]` was accepted before #3104 and a syntax error after (C's answer). #3041 makes a failed slice bound an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`), and the expression fragment consumes balanced runs on every input checked (`bounded_bal`). `Oracle.Bal` is no longer refuted, but it is not proved for the whole expression parser (CASE, comprehensions, maps, … are outside the fragment). `MemoSound` is unproven: the memo key omits the anonymous counter, and no input was found where that matters (`memoRun_sound`).
+- **"The gate never changes the parse" is CONDITIONAL.** `listLitP_eq_ungated` holds under two premises, `Oracle.Bal` and `MemoSound`. A failed slice bound is an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`), and the expression fragment consumes balanced runs on every input checked (`bounded_bal`). `Oracle.Bal` is not refuted, but it is not proved for the whole expression parser (CASE, comprehensions, maps, … are outside the fragment). `MemoSound` is unproven: the memo key omits the anonymous counter, and no input was found where that matters (`memoRun_sound`).
 
 **5. Does `connected_components` split a pattern correctly?**
 
@@ -65,17 +65,17 @@ Before #3104, `[(x {k: [(x {k: …})]})]` nested 18 levels deep (206 bytes) took
 |---|---|---|
 | `parseExpr_no_panic` | The expression parser never reaches a panic site, and returns well-formed trees | `NoPanic.lean` |
 | `binary_pairs_agree` | All 400 binary-operator pairs parse to the grammar's tree | `Theorems.lean` |
-| `bounded_agree` | Every token list of length ≤ 3 is parsed exactly as the grammar parses it, apart from `known` classes (no slice class since #3041) | `Bounded.lean` |
-| `slice_bound_error_reported` | A slice bound that fails to parse is an error, as in the grammar and C (#3041) | `Theorems.lean` |
+| `bounded_agree` | Every token list of length ≤ 3 is parsed exactly as the grammar parses it, apart from `known` classes (no slice class) | `Bounded.lean` |
+| `slice_bound_error_reported` | A slice bound that fails to parse is an error, as in the grammar and C | `Theorems.lean` |
 | `bounded_bal` | Every token list of length ≤ 3 that parses consumes a balanced run (the fragment's `Oracle.Bal`) | `Bounded.lean` |
 | `chained_comparison` | `a < b < c` becomes `a < b AND b < c` | `Theorems.lean` |
 | `parse_deterministic` | The parse is a function of the input | `Theorems.lean` |
 | `parseP_sound`, `queryP_sound` | Given `Oracle.PPRec` (question 3), every accepted model query is derivable in the grammar, with the derivation's tree | `C/Index.lean`, `C/ClausesG3.lean` |
 | `patternP_sound`, `primaryC_sound`, `shortestP_sound`, `listLitP_sound` | The same for patterns, primaries, shortestPath and list literals | `C/PatternG2.lean`, `C/PrimaryG.lean`, `C/ExprC5.lean`, `C/ExprC3.lean` |
 | `parse_no_panic` | Given `Oracle.Safe` (question 1), the clause layer never panics | `C/Index.lean` (clause lemmas in `C/ClausesNP.lean`) |
-| `pipeScan_exact`, `failed_attempts_linear` | #3104's gate is exact on balanced input; failed attempts are linear | `C/ListGate.lean` |
+| `pipeScan_exact`, `failed_attempts_linear` | The gate is exact on balanced input; failed attempts are linear | `C/ListGate.lean` |
 | `connectedComponents_spec` | Pattern components are disjoint and cover every node whose id is not also a relationship or path id (within the fuel budget) | `C/Components.lean` |
-| `not_not_kept`, `is_null_then_predicate` | `NOT NOT x` keeps both NOTs; `1 IS NULL IN [false]` parses (since #3060) | `Theorems.lean` |
+| `not_not_kept`, `is_null_then_predicate` | `NOT NOT x` keeps both NOTs; `1 IS NULL IN [false]` parses | `Theorems.lean` |
 
 ### How `parseExpr_no_panic` is proved
 
@@ -97,18 +97,7 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W3-parser-1 | `skipFilter_eof_diverges` | `RETURN shortestPath((a)-[{` at end of input: the filter-skip loop never ends, a worker spins forever, and 11 such queries stop all graph queries. C: syntax error | **Open** |
-| #3036 | removed (17ccc5412) | A slice bound that failed to parse became `0` or `i64::MAX`: `[1,2,3][abs()..2]` → `[1, 2]` (C: arity error); `[(1..2]` was accepted | Fixed by #3041: `slice_bound_error_reported`, `listOp_from_err`, `listOp_to_err` |
-| — | (Rust test only) | A pattern predicate in a projection swallows the `,`: `RETURN (a)-->(b), (b)-->(a)` returns one column (C: two). Same root cause as W2-binder-1 | **Open** |
-| — | `sign_sequences` | `+-1` is accepted, `- -1` and `-+1` are rejected; the grammar allows one sign (`- -1` is #2309) | **Open** |
-| W4-plan-4 | `call_validates_rest`, `match_last_after_call_rejected` | Nothing after a procedure CALL was validated: `… MERGE ()-[:R\|S]->()` created an edge, `… UNWIND [1] AS x` was accepted; C rejects all | **Fixed by #3297** (b774fdfad, main b84473a7f); the `parent().unwrap()` in `utilize_node_by_id` remains as a hazard |
-| W4-parse-1 | `fixed3303_anon_name_distinct` | Anonymous entities were named `_anon_N`, a name users can write: `MATCH (_anon_0:A), (:B) RETURN count(*)` → Rust 0, C 1 | **Fixed by #3303** (unnamed entities are `Alias::Anon`) |
-| W4-parse-2 | `create_named_path_dup_rel_rejected` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` created 1 relationship (C: "already declared") | **Fixed by #3289** (`d15d38a10`) |
-| W4-parse-3 | `merge_dup_rel_rejected`, `pattern_comprehension_repeated_rel_refused` | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` created 1 relationship (C: error); pattern comprehensions ignored a repeat | **Fixed by #3289** |
-| W4-parse-4 | `set_paren_target_refused`, `set_paren_needs_dot`, `type_colon_refused` | `SET (n.x) = 5` and `[:A:B]` were accepted (C: syntax error) | **Fixed by #3300** (`f680bb9f2`) |
-| #2502 | `bug2502_pred_swallows_match`, `bug2502_where_match_merged` (property `PredEndsBeforeClause`) | A WHERE pattern predicate is parsed by `parse_pattern(&Keyword::Match)` (cypher.rs:2119), whose separator (1562-1579) continues on `MATCH`, so the next MATCH clause is folded into the predicate: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → Rust `'m' not defined`, C returns the rows; with `MATCH (a:A) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN count(*)` on `CREATE (a:A)-[:Q]->(:B), (a)-[:R]->(:M {v:1}), (a)-[:R]->(:M {v:2})` Rust 1, C 2 | **Open** |
-| W3-parser-9 | removed (17ccc5412) | Exponential backtracking in nested `[(...)]` lists: 206 bytes took 49 s | Fixed by #3104 |
-| #3057 | `not_not_kept`, `is_null_then_predicate`, `call_trailing_comma_refused`, `set_bracket_paren_refused`, `match_match_refused`, `load_csv_with_from_refused` | `NOT NOT x` was parsed as `x`; `1 IS NULL IN [false]` was rejected; `abs(-1,)`, `SET [n).x = 5`, `MATCH MATCH` and `LOAD CSV WITH FROM` were accepted | Fixed by #3060 (the theorems are now the correct behaviour) |
+| — | (Rust test only) | A pattern predicate in a projection swallows the `,`: `RETURN (a)-->(b), (b)-->(a)` returns one column (C: two) | **Open** |
 
 Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS xN` clauses crash the Rust server in planning or execution (W4-parse-5); C runs 5000.
 
@@ -119,7 +108,7 @@ Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS 
 - `'a' + 'b' STARTS WITH 'ab'`: Rust true, C `'afalse'`.
 - `SKIP (1)`: Rust rejects, C accepts.
 
-**CONDITIONAL:** `listLitP_eq_ungated` rests on `Oracle.Bal` (refuted before #3041; since #3041 unproven but with no known counterexample, and checked on the fragment by `bounded_bal`, see question 4) and `MemoSound` (unproven). The `parse_list_literal_or_comprehension` row in `COVERAGE.tsv` is PROVEN through `listLitP_sound` and the no-panic theorem, which do not need those premises; only the "same as before #3104" claim is conditional.
+**CONDITIONAL:** `listLitP_eq_ungated` rests on `Oracle.Bal` (unproven, with no known counterexample, and checked on the fragment by `bounded_bal`, see question 4) and `MemoSound` (unproven). The `parse_list_literal_or_comprehension` row in `COVERAGE.tsv` is PROVEN through `listLitP_sound` and the no-panic theorem, which do not need those premises; only the "the gate never changes the parse" claim is conditional.
 
 ## Files
 
@@ -129,7 +118,7 @@ Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS 
 | `Model.lean` | The expression parser: tokens `Tok`, trees, frames, `step`, one function per level, `primary`, `listLit`, `listOp` |
 | `Grammar.lean` | The reference: openCypher's expression rules (`G.*`) as a recursive-descent recogniser |
 | `NoPanic.lean` | `Good`, `Inv`, `parseExpr_no_panic` |
-| `Theorems.lean` | Precedence, associativity, `binary_pairs_agree`, determinism, the #3060 fixes, `sign_sequences`, the #3041 slice fix |
+| `Theorems.lean` | Precedence, associativity, `binary_pairs_agree`, determinism, `not_not_kept`, `is_null_then_predicate`, `sign_runs`, the slice-bound error |
 | `Bounded.lean` | `bounded_agree` and the `known` disagreement classes; `bounded_bal` (balanced consumption) |
 | `Clauses.lean` | Clause-level fragments: the shortestPath filter skipper, SET/REMOVE targets, the projection-comma bug |
 | `Tactic.lean` | Proof helpers |
@@ -140,12 +129,12 @@ Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS 
 | `C/Pattern.lean`, `C/PatternG.lean`, `C/PatternG2.lean` | Node, relationship and path patterns, their grammar and soundness |
 | `C/Primary.lean`, `C/PrimaryG.lean` | The full `parse_primary_expr` and its soundness |
 | `C/ExprC.lean` … `C/ExprC5.lean` | CASE, quantifiers, reduce, list and pattern comprehensions, shortestPath |
-| `C/ListGate.lean` | The #3104 gate and memo |
+| `C/ListGate.lean` | The pattern-comprehension gate and memo |
 | `C/Index.lean` | Index DDL and the entry point `parse`: `parseP_sound`, `parse_no_panic` |
 | `C/Params.lean` | Query parameters and small helpers |
 | `C/Graph.lean`, `C/Components.lean`, `C/IR.lean`, `C/Fmt.lean` | `ast.rs`: `QueryGraph`, connected components, `QueryIR` validation, `Display` |
 | `C/ClauseBugs.lean`, `C/PatternBugs.lean` | The clause- and pattern-level counterexamples |
-| `C/PredicateBugs.lean` | #2502: `PredEndsBeforeClause` (a WHERE pattern predicate ends before a clause keyword) and its counterexamples |
+| `C/PredicateBugs.lean` | `PredEndsBeforeClause` (a WHERE pattern predicate ends before a clause keyword) and its counterexamples |
 | `C/Oracle0.lean` | A small concrete expression oracle for running the clause models on examples |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -161,6 +150,16 @@ The project has no Lake dependencies.
 
 Every function listed is PROVEN. For the functions involved in open bugs (for example `parse_shortest_path_expr`), the row cites both the soundness theorem and the counterexample.
 
+## More clause-level facts
+
+- `add_pattern_relationship` (cypher.rs) replaces five copies of `if !query_graph.add_relationship(..) && clause == Match`; it rejects a repeated alias in every clause (`create_named_path_dup_rel_rejected`, `merge_dup_rel_rejected`). A pattern comprehension collects the first repeat and goes on, and the caller reports it after the speculative attempt succeeded (`pattern_comprehension_repeated_rel_refused`).
+- `parse_relationship_types` is `ident (| :? ident)*`: a bare `:` does not continue the list (`typesP_colon_refused`, `type_colon_refused`); a parenthesised SET/REMOVE target needs a following `.` (`set_paren_target_refused`, `set_paren_needs_dot`).
+- `parse_pattern` records `is_incoming` before `parse_relationship_pattern`, so `(a)<-[*]-(a)` keeps its direction (`aspRel_same_alias`).
+- A WHERE pattern predicate stops before a clause keyword (`PredEndsBeforeClause`, `fixed2502_pred_stops_at_match`, `fixed2502_where_match_split`: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to two clauses). Anonymous entities are `Alias::Anon(N)`, which no identifier equals (`fixed3303_anon_name_distinct`).
+- While a `CYPHER` parameter value goes through the expression fallback, `legacy_signs` is set: `C.legacySigns` models the loop (`legacySigns_runs`, `legacySigns_neg_le`: at most one `-`, `+`, `-` or `+-`). The Rust-side `Parser::new` field is false, and the main sign run is `countSigns` (any run of `+`/`-`, folded by the parity of `-`: `sign_runs`).
+
+More places where Rust follows the grammar and C does not: `1 = 1 = 1` gives Rust true (chained), C false; `WHERE n.x = 0 = true` gives Rust 0 rows, C 1; `1 + 2 IS NULL` gives Rust false, C `1`; `- 1 IS NULL` gives Rust false, C a type error. `true CONTAINS 'c'` and `1 ENDS WITH 1` return null in Rust, where C raises a type error. `SET n.x = 1 SET n.y = n.x` gives Rust 1, C null (C evaluates the folded SETs as one batch). Known and not re-reported: #2605 (`.1e-5`), #2895 (SET chains, FOREACH nesting; see `proofs/lexer`), the lexer findings of #2909.
+
 ## What the model does not cover
 
 - The expression layer's token alphabet has no `CASE`, quantifiers, `reduce`, `shortestPath`, `DISTINCT`, `count(*)`, aggregates, `|`, pattern predicates or pattern comprehensions, and no floats. The clause layer models those.
@@ -170,7 +169,7 @@ Every function listed is PROVEN. For the functions involved in open bugs (for ex
 - The step budget (`fuel`) is the model's. It is not proven that more fuel never changes a result, so parsers and `connected_components` are proven partially correct: nothing is claimed when fuel runs out.
 - Relationship types go through a `HashSet`; the model keeps first-occurrence order, and only membership is observable.
 - Identifier length limits, error messages and error positions are not modelled.
-- The header cites `cypher.rs` line numbers from main at `737dfb5da` (the `ast.rs` CALL arm at `b84473a7f`, after #3297); `lean_ci.sh` builds the project but does not check these line numbers against current main, so they may have drifted.
+- `COVERAGE.tsv` is the authoritative Rust line list; docstring cites may point at earlier targets, and `lean_ci.sh` does not check them against current main, so they may have drifted.
 
 ## Build and check
 

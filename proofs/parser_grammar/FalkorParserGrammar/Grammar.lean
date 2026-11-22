@@ -6,8 +6,8 @@ parser, one function per rule, over the same tokens and producing the same
 tree shapes as the Rust parser for the same meaning:
 
 * a run `a op b op c` of one left-associative operator is one n-ary node
-  `op[a,b,c]` (Rust flattens it, macro.rs:140; the evaluator folds left,
-  eval.rs:779-825), a change of operator nests on the left;
+  `op[a,b,c]` (Rust flattens it, macro.rs; the evaluator folds left,
+  eval.rs), a change of operator nests on the left;
 * a chain of comparisons `a < b <= c` is `a < b AND b <= c` (the chaining
   rule of the openCypher / Cypher manual), built as
   `And[c1, And[c2, ... ck]]`;
@@ -21,12 +21,6 @@ import FalkorParserGrammar.Model
 namespace FalkorParserGrammar
 
 namespace G
-
-/-- `-a`: a negated integer literal is the constant `-n` (the Rust parser folds
-it, #3437; same meaning as `Negate`), anything else a `neg` node. -/
-def negOf : RT → RT
-  | .node (.int n) _ => lf (.int (-n))
-  | a => .node .neg [a]
 
 /-- One step of `oC_ComparisonExpression`'s chain builder. -/
 def chain : List RT → RT
@@ -196,7 +190,7 @@ def unE : Nat → List Tok → Out
   | 0, _ => .fuel
   | n + 1, .dash :: r =>
     match nonArith n r with
-    | .ok a r' => .ok (negOf a) r'
+    | .ok a r' => .ok (.node .neg [a]) r'
     | o => o
   | n + 1, .plus :: r => nonArith n r
   | n + 1, ts => nonArith n ts

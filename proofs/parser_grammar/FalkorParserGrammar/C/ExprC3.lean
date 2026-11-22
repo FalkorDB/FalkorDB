@@ -1,6 +1,6 @@
 /-
 # Soundness and no-panic for pattern comprehensions, `[`-dispatch and
-# shortestPath; the full `parse_primary_expr` dispatch (cypher.rs:1942-2133)
+# shortestPath; the full `parse_primary_expr` dispatch (cypher.rs)
 -/
 import FalkorParserGrammar.C.ExprC2
 

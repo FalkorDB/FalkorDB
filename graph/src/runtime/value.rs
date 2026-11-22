@@ -1325,7 +1325,9 @@ impl ValueTypeOf for Value {
         arg_type: &Type,
     ) -> Option<(Type, Type)> {
         match (self, arg_type) {
-            // Every element matches `Any`; don't walk a long list to find out.
+            // `List(Any)` accepts every element, so skip the walk: it made
+            // each `size(list)` / `head(list)` call O(len) and any per-row
+            // use of a large list variable quadratic.
             (Self::List(_), Type::List(ty)) if matches!(**ty, Type::Any) => None,
             (Self::List(vs), Type::List(ty)) => {
                 for v in vs.iter() {
@@ -2935,5 +2937,65 @@ mod date_format_tests {
             Value::format_datetime(i64::MIN),
             "-292277022657-01-27T08:29:52"
         );
+    }
+}
+
+#[cfg(test)]
+mod value_of_type_tests {
+    use super::{Type, Value, ValueTypeOf};
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    fn list(items: impl IntoIterator<Item = Value>) -> Value {
+        Value::List(Arc::new(items.into_iter().collect()))
+    }
+
+    #[test]
+    fn list_of_any_accepts_every_element() {
+        let any = Type::List(Box::new(Type::Any));
+        let mixed = list([
+            Value::Int(1),
+            Value::Null,
+            list([Value::Bool(true)]),
+            Value::Float(1.5),
+        ]);
+        assert!(mixed.value_of_type(&any).is_none());
+        assert!(list([]).value_of_type(&any).is_none());
+        // A non-list is still rejected.
+        assert!(Value::Int(1).value_of_type(&any).is_some());
+    }
+
+    #[test]
+    fn typed_list_still_checks_elements() {
+        let ints = Type::List(Box::new(Type::Int));
+        assert!(
+            list([Value::Int(1), Value::Int(2)])
+                .value_of_type(&ints)
+                .is_none()
+        );
+        assert!(
+            list([Value::Int(1), Value::Bool(true)])
+                .value_of_type(&ints)
+                .is_some()
+        );
+        // Nested: the walk still reaches the inner elements.
+        let nested = Type::List(Box::new(Type::List(Box::new(Type::Int))));
+        assert!(
+            list([list([Value::Int(1)])])
+                .value_of_type(&nested)
+                .is_none()
+        );
+        assert!(
+            list([list([Value::Bool(true)])])
+                .value_of_type(&nested)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn size_signature_accepts_a_list_without_walking_it() {
+        let sig = Type::union([Type::List(Box::new(Type::Any)), Type::String, Type::Null]);
+        let big = Value::List(Arc::new(thin_vec![Value::Int(0); 1000]));
+        assert!(big.value_of_type(&sig).is_none());
     }
 }

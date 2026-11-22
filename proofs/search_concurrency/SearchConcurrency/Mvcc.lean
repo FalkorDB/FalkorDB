@@ -8,22 +8,22 @@ Since #3657 (34a708cfa) there is no write slot: a writer forks a private version
 
 | here | there |
 | --- | --- |
-| `S.pub`, `S.ver`           | `MvccGraph.graph` (the published `Arc`) and its data `Graph::version` (`graph/src/graph/mvcc_graph.rs:74` `MvccGraph`; `new_version` sets `version + 1`; `new_build_version` keeps it, `graph.rs:1139`) |
-| `S.forks`                  | `Version::Unchecked` forks (`QuerySession.version`, `src/query_session.rs:108` `enum Version`): owner, the published version forked, its base |
+| `S.pub`, `S.ver`           | `MvccGraph.graph` (the published `Arc<Graph>`, `ArcSwap<Graph>` since #3683) and its data `Graph::version` (`graph/src/graph/mvcc_graph.rs` `MvccGraph`; `new_version` sets `version + 1`, `graph.rs`; `new_build_version` keeps it, `graph.rs`) |
+| `S.forks`                  | `Version::Unchecked` forks (`QuerySession.version`, `src/query_session.rs` `enum Version`): owner, the published version forked, its base |
 | `S.cur`                    | the one `Version::Current` version: it is built under the write lock (the owner holds the GIL), so nothing can commit before its own commit |
-| `Ev.read`                  | `MvccGraph::read` (`:118`) — clone of the published Arc |
-| `Ev.forkW`                 | `MvccGraph::fork` (`mvcc_graph.rs:130`) via `QuerySession::write_version` in reader mode (`query_session.rs:211-224`): takes nothing; refused if the thread has a `Current` version (a session holds one version) |
+| `Ev.read`                  | `MvccGraph::read` (`mvcc_graph.rs`) — clone of the published Arc |
+| `Ev.forkW`                 | `MvccGraph::fork` (`mvcc_graph.rs`, returns an owned `Graph` since #3683) via `QuerySession::write_version` in reader mode (`query_session.rs`): takes nothing; refused if the thread has a `Current` version (a session holds one version) |
 | `Ev.forkCur`               | the same in writer mode (`Version::Current`), refused if the thread already has an unchecked fork or a `Current` version (`debug_assert!(Version::None)`, "one write version per session"), and `graph.write()` + `fork()` in `effect.rs`/`constraint.rs`/`bulk_insert.rs` |
-| `Ev.checkFork`             | `QuerySession::check_fork` (`:247`) → `MvccGraph::is_stale` (`mvcc_graph.rs:144`): `published.version + 1 != fork.version` ⇒ `Version::Stale` + `Err(Stale)`, else `Current`; called from `upgrade_to_write` (`:332`, the call at `:348`) in writer mode. Since #3567 (b18530683) it also rebases the fork onto the indexer batches published since (`MvccGraph::rebase_onto_indexer_batches`, `mvcc_graph.rs:165`): index progress only, data version and data untouched, so the verdict and the model are unchanged (native_index `Rebase.lean`: `V.rebased_keeps_data`, `V.rebased_not_stale`, `rebase_progress`). Its one `Err(Stale)` (a release build, a fork still borrowed) cannot happen to an escalating writer, whose fork its owner has stopped reading; a debug build panics on it |
+| `Ev.checkFork`             | `QuerySession::check_fork` (`query_session.rs`) → `MvccGraph::is_stale` (`mvcc_graph.rs`): `published.version + 1 != fork.version` ⇒ `Version::Stale` + `Err(Stale)`, else `Current`; called from `upgrade_to_write` (the call ) in writer mode. Since #3567 (b18530683) it also rebases the fork onto the indexer batches published since (`MvccGraph::rebase_onto_indexer_batches`, `mvcc_graph.rs`): index progress only, data version and data untouched, so the verdict and the model are unchanged (native_index `Rebase.lean`: `V.rebased_keeps_data`, `V.rebased_not_stale`, `rebase_progress`). Since #3683 the fork is an owned `Graph` handed over as `&mut`, and `rebase_onto_indexer_batches` returns `()`: the old `Err(Stale)` for a fork still borrowed (and the debug panic) no longer exists, so `check_fork` has two outcomes only (`Session.checkFork`, `checkFork_other`, `checkFork_verdict`) |
 | `Ev.abandon`               | dropping the session/runtime: an uncommitted version (`Unchecked`, `Current` or `Stale`) is just dropped |
 | `Ev.mutate`                | any mutation on the private version (runtime `Commit` op) — requires writer mode |
-| `Ev.commit`                | `commit_and_replicate` → `MvccGraph::commit` → `commit_version(.., true)` (`src/graph_core.rs:1553`, `mvcc_graph.rs:205`, `:261`) up to the swap: loads the published pointer (`S.pid` into `S.ld`), `is_stale` ⇒ `Err(Stale)`; `Graph::validate` (`valid`) refused ⇒ `Err(Invalid)`. A refusal publishes nothing and the version is dropped |
-| `Ev.swap`                  | the publish, `self.graph.compare_and_swap(&published, new)` (#3545, `mvcc_graph.rs:327-331`): installs the version only if the published pointer is still the one `Ev.commit` loaded (`S.pid = p0`), else `Err(Stale)` ("another version was published while this commit ran") and nothing is published. With the host's global lock nothing publishes between the two (`cas_current_commit_publishes`); a publisher without it, e.g. an unlocked `Ev.batch`, makes the swap fail (`cas_refuses_overtaken_commit`) |
-| `Ev.batch`                 | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:235`) → `commit_version(.., false)` (`:261`): publishes a version at the *same* data version (`new_build_version`), changes no data, bumps `batches_published` (`S.bver`) and installs a new published pointer (`S.pid`). Its own swap is atomic here and enabled at any time (it may run without the global lock, the adversarial case for a writer's swap); its CAS refusal is native_index `Batch.commit_cas_stale` |
-| `S.gil`, `Ev.escalate`     | `QuerySession::escalate` (`query_session.rs:399`): drop read lock, then `acquire_write` (`:460`): `Gil::acquire`, the write lock (#3816: in GIL-free slices off the main thread; a missed slice changes no state here, so it is not an event) |
-| `S.registered`             | `GRAPH_REGISTRY` membership (`graph_core.rs:140`, `graph_is_registered` `:188`) |
-| `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs:37`) → `graph_free` (`graph_core.rs:1777`), main thread, GIL held |
-| `Ev.fork`                  | BGSAVE `fork()` on the main thread with the GIL (`redis_type.rs:350` `pre_fork_prepare`, `module_init.rs:118` `on_fork_child`) |
+| `Ev.commit`                | `commit_and_replicate` → `MvccGraph::commit` → `prepare(.., true)` (`src/graph_core.rs`, `mvcc_graph.rs`; the former `commit_version`, split by #3683) up to the swap: loads the published pointer (`S.pid` into `S.ld`), `is_stale` ⇒ `Err(Stale)`; `Graph::validate` (`valid`) refused ⇒ `Err(Invalid)`. A refusal publishes nothing and the version is dropped |
+| `Ev.swap`                  | the publish, `MvccGraph::publish` (`mvcc_graph.rs`, `self.graph.compare_and_swap(published, version)`, #3545): installs the version only if the published pointer is still the one `Ev.commit` loaded (`S.pid = p0`), else `Err(Stale)` ("another version was published while this commit ran") and nothing is published. With the host's global lock nothing publishes between the two (`cas_current_commit_publishes`); a publisher without it, e.g. an unlocked `Ev.batch`, makes the swap fail (`cas_refuses_overtaken_commit`) |
+| `Ev.batch`                 | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs`) → `prepare(.., false)` then `publish`: publishes a version at the *same* data version (`new_build_version`), changes no data, bumps `batches_published` (`S.bver`) and installs a new published pointer (`S.pid`). Its own swap is atomic here and enabled at any time (it may run without the global lock, the adversarial case for a writer's swap); its CAS refusal is native_index `Batch.commit_cas_stale` |
+| `S.gil`, `Ev.escalate`     | `QuerySession::escalate` (`query_session.rs`): drop read lock, then `acquire_write`: `Gil::acquire`, the write lock (#3816: in GIL-free slices off the main thread; a missed slice changes no state here, so it is not an event) |
+| `S.registered`             | `GRAPH_REGISTRY` membership (`graph_core.rs`, `graph_is_registered`; `Glue.registerGraph`, `renameGraph`) |
+| `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs`) → `graph_free` (`graph_core.rs`), main thread, GIL held |
+| `Ev.fork`                  | BGSAVE `fork()` on the main thread with the GIL (`redis_type.rs` `pre_fork_prepare`, `module_init.rs` `on_fork_child`) |
 
 **#3657 (34a708cfa).** `MvccGraph::write`/`claim`/`rollback` and the `AtomicBool` are gone.
 The host serializes writers (`commit` takes `&mut self`, handed out under the per-graph
@@ -31,7 +31,7 @@ write lock), so the module needs no lock; what it must still catch is a fork tha
 commit overtook, which `is_stale` finds before anything unversioned is published
 (`check_fork`) and `commit` finds again as `CommitError::Stale`. A version made under the
 write lock is `Current`: no commit can come between its fork and its own commit
-(`current_not_stale`). #3290's retry (a queued write forks as a reader, finds its fork
+(`current_not_stale`). The retry (a queued write forks as a reader, finds its fork
 stale, re-runs on top of the inline write) is `stale_then_rerun`.
 
 Transactions are lists of abstract writes; a version is the list of all writes it
@@ -130,7 +130,7 @@ def step (valid : List W → Bool) (s : S) : Ev → Option S
         else some { s with cur := none }                        -- `CommitError::Invalid`
       else none
     | none => none
-  | .swap t => match s.ld, s.cur with                  -- `compare_and_swap(&published, new)` (`mvcc_graph.rs:327`)
+  | .swap t => match s.ld, s.cur with                  -- `compare_and_swap(published, version)` (`mvcc_graph.rs`)
     | some (o', p0), some (o, fv, b, p) =>
       if o = t ∧ o' = t ∧ s.gil = some t ∧ s.registered then
         if s.pid = p0 then
@@ -565,7 +565,7 @@ theorem unchecked_fork_cannot_write {valid : List W → Bool} {s : S} (h : Reach
     have hne := hi o fv b p hc
     have hot : o ≠ t := fun e => hne (hft.trans e.symm)
     simp only [step, hc, hot]
-    refine ⟨by simp [hot], by simp [hot], ?_⟩
+    refine ⟨by simp, by simp, ?_⟩
     split
     · rename_i o'' p0 o3 fv3 b3 p3 hld hcc
       simp at hcc; obtain ⟨rfl, -, -, -⟩ := hcc
@@ -577,7 +577,7 @@ holds no `Current` version, so `commit` is refused (an instance of `unchecked_fo
 theorem reader_cannot_commit : ∀ t, ((step (fun _ => true) init (.forkW 1)).bind (step (fun _ => true) · (.commit t))).isNone := by
   intro t; simp [step, init, dropT, Option.bind]
 
-/-! ## The MULTI write while a queued write matches (#3093, fixed by #3290)
+/-! ## The MULTI write while a queued write matches
 
 Queued write `1` forks as a reader and matches; an inline writer `0` (`MULTI`/`EXEC`,
 `query_sync` → `begin_writer`, main thread, GIL and write lock) runs in that window. -/
@@ -605,6 +605,21 @@ theorem stale_then_rerun :
     ((run init (inlineTrace ++ [.escalate 1, .checkFork 1])).map (fun s => (s.stale, s.cur.isNone))) =
       some ([1], true) ∧
     ((run init rerunTrace).map (fun s => (s.pub, s.acked, s.ver))) = some ([7, 8], [7, 8], 2) := by
+  decide
+
+/-- **The escalated rerun** (#3559): after its stale runs the queued write begins as a writer
+(`QuerySession::begin_writer_checked`: `begin_with`, then `escalate` — GIL, write lock — and then a
+`Current` version) instead of a reader. Nothing can commit under it, so it needs no check: `7` then
+`8`, both acknowledged, and the reader run is the only one ever found stale. This is one scenario
+for the *effect* of the escalation; *when* it happens (the stale-run count and the 10 ms rule) is
+`GraphCore.loopW` in `redis_layer`, with `loopW_bounded` and `escalate_after_max`. -/
+def escalatedRerunTrace : List Ev :=
+  inlineTrace ++ [.escalate 1, .checkFork 1, .abandon 1, .release 1,
+                  .escalate 1, .forkCur 1, .mutate 1 8, .commit 1, .swap 1, .release 1]
+
+theorem stale_then_writer_rerun :
+    ((run init escalatedRerunTrace).map (fun s => (s.pub, s.acked, s.ver, s.stale))) =
+      some ([7, 8], [7, 8], 2, [1]) := by
   decide
 
 /-- An indexer batch between the queued write's fork and its check does not make it stale:

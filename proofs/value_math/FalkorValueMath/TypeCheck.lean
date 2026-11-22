@@ -4,14 +4,14 @@ import FalkorValueMath.Value
 
 | Lean | Rust |
 | --- | --- |
-| `Ty` | `enum Type` (mod.rs:531) |
-| `valueOfType` | `ValueTypeOf::value_of_type` (value.rs:1282) |
-| `getType` | `ValueGetType::get_type` (value.rs:1328) |
-| `validate` | `GraphFn::validate` (mod.rs:787-823) — arity, called by the parser |
-| `validateArgsType` | `GraphFn::validate_args_type` (mod.rs:828) — per call, eval.rs:955 |
-| `isCompatibleWith` | `Type::is_compatible_with` (mod.rs:590) |
-| `canReturnBoolean`, `canReturnEntity` | mod.rs:569, :579 |
-| `tyDisplay` | `Display for Type` (mod.rs:610) |
+| `Ty` | `enum Type` (mod.rs) |
+| `valueOfType` | `ValueTypeOf::value_of_type` (value.rs) |
+| `getType` | `ValueGetType::get_type` (value.rs) |
+| `validate` | `GraphFn::validate` (mod.rs) — arity, called by the parser |
+| `validateArgsType` | `GraphFn::validate_args_type` (mod.rs) — per call, eval.rs |
+| `isCompatibleWith` | `Type::is_compatible_with` (mod.rs) |
+| `canReturnBoolean`, `canReturnEntity` | mod.rs |
+| `tyDisplay` | `Display for Type` (mod.rs) |
 | `Registry`, `regGet`, `regAdd`, `regIsAggregate` | `Functions::get` (:1040), `add`/`add_var_len`/`add_procedure` (:915/:971/:943), `is_aggregate` (:1071) |
 | `FnTypeTag`, `fnTypeEq` | `FnType` + `PartialEq for FnType` (:514) |
 -/
@@ -30,14 +30,14 @@ inductive Ty where
 
 variable {F : Type}
 
-/-- `get_type` (value.rs:1328): lists report `List(Any)`. -/
+/-- `get_type` (value.rs): lists report `List(Any)`. -/
 def getType : V F → Ty
   | .null => .null | .bool _ => .bool | .int _ => .int | .float _ => .float
   | .str _ => .string | .list _ => .list .any | .map _ => .map | .node _ => .node
   | .rel _ => .rel | .path _ => .path | .vec _ => .vecf32 | .point .. => .point
   | .datetime _ => .datetime | .date _ => .date | .time _ => .time | .duration _ => .duration
 
-/-- The "same variant" arms of `value_of_type` (value.rs:1295-1310, without `Any`). -/
+/-- The "same variant" arms of `value_of_type` (value.rs, without `Any`). -/
 def tagMatch : V F → Ty → Bool
   | .null, .null | .bool _, .bool | .int _, .int | .float _, .float | .str _, .string
   | .point .., .point | .vec _, .vecf32 | .map _, .map | .node _, .node | .rel _, .rel
@@ -54,11 +54,9 @@ def Ty.isAny : Ty → Bool
   | _ => false
 
 mutual
-/-- `value_of_type` (value.rs:1282-1320), arms in source order. `none` = accepted,
-`some (actual, expected)` = the mismatch reported. The first arm is #3437's
-`List(Any)` shortcut (value.rs:1328): no element walk. -/
+/-- `value_of_type` (value.rs), arms in source order. `none` = accepted,
+`some (actual, expected)` = the mismatch reported. -/
 def valueOfType : V F → Ty → Option (Ty × Ty)
-  | .list _, .list .any => none
   | .list vs, .list ty => listLoop vs ty
   | v, t =>
     if tagMatch v t || t.isAny then none else
@@ -134,13 +132,15 @@ theorem vot_union (v : V F) (tys : List Ty) :
 theorem vot_any (v : V F) : valueOfType v .any = none := by
   cases v <;> simp [valueOfType, tagMatch, Ty.isAny]
 
-/-- The `List(Any)` shortcut agrees with the element walk it skips. -/
 theorem vot_list_list (vs : List (V F)) (ty : Ty) : valueOfType (.list vs) (.list ty) = listLoop vs ty := by
-  cases ty with
-  | any =>
-    rw [valueOfType]
-    exact ((listLoop_none vs .any).mpr (fun v _ => vot_any v)).symm
-  | _ => simp [valueOfType]
+  simp [valueOfType]
+
+/-- The `(List(_), List(Any)) => None` fast path (value.rs) agrees with the
+element walk: every element is accepted by `Any`, so the walk returns `None` too. -/
+theorem vot_list_any (vs : List (V F)) : valueOfType (.list vs) (.list .any) = none := by
+  rw [vot_list_list, listLoop_none]
+  intro w _
+  exact vot_any w
 
 theorem vot_nonlist_list (v : V F) (ty : Ty) (h : v.isList = false) :
     valueOfType v (.list ty) = some (getType v, .list ty) := by
@@ -214,7 +214,7 @@ theorem valueOfType_none_iff : ∀ (t : Ty) (v : V F), valueOfType v t = none �
     rw [vot_base _ _ rfl, accepts_base rfl]
     split <;> simp_all
 
-/-! ## Arity (`GraphFn::validate`, mod.rs:787) -/
+/-! ## Arity (`GraphFn::validate`, mod.rs) -/
 
 inductive FnArgs where
   | fixed (ts : List Ty)
@@ -224,9 +224,9 @@ def Ty.isOpt : Ty → Bool
   | .optional _ => true
   | _ => false
 
-/-- `validate` (mod.rs:787-823): `least` = non-`Optional` count, `most` = declared count;
-a built-in var-length function needs ≥ 1 argument (mod.rs:815, #2990), a UDF
-(`fn_type = FnType::Udf`, `isUdf`) takes any count (mod.rs:821). -/
+/-- `validate` (mod.rs): `least` = non-`Optional` count, `most` = declared count;
+a built-in var-length function needs ≥ 1 argument (mod.rs, #2990), a UDF
+(`fn_type = FnType::Udf`, `isUdf`) takes any count (mod.rs). -/
 def validate (a : FnArgs) (n : Nat) (isUdf : Bool := false) : Bool :=
   match a with
   | .fixed ts => !(n < (ts.filter (fun t => !t.isOpt)).length) && !(n > ts.length)
@@ -241,7 +241,7 @@ theorem validate_varLength (t : Ty) (n : Nat) (u : Bool) :
     validate (.varLength t) n u = true ↔ (1 ≤ n ∨ u = true) := by
   cases u <;> simp [validate] <;> omega
 
-/-- **#2956 fixed** (`648b41c5c`, PR #2990): `coalesce` (math.rs:314, `var_arg:
+/-- **#2956 fixed** (`648b41c5c`, PR #2990): `coalesce` (math.rs, `var_arg:
 Type::Any`) with zero arguments is now rejected at arity validation, with C's text
 "Received 0 arguments to function 'coalesce', expected at least 1". Historical: before
 `648b41c5c` the `VarLength` arm accepted every count, so `coalesce()` returned null
@@ -252,10 +252,10 @@ theorem coalesce_zero_args_rejected : validate (.varLength .any) 0 = false := rf
 theorem coalesce_some_args_ok (n : Nat) (h : 1 ≤ n) : validate (.varLength .any) n = true :=
   (validate_varLength .any n false).2 (Or.inl h)
 
-/-- UDFs keep accepting zero arguments (mod.rs:813: "UDFs take any number"). -/
+/-- UDFs keep accepting zero arguments (mod.rs: "UDFs take any number"). -/
 theorem udf_zero_args_ok (t : Ty) : validate (.varLength t) 0 true = true := rfl
 
-/-! ## Per-call type check (`validate_args_type`, mod.rs:828) -/
+/-! ## Per-call type check (`validate_args_type`, mod.rs) -/
 
 /-- Result: `none` = ok, `some msg-kind`. -/
 inductive ArgErr where
@@ -305,7 +305,7 @@ theorem validateArgsType_go_none (ts : List Ty) (args : List (V F)) (i : Nat) :
         simp only
         rw [ih, ← valueOfType_none_iff, hv]; simp
 
-/-- The math functions' argument type `Int | Float | Null` (math.rs:44 etc.). -/
+/-- The math functions' argument type `Int | Float | Null` (math.rs etc.). -/
 def numArg : Ty := .union [.int, .float, .null]
 
 theorem accepts_numArg (v : V F) :
@@ -315,7 +315,7 @@ theorem accepts_numArg (v : V F) :
 
 /-- A single-argument numeric function reaches its body only with Int, Float or Null:
 the `_ => unreachable!()` arms of `abs`, `ceil`, `exp`, `floor`, `log`, `log10`,
-`round`, `sign`, `sqrt` (math.rs:55-243) are dead after `validate_args_type`. -/
+`round`, `sign`, `sqrt` (math.rs) are dead after `validate_args_type`. -/
 theorem numeric_body_cases (v : V F) (h : validateArgsType (.fixed [numArg]) [v] = none) :
     (∃ i, v = .int i) ∨ (∃ f, v = .float f) ∨ v = .null := by
   have := ((validateArgsType_go_none [numArg] [v] 0).1 h).1
@@ -325,7 +325,7 @@ theorem numeric_body_cases (v : V F) (h : validateArgsType (.fixed [numArg]) [v]
 theorem optional_rejects_null : valueOfType (F := F) .null (.optional .int) = some (.null, .int) := by
   simp [vot_opt, valueOfType, tagMatch, Ty.isAny, getType]
 
-/-! ## `is_compatible_with`, `can_return_*` (mod.rs:569-606) -/
+/-! ## `is_compatible_with`, `can_return_*` (mod.rs) -/
 
 def tyBeq : Ty → Ty → Bool
   | .null, .null | .bool, .bool | .int, .int | .float, .float | .string, .string
@@ -444,9 +444,9 @@ theorem canReturnBoolean_of_accepts : ∀ (t : Ty) (v : V F), Accepts v t →
     cases ha
     all_goals first
       | rfl
-      | (rcases hv with hv | ⟨b, rfl⟩ <;> (try cases v) <;> simp_all [V.isNull, tagMatch, canReturnBoolean])
+      | (rcases hv with hv | ⟨b, rfl⟩ <;> (try cases v) <;> simp_all [V.isNull, tagMatch])
 
-/-! ## `Display for Type` (mod.rs:610): "A", "A or B", "A, B, or C" -/
+/-! ## `Display for Type` (mod.rs): "A", "A or B", "A, B, or C" -/
 
 def tyName : Ty → String
   | .null => "Null" | .bool => "Boolean" | .int => "Integer" | .float => "Float"
@@ -480,7 +480,7 @@ theorem unionDisplay_three (a b c : String) : unionDisplay [a, b, c] = a ++ ", "
 /-- The live message for `abs('a')` is produced by this rendering. -/
 example : unionDisplay (["Integer", "Float", "Null"]) = "Integer, Float, or Null" := by decide
 
-/-! ## Registry (`Functions`, mod.rs:907-1087) -/
+/-! ## Registry (`Functions`, mod.rs) -/
 
 inductive FnKind where
   | function | internal | procedure | aggregation | udf
@@ -505,7 +505,7 @@ structure Registry where
 def alookup (m : List (String × Entry)) (k : String) : Option Entry :=
   (m.find? (·.1 = k)).map (·.2)
 
-/-- `Functions::get` (mod.rs:1048): built-in (lowered name) of the same kind, else (for
+/-- `Functions::get` (mod.rs): built-in (lowered name) of the same kind, else (for
 scalar/UDF lookups) the UDF registry under the exact, case-sensitive name (#3066). -/
 def regGet (r : Registry) (name : String) (k : FnKind) : Option Entry :=
   let l := r.lower name
@@ -531,7 +531,7 @@ theorem regGet_udf_case_sensitive (r : Registry) (name : String) (k : FnKind)
     regGet r name k = alookup r.udfs name := by
   simp [regGet, hb, regGet.udfFallback, hk]
 
-/-- `Functions::is_aggregate(name)` (mod.rs:1080) does **not** lower its argument. -/
+/-- `Functions::is_aggregate(name)` (mod.rs) does **not** lower its argument. -/
 def regIsAggregate (r : Registry) (name : String) : Bool :=
   match alookup r.builtins name with
   | some e => e.kind = .aggregation

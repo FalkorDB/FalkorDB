@@ -2,22 +2,22 @@ import VersionedMatrix.DeltaBook
 /-
 # `VersionedMatrix<bool>` with its bookkeeping: the remaining methods
 
-`BVM` is `struct VersionedMatrix` (`versioned_matrix.rs:645`) with the full
+`BVM` is `struct VersionedMatrix` (`versioned_matrix.rs`) with the full
 `Delta` bookkeeping of `DeltaBook.lean` (the set-level layer algebra of
 `set`/`remove`/`flush`/… is `Delta.lean`/`DeltaProofs.lean`).
 
 | here | there |
 | --- | --- |
-| `getM`/`getDp`/`getDm`/`nrows`/`ncols` | accessors :679-704 |
-| `wait`       | `wait` (:710) |
-| `waitBase`/`waitAll`/`isSynced` | :745 / :751 / :760 |
-| `memoryUsage`| :765 (`memM` = `GxB_Matrix_memoryUsage`, FFI) |
-| `print`      | :799 (the sequence of layers printed) |
-| `clearDeltas`| :951 |
-| `fromMatrix` | :1067 |
-| `transpose`  | :1306 |
-| `clone`      | :662 |
-| `encode`/`decode` | :1319 / :1330 over a token stream of matrices |
+| `getM`/`getDp`/`getDm`/`nrows`/`ncols` | accessors :686-711 |
+| `wait`       | `wait` (:717) |
+| `waitBase`/`waitAll`/`isSynced` | :752 / :758 / :767 |
+| `memoryUsage`| :772 (`memM` = `GxB_Matrix_memoryUsage`, FFI) |
+| `print`      | :806 (the sequence of layers printed) |
+| `clearDeltas`| :958 |
+| `fromMatrix` | :1074 |
+| `transpose`  | :1314 |
+| `clone`      | :669 |
+| `encode`/`decode` | :1327 / :1338 over a token stream of matrices |
 -/
 namespace VMOps
 open VMMat VMRowFilter VMPolicy VMDelta
@@ -41,7 +41,7 @@ def ncols (v : BVM) := v.m.ncols
 theorem accessors (v : BVM) : getM v = v.m ∧ getDp v = v.dp.layer ∧ getDm v = v.dm.layer ∧
     nrows v = v.m.nrows ∧ ncols v = v.m.ncols := ⟨rfl, rfl, rfl, rfl, rfl⟩
 
-/-- `wait` (:710). -/
+/-- `wait` (:717). -/
 def wait (v : BVM) : BVM :=
   if v.dp.layer.synced && v.dm.layer.synced then v else
   let dp := resync v.dp
@@ -72,7 +72,7 @@ theorem wait_latch_mono (v : BVM) (h : v.dp.fold = true) : (wait v).dp.fold = tr
 /-- When `wait` runs, both counters are exact afterwards. -/
 theorem wait_exact (v : BVM) (h : (v.dp.layer.synced && v.dm.layer.synced) = false) :
     Exact (wait v).dp ∧ Exact (wait v).dm := by
-  unfold wait; rw [if_neg (by simp [h])]
+  unfold wait; rw [ite_eq_right (by simp [h])]
   constructor
   · show (latch _ _).count = nvals (latch _ _).layer
     rw [latch_layer]; unfold latch; split <;> rfl
@@ -105,7 +105,7 @@ theorem memoryUsage_eq (memM : Mat Unit → Nat) (v : BVM) :
 def print (v : BVM) : List (Mat Unit) := [v.m, v.dp.layer, v.dm.layer]
 theorem print_order (v : BVM) : print v = [getM v, getDp v, getDm v] := rfl
 
-/-- `clear_deltas` (:951). -/
+/-- `clear_deltas` (:958). -/
 def clearDeltas (v : BVM) (r c : Nat) : BVM :=
   { v with dp := clear v.dp r c, dm := clear v.dm r c, nf := false }
 theorem clearDeltas_spec (v : BVM) (r c : Nat) :
@@ -116,7 +116,7 @@ theorem clearDeltas_spec (v : BVM) (r c : Nat) :
 theorem clearDeltas_eff (v : BVM) (r c : Nat) (p : Pair) : effK (clearDeltas v r c) p ↔ p ∈ keys v.m := by
   simp [effK, clearDeltas, clear, keys, empty]
 
-/-- `from_matrix` (:1067). -/
+/-- `from_matrix` (:1074). -/
 def fromMatrix (m : Mat Unit) : BVM :=
   let m := VMMat.wait m
   ⟨m, ofLayer (empty m.nrows m.ncols), ofLayer (empty m.nrows m.ncols), false⟩
@@ -126,7 +126,7 @@ theorem fromMatrix_spec (m : Mat Unit) (p : Pair) :
   refine ⟨?_, rfl, rfl, ofLayer_rowsOk _, ofLayer_rowsOk _⟩
   simp [effK, fromMatrix, ofLayer, keys, empty, VMMat.wait]
 
-/-- `transpose` (:1306). -/
+/-- `transpose` (:1314). -/
 def transpose (v : BVM) : BVM := ⟨transposeM v.m, transposed v.dp, transposed v.dm, v.nf⟩
 theorem transpose_eff (v : BVM) (i j : Nat) : effK (transpose v) (i, j) ↔ effK v (j, i) := by
   have hm : (i, j) ∈ keys (transposeM v.m) ↔ (j, i) ∈ keys v.m := by
@@ -137,12 +137,12 @@ theorem transpose_bookkeeping (v : BVM) :
     RowsOk (transpose v).dp ∧ RowsOk (transpose v).dm :=
   ⟨rfl, rfl, rfl, sound_unknown _, sound_unknown _⟩
 
-/-- `Clone` (:662): shares the handles; observationally the same value
+/-- `Clone` (:669): shares the handles; observationally the same value
 (the sharing hazard is `VMCow.clone_of_owned_is_not_isolated`). -/
 def clone (v : BVM) : BVM := ⟨v.m, VMDelta.clone v.dp, VMDelta.clone v.dm, v.nf⟩
 theorem clone_eq (v : BVM) : clone v = v := rfl
 
-/-! ## Encode / decode (:1319 / :1330)
+/-! ## Encode / decode (:1327 / :1338)
 
 The writer is modelled at the granularity of whole matrices: `Matrix::encode`
 emits one token, `Matrix::decode` consumes one (its byte-level round trip is
