@@ -42,7 +42,7 @@ graph/src/planner/optimizer/reduce_bound_edge.rs	edge_read_after_a_with_barrier_
 graph/src/planner/optimizer/reduce_bound_edge.rs	optional_traverse_keeps_the_distinction	161	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
 graph/src/planner/optimizer/reduce_count.rs	reduce_count	54	PROVEN	Passes.reduce_count_correct, reduce_count_stale
 graph/src/planner/optimizer/reduce_count.rs	extract_count_variable	193	PROVEN	Helpers.countVar_spec (count(var) -> var.id, scope dropped)
-graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	19	PROVEN	References2.ancestorsRead refsNew vs readOutside_iff, main_misses_call_sibling (still open); References.refsNew_misses_sibling_edges (W2-traverse-1, still open)
+graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	30	PROVEN	References2.ancestorsRead refsNew vs readOutside_iff, main_misses_call_sibling (still open); References.refsNew_misses_sibling_edges (W2-traverse-1, still open); #3054: References2.collapses/collapseFlag (the types guard only removes collapses): collapses_imp_unread, collapses_le_one_type, multi_type_many_siblings_emits, main_misses_call_sibling_collapses; the flags it sets are read by RuntimeCore.Misc.edgeAlreadyUsedP
 graph/src/planner/optimizer/reduce_var_len_path.rs	reduce_var_len_path	27	PROVEN	References2.ancestorsRead refsNew (same oracle and walk); References.refsNew_complete (CVLT edge attrs/edge_filter/path_var seen); UNWIND r loss fixed by #2390
 graph/src/planner/optimizer/reduce_var_len_path.rs	optimized_varlen_plan	73	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
 graph/src/planner/optimizer/reduce_var_len_path.rs	emit_paths	87	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
@@ -81,7 +81,7 @@ graph/src/graph/graphblas/me_delta_bench.rs	per_op	43	NOT COVERED	TEST-ONLY: ben
 graph/src/graph/graphblas/me_delta_bench.rs	committed_multi	58	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_step	84	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_attach_vs_seek	140	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
-graph/src/planner/optimizer/reduce_expand_into.rs	starts_plan	93	NOT COVERED	(#3054): not modelled yet
-graph/src/planner/optimizer/reduce_expand_into.rs	branch_root	106	NOT COVERED	(#3054): not modelled yet
-graph/src/planner/optimizer/reduce_expand_into.rs	plan_indices	122	NOT COVERED	(#3054): not modelled yet
-graph/src/planner/optimizer/reduce_expand_into.rs	flag_collapsed_siblings	148	NOT COVERED	(#3054): not modelled yet
+graph/src/planner/optimizer/reduce_expand_into.rs	starts_plan	101	NOT COVERED	(#3054): IR-variant test of where a plan branch starts (Union, NestedPlans, the non-first children of the applies); not modelled: the plan tree with its child positions has no model here
+graph/src/planner/optimizer/reduce_expand_into.rs	branch_root	114	NOT COVERED	(#3054): orx_tree parent walk up to starts_plan; not modelled: no orx_tree NodeIdx/sibling_idx model
+graph/src/planner/optimizer/reduce_expand_into.rs	plan_indices	130	NOT COVERED	(#3054): DFS of one plan branch stopping at starts_plan; not modelled: no orx_tree NodeIdx model
+graph/src/planner/optimizer/reduce_expand_into.rs	flag_collapsed_siblings	156	NOT COVERED	(#3054): sets the flag bit of a collapsed edge in the sibling_edges of every traverse of its branch and scope; not modelled as a tree pass: its effect (flagged entries) is the input of RuntimeCore.Misc.edgeAlreadyUsedP (Entry.flag)

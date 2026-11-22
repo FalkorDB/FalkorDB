@@ -148,4 +148,49 @@ theorem main_misses_call_sibling :
   · simp [outsideOps, callCtx, Plan.ops]
   · decide
 
+/-! ## `reduce_expand_into` since #3054: which edges collapse, and their sibling flag -/
+
+/-- The flag a collapsed edge gets in its siblings' lists (`COLLAPSED_SIBLING` /
+`COLLAPSED_SIBLING_ANY_TYPE`, `runtime/ops/mod.rs`). -/
+inductive SibFlag where
+  | single
+  | anyType
+deriving DecidableEq
+
+/-- The `match relationship.types.len()` of `reduce_expand_into`: `none` = the edge is
+skipped (`continue`: never collapsed), `some f` = it may collapse, flagged `f` (`none`:
+unflagged, a multi-type hop among at most two siblings). -/
+def collapseFlag (ntypes nsibs : Nat) : Option (Option SibFlag) :=
+  match ntypes with
+  | 0 => some (some .anyType)
+  | 1 => some (some .single)
+  | _ => if nsibs > 2 then none else some none
+
+/-- `reduce_expand_into`: the edge `v` (with `ntypes` types and `nsibs` sibling entries)
+is collapsed iff the type guard lets it through and no ancestor reads it. -/
+def collapses (refs : IR → Var → Bool) (ctx : Ctx) (v : Var) (ntypes nsibs : Nat) : Bool :=
+  (collapseFlag ntypes nsibs).isSome && !ancestorsRead refs ctx v
+
+/-- **PROVEN**: #3054 only removes collapses: an edge is still collapsed only when the
+ancestor walk finds no reader, so every theorem about `ancestorsRead` carries over. -/
+theorem collapses_imp_unread (refs : IR → Var → Bool) (ctx : Ctx) (v : Var) (nt ns : Nat)
+    (h : collapses refs ctx v nt ns = true) : ancestorsRead refs ctx v = false := by
+  simp only [collapses, Bool.and_eq_true, Bool.not_eq_true'] at h; exact h.2
+
+/-- **PROVEN**: an untyped or single-type edge collapses exactly as before #3054. -/
+theorem collapses_le_one_type (refs : IR → Var → Bool) (ctx : Ctx) (v : Var) (nt ns : Nat)
+    (hn : nt ≤ 1) : collapses refs ctx v nt ns = !ancestorsRead refs ctx v := by
+  rcases Nat.le_one_iff_eq_zero_or_eq_one.1 hn with rfl | rfl <;> simp [collapses, collapseFlag]
+
+/-- **PROVEN**: a hop over several types among three or more siblings is never collapsed
+(its types cannot be told apart at run time). -/
+theorem multi_type_many_siblings_emits (refs : IR → Var → Bool) (ctx : Ctx) (v : Var)
+    (nt ns : Nat) (hn : 2 ≤ nt) (hs : 2 < ns) : collapses refs ctx v nt ns = false := by
+  obtain ⟨k, rfl⟩ : ∃ k, nt = k + 2 := ⟨nt - 2, by omega⟩
+  simp [collapses, collapseFlag, hs]
+
+/-- The untyped `r` of `main_misses_call_sibling` still collapses after #3054 (bug 7 open). -/
+theorem main_misses_call_sibling_collapses : collapses refsNew callCtx r 0 0 = true := by
+  rw [collapses_le_one_type _ _ _ _ _ (by decide), main_misses_call_sibling.1]; rfl
+
 end Falkor.Opt.Refs

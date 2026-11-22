@@ -6,7 +6,8 @@
 | `checkTimeout`       | `Runtime::check_timeout`, `runtime/runtime.rs` (deadline = `Instant::now() + timeout_ms` from `Runtime::new`) |
 | `asI64`, `checkMem`  | `Runtime::check_mem_capacity`, `runtime/runtime.rs` (`usage_fn() as i64`) |
 | `drainPending`       | `drain_pending`, `runtime/ops/mod.rs` |
-| `edgeAlreadyUsed`    | `edge_already_used`, `runtime/ops/mod.rs` |
+| `edgeAlreadyUsed`    | `edge_already_used`, `runtime/ops/mod.rs`, when nothing is collapsed (`edgeAlreadyUsedP_plain`) |
+| `edgeAlreadyUsedP`, `hasAlt` | `edge_already_used` and `Parallel::has_alternative` since #3054, `runtime/ops/mod.rs` |
 | `natOpt`, `vectorOptions`, `simNames` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs` (name check) |
 | `fulltextUnknown`    | the unknown-key refusal of the `IndexType::Fulltext` arm, `runtime.rs` |
 | `phonetic`           | the `phonetic` key of the `IndexType::Fulltext` arm, `runtime.rs` |
@@ -98,7 +99,8 @@ inductive Slot where
   | rel (id : Nat)
   | other
 
-/-- `edge_already_used`. -/
+/-- The scan of `edge_already_used` over plain (unflagged) siblings: the whole function
+when nothing is collapsed (`edgeAlreadyUsedP_plain`). -/
 def edgeAlreadyUsed (env : Nat → Option Slot) (edge own : Nat) : List Nat → Bool
   | [] => false
   | s :: ss =>
@@ -151,6 +153,344 @@ theorem edgeAlreadyUsed_iff (env : Nat → Option Slot) (edge own : Nat) :
             · rintro ⟨x, hx | hx, h1, h2⟩
               · subst hx; rw [he] at h2; simp at h2; exact absurd h2 hr
               · exact ⟨x, hx, h1, h2⟩
+
+/-! ### `edge_already_used` with collapsed edges (#3054)
+
+Since #3054 `edge_already_used` also takes a `Parallel` and `sibling_edges`
+entries may carry a flag (`COLLAPSED_SIBLING`, bit 31: a collapsed edge of one
+type; `COLLAPSED_SIBLING_ANY_TYPE`, bit 30: a collapsed untyped edge). An entry
+is modelled as its alias id (`entry & !SIBLING_FLAGS`) and its flag; alias ids
+are below `2^30`, so the two never overlap. `edgeAlreadyUsed` above is the
+scan with no flag and no collapsed own hop (`edgeAlreadyUsedP_plain`). -/
+
+inductive Flag where
+  | none
+  | single
+  | any
+deriving DecidableEq, Repr
+
+structure Entry where
+  id : Nat
+  flag : Flag
+deriving DecidableEq, Repr
+
+/-- A stored relationship: id, endpoints, and the tensor (type) it lives in. -/
+structure Rel where
+  id : Nat
+  src : Nat
+  dst : Nat
+  ty : Nat
+deriving DecidableEq, Repr
+
+/-- `Parallel`: the graph (`rels`, `ntypes` = `relationship_tensors().len()`),
+`own_types` (the tensors of the expanding hop when it is collapsed) and
+`deleted` (the query's pending relationship deletes). -/
+structure Par where
+  rels : List Rel
+  ntypes : Nat
+  ownTypes : Option (List Nat)
+  deleted : Nat → Bool
+
+/-- `Matching`. -/
+inductive Matching where
+  | tensors (ts : List Nat)
+  | typeOfEdge
+  | anyType
+
+/-- `endpoints_for_edge` and the edge's tensor (`relationship_type_matrix_iter`). -/
+def Par.find (P : Par) (e : Nat) : Option Rel := P.rels.find? (·.id == e)
+
+/-- The `matches` closure of `has_alternative`. -/
+def Matching.ok (P : Par) (ownT : Option Nat) (t : Nat) : Matching → Bool
+  | .tensors ts => ts.contains t
+  | .typeOfEdge => ownT == some t
+  | .anyType => decide (t < P.ntypes)
+
+/-- The `taken` loop of `has_alternative`: other hops bound to a live edge of
+the pair `(src, dst)` (stored direction) whose type matches. -/
+def taken (P : Par) (env : Nat → Option Slot) (src dst own : Nat) (ownT : Option Nat)
+    (m : Matching) (sibs : List Entry) : Nat :=
+  sibs.countP fun en =>
+    en.id != own && match env en.id with
+      | some (.rel b) => !P.deleted b && match P.find b with
+          | some rb => rb.src == src && rb.dst == dst && m.ok P ownT rb.ty
+          | none => false
+      | _ => false
+
+/-- The `live` closure: live edges of tensor `t` on the pair, stopping at `k + 1`. -/
+def live (P : Par) (src dst k t : Nat) : Nat :=
+  if t < P.ntypes then
+    min ((P.rels.filter fun r => r.src == src && r.dst == dst && r.ty == t && !P.deleted r.id).length)
+      (k + 1)
+  else 0
+
+/-- `total += live(tidx); if total > taken { break }`. -/
+def sumBreak (k : Nat) : List Nat → Nat → Nat
+  | [], acc => acc
+  | x :: xs, acc => if acc + x > k then acc + x else sumBreak k xs (acc + x)
+
+def total (P : Par) (src dst k : Nat) (ownT : Option Nat) : Matching → Nat
+  | .tensors ts => sumBreak k (ts.map (live P src dst k)) 0
+  | .typeOfEdge => match ownT with
+    | some t => live P src dst k t
+    | none => 0
+  | .anyType => sumBreak k ((List.range P.ntypes).map (live P src dst k)) 0
+
+/-- `Parallel::has_alternative`. -/
+def hasAlt (P : Par) (env : Nat → Option Slot) (edge own : Nat) (sibs : List Entry)
+    (m : Matching) : Bool :=
+  match P.find edge with
+  | none => false
+  | some e =>
+    let k := taken P env e.src e.dst own (some e.ty) m sibs
+    if k = 0 then true else decide (total P e.src e.dst k (some e.ty) m > k)
+
+/-- Live edges of tensor `t` on the pair, uncapped (spec side). -/
+def liveAll (P : Par) (src dst t : Nat) : Nat :=
+  if t < P.ntypes then
+    (P.rels.filter fun r => r.src == src && r.dst == dst && r.ty == t && !P.deleted r.id).length
+  else 0
+
+/-- Live edges of the pair whose type matches, uncapped (spec side). -/
+def totalAll (P : Par) (src dst : Nat) (ownT : Option Nat) : Matching → Nat
+  | .tensors ts => (ts.map (liveAll P src dst)).sum
+  | .typeOfEdge => match ownT with
+    | some t => liveAll P src dst t
+    | none => 0
+  | .anyType => ((List.range P.ntypes).map (liveAll P src dst)).sum
+
+theorem live_eq (P : Par) (src dst k t : Nat) :
+    live P src dst k t = min (liveAll P src dst t) (k + 1) := by
+  unfold live liveAll; split <;> simp
+
+theorem sumBreak_gt (k : Nat) (f : Nat → Nat) :
+    ∀ (xs : List Nat) (acc : Nat),
+      sumBreak k (xs.map fun t => min (f t) (k + 1)) acc > k ↔ acc + (xs.map f).sum > k
+  | [], acc => by simp [sumBreak]
+  | x :: xs, acc => by
+    have ih := sumBreak_gt k f xs (acc + min (f x) (k + 1))
+    simp only [List.map_cons, sumBreak, List.sum_cons]
+    split
+    · next h => constructor <;> intro <;> omega
+    · next h =>
+      rw [ih]
+      have : min (f x) (k + 1) = f x := by omega
+      rw [this]; omega
+
+/-- **PROVEN**: the early exits of `has_alternative` (`take(taken + 1)` and the `break`)
+do not change its answer: it holds iff the edge exists and either no other hop is bound
+to a matching edge of its pair, or the pair has more live matching edges than those hops. -/
+theorem hasAlt_spec (P : Par) (env : Nat → Option Slot) (edge own : Nat) (sibs : List Entry)
+    (m : Matching) :
+    hasAlt P env edge own sibs m = true ↔
+      ∃ e, P.find edge = some e ∧
+        (taken P env e.src e.dst own (some e.ty) m sibs = 0 ∨
+          taken P env e.src e.dst own (some e.ty) m sibs < totalAll P e.src e.dst (some e.ty) m) := by
+  unfold hasAlt
+  cases hf : P.find edge with
+  | none => simp
+  | some e =>
+    simp only [Option.some.injEq, exists_eq_left']
+    generalize taken P env e.src e.dst own (some e.ty) m sibs = k
+    by_cases hk : k = 0
+    · simp [hk]
+    · simp only [hk, ite_false, decide_eq_true_eq, false_or]
+      have hl : live P e.src e.dst k = fun t => min (liveAll P e.src e.dst t) (k + 1) := by
+        funext t; exact live_eq P e.src e.dst k t
+      cases m with
+      | tensors ts =>
+        simp only [total, totalAll, hl]
+        rw [sumBreak_gt k (liveAll P e.src e.dst) ts 0]; omega
+      | typeOfEdge =>
+        simp only [total, totalAll, hl]; omega
+      | anyType =>
+        simp only [total, totalAll, hl]
+        rw [sumBreak_gt k (liveAll P e.src e.dst) _ 0]; omega
+
+/-- `own_avoids`. -/
+def ownAvoids (P : Par) (env : Nat → Option Slot) (edge own : Nat) (sibs : List Entry) : Bool :=
+  match P.ownTypes with
+  | some ts => hasAlt P env edge own sibs (.tensors ts)
+  | none => false
+
+/-- `sibling_avoids`. -/
+def sibAvoids (P : Par) (env : Nat → Option Slot) (edge own : Nat) (sibs : List Entry)
+    (en : Entry) : Bool :=
+  match en.flag with
+  | .any => hasAlt P env edge own sibs .anyType
+  | .single => hasAlt P env edge own sibs .typeOfEdge
+  | .none => false
+
+/-- The loop of `edge_already_used`: `true` at the first collision neither side avoids. -/
+def collisions (P : Par) (env : Nat → Option Slot) (edge own : Nat) (full : List Entry) :
+    List Entry → Bool
+  | [] => false
+  | en :: rest =>
+    if en.id = own then collisions P env edge own full rest
+    else match env en.id with
+      | some (.rel r) =>
+        if r = edge then
+          if ownAvoids P env edge own full || sibAvoids P env edge own full en then
+            collisions P env edge own full rest
+          else true
+        else collisions P env edge own full rest
+      | _ => collisions P env edge own full rest
+
+/-- The types of the final `has_alternative` call. -/
+def finalMatching (P : Par) (sibs : List Entry) : Matching :=
+  match P.ownTypes with
+  | some ts => .tensors ts
+  | none => if sibs.any (·.flag == .any) then .anyType else .typeOfEdge
+
+def anyCollapsed (P : Par) (sibs : List Entry) : Bool :=
+  P.ownTypes.isSome || sibs.any (·.flag != .none)
+
+/-- `edge_already_used` (#3054). -/
+def edgeAlreadyUsedP (P : Par) (env : Nat → Option Slot) (edge own : Nat) (sibs : List Entry) :
+    Bool :=
+  collisions P env edge own sibs sibs ||
+    (anyCollapsed P sibs && !hasAlt P env edge own sibs (finalMatching P sibs))
+
+theorem collisions_iff (P : Par) (env : Nat → Option Slot) (edge own : Nat) (full : List Entry) :
+    ∀ L : List Entry, collisions P env edge own full L = true ↔
+      ∃ en ∈ L, en.id ≠ own ∧ env en.id = some (.rel edge) ∧
+        ownAvoids P env edge own full = false ∧ sibAvoids P env edge own full en = false
+  | [] => by simp [collisions]
+  | en :: rest => by
+    have ih := collisions_iff P env edge own full rest
+    simp only [collisions]
+    by_cases hs : en.id = own
+    · simp only [hs, ite_true, ih, List.mem_cons]
+      constructor
+      · rintro ⟨x, hx, h⟩; exact ⟨x, Or.inr hx, h⟩
+      · rintro ⟨x, hx | hx, h1, h⟩
+        · subst hx; exact absurd hs h1
+        · exact ⟨x, hx, h1, h⟩
+    · simp only [hs, ite_false]
+      have tail : (∃ x ∈ en :: rest, x.id ≠ own ∧ env x.id = some (.rel edge) ∧
+          ownAvoids P env edge own full = false ∧ sibAvoids P env edge own full x = false) ↔
+          ((env en.id = some (.rel edge) ∧ ownAvoids P env edge own full = false ∧
+            sibAvoids P env edge own full en = false) ∨
+          ∃ x ∈ rest, x.id ≠ own ∧ env x.id = some (.rel edge) ∧
+            ownAvoids P env edge own full = false ∧ sibAvoids P env edge own full x = false) := by
+        constructor
+        · rintro ⟨x, hx, h⟩
+          rcases List.mem_cons.1 hx with rfl | hx
+          · exact Or.inl h.2
+          · exact Or.inr ⟨x, hx, h⟩
+        · rintro (h | ⟨x, hx, h⟩)
+          · exact ⟨en, List.mem_cons_self, hs, h⟩
+          · exact ⟨x, List.mem_cons_of_mem _ hx, h⟩
+      rw [tail, ← ih]
+      cases he : env en.id with
+      | none => simp
+      | some sl =>
+        cases sl with
+        | other => simp
+        | rel r =>
+          by_cases hr : r = edge
+          · subst hr
+            cases ho : ownAvoids P env r own full <;>
+              cases hsa : sibAvoids P env r own full en <;> simp
+          · simp [hr]
+
+/-- **PROVEN**: `edge_already_used` since #3054 rejects `edge` exactly when some other
+hop of the clause is bound to it and neither the expanding hop (when collapsed) nor that
+sibling (when flagged collapsed) has an alternative edge on the pair, or when some hop is
+collapsed and the pair has no edge left for one more hop (`has_alternative`). -/
+theorem edgeAlreadyUsedP_iff (P : Par) (env : Nat → Option Slot) (edge own : Nat)
+    (sibs : List Entry) :
+    edgeAlreadyUsedP P env edge own sibs = true ↔
+      (∃ en ∈ sibs, en.id ≠ own ∧ env en.id = some (.rel edge) ∧
+        ownAvoids P env edge own sibs = false ∧ sibAvoids P env edge own sibs en = false) ∨
+      (anyCollapsed P sibs = true ∧ hasAlt P env edge own sibs (finalMatching P sibs) = false) := by
+  simp only [edgeAlreadyUsedP, Bool.or_eq_true, Bool.and_eq_true, Bool.not_eq_true',
+    collisions_iff]
+
+theorem collisions_plain (P : Par) (env : Nat → Option Slot) (edge own : Nat) (full : List Entry)
+    (ho : P.ownTypes = none) :
+    ∀ L : List Entry, (∀ en ∈ L, en.flag = .none) →
+      collisions P env edge own full L = edgeAlreadyUsed env edge own (L.map (·.id))
+  | [], _ => rfl
+  | en :: rest, hf => by
+    have ih := collisions_plain P env edge own full ho rest
+      (fun x hx => hf x (List.mem_cons_of_mem _ hx))
+    have hen : en.flag = .none := hf en List.mem_cons_self
+    have hown : ownAvoids P env edge own full = false := by simp [ownAvoids, ho]
+    have hsib : sibAvoids P env edge own full en = false := by simp [sibAvoids, hen]
+    simp only [collisions, edgeAlreadyUsed, List.map_cons, hown, hsib, Bool.false_or, ih]
+    split <;> simp
+
+/-- **PROVEN**: when nothing is collapsed (the expanding hop emits and no sibling entry is
+flagged) the new `edge_already_used` is the plain scan, so `edgeAlreadyUsed_iff` (Cypher
+relationship uniqueness) holds unchanged for it. -/
+theorem edgeAlreadyUsedP_plain (P : Par) (env : Nat → Option Slot) (edge own : Nat)
+    (sibs : List Entry) (ho : P.ownTypes = none) (hf : ∀ en ∈ sibs, en.flag = .none) :
+    edgeAlreadyUsedP P env edge own sibs = edgeAlreadyUsed env edge own (sibs.map (·.id)) := by
+  have hc : anyCollapsed P sibs = false := by
+    simp only [anyCollapsed, ho, Option.isSome_none, Bool.false_or, List.any_eq_false]
+    intro x hx; simp [hf x hx]
+  simp only [edgeAlreadyUsedP, collisions_plain P env edge own sibs ho sibs hf, hc,
+    Bool.false_and, Bool.or_false]
+
+theorem edgeAlreadyUsedP_plain_iff (P : Par) (env : Nat → Option Slot) (edge own : Nat)
+    (sibs : List Entry) (ho : P.ownTypes = none) (hf : ∀ en ∈ sibs, en.flag = .none) :
+    edgeAlreadyUsedP P env edge own sibs = true ↔
+      ∃ en ∈ sibs, en.id ≠ own ∧ env en.id = some (.rel edge) := by
+  rw [edgeAlreadyUsedP_plain P env edge own sibs ho hf, edgeAlreadyUsed_iff]
+  constructor
+  · rintro ⟨_, hm, h1, h2⟩
+    obtain ⟨en, hen, rfl⟩ := List.mem_map.1 hm
+    exact ⟨en, hen, h1, h2⟩
+  · rintro ⟨en, hen, h1, h2⟩
+    exact ⟨en.id, List.mem_map.2 ⟨en, hen, rfl⟩, h1, h2⟩
+
+/-! #### The #3047 repro: `MATCH (a)-[r]->(x)<-[s]-(c)` with `r`, `s` collapsed
+
+`e0, e1 : 1→2`, `e2 : 2→3`, one type. `r` (alias 0, untyped: flag `any`) is bound to its
+representative; `s` (alias 1) is collapsed over tensor 0. -/
+
+def g3047 (pending : Nat → Bool) : Par :=
+  ⟨[⟨0, 1, 2, 0⟩, ⟨1, 1, 2, 0⟩, ⟨2, 2, 3, 0⟩], 1, some [0], pending⟩
+
+def envR (e : Nat) : Nat → Option Slot := fun v => if v = 0 then some (.rel e) else none
+
+def sibs3047 : List Entry := [⟨0, .any⟩]
+
+/-- **PROVEN** (#3047 fixed): `r`'s representative `e0` on a pair that also holds `e1` no
+longer blocks `s`, whichever of the two `r` picked, so `s` binds a row for `(1,1)` either way. -/
+theorem repro3047_parallel_free :
+    edgeAlreadyUsedP (g3047 fun _ => false) (envR 0) 0 1 sibs3047 = false ∧
+    edgeAlreadyUsedP (g3047 fun _ => false) (envR 1) 1 1 sibs3047 = false := by decide
+
+/-- **PROVEN**: on the single-edge pair `2→3` the representative is the edge itself and
+uniqueness still applies (no `(2,2)` row, as before #3054). -/
+theorem repro3047_single_kept :
+    edgeAlreadyUsedP (g3047 fun _ => false) (envR 2) 2 1 sibs3047 = true := by decide
+
+/-- **PROVEN**: a parallel edge deleted by the query is no alternative. -/
+theorem repro3047_deleted_parallel :
+    edgeAlreadyUsedP (g3047 fun e => e == 1) (envR 0) 0 1 sibs3047 = true := by decide
+
+/-! #### Still open: a typed hop next to a collapsed untyped one
+
+`R1 = e0 : 1→2` of type 0 (`R`), `T1 = e1 : 1→2` of type 1 (`T`).
+`MATCH (a)-[s]->(x)<-[r:R]-(a)`: `s` (alias 0, untyped, collapsed: flag `any`) is
+traversed first and binds one representative edge of the pair; `r` (alias 1, tensor 0,
+collapsed) is expanded next. The final `has_alternative` counts `s` as holding the pair's
+only `R` edge, although `s` could have taken `T1`. -/
+
+def gRT : Par := ⟨[⟨0, 1, 2, 0⟩, ⟨1, 1, 2, 1⟩], 2, some [0], fun _ => false⟩
+
+/-- **Open** (W2-traverse-12): whether `r` finds an edge depends on which representative
+`s` holds: with `s = R1`, `R1` is rejected and `r` has no other `R` edge, so the row is
+lost; with `s = T1` it is kept. The pattern has a match (`s = T1`, `r = R1`). Confirmed
+live on the base (41d2f20ce) and on #3054's head: on `CREATE (a)-[:R]->(x), (a)-[:T]->(x)`
+the runtime binds `s` to the `T` edge, so `MATCH (a)-[s]->(x)<-[r:T]-(a) RETURN count(*)`
+gives 0 (expected 1) while the `r:R` query gives 1. Not a regression of #3054. -/
+theorem typed_hop_depends_on_representative :
+    edgeAlreadyUsedP gRT (envR 0) 0 1 [⟨0, .any⟩] = true ∧
+    edgeAlreadyUsedP gRT (envR 1) 0 1 [⟨0, .any⟩] = false := by decide
 
 /-! ### `map_to_index_options` (vector arm, phonetic) -/
 

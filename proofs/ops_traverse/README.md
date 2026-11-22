@@ -6,7 +6,7 @@ This project proves that the operators which match patterns return the rows open
 - variable-length patterns, `(a)-[*1..3]->(b)`, including `*0`;
 - `allShortestPaths(…)` and named paths (`p = …`, PathBuilder);
 - node scans: by label, by id, by label and id range, and index, fulltext and vector scans on nodes and edges;
-- relationship uniqueness: inside one MATCH, two relationship variables never bind the same edge.
+- relationship uniqueness: inside one MATCH, two relationship variables never bind the same edge (since #3054 an unread, collapsed variable may share its representative edge with a sibling while the pair holds a parallel edge neither holds: `runtime_core` `Misc.edgeAlreadyUsedP_iff`).
 
 The operators work on GraphBLAS matrices, merge rows in batches, and take shortcuts when an edge variable is never read. Each shortcut is a place where the result can drift from the pattern's meaning.
 
@@ -90,7 +90,7 @@ Every bug was reproduced against a live server and compared with C before it was
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-traverse-1 | `twoHop_collapse_changes_count` | An unreferenced named edge is collapsed even though a sibling traverse still reads it for uniqueness (`reduce_expand_into.rs`; the oracle is now `optimizer/references.rs`). `MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)` on `a⇉b→c`: Rust 1, C 2. Related to #2896 | **Open** |
+| W2-traverse-1 | `twoHop_collapse_changes_count` | An unreferenced named edge is collapsed even though a sibling traverse still reads it for uniqueness (`reduce_expand_into.rs`; the oracle is now `optimizer/references.rs`). `MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)` on `a⇉b→c`: Rust 1, C 2. Related to #2896. #3054 removes the #3047 part (the result depended on which parallel edge the collapsed sibling bound: `runtime_core` `Misc.repro3047_parallel_free`) and keeps the check on a single-edge pair, so this count stays 1; a typed hop next to a collapsed untyped one still depends on it (W2-traverse-12, `Misc.typed_hop_depends_on_representative`) | **Open** |
 | W2-traverse-2 | `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result` | The dedup for chained anonymous undirected hops (`cond_traverse.rs`) ignores other columns, keys on an intermediate node at 3+ hops, and resets per batch. `UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10; a 3-hop star: Rust 7, C 12 | **Open** |
 | W2-traverse-3 | `bidir_collapse_duplicates_pair`, `expandInto_bidir_collapse_two_rows` | An undirected anonymous hop collapses per direction, not per pair. With `a→b`, `b→a`, `a→b`, `MATCH (a)-[]-(b) RETURN a.id, b.id`: Rust 4 rows, C 2 | **Open** |
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |

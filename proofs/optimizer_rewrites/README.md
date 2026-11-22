@@ -157,7 +157,7 @@ The project has no Lake dependencies.
 - #2918: `variable_read_outside` for the three `reduce_*` passes (its per-operator oracle is superseded by `references.rs`): modelled as `readOutside` (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
 - #3092: `collect_subtree_variables` stops at Project/Aggregate (their outputs only) instead of `get_variables` of the whole subtree, the same direction as the Apply-left routing of `branch_visible_variables`; `mem_subtreeIds` describes origin/main.
 - #3100: exports `ir_references_variable` for the planner's CP-correlation check (planner bug 2); no change to the oracle itself.
-- #3054: `reduce_expand_into` removes a collapsed (no longer emitted) edge from its siblings' `sibling_edges` uniqueness lists (`forget_sibling_edge`); the emit-flag decision (`refsMain`) is unchanged.
+- #3054: `reduce_expand_into` no longer collapses a multi-type hop among three or more siblings, and flags every collapsed edge in the `sibling_edges` of its plan branch (`flag_collapsed_siblings`). Modelled as `collapses`/`collapseFlag` (`References2.lean`): it only removes collapses (`collapses_imp_unread`), so bug 7 is unchanged (`main_misses_call_sibling_collapses`). The flags' runtime effect is proved in `runtime_core` (`Misc.edgeAlreadyUsedP`).
 
 ## Suspected, unconfirmed
 
