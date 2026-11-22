@@ -197,10 +197,6 @@ pub struct TypeId(pub usize);
 #[repr(transparent)]
 pub struct NodeId(u64);
 
-// `get_node_attributes_by_idx` views a `&[NodeId]` as a `&[u64]`.
-const _: () =
-    assert!(size_of::<NodeId>() == size_of::<u64>() && align_of::<NodeId>() == align_of::<u64>());
-
 /// Opaque identifier for a relationship (edge).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
@@ -6212,6 +6208,10 @@ mod grow_cap_tests {
 
 #[cfg(all(test, feature = "index-falkordb"))]
 mod falkordb_index_tests;
+
+// `get_node_attributes_by_idx` views a `&[NodeId]` as a `&[u64]`.
+const _: () =
+    assert!(size_of::<NodeId>() == size_of::<u64>() && align_of::<NodeId>() == align_of::<u64>());
 
 #[cfg(test)]
 mod restore_tests {

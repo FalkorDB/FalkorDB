@@ -57,4 +57,4 @@ graph/src/runtime/eval.rs	ExprEval::eval_list_comprehension	1400	NOT COVERED	(#3
 graph/src/runtime/eval.rs	ExprEval::list_loop_chunk	1491	NOT COVERED	(#3437): not modelled yet
 graph/src/runtime/eval.rs	ExprEval::check_predicate_result	1584	NOT COVERED	(#3437): not modelled yet
 graph/src/runtime/eval.rs	ExprEval::list_loop_columnar	1598	NOT COVERED	(#3437): not modelled yet
-graph/src/runtime/eval.rs	ExprEval::eval_quantifier	2167	NOT COVERED	(#3437): not modelled yet
+graph/src/runtime/eval.rs	ExprEval::eval_quantifier	1338	NOT COVERED	(#3437): not modelled yet
