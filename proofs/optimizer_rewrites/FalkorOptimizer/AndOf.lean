@@ -1,25 +1,18 @@
 import FalkorOptimizer.Basic
 /-
-# `ExprIR::and_of` / `or_of` keep the runtime value (ast.rs:342-380, #3335)
+# `ExprIR::and_of` / `or_of` keep the runtime value (ast.rs)
 
-Every filter rebuilt by the optimizer passes since #3335 goes through
-`ExprIR::and_of` (absorb_edge_filters_into_vlt.rs:139/145, eliminate_true_filters.rs:135,
-push_filters_down.rs:130/347/360/423, replace_cartesian_with_hash_join.rs:208,
-utilize_index.rs:1008), which splices an AND operand into the new AND. This file
+Every filter rebuilt by the optimizer passes goes through
+`ExprIR::and_of` (absorb_edge_filters_into_vlt.rs, eliminate_true_filters.rs,
+push_filters_down.rs, replace_cartesian_with_hash_join.rs,
+utilize_index.rs), which splices an AND operand into the new AND. This file
 shows that is invisible at run time, errors included.
-
-| here | there |
-| --- | --- |
-| `scL sc` | the `ExprIR::And` (`sc = false`) / `ExprIR::Or` (`sc = true`) loops eval.rs:629-699, over the children's results left to right: an error or a non-boolean stops it, `sc` short-circuits, a null is remembered |
-| `T`, `evalT` | a bound expression as `flat` sees it: AND/OR nodes, everything else by its value on the row |
-| `flatT` | `ExprIR::flat` (ast.rs:355-380): early return of a lone other operand, splice, identity / single / node |
 
 * `andLoop_eq`: Basic's `andLoop` (the model every pass theorem uses) is `scL false`.
 * `scL_splice`: splicing a nested run of the same connective never changes the loop's result
   (associativity, with errors, nulls and short-circuit).
 * `flat_eval`: `flat` evaluates like the unflattened node whenever more than one operand is left;
-  `flat_single`, `flat_single_same`: the lone-operand cases return the operand itself (the
-  pre-#3335 `remaining.len() == 1` branch).
+  `flat_single`, `flat_single_same`: the lone-operand cases return the operand itself.
 * `flat_passes`: as a Filter predicate, `and_of xs` keeps / drops / errors on a row exactly as
   `AND(xs)` does — unconditionally (a lone non-boolean operand is a type error either way).
 -/
@@ -223,7 +216,7 @@ theorem flat_eval (o : Bool) (ts : List T) (h : (ts.flatMap (splice o)).length �
   | [], _ => cases o <;> rfl
   | _ :: _ :: _, _ => simp only [evalT, evalTL_map]
 
-/-- `FilterOp`'s per-row verdict on a value (filter.rs:48-80). -/
+/-- `FilterOp`'s per-row verdict on a value (filter.rs). -/
 def passesV : Except Err Val → Except Err Bool
   | .ok (.bool b) => .ok b
   | .ok .null => .ok false

@@ -2,7 +2,7 @@
 # `versioned_matrix::Iter`: the three-way sorted merge yields the logical
 # matrix, sorted, each entry exactly once
 
-Model of `impl Iterator for Iter<E>` (`versioned_matrix.rs:1478-1521`).
+Model of `impl Iterator for Iter<E>` (`versioned_matrix.rs`).
 
 A GraphBLAS row iterator yields a layer's stored entries in ascending
 `(row, col)` order; a coordinate is modelled by its position in that order, a
@@ -18,9 +18,9 @@ produced. So the iterator state is three lists `M`, `D`, `P`.
 
 | here | there |
 | --- | --- |
-| `dropLt`   | `while let Some(dm) = self.dm_next { if dm < mp { advance } else break }` (:1488-1494) |
-| `skipDel`  | the outer `while let Some(m) = &self.m_next` loop (:1486-1501) |
-| `next`     | the final `match (&self.m_next, &self.dp_next)` (:1505-1520) |
+| `dropLt`   | `while let Some(dm) = self.dm_next { if dm < mp { advance } else break }` (:1496-1502) |
+| `skipDel`  | the outer `while let Some(m) = &self.m_next` loop (:1494-1509) |
+| `next`     | the final `match (&self.m_next, &self.dp_next)` (:1513-1528) |
 | `drain`    | `Iterator::collect` over `next` |
 | `mergeW`   | the specification: sorted union, `dp` wins on a shared key |
 
@@ -237,7 +237,7 @@ theorem next_spec (s : St α) (h : Good s) :
       right
       refine ⟨d, ⟨[], D', ps⟩, rfl, ?_, ⟨List.Pairwise.nil, hDr, (List.pairwise_cons.1 hP).2⟩, ?_⟩
       · simp [spec, live, mergeW]
-      · simp [meas]; omega
+      · simp; omega
   | cons m ms =>
     have hmD := hhead m ms rfl
     have hms : Sorted ms := (List.pairwise_cons.1 hMr).2
@@ -249,7 +249,7 @@ theorem next_spec (s : St α) (h : Good s) :
       refine ⟨m, ⟨ms, D', []⟩, rfl, ?_, ⟨hms, hDr, List.Pairwise.nil⟩, ?_⟩
       · simp only [spec]
         cases live ms D' <;> simp [mergeW]
-      · simp [meas]; omega
+      · simp; omega
     | cons d ps =>
       have hps : Sorted ps := (List.pairwise_cons.1 hP).2
       by_cases hle : d.1 ≤ m.1
@@ -257,10 +257,10 @@ theorem next_spec (s : St α) (h : Good s) :
         · rw [mergeW_cons_le hle]; simp only [spec]
           by_cases he : d.1 = m.1 <;> simp [he, live_cons_of_not_mem hmD]
         · by_cases he : d.1 = m.1 <;> simp [he, hms, hMr]
-        · simp only [meas]; by_cases he : d.1 = m.1 <;> simp [he] <;> omega
+        · simp only; by_cases he : d.1 = m.1 <;> simp [he] <;> omega
       · refine ⟨m, ⟨ms, D', d :: ps⟩, by simp [hle], ?_, ⟨hms, hDr, hP⟩, ?_⟩
         · rw [mergeW_cons_gt hle]; rfl
-        · simp [meas]; omega
+        · simp; omega
 
 /-- **The iterator yields exactly the specification.** Any budget of at least
 `|M| + |P| + 1` calls drains it. -/

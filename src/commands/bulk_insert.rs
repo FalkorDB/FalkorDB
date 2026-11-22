@@ -1,8 +1,11 @@
 use crate::dispatch::must_run_inline;
+use crate::graph_core::{MAX_STALE_RETRIES, SLOW_STALE_RUN};
 use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
+    graph_core::{
+        BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, key_of_write, register_graph,
+    },
     redis_type::{GRAPH_TYPE, wrong_type_compat},
     telemetry,
 };
@@ -17,7 +20,9 @@ use parking_lot::RwLock;
 use roaring::RoaringTreemap;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::ptr::null_mut;
 use std::sync::Arc;
+use std::time::Instant;
 use valkey_module::{
     Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
 };
@@ -280,17 +285,37 @@ fn parse_header(
 /// fails must leave no key behind, otherwise re-running the loader against a
 /// corrected input trips the "already exists" guard instead of retrying.
 ///
+/// A batch that failed on a worker is cleaned up after a `RENAME`, `MOVE`, `DEL` or
+/// `FLUSHALL` may have run, so the graph is taken out of the key that holds it now
+/// ([`key_of_write`]), not out of whatever the addressed key holds. Deleting the
+/// addressed key deleted a graph another client had created there since, and left
+/// a renamed one behind on the master alone. If no key in the client's database
+/// holds the graph, nothing is deleted: a flushed graph is gone already, and one
+/// `MOVE`d to another database is out of this context's reach.
+///
 /// Requires the GIL — the caller either runs on the main Redis thread or holds
 /// it explicitly.
 fn discard_created_graph(
     ctx: &Context,
     key_str: &ValkeyString,
+    graph: &Arc<RwLock<ThreadedGraph>>,
 ) {
     // The graph was created under C's name, so that — not the addressed key — is
-    // what has to be taken back out of the keyspace.
-    telemetry::delete_stream(ctx, &c_graph_name(key_str));
-    let key = ctx.open_key_writable(&c_graph_key(ctx, key_str));
-    let _ = key.delete();
+    // where it was stored, and what its telemetry stream is named after.
+    let name: Arc<str> = Arc::from(c_graph_name(key_str));
+    let Ok(live) = key_of_write(ctx, graph, &name) else {
+        return;
+    };
+    telemetry::delete_stream(ctx, &name);
+    let key = if live == name {
+        // The exact bytes, which `name` may only approximate.
+        c_graph_key(ctx, key_str)
+    } else {
+        ValkeyString::create_from_slice(ctx.get_raw(), live.as_bytes())
+    };
+    if let Ok(key) = ctx.open_key_writable(&key) {
+        let _ = key.delete();
+    }
 }
 
 /// A command, held so a worker thread can replicate it after the calling context is
@@ -362,6 +387,25 @@ impl HeldArgs {
         // against the registered name to reach this handler.
         let cmd = CString::new(name).expect("a dispatched command name has no interior NUL");
         unsafe { ffi::replicate_argv(ctx, &cmd, &self.argv[1..]) };
+    }
+
+    /// Propagate under `key` instead of the key the client named: the batch's graph
+    /// was renamed to `key` while the batch was built, so that is the name the batch
+    /// has to reach the replica under.
+    ///
+    /// # Safety
+    /// The GIL must be held: the replaced string came from client command arguments.
+    unsafe fn rekey(
+        &mut self,
+        key: &[u8],
+    ) {
+        let fresh = ValkeyString::create_from_slice(null_mut(), key);
+        // SAFETY: `fresh` is valid and the GIL is held. The held reference is this
+        // struct's own; `fresh` drops its own reference when it goes out of scope.
+        let held = unsafe { ffi::hold_string(fresh.inner) };
+        // SAFETY: argument 1 came from `hold_string` and leaves the vector here, so
+        // it is freed exactly once.
+        unsafe { ffi::free_string(std::mem::replace(&mut self.argv[1], held)) };
     }
 }
 
@@ -742,7 +786,7 @@ pub fn graph_bulk_insert(
     // creation below — and `discard_created_graph` on the failure paths — can re-open the
     // key without a second live handle to it.
     let existing = {
-        let key = ctx.open_key_writable(&key_str);
+        let key = ctx.open_key_writable(&key_str)?;
         let found = key
             .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
             .map_err(wrong_type_compat)?
@@ -824,7 +868,7 @@ pub fn graph_bulk_insert(
     } else {
         // Created under C's name and stored at the key rebuilt from it, not at
         // the key the command addressed — see `c_graph_key`.
-        let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
         let name = c_graph_name(&key_str);
         let g = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
@@ -886,7 +930,7 @@ pub fn graph_bulk_insert(
             Err(e) => {
                 drop(tg);
                 if begin {
-                    discard_created_graph(ctx, &key_str);
+                    discard_created_graph(ctx, &key_str, &graph);
                 }
                 Err(ValkeyError::String(format!("ERR bulk insert failed: {e}")))
             }
@@ -922,7 +966,15 @@ pub fn graph_bulk_insert(
         .iter()
         .map(|rs| rs.as_slice().to_vec())
         .collect();
-    let held = held.expect("held on the background path, which is the only path here");
+    let mut held = held.expect("held on the background path, which is the only path here");
+    // The key the graph is stored at now, which the worker asks about again before it
+    // publishes: the addressed key for an existing graph, C's name for one this batch
+    // created (see `c_graph_key`).
+    let admitted: Arc<str> = Arc::from(if begin {
+        c_graph_name(&key_str)
+    } else {
+        key_str.to_string_lossy()
+    });
     // The cleanup path re-opens the key by name, so it also needs the exact bytes:
     // `to_string` goes through `to_string_lossy`, and a non-UTF-8 graph name would come
     // back with replacement characters and delete a *different* key than the one this
@@ -935,13 +987,30 @@ pub fn graph_bulk_insert(
             // when this block ends — before the client is unblocked below.
             // A loop only to run the insert again if an inline writer commits while
             // phase 1 builds (see the escalation below); every other path breaks.
+            //
+            // The retry is bounded, like `execute_query_write`'s: after a few stale
+            // builds, or one that took long, the insert runs as a writer from the
+            // start — the GIL and write lock held for the whole build, as in C — so
+            // a steady stream of inline writes cannot starve it.
+            let mut stale_runs = 0;
+            let mut as_writer = false;
             let result: Result<(), String> = 'phase: loop {
-                let session = QuerySession::begin_with(&graph, facts);
-                // Phase 1: build the new version as a reader, GIL-free, into a private
-                // fork. Forking takes nothing, so an inline writer is never refused
-                // because this insert is building; phase 2's escalation checks whether
-                // one committed meanwhile. Every early exit below drops the fork with
-                // the session — there is nothing else to release.
+                let attempt_start = Instant::now();
+                let session = if as_writer {
+                    match QuerySession::begin_writer_checked(&graph, facts) {
+                        Ok(session) => session,
+                        Err(e) => break 'phase Err(e.to_string()),
+                    }
+                } else {
+                    QuerySession::begin_with(&graph, facts)
+                };
+                // Phase 1: build the new version into a private fork. As a reader (every
+                // run but an escalated one) that is GIL-free, and forking takes nothing,
+                // so an inline writer is never refused because this insert is building;
+                // phase 2's escalation checks whether one committed meanwhile. An
+                // escalated run is already a writer and builds under the GIL and the
+                // write lock, so there is nothing to check. Every early exit below drops
+                // the fork with the session — there is nothing else to release.
                 let mut fork = session.write_version();
                 let mut docs = IndexDocs::default();
                 let tokens: Vec<&[u8]> = token_data.iter().map(std::vec::Vec::as_slice).collect();
@@ -964,10 +1033,22 @@ pub fn graph_bulk_insert(
                     // An inline writer committed while phase 1 built: nothing was
                     // published, so build again on top of its version.
                     if session.is_stale() {
+                        stale_runs += 1;
+                        as_writer = stale_runs >= MAX_STALE_RETRIES
+                            || attempt_start.elapsed() >= SLOW_STALE_RUN;
                         continue 'phase;
                     }
                     break 'phase Err(e.to_string());
                 }
+                // The batch was admitted on the main thread, and a `RENAME`, `MOVE`
+                // or `FLUSHALL` may have run since; the registry check above cannot
+                // see the last two, nor tell where a renamed graph lives. Ask the
+                // keyspace, before anything is published: the index documents
+                // below cannot be taken back.
+                let live = match key_of_write(&Context::new(ts_ctx), &graph, &admitted) {
+                    Ok(live) => live,
+                    Err(abort) => break 'phase Err(abort.to_string()),
+                };
                 // Publish the index documents inside the writer scope, matching
                 // `CommitOp`: the index is not MVCC, so readers must be excluded while
                 // it is mutated, and a read query holds L1-read for its whole session.
@@ -976,9 +1057,10 @@ pub fn graph_bulk_insert(
                 // cannot resolve against its own snapshot.
                 //
                 // Every token has succeeded by now, so nothing reaches the index for an
-                // insert that later rolls back. The cost is a GIL hold proportional to
-                // the number of indexed rows — paid only when the graph actually has an
-                // index, since `docs` is otherwise empty.
+                // insert that later rolls back. For a run that built as a reader the cost
+                // is a GIL hold proportional to the number of indexed rows — paid only
+                // when the graph actually has an index, since `docs` is otherwise empty;
+                // an escalated run holds the GIL for the whole build anyway.
                 //
                 // Validated before publishing, as on the inline path above and
                 // for the same reason: RediSearch is not MVCC, so a document
@@ -1021,10 +1103,20 @@ pub fn graph_bulk_insert(
                 // Replay is deterministic — bulk assigns ids sequentially from the
                 // current reserved counts, and the replica parses identical token bytes
                 // in identical order.
+                //
+                // Under the key the graph lives at now. Replicated under the one the
+                // client named after a `RENAME`, a `BEGIN` created the graph again at
+                // that key on the replica, and an append was refused there as an
+                // empty key.
                 // SAFETY: `ts_ctx` is this worker's context, every entry of `held.argv`
                 // is a string this closure owns a reference to, and the session holds
                 // the GIL.
-                unsafe { held.replicate(ts_ctx) };
+                unsafe {
+                    if live != admitted {
+                        held.rekey(live.as_bytes());
+                    }
+                    held.replicate(ts_ctx);
+                }
                 break 'phase Ok(());
             };
             match result {
@@ -1045,7 +1137,7 @@ pub fn graph_bulk_insert(
                         // deliberately captured. ptr+len carries them.
                         let key_name =
                             ValkeyString::create_from_slice(ts_ctx, key_bytes.as_slice());
-                        discard_created_graph(&cleanup_ctx, &key_name);
+                        discard_created_graph(&cleanup_ctx, &key_name, &graph);
                     }
                     let cerr = ffi::sanitise_error(msg);
                     unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };

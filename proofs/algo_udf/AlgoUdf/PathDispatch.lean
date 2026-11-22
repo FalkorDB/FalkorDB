@@ -4,15 +4,6 @@ import AlgoUdf.BfsBound
 import AlgoUdf.DfsResult
 /-! # algo.SPpaths / algo.SSpaths entry points and `run_path_algo` dispatch
 
-| here | there (`algo_procedures.rs`) |
-| --- | --- |
-| `present`, `parseSp`   | `parse_sp_config` :2078 (then `parse_common_path_config`, `Config`) |
-| `parseSs`              | `parse_ss_config` :2114 |
-| `toNumeric`            | `to_numeric_value` :2133 over `Marshal.F64` |
-| `algoSp`, `algoSs`     | `algo_sp_paths` :2728, `algo_ss_paths` :2740 (`parse_*_config(args)?` then `run_path_algo`) |
-| `Plan`, `plan`         | `run_path_algo` :2672-2721: Dijkstra fast path, BFS pre-pass, bound seeding, enumeration |
-| `bfsWeight`/`bfsCost`  | the forward folds :2459-2466 (`none` weight = a non-finite sum: `next_weight > NaN/inf` never prunes) |
-
 Theorems:
 * `parseSp_ok`, `parseSp_missing`, `parseSp_not_node`, `parseSs_ok`, `parseSs_missing`.
 * `toNumeric_nat` (exact path weights come back as `Int`), `toNumeric_neg_zero`.
@@ -87,7 +78,7 @@ theorem parseSp_missing (args : List Val) (m : List (String × Val)) (hm : parse
       lookup m "sourceNode" = some .null ∨ lookup m "targetNode" = some .null) :
     parseSp args = .error "sourceNode and targetNode are required" := by
   unfold parseSp; rw [hm]; dsimp only
-  rw [if_pos]
+  rw [ite_eq_left]
   rcases h with h | h | h | h <;> simp [h, present]
 
 theorem parseSp_not_node (args : List Val) (m : List (String × Val)) (hm : parseConfig args = .ok m)
@@ -97,7 +88,7 @@ theorem parseSp_not_node (args : List Val) (m : List (String × Val)) (hm : pars
   unfold parseSp; rw [hm]; dsimp only
   have hp : present (lookup m "sourceNode") = true := by
     rw [hv]; cases v <;> simp_all [present]
-  rw [if_neg (by simp [hp, ht]), hv]
+  rw [ite_eq_right (by simp [hp, ht]), hv]
   cases v <;> simp_all
 
 theorem parseSs_ok (args : List Val) (s : Nat) (m : List (String × Val)) :
@@ -192,7 +183,7 @@ def bfsCost (g : G) (es : List Rel) : Nat := costSum g es
 
 def u32Max : Nat := 4294967295
 
-/-- `run_path_algo` :2672-2721; `bfs` is `bfs_find_bound`'s result. -/
+/-- `run_path_algo` ; `bfs` is `bfs_find_bound`'s result. -/
 def plan (g : G) (c : PCfg) (bfs : Option (Option (List Rel))) : Plan :=
   match c.tgt with
   | some t =>

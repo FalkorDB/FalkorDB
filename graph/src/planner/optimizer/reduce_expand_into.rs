@@ -19,7 +19,7 @@ use super::references::ir_references_variable;
 pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
     for idx in indices {
-        let (edge_id, edge_scope_id) = match plan.node(idx).data() {
+        let edge = match plan.node(idx).data() {
             IR::ExpandInto {
                 emit_relationship: true,
                 relationship,
@@ -29,7 +29,7 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
                 emit_relationship: true,
                 relationship,
                 ..
-            } => (relationship.alias.id, relationship.alias.scope_id),
+            } => relationship.alias.key(),
             _ => continue,
         };
 
@@ -37,7 +37,7 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), edge_id, edge_scope_id) {
+            if ir_references_variable(parent.data(), edge) {
                 referenced = true;
                 break;
             }
