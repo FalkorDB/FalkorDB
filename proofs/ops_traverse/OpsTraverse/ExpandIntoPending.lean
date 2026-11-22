@@ -43,10 +43,11 @@ the edges between them that are not pending-deleted or used by a sibling. -/
 def expandIntoRows (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
     (used : List Nat) : List Nat :=
   let ps := if bidir && src != dst then [(src, dst), (dst, src)] else [(src, dst)]
-  ps.flatMap fun q =>
+  let rows := ps.flatMap fun q =>
     let es := (edgesBetween g q.1 q.2).filter fun e =>
       !(p.delRels.contains e) && !(used.contains e)
     if emit then es else es.take 1
+  if emit then rows else rows.take 1
 
 /-- `ExpandIntoOp::expand_row` (relationship mode) on main (`expand_into.rs`):
 `is_node_deleted(src) || is_node_deleted(dst)` ⇒ no row (#3463). -/
@@ -75,6 +76,13 @@ theorem mem_expandIntoRows {g : Graph} {p : Pending} {b em : Bool} {s d e : Nat}
     e ∉ p.delRels ∧ e ∉ u ∧ ∃ x ∈ g, x.id = e ∧
       ((x.src = s ∧ x.dst = d) ∨ (x.src = d ∧ x.dst = s)) := by
   unfold expandIntoRows at h
+  replace h : e ∈ (if b && s != d then [(s, d), (d, s)] else [(s, d)]).flatMap fun q =>
+      let es := (edgesBetween g q.1 q.2).filter fun e =>
+        !(p.delRels.contains e) && !(u.contains e)
+      if em then es else es.take 1 := by
+    cases em
+    · exact List.mem_of_mem_take h
+    · exact h
   simp only [List.mem_flatMap] at h
   obtain ⟨q, hq, he⟩ := h
   have he' : e ∈ (edgesBetween g q.1 q.2).filter fun e =>

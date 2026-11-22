@@ -26,7 +26,14 @@ structure QG where
   nodes : List V := []
   /-- relationship aliases, in pattern order -/
   rels : List V := []
+  /-- named paths `(var, components)` (`QueryGraph::paths`) -/
+  paths : List (V × List V) := []
   deriving DecidableEq, Repr
+
+/-- `QueryGraph::add_path` (parser/ast.rs) for a path whose variable is new: pushed on
+`paths`, and `variables()` (nodes, relationships, paths) now lists it. -/
+def QG.addPath (g : QG) (pv : V) (comps : List V) : QG :=
+  { g with vars := g.vars ++ [pv], paths := g.paths ++ [(pv, comps)] }
 
 inductive C
   | null | bool (b : Bool) | int (i : Int) | str (s : String)
@@ -211,18 +218,42 @@ def isConn : D → Bool
   | .and | .or | .not => true
   | _ => false
 
+/-- `matches!(parent, ExprIR::FuncInvocation(f) if f.name == "size")` (mod.rs, #3107). -/
+def isSize : D → Bool
+  | .func n => n == "size"
+  | _ => false
+
+theorem isConn_isSize (p : D) (h : isConn p = true) : isSize p = false := by
+  cases p <;> simp_all [isConn, isSize]
+
+/-- `PatternMode::descend` (mod.rs): the argument of `size` is a list wherever it appears
+(#3107); otherwise SemiApply degrades to Exists below a non-connective. -/
 def Mode.descend (m : Mode) (parent : D) : Mode :=
-  if m = .semiApply ∧ isConn parent = false then .exists_ else m
+  if isSize parent then .collect
+  else if m = .semiApply ∧ isConn parent = false then .exists_ else m
 
 theorem descend_table (m : Mode) (p : D) :
-    m.descend p = (if m = .semiApply then (if isConn p then .semiApply else .exists_) else m) := by
-  unfold Mode.descend; cases m <;> cases h : isConn p <;> simp
+    m.descend p = (if isSize p then .collect else
+      if m = .semiApply then (if isConn p then .semiApply else .exists_) else m) := by
+  unfold Mode.descend; cases m <;> cases h : isConn p <;> cases isSize p <;> simp
+
+/-- Below `size(..)` a pattern is collected as a list, whatever the mode (#3107). -/
+theorem descend_size (m : Mode) : m.descend (.func "size") = .collect := by
+  simp [Mode.descend, isSize]
+
+/-- Descending never re-enters SemiApply from another mode. -/
+theorem descend_ne_semi (m : Mode) (p : D) (h : m ≠ .semiApply) : m.descend p ≠ .semiApply := by
+  unfold Mode.descend; split
+  · simp
+  · split
+    · simp
+    · exact h
 
 mutual
 def needsExtraction : Ex → Mode → Bool
   | .node d cs, m => match d with
     | .patComp _ => true
-    | .pat _ => m == .exists_
+    | .pat _ => m != .semiApply
     | _ => needsExtractionL cs (m.descend d)
 def needsExtractionL : List Ex → Mode → Bool
   | [], _ => false
@@ -230,23 +261,39 @@ def needsExtractionL : List Ex → Mode → Bool
 end
 
 mutual
-/-- Outside SemiApply mode, extraction is needed exactly when the tree has a
-pattern or pattern comprehension. -/
-theorem needsExtraction_exists : ∀ e, needsExtraction e .exists_ = hasPatternExpr e
-  | .node d cs => by
-    have hd : Mode.exists_.descend d = .exists_ := by simp [Mode.descend]
-    cases d <;> simp [needsExtraction, hasPatternExpr, hd, needsExtractionL_exists cs]
-theorem needsExtractionL_exists : ∀ l, needsExtractionL l .exists_ = hasPatternExprL l
-  | [] => rfl
-  | c :: cs => by
-    simp [needsExtractionL, hasPatternExprL, needsExtraction_exists c, needsExtractionL_exists cs]
+/-- Outside SemiApply mode (Exists or Collect), extraction is needed exactly when the
+tree has a pattern or pattern comprehension. -/
+theorem needsExtraction_nonSemi : ∀ e (m : Mode), m ≠ .semiApply → needsExtraction e m = hasPatternExpr e
+  | .node d cs, m, hm => by
+    have hd := descend_ne_semi m d hm
+    have hL := needsExtractionL_nonSemi cs (m.descend d) hd
+    cases d <;> simp_all [needsExtraction, hasPatternExpr]
+theorem needsExtractionL_nonSemi : ∀ l (m : Mode), m ≠ .semiApply → needsExtractionL l m = hasPatternExprL l
+  | [], _, _ => rfl
+  | c :: cs, m, hm => by
+    simp [needsExtractionL, hasPatternExprL, needsExtraction_nonSemi c m hm,
+      needsExtractionL_nonSemi cs m hm]
 end
+
+theorem needsExtraction_exists (e : Ex) : needsExtraction e .exists_ = hasPatternExpr e :=
+  needsExtraction_nonSemi e .exists_ (by simp)
+theorem needsExtractionL_exists (l : List Ex) : needsExtractionL l .exists_ = hasPatternExprL l :=
+  needsExtractionL_nonSemi l .exists_ (by simp)
+/-- A Collect-mode walk (below `size`) needs extraction exactly when Exists does (#3107). -/
+theorem needsExtraction_collect (e : Ex) : needsExtraction e .collect = hasPatternExpr e :=
+  needsExtraction_nonSemi e .collect (by simp)
+
+/-- #3107: `WHERE size((a)--()) > 1` is extracted (the pattern's list is used), not left to
+the decomposer. -/
+theorem needs_semi_size (g : QG) (b : Ex) :
+    needsExtraction (.node .gt [.node (.func "size") [.node (.pat g) []], b]) .semiApply = true := by
+  simp [needsExtraction, needsExtractionL, Mode.descend, isConn, isSize]
 
 /-- In SemiApply mode a bare pattern directly under connectives needs nothing. -/
 theorem needs_semi_pat (g : QG) : needsExtraction (.node (.pat g) []) .semiApply = false := rfl
 theorem needs_semi_xor (g : QG) (b : Ex) :
     needsExtraction (.node .xor [.node (.pat g) [], b]) .semiApply = true := by
-  simp [needsExtraction, needsExtractionL, Mode.descend, isConn]
+  simp [needsExtraction, needsExtractionL, Mode.descend, isConn, isSize]
 
 /-! ## `ExprIR::and_of` / `or_of` / `flat` (ast.rs)
 
