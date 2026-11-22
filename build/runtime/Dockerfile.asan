@@ -209,7 +209,7 @@ RUN /usr/lib/llvm-23/bin/llvm-symbolizer --version
 
 WORKDIR ${FALKORDB_HOME}
 
-COPY LICENSE LICENSE-SSPL LICENSE-AGPL LICENSE-ELASTIC /usr/local/share/licenses/falkordb/
+COPY LICENSE LICENSE-SSPL LICENSE-AGPL /usr/local/share/licenses/falkordb/
 COPY ./build/runtime/run.sh        ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh  ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh

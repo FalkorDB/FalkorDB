@@ -292,13 +292,12 @@ jobs:
             # Outputs are captured before matching: `docker exec ... | grep -q`
             # under pipefail reports 141 when grep exits early.
             wait_pong smoke
-            if [[ -f LICENSE-SSPL && -f LICENSE-AGPL && -f LICENSE-ELASTIC ]]; then
-              for license in LICENSE LICENSE-SSPL LICENSE-AGPL LICENSE-ELASTIC; do
+            if [[ -f LICENSE-SSPL && -f LICENSE-AGPL ]]; then
+              for license in LICENSE LICENSE-SSPL LICENSE-AGPL; do
                 docker exec smoke cat "/usr/local/share/licenses/falkordb/$license" | cmp - "$license"
               done
             elif [[ ! -e LICENSE-SSPL && ! -L LICENSE-SSPL &&
-                    ! -e LICENSE-AGPL && ! -L LICENSE-AGPL &&
-                    ! -e LICENSE-ELASTIC && ! -L LICENSE-ELASTIC ]] \
+                    ! -e LICENSE-AGPL && ! -L LICENSE-AGPL ]] \
               && grep -qx ' *Server Side Public License' LICENSE; then
               echo "Historical tagged tree predates image license files."
             else

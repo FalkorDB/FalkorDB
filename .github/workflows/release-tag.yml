@@ -295,15 +295,18 @@ jobs:
           if [ -n "$MISSING" ]; then
             echo "::error::missing expected release assets:$MISSING"; exit 1
           fi
-          cp LICENSE dist/
-          if [[ -f LICENSE-SSPL && -f LICENSE-AGPL && -f LICENSE-ELASTIC ]]; then
-            cp LICENSE-SSPL LICENSE-AGPL LICENSE-ELASTIC dist/
+          if [[ -f LICENSE-SSPL && -f LICENSE-AGPL ]]; then
+            cp LICENSE LICENSE-SSPL LICENSE-AGPL dist/
           elif [[ ! -e LICENSE-SSPL && ! -L LICENSE-SSPL &&
-                  ! -e LICENSE-AGPL && ! -L LICENSE-AGPL &&
-                  ! -e LICENSE-ELASTIC && ! -L LICENSE-ELASTIC ]] \
+                  ! -e LICENSE-AGPL && ! -L LICENSE-AGPL ]] \
             && grep -qx ' *Server Side Public License' LICENSE; then
             # A workflow_dispatch may re-release a tag from before dual licensing.
-            echo "Publishing the historical license file."
+            # Publish only the SSPL terms from the historical combined file.
+            if ! grep -qx ' *END OF TERMS AND CONDITIONS' LICENSE; then
+              echo "::error::historical SSPL license has no end marker"; exit 1
+            fi
+            sed '/^ *END OF TERMS AND CONDITIONS$/q' LICENSE > dist/LICENSE
+            echo "Publishing the historical SSPL license."
           else
             echo "::error::tagged tree has an incomplete license set"; exit 1
           fi

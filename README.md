@@ -452,8 +452,6 @@ v3](LICENSE-AGPL) (AGPLv3), at your option. Third-party components may be
 subject to their own license terms and notices. See [LICENSE](LICENSE).
 The license notice and texts are also included in container images under
 `/usr/local/share/licenses/falkordb/` and as release assets.
-The Elastic License 2.0 text from the previous license file is retained in
-[LICENSE-ELASTIC](LICENSE-ELASTIC) for historical reference.
 
 ### Support our work
 

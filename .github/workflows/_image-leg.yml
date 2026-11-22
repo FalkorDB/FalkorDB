@@ -227,7 +227,7 @@ jobs:
           SERVICE_CONTAINER: ${{ job.services.falkordb.id }}
         run: |
           set -euo pipefail
-          for license in LICENSE LICENSE-SSPL LICENSE-AGPL LICENSE-ELASTIC; do
+          for license in LICENSE LICENSE-SSPL LICENSE-AGPL; do
             docker exec "$SERVICE_CONTAINER" test -s "/usr/local/share/licenses/falkordb/$license"
           done
       # The Rust unit tests run once, in build-engine (_ci-pipeline.yml).
