@@ -179,30 +179,38 @@ theorem boundLabelFilters_visited (st : MSt) (rels : List QR) :
 
 def u32max : Nat := 4294967295
 
+/-- `p = (n)` is the one-node path whether or not `n` was bound before (#3526): every branch
+puts the component's paths in a `PathBuilder` over its plan (mod.rs). -/
+def withPaths (paths : List (V × List V)) (m : MP) : MP := if paths.isEmpty then m else .pathB paths m
+
+/-- The node-only branch of `plan_match` (mod.rs). A bound node with named paths also pushes
+`n IS NOT NULL` (`is_not_null_filter`) to the bound filters (#3526): a node an earlier
+OPTIONAL MATCH left null is not a path. -/
 def nodeOnly (st : MSt) (lw : LW) (n : QN) (paths : List (V × List V)) : MP × MSt × List Ex × LW :=
   if st.bound n.alias then
     let (af, lw) := lowerN lw n
-    let bf := af.toList
-    if n.labels.isEmpty then (.arg, st, bf, lw)
+    let bf := af.toList ++ (if paths.isEmpty then [] else [isNotNullFilter n.alias])
+    if n.labels.isEmpty then (withPaths paths .arg, st, bf, lw)
     else
       let rel : QR := { alias := ⟨u32max - n.alias.id, n.alias.scope⟩, named := false,
                         frm := { alias := n.alias, ptr := 0 }, to := { alias := n.alias, labels := n.labels, ptr := 0 }, ptr := 0 }
-      (.expandInto rel false [.arg], markLabels st n.alias n.labels, bf, lw)
+      (withPaths paths (.expandInto rel false [.arg]), markLabels st n.alias n.labels, bf, lw)
   else
     let (af, lw) := lowerN lw n
     let res := withF af (scanOf (stripNode n))
     let st' := markLabels { st with visited := st.visited ++ [n.alias] } n.alias n.labels
-    (if paths.isEmpty then res else .pathB paths res, st', [], lw)
+    (withPaths paths res, st', [], lw)
 
+/-- A bound unlabelled node: its `Argument`, under the `PathBuilder` of its paths if any. -/
 theorem nodeOnly_bound_plain (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
-    (hb : st.bound n.alias = true) (hl : n.labels = []) : (nodeOnly st lw n ps).1 = .arg := by
+    (hb : st.bound n.alias = true) (hl : n.labels = []) : (nodeOnly st lw n ps).1 = withPaths ps .arg := by
   simp [nodeOnly, hb, hl]
 
 /-- Extra labels on a bound node: a synthetic self-loop `ExpandInto` whose
-edge id is `u32::MAX - id` (mod.rs) checks them. -/
+edge id is `u32::MAX - id` (mod.rs) checks them (under the `PathBuilder` of its paths if any). -/
 theorem nodeOnly_bound_labels (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
     (hb : st.bound n.alias = true) (hl : n.labels ≠ []) :
-    ∃ r, (nodeOnly st lw n ps).1 = .expandInto r false [.arg] ∧
+    ∃ r, (nodeOnly st lw n ps).1 = withPaths ps (.expandInto r false [.arg]) ∧
       r.alias = ⟨u32max - n.alias.id, n.alias.scope⟩ ∧ r.frm.alias = n.alias ∧ r.to.alias = n.alias ∧
       r.to.labels = n.labels ∧ r.frm.labels = [] := by
   have : n.labels.isEmpty = false := by cases h : n.labels <;> simp_all
@@ -210,9 +218,11 @@ theorem nodeOnly_bound_labels (st : MSt) (lw : LW) (n : QN) (ps : List (V × Lis
            frm := { alias := n.alias, ptr := 0 }, to := { alias := n.alias, labels := n.labels, ptr := 0 }, ptr := 0 },
     by simp [nodeOnly, hb, this], rfl, rfl, rfl, rfl, rfl⟩
 
-/-- A bound node's map becomes a bound filter, at most once per (alias, map). -/
+/-- A bound node's map becomes a bound filter, at most once per (alias, map); with named paths
+it is followed by `n IS NOT NULL` (#3526). -/
 theorem nodeOnly_bound_filter (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
-    (hb : st.bound n.alias = true) : (nodeOnly st lw n ps).2.2.1 = (lowerN lw n).1.toList := by
+    (hb : st.bound n.alias = true) : (nodeOnly st lw n ps).2.2.1 =
+      (lowerN lw n).1.toList ++ (if ps.isEmpty then [] else [isNotNullFilter n.alias]) := by
   unfold nodeOnly; simp only [hb, ↓reduceIte]; split <;> rfl
 
 theorem nodeOnly_unbound (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
@@ -222,19 +232,22 @@ theorem nodeOnly_unbound (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
          else .pathB ps (withF (lowerN lw n).1 (scanOf (stripNode n)))) ∧
       (nodeOnly st lw n ps).2.1.bound n.alias = true := by
   constructor
-  · unfold nodeOnly; simp only [hb, Bool.false_eq_true, ↓reduceIte]
+  · unfold nodeOnly withPaths; simp only [hb, Bool.false_eq_true, ↓reduceIte]
     split <;> simp [core_withF, MP.core, scanOf] <;> split <;> rfl
   · simp only [nodeOnly, hb, Bool.false_eq_true, ↓reduceIte]
     unfold markLabels; split <;> simp [MSt.bound]
+
+theorem withPaths_stripped (ps : List (V × List V)) (m : MP) : (withPaths ps m).stripped = m.stripped := by
+  unfold withPaths; split <;> rfl
 
 theorem nodeOnly_stripped (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V)) :
     (nodeOnly st lw n ps).1.stripped = true := by
   unfold nodeOnly
   by_cases hb : st.bound n.alias
   · simp only [hb, ↓reduceIte]
-    split <;> simp [MP.stripped, MP.stripped.strippedL]
+    split <;> simp [withPaths_stripped, MP.stripped, MP.stripped.strippedL]
   · simp only [hb, Bool.false_eq_true, ↓reduceIte]
-    split <;> simp [MP.stripped, stripped_withF, scanOf_stripNode]
+    simp [withPaths_stripped, stripped_withF, scanOf_stripNode]
 
 /-! ## A component with relationships -/
 
@@ -797,7 +810,7 @@ theorem q2923_lifted :
       .filter (attrEq v2923c ("v", bDotV))
         (.cp [.allScan { alias := v2923b, ptr := 0 } [], .allScan { alias := v2923c, ptr := 1 } []]) := by
   simp only [planMatch, liftPattern, pendingOf, patVars, liftOrder]
-  simp [planFrom, planComp, q2923, q2923c, boundLabelFilters, orderRels, sortRels, leadingWalk, leadOrder, WI.forClause, HopOrder.selfLoopsAfterBinders, nodeOnly, lowerN, lowerInline, lwKey, MSt.bound, withF, scanOf, stripNode, inlineAttrsToFilter, markLabels, v2923b, v2923c, rewriteComp, keepNode, keepAttrs, readsPending, bDotV, nodes, nodesL, Ex.v,
+  simp [planFrom, planComp, q2923, q2923c, boundLabelFilters, orderRels, sortRels, leadingWalk, leadOrder, WI.forClause, HopOrder.selfLoopsAfterBinders, nodeOnly, withPaths, lowerN, lowerInline, lwKey, MSt.bound, withF, scanOf, stripNode, inlineAttrsToFilter, markLabels, v2923b, v2923c, rewriteComp, keepNode, keepAttrs, readsPending, bDotV, nodes, nodesL, Ex.v,
     liftItems, liftItem]
   simp only [andOf]
   rw [flat_single _ _ _ (by decide), flat_single _ _ _ (by decide)]
