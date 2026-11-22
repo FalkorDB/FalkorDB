@@ -429,7 +429,10 @@ theorem union_state (st st' : St) (bs : List RC) (h : bindIR S st (.union bs) = 
 
 /-! ## CALL {} -/
 
-def internalPrefixes : List String := ["_slot_", "__agg_placeholder_", "_quant_", "_lc_", "_reduce_"]
+/-- The reserved key prefixes `bind_call_subquery` filters out (binder.rs). Since #3011 the
+aggregate order-by slot is unnamed (`bindSlot`), so it has no `__agg_placeholder_` key to filter:
+`subqueryReturns_pushUnnamed`. -/
+def internalPrefixes : List String := ["_slot_", "_quant_", "_lc_", "_reduce_"]
 
 def isInternal (n : Name) : Bool := internalPrefixes.any fun p => n.startsWith p
 
@@ -498,6 +501,11 @@ theorem callSubquery_collision (outer inner : Env) (d : Nat) (kv : Name × Var) 
 theorem subqueryReturns_noInternal (inner : Env) (kv : Name × Var) (h : kv ∈ subqueryReturns inner) :
     isInternal kv.1 = false := by
   simp only [subqueryReturns, List.mem_filter, Bool.not_eq_true'] at h; exact h.2
+
+/-- An unnamed entry (an unnamed pattern entity, an aggregate order-by slot) is never returned. -/
+theorem subqueryReturns_pushUnnamed (inner : Env) (v : Var) :
+    subqueryReturns (inner.pushUnnamed v) = subqueryReturns inner := by
+  simp [subqueryReturns, Env.pushUnnamed, Env.named, List.filterMap_append]
 
 theorem foldProject_covers (depth : Nat) : ∀ (ret : List (Name × Var)) (acc : Env × List (Var × Var)),
     acc.1.Covers → (∀ kv ∈ ret, acc.1.has kv.1 = false) → (ret.map (·.1)).Nodup →

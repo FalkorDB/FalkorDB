@@ -25,14 +25,18 @@ structure St where
   /-- `match_rel_vars` (#2981): the `(id, scope_id)` of every named relationship a MATCH bound -/
   matchRels : List (Nat × Nat) := []
 
-/-- The name `resolve_name` treats specially (binder.rs). Since #3303 no `_anon` name
-is special: an unnamed entity has no name to resolve. -/
-def isSpecial (n : Name) : Bool :=
-  n == "__agg_order_by_placeholder__"
+/-- The names `resolve_name` treats specially (binder.rs): none. Since #3303 no `_anon` name is
+special (an unnamed entity has no name to resolve), and since #3011 neither is
+`__agg_order_by_placeholder__`: the aggregate order-by slot is its own `ExprIR` variant, bound by
+`bind_expr_node` (`bindSlot`), not a name. -/
+def isSpecial (_ : Name) : Bool := false
 
 /-- A written `_anon…` name is an ordinary name (#3303; before, `resolve_name` minted a fresh
 variable for it whatever the scope held). -/
 theorem isSpecial_anon_name : isSpecial "_anon_0" = false := by decide
+
+/-- …and so is the old reserved spelling of the aggregate slot (#3011). -/
+theorem isSpecial_placeholder_name : isSpecial "__agg_order_by_placeholder__" = false := by decide
 
 /-- Innermost-first lookup in the comprehension locals (binder.rs). -/
 def lookupLocals : List Env → Name → Option Var
@@ -122,39 +126,40 @@ theorem resolve_covers (st : St) (locals : List Env) (n : Name) (st' : St) (v : 
     · rw [← h.1]; exact hc
   · rw [← h.1]; exact hc
 
-/-- The reserved key `resolve_name` files an `__agg_order_by_placeholder__` under (binder.rs). -/
-def placeholderKey (id : Nat) : Name := s!"__agg_placeholder_{id}"
-
-/-- `Binder::resolve_name` in full (binder.rs): the aggregate-ORDER-BY placeholder always
-gets a fresh variable at `len()` under its own key; every other name is `resolve`. -/
+/-- `Binder::resolve_name` in full (binder.rs): since #3011 it has no special arm, every name is
+`resolve`. -/
 def resolveName (st : St) (locals : List Env) (n : Name) : Except String (St × Var) :=
-  if n == "__agg_order_by_placeholder__" then
-    let v := freshVar st.cur n .any st.depth
-    .ok ({ st with cur := st.cur.insert (placeholderKey v.id) v }, v)
-  else resolve st locals n
+  resolve st locals n
 
-/-- Any name but the placeholder resolves as `resolve` does. -/
+/-- Any name resolves as `resolve` does… -/
 theorem resolveName_other (st : St) (locals : List Env) (n : Name)
-    (h : n ≠ "__agg_order_by_placeholder__") : resolveName st locals n = resolve st locals n := by
-  simp [resolveName, h]
+    (_h : n ≠ "__agg_order_by_placeholder__") : resolveName st locals n = resolve st locals n := rfl
 
-/-- The placeholder is minted fresh at `len()` in the current scope, whatever the scope holds, and
-never reads a local, the parent or the table. -/
-theorem resolveName_placeholder (st : St) (locals : List Env) :
-    ∃ v, resolveName st locals "__agg_order_by_placeholder__" =
-      .ok ({ st with cur := st.cur.insert (placeholderKey st.cur.length) v }, v) ∧
-      v.id = st.cur.length ∧ v.scope = st.depth ∧ v.name = some "__agg_order_by_placeholder__" := by
-  refine ⟨freshVar st.cur "__agg_order_by_placeholder__" .any st.depth, ?_, rfl, rfl, rfl⟩
-  simp [resolveName, freshVar]
+/-- …the old placeholder spelling included: a query that writes `` `__agg_order_by_placeholder__` ``
+reads an ordinary variable; it no longer mints a fresh one (#3011). -/
+theorem resolveName_placeholder_spelling (st : St) (locals : List Env) :
+    resolveName st locals "__agg_order_by_placeholder__" =
+      resolve st locals "__agg_order_by_placeholder__" := rfl
 
-/-- Under a fresh reserved key the placeholder keeps the table covering (the key is
-`__agg_placeholder_<len>`; `KeysFresh` for it is the hypothesis, as for the loop variables). -/
-theorem resolveName_placeholder_covers (st : St) (locals : List Env) (hc : st.cur.Covers)
-    (hk : st.cur.has (placeholderKey st.cur.length) = false) (st' : St) (v : Var)
-    (h : resolveName st locals "__agg_order_by_placeholder__" = .ok (st', v)) : st'.cur.Covers := by
-  simp only [resolveName, beq_self_eq_true, if_true, Except.ok.injEq, Prod.mk.injEq] at h
-  obtain ⟨rfl, rfl⟩ := h
-  exact mint_new_covers hc hk _ _ _
+/-- The `ExprIR::AggOrderByPlaceholder` arm of `bind_expr_node` (binder.rs, #3011): a fresh
+nameless variable at `len()` in the current scope, pushed to its unnamed list. -/
+def bindSlot (st : St) : St × Var :=
+  let v := freshSlot st.cur st.depth
+  ({ st with cur := st.cur.pushUnnamed v }, v)
+
+/-- The slot is minted fresh at `len()` in the current scope, whatever the scope holds, never
+reads a local, the parent or the table, has no name, and no name reaches it afterwards. -/
+theorem bindSlot_spec (st : St) :
+    (bindSlot st).1 = { st with cur := st.cur.pushUnnamed (bindSlot st).2 } ∧
+      (bindSlot st).2.id = st.cur.length ∧ (bindSlot st).2.scope = st.depth ∧
+      (bindSlot st).2.name = none ∧ (bindSlot st).2.ty = .any ∧
+      (bindSlot st).1.cur.length = st.cur.length + 1 ∧
+      ∀ n, (bindSlot st).1.cur.find? n = st.cur.find? n :=
+  ⟨rfl, rfl, rfl, rfl, rfl, Env.pushUnnamed_length _ _, fun n => Env.pushUnnamed_find _ _ n⟩
+
+/-- The slot keeps the table covering (no key to keep fresh: it is unnamed). -/
+theorem bindSlot_covers (st : St) (hc : st.cur.Covers) : (bindSlot st).1.cur.Covers :=
+  pushUnnamed_slot_covers hc _
 
 /-! ## `define_name_in_scope` and `ensure_type` -/
 

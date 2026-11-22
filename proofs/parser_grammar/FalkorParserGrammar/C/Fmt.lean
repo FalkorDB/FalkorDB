@@ -36,6 +36,7 @@ def fmtOp : EOp → String
   | .patComp => "pattern comp"
   | .shortest .. => "shortestPath()"
   | .pattern => "<pattern>"
+  | .aggSlot => "<aggregate order-by slot>"
   | .other _ => "?"
 
 theorem fmtOp_var (v : Nat) : fmtOp (.var v) = toString v := rfl

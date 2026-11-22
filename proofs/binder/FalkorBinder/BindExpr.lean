@@ -25,6 +25,8 @@ namespace FalkorBinder
 
 inductive NE
   | var (n : Name)
+  /-- `ExprIR::AggOrderByPlaceholder` (#3011): the slot the parser appends to an aggregate call -/
+  | aggSlot
   | quant (x : Name) (cs : List NE)
   | listComp (x : Name) (cs : List NE)
   | reduce (acc it : Name) (cs : List NE)
@@ -120,6 +122,7 @@ def bindNode (st : St) (locals : List Env) : NE → Except String (BE × St)
   | .var n => match resolve st locals n with
     | .ok (st', v) => .ok (.var v, st')
     | .error e => .error e
+  | .aggSlot => let r := bindSlot st; .ok (.var r.2, r.1)
   | .quant x cs => match cs with
     | c0 :: rest =>
       let r := reserve C st "_quant_" x
@@ -235,6 +238,11 @@ theorem bind_iterable_outer (st : St) (locals : List Env) (x : Name) (c0 : NE) (
   cases h0 : bindNode C (reserve C st "_lc_" x).1 locals c0 with
   | error e => rw [h0] at h; simp at h
   | ok p => exact ⟨p.1, p.2, rfl⟩
+
+/-- The aggregate order-by slot binds to a fresh nameless variable (`bindSlot_spec`), whatever
+the locals and the table hold: no alias, written or backquoted, can resolve to it (#3011). -/
+theorem bindNode_aggSlot (st : St) (locals : List Env) :
+    bindNode C st locals .aggSlot = .ok (.var (bindSlot st).2, (bindSlot st).1) := rfl
 
 theorem reduce_same_name (st : St) (locals : List Env) (a : Name) (cs : List NE) :
     bindNode C st locals (.reduce a a cs) = .error s!"Variable `{a}` already declared" := by
@@ -373,7 +381,7 @@ theorem reserve_frame (st : St) (p : String) (x : Name) :
 mutual
 def patFree : NE → Bool
   | .pattern _ | .patComp _ _ => false
-  | .var _ => true
+  | .var _ | .aggSlot => true
   | .quant _ cs | .listComp _ cs | .reduce _ _ cs | .prop _ cs | .func _ _ cs | .paren cs | .andOr _ cs
   | .other _ cs => patFreeL cs
 def patFreeL : List NE → Bool
@@ -408,6 +416,9 @@ theorem bindNode_covers (hk : KeysFresh C) : ∀ (st : St) (locals : List Env) (
     | ok p =>
       rw [hr] at h; simp at h; obtain ⟨-, rfl⟩ := h
       exact resolve_covers st locals n p.1 p.2 hc (find_none_has _ _) hr
+  | st, locals, .aggSlot, hc, _, b, st', h => by
+    simp only [bindNode, Except.ok.injEq, Prod.mk.injEq] at h
+    rw [← h.2]; exact bindSlot_covers st hc
   | st, locals, .quant x cs, hc, hp, b, st', h => by
     match cs, hp, h with
     | c0 :: rest, hp, h =>
@@ -617,7 +628,7 @@ mutual
 def selfRef (a : Name) : NE → Bool
   | .prop _ (.var n :: _) => n == a
   | .prop _ cs => selfRefL a cs
-  | .var _ | .pattern _ => false
+  | .var _ | .aggSlot | .pattern _ => false
   | .quant _ cs | .listComp _ cs | .reduce _ _ cs | .patComp _ cs | .func _ _ cs | .paren cs | .andOr _ cs
   | .other _ cs => selfRefL a cs
 def selfRefL (a : Name) : List NE → Bool
