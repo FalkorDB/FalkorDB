@@ -382,42 +382,31 @@ theorem merge_loop_correct (p : Nat) (m : Plan) (path : Option Nat) (mt : Rec V 
     rw [forRows_path, ev_merge_two S p m y mt hm r g]
     rfl
 
-/-- MERGE without a path is also correct as the last clause. -/
-theorem merge_first_correct (p : Nat) (m : Plan) (mt : Rec V → G → List (Rec V))
+/-- **MERGE (with or without a named path) is correct as the last clause**: since
+#3101 the first walk (mod.rs) steps over `PathBuilder` too, so the previous
+clause lands as `Merge`'s child 0 (before, it became `PathBuilder`'s child 0
+beside `Merge`, and the `Merge` never ran). -/
+theorem merge_first_correct (p : Nat) (m : Plan) (path : Option Nat) (mt : Rec V → G → List (Rec V))
     (hm : MatchBranch S m mt) (ok : Plan → Prop) (q y : Plan) (r : Rec V) (g : G) :
-    ev S (refill (planMerge p m none) (slotFirst (planMerge p m none)) q y) r g =
-      specMerge S p mt none (ev S y r g) := by
-  rw [show slotFirst (planMerge p m none) = slotWith walkFirst (.node (.merge p) [m]) from rfl,
-    show planMerge p m none = .node (.merge p) [m] from rfl,
-    refill_corr walkFirst goodWalk_first (.merge p) m q y rfl (by simp) rfl rfl]
-  exact ev_merge_two S p m y mt hm r g
-
-/-- **Bug (confirmed): MERGE with a named path as the last clause.** The first
-walk (mod.rs) stops at `PathBuilder`, so the previous clause becomes
-`PathBuilder`'s child 0 beside `Merge`: -/
-theorem merge_path_last_misplaced (p k : Nat) (m q y : Plan) :
-    refill (planMerge p m (some k)) (slotFirst (planMerge p m (some k))) q y =
-      .node (.pathBuilder k) [y, .node (.merge p) [m]] := by
-  have hslot : slotFirst (planMerge p m (some k)) = [] := by
-    show slotWith walkFirst (.node (.pathBuilder k) [.node (.merge p) [m]]) = []
-    unfold slotWith
-    simp only [walkFirst, firstPass, isApply, Bool.false_or,
-      projDescend]
-    exact descendClause_nil _ rfl
-  rw [hslot, show planMerge p m (some k) = .node (.pathBuilder k) [.node (.merge p) [m]] from rfl,
-    refill, insertStep_nonCP _ [] q _ _ rfl (by simp)]
-  rfl
-
-/-- …and `PathBuilder` only runs child 0 (runtime.rs, `children_to_recurse`
-`_` arm): the `Merge` never executes; the paths are built from the previous
-clause's rows, which do not bind the pattern (Rust: "Variable _anon_0 not
-found"). -/
-theorem merge_path_last_skips_merge (p k : Nat) (m q y : Plan) (r : Rec V) (g : G) :
-    ev S (refill (planMerge p m (some k)) (slotFirst (planMerge p m (some k))) q y) r g =
-      ((ev S y r g).1.map (S.path k), (ev S y r g).2) := by
-  rw [merge_path_last_misplaced]
-  show forRows (S.step (.pathBuilder k)) (ev S y r g).1 (ev S y r g).2 = _
-  exact forRows_path S k _
+    ev S (refill (planMerge p m path) (slotFirst (planMerge p m path)) q y) r g =
+      specMerge S p mt path (ev S y r g) := by
+  cases path with
+  | none =>
+    rw [show slotFirst (planMerge p m none) = slotWith walkFirst (.node (.merge p) [m]) from rfl,
+      show planMerge p m none = .node (.merge p) [m] from rfl,
+      refill_corr walkFirst goodWalk_first (.merge p) m q y rfl (by simp) rfl rfl]
+    exact ev_merge_two S p m y mt hm r g
+  | some k =>
+    have hs := slotWith_step walkFirst (.pathBuilder k) (steps_first _ rfl) (.node (.merge p) [m])
+    rw [show slotFirst (planMerge p m (some k)) =
+        slotWith walkFirst (.node (.pathBuilder k) [.node (.merge p) [m]]) from rfl, hs,
+      show planMerge p m (some k) = .node (.pathBuilder k) [.node (.merge p) [m]] from rfl,
+      refill_step _ _ _ q y (slotWith_valid _ walkFirst_valid _),
+      refill_corr walkFirst goodWalk_first (.merge p) m q y rfl (by simp) rfl rfl]
+    show forRows (S.step (.pathBuilder k)) (ev S (.node (.merge p) [y, m]) r g).1
+      (ev S (.node (.merge p) [y, m]) r g).2 = _
+    rw [forRows_path, ev_merge_two S p m y mt hm r g]
+    rfl
 
 /-! ### CREATE with a named path -/
 
@@ -457,39 +446,86 @@ theorem create_loop_correct (p : Nat) (path : Option Nat) (ok : Plan → Prop)
     rw [forRows_path, create_correct S walkLoop goodWalk_loop p ok q y r g hq]
     rfl
 
-/-- CREATE without a path is also correct as the last clause. -/
-theorem create_first_correct (p : Nat) (ok : Plan → Prop) (q y : Plan) (r : Rec V) (g : G)
-    (hq : ok q) :
-    ev S (refill (planCreate p none) (slotFirst (planCreate p none)) q y) r g =
-      specCreatePath S p none (ev S y r g) :=
-  create_correct S walkFirst goodWalk_first p ok q y r g hq
+/-- **CREATE (with or without a named path) is correct as the last clause**:
+since #3101 the first walk (mod.rs) steps over `PathBuilder`, so the input
+lands below `Create` (before, the #2829 regression: it became `PathBuilder`'s
+child 0 beside `Create`, which never ran). -/
+theorem create_first_correct (p : Nat) (path : Option Nat) (ok : Plan → Prop) (q y : Plan)
+    (r : Rec V) (g : G) (hq : ok q) :
+    ev S (refill (planCreate p path) (slotFirst (planCreate p path)) q y) r g =
+      specCreatePath S p path (ev S y r g) := by
+  cases path with
+  | none => exact create_correct S walkFirst goodWalk_first p ok q y r g hq
+  | some k =>
+    have hs := slotWith_step walkFirst (.pathBuilder k) (steps_first _ rfl) (.node (.create p) [])
+    rw [show slotFirst (planCreate p (some k)) =
+        slotWith walkFirst (.node (.pathBuilder k) [.node (.create p) []]) from rfl, hs,
+      show planCreate p (some k) = .node (.pathBuilder k) [.node (.create p) []] from rfl,
+      refill_step _ _ _ q y (slotWith_valid _ walkFirst_valid _)]
+    show forRows (S.step (.pathBuilder k))
+      (ev S (refill (.node (.create p) []) (slotWith walkFirst (.node (.create p) [])) q y) r g).1
+      (ev S (refill (.node (.create p) []) (slotWith walkFirst (.node (.create p) [])) q y) r g).2 = _
+    rw [forRows_path, create_correct S walkFirst goodWalk_first p ok q y r g hq]
+    rfl
 
-/-- **Bug (new with #2829): CREATE with a named path as the last clause** — the
-MERGE bug 1 shape. The first walk (mod.rs) does not step over
-`PathBuilder`, so the previous clause becomes `PathBuilder`'s child 0 beside
-`Create`: -/
-theorem create_path_last_misplaced (p k : Nat) (q y : Plan) :
-    refill (planCreate p (some k)) (slotFirst (planCreate p (some k))) q y =
-      .node (.pathBuilder k) [y, .node (.create p) []] := by
-  have hslot : slotFirst (planCreate p (some k)) = [] := by
-    show slotWith walkFirst (.node (.pathBuilder k) [.node (.create p) []]) = []
-    unfold slotWith
-    simp only [walkFirst, firstPass, isApply, Bool.false_or,
-      projDescend]
-    exact descendClause_nil _ rfl
-  rw [hslot, show planCreate p (some k) = .node (.pathBuilder k) [.node (.create p) []] from rfl,
-    refill, insertStep_nonCP _ [] q _ _ rfl (by simp)]
-  rfl
+/-! ### MERGE / CREATE with a named path as the last clause of a FOREACH body
 
-/-- …so the `Create` never runs (`PathBuilder` runs child 0 only, runtime.rs
-`children_to_recurse`): the path is built from the previous clause's rows, which
-do not bind the pattern. -/
-theorem create_path_last_skips_create (p k : Nat) (q y : Plan) (r : Rec V) (g : G) :
-    ev S (refill (planCreate p (some k)) (slotFirst (planCreate p (some k))) q y) r g =
-      ((ev S y r g).1.map (S.path k), (ev S y r g).2) := by
-  rw [create_path_last_misplaced]
-  show forRows (S.step (.pathBuilder k)) (ev S y r g).1 (ev S y r g).2 = _
-  exact forRows_path S k _
+The body stitch (`bodyStitch`, `plan`, mod.rs) steps over `PathBuilder` with
+`step_over_path_builder` (#3101), so the clause before lands below `Merge` /
+`Create`. -/
+
+theorem bodyStitch_two (y x : Plan) : bodyStitch [y, x] = insertAt x (slotBody x) y := by
+  simp [bodyStitch, bodyLoop]
+
+theorem slotBody_pathBuilder (k : Nat) (c : Plan) (h : descendOne c = []) :
+    slotBody (.node (.pathBuilder k) [c]) = [0] := by
+  unfold slotBody
+  simp only [stepOverPB, Plan.get, List.getElem?_cons_zero]
+  rw [descendClause_nil c h]; rfl
+
+theorem slotBody_plain (op : Op) (cs : List Plan) (hop : ∀ k, op ≠ .pathBuilder k)
+    (h : descendOne (.node op cs) = []) : slotBody (.node op cs) = [] := by
+  have hs : stepOverPB (.node op cs) = [] := by
+    cases op <;> simp_all [stepOverPB]
+  unfold slotBody
+  rw [hs]
+  simp only [Plan.get, List.nil_append]
+  exact descendClause_nil _ h
+
+theorem body_merge_correct (p : Nat) (m : Plan) (path : Option Nat)
+    (mt : Rec V → G → List (Rec V)) (hm : MatchBranch S m mt) (y : Plan) (r : Rec V) (g : G) :
+    ev S (bodyStitch [y, planMerge p m path]) r g = specMerge S p mt path (ev S y r g) := by
+  rw [bodyStitch_two]
+  cases path with
+  | none =>
+    rw [show planMerge p m none = .node (.merge p) [m] from rfl,
+      slotBody_plain _ _ (by simp) rfl]
+    show ev S (.node (.merge p) [y, m]) r g = _
+    exact ev_merge_two S p m y mt hm r g
+  | some k =>
+    rw [show planMerge p m (some k) = .node (.pathBuilder k) [.node (.merge p) [m]] from rfl,
+      slotBody_pathBuilder k _ rfl]
+    show forRows (S.step (.pathBuilder k)) (ev S (.node (.merge p) [y, m]) r g).1
+      (ev S (.node (.merge p) [y, m]) r g).2 = _
+    rw [forRows_path, ev_merge_two S p m y mt hm r g]
+    rfl
+
+theorem body_create_correct (p : Nat) (path : Option Nat) (y : Plan) (r : Rec V) (g : G) :
+    ev S (bodyStitch [y, planCreate p path]) r g = specCreatePath S p path (ev S y r g) := by
+  have hc : ev S (.node (.create p) [y]) r g = specCreate S p (ev S y r g) := rfl
+  rw [bodyStitch_two]
+  cases path with
+  | none =>
+    rw [show planCreate p none = .node (.create p) [] from rfl,
+      slotBody_plain _ _ (by simp) rfl]
+    exact hc
+  | some k =>
+    rw [show planCreate p (some k) = .node (.pathBuilder k) [.node (.create p) []] from rfl,
+      slotBody_pathBuilder k _ rfl]
+    show forRows (S.step (.pathBuilder k)) (ev S (.node (.create p) [y]) r g).1
+      (ev S (.node (.create p) [y]) r g).2 = _
+    rw [forRows_path, hc]
+    rfl
 
 /-- A sub-plan implementing a sub-query on one argument row. -/
 def Body (b : Plan) (sb : Rec V → G → Res V G) : Prop := ∀ row g, ev S b row g = sb row g

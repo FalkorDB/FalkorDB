@@ -27,7 +27,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 **2. Does each clause's plan implement that clause?**
 
 - **For every clause kind, yes, in the positions the proof covers.** Each theorem holds for *any* input plan placed at the clause's insertion point. The clause theorems are `unwind_correct`, `create_correct`, `set_correct`, `remove_correct`, `delete_correct`, `proc_correct`, `project_correct`, `foreach_correct`, `call_correct`, `unit_call_correct`, `optional_correct`, `optional_apply_correct`, `match_bound_correct`, `union_correct`, `merge_loop_correct`, `merge_first_correct`, `create_loop_correct` and `create_first_correct`.
-- **MERGE or CREATE with a named path as the last clause, no.** The first insertion-point walk does not step over `PathBuilder`, so `Merge`/`Create` never runs. `MATCH (a:A) MERGE p=(a)-[:T]->(x:X)` fails with "Variable ? not found"; C creates the edge (`merge_path_last_misplaced`, `create_path_last_misplaced`). Adding `RETURN …` after it works.
+- **MERGE or CREATE with a named path as the last clause, yes (since #3101).** Both insertion-point walks, and the FOREACH body walk (`step_over_path_builder`), step over `PathBuilder`, so the previous clause feeds `Merge`/`Create` (`merge_first_correct`, `create_first_correct`, `body_merge_correct`, `body_create_correct`).
 
 **3. Is a `MATCH … WHERE` correlated with the next `MATCH`?**
 
@@ -59,7 +59,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 | `rustStitch_eq_nestStitch` | The Rust stitching loop builds the nested fill of the clause plans | `Stitch.lean` |
 | `query_correct` | If every clause plan implements its clause, the whole plan evaluates to the openCypher clause sequence | `Match.lean` |
 | `project_correct` | WITH/RETURN (projection or aggregation, DISTINCT, ORDER BY, SKIP, LIMIT, WHERE) is correct at its slot | `Clauses.lean` |
-| `merge_loop_correct`, `create_loop_correct` | MERGE and CREATE, with or without a named path, are correct when not last | `Clauses.lean` |
+| `merge_loop_correct`, `create_loop_correct`, `merge_first_correct`, `create_first_correct` | MERGE and CREATE, with or without a named path, are correct in every position | `Clauses.lean` |
 | `union_correct`, `call_correct`, `foreach_correct` | UNION / UNION ALL, `CALL {}` and FOREACH are correct | `Clauses.lean` |
 | `cp_stitch_sound` | Prepending a MATCH to a Cartesian product is right when no other component reads its variables | `Match.lean` |
 | `toPlan_correct` | The SemiApply/AntiSemiApply/OrApplyMultiplexer/Filter tree keeps exactly the rows where WHERE is true (two-valued atoms) | `ToPlan.lean` |
@@ -84,9 +84,7 @@ Each bug was checked live, Rust release module vs C module, and has a Rust repro
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `merge_path_last_misplaced`, `merge_path_last_skips_merge` | MERGE with a named path as the last clause (of a query, a `CALL {}` body or a FOREACH body) never runs: "Variable ? not found" | **Open** (PR #3101 not merged; reconfirmed live 2026-11-22) |
 | 5 (W4-plan-1) | `toPlan_not_null_bug` | `NOT (complex)` with an inline pattern keeps null rows: Rust 2, C 1 | **Open** |
-| 8 (W8-plan-1) | `create_path_last_misplaced`, `create_path_last_skips_create` | Regression from #2829: CREATE with a named path as the last clause, after another clause, never runs | **Open** (PR #3101 not merged; covers bugs 1 and 8; reconfirmed live 2026-11-22) |
 | #2311 | `bug2311_optional_path_null` | `MATCH (n0:P) OPTIONAL MATCH p0=(n0) RETURN n0.id, p0`: Rust `1, null`, C `1, [(0)]`. The bound node-only branch never builds the path (`BindsAllPaths` fails) | **Open** |
 | #2737 | `bug2737_optional_path_null` | `MATCH (n1:X) OPTIONAL MATCH p6 = (n1) RETURN p6`: Rust `null`, C `[(0)]`. Same cause as #2311 | **Open** |
 | #2743 | `bug2743_bound_path_drops_rows` | `MATCH (n0:V) WITH * MATCH p0=(n0) RETURN count(*)`: Rust 0, C 1. No path, and the plan is not Apply-wrapped, so the earlier clauses land under an `Argument` that never runs them (`argIsLeaf` fails) | **Open** |
