@@ -191,6 +191,4 @@ graph/src/graph/schema.rs	hash	245	PROVEN	SchemaHash.schemaHash over the three N
 graph/src/graph/graph.rs	usize::from	201	NOT COVERED	(#3751): not modelled yet
 graph/src/graph/graph.rs	usize::from	207	NOT COVERED	(#3751): not modelled yet
 graph/src/graph/graph.rs	NodeId::from	213	NOT COVERED	(#3751): not modelled yet
-graph/src/graph/graph.rs	Graph::node_holds	4246	NOT COVERED	(#3751): not modelled yet
-graph/src/graph/graph.rs	Graph::relationship_holds	4259	NOT COVERED	(#3751): not modelled yet
 graph/src/graph/graph.rs	u64::from	219	NOT COVERED	(#3751): not modelled yet

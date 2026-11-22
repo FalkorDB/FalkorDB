@@ -379,17 +379,29 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertEqual(g.query(query).result_set, expected)
 
     def _build_while_writing(self, g, acked, create):
-        # Starts the build once the writer has had a mutation acknowledged and waits for it to
-        # finish; returns how many more were acknowledged in between, so a test can tell that
-        # writes really raced a build and did not run entirely before or after it.
+        # Starts the build once the writer has had a mutation acknowledged, polls until the index is
+        # operational, and returns how many mutations were acknowledged while the build was still
+        # running. `acked` holds the time each one was acknowledged. A build only goes from
+        # building to operational, so a poll issued at time t that finds it still building shows it
+        # was building at every time up to t: a mutation acknowledged by then committed during the
+        # build, not before CREATE INDEX returned and not in the sleep after the build finished.
         deadline = time.monotonic() + 60
         while not acked:
             self.env.assertLess(time.monotonic(), deadline, message="the writer made no progress")
             time.sleep(0.01)
         create()
-        before = len(acked)
-        wait_for_indices_to_sync(g, timeout=300)
-        return len(acked) - before
+        created = time.monotonic()
+        still_building = created
+        q = "CALL db.indexes() YIELD status WHERE status <> 'OPERATIONAL' RETURN count(1)"
+        deadline = created + 300
+        while True:
+            polled = time.monotonic()
+            if g.ro_query(q).result_set[0][0] == 0:
+                break
+            still_building = polled
+            self.env.assertLess(polled, deadline, message="the index was not operational in 300 s")
+            time.sleep(0.005)
+        return sum(1 for t in list(acked) if created < t <= still_building)
 
     def test14_concurrent_writes_during_index_population(self):
         # Writes that race background index population must not leave stale
@@ -398,7 +410,8 @@ class testIndexUpdatesFlow(FlowTestsBase):
         # to overwrite the writer's newer document with the old value.
         import threading
         g = self.db.select_graph('idx_pop_writes')
-        n = 200000
+        # Large enough that the build outlasts several of the writer's statements.
+        n = 2000000
         g.query("UNWIND range(0, $n - 1) AS k CREATE (:PW {k: k, v: 0})", {'n': n})
 
         overlapped = 0
@@ -415,11 +428,13 @@ class testIndexUpdatesFlow(FlowTestsBase):
                     while not stop.is_set():
                         # a fixed key space and a few distinct values keep the
                         # dataset and the index the same size in every round
-                        wg.query("MATCH (n:PW) WHERE n.k % 50 = $m SET n.v = (n.v + 1) % 8", {'m': i % 50})
+                        wg.query("MATCH (n:PW) WHERE id(n) = $id SET n.v = (n.v + 1) % 8", {'id': (i * 7919) % n})
+                        acked.append(time.monotonic())
                         k = i % 1000
                         wg.query("MATCH (n:PW {k: $k}) DELETE n", {'k': k})
+                        acked.append(time.monotonic())
                         wg.query("CREATE (:PW {k: $k, v: 0})", {'k': k})
-                        acked.append(i)
+                        acked.append(time.monotonic())
                         i += 1
                 except Exception as e:
                     errors.append(e)
@@ -454,8 +469,9 @@ class testIndexUpdatesFlow(FlowTestsBase):
         # later CREATE, so a stale or resurrected document is easy to leave.
         import threading
         g = self.db.select_graph('idx_pop_edge_writes')
-        n = 100000
-        g.query("UNWIND range(0, $n - 1) AS k CREATE (:PE)-[:PR {k: k, v: 0}]->(:PE)", {'n': n})
+        # Two nodes and many edges between them: the edge build is what has to outlast the writer.
+        n = 4000000
+        g.query("CREATE (a:PE), (b:PE) WITH a, b UNWIND range(0, $n - 1) AS k CREATE (a)-[:PR {k: k, v: 0}]->(b)", {'n': n})
 
         overlapped = 0
         for _ in range(3):
@@ -468,11 +484,13 @@ class testIndexUpdatesFlow(FlowTestsBase):
                     wg = _db_handle(self.env.host, self.env.port).select_graph('idx_pop_edge_writes')
                     i = 0
                     while not stop.is_set():
-                        wg.query("MATCH ()-[r:PR]->() WHERE r.k % 50 = $m SET r.v = (r.v + 1) % 8", {'m': i % 50})
+                        wg.query("MATCH ()-[r:PR]->() WHERE id(r) = $id SET r.v = (r.v + 1) % 8", {'id': (i * 7919) % n})
+                        acked.append(time.monotonic())
                         k = i % 1000
                         wg.query("MATCH ()-[r:PR {k: $k}]->() DELETE r", {'k': k})
+                        acked.append(time.monotonic())
                         wg.query("CREATE (:PE)-[:PR {k: $k, v: 0}]->(:PE)", {'k': k})
-                        acked.append(i)
+                        acked.append(time.monotonic())
                         i += 1
                 except Exception as e:
                     errors.append(e)
@@ -499,6 +517,72 @@ class testIndexUpdatesFlow(FlowTestsBase):
             drop_edge_range_index(g, 'PR', 'v')
         self.env.assertGreater(overlapped, 0, message="no write was acknowledged during a build")
         g.delete()
+
+    def test16_index_scan_sees_attributes_set_earlier_in_the_query(self):
+        # An index holds committed values, so a scan beginning after a SET of the same query must
+        # still find the entity by its new value, as a label scan does: MERGE must match it rather
+        # than create a duplicate. Each shape is compared with the same data and no index.
+        def run(name, indexed, create, setup_index, queries):
+            g = self.db.select_graph(name)
+            if indexed:
+                setup_index(g)
+            g.query(create)
+            results = [g.query(q).result_set for q in queries]
+            g.delete()
+            return results
+
+        node_queries = [
+            "MATCH (n:PS) SET n.v = 5 MERGE (m:PS {v: 5}) RETURN count(m)",
+            "MATCH (n:PS) RETURN count(n)",
+            "MATCH (n:PS) SET n.v = date('2020-01-01') MERGE (m:PS {v: date('2020-01-01')}) RETURN count(m)",
+            "MATCH (n:PS) RETURN count(n)",
+            "MATCH (n:PS) SET n.v = 7 WITH n MATCH (m:PS) WHERE m.v = 7 RETURN count(m)",
+            "MATCH (n:PS) SET n.v = 'x' WITH n MATCH (m:PS) WHERE m.v = 'x' RETURN count(m)",
+        ]
+        make = lambda g: create_node_range_index(g, 'PS', 'v', sync=True)
+        data = "CREATE (:PS {v: 0})"
+        expected = run('pending_scan_truth', False, data, make, node_queries)
+        actual = run('pending_scan_index', True, data, make, node_queries)
+        self.env.assertEqual(actual, expected)
+        self.env.assertEqual(expected[0], [[1]])
+        self.env.assertEqual(expected[1], [[1]])
+
+        edge_queries = [
+            "MATCH ()-[r:PR]->() SET r.v = 5 WITH r MATCH ()-[m:PR]->() WHERE m.v = 5 RETURN count(m)",
+            "MATCH (a)-[r:PR]->(b) SET r.v = 7 MERGE (a)-[m:PR {v: 7}]->(b) RETURN count(m)",
+            "MATCH ()-[r:PR]->() RETURN count(r)",
+        ]
+        make = lambda g: create_edge_range_index(g, 'PR', 'v', sync=True)
+        data = "CREATE (:PE)-[:PR {v: 0}]->(:PE)"
+        expected = run('pending_edge_scan_truth', False, data, make, edge_queries)
+        actual = run('pending_edge_scan_index', True, data, make, edge_queries)
+        self.env.assertEqual(actual, expected)
+        self.env.assertEqual(expected[2], [[1]])
+
+    def test17_invalid_distance_operand_raises_on_an_indexed_scan(self):
+        # A property `distance()` rejects must reach the filter that raises the type error, as it
+        # does without an index, even when another predicate of the query is answered by a scan
+        # that checks it itself (a date is not answered by an index lookup).
+        query = ("MATCH (n:PD) WHERE n.v = date('2020-01-01') "
+                 "AND distance(n.loc, point({latitude: 0, longitude: 0})) < 100 RETURN count(n)")
+        data = "CREATE (:PD {v: date('2020-01-01'), loc: 1})"
+
+        def outcome(name, indexed):
+            g = self.db.select_graph(name)
+            if indexed:
+                create_node_range_index(g, 'PD', 'v')
+                create_node_range_index(g, 'PD', 'loc', sync=True)
+            g.query(data)
+            try:
+                result = g.query(query).result_set
+            except ResponseError as e:
+                result = str(e)
+            g.delete()
+            return result
+
+        expected = outcome('distance_operand_truth', False)
+        self.env.assertContains("Type mismatch", str(expected))
+        self.env.assertEqual(outcome('distance_operand_index', True), expected)
 
 class testNativeOnlyFeedFlow(FlowTestsBase):
     # The native index is the only Range index, so nothing may also feed Range fields to

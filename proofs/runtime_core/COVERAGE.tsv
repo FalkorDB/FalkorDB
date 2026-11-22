@@ -63,3 +63,9 @@ graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loo
 graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)
+graph/src/runtime/runtime.rs	Runtime::has_pending_node_attrs	1608	NOT COVERED	(#3751): not modelled yet
+graph/src/runtime/runtime.rs	Runtime::has_pending_relationship_attrs	1614	NOT COVERED	(#3751): not modelled yet
+graph/src/runtime/runtime.rs	Runtime::resolve_node_query_attrs	1621	NOT COVERED	(#3751): not modelled yet
+graph/src/runtime/runtime.rs	Runtime::resolve_relationship_query_attrs	1638	NOT COVERED	(#3751): not modelled yet
+graph/src/runtime/runtime.rs	Runtime::node_holds	1656	NOT COVERED	(#3751): not modelled yet
+graph/src/runtime/runtime.rs	Runtime::relationship_holds	1675	NOT COVERED	(#3751): not modelled yet

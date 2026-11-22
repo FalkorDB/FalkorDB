@@ -217,6 +217,30 @@ pub enum IndexQuery<T> {
 }
 
 impl IndexQuery<Value> {
+    /// Every attribute name the query reads, so a scan can resolve each to its id once rather than
+    /// once per row.
+    pub fn keys(
+        &self,
+        out: &mut Vec<Arc<String>>,
+    ) {
+        match self {
+            Self::Equal { key, .. }
+            | Self::Range { key, .. }
+            | Self::Point { key, .. }
+            | Self::InList { key, .. }
+            | Self::ArrayContains { key, .. } => {
+                if !out.contains(key) {
+                    out.push(key.clone());
+                }
+            }
+            Self::And(children) | Self::Or(children) => {
+                for c in children {
+                    c.keys(out);
+                }
+            }
+        }
+    }
+
     /// Whether an entity whose attributes `get` reads satisfies this query, by the same rules the
     /// `Filter` it was pushed down from applies: Cypher `=`, `<`/`<=`, `IN` and `distance()`. A
     /// comparison that is `null` (a missing attribute, disjoint types, NaN) does not hold.
@@ -265,8 +289,13 @@ impl IndexQuery<Value> {
             Self::And(children) => children.iter().all(|c| c.holds(get)),
             Self::Or(children) => children.iter().any(|c| c.holds(get)),
             Self::Point { key, point, radius } => {
-                let (Some(Value::Point(v)), Value::Point(point)) = (get(key), point) else {
-                    return false;
+                // An operand `distance()` rejects (a property or a centre that is neither a
+                // point nor null) is kept, so the retained filter raises the type error an
+                // unindexed query does. A null, or a missing property, holds for nothing.
+                let (v, point) = match (get(key), point) {
+                    (Some(Value::Point(v)), Value::Point(point)) => (v, point),
+                    (Some(Value::Null) | None, _) | (_, Value::Null) => return false,
+                    _ => return true,
                 };
                 let radius = match radius {
                     Value::Int(r) => *r as f64,

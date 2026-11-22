@@ -225,7 +225,13 @@ impl KeySet {
         self,
         other: Self,
     ) -> Self {
-        let mut windows: Vec<(u64, u64)> = [self, other]
+        Self::or_all([self, other])
+    }
+
+    /// What any of `sets` selects, normalised once however many there are: uniting them one pair
+    /// at a time would rebuild and re-sort the accumulated windows per member.
+    pub fn or_all(sets: impl IntoIterator<Item = Self>) -> Self {
+        let mut windows: Vec<(u64, u64)> = sets
             .into_iter()
             .flat_map(|set| match set {
                 Self::Empty => Vec::new(),
@@ -777,6 +783,24 @@ mod tests {
     use super::*;
     use crate::index::IndexQuery;
     use std::iter::once;
+
+    /// Uniting many sets at once selects what folding the pairs does, in one normalisation: a left
+    /// fold over 4,000 equality members rebuilt the accumulated windows per member.
+    #[test]
+    fn or_all_matches_a_fold_of_pairs() {
+        let sets: Vec<KeySet> = (0..4000u64)
+            .map(|i| match i % 3 {
+                0 => KeySet::Point(i * 2),
+                1 => KeySet::Range(i * 2, i * 2 + 3),
+                _ => KeySet::of_keys(vec![i * 2, i * 2 + 9]),
+            })
+            .collect();
+        let all = KeySet::or_all(sets.clone());
+        let folded = sets.into_iter().fold(KeySet::Empty, KeySet::or);
+        for key in 0..8100 {
+            assert_eq!(all.contains(key), folded.contains(key), "key {key}");
+        }
+    }
 
     /// Every kind's encoded tuple lands in its own slot, geo included: `push` panicked on a
     /// geo tuple, so writing or building any point under the native index crashed the server.

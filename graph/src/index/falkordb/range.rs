@@ -207,15 +207,21 @@ impl Scalars {
             || GeoIndex::is_scalar_in(&self.geo, value)
     }
 
-    /// What either selects, kind by kind.
-    fn or(
-        self,
-        other: Self,
-    ) -> Self {
+    /// What any of `sets` selects, kind by kind, each kind united once: folding [`or`](Self::or)
+    /// over many members would re-normalise the accumulated keys per member.
+    fn or_all(sets: Vec<Self>) -> Self {
+        let mut numeric = Vec::with_capacity(sets.len());
+        let mut tag = Vec::with_capacity(sets.len());
+        let mut geo = Vec::with_capacity(sets.len());
+        for set in sets {
+            numeric.push(set.numeric);
+            tag.push(set.tag);
+            geo.push(set.geo);
+        }
         Self {
-            numeric: self.numeric.or(other.numeric),
-            tag: self.tag.or(other.tag),
-            geo: self.geo.or(other.geo),
+            numeric: KeySet::or_all(numeric),
+            tag: StrSel::or_all(tag),
+            geo: KeySet::or_all(geo),
         }
     }
 
@@ -464,14 +470,14 @@ impl Selection {
         if !on_one_attribute(members) {
             return None;
         }
-        let mut union = Scalars::none();
+        let mut sets = Vec::with_capacity(members.len());
         for &member in members {
             match Self::of(member)? {
-                Self::Scalars(scalars) => union = union.or(scalars),
+                Self::Scalars(scalars) => sets.push(scalars),
                 Self::ListsHolding { .. } => return None,
             }
         }
-        Some(Self::Scalars(union))
+        Some(Self::Scalars(Scalars::or_all(sets)))
     }
 
     /// A conjunction of predicates on **one** attribute: what every conjunct selects

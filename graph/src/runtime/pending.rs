@@ -1120,6 +1120,26 @@ impl Pending {
                 result.insert(node_id);
             }
         }
+        // A committed node whose attributes were set in this query: an index (and any scan that
+        // reads the committed graph) still sees its old values, so a lookup on the new ones
+        // misses it. It is enumerated here and the caller's filter, which reads the staged
+        // values, decides.
+        for &node_id in self.existing_nodes_attrs.keys() {
+            if self.deleted_nodes.contains(node_id) || result.contains(node_id) {
+                continue;
+            }
+            let removed = self.remove_labels.get(&node_id);
+            let staged = self.set_labels.get(&node_id);
+            let has_labels = label_ids.iter().all(|&label| {
+                let lid = usize::from(label) as u64;
+                staged.is_some_and(|s| s.contains(&lid))
+                    || (!removed.is_some_and(|r| r.contains(&lid))
+                        && g.node_has_label_id(NodeId::from(node_id), label))
+            });
+            if has_labels {
+                result.insert(node_id);
+            }
+        }
         result
     }
 

@@ -43,31 +43,34 @@ use super::versioned::IndexId;
 /// write call, so an entity under no indexed label costs a lookup here and nothing more. Without
 /// it every attribute of every written entity was hashed against the column map, which made
 /// writes to unindexed labels 25% dearer once any label had an index.
-struct Routed(Vec<bool>);
+///
+/// Built from the columns, not from the schema's names, so a write costs the number of indexed
+/// labels and not the number of labels the graph has.
+struct Routed(Vec<usize>);
 
 impl Routed {
     fn of(
         g: &Graph,
         entity: EntityType,
     ) -> Self {
-        let names = match entity {
-            EntityType::Node => g.get_labels(),
-            EntityType::Relationship => g.get_types(),
-        };
-        let indexed = g.falkordb_index.labels_with_columns(entity);
-        Self(
-            names
-                .iter()
-                .map(|name| indexed.contains(name.as_str()))
-                .collect(),
-        )
+        let mut ids: Vec<usize> = g
+            .falkordb_index
+            .labels_with_columns(entity)
+            .into_iter()
+            .filter_map(|name| match entity {
+                EntityType::Node => g.get_label_id(name).map(|id| id.0),
+                EntityType::Relationship => g.get_type_id(name).map(|id| id.0),
+            })
+            .collect();
+        ids.sort_unstable();
+        Self(ids)
     }
 
     fn has(
         &self,
         id: usize,
     ) -> bool {
-        self.0.get(id).copied().unwrap_or(false)
+        self.0.binary_search(&id).is_ok()
     }
 }
 

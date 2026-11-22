@@ -4239,34 +4239,6 @@ impl Graph {
         scan_filter.matches(|&attr| self.get_relationship_attribute_by_idx(id, attr))
     }
 
-    /// Whether node `id` satisfies `query`, read from its committed attributes: the check of a
-    /// scan standing in for an index scan whose query the native index declined
-    /// ([`IndexQuery::holds`]).
-    #[must_use]
-    pub fn node_holds(
-        &self,
-        id: NodeId,
-        query: &IndexQuery<Value>,
-    ) -> bool {
-        query.holds(&mut |attr| {
-            self.get_node_attribute_id(attr)
-                .and_then(|attr| self.get_node_attribute_by_idx(id, attr as u16))
-        })
-    }
-
-    /// [`Self::node_holds`] for relationship `id`.
-    #[must_use]
-    pub fn relationship_holds(
-        &self,
-        id: RelationshipId,
-        query: &IndexQuery<Value>,
-    ) -> bool {
-        query.holds(&mut |attr| {
-            self.get_relationship_attribute_id(attr)
-                .and_then(|attr| self.get_relationship_attribute_by_idx(id, attr as u16))
-        })
-    }
-
     /// The relationship counterpart of [`Self::is_indexed`].
     #[must_use]
     pub fn is_edge_indexed(

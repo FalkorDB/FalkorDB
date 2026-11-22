@@ -95,27 +95,32 @@ impl StrSel {
         self,
         other: Self,
     ) -> Self {
-        match (self, other) {
-            (a, b) if b.is_empty() => a,
-            (a, b) if a.is_empty() => b,
-            (Self::Set(mut a), Self::Set(b)) => {
-                a.extend(b);
-                Self::set(a)
-            }
-            (a, b) => {
-                let mut members = Vec::new();
-                #[allow(
-                    clippy::tuple_array_conversions,
-                    reason = "`a` and `b` were bound by the match arm above; this loop is one body for both"
-                )]
-                for side in [a, b] {
-                    match side {
-                        Self::Any(inner) => members.extend(inner),
-                        other => members.push(other),
-                    }
+        Self::or_all([self, other])
+    }
+
+    /// The strings any of `sets` selects, normalised once however many there are.
+    #[must_use]
+    pub fn or_all(sets: impl IntoIterator<Item = Self>) -> Self {
+        let sets: Vec<Self> = sets.into_iter().filter(|s| !s.is_empty()).collect();
+        if sets.iter().all(|s| matches!(s, Self::Set(_))) {
+            let mut all = Vec::new();
+            for set in sets {
+                if let Self::Set(strings) = set {
+                    all.extend(strings);
                 }
-                Self::Any(members)
             }
+            return Self::set(all);
+        }
+        let mut members = Vec::new();
+        for side in sets {
+            match side {
+                Self::Any(inner) => members.extend(inner),
+                other => members.push(other),
+            }
+        }
+        match members.len() {
+            1 => members.pop().expect("one member"),
+            _ => Self::Any(members),
         }
     }
 
