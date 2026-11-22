@@ -288,7 +288,6 @@ inductive NumConst : Val → Prop where
 
 theorem enum_le_eq (a b : ENum) : (ENum.lt a b || ENum.eq a b) = ENum.le a b := rfl
 
-set_option maxHeartbeats 4000000 in
 /-- Numeric ranges (any combination of open/closed/absent bounds, with at
 least one bound, as the optimizer builds them) are exact for every stored
 number: finite, NaN, and — since #3081 (`ff3d24ba7`) made an absent bound
@@ -311,24 +310,12 @@ theorem numRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
   rcases key mx hmx with rfl | ⟨b, rfl⟩ | ⟨b, rfl⟩ <;>
   rcases key (p k) hp with h | ⟨c, h⟩ | ⟨c, h⟩ <;>
   (try simp at hb) <;>
-  (try (rcases a with _ | a | _ | _)) <;> (try (rcases b with _ | b | _ | _)) <;>
-  (try (rcases c with _ | c | _ | _)) <;>
   cases imn <;> cases imx <;>
   simp [indexHit, buildQ, isStrVal, buildNumRange, valueToNumeric, hf, rsMatch, docOf, h,
-    setRange, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, inNum, ENum.le, ENum.lt, ENum.eq] <;>
+    setRange, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, inNum] <;>
+  (try (rcases a with _ | a | _ | _)) <;> (try (rcases b with _ | b | _ | _)) <;>
+  (try (rcases c with _ | c | _ | _)) <;>
+  simp [ENum.le, ENum.lt, ENum.eq] <;>
   omega
-
-/-- The pre-#3081 statement (finite or NaN stored numbers) is an instance. -/
-theorem numRange_exact_fin (fields : Attr → Bool) (p : Props) (k : Attr)
-    (mn mx : Option Val) (imn imx : Bool) (hf : fields k = true)
-    (hb : mn.isSome ∨ mx.isSome)
-    (hmn : ∀ v, mn = some v → NumConst v) (hmx : ∀ v, mx = some v → NumConst v)
-    (hp : ∀ v, p k = some v → FinNum v) :
-    indexHit fields p (.range k mn mx imn imx) = holds p (.range k mn mx imn imx) :=
-  numRange_exact fields p k mn mx imn imx hf hb hmn hmx (fun v hv => by
-    cases hp v hv with
-    | int i => exact .int i
-    | flt i => exact .flt _
-    | nan => exact .flt _)
 
 end IndexLayer

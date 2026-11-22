@@ -31,7 +31,7 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
     let mut collapsed = vec![];
     for idx in indices {
-        let (edge_id, edge_scope_id, flag) = match plan.node(idx).data() {
+        let (edge, flag) = match plan.node(idx).data() {
             IR::ExpandInto {
                 emit_relationship: true,
                 relationship,
@@ -42,8 +42,7 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
                 relationship,
                 ..
             } => (
-                relationship.alias.id,
-                relationship.alias.scope_id,
+                relationship.alias.key(),
                 match relationship.types.len() {
                     0 => Some(COLLAPSED_SIBLING_ANY_TYPE),
                     1 => Some(COLLAPSED_SIBLING),
@@ -57,7 +56,7 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), edge_id, edge_scope_id) {
+            if ir_references_variable(parent.data(), edge) {
                 referenced = true;
                 break;
             }
@@ -77,8 +76,8 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
                 _ => {}
             }
             collapsed.push(Collapsed {
-                edge_id,
-                edge_scope_id,
+                edge_id: edge.id,
+                edge_scope_id: edge.scope_id,
                 flag,
                 branch: branch_root(plan, idx),
             });

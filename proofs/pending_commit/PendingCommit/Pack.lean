@@ -2,7 +2,7 @@ import Std.Tactic.BVDecide
 /-
 # Packed entries and the block heap: `pack_value` / `unpack` / free list
 
-attribute_store.rs:256-300 (`Tag`, `PackedAttr`, `heap_index`) and the
+attribute_store.rs (`Tag`, `PackedAttr`, `heap_index`) and the
 `Block` methods :430-532. A stored value is a 12-byte `(id u16, tag u8,
 [u8; 8])`; scalars are their little-endian bytes, everything else (`String`,
 `List`, `VecF32`, `Map`, …: `V.other`) goes to the block's `heap` and the
@@ -300,11 +300,11 @@ theorem store_get (arena : List PA) (index : Nat) (e : PA) (h : index ≤ arena.
       · rfl
       · rename_i hge
         have : j - arena.length ≠ 0 := by omega
-        simp [List.getElem?_singleton, this, List.getElem?_eq_none (by omega : arena.length ≤ j)]
+        simp [this, List.getElem?_eq_none (by omega : arena.length ≤ j)]
   · rename_i hne
     refine ⟨?_, by simp <;> omega⟩
     by_cases hj : j = index
-    · subst hj; simp [List.getElem?_set, show j < arena.length by omega]
+    · subst hj; simp [show j < arena.length by omega]
     · simp [hj, List.getElem?_set_ne (Ne.symm hj)]
 
 /-! ## `compact`'s heap remap (:806-816) -/
@@ -393,8 +393,8 @@ theorem foldl_cost (sizeV : Nat) (amort : V → Nat) (H : Heap) : ∀ (es : List
     simp only [List.foldl_cons]
     rw [foldl_cost sizeV amort H es]
     by_cases h : e.1 = .heap
-    · simp [heapCost, h, List.filter_cons]; omega
-    · simp [heapCost, h, List.filter_cons]
+    · simp [heapCost, h]; omega
+    · simp [heapCost, h]
 
 /-- **`heapBytes_eq`**: an entity's bytes are its 12-byte entries plus, for each
 heap entry, one `Value` slot and the value's amortized payload. -/

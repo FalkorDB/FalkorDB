@@ -870,6 +870,42 @@ class testIndexCreationFlow():
         self.env.assertEqual(result.indices_created, 1)
         self.env.assertEqual(result.labels_added, 1)
 
+    def test20_failed_fulltext_create_does_not_leak(self):
+        # A fulltext CREATE refused while building the RediSearch index
+        # (unsupported language, NUL byte in a stopword) must free the
+        # options block it allocated: ~56 bytes per statement leaked before.
+        conn = self.env.getConnection()
+        graph = self.db.select_graph("failed_fulltext_create_leak")
+        try:
+            graph.query("CREATE (:L {s:'a'})")
+            n = 10000
+            cases = [
+                ("CREATE FULLTEXT INDEX FOR (n:L) ON (n.s) OPTIONS {language:'klingon'}",
+                 "Language is not supported"),
+                ("CREATE FULLTEXT INDEX FOR (n:L) ON (n.s) OPTIONS {stopwords:['a\\u0000b']}",
+                 "nul byte"),
+            ]
+            for q, expected in cases:
+                def run(times):
+                    for _ in range(times):
+                        try:
+                            graph.query(q)
+                            self.env.assertTrue(False, message=q)
+                        except ResponseError as e:
+                            # Refused by design; only what the refusal leaves
+                            # behind is measured, and it must be this refusal.
+                            if expected not in str(e):
+                                self.env.assertTrue(False, message=f"{q}: {e}")
+                                return
+                run(100)  # warm up
+                before = conn.info('memory')['used_memory']
+                run(n)
+                grown = conn.info('memory')['used_memory'] - before
+                # the leak alone was ~560 KB here; allow for allocator noise
+                self.env.assertLess(grown, 200_000, message=q)
+        finally:
+            graph.delete()
+
     def test19_index_options_validation(self):
         # index OPTIONS are validated like C: a vector index needs a dimension
         # and a similarity function (matched case-insensitively), and a
@@ -884,6 +920,12 @@ class testIndexCreationFlow():
             ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {similarityFunction:'euclidean'}",
              "Invalid vector index configuration"),
             ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:2}",
+             "Invalid vector index configuration"),
+            # an unknown similarity function is refused whatever the
+            # dimension, including 0 (an index no vector can enter)
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:2, similarityFunction:'bogus'}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:0, similarityFunction:'bogus'}",
              "Invalid vector index configuration"),
             ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {foo:1}",
              "unknown option 'foo'"),
@@ -902,6 +944,12 @@ class testIndexCreationFlow():
         res = graph.query("CREATE VECTOR INDEX FOR (n:C) ON (n.v) OPTIONS {dimension:2, similarityFunction:'COSINE'}")
         self.env.assertEqual(res.indices_created, 1)
         res = graph.query("CREATE FULLTEXT INDEX FOR (n:D) ON (n.t) OPTIONS {weight:2, nostem:true}")
+        self.env.assertEqual(res.indices_created, 1)
+        # `ip` (inner product) is accepted, a Rust extension over C
+        res = graph.query("CREATE VECTOR INDEX FOR (n:F) ON (n.v) OPTIONS {dimension:2, similarityFunction:'ip'}")
+        self.env.assertEqual(res.indices_created, 1)
+        # dimension 0 is accepted, as in C
+        res = graph.query("CREATE VECTOR INDEX FOR (n:E) ON (n.v) OPTIONS {dimension:0, similarityFunction:'cosine'}")
         self.env.assertEqual(res.indices_created, 1)
 
         # the similarity function is stored normalized

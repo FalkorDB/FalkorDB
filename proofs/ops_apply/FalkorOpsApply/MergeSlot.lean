@@ -1,42 +1,32 @@
 import FalkorOpsApply.Ctors
 /-
-# MERGE reads a value-only slot as its node (gap closed 2026-10-20; #3368, #3369)
+# MERGE reads a value-only slot as its node (gap closed 2026-10-20; #3368)
 
 `Merge.lean` treats the merged variable as a clause-level constant (`Clause.var`) and the
 pattern hash as the property key alone, so the row the MERGE receives never influenced the
 outcome. Two details of `MergeOp` at fb3d516d0 were outside the model:
 
-* the row is a dense value vector plus a bound bitset (row.rs:65-72); a slot whose column is
-  "value-present-but-unbound" (batch.rs:631-640 `push_row`, :763-778 `finish`) is rebuilt by
-  `to_owned_row` (batch.rs:1431-1442) as stored-but-unbound (`insert_by_id` then
-  `unbind_by_id`, row.rs:113-123, :222-227);
-* `compute_merge_pattern_hash` asks `vars.get_by_id(node.alias.id)` (merge.rs:193), which reads
-  the stored value whatever the bound bit says (row.rs:128-133). A present value — any value,
+* the row is a dense value vector plus a bound bitset (row.rs); a slot whose column is
+  "value-present-but-unbound" (batch.rs `push_row`, :763-778 `finish`) is rebuilt by
+  `to_owned_row` (batch.rs) as stored-but-unbound (`insert_by_id` then
+  `unbind_by_id`, row.rs);
+* `compute_merge_pattern_hash` asks `vars.get_by_id(node.alias.id)` (merge.rs), which reads
+  the stored value whatever the bound bit says (row.rs). A present value — any value,
   not only a node — replaces the label and property tokens (`Ctors.nodeToks_bound`). On a
-  no-match row `do_create_fallback` (merge.rs:117-182) looks that hash up in the query-wide
+  no-match row `do_create_fallback` (merge.rs) looks that hash up in the query-wide
   `merge_pattern_cache` and, on a hit, re-inserts the cached `(var id, value)` pairs
-  (merge.rs:126-131) — the ids of whichever MERGE created the entry.
+  (merge.rs) — the ids of whichever MERGE created the entry.
 
 The match sub-plan itself is not affected: the binder knows the variable is new, so it plans
 a label scan that writes the slot and never reads it (live: `OPTIONAL MATCH (c:C {id: …})`
 returns null in the same position, #3368). `MergeOp::next`'s all-bound shortcut
-(merge.rs:378-393) uses `is_bound_by_id` and is only reached when matches exist.
+(merge.rs) uses `is_bound_by_id` and is only reached when matches exist.
 
 Where does a value-only slot at a MERGE variable's id come from?  ops_aggregate
 `FalkorAggOps.AggPlan.bug3368_count_acc_in_merge_slot` / `bug3369_count_acc_in_merge_slot`
 (property `EmitsOnlyScope`): a keyless `count(*)` over a 2-variable scope leaves its
 accumulator, unbound but present, at slot 2; `WITH c0, count(*) AS c1` over `c0, r1, b` leaves
 it at slot 3. That row shape is restated here (`row2`, `row3_68`, `row3_69`), not imported.
-
-| here | there |
-| --- | --- |
-| `MV`, `Row`, `Row.get`, `Row.isBound`, `Row.insert`, `Row.unbind` | `Value`, `Row` (row.rs:65), `get_by_id` (:128), `is_bound_by_id` (:199), `insert_by_id` (:113), `unbind_by_id` (:222) |
-| `Cell`, `Row.ofCells` | a columnar batch row (`Column::Unbound` / bound / `value_only`) and `BatchRow::to_owned_row` (batch.rs:1431) |
-| `MClause`, `nodeOf`, `attrsOf` | a one-node pattern `MERGE (v:L {id: r.id})` |
-| `rustKey` | `compute_merge_pattern_hash` (merge.rs:184-252) = `Ctors.mergeHashInput` with `get := Row.get` (FxHash taken as injective on token streams; collisions are FINDINGS 6) |
-| `fixKey` | the same with `get` returning a value only for a slot bound to a node |
-| `matchK` | the match sub-plan (`run_batch(merge_child_idx)`, merge.rs:260-297, `match_all`): label scan + property filter |
-| `mergeRowK` | one input row of `MergeOp::next` (merge.rs:350-437) with `do_create_fallback` (merge.rs:117-182) |
 
 Properties a fix should prove: `KeyFromBoundNodeOnly` (MERGE takes a pattern variable as given
 only when the row binds it to a node) and `MergeBindsOwnNode` (after MERGE the variable is bound
@@ -59,7 +49,7 @@ inductive MV where
   | node (id : Nat)
   deriving DecidableEq, Repr
 
-/-- `Row`: dense values (`Null`-padded) + bound bits (row.rs:65-72). -/
+/-- `Row`: dense values (`Null`-padded) + bound bits (row.rs). -/
 structure Row where
   vals : List MV
   bnd : List Bool
@@ -67,7 +57,7 @@ structure Row where
 
 def Row.empty : Row := ⟨[], []⟩
 
-/-- `get_by_id` (row.rs:128-133): the stored value, bound or not; `none` only out of range. -/
+/-- `get_by_id` (row.rs): the stored value, bound or not; `none` only out of range. -/
 def Row.get (r : Row) (i : Nat) : Option MV := r.vals[i]?
 
 /-- `is_bound_by_id`. -/
@@ -75,11 +65,11 @@ def Row.isBound (r : Row) (i : Nat) : Bool := (r.bnd[i]?).getD false
 
 def pad {β : Type} (l : List β) (n : Nat) (d : β) : List β := l ++ List.replicate (n - l.length) d
 
-/-- `insert_by_id` (row.rs:113-123): grow with `Null`, store, set the bound bit. -/
+/-- `insert_by_id` (row.rs): grow with `Null`, store, set the bound bit. -/
 def Row.insert (r : Row) (i : Nat) (v : MV) : Row :=
   ⟨(pad r.vals (i + 1) .null).set i v, (pad r.bnd (i + 1) false).set i true⟩
 
-/-- `unbind_by_id` (row.rs:222-227): clear the bit, keep the value. -/
+/-- `unbind_by_id` (row.rs): clear the bit, keep the value. -/
 def Row.unbind (r : Row) (i : Nat) : Row := ⟨r.vals, r.bnd.set i false⟩
 
 /-- One column of a batch row: `Column::Unbound`, a bound value, or a `value_only` value. -/
@@ -88,16 +78,66 @@ inductive Cell where
   | bound (v : MV)
   | valueOnly (v : MV)
 
-/-- `BatchRow::to_owned_row` (batch.rs:1431-1442). -/
-def Row.ofCellsGo : Nat → List Cell → Row → Row
-  | _, [], r => r
-  | i, .unbound :: cs, r => Row.ofCellsGo (i + 1) cs r
-  | i, .bound v :: cs, r => Row.ofCellsGo (i + 1) cs (r.insert i v)
-  | i, .valueOnly v :: cs, r => Row.ofCellsGo (i + 1) cs ((r.insert i v).unbind i)
+/-- `Row::push_slot` (row.rs:`push_slot`): append one slot holding `v`, with the bound bit `b`. -/
+def Row.pushSlot (r : Row) (v : MV) (b : Bool) : Row := ⟨r.vals ++ [v], r.bnd ++ [b]⟩
 
-def Row.ofCells (cs : List Cell) : Row := Row.ofCellsGo 0 cs Row.empty
+/-- `BatchRow::to_owned_row` (batch.rs, since #3059): one slot per column, in order. An
+`Unbound` column stays in scope as an unbound `Null` (trailing ones included); a bound column is a
+bound value; a `value_only` column keeps its value with the bound bit cleared. -/
+def Row.ofCellsGo : List Cell → Row → Row
+  | [], r => r
+  | .unbound :: cs, r => Row.ofCellsGo cs (r.pushSlot .null false)
+  | .bound v :: cs, r => Row.ofCellsGo cs (r.pushSlot v true)
+  | .valueOnly v :: cs, r => Row.ofCellsGo cs (r.pushSlot v false)
 
-/-- What `push_row` makes of slot `i` for the next operator / the reply (batch.rs:631-640):
+def Row.ofCells (cs : List Cell) : Row := Row.ofCellsGo cs Row.empty
+
+/-- The value a cell stores: an `Unbound` column stores `Null`. -/
+def Cell.val : Cell → MV
+  | .unbound => .null
+  | .bound v => v
+  | .valueOnly v => v
+
+/-- The bound bit of a cell: only a bound column binds. -/
+def Cell.isB : Cell → Bool
+  | .bound _ => true
+  | _ => false
+
+theorem ofCellsGo_cols (cs : List Cell) : ∀ r : Row,
+    (Row.ofCellsGo cs r).vals = r.vals ++ cs.map Cell.val ∧
+    (Row.ofCellsGo cs r).bnd = r.bnd ++ cs.map Cell.isB := by
+  induction cs with
+  | nil => intro r; simp [Row.ofCellsGo]
+  | cons c cs ih =>
+    intro r
+    cases c <;> simp [Row.ofCellsGo, Row.pushSlot, Cell.val, Cell.isB, (ih _).1, (ih _).2]
+
+/-- **PROVEN** (`BatchRow::to_owned_row`, batch.rs): the owned row has exactly one slot per
+column of the batch row, each holding the cell's value (`Null` for an `Unbound` column) with the
+bound bit set only for a bound column. A `value_only` column keeps its value unbound; trailing
+`Unbound` columns stay in scope (`get` is `some Null`, not out of range; #3059). -/
+theorem ofCells_vals (cs : List Cell) : (Row.ofCells cs).vals = cs.map Cell.val := by
+  have := (ofCellsGo_cols cs Row.empty).1
+  simpa [Row.ofCells, Row.empty] using this
+
+theorem ofCells_bnd (cs : List Cell) : (Row.ofCells cs).bnd = cs.map Cell.isB := by
+  have := (ofCellsGo_cols cs Row.empty).2
+  simpa [Row.ofCells, Row.empty] using this
+
+theorem ofCells_slot (cs : List Cell) (i : Nat) (h : i < cs.length) :
+    (Row.ofCells cs).get i = some (cs[i]).val ∧ (Row.ofCells cs).isBound i = (cs[i]).isB := by
+  simp [Row.get, Row.isBound, ofCells_vals, ofCells_bnd, List.getElem?_map, h]
+
+theorem ofCells_length (cs : List Cell) : (Row.ofCells cs).vals.length = cs.length := by
+  simp [ofCells_vals]
+
+/-- A trailing `Unbound` column is in scope as an unbound `Null`. -/
+theorem ofCells_trailing_unbound (v : MV) :
+    (Row.ofCells [.bound v, .unbound]).get 1 = some .null ∧
+    (Row.ofCells [.bound v, .unbound]).isBound 1 = false := by
+  simpa [Cell.val, Cell.isB] using ofCells_slot [.bound v, .unbound] 1 (by simp)
+
+/-- What `push_row` makes of slot `i` for the next operator / the reply (batch.rs):
 bound ⇒ the value; unbound but non-null ⇒ the value (`value_only`); otherwise absent. -/
 def Row.read (r : Row) (i : Nat) : Option MV :=
   match r.get i with
@@ -135,9 +175,6 @@ structure MClause where
   /-- plan index of this MERGE operator (`MergeOp::idx`): the cache key's first half since #3050 -/
   op : Nat
 
-/-- The cache as it was before #3050: one key space for every MERGE of the query. -/
-def MClause.erase (cl : MClause) : MClause := { cl with op := 0 }
-
 /-- `{id: r.id}` evaluated on the row (`r` = the map at slot `src`). -/
 def MClause.attr (cl : MClause) (r : Row) : MV :=
   match r.get cl.src with
@@ -154,7 +191,7 @@ def nodeOf (cl : MClause) : PNode Nat Unit := ⟨cl.var, [cl.label], ()⟩
 
 abbrev Key := Except String (List (Tok MV Nat Unit))
 
-/-- `compute_merge_pattern_hash` on main: `get_by_id`, bound or not (merge.rs:193). -/
+/-- `compute_merge_pattern_hash` on main: `get_by_id`, bound or not (merge.rs). -/
 def rustKey (cl : MClause) (r : Row) : Key :=
   mergeHashInput (T := Unit) r.get (attrsOf cl r) [nodeOf cl] []
 
@@ -210,8 +247,8 @@ structure St where
 def matchK (g : Graph) (cl : MClause) (r : Row) : List GNode :=
   g.filter (fun n => n.label == cl.label && n.attr == cl.attr r)
 
-/-- One input row of `MergeOp::next` without SET (merge.rs:350-437): matches ⇒ one output per
-match with the variable bound; none ⇒ `do_create_fallback` (merge.rs:117-182). -/
+/-- One input row of `MergeOp::next` without SET (merge.rs): matches ⇒ one output per
+match with the variable bound; none ⇒ `do_create_fallback` (merge.rs). -/
 def mergeRowK (key : MClause → Row → Key) (cl : MClause) (st : St) (r : Row) :
     Except String (St × List Row) :=
   match matchK st.g cl r with
@@ -285,8 +322,7 @@ theorem fixKey_from_bound_node (cl : MClause) (r : Row) : KeyFromBoundNodeOnly f
         split at hv <;> simp [bind, Except.bind, pure, Except.pure, firstNull, keyVal] at hv
 
 /-- The cache entries a fixed MERGE can hit for this clause's label point at one of this
-clause's nodes (true of a per-clause cache, C's `unique_entities`; the cross-clause sharing is
-the separate `Merge.cross_clause_unbound`). -/
+clause's nodes (true of a per-clause cache, C's `unique_entities`). -/
 def CacheOK (cl : MClause) (st : St) : Prop :=
   ∀ r k pairs, k = fixKey cl r → r.isBound cl.var = false → lookup st.cache (cl.op, k) = some pairs →
     ∃ n ∈ st.g, pairs = [(cl.var, .node n.id)] ∧ n.label = cl.label ∧ n.attr = cl.attr r
@@ -346,14 +382,13 @@ def row3_69 (acc : MV) : Row :=
   Row.ofCells [.bound (.int 1), .bound (.int 1), .bound (.map 12), .valueOnly acc]
 
 /-- Run segments 1 and 2, then the last MERGE on `last`; returns (final state, last outputs). -/
-def run (shared : Bool) (key : MClause → Row → Key) (acc1 : MV) (cl : MClause) (last : Row) :
+def run (key : MClause → Row → Key) (acc1 : MV) (cl : MClause) (last : Row) :
     Except String (St × List Row) :=
-  let adj : MClause → MClause := if shared then MClause.erase else id
-  match mergeRows key (adj clA) st0 [row1] with
+  match mergeRows key clA st0 [row1] with
   | .error e => .error e
-  | .ok (s1, _) => match mergeRows key (adj clB) s1 [row2 acc1] with
+  | .ok (s1, _) => match mergeRows key clB s1 [row2 acc1] with
     | .error e => .error e
-    | .ok (s2, _) => mergeRows key (adj cl) s2 [last]
+    | .ok (s2, _) => mergeRows key cl s2 [last]
 
 def outVar (res : Except String (St × List Row)) (i : Nat) : Option (Option MV) :=
   match res with
@@ -365,30 +400,15 @@ def nodes (res : Except String (St × List Row)) : Option Graph :=
   | .ok (s, _) => some s.g
   | _ => none
 
-/-- The state the last MERGE starts from (after segments 1 and 2). -/
-def before (shared : Bool) (key : MClause → Row → Key) (acc1 : MV) : St :=
-  let adj : MClause → MClause := if shared then MClause.erase else id
-  match mergeRows key (adj clA) st0 [row1] with
-  | .ok (s1, _) => match mergeRows key (adj clB) s1 [row2 acc1] with
-    | .ok (s2, _) => s2
-    | .error _ => st0
-  | .error _ => st0
-
-/-! ### #3368 -/
-
-/-! ### #3369 -/
-
-/-! ## On main (#3050 keys the cache by `(operator idx, hash)`) -/
-
 /-- **#3368 and #3369 as filed no longer reproduce on main.**  `b`'s and `c`'s MERGEs are
 different operators, so `c`'s lookup of `(op c, hash Int 1)` misses `b`'s entry
 `(op b, hash Int 1)`: `c` gets its own new node (id 2, three nodes), even with the
 unchanged `rustKey`. Model only: the live repros were not re-run on main. -/
 theorem bug3368_filed_repro_fixed_by_3050 :
-    outVar (run false rustKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
-    nodes (run false rustKey (.int 1) clC68 (row3_68 (.int 1))) =
+    outVar (run rustKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
+    nodes (run rustKey (.int 1) clC68 (row3_68 (.int 1))) =
       some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩, ⟨2, 2, .str 12⟩] ∧
-    outVar (run false rustKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) := by
+    outVar (run rustKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) := by
   decide
 
 /-- Segment 2's MERGE input for a second `UNWIND` element (`{id:'b2'}` = 13): the same

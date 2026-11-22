@@ -2,7 +2,8 @@
 members = [
     "graph",
     "fuzz",
-    "runtime-fuzz-target", ]
+    "runtime-fuzz-target",
+    "fuzz-support", ]
 # native-deps is its own workspace: graph/build.rs uses it as a build-dependency,
 # so it must not inherit this workspace's RUSTFLAGS/target (e.g. an ASAN build).
 exclude = ["native-deps"]
@@ -25,7 +26,7 @@ name = "falkordb-rs"
 version = "99.99.99"
 edition = "2024"
 description = "Graph database"
-license = "SSPL-1.0"
+license = "SSPL-1.0 OR AGPL-3.0-only"
 repository = "https://github.com/FalkorDB/FalkorDB"
 readme = "README.md"
 keywords = ["graph", "database"]
@@ -47,9 +48,7 @@ graph = { path = "graph", version = "0.1.0" }
 lazy_static = "1.5.0"
 libc = "0.2"
 parking_lot = { version = "0.13.0", features = ["arc_lock"] }
-# valkey-io/valkeymodule-rs#254 (UTF-8 in RESP simple strings and errors), merged
-# 2026-11-03; no crates.io release includes it yet (0.1.15 predates it).
-valkey-module = { git = "https://github.com/valkey-io/valkeymodule-rs", rev = "e4df023371ad4a5f532ef88407847f2bde287482", features = ["use-redismodule-api"] }
+valkey-module = { version = "0.2.0", features = ["use-redismodule-api"] }
 # Pinned exactly, not caret-matched. Two engines have to serialize the same
 # ids to the same bytes (#2698), and roaring's output is not stable across
 # releases by contract: `optimize()` is path-dependent, and the container

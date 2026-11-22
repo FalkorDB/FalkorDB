@@ -164,6 +164,54 @@ def _ci_tmpdir():
     return p
 
 
+# ──── A server of the test's own (local runs only) ─────────────────────────
+#
+# For what RLTest's Env cannot show: a server that refuses to start. These run
+# the binary and module RLTest uses, so they need them on this machine: skip
+# the test under FALKORDB_TEST_IMAGE, where both live in a container.
+
+def start_local_server(workdir, *server_args, module_args=(), listen=False):
+    """Start a server with the module, `workdir` as its --dir, logging to
+    `workdir`/server.log. Return (process, log path).
+
+    Without `listen` it has no port, so it exits once the module is loaded,
+    before reading any RDB file; with it, it listens on a free local port and
+    goes on to load `workdir`/dump.rdb, if there is one."""
+    module = Defaults.module
+    if isinstance(module, (list, tuple)):
+        module = module[0]
+    port = 0
+    if listen:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+    log = os.path.join(workdir, "server.log")
+    cmd = [Defaults.binary, "--port", str(port), "--bind", "127.0.0.1",
+           "--dir", workdir, "--dbfilename", "dump.rdb", "--logfile", log,
+           *server_args, "--loadmodule", module, *module_args]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return proc, log
+
+
+def wait_for_exit(proc, timeout):
+    """The exit code of a `start_local_server` process, or None if it was still
+    running after `timeout` seconds (it is then killed)."""
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return None
+
+
+def read_log(log):
+    """The text of a `start_local_server` log, or '' before there is one."""
+    if not os.path.exists(log):
+        return ""
+    with open(log) as f:
+        return f.read()
+
+
 def _job_network():
     """The docker network the GHA job container is attached to.
     Spawned containers join this network so the job container can resolve
