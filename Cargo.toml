@@ -23,7 +23,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 
 [package]
 name = "falkordb-rs"
-version = "99.99.99"
+version = "6.2.0"
 edition = "2024"
 description = "Graph database"
 license = "SSPL-1.0 OR AGPL-3.0-only"
