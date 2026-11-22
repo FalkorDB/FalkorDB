@@ -243,12 +243,14 @@ fn pack(groups: Vec<Group>) -> Vec<StrLeaf> {
     if chunks.len() >= 2 && underfull_groups(chunks.last().expect("two chunks")) {
         let b = chunks.pop().expect("two chunks");
         let a = chunks.pop().expect("two chunks");
-        let both = concat_groups(a, b);
-        let total: usize = both.iter().map(|g| g.docs.len()).sum();
-        let (l, r) = split_groups(both, total / 2);
-        chunks.push(l);
-        if !r.is_empty() {
+        // Share the tuples evenly if both halves stay within the page budget; otherwise keep the
+        // partition as it was.
+        if let Some((l, r)) = balanced_split(&concat_groups(a.clone(), b.clone())) {
+            chunks.push(l);
             chunks.push(r);
+        } else {
+            chunks.push(a);
+            chunks.push(b);
         }
     }
     chunks.iter().map(|c| encode(c)).collect()
@@ -272,6 +274,27 @@ fn concat_groups(
         }
     }
     a
+}
+
+/// `groups` split into two non-empty pages that both fit the budget, as near the middle (by
+/// tuples) as possible; `None` if no split does. Splitting at half the tuples is not enough: one
+/// long string can make that half exceed [`LEAF_BYTES`] although every string fits on its own.
+fn balanced_split(groups: &[Group]) -> Option<(Vec<Group>, Vec<Group>)> {
+    let total: usize = groups.iter().map(|g| g.docs.len()).sum();
+    let half = total / 2;
+    for distance in 0..total {
+        for at in [half.checked_sub(distance), Some(half + distance)]
+            .into_iter()
+            .flatten()
+            .filter(|&at| 0 < at && at < total)
+        {
+            let (l, r) = split_groups(groups.to_vec(), at);
+            if encode(&l).fits() && encode(&r).fits() {
+                return Some((l, r));
+            }
+        }
+    }
+    None
 }
 
 /// `groups` split after `at` tuples.
@@ -538,10 +561,14 @@ impl Page for StrLeaf {
         if one.fits() || one.len < 2 {
             return Combined::One(one);
         }
-        let total = one.len;
-        let (l, r) = split_groups(both, total / 2);
-        let right = encode(&r);
-        Combined::Two(encode(&l), right.min(), right)
+        match balanced_split(&both) {
+            Some((l, r)) => {
+                let right = encode(&r);
+                Combined::Two(encode(&l), right.min(), right)
+            }
+            // No split fits both pages in the byte budget: keep the two as they were.
+            None => Combined::Two(self.clone(), right.min(), right.clone()),
+        }
     }
 
     fn heap_bytes(&self) -> usize {
@@ -551,5 +578,54 @@ impl Page for StrLeaf {
     fn key_heap_bytes(key: &Arc<String>) -> usize {
         // The `Arc` allocation: two counts, the `String`, and its buffer.
         2 * std::mem::size_of::<usize>() + std::mem::size_of::<String>() + key.capacity()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A page near the byte budget plus a few short keys: sharing their tuples evenly would push the
+    /// page holding the long key over [`LEAF_BYTES`], so a redistribution must be byte-aware.
+    fn long_key_then_short_keys() -> Vec<Tuple<Arc<String>>> {
+        let mut tuples = vec![(Arc::new("a".repeat(3950)), 1)];
+        tuples.extend((0..14).map(|i| (Arc::new(format!("b{i:02}{}", "x".repeat(27))), 100 + i)));
+        tuples
+    }
+
+    fn all_tuples(pages: &[StrLeaf]) -> Vec<(Vec<u8>, u64)> {
+        pages.iter().flat_map(StrLeaf::tuples).collect()
+    }
+
+    #[test]
+    fn build_keeps_every_page_within_the_byte_budget() {
+        let tuples = long_key_then_short_keys();
+        let pages = StrLeaf::build(&tuples);
+        assert!(
+            pages.iter().all(StrLeaf::fits),
+            "{:?}",
+            pages.iter().map(StrLeaf::shape).collect::<Vec<_>>()
+        );
+        assert_eq!(all_tuples(&pages).len(), tuples.len());
+    }
+
+    #[test]
+    fn combine_keeps_every_page_within_the_byte_budget() {
+        let tuples = long_key_then_short_keys();
+        let (long, short) = tuples.split_at(1);
+        let (left, right) = (
+            StrLeaf::build(long).remove(0),
+            StrLeaf::build(short).remove(0),
+        );
+        let pages = match left.combine(&right) {
+            Combined::One(page) => vec![page],
+            Combined::Two(l, _, r) => vec![l, r],
+        };
+        assert!(
+            pages.iter().all(StrLeaf::fits),
+            "{:?}",
+            pages.iter().map(StrLeaf::shape).collect::<Vec<_>>()
+        );
+        assert_eq!(all_tuples(&pages).len(), tuples.len());
     }
 }
