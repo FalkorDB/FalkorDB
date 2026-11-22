@@ -24,6 +24,7 @@
 #include "src/effects/effects_v3_id_list.h"
 #include "src/effects/effects_bytes.h"
 #include "src/util/rmalloc.h"
+#include "effects_v3_hex.h"
 
 void setup() {
 	Alloc_Reset();
@@ -75,27 +76,6 @@ static const SegCase SEG_CASES[] = {
 
 #define N_SEG_CASES ((int)(sizeof(SEG_CASES) / sizeof(SEG_CASES[0])))
 
-static unsigned char *_unhex(const char *hex, size_t *n) {
-	size_t len = strlen(hex) / 2;
-	unsigned char *out = malloc(len);
-	for(size_t i = 0; i < len; i++) {
-		unsigned v = 0;
-		sscanf(hex + 2 * i, "%2x", &v);
-		out[i] = (unsigned char)v;
-	}
-	*n = len;
-	return out;
-}
-
-static char *_hex(const unsigned char *b, size_t n) {
-	char *out = malloc(2 * n + 1);
-	for(size_t i = 0; i < n; i++) {
-		sprintf(out + 2 * i, "%02x", b[i]);
-	}
-	out[2 * n] = '\0';
-	return out;
-}
-
 // build the ids, encode the list, and compare against the fixture's slice
 void test_effectsV3Encode_matchesFixtureSegments(void) {
 	for(int i = 0; i < N_SEG_CASES; i++) {
@@ -116,12 +96,12 @@ void test_effectsV3Encode_matchesFixtureSegments(void) {
 		EffectsBytes_CopyInto(out, got);
 
 		size_t want_all_n = 0;
-		unsigned char *want_all = _unhex(c->hex, &want_all_n);
+		unsigned char *want_all = EffectsV3Test_Unhex(c->hex, &want_all_n);
 		const unsigned char *want = want_all + DELETE_NODE_PREFIX;
 		size_t want_n = want_all_n - DELETE_NODE_PREFIX;
 
-		char *got_s  = _hex(got, got_n);
-		char *want_s = _hex(want, want_n);
+		char *got_s  = EffectsV3Test_Hex(got, got_n);
+		char *want_s = EffectsV3Test_Hex(want, want_n);
 
 		TEST_ASSERT_(got_n == want_n && memcmp(got, want, want_n) == 0,
 				"%s: encoded IdList\n      got %s\n  expected %s",
@@ -187,12 +167,12 @@ void test_effectsV3Encode_collapseBoundaryFromCorpus(void) {
 		EffectsBytes_CopyInto(out, got);
 
 		size_t want_all_n = 0;
-		unsigned char *want_all = _unhex(cases[i].hex, &want_all_n);
+		unsigned char *want_all = EffectsV3Test_Unhex(cases[i].hex, &want_all_n);
 		const unsigned char *want = want_all + DELETE_NODE_PREFIX;
 		size_t want_n = want_all_n - DELETE_NODE_PREFIX;
 
-		char *got_s  = _hex(got, got_n);
-		char *want_s = _hex(want, want_n);
+		char *got_s  = EffectsV3Test_Hex(got, got_n);
+		char *want_s = EffectsV3Test_Hex(want, want_n);
 
 		TEST_ASSERT_(got_n == want_n && memcmp(got, want, want_n) == 0,
 				"%s (%zu ids): the corpus and this encoder disagree\n"
@@ -273,12 +253,12 @@ void test_effectsV3Encode_directionAndWidthFromCorpus(void) {
 		EffectsBytes_CopyInto(out, got);
 
 		size_t want_all_n = 0;
-		unsigned char *want_all = _unhex(cases[i].hex, &want_all_n);
+		unsigned char *want_all = EffectsV3Test_Unhex(cases[i].hex, &want_all_n);
 		const unsigned char *want = want_all + DELETE_NODE_PREFIX;
 		size_t want_n = want_all_n - DELETE_NODE_PREFIX;
 
-		char *got_s  = _hex(got, got_n);
-		char *want_s = _hex(want, want_n);
+		char *got_s  = EffectsV3Test_Hex(got, got_n);
+		char *want_s = EffectsV3Test_Hex(want, want_n);
 
 		TEST_ASSERT_(got_n == want_n && memcmp(got, want, want_n) == 0,
 				"%s: the corpus and this encoder disagree\n"
