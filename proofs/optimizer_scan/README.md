@@ -23,8 +23,9 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 **2. Does the id seek return the same nodes as `WHERE id(n) …`?**
 
-- **With non-negative integer bounds below 2⁶³, yes, on any well-formed graph.** `seek_sound` (hypotheses: `g.wf` and every bound `< 2^63`) proves `NodeByIdSeek` equals `Filter(id(n) op v …)` over `AllNodeScan` on every well-formed graph (`node_count` counts the live ids), including one that never held a node.
-- `step_some`, `step_none` and `step_nonempty` prove each arm of `evaluate_id_filter` keeps exactly the ids that satisfy it, and the running range never inverts.
+- **Yes, for every bound, on any well-formed graph** (since #3017). `seek_sound` (hypothesis: `g.wf`) proves `NodeByIdSeek` equals `Filter(id(n) op v …)` over `AllNodeScan` on every well-formed graph (`node_count` counts the live ids), including one that never held a node, for any operand: negative or huge integers, floats, NaN, null and other types (`id_gt_neg_all`, `id_le_neg_none`, `id_nonint_bounds`).
+- A float bound is modelled by its `(first_id_ge, last_id_le)` pair; `cypherHolds_bounds` proves that pair decides every comparison. `firstIdWhere_spec` / `firstIdWhereRust_iff` prove the binary search `first_id_where` returns the least id where a monotone predicate holds. The `f64` fast paths of `first_id_ge`/`last_id_le` (`ceil`/`floor` below 2⁵³) are not modelled (no IEEE `f64` in core Lean).
+- `step_some`, `step_none` and `step_nonempty` prove each arm of `evaluate_id_filter` keeps exactly the ids that satisfy it, that the `min > max` check is exact, and that the range only narrows; `fold_bounds` that the final `min as u64 ..= max as u64` casts are exact.
 - On a graph that never held a node, no range is returned when `node_count() == 0` (`empty_graph_seek_none`).
 
 **3. Does reordering the hops keep the rows?**
@@ -54,7 +55,8 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 | `utilizeIndex_sound`, `tryIndexRewrite_sound` | The whole `utilize_index` driver, including its fixed-point loop, preserves results | `Cleanup.lean` |
 | `overPending_sound` | Over `IncludePending` the kept Filter makes the index scan exact for any set of pending writes | `Cleanup.lean` |
 | `prune_sound` | Dropping the AllNodeScan child of an edge index scan keeps the edges | `Cleanup.lean` |
-| `seek_sound` | NodeByIdSeek equals the id filter on every well-formed graph (empty included) with bounds in `[0, 2⁶³)` | `IdSeek.lean` |
+| `seek_sound` | NodeByIdSeek equals the id filter on every well-formed graph (empty included), for every bound | `IdSeek.lean` |
+| `firstIdWhere_spec` | `first_id_where` finds the least id where a monotone predicate holds | `IdSeek.lean` |
 | `empty_graph_seek_none` | A graph that never held a node seeks nothing | `IdSeek.lean` |
 | `order_sound`, `run_perm`, `swap_holds` | Hop ordering and orientation keep the rows | `ScanOrder.lean` |
 | `place_wellScoped`, `salvage_wellScoped` | Filters are placed after their variables are bound, given an honest seed | `ScanOrder.lean` |
@@ -79,11 +81,10 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 | W2-scan-3 | `IndexCex` C4 | A computed constant ≥ 2⁵² (`n.v = 4503599627370495 + 4503599627370495 + 3`): the Filter is dropped and the op falls back to a label scan, returning every node (C: 0) | **Open** |
 | W2-scan-6 (#2972) | `Salvage.premise_fails`, `salvage_loses_row`, `rebuilt_drops_unwind` | The pass prunes a planner scan whole but salvages only its `Filter`s and `Argument` leaf, so an `Unwind`/`WITH` child is lost: `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 0 (C 1); `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 1 (C 2) | **Open**, fix in PR #3099 |
 | W2-scan-7 | `IndexArray.tryPushdown_or_ac_drops_filter`, `Cex C12` | The OR branch of `try_filter_pushdown` keeps no filter for an array-contains disjunct (the same family as #3736, which fixed AND and the single atom): `MATCH (n:L) WHERE 1 IN n.arr OR n.k = 9` on an index over `(arr, k)` also returns `{arr:[true], k:0}`, because Bool and Int share the numeric key. Rust with index and C with index return it; openCypher and Rust without an index do not. Fix: keep the filter whenever an OR branch `is_array_contains` | **Open** |
-| — | `IdSeek.lean` examples on `g5` | `id(n) > -1` returns 0 rows, and non-integer bounds error. Reported as bugs 3–4 of [`../optimizer_rewrites`](../optimizer_rewrites) | **Open** |
 
 The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): a folded `date()` constant returns every node (C3); `IN [.., date()]` drops the item (C9); multi-label AND/OR (C5, C6); Bool/Int conflation (C1, shared with C).
 
-- `evaluate_id_filter` stops at the first empty conjunct, so a type error in a later one is masked: `id(n) = 100 AND id(n) = 'x'` returns 0 rows, swapped it errors (`probe_id_seek_error_order`).
+- `evaluate_id_filter` stops at the first empty conjunct, so an evaluation error in a later conjunct's expression is masked (not modelled: the model's operands are already evaluated). A non-integer bound no longer errors (#3017).
 
 **Hazard, not a confirmed bug:** `utilize_node_by_id` calls `parent().unwrap()` on the scan it rewrites. W4-plan-4's repro (`CALL db.labels() YIELD label MATCH (n)`) is rejected by validation, but the `unwrap` remains. [`../optimizer_rewrites`](../optimizer_rewrites) models it as `root_scan_has_no_parent`.
 
@@ -94,7 +95,7 @@ There are no CONDITIONAL rows in this project.
 | File | What's in it |
 |---|---|
 | `OptimizerScan.lean` | The report header and imports |
-| `IdSeek.lean` | `get_id_filter`, the flip table, `evaluate_id_filter` (`step`, `fold`, `evalIdFilter`, `evalIdFilterMain`), `seek` vs `reference`, `seek_sound`, the id-seek examples |
+| `IdSeek.lean` | `get_id_filter`, the flip table, `first_id_where` (`firstIdWhere`), `evaluate_id_filter` (`bounds`, `step`, `fold`, `evalIdFilter`, `evalIdFilterMain`), `seek` vs `reference`, `seek_sound`, the id-seek examples |
 | `Index.lean` | The value and node model, index encoding, query nodes (`build`), `utilize_index`'s helpers and rewrite (`utilize`) |
 | `IndexSound.lean` | `sel_*` lemmas for each query node, `trySingle_spec` |
 | `IndexPipeline.lean` | The AND/OR pushdown, `goodF`, and the headline `utilize_sound` |
@@ -138,7 +139,7 @@ bash proofs/coverage.sh                      # repo-wide coverage report
 venv/bin/python proofs/optimizer_scan/repro.py   # live index repros (Rust on 18200, C on 18201)
 ```
 
-**When you change `select_scan_node.rs`, `utilize_index.rs`, `utilize_node_by_id.rs`, `reorder_labels.rs`, `node_by_index_scan.rs` or `evaluate_id_filter`:**
+**When you change `select_scan_node.rs`, `utilize_index.rs`, `utilize_node_by_id.rs`, `reorder_labels.rs`, `node_by_index_scan.rs`, `evaluate_id_filter` or `first_id_where`:**
 
 1. Find the function in `COVERAGE.tsv`.
 2. Update its Lean model to match.

@@ -24,7 +24,7 @@ graph/src/runtime/runtime.rs	record_cap	777	PROVEN	Budget.recordCap_hardCap_soun
 graph/src/runtime/runtime.rs	children_to_recurse	787	PROVEN	RunBatch.childrenToRecurse: childrenToRecurse_spec
 graph/src/runtime/runtime.rs	run_nested_plan	813	PROVEN	Plan.runNested: runNested_spec
 graph/src/runtime/runtime.rs	run_batch	845	PROVEN	RunBatch.runBatch_eq_rec, RunBatch.runBatch_ok_single
-graph/src/runtime/runtime.rs	build_batch_op	878	PROVEN	Plan.buildOp/popOrOnce/popOrArgument: buildOp_spec; RunBatch.runBatch_eq_rec
+graph/src/runtime/runtime.rs	build_batch_op	913	PROVEN	Plan.buildOp/popOrOnce/popOrArgument: buildOp_spec; RunBatch.runBatch_eq_rec
 graph/src/runtime/runtime.rs	set_pending_node_attr	1517	PROVEN	RelAccessors.setPendingAttr: setPendingAttr_spec
 graph/src/runtime/runtime.rs	set_pending_relationship_attr	1536	PROVEN	RelAccessors.setPendingAttr (rel tables): setPendingAttr_spec
 graph/src/runtime/runtime.rs	memo_lookup	1553	PROVEN	Accessors.memoLookup_ok
@@ -63,6 +63,3 @@ graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loo
 graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)
-graph/src/runtime/runtime.rs	first_id_where	453	NOT COVERED	(#3017): not modelled yet
-graph/src/runtime/runtime.rs	first_id_ge	467	NOT COVERED	(#3017): not modelled yet
-graph/src/runtime/runtime.rs	last_id_le	475	NOT COVERED	(#3017): not modelled yet
