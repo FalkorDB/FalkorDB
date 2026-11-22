@@ -746,6 +746,95 @@ def PT.walkL : List PT → List IRk
   | c :: cs => c.walk ++ PT.walkL cs
 end
 
+/-! ### `carries_opaque_argument` (`select_scan_node.rs`, #3957)
+
+An `Argument(None)` makes an outer child opaque only while its rows reach the child's output: a
+`Project` or an `Aggregate` outputs exactly its own targets, so the search stops there. -/
+
+mutual
+def PT.carriesOpaque : PT → Bool
+  | .node (.argument none) _ => true
+  | .node (.project _ _) _ => false
+  | .node (.aggregate _ _) _ => false
+  | .node _ cs => PT.carriesOpaqueL cs
+def PT.carriesOpaqueL : List PT → Bool
+  | [] => false
+  | c :: cs => c.carriesOpaque || PT.carriesOpaqueL cs
+end
+
+/-- `Project` / `Aggregate` at a node (the barrier of `carries_opaque_argument`). -/
+def IRk.isProjection : IRk → Bool
+  | .project _ _ | .aggregate _ _ => true
+  | _ => false
+
+mutual
+/-- **PROVEN**: the new check is never more conservative than the old one — an opaque
+`Argument` it reports is one the old `walk::<Bfs>().any(Argument(None))` reported. -/
+theorem PT.carriesOpaque_walk : ∀ t : PT, t.carriesOpaque = true → IRk.argument none ∈ t.walk
+  | .node ir cs, h => by
+    match ir, h with
+    | .argument none, _ => simp [PT.walk]
+    | .allNodeScan _, h | .labelScan _ _, h | .filter _, h | .includePending, h
+    | .argument (some _), h | .condTraverse, h | .condVarLen, h | .pathBuilder, h | .merge, h
+    | .unwind _, h | .indexScan _, h | .fulltextScan _ _, h | .other, h =>
+      simp only [PT.carriesOpaque] at h
+      simp only [PT.walk, List.mem_cons]
+      exact Or.inr (PT.carriesOpaqueL_walk cs h)
+theorem PT.carriesOpaqueL_walk : ∀ cs : List PT, PT.carriesOpaqueL cs = true →
+    IRk.argument none ∈ PT.walkL cs
+  | [], h => by simp [PT.carriesOpaqueL] at h
+  | c :: cs, h => by
+    simp only [PT.carriesOpaqueL, Bool.or_eq_true] at h
+    simp only [PT.walkL, List.mem_append]
+    rcases h with h | h
+    · exact Or.inl (PT.carriesOpaque_walk c h)
+    · exact Or.inr (PT.carriesOpaqueL_walk cs h)
+end
+
+mutual
+/-- **PROVEN**: with no `Project` / `Aggregate` in the subtree, `carries_opaque_argument` is
+exactly the old check (an `Argument(None)` anywhere below), so #3957 changes nothing there. -/
+theorem PT.carriesOpaque_noBarrier : ∀ t : PT, (∀ ir ∈ t.walk, ir.isProjection = false) →
+    (t.carriesOpaque = true ↔ IRk.argument none ∈ t.walk)
+  | .node ir cs, hb => by
+    have hcs : ∀ ir' ∈ PT.walkL cs, ir'.isProjection = false :=
+      fun ir' h' => hb ir' (by simp [PT.walk, h'])
+    have hir : ir.isProjection = false := hb ir (by simp [PT.walk])
+    have ih := PT.carriesOpaqueL_noBarrier cs hcs
+    match ir, hir with
+    | .argument none, _ => simp [PT.carriesOpaque, PT.walk]
+    | .allNodeScan _, _ | .labelScan _ _, _ | .filter _, _ | .includePending, _
+    | .argument (some _), _ | .condTraverse, _ | .condVarLen, _ | .pathBuilder, _ | .merge, _
+    | .unwind _, _ | .indexScan _, _ | .fulltextScan _ _, _ | .other, _ =>
+      simp only [PT.carriesOpaque, PT.walk, List.mem_cons, ih]; simp
+theorem PT.carriesOpaqueL_noBarrier : ∀ cs : List PT, (∀ ir ∈ PT.walkL cs, ir.isProjection = false) →
+    (PT.carriesOpaqueL cs = true ↔ IRk.argument none ∈ PT.walkL cs)
+  | [], _ => by simp [PT.carriesOpaqueL, PT.walkL]
+  | c :: cs, hb => by
+    have h1 : ∀ ir ∈ c.walk, ir.isProjection = false := fun ir h => hb ir (by simp [PT.walkL, h])
+    have h2 : ∀ ir ∈ PT.walkL cs, ir.isProjection = false :=
+      fun ir h => hb ir (by simp [PT.walkL, h])
+    simp only [PT.carriesOpaqueL, PT.walkL, Bool.or_eq_true, List.mem_append,
+      PT.carriesOpaque_noBarrier c h1, PT.carriesOpaqueL_noBarrier cs h2]
+end
+
+/-- **PROVEN** (#3957): an `Argument(None)` under a `Project` or an `Aggregate` (the `CALL {}`
+body below `WITH x, count(*)`) no longer makes the child opaque, though the old check did. -/
+theorem carriesOpaque_barrier (es : List Var) (cp : List (Var × Var)) (ns : List Var)
+    (ps : List (Var × Var)) (cs : List PT) :
+    (PT.node (.project es cp) cs).carriesOpaque = false ∧
+    (PT.node (.aggregate ns ps) cs).carriesOpaque = false := by
+  simp [PT.carriesOpaque]
+
+/-- **PROVEN**: the Rust unit test `opaque_argument_stops_at_projections_and_aggregations`. -/
+theorem carriesOpaque_unit_test :
+    (PT.node (.argument none) []).carriesOpaque = true ∧
+    (PT.node (.filter []) [.node (.argument none) []]).carriesOpaque = true ∧
+    (PT.node (.aggregate [] []) [.node (.argument none) []]).carriesOpaque = false ∧
+    (PT.node (.project [] []) [.node (.argument none) []]).carriesOpaque = false ∧
+    IRk.argument none ∈ (PT.node (.project [] []) [.node (.argument none) []]).walk := by
+  simp [PT.carriesOpaque, PT.carriesOpaqueL, PT.walk, PT.walkL]
+
 /-- `child_subtree_binds`; `getVars c` = the `GetVariables` of a child subtree. -/
 def childBindsLoop (getVars : PT → List Var) (alias : Var) : List PT → Bool → Bool
   | [], b => b
