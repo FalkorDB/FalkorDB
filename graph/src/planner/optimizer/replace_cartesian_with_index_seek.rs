@@ -37,7 +37,7 @@ use orx_tree::{DynNode, DynTree, NodeRef};
 use crate::{
     graph::graph::Graph,
     parser::ast::{ExprIR, QueryExpr, QueryNode, Variable},
-    runtime::value::Value,
+    runtime::{functions::FnType, value::Value},
     tree,
 };
 
@@ -172,7 +172,10 @@ fn try_seek_rewrite(
         // where the hash-join plan evaluated them.
         let mut seek_label: Option<Arc<String>> = None;
         let (moved, rest): (Vec<_>, Vec<_>) = moved.into_iter().partition(|c| {
-            if has_non_deterministic(c) || reads_node_bare(c, p) {
+            if has_non_deterministic(c)
+                || reads_node_bare(c, p)
+                || (!chain_filters.is_empty() && may_fail(c))
+            {
                 return false;
             }
             let Some(label) = seek_index_label(&scan_node, c, graph) else {
@@ -280,7 +283,7 @@ fn estimate_rows(
             if let Some(parent) = node.parent()
                 && let IR::Filter(f) = parent.data()
                 && can_seek_index(n, f, graph)
-                && has_equality(f)
+                && has_seekable_equality(n, f, graph)
             {
                 return inputs();
             }
@@ -327,21 +330,43 @@ fn unwound_len(expr: &DynTree<ExprIR<Variable>>) -> Option<usize> {
     }
 }
 
-/// Whether an equality is among the conjuncts of `filter`.
-fn has_equality(filter: &QueryExpr<Variable>) -> bool {
+/// Whether an equality that an index serves is among the conjuncts of `filter`.
+fn has_seekable_equality(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    filter: &QueryExpr<Variable>,
+    graph: &Graph,
+) -> bool {
     let root = filter.root();
     match root.data() {
         ExprIR::Eq => true,
-        ExprIR::And => root.children().any(|c| matches!(c.data(), ExprIR::Eq)),
+        ExprIR::And => root.children().any(|c| {
+            matches!(c.data(), ExprIR::Eq) && can_seek_index(node, &c.clone_as_tree(), graph)
+        }),
         _ => false,
     }
+}
+
+/// Whether evaluating `expr` can raise an error (a division, a call, an
+/// element access), which a guard on the scanned branch may be there to avoid.
+fn may_fail(expr: &DynTree<ExprIR<Variable>>) -> bool {
+    expr.root().walk::<orx_tree::Bfs>().any(|data| {
+        matches!(
+            data,
+            ExprIR::Div
+                | ExprIR::Modulo
+                | ExprIR::Pow
+                | ExprIR::GetElement
+                | ExprIR::GetElements
+                | ExprIR::FuncInvocation(_)
+        )
+    })
 }
 
 /// Whether `expr` calls a function whose result can differ between calls.
 fn has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
     expr.root()
         .walk::<orx_tree::Bfs>()
-        .any(|data| matches!(data, ExprIR::FuncInvocation(f) if f.non_deterministic))
+        .any(|data| matches!(data, ExprIR::FuncInvocation(f) if f.non_deterministic || matches!(f.fn_type, FnType::Udf)))
 }
 
 /// Whether `expr` reads the node `p` other than through a property access

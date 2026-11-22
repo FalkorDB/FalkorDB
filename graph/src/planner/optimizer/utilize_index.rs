@@ -827,6 +827,15 @@ pub(super) fn seek_index_label(
     filter: &DynTree<ExprIR<Variable>>,
     graph: &Graph,
 ) -> Option<Arc<String>> {
+    if matches!(filter.root().data(), ExprIR::Or) {
+        // One lookup answers every disjunct, so they must share a label.
+        let mut labels = filter
+            .root()
+            .children()
+            .map(|c| seek_index_label(node, &c.clone_as_tree(), graph));
+        let first = labels.next()??;
+        return labels.all(|l| l.as_ref() == Some(&first)).then_some(first);
+    }
     try_filter_pushdown(node, filter, graph).map(|(label, _, _)| label)
 }
 

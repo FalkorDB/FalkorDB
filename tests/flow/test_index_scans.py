@@ -1560,6 +1560,22 @@ class testIndexScanFlow():
              "WHERE p.a = e.a AND p.b = e.b RETURN count(*)")
         self.env.assertEqual(g.query(q).result_set, [[1]])
 
+        # A disjunction whose branches need different labels' indexes.
+        q = ("UNWIND [{sid: 1, a: 9, b: 2}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:A:B) "
+             "WHERE p.a = e.a OR p.b = e.b RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+
+        # A range key that can fail stays behind the scanned branch's guard:
+        # every `G` node is rejected by `p.nts <> 0`, so `e.q / e.d` never runs.
+        g.create_node_range_index('G', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 599) AS i CREATE (:G {ts: i, nts: 0})")
+        q = ("UNWIND [{sid: 1, q: 5, d: 0}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:G) "
+             "WHERE p.nts <> 0 AND p.ts > e.q / e.d RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+
         g.delete()
 
     def test_36_scalar_array_scalar_round_trip(self):
