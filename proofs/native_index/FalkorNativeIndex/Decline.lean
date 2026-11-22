@@ -23,7 +23,8 @@ inductive Pred where
   | or (children : List Pred)
   | and (children : List Pred)
   | inList (key : String) (list : Option (List Value))
-  | point (key : String)
+  /-- `Point { key, point, radius }`; `cover` as in `IndexQuery.point`. -/
+  | point (key : String) (centre radius : Value) (cover : List (Nat × Nat))
   | arrayContains (key : String) (value : Value)
 
 mutual
@@ -34,7 +35,7 @@ def Pred.toQuery : Pred → IndexQuery
   | .or cs => .or (Pred.toQueries cs)
   | .and cs => .and (Pred.toQueries cs)
   | .inList k l => .inList k l
-  | .point k => .point k
+  | .point k c r cv => .point k c r cv
   | .arrayContains k v => .arrayContains k v
 def Pred.toQueries : List Pred → List IndexQuery
   | [] => []
@@ -67,7 +68,7 @@ def unionMembers : Bool → List Pred → List (String × Bool)
       | .or nested => unionMembers false nested
       | .and nested => unionMembers false nested
       | .range k .. => [(k, false)]
-      | .point k => [(k, false)]
+      | .point k .. => [(k, false)]
       | .arrayContains k _ => [(k, false)]) ++ unionMembers top cs
 end
 
@@ -92,7 +93,7 @@ def describe : Pred → Desc
     .inList k (match l with
       | some items => items.all (fun v => (encodeNumeric v).isSome)
       | none => false)
-  | .point k => .geo k
+  | .point k .. => .geo k
   | .arrayContains k v => .arrayContains k (encodeNumeric v).isSome
 def describeAll : List Pred → List Desc
   | [] => []
@@ -120,8 +121,8 @@ theorem describe_equal (k : String) (v : Value) : describe (.equal k v) = .equal
 theorem describe_inList (k : String) (items : List Value) :
     describe (.inList k (some items)) = .inList k (items.all (fun v => (encodeNumeric v).isSome)) := rfl
 
-theorem describe_leaves (k : String) (v : Value) :
-    describe (.point k) = .geo k ∧ describe (.arrayContains k v) = .arrayContains k (encodeNumeric v).isSome :=
+theorem describe_leaves (k : String) (v : Value) (c r : Value) (cv : List (Nat × Nat)) :
+    describe (.point k c r cv) = .geo k ∧ describe (.arrayContains k v) = .arrayContains k (encodeNumeric v).isSome :=
   ⟨rfl, rfl⟩
 
 /-- A conjunction names its children (not just their count). -/

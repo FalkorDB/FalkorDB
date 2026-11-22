@@ -7,7 +7,7 @@ set_option linter.unusedSimpArgs false
 `Value` keeps every variant the index path can meet with its real payload: `Int` (an `i64`), `Float`
 (the `f64` bits, so `-0.0` and every NaN payload are distinct values), `Bool`, the four temporals
 (raw `i64`), `String`, `Null`, and `other` for the variants no numeric index ever stores or queries
-(List/Map/Path/Node/Relationship/Point/VecF32, `tag` = their `order()`).
+(List/Map/Path/Node/Relationship/VecF32, `tag` = their `order()`); a `Point` is `point`, its geo key.
 
 `compareValue` is `CompareValue::compare_value` (`value.rs`) on these variants;
 `cmpPred` is the Filter's `<`/`>`/`<=`/`>=` (`eval.rs`) and `=` (`all_equals`,
@@ -29,6 +29,11 @@ inductive Value where
   /-- `List`: only what the index reads of an element is kept, its `encode_numeric` (`for_each_stored_key`
       is `items.iter().filter_map(encode_numeric)`): `some key`, or `none` for an element no tree holds. -/
   | list (elems : List (Option Nat))
+  /-- `Point` (since #2527 the geo kind holds it): only what the index reads of it is kept, its
+      `GeoIndex::key_of` (`geo.rs`), the Morton code of its quantised coordinates, or `none` for a
+      point with a `NaN` coordinate. Two points in one grid cell are one value here; nothing in this
+      project compares points (the geo kind answers a superset the retained filter narrows). -/
+  | point (key : Option Nat)
   | other (tag : Nat)
 deriving DecidableEq, Repr
 
@@ -42,7 +47,7 @@ def Value.WF : Value → Prop
 def Value.order : Value → Nat
   | .null => 2 ^ 15 | .bool _ => 2 ^ 12 | .int _ => 2 ^ 13 | .float _ => 2 ^ 14
   | .string _ => 2 ^ 11 | .datetime _ => 2 ^ 6 | .date _ => 2 ^ 7 | .time _ => 2 ^ 8
-  | .duration _ => 2 ^ 10 | .list _ => 2 ^ 3 | .other t => t
+  | .duration _ => 2 ^ 10 | .list _ => 2 ^ 3 | .point _ => 2 ^ 5 | .other t => t
 
 /-- `DisjointOrNull` (`value.rs`). -/
 inductive Flag where

@@ -160,6 +160,10 @@ inductive KeySet where
   | point (k : Nat)
   | range (lo hi : Nat)
   | keys (ks : List Nat)
+  /-- `Windows` (#2527): the keys in any of these `(lo, hi)` windows, non-empty, sorted and
+      disjoint (`of_windows`'s `debug_assert!`). Only the geo kind builds one (`of_windows` of a
+      `cover_of`, and `and` of two of them); no numeric builder does. -/
+  | windows (ws : List (Nat × Nat))
 deriving Repr, DecidableEq
 
 /-- `KeySet::distinct` (`numeric.rs`): `sort_unstable(); dedup()`. -/
@@ -175,6 +179,34 @@ def KeySet.contains : KeySet → Nat → Bool
   | .point k, key => k == key
   | .range lo hi, key => decide (lo ≤ key ∧ key ≤ hi)
   | .keys ks, key => decide (key ∈ ks)
+  | .windows ws, key => ws.any (fun w => decide (w.1 ≤ key ∧ key ≤ w.2))
+
+/-- The `Windows` arm of `KeySet::contains` as the Rust spells it: `partition_point(lo <= key)`, then
+    the last window starting at or below `key`. On a partitioned slice `partition_point` is the length
+    of the `takeWhile` prefix. `containsW_eq_any` shows it is `contains` on sorted, disjoint windows. -/
+def KeySet.containsW (ws : List (Nat × Nat)) (key : Nat) : Bool :=
+  match (ws.takeWhile (fun w => decide (w.1 ≤ key))).getLast? with
+  | some w => decide (key ≤ w.2)
+  | none => false
+
+/-- `KeySet::of_windows` (`numeric.rs`): none is `Empty`, one a `Range` (a `Point` if it holds one key),
+    more `Windows`. -/
+def KeySet.ofWindows : List (Nat × Nat) → KeySet
+  | [] => .empty
+  | [(lo, hi)] => if lo = hi then .point lo else .range lo hi
+  | ws => .windows ws
+
+/-- `KeySet::windows` (`numeric.rs`): the windows of a range or of a set of windows; `[]` (the Rust
+    `None`, which `and` never meets: `expect`) for any other set. -/
+def KeySet.wins : KeySet → List (Nat × Nat)
+  | .range lo hi => [(lo, hi)]
+  | .windows ws => ws
+  | _ => []
+
+/-- The pairwise overlaps of two window lists, in the nested-loop order of `and`'s last arm. -/
+def overlaps (a b : List (Nat × Nat)) : List (Nat × Nat) :=
+  a.flatMap (fun x => b.filterMap (fun y =>
+    if max x.1 y.1 ≤ min x.2 y.2 then some (max x.1 y.1, min x.2 y.2) else none))
 
 /-- `KeySet::of_keys` (`numeric.rs`): the set of `keys`, in any order and possibly repeated;
     none is `Empty`, one is a `Point`, more is `Keys`. -/
@@ -194,6 +226,7 @@ def KeySet.and : KeySet → KeySet → KeySet
   | o, .keys ks => KeySet.ofKeys (ks.filter (fun k => o.contains k))
   | .empty, _ => .empty
   | _, .empty => .empty
+  | a, b => KeySet.ofWindows (overlaps a.wins b.wins)
 
 /-- `point_keys` (`numeric.rs`). -/
 def pointKeys (value : Value) : KeySet :=
@@ -231,6 +264,7 @@ def NumericIndex.lookup (ix : NumericIndex) : KeySet → List Nat
   | .point k => tRange ix.tree k k
   | .range lo hi => tRange ix.tree lo hi
   | .keys ks => ks.flatMap (fun k => tRange ix.tree k k)
+  | .windows ws => ws.flatMap (fun w => tRange ix.tree w.1 w.2)
 
 /-- `point` (`numeric.rs`) = `lookup (point_keys value)`. -/
 def NumericIndex.point (ix : NumericIndex) (v : Value) : List Nat := ix.lookup (pointKeys v)
@@ -261,7 +295,10 @@ inductive IndexQuery where
   | arrayContains (key : String) (value : Value)
   | or (children : List IndexQuery)
   | and (children : List IndexQuery)
-  | point (key : String)
+  /-- `Point { key, point, radius }`: `distance(n.key, centre) <= radius`. `cover` stands for
+      `cover_of(centre, radius)` (`geo.rs`), the sorted, disjoint Morton windows the geo kind reads;
+      the geodesy behind it is not modelled, only that a column reads exactly those windows. -/
+  | point (key : String) (centre radius : Value) (cover : List (Nat × Nat))
 
 /-! ## `Selection` (`range.rs`): what a column answers a predicate on one attribute with -/
 
@@ -334,7 +371,7 @@ def attrsOf : IndexQuery → Option (List String)
   | .range k .. => some [k]
   | .inList k _ => some [k]
   | .arrayContains k _ => some [k]
-  | .point k => some [k]
+  | .point k .. => some [k]
   | .or cs => if cs.isEmpty then none else attrsOfAll cs
   | .and cs => if cs.isEmpty then none else attrsOfAll cs
 /-- The `children.iter().all(|c| attributes_of(c, out))`. -/
@@ -415,7 +452,7 @@ def Selection.ofLeaf : IndexQuery → Option Selection
   | .inList _ (some items) => if items.isEmpty then none else Selection.equalToAny items
   | .inList _ none => none
   | .arrayContains _ v => Selection.listsHoldingOf v
-  | .point _ => none
+  | .point .. => none
   | .or _ => none
   | .and _ => none
 
@@ -985,8 +1022,16 @@ theorem ofKeys_sorted (keys ks : List Nat) (h : KeySet.ofKeys keys = .keys ks) :
   | [a] => simp at h
   | _ :: _ :: _ => simp only [KeySet.keys.injEq] at h; subst h; exact hs
 
+/-- `of_windows` never builds a `Keys`. -/
+theorem ofWindows_ne_keys (ws : List (Nat × Nat)) (ks : List Nat) : KeySet.ofWindows ws ≠ .keys ks := by
+  unfold KeySet.ofWindows; split
+  · simp
+  · split <;> simp
+  · simp
+
 theorem keyset_and_sorted (a b : KeySet) (ks : List Nat) (h : KeySet.and a b = .keys ks) : Sorted ks := by
   cases a <;> cases b <;> simp [KeySet.and] at h <;> first
+    | exact absurd h (ofWindows_ne_keys _ _)
     | exact ofKeys_sorted _ _ h
     | (split at h <;> simp_all)
     | skip
@@ -1090,6 +1135,12 @@ theorem lookup_mem (ix : NumericIndex) (ks : KeySet) (id : Nat) (hid : id < W) :
     · rintro ⟨k, hk, k', hk', h1, h2⟩; exact ⟨k', hk', by have : k' = k := by omega
                                                           subst this; exact hk⟩
     · rintro ⟨k, hk, h⟩; exact ⟨k, h, k, hk, Nat.le_refl _, Nat.le_refl _⟩
+  | windows ws =>
+    simp only [NumericIndex.lookup, List.mem_flatMap, mem_tRange _ _ _ _ hid, KeySet.contains,
+      List.any_eq_true, decide_eq_true_eq]
+    constructor
+    · rintro ⟨w, hw, k, hk, h1, h2⟩; exact ⟨k, hk, w, hw, h1, h2⟩
+    · rintro ⟨k, hk, w, hw, h1, h2⟩; exact ⟨w, hw, k, hk, h1, h2⟩
 
 /-- **The scan standing in for a building column keeps exactly what the built column answers.** A
     column built from `entries` answers a key set with the ids whose value's key the set contains,

@@ -30,6 +30,8 @@ namespace Tag
 /-- `KeyKind` (`encode.rs`): the tree a tuple lives in. -/
 inductive KeyKind where
   | scalar | array | tag | tagArray
+  /-- A point value: its Morton key on the geo grid (#2527). -/
+  | geo
 deriving DecidableEq, Repr
 
 /-- `ColumnKey` (`encode.rs`): a number's encoding or the string a tag tree is keyed on. -/
@@ -38,15 +40,17 @@ inductive ColumnKey where
   | tag (s : String)
 deriving DecidableEq, Repr
 
-/-- `indexable` (`mod.rs`): some kind holds a value of this type. -/
+/-- `indexable` (`mod.rs`): some kind holds a value of this type (numbers, strings, and since
+    #2527 points). -/
 def indexable : Value → Bool
-  | .int _ | .float _ | .bool _ | .string _ => true
+  | .int _ | .float _ | .bool _ | .string _ | .point _ => true
   | _ => false
 
 /-- `RangeIndex::encode_value` (`range.rs`) through `Kind::of` (`range.rs`). -/
 def encodeValueK : Value → Option (KeyKind × ColumnKey)
   | .string s => some (.tag, .tag s)
   | v@(.int _) | v@(.float _) | v@(.bool _) => (encodeNumeric v).map (fun k => (.scalar, .encoded k))
+  | .point key => key.map (fun k => (.geo, .encoded k))
   | _ => none
 
 /-- A string is keyed by itself in the tag tree. -/
@@ -54,11 +58,16 @@ theorem encodeValueK_string (s : String) : encodeValueK (.string s) = some (.tag
 
 /-- **Every non-string value takes exactly the key it took before #3738** (the old `encodeValue`,
     `encodeValue_spec`), in the scalar tree. -/
-theorem encodeValueK_numeric (v : Value) (hv : ∀ s, v ≠ .string s) :
+theorem encodeValueK_numeric (v : Value) (hv : ∀ s, v ≠ .string s) (hp : ∀ k, v ≠ .point k) :
     encodeValueK v = (encodeNumeric v).map (fun k => (.scalar, .encoded k)) := by
   cases v with
   | string s => exact absurd rfl (hv s)
+  | point k => exact absurd rfl (hp k)
   | _ => simp [encodeValueK, encodeNumeric]
+
+/-- A point is keyed by its geo key in the geo tree (#2527); a `NaN` point has none. -/
+theorem encodeValueK_point (k : Option Nat) :
+    encodeValueK (.point k) = k.map (fun k => (.geo, .encoded k)) := rfl
 
 /-- What is not indexable has no key (`NULL`, temporals, the rest). -/
 theorem encodeValueK_none (v : Value) (hv : indexable v = false) : encodeValueK v = none := by
@@ -66,22 +75,24 @@ theorem encodeValueK_none (v : Value) (hv : indexable v = false) : encodeValueK 
 
 /-! ## `EncodedTuples` with the tag kinds (`numeric.rs`) -/
 
-/-- `by_kind` (scalar, array) and `tags` (tag, tag array). -/
+/-- `by_kind` (scalar, array, geo) and `tags` (tag, tag array). -/
 structure ET where
   scalar : List (Nat × Nat)
   array : List (Nat × Nat)
   tag : List (String × Nat)
   tagArray : List (String × Nat)
+  geo : List (Nat × Nat) := []
 deriving DecidableEq, Repr
 
 namespace ET
-def empty : ET := ⟨[], [], [], []⟩
+def empty : ET := ⟨[], [], [], [], []⟩
 /-- `scalars`. -/
 def scalars (s : List (Nat × Nat)) : ET := { empty with scalar := s }
 /-- `is_empty`. -/
-def isEmpty (t : ET) : Bool := t.scalar.isEmpty && t.array.isEmpty && t.tag.isEmpty && t.tagArray.isEmpty
+def isEmpty (t : ET) : Bool :=
+  t.scalar.isEmpty && t.array.isEmpty && t.tag.isEmpty && t.tagArray.isEmpty && t.geo.isEmpty
 /-- `len`. -/
-def len (t : ET) : Nat := t.scalar.length + t.array.length + (t.tag.length + t.tagArray.length)
+def len (t : ET) : Nat := t.scalar.length + t.array.length + t.geo.length + (t.tag.length + t.tagArray.length)
 /-- `clear`. -/
 def clear (_t : ET) : ET := empty
 /-- `push`; a key of the other kind's type is `unreachable!` (`none`). -/
@@ -90,48 +101,56 @@ def push (t : ET) : KeyKind → ColumnKey → Nat → Option ET
   | .array, .encoded k, d => some { t with array := t.array ++ [(k, d)] }
   | .tag, .tag s, d => some { t with tag := t.tag ++ [(s, d)] }
   | .tagArray, .tag s, d => some { t with tagArray := t.tagArray ++ [(s, d)] }
+  | .geo, .encoded k, d => some { t with geo := t.geo ++ [(k, d)] }
   | _, _, _ => none
 /-- `retain_docs`. -/
 def retainDocs (t : ET) (keep : Nat → Bool) : ET :=
-  ⟨t.scalar.filter (keep ·.2), t.array.filter (keep ·.2), t.tag.filter (keep ·.2), t.tagArray.filter (keep ·.2)⟩
+  ⟨t.scalar.filter (keep ·.2), t.array.filter (keep ·.2), t.tag.filter (keep ·.2), t.tagArray.filter (keep ·.2),
+    t.geo.filter (keep ·.2)⟩
 end ET
 
-/-- **`is_empty`, `len`, `clear` count every kind, the tag kinds included; `push` files a tuple in its
-    kind's list; `retain_docs` filters every kind by doc.** -/
+/-- **`is_empty`, `len`, `clear` count every kind, the tag and geo kinds included; `push` files a
+    tuple in its kind's list; `retain_docs` filters every kind by doc.** -/
 theorem et_spec (t : ET) :
-    (t.isEmpty = true ↔ t.scalar = [] ∧ t.array = [] ∧ t.tag = [] ∧ t.tagArray = []) ∧
-    t.len = t.scalar.length + t.array.length + t.tag.length + t.tagArray.length ∧
+    (t.isEmpty = true ↔ t.scalar = [] ∧ t.array = [] ∧ t.tag = [] ∧ t.tagArray = [] ∧ t.geo = []) ∧
+    t.len = t.scalar.length + t.array.length + t.tag.length + t.tagArray.length + t.geo.length ∧
     t.clear.isEmpty = true ∧ t.clear.len = 0 ∧
     (t.isEmpty = true ↔ t.len = 0) ∧
     (∀ s d, (t.push .tag (.tag s) d).map ET.len = some (t.len + 1)) ∧
     (∀ s d, (t.push .tagArray (.tag s) d).map ET.len = some (t.len + 1)) ∧
     (∀ k d, (t.push .scalar (.encoded k) d).map ET.len = some (t.len + 1)) ∧
     (∀ k d, (t.push .array (.encoded k) d).map ET.len = some (t.len + 1)) ∧
+    (∀ k d, (t.push .geo (.encoded k) d).map ET.geo = some (t.geo ++ [(k, d)]) ∧
+      (t.push .geo (.encoded k) d).map ET.len = some (t.len + 1)) ∧
     (∀ keep, (∀ x ∈ (t.retainDocs keep).tag, keep x.2 = true) ∧ (∀ x ∈ (t.retainDocs keep).scalar, keep x.2 = true) ∧
-      (∀ x ∈ (t.retainDocs keep).tagArray, keep x.2 = true) ∧ (∀ x ∈ (t.retainDocs keep).array, keep x.2 = true)) := by
-  refine ⟨by simp [ET.isEmpty, and_assoc], by simp only [ET.len]; omega, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      (∀ x ∈ (t.retainDocs keep).tagArray, keep x.2 = true) ∧ (∀ x ∈ (t.retainDocs keep).array, keep x.2 = true) ∧
+      (∀ x ∈ (t.retainDocs keep).geo, keep x.2 = true)) := by
+  refine ⟨by simp [ET.isEmpty, and_assoc], by simp only [ET.len]; omega, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · simp only [ET.isEmpty, ET.len, Bool.and_eq_true, List.isEmpty_iff]
     constructor
-    · rintro ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩; simp [h1, h2, h3, h4]
+    · rintro ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩; simp [h1, h2, h3, h4, h5]
     · intro h
-      refine ⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩ <;> (apply List.eq_nil_of_length_eq_zero; omega)
+      refine ⟨⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩, ?_⟩ <;> (apply List.eq_nil_of_length_eq_zero; omega)
   · intro s d; simp [ET.push, ET.len]; omega
   · intro s d; simp [ET.push, ET.len]; omega
   · intro k d; simp [ET.push, ET.len]; omega
   · intro k d; simp [ET.push, ET.len]; omega
-  · intro keep; refine ⟨?_, ?_, ?_, ?_⟩ <;> intro x hx <;> simp [ET.retainDocs] at hx <;> exact hx.2
+  · intro k d; simp [ET.push, ET.len]; omega
+  · intro keep; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro x hx <;> simp [ET.retainDocs] at hx <;> exact hx.2
 
 /-- `retain_docs` keeps exactly the tuples whose doc passes, in every kind. -/
 theorem et_retainDocs_mem (t : ET) (keep : Nat → Bool) :
     (∀ x, x ∈ (t.retainDocs keep).scalar ↔ x ∈ t.scalar ∧ keep x.2 = true) ∧
     (∀ x, x ∈ (t.retainDocs keep).array ↔ x ∈ t.array ∧ keep x.2 = true) ∧
     (∀ x, x ∈ (t.retainDocs keep).tag ↔ x ∈ t.tag ∧ keep x.2 = true) ∧
-    (∀ x, x ∈ (t.retainDocs keep).tagArray ↔ x ∈ t.tagArray ∧ keep x.2 = true) := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> intro x <;> simp [ET.retainDocs]
+    (∀ x, x ∈ (t.retainDocs keep).tagArray ↔ x ∈ t.tagArray ∧ keep x.2 = true) ∧
+    (∀ x, x ∈ (t.retainDocs keep).geo ↔ x ∈ t.geo ∧ keep x.2 = true) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro x <;> simp [ET.retainDocs]
 
 theorem et_scalars (s : List (Nat × Nat)) :
-    (ET.scalars s).scalar = s ∧ (ET.scalars s).array = [] ∧ (ET.scalars s).tag = [] ∧ (ET.scalars s).tagArray = [] :=
-  ⟨rfl, rfl, rfl, rfl⟩
+    (ET.scalars s).scalar = s ∧ (ET.scalars s).array = [] ∧ (ET.scalars s).tag = [] ∧ (ET.scalars s).tagArray = [] ∧
+      (ET.scalars s).geo = [] :=
+  ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-! ## `last_write_wins` over any tuple and any total order (`pending_writes.rs`) -/
 
@@ -353,7 +372,7 @@ def describeK : Pred → DescK
     .inList k (match l with
       | some items => (items.find? unindexable).map .value
       | none => some .nonList)
-  | .point k => .geo k
+  | .point k .. => .geo k
   | .arrayContains k v => .arrayContains k (if indexable v then none else some v)
 def describeAllK : List Pred → List DescK
   | [] => []
@@ -380,9 +399,24 @@ theorem describeK_range_named (k : String) (mn mx : Option Value) (a b : Bool) (
   refine ⟨hf, ?_⟩
   cases mn <;> cases mx <;> simp at hm ⊢ <;> first | exact hm | exact hm.symm | exact hm.imp Eq.symm Eq.symm
 
-theorem describeK_leaves (k : String) (v : Value) :
-    describeK (.point k) = .geo k ∧
+theorem describeK_leaves (k : String) (v : Value) (c r : Value) (cv : List (Nat × Nat)) :
+    describeK (.point k c r cv) = .geo k ∧
     describeK (.arrayContains k v) = .arrayContains k (if indexable v then none else some v) := ⟨rfl, rfl⟩
+
+/-- A point operand has a kind since #2527 (the geo kind), so a declined equality or range over one
+    names no type, like a number or a string. -/
+theorem describeK_point (k : String) (p : Option Nat) (mx : Option Value) (a b : Bool)
+    (hmx : ∀ v, mx = some v → unindexable v = false) :
+    describeK (.equal k (.point p)) = .equality k none ∧
+    describeK (.range k (some (.point p)) mx a b) = .range k none := by
+  refine ⟨rfl, ?_⟩
+  cases mx with
+  | none => rfl
+  | some v =>
+    have h := hmx v rfl
+    simp only [describeK, List.filterMap_cons, id, List.filterMap_nil, List.find?_cons]
+    have hp : unindexable (.point p) = false := rfl
+    simp [hp, h]
 
 /-- A string probe of a list is served by the tag array tree, so its description names no type. -/
 theorem describeK_arrayContains_string (k s : String) :

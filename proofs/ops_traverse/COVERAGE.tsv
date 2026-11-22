@@ -65,8 +65,8 @@ graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1374	PROVEN	EvalSP.evalSP
 graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1459	PROVEN	BidirBfs.bspNodes (bidirectional level-synchronised BFS, maps as newest-first lists, fuelled loop): bspNodes_spec (src = dst gives Null; otherwise Null only when no walk of <= max_level edges exists: the stop rule is complete; a returned node list is the node sequence of a SHORTEST walk src->dst along the forward rows, <= max_level long, distinct nodes) from bbLoop_spec (invariants: both sides' seen sets = nodes within their depth, frontiers = exact depth, disjoint until the first meeting, expand_spec/step_gen, meet_min = min other-side depth in the final level gives the true distance); BspWire.bfsSV_spec adds the min_hops filter. Scope: the backward rows are the converse of the forward rows (hrv1/hrv2: a property of the matrices NeighborIter reads); the post-hoc relationship lookup (get_src_dest_relationships) is not modelled, only the node sequence
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	58	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	100	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList (one InList since #2383), evalIQ_inList_err (W2-index-3, still open)
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	253	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff; InList arm (#2383): canUse_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist
-graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	256	PROVEN	IndexScan.indexable/losesPrecision: canUse_spec
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	263	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff; InList arm (#2383): canUse_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist
+graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	266	PROVEN	IndexScan.indexable/losesPrecision: canUse_spec
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::new	47	PROVEN	IndexScan.VecSt.new: vecNew_spec
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::next	83	PROVEN	IndexScan.vecRow: vecRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	IndexScan.vecArgs: vecArgs_ok, vecArgs_bad_k
@@ -76,8 +76,8 @@ graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::new	47	PROV
 graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::next	78	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, ftArgs_ok_iff, ftArgs_nonstring_empty, scans_stream
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::new	40	PROVEN	IndexScan.ftNew/VecSt.new: ftNew_spec
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::next	75	PROVEN	IndexScan.edgeVecRow/vecArgs: edgeVecRow_spec, vecArgs_ok
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	80	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	118	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	267	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
-graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	270	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	81	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	119	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	278	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
+graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	281	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	329	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream

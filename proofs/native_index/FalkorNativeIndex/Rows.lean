@@ -20,52 +20,140 @@ theorem ofKeys_filter_contains (ks : List Nat) (o : KeySet) (k : Nat) :
   rw [ofKeys_contains]
   by_cases h1 : k ∈ ks <;> by_cases h2 : o.contains k = true <;> simp [List.mem_filter, h1, h2]
 
+/-- The `Point` arm of `and`: the point, if the other side holds it. -/
+theorem point_arm (o : KeySet) (ka k : Nat) :
+    (if o.contains ka = true then KeySet.point ka else KeySet.empty).contains k = (ka == k && o.contains k) := by
+  by_cases h2 : o.contains ka = true
+  · rw [if_pos h2]
+    by_cases h : ka = k
+    · subst h; simp only [point_contains, beq_self_eq_true, h2, Bool.and_self]
+    · simp [KeySet.contains, beq_false_of_ne h]
+  · rw [if_neg h2]
+    by_cases h : ka = k
+    · subst h; simp only [Bool.not_eq_true] at h2
+      rw [h2, beq_self_eq_true]; rfl
+    · simp [KeySet.contains, beq_false_of_ne h]
+
+/-- A key in a window. -/
+def inWin (k : Nat) (w : Nat × Nat) : Bool := decide (w.1 ≤ k ∧ k ≤ w.2)
+
+/-- **`of_windows` holds exactly the keys in its windows**, whichever shape it picks. -/
+theorem ofWindows_contains (ws : List (Nat × Nat)) (k : Nat) :
+    (KeySet.ofWindows ws).contains k = ws.any (inWin k) := by
+  unfold KeySet.ofWindows
+  split
+  · rfl
+  · rename_i lo hi
+    split
+    · rename_i h; subst h
+      rw [Bool.eq_iff_iff]; simp [KeySet.contains, inWin]; omega
+    · simp [KeySet.contains, inWin]
+  · rfl
+
+/-- Sorted, disjoint windows (`cover_of`'s and `of_windows`'s invariant): each window is a range and
+    starts after the one before it ends. -/
+def WinsSorted (ws : List (Nat × Nat)) : Prop := (∀ w ∈ ws, w.1 ≤ w.2) ∧ ws.Pairwise (fun a b => a.2 < b.1)
+
+private theorem none_after (k : Nat) : ∀ (ws : List (Nat × Nat)), WinsSorted ws →
+    ws.takeWhile (fun w => decide (w.1 ≤ k)) = [] → ws.any (inWin k) = false
+  | [], _, _ => rfl
+  | r :: rest, ⟨hw, hp⟩, ht => by
+    have hr : ¬ r.1 ≤ k := by
+      intro h; simp [List.takeWhile_cons, h] at ht
+    rw [List.any_eq_false]
+    intro x hx
+    simp only [inWin, decide_eq_true_eq, not_and, Nat.not_le]
+    rcases List.mem_cons.1 hx with rfl | hx
+    · intro h; omega
+    · have := List.rel_of_pairwise_cons hp hx
+      have := hw r List.mem_cons_self
+      intro h; omega
+
+/-- **`KeySet::contains` on `Windows` (`partition_point`, then the last window starting at or below the
+    key) is "some window holds the key"**, the model's `contains`, on sorted disjoint windows. -/
+theorem containsW_eq_any (k : Nat) : ∀ (ws : List (Nat × Nat)), WinsSorted ws →
+    KeySet.containsW ws k = (KeySet.windows ws).contains k
+  | [], _ => rfl
+  | w :: rest, ⟨hw, hp⟩ => by
+    have hs : WinsSorted rest := ⟨fun x hx => hw x (List.mem_cons_of_mem _ hx), (List.pairwise_cons.1 hp).2⟩
+    have ih := containsW_eq_any k rest hs
+    simp only [KeySet.contains] at ih ⊢
+    unfold KeySet.containsW at ih ⊢
+    by_cases h1 : w.1 ≤ k
+    · rw [List.takeWhile_cons, if_pos (by simpa using h1)]
+      cases ht : rest.takeWhile (fun w => decide (w.1 ≤ k)) with
+      | nil =>
+        have : rest.any (fun w => decide (w.1 ≤ k ∧ k ≤ w.2)) = false := none_after k rest hs ht
+        rw [List.any_cons, this, Bool.or_false]
+        simp [h1]
+      | cons r t =>
+        rw [ht] at ih
+        have hl : (w :: r :: t).getLast? = (r :: t).getLast? := by simp [List.getLast?_cons]
+        rw [hl, ih, List.any_cons]
+        have hrk : r ∈ rest ∧ r.1 ≤ k := by
+          cases rest with
+          | nil => simp at ht
+          | cons r' rest' =>
+            rw [List.takeWhile_cons] at ht
+            by_cases h' : r'.1 ≤ k
+            · rw [if_pos (by simpa using h')] at ht
+              obtain ⟨rfl, -⟩ := List.cons.inj ht
+              exact ⟨List.mem_cons_self, h'⟩
+            · rw [if_neg (by simpa using h')] at ht; simp at ht
+        obtain ⟨hr, hrk⟩ := hrk
+        have := List.rel_of_pairwise_cons hp hr
+        have hn : decide (w.1 ≤ k ∧ k ≤ w.2) = false := by simp; omega
+        rw [hn, Bool.false_or]
+    · rw [List.takeWhile_cons, if_neg (by simpa using h1)]
+      have : (w :: rest).any (fun w => decide (w.1 ≤ k ∧ k ≤ w.2)) = false :=
+        none_after k (w :: rest) ⟨hw, hp⟩ (by rw [List.takeWhile_cons, if_neg (by simpa using h1)])
+      rw [this]; rfl
+
+/-- **The pairwise overlaps hold exactly the keys both window lists hold.** -/
+theorem overlaps_any (a b : List (Nat × Nat)) (k : Nat) :
+    (overlaps a b).any (inWin k) = (a.any (inWin k) && b.any (inWin k)) := by
+  rw [Bool.eq_iff_iff]
+  simp only [overlaps, List.any_eq_true, List.mem_flatMap, List.mem_filterMap, Bool.and_eq_true, inWin,
+    decide_eq_true_eq]
+  constructor
+  · rintro ⟨w, ⟨x, hx, y, hy, hw⟩, h1, h2⟩
+    split at hw
+    · cases hw; exact ⟨⟨x, hx, by simp at h1 h2; omega⟩, ⟨y, hy, by simp at h1 h2; omega⟩⟩
+    · cases hw
+  · rintro ⟨⟨x, hx, h1⟩, ⟨y, hy, h2⟩⟩
+    refine ⟨(max x.1 y.1, min x.2 y.2), ⟨x, hx, y, hy, ?_⟩, ?_⟩
+    · rw [if_pos (by omega)]
+    · simp; omega
+
+theorem wins_contains_range (lo hi k : Nat) : (KeySet.range lo hi).contains k = (KeySet.range lo hi).wins.any (inWin k) := by
+  simp [KeySet.contains, KeySet.wins, inWin]
+theorem wins_contains_windows (ws : List (Nat × Nat)) (k : Nat) :
+    (KeySet.windows ws).contains k = (KeySet.windows ws).wins.any (inWin k) := rfl
+
+/-- **`KeySet::and` holds exactly the keys both sides hold**, arm by arm (#2527: two sets of windows,
+    a range being one, meet in their pairwise overlaps). -/
 theorem keyset_and_contains (a b : KeySet) (k : Nat) : (a.and b).contains k = (a.contains k && b.contains k) := by
-  rcases a with _ | ka | ⟨lo, hi⟩ | ks <;> rcases b with _ | kb | ⟨lo', hi'⟩ | ks'
-  -- a = empty
-  · simp [KeySet.and, KeySet.contains]
-  · simp only [KeySet.and]; rw [ctn_ite]; simp [KeySet.contains]
-  · simp [KeySet.and, KeySet.contains]
-  · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
-  -- a = point
-  · simp only [KeySet.and]; rw [ctn_ite]; simp [KeySet.contains]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : ka = k
-    · subst h
-      by_cases h2 : kb = ka <;> simp [KeySet.contains, h2]
-    · simp [KeySet.contains, beq_false_of_ne h]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : ka = k
-    · subst h; simp [KeySet.contains]
-    · simp [KeySet.contains, beq_false_of_ne h]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : ka = k
-    · subst h; simp [KeySet.contains]
-    · simp [KeySet.contains, beq_false_of_ne h]
-  -- a = range
-  · simp [KeySet.and, KeySet.contains]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : kb = k
-    · subst h; simp [KeySet.contains]
-    · simp [KeySet.contains, beq_false_of_ne h]
-  · simp only [KeySet.and]
-    by_cases hc : max lo lo' ≤ min hi hi'
-    · rw [if_pos hc, Bool.eq_iff_iff]
-      simp only [KeySet.contains, Bool.and_eq_true, decide_eq_true_eq]; omega
-    · rw [if_neg hc, Bool.eq_iff_iff]
-      simp only [KeySet.contains, Bool.and_eq_true, decide_eq_true_eq, Bool.false_eq_true]
-      constructor
-      · intro h; exact h.elim
-      · rintro ⟨⟨h1, h2⟩, h3, h4⟩; omega
-  · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp only [KeySet.contains]; rw [Bool.and_comm]
-  -- a = keys
-  · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : kb = k
-    · subst h; simp [KeySet.contains]
-    · simp [KeySet.contains, beq_false_of_ne h]
-  · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
-  · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
+  cases a <;> cases b
+  all_goals simp only [KeySet.and]
+  all_goals first
+    | (rw [point_arm]; simp [KeySet.contains, Bool.and_comm]; done)
+    | (rw [point_arm]; rw [Bool.and_comm]; rfl)
+    | (rw [ofKeys_filter_contains]; simp [KeySet.contains, Bool.and_comm]; done)
+    | (rw [ofKeys_filter_contains]; simp only [KeySet.contains]; rw [Bool.and_comm]; done)
+    | (rw [ofWindows_contains, overlaps_any, wins_contains_range, wins_contains_windows]; done)
+    | (rw [ofWindows_contains, overlaps_any, wins_contains_windows, wins_contains_range]; done)
+    | (rw [ofWindows_contains, overlaps_any, wins_contains_windows, wins_contains_windows]; done)
+    | (simp [KeySet.contains]; done)
+    | skip
+  all_goals rename_i lo hi lo' hi'
+  by_cases hc : max lo lo' ≤ min hi hi'
+  · rw [if_pos hc, Bool.eq_iff_iff]
+    simp only [KeySet.contains, Bool.and_eq_true, decide_eq_true_eq]; omega
+  · rw [if_neg hc, Bool.eq_iff_iff]
+    simp only [KeySet.contains, Bool.and_eq_true, decide_eq_true_eq, Bool.false_eq_true]
+    constructor
+    · intro h; exact h.elim
+    · rintro ⟨⟨h1, h2⟩, h3, h4⟩; omega
 
 /-! ## `atoms` (`range.rs`) -/
 
@@ -124,7 +212,7 @@ theorem atoms_same : ∀ (m : IndexQuery) (b : Bool) (as : List IndexQuery), sam
   | .range .., b, as, hs, h => by simp [sameCombinator] at hs
   | .inList .., b, as, hs, h => by simp [sameCombinator] at hs
   | .arrayContains .., b, as, hs, h => by simp [sameCombinator] at hs
-  | .point _, b, as, hs, h => by simp [sameCombinator] at hs
+  | .point .., b, as, hs, h => by simp [sameCombinator] at hs
 end
 
 /-- **No atom of an `AND` is itself an `AND`** (`conjunction`'s `debug_assert!`, `range.rs`): the
