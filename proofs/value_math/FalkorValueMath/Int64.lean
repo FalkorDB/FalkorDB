@@ -3,10 +3,12 @@ import FalkorCore.Int64
 # `i64` arithmetic of `Value` (Int lanes of `Add/Sub/Mul/Div/Rem for Value`)
 
 Rust's `i64` is modelled as a mathematical `Int` together with the two's-complement
-wrap `wrap : Int → Int` onto `[-2^63, 2^63)`. Every Int lane in
-`graph/src/runtime/value.rs:903-1171` uses the `wrapping_*` methods, which are exactly
-`wrap ∘ (exact op)` (Rust reference, `i64::wrapping_add` etc.; `wrapping_div` wraps only
-`MIN / -1`, `wrapping_rem` returns 0 for `MIN % -1`).
+wrap `wrap : Int → Int` onto `[-2^63, 2^63)`. The Int lanes of `Add`, `Sub`, `Mul` and `Rem` in
+`graph/src/runtime/value.rs` use the `wrapping_*` methods, which are exactly
+`wrap ∘ (exact op)` (Rust reference, `i64::wrapping_add` etc.; `wrapping_rem` returns 0 for
+`MIN % -1`). `Div` does NOT use `wrapping_div`: it uses `checked_div`, so `MIN / -1` is an
+overflow error (`ValueMath.div_min_neg_one`). `wDiv` below models the `wrapping_div` helper
+only (and C's wrapping behaviour for comparison), not the current runtime division.
 
 C FalkorDB's integer division (`SIValue_Divide`, `src/value.c`, master) is
 `SI_LongVal(SI_GET_NUMERIC(a) / SI_GET_NUMERIC(b))`: both operands are converted to
@@ -35,7 +37,7 @@ theorem wrap_wrap (x : Int) : wrap (wrap x) = wrap x := wrap_id (wrap_inI64 x)
 theorem wrap_add_mul (x k : Int) : wrap (x + k * TWO64) = wrap x := by
   unfold wrap; omega
 
-/-! ## Rust `wrapping_*` (value.rs:915, 1048, 1097, 1130, 1158) -/
+/-! ## Rust `wrapping_*` (value.rs) -/
 
 -- `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem` are `FalkorCore`'s.
 
@@ -137,7 +139,7 @@ theorem rem_bounds (a b : Int) (hb : b ≠ 0) :
   refine ⟨?_, fun h => Int.tmod_nonneg b h⟩
   rw [Int.natAbs_tmod]; exact Nat.mod_lt _ (by omega)
 
-/-! ## `abs` / `sign` on integers (math.rs:48, 212) -/
+/-! ## `abs` / `sign` on integers (math.rs) -/
 
 /-- `i64::checked_abs`. -/
 def checkedAbs (a : Int) : Option Int := if a = I64MIN then none else some a.natAbs
