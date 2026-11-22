@@ -1,12 +1,4 @@
 /-! # `node.getNeighbors()` (`graph/src/udf/js_classes.rs`)
-
-| here | there |
-| --- | --- |
-| `nodeRels`       | AXIOMATISED `Graph::get_node_relationships` contract: every outgoing edge of `v`, then every incoming edge of `v` (a self-loop is in both) |
-| `collectEdges`   | `collect_edges` :97 |
-| `typeFilters`    | `types` parsing in `js_get_neighbors` :419-428 (non-string elements skipped) |
-| `applyTypes`     | the `type_filters` retain :486-493 |
-| `neighborNodes`  | node result with `seen_neighbors` dedup :507-517 |
 -/
 namespace AlgoUdf.Neighbors
 
@@ -19,13 +11,16 @@ structure E where
 
 inductive Dir | outgoing | incoming | both deriving DecidableEq
 
-def nodeRels (es : List E) (v : Nat) : List E :=
-  es.filter (·.src == v) ++ es.filter (·.dst == v)
+/-- `get_node_relationships_by_type` with no type filter (graph.rs): the outgoing half if
+enumerated, then the incoming half, which drops the self-loop (`src != id`) when the outgoing half
+is also enumerated. -/
+def nodeRels (es : List E) (v : Nat) : Dir → List E
+  | .outgoing => es.filter (·.src == v)
+  | .incoming => es.filter (·.dst == v)
+  | .both => es.filter (·.src == v) ++ (es.filter (·.dst == v)).filter (·.src != v)
 
-def collectEdges (es : List E) (v : Nat) : Dir → List E
-  | .outgoing => (nodeRels es v).filter (·.src == v)
-  | .incoming => (nodeRels es v).filter (·.dst == v)
-  | .both => nodeRels es v
+/-- `collect_edges` (js_classes.rs): the direction is handed to the graph. -/
+def collectEdges (es : List E) (v : Nat) (d : Dir) : List E := nodeRels es v d
 
 /-- What C returns: each incident edge once. -/
 def spec (es : List E) (v : Nat) : Dir → List E
@@ -33,28 +28,36 @@ def spec (es : List E) (v : Nat) : Dir → List E
   | .incoming => es.filter (·.dst == v)
   | .both => es.filter (fun e => e.src == v || e.dst == v)
 
-/-- Without self-loops at `v`, outgoing agrees with the spec. -/
-theorem outgoing_ok (es : List E) (v : Nat) (h : ∀ e ∈ es, e.src = v → e.dst ≠ v) :
-    collectEdges es v .outgoing = spec es v .outgoing := by
-  simp only [collectEdges, spec, nodeRels, List.filter_append, List.filter_filter]
-  have : List.filter (fun e => (e.src == v) && (e.dst == v)) es = [] := by
-    apply List.filter_eq_nil_iff.mpr
-    intro e he; have := h e he; simp; intro hs; exact this hs
-  have e1 : List.filter (fun e => (e.src == v) && (e.src == v)) es = List.filter (·.src == v) es := by
-    simp
-  rw [e1]
-  have e2 : List.filter (fun e => (e.src == v) && (e.dst == v)) es =
-      List.filter (fun e => (e.dst == v) && (e.src == v)) es := by
-    congr 1; funext e; exact Bool.and_comm _ _
-  rw [this, List.append_nil]
+/-- **Fixed by #3084.** `collect_edges` returns exactly the incident edges of the spec, in every
+direction, self-loops included. -/
+theorem collectEdges_mem (es : List E) (v : Nat) (d : Dir) (e : E) :
+    e ∈ collectEdges es v d ↔ e ∈ spec es v d := by
+  cases d <;> simp only [collectEdges, nodeRels, spec, List.mem_append, List.mem_filter, beq_iff_eq,
+    bne_iff_ne, ne_eq, Bool.or_eq_true]
+  by_cases h : e.src = v <;> simp [h]
 
-/-- BUG (confirmed, `bug_udf_get_neighbors_self_loop_twice`): e0 a→b, e2 a→a:
-outgoing edges of a are [e0, e2, e2]. -/
-theorem self_loop_twice :
+/-- ... and each of them once (a self-loop is no longer in both halves). -/
+theorem collectEdges_nodup (es : List E) (v : Nat) (d : Dir) (h : es.Nodup) :
+    (collectEdges es v d).Nodup := by
+  cases d with
+  | outgoing => exact h.filter _
+  | incoming => exact h.filter _
+  | both =>
+    simp only [collectEdges, nodeRels]
+    rw [List.nodup_append]
+    refine ⟨h.filter _, (h.filter _).filter _, ?_⟩
+    intro a ha b hb hab
+    subst hab
+    simp only [List.mem_filter, beq_iff_eq, bne_iff_ne, ne_eq] at ha hb
+    exact hb.2 ha.2
+
+/-- A self-loop is listed once (#3084). -/
+theorem fixed3084_self_loop_once :
     let es := [E.mk 0 0 1 "R", E.mk 2 0 0 "R"]
-    (collectEdges es 0 .outgoing).map (·.id) = [0, 2, 2] ∧
+    (collectEdges es 0 .outgoing).map (·.id) = [0, 2] ∧
     (spec es 0 .outgoing).map (·.id) = [0, 2] ∧
-    (collectEdges es 0 .both).map (·.id) = [0, 2, 2] := by decide
+    (collectEdges es 0 .both).map (·.id) = [0, 2] ∧
+    (collectEdges es 0 .incoming).map (·.id) = [2] := by decide
 
 /-- JS `types` array elements: `some s` for strings, `none` for anything else. -/
 def typeFilters (xs : List (Option String)) : List String := xs.filterMap id

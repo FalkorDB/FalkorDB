@@ -82,16 +82,16 @@ theorem insU_pairwise (x : Nat) : ∀ l : List Nat, List.Pairwise (· < ·) l �
     have hys : List.Pairwise (· < ·) ys := (List.pairwise_cons.mp hp).2
     unfold insU
     by_cases h1 : x < y
-    · rw [if_pos h1]
+    · rw [ite_eq_left h1]
       refine List.Pairwise.cons ?_ hp
       intro a ha
       rcases List.mem_cons.mp ha with rfl | ha
       · exact h1
       · exact Nat.lt_trans h1 (hy a ha)
-    · rw [if_neg h1]
+    · rw [ite_eq_right h1]
       by_cases h2 : x = y
-      · rw [if_pos h2]; exact hp
-      · rw [if_neg h2]
+      · rw [ite_eq_left h2]; exact hp
+      · rw [ite_eq_right h2]
         refine List.Pairwise.cons ?_ (ih hys)
         intro a ha
         rcases (mem_insU x a ys).mp ha with rfl | ha'
@@ -173,7 +173,7 @@ def groupBy {K} [DecidableEq K] {A} (key : A → K) (l : List A) : List (K × Li
     };
     slots[slot].1.push(id);
     ```
-    (`emit.rs:523-561`, `emit.rs:812-844`). `index` is an `FxHashMap<Shape,
+    (`emit.rs`, `emit.rs`). `index` is an `FxHashMap<Shape,
     usize>`; here an association list, since only `get` and `insert` of a fresh
     key are used and the map's iteration order never leaks into the output. -/
 
@@ -415,13 +415,13 @@ theorem memoStep_spec {K} [DecidableEq K] {A} (key : A → K) (m : Memo K A) (x 
   | some i =>
     simp only
     by_cases he : keyAt i m.slots = some (key x)
-    · rw [if_pos he]
+    · rw [ite_eq_left he]
       have hf := keyAt_pos (key x) m.slots i hinv.nd he
       refine ⟨(addTo_eq_pushAt _ _ _ _ hf).symm, ⟨?_, ?_, ?_⟩⟩
       · intro k; simp only; rw [hinv.idx, pos_pushAt]
       · intro i' hi'; simp only at hi'; rw [pushAt_length]; simp only [Option.some.injEq] at hi'; subst hi'; exact hinv.last i hl
       · simp only [pushAt_fst]; exact hinv.nd
-    · rw [if_neg he]; exact memoMiss_spec m (key x) x hinv
+    · rw [ite_eq_right he]; exact memoMiss_spec m (key x) x hinv
 
 theorem memoFold_spec {K} [DecidableEq K] {A} (key : A → K) :
     ∀ (l : List A) (m : Memo K A), MemoInv m →

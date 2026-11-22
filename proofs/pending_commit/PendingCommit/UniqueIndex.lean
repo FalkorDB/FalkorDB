@@ -1,41 +1,34 @@
 import PendingCommit.PendingCommitOp
 /-
-# UNIQUE constraints enforced by index lookup (#3334, #3547/#2386; pending.rs:61-290 `unique_violated` and helpers, :1580-1700 constraint checks)
+# UNIQUE constraints enforced by index lookup (#3547/#2386; pending.rs `unique_violated` and helpers, :1580-1700 constraint checks)
 
-Before #3334 (fixing #3330) a UNIQUE check scanned the whole label (type) once per
-affected member: `PC.check` / `PC.scan_ok` / `PC.check_spec` (kept as the reference
-"label-scan spec"). Now `unique_violated` (:216) gathers the members' composite keys
-(skipping a member with a `Null` or unenforced value; an early `true` on two members sharing one), then looks each key up through an index and
-re-verifies every candidate against the graph. Since #3547 the index is abstracted by two
+A UNIQUE check no longer scans the whole label (type) once per
+affected member (`PC.check` / `PC.scan_ok` / `PC.check_spec` are kept as the reference
+"label-scan spec"); `unique_violated` (:217) gathers the members' composite keys
+(an early `true` on two members sharing one), then looks each key up through an index and
+re-verifies every candidate against the graph. The index is abstracted by two
 closures: `query_for(values) -> Option<Q>` gives the lookup for one member (or `None`: the
 index cannot answer for it) and `lookup(Q)` runs one. `use_index` starts `true`; one member
 for which `query_for` is `None` sends the whole set to the label scan, and the lookups
 gathered so far are dropped (none runs). The RediSearch `query_for` is
-`redisearch_unique_query` (:173); the native one is `native_unique_query`
+`redisearch_unique_query` (:174); the native one is `native_unique_query`
 (index/falkordb/unique.rs), which this project does not model.
 
-| Lean | Rust |
-| --- | --- |
-| `EV`, `exactLookup`, `exactLookup_spec` | `is_value_valid_for_index_lookup` (:159) |
-| `entOf`, `keyOf` | `values` / `Graph::build_composite_key` in `unique_violated` (:236-249) |
-| `gather` | the member loop of `unique_violated` (:234-267): `keys`, `lookups`, `use_index` |
-| `uniqueViolated` | `unique_violated` (:216) |
-| `checkMandatory`, `checkUnique`, `checkNode2`, `checkEdge2` | `check_node_constraint` (:1580), `check_edge_constraint` (:1672) |
-| `UniqueQuery.lean`: `Query`, `redisearchQuery` | `redisearch_unique_query` (:173) |
-
 Modelling:
-* Since #2991 values and keys are separate. Property values are an abstract type `W`;
-  `attr e q = none` is an absent or `Null` property (both filtered by Rust before keying).
-  `kv : W → Option V` is one component of `Graph::build_composite_key` (graph.rs:4866):
-  `none` for a value the constraint does not enforce (list, point, temporal, vecf32, NaN:
-  the empty key), otherwise the component's key class (`V` equality = equal key bytes:
-  numbers as their folded `f64`, so `1`, `1.0`, `true` share one; strings byte for byte).
-  `entOf` pairs a member's values `ws` (what `query_for` receives) with its key `vals`, and is
-  `none` exactly when Rust skips the member (`collect` fails, or `key.is_empty()` at :245);
-  `keyOf = (props.mapM (attr e)).bind (·.mapM kv)` (`keyOf_eq`) is the key `collides`
-  recomputes. That the byte key is injective on key classes is proven in proofs/graph_persist
-  (`composite_key_unambiguous`, `keyFrag_eq_iff`). With `props = []` both sides degenerate
-  the same way (`some []` / `b""`).
+* Values are an abstract type `V` with decidable equality; `attr e q = none` is an absent
+  or `Null` property (both filtered by Rust before keying). The composite key of `e` is
+  `key e = props.mapM (attr e)`: `Graph::build_composite_key` (graph.rs) returns the
+  empty byte string iff a property is null/absent, and otherwise the `Debug` rendering of
+  each value followed by `'|'`. Key equality is therefore equality of the derived `Debug`
+  renderings, and `V` is to be read as the set of those renderings (`V` equality = key
+  equality). **Modelling assumption:** the rendering is injective on the values a property can
+  hold except for floating-point NaN: every NaN, whatever its payload or sign, renders as
+  `NaN`, so two distinct NaN bit patterns share a key (`0.0` and `-0.0` render differently,
+  as `Int(1)` and `Float(1.0)` do). With `V` read as renderings this is exactly Rust's
+  behaviour (two NaN-valued members count as sharing a key; `is_value_valid_for_index_lookup`
+  also sends NaN to the scan); the theorems say nothing about a finer notion of value
+  equality. Strings render quoted and escaped. With `props = []` both sides degenerate the
+  same way (`some []` / `b""`).
 * `FxHashSet`/`Vec` are lists; `RoaringTreemap` iteration is a duplicate-free list.
 * The lookup (`queryFor`, `lookup`) and the label/type scan (`scan`) are uninterpreted. The
   theorems that compare with a specification take, as explicit hypotheses, the contract the
@@ -50,8 +43,6 @@ Results:
   or a member's key is also carried by a live candidate outside the affected set.
 * `uniqueViolated_declined` — a member `query_for` declines sends the whole set to the
   scan: the verdict no longer depends on `lookup` at all (no lookup runs).
-* `uniqueViolated_vacuous` — (#2991) a member with a value the constraint does not enforce
-  is ignored, like one with a `Null` property.
 * `uniqueViolated_agrees` — under the constraint's pre-commit invariant (no two live,
   unaffected candidates share a full key) that is exactly the old label-scan verdict:
   some member participates and the label's full keys are not pairwise distinct.
@@ -91,102 +82,53 @@ theorem exactLookup_spec (loses : Int → Bool) (v : EV) :
 
 /-! ## `unique_violated` -/
 
-variable {W V Q : Type} [DecidableEq V]
-
-/-- One member's values and key, or `none` when it does not participate: a property is
-absent or `Null` (`attr` is `none`, the `collect::<Option<Vec<_>>>` at :236-242), or a value
-is one the constraint does not enforce (`kv` is `none`, the `key.is_empty()` `continue` at
-:245-249, #2991). `ws` is what `query_for` receives, `vals` the composite key. -/
-def entOf (props : List Nat) (attr : Nat → Nat → Option W) (kv : W → Option V) (e : Nat) :
-    Option (List W × List V) :=
-  match props.mapM (attr e) with
-  | none => none
-  | some ws =>
-    match ws.mapM kv with
-    | none => none
-    | some vals => some (ws, vals)
-
-/-- `Graph::build_composite_key` of an entity: `none` is the empty key. -/
-def keyOf (props : List Nat) (attr : Nat → Nat → Option W) (kv : W → Option V) (e : Nat) :
-    Option (List V) :=
-  (entOf props attr kv e).map Prod.snd
-
-theorem keyOf_eq (props : List Nat) (attr : Nat → Nat → Option W) (kv : W → Option V) (e : Nat) :
-    keyOf props attr kv e = (props.mapM (attr e)).bind (·.mapM kv) := by
-  unfold keyOf entOf
-  cases h1 : props.mapM (attr e) with
-  | none => rfl
-  | some ws => cases h2 : ws.mapM kv <;> simp [h2]
+variable {V Q : Type} [DecidableEq V]
 
 /-- The member loop: `none` is the early `return true` (two members share a key).
-`qf` is `query_for` (on the member's values); a `none` from it clears the queue and
-`use_index` for good. -/
-def gather (props : List Nat) (attr : Nat → Nat → Option W) (kv : W → Option V)
-    (qf : List W → Option Q) :
+`qf` is `query_for`; a `none` from it clears the queue and `use_index` for good. -/
+def gather (props : List Nat) (attr : Nat → Nat → Option V) (qf : List V → Option Q) :
     List Nat → List (List V) → List Q → Bool → Option (List (List V) × List Q × Bool)
   | [], keys, lk, ui => some (keys, lk, ui)
   | m :: ms, keys, lk, ui =>
-    match entOf props attr kv m with
-    | none => gather props attr kv qf ms keys lk ui
-    | some (ws, vals) =>
+    match props.mapM (attr m) with
+    | none => gather props attr qf ms keys lk ui
+    | some vals =>
       if vals ∈ keys then none
       else if ui then
-        match qf ws with
-        | some q => gather props attr kv qf ms (vals :: keys) (lk ++ [q]) true
-        | none => gather props attr kv qf ms (vals :: keys) [] false
-      else gather props attr kv qf ms (vals :: keys) lk false
+        match qf vals with
+        | some q => gather props attr qf ms (vals :: keys) (lk ++ [q]) true
+        | none => gather props attr qf ms (vals :: keys) [] false
+      else gather props attr qf ms (vals :: keys) lk false
 
-/-- `unique_violated` (:216). `affected` is the whole affected set, `isCand` the
+/-- `unique_violated` (:217). `affected` is the whole affected set, `isCand` the
 `is_candidate` closure, `qf` is `query_for`, `lookup` runs one query,
 `scan` the label matrix / relationship tensor listing. -/
 def uniqueViolated (props : List Nat) (members : List Nat) (affected : Nat → Bool)
-    (attr : Nat → Nat → Option W) (kv : W → Option V) (isCand : Nat → Bool)
-    (qf : List W → Option Q) (lookup : Q → List Nat) (scan : List Nat) : Bool :=
-  match gather props attr kv qf members [] [] true with
+    (attr : Nat → Nat → Option V) (isCand : Nat → Bool) (qf : List V → Option Q)
+    (lookup : Q → List Nat) (scan : List Nat) : Bool :=
+  match gather props attr qf members [] [] true with
   | none => true
   | some (keys, lks, ui) =>
     if keys = [] then false
     else
       let collides := fun o => !affected o && isCand o &&
-        (match keyOf props attr kv o with | some k => decide (k ∈ keys) | none => false)
+        (match props.mapM (attr o) with | some k => decide (k ∈ keys) | none => false)
       if ui then lks.any (fun q => (lookup q).any collides)
       else scan.any collides
 
-theorem keyOf_some_of_ent (props : List Nat) (attr : Nat → Nat → Option W) (kv : W → Option V) {m : Nat} {ws : List W} {vals : List V}
-    (h : entOf props attr kv m = some (ws, vals)) : keyOf props attr kv m = some vals := by
-  simp [keyOf, h]
-
-theorem keyOf_none_of_ent (props : List Nat) (attr : Nat → Nat → Option W) (kv : W → Option V) {m : Nat} (h : entOf props attr kv m = none) :
-    keyOf props attr kv m = none := by
-  simp [keyOf, h]
-
-theorem entOf_mapM (props : List Nat) (attr : Nat → Nat → Option W) (kv : W → Option V) {m : Nat} {ws : List W} {vals : List V}
-    (h : entOf props attr kv m = some (ws, vals)) : ws.mapM kv = some vals := by
-  unfold entOf at h
-  cases h1 : props.mapM (attr m) with
-  | none => rw [h1] at h; cases h
-  | some ws' =>
-    rw [h1] at h; dsimp only at h
-    cases h2 : ws'.mapM kv with
-    | none => rw [h2] at h; cases h
-    | some v' => rw [h2] at h; cases h; exact h2
-
 section
-variable (props : List Nat) (attr : Nat → Nat → Option W) (kv : W → Option V)
-  (qf : List W → Option Q)
+variable (props : List Nat) (attr : Nat → Nat → Option V) (qf : List V → Option Q)
 
-local notation "key" => keyOf props attr kv
+local notation "key" => fun e => props.mapM (attr e)
 
 theorem gather_none : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (ui : Bool), keys.Nodup →
-    (gather props attr kv qf ms keys lk ui = none ↔ ¬ (ms.filterMap key ++ keys).Nodup)
+    (gather props attr qf ms keys lk ui = none ↔ ¬ (ms.filterMap key ++ keys).Nodup)
   | [], keys, lk, ui, h => by simp [gather, h]
   | m :: ms, keys, lk, ui, h => by
     simp only [gather, List.filterMap_cons]
-    cases hk : entOf props attr kv m with
-    | none => rw [keyOf_none_of_ent props attr kv hk]; exact gather_none ms keys lk ui h
-    | some p =>
-      obtain ⟨ws, vals⟩ := p
-      rw [keyOf_some_of_ent props attr kv hk]
+    cases hk : props.mapM (attr m) with
+    | none => exact gather_none ms keys lk ui h
+    | some vals =>
       simp only [List.cons_append, List.nodup_cons]
       by_cases hv : vals ∈ keys
       · simp [hv]
@@ -194,52 +136,57 @@ theorem gather_none : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
         have e : (ms.filterMap key ++ vals :: keys).Nodup ↔ (vals ∉ ms.filterMap key ++ keys ∧
             (ms.filterMap key ++ keys).Nodup) := by
           rw [List.perm_middle.nodup_iff, List.nodup_cons]
-        rw [if_neg hv]
+        rw [ite_eq_right hv]
         by_cases hu : ui = true
-        · rw [if_pos hu]
-          cases hq : qf ws with
+        · rw [ite_eq_left hu]
+          cases hq : qf vals with
           | some q => dsimp only; rw [gather_none ms _ _ _ h', e]
           | none => dsimp only; rw [gather_none ms _ _ _ h', e]
-        · rw [if_neg hu, gather_none ms _ _ _ h', e]
+        · rw [ite_eq_right hu, gather_none ms _ _ _ h', e]
 
 /-- Invariant: while the index is still in use, every key gathered has its query queued. -/
 def GInv (keys : List (List V)) (lk : List Q) (ui : Bool) : Prop :=
-  ui = true → ∀ k ∈ keys, ∃ ws q, ws.mapM kv = some k ∧ qf ws = some q ∧ q ∈ lk
+  ui = true → ∀ k ∈ keys, ∃ q, qf k = some q ∧ q ∈ lk
 
 theorem gather_some : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (ui : Bool) r,
-    GInv kv qf keys lk ui → gather props attr kv qf ms keys lk ui = some r →
-    (∀ k, k ∈ r.1 ↔ k ∈ keys ∨ k ∈ ms.filterMap key) ∧ GInv kv qf r.1 r.2.1 r.2.2 ∧
+    GInv qf keys lk ui → gather props attr qf ms keys lk ui = some r →
+    (∀ k, k ∈ r.1 ↔ k ∈ keys ∨ k ∈ ms.filterMap key) ∧ GInv qf r.1 r.2.1 r.2.2 ∧
     (r.2.2 = true → ui = true) ∧
-    (r.2.2 = true ↔ ui = true ∧ ∀ p ∈ ms.filterMap (entOf props attr kv), ∃ q, qf p.1 = some q)
+    (r.2.2 = true ↔ ui = true ∧ ∀ k ∈ ms.filterMap key, ∃ q, qf k = some q)
   | [], keys, lk, ui, r, hi, h => by
     simp only [gather, Option.some.injEq] at h; subst h; simp [hi]
   | m :: ms, keys, lk, ui, r, hi, h => by
     simp only [gather] at h
     simp only [List.filterMap_cons]
-    cases hk : entOf props attr kv m with
+    cases hk : props.mapM (attr m) with
     | none =>
       rw [hk] at h; simp only at h
-      rw [keyOf_none_of_ent props attr kv hk]
       exact gather_some ms keys lk ui r hi h
-    | some p =>
-      obtain ⟨ws, vals⟩ := p
+    | some vals =>
       rw [hk] at h; simp only at h
-      rw [keyOf_some_of_ent props attr kv hk]
-      have hmk := entOf_mapM props attr kv hk
-      clear hk
       by_cases hv : vals ∈ keys
-      · rw [if_pos hv] at h; cases h
-      rw [if_neg hv] at h
+      · rw [ite_eq_left hv] at h; cases h
+      rw [ite_eq_right hv] at h
+      have fin : ∀ lk' ui', GInv qf (vals :: keys) lk' ui' →
+          gather props attr qf ms (vals :: keys) lk' ui' = some r → (ui' = true → ui = true) →
+          (∀ k, k ∈ r.1 ↔ k ∈ keys ∨ k ∈ vals :: ms.filterMap key) ∧ GInv qf r.1 r.2.1 r.2.2 ∧
+          (r.2.2 = true → ui = true) := by
+        intro lk' ui' hi' h' hu
+        obtain ⟨a, b, c, -⟩ := gather_some ms (vals :: keys) lk' ui' r hi' h'
+        refine ⟨fun k => ?_, b, fun x => hu (c x)⟩
+        rw [a k]; simp only [List.mem_cons]; constructor
+        · rintro ((h | h) | h) <;> simp_all
+        · rintro (h | h | h) <;> simp_all
       by_cases hu : ui = true
-      · rw [if_pos hu] at h
-        cases hq : qf ws with
+      · rw [ite_eq_left hu] at h
+        cases hq : qf vals with
         | some q =>
           rw [hq] at h; dsimp only at h
           obtain ⟨a, b, c, d⟩ := gather_some ms (vals :: keys) (lk ++ [q]) true r (fun _ k hk => by
             simp only [List.mem_cons] at hk
             rcases hk with rfl | hk
-            · exact ⟨ws, q, hmk, hq, by simp⟩
-            · obtain ⟨ws', q', a, b, c⟩ := hi hu k hk; exact ⟨ws', q', a, b, by simp [c]⟩) h
+            · exact ⟨q, hq, by simp⟩
+            · obtain ⟨q', a, b⟩ := hi hu k hk; exact ⟨q', a, by simp [b]⟩) h
           refine ⟨?_, b, fun _ => hu, ?_⟩
           · intro k; rw [a k]; simp only [List.mem_cons]; constructor
             · rintro ((h | h) | h) <;> simp_all
@@ -256,10 +203,9 @@ theorem gather_some : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
           · constructor
             · intro h'; have := (d.1 h').1; simp at this
             · rintro ⟨-, h2⟩
-              obtain ⟨q, hq'⟩ := h2 (ws, vals) (by simp)
+              obtain ⟨q, hq'⟩ := h2 vals (by simp)
               rw [hq] at hq'; cases hq'
-      · rw [if_neg hu] at h
-        clear hmk
+      · rw [ite_eq_right hu] at h
         obtain ⟨a, b, c, d⟩ := gather_some ms (vals :: keys) lk false r (fun h => by cases h) h
         refine ⟨?_, b, fun h => absurd (c h) (by simp), ?_⟩
         · intro k; rw [a k]; simp only [List.mem_cons]; constructor
@@ -273,43 +219,43 @@ end
 /-- **`uniqueViolated_spec`**: given the lookup/scan contract, `unique_violated` reports a
 violation iff two members share a full key, or some member's key is carried by a live
 candidate this commit did not write. `hIdx`: a lookup returns a superset of the live
-candidates outside the commit that carry the key of the values it was built for. -/
+candidates outside the commit that carry the key it was built for. -/
 theorem uniqueViolated_spec (props : List Nat) (members : List Nat) (affected : Nat → Bool)
-    (attr : Nat → Nat → Option W) (kv : W → Option V) (isCand : Nat → Bool)
-    (qf : List W → Option Q) (lookup : Q → List Nat) (scan : List Nat)
-    (hIdx : ∀ ws q, qf ws = some q → ∀ vals, ws.mapM kv = some vals → ∀ o, affected o = false →
-      isCand o = true → keyOf props attr kv o = some vals → o ∈ lookup q)
-    (hScan : ∀ o, affected o = false → isCand o = true → (keyOf props attr kv o).isSome → o ∈ scan) :
-    uniqueViolated props members affected attr kv isCand qf lookup scan = true ↔
-      (¬ (members.filterMap (keyOf props attr kv)).Nodup ∨
-       ∃ m ∈ members, ∃ k, keyOf props attr kv m = some k ∧
-         ∃ o, affected o = false ∧ isCand o = true ∧ keyOf props attr kv o = some k) := by
+    (attr : Nat → Nat → Option V) (isCand : Nat → Bool) (qf : List V → Option Q)
+    (lookup : Q → List Nat) (scan : List Nat)
+    (hIdx : ∀ vals q, qf vals = some q → ∀ o, affected o = false →
+      isCand o = true → props.mapM (attr o) = some vals → o ∈ lookup q)
+    (hScan : ∀ o, affected o = false → isCand o = true → (props.mapM (attr o)).isSome → o ∈ scan) :
+    uniqueViolated props members affected attr isCand qf lookup scan = true ↔
+      (¬ (members.filterMap fun e => props.mapM (attr e)).Nodup ∨
+       ∃ m ∈ members, ∃ k, props.mapM (attr m) = some k ∧
+         ∃ o, affected o = false ∧ isCand o = true ∧ props.mapM (attr o) = some k) := by
   unfold uniqueViolated
-  cases hg : gather props attr kv qf members [] [] true with
+  cases hg : gather props attr qf members [] [] true with
   | none =>
-    have := (gather_none props attr kv qf members [] [] true List.nodup_nil).1 hg
+    have := (gather_none props attr qf members [] [] true List.nodup_nil).1 hg
     simp only [List.append_nil] at this
     simp [this]
   | some r =>
     obtain ⟨keys, lks, ui⟩ := r
-    have hnd : (members.filterMap (keyOf props attr kv)).Nodup := by
-      have := gather_none props attr kv qf members [] [] true List.nodup_nil
+    have hnd : (members.filterMap fun e => props.mapM (attr e)).Nodup := by
+      have := gather_none props attr qf members [] [] true List.nodup_nil
       simp only [List.append_nil] at this
       exact Classical.byContradiction fun hc => by rw [this.2 hc] at hg; cases hg
-    obtain ⟨hmem, hinv, hui, -⟩ := gather_some props attr kv qf members [] [] true _
+    obtain ⟨hmem, hinv, hui, -⟩ := gather_some props attr qf members [] [] true _
       (fun _ k hk => by cases hk) hg
     simp only [List.not_mem_nil, false_or] at hmem
     dsimp only
     simp only [hnd, not_true_eq_false, false_or]
-    have toM : ∀ k, k ∈ keys → ∃ m ∈ members, keyOf props attr kv m = some k := by
+    have toM : ∀ k, k ∈ keys → ∃ m ∈ members, props.mapM (attr m) = some k := by
       intro k hk; have := (hmem k).1 hk; rw [List.mem_filterMap] at this; exact this
-    have ofM : ∀ m ∈ members, ∀ k, keyOf props attr kv m = some k → k ∈ keys := by
+    have ofM : ∀ m ∈ members, ∀ k, props.mapM (attr m) = some k → k ∈ keys := by
       intro m hm k hk; exact (hmem k).2 (List.mem_filterMap.2 ⟨m, hm, hk⟩)
     have hcol : ∀ o, ((!affected o && isCand o &&
-        (match keyOf props attr kv o with | some k => decide (k ∈ keys) | none => false)) = true ↔
-        affected o = false ∧ isCand o = true ∧ ∃ k, keyOf props attr kv o = some k ∧ k ∈ keys) := by
+        (match props.mapM (attr o) with | some k => decide (k ∈ keys) | none => false)) = true ↔
+        affected o = false ∧ isCand o = true ∧ ∃ k, props.mapM (attr o) = some k ∧ k ∈ keys) := by
       intro o
-      cases h : keyOf props attr kv o <;> simp [and_assoc]
+      cases h : props.mapM (attr o) <;> simp [and_assoc]
     by_cases hk : keys = []
     · simp only [hk, ite_true, Bool.false_eq_true, false_iff, not_exists, not_and]
       intro m hm k hmk
@@ -317,7 +263,7 @@ theorem uniqueViolated_spec (props : List Nat) (members : List Nat) (affected : 
     · simp only [hk, ite_false]
       constructor
       · intro h
-        have : ∃ o, affected o = false ∧ isCand o = true ∧ ∃ k, keyOf props attr kv o = some k ∧ k ∈ keys := by
+        have : ∃ o, affected o = false ∧ isCand o = true ∧ ∃ k, props.mapM (attr o) = some k ∧ k ∈ keys := by
           split at h
           · obtain ⟨q, -, h⟩ := List.any_eq_true.1 h
             obtain ⟨o, -, h⟩ := List.any_eq_true.1 h
@@ -332,34 +278,34 @@ theorem uniqueViolated_spec (props : List Nat) (members : List Nat) (affected : 
         have hco := (hcol o).2 ⟨ha, hc, k, hok, hkk⟩
         split
         · rename_i hu
-          obtain ⟨ws, q, hws, hq, hl⟩ := hinv hu k hkk
-          have ho := hIdx ws q hq k hws o ha hc hok
+          obtain ⟨q, hq, hl⟩ := hinv hu k hkk
+          have ho := hIdx k q hq o ha hc hok
           exact List.any_eq_true.2 ⟨q, hl, List.any_eq_true.2 ⟨o, ho, hco⟩⟩
         · exact List.any_eq_true.2 ⟨o, hScan o ha hc (by simp [hok]), hco⟩
 
-/-- **`uniqueViolated_declined`**: when `query_for` declines the values of some
-participating member, the whole set goes to the scan and no lookup runs: the verdict is
-the same for every `lookup`. (The lookups gathered before the declined member are dropped:
-`gather_some`'s last conjunct, `use_index` ends `false`.) -/
+/-- **`uniqueViolated_declined`**: when `query_for` declines the key of some member (that
+is reached: no two members shared a key before it), the whole set goes to the scan and no
+lookup runs: the verdict is the same for every `lookup`. (The lookups gathered before the
+declined member are dropped: `gather_some`'s last conjunct, `use_index` ends `false`.) -/
 theorem uniqueViolated_declined (props : List Nat) (members : List Nat) (affected : Nat → Bool)
-    (attr : Nat → Nat → Option W) (kv : W → Option V) (isCand : Nat → Bool)
-    (qf : List W → Option Q) (lookup lookup' : Q → List Nat) (scan : List Nat)
-    (hdecl : ∃ p ∈ members.filterMap (entOf props attr kv), qf p.1 = none) :
-    uniqueViolated props members affected attr kv isCand qf lookup scan =
-      uniqueViolated props members affected attr kv isCand qf lookup' scan := by
+    (attr : Nat → Nat → Option V) (isCand : Nat → Bool) (qf : List V → Option Q)
+    (lookup lookup' : Q → List Nat) (scan : List Nat)
+    (hdecl : ∃ k ∈ members.filterMap (fun e => props.mapM (attr e)), qf k = none) :
+    uniqueViolated props members affected attr isCand qf lookup scan =
+      uniqueViolated props members affected attr isCand qf lookup' scan := by
   unfold uniqueViolated
-  cases hg : gather props attr kv qf members [] [] true with
+  cases hg : gather props attr qf members [] [] true with
   | none => rfl
   | some r =>
     obtain ⟨keys, lks, ui⟩ := r
-    obtain ⟨-, -, -, hiff⟩ := gather_some props attr kv qf members [] [] true _
+    obtain ⟨-, -, -, hiff⟩ := gather_some props attr qf members [] [] true _
       (fun _ k hk => by cases hk) hg
     have hui : ui = false := by
       cases hu : ui
       · rfl
       · obtain ⟨-, h2⟩ := hiff.1 hu
-        obtain ⟨p, hp, hq⟩ := hdecl
-        obtain ⟨q, hq'⟩ := h2 p hp
+        obtain ⟨k, hk, hq⟩ := hdecl
+        obtain ⟨q, hq'⟩ := h2 k hk
         rw [hq] at hq'; cases hq'
     subst hui
     simp
@@ -367,37 +313,21 @@ theorem uniqueViolated_declined (props : List Nat) (members : List Nat) (affecte
 /-- The converse: with no declined member, `use_index` stays true, so every gathered key
 runs its query (and the scan is not consulted). -/
 theorem uniqueViolated_indexed (props : List Nat) (members : List Nat) (affected : Nat → Bool)
-    (attr : Nat → Nat → Option W) (kv : W → Option V) (isCand : Nat → Bool)
-    (qf : List W → Option Q) (lookup : Q → List Nat) (scan scan' : List Nat)
-    (hall : ∀ p ∈ members.filterMap (entOf props attr kv), ∃ q, qf p.1 = some q) :
-    uniqueViolated props members affected attr kv isCand qf lookup scan =
-      uniqueViolated props members affected attr kv isCand qf lookup scan' := by
+    (attr : Nat → Nat → Option V) (isCand : Nat → Bool) (qf : List V → Option Q)
+    (lookup : Q → List Nat) (scan scan' : List Nat)
+    (hall : ∀ k ∈ members.filterMap (fun e => props.mapM (attr e)), ∃ q, qf k = some q) :
+    uniqueViolated props members affected attr isCand qf lookup scan =
+      uniqueViolated props members affected attr isCand qf lookup scan' := by
   unfold uniqueViolated
-  cases hg : gather props attr kv qf members [] [] true with
+  cases hg : gather props attr qf members [] [] true with
   | none => rfl
   | some r =>
     obtain ⟨keys, lks, ui⟩ := r
-    obtain ⟨-, -, -, hiff⟩ := gather_some props attr kv qf members [] [] true _
+    obtain ⟨-, -, -, hiff⟩ := gather_some props attr qf members [] [] true _
       (fun _ k hk => by cases hk) hg
     have hui : ui = true := hiff.2 ⟨rfl, hall⟩
     subst hui
     simp
-
-/-- **`uniqueViolated_vacuous`** (#2991): a member whose values the constraint does not
-enforce (a list, point, temporal, vecf32 or NaN: `kv` is `none` on one of them) changes
-nothing, exactly as a member with a `Null` property: dropping it from `members` gives the
-same verdict. -/
-theorem uniqueViolated_vacuous (props : List Nat) (members : List Nat) (affected : Nat → Bool)
-    (attr : Nat → Nat → Option W) (kv : W → Option V) (isCand : Nat → Bool)
-    (qf : List W → Option Q) (lookup : Q → List Nat) (scan : List Nat)
-    (m : Nat) (hm : keyOf props attr kv m = none) :
-    uniqueViolated props (m :: members) affected attr kv isCand qf lookup scan =
-      uniqueViolated props members affected attr kv isCand qf lookup scan := by
-  have he : entOf props attr kv m = none := by
-    cases h : entOf props attr kv m with
-    | none => rfl
-    | some p => simp [keyOf, h] at hm
-  simp [uniqueViolated, gather, he]
 
 /-- Pairwise form of `(l.filterMap f).Nodup` over a duplicate-free `l`. -/
 theorem filterMap_nodup_iff {α β : Type} (f : α → Option β) : ∀ (l : List α), l.Nodup →
@@ -443,19 +373,19 @@ invariant `hPre` (no two live candidates outside this commit share a full key), 
 index-based verdict equals the old label-scan verdict (`PC.check_spec`'s UNIQUE clause:
 some member participates and the full keys over the label, `all`, are not distinct). -/
 theorem uniqueViolated_agrees (props : List Nat) (members : List Nat) (affected : Nat → Bool)
-    (attr : Nat → Nat → Option W) (kv : W → Option V) (isCand : Nat → Bool)
-    (qf : List W → Option Q) (lookup : Q → List Nat) (all : List Nat)
-    (hIdx : ∀ ws q, qf ws = some q → ∀ vals, ws.mapM kv = some vals → ∀ o, affected o = false →
-      isCand o = true → keyOf props attr kv o = some vals → o ∈ lookup q)
+    (attr : Nat → Nat → Option V) (isCand : Nat → Bool) (qf : List V → Option Q)
+    (lookup : Q → List Nat) (all : List Nat)
+    (hIdx : ∀ vals q, qf vals = some q → ∀ o, affected o = false →
+      isCand o = true → props.mapM (attr o) = some vals → o ∈ lookup q)
     (hnd : members.Nodup) (hallnd : all.Nodup) (hall : ∀ o, o ∈ all ↔ isCand o = true)
     (hmem : ∀ m ∈ members, isCand m = true ∧ affected m = true)
     (hAff : ∀ o, affected o = true → isCand o = true → o ∈ members)
     (hPre : ∀ o₁ o₂, affected o₁ = false → affected o₂ = false → isCand o₁ = true →
-      isCand o₂ = true → o₁ ≠ o₂ → ∀ k, keyOf props attr kv o₁ = some k → keyOf props attr kv o₂ ≠ some k) :
-    uniqueViolated props members affected attr kv isCand qf lookup all = true ↔
-      ((∃ m ∈ members, (keyOf props attr kv m).isSome) ∧
-        ¬ (all.filterMap (keyOf props attr kv)).Nodup) := by
-  rw [uniqueViolated_spec props members affected attr kv isCand qf lookup all hIdx
+      isCand o₂ = true → o₁ ≠ o₂ → ∀ k, props.mapM (attr o₁) = some k → props.mapM (attr o₂) ≠ some k) :
+    uniqueViolated props members affected attr isCand qf lookup all = true ↔
+      ((∃ m ∈ members, (props.mapM (attr m)).isSome) ∧
+        ¬ (all.filterMap fun e => props.mapM (attr e)).Nodup) := by
+  rw [uniqueViolated_spec props members affected attr isCand qf lookup all hIdx
     (fun o _ hc _ => (hall o).2 hc)]
   rw [filterMap_nodup_iff _ _ hnd, filterMap_nodup_iff _ _ hallnd]
   simp only [Classical.not_forall, Classical.not_not, exists_prop]
@@ -474,7 +404,7 @@ theorem uniqueViolated_agrees (props : List Nat) (members : List Nat) (affected 
     · exact .inr ⟨a, hAff a hfa hca, k, hka, b, hfb, hcb, hkb⟩
     · exact .inl ⟨a, hAff a hfa hca, b, hAff b hfb hcb, hab, k, hka, hkb⟩
 
-/-! ## `check_node_constraint` / `check_edge_constraint` since #3334 -/
+/-! ## `check_node_constraint` / `check_edge_constraint` -/
 
 /-- MANDATORY: every member has every property (the loop moved under the `match`). -/
 def checkMandatory (props affected : List Nat) (member : Nat → Bool) (present : Nat → Nat → Bool) : Bool :=
@@ -491,48 +421,48 @@ theorem checkMandatory_eq_old (props affected : List Nat) (member : Nat → Bool
     cases hm : member a <;> simp [ih]
 
 /-- UNIQUE: `!unique_violated` over the members `affected.filter member`. -/
-def checkUnique (props affected : List Nat) (member : Nat → Bool) (attr : Nat → Nat → Option W)
-    (kv : W → Option V) (isCand : Nat → Bool) (qf : List W → Option Q)
+def checkUnique (props affected : List Nat) (member : Nat → Bool) (attr : Nat → Nat → Option V)
+    (isCand : Nat → Bool) (qf : List V → Option Q)
     (lookup : Q → List Nat) (scan : List Nat) : Bool :=
-  !uniqueViolated props (affected.filter member) (fun o => decide (o ∈ affected)) attr kv isCand qf
+  !uniqueViolated props (affected.filter member) (fun o => decide (o ∈ affected)) attr isCand qf
     lookup scan
 
 /-- `check_node_constraint` (:1580): no such label ⇒ `Ok`. `isCand` for nodes is
 `!deleted_nodes.contains(n) && constraint_node_has_label(n)` (`PC.constraintHas`). `qf`/`lookup`
 are the per-cfg `(query_for, lookup)` pair. -/
 def checkNode2 (labelExists : Bool) (ct : CT) (props affected : List Nat) (member : Nat → Bool)
-    (present : Nat → Nat → Bool) (attr : Nat → Nat → Option W) (kv : W → Option V)
-    (isCand : Nat → Bool) (qf : List W → Option Q) (lookup : Q → List Nat) (scan : List Nat) : Bool :=
+    (present : Nat → Nat → Bool) (attr : Nat → Nat → Option V) (isCand : Nat → Bool)
+    (qf : List V → Option Q) (lookup : Q → List Nat) (scan : List Nat) : Bool :=
   !labelExists || match ct with
     | .mandatory => checkMandatory props affected member present
-    | .unique => checkUnique props affected member attr kv isCand qf lookup scan
+    | .unique => checkUnique props affected member attr isCand qf lookup scan
 
 /-- `check_edge_constraint` (:1672): membership is `PC.edgeMember`; `isCand` is
 `!deleted_relationships.contains(e)` (the index and the tensor hold only this type). -/
 def checkEdge2 (ct : CT) (props affected : List Nat) (member : Nat → Bool)
-    (present : Nat → Nat → Bool) (attr : Nat → Nat → Option W) (kv : W → Option V)
-    (isCand : Nat → Bool) (qf : List W → Option Q) (lookup : Q → List Nat) (scan : List Nat) : Bool :=
+    (present : Nat → Nat → Bool) (attr : Nat → Nat → Option V) (isCand : Nat → Bool)
+    (qf : List V → Option Q) (lookup : Q → List Nat) (scan : List Nat) : Bool :=
   match ct with
   | .mandatory => checkMandatory props affected member present
-  | .unique => checkUnique props affected member attr kv isCand qf lookup scan
+  | .unique => checkUnique props affected member attr isCand qf lookup scan
 
 /-- **`checkUnique_spec`**: the UNIQUE check passes iff no two members share a full key
 and no member's key is carried by a live candidate outside the affected set (under the
 lookup/scan contract). -/
-theorem checkUnique_spec (props affected : List Nat) (member : Nat → Bool) (attr : Nat → Nat → Option W)
-    (kv : W → Option V) (isCand : Nat → Bool) (qf : List W → Option Q)
+theorem checkUnique_spec (props affected : List Nat) (member : Nat → Bool) (attr : Nat → Nat → Option V)
+    (isCand : Nat → Bool) (qf : List V → Option Q)
     (lookup : Q → List Nat) (scan : List Nat)
-    (hIdx : ∀ ws q, qf ws = some q → ∀ vals, ws.mapM kv = some vals → ∀ o, o ∉ affected →
-      isCand o = true → keyOf props attr kv o = some vals → o ∈ lookup q)
-    (hScan : ∀ o, o ∉ affected → isCand o = true → (keyOf props attr kv o).isSome → o ∈ scan) :
-    checkUnique props affected member attr kv isCand qf lookup scan = true ↔
-      ((affected.filter member).filterMap (keyOf props attr kv)).Nodup ∧
-      ∀ m ∈ affected.filter member, ∀ k, keyOf props attr kv m = some k →
-        ∀ o, o ∉ affected → isCand o = true → keyOf props attr kv o ≠ some k := by
+    (hIdx : ∀ vals q, qf vals = some q → ∀ o, o ∉ affected →
+      isCand o = true → props.mapM (attr o) = some vals → o ∈ lookup q)
+    (hScan : ∀ o, o ∉ affected → isCand o = true → (props.mapM (attr o)).isSome → o ∈ scan) :
+    checkUnique props affected member attr isCand qf lookup scan = true ↔
+      ((affected.filter member).filterMap fun e => props.mapM (attr e)).Nodup ∧
+      ∀ m ∈ affected.filter member, ∀ k, props.mapM (attr m) = some k →
+        ∀ o, o ∉ affected → isCand o = true → props.mapM (attr o) ≠ some k := by
   unfold checkUnique
   rw [Bool.not_eq_true', ← Bool.not_eq_true,
-    uniqueViolated_spec props _ _ attr kv isCand qf lookup scan
-      (fun ws q hq vals hv o ho hc hk => hIdx ws q hq vals hv o (by simpa using ho) hc hk)
+    uniqueViolated_spec props _ _ attr isCand qf lookup scan
+      (fun vals q hq o ho hc hk => hIdx vals q hq o (by simpa using ho) hc hk)
       (fun o ho hc hs => hScan o (by simpa using ho) hc hs)]
   simp only [not_or, Classical.not_not, not_exists, not_and, decide_eq_false_iff_not]
 

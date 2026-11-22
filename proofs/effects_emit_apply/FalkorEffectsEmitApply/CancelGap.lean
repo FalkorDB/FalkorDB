@@ -1,45 +1,25 @@
 import FalkorEffectsEmitApply.Emit
 import FalkorEffectsEmitApply.Liveness
 /-!
-# Emit then apply, with cancellation: two open replica divergences (#3447, #3448)
+# Emit then apply, with cancellation: replica divergences
 
-`Emit.forEachRecord` (`for_each_record`, emit.rs:323-375 on 5e475e6c9) and
-`Live.applyAll` (the checked arms of `apply_record`) were proven separately;
-nothing related what the master emits to what a replica *at the master's
-pre-segment state* accepts. Two properties, both refuted on main:
+`Emit.forEachRecord` (`for_each_record`, emit.rs) and `Live.applyAll` (the checked arms of
+`apply_record`) are related for a master segment with cancelled entities. Two properties:
 
-* **`RelIdsCovered`** (#3447) — every relationship id the master allocated in
-  the segment (created or cancelled) is named by some `CREATE_EDGE`, so the
-  replica's relationship `IdSpace` ends with the same contiguous range
-  (`IdSpace::verify`, id_space.rs:737-790, refuses a hole above the entry
-  bound). `digest_cancelled` (emit.rs:455) skips a cancelled edge whose type has
-  no id, and a type whose every edge was cascaded away is never registered
-  (`Pending::commit` registers only `created_rels_by_type` keys via
-  `create_relationships_bulk` → `get_type_id_mut`, pending.rs:1236-1249,
-  graph.rs:2610/:1265; proofs/pending_commit `bug3447_cascade_drops_type_key`).
-  `bug3447_cancelled_edge_id_gap`: live repro `CREATE ()-[:EXISTING]->()` then
-  `CREATE (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a`; the
-  payload carries `CreateEdge{ids:[2]}` and nothing for 1, the replica's verify
-  refuses (`verifyRange`), the master's passes. `relIdsCovered_of_registered`:
-  with every created and cancelled type registered, the property holds for every
-  `Pending`.
-* **`ReplayApplies`** (#3448) — the emitted stream, translated to apply records
-  (`toLive`), applies on the replica. `digest_labels(&p.remove_labels, None, …)`
-  (emit.rs:370) runs before `digest_cancelled` (:374) and does not skip created
-  or cancelled nodes; `delete_pending_node` keeps the node's `remove_labels`
-  (proofs/pending_commit `bug3448_cancelled_node_keeps_remL`); the
-  `RemoveLabels` arm calls `require_live` (apply.rs:359-360).
-  `bug3448_removeLabels_before_create_refused`: `CREATE (n:Foo) REMOVE n:Foo
-  DELETE n` emits `AddLabel Foo, RemoveLabels [0], CreateNode [0], DeleteNode [0]`,
-  refused with `NotLive node 0`; without the stale entry the same segment applies
-  (`agree3448_without_stale_remL`).
+* **`RelIdsCovered`**: every relationship id the segment allocated (created or cancelled) is
+  named by some `CREATE_EDGE`, so the replica's `IdSpace::verify` sees no hole. `Pending::commit`
+  registers every cancelled type (`relIdsCovered_after_commit`, `fixed3447_cancelled_edge_id_gap`,
+  #3461); `relIdsCovered_of_registered` holds for every `Pending`.
+* **`ReplayApplies`**: the emitted stream, translated to apply records (`toLive`), applies on
+  the replica. `delete_pending_node` clears the node's `remove_labels` and a removal of a staged
+  label is not staged (`fixed3448_replay_applies`, #3459, over proofs/pending_commit).
 -/
 namespace FalkorEA.CancelGap
 open FalkorEA
 
-/-! ## #3447: relationship ids -/
+/-! ## Relationship ids -/
 
-/-- `IdSpace::verify` (id_space.rs:737-790), the hole half: the ids taken at or
+/-- `IdSpace::verify` (id_space.rs), the hole half: the ids taken at or
 above `entry` are exactly `[entry, entry + k)`. -/
 def verifyRange (entry : Nat) (taken : List Nat) : Bool :=
   let c := taken.filter (entry ≤ ·)
@@ -58,11 +38,17 @@ def allocated (p : Pending) : List Nat := p.createdRelTypes.flatMap (·.2) ++ p.
 /-- **Property `RelIdsCovered`**. -/
 def RelIdsCovered (p : Pending) (g : Schema) : Prop := ∀ i ∈ allocated p, i ∈ edgeIds (forEachRecord p g)
 
-/-- The relationship-type dictionary after `Pending::commit`: each
-`created_rels_by_type` key is get-or-created (pending.rs:1236-1249); cancelled
-types are not looked at. -/
+/-- Get-or-create of one name (`get_type_id_mut`, graph.rs). -/
+def regName (ts : List Name) (n : Name) : List Name := if n ∈ ts then ts else ts ++ [n]
+
+/-- The relationship-type dictionary after `Pending::commit` (pending.rs,
+#3461): each `created_rels_by_type` key is get-or-created by
+`create_relationships_bulk`, then the type of every `cancelled_relationships`
+entry by `get_type_id_mut` (the `FxHashSet` only skips repeats, which
+get-or-create ignores anyway). -/
 def typesAfterCommit (base : List Name) (p : Pending) : List Name :=
-  p.createdRelTypes.foldl (fun ts q => if q.1 ∈ ts then ts else ts ++ [q.1]) base
+  p.cancelledRels.foldl (fun ts q => regName ts q.1)
+    (p.createdRelTypes.foldl (fun ts q => regName ts q.1) base)
 
 /-- `CREATE (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a` after
 `CREATE ()-[:EXISTING]->()` (nodes 0,1 and edge 0 committed): `a` = 2 is
@@ -73,23 +59,6 @@ def pGap : Pending :=
     newNodesAttrs := [], existingNodesAttrs := [], newRelsAttrs := [], existingRelsAttrs := [],
     setLabels := [], removeLabels := [], cancelledNodes := [2], cancelledRels := [("NEW_TYPE", 1)],
     baseline := ⟨[], ["EXISTING"], []⟩ }
-
-def gGap : Schema := ⟨[], typesAfterCommit ["EXISTING"] pGap, []⟩
-
-/-- **#3447**: `NEW_TYPE` is never registered, so the cancelled edge 1 is not
-in the payload; the master's relationship id space `{0, 1, 2}` (entry bound 1)
-verifies, the replica's `{0} ∪ {2}` has a hole and is refused
-(live: "effects buffer allocated relationship ids 1..=2 but created only 1 of
-them … forced full resync"; C stays in sync). -/
-theorem bug3447_cancelled_edge_id_gap :
-    gGap.types = ["EXISTING"] ∧
-    forEachRecord pGap gGap = [.createNode [3, 4, 5] [], .createEdge [2] 0, .createNode [2] [], .deleteNode [2] []] ∧
-    ¬ RelIdsCovered pGap gGap ∧
-    verifyRange 1 ([0] ++ allocated pGap) = true ∧
-    verifyRange 1 ([0] ++ edgeIds (forEachRecord pGap gGap)) = false := by
-  refine ⟨by decide, by decide, fun h => ?_, by decide, by decide⟩
-  have := h 1 (by decide)
-  revert this; decide
 
 theorem mem_edgeIds_append (a b : List Rec) (i : Nat) : i ∈ edgeIds (a ++ b) ↔ i ∈ edgeIds a ∨ i ∈ edgeIds b := by
   induction a with
@@ -151,7 +120,58 @@ theorem relIdsCovered_of_registered (p : Pending) (g : Schema)
     simp only [List.mem_append]
     simp [hmem]
 
-/-! ## #3448: a label removal on a cancelled node -/
+theorem regName_mem (ts : List Name) (n : Name) : n ∈ regName ts n := by
+  unfold regName; split
+  · assumption
+  · simp
+
+theorem regName_mono (ts : List Name) (n m : Name) (h : m ∈ ts) : m ∈ regName ts n := by
+  unfold regName; split
+  · exact h
+  · simp [h]
+
+theorem foldl_regName_mono {α} (f : α → Name) (l : List α) (ts : List Name) (m : Name) (h : m ∈ ts) :
+    m ∈ l.foldl (fun ts q => regName ts (f q)) ts := by
+  induction l generalizing ts with
+  | nil => exact h
+  | cons x xs ih => exact ih _ (regName_mono _ _ _ h)
+
+theorem foldl_regName_mem {α} (f : α → Name) (l : List α) (ts : List Name) (q : α) (hq : q ∈ l) :
+    f q ∈ l.foldl (fun ts q => regName ts (f q)) ts := by
+  induction l generalizing ts with
+  | nil => cases hq
+  | cons x xs ih =>
+    rcases List.mem_cons.mp hq with rfl | hq
+    · exact foldl_regName_mono f xs _ _ (regName_mem _ _)
+    · exact ih _ hq
+
+theorem idxOf_isSome_of_mem (l : List Name) (n : Name) (h : n ∈ l) : (idxOf l n).isSome := by
+  unfold idxOf
+  have : (l.findIdx? (· == n)).isSome := by
+    rw [List.findIdx?_isSome, List.any_eq_true]; exact ⟨n, h, by simp⟩
+  revert this; cases l.findIdx? (· == n) <;> simp
+
+/-- **#3461 fix of #3447 (`RelIdsCovered`)**: with the dictionary `Pending::commit`
+now leaves, every relationship id the segment allocated (created or cancelled)
+reaches a `CREATE_EDGE`, whatever the graph's types were before. -/
+theorem relIdsCovered_after_commit (p : Pending) (ls base as : List Name) :
+    RelIdsCovered p ⟨ls, typesAfterCommit base p, as⟩ := by
+  apply relIdsCovered_of_registered
+  · intro q hq
+    exact idxOf_isSome_of_mem _ _
+      (foldl_regName_mono _ _ _ _ (foldl_regName_mem (·.1) _ base q hq))
+  · intro q hq
+    exact idxOf_isSome_of_mem _ _ (foldl_regName_mem (·.1) _ _ q hq)
+
+/-- The #3447 repro on the #3461 commit: `NEW_TYPE` is registered (id 1), the
+cancelled edge 1 is paired, and the replica's id space verifies. -/
+theorem fixed3447_cancelled_edge_id_gap :
+    typesAfterCommit ["EXISTING"] pGap = ["EXISTING", "NEW_TYPE"] ∧
+    RelIdsCovered pGap ⟨[], typesAfterCommit ["EXISTING"] pGap, []⟩ ∧
+    verifyRange 1 ([0] ++ edgeIds (forEachRecord pGap ⟨[], typesAfterCommit ["EXISTING"] pGap, []⟩)) = true :=
+  ⟨by decide, relIdsCovered_after_commit _ _ _ _, by decide⟩
+
+/-! ## A label removal on a cancelled node -/
 
 /-- Opcode records as apply records (`apply_record`, apply.rs); schema records
 touch no entity (their own checks are `applyAddSchema_eq_applyAddName`); an
@@ -177,36 +197,32 @@ def rEmpty : Live.G :=
   { nlive := fun _ => false, labels := fun _ => [], props := fun _ => [], rels := [],
     eprops := fun _ => [], released := [], taken := [] }
 
-/-- `CREATE (n:Foo) REMOVE n:Foo DELETE n`: node 0 cancelled, `Foo` (label 0)
-left in `remove_labels`. -/
-def p3448 : Pending :=
-  { createdNodes := [], createdRelTypes := [], deletedNodes := [], deletedRels := [],
-    newNodesAttrs := [], existingNodesAttrs := [], newRelsAttrs := [], existingRelsAttrs := [],
-    setLabels := [], removeLabels := [(0, [0])], cancelledNodes := [0], cancelledRels := [],
-    baseline := ⟨[], [], []⟩ }
-
 def g3448 : Schema := ⟨["Foo"], [], []⟩
 
-/-- **#3448**: the stream names node 0 in `REMOVE_LABELS` before its
-`CREATE_NODE`, and the replica refuses it as not live (live: "effects buffer
-names node 0, which is not live on this replica … forced full resync"; C stays
-in sync). -/
-theorem bug3448_removeLabels_before_create_refused :
-    forEachRecord p3448 g3448 = [.addLabel 0 "Foo", .removeLabels [0] [0], .createNode [0] [], .deleteNode [0] []] ∧
-    Live.errOf (Live.applyAll rEmpty ((forEachRecord p3448 g3448).flatMap (toLive fun _ => (0, 0)))) =
-      some (.notLive .node 0 "") ∧
-    ¬ ReplayApplies (fun _ => (0, 0)) rEmpty p3448 g3448 := by
-  refine ⟨by decide, by decide, fun ⟨r, h⟩ => ?_⟩
-  have : Live.errOf (Live.applyAll rEmpty ((forEachRecord p3448 g3448).flatMap (toLive fun _ => (0, 0)))) = none := by
-    rw [h]; rfl
-  revert this; decide
+/-- `CREATE (n:Foo) REMOVE n:Foo DELETE n` as staged **since #3459**: the removal only cancelled
+the staged add (`staged_labels_removed = 1`, proofs/pending_commit `fixed3448_remove_of_staged_label`)
+and `delete_pending_node` clears `remove_labels` (`fixed3448_cancelled_node_clears_remL`). -/
+def p3459 : Pending :=
+  { createdNodes := [], createdRelTypes := [], deletedNodes := [], deletedRels := [],
+    newNodesAttrs := [], existingNodesAttrs := [], newRelsAttrs := [], existingRelsAttrs := [],
+    setLabels := [], removeLabels := [], cancelledNodes := [0], cancelledRels := [],
+    stagedLabelsRemoved := 1, baseline := ⟨[], [], []⟩ }
 
-/-- Control: the same segment without the stale `remove_labels` entry (what
-C ships, and what a `delete_pending_node` that also clears `remove_labels` would
-give) replays cleanly. -/
-theorem agree3448_without_stale_remL :
-    Live.okDangling (Live.applyAll rEmpty
-      ((forEachRecord { p3448 with removeLabels := [] } g3448).flatMap (toLive fun _ => (0, 0)))) = some none := by
-  decide
+/-- **#3448, fixed by #3459**: the gate stays open (`effects_count` = 2 for the cancelled node + 1 for
+the cancelled add), the
+commit ships `AddLabel Foo, CreateNode [0], DeleteNode [0]` with no `RemoveLabels`, and the replica
+applies it (`ReplayApplies`). -/
+theorem fixed3448_replay_applies :
+    effectsCount p3459 = 3 ∧
+    commitShips p3459 g3448 = [.addLabel 0 "Foo", .createNode [0] [], .deleteNode [0] []] ∧
+    ReplayApplies (fun _ => (0, 0)) rEmpty p3459 g3448 := by
+  refine ⟨rfl, by decide, ?_⟩
+  have h : Live.okDangling (Live.applyAll rEmpty
+      ((forEachRecord p3459 g3448).flatMap (toLive fun _ => (0, 0)))) = some none := by decide
+  unfold ReplayApplies
+  generalize Live.applyAll rEmpty ((forEachRecord p3459 g3448).flatMap (toLive fun _ => (0, 0))) = x at h ⊢
+  cases x with
+  | error e => cases h
+  | ok r => exact ⟨r, rfl⟩
 
 end FalkorEA.CancelGap
