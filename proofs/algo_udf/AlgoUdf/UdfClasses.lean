@@ -6,15 +6,16 @@ import AlgoUdf.AlgoGlue
 | --- | --- |
 | `Slot`, `setGraph`, `clearGraph`, `withGraph` | `CURRENT_GRAPH`, `set_current_graph` :72, `clear_current_graph` :78, `with_current_graph` :84 |
 | `JV`, `Obj`, `set`, `get` | QuickJS values / ordinary objects (AXIOMATISED: `obj.set(k, v)` replaces own key `k`; `"__proto__"` never becomes an own key, cf. `Marshal.objSet`) |
-| `jsNode`                 | `create_js_node` :129-211 |
-| `jsEdge`                 | `create_js_edge` :213-287 (type: runtime, else committed graph, else `""`) |
-| `jsPath`                 | `create_js_path` :289-344 |
+| `Ent`, `newEntity`, `entityValue`, `nodeIdOf`, `nextEpoch` | `JsEntity` :83-86 (`trace` :93, `constructor` :105), `new_entity_object` :110, `entity_value` :129, `node_id_of` :135, the `CALL_EPOCH` bump in `with_graph` :162-165 (#2976) |
+| `jsNode`                 | `create_js_node` :200 (a `JsEntity` instance holding `Value::Node`; its visible properties below) |
+| `jsEdge`                 | `create_js_edge` :311 (type: runtime, else committed graph, else `""`) |
+| `jsPath`                 | `create_js_path` :385 |
 | `optArg`                 | rquickjs `Opt<Object>`: `None` only for a *missing* argument |
-| `getNeighborsCall`       | the shared method `function(config) { return h(this.__falkor_node_id, config); }` :195 → `js_get_neighbors_entry` :349 |
-| `Exc`, `throwJs`, `entryErr` | `throw_js_error` :498, the `Err` arms of `js_get_neighbors_entry` :356-364 / `js_traverse` :665-673 |
-| `nodeById`               | `js_get_node_by_id` :510, `js_get_node_by_id_impl` :517-551 |
-| `iterNodes`, `iterEdges` | `js_iterate_nodes(_impl)` :553-606, `js_iterate_edges(_impl)` :608-656 (label matrix / tensor scans AXIOMATISED) |
-| `traverseEntry`          | `js_traverse` :658 (body: `UdfTraverse`) |
+| `getNeighborsCall`       | the shared method `function(...args) { return h(this, ...args); }` :251 → `js_get_neighbors_entry` :448 |
+| `Exc`, `throwJs`, `entryErr` | `throw_js_error` :599, the `Err` arms of `js_get_neighbors_entry` :456-466 / `js_traverse` |
+| `nodeById`               | `js_get_node_by_id` :609, `js_get_node_by_id_impl` :616 |
+| `iterNodes`, `iterEdges` | `js_iterate_nodes(_impl)` :653, :660, `js_iterate_edges(_impl)` :708, :715 (label matrix / tensor scans AXIOMATISED) |
+| `traverseEntry`          | `js_traverse` :760 (body: `UdfTraverse`) |
 -/
 namespace AlgoUdf.UdfClasses
 open AlgoUdf
@@ -129,6 +130,69 @@ theorem jsNode_markers (id : Nat) (labels : List String) (attrs : List (String �
   · rw [get_set_ne _ _ _ _ (by decide), get_set_ne _ _ _ _ (by decide), attrLoop_keeps _ (by decide)]
     repeat (first | rw [get_set_same _ _ _ (by decide)] | rw [get_set_ne _ _ _ _ (by decide)])
 
+/-! ## Entity objects (`JsEntity`, #2976) -/
+
+/-- The class data of a `JsEntity` instance (:83-86): the entity and the epoch it was made in. -/
+structure Ent where
+  value : Marshal.RV
+  epoch : Nat
+
+/-- `JsEntity::trace` (:93): the class data holds no JS value, so there is nothing to mark. -/
+def entTrace : List Unit := []
+
+/-- `JsClass::constructor` (:105): `None`, so JS has no constructor to make an instance. -/
+def entConstructor : Option Unit := none
+
+/-- `new_entity_object` (:110-123): an instance holding `v` and the current epoch
+(`Class::instance` failing is the `JS object error` arm). -/
+def newEntity (epochNow : Nat) (v : Marshal.RV) : Ent := ⟨v, epochNow⟩
+
+/-- `entity_value` (:129-133): `None` for an object that is not a `JsEntity`, or whose epoch is not
+the current one. -/
+def entityValue (epochNow : Nat) : Option Ent → Option Marshal.RV
+  | none => none
+  | some e => if e.epoch = epochNow then some e.value else none
+
+/-- `node_id_of` (:135-140). -/
+def nodeIdOf (epochNow : Nat) (o : Option Ent) : Option Nat :=
+  match entityValue epochNow o with
+  | some (.node id) => some id
+  | _ => none
+
+/-- `with_graph`'s epoch bump (:162-165): only an outermost call (no graph lent before) starts a
+new epoch (`wrapping_add`: the wrap after 2^64 calls is not modelled). -/
+def nextEpoch (prevLent : Bool) (epoch : Nat) : Nat := if prevLent then epoch else epoch + 1
+
+theorem entTrace_empty : entTrace = [] ∧ entConstructor = none := ⟨rfl, rfl⟩
+
+/-- **An entity made in this call reads back as itself.** -/
+theorem entityValue_new (e : Nat) (v : Marshal.RV) : entityValue e (some (newEntity e v)) = some v := by
+  simp [entityValue, newEntity]
+
+/-- **An entity from another call is not honoured**: the next outermost call has another epoch. -/
+theorem entityValue_stale (e : Nat) (v : Marshal.RV) :
+    entityValue (nextEpoch false e) (some (newEntity e v)) = none := by
+  simp [entityValue, newEntity, nextEpoch]
+
+/-- Nested `with_graph` keeps the epoch, so an entity stays valid inside the same UDF call. -/
+theorem entityValue_nested (e : Nat) (v : Marshal.RV) :
+    entityValue (nextEpoch true e) (some (newEntity e v)) = some v := entityValue_new e v
+
+/-- A non-entity object (a plain object copying the markers) has no entity. -/
+theorem entityValue_plain (e : Nat) : entityValue e none = none := rfl
+
+theorem nodeIdOf_spec (e id : Nat) (v : Marshal.RV) :
+    nodeIdOf e (some (newEntity e (.node id))) = some id ∧
+    nodeIdOf e (some (newEntity e (.rel id))) = none ∧
+    nodeIdOf (nextEpoch false e) (some (newEntity e v)) = none ∧ nodeIdOf e none = none := by
+  refine ⟨?_, ?_, ?_, rfl⟩ <;> simp [nodeIdOf, entityValue, newEntity, nextEpoch]
+
+/-- The Marshal model's `JsV.ent ps v current` is the object `entity_value` reads: `current` is
+`entityValue` returning `some v`. -/
+theorem ent_current_iff (now : Nat) (x : Ent) :
+    (entityValue now (some x)).isSome = decide (x.epoch = now) := by
+  simp only [entityValue]; split <;> simp_all
+
 /-! ## Edges and paths -/
 
 /-- `create_js_edge`'s `type`: the runtime's view, else the committed graph's, else `""`. -/
@@ -177,18 +241,46 @@ def optArg (args : List JV) (i : Nat) : Except String (Option Obj) :=
   | some .undef => .error "Error converting from js 'undefined' into type 'object'"
   | some _ => .error "Error converting from js value into type 'object'"
 
-/-- `node.getNeighbors(...)` goes through `(h) => function(config) { return
-h(this.__falkor_node_id, config); }` (:195), which always passes two arguments. -/
-def getNeighborsCall (nodeId : Nat) (userArgs : List JV) : Except String (Option Obj) :=
+/-- `node.getNeighbors(...)` goes through `(h) => function(...args) { return h(this, ...args); }`
+(:251, #2976), so the user's arguments reach `js_get_neighbors_entry` :448 as given, after `this`:
+`config` is the user's first argument (`optArg userArgs 0`), missing when omitted. rquickjs
+converts the parameters before the body runs, then the body needs `this` to be a current node
+entity (`thisNode = nodeIdOf …`, :453-455). Returns `(node id, config)`. -/
+def getNeighborsCall (thisNode : Option Nat) (userArgs : List JV) : Except String (Nat × Option Obj) :=
+  match optArg userArgs 0 with
+  | .error e => .error e
+  | .ok cfg => match thisNode with
+    | none => .error "getNeighbors must be called on a node"
+    | some n => .ok (n, cfg)
+
+/-- Before #2976: `function(config) { return h(this.__falkor_node_id, config); }` always passed
+two arguments, so an omitted config arrived as `undefined`. -/
+def getNeighborsCallPre2976 (nodeId : Nat) (userArgs : List JV) : Except String (Option Obj) :=
   let config := (userArgs[0]?).getD .undef
   optArg [.num nodeId, config] 1
 
-/-- BUG (confirmed live and by `bug_udf_get_neighbors_without_config_throws`):
-`node.getNeighbors()` with no argument fails; C returns the neighbours. -/
-theorem getNeighbors_no_arg_errors (n : Nat) :
-    getNeighborsCall n [] = .error "Error converting from js 'undefined' into type 'object'" := rfl
+/-- Historical (BUG, confirmed live and by `bug_udf_get_neighbors_without_config_throws`; fixed
+by #2976): `node.getNeighbors()` with no argument failed; C returns the neighbours. -/
+theorem pre2976_getNeighbors_no_arg_errors (n : Nat) :
+    getNeighborsCallPre2976 n [] = .error "Error converting from js 'undefined' into type 'object'" := rfl
 
-theorem getNeighbors_with_config (n : Nat) (o : Obj) : getNeighborsCall n [.obj o] = .ok (some o) := rfl
+/-- **Fixed by #2976**: `node.getNeighbors()` with no argument runs with no config (as in C). -/
+theorem getNeighbors_no_arg_ok (n : Nat) : getNeighborsCall (some n) [] = .ok (n, none) := rfl
+
+theorem getNeighbors_with_config (n : Nat) (o : Obj) (rest : List JV) :
+    getNeighborsCall (some n) (.obj o :: rest) = .ok (n, some o) := rfl
+
+/-- An explicit `undefined` config is still a conversion error (unchanged by #2976). -/
+theorem getNeighbors_undefined_errors (n : Nat) :
+    getNeighborsCall (some n) [.undef] = .error "Error converting from js 'undefined' into type 'object'" ∧
+    getNeighborsCallPre2976 n [.undef] = .error "Error converting from js 'undefined' into type 'object'" :=
+  ⟨rfl, rfl⟩
+
+/-- Called on anything but a current node entity (`getNeighbors.call({__falkor_node_id: 0})`,
+an edge, a node kept from an earlier call) it is an error, never another node's neighbours. -/
+theorem getNeighbors_not_node (args : List JV) (h : optArg args 0 = .ok none ∨ ∃ o, optArg args 0 = .ok (some o)) :
+    getNeighborsCall none args = .error "getNeighbors must be called on a node" := by
+  rcases h with h | ⟨o, h⟩ <;> simp [getNeighborsCall, h]
 
 /-- `graph.traverse` is bound directly (`Function::new(ctx, js_traverse)`), so an
 omitted config really is missing. -/

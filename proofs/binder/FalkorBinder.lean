@@ -86,7 +86,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `where_copy_id_reused`,
   `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`,
   `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
-  `labels_leak`, `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
+  `pre3049_labels_leak` (fixed by #3049: `labels_leak_fixed`), `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
 
 * Wave 5 (all binder.rs fns PROVEN): `sortedScopeVars_spec`, `push_toSt`, `updNode_union`/`_idem`;
   `bindNode_covers` (pattern-free expressions keep the table covering), `loop_var_shadows`,
@@ -170,7 +170,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
   (`match_rel_reused`, `pruneMatchRels_spec`).
 * #3016: keeps hidden scope variables' ids reserved and hides ORDER BY copies — fixes `erase_breaks_covers`,
   `where_copy_id_reused`, `orderBy_leaks` (bugs 3, 5).
-* #3049: CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes `labels_leak` (bug 6).
+* #3049 (modelled: `accumulateFrom`): CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes bug 6 (`pre3049_labels_leak` → `labels_leak_fixed`, `accumulate_bound_match_only`).
 * #3062: pattern predicates in WITH … WHERE resolve pre-projection names — fixes `defineName_ignores_parent` (bug 7).
 * #3011: generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY
   expressions repeating a projection read its alias), guarded by `is_alias_rewritable`, which admits
