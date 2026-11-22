@@ -85,5 +85,9 @@ graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	replace_cartesi
 graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	rebuild	67	NOT COVERED	(#3889): not modelled yet
 graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	scan_chain	93	NOT COVERED	(#3889): not modelled yet
 graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	try_seek_rewrite	117	NOT COVERED	(#3889): not modelled yet
-graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	estimate_rows	226	NOT COVERED	(#3889): not modelled yet
-graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	unwound_len	273	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	estimate_rows	258	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	unwound_len	308	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	has_equality	331	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	has_non_deterministic	341	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	reads_node_bare	349	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/utilize_index.rs	seek_index_label	825	NOT COVERED	(#3889): not modelled yet
