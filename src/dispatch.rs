@@ -1,7 +1,7 @@
 //! Where a graph command runs: inline on the calling thread, or blocked and handed to
 //! the thread pool.
 
-use redis_module::{Context, ContextFlags};
+use valkey_module::{Context, ContextFlags};
 
 /// True when this context must not block, so the command has to run inline on the
 /// calling thread.
@@ -41,4 +41,26 @@ pub fn must_run_inline(ctx: &Context) -> bool {
             | ContextFlags::DENY_BLOCKING
             | ContextFlags::LOADING,
     )
+}
+
+/// True when a query that finishes in this context is logged to the graph's telemetry
+/// stream.
+///
+/// Telemetry is node-local: each node's stream holds the queries it served its own
+/// clients. Two kinds of command run here without being served here, and C's
+/// dispatcher leaves both out (`log_query` in `cmd_dispatcher.c`):
+///
+/// * `REPLICATED` — the master's query, re-run on this replica. It is in the master's
+///   stream already; here it would show a replica "serving" writes it never accepted.
+/// * `LOADING` — AOF replay. Logging it would rebuild, on every restart, a stream of
+///   queries from before the restart, stamped with the time of the replay.
+///
+/// Both run inline (see [`must_run_inline`]), so the inline path is the only one that
+/// has to ask. This engine replicates writes as `GRAPH.EFFECT`, which logs nothing, so
+/// what the rule catches in practice is a `GRAPH.QUERY` from elsewhere: a C master's
+/// replication stream, or an AOF an earlier version wrote. `CMD_INFO` is the other half of C's predicate, and
+/// `telemetry::enqueue_entry` reads it.
+pub fn logs_telemetry(ctx: &Context) -> bool {
+    !ctx.get_flags()
+        .intersects(ContextFlags::REPLICATED | ContextFlags::LOADING)
 }

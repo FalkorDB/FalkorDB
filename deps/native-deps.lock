@@ -12,8 +12,8 @@
 [graphblas]
 path = deps/GraphBLAS
 url = https://github.com/DrTimothyAldenDavis/GraphBLAS.git
-rev = ea79e354877ad5e96fad13e161b8db6d661875e4
-pin = v10.5.0
+rev = 7d4d263278f6583806c77e6e70a0a43c4a4dc723
+pin = v10.5.3
 
 [lagraph]
 path = deps/LAGraph
@@ -24,5 +24,5 @@ pin = v1.3.x
 [redisearch]
 path = deps/RediSearch
 url = https://github.com/FalkorDB/RediSearch.git
-rev = de3da0f6f6ba747119130fb32be8f873033e012c
+rev = 994282d3075adae126076b0aa141b1c6ac66c0bf
 pin = falkordb/llapi-extensions-8.6

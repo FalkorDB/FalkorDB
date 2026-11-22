@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! +-------------------------------+    +----------------------------+
-//! | RedisGILGuard configs         |    | Atomic configs             |
+//! | ValkeyGILGuard configs        |    | Atomic configs             |
 //! | (set at module load)          |    | (changeable at runtime)    |
 //! |-------------------------------|    |----------------------------|
 //! | CACHE_SIZE                    |    | TIMEOUT / TIMEOUT_DEFAULT  |
@@ -15,6 +15,7 @@
 //! | IMPORT_FOLDER / TEMP_FOLDER   |    | QUERY_MEM_CAPACITY         |
 //! | JS_HEAP_SIZE / JS_STACK_SIZE  |    | DELTA_MAX_PENDING_CHANGES  |
 //! | DELAY_INDEXING                |    | CMD_INFO                   |
+//! |                               |    | WRITE_LOCK_POLL_INTERVAL   |
 //! |                               |    | OMP_THREAD_COUNT ...       |
 //! +-------------------------------+    +----------------------------+
 //!       |                                      |
@@ -24,9 +25,9 @@
 //! ```
 //!
 //! - **GIL-guarded configs** are declared via `lazy_static` and wrapped in
-//!   `RedisGILGuard`, ensuring safe access from the Redis main thread.
+//!   `ValkeyGILGuard`, ensuring safe access from the Redis main thread.
 //!   Most are immutable after module load (flagged `IMMUTABLE` in the
-//!   `redis_module!` macro); the ones C also lets change at run-time are
+//!   `valkey_module!` macro); the ones C also lets change at run-time are
 //!   flagged `DEFAULT` and accepted by `GRAPH.CONFIG SET`.
 //!
 //! - **Atomic configs** use `AtomicI64` / `AtomicU64` / `AtomicBool` for
@@ -41,34 +42,39 @@ use crate::commands::config_cmd::{
     ConfigValue, UNKNOWN_FIELD, apply_config_set, check_timeout_constraints, validate_config_set,
 };
 use lazy_static::lazy_static;
-use redis_module::{Context, RedisGILGuard};
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use valkey_module::{Context, ValkeyGILGuard};
 
 // ── Redis module-level configurations (set via moduleArgs) ──
 
 lazy_static! {
-    pub static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
-        RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
-    pub static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
-    pub static ref CONFIGURATION_THREAD_COUNT: RedisGILGuard<i64> = RedisGILGuard::new(0.into());
+    pub static ref CONFIGURATION_IMPORT_FOLDER: ValkeyGILGuard<String> =
+        ValkeyGILGuard::new("/var/lib/FalkorDB/import/".into());
+    pub static ref CONFIGURATION_CACHE_SIZE: ValkeyGILGuard<i64> = ValkeyGILGuard::new(25.into());
+    pub static ref CONFIGURATION_THREAD_COUNT: ValkeyGILGuard<i64> = ValkeyGILGuard::new(0.into());
     /// Number of RediSearch background worker threads (e.g. TIERED vector-index
     /// HNSW migration jobs). 0 = disabled: tiered inserts stay in the flat
     /// buffer (KNN still correct), no async migration.
-    pub static ref CONFIGURATION_INDEX_WORKER_THREADS: RedisGILGuard<i64> =
-        RedisGILGuard::new(0.into());
-    pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
-        RedisGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
-    pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
-        RedisGILGuard::new(100_000.into());
-    pub static ref CONFIGURATION_DELAY_INDEXING: RedisGILGuard<bool> = RedisGILGuard::new(false);
-    pub static ref CONFIGURATION_TEMP_FOLDER: RedisGILGuard<String> =
-        RedisGILGuard::new("/tmp".into());
-    pub static ref CONFIGURATION_JS_HEAP_SIZE: RedisGILGuard<i64> =
-        RedisGILGuard::new(256 * 1024 * 1024_i64);
-    pub static ref CONFIGURATION_JS_STACK_SIZE: RedisGILGuard<i64> =
-        RedisGILGuard::new(1024 * 1024_i64);
+    pub static ref CONFIGURATION_INDEX_WORKER_THREADS: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(0.into());
+    /// Workers in the native index's background build pool (feature `index-falkordb`), which runs
+    /// the indexer batches of every index `CREATE INDEX` leaves `Building`. Load-time only. Not
+    /// listed by `GRAPH.CONFIG`, whose list mirrors the C engine's.
+    pub static ref CONFIGURATION_INDEX_BUILD_THREAD_COUNT: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(1.into());
+    pub static ref CONFIGURATION_NODE_CREATION_BUFFER: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
+    pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(100_000.into());
+    pub static ref CONFIGURATION_DELAY_INDEXING: ValkeyGILGuard<bool> = ValkeyGILGuard::new(false);
+    pub static ref CONFIGURATION_TEMP_FOLDER: ValkeyGILGuard<String> =
+        ValkeyGILGuard::new("/tmp".into());
+    pub static ref CONFIGURATION_JS_HEAP_SIZE: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(256 * 1024 * 1024_i64);
+    pub static ref CONFIGURATION_JS_STACK_SIZE: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(1024 * 1024_i64);
 }
 
 // ── Runtime-configurable atomics ──
@@ -117,6 +123,11 @@ pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(MAX_INFO_QUERIES_CAP);
 /// in C, but not yet read: this engine always frees off-thread (see
 /// `graph_core::graph_free`), so it defaults to 1 — C's default, and what happens.
 pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(1);
+/// How long, in ms, a writer waits for a graph's write lock while holding the GIL
+/// before it gives the GIL back and tries again (`query_session::acquire_write`).
+/// 0 waits once, holding the GIL until the lock is free. The default and the meaning
+/// of 0 are both C's.
+pub static WRITE_LOCK_POLL_INTERVAL: AtomicI64 = AtomicI64::new(5);
 
 // ── Read-only runtime configs ──
 
@@ -127,7 +138,7 @@ pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
 /// clamped rather than rejected, matching C's `Config_cmd_info_max_queries_set`.
 pub const MAX_INFO_QUERIES_CAP: i64 = 1000;
 
-pub fn get_thread_count(ctx: &redis_module::Context) -> i64 {
+pub fn get_thread_count(ctx: &Context) -> i64 {
     let val = *CONFIGURATION_THREAD_COUNT.lock(ctx);
     if val > 0 {
         val
@@ -168,6 +179,7 @@ pub const CONFIG_NAMES: &[&str] = &[
     "TEMP_FOLDER",
     "JS_HEAP_SIZE",
     "JS_STACK_SIZE",
+    "WRITE_LOCK_POLL_INTERVAL",
 ];
 
 // ── Module load arguments ──
@@ -188,6 +200,7 @@ enum LoadArg {
     OmpThreadCount(i64),
     NodeCreationBuffer(i64),
     IndexWorkerThreads(i64),
+    IndexBuildThreadCount(i64),
     ImportFolder(String),
     TempFolder(String),
     /// Not validated at load time (yet); accepted and unused, as before.
@@ -236,6 +249,10 @@ fn validate_load_only(
         "OMP_THREAD_COUNT" => positive.map(LoadArg::OmpThreadCount),
         "NODE_CREATION_BUFFER" => non_negative.map(LoadArg::NodeCreationBuffer),
         "INDEX_WORKER_THREADS" => non_negative.map(LoadArg::IndexWorkerThreads),
+        // This engine's own: the native index's build pool, 1 to 1024 workers as registered.
+        "INDEX_BUILD_THREAD_COUNT" => positive
+            .filter(|&v| v <= 1024)
+            .map(LoadArg::IndexBuildThreadCount),
         "IMPORT_FOLDER" => Some(LoadArg::ImportFolder(value.to_string())),
         "TEMP_FOLDER" => {
             return Some(
@@ -259,6 +276,7 @@ fn apply_load_arg(
         LoadArg::OmpThreadCount(v) => OMP_THREAD_COUNT.store(v, Ordering::Relaxed),
         LoadArg::NodeCreationBuffer(v) => *CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx) = v,
         LoadArg::IndexWorkerThreads(v) => *CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx) = v,
+        LoadArg::IndexBuildThreadCount(v) => *CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx) = v,
         LoadArg::ImportFolder(v) => *CONFIGURATION_IMPORT_FOLDER.lock(ctx) = v,
         LoadArg::TempFolder(v) => *CONFIGURATION_TEMP_FOLDER.lock(ctx) = v,
         LoadArg::BoltPort => {}

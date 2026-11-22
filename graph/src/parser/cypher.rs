@@ -100,8 +100,8 @@ use crate::entity_type::EntityType;
 use crate::identifier_limits::{is_identifier_too_long, validate_identifier_len};
 use crate::index::indexer::IndexType;
 use crate::parser::ast::{
-    AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
+    Alias, AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode,
+    QueryPath, QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
 };
 use crate::parser::lexer::{Keyword, Lexer, Token};
 use crate::runtime::orderset::OrderSet;
@@ -220,6 +220,10 @@ pub struct Parser<'a> {
     /// with everything else that decides whether the attempt can succeed.
     /// See [`Parser::parse_list_literal_or_comprehension`].
     not_pattern_comprehension: HashSet<PatternComprehensionAttempt>,
+    /// Set while a `CYPHER` parameter value is parsed as an expression: a sign run
+    /// is then limited to what the grammar took before runs parsed (`+`, `-` or
+    /// `+-`), at every nesting level, since the parser folds a run to its parity.
+    legacy_signs: bool,
 }
 
 /// Where and in what context [`Parser::parse_list_literal_or_comprehension`]
@@ -283,6 +287,7 @@ impl<'a> Parser<'a> {
             max_child_height: 0,
             forbidden_pattern_comprehension: None,
             not_pattern_comprehension: HashSet::new(),
+            legacy_signs: false,
         }
     }
 
@@ -437,7 +442,12 @@ impl<'a> Parser<'a> {
             return Ok(value);
         }
         self.restore_state(state);
-        evaluate_param(&self.parse_expr(false)?.root())
+        // `parse_expr` folds a run of signs to its parity, so `---1` would come out
+        // accepted: a parameter keeps the sign grammar it had before runs parsed.
+        self.legacy_signs = true;
+        let expr = self.parse_expr(false);
+        self.legacy_signs = false;
+        evaluate_param(&expr?.root())
     }
 
     /// Reads a literal: `null`, a boolean, a number, a string, a list, a map,
@@ -1358,7 +1368,7 @@ impl<'a> Parser<'a> {
     /// the entity being created, it does not add predicates.
     fn add_pattern_node(
         query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
-        nodes_alias: &mut HashSet<Arc<String>>,
+        nodes_alias: &mut HashSet<Alias>,
         node: &Arc<QueryNode<Arc<String>, Arc<String>>>,
         clause: &Keyword,
     ) {
@@ -1520,7 +1530,7 @@ impl<'a> Parser<'a> {
                         }
 
                         match_token!(self.lexer, RParen); // consume outer ')'
-                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
+                        query_graph.add_path(Arc::new(QueryPath::new(Alias::Named(ident), vars)));
 
                         // Continue to next pattern or end
                         if self.lexer.current()? != Token::Comma {
@@ -1545,7 +1555,7 @@ impl<'a> Parser<'a> {
                         Self::add_pattern_relationship(&mut query_graph, relationship, clause)?;
                         Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                     } else {
-                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
+                        query_graph.add_path(Arc::new(QueryPath::new(Alias::Named(ident), vars)));
                         break;
                     }
                 }
@@ -1569,16 +1579,11 @@ impl<'a> Parser<'a> {
                 Token::Comma => {
                     self.lexer.next();
                 }
-                Token::IdentifierOrKeyword {
-                    keyword: Some(token),
-                    ..
-                } => {
-                    if token == *clause {
-                        self.lexer.next();
-                        continue;
-                    }
-                    break;
-                }
+                // Anything else ends the pattern, including a repeated MATCH or
+                // CREATE keyword: it starts a new clause and is not folded into
+                // this one. Relationship uniqueness is scoped per MATCH clause,
+                // and a variable bound by one CREATE clause is visible to the
+                // next.
                 _ => break,
             }
         }
@@ -1822,42 +1827,20 @@ impl<'a> Parser<'a> {
                 (1, Some(1)) // no *, fixed 1-hop
             };
 
-            // Check for edge filter properties (not allowed)
-            let has_filter = if let Token::Parameter(_) = self.lexer.current()? {
-                true
-            } else {
-                self.lexer.current()? == Token::LBracket
-            };
-
-            // Skip filter content if present (consume until we reach `]`)
-            if has_filter {
-                let mut depth = 0i32;
-                loop {
-                    let tok = self.lexer.current()?;
-                    match tok {
-                        Token::LBracket => {
-                            // Nested `{`
-                            depth += 1;
-                            self.lexer.next();
-                        }
-                        Token::RBracket => {
-                            // Closing `}`
-                            depth -= 1;
-                            self.lexer.next();
-                            if depth <= 0 {
-                                break;
-                            }
-                        }
-                        Token::RBrace => {
-                            // `]` - stop before consuming it
-                            break;
-                        }
-                        _ => {
-                            self.lexer.next();
-                        }
-                    }
+            // An edge filter is not allowed, but it is parsed like any other
+            // so that a malformed or unterminated one is a syntax error; the
+            // caller rejects it once the pattern is known to be complete.
+            let has_filter = match self.lexer.current()? {
+                Token::Parameter(_) => {
+                    self.lexer.next();
+                    true
                 }
-            }
+                Token::LBracket => {
+                    self.parse_map()?;
+                    true
+                }
+                _ => false,
+            };
 
             match_token!(self.lexer, RBrace);
             (types, min, max, has_filter)
@@ -2226,21 +2209,43 @@ impl<'a> Parser<'a> {
                     }
                     stack.push((current + 1, None, 0));
                 } else if current == 9 {
-                    // unary add or subtract
-                    optional_match_token!(self.lexer, Plus);
-                    let is_negate = optional_match_token!(self.lexer, Dash);
-
-                    // Handle integer overflow with negation
-                    if is_negate && let Err(err) = self.lexer.current() {
-                        return Err(err.replace("Integer overflow '", "Integer overflow '-"));
+                    // unary add or subtract, any run of them: `- -5` is 5
+                    let mut negate_count = 0;
+                    let mut plus_count = 0;
+                    loop {
+                        match self.lexer.current() {
+                            Ok(token @ (Token::Plus | Token::Dash))
+                                if self.legacy_signs
+                                    && (negate_count > 0
+                                        || plus_count > 0 && matches!(token, Token::Plus)) =>
+                            {
+                                return Err(self
+                                    .lexer
+                                    .format_error(&format!("Invalid input {token:?}")));
+                            }
+                            Ok(Token::Plus) => plus_count += 1,
+                            Ok(Token::Dash) => negate_count += 1,
+                            // Handle integer overflow with negation
+                            Err(err) if negate_count > 0 => {
+                                return Err(
+                                    err.replace("Integer overflow '", "Integer overflow '-")
+                                );
+                            }
+                            _ => break,
+                        }
+                        self.lexer.next();
                     }
 
-                    let (res, height) = if is_negate {
-                        (Some(tree!(ExprIR::Negate)), 1)
+                    // Negate type-checks its operand, so `- -x` is not `x`.
+                    // A longer run still folds, keeping its parity, as NOT's
+                    // does: to one Negate, or to two the operand is placed under.
+                    if negate_count == 0 {
+                        stack.push((current, None, 0));
                     } else {
-                        (None, 0)
-                    };
-                    stack.push((current, res, height));
+                        for _ in 0..(2 - negate_count % 2) {
+                            stack.push((current, Some(tree!(ExprIR::Negate)), 1));
+                        }
+                    }
                     stack.push((current + 1, None, 0));
                 } else {
                     // primary expression
@@ -2986,7 +2991,7 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(pv) = path_var {
-            graph.add_path(Arc::new(QueryPath::new(pv, vec![])));
+            graph.add_path(Arc::new(QueryPath::new(Alias::Named(pv), vec![])));
         }
 
         // Optional WHERE
@@ -3029,15 +3034,22 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// A new number for an unnamed pattern entity.
+    const fn next_unnamed(&mut self) -> Alias {
+        let id = self.anon_counter;
+        self.anon_counter += 1;
+        Alias::Anon(id)
+    }
+
+    /// The identifier at the cursor, or a fresh unnamed alias if there is none.
+    fn parse_alias_or_unnamed(&mut self) -> Alias {
+        self.try_parse_ident()
+            .map_or_else(|| self.next_unnamed(), Alias::Named)
+    }
+
     fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
-        let alias = if let Some(id) = self.try_parse_ident() {
-            id
-        } else {
-            let name = Arc::new(format!("_anon_{}", self.anon_counter));
-            self.anon_counter += 1;
-            name
-        };
+        let alias = self.parse_alias_or_unnamed();
         let labels = self.parse_labels()?;
         let attrs = if let Token::Parameter(param) = self.lexer.current()? {
             self.lexer.next();
@@ -3079,13 +3091,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (alias, types, attrs, var_len) = if has_details {
-            let alias = if let Some(id) = self.try_parse_ident() {
-                id
-            } else {
-                let name = Arc::new(format!("_anon_{}", self.anon_counter));
-                self.anon_counter += 1;
-                name
-            };
+            let alias = self.parse_alias_or_unnamed();
             let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
                 types.extend(self.parse_relationship_types()?);
@@ -3151,9 +3157,7 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, RBrace);
             (alias, types.into_iter().collect(), attrs, var_len)
         } else {
-            let name = Arc::new(format!("_anon_{}", self.anon_counter));
-            self.anon_counter += 1;
-            (name, vec![], tree!(ExprIR::Map), None)
+            (self.next_unnamed(), vec![], tree!(ExprIR::Map), None)
         };
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
@@ -3338,18 +3342,8 @@ impl<'a> Parser<'a> {
         set_items: &mut Vec<SetItem<Arc<String>, Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr(false)?;
-            if recurse {
-                self.reject_unparenthesized_target(&expr)?;
-                expr = self.parse_expr(false)?;
-                match_token!(self.lexer, RParen);
-                self.expect_property_after_paren()?;
-            }
-            if self.lexer.current()? == Token::Dot {
-                while self.lexer.current()? == Token::Dot {
-                    self.lexer.next();
-                    expr = self.parse_property_lookup(expr)?;
-                }
+            let (expr, has_properties) = self.parse_update_target()?;
+            if has_properties {
                 match_token!(self.lexer, Equal);
                 let value = Arc::new(self.parse_expr(false)?);
                 set_items.push(SetItem::Attribute {
@@ -3387,6 +3381,37 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
+    }
+
+    /// Parses what a `SET` or `REMOVE` item updates: an expression followed
+    /// by an optional `.prop.prop...` chain, reporting whether a chain was
+    /// present.
+    ///
+    /// Each lookup wraps the tree before it, so the chain is charged against
+    /// [`Self::MAX_TREE_DEPTH`] step by step, as the postfix chain in
+    /// [`Self::parse_expr_inner`] is: otherwise `n.a.a.a...` builds a tree
+    /// the binder overflows its stack walking, quadratically slowly.
+    fn parse_update_target(&mut self) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+        let ((mut expr, recurse), child_height) =
+            self.with_child_height(|s| s.parse_primary_expr(false))?;
+        let mut height = child_height + Self::PRIMARY_LEVELS;
+        if recurse {
+            self.reject_unparenthesized_target(&expr)?;
+            expr = self.parse_expr(false)?;
+            height = self.expr_height;
+            match_token!(self.lexer, RParen);
+            self.expect_property_after_paren()?;
+        }
+        // The target itself may already be too tall, with no lookup to charge.
+        self.check_depth(height)?;
+        let has_properties = self.lexer.current()? == Token::Dot;
+        while self.lexer.current()? == Token::Dot {
+            self.lexer.next();
+            expr = self.parse_property_lookup(expr)?;
+            height += 1;
+            self.check_depth(height)?;
+        }
+        Ok((expr, has_properties))
     }
 
     /// A `SET`/`REMOVE` target that opens a nested expression may only open
@@ -3434,18 +3459,8 @@ impl<'a> Parser<'a> {
         remove_items: &mut Vec<QueryExpr<Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr(false)?;
-            if recurse {
-                self.reject_unparenthesized_target(&expr)?;
-                expr = self.parse_expr(false)?;
-                match_token!(self.lexer, RParen);
-                self.expect_property_after_paren()?;
-            }
-            if self.lexer.current()? == Token::Dot {
-                while self.lexer.current()? == Token::Dot {
-                    self.lexer.next();
-                    expr = self.parse_property_lookup(expr)?;
-                }
+            let (mut expr, has_properties) = self.parse_update_target()?;
+            if has_properties {
                 remove_items.push(Arc::new(expr));
             } else if self.lexer.current()? == Token::Colon {
                 expr = tree!(
@@ -3524,7 +3539,9 @@ impl<'a> Parser<'a> {
                     ..
                 } => {
                     self.lexer.next();
-                    body.push(self.parse_foreach_clause()?);
+                    // A nested FOREACH recurses like `CALL {}` does, so it is
+                    // bounded the same way.
+                    body.push(self.nested(Self::parse_foreach_clause)?);
                 }
                 _ => break,
             }
@@ -3701,6 +3718,23 @@ mod tests {
                 "map projection",
                 format!("MATCH (a) RETURN {}a{{.k}}{}", "[".repeat(n), "]".repeat(n)),
             ),
+            // Clauses that build expressions or recurse outside parse_expr.
+            (
+                "set property chain",
+                format!("MATCH (n) SET n{} = 1", ".a".repeat(n)),
+            ),
+            (
+                "remove property chain",
+                format!("MATCH (n) REMOVE n{}", ".a".repeat(n)),
+            ),
+            (
+                "foreach",
+                format!(
+                    "{}CREATE (){}",
+                    "FOREACH (x IN [1] | ".repeat(n),
+                    ")".repeat(n)
+                ),
+            ),
         ];
         // The same nesting an expression can hide, wrapped in a clause.
         shapes.extend(
@@ -3786,6 +3820,22 @@ mod tests {
                     "{name}: {n} levels were accepted as a tree {height} deep",
                 );
             }
+        }
+    }
+
+    // A SET/REMOVE target is charged for the primary expression wrapped
+    // around what it nests even when no `.prop` follows it, so one a level or
+    // two over the cap is refused as too deep rather than as a bad target.
+    #[test]
+    fn update_target_without_property_is_bounded() {
+        with_functions();
+        let target = |n: usize| format!("abs({}1{})", "(".repeat(n), "+1)".repeat(n));
+        // 126 levels still fit under the cap and are rejected as a target.
+        for clause in ["REMOVE", "SET"] {
+            let err = parse_fully(&format!("MATCH (x) {clause} {}", target(126))).unwrap_err();
+            assert!(!is_too_deep(&err), "{clause}: {err}");
+            let err = parse_fully(&format!("MATCH (x) {clause} {}", target(127))).unwrap_err();
+            assert!(is_too_deep(&err), "{clause}: 127 levels: {err}");
         }
     }
 
@@ -3978,6 +4028,27 @@ mod tests {
         }
     }
 
+    // Regression (#2309): a run of signs parsed only its first `+` and `-`, so
+    // `- -5` was "Invalid input Dash". It folds to one or two Negates by parity.
+    #[test]
+    fn chained_unary_signs_parse() {
+        with_functions();
+        for query in [
+            "RETURN - -5",
+            "RETURN --5",
+            "RETURN - - -5",
+            "RETURN -+5",
+            "RETURN +-+-5",
+            "RETURN --9223372036854775808",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "{query}");
+        }
+        let err = Parser::new("RETURN - -99999999999999999999")
+            .parse()
+            .expect_err("overflow");
+        assert!(err.contains("Integer overflow '-"), "{err}");
+    }
+
     // Negation of a non-number is Null, and i64::MIN negates to itself. Both
     // were `evaluate_param`'s behaviour and both are easy to lose.
     #[test]
@@ -3996,7 +4067,21 @@ mod tests {
         // Unnegated, those digits are i64::MAX + 1 and must still be refused.
         assert!(param_of("9223372036854775808").is_err());
         // A second `-` is not part of a literal, and never parsed before.
-        assert!(param_of("--1").is_err());
+        assert_eq!(format!("{:?}", param_of("+-1").unwrap()), "Int(-1)");
+        assert!(param_of("[+-1, -2, {a: -3}]").is_ok());
+        for value in [
+            "--1",
+            "---1",
+            "----1",
+            "--9223372036854775808",
+            "-+-1",
+            "++1",
+            "[--1]",
+            "{a: ---1}",
+            "[1, [-+1]]",
+        ] {
+            assert!(param_of(value).is_err(), "accepted parameter {value}");
+        }
     }
 
     // A value that is not a literal falls back to the expression path, so it
@@ -4095,6 +4180,10 @@ mod tests {
 
     // Malformed literals are parse errors, named by the parameter that failed.
     #[test]
+    #[allow(
+        clippy::literal_string_with_formatting_args,
+        reason = "`{`a`}` is a malformed parameter value, not a format string"
+    )]
     fn malformed_params_name_the_parameter() {
         for value in ["[1,2", "{`a`:1", "{1:2}", "[1,]", "[,]", "{`a`}"] {
             let err = param_of(value).unwrap_err();
@@ -4141,6 +4230,34 @@ mod tests {
         assert_eq!(rest.trim_start(), "MATCH (n) RETURN n");
         assert_eq!(format!("{:?}", params["a"]), format!("{:?}", Value::Int(3)));
         assert_eq!(params.len(), 2);
+    }
+
+    // The edge filter of a shortestPath used to be skipped token by token until
+    // `]` or `}`; at end of input that loop never ended and pinned a worker.
+    #[test]
+    fn shortest_path_edge_filter_at_end_of_input_is_an_error() {
+        with_functions();
+        for query in [
+            "RETURN shortestPath((a)-[{",
+            "RETURN shortestPath((a)-[$p",
+            "RETURN shortestPath((a)-[{x: [1, {y: 2",
+            "MATCH (a), (b) RETURN shortestPath((a)-[* {x: 1",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        // A complete filter is still parsed and rejected for being a filter.
+        for query in [
+            "MATCH (a), (b) RETURN shortestPath((a)-[{x: {y: [1]}}]->(b))",
+            "MATCH (a), (b) RETURN shortestPath((a)-[$p]->(b))",
+        ] {
+            let Err(err) = Parser::new(query).parse() else {
+                panic!("accepted {query:?}");
+            };
+            assert!(
+                err.contains("filters on relationships in shortestPath are not allowed"),
+                "{query:?}: {err}"
+            );
+        }
     }
 
     // The speculative-ident path must still recognise what it probes for.

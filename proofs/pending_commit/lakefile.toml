@@ -1,0 +1,21 @@
+name = "falkor-pending-commit"
+defaultTargets = ["PendingCommit"]
+
+[[lean_lib]]
+name = "PendingCommit"
+
+# graph_queries' IdSpace model (`GQ.IdS`, `GQ.rCancel`) is imported, not copied.
+[[require]]
+name = "falkor-graph-queries"
+path = "../graph_queries"
+
+# runtime_core owns the borrow-word model (`RuntimeCore.Cell`) that `Hold` runs on.
+[[require]]
+name = "falkor-runtime-core"
+path = "../runtime_core"
+
+# graph_persist's RDB layout (`GraphPersist.Persist.encPayload`, `load_encode`, `multi_load`) that
+# `SaveLayout` runs #3438's slice encoders inside (graph_persist requires nothing: no cycle).
+[[require]]
+name = "falkor-graph-persist"
+path = "../graph_persist"

@@ -248,7 +248,17 @@ impl VarLenIter<'_> {
                     continue;
                 }
 
-                let neighbor = if reversed {
+                // An undirected walk follows an edge either way, so it reads the
+                // same whether it starts at `from` or, reversed, at `to`.
+                let neighbor = if bidirectional {
+                    if edge_src == current {
+                        Some(edge_dst)
+                    } else if edge_dst == current {
+                        Some(edge_src)
+                    } else {
+                        None
+                    }
+                } else if reversed {
                     if edge_dst == current {
                         Some(edge_src)
                     } else {
@@ -256,8 +266,6 @@ impl VarLenIter<'_> {
                     }
                 } else if edge_src == current {
                     Some(edge_dst)
-                } else if bidirectional && edge_dst == current {
-                    Some(edge_src)
                 } else {
                     None
                 };
@@ -448,6 +456,10 @@ pub struct CondVarLenTraverseOp<'a> {
 }
 
 impl<'a> CondVarLenTraverseOp<'a> {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "built once from the plan node; mirrors its fields"
+    )]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -507,6 +519,10 @@ impl<'a> CondVarLenTraverseOp<'a> {
     /// binds it without any transpose. Callers pass the op's fields explicitly
     /// so this runs inside the emitter closure without borrowing the emitter
     /// through `&self`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "takes the op's fields explicitly; see above"
+    )]
     fn expand_row(
         runtime: &'a Runtime<'a>,
         rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -549,8 +565,10 @@ impl<'a> CondVarLenTraverseOp<'a> {
 
         // When `to` is bound but `from` is unbound (e.g. `(:L1)<-[:R1*]-()`)
         // we reverse the traversal: start from the bound `to` node and follow
-        // edges in the opposite direction, emitting destinations as `from`.
-        let reversed = from_id.is_none() && to_id.is_some() && !bidirectional;
+        // edges in the opposite direction, emitting destinations as `from`. An
+        // undirected walk reverses too: it follows edges both ways, and only the
+        // start, the emitted endpoints and the path order change.
+        let reversed = from_id.is_none() && to_id.is_some();
 
         // Get starting nodes
         let start_nodes: Vec<NodeId> = if reversed {

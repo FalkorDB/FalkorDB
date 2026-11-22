@@ -69,9 +69,7 @@ fn assert_sanitizer_agrees(request: &Request) {
     // plain RUSTFLAGS, so checking only the first two would miss the exact
     // configuration this guard is for.
     let mut sources = vec![
-        std::env::var("CARGO_ENCODED_RUSTFLAGS")
-            .map(|v| v.replace('\x1f', " "))
-            .unwrap_or_default(),
+        std::env::var("CARGO_ENCODED_RUSTFLAGS").map_or_default(|v| v.replace('\x1f', " ")),
         std::env::var("RUSTFLAGS").unwrap_or_default(),
     ];
     if let Ok(target) = std::env::var("TARGET") {
@@ -231,8 +229,9 @@ fn link_redisearch(redisearch: &Resolved) {
     // libredisearch_rs.a embeds its own copy of the `redis-module` crate (pulled
     // by rlookup / redis_mock). That crate unconditionally defines linkme
     // `#[distributed_slice]`s (COMMANDS_LIST, configs, info, ...). FalkorDB links
-    // its own `redis-module`, so without intervention the final cdylib carries two
-    // definitions of each slice and linkme aborts at module load with
+    // `valkey-module`, which defines slices with the same names, so without
+    // intervention the final cdylib carries two definitions of each slice and
+    // linkme aborts at module load with
     // `duplicate #[distributed_slice] with name "COMMANDS_LIST"`. In RediSearch's
     // library build those slices are empty and never iterated, so we strip the
     // linkme sections from a private copy of the archive and link that instead.
@@ -240,8 +239,8 @@ fn link_redisearch(redisearch: &Resolved) {
     link_static(&patched);
 }
 
-/// RediSearch's Rust archive carries a second copy of the `redis-module` crate
-/// whose linkme `#[distributed_slice]` markers collide with FalkorDB's at load
+/// RediSearch's Rust archive carries a copy of the `redis-module` crate whose
+/// linkme `#[distributed_slice]` markers collide with `valkey-module`'s at load
 /// time. Produce a copy in `OUT_DIR` with every linkme section removed and return
 /// its path. The slices are empty in RediSearch's library build, so dropping them
 /// only removes dead bookkeeping.
@@ -256,9 +255,10 @@ fn strip_linkme_sections(archive: &Path) -> PathBuf {
     let objdump = llvm_tool("LLVM_OBJDUMP", "llvm-objdump");
     let objcopy = llvm_tool("LLVM_OBJCOPY", "llvm-objcopy");
 
-    // Enumerate linkme section names from the archive's section headers. The names
-    // are content-hashed (e.g. `__linkm2JsytAsd7`), so discover them rather than
-    // hard-coding; this also keeps working if linkme is bumped.
+    // Enumerate linkme section names from the archive's section headers rather than
+    // hard-coding them, so this keeps working if linkme is bumped. ELF names them
+    // after the slice (`linkme_COMMANDS_LIST`, `linkm2_COMMANDS_LIST`); Mach-O after
+    // a hash of the slice's name (`__linkm2JsytAsd7`), with a `__` prefix.
     let headers = std::process::Command::new(&objdump)
         .arg("--section-headers")
         .arg(archive)
@@ -270,17 +270,20 @@ fn strip_linkme_sections(archive: &Path) -> PathBuf {
         archive.display()
     );
     let stdout = String::from_utf8_lossy(&headers.stdout);
+    let prefix = if cfg!(target_os = "macos") {
+        "__linkm"
+    } else {
+        "linkm"
+    };
     let mut sections: Vec<&str> = stdout
         .lines()
-        // Match the linkme DATA sections only. Their names are content-hashed
-        // (`linkm2_COMMANDS_LIST`, ...), so discover them rather than hard-coding
-        // -- but anchor on the START of the name. A `contains` match also catches
-        // `.text._RNv...6linkme...static_slice...`, a CODE section whose mangled
-        // Rust symbol merely embeds "linkme"; objcopy rightly refuses to remove
-        // that one because `.rela.text` relocates into it, and whether rustc emits
-        // it as a separate section at all is a codegen-unit partitioning detail.
-        // Anchoring keeps this independent of that.
-        .filter_map(|line| line.split_whitespace().find(|tok| tok.starts_with("linkm")))
+        // Match the linkme DATA sections only, by the START of the name. A
+        // `contains` match also catches `.text._RNv...6linkme...static_slice...`,
+        // a CODE section whose mangled Rust symbol merely embeds "linkme"; objcopy
+        // rightly refuses to remove that one because `.rela.text` relocates into
+        // it, and whether rustc emits it as a separate section at all is a
+        // codegen-unit partitioning detail. Anchoring keeps this independent of that.
+        .filter_map(|line| line.split_whitespace().find(|tok| tok.starts_with(prefix)))
         .collect();
     sections.sort_unstable();
     sections.dedup();

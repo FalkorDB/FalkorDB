@@ -109,7 +109,7 @@ trait IndexSubject: Clone {
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> bool;
 
     /// Subject-specific hook for function-based predicates. Node impl
@@ -161,9 +161,9 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> bool {
-        graph.is_indexed(label, attr, ty)
+        graph.is_indexed(label, attr, &ty)
     }
     fn try_func_scan(
         subject: &Self,
@@ -228,9 +228,9 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> bool {
-        graph.is_edge_indexed(label, attr, ty)
+        graph.is_edge_indexed(label, attr, &ty)
     }
     fn try_func_scan(
         _subject: &Self,
@@ -350,6 +350,28 @@ fn build_op_query(
             include_min: false,
             include_max: true,
         }),
+        _ => None,
+    }
+}
+
+/// The attribute name when the subtree at `idx` is exactly `alias.attr`
+/// (a property access directly on the variable), `None` for any other
+/// shape that merely contains such a property.
+fn bare_property_of(
+    tree: &DynTree<ExprIR<Variable>>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    alias: &Variable,
+) -> Option<Arc<String>> {
+    let mut node = tree.node(idx);
+    while matches!(node.data(), ExprIR::Paren) {
+        node = node.get_child(0)?;
+    }
+    let ExprIR::Property(attr) = node.data() else {
+        return None;
+    };
+    // `Variable` equality is by id only; ids repeat across scopes.
+    match node.get_child(0).map(|c| c.data()) {
+        Some(ExprIR::Variable(v)) if v.key() == alias.key() => Some(attr.clone()),
         _ => None,
     }
 }
@@ -623,10 +645,13 @@ fn try_in_filter_scan<T: IndexSubject>(
         _ => return None,
     };
 
-    let attr = extract_attribute_from_subtree(filter, attr_side)?;
+    // The index side must be the scanned property itself. `abs(n.a) IN
+    // [1]` or `2 IN [n.a, n.b]` only *contain* `n.a`; pushing them as
+    // `n.a IN [...]` or as an array-contains on `n.a` selects other rows.
+    let attr = bare_property_of(filter, attr_side, subject.alias())?;
     let label = subject
         .all_labels()
-        .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
+        .find(|l| T::is_indexed(graph, l, &attr, IndexType::Range))?
         .clone();
 
     let query = if is_property_in_list {
@@ -673,7 +698,7 @@ fn try_single_filter_scan<T: IndexSubject>(
         extract_attribute_and_expression_from_filter(filter, Some(subject.alias()))?;
     let label = subject
         .all_labels()
-        .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
+        .find(|l| T::is_indexed(graph, l, &attr, IndexType::Range))?
         .clone();
     match filter.node(attr_side).data() {
         ExprIR::FuncInvocation(func) if func.name.as_str() == "distance" => {
@@ -742,6 +767,12 @@ fn try_filter_pushdown<T: IndexSubject>(
                             (prev_label, merge_range_queries(prev_q, query))
                         }
                     });
+                    // An array-contains conjunct keeps its filter, as it does on its own (below):
+                    // the index may return false positives for it (a numeric key is shared by
+                    // `1` and `true`), and a conjunction is no reason to trust them.
+                    if is_array_contains(subject, &conjunct) {
+                        remaining.push(conjunct);
+                    }
                 } else {
                     remaining.push(conjunct);
                 }
@@ -770,16 +801,25 @@ fn try_filter_pushdown<T: IndexSubject>(
             // For "value IN property" (array-contains), keep the filter
             // as a post-filter — the index may return false positives
             // for non-indexable array elements.
-            let is_array_contains = matches!(filter.root().data(), ExprIR::In)
-                && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
-                && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias());
-            if is_array_contains {
+            if is_array_contains(subject, filter) {
                 (label, q, vec![filter.root().clone_as_tree()])
             } else {
                 (label, q, Vec::new())
             }
         }),
     }
+}
+
+/// Whether `filter` is `value IN subject.prop` (array-contains): a predicate the index answers
+/// with possible false positives — a numeric key is shared by `1` and `true`, and an element it
+/// cannot index is not in its array tree at all — so its filter is always kept.
+fn is_array_contains<T: IndexSubject>(
+    subject: &T,
+    filter: &DynTree<ExprIR<Variable>>,
+) -> bool {
+    matches!(filter.root().data(), ExprIR::In)
+        && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
+        && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias())
 }
 
 /// Whether a filter contains runtime values that might evaluate to
@@ -922,10 +962,9 @@ fn governing_filter(
     idx: NodeIdx<Dyn<IR>>,
 ) -> Option<(NodeIdx<Dyn<IR>>, QueryExpr<Variable>, bool)> {
     let mut node = plan.node(idx).parent()?;
-    let mut over_pending = false;
-    if matches!(node.data(), IR::IncludePending { .. }) && node.num_children() == 1 {
+    let over_pending = matches!(node.data(), IR::IncludePending { .. }) && node.num_children() == 1;
+    if over_pending {
         node = node.parent()?;
-        over_pending = true;
     }
     let IR::Filter(filter) = node.data() else {
         return None;
@@ -1062,12 +1101,23 @@ fn prune_all_node_scan_child(
     let IR::AllNodeScan(child_node) = child.data() else {
         return false;
     };
-    let (child_alias_id, child_scope_id) = (child_node.alias.id, child_node.alias.scope_id);
     let child_idx = child.idx();
     // Safety: don't drop the scan that binds the child alias if the
     // edge-index query still depends on it.
-    if index_query_references_variable(&query, child_alias_id, child_scope_id) {
+    if index_query_references_variable(&query, child_node.alias.key()) {
         return false;
+    }
+    // The scan may sit on rows an earlier clause supplies (an `UNWIND`, a
+    // `WITH`); those rows still have to reach the edge scan, so what is beneath
+    // the scan stays and only the scan goes.
+    let below: Vec<DynTree<IR>> = plan
+        .node(child_idx)
+        .children()
+        .map(|c| c.clone_as_tree())
+        .collect();
+    // Reattach before pruning: `prune` can reclaim memory and invalidate `idx`.
+    for t in below {
+        plan.node_mut(idx).push_child_tree(t);
     }
     plan.node_mut(child_idx).prune();
     true

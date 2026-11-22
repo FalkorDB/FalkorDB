@@ -1,0 +1,20 @@
+[package]
+name = "fuzz-support"
+version = "0.1.0"
+edition = "2024"
+description = "Process setup the fuzz harnesses need because they run the engine without Redis"
+license = "SSPL-1.0 OR AGPL-3.0-only"
+repository = "https://github.com/FalkorDB/FalkorDB"
+readme = "../README.md"
+keywords = ["graph", "database"]
+categories = ["data-structures", "database"]
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+libc = "0.2"
+
+[dependencies.graph]
+path = "../graph"

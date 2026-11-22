@@ -121,9 +121,9 @@ pub struct Field {
 impl Field {
     fn make_arr_names(
         name: &CString,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> (Option<CString>, Option<CString>) {
-        if *ty == IndexType::Range {
+        if ty == IndexType::Range {
             let base = name.to_str().unwrap_or("");
             (
                 CString::new(format!("{base}:numeric:arr")).ok(),
@@ -140,7 +140,7 @@ impl Field {
         ty: IndexType,
         options: Option<TextIndexOptions>,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -157,7 +157,7 @@ impl Field {
         ty: IndexType,
         vector_options: VectorIndexOptions,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -714,6 +714,10 @@ impl Document {
         self.id
     }
 
+    #[allow(
+        clippy::match_same_arms,
+        reason = "temporal values and vectors are skipped for different reasons, each commented"
+    )]
     pub fn set(
         &mut self,
         field: &Field,
@@ -1107,6 +1111,27 @@ impl Index {
         stopwords: Option<&Vec<Arc<String>>>,
         language: Option<&Arc<String>>,
     ) -> Result<(), String> {
+        // Every fallible conversion runs before the options block is
+        // allocated, so an early return cannot leak it.
+        let c_stopwords: Option<Vec<CString>> = stopwords
+            .map(|words| {
+                words
+                    .iter()
+                    .map(|s| CString::new(s.as_str()).map_err(|e| e.to_string()))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+        // `RediSearch_IndexOptionsSetLanguage` only stores the raw pointer
+        // (`options->lang = lang`); `_CreateIndex` later reads it via
+        // `RSLanguage_Find` to convert to an enum, so this `CString` must
+        // outlive that call.
+        // (Bug uncovered by ASAN: heap-use-after-free in `RSLanguage_Find`
+        // when the inner `c_lang` was dropped at end of its if-let block.)
+        let c_lang: Option<CString> = language
+            .map(|lang| CString::new(lang.as_str()).map_err(|e| e.to_string()))
+            .transpose()?;
+        let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
+
         unsafe {
             // Requires the global lock (the host's module GIL):
             // `RediSearch_CreateIndex` registers a GC timer in the host event loop
@@ -1119,13 +1144,9 @@ impl Index {
             // `RediSearch_IndexOptionsSetStopwords` deep-copies via
             // `rm_strdup`, so our CStrings can drop as soon as the call
             // returns.
-            if let Some(stop_words) = stopwords {
-                let c_stopwords: Vec<CString> = stop_words
-                    .iter()
-                    .map(|s| CString::new(s.as_str()).map_err(|e| e.to_string()))
-                    .collect::<Result<Vec<_>, _>>()?;
+            if let Some(stopword_cstrs) = &c_stopwords {
                 let mut ptrs: Vec<*const c_char> =
-                    c_stopwords.iter().map(|cs| cs.as_ptr()).collect();
+                    stopword_cstrs.iter().map(|cs| cs.as_ptr()).collect();
                 RediSearch_IndexOptionsSetStopwords(
                     options,
                     ptrs.as_mut_ptr(),
@@ -1135,24 +1156,14 @@ impl Index {
                 RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
             }
 
-            // `RediSearch_IndexOptionsSetLanguage`, in contrast, only stores
-            // the raw pointer (`options->lang = lang`); `_CreateIndex` later
-            // reads it via `RSLanguage_Find` to convert to an enum, so the
-            // backing `CString` must outlive that call.
-            // (Bug uncovered by ASAN: heap-use-after-free in `RSLanguage_Find`
-            // when the inner `c_lang` was dropped at end of its if-let block.)
-            let _language_owner: Option<CString> = if let Some(lang) = language {
-                let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
+            if let (Some(lang), Some(c_lang)) = (language, &c_lang) {
                 if RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr()) != 0 {
+                    RediSearch_FreeIndexOptions(options);
                     return Err(format!("Language is not supported: {lang}"));
                 }
-                Some(c_lang)
             } else {
                 RediSearch_IndexOptionsSetLanguage(options, null_mut());
-                None
-            };
-
-            let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
+            }
 
             // GIL is already held at the top of this unsafe block, covering
             // CreateIndex's transitive RM_CreateTimer call.

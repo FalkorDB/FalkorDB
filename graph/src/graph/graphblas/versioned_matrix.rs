@@ -152,7 +152,7 @@ const MIN_FOLD_DELTA: u64 = 256;
 /// Write-path fold policy, evaluated in `dup` (version creation). Balances the
 /// COW dup tax against the fold; see the module docs above for the model and
 /// the measurements behind [`WRITE_FOLD_K`].
-pub(super) fn should_fold(
+pub(super) const fn should_fold(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -164,7 +164,7 @@ pub(super) fn should_fold(
 /// [`should_fold`], but the transaction pays the `O(|delta|)` pending-tuple
 /// merge on top of the dup, so `w` is 250x larger and the balance point
 /// `sqrt(250) ≈ 16x` tighter. See [`READ_FOLD_K`].
-pub(super) fn should_fold_read(
+pub(super) const fn should_fold_read(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -173,7 +173,7 @@ pub(super) fn should_fold_read(
 }
 
 /// `|delta| ≥ sqrt(k · tx_added)`, or a delta comparable to the base.
-fn fold_balance(
+const fn fold_balance(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -193,7 +193,7 @@ fn fold_balance(
 /// same order as a single delta touch — and because the delta is holding as
 /// much memory as the base it shadows. Evaluated on the approximate counters,
 /// so it never forces a delta's pending tuples to merge.
-pub(super) fn delta_dominates_base(
+pub(super) const fn delta_dominates_base(
     delta_nvals: u64,
     base_nvals: u64,
 ) -> bool {
@@ -449,6 +449,10 @@ impl<T> Delta<T> {
 
     /// Consume the latched decision: true when this layer must fold *and* has
     /// something to fold.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "consuming the latch is a write; `&mut` keeps it to the owner"
+    )]
     pub(super) fn take_fold(&mut self) -> bool {
         self.fold.swap(false, Ordering::Relaxed) && self.layer.nvals() > 0
     }
@@ -548,9 +552,8 @@ impl<T> Delta<T> {
 // `Matrix::set` is element-typed (`impl Matrix<bool>` / `impl Matrix<u64>`),
 // so the counted insert is too.
 impl Delta<bool> {
-    /// Add `(i, j)` and count it. A `bool` layer carries only a pattern — a
-    /// stored `false` reads as absent to the valued masks these layers are used
-    /// with — so there is no value to pass.
+    /// Add `(i, j)` and count it. A `bool` layer carries only a pattern (the
+    /// masks it is used as are structural), so there is no value to pass.
     pub(super) fn insert(
         &mut self,
         i: u64,
@@ -591,8 +594,12 @@ impl Delta<bool> {
         mask: &Matrix<bool>,
         base: &Matrix<TV>,
     ) {
-        self.layer_mut()
-            .element_wise_multiply(Some(mask), Some(mask), Some(base), None);
+        self.layer_mut().element_wise_multiply(
+            Some(mask),
+            Some(mask),
+            Some(base),
+            Some(matrix::Descriptor::S),
+        );
         self.resync();
     }
 }
@@ -1100,12 +1107,13 @@ impl VersionedMatrix<bool> {
                 match (fold_dp, fold_dm) {
                     // new_m<!dm, replace> = m ∪ dp: REPLACE drops the dm
                     // entries, the complemented mask lets everything else
-                    // through (dp ∩ dm = ∅, so no pending add is lost).
+                    // through (dp ∩ dm = ∅, so no pending add is lost). The
+                    // mask is structural
                     (true, true) => new_m.element_wise_add(
                         Some(&self.dm),
                         Some(&self.m),
                         Some(&*self.dp),
-                        Some(matrix::Descriptor::RC),
+                        Some(matrix::Descriptor::RSC),
                     ),
                     (true, false) => {
                         new_m.element_wise_add(None, Some(&self.m), Some(&*self.dp), None);
@@ -1537,7 +1545,7 @@ mod tests {
         tx_added: u64,
     ) -> u64 {
         let target = k * tx_added;
-        (1..).find(|d| d * d >= target).unwrap()
+        (1..=target.max(1)).find(|d| d * d >= target).unwrap()
     }
 
     /// A base big enough that the `2·|delta| ≥ base_nvals` escape hatch never

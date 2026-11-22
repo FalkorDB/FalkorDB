@@ -205,6 +205,19 @@ Cypher Query String
 - **Env** (`runtime/value.rs`) - Variable bindings flowing through pipeline
 - **Pending** (`runtime/pending.rs`) - Batched mutations for transactional semantics
 
+## Lean proofs
+
+Do not update or generate Lean proofs (`proofs/`) as part of a code change, even
+when the change touches a function listed in `proofs/*/COVERAGE.tsv`. CI handles
+it: `proof-impact.yml` lists the verified functions a PR changes, re-proves them,
+and posts the resulting patch on the PR, which a maintainer applies with
+`/proofs apply` (`proof-apply.yml`), including a patch the gate *holds* for
+review (it changes a theorem statement or raises a coverage row); a patch whose
+proofs fail is never committed, and the bot replies with why. Work on the proofs only when explicitly asked.
+That covers same-repo PRs only: for a PR from a fork the bot reports which
+verified functions changed but neither re-proves them nor applies a patch, so a
+maintainer updates those proofs by hand (or from a same-repo branch).
+
 ## Code Style
 
 - Uses `rustfmt` with vertical function parameter layout (`fn_params_layout = "Vertical"`)
@@ -214,6 +227,18 @@ Cypher Query String
   (see `src/commands/explain.rs`)
 - The parser (`cypher.rs`) is hand-written, not generated from Cypher.g4 grammar file
 - GraphBLAS FFI bindings are in `graph/src/graph/GraphBLAS.rs` (auto-generated, do not edit)
+- Keep clippy clean under the strict set: pedantic, nursery and cargo, from
+  `[workspace.lints]` in `Cargo.toml`, which CI enforces with `-D warnings`.
+  Check it before every commit, in both feature sets:
+  ```bash
+  CXX=${CXX:-clang++} cargo clippy --workspace --all-targets -- -D warnings
+  CXX=${CXX:-clang++} cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
+  cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
+  ```
+  Fix every warning. Where a lint is wrong or the shape is deliberate, put a
+  scoped `#[allow(clippy::<lint>, reason = "...")]` on the narrowest item it
+  covers (a bench/test module at most), never a crate-wide allow. Review
+  `--fix` output: its `map_or` rewrites can delete comments inside match arms.
 
 ## Configuration
 

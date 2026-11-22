@@ -201,7 +201,7 @@ fn encode_all<W: EffectWrite + ?Sized>(
 
 /// `IndexFieldType` is a bit flag set rather than a discriminant, so this is a
 /// union not a cast. The inverse is `apply::index_type_of`.
-const fn index_field_flags(t: &IndexType) -> u32 {
+const fn index_field_flags(t: IndexType) -> u32 {
     match t {
         IndexType::Range => v3::INDEX_FLD_RANGE,
         IndexType::Fulltext => v3::INDEX_FLD_FULLTEXT,
@@ -278,7 +278,7 @@ pub fn build_index_buffer<W: EffectWrite + ?Sized>(
         Record::CreateIndex {
             schema_type: ix.entity_type,
             schemas,
-            field_type: index_field_flags(ix.index_type),
+            field_type: index_field_flags(*ix.index_type),
             fields,
             options: wire_index_options(ix),
         }
@@ -286,7 +286,7 @@ pub fn build_index_buffer<W: EffectWrite + ?Sized>(
         Record::DropIndex {
             schema_type: ix.entity_type,
             schemas,
-            field_type: index_field_flags(ix.index_type),
+            field_type: index_field_flags(*ix.index_type),
             fields,
         }
     };
@@ -445,13 +445,10 @@ fn digest_cancelled(
     }
     let mut pairs: Vec<(u32, IdList, IdList, IdList)> = Vec::with_capacity(by_type.len());
     for (type_name, mut rels) in by_type {
-        // A type whose every edge was cancelled was never registered on this
-        // graph — nothing of it reached `create_relationships_bulk` — so there
-        // is no id to state and no `ADD_SCHEMA` announcing one. Skipped rather
-        // than invented: a made-up id would index the pair under some other
-        // type. The reservation those ids came from is still the master's, so
-        // this case leaves the two relationship bounds apart. It cannot be
-        // closed with the records this format has.
+        // `Pending::commit` registers the type of every cancelled edge, so the
+        // id is there and `emit_schema_additions` has announced it. Skipped
+        // rather than invented if it ever is not: a made-up id would index the
+        // pair under some other type.
         let Some(relation_id) = graph.get_type_id(&type_name).map(|t| schema_id(t.0)) else {
             continue;
         };
@@ -602,8 +599,7 @@ fn digest_created_edges(
             let attr_ids: Vec<u16> = p
                 .new_relationships_attrs
                 .get(&id)
-                .map(|a| a.iter().map(|(aid, _)| *aid).collect())
-                .unwrap_or_default();
+                .map_or_default(|a| a.iter().map(|(aid, _)| *aid).collect());
             groups
                 .entry(attr_ids)
                 .or_default()
@@ -960,7 +956,7 @@ mod tests {
     };
     use crate::entity_type::EntityType;
     use crate::runtime::pending::Pending;
-    use atomic_refcell::AtomicRefCell;
+
     // The module itself no longer needs these — the announced types moved to
     // `effects::announce` — but the tests still build the values they carry.
     use std::sync::Arc;
@@ -991,11 +987,10 @@ mod tests {
         }
         let fields = vec![Arc::new(String::from("body"))];
         let options = Value::Map(Arc::new(
-            [(
+            std::iter::once((
                 Arc::new(String::from("language")),
                 Value::String(Arc::new(String::from("german"))),
-            )]
-            .into_iter()
+            ))
             .collect(),
         ));
         let mut buf = v3::new_buffer();
@@ -1784,7 +1779,7 @@ mod cancelled {
             unreachable!()
         };
         assert_eq!(ids.iter().collect::<Vec<_>>(), vec![0]);
-        assert!(labels.is_empty());
+        assert_eq!(labels.as_slice(), []);
     }
 
     #[test]
@@ -1885,7 +1880,7 @@ mod cancelled {
             graph.get_type_id_mut("R");
         }
         let records = digest(&cancelled_with_edges(&g), &g);
-        let pos = |f: &dyn Fn(&Record) -> bool| records.iter().position(|r| f(r)).unwrap();
+        let pos = |f: &dyn Fn(&Record) -> bool| records.iter().position(f).unwrap();
 
         let node_create =
             pos(&|r| matches!(r, Record::CreateNode { labels, .. } if labels.is_empty()));
