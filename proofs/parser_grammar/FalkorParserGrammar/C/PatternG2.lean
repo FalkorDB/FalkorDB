@@ -9,7 +9,7 @@ namespace FalkorParserGrammar.C
 structure GExt where
   /-- A repeated relationship variable inside one pattern is silently dropped instead of
   rejected. It was the case for MERGE, and for CREATE in a named path, until #3289
-  (`add_pattern_relationship`, cypher.rs:1378, rejects it in every clause): no extension is left,
+  (`add_pattern_relationship`, cypher.rs, rejects it in every clause): no extension is left,
   so `GExt.rust = GExt.g4`. -/
   dupDrop : Bool
 

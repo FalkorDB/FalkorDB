@@ -1,16 +1,6 @@
 /-!
 # Columnar AND/OR agrees with the per-row evaluator
 
-| here | there |
-| --- | --- |
-| `V`                 | a child's `Value` for one row: `Bool`, `Null`, anything else (type error), or an eval error |
-| `St`                | per-row state of `eval_and_or`: `live`, `result[pos]`, `nulls[pos]` — `vector_expr.rs:391-467` |
-| `step`              | one child for one row: the `Bools` fast path (`:427-442`) and the generic path (`:444-463`), which are the same function of the row's value |
-| `rowEval`           | `ExprIR::And` / `ExprIR::Or` in `ExprEval::eval_compound` — `eval.rs:640` (`Or`), `eval.rs:691` (`And`) (loop with `break` on the settling value) |
-| `colEval`           | `VectorEval::eval_and_or` — children outer, rows inner, settled rows dropped from `live` |
-| `finish`            | how `ExprColumn::Bools(result, nulls)` reads back as a `Value` |
-| `intLane`           | `arithmetic` int lane — `vector_expr.rs:880`, `int_lane` `:962`; `valueArith` is `Add/Sub/Mul/Div/Rem for Value` (`value.rs`) |
-
 `colEval_eq` is the theorem: evaluating child-by-child over all rows, dropping settled rows,
 yields exactly the per-row results, and fails iff some row fails (the error surfaces for the
 whole batch either way; *which* row's message is reported may differ).
@@ -148,7 +138,7 @@ def valueArith : Op → Int → Int → Option Int
   | .rem, a, b => if b = 0 then none else some (wrap (a.tmod b))
 
 /-- The columnar int lane over rows `(a, b, isNull)`: enters `Div/Rem` only if no
-non-null divisor is 0 (`vector_expr.rs:888`), else falls back to the generic lane
+non-null divisor is 0 (`vector_expr.rs`), else falls back to the generic lane
 (= `valueArith` per row). Null rows yield null either way. -/
 def laneRow (op : Op) (a b : Int) (isNull : Bool) : Option (Option Int) :=
   if isNull then some none else (valueArith op a b).map some

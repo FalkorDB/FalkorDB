@@ -3,20 +3,18 @@
 
 | here | there |
 | --- | --- |
-| `Op`, `Op.flip`            | `ExprIR::{Eq,Gt,Ge,Lt,Le}` and the flip table, `planner/optimizer/utilize_node_by_id.rs:80-87` |
-| `getIdFilter`              | `get_id_filter`, `utilize_node_by_id.rs:52-92` |
-| `collectFilters`           | the AND walk of `utilize_node_by_id`, `utilize_node_by_id.rs:106-119` |
-| `asU64`                    | `Value::Int(id) => id as u64`, `runtime/runtime.rs:1428` |
-| `step`                     | one arm of the `match op`, `runtime/runtime.rs:1433-1468` |
-| `evalIdFilter`             | the filter loop of `Runtime::evaluate_id_filter`, `runtime/runtime.rs:1415-1469` |
-| `evalIdFilterMain`         | `Runtime::evaluate_id_filter` on main b84473a7f (#3394): the loop, then `node_count() == 0 → Ok(None)`, `runtime.rs:1470-1479` |
-| `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs:1783-1786` (since #2846 `node_ids.max_id()`, id_space.rs:353 — same arithmetic) |
-| `idMax`                    | PR #2979: the loop's initial `max = node_id_bound().saturating_sub(1)`, `runtime/runtime.rs:1439` (`Graph::node_id_bound` → `IdSpace::bound`, id_space.rs:343) |
-| `seek`                     | `NodeByIdSeekOp::next`: range minus `deleted_nodes`, `runtime/ops/node_by_id_seek.rs:63-73` |
-| `pre2979_seek`             | the same before PR #2979: the loop starts at `max_node_id()` |
-| `pre3394_seek`             | the same before #3394 (b6567cb97): no `node_count` check |
+| `Op`, `Op.flip`            | `ExprIR::{Eq,Gt,Ge,Lt,Le}` and the flip table, `planner/optimizer/utilize_node_by_id.rs` |
+| `getIdFilter`              | `get_id_filter`, `utilize_node_by_id.rs` |
+| `collectFilters`           | the AND walk of `utilize_node_by_id`, `utilize_node_by_id.rs` |
+| `asU64`                    | `Value::Int(id) => id as u64`, `runtime/runtime.rs` |
+| `step`                     | one arm of the `match op`, `runtime/runtime.rs` |
+| `evalIdFilter`             | the filter loop of `Runtime::evaluate_id_filter`, `runtime/runtime.rs` |
+| `evalIdFilterMain`         | `Runtime::evaluate_id_filter` on main: the loop, then `node_count() == 0 → Ok(None)`, `runtime.rs` |
+| `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs` (`node_ids.max_id()`, id_space.rs) |
+| `idMax`                    | the loop's initial `max = node_id_bound().saturating_sub(1)`, `runtime/runtime.rs` (`Graph::node_id_bound` → `IdSpace::bound`, id_space.rs) |
+| `seek`                     | `NodeByIdSeekOp::next`: range minus `deleted_nodes`, `runtime/ops/node_by_id_seek.rs` |
 | `G.wf`                     | `Graph::node_count` is the number of live ids below the id bound (`id_space.rs`) |
-| `labelIdScan`              | `NodeByLabelAndIdScanOp::next`: `get_nodes(labels, min)` ∩ range, `runtime/ops/node_by_label_and_id_scan.rs:69-82` |
+| `labelIdScan`              | `NodeByLabelAndIdScanOp::next`: `get_nodes(labels, min)` ∩ range, `runtime/ops/node_by_label_and_id_scan.rs` |
 | `reference`                | `Filter(id(n) op v)` over `AllNodeScan` — Cypher semantics, what the rewrite must preserve |
 -/
 namespace OptimizerScan.IdSeek
@@ -25,7 +23,7 @@ inductive Op | eq | gt | ge | lt | le
   deriving DecidableEq, Repr
 
 /-- The flip applied when `id(n)` is on the right: `v op id(n)` becomes `id(n) (flip op) v`
-(`utilize_node_by_id.rs:80-87`). -/
+(`utilize_node_by_id.rs`). -/
 def Op.flip : Op → Op
   | .eq => .eq | .gt => .lt | .ge => .le | .lt => .gt | .le => .ge
 
@@ -67,7 +65,7 @@ inductive E
   | refs (var : Var)           -- any expression mentioning `var`
   deriving DecidableEq, Repr
 
-/-- `subtree_references_variable(expr, id, scope)` (`references.rs:327`, proven in
+/-- `subtree_references_variable(expr, id, scope)` (`references.rs`, proven in
     `proofs/optimizer_rewrites`: `References.subtreeRefs_iff`): some `Variable` node is `(id, scope)`. -/
 def E.references (x : Var) : E → Bool
   | .idOf v => v == x
@@ -80,7 +78,7 @@ structure Cmp where
   rhs : E
   deriving DecidableEq, Repr
 
-/-- `get_id_filter` (`utilize_node_by_id.rs:52-92`). Since #2390 the `id()` argument must be the alias
+/-- `get_id_filter` (`utilize_node_by_id.rs`). Since #2390 the `id()` argument must be the alias
     by `(id, scope_id)` (lines 62-64, 76-78) and the other side must not reference it by
     `(id, scope_id)`; before, both tests compared `Variable`s with `==`, which compares ids only. -/
 def getIdFilter (alias : Var) (c : Cmp) : Option (E × Op) :=
@@ -113,7 +111,7 @@ theorem getIdFilter_other_scope (i s s' : Nat) (hs : s ≠ s') (op : Op) (v : V)
   simp [getIdFilter, E.references, Ne.symm hs]
 
 /-- The AND walk: every conjunct must be an id comparison, else nothing
-(`utilize_node_by_id.rs:106-119`). -/
+(`utilize_node_by_id.rs`). -/
 def collectFilters (alias : Var) : List Cmp → List (E × Op)
   | cs => match cs.mapM (getIdFilter alias) with
     | some fs => fs
@@ -121,11 +119,11 @@ def collectFilters (alias : Var) : List Cmp → List (E × Op)
 
 /-! ### The runtime side -/
 
-/-- `id as u64`: two's-complement reinterpretation (`runtime.rs:1428`). -/
+/-- `id as u64`: two's-complement reinterpretation (`runtime.rs`). -/
 def asU64 (i : Int) : Nat := (i % (2 ^ 64 : Int)).toNat
 
 /-- One arm of `evaluate_id_filter`'s `match op` on the running `[min, max]`
-(`runtime.rs:1433-1468`). `none` is the early `return Ok(None)`. -/
+(`runtime.rs`). `none` is the early `return Ok(None)`. -/
 def step : Nat × Nat → Op × Nat → Option (Nat × Nat)
   | (mn, mx), (.eq, id) => if id < mn ∨ id > mx then none else some (id, id)
   | (mn, mx), (.gt, id) => if id ≥ mx then none else some (max mn (id + 1), mx)
@@ -136,7 +134,7 @@ def step : Nat × Nat → Op × Nat → Option (Nat × Nat)
 inductive Res | err (msg : String) | empty | range (lo hi : Nat)
   deriving DecidableEq, Repr
 
-/-- `Runtime::evaluate_id_filter` (`runtime.rs:1415-1473`), filters evaluated in order;
+/-- `Runtime::evaluate_id_filter` (`runtime.rs`), filters evaluated in order;
 the first non-integer is an error, the first empty step returns `Ok(None)`. -/
 def evalIdFilter (maxId : Nat) (fs : List (V × Op)) : Res :=
   go (0, maxId) fs
@@ -160,10 +158,10 @@ structure G where
 def G.bound (g : G) : Nat := g.nodeCount + g.deleted.length
 def G.live (g : G) (x : Nat) : Bool := decide (x < g.bound) && !g.deleted.contains x
 
-/-- `Graph::max_node_id` (`graph.rs:1783-1786` → `IdSpace::max_id`, id_space.rs:353). -/
+/-- `Graph::max_node_id` (`graph.rs` → `IdSpace::max_id`, id_space.rs). -/
 def maxNodeId (g : G) : Nat := if g.nodeCount = 0 then 0 else g.bound - 1
 
-/-- `Runtime::evaluate_id_filter` on main (#3394, `runtime.rs:1415-1479`): the same loop, then
+/-- `Runtime::evaluate_id_filter` on main (#3394, `runtime.rs`): the same loop, then
 `if self.g.borrow().node_count() == 0 { return Ok(None) }` before `insert_range(min..=max)`.
 The loop's error and early `Ok(None)` come first, so only a `range` result is affected. -/
 def evalIdFilterMain (nodeCount maxId : Nat) (fs : List (V × Op)) : Res :=
@@ -180,7 +178,7 @@ theorem idMax_eq_maxNodeId (g : G) (hne : g.nodeCount ≠ 0) : idMax g = maxNode
   simp [idMax, maxNodeId, hne]
 
 /-- `NodeByIdSeekOp`: every id of the range that is not deleted (no liveness check
-beyond `deleted_nodes`, `node_by_id_seek.rs:63-73`). Membership test; `none` = query error.
+beyond `deleted_nodes`, `node_by_id_seek.rs`). Membership test; `none` = query error.
 The filter loop starts at `[0, idMax g]` (PR #2979). -/
 def seek (g : G) (fs : List (V × Op)) (x : Nat) : Option Bool :=
   match evalIdFilterMain g.nodeCount (idMax g) fs with
@@ -188,24 +186,13 @@ def seek (g : G) (fs : List (V × Op)) (x : Nat) : Option Bool :=
   | .empty => some false
   | .range a b => some (decide (a ≤ x ∧ x ≤ b) && !g.deleted.contains x)
 
-/-- History: the seek before PR #2979, whose loop started at `[0, max_node_id()]`. -/
-def pre2979_seek (g : G) (fs : List (V × Op)) (x : Nat) : Option Bool :=
-  match evalIdFilterMain g.nodeCount (maxNodeId g) fs with
-  | .err _ => none
-  | .empty => some false
-  | .range a b => some (decide (a ≤ x ∧ x ≤ b) && !g.deleted.contains x)
-
-/-- History: `NodeByIdSeekOp` before #3394 (b6567cb97), over the loop alone. -/
-def pre3394_seek (g : G) (fs : List (V × Op)) (x : Nat) : Option Bool :=
-  match evalIdFilter (maxNodeId g) fs with
-  | .err _ => none
-  | .empty => some false
-  | .range a b => some (decide (a ≤ x ∧ x ≤ b) && !g.deleted.contains x)
-
 /-- On a graph with nodes the #3394 check is a no-op. -/
-theorem seek_eq_pre3394 (g : G) (fs : List (V × Op)) (hne : g.nodeCount ≠ 0) (x : Nat) :
-    seek g fs x = pre3394_seek g fs x := by
-  unfold seek pre3394_seek evalIdFilterMain
+theorem seek_nonempty (g : G) (fs : List (V × Op)) (hne : g.nodeCount ≠ 0) (x : Nat) :
+    seek g fs x = (match evalIdFilter (maxNodeId g) fs with
+      | .err _ => none
+      | .empty => some false
+      | .range a b => some (decide (a ≤ x ∧ x ≤ b) && !g.deleted.contains x)) := by
+  unfold seek evalIdFilterMain
   rw [idMax_eq_maxNodeId g hne]
   cases evalIdFilter (maxNodeId g) fs <;> simp [hne]
 
@@ -331,16 +318,16 @@ theorem all_cypher (fs : List (Nat × Op)) (x : Nat) :
     simp only [List.map, List.all_cons, natSat, cypherHolds]
     rw [← ih]; rfl
 
-/-- **PROVEN** (history, before #3394): for a non-empty graph and non-negative integer operands
-the pre-#3394 `NodeByIdSeek` returned exactly the nodes `Filter(id(n) op v …)` over
-`AllNodeScan` would; dropping `nodeCount ≠ 0` gave the phantom node 0 (W2-scan-2). -/
-theorem pre3394_seek_sound (g : G) (fs : List (Nat × Op)) (hne : g.nodeCount ≠ 0)
+/-- For a non-empty graph and non-negative integer operands `NodeByIdSeek` returns exactly the
+nodes `Filter(id(n) op v …)` over `AllNodeScan` would (the non-empty half of `seek_sound`). -/
+theorem seek_sound_nonempty (g : G) (fs : List (Nat × Op)) (hne : g.nodeCount ≠ 0)
     (hsmall : ∀ p ∈ fs, p.1 < 2 ^ 63) (x : Nat) :
-    pre3394_seek g (fs.map (fun p => (V.int p.1, p.2))) x
+    seek g (fs.map (fun p => (V.int p.1, p.2))) x
       = some (reference g (fs.map (fun p => (V.int p.1, p.2))) x) := by
+  rw [seek_nonempty g _ hne]
   have hmax : maxNodeId g = g.bound - 1 := by simp [maxNodeId, hne]
   have hb : 0 < g.bound := by unfold G.bound; omega
-  unfold pre3394_seek evalIdFilter reference G.live
+  unfold evalIdFilter reference G.live
   rw [go_eq_fold fs _ hsmall, all_cypher]
   cases hf : fold (0, maxNodeId g) fs with
   | none =>
@@ -369,8 +356,7 @@ theorem seek_sound (g : G) (hwf : g.wf) (fs : List (Nat × Op))
     cases fold (0, idMax g) fs with
     | none => rfl
     | some r => obtain ⟨a, b⟩ := r; simp [hne]
-  · rw [seek_eq_pre3394 g _ hne]
-    exact pre3394_seek_sound g fs hne hsmall x
+  · exact seek_sound_nonempty g fs hne hsmall x
 
 /-! ### Counterexamples — each reproduced against the real server (see header of
 `OptimizerScan.lean`) -/
@@ -394,8 +380,7 @@ example : reference g5 [(.float 1, .eq)] 1 = true := by decide
 /-- `id(n) = null`: Cypher drops every row; the runtime errors. -/
 example : reference g5 [(.null, .eq)] 1 = false := by decide
 
-/-- A graph that has never held a node (W2-scan-2, #3353). Before #3394 `max_node_id` was 0,
-the range `{0}`, nothing deleted, so `NodeByIdSeek` yielded node 0, which does not exist. -/
+/-- A graph that has never held a node (W2-scan-2, #3353). #3394 made `NodeByIdSeek` empty on it (it once yielded the phantom node 0). -/
 def gEmpty : G := { nodeCount := 0, deleted := [] }
 theorem gEmpty_wf : gEmpty.wf := by simp [G.wf, gEmpty, G.bound]
 example : reference gEmpty [(.int 0, .eq)] 0 = false := by decide
@@ -407,33 +392,12 @@ theorem empty_graph_seek_none (fs : List (V × Op)) (x : Nat) : seek gEmpty fs x
   cases evalIdFilter (idMax gEmpty) fs <;> simp [gEmpty]
 example : seek gEmpty [(.int 0, .eq)] 0 = some false := by decide
 
-/-- …while an emptied graph (every node deleted) was fine even before, because 0 is in
-`deleted`. -/
-example : pre3394_seek { nodeCount := 0, deleted := [0, 1] } [(.int 0, .eq)] 0 = some false := by
-  decide
 example : seek { nodeCount := 0, deleted := [0, 1] } [(.int 0, .eq)] 0 = some false := by decide
 
-/-- **PROVEN** (PR #2979): the new initial bound is invisible on integer operands — the seek
-agrees with the pre-#2979 one on every graph, since the bounds differ only when
-`node_count = 0`, where both return no ids. -/
-theorem seek_eq_pre2979 (g : G) (fs : List (Nat × Op)) (hsmall : ∀ p ∈ fs, p.1 < 2 ^ 63)
-    (x : Nat) :
-    seek g (fs.map (fun p => (V.int p.1, p.2))) x
-      = pre2979_seek g (fs.map (fun p => (V.int p.1, p.2))) x := by
-  by_cases hne : g.nodeCount = 0
-  · unfold seek pre2979_seek evalIdFilterMain evalIdFilter
-    rw [go_eq_fold fs _ hsmall, go_eq_fold fs _ hsmall]
-    cases fold (0, idMax g) fs <;> cases fold (0, maxNodeId g) fs <;> simp [hne]
-  · unfold seek pre2979_seek
-    rw [idMax_eq_maxNodeId g hne]
-
-/-- PR #2979 side effect on an emptied graph (ids 0, 1 handed out, both deleted): the loop now
-starts at `[0, 1]` instead of `[0, 0]`, so `id(n) = 1 AND id(n) = 'x'` reaches the type check
-and errors where it used to return no rows (the error masking below, now narrower). -/
+/-- On an emptied graph (ids 0, 1 handed out, both deleted) the loop starts at `[0, 1]` (PR #2979),
+so `id(n) = 1 AND id(n) = 'x'` reaches the type check and errors. -/
 example : seek { nodeCount := 0, deleted := [0, 1] } [(.int 1, .eq), (.str "x", .eq)] 0 = none := by
   decide
-example : pre2979_seek { nodeCount := 0, deleted := [0, 1] } [(.int 1, .eq), (.str "x", .eq)] 0
-    = some false := by decide
 
 /-- An error in a later conjunct is masked when an earlier one already empties the range
 (`id(n) = 100 AND id(n) = 'x'` returns no rows instead of the type error). Modelled only. -/

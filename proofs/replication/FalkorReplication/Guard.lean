@@ -9,12 +9,12 @@ is then a total function here, and the theorems say exactly what it does.
 
 | here | there |
 | --- | --- |
-| `Flags`, `isReplayed`   | `is_replayed` (`src/divergence_guard.rs:41`) — `REPLICATED \| LOADING` intersect |
-| `onFailure`             | `on_failure` (`:53`) |
-| `forceFullResync`       | `force_full_resync` (`:104`) |
-| `masterAddress`         | `master_address` (`:142`) |
-| `logPayload`            | `log_payload` (`:168`) |
-| `clip`, `clipEnd`       | `clip` (`:192`), `LOG_LINE_BUDGET = 880` (`:208`) |
+| `Flags`, `isReplayed`   | `is_replayed` (`src/divergence_guard.rs`) — `REPLICATED \| LOADING` intersect |
+| `onFailure`             | `on_failure` |
+| `forceFullResync`       | `force_full_resync` |
+| `masterAddress`         | `master_address` |
+| `logPayload`            | `log_payload` |
+| `clip`, `clipEnd`       | `clip`, `LOG_LINE_BUDGET = 880` |
 
 Boundaries (inputs, not axioms): `Context::get_flags`, `ctx.server_info(..).field`,
 `ctx.call("REPLICAOF", ..)` success/failure, `EffectsPayload::describe` (the
@@ -30,7 +30,7 @@ structure Flags where
   loading    : Bool
 deriving DecidableEq, Repr
 
-/-- `is_replayed` (`divergence_guard.rs:41`):
+/-- `is_replayed` (`divergence_guard.rs`):
 `flags.intersects(REPLICATED | LOADING)`. -/
 def isReplayed (f : Flags) : Bool := f.replicated || f.loading
 
@@ -42,7 +42,7 @@ inductive Act where
   | call  (args : List String)
 deriving DecidableEq, Repr
 
-/-- `log_payload` (`:168`): `None` logs nothing; otherwise one warning per
+/-- `log_payload`: `None` logs nothing; otherwise one warning per
 description line, each passed through `clip` (modelled abstractly as `c`, the
 concrete `clip` is below). `lines` is `EffectsPayload::describe(buf)`. -/
 def logPayload (c : String → String) (graph : String) (lines : Option (List String)) : List Act :=
@@ -50,7 +50,7 @@ def logPayload (c : String → String) (graph : String) (lines : Option (List St
   | none    => []
   | some ls => ls.map fun l => .log ("Diverged payload on '" ++ graph ++ "': " ++ c l)
 
-/-- `on_failure` (`:53`). The `msg*` are the formatted warning texts; the model
+/-- `on_failure`. The `msg*` are the formatted warning texts; the model
 keeps their order relative to the other effects, which is what matters. -/
 def onFailure (c : String → String) (f : Flags) (graph msgLoad msgRepl : String)
     (lines : Option (List String)) : List Act :=
@@ -60,13 +60,13 @@ def onFailure (c : String → String) (f : Flags) (graph msgLoad msgRepl : Strin
   else
     [.log msgRepl] ++ logPayload c graph lines ++ [.timer graph]
 
-/-- `master_address` (`:142`): both fields must be present and non-empty. -/
+/-- `master_address`: both fields must be present and non-empty. -/
 def masterAddress (host port : Option String) : Option (String × String) :=
   match host, port with
   | some h, some p => if h.isEmpty || p.isEmpty then none else some (h, p)
   | _, _ => none
 
-/-- `force_full_resync` (`:104`). `ok1` / `ok2`: whether each `REPLICAOF` call
+/-- `force_full_resync`. `ok1` / `ok2`: whether each `REPLICAOF` call
 succeeded (a Redis boundary). Every failure path ends in `exit`. -/
 def forceFullResync (host port : Option String) (ok1 ok2 : Bool) : List Act :=
   match masterAddress host port with
@@ -165,7 +165,7 @@ theorem forceFullResync_success (h p) (a b : String) (hm : masterAddress h p = s
       [.call ["REPLICAOF", "NO", "ONE"], .call ["REPLICAOF", a, b], .log "resync initiated"] := by
   simp [forceFullResync, hm]
 
-/-! ### clip (`:192`)
+/-! ### clip
 
 `s.len()` is the UTF-8 byte length; `is_char_boundary(i)` holds exactly at the
 byte offsets of char starts and at `len`. A string is modelled as its

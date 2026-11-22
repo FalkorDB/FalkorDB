@@ -4,13 +4,13 @@ import OpsTraverse.Basic
 
 | here | there |
 | --- | --- |
-| `RowIn`                  | the endpoint bindings `from_id` / `to_id` read at `cond_traverse.rs:915-928` and the sibling-edge columns read by `edge_already_used` (`runtime/ops/mod.rs:155`) |
-| `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs:1235-1316`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
-| `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs:900-1118`): forward scan, then the reverse scan with `s != d` (`:1050`, `:1062`; the multi-type twin `expand_union_row` :1121, `UnionGlue`) for bidirectional patterns |
-| `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs:125-245`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` (`:183-184`) |
-| `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`cond_traverse.rs:86-112`, `graphblas/matrix.rs:1520`; proved in `UnionGlue.deltaInto_eff`, `GBWDelta.deltaLmxm_correct`) |
+| `RowIn`                  | the endpoint bindings `from_id` / `to_id` read at `cond_traverse.rs` and the sibling-edge columns read by `edge_already_used` (`runtime/ops/mod.rs`) |
+| `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
+| `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs`): forward scan, then the reverse scan with `s != d` (the multi-type twin `expand_union_row` , `UnionGlue`) for bidirectional patterns |
+| `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` |
+| `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`cond_traverse.rs`, `graphblas/matrix.rs`; proved in `UnionGlue.deltaInto_eff`, `GBWDelta.deltaLmxm_correct`) |
 | `mxmRef`                 | a reference implementation proving `MxmSpec` is satisfiable |
-| `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs:742-747`) |
+| `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs`) |
 
 The GraphBLAS primitive is not given an `axiom`: every theorem about the
 batched path takes an arbitrary `mxm` together with a proof of `MxmSpec mxm`,
@@ -34,15 +34,15 @@ def okBound (b : Option Nat) (n : Nat) : Bool := b.all (· == n)
 /-- Pattern endpoints of matrix pair `p` (swapped on the reverse scan). -/
 def pf (isRev : Bool) (p : Nat × Nat) : Nat := if isRev then p.2 else p.1
 def pt (isRev : Bool) (p : Nat × Nat) : Nat := if isRev then p.1 else p.2
-/-- Bound-endpoint check (`cond_traverse.rs:1268-1273`). -/
+/-- Bound-endpoint check (`cond_traverse.rs`). -/
 def pcond (r : RowIn) (isRev : Bool) (p : Nat × Nat) : Bool :=
   okBound r.fromId (pf isRev p) && okBound r.toId (pt isRev p)
-/-- Unused edges on the pair (`edge_already_used`, `ops/mod.rs:155`). -/
+/-- Unused edges on the pair (`edge_already_used`, `ops/mod.rs`). -/
 def pes (g : Graph) (r : RowIn) (p : Nat × Nat) : List Nat :=
   (edgesBetween g p.1 p.2).filter fun e => !(r.used.contains e)
 
 /-- One matrix pair of `process_pairs`: every unused edge when
-`emit_relationship` (`:1302-1314`), else only the first (`:1282-1299`). -/
+`emit_relationship`, else only the first. -/
 def pairRows (g : Graph) (isRev : Bool) (r : RowIn) (emit : Bool) (p : Nat × Nat) :
     List (Nat × Nat × Nat) :=
   if pcond r isRev p then
@@ -223,7 +223,7 @@ theorem collapse_directed_keys_nodup (g : Graph) (r : RowIn) :
 
 `a→b` twice and `b→a` once. C collapses `(a)-[]-(b)` to one row per `(a,b)`;
 the forward and the reverse scan each contribute a representative, so Rust
-emits `(1,2)` twice (`cond_traverse.rs:985-1082`; `expand_into.rs:183-222`).
+emits `(1,2)` twice (`cond_traverse.rs`; `expand_into.rs`).
 Repro: `lean_ops_traverse::bug_undirected_anonymous_collapse_duplicates_pairs`. -/
 def gAB : Graph := [⟨0, 1, 2⟩, ⟨1, 2, 1⟩, ⟨2, 1, 2⟩]
 
@@ -262,7 +262,7 @@ theorem mem_expandInto_emit {g : Graph} {b : Bool} {s d e : Nat} {used : List Na
 /-! ## Two hops, sibling uniqueness, and the collapse of an unreferenced edge
 
 `(a)-[r]->(x)<-[s]-(c)`: the second hop reads `r` for uniqueness
-(`edge_already_used`). `reduce_expand_into` (`planner/optimizer/reduce_expand_into.rs:30-55`)
+(`edge_already_used`). `reduce_expand_into` (`planner/optimizer/reduce_expand_into.rs`)
 collapses `r` and `s` when no ancestor *expression* names them, ignoring
 that the ancestor traverse's `sibling_edges` does. -/
 
@@ -313,7 +313,7 @@ abbrev Mat := List (Nat × Nat)
 /-- **Axiomatised FFI primitive** (as a hypothesis, not an `axiom`): the
 behaviour the GraphBLAS C API specifies for `GrB_mxm(C, NULL, NULL,
 GxB_ANY_PAIR_BOOL, F, A, NULL)` — used by `Matrix::delta_lmxm`
-(`cond_traverse.rs:86-112`). C(i,j) is present iff ∃k. F(i,k) ∧ A(k,j), and a
+(`cond_traverse.rs`). C(i,j) is present iff ∃k. F(i,k) ∧ A(k,j), and a
 matrix stores each coordinate at most once. -/
 structure MxmSpec (mxm : Mat → Mat → Mat) : Prop where
   mem   : ∀ F A i j, (i, j) ∈ mxm F A ↔ ∃ k, (i, k) ∈ F ∧ (k, j) ∈ A
@@ -337,7 +337,7 @@ def Reach : List Mat → Nat → Nat → Prop
   | [], a, b => a = b
   | A :: As, a, b => ∃ k, (a, k) ∈ A ∧ Reach As k b
 
-/-- `F ← F·A₀`, then every fused chain hop (`cond_traverse.rs:742-747`). -/
+/-- `F ← F·A₀`, then every fused chain hop (`cond_traverse.rs`). -/
 def chain (mxm : Mat → Mat → Mat) (F : Mat) : List Mat → Mat
   | [] => F
   | A :: As => chain mxm (mxm F A) As

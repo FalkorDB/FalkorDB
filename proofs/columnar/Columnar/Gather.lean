@@ -1,6 +1,6 @@
 import Columnar.Emitter
 /-
-`GatherItem` (graph/src/runtime/ops/batched_result_emitter.rs:40-430): the typed lanes the
+`GatherItem` (graph/src/runtime/ops/batched_result_emitter.rs): the typed lanes the
 emitter packs one item per output row into, and how they become columns — proved ONCE
 generically, then instantiated per lane.
 

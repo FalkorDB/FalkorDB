@@ -1,7 +1,7 @@
 import PendingCommit.PendingDeg
 /-
 # `IndexDocs`, the deferred/published document logs, `clear`, `effects_count`,
-# constructors and `end_segment` (pending.rs `impl IndexDocs` :409-507, constructors :510-560, deferred-index methods and `end_segment` :1771-1978; the `IndexDocs` struct itself now lives in `index/index_docs.rs:27`, #3307)
+# constructors and `end_segment` (pending.rs `impl IndexDocs` , constructors :510-560, deferred-index methods and `end_segment` ; the `IndexDocs` struct itself now lives in `index/index_docs.rs`)
 
 * `IndexDocs::is_empty`/`absorb`/`merge`/`ids_by_slot` (:413-471): per slot,
   `absorb` and `merge` make `self` the union (`absorb_spec`, `merge_spec`;
@@ -16,23 +16,21 @@ import PendingCommit.PendingDeg
   iff the committed version still has it, otherwise removed (edges: removed
   with the private version's endpoints, dropped if neither version has the
   edge); `published` is emptied (`resync_spec`).
-* `end_segment` (:1885, was `clear` before #2846): both branches (background
+* `end_segment` (:1885): both branches (background
   drop or in place) give the same state — every per-commit field empty,
   `published`, `deferred_docs` and the schema baseline untouched
   (`clear_spec`) — and the graph's id batches are rolled in the same call
   (`endSegment_spec`).
-* #3307: `IndexDocs` also carries the native index's staged changes (`native`, feature
+* `IndexDocs` also carries the native index's staged changes (`native`, feature
   `index-falkordb`). `absorb` only `debug_assert!`s it is empty (`Pending::commit` applies
-  it first, `apply_index_writes` call :1465, defined graph.rs:3890) and never touches it; `end_segment` clears it with
+  it first, `apply_index_writes` call :1465, defined graph.rs) and never touches it; `end_segment` clears it with
   the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
   modelled here are unchanged.
-* `effects_count` (:2013) is the documented sum; since #3461 it counts each
-  cancelled node and relationship twice (`effectsCount_eq_pre`,
-  `effects_counts_cancelled`; history `pre3461_effects_ignores_cancelled`), and since
-  #3459 adds `staged_labels_removed` (`effects_counts_staged_removal`).
+* `effects_count` (:2013) is the documented sum; it counts each
+  cancelled node and relationship twice (`effects_counts_cancelled`), and
+  adds `staged_labels_removed` (`effects_counts_staged_removal`).
 * `new`/`default` (:522, :515), `set_schema_baseline` (:547): field-level
-  equations. (`node_id_space`, `rel_id_space`, `issued_*`,
-  `open_id_boundaries` were removed by #2846.)
+  equations.
 -/
 namespace PendingCommit.PD
 open PA PS
@@ -408,7 +406,7 @@ theorem clear_spec (f : Full) :
     exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `end_segment` (:1939): the reset above, then `g.roll_id_batches()`
-(graph.rs:1611; `roll` here, `none` = its `Err`). The `Pending` reset happens
+(graph.rs; `roll` here, `none` = its `Err`). The `Pending` reset happens
 whether or not the roll succeeds; the error is returned to `CommitOp`. -/
 def endSegment {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) : Full × Option Gr :=
   (clear f, roll g)
@@ -429,26 +427,9 @@ def effectsCount (p : PS.P) : Nat :=
     p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
     (p.remL.map (·.2.length)).sum + p.stagedRem
 
-/-- `effects_count` before #3461 (:1958 on 343e077f2): the cancelled sets were not summed. -/
-def effectsCountPre3461 (p : PS.P) : Nat :=
-  p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length + p.newN.length +
-    p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
-    (p.remL.map (·.2.length)).sum
-
-/-- History (fixed by #3461, f203972c5): `CREATE (a) DELETE a` left only
-`cancelled_nodes = {a}` and `effects_count` was 0. -/
-theorem pre3461_effects_ignores_cancelled : effectsCountPre3461 { PS.P0 with cancelledN := [0] } = 0 := rfl
-
-/-- **#3461**: `effects_count` is the old sum plus two per cancelled entity (and, since #3459,
-`staged_labels_removed`), so a segment that cancelled anything has a positive count. -/
-theorem effectsCount_eq_pre (p : PS.P) :
-    effectsCount p =
-      effectsCountPre3461 p + 2 * p.cancelledN.length + 2 * p.cancelledR.length + p.stagedRem := by
-  unfold effectsCount effectsCountPre3461; omega
-
 theorem effects_counts_cancelled (p : PS.P) (h : p.cancelledN ≠ [] ∨ p.cancelledR ≠ []) :
     effectsCount p > 0 := by
-  rw [effectsCount_eq_pre]
+  unfold effectsCount
   rcases h with h | h
   · have := List.length_pos_iff.mpr h; omega
   · have := List.length_pos_iff.mpr h; omega

@@ -78,7 +78,7 @@ def bTag {α} (tag : α → Nat) (untag : Nat → Except DErr α) (h : ∀ a, un
     intro a bs rest _ e; cases e
     simp only [bind_apply]; rw [u32_w32 (hlt a)]; simp only [h]; rfl
 
-/-- `LabelSet` (`blocks.rs:54-81`). -/
+/-- `LabelSet` (`blocks.rs`). -/
 def bLabels : Blk (List Nat) where
   enc := wLabelSet
   dec := rLabelSet
@@ -91,7 +91,7 @@ def bLabels : Blk (List Nat) where
     rw [ite_eq_right (by simp only [List.length_append, flatMap_w32_length]; omega)]
     simp only; rw [readN_u32 ls hx]
 
-/-- `AttrIds` (`blocks.rs:100-124`). -/
+/-- `AttrIds` (`blocks.rs`). -/
 def bAttrIds : Blk (List Nat) where
   enc := wAttrIds
   dec := rAttrIds
@@ -123,7 +123,7 @@ def bRows (utf8 I : Bytes → Bool) (count attrs : Nat) : Blk (List Val) where
     rw [ite_eq_right (by simp [MIN_VALUE_BYTES]; omega)]
     simp only; rw [← hl, readN_decodeV utf8 I rows bs rest e hw]
 
-/-- `put_opt` (`records.rs:123`) / `take_opt` (`:137`). -/
+/-- `put_opt` (`records.rs`) / `take_opt`. -/
 def bOpt {α} (A : Blk α) : Blk (Option α) where
   enc
     | none => .ok (w8 0)

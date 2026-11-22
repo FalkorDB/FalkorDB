@@ -1,30 +1,21 @@
 /-
 # Static operand checks: `validate_boolean_operands`, `expr_may_return_boolean`, `expr_may_return_entity`
 
-| here | there |
-| --- | --- |
-| `TK`, `CK`, `TE` | `ExprIR` variants (bound), constant value kinds |
-| `mayBool` | `expr_may_return_boolean` binder.rs:2323-2389 |
-| `mayEntity` | `expr_may_return_entity` binder.rs:2392-2457 |
-| `validate` | `validate_boolean_operands` / `_impl` binder.rs:2297-2321 |
-| `canBN`, `canEnt` | reference: can the expression *evaluate* (without error) to a Bool/Null, to an entity/Null |
-
-`TE` is a *bound* tree, and since #3335 no bound tree holds a `Paren`
-(`BindExpr.bind_paren`; `BE` has no such constructor): both checks now hit
-`unreachable!` on one (binder.rs:2334, 2408), so `TK` has no `paren` and
+`TE` is a *bound* tree, and no bound tree holds a `Paren`
+(`BindExpr.bind_paren`; `BE` has no such constructor): both checks hit
+`unreachable!` on one, so `TK` has no `paren` and
 `Distinct` is the one transparent wrapper.
 
 `mayBool` is used to reject a WHERE / list-comprehension predicate ("Expected
-boolean predicate", binder.rs:352, 662, 1259, 1827) and logical operands
+boolean predicate", binder.rs) and logical operands
 (`validate_boolean_operands`); a check is *sound* if it never rejects an
 expression that can produce a boolean or null.
 
-* `mayBool_sound_except`: sound for every variant except `GetElement`,
-  `Negate`, `Length`, `ListComprehension`, `MapProjection` (all can yield
-  `null`, and a subscript can yield `true`).
-* `getElement_rejected` — CONFIRMED bug: `MATCH (n:N) WHERE n.flags[0] RETURN count(n)`
-  → Rust "Expected boolean predicate", C `1`; `WITH [true] AS l RETURN true AND l[0]`
-  → Rust "Type mismatch: expected Boolean", C `true`.
+* `mayBool_sound_except`: sound for every variant except `Negate`, `Length`,
+  `ListComprehension`, `MapProjection` (all can yield `null`).
+* `getElement_accepted` — `GetElement` is in the "runtime-typed → true" arm:
+  `MATCH (n:N) WHERE n.flags[0] RETURN count(n)` and `WITH [true] AS l RETURN true AND l[0]`
+  bind, as in C.
 * `arith_accepted`: `Add`/`Sub`/… are accepted as possibly boolean (they can
   be null), so `RETURN false AND (1+2)` returns `false` (runtime short-circuit)
   where C rejects it statically ("Type mismatch") — deviation, not a wrong answer.
@@ -61,10 +52,10 @@ def mayBool : TE → Bool
       | [] => false
     | .func rb _ => rb
     | .case_ => true
-    | .list | .map | .mapProj | .negate | .length | .getElement | .getElements | .listComp
+    | .list | .map | .mapProj | .negate | .length | .getElements | .listComp
     | .patComp | .nestedPlan => false
     | .cmp | .inOp | .arith | .isNode | .isRel | .quant | .reduce | .var _ | .param | .prop
-    | .shortestPath | .pattern => true
+    | .getElement | .shortestPath | .pattern => true
     | .const c => c == .bool || c == .null
     | .regex => true
 def mayBoolAll : List TE → Bool
@@ -123,9 +114,10 @@ def canBNAll : List TE → Bool
   | c :: cs => canBN c && canBNAll cs
 end
 
-/-- The variants `mayBool` treats more strictly than evaluation allows. -/
+/-- The variants `mayBool` treats more strictly than evaluation allows (`getElement` left this
+list with #3270). -/
 def lossy : TK → Bool
-  | .negate | .length | .getElement | .listComp | .mapProj => true
+  | .negate | .length | .listComp | .mapProj => true
   | _ => false
 
 mutual
@@ -137,7 +129,7 @@ def noLossyAll : List TE → Bool
 end
 
 mutual
-/-- Sound away from the five lossy variants. -/
+/-- Sound away from the four lossy variants. -/
 theorem mayBool_sound_except : ∀ e, noLossy e = true → canBN e = true → mayBool e = true
   | .node k cs, hl, hc => by
     simp only [noLossy, Bool.and_eq_true, Bool.not_eq_true'] at hl
@@ -158,12 +150,19 @@ theorem mayBoolAll_sound : ∀ l, noLossyAll l = true → canBNAll l = true → 
     exact ⟨mayBool_sound_except c hl.1 hc.1, mayBoolAll_sound cs hl.2 hc.2⟩
 end
 
-/-- The subscript `l[0]` (a list of booleans, a property list …) is rejected as
-a predicate although it can be `true` (CONFIRMED bug, the `GetElement` arm of the non-boolean list, binder.rs:2352). -/
-theorem getElement_rejected (l i : TE) :
-    canBN (.node .getElement [l, i]) = true ∧ mayBool (.node .getElement [l, i]) = false ∧
-    validate (.node .and [.node (.const .bool) [], .node .getElement [l, i]]) = false := by
-  simp [canBN, mayBool, validate, mayBoolAll, isLogical]
+/-- #3270: the subscript `l[0]` (a list of booleans, a property list …) can be `true`, and is now
+accepted as a predicate and as a logical operand (the `GetElement` arm of the "runtime-typed → true"
+list, binder.rs). -/
+theorem getElement_accepted (l i : TE) :
+    canBN (.node .getElement [l, i]) = true ∧ mayBool (.node .getElement [l, i]) = true ∧
+    mayBoolAll [.node (.const .bool) [], .node .getElement [l, i]] = true := by
+  simp [canBN, mayBool, mayBoolAll]
+
+/-- `true AND l[0]` over a literal list and index validates. -/
+theorem getElement_and_validates :
+    validate (.node .and [.node (.const .bool) [],
+      .node .getElement [.node .list [], .node (.const .int) []]]) = true := by
+  decide
 
 /-- `-null` and `size(null)` are null, a valid operand, but rejected; C accepts
 `RETURN true AND -null`. -/

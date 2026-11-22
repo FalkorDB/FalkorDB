@@ -3,7 +3,7 @@ import FalkorCore.Float
 set_option linter.unusedSimpArgs false
 
 /-!
-# `i as f64` at the bit level (`encode.rs:31`, `value.rs:1267-1268`)
+# `i as f64` at the bit level (`encode.rs`, `value.rs`)
 
 `bitlenAux` / `bitlen` / `roundNat` are imported from proofs/core
 (`FalkorCore/Float.lean`, Lake path dependency; IEEE round-to-nearest-even to 53

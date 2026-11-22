@@ -7,7 +7,7 @@ operator-tree plumbing (`set_argument_batch`, `inspect_context`, `BatchOp::next`
 
 | here | there |
 | --- | --- |
-| `Column.isEmptyC` | `Column::is_empty` (batch.rs:370) |
+| `Column.isEmptyC` | `Column::is_empty` (batch.rs) |
 | `Column.compareAt` | `Column::compare_at` (:399; `sort_cmp`, Floats lane `sort_cmp_f64`) |
 | `CB`, `CB.pushBound`, `CB.pushLeftOf` | `ColumnBuilder::push_bound` (:430), `push_left_of` (:443) |
 | `forRights`, `planWidth` | `MergePlan::for_rights` (:499), `width` (:520) |
@@ -27,7 +27,7 @@ variable {F : Type}
 
 namespace Column
 
-/-- batch.rs:370 -/
+/-- batch.rs -/
 def isEmptyC (c : Column F) : Bool := c.len == 0
 
 theorem isEmptyC_iff (c : Column F) : c.isEmptyC = true ↔ c.len = 0 := by simp [isEmptyC]
@@ -36,13 +36,13 @@ theorem isEmptyC_unbound : (Column.unbound : Column F).isEmptyC = true := rfl
 /-- `f64::is_nan`: `x != x`, i.e. `partial_cmp(x, x)` is `None`. -/
 def fIsNaN [FloatModel F] (x : F) : Bool := (FloatModel.pcmp x x).isNone
 
-/-- `sort_cmp_f64` (value.rs:1891): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
+/-- `sort_cmp_f64` (value.rs): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
 def sortCmpF64 [FloatModel F] (x y : F) : Ordering :=
   match FloatModel.pcmp x y with
   | some o => o
   | none => compare (fIsNaN x) (fIsNaN y)
 
-/-- batch.rs:399-412 (since #2912 b033aecc6). `cv` = `Value::sort_cmp`; the `Floats`
+/-- batch.rs (since #2912 b033aecc6). `cv` = `Value::sort_cmp`; the `Floats`
 lane is `sort_cmp_f64`. -/
 def compareAt [FloatModel F] (cv : V F → V F → Ordering) (c : Column F) (a b : Nat) : Ordering :=
   match c with
@@ -88,10 +88,10 @@ structure CB (F : Type) where
   present : Bool
   anyBound : Bool
 
-/-- batch.rs:430-437 -/
+/-- batch.rs -/
 def CB.pushBound (c : CB F) (v : V F) : CB F := ⟨c.values ++ [v], true, true⟩
 
-/-- batch.rs:443-462: copy the left base row's slot; a value-only slot marks presence only
+/-- batch.rs: copy the left base row's slot; a value-only slot marks presence only
 when non-null and never binds; an absent/`Unbound` slot pushes `Null`. -/
 def CB.pushLeftOf (c : CB F) (base : Batch F) (id row : Nat) : CB F :=
   match base.cols[id]? with
@@ -121,7 +121,7 @@ theorem pushLeftOf_spec (c : CB F) (base : Batch F) (id row : Nat) :
     · cases hv : base.vo id <;> simp [CB.pushBound]
     · simp
 
-/-! ## `MergePlan` (batch.rs:499, :520) -/
+/-! ## `MergePlan` (batch.rs) -/
 
 inductive Src where
   | right (i : Nat)
@@ -178,7 +178,7 @@ structure BB (F : Type) where
   anyOrigin : Bool
   rows : Nat
 
-/-- batch.rs:548 (`Default`) -/
+/-- batch.rs (`Default`) -/
 def BB.new : BB F := ⟨[], [], false, 0⟩
 def BB.len (b : BB F) : Nat := b.rows
 def BB.isEmpty (b : BB F) : Bool := b.rows == 0
@@ -186,7 +186,7 @@ def BB.isEmpty (b : BB F) : Bool := b.rows == 0
 theorem bbNew_spec : (BB.new : BB F).len = 0 ∧ (BB.new : BB F).isEmpty = true ∧ (BB.new : BB F).cols = [] := ⟨rfl, rfl, rfl⟩
 theorem bbIsEmpty_iff (b : BB F) : b.isEmpty = true ↔ b.len = 0 := by simp [BB.isEmpty, BB.len]
 
-/-- batch.rs:722-734: add `Null`-back-filled columns up to `n`. -/
+/-- batch.rs: add `Null`-back-filled columns up to `n`. -/
 def BB.growCols (b : BB F) (n : Nat) : BB F :=
   { b with cols := b.cols ++ List.replicate (n - b.cols.length) ⟨List.replicate b.rows .null, false, false⟩ }
 
@@ -202,7 +202,7 @@ theorem growCols_spec (b : BB F) (n : Nat) :
 def BB.finishRow (b : BB F) (origin : Nat) : BB F :=
   { b with anyOrigin := b.anyOrigin || origin != 0, origins := b.origins ++ [origin], rows := b.rows + 1 }
 
-/-- batch.rs:660-678: per slot, the right row's value when the right binds it, else the left. -/
+/-- batch.rs: per slot, the right row's value when the right binds it, else the left. -/
 def BB.pushMerged (b : BB F) (left : Batch F) (lr : Nat) (right : Batch F) (rr : Nat) (origin : Nat) : BB F :=
   let g := b.growCols (max left.cols.length right.cols.length)
   let cols := (List.range g.cols.length).zip g.cols |>.map fun (id, c) =>
@@ -210,7 +210,7 @@ def BB.pushMerged (b : BB F) (left : Batch F) (lr : Nat) (right : Batch F) (rr :
     else c.pushLeftOf left id lr
   ({ g with cols }).finishRow origin
 
-/-- batch.rs:694-718: the plan names the right per slot. -/
+/-- batch.rs: the plan names the right per slot. -/
 def BB.pushPlanned (b : BB F) (left : Batch F) (lr : Nat) (rights : List (Batch F)) (cursor : List Nat)
     (plan : List Src) (origin : Nat) : BB F :=
   let g := b.growCols (max (planWidth plan) left.cols.length)
@@ -254,7 +254,7 @@ theorem pushPlanned_spec (b : BB F) (left : Batch F) (lr : Nat) (rights : List (
 
 namespace Batch
 
-/-- batch.rs:831 -/
+/-- batch.rs -/
 def new0 (n : Nat) : Batch F := ⟨0, none, List.replicate n .unbound, none, fun _ => false⟩
 
 theorem new0_spec (n i : Nat) : (new0 n : Batch F).column i = .unbound ∧ (new0 n : Batch F).activeLen = 0 ∧
@@ -268,7 +268,7 @@ theorem new0_spec (n i : Nat) : (new0 n : Batch F).column i = .unbound ∧ (new0
     · intro s hs; cases hs
     · intro o ho; cases ho
 
-/-- batch.rs:866: `set_column(i, cols[i])` in order. -/
+/-- batch.rs: `set_column(i, cols[i])` in order. -/
 def fromColumns [FloatModel F] (cs : List (Column F)) : Batch F :=
   (cs.zipIdx).foldl (fun b p => b.setColumn p.2 p.1) (new0 0)
 
@@ -307,7 +307,7 @@ theorem fromColumns_column [FloatModel F] (cs : List (Column F)) (i : Nat) (hi :
     rw [List.getElem?_eq_getElem hi] at hm
     cases hm; rfl
 
-/-- batch.rs:1172-1190, 1213, 1298-1336, 1372, 1385 -/
+/-- batch.rs -/
 def lenB (b : Batch F) : Nat := b.len
 def isEmptyB (b : Batch F) : Bool := b.activeLen == 0
 def selection (b : Batch F) : Option (List Nat) := b.sel
@@ -335,7 +335,7 @@ theorem accessors_spec (b : Batch F) (i r : Nat) (o : List Nat) :
 theorem originRow_spec (b : Batch F) (r : Nat) :
     b.originRow r = (match b.origins with | none => 0 | some o => o[r]?.getD 0) := rfl
 
-/-- `Batch::rows_only` (batch.rs:853, #2845): `len` rows, no column, no selection,
+/-- `Batch::rows_only` (batch.rs, #2845): `len` rows, no column, no selection,
 no origins — what a projection naming nothing produces. -/
 def rowsOnly (n : Nat) : Batch F := ⟨n, none, [], none, fun _ => false⟩
 
@@ -350,7 +350,7 @@ theorem rowsOnly_spec (n i r : Nat) :
   · intro s hs; cases hs
   · intro o ho; cases ho
 
-/-- `Batch::has_origins` (batch.rs:1312, #2845): whether the origin sidecar is set. -/
+/-- `Batch::has_origins` (batch.rs, #2845): whether the origin sidecar is set. -/
 def hasOrigins (b : Batch F) : Bool := b.origins.isSome
 
 /-- `has_origins` tells "never stamped" from "all origins 0", which `origin_row`
@@ -376,7 +376,7 @@ theorem hasOrigins_zero_not_unset :
   | 1 => rfl
   | _ + 2 => rfl
 
-/-- batch.rs:1282-1293: unbound compares `Equal`; else `compare_value` of the two cells. -/
+/-- batch.rs: unbound compares `Equal`; else `compare_value` of the two cells. -/
 def compareRowsAt (cv : V F → V F → Ordering) (b : Batch F) (i x y : Nat) : Ordering :=
   if (b.column i).isUnbound then .eq
   else cv (((b.column i).get? x).getD .null) (((b.column i).get? y).getD .null)
@@ -387,7 +387,7 @@ theorem compareRowsAt_spec (cv : V F → V F → Ordering) (b : Batch F) (i x y 
       cv ((b.valueAt i x).getD .null) ((b.valueAt i y).getD .null)) := by
   refine ⟨fun h => by simp [compareRowsAt, h], fun h => by simp [compareRowsAt, valueAt, h]⟩
 
-/-- batch.rs:1163-1168: compact, then origins `0..n` when more than one row. -/
+/-- batch.rs: compact, then origins `0..n` when more than one row. -/
 def seqOrigin (b : Batch F) : Option (Batch F) :=
   b.compact.map fun c => { c with origins := if c.len > 1 then some (List.range c.len) else none }
 
@@ -404,7 +404,7 @@ theorem seqOrigin_spec (b : Batch F) (h : b.WF) :
     rw [List.getElem?_range (by omega)]; rfl
   · simp only [hlen, ite_false]; omega
 
-/-- batch.rs:943-961: restore the input columns the sub-plan does not bind, gathered by the
+/-- batch.rs: restore the input columns the sub-plan does not bind, gathered by the
 output rows' origins; keep everything the sub-plan binds. -/
 def mergeOverInput [FloatModel F] (out input : Batch F) (origins : List Nat) : Option (Batch F) := do
   let missing := (List.range input.cols.length).filter fun id => input.isBound id && !out.isBound id
@@ -463,27 +463,31 @@ theorem sizeHint_spec (b : Batch F) (pos : Nat) :
 
 /-- The operator tree, by how `set_argument_batch` treats each node: an `Argument` leaf, a
 `Once` leaf, a pass-through node (one child), a reset-then-pass node (emitter-backed ops,
-`ProcedureCall`, `IncludePending`), a fan-out node (`CartesianProduct`, `ValueHashJoin`: the
-compacted batch to every right child too), and a `Union` (stores the compacted batch). -/
+`ProcedureCall`, `IncludePending`), a fan-out node (`CartesianProduct`: the compacted batch to
+every right child too), a `ValueHashJoin` (`join`: a fan-out that also records `per_origin`,
+since #3012/#3035 `25e3c93af`), and a `Union` (stores the compacted batch). -/
 inductive OpTree (B : Type) where
   | argument (slot : Option B)
   | once
   | pass (child : OpTree B)
   | reset (stale : Bool) (child : OpTree B)
   | fanout (rights : List (OpTree B)) (child : OpTree B)
+  | join (perOrigin : Bool) (rights : List (OpTree B)) (child : OpTree B)
   | union (stored : Option B) (current : Option (OpTree B))
 
+-- `compactB` is `Batch::into_compacted`, `many b` is `batch.len() > 1`.
 mutual
-def setArg {B : Type} (compactB : B → B) (b : B) : OpTree B → OpTree B
+def setArg {B : Type} (compactB : B → B) (many : B → Bool) (b : B) : OpTree B → OpTree B
   | .argument _ => .argument (some b)
   | .once => .once
-  | .pass c => .pass (setArg compactB b c)
-  | .reset _ c => .reset false (setArg compactB b c)
-  | .fanout rs c => .fanout (setArgL compactB (compactB b) rs) (setArg compactB b c)
-  | .union _ cur => .union (some (compactB b)) (cur.attach.map fun ⟨c, _⟩ => setArg compactB (compactB b) c)
-def setArgL {B : Type} (compactB : B → B) (b : B) : List (OpTree B) → List (OpTree B)
+  | .pass c => .pass (setArg compactB many b c)
+  | .reset _ c => .reset false (setArg compactB many b c)
+  | .fanout rs c => .fanout (setArgL compactB many (compactB b) rs) (setArg compactB many b c)
+  | .join _ rs c => .join (many b) (setArgL compactB many (compactB b) rs) (setArg compactB many b c)
+  | .union _ cur => .union (some (compactB b)) (cur.attach.map fun ⟨c, _⟩ => setArg compactB many (compactB b) c)
+def setArgL {B : Type} (compactB : B → B) (many : B → Bool) (b : B) : List (OpTree B) → List (OpTree B)
   | [] => []
-  | c :: cs => setArg compactB b c :: setArgL compactB b cs
+  | c :: cs => setArg compactB many b c :: setArgL compactB many b cs
 end
 
 -- The argument slots reachable through pass-through nodes, left to right.
@@ -494,6 +498,7 @@ def args {B : Type} : OpTree B → List (Option B)
   | .pass c => args c
   | .reset _ c => args c
   | .fanout rs c => argsL rs ++ args c
+  | .join _ rs c => argsL rs ++ args c
   | .union _ cur => match cur with | some c => args c | none => []
 def argsL {B : Type} : List (OpTree B) → List (Option B)
   | [] => []
@@ -501,45 +506,61 @@ def argsL {B : Type} : List (OpTree B) → List (Option B)
 end
 
 mutual
-theorem setArg_args {B : Type} (cb : B → B) (b : B) (hidem : ∀ x, cb (cb x) = cb x) :
-    ∀ t : OpTree B, ∀ s ∈ args (setArg cb b t), s = some b ∨ s = some (cb b)
+theorem setArg_args {B : Type} (cb : B → B) (many : B → Bool) (b : B) (hidem : ∀ x, cb (cb x) = cb x) :
+    ∀ t : OpTree B, ∀ s ∈ args (setArg cb many b t), s = some b ∨ s = some (cb b)
   | .argument _ => by simp [setArg, args]
   | .once => by simp [setArg, args]
-  | .pass c => by simpa [setArg, args] using setArg_args cb b hidem c
-  | .reset _ c => by simpa [setArg, args] using setArg_args cb b hidem c
+  | .pass c => by simpa [setArg, args] using setArg_args cb many b hidem c
+  | .reset _ c => by simpa [setArg, args] using setArg_args cb many b hidem c
   | .fanout rs c => by
       intro s hs
       simp only [setArg, args, List.mem_append] at hs
       rcases hs with hs | hs
-      · rcases setArgL_args cb (cb b) hidem rs s hs with h | h
+      · rcases setArgL_args cb many (cb b) hidem rs s hs with h | h
         · exact Or.inr h
         · exact Or.inr (by rw [h, hidem])
-      · exact setArg_args cb b hidem c s hs
+      · exact setArg_args cb many b hidem c s hs
+  | .join _ rs c => by
+      intro s hs
+      simp only [setArg, args, List.mem_append] at hs
+      rcases hs with hs | hs
+      · rcases setArgL_args cb many (cb b) hidem rs s hs with h | h
+        · exact Or.inr h
+        · exact Or.inr (by rw [h, hidem])
+      · exact setArg_args cb many b hidem c s hs
   | .union _ cur => by
       intro s hs
       cases cur with
       | none => simp [setArg, args] at hs
       | some c =>
         simp only [setArg, args, Option.attach_some, Option.map_some] at hs
-        rcases setArg_args cb (cb b) hidem c s hs with h | h
+        rcases setArg_args cb many (cb b) hidem c s hs with h | h
         · exact Or.inr h
         · exact Or.inr (by rw [h, hidem])
-theorem setArgL_args {B : Type} (cb : B → B) (b : B) (hidem : ∀ x, cb (cb x) = cb x) :
-    ∀ ts : List (OpTree B), ∀ s ∈ argsL (setArgL cb b ts), s = some b ∨ s = some (cb b)
+theorem setArgL_args {B : Type} (cb : B → B) (many : B → Bool) (b : B) (hidem : ∀ x, cb (cb x) = cb x) :
+    ∀ ts : List (OpTree B), ∀ s ∈ argsL (setArgL cb many b ts), s = some b ∨ s = some (cb b)
   | [] => by simp [setArgL, argsL]
   | t :: ts => by
       intro s hs
       simp only [setArgL, argsL, List.mem_append] at hs
       rcases hs with hs | hs
-      · exact setArg_args cb b hidem t s hs
-      · exact setArgL_args cb b hidem ts s hs
+      · exact setArg_args cb many b hidem t s hs
+      · exact setArgL_args cb many b hidem ts s hs
 end
+
+/-- **#3012 (#3035, `25e3c93af`)**: a `ValueHashJoin` keeps outer rows apart (`per_origin`)
+exactly when the argument batch carries several rows (`batch.len() > 1`), whatever it was set to
+before; and it re-installs the batch on both sides (the compacted copy on the right). -/
+theorem setArg_join {B : Type} (cb : B → B) (many : B → Bool) (b : B) (po : Bool)
+    (rs : List (OpTree B)) (c : OpTree B) :
+    setArg cb many b (.join po rs c) =
+      .join (many b) (setArgL cb many (cb b) rs) (setArg cb many b c) := by rw [setArg]
 
 /-- **`set_argument_batch`**: every reachable `Argument` leaf now holds the new batch (the
 compacted copy under a fan-out / union), and every emitter-backed node is reset (no stale
 rows survive into the new iteration). -/
-theorem setArg_resets {B : Type} (cb : B → B) (b : B) (st : Bool) (c : OpTree B) :
-    setArg cb b (.reset st c) = .reset false (setArg cb b c) := by rw [setArg]
+theorem setArg_resets {B : Type} (cb : B → B) (many : B → Bool) (b : B) (st : Bool) (c : OpTree B) :
+    setArg cb many b (.reset st c) = .reset false (setArg cb many b c) := by rw [setArg]
 
 /-- `inspect_context` (:1722): `None` exactly for the synthetic leaves. -/
 def inspectCtx {B : Type} : OpTree B → Bool

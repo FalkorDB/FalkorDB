@@ -1,12 +1,12 @@
 /-
 # `NameMap` — a schema name list; `AttrNameMap` — the graph's attribute-name dictionary
 
-`graph/src/graph/schema.rs:43-216` (#3757): a `NameMap` is one of `Labels`,
+`graph/src/graph/schema.rs`: a `NameMap` is one of `Labels`,
 `RelationshipTypes`, `PropertyKeys`, each a `NameList` of `names` (id → name), `ids`
 (name → id) and the schema-hash `chain`. `vec`/`index` here are `names`/`ids`. Ids are
 minted only by `get_or_insert` (:168) as `names.len()`, refused once `len() ≥
 capacity()` (:105: `MAX_ATTRIBUTES = 65535` for property keys, else `usize::MAX`).
-`AttrNameMap` (attribute_store.rs:139) is the `PropertyKeys` map: `insert` (:155) is
+`AttrNameMap` (attribute_store.rs) is the `PropertyKeys` map: `insert` (:155) is
 `get_or_insert`, `get_or_create` (:182) its id through `u16::try_from`, else
 `ATTRIBUTE_ID_NONE = 65535` (:128); the cap keeps every minted id `< 65535`.
 
@@ -15,7 +15,7 @@ capacity()` (:105: `MAX_ATTRIBUTES = 65535` for property keys, else `usize::MAX`
   returned id names `n` (or is `NONE` exactly when the table is full and `n` is
   new), ids already minted keep their names (`getOrCreate_prefix`), and a
   minted id is `< 65535`, so it fits a `u16` exactly (`mint_cast_exact`).
-* `uncapped_aliases_zero` — with the pre-#3757 `as u16` cast and no cap the 65,537th
+* `uncapped_aliases_zero` — with an `as u16` cast and no cap the 65,537th
   name would get id 0; `uncapped_try_from_none` — through `u16::try_from` it is `NONE`.
 * accessors: `len`, `is_empty`, `names`, `get`, `iter`/`into_iter`, `id_of`
   (= `get_index_of`), `Index::index` (a panic is `none`).
@@ -36,35 +36,35 @@ structure M where
 /-- `x as u16`. -/
 def asU16 (x : Nat) : Nat := x % 65536
 
-/-- `u16::try_from` (attribute_store.rs:184). -/
+/-- `u16::try_from` (attribute_store.rs). -/
 def u16TryFrom (x : Nat) : Option Nat := if x < 65536 then some x else none
 
-def len (m : M) : Nat := m.vec.length                      -- schema.rs:129
+def len (m : M) : Nat := m.vec.length                      -- schema.rs
 def isEmpty (m : M) : Bool := m.vec.length == 0             -- :134
 def names (m : M) : List String := m.vec                    -- :140
 def get (m : M) (i : Nat) : Option String := m.vec[i]?      -- :146
 def iter (m : M) : List String := m.vec                     -- :153
 def intoIter (m : M) : List String := iter m                -- :209
 def idOf (m : M) (n : String) : Option Nat := m.index n     -- :159
-def getIndexOf (m : M) (n : String) : Option Nat := idOf m n  -- attribute_store.rs:143
-/-- `impl Index<usize>` (schema.rs:197): `&self.inner().names[id]`; `none` = panic. -/
+def getIndexOf (m : M) (n : String) : Option Nat := idOf m n  -- attribute_store.rs
+/-- `impl Index<usize>` (schema.rs): `&self.inner().names[id]`; `none` = panic. -/
 def idx (m : M) (i : Nat) : Option String := m.vec[i]?
 
-/-- The append of `get_or_insert` (schema.rs:177-181): `id = names.len()`, no cast. -/
+/-- The append of `get_or_insert` (schema.rs): `id = names.len()`, no cast. -/
 def push (m : M) (n : String) : M × Nat :=
   let i := m.vec.length
   ({ vec := m.vec ++ [n], index := fun x => if x = n then some i else m.index x }, i)
 
-/-- `get_or_insert` (schema.rs:168) on `names`/`ids`; `cap` is `capacity()`. -/
+/-- `get_or_insert` (schema.rs) on `names`/`ids`; `cap` is `capacity()`. -/
 def getOrInsert (cap : Nat) (m : M) (n : String) : M × Option Nat :=
   match m.index n with
   | some i => (m, some i)
   | none => if m.vec.length ≥ cap then (m, none) else let r := push m n; (r.1, some r.2)
 
-/-- `AttrNameMap::insert` (attribute_store.rs:155): `get_or_insert`, result dropped. -/
+/-- `AttrNameMap::insert` (attribute_store.rs): `get_or_insert`, result dropped. -/
 def insert (m : M) (n : String) : M := (getOrInsert MAX m n).1
 
-/-- `AttrNameMap::get_or_create` (attribute_store.rs:182). -/
+/-- `AttrNameMap::get_or_create` (attribute_store.rs). -/
 def getOrCreate (m : M) (n : String) : M × Nat :=
   let r := getOrInsert MAX m n
   (r.1, (r.2.bind u16TryFrom).getD NONE)
@@ -191,7 +191,7 @@ theorem uncapped_try_from_none (m : M) (h : m.vec.length = 65536) (n : String)
 theorem push_eq_pushU16 (m : M) (h : m.vec.length < MAX) (n : String) : push m n = pushU16 m n := by
   simp [push, pushU16, mint_cast_exact m h]
 
-/-! ## First positions (`from_names`, schema.rs:76-91) -/
+/-! ## First positions (`from_names`, schema.rs) -/
 
 /-- `n`'s first position in `l`. -/
 def first (l : List String) (n : String) : Option Nat := l.findIdx? (fun x => decide (x = n))
@@ -207,7 +207,7 @@ theorem first_snoc (l : List String) (x n : String) :
 
 theorem first_nil (n : String) : first [] n = none := rfl
 
-/-- `ids.entry(name).or_insert(id)` over `names.iter().enumerate()` (schema.rs:85-87). -/
+/-- `ids.entry(name).or_insert(id)` over `names.iter().enumerate()` (schema.rs). -/
 def fromIds : List String → Nat → (String → Option Nat) → (String → Option Nat)
   | [], _, f => f
   | x :: xs, i, f =>
@@ -310,11 +310,11 @@ theorem getOrInsert_some (cap : Nat) (m : M) (n : String) (hc : m.vec.length < c
   · rfl
   · rw [ite_eq_right_iff.mpr (fun h => absurd h (by omega))]; rfl
 
-/-! ## The schema-hash chain (#3757, schema.rs:43-216, schema_hash.rs:37-60)
+/-! ## The schema-hash chain (schema.rs, schema_hash.rs)
 
 Each list's `chain` is extended (`extend_chain(tag, chain, name)`, abstract `xc` here —
 xxh3, see graph_queries `GQ.SchemaHash.push`) exactly where `names` is pushed
-(`get_or_insert`, schema.rs:178), and rebuilt as `chain_of(tag, names)` = `foldl
+(`get_or_insert`, schema.rs), and rebuilt as `chain_of(tag, names)` = `foldl
 (extend_chain tag) 0` by `from_names` (:89). `tag` (:94) and `capacity` (:105) come
 from the variant. `ChainInvT`: the chain is the fold of the names in id order;
 `getOrInsertC_inv` keeps it and `fromNames_chainInv` builds it. `AttrNameMap` is the
@@ -328,7 +328,7 @@ inductive Kind where
   | propKeys
   deriving DecidableEq
 
-/-- `NameMap::tag` (schema.rs:94). -/
+/-- `NameMap::tag` (schema.rs). -/
 def Kind.tag : Kind → Nat
   | .labels => 0
   | .relTypes => 1
@@ -336,7 +336,7 @@ def Kind.tag : Kind → Nat
 
 def USIZE_MAX : Nat := 2 ^ 64 - 1
 
-/-- `NameMap::capacity` (schema.rs:105). -/
+/-- `NameMap::capacity` (schema.rs). -/
 def Kind.capacity : Kind → Nat
   | .propKeys => MAX
   | .labels | .relTypes => USIZE_MAX
@@ -350,7 +350,7 @@ def ChainInvT (xc : Nat → Nat → String → Nat) (tag : Nat) (c : MC) : Prop 
 
 def ChainInv (cp : Nat → String → Nat) (c : MC) : Prop := c.chain = c.m.vec.foldl cp 0
 
-/-- `NameMap::get_or_insert` (schema.rs:168-186) with its chain. -/
+/-- `NameMap::get_or_insert` (schema.rs) with its chain. -/
 def getOrInsertC (xc : Nat → Nat → String → Nat) (k : Kind) (c : MC) (n : String) :
     MC × Option Nat :=
   match c.m.index n with
@@ -358,20 +358,20 @@ def getOrInsertC (xc : Nat → Nat → String → Nat) (k : Kind) (c : MC) (n : 
   | none => if c.m.vec.length ≥ k.capacity then (c, none) else
       let r := push c.m n; (⟨r.1, xc k.tag c.chain n⟩, some r.2)
 
-/-- `NameMap::from_names(list, names)` (schema.rs:76-91): truncate to the capacity,
+/-- `NameMap::from_names(list, names)` (schema.rs): truncate to the capacity,
 `ids` by `entry().or_insert` (first position wins), `chain = chain_of(tag, names)`. -/
 def fromNames (xc : Nat → Nat → String → Nat) (k : Kind) (names : List String) : MC :=
   let ns := names.take k.capacity
   ⟨⟨ns, fromIds ns 0 (fun _ => none)⟩, ns.foldl (xc k.tag) 0⟩
 
-/-- `NameMap::chain` (schema.rs:189). -/
+/-- `NameMap::chain` (schema.rs). -/
 def chain (c : MC) : Nat := c.chain
 
-/-- `AttrNameMap::insert` (attribute_store.rs:155) with its chain. -/
+/-- `AttrNameMap::insert` (attribute_store.rs) with its chain. -/
 def insertC (cp : Nat → String → Nat) (c : MC) (n : String) : MC :=
   (getOrInsertC (fun _ => cp) .propKeys c n).1
 
-/-- `AttrNameMap::get_or_create` (attribute_store.rs:182) with its chain. -/
+/-- `AttrNameMap::get_or_create` (attribute_store.rs) with its chain. -/
 def getOrCreateC (cp : Nat → String → Nat) (c : MC) (n : String) : MC × Nat :=
   let r := getOrInsertC (fun _ => cp) .propKeys c n
   (r.1, (r.2.bind u16TryFrom).getD NONE)

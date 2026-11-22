@@ -15,22 +15,19 @@ The full Lean↔Rust mapping is in the header of [`FalkorEffectsEmitApply.lean`]
 
 **1. Does every write that changes the master ship a payload?**
 
-**No, and this is still open (W2-effects-1).** `commit.rs` calls the emitter only when `Pending::effects_count()` is positive. That count does not include entities created and deleted in the same query (*cancelled* entities), nor labels, types and attribute names registered by the query. But the emitter would ship something for both:
+**No, and this is still open (W2-effects-1).** `commit.rs` calls the emitter only when `Pending::effects_count()` is positive. That count does not include labels, types and attribute names registered by the query. But the emitter would ship something for them:
 
 - `gate_zero_stream`: when the count is 0, the records the emitter would write are exactly the schema additions plus the cancelled create/delete pairs;
 - `commitShips_eq_iff`: the gate is correct exactly when that residue is empty.
 
 The counterexamples are concrete queries:
 
-- `CREATE (a:A {p:1}) DELETE a` registered label `A` and attribute `p` on the master and shipped nothing before #3461 (`pre3461_gate_drops_cancelled`; now `gate_ships_cancelled`);
 - `OPTIONAL MATCH (n:Nope) SET n:L6` registers `L6` and ships nothing (`gate_drops_schema_only`);
 - the next write's `ADD_SCHEMA 1 "K6"` is then refused by the replica, which would assign id 0 (`next_payload_refused`). That forces a full resync, and during AOF load the server exits;
-- `CREATE (a)-[:T1 {p4:1}]->(b) DELETE a, b` is worse: no error at all, but the replica's attribute dictionary is missing `p4` (`pre3461_cancelled_edge_attr_dropped`; fixed by #3461, `cancelled_edge_attr_ships`).
 
 **2. Can a payload that the replica accepts leave its graph broken?**
 
-- **Before #3022, yes.** `UPDATE_NODE`, `UPDATE_EDGE`, `SET_LABELS` and `REMOVE_LABELS` did not check that their ids were live, and `DELETE_NODE` accepted a node that still had edges. A `GRAPH.EFFECT` naming a deleted id was accepted, and the next `CREATE` that recycled the id returned a node that already had `{x: 666}`, or an extra label, or someone else's edge (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
-- **On main, no.** `apply_wf`: start from a well-formed replica, apply any list of records that the replica accepts, and pass the end-of-buffer `validate`. The result is well formed:
+- **No.** `apply_wf`: start from a well-formed replica, apply any list of records that the replica accepts, and pass the end-of-buffer `validate`. The result is well formed:
   - a dead node has no labels and no properties;
   - a dead relationship has no properties;
   - relationship ids are distinct;
@@ -66,7 +63,7 @@ Not for indexes, and this is still open (W2-effects-4). `apply_effects` applies 
 | `buildIndexRec_verifies`, `buildConstraintRec_verifies` | Emitted index/constraint DDL always passes the replica's checks | `EmitDDL.lean` |
 | `applyAddSchema_eq_applyAddName` | The real get-or-create-and-verify of a name is the replication model's `applyAddName` | `ApplyHelpers.lean` |
 | `applyEffects_ok` | `apply_effects` succeeds only if every record applied in order and `validate` passed | `ApplyHelpers.lean` |
-| `relIdsCovered_of_registered` | When every created and cancelled relationship's type is registered, every relationship id the master allocated reaches the replica in a `CREATE_EDGE` (the property #3447 breaks) | `CancelGap.lean` |
+| `relIdsCovered_of_registered` | When every created and cancelled relationship's type is registered, every relationship id the master allocated reaches the replica in a `CREATE_EDGE` | `CancelGap.lean` |
 
 ### How `apply_wf` is proved
 
@@ -78,37 +75,31 @@ Not for indexes, and this is still open (W2-effects-4). `apply_effects` applies 
 
 ## Bugs found
 
-All four were reproduced in Rust and against a live server (see [`../FINDINGS.md`](../FINDINGS.md), wave 2). The Rust repro tests are in `graph/tests/lean_effects_emit_apply.rs`, which is not committed because some of its tests fail on purpose.
+All were reproduced in Rust and against a live server (see [`../FINDINGS.md`](../FINDINGS.md), wave 2). The Rust repro tests are in `graph/tests/lean_effects_emit_apply.rs`, which is not committed because some of its tests fail on purpose.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-effects-1 | `pre3461_gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`, `pre3461_cancelled_edge_attr_dropped` | A write that only registers a name or only cancels entities ships nothing. The next payload is refused (full resync; AOF load exits), or the replica silently misses an attribute name. 134 of 200 random seeds diverge | Cancelled half **fixed by #3461** (`effects_count` counts cancelled entities: `gate_ships_of_cancelled`, `gate_ships_cancelled`, `cancelled_edge_attr_ships`); schema-only writes still dropped (`gate_drops_schema_only`) |
-| W2-effects-2 | removed (17ccc5412) | `UPDATE_NODE`/`UPDATE_EDGE`/`SET_LABELS`/`REMOVE_LABELS` on a dead id were accepted; the next node to recycle the id inherited the property or label | Fixed by #3022 (`wf_updateNode_live`, `wf_setLabels_live`, `apply_wf`) |
-| W2-effects-3 | removed (17ccc5412) | `DELETE_NODE` of a node with edges was accepted; the edge dangled and the next node with that id inherited it | Fixed by #3022 (`wf_deleteNode`, `apply_wf`) |
-| #3247 | removed (17ccc5412) | A `CREATE_NODE` naming the same id twice (`[2, 3, 2]`) applied: the id set created one node where the record named two, and the repeated id's row had no node of its own | Fixed by #3298 (`2bb51088b`): `createNode_repeat_refused`, `createNode_ok_nodup`, `a_repeated_node_id_in_one_create_is_refused` |
-| #3447 | `pre3461_bug3447_cancelled_edge_id_gap` (property `RelIdsCovered`) | An edge of a new type cascaded away by `DETACH DELETE` never registers its type, so `digest_cancelled` drops its id. With a surviving edge above it in the same segment the replica's relationship id space has a hole: `IdSpace::verify` refuses and forces a full resync. C stays in sync | **Fixed by #3461** (`relIdsCovered_after_commit`, `fixed3447_cancelled_edge_id_gap`) |
-| #3448 | `bug3448_removeLabels_before_create_refused` (property `ReplayApplies`; now `fixed3448_replay_applies`) | `CREATE (n:Foo) REMOVE n:Foo DELETE n` leaves `n` in `remove_labels`; the stream emits `RemoveLabels [0]` before the cancelled pair's `CreateNode [0]`, and the replica refuses node 0 as not live (full resync). C stays in sync | **Fixed by #3459** |
+| W2-effects-1 | `gate_drops_schema_only`, `next_payload_refused` | A write that only registers a name ships nothing. The next payload is refused (full resync; AOF load exits). 134 of 200 random seeds diverge | **Open** (schema-only writes are still dropped: `gate_drops_schema_only`) |
 | W2-effects-4 | none (the model has no indexes) | A refused buffer's `CREATE_INDEX` is not rolled back, because the `Indexer` is shared by `Arc` across versions | **Open** (PR #3235) |
-
-#2924 (`CREATE_EDGE` between non-live ids) was fixed by the same PR #3022, and `apply_wf` covers it: `edge_to_dead_refused` replays the Rust test.
 
 One smaller observation, not filed:
 
+- The C module (Redis 8.6.2) aborts on `OPTIONAL MATCH (n:Nope) SET n:L6` (`blocked.c:346 'server.also_propagate.numops == 0'`), with or without a replica. C-side, not investigated.
 - An `example` in `Emit.lean`: `gather_rows`' merge drops a cell if the staged attributes are not sorted. The emitter always sorts them, so this only shows the sort is load-bearing.
 
 ## Files
 
 | File | What's in it |
 |---|---|
-| `FalkorEffectsEmitApply.lean` | Root: the report header (Lean↔Rust table, theorem list, bug write-ups, gaps) |
+| `FalkorEffectsEmitApply.lean` | Root: imports and a short header |
 | `Basic.lean` | The values the emitter moves around, canonical label sets (`sortDedup`), first-appearance `groupBy`, the memo loop and `memoGroup_eq_groupBy` |
-| `Emit.lean` | `gather_rows` (`mergeRow`, `gatherRows`), the record stream `forEachRecord`, `effectsCount`, the commit gate `commitShips`; the W2-effects-1 counterexamples |
+| `Emit.lean` | `gather_rows` (`mergeRow`, `gatherRows`), the record stream `forEachRecord`, `effectsCount`, the commit gate `commitShips`; the W2-effects-1 counterexample (`gate_drops_schema_only`) |
 | `Digests.lean` | `digest_created_edges`, `digest_deleted_edges`, `digest_updates`, `digest_labels`, `digest_cancelled`, column by column |
 | `EmitDDL.lean` | Schema additions (`replayNames_suffix`), `encode_all`, index/constraint DDL buffers and their verification |
-| `Apply.lean` | The pre-#3022 apply arms over a simple replica (`Apply.RG`), its well-formedness, the W2-effects-2/3 counterexamples |
+| `Apply.lean` | The apply arms over a simple replica (`Apply.RG`), its well-formedness, and counterexamples for the pre-liveness-check arms |
 | `ApplyHelpers.lean` | `apply.rs`'s checks function by function: `verify_id`, `require_live`, `check_attr_shape`, error mapping, `apply_effects` |
-| `Liveness.lean` | The apply side on main (#3022): `Live.G`, `applyRec`, `BInv`, `apply_wf`, the Rust tests replayed by `decide` |
-| `CancelGap.lean` | Emit then apply with cancellation: `RelIdsCovered` (#3447) and `ReplayApplies` (#3448), refuted on main; `relIdsCovered_of_registered` |
+| `Liveness.lean` | The apply side on main: `Live.G`, `applyRec`, `BInv`, `apply_wf`, the Rust tests replayed by `decide` |
+| `CancelGap.lean` | Emit then apply with cancellation: `RelIdsCovered` and `ReplayApplies` and their fixed-state proofs; `relIdsCovered_of_registered` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies. [`../replication`](../replication) requires it as a path dependency to import the memo loop.
@@ -121,7 +112,7 @@ The project has no Lake dependencies. [`../replication`](../replication) require
 |---|---|
 | PROVEN | 36 |
 
-Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, including that it is wrong for cancelled and schema-only writes. Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models, and `CancelGap.lean` proves that what they emit is wrong for #3447 and #3448.
+Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, including that it is wrong for schema-only writes. Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models.
 
 ## What the model does not cover
 
@@ -130,7 +121,7 @@ Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model 
 - **Indexes and rollback.** W2-effects-4 is outside the model.
 - **Index and constraint DDL apply** is checked only by a live Rust-vs-C differential (18 steps, all agree), not by a theorem.
 - **`IdSpace` and `first_node_with_relationships`** are specs here, proven in `id_space` and `graph_queries`.
-- The `rel_bound` gap documented at `emit.rs:448-454` is no longer a gap: it is #3447, proven in `CancelGap.lean` (`pre3461_bug3447_cancelled_edge_id_gap`; fixed by #3461, `relIdsCovered_after_commit`). The replica's `IdSpace::verify` is modelled there only as its hole check (`verifyRange`).
+- The replica's `IdSpace::verify` is modelled in `CancelGap.lean` only as its hole check (`verifyRange`).
 
 ## Build and check
 
@@ -148,4 +139,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A fix for W2-effects-1 should turn `gate_drops_cancelled` and its siblings into `pre<PR>_` history and prove that the new gate ships whenever `forEachRecord` is non-empty (the right-hand side of `commitShips_eq_iff`). If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.
+A fix for W2-effects-1 should replace `gate_drops_schema_only` and prove that the new gate ships whenever `forEachRecord` is non-empty (the right-hand side of `commitShips_eq_iff`). If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.

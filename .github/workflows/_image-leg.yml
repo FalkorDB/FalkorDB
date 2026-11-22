@@ -222,6 +222,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Verify the image includes its licenses
+        env:
+          SERVICE_CONTAINER: ${{ job.services.falkordb.id }}
+        run: |
+          set -euo pipefail
+          for license in LICENSE LICENSE-SSPL LICENSE-AGPL; do
+            docker exec "$SERVICE_CONTAINER" test -s "/usr/local/share/licenses/falkordb/$license"
+          done
       # The Rust unit tests run once, in build-engine (_ci-pipeline.yml).
       - name: Run pytest tests against the RC image
         id: pytest

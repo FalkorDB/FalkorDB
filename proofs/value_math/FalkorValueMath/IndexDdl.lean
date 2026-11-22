@@ -18,7 +18,7 @@ created by `get_or_insert_with` (an empty buffer, no count) — harmless, it is 
 the failing query.
 
 #3094 (`fe619ac5f`): a vector index whose options converted to nothing — no `OPTIONS`
-map at all — is refused before the write upgrade (`:61-65`), so nothing is registered
+map at all — is refused before the write upgrade, so nothing is registered
 (`create_vector_no_opts`). That is what closes W5-idx-2 (the half-created vector index
 on error): live at fe619ac5f, `CREATE VECTOR INDEX FOR (n:L) ON (n.emb)` answers
 "Invalid vector index configuration" on Rust and C alike and `db.indexes()` is unchanged.

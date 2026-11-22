@@ -3,7 +3,7 @@
 
 | here | there (`graph/src/graph/graphblas/serialization.rs`) |
 | --- | --- |
-| `EncodeState`/`disc` | `enum EncodeState` (:130), `#[repr(u64)]` discriminants (`CchIndices = 10`, `Final = 11` since #3793) |
+| `EncodeState`/`disc` | `enum EncodeState` (:130), `#[repr(u64)]` discriminants (`CchIndices = 10`, `Final = 11`) |
 | `fromU64`     | `from_u64` (:150) |
 | `Codec`       | `trait Encode::encode` (:34) + `trait Decode::decode` (:64): the contract every impl owes |
 | `encodeWithRangeDefault` / `decodeWithCountDefault` | the `unimplemented!()` defaults (:40 / :76) |

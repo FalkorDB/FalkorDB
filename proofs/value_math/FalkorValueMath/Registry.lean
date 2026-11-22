@@ -1,5 +1,5 @@
 /-!
-# Function registry and dispatch (functions/mod.rs:419-1160)
+# Function registry and dispatch (functions/mod.rs)
 
 `RuntimeFn` dispatch, the `GraphFn` constructors, `Functions::add*` / `set_*_fn` / `iter`,
 the global `FUNCTIONS` (`OnceLock`) and the UDF registry (`OnceLock<RwLock<HashMap>>` +
@@ -15,18 +15,18 @@ Assumptions as structures/hypotheses, not axioms:
 -/
 namespace ValueMath.Reg
 
-/-- `enum Type` (mod.rs:530). -/
+/-- `enum Type` (mod.rs). -/
 inductive Ty where
   | null | bool | int | float | string | list (t : Ty) | map | node | rel | path | vecf32
   | point | datetime | date | time | duration | any | union (ts : List Ty) | optional (t : Ty)
 
-/-- `Type::union` (mod.rs:560): collect into `Union`. -/
+/-- `Type::union` (mod.rs): collect into `Union`. -/
 def Ty.mkUnion (ts : List Ty) : Ty := .union ts
 
 theorem mkUnion_eq (ts : List Ty) : Ty.mkUnion ts = .union ts := rfl
 
 mutual
-/-- `can_return_entity` (mod.rs:579). -/
+/-- `can_return_entity` (mod.rs). -/
 def Ty.canReturnEntity : Ty → Bool
   | .node | .rel | .path | .any => true
   | .union ts => anyEntity ts
@@ -83,7 +83,7 @@ theorem canReturnEntity_complete {t : Ty} (h : EntityLeaf t) : t.canReturnEntity
 /-- `List(Node)` is not an entity type (lists are not looked into). -/
 example : (Ty.list .node).canReturnEntity = false := rfl
 
-/-! ## `RuntimeFn` (mod.rs:425-461) -/
+/-! ## `RuntimeFn` (mod.rs) -/
 
 /-- Runtime/args/results are abstract. A procedure batch is its row list
 (`empty_procedure_batch` = no rows). -/
@@ -97,7 +97,7 @@ structure Sig where
 
 variable (S : Sig)
 
-/-- `empty_procedure_batch` (mod.rs:419): `BatchBuilder::new().finish()`. -/
+/-- `empty_procedure_batch` (mod.rs): `BatchBuilder::new().finish()`. -/
 def emptyProcedureBatch : S.Batch := S.empty
 
 theorem emptyProcedureBatch_rows : S.rows (emptyProcedureBatch S) = 0 := S.empty_rows
@@ -107,14 +107,14 @@ inductive RuntimeFn where
   | nativeProcBatch (f : S.Rt → List S.V → Nat → Except String S.Batch)
   | udf (name : String)
 
-/-- `RuntimeFn::call` (mod.rs:436); `bridge` is `call_udf_bridge` (QuickJS, FFI). -/
+/-- `RuntimeFn::call` (mod.rs); `bridge` is `call_udf_bridge` (QuickJS, FFI). -/
 def RuntimeFn.call (bridge : String → S.Rt → List S.V → Except String S.V) :
     RuntimeFn S → S.Rt → List S.V → Except String S.V
   | .native f, rt, args => f rt args
   | .nativeProcBatch _, _, _ => .error "Procedure runtime function cannot be called as scalar"
   | .udf name, rt, args => bridge name rt args
 
-/-- `RuntimeFn::call_procedure_batch` (mod.rs:451). -/
+/-- `RuntimeFn::call_procedure_batch` (mod.rs). -/
 def RuntimeFn.callProcBatch : RuntimeFn S → S.Rt → List S.V → Nat → Except String S.Batch
   | .nativeProcBatch f, rt, args, y => f rt args y
   | _, _, _, _ => .error "Function is not a procedure runtime function"
@@ -130,12 +130,12 @@ theorem call_arms (bridge : String → S.Rt → List S.V → Except String S.V) 
     (RuntimeFn.udf n : RuntimeFn S).callProcBatch S rt a y = .error "Function is not a procedure runtime function" :=
   ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-! ## `FnType`, `GraphFn` (mod.rs:463-898) -/
+/-! ## `FnType`, `GraphFn` (mod.rs) -/
 
 inductive FnType where
   | function | internal | procedure (cols : List String) | aggregation | udf
 
-/-- `Debug for FnType` (mod.rs:500). -/
+/-- `Debug for FnType` (mod.rs). -/
 def FnType.dbg : FnType → String
   | .function => "Function" | .internal => "Internal" | .procedure _ => "Procedure"
   | .aggregation => "Aggregation" | .udf => "Udf"
@@ -163,17 +163,17 @@ structure GraphFn where
   fnType : FnType
   ret : Ty
 
-/-- `GraphFn::new` (mod.rs:715). -/
+/-- `GraphFn::new` (mod.rs). -/
 def GraphFn.new (name : String) (f : S.Rt → List S.V → Except String S.V) (write nonDet : Bool)
     (args : FnArgs) (ft : FnType) (ret : Ty) : GraphFn S :=
   ⟨name, .native f, write, nonDet, false, [], false, [], args, ft, ret⟩
 
-/-- `GraphFn::new_procedure` (mod.rs:740). -/
+/-- `GraphFn::new_procedure` (mod.rs). -/
 def GraphFn.newProcedure (name : String) (f : S.Rt → List S.V → Nat → Except String S.Batch)
     (write nonDet : Bool) (args : FnArgs) (ft : FnType) (ret : Ty) : GraphFn S :=
   ⟨name, .nativeProcBatch f, write, nonDet, false, [], false, [], args, ft, ret⟩
 
-/-- `GraphFn::new_udf` (mod.rs:765). -/
+/-- `GraphFn::new_udf` (mod.rs). -/
 def GraphFn.newUdf (name : String) : GraphFn S :=
   ⟨name, .udf name, false, false, false, [], false, [], .varLength .any, .udf, .any⟩
 
@@ -187,10 +187,10 @@ theorem newUdf_fields (n : String) :
     g.name = n ∧ g.func = .udf n ∧ g.write = false ∧ g.fnType = .udf ∧ g.args = .varLength .any :=
   ⟨rfl, rfl, rfl, rfl, rfl⟩
 
-/-- `GraphFn::is_aggregate` (mod.rs:783). -/
+/-- `GraphFn::is_aggregate` (mod.rs). -/
 def GraphFn.isAggregate (g : GraphFn S) : Bool := g.fnType.tag = 3
 
-/-- `Debug for GraphFn` (mod.rs:698): `debug_struct` over six fields, non-exhaustive. -/
+/-- `Debug for GraphFn` (mod.rs): `debug_struct` over six fields, non-exhaustive. -/
 def GraphFn.dbg (dS : String → String) (dB : Bool → String) (dA : FnArgs → String)
     (dT : Ty → String) (g : GraphFn S) : String :=
   "GraphFn { name: " ++ dS g.name ++ ", write: " ++ dB g.write ++ ", non_deterministic: " ++
@@ -203,7 +203,7 @@ theorem dbg_fields (dS dB dA dT) (g h : GraphFn S) (e1 : g.name = h.name) (e2 : 
     (e6 : g.ret = h.ret) : g.dbg S dS dB dA dT = h.dbg S dS dB dA dT := by
   simp [GraphFn.dbg, e1, e2, e3, e4, e5, e6]
 
-/-- `GraphFn::call_procedure_batch` (mod.rs:894). -/
+/-- `GraphFn::call_procedure_batch` (mod.rs). -/
 def GraphFn.callProcBatch (g : GraphFn S) (rt : S.Rt) (args : List S.V) (y : Nat) :
     Except String S.Batch :=
   match g.fnType with
@@ -218,7 +218,7 @@ theorem callProcBatch_not_proc (g : GraphFn S) rt args y (h : g.fnType.tag ≠ 2
     g.callProcBatch S rt args y = .error s!"Function '{g.name}' is not a procedure" := by
   unfold GraphFn.callProcBatch; split <;> simp_all [FnType.tag]
 
-/-! ## `Functions` (mod.rs:913-1088) -/
+/-! ## `Functions` (mod.rs) -/
 
 structure Lower where
   lower : String → String
@@ -229,25 +229,25 @@ variable (Lo : Lower)
 /-- The `HashMap<String, Arc<GraphFn>>`, as an association list (keys distinct). -/
 abbrev Fns := List (String × GraphFn S)
 
-/-- `Functions::new` (mod.rs:918). -/
+/-- `Functions::new` (mod.rs). -/
 def Fns.new : Fns S := []
 
 def has (m : Fns S) (k : String) : Bool := m.any (·.1 == k)
 
 def lookup (m : Fns S) (k : String) : Option (GraphFn S) := (m.find? (·.1 == k)).map (·.2)
 
-/-- `Functions::add` (mod.rs:923): assert absent (by lowered name), insert under the lowered
+/-- `Functions::add` (mod.rs): assert absent (by lowered name), insert under the lowered
 key, keep the original-case `name` in the entry. -/
 def add (m : Fns S) (name : String) (f : S.Rt → List S.V → Except String S.V) (w d : Bool) (args : List Ty) (ft : FnType) (r : Ty) : Option (Fns S) :=
   if has S m (Lo.lower name) then none
   else some ((Lo.lower name, GraphFn.new S name f w d (.fixed args) ft r) :: m)
 
-/-- `Functions::add_procedure` (mod.rs:951). -/
+/-- `Functions::add_procedure` (mod.rs). -/
 def addProcedure (m : Fns S) (name : String) (f : S.Rt → List S.V → Nat → Except String S.Batch) (w d : Bool) (args : List Ty) (ft : FnType) (r : Ty) : Option (Fns S) :=
   if has S m (Lo.lower name) then none
   else some ((Lo.lower name, GraphFn.newProcedure S name f w d (.fixed args) ft r) :: m)
 
-/-- `Functions::add_var_len` (mod.rs:979): the entry's `name` is the LOWERED name. -/
+/-- `Functions::add_var_len` (mod.rs): the entry's `name` is the LOWERED name. -/
 def addVarLen (m : Fns S) (name : String) (f : S.Rt → List S.V → Except String S.V) (w d : Bool) (t : Ty) (ft : FnType) (r : Ty) : Option (Fns S) :=
   if has S m (Lo.lower name) then none
   else some ((Lo.lower name, GraphFn.new S (Lo.lower name) f w d (.varLength t) ft r) :: m)
@@ -288,7 +288,7 @@ theorem addVarLen_name (m : Fns S) (name : String) (f : S.Rt → List S.V → Ex
     by simp [addVarLen, h], ?_⟩
   rw [lookup_cons_self]; rfl
 
-/-- `set_pure_fn` (mod.rs:1009) / `set_struct_fn` (mod.rs:1031): panic unless registered;
+/-- `set_pure_fn` (mod.rs) / `set_struct_fn` (mod.rs): panic unless registered;
 update that entry only. (`Arc::get_mut` cannot fail at init: the registry is the sole owner.) -/
 def update (m : Fns S) (k : String) (u : GraphFn S → GraphFn S) : Option (Fns S) :=
   if has S m k then some (m.map fun p => (p.1, if p.1 = k then u p.2 else p.2)) else none
@@ -356,13 +356,13 @@ theorem setPureFn_spec (m : Fns S) (name : String) (args : List Ty) :
   | none => simp [e] at this
   | some g => rfl
 
-/-- `Functions::iter` (mod.rs:1075): `functions.values()`. -/
+/-- `Functions::iter` (mod.rs): `functions.values()`. -/
 def iter (m : Fns S) : List (GraphFn S) := m.map (·.2)
 
 theorem iter_mem (m : Fns S) (g : GraphFn S) : g ∈ iter S m ↔ ∃ k, (k, g) ∈ m := by
   simp [iter]
 
-/-! ## `init_functions`, `get_functions` (mod.rs:1104, :1166) -/
+/-! ## `init_functions`, `get_functions` (mod.rs) -/
 
 /-- One module's `register`: a sequence of `add`s (here: names; panics on a duplicate). -/
 def registerAll (m : Fns S) : List (String × GraphFn S) → Option (Fns S)
@@ -400,7 +400,7 @@ theorem registerAll_ok (entries : List (String × GraphFn S)) :
     refine ⟨m', by simp [registerAll, hfree, h1], ?_⟩
     rw [h2]; simp
 
-/-- `static FUNCTIONS: OnceLock<Functions>` and `init_functions` (mod.rs:1104):
+/-- `static FUNCTIONS: OnceLock<Functions>` and `init_functions` (mod.rs):
 `FUNCTIONS.set(funcs)` — `Err(funcs)` if already initialised (the first value stays). -/
 def initFunctions (cell : Option (Fns S)) (built : Fns S) : Option (Fns S) × Except (Fns S) Unit :=
   match cell with
@@ -412,45 +412,45 @@ theorem initFunctions_once (built1 built2 : Fns S) :
     let (c2, r2) := initFunctions S c1 built2
     r1 = .ok () ∧ c2 = some built1 ∧ r2 = .error built2 := ⟨rfl, rfl, rfl⟩
 
-/-- `get_functions` (mod.rs:1166): `expect` — `none` (panic) before init. -/
+/-- `get_functions` (mod.rs): `expect` — `none` (panic) before init. -/
 def getFunctions (cell : Option (Fns S)) : Option (Fns S) := cell
 
 theorem getFunctions_after_init (b : Fns S) : getFunctions S (initFunctions S none b).1 = some b := rfl
 
-/-! ## UDF registry (mod.rs:1091-1163) -/
+/-! ## UDF registry (mod.rs) -/
 
 structure UdfState where
   reg : Option (Fns S)       -- `UDF_FUNCTIONS` (`OnceLock`): `None` until `init_udf_functions`
   version : Nat              -- `UDF_VERSION`
 
-/-- `udf_version` (mod.rs:1100): an atomic load. -/
+/-- `udf_version` (mod.rs): an atomic load. -/
 def udfVersion (st : UdfState S) : Nat := st.version
 
-/-- `init_udf_functions` (mod.rs:1125): set once; later calls are ignored. -/
+/-- `init_udf_functions` (mod.rs): set once; later calls are ignored. -/
 def initUdf (st : UdfState S) : UdfState S :=
   match st.reg with
   | none => { st with reg := some [] }
   | some _ => st
 
-/-- `register_udf` (mod.rs:1131): insert (replacing) under the case-sensitive name (#3066: no longer lowered), bump version. -/
+/-- `register_udf` (mod.rs): insert (replacing) under the case-sensitive name (#3066: no longer lowered), bump version. -/
 def registerUdf (st : UdfState S) (name : String) (g : GraphFn S) : UdfState S :=
   match st.reg with
   | none => st
   | some m => ⟨some ((name, g) :: m.filter (·.1 ≠ name)), st.version + 1⟩
 
-/-- `unregister_udf` (mod.rs:1142; case-sensitive since #3066). -/
+/-- `unregister_udf` (mod.rs; case-sensitive since #3066). -/
 def unregisterUdf (st : UdfState S) (name : String) : UdfState S :=
   match st.reg with
   | none => st
   | some m => ⟨some (m.filter (·.1 ≠ name)), st.version + 1⟩
 
-/-- `flush_udfs` (mod.rs:1150). -/
+/-- `flush_udfs` (mod.rs). -/
 def flushUdfs (st : UdfState S) : UdfState S :=
   match st.reg with
   | none => st
   | some _ => ⟨some [], st.version + 1⟩
 
-/-- `get_udf_functions` (mod.rs:1159): snapshot of the values, empty before init. -/
+/-- `get_udf_functions` (mod.rs): snapshot of the values, empty before init. -/
 def getUdfFunctions (st : UdfState S) : List (GraphFn S) :=
   match st.reg with
   | none => []

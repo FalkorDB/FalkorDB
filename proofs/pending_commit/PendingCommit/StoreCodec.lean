@@ -1,12 +1,12 @@
 import PendingCommit.StoreApi
 import PendingCommit.Pack
 /-
-# RDB codec, `trim`, memory accounting (attribute_store.rs:1038-1145, :1398-1497)
+# RDB codec, `trim`, memory accounting (attribute_store.rs)
 
 * `encode_spec` — `encode_with_range` (:1409) writes, for the entities
   `0..=max_id` not in `deleted`, skipping the first `offset`, the next
   `max(count, 1)` (the `break` follows the write; every caller passes
-  `count > 0`, src/serializers/encoder/mod.rs:139-196), each as `(id, len,
+  `count > 0`, src/serializers/encoder/mod.rs), each as `(id, len,
   entries)`.
 * `decode_spec` — `decode_with_count` (:1460) stores, per entity, the entries
   whose wire id fits `u16` (`try_from`, not `as`) and the dictionary, minus
