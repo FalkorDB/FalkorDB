@@ -23,21 +23,21 @@ The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv), and each file under `Runt
 
 **1. Can `LIMIT` make a traversal drop rows that should be returned?**
 
-Yes, today. The runtime computes a row budget, `record_cap`, by walking up from an operator to the nearest `LIMIT` and adding any `SKIP`. `CondTraverse` and `ExpandInto` treat that budget as a *hard* stop. But the walk passes through other traversals, and a traversal can turn one row into zero rows. Here is an example:
+No (since #3071). The runtime computes two row budgets with one walk, `row_budget`, which goes up from an operator to the nearest `LIMIT` and adds every `SKIP` on the way (saturating). `hard_record_cap` (`row_budget(false)`) stops at the first traversal, aggregate or any other barrier, and is the *hard* stop of `CondTraverse`, `ExpandInto` and `Sort`'s top-k. `record_cap` (`row_budget(true)`) walks through `CondTraverse`/`ExpandInto` and is only a batch-size hint (the emitter's pack ceiling, scan sizing). Before #3071 the hint was also the hard stop, so:
 
 ```cypher
 // a1 -> b1 (dead end), a2 -> b2 -> c
 MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 1
-// Rust: []    C: [30]
+// before #3071: []    C and now: [30]
 ```
 
-The lower traversal stops after one row (`b1`). The upper traversal finds nothing from `b1`, so the answer is lost. `hard_cap_unsound_condTraverse` and `hard_cap_unsound_expandInto` prove this on the model with exactly these inputs. `hard_cap_unsound_through_traverse` proves the general form: for every `LIMIT`, some expansion makes the cap drop rows.
+The lower traversal stopped after one row (`b1`), and the upper one found nothing from `b1`. Now its hard cap is none (`hardRecordCap_traverse`, `hardRecordCap_twoHopChain`, `hardRecordCap_cycleChain`), and stacked `SKIP`s all count (`hardRecordCap_stackedSkips`).
 
-The project also proves what a correct budget looks like. `need` is the smallest sound budget: a `LIMIT n` bounds it, a `SKIP s` adds `s`, a 1:1 `Project` passes it through, and anything else (including a traversal) is a barrier. `need_sound` proves that cutting the stream to `need` rows never changes the result. `recordCap_hardCap_sound_oneSkip` proves that today's `record_cap` *is* sound when only `Project`s and at most one `SKIP` sit between the operator and the `LIMIT`.
+The reference is `need`, the smallest sound budget: a `LIMIT n` bounds it, a `SKIP s` adds `s`, a 1:1 `Project` passes it through, and anything else (including a traversal) is a barrier. `need_sound` proves that cutting the stream to `need` rows never changes the result; `hardRecordCap_eq_need` proves `hard_record_cap` is exactly `need` (when it is below `usize::MAX`), and `hardRecordCap_sound` proves the hard stop sound for every ancestor chain. `recordCap_eq_hard_of_need` shows the hint equals the hard cap wherever `need` is defined.
 
 **2. Does the emitter lose, duplicate or reorder rows?**
 
-No. `drive_flatten` and `fresh_drive` prove that the batches an emitter-driven operator yields, concatenated, are exactly the per-row expansions of every input row, in order, **for any initial `record_cap`**. For the emitter, the budget is only a batch-size hint, which is why the same `record_cap` is harmless there and harmful as a hard stop in traversals. The pack ceiling stays in `[1, 1024]` (`ceiling_bounds`), the emitter makes progress whenever work is left (`loop_progress`), and `reset` drops all queued work (`reset_remaining`).
+No. `drive_flatten` and `fresh_drive` prove that the batches an emitter-driven operator yields, concatenated, are exactly the per-row expansions of every input row, in order, **for any initial pack hint**. For the emitter the budget is only a batch-size hint, which is why the soft `record_cap` is harmless there. The pack ceiling stays in `[1, 1024]` (`ceiling_bounds`), doubles only after a non-empty batch (`emit_ceiling`, `emit_none_ceiling`), `lift_pack_ceiling` resets it to 1024 (`lift_spec`), the emitter makes progress whenever work is left (`loop_progress`), and `reset` drops all queued work (`reset_remaining`).
 
 **3. Does `resultset_size` return the right rows, and do writes still run?**
 
@@ -59,8 +59,9 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 | Theorem | In plain words | File |
 |---|---|---|
 | `need_sound` | The reference budget (LIMIT bounds, SKIP adds, Project passes, anything else is a barrier) never changes results | `Budget.lean` |
-| `recordCap_hardCap_sound_oneSkip` | Today's `record_cap` is a sound hard cap when only Projects and at most one SKIP are below the LIMIT | `Budget.lean` |
-| `hard_cap_unsound_expandInto`, `hard_cap_unsound_condTraverse`, `hard_cap_unsound_stacked_skip` | Counterexamples: through a traversal, or with stacked SKIPs, the hard cap loses the answer | `Budget.lean` |
+| `hardRecordCap_sound`, `hardRecordCap_eq_need` | `hard_record_cap`, the hard stop of CondTraverse/ExpandInto/Sort, never changes results: it is `need` | `Budget.lean` |
+| `recordCap_hardCap_sound_oneSkip`, `recordCap_eq_hard_of_need` | The soft `record_cap` equals the hard cap wherever `need` is defined (e.g. Projects and one SKIP below the LIMIT) | `Budget.lean` |
+| `hardRecordCap_cycleChain`, `hardRecordCap_twoHopChain`, `hardRecordCap_stackedSkips` | The former counterexamples (through a traversal, stacked SKIPs) now get no cap or the full `limit + Σ skip` | `Budget.lean` |
 | `drive_flatten`, `fresh_drive` | The emitter outputs exactly the per-row expansions in order, for any `record_cap` | `Emitter.lean` |
 | `runBatch_eq_rec` | The iterative post-order `run_batch` builds the same tree, with the same first error, as the recursive build, for every plan | `RunBatch.lean` |
 | `query_rows`, `query_write_pulls_all` | `resultset_size` keeps exactly the first `n` rows; a write query always drains the root operator (every batch plus the terminating `next()`), so a root `CommitOp` always runs | `Query.lean` |
@@ -72,24 +73,21 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 | `checkTimeout_spec`, `checkMem_spec` | The timeout fires iff now ≥ deadline; for usage < 2⁶³, the memory cap fires iff 0 < cap < usage | `Misc.lean` |
 | `vector_requires_dimension`, `vector_requires_similarity`, `fulltextUnknown_none_iff` | Index OPTIONS validation as in C (#3094) | `Misc.lean` |
 
-### How `need_sound` is proved (and why `record_cap` fails it)
+### How `need_sound` is proved (and why `hard_record_cap` meets it)
 
 1. **Model the plan above an operator.** `Anc` is one ancestor, nearest parent first: `limit n`, `skip n`, `project g` (1:1), `condTraverse f` or `expandInto f` (one row to any list of rows, possibly empty), or `other h` (any barrier). `run` applies a list of ancestors to a row stream.
-2. **Model the Rust.** `effectiveLimit`, `effectiveSkip` and `recordCap` are `Runtime::effective_limit`, `effective_skip` and `record_cap`, walk for walk. `hardCap` is the `produced >= cap` stop in `CondTraverseOp` and `ExpandIntoOp`, and SortOp's top-k heap.
+2. **Model the Rust.** `rowBudgetGo`/`rowBudget` is `Runtime::row_budget` walk for walk (saturating `SKIP` sum, `through_traverse` flag); `recordCap` and `hardRecordCap` are `record_cap` and `hard_record_cap`. `hardCap` is the `produced >= cap` stop in `CondTraverseOp` and `ExpandIntoOp`, and SortOp's top-k heap.
 3. **Induct on the ancestor list.** `need_sound` follows `need`'s definition. A `limit` at the head is `take n` of `take n`; a `skip s` turns a budget of `c` above into `c + s` below; a `project` commutes with `take`. A traversal or barrier makes `need` return `none`, which means no cap.
-4. **Compare.** `hardCap_sound_of_need_le` shows that any cap at least `need` is also sound, and `recordCap_sound_oneSkip` shows that `record_cap ≥ need` under the one-skip condition. The counterexamples show where that condition fails: `record_cap` walks *through* `condTraverse`/`expandInto` where `need` stops, and `effective_skip` keeps only the *first* `SKIP`.
+4. **Compare.** `hardRecordCap_eq` shows `row_budget(false)` is `need` (saturated); `hardCap_sound_of_need_le` and the saturation bound (a stream never has more than `usize::MAX` rows) give `hardRecordCap_sound`.
 
 `Limit` and `Skip` are stored as `Nat`. That loses nothing: a negative or non-integer value makes `build_batch_op` fail the whole query before anything runs.
 
 ## Bugs found
 
-Each bug was compared against C. The live repro for B1/B2 is `repro_limit.py PORT` (the Rust test file `graph/tests/lean_runtime_core.rs` no longer exists on main). See [`../FINDINGS.md`](../FINDINGS.md), wave 3.
+Each bug was compared against C. See [`../FINDINGS.md`](../FINDINGS.md), wave 3. (The LIMIT/SKIP budget bugs B1–B3 were fixed by #3071, which also deleted their `repro_limit.py`; git history keeps them.)
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| B1 (W3-runtime-1) | `hard_cap_unsound_expandInto`, `hard_cap_unsound_condTraverse`, `hard_cap_unsound_through_traverse` | `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`), which then use it as a hard stop. `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` returns `[]` (C: `[2]`) | **Open** (walk unchanged at 0f45a8685) |
-| B2 (W3-runtime-2) | `hard_cap_unsound_stacked_skip` | `effective_skip` returns only the first `SKIP`. `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1` returns `[]` (C: `[20]`) | **Open**. The proposed fix for B1 and B2 is to give hard-cap consumers `need` and keep `record_cap` for the emitter |
-| B3 | *(same shape as B1; no separate theorem)* | SortOp's top-k uses the same walk: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1` returns `[]`; expected `[20]` | **Open**, shared with C. The stacked-SKIP Sort variant is #2659 |
 | — | `Accessors.reuse_diverges` | With a node id present in both pending attribute maps, `n.a` falls through `new_nodes_attrs` to `existing_nodes_attrs` while `properties(n)` reads only `new_nodes_attrs`. Only reachable via deleted-id reuse (#2876), where `deleted_nodes` shadows both anyway | Suspected |
 | — | `checkMem_wrap` | `usage_fn() as i64` wraps at 2⁶³, so the memory cap never fires past 8 EiB | Latent |
 
@@ -99,8 +97,8 @@ Each bug was compared against C. The live repro for B1/B2 is `repro_limit.py POR
 
 | File | What's in it |
 |---|---|
-| `Budget.lean` | `effective_limit`, `effective_skip`, `record_cap`, the hard cap, the reference `need`; bugs B1–B3 |
-| `Emitter.lean` | `RowIter`, `refill_from_cursor`, `drain_pending_entry`, `emit_lazy`, `seed`, `reset`, and the operator pull loop; `drive_flatten` |
+| `Budget.lean` | `row_budget`, `record_cap` (soft hint), `hard_record_cap` (hard stop), the reference `need` and the soundness proofs |
+| `Emitter.lean` | `RowIter`, `refill_from_cursor`, `drain_pending_entry`, `emit_lazy`, `lift_pack_ceiling`, `seed`, `reset`, and the operator pull loop; `drive_flatten` |
 | `Query.lean` | `Runtime::query`: the result-set cap and the write drain |
 | `RunBatch.lean` | `run_batch`'s iterative post-order build against the recursive build; `children_to_recurse` |
 | `Cell.lean` | The earlier `Arc<AtomicRefCell<Graph>>` borrow-word model (removed by #3683; kept because `pending_commit`'s `Hold` imports it). The current model is `QueryGraph.lean` |
@@ -150,4 +148,4 @@ bash proofs/coverage.sh                 # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A change to which IR variants `effective_limit` or `effective_skip` walk through changes `Anc` and the budget theorems. Fixing B1/B2 should replace the `hard_cap_unsound_*` counterexamples with a proof of the new budget against `need` (no `pre<PR>_` history is kept). Fixing #2876 should discharge `hdisj` and move the attribute rows from CONDITIONAL to PROVEN.
+A change to which IR variants `row_budget` walks through (with or without `through_traverse`) changes `Anc` and the budget theorems. Fixing #2876 should discharge `hdisj` and move the attribute rows from CONDITIONAL to PROVEN.

@@ -8,7 +8,8 @@
 | `initCeiling`             | `with_binding` |
 | `refill`                  | `refill_from_cursor` |
 | `drain`                   | `drain_pending_entry` |
-| `loop`, `emit`            | `emit_lazy` (loop + ceiling doubling) |
+| `loop`, `emit`            | `emit_lazy` (loop + ceiling doubling after a non-empty batch) |
+| `lift`                    | `lift_pack_ceiling` |
 | `seed`, `reset`           | `seed`; `reset` |
 | `drive`                   | the operator's pull loop: `emit_lazy` until `None`, then pull the next child batch and `seed` (e.g. `ExpandIntoOp::next`, `ops/expand_into.rs`) |
 
@@ -108,11 +109,15 @@ def loop (f : Nat → Option (RowIter β)) (ceil : Nat) :
           { s with pending := d.2.map (fun it => (r, it)) }
     else (acc, s)
 
-/-- `emit_lazy`: pack, double the ceiling, `None` when nothing was packed. -/
+/-- `emit_lazy`: pack, double the ceiling only when something was packed (`count > 0`;
+`count` is the packed length), `None` when nothing was packed. -/
 def emit (f : Nat → Option (RowIter β)) (s : St β) : Option (List (Nat × β)) × St β :=
   let r := loop f s.ceiling (2 * s.rows.length + 2) 0 [] s
-  let s' := { r.2 with ceiling := min (s.ceiling * 2) BATCH_SIZE }
+  let s' := { r.2 with ceiling := if r.1 = [] then s.ceiling else min (s.ceiling * 2) BATCH_SIZE }
   (if r.1 = [] then none else some r.1, s')
+
+/-- `lift_pack_ceiling`: full batches from now on. -/
+def lift (s : St β) : St β := { s with ceiling := BATCH_SIZE }
 
 /-- `seed` installs a new parent batch and resets the cursor; `pending` is
 left alone (the Rust `debug_assert!`s it is empty — `emit_none_pending` shows the
@@ -380,9 +385,30 @@ theorem initCeiling_pos (c : Option Nat) : 1 ≤ initCeiling c ∧ initCeiling c
   | none => simp [initCeiling, BATCH_SIZE]
   | some c => simp only [initCeiling, BATCH_SIZE]; omega
 
-/-- **PROVEN** (ceiling schedule): the ceiling stays in `[1, BATCH_SIZE]` and doubles. -/
+/-- **PROVEN** (ceiling schedule): the ceiling doubles (capped at `BATCH_SIZE`) after a
+packed batch and is kept after an empty call. -/
 theorem emit_ceiling (f : Nat → Option (RowIter β)) (s : St β) :
-    (emit f s).2.ceiling = min (s.ceiling * 2) BATCH_SIZE := rfl
+    (emit f s).2.ceiling =
+      if (emit f s).1 = none then s.ceiling else min (s.ceiling * 2) BATCH_SIZE := by
+  simp only [emit]; split <;> simp_all
+
+/-- **PROVEN** (#3071): an `emit_lazy` call that packs nothing (e.g. the one an operator
+makes before seeding its first input) leaves the ceiling alone, so the first real batch is
+still sized to the hint. -/
+theorem emit_none_ceiling (f : Nat → Option (RowIter β)) (s : St β) (h : (emit f s).1 = none) :
+    (emit f s).2.ceiling = s.ceiling := by
+  rw [emit_ceiling, if_pos h]
+
+/-- **PROVEN**: after a packed batch the ceiling doubles, capped at `BATCH_SIZE`. -/
+theorem emit_some_ceiling (f : Nat → Option (RowIter β)) (s : St β) (out : List (Nat × β))
+    (h : (emit f s).1 = some out) : (emit f s).2.ceiling = min (s.ceiling * 2) BATCH_SIZE := by
+  rw [emit_ceiling, if_neg (by rw [h]; simp)]
+
+/-- `lift_pack_ceiling` puts the ceiling at `BATCH_SIZE` (inside `[1, BATCH_SIZE]`) and
+drops no work, so `drive_flatten` applies after it. -/
+theorem lift_spec (f : Nat → Option (RowIter β)) (s : St β) :
+    (lift s).ceiling = BATCH_SIZE ∧ 1 ≤ (lift s).ceiling ∧ remaining f (lift s) = remaining f s :=
+  ⟨rfl, by simp [lift, BATCH_SIZE], rfl⟩
 
 theorem ceiling_bounds (c : Nat) (h1 : 1 ≤ c) (h2 : c ≤ BATCH_SIZE) :
     1 ≤ min (c * 2) BATCH_SIZE ∧ min (c * 2) BATCH_SIZE ≤ BATCH_SIZE := by
@@ -412,7 +438,7 @@ theorem remaining_seed (f : Nat → Option (RowIter β)) (s : St β) (b : List N
 /-- **PROVEN** (headline, emitter correctness): the batches an emitter-driven operator
 yields, concatenated, are exactly the per-row expansions of every active input row, in
 order — for any initial `record_cap`. So the pack ceiling is only a batch-size hint and
-cannot change a query's rows (contrast `Budget.hard_cap_unsound_*`). -/
+cannot change a query's rows (the hard stops use `Budget.hardRecordCap` instead). -/
 theorem drive_flatten (f : Nat → Option (RowIter β)) :
     ∀ (fuel : Nat) (s : St β) (bs : List (List Nat)),
       1 ≤ s.ceiling → s.ceiling ≤ BATCH_SIZE →
@@ -429,7 +455,7 @@ theorem drive_flatten (f : Nat → Option (RowIter β)) :
       rw [he] at hinv
       simp only [Option.getD_some] at hinv
       have hc : s'.ceiling = min (s.ceiling * 2) BATCH_SIZE := by
-        have := emit_ceiling f s; rw [he] at this; exact this
+        have := emit_some_ceiling f s out (by rw [he]); rw [he] at this; exact this
       have hl : (remaining f s').length < (remaining f s).length := by
         rw [← hinv, List.length_append]
         have : out.length ≠ 0 := by simpa using hne
@@ -439,8 +465,8 @@ theorem drive_flatten (f : Nat → Option (RowIter β)) :
     · next s' he =>
       have hn := emit_none_remaining f s h1 (by rw [he])
       rw [he] at hn
-      have hc : s'.ceiling = min (s.ceiling * 2) BATCH_SIZE := by
-        have := emit_ceiling f s; rw [he] at this; exact this
+      have hc : s'.ceiling = s.ceiling := by
+        have := emit_none_ceiling f s (by rw [he]); rw [he] at this; exact this
       split
       · simp [hn.1, flatAll]
       · next b bs' =>

@@ -25,10 +25,10 @@ graph/src/runtime/ops/sort.rs	eq	156	PROVEN	SortCmp.heEq: heEq_partial, heapCmp_
 graph/src/runtime/ops/sort.rs	partial_cmp	165	PROVEN	SortCmp.hePartialCmp: heEq_partial
 graph/src/runtime/ops/sort.rs	cmp	173	PROVEN	SortCmp.heapCmp: heapCmp_seq_strict, lexCmp_swap, Discharge.heapCmp_main (heapCmp_swap/heapCmp_refl with Lawful sort_cmp discharged: Discharge.lawful_main)
 graph/src/runtime/ops/sort.rs	classify_sort_key	203	PROVEN	SortKey.classifySortKey: classifySortKey_get, classifyPure_lossless
-graph/src/runtime/ops/sort.rs	new	277	PROVEN	SortSt.new: sort_new_spec
-graph/src/runtime/ops/sort.rs	build_full_sort	302	PROVEN	isort, sorted_isort (+ truncate: sort_skip_limit)
-graph/src/runtime/ops/sort.rs	build_top_k	403	PROVEN	rustStep_eq_sem, topk_eq_take_sort
-graph/src/runtime/ops/sort.rs	next	504	PROVEN	sort_skip_limit (cap = k + s, saturating)
+graph/src/runtime/ops/sort.rs	new	276	PROVEN	SortSt.new: sort_new_spec (record_cap)
+graph/src/runtime/ops/sort.rs	build_full_sort	299	PROVEN	isort, sorted_isort (+ truncate: sort_skip_limit)
+graph/src/runtime/ops/sort.rs	build_top_k	400	PROVEN	rustStep_eq_sem, topk_eq_take_sort
+graph/src/runtime/ops/sort.rs	next	501	PROVEN	sort_skip_limit (cap = hard_record_cap = k + s, saturating), sort_cap_sound
 graph/src/runtime/ops/limit.rs	new	32	PROVEN	LimitSt.new: limit_new_spec
 graph/src/runtime/ops/limit.rs	next	52	PROVEN	limitOp_spec, limit_zero
 graph/src/runtime/ops/skip.rs	new	32	PROVEN	SkipSt.new: skip_new_spec

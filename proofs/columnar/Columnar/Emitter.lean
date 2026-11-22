@@ -12,6 +12,7 @@ gathers the parent columns by the packed parent rows.
 | --- | --- |
 | `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs`; the clamp is) — `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))` |
 | `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` |
+| `liftPackCeiling` | `lift_pack_ceiling` |
 | `drain` | `drain_pending_entry` |
 | `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` |
 | `emitLazy` | `emit_lazy` |
@@ -45,6 +46,16 @@ theorem withBinding_le_batch (rc : Option Nat) : 1 ≤ withBinding rc ∧ withBi
 
 theorem grow_bounds {c : Nat} (h : 1 ≤ c ∧ c ≤ BATCH_SIZE) : 1 ≤ grow c ∧ grow c ≤ BATCH_SIZE := by
   unfold grow BATCH_SIZE at *; omega
+
+/-- `lift_pack_ceiling` (#3071): `pack_ceiling = BATCH_SIZE`, used when a downstream
+filter (bidirectional dedup) may drop rows so a lowered hint must not apply. -/
+def liftPackCeiling (_c : Nat) : Nat := BATCH_SIZE
+
+/-- The lifted ceiling is in `[1, BATCH_SIZE]`, so `emitAll_spec` (all items, in order,
+non-empty batches of at most `BATCH_SIZE`) still applies after a lift. -/
+theorem liftPackCeiling_bounds (c : Nat) :
+    1 ≤ liftPackCeiling c ∧ liftPackCeiling c ≤ BATCH_SIZE ∧ liftPackCeiling c = BATCH_SIZE := by
+  simp [liftPackCeiling, BATCH_SIZE]
 
 /-- A lowered ceiling reaches `BATCH_SIZE` again (here: 10 → … → 1024 in 7 steps). -/
 theorem grow_reaches : Nat.repeat grow 7 (withBinding (some 10)) = BATCH_SIZE := by decide
