@@ -252,14 +252,25 @@ structure CT where
   toV : Var
   /-- The edge alias (`relationship.alias`). -/
   edgeV : Var
+  /-- The hops already fused into it (`chain`). -/
+  chain : List Nat
+
+/-- `can_fuse`'s sibling rule (#3639): every sibling is one of the two hops' own edges. -/
+def onlyPair (p c : CT) (sib : List Nat) : Bool :=
+  sib.all fun i => i == p.edgeV.id || i == c.edgeV.id
 
 /-- `can_fuse(parent, child)`; `unread` = `intermediate_unreferenced` (whole plan since #2390).
 #2390 dropped the `node_attrs_empty(intermediate)` test (its map is a Filter now, which the
-reference check sees) and added the two edges to the reference check (:181-185). -/
+reference check sees) and added the two edges to the reference check. #3639 admits siblings
+that are only these two hops' edges, when neither hop carries a chain: over a directed pair
+they can share an edge only at a self-loop, which the fused operator subtracts
+(proofs/ops_traverse `walks2_distinct_count`). -/
 def canFuse (p c : CT) (unread : Var → Bool) : Bool :=
   p.bind && c.bind && !p.optional && !c.optional && !p.transposed && !c.transposed &&
   isUnnamed p.edgeName && isUnnamed c.edgeName && !p.emit && !c.emit &&
-  p.siblings.isEmpty && c.siblings.isEmpty && !p.bidirectional && !c.bidirectional &&
+  onlyPair p c p.siblings && onlyPair p c c.siblings &&
+  ((p.siblings.isEmpty && c.siblings.isEmpty) || (p.chain.isEmpty && c.chain.isEmpty)) &&
+  !p.bidirectional && !c.bidirectional &&
   !p.varLen && !c.varLen && attrsEmpty p.edgeAttrs && attrsEmpty c.edgeAttrs &&
   p.fromV == c.toV && isUnnamed p.fromName && p.fromLabels.isEmpty &&
   unread p.fromV && unread p.edgeV && unread c.edgeV
@@ -267,17 +278,32 @@ def canFuse (p c : CT) (unread : Var → Bool) : Bool :=
 /-- Fusion only happens on two plain, storage-direction, anonymous, unfiltered,
 fixed-length hops whose shared middle node is anonymous, unlabelled and — like both
 edges — read by no operator of the plan (its inline map, if any, is a Filter that reads
-it) — the preconditions of `fuse_same_support` (Passes.lean). -/
+it) — the preconditions of `fuse_same_support` (Passes.lean); their siblings are at most
+each other, and only on a two-hop chain. -/
 theorem canFuse_spec (p c : CT) (u : Var → Bool) (h : canFuse p c u = true) :
     p.optional = false ∧ c.optional = false ∧ p.emit = false ∧ c.emit = false ∧
     isUnnamed p.edgeName = true ∧ isUnnamed c.edgeName = true ∧ p.fromV = c.toV ∧
     isUnnamed p.fromName = true ∧ p.fromLabels = [] ∧
     p.edgeAttrs = .node .map [] ∧ c.edgeAttrs = .node .map [] ∧ p.varLen = false ∧ c.varLen = false ∧
-    p.siblings = [] ∧ c.siblings = [] ∧ u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
-  simp only [canFuse, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff] at h
+    (∀ i ∈ p.siblings, i = p.edgeV.id ∨ i = c.edgeV.id) ∧
+    (∀ i ∈ c.siblings, i = p.edgeV.id ∨ i = c.edgeV.id) ∧
+    ((p.siblings = [] ∧ c.siblings = []) ∨ (p.chain = [] ∧ c.chain = [])) ∧
+    p.bidirectional = false ∧ c.bidirectional = false ∧ p.transposed = false ∧ c.transposed = false ∧
+    u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
+  simp only [canFuse, onlyPair, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true',
+    beq_iff_eq, List.isEmpty_iff, List.all_eq_true, decide_eq_true_eq] at h
   simp only [← attrsEmpty_iff]
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
-    first | exact h.2 | exact h.1.2 | exact h.1.1.2 | simp_all
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, _⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩, h9⟩, h10⟩, hps⟩, hcs⟩, hsc⟩, hb1⟩, hb2⟩, hv1⟩, hv2⟩, ha1⟩, ha2⟩, hft⟩, hfn⟩, hfl⟩, hu1⟩, hu2⟩, hu3⟩ := h
+  exact ⟨h3, h4, h9, h10, h7, h8, hft, hfn, hfl, ha1, ha2, hv1, hv2, hps, hcs, hsc, hb1, hb2,
+    h5, h6, hu1, hu2, hu3⟩
+
+/-- Without siblings the rule is the one before #3639: both hops sibling-free. -/
+theorem canFuse_no_siblings (p c : CT) (u : Var → Bool) (h : canFuse p c u = true)
+    (hc : p.chain ≠ [] ∨ c.chain ≠ []) : p.siblings = [] ∧ c.siblings = [] := by
+  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hsc, -⟩ := canFuse_spec p c u h
+  rcases hsc with h1 | ⟨h1, h2⟩
+  · exact h1
+  · rcases hc with hc | hc <;> contradiction
 
 /-! ## `fuse_optional_traverse` -/
 

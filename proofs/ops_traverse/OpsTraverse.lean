@@ -1,6 +1,5 @@
 import OpsTraverse.Basic
 import OpsTraverse.CondTraverse
-import OpsTraverse.BidirDedup
 import OpsTraverse.VarLen
 import OpsTraverse.ShortestPaths
 import OpsTraverse.Scans

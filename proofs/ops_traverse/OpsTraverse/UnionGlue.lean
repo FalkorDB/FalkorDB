@@ -3,7 +3,7 @@ import OpsTraverse.CondTraverse
 import OpsTraverse.CTGlue
 import GraphblasWrappers.DeltaLmxm
 /-
-# Multi-type traversal (#3492): matrix selection, `delta_lmxm_into`, builders, `expand_union_row`
+# Multi-type traversal (#3492): matrix selection, `count_lmxm_into`'s support, builders, `expand_union_row`
 
 | here | there |
 | --- | --- |
@@ -12,7 +12,7 @@ import GraphblasWrappers.DeltaLmxm
 | `buildUnion`, `transposedPairs` | `build_union_iter` (:317); `build_transposed_union_iter` (:352), whose pair set is the forward union's swapped back (`transposedPairs`) |
 | `fwdOkOf`                    | the `fwd_ok` / `rev_ok` of `build_state` (:512-531) |
 | `pickMatrix`                 | the `TraversalMatrix` selection of `expand_batch` (:615-650, chain hops :658-680) |
-| `deltaInto`, `TMat`          | `TraversalMatrix::delta_lmxm_into` (:86-112) |
+| `deltaInto`, `TMat`          | the support of `TraversalMatrix::count_lmxm_into` (#3639 replaced `delta_lmxm_into` by the `PLUS_PAIR` count; `BoolUnion` is `union`'s support; counts: `CondTraverse.hopCount_eq`) |
 | `expandRowP`, `expandUnionRow` | `expand_row`'s forward/reverse blocks over `PairIters<UnionIter>` = `expand_union_row` (:1121) |
 | `expandRowDispatch`          | the `state.union.is_some()` branch of `expand_row` (:963-990) |
 -/
@@ -157,7 +157,44 @@ theorem pickMatrix_spec {A T Ty : Type} (adj : A) (get : Ty → Option T) (t u :
     rw [← relationshipTensors_none]
     cases relationshipTensors get (t :: u :: rest) <;> simp
 
-/-! ## `delta_lmxm_into` -/
+/-- `untyped_traversal_matrix` (#3639): the adjacency counts each pair once, so it is used only
+while no pair holds two edges (`relationship_count <= nvals`) or there is no tensor; otherwise the
+tensors, which count every edge. -/
+def untypedSel {A T : Type} (adj : A) (relCount nvals : Nat) : List T → Sel A T
+  | [] => .bool adj
+  | [t] => if relCount ≤ nvals then .bool adj else .u64 t
+  | t :: u :: rest => if relCount ≤ nvals then .bool adj else .union (t :: u :: rest)
+
+/-- The forward selection since #3639: `pickMatrix` with the untyped case `untypedSel`. -/
+def pickMatrixN {A T Ty : Type} (adj : A) (get : Ty → Option T) (relCount nvals : Nat)
+    (tensors : List T) : List Ty → Option (Sel A T)
+  | [] => some (untypedSel adj relCount nvals tensors)
+  | ts => pickMatrix adj get ts
+
+theorem untypedSel_spec {A T : Type} (adj : A) (rc nv : Nat) (ts : List T) :
+    (rc ≤ nv ∨ ts = [] → untypedSel adj rc nv ts = .bool adj) ∧
+    (nv < rc → ∀ t, ts = [t] → untypedSel adj rc nv ts = .u64 t) ∧
+    (nv < rc → 2 ≤ ts.length → untypedSel adj rc nv ts = .union ts) := by
+  refine ⟨fun h => ?_, fun h t ht => ?_, fun h hl => ?_⟩
+  · rcases h with h | h
+    · match ts with
+      | [] => rfl
+      | [_] => simp [untypedSel, h]
+      | _ :: _ :: _ => simp [untypedSel, h]
+    · subst h; rfl
+  · subst ht; simp [untypedSel, Nat.not_le.2 h]
+  · match ts, hl with
+    | _ :: _ :: _, _ => simp [untypedSel, Nat.not_le.2 h]
+
+/-- A typed hop selects as before. -/
+theorem pickMatrixN_typed {A T Ty : Type} (adj : A) (get : Ty → Option T) (rc nv : Nat)
+    (tensors : List T) (ts : List Ty) (h : ts ≠ []) :
+    pickMatrixN adj get rc nv tensors ts = pickMatrix adj get ts := by
+  cases ts with
+  | nil => exact absurd rfl h
+  | cons _ _ => rfl
+
+/-! ## `delta_lmxm_into`, now the support of `count_lmxm_into` -/
 
 open GBWDelta
 
@@ -182,8 +219,9 @@ theorem foldl_eadd (n : Nat) (F : Pat) (rest : List VM.VM) :
     rw [List.foldl_cons, ih]
     simp [eadd, or_assoc]
 
-/-- `TraversalMatrix::delta_lmxm_into` (cond_traverse.rs): one `delta_lmxm`, or for the union
-the first type into `f` and each further type, from a copy of the original frontier, OR-ed in. -/
+/-- The entries `TraversalMatrix::count_lmxm_into` (cond_traverse.rs) leaves non-zero: one product,
+or for a union the first type into `f` and each further type, from a copy of the original
+frontier, added in (`add_counts`; a sum of counts is non-zero where one of them is). -/
 noncomputable def deltaInto (n : Nat) (F : Pat) : TMat → Pat
   | .bool v => lm n F v
   | .u64 v => lm n F v

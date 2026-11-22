@@ -12,8 +12,8 @@ graph/src/planner/optimizer/eliminate_true_filters.rs	eliminate_true_filters	102
 graph/src/parser/ast.rs	Variable::is_unnamed	231	PROVEN	Helpers.varIsUnnamed_iff, varIsUnnamed_named, varIsUnnamed_eq (alias None or Anon is unnamed; a written name, _anon_x included, never; isUnnamed is the test on the name Alias::name yields)
 graph/src/planner/optimizer/fuse_anonymous_traverse.rs	rel_attrs_empty	39	PROVEN	Helpers.attrsEmpty_iff (exactly the empty Map)
 graph/src/planner/optimizer/fuse_anonymous_traverse.rs	intermediate_unreferenced	67	PROVEN	References2.wholeRead (whole-plan BFS since #2390): anyRead_plug, wholeRead_covers (sees readers inside and outside the hops), fuse_unread_sound (with refsNew_complete)
-graph/src/planner/optimizer/fuse_anonymous_traverse.rs	can_fuse	79	PROVEN	Helpers.canFuse_spec (all preconditions of Passes.fuse_same_support; #2390: no node_attrs_empty, both edges also unreferenced)
-graph/src/planner/optimizer/fuse_anonymous_traverse.rs	fuse_anonymous_traverse	188	PROVEN	Passes.fuse_same_support, fuse_changes_multiplicity; Helpers.canFuse_spec; References2.fuse_unread_sound
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	can_fuse	79	PROVEN	Helpers.canFuse_spec (all preconditions of Passes.fuse_same_support; #2390: no node_attrs_empty, both edges also unreferenced; #3639: siblings only the two hops' edges, and then no chain: onlyPair), canFuse_no_siblings
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	fuse_anonymous_traverse	197	PROVEN	Passes.fuse_same_support, fuse_counts_paths, fuse_diamond_two_rows (#3639 path counts; fuse_changes_multiplicity is C's boolean product); Helpers.canFuse_spec; References2.fuse_unread_sound
 graph/src/planner/optimizer/references.rs	ir_references_variable	41	PROVEN	References.refsNew: refsNew_complete (every read seen, under the planner invariant PlanInv = planner_build planMatch_stripped), refsNew_sound (only reads or bound vars), refsNew_sees_unwind/create/foreach; refsNew_misses_sibling_edges (W2-traverse-1)
 graph/src/planner/optimizer/references.rs	index_query_references_variable	186	PROVEN	References.iqLoop/iqRefs: iqLoop_iff (explicit stack = some operand mentions v, any And/Or depth), iqRefs_iff
 graph/src/planner/optimizer/references.rs	query_graph_references_variable	217	PROVEN	References.qgRefs (node attrs then rel attrs), within refsNew_complete/refsNew_sound
@@ -42,7 +42,7 @@ graph/src/planner/optimizer/reduce_bound_edge.rs	edge_read_after_a_with_barrier_
 graph/src/planner/optimizer/reduce_bound_edge.rs	optional_traverse_keeps_the_distinction	161	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
 graph/src/planner/optimizer/reduce_count.rs	reduce_count	54	PROVEN	Passes.reduce_count_correct, reduce_count_stale
 graph/src/planner/optimizer/reduce_count.rs	extract_count_variable	193	PROVEN	Helpers.countVar_spec (count(var) -> var.id, scope dropped)
-graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	19	PROVEN	References2.ancestorsRead refsNew vs readOutside_iff, main_misses_call_sibling (still open); References.refsNew_misses_sibling_edges (W2-traverse-1, still open)
+graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	19	PROVEN	References2.ancestorsRead refsNew vs readOutside_iff, main_misses_call_sibling (still open); References.refsNew_misses_sibling_edges (W2-traverse-1 oracle gap; exact at runtime since #3639, ops_traverse twoHopN_eq_emit)
 graph/src/planner/optimizer/reduce_var_len_path.rs	reduce_var_len_path	27	PROVEN	References2.ancestorsRead refsNew (same oracle and walk); References.refsNew_complete (CVLT edge attrs/edge_filter/path_var seen); UNWIND r loss fixed by #2390
 graph/src/planner/optimizer/reduce_var_len_path.rs	optimized_varlen_plan	73	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
 graph/src/planner/optimizer/reduce_var_len_path.rs	emit_paths	87	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
