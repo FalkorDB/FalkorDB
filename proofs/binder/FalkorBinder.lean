@@ -67,7 +67,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | `RC`, `bindIR`, `shortestOk`, `mergeOk`, `yieldLoop`, `bindYield`, `bindCallSubquery`, `importProjections`, `createCheck` (BindIR.lean) | `bind_ir` :262, `bind_call_subquery` :716, `build_import_projections` :984, `bind_graph_create` :1562 |
 | `mayBool`, `mayEntity`, `validate` (Types.lean) | `expr_may_return_boolean` :2323, `expr_may_return_entity` :2392, `validate_boolean_operands(_impl)` :2297/2301 |
 | `nodeToValue`, `collectConstArgs`, `foldCall`, `rewriteStruct`, `rewriteRegex` (Fold.lean) | `expr_tree_to_value` :2465, `collect_constant_args` :2497, folding :2124, `rewrite_struct_constructor` :2515, `rewrite_compiled_regex` :2580 |
-| `exprIrEq`, `strip`/`eqS`, `structEq`, `replaceAgg` (AggEq.lean) | `expr_ir_eq` :2682, `nodes_eq` :2652, `raw_exprs_structurally_equal` :2644, `replace_agg_subtrees` :2614 |
+| `constEq`, `exprIrEq`, `strip`/`eqS`, `structEq`, `replaceAgg` (AggEq.lean) | `constants_equal` :2843, `expr_ir_eq` :2896, `nodes_eq` :2866, `raw_exprs_structurally_equal` :2858, `replace_agg_subtrees` :2809 (#3254) |
 
 ## Proven (one line each)
 * `fresh_not_used`, `mint_new_covers`, `reinsert_covers`: minting under a new key is fresh and keeps the table covering.
@@ -93,7 +93,8 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
   `bind_iterable_outer`; per-arm `bindIR` theorems (`shortestOk_iff`, `mergeOk_*`, `yieldLoop_ok`,
   `callSubquery_covers`, `importProjections_covers`, `createCheck_*`); `mayBool_sound_except`, `mayEntity_eq`;
   `nodeToValue_sound`/`_complete`, `foldCall_sound`, `rewriteStruct_shape`, `rewriteRegex_spec`;
-  `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`.
+  `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`; #3254 `exprIrEq_exact_any_kind`,
+  `const_kinds_distinguished`, `order_by_float_rejected`/`_equal` (bug 9 fixed).
 * #2845 CALL entry projection (`CallBoundary`, folded in from the retired pr2845_review):
   `Pr2845.bodyNew_entry`, `importProj_spec`, `entry_ids_below`, `body_own_unbound`,
   `body_import_value`, `union_branch_label_fixed` (#3027), `pushed_read_unbound` (W6-opt-1).
@@ -139,13 +140,14 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
    `RETURN true AND -null` → Rust error, C `null`. Lean `getElement_rejected`, `negate_rejected`
    (`mayBool_sound_except`: sound for every other variant). Fix: move `GetElement` (and the null-capable
    unary/list forms) to the "runtime-typed → true" arm.
-9. **ORDER BY aggregate matched to the wrong projection** (NEW, `expr_ir_eq` binder.rs:2682 falls back to
+9. **ORDER BY aggregate matched to the wrong projection** (FIXED by #3254: constants compared by value,
+   quantifier kinds compared; Lean `const_kinds_distinguished`, `order_by_float_rejected`; history below; `expr_ir_eq` binder.rs:2682 falls back to
    `discriminant` equality, so every two `Constant`s of different kinds — Int vs Float, Null vs Int,
    Bool vs Int, String vs Int — and any two quantifiers compare equal): `CREATE (:N {g:1, v:3}), (:N {g:2, v:4})`,
    `MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m ORDER BY max(n.v % 4.0)` → Rust rows `[1,0],[2,1]`
    (sorted by `m`), C `failed to map aggregation expression within ORDER BY clause, please use alias`
    (openCypher order by `max(v % 4.0)` would be `[2,1],[1,0]`); with `% 4` (Int) Rust also rejects.
-   Lean `order_by_wrong_aggregate`, `const_kinds_conflated`. Fix: compare `Constant` values with
+   Lean `pre3254_order_by_wrong_aggregate`, `pre3254_const_kinds_conflated`. Fix: compare `Constant` values with
    type-aware equality (`Value` equality, not discriminant) and compare quantifier kinds.
 
 ## Spec vs C disagreements (not Rust-vs-C bugs)
@@ -175,7 +177,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * #3011: generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY
   expressions repeating a projection read its alias), guarded by `is_alias_rewritable`, which admits
   `Constant(Bool|Int|Float|String)` — exactly the kinds `expr_ir_eq` conflates with each other
-  (`const_kinds_conflated`). With it, bug 9 would extend to plain expressions, e.g.
+  (`pre3254_const_kinds_conflated`; fixed by #3254). Before #3254, bug 9 would extend to plain expressions, e.g.
   `RETURN n.v % 3 AS k ORDER BY n.v % 4.0` (sorted by `k`). Fix bug 9 first (or compare constants by value).
 
 ## Gaps
