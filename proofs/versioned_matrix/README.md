@@ -63,7 +63,8 @@ No. `mayHold_sound` (bit-exact over `BitVec 64`) proves `may_hold` never answers
 | `newIt_abs`, `seek_abs` | `Iter::new` and `seek` produce exactly that stream | `IterSeek.lean` |
 | `addBatch_correct`, `removeBatch_correct` | Adding or removing edges on a pair keeps the multi-edge invariants and changes exactly the batch | `TensorProofs.lean` |
 | `colDegree_eq` | `col_degree` never hits `unreachable!` and counts every incoming edge | `TensorOps.lean` |
-| `resizeT_edges`, `resizeT_allInv` | `Tensor::resize` never shrinks, so it never drops an entry and keeps every invariant | `TensorResize.lean` |
+| `resizeT_edges`, `resizeT_allInv` | `Tensor::resize` never shrinks, so it never drops an entry and keeps every invariant | `TensorClean.lean` | `clean_fwd`/`clean_bwd`: the lent base is the effective structure (`cleanFwd_eq_extract`, `cleanBwd_eq_eff`) |
+| `TensorResize.lean` |
 | `snapshot_isolation`, `reader_view_frozen` | A published version's matrices never change | `Cow.lean` |
 | `refused_commit_publishes_nothing` | A version that fails validation is never published | `Cow.lean` |
 | `mayHold_sound`, `slot_word_lt` | The row filter never wrongly answers "no" and never indexes out of bounds | `RowFilter.lean` |

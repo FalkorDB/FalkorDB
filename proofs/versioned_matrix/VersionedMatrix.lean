@@ -24,3 +24,4 @@ import VersionedMatrix.TensorResize
 import VersionedMatrix.CowGlue
 import VersionedMatrix.CountRows
 import VersionedMatrix.TensorSave
+import VersionedMatrix.TensorClean
