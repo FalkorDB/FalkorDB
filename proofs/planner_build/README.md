@@ -68,6 +68,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 | `selfLoops_perm`, `deferred_after_binder`, `eq_reference` | The hop order keeps every hop and places a self-loop after its binder | `HopOrder.lean` |
 | `lowerInline_once`, `planMatch_stripped` | Inline maps become one Filter each, and no operator keeps one | `PlanMatch.lean`, `PlanMatch2.lean` |
 | `rebuild_keeps_where` | The previous MATCH's WHERE survives the scan rebuild | `Match.lean` |
+| `checkDepth_ok_iff`, `optStack_spec` | `check_depth` rejects exactly the plans the optimizer could grow past `MAX_PLAN_DEPTH`; an accepted plan's optimizer stack covers every level it can reach | `PlanStack.lean` |
 
 ### How `query_correct` is proved
 
@@ -124,6 +125,7 @@ There are no CONDITIONAL rows in this project.
 | `Ast.lean`, `Ast2.lean` | `parser/ast.rs`: variables, query graphs, connected components, validation, `Display` |
 | `PathBind.lean` | Named paths over an already-bound node: `BindsAllPaths`, `planMatchArm` (the MATCH arm), `Plan.argIsLeaf`, bugs #2311, #2727, #2737, #2743, #2744, #2725 |
 | `RemoveVerified.lean` | #3450: `VerifiedSound` (verified labels are on the node), REMOVE / WITH effect on `verified_labels`, `bug3450_remove_keeps_verified_label` |
+| `PlanStack.lean` | #3305 plan-depth caps and stack sizing: `optimizer_depth_bound` (`PT.bound`), `check_depth`/`check_height` (`checkDepth_ok_iff`: the `len()` shortcut is sound), `with_plan_stack`/`with_optimizer_stack` return `f()` and reserve base + levels × per-level |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.
