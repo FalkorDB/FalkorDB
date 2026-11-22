@@ -56,13 +56,26 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// enclosing `Apply` propagates through `Argument`. Returns `None` for
 /// operators that pass their input environment through unchanged, where the
 /// subtree's variables are the right answer.
-fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
+fn branch_output_variables(
+    node: &orx_tree::DynNode<IR>,
+    include_copies: bool,
+) -> Option<HashSet<u32>> {
+    // A copy is `(read from, written to)`: a later reader finds it in the
+    // written-to slot. The same-clause WHERE / ORDER BY reads it there, but no
+    // later clause can name it, so `branch_visible_variables` leaves copies out.
+    let copied = |copies: &[(Variable, Variable)]| -> Vec<u32> {
+        if include_copies {
+            copies.iter().map(|(_, v)| v.id).collect()
+        } else {
+            vec![]
+        }
+    };
     match node.data() {
         IR::Project { exprs, copies } => Some(
             exprs
                 .iter()
                 .map(|(v, _)| v.id)
-                .chain(copies.iter().map(|(v, _)| v.id))
+                .chain(copied(copies))
                 .collect(),
         ),
         IR::Aggregate {
@@ -71,33 +84,35 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
             names
                 .iter()
                 .map(|v| v.id)
-                .chain(projections.iter().map(|(v, _)| v.id))
+                .chain(copied(projections))
                 .collect(),
         ),
         _ => None,
     }
 }
 
-/// Variables the rows leaving `node` carry.
-///
-/// Like `collect_subtree_variables`, except that below an env-resetting
-/// operator only its named outputs survive. Variable IDs are per scope, so a
-/// variable matched below a `WITH` can share its ID with an unrelated one
-/// bound after it; counting it as visible would let a filter on the later one
-/// be pushed below the operator that binds it.
+/// Variables a branch makes visible to the right branch of an `Apply` or
+/// `Optional`: every variable of the subtree, except those hidden beneath a
+/// `Project`/`Aggregate`, which only exposes the variables it names (ids are
+/// per scope, so a hidden variable's id may belong to a different variable
+/// further up). A `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer` contributes only its first child.
 fn branch_visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
-    if let Some(outputs) = branch_output_variables(node) {
+    if let Some(outputs) = branch_output_variables(node, false) {
         return outputs;
     }
-    let below: HashSet<u32> = node
-        .children()
-        .flat_map(|child| collect_subtree_variables(&child))
-        .collect();
-    let mut vars: HashSet<u32> = collect_subtree_variables(node)
-        .difference(&below)
-        .copied()
-        .collect();
-    for child in node.children() {
+    let mut vars = collect_subtree_variables(&DynTree::new(node.data().clone()).root());
+    // A (anti) semi-join, or an `OrApplyMultiplexer`, emits only its first
+    // child's rows: the others are existence sub-plans, whose variables never
+    // reach the output.
+    let output_children = if matches!(
+        node.data(),
+        IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+    ) {
+        1
+    } else {
+        usize::MAX
+    };
+    for child in node.children().take(output_children) {
         vars.extend(branch_visible_variables(&child));
     }
     vars
@@ -233,10 +248,11 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 for grandchild in child.children() {
                     // `resets_env` branches expose only their named outputs, so
                     // they must not inherit Argument-propagated variables below.
-                    let (vars, resets_env) = branch_output_variables(&grandchild).map_or_else(
-                        || (collect_subtree_variables(&grandchild), false),
-                        |outputs| (outputs, true),
-                    );
+                    let (vars, resets_env) = branch_output_variables(&grandchild, true)
+                        .map_or_else(
+                            || (collect_subtree_variables(&grandchild), false),
+                            |outputs| (outputs, true),
+                        );
                     children.push((grandchild.idx(), vars, resets_env));
                 }
             }
@@ -269,17 +285,28 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 inherited.extend(left_vars.iter());
             }
 
-            // Case 2: Filter is inside an Apply's right branch.
-            // The left branch's variables are available in the right branch
-            // via Argument propagation. Only applies when the filter is
-            // actually in the right subtree (not the left subtree itself).
+            // Case 2: Filter is inside the right branch of an Apply or an
+            // Optional (both feed their left branch's rows to the right one
+            // through Argument). The left branch's variables are available
+            // in the right branch. Only applies when the filter is actually
+            // in the right subtree (not the left subtree itself). The walk
+            // stops at the nearest such operator: an outer one's variables
+            // only reach this branch through the inner one's left branch, and
+            // ids are per scope, so inheriting them directly would let a
+            // `CALL {}` body variable pass for an outer one with the same id.
+            // When the left branch is a `Project`/`Aggregate` (a `CALL {}`
+            // import), only the variables it names are inherited.
             // Stop the ancestor walk at Merge nodes — Merge's internal
             // match sub-plan has its own Argument leaves that receive
             // variables from Merge's input, not from an enclosing Apply.
             {
                 let mut ancestor = idx;
                 while let Some(parent) = optimized_plan.node(ancestor).parent() {
-                    if matches!(parent.data(), IR::Apply) {
+                    // A single-child `Optional` takes no input of its own: the
+                    // `Apply` above it feeds the row through, so keep walking.
+                    if matches!(parent.data(), IR::Apply)
+                        || (matches!(parent.data(), IR::Optional(_)) && parent.num_children() > 1)
+                    {
                         // Only inherit left-branch variables if the filter
                         // is NOT inside the left branch (child 0) itself.
                         let left_child_idx = parent.child(0).idx();
@@ -300,8 +327,8 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                             }
                         };
                         if !filter_in_left {
-                            let left_vars = branch_visible_variables(&parent.child(0));
-                            inherited.extend(left_vars);
+                            let left = parent.child(0);
+                            inherited.extend(branch_visible_variables(&left));
                         }
                         break;
                     }

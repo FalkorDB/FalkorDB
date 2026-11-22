@@ -16,13 +16,14 @@ computes it, so both families are visible.
 | `Op` | `IR` (`graph/src/planner/mod.rs:200-300`), the operators these repros use |
 | `run` | the runtime ops, eager: `apply.rs:102-340` (right branch re-run per left row with `Argument` = that row), `optional.rs:91-292` (one null row when the branch is empty), `aggregate.rs:288` (no keys → one row even on empty input), `create.rs:101-160`, `merge.rs:67-300` (match else create), `filter.rs:48-80` (`Basic.filterRows`), `unwind.rs`, `node_by_label_scan.rs`, `cond_traverse.rs` (bound destination) |
 | `gv` | `GetVariables::get_variables` (`runtime/runtime.rs:212-330`): `Aggregate` adds `names` and keeps walking, `Project` adds its outputs and `break`s |
-| `branchOut` | `branch_output_variables` (`optimizer/push_filters_down.rs:59-79`) |
+| `branchOut` | `branch_output_variables` (`optimizer/push_filters_down.rs:59-92`; the model's `Project`/`Aggregate` carry no copies, so `include_copies` makes no difference) |
 | `excluded` | the child exclusion list (`push_filters_down.rs:181-200`; before #3582 without the write kinds) |
 | `isWriteOp`, `locked` | `is_write` (:86-99) and `holds_write`/`locked` (:213-223, used at :306), #3582 (`Cfg.pr3582`) |
 | `pushAt` | one Filter's routing (`push_filters_down.rs:138-364`): grandchild variable sets (:176-185), Case 1 (:196-201), Case 2 inherited (`inh`, :210-244), augmentation of `Argument` subtrees (:247-257), the `all` test over ids (:264-276) |
-| `childInh` | Case 2's ancestor walk, top-down: below an `Apply`'s right child the left subtree's visible ids (`bv`, `branch_visible_variables` :88-104, #2981), below its left child nothing, below `Merge` nothing (:237-268) |
+| `childInh` | Case 2's ancestor walk, top-down (:288-341): below an `Apply`'s right child the left branch's visible ids (`bv`, `branch_visible_variables` :99-119, #3281; before it `bvPre3281`, #2981), below its left child nothing, below `Merge` nothing; since #3281 (`Cfg.walk3281`) a two-child `Optional` (`optApply`) ends the walk like an `Apply` |
 | `sweep`, `pushFilters` | the restart loop (:103-370), as a top-down sweep that follows each pushed filter |
 | `Cfg.main` | before #3582: ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs:92-110`), no write barrier |
+| `Cfg.pr3281` | Rust at 21a34f5a3 (#3281): `Cfg.pr3582` with the new walk and `bv` |
 | `Cfg.pr3582` | Rust at 7c04fa598 (#3582): ids only, write kinds excluded, siblings of a writing branch locked; the CP split's `!holds_write` guard (:322) is not modelled (no CP split here) |
 
 The property each bug violates is `EffectSound`: a rewrite keeps the rows
@@ -88,6 +89,10 @@ inductive Op where
   | create (v : Var) (c : Op)
   | merge (v : Var) (c : Op)
   | apply (l r : Op)
+  /-- A two-child `IR::Optional(vs)` (`optional.rs:98-102`): its right branch
+  runs per row of its left child (that row is the `Argument`), and a left row
+  with no right row gets `vs` null-padded. -/
+  | optApply (vs : List Var) (l r : Op)
 deriving Repr
 
 /-! ## Semantics -/
@@ -178,6 +183,11 @@ def run (arg : Row) : Op → G → Res
       forRows (fun x g => do
         let (ys, g) ← run x r g
         pure (ys.map (fun y => x ++ y), g)) xs g
+  | .optApply vs l r, g => do
+      let (xs, g) ← run arg l g
+      forRows (fun x g => do
+        let (ys, g) ← run x r g
+        pure (if ys.isEmpty then [x ++ vs.map (fun v => (v, .null))] else ys, g)) xs g
 
 /-! ## The correctness criteria -/
 
@@ -210,17 +220,25 @@ structure Cfg where
   and a grandchild is locked when a sibling subtree writes (`is_write`,
   `holds_write`/`locked`, push_filters_down.rs:86-99, :213-223, :306). -/
   lockSiblings : Bool
+  /-- #3281: Case 2 inherits the new `branch_visible_variables` (`bv`; before it
+  `bvPre3281`) and a two-child `Optional` (`optApply`) ends the walk like an
+  `Apply` (before it, the walk passed through every `Optional`). -/
+  walk3281 : Bool
 
 /-- Rust before #3582: ids only, no barrier. -/
-def Cfg.main : Cfg := ⟨fun a b => a.id == b.id, false, false⟩
+def Cfg.main : Cfg := ⟨fun a b => a.id == b.id, false, false, false⟩
 
 /-- A candidate fix: `(id, scope)` matching and no push below an operator whose
 subtree writes (`Merge`/`Create`). -/
-def Cfg.fixed : Cfg := ⟨fun a b => a == b, true, false⟩
+def Cfg.fixed : Cfg := ⟨fun a b => a == b, true, false, false⟩
 
 /-- Rust with #3582 (7c04fa598): ids only, write operators excluded, siblings
 of a writing branch locked. -/
-def Cfg.pr3582 : Cfg := ⟨fun a b => a.id == b.id, false, true⟩
+def Cfg.pr3582 : Cfg := ⟨fun a b => a.id == b.id, false, true, false⟩
+
+/-- Rust with #3582 and #3281 (21a34f5a3): as `Cfg.pr3582`, and Case 2 inherits the
+new `branch_visible_variables` and stops at a two-child `Optional`. -/
+def Cfg.pr3281 : Cfg := ⟨fun a b => a.id == b.id, false, true, true⟩
 
 /-- `get_variables` (runtime.rs:212-330). -/
 def gv : Op → List Var
@@ -233,8 +251,9 @@ def gv : Op → List Var
   | .optional vs c => vs ++ gv c
   | .aggregate keys cnt c => aggNames keys cnt ++ gv c
   | .apply l r => gv l ++ gv r
+  | .optApply vs l r => vs ++ gv l ++ gv r
 
-/-- `branch_output_variables` (push_filters_down.rs:59-79). -/
+/-- `branch_output_variables` (push_filters_down.rs:59-92); no copies in the model. -/
 def branchOut : Op → Option (List Var)
   | .project bs _ => some (bs.map Prod.fst)
   | .aggregate keys cnt _ => some (aggNames keys cnt)
@@ -243,21 +262,88 @@ def branchOut : Op → Option (List Var)
 /-- The ids of `xs` that are not ids of `ys` (`HashSet<u32>::difference`). -/
 def idsMinus (xs ys : List Var) : List Var := xs.filter fun v => !ys.any (·.id == v.id)
 
-/-- `branch_visible_variables` (push_filters_down.rs:88-104, #2981): an env-resetting
+/-- `branch_visible_variables` before #3281 (push_filters_down.rs:88-104 at b65fcac00, #2981): an env-resetting
 operator's outputs; otherwise the ids the operator itself adds (its `get_variables` minus its
 children's) and, recursively, what its children's rows carry. -/
+def bvPre3281 : Op → List Var
+  | .argument | .unit => []
+  | .project bs _ => bs.map Prod.fst
+  | .aggregate keys cnt _ => aggNames keys cnt
+  | .filter _ c | .commit c => bvPre3281 c
+  | .unwind v _ c | .allNodeScan v c | .labelScan v _ c | .create v c | .merge v c => idsMinus [v] (gv c) ++ bvPre3281 c
+  | .condTraverse e fr to _ c => idsMinus [e, fr, to] (gv c) ++ bvPre3281 c
+  | .hop e fr to _ c => idsMinus [e, fr.v, to.v] (gv c) ++ bvPre3281 c
+  | .optional vs c => idsMinus vs (gv c) ++ bvPre3281 c
+  | .apply l r => bvPre3281 l ++ bvPre3281 r
+  | .optApply vs l r => idsMinus vs (gv l ++ gv r) ++ bvPre3281 l ++ bvPre3281 r
+
+/-- Every id `bv` reports is one `get_variables` reports: Case 2 inherits no more than before. -/
+theorem bvPre3281_sub_gv : ∀ (op : Op), ∀ v ∈ bvPre3281 op, v ∈ gv op := by
+  intro op
+  induction op with
+  | argument | unit => simp [bvPre3281]
+  | project bs c _ => simp [bvPre3281, gv]
+  | aggregate k n c _ => intro x hx; simp only [bvPre3281] at hx; simp [gv, hx]
+  | filter p c ih => simpa [bvPre3281, gv] using ih
+  | commit c ih => simpa [bvPre3281, gv] using ih
+  | unwind v xs c ih | allNodeScan v c ih | labelScan v l c ih | create v c ih | merge v c ih =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp at h; simp [gv, h]
+    · simp [gv, ih x h]
+  | condTraverse e fr to l c ih =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp only [gv, List.mem_append]; exact Or.inl h
+    · simp [gv, ih x h]
+  | hop e fr to tr c ih =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp only [gv, List.mem_append]; exact Or.inl h
+    · simp [gv, ih x h]
+  | optional vs c ih =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp only [gv, List.mem_append]; exact Or.inl h
+    · simp [gv, ih x h]
+  | apply l r ihl ihr =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append] at hx
+    rcases hx with h | h
+    · simp [gv, ihl x h]
+    · simp [gv, ihr x h]
+  | optApply vs l r ihl ihr =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with (⟨h, _⟩ | h) | h
+    · simp [gv, h]
+    · simp [gv, ihl x h]
+    · simp [gv, ihr x h]
+
+/-- `branch_visible_variables` (push_filters_down.rs:99-119, #3281): an env-resetting
+operator's named outputs (`branch_output_variables(_, false)`: no copies); otherwise
+the variables of the lone operator (`collect_subtree_variables` of a one-node tree, its
+`get_variables` without its children) and, recursively, what its children expose.
+(The model has no `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer`, which expose only
+their first child: `Helpers.visT_semi_first`.) -/
 def bv : Op → List Var
   | .argument | .unit => []
   | .project bs _ => bs.map Prod.fst
   | .aggregate keys cnt _ => aggNames keys cnt
   | .filter _ c | .commit c => bv c
-  | .unwind v _ c | .allNodeScan v c | .labelScan v _ c | .create v c | .merge v c => idsMinus [v] (gv c) ++ bv c
-  | .condTraverse e fr to _ c => idsMinus [e, fr, to] (gv c) ++ bv c
-  | .hop e fr to _ c => idsMinus [e, fr.v, to.v] (gv c) ++ bv c
-  | .optional vs c => idsMinus vs (gv c) ++ bv c
+  | .unwind v _ c | .allNodeScan v c | .labelScan v _ c | .create v c | .merge v c => v :: bv c
+  | .condTraverse e fr to _ c => [e, fr, to] ++ bv c
+  | .hop e fr to _ c => [e, fr.v, to.v] ++ bv c
+  | .optional vs c => vs ++ bv c
   | .apply l r => bv l ++ bv r
+  | .optApply vs l r => vs ++ bv l ++ bv r
 
-/-- Every id `bv` reports is one `get_variables` reports: Case 2 inherits no more than before. -/
+/-- Every id `bv` reports is one `get_variables` reports: Case 2 inherits no more
+than `collect_subtree_variables` would. -/
 theorem bv_sub_gv : ∀ (op : Op), ∀ v ∈ bv op, v ∈ gv op := by
   intro op
   induction op with
@@ -268,26 +354,14 @@ theorem bv_sub_gv : ∀ (op : Op), ∀ v ∈ bv op, v ∈ gv op := by
   | commit c ih => simpa [bv, gv] using ih
   | unwind v xs c ih | allNodeScan v c ih | labelScan v l c ih | create v c ih | merge v c ih =>
     intro x hx
-    simp only [bv, List.mem_append, idsMinus, List.mem_filter] at hx
-    rcases hx with ⟨h, _⟩ | h
-    · simp at h; simp [gv, h]
+    simp only [bv, List.mem_cons] at hx
+    rcases hx with h | h
+    · simp [gv, h]
     · simp [gv, ih x h]
-  | condTraverse e fr to l c ih =>
+  | condTraverse e fr to l c ih | hop e fr to tr c ih | optional vs c ih =>
     intro x hx
-    simp only [bv, List.mem_append, idsMinus, List.mem_filter] at hx
-    rcases hx with ⟨h, _⟩ | h
-    · simp only [gv, List.mem_append]; exact Or.inl h
-    · simp [gv, ih x h]
-  | hop e fr to tr c ih =>
-    intro x hx
-    simp only [bv, List.mem_append, idsMinus, List.mem_filter] at hx
-    rcases hx with ⟨h, _⟩ | h
-    · simp only [gv, List.mem_append]; exact Or.inl h
-    · simp [gv, ih x h]
-  | optional vs c ih =>
-    intro x hx
-    simp only [bv, List.mem_append, idsMinus, List.mem_filter] at hx
-    rcases hx with ⟨h, _⟩ | h
+    simp only [bv, List.mem_append] at hx
+    rcases hx with h | h
     · simp only [gv, List.mem_append]; exact Or.inl h
     · simp [gv, ih x h]
   | apply l r ihl ihr =>
@@ -296,6 +370,48 @@ theorem bv_sub_gv : ∀ (op : Op), ∀ v ∈ bv op, v ∈ gv op := by
     rcases hx with h | h
     · simp [gv, ihl x h]
     · simp [gv, ihr x h]
+  | optApply vs l r ihl ihr =>
+    intro x hx
+    simp only [bv, List.mem_append] at hx
+    rcases hx with (h | h) | h
+    · simp [gv, h]
+    · simp [gv, ihl x h]
+    · simp [gv, ihr x h]
+
+/-- #3281 never hides a variable the pre-#3281 `branch_visible_variables` exposed. -/
+theorem bvPre3281_sub_bv : ∀ (op : Op), ∀ v ∈ bvPre3281 op, v ∈ bv op := by
+  intro op
+  induction op with
+  | argument | unit => simp [bvPre3281]
+  | project bs c _ => simp [bvPre3281, bv]
+  | aggregate k n c _ => simp [bvPre3281, bv]
+  | filter p c ih => simpa [bvPre3281, bv] using ih
+  | commit c ih => simpa [bvPre3281, bv] using ih
+  | unwind v xs c ih | allNodeScan v c ih | labelScan v l c ih | create v c ih | merge v c ih =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp at h; simp [bv, h]
+    · simp [bv, ih x h]
+  | condTraverse e fr to l c ih | hop e fr to tr c ih | optional vs c ih =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with ⟨h, _⟩ | h
+    · simp only [bv, List.mem_append]; exact Or.inl h
+    · simp [bv, ih x h]
+  | apply l r ihl ihr =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append] at hx
+    rcases hx with h | h
+    · simp [bv, ihl x h]
+    · simp [bv, ihr x h]
+  | optApply vs l r ihl ihr =>
+    intro x hx
+    simp only [bvPre3281, List.mem_append, idsMinus, List.mem_filter] at hx
+    rcases hx with (⟨h, _⟩ | h) | h
+    · simp [bv, h]
+    · simp [bv, ihl x h]
+    · simp [bv, ihr x h]
 
 /-- `subtree_contains(…, Argument)` (planner/mod.rs:333). -/
 def hasArg : Op → Bool
@@ -304,7 +420,7 @@ def hasArg : Op → Bool
   | .project _ c | .filter _ c | .unwind _ _ c | .allNodeScan _ c | .labelScan _ _ c
   | .condTraverse _ _ _ _ c | .hop _ _ _ _ c | .optional _ c | .aggregate _ _ c | .commit c
   | .create _ c | .merge _ c => hasArg c
-  | .apply l r => hasArg l || hasArg r
+  | .apply l r | .optApply _ l r => hasArg l || hasArg r
 
 def hasWrite : Op → Bool
   | .argument | .unit => false
@@ -312,11 +428,11 @@ def hasWrite : Op → Bool
   | .project _ c | .filter _ c | .unwind _ _ c | .allNodeScan _ c | .labelScan _ _ c
   | .condTraverse _ _ _ _ c | .hop _ _ _ _ c | .optional _ c | .aggregate _ _ c | .commit c =>
     hasWrite c
-  | .apply l r => hasWrite l || hasWrite r
+  | .apply l r | .optApply _ l r => hasWrite l || hasWrite r
 
 /-- push_filters_down.rs:181-200 before #3582 (the kinds that occur here). -/
 def excluded : Op → Bool
-  | .project _ _ | .aggregate _ _ _ | .merge _ _ | .argument | .optional _ _ => true
+  | .project _ _ | .aggregate _ _ _ | .merge _ _ | .argument | .optional _ _ | .optApply _ _ _ => true
   | _ => false
 
 /-- `is_write` (push_filters_down.rs:86-99), the kinds that occur here; #3582
@@ -334,7 +450,7 @@ def kids : Op → List Op
   | .project _ c | .filter _ c | .unwind _ _ c | .allNodeScan _ c | .labelScan _ _ c
   | .condTraverse _ _ _ _ c | .hop _ _ _ _ c | .optional _ c | .aggregate _ _ c | .commit c
   | .create _ c | .merge _ c => kid c
-  | .apply l r => [l, r]
+  | .apply l r | .optApply _ l r => [l, r]
 
 /-- Replace the children (same shape). -/
 def setKids (op : Op) (ks : List Op) : Op :=
@@ -352,6 +468,7 @@ def setKids (op : Op) (ks : List Op) : Op :=
   | .create v _, [c] => .create v c
   | .merge v _, [c] => .merge v c
   | .apply _ _, [l, r] => .apply l r
+  | .optApply vs _ _, [l, r] => .optApply vs l r
   | op, _ => op
 
 def isApply : Op → Bool
@@ -389,11 +506,13 @@ def pushAt (cfg : Cfg) (inh : List Var) (p : Expr) (c : Op) : Op :=
   if rs.any id then setKids c ((ks.zip rs).map (fun kb => if kb.2 then .filter p kb.1 else kb.1))
   else .filter p c
 
-/-- Case 2, top-down (:237-268); since #2981 the Apply's left side contributes
-`branch_visible_variables` (`bv`), before it `collect_subtree_variables` (`gv`). -/
-def childInh (op : Op) (i : Nat) (inh : List Var) : List Var :=
+/-- Case 2, top-down (:288-341); since #2981 the Apply's left side contributes
+`branch_visible_variables` (`bvPre3281`; since #3281 `bv`), before it `collect_subtree_variables`
+(`gv`). Since #3281 (`walk3281`) a two-child `Optional` ends the walk like an `Apply`. -/
+def childInh (cfg : Cfg) (op : Op) (i : Nat) (inh : List Var) : List Var :=
   match op with
-  | .apply l _ => if i = 0 then [] else bv l
+  | .apply l _ => if i = 0 then [] else if cfg.walk3281 then bv l else bvPre3281 l
+  | .optApply _ l _ => if cfg.walk3281 then (if i = 0 then [] else bv l) else inh
   | .merge _ _ => []
   | _ => inh
 
@@ -407,8 +526,8 @@ def sweep (cfg : Cfg) : Nat → List Var → Op → Op
     | .filter p c =>
       match pushAt cfg inh p c with
       | .filter p' c' => .filter p' (sweep cfg fuel inh c')
-      | t => mapKids (fun i k => sweep cfg fuel (childInh t i inh) k) t
-    | op => mapKids (fun i k => sweep cfg fuel (childInh op i inh) k) op
+      | t => mapKids (fun i k => sweep cfg fuel (childInh cfg t i inh) k) t
+    | op => mapKids (fun i k => sweep cfg fuel (childInh cfg op i inh) k) op
 
 def pushFilters (cfg : Cfg) (op : Op) : Op := sweep cfg 64 [] op
 
@@ -652,6 +771,74 @@ theorem pr3582_3352_fixed :
     run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) :=
   ⟨rfl, rfl, rfl⟩
 
+/-! ## #3281: the new `branch_visible_variables` and a two-child `Optional` ends the walk
+
+`Cfg.pr3281` is the Rust of 21a34f5a3: #3582's lock, and Case 2 inherits the new `bv`
+and stops at a two-child `Optional`. One Filter's routing (`pushAt`) is unchanged, so
+every #3582 theorem about `pushAt` carries over. -/
+
+theorem pushAt_walk_irrel (cfg : Cfg) (b : Bool) :
+    pushAt { cfg with walk3281 := b } = pushAt cfg := rfl
+
+theorem pr3281_is_pr3582_walk : Cfg.pr3281 = { Cfg.pr3582 with walk3281 := true } := rfl
+
+/-- #3352 stays fixed: the `Aggregate` exposes only `p, n`. -/
+theorem pr3281_3352_fixed :
+    bv agg3352 = [p', nV] ∧ routes .pr3281 revoked (bv agg3352) = false ∧
+    pushFilters .pr3281 plan3352 = plan3352 ∧
+    run [] (pushFilters .pr3281 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- #748 and #997 stay fixed: the writes still run. -/
+theorem pr3281_748_plan :
+    pushFilters .pr3281 plan748 =
+      .project [(col, .lit (.int 0))]
+        (.allNodeScan a1 (.apply (.project [(n0, .lit (.int 0))] .unit) (.filter fls body748))) := rfl
+
+theorem pr3281_748_fixed :
+    run [] (pushFilters .pr3281 plan748) g0 = .ok ([], ⟨1, [], []⟩) := rfl
+
+theorem pr3281_997_plan :
+    pushFilters .pr3281 plan997 =
+      .project [(col, .lit (.int 0))]
+        (.allNodeScan a1 (.unwind x [.int 0]
+          (.apply .argument
+            (.filter fls (.aggregate [] none (.commit (.create c0 (.project [] .argument)))))))) := rfl
+
+theorem pr3281_997_fixed :
+    run [] (pushFilters .pr3281 plan997) g0 = .ok ([], ⟨1, [], []⟩) := rfl
+
+theorem pr3281_controls :
+    run [] (pushFilters .pr3281 plan748star) g0 = .ok ([], ⟨1, [], []⟩) ∧
+    run [] (pushFilters .pr3281 (plan997With caseX)) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
+
+/-- `MATCH (a) OPTIONAL MATCH (b) WHERE a = 0 RETURN a, b`: the planner emits a
+two-child `Optional([b])` over the scan of `a` and the match of `b` (with an
+`Argument` leaf). Since #3281 the walk stops there and inherits `bv` of the left
+branch (`a`), so `a = 0` lands on the `Argument`; before it the walk passed the
+`Optional` and inherited nothing. Same rows either way. -/
+def aV : Var := ⟨0, 0⟩
+def bV : Var := ⟨1, 0⟩
+def aIs0 : Expr := .eq (.var aV) (.lit (.int 0))
+def planOpt2 : Op := .optApply [bV] (.allNodeScan aV .unit) (.filter aIs0 (.allNodeScan bV .argument))
+def gOpt2 : G := ⟨2, [], []⟩
+
+theorem opt2_walk_stops :
+    pushFilters .pr3281 planOpt2 =
+      .optApply [bV] (.allNodeScan aV .unit) (.allNodeScan bV (.filter aIs0 .argument)) ∧
+    pushFilters .pr3582 planOpt2 = planOpt2 ∧
+    run [] (pushFilters .pr3281 planOpt2) gOpt2 = run [] planOpt2 gOpt2 ∧
+    run [] planOpt2 gOpt2 =
+      .ok ([[(aV, .int 0), (bV, .int 0)], [(aV, .int 0), (bV, .int 1)], [(aV, .int 1), (bV, .null)]], gOpt2) :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- A variable a lone operator binds again is still visible: #3281 takes the lone
+node's variables (`unwind x` over a `Project` that hides an `x` of the same id),
+where the pre-#3281 set difference dropped it. -/
+theorem bv_rebinding_kept :
+    bv (.unwind x [.int 0] (.project [(x, .lit (.int 0))] .unit)) = [x, x] ∧
+    bvPre3281 (.unwind x [.int 0] (.project [(x, .lit (.int 0))] .unit)) = [x] := ⟨rfl, rfl⟩
+
 /-! ## A general fact the fix can build on -/
 
 /-- `forRows` of a step that never changes the graph does not change it. -/
@@ -680,6 +867,19 @@ theorem run_readonly : ∀ (op : Op) (arg : Row) (g : G) rs g',
     intro arg g rs g' _ h; simp [run] at h; exact h.2.symm
   | create | merge => intro _ _ _ _ hw; simp [hasWrite] at hw
   | apply l r ihl ihr =>
+    intro arg g rs g' hw h
+    simp only [hasWrite, Bool.or_eq_false_iff] at hw
+    simp only [run, bind, Except.bind] at h
+    rcases hl : run arg l g with e | ⟨xs, g1⟩ <;> rw [hl] at h
+    · cases h
+    · try simp only at h
+      rw [forRows_keeps _ (fun x g ys g' hx => by
+          try simp only [bind, Except.bind] at hx
+          rcases hr : run x r g with e | ⟨zs, g2⟩ <;> rw [hr] at hx
+          · cases hx
+          · simp [pure, Except.pure] at hx; rw [← hx.2]; exact ihr x g zs g2 hw.2 hr) xs g1 rs g' h]
+      exact ihl arg g xs g1 hw.1 hl
+  | optApply vs l r ihl ihr =>
     intro arg g rs g' hw h
     simp only [hasWrite, Bool.or_eq_false_iff] at hw
     simp only [run, bind, Except.bind] at h
@@ -902,6 +1102,7 @@ def rowVars : Op → List Var
   | .hop e _ to _ c => [e, to.v] ++ rowVars c
   | .optional vs c => vs ++ rowVars c
   | .apply l r => rowVars l ++ rowVars r
+  | .optApply vs l r => vs ++ rowVars l ++ rowVars r
 
 /-- Every `Filter` reads only variables bound below it. -/
 def filtersBound : Op → Bool
@@ -910,7 +1111,7 @@ def filtersBound : Op → Bool
   | .project _ c | .unwind _ _ c | .allNodeScan _ c | .labelScan _ _ c | .condTraverse _ _ _ _ c
   | .hop _ _ _ _ c | .optional _ c | .aggregate _ _ c | .commit c | .create _ c | .merge _ c =>
     filtersBound c
-  | .apply l r => filtersBound l && filtersBound r
+  | .apply l r | .optApply _ l r => filtersBound l && filtersBound r
 
 /-- **The property #2556 violates.** A plan rewrite never moves a Filter below
 the operator that binds a variable it reads: every Filter of a plan whose
