@@ -417,3 +417,4 @@ graph/src/index/falkordb/tag.rs	TagIndex::scalars	317	NOT COVERED	string trees (
 graph/src/index/falkordb/tag.rs	TagIndex::lists_holding	325	NOT COVERED	string trees (StrTree, StrRanges cursors) not modelled; TagSel.lookupT takes the tag kind's lookups as functions (lookupT_lift: the numeric path does not depend on them)
 graph/src/index/falkordb/tag.rs	TagIndex::is_scalar_in	332	PROVEN	TagSel.tagIn (a string the StrSel holds): tagIn_none, equalT_string_matches, rangeT_string_matches
 graph/src/index/falkordb/tag.rs	TagIndex::is_list_holding	339	PROVEN	TagSel.isHeldBy .tag (a string element of the list): isHeldBy_list, listsHoldingT_string_matches
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	balanced_split	282	NOT COVERED	(#3738): not modelled yet
