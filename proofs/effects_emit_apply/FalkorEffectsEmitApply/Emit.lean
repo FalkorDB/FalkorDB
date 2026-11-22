@@ -4,13 +4,13 @@ import FalkorEffectsEmitApply.Basic
 # The emitter: `gather_rows`, the record stream, and the gate in front of it
 
 Models `graph/src/effects/v3/emit.rs` (`for_each_record` and its digests) and
-the gate that decides whether it runs at all (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1958`).
+the gate that decides whether it runs at all (`runtime/ops/commit.rs`,
+`Pending::effects_count` at `runtime/pending.rs`).
 -/
 
 namespace FalkorEA
 
-/-! ## Attribute lookup and `gather_rows` (`emit.rs:921-949`) -/
+/-! ## Attribute lookup and `gather_rows` (`emit.rs`) -/
 
 /-- The value an entity holds for attribute `a`, or `Null` (a pad). -/
 def lookupAttr : List (Nat × Val) → Nat → Val
@@ -92,7 +92,7 @@ theorem pairwise_dropWhile {α} (R : α → α → Prop) (f : α → Bool) :
     pairs are strictly ascending by attribute id (what `Pending`'s sorted vec
     keeps) and a strictly ascending shape (built from those very vectors), the
     linear merge produces exactly `attr_ids.map(lookup)` — the quadratic
-    per-cell search that `emit.rs:937-940` says it replaced. No cell is taken
+    per-cell search that `emit.rs` says it replaced. No cell is taken
     from the wrong attribute and none is skipped. -/
 theorem mergeRow_eq_lookup :
     ∀ (as : List Nat) (ps : List (Nat × Val)),
@@ -130,7 +130,7 @@ theorem mergeRow_eq_lookup :
       by_cases hk : k = a
       · subst hk
         dsimp only
-        rw [if_pos rfl]
+        rw [ite_eq_left rfl]
         simp only [List.cons.injEq]
         refine ⟨by rw [← key k (Nat.le_refl k)]; simp [lookupAttr], ?_⟩
         rw [ih rest has' hrest]
@@ -140,7 +140,7 @@ theorem mergeRow_eq_lookup :
         have : ¬ k = b := by omega
         simp [lookupAttr, this]
       · dsimp only
-        rw [if_neg hk]
+        rw [ite_eq_right hk]
         simp only [List.cons.injEq]
         have hka : a < k := by have := hhead k v rest rfl; omega
         have hrk : ∀ q ∈ rest, a < q.1 := by
@@ -154,7 +154,7 @@ theorem mergeRow_eq_lookup :
         rw [← key b (Nat.le_of_lt (hlt b hb))]
 
 /-- A width-`n` shape yields `n` cells per id, so `rows.len() == ids.len() * n`
-    — the shape check the decoder and `check_attr_shape` (`apply.rs:720`)
+    — the shape check the decoder and `check_attr_shape` (`apply.rs`)
     apply to it. -/
 theorem mergeRow_length : ∀ (as : List Nat) (ps : List (Nat × Val)),
     (mergeRow as ps).length = as.length := by
@@ -185,7 +185,7 @@ theorem gatherRows_length (attrIds : List Nat) (look : Nat → Option (List (Nat
 example : mergeRow [1, 2] [(2, .int 20), (1, .int 10)] ≠ [1, 2].map (lookupAttr [(2, .int 20), (1, .int 10)]) := by
   decide
 
-/-! ## The record stream (`for_each_record`, `emit.rs:323-375`)
+/-! ## The record stream (`for_each_record`, `emit.rs`)
 
     Records are abstracted to their opcode and the ids they name — enough to
     decide *whether* the stream is empty and what the replica's schema
@@ -228,23 +228,29 @@ structure Pending where
   cancelledNodes    : List Nat
   cancelledRels     : List (Name × Nat)         -- (type name, id)
   baseline          : Schema
+  /-- `staged_labels_removed` (#3459): removals that only cancelled a staged add. -/
+  stagedLabelsRemoved : Nat := 0
 deriving Repr
 
-/-- `Pending::effects_count` (`runtime/pending.rs:1958-1977`), term for term.
-    Note what is **not** summed: `cancelled_nodes`, `cancelled_relationships`,
-    and the schema registered since `baseline`. -/
+/-- `Pending::effects_count` (`runtime/pending.rs`), term for term.
+    Since #3461 (f203972c5) a cancelled node or relationship counts twice (its
+    create and its delete); since #3459 `staged_labels_removed` is added. Note
+    what is still **not** summed: the schema registered since `baseline`. -/
 def effectsCount (p : Pending) : Nat :=
   p.createdNodes.length + p.createdRelTypes.length + p.deletedNodes.length
-  + p.deletedRels.length + p.newNodesAttrs.length + p.existingNodesAttrs.length
+  + p.deletedRels.length
+  + 2 * p.cancelledNodes.length + 2 * p.cancelledRels.length
+  + p.newNodesAttrs.length + p.existingNodesAttrs.length
   + p.newRelsAttrs.length + p.existingRelsAttrs.length
   + (p.setLabels.map (fun q => q.2.length)).sum
   + (p.removeLabels.map (fun q => q.2.length)).sum
+  + p.stagedLabelsRemoved
 
 def suffixRecs (mk : Nat → Name → Rec) (base : Nat) : List Name → List Rec
   | []      => []
   | n :: ns => mk base n :: suffixRecs mk (base + 1) ns
 
-/-- `emit_schema_additions` (`emit.rs:60-92`): every dictionary entry past the
+/-- `emit_schema_additions` (`emit.rs`): every dictionary entry past the
     baseline, with its offset as id. -/
 def schemaAdditions (g : Schema) (b : Schema) : List Rec :=
   suffixRecs .addLabel b.labels.length (g.labels.drop b.labels.length)
@@ -256,8 +262,8 @@ def idxOf (l : List Name) (n : Name) : Option Nat :=
   | some i => some i
   | none   => none
 
-/-- `digest_cancelled` (`emit.rs:395-495`), ids only. A cancelled edge of a type
-    the graph never registered is skipped (`emit.rs:448-454`). -/
+/-- `digest_cancelled` (`emit.rs`), ids only. A cancelled edge of a type
+    the graph never registered is skipped (`emit.rs`). -/
 def digestCancelled (p : Pending) (g : Schema) : List Rec :=
   if p.cancelledNodes.isEmpty && p.cancelledRels.isEmpty then [] else
   let edges := p.cancelledRels.filterMap
@@ -286,24 +292,9 @@ def forEachRecord (p : Pending) (g : Schema) : List Rec :=
   ++ (if p.deletedNodes.isEmpty then [] else [Rec.deleteNode p.deletedNodes []])
   ++ digestCancelled p g
 
-/-- `CommitOp::next` before #2970 (`runtime/ops/commit.rs:108` at 343e077f2):
-    `if estimated > 0 { buf.build(..) }`. Kept as history for W2-effects-1. -/
-def pre2970_commitShips (p : Pending) (g : Schema) : List Rec :=
-  if effectsCount p > 0 then forEachRecord p g else []
-
-/-- `CommitOp::next` since #2970 (`runtime/ops/commit.rs:107-125`), with
-    `build_effects` set: `buf.build(..)` runs unconditionally, so the buffer
-    holds exactly what `for_each_record` emits (an empty one is dropped by
-    `take_effects_buffer`). -/
+/-- `CommitOp` (`runtime/ops/commit.rs`): `if estimated > 0 { buf.build(..) }`. -/
 def commitShips (p : Pending) (g : Schema) : List Rec :=
-  forEachRecord p g
-
-/-- What `CommitOp::next` adds to `runtime.effects_count` (`commit.rs:125-135`):
-    the number of records `build` encoded (`format.rs:127-139`) when
-    `build_effects` is set, else `Pending::effects_count`. `graph_core.rs:274`
-    reads it as "modified". -/
-def commitCount (buildEffects : Bool) (p : Pending) (g : Schema) : Nat :=
-  if buildEffects then (commitShips p g).length else effectsCount p
+  if effectsCount p > 0 then forEachRecord p g else []
 
 /-! ## What the gate drops -/
 
@@ -335,6 +326,8 @@ theorem gate_zero_stream (p : Pending) (g : Schema) (h : effectsCount p = 0) :
   have h2 : p.createdRelTypes = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h3 : p.deletedNodes = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h4 : p.deletedRels = [] := List.eq_nil_of_length_eq_zero (by omega)
+  have h11 : p.cancelledNodes = [] := List.eq_nil_of_length_eq_zero (by omega)
+  have h12 : p.cancelledRels = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h6 : p.existingNodesAttrs = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h8 : p.existingRelsAttrs = [] := List.eq_nil_of_length_eq_zero (by omega)
   have h9 := sum_zero_nil p.setLabels (by omega)
@@ -346,38 +339,18 @@ theorem gate_zero_stream (p : Pending) (g : Schema) (h : effectsCount p = 0) :
   simp [forEachRecord, h1, h2, h3, h4, h6, h8, hr]
   exact fun a b hm => h9 (a, b) hm
 
-/-- Soundness of the pre-#2970 gate: the commit shipped what the emitter would
-    write **iff** the count was positive or the would-be stream was empty. -/
-theorem pre2970_commitShips_eq_iff (p : Pending) (g : Schema) :
-    pre2970_commitShips p g = forEachRecord p g ↔ effectsCount p > 0 ∨ forEachRecord p g = [] := by
-  unfold pre2970_commitShips
+/-- Soundness of the gate, stated the way a fix would need it: the commit ships
+    what the emitter would write **iff** the count is positive or the would-be
+    stream is empty. -/
+theorem commitShips_eq_iff (p : Pending) (g : Schema) :
+    commitShips p g = forEachRecord p g ↔ effectsCount p > 0 ∨ forEachRecord p g = [] := by
+  unfold commitShips
   by_cases h : effectsCount p > 0
   · simp [h]
   · simp only [h, ↓reduceIte, false_or]
     exact ⟨fun e => e.symm, fun e => e.symm⟩
 
-
-/-! ## Since #2970: no gate -/
-
-/-- **The commit ships exactly what the emitter writes**, for every pending
-    state and schema — the right-hand side of `pre2970_commitShips_eq_iff`
-    holds unconditionally. -/
-theorem commitShips_eq (p : Pending) (g : Schema) : commitShips p g = forEachRecord p g := rfl
-
-/-- The query counts as modified (`effects_count > 0`, `graph_core.rs:274`)
-    exactly when the payload is non-empty, so a non-empty buffer is never
-    dropped by the `!wq.modified` early return (`graph_core.rs:1575`), and an
-    empty one never trips the "modified but produced no effects payload" error. -/
-theorem commitCount_pos_iff (p : Pending) (g : Schema) :
-    commitCount true p g > 0 ↔ commitShips p g ≠ [] := by
-  simp only [commitCount, ↓reduceIte]
-  cases commitShips p g <;> simp
-
-/-- Without `build_effects` the count is `Pending::effects_count`, as before. -/
-theorem commitCount_noBuild (p : Pending) (g : Schema) :
-    commitCount false p g = effectsCount p := rfl
-
-/-! ### Pre-#2970 counterexamples (W2-effects-1, fixed by #2970)
+/-! ### Counterexamples (both reproduced against the real code)
 
     `graph/tests/lean_effects_emit_apply.rs`:
     `fully_cancelled_write_ships_nothing_and_next_payload_is_refused` and
@@ -393,43 +366,39 @@ def pCancelled : Pending :=
 
 def gCancelled : Schema := ⟨["A"], [], ["p"]⟩
 
-theorem pre2970_gate_drops_cancelled :
-    effectsCount pCancelled = 0 ∧
-    forEachRecord pCancelled gCancelled =
-      [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] ∧
-    pre2970_commitShips pCancelled gCancelled = [] := by
-  refine ⟨rfl, ?_, rfl⟩
+/-- **#3461**: the same write now ships its whole stream. -/
+theorem gate_ships_cancelled :
+    effectsCount pCancelled = 2 ∧
+    commitShips pCancelled gCancelled =
+      [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] := by
   decide
 
-/-- #2970: the same write now ships all four records and counts as modified. -/
-theorem fixed2970_ships_cancelled :
-    commitShips pCancelled gCancelled =
-      [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] ∧
-    commitCount true pCancelled gCancelled = 4 := by
-  decide
+/-- **#3461**: any segment that cancelled a node or a relationship passes the
+    gate, so its cancelled pairs (and the schema it registered) ship. -/
+theorem gate_ships_of_cancelled (p : Pending) (g : Schema)
+    (h : p.cancelledNodes ≠ [] ∨ p.cancelledRels ≠ []) : commitShips p g = forEachRecord p g := by
+  have hpos : effectsCount p > 0 := by
+    unfold effectsCount
+    rcases h with h | h
+    · have := List.length_pos_iff.mpr h; omega
+    · have := List.length_pos_iff.mpr h; omega
+  simp [commitShips, hpos]
 
 /-- `OPTIONAL MATCH (n:Nope) SET n:L6`: `L6` registered, nothing else. -/
 def pSchemaOnly : Pending := { pCancelled with cancelledNodes := [] }
 def gSchemaOnly : Schema := ⟨["L6"], [], []⟩
 
-theorem pre2970_gate_drops_schema_only :
+theorem gate_drops_schema_only :
     effectsCount pSchemaOnly = 0 ∧
     forEachRecord pSchemaOnly gSchemaOnly = [.addLabel 0 "L6"] ∧
-    pre2970_commitShips pSchemaOnly gSchemaOnly = [] := by
+    commitShips pSchemaOnly gSchemaOnly = [] := by
   refine ⟨rfl, ?_, rfl⟩
-  decide
-
-/-- #2970: `ADD_SCHEMA 0 "L6"` ships, so the replica's dictionary stays aligned
-    (`next_payload_refused`'s accepting branch). -/
-theorem fixed2970_ships_schema_only :
-    commitShips pSchemaOnly gSchemaOnly = [.addLabel 0 "L6"] ∧
-    commitCount true pSchemaOnly gSchemaOnly = 1 := by
   decide
 
 /-! ### Why a dropped payload is a divergence and not a no-op
 
     The replica checks every `ADD_SCHEMA` id against the id its own dictionary
-    assigns (`apply_add_schema`, `apply.rs:532`; `verify_id`, `apply.rs:552`).
+    assigns (`apply_add_schema`, `apply.rs`; `verify_id`, `apply.rs`).
     One dropped registration shifts every later id by one. -/
 
 /-- `get_label_id_mut` then `verify_id`: get-or-create, and the id must match. -/
@@ -444,26 +413,23 @@ theorem next_payload_refused :
     applyAddName [] 1 "K6" = none ∧ applyAddName ["L6"] 1 "K6" = some ["L6", "K6"] := by
   decide
 
-/-- A cancelled edge of an unregistered type, whose attribute name is new
-    (`CREATE (a)-[:T1 {p4: 1}]->(b) DELETE a, b`): the master's attribute
-    dictionary grows by `p4`, nothing ships, and the next payload that names no
-    attribute is *accepted* — a silent divergence
-    (`cancelled_edge_attribute_is_a_silent_dictionary_divergence`). Here even an
-    un-gated emitter would say nothing about `T1`'s edges, since the type has no
-    id (`emit.rs:448-454`), but it would still announce `p4`. -/
-theorem pre2970_cancelled_edge_attr_dropped :
+/-- **#3461**: the same write, with `T1` now registered at commit, ships `T1`,
+    `p4` and the cancelled edge pair. -/
+theorem cancelled_edge_attr_ships :
     let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
-    let g : Schema := ⟨[], [], ["p4"]⟩
-    effectsCount p = 0 ∧ pre2970_commitShips p g = [] ∧
-    forEachRecord p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
-  refine ⟨rfl, rfl, ?_⟩
+    let g : Schema := ⟨[], ["T1"], ["p4"]⟩
+    effectsCount p = 6 ∧
+    commitShips p g = [.addRelType 0 "T1", .addAttribute 0 "p4", .createNode [0, 1] [],
+      .createEdge [0] 0, .deleteEdge [0], .deleteNode [0, 1] []] := by
   decide
 
-/-- #2970: the attribute `p4` now ships. -/
-theorem fixed2970_ships_cancelled_edge_attr :
-    let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
-    let g : Schema := ⟨[], [], ["p4"]⟩
-    commitShips p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
+/-- #3459: a removal that only cancelled a staged add is counted, so `MATCH (n) SET n:L6 REMOVE n:L6`
+on a committed node without `L6` (nothing else staged, `L6` newly registered) still ships `L6`'s
+registration. -/
+theorem gate_keeps_staged_removal :
+    let p : Pending := { pSchemaOnly with stagedLabelsRemoved := 1 }
+    effectsCount p = 1 ∧ commitShips p gSchemaOnly = [.addLabel 0 "L6"] := by
+  refine ⟨rfl, ?_⟩
   decide
 
 end FalkorEA

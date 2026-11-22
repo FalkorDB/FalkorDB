@@ -1,7 +1,7 @@
-/-! # `wrong_type_compat` (redis_type.rs:897)
+/-! # `wrong_type_compat` (redis_type.rs)
 
 valkey-module words the error for a key that holds another type "Existing key has wrong
-Valkey type" (`verify_type`, valkeymodule-rs `key.rs:678`, reached from `get_value` and
+Valkey type" (`verify_type`, valkeymodule-rs `key.rs`, reached from `get_value` and
 `set_value`); clients have always seen redis-module's "Existing key has wrong Redis type".
 Every `get_value`/`set_value` of `GRAPH_TYPE` in `src/commands/` maps its error through
 this function.

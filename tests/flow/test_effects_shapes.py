@@ -222,15 +222,40 @@ class testEffects_01_Shapes(_EffectsBase):
         self.env.assertEqual(res.nodes_deleted, 1)
         self.wait_for_replica_offset()
 
-        # The primary kept exactly one node, on the recycled id 0.
+        # The primary kept exactly one node. It is on a fresh id, not the freed
+        # 0: a query never reissues an id it freed itself (#3164), because a
+        # row may still hold the old node. So the primary no longer emits the
+        # create/delete/create-of-one-id shape this test was written to hand
+        # the replica; the replica's handling of it stays covered by the id
+        # space unit tests, and what is checked here is that both sides agree.
         self.env.assertEqual(
             m.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set,
-            [[1, "Reborn", 0]])
+            [[1, "Reborn", 1]])
         # And the replica must hold the same. Refusing the recreate discards the
         # whole payload, so the failure here is an empty graph, not a wrong one.
         self.env.assertEqual(
             r.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set,
             m.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set)
+        self.env.assertTrue(graph_eq(m, r))
+
+    def test07b_cancelled_edge_of_an_unregistered_type_leaves_no_id_hole(self):
+        # The edge `:R` is created and cancelled by the DETACH DELETE in the same
+        # segment, so on a fresh graph type R is never registered. The id it
+        # held is now held back for the rest of the query, so `:S` takes the
+        # next id. The replica must still be told about the cancelled id, or it
+        # sees relationship id 1 with no id 0 before it and refuses the payload.
+        fresh = "effects_cancelled_unregistered_type"
+        m = Graph(self.master, fresh)
+        r = Graph(self.replica, fresh)
+
+        res = m.query("CREATE (a)-[:R]->(b) DETACH DELETE a "
+                      "WITH b CREATE (b)-[:S]->(:X)")
+        self.env.assertEqual(res.relationships_created, 1)
+        self.wait_for_replica_offset()
+
+        q = "MATCH ()-[r]->() RETURN type(r), ID(r)"
+        self.env.assertEqual(m.ro_query(q).result_set, [["S", 1]])
+        self.env.assertEqual(r.ro_query(q).result_set, [["S", 1]])
         self.env.assertTrue(graph_eq(m, r))
 
     def test08_everything_still_agrees(self):
@@ -467,6 +492,78 @@ class testEffects_02_HarderShapes(_EffectsBase):
         self.assert_agree(
             """MATCH ()-[e:TB]->() RETURN count(e), min(e.w), max(e.w)""",
             [[50, 1001, 1050]])
+        self.assert_graph_eq()
+
+    def test07_a_cascaded_edge_of_a_new_type_beside_a_surviving_edge(self):
+        # `r1` is the only edge of a type this graph has never seen, and the
+        # DETACH DELETE of its source cascades it away; `r2` survives with an
+        # id above it. The cancelled pair for `r1` states its type id, so the
+        # type has to be registered at commit — it used to be skipped, the
+        # buffer named `r2` and nothing below it, and the replica's id space
+        # refused the hole with a forced full resync.
+        # https://github.com/FalkorDB/FalkorDB/issues/3447
+        self.set_effects_config()
+        self.query_and_sync("CREATE ()-[:EXISTING]->()")
+        failures_before = self.effect_failures()
+        diverged_before = self.replica_log_diverged()
+        full_before = self.master.info()["sync_full"]
+
+        self.query_and_sync(
+            """CREATE (a:Cascade)-[r1:CASCADED_TYPE]->(b:Cascade),
+                      (c:Cascade)-[r2:EXISTING]->(d:Cascade)
+               DETACH DELETE a""")
+
+        self.env.assertEqual(self.effect_failures(), failures_before,
+            message="the replica refused the buffer")
+        self.env.assertEqual(self.master.info()["sync_full"], full_before,
+            message="the cancelled edge forced a resync")
+        if diverged_before is not None:
+            self.env.assertEqual(self.replica_log_diverged(), diverged_before)
+        self.assert_agree(
+            "MATCH (n:Cascade) RETURN count(n)", [[3]])
+        self.assert_agree(
+            "MATCH ()-[e:CASCADED_TYPE]->() RETURN count(e)", [[0]])
+
+        # Both sides registered the type, and both hand the next edge the same
+        # id: the cancelled one, recycled.
+        self.assert_agree(
+            "CALL db.relationshipTypes() YIELD relationshipType "
+            "WHERE relationshipType = 'CASCADED_TYPE' RETURN relationshipType",
+            [["CASCADED_TYPE"]])
+        self.query_and_sync(
+            "MATCH (b:Cascade) WITH b LIMIT 1 CREATE (b)-[:CASCADED_TYPE]->(b)")
+        self.assert_agree(
+            "MATCH ()-[e:CASCADED_TYPE]->() RETURN count(e), collect(id(e))",
+            self.master_graph.ro_query(
+                "MATCH ()-[e:CASCADED_TYPE]->() RETURN count(e), collect(id(e))"
+            ).result_set)
+        self.env.assertEqual(self.effect_failures(), failures_before)
+        self.env.assertEqual(self.master.info()["sync_full"], full_before)
+        self.assert_graph_eq()
+
+    def test08_a_cascaded_edge_of_a_new_type_with_nothing_surviving(self):
+        # Neither endpoint survives, so the commit holds nothing but
+        # cancellations. The type is still registered on the master at commit,
+        # so the buffer has to announce it (and the cancelled pair) even though
+        # no created or deleted entity of the existing graph is in it.
+        # https://github.com/FalkorDB/FalkorDB/issues/3447
+        self.set_effects_config()
+        self.query_and_sync("CREATE ()-[:EXISTING]->()")
+        failures_before = self.effect_failures()
+        full_before = self.master.info()["sync_full"]
+
+        self.query_and_sync(
+            "CREATE (a)-[:ONLY_CANCELLED_TYPE]->(b) DETACH DELETE a, b")
+
+        self.env.assertEqual(self.effect_failures(), failures_before,
+            message="the replica refused the buffer")
+        self.env.assertEqual(self.master.info()["sync_full"], full_before,
+            message="the cancelled edge forced a resync")
+        self.assert_agree(
+            "CALL db.relationshipTypes() YIELD relationshipType "
+            "WHERE relationshipType = 'ONLY_CANCELLED_TYPE' "
+            "RETURN relationshipType",
+            [["ONLY_CANCELLED_TYPE"]])
         self.assert_graph_eq()
 
 
@@ -779,3 +876,40 @@ class testEffects_03_CompoundSequences(_EffectsBase):
         self.env.assertEqual(self.count_in(window, 'GRAPH.QUERY'), 0)
         self.assert_graph_eq()
 
+    def test09_a_label_removed_from_a_node_that_never_had_it_committed(self):
+        # #3448. A REMOVE of a label the statement itself staged has nothing to
+        # remove at commit. Staging it anyway put a REMOVE_LABELS on the wire;
+        # when the node was also created and deleted in the statement, that
+        # record named a node the replica does not hold yet, the replica
+        # refused the payload, and the primary forced a full resync.
+        self.set_effects_config()
+        failures_before = self.effect_failures()
+        full_before = self.master.info()["sync_full"]
+        diverged_before = self.replica_log_diverged()
+
+        res = self.query_and_sync("CREATE (n:Foo3448) REMOVE n:Foo3448 DELETE n")
+        # Counted as C counts it, although nothing is removed at commit.
+        self.env.assertEqual(res.labels_removed, 1)
+
+        self.query_and_sync("CREATE (:Keep3448)")
+        res = self.query_and_sync(
+            "MATCH (n:Keep3448) SET n:Tmp3448 REMOVE n:Tmp3448")
+        self.env.assertEqual(res.labels_removed, 1)
+        self.assert_agree("MATCH (n:Keep3448) RETURN labels(n)", [[["Keep3448"]]])
+        # The add was cancelled, but `Tmp3448` stays registered on both sides.
+        self.assert_agree("CALL db.labels() YIELD label WHERE label = 'Tmp3448' "
+                          "RETURN label", [["Tmp3448"]])
+
+        # Re-setting a committed label and removing it does remove it.
+        res = self.query_and_sync(
+            "MATCH (n:Keep3448) SET n:Keep3448 REMOVE n:Keep3448")
+        self.env.assertEqual(res.labels_removed, 1)
+        self.assert_agree("MATCH (n:Keep3448) RETURN count(n)", [[0]])
+
+        self.env.assertEqual(self.effect_failures(), failures_before,
+            message="the replica refused a payload")
+        self.env.assertEqual(self.master.info()["sync_full"], full_before,
+            message="a staged-only label removal forced a resync")
+        if diverged_before is not None:
+            self.env.assertEqual(self.replica_log_diverged(), diverged_before)
+        self.assert_graph_eq()
