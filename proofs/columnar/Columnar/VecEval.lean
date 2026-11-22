@@ -18,8 +18,8 @@ proofs/expr_semantics' `E` — the `ExprIR` model whose per-row evaluator is `ev
 | `add`, `arith` | `arithmetic` (:239-245) |
 | `case` | `eval_case` (:246) |
 | `eq`, `neq`, `cmp` | `compare_columns` (:247-252; `CmpOp::from_expr_ir` is `kindOp`) |
-| `func f cs` | guard `!Aggregation && struct_fn.is_none() && !write && !any(Distinct)`, then `eval_has_labels` for `hasLabels`, else `eval_function` (:253-266) |
-| everything else | `eval_per_row` (:267) |
+| `func f cs` | guard `!Aggregation && !counts_comprehension && struct_fn.is_none() && !write && !any(Distinct)`, then `eval_has_labels` for `hasLabels`, else `eval_function` (:250-266; `size(<ListComprehension>)` is never an `E.func`, see `E`, and `Dispatch.size_comprehension_per_row`) |
+| everything else | `eval_per_row` (:270) |
 
 `E`'s binary constructors are exactly the `num_children() == 2` shapes and `prop`/`not` the
 one-child shapes; an `Add`…`Eq` node with another arity is `E.compound` and so per row, as in

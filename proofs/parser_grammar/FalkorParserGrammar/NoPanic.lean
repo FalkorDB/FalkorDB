@@ -556,6 +556,7 @@ theorem step_ok {pe : List Tok → Out} (hpe : PeOK pe) (n : Nat) {K : List Fram
       simp only
       split
       · exact absurd rfl ((good_iff.mp hr).1 rfl)
+      · exact ret_ok ts (good_leaf rfl) hK'
       · exact ret_ok ts hr hK'
     | 10, _ => exact postStep_ok hpe n res hr K' hK' ts
     | 11, _ => exact closeStep_ok hr hK' ts

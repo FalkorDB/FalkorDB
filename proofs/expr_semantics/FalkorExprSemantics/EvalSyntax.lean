@@ -67,12 +67,15 @@ structure Fn (V : Type) where
 `eval_compound` (eval.rs) treats specially that a list-comprehension body can reach
 has its own constructor (since 2026-10-21); `compound` is every remaining arm
 (`Length`, `GetElements`, `IsNode`, `IsRelationship`, `Negate`, `Pow`, `Add`…`Modulo` and
-`Eq`/`Neq` with other than two children, `CompiledRegex`, `ShortestPath`, aggregate calls and
-the binders `Quantifier` / `ListComprehension` / `Reduce`, `NestedPlan`, `Pattern`, …),
+`Eq`/`Neq` with other than two children, `CompiledRegex`, `ShortestPath`, aggregate calls,
+`size(<ListComprehension>)` (#3437: `counts_comprehension`, answered by
+`eval_list_comprehension(.., count = true)` ahead of the `FuncInvocation` arm and without its
+runtime check; proofs/functions_str_list `comprehensionCount_eq_size`) and the binders `Quantifier` / `ListComprehension` / `Reduce`, `NestedPlan`, `Pattern`, …),
 evaluated by a parameter that receives its children as *thunks* — it may evaluate them
 lazily, in any order, or not at all — on the same row. Shapes: `case` is
 `Case { has_subject }` with children `[subject?] ++ [List(arms)] ++ [else]`; `func` is a
-non-aggregate `FuncInvocation` whose children are not `[Distinct, _]`; `mapProj` is
+non-aggregate `FuncInvocation` whose children are not `[Distinct, _]` and that is not
+`size(<ListComprehension>)`; `mapProj` is
 `MapProjection` with children `[base, items…]`, items `projAll` (a child `MapProjection`),
 `projProp` (`Property(name)` without children) and `key` (`Constant(String)` with a child). -/
 inductive E (V : Type) where

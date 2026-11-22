@@ -190,4 +190,4 @@ graph/src/graph/schema_hash.rs	schema_hash	65	PROVEN	SchemaHash.schemaHash (wrap
 graph/src/graph/graph.rs	schema_hash	1242	PROVEN	SchemaHash.graphSchemaHash: graphSchemaHash_eq (= listsHash labels types attrs under Inv + NameMap.ChainInv), restore_same_hash; Inv kept by newGC_inv, restoreGC_inv, newVersionGC_inv, internLabelC_inv, registerRelTypeC_inv
 graph/src/graph/graph.rs	schema	1234	PROVEN	SchemaHash.GC (the schema's label/type chains with the graph's lists): graphSchemaHash_eq; Accessors.labelById_getLabelId, typeById_getTypeId (names via schema)
 graph/src/graph/schema.rs	hash	245	PROVEN	SchemaHash.schemaHash over the three NameMap chains (Schema::hash): graphSchemaHash_eq, empty_hash, schemaHash_lt
-graph/src/graph/graph.rs	Graph::get_node_int_attributes_by_idx	2702	NOT COVERED	(#3437): not modelled yet
+graph/src/graph/graph.rs	Graph::get_node_int_attributes_by_idx	2702	NOT COVERED	(#3437): integer-lane variant of get_node_attributes_by_idx (AttributeStore::get_int_attrs_by_idx_batch_into), not modelled

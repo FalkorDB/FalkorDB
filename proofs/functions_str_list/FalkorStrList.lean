@@ -697,6 +697,78 @@ theorem comprehensionFull_noWhere (s : CSrc) :
   | other v =>
     cases v <;> simp [comprehensionFull, comprehensionLoop_true_id, comprehensionRust, Except.map]
 
+/-! ### `size(<list comprehension>)` (#3437): counted, never built
+
+`eval_node` / `eval_compound` answer `size([x IN l WHERE p | e])` with
+`eval_list_comprehension(.., count = true)`: the `LoopSink::Tally` arm of `list_loop_chunk`
+checks each predicate result as the list does, still evaluates the projection of a kept
+element (for its errors) and adds one; a null source is `Null`. -/
+
+/-- The `LoopSink::Tally` per-element loop. -/
+def countLoop {α β : Type} (pred : α → Except String PV) (proj : α → Except String β) :
+    List α → Except String Nat
+  | [] => .ok 0
+  | x :: xs =>
+    match pred x with
+    | .error e => .error e
+    | .ok p =>
+      match whereKeep p with
+      | .error e => .error e
+      | .ok false => countLoop pred proj xs
+      | .ok true =>
+        match proj x with
+        | .error e => .error e
+        | .ok _ => (countLoop pred proj xs).map (· + 1)
+
+/-- Counting gives the length of the list the comprehension builds, and the same error. -/
+theorem countLoop_eq_length {α β : Type} (pred : α → Except String PV) (proj : α → Except String β)
+    (l : List α) : countLoop pred proj l = (comprehensionLoop pred proj l).map List.length := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [countLoop, comprehensionLoop]
+    cases pred x with
+    | error e => rfl
+    | ok p =>
+      simp only
+      cases whereKeep p with
+      | error e => rfl
+      | ok b =>
+        cases b with
+        | false => exact ih
+        | true =>
+          simp only
+          cases proj x with
+          | error e => rfl
+          | ok y =>
+            simp only [ih]
+            cases comprehensionLoop pred proj xs <;> rfl
+
+/-- `eval_list_comprehension(.., count = true)`: the source dispatch of `comprehensionFull`
+(`none` = `Value::Null`), then the counting loop. -/
+def comprehensionCount {β : Type} (pred : Int → Except String PV) (proj : Int → Except String β) :
+    CSrc → Except String (Option Nat)
+  | .literal l | .range l => (countLoop pred proj l).map some
+  | .other .null => .ok none
+  | .other (.scalar _) => .error "Type mismatch: expected List or Null but was Integer"
+  | .other (.list l) => (countLoop pred proj l).map some
+
+/-- #3437: the counting arm is `size` of the built list — same count, same `null`, same
+error — on every source, predicate and projection. -/
+theorem comprehensionCount_eq_size {β : Type} (pred : Int → Except String PV)
+    (proj : Int → Except String β) (s : CSrc) :
+    comprehensionCount pred proj s = (comprehensionFull pred proj s).map (Option.map List.length) := by
+  cases s with
+  | literal l | range l =>
+    simp only [comprehensionCount, comprehensionFull, countLoop_eq_length]
+    cases comprehensionLoop pred proj l <;> rfl
+  | other v =>
+    cases v with
+    | null | scalar _ => rfl
+    | list l =>
+      simp only [comprehensionCount, comprehensionFull, countLoop_eq_length]
+      cases comprehensionLoop pred proj l <;> rfl
+
 /-! ### `eval_iter_expr` (`eval.rs`): the three source shapes
 
 `range(..)` (arguments already `eval_node`d and `validate_args_type`d: an error from either is
