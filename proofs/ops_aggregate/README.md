@@ -27,9 +27,9 @@ Some consequences the project also proves directly:
 
 **2. Is grouping correct?**
 
-Yes. `groupAll_spec` proves that each group holds exactly the rows with its key, in arrival order, so the aggregate of group `k` is the aggregate of "rows where key = k". `null` is an ordinary key, as in C. A keyed aggregate over no rows has no groups (`keyed_empty`); a keyless one has exactly one (`keyless_one_row`), which is why `MATCH (n:Missing) RETURN count(n)` returns one row with 0.
+Yes. `groupAll_spec` proves that each group holds exactly the rows with its key, in arrival order, so the aggregate of group `k` is the aggregate of "rows where key = k". `null` is an ordinary key, as in C. A keyed aggregate over no rows has no groups (`keyed_empty`); a keyless one has exactly one (`keyless_one_row`), which is why `MATCH (n:Missing) RETURN count(n)` returns one row with 0. Since #3579 an aggregation item that mixes an aggregate with a variable-reading term (`n.x + count(n)`) groups by that term too (an implicit key), so it gets no default group (`preInsert_implicit`) and takes the per-row path (`analyzeOp_implicit`).
 
-Caveat: that is the model of the per-group row. The real `AggregateOp::next` is refuted against the row property `AggRowSpec` under the ids the binder assigns, by four open slot-reuse bugs (#3375, #3333, #3368, #3369; `SlotReuse.lean`), so the row it emits can still be wrong until those are fixed.
+The emitted row satisfies the row property `AggRowSpec` under the ids the binder assigns (`aggRowSpec_main`, `aggRowSpec_layout`): since #3579 `next` evaluates every item over an old-scope-only environment and emits only the key row and the outputs, which fixed #3375, #3333, #3368 and #3369 (`SlotReuse.lean`).
 
 Grouping uses a `HashMap<GroupKey, _>`, which is only correct if equal keys hash the same. `gk_hash_consistent_main` proves that on main, using `value_order`'s `main_hash_consistent`.
 
@@ -72,15 +72,15 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `dedup_injective` | `DISTINCT` is correct when its hash is injective (`dedup_collision_drops` is one counterexample for a collision, not the converse) | `Ops.lean` |
 | `drain_all` | The aggregate's `next` emits every group once, 1024 per batch | `AggNext.lean` |
 | `finishGroup_outputs` | Output bindings of a finished group take precedence | `AggNext.lean` |
-| `bug3375_output_overwrites_next_acc` … `bug3368_count_acc_in_merge_slot` | With the ids the binder really assigns, `next` breaks `AggRowSpec` in four open issues (#3375, #3333, #3368, #3369) | `SlotReuse.lean` |
-| `unbind_after_zero` | Every accumulator the aggregate zeroes is unbound again afterwards | `AggState.lean` |
+| `aggRowSpec_main`, `aggRowSpec_layout` | `next`'s emitted row satisfies `OutputsOwnAcc`, `KeysBound` and `EmitsOnlyScope` for any ids the binder assigns (#3375, #3333, #3368, #3369 fixed by #3579; `fixed3579_*` re-check each issue's query) | `SlotReuse.lean` |
+| `slot_fresh` | An implicit key's slot id is above every id the aggregation trees read or bind | `AggPlan.lean` |
 | `pctCmp_total` | The percentile sort comparator is a total preorder, so it cannot panic on NaN | `Ops.lean` |
 | `pct_first_wins`, `pct_stable` | A per-row percentile argument is taken from the first non-null row and never overwritten, as in C | `Agg.lean` |
 | `validateRemote_spec`, `erRun_le`, `resolvePath_spec` | LOAD CSV: public addresses only, byte cap, path containment | `LoadCsv.lean` |
 | `fixed3443_eachHopValidated` | For a successful `loadRemote` (https_only, no redirects, pinned resolver) every connection is https to an address validated for its own host. A 3xx reply makes `loadRemote` an error without a connection list, so that trace is covered by `noRedirect_single` (the `fetch` trace) and `fixed3443_redirect_is_error` | `LoadCsvRedirect.lean` |
 | `fixed_eachHopValidated` | The general fix shape: with `https_only` and a resolver that validates and pins per request, every hop of any redirect chain is https and goes to an address validated for its own host | `LoadCsvRedirect.lean` |
 | `includePendingMain_exact` | main's `IncludePendingOp` (Phase 1 skipping deleted, label-removed and `extra_nodes`, Phase 2 emitting `extra_nodes`) shows MERGE's node scan each live matching node exactly once, for a non-empty pattern, an uncorrelated scan, and these hypotheses about `Pending`, not discharged here: committed node ids distinct, created ids apart from them, `set_labels`/`remove_labels` keyed uniquely, `set_labels` naming only committed-or-created nodes | `IncludePendingExact.lean` |
-| `finishGroup_keys_bound`, `keysBound_main`, `fixed3522_null_key_bound` | `AggregateOp::next` unbinds the accumulators before it writes the keys (#3522), so every grouping key stays bound, a null key included | `AggNext.lean`, `SlotReuse.lean` |
+| `finishGroup_keys_bound`, `keysBound_main`, `fixed3522_null_key_bound` | `AggregateOp::next` starts the emitted row from the key row and writes no accumulator (#3579; #3522 before it), so every grouping key stays bound, a null key included | `AggNext.lean`, `SlotReuse.lean` |
 
 ### How `vectorized_eq_rowwise` is proved
 
@@ -99,16 +99,11 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | W2-agg-1 | `distinct_fold_clear_overcounts` | `CALL {}` clears the runtime-wide DISTINCT state after each run (`apply.rs:283`), wiping an outer `count(DISTINCT)`'s state every batch. `UNWIND range(1,3000) AS i CALL { WITH i RETURN i % 2 AS v LIMIT 1 } RETURN count(DISTINCT v)` gives 6; C gives 2 | **Open** |
-| #3375 | `bug3375_output_overwrites_next_acc`, `bug3375_avg_panics` (property `OutputsOwnAcc`) | The binder gives `count(x)`'s output the same id as `sum(x)`'s accumulator, and `next` writes the output into `combined` before `sum` reads it. `UNWIND [1,2,3] AS x RETURN 'a', 'b', count(x), sum(x)`: Rust 3, 3; C 3, 6. With `avg` the server panics (`finalize_avg expects a list`) | **Open** (PR #3374) |
-| #3333 | `bug3333_alias_binds_next_var` (property `EmitsOnlyScope`) | `… (x)-[:R]->(m) WITH m, count(*) AS c1 MATCH (m)-[r]->(b …)`: the pre-projection alias of `m` (id 2) is bound on the emitted row, and `b` gets id 2, so `b` starts bound to `m`. Rust `[]`, C `[3,1,4]` | **Open** |
-| #3369 | `bug3369_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Two `count(*)` accumulators are left, unbound but present, at the ids of the next segments' MERGE nodes (2 and 3). The MERGE that then treats them as bound is in `merge.rs`, which this project does not model | **Open** |
-| #3368 | `bug3368_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Same cause as #3369: the counts are left at id 2, which is `b` in the second segment and `c` in the last. Rust returns `[B] b1` for `c`; C `[C] c1` | **Open** |
 | — | `dedup_collision_drops` | `DISTINCT`, `count(DISTINCT)` and the MERGE cache keep only a 64-bit FxHash; a collision drops a row | **Present on main** (#2780 closed as not planned) |
-| — | `one_child_not_unbound` | An aggregate call with only an accumulator child would be zeroed but never unbound, leaking its accumulator downstream | Latent: no parsed call has that shape |
 
 ## Gap closed 2026-10-20: slot ids shared across the projection
 
-Until this date the aggregate model kept outputs, accumulators and pre-projection key aliases in separate slots, so `finishGroup_outputs` and `unbind_other` could not see that the binder gives them overlapping ids. `SlotReuse.lean` now mints the ids as the binder does and models that `unbind` keeps the value (a value-present-but-unbound column). Four open issues come from this one cause; see the bug table. The MERGE half of #3369 and #3368 (a value-only Int read as a bound node) lives in `merge.rs` and is not modelled here.
+Until this date the aggregate model kept outputs, accumulators and pre-projection key aliases in separate slots, so `finishGroup_outputs` could not see that the binder gives them overlapping ids. `SlotReuse.lean` mints the ids as the binder does. Four issues came from this one cause (#3375, #3333, #3368, #3369); #3579 fixed them, and `aggRowSpec_layout` now proves the row property for every layout. The MERGE half of #3369 and #3368 (a value-only Int read as a bound node) lives in `merge.rs` and is not modelled here.
 
 ### CONDITIONAL rows, and how they were discharged
 
@@ -129,10 +124,10 @@ On main, `Discharge.lean` proves both hypotheses from `value_order` (`hc_main` f
 | `Ops.lean` | Limit, Skip, the full sort and top-k heap, Project, Unwind, grouping, DISTINCT and its counterexamples, the stack-machine `return`, percentile index bounds and comparator |
 | `SortCmp.lean` | `OrderedKey` and `HeapEntry` comparators, `compare_row_content`, `tiebreak`, over an abstract value comparison `cv` |
 | `SortKey.lean` | `classify_sort_key`: the typed key column reads back the evaluated key |
-| `AggPlan.lean` | Aggregate operator setup: `subtree_has_aggregate`, `analyze`, `analyze_agg_tree`, `args_for`, `new` |
-| `AggState.lean` | Accumulator zeroing and unbinding, `GroupKey` equality and hash |
+| `AggPlan.lean` | Aggregate operator setup: `subtree_has_aggregate`, `analyze` (and its implicit-key guard `analyzeOp`), `analyze_agg_tree`, `max_variable_id` |
+| `AggState.lean` | Accumulator zeroing, `GroupKey` equality and hash, `args_for`, `new` |
 | `AggNext.lean` | Column extraction and the aggregate's `next`: groups finished and emitted in batches |
-| `SlotReuse.lean` | Binder ids for one projection (`projLayout`), what the emitted row stores and what a reader sees (`finishVals`, `cell`), the properties `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`, and the #3375/#3333/#3369/#3368 counterexamples |
+| `SlotReuse.lean` | Binder ids for one projection (`projLayout`), what the emitted row stores and what a reader sees (`finishVals`, `cell`), the properties `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`, proved on main, and the #3375/#3333/#3369/#3368 queries re-checked |
 | `Discharge.lean` | Instantiates `SortCmp` and `AggState` with main's `sort_cmp` and hash from `value_order` |
 | `Bitmap.lean` | `NullBitmap` from `batch.rs`: set, clear, `all`, `from_values` |
 | `Ctors.lean` | `new` of Limit, Skip, Distinct, Project, Unwind, Sort and Commit |
@@ -148,12 +143,12 @@ This project depends on [`../value_order`](../value_order) (a Lake path dependen
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 84 |
+| PROVEN | 85 |
 | CONDITIONAL | 1 |
 | MODELLED | 13 |
-| NOT COVERED | 57 |
+| NOT COVERED | 56 |
 
-All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.rs`, `project.rs`, `unwind.rs`, `load_csv.rs`, `filter.rs`, `include_pending.rs`, `procedure_call.rs`, `commit.rs`) are fully PROVEN, with one caveat: `AggregateOp::next` is proven against the per-group model (`drain_all`, `finishGroup_outputs`) but refutes `AggRowSpec` under the binder's slot ids until the open slot-reuse bugs (#3375, #3333, #3368, #3369) are fixed (`SlotReuse.lean`). The rest:
+All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.rs`, `project.rs`, `unwind.rs`, `load_csv.rs`, `filter.rs`, `include_pending.rs`, `procedure_call.rs`, `commit.rs`) are fully PROVEN, except the implicit-grouping-key helpers #3579 added to `aggregate.rs` (`implicit_keys` and its nested `binds`, `variables`, `walk`, and `replace_with_slots`), which are NOT COVERED: they walk the full `ExprIR` (CASE, AND/OR, quantifiers, `reduce`, maps) and identify subtrees by `orx_tree` node index, none of which the `Ex` model has. `max_variable_id` is PROVEN (`slot_fresh`). The rest:
 
 - **NOT COVERED, `batch.rs` (47 rows):** the model treats a batch as its list of active rows, so the typed columns, builders, `concat` and `gather` are abstracted away. `compare_at` and `compare_rows_at` are proven in `value_order` and `columnar` instead.
 - **MODELLED, `batch.rs` (11 rows):** accessors such as `active_indices`, `value_at` and the row iterators are what "a batch is its active rows" stands for; the `agrees_*` Rust tests exercise them.

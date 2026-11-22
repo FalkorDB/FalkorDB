@@ -328,4 +328,95 @@ theorem analyzeKey_spec (e : Ex Z) (k : KeyKind Z) (h : analyzeKey e = some k) :
     · cases h
     · cases h; simp
 
+/-- `AggregateOp::analyze` (aggregate.rs since #3579): an aggregation with any implicit grouping
+key (`implicit_keys`, abstract here) is refused, so it takes the per-row path; otherwise the
+analysis is `analyze` on the explicit keys and the aggregations. -/
+def analyzeOp {K : Type} (implicit : List K) (keys aggs : List (Ex Z)) :
+    Option (List (KeyKind Z) × List (VAgg Z)) :=
+  if implicit.isEmpty then analyze keys aggs else none
+
+/-- With an implicit grouping key the vectorized path is never taken: `consume_input_vectorized`
+may therefore hand its fallback an empty `ImplicitKeys`. -/
+theorem analyzeOp_implicit {K : Type} (implicit : List K) (keys aggs : List (Ex Z))
+    (h : implicit ≠ []) : analyzeOp implicit keys aggs = none := by
+  cases implicit with
+  | nil => exact absurd rfl h
+  | cons _ _ => rfl
+
+/-- Without implicit keys `analyze` is unchanged (`analyze_spec`, `analyze_lengths` apply). -/
+theorem analyzeOp_none {K : Type} (keys aggs : List (Ex Z)) :
+    analyzeOp ([] : List K) keys aggs = analyze keys aggs := rfl
+
+/-! ## `max_variable_id` (aggregate.rs, #3579) -/
+
+/-- An expression tree for `max_variable_id`: each node carries the ids it reads or binds
+itself (`Variable`: its id; a quantifier or list comprehension: its variable; `reduce`: its
+accumulator and iterator; any other node: none). -/
+inductive VT where
+  | node (own : List Nat) (cs : List VT)
+
+/-- The node's own id, as in the Rust `match`: the largest of its listed ids, `0` if none
+(`reduce.accumulator.id.max(reduce.iterator.id)`). -/
+def ownId (own : List Nat) : Nat := own.foldl max 0
+
+mutual
+/-- `max_variable_id`: the node's own id folded with `u32::max` over every child. -/
+def maxVarId : VT → Nat
+  | .node own cs => maxVarIdL (ownId own) cs
+def maxVarIdL : Nat → List VT → Nat
+  | a, [] => a
+  | a, c :: cs => maxVarIdL (max a (maxVarId c)) cs
+end
+
+-- Every id the tree reads or binds, pre-order.
+mutual
+def allIds : VT → List Nat
+  | .node own cs => own ++ allIdsL cs
+def allIdsL : List VT → List Nat
+  | [] => []
+  | c :: cs => allIds c ++ allIdsL cs
+end
+
+theorem le_foldl_max (l : List Nat) (a : Nat) : a ≤ l.foldl max a ∧ ∀ x ∈ l, x ≤ l.foldl max a := by
+  induction l generalizing a with
+  | nil => simp
+  | cons y ys ih =>
+    obtain ⟨h1, h2⟩ := ih (max a y)
+    refine ⟨by simp only [List.foldl_cons]; omega, fun x hx => ?_⟩
+    simp only [List.foldl_cons]
+    rcases List.mem_cons.mp hx with rfl | hx
+    · omega
+    · exact h2 x hx
+
+mutual
+theorem maxVarId_ge : ∀ t : VT, ∀ x ∈ allIds t, x ≤ maxVarId t
+  | .node own cs => by
+    intro x hx
+    simp only [allIds, List.mem_append] at hx
+    simp only [maxVarId]
+    rcases hx with hx | hx
+    · exact Nat.le_trans ((le_foldl_max own 0).2 x hx) (maxVarIdL_ge cs (ownId own)).1
+    · exact (maxVarIdL_ge cs (ownId own)).2 x hx
+theorem maxVarIdL_ge : ∀ (cs : List VT) (a : Nat), a ≤ maxVarIdL a cs ∧ ∀ x ∈ allIdsL cs, x ≤ maxVarIdL a cs
+  | [], a => by simp [maxVarIdL, allIdsL]
+  | c :: cs, a => by
+    obtain ⟨h1, h2⟩ := maxVarIdL_ge cs (max a (maxVarId c))
+    refine ⟨by simp only [maxVarIdL]; omega, fun x hx => ?_⟩
+    simp only [allIdsL, List.mem_append] at hx
+    simp only [maxVarIdL]
+    rcases hx with hx | hx
+    · have := maxVarId_ge c x hx; omega
+    · exact h2 x hx
+end
+
+/-- **The slots are fresh** (`implicit_keys`, #3579): the first slot id, one above
+`max_variable_id` of every key and aggregation tree, and every later one, is above every id
+any of those trees reads or binds (a comprehension's or `reduce`'s own variables included), so
+a slot is never read as an old-scope variable. -/
+theorem slot_fresh (ts : List VT) (n : Nat) (t : VT) (ht : t ∈ ts) (x : Nat) (hx : x ∈ allIds t) :
+    x < (ts.map maxVarId).foldl max 0 + 1 + n := by
+  have h1 := maxVarId_ge t x hx
+  have h2 := (le_foldl_max (ts.map maxVarId) 0).2 (maxVarId t) (List.mem_map_of_mem ht)
+  omega
+
 end FalkorAggOps.AggPlan

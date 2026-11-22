@@ -401,6 +401,22 @@ def keylessGroups {A : Type} (rows : List A) : List (Unit × List A) :=
 
 theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length = 1 := rfl
 
+/-- `consume_input_per_row`'s pre-insert (aggregate.rs since #3579): the empty-key default group
+is inserted only when there are neither explicit nor implicit grouping keys (implicit keys
+are keys: `MATCH (n:Missing) RETURN n.x + count(n)` groups by `n.x`). -/
+def preInsert {G : Type} (noKeys noImplicit : Bool) (dflt : G) : List G :=
+  if noKeys && noImplicit then [dflt] else []
+
+/-- A keyless aggregation without implicit keys still starts with its one default group
+(`keyless_one_row`). -/
+theorem preInsert_keyless {G : Type} (dflt : G) : preInsert true true dflt = [dflt] := rfl
+
+/-- With an implicit grouping key there is no default group, so an empty input emits no row,
+as with any keyed aggregation (`keyed_empty`). -/
+theorem preInsert_implicit {G : Type} (noKeys : Bool) (dflt : G) :
+    preInsert noKeys false dflt = [] := by
+  cases noKeys <;> rfl
+
 /-! ## DISTINCT deduplication
 
 The per-group state is keyed by a group id; see `GroupId.lean`
