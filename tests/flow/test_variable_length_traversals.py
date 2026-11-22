@@ -643,7 +643,8 @@ class testVariableLengthTraversals(FlowTestsBase):
             pass
         g.query("""CREATE (a:N {id: 0})-[:R {w: 1}]->(b:N {id: 1}),
                           (b)-[:R {w: 2}]->(c:N {id: 2}),
-                          (c)-[:R {w: 3}]->(a)""")
+                          (c)-[:R {w: 3}]->(a),
+                          (a)-[:R {w: 4}]->(:N {id: 3})""")
 
         try:
             ret = "RETURN [n IN nodes(p) | n.id], [r IN relationships(p) | r.w]"
@@ -656,9 +657,9 @@ class testVariableLengthTraversals(FlowTestsBase):
                 # two variables bound to the same node
                 ("MATCH (a:N {id: 0}), (b:N {id: 0}) "
                  "MATCH p = (a)<-[:R*3..3]-(b) " + ret, incoming),
-                # the cycle after a fixed-length hop
-                ("MATCH p = (x:N {id: 1})<-[:R]-(a:N {id: 0})<-[:R*3..3]-(a) " + ret,
-                 [[[1, 0, 2, 1, 0], [1, 3, 2, 1]]]),
+                # the cycle after a fixed-length hop (on an edge outside the cycle)
+                ("MATCH p = (x:N {id: 3})<-[:R]-(a:N {id: 0})<-[:R*3..3]-(a) " + ret,
+                 [[[3, 0, 2, 1, 0], [4, 3, 2, 1]]]),
                 # not a cycle
                 ("MATCH p = (a:N {id: 0})<-[:R*2..2]-() " + ret,
                  [[[0, 2, 1], [3, 2]]]),
