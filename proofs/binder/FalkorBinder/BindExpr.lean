@@ -8,7 +8,7 @@ node/relationship order). The constant fold and call rewrites are Fold.lean;
 labels are Scopes.lean.
 
 Theorems: `reserve_covers` / `bindNode_covers` (every reservation keeps the
-table covering; only pattern cleanup can break it — `comprehension_cleanup_breaks`),
+table covering; the pattern cleanup hides names and keeps it too — `cleanup_covers`),
 `bind_iterable_outer` (a comprehension's list is bound before its variable),
 `loop_var_shadows`, `reduce_same_name`, `prop_on_path`, `exists_pattern`,
 `func_arg_mismatch`, `bindExpr_eq`, `bindSetItems_*`, `selfRef_iff`.
@@ -72,14 +72,42 @@ def reserve (st : St) (pfx : String) (x : Name) : St × Var :=
   let v := freshVar st.cur x .any st.depth
   ({ st with cur := st.cur.insert (C.rkey pfx st.depth v.id) v }, v)
 
-/-- `bind_graph` on a pattern's aliases: each `define_alias_in_scope`d (reused if present). -/
-def bindNames (st : St) : List Alias → Except String (St × List Var)
+/-- `bind_graph` on a pattern's aliases: each `define_alias_in_scope`d (reused if present). `al`
+holds the second names `import_parent_names` entered (`insert_alias`); `define_name_in_scope`'s
+`Scope::get` finds them after the table's own names (`Env.withAliases_get`) and reuses them. -/
+def bindNames (st : St) (al : List (Name × Var)) : List Alias → Except String (St × List Var)
   | [] => .ok (st, [])
-  | n :: ns => match defineAlias st n .any true with
+  | n :: ns =>
+    let r : Except String (St × Var) := match n with
+      | .named x => match st.cur.find? x, al.lookup x with
+        | none, some ex => .ok (st, ex)
+        | _, _ => defineAlias st n .any true
+      | .anon _ => defineAlias st n .any true
+    match r with
     | .error e => .error e
-    | .ok (st1, v) => match bindNames st1 ns with
+    | .ok (st1, v) => match bindNames st1 al ns with
       | .error e => .error e
       | .ok (st', vs) => .ok (st', v :: vs)
+
+/-- `Binder::import_parent_names` (binder.rs, #3062), the loop once `use_parent_scope` is set:
+a named alias in neither the scope (its names, `al` included) nor a local is resolved
+(`resolve_name`); a parent variable is thereby copied in under its name, and a name the
+resolution did not enter (`WITH n AS m`: `n` resolves to `m`) becomes a second name in `al`. -/
+def importNames (locals : List Env) : St → List (Name × Var) → List Alias → St × List (Name × Var)
+  | st, al, [] => (st, al)
+  | st, al, .anon _ :: rest => importNames locals st al rest
+  | st, al, .named n :: rest =>
+    if st.cur.has n || (al.lookup n).isSome || (lookupLocals locals n).isSome then
+      importNames locals st al rest
+    else match resolveName st locals n with
+      | .ok (st', v) =>
+        if st'.cur.has n then importNames locals st' al rest
+        else importNames locals st' (al ++ [(n, v)]) rest
+      | .error _ => importNames locals st al rest
+
+/-- `Binder::import_parent_names`: nothing unless parent-scope variables are visible. -/
+def importParent (st : St) (locals : List Env) (vars : List Alias) : St × List (Name × Var) :=
+  if st.useParent then importNames locals st [] vars else (st, [])
 
 /-- The comprehension locals injected by name (a local table holds named entries only). -/
 def injectLocals (e : Env) (locals : List Env) : Env :=
@@ -87,10 +115,17 @@ def injectLocals (e : Env) (locals : List Env) : Env :=
     | .nm n => e.insert n kv.2
     | .un => e) e) e
 
-/-- The cleanup after a pattern (binder.rs): keep the outer names; the
-unnamed entries stay (`Scope::retain`, #3303 — before, every `_anon…` key stayed, a written one
-included). -/
-def cleanup (outer : List Name) (e : Env) : Env := e.retain fun k => outer.contains k
+/-- `Binder::hide_new_names` (binder.rs, #3062), the cleanup after a pattern: every name not
+in the snapshot `outer` is hidden (`hide_names`), so its id stays counted; unnamed entries stay.
+`drop_aliases` then removes the second names, which the snapshot holds: here they were never
+entered in the table, so dropping them is discarding `al` (`Env.dropAliases_withAliases`). -/
+def cleanup (outer : List Name) (e : Env) : Env := e.hide (e.keys.filter fun k => !outer.contains k)
+
+/-- The cleanup keeps the table covering and its size (the fix of `comprehension_cleanup_breaks`,
+W2-binder-3). -/
+theorem cleanup_covers (outer : List Name) {e : Env} (h : e.Covers) :
+    (cleanup outer e).Covers ∧ (cleanup outer e).length = e.length :=
+  ⟨hide_covers h _, Env.hide_length _ _⟩
 
 def firstVar : List BE → Option Var
   | BE.var v :: _ => some v
@@ -146,13 +181,17 @@ def bindNode (st : St) (locals : List Env) : NE → Except String (BE × St)
     if acc = it then .error s!"Variable `{acc}` already declared"
     else bindReduce st locals acc it cs
   | .pattern vars =>
-    let outer := st.cur.keys
-    match bindNames { st with cur := injectLocals st.cur locals } vars with
+    let (st0, al) := importParent st locals vars
+    let outer := st0.cur.keys
+    match bindNames { st0 with cur := injectLocals st0.cur locals } al vars with
     | .error e => .error e
     | .ok (st1, vs) => .ok (.pattern vs, { st1 with cur := cleanup outer st1.cur })
   | .patComp vars cs =>
-    let outer := st.cur.keys
-    match bindNames { st with cur := injectLocals st.cur locals } vars with
+    -- The body `cs` reads a second name through `resolve_name`; without it in the table, `resolve`
+    -- reaches the same variable through `parent_to_child_scope` / `copy_from_parent`.
+    let (st0, al) := importParent st locals vars
+    let outer := st0.cur.keys
+    match bindNames { st0 with cur := injectLocals st0.cur locals } al vars with
     | .error e => .error e
     | .ok (st1, vs) => match bindL st1 locals cs with
       | .error e => .error e
@@ -678,21 +717,72 @@ def st1334 : St :=
     depth := 1, useParent := true, p2c := [], cfp := [] }
 
 /-- **#1334**: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds — `n1` is minted fresh (id 2,
-after the anonymous node's 1) and cleaned up — although `n1` is visible nowhere. Live: Rust main
+after the anonymous node's 1) and hidden by the cleanup — although `n1` is visible nowhere. Live: Rust main
 returns 2 rows on a 2-node graph with an edge; C errors. -/
 theorem bug1334_pattern_predicate_declares_var :
     bindNode C st1334 [] (.pattern [.anon 0, .named "n1"]) =
       .ok (.pattern [⟨none, 1, 1, .any, some 0⟩, ⟨"n1", 2, 1, .any, none⟩],
-           { st1334 with cur := [("n0", ⟨"n0", 0, 1, .node, none⟩), (.un, ⟨none, 1, 1, .any, some 0⟩)] }) ∧
+           { st1334 with cur := [("n0", ⟨"n0", 0, 1, .node, none⟩), (.un, ⟨none, 1, 1, .any, some 0⟩),
+                                 (.un, ⟨"n1", 2, 1, .any, none⟩)] }) ∧
     ¬ visible st1334 [] "n1" ∧
     ¬ PatternPredDeclaresNothing C st1334 [] [.anon 0, .named "n1"] := by
   have hb : bindNode C st1334 [] (.pattern [.anon 0, .named "n1"]) =
       .ok (.pattern [⟨none, 1, 1, .any, some 0⟩, ⟨"n1", 2, 1, .any, none⟩],
-           { st1334 with cur := [("n0", ⟨"n0", 0, 1, .node, none⟩), (.un, ⟨none, 1, 1, .any, some 0⟩)] }) := by
-    simp (config := { decide := true }) [bindNode, st1334, injectLocals, bindNames, defineAlias,
+           { st1334 with cur := [("n0", ⟨"n0", 0, 1, .node, none⟩), (.un, ⟨none, 1, 1, .any, some 0⟩),
+                                 (.un, ⟨"n1", 2, 1, .any, none⟩)] }) := by
+    simp (config := { decide := true }) [bindNode, st1334, importParent, importNames, resolveName,
+      resolve, lookupLocals, injectLocals, bindNames, defineAlias,
       defineName, Env.find?, freshVar, freshAnon, Env.insert, Env.has, Env.pushUnnamed, Env.keys, Env.lookupAnon, Env.unnamed,
-      cleanup, Env.retain, List.lookup, List.filter, List.filterMap]
+      cleanup, Env.hide, Env.take1, List.lookup, List.filter, List.filterMap]
   have hv : ¬ visible st1334 [] "n1" := by unfold visible; decide
   exact ⟨hb, hv, fun h => hv (h _ hb "n1" (by simp))⟩
+
+/-! ## W2-binder-7 fixed (#3062): a pattern predicate refers to the parent's variable
+
+Where parent-scope variables are visible (WITH … WHERE, ORDER BY), `import_parent_names` brings a
+name the pattern shares with the parent in before `bind_graph` would define it afresh. -/
+
+/-- The parent `n` of `MATCH (n) WITH n.v AS k WHERE (n)-->() RETURN k`. -/
+def pvW7 : Var := ⟨"n", 0, 0, .node, none⟩
+
+/-- The state while the WHERE is bound: scope 1 `{k}`, parent `{n}`. -/
+def stW7 : St :=
+  { cur := [("k", ⟨"k", 0, 1, .any, none⟩)], parent := [("n", pvW7)], depth := 1,
+    useParent := true, p2c := [], cfp := [] }
+
+/-- **The predicate's `n` is the parent's `n`**: it binds to the copy `resolve_name` makes (id 1,
+recorded in `copy_from_parent` against the parent variable, so the planner fills it from the
+parent's row), not to a fresh, unconstrained node; the anonymous node takes id 2. (Before #3062 the
+pattern got its own `n`, and Rust returned every row where C returns one.) -/
+theorem pattern_pred_uses_parent :
+    bindNode C stW7 [] (.pattern [.named "n", .anon 0]) =
+      .ok (.pattern [⟨"n", 1, 1, .node, none⟩, ⟨none, 2, 1, .any, some 0⟩],
+           { stW7 with cur := [("k", ⟨"k", 0, 1, .any, none⟩), ("n", ⟨"n", 1, 1, .node, none⟩),
+                                (.un, ⟨none, 2, 1, .any, some 0⟩)],
+                       cfp := [("n", (pvW7, ⟨"n", 1, 1, .node, none⟩))] }) := by
+  simp (config := { decide := true }) [bindNode, stW7, pvW7, importParent, importNames, resolveName,
+    resolve, lookupLocals, injectLocals, bindNames, defineAlias,
+    defineName, Env.find?, freshAnon, Env.insert, Env.has, Env.pushUnnamed, Env.keys,
+    Env.lookupAnon, Env.unnamed, cleanup, Env.hide, List.lookup, List.filter, List.filterMap]
+
+/-- `MATCH (n) WITH n AS m WHERE (n)-->() RETURN m`: scope 1 `{m}`, `n ↦ m` in
+`parent_to_child_scope`. -/
+def mvW7 : Var := ⟨"m", 0, 1, .any, none⟩
+
+def stW7r : St :=
+  { cur := [("m", mvW7)], parent := [("n", pvW7)], depth := 1,
+    useParent := true, p2c := [("n", mvW7)], cfp := [] }
+
+/-- **A renamed parent name refers to the projected variable and takes no id**: the predicate's
+`n` is `m`, the anonymous node gets id 1 (the second name `n` is not counted), and afterwards the
+scope is `{m}` plus that node, `n` gone. -/
+theorem pattern_pred_renamed_parent :
+    bindNode C stW7r [] (.pattern [.named "n", .anon 0]) =
+      .ok (.pattern [mvW7, ⟨none, 1, 1, .any, some 0⟩],
+           { stW7r with cur := [("m", mvW7), (.un, ⟨none, 1, 1, .any, some 0⟩)] }) := by
+  simp (config := { decide := true }) [bindNode, stW7r, mvW7, pvW7, importParent, importNames,
+    resolveName, resolve, lookupLocals, injectLocals, bindNames, defineAlias,
+    Env.find?, freshAnon, Env.insert, Env.has, Env.pushUnnamed, Env.keys,
+    Env.lookupAnon, Env.unnamed, cleanup, Env.hide, List.lookup, List.filter, List.filterMap]
 
 end FalkorBinder
