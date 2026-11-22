@@ -211,6 +211,18 @@ class testQueryValidationFlow(FlowTestsBase):
             (("version", "4294967296"), "Failed to parse graph version value"),
             (("version", "-1"), "Failed to parse graph version value"),
             (("version",), "Failed to parse graph version value"),
+            (("SCHEMA_HASH",), "Failed to parse schema hash value"),
+            (("SCHEMA_HASH", "abc"), "Failed to parse schema hash value"),
+            (("SCHEMA_HASH", "18446744073709551616"), "Failed to parse schema hash value"),
+            (("SCHEMA_HASH", "-9223372036854775809"), "Failed to parse schema hash value"),
+            (("SCHEMA_HASH", "+1"), "Failed to parse schema hash value"),
+            (("SCHEMA_HASH", "01"), "Failed to parse schema hash value"),
+            (("SCHEMA_HASH", "09223372036854775808"), "Failed to parse schema hash value"),
+            (("SCHEMA_HASH", "abc", "--compact"), "Failed to parse schema hash value"),
+            # a verbose reply carries the names already: SCHEMA_HASH needs --compact,
+            # and a malformed value is reported first (above)
+            (("SCHEMA_HASH", "0"), "SCHEMA_HASH requires --compact"),
+            (("schema_hash", "-1", "TIMEOUT", "10"), "SCHEMA_HASH requires --compact"),
             # at most 8 arguments, command name included
             (("a", "b", "c", "d", "e", "f"), "wrong number of arguments"),
         ]
@@ -223,7 +235,11 @@ class testQueryValidationFlow(FlowTestsBase):
                     self.env.assertContains(err, str(e))
 
             # valid flags, unknown ones skipped
-            for flags in [("TIMEOUT", "0"), ("timeout", "10"), ("a", "b", "c", "d", "e")]:
+            for flags in [("TIMEOUT", "0"), ("timeout", "10"), ("a", "b", "c", "d", "e"),
+                          ("--compact", "schema_hash", "0"),
+                          ("SCHEMA_HASH", "-1", "--COMPACT"),
+                          ("--compact", "SCHEMA_HASH", "18446744073709551615"),
+                          ("--compact", "TIMEOUT", "10", "SCHEMA_HASH", "0")]:
                 self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", *flags)
 
         # a non-UTF-8 argument is an unknown flag, not the end of the flags

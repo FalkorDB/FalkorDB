@@ -20,9 +20,9 @@ For the query shapes below, yes. The bridge is `query_eq_scan_filter` (and `quer
 
 - `equal_exact`: `n.v = literal`, for a stored Int, Float or non-empty String;
 - `inList_exact`: `n.v IN [scalar literals]`, under the same conditions;
-- `numRange_exact`: numeric `<`, `<=`, `>`, `>=` and two-sided ranges, for every stored number including NaN and, since #3081, ±∞;
+- `numRange_exact`: numeric `<`, `<=`, `>`, `>=` and two-sided ranges, for every stored number including NaN and ±∞;
 - `strRange_exact`: string ranges, **only** when no string involved contains a byte ≤ 0x20, a `\` or a `_`, and stored strings are non-empty;
-- `temporal_numRange_exact`, `temporal_equal_exact`: since #3076, dates and times are not indexed, so a numeric or scalar query never returns them.
+- `temporal_numRange_exact`, `temporal_equal_exact`: dates and times are not indexed, so a numeric or scalar query never returns them.
 
 Outside these conditions the counterexamples in [Bugs found](#bugs-found) show exactly how it goes wrong.
 
@@ -36,7 +36,7 @@ No. `tag_encode_lower` is the only string transformation between Cypher and Redi
 
 **4. Are the population tickets and refcounts safe?**
 
-`ok_inc`, `ok_dec`, `ok_bump` prove the ticket counters stay non-negative. `bump_total` proves recreating an index conserves pending work, and `dec_stale_keeps_current` that a stale worker never touches the new generation. Since #3086, adding a field to an existing index also starts a new generation: `createIndex_regen` proves the stored entry has a fresh generation with nothing pending and every earlier ticket still counted as stale, and `createIndex_old_ticket_stale` that only the new generation passes `is_ticket_current`, so a populate job holding the old field list stops at its next batch. That an OPERATIONAL index then has every field populated is proven in [`../search_concurrency`](../search_concurrency) (`main_operational_complete`). `RC.not_freed` proves no use-after-free of a RediSearch handle while an iterator holds a clone.
+`ok_inc`, `ok_dec`, `ok_bump` prove the ticket counters stay non-negative. `bump_total` proves recreating an index conserves pending work, and `dec_stale_keeps_current` that a stale worker never touches the new generation. Adding a field to an existing index also starts a new generation: `createIndex_regen` proves the stored entry has a fresh generation with nothing pending and every earlier ticket still counted as stale, and `createIndex_old_ticket_stale` that only the new generation passes `is_ticket_current`, so a populate job holding the old field list stops at its next batch. That an OPERATIONAL index then has every field populated is proven in [`../search_concurrency`](../search_concurrency) (`main_operational_complete`). `RC.not_freed` proves no use-after-free of a RediSearch handle while an iterator holds a clone.
 
 **5. Do the B⁺-tree leaf pages decode to what was written?**
 
@@ -48,14 +48,14 @@ Yes, for all three page formats (AoS, compact, compact-indexed): build and read 
 |---|---|---|
 | `query_eq_scan_filter`, `queryE_eq_scan_filter` | Node and edge index scan = label/type scan + filter, given an exact predicate and a consistent index | `Iter.lean` |
 | `equal_exact`, `inList_exact` | `=` and `IN` are exact for stored Int, Float and non-empty String | `Proofs.lean` |
-| `numRange_exact` | Numeric ranges are exact for every stored number, ±∞ included since #3081 | `Proofs.lean` |
+| `numRange_exact` | Numeric ranges are exact for every stored number, ±∞ included | `Proofs.lean` |
 | `strRange_exact` | String ranges are exact on strings without bytes ≤ 0x20, `\`, `_` | `Strings.lean` |
 | `tagEnc_injective`, `tagEnc_printable` | The TAG encoding never collides and never emits a separator or whitespace | `Proofs.lean` |
 | `commit_preserves_inv` | After commit the index matches the committed graph | `Maintenance.lean` |
 | `RC.not_freed` | A RediSearch handle is not freed while an iterator holds it | `Iter.lean` |
-| `setVector_sound` | A vector is added to a document only with the field's own non-zero dimension (#3087) | `SetVector.lean` |
+| `setVector_sound` | A vector is added to a document only with the field's own non-zero dimension | `SetVector.lean` |
 | `fromPairs_roundtrip`, `mergeBatch_spec` | Every leaf format round-trips; every leaf fast path equals the slow path | `LeafDispatch.lean`, `LeafOps.lean` |
-| `readWidth_admitted` | `read_width` reads exactly `w` bytes for every width the const assert admits (#3285) | `LeafBytes.lean` |
+| `readWidth_admitted` | `read_width` reads exactly `w` bytes for every width the const assert admits | `LeafBytes.lean` |
 
 ### How `query_eq_scan_filter` is proved
 
@@ -69,28 +69,21 @@ The hypotheses: the RediSearch specification (`RunSpec`, the 82 AXIOMATISED rows
 
 ## Bugs found
 
-Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 73077bb4a: the header's re-targets (cab3cf192, 1d15bf713, 73077bb4a) list bugs 1-4, 7, 8, 10, 12 and 13 as still present, and no later commit touches that code. The last three rows (#3166, #3382, #2781) are not `repro.py` cases: each needs more than one setup and one query (a second `CREATE FULLTEXT INDEX` with options; a vector query while the index is still UNDER CONSTRUCTION; a failed query whose rollback is observed afterwards), so they were reproduced by hand on a Rust and a C server and the results are recorded in those rows and in the per-bug notes of `FalkorIndexLayer.lean`.
+Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 256ab4d3f: re-run of `repro.py` on a release module from this tree (redis 8.6) gives the same result as before for bugs 1-4, 7, 8, 12 (and 10), and the header's re-targets list 13 as still present; no commit since touches that code in a way that changes them. The last two rows (#3166, #2781) are not `repro.py` cases: each needs more than one setup and one query (a second `CREATE FULLTEXT INDEX` with options; a failed query whose rollback is observed afterwards), so they were reproduced by hand on a Rust and a C server and the results are recorded in those rows and in the per-bug notes of `FalkorIndexLayer.lean`.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 (W2-index-1) | `bug_folded_temporal_constant` | `n.v = date('2020-01-01')` returns **every** node of the label: the constant is folded and treated as indexable, the filter is dropped, then the index refuses it and falls back to a label scan. C correct | **Open** |
 | 2 (W2-index-2) | `bug_point_equality` | `n.v = point({latitude:1.0, longitude:2.0})` returns `[]`. C correct | **Open** |
-| 3 (W2-index-3) | `bug_in_list_drops_item` | `n.v IN [date('2020-01-01'), 2]` drops the date row. C correct | **Fixed by #3064** (`in_list` keeps the date, the scan falls back; ops_traverse `inList_unservable_falls_back`) |
+| 3 (W2-index-3) | `bug_in_list_drops_item` | `n.v IN [date('2020-01-01'), 2]` drops the date row. C correct | **Open** |
 | 4 (W2-index-4) | `bug_multilabel_and`, `bug_multilabel_or` | On `(n:A:B)` with A indexing `x` and B indexing `y`, `n.x = 1 AND n.y = 2` returns `[]`, and the `OR` loses rows. C correct | **Open** |
-| 5 (W2-index-5) | removed (17ccc5412) | `n.v > 0` matched a stored date | Fixed by #3076 (issue #2959): `fixed3076_temporal_in_numeric_range`, `temporal_not_indexed` |
-| 6 (W2-index-6) | removed (17ccc5412) | `n.v > 'a' AND n.v < 'a'` returned `'a'` | Fixed by #3072 (issue #2961): `fixed3072_exclusive_equal_bounds` |
 | 7 | `tagEnc_not_monotone`, `bug_string_range_order`, `bug_string_range_order_gt` | The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong both ways: `n.v < 'JohnA'` misses `'John Smith'` | **Open**. C is also wrong, differently |
 | 8 | `bug_bool_eq_int` | `n.v = 1` also returns `v = true`, and the reverse | **Open**. C has the same bug |
-| 9 | removed (17ccc5412) | `n.v > 0` missed a stored `+∞` | Fixed by #3081: `fixed3081_open_bound_includes_inf` |
 | 10 | `bug_empty_string_not_indexed` | `n.v = ''` returns `[]`, and `n.v < 'a'` misses `''` | **Open**. C has the same bug |
-| 11 | (proven in `ops_traverse`) | An undirected edge index scan returned each edge once instead of twice | Fixed by #3081 |
 | 12 | (outside the model) | Geo radius near the poles: RediSearch geohash is limited to \|lat\| ≤ 85.05, so points at 89.99 are missed | **Open**. C has the same bug |
 | 13 (W4-index-1) | `bug_range_after_fulltext` | After a full-text index and then a range index on the same `n.s`, every range query on `n.s` targets the full-text field and returns `[]`. C correct | **Open**. Fix: pick the field whose type is `IndexType::Range` |
-| 14 (W7-btree-2) | removed (17ccc5412) | `CowBTree` with `DOC_BYTES = 3/5/6/7` passed the const assert but read garbage docs or panicked | Fixed by #3285: `readWidth_admitted`, `admitted_fromPairs_roundtrip` |
 | #3166 | `bug3166_stopwords_not_applied`, `bug3166_violates` (property `StopwordsAgree` / `CreateIndexKeepsStopwords`) | A range index first, then `CREATE FULLTEXT INDEX … OPTIONS {stopwords: ['router']}`: the label reports `['router']`, but its RediSearch spec keeps the default list, because the second call only registers the new field on the existing spec. `queryNodes('L', 'router')` returns 1 row; C returns 0. `createIndex_fresh_stopwords_agree` proves the new-label path agrees | **Open** |
-| #3382 | `bug3382_vector_query_ignores_operational`, `bug3382_partial_answer` (property `VectorQueryRequiresOperational` / `VectorQueryComplete`) | `db.idx.vector.queryNodes` answers while the index is UNDER CONSTRUCTION, with 0 rows and then 3. C refuses with "Invalid arguments for procedure" until OPERATIONAL. `vectorQueryGuarded_requires_operational` is the fix shape | **Open** |
 | #2781 | `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored` (property `RollbackRestoresEdgeIndex`) | A failed query that deletes edge 0 and reuses id 0 for `c→d` leaves the orphan document `(c, d, 0)` after rollback, beside the restored `(a, b, 0)`. The index scan returns both; a full scan and C return only `a→b`. `resyncEdgesFixed_restores` proves the fix: also delete the private key when the endpoints changed | **Open** |
-| W3-conc-3 | removed (17ccc5412) | A vector of the wrong dimension (or a vector field with no options) made RediSearch reject the whole document, so the node dropped out of the label's other indexes | Fixed by #3087 (issue #3075): `setVector_sound` |
 
 C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a range index; Rust returns the right result.
 
@@ -101,22 +94,23 @@ C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a ran
 | `Model.lean` | The executable model of `mod.rs`/`indexer.rs`: `ENum`, `tagEnc`, node and edge keys, `Document::set` (`docOf`), the query builders (`buildQ`), the RediSearch spec (`rsMatch`), `commit`, `Slots` |
 | `Proofs.lean` | Key round trips, `tagEnc_injective`, `intLosesPrecision_sound`, `equal_exact`, `inList_exact`, `numRange_exact` |
 | `Strings.lean` | `strRange_exact` and the byte-order lemmas (`lexLt_total`, `tagEnc_id`) |
-| `Temporal.lean` | Since #3076: `temporal_not_indexed`, `temporal_numRange_exact`, `temporal_equal_exact` |
+| `Temporal.lean` | `temporal_not_indexed`, `temporal_numRange_exact`, `temporal_equal_exact` |
 | `Maintenance.lean` | `Indexer::commit` (`commit_lookup`, `commit_preserves_inv`, `commit_both_removes`) and the ticket counters |
 | `Bugs.lean` | Counterexamples 1-10 and the `pre…`/`fixed…` pairs for the fixed ones |
-| `SetVector.lean` | The vector arm of `Document::set` (#3087): `setVector_sound` |
+| `SetVector.lean` | The vector arm of `Document::set`: `setVector_sound` |
 | `Meta.lean`, `IndexM.lean` | `Field` and `Index` metadata, the RediSearch spec lifecycle |
-| `IndexerM.lean` | `Indexer`: create, drop, lookups, `index_info`; `createIndex_ok`, `dropIndex_spec`, the #3086 generation bump (`createIndex_regen`), bug 13 |
-| `IndexGaps.lean` | Gaps closed 2026-10-20: the stopwords the RediSearch spec applies (`Idx.rsStop`, #3166) and the vector query's missing OPERATIONAL gate (#3382) |
+| `IndexerM.lean` | `Indexer`: create, drop, lookups, `index_info`; `createIndex_ok`, `dropIndex_spec`, the generation bump (`createIndex_regen`), bug 13 |
+| `IndexGaps.lean` | Gaps closed 2026-10-20: the stopwords the RediSearch spec applies (`Idx.rsStop`, #3166) and the vector query's OPERATIONAL gate |
 | `EdgeResync.lean` | Gap closed 2026-10-20: the edge arm of `resync_published_indexes` with documents keyed by `(src, dst, id)` (#2781) |
 | `Iter.lean` | Result iterators, RediSearch refcounts (`RC.not_freed`), and the bridges `query_eq_scan_filter`, `queryE_eq_scan_filter`, `fulltextQ_exact`, `vectorQ_sound` |
 | `LeafBytes.lean` | Byte helpers of the leaf pages, `read_width` (`readWidth_admitted`) |
-| `LeafAos.lean`, `LeafAosD.lean` | The AoS page at `DOC_BYTES = 8` and at any width (#2278), bug 14 |
+| `LeafAos.lean`, `LeafAosD.lean` | The AoS page at `DOC_BYTES = 8` and at any width |
 | `LeafCompact.lean` | `CompactLeaf`: build round trip, splices, merge |
 | `LeafIndexed.lean`, `LeafIndexedOps.lean`, `LeafIndexedMerge.lean` | `CompactIndexedLeaf`: build round trip, splices, merge |
 | `LeafMerge.lean` | `merge_sorted`, `merge_walk`, `partition_point`, gallop |
 | `LeafBlockCopy.lean`, `LeafBlockCopy2.lean` | `block_copy_merge`, list level and byte level |
 | `LeafOps.lean` | `Leaf::merge_batch`: every fast path equals the slow path |
+| `InList.lean` | The `IN` arm of the index scan re-checked at 256ab4d3f: `canUtilizeInList_eq_or`, `scan_inlist_faithful` |
 | `LeafDispatch.lean` | The `Leaf` enum, `from_pairs` format choice, `fromPairs_roundtrip` |
 | `LeafTree.lean` | Tree glue: `pack_branches`, `build_root`, `make_private`, `from_sorted`, `insert_batch` contents |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -125,16 +119,22 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 281 rows: all of `index/mod.rs` (94) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82, plus one commented row for the Redis module ABI types), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
+`COVERAGE.tsv` has 282 rows: all of `index/mod.rs` (94) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 196 |
-| AXIOMATISED | 83 |
-| MODELLED | 2 |
+| PROVEN | 200 |
+| AXIOMATISED | 82 |
+| MODELLED | 0 |
 
-- **MODELLED:** the two #2781 rows: the edge arm of the rollback is modelled and refuted (`bug2781_rollback_not_restored`); the only positive edge-arm result is the fix shape `resyncEdgesFixed_restores` in this project (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
-- **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`. The 83rd row is the commented-out `redis.rs` line for the Redis module ABI types.
+- **Formerly MODELLED, now PROVEN:** the two #2781 rows. `resyncEdgeKeys_spec`/`resyncEdgeKeys_disjoint` state exactly what the edge arm of the rollback re-adds and deletes, and `commitEdgeAddKeys_mem` what `commit_edge_index_locked` writes; the rollback property itself stays refuted (`bug2781_rollback_not_restored`, open), and the only positive result for it is the fix shape `resyncEdgesFixed_restores` (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
+- **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`.
+
+## Differential coverage and suspicions
+
+`diff.py` ran 83 predicate shapes over 38 stored values (numbers, ±0, ±inf, NaN, 2^53+1, booleans, strings including empty, whitespace, `\`, `_`, unicode and emoji, lists, temporals, points); `diff2.py` ran 22 maintenance scenarios (SET/REMOVE of a property or label, `SET n = {}`, `+=`, scalar/list type changes, DELETE, id reuse, MERGE, rollback on error, edge SET/DELETE/DETACH DELETE). Every Rust mismatch between the index and the full scan falls into the bugs above. The precision guard, NaN and -0.0 equality, and unicode equality were exact; all maintenance scenarios were consistent.
+
+Suspected, unconfirmed: `Indexer::commit` applies removes after adds, so an id in both sets loses its document (`commit_both_removes`), though no Cypher sequence tried produces both; and `1 IN n.v` over a non-list `n.v` raises a type error in a full scan but returns `[]` or rows through the index (C behaves the same).
 
 ## What the model does not cover
 
@@ -159,4 +159,4 @@ bash proofs/coverage.sh                # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build, and re-run `proofs/index_layer/repro.py` against live servers for a query-building change.
 
-If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. When you fix one of the open bugs above, keep its counterexample as a `pre<PR>_` theorem and add the `fixed<PR>_` or exactness theorem next to it, as was done for #3072, #3076 and #3081.
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. When you fix one of the open bugs above, keep its counterexample as a `pre<PR>_` theorem and add the `fixed<PR>_` or exactness theorem next to it.

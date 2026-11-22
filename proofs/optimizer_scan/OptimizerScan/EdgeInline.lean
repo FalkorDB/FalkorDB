@@ -6,11 +6,11 @@ import OptimizerScan.IndexPipeline
 | here | there |
 | --- | --- |
 | `QNode`, `QRel`, `IRs` | `QueryNode`, `QueryRelationship`, the `IR` variants the pass matches |
-| `nAlias`/`nLabels`/`nIndexed`/`nMatch`/`nBuild` | `impl IndexSubject for Arc<QueryNode>` `utilize_index.rs:151-216` |
-| `eAlias`/`eLabels`/`eIndexed`/`eFunc`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs:218-310` |
-| `endpointOK`, `edgeScanSel`, `edgeRefSel` | `EdgeByIndexScanOp::next` `runtime/ops/edge_by_index_scan.rs:330-380` (bound-endpoint filter), `CondTraverse` + `Filter` |
-| `distScan`, `pointSel` | `try_distance_index_scan` 421, `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs:1545`) |
-| `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs:58,237,100` |
+| `nAlias`/`nLabels`/`nIndexed`/`nMatch`/`nBuild` | `impl IndexSubject for Arc<QueryNode>` `utilize_index.rs` |
+| `eAlias`/`eLabels`/`eIndexed`/`eFunc`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs` |
+| `endpointOK`, `edgeScanSel`, `edgeRefSel` | `EdgeByIndexScanOp::next` `runtime/ops/edge_by_index_scan.rs` (bound-endpoint filter), `CondTraverse` + `Filter` |
+| `distScan`, `pointSel` | `try_distance_index_scan` 421, `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs`) |
+| `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs` |
 -/
 namespace OptimizerScan.Index
 
@@ -106,7 +106,7 @@ structure EdgeE where
   dst : Nat
   ent : Node
 
-/-- The bound-endpoint filter of `EdgeByIndexScanOp` (`edge_by_index_scan.rs:338-372`),
+/-- The bound-endpoint filter of `EdgeByIndexScanOp` (`edge_by_index_scan.rs`),
 which is also what `CondTraverse` enforces for bound endpoints. -/
 def endpointOK (bf bt : Option Nat) (tr same : Bool) (e : EdgeE) : Bool :=
   let ft := if tr then (e.dst, e.src) else (e.src, e.dst)
@@ -134,16 +134,13 @@ theorem edge_utilize_sound (eidx : Nat → List Nat) (opq : Nat → Node → Boo
     edgeScanSel eidx opq T' f bf bt tr same e = edgeRefSel eidx opq T' f bf bt tr same e := by
   simp only [edgeScanSel, edgeRefSel, utilize_sound eidx T' opq f hf e.ent he]
 
-/-! ## HISTORICAL: the inline-attribute path (`(n:L {k: v})`), removed by #2390 (d2c42e032)
+/-! ## No inline-attribute path (`(n:L {k: v})`)
 
-Until #2390 `try_index_rewrite` had a second path for patterns carrying inline attributes. #2390
-removed it (with `IndexSubject::inline_attrs`): the planner now lowers inline attributes to an
-`IR::Filter` and strips them from the pattern, so they reach the index through the filter path.
-Unchecked historical note: the removed inline rewrite (`get_inline_attr_index` 721,
-`needs_inline_post_filter` 897, `apply_inline_rewrite` 1038, all at a9377c636, the last revision that
-has them) was meant to be the same as `utilize` of the equivalent filter `n.k = v`. The theorem that
-stated this (`pre2390_applyInline_eq_utilize`) was deleted with the pre-#2390 model, so nothing in
-this project checks the claim any more; it is context only. -/
+`try_index_rewrite` has no second path for patterns carrying inline attributes: the planner lowers
+inline attributes to an `IR::Filter` and strips them from the pattern, so they reach the index
+through the filter path. Unchecked note: the old inline rewrite (`get_inline_attr_index`,
+`needs_inline_post_filter`, `apply_inline_rewrite`) was meant to be the same as `utilize` of the
+equivalent filter `n.k = v`; nothing in this project checks that claim, it is context only. -/
 
 /-! ## `distance()` scans -/
 
@@ -191,11 +188,11 @@ theorem distance_keeps_filter (t : T) : nonIdxT (.abs t) = true := rfl
 
 /-! ## `NodeByIndexScanOp` -/
 
-/-- `NodeByIndexScanOp::new` (`node_by_index_scan.rs:68-72`). -/
+/-- `NodeByIndexScanOp::new` (`node_by_index_scan.rs`). -/
 def extraLabels (ls : List Nat) : Option (List Nat) := if ls.length > 1 then some ls.tail else none
 
 /-- `evaluate_index_query` with its error: `InList` over a non-list value is
-`Err("IN operator requires a list")` (`node_by_index_scan.rs:227`). -/
+`Err("IN operator requires a list")` (`node_by_index_scan.rs`). -/
 def evalIQE (q : IQ) : Except String Q :=
   match q with
   | .inList _ (.term t) => match evalC t with
@@ -203,8 +200,8 @@ def evalIQE (q : IQ) : Except String Q :=
     | _ => .error "IN operator requires a list"
   | _ => .ok (evalIQ q)
 
-/-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs:253-310`):
-index when `IndexQuery::can_be_served`, else `get_nodes(labels)`, then the extra labels. -/
+/-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs`):
+index when `can_utilize_index`, else `get_nodes(labels)`, then the extra labels. -/
 def scanRow (idx : Nat → List Nat) (ls : List Nat) (L : Nat) (q : IQ) (n : Node) : Bool :=
   let qv := evalIQ q
   (if canUtilize qv then idxSel idx L qv n else hasAll ls n) &&
@@ -246,35 +243,16 @@ theorem evalIQE_inList_err (k : Nat) (t : T) (h : ∀ xs, evalC t ≠ .arr xs) :
   · next xs hx => exact absurd hx (h xs)
   · rfl
 
-/-- `can_be_served`: an empty `Or`/`And` (or an empty `InList`, e.g. `IN [NULL]` after
-`IndexQuery::in_list` drops the nulls) is refused, so the kept Filter re-establishes correctness. -/
+/-- `can_utilize_index`: an empty `Or`/`And` (e.g. `IN [NULL]` after the runtime
+drops non-scalars) is refused, so the kept Filter re-establishes correctness. -/
 theorem canUtilize_empty : canUtilize (.or []) = false ∧ canUtilize (.and []) = false := ⟨rfl, rfl⟩
 
 theorem isIndexable_spec (v : V) :
     isIndexable v = match v with | .i x => !lossy x | .date _ | .arr _ => false | _ => true := by
   cases v <;> rfl
 
-/-- #2383: the runtime keeps an `IN` list whole; since #3064 (`IndexQuery::in_list`) only its
-null members are dropped. -/
+/-- #2383: the runtime keeps an `IN` list whole, filtered to its scalar members. -/
 theorem evalIQ_inList (k : Nat) (r : R) :
-    evalIQ (.inList k r) = .inList k ((listVals r).filter notNullV) := rfl
-
-/-- **PROVEN** (#3064, fixes C9 / W2-index-3 at the runtime): an `IN` list holding a value the
-index cannot look up exactly (a date, a list, a lossy integer) is never served by the index: the
-scan falls back to the label and the kept Filter decides. -/
-theorem inList_unservable_falls_back (k : Nat) (vs : List V) (x : V) (hx : x ∈ vs)
-    (hn : x ≠ .null) (hi : isIndexable x = false) :
-    canUtilize (.inList k (vs.filter notNullV)) = false := by
-  have hm : x ∈ vs.filter notNullV := List.mem_filter.mpr ⟨hx, by cases x <;> simp_all [notNullV]⟩
-  simp only [canUtilize, Bool.and_eq_false_iff]
-  right
-  exact List.all_eq_false.mpr ⟨x, hm, by simp [hi]⟩
-
-/-- #3064: `ArrayContains` with a lossy integer is refused on the node scan too (as the edge scan
-already did), and with a null value. -/
-theorem canUtilize_contains (k : Nat) :
-    canUtilize (.contains k (.i (2 ^ 60 + 1))) = false ∧ canUtilize (.contains k .null) = false ∧
-    canUtilize (.contains k (.i 1)) = true := by
-  refine ⟨?_, rfl, ?_⟩ <;> simp only [canUtilize] <;> decide
+    evalIQ (.inList k r) = .inList k ((listVals r).filter isPrim) := rfl
 
 end OptimizerScan.Index

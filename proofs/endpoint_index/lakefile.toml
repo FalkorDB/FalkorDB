@@ -1,8 +1,19 @@
 name = "falkor-endpoint-index"
-defaultTargets = ["FalkorEndpointIndex", "EndpointPaged"]
+defaultTargets = ["FalkorEndpointIndex", "EndpointPaged", "EndpointGraph", "EndpointRelease"]
 
 [[lean_lib]]
 name = "FalkorEndpointIndex"
 
 [[lean_lib]]
 name = "EndpointPaged"
+
+[[lean_lib]]
+name = "EndpointGraph"
+
+# `EndpointRelease` links `delete_implicit_edges`'s fallible `release` to id_space's refusal model.
+[[lean_lib]]
+name = "EndpointRelease"
+
+[[require]]
+name = "falkor-id-space"
+path = "../id_space"

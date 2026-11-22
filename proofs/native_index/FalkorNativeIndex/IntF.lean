@@ -3,7 +3,7 @@ import FalkorCore.Float
 set_option linter.unusedSimpArgs false
 
 /-!
-# `i as f64` at the bit level (`encode.rs:31`, `value.rs:1267-1268`)
+# `i as f64` at the bit level (`encode.rs`, `value.rs`)
 
 `bitlenAux` / `bitlen` / `roundNat` are imported from proofs/core
 (`FalkorCore/Float.lean`, Lake path dependency; IEEE round-to-nearest-even to 53
@@ -38,7 +38,7 @@ theorem bitlenAux_spec : ∀ (f n : Nat), n < 2 ^ f → 0 < n →
   | 0, n, h, hn => by simp at h; omega
   | f + 1, n, h, hn => by
     have hne : n ≠ 0 := by omega
-    simp only [bitlenAux, hne, if_false]
+    simp only [bitlenAux, hne, ite_false]
     by_cases h2 : n / 2 = 0
     · have : bitlenAux f (n / 2) = 0 := by rw [h2]; cases f <;> simp [bitlenAux]
       rw [this]; simp; omega
