@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 
 // EffectsBytes is a growable append-only byte sequence
@@ -35,8 +36,24 @@ void EffectsBytes_Write
 	size_t n           // number of bytes to append
 );
 
+// append every byte of 'src', leaving it untouched
+//
+// Walks src's blocks straight into bs, so neither side is flattened into a
+// scratch buffer first. 'src' must not be 'bs'
+void EffectsBytes_Append
+(
+	EffectsBytes *bs,        // byte sequence to append to
+	const EffectsBytes *src  // byte sequence to append
+);
+
 // total number of bytes appended
 size_t EffectsBytes_Len
+(
+	const EffectsBytes *bs  // byte sequence
+);
+
+// whether anything has been appended
+bool EffectsBytes_IsEmpty
 (
 	const EffectsBytes *bs  // byte sequence
 );

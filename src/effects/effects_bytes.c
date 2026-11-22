@@ -24,9 +24,15 @@ struct EffectsBytesBlock {
 };
 
 struct EffectsBytes {
-	size_t block_size;                  // size of each block
-	struct EffectsBytesBlock *head;     // first block
-	struct EffectsBytesBlock *current;  // block currently being written into
+	size_t block_size;               // size of each block
+	size_t len;                      // bytes appended, over every block
+
+	struct EffectsBytesBlock *head;  // first block
+
+	// ALWAYS THE LAST BLOCK, never an interior one: AddBlock only ever links
+	// onto it, and Clear frees everything behind head and points this back at
+	// head. Held rather than walked to so an append is O(1)
+	struct EffectsBytesBlock *tail;
 };
 
 // create a new block
@@ -53,15 +59,15 @@ static void EffectsBytesBlock_Free
 	rm_free(b);
 }
 
-// append a new block and make it current
+// append a new block and make it the tail
 static void EffectsBytes_AddBlock
 (
 	EffectsBytes *bs  // byte sequence
 ) {
 	struct EffectsBytesBlock *b = EffectsBytesBlock_New(bs->block_size);
 
-	bs->current->next = b;
-	bs->current       = b;
+	bs->tail->next = b;
+	bs->tail       = b;
 }
 
 // write n bytes from ptr into block
@@ -102,8 +108,9 @@ EffectsBytes *EffectsBytes_New
 	EffectsBytes *bs = rm_malloc(sizeof(EffectsBytes));
 
 	bs->block_size = block_size;
+	bs->len        = 0;
 	bs->head       = EffectsBytesBlock_New(block_size);
-	bs->current    = bs->head;
+	bs->tail       = bs->head;
 
 	return bs;
 }
@@ -120,11 +127,13 @@ void EffectsBytes_Write
 
 	const unsigned char *src = ptr;
 
+	bs->len += n;
+
 	while(n > 0) {
-		size_t written = EffectsBytesBlock_Write(bs->current, src, n);
+		size_t written = EffectsBytesBlock_Write(bs->tail, src, n);
 
 		if(written == 0) {
-			// current block is full, add another
+			// tail block is full, add another
 			EffectsBytes_AddBlock(bs);
 			continue;
 		}
@@ -134,19 +143,48 @@ void EffectsBytes_Write
 	}
 }
 
+void EffectsBytes_Append
+(
+	EffectsBytes *bs,       // byte sequence to append to
+	const EffectsBytes *src  // byte sequence to append
+) {
+	ASSERT(bs  != NULL);
+	ASSERT(src != NULL);
+	// RELEASE_ASSERT for the reason EffectsV3_WriteUint's width check is one:
+	// ASSERT compiles out of a release build, and self-append does not fail
+	// cleanly - Append would keep finding blocks that Write is still adding,
+	// allocating until the host gives up. No caller can do it today, but that
+	// is a fact about the call sites
+	RELEASE_ASSERT(bs != src);
+
+	for(const struct EffectsBytesBlock *b = src->head; b != NULL; b = b->next) {
+		size_t n = BLOCK_USED_SPACE(b);
+		if(n > 0) {
+			EffectsBytes_Write(bs, b->buffer, n);
+		}
+	}
+}
+
 size_t EffectsBytes_Len
 (
 	const EffectsBytes *bs  // byte sequence
 ) {
 	ASSERT(bs != NULL);
 
-	size_t l = 0;
+	// RUNNING COUNT, not a walk. Callers ask per record - the encoder sizes
+	// every group's values block before writing it - and the blocks a long
+	// payload holds are the thing being counted, so a walk here is the one
+	// part of encoding that gets slower the more there is to encode
+	return bs->len;
+}
 
-	for(const struct EffectsBytesBlock *b = bs->head; b != NULL; b = b->next) {
-		l += BLOCK_USED_SPACE(b);
-	}
+bool EffectsBytes_IsEmpty
+(
+	const EffectsBytes *bs  // byte sequence
+) {
+	ASSERT(bs != NULL);
 
-	return l;
+	return bs->len == 0;
 }
 
 unsigned char *EffectsBytes_CopyInto
@@ -184,7 +222,8 @@ void EffectsBytes_Clear
 
 	bs->head->next   = NULL;
 	bs->head->offset = bs->head->buffer;
-	bs->current      = bs->head;
+	bs->tail         = bs->head;
+	bs->len          = 0;
 }
 
 void EffectsBytes_Free
