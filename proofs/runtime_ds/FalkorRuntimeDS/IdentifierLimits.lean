@@ -6,10 +6,10 @@ Rust `&str::len()` is the UTF-8 byte length, so a name is modelled as a
 
 | here | there |
 | --- | --- |
-| `MAX_IDENTIFIER_LEN` | identifier_limits.rs:10 |
-| `TOO_LONG`           | identifier_limits.rs:15 |
-| `validate`           | `validate_identifier_len` (identifier_limits.rs:26) |
-| `isTooLong`          | `is_identifier_too_long` (identifier_limits.rs:42) — `ends_with` |
+| `MAX_IDENTIFIER_LEN` | identifier_limits.rs |
+| `TOO_LONG`           | identifier_limits.rs |
+| `validate`           | `validate_identifier_len` (identifier_limits.rs) |
+| `isTooLong`          | `is_identifier_too_long` (identifier_limits.rs) — `ends_with` |
 -/
 namespace FalkorRuntimeDS.IdentifierLimitsModel
 
@@ -19,11 +19,11 @@ def TOO_LONG : List Char := "exceeds maximum length of 512 characters".toList
 
 def byteLen (s : List Char) : Nat := (s.map Char.utf8Size).sum
 
-/-- identifier_limits.rs:26 — `format!("{entity} {TOO_LONG}")` on rejection. -/
+/-- identifier_limits.rs — `format!("{entity} {TOO_LONG}")` on rejection. -/
 def validate (name entity : List Char) : Except (List Char) Unit :=
   if byteLen name > MAX_IDENTIFIER_LEN then .error (entity ++ ' ' :: TOO_LONG) else .ok ()
 
-/-- identifier_limits.rs:42 -/
+/-- identifier_limits.rs -/
 def isTooLong (err : List Char) : Bool := TOO_LONG.isSuffixOf err
 
 theorem validate_ok_iff (name entity : List Char) :

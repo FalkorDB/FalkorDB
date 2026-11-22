@@ -1,33 +1,26 @@
 /-
-# Row-budget hints: `row_budget`, `record_cap`, `hard_record_cap` (PR #3071)
+# Row-budget hints: `effective_limit`, `effective_skip`, `record_cap`
 
 | here | there |
 | --- | --- |
-| `Anc`                 | the `IR` variants the walk distinguishes, `runtime/runtime.rs:695-722` |
-| `rowBudgetAux`        | `Runtime::row_budget`, `runtime/runtime.rs:695-722` (`skip` accumulator `:704`, `Limit` `:711`, `Skip` `:712`, `Project` `:713`, traverse iff `through_traverse` `:714`, barrier `:715`) |
-| `recordCap`           | `Runtime::record_cap` = `row_budget(idx, true)`, `runtime/runtime.rs:728-733` (the emitters' pack-ceiling *hint*) |
-| `hardRecordCap`       | `Runtime::hard_record_cap` = `row_budget(idx, false)`, `runtime/runtime.rs:740-745` (the hard stop of CondTraverse/ExpandInto and Sort's top-k, `build_batch_op` `:962`, `:1017`, `:1040`) |
+| `Anc`                 | the `IR` variants the walks distinguish, `runtime/runtime.rs` |
+| `effectiveLimit`      | `Runtime::effective_limit`, `runtime/runtime.rs` |
+| `effectiveSkip`       | `Runtime::effective_skip`, `runtime/runtime.rs` |
+| `recordCap`           | `Runtime::record_cap`, `runtime/runtime.rs` |
 | `Anc.sem`, `run`      | what each ancestor does to the row stream it pulls (LimitOp / SkipOp / ProjectOp / CondTraverseOp / ExpandIntoOp) |
-| `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs`: `next`'s stop `:1410-1414`, `trim_to_cap` `:1349`) and `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), and SortOp's top-`record_cap` heap (`ops/sort.rs:504-506`, `build_top_k`) |
+| `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs`: `next`'s stop, `trim_to_cap` and its call sites `:1409,1445,1458`) and `ExpandIntoOp` (`ops/expand_into.rs`: stop, trim), and SortOp's top-`limit+skip` heap (`ops/sort.rs`, `build_top_k`) |
 | `need`                | the smallest sound budget (reference) |
-| `preEffectiveLimit`, `preEffectiveSkip`, `preRecordCap` | the walks before #3071 (`effective_limit`, `effective_skip`, `record_cap` at 343e077f2 `runtime.rs:694`, `:729`, `:761`), kept for bugs B1/B2 |
 
-The walk starts at the *parent* of the operator (`self.plan.node(cur).parent()`), so an
+The walks start at the *parent* of the operator (`self.plan.node(cur).parent()`), so an
 ancestor list here is "nearest parent first".
 
-`Limit`/`Skip` values: the walk evaluates the expression with no row; a non-`Int` or a
-negative value makes the walk return `None`, and makes `build_batch_op` fail the
-whole query. So on every plan that executes, each `Limit`/`Skip`
+`Limit`/`Skip` values: the walks evaluate the expression with no row; a non-`Int` or a
+negative value makes the walk return `None`/`0`, and makes `build_batch_op` fail the
+whole query (`runtime.rs`). So on every plan that executes, each `Limit`/`Skip`
 ancestor carries a `Nat`, which is what `Anc` stores.
 
-`saturating_add`: each operand is `< 2^63` (a non-negative `i64`); a saturated sum
-(`usize::MAX`) is larger than any row count a stream can reach, so `Nat` addition gives
-the same cut.
-
-PR #3071 fixes B1 and B2: the hard-cap consumers now get `hardRecordCap`, which is
-exactly `need` (`hardRecordCap_eq_need`), so the hard cap is sound on every ancestor
-chain (`hardRecordCap_sound`). `recordCap` (still walking through traverses) only sizes
-emitter batches, where it cannot change rows (`Emitter.drive_flatten`).
+`saturating_add` (`runtime.rs`): both operands are `< 2^63` (they come from a
+non-negative `i64`), so the sum never saturates in `usize`; `Nat` addition is exact.
 -/
 namespace RuntimeCore.Budget
 
@@ -44,42 +37,24 @@ inductive Anc (α : Type) where
 
 variable {α : Type}
 
-/-- `Runtime::row_budget` (`runtime.rs:695-722`) with its `skip` accumulator: a `Limit n`
-returns `n + skip`, a `Skip k` adds `k`, a `Project` passes, `CondTraverse`/`ExpandInto`
-pass iff `through`, anything else is a barrier. -/
-def rowBudgetAux (through : Bool) : Nat → List (Anc α) → Option Nat
-  | _, [] => none
-  | s, .limit n :: _ => some (n + s)
-  | s, .skip k :: r => rowBudgetAux through (s + k) r
-  | s, .project _ :: r => rowBudgetAux through s r
-  | s, .condTraverse _ :: r | s, .expandInto _ :: r =>
-    if through then rowBudgetAux through s r else none
-  | _, .other _ :: _ => none
-
-/-- `Runtime::record_cap` (`runtime.rs:728-733`): the pack-ceiling hint. -/
-def recordCap (as : List (Anc α)) : Option Nat := rowBudgetAux true 0 as
-
-/-- `Runtime::hard_record_cap` (`runtime.rs:740-745`): the hard stop. -/
-def hardRecordCap (as : List (Anc α)) : Option Nat := rowBudgetAux false 0 as
-
-/-- Pre-#3071 `Runtime::effective_limit` (343e077f2 `runtime.rs:694`). -/
-def preEffectiveLimit : List (Anc α) → Option Nat
+/-- `Runtime::effective_limit` (`runtime.rs`). -/
+def effectiveLimit : List (Anc α) → Option Nat
   | [] => none
   | .limit n :: _ => some n
-  | .project _ :: r | .skip _ :: r | .condTraverse _ :: r | .expandInto _ :: r => preEffectiveLimit r
+  | .project _ :: r | .skip _ :: r | .condTraverse _ :: r | .expandInto _ :: r => effectiveLimit r
   | .other _ :: _ => none
 
-/-- Pre-#3071 `Runtime::effective_skip` (343e077f2 `runtime.rs:729`): the *first* `Skip`
-reached through `Project`/`Limit`, else 0. -/
-def preEffectiveSkip : List (Anc α) → Nat
+/-- `Runtime::effective_skip` (`runtime.rs`): the *first* `Skip` reached through
+`Project`/`Limit`, else 0. -/
+def effectiveSkip : List (Anc α) → Nat
   | [] => 0
   | .skip n :: _ => n
-  | .project _ :: r | .limit _ :: r => preEffectiveSkip r
+  | .project _ :: r | .limit _ :: r => effectiveSkip r
   | _ :: _ => 0
 
-/-- Pre-#3071 `Runtime::record_cap` (343e077f2 `runtime.rs:761`), then also the hard cap. -/
-def preRecordCap (as : List (Anc α)) : Option Nat :=
-  (preEffectiveLimit as).map (· + preEffectiveSkip as)
+/-- `Runtime::record_cap` (`runtime.rs`). -/
+def recordCap (as : List (Anc α)) : Option Nat :=
+  (effectiveLimit as).map (· + effectiveSkip as)
 
 /-- The row-stream semantics of one ancestor. -/
 def Anc.sem : Anc α → List α → List α
@@ -155,81 +130,32 @@ inductive OneSkip : List (Anc α) → Prop
   | project (g : α → α) (r : List (Anc α)) : OneSkip r → OneSkip (.project g :: r)
 
 theorem noSkip_need {as : List (Anc α)} (h : NoSkip as) :
-    ∃ n, need as = some n ∧ preEffectiveLimit as = some n := by
+    ∃ n, need as = some n ∧ effectiveLimit as = some n := by
   induction h with
   | limit n r => exact ⟨n, rfl, rfl⟩
-  | project g r _ ih => simpa [need, preEffectiveLimit] using ih
+  | project g r _ ih => simpa [need, effectiveLimit] using ih
 
-/-- Whenever `need` gives a budget, the walk gives the same one plus its accumulated
-skip, whether or not it walks through traverses. -/
-theorem rowBudgetAux_of_need (b : Bool) : ∀ (as : List (Anc α)) (c s : Nat),
-    need as = some c → rowBudgetAux b s as = some (c + s)
-  | [], _, _, h => by simp [need] at h
-  | .limit n :: _, c, s, h => by simp [need] at h; subst h; rfl
-  | .skip k :: r, c, s, h => by
-    simp only [need, Option.map_eq_some_iff] at h
-    obtain ⟨c', hc', rfl⟩ := h
-    simp only [rowBudgetAux]
-    rw [rowBudgetAux_of_need b r c' (s + k) hc']; congr 1; omega
-  | .project _ :: r, c, s, h => by
-    simp only [need] at h; simp only [rowBudgetAux]; exact rowBudgetAux_of_need b r c s h
-  | .condTraverse _ :: _, _, _, h | .expandInto _ :: _, _, _, h | .other _ :: _, _, _, h => by
-    simp [need] at h
-
-/-- The hard walk with skip `s` is `need` shifted by `s`. -/
-theorem rowBudgetAux_false (s : Nat) : ∀ (as : List (Anc α)),
-    rowBudgetAux false s as = (need as).map (· + s)
-  | [] => rfl
-  | .limit n :: _ => rfl
-  | .skip k :: r => by
-    simp only [rowBudgetAux, need, rowBudgetAux_false (s + k) r, Option.map_map]
-    congr 1; funext x; simp only [Function.comp]; omega
-  | .project _ :: r => by simp only [rowBudgetAux, need]; exact rowBudgetAux_false s r
-  | .condTraverse _ :: _ | .expandInto _ :: _ | .other _ :: _ => by simp [rowBudgetAux, need]
-
-/-- **PROVEN** (#3071): `hard_record_cap` is exactly the reference budget `need`. -/
-theorem hardRecordCap_eq_need (as : List (Anc α)) : hardRecordCap as = need as := by
-  simp [hardRecordCap, rowBudgetAux_false]
-
-/-- **PROVEN** (#3071, headline): the hard stop that `CondTraverse`, `ExpandInto` and
-Sort's top-k apply with `hard_record_cap` never changes what reaches the top, on every
-ancestor chain (stacked `SKIP`s and traverses included). -/
-theorem hardRecordCap_sound (as : List (Anc α)) (xs : List α) :
-    run as (hardCap (hardRecordCap as) xs) = run as xs := by
-  rw [hardRecordCap_eq_need]
-  cases h : need as with
-  | none => rfl
-  | some c => exact hardCap_sound_of_need_le as c c h (Nat.le_refl _) xs
-
-/-- **PROVEN**: where the hard cap exists, the hint `record_cap` equals it. -/
-theorem recordCap_eq_hard (as : List (Anc α)) (c : Nat) (h : hardRecordCap as = some c) :
-    recordCap as = some c := by
-  rw [hardRecordCap_eq_need] at h
-  simpa [recordCap] using rowBudgetAux_of_need true as c 0 h
-
-/-- **PROVEN**: for a chain of `Project`s and at most one `Skip` below the `Limit`,
-`record_cap ≥ need`, so the hard cap is sound. -/
+/-- **PROVEN** (when `record_cap` is right): for a chain of `Project`s and at most one
+`Skip` below the `Limit`, `record_cap ≥ need`, so the hard cap is sound. -/
 theorem recordCap_sound_oneSkip {as : List (Anc α)} (h : OneSkip as) :
     ∃ c c', need as = some c ∧ recordCap as = some c' ∧ c ≤ c' := by
-  have hn : ∃ c, need as = some c := by
-    induction h with
-    | none r hr => obtain ⟨n, h1, -⟩ := noSkip_need hr; exact ⟨n, h1⟩
-    | skip s r hr => obtain ⟨n, h1, -⟩ := noSkip_need hr; exact ⟨n + s, by simp [need, h1]⟩
-    | project g r _ ih => simpa [need] using ih
-  obtain ⟨c, hc⟩ := hn
-  exact ⟨c, c, hc, by simpa [recordCap] using rowBudgetAux_of_need true as c 0 hc, Nat.le_refl _⟩
+  induction h with
+  | none r hr =>
+    obtain ⟨n, h1, h2⟩ := noSkip_need hr
+    exact ⟨n, n + effectiveSkip r, h1, by simp [recordCap, h2], by omega⟩
+  | skip s r hr =>
+    obtain ⟨n, h1, h2⟩ := noSkip_need hr
+    exact ⟨n + s, n + s, by simp [need, h1], by simp [recordCap, effectiveLimit, effectiveSkip, h2], Nat.le_refl _⟩
+  | project g r _ ih =>
+    obtain ⟨c, c', h1, h2, h3⟩ := ih
+    exact ⟨c, c', by simpa [need] using h1, by simpa [recordCap, effectiveLimit, effectiveSkip] using h2, h3⟩
 
 theorem recordCap_hardCap_sound_oneSkip {as : List (Anc α)} (h : OneSkip as) (xs : List α) :
     run as (hardCap (recordCap as) xs) = run as xs := by
   obtain ⟨c, c', h1, h2, h3⟩ := recordCap_sound_oneSkip h
   rw [h2]; exact hardCap_sound_of_need_le as c c' h1 h3 xs
 
-/-! ### Why `record_cap` is only a hint (bug B1 before #3071)
-
-`record_cap` walks through `CondTraverse`/`ExpandInto`. Before #3071 it was also the hard
-stop of those operators (B1, CONFIRMED against Rust); since #3071 they stop at
-`hard_record_cap`, and the theorems below show what goes wrong if the hint were used as a
-hard stop, next to what `hard_record_cap` gives. -/
+/-! ### Where `record_cap` is wrong for a hard cap (CONFIRMED against Rust, see header) -/
 
 /-- The lower `CondTraverse` of `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1`:
 ancestors `ExpandInto` (keeps only the pair that closes the cycle), `Project`, `Limit 1`.
@@ -237,8 +163,8 @@ Rows are `a.id`; pair `1` has no edge back, pair `2` does. -/
 def cycleChain : List (Anc Nat) :=
   [.expandInto (fun a => if a = 2 then [a] else []), .project id, .limit 1]
 
-/-- **PROVEN** (bug B1, pre-#3071 hard cap): the hint as a hard cap drops the only answer:
-`[]` instead of `[2]`. The pre-#3071 `record_cap` is the same here. -/
+/-- **PROVEN** (bug B1): `record_cap` walks through `ExpandInto`, and the hard cap it
+gives the traverse beneath drops the only answer: `[]` instead of `[2]`. -/
 theorem hard_cap_unsound_expandInto :
     recordCap cycleChain = some 1 ∧
     run cycleChain (hardCap (recordCap cycleChain) [1, 2]) = [] ∧
@@ -254,40 +180,25 @@ theorem hard_cap_unsound_condTraverse :
     run twoHopChain (hardCap (recordCap twoHopChain) [10, 20]) = [] ∧
     run twoHopChain [10, 20] = [30] := by decide
 
-theorem pre3071_record_cap_was_hard :
-    preRecordCap cycleChain = some 1 ∧ preRecordCap twoHopChain = some 1 := by decide
-
-/-- **PROVEN** (#3071 fixes B1): `hard_record_cap` stops at the traverse, so both chains
-keep their answer. -/
-theorem hardRecordCap_fixes_traverse :
-    hardRecordCap cycleChain = none ∧ run cycleChain (hardCap (hardRecordCap cycleChain) [1, 2]) = [2] ∧
-    hardRecordCap twoHopChain = none ∧
-      run twoHopChain (hardCap (hardRecordCap twoHopChain) [10, 20]) = [30] := by decide
-
 /-- `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1`: the traverse's
-ancestors are `Skip 0`, `Project`, `Skip 1`, `Limit 1`. -/
+ancestors are `Skip 0`, `Project`, `Skip 1`, `Limit 1`. `effective_skip` stops at the
+first `Skip` (0), so `record_cap = 1` while `need = 2`. -/
 def stackedSkips : List (Anc Nat) := [.skip 0, .project id, .skip 1, .limit 1]
 
-/-- **PROVEN** (bug B2 before #3071, fixed by #3071): pre-#3071 `effective_skip` stopped at
-the first `Skip` (0), so the cap was 1 while `need = 2`. -/
-theorem pre3071_hard_cap_unsound_stacked_skip :
-    preRecordCap stackedSkips = some 1 ∧ need stackedSkips = some 2 ∧
-    run stackedSkips (hardCap (preRecordCap stackedSkips) [10, 20, 30]) = [] ∧
+/-- **PROVEN** (bug B2): stacked `Skip`s make the hard cap too small. -/
+theorem hard_cap_unsound_stacked_skip :
+    recordCap stackedSkips = some 1 ∧ need stackedSkips = some 2 ∧
+    run stackedSkips (hardCap (recordCap stackedSkips) [10, 20, 30]) = [] ∧
     run stackedSkips [10, 20, 30] = [20] := by decide
 
-/-- **PROVEN** (#3071 fixes B2): every `Skip` on the way is added. -/
-theorem stacked_skip_fixed :
-    hardRecordCap stackedSkips = some 2 ∧ recordCap stackedSkips = some 2 ∧
-    run stackedSkips (hardCap (hardRecordCap stackedSkips) [10, 20, 30]) = [20] := by decide
-
-/-- **PROVEN** (general form of B1): whenever a `CondTraverse` sits between an operator
-and the `Limit`, using the hint `record_cap` as a hard cap drops rows for some expansion. -/
+/-- **PROVEN** (general form of B1): whenever a `CondTraverse`/`ExpandInto` sits between
+a hard-capped operator and the `Limit`, some expansion makes the cap drop rows. -/
 theorem hard_cap_unsound_through_traverse (n : Nat) :
     ∃ (f : Nat → List Nat) (xs : List Nat),
       let as : List (Anc Nat) := [.condTraverse f, .limit (n + 1)]
       recordCap as = some (n + 1) ∧ run as (hardCap (recordCap as) xs) ≠ run as xs := by
   refine ⟨fun x => if x = n + 1 then [x] else [], List.range (n + 2), ?_⟩
-  simp only [recordCap, rowBudgetAux, ite_true, Nat.add_zero, true_and]
+  simp only [recordCap, effectiveLimit, effectiveSkip, Option.map_some, Nat.add_zero, true_and]
   simp only [hardCap, run, Anc.sem]
   intro h
   have h1 : ((List.range (n + 2)).take (n + 1)) = List.range (n + 1) := by
@@ -305,6 +216,10 @@ theorem hard_cap_unsound_through_traverse (n : Nat) :
   · omega
   · exact hr h0
 
+/-- Suggested fix: give the hard-cap consumers `need` (Skip adds, Project passes,
+traverse is a barrier) instead of `effective_limit + effective_skip`. `need_sound` is
+the correctness proof of that fix. On the soft consumers (`BatchedResultEmitter`) the
+current value is harmless — see `Emitter.emitAll_flatten`. -/
 theorem need_is_barrier_at_traverse (f : α → List α) (r : List (Anc α)) :
     need (.condTraverse f :: r) = none ∧ need (.expandInto f :: r) = none := ⟨rfl, rfl⟩
 

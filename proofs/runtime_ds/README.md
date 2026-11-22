@@ -42,7 +42,7 @@ The exception is `from_unique_keys`, which checks uniqueness only with a `debug_
 
 **4. Is `OrderSet` a correct set?**
 
-Yes, and since #2905 with no caveat on duplicates, for elements whose equality is an equivalence (the theorems assume `EquivBEq`, as for `OrderMap`; `OrderSet::from_vec` itself takes any `T: PartialEq`, and for `f32::NAN`, where `NAN == NAN` is false, `remove(&NAN)` cannot remove a stored NaN, which the model does not cover): `from_vec`, the one constructor that could take duplicates, now drops later duplicates in every build (`fromVec_nodup`; first wins, order kept, `fromVec_sublist`), so `remove` after `from_vec` really removes (`containsS_removeS_fromVec`). On a duplicate-free vector, which every in-tree caller passes, it is still the identity (`fromVec_of_nodup`). `insert` never duplicates (`insertS_nodup`), `remove` removes (`containsS_removeS`, given no duplicates), and `get_index_of` shifts by exactly one for every element after a removed one (`indexOf_removeS`). Unlike `OrderMap`, `OrderSet`'s `=` is order-sensitive: it is the derived list equality.
+Yes, with no caveat on duplicates, for elements whose equality is an equivalence (the theorems assume `EquivBEq`, as for `OrderMap`; `OrderSet::from_vec` itself takes any `T: PartialEq`, and for `f32::NAN`, where `NAN == NAN` is false, `remove(&NAN)` cannot remove a stored NaN, which the model does not cover): `from_vec`, the one constructor that could take duplicates, now drops later duplicates in every build (`fromVec_nodup`; first wins, order kept, `fromVec_sublist`), so `remove` after `from_vec` really removes (`containsS_removeS_fromVec`). On a duplicate-free vector, which every in-tree caller passes, it is still the identity (`fromVec_of_nodup`). `insert` never duplicates (`insertS_nodup`), `remove` removes (`containsS_removeS`, given no duplicates), and `get_index_of` shifts by exactly one for every element after a removed one (`indexOf_removeS`). Unlike `OrderMap`, `OrderSet`'s `=` is order-sensitive: it is the derived list equality.
 
 **5. Does string interning give one pointer per string, and keep it stable?**
 
@@ -54,7 +54,7 @@ Yes, in one direction. `newVersion_isolated` proves that after `v2 = v1.new_vers
 
 The other direction does not hold, by design: writing through `v1` (or a clone of it) after taking `v2` changes what `v2` sees (`release_old_write_leaks`, `release_clone_write_leaks`). MVCC relies on the committed version never being written once a new version exists.
 
-Since #2905 debug builds check that rule. `Cow` carries a `branched` flag shared by every clone; `new_version` sets it, and `deref_mut` asserts it is clear. The debug model (`DCow`, `dWrite`, ...) proves:
+Debug builds check that rule. `Cow` carries a `branched` flag shared by every clone; `new_version` sets it, and `deref_mut` asserts it is clear. The debug model (`DCow`, `dWrite`, ...) proves:
 
 - `dbg_write_through_branched_source_panics` and `dbg_write_through_clone_panics`: writing an owned version, or any clone of it, after `new_version` panics instead of leaking;
 - `dbg_new_version_write_ok` and `dbg_replace_then_write_ok`: the legitimate writes (through the new version, or after `replace`) never trip the assert;
@@ -76,8 +76,8 @@ Since #2905 debug builds check that rule. `Cow` carries a `branched` flag shared
 | `indexM_panics_iff`, `indexS_panics_iff` | `map[&k]` and `set[i]` panic exactly when the key or index is absent | `OrderMapExtra.lean`, `OrderSetExtra.lean` |
 | `intern_injective`, `prune_keeps_held`, `reintern_fresh` | One pointer per string; held strings survive cleanup; no pointer reuse | `StringPool.lean` |
 | `newVersion_isolated` | Writes through a new version never reach the committed one | `Cow.lean` |
-| `dbg_write_through_branched_source_panics`, `dbg_agrees_with_release` | Debug builds refuse the one-directional leak and otherwise match release (#2905) | `Cow.lean` |
-| `fromVec_nodup`, `containsS_removeS_fromVec` | `OrderSet::from_vec` always builds a real set, so `remove` removes (#2905) | `OrderSetExtra.lean` |
+| `dbg_write_through_branched_source_panics`, `dbg_agrees_with_release` | Debug builds refuse the one-directional leak and otherwise match release | `Cow.lean` |
+| `fromVec_nodup`, `containsS_removeS_fromVec` | `OrderSet::from_vec` always builds a real set, so `remove` removes | `OrderSetExtra.lean` |
 | `widthFor_fits`, `widthFor_minimal`, `narrow_lossless` | `width_for` picks the narrowest of 1/2/4/8 bytes that holds the maximum, and narrowing loses nothing | `NarrowInt.lean` |
 | `validate_ok_iff`, `isTooLong_of_validate` | A name is accepted iff its UTF-8 byte length is ≤ 512, and every rejection is recognised by `is_identifier_too_long` | `IdentifierLimits.lean` |
 
@@ -93,12 +93,11 @@ The only hypothesis is `v1.h < H.next`: `v1`'s handle was allocated before. Ever
 
 ## Bugs found
 
-None of these is reachable from Cypher today. They are contracts the code did not check, filed together as #2903. PR #2905 is merged (main 1d15bf713); the status column says what it changed.
+None of these is reachable from Cypher today. They are contracts the code did not check, filed together as #2903. The status column says how each is documented or checked.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 | `example` blocks at the end of `OrderMap.lean` | `OrderMap::from_unique_keys` checks uniqueness only in debug builds. In a release build, a duplicate key gives a map where `a == b` but `b != a`, and where `remove(k)` leaves `k` reachable. The in-tree callers build from stored attributes or from CSV headers deduplicated when the file is opened, so their keys are unique (not proven here) | **Latent, documented:** #2905 keeps the check debug-only on purpose (a release check measured 1.2x to 5x slower) and documents the contract |
-| 2 | removed (17ccc5412) | `OrderSet::from_vec` did not deduplicate; with a duplicate, `remove` left the element in (this is why `containsS_removeS` needs no duplicates) | **Fixed by #2905:** `from_vec` drops later duplicates in every build (`fromVec_nodup`, `containsS_removeS_fromVec`, `fromVec_dup_removed`) |
 | 3 | `release_old_write_leaks`, `release_clone_write_leaks` | Copy-on-write isolation is one-directional: a write through the committed version (or a clone of it) after `new_version` is seen by the new version. MVCC never does this | **Latent, documented:** #2905 documents the contract and debug builds assert it (`dbg_write_through_branched_source_panics`, `dbg_write_through_clone_panics`); release unchanged |
 
 The Rust repros (`orderset_from_vec_duplicates`, `ordermap_from_unique_keys_duplicates`, `cow_isolation`) are in `graph/tests/lean_runtime_ds.rs`, which is kept locally and not committed (see [`../FINDINGS.md`](../FINDINGS.md)).
@@ -117,7 +116,7 @@ Also worth knowing, not filed as a bug: the examples after `hashed_pad` in `Row.
 | `OrderSet.lean` | `OrderSet` as a list; insert/remove/contains/`get_index_of`; why `remove` needs no duplicates |
 | `OrderSetExtra.lean` | Constructors (incl. the deduplicating `from_vec`), accessors, `clear`, `Index`, `IntoIterator` |
 | `StringPool.lean` | The pool as `(content, pointer)` entries plus a count of outside references; intern, prune, release and the invariant `WF` |
-| `Cow.lean` | `Cow` over a heap of handles; `newVersion_isolated`, `siblings_isolated`, the one-directional counterexample, and the #2905 debug `branched` flag |
+| `Cow.lean` | `Cow` over a heap of handles; `newVersion_isolated`, `siblings_isolated`, the one-directional counterexample, and the debug `branched` flag |
 | `NarrowInt.lean` | `width_for` and the truncating cast it guards |
 | `IdentifierLimits.lean` | `validate_identifier_len` and `is_identifier_too_long` over UTF-8 byte length |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |

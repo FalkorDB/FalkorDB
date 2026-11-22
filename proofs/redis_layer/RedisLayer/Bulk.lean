@@ -1,18 +1,17 @@
 /-!
 # `GRAPH.BULK` binary format (`src/commands/bulk_insert.rs`)
 
-* `go` / `attach` — `read_property` (`bulk_insert.rs:95-176`, depth cap since #3339 b080a44c1): the explicit-stack reader.
+* `go` / `attach` — `read_property` (`bulk_insert.rs`, with a depth cap): the explicit-stack reader.
   `go` is the outer `loop` decoding one type byte, `attach` the inner loop that pushes
   a finished value into the innermost open array and pops every array it completes.
   The input is the remaining byte list rather than `(data, idx)`; `idx` is
   `data.length - rest.length`.
-* `cstr` — `read_cstring` (`:31-45`), `readNe` — `read_u32_ne`/`read_u64_ne`/`read_i64_ne`/
-  `read_f64_ne` (`:47-93`): every one bounds-checks before indexing (`readNe_ok`).
-* `records` — the record loop of `process_node_token` (`:419-440`); each record's values
+* `cstr` — `read_cstring`, `readNe` — `read_u32_ne`/`read_u64_ne`/`read_i64_ne`/
+  `read_f64_ne`: every one bounds-checks before indexing (`readNe_ok`).
+* `records` — the record loop of `process_node_token`; each record's values
   are read by `PropColumns::read_record`, which consumes one value per header column.
-* `PropColumns.new` / `PropColumns.readRecord` / `keepFirst` — `PropColumns::new`/`read_record`
-  (`:178-235`, #3026 `fb3d516d0`): one entry per attribute, the first non-null in header order.
-* `parseCount` — `parse_count` (`:647-666`).
+* `PropColumns.new` / `PropColumns.readRecord` / `keepFirst` — `PropColumns::new`/`read_record`: one entry per attribute, the first non-null in header order.
+* `parseCount` — `parse_count`.
 
 `i64::from_ne_bytes`/`to_ne_bytes` and `str::from_utf8` are Rust `core` functions; their
 specification is taken as the hypothesis structure `Codec` (bytes ↔ value, 8 bytes wide;
@@ -48,16 +47,15 @@ inductive BV where
 
 inductive BErr where
   | eof | unterminated | badUtf8 | negLen | unknownType
-  | tooDeep   -- `value_nesting_error()` (#3339, `bulk_insert.rs:132-134`)
+  | tooDeep   -- `value_nesting_error()` (#3339, `bulk_insert.rs`)
   deriving DecidableEq, Repr
 
-/-- `MAX_VALUE_NESTING` (`graph/src/runtime/value.rs:62`). -/
+/-- `MAX_VALUE_NESTING` (`graph/src/runtime/value.rs`). -/
 def MAX_VALUE_NESTING : Nat := 4096
 
 variable (C : Codec)
 
-/-- `read_u32_ne` (`:47`, `w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (`:59`, `:71`,
-`:83`, `w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
+/-- `read_u32_ne` (`w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (`w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
 `data[*idx..*idx + w]` (`dec`: the core decoder, any total function) and `*idx += w`. -/
 def readNe {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat) (idx : Nat) :
     Except BErr (α × Nat) :=
@@ -86,7 +84,7 @@ theorem readNe_ok {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat
 theorem readNe_enc8 (pre r : List Nat) (i : Int) :
     readNe 8 C.dec8 (pre ++ C.enc8 i ++ r) pre.length = .ok (i, pre.length + 8) := by
   unfold readNe
-  rw [if_neg (by simp [C.len8])]
+  rw [ite_eq_right (by simp [C.len8])]
   have : (List.drop pre.length (pre ++ C.enc8 i ++ r)) = C.enc8 i ++ r := by
     rw [List.append_assoc, List.drop_left]
   rw [this, C.dec_enc8]
@@ -131,7 +129,7 @@ def go : List Nat → List Frame → Except BErr (BV × List Nat)
         have := cstr_len r s r' h
         if C.utf8ok s then attach (.str s) r' st else .error .badUtf8
     else if t = 5 then
-      -- `stack.len() >= MAX_VALUE_NESTING` (#3339, `:132`), before the length is read
+      -- `stack.len() >= MAX_VALUE_NESTING` (#3339), before the length is read
       if st.length ≥ MAX_VALUE_NESTING then .error .tooDeep
       else if r.length < 8 then .error .eof
       else
@@ -229,7 +227,7 @@ theorem go_enc : ∀ (v : BV) (r : List Nat) (st : List Frame), wf C v →
     all_goals (intro h; omega)
   | .str s, r, st, h, _ => by
     obtain ⟨h1, h2⟩ := h
-    simp only [enc, List.cons_append, List.append_assoc, List.singleton_append]
+    simp only [enc, List.cons_append, List.append_assoc]
     rw [go.eq_def]
     simp only [show (3:Nat) ≠ 0 by omega, show (3:Nat) ≠ 1 by omega, show (3:Nat) ≠ 2 by omega,
       show (3:Nat) ≠ 4 by omega, ite_false, ite_true]
@@ -246,13 +244,13 @@ theorem go_enc : ∀ (v : BV) (r : List Nat) (st : List Frame), wf C v →
     rw [go.eq_def]
     simp only [show (5:Nat) ≠ 0 by omega, show (5:Nat) ≠ 1 by omega, show (5:Nat) ≠ 2 by omega,
       show (5:Nat) ≠ 4 by omega, show (5:Nat) ≠ 3 by omega, ite_false, ite_true]
-    rw [if_neg (by omega)]
-    simp only [List.length_append, C.len8, take8, drop8, hd, de8]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
+    simp only [List.length_append, C.len8, take8, drop8, de8]
+    rw [ite_eq_right (by omega)]
     cases xs with
-    | nil => simp [encs, attach]
+    | nil => simp [encs]
     | cons x xs =>
-      rw [if_neg (by simp; omega), if_neg (by simp; omega)]
+      rw [ite_eq_right (by simp; omega), ite_eq_right (by simp; omega)]
       simp only [Int.toNat_natCast]
       exact go_encs (x :: xs) r st [] (by simp) h (by omega)
 theorem go_encs : ∀ (xs : List BV) (r : List Nat) (st : List Frame) (acc : List BV),
@@ -270,7 +268,7 @@ theorem go_encs : ∀ (xs : List BV) (r : List Nat) (st : List Frame) (acc : Lis
       simp only [depths] at hd; simp; omega
     rw [go_enc x _ _ h.1 hx, attach]
     simp only [List.length_cons]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     have hys : depths (y :: ys) + st.length + 1 ≤ MAX_VALUE_NESTING := by
       simp only [depths] at hd ⊢; omega
     have := go_encs (y :: ys) r st (acc ++ [x]) (by simp) h.2 hys
@@ -297,7 +295,7 @@ theorem enc_len_pos (v : BV) : 1 ≤ (enc C v).length := by
 /-! ## Records of a node token -/
 
 /-- `process_node_token`'s loop: `while idx < data.len()`, read `P` properties per
-record (`read_record`, `:433-438`; which values it keeps is `keepFirst`, below). -/
+record (`read_record`; which values it keeps is `keepFirst`, below). -/
 def readN : Nat → List Nat → Except BErr (List BV × List Nat)
   | 0, r => .ok ([], r)
   | n + 1, r =>
@@ -341,7 +339,7 @@ theorem encRec_ne_nil (vs : List BV) (hP : vs ≠ []) : encRec C vs ≠ [] := by
 /-- **A node token imports exactly the records it encodes**: for a header with `P ≥ 1`
 properties and a body that is the concatenation of `rs` (each with `P` values), the
 record loop returns `rs`, in order — so with `node_count = rs.length` every record gets
-exactly one reserved id and none is left over (the `node_id_cursor` check at `:420`). -/
+exactly one reserved id and none is left over (the `node_id_cursor` check ). -/
 theorem records_enc (P : Nat) (hP : 1 ≤ P) (rs : List (List BV))
     (hlen : ∀ vs ∈ rs, vs.length = P) (hwf : ∀ vs ∈ rs, ∀ v ∈ vs, wf C v)
     (hdep : ∀ vs ∈ rs, ∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) (fuel : Nat)
@@ -354,7 +352,7 @@ theorem records_enc (P : Nat) (hP : 1 ≤ P) (rs : List (List BV))
     have hv := hlen vs (List.mem_cons_self ..)
     have hne : vs ≠ [] := by intro h; rw [h] at hv; simp at hv; omega
     simp only [records, List.flatMap_cons]
-    rw [if_neg (by simp [encRec_ne_nil C vs hne])]
+    rw [ite_eq_right (by simp [encRec_ne_nil C vs hne])]
     have hr := readN_enc C vs (rs.flatMap (encRec C)) (hwf vs (List.mem_cons_self ..))
       (hdep vs (List.mem_cons_self ..))
     rw [hv] at hr
@@ -373,7 +371,7 @@ theorem encRec_len (vs : List BV) : vs.length ≤ (encRec C vs).length := by
     have e : encRec C (v :: vs) = enc C v ++ encRec C vs := by simp [encRec]
     rw [e, List.length_append, List.length_cons]; omega
 
-/-- The `max_records` ceiling (`bulk_insert.rs:683-695`) never rejects an honest
+/-- The `max_records` ceiling (`bulk_insert.rs`) never rejects an honest
 payload: `P` properties cost at least `P` bytes per record. -/
 theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.length = P) :
     rs.length * P ≤ (rs.flatMap (encRec C)).length := by
@@ -385,7 +383,7 @@ theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.
     have := encRec_len C vs
     rw [List.flatMap_cons, List.length_append, List.length_cons, Nat.succ_mul]; omega
 
-/-! ## `parse_count` (`bulk_insert.rs:647-666`) -/
+/-! ## `parse_count` (`bulk_insert.rs`) -/
 
 def parseCount (s : List Nat) : Option Nat :=
   if s = [] then none
@@ -403,14 +401,14 @@ theorem parseCount_rejects :
 
 /-! ## Attribute resolution: where the imported entity differs from the encoded one -/
 
-/-- `get_or_create` (`graph/src/graph/attribute_store.rs:224-238`) over a dictionary
+/-- `get_or_create` (`graph/src/graph/attribute_store.rs`) over a dictionary
 modelled as a list of names. -/
 def getOrCreate (dict : List (List Nat)) (name : List Nat) : List (List Nat) × Nat :=
   match dict.idxOf? name with
   | some i => (dict, i)
   | none => if dict.length ≥ 65535 then (dict, 65535) else (dict ++ [name], dict.length)
 
-/-- The attribute ids a header resolves to (`process_node_token`, `:406-410`). -/
+/-- The attribute ids a header resolves to (`process_node_token`). -/
 def resolve : List (List Nat) → List (List Nat) → List Nat
   | _, [] => []
   | d, n :: ns => let (d', i) := getOrCreate d n; i :: resolve d' ns
@@ -424,7 +422,7 @@ pending_commit `Content.normResolved_get`, `resolved_duplicate_fixed`), and sinc
 (`readRecord_enc`, `keepFirst_nodup`). -/
 theorem duplicate_header_ids : resolve [] [[112], [113], [112]] = [0, 1, 0] := by decide
 
-/-- `Slot.len` is a `u16` written as `n as u16` (`attribute_store.rs:598`, `:609-610`).
+/-- `Slot.len` is a `u16` written as `n as u16` (`attribute_store.rs`).
 Before #3063 a record with 65536 non-null properties got `len = 0`: every property was
 silently dropped (confirmed live via `GRAPH.BULK`, `size(keys(n)) = 0`; 65537 kept 1).
 The cast is unchanged, but since #3063 (`0f45a8685`) the span `GRAPH.BULK` hands to
@@ -435,10 +433,10 @@ def slotLen (n : Nat) : Nat := n % 65536
 theorem slot_len_truncates : slotLen 65536 = 0 ∧ slotLen 65537 = 1 ∧ slotLen 65535 = 65535 := by
   decide
 
-/-! ## Header columns: `PropColumns` (#3026, `fb3d516d0`, closes #3024)
+/-! ## Header columns: `PropColumns`
 
-`PropColumns::new` (`bulk_insert.rs:197-210`) and `PropColumns::read_record` (`:218-234`),
-used by `process_node_token` (`:411`, `:433-438`) and `process_edge_token` (`:495`, `:517-522`).
+`PropColumns::new` (`bulk_insert.rs`) and `PropColumns::read_record`,
+used by `process_node_token` and `process_edge_token`.
 Attribute ids are `Nat` (Rust `u16`). The `HashMap<u16, usize>` from attribute to slot is
 modelled by its key list in insertion order: `entry(a).or_insert(slots.len())` gives a new key
 the next index, so a key's slot is its index in that list (`slotOf`). -/
@@ -599,11 +597,11 @@ theorem recLoop_keepFirst (K : List Nat) :
     by_cases hskip : v.isNull = true ∨ a ∈ seen
     · have hc : (v.isNull || filled.getD s false) = true := by
         rw [hget]; rcases hskip with h | h <;> simp [h]
-      rw [if_pos hc, if_pos hskip]
+      rw [ite_eq_left hc, ite_eq_left hskip]
       exact recLoop_keepFirst K cs vs filled seen acc r hcs' hfl hinv hl' hw' hd'
     · have hc : ¬ (v.isNull || filled.getD s false) = true := by
         rw [hget]; simp only [not_or] at hskip; simp [hskip.1, hskip.2]
-      rw [if_neg hc, if_neg hskip]
+      rw [ite_eq_right hc, ite_eq_right hskip]
       have hlt : s < filled.length := by rw [hfl, hs]; exact List.idxOf_lt_length_of_mem haK
       have hinv' : ∀ b ∈ K, (filled.set s true).getD (K.idxOf b) false = decide (b ∈ a :: seen) := by
         intro b hb
@@ -683,7 +681,7 @@ theorem keepFirst_sublist (seen : List Nat) (xs : List (Nat × BV)) :
     simp only [keepFirst]
     split
     · exact (ih seen).cons _
-    · exact (ih _).cons₂ _
+    · exact (ih _).cons_cons _
 
 /-- **The first non-null value wins**: the entry kept for `a` is the first column naming `a`
 whose value is not null (and there is none exactly when every such column is null). -/
@@ -725,10 +723,10 @@ theorem keepFirst_nodup_eq (seen : List Nat) (xs : List (Nat × BV))
     have hb : b ∉ seen := hs (b, v) (List.mem_cons_self ..)
     simp only [keepFirst, plainRead, List.filter_cons]
     by_cases hv : v.isNull = true
-    · rw [if_pos (Or.inl hv), if_neg (by simp [hv])]
+    · rw [ite_eq_left (Or.inl hv), ite_eq_right (by simp [hv])]
       exact ih seen hnd.2 (fun p hp => hs p (List.mem_cons_of_mem _ hp))
     · have hv' : v.isNull = false := by simpa using hv
-      rw [if_neg (by simp [hv', hb]), if_pos (by simp [hv'])]
+      rw [ite_eq_right (by simp [hv', hb]), ite_eq_left (by simp [hv'])]
       congr 1
       refine ih (b :: seen) hnd.2 ?_
       intro p hp hm
@@ -752,8 +750,8 @@ theorem keepFirst_plainRead (seen : List Nat) (xs : List (Nat × BV)) :
     obtain ⟨b, v⟩ := p
     simp only [plainRead] at ih ⊢
     by_cases hv : v.isNull = true
-    · simp [List.filter_cons, hv, keepFirst, ih]
-    · simp only [List.filter_cons, hv, Bool.not_false, if_true, keepFirst]
+    · simp [hv, keepFirst, ih]
+    · simp only [List.filter_cons, hv, Bool.not_false, ite_true, keepFirst]
       split <;> simp [ih]
 
 /-- **End to end**: a record of a token whose header names no attribute twice reads exactly
