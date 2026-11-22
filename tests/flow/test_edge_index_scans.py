@@ -1077,8 +1077,8 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
 
     # A LIMIT above a bound-endpoint edge index scan, with or without a Filter
     # between them (a labelled destination adds one), keeps the answer equal to
-    # the graph without the edge index. The hit cache is off while a LIMIT caps
-    # the operator, so the scan streams.
+    # the graph without the edge index. The first bound row streams; later rows
+    # may read the kept hits, and the LIMIT stops the output early either way.
     def test_bound_endpoint_hit_cache_under_limit(self):
         with_idx = self.db.select_graph("edge_idx_bound_cache_lim")
         no_idx = self.db.select_graph("edge_idx_bound_cache_lim_plain")
