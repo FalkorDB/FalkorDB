@@ -38,31 +38,29 @@ theorem fixed3076_temporal_in_numeric_range :
     indexHit allF (one (.temporal 0 5)) (.range 0 (some (.int 0)) none false false) = false ∧
     holds (one (.temporal 0 5)) (.range 0 (some (.int 0)) none false false) = false := by bugsimp
 
-/-- [folded_temporal_constant_drops_filter] a temporal *constant*
-(constant-folded `date(...)`) is not `can_utilize_index`
-(`node_by_index_scan.rs`), so the scan falls back to a label scan; but
-`is_non_indexable_subexpr` (`utilize_index.rs`) only flags
-`Constant(Int)` among constants, so no post-filter is kept: every node of
-the label is returned. -/
-theorem bug_folded_temporal_constant :
+/-- Since #3064 (W2-index-1 fixed) a folded temporal constant is still not `can_be_served`,
+so the scan falls back to the label scan, but `is_non_indexable_subexpr` now flags every constant
+that is not an exact index literal (`is_exact_index_literal`, `utilize_index.rs`), so the optimizer
+keeps the post-filter (`keep = true`; proven in `optimizer_scan`, `Index.litFlag`): the node
+whose `v` is not the date is dropped, as Cypher does. -/
+theorem fixed3064_folded_temporal_constant :
     canUtilize (.equal 0 (.temporal 0 5)) = false ∧
-    scanEmits allF false (one (.int 7)) (.equal 0 (.temporal 0 5)) = true ∧
+    scanEmits allF true (one (.int 7)) (.equal 0 (.temporal 0 5)) = false ∧
     holds (one (.int 7)) (.equal 0 (.temporal 0 5)) = false := by bugsimp
 
-/-- [point_equality_empty] `is_indexable(Point) = true` but
-`build_query_node` has no `Equal`-`Point` arm (`mod.rs` → null), so
-`n.p = point(...)` returns nothing even with the filter kept. (C: correct.) -/
-theorem bug_point_equality :
-    canUtilize (.equal 0 (.point 1 2)) = true ∧
-    scanEmits allF true (one (.point 1 2)) (.equal 0 (.point 1 2)) = false ∧
+/-- Since #3064 (W2-index-2 fixed) `is_indexable(Point)` is false, so `n.p = point(...)` falls
+back to the label scan under the kept filter and finds the point. -/
+theorem fixed3064_point_equality :
+    canUtilize (.equal 0 (.point 1 2)) = false ∧
+    scanEmits allF true (one (.point 1 2)) (.equal 0 (.point 1 2)) = true ∧
     holds (one (.point 1 2)) (.equal 0 (.point 1 2)) = true := by bugsimp
 
-/-- [in_list_drops_temporal_item] the `InList` expansion silently drops list
-items that are not Int/Float/String/Bool (`node_by_index_scan.rs`), so
-the node whose value is the dropped item is never produced. -/
-theorem bug_in_list_drops_item :
-    expandIn 0 (.list [.temporal 0 5, .int 2]) = some (.or [.equal 0 (.int 2)]) ∧
-    scanEmits allF true (one (.temporal 0 5)) (.or [.equal 0 (.int 2)]) = false ∧
+/-- Since #3064 (W2-index-3 fixed) `IndexQuery::in_list` keeps the date member, so the list is not
+`can_be_served`, the scan falls back, and the date row is produced. -/
+theorem fixed3064_in_list_keeps_item :
+    expandIn 0 (.list [.temporal 0 5, .int 2]) = some (.or [.equal 0 (.temporal 0 5), .equal 0 (.int 2)]) ∧
+    canUtilize (.inList 0 (.list [.temporal 0 5, .int 2])) = false ∧
+    scanEmits allF true (one (.temporal 0 5)) (.inList 0 (.list [.temporal 0 5, .int 2])) = true ∧
     holds (one (.temporal 0 5)) (.inList 0 (.list [.temporal 0 5, .int 2])) = true := by bugsimp
 
 /-- [empty_string_not_indexed] RediSearch does not index an empty TAG value
@@ -106,18 +104,24 @@ theorem fixed3081_open_bound_includes_inf :
     indexHit allF (one (.flt .negInf)) (.range 0 none (some (.int 0)) false false) = true ∧
     holds (one (.flt .negInf)) (.range 0 none (some (.int 0)) false false) = true := by bugsimp
 
-/-- [multilabel_and] `try_filter_pushdown` merges conjuncts found on
-*different* labels into one query against the *first* label's index
-(`utilize_index.rs`); `build_query_node` returns null for the unknown
-field and the whole AND becomes empty (`mod.rs`). (C: correct.) -/
-theorem bug_multilabel_and :
+/-- Why a query must not mix labels: one index answers a conjunction over a field it does not
+hold with nothing (`build_query_node` returns null for the unknown field, `mod.rs`)... -/
+theorem multilabel_and_unanswerable :
     indexHit fieldsA both (.and [.equal 0 (.int 1), .equal 1 (.int 2)]) = false ∧
     holds both (.and [.equal 0 (.int 1), .equal 1 (.int 2)]) = true := by bugsimp
 
-/-- [multilabel_or] same for OR (`utilize_index.rs`); the unknown-field
-branch is dropped from the union (`mod.rs`) and the filter is gone. -/
-theorem bug_multilabel_or :
+/-- ...and a disjunction without the unknown branch. -/
+theorem multilabel_or_unanswerable :
     indexHit fieldsB both' (.or [.equal 1 (.int 2), .equal 0 (.int 1)]) = false ∧
     holds both' (.or [.equal 1 (.int 2), .equal 0 (.int 1)]) = true := by bugsimp
+
+/-- Since #3064 (W2-index-4 fixed) `try_filter_pushdown` pushes only the conjuncts of the first
+label's index (`utilize_index.rs`; `optimizer_scan` `Index.pushAnd_spec`) and keeps the others as
+the remaining filter, and refuses an `OR` across labels: the pushed query finds the node, and the
+remaining `n.y = 2` keeps it. -/
+theorem fixed3064_multilabel_and :
+    indexHit fieldsA both (.equal 0 (.int 1)) = true ∧
+    holds both (.equal 1 (.int 2)) = true ∧
+    holds both (.and [.equal 0 (.int 1), .equal 1 (.int 2)]) = true := by bugsimp
 
 end IndexLayer

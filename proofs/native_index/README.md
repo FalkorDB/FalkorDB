@@ -34,7 +34,7 @@ Yes, for non-Bool data and a guarded numeric bound. `filter_iff_key` proves that
 
 **3b. Does an `IN` list (#2383) return what a label scan plus `IN` filter returns?**
 
-Yes for a non-empty list whose members are all guarded numerics, and it declines rather than answering part. One open gap sits before the column: a mixed list such as `[date(..), 2]` loses its non-scalar members in the scan op before the native route sees them, so the column is asked about a shorter list and answers wrongly (W2-index-3, FINDINGS.md; not modelled here). `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and returns them as a `KeySet::Keys` (sorted, deduplicated: `KeySet::distinct`) that `lookup` turns into the union of the point scans (since #2386 the keys are computed apart from the lookup).
+Yes for a non-empty list whose members are all guarded numerics, and it declines rather than answering part. `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and returns them as a `KeySet::Keys` (sorted, deduplicated: `KeySet::distinct`) that `lookup` turns into the union of the point scans (since #2386 the keys are computed apart from the lookup).
 
 - `inList_agrees`: a served list returns exactly the ids whose value equals some member (members guarded, no `Bool` data), via `point_agrees` per key;
 - `inList_isSome_iff`: the column answers only a non-empty list whose members all encode. Serving the numeric subset would drop rows held by another kind (a string member), and an empty list must not mean "no rows"; the scan op does not re-check the predicate, so both are declined (`inListKeys_isSome_iff`), and under `index-falkordb` a decline is an error, not a RediSearch query;

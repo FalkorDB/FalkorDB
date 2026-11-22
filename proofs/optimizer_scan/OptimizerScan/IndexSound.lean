@@ -115,8 +115,8 @@ theorem buildSome_eqs (cs : List V) (hcs : cs.all goodV = true) (hk : k ∈ idx 
 theorem evalT_good (m : Node) (t : T) (h : goodLitT t = true) : evalT m t = evalC t := by
   cases t <;> simp [goodLitT] at h; rfl
 
-theorem goodV_isPrim (c : V) (h : goodV c = true) : isPrim c = true := by
-  cases c <;> simp_all [goodV, isPrim]
+theorem goodV_notNull (c : V) (h : goodV c = true) : notNull c = true := by
+  cases c <;> simp_all [goodV, notNull]
 
 /-- **PROVEN**: `n.k IN [c₁,…,cₙ]` on faithful literals is exact through the index
 (`InList` kept whole since #2383 → `build_query_node`'s `InList` arm, a RediSearch union of
@@ -131,8 +131,8 @@ theorem sel_inList (ts : List T) (hts : ts.all goodLitT = true) (hv : faithV (n.
     intro t ht
     have := List.all_eq_true.mp hts t ht
     cases t <;> simp_all [goodLitT, evalC, evalT]
-  have hfilt : (ts.map evalC).filter isPrim = ts.map evalC :=
-    List.filter_eq_self.mpr (fun c hc => goodV_isPrim c (List.all_eq_true.mp hgood c hc))
+  have hfilt : (ts.map evalC).filter notNull = ts.map evalC :=
+    List.filter_eq_self.mpr (fun c hc => goodV_notNull c (List.all_eq_true.mp hgood c hc))
   unfold qsem idxSel bsel
   simp only [evalIQ, listVals, hfilt, build, hL, decide_true, Bool.true_and, hmap]
   rw [← buildSome_map_eq, buildSome_eqs idx L k n _ hgood hk hv]

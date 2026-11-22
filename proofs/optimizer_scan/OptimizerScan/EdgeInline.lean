@@ -201,7 +201,7 @@ def evalIQE (q : IQ) : Except String Q :=
   | _ => .ok (evalIQ q)
 
 /-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs`):
-index when `can_utilize_index`, else `get_nodes(labels)`, then the extra labels. -/
+index when `can_be_served`, else `get_nodes(labels)`, then the extra labels. -/
 def scanRow (idx : Nat → List Nat) (ls : List Nat) (L : Nat) (q : IQ) (n : Node) : Bool :=
   let qv := evalIQ q
   (if canUtilize qv then idxSel idx L qv n else hasAll ls n) &&
@@ -243,16 +243,32 @@ theorem evalIQE_inList_err (k : Nat) (t : T) (h : ∀ xs, evalC t ≠ .arr xs) :
   · next xs hx => exact absurd hx (h xs)
   · rfl
 
-/-- `can_utilize_index`: an empty `Or`/`And` (e.g. `IN [NULL]` after the runtime
-drops non-scalars) is refused, so the kept Filter re-establishes correctness. -/
+/-- `can_be_served`: an empty `Or`/`And` (e.g. `IN [NULL]` after `in_list`
+drops the nulls) is refused, so the kept Filter re-establishes correctness. -/
 theorem canUtilize_empty : canUtilize (.or []) = false ∧ canUtilize (.and []) = false := ⟨rfl, rfl⟩
 
 theorem isIndexable_spec (v : V) :
     isIndexable v = match v with | .i x => !lossy x | .date _ | .arr _ => false | _ => true := by
   cases v <;> rfl
 
-/-- #2383: the runtime keeps an `IN` list whole, filtered to its scalar members. -/
+/-- #2383: the runtime keeps an `IN` list whole; since #3064 (`IndexQuery::in_list`) filtered to
+its non-null members, so a member the index cannot serve (a `date()`) is kept and the scan falls
+back (`evalIQ_inList_unservable`). -/
 theorem evalIQ_inList (k : Nat) (r : R) :
-    evalIQ (.inList k r) = .inList k ((listVals r).filter isPrim) := rfl
+    evalIQ (.inList k r) = .inList k ((listVals r).filter notNull) := rfl
+
+/-- **PROVEN** (#3064, W2-index-3 fixed): a non-null member the index cannot hold exactly is kept,
+so the evaluated `InList` is not `can_be_served` and the scan falls back to the label scan. -/
+theorem evalIQ_inList_unservable (k : Nat) (r : R) (v : V) (hv : v ∈ listVals r)
+    (hn : notNull v = true) (hi : isIndexable v = false) :
+    canUtilize (evalIQ (.inList k r)) = false := by
+  rw [evalIQ_inList]
+  have hm : v ∈ (listVals r).filter notNull := List.mem_filter.mpr ⟨hv, hn⟩
+  have hne : ((listVals r).filter notNull).isEmpty = false := by
+    cases h : (listVals r).filter notNull with
+    | nil => rw [h] at hm; simp at hm
+    | cons _ _ => rfl
+  simp only [canUtilize, hne, Bool.not_false, Bool.true_and, List.all_eq_false]
+  exact ⟨v, hm, by simp [hi]⟩
 
 end OptimizerScan.Index

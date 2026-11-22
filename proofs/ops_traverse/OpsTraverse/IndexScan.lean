@@ -5,7 +5,8 @@ Index and vector scans (graph/src/runtime/ops/node_by_index_scan.rs, node_by_vec
 | here | there |
 | --- | --- |
 | `IQ`, `evalIQ`        | `IndexQuery`, `NodeByIndexScanOp::evaluate_index_query` (node_by_index_scan.rs) |
-| `indexable`, `canUse` | `can_utilize_index` (:250) and its inner `is_indexable` (:253) |
+| `indexable`, `canUse` | `IndexQuery::can_be_served` (index/mod.rs:291) and its inner `is_indexable` (:296), shared by the node and edge scans since #3064 |
+| `notNull`             | the item filter of `IndexQuery::in_list` (index/mod.rs:271) |
 | `extraLabels`, `IxSt.new` | `NodeByIndexScanOp::new` (:56) |
 | `scanRow`             | the per-row closure of `NodeByIndexScanOp::next` (:293) |
 | `vecArgs`             | `eval_vector_args` (node_by_vector_scan.rs) |
@@ -31,14 +32,15 @@ inductive IQ (E : Type) where
   | or (qs : List (IQ E))
   | arr (key : String) (v : E)
   | inList (key : String) (l : E)
-  /-- `IndexQuery::InList { list: Value::List(items) }`, the evaluated form (#2383): only the
-  scalar items of the list are kept, in order, instead of being expanded to `Or(Equal, ..)`. Only
-  `evalIQ` produces it. -/
+  /-- `IndexQuery::InList { list: Value::List(items) }`, the evaluated form (#2383): the non-null
+  items of the list are kept, in order (`IndexQuery::in_list`, #3064), instead of being expanded to
+  `Or(Equal, ..)`. Only `evalIQ` produces it. -/
   | inListV (key : String) (items : List V)
 
-def isScalar : V → Bool
-  | .int _ | .float | .str _ | .bool _ => true
-  | _ => false
+/-- `not_null` in `IndexQuery::in_list` (index/mod.rs). -/
+def notNull : V → Bool
+  | .null => false
+  | _ => true
 
 /-- node_by_index_scan.rs. `ev` = `ExprEval::eval` on the row; `asList` = the
 `Value::List` match of the `InList` arm. -/
@@ -55,7 +57,7 @@ def evalIQ {E : Type} (ev : E → Except String V) (asList : E → Except String
   | .arr k v => do pure (.arr k (← ev v))
   | .inList k l => do
     match ← asList l with
-    | some items => pure (.inListV k (items.filter isScalar))
+    | some items => pure (.inListV k (items.filter notNull))
     | none => throw "IN operator requires a list"
   | .inListV k items => pure (.inListV k items)
 where
@@ -67,19 +69,19 @@ where
 (conservative: any |i| ≥ 2^52 except 2^63 falls back). -/
 def losesPrecision (i : Int) : Bool := (i.natAbs &&& 0x7FF0000000000000) != 0
 
-/-- node_by_index_scan.rs -/
+/-- `is_indexable` in `IndexQuery::can_be_served` (index/mod.rs): no `Point` since #3064. -/
 def indexable : V → Bool
   | .int i => !losesPrecision i
-  | .float | .str _ | .bool _ | .point | .null => true
+  | .float | .str _ | .bool _ | .null => true
   | _ => false
 
-/-- node_by_index_scan.rs -/
+/-- `IndexQuery::can_be_served` (index/mod.rs). -/
 def canUse : IQ V → Bool
   | .eq _ v => indexable v
   | .range _ lo hi _ _ => (lo.all indexable) && (hi.all indexable)
   | .and qs => !qs.isEmpty && canUseL qs
   | .or qs => !qs.isEmpty && canUseL qs
-  | .arr _ v => isScalar v
+  | .arr _ v => v != .null && indexable v
   -- #2383: `matches!(list, Value::List(items) if !items.is_empty() && items.iter().all(is_indexable))`
   | .inListV _ items => !items.isEmpty && items.all indexable
   -- an `InList` whose payload is not a list never reaches the index
@@ -103,13 +105,27 @@ theorem canUse_spec (k : String) (v : V) (qs : List (IQ V)) :
     canUse (.or qs) = (!qs.isEmpty && qs.all canUse) ∧ canUse (.or []) = false := by
   refine ⟨rfl, by simp only [canUse, indexable]; decide, rfl, by simp [canUse, canUseL_iff], rfl⟩
 
-/-- `IN list` keeps only the scalar items, in order, as one `InList` (since #2383; before it was an
-`Or` of equalities over the same members, which `canUse_inListV_eq_or` shows decides alike). Known W2-index-3, still open on main:
-a non-scalar item — date, array — is dropped before the index is asked. -/
+/-- `IN list` keeps every non-null item, in order, as one `InList` (`IndexQuery::in_list`; since
+#2383 one `InList`, before it an `Or` of equalities over the same members, which
+`canUse_inListV_eq_or` shows decides alike). Since #3064 a non-scalar item (date, array) is kept, so
+`can_be_served` sees it and falls back (`canUse_inListV_unservable`): W2-index-3 is fixed. -/
 theorem evalIQ_inList {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V)))
     (k : String) (l : E) (items : List V) (h : asList l = .ok (some items)) :
-    evalIQ ev asList (.inList k l) = .ok (.inListV k (items.filter isScalar)) := by
+    evalIQ ev asList (.inList k l) = .ok (.inListV k (items.filter notNull)) := by
   simp [evalIQ, h, bind, Except.bind, pure, Except.pure]
+
+/-- **PROVEN** (#3064): a non-null member the index cannot hold exactly is kept by `in_list` and
+makes the whole list fall back to a label scan, under the kept post-filter. -/
+theorem canUse_inListV_unservable (k : String) (items : List V) (v : V) (hv : v ∈ items)
+    (hn : notNull v = true) (hi : indexable v = false) :
+    canUse (.inListV k (items.filter notNull)) = false := by
+  have hm : v ∈ items.filter notNull := List.mem_filter.mpr ⟨hv, hn⟩
+  have hne : (items.filter notNull).isEmpty = false := by
+    cases h : items.filter notNull with
+    | nil => rw [h] at hm; simp at hm
+    | cons _ _ => rfl
+  simp only [canUse, hne, Bool.not_false, Bool.true_and, List.all_eq_false]
+  exact ⟨v, hm, by simp [hi]⟩
 
 /-- **#2383 keeps the fallback rule.** A list reaches the index iff its members, as an `Or` of
 `Equal`s, would have (the Rust test `in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members`):
@@ -246,38 +262,23 @@ theorem scans_stream {C R : Type} (pack : C → List (List R)) (cs : List C) :
 
 /-! ## Edge index scan (edge_by_index_scan.rs) -/
 
-/-- edge_by_index_scan.rs: as `canUse`, except `ArrayContains` also refuses integers that
-lose precision as `f64`. -/
-def canUseE : IQ V → Bool
-  | .arr _ v => match v with
-    | .int i => !losesPrecision i
-    | .float | .str _ | .bool _ => true
-    | _ => false
-  | .and qs => !qs.isEmpty && canUseEL qs
-  | .or qs => !qs.isEmpty && canUseEL qs
-  | .eq k v => canUse (.eq k v)
-  | .range k lo hi a b => canUse (.range k lo hi a b)
-  | .pt _ _ _ => true
-  | .inListV _ items => !items.isEmpty && items.all indexable   -- #2383, as the node op
-  | .inList _ _ => false
-where
-  canUseEL : List (IQ V) → Bool
-  | [] => true
-  | q :: qs => canUseE q && canUseEL qs
+/-- edge_by_index_scan.rs: since #3064 the edge op asks the same `IndexQuery::can_be_served` as
+the node op. -/
+def canUseE : IQ V → Bool := canUse
 
 /-- The edge op's `IN` rule (#2383) is the node op's, and decides as the `Or` of `Equal`s it replaced. -/
 theorem canUseE_inListV_eq_or (k : String) (items : List V) :
-    canUseE (.inListV k items) = canUseE (.or (items.map (.eq k))) := by
-  have h : ∀ qs : List V, canUseE.canUseEL (qs.map (.eq k)) = qs.all (fun v => indexable v) := by
-    intro qs; induction qs with
-    | nil => rfl
-    | cons v vs ih => simp [canUseE.canUseEL, canUseE, canUse, ih]
-  simp only [canUseE, h, List.isEmpty_map]
+    canUseE (.inListV k items) = canUseE (.or (items.map (.eq k))) :=
+  canUse_inListV_eq_or k items
 
+/-- Both ops agree on every query; `ArrayContains` refuses an integer that loses precision as `f64`
+in both (before #3064 the node op accepted it). -/
 theorem canUseE_spec (k : String) (v : V) (lo hi : Option V) (a b : Bool) :
     canUseE (.eq k v) = canUse (.eq k v) ∧ canUseE (.range k lo hi a b) = canUse (.range k lo hi a b) ∧
-    canUseE (.arr k (.int (2 ^ 60))) = false ∧ canUse (.arr k (.int (2 ^ 60))) = true := by
-  refine ⟨by simp [canUseE], by simp [canUseE], by simp only [canUseE]; decide, rfl⟩
+    canUseE (.arr k (.int (2 ^ 60))) = false ∧ canUse (.arr k (.int (2 ^ 60))) = false := by
+  refine ⟨rfl, rfl, ?_, ?_⟩ <;> (simp only [canUseE, canUse, indexable]; decide)
+
+theorem canUseE_eq_canUse : canUseE = canUse := rfl
 
 /-- edge_by_index_scan.rs: `to` is not bound separately for a self-loop alias. -/
 structure EdgeCfg where
