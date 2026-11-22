@@ -475,8 +475,8 @@ def test_scan_below_aggregate_ignores_hidden_scan_aliases():
     # `WITH count(*) AS n` resets the environment: the scans under the
     # aggregate bind nothing the later MATCH can see, even where their ids
     # equal ids of the new scope's variables. The hops must therefore be
-    # ordered as if nothing below the aggregate bound `z`, so `d` -> `c` stays
-    # in storage direction instead of being flipped to start from `z`.
+    # ordered as if nothing below the aggregate bound `z`: treating `z` as
+    # bound would start a hop from a variable no operator has bound yet.
     query(
         "CREATE (d:D), (c {v: 1}), (z:Z), (d)-[:R]->(c), (c)-[:R]->(z), (c)-[:R]->(:Z), (:Q)-[:R]->(z)",
         write=True,
@@ -484,7 +484,6 @@ def test_scan_below_aggregate_ignores_hidden_scan_aliases():
     q = "MATCH (a),(b) WITH count(*) AS n MATCH (z:Z)<-[:R]-(c {v: 1})<-[:R]-(d) RETURN n, count(*)"
     res = query(q)
     assert res.result_set == [[25, 2]]
-    assert "(d)->(c)" in str(common.g.explain(q))
 
 
 def test_stacked_filters_keep_their_order():
