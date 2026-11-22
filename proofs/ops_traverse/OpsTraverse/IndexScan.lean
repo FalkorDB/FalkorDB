@@ -371,18 +371,42 @@ theorem orient_length (base : List (Nat × Nat × Nat)) :
 
 /-! ## Fulltext scans and the edge vector scan -/
 
-/-- node_by_fulltext_scan.rs:73-105 / edge_by_fulltext_scan.rs: label and query must be
-strings; the index answer (FFI) is emitted with its scores. -/
-def ftArgs (what : String) (label query : Option String) : Except String (String × String) :=
+/-- node_by_fulltext_scan.rs:73-112 / edge_by_fulltext_scan.rs:78-119: label and query must be
+strings; a non-string one matches nothing (`.ok none`: the parent row yields no rows, as C);
+otherwise the index answer (FFI) is emitted with its scores. -/
+def ftArgs (_what : String) (label query : Option String) : Except String (Option (String × String)) :=
+  match label with
+  | none => .ok none
+  | some l => match query with
+    | none => .ok none
+    | some q => .ok (some (l, q))
+
+theorem ftArgs_spec (w l q : String) :
+    ftArgs w (some l) (some q) = .ok (some (l, q)) ∧ ftArgs w none (some q) = .ok none ∧
+    ftArgs w (some l) none = .ok none := ⟨rfl, rfl, rfl⟩
+
+/-- `ftArgs` never errors; it queries the index exactly when both arguments are strings. -/
+theorem ftArgs_ok_iff (w : String) (l q : Option String) (a : String × String) :
+    ftArgs w l q = .ok (some a) ↔ l = some a.1 ∧ q = some a.2 := by
+  cases l <;> cases q <;> simp [ftArgs] <;> constructor <;> (try rintro rfl) <;> simp_all
+
+/-- A non-string label/type or query: the parent row expands to no rows (not an error). -/
+theorem ftArgs_nonstring_empty (w : String) (l q : Option String) (h : l = none ∨ q = none) :
+    ftArgs w l q = .ok none := by
+  cases l <;> cases q <;> simp_all [ftArgs]
+
+/-- Historical (pre-#3269): a non-string label/query was an error, C returns empty
+(FINDINGS W5-proc-3). Fixed by #3269 (c23975b98). -/
+def pre3269_ftArgs (what : String) (label query : Option String) : Except String (String × String) :=
   match label with
   | none => .error s!"fulltext query expects a string {what}"
   | some l => match query with
     | none => .error "fulltext query expects a string query"
     | some q => .ok (l, q)
 
-theorem ftArgs_spec (w l q : String) :
-    ftArgs w (some l) (some q) = .ok (l, q) ∧ ftArgs w none (some q) = .error s!"fulltext query expects a string {w}" ∧
-    ftArgs w (some l) none = .error "fulltext query expects a string query" := ⟨rfl, rfl, rfl⟩
+theorem pre3269_ftArgs_errors (w : String) :
+    pre3269_ftArgs w none none = .error s!"fulltext query expects a string {w}" ∧
+    ftArgs w none none = .ok none := ⟨rfl, rfl⟩
 
 /-- `NodeByFulltextScanOp::new` (:42) / `EdgeByFulltextScanOp::new` (:47): scored column with the
 operator's record cap; `EdgeByVectorScanOp::new` (:40): scored column, no cap. -/
