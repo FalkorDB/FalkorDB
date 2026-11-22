@@ -115,9 +115,14 @@ fn map_components<'a>(
 /// followed by the presence mask (see `rewrite_struct_constructor`). A slot
 /// whose bit is clear was not written, whatever value sits in it.
 fn struct_components(args: &[Value]) -> Components<'_> {
-    let (mask, slots) = match args.split_last() {
-        Some((Value::Int(mask), slots)) => (*mask, slots),
-        _ => (0, &[][..]),
+    let (mask, slots) = if let Some((Value::Int(mask), slots)) = args.split_last() {
+        (*mask, slots)
+    } else {
+        debug_assert!(
+            false,
+            "a rewritten struct constructor ends in its presence mask"
+        );
+        (0, &[][..])
     };
     let mut out: Components = [None; MAX_SLOTS];
     for (i, v) in slots.iter().enumerate() {
@@ -234,9 +239,14 @@ fn struct_ints(
     args: &[Value],
     keys: &[&str],
 ) -> Result<[Option<i64>; MAX_SLOTS], String> {
-    let mask = match args.last() {
-        Some(Value::Int(mask)) => *mask,
-        _ => 0,
+    let mask = if let Some(Value::Int(mask)) = args.last() {
+        *mask
+    } else {
+        debug_assert!(
+            false,
+            "a rewritten struct constructor ends in its presence mask"
+        );
+        0
     };
     let mut out = [None; MAX_SLOTS];
     for (i, key) in keys.iter().enumerate() {
@@ -815,6 +825,11 @@ fn duration_from_values(vals: &[Option<&Value>]) -> Result<Value, String> {
     Ok(Value::Duration(ts))
 }
 
+/// Largest total (in seconds) a float duration may reach. `i64::MAX` is about
+/// 9.22e18; the headroom keeps the `f64` -> `i64` cast clear of rounding at
+/// the edge, and `check_date_range` rejects far smaller values anyway.
+const DURATION_SECS_LIMIT: f64 = 9.0e18;
+
 /// Duration with fractional components, following C's `duration_from_epoch_utc`:
 /// components are 32-bit floats, whole years and months anchor the date, the
 /// fractions of a year / month count as 365.25 / 30.44 days, and the rest is
@@ -835,7 +850,7 @@ fn construct_duration_secs_float(c: [f64; 7]) -> Result<i64, String> {
         + f64::from(hours * 3600.0)
         + f64::from(minutes * 60.0)
         + f64::from(seconds);
-    if !total.is_finite() || total.abs() >= 9.0e18 {
+    if !total.is_finite() || total.abs() >= DURATION_SECS_LIMIT {
         return Err("Duration overflow".to_string());
     }
     // years_int / months_int are saturated by the cast; construct_duration_secs

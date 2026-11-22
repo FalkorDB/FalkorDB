@@ -562,7 +562,7 @@ class testTemporalDuration(FlowTestsBase):
         ]:
             try:
                 self.graph.query(q, params)
-                self.env.assertFalse(True)
+                self.env.assertTrue(False, message=f"{q} unexpectedly succeeded")
             except ResponseError as e:
                 self.env.assertIn("out of range", str(e))
 
