@@ -48,13 +48,14 @@ use crate::graph::graphblas::{
 
 use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
-    GrB_BOOL, GrB_Info, GrB_Type, GrB_Type_get_String, GrB_Vector, GrB_Vector_free, GrB_Vector_new,
-    GrB_Vector_removeElement, GrB_Vector_resize, GrB_Vector_setElement_BOOL, GrB_Vector_size,
-    GrB_Vector_wait, GrB_WaitMode, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64,
-    GxB_Iterator_new, GxB_MAX_NAME_LEN, GxB_Option_Field, GxB_Type_from_name,
-    GxB_Vector_Iterator_attach, GxB_Vector_Iterator_getIndex, GxB_Vector_Iterator_next,
-    GxB_Vector_Iterator_seek, GxB_Vector_deserialize, GxB_Vector_load, GxB_Vector_serialize,
-    GxB_Vector_unload,
+    GrB_BOOL, GrB_Index, GrB_Info, GrB_Type, GrB_Type_get_String, GrB_Vector,
+    GrB_Vector_extractTuples_FP64, GrB_Vector_extractTuples_INT64, GrB_Vector_free, GrB_Vector_new,
+    GrB_Vector_nvals, GrB_Vector_removeElement, GrB_Vector_resize, GrB_Vector_setElement_BOOL,
+    GrB_Vector_size, GrB_Vector_wait, GrB_WaitMode, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_MAX_NAME_LEN, GxB_Option_Field,
+    GxB_Type_from_name, GxB_Vector_Iterator_attach, GxB_Vector_Iterator_getIndex,
+    GxB_Vector_Iterator_next, GxB_Vector_Iterator_seek, GxB_Vector_deserialize, GxB_Vector_load,
+    GxB_Vector_serialize, GxB_Vector_unload,
 };
 
 /// A sparse vector backed by GraphBLAS.
@@ -657,6 +658,87 @@ impl Iterator for Iter<u64> {
     }
 }
 
+impl<T> Vector<T> {
+    /// Adopts exclusive ownership of a raw `GrB_Vector` handle.
+    ///
+    /// # Safety
+    /// The caller must ensure that `v` is a valid GraphBLAS vector handle matching type `T`
+    /// or null, and that the caller transfers exclusive ownership of `v` to the returned [`Vector`].
+    #[must_use]
+    pub const unsafe fn from_raw(v: GrB_Vector) -> Self {
+        Self {
+            v,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl Vector<f64> {
+    #[must_use]
+    pub const fn ptr(&self) -> GrB_Vector {
+        self.v
+    }
+
+    /// Extract all stored (index, value) tuples from the vector.
+    #[must_use]
+    pub fn extract_tuples(&self) -> Vec<(u64, f64)> {
+        if self.v.is_null() {
+            return Vec::new();
+        }
+        unsafe {
+            let mut nvals: GrB_Index = 0;
+            let info = GrB_Vector_nvals(addr_of_mut!(nvals), self.v);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let mut indices = vec![0u64; nvals as usize];
+            let mut values = vec![0.0f64; nvals as usize];
+            let mut nvals_out = nvals;
+            let info = GrB_Vector_extractTuples_FP64(
+                indices.as_mut_ptr(),
+                values.as_mut_ptr(),
+                addr_of_mut!(nvals_out),
+                self.v,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            indices.truncate(nvals_out as usize);
+            values.truncate(nvals_out as usize);
+            indices.into_iter().zip(values).collect()
+        }
+    }
+}
+
+impl Vector<i64> {
+    #[must_use]
+    pub const fn ptr(&self) -> GrB_Vector {
+        self.v
+    }
+
+    /// Extract all stored (index, value) tuples from the vector.
+    #[must_use]
+    pub fn extract_tuples(&self) -> Vec<(u64, i64)> {
+        if self.v.is_null() {
+            return Vec::new();
+        }
+        unsafe {
+            let mut nvals: GrB_Index = 0;
+            let info = GrB_Vector_nvals(addr_of_mut!(nvals), self.v);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let mut indices = vec![0u64; nvals as usize];
+            let mut values = vec![0i64; nvals as usize];
+            let mut nvals_out = nvals;
+            let info = GrB_Vector_extractTuples_INT64(
+                indices.as_mut_ptr(),
+                values.as_mut_ptr(),
+                addr_of_mut!(nvals_out),
+                self.v,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            indices.truncate(nvals_out as usize);
+            values.truncate(nvals_out as usize);
+            indices.into_iter().zip(values).collect()
+        }
+    }
+}
+
 #[cfg(test)]
 mod decode_tests {
     use super::*;
@@ -813,6 +895,35 @@ mod decode_tests {
         match <Vector<bool> as Decode<19>>::decode(&mut r) {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name with an interior-only NUL"),
+        }
+    }
+
+    #[test]
+    fn test_vector_f64_and_i64_extract() {
+        crate::graph::graphblas::test_init::ensure_init();
+        unsafe {
+            use super::super::{
+                GrB_FP64, GrB_INT64, GrB_Vector_setElement_FP64, GrB_Vector_setElement_INT64,
+            };
+            let mut vf: GrB_Vector = null_mut();
+            let _ = GrB_Vector_new(addr_of_mut!(vf), GrB_FP64, 10);
+            GrB_Vector_setElement_FP64(vf, 1.23, 2);
+            GrB_Vector_setElement_FP64(vf, 4.56, 5);
+            let vec_f = Vector::<f64>::from_raw(vf);
+            let tuples_f = vec_f.extract_tuples();
+            assert_eq!(tuples_f.len(), 2);
+            assert_eq!(tuples_f[0], (2, 1.23));
+            assert_eq!(tuples_f[1], (5, 4.56));
+
+            let mut vi: GrB_Vector = null_mut();
+            let _ = GrB_Vector_new(addr_of_mut!(vi), GrB_INT64, 10);
+            GrB_Vector_setElement_INT64(vi, 42, 3);
+            GrB_Vector_setElement_INT64(vi, 99, 7);
+            let vec_i = Vector::<i64>::from_raw(vi);
+            let tuples_i = vec_i.extract_tuples();
+            assert_eq!(tuples_i.len(), 2);
+            assert_eq!(tuples_i[0], (3, 42));
+            assert_eq!(tuples_i[1], (7, 99));
         }
     }
 }
