@@ -1,8 +1,8 @@
 import FalkorAggOps.AggPlan
 /-
 Aggregate operator state: accumulator zeroing / unbinding, `GroupKey` Eq/Hash,
-`args_for`, `new` (graph/src/runtime/ops/aggregate.rs); `hash_u64` is history (removed by #2977).
-Table in `AggPlan.lean`. An environment is `Nat → Option Z` (slot ↦ bound value);
+`args_for`, `new` (graph/src/runtime/ops/aggregate.rs).
+An environment is `Nat → Option Z` (slot ↦ bound value);
 `Row::insert` = `upd`, `Row::unbind` = `clr`.
 -/
 namespace FalkorAggOps.AggPlan
@@ -24,7 +24,7 @@ def outerL : List (Ex Z) → List (Fn Z × List (Ex Z))
   | e :: es => outer e ++ outerL es
 end
 
-/-! ## `set_agg_expr_zero` (aggregate.rs:1355) — `none` = the `unreachable!()` / underflow panic -/
+/-! ## `set_agg_expr_zero` (aggregate.rs) — `none` = the `unreachable!()` / underflow panic -/
 
 mutual
 def setZero : Ex Z → Env Z → Option (Env Z)
@@ -113,7 +113,7 @@ theorem setZero_spec (e : Ex Z) (env : Env Z) (hw : AccWF (outer e)) :
   rw [setZero_eq]
   exact ⟨rfl, foldlM_stepZ_ok _ env hw (outer_agg e)⟩
 
-/-! ## `unbind_agg_accumulators` (history: aggregate.rs:1251 at 343e077f2, removed by #3579) -/
+/-! ## `unbind_agg_accumulators` (aggregate.rs) -/
 
 mutual
 def unbindAcc : Ex Z → Env Z → Env Z
@@ -183,7 +183,7 @@ end
 
 /-- Every slot `set_agg_expr_zero` wrote is unbound again by `unbind_agg_accumulators`,
 provided every outermost aggregate has an argument besides its accumulator (true of every
-parsed call: `count(*)` is `count(1)`, cypher.rs:2023). Other slots are untouched. -/
+parsed call: `count(*)` is `count(1)`, cypher.rs). Other slots are untouched. -/
 theorem unbind_after_zero (l : List (Fn Z × List (Ex Z))) (env : Env Z) (k : Nat)
     (h2 : ∀ p ∈ l, 2 ≤ p.2.length) (hk : ∃ p ∈ l, p.2.getLast? = some (.var k)) :
     l.foldl stepU env k = none := by
@@ -224,9 +224,9 @@ theorem one_child_not_unbound (f : Fn Z) (z : Z) (k : Nat) (env : Env Z) (hf : f
     unbindAcc (.func f [.var k]) env = env ∧ setZero (.func f [.var k]) env = some (upd env k z) := by
   simp [unbindAcc, setZero, hf]
 
-/-! ## `GroupKey` (aggregate.rs:99 `eq`, :115 `hash`) -/
+/-! ## `GroupKey` (aggregate.rs `eq`, `hash`) -/
 
-/-- `GroupKey::eq` (aggregate.rs:99): same length and pairwise `veq`; on main (#2917
+/-- `GroupKey::eq` (aggregate.rs): same length and pairwise `veq`; on main (#2917
 7fdf06a0e) `veq a b` is `a.sort_cmp(b) == Equal` (before: `Value::eq`). Instantiated in
 `Discharge.lean`. -/
 def gkEq (veq : Z → Z → Bool) : List Z → List Z → Bool
@@ -275,22 +275,7 @@ theorem gkHash_consistent {S : Type} (veq : Z → Z → Bool) (hv : S → Z → 
       rw [hc st x y h.1]
       exact ih _ ys h.2
 
-/-! ## `hash_u64` (history: aggregate.rs:1254 trait decl, :1258 `impl HashU64 for Row` at ca36bfa15;
-removed by #2977, c652e505e: the group id is the insertion index, see `GroupId.lean`) -/
-
-/-- `FxHasher::default()`, `self.hash(&mut hasher)`, `hasher.finish()`. -/
-def hashU64 {R S : Type} (fxDefault : S) (rowHash : S → R → S) (finish : S → Nat) (r : R) : Nat :=
-  finish (rowHash fxDefault r)
-
-/-- `hash_u64` depends only on the row's `Hash` input: rows feeding the same
-`(key, value)` sequence get the same group id. (It is not injective — the
-collision bug was fixed by #2977.) -/
-theorem hashU64_spec {R S : Type} (d : S) (rh : S → R → S) (fin : S → Nat) (r₁ r₂ : R)
-    (heq : rh d r₁ = rh d r₂) : hashU64 d rh fin r₁ = hashU64 d rh fin r₂ ∧
-    hashU64 d rh fin r₁ = fin (rh d r₁) := by
-  simp [hashU64, heq]
-
-/-! ## `VectorizableAgg::args_for` (aggregate.rs:432) -/
+/-! ## `VectorizableAgg::args_for` (aggregate.rs) -/
 
 def argsFor (vt vd : List Z → Except String Unit) (value : Z) (extra : List Z) :
     Except String (List Z) := do
@@ -312,32 +297,19 @@ theorem argsFor_spec (vt vd : List Z → Except String Unit) (v : Z) (extra : Li
   cases h1 : vt (v :: extra) <;> cases h2 : vd (v :: extra) <;>
     simp [h1, h2, bind, Except.bind, pure, Except.pure]
 
-/-! ## `AggregateOp::new` (aggregate.rs:506) -/
+/-! ## `AggregateOp::new` (aggregate.rs) -/
 
-/-- Since #3579 the operator also stores its implicit grouping keys (`ImplicitKeys`,
-aggregate.rs:211-221): the keys (`implicit`: item index, node and optional slot, abstracted to
-`I`), the variables the unslotted (under-`CASE`) keys read (`lazy_vars`, here `implicitVars`), and
-the aggregation items with every slotted key replaced by a read of its slot (`items`; `none` when no
-key has a slot). -/
-structure AggSt (C E G A : Type) (Z : Type) (I : Type := Nat × Nat) where
+structure AggSt (C E G A : Type) (Z : Type) where
   child : Option C
   defaultAcc : Option (Env Z)
   errors : List E
   groups : List G
   vectorized : Option A
-  implicit : List I
-  implicitVars : List Nat
-  items : Option (List (Ex Z))
 
-/-- `AggregateOp::new` (aggregate.rs:506-536). `ik` is `implicit_keys` (aggregate.rs:257; not
-modelled here), applied once to the key and the aggregation expressions (:518): it reads the keys
-only to number the slots above every id they read. -/
-def AggSt.new {C E G A I : Type} (ik : List (Ex Z) → List (Ex Z) → List I × List Nat × Option (List (Ex Z)))
-    (child : C) (keys aggs : List (Ex Z)) : Option (AggSt C E G A Z I) :=
+def AggSt.new {C E G A : Type} (child : C) (aggs : List (Ex Z)) : Option (AggSt C E G A Z) :=
   match aggs.foldlM (fun env t => setZero t env) (fun _ => none) with
   | some acc => some { child := some child, defaultAcc := some acc, errors := [], groups := [],
-                       vectorized := none, implicit := (ik keys aggs).1,
-                       implicitVars := (ik keys aggs).2.1, items := (ik keys aggs).2.2 }
+                       vectorized := none }
   | none => none
 
 theorem foldlM_setZero (aggs : List (Ex Z)) (env : Env Z) :
@@ -354,27 +326,14 @@ theorem foldlM_setZero (aggs : List (Ex Z)) (env : Env Z) :
 /-- The built operator has not consumed its child, has no errors or groups, has not run the
 analysis, and its default accumulator row is exactly the zeroing of every outermost aggregate
 of every aggregation expression. -/
-theorem aggNew_spec {C E G A I : Type}
-    (ik : List (Ex Z) → List (Ex Z) → List I × List Nat × Option (List (Ex Z))) (c : C)
-    (keys aggs : List (Ex Z)) (s : AggSt C E G A Z I)
-    (h : AggSt.new ik c keys aggs = some s) :
+theorem aggNew_spec {C E G A : Type} (c : C) (aggs : List (Ex Z)) (s : AggSt C E G A Z)
+    (h : AggSt.new c aggs = some s) :
     s.child = some c ∧ s.errors = [] ∧ s.groups = [] ∧ s.vectorized = none ∧
-    s.defaultAcc = (outerL aggs).foldlM stepZ (fun _ => none) ∧
-    s.implicit = (ik keys aggs).1 ∧ s.implicitVars = (ik keys aggs).2.1 ∧
-    s.items = (ik keys aggs).2.2 := by
+    s.defaultAcc = (outerL aggs).foldlM stepZ (fun _ => none) := by
   unfold AggSt.new at h
   have hfold := foldlM_setZero aggs (fun _ => none)
   split at h
-  · rename_i acc hacc; cases h; rw [← hfold, hacc]; exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · rename_i acc hacc; cases h; rw [← hfold, hacc]; exact ⟨rfl, rfl, rfl, rfl, rfl⟩
   · cases h
-
-/-- **`new` fails only on zeroing (#3579 adds no failure)**: computing the implicit keys never
-makes `new` fail, so it succeeds exactly when it did before. -/
-theorem aggNew_isSome {C E G A I : Type}
-    (ik : List (Ex Z) → List (Ex Z) → List I × List Nat × Option (List (Ex Z))) (c : C)
-    (keys aggs : List (Ex Z)) :
-    (AggSt.new (E := E) (G := G) (A := A) ik c keys aggs).isSome =
-      (aggs.foldlM (fun env t => setZero t env) (fun _ => none)).isSome := by
-  unfold AggSt.new; split <;> simp_all
 
 end FalkorAggOps.AggPlan

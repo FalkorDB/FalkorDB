@@ -1,12 +1,11 @@
 /-
-# `CommitOp::next` (graph/src/runtime/ops/commit.rs:69), after #2846
+# `CommitOp::next` (graph/src/runtime/ops/commit.rs)
 
 The first call drains the child (:71-82), then runs, each fallible step
 short-circuiting with `Some(Err(..))`: `Pending::commit` (:85-92), the writer
 upgrade (:96-98), the deferred-index publish (:103), the effects block
-(:105-131), and — new in #2846 — `Pending::end_segment` (:135-143), which both
-resets the segment's mutation log and rolls the graph's id batches (the old
-`clear()` + `open_id_boundaries()` pair). Then the schema baseline (:146-149)
+(:105-131), and `Pending::end_segment` (:135-143), which both
+resets the segment's mutation log and rolls the graph's id batches. Then the schema baseline (:146-149)
 and `results.reverse()` (:151). Every call ends with `results.pop()` (:155).
 
 The runtime is abstract (`S`, with the six steps as functions), batches are `B`.
@@ -21,6 +20,34 @@ The runtime is abstract (`S`, with the six steps as functions), batches are `B`.
 * `pops_in_order`: non-root, the drained batches are yielded in child order.
 -/
 namespace PendingCommit.CommitOpNext
+
+/-! ## `CommitOp::new` (ops/commit.rs)
+
+```rust
+if !runtime.write { return Err("graph.RO_QUERY is to be executed only on read-only queries"); }
+let is_root = runtime.plan.node(idx).parent().is_none();
+Ok(Self { runtime, child: Some(child), results: Vec::new(), idx, is_root })
+```
+A read-only runtime cannot build a `Commit`; a write runtime does, drains nothing yet
+(`results = []`) and is the root iff the plan node has no parent. -/
+
+/-- The constructor's outcome: `.error msg` or `.ok is_root`. -/
+def commitNew (write hasParent : Bool) : Except String Bool :=
+  if !write then .error "graph.RO_QUERY is to be executed only on read-only queries"
+  else .ok (!hasParent)
+
+/-- **`commit_new_ro`**: a read-only runtime is refused with the RO_QUERY error, whatever the plan. -/
+theorem commit_new_ro (hasParent : Bool) :
+    commitNew false hasParent = .error "graph.RO_QUERY is to be executed only on read-only queries" := rfl
+
+/-- **`commit_new_write`**: a write runtime gets its `Commit`, which is the plan root iff the node
+has no parent. -/
+theorem commit_new_write (hasParent : Bool) : commitNew true hasParent = .ok (!hasParent) := rfl
+
+/-- The two outcomes are exhaustive: success iff the runtime writes. -/
+theorem commit_new_ok_iff (write hasParent : Bool) (r : Bool) :
+    commitNew write hasParent = .ok r ↔ write = true ∧ r = !hasParent := by
+  cases write <;> cases hasParent <;> cases r <;> simp [commitNew]
 
 structure Env (S : Type) where
   commit : S → Except String S

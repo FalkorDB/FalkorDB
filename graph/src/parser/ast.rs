@@ -201,7 +201,23 @@ impl Hash for Variable {
     }
 }
 
+/// A variable's identity. Ids restart in every scope, so the id alone names
+/// different variables in different scopes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VarKey {
+    pub id: u32,
+    pub scope_id: u32,
+}
+
 impl Variable {
+    #[must_use]
+    pub const fn key(&self) -> VarKey {
+        VarKey {
+            id: self.id,
+            scope_id: self.scope_id,
+        }
+    }
+
     /// The name the query wrote, or `None` for an unnamed pattern entity or a
     /// planner temporary.
     #[must_use]
@@ -553,7 +569,7 @@ pub struct NestedPlanRef<TVar> {
 }
 
 /// Quantifier types for list predicates (all, any, none, single).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QuantifierType {
     All,
     Any,
@@ -935,7 +951,7 @@ impl<T, L> QueryGraph<T, L, Variable> {
     #[must_use]
     pub fn filter_visited(
         &self,
-        visited: &HashSet<(u32, u32)>,
+        visited: &HashSet<VarKey>,
     ) -> Self
     where
         T: Default,
@@ -943,17 +959,17 @@ impl<T, L> QueryGraph<T, L, Variable> {
     {
         let mut res = Self::default();
         for node in &self.nodes {
-            if !visited.contains(&(node.alias.id, node.alias.scope_id)) {
+            if !visited.contains(&node.alias.key()) {
                 res.add_node(node.clone());
             }
         }
         for relationship in &self.relationships {
-            if !visited.contains(&(relationship.alias.id, relationship.alias.scope_id)) {
+            if !visited.contains(&relationship.alias.key()) {
                 res.add_relationship(relationship.clone());
             }
         }
         for path in &self.paths {
-            if !visited.contains(&(path.var.id, path.var.scope_id)) {
+            if !visited.contains(&path.var.key()) {
                 res.add_path(path.clone());
             }
         }

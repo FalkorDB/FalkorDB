@@ -1,6 +1,6 @@
 import GraphQueries.Accessors
 /-
-# `Graph::first_node_with_relationships` (graph.rs:2421, #3022)
+# `Graph::first_node_with_relationships` (graph.rs, #3022)
 
 The `DELETE_NODE` arm of `apply_record` refuses a node that still has a
 relationship. The Rust answers it in bulk: one `Aᵀ·x` over the adjacency matrix
@@ -19,7 +19,7 @@ edge of any type), and every edge's endpoints are rows of it.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `firstNodeWithRels` | `first_node_with_relationships` :2421 |
+| `firstNodeWithRels` | `first_node_with_relationships`  |
 | `BulkOps.countInRows` | `adj.count_in_rows(&x)` (`VersionedMatrix::count_in_rows`) over `x = Vector::from_sorted_indices(n, &ids)` |
 | `BulkOps.pairsInto` | `t.count_pairs_into(&x)` (`Tensor::count_pairs_into`) |
 | `BulkOps.outNext` / `incNext` | `out.seek(id, id); out.next().is_some()` / `it.seek(id, id); it.next().is_some()` over `adj.iter(0, 0)` / `t.iter(0, 0, true)` |

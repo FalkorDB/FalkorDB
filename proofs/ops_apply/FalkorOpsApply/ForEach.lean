@@ -1,11 +1,11 @@
 /-
 # FOREACH — `graph/src/runtime/ops/foreach.rs`
 
-`ForEachOp::next` (`foreach.rs:124-208`) pulls input batches, and for every
+`ForEachOp::next` (`foreach.rs`) pulls input batches, and for every
 active row: evaluates the list expression, runs the body sub-plan over the list
 items in chunks of at most `BATCH_SIZE` loop envs (`execute_list`,
-`foreach.rs:86-118`), and queues the row unchanged in `pending`; queued rows are
-emitted in batches of at most `BATCH_SIZE` (`drain_pending`, `ops/mod.rs:127`).
+`foreach.rs`), and queues the row unchanged in `pending`; queued rows are
+emitted in batches of at most `BATCH_SIZE` (`drain_pending`, `ops/mod.rs`).
 
 The model keeps Rust's state exactly (`pending`, `current_batch` + `current_pos`
 as the remaining suffix `cur`, the child iterator as the list of its remaining
@@ -16,14 +16,14 @@ headline theorem `run_ok`, for any batch size `B > 0` and no errors:
   a pass-through), every emitted batch has `1 ≤ size ≤ B`, and
 * the body was invoked exactly on `calls input` — every list item of every row,
   in row order and item order, in chunks of size `≤ B` (`chunks_flatten`,
-  `chunks_size`); a NULL list runs nothing (`foreach.rs:173-175`).
+  `chunks_size`); a NULL list runs nothing (`foreach.rs`).
 -/
 
 namespace ForEach
 
 variable {α ι : Type}
 
-/-- `execute_list`'s chunking loop (`foreach.rs:104-116`): `drain(..BATCH_SIZE.min(len))`. -/
+/-- `execute_list`'s chunking loop (`foreach.rs`): `drain(..BATCH_SIZE.min(len))`. -/
 def chunks (B : Nat) (hB : 0 < B) (l : List ι) : List (List ι) :=
   if h : l = [] then [] else l.take B :: chunks B hB (l.drop B)
 termination_by l.length
@@ -58,7 +58,7 @@ structure Env (α ι : Type) where
   B : Nat
   hB : 0 < B
   /-- list expression: `ok (some items)` (a List), `ok none` (Null), or an error
-  (evaluation error or `Type mismatch: expected List`, `foreach.rs:156-181`). -/
+  (evaluation error or `Type mismatch: expected List`, `foreach.rs`). -/
   ev : α → Except String (Option (List ι))
   /-- running the body over one chunk of loop envs: `some e` if it failed (`result?`). -/
   body : α → List ι → Option String
@@ -66,18 +66,18 @@ structure Env (α ι : Type) where
 variable (E : Env α ι)
 
 /-- Running the body on the chunks in order, stopping at the first failure
-(`foreach.rs:104-116`). -/
+(`foreach.rs`). -/
 def runChunks (x : α) : List (List ι) → List (α × List ι) × Option String
   | [] => ([], none)
   | c :: cs => match E.body x c with
     | some e => ([(x, c)], some e)
     | none => let r := runChunks x cs; ((x, c) :: r.1, r.2)
 
-/-- `execute_list` (`foreach.rs:86-118`). -/
+/-- `execute_list` (`foreach.rs`). -/
 def execList (x : α) (items : List ι) : List (α × List ι) × Option String :=
   if items.isEmpty then ([], none) else runChunks E x (chunks E.B E.hB items)
 
-/-- The inner `while self.current_pos < active.len()` loop (`foreach.rs:150-190`).
+/-- The inner `while self.current_pos < active.len()` loop (`foreach.rs`).
 Returns the unprocessed rows, the new pending queue, the log and an error. -/
 def inner (pending : List α) (log : List (α × List ι)) :
     List α → List α × List α × List (α × List ι) × Option String
@@ -133,7 +133,7 @@ theorem inner_rest_lt (pending : List α) (log : List (α × List ι)) (rows : L
   | nil => simp [inner] at h
   | cons x xs => have := inner_cons_le E pending log x xs; simp; omega
 
-/-- `drain_pending` (`ops/mod.rs:127-138`): move rows from the front of `pending`
+/-- `drain_pending` (`ops/mod.rs`): move rows from the front of `pending`
 into the builder until it holds `B` rows. -/
 def drainP (builder pending : List α) : List α × List α :=
   (builder ++ pending.take (E.B - builder.length), pending.drop (E.B - builder.length))
@@ -149,8 +149,8 @@ structure St (α ι : Type) where
 def finish (builder : List α) (st : St α ι) : Option (Except String (List α)) × St α ι :=
   if builder.isEmpty then (none, st) else (some (.ok builder), st)
 
-/-- The body of `next`'s `loop` (`foreach.rs:130-201`) followed by the final
-`builder.is_empty()` check (`foreach.rs:203-207`). -/
+/-- The body of `next`'s `loop` (`foreach.rs`) followed by the final
+`builder.is_empty()` check (`foreach.rs`). -/
 def go (builder : List α) (st : St α ι) : Option (Except String (List α)) × St α ι :=
   if E.B ≤ builder.length then finish builder st                             -- 131-133
   else match hc : st.cur with
@@ -174,7 +174,7 @@ decreasing_by
     rw [hr] at this
     simp only [hc]; exact Prod.Lex.right _ (by simpa using this)
 
-/-- `ForEachOp::next` (`foreach.rs:124-208`). -/
+/-- `ForEachOp::next` (`foreach.rs`). -/
 def next (st : St α ι) : Option (Except String (List α)) × St α ι :=
   let d := drainP E [] st.pending                                             -- 128
   go E d.1 { st with pending := d.2 }
@@ -448,7 +448,7 @@ theorem next_ok (h : NoErr E) (emitted input : List α) (st : St α ι) (hi : In
 def remaining (st : St α ι) : List α := st.pending ++ st.cur.getD [] ++ okRows st.child
 
 /-- **FOREACH is a pass-through that runs the body on every item exactly once.**
-From a fresh operator (`ForEachOp::new`, `foreach.rs:56-80`: nothing pending, no
+From a fresh operator (`ForEachOp::new`, `foreach.rs`: nothing pending, no
 current batch) over all-`Ok` child batches, with enough fuel, the operator emits
 non-empty batches of at most `B` rows whose concatenation is the input, and the
 body was invoked exactly for `calls input`. -/

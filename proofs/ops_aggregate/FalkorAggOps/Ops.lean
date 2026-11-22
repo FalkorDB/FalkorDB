@@ -3,16 +3,16 @@ Operators: Limit, Skip, Sort (full sort and the bounded top-k heap), Project,
 Unwind, Distinct and the Aggregate operator's grouping and DISTINCT state.
 
 A batch is modelled by its list of ACTIVE rows (`Batch::active_indices`,
-batch.rs:1204 — the selection vector when present, else `0..len`). A stream
+batch.rs — the selection vector when present, else `0..len`). A stream
 of batches is a `List (List α)`; its row sequence is `flatten`.
 -/
 
 namespace FalkorAggOps
 
-/-! ## Limit (ops/limit.rs:52) -/
+/-! ## Limit (ops/limit.rs) -/
 
 /-- `LimitOp::next`, run to exhaustion. `remaining = 0` stops pulling
-(limit.rs:54); an empty batch is skipped (:65); a batch that fits passes
+(limit.rs); an empty batch is skipped (:65); a batch that fits passes
 through (:70); otherwise its first `remaining` active rows are kept (:78). -/
 def limitOp {α : Type} : Nat → List (List α) → List (List α)
   | 0, _ => []
@@ -48,7 +48,7 @@ theorem limitOp_spec {α : Type} (k : Nat) (bs : List (List α)) :
 theorem limit_zero {α : Type} (bs : List (List α)) : limitOp 0 bs = [] := by
   cases bs <;> rfl
 
-/-! ## Skip (ops/skip.rs:50) -/
+/-! ## Skip (ops/skip.rs) -/
 
 def skipOp {α : Type} : Nat → List (List α) → List (List α)
   | _, [] => []
@@ -92,7 +92,7 @@ theorem skip_limit {α : Type} (s k : Nat) (bs : List (List α)) :
 /-! ## Sort: insertion-sort spec and the bounded top-k heap (ops/sort.rs) -/
 
 /-- Rows are identified with their position in the sort's total order
-(keys, then row content, then arrival `seq`: `HeapEntry::cmp`, sort.rs:172).
+(keys, then row content, then arrival `seq`: `HeapEntry::cmp`, sort.rs).
 That order is a strict total order exactly when `compare_value` is one —
 false for NaN / Int-Float near 2^53 (known #2891). We model the order by `Nat`. -/
 def ins (x : Nat) : List Nat → List Nat
@@ -210,9 +210,9 @@ theorem ins_lt_last (x : Nat) (h : List Nat) (hne : h ≠ []) (hx : x < h.getLas
         congr 1
         exact ih (by simp) hx
 
-/-- `build_top_k`'s loop body (sort.rs:425-469): push while below capacity;
+/-- `build_top_k`'s loop body (sort.rs): push while below capacity;
 when full, replace the worst (`peek`, the last of the sorted view) only if the
-new row sorts strictly before it. `cap = 0` drains the child (sort.rs:393). -/
+new row sorts strictly before it. `cap = 0` drains the child (sort.rs). -/
 def rustStep (c : Nat) (h : List Nat) (x : Nat) : List Nat :=
   if c = 0 then [] else
   if h.length < c then ins x h
@@ -267,7 +267,7 @@ theorem rustStep_eq_sem (c : Nat) (h : List Nat) (x : Nat) (hs : Sorted h)
       rw [← heq]; exact (take_ins_ge_last x h hs hne (by omega)).symm
 
 /-- Headline: the streaming top-k heap returns exactly the first `cap` rows of
-the full sort (sort.rs:13-17 claim, and the full-sort path's `truncate`). -/
+the full sort (sort.rs claim, and the full-sort path's `truncate`). -/
 theorem topk_eq_take_sort (c : Nat) (xs : List Nat) :
     xs.foldl (rustStep c) [] = (isort xs).take c := by
   rw [← topk_sem]
@@ -286,7 +286,7 @@ theorem topk_eq_take_sort (c : Nat) (xs : List Nat) :
   exact this xs [] trivial (by simp)
 
 /-- `ORDER BY … SKIP s LIMIT k`: the Sort op keeps `cap = k + s` rows
-(sort.rs:493, `saturating_add` — no wrap), and Skip/Limit above it cut the
+(sort.rs, `saturating_add` — no wrap), and Skip/Limit above it cut the
 window; that is the `[s, s+k)` window of the full sort. -/
 theorem sort_skip_limit (s k : Nat) (xs : List Nat) :
     ((xs.foldl (rustStep (k + s)) []).drop s).take k = ((isort xs).drop s).take k := by
@@ -295,12 +295,12 @@ theorem sort_skip_limit (s k : Nat) (xs : List Nat) :
 
 /-! ## Project and Unwind: batching is invisible -/
 
-/-- `ProjectOp::eval` (project.rs:54): one output row per active input row. -/
+/-- `ProjectOp::eval` (project.rs): one output row per active input row. -/
 theorem project_flatten {α β : Type} (f : α → β) (bs : List (List α)) :
     (bs.map (List.map f)).flatten = bs.flatten.map f := by
   simp [List.map_flatten]
 
-/-- `UNWIND` (unwind.rs:90, `eval_iter_expr`): a list spreads, `null` yields
+/-- `UNWIND` (unwind.rs, `eval_iter_expr`): a list spreads, `null` yields
 nothing, a scalar yields itself. -/
 inductive UV where
   | null
@@ -391,7 +391,7 @@ theorem groupAll_spec {K A : Type} [DecidableEq K] (rows : List (K × A)) (k : K
   simpa [groupAll, lookupG] using this []
 
 /-- Keyed aggregation over no rows has no groups; keyless aggregation
-pre-inserts the single empty-key group (aggregate.rs:751-759, :1111-1119), so it always
+pre-inserts the single empty-key group (aggregate.rs), so it always
 emits one row of initial accumulators (`count`=0, `sum`=0.0, `avg`=null,
 `collect`=[] …; checked in `agrees_empty_input_aggregates`). -/
 theorem keyed_empty {K A : Type} [DecidableEq K] : groupAll ([] : List (K × A)) = [] := rfl
@@ -401,191 +401,10 @@ def keylessGroups {A : Type} (rows : List A) : List (Unit × List A) :=
 
 theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length = 1 := rfl
 
-/-! ### Per-row grouping with implicit keys (#3579; aggregate.rs:1104-1252)
+/-! ## DISTINCT deduplication
 
-`consume_input_per_row` pre-inserts the empty-key group only when there are neither explicit
-nor implicit keys (:1113); `consume_batch_per_row` groups by the explicit key values followed by
-the implicit key values (:1166-1188; a slotted key's error fails the row, an unslotted one under a
-`CASE` groups as `null`, `implicitVal`), and seeds a new group's accumulator row with each slotted
-key's grouped value at its slot, then the first row's values of the unslotted keys' variables
-(`lazy_vars`, :1207-1228, `seedNew`). -/
-
-/-- `consume_input_per_row` + `consume_batch_per_row` grouping: `keyless` is
-`keys.is_empty() && implicit.is_empty()`. -/
-def perRowGroups {V A : Type} [DecidableEq V] (keyless : Bool) (rows : List (List V × A)) :
-    List (List V × List A) :=
-  rows.foldl (fun g r => groupInsert r.1 r.2 g) (if keyless then [([], [])] else [])
-
-/-- The per-row group key: explicit key values, then implicit key values (:1166-1188). -/
-def rowKey {V : Type} (explicit implicit : List V) : List V := explicit ++ implicit
-
-/-- With keys, every group still holds exactly the rows with its key (bag semantics). -/
-theorem perRowGroups_spec {V A : Type} [DecidableEq V] (rows : List (List V × A)) (k : List V) :
-    perRowGroups false rows = groupAll rows ∧
-    (lookupG k (perRowGroups false rows)).getD [] = (rows.filter (fun r => r.1 = k)).map Prod.snd :=
-  ⟨rfl, groupAll_spec rows k⟩
-
-/-- Without explicit or implicit keys every row has the empty key: exactly one group, holding all
-rows (one output row even for an empty input). -/
-theorem perRowGroups_keyless {V A : Type} [DecidableEq V] (rows : List (List V × A))
-    (h : ∀ r ∈ rows, r.1 = []) : perRowGroups true rows = [([], rows.map Prod.snd)] := by
-  unfold perRowGroups
-  simp only [if_true]
-  suffices ∀ (acc : List A), rows.foldl (fun g r => groupInsert r.1 r.2 g) [([], acc)] =
-      [([], acc ++ rows.map Prod.snd)] by simpa using this []
-  induction rows with
-  | nil => intro acc; simp
-  | cons r rows ih =>
-    intro acc
-    have hr : r.1 = [] := h r (by simp)
-    simp only [List.foldl, groupInsert, hr, if_true]
-    rw [ih (fun r' hr' => h r' (by simp [hr']))]
-    simp
-
-/-- **Implicit keys are keys (#3571)**: with an implicit key and no input row there is no group,
-so `MATCH (n) RETURN n.v + count(*)` on an empty graph emits no row (it emitted one before). -/
-theorem implicit_empty_input_no_group {V A : Type} [DecidableEq V] :
-    perRowGroups false ([] : List (List V × A)) = [] := rfl
-
-/-- Rows of one group agree on every implicit key value: the explicit parts have one length
-(one value per key), so equal group keys have equal implicit parts. -/
-theorem rowKey_implicit_eq {V : Type} (e₁ e₂ i₁ i₂ : List V) (hl : e₁.length = e₂.length)
-    (h : rowKey e₁ i₁ = rowKey e₂ i₂) : e₁ = e₂ ∧ i₁ = i₂ :=
-  List.append_inj h hl
-
-/-- The lazy-variable step of a new group's accumulator row: each variable of `lazy_vars` bound in
-the first row is written (:1222-1226). -/
-def seedAcc {V : Type} (vars : List Nat) (row acc : Nat → Option V) : Nat → Option V :=
-  vars.foldl (fun a v => match row v with
-    | some x => fun j => if j = v then some x else a j
-    | none => a) acc
-
-/-- Slots that are not implicit variables keep the default accumulator. -/
-theorem seedAcc_other {V : Type} (vars : List Nat) (row acc : Nat → Option V) (j : Nat)
-    (hj : j ∉ vars) : seedAcc vars row acc j = acc j := by
-  induction vars generalizing acc with
-  | nil => rfl
-  | cons v vs ih =>
-    simp only [seedAcc, List.foldl] at ih ⊢
-    have hv : j ≠ v := fun h => hj (by simp [h])
-    rw [ih _ (fun h => hj (by simp [h]))]
-    cases row v <;> simp [hv]
-
-/-- An implicit variable bound in the first row holds that row's value. -/
-theorem seedAcc_var {V : Type} (vars : List Nat) (row acc : Nat → Option V) (j : Nat) (x : V)
-    (hj : j ∈ vars) (hx : row j = some x) : seedAcc vars row acc j = some x := by
-  induction vars generalizing acc with
-  | nil => simp at hj
-  | cons v vs ih =>
-    simp only [seedAcc, List.foldl] at ih ⊢
-    by_cases hin : j ∈ vs
-    · exact ih _ hin
-    · have hv : j = v := by simpa [hin] using hj
-      subst hv
-      have := seedAcc_other vs row (fun i => if i = j then some x else acc i) j hin
-      simp only [seedAcc] at this
-      rw [hx]; simp [this]
-
-/-- One implicit key's group value (aggregate.rs:1177-1187): a slotted key (`slotted = true`)
-propagates its evaluation error (`value?`, the row fails); an unslotted one, under a `CASE`, reads an
-error as `null` (`value.unwrap_or(Value::Null)`). -/
-def implicitVal {V E : Type} (null : V) (slotted : Bool) (r : Except E V) : Except E V :=
-  if slotted then r else match r with
-    | .ok v => .ok v
-    | .error _ => .ok null
-
-theorem implicitVal_ok {V E : Type} (null : V) (slotted : Bool) (v : V) :
-    implicitVal null slotted (.ok v : Except E V) = .ok v := by
-  cases slotted <;> rfl
-
-theorem implicitVal_slotted_err {V E : Type} (null : V) (e : E) :
-    implicitVal null true (.error e : Except E V) = .error e := rfl
-
-/-- **An implicit key under a `CASE` never fails grouping (#3579)**: its error groups as `null`. -/
-theorem implicitVal_guarded_err {V E : Type} (null : V) (e : E) :
-    implicitVal null false (.error e : Except E V) = .ok null := rfl
-
-/-- The slot step (aggregate.rs:1213-1217): each implicit key with a slot writes the value the row
-grouped by (the matching implicit part of the group key) at its slot. -/
-def seedSlots {V : Type} : List (Option Nat) → List V → (Nat → Option V) → Nat → Option V
-  | some j :: ss, x :: xs, acc => seedSlots ss xs (fun i => if i = j then some x else acc i)
-  | none :: ss, _ :: xs, acc => seedSlots ss xs acc
-  | _, _, acc => acc
-
-/-- A new group's accumulator row (aggregate.rs:1209-1227): `default_acc`, the slotted keys'
-grouped values at their slots, then the lazy variables from the first row. -/
-def seedNew {V : Type} (slots : List (Option Nat)) (ivals : List V) (lazy : List Nat)
-    (row acc : Nat → Option V) : Nat → Option V :=
-  seedAcc lazy row (seedSlots slots ivals acc)
-
-theorem seedSlots_other {V : Type} (slots : List (Option Nat)) (ivals : List V)
-    (acc : Nat → Option V) (j : Nat) (hj : some j ∉ slots) : seedSlots slots ivals acc j = acc j := by
-  induction slots generalizing ivals acc with
-  | nil => cases ivals <;> rfl
-  | cons s ss ih =>
-    cases ivals with
-    | nil => cases s <;> rfl
-    | cons x xs =>
-      have hss : some j ∉ ss := fun h => hj (List.mem_cons_of_mem _ h)
-      cases s with
-      | none => exact ih xs acc hss
-      | some k =>
-        have hk : j ≠ k := fun h => hj (by simp [h])
-        simp only [seedSlots]; rw [ih xs _ hss]; simp [hk]
-
-/-- **A slotted key reports the value it grouped by (#3579)**: with distinct slots, a slot holds
-the grouped value of its key (the item then reads that slot, so a volatile subtree such as `rand()`
-is not drawn again at finalize). -/
-theorem seedSlots_slot {V : Type} (slots : List (Option Nat)) (ivals : List V)
-    (acc : Nat → Option V) (n j : Nat) (x : V) (hnd : (slots.filterMap id).Nodup)
-    (hs : slots[n]? = some (some j)) (hx : ivals[n]? = some x) :
-    seedSlots slots ivals acc j = some x := by
-  induction slots generalizing ivals acc n with
-  | nil => simp at hs
-  | cons s ss ih =>
-    cases ivals with
-    | nil => simp at hx
-    | cons y ys =>
-      cases n with
-      | zero =>
-        simp at hs hx; subst hs; subst hx
-        have hnot : some j ∉ ss := by
-          intro hm
-          have : j ∈ ss.filterMap id := List.mem_filterMap.mpr ⟨some j, hm, rfl⟩
-          simp at hnd; exact hnd.1 (by simpa using this)
-        simp only [seedSlots]; rw [seedSlots_other _ _ _ _ hnot]; simp
-      | succ m =>
-        simp at hs hx
-        cases s with
-        | none => exact ih ys acc m (by simpa using hnd) hs hx
-        | some k =>
-          simp only [seedSlots]
-          exact ih ys _ m (by simp at hnd; exact hnd.2) hs hx
-
-/-- With slots above every lazy variable's id (aggregate.rs:350-357: slot ids exceed every id the
-key and aggregation trees read), the lazy step does not touch a slot. -/
-theorem seedNew_slot {V : Type} (slots : List (Option Nat)) (ivals : List V) (lazy : List Nat)
-    (row acc : Nat → Option V) (n j : Nat) (x : V) (hnd : (slots.filterMap id).Nodup)
-    (hs : slots[n]? = some (some j)) (hx : ivals[n]? = some x) (hj : j ∉ lazy) :
-    seedNew slots ivals lazy row acc j = some x := by
-  unfold seedNew; rw [seedAcc_other _ _ _ _ hj]; exact seedSlots_slot _ _ _ _ _ _ hnd hs hx
-
-theorem seedNew_var {V : Type} (slots : List (Option Nat)) (ivals : List V) (lazy : List Nat)
-    (row acc : Nat → Option V) (j : Nat) (x : V) (hj : j ∈ lazy) (hx : row j = some x) :
-    seedNew slots ivals lazy row acc j = some x :=
-  seedAcc_var _ _ _ _ _ hj hx
-
-/-- Every other slot (the accumulators) keeps `default_acc`. -/
-theorem seedNew_other {V : Type} (slots : List (Option Nat)) (ivals : List V) (lazy : List Nat)
-    (row acc : Nat → Option V) (j : Nat) (hl : j ∉ lazy) (hs : some j ∉ slots) :
-    seedNew slots ivals lazy row acc j = acc j := by
-  unfold seedNew; rw [seedAcc_other _ _ _ _ hl, seedSlots_other _ _ _ _ hs]
-
-/-! ## DISTINCT state keyed by a hash (history: distinct.rs:79, aggregate.rs:724/:968 at ca36bfa15)
-
-#2977 (c652e505e) keys the per-group state by a group id instead; see `GroupId.lean`
-(`distinct_by_group_id_exact`, `fixed2977_collision_example`). The definitions below are the
-pre-#2977 model (its counterexample was removed in bbee75955; the last revision that has them is 17ccc5412). -/
+The per-group state is keyed by a group id; see `GroupId.lean`
+(`distinct_by_group_id_exact`, `fixed2977_collision_example`). -/
 
 /-- Keep the first row of each `key` class (`ValuesDeduper::is_seen`). -/
 def dedupBy {α β : Type} [DecidableEq β] (key : α → β) : List β → List α → List α
@@ -612,30 +431,20 @@ theorem dedup_injective {α β : Type} [DecidableEq α] [DecidableEq β] (h : α
       simp only [List.map_cons] at this
       rw [this]
 
-/-- …and with a collision it drops a row (`#2780`; the grouped-aggregate
-variant below is new). -/
+/-- …and with a collision it drops a row (`#2780`). -/
 theorem dedup_collision_drops :
     dedupBy (fun n : Nat => n % 2) [] [0, 2] = [0] ∧ dedupBy id [] [0, 2] = [0, 2] := by
   decide
 
-/-- Per-group DISTINCT, pre-#2977: the dedup table was keyed by `(distinct node,
-hash(group key row))`, not by the group key (aggregate.rs:724, :968 at ca36bfa15). Two
-groups whose key rows collide shared one `seen` set. -/
-def dcgGo {K : Type} [DecidableEq K] (hk : K → Nat) (k : K) :
-    List (Nat × Nat) → List (K × Nat) → Nat
-  | _, [] => 0
-  | seen, (k', v) :: rs =>
-    if (hk k', v) ∈ seen then dcgGo hk k seen rs
-    else (if k' = k then 1 else 0) + dcgGo hk k ((hk k', v) :: seen) rs
+/-! ## DISTINCT across batches: OPEN bug #2779 (current behaviour, not a superseded model)
 
-def distinctCountGrouped {K : Type} [DecidableEq K] (hk : K → Nat) (rows : List (K × Nat))
-    (k : K) : Nat :=
-  dcgGo hk k [] rows
+`distinctCountBatches`, `distinct_one_batch` and `distinct_fold_clear_overcounts` describe
+`ApplyOp`'s current per-subquery clear of the runtime-wide dedup map (`apply.rs`), tracked as
+W2-agg-1 in the README and in COVERAGE.tsv. -/
 
--- Two distinct keys 0 and 2 that hash alike (hk = · % 2), one value each.
 /-- `count(DISTINCT v)` fed batch by batch, with an optional wipe of the
 (runtime-global) dedup map between batches — what `ApplyOp`'s per-row mode
-does after every subquery (apply.rs:283). -/
+does after every subquery (apply.rs). -/
 def distinctCountBatches (clear : Bool) : List Nat → List (List Nat) → Nat
   | _, [] => 0
   | seen, b :: bs =>
@@ -671,13 +480,10 @@ theorem distinct_fold_clear_overcounts :
     (dedupBy id [] [1, 0, 1, 0, 1, 0]).length = 2 := by
   decide
 
-/-! ## eval.rs:886-893 — an aggregate's finalized value is pushed (#2951)
+/-! ## eval.rs — an aggregate's finalized value is pushed
 
-Re-targeted to 289c201fe. Before #2951 (0912f4500, closes #2945, FINDINGS
-W2-agg-5) the `FuncInvocation` arm of `ExprEval::eval_compound` ran
-`return match finalize { … }` (eval.rs:877 at fb3d516d0), leaving the whole
-stack machine with that one value; that model was removed (in 17ccc5412). On main the arm pushes the finalized value and
-`continue`s (eval.rs:883-893 at 289c201fe), so any enclosing frame, e.g. the
+The `FuncInvocation` arm of `ExprEval::eval_compound` pushes the finalized value and
+`continue`s (eval.rs at 289c201fe), so any enclosing frame, e.g. the
 list literal `[min(x), max(x)]`, still runs. -/
 
 /-- A two-node fragment of `ExprEval::eval_compound`'s stack machine: list
@@ -702,7 +508,7 @@ theorem evalRef_list (es : List E) : evalRef (.list es) = .lst (es.map evalRef) 
   simp [evalRef]
 
 /-- One step of the stack machine. `push` is a leaf's value: a literal, or an
-aggregate's finalized accumulator, which main pushes (eval.rs:889-892 at
+aggregate's finalized accumulator, which main pushes (eval.rs at
 289c201fe). `mk n` is a list literal's frame: it pops its `n` operands and
 pushes the list. -/
 inductive I where
@@ -723,7 +529,7 @@ def run : List I → List R → Option (List R)
   | [], st => some st
   | i :: is, st => (step i st).bind (run is)
 
-/-- Main's stack machine (eval.rs:883-893 at 289c201fe): the aggregate arm
+/-- Main's stack machine (eval.rs at 289c201fe): the aggregate arm
 pushes and `continue`s; the result is the single value left on the stack. -/
 def evalStack (e : E) : R :=
   match run (compile e) [] with
@@ -800,11 +606,9 @@ theorem main_count_lit_list : evalStack (.list [.agg 2, .lit 5]) = .lst [.num 2,
 theorem main_size_singleton_agg : rsize (evalStack (.list [.agg 2])) = some 1 := by
   rw [evalStack_eq_evalRef]; simp [evalRef, rsize]
 
-/-! ### History: before #2951 (eval.rs:877 at fb3d516d0) -/
-
 /-! ## finalize_percentile_{disc,cont}: index bounds and the NaN comparator -/
 
-/-- `percentileDisc` index `ceil(n·p) − 1` (aggregation.rs:621) with the
+/-- `percentileDisc` index `ceil(n·p) − 1` (aggregation.rs) with the
 percentile a rational `a/b ∈ (0,1]` is in bounds. (For f64: `n·p ≤ n` holds
 under round-to-nearest because `p ≤ 1` and `n·1 = n` exactly.) -/
 theorem disc_index_in_bounds (n a b : Nat) (hn : 0 < n) (ha : 0 < a) (hab : a ≤ b) :
@@ -819,7 +623,7 @@ theorem disc_index_in_bounds (n a b : Nat) (hn : 0 < n) (ha : 0 < a) (hab : a �
   · rw [Nat.le_div_iff_mul_le hb]; omega
 
 /-- `percentileCont` reads `values[index + 1]` only when the fraction is
-nonzero (aggregation.rs:661-665); then `index + 1 < n`. -/
+nonzero (aggregation.rs); then `index + 1 < n`. -/
 theorem cont_index_in_bounds (n a b : Nat) (hab : a ≤ b) (hb : 0 < b)
     (hfrac : (n - 1) * a % b ≠ 0) : (n - 1) * a / b + 1 < n := by
   by_cases heq : a = b
@@ -833,15 +637,7 @@ theorem cont_index_in_bounds (n a b : Nat) (hab : a ≤ b) (hb : 0 < b)
   have : (n - 1) * a / b < n - 1 := by rw [Nat.div_lt_iff_lt_mul hb]; exact this
   omega
 
-/-- History (e8f8a3017, fixed by #2912 b033aecc6): the percentile sort comparator
-`partial_cmp(..).unwrap_or(Equal)` (then aggregation.rs:615, :645) with NaN (modelled as
-`none`) was not transitive: 1 ~ NaN ~ 3 but 1 < 3. std's sort panicked on it (and killed a
-live server; `lean_ops_aggregate::bug_percentile_with_nan_panics`). -/
-def pcmpEq : Option Nat → Option Nat → Ordering
-  | some a, some b => compare a b
-  | _, _ => .eq
-
-/-- Main (aggregation.rs:625, :651): `sort_by(|a, b| sort_cmp_f64(a.get_numeric(),
+/-- Main (aggregation.rs): `sort_by(|a, b| sort_cmp_f64(a.get_numeric(),
 b.get_numeric()))` — `partial_cmp`, else NaN (`none`) above every number and equal to itself.
 Numbers are `Nat`s here (any total order on the non-NaN values gives the same laws; the
 f64 version is proofs/value_order `SC.scF64_key`/`SC.scF64_lw`). -/

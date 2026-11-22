@@ -46,11 +46,11 @@ Yes, between two different nodes:
 - no path is returned twice (`asp_nodup`);
 - the BFS always finishes, within `|univ| + 1` iterations (`fin_drained`), where `univ` lists the source and every edge endpoint, repeats included, so it bounds the node count from above.
 
-When source and destination are the same node (a cycle), only examples are checked (`directed_cycle_walk_order`, `directed_cycle_is_a_walk`, `directed_cycle_reversed_order`); since #3112 the edge list is in walk order like any other path.
+When source and destination are the same node (a cycle), only examples are checked (`directed_cycle_walk_order`, `directed_cycle_is_a_walk`, `directed_cycle_reversed_order`); the edge list is in walk order like any other path.
 
 **5. Do scans and LIMIT lose or duplicate rows?**
 
-No. The `next` loops that pack expanded rows into output batches emit every row once, in order (`drive_flatten`), and a LIMIT pushed into them keeps exactly the first rows (`capDrive_flatten`). The label-and-id-range scan returns exactly the labelled nodes in the range (`labelIdScan_correct`). An index scan is a sound pre-filter under the RediSearch contract (`scanRow_spec`), and an undirected edge-index scan reads each edge both ways, a self-loop once (`orient_length`; fixed by #3081).
+No. The `next` loops that pack expanded rows into output batches emit every row once, in order (`drive_flatten`), and a LIMIT pushed into them keeps exactly the first rows (`capDrive_flatten`). The label-and-id-range scan returns exactly the labelled nodes in the range (`labelIdScan_correct`). An index scan is a sound pre-filter under the RediSearch contract (`scanRow_spec`), and an undirected edge-index scan reads each edge both ways, a self-loop once (`orient_length`).
 
 ## The headline theorems
 
@@ -60,19 +60,19 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `twoHop_emit_iff` | Two chained hops return the openCypher match set with distinct relationships | `CondTraverse.lean` |
 | `batched_eq_collapse`, `fused_chain_semantics` | The matrix-multiply path equals per-row expansion, for any multiply meeting the GraphBLAS spec | `CondTraverse.lean` |
 | `varLen_iff` | Variable-length returns exactly the trails with length in `[min, max]` | `VarLen.lean` |
-| `varLen_bidir_reverse_iff` | An undirected variable-length walk started from the bound `to` (reversed, #3593) returns the same trails read backwards | `VarLen.lean` |
+| `varLen_bidir_reverse_iff` | An undirected variable-length walk started from the bound `to` (reversed) returns the same trails read backwards | `VarLen.lean` |
 | `asp_sound`, `asp_minimal`, `asp_complete'`, `asp_nodup` | allShortestPaths (source ≠ destination) returns every shortest path, once, and nothing else | `ShortestPaths.lean`, `ASPMain.lean`, `ASPFuel.lean` |
 | `fin_drained` | The allShortestPaths BFS terminates within `|univ| + 1` steps (`univ` = source and every edge endpoint, repeats included, an upper bound on the node count) | `ASPFuel.lean` |
 | `buildNodes_walk` | PathBuilder's "other endpoint" rule rebuilds a walk's nodes, given unique edge ids | `ShortestPaths.lean` |
 | `revWalk_reconstructs`, `vltFix_follows` | PathBuilder's reversed var-length branch rebuilds any walk backwards; with the pattern direction as input it always follows the pattern | `PathVlt.lean` |
-| `expandIntoP_live`, `expandIntoP_not_delRel` | main's ExpandInto (with #3463's pending-deleted endpoint check) only matches live edges and never a pending-deleted one | `ExpandIntoPending.lean` |
+| `expandIntoP_live`, `expandIntoP_not_delRel` | main's ExpandInto (with its pending-deleted endpoint check) only matches live edges and never a pending-deleted one | `ExpandIntoPending.lean` |
 | `drive_flatten`, `capDrive_flatten` | Output batching never loses, duplicates or reorders rows; LIMIT is exact | `Drive.lean` |
 | `run_complete` | The variable-length frame machine yields every frame's items | `VarLenGlue.lean` |
 | `labelIdScan_correct` | The label + id-range scan returns exactly labelled ∩ range | `Scans.lean` |
-| `canUse_inListV_eq_or`, `canUseE_inListV_eq_or` | #2383: an `IN` list reaches the index on the same terms as the `Or` of `Equal`s it replaced (non-empty, every member indexable), so `IN [NULL]` still falls back | `IndexScan.lean` |
+| `canUse_inListV_eq_or`, `canUseE_inListV_eq_or` | An `IN` list reaches the index on the same terms as the `Or` of `Equal`s it replaced (non-empty, every member indexable), so `IN [NULL]` still falls back | `IndexScan.lean` |
 | `scanRow_spec`, `edgeRow_sound`, `orient_length` | Index scans are sound pre-filters, honour bound endpoints, and read undirected edges both ways | `IndexScan.lean` |
 | `dedupRows_keys_nodup`, `dedupRows_keys_complete` | The bidirectional dedup keeps unique keys and never loses a key (the bugs are in *which* key) | `BidirDedup.lean` |
-| `edgeVerdict_eq_filterEval` | A variable-length edge filter answers every evaluated value exactly as `FilterOp` does, by `StreamOps.filterEval` (non-boolean is a type error since #2390) | `VarLen.lean` |
+| `edgeVerdict_eq_filterEval` | A variable-length edge filter answers every evaluated value exactly as `FilterOp` does, by `StreamOps.filterEval` (non-boolean is a type error) | `VarLen.lean` |
 
 ### How `asp_minimal` is proved
 
@@ -94,15 +94,15 @@ Every bug was reproduced against a live server and compared with C before it was
 | W2-traverse-2 | `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result` | The dedup for chained anonymous undirected hops (`cond_traverse.rs`) ignores other columns, keys on an intermediate node at 3+ hops, and resets per batch. `UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10; a 3-hop star: Rust 7, C 12 | **Open** |
 | W2-traverse-3 | `bidir_collapse_duplicates_pair`, `expandInto_bidir_collapse_two_rows` | An undirected anonymous hop collapses per direction, not per pair. With `a→b`, `b→a`, `a→b`, `MATCH (a)-[]-(b) RETURN a.id, b.id`: Rust 4 rows, C 2 | **Open** |
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |
-| W2-traverse-4 | `directed_cycle_walk_order`, `directed_cycle_is_a_walk`, `directed_cycle_reversed_order` | allShortestPaths on a directed cycle returned the edge list backwards (`0→1→2→0`, `(a)-[*]->(a)` gave `[3,2,1]`). C was also wrong | Fixed by #3112 (fixes #3108): walk order `[1,2,3]` |
-| W2-traverse-5 | none (Cypher repro only) | `algo.SPpaths`/`algo.SSpaths` charged cost 0 per relationship without `costProp`; C charges 1 | Fixed by #3113 (the single-path shortcut still charges 0, as C does) |
 | #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4; C's 4 is the figure from the issue report, not re-run here); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
-| #3451 | `bug3451_main_violates`, `bug3451_cycle_not_reversed` | PathBuilder infers a var-length segment's direction by comparing its first node with the previous path node (`path_builder.rs:102-110`); on a cycle they are equal, so an incoming `(a)<-[:R*3..3]-(a)` on `0→1→2→0` comes out `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]` (C: `[0,2,1,0]`/`[1,2,3]`: right nodes, but its relationship list is also in the wrong order, the defect shared with W2-traverse-4). Property `PathFollowsPattern`; main is right on non-cyclic walks (`vltMain_follows_of_ne`), the plan-time direction flag fixes it (`vltFix_follows`) | **Open** |
-| #3452 | none (fixed; proof `expandIntoP_live`) | ExpandInto skipped pending-deleted edges but never checked pending-deleted endpoints, and `DETACH DELETE` defers a node's edges to commit: `MATCH (a:A),(b:B) DETACH DELETE a MERGE (a)-[r:R]->(b) RETURN count(r)` gave 1 with nothing created (C creates a dangling edge). Property `LiveExpandInto` | Fixed by #3463 (`expandIntoP_live`) |
-| W2-strlist-6 | none (out of target; see `proofs/functions_str_list`) | `[x IN null \| x]` returned `[]`; C returns `null` | Fixed by #2954 (`b6567cb97`, closes #2928) |
+| #3451 | `bug3451_main_violates`, `bug3451_cycle_not_reversed` | PathBuilder infers a var-length segment's direction by comparing its first node with the previous path node (`path_builder.rs:102-110`); on a cycle they are equal, so an incoming `(a)<-[:R*3..3]-(a)` on `0→1→2→0` comes out `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]` (C: `[0,2,1,0]`/`[1,2,3]`: right nodes, but its relationship list is also in the wrong order). Property `PathFollowsPattern`; main is right on non-cyclic walks (`vltMain_follows_of_ne`), the plan-time direction flag fixes it (`vltFix_follows`) | **Open** |
+| W2-traverse-11 | `EIP.bug_condTraverse_matches_doomed_edge`, `bug_condTraverse_main_violates` (property `LiveCondTraverse`) | `cond_traverse.rs` never reads `Pending`, so with one endpoint unbound (`MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)`) CondTraverse matches the doomed edge of a pending-deleted node; ExpandInto does not (`expandIntoP_live`) | **Open** |
+| W2-index-3 | `IndexScan.evalIQ_inList` | `IN [date, 2]` on an indexed property drops the non-scalar member before the index is asked | **Open** |
 
 ### Shared with C, not filed as Rust bugs
 
+- `algo.SPpaths` / `SSpaths` with a `costProp` no edge carries and no `maxLen`/`maxCost`: Rust reports the hop count as the cost, C reports 0 on its own fast path (`{sourceNode: a, targetNode: c, weightProp: 'w', costProp: 'zz'}`: Rust 2, C 0; with `maxLen: 5` both 2). `maxLen` wraps modulo 2^32 in both engines (`AlgoPaths.pMaxLen_wraps`).
+- `[x IN null | x]` returns `[]` (C `null`); outside this project's target files.
 - Anonymous edges, and named edges that are never read, collapse parallel edges.
 - No relationship uniqueness between variable-length hops and sibling edges (`no_sibling_uniqueness`), nor for anonymous edges or named paths.
 - An undirected allShortestPaths cycle reuses its first edge (`undirected_cycle_repeats_edge`).
@@ -125,7 +125,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | `Scans.lean` | Label scan, id seek, label + id-range scan |
 | `IndexScan.lean` | Node and edge index scans under the `IndexSound` contract, fulltext and vector scans, undirected edge orientation |
 | `PathVlt.lean` | PathBuilder's `Value::Path` branch (splicing a var-length segment, reversed for `<-`); property `PathFollowsPattern` and the #3451 counterexample |
-| `ExpandIntoPending.lean` | ExpandInto with pending deletes; property `LiveExpandInto`, proved for main (#3452, fixed by #3463) |
+| `ExpandIntoPending.lean` | ExpandInto with pending deletes; property `LiveExpandInto`, proved for main |
 | `SlotFeed.lean` | How an Aggregate output row feeds a later CondTraverse across `WITH`: binder slot ids, the Aggregate row, the endpoint reads; property `ScopedRow` and the #3372 counterexamples |
 | `Drive.lean` | The emitter-driven `next` loops and LIMIT propagation |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -140,21 +140,21 @@ Line numbers are pinned to main 5e475e6c9. No traversal operator changed since f
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 61 |
-| NOT COVERED | 23 |
+| PROVEN | 84 |
 
 Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled). The rest:
 
 - **`cond_traverse.rs` since #3492:** `delta_lmxm_into` is proved (`UnionGlue.deltaInto_eff`: `F * (A1 + .. + Ak)` on the pattern, via `GBWDelta.deltaLmxm_eff`); the iterator builders and the `UnionIter` merge (`UnionStream.drain_spec`) are modelled and proved. The batched path's one-hop theorems still take `MxmSpec` for the multiply.
-- **NOT COVERED, `algo_procedures.rs` (18):** the `algo.SPpaths`/`algo.SSpaths` procedures (Dijkstra over `f64` weights, config parsing, path enumeration, registration). They are only differential-tested against C.
-- **NOT COVERED, `eval.rs` (5):** `shortestPath()` is a bidirectional BFS in the expression evaluator. It is differential-tested against C; its stopping rule is argued in comments, not formalised.
+- **`algo_procedures.rs`, `eval.rs` (since 2026-11-22):** config parsing, the path comparator, `to_numeric_value`, `edge_numeric_attr`, `far_endpoint`, `node_successors`, the Dijkstra heap order, `build_path_batch` and the two registrations are PROVEN (`AlgoPaths`); `eval_shortest_path` is PROVEN as glue (`EvalSP`, the search is a parameter).
+- **Also PROVEN since the second pass:** `record_found_path` (`RecordFound`), `run_path_algo` (`RunAlgo`, glue over the searches), `NeighborIter::{new,new_reversed,neighbors}` (`NeighborIter`, relative to the matrices they read).
+- **The four path searches are PROVEN (2026-11-22, third pass):** `bfs_find_bound` (`BfsFind`: `None` iff unreachable within `max_len`; the bound is the fold over a shortest simple walk), `dijkstra_single_path` (`Dijkstra`: valid simple walk, cost = left fold, finite weight, any heap; f64 optimality is not provable because `+` is not associative, so optimality is `DijkstraNat.dijkstraNat_spec`, the same algorithm over `Nat`), `enumerate_paths` (`Enum`: the iterative stack loop equals the recursive DFS; `EnumSpec`: sound, and exact for a bound-preserving recorder), and `bfs_shortest_path` (`BidirBfs`: the stop rule returns a shortest path, `Null` only when none within `max_level`). `AlgoSearch` instantiates them at `node_successors` and `RunAlgo.runAlgo_ok_good` gives the end-to-end statement for `run_path_algo`; `BspWire` adds the `min_hops` filter. Scope notes are in COVERAGE.tsv.
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 
 ## What the model does not cover
 
 - **Labels and WHERE edge filters** are pure filters and are abstracted away; relationship types are a pre-filtered edge list. A variable-length walk still prunes on its edge's own attributes; the model treats that like the WHERE filter.
-- **ExpandInto's `synthetic_label` branch** (`expand_into.rs:162-173`) reads committed labels only and is not modelled: no valid Cypher reaches it with pending label changes (#3452). Pending *deletes* are modelled (`ExpandIntoPending.lean`).
+- **ExpandInto's `synthetic_label` branch** (`expand_into.rs:162-173`) reads committed labels only and is not modelled: no valid Cypher reaches it with pending label changes. Pending *deletes* are modelled (`ExpandIntoPending.lean`).
 - **Emission order.** Iterator `seek` is modelled as a filter of the full pair list, and the order rows come out in (stack vs recursion, `swap_remove`) is not modelled. The theorems are about which rows come out and how many.
 - **`get_nodes`** (label-matrix intersection) is assumed to return ids in ascending order.
 - **allShortestPaths cycles.** Minimality and completeness are proven for source ≠ destination only; the cycle order is checked on examples.

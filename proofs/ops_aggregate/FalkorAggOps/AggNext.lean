@@ -1,15 +1,7 @@
 import FalkorAggOps.AggState
 /-
-`AggregateOp::next` (aggregate.rs:1384) and the bulk column extractors
-`extract_key_columns` (:1014) / `extract_agg_input_columns` (:1063).
-
-| here | there |
-| --- | --- |
-| `keyCol`, `extractKeys`   | `extract_key_columns` (aggregate.rs:1014-1054) |
-| `aggCol`, `extractAggs`   | `extract_agg_input_columns` (aggregate.rs:1063-1097) |
-| `evalEnv`, `finishOuts`, `finishGroup` | the per-group closure of `next` (aggregate.rs:1418-1470, since #3579) |
-| `finishEval`/`finishTail`/`pre3579FinishGroup`, `preFinishGroup` | history: the closure before #3579 (343e077f2 :1162-1228) and before #3522 |
-| `aggNext`                 | `Iterator::next` (aggregate.rs:1384-1481) after consumption |
+`AggregateOp::next` (aggregate.rs) and the bulk column extractors
+`extract_key_columns` (:794) / `extract_agg_input_columns` (:843).
 
 `batch.value_at`, `extract_node_ids`, `materialize_node_property_values` and
 `VectorEval::eval_values` are parameters; the expression evaluator (`ExprEval::eval`) is a
@@ -25,7 +17,7 @@ section Extract
 variable {N : Type} (null : Z) (valueAt : Nat → Nat → Option Z)
   (nodeIds : Nat → Option (Nat → N)) (props : List N → Nat → List Z)
 
-/-- One key column (inside `extract_key_columns`, aggregate.rs:794-834). `.error ()` = "this batch cannot take the bulk path". -/
+/-- One key column (inside `extract_key_columns`, aggregate.rs). `.error ()` = "this batch cannot take the bulk path". -/
 def keyCol (evalC : Ex Z → Except Unit (List Z)) (active : List Nat) : KeyKind Z → Except Unit (List Z)
   | .var v => .ok (active.map fun r => (valueAt v r).getD null)
   | .prop v attr => match nodeIds v with
@@ -37,7 +29,7 @@ def extractKeys (evalC : Ex Z → Except Unit (List Z)) (active : List Nat) (ks 
     Except Unit (List (List Z)) :=
   ks.mapM (keyCol null valueAt nodeIds props evalC active)
 
-/-- One aggregate input column (inside `extract_agg_input_columns`, aggregate.rs:843-877); `count(*)` gets an empty placeholder. -/
+/-- One aggregate input column (inside `extract_agg_input_columns`, aggregate.rs); `count(*)` gets an empty placeholder. -/
 def aggCol (evalC : Ex Z → Except String (List Z)) (active : List Nat) : Option (Input Z) → Except String (List Z)
   | none => .ok []
   | some (.var v) => .ok (active.map fun r => (valueAt v r).getD null)
@@ -110,8 +102,7 @@ theorem extractAggs_spec (evalC : Ex Z → Except String (List Z)) (active : Lis
 
 end Extract
 
-/-! ## Per-group output row (aggregate.rs:1418-1470; the pieces below `combinedEnv` … `finishTail` are
-the closure before #3579, at 343e077f2 :1162-1228, kept for the history theorems) -/
+/-! ## Per-group output row (aggregate.rs) -/
 
 /-- `Row::merge`: every bound slot of `other` overwrites. -/
 def mergeE (self other : Env Z) : Env Z := fun j => match other j with
@@ -125,7 +116,7 @@ structure KeySpec where
   name : Nat
   orig : Option Nat
 
-/-- History (before #3579). `combined` (aggregate.rs:1163-1174 at 343e077f2): the key row, the pre-projection key aliases
+/-- `combined` (aggregate.rs): the key row, the pre-projection key aliases
 (`combined.insert(original_var, …)`), then every bound accumulator slot on top
 (`combined.merge(&acc)`). -/
 def combinedEnv (keys : List KeySpec) (key acc : Env Z) : Env Z :=
@@ -133,7 +124,7 @@ def combinedEnv (keys : List KeySpec) (key acc : Env Z) : Env Z :=
     | some o, some v => upd c o v
     | _, _ => c) key) acc
 
-/-- History (before #3579). The closure of `next` up to `acc.merge(&key)` (aggregate.rs:1175-1217 at 343e077f2): evaluate every
+/-- The closure of `next` up to `acc.merge(&key)` (aggregate.rs): evaluate every
 aggregation over `combined`, writing each output into `acc` **and** `combined`
 (`acc.insert(name, …)`, `combined.insert(name, …)`, :1188-1189), then the pre-projection key
 aliases unless an output owns the slot (:1206-1216), then the key row (:1217). Returns that
@@ -151,7 +142,7 @@ def finishCore {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeyS
     | _, _ => a) acc1
   pure (mergeE acc2 key, outs)
 
-/-- History (before #3579). Stage 1 of `finishCore` (aggregate.rs:1175-1191 at 343e077f2): evaluate every aggregation over `combined`,
+/-- Stage 1 of `finishCore` (aggregate.rs): evaluate every aggregation over `combined`,
 writing each output into `acc` and `combined`. Returns `acc` and the outputs in order. -/
 def finishEval {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z × List (Nat × Z)) := do
@@ -161,91 +152,22 @@ def finishEval {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeyS
     (acc, combinedEnv keys key acc, [])
   pure (acc1, outs)
 
-/-- History (before #3579). Stage 2 (aggregate.rs:1202-1217 at 343e077f2): the pre-projection key aliases unless an output owns
+/-- Stage 2 (aggregate.rs on main): the pre-projection key aliases unless an output owns
 the slot, then `acc.merge(&key)`. -/
 def finishTail (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc1 : Env Z) : Env Z :=
   mergeE (keys.foldl (fun a k => match k.orig, key k.name with
     | some o, some v => if aggs.any (·.1 == o) then a else upd a o v
     | _, _ => a) acc1) key
 
-/-- **History, before #3522 (ca36bfa15).** The emitted row's bound slots: `finishCore` (keys
-written), THEN `unbind_agg_accumulators`, then the outputs re-bound. An accumulator sharing a key's
-slot id unbinds the key. -/
-def preFinishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
-  match finishCore ev keys aggs key acc with
-  | .error e => .error e
-  | .ok (acc3, outs) => .ok (updAll (aggs.foldl (fun a p => unbindAcc p.2 a) acc3) outs)
-
-/-- **History, #3522 (ca36bfa15) until #3579.** The emitted row's **bound** slots: evaluate the
-aggregations over `combined` (key row + aliases + accumulators), writing each output back
-(aggregate.rs:1175-1191 at 343e077f2), unbind every accumulator (:1192-1201), then write the key
-aliases and the key row (:1202-1217), then re-bind the outputs (:1218-1226). -/
-def pre3579FinishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+/-- The emitted row's **bound** slots on main (aggregate.rs since #3522): evaluate the
+aggregations (:1175-1191), unbind every accumulator FIRST (:1192-1201), then write the key aliases
+and the key row (:1202-1217), then re-bind the outputs last (:1218-1226). -/
+def finishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
   match finishEval ev keys aggs key acc with
   | .error e => .error e
   | .ok (acc1, outs) =>
     .ok (updAll (finishTail keys aggs key (aggs.foldl (fun a p => unbindAcc p.2 a) acc1)) outs)
-
-/-- `eval_env` (aggregate.rs:1428-1435 since #3579): the group's accumulator row (which also holds
-each slotted implicit key's grouped value at its slot and the variables the unslotted keys read,
-stored when the group was created by `consume_batch_per_row`, :1209-1227, `Ops.seedNew`) plus each bare-variable key's value at its pre-projection id.
-The key row (new-scope ids) is not in it. -/
-def evalEnv (keys : List KeySpec) (key acc : Env Z) : Env Z :=
-  keys.foldl (fun c k => match k.orig, key k.name with
-    | some o, some v => upd c o v
-    | _, _ => c) acc
-
-/-- One aggregation's output: its name and its value, or the evaluation error (`?`). -/
-def outStep {E : Type} (ev : Ex Z → Env Z → Except E Z) (env : Env Z) (p : Nat × Ex Z) :
-    Except E (Nat × Z) :=
-  match ev p.2 env with
-  | .ok v => .ok (p.1, v)
-  | .error e => .error e
-
-/-- The aggregation outputs (aggregate.rs:1441-1456): every aggregation evaluated over the same
-`env`, in order; the first error aborts. The list evaluated is `implicit.items` (the items with each
-slotted implicit key replaced by a read of its slot) when there is one, else `agg` (:1442); `aggs`
-here is that list. -/
-def finishOuts {E : Type} (ev : Ex Z → Env Z → Except E Z) (aggs : List (Nat × Ex Z)) (env : Env Z) :
-    Except E (List (Nat × Z)) :=
-  aggs.mapM (outStep ev env)
-
-/-- The emitted row on main (aggregate.rs:1418-1470 since #3579): the outputs are computed over
-`evalEnv` and written on top of the key row (`let mut out = key; out.insert(name, val)`). Nothing
-of the old scope (accumulators, pre-projection aliases) is written, and no output is written back
-into the evaluation env. -/
-def finishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
-  match finishOuts ev aggs (evalEnv keys key acc) with
-  | .error e => .error e
-  | .ok outs => .ok (updAll key outs)
-
-theorem finishOuts_spec {E : Type} (ev : Ex Z → Env Z → Except E Z) (aggs : List (Nat × Ex Z))
-    (env : Env Z) (outs : List (Nat × Z)) (h : finishOuts ev aggs env = .ok outs) :
-    outs.map Prod.fst = aggs.map Prod.fst ∧
-      ∀ p ∈ aggs, ∀ v, ev p.2 env = .ok v → (p.1, v) ∈ outs := by
-  induction aggs generalizing outs with
-  | nil => simp [finishOuts, List.mapM_nil, pure, Except.pure] at h; subst h; simp
-  | cons q qs ih =>
-    unfold finishOuts at h ih
-    rw [List.mapM_cons] at h
-    cases hq : outStep ev env q with
-    | error e => simp [hq, bind, Except.bind] at h
-    | ok w =>
-      cases hqs : qs.mapM (outStep ev env) with
-      | error e => simp [hq, hqs, bind, Except.bind, pure, Except.pure] at h
-      | ok ws =>
-        simp only [hq, hqs, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
-        subst h
-        obtain ⟨hl, hm⟩ := ih ws hqs
-        have hw : w.1 = q.1 ∧ ev q.2 env = .ok w.2 := by
-          unfold outStep at hq; split at hq <;> cases hq; simp_all
-        refine ⟨by simp [hl, hw.1], fun p hp v hv => ?_⟩
-        rcases List.mem_cons.mp hp with rfl | hp'
-        · rw [hw.2] at hv; cases hv; rw [← hw.1]; exact List.mem_cons_self ..
-        · exact List.mem_cons_of_mem _ (hm p hp' v hv)
 
 /-- `finishCore` is `finishEval` followed by `finishTail`; no unbind is involved. The argument that
 unbind order does not change values is in `SlotReuse.finishVals`. -/
@@ -325,9 +247,9 @@ theorem finishEval_outs {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : 
     have hl := foldlM_outs ev aggs _ r0 hr
     simpa using hl
 
-/-- **Output bindings win** (aggregate.rs:1465-1468): on success, with distinct output
-names, every aggregate output name is bound to the value computed for it — even when a key
-shares its id. -/
+/-- **Output bindings win** (aggregate.rs): on success, with distinct output
+names, every aggregate output name is bound to the value computed for it — even when an
+accumulator slot or a key alias shares its id. -/
 theorem finishGroup_outputs {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc out : Env Z)
     (hnd : (aggs.map Prod.fst).Nodup)
@@ -335,12 +257,13 @@ theorem finishGroup_outputs {E : Type} (ev : Ex Z → Env Z → Except E Z) (key
     ∃ outs : List (Nat × Z), outs.map Prod.fst = aggs.map Prod.fst ∧
       ∀ n v, (n, v) ∈ outs → out n = some v := by
   unfold finishGroup at h
-  cases hc : finishOuts ev aggs (evalEnv keys key acc) with
+  cases hc : finishEval ev keys aggs key acc with
   | error e => rw [hc] at h; cases h
-  | ok outs =>
+  | ok r =>
     rw [hc] at h
+    obtain ⟨acc1, outs⟩ := r
     simp only [Except.ok.injEq] at h
-    have hl := (finishOuts_spec ev aggs _ outs hc).1
+    have hl := finishEval_outs ev keys aggs key acc _ hc
     refine ⟨outs, hl, fun n v hm => ?_⟩
     rw [← h]
     exact updAll_get _ _ n v (by rw [hl]; exact hnd) hm
@@ -350,7 +273,7 @@ theorem finishGroup_err {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : 
     (key acc : Env Z) (n : Nat) (t : Ex Z) (e : E)
     (he : ∀ env, ev t env = .error e) :
     finishGroup ev keys [(n, t)] key acc = .error e := by
-  simp [finishGroup, finishOuts, outStep, bind, Except.bind, List.mapM_cons, he]
+  simp [finishGroup, finishEval, bind, Except.bind, List.foldlM_cons, he]
 
 /-- `updAll` leaves a slot no listed name touches. -/
 theorem updAll_other (env : Env Z) (l : List (Nat × Z)) (n : Nat) (hn : n ∉ l.map Prod.fst) :
@@ -364,11 +287,14 @@ theorem updAll_other (env : Env Z) (l : List (Nat × Z)) (n : Nat) (hn : n ∉ l
     rw [List.foldl_cons, this]
     simp [upd]; intro h; exact absurd h hn.1
 
-/-- **Every grouping key is bound on main (#3150, fixed by #3522; still so since #3579).** A key
-whose name is not an aggregate output name is bound to its key value on the emitted row: the row
-is the key row with the outputs written on top (aggregate.rs:1465-1468). The premise that no key
-name is an output name is the binder's (the projected items get distinct ids `0, 1, …` in the new
-scope, binder.rs, `bind_projection`). -/
+/-- **Every grouping key is bound on main (#3150, fixed by #3522).** Whatever the accumulators'
+slot ids are (even a null key sharing a slot with an accumulator), a key whose name is not an
+aggregate output name is bound to its key value on the emitted row, because the keys are written
+after the accumulators are unbound and `acc.merge(&key)` lets every key win over every alias. The
+premise that no key name is an output name is the binder's (the projected items get distinct
+ids `0, 1, …` in the new scope, binder.rs, `bind_projection`). Keys do not overwrite each other: `key` is
+one row, so `WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*)` keeps `x = 2, y = 1`
+(`keysBound_swap_3522`). -/
 theorem finishGroup_keys_bound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc out : Env Z)
     (hdisj : ∀ k ∈ keys, k.name ∉ aggs.map Prod.fst)
@@ -376,87 +302,22 @@ theorem finishGroup_keys_bound {E : Type} (ev : Ex Z → Env Z → Except E Z) (
     ∀ k ∈ keys, ∀ v, key k.name = some v → out k.name = some v := by
   intro k hk v hv
   unfold finishGroup at h
-  cases hc : finishOuts ev aggs (evalEnv keys key acc) with
+  cases hc : finishEval ev keys aggs key acc with
   | error e => rw [hc] at h; cases h
-  | ok outs =>
+  | ok r =>
     rw [hc] at h
+    obtain ⟨acc1, outs⟩ := r
     simp only [Except.ok.injEq] at h
-    have hl := (finishOuts_spec ev aggs _ outs hc).1
+    have hl := finishEval_outs ev keys aggs key acc _ hc
     rw [← h, updAll_other _ _ _ (by rw [hl]; exact hdisj k hk)]
-    exact hv
+    simp [finishTail, mergeE, hv]
 
-/-- **Each output is its own expression over the old scope only (#3375, #3571, fixed by #3579).**
-With distinct output names, every aggregation `p` is bound on the emitted row to `p`'s expression
-evaluated over `evalEnv` (accumulators, implicit-key variables and bare-variable key aliases), so no
-other output written during the loop and no new-scope key id can change what it reads. -/
-theorem finishGroup_eval {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc out : Env Z)
-    (hnd : (aggs.map Prod.fst).Nodup)
-    (h : finishGroup ev keys aggs key acc = .ok out) :
-    ∀ p ∈ aggs, ∀ v, ev p.2 (evalEnv keys key acc) = .ok v → out p.1 = some v := by
-  intro p hp v hv
-  unfold finishGroup at h
-  cases hc : finishOuts ev aggs (evalEnv keys key acc) with
-  | error e => rw [hc] at h; cases h
-  | ok outs =>
-    rw [hc] at h
-    simp only [Except.ok.injEq] at h
-    obtain ⟨hl, hm⟩ := finishOuts_spec ev aggs _ outs hc
-    rw [← h]
-    exact updAll_get _ _ _ _ (by rw [hl]; exact hnd) (hm p hp v hv)
-
-/-- **Only the new scope is emitted (#3333, #3368, #3369, #3372, fixed by #3579).** A slot that
-is neither in the key row nor an aggregate output is unbound on the emitted row. -/
-theorem finishGroup_only_scope {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc out : Env Z)
-    (h : finishGroup ev keys aggs key acc = .ok out) :
-    ∀ j, key j = none → j ∉ aggs.map Prod.fst → out j = none := by
-  intro j hk hj
-  unfold finishGroup at h
-  cases hc : finishOuts ev aggs (evalEnv keys key acc) with
-  | error e => rw [hc] at h; cases h
-  | ok outs =>
-    rw [hc] at h
-    simp only [Except.ok.injEq] at h
-    have hl := (finishOuts_spec ev aggs _ outs hc).1
-    rw [← h, updAll_other _ _ _ (by rw [hl]; exact hj)]
-    exact hk
-
-/-- **The key row is read only through bare-variable key aliases (#3571).** Two key rows that
-agree on every key that is a bare variable give the same evaluation env, so a computed key's
-value at its new-scope id (`p.name` at id 0) is never read as an old-scope variable. -/
-theorem evalEnv_key_irrelevant (keys : List KeySpec) (key key' acc : Env Z)
-    (h : ∀ k ∈ keys, k.orig.isSome → key k.name = key' k.name) :
-    evalEnv keys key acc = evalEnv keys key' acc := by
-  unfold evalEnv
-  induction keys generalizing acc with
-  | nil => rfl
-  | cons k ks ih =>
-    simp only [List.foldl_cons]
-    have hk : (match k.orig, key k.name with
-        | some o, some v => upd acc o v
-        | _, _ => acc) = (match k.orig, key' k.name with
-        | some o, some v => upd acc o v
-        | _, _ => acc) := by
-      cases ho : k.orig with
-      | none => rfl
-      | some o => rw [h k (List.mem_cons_self ..) (by simp [ho])]
-    rw [hk]
-    exact ih _ (fun k' hk' => h k' (List.mem_cons_of_mem _ hk'))
-
-/-- Hence the outputs of a group do not depend on the key row beyond those aliases. -/
-theorem finishOuts_key_irrelevant {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key key' acc : Env Z)
-    (h : ∀ k ∈ keys, k.orig.isSome → key k.name = key' k.name) :
-    finishOuts ev aggs (evalEnv keys key acc) = finishOuts ev aggs (evalEnv keys key' acc) := by
-  rw [evalEnv_key_irrelevant keys key key' acc h]
-
-/-! ## `next` after consumption (aggregate.rs:1407-1480) -/
+/-! ## `next` after consumption (aggregate.rs) -/
 
 def BATCH_SIZE : Nat := 1024
 
 /-- Pack up to `n` finished groups; the first failing group aborts the call
-(`return Some(Err(e))`, aggregate.rs:1472). Returns (packed rows or error, rest). -/
+(`return Some(Err(e))`, aggregate.rs). Returns (packed rows or error, rest). -/
 def pack {G R E : Type} (fin : G → Except E R) : Nat → List G → List R → Except E (List R) × List G
   | 0, gs, acc => (.ok acc, gs)
   | _, [], acc => (.ok acc, [])

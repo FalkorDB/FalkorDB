@@ -3,3 +3,8 @@ defaultTargets = ["FalkorEffectsCodec"]
 
 [[lean_lib]]
 name = "FalkorEffectsCodec"
+
+# `IdLink` instantiates the abstract `IdCodec` with the IdList wire model.
+[[require]]
+name = "falkor-id-list"
+path = "../id_list"

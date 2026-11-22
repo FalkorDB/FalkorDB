@@ -1,26 +1,26 @@
 /-
 # Core: records, bags, the IR tree and its reference semantics
 
-`Plan` is `DynTree<IR>` (planner/mod.rs:65-328) with the operator payloads
+`Plan` is `DynTree<IR>` (planner/mod.rs) with the operator payloads
 replaced by spec ids; a `Sem` gives each spec id its meaning (scans,
 traversals, predicates, projections, writes are the other proof projects'
 business — here they are parameters). `ev` is the reference semantics of the
 IR tree: what the batched runtime (`Runtime::build_batch_op`,
-runtime/runtime.rs:752-1180) computes, with batches flattened to lists and
+runtime/runtime.rs) computes, with batches flattened to lists and
 evaluation eager per operator.
 
 Faithful structural points (each is load-bearing for a theorem):
 * every operator reads its input from child 0, and uses one empty argument row
-  (`pop_or_once` / `pop_or_argument`, runtime.rs:758-765) when it has none;
+  (`pop_or_once` / `pop_or_argument`, runtime.rs) when it has none;
 * `Apply`, `SemiApply`, `AntiSemiApply`, `Optional`, `Merge`, `ForEach` have
   their input at child 0 only when they have two children
-  (`children_to_recurse`, runtime.rs:654-672), else the sub-plan is child 0;
+  (`children_to_recurse`, runtime.rs), else the sub-plan is child 0;
 * every other operator — `PathBuilder` and `ExpandInto` included — builds
   **only child 0**; further children are never run (the `_` arm of
-  `children_to_recurse`, runtime.rs:670);
+  `children_to_recurse`, runtime.rs);
 * `CartesianProduct` streams child 0 and materialises every other child once,
   on the operator's own argument row, merging columns right-biased
-  (cartesian_product.rs:1-40, `MergePlan`).
+  (cartesian_product.rs, `MergePlan`).
 -/
 namespace PlannerBuild
 
@@ -110,7 +110,7 @@ inductive HopKind
   | condTraverse | varLen | shortest | expandInto
   deriving DecidableEq, Repr
 
-/-- The IR operators (planner/mod.rs:65-328), payloads as spec ids. -/
+/-- The IR operators (planner/mod.rs), payloads as spec ids. -/
 inductive Op
   | argument
   | filter (p : Nat)
@@ -196,7 +196,7 @@ def Op.isBag : Op → Bool
   | _ => false
 
 /-- Operators with a sub-plan child besides the input (`children_to_recurse`,
-runtime.rs:666; Apply / Semi / Anti read child 1 in their ops). -/
+runtime.rs; Apply / Semi / Anti read child 1 in their ops). -/
 def Op.isCorr : Op → Bool
   | .apply | .semiApply | .antiSemiApply | .optional _ | .merge _ | .forEach _ _ => true
   | _ => false

@@ -2,27 +2,14 @@
 Aggregate operator: expression analysis, accumulator zeroing/unbinding, `GroupKey`,
 `args_for`, `new` (graph/src/runtime/ops/aggregate.rs).
 
-| here | there |
-| --- | --- |
-| `Ex`, `Fn`, `Cst`            | `ExprIR<Variable>` tree (`DynNode`), `GraphFn`, `ExprIR::Constant` |
-| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs:182) |
-| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs:614) |
-| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs:541) |
-| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs:1355) |
-| `unbindAcc` / `unbindAccL`   | history: `unbind_agg_accumulators` (aggregate.rs:1251 at 343e077f2, removed by #3579) |
-| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs:100, :116) |
-| `hashU64` (history)          | `HashU64::hash_u64` (removed by #2977; was aggregate.rs:1254/:1258) |
-| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs:432) |
-| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs:506) |
-
-`is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs:783), and the
+`is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs), and the
 `initial` value lives in that variant, so a function is aggregate iff `init = some z`.
 -/
 namespace FalkorAggOps.AggPlan
 
 variable {Z : Type}
 
-/-- Literal kinds that matter: `count(<non-null literal>)` is `count(*)` (aggregate.rs:449). -/
+/-- Literal kinds that matter: `count(<non-null literal>)` is `count(*)` (aggregate.rs). -/
 inductive Cst where
   | btrue | bfalse | int | float | str | null | other
   deriving DecidableEq
@@ -47,7 +34,7 @@ def isAggNode : Ex Z → Bool
   | .func f _ => f.init.isSome
   | _ => false
 
-/-! ## `subtree_has_aggregate` (aggregate.rs:182) -/
+/-! ## `subtree_has_aggregate` (aggregate.rs) -/
 
 mutual
 def hasAgg : Ex Z → Bool
@@ -88,7 +75,7 @@ aggregate call. -/
 theorem hasAgg_iff (e : Ex Z) : hasAgg e = true ↔ ∃ n ∈ nodes e, isAggNode n = true := by
   rw [hasAgg_spec]; simp
 
-/-! ## `analyze_agg_tree` (aggregate.rs:614) -/
+/-! ## `analyze_agg_tree` (aggregate.rs) -/
 
 inductive Input (Z : Type) where
   | var (v : Nat)
@@ -107,7 +94,7 @@ def countStarLit : Cst → Bool
   | .btrue | .int | .float | .str => true
   | _ => false
 
-/-- Single argument (aggregate.rs:442-467). `none` = whole analysis bails. -/
+/-- Single argument (aggregate.rs). `none` = whole analysis bails. -/
 def singleArg (f : Fn Z) (arg : Ex Z) : Option (Option (Input Z)) :=
   match arg with
   | .var v => some (some (.var v))
@@ -115,7 +102,7 @@ def singleArg (f : Fn Z) (arg : Ex Z) : Option (Option (Input Z)) :=
                 else if hasAgg arg then none else some (some (.computed arg))
   | _ => if hasAgg arg then none else some (some (.computed arg))
 
-/-- Multi-argument tail check (aggregate.rs:478-483): children `1..n-1` all constants. -/
+/-- Multi-argument tail check (aggregate.rs): children `1..n-1` all constants. -/
 def constsOf : List (Ex Z) → Option (List Cst)
   | [] => some []
   | e :: es => match isConst e, constsOf es with
@@ -134,7 +121,7 @@ def distinctInput (ds : List (Ex Z)) : Option (Input Z) :=
     | _ => if hasAgg inner then none else some (.computed inner)
   | _ => none
 
-/-- The per-shape body of aggregate.rs:404-505, once `acc` (the last child) is known. -/
+/-- The per-shape body of aggregate.rs, once `acc` (the last child) is known. -/
 def aggBody (f : Fn Z) (acc : Nat) (cs : List (Ex Z)) : Option (VAgg Z) :=
   match cs with
   | [.distinct ds, _] => (distinctInput ds).map fun i => ⟨f, some i, acc, true, []⟩
@@ -240,7 +227,7 @@ theorem distinctInput_computed (ds : List (Ex Z)) (x : Ex Z) (h : distinctInput 
       · rename_i hh; cases h; exact ⟨rfl, by simpa using hh⟩
   · cases h
 
-/-- `count(*)` (parsed as `count(1)`, cypher.rs:2023) needs no input column. -/
+/-- `count(*)` (parsed as `count(1)`, cypher.rs) needs no input column. -/
 theorem countStar_no_input (f : Fn Z) (z : Z) (acc : Nat) (hf : f.init = some z) (hc : f.isCount = true) :
     analyzeAgg (.func f [.const .int, .var acc]) = some ⟨f, none, acc, false, []⟩ := by
   simp [analyzeAgg, aggBody, hf, isVar, singleArg, countStarLit, hc]
@@ -275,14 +262,14 @@ theorem multi_extra (f : Fn Z) (z : Z) (v acc : Nat) (cs : List Cst) (hf : f.ini
   unfold aggBody
   simp only [hd, hcs, multiArg]
 
-/-! ## `analyze` (aggregate.rs:541) -/
+/-! ## `analyze` (aggregate.rs) -/
 
 inductive KeyKind (Z : Type) where
   | var (v : Nat)
   | prop (v : Nat) (attr : Nat)
   | computed (e : Ex Z)
 
-/-- One key (aggregate.rs:547-594). `none` = the whole operator bails. -/
+/-- One key (aggregate.rs). `none` = the whole operator bails. -/
 def analyzeKey (e : Ex Z) : Option (KeyKind Z) :=
   match e with
   | .var v => some (.var v)
@@ -294,32 +281,17 @@ def analyzeKey (e : Ex Z) : Option (KeyKind Z) :=
     | _ => none
   | _ => if hasAgg e then none else some (.computed e)
 
-/-- `analyze` (aggregate.rs:541-612). `implicit` is the operator's implicit grouping keys
-(`self.implicit.keys`, computed by `implicit_keys` in `new`); since #3579 any of them sends the whole
-operator to the per-row path (:543-545). -/
-def analyze {I : Type} (implicit : List I) (keys aggs : List (Ex Z)) :
-    Option (List (KeyKind Z) × List (VAgg Z)) :=
-  if !implicit.isEmpty then none else
+def analyze (keys aggs : List (Ex Z)) : Option (List (KeyKind Z) × List (VAgg Z)) :=
   match keys.mapM analyzeKey, aggs.mapM analyzeAgg with
   | some ks, some as => some (ks, as)
   | _, _ => none
 
-/-- `analyze` succeeds iff there is no implicit grouping key and every key and every aggregate
-expression is vectorizable; the kinds are then in key/aggregate order (one per expression). -/
-theorem analyze_spec {I : Type} (implicit : List I) (keys aggs : List (Ex Z)) (ks : List (KeyKind Z))
-    (as : List (VAgg Z)) :
-    analyze implicit keys aggs = some (ks, as) ↔
-      implicit = [] ∧ keys.mapM analyzeKey = some ks ∧ aggs.mapM analyzeAgg = some as := by
-  unfold analyze
-  cases implicit with
-  | cons _ _ => simp
-  | nil => simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, ite_false, true_and]; split <;> simp_all
-
-/-- **Implicit grouping keys never take the vectorized path (#3579)**: their values are computed
-per row only, so the fallback `consume_batch_per_row` call of the vectorized path may pass none
-(aggregate.rs:786-788). -/
-theorem analyze_implicit_none {I : Type} (i : I) (is : List I) (keys aggs : List (Ex Z)) :
-    analyze (i :: is) keys aggs = none := rfl
+/-- `analyze` succeeds iff every key and every aggregate expression is vectorizable; the
+kinds are then in key/aggregate order (one per expression). -/
+theorem analyze_spec (keys aggs : List (Ex Z)) (ks : List (KeyKind Z)) (as : List (VAgg Z)) :
+    analyze keys aggs = some (ks, as) ↔
+      keys.mapM analyzeKey = some ks ∧ aggs.mapM analyzeAgg = some as := by
+  unfold analyze; split <;> simp_all
 
 theorem mapM_length {α β : Type} (f : α → Option β) (xs : List α) (ys : List β)
     (h : xs.mapM f = some ys) : ys.length = xs.length := by
@@ -334,11 +306,10 @@ theorem mapM_length {α β : Type} (f : α → Option β) (xs : List α) (ys : L
       | none => simp [hx, hxs] at h
       | some bs => simp [hx, hxs] at h; subst h; simp [ih _ hxs]
 
-theorem analyze_lengths {I : Type} (implicit : List I) (keys aggs : List (Ex Z)) (ks : List (KeyKind Z))
-    (as : List (VAgg Z))
-    (h : analyze implicit keys aggs = some (ks, as)) : ks.length = keys.length ∧ as.length = aggs.length := by
+theorem analyze_lengths (keys aggs : List (Ex Z)) (ks : List (KeyKind Z)) (as : List (VAgg Z))
+    (h : analyze keys aggs = some (ks, as)) : ks.length = keys.length ∧ as.length = aggs.length := by
   rw [analyze_spec] at h
-  exact ⟨mapM_length _ _ _ h.2.1, mapM_length _ _ _ h.2.2⟩
+  exact ⟨mapM_length _ _ _ h.1, mapM_length _ _ _ h.2⟩
 
 /-- A key that is a bare variable or `var.prop` maps to the bulk kinds; a computed key is
 aggregate-free. -/

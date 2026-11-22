@@ -39,12 +39,12 @@ Every variable id is minted as the **current size of its scope table**. The bind
 openCypher binds a pattern left to right, clause by clause.
 
 - `agree_on_outer_refs` proves the binder's order (all nodes, then all relationships) and textual order accept the same patterns when every inline property map only mentions variables from earlier clauses.
-- **But the parser folds clauses.** `MATCH p MATCH q`, `CREATE … CREATE …` and `OPTIONAL MATCH p MATCH q` become one pattern (`fold_merges`). Combined with nodes-first binding, `MATCH (a)-[r:R]->(b) MATCH (c {v: r.w})` fails with "'r' not defined" (`q2923_cause`, issue #2923). Each half alone is harmless: with a `WITH` between the clauses the query binds.
+- **Clauses are not folded.** `MATCH p MATCH q`, `CREATE … CREATE …` and `OPTIONAL MATCH p MATCH q` stay separate, so `MATCH (a)-[r:R]->(b) MATCH (c {v: r.w})` binds (`q2923_fixed`, `match_rel_reused`). (Issue #2923.)
 
 **5. Are the type checks right?**
 
 - `ensureType_table` proves the kind conflicts rejected are exactly a node, relationship or path used as one of the others.
-- `mayBool_sound_except` proves `expr_may_return_boolean` says "maybe" for every expression that can produce a boolean or null, **except** a few listed shapes: `WHERE n.flags[0]` is rejected with "Expected boolean predicate" where C returns rows (`getElement_rejected`, `negate_rejected`).
+- `mayBool_sound_except` proves `expr_may_return_boolean` says "maybe" for every expression that can produce a boolean or null, **except** a few listed shapes: `true AND -null` is rejected where C returns `null` (`negate_rejected`). A subscript (`WHERE n.flags[0]`) is accepted (`getElement_accepted`).
 - `mayEntity_eq` proves `expr_may_return_entity` matches its spec exactly.
 
 **6. Does constant folding preserve meaning?**
@@ -64,11 +64,12 @@ openCypher binds a pattern left to right, clause by clause.
 | `callBody_query_disjoint` | A plain `CALL {}` body's scopes are disjoint from the live outer scopes | `Scopes.lean` |
 | `unionCheck_ok_iff`, `validateImport_ok` | The UNION column rule and the CALL import rule hold as stated | `Scopes.lean` |
 | `bindNode_covers` | Binding a pattern-free expression keeps the table covering | `BindExpr.lean` |
-| `bind_paren`, `bind_andOr_paren` | `(x)` binds exactly like `x`, and nested AND/OR bind flat (since #3335) | `BindExpr.lean` |
+| `bind_paren`, `bind_andOr_paren` | `(x)` binds exactly like `x`, and nested AND/OR bind flat | `BindExpr.lean` |
 | `mayBool_sound_except`, `mayEntity_eq` | The boolean and entity type checks, and their exact exceptions | `Types.lean` |
 | `nodeToValue_sound`, `foldCall_sound` | Constant folding gives the same value as evaluation | `Fold.lean` |
-| `exprIrEq_exact` | `expr_ir_eq` is exact on expressions it can compare by value | `AggEq.lean` |
-| `importProj_spec`, `entry_ids_below`, `body_import_value` | A `CALL {}` body's entry projection (#2845) imports exactly the listed variables, below the body's own ids | `CallBoundary.lean` |
+| `exprIrEq_exact`, `exprIrEq_exact_any_kind` | `expr_ir_eq` is exact on expressions it can compare by value; constants of different kinds never match | `AggEq.lean` |
+| `order_by_float_rejected`, `order_by_float_equal` | `ORDER BY max(n.v % 4.0)` does not match `max(n.v % 3)`; `% 3.0` still does | `AggEq.lean` |
+| `importProj_spec`, `entry_ids_below`, `body_import_value` | A `CALL {}` body's entry projection imports exactly the listed variables, below the body's own ids | `CallBoundary.lean` |
 
 ### How `mint_fresh_iff` and the covering lemmas fit together
 
@@ -80,26 +81,20 @@ openCypher binds a pattern left to right, clause by clause.
 
 ## Bugs found
 
-Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committed; the tests assert C's answer and fail while the bug is Open; a Fixed row's test passes) and was compared against C (see [`../FINDINGS.md`](../FINDINGS.md)).
+Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committed; the tests assert C's answer and fail while the bug is Open) and was compared against C (see [`../FINDINGS.md`](../FINDINGS.md)).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-binder-1 | `q2923_cause`, `fold_merges` (pre-#2981 folding), `node_attr_on_rel_rust_accepts`, `q2923_fixed`, `match_rel_reused` | Consecutive MATCH/CREATE clauses are folded into one pattern and bound nodes first: "'a' not defined" for consecutive CREATEs; relationship uniqueness across separate MATCHes (0 rows vs C 1); a MATCH after OPTIONAL MATCH becomes optional | **Fixed by #2981** for MATCH (no folding; relationship aliases defined first, `node_attr_on_rel_rust_accepts`; an earlier MATCH's relationship variable is rejected, `match_rel_reused`) |
-| W2-binder-2 | (planner side; see the header) | `MATCH (a:A), (b:B {v: a.v})` filters `b`'s inline map on `b`'s own scan: Rust `[]`, C 2 rows. The node case of #2923 | **Fixed by #2981** (the planner lifts the entry above the whole pattern: planner_build `q2923_lifted`) |
 | W2-binder-3 | `erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks` | A removed WHERE copy or comprehension local frees an id still in use; the next variable reuses it. Wrong rows, extra rows, or "Invalid node id for 'to'" | **Open** (PR #3016 not merged) |
-| W2-binder-4 | `callBody_union_disjoint`, `union_branch_label_fixed` | UNION branches inside `CALL {}` started at scope 0, shared with the outer query | **Fixed** (#3027) |
 | W2-binder-5 | `orderBy_leaks` | ORDER BY copies leak past WITH/RETURN: a spurious "already declared", and `RETURN *` returns ORDER BY-only variables | **Open** (PR #3016 not merged) |
-| W2-binder-6 | `labels_leak` | Labels from CREATE and from pattern comprehensions tighten an earlier MATCH scan: 0 or 1 rows where C returns 3 | **Open** (PR #3049 not merged) |
 | W2-binder-7 | `defineName_ignores_parent` | A pattern predicate in `WITH … WHERE` rebinds a parent variable as a fresh one: 3 rows where C returns 1 | **Open** (PR #3062 not merged) |
-| W4-plan-2 | `getElement_rejected`, `negate_rejected` | `WHERE n.flags[0]` → "Expected boolean predicate" (C: 1); same for `true AND l[0]` and `true AND -null` | **Open** |
-| W4-plan-3 | `order_by_wrong_aggregate`, `const_kinds_conflated` | `expr_ir_eq` treats all Int/Float/Null/Bool/String constants as equal, so `ORDER BY max(n.v % 4.0)` sorts by the alias of `max(n.v % 3)`; C rejects the query | **Open**; PR #3011 would widen it to non-aggregate ORDER BY, so fix this first |
-| W6-opt-1 | `pushed_read_unbound` | Filter push-down gives an OPTIONAL MATCH inside `CALL {}` the outer query's ids: "Variable n not found" where C returns rows | **Open** |
+| W4-plan-2 | `negate_rejected` | `RETURN true AND -null` → Rust "Type mismatch", C `null`; `Length`, `ListComprehension`, `MapProjection` are rejected the same way | **Open** |
 | #1334 | `bug1334_pattern_predicate_declares_var` (property `PatternPredDeclaresNothing`) | A WHERE pattern predicate may mint a new named variable: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds and returns every `n0`; C rejects it (issue #1334; the C error message is not recorded here) | **Open** |
 | #3450 | `bug3450_remove_label_kept_across_with` (property `StampedLabelsHeld`, `RemoveLabels.lean`) | `REMOVE a:A` leaves `A` in the accumulated label set, which `WITH a` copies and `update_all_node_labels` stamps on the next MATCH: `MATCH (a:A) REMOVE a:A WITH a MATCH (a)-[:R]->(b)` gives 0 rows, C 1. The fixed stamp `specStamp` satisfies the property (`specStamp_held`). The issue's CREATE/MERGE back-propagation half does not reproduce | **Open** |
 
 **Gap closed 2026-10-22.** `StampedLabelsHeld` (in `RemoveLabels.lean`) states that a label stamped on a MATCH node after `WITH` is one that MATCH wrote or one the node still carries (`held`: REMOVE clears); `bug3450_remove_label_kept_across_with` refutes it. The planner's half (`verified_labels`) is in [`../planner_build`](../planner_build).
 
-**Gap closed 2026-10-20.** `PatternPredDeclaresNothing` (in `BindExpr.lean`) states that an accepted pattern predicate names only variables that are already visible; `bug1334_pattern_predicate_declares_var` refutes it on main. The slot-reuse family (#3333, #3369, #3375, #3368, #3150) comes from this binder's per-scope numbering, but it is modelled and refuted in [`../ops_aggregate`](../ops_aggregate) (`SlotReuse.lean`), where the colliding ids are consumed.
+**Gap closed 2026-10-20.** `PatternPredDeclaresNothing` (in `BindExpr.lean`) states that an accepted pattern predicate names only variables that are already visible; `bug1334_pattern_predicate_declares_var` refutes it on main. The slot-reuse family (#3333, #3369, #3375, #3368) comes from this binder's per-scope numbering, but it is modelled and refuted in [`../ops_aggregate`](../ops_aggregate) (`SlotReuse.lean`), where the colliding ids are consumed.
 
 Smaller over-acceptances, not filed as bugs: `RETURN n.v+1 AS k, count(*) ORDER BY n.v` is accepted where C rejects (`agg_orderBy_by_name`), and so is `(a)-[r {w: b.v}]->(b)` (`rel_attr_forward_node`). `projectName_present_uncovered` shows a case where the invariant could break but a guard in the Rust prevents it; no bug.
 
@@ -113,7 +108,7 @@ There are no CONDITIONAL rows in this project.
 | `Table.lean` | The scope table `Env`, `Env.Covers`, `freshVar`, `mint_fresh_iff`, `erase_breaks_covers` |
 | `Resolve.lean` | The binder state `St`, `resolve` (`resolve_name`), `visible`, `ensureType`, `defineName`, `projectName` |
 | `Projection.lean` | `bindProjection` (WITH/RETURN), `projectItems`, the ORDER BY and WHERE-copy counterexamples |
-| `Pattern.lean` | Nodes-first `rustBind` vs textual `specBind`, the clause `fold`, `q2923_cause` |
+| `Pattern.lean` | Nodes-first `rustBind` vs textual `specBind` |
 | `Scopes.lean` | `mergeSV`, `foreachRestore`, comprehension cleanup, `callBodyScope`, label accumulation, `unionCheck`, `validateImport` |
 | `RemoveLabels.lean` | #3450: `held` (point-in-time label set, REMOVE clears), `rsStamp`/`specStamp`, property `StampedLabelsHeld` |
 | `Stack.lean` | The scope stack `BSt`, `sortedScopeVars`, label updates (`updNode`) |
@@ -122,7 +117,7 @@ There are no CONDITIONAL rows in this project.
 | `Types.lean` | `mayBool`, `mayEntity`, `validate` |
 | `Fold.lean` | Constant folding (`nodeToValue`, `foldCall`), struct-constructor and regex rewrites |
 | `AggEq.lean` | `expr_ir_eq` (`exprIrEq`), structural equality, `replaceAgg` |
-| `CallBoundary.lean` | The `CALL {}` entry projection added by #2845 (namespace `Pr2845`) |
+| `CallBoundary.lean` | The `CALL {}` entry projection (namespace `Pr2845`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.
@@ -136,6 +131,15 @@ The project has no Lake dependencies.
 | PROVEN | 44 |
 
 Every function in `binder.rs` (and `Planner::fresh_var`) is PROVEN. "PROVEN" here means the function's model has theorems stating what it does; for the functions involved in the bugs above, those theorems include the counterexamples.
+
+## Spec vs C disagreements (not Rust-vs-C bugs)
+
+- `RETURN false AND (1+2)`, `WITH 2 AS x RETURN false AND x`, `false AND size([1])`: Rust `false` (arithmetic, variables and calls are "may be boolean", `arith_accepted`, and AND short-circuits at runtime), C `Type mismatch` (static check). openCypher: type error.
+- `MATCH (a)-[r*1..2]->(c) WITH r WHERE r.w = 1 RETURN count(*)`: Rust `Type mismatch: … but was Path` (the projected `r` is no longer in `varlen_rel_var_ids`), C `1`; without the WITH both return `1`. openCypher rejects `r.w` on a list.
+- `date({year:2020, month:null})`, `duration({days:null})`, `localtime({hour:null})`: Rust treats a null field as absent, C errors. Not caused by `rewrite_struct_constructor` (the map path agrees).
+- Rust follows openCypher and C does not: `MATCH p=(a)-->(b) MATCH (p)` rejected; `reduce(a = 0, a IN …)` rejected; `RETURN [(n)-->(m)|m], m` rejected; within one MATCH `(a)-[r]->(), (a)-[s]->()` enforces r≠s.
+- Both accept what openCypher rejects: `WITH 1 AS a MATCH (a)` (`ensureType_accepts_any_binding`), `WITH n.v AS k WHERE n.v > 0`.
+- #3011 (not in `256ab4d3f`) generalises `replace_agg_subtrees` to `replace_projected_subtrees`, guarded by `is_alias_rewritable`, which admits `Constant(Bool|Int|Float|String)`; `expr_ir_eq` compares constants by value and kind (`const_kinds_distinguished`).
 
 ## What the model does not cover
 
