@@ -1,18 +1,5 @@
 /-! # Node id ↔ matrix index mapping in the LAGraph-backed procedures
 
-| here | there (`graph/src/runtime/functions/algo_procedures.rs`) |
-| --- | --- |
-| `idx`, `ids`            | `build_compact_adj_from_tensors` :570 / `..._symmetric_...` :636: `sorted_ids` (compact → id) and `id_to_compact` |
-| `compactEdges`          | the tensor loops in the same two functions (edge kept iff both ends are active) |
-| `LagWcc`                | AXIOMATISED spec of `LAGr_ConnectedComponents` / `LAGraph_cdlp` output |
-| `compactToOriginal`     | `compact_to_original` :451-456 (#3032): `compact_to_id.map_or(idx, \|m\| m[idx])` |
-| `wccRows`               | algo.WCC result assembly :922-935 (algo.labelPropagation :1343-1356 is identical); component id through `compact_to_original` since #3032 |
-| `unfilteredRows`        | the `compact_to_id = None` branch of every procedure + `is_node_deleted` skip |
-| `harmonicRows`          | algo.HarmonicCentrality :2848-2860 source vector sized `node_id_bound()` since #3045 |
-| `pagerankPath`          | algo.pageRank early exits :729-735, `use_unfiltered` :750-752, empty active set :772-774 (#3058; line numbers pre-#3045/#3032) |
-| `checkKnown`            | `check_known_labels_and_types` :469 (betweenness :973, labelPropagation :1268, HarmonicCentrality :2759; pre-#3032 lines) |
-| `seed0Sources`          | algo.betweenness source sampling with `samplingSeed = 0` :1032-1052 |
-
 LAGraph is not modelled; its output contract is a hypothesis (`LagWcc`), citing
 LAGraph's `LAGr_ConnectedComponents` doc: "component(i) = r where r is the
 representative (smallest index) of i's component, over indices 0..n-1".
@@ -74,7 +61,7 @@ theorem unfiltered_component_ids_are_members (n : Nat) (comp : Nat → Nat)
   apply List.map_congr_left
   intro i hi
   have hi' := List.mem_range.mp hi
-  simp [List.getD_eq_getElem?_getD, List.getElem?_range, hi', h.lt i hi']
+  simp [List.getD_eq_getElem?_getD, hi', h.lt i hi']
 
 /-- The spec's component id is always a reported node, hence so is Rust's. -/
 theorem spec_component_is_member (ids : List Nat) (comp : Nat → Nat)
@@ -126,8 +113,8 @@ theorem unfiltered_rows_nodup (bound : Nat) (alive : Nat → Bool) :
     (unfilteredRows bound alive).Nodup :=
   (List.nodup_range).filter _
 
-/-- HarmonicCentrality's unfiltered source vector has length `node_id_bound()` (:2848-2860,
-since #3045, fixes #3044); it was `node_count()`. `bound` is the vector length. -/
+/-- HarmonicCentrality's unfiltered source vector has length `node_id_bound()` (`algo_procedures.rs`, the harmonic-centrality procedure).
+`bound` is the vector length. -/
 def harmonicRows (bound : Nat) (alive : Nat → Bool) : List Nat :=
   unfilteredRows bound alive
 
@@ -148,7 +135,7 @@ theorem unfiltered_keeps_high_ids :
     harmonicRows 5 alive = [1, 2, 3, 4] := by
   decide
 
-/-! ## Unknown labels / relationship types (#3058, fixes #3056) -/
+/-! ## Unknown labels / relationship types -/
 
 /-- `check_known_labels_and_types` (:469): the first label the graph does not have, else
 the first relationship type it does not have, becomes the procedure's own error. -/
@@ -171,7 +158,7 @@ theorem checkKnown_ok_iff (hasLabel hasType : String → Bool) (labels types : L
   | some l =>
     have := List.find?_some hl
     have hm := List.mem_of_find?_eq_some hl
-    simp only [Except.error.injEq, reduceCtorEq, false_iff, not_and]
+    simp only [reduceCtorEq, false_iff, not_and]
     intro h
     have := h _ hm
     simp_all

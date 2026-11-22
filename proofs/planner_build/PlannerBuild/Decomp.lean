@@ -9,23 +9,12 @@ synthetic inline variable (id in `ι`, the `inline_map`) stands for its pattern.
 Everything else is an atom (`atom`, a parameter). A row passes a `Filter` iff
 the value is `true` (filter.rs). `tv [] e` is the meaning of the user's WHERE.
 
-| here | there |
-| --- | --- |
-| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs:1676-1768 (inline ids minted at mod.rs:1693-1700 / 1716-1723) |
-| `FP`, `run` | IR filter operators: `Filter` (filter.rs), `SemiApply`/`AntiSemiApply` (semi_apply.rs), `OrApplyMultiplexer` (or_apply_multiplexer.rs: row passes iff some branch has `has_result ^ is_anti`), `Argument` |
-| `FP.patSub g` | `build_pattern_sub_plan` mod.rs:1033-1044 (its rows are `sub g`) |
-| `toPlan`, `pushNot` | `expr_to_plan` mod.rs:1489-1556, `push_not_down` mod.rs:1560-1574 |
-| `orClass`, `orPlan` | `or_expr_to_plan` mod.rs:1578-1640 |
-| `andFold`, `andPlan` | `and_expr_to_plan` mod.rs:1644-1685 |
-| `planFilter` | `plan_filter` mod.rs:2597-2636 (after `extract_filter_comprehensions`) |
-
 Results: `collect_value` / `collect_passes` (the rebuild is exact, also in
-three-valued logic); `toPlan_correct3` (the decomposition is exact in
-three-valued logic since #3260; `toPlan_correct` its two-valued form);
-`planFilter_scalar_correct` (no inline patterns: exact in three-valued logic);
-`pre3260_not_null_bug` (history: `NOT (x OR p)` with `x` null kept the row —
-CONFIRMED on Rust vs C, fixed by #3260); `not3_or3`/`not3_and3` (De Morgan
-holds in Kleene logic, the basis of `push_not_down`).
+three-valued logic); `toPlan_correct` (the decomposition is exact when atoms
+are two-valued); `planFilter_scalar_correct` (no inline patterns: exact in
+three-valued logic); `toPlan_not_null_bug` (counterexample: `NOT (x OR p)`
+with `x` null keeps the row — CONFIRMED on Rust vs C); `not3_or3`/`not3_and3`
+(De Morgan holds in Kleene logic, the basis of the suggested fix).
 -/
 namespace PlannerBuild.E
 
@@ -121,7 +110,7 @@ theorem tvL_map (ι : List (Nat × QG)) (l : List Ex) (r : R) :
   | nil => rfl
   | cons c cs ih => simp [tvL, ih]
 
-/-! ## `collect_patterns_and_rebuild` (mod.rs:1676-1768) -/
+/-! ## `collect_patterns_and_rebuild` (mod.rs) -/
 
 structure CSt where
   lens : Nat → Nat
@@ -130,14 +119,14 @@ structure CSt where
 
 def scopeOf (g : QG) : Nat := (g.vars.head?.map V.scope).getD 0
 
-/-- Inline variable minted at mod.rs:1693-1700 / 1716-1723: id = current length
+/-- Inline variable minted at mod.rs: id = current length
 of the pattern's first variable's scope table, which then grows by one. -/
 def mint (st : CSt) (g : QG) : Nat × CSt :=
   let s := scopeOf g
   (st.lens s, { st with lens := fun t => if t = s then st.lens s + 1 else st.lens t,
                         inl := (st.lens s, g) :: st.inl })
 
-/-- `NOT` directly wrapping a pattern (mod.rs:1704-1707). -/
+/-- `NOT` directly wrapping a pattern (mod.rs). -/
 def notPat : List Ex → Option QG
   | .node (.pat g) _ :: _ => some g
   | _ => none
@@ -230,7 +219,7 @@ theorem collect_noPat : ∀ (st : CSt) ce e, hasPatternExpr e = false → collec
     cases d <;> simp only [collect, ih] <;> simp_all [hasPatternExpr]
     case not =>
       cases h' : notPat cs with
-      | none => simp [ih]
+      | none => simp
       | some g =>
         match cs, h' with
         | .node (.pat g') _ :: _, _ => simp [hasPatternExprL, hasPatternExpr] at hL
@@ -336,7 +325,7 @@ theorem collect_value : ∀ (st : CSt) (e : Ex), shapeOK e = true →
         | .node (.pat g') _, hp =>
           simp [notPat] at hp; subst hp
           refine ⟨?_, rfl⟩
-          simp [tv, Ex.v, lk_mint ι st _ hg, tvL]
+          simp [tv, Ex.v, lk_mint ι st _ hg]
       | none =>
         simp only [collect, hp] at hg ⊢
         simp only [collectL] at hg ⊢

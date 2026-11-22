@@ -24,7 +24,7 @@ A `VersionedMatrix` stores `m`, `dp` and `dm`. What it *means* is the logical ma
 
 **2. Does iterating yield every entry once, in order?**
 
-`drain_eq` proves the three-way merge iterator yields exactly the logical matrix, sorted and without duplicates, with `dp`'s value winning on a shared key. It needs less than the layer invariant: a stray tombstone or a shared key is handled correctly. `newIt_abs` and `seek_abs` prove that construction and `seek` give the same stream. That includes seeking after a layer was skipped, the #2430 regression (`seek_after_a_skipped_layer_still_reads_the_delta`).
+`drain_eq` proves the three-way merge iterator yields exactly the logical matrix, sorted and without duplicates, with `dp`'s value winning on a shared key. It needs less than the layer invariant: a stray tombstone or a shared key is handled correctly. `newIt_abs` and `seek_abs` prove that construction and `seek` give the same stream. That includes seeking after a layer was skipped (`seek_after_a_skipped_layer_still_reads_the_delta`).
 
 **3. Are multi-edges stored correctly?**
 
@@ -32,7 +32,7 @@ A pair with one edge stores the id inline. A pair with more is marked `MULTI_EDG
 
 **4. Does a reader see a frozen snapshot while a writer works?**
 
-`snapshot_isolation` proves that along any history (fork, writes, commit, abandon, new writers) no handle a published version references ever changes. So `reader_view_frozen` holds: a reader's view of any committed version stays fixed. `fork_takes_nothing` proves a fork leaves the published version alone (there is no write flag since #3657). Since #2846, `refused_commit_publishes_nothing` proves a version that fails `Graph::validate` is never published and is dropped.
+`snapshot_isolation` proves that along any history (fork, writes, commit, abandon, new writers) no handle a published version references ever changes. So `reader_view_frozen` holds: a reader's view of any committed version stays fixed. `fork_takes_nothing` proves a fork leaves the published version alone (there is no write flag). `refused_commit_publishes_nothing` proves a version that fails `Graph::validate` is never published and is dropped.
 
 The project also proves where isolation stops. `clone_of_owned_is_not_isolated` shows a shallow `clone` of an owned layer shares a writable handle. `old_write_leaks_into_new_version` shows copy-on-write only protects one direction: a write through the *old* version lands in the new one. Isolation holds because the engine only ever writes the in-flight version. Since #2905 that rule is documented on `Cow` and debug builds assert it (proved in `runtime_ds`: `CowModel.dbg_write_through_branched_source_panics`); release builds behave as before.
 
@@ -49,7 +49,7 @@ No. `mayHold_sound` (bit-exact over `BitVec 64`) proves `may_hold` never answers
 
 **7. Is `count_in_rows` exact?**
 
-`vmCountInRows_spec` proves `VersionedMatrix::count_in_rows` returns the number of logical entries in the selected rows, and that its `u64` subtraction cannot underflow (#3022). This is **CONDITIONAL** on `LayerCount`, the spec of `Matrix::count_in_rows` per layer. `vmCountInRows_distinct` adds that, given `dp` duplicate-free and disjoint from `m`, the counted list has no repeated coordinate, so the result is a count of distinct effective entries. `countPairsInto_spec` covers `Tensor::count_pairs_into`; `countPairsInto_distinct` adds the same for a duplicate-free pair list.
+`vmCountInRows_spec` proves `VersionedMatrix::count_in_rows` returns the number of logical entries in the selected rows, and that its `u64` subtraction cannot underflow. This is **CONDITIONAL** on `LayerCount`, the spec of `Matrix::count_in_rows` per layer, and also requires duplicate-free `m` and `dm` keys and `dm ⊆ m` (a tombstone without a base entry would make the deletion count exceed the base count). `vmCountInRows_distinct` adds that, given `dp` duplicate-free and disjoint from `m`, the counted list has no repeated coordinate, so the result is a count of distinct effective entries. `countPairsInto_spec` covers `Tensor::count_pairs_into`; `countPairsInto_distinct` adds the same for a duplicate-free pair list.
 
 ## The headline theorems
 
@@ -63,7 +63,7 @@ No. `mayHold_sound` (bit-exact over `BitVec 64`) proves `may_hold` never answers
 | `newIt_abs`, `seek_abs` | `Iter::new` and `seek` produce exactly that stream | `IterSeek.lean` |
 | `addBatch_correct`, `removeBatch_correct` | Adding or removing edges on a pair keeps the multi-edge invariants and changes exactly the batch | `TensorProofs.lean` |
 | `colDegree_eq` | `col_degree` never hits `unreachable!` and counts every incoming edge | `TensorOps.lean` |
-| `resizeT_edges`, `resizeT_allInv` | `Tensor::resize` never shrinks (#3250), so it never drops an entry and keeps every invariant | `TensorResize.lean` |
+| `resizeT_edges`, `resizeT_allInv` | `Tensor::resize` never shrinks, so it never drops an entry and keeps every invariant | `TensorResize.lean` |
 | `snapshot_isolation`, `reader_view_frozen` | A published version's matrices never change | `Cow.lean` |
 | `refused_commit_publishes_nothing` | A version that fails validation is never published | `Cow.lean` |
 | `mayHold_sound`, `slot_word_lt` | The row filter never wrongly answers "no" and never indexes out of bounds | `RowFilter.lean` |
@@ -94,7 +94,6 @@ See [`../FINDINGS.md`](../FINDINGS.md) for the repro of each.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W4-matrix-1 | removed (17ccc5412) | `Tensor::resize`'s shrink never trimmed `me`. Orphan multi-edge rows survived: `iter_edges` yielded phantom ids and `edge_count` was too high (repro `tensor_shrink_keeps_orphan_me_rows`) | **Fixed by #3250 (#3246):** `resize` never shrinks; `resizeT_edges` proves no entry is dropped, and `resizeT_allInv` keeps every invariant whenever the input satisfies `AllInv`, with no node-capacity precondition |
 | #2898 | — (mechanism shown by `clone_of_owned_is_not_isolated`) | `versioned_matrix::Iter` holds its layer's handle with no borrow of the owner, so an in-place write can land under a live iterator (Rust probe `probe_iter_outlives_in_place_mutation`) | **Open, latent:** issue #2898, needs a design choice; no PR |
 | #2903 | `old_write_leaks_into_new_version` | Copy-on-write is one-directional: a write through an older version leaks into the newer one. Safe today because only the in-flight version is ever written (repro `cow_is_one_directional_old_version_write_leaks`) | **Latent, documented (release):** PR #2905 (merged, main 1d15bf713) documents the contract and debug builds assert it; release behaviour, and so this counterexample, is unchanged |
 
@@ -113,12 +112,12 @@ See [`../FINDINGS.md`](../FINDINGS.md) for the repro of each.
 | `VMOps.lean` | `wait`, `transpose`, `clear_deltas`, `from_matrix`, encode/decode and the remaining methods |
 | `Iter.lean` | The three-way merge iterator: `drain_eq` |
 | `IterSeek.lean` | `Iter::new`, `from_layers(_detaching)`, `seek` |
-| `CountRows.lean` | `count_in_rows` and `count_pairs_into` (#3022) |
+| `CountRows.lean` | `count_in_rows` and `count_pairs_into` |
 | `Tensor.lean` | One `(src, dst)` pair of a `Tensor`: inline / `MULTI_EDGE` encoding, add and remove batches, the pair invariant |
 | `TensorProofs.lean` | `addBatch_correct`, `removeBatch_correct`, `compoundKey_inv` |
 | `TensorBlocks.lean` | The whole tensor: `me` blocks, widening, multi-pair counting |
 | `TensorOps.lean` | Degrees, extract, flush/fold/dup/wait, iterator plumbing |
-| `TensorResize.lean` | `resize` (grow-only since #3250; W4-matrix-1 history), `nrows`/`ncols`, encode's inline values, `EdgeIds::size_hint`, `Iter::new`/`seek` |
+| `TensorResize.lean` | `resize` (grow-only), `nrows`/`ncols`, encode's inline values, `EdgeIds::size_hint`, `Iter::new`/`seek` |
 | `Cow.lean` | Copy-on-write handles and the MVCC history: `snapshot_isolation`, `refused_commit_publishes_nothing`, the isolation limits |
 | `CowGlue.lean` | `Cow::new`, `Cow::deref`, `MvccGraph::new`/`from_graph`/`drop` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |

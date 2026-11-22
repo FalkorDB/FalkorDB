@@ -1,4 +1,4 @@
-/-! # `rebuild_indexes` (decoder/mod.rs:345-400)
+/-! # `rebuild_indexes` (decoder/mod.rs)
 
 After `Graph::restore`, each saved `IndexInfo` is replayed as `create_index_sync` calls: one
 per `(attribute, field)` in `field_order` order (an attribute missing from `fields` is
@@ -55,12 +55,12 @@ variable {A L S X V : Type} [Inhabited X]
 
 def entOf (s : String) : Ent := if s = "RELATIONSHIP" then .relationship else .node
 
-/-- `topts.language = info.language; topts.stopwords = info.stopwords` (`:379-380`). -/
+/-- `topts.language = info.language; topts.stopwords = info.stopwords`. -/
 def withMeta (info : Info A L S X V) (t : TOpts L S X) : TOpts L S X :=
   ⟨info.language, info.stopwords, t.rest⟩
 
 /-- The options of one field, given whether the index-level text metadata is still pending;
-returns the new pending flag (`:374-386`). -/
+returns the new pending flag. -/
 def fieldOpts (info : Info A L S X V) (pending : Bool) (f : Field L S X V) : Option (Opt L S X V) × Bool :=
   match f.vec with
   | some v => (some (.vector v), pending)

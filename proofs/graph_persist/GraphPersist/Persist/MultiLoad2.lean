@@ -21,7 +21,7 @@ theorem fillKey_pos : ∀ (n cap : Nat) (ts : List Kind), cap + ts.length = n �
     · subst h0; simp [fillKey]
     by_cases hd : off + min cap (tot - off) ≥ tot
     · obtain ⟨i1, i2⟩ := ih _ (by omega) (cap - min cap (tot - off)) rest rfl
-      rw [fillKey, dif_neg h0, dif_pos hd]
+      rw [fillKey, dite_eq_right h0, dite_eq_left hd]
       refine ⟨fun e he => ?_, ?_⟩
       · simp only [List.mem_append] at he
         rcases he with he | he
@@ -33,7 +33,7 @@ theorem fillKey_pos : ∀ (n cap : Nat) (ts : List Kind), cap + ts.length = n �
       have hc0 : cap - min cap (tot - off) = 0 := by omega
       have hnil : (fillKey (cap - min cap (tot - off)) ((st, tot, off + min cap (tot - off)) :: rest)).1 = [] := by
         rw [hc0]; simp [fillKey]
-      rw [fillKey, dif_neg h0, dif_neg hd]
+      rw [fillKey, dite_eq_right h0, dite_eq_right hd]
       refine ⟨fun e he => ?_, ?_⟩
       · simp only [List.mem_append, hnil] at he
         rcases he with he | he
@@ -65,10 +65,10 @@ theorem keysFrom_entries (cap : Nat) : ∀ (n : Nat) (ts : List Kind), ts.length
             by_cases h0 : c = 0
             · subst h0; simp [fillKey]
             by_cases hd : off + min c (tot - off) ≥ tot
-            · rw [fillKey, dif_neg h0, dif_pos hd]
+            · rw [fillKey, dite_eq_right h0, dite_eq_left hd]
               have := ihm _ (by omega) (c - min c (tot - off)) rest rfl
               simp only [List.length_cons]; omega
-            · rw [fillKey, dif_neg h0, dif_neg hd]
+            · rw [fillKey, dite_eq_right h0, dite_eq_right hd]
               have := ihm _ (by simp only [List.length_cons]; omega) (c - min c (tot - off))
                 ((st, tot, off + min c (tot - off)) :: rest) rfl
               simpa using this
