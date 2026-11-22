@@ -10,9 +10,9 @@ coordinates; `VMTensor.edges`: a `Tensor` pair holds a set of edge ids):
 | --- | --- |
 | `Mat` (+ `nr`,`nc` dims) | `VersionedMatrix<bool>` — `(m ∖ dm) ∪ dp` as a coordinate list |
 | `Ten` | `Tensor` — `(src, dst, edge_id)` triples |
-| `Mat.get` | `VersionedMatrix::get` (versioned_matrix.rs:1009); `None` out of bounds = GrB_INVALID_INDEX (matrix.rs:1345) |
+| `Mat.get` | `VersionedMatrix::get` (versioned_matrix.rs); `None` out of bounds = GrB_INVALID_INDEX (matrix.rs) |
 | `Mat.row`, `Ten.out`, `Ten.inc` | `iter(i, i)`, `Tensor::iter(i, i, false/true)` (original orientation) |
-| `G` | `struct Graph` (graph.rs:418) |
+| `G` | `struct Graph` (graph.rs) |
 
 Machine integers: ids are `Nat`; every u64 count in `G` stays far below 2^64
 (ids are dense, see `Ids.lean`), so wrap never happens; the one narrowing cast
@@ -48,7 +48,7 @@ theorem distinctCount_eq_length : ∀ l : List (Nat × Nat), l.Nodup → distinc
 
 namespace Mat
 def empty (r c : Nat) : Mat := ⟨r, c, []⟩
-/-- `get` (versioned_matrix.rs:1009): `GrB_Matrix_extractElement` fails
+/-- `get` (versioned_matrix.rs): `GrB_Matrix_extractElement` fails
 (→ `None`) outside the dimensions. -/
 def get (m : Mat) (i j : Nat) : Bool :=
   decide (i < m.nr) && decide (j < m.nc) && decide ((i, j) ∈ m.ents)
@@ -65,9 +65,9 @@ def rowsFrom (m : Mat) (lo : Nat) : List (Nat × Nat) := m.ents.filter (lo ≤ �
 def set (m : Mat) (i j : Nat) : Mat :=
   if i < m.nr ∧ j < m.nc ∧ (i, j) ∉ m.ents then { m with ents := m.ents ++ [(i, j)] } else m
 def remove (m : Mat) (i j : Nat) : Mat := { m with ents := m.ents.filter (· != (i, j)) }
-/-- `remove_mask` (versioned_matrix.rs:989): `eWiseMult` / masked transpose
+/-- `remove_mask` (versioned_matrix.rs): `eWiseMult` / masked transpose
 require equal dimensions; on `GrB_DIMENSION_MISMATCH` the release build
-(`debug_assert_eq!` only, matrix.rs:927) leaves the matrix unchanged. -/
+(`debug_assert_eq!` only, matrix.rs) leaves the matrix unchanged. -/
 def removeMask (m : Mat) (mr mc : Nat) (mask : List (Nat × Nat)) : Mat :=
   if mr = m.nr ∧ mc = m.nc then { m with ents := m.ents.filter (fun p => p ∉ mask) } else m
 def resize (m : Mat) (r c : Nat) : Mat :=
@@ -87,7 +87,7 @@ def colDegree (t : Ten) (n : Nat) : Nat := (inc t n).length
 def pattern (t : Ten) : List (Nat × Nat) := t.map (fun e => (e.1, e.2.1))
 end Ten
 
-/-- Constraint (constraint.rs:48). -/
+/-- Constraint (constraint.rs). -/
 inductive CType | unique | mandatory deriving DecidableEq, Repr
 inductive CStatus | underConstruction | operational | failed deriving DecidableEq, Repr
 inductive EType | node | rel deriving DecidableEq, Repr
@@ -101,14 +101,14 @@ structure Constraint where
   status : CStatus
 deriving DecidableEq, Repr
 
-/-- `struct Graph` (graph.rs:418). Attribute values are abstract (`V`), the
+/-- `struct Graph` (graph.rs). Attribute values are abstract (`V`), the
 attribute store is the map `entity → [(attr id, value)]`. Indexers are not
 part of the state; their behaviour is a parameter of each index theorem.
 
-Since #2846 the graph keeps no counters of its own: `node_ids` /
-`relationship_ids : IdSpace` (graph.rs:429/:432). Their four fields are
+The graph keeps no counters of its own: `node_ids` /
+`relationship_ids : IdSpace` (graph.rs). Their four fields are
 spelled out here — `nodeCount`/`delNodes` are `node_ids.live`/`.recycled`,
-`nodeEB`/`nodeTaken` its `entry_bound`/`taken` (id_space.rs:164) — and
+`nodeEB`/`nodeTaken` its `entry_bound`/`taken` (id_space.rs) — and
 reassembled by `nodeIds`/`relIds` (Ids.lean). -/
 structure G (V : Type) where
   name : String

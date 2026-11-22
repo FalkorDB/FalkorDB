@@ -115,7 +115,7 @@ theorem next_adv (cur : Cursor) (es : List E) (hl : cur.leaf = some es) (hp : ¬
     simp only [hp, ↓reduceDIte]
     split <;> rename_i h1 <;> split <;> rename_i h2 <;> simp_all
 
-/-- **`Iterator::next` (`cursor.rs:181`)** is a correct generator of `out` (any stack shape). -/
+/-- **`Iterator::next` (`cursor.rs`)** is a correct generator of `out` (any stack shape). -/
 theorem next_spec : ∀ (w : Nat) (cur : Cursor), stackWeight cur.stack = w → Inv cur → NextPost cur cur.next := by
   intro w
   induction w using Nat.strongRecOn with
@@ -186,12 +186,12 @@ theorem take_spec : ∀ (n : Nat) (cur : Cursor), Inv cur → cur.take n = (out 
 theorem dropWhile_all {α} (p : α → Bool) : ∀ (l : List α), (∀ x ∈ l, p x = true) → l.dropWhile p = []
   | [], _ => rfl
   | a :: l, h => by
-    rw [List.dropWhile_cons, if_pos (h a List.mem_cons_self)]
+    rw [List.dropWhile_cons, ite_eq_left (h a List.mem_cons_self)]
     exact dropWhile_all p l (fun x hx => h x (List.mem_cons_of_mem _ hx))
 
 theorem dropWhile_none {α} (p : α → Bool) : ∀ (l : List α), (∀ x ∈ l, p x = false) → l.dropWhile p = l
   | [], _ => rfl
-  | a :: l, h => by rw [List.dropWhile_cons, if_neg (by simp [h a List.mem_cons_self])]
+  | a :: l, h => by rw [List.dropWhile_cons, ite_eq_right (by simp [h a List.mem_cons_self])]
 
 theorem dropWhile_route {α} (p : α → Bool) (A M C : List α) (hA : ∀ x ∈ A, p x = true) (hC : ∀ x ∈ C, p x = false) :
     (A ++ M ++ C).dropWhile p = M.dropWhile p ++ C := by
@@ -204,7 +204,7 @@ theorem dropWhile_route {α} (p : α → Bool) (A M C : List α) (hA : ∀ x ∈
 
 def keyLt (lo : Nat) (e : E) : Bool := decide (keyOf e < lo)
 
-/-- **`RangeIter::new`'s descent (`cursor.rs:101-115`)** lands on the first entry with key `>= lo`. -/
+/-- **`RangeIter::new`'s descent (`cursor.rs`)** lands on the first entry with key `>= lo`. -/
 theorem seek_rest (c : Cfg) (lo : Nat) : ∀ (h : Nat) (r : Bool) (n : Node) (stk : List Frame) (a b : Nat),
     WFb c r h n a b →
     (seek (enc lo 0) lo h n stk).2.1.drop (seek (enc lo 0) lo h n stk).2.2 ++ restStack (seek (enc lo 0) lo h n stk).1 =
@@ -279,14 +279,14 @@ theorem new_inv_rest (c : Cfg) (h : Nat) (root : Node) (lo hi : Nat) (hw : TreeW
   have hs := TreeWF_sorted hw
   simp only [restStack, List.map_nil, List.flatten_nil, List.append_nil] at hr
   have hsr : Sorted ((toList h root).dropWhile (keyLt lo)) := Sorted.sublist (List.dropWhile_sublist _) hs
-  simp only [Cursor.new, Inv, rest, restStack, List.map_nil, List.flatten_nil, List.append_nil]
+  simp only [Cursor.new, Inv, rest, restStack]
   refine ⟨⟨?_, fun hwh => ?_⟩, ?_, trivial⟩
   · rw [hr]; exact hsr
   · apply wholeOf_sound _ _ _ _ hwh
     rw [← hr] at hsr; exact (sorted_append.1 hsr).1
   · exact hr
 
-/-- **`CowBTree::range(lo, hi)` (`mod.rs:366`) collects exactly the entries whose key lies in the
+/-- **`CowBTree::range(lo, hi)` (`mod.rs`) collects exactly the entries whose key lies in the
     inclusive range `[lo, hi]`, in `(key, doc)` order**, on every well-formed tree, for all `lo`, `hi`
     (duplicates of a key all appear; `lo > hi` yields nothing). Its docs are `docOf` of these. -/
 theorem range_spec (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : TreeWF c h root)

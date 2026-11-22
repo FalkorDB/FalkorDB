@@ -1,6 +1,6 @@
 import FalkorIndexLayer.IndexM
 /-
-# `Document::set`, vector arm (`graph/src/index/mod.rs:731-744`, #3087 @ 49f698d22)
+# `Document::set`, vector arm (`graph/src/index/mod.rs`)
 
 ```rust
 if field.ty == IndexType::Vector {
@@ -18,19 +18,20 @@ The Range arm is `setRange`/`docOf` (`Model.lean`); a vector field never reaches
 
 RediSearch rejects the whole document when a vector blob is not `dim * 4` bytes or
 the field has no vector params (`RsKind.vector none`, which `registerOne` creates
-for `dimension = 0` or no options). The theorems below show that, since #3087, `set`
-never hands RediSearch such a blob, which is what justifies the `ht` hypothesis of
+for `dimension = 0` or no options). The theorems below show that a vector add `set`
+hands RediSearch always carries the field's own non-zero dimension, and that the field has
+vector params. They do NOT show that the dimension of the RediSearch field registered under
+that name equals it: `RsKind.vector` records no dimension, so `registerOne` cannot express the
+equality. That equality is the `Registered` premise (`rs.dimOf p.1.name = some k`) of
+`SC.Search.doc_always_accepted` (proofs/search_concurrency), the end-to-end acceptance
+theorem over the RediSearch contract, and nothing in this file discharges it. So the
+conclusion that `set` never adds an unindexable vector, and with it the `ht` hypothesis of
 `Iter.query_eq_scan_filter` (the label's table holds `docOf` of every entity) in the
-presence of vector fields. The end-to-end acceptance theorem over the RediSearch
-contract is `SC.Search.doc_always_accepted` (proofs/search_concurrency).
-
-HISTORICAL (fe619ac5f, before #3087): `setVectorPre3087` added every `VecF32`
-unchecked (W3-conc-3 / #3075, and W5-idx-2's no-options shape), fixed by #3087 (49f698d22). The
-`pre3087_*` counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412.
+presence of vector fields, holds only given that `Registered` premise.
 -/
 namespace IndexLayer.Meta
 
-/-- The vector arm of `Document::set` (mod.rs:730-744), literally. -/
+/-- The vector arm of `Document::set` (mod.rs), literally. -/
 def setVector (f : Field) (vec : Option Nat) : Option Nat :=
   if f.ty = .vector then
     match vec with
@@ -38,10 +39,6 @@ def setVector (f : Field) (vec : Option Nat) : Option Nat :=
                   then some (len * 4) else none
     | none => none
   else none
-
-/-- HISTORICAL: the arm at fe619ac5f (no dimension check). -/
-def setVectorPre3087 (f : Field) (vec : Option Nat) : Option Nat :=
-  if f.ty = .vector then vec.map (· * 4) else none
 
 /-- **Key property.** For any field options and any value, a vector add has the
 field's own non-zero dimension: never a disagreeing or absent one. -/
@@ -123,16 +120,5 @@ theorem setVector_none_of_noparams {f : Field} {fo : Option TextOpts} {tieredOk 
   | some nb =>
     obtain ⟨m, _, hr', _⟩ := setVector_has_params hs hr
     cases hr'
-
-/-- #3087 changed only which `VecF32` values are added, never adding a new call. -/
-theorem setVector_sub_pre {f : Field} {vec : Option Nat} {nb : Nat}
-    (h : setVector f vec = some nb) : setVectorPre3087 f vec = some nb := by
-  obtain ⟨hty, o, _, _, rfl, rfl⟩ := setVector_sound h
-  simp [setVectorPre3087, hty]
-
-/-! ### HISTORICAL counterexamples (fe619ac5f), fixed by #3087 (49f698d22) -/
-
-def vf (vopts : Option VecOpts) : Field :=
-  { name := "vector:v", ty := .vector, options := none, vopts, numArr := none, strArr := none }
 
 end IndexLayer.Meta

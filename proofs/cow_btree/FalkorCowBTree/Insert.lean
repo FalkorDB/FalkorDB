@@ -58,7 +58,7 @@ theorem insertOne_leaf (c : Cfg) (r : Bool) (es : List E) (lo hi x : Nat)
     · have := (bl el hel).1; have := hls el hel; omega
     · have := hrs er her; have := (br er her).2; omega
 
-/-- **`Node::insert_one` (`node.rs:305`)** on a well-formed subtree, for an `x` within its bounds. -/
+/-- **`Node::insert_one` (`node.rs`)** on a well-formed subtree, for an `x` within its bounds. -/
 theorem insertOne_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x : Nat),
     WFb c r h n lo hi → lo ≤ x → x < hi → InsPost c r h n lo hi x (insertOne c h n x)
   | 0, r, .leaf es, lo, hi, x, hw, hlo, hhi => insertOne_leaf c r es lo hi x hw hlo hhi
@@ -82,7 +82,7 @@ theorem insertOne_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x 
       simp only [toList]
       conv => rhs; rw [hsp]
       rw [setAt_eq]
-      simp only [mem_flat_append, mem_flat_cons, List.map_cons, List.map_nil, List.flatten_cons,
+      simp only [mem_flat_append, List.map_cons, List.map_nil, List.flatten_cons,
         List.flatten_nil, List.append_nil, hmem e, List.mem_append]
       constructor
       · rintro ((h1 | h1 | h1) | h1)
@@ -108,7 +108,7 @@ theorem insertOne_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x 
         intro e
         simp only [toList]
         conv => rhs; rw [hsp]
-        simp only [mem_flat_append, mem_flat_cons, List.map_cons, List.map_nil, List.flatten_cons,
+        simp only [mem_flat_append, List.map_cons, List.map_nil, List.flatten_cons,
           List.flatten_nil, List.append_nil, List.mem_append]
         have := hmem e
         constructor
@@ -154,7 +154,7 @@ theorem insertOne_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x 
         conv => rhs; rw [← List.take_append_drop (cs'.length / 2) cs']
         rw [mem_flat_append]
 
-/-- **`CowBTree::insert` (`mod.rs:220`)**: a well-formed tree stays well-formed (growing a level on a
+/-- **`CowBTree::insert` (`mod.rs`)**: a well-formed tree stays well-formed (growing a level on a
     root split) and its entries become exactly the reference sorted-set insertion. -/
 theorem insert_spec (c : Cfg) (h : Nat) (t : Node) (x : E) (hw : TreeWF c h t) (hx : x < HI) :
     TreeWF c (insert c h t x).2 (insert c h t x).1 ∧

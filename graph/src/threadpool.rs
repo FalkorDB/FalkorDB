@@ -46,6 +46,8 @@ use crossfire::{MRx, MTx, mpmc::List};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
+use crate::thread_id::set_pool_thread;
+
 /// A closure dispatched to a worker thread. `None` is a sentinel that asks
 /// the receiving worker to exit its recv loop so it can be joined.
 type Job = Option<Box<dyn FnOnce() + Send + 'static>>;
@@ -97,6 +99,7 @@ impl ThreadPool {
                 builder = builder.name(format!("{name}-{i}"));
             }
             let worker = builder.spawn(move || {
+                set_pool_thread();
                 while let Ok(job) = rx.recv() {
                     match job {
                         Some(j) => {
@@ -268,6 +271,7 @@ impl Drop for QueueSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::thread_id::is_pool_thread;
     use std::sync::Arc;
     use std::sync::mpsc;
 
@@ -324,6 +328,17 @@ mod tests {
             rx.recv_timeout(Duration::from_secs(2)),
             Ok(Some("named-pool-0".to_owned()))
         );
+        assert!(pool.shutdown_within(Duration::from_secs(2)));
+    }
+
+    /// A worker knows it is one; the thread that made the pool does not.
+    #[test]
+    fn workers_know_they_are_workers() {
+        let pool = ThreadPool::new(1);
+        let (tx, rx) = mpsc::channel();
+        pool.spawn(move || tx.send(is_pool_thread()).unwrap(), None);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(true));
+        assert!(!is_pool_thread());
         assert!(pool.shutdown_within(Duration::from_secs(2)));
     }
 
