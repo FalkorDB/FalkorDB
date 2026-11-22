@@ -46,7 +46,6 @@ import SearchConcurrency.Session
 #print axioms SC.Guarded.h1_fork_vs_populate_race
 #print axioms SC.Guarded.consistent_common_lock
 #print axioms SC.Glue.cGraphName_eq_lossy_key
-#print axioms SC.Glue.renameGraph_moves
 #print axioms SC.Exec.execQuery_write_keeps_slot
 #print axioms SC.Exec.effTimeout_pq
 #print axioms SC.Session.checkFork_verdict

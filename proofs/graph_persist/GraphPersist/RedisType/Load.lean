@@ -1,22 +1,30 @@
+import GraphPersist.RedisType.Db
 /-! # Loading keys into the keyspace (redis_type.rs)
 
 | here | there |
 | --- | --- |
-| `ioKeyName`           | `io_key_name` (:84-95): NULL name → `""`, else the lossy UTF-8 rendering |
-| `MS`, `alloc`         | `GRAPH_REGISTRY`, `DECODE_STATE.placeholders`, and the `Arc<RwLock<ThreadedGraph>>` values (`some none` = a placeholder `ThreadedGraph`, `some (some v)` = a loaded graph) |
-| `loadWhole`           | `graph_rdb_load`, `LoadedKey::Graph` arm (:105-115) |
-| `loadPartial`         | `graph_rdb_load`, `LoadedKey::Partial` arm (:116-169) |
-| `finalizePending`     | `finalize_pending_graphs` (:729-761) + `install_graph` (:764-787) |
-| `metaLoad`            | `graphmeta_rdb_load` (:858-874) |
-| `ioCacheSize`, `cacheOnLoad` | `io_cache_size` (:69), which every RDB load passes to `rdb_load_graph` |
+| `ioKeyName`           | `io_key_name`: NULL name → `""`, else the lossy UTF-8 rendering |
+| `MS`, `alloc`         | `GRAPH_REGISTRY` (keyed by `graph_id`, the `Arc`'s identity, #3424; `reg a` = where graph `a` lives), `DECODE_STATE.placeholders`, and the `Arc<RwLock<ThreadedGraph>>` values (`some none` = a placeholder `ThreadedGraph`, `some (some v)` = a loaded graph) |
+| `loadWhole`           | `graph_rdb_load`, `LoadedKey::Graph` arm: `register_graph_at(db, key_name, arc)` |
+| `loadPartial`         | `graph_rdb_load`, `LoadedKey::Partial` arm |
+| `finalizePending`     | `finalize_pending_graphs` + `install_graph` |
+| `metaLoad`            | `graphmeta_rdb_load` |
+| `ioCacheSize`, `cacheOnLoad` | `io_cache_size`, which every RDB load passes to `rdb_load_graph` |
 
-`fin` is `DECODE_STATE.finalized[graph_name]` as the decoder (`Persist.Pending`) leaves it:
-`none` after every key but the last of a multi-key graph, the finished graph after the last.
+A key `Nm` here is a `DbKey` (serializers/mod.rs): the database `io_db` reports (`Db.ioDb`)
+and the key's name. `placeholders`, `finalized` and `pending` are keyed by it (#3424), and
+`register_graph_at` records it as the graph's location; a graph's virtual keys are in its
+own database, so all keys of one graph share the database.
+
+`fin` is `DECODE_STATE.finalized[(db, graph_name)]` as the decoder (`Persist.Pending`) leaves
+it: `none` after every key but the last of a multi-key graph, the finished graph after the last.
 
 * `load_main_last` / `load_main_first` — whichever position the graph's own key has in
-  the load order, after `finalize_pending_graphs` the registry entry for the graph and the
-  value Redis holds under its key are the **same** `Arc`, holding the finished graph; no
-  virtual key is registered; all placeholders are dropped.
+  the load order, after `finalize_pending_graphs` exactly one registry entry is at the
+  graph's key, and it is the `Arc` Redis holds under that key, holding the finished graph;
+  no virtual key is registered; all placeholders are dropped.
+* `load_same_name_two_dbs` — two graphs of one name in two databases are both registered,
+  each at its own location (#2782: the name-keyed registry kept only the last).
 * `cache_size_on_load` — a loaded graph's query cache has the configured `CACHE_SIZE`.
 -/
 namespace GraphPersist.RedisType
@@ -36,7 +44,7 @@ theorem ioKeyName_spec (lossy : List UInt8 → String) :
 def fupd {α β : Type} [DecidableEq α] (f : α → β) (a : α) (x : β) : α → β := fun b => if b = a then x else f b
 
 structure MS (Nm V : Type) where
-  reg : Nm → Option Nat
+  reg : Nat → Option Nm
   ph : Nm → Option Nat
   heap : Nat → Option (Option V)
   next : Nat
@@ -45,12 +53,12 @@ structure MS (Nm V : Type) where
 def alloc (ms : MS Nm V) (c : Option V) : MS Nm V × Nat :=
   ({ ms with heap := fupd ms.heap ms.next (some c), next := ms.next + 1 }, ms.next)
 
-/-- `LoadedKey::Graph`: a fresh `Arc`, registered under the key, returned to Redis. -/
+/-- `LoadedKey::Graph`: a fresh `Arc`, registered at the key, returned to Redis. -/
 def loadWhole (ms : MS Nm V) (kn : Nm) (v : V) : MS Nm V × Nat :=
   let (ms1, a) := alloc ms (some v)
-  ({ ms1 with reg := fupd ms1.reg kn (some a) }, a)
+  ({ ms1 with reg := fupd ms1.reg a (some kn) }, a)
 
-/-- `LoadedKey::Partial { is_virtual }` (:109-162). Returns the state, what is left in
+/-- `LoadedKey::Partial { is_virtual }`. Returns the state, what is left in
 `finalized[graph_name]`, and the `Arc` handed to Redis. -/
 def loadPartial (ms : MS Nm V) (fin : Option V) (gname kn : Nm) (isVirtual : Bool) : MS Nm V × Option V × Nat :=
   match (if kn = gname then fin else none) with
@@ -59,11 +67,11 @@ def loadPartial (ms : MS Nm V) (fin : Option V) (gname kn : Nm) (isVirtual : Boo
     | some p => ({ ms with heap := fupd ms.heap p (some (some v)), ph := fupd ms.ph kn none }, none, p)
     | none =>
       let (ms1, a) := alloc ms (some v)
-      ({ ms1 with reg := fupd ms1.reg kn (some a) }, none, a)
+      ({ ms1 with reg := fupd ms1.reg a (some kn) }, none, a)
   | none =>
     let (ms1, p) := alloc ms none
     let ms2 := { ms1 with ph := fupd ms1.ph kn (some p) }
-    (if isVirtual then ms2 else { ms2 with reg := fupd ms2.reg kn (some p) }, fin, p)
+    (if isVirtual then ms2 else { ms2 with reg := fupd ms2.reg p (some kn) }, fin, p)
 
 /-- `finalize_pending_graphs` for one graph, `pending` already empty (the decoder never
 leaves a pending graph with `keys_remaining == 0`: it finalizes inline). -/
@@ -81,10 +89,10 @@ def loadPrefix (ms : MS Nm V) (gname : Nm) : List Nm → MS Nm V
   | [] => ms
   | kn :: ks => loadPrefix (loadPartial ms none gname kn (decide (kn ≠ gname))).1 gname ks
 
-/-- Fresh: nothing is registered or placed under these names, and the heap is empty from
+/-- Fresh: nothing is registered at or placed under these keys, and the heap is empty from
 `next` on. -/
 structure Fresh (ms : MS Nm V) (names : List Nm) : Prop where
-  reg : ∀ n ∈ names, ms.reg n = none
+  reg : ∀ a, ∀ n ∈ names, ms.reg a ≠ some n
   ph : ∀ n ∈ names, ms.ph n = none
   heap : ∀ i, ms.next ≤ i → ms.heap i = none
 
@@ -112,33 +120,41 @@ theorem loadPrefix_append (ms : MS Nm V) (gname : Nm) (a b : List Nm) :
   | cons k ks ih => simp only [List.cons_append, loadPrefix]; exact ih _
 
 /-- **The graph's own key is the last to load.** It finds the finished graph in `finalized`,
-gets a fresh `Arc` with it, and registers it. -/
+gets a fresh `Arc` with it, and registers it at the key: the only entry there. -/
 theorem load_main_last (ms : MS Nm V) (gname : Nm) (vkeys : List Nm) (R : V)
     (hv : ∀ k ∈ vkeys, k ≠ gname) (hf : Fresh ms (gname :: vkeys)) :
     let ms1 := loadPrefix ms gname vkeys
     let r := loadPartial ms1 (some R) gname gname false
     let ms3 := finalizePending r.1 r.2.1 gname
-    ms3.reg gname = some r.2.2 ∧ ms3.heap r.2.2 = some (some R) ∧ (∀ k ∈ vkeys, ms3.reg k = none) ∧
+    ms3.reg r.2.2 = some gname ∧ (∀ a, ms3.reg a = some gname → a = r.2.2) ∧
+    ms3.heap r.2.2 = some (some R) ∧ (∀ a, ∀ k ∈ vkeys, ms3.reg a ≠ some k) ∧
     (∀ n, ms3.ph n = none) ∧ r.2.1 = none := by
   intro ms1 r ms3
   obtain ⟨i1, i2, i3, i4⟩ := loadPrefix_virtual ms gname vkeys hv
   have hph : ms1.ph gname = none := by simp only [ms1]; rw [i2]; exact hf.ph gname (by simp)
-  have hr : r = (⟨fupd ms1.reg gname (some ms1.next), ms1.ph, fupd ms1.heap ms1.next (some (some R)),
+  have hr : r = (⟨fupd ms1.reg ms1.next (some gname), ms1.ph, fupd ms1.heap ms1.next (some (some R)),
       ms1.next + 1⟩, none, ms1.next) := by
     simp [r, loadPartial, hph, alloc]
-  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  have hreg1 : ∀ a, ms1.reg a = ms.reg a := fun a => by simp only [ms1]; rw [i1]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
   · simp [ms3, finalizePending, hr, fupd]
+  · intro a ha
+    simp only [ms3, finalizePending, hr, fupd] at ha
+    by_cases hn : a = ms1.next
+    · simp [hr, hn]
+    · simp only [hn, ↓reduceIte, hreg1] at ha; exact absurd ha (hf.reg a gname (by simp))
   · simp [ms3, finalizePending, hr, fupd]
-  · intro k hk
+  · intro a k hk
     have hk0 : k ≠ gname := hv k hk
-    simp [ms3, finalizePending, hr, fupd, hk0]
-    show ms1.reg k = none
-    simp only [ms1]; rw [i1]; exact hf.reg k (by simp [hk])
+    simp only [ms3, finalizePending, hr, fupd]
+    split
+    · intro h; cases h; exact hk0 rfl
+    · rw [hreg1]; exact hf.reg a k (by simp [hk])
   · intro n; simp [ms3, finalizePending, hr]
   · simp [hr]
 
 /-- **The graph's own key loads before the last key.** It gets a placeholder `Arc`,
-registered under the graph's name; the last (virtual) key finishes the graph, which waits
+registered at the graph's key; the last (virtual) key finishes the graph, which waits
 in `finalized` until `finalize_pending_graphs` writes it into that same placeholder. -/
 theorem load_main_first (ms : MS Nm V) (gname : Nm) (pre post : List Nm) (last : Nm) (R : V)
     (hpre : ∀ k ∈ pre, k ≠ gname) (hpost : ∀ k ∈ post, k ≠ gname) (hlast : last ≠ gname)
@@ -146,15 +162,15 @@ theorem load_main_first (ms : MS Nm V) (gname : Nm) (pre post : List Nm) (last :
     let ms1 := loadPrefix ms gname (pre ++ gname :: post)
     let r := loadPartial ms1 (some R) gname last true
     let ms3 := finalizePending r.1 r.2.1 gname
-    ∃ p, ms3.reg gname = some p ∧ ms3.heap p = some (some R) ∧
-      (∀ k ∈ pre ++ post ++ [last], ms3.reg k = none) ∧ (∀ n, ms3.ph n = none) := by
+    ∃ p, ms3.reg p = some gname ∧ (∀ a, ms3.reg a = some gname → a = p) ∧ ms3.heap p = some (some R) ∧
+      (∀ a, ∀ k ∈ pre ++ post ++ [last], ms3.reg a ≠ some k) ∧ (∀ n, ms3.ph n = none) := by
   intro ms1 r ms3
   -- after `pre`
   obtain ⟨a1, a2, a3, a4⟩ := loadPrefix_virtual ms gname pre hpre
   let msA := loadPrefix ms gname pre
-  -- the main key: a placeholder at `msA.next`, registered and placed under `gname`
+  -- the main key: a placeholder at `msA.next`, registered at and placed under `gname`
   have hmain : (loadPartial msA none gname gname (decide (gname ≠ gname))).1 =
-      ⟨fupd msA.reg gname (some msA.next), fupd msA.ph gname (some msA.next),
+      ⟨fupd msA.reg msA.next (some gname), fupd msA.ph gname (some msA.next),
         fupd msA.heap msA.next (some none), msA.next + 1⟩ := by
     simp [loadPartial, alloc]
   let msB := (loadPartial msA none gname gname (decide (gname ≠ gname))).1
@@ -163,35 +179,49 @@ theorem load_main_first (ms : MS Nm V) (gname : Nm) (pre post : List Nm) (last :
     simp only [ms1, msB, msA, loadPrefix_append, loadPrefix]
   have hphg : ms1.ph gname = some msA.next := by
     rw [hsplit, b2]; simp only [msB, hmain, fupd]; simp
-  have hregg : ms1.reg gname = some msA.next := by
-    rw [hsplit, b1]; simp only [msB, hmain, fupd]; simp
+  have hreg1 : ∀ a, ms1.reg a = fupd ms.reg msA.next (some gname) a := by
+    intro a; rw [hsplit, b1]; simp only [msB, hmain, fupd]; simp only [msA]; rw [a1]
   have hheap : ms1.heap msA.next = some none := by
     rw [hsplit, b4 _ (by simp only [msB, hmain]; omega)]; simp only [msB, hmain, fupd]; simp
-  have hB : msB.next = msA.next + 1 := by simp only [msB, hmain]
-  have hnext : msA.next < ms1.next := by
-    rw [hsplit]; have := b3; omega
   -- the last key: `finalized` is keyed by `gname`, so it stays; the key gets a placeholder
   have hr : r = (⟨ms1.reg, fupd ms1.ph last (some ms1.next), fupd ms1.heap ms1.next (some none),
       ms1.next + 1⟩, some R, ms1.next) := by
     simp [r, loadPartial, alloc, hlast]
-  refine ⟨msA.next, ?_, ?_, ?_, ?_⟩
-  · simp [ms3, finalizePending, hr, fupd, Ne.symm hlast, hphg, hregg]
+  have hreg3 : ∀ a, ms3.reg a = fupd ms.reg msA.next (some gname) a := by
+    intro a; rw [← hreg1]; simp [ms3, finalizePending, hr, fupd, Ne.symm hlast, hphg]
+  refine ⟨msA.next, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [hreg3]; simp [fupd]
+  · intro a ha
+    rw [hreg3] at ha; simp only [fupd] at ha
+    split at ha
+    · assumption
+    · exact absurd ha (hf.reg a gname (by simp))
   · simp [ms3, finalizePending, hr, fupd, Ne.symm hlast, hphg]
-  · intro k hk
+  · intro a k hk
     have hk0 : k ≠ gname := by
       simp only [List.mem_append, List.mem_singleton] at hk
       rcases hk with (hk | hk) | rfl
       · exact hpre k hk
       · exact hpost k hk
       · exact hlast
-    simp only [ms3, finalizePending, hr, fupd, Ne.symm hlast, hphg]
-    show ms1.reg k = none
-    rw [hsplit, b1]
-    simp only [msB, hmain, fupd, hk0, ite_false, msA]
-    rw [a1]; exact hf.reg k (List.mem_cons_of_mem _ hk)
+    rw [hreg3]; simp only [fupd]
+    split
+    · intro h; cases h; exact hk0 rfl
+    · exact hf.reg a k (List.mem_cons_of_mem _ hk)
   · intro n; simp [ms3, finalizePending]
 
-/-- `graphmeta_rdb_load` (:858): decode like a graph key, keep a dummy byte on success,
+/-- **Two graphs of one name in two databases are both registered**, each at its own
+`(db, name)` (#2782: the name-keyed registry kept only the one loaded last). -/
+theorem load_same_name_two_dbs {N : Type} [DecidableEq N] (ms : MS (Int × N) V) (n : N) (d1 d2 : Int)
+    (v w : V) :
+    let r1 := loadWhole ms (d1, n) v
+    let r2 := loadWhole r1.1 (d2, n) w
+    r1.2 ≠ r2.2 ∧ r2.1.reg r1.2 = some (d1, n) ∧ r2.1.reg r2.2 = some (d2, n) ∧
+      r2.1.heap r1.2 = some (some v) ∧ r2.1.heap r2.2 = some (some w) := by
+  intro r1 r2
+  simp [r1, r2, loadWhole, alloc, fupd]
+
+/-- `graphmeta_rdb_load`: decode like a graph key (`rdb_load_graph(rdb, io_db(rdb), …)`), keep a dummy byte on success,
 NULL (load failure) on error. -/
 def metaLoad {E : Type} (res : Except E Unit) : Option Unit :=
   match res with
@@ -203,7 +233,7 @@ theorem metaLoad_spec {E : Type} (e : E) : metaLoad (.ok () : Except E Unit) = s
 
 /-! ## Cache size on load -/
 
-/-- `io_cache_size` (:69-73): `RedisModule_GetContextFromIO` (FFI) gives the context the
+/-- `io_cache_size`: `RedisModule_GetContextFromIO` (FFI) gives the context the
 load callback runs under (main thread, GIL held), and `CONFIGURATION_CACHE_SIZE.lock(&ctx)`
 reads the configured `CACHE_SIZE`; `configured` is that config value. -/
 def ioCacheSize (configured : Nat) : Nat := configured

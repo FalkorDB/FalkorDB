@@ -6,12 +6,12 @@ Source: origin/main `5c7af54f2` (line numbers re-pinned there).
 | here | there |
 | --- | --- |
 | `It`, `loadU`, `loadBuf` | the RDB aux stream: `save_unsigned`/`save_string`, `load_unsigned`/`load_string_buffer` |
-| `auxSave`               | `graph_aux_save` (:272-290) |
-| `auxLoad`               | `graph_aux_load` (:293-334) |
-| `metaAuxLoad`           | `graphmeta_aux_load` (:981-991) |
-| `Sub`, `onPersistence`  | `on_persistence` (:384-413; strips telemetry at every start) |
-| `preFork`               | `pre_fork_prepare` (:360-370) |
-| `metaFree`              | `graphmeta_free` (:971-977); `graphmeta_rdb_save` is `VKeys.metaSave` |
+| `auxSave`               | `graph_aux_save` |
+| `auxLoad`               | `graph_aux_load` |
+| `metaAuxLoad`           | `graphmeta_aux_load` |
+| `Sub`, `onPersistence`  | `on_persistence` (strips telemetry at every start) |
+| `preFork`               | `pre_fork_prepare` |
+| `metaFree`              | `graphmeta_free`; `graphmeta_rdb_save` is `VKeys.metaSave` |
 
 Names and scripts are byte strings; `String::from_utf8_lossy` is the identity on the UTF-8
 the module itself writes (a Rust `String`), so it is not modelled further.
@@ -41,17 +41,17 @@ inductive When where
   | after
   deriving DecidableEq, Repr
 
-/-- `strip_trailing_nul` (:266): one trailing NUL. -/
+/-- `strip_trailing_nul`: one trailing NUL. -/
 def strip (b : List UInt8) : List UInt8 := stripNul b
 
-/-- `graph_aux_save` (:272): before the keys, the UDF libraries as `count, (name, code)*`,
+/-- `graph_aux_save`: before the keys, the UDF libraries as `count, (name, code)*`,
 each NUL-terminated (`save_string_nul`, :248); after the keys, a `0` placeholder. -/
 def auxSave (w : When) (libs : List (List UInt8 × List UInt8)) : List It :=
   match w with
   | .before => .u libs.length :: libs.flatMap fun (n, c) => [.buf (nulTerm n), .buf (nulTerm c)]
   | .after => [.u 0]
 
-/-- The library loop of `graph_aux_load` (:302-314). -/
+/-- The library loop of `graph_aux_load`. -/
 def readLibs : Nat → List It → Option (List (List UInt8 × List UInt8) × List It)
   | 0, r => some ([], r)
   | k + 1, r =>
@@ -74,7 +74,7 @@ structure AuxOut (Lib : Type) where
   finalized : Bool
   rest : List It
 
-/-- `graph_aux_load` (:293). -/
+/-- `graph_aux_load`. -/
 def auxLoad {Lib : Type} (deser : List (List UInt8 × List UInt8) → Option (List Lib)) (w : When) (s : List It) :
     AuxOut Lib :=
   match w with
@@ -124,7 +124,7 @@ theorem aux_truncated {Lib : Type} (deser : List (List UInt8 × List UInt8) → 
     (auxLoad deser .before [.u 1, .buf (nulTerm n)]).registered = none := by
   simp [auxLoad, loadU, readLibs, loadBuf]
 
-/-- `graphmeta_aux_load` (:903): one placeholder read, finalize after the keys, always 0. -/
+/-- `graphmeta_aux_load`: one placeholder read, finalize after the keys, always 0. -/
 def metaAuxLoad (w : When) (s : List It) : Nat × Bool × List It :=
   (0, w == .after, ((loadU s).map Prod.snd).getD s)
 
@@ -153,7 +153,7 @@ inductive Act where
   | deleteVKeys
   deriving DecidableEq, Repr
 
-/-- `on_persistence` (:384): the actions it takes, in order. -/
+/-- `on_persistence`: the actions it takes, in order. -/
 def onPersistence : Sub → List Act
   | .syncRdbStart => [.createVKeys, .stripTelemetry]
   | .rdbStart | .aofStart | .syncAofStart => [.stripTelemetry]
@@ -178,7 +178,7 @@ theorem onPersistence_strip (s : Sub) :
 /-- A `SAVE` creates the virtual keys first, then strips. -/
 theorem onPersistence_sync_order : onPersistence .syncRdbStart = [.createVKeys, .stripTelemetry] := rfl
 
-/-- `pre_fork_prepare` (:360): only on the main thread, wait on every registered graph. -/
+/-- `pre_fork_prepare`: only on the main thread, wait on every registered graph. -/
 def preFork {Gr : Type} (isMain : Bool) (registry : List Gr) : List Gr :=
   if isMain then registry else []
 
@@ -186,7 +186,7 @@ theorem preFork_spec {Gr : Type} (isMain : Bool) (registry : List Gr) :
     (isMain = true → preFork isMain registry = registry) ∧ (isMain = false → preFork isMain registry = []) := by
   cases isMain <;> simp [preFork]
 
-/-- `graphmeta_free` (:893): frees the dummy byte iff the pointer is non-null; returns the
+/-- `graphmeta_free`: frees the dummy byte iff the pointer is non-null; returns the
 number of frees. -/
 def metaFree (p : Option Unit) : Nat := if p.isSome then 1 else 0
 

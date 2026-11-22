@@ -12,7 +12,6 @@ its own models; these are this project's, so the rows here do not lean on anothe
 | `cGraphKey`, `cGraphName`      | `c_graph_key` (bytes up to the first NUL), `c_graph_name` (`up_to_nul` of the lossy string) |
 | `regPut`, `registerGraph`      | `register_graph` (`GRAPH_REGISTRY.lock().insert`, the displaced entry is dropped on another thread) |
 | `isRegistered`                 | `graph_is_registered` (a scan for the same `Arc`) |
-| `renameGraph`                  | `rename_graph` (`remove(old).and_then(insert(new))`) |
 
 `String::from_utf8_lossy` is a std function: the two properties of it that `c_graph_name` needs
 are a hypothesis structure (`Lossy`), not an axiom.
@@ -177,47 +176,5 @@ def isRegistered (r : Reg) (a : Nat) : Bool := r.any (·.2 == a)
 
 theorem registerGraph_registered (r : Reg) (n a : Nat) : isRegistered (registerGraph r n a).1 a = true := by
   simp [registerGraph, regPut, isRegistered]
-
-/-- `rename_graph`: `reg.remove(old).and_then(|arc| reg.insert(new, arc))`; the displaced
-destination entry (lazy free may not have removed it yet) is dropped off the main thread. -/
-def renameGraph (r : Reg) (old new : Nat) : Reg × Option Nat :=
-  match regGet r old with
-  | none => (r, none)
-  | some a => regPut (regDel r old) new a
-
-/-- An absent source changes nothing. -/
-theorem renameGraph_absent (r : Reg) (old new : Nat) (h : regGet r old = none) :
-    renameGraph r old new = (r, none) := by simp [renameGraph, h]
-
-/-- The entry moves: `new` holds the graph, `old` is gone, the destination's old entry is what
-comes back, and every other name is untouched. -/
-theorem renameGraph_moves (r : Reg) (old new a : Nat) (h : regGet r old = some a) (hne : old ≠ new) :
-    regGet (renameGraph r old new).1 new = some a ∧
-    regGet (renameGraph r old new).1 old = none ∧
-    (renameGraph r old new).2 = regGet r new ∧
-    ∀ m, m ≠ old → m ≠ new → regGet (renameGraph r old new).1 m = regGet r m := by
-  have h1 : regGet (regDel r old) new = regGet r new := regGet_regDel_other r old new (Ne.symm hne)
-  refine ⟨?_, ?_, ?_, ?_⟩
-  · simp [renameGraph, h, regPut, regGet]
-  · simp only [renameGraph, h, regPut]
-    simp only [regGet, Ne.symm hne, ite_false]
-    exact (regGet_regDel_other (regDel r old) new old hne).trans (regGet_regDel_same r old)
-  · simp only [renameGraph, h, regPut]
-    exact h1
-  · intro m hm1 hm2
-    simp only [renameGraph, h]
-    exact (registerGraph_other (regDel r old) new a m hm2).trans (regGet_regDel_other r old m hm1)
-
-/-- Renaming onto itself keeps the entry and displaces nothing. -/
-theorem renameGraph_self (r : Reg) (n a : Nat) (h : regGet r n = some a) :
-    regGet (renameGraph r n n).1 n = some a ∧ (renameGraph r n n).2 = none := by
-  simp only [renameGraph, h, regPut]
-  exact ⟨by simp [regGet], regGet_regDel_same r n⟩
-
-/-- A renamed graph stays registered (`graph_is_registered` scans by identity, which is why a
-`RENAME` does not abort a running write). -/
-theorem renameGraph_registered (r : Reg) (old new a : Nat) (h : regGet r old = some a) :
-    isRegistered (renameGraph r old new).1 a = true := by
-  simp [renameGraph, h, regPut, isRegistered]
 
 end SC.Glue

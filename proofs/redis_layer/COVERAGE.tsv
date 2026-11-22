@@ -70,13 +70,13 @@ src/serializers/mod.rs	Header::null_terminated	169	PROVEN	Serial.nullTerm: strip
 src/serializers/mod.rs	Header::decode	194	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
 src/serializers/mod.rs	Header::from_graph	242	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
 src/serializers/mod.rs	null_terminated	274	PROVEN	Serial.nullTerm: strip_nullTerm
-src/serializers/mod.rs	strip_null_terminator	261	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
+src/serializers/mod.rs	strip_null_terminator	282	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
 src/serializers/mod.rs	Schema::encode	291	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
-src/serializers/mod.rs	encode_schema_index_block	346	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
-src/serializers/mod.rs	encode_constraint_block	452	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
+src/serializers/mod.rs	encode_schema_index_block	367	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
+src/serializers/mod.rs	encode_constraint_block	473	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
 src/serializers/mod.rs	Schema::decode	501	PROVEN	Serial.decSchema: decSchema_encSchema
-src/serializers/mod.rs	decode_schema_entry	542	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	644	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
+src/serializers/mod.rs	decode_schema_entry	563	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
+src/serializers/mod.rs	decode_index_field	665	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
 src/serializers/mod.rs	Schema::from_graph	755	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	write_f	43	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
 src/reply.rs	format_value_to_string	56	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
@@ -88,39 +88,39 @@ src/reply.rs	reply_stats	548	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (an
 src/reply.rs	reply_query	688	PROVEN	Resp.queryCalls (ReplyFormat::Verbose = (false, None), Compact{schema} = (true, schema), #3757) over Resp.resultCalls: query_verbose_reply, query_verbose_noreturn (verbose never sends the schema element), query_compact_reply + Compact.decReply_enc, query_compact_schema_reply, query_schema_noreturn; resultCalls: compact_reply, verbose_reply, noreturn_reply, noreturn_schema_reply, compact_schema_reply, verbose_schema_reply; bytes_of_emits (RESP2 bytes)
 src/reply.rs	reply_schema	644	PROVEN	Resp.schemaCalls (#3757): schema_emits (hash alone, or hash + labels/relationshipTypes/propertyKeys as a 2n-element map), i64OfU64_spec (u64 hash sent as its i64 bit pattern)
 src/graph_core.rs	c_graph_name	106	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); GraphCore.Lossy (from_utf8_lossy kept as a core-library hypothesis structure; KeyName.lossy is a separate concrete model, not bridged to it) — #2653: bug2653_nonutf8_key_mangled
-src/graph_core.rs	register_graph	142	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
-src/graph_core.rs	graph_is_registered	188	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered), bug2782_invariant_broken: OPEN BUG #2782 refutes KeyspaceRegistered on main (kept PROVEN, bug named)
-src/graph_core.rs	key_of_write	221	PROVEN	GraphCore.keyOfWrite (#3850/#3851; key_holds_graph as keyspace lookup, TelemetryLoop.keyHolds_iff): keyOfWrite_main, keyOfWrite_admitted, keyOfWrite_renamed, keyOfWrite_holds, keyOfWrite_unheld
-src/graph_core.rs	WriteQueryOk::new	360	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
-src/graph_core.rs	ffi::sanitise_error	363	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
-src/graph_core.rs	ffi::block_client	378	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::unblock_client	389	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::get_thread_safe_context	398	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::free_thread_safe_context	409	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::reply_error	418	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::signal_modified_key	435	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::yield_ctx	457	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::measure_time_start	474	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::measure_time_end	484	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::hold_string	501	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::free_string	512	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::trim_string_allocation	527	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::replicate_argv	542	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ThreadedGraph::new	657	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	ThreadedGraph::from_mvcc	618	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	execute_query_write	791	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent; GraphCore.loopW/escalateNext (#3559 bounded retry): escalate_after_max, reader_before_max, loopW_readers, loopW_length, loopW_bounded, loopW_has_result, loopW_decided, loopW_not_stale, loopW_first (writer runs never stale: QuerySession.writer_never_stale)
-src/graph_core.rs	try_query_write	884	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon; #3850/#3851 refused finish_write abandons and fails; #3559 one timeout for all runs: a run past it fails before forking, no write step): reply_after_commit, reply_only_after_commit, failed_no_commit, unkeyed_refused, stale_run_silent, unregistered_not_stale; GraphCore.resolveT/runBudget (#3559): resolveT_kept, runBudget_le, runBudget_unlimited
-src/graph_core.rs	WriteAttempt::from	862	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
-src/graph_core.rs	BlockedClient::new	1092	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	BlockedClient::drop	1044	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	query_sync	1330	PROVEN	GraphCore.syncOutcome/logsTelemetry (#3844 log_query): sync_err, sync_write_logs, sync_read_logs, sync_unserved_silent, sync_log_only
-src/graph_core.rs	profile_mut	1466	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
-src/graph_core.rs	finish_write	1638	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657; escalated: published under GraphCore.keyOfWrite's key, or refused, #3850/#3851): reply_after_commit, reply_only_after_commit, unkeyed_refused, unescalated_silent
-src/graph_core.rs	abandon_write	1673	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
-src/graph_core.rs	commit_and_replicate	1689	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
-src/graph_core.rs	process_write_queued_query	1767	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
-src/graph_core.rs	CtxSink::replicate	1915	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
-src/graph_core.rs	graph_free	1928	PROVEN	GraphCore.free: free_unregisters, free_keeps_others; Telemetry.graphFree (#3844 queues the freed keys' streams): graphFree_registry, graphFree_queues, freed_stream_stripped
+src/graph_core.rs	register_graph	175	PROVEN	GraphCore.register (= registerAt on the selected db; #2782 keyed by graph identity): register_registered, register_get, register_keeps_others, register_uniq, isRegistered_register_mono; MultiDb.query: query_keeps, writes_succeed, repro_ok
+src/graph_core.rs	graph_is_registered	224	PROVEN	GraphCore.isRegistered (any entry of that id): isRegistered_iff_get, free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered, kept by every query: query_keeps, run_ok)
+src/graph_core.rs	key_of_write	254	PROVEN	GraphCore.keyOfWrite (#3850/#3851; registry entry by graph id, its name; key_holds_graph as keyspace lookup, TelemetryLoop.keyHolds_iff): keyOfWrite_main, keyOfWrite_admitted, keyOfWrite_renamed, keyOfWrite_holds, keyOfWrite_unheld
+src/graph_core.rs	WriteQueryOk::new	367	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
+src/graph_core.rs	ffi::sanitise_error	426	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
+src/graph_core.rs	ffi::block_client	441	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::unblock_client	452	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::get_thread_safe_context	461	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::free_thread_safe_context	472	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::reply_error	481	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::signal_modified_key	498	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::yield_ctx	520	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::measure_time_start	537	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::measure_time_end	547	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::hold_string	564	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::free_string	575	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::trim_string_allocation	590	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::replicate_argv	605	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ThreadedGraph::new	664	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	ThreadedGraph::from_mvcc	681	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	execute_query_write	854	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent; GraphCore.loopW/escalateNext (#3559 bounded retry): escalate_after_max, reader_before_max, loopW_readers, loopW_length, loopW_bounded, loopW_has_result, loopW_decided, loopW_not_stale, loopW_first (writer runs never stale: QuerySession.writer_never_stale)
+src/graph_core.rs	try_query_write	947	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon; #3850/#3851 refused finish_write abandons and fails; #3559 one timeout for all runs: a run past it fails before forking, no write step): reply_after_commit, reply_only_after_commit, failed_no_commit, unkeyed_refused, stale_run_silent, unregistered_not_stale; GraphCore.resolveT/runBudget (#3559): resolveT_kept, runBudget_le, runBudget_unlimited
+src/graph_core.rs	WriteAttempt::from	925	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
+src/graph_core.rs	BlockedClient::new	1099	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	BlockedClient::drop	1107	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	query_sync	1393	PROVEN	GraphCore.syncOutcome/logsTelemetry (#3844 log_query): sync_err, sync_write_logs, sync_read_logs, sync_unserved_silent, sync_log_only
+src/graph_core.rs	profile_mut	1529	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
+src/graph_core.rs	finish_write	1701	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657; escalated: published under GraphCore.keyOfWrite's key, or refused, #3850/#3851): reply_after_commit, reply_only_after_commit, unkeyed_refused, unescalated_silent
+src/graph_core.rs	abandon_write	1736	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
+src/graph_core.rs	commit_and_replicate	1752	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
+src/graph_core.rs	process_write_queued_query	1830	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
+src/graph_core.rs	CtxSink::replicate	1978	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
+src/graph_core.rs	graph_free	1991	PROVEN	GraphCore.free: free_unregisters, free_keeps_others; Telemetry.graphFree/freedKeys (#3844 queues the freed graph's (db, name) unless a survivor shares the stream, #3424): graphFree_registry, graphFree_queues, graphFree_shared_kept, freed_stream_stripped
 src/query_session.rs	QuerySession::begin	178	PROVEN	QuerySession.begin: escalate_order
 src/query_session.rs	QuerySession::begin_with	185	PROVEN	QuerySession.beginWith/readPastGate (#3816: past the WriterGate first; facts parameter): beginWith_open, beginWith_nowait, readPastGate_ends_reading, upgrade_unregistered, reauth_replay
 src/query_session.rs	QuerySession::begin_writer	205	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
@@ -152,19 +152,19 @@ src/query_session.rs	Gil::acquire	722	PROVEN	QuerySession.gilAcquire (no-op iff 
 src/query_session.rs	Gil::drop	745	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
 src/query_session.rs	lock_gil	766	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/query_session.rs	release_gil	779	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
-src/module_init.rs	pthread_atfork	95	AXIOMATISED	libc pthread_atfork declaration
-src/module_init.rs	on_fork_child	122	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
-src/module_init.rs	sync_deepbind_environ	158	PROVEN	EnvBuild.syncDeepbind: sync_unchanged (NULL dlopen handle, NULL dlsym, or the symbol is this module's own environ: environ untouched, the path CI reaches), sync_installs (otherwise environ becomes a NULL-terminated snapshot of the live array's strings); dlopen/dlsym/dlclose results are the inputs of `Ld`, the libc side being FFI
+src/module_init.rs	pthread_atfork	103	AXIOMATISED	libc pthread_atfork declaration
+src/module_init.rs	on_fork_child	130	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
+src/module_init.rs	sync_deepbind_environ	166	PROVEN	EnvBuild.syncDeepbind: sync_unchanged (NULL dlopen handle, NULL dlsym, or the symbol is this module's own environ: environ untouched, the path CI reaches), sync_installs (otherwise environ becomes a NULL-terminated snapshot of the live array's strings); dlopen/dlsym/dlclose results are the inputs of `Ld`, the libc side being FFI
 graph/src/env_snapshot.rs	leak_deep_copy	22	PROVEN	EnvBuild.leakDeepCopy: copy_null_src, copy_length, copy_terminated (len+1 cells, last NULL), copy_read_back (the copy reads back exactly the source's entries in order), copy_fresh (every string cell allocated fresh), copy_indep (depends on the entries' bytes only, so a later setenv/putenv/free of the source cannot change it); the unsafe pointer reads are the `# Safety` contract (NULL-terminated source)
-src/module_init.rs	graph_init	203	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range
-src/module_init.rs	info_func	494	PROVEN	ModuleInit.infoSections: info_normal
-src/module_init.rs	on_flush	511	PROVEN	ModuleInit.onFlush (#3844 FLUSH_IN_PROGRESS): onFlush_start, onFlush_end
-src/module_init.rs	on_shutdown	525	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
-src/module_init.rs	on_role_change	549	PROVEN	ModuleInit.onRoleChange (no replica flag since #3844): onRoleChange_promote, onRoleChange_demote
-src/module_init.rs	enforce_pending_constraints_after_promotion	578	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
-src/module_init.rs	on_replica_change	645	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
-src/module_init.rs	on_loading	657	PROVEN	ModuleInit.onLoading: onLoading_only_end
-src/module_init.rs	on_keyspace_event	678	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
+src/module_init.rs	graph_init	211	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range
+src/module_init.rs	info_func	516	PROVEN	ModuleInit.infoSections: info_normal
+src/module_init.rs	on_flush	533	PROVEN	ModuleInit.onFlush (#3844 FLUSH_IN_PROGRESS): onFlush_start, onFlush_end
+src/module_init.rs	on_shutdown	547	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
+src/module_init.rs	on_role_change	571	PROVEN	ModuleInit.onRoleChange (no replica flag since #3844): onRoleChange_promote, onRoleChange_demote
+src/module_init.rs	enforce_pending_constraints_after_promotion	600	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
+src/module_init.rs	on_replica_change	668	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
+src/module_init.rs	on_loading	680	PROVEN	ModuleInit.onLoading: onLoading_only_end
+src/module_init.rs	on_keyspace_event	745	PROVEN	ModuleInit.onKeyspace (#3424: rename_to/move_to relocate by graph id): from_events_noop, rename_to_alone, rename_pair, move_to_moves, move_to_plain, other_event
 src/telemetry.rs	truncate	34	PROVEN	Telemetry.truncate: truncate_short, truncate_len, truncate_prefix
 src/telemetry.rs	truncate_arc	50	PROVEN	Telemetry.truncateArc: truncateArc_eq
 src/telemetry.rs	stream_name	66	PROVEN	Telemetry.streamName: streamName_key_name, streamName_inj, streamName_nul, stream_same_slot, stream_other_slot
@@ -175,41 +175,41 @@ src/telemetry.rs	create_detached_string	244	AXIOMATISED	RM_CreateString/RM_FreeS
 src/telemetry.rs	free_detached_string	251	AXIOMATISED	RM_CreateString/RM_FreeString (Redis API)
 src/telemetry.rs	stream_entries	269	PROVEN	Telemetry.streamOps: streamOps_writable, streamOps_trim_zero, streamOps_foreign
 src/telemetry.rs	strip_stream	350	PROVEN	Telemetry.stripOps/stripStream (key API calls recorded): strip_deletes_iff, strip_write_open_iff, stripStream_iff
-src/telemetry.rs	FreedGraphStreams::new	423	PROVEN	Telemetry.FQ.new: FQ.new_inv
-src/telemetry.rs	FreedGraphStreams::push	411	PROVEN	Telemetry.FQ.push: FQ.push_inv, FQ.isPending_push
-src/telemetry.rs	FreedGraphStreams::is_pending	420	PROVEN	Telemetry.FQ.isPending: FQ.isPending_push
-src/telemetry.rs	FreedGraphStreams::take	426	PROVEN	Telemetry.FQ.take: FQ.take_inv, FQ.take_all
-src/telemetry.rs	set_flush_in_progress	441	PROVEN	Telemetry.setFlush: setFlush_eq
-src/telemetry.rs	queue_streams_of_freed_graph	475	PROVEN	Telemetry.queueFreed: queue_flushing, queue_no_gil, queue_inv, queue_pushes
-src/telemetry.rs	delete_streams_of_freed_graphs	488	PROVEN	Telemetry.deleteFreed: deleteFreed_all
-src/redis_type.rs	strip_telemetry_streams	421	PROVEN	Telemetry.stripAll: stripAll_covers, stripAll_empties, freed_stream_stripped
+src/telemetry.rs	FreedGraphStreams::new	413	PROVEN	Telemetry.FQ.new: FQ.new_inv
+src/telemetry.rs	FreedGraphStreams::push	423	PROVEN	Telemetry.FQ.push ((db, name) pairs since #3424): FQ.push_inv, FQ.isPending_push
+src/telemetry.rs	FreedGraphStreams::is_pending	448	PROVEN	Telemetry.FQ.isPending: FQ.isPending_push
+src/telemetry.rs	FreedGraphStreams::take	454	PROVEN	Telemetry.FQ.take ((db, name) pairs since #3424): FQ.take_inv, FQ.take_all
+src/telemetry.rs	set_flush_in_progress	469	PROVEN	Telemetry.setFlush: setFlush_eq
+src/telemetry.rs	queue_streams_of_freed_graph	503	PROVEN	Telemetry.queueFreed ((db, name) pairs since #3424): queue_flushing, queue_no_gil, queue_inv, queue_pushes
+src/telemetry.rs	delete_streams_of_freed_graphs	524	PROVEN	Telemetry.deleteFreed (each stripped in its db via strip_stream_in_db, Telemetry.inDb): deleteFreed_all, inDb_restores
+src/redis_type.rs	strip_telemetry_streams	500	PROVEN	Telemetry.stripAll (queued and registered (db, name)s, each in its db): stripAll_covers, stripAll_empties, freed_stream_stripped
 src/dispatch.rs	logs_telemetry	63	PROVEN	GraphCore.logsTelemetry: logsTelemetry_iff, sync_unserved_silent
-src/telemetry.rs	delete_stream	501	PROVEN	Telemetry.deleteStreamKey: deleteStream_key_or_name
-src/telemetry.rs	next_id	519	PROVEN	Telemetry.nextIds: nextIds_nodup
-src/telemetry.rs	unix_now_secs	524	AXIOMATISED	SystemTime::now (OS clock)
-src/telemetry.rs	shard_for	569	PROVEN	Telemetry.shardFor: shardFor_lt
-src/telemetry.rs	register_running	574	PROVEN	Telemetry.registerRunning: registerRunning_placed
-src/telemetry.rs	unregister_running	594	PROVEN	Telemetry.unregisterRunning/removeId: removeId_absent, removeId_sub
-src/telemetry.rs	unregister_waiting	602	PROVEN	Telemetry.unregisterWaiting: removeId_absent
-src/telemetry.rs	register_waiting	616	PROVEN	Telemetry.registerWaiting: registerWaiting_placed
-src/telemetry.rs	WaitingEntry::register	646	PROVEN	Telemetry.WE: WE.drop_armed
-src/telemetry.rs	WaitingEntry::promote	656	PROVEN	Telemetry.WE.promote: WE.promote_then_drop, WE.promote_twice
+src/telemetry.rs	delete_stream	537	PROVEN	Telemetry.deleteStreamKey: deleteStream_key_or_name
+src/telemetry.rs	next_id	617	PROVEN	Telemetry.nextIds: nextIds_nodup
+src/telemetry.rs	unix_now_secs	622	AXIOMATISED	SystemTime::now (OS clock)
+src/telemetry.rs	shard_for	667	PROVEN	Telemetry.shardFor: shardFor_lt
+src/telemetry.rs	register_running	672	PROVEN	Telemetry.registerRunning: registerRunning_placed
+src/telemetry.rs	unregister_running	692	PROVEN	Telemetry.unregisterRunning/removeId: removeId_absent, removeId_sub
+src/telemetry.rs	unregister_waiting	700	PROVEN	Telemetry.unregisterWaiting: removeId_absent
+src/telemetry.rs	register_waiting	714	PROVEN	Telemetry.registerWaiting: registerWaiting_placed
+src/telemetry.rs	WaitingEntry::register	744	PROVEN	Telemetry.WE: WE.drop_armed
+src/telemetry.rs	WaitingEntry::promote	754	PROVEN	Telemetry.WE.promote: WE.promote_then_drop, WE.promote_twice
 src/telemetry.rs	WaitingEntry::drop	760	PROVEN	Telemetry.WE.drop: WE.drop_armed, WE.promote_then_drop
-src/telemetry.rs	transition_waiting_to_running	674	PROVEN	Telemetry.transition: transition_moves, transition_absent, transition_placed
-src/telemetry.rs	snapshot_running	690	PROVEN	Telemetry.snapshotRunning: trySnapshot_unlocked
-src/telemetry.rs	try_snapshot_running	701	PROVEN	Telemetry.trySnapshotRunning: trySnapshot_sub, trySnapshot_unlocked
-src/telemetry.rs	snapshot_waiting	712	PROVEN	Telemetry.snapshotWaiting: registerWaiting_placed (shard concatenation)
-src/telemetry.rs	running_queries_reply	721	PROVEN	Telemetry.runningRow/runningReply: runningRow_len, runningReply_len
-src/telemetry.rs	waiting_queries_reply	745	PROVEN	Telemetry.waitingRow: waitingRow_len
-src/telemetry.rs	resolve_current_names	854	PROVEN	Telemetry.resolve/pass1/pass2Step/retain: retain_sound, retain_drops, pass1_unmoved, pass1_rebound, pass2Step_sound
-src/telemetry.rs	hold_batch_graphs	930	PROVEN	Telemetry.distinctAlive: distinctAlive_nodup, distinctAlive_complete
-src/telemetry.rs	release_batch_graphs	961	PROVEN	Telemetry.releaseSpawns: releaseSpawns_len
-src/redis_type.rs	key_holds_graph	608	PROVEN	Telemetry.keyHolds: keyHolds_iff (moved from telemetry.rs by #3819; get_value::<_>(&GRAPH_TYPE) = keyValue input)
-src/telemetry.rs	drain_queued	977	PROVEN	Telemetry.drain: drain_bound, drain_conserves
-src/telemetry.rs	enqueue_entry	1038	PROVEN	Telemetry.enqueueOk (no role check since #3844): enqueue_off, enqueue_full, enqueue_iff
-src/telemetry.rs	start_flusher_thread	1080	PROVEN	Telemetry.start: start_idem
-src/telemetry.rs	shutdown_flusher_thread	1133	PROVEN	Telemetry.shutdown/stopped: shutdown_keeps_names_if_parked, shutdown_frees_on_stop, shutdown_closes_sender
-src/telemetry.rs	flusher_loop	1169	PROVEN	Telemetry.iter/iterSteps/groupOrder (#3844: no role/pause branch, freed streams deleted first): iter_disconnected, iter_write_iff, iterSteps_disconnected, iterSteps_delete_before_write, iterSteps_serves_pending, group_keeps_order, drain_bound
+src/telemetry.rs	transition_waiting_to_running	772	PROVEN	Telemetry.transition: transition_moves, transition_absent, transition_placed
+src/telemetry.rs	snapshot_running	788	PROVEN	Telemetry.snapshotRunning: trySnapshot_unlocked
+src/telemetry.rs	try_snapshot_running	799	PROVEN	Telemetry.trySnapshotRunning: trySnapshot_sub, trySnapshot_unlocked
+src/telemetry.rs	snapshot_waiting	810	PROVEN	Telemetry.snapshotWaiting: registerWaiting_placed (shard concatenation)
+src/telemetry.rs	running_queries_reply	819	PROVEN	Telemetry.runningRow/runningReply: runningRow_len, runningReply_len
+src/telemetry.rs	waiting_queries_reply	843	PROVEN	Telemetry.waitingRow: waitingRow_len
+src/telemetry.rs	resolve_current_names	955	PROVEN	Telemetry.resolve/resolveOne/retain (#3424: one lookup by graph id, (db, name)): retain_sound, retain_drops, resolve_unmoved, resolve_sound, resolve_unregistered
+src/telemetry.rs	hold_batch_graphs	1012	PROVEN	Telemetry.distinctAlive: distinctAlive_nodup, distinctAlive_complete
+src/telemetry.rs	release_batch_graphs	1043	PROVEN	Telemetry.releaseSpawns: releaseSpawns_len
+src/redis_type.rs	key_holds_graph	726	PROVEN	Telemetry.keyHolds: keyHolds_iff (moved from telemetry.rs by #3819; get_value::<_>(&GRAPH_TYPE) = keyValue input)
+src/telemetry.rs	drain_queued	1059	PROVEN	Telemetry.drain: drain_bound, drain_conserves
+src/telemetry.rs	enqueue_entry	1120	PROVEN	Telemetry.enqueueOk (no role check since #3844): enqueue_off, enqueue_full, enqueue_iff
+src/telemetry.rs	start_flusher_thread	1163	PROVEN	Telemetry.start: start_idem
+src/telemetry.rs	shutdown_flusher_thread	1216	PROVEN	Telemetry.shutdown/stopped: shutdown_keeps_names_if_parked, shutdown_frees_on_stop, shutdown_closes_sender
+src/telemetry.rs	flusher_loop	1252	PROVEN	Telemetry.iter/iterSteps/groupOrder (#3844: no role/pause branch, freed streams deleted first; #3424 runs keyed by ((db, graph), name), group_keeps_order over any key type): iter_disconnected, iter_write_iff, iterSteps_disconnected, iterSteps_delete_before_write, iterSteps_serves_pending, group_keeps_order, drain_bound
 src/slow_log.rs	prefix	32	PROVEN	SlowLog.strPrefix: prefix_total, prefix_le, prefix_isPrefix, prefix_boundary, prefix_longest, prefix_short, prefix_ascii
 src/slow_log.rs	truncate	38	PROVEN	SlowLog.truncate: truncate_total, truncate_short (W4-redis-1 fixed by #3234 3660a5fc3)
 src/slow_log.rs	entry_hash	51	PROVEN	SlowLog.hashInput: hashInput_total, hashInput_short, hashInput_bad (W4-redis-1 fixed by #3234 3660a5fc3)
@@ -255,13 +255,13 @@ src/commands/config_cmd.rs	apply_config_set	271	PROVEN	Config.apply1 (used by ru
 src/commands/config_cmd.rs	ConfigValue::as_i64	317	PROVEN	Commands.asI64: asI64_small
 src/commands/config_cmd.rs	ConfigValue::as_u64	323	PROVEN	Commands.asU64: asU64_nonneg, asU64_neg
 src/commands/config_cmd.rs	graph_config	331	PROVEN	Config.dispatch: get_extra_wrong_arity, set_pairs_complete, dotless_i_not_folded; Config.rustSet (SET): rustSet_inv; Commands.getOne (GET)
-src/commands/constraint.rs	is_valid_identifier	26	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
-src/commands/constraint.rs	register_constraint_schema	70	PROVEN	Commands.registerSchema: registerSchema_contains
-src/commands/constraint.rs	find_status	89	PROVEN	Commands.findStatus: findStatus_none
-src/commands/constraint.rs	settle_constraint	178	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
-src/commands/constraint.rs	attempt_settle	284	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
-src/commands/constraint.rs	graph_constraint	384	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053); pool path Commands.consWorker: consWorker_announce, consWorker_signal, consWorker_key_gone (#3819)
-src/commands/constraint.rs	apply_constraint	599	PROVEN	Commands.applyCons: applyCons_replayed_silent, applyCons_commit_refused, applyCons_aof_duplicate, applyCons_ok (#3819; create_constraint/drop_constraint/commit/find_status/build_constraint results are inputs)
+src/commands/constraint.rs	is_valid_identifier	27	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
+src/commands/constraint.rs	register_constraint_schema	71	PROVEN	Commands.registerSchema: registerSchema_contains
+src/commands/constraint.rs	find_status	90	PROVEN	Commands.findStatus: findStatus_none
+src/commands/constraint.rs	settle_constraint	179	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
+src/commands/constraint.rs	attempt_settle	316	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid; Commands.announceTarget (#3424: announced in the graph's db, key replaced only by one holding the graph): announce_in_graph_db, announce_keeps_holding_key, announce_replaced_holds, announce_restores
+src/commands/constraint.rs	graph_constraint	439	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053); pool path Commands.consWorker: consWorker_announce, consWorker_signal, consWorker_key_gone (#3819)
+src/commands/constraint.rs	apply_constraint	654	PROVEN	Commands.applyCons: applyCons_replayed_silent, applyCons_commit_refused, applyCons_aof_duplicate, applyCons_ok (#3819; create_constraint/drop_constraint/commit/find_status/build_constraint results are inputs)
 src/commands/copy.rs	pipe	19	AXIOMATISED	libc pipe(2)
 src/commands/copy.rs	fork	20	AXIOMATISED	libc fork(2)
 src/commands/copy.rs	_exit	21	AXIOMATISED	libc _exit(2)
@@ -281,7 +281,7 @@ src/commands/memory.rs	c_schema_name	69	PROVEN	Commands.cSchemaName = cReplyName
 src/commands/memory.rs	memory_report	73	PROVEN	Commands.memTotal/memFields: memTotal_sum
 src/commands/memory.rs	graph_memory	184	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err, memArgs_subcmd_err, memArgs_kw_err (C error texts, PR #3257)
 src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, profile_timeout_parsed, profile_timeout_garbage_rejected (#3009 fixed 557f18868), profile_other_args_ignored
-src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51, ReplyFormat): four_commands_share, rust_c_agree_except_schema, rust_ok_c_ok, COUNTEREXAMPLES rust_c_agree_refuted (#3757: SCHEMA_HASH abc refused, C skips it) and rust_c_agree_except_schemaParse_refuted (SCHEMA_HASH without --compact refused, C skips it), parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
+src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51, ReplyFormat): four_commands_share, rust_c_agree_except_schema, rust_ok_c_ok, COUNTEREXAMPLES rust_c_agree_refuted (#3757: SCHEMA_HASH abc refused, C skips it) and rust_c_agree_except_schemaParse_refuted (SCHEMA_HASH without --compact refused, C skips it), parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 fixed: writes_succeed, repro_ok) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
 src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps: a refused finish_write is abandoned, unkeyed_refused; write_version: QuerySession.writeVersion_takes_nothing); rendering of recorded rows: RelLookup.recordDelete/s3449abort, #3449 fixed by #3462 (inspect || snapshot_required): fixed3449_record_snapshot, fixed3449_record_abort
 src/commands/record.rs	graph_record	189	PROVEN	Commands.recordKey: recordKey_creates
 src/commands/restore.rs	graph_restore	14	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
@@ -296,25 +296,25 @@ src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one
 src/commands/udf.rs	udf_flush	170	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
 src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere
 # Online index build (#2355): fns the background builder added, not modelled yet.
-src/graph_core.rs	RedisBuildHost::publish	1750	PROVEN	EnvBuild.publish: publish_holds (the GIL is held while f runs), publish_nested (already holding: no lock events), publish_log (else gilLock, f's events, gilUnlock and no context left)
-src/graph_core.rs	RedisBuildHost::warn	1759	PROVEN	EnvBuild.warn: warn_appends (log_warning appends exactly the message)
+src/graph_core.rs	RedisBuildHost::publish	1813	PROVEN	EnvBuild.publish: publish_holds (the GIL is held while f runs), publish_nested (already holding: no lock events), publish_log (else gilLock, f's events, gilUnlock and no context left)
+src/graph_core.rs	RedisBuildHost::warn	1822	PROVEN	EnvBuild.warn: warn_appends (log_warning appends exactly the message)
 src/query_session.rs	QuerySession::begin_writer_checked	235	PROVEN	QuerySession.beginWriterChecked (#3559, begin_with then escalate): beginWriterChecked_refusal (same refusal as upgrade_to_write), beginWriterChecked_ok, beginWriterChecked_refused_releases, writer_never_stale
-src/graph_core.rs	graph_id	148	NOT COVERED	(#3424): not modelled yet
-src/graph_core.rs	selected_db	170	NOT COVERED	(#3424): not modelled yet
-src/graph_core.rs	register_graph_at	188	NOT COVERED	(#3424): not modelled yet
-src/graph_core.rs	registered_location	292	NOT COVERED	(#3424): not modelled yet
-src/graph_core.rs	relocate_graph	298	NOT COVERED	(#3424): not modelled yet
-src/graph_core.rs	swap_graph_dbs	312	NOT COVERED	(#3424): not modelled yet
-src/module_init.rs	relocate_graph_at_key	697	NOT COVERED	(#3424): not modelled yet
-src/module_init.rs	on_swapdb	741	NOT COVERED	(#3424): not modelled yet
-src/telemetry.rs	strip_stream_in_db	390	NOT COVERED	(#3424): not modelled yet
-src/telemetry.rs	delete_stream_if_stream	539	NOT COVERED	(#3424): not modelled yet
-src/telemetry.rs	delete_stream_in_db	561	NOT COVERED	(#3424): not modelled yet
-src/commands/constraint.rs	SelectedDb::of	288	NOT COVERED	(#3424): not modelled yet
-src/commands/constraint.rs	SelectedDb::select	296	NOT COVERED	(#3424): not modelled yet
-src/commands/constraint.rs	SelectedDb::drop	307	NOT COVERED	(#3424): not modelled yet
-src/telemetry.rs	RestoreSelectedDb::select	554	NOT COVERED	(#3424): not modelled yet
-src/telemetry.rs	RestoreSelectedDb::drop	592	NOT COVERED	(#3424): not modelled yet
-src/graph_core.rs	name_is_shared	293	NOT COVERED	(#3424): not modelled yet
-src/telemetry.rs	FreedGraphStreams::swap_dbs	433	NOT COVERED	(#3424): not modelled yet
-src/telemetry.rs	swap_queued_stream_dbs	511	NOT COVERED	(#3424): not modelled yet
+src/graph_core.rs	graph_id	148	AXIOMATISED	graph identity is Arc::as_ptr (the Nat graph id of GraphCore.Ent.g)
+src/graph_core.rs	selected_db	170	AXIOMATISED	single FFI call RedisModule_GetSelectedDb (the db argument of GraphCore.register)
+src/graph_core.rs	register_graph_at	188	PROVEN	GraphCore.registerAt: register_registered, register_get, register_keeps_others, register_uniq
+src/graph_core.rs	registered_location	279	PROVEN	GraphCore.registeredLocation (Reg.get by id, (db, name)): get_some, get_none_of; Commands.announceTarget
+src/graph_core.rs	relocate_graph	305	PROVEN	GraphCore.relocate: relocate_absent, relocate_moves, relocate_keeps_others
+src/graph_core.rs	swap_graph_dbs	319	PROVEN	GraphCore.swapDbs/swapDb: swapDb_swap, swapDb_invol, swapDbs_get
+src/module_init.rs	relocate_graph_at_key	698	PROVEN	ModuleInit.relocAtKey (GraphCore.relocate of the value's graph id): rename_pair, move_to_moves, rename_to_alone, move_to_plain
+src/module_init.rs	on_swapdb	726	PROVEN	ModuleInit.onSwapdb: onSwapdb_follows, onSwapdb_inv
+src/telemetry.rs	strip_stream_in_db	390	PROVEN	Telemetry.inDb (strip_stream in db under RestoreSelectedDb, skipped if unselectable): inDb_restores, inDb_runs, inDb_refused
+src/telemetry.rs	delete_stream_if_stream	553	PROVEN	Telemetry.deleteIfStream (DEL only when TYPE is stream): deleteIfStream_iff, deleteIfStream_key
+src/telemetry.rs	delete_stream_in_db	601	PROVEN	Telemetry.inDb + deleteIfStream: inDb_restores, inDb_runs, inDb_refused, deleteIfStream_iff
+src/commands/constraint.rs	SelectedDb::of	288	AXIOMATISED	single FFI call RedisModule_GetSelectedDb (orig of Commands.announceTarget)
+src/commands/constraint.rs	SelectedDb::select	296	AXIOMATISED	single FFI call RedisModule_SelectDb == OK (selOk of Commands.announceTarget)
+src/commands/constraint.rs	SelectedDb::drop	307	AXIOMATISED	single FFI call RedisModule_SelectDb(orig) (Commands.announce_restores)
+src/telemetry.rs	RestoreSelectedDb::select	578	PROVEN	Telemetry.restoreSelect: inDb_restores, inDb_runs, inDb_refused
+src/telemetry.rs	RestoreSelectedDb::drop	592	AXIOMATISED	single FFI call RedisModule_SelectDb(orig) (Telemetry.inDb_restores)
+src/graph_core.rs	name_is_shared	293	PROVEN	GraphCore.nameIsShared (same db, names equal up to NUL): graphFree_shared_kept, freed_stream_stripped, rename_pair
+src/telemetry.rs	FreedGraphStreams::swap_dbs	433	PROVEN	Telemetry.FQ.swapDbs: FQ.swapDbs_inv, FQ.swapDbs_mem
+src/telemetry.rs	swap_queued_stream_dbs	511	PROVEN	Telemetry.swapQueued (= FQ.swapDbs): FQ.swapDbs_inv, FQ.swapDbs_mem, onSwapdb_inv

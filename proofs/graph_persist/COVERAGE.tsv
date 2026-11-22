@@ -16,32 +16,32 @@ graph/src/graph/graphblas/serialization.rs	encode	178	PROVEN	Layout.roaring_roun
 graph/src/graph/graphblas/serialization.rs	decode	206	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
 graph/src/graph/graphblas/serialization.rs	decode_with_count	227	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
 src/redis_type.rs	io_cache_size	72	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
-src/redis_type.rs	io_key_name	87	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
-src/redis_type.rs	graph_rdb_load	100	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1)
-src/redis_type.rs	graph_rdb_save	190	PROVEN	RedisType.rdbSave (= saveKeySlice.getD whole): save_main, save_vkey (slice i, key_count K), save_single
-src/redis_type.rs	save_key_slice	214	PROVEN	RedisType.saveKeySlice: save_main, save_vkey, save_single, metaSave_of_slice (VKEY_STATE/GRAPH_REGISTRY lookups are the modelled maps; rdb_save_graph_key = Persist encoder)
-src/redis_type.rs	save_string_nul	251	PROVEN	Codec.stripNul_nulTerm
-src/redis_type.rs	strip_trailing_nul	269	PROVEN	Codec.stripNul_nulTerm
-src/redis_type.rs	graph_aux_save	275	PROVEN	RedisType.auxSave: aux_roundtrip, aux_after
-src/redis_type.rs	graph_aux_load	296	PROVEN	RedisType.auxLoad: aux_roundtrip, aux_after, aux_truncated, strip_keeps_inner_nul (UdfRepo::deserialize/register_udf are inputs)
-src/redis_type.rs	pre_fork_prepare	360	PROVEN	RedisType.preFork: preFork_spec (wait_all = GraphBLAS effect)
-src/redis_type.rs	on_persistence	384	PROVEN	RedisType.onPersistence: onPersistence_spec, onPersistence_strip, onPersistence_sync_order (#3844 strip_telemetry_streams at every start)
-src/redis_type.rs	create_virtual_keys	447	PROVEN	RedisType.createVKeys: save_main, save_vkey, createdKeys_spec; names Uuid.vkeyName_inj/vkeyName_ne (OpenKey/SetValue = effects, key_holds_graph = input); vkeys typed graphmeta (vkeyType, #3161)
-src/redis_type.rs	delete_virtual_keys	559	PROVEN	RedisType.deleteVKeys: deleteVKeys_spec, createdKeys_spec
-src/redis_type.rs	delete_key	578	AXIOMATISED	Redis module API DeleteKey
-src/redis_type.rs	delete_stale_graphmeta_keys	624	PROVEN	RedisType.deleteStaleGraphmeta: scanKeys_spec
-src/redis_type.rs	delete_stale_virtual_keys	658	PROVEN	RedisType.deleteStaleVirtual: deleteStaleVirtual_spec; Persist.multi_meta (meta keys = exactly the virtual keys)
-src/redis_type.rs	scan_keys_by_type	675	PROVEN	RedisType.scanKeys: scanKeys_spec, scanKeys_stops (RedisModule_Call replies are inputs)
-src/redis_type.rs	finalize_pending_graphs	762	PROVEN	RedisType.finalizePending: load_main_first, load_main_last
-src/redis_type.rs	install_graph	797	PROVEN	RedisType.finalizePending (install arm): load_main_first
-src/redis_type.rs	uuid_v4	823	PROVEN	RedisType.uuid (#3286: uuid_fields, clock and counter in separate fields): uuid_counter_distinct (names differ whenever counters differ mod 2^48, any clocks), uuid_same_clock_distinct, uuid_regression_pair_distinct, uuid_length; vkeyName_uuid_counter, names_vname_inj (discharges VKeys.Names.vname_inj)
-src/redis_type.rs	uuid_fields	845	PROVEN	RedisType.uuidFields: counter_field_bijective (last field = bijection of seq mod 2^48, for every seq; the const _ block checks sample points), uuidFields_fit, mixB_mod48, uuid_last_field
-src/redis_type.rs	same_fields	872	PROVEN	RedisType.sameFields (helper of the compile-time const _ check): sameFields_iff (= equality of the five fields), const_check_holds (the const block's assertions hold for every clock, not only its samples)
-src/redis_type.rs	graphmeta_rdb_load	985	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys); cacheOnLoad: cache_size_on_load
-src/redis_type.rs	graphmeta_rdb_save	1010	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
-src/redis_type.rs	graphmeta_free	1022	PROVEN	RedisType.metaFree: metaFree_spec
-src/redis_type.rs	graphmeta_aux_load	1032	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
-src/redis_type.rs	wrong_type_compat	933	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
+src/redis_type.rs	io_key_name	145	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
+src/redis_type.rs	graph_rdb_load	158	PROVEN	RedisType.loadWhole/loadPartial (registry keyed by graph id, entries (db, name)): load_main_last, load_main_first (registry entry = (db, key), key value = finished graph, no vkey registered, any key order), load_same_name_two_dbs (#2782); decoder Persist.multi_load, Persist.multi_load_db (DECODE_STATE keyed by (io_db, name)); cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1)
+src/redis_type.rs	graph_rdb_save	250	PROVEN	RedisType.rdbSave (= saveKeySlice db key (Some graph_id), whole on none): save_main, save_vkey (slice i, key_count K), save_single, rdbSave_owner_mismatch (another graph's slice -> whole), save_same_name_two_dbs (#2782)
+src/redis_type.rs	save_key_slice	277	PROVEN	RedisType.saveKeySlice (vkey_map keyed by (db, key), owner check, registry by graph id): save_main, save_vkey, save_single, save_vkey_meta, metaSave_of_slice, rdbSave_owner_mismatch, save_same_name_two_dbs (VKEY_STATE/GRAPH_REGISTRY lookups are the modelled maps; rdb_save_graph_key = Persist encoder)
+src/redis_type.rs	save_string_nul	330	PROVEN	Codec.stripNul_nulTerm
+src/redis_type.rs	strip_trailing_nul	348	PROVEN	Codec.stripNul_nulTerm
+src/redis_type.rs	graph_aux_save	354	PROVEN	RedisType.auxSave: aux_roundtrip, aux_after
+src/redis_type.rs	graph_aux_load	375	PROVEN	RedisType.auxLoad: aux_roundtrip, aux_after, aux_truncated, strip_keeps_inner_nul (UdfRepo::deserialize/register_udf are inputs)
+src/redis_type.rs	pre_fork_prepare	439	PROVEN	RedisType.preFork: preFork_spec (wait_all = GraphBLAS effect)
+src/redis_type.rs	on_persistence	463	PROVEN	RedisType.onPersistence: onPersistence_spec, onPersistence_strip, onPersistence_sync_order (#3844 strip_telemetry_streams at every start)
+src/redis_type.rs	create_virtual_keys	536	PROVEN	RedisType.createVKeys (foldl of createGraphVKeys over the registry, each in_db(entry db)): createVKeys_eq, createVKeys_foldl, save_main, save_vkey, createdKeys_spec, save_same_name_two_dbs; names Uuid.vkeyName_inj/vkeyName_ne (OpenKey/SetValue = effects, key_holds_graph = input); vkeys typed graphmeta (vkeyType, #3161)
+src/redis_type.rs	delete_virtual_keys	675	PROVEN	RedisType.deleteVKeys (in_db per graph): deleteVKeys_spec, createdKeys_spec
+src/redis_type.rs	delete_key	696	AXIOMATISED	Redis module API DeleteKey
+src/redis_type.rs	delete_stale_graphmeta_keys	743	PROVEN	RedisType.deleteStaleGraphmeta (Sweep, for_each_db over non-empty dbs): deleteStaleGraphmeta_spec, scanKeys_spec, forEachDb_spec
+src/redis_type.rs	delete_stale_virtual_keys	779	PROVEN	RedisType.deleteStaleVirtual (Sweep; meta_keys (db, name) deleted in_db): deleteStaleVirtual_spec; Persist.multi_meta, Persist.multi_load_db (meta keys = exactly the virtual keys, with their db)
+src/redis_type.rs	scan_keys_by_type	796	PROVEN	RedisType.scanKeys (Sweep): scanKeys_spec, scanKeys_stops (RedisModule_Call replies are inputs)
+src/redis_type.rs	finalize_pending_graphs	883	PROVEN	RedisType.finalizePending (pending keyed by (db, name), registry by graph id): load_main_first, load_main_last, load_same_name_two_dbs
+src/redis_type.rs	install_graph	918	PROVEN	RedisType.finalizePending (install arm): load_main_first
+src/redis_type.rs	uuid_v4	944	PROVEN	RedisType.uuid (#3286: uuid_fields, clock and counter in separate fields): uuid_counter_distinct (names differ whenever counters differ mod 2^48, any clocks), uuid_same_clock_distinct, uuid_regression_pair_distinct, uuid_length; vkeyName_uuid_counter, names_vname_inj (discharges VKeys.Names.vname_inj)
+src/redis_type.rs	uuid_fields	966	PROVEN	RedisType.uuidFields: counter_field_bijective (last field = bijection of seq mod 2^48, for every seq; the const _ block checks sample points), uuidFields_fit, mixB_mod48, uuid_last_field
+src/redis_type.rs	same_fields	993	PROVEN	RedisType.sameFields (helper of the compile-time const _ check): sameFields_iff (= equality of the five fields), const_check_holds (the const block's assertions hold for every clock, not only its samples)
+src/redis_type.rs	graphmeta_rdb_load	1106	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys); cacheOnLoad: cache_size_on_load
+src/redis_type.rs	graphmeta_rdb_save	1132	PROVEN	RedisType.metaSave (= saveKeySlice db key None, #3161): metaSave_of_slice, metaSave_rdbSave (owner premise), metaSave_rdbSave_fails (counterexample to the premise-free statement: owner check), metaSave_stale, save_vkey_meta
+src/redis_type.rs	graphmeta_free	1144	PROVEN	RedisType.metaFree: metaFree_spec
+src/redis_type.rs	graphmeta_aux_load	1154	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
+src/redis_type.rs	wrong_type_compat	1054	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
 graph/src/graph/graph.rs	create_constraint	4622	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
 graph/src/graph/graph.rs	validate_mandatory_constraint	4797	PROVEN	Constraint.mandatory_agrees
 graph/src/graph/graph.rs	validate_unique_constraint	4836	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
@@ -55,15 +55,15 @@ src/serializers/encoder/mod.rs	build_multi_key_payloads	95	PROVEN	Persist.buildM
 src/serializers/encoder/mod.rs	build_payloads	192	PROVEN	Persist.buildPayloads: load_encode, fold_build, buildPayloads_bounds
 src/serializers/decoder/mod.rs	decode_payload_directory	51	PROVEN	Persist.decDir/decDirEntry/St.accepted: decDir_rt (with buildPayloads_accepted, EntryOK.accepted), decDirEntry_refuses, decDir_refuses_cch
 src/serializers/decoder/mod.rs	check_encoding_version	85	PROVEN	Persist.checkVer: checkVer_iff, key_rt_ver, rdbLoad_refuses
-src/serializers/decoder/mod.rs	rdb_load_graph	115	PROVEN	Persist.rdbLoad (version gate checkVer) + rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build; key_rt_ver, rdbLoad_refuses
-src/serializers/decoder/mod.rs	decode_payloads_into_pending	325	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
-src/serializers/decoder/mod.rs	finalize_pending_graph	375	PROVEN	Persist.finalizePG: run_keys, multi_load
-src/serializers/decoder/mod.rs	rebuild_indexes	410	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
-src/serializers/decoder/mod.rs	pipe_load_graph	471	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
-src/serializers/decoder/mod.rs	vec_load_graph	486	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
-src/serializers/decoder/mod.rs	load_graph_from_reader	496	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
-src/redis_type.rs	io_db	79	NOT COVERED	(#3424): not modelled yet
-src/redis_type.rs	RestoreDb::drop	91	NOT COVERED	(#3424): not modelled yet
-src/redis_type.rs	RestoreDb::in_db	98	NOT COVERED	(#3424): not modelled yet
-src/redis_type.rs	RestoreDb::for_each_db	116	NOT COVERED	(#3424): not modelled yet
-src/redis_type.rs	create_graph_virtual_keys	566	NOT COVERED	(#3424): not modelled yet
+src/serializers/decoder/mod.rs	rdb_load_graph	115	PROVEN	Persist.rdbLoad (version gate checkVer) + rdbKey (+ stepKey for key_count > 1; whole DECODE_STATE keyed by (db, graph name): stepKeyDb/runKeysDb): key_rt, run_keys, run_prefix_pending, multi_load (any key order), multi_load_db, runKeysDb_sep, two_dbs_same_name (#2782); key_count 1: key_rt K=1 + fold_build; key_rt_ver, rdbLoad_refuses
+src/serializers/decoder/mod.rs	decode_payloads_into_pending	328	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
+src/serializers/decoder/mod.rs	finalize_pending_graph	378	PROVEN	Persist.finalizePG: run_keys, multi_load
+src/serializers/decoder/mod.rs	rebuild_indexes	413	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
+src/serializers/decoder/mod.rs	pipe_load_graph	474	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/decoder/mod.rs	vec_load_graph	489	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
+src/serializers/decoder/mod.rs	load_graph_from_reader	499	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
+src/redis_type.rs	io_db	79	AXIOMATISED	RedisModule_GetDbIdFromIO (FFI): RedisType.ioDb/ioDb_spec (the db is an input)
+src/redis_type.rs	RestoreDb::drop	92	PROVEN	RedisType.restoreDrop: restoreDrop_spec, inDb_spec, forEachDb_spec (SelectDb = FFI input)
+src/redis_type.rs	in_db	99	PROVEN	RedisType.inDb: inDb_spec (f runs with db selected, original db restored; None when SelectDb fails), inDb_fst
+src/redis_type.rs	for_each_db	117	PROVEN	RedisType.forEachDb/forEachLoop: forEachDb_spec, forEachLoop_spec (f on every non-empty db 0..N-1, N = first failing SelectDb; original db restored; SelectDb/DbSize = FFI inputs)
+src/redis_type.rs	create_graph_virtual_keys	567	PROVEN	RedisType.createGraphVKeys: createVKeys_eq, createVKeys_foldl, save_main, save_vkey, createdKeys_spec

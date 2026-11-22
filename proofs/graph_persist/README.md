@@ -60,8 +60,10 @@ No. `decode_filter_sound`: on load, `decode_with_count` drops any attribute whos
 
 Yes:
 
-- `save_main`, `save_vkey`, `save_single`: SAVE writes the graph's own key plus K − 1 virtual keys holding slices `0..K`, with `key_count = K`;
-- `deleteVKeys_spec`: the virtual keys are deleted afterwards;
+- `save_main`, `save_vkey`, `save_single`: SAVE writes the graph's own key plus K − 1 virtual keys holding slices `0..K`, with `key_count = K`; the virtual keys are created in the graph's own database (`in_db`, `createdKeys_spec`) and `vkey_map` is keyed by `(db, name)`;
+- `save_same_name_two_dbs`, `load_same_name_two_dbs`, `two_dbs_same_name`: two graphs of one name in two databases are each saved, decoded and registered as themselves (#2782: keyed by name, they collided);
+- `rdbSave_owner_mismatch`: a graph key whose `(db, name)` was assigned another graph's slice (a non-UTF-8 key whose lossy name is a split graph's key) is written whole; so `metaSave_rdbSave` needs the owner premise, and `metaSave_rdbSave_fails` shows the premise-free statement is false;
+- `deleteVKeys_spec`: the virtual keys are deleted afterwards, each in its database; `deleteStaleGraphmeta_spec`, `deleteStaleVirtual_spec`: the stale-key sweeps visit every non-empty database (`for_each_db`, `forEachDb_spec`);
 - `onPersistence_spec`: BGSAVE never splits a graph; `onPersistence_strip`: every persistence start strips the telemetry streams;
 - `metaSave_stale`: virtual keys have the `graphmeta` type, and a leftover one writes nothing;
 - `load_main_first`, `load_main_last`: whatever position the graph's own key has in the load order, the registered graph and the key's value end up as the same finished graph.
@@ -87,6 +89,7 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 |---|---|---|
 | `load_encode` | Loading a single-key payload gives exactly the `Graph::restore` arguments of the saved graph, and every truncation is detected | `Persist/RoundTrip.lean` |
 | `multi_load` | A graph saved across K ≥ 2 keys, loaded in any key order, finalizes once, at the last key, to the same graph | `Persist/MultiLoad3.lean` |
+| `multi_load_db`, `two_dbs_same_name` | The same on the whole `DECODE_STATE` keyed by `(db, name)`: other graphs' keys, interleaved, do not touch it, even one of the same name in another database | `Persist/MultiDb.lean` |
 | `multi_key_tiles`, `multi_key_bound`, `multi_key_all_placed`, `multi_key_matrices` | The multi-key layout puts each entity in exactly one key, in order, within the size limit, with matrices on key 0 only | `Persist/MultiKey.lean` |
 | `decOne_encode` | Every scalar property value round-trips through the v19 codec | `Codec.lean` |
 | `roaring_roundtrip`, `encoded_len_mult8` | The deleted-id bitmap round-trips; its encoding is 8 bytes per id | `Layout.lean` |
@@ -94,6 +97,7 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 | `rebuild_calls`, `rebuild_entity`, `rebuild_meta_first` | Indexes are replayed after load with the right fields, entity type and full-text options | `Persist/Indexes.lean` |
 | `save_main`, `save_vkey`, `deleteVKeys_spec`, `onPersistence_spec` | SAVE writes the graph key plus K − 1 virtual keys and deletes them afterwards; BGSAVE never splits | `RedisType/VKeys.lean`, `RedisType/AuxData.lean` |
 | `load_main_first`, `load_main_last` | Whatever the load order, the registered graph is the finished graph | `RedisType/Load.lean` |
+| `inDb_spec`, `forEachDb_spec` | `in_db` runs its body with the db selected and restores the original; `for_each_db` visits every non-empty db | `RedisType/Db.lean` |
 | `aux_roundtrip` | UDF libraries round-trip through the RDB aux fields | `RedisType/AuxData.lean` |
 | `uuid_counter_distinct`, `counter_field_bijective` | Virtual-key names differ whenever their counters differ mod 2^48, whatever the clock | `RedisType/Uuid.lean` |
 | `countCheck_in_bounds` | The deleted-id decoder's checks keep every 8-byte read in bounds, whatever `count` the payload claims | `Layout.lean` |
@@ -141,11 +145,14 @@ Recorded but not bugs:
 | `Persist/KeyRT.lean` | One key of a multi-key graph reads back its slices (`key_rt`) |
 | `Persist/Pending.lean` | The `DECODE_STATE` machine for one multi-key graph (`run_keys`) |
 | `Persist/MultiLoad.lean`, `MultiLoad2.lean`, `MultiLoad3.lean` | The parts of `multi_load` |
+| `Persist/MultiDb.lean` | `DECODE_STATE` keyed by `(db, graph name)` (`multi_load_db`) |
 | `Persist/Indexes.lean` | `rebuild_indexes` |
 | `RedisType.lean` | Imports the `RedisType/` modules |
 | `RedisType/AuxData.lean` | Aux fields (UDF libraries), persistence events, the fork hook, `graphmeta` stubs |
 | `RedisType/Uuid.lean` | `uuid_v4` and virtual-key names |
-| `RedisType/VKeys.lean` | Virtual keys on save, `graph_rdb_save`, the stale-key sweeps |
+| `RedisType/Db.lean` | `io_db`, `in_db`, `for_each_db`, `RestoreDb` |
+| `RedisType/VKeys.lean` | Virtual keys on save (`create_virtual_keys`, `create_graph_virtual_keys`), `graph_rdb_save`, `save_key_slice` |
+| `RedisType/Sweep.lean` | `scan_keys_by_type` and the stale-key sweeps |
 | `RedisType/Load.lean` | `graph_rdb_load`, placeholders, `finalize_pending_graphs`, `CACHE_SIZE` on load |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -153,14 +160,14 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 63 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (16), the decoder (9), the encoder (7), `graph.rs` (4).
+`COVERAGE.tsv` has 68 rows: `redis_type.rs` (32), `graphblas/serialization.rs` (16), the decoder (9), the encoder (7), `graph.rs` (4).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 54 |
-| AXIOMATISED | 9 |
+| PROVEN | 58 |
+| AXIOMATISED | 10 |
 
-- **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`).
+- **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `io_db` (`RedisModule_GetDbIdFromIO`); `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`).
 - **Not rows of this ledger:** the `MvccGraph` functions (`new`, `from_graph`, `read`, `fork`, `commit`, `is_stale`, `prepare`, `publish`, `drop`) are PROVEN rows of [`../versioned_matrix`](../versioned_matrix); this project's `Mvcc.lean` models the load-publish and fork-commit entry points sequentially, which excludes races between writers; those are covered by [`../search_concurrency`](../search_concurrency). `bash proofs/coverage.sh` counts each function once, in its best bucket.
 
 ## What the model does not cover

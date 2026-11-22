@@ -193,6 +193,55 @@ the retry loop must not spend its whole budget on a permanent engine fault. -/
 theorem attempt_invalid : attempt false none (some .invalid) = some .invalid := rfl
 theorem attempt_stale : attempt false none (some .stale) = some .stale := rfl
 
+/-- Where `attempt_settle` announces (#2782): `(database, key)`. The detached context starts in
+`orig`; `loc` is `registered_location(graph)`, `selOk` whether `SelectDb` into its database
+succeeded, `holds k` whether key `k` (in the selected database) holds the graph. The
+database is the graph's own when it could be selected; the key is the command's `key`
+unless it no longer holds the graph and the registered name does. -/
+def announceTarget (orig : Nat) (loc : Option (Nat × List Char)) (selOk : Bool)
+    (holds : List Char → Bool) (key : List Char) : Nat × List Char :=
+  match loc with
+  | some (db, name) =>
+    if selOk then
+      if !holds key && holds name then (db, name) else (db, key)
+    else (orig, key)
+  | none => (orig, key)
+
+/-- A registered graph whose database could be selected is announced in that database —
+not in the context's default database 0. -/
+theorem announce_in_graph_db (orig db : Nat) (name key : List Char) (holds : List Char → Bool) :
+    (announceTarget orig (some (db, name)) true holds key).1 = db := by
+  simp only [announceTarget, if_true]; split <;> rfl
+
+/-- A key that still holds the graph is never replaced (a lossy name cannot steal it). -/
+theorem announce_keeps_holding_key (orig : Nat) (loc : Option (Nat × List Char)) (ok : Bool)
+    (holds : List Char → Bool) (key : List Char) (h : holds key = true) :
+    (announceTarget orig loc ok holds key).2 = key := by
+  unfold announceTarget; split
+  · split
+    · simp [h]
+    · rfl
+  · rfl
+
+/-- The announced key is replaced only by one that holds the graph. -/
+theorem announce_replaced_holds (orig : Nat) (loc : Option (Nat × List Char)) (ok : Bool)
+    (holds : List Char → Bool) (key : List Char)
+    (h : (announceTarget orig loc ok holds key).2 ≠ key) :
+    holds (announceTarget orig loc ok holds key).2 = true := by
+  unfold announceTarget at *
+  rcases loc with _ | ⟨db, name⟩
+  · exact absurd rfl h
+  · cases ok
+    · exact absurd rfl h
+    · by_cases hc : (!holds key && holds name) = true
+      · simp only [if_true, hc]; simp at hc; exact hc.2
+      · simp only [if_true, hc] at h; exact absurd rfl h
+
+/-- `SelectedDb` puts the context's database back when the attempt ends. -/
+def announceRestores (orig : Nat) (ok : Bool) : Nat := (Telemetry.inDb orig ok ()).2
+theorem announce_restores (orig : Nat) (ok : Bool) : announceRestores orig ok = orig :=
+  Telemetry.inDb_restores orig ok ()
+
 /-- The retry loop on a list of attempt outcomes, with `budget` retries left before the
 deadline: returns the number of attempts and whether it settled. -/
 def settle : List (Option Abort) → Nat → Nat × Bool
@@ -453,10 +502,10 @@ theorem discardCreated_admitted (m : Bool) (ks : List Char → Option Nat) (reg 
   simp [discardCreated, GraphCore.keyOfWrite_admitted m ks reg g n h]
 
 /-- Worker, graph renamed: the renamed key is deleted, not whatever now sits at the old one. -/
-theorem discardCreated_renamed (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n r : List Char)
-    (ha : ks n ≠ some g) (hr : reg.find? (·.2 = g) = some (r, g)) (hn : ks r = some g) :
-    discardCreated false ks reg g n = discardOps n r := by
-  simp [discardCreated, GraphCore.keyOfWrite_renamed ks reg g n r ha hr hn]
+theorem discardCreated_renamed (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n : List Char)
+    (e : GraphCore.Ent) (ha : ks n ≠ some g) (hr : reg.get g = some e) (hn : ks e.name = some g) :
+    discardCreated false ks reg g n = discardOps n e.name := by
+  simp [discardCreated, GraphCore.keyOfWrite_renamed ks reg g n e ha hr hn]
 
 /-- Worker, no key holds the graph (flushed, deleted, moved): nothing is deleted. -/
 theorem discardCreated_unheld (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n : List Char)
