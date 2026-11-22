@@ -1370,6 +1370,7 @@ void test_effectsV3Group_singleTypeCCHDoesNotStripOptions(void) {
 	SIValue opts = SI_Map(2);
 	Map_Add(&opts, SI_ConstStringVal("stopwords"), sw);
 	Map_Add(&opts, SI_ConstStringVal("language"), SI_ConstStringVal("english"));
+	SIArray_Free(sw);  // Map_Add clones it (map.c:157)
 
 	// a fulltext index on the SAME relationship type, in the same payload
 	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_EDGE, 2,
