@@ -1,9 +1,9 @@
 file	function	line	bucket	lean_name_or_reason
 graph/src/runtime/runtime.rs	deref	141	PROVEN	QueryGraph.GraphRef.deref: deref_spec (both arms deref to the graph they hold); graph_deref/graph_same_result (whatever graph() returns derefs to Rt.cur). Re-targeted to #3683 (08616ec29); Cell.deref (HeldRead) is history
-graph/src/runtime/runtime.rs	get_variables	257	PROVEN	Plan.getVariables/nodeVars/expand (trait decl): getVariables_spec, getVariables_mem, getVariables_stops, getVariables_sibling
-graph/src/runtime/runtime.rs	get_variables	268	PROVEN	Plan.getVariables/nodeVars/expand: getVariables_spec, getVariables_mem, getVariables_stops, getVariables_sibling, pre3521_hidden_reported
-graph/src/runtime/runtime.rs	get_return_names	399	PROVEN	Plan.returnNames (trait decl): returnNames_spec
-graph/src/runtime/runtime.rs	get_return_names	403	PROVEN	Plan.returnNames/skipApply: returnNames_spec
+graph/src/runtime/runtime.rs	get_variables	263	PROVEN	Plan.getVariables/nodeVars/expand (trait decl): getVariables_spec, getVariables_mem, getVariables_stops, getVariables_sibling
+graph/src/runtime/runtime.rs	get_variables	274	PROVEN	Plan.getVariables/nodeVars/expand: getVariables_spec, getVariables_mem, getVariables_stops, getVariables_sibling, pre3521_hidden_reported
+graph/src/runtime/runtime.rs	get_return_names	405	PROVEN	Plan.returnNames (trait decl): returnNames_spec
+graph/src/runtime/runtime.rs	get_return_names	409	PROVEN	Plan.returnNames/skipApply: returnNames_spec
 graph/src/runtime/runtime.rs	inspect_batch	449	PROVEN	Plan.inspectBatch: inspectBatch_spec
 graph/src/runtime/runtime.rs	new	471	PROVEN	QueryGraph.new: new_published, new_fork, new_write_iff (write = fork.is_some()), new_inv (never both a published version and a fork), new_cur; Plan.rtNew: rtNew_spec; Misc.checkTimeout_spec (deadline). #3683: QueryGraph::{Published,Fork}; Cell.new/DropOrder/Proto.readNew (HeldRead) are history
 graph/src/runtime/runtime.rs	check_timeout	538	PROVEN	Misc.checkTimeout_spec
