@@ -116,9 +116,9 @@ class testBoundVariables(FlowTestsBase):
                     g.query(f"MATCH (a:n), (b:n) WHERE id(b) = (id(a) * 7 + {k * 5 + 1}) % 60 "
                             f"AND id(a) % {n_types} = {k} CREATE (a)-[:R{k}]->(b)")
                 g.query("MATCH (a:n {id: 'test0'}), (b:n {id: 'test7'}) CREATE (a)-[:R0]->(b), (b)-[:R1]->(a)")
-                # Parallel edges of different types between the same pair: the
-                # hop must still return that pair once.
-                g.query("MATCH (a:n {id: 'test7'}), (b:n {id: 'test0'}) CREATE (a)-[:R2]->(b), (a)-[:R2]->(b)")
+                # Parallel edges between the same pair, of one type and of two
+                # types: the hop must still return that pair once.
+                g.query("MATCH (a:n {id: 'test7'}), (b:n {id: 'test0'}) CREATE (a)-[:R2]->(b), (a)-[:R2]->(b), (a)-[:R1]->(b)")
                 for i in range(0, 60, 7):
                     for tail in ("", "WHERE x.id <> 'none'"):
                         q = (f"MATCH (:n {{id: 'test{i}'}})-[]->(m)<-[]-(x:n) {tail} "

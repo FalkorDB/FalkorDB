@@ -334,8 +334,9 @@ fn empty_edge_iter() -> Iter {
     VersionedMatrix::<bool>::new(0, 0).iter(0, u64::MAX)
 }
 
-/// Most relationship types for which an untyped destination-bound expansion
-/// streams the per-type transposes instead of transposing the adjacency matrix.
+/// The largest number of relationship types for which an untyped,
+/// destination-bound expansion still streams each type's transpose. Beyond
+/// it, the expansion transposes the adjacency matrix once instead.
 const MAX_STREAMED_BWD_TYPES: usize = 16;
 
 /// The transposed (dst → src) pair stream of an untyped or single-type
