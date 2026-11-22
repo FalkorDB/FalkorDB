@@ -93,11 +93,11 @@ theorem writeAt_getElem? (a : List Entry) (off : Nat) (L : List Entry) (h : off 
   have ht : (a.take off).length = off := by simp; omega
   by_cases h1 : k < off
   · rw [List.getElem?_append_left (by simp; omega), List.getElem?_append_left (by omega),
-      List.getElem?_take_of_lt h1, if_neg (by omega)]
+      List.getElem?_take_of_lt h1, ite_eq_right (by omega)]
   · by_cases h2 : k < off + L.length
     · rw [List.getElem?_append_left (by simp; omega), List.getElem?_append_right (by omega), ht,
-        if_pos ⟨by omega, h2⟩]
-    · rw [List.getElem?_append_right (by simp; omega), if_neg (by omega), List.getElem?_drop]
+        ite_eq_left ⟨by omega, h2⟩]
+    · rw [List.getElem?_append_right (by simp; omega), ite_eq_right (by omega), List.getElem?_drop]
       simp only [List.length_append, ht]; congr 1; omega
 
 theorem spanOf_writeAt_frame (a : List Entry) (off : Nat) (L : List Entry) (h : off + L.length ≤ a.length)
@@ -106,7 +106,7 @@ theorem spanOf_writeAt_frame (a : List Entry) (off : Nat) (L : List Entry) (h : 
   apply List.ext_getElem?; intro k
   rw [spanOf_getElem?, spanOf_getElem?]
   split
-  · rw [writeAt_getElem? a off L h]; rw [if_neg (by omega)]
+  · rw [writeAt_getElem? a off L h]; rw [ite_eq_right (by omega)]
   · rfl
 
 theorem spanOf_writeAt_self (a : List Entry) (off : Nat) (L : List Entry) (h : off + L.length ≤ a.length) :
@@ -114,7 +114,7 @@ theorem spanOf_writeAt_self (a : List Entry) (off : Nat) (L : List Entry) (h : o
   apply List.ext_getElem?; intro k
   rw [spanOf_getElem?]; simp only
   split
-  · rw [writeAt_getElem? a off L h, if_pos (by omega)]; congr 1; omega
+  · rw [writeAt_getElem? a off L h, ite_eq_left (by omega)]; congr 1; omega
   · rw [List.getElem?_eq_none (by omega)]
 
 theorem spanOf_append_frame (a L : List Entry) (s : Slot) (h : s.len = 0 ∨ s.off + s.len ≤ a.length) :
@@ -203,10 +203,10 @@ theorem disj_set (b : CB) (h : CInv b) (i : Nat) (hi : i < b.slots.length) (x : 
   intro p q hpq
   rw [e p, e q]
   by_cases hp : p = i
-  · subst hp; rw [if_pos rfl, if_neg (Ne.symm hpq)]; exact hx q (Ne.symm hpq)
+  · subst hp; rw [ite_eq_left rfl, ite_eq_right (Ne.symm hpq)]; exact hx q (Ne.symm hpq)
   · by_cases hq : q = i
-    · subst hq; rw [if_neg hp, if_pos rfl]; exact apart_symm (hx p hp)
-    · rw [if_neg hp, if_neg hq]; exact h.disj p q hpq
+    · subst hq; rw [ite_eq_right hp, ite_eq_left rfl]; exact apart_symm (hx p hp)
+    · rw [ite_eq_right hp, ite_eq_right hq]; exact h.disj p q hpq
 
 /-- **`freeSpanC_ok`**: `free_span` empties slot `i`, leaves every other span
 as it was, and keeps `CInv`. -/
@@ -215,9 +215,9 @@ theorem freeSpanC_ok (b : CB) (h : CInv b) (i : Nat) (hi : i < b.slots.length) :
       (∀ j, j ≠ i → span (freeSpanC b i) j = span b j) ∧ (freeSpanC b i).slots.length = b.slots.length := by
   unfold freeSpanC
   by_cases hc : (slotAt b i).cap = 0
-  · rw [if_pos hc]
+  · rw [ite_eq_left hc]
     exact ⟨h, by simp [span, spanOf, cap0_len0 b h i hc], fun _ _ => rfl, rfl⟩
-  · rw [if_neg hc]
+  · rw [ite_eq_right hc]
     have hsl := Arena.slot_slack_le h.arena hi
     have ha := h.arena.arena_eq
     have hs := h.arena.slack_eq

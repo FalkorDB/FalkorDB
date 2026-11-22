@@ -72,7 +72,7 @@ theorem wait_latch_mono (v : BVM) (h : v.dp.fold = true) : (wait v).dp.fold = tr
 /-- When `wait` runs, both counters are exact afterwards. -/
 theorem wait_exact (v : BVM) (h : (v.dp.layer.synced && v.dm.layer.synced) = false) :
     Exact (wait v).dp ∧ Exact (wait v).dm := by
-  unfold wait; rw [if_neg (by simp [h])]
+  unfold wait; rw [ite_eq_right (by simp [h])]
   constructor
   · show (latch _ _).count = nvals (latch _ _).layer
     rw [latch_layer]; unfold latch; split <;> rfl

@@ -62,7 +62,7 @@ fn branch_output_variables(
 ) -> Option<HashSet<u32>> {
     // A copy is `(read from, written to)`: a later reader finds it in the
     // written-to slot. The same-clause WHERE / ORDER BY reads it there, but no
-    // later clause can name it, so `visible_variables` leaves copies out.
+    // later clause can name it, so `branch_visible_variables` leaves copies out.
     let copied = |copies: &[(Variable, Variable)]| -> Vec<u32> {
         if include_copies {
             copies.iter().map(|(_, v)| v.id).collect()
@@ -96,7 +96,7 @@ fn branch_output_variables(
 /// `Project`/`Aggregate`, which only exposes the variables it names (ids are
 /// per scope, so a hidden variable's id may belong to a different variable
 /// further up). A `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer` contributes only its first child.
-fn visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
+fn branch_visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
     if let Some(outputs) = branch_output_variables(node, false) {
         return outputs;
     }
@@ -113,9 +113,29 @@ fn visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
         usize::MAX
     };
     for child in node.children().take(output_children) {
-        vars.extend(visible_variables(&child));
+        vars.extend(branch_visible_variables(&child));
     }
     vars
+}
+
+/// Operators that change the graph (or its schema) when they run.
+///
+/// A `Filter` is never moved below one of these, nor into a branch that
+/// feeds a sibling subtree containing one: the write must still happen for
+/// every row that reaches it, whatever a later `WHERE` says.
+const fn is_write(ir: &IR) -> bool {
+    matches!(
+        ir,
+        IR::Create(_)
+            | IR::Merge { .. }
+            | IR::Delete { .. }
+            | IR::Set(_)
+            | IR::Remove(_)
+            | IR::Commit
+            | IR::ForEach { .. }
+            | IR::CreateIndex { .. }
+            | IR::DropIndex { .. }
+    )
 }
 
 /// Pushes filter conjuncts down through nodes.
@@ -157,9 +177,15 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let filter = filter.clone();
                 let child_idx = child.idx();
 
-                // Flatten conjuncts from both filters
+                // Flatten conjuncts from both filters. The child's conjuncts run first:
+                // it was evaluated first before the merge, and `And` stops at
+                // the first false conjunct, so a conjunct pushed down onto it
+                // must still be guarded by it (`n.v <> 1` before
+                // `1 / (n.v - 1) = 0`, or the merge raises "Division by zero").
+                // A `null` verdict does not stop `And`, here or in a single
+                // `WHERE a AND b`: the merged filter behaves like that one.
                 let mut conjuncts: Vec<DynTree<ExprIR<Variable>>> = vec![];
-                for f in [&filter, &child_filter] {
+                for f in [&child_filter, &filter] {
                     if matches!(f.root().data(), ExprIR::And) {
                         conjuncts.extend(f.root().children().map(|c| c.clone_as_tree()));
                     } else {
@@ -205,6 +231,12 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         IR::Project { .. }
                             | IR::Aggregate { .. }
                             | IR::Merge { .. }
+                            | IR::Create(_)
+                            | IR::Delete { .. }
+                            | IR::Set(_)
+                            | IR::Remove(_)
+                            | IR::Commit
+                            | IR::ForEach { .. }
                             | IR::Argument(_)
                             | IR::IncludePending { .. }
                             | IR::SemiApply
@@ -224,6 +256,18 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                     children.push((grandchild.idx(), vars, resets_env));
                 }
             }
+
+            // A branch is locked when a sibling subtree writes: filtering that
+            // branch would starve the write of rows it must see (an `Apply`
+            // runs its right side once per left row), e.g. `CALL { CREATE () }
+            // MATCH () WHERE false` must still create its node.
+            let holds_write: Vec<bool> = children
+                .iter()
+                .map(|(i, ..)| subtree_contains(optimized_plan, *i, is_write))
+                .collect();
+            let locked: Vec<bool> = (0..children.len())
+                .map(|i| holds_write.iter().enumerate().any(|(j, w)| *w && j != i))
+                .collect();
 
             // Compute inherited variables from Apply context.
             // When Apply propagates bound variables via Argument leaves,
@@ -284,7 +328,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         };
                         if !filter_in_left {
                             let left = parent.child(0);
-                            inherited.extend(visible_variables(&left));
+                            inherited.extend(branch_visible_variables(&left));
                         }
                         break;
                     }
@@ -317,7 +361,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let conj_vars = collect_expr_variables(&conjunct);
                 let mut matched_any = false;
                 for (i, (_, child_vars, _)) in children.iter().enumerate() {
-                    if conj_vars.iter().all(|v| child_vars.contains(v)) {
+                    if !locked[i] && conj_vars.iter().all(|v| child_vars.contains(v)) {
                         child_conjuncts[i].push(conjunct.clone());
                         matched_any = true;
                     }
@@ -333,6 +377,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             // CP wrapped with that conjunct as a filter.
             if !remaining.is_empty()
                 && child_conjuncts.iter().all(Vec::is_empty)
+                && !holds_write.contains(&true)
                 && let Some(filter_child) = optimized_plan.node(idx).get_child(0)
                 && matches!(filter_child.data(), IR::CartesianProduct)
                 && filter_child.num_children() > 2
@@ -583,5 +628,42 @@ mod tests {
                 "= property(p) a 1",
             ]],
         );
+    }
+    /// A `WHERE` after a `CALL {}` that writes must not reach the rows feeding
+    /// the write: the `Apply` runs its right side once per left row, so a
+    /// filter on the left starves the write (#748, #997).
+    #[test]
+    fn filter_never_lands_on_the_input_of_a_write() {
+        for query in [
+            "CALL { CREATE () } UNWIND 0 AS x MATCH () WHERE false RETURN 0",
+            "WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0",
+        ] {
+            let _ = crate::runtime::functions::init_functions();
+            let mut parser = Parser::new(query);
+            parser.parse_parameters().expect("parse parameters");
+            let raw = parser.parse().expect("parse");
+            let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+            let mut plan = Planner::new(scope_vars).plan(ir);
+            push_filters_down(&mut plan);
+
+            for idx in plan.root().indices::<Bfs>() {
+                let node = plan.node(idx);
+                if !matches!(node.data(), IR::Apply) || node.num_children() != 2 {
+                    continue;
+                }
+                let writes = node
+                    .child(1)
+                    .indices::<Bfs>()
+                    .any(|i| super::is_write(plan.node(i).data()));
+                let filtered_input = node
+                    .child(0)
+                    .indices::<Bfs>()
+                    .any(|i| matches!(plan.node(i).data(), IR::Filter(_)));
+                assert!(
+                    !(writes && filtered_input),
+                    "a Filter sits on the input of a write in {query}"
+                );
+            }
+        }
     }
 }

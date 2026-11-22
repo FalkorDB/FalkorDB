@@ -617,7 +617,7 @@ theorem buildPath_length (rf : Nat → Nat → Option Nat) :
       obtain ⟨r, hr'⟩ := Option.isSome_iff_exists.mp (hr a b)
       simp only [buildPath, hr', Option.map_some, Option.toList_some, List.cons_append,
         List.length_cons] at this ⊢
-      simp only [List.nil_append, List.length_cons] at this ⊢
+      simp only [List.nil_append] at this ⊢
       omega
 
 end FalkorExpr.BFS

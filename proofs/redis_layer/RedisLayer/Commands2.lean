@@ -1,19 +1,21 @@
 import RedisLayer.Commands
 import RedisLayer.ModuleInit
 import RedisLayer.Telemetry
+import RedisLayer.GraphCore
 /-!
 # Constraint, record, copy, bulk and config-get handlers (`src/commands/*.rs`, `origin/main`)
 
 | here | there |
 | --- | --- |
 | `validIdent`              | `constraint.rs` `is_valid_identifier` `:19` |
-| `consArgs`, `string2ll`   | `graph_constraint` argument parsing `:415-511`; `parse_integer` = `RedisModule_StringToLongLong` = Redis `string2ll` (util.c) |
+| `consArgs`, `string2ll`   | `graph_constraint` `:384`, argument parsing `:388-475`; `parse_integer` = `RedisModule_StringToLongLong` = Redis `string2ll` (util.c) |
 | `registerSchema`          | `register_constraint_schema` `:63` |
 | `findStatus`              | `find_status` `:82` |
-| `settle`, `attempt`       | `settle_constraint` `:171`, `attempt_settle` `:282` |
-| `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:173` |
+| `settle`, `attempt`       | `settle_constraint` `:178`, `attempt_settle` `:284` |
+| `applyCons`, `consWorker` | `apply_constraint` `:599`; `graph_constraint` pool path `:547-585` (#3819) |
+| `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:180` |
 | `copyOut`                 | `copy.rs` `graph_copy` `:27` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
-| `bulkFlow`, `heldReplicate`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:218-1045` |
+| `bulkFlow`, `heldReplicate`, `heldRekey`, `bulkArgv`, `discardCreated`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:247-1125` (#3863: `discard_created_graph` `:296`, `HeldArgs::rekey` `:396`, the worker's `key_of_write` `:1026`) |
 | `getNames`, `getOne`, `asI64`, `asU64` | `config_cmd.rs` `config_get_one` `:57`, `ConfigValue::as_i64/as_u64` `:294-306` |
 -/
 namespace RedisLayer.Commands
@@ -242,6 +244,81 @@ theorem settle_permanent (os : List (Option Abort)) (b : Nat) :
     settle (some .invalid :: os) b = (1, false) :=
   ⟨rfl, rfl, rfl⟩
 
+/-! ### Applying (`apply_constraint` :599, the pool path of `graph_constraint` :547-585, #3819) -/
+
+/-- What `apply_constraint` does: its reply (`PENDING`/`OK` or an error message), whether it
+spawns the validation thread, and whether it announces (replicates a `GRAPH.EFFECT`). -/
+structure ApplyOut where
+  reply : Except String String
+  spawn : Bool
+  announce : Bool
+  deriving DecidableEq, Repr
+
+/-- `apply_constraint` (:599-766). `result` is `create_constraint` (`Ok needs_background_validation`)
+or `drop_constraint` (`Ok false`); `commit` is `tg.graph.commit`'s refusal, passed on by
+`map_err(WriteAbort::from)?` (`abortMsg` = `WriteAbort`'s `Display`); `statusFound` is
+`find_status` read back on an inline create; `buildOk` is `build_constraint`. -/
+def applyCons (abortMsg : Abort → String) (isCreate isReplayed : Bool)
+    (result : Except String Bool) (commit : Option Abort) (statusFound buildOk : Bool) : ApplyOut :=
+  match result with
+  | .ok bg =>
+    match commit with
+    | some a => ⟨.error (abortMsg a), false, false⟩
+    | none =>
+      ⟨.ok (if isCreate then "PENDING" else "OK"), bg,
+       !isReplayed && (!isCreate || bg || statusFound) && buildOk⟩
+  | .error e =>
+    if isReplayed && e == "Constraint already exists" then ⟨.ok "OK", false, false⟩
+    else ⟨.error e, false, false⟩
+
+/-- A replayed command (v2-era AOF) never announces. -/
+theorem applyCons_replayed_silent (m : Abort → String) (c : Bool) (r : Except String Bool)
+    (k : Option Abort) (s b : Bool) : (applyCons m c true r k s b).announce = false := by
+  unfold applyCons; split <;> (try split) <;> (try split) <;> rfl
+/-- A refused commit replies the abort and neither spawns nor announces. -/
+theorem applyCons_commit_refused (m : Abort → String) (c p : Bool) (bg : Bool) (a : Abort)
+    (s b : Bool) : applyCons m c p (.ok bg) (some a) s b = ⟨.error (m a), false, false⟩ := rfl
+/-- The second copy of a v2-era AOF pair loads as `OK`. -/
+theorem applyCons_aof_duplicate (m : Abort → String) (c : Bool) (k : Option Abort) (s b : Bool) :
+    (applyCons m c true (.error "Constraint already exists") k s b).reply = .ok "OK" := rfl
+/-- A committed create replies `PENDING`, a drop `OK`; a validated create spawns the thread. -/
+theorem applyCons_ok (m : Abort → String) (c p bg s b : Bool) :
+    (applyCons m c p (.ok bg) none s b).reply = .ok (if c then "PENDING" else "OK") ∧
+    (applyCons m c p (.ok bg) none s b).spawn = bg := ⟨rfl, rfl⟩
+
+/-- The pool path of `graph_constraint` (:547-585): the reply, and whether the key is
+signalled modified. `upgrade` is `upgrade_to_write`'s abort, `keyHolds` is
+`key_holds_graph` on the key holding the graph (`Telemetry.keyHolds`), `apply` is
+`applyCons` under the write lock. `must_run_inline` contexts call `apply` directly (:528-531). -/
+def consWorker (abortMsg : Abort → String) (upgrade : Option Abort) (keyHolds : Bool)
+    (apply : ApplyOut) : ApplyOut × Bool :=
+  match upgrade with
+  | some a => (⟨.error (abortMsg a), false, false⟩, false)
+  | none =>
+    if keyHolds then (apply, match apply.reply with | .ok _ => true | .error _ => false)
+    else (⟨.error (abortMsg .unregistered), false, false⟩, false)
+
+/-- Nothing is applied, announced or signalled unless the write lock was taken and the
+addressed key still holds the graph (no announcement for a moved/flushed key). -/
+theorem consWorker_announce (m : Abort → String) (u : Option Abort) (k : Bool) (a : ApplyOut)
+    (h : (consWorker m u k a).1.announce = true) : u = none ∧ k = true ∧ a.announce = true := by
+  unfold consWorker at h; split at h
+  · simp at h
+  · split at h
+    · rename_i hk; exact ⟨rfl, hk, h⟩
+    · simp at h
+/-- The key is signalled modified exactly when the constraint was applied with an `Ok` reply. -/
+theorem consWorker_signal (m : Abort → String) (u : Option Abort) (k : Bool) (a : ApplyOut) :
+    (consWorker m u k a).2 = true ↔ u = none ∧ k = true ∧ ∃ s, a.reply = .ok s := by
+  unfold consWorker; split
+  · simp
+  · split
+    · rename_i hk; split <;> simp_all
+    · simp_all
+/-- A key that no longer holds the graph is refused as unregistered. -/
+theorem consWorker_key_gone (m : Abort → String) (a : ApplyOut) :
+    consWorker m none false a = (⟨.error (m .unregistered), false, false⟩, false) := rfl
+
 /-! ## GRAPH.RECORD reply shape -/
 
 /-- `record_mut`'s reply: `[records, plan]`, one record `[op_index, ok, payload]` per
@@ -307,7 +384,7 @@ theorem sync_is_yield_without_yields (n r : List Nat) :
       have h2 : noYield BOp.yield = false := rfl
       simp [List.filter, h1, h2]
   unfold processTokens
-  simp only [Bool.false_eq_true, if_false, if_true, List.filter_append]
+  simp only [Bool.false_eq_true, ite_false, ite_true, List.filter_append]
   rw [← h BOp.node n (fun t => by simp), ← h BOp.edge r (fun t => by simp)]
   rfl
 
@@ -319,6 +396,27 @@ def heldReplicate (argv : List String) : Option (String × List String) :=
 
 theorem heldReplicate_verbatim (c : String) (rest : List String) :
     heldReplicate (c :: rest) = some (c, rest) := rfl
+
+/-- `HeldArgs::rekey` (`:396`, #3863): argument 1 (the graph key) is replaced by `key`. -/
+def heldRekey (argv : List String) (key : String) : List String :=
+  match argv with
+  | c :: _ :: rest => c :: key :: rest
+  | _ => argv
+
+/-- The worker's replicated vector (`:1092-1096`): rekeyed only when `key_of_write`'s `live`
+differs from the `admitted` key. -/
+def bulkArgv (admitted live : String) (argv : List String) : List String :=
+  if live ≠ admitted then heldRekey argv live else argv
+
+/-- Not renamed: the client's own arguments, verbatim (as before #3863). -/
+theorem bulkArgv_admitted (a : String) (argv : List String) : bulkArgv a a argv = argv := by
+  simp [bulkArgv]
+
+/-- Renamed: the batch reaches the replica under the key the graph lives at now, the rest of
+the arguments unchanged. -/
+theorem bulkArgv_renamed (a l c k : String) (rest : List String) :
+    heldReplicate (bulkArgv a l (c :: k :: rest)) = some (c, (if l ≠ a then l else k) :: rest) := by
+  unfold bulkArgv; by_cases h : l ≠ a <;> simp [h, heldRekey, heldReplicate]
 
 /-- The publish step of `graph_bulk_insert` (`g.commit_index_docs(&mut docs)`, :830 / :952;
 `BulkIndexDocs::publish` before #3307): bulk only adds, so `node_removes`/`edge_removes` are
@@ -342,11 +440,41 @@ theorem edgeRecords_bound (r : Nat) (rs : List (List (Option Nat))) (out : List 
   unfold edgeRecords at h; split at h; · simp at h
   · cases h; simp; omega
 
-/-- `discard_created_graph`: stream then key. -/
-def discardOps (name : List Char) : List String := ["DEL " ++ String.ofList (Telemetry.streamName name), "delete key"]
+/-- `discard_created_graph`: stream then key. Since #3863 the key deleted is `live`, the one
+`key_of_write` finds holding the graph; the stream stays named after C's `name`. -/
+def discardOps (name live : List Char) : List String :=
+  ["DEL " ++ String.ofList (Telemetry.streamName name), "delete key " ++ String.ofList live]
 
-theorem discardOps_stream_first (n : List Char) :
-    (discardOps n).head? = some ("DEL " ++ String.ofList (Telemetry.streamName n)) := rfl
+/-- `discard_created_graph` (`:296`, #3863): `key_of_write` first; `Err` deletes nothing. -/
+def discardCreated (main : Bool) (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat)
+    (name : List Char) : List String :=
+  match GraphCore.keyOfWrite main ks reg g name with
+  | some live => discardOps name live
+  | none => []
+
+theorem discardOps_stream_first (n l : List Char) :
+    (discardOps n l).head? = some ("DEL " ++ String.ofList (Telemetry.streamName n)) := rfl
+
+/-- Inline (main thread): the addressed key, as before #3863. -/
+theorem discardCreated_main (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n : List Char) :
+    discardCreated true ks reg g n = discardOps n n := by
+  simp [discardCreated, GraphCore.keyOfWrite_main]
+
+/-- Worker, graph still at its key: that key. -/
+theorem discardCreated_admitted (m : Bool) (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat)
+    (n : List Char) (h : ks n = some g) : discardCreated m ks reg g n = discardOps n n := by
+  simp [discardCreated, GraphCore.keyOfWrite_admitted m ks reg g n h]
+
+/-- Worker, graph renamed: the renamed key is deleted, not whatever now sits at the old one. -/
+theorem discardCreated_renamed (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n r : List Char)
+    (ha : ks n ≠ some g) (hr : reg.find? (·.2 = g) = some (r, g)) (hn : ks r = some g) :
+    discardCreated false ks reg g n = discardOps n r := by
+  simp [discardCreated, GraphCore.keyOfWrite_renamed ks reg g n r ha hr hn]
+
+/-- Worker, no key holds the graph (flushed, deleted, moved): nothing is deleted. -/
+theorem discardCreated_unheld (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (n : List Char)
+    (hu : '\uFFFD' ∉ n) (h : ∀ k, ks k ≠ some g) : discardCreated false ks reg g n = [] := by
+  simp [discardCreated, GraphCore.keyOfWrite_unheld ks reg g n hu h]
 theorem maybeYield_null : maybeYield true = [] := rfl
 theorem publishOps_empty : publishOps true true = ["apply_index_writes"] := rfl
 /-- Nothing collected: no RediSearch indexer is called. -/
@@ -360,9 +488,12 @@ theorem publishOps_nonempty (a b : Bool) :
 validated *before* the index documents are published, then committed; a refusal of
 either joins the token error, so a failed `BEGIN` load removes the graph it created
 and no RediSearch document outlives the discarded fork. -/
-def bulkFlow (begin ok : Bool) (valid : Bool := true) : List String :=
-  if ok && valid then ["validate", "publish", "commit", "replicate", "reply"]
-  else (if ok then ["validate"] else []) ++
+/- `keyed` (#3863): the worker's `key_of_write` (`:1026`), asked after escalation and before
+`validate`; `false` = `Err`, the batch is refused. The inline path is on the main thread, where
+`key_of_write` always answers (`GraphCore.keyOfWrite_main`), so it is `true` there. -/
+def bulkFlow (begin ok : Bool) (valid : Bool := true) (keyed : Bool := true) : List String :=
+  if ok && keyed && valid then ["validate", "publish", "commit", "replicate", "reply"]
+  else (if ok && keyed then ["validate"] else []) ++
     ((if begin then ["discard"] else []) ++ ["error"])
 
 theorem bulk_begin_failure_discards : "discard" ∈ bulkFlow true false := by decide
@@ -374,6 +505,17 @@ theorem bulk_invalid_discards : "discard" ∈ bulkFlow true true false ∧ "publ
 /-- Documents are published only after validation and before the commit. -/
 theorem bulk_publish_after_validate :
     bulkFlow true true true = ["validate", "publish", "commit", "replicate", "reply"] := rfl
+/-- #3863: a batch whose graph no key holds any more publishes, commits and replicates
+nothing; a `BEGIN` still runs its (then empty, `discardCreated_unheld`) cleanup. -/
+theorem bulk_unkeyed_refused (b v : Bool) :
+    "publish" ∉ bulkFlow b true v false ∧ "commit" ∉ bulkFlow b true v false ∧
+    "replicate" ∉ bulkFlow b true v false ∧ "error" ∈ bulkFlow b true v false := by
+  cases b <;> cases v <;> decide
+/-- The worker's `keyed` is `key_of_write`'s answer: a flushed/deleted graph is refused. -/
+theorem bulk_flushed_refused (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat) (a : List Char)
+    (b v : Bool) (hu : '\uFFFD' ∉ a) (h : ∀ k, ks k ≠ some g) :
+    bulkFlow b true v (GraphCore.keyOfWrite false ks reg g a).isSome = (if b then ["discard"] else []) ++ ["error"] := by
+  rw [GraphCore.keyOfWrite_unheld ks reg g a hu h]; cases b <;> cases v <;> rfl
 
 /-! ## GRAPH.CONFIG GET (`config_get_one`) -/
 
@@ -382,7 +524,8 @@ def getNames : List String :=
    "THREAD_COUNT", "INDEX_WORKER_THREADS", "RESULTSET_SIZE", "VKEY_MAX_ENTITY_COUNT",
    "MAX_QUEUED_QUERIES", "QUERY_MEM_CAPACITY", "DELTA_MAX_PENDING_CHANGES", "NODE_CREATION_BUFFER",
    "CMD_INFO", "MAX_INFO_QUERIES", "EFFECTS_COMPRESSION", "EFFECTS_THRESHOLD", "BOLT_PORT",
-   "DELAY_INDEXING", "IMPORT_FOLDER", "TEMP_FOLDER", "JS_HEAP_SIZE", "JS_STACK_SIZE"]
+   "DELAY_INDEXING", "IMPORT_FOLDER", "TEMP_FOLDER", "JS_HEAP_SIZE", "JS_STACK_SIZE",
+   "WRITE_LOCK_POLL_INTERVAL"]   -- #3816
 
 /-- Every documented name can be read back… -/
 theorem get_covers_documented : ModuleInit.documented.all (· ∈ getNames) = true := by decide

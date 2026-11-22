@@ -165,7 +165,7 @@ New modules, all `sorry`-free:
 - `Meta`, `IndexM`: `Field` and the `Index` metadata (field map as an association list,
   `field_order` invariant `Inv` preserved by insert/remove/add/retain), RS spec lifecycle
   (`create_rs_index`, `register_fields`, `recreate_index`) with FFI results as parameters.
-- `IndexerM`: `Indexer` (create/drop/remove/lookups/vector metadata/index_info/progress/
+- `IndexerM`: `Indexer` (create/drop/remove_if_empty (#3856: `removeIfEmpty_spec`, `removeIfEmpty_keeps_filled`, `dropIndex_removeIfEmpty_erases`)/lookups/vector metadata/index_info/progress/
   cancel/graph slot/recreate). `createIndex_validates`, `createIndex_ok`, `dropIndex_spec`
   (a well-formed entry never keeps an empty field list), `indexInfo_spec` (sorted permutation).
 - `Iter`: result iterators (`drain_next`), RS refcounting (`RC.not_freed`: no use-after-free
@@ -189,6 +189,12 @@ every range query on `n.s` is built against the fulltext field `s` instead of `r
 (live, ports 18850 Rust / 18851 C). Fix: pick the field with `ty == IndexType::Range`.
 Suspected, unconfirmed: `create_rs_index` returns `Err` on a NUL in a stopword/language/label
 after `RediSearch_CreateIndexOptions` without `RediSearch_FreeIndexOptions` (leak only).
+#3274 fixes that leak by running every `CString::new` (stopwords, language, label) before
+the options block is allocated and freeing it on the unsupported-language return. Side
+effect: the label NUL check now precedes the unsupported-language check, so
+`createRsIndex_lang_err` is false on the new code (`createRsIndex_lang_err_fails`; label
+``L\0`` with `language: 'x'` reports the NUL error instead of `Language is not supported: x`);
+`createRsIndex_lang_err_cleanLabel` proves the message for NUL-free labels.
 
 ## Re-target to 49f698d22 (#3087)
 `Document::set` now adds a `VecF32` only if

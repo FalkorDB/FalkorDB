@@ -66,7 +66,7 @@ def identArm (o : Oracle) (fr : List Nat → Option FnI) (F : Nat) (allow : Bool
   let lp ← opt .lparen
   if lp then
     if name = [nmReduce] then do let t ← reduceP (o.pe allow); pure (t, false)
-    else if name = [nmShortest] then do let t ← shortestP F; pure (t, false)
+    else if name = [nmShortest] then do let t ← shortestP o.pmap F; pure (t, false)
     else if name = [nmAllShortest] then fail
     else match fr name with
       | none => fail
@@ -76,7 +76,7 @@ def identArm (o : Oracle) (fr : List Nat → Option FnI) (F : Nat) (allow : Bool
     let v ← ident
     pure (leaf (.var v), false)
 
-def isPatG : Option (QG Nat) → Bool
+def isPatG : Option (QG Alias) → Bool
   | some g => !g.rels.isEmpty
   | none => false
 
@@ -141,7 +141,7 @@ theorem np_callTail (pe : PE) (hpe : NP pe) (F : Nat) (fi : FnI) : NP (callTail 
 
 theorem np_identArm (fr : List Nat → Option FnI) (F : Nat) (allow : Bool) : NP (identArm o fr F allow) := by
   have := np_dottedP; have := np_reduceP (o.pe allow) (np_pe o ho allow)
-  have := np_shortestP; have := np_callTail o ho (o.pe allow) (np_pe o ho allow)
+  have := np_shortestP o.pmap ho.pmap; have := np_callTail o ho (o.pe allow) (np_pe o ho allow)
   have hs : ∀ s, NP (setS s) := fun _ => ⟨fun _ => by simp⟩
   unfold identArm; np_go
 
