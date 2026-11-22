@@ -51,12 +51,12 @@ graph/src/planner/binder.rs	collect_constant_args	2692	PROVEN	Fold.collectConstA
 graph/src/planner/binder.rs	rewrite_struct_constructor	2710	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
 graph/src/planner/binder.rs	rewrite_compiled_regex	2775	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
 graph/src/planner/binder.rs	replace_agg_subtrees	2809	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
-graph/src/planner/binder.rs	constants_equal	2839	NOT COVERED	(#3236): new function, not proven yet
-graph/src/planner/binder.rs	raw_exprs_structurally_equal	2857	NOT COVERED	(#3236): body changed, not re-proven yet
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2861	NOT COVERED	(#3236): body changed, not re-proven yet
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2865	NOT COVERED	(#3236): body changed, not re-proven yet
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2895	NOT COVERED	(#3236): body changed, not re-proven yet
-graph/src/planner/binder.rs	denotes	2946	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	sorted_scope_vars	2953	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
-graph/src/planner/binder.rs	merge_scope_vars	2961	PROVEN	mergeSV_ge, mergeSV_covers
+graph/src/planner/binder.rs	constants_equal	2843	NOT COVERED	(#3236): new function, not proven yet
+graph/src/planner/binder.rs	raw_exprs_structurally_equal	2858	NOT COVERED	(#3236): body changed, not re-proven yet
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2862	NOT COVERED	(#3236): body changed, not re-proven yet
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2866	NOT COVERED	(#3236): body changed, not re-proven yet
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2896	NOT COVERED	(#3236): body changed, not re-proven yet
+graph/src/planner/binder.rs	denotes	2947	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	sorted_scope_vars	2954	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
+graph/src/planner/binder.rs	merge_scope_vars	2962	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	1018	NOT COVERED	(#3302): not modelled yet

@@ -2833,6 +2833,10 @@ fn replace_agg_subtrees(
     new_tree
 }
 
+/// 2^63: the first float above the `i64` range, and the negation of its first
+/// float below it (`i64::MIN` is exactly `-2^63`).
+const I64_RANGE_BOUND: f64 = 9_223_372_036_854_775_808.0;
+
 /// Whether two constants are the same value. An `Int` and a `Float` match
 /// only when the float is that exact integer: `Value`'s own equality rounds the
 /// integer to `f64`, which would conflate neighbours past 2^53.
@@ -2842,10 +2846,7 @@ fn constants_equal(
 ) -> bool {
     match (a, b) {
         (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => {
-            f.fract() == 0.0
-                && *f >= -9_223_372_036_854_775_808.0
-                && *f < 9_223_372_036_854_775_808.0
-                && *f as i64 == *i
+            f.fract() == 0.0 && *f >= -I64_RANGE_BOUND && *f < I64_RANGE_BOUND && *f as i64 == *i
         }
         _ => a == b,
     }
@@ -2916,7 +2917,7 @@ fn raw_exprs_structurally_equal(
                     quantifier_type: qb,
                     var: vb,
                 },
-            ) => discriminant(qa) == discriminant(qb) && va == vb,
+            ) => qa == qb && va == vb,
             (ExprIR::Reduce(ra), ExprIR::Reduce(rb)) => {
                 ra.accumulator == rb.accumulator && ra.iterator == rb.iterator
             }
