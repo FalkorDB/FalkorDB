@@ -23,6 +23,7 @@
 //      globally wrong
 
 #include "src/effects/effects_v3_group.h"
+#include "src/effects/effects_v3_encode.h"
 #include "src/effects/effects_bytes.h"
 #include "src/util/rmalloc.h"
 
@@ -968,6 +969,79 @@ void test_effectsV3Group_stagedValueIsCopiedFromTheCaller(void) {
 	SIValue_Free(second);
 }
 
+// AN UPDATED EDGE CARRIES NO ENDPOINTS
+//
+// An update-edge record states a relationship type and the edges it touches and
+// nothing else - src and dst are on the wire for create and delete only. So
+// _group_for opens the two endpoint builders for those opcodes alone, and an
+// update-edge group reaches the encoder with them NULL.
+//
+// Nothing covered this: every edge case in this file was a CREATE_EDGE, so the
+// null test guarding the endpoint conversion could be deleted and the suite
+// stayed green.
+//
+// WHAT FAILS HERE IS THE CONVERSION, NOT THE BYTES. EffectsV3UpdateEdge has no
+// src or dst fields at all (effects_v3.h) and the encoder's arm writes none, so
+// stray endpoints have nowhere to appear in the payload. Drop the NULL test
+// from _group_has_endpoints and _group_to_record hands a NULL builder to
+// EffectsV3IdListBuilder_ToIdList, which dereferences it - this test dies on
+// that, before it compares a byte. The byte comparison below is here to pin the
+// record's shape, not to catch the endpoints.
+void test_effectsV3Group_updatedEdgeHasNoEndpoints(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	SIValue v = SI_LongVal(7);
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_EDGE, 42, NULL, 0, 3, 11, v);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+			"one staged edge update is one record, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t got_n = 0;
+	unsigned char *got = _encode(g, &got_n);
+
+	TEST_ASSERT_(got_n >= 4, "payload is %zu bytes, too short to hold a record",
+			got_n);
+	TEST_ASSERT_(_u32(got) == (uint32_t)EFFECT_UPDATE_EDGE,
+			"first record's opcode is %u, expected UPDATE_EDGE (%u)",
+			_u32(got), (uint32_t)EFFECT_UPDATE_EDGE);
+
+	// the same record, built by hand with no endpoint lists
+	EffectsV3IdListBuilder *ib = EffectsV3IdListBuilder_New();
+	EffectsV3IdListBuilder_Push(ib, 42);
+	EffectsV3IdList ids = EffectsV3IdListBuilder_ToIdList(ib);
+
+	AttributeID attr_ids[] = { 11 };
+	SIValue values[] = { SI_LongVal(7) };
+	EffectsV3Record r = { .opcode = EFFECT_UPDATE_EDGE };
+	r.update_edge.count       = 1;
+	r.update_edge.relation_id = 3;
+	r.update_edge.attr_ids    = attr_ids;
+	r.update_edge.n_attrs     = 1;
+	r.update_edge.ids         = ids;
+	r.update_edge.values      = values;
+	r.update_edge.n_values    = 1;
+
+	EffectsBytes *wb = EffectsBytes_New(256);
+	EffectsV3_EncodeRecord(&r, wb);
+	size_t want_n = EffectsBytes_Len(wb);
+	unsigned char *want = malloc(want_n > 0 ? want_n : 1);
+	EffectsBytes_CopyInto(wb, want);
+
+	TEST_ASSERT_(got_n == want_n,
+			"encoded %zu bytes, the endpoint-free record is %zu - a group that "
+			"converted null endpoint builders would be longer", got_n, want_n);
+	TEST_ASSERT_(memcmp(got, want, want_n < got_n ? want_n : got_n) == 0,
+			"bytes differ from the hand-built endpoint-free record");
+
+	EffectsBytes_Free(wb);
+	free(want);
+	EffectsV3IdListBuilder_FreeIdList(&ids);
+	EffectsV3IdListBuilder_Free(ib);
+	free(got);
+	EffectsV3Grouping_Free(g);
+}
+
 TEST_LIST = {
 	{ "EffectsV3Group:attributeOrderDoesNotSplit",
 		test_effectsV3Group_attributeOrderDoesNotSplit },
@@ -997,6 +1071,8 @@ TEST_LIST = {
 		test_effectsV3Group_attributeAnnouncedOncePerPayload },
 	{ "EffectsV3Group:stagedUpdates",
 		test_effectsV3Group_stagedUpdates },
+	{ "EffectsV3Group:updatedEdgeHasNoEndpoints",
+		test_effectsV3Group_updatedEdgeHasNoEndpoints },
 	{ "EffectsV3Group:recordsWithNoEffectAreNotEmitted",
 		test_effectsV3Group_recordsWithNoEffectAreNotEmitted },
 	{ "EffectsV3Group:emptyBlocks",

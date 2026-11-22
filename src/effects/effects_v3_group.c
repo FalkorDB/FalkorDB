@@ -25,8 +25,8 @@
 //      two opcodes, one attribute per call    (at the flush)                |
 //                                                                           |
 //                                                                           v
-//   3  AddSchema / AddAttribute -----------------> Announcement --------> Encode
-//      singular records, no grouping                (emitted FIRST)
+//   3  AddSchema / AddAttribute -------------> EffectsV3Record --------> Encode
+//      singular records, no grouping              (emitted FIRST)
 //
 // PATH 1 normalises on the way IN - labels sorted and deduplicated, attribute
 // ids sorted with their values carried along.
@@ -189,15 +189,6 @@ typedef struct {
 	StagedAttr *attrs;
 } PendingUpdate;
 
-// a schema or attribute announcement, kept in arrival order
-typedef struct {
-	EffectType  opcode;  // ADD_SCHEMA or ADD_ATTRIBUTE
-	SchemaType  schema_type;
-	int         schema_id;
-	AttributeID attr_id;
-	char       *name;    // owned
-} Announcement;
-
 // one slot of the per-entity index; idx1 == 0 means empty
 typedef struct {
 	uint64_t   id;
@@ -232,6 +223,19 @@ typedef struct {
 	// built and destroyed once per payload, and on a single-attribute update
 	// every lookup misses, so allocating and freeing dominates probing.
 	//
+	// NOT util/dict.c, and measured rather than assumed: with keys packed into
+	// the pointer so dict needs no keyDup or keyDestructor - the friendliest
+	// shape it can be given here - dict costs one heap block PER ENTITY against
+	// this table's one per payload (a dictEntry each, dict.c:448), and 5x to
+	// 20x the CYCLES over the same key stream and the same hash in the
+	// 10-to-1,000 entity band a statement touches, narrowing to 2.1x at 100k
+	// where this table turns memory-bound. A one-entity payload is too small to
+	// call either way.
+	//
+	// What dict does NOT cost more of is BYTES: below ~100 entities it holds
+	// fewer than this table does, because the 256-slot floor is 4 KB whatever
+	// the payload turns out to hold. The win here is cycles and block count.
+	//
 	// An INDEX rather than a pointer because 'updates' is reallocated, and
 	// index+1 so zero means empty.
 	UpdateSlot *index;
@@ -246,7 +250,11 @@ struct EffectsV3Grouping {
 
 	// emitted FIRST, because a batched record carries a bare schema or
 	// attribute id and the replica has to have seen the name
-	Announcement *announcements;  // arr
+	// AS RECORDS, not as a struct of their own: an announcement is already a
+	// singular record - ADD_SCHEMA or ADD_ATTRIBUTE, no count and no ids - so a
+	// parallel struct bought nothing but a transcription loop at the exit that
+	// could fill the wrong arm. The 'name' in whichever arm is live is owned
+	EffectsV3Record *announcements;  // arr
 
 	// emitted after them, in key order
 	Group *groups;                // arr
@@ -364,7 +372,13 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	EffectsV3Grouping *g = rm_malloc(sizeof(EffectsV3Grouping));
 
 	g->groups        = arr_new(Group, 4);
-	g->announcements = arr_new(Announcement, 4);
+	// CAPACITY 1, NOT 4: an EffectsV3Record is 192 bytes against the 24 of the
+	// struct this used to hold, so a capacity of four would cost 768 bytes on
+	// EVERY payload - 576 more than this does - to spare a realloc on the rare
+	// one that announces anything.
+	// Most payloads announce nothing at all - a schema or attribute is new only
+	// the first time a query mentions it
+	g->announcements = arr_new(EffectsV3Record, 1);
 	g->last_group    = UINT32_MAX;
 
 	g->staging.updates   = arr_new(PendingUpdate, 4);
@@ -632,8 +646,8 @@ void EffectsV3Grouping_AddEdge
 	}
 }
 
-static Announcement *_new_announcement(EffectsV3Grouping *g) {
-	const Announcement blank = { 0 };
+static EffectsV3Record *_new_announcement(EffectsV3Grouping *g) {
+	const EffectsV3Record blank = { 0 };
 	arr_append(g->announcements, blank);
 	return &arr_tail(g->announcements);
 }
@@ -646,18 +660,18 @@ void EffectsV3Grouping_AddSchema
 	const char *name       // schema name
 ) {
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
-		Announcement *a = g->announcements + i;
-		if(a->opcode == EFFECT_ADD_SCHEMA && a->schema_type == t
-				&& a->schema_id == id) {
+		const EffectsV3Record *a = g->announcements + i;
+		if(a->opcode == EFFECT_ADD_SCHEMA && a->add_schema.schema_type == t
+				&& a->add_schema.schema_id == id) {
 			return;
 		}
 	}
 
-	Announcement *a = _new_announcement(g);
-	a->opcode      = EFFECT_ADD_SCHEMA;
-	a->schema_type = t;
-	a->schema_id   = id;
-	a->name        = rm_strdup(name);
+	EffectsV3Record *a = _new_announcement(g);
+	a->opcode                 = EFFECT_ADD_SCHEMA;
+	a->add_schema.schema_type = t;
+	a->add_schema.schema_id   = id;
+	a->add_schema.name        = rm_strdup(name);
 }
 
 void EffectsV3Grouping_AddAttribute
@@ -671,16 +685,17 @@ void EffectsV3Grouping_AddAttribute
 	// dictionary - so announcing per entity kind would introduce the same id
 	// twice under the same name
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
-		Announcement *a = g->announcements + i;
-		if(a->opcode == EFFECT_ADD_ATTRIBUTE && a->attr_id == id) {
+		const EffectsV3Record *a = g->announcements + i;
+		if(a->opcode == EFFECT_ADD_ATTRIBUTE
+				&& a->add_attribute.attr_id == id) {
 			return;
 		}
 	}
 
-	Announcement *a = _new_announcement(g);
-	a->opcode  = EFFECT_ADD_ATTRIBUTE;
-	a->attr_id = id;
-	a->name    = rm_strdup(name);
+	EffectsV3Record *a = _new_announcement(g);
+	a->opcode                 = EFFECT_ADD_ATTRIBUTE;
+	a->add_attribute.attr_id  = id;
+	a->add_attribute.name     = rm_strdup(name);
 }
 
 static int _cmp_staged_attr(const void *a, const void *b) {
@@ -708,6 +723,20 @@ static inline UpdateSlot *_index_probe
 		i = (i + 1) & m;
 	}
 	return tbl + i;
+}
+
+// empty the table, keeping its allocation
+//
+// A memset rather than a free: this runs once per payload, the table is built
+// and destroyed whole, and on a single-attribute update every lookup misses -
+// so allocating and freeing dominates probing. That teardown cost 14.2% when
+// this was a radix tree; see the Staging comment for how it compares to dict
+static void _staging_index_clear
+(
+	Staging *s  // staging area
+) {
+	memset(s->index, 0, s->index_cap * sizeof(UpdateSlot));
+	s->index_n = 0;
 }
 
 // double the table and reinsert
@@ -978,11 +1007,8 @@ static void _flush_updates(EffectsV3Grouping *g) {
 
 	arr_clear(g->staging.updates);
 
-	// the indices it holds now point past the end of a zero-length array.
-	// Cleared with a memset and the allocation kept - this is the teardown
-	// that cost 14.2% as a radix tree
-	memset(g->staging.index, 0, g->staging.index_cap * sizeof(UpdateSlot));
-	g->staging.index_n = 0;
+	// every slot held an index into the array just emptied
+	_staging_index_clear(&g->staging);
 }
 
 uint32_t EffectsV3Grouping_RecordCount
@@ -1006,6 +1032,109 @@ uint32_t EffectsV3Grouping_RecordCount
 	return n;
 }
 
+// whether this group carries endpoint id lists beside its entity ids
+//
+// SHAPE_EDGE IS BROADER THAN "HAS ENDPOINTS": an update-edge record names a
+// relationship type and the edges it touches, and nothing else - the endpoints
+// are on the wire for create and delete only, so _group_for allocates the two
+// builders for those opcodes alone. Asking the shape would read two null
+// builders on every edge update
+static bool _group_has_endpoints
+(
+	const Group *grp  // group
+) {
+	return _shape_of(grp->opcode) == SHAPE_EDGE &&
+	       grp->shape.edge.src != NULL;
+}
+
+// project a group onto the record it will be encoded as
+//
+// FILLED PER OPCODE, because each owns its arm. A group knows its shape - which
+// halves it carries - but the arm it fills is selected by the opcode, and
+// writing the wrong one is valid C that encodes zeroes.
+static EffectsV3Record _group_to_record
+(
+	const Group *grp,       // group
+	EffectsV3IdList ids,    // its entity ids
+	EffectsV3IdList src,    // its source endpoints, empty unless it has them
+	EffectsV3IdList dst     // its destination endpoints, likewise
+) {
+	EffectsV3Record r = { .opcode = grp->opcode };
+
+	switch(grp->opcode) {
+		case EFFECT_UPDATE_NODE:
+			r.update_node.count    = grp->count;
+			r.update_node.labels   = grp->shape.node.labels;
+			r.update_node.n_labels = grp->shape.node.n_labels;
+			r.update_node.attr_ids = grp->attr_ids;
+			r.update_node.n_attrs  = grp->n_attrs;
+			r.update_node.ids      = ids;
+			break;
+
+		case EFFECT_UPDATE_EDGE:
+			r.update_edge.count       = grp->count;
+			r.update_edge.relation_id = grp->shape.edge.relation_id;
+			r.update_edge.attr_ids    = grp->attr_ids;
+			r.update_edge.n_attrs     = grp->n_attrs;
+			r.update_edge.ids         = ids;
+			break;
+
+		case EFFECT_CREATE_NODE:
+			r.create_node.count    = grp->count;
+			r.create_node.labels   = grp->shape.node.labels;
+			r.create_node.n_labels = grp->shape.node.n_labels;
+			r.create_node.attr_ids = grp->attr_ids;
+			r.create_node.n_attrs  = grp->n_attrs;
+			r.create_node.ids      = ids;
+			break;
+
+		case EFFECT_CREATE_EDGE:
+			r.create_edge.count       = grp->count;
+			r.create_edge.relation_id = grp->shape.edge.relation_id;
+			r.create_edge.attr_ids    = grp->attr_ids;
+			r.create_edge.n_attrs     = grp->n_attrs;
+			r.create_edge.ids         = ids;
+			r.create_edge.src         = src;
+			r.create_edge.dst         = dst;
+			break;
+
+		case EFFECT_DELETE_NODE:
+			r.delete_node.count    = grp->count;
+			r.delete_node.labels   = grp->shape.node.labels;
+			r.delete_node.n_labels = grp->shape.node.n_labels;
+			r.delete_node.ids      = ids;
+			break;
+
+		case EFFECT_DELETE_EDGE:
+			r.delete_edge.count       = grp->count;
+			r.delete_edge.relation_id = grp->shape.edge.relation_id;
+			r.delete_edge.ids         = ids;
+			r.delete_edge.src         = src;
+			r.delete_edge.dst         = dst;
+			break;
+
+		case EFFECT_SET_LABELS:
+			r.set_labels.count    = grp->count;
+			r.set_labels.labels   = grp->shape.node.labels;
+			r.set_labels.n_labels = grp->shape.node.n_labels;
+			r.set_labels.ids      = ids;
+			break;
+
+		case EFFECT_REMOVE_LABELS:
+			r.remove_labels.count    = grp->count;
+			r.remove_labels.labels   = grp->shape.node.labels;
+			r.remove_labels.n_labels = grp->shape.node.n_labels;
+			r.remove_labels.ids      = ids;
+			break;
+
+		default:
+			ASSERT(false && "not a batchable record");
+			break;
+	}
+
+	return r;
+}
+
 void EffectsV3Grouping_Encode
 (
 	EffectsV3Grouping *g,  // accumulator
@@ -1017,20 +1146,7 @@ void EffectsV3Grouping_Encode
 	// announcements first: a bulk record carries a bare id, so the replica has
 	// to have seen the name before anything references it
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
-		const Announcement *a = g->announcements + i;
-		// each opcode fills its own arm now; an announcement is one or the
-		// other, never both, and the record no longer has a shared slot that
-		// would let the wrong one be read
-		EffectsV3Record r = { .opcode = a->opcode };
-		if(a->opcode == EFFECT_ADD_SCHEMA) {
-			r.add_schema.schema_type = a->schema_type;
-			r.add_schema.schema_id   = a->schema_id;
-			r.add_schema.name        = a->name;
-		} else {
-			r.add_attribute.attr_id = a->attr_id;
-			r.add_attribute.name    = a->name;
-		}
-		EffectsV3_EncodeRecord(&r, out);
+		EffectsV3_EncodeRecord(g->announcements + i, out);
 	}
 
 	// RULE 2: sorted by key. A scan finds groups in arrival order, which is a
@@ -1047,94 +1163,19 @@ void EffectsV3Grouping_Encode
 		EffectsV3IdList ids = EffectsV3IdListBuilder_ToIdList(grp->ids);
 		EffectsV3IdList src = { 0 };
 		EffectsV3IdList dst = { 0 };
-		if(_shape_of(grp->opcode) == SHAPE_EDGE &&
-		   grp->shape.edge.src != NULL) {
+		if(_group_has_endpoints(grp)) {
 			src = EffectsV3IdListBuilder_ToIdList(grp->shape.edge.src);
 			dst = EffectsV3IdListBuilder_ToIdList(grp->shape.edge.dst);
 		}
 
-		// FILLED PER OPCODE, because each now owns its arm. A group knows its
-		// shape - which halves it carries - but the arm it fills is selected by
-		// the opcode, and writing the wrong one is valid C that encodes zeroes.
-		EffectsV3Record r = { .opcode = grp->opcode };
-		switch(grp->opcode) {
-			case EFFECT_UPDATE_NODE:
-				r.update_node.count    = grp->count;
-				r.update_node.labels   = grp->shape.node.labels;
-				r.update_node.n_labels = grp->shape.node.n_labels;
-				r.update_node.attr_ids = grp->attr_ids;
-				r.update_node.n_attrs  = grp->n_attrs;
-				r.update_node.ids      = ids;
-				break;
-
-			case EFFECT_UPDATE_EDGE:
-				r.update_edge.count       = grp->count;
-				r.update_edge.relation_id = grp->shape.edge.relation_id;
-				r.update_edge.attr_ids    = grp->attr_ids;
-				r.update_edge.n_attrs     = grp->n_attrs;
-				r.update_edge.ids         = ids;
-				break;
-
-			case EFFECT_CREATE_NODE:
-				r.create_node.count    = grp->count;
-				r.create_node.labels   = grp->shape.node.labels;
-				r.create_node.n_labels = grp->shape.node.n_labels;
-				r.create_node.attr_ids = grp->attr_ids;
-				r.create_node.n_attrs  = grp->n_attrs;
-				r.create_node.ids      = ids;
-				break;
-
-			case EFFECT_CREATE_EDGE:
-				r.create_edge.count       = grp->count;
-				r.create_edge.relation_id = grp->shape.edge.relation_id;
-				r.create_edge.attr_ids    = grp->attr_ids;
-				r.create_edge.n_attrs     = grp->n_attrs;
-				r.create_edge.ids         = ids;
-				r.create_edge.src         = src;
-				r.create_edge.dst         = dst;
-				break;
-
-			case EFFECT_DELETE_NODE:
-				r.delete_node.count    = grp->count;
-				r.delete_node.labels   = grp->shape.node.labels;
-				r.delete_node.n_labels = grp->shape.node.n_labels;
-				r.delete_node.ids      = ids;
-				break;
-
-			case EFFECT_DELETE_EDGE:
-				r.delete_edge.count       = grp->count;
-				r.delete_edge.relation_id = grp->shape.edge.relation_id;
-				r.delete_edge.ids         = ids;
-				r.delete_edge.src         = src;
-				r.delete_edge.dst         = dst;
-				break;
-
-			case EFFECT_SET_LABELS:
-				r.set_labels.count    = grp->count;
-				r.set_labels.labels   = grp->shape.node.labels;
-				r.set_labels.n_labels = grp->shape.node.n_labels;
-				r.set_labels.ids      = ids;
-				break;
-
-			case EFFECT_REMOVE_LABELS:
-				r.remove_labels.count    = grp->count;
-				r.remove_labels.labels   = grp->shape.node.labels;
-				r.remove_labels.n_labels = grp->shape.node.n_labels;
-				r.remove_labels.ids      = ids;
-				break;
-
-			default:
-				ASSERT(false && "not a batchable record");
-				break;
-		}
+		EffectsV3Record r = _group_to_record(grp, ids, src, dst);
 
 		// the values were encoded as they arrived, so they are appended as
 		// bytes rather than re-encoded from SIValues the group no longer holds
 		EffectsV3_EncodeRecordWithRawValues(&r, grp->values, out);
 
 		EffectsV3IdListBuilder_FreeIdList(&ids);
-		if(_shape_of(grp->opcode) == SHAPE_EDGE &&
-		   grp->shape.edge.src != NULL) {
+		if(_group_has_endpoints(grp)) {
 			EffectsV3IdListBuilder_FreeIdList(&src);
 			EffectsV3IdListBuilder_FreeIdList(&dst);
 		}
@@ -1170,8 +1211,28 @@ void EffectsV3Grouping_Free
 		}
 	}
 
+	// THE ARM DECIDES WHICH 'name' IS LIVE. Both arms hold the pointer at the
+	// same offset today, so freeing through either would work by coincidence -
+	// and stop working the moment a field is added ahead of one of them.
+	//
+	// Spelled as a switch and not an if/else: an else would hand a third
+	// announcement opcode to add_attribute's arm, which is the coincidence
+	// above relied on rather than guarded against. The default leaks the name
+	// instead, because leaking a pointer is recoverable and freeing the wrong
+	// one is not
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
-		rm_free(g->announcements[i].name);
+		EffectsV3Record *a = g->announcements + i;
+		switch(a->opcode) {
+			case EFFECT_ADD_SCHEMA:
+				rm_free(a->add_schema.name);
+				break;
+			case EFFECT_ADD_ATTRIBUTE:
+				rm_free(a->add_attribute.name);
+				break;
+			default:
+				ASSERT(false && "announcement is neither schema nor attribute");
+				break;
+		}
 	}
 
 	// anything still staged - an accumulator freed without being encoded
