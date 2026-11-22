@@ -2,7 +2,7 @@
 # runtime_core: Lean 4 model of `graph/src/runtime/runtime.rs`, `runtime/ops/mod.rs` and
 # `runtime/ops/batched_result_emitter.rs`
 
-Build: `lake build` (core Lean 4.35, no Mathlib). No `sorry`/`admit`/`axiom`: the
+Build: `lake build` (core Lean 4.36, no Mathlib). No `sorry`/`admit`/`axiom`: the
 contracts of the stores underneath (attribute/label name tables, attribute store batch
 read, `lookup_sorted`) are explicit theorem hypotheses. Coverage: `COVERAGE.tsv`.
 Rust repros: `graph/tests/lean_runtime_core.rs`
@@ -99,7 +99,7 @@ instantiated; `Instant` arithmetic.
 ## Wave-5 additions
 * `RelAccessors`: relationship reads, pending attribute writes (`setPendingAttr_spec`), typed
   materialisation, `label_id`, endpoints/type lookups (deleted > pending > committed).
-* `Plan`: `get_variables` (BFS walk stopping at the first Project), `get_return_names`,
+* `Plan`: `get_variables` (BFS queue; Project/Aggregate end their subtree, existence checks keep only their input), `get_return_names`,
   `inspect_batch`, `Runtime::new`, delegating accessors, `default_batch`, `run_nested_plan`,
   `build_batch_op` child popping and SKIP/LIMIT/VHJ checks; `children_to_recurse` spec in RunBatch.
 -/

@@ -37,13 +37,14 @@ theorem mergeSV_covers (a b : List (List Var)) (s i : Nat)
     (h : i < lenAt a s ∨ i < lenAt b s) : i < lenAt (mergeSV a b) s := by
   have := mergeSV_ge a b s; omega
 
-/-! ## FOREACH restore (binder.rs:678-709) -/
+/-! ## FOREACH restore (binder.rs:775-796) -/
 
 /-- The restored table: the saved outer table plus every inner entry whose
-id the outer table does not hold, re-keyed `_foreach_{scope}_{id}`. -/
+id the outer table does not hold, re-keyed `_foreach_{scope}_{id}` — or, for a nameless
+variable, pushed unnamed (#3303). -/
 def foreachRestore (saved inner : Env) (scope : Nat) : Env :=
   saved ++ (inner.filter (fun p => !(saved.ids.contains p.2.id))).map
-    (fun p => (s!"_foreach_{scope}_{p.2.id}", p.2))
+    (fun p => if p.2.name.isNone then (Key.un, p.2) else (Key.nm s!"_foreach_{scope}_{p.2.id}", p.2))
 
 /-- When the body only *added* entries, each minted at or above the outer
 size (`inner = saved ++ added`), the restored table holds exactly the inner
@@ -70,7 +71,9 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
     omega
   have hids : (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
     simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
-    simp [Env.ids, List.map_map, Function.comp_def]
+    simp only [Env.ids, List.map_append, List.map_map, Function.comp_def]
+    congr 1
+    apply List.map_congr_left; intro p _; split <;> rfl
   have hlen : (foreachRestore saved (saved ++ added) scope).length = (saved ++ added).length := by
     simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
     simp
@@ -83,11 +86,11 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
 comprehension's sub-plan uses; the cleanup then keeps only the names that
-were there before (and `_anon*`). -/
+were there before (unnamed entries stay, #3303). -/
 def compScope : Env :=
-  [("n", ⟨"n", 0, 0, .node⟩), ("m", ⟨"m", 1, 0, .node⟩), ("r", ⟨"r", 2, 0, .rel⟩)]
+  [("n", ⟨"n", 0, 0, .node, none⟩), ("m", ⟨"m", 1, 0, .node, none⟩), ("r", ⟨"r", 2, 0, .rel, none⟩)]
 
-def compCleaned : Env := compScope.retain (fun k => k == "n" || k.startsWith "_anon")
+def compCleaned : Env := compScope.retain (fun k => k == "n")
 
 /-- **Root cause 2 (comprehensions).** The cleaned table has size 1 while
 ids 1 and 2 are still in the IR: the planner's first two fresh ids in scope
@@ -130,36 +133,24 @@ theorem callBody_union_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen true ≠ s := by
   simp [callBodyScope, unionBranchStack]; omega
 
-/-! ## Label accumulation (binder.rs:1364-1374, 122-154; rollback :1575-1596) -/
+/-! ## Label accumulation (binder.rs:1356-1360, 122-154) -/
 
 inductive LClause
   | match_ (labels : List Name)        -- MATCH (n:L…)
   | optMatch (labels : List Name)      -- OPTIONAL MATCH (n:L…): saved/restored (binder.rs:338-346)
   | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs:2090-2092)
-  | create (labels : List Name)        -- CREATE (n:L)-[..]->(): `with_node_labels_rolled_back(true, ..)`
-                                       -- (:438-441): kept only for a node the CREATE declares (#3049)
-  | comprehension (labels : List Name) -- [(n:L)-->() | …]: `with_node_labels_rolled_back(false, ..)`
-                                       -- (:1954-1956): always restored (#3049)
+  | create (labels : List Name)        -- CREATE (n:L)-[..]->(): not saved
+  | comprehension (labels : List Name) -- [(n:L)-->() | …]: not saved
   | remove (labels : List Name)        -- REMOVE n:L…: `bind_ir` QueryIR::Remove (b84473a7f :477-482)
                                        -- binds the items and leaves `node_labels` alone (#3450)
   deriving Repr, DecidableEq
 
-/-- The accumulated label set of one node variable after the clauses; `bound` is whether
-the variable is already in the current scope (`in_scope` of `with_node_labels_rolled_back`,
-binder.rs:1581-1585): MATCH, OPTIONAL MATCH and CREATE declare it. A CREATE's labels are
-kept only when the CREATE declares the node (the `!in_scope.contains(&key)` arm, :1588-1592);
-a pattern comprehension's are always rolled back. -/
-def accumulateB (bound : Bool) (acc : List Name) : List LClause → List Name
+/-- The accumulated label set of one node variable after the clauses. -/
+def accumulate (acc : List Name) : List LClause → List Name
   | [] => acc
-  | .match_ ls :: r => accumulateB true (acc ++ ls.filter (fun l => !acc.contains l)) r
-  | .create ls :: r =>
-    if bound then accumulateB true acc r
-    else accumulateB true (acc ++ ls.filter (fun l => !acc.contains l)) r
-  | .optMatch _ :: r => accumulateB true acc r
-  | .predicate _ :: r | .comprehension _ :: r | .remove _ :: r => accumulateB bound acc r
-
-/-- From the variable's first clause (not yet in scope). -/
-def accumulate (acc : List Name) (cs : List LClause) : List Name := accumulateB false acc cs
+  | .match_ ls :: r | .create ls :: r | .comprehension ls :: r =>
+    accumulate (acc ++ ls.filter (fun l => !acc.contains l)) r
+  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r => accumulate acc r
 
 /-- `update_all_node_labels` writes the accumulation into the *first* MATCH's
 scan. openCypher: that scan carries the labels of the (non-optional) MATCH
@@ -175,41 +166,12 @@ theorem labels_agree_match_only :
       specScanLabels [.match_ ["A"], .optMatch ["B"], .predicate ["C"], .match_ ["D"]] := by
   decide
 
-theorem accumulateB_true_mem (acc : List Name) (cs : List LClause) (l : Name) :
-    l ∈ accumulateB true acc cs ↔ l ∈ acc ∨ l ∈ specScanLabels cs := by
-  induction cs generalizing acc with
-  | nil => simp [accumulateB, specScanLabels]
-  | cons c r ih =>
-    cases c with
-    | match_ ls =>
-      simp only [accumulateB, specScanLabels, ih, List.mem_append, List.mem_filter]
-      by_cases h1 : l ∈ acc <;> by_cases h2 : l ∈ ls <;> simp [h1, h2]
-    | create ls => simp [accumulateB, specScanLabels, ih]
-    | optMatch ls => simp [accumulateB, specScanLabels, ih]
-    | predicate ls => simp [accumulateB, specScanLabels, ih]
-    | comprehension ls => simp [accumulateB, specScanLabels, ih]
-    | remove ls => simp [accumulateB, specScanLabels, ih]
-
-/-- **#3049 (fixes W2-binder-6, formerly `labels_leak`).** For a node a MATCH binds, the
-accumulated set stamped on its scan holds exactly the labels of the MATCH clauses, whatever
-CREATE, pattern comprehension, OPTIONAL MATCH, predicate or REMOVE clauses follow. -/
-theorem scanLabels_match_only (ls : List Name) (cs : List LClause) (l : Name) :
-    l ∈ accumulate [] (.match_ ls :: cs) ↔ l ∈ specScanLabels (.match_ ls :: cs) := by
-  simp only [accumulate, accumulateB, accumulateB_true_mem, specScanLabels, List.mem_append,
-    List.mem_filter]
-  by_cases h : l ∈ ls <;> simp [h]
-
-/-- `MATCH (a) CREATE (a:Z)-[:T]->(:C)` scans `(a)`, and `MATCH (a) RETURN [(a:A)-->(b) | b.v]`
-scans `(a)` (before #3049: `(a:Z)` and `(a:A)`). -/
-theorem labels_no_leak :
-    accumulate [] [.match_ [], .create ["Z"]] = [] ∧ specScanLabels [.match_ [], .create ["Z"]] = [] ∧
-    accumulate [] [.match_ [], .comprehension ["A"]] = [] ∧
+/-- **Root cause 5.** `MATCH (a) CREATE (a:Z)-[:T]->(:C)` scans `(a:Z)`, and
+`MATCH (a) RETURN [(a:A)-->(b) | b.v]` scans `(a:A)`. -/
+theorem labels_leak :
+    accumulate [] [.match_ [], .create ["Z"]] = ["Z"] ∧ specScanLabels [.match_ [], .create ["Z"]] = [] ∧
+    accumulate [] [.match_ [], .comprehension ["A"]] = ["A"] ∧
       specScanLabels [.match_ [], .comprehension ["A"]] = [] := by
-  decide
-
-/-- A node the CREATE declares keeps its labels (so a later `MERGE (a:Y)` still sees them). -/
-theorem create_new_node_keeps_labels :
-    accumulate [] [.create ["Z"]] = ["Z"] ∧ accumulate [] [.optMatch ["A"], .create ["Z"]] = [] := by
   decide
 
 /-! ## UNION column agreement (binder.rs:267-292) -/

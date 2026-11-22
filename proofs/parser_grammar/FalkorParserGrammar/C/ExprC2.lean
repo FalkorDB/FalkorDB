@@ -57,7 +57,7 @@ theorem inlineErr_spec (u : String → Bool) (msg : String) (r : Except String E
 `repeated`: whether some relationship alias was already in it. Since #3289 a repeat does not stop
 the loop (`repeated.get_or_insert(e)`): the parse goes on, and the caller reports it once the whole
 comprehension has parsed. -/
-def pcChain (o : Oracle) (F : Nat) : Nat → QNode Nat → QG Nat × Bool → P (QG Nat × Bool)
+def pcChain (o : Oracle) (F : Nat) : Nat → QNode Alias → QG Alias × Bool → P (QG Alias × Bool)
   | 0, _, _ => fuelP
   | n + 1, left, g => do
     let c ← peek
@@ -193,9 +193,9 @@ def spTypes : Nat → List Nat → P (List Nat)
       spTypes n (acc ++ [t])
     else pure (acc ++ [t])
 
-/-- The edge-filter skipper (cypher.rs:1835-1862): `{` deepens, `}`
+/-- The edge-filter skipper before #3019 (cypher.rs:1835-1862 at 3f4ea8f40): `{` deepens, `}`
 shallows and stops at depth ≤ 0, `]` stops before it; at end of input it
-never stops (the model's budget runs out: `fuel`). -/
+never stops (the model's budget runs out: `fuel`). No longer used by `shortestP`. -/
 def skipP : Nat → Int → P Unit
   | 0, _ => fuelP
   | n + 1, d => do
@@ -206,11 +206,18 @@ def skipP : Nat → Int → P Unit
     | .rbrack => pure ()
     | _ => do next; skipP n d
 
-/-- `Token::Parameter(_) | Token::LBracket` after the range (cypher.rs:1826-1830). -/
+/-- `Token::Parameter(_) | Token::LBracket` after the range (cypher.rs:1833-1843). -/
 def isFilter : CT → Bool
   | .param _ => true
   | .lbrace => true
   | _ => false
+
+/-- The edge filter since #3019 (cypher.rs:1833-1843), entered on `isFilter`: `$p` is one
+token, `{...}` is parsed by `parse_map` (an error there, e.g. at end of input, is an error). -/
+def spFilterP (pmap : P ET) (c : CT) : P Unit :=
+  match c with
+  | .lbrace => do let _ ← pmap; pure ()
+  | _ => next
 
 /-- shortestPath's `*` range (cypher.rs:1800-1823). -/
 def spRangeP : P (Nat × Option Nat) := do
@@ -227,7 +234,7 @@ def spRangeP : P (Nat × Option Nat) := do
   else pure (1, some 1)
 
 /-- `parse_shortest_path_expr`, after `shortestPath(`. -/
-def shortestP (F : Nat) : P ET := do
+def shortestP (pmap : P ET) (F : Nat) : P ET := do
   let c0 ← peek
   if c0 ≠ .lparen then fail else do
   tok .lparen
@@ -248,7 +255,7 @@ def shortestP (F : Nat) : P ET := do
         let mm ← spRangeP
         let c2 ← peek
         let filt := isFilter c2
-        if filt then skipP F 0 else pure ()
+        if filt then spFilterP pmap c2 else pure ()
         tok .rbrack
         pure (ts, mm.1, mm.2, filt)
       else pure ([], 1, some 1, false))
@@ -268,13 +275,24 @@ def shortestP (F : Nat) : P ET := do
       let ends := if inc && !out then (dst, src) else (src, dst)
       pure (.node (.shortest d.1 d.2.1 d.2.2.1 (inc || out)) [leaf (.var ends.1), leaf (.var ends.2)])
 
-/-- **An edge filter is never accepted**: whenever `shortestPath` returns,
-the relationship had no `{...}` / `$param` filter. With a filter the result
-is an error, or (input ending inside the filter) no result at all — the
-known hang, `skipFilter_eof_diverges`. -/
+/-- Before #3019, input ending inside the filter never stopped the skipper (the
+known hang, `skipFilter_eof_diverges`). `shortestP` no longer uses `skipP`: see
+`shortestP_param_eof_err` / `shortestP_map_eof_err`. -/
 theorem skipP_eof : ∀ n (d : Int) (k : Nat), skipP n d ([], k) = .fuel
   | 0, _, _ => rfl
   | n + 1, d, k => by
     simp only [skipP, run_bind, peek, PS.cur, next, PS.adv, List.tail_nil]; exact skipP_eof n d k
+
+/-- **#3019: an unterminated `$p` filter is a syntax error**: `shortestPath((a)-[$p` at
+end of input fails (it used to hang). -/
+theorem shortestP_param_eof_err (pmap : P ET) (F a p k : Nat) :
+    shortestP pmap F ([.lparen, .ident a, .rparen, .dash, .lbrack, .param p], k) = .err := rfl
+
+/-- **#3019: an unterminated `{...}` filter is a syntax error** whenever `parse_map`
+rejects the rest of the input (as at end of input): `shortestPath((a)-[{` fails. -/
+theorem shortestP_map_eof_err (pmap : P ET) (F a k : Nat) (h : pmap ([.lbrace], k) = .err) :
+    shortestP pmap F ([.lparen, .ident a, .rparen, .dash, .lbrack, .lbrace], k) = .err := by
+  simp [shortestP, spFilterP, run_bind, peek, PS.cur, PS.adv, tok, opt, tryIdent, spRangeP,
+    isFilter, identOf, next, h]
 
 end FalkorParserGrammar.C

@@ -310,7 +310,7 @@ theorem lookup_map_update (m : Fns S) (k k' : String) (u : GraphFn S → GraphFn
     · subst h2
       by_cases h1 : a = k
       · subst h1; simp [lookup]
-      · simp [lookup, h1, Ne.symm h1]
+      · simp [lookup, h1]
     · have hb : (a == k') = false := by simp [h2]
       simp only [lookup, List.map_cons, List.find?, hb] at ih ⊢
       exact ih

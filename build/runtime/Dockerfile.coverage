@@ -4,7 +4,7 @@ ARG TARGETPLATFORM=linux/amd64
 # build/runtime/Dockerfile (build/check-server-pins.sh enforces it).
 ARG SERVER=redis
 ARG REDIS_VERSION=8.10.2
-ARG VALKEY_VERSION=9.1.2
+ARG VALKEY_VERSION=9.2.0
 
 # Stage 1: chef/planner — same cache split as the regular Dockerfile so a
 # source-only change skips the dep cook.

@@ -121,16 +121,16 @@ theorem icmp_agree (other : V F → V F → Ordering × Flag) (op : CmpOp) (a b 
   have hc : compare a b = (if a < b then Ordering.lt else if a = b then Ordering.eq else Ordering.gt) := by
     simp [compare, compareOfLessAndEq]
   rcases Int.lt_trichotomy a b with h | h | h
-  · have e : compare a b = .lt := by rw [hc, if_pos h]
+  · have e : compare a b = .lt := by rw [hc, ite_eq_left h]
     have h1 : a ≠ b := Int.ne_of_lt h
     have h2 : a ≤ b := Int.le_of_lt h
     have h3 : ¬ b ≤ a := Int.not_le.mpr h
     have h5 : (a != b) = true := bne_iff_ne.mpr h1
     cases op <;> simp [compareValues, compareValue, icmp, e, h, h1, h2, h3, h5] <;> rfl
   · subst h
-    have e : compare a a = .eq := by rw [hc, if_neg (Int.lt_irrefl a), if_pos rfl]
-    cases op <;> simp [compareValues, compareValue, icmp, e]
-  · have e : compare a b = .gt := by rw [hc, if_neg (by omega), if_neg (by omega)]
+    have e : compare a a = .eq := by rw [hc, ite_eq_right (Int.lt_irrefl a), ite_eq_left rfl]
+    cases op <;> simp [compareValues, compareValue, icmp]
+  · have e : compare a b = .gt := by rw [hc, ite_eq_right (by omega), ite_eq_right (by omega)]
     have h1 : a ≠ b := (Int.ne_of_lt h).symm
     have h2 : b ≤ a := Int.le_of_lt h
     have h3 : ¬ a ≤ b := Int.not_le.mpr h
@@ -282,7 +282,7 @@ theorem Bits.isNull_none (n i : Nat) : (Bits.none n).isNull i = false := by
   simp [Bits.none, Bits.isNull, List.getElem?_replicate]; split <;> rfl
 
 theorem Bits.isNull_all (n i : Nat) (h : i < n) : (Bits.all n).isNull i = true := by
-  simp [Bits.all, Bits.isNull, List.getElem?_replicate, h]
+  simp [Bits.all, Bits.isNull, h]
 
 theorem Bits.isNull_ofFn (n : Nat) (p : Nat → Bool) (i : Nat) (h : i < n) :
     Bits.isNull ((List.range n).map p) i = p i := by
@@ -382,7 +382,7 @@ theorem unionNulls_length (l r : EC F) (len : Nat) (hl : l.WF len) (hr : r.WF le
   | none =>
     cases hrc : r.constNull with
     | some br =>
-      cases br <;> simp [Bits.all, Bits.none] <;>
+      cases br <;> simp [Bits.all] <;>
       (cases l <;> simp_all [EC.nullsOrNone, EC.WF, EC.constNull, Bits.none])
     | none => simp
 
@@ -496,7 +496,7 @@ theorem typedLane_agree (other : V F → V F → Ordering × Flag) (lhs rhs : EC
     simp only [EC.isNull, V.isNull, Bool.or_false]
     rw [ints_get d n i (by omega)]
     by_cases hn : n.isNull i
-    · simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_null_l]
+    · simp [EC.get, hn, rowCmp_null_l]
     · rw [kernelI_get _ _ _ _ _ (by omega) (by simp; omega)]
       simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_some other (icmp_agree other op _ _)]
   · rename_i t d n
@@ -506,7 +506,7 @@ theorem typedLane_agree (other : V F → V F → Ordering × Flag) (lhs rhs : EC
     simp only [EC.isNull, V.isNull, Bool.false_or]
     rw [ints_get d n i (by omega)]
     by_cases hn : n.isNull i
-    · simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_null_r]
+    · simp [EC.get, hn, rowCmp_null_r]
     · rw [kernelI_get _ _ _ _ _ (by omega) (by simp; omega)]
       simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_some other (icmp_agree other op _ _), icmp_flip]
   · rename_i d n t
@@ -516,7 +516,7 @@ theorem typedLane_agree (other : V F → V F → Ordering × Flag) (lhs rhs : EC
     simp only [EC.isNull, V.isNull, Bool.or_false]
     rw [floats_get d n i (by omega)]
     by_cases hn : n.isNull i
-    · simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_null_l]
+    · simp [EC.get, hn, rowCmp_null_l]
     · rw [kernelF_get _ _ _ _ _ (by omega) (by simp; omega)]
       simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_some other (fcmp_agree_ff other op _ _)]
   · rename_i t d n
@@ -526,7 +526,7 @@ theorem typedLane_agree (other : V F → V F → Ordering × Flag) (lhs rhs : EC
     simp only [EC.isNull, V.isNull, Bool.false_or]
     rw [floats_get d n i (by omega)]
     by_cases hn : n.isNull i
-    · simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_null_r]
+    · simp [EC.get, hn, rowCmp_null_r]
     · rw [kernelF_get _ _ _ _ _ (by omega) (by simp; omega)]
       simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_some other (fcmp_agree_ff other op _ _), fcmp_flip]
   · rename_i d n t
@@ -536,7 +536,7 @@ theorem typedLane_agree (other : V F → V F → Ordering × Flag) (lhs rhs : EC
     simp only [EC.isNull, V.isNull, Bool.or_false]
     rw [ints_get d n i (by omega)]
     by_cases hn : n.isNull i
-    · simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_null_l]
+    · simp [EC.get, hn, rowCmp_null_l]
     · rw [kernelF_get _ _ _ _ _ (by simp; omega) (by simp; omega)]
       simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_some other (fcmp_agree_if other op _ _)]
   · rename_i d n t
@@ -546,7 +546,7 @@ theorem typedLane_agree (other : V F → V F → Ordering × Flag) (lhs rhs : EC
     simp only [EC.isNull, V.isNull, Bool.or_false]
     rw [floats_get d n i (by omega)]
     by_cases hn : n.isNull i
-    · simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_null_l]
+    · simp [EC.get, hn, rowCmp_null_l]
     · rw [kernelF_get _ _ _ _ _ (by omega) (by simp; omega)]
       simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_some other (fcmp_agree_fi other op _ _)]
   · rename_i a na b nb
@@ -556,11 +556,11 @@ theorem typedLane_agree (other : V F → V F → Ordering × Flag) (lhs rhs : EC
     simp only [EC.isNull]
     rw [ints_get a na i (by omega), ints_get b nb i (by omega)]
     by_cases hn : na.isNull i
-    · simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_null_l]
+    · simp [hn, rowCmp_null_l]
     · by_cases hm : nb.isNull i
-      · simp [hu', EC.isNull, V.isNull, EC.get, hn, hm, rowCmp_null_r]
+      · simp [hn, hm, rowCmp_null_r]
       · rw [kernelI_get _ _ _ _ _ (by omega) (by omega)]
-        simp [hu', EC.isNull, V.isNull, EC.get, hn, hm, rowCmp_some other (icmp_agree other op _ _)]
+        simp [hu', EC.isNull, hn, hm, rowCmp_some other (icmp_agree other op _ _)]
   · rename_i a na b nb
     simp only [EC.WF] at hl hr
     have hu' := hu (by simp [EC.isValues]) (by simp [EC.isValues])
@@ -568,11 +568,11 @@ theorem typedLane_agree (other : V F → V F → Ordering × Flag) (lhs rhs : EC
     simp only [EC.isNull]
     rw [floats_get a na i (by omega), floats_get b nb i (by omega)]
     by_cases hn : na.isNull i
-    · simp [hu', EC.isNull, V.isNull, EC.get, hn, rowCmp_null_l]
+    · simp [hn, rowCmp_null_l]
     · by_cases hm : nb.isNull i
-      · simp [hu', EC.isNull, V.isNull, EC.get, hn, hm, rowCmp_null_r]
+      · simp [hn, hm, rowCmp_null_r]
       · rw [kernelF_get _ _ _ _ _ (by omega) (by omega)]
-        simp [hu', EC.isNull, V.isNull, EC.get, hn, hm, rowCmp_some other (fcmp_agree_ff other op _ _)]
+        simp [hu', EC.isNull, hn, hm, rowCmp_some other (fcmp_agree_ff other op _ _)]
 
 /-- **`compare_columns` = the per-row comparison, at every row**, whichever lane
 (typed int, typed float, promoted int→float, flipped constant, pairwise, or the

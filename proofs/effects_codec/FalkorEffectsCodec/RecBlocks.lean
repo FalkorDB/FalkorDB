@@ -87,8 +87,8 @@ def bLabels : Blk (List Nat) where
     intro ls bs rest ⟨hl, hx⟩ e
     simp only [wLabelSet, hl, ite_true, Except.ok.injEq] at e; subst e
     simp only [rLabelSet, bind_apply, List.append_assoc]
-    rw [u16_w16 hl]; simp only [bind_apply, guardCount]
-    rw [if_neg (by simp only [List.length_append, flatMap_w32_length]; omega)]
+    rw [u16_w16 hl]; simp only [guardCount]
+    rw [ite_eq_right (by simp only [List.length_append, flatMap_w32_length]; omega)]
     simp only; rw [readN_u32 ls hx]
 
 /-- `AttrIds` (`blocks.rs:100-124`). -/
@@ -100,8 +100,8 @@ def bAttrIds : Blk (List Nat) where
     intro as bs rest ⟨hl, hx⟩ e
     simp only [wAttrIds, hl, ite_true, Except.ok.injEq] at e; subst e
     simp only [rAttrIds, bind_apply, List.append_assoc]
-    rw [u16_w16 hl]; simp only [bind_apply, guardCount]
-    rw [if_neg (by simp only [List.length_append, flatMap_w16_length]; omega)]
+    rw [u16_w16 hl]; simp only [guardCount]
+    rw [ite_eq_right (by simp only [List.length_append, flatMap_w16_length]; omega)]
     simp only; rw [readN_u16 as hx]
 
 /-- `IdList::encode` / `decode_sized(r, count)`. -/
@@ -120,7 +120,7 @@ def bRows (utf8 I : Bytes → Bool) (count attrs : Nat) : Blk (List Val) where
     intro rows bs rest ⟨hl, hw⟩ e
     have hlen := (encL_len I rows bs e).2
     simp only [rRows, bind_apply, guardCount]
-    rw [if_neg (by simp [MIN_VALUE_BYTES]; omega)]
+    rw [ite_eq_right (by simp [MIN_VALUE_BYTES]; omega)]
     simp only; rw [← hl, readN_decodeV utf8 I rows bs rest e hw]
 
 /-- `put_opt` (`records.rs:123`) / `take_opt` (`:137`). -/
@@ -196,8 +196,8 @@ def bItems {α} (k minEach : Nat) (tooLong : EErr) (A : Blk α)
     cases ha
     have hlen := encItems_len A.enc minEach hmin xs b hb
     simp only [readItems, bind_apply, List.append_assoc]
-    rw [rdU_le hl]; simp only [bind_apply, guardCount]
-    rw [if_neg (by simp only [List.length_append]; rw [Nat.mul_comm]; omega)]
+    rw [rdU_le hl]; simp only [guardCount]
+    rw [ite_eq_right (by simp only [List.length_append]; rw [Nat.mul_comm]; omega)]
     simp only; rw [readN_items A xs b rest hx hb]
 
 end FalkorCodec

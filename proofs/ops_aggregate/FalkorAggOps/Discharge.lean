@@ -88,8 +88,8 @@ theorem gkEq_spec : ∀ a b : List WV, gkEq veqMain a b = gkEqR (a.map (·.1)) (
   | x :: xs, y :: ys => by
     have ih := gkEq_spec xs ys
     simp only [gkEqR, List.map_cons, List.length_cons, List.zip_cons_cons, List.all_cons] at ih ⊢
-    simp only [gkEq, veqMain, ih, gkEqR]
-    cases (scMain x.1 y.1 == .eq) <;> simp [Nat.add_right_cancel_iff]
+    simp only [gkEq, veqMain, ih]
+    cases (scMain x.1 y.1 == .eq) <;> simp
 
 /-- `GroupKey::eq` on main is an equivalence (needed by a `HashMap` key): it inherits
 reflexivity, symmetry and transitivity from `sort_cmp`. -/

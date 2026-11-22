@@ -178,7 +178,7 @@ theorem countRows_row (k : Nat) : ∀ (ids : List Nat) (rest : List (Nat × Nat)
     countRows (rowEnts k ids ++ rest) (some k) n = countRows rest (some k) n
   | [], _, _ => rfl
   | i :: is, rest, n => by
-    simp only [rowEnts, List.map_cons, List.cons_append, countRows, if_pos]
+    simp only [rowEnts, List.map_cons, List.cons_append, countRows, ite_eq_left]
     exact countRows_row k is rest n
 
 theorem countRows_groups : ∀ (gs : List (Nat × List Nat)) (last : Option Nat) (n : Nat),
@@ -192,7 +192,7 @@ theorem countRows_groups : ∀ (gs : List (Nat × List Nat)) (last : Option Nat)
         (k, i) :: (rowEnts k is ++ gs.flatMap (fun g => rowEnts g.1 g.2)) := by
       simp [rowEnts]
     rw [e1]; simp only [countRows]
-    rw [if_neg (hl _ List.mem_cons_self), this]
+    rw [ite_eq_right (hl _ List.mem_cons_self), this]
     simp only [List.map_cons, List.pairwise_cons] at hpw
     rw [countRows_groups gs (some k) (n + 1) (fun g hg => hne g (List.mem_cons_of_mem _ hg)) hpw.2
       (by intro g hg h; injection h with h; exact hpw.1 g.1 (List.mem_map_of_mem hg) h)]

@@ -521,4 +521,40 @@ theorem rustStitch_eq_nestStitch (plans : List Plan) : rustStitch plans = nestSt
       simp only
       exact stitchLoop_eq_nest q more last _ (slotFirst_valid last)
 
+/-! ## A disjoint MATCH after a MATCH (#2981)
+
+`plan_query` (mod.rs:2918-2950) wraps the plan of a non-optional MATCH that follows a
+non-optional MATCH and binds none of the variables bound so far in a one-branch
+CartesianProduct, below the filters on top of it (`join_as_cartesian_branch`,
+mod.rs:3088-3111): the stitcher then adds the earlier clause as its other branch.
+`joins_components` (mod.rs:3115-3128) walks the same way and asks whether the operator
+below the filters is a CartesianProduct. Operator payloads are spec ids here, so
+`ir_references_variable` of the bound set is a parameter `rb`. -/
+
+/-- The walk of both: Filter, SemiApply, AntiSemiApply, OrApplyMultiplexer with a child,
+or a saturated Apply (`is_saturated_apply`, mod.rs:1133-1138): step to child 0. -/
+def branchWalk : Plan → Path
+  | .node op (c :: cs) =>
+    if (match op with | .filter _ | .semiApply | .antiSemiApply | .orMux => true | _ => false)
+        || (isApply op && !cs.isEmpty) then 0 :: branchWalk c else []
+  | .node _ [] => []
+
+/-- `joins_components`. -/
+def joinsComponents (p : Plan) : Bool :=
+  match p.get (branchWalk p) with
+  | some (.node .cartesian _) => true
+  | _ => false
+
+/-- `join_as_cartesian_branch`: `push_parent(CartesianProduct)` at the end of the walk,
+unless that subtree reads a bound variable (`rb`). -/
+def joinAsCartesianBranch (rb : Plan → Bool) (p : Plan) : Plan :=
+  match p.get (branchWalk p) with
+  | some q => if rb q then p else p.modify (fun q => .node .cartesian [q]) (branchWalk p)
+  | none => p
+
+/-- The clause plans `plan_query` stitches: each plan with whether it is a disjoint MATCH
+after a MATCH (`disjoint_match`, decided on the IR, mod.rs:2930-2949). -/
+def wrapDisjoint (rb : Plan → Bool) (plans : List (Plan × Bool)) : List Plan :=
+  plans.map fun (p, d) => if d then joinAsCartesianBranch rb p else p
+
 end PlannerBuild
