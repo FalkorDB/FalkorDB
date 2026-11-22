@@ -62,14 +62,21 @@ mod tests {
     use crate::runtime::functions::init_functions;
 
     fn emitted_edges(query: &str) -> Vec<bool> {
+        try_emitted_edges(query).expect("bind")
+    }
+
+    /// Like [`emitted_edges`], but a bind error is returned instead of
+    /// panicking. Parse and planning failures still panic.
+    fn try_emitted_edges(query: &str) -> Result<Vec<bool>, String> {
         let _ = init_functions();
         let mut parser = Parser::new(query);
         parser.parse_parameters().expect("parse parameters");
         let raw = parser.parse().expect("parse");
-        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let (ir, scope_vars) = Binder::default().bind(raw)?;
         let mut plan: DynTree<IR> = Planner::new(scope_vars).plan(ir);
         reduce_expand_into(&mut plan);
-        plan.root()
+        Ok(plan
+            .root()
             .indices::<Bfs>()
             .filter_map(|idx| match plan.node(idx).data() {
                 IR::CondTraverse {
@@ -80,7 +87,7 @@ mod tests {
                 } => Some(*emit_relationship),
                 _ => None,
             })
-            .collect()
+            .collect())
     }
 
     #[test]
@@ -147,6 +154,14 @@ mod tests {
             ),
             vec![true, false]
         );
+        // A branch that binds the same slot through UNWIND (two node aliases
+        // before it) is not a read of the other branch's edge either.
+        assert_eq!(
+            emitted_edges(
+                "MATCH (a:A)-[r:R]->(b) RETURN count(*) AS c UNION ALL MATCH (x0), (x1) UNWIND [1] AS r RETURN count(*) AS c"
+            ),
+            vec![false]
+        );
     }
 
     /// The same, one level down: the `r` a nested `UNION` branch of a `CALL {}`
@@ -180,6 +195,7 @@ mod tests {
             "MATCH (a:A)-[r:R]->(b) CALL { WITH r MATCH ()-[r]->() RETURN 1 AS x UNION ALL WITH a RETURN 2 AS x } RETURN count(*)",
             "MATCH (a:A)-[r:R]->(b) CALL { WITH a RETURN 2 AS x UNION ALL WITH r MATCH ()-[r]->() RETURN 1 AS x } RETURN count(*)",
             "MATCH (a:A)-[r:R]->(b) CALL { WITH r MATCH ()-[r]->() RETURN count(*) AS x } RETURN count(*)",
+            "MATCH (a:A)-[r:R]->(b) CALL { WITH a, b, r MATCH (a)-[r]->(b) RETURN 1 AS x UNION ALL WITH a, b, r MATCH (a)-[r]->(b) RETURN 2 AS x } RETURN count(*)",
         ] {
             let emitted = emitted_edges(query);
             assert_eq!(emitted.first(), Some(&true), "{query}: {emitted:?}");
@@ -260,10 +276,18 @@ mod tests {
                             true,
                         ),
                     ] {
-                        // A name clash (`WITH 1 AS r` after importing `r`) does not plan.
-                        let Ok(emitted) = std::panic::catch_unwind(|| emitted_edges(&query)) else {
-                            unplannable += 1;
-                            continue;
+                        // A name clash (`WITH 1 AS r` after importing `r`) does not
+                        // bind; any other failure (parse, plan) still fails the test.
+                        let emitted = match try_emitted_edges(&query) {
+                            Ok(emitted) => emitted,
+                            Err(err) => {
+                                assert!(
+                                    err.contains("WITH imports in CALL {}"),
+                                    "{query}: unexpected bind error: {err}"
+                                );
+                                unplannable += 1;
+                                continue;
+                            }
                         };
                         checked += 1;
                         assert_eq!(emitted.first(), Some(&read), "{query}: {emitted:?}");

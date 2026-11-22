@@ -74,9 +74,7 @@ pub(in crate::planner) fn ir_references_variable(
         }
         IR::PathBuilder(paths) => paths.iter().any(|p| p.vars.iter().any(|v| v.key() == key)),
         // The list they iterate is read; `UNWIND [e] AS x` reads `e`.
-        IR::Unwind { expr: list, var } => {
-            expr_references_variable(list, key) || var.key() == key
-        }
+        IR::Unwind { expr: list, var } => expr_references_variable(list, key) || var.key() == key,
         // The loop variable is not a read: it is bound only into the body's
         // own environment (the operator outputs its input rows), and `FOREACH
         // (r IN [1] | ...)` may reuse an outer edge's name, so a body that
@@ -240,10 +238,7 @@ fn subtree_reads_variable(
         }
         let is_union = matches!(node.data(), IR::Union);
         for child in node.children() {
-            let own = is_union
-                && child
-                    .walk::<Bfs>()
-                    .any(|ir| ir_binds_variable(ir, key));
+            let own = is_union && child.walk::<Bfs>().any(|ir| ir_binds_variable(ir, key));
             if !own {
                 pending.push(child.idx());
             }
@@ -277,9 +272,7 @@ pub(super) fn variable_read_outside(
         }
         if row_reaches_siblings(parent.data(), parent.child(0).idx() == cur.idx()) {
             for sibling in parent.children() {
-                if sibling.idx() != cur.idx()
-                    && subtree_reads_variable(plan, sibling.idx(), key)
-                {
+                if sibling.idx() != cur.idx() && subtree_reads_variable(plan, sibling.idx(), key) {
                     return true;
                 }
             }
