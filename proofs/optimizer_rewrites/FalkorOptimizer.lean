@@ -87,9 +87,14 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
   keeps the rows, under the per-edge reading both engines use);
   `hasParam_iff`, `subst_params`, `evX_subst`; `refsVar_iff`, `refsVarId_iff`,
   `refsVar_le_refsVarId`; `countVar_spec`; `attrsEmpty_iff`, `canFuse_spec`;
-  `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new`.
+  `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new` (#3281; pre-PR `pre3281_branchOut_copy_old`).
   W6-opt-1 Case-2 walk (`CallBoundary`, from the retired pr2845_review):
-  `Pr2845.filter_pushed_through_boundary`, fix `fixed_keeps_filter`/`fixed_conservative`.
+  `Pr2845.filter_pushed_through_boundary` (pre-#3281 walk `inheritedPre3281`), fix
+  `fixed_keeps_filter`/`fixed_conservative`; #3281's walk (stops at a two-child `Optional`,
+  inherits `branch_visible_variables`): `keeps_filter_main`, `main_sub_fixed`, `main_eq_fixed`;
+  `visT_reset`, `visT_semi_first`, `visT_plain`, `visT_pattern_predicate`; on the plan tree
+  (`PushPlan`, `Cfg.pr3281`): `bv_sub_gv`, `bvPre3281_sub_bv`, `bv_rebinding_kept`,
+  `opt2_walk_stops`, `pr3281_3352_fixed`, `pr3281_748_fixed`, `pr3281_997_fixed`, `pr3281_controls`.
 
 ## CONFIRMED bugs (Rust repro: `cargo test -p graph --test lean_optimizer_rewrites`;
 ## Cypher compared on live servers, Rust release module vs C `bin/macos-arm64v8-release/falkordb.so`)
@@ -185,7 +190,7 @@ node, labels, relationships and attributes are not written); `RowSound` is the o
    Argument → `n = 1, e = null` (C 123). Lean `bug3352_routes_unbound`
    (`¬ RoutesBound` under the old `gv` inheritance); **fixed by #2981**: Case 2 inherits
    `branch_visible_variables` (`bv`), `fixed3352_plan`, `fixed3352_inherits_outputs`, `fixed3352_rows_kept`; `bug3352_fixed`
-   for `(id, scope)` routing. Live: three pre-WITH ids `{0,1,2}` → wrong, two → right.
+   for `(id, scope)` routing; still fixed under #3281 (`pr3281_3352_fixed`). Live: three pre-WITH ids `{0,1,2}` → wrong, two → right.
 
 ## Gap closed 2026-10-20 (#2556) — `PushPlan`, select_scan_node chain re-ordering
 
@@ -223,11 +228,10 @@ binds what it reads).
 
 ## Suspected, unconfirmed
 
-* `branch_output_variables` (push_filters_down.rs:65) takes `copies.0` as the
-  (Lean `branchOut_copy_new`)
-  Project's output, but `copies` is `(old, new)` (binder.rs:2234, project.rs:115) —
-  outputs are the new vars. Currently only makes push-down more conservative, but
-  with scope-blind ids it can also admit a conjunct whose id matches an old var.
+* `branch_output_variables` took `copies.0` as the Project's output, but `copies`
+  is `(old, new)` (binder.rs:2234, project.rs:115). Fixed by #3281: it now reads
+  the destination (`.1`) and only for routing (Lean `branchOut_copy_new`;
+  historical `pre3281_branchOut_copy_old`).
 * Filters on zero-variable conjuncts (`rand() < 0.5`) are pushed into every CP/Apply branch.
 * Pushing into one CP branch evaluates the conjunct even when the other branch is
   empty, so a query can start to error (Lean `push_cp_left` needs `NoErr`).
