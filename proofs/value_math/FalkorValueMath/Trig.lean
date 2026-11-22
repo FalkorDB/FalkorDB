@@ -7,7 +7,7 @@ uses (`*`, `/`, `-`) are fields of `TrigOps`. What is proved is everything the R
 around them: argument dispatch, `Int → f64` promotion, `Null` propagation, the exact
 formula each Cypher function evaluates (`cot = cos/sin`, `haversin = (1-cos)/2`,
 `degrees = x·(180/π)`, `radians = x·(π/180)` — the last two are Rust std's own
-`to_degrees`/`to_radians`, core/src/num/f64.rs:871-895), that every `unreachable!()` is
+`to_degrees`/`to_radians`, core/src/num/f64.rs), that every `unreachable!()` is
 dead after `validate_args_type`, that the result type is the declared return type, and
 that each function is **the same expression tree as C** (`AR_SIN` … `AR_HAVERSIN`,
 `src/arithmetic/numeric_funcs/numeric_funcs.c:250-392` on master), so Rust = C
@@ -16,9 +16,9 @@ bit-for-bit given the same libm. Live (ports 18920/18921): 25 calls incl. `cot(0
 
 | Lean | Rust (trig.rs) |
 | --- | --- |
-| `applyUnary` | `apply_unary_float` :31 |
+| `applyUnary` | `apply_unary_float`  |
 | `tSin … tHaversin`, `tAtan2`, `tPi` | the `cypher_fn!` bodies :47 :53 :59 :65 :73 :79 :85 :94 :109 :115 :121 :130 |
-| `trigSigs` | `register` :43 (names, `args:`, `ret:`) |
+| `trigSigs` | `register`  (names, `args:`, `ret:`) |
 | `cUnary`, `cAtan2` | C `AR_*` (null check, `SI_GET_NUMERIC`) |
 -/
 

@@ -4,13 +4,13 @@ import OpsTraverse.VarLen
 
 | here | there |
 | --- | --- |
-| `St`, `relax`       | the BFS body of `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:141-265`): cycle case `:215-238`, same-distance predecessor `:240-248`, first discovery `:249-263` |
-| `bfs`               | the `while let Some(current) = queue.pop_front()` loop (`:146-265`), fuel-bounded; neighbours via `step` (`:161-191`, self-loop once when undirected) |
-| `back`              | the DFS backtrack iterator (`:278-304`): push `edge` then continue at `prev`, stop at `src` with a non-empty list |
-| `asp`               | the whole row: reverse always, cycles included (#3112; `:283-289`), reverse again for `AllShortestPaths::Reversed` (`:289-291`) |
-| `ends`, `buildNodes`| `PathBuilderOp`'s `Value::List` branch (`runtime/ops/path_builder.rs:156-180`): next node = the edge endpoint that differs from the previous node, via `Runtime::get_relationship_endpoints` |
+| `St`, `relax`       | the BFS body of `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs`): cycle case, same-distance predecessor, first discovery |
+| `bfs`               | the `while let Some(current) = queue.pop_front()` loop, fuel-bounded; neighbours via `step` (self-loop once when undirected) |
+| `back`              | the DFS backtrack iterator: push `edge` then continue at `prev`, stop at `src` with a non-empty list |
+| `asp`               | the whole row: reverse always, cycles included (#3112), reverse again for `AllShortestPaths::Reversed` |
+| `ends`, `buildNodes`| `PathBuilderOp`'s `Value::List` branch (`runtime/ops/path_builder.rs`): next node = the edge endpoint that differs from the previous node, via `Runtime::get_relationship_endpoints` |
 
-Edge-attribute filters (`:193-208`) are a pure pre-filter of the neighbour
+Edge-attribute filters are a pure pre-filter of the neighbour
 list and are not modelled. *Minimality*, *completeness* and *exactly-once* are proved in
 `ASPFold`/`ASPInv`/`ASPStep`/`ASPFinal`/`ASPMain`/`ASPFuel` (`asp_minimal`,
 `asp_complete'`, `asp_nodup`; non-cycle, `min_hops = 1` as the planner enforces).
@@ -70,7 +70,7 @@ def back (st : St) (src : Nat) : Nat → Nat → List Nat → List (List Nat)
     if node == src && !acc.isEmpty then [acc]
     else (predsOf st node).flatMap fun p => back st src fuel p.1 (acc ++ [p.2])
 
-/-- `distances = {src: 0}`, `queue = [src]` (`:141-142`). -/
+/-- `distances = {src: 0}`, `queue = [src]`. -/
 def st0 (src : Nat) : St where
   dist := upd (fun _ => none) src 0
   preds := []
@@ -161,12 +161,12 @@ theorem back_sound {g : Graph} {b : Bool} {st : St} {src : Nat} (hok : PredOK g 
   | fuel + 1, node, acc, res, h => by
     unfold back at h
     by_cases hc : (node == src && !acc.isEmpty) = true
-    · rw [if_pos hc] at h
+    · rw [ite_eq_left hc] at h
       simp only [List.mem_singleton] at h
       subst h
       simp only [Bool.and_eq_true, beq_iff_eq] at hc
       exact ⟨[], by simp, by rw [hc.1]; exact Walk.nil _⟩
-    · rw [if_neg hc] at h
+    · rw [ite_eq_right hc] at h
       simp only [List.mem_flatMap] at h
       obtain ⟨⟨u, e⟩, hp, hr⟩ := h
       obtain ⟨w, rfl, hw⟩ := back_sound hok fuel u _ _ hr
@@ -191,7 +191,7 @@ theorem asp_sound {g : Graph} {b : Bool} {src dst minH maxH fuel : Nat} (hne : s
   simp only [hsd] at h
   split at h
   · simp at h
-  · simp only [Bool.false_eq_true, if_false, List.mem_map] at h
+  · simp only [Bool.false_eq_true, ite_false, List.mem_map] at h
     obtain ⟨res, hres, rfl⟩ := h
     have hok := bfs_ok (g := g) (b := b) (src := src) (dst := dst) (minH := minH) (maxH := maxH)
       (isCycle := false) fuel (st0 src) (by intro v u e h; simp [st0] at h)
@@ -237,7 +237,7 @@ def ends (g : Graph) (e : Nat) : Nat × Nat :=
   | some x => (x.src, x.dst)
   | none => (0, 0)
 
-/-- Nodes PathBuilder appends after `prev` for an edge list (`path_builder.rs:156-180`). -/
+/-- Nodes PathBuilder appends after `prev` for an edge list (`path_builder.rs`). -/
 def buildNodes (g : Graph) : Nat → List Nat → List Nat
   | _, [] => []
   | prev, e :: es =>
@@ -291,7 +291,7 @@ theorem buildNodes_walk {g : Graph} {b : Bool} (hwf : g.WF) :
       · simp [h1, h2]
       · have : (s == x.src) = false := by
           simp only [beq_eq_false_iff_ne]; exact fun h => h1 h.symm
-        simp only [this, Bool.false_eq_true, if_false]; exact h2
+        simp only [this, Bool.false_eq_true, ite_false]; exact h2
     simp only [buildNodes, hn, lastOr, List.getLastD_cons]
     exact ih
 

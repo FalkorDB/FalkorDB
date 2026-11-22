@@ -6,8 +6,8 @@ parser, one function per rule, over the same tokens and producing the same
 tree shapes as the Rust parser for the same meaning:
 
 * a run `a op b op c` of one left-associative operator is one n-ary node
-  `op[a,b,c]` (Rust flattens it, macro.rs:140; the evaluator folds left,
-  eval.rs:779-825), a change of operator nests on the left;
+  `op[a,b,c]` (Rust flattens it, macro.rs; the evaluator folds left,
+  eval.rs), a change of operator nests on the left;
 * a chain of comparisons `a < b <= c` is `a < b AND b <= c` (the chaining
   rule of the openCypher / Cypher manual), built as
   `And[c1, And[c2, ... ck]]`;

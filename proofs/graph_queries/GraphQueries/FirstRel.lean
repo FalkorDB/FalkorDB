@@ -1,6 +1,6 @@
 import GraphQueries.Accessors
 /-
-# `Graph::first_node_with_relationships` (graph.rs:2421, #3022)
+# `Graph::first_node_with_relationships` (graph.rs, #3022)
 
 The `DELETE_NODE` arm of `apply_record` refuses a node that still has a
 relationship. The Rust answers it in bulk: one `Aᵀ·x` over the adjacency matrix
@@ -19,7 +19,7 @@ edge of any type), and every edge's endpoints are rows of it.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `firstNodeWithRels` | `first_node_with_relationships` :2421 |
+| `firstNodeWithRels` | `first_node_with_relationships`  |
 | `BulkOps.countInRows` | `adj.count_in_rows(&x)` (`VersionedMatrix::count_in_rows`) over `x = Vector::from_sorted_indices(n, &ids)` |
 | `BulkOps.pairsInto` | `t.count_pairs_into(&x)` (`Tensor::count_pairs_into`) |
 | `BulkOps.outNext` / `incNext` | `out.seek(id, id); out.next().is_some()` / `it.seek(id, id); it.next().is_some()` over `adj.iter(0, 0)` / `t.iter(0, 0, true)` |
@@ -168,10 +168,10 @@ theorem firstNodeWithRels_spec (g : G V) (hx : AdjExact g) (B : BulkOps g) (node
   · simp only [h1, ↓reduceIte]; rw [List.isEmpty_iff.mp h1]; rfl
   simp only [h1, Bool.false_eq_true, ↓reduceIte]
   by_cases h2 : (decide (B.countInRows ids > 0) || g.relMs.any (fun t => decide (B.pairsInto t ids > 0))) = true
-  · rw [h2]; simp only [Bool.not_true, Bool.false_eq_true, if_false]
+  · rw [h2]; simp only [Bool.not_true, Bool.false_eq_true, ite_false]
     congr 1; funext id; exact probe_iff g hx B id
   · simp only [Bool.not_eq_true] at h2
-    rw [h2]; simp only [Bool.not_false, if_true]
+    rw [h2]; simp only [Bool.not_false, ite_true]
     symm; apply find_none_of
     intro i hi
     rw [Bool.or_eq_false_iff] at h2
