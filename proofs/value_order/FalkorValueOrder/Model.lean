@@ -71,12 +71,12 @@ def fne (x y : F) : Bool := fpcmp x y != some .eq
 /-- IEEE `x > y`. -/
 def fgt (x y : F) : Bool := fpcmp x y == some .gt
 
-/-- `first_difference` (`value.rs:2007`): the first pair with `x != y` decides by `x > y`. -/
+/-- `first_difference` (`value.rs:2013`): the first pair with `x != y` decides by `x > y`. -/
 def firstDifference : List F → List F → Ordering
   | x :: xs, y :: ys => if fne x y then (if fgt x y then .gt else .lt) else firstDifference xs ys
   | _, _ => .eq
 
-/-- `compare_vecf32` (`value.rs:2003`): length, then `first_difference` (the chunked
+/-- `compare_vecf32` (`value.rs:2009`): length, then `first_difference` (the chunked
 scan equals the plain one: proofs/value_math `chunked_eq_firstDiff`). -/
 def cmpVec (a b : List F) : Ordering :=
   match cmpI a.length b.length with
@@ -211,12 +211,12 @@ example : floatWord (.nan true 5) = NAN_BITS := by decide
 /-- `f32::NAN.to_bits()`. -/
 def F32_NAN_BITS : Nat := 0x7fc00000
 
-/-- `f32_hash_bits` (`value.rs:1959`): one value for every NaN, else `to_bits`. -/
+/-- `f32_hash_bits` (`value.rs:1961`): one value for every NaN, else `to_bits`. -/
 def f32HashBits (f : F) : Nat := if f.nkey.isNone then F32_NAN_BITS else bits32 f
 
 mutual
 /-- The words `Hash for Value` (`value.rs:861`) writes, in order (each `write_*` is one
-Fx `add_to_hash`). VecF32/Point components go through `f32_hash_bits` (`:876-886`). -/
+Fx `add_to_hash`). VecF32/Point components go through `f32_hash_bits` (`:915-930`). -/
 def hwords : V → List UInt64
   | .null => [0]
   | .bool b => [1, if b then 1 else 0]

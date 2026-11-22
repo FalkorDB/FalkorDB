@@ -11,12 +11,12 @@ pre-segment state* accepts. Two properties, both refuted on main:
 * **`RelIdsCovered`** (#3447) — every relationship id the master allocated in
   the segment (created or cancelled) is named by some `CREATE_EDGE`, so the
   replica's relationship `IdSpace` ends with the same contiguous range
-  (`IdSpace::verify`, id_space.rs:737-790, refuses a hole above the entry
-  bound). `digest_cancelled` (emit.rs:455) skips a cancelled edge whose type has
+  (`IdSpace::verify`, id_space.rs:773-821, refuses a hole above the entry
+  bound). `digest_cancelled` (emit.rs:451) skips a cancelled edge whose type has
   no id, and a type whose every edge was cascaded away is never registered
   (`Pending::commit` registers only `created_rels_by_type` keys via
-  `create_relationships_bulk` → `get_type_id_mut`, pending.rs:1236-1249,
-  graph.rs:2610/:1265; proofs/pending_commit `bug3447_cascade_drops_type_key`).
+  `create_relationships_bulk` → `get_type_id_mut`, pending.rs:1236-1249 (then; now `Pending::commit`, pending.rs:1367),
+  graph.rs:2710/:1346; proofs/pending_commit `bug3447_cascade_drops_type_key`).
   `pre3461_bug3447_cancelled_edge_id_gap` (fixed by #3461, which registers every
   cancelled type at commit: `relIdsCovered_after_commit`): live repro `CREATE ()-[:EXISTING]->()` then
   `CREATE (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a`; the
@@ -29,7 +29,7 @@ pre-segment state* accepts. Two properties, both refuted on main:
   (emit.rs:370) runs before `digest_cancelled` (:374) and does not skip created
   or cancelled nodes; `delete_pending_node` keeps the node's `remove_labels`
   (before #3459; proofs/pending_commit `fixed3448_cancelled_node_clears_remL` now); the
-  `RemoveLabels` arm calls `require_live` (apply.rs:359-360).
+  `RemoveLabels` arm calls `require_live` (apply.rs:387-388).
   `bug3448_removeLabels_before_create_refused`: `CREATE (n:Foo) REMOVE n:Foo
   DELETE n` emits `AddLabel Foo, RemoveLabels [0], CreateNode [0], DeleteNode [0]`,
   refused with `NotLive node 0`; without the stale entry the same segment applies
@@ -44,7 +44,7 @@ open FalkorEA
 
 /-! ## #3447: relationship ids -/
 
-/-- `IdSpace::verify` (id_space.rs:737-790), the hole half: the ids taken at or
+/-- `IdSpace::verify` (id_space.rs:773-821), the hole half: the ids taken at or
 above `entry` are exactly `[entry, entry + k)`. -/
 def verifyRange (entry : Nat) (taken : List Nat) : Bool :=
   let c := taken.filter (entry ≤ ·)
@@ -72,7 +72,7 @@ each `created_rels_by_type` key is get-or-created (pending.rs:1236-1249 on
 def typesAfterCommitPre3461 (base : List Name) (p : Pending) : List Name :=
   p.createdRelTypes.foldl (fun ts q => regName ts q.1) base
 
-/-- The relationship-type dictionary after `Pending::commit` (pending.rs:1345-1371,
+/-- The relationship-type dictionary after `Pending::commit` (pending.rs:1367-1413,
 #3461): each `created_rels_by_type` key is get-or-created by
 `create_relationships_bulk`, then the type of every `cancelled_relationships`
 entry by `get_type_id_mut` (the `FxHashSet` only skips repeats, which

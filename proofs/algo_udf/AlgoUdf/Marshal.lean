@@ -6,7 +6,7 @@ import AlgoUdf.Nesting
 | `F64`                 | f64 as `==`/`floor`/`abs`/`is_finite` see it |
 | `JsV`, `Heap`, `deref` | the QuickJS values `js_to_value` distinguishes; an array/object may also be a `ref` into the QuickJS heap, so shared and *cyclic* values (`a.push(a)`) are representable |
 | `objSet`, `jsKeys`    | AXIOMATISED QuickJS object semantics (ECMA-262 §10.1.9 [[Set]] through the `Object.prototype.__proto__` accessor, §10.1.11 OrdinaryOwnPropertyKeys: array-index keys first, ascending) |
-| `JsKind`              | the object's internal class, as `JS_IsDate` / `JS_IsRegExp` test it (QuickJS FFI, AXIOMATISED by construction). `date ms` / `regexp s` carry the value Rust then obtains by *calling the object's `getTime` / `toString` properties* (`obj.get("getTime")`, :412-438): those calls are an ORACLE here, so a Date or RegExp whose `getTime` / `toString` the script overrides (an own property) is outside the model: Rust returns whatever the override returns (or an `Err` if it is not a function / not a number), the model returns the internal time value / source |
+| `JsKind`              | the object's internal class, as `JS_IsDate` / `JS_IsRegExp` test it (QuickJS FFI, AXIOMATISED by construction). `date ms` / `regexp s` carry the value Rust then obtains by *calling the object's `getTime` / `toString` properties* (`obj.get("getTime")`, :370-396): those calls are an ORACLE here, so a Date or RegExp whose `getTime` / `toString` the script overrides (an own property) is outside the model: Rust returns whatever the override returns (or an `Err` if it is not a function / not a number), the model returns the internal time value / source |
 | `ctorName`            | historical only: `obj.get("constructor").name`, the pre-#3074 test |
 | `RV`                  | `runtime::value::Value` (all variants; Path as node/rel id lists) |
 | `MAX`, `nestErr`, `chk` (`Nesting.lean`) | `MAX_UDF_VALUE_NESTING` :68, `udf_nesting_error` :88, `depth >= MAX_UDF_VALUE_NESTING` |
@@ -15,7 +15,7 @@ import AlgoUdf.Nesting
 | `classify`, `classifyObj`, `runShape`, `fromLevel`, `fromStep`, `fromF` | `js_to_value_level` :271-425 (dispatch / recursive arms; array :321, entity class :352, plain object :399), `js_to_value_at` :263-268 |
 | `JsV.ent`             | an instance of `js_classes::JsEntity` (#2976): `entity_value` reads the entity back, only in the call that made it |
 | `fromJs`              | `js_to_value` :253 (= `js_to_value_at(.., 0)`) |
-| `esc`, `unesc`        | key escaping :172-178 / :413-417 |
+| `esc`, `unesc`        | key escaping :172-178 / :414-417 |
 
 `with_stack` (:81, `stacker::maybe_grow`) only switches the machine stack; `f` counts conversion
 levels, which is what the depth cap bounds (`MarshalCap.lean`).

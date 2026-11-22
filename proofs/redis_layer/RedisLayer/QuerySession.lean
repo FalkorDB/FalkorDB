@@ -558,14 +558,14 @@ def isStale (s : SS) : Bool := s.version == .stale
 /-- `version_is_current` (`:235`). -/
 def versionIsCurrent (s : SS) : Bool := s.version == .current
 
-/-- `check_fork` (`:246`): only an `Unchecked` fork is looked at; `MvccGraph::is_stale` fork
-(`mvcc_graph.rs:144`) is `ver + 1 ≠ fork.version`. Stale ⇒ `Version::Stale` and `Err(Stale)`.
-Since #3567 an unchecked fork is also rebased onto the indexer batches published since, as it
-becomes current (inside the `Unchecked` arm: `rebase_onto_indexer_batches`, `query_session.rs:261`; the
-`Current`/`Stale`/`None` arms return at once): index progress only, no data change
-(native_index `Rebase.lean`: `V.rebased_keeps_data`). The rebase fails (`Err(Stale)`, release) only for a
-fork that is still borrowed, which an escalating writer's is not (a debug build panics): that is the one
-assumption this model makes, not proven here. -/
+/-- `check_fork` (`:300`): only an `Unchecked` fork is looked at (`Current`/`Stale`/`None` return at once);
+`MvccGraph::is_stale` (`mvcc_graph.rs:152`) is `ver + 1 ≠ fork.version`. Stale ⇒ `Version::Stale` and
+`Err(Stale)`. Since #3567 an unchecked fork that is current is also rebased onto the indexer batches
+published since (`rebase_onto_indexer_batches`, `mvcc_graph.rs:171`): index progress only, no data change
+(native_index `Rebase.lean`: `V.rebased_keeps_data`). Since #3683 (08616ec29) that rebase returns `()`:
+it has no `Err(Stale)` arm any more, and the fork is passed in by `&mut` (`upgrade_to_write(fork)`), so
+the one assumption this model used to make (a rebase refusal never happens for an escalating writer's
+fork) is gone: `checkFork` is the whole function. -/
 def checkFork (s : SS) : Except Unit SS :=
   match s.version with
   | .unchecked fv =>

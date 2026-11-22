@@ -5,13 +5,13 @@ import FalkorBinder.Scopes
 
 | here | there |
 | --- | --- |
-| `BSt` | `Binder` fields `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`, `match_rel_vars`, `retired_scope_vars` (binder.rs:44-75) |
-| `BSt.default` | `Default for Binder` binder.rs:77-90 |
-| `BSt.current`, `BSt.setCurrent` | `current_env` / `current_env_mut` binder.rs:239-249 |
-| `BSt.push`, `BSt.commit` | `push_scope` / `commit_scope` binder.rs:251-259 |
-| `sortedScopeVars`, `BSt.scopeVars` | `sorted_scope_vars` binder.rs:2686-2690, `scope_vars` binder.rs:114-116 |
+| `BSt` | `Binder` fields `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`, `match_rel_vars`, `retired_scope_vars` (binder.rs:138-168) |
+| `BSt.default` | `Default for Binder` binder.rs:171-182 |
+| `BSt.current`, `BSt.setCurrent` | `current_env` / `current_env_mut` binder.rs:343-347 |
+| `BSt.push`, `BSt.commit` | `push_scope` / `commit_scope` binder.rs:354-357 |
+| `sortedScopeVars`, `BSt.scopeVars` | `sorted_scope_vars` binder.rs:2942-2946, `scope_vars` binder.rs:212-214 |
 | `toSt` | the two innermost scopes as name resolution sees them (Resolve.lean `St`) |
-| `mergedLabels`, `updNode`, `updGraph` | `update_graph_labels` binder.rs:160-237 |
+| `mergedLabels`, `updNode`, `updGraph` | `update_graph_labels` binder.rs:258-335 |
 -/
 namespace FalkorBinder
 
@@ -117,7 +117,7 @@ def updNode (nl : List (VKey × List Name)) (union : Bool) (n : VKey × List Nam
   | some acc => (n.1, mergedLabels union n.2 acc)
   | none => n
 
-/-- Nodes, then each relationship's two endpoints (binder.rs:183-236). -/
+/-- Nodes, then each relationship's two endpoints (binder.rs:276-335). -/
 def updGraph (nl : List (VKey × List Name)) (union : Bool) (nodes : List (VKey × List Name))
     (rels : List ((VKey × List Name) × (VKey × List Name))) :
     List (VKey × List Name) × List ((VKey × List Name) × (VKey × List Name)) :=

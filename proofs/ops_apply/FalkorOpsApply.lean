@@ -7,6 +7,9 @@ import FalkorOpsApply.SetRemove
 import FalkorOpsApply.CartVhj
 import FalkorOpsApply.RowWrites
 import FalkorOpsApply.MergeSlot
+import FalkorOpsApply.BatchRows
+import FalkorOpsApply.VhjSep
+import FalkorOpsApply.OpSep
 /-
 # ops_apply: MERGE, correlated sub-plans, FOREACH and UNION (FalkorDB-rs)
 
@@ -23,15 +26,17 @@ asserts C's answer and FAILS today).
 
 | here | there |
 | --- | --- |
-| `Correlated.tag`                          | `Batch::clone_active_rows_seq_origin` (`batch.rs:1163`) |
-| `Correlated.SubPlan`, `Separable`         | `run_batch` + `set_argument_batch` (`batch.rs:1590`); separability = origin-respecting, row-local |
-| `Correlated.applyBatched`                 | `ApplyOp::next_batched` (`apply.rs:152`), `merge_over_input` (`batch.rs:943`) |
+| `Correlated.tag`                          | `Batch::clone_active_rows_seq_origin` (`batch.rs:1170`) |
+| `Correlated.SubPlan`, `Separable`         | `run_batch` + `set_argument_batch` (`batch.rs:1603`); separability = origin-respecting, row-local |
+| `Correlated.applyBatched`                 | `ApplyOp::next_batched` (`apply.rs:152`), `merge_over_input` (`batch.rs:944`) |
 | `Correlated.applyPerRow`                  | `ApplyOp::next_per_row` (`apply.rs:238`) |
 | `Correlated.optionalBatched`              | `OptionalOp::next_batched` (`optional.rs:125`), Optional arm of `apply.rs:210-229` |
 | `Correlated.optionalPerRow`               | `OptionalOp::next_per_row` (`optional.rs:195`) |
 | `Correlated.semiBatched`                  | `SemiApplyOp::next` (`semi_apply.rs:66`) |
 | `Correlated.orApply`                      | `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73`) |
 | `Correlated.canBatchApply/Optional`       | `can_batch` in `ApplyOp::new` (`apply.rs:119`), `OptionalOp::new` (`optional.rs:104`) |
+| `OpSep.Adm`, `DSep`, `expandF`/`optF`/`semiF`/`orF`/`vhjF`/`perRowF` | the operators `can_batch` admits under a batched sub-plan (inventory in `OpSep.lean`'s header); `Adm.dsep` = separability on distinct-origin arguments |
+| `OpSep.applyBatched_rel`, `applyNext`, `optionalBatched_perm_ref_adm`, `semiBatched_eq_ref_adm`, `orApply_eq_ref_adm` | `ApplyOp::next_batched`/`next` (`apply.rs:152,343`), `OptionalOp::next_batched`/`next` (`optional.rs:125,292`), `SemiApplyOp::next` (`semi_apply.rs:66`), `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73`) |
 | `Correlated.vhj`                          | `ValueHashJoinOp::next` before #3035 (`value_hash_join.rs:366-446` at 343e077f2; now per-origin, `CartVhj.vhjRowsPO`) |
 | `Union.next`, `Union.St`                  | `UnionOp::next` (`union.rs:68`), `current`/`current_child` |
 | `ForEach.chunks`, `execList`, `runChunks` | `ForEachOp::execute_list` (`foreach.rs:86`) |
@@ -44,6 +49,10 @@ asserts C's answer and FAILS today).
 | `Merge.phaseB`                            | `MergeOp::drain_pending` (`merge.rs:302`) |
 | `SetRemove.clearForReplace`, `setFrom`    | `clear_node_attrs_for_replace` (`set.rs:125`), `clear_relationship_attrs_for_replace` (`set.rs:138`), `set_inner` (`set.rs:151`) |
 | `Merge.refMerge`                          | openCypher MERGE, per row |
+| `BatchRows.Bat`, `gather`, `intoCompacted`, `cloneSeq`, `originRow` | `Batch`, `gather` (`batch.rs:898`), `into_compacted`, `clone_active_rows_seq_origin` (`:1170`), `origin_row` (`:1305`) |
+| `BatchRows.mergeOverInput`                | `Batch::merge_over_input` (`batch.rs:944`) |
+| `BatchRows.setArg`                        | `BatchOp::set_argument_batch` (`batch.rs:1603`) |
+| `MergeSlot.Row.ofCells`                   | `BatchRow::to_owned_row` (`batch.rs:1439`, one slot per column since #3059) |
 
 ## Proven (headline)
 
@@ -52,7 +61,10 @@ asserts C's answer and FAILS today).
 * `optionalBatched_perm_ref` — batched Optional is a permutation of the reference.
 * `semiBatched_eq_ref`, `orApply_eq_ref`, `orApply_single` — (anti-)semi-apply / OR-apply = per-row EXISTS.
 * `rowLocal_separable`, `compose_separable` — row-local operators and their pipelines are separable.
-* `vhj_not_separable`, `count_not_separable`, `canBatchApply_admits_vhj`, `vhj_batched_16_vs_8`.
+* `vhj_not_separable`, `count_not_separable`, `canBatchApply_admits_vhj`, `vhj_batched_16_vs_8` (the ValueHashJoin ones describe the pre-#3035 join; per-origin since #3035, `CartVhj.vhjRowsPO`).
+* `OpSep.Adm.dsep`, `applyBatched_rel`/`applyBatched_eq_ref_adm`, `applyNext_perm_ref`, `optionalBatched_perm_ref_adm`, `optionalNext_perm_ref`, `semiBatched_eq_ref_adm`, `orApply_eq_ref_adm` — the six CONDITIONAL rows, discharged: every operator the `can_batch` guards let through is modelled (scans/traverses/Unwind/ProcedureCall/Filter/Project/PathBuilder = `expandF`, fused optional traverse = `optF`, `SemiApply`/`OrApply`, per-origin `ValueHashJoin`, nested per-row `Apply`), separability composes through the tree (`DSep`, origins tracked instead of required distinct), and batched = per-row (exactly, or up to permutation when a fused optional `CondTraverse` is inside). Counterexamples kept: `OpSep.dedupF_not_separable` (#3106), `limitF_not_separable`, `optF_not_exact` (#3070 family); writes: `RowWrites.bug2738_batched_call_hides_writes` (#2738).
+* `VhjSep.vhjPO_sepT`, `applyBatched_vhjPO`, `vhjPO_16_vs_8_fixed` — the #3035 per-origin ValueHashJoin is separable on the tag-shaped batches Apply builds (`SepT`), and batched Apply over it equals the reference.
+* `BatchRows.cloneSeq_spec`, `cloneSeq_tag`, `gather_row`, `intoCompacted_row`, `originRow_spec`, `mergeOverInput_row`, `slots_setArg`, `MergeSlot.ofCells_slot` — the plumbing under the idiom: stamping, gathering, merging over the input and installing the argument batch.
 * `union_drain`, `drain_eq`, `next_spec`, `stream_all_ok`, `next_none_stays` — UNION ALL = concatenation; failed branch instantiation ends the stream with its error.
 * `chunks_flatten`, `chunks_size`, `inner_ok`, `go_ok`, `next_ok`, `run_ok`, `foreach_correct`, `calls_items` — FOREACH passes every row through unchanged, in order, in batches of 1..B rows, and runs the body on every item of every row exactly once, in order, in chunks ≤ B.
 * `phaseA_ref`, `rustBatch_ref`, `rust_eq_ref_noSet`, `merge_noSet_any_batch_size`, `heads_tails_perm` — MERGE without SET equals per-row openCypher for EVERY batching (same graph, same ids, output rows a permutation).
@@ -81,7 +93,7 @@ asserts C's answer and FAILS today).
    Lean theorem `fixed3067_batch_independent`.
 4. **All-bound shortcut drops matches visible through a path** — FIXED by #3055
    (closes #3040, main 5e475e6c9): the shortcut applies only when every relationship is
-   bound or anonymous and not exposed by a path variable (`merge.rs:378-393`).
+   bound or anonymous and not exposed by a path variable (`merge.rs:380-395`).
    `MATCH (a:A),(b:B) MERGE p=(a)-[:R]->(b) RETURN count(p)` over two parallel edges was
    Rust 1, C 2. Lean: `Merge.allBound_path_keeps_all`,
    `Merge.allBoundMain_imp_pre`, `Merge.path_shortcut_off`.

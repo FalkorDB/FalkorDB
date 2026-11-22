@@ -16,7 +16,7 @@ graph/src/graph/graph.rs	grow_cap	842	PROVEN	Schema.growCap/growStep: growCap_ge
 graph/src/graph/graph.rs	new	858	PROVEN	Ids.newG_spec; chains (#3757): SchemaHash.newGC_inv
 graph/src/graph/graph.rs	restore	900	PROVEN	Ids.restore_ids, restoreCap_covers, clampTiers_mono, restore_LInv, restore_LInv_any (NameMap::from_names index, first position wins, #3757: fromNamesIdx_spec), fillEndpoints_spec; chains rebuilt with chain_of (#3757): SchemaHash.restoreGC_inv, restore_same_hash
 graph/src/graph/graph.rs	rebuild_derived_matrices	1015	PROVEN	Ids.rebuildRelType_complete (tensor rebuild_backward = GraphBLAS transpose); #3250 node half Ids.rebuildNodeMs (node_cap = max(node_cap, saved)): rebuild_never_shrinks, rebuild_keeps_entries (tensor dims not on Ten; Tensor::resize in versioned_matrix)
-graph/src/graph/graph.rs	trim_attr_stores	1060	PROVEN	Ids.trimAttrStores_id
+graph/src/graph/graph.rs	trim_attr_stores	1060	PROVEN	Ids.trimAttrStores_id (private since #3641; called by finish_version)
 graph/src/graph/graph.rs	new_version	1074	PROVEN	Ids.newVersion_spec (fresh batch per version); chains copied (#3757): SchemaHash.newVersionGC_inv, newVersionGC_model
 graph/src/graph/graph.rs	name	1132	PROVEN	Accessors (field projection; newVersion_spec keeps it)
 graph/src/graph/graph.rs	node_count	1137	PROVEN	Ids.markNodesLive_spec / nodeBound_eq (IdSpace::live) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
@@ -73,9 +73,9 @@ graph/src/graph/graph.rs	set_node_labels_product	2150	PROVEN	Labels.setLabelsPro
 graph/src/graph/graph.rs	set_nodes_labels_bulk	2230	PROVEN	Labels.setLabelsBulk_spec
 graph/src/graph/graph.rs	remove_nodes_labels	2276	PROVEN	Labels.removeLabels_spec
 graph/src/graph/graph.rs	delete_nodes	2310	PROVEN	Labels.deleteNodes_spec, deleteNodes_refused, deleteNodes_ids || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	get_node_relationships	2400	PROVEN	Queries.nodeRels_selfloop_twice (BUG via UDF getNeighbors)
+graph/src/graph/graph.rs	get_node_relationships	2400	PROVEN	Queries.nodeRels (#3084 fixed the self-loop-twice bug: incoming half drops src == dest): nodeRels_once (every incident edge of a tensor exactly once, self-loops included), nodeRels_eq_byType, inc_filter_agree; historical pre3084_nodeRels, pre3084_nodeRels_selfloop_twice (fixed by #3084, 5f147f10e)
 graph/src/graph/graph.rs	relationship_matrices_iter	2477	PROVEN	Queries.inDeg_eq (relMs iteration)
-graph/src/graph/graph.rs	get_node_relationships_by_type	2485	PROVEN	Queries.byType_both_once, byType_out, byType_in
+graph/src/graph/graph.rs	get_node_relationships_by_type	2485	PROVEN	Queries.byType_both_once, byType_out, byType_in; #3084 restructured the matrix selection (all-types walked in place, typed gathered) = selMats unchanged
 graph/src/graph/graph.rs	get_node_indegree	2531	PROVEN	Queries.inDeg_eq
 graph/src/graph/graph.rs	get_node_indegree_by_type	2543	PROVEN	Queries.inDegByType_eq
 graph/src/graph/graph.rs	get_node_outdegree	2557	PROVEN	Queries.outDeg_eq
@@ -105,7 +105,7 @@ graph/src/graph/graph.rs	is_relationship_deleted	2958	PROVEN	Accessors.isRelDele
 graph/src/graph/graph.rs	delete_relationships	2965	PROVEN	Delete.deleteRels_clears, deleteRels_adj, deleteRels_refused, deleteRels_stale (BUG) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
 graph/src/graph/graph.rs	delete_implicit_edges	3102	PROVEN	Delete.collectImplicit_mem, deleteImplicit_no_dangling, deleteImplicit_freed || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
 graph/src/graph/graph.rs	get_src_dest_relationships	3287	PROVEN	Queries.srcDestRels_mem
-graph/src/graph/graph.rs	build_relationship_matrix_unrestricted	3311	PROVEN	Queries.relMatUnrestricted_mem, relMatUnrestricted_none
+graph/src/graph/graph.rs	build_relationship_matrix_unrestricted	3311	PROVEN	Queries.relMatUnrestricted_mem, relMatUnrestricted_none (#3471: the delta-minus mask is now structural, Descriptor::SC: a stored entry of fwd_dm hides the base entry whatever its value, which is what the logical-set model of set_pattern assumes)
 graph/src/graph/graph.rs	resolve_label_ids	3345	PROVEN	Queries.resolveLabelIds_none
 graph/src/graph/graph.rs	build_relationship_matrix	3355	PROVEN	Queries.relMatrix_mem
 graph/src/graph/graph.rs	get_relationships	3423	PROVEN	Queries.getRelationships_all
@@ -143,16 +143,16 @@ graph/src/graph/graph.rs	commit_edge_index	3977	PROVEN	Index.commitEdgeDocs_mem 
 graph/src/graph/graph.rs	commit_edge_index_locked	3989	PROVEN	Index.commitEdgeDocs_mem
 graph/src/graph/graph.rs	commit_index_kind	4070	PROVEN	Index.commitDocs_noop, commitDocs_every_id
 graph/src/graph/graph.rs	drop_index	4121	PROVEN	Index.dropIndex_protects, Index.dropIndex_none_noattr, Constraints.drop_blocked
-graph/src/graph/graph.rs	is_indexed	4219	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
+graph/src/graph/graph.rs	is_indexed	4219	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation (index-falkordb: a Range lookup is the native column is_ready, #3585, proofs/native_index)
 graph/src/graph/graph.rs	get_indexed_nodes	4232	AXIOMATISED	RediSearch Indexer::query, ids wrapped (Accessors.nodeId_roundtrip)
-graph/src/graph/graph.rs	is_edge_indexed	4318	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
+graph/src/graph/graph.rs	is_edge_indexed	4318	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation (index-falkordb: a Range lookup is the native column is_ready, #3585, proofs/native_index)
 graph/src/graph/graph.rs	get_indexed_edges	4333	AXIOMATISED	RediSearch Indexer::query_edges delegation
 graph/src/graph/graph.rs	get_all_edges	4348	PROVEN	Queries.allEdges_unknown
 graph/src/graph/graph.rs	fulltext_query_nodes	4361	AXIOMATISED	RediSearch fulltext_query delegation
 graph/src/graph/graph.rs	fulltext_query_edges	4376	AXIOMATISED	RediSearch fulltext_query_edges delegation
 graph/src/graph/graph.rs	vector_query_nodes	4400	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row, not_operational_refused (#3088 clamp, #3085, #3382 gate)
 graph/src/graph/graph.rs	vector_query_edges	4467	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, not_operational_refused (vectorQueryEdges, relationship_count clamp, #3382 gate)
-graph/src/graph/graph.rs	index_info	4527	PROVEN	Index.indexInfo_length
+graph/src/graph/graph.rs	index_info	4527	PROVEN	Index.indexInfo_length (default build); with index-falkordb each info also goes through add_native_build: Index.addNativeBuild_none / _pending / _progress_le
 graph/src/graph/graph.rs	constraints	4606	PROVEN	Constraints.two_phase_eq (constraints projection)
 graph/src/graph/graph.rs	constraints_mut	4610	PROVEN	Constraints.upsert_twice (constraints_mut projection)
 graph/src/graph/graph.rs	create_constraint	4623	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
@@ -197,12 +197,12 @@ graph/src/graph/graph.rs	verify_id_batches	1681	PROVEN	Ids.verifyIdBatches: veri
 graph/src/graph/graph.rs	node_id_space	1695	PROVEN	Ids.openNodeSpace_eq
 graph/src/graph/graph.rs	relationship_id_space	1701	PROVEN	Ids.openRelSpace_eq
 graph/src/graph/graph.rs	grow_for_nodes	1767	PROVEN	Ids.growForNodes_spec
-graph/src/graph/graph.rs	first_node_with_relationships	2434	CONDITIONAL	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022) || CONDITIONAL on AdjExact (adjacency = union of relation tensors; the graph.rs mutators' invariant, not proven preserved)
+graph/src/graph/graph.rs	first_node_with_relationships	2434	CONDITIONAL	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022) || CONDITIONAL on AdjExact (adjacency = union of relation tensors; the graph.rs mutators' invariant, not proven preserved) || Why it stays CONDITIONAL (re-attempted): AdjExact must hold of every graph, including one loaded from an RDB. `src/serializers/decoder/mod.rs` (:286, :363, :558) decodes the adjacency matrix with `VersionedMatrix::decode` and `Graph::restore` (graph.rs:907) takes it as is: nothing compares it with the relation tensors, so a corrupt or hand-edited RDB that drops a pair breaks AdjExact (model-level finding, not reproduced live: the matrix is a serialised GraphBLAS blob). The mutators' preservation (create_relationships_bulk, delete_relationships, delete_implicit_edges, incl. `Mat.set`'s silent no-op for an endpoint past the dimension) is not mechanised either
 graph/src/graph/graph.rs	edge_has_type_id	1335	PROVEN	Schema.edgeHasTypeId_iff (#3567: the matrix read edge_has_type used inline); edgeHasType_iff
-graph/src/graph/graph.rs	Graph::add_native_build	4551	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/graph/graph.rs	Graph::native_build_total	4587	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/graph/graph.rs	end_id_quarantine	1068	NOT COVERED	(#3164): not modelled yet
-graph/src/graph/graph.rs	finish_version	1054	NOT COVERED	(#3164): end-of-version tail calling trim_attr_stores and end_id_quarantine; the quarantine half is not modelled yet
+graph/src/graph/graph.rs	Graph::add_native_build	4551	PROVEN	Index.addNativeBuild (index-falkordb, #3585): addNativeBuild_none, addNativeBuild_pending, addNativeBuild_progress_le, addNativeBuild_progress_min, nbFold_cols; building_read is proofs/native_index
+graph/src/graph/graph.rs	Graph::native_build_total	4587	PROVEN	Index.nativeBuildTotal (nvals of the label matrix / edge_count of the tensor, 0 when absent): addNativeBuild_pending, addNativeBuild_progress_le
+graph/src/graph/graph.rs	end_id_quarantine	1068	PROVEN	Ids.endIdQuarantine (#3641): endIdQuarantine_id (IdSpace::end_quarantine empties only `quarantined`, outside IdS: proofs/id_space IdSpace.endQuarantine_spec)
+graph/src/graph/graph.rs	finish_version	1054	PROVEN	Ids.finishVersion (= endIdQuarantine ∘ trimAttrStores, #3641): finishVersion_id (neither changes the logical graph)
 graph/src/graph/schema_hash.rs	extend_chain	37	PROVEN	SchemaHash.push (xxh3_64 over tag ‖ h ‖ len ‖ name, streamed; xxh3 an abstract parameter): chainOf_snoc (push_matches_of), internLabelC_inv, registerRelTypeC_inv
 graph/src/graph/schema_hash.rs	chain_of	54	PROVEN	SchemaHash.chainOf (foldl push from 0): chainOf_snoc, chainOf_nil, restoreGC_inv, restore_same_hash
 graph/src/graph/schema_hash.rs	schema_hash	65	PROVEN	SchemaHash.schemaHash (wrapping sum mod 2^64): empty_hash, schemaHash_lt, graphSchemaHash_eq

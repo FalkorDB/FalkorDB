@@ -11,6 +11,7 @@ import FalkorTemporal.Pure
 import FalkorTemporal.PadDefs
 import FalkorTemporal.PadAux
 import FalkorTemporal.Components
+import FalkorTemporal.DurationComponent
 import FalkorTemporal.SpatialFns
 import FalkorTemporal.VecDistance
 /-!
@@ -36,23 +37,23 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 | --- | --- |
 | `isLeap`, `daysInMonth` | `is_leap` `value.rs:777`, `days_in_month` `value.rs:765` |
 | `daysFromCivil` | `days_from_civil` `value.rs:784` |
-| `daysFromCivilT` | `days_from_civil` `temporal.rs:463` (second copy, truncating i32 `/`) |
+| `daysFromCivilT` | `days_from_civil` `temporal.rs:471` (second copy, truncating i32 `/`) |
 | `civilFromDaysI` / `civilFromDays` | `civil_from_days_wide` `value.rs:812` (i64 year) / `civil_from_days` `value.rs:804` (with `y as i32`) |
-| `constructDuration` | `construct_duration_secs` `temporal.rs:479` (ends in `check_date_range`, #2746) |
-| `MAX_DATE_YEAR`, `checkDateRange` | `MAX_DATE_YEAR` `temporal.rs:523`, `check_date_range` `temporal.rs:531` (#2746) |
-| `decomposeDuration` | `decompose_duration` `temporal.rs:539` |
+| `constructDuration` | `construct_duration_secs` `temporal.rs:487` (ends in `check_date_range`, #2746) |
+| `MAX_DATE_YEAR`, `checkDateRange` | `MAX_DATE_YEAR` `temporal.rs:533`, `check_date_range` `temporal.rs:541` (#2746) |
+| `decomposeDuration` | `decompose_duration` `temporal.rs:549` |
 | `shiftMonths` / `shiftMonthsR` | `shift_months` `value.rs:725` (shared by `+`/`-` since #2984); arithmetic / with the `MAX_DATE_YEAR` guard |
 | `addDur` / `subDur` (`addDurRaw` / `subDurRaw`: the unchecked arithmetic) | `add_duration_to_timestamp` `value.rs:701` / `sub_duration_from_timestamp` `value.rs:711` (range-checked since #2746) |
-| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1063` / `Sub` `value.rs:1105` (#2985) |
+| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1069` / `Sub` `value.rs:1111` (#2985) |
 | `dateFromComponents`, `weekPath`, `quarterPath`, `ymdPath` | `date_from_components` `temporal.rs:82` (range-checked since #2950) |
 | `checkRange`, `inRange`, `i32Ok`, `u32Ok` | `check_range` `temporal.rs:63`, `i32::try_from`/`u32::try_from` |
 | `checkedAddDays`, `tdDaysOk`, `chronoYearOk` | chrono 0.4.45 `checked_add_signed` / `NaiveDate + TimeDelta`, `TimeDelta::days`, `MIN_YEAR`/`MAX_YEAR` |
 | `weekSlice`, `sliceOk` | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` `temporal.rs:279-289` |
-| `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:417-428` (`checked_mul`/`checked_add`, #2987) |
+| `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:417-428` (the trailing-number-without-unit errors, #3574, at `:433-435` and `:460-462`) (`checked_mul`/`checked_add`, #2987) |
 | `formatDate`, `formatDatetime`, `pushDate`, `twoDigits` (`Components.lean`) | `format_date` `value.rs:281`, `format_datetime` `value.rs:261`, `push_date` `value.rs:828`, `write_two_digits` `value.rs:853` (#2986, #2746: i64 year, all digits, sign) |
 | `SpatialFns.pointFromMapEntries`, `numeric`, `point` | `point_from_map_entries` `spatial.rs:38`, `numeric` `spatial.rs:74`, `point` `spatial.rs:110` (#3301; `Point::validate` and `point_struct_pure` are gone) |
-| `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::Or` `eval.rs:640` / `ExprIR::And` `eval.rs:691` |
-| `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:880` / `Add..Rem for Value` `value.rs:933-1200` |
+| `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:388` / `ExprIR::Or` `eval.rs:644` / `ExprIR::And` `eval.rs:695` |
+| `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:881` / `Add..Rem for Value` `value.rs:946-1216` |
 | `Spatial2.distance` (`Spatial` holds only the `#guard`ed rounding mechanism) | `Point::distance` `value.rs:153` (clamped `a`, #2983); pre-#2983 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412): history |
 
 ## Proven (160 theorems + 30 kernel-checked era chunks)
@@ -193,6 +194,27 @@ any non-digit (`allDigits` guard, temporal.rs:220, :335) instead of silently dro
 Suspicion (message only): `point({latitude: null, ..})` errors "requires 'latitude'
 field" for a literal map (slot form) but "must be a number, got Null" for a map value
 (`point_null_lat_msgs`); C uses one message for both.
+
+## Re-targeted to 256ab4d3f (from 43936bab9)
+
+#3574 (`e0a34e480`, closes #3117): `parse_duration_string` now errors on a trailing number with
+no unit (`P5`, `P1Y5`, `PT5`, `P1DT2H3`: "Duration component has no unit: 5") in both the date and
+the time loop; `Fns.dateLoop` / `timeLoop` end-of-input arms re-modelled, new theorems
+`dateLoop_trailing_number`, `timeLoop_trailing_number`, `dateLoop_end_ok`, `timeLoop_end_ok`,
+`parseDuration_P5` (live on the main build: all four strings error, `P1D` still parses).
+#3787 only touches `debug_assert!` -> `debug_assert_eq!` in `timestamp_fn` / `register` and a doc comment
+(no model change). #3609 (`toString(Float)`) is `conversion.rs`, proved in proofs/value_math.
+
+**New: `DurationComponent.lean` — `Value::get_duration_component` (value.rs:613) is chrono-bounded.**
+`durComp_agrees_decompose`: inside chrono's year range (-262143..=262142, `chronoK`) every component
+equals the `decompose_duration` one; `durComp_weeks`, `durComp_unknown`, `durComp_invalid_null`.
+**BUG** (`durComp_null_but_representable`, `bug_duration_component_null`): a duration whose instant
+leaves chrono's range (about 260 174 years and up) is still accepted by `check_date_range` (up to
+~2.1e9 years) and printed/added by `decompose_duration`, but `.years`/`.days`/... return `null`.
+Live (Rust main 256ab4d3f vs C master build): `RETURN duration({years: 262000, days: 3}).years` is
+`null` in Rust and `262000` in C; `toString(duration({years: 1000000, days: 3}))` is `P1000000Y3D` in
+both; 100000 and 200000 years agree. (C returns 0/0/3/6 for the negative `years: -1000000`; Rust
+`null`.)
 
 ## Re-targeted to 289c201fe
 

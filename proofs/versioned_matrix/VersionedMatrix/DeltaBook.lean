@@ -2,7 +2,7 @@ import VersionedMatrix.Mat
 import VersionedMatrix.RowFilter
 import VersionedMatrix.Policy
 /-
-# `Delta<T>`: one delta layer plus its bookkeeping (`versioned_matrix.rs:301-634`)
+# `Delta<T>`: one delta layer plus its bookkeeping (`versioned_matrix.rs:301-641`)
 
 | here | there |
 | --- | --- |
@@ -13,14 +13,14 @@ import VersionedMatrix.Policy
 | `transposed`   | `transposed` (:365) |
 | `newVersion`   | `new_version` (:392) |
 | `count`/`resync` | `count` (:407) / `resync` (:413) |
-| `latch`/`foldDecision`/`folding`/`takeFold` | :421 / :434 / :446 / :452 |
-| `clear`/`replace`/`resize` | :459 / :479 / :488 |
-| `layerMut`/`layerMutRow` | :503 / :514 (the mutation is passed as `f`) |
-| `mayHoldRows`  | `may_hold_rows` (:524) |
-| `erase`        | `erase` (:535) |
-| `insertB`/`insertProduct`/`tombstoneMasked` | `impl Delta<bool>` :554 / :574 / :589 |
-| `removeAll`    | `remove_all` (:603) |
-| `insertV`      | `impl Delta<u64>::insert` (:621) |
+| `latch`/`foldDecision`/`folding`/`takeFold` | :421 / :434 / :446 / :456 |
+| `clear`/`replace`/`resize` | :463 / :483 / :492 |
+| `layerMut`/`layerMutRow` | :507 / :518 (the mutation is passed as `f`) |
+| `mayHoldRows`  | `may_hold_rows` (:528) |
+| `erase`        | `erase` (:539) |
+| `insertB`/`insertProduct`/`tombstoneMasked` | `impl Delta<bool>` :557 / :577 / :592 |
+| `removeAll`    | `remove_all` (:610) |
+| `insertV`      | `impl Delta<u64>::insert` (:628) |
 
 `Atomic*` fields are plain values: every access is `Relaxed` under the
 single-writer discipline (`Cow.lean`), so only their values matter.
@@ -73,7 +73,7 @@ def replace (d : Delta α) (l : Mat α) : Delta α := { d with layer := l }
 def layerMut (d : Delta α) (f : Mat α → Mat α) : Delta α := { d with rows := .unknown, layer := f d.layer }
 def layerMutRow (d : Delta α) (i : Nat) (f : Mat α → Mat α) : Delta α :=
   { d with rows := add d.rows (BitVec.ofNat 64 i), layer := f d.layer }
-/-- `resize` (:488): `layer_mut` invalidates, then the saved filter is restored. -/
+/-- `resize` (:492): `layer_mut` invalidates, then the saved filter is restored. -/
 def resize (d : Delta α) (r c : Nat) : Delta α :=
   { layerMut d (fun m => resizeM m r c) with rows := d.rows }
 def mayHoldRows (d : Delta α) (lo hi : Nat) : Bool := mayHold d.rows lo hi

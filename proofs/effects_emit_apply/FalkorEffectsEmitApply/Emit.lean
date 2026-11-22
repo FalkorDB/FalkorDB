@@ -10,7 +10,7 @@ the gate that decides whether it runs at all (`runtime/ops/commit.rs:108`,
 
 namespace FalkorEA
 
-/-! ## Attribute lookup and `gather_rows` (`emit.rs:921-949`) -/
+/-! ## Attribute lookup and `gather_rows` (`emit.rs:917-945`) -/
 
 /-- The value an entity holds for attribute `a`, or `Null` (a pad). -/
 def lookupAttr : List (Nat × Val) → Nat → Val
@@ -92,7 +92,7 @@ theorem pairwise_dropWhile {α} (R : α → α → Prop) (f : α → Bool) :
     pairs are strictly ascending by attribute id (what `Pending`'s sorted vec
     keeps) and a strictly ascending shape (built from those very vectors), the
     linear merge produces exactly `attr_ids.map(lookup)` — the quadratic
-    per-cell search that `emit.rs:937-940` says it replaced. No cell is taken
+    per-cell search that `emit.rs:933-936` says it replaced. No cell is taken
     from the wrong attribute and none is skipped. -/
 theorem mergeRow_eq_lookup :
     ∀ (as : List Nat) (ps : List (Nat × Val)),
@@ -154,7 +154,7 @@ theorem mergeRow_eq_lookup :
         rw [← key b (Nat.le_of_lt (hlt b hb))]
 
 /-- A width-`n` shape yields `n` cells per id, so `rows.len() == ids.len() * n`
-    — the shape check the decoder and `check_attr_shape` (`apply.rs:720`)
+    — the shape check the decoder and `check_attr_shape` (`apply.rs:758`)
     apply to it. -/
 theorem mergeRow_length : ∀ (as : List Nat) (ps : List (Nat × Val)),
     (mergeRow as ps).length = as.length := by
@@ -271,8 +271,8 @@ def idxOf (l : List Name) (n : Name) : Option Nat :=
   | some i => some i
   | none   => none
 
-/-- `digest_cancelled` (`emit.rs:395-495`), ids only. A cancelled edge of a type
-    the graph never registered is skipped (`emit.rs:448-454`). -/
+/-- `digest_cancelled` (`emit.rs:395-492`), ids only. A cancelled edge of a type
+    the graph never registered is skipped (`emit.rs:448-451`). -/
 def digestCancelled (p : Pending) (g : Schema) : List Rec :=
   if p.cancelledNodes.isEmpty && p.cancelledRels.isEmpty then [] else
   let edges := p.cancelledRels.filterMap
@@ -421,7 +421,7 @@ theorem gate_drops_schema_only :
 /-! ### Why a dropped payload is a divergence and not a no-op
 
     The replica checks every `ADD_SCHEMA` id against the id its own dictionary
-    assigns (`apply_add_schema`, `apply.rs:532`; `verify_id`, `apply.rs:552`).
+    assigns (`apply_add_schema`, `apply.rs:560`; `verify_id`, `apply.rs:586`).
     One dropped registration shifts every later id by one. -/
 
 /-- `get_label_id_mut` then `verify_id`: get-or-create, and the id must match. -/
@@ -442,7 +442,7 @@ theorem next_payload_refused :
     attribute is *accepted* — a silent divergence
     (`cancelled_edge_attribute_is_a_silent_dictionary_divergence`). Here even an
     un-gated emitter would say nothing about `T1`'s edges, since the type has no
-    id (`emit.rs:448-454`), but it would still announce `p4`. -/
+    id (`emit.rs:448-451`), but it would still announce `p4`. -/
 theorem pre3461_cancelled_edge_attr_dropped :
     let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
     let g : Schema := ⟨[], [], ["p4"]⟩

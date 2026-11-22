@@ -10,12 +10,12 @@ here: `scF32`, `fkey32`, the hash-consistency proof, the per-shape key claims an
 
 | here | there (origin/main 4a4f2a72f, graph/src/runtime/value.rs) |
 | --- | --- |
-| `scF32`      | `sort_cmp_f32` (:1905): `-0.0` sorts before `0.0`, NaN on top |
-| `scMain`     | `Value::sort_cmp` (:1529) / `sort_cmp_map` (:1566) = `sc scF32` |
-| `hwords`, `floatWord`, `f32HashBits` | `Hash for Value` (:823, Float arm :839-850, VecF32/Point :876-886), `f32_hash_bits` (:1919) — Model.lean |
+| `scF32`      | `sort_cmp_f32` (:1947): `-0.0` sorts before `0.0`, NaN on top |
+| `scMain`     | `Value::sort_cmp` (:1573) / `sort_cmp_map` (:1610) = `sc scF32` |
+| `hwords`, `floatWord`, `f32HashBits` | `Hash for Value` (:861, Float arm :878-891, VecF32/Point :915-930), `f32_hash_bits` (:1961) — Model.lean |
 | `cmpKey`     | `OrderedKey::cmp_key` (ops/sort.rs:76) |
-| `compareAt`  | `Column::compare_at` (batch.rs:399) |
-| `compareRowsAt` | `Batch::compare_rows_at` (batch.rs:1287) |
+| `compareAt`  | `Column::compare_at` (batch.rs:401) |
+| `compareRowsAt` | `Batch::compare_rows_at` (batch.rs:1289) |
 | `listSort`   | `list.sort` (functions/list.rs:197): `sort_by(Value::sort_cmp)` |
 -/
 namespace ValueOrder.Main
@@ -23,7 +23,7 @@ open FalkorCore ValueOrder FalkorCore.Laws ValueOrder.SC
 
 /-! ## `sort_cmp_f32` -/
 
-/-- `sort_cmp_f32` (value.rs:1945). -/
+/-- `sort_cmp_f32` (value.rs:1947). -/
 def scF32 (a b : F) : Ordering :=
   match fpcmp a b with
   | some .eq => cmpB (isSignNeg b) (isSignNeg a)
@@ -96,7 +96,7 @@ theorem scF32_refl (x : F) : scF32 x x = .eq := by rw [scF32_key]; exact cmp3_re
 
 /-! ## Main's `sort_cmp` is a total preorder -/
 
-/-- `Value::sort_cmp` on main (value.rs:1569). -/
+/-- `Value::sort_cmp` on main (value.rs:1573). -/
 def scMain : V → V → Ordering := sc scF32
 
 /-- **Main's `sort_cmp` is a total preorder** on every well-formed value (Ints are `i64`,
@@ -312,7 +312,7 @@ def Col.get : Col → Nat → V
   | .nodeIds v, i => .node (v.getD i 0)
   | .unbound, _ => .null
 
-/-- `Column::compare_at` (batch.rs:399): raw lanes, else `sort_cmp` on `get`. -/
+/-- `Column::compare_at` (batch.rs:401): raw lanes, else `sort_cmp` on `get`. -/
 def compareAt : Col → Nat → Nat → Ordering
   | .ints v, a, b => cmpI (v.getD a 0) (v.getD b 0)
   | .floats v, a, b => scF64 (v.getD a (.num 0)) (v.getD b (.num 0))
@@ -324,7 +324,7 @@ fast paths sort exactly like the `Values` path, and like `list.sort`). -/
 theorem compareAt_eq_scMain (c : Col) (a b : Nat) : compareAt c a b = scMain (c.get a) (c.get b) := by
   cases c <;> rfl
 
-/-- `Batch::compare_rows_at` (batch.rs:1287): Unbound columns tie, else `sort_cmp`. -/
+/-- `Batch::compare_rows_at` (batch.rs:1289): Unbound columns tie, else `sort_cmp`. -/
 def compareRowsAt (c : Col) (a b : Nat) : Ordering :=
   match c with
   | .unbound => .eq

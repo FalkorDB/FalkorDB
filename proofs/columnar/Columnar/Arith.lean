@@ -1,14 +1,14 @@
 import Columnar.VectorExpr
 
 /-
-# Arithmetic lanes (`vector_expr.rs:880-994`) against `Value` arithmetic
+# Arithmetic lanes (`vector_expr.rs:881-995`) against `Value` arithmetic
 
 | here | there |
 | --- | --- |
 | `wrap` | two's-complement `i64` wrap-around for `+ - *` and `%` (`wrapping_add/sub/mul/rem`); `Int / Int` does not wrap: it is `checked_div`, so a zero divisor and `i64::MIN / -1` are errors (`value.rs:1163-1169`, `minDivNegOne`, `divOverflow`, #3603), and the lane's `wrapping_div` (`vector_expr.rs:910`) runs only when no live lane is `MIN / -1` (guard `:898-901`), so it never wraps either |
 | `AOp`, `valueArith` | `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs:904-1170`), numeric + null arms; every other shape is an abstract `other` (the generic lane calls it too) |
-| `intLane`, `floatLane`, `floatOperand` | `int_lane`, `float_lane`, `float_operand` (`vector_expr.rs:962-994`) |
-| `arithmetic` | `arithmetic` (`vector_expr.rs:880-959`) |
+| `intLane`, `floatLane`, `floatOperand` | `int_lane`, `float_lane`, `float_operand` (`vector_expr.rs:963-995`) |
+| `arithmetic` | `arithmetic` (`vector_expr.rs:881-960`) |
 -/
 
 namespace Columnar
@@ -106,7 +106,7 @@ def genericStage (other : AOp → V F → V F → Except String (V F)) (op : AOp
     Except String (EC F) :=
   ((List.range len).mapM (fun i => valueArith other op (lhs.get i) (rhs.get i))).map EC.values
 
-/-- `arithmetic` (`vector_expr.rs:880-959`). -/
+/-- `arithmetic` (`vector_expr.rs:881-960`). -/
 def arithmetic (other : AOp → V F → V F → Except String (V F)) (op : AOp) (lhs rhs : EC F) (len : Nat) :
     Except String (EC F) :=
   match intStage op lhs rhs len with

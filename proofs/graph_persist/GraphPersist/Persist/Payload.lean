@@ -22,6 +22,24 @@ def St.ofU : Nat → Option St
 theorem St.ofU_toU (s : St) : St.ofU s.toU = some s := by cases s <;> rfl
 theorem St.toU_lt (s : St) : s.toU < 2 ^ 64 := by cases s <;> decide
 
+/-- `from_u64` refuses every value past `Final = 11` (`_ => None`). -/
+theorem St.ofU_none (v : Nat) (h : 12 ≤ v) : St.ofU v = none := by
+  match v, h with
+  | v + 12, _ => rfl
+
+/-- `EncodeState::from_u64` is exactly the inverse of the `#[repr(u64)]` discriminant:
+`from_u64 v = Some s` iff `s as u64 == v` (so every tag the encoder writes decodes to its state,
+and nothing else decodes). -/
+theorem St.ofU_iff (v : Nat) (s : St) : St.ofU v = some s ↔ s.toU = v := by
+  constructor
+  · intro h
+    by_cases hv : v < 12
+    · have : v = 0 ∨ v = 1 ∨ v = 2 ∨ v = 3 ∨ v = 4 ∨ v = 5 ∨ v = 6 ∨ v = 7 ∨ v = 8 ∨ v = 9 ∨ v = 10 ∨ v = 11 := by omega
+      rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+        cases s <;> simp_all [St.ofU, St.toU]
+    · rw [St.ofU_none v (by omega)] at h; cases h
+  · rintro rfl; exact St.ofU_toU s
+
 /-- The states `decode_payload_directory` (decoder/mod.rs:48) accepts: all but
 `CchIndices` (no CCH index in this module), `Init` and `Final` (never saved). -/
 def St.accepted : St → Bool

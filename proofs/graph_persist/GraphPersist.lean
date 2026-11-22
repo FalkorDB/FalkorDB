@@ -173,5 +173,7 @@ calls are FFI; MvccGraph concurrency is not modelled; floats are bit images.
 import GraphPersist.Codec
 import GraphPersist.Constraint
 import GraphPersist.Layout
+import GraphPersist.Traits
+import GraphPersist.Mvcc
 import GraphPersist.Persist
 import GraphPersist.RedisType

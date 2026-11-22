@@ -1,8 +1,11 @@
 name = "falkor-endpoint-index"
-defaultTargets = ["FalkorEndpointIndex", "EndpointPaged"]
+defaultTargets = ["FalkorEndpointIndex", "EndpointPaged", "EndpointGraph"]
 
 [[lean_lib]]
 name = "FalkorEndpointIndex"
 
 [[lean_lib]]
 name = "EndpointPaged"
+
+[[lean_lib]]
+name = "EndpointGraph"

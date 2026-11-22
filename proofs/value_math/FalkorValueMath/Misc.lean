@@ -185,7 +185,7 @@ theorem shares_le (x rc : Nat) (h : 0 < rc) : rc * (x / rc) ≤ x ∧ x < rc * (
     have := Nat.mod_lt x h
     rw [Nat.mul_comm] at *; omega
 
-/-- A `Relationship` value owns no heap (it is an id, value.rs:200), yet both
+/-- A `Relationship` value owns no heap (it is an id, value.rs:184-222), yet both
 estimates charge it 24 bytes — a fixed over-count (suspicion; no user-visible effect
 known, relationships are never stored as attributes). -/
 theorem rel_charged : heapSize .rel = 24 ∧ amortized .rel = 24 := ⟨rfl, rfl⟩
@@ -198,7 +198,7 @@ def asciiLowerStr (s : List Char) : List Char := s.map lowerAscii
 
 def eqIC (a : String) (b : String) : Bool := asciiLowerStr a.toList == asciiLowerStr b.toList
 
-/-- `get_point_component` (value.rs:458): ASCII case-insensitive. -/
+/-- `get_point_component` (value.rs:463): ASCII case-insensitive. -/
 def pointComponent (widen : F → F) (la lo : F) (attr : String) : V F :=
   if eqIC attr "latitude" then .float (widen la)
   else if eqIC attr "longitude" then .float (widen lo)
@@ -210,7 +210,7 @@ theorem point_component_case (widen : F → F) (la lo : F) :
     pointComponent widen la lo "LATITUDE" = .float (widen la) := by
   simp [pointComponent, eqIC, asciiLowerStr] <;> decide
 
-/-- The part of `get_duration_component` (value.rs:608-634) before chrono is consulted:
+/-- The part of `get_duration_component` (value.rs:613-640) before chrono is consulted:
 unknown names error, `weeks` is always `0.0`. -/
 def durationComponentPre (zero : F) (c : String) : Option (Except String (V F)) :=
   let known := ["years", "months", "weeks", "days", "hours", "minutes", "seconds"]
@@ -223,7 +223,7 @@ live; openCypher expects 2). -/
 theorem duration_weeks_zero (zero : F) : durationComponentPre zero "weeks" = some (.ok (.float zero)) := by
   simp [durationComponentPre, eqIC, asciiLowerStr] <;> decide
 
-/-- `get_attr` dispatch (value.rs:439); temporal component extractors are parameters
+/-- `get_attr` dispatch (value.rs:444); temporal component extractors are parameters
 (chrono-backed). -/
 def getAttr (widen : F → F) (dt d t du : Int → String → Except String (V F)) (v : V F) (attr : String) :
     Except String (V F) :=
@@ -270,7 +270,7 @@ theorem partialCmp_null (fc : FloatCmp F) (a : V F) : partialCmp fc .null a = no
 /-! `Point::validate` was removed in #3301: `point()` checks NaN and range in `point_from_map_entries`
 (`proofs/functions_temporal` `SpatialFns.pointFromMapEntries`). -/
 
-/-! ## JSON of a Float (value.rs:1591) -/
+/-! ## JSON of a Float (value.rs:1700) -/
 
 /-- NaN/±∞ are emitted as JSON `null` (valid JSON; C emits `nan`, live). -/
 def jsonFloat (display : FC → String) : FC → String
@@ -293,8 +293,8 @@ theorem dedup_second_seen (seen : List Nat) (h : Nat) :
 theorem dedup_first_unseen (seen : List Nat) (h : Nat) (hn : h ∉ seen) : (dedupStep seen h).1 = false := by
   simp [dedupStep, hn]
 
-/-! ## v19 value codec (`Encode<19>` value.rs:2068; `Decode<19>` before #3339 — the current
-decoder `decode_value` value.rs:2166 is `decodeValue` in Nesting.lean) -/
+/-! ## v19 value codec (`Encode<19>` value.rs:2091; `Decode<19>` before #3339 — the current
+decoder `decode_value` value.rs:2189 is `decodeValue` in Nesting.lean) -/
 
 def T_NULL : Nat := 2 ^ 15
 def T_BOOL : Nat := 2 ^ 12

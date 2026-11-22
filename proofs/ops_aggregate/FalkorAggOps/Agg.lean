@@ -229,6 +229,18 @@ def avgStep (s : AvgS) (v : V) : AvgS :=
 
 def avgBatch (acc : AvgS) (xs : List V) : AvgS := skipFold avgStep acc xs
 
+/-- How `about_to_overflow` is used (aggregation.rs:451-478, the `avg_batch` loop): the running
+sum switches to incremental averaging exactly when it was already incremental or
+`about_to_overflow(sum, val)`, and stays switched. -/
+theorem avgStep_switch_iff (s : AvgS) (v : V) :
+    (avgStep s v).ovf = (s.ovf || aboutToOverflow s.sum v.num) := by
+  unfold avgStep
+  by_cases h : (s.ovf || aboutToOverflow s.sum v.num) = true
+  · simp [h]
+  · have h' : (s.ovf || aboutToOverflow s.sum v.num) = false := by simpa using h
+    simp [h']
+    simpa [Bool.or_eq_false_iff] using (Bool.or_eq_false_iff.mp h').1
+
 /-- `finalize_avg` (aggregation.rs:599). -/
 def finalizeAvg (s : AvgS) : Option Float :=
   if s.count == 0 then none else if s.ovf then some s.sum else some (s.sum / Float.ofInt s.count)
@@ -307,6 +319,32 @@ def finalizeStdev (s : Float × List Float) : Float :=
       / Float.ofNat (s.2.length - 1))
 
 theorem stdev_empty : finalizeStdev (stdevBatch (0.0, []) []) = 0.0 := rfl
+
+/-- `finalize_stdev` returns `0.0` for none or one value (aggregation.rs:688). -/
+theorem finalizeStdev_small (s : Float × List Float) (h : s.2.length ≤ 1) : finalizeStdev s = 0.0 := by
+  simp [finalizeStdev, h]
+
+/-- Otherwise the sample divisor is `n - 1` and the mean `sum / n`. -/
+theorem finalizeStdev_big (s : Float × List Float) (h : ¬ s.2.length ≤ 1) :
+    finalizeStdev s =
+      Float.sqrt ((s.2.map (fun v => (v - s.1 / Float.ofNat s.2.length) * (v - s.1 / Float.ofNat s.2.length))).foldl
+        (· + ·) 0.0 / Float.ofNat (s.2.length - 1)) := by
+  simp [finalizeStdev, h]
+
+/-- `finalize_stdevp` (aggregation.rs:704): population variant, `n = 0` → `0.0`, divisor `n`. -/
+def finalizeStdevp (s : Float × List Float) : Float :=
+  if s.2.isEmpty then 0.0 else
+    let mean := s.1 / Float.ofNat s.2.length
+    Float.sqrt ((s.2.map (fun v => (v - mean) * (v - mean))).foldl (· + ·) 0.0
+      / Float.ofNat s.2.length)
+
+theorem finalizeStdevp_empty (sum : Float) : finalizeStdevp (sum, []) = 0.0 := rfl
+
+theorem finalizeStdevp_nonempty (s : Float × List Float) (h : s.2.isEmpty = false) :
+    finalizeStdevp s =
+      Float.sqrt ((s.2.map (fun v => (v - s.1 / Float.ofNat s.2.length) * (v - s.1 / Float.ofNat s.2.length))).foldl
+        (· + ·) 0.0 / Float.ofNat s.2.length) := by
+  simp [finalizeStdevp, h]
 
 /-- `percentile_batch` (aggregation.rs:531 at 8621212fc) state
 `[percentile, values]`. Since #3007 (1d3b029e1, closes #2980) the percentile

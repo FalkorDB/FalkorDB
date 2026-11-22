@@ -44,8 +44,8 @@ Rust panics when it slices a `&str` at a byte that is not a character boundary, 
 The parser builds expressions on an explicit stack and keeps a *height estimate* for each partial tree; `check_depth` compares the estimate with `MAX_TREE_DEPTH` (256). The guard only means something if the estimate is never below the real height.
 
 - **For expressions, yes.** `height_sound` proves every estimate is an upper bound, and `guarded_height_le` that a parse which passes `check_depth` builds no tree taller than `MAX_TREE_DEPTH`. `chain_rejected` shows a chain of 256 levels is refused.
-- `nested_depth_bound` proves every `parse_expr` / literal / `CALL {}` recursion through `Parser::nested` is at most `MAX_NESTING` (100) deep.
-- **But two paths bypass the guards** (open, see [Bugs found](#bugs-found)): `SET n.a.a.a… = 1` builds its target outside `check_depth` (`set_target_unbounded`), and nested `FOREACH` never passes through `nested` (`foreach_unbounded`).
+- `nested_depth_bound` proves every `parse_expr` / literal / `CALL {}` / nested `FOREACH` recursion through `Parser::nested` is at most `MAX_NESTING` (100) deep.
+- **The two paths that bypassed the guards are closed by #2900** (`8312750b5`): the `SET` / `REMOVE` target chain of `parse_update_target` is charged against `MAX_TREE_DEPTH` lookup by lookup (`lookups_reach`, `updateTarget_bounded`; `updateTarget_chain_limit`: a variable takes 254 lookups, 255 is refused), and a nested `FOREACH` goes through `nested` (`foreach_bounded`, `foreach_limit`). The pre-fix models are kept as `pre2900_set_target_unbounded` and `pre2900_foreach_unbounded`.
 
 ## The headline theorems
 
@@ -87,8 +87,9 @@ Every bug was reproduced against the real Rust (`graph/tests/lean_lexer.rs`, not
 | 6 | `pre2910_min_noncanonical_bug` (removed in bbee75955; last held in 17ccc5412) | `-0x08000000000000000` was rejected as an overflow (C: `-9223372036854775808`) | Fixed by #2910 (`min_noncanonical_fixed`, `int_literal_correct`) |
 | 7 | `pre2910_min_postfix_bug` (removed in bbee75955; last held in 17ccc5412) | `9223372036854775808.x` escaped the overflow check | Fixed by #2910 (`litExpr_min`) |
 | 8 | `pre2910_unesc_plus_bug` (removed in bbee75955; last held in 17ccc5412) | `'\u+041'` decoded to `A` | Fixed by #2910 (`unesc_plus_rejected`) |
-| 9 | `set_target_unbounded` | `MATCH (n) SET n.a.a…(5000) = 1` builds its target outside `check_depth`; the binder then overflows its stack. C rejects it | **Open** (#2895, PR #2900 not merged) |
-| 10 | `foreach_unbounded` | Nested `FOREACH (x IN [1] \| FOREACH (…))` never goes through `nested`; 100 000 levels abort the process with a stack overflow (C crashes as well) | **Open** (#2895, PR #2900 not merged) |
+| 9 | `pre2900_set_target_unbounded` | `MATCH (n) SET n.a.a…(5000) = 1` built its target outside `check_depth`; the binder then overflowed its stack. C rejects it | **Fixed by #2900** (`8312750b5`; now `updateTarget_bounded`) |
+| 10 | `pre2900_foreach_unbounded` | Nested `FOREACH (x IN [1] \| FOREACH (…))` never went through `nested`; 100 000 levels aborted the process with a stack overflow (C crashes as well) | **Fixed by #2900** (now `foreach_bounded`, `foreach_limit`) |
+| 12 | `neg_run_min_wraps` | `RETURN --9223372036854775808` is `-9223372036854775808` (the inner `Negate(MIN)` collapses to the constant `MIN`, which the outer frame collapses again; the value is `+2^63`, out of range). Live, Rust and the C module agree; the explicit `-(-9223372036854775808)` is "integer overflow in unary minus" in Rust (C: `-9223372036854775808` too). Since #3525 only: the run used to be a syntax error | Not filed: matches C (a wrong value, not a Rust-vs-C divergence) |
 | 11 | `hop_truncation_bug` | A hop bound is cast `i as u32`, so `*4294967298` means `*2` | Not filed: C truncates the same way |
 
 There are no CONDITIONAL rows in this project.
@@ -97,7 +98,7 @@ There are no CONDITIONAL rows in this project.
 
 | File | What's in it |
 |---|---|
-| `FalkorLexer.lean` | The report header; bytes and boundaries (`splitBytes`, `boundary_iff`); `read_spaces` (`rs`) against the spec (`specSkip`, `rs_agrees_spec`) and the pre-#2908/#2910 versions; the token scanners, `getTok` and the loop `lexAll`; `cypher_unescape` (`unescF`) against `specUnescF`; integer literals (`str2int`, `evalLit`, `litExpr`); the hop cast `asU32`; the height model (`T`, `Reach`, `height_sound`) and `SET` targets; the call-recursion model (`Call`, `runCall`, `foreach_unbounded`) |
+| `FalkorLexer.lean` | The report header; bytes and boundaries (`splitBytes`, `boundary_iff`); `read_spaces` (`rs`) against the spec (`specSkip`, `rs_agrees_spec`) and the pre-#2908/#2910 versions; the token scanners, `getTok` and the loop `lexAll`; `cypher_unescape` (`unescF`) against `specUnescF`; integer literals (`str2int`, `evalLit`, `litExpr`, and since #3525 `signedLit`, `signedLit_exact`, `neg_run_min_wraps`); the hop cast `asU32`; the height model (`T`, `Reach`, `height_sound`) and `SET` targets; the call-recursion model (`Call`, `runCall`, `foreach_unbounded`) |
 | `FalkorLexerExtra.lean` | The rest of `lexer.rs` and `string_escape.rs`: `pos`, `next`, `set_pos`, `current`, `current_str` (`LexSt`), `lex_numeric` (`lexNum`, `intLoop`, `floatLoop`), `err_ctx`/`format_error`, the `Token` `Display` impl (`tokDisplay_injective_punct`), and `cypher_escape` (`esc`, `unesc_escape`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -139,4 +140,4 @@ bash proofs/coverage.sh                # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for #2895 should replace `set_target_unbounded` and `foreach_unbounded` with theorems that the new guards bound both paths, and note the fix in prose (no `pre<PR>_` history theorems).
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. The #2900 fix did exactly that for `set_target_unbounded` and `foreach_unbounded`: `updateTarget_bounded` and `foreach_bounded` replace them, with `pre2900_*` history theorems.

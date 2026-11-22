@@ -5,13 +5,13 @@ import FalkorTemporal.CalendarLaws
 | here | there |
 | --- | --- |
 | `chk`, `chkMul`, `chkAdd` | `i64::checked_*` |
-| `constructDuration`       | `construct_duration_secs` — `temporal.rs:479` (ends in `check_date_range`, #2746) |
-| `decomposeDuration`       | `decompose_duration` — `temporal.rs:539` (`y - 1970` is i32: `toI32`) |
+| `constructDuration`       | `construct_duration_secs` — `temporal.rs:487` (ends in `check_date_range`, #2746) |
+| `decomposeDuration`       | `decompose_duration` — `temporal.rs:549` (`y - 1970` is i32: `toI32`) |
 | `shiftMonths`             | `shift_months` — `value.rs:725`, arithmetic only (shared by `+` and `-` since #2984) |
 | `addDur` / `addDurRaw`    | `add_duration_to_timestamp` — `value.rs:701` (checked / the unchecked arithmetic inside it) |
 | `subDur` / `subDurRaw`    | `sub_duration_from_timestamp` — `value.rs:711` |
 | `shiftMonthsR`            | `shift_months` — `value.rs:725`, with its `MAX_DATE_YEAR` guard (#2746) |
-| `checkDateRange`          | `check_date_range` — `temporal.rs:531` |
+| `checkDateRange`          | `check_date_range` — `temporal.rs:541` |
 | (not modelled)            | `Add for Value`, `(Duration, Duration)` arm — `value.rs:1048` (`add_slow`): only the `construct_decompose` round-trip it rests on is proved |
 | `timeAddDur` / `timeSubDur` | `Add`/`Sub for Value`, `(Time, Duration)` arms — `add_slow` `value.rs:1069-1070`, `Sub` `:1111-1112` (since #2985) |
 
@@ -39,11 +39,11 @@ def MAX_DATE_YEAR : Int := 2147481647
 def minDateDays : Int := daysFromCivil (-MAX_DATE_YEAR) 1 1
 def maxDateDays : Int := daysFromCivil MAX_DATE_YEAR 12 31
 
-/-- `check_date_range` (`temporal.rs:531`): `Err("Date out of range")` ↦ `none`. -/
+/-- `check_date_range` (`temporal.rs:541`): `Err("Date out of range")` ↦ `none`. -/
 def checkDateRange (ts : Int) : Option Int :=
   if minDateDays ≤ ts / 86400 ∧ ts / 86400 ≤ maxDateDays then some ts else none
 
-/-- `construct_duration_secs` (`temporal.rs:479-518`), `Err` ↦ `none`; ends with `check_date_range`. -/
+/-- `construct_duration_secs` (`temporal.rs:487-526`), `Err` ↦ `none`; ends with `check_date_range`. -/
 def constructDuration (years months weeks days hours minutes seconds : Int) : Option Int := do
   let tmo ← chkMul years 12 >>= fun y => chkAdd y months
   let tmo32 ← chk32 tmo
@@ -69,7 +69,7 @@ theorem construct_ym_s (Y M S : Int) (h1 : I64 (Y * 12)) (h2 : I64 (Y * 12 + M))
   simp only [Int.zero_mul, Int.zero_add, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
     chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind, checkDateRange, h7, and_self, ite_true]
 
-/-- `decompose_duration` (`temporal.rs:539-549`) as built in release (i32 wrap). -/
+/-- `decompose_duration` (`temporal.rs:549-559`) as built in release (i32 wrap). -/
 def decomposeDuration (dur : Int) : Int × Int × Int :=
   let days := dur / 86400
   let tod := dur % 86400

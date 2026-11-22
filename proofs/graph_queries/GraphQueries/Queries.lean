@@ -25,7 +25,15 @@ variable {V : Type}
 
 /-! ## Incident edges -/
 
-def nodeRels (g : G V) (n : Nat) : Ten := g.relMs.flatMap (fun t => Ten.out t n ++ Ten.inc t n)
+/-- `get_node_relationships` (graph.rs:2390), since #3084 (`5f147f10e`): per tensor the outgoing
+half, then the incoming half minus its self-loops (`src != dest`; a self-loop is on the diagonal
+of both halves and the outgoing one already produced it). -/
+def nodeRels (g : G V) (n : Nat) : Ten :=
+  g.relMs.flatMap (fun t => Ten.out t n ++ (Ten.inc t n).filter (fun e => e.1 != e.2.1))
+
+/-- The body before #3084: both halves, unfiltered (a self-loop came out twice). -/
+def pre3084_nodeRels (g : G V) (n : Nat) : Ten :=
+  g.relMs.flatMap (fun t => Ten.out t n ++ Ten.inc t n)
 
 inductive Dir | outgoing | incoming | both deriving DecidableEq
 
@@ -51,9 +59,9 @@ def oneByType (n : Nat) (d : Dir) (t : Ten) : Ten :=
 def nodeRelsByType (g : G V) (n : Nat) (types : List String) (d : Dir) : Ten :=
   (selMats g types).flatMap (oneByType n d)
 
-/-- `get_node_relationships` reports a self-loop **twice** (once from the
-outgoing scan, once from the incoming scan). -/
-theorem nodeRels_selfloop_twice (t : Ten) (n e : Nat) (hnd : t.Nodup) (hm : (n, n, e) ∈ t) :
+/-- HISTORICAL (fixed by #3084, `5f147f10e`): before it, `get_node_relationships` reported a
+self-loop **twice** (once from the outgoing scan, once from the incoming scan). -/
+theorem pre3084_nodeRels_selfloop_twice (t : Ten) (n e : Nat) (hnd : t.Nodup) (hm : (n, n, e) ∈ t) :
     (Ten.out t n ++ Ten.inc t n).count (n, n, e) = 2 := by
   simp only [Ten.out, Ten.inc, List.count_append]
   rw [List.count_filter (by simp), List.count_filter (by simp), hnd.count_of_mem hm]
@@ -72,6 +80,23 @@ theorem byType_both_once (t : Ten) (n : Nat) (x : Nat × Nat × Nat) (hnd : t.No
     simp only [oneByType, Ten.out, Ten.inc, List.count_append]
     rw [List.count_eq_zero.2 (by simp [hs]), List.count_filter (by simp [hs]),
       List.count_filter (by simp), hnd.count_of_mem hm]
+
+/-- On the incoming half of `n` (every entry's `dest` is `n`) the two spellings of the self-loop
+filter agree: `get_node_relationships` filters `src != dest`, `get_node_relationships_by_type` filters
+`src != id`. -/
+theorem inc_filter_agree (t : Ten) (n : Nat) :
+    (Ten.inc t n).filter (fun e => e.1 != e.2.1) = (Ten.inc t n).filter (·.1 != n) := by
+  apply List.filter_congr
+  intro e he
+  simp only [Ten.inc, List.mem_filter, beq_iff_eq] at he
+  rw [he.2]
+
+/-- **Fixed by #3084.** `get_node_relationships` reports every incident edge of one tensor exactly
+once, a self-loop included (the bug `pre3084_nodeRels_selfloop_twice` is gone). -/
+theorem nodeRels_once (t : Ten) (n : Nat) (x : Nat × Nat × Nat) (hnd : t.Nodup) (hm : x ∈ t)
+    (hi : x.1 = n ∨ x.2.1 = n) :
+    (Ten.out t n ++ (Ten.inc t n).filter (fun e => e.1 != e.2.1)).count x = 1 := by
+  rw [inc_filter_agree]; exact byType_both_once t n x hnd hm hi
 
 /-- Outgoing-only / incoming-only by type list = the plain out / in scans. -/
 theorem byType_out (g : G V) (n : Nat) (types : List String) :
@@ -95,6 +120,11 @@ theorem sum_len {α} (f : α → List β) : ∀ (l : List α), (l.map (fun t => 
 theorem selMats_nil (g : G V) : selMats g [] = g.relMs := ite_eq_left rfl
 theorem selMats_ne (g : G V) (types : List String) (h : types ≠ []) :
     selMats g types = types.filterMap (getRelMat g) := ite_eq_right h
+
+/-- `get_node_relationships` is `get_node_relationships_by_type` over every type, both directions. -/
+theorem nodeRels_eq_byType (g : G V) (n : Nat) : nodeRels g n = nodeRelsByType g n [] .both := by
+  simp only [nodeRels, nodeRelsByType, selMats_nil, inc_filter_agree]
+  rfl
 
 /-- Degrees count exactly the edges the incident-edge scans enumerate. -/
 theorem inDeg_eq (g : G V) (n : Nat) : inDeg g n = (nodeRelsByType g n [] .incoming).length := by

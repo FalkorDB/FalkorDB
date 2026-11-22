@@ -195,15 +195,49 @@ theorem exprList_comma_first (pe : List Tok → Out) (n : Nat) (r : List Tok)
     exprList pe (n + 1) [] (.comma :: r) = .err (.comma :: r) := by
   simp [exprList, cur, exprItems, h]
 
-/-- `+-x` is accepted (cypher.rs:2232-2233 reads an optional `+` then an
-optional `-`), while `- -x` and `-+x` are rejected (#2309). The grammar
-allows exactly one sign. -/
-theorem sign_sequences :
+/-- Fixed by #3525 (`56d00c3d8`, closes #2309): a run of signs parses, folded by the parity of its
+`-` as `NOT` runs are: `+-x` and `- -x` and `-+x` all parse (cypher.rs:2212-2246). `- -x` is
+`Negate(Negate x)` (`Negate` type-checks its operand, so it is not `x`), `---x` folds to one
+`Negate`. The grammar (`Cypher.g4:345`) allows exactly one sign, so the model and the grammar
+now differ on every run of two or more signs (`known` in `BoundedDefs`). -/
+theorem sign_runs :
     parseAll 400 [.plus, .dash, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
-    (∃ e, parseAll 400 [.dash, .dash, .int 1] = .err e) ∧
-    (∃ e, parseAll 400 [.dash, .plus, .int 1] = .err e) ∧
+    parseAll 400 [.dash, .dash, .int 1] = .ok (.node .neg [.node .neg [lf (.int 1)]]) [] ∧
+    parseAll 400 [.dash, .plus, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
+    parseAll 400 [.dash, .dash, .dash, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
+    parseAll 400 [.plus, .plus, .int 1] = .ok (lf (.int 1)) [] ∧
+    (∃ e, G.all 200 [.dash, .dash, .int 1] = .err e) ∧
     (∃ e, G.all 200 [.plus, .dash, .int 1] = .err e) := by
-  refine ⟨rfl, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
+  refine ⟨rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
+
+/-- A run of signs, however long, pushes at most two frames (so, with the `Reach.opener` height 1
+each, costs the stack and the tree nothing: `-----…5` folds). -/
+theorem signFrames_length (n : Nat) (K : List Frame) : (signFrames n K).length ≤ K.length + 2 := by
+  unfold signFrames; split
+  · simp
+  · split <;> simp
+
+/-- `pre3525_sign_sequences` (historical note, fixed by #3525 `56d00c3d8`): before the fix the
+prefix was `pre3525_signs` (an optional `+`, then an optional `-`), so `- -x` and `-+x` were
+syntax errors. The old prefix still has that shape. -/
+theorem pre3525_sign_sequences :
+    pre3525_signs [.dash, .dash, .int 1] = (true, [.dash, .int 1]) ∧
+    pre3525_signs [.dash, .plus, .int 1] = (true, [.plus, .int 1]) ∧
+    pre3525_signs [.plus, .dash, .int 1] = (true, [.int 1]) := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- The sign run is consumed whole: after it the next token is not a sign. -/
+theorem countSigns_rest : ∀ ts : List Tok,
+    (countSigns ts).2.head? ≠ some .dash ∧ (countSigns ts).2.head? ≠ some .plus
+  | [] => by simp [countSigns]
+  | t :: r => by
+    by_cases hd : t = .dash
+    · subst hd; simpa [countSigns] using countSigns_rest r
+    · by_cases hp : t = .plus
+      · subst hp; simpa [countSigns] using countSigns_rest r
+      · have : countSigns (t :: r) = (0, t :: r) := by
+          unfold countSigns; split <;> simp_all
+        rw [this]; simp [hd, hp]
 
 /-- The parse is deterministic: `parse_expr` is a function of its input
 (no hidden state survives a `restore_state`; the model has none to begin

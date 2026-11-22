@@ -5,9 +5,9 @@ import PlannerBuild.Nested
 
 | here | there |
 | --- | --- |
-| `Proj`, `outerOf`, `renameProj` | `rename_projection_outputs` mod.rs:2646-2679 |
-| `newPSt` | `Planner::new` mod.rs:809-818 |
-| `inlineAttrs_passes` | `inline_attrs_to_filter` mod.rs:543-571 (meaning of the filter) |
+| `Proj`, `outerOf`, `renameProj` | `rename_projection_outputs` mod.rs:2930-2960 |
+| `newPSt` | `Planner::new` mod.rs:989-998 |
+| `inlineAttrs_passes` | `inline_attrs_to_filter` mod.rs:545-571 (meaning of the filter) |
 -/
 namespace PlannerBuild.E
 

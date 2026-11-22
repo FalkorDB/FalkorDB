@@ -45,7 +45,8 @@ def table : List (String × Kind) :=
    ("VKEY_MAX_ENTITY_COUNT", .i64 100000 0 9223372036854775807), ("JS_HEAP_SIZE", .i64 268435456 0 4294967296),
    ("JS_STACK_SIZE", .i64 1048576 0 4294967296),
    ("IMPORT_FOLDER", .str "/var/lib/FalkorDB/import/"), ("TEMP_FOLDER", .str "/tmp"),
-   ("CMD_INFO", .bool true), ("DELAY_INDEXING", .bool false)]
+   ("CMD_INFO", .bool true), ("DELAY_INDEXING", .bool false),
+   ("INDEX_BUILD_THREAD_COUNT", .i64 1 1 1024)]   -- #3585, `IMMUTABLE`
 
 /-- Table defaults lie inside their declared bounds. -/
 def defaultOk : Kind → Bool

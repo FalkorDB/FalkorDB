@@ -5,25 +5,27 @@
 Build: `lake build` (core Lean 4.36, no Mathlib). No `sorry`/`admit`/`axiom`: the
 contracts of the stores underneath (attribute/label name tables, attribute store batch
 read, `lookup_sorted`) are explicit theorem hypotheses. Coverage: `COVERAGE.tsv`.
-Rust repros: `graph/tests/lean_runtime_core.rs`
-(`cargo test -p graph --test lean_runtime_core`); `bug_*` tests assert the correct
-answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to main 1c0e6c8de (after #3464, which inserted `node_differs_from_committed` at `:1778`, moving every row from `get_node_labels` on by +15).
+Live repro of the confirmed bugs B1/B2 below: `repro_limit.py PORT` (the Rust test file
+`graph/tests/lean_runtime_core.rs` no longer exists on main). `runtime.rs` line numbers are
+pinned to main 256ab4d3f (after #3683, which replaced the graph cell by `published`/`fork`).
 
 | here | there |
 | --- | --- |
-| `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs:681`), `effective_skip` (`:716`), `record_cap` (`:748`) |
-| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs`: stop `:1378-1383`, `trim_to_cap` `:1321-1340`), `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), SortOp top-k (`ops/sort.rs:509-511`) |
-| `Cell.*`      | #3436 `Runtime::graph()` / `graph_mut()` / `GraphRef` / `Deref` / `HeldRead` (`runtime.rs:115-137`, `:476-491`, `:559-589`): an atomic_refcell borrow-word model; `graph_deref`, `graph_same_result`, `read_program_same`, `sites_same`, `graph_mut_write_same`, `graph_mut_same_cell` |
-| `Drop.*` (`DropOrder.lean`) | `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()`: `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
-| `Proto.*`     | the read-guard protocol over `MvccGraph`, `QuerySession` and every graph-cell `borrow_mut`: `reader_guard_sound`, `guard_never_excl`, `readNew_never_panics`, `priv_borrows_owner_only`; open bug #3439 `writer_reply_race` |
+| `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs:710`), `effective_skip` (`:745`), `record_cap` (`:777`) |
+| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs`: stop `:1384-1390`, `trim_to_cap` `:1324-1345`), `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), SortOp top-k (`ops/sort.rs:509-511`) |
+| `QueryGraph.*` | **current (#3683, 08616ec29)**: `QueryGraph`, `GraphRef`/`Deref`, `Runtime::new`/`graph()`/`graph_mut()`/`publish()`/`upgrade_to_write()` (`runtime.rs:109-147`, `:471-500`, `:563-629`): a published `Arc<Graph>` (read with no borrow) or an owned fork in a `RefCell`; `new_inv`, `graph_published`, `graph_panics_iff`, `graph_same_result`, `graphMut_panics_iff`, `publish_ok`, `publish_refused`, `publish_twice_panics`, `graph_after_publish`, `upgrade_spec` |
+| `Cell.*`      | HISTORY (pre-#3683; imported by `pending_commit`'s `Hold`, so kept): #3436 `Runtime::graph()` / `graph_mut()` / `GraphRef` / `HeldRead` over `Arc<AtomicRefCell<Graph>>`, an atomic_refcell borrow-word model; `graph_deref`, `graph_same_result`, `read_program_same`, `sites_same`, `graph_mut_write_same`, `graph_mut_same_cell`. The code it models no longer exists |
+| `Drop.*` (`DropOrder.lean`) | HISTORY (pre-#3683): `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()` (both gone): `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
+| `Proto.*`     | HISTORY (pre-#3683): the read-guard protocol over `MvccGraph`, `QuerySession` and every graph-cell `borrow_mut`: `reader_guard_sound`, `guard_never_excl`, `readNew_never_panics`, `priv_borrows_owner_only`; #3439 `writer_reply_race` (`resync_published_indexes` borrowing the published cell while a reader held it) is **gone with the cell**: `resync_published_indexes` takes `&Graph` and a published version is never borrowed |
 | `Reuse.*`     | `read_plan_no_update` (a read plan has no updating operator, from `redis_layer`'s `RedisLayer.Ro`), `accessor_unchanged`, `materialize_unchanged` (accessor theorems transfer through `graph()`) |
 | `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs:455-785`) |
-| `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:620-667`) |
-| `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:816`), `children_to_recurse` (`:758`) |
-| `Accessors.*` | entity accessors `runtime.rs:1483-1984` (attrs, memo, labels, degrees, endpoints/type) |
-| `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs:1778`) + `Pending::node_has_changes` (`pending.rs:784`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
-| `Misc.*`      | `check_timeout` (`:531`), `check_mem_capacity` (`:541`), `map_to_index_options` (`:2042`; #3094 required vector keys, fulltext unknown-key refusal; PR #3257 similarity name check), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
-| (reused)      | `evaluate_id_filter` (`:1415-1479`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: since #3394 no range on a graph with no nodes) |
+| `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:649-697`) |
+| `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:845`), `children_to_recurse` (`:787`) |
+| `Accessors.*` | entity accessors `runtime.rs:1517-2035` (attrs, memo, labels, degrees, endpoints/type) |
+| `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs:1812`) + `Pending::node_has_changes` (`pending.rs:807`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
+| `Discharge.*` | proves the store contracts the accessor theorems took as hypotheses, from copies of the `Graph` models in `proofs/graph_queries` (`Attrs.lean`): `reach_nodup`, `reach_cap`, `nameOk_of_reach`, `hc_of_reach`, `hName_of_reach`, `hbg_rfl`; then `materialize_discharged`, `getRelAttribute_discharged`, `materializeRel_discharged`, `materializeNodeProp_discharged`, `materializeRelProp_discharged`, `attrs_agree_discharged`, `relAttrs_agree_discharged`. Left: `hdisj`/`huniq` about `Pending` |
+| `Misc.*`      | `check_timeout` (`:538`), `check_mem_capacity` (`:548`), `map_to_index_options` (`:2042`; #3094 required vector keys, fulltext unknown-key refusal; PR #3257 similarity name check), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
+| (reused)      | `evaluate_id_filter` (`:1444-1515`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: since #3394 no range on a graph with no nodes) |
 
 ## Proven (plain English)
 - Budget: the reference budget `need` (Skip adds, Project passes, anything else is a
@@ -93,10 +95,12 @@ deleted-id reuse breaks the one-map assumption of `attrs_agree` — #2876
 
 ## Gaps
 Columnar representation (`GatherItem` lanes, `gather`, selection vectors) is abstracted
-to row lists; the emitter closure's `Err` path; `build_batch_op` per-variant constructor
-arguments (abstract `mk`); `get_variables`/`get_return_names`; profiling/inspect;
-index resync; relationship accessors are the node proofs' shape but not separately
-instantiated; `Instant` arithmetic.
+to row lists here (it is proved in `proofs/columnar`, whose theorems the `batched_result_emitter.rs`
+rows now cite); the emitter closure's `Err` path; `build_batch_op` per-variant constructor
+arguments (abstract `mk`); profiling/inspect; `Instant` arithmetic. Open: the four accessors whose
+agreement theorems still assume `hdisj` (a node/relationship id is in at most one of the pending
+`new_*`/`existing_*` attribute maps) and `huniq` (unique keys in each pending list): both are facts
+about `Pending` and the id space (`proofs/pending_commit`, `proofs/id_space`), not about the graph.
 
 ## Wave-5 additions
 * `RelAccessors`: relationship reads, pending attribute writes (`setPendingAttr_spec`), typed
@@ -117,3 +121,5 @@ import RuntimeCore.Cell
 import RuntimeCore.DropOrder
 import RuntimeCore.Protocol
 import RuntimeCore.Reuse
+import RuntimeCore.QueryGraph
+import RuntimeCore.Discharge

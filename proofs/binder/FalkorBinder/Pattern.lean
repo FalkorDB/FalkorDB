@@ -14,7 +14,7 @@ fails with "'r' not defined".
 * Before #2981 `bind_graph` defined and bound **all nodes** (with their inline
   attrs) before **any relationship**, so a node's attrs could only see
   relationships of *earlier clauses*. Since #2981 it first defines every named
-  relationship alias (binder.rs:1486-1502), then the nodes (1511-1525), then
+  relationship alias (binder.rs:1497-1511), then the nodes (1522-1534), then
   the relationships (1527-1706): a node's attrs see every relationship of the
   pattern, and the planner checks such attrs once all they read is bound
   (`lift_cross_entity_attrs`).
@@ -78,15 +78,15 @@ def stepAll (scope : List Alias) : List Elem → Except String (List Alias)
 def specBind (scope : List Alias) (p : List Elem) : Except String (List Alias) :=
   stepAll scope p
 
-/-- The named relationship aliases `bind_graph` defines first (binder.rs:1493-1502; an
+/-- The named relationship aliases `bind_graph` defines first (binder.rs:1480-1715; an
 unnamed one, `alias.name()` = `None`, is skipped). -/
 def defRels (scope : List Alias) (p : List Elem) : List Alias :=
   ((split p).2.filter (fun e => e.alias.isNamed)).foldl (fun s e => grow s e.alias) scope
 
-/-- `bind_graph` (binder.rs:1470): named relationship aliases, then nodes, then
+/-- `bind_graph` (binder.rs:1480): named relationship aliases, then nodes, then
 relationships (#2981; before it, nodes then relationships). A node `Elem`'s attrs are
 those of every occurrence of its alias (`Parser::add_pattern_node` merges them for MATCH), so
-a repeated endpoint that shares the node's bound map (`merged_occurrences`, binder.rs:1579,
+a repeated endpoint that shares the node's bound map (`merged_occurrences`, binder.rs:1575,
 1634) checks no name the node step did not already check. -/
 def rustBind (scope : List Alias) (p : List Elem) : Except String (List Alias) :=
   do stepAll (← stepAll (defRels scope p) (split p).1) (split p).2

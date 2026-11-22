@@ -34,9 +34,21 @@ Re-targeted to origin/main `1d15bf713` (from `0f45a8685`):
   hypothesis; new `framePrefix_*`.
 
 Gaps: zstd/crc32 are hypotheses (`CodecOK`).
-`staging.rs`/`test_aux.rs` are `#[cfg(test)]` modules (NOT COVERED, TEST-ONLY).
+`staging.rs`/`test_aux.rs` are `#[cfg(test)]` modules (`mod staging;`/`mod test_aux;` in `v3/mod.rs`): test helpers, not engine code, so they carry no COVERAGE rows (their 22 NOT COVERED rows were deleted at the 256ab4d3f re-sync; `coverage.sh` excludes test fns from its denominators).
 Bugs: #2914 (encoder wrote records its reader rejects) — **fixed by #2916 (`2c874022a`)**, now theorems;
 quadratic list reservation — **fixed by #3267**; ≥ 4 GiB compressed frame — **fixed by #3278**.
+
+## Re-sync to 256ab4d3f (from 43936bab9)
+* `IdLink` (new) discharges the last hypothesis: `idListCodec ρ hρ : IdCodec` is built from `proofs/id_list`
+  (`IdListWire.encodeIds`/`readIds`, a Lake path dependency), so `records_concat_idList` (`Payload::records` /
+  `Records::next` over the real IdList codec) is PROVEN; the two former CONDITIONAL rows are PROVEN. The only
+  assumption left is `RoaringOK ρ`, the `roaring` crate's serialize/deserialize contract (an external library,
+  as in id_list). New: `encodeIds_bytes` (every byte the encoder writes is a byte), `idDec_roundtrip`, `idDec_good`.
+* No model change for the 17 CHANGED rows: #3787 (clippy) made `guard_count` a `const fn`, `Reader::take_n` read
+  `as_chunks::<W>().0.iter()` instead of `chunks_exact(W)` (the slice is exactly `n*W` long, so the same chunks),
+  `field_type_bits` takes `rest.isolate_lowest_one()` instead of `rest & rest.wrapping_neg()` (the same lowest set
+  bit, `setBits_spec`), `Record::encode`/`Value::encode` match on `Self::`, `LocalName::fmt` uses `map_or`.
+  #3446/#3447 touched `apply.rs`/`emit.rs` only (project `effects_emit_apply`). All line cites re-pinned.
 
 ## Re-pinned to 5e475e6c9 (#3436)
 No model change. `graph/src/effects/mod.rs` and `v3/format.rs` build entry points take `&Graph`
@@ -49,6 +61,7 @@ import FalkorEffectsCodec.Records
 import FalkorEffectsCodec.Cursor
 import FalkorEffectsCodec.ModRs
 import FalkorEffectsCodec.RecShape
+import FalkorEffectsCodec.IdLink
 
 open FalkorCodec in
 #print axioms decodeV_encV
@@ -64,3 +77,5 @@ open FalkorCodec in
 #print axioms capTrace_linear
 open FalkorCodec in
 #print axioms openPayload_maybeCompress
+open FalkorCodec in
+#print axioms records_concat_idList

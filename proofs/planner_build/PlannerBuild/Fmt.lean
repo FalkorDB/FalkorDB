@@ -1,11 +1,11 @@
 /-
-# EXPLAIN text (mod.rs:341-536)
+# EXPLAIN text (mod.rs:345-538)
 
 | here | there |
 | --- | --- |
-| `FRel`, `typesStr`, `hopsStr`, `fmtVarLen` | `fmt_var_len_rel` mod.rs:347-372 |
-| `fmtRelDir`, `fmtRel` | `fmt_rel_with_labels_dir` mod.rs:379-415, `fmt_rel_with_labels` mod.rs:375-377 |
-| `IRK`, `irName`, `irDetail`, `irFmt` | `impl Display for IR` mod.rs:419-536 |
+| `FRel`, `typesStr`, `hopsStr`, `fmtVarLen` | `fmt_var_len_rel` mod.rs:352-376 |
+| `fmtRelDir`, `fmtRel` | `fmt_rel_with_labels_dir` mod.rs:384-418, `fmt_rel_with_labels` mod.rs:380-382 |
+| `IRK`, `irName`, `irDetail`, `irFmt` | `impl Display for IR` mod.rs:380-382 |
 
 Strings are built exactly as the `format!` calls do (payload `Display`s are
 parameters: the node/relationship/pattern text is passed in already rendered).
@@ -21,7 +21,7 @@ structure FRel where
   to : String
   toLabels : List String
   bidirectional : Bool
-  /-- `rel.alias.is_unnamed()` (ast.rs:209-211, #3303): the relationship has no name. -/
+  /-- `rel.alias.is_unnamed()` (ast.rs:231-233, #3303): the relationship has no name. -/
   unnamed : Bool
 
 def typesStr (r : FRel) : String :=

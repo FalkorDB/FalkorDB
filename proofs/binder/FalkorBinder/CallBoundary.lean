@@ -3,8 +3,8 @@ import FalkorBinder.Resolve
 # CALL {} entry projection as a record boundary (#2845, eb470521b)
 
 Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
-(graph/src/planner/binder.rs:824-978) and `build_import_projections`
-(binder.rs:984-1006); scope tables, `freshVar`, `mint_fresh_iff`,
+(graph/src/planner/binder.rs:971-1126) and `build_import_projections`
+(binder.rs:1132-1150); scope tables, `freshVar`, `mint_fresh_iff`,
 `projectName` are this project's (Table.lean, Resolve.lean). Counterexamples
 on main before #2845 (da6f808c3) were removed in bbee75955 (the last revision that has them is
 17ccc5412) (fixed by #2845, eb470521b; closes #2601, #2602).
@@ -22,7 +22,7 @@ on main before #2845 (da6f808c3) were removed in bbee75955 (the last revision th
 -/
 namespace FalkorBinder.Pr2845
 
-/-- `build_import_projections` (binder.rs:984): one `project_name` per
+/-- `build_import_projections` (binder.rs:1132): one `project_name` per
 imported variable, in the HashMap's iteration order (`imported`, any order),
 paired with the outer variable it reads. The final `sort_by` name only
 reorders the pairs. -/
@@ -39,7 +39,7 @@ inductive Clause
   | other (tag : Nat)
   deriving DecidableEq, Repr
 
-/-- The merged Query arm (binder.rs:845-871): push a fresh scope (index
+/-- The merged Query arm (binder.rs:977-1020): push a fresh scope (index
 `outerLen`), always emit the entry projection, then the remaining clauses. -/
 def bodyNew (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause) : List Clause :=
   .with_ (importProj [] outerLen imported).2 :: rest
@@ -48,9 +48,9 @@ def bodyNew (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause
 def bodyOld (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause) : List Clause :=
   if imported.isEmpty then rest else .with_ (importProj [] outerLen imported).2 :: rest
 
-/-- The UNION arm (binder.rs:899-925): each branch binder starts with
+/-- The UNION arm (binder.rs:1023-1118): each branch binder starts with
 `env_stack: vec![HashMap::new(); self.env_stack.len() + 1]` (#3027, d42d121c6,
-binder.rs:897-905), so its scope is `outerLen`, above the live outer scopes. -/
+binder.rs:1050-1058), so its scope is `outerLen`, above the live outer scopes. -/
 def branchScope (outerLen : Nat) : Nat := outerLen
 
 def branchNew (outerLen : Nat) (imported : List (Name × Var))
@@ -166,7 +166,7 @@ theorem body_scope_disjoint (outerLen s : Nat) (h : s < outerLen) : outerLen ≠
 /-! ## Claim 2 for UNION bodies: (scope, id) keys still alias -/
 
 /-- `node_labels: HashMap<(u32,u32), OrderSet<..>>` and `update_graph_labels`
-(binder.rs:160-190) for a non-optional MATCH node: the accumulated labels
+(binder.rs:258-335) for a non-optional MATCH node: the accumulated labels
 for the key `(scope_id, id)` replace the node's own. -/
 abbrev Labels := List ((Nat × Nat) × List Name)
 
@@ -176,9 +176,9 @@ def relabel (L : Labels) (v : Var) (own : List Name) : List Name :=
   | none => own
 
 /-- `MATCH (n:A) CALL { MATCH (q:B) RETURN q UNION MATCH (q:B) RETURN q }`:
-step 2b of `bind_call_subquery` (binder.rs:731) runs the OUTER binder's
+step 2b of `bind_call_subquery` (binder.rs:844) runs the OUTER binder's
 `update_all_node_labels` over the bound body, recursing into the UNION
-branches (binder.rs:140-143). The outer table holds `(0,0) ↦ [A]` for `n`;
+branches (binder.rs:220-252). The outer table holds `(0,0) ↦ [A]` for `n`;
 the branch's `q` is minted at scope 0 (the branch binder's only scope) after
 its entry projection (no imports), id 0: same key. The branch scans `(q:A)`. -/
 def outerLabels : Labels := [((0, 0), ["A"])]
@@ -207,6 +207,22 @@ theorem relabel_3027 (L : Labels) (outerLen : Nat) (hL : ∀ p ∈ L, p.1.1 < ou
   rw [this]
 
 theorem union_branch_label_fixed : relabel outerLabels branchQ ["B"] = ["B"] := by decide
+
+/-- Step 2b as merged (binder.rs:860-870, #3641): a UNION body skips the outer
+`update_all_node_labels` (`if !matches!(bound_body, QueryIR::Union { .. })`) — each branch was
+already labelled by its own binder. -/
+def relabelBody (isUnion : Bool) (L : Labels) (v : Var) (own : List Name) : List Name :=
+  if isUnion then own else relabel L v own
+
+/-- #3641: whatever the outer table holds, a UNION body's node keeps the labels its own binder
+gave it (`MATCH (a:N) CALL { RETURN 0 AS x UNION CREATE (:New) RETURN 1 AS x }` creates `:New`).
+Unlike `relabel_3027` this needs no disjointness hypothesis on the outer keys. -/
+theorem union_body_never_relabelled (L : Labels) (v : Var) (own : List Name) :
+    relabelBody true L v own = own := rfl
+
+/-- A plain body is still relabelled by step 2b (its scopes are the outer binder's own). -/
+theorem query_body_relabelled (L : Labels) (v : Var) (own : List Name) :
+    relabelBody false L v own = relabel L v own := rfl
 
 /-! ## Runtime side: the entry projection is a record boundary
 

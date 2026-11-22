@@ -202,30 +202,42 @@ def targetP (o : Oracle) : P ET := do
     pure e
   else pure r.1
 
-/-- `parse_set_items` (cypher.rs:3336-3390). -/
+/-- `parse_update_target` (cypher.rs:3394-3416, new in #2900): what a `SET` / `REMOVE` item
+updates, an expression with an optional `.prop.prop...` chain, and whether a chain was present.
+The depth charges (`check_depth` on the target and after each lookup) only add failures, so
+they are in `proofs/lexer` (`updateTarget_bounded`) and not here. -/
+def updateTargetP (o : Oracle) (F : Nat) : P (ET × Bool) := do
+  let t ← targetP o
+  let c ← peek
+  if c = .dot then do
+    let e ← dotChain F t
+    pure (e, true)
+  else pure (t, false)
+
+/-- `parse_set_items` (cypher.rs:3339-3385). -/
 def setItems (o : Oracle) (F : Nat) : Nat → List SetItem → P (List SetItem)
   | 0, _ => fuelP
   | n + 1, acc => do
-    let t ← targetP o
-    let c ← peek
-    let item ← (if c = .dot then do
-        let t' ← dotChain F t
+    let r ← updateTargetP o F
+    let item ← (if r.2 then do
         tok .eq
         let v ← o.pe false
-        pure (SetItem.attr t' v false)
-      else if c = .colon then
-        match t.root with
-        | .var v => do let ls ← labelsP F []; pure (SetItem.label v ls)
-        | _ => fail
+        pure (SetItem.attr r.1 v false)
       else do
-        let eq ← opt .eq
-        if eq then do
-          let v ← o.pe false
-          pure (SetItem.attr t v true)
+        let c ← peek
+        if c = .colon then
+          match r.1.root with
+          | .var v => do let ls ← labelsP F []; pure (SetItem.label v ls)
+          | _ => fail
         else do
-          tok .plusEq
-          let v ← o.pe false
-          pure (SetItem.attr t v false))
+          let eq ← opt .eq
+          if eq then do
+            let v ← o.pe false
+            pure (SetItem.attr r.1 v true)
+          else do
+            tok .plusEq
+            let v ← o.pe false
+            pure (SetItem.attr r.1 v false))
     let more ← opt .comma
     if more then setItems o F n (acc ++ [item]) else pure (acc ++ [item])
 
@@ -243,17 +255,18 @@ def setP (o : Oracle) (F : Nat) : P IR := do
 /-- The `hasLabels` function id (cypher.rs:3452). -/
 def fnHasLabels : Nat := 5000001
 
-/-- `parse_remove_items` (cypher.rs:3432-3467). -/
+/-- `parse_remove_items` (cypher.rs:3456-3481). -/
 def removeItems (o : Oracle) (F : Nat) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
   | n + 1, acc => do
-    let t ← targetP o
-    let c ← peek
-    let item ← (if c = .dot then dotChain F t
-      else if c = .colon then do
-        let ls ← labelsP F []
-        pure (ET.node (.func fnHasLabels false) [t, .node .list (ls.map (fun l => leaf (.str l)))])
-      else fail)
+    let r ← updateTargetP o F
+    let item ← (if r.2 then pure r.1
+      else do
+        let c ← peek
+        if c = .colon then do
+          let ls ← labelsP F []
+          pure (ET.node (.func fnHasLabels false) [r.1, .node .list (ls.map (fun l => leaf (.str l)))])
+        else fail)
     let more ← opt .comma
     if more then removeItems o F n (acc ++ [item]) else pure (acc ++ [item])
 

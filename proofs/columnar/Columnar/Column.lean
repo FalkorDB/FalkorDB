@@ -7,14 +7,14 @@ import FalkorCore.Value
 | `FloatModel` | `f64`: `as f64` (`ofInt`), `partial_cmp` (`pcmp`), `+ - * / %` — abstract; the one IEEE fact used is a field (hypothesis, not an axiom) |
 | `V` | `Value` (`runtime/value.rs:180`): proofs/core's `FalkorCore.V F`, every variant (since 2026-10-21; was a 7-constructor restriction with an opaque `other t`) |
 | `Column` | `Column` (`runtime/batch.rs:321-334`) |
-| `Column.get?` | `Column::get` (`batch.rs:340-352`); `none` = index-out-of-bounds panic |
-| `Column.len` | `Column::len` (`batch.rs:357-366`) |
-| `gatherL`, `Column.gather` | `Column::gather` (`batch.rs:377-389`); `none` = panic |
+| `Column.get?` | `Column::get` (`batch.rs:342-354`); `none` = index-out-of-bounds panic |
+| `Column.len` | `Column::len` (`batch.rs:359-368`) |
+| `gatherL`, `Column.gather` | `Column::gather` (`batch.rs:379-391`); `none` = panic |
 | `Bits` | `NullBitmap` (`batch.rs:90-167`) as its list of bits (word packing is proved in proofs/ops_aggregate) |
 | `intsOf`, `floatsOf`, `classifyNumeric` | `classify_numeric` (`batch.rs:191-231`), both `all()` passes |
 | `classifyStored` | `classify_stored_column` (`batch.rs:241-268`) |
 | `classifyColumn` / `classifyExact` | `classify_column` (`:279`) / `classify_exact_column` (`:295`) |
-| `extendActive` | `extend_active_slice` (`batch.rs:308-317`) |
+| `extendActive` | `extend_active_slice` (`batch.rs:310-319`) |
 -/
 
 namespace Columnar
@@ -322,7 +322,7 @@ def classifyStored [FloatModel F] (vs : List (V F)) : Column F :=
 def classifyColumn [FloatModel F] (vs : List (V F)) : Column F × Bits :=
   (classifyNumeric vs true .promote, Bits.ofValues vs)
 
-/-- `classify_exact_column` (`batch.rs:295`). -/
+/-- `classify_exact_column` (`batch.rs:297`). -/
 def classifyExact [FloatModel F] (vs : List (V F)) : Column F × Bits :=
   (classifyNumeric vs true .pure, Bits.ofValues vs)
 
@@ -466,7 +466,7 @@ end lemmas
 
 /-! ## `extend_active_slice` -/
 
-/-- `extend_active_slice` (`batch.rs:308-317`) as the slice it appends. -/
+/-- `extend_active_slice` (`batch.rs:310-319`) as the slice it appends. -/
 def extendActive {α : Type} (src : List α) : Option (List Nat) → Option (List α)
   | none => some src
   | some sel => gatherL src sel

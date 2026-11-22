@@ -12,8 +12,8 @@ rollback with documents keyed by id, so it proves the buggy rule faithfully
 | Lean | Rust (origin/main 5c7af54f2, located by name) |
 | --- | --- |
 | `Ep` | `endpoints_for_edge` of one graph version (`committed` or the query's discarded `private`) |
-| `resyncEdgeKeys` | `Pending::resync_published_indexes`, edge arm (`runtime/pending.rs:1816-1827`): id live in committed ⇒ re-add, else if `private` knows it ⇒ delete under the private endpoints |
-| re-add key | `Graph::commit_edge_index_locked` (`graph/graph.rs:3962-4037`): re-resolves `(src, dst)` from the **committed** tensor; an id with no endpoints is skipped |
+| `resyncEdgeKeys` | `Pending::resync_published_indexes`, edge arm (`runtime/pending.rs:1872-1880`): id live in committed ⇒ re-add, else if `private` knows it ⇒ delete under the private endpoints |
+| re-add key | `Graph::commit_edge_index_locked` (`graph/graph.rs:3989-4064`): re-resolves `(src, dst)` from the **committed** tensor; an id with no endpoints is skipped |
 | `resyncEdges` | the above then `Indexer::commit_edge` (`indexer.rs:760`, `Iter.commitEdge`: adds, then deletes) |
 | `EdgeIndexMatches`, `RollbackRestoresEdgeIndex` | the property: after rollback the edge index is exactly the committed graph's documents |
 | `resyncEdgesFixed` | a fix: also delete the private key when the endpoints changed |
@@ -33,10 +33,65 @@ def resyncEdgeKeys (committed priv : Ep) (pub : List Nat) :
      | some _ => none
      | none => (priv e).map (fun p => (p.1, p.2, e))))
 
+/-- The add keys `Graph::commit_edge_index_locked` writes for edge ids `ids` of one type: each
+`(src, dst)` is re-resolved from the **committed** tensor (`ep`, the first scan hit per id), and an
+id with no endpoints there ("vanished between track time and commit") is skipped. -/
+def commitEdgeAddKeys (ep : Ep) (ids : List Nat) : List (Nat × Nat × Nat) :=
+  ids.filterMap (fun e => (ep e).map (fun p => (p.1, p.2, e)))
+
+/-- **`commit_edge_index_locked`'s add arm**: a document is written under `(s, d, e)` exactly for a
+requested id whose committed endpoints are `(s, d)`; an id the tensor does not hold gets none. -/
+theorem commitEdgeAddKeys_mem (ep : Ep) (ids : List Nat) (s d e : Nat) :
+    (s, d, e) ∈ commitEdgeAddKeys ep ids ↔ e ∈ ids ∧ ep e = some (s, d) := by
+  simp only [commitEdgeAddKeys, List.mem_filterMap, Option.map_eq_some_iff, Prod.mk.injEq]
+  constructor
+  · rintro ⟨e', he', p, hp, rfl, rfl, rfl⟩; exact ⟨he', hp⟩
+  · rintro ⟨he, hc⟩; exact ⟨e, he, (s, d), hc, rfl, rfl, rfl⟩
+
+theorem commitEdgeAddKeys_missing (ep : Ep) (ids : List Nat) (e : Nat) (h : ep e = none) :
+    ∀ s d, (s, d, e) ∉ commitEdgeAddKeys ep ids := by
+  intro s d hm
+  have := (commitEdgeAddKeys_mem ep ids s d e).mp hm
+  simp [h] at this
+
 /-- Main: the rollback applied to the RS edge table `t1` the failed query left. -/
 def resyncEdges (build : Nat × Nat × Nat → Doc) (committed priv : Ep) (pub : List Nat)
     (t1 : ETable) : ETable :=
   commitEdge t1 build (resyncEdgeKeys committed priv pub).1 (resyncEdgeKeys committed priv pub).2
+
+/-- **What the edge arm of `resync_published_indexes` does**, id by id (`pending.rs:1887-1895`): an id
+live in `committed` is re-added under its committed endpoints, and **only** an id that is gone from
+`committed` and known to `private` is deleted, under the private endpoints. So a published id still
+live in `committed` is never deleted, whatever endpoints `private` gave it (the open bug #2781
+below), and an id neither version knows is left alone. -/
+theorem resyncEdgeKeys_spec (committed priv : Ep) (pub : List Nat) (s d e : Nat) :
+    ((s, d, e) ∈ (resyncEdgeKeys committed priv pub).1 ↔ e ∈ pub ∧ committed e = some (s, d)) ∧
+    ((s, d, e) ∈ (resyncEdgeKeys committed priv pub).2 ↔
+      e ∈ pub ∧ committed e = none ∧ priv e = some (s, d)) := by
+  constructor
+  · exact commitEdgeAddKeys_mem committed pub s d e
+  · simp only [resyncEdgeKeys, List.mem_filterMap]
+    constructor
+    · rintro ⟨e', he', hm⟩
+      cases hc : committed e' with
+      | some _ => simp [hc] at hm
+      | none =>
+        simp only [hc] at hm
+        obtain ⟨p, hp, h1⟩ := Option.map_eq_some_iff.mp hm
+        simp only [Prod.mk.injEq] at h1
+        obtain ⟨rfl, rfl, rfl⟩ := h1
+        exact ⟨he', hc, hp⟩
+    · rintro ⟨he, hc, hp⟩
+      exact ⟨e, he, by simp [hc, hp]⟩
+
+/-- The two key lists never name the same edge id: an id is re-added or deleted, not both. -/
+theorem resyncEdgeKeys_disjoint (committed priv : Ep) (pub : List Nat) (s d e s' d' : Nat) :
+    (s, d, e) ∈ (resyncEdgeKeys committed priv pub).1 →
+    (s', d', e) ∉ (resyncEdgeKeys committed priv pub).2 := by
+  intro h1 h2
+  have a := ((resyncEdgeKeys_spec committed priv pub s d e).1.mp h1).2
+  have b := ((resyncEdgeKeys_spec committed priv pub s' d' e).2.mp h2).2.1
+  rw [a] at b; cases b
 
 /-- The edge index agrees with a graph version: there is a document under
 `(s, d, e)` iff edge `e` runs `s → d` there. -/
@@ -53,7 +108,7 @@ def PublishedBy (committed priv : Ep) (pub : List Nat) (t0 t1 : ETable) : Prop :
 
 /-- **Property (#2781).** Rolling back a failed query restores the edge index to
 the committed graph's documents: C's undo-log guarantee, which the doc comment of
-`resync_published_indexes` (`pending.rs:1607-1620`) claims. -/
+`resync_published_indexes` (`pending.rs:1826-1843`) claims. -/
 def RollbackRestoresEdgeIndex (resync : Ep → Ep → List Nat → ETable → ETable) : Prop :=
   ∀ committed priv pub t0 t1, EdgeIndexMatches committed t0 →
     PublishedBy committed priv pub t0 t1 → EdgeIndexMatches committed (resync committed priv pub t1)

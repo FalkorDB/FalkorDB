@@ -6,14 +6,14 @@ import FalkorIndexLayer.Maintenance
 
 | Lean | Rust |
 | --- | --- |
-| `nextN`, `drainN` | `IndexResultsIter::next` `mod.rs:312`, `EdgeTripleIter::next` 381, `ScoredEdgeTripleIter::next` 445 (skip keys of the wrong length, decode) |
+| `nextN`, `drainN` | `IndexResultsIter::next` `mod.rs:312`, `EdgeTripleIter::next` 382, `ScoredEdgeTripleIter::next` 446 (skip keys of the wrong length, decode) |
 | `RIter`, `RIter.empty`, `RIter.next` | `IndexResultsIter::{new,empty,empty_scored}` 277/288/299, `EdgeTripleIter::{new,empty}` 362/370, `ScoredEdgeTripleIter::{new,empty}` 426/434, vector wrappers 498-537 |
 | `decTriple` | `decode_triple` 612 |
 | `RC`, `RC.clone/release/dropSpec` | `OwnedIndex::{from_owned,as_ptr,try_clone,into_raw,drop}` 926-964, `SpecHandle::{new,as_ptr,try_clone_ref,drop}` 980-1010 |
 | `DocLife` | `Document::drop` 641, `add_document` 1893 (`consumed`) |
 | `queryN`, `queryE` | `Index::query` 1677, `Index::query_edges` 1700 |
 | `fulltextQ`, `vectorQ` | `Index::fulltext_query(_edges)` 1718/1747, `vector_query(_edges)` 1784/1846 |
-| `delKey`, `delEdgeKey`, `commitEdge` | `delete_document` 1915, `delete_edge_document` 1932, `Indexer::commit_edge` `indexer.rs:744` |
+| `delKey`, `delEdgeKey`, `commitEdge` | `delete_document` 1940, `delete_edge_document` 1957, `Indexer::commit_edge` `indexer.rs:779` |
 
 RediSearch is a *hypothesis*: `run n` is the list of `(key, score)` pairs the
 results iterator returns for query node `n`, and `RunSpec` states the documented
@@ -191,7 +191,7 @@ theorem DocLife.freed_once (d : DocLife) :
 
 /-! ## Query entry points -/
 
-/-- `Index::query` (`mod.rs:1691`): no spec or a dead spec ⇒ empty; a null
+/-- `Index::query` (`mod.rs:1702`): no spec or a dead spec ⇒ empty; a null
 query node ⇒ empty; else the results iterator over `run n`. -/
 def queryN (spec : Option Nat) (cloneOk : Bool) (node : Option QN) (run : QN → List (Key × Nat)) : RIter :=
   match spec with
@@ -199,7 +199,7 @@ def queryN (spec : Option Nat) (cloneOk : Bool) (node : Option QN) (run : QN →
   | some _ => if cloneOk then (match node with | none => RIter.empty | some n => RIter.new (run n)) else RIter.empty
 
 /-- The RediSearch LLAPI contract for a node-index table `t` (doc keys are
-`nodeKey id`, `mod.rs:657`): the iterator returns exactly the keys of the
+`nodeKey id`, `mod.rs:658`): the iterator returns exactly the keys of the
 stored documents that match `n`. -/
 def RunSpec (t : Table) (run : QN → List (Key × Nat)) : Prop :=
   ∀ n k, (∃ s, (k, s) ∈ run n) ↔ ∃ id d, id < 2 ^ 64 ∧ t id = some d ∧ rsMatch d n ∧ k = nodeKey id
@@ -317,7 +317,7 @@ theorem queryE_eq_scan_filter (fields : Attr → Bool) (P : Nat × Nat × Nat �
 
 /-! ### Full-text and vector queries (abstract RediSearch semantics) -/
 
-/-- `fulltext_query` (`mod.rs:1732`): `CString::new` fails on a NUL ⇒ `Err`;
+/-- `fulltext_query` (`mod.rs:1743`): `CString::new` fails on a NUL ⇒ `Err`;
 no / dead spec ⇒ `Ok(empty)`; `RediSearch_IterateQuery` error ⇒ `Err(msg)`;
 otherwise the scored iterator. `ft s str` is RediSearch's answer (FFI). -/
 def fulltextQ (hasNul : Bool) (spec : Option Nat) (cloneOk : Bool)
@@ -352,7 +352,7 @@ theorem fulltextQ_errors (spec : Option Nat) (c : Bool) (ft : Nat → Except Str
     (∀ s e, ft s = .error e → fulltextQ false (some s) true ft = .error e) := by
   refine ⟨rfl, rfl, fun s e h => by simp [fulltextQ, h]⟩
 
-/-- `vector_query` (`mod.rs:1798`): the field is `vector:{attr}`; a null node or
+/-- `vector_query` (`mod.rs:1809`): the field is `vector:{attr}`; a null node or
 a null results iterator ⇒ empty; else the scored iterator. `node`/`iterOk` are
 `CreateVecSimNode`/`GetResultsIterator` (FFI). -/
 def vectorQ (spec : Option Nat) (cloneOk nodeOk iterOk : Bool) (l : List (Key × Nat)) : RIter :=

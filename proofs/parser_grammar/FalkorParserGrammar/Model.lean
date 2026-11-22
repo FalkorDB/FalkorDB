@@ -565,8 +565,26 @@ def notFrames (n : Nat) (K : List Frame) : List Frame :=
   else if n % 2 = 1 then (3, some (lf .not_)) :: K
   else (3, some (lf .not_)) :: (3, some (lf .not_)) :: K
 
-/-- Level 9 prefix (2230-2246): an optional `+`, then an optional `-`. -/
-def signs : List Tok → Bool × List Tok
+/-- Level 9 prefix since #3525 (`56d00c3d8`, cypher.rs:2212-2236): any run of `+` and `-`.
+The number of `-` is what counts (`+` is dropped); `legacy_signs` is only set while a
+`CYPHER` parameter value is parsed (see `C.Params`), never on this path. Before #3525 the
+prefix was one optional `+` then one optional `-` (`pre3525_signs`). -/
+def countSigns : List Tok → Nat × List Tok
+  | .dash :: r => let p := countSigns r; (p.1 + 1, p.2)
+  | .plus :: r => countSigns r
+  | ts => (0, ts)
+
+/-- The frames level 9 pushes for `n` leading `-` (2236-2246): none pushes `(9, None)`; a run of
+`n ≥ 1` pushes `2 - n % 2` frames `(9, Some(Negate))`: one for odd `n`, two for even (the operand
+is placed under them, as for `NOT`). -/
+def signFrames (n : Nat) (K : List Frame) : List Frame :=
+  if n = 0 then (9, none) :: K
+  else if n % 2 = 1 then (9, some (lf .neg)) :: K
+  else (9, some (lf .neg)) :: (9, some (lf .neg)) :: K
+
+/-- Level 9 prefix before #3525 (cypher.rs:2230-2246 at `43936bab9`): an optional `+`, then an
+optional `-`. Kept as the historical shape: `- -x` and `-+x` were syntax errors. -/
+def pre3525_signs : List Tok → Bool × List Tok
   | .plus :: .dash :: r => (true, r)
   | .plus :: r => (false, r)
   | .dash :: r => (true, r)
@@ -603,8 +621,8 @@ def step (pe : List Tok → Out) (fuel : Nat) : List Frame → List Tok → St
       let (n, ts') := countNots ts
       .run ((4, none) :: notFrames n K) ts'
     else if l = 9 then
-      let (neg, ts') := signs ts
-      .run ((10, none) :: (9, if neg then some (lf .neg) else none) :: K) ts'
+      let (n, ts') := countSigns ts
+      .run ((10, none) :: signFrames n K) ts'
     else
       match primary pe fuel ts with
       | .ok (res, true) ts' => .run ((0, none) :: (l, some res) :: K) ts'

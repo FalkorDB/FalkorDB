@@ -1,6 +1,6 @@
 import VersionedMatrix.DeltaBook
 /-
-# `versioned_matrix::Iter` construction and `seek` (`versioned_matrix.rs:1374-1476`)
+# `versioned_matrix::Iter` construction and `seek` (`versioned_matrix.rs:1382-1484`)
 
 A layer's `matrix::Iter` is `LIt`: the layer it is bound to plus the entries
 it has yet to yield in the current row range (`GxB_rowIterator_seekRow` +
@@ -11,10 +11,10 @@ iterator has left) is exactly the `VMIter.St` the merge theorem
 
 | here | there |
 | --- | --- |
-| `fromLayersDetaching` | `from_layers_detaching` (:1419) |
-| `fromLayers`          | `from_layers` (:1405) |
-| `newIt`               | `Iter::new` (:1378), detaching layers `may_hold_rows` rules out |
-| `seek`                | `Iter::seek` (:1456) |
+| `fromLayersDetaching` | `from_layers_detaching` (:1427) |
+| `fromLayers`          | `from_layers` (:1413) |
+| `newIt`               | `Iter::new` (:1386), detaching layers `may_hold_rows` rules out |
+| `seek`                | `Iter::seek` (:1464) |
 
 Results: `fromLayers_abs` (each stream is the layer restricted to the
 range), `detach_harmless` (detaching a layer with nothing in range changes
@@ -61,12 +61,12 @@ def fromLayersDetaching (m dp : List Pair) (ddp : Bool) (dm : List Pair) (ddm : 
 
 def fromLayers (m dp dm : List Pair) (lo hi : Nat) : It := fromLayersDetaching m dp false dm false lo hi
 
-/-- `Iter::new` (:1378). -/
+/-- `Iter::new` (:1386). -/
 def newIt (m : Mat Unit) (dp dm : Delta Unit) (lo hi : Nat) : It :=
   fromLayersDetaching (keys m) (keys dp.layer) (!mayHoldRows dp lo hi) (keys dm.layer)
     (!mayHoldRows dm lo hi) lo hi
 
-/-- `Iter::seek` (:1456). -/
+/-- `Iter::seek` (:1464). -/
 def seek (s : It) (lo hi : Nat) : It :=
   let r := match s.dmit with
     | none => (s.dmNext, none)

@@ -1,4 +1,10 @@
 /-
+**HISTORY (pre-#3683).** This module models `HeldRead`/`Arc<AtomicRefCell<Graph>>`, which #3683
+(08616ec29) removed: a read query now holds an `Arc<Graph>` and takes no borrow, a write query an
+owned fork. The current model is `QueryGraph.lean`. Kept because `proofs/pending_commit` (`Hold`)
+imports its definitions.
+-/
+/-
 # Claim 3: the `'static` guard never outlives the cell it borrows
 
 Merged PR #3436 (25babfe4f), folded from the retired `pr3436_review`. Cites: current main (= PR branch @ e30861ea3, `runtime.rs` re-cited) unless marked. Since 653f467a9 the

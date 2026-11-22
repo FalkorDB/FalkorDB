@@ -3,19 +3,19 @@ Plan-shape helpers and constructors of `Runtime` (graph/src/runtime/runtime.rs).
 
 | here | there |
 | --- | --- |
-| `IRK`, `VT`, `nodeVars`, `expand`, `getVariables`, `visible` | `GetVariables` trait (:256) and its `DynNode` impl (:260-396) |
-| `PT`, `returnNames`  | `ReturnNames` trait (:398) and its impl (:402-) |
-| `inspectBatch`       | `Runtime::inspect_batch` (:384) |
-| `RtInit`, `rtNew`    | `Runtime::new` (:406-463) |
-| `writeEscalation`, `resyncPublished`, `commitDeferred` | `write_escalation` (:494), `resync_published_indexes` (:500), `commit_deferred_indexes` (:510) |
-| `defaultBatch`       | `default_batch` (:564) |
-| `childrenSpec`       | `children_to_recurse` (:652), on `RunBatch.childrenToRecurse` |
-| `runNested`          | `run_nested_plan` (:678) |
-| `BK`, `buildOp`      | `build_batch_op` (:743-1306): child popping and the per-arm checks |
+| `IRK`, `VT`, `nodeVars`, `expand`, `getVariables`, `visible` | `GetVariables` trait (:257) and its `DynNode` impl (:260-395) |
+| `PT`, `returnNames`  | `ReturnNames` trait (:399) and its impl (:402-) |
+| `inspectBatch`       | `Runtime::inspect_batch` (:449) |
+| `RtInit`, `rtNew`    | `Runtime::new` (:471-525; the graph fields are `QueryGraph.new`) |
+| `writeEscalation` (history), `resyncPublished`, `commitDeferred` | `write_escalation()` (gone: `Runtime::upgrade_to_write`, `QueryGraph.upgradeToWrite`, :626), `resync_published_indexes` (:633), `commit_deferred_indexes` (:643) |
+| `defaultBatch`       | `default_batch` (:699) |
+| `childrenSpec`       | `children_to_recurse` (:787), on `RunBatch.childrenToRecurse` |
+| `runNested`          | `run_nested_plan` (:813) |
+| `BK`, `buildOp`      | `build_batch_op` (:878-1442): child popping and the per-arm checks |
 -/
 namespace RuntimeCore.Plan
 
-/-! ## `get_variables` (:257-396) -/
+/-! ## `get_variables` (:257-395) -/
 
 /-- The variable-bearing payload of each IR variant, as `get_variables` reads it. -/
 inductive IRK where
@@ -161,7 +161,7 @@ theorem pre3521_hidden_reported :
     pre3521_getVariables [.silent, .project [1] [], .scan 2] = [1] := by
   simp [pre3521_getVariables, getVariables, expand, nodeVars]
 
-/-! ## `get_return_names` (:403) -/
+/-! ## `get_return_names` (:399-) -/
 
 inductive RK where
   | project (names : List Nat)
@@ -215,7 +215,7 @@ theorem returnNames_spec (ns : List Nat) (t : PT) (rest : List PT) (k : RK) :
   refine ⟨by simp [returnNames], by simp [returnNames], by simp [returnNames], by simp [returnNames], ?_, by simp [returnNames], fun _ _ => by simp [returnNames]⟩
   simp [returnNames, returnNames.skipApply]
 
-/-! ## `inspect_batch` (:384) -/
+/-! ## `inspect_batch` (:449) -/
 
 /-- Inspect mode records one owned row per active row, or the error; otherwise nothing. -/
 def inspectBatch {R : Type} (inspect : Bool) (record : List (Nat × Except String R)) (idx : Nat)
@@ -232,7 +232,7 @@ theorem inspectBatch_spec {R : Type} (rec : List (Nat × Except String R)) (idx 
     inspectBatch true rec idx (.error e) = rec ++ [(idx, .error e)] ∧
     inspectBatch false rec idx res = rec := ⟨rfl, rfl, rfl⟩
 
-/-! ## `Runtime::new` (:406) -/
+/-! ## `Runtime::new` (:471) -/
 
 structure RtInit (P B : Type) where
   returnNames : Option (List Nat)
@@ -273,7 +273,7 @@ theorem rtNew_spec {P B : Type} (root : PT) (nested : Bool) (kids : List Nat) (w
   refine ⟨rfl, fun h => by simp [rtNew, h], fun h => by simp [rtNew, h], fun h => by simp [rtNew, h],
     fun h => by simp [rtNew, h], rfl, rfl, rfl, rfl, rfl⟩
 
-/-! ## Delegating accessors (:494, :500, :510) -/
+/-! ## Delegating accessors (`upgrade_to_write` :626, :633, :643) -/
 
 def writeEscalation {W : Type} (w : W) : W := w
 
@@ -287,7 +287,7 @@ theorem delegates_spec {P G C W : Type} (w : W) (rs : P → C → G → P) (cm :
     writeEscalation w = w ∧ resyncPublished rs p c g = rs p c g ∧ commitDeferred cm p g = cm p g :=
   ⟨rfl, rfl, rfl⟩
 
-/-! ## `default_batch` (:564) -/
+/-! ## `default_batch` (:699) -/
 
 /-- One row, no bindings: `BatchBuilder::new()`, `push_row(&Row::new())`, `finish()`. -/
 def defaultBatch : List (List (Option Nat)) := [[]]
@@ -295,7 +295,7 @@ def defaultBatch : List (List (Option Nat)) := [[]]
 theorem defaultBatch_spec : defaultBatch.length = 1 ∧ ∀ r ∈ defaultBatch, r = [] := by
   simp [defaultBatch]
 
-/-! ## `run_nested_plan` (:678) -/
+/-! ## `run_nested_plan` (:813) -/
 
 /-- Find the plan, build it, install the argument row, take the first batch's first active
 row's `result` slot; any missing piece is "nested plan #id produced no result". -/
@@ -326,7 +326,7 @@ theorem runNested_spec {B V : Type} (plans : List Nat) (id : Nat) (build : Nat �
   refine ⟨by simp [runNested, hi, hb, hf, hv, bind, Except.bind, pure, Except.pure], fun h => ?_⟩
   simp [runNested, h, bind, Except.bind, throw, throwThe, MonadExceptOf.throw]
 
-/-! ## `build_batch_op` (:743) -/
+/-! ## `build_batch_op` (:878) -/
 
 /-- How each IR arm sources its input: `pop_or_once` (a missing child becomes a one-row
 `Once` leaf), `pop_or_argument` (MERGE / FOREACH: a one-row `Argument` leaf, so the body sees

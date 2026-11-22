@@ -5,6 +5,8 @@ Targets: `graph/src/planner/optimizer/select_scan_node.rs`, `utilize_index.rs`,
 `utilize_node_by_id.rs`, `reorder_labels.rs`, plus the runtime pieces their rewrites hand
 work to (`Runtime::evaluate_id_filter`, `NodeByIndexScanOp`, `Index::build_query_node`).
 
+**Re-synced to main 256ab4d3f (2026-11-22)**: new `IndexArray` (the array-contains arm of `try_filter_pushdown`, `utilize_sound_ac`, and the OR branch that keeps no filter: bug 7); `faithV` now admits list-valued properties (the array tree), every existing theorem unchanged. Table pins below are the function starts at 256ab4d3f; COVERAGE.tsv is authoritative for every row. IdSeek/IndexSound/ScanOrder header cites that point *inside* a body (e.g. `select_scan_node.rs:983`) keep the line of the revision they were written for.
+
 Build: `lake build` (Lean 4.36, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
 `utilize_sound` and `seek_sound` depend only on `propext`, `Quot.sound`, `Classical.choice`.
 77 theorems, 36 `decide`d examples (counterexamples and sanity checks).
@@ -29,18 +31,19 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | Lean | Rust |
 | --- | --- |
 | `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:52-92, 106-119` |
-| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1415-1469` (`id as u64` at 1428) |
-| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1470-1480` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
-| `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1783` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
-| `IdSeek.idMax` (`pre2979_seek` before PR #2979) | `runtime/runtime.rs:1439`: the loop starts at `node_id_bound().saturating_sub(1)`; `seek_eq_pre2979` |
+| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1444-1506` (`id as u64` at 1463) |
+| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1507-1510` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
+| `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1785` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:55-84` (`range -= deleted_nodes()` at :67) |
+| `IdSeek.idMax` (`pre2979_seek` before PR #2979) | `runtime/runtime.rs:1455`: the loop starts at `node_id_bound().saturating_sub(1)`; `seek_eq_pre2979` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
 | `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
-| `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-295` |
-| `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:357-368, 547-595, 802-873` |
-| `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-355, 602-704, 481-544` |
-| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-801` |
-| `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:308-335` |
-| `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
+| `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:100-300` |
+| `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:360-381, 569-621, 816-920` |
+| `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-358, 624-733, 503-566` |
+| `IndexArray.contains_no_fn`, `pushAnd_spec_ac`, `utilize_sound_ac` | `is_array_contains` (`utilize_index.rs:816`): the array-contains conjunct pushed as `ArrayContains` with its filter kept (#3736) |
+| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:752-835` |
+| `Index.utilize`, `Plan.sel` | `utilize_index.rs:981-1090`, `node_by_index_scan.rs:302-360` |
+| `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:434-451, 836-1330` |
 | `ScanOrder.place`, `runScoped`, `initialBound` | `select_scan_node.rs:983-986, 1185-1235` |
 | `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
 
@@ -53,7 +56,8 @@ Id seeks (`IdSeek.lean`):
 - `fold_none`, `fold_some`, `go_eq_fold`, `asU64_of_small`: the whole fold is exact for operands in `[0, 2^63)`.
 - `seek_sound` (main b84473a7f, #3394): on any well-formed graph (`G.wf`: `node_count` counts the live ids), including one that never held a node, with non-negative integer operands, `NodeByIdSeek` = `Filter(id(n) op v …)` over `AllNodeScan`. `empty_graph_seek_none`: a never-populated graph seeks nothing. Before #3394 the seek theorem needed `nodeCount ≠ 0`; that version survives only as `pre3394_seek_sound` in `IdSeek.lean`, the stepping stone of `seek_sound` (the other pre-#3394 counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412).
 
-Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`):
+Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`, `IndexArray.lean`):
+- `contains_no_fn`, `pushAnd_spec_ac`, `utilize_sound_ac` (#3736): the index never loses a row of `x IN n.k`, and an array-contains conjunct (alone or in an AND) is rewritten soundly because its filter is kept; `tryPushdown_or_ac_drops_filter` is the OR counterexample (bug 7).
 - `ordI_swap`, `ord3_swap`, `eq3_swap`, `flip_correct`: comparison flip when the property is on the right.
 - `sel_eq`: `Equal` on a faithful literal (non-lossy Int, String) and faithful stored value (Null/Int/String) is exact.
 - `sel_range`: every one- or two-sided numeric or string range is exact except the equal-string-bounds-with-an-exclusive-flag trap.
@@ -149,6 +153,18 @@ Scan selection (`ScanOrder.lean`):
   field). Rust with index `[4],[5]`, without `[5]`, C `[4],[5]` — an index-dependent result shared
   with C (Lean C10, now stated as agreement). The AND branch keeps an array-contains conjunct's
   filter (`is_array_contains`).
+
+7. **The OR branch of `try_filter_pushdown` keeps no filter for an array-contains disjunct** — the same
+   family as #3736 (which fixed AND and the single atom): `try_filter_pushdown` OR arm
+   (`utilize_index.rs:782-801`) pushes `1 IN n.arr` as an `ArrayContains` and returns no leftover
+   filter, `needs_post_filter` flags nothing, and the array tree answers `1 IN [true]` (Bool and Int
+   share the numeric key). Lean `IndexArray.tryPushdown_or_ac_drops_filter`, `Cex C12` (by `decide`).
+   Live at 256ab4d3f on `CREATE INDEX FOR (n:L) ON (n.arr, n.k)` and nodes `{arr:[true], k:0}`,
+   `{arr:[1], k:0}`, `{arr:[2], k:9}`: `MATCH (n:L) WHERE 1 IN n.arr OR n.k = 9 RETURN n.arr, n.k`
+   Rust with index `[true],0 / [1],0 / [2],9`, Rust without index and openCypher `[1],0 / [2],9`,
+   C with index `[true],0 / [1],0 / [2],9` (C also returns `[true]` for `1 IN n.arr` alone, which
+   Rust no longer does). EXPLAIN: `Sort → Project → Node By Index Scan` (no Filter). Fix: keep the
+   original filter whenever any OR branch `is_array_contains`.
 
 ## Suspected / hazards (not confirmed as wrong results)
 - `utilize_node_by_id.rs:106` `parent().unwrap()` panics if a scan is the plan root. W4-plan-4's
@@ -277,6 +293,7 @@ import OptimizerScan.Index
 import OptimizerScan.IndexCex
 import OptimizerScan.IndexSound
 import OptimizerScan.IndexPipeline
+import OptimizerScan.IndexArray
 import OptimizerScan.ScanOrder
 import OptimizerScan.EdgeInline
 import OptimizerScan.Cleanup

@@ -200,7 +200,7 @@ def dropAttrs (t : IType) : Idx → Bool → List String → Idx × Bool
         dropAttrs t (if fs.length = 1 then (x.removeField a).2 else x.retainFields a t) true as
       else dropAttrs t x r as
 
-/-- `Indexer::drop_index` (`indexer.rs:359`). -/
+/-- `Indexer::drop_index` (`indexer.rs:375`). -/
 def dropIndex (I : Ixr) (label : String) (attrs : List String) (t : IType) (total : Nat) :
     Option (Nat × Nat) × Ixr :=
   match I.map.get label with
@@ -227,32 +227,32 @@ def isLabelIndexed (I : Ixr) (l a : String) (t : IType) : Bool :=
 def isAttrIndexed (I : Ixr) (l a : String) : Bool :=
   match I.map.get l with | some x => operational x && x.containsField a | none => false
 /-- Routing shared by `query`, `query_edges`, `fulltext_query(_edges)`,
-`vector_query(_edges)` (`indexer.rs:467-551`): the per-label index, or the
+`vector_query(_edges)` (`indexer.rs:560-596`): the per-label index, or the
 empty iterator when the label has none. -/
 def route (I : Ixr) (l : String) : Option Idx := I.map.get l
 def vectorField (I : Ixr) (l a : String) : Option Field := do
   let x ← I.map.get l
   let fs ← x.getFields a
   fs.find? (fun f => f.ty == .vector && f.vopts.isSome)
-/-- `get_vector_metric` (`indexer.rs:562`). -/
+/-- `get_vector_metric` (`indexer.rs:597`). -/
 def getVectorMetric (I : Ixr) (l a : String) : Option String := do
   let x ← I.map.get l
   let fs ← x.getFields a
   (fs.find? (fun f => f.ty == .vector && (f.vopts.bind (·.sim)).isSome)).bind (fun f => f.vopts.bind (·.sim))
-/-- `get_vector_dimension` (`indexer.rs:585`). -/
+/-- `get_vector_dimension` (`indexer.rs:620`). -/
 def getVectorDimension (I : Ixr) (l a : String) : Option Nat :=
   (vectorField I l a).bind (fun f => f.vopts.map (·.dimension))
 def getFields (I : Ixr) (l : String) : AMap (List Field) := ((I.map.get l).map (·.fields)).getD []
 def getAllFields (I : Ixr) : List (String × AMap (List Field)) :=
   (I.map.filter (fun p => !p.2.isEmpty)).map (fun p => (p.1, p.2.fields))
-/-- `index_info` (`indexer.rs:793`): non-empty indexes, sorted by label (`le`
+/-- `index_info` (`indexer.rs:827`): non-empty indexes, sorted by label (`le`
 is `String`'s `Ord`, passed in so that only its order laws are used). -/
 def indexInfo (I : Ixr) (le : String → String → Bool) : List (String × Idx) :=
   (I.map.filter (fun p => !p.2.isEmpty)).mergeSort (fun a b => le a.1 b.1)
 def hasIndex (I : Ixr) (l : String) : Bool := (I.map.get l).isSome
 def hasIndexedAttr (I : Ixr) (l a : String) : Bool :=
   match I.map.get l with | some x => x.containsField a | none => false
-/-- `update_progress` (`indexer.rs:840`): the atomics are interior-mutable, so
+/-- `update_progress` (`indexer.rs:874`): the atomics are interior-mutable, so
 the published index itself changes. -/
 def updateProgress (I : Ixr) (l : String) (p : Nat) : Ixr :=
   match I.map.get l with
@@ -609,7 +609,7 @@ theorem recreate_spec (E : Env) (I I' : Ixr) (l : String) (h : I.recreate E l = 
 
 /-! ## #3086 (73077bb4a): adding a field to an existing entry starts a new generation -/
 
-/-- `is_ticket_current` (`indexer.rs:698`). -/
+/-- `is_ticket_current` (`indexer.rs:717`). -/
 def isTicketCurrent (I : Ixr) (tk : Ticket) : Bool :=
   match I.map.get tk.label with | some x => x.id == tk.gen | none => false
 

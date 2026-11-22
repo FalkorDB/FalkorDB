@@ -8,10 +8,10 @@
 | `flush` | the latest-first `for k in (0..deferred.len()).rev()` loop :52-56 |
 | `step` | one iteration of `for (i, (hop, s)) in hops.into_iter().zip(&shapes).enumerate()` :39-58 |
 | `selfLoopsAfterBinders` | `self_loops_after_binders` :25 (early return :32-34, `foldl` = the loop) |
-| `pre3102_loop`, `pre3102_reference` | the loop #3102's first commit used, kept as `tests::reference` hop_order.rs:84-107 |
+| `pre3102_loop`, `pre3102_reference` | the loop #3102's first commit used, kept as `tests::reference` hop_order.rs:84-110 |
 
 Generic over the hop type `T` and the node type `N` (the planner instantiates `T = QR`,
-`N = (id, scope_id)`, `bound = self.visited.contains`, mod.rs:1917-1926).
+`N = (id, scope_id)`, `bound = self.visited.contains`, mod.rs:2218-2227).
 
 * `selfLoops_perm` — the output is a permutation of the input (no hop lost or doubled; the
   deferred list is always empty at the end, `run_D_nil`).
@@ -502,7 +502,7 @@ end
 
 /-! ## The pre-#3102 loop (`tests::reference`) -/
 
-/-- The loop #3102's first commit planned with (hop_order.rs:84-107 keeps it verbatim):
+/-- The loop #3102's first commit planned with (hop_order.rs:84-110 keeps it verbatim):
 `remove(i)` the self-loop and `insert(i + j + 1)` it right after its first later binder, then
 look at index `i` again. Fuel bounds the `while`. -/
 def pre3102_loop (shape : T → HopShape N) (bound : N → Bool) : Nat → List T → Nat → List T

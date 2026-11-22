@@ -7,7 +7,8 @@ sets (the abstraction proofs/versioned_matrix proves sound for
 `VersionedMatrix<bool>`/`Tensor`). Every non-FFI fn of both files has a
 theorem (COVERAGE.tsv); zero sorry/admit/axiom. Rust repros:
 `graph/tests/lean_graph_queries.rs`; live servers Rust (release module) vs C.
-Line numbers: origin/main `4a4f2a72f` (re-targeted from `e8f8a3017`: #2350/#3307 add the
+Line numbers: origin/main `256ab4d3f` (COVERAGE.tsv rows; the module headers' `:NNN` cites keep the numbers of the revision they were
+written at). Re-targeted from `4a4f2a72f` (itself re-targeted from `e8f8a3017`: #2350/#3307 add the
 native FalkorDB index — every write method now takes the whole `IndexDocs` instead of one
 `FxHashMap`; the models' document list is the field the method used to receive
 (`node_adds`/`node_removes`/`edge_adds`/`edge_removes`), and the added
@@ -20,6 +21,30 @@ project models is unchanged. New here: `commit_index_docs` (`Index.commitIndexDo
 Earlier `8743953a8`: #3022 adds
 `verify_created_relationships` to `validate` and `first_node_with_relationships`; earlier
 `fe619ac5f`: #2911 bounds `grow_cap`).
+
+**Re-targeted to origin/main `256ab4d3f`** (from `43936bab9`; 93 commits, 76 `graph.rs` rows were flagged CHANGED):
+* #3757 (`97a7cfff0`, `Schema`/`NameMap`, schema hash) and #3856 (`drop_index_bg`) were modelled in their own PRs
+  (`SchemaHash.lean`, `Schema.lean`, `Index.dropBg`); this pass re-read the rest of the diff of every flagged row.
+* **#3084 (`5f147f10e`) fixes bug 2**: `get_node_relationships` takes a self-loop from the outgoing half only
+  (the incoming half drops `src == dest`). `Queries.nodeRels` is the new body, `nodeRels_once` (every incident edge
+  of a tensor exactly once, self-loops included), `nodeRels_eq_byType`, `inc_filter_agree`; the old body and its
+  counterexample are kept as `pre3084_nodeRels`, `pre3084_nodeRels_selfloop_twice`. Live at `256ab4d3f`: no longer
+  reproduced (see the repro in the project report).
+* #3641 (`e0d9c2188`): `finish_version` (= `trim_attr_stores` then `end_id_quarantine`) is `Ids.finishVersion`,
+  `endIdQuarantine_id` (`IdSpace::end_quarantine` clears only `quarantined`, which is outside `IdS`;
+  proofs/id_space proves it); `IdRust.lean`/`IdContract.lean` cite id_space.rs at its new lines and say why the
+  `quarantined` field (`open_batch` folds `released ∪ (taken ∩ recycled)` into it) leaves `IdContract` unchanged.
+* #3585 (`index-falkordb` only): `Index.nativeBuildTotal`, `addNativeBuild` (+ `addNativeBuild_none`,
+  `_pending`, `_progress_le`, `_progress_min`, `nbFold_cols`) model `native_build_total` / `add_native_build`;
+  `is_indexed` / `is_edge_indexed` under the flag answer a Range lookup from the native column (proofs/native_index).
+* #3471 (`6f95cde7b`): `build_relationship_matrix_unrestricted` now masks with `Descriptor::SC` (structural): a stored
+  entry of `fwd_dm` hides the base entry whatever its value, which is what the logical-set model of `set_pattern` assumes.
+* #3683 (`08616ec29`, `Arc<Graph>`) and #3787 (clippy) change no behaviour of any modelled function
+  (`populate_index_batch`, `set_indexer_graph`, `validate_*_constraint` read-checked).
+* Open: `first_node_with_relationships` stays CONDITIONAL on `AdjExact`: the adjacency matrix equals the union of
+  the relationship tensors, which every graph mutator keeps and an RDB load takes from the file; it is not proven
+  preserved by `create_relationships_bulk`/`delete_relationships`/`delete_implicit_edges` together with
+  `restore`. 270+ theorems; gaps 0 NOT COVERED.
 
 **Re-targeted to #2846 (IdSpace owns the ids).** `Graph` keeps two `IdSpace`s and
 no counters; `G`'s `nodeCount`/`delNodes` (+ new `nodeEB`/`nodeTaken`) are the
@@ -90,7 +115,7 @@ graph.rs:974). 234 theorems.
 `getRelMatMut_new`, `Delete.type_cleared_after_registration` (bug 1 below fixed). COVERAGE.tsv lines re-cited to
 `0f45a8685`. 230 theorems.
 
-## CONFIRMED bugs (Rust vs C, live) — bugs 2 and 3 re-checked live at 2c874022a: still present; bug 1 is fixed
+## CONFIRMED bugs (Rust vs C, live) — bug 3 re-checked live at 256ab4d3f: still present; bugs 1 and 2 are fixed
 (the code bugs 2 and 3 cite is unchanged at fe619ac5f; #2911 touched only `grow_cap`)
 1. **FIXED by #3277 (`13e849935`, closes #3244)** — history: a deleted edge kept its type after a type
    was registered without a resize. `get_type_id_mut` had no `self.resize()`, so the
@@ -104,11 +129,11 @@ graph.rs:974). 234 theorems.
    Lean: now
    `type_cleared_after_registration` (counterexample removed in bbee75955; the last revision that has
    them is 17ccc5412).
-2. **Self-loop reported twice by `get_node_relationships`** (graph.rs:2390),
+2. **FIXED by #3084 (`5f147f10e`)** — history: `get_node_relationships` (graph.rs:2390) reported a self-loop twice,
    surfacing in UDF `node.getNeighbors` (udf/js_classes.rs:104): self-loop
    count Rust 2 / C 1 for outgoing, incoming, both (2c874022a: with
    `{returnType:'edges'}` Rust 2, C 1; node results are deduplicated). Lean:
-   `nodeRels_selfloop_twice` vs `byType_both_once`. Test `self_loop_reported_once`.
+   `pre3084_nodeRels_selfloop_twice` (old) vs `nodeRels_once` (new). Test `self_loop_reported_once`.
 3. **Constraint identity is property-order sensitive** (constraint.rs:79):
    `UNIQUE NODE L (a,b)` then `(b,a)` — Rust creates both, C "Constraint
    already exists" (2c874022a: unchanged). Lean `cmatches_order_sensitive`; test

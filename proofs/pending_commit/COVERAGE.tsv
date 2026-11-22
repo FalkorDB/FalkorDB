@@ -1,54 +1,54 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/ops/commit.rs	new	45	NOT COVERED	RO check
+graph/src/runtime/ops/commit.rs	new	45	PROVEN	CommitOpNext.commitNew: commit_new_ro (RO runtime refused), commit_new_write, commit_new_ok_iff; proofs/ops_aggregate CommitSt.new
 graph/src/runtime/ops/commit.rs	next	69	PROVEN	CommitOpNext.commitNext_ok, commitNext_commit_err, commitNext_endSegment_err, pops_in_order
-graph/src/runtime/ops/create.rs	build_attr_template	55	NOT COVERED	pattern/attr resolution
-graph/src/runtime/ops/create.rs	resolve_map_attrs	84	NOT COVERED	pattern/attr resolution
-graph/src/runtime/ops/create.rs	new	102	NOT COVERED	pattern/attr resolution
-graph/src/runtime/ops/create.rs	next	121	NOT COVERED	pattern/attr resolution
-graph/src/runtime/ops/create.rs	create_batch	139	MODELLED	Snapshot.createRust / Stats.step create
-graph/src/runtime/ops/create.rs	resolve_pattern	353	NOT COVERED	pattern/attr resolution
-graph/src/runtime/ops/set.rs	new	40	NOT COVERED	operator plumbing
-graph/src/runtime/ops/set.rs	next	59	NOT COVERED	operator plumbing
-graph/src/runtime/ops/set.rs	set_batch	76	MODELLED	per-row set_inner
-graph/src/runtime/ops/set.rs	resolve_set_items	96	NOT COVERED	operator plumbing
-graph/src/runtime/ops/set.rs	set_inner	151	MODELLED	Props.replaceFrom: replace_reads_src (#3524: every `SET e = …` branch clears the staged attributes; reads = the source's last write), fixed3524_replace_clears_staged (fixed by #3524 af45ca776); the full per-item model is ops_apply SetRemove
+graph/src/runtime/ops/create.rs	build_attr_template	55	PROVEN	see proofs/ops_apply CreateAttrs.tplBuild_nodup, tplSet_ids, tplSet_lookup, tplBuild_lookup, rank_strict
+graph/src/runtime/ops/create.rs	resolve_map_attrs	84	PROVEN	see proofs/ops_apply CreateAttrs.resolveMap_spec
+graph/src/runtime/ops/create.rs	new	102	PROVEN	see proofs/ops_apply CreateBatch.createNew_spec
+graph/src/runtime/ops/create.rs	next	121	PROVEN	see proofs/ops_apply CreateBatch.createNext_spec
+graph/src/runtime/ops/create.rs	create_batch	139	PROVEN	see proofs/ops_apply CreateBatch.createNode_spec, createRel_spec, endpoint_spec, setAttrs_prefix; what it stages is Pending (PS.createdNodes, createdRel_spec) and the id space (graph_queries); Snapshot.createRust_preserves_Good: the ids it reserves are never an id this query deleted (#3641)
+graph/src/runtime/ops/create.rs	resolve_pattern	353	PROVEN	see proofs/ops_apply CreateAttrs.resolveLabels_spec, resolveNodes_shape
+graph/src/runtime/ops/set.rs	new	40	PROVEN	see proofs/ops_apply SetRemove.setNew_spec
+graph/src/runtime/ops/set.rs	next	59	PROVEN	see proofs/ops_apply SetRemove.opNext_spec
+graph/src/runtime/ops/set.rs	set_batch	76	PROVEN	see proofs/ops_apply SetRemove.perRow_spec (the skip_delete_checks precheck and the per-row set_inner loop)
+graph/src/runtime/ops/set.rs	resolve_set_items	96	PROVEN	see proofs/ops_apply SetRemove.resolveItems_length, resolveItems_attr
+graph/src/runtime/ops/set.rs	set_inner	151	PROVEN	see proofs/ops_apply SetRemove.setAttrItem_replace_shapes, setProp_spec, setFrom_replace, setFrom_merge_keeps, setLabelItem; here Props.replaceFrom: replace_reads_src, fixed3524_replace_clears_staged (#3524)
 graph/src/runtime/ops/set.rs	clear_node_attrs_for_replace	125	PROVEN	Props.replaceFrom: replace_reads_src
 graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	138	PROVEN	Props.replaceFrom: replace_reads_src
-graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	rel_attrs_to_map	50	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	snapshot_required	70	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	new	94	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	next	116	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	delete_batch	130	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	PROVEN	see proofs/ops_apply Delete.attrsToMap_spec
+graph/src/runtime/ops/delete.rs	rel_attrs_to_map	50	PROVEN	see proofs/ops_apply Delete.attrsToMap_spec
+graph/src/runtime/ops/delete.rs	snapshot_required	70	PROVEN	see proofs/ops_apply Delete.snapshotRequired_spec
+graph/src/runtime/ops/delete.rs	new	94	PROVEN	see proofs/ops_apply Delete.deleteNew_spec, deleteNew_inspect_snapshots, deleteNew_no_inspect
+graph/src/runtime/ops/delete.rs	next	116	PROVEN	see proofs/ops_apply Delete.deleteNext_spec
+graph/src/runtime/ops/delete.rs	delete_batch	130	PROVEN	see proofs/ops_apply Delete.deleteBatch_vars, scan_nodes, deleteBatch_mismatch; DeleteCancel.deleteBatchE_ok
 graph/src/runtime/ops/delete.rs	staged_label_ids	196	PROVEN	Labels.stagedLabelIds_eq_overlay, stagedLabelIds_run, deleted_snapshot_examples (#3288: committed ids with the staged adds/removes applied = the live view; fixes W4-fn-1 / #3245)
-graph/src/runtime/ops/delete.rs	delete_nodes_bulk	213	MODELLED	Snapshot.del, Stats.step
-graph/src/runtime/ops/delete.rs	delete_relationships_bulk	319	MODELLED	Snapshot.del (relationship map)
-graph/src/runtime/ops/delete.rs	delete_entity	415	MODELLED	Snapshot.del, Stats.step
-graph/src/runtime/ops/remove.rs	new	30	NOT COVERED	operator plumbing
-graph/src/runtime/ops/remove.rs	next	48	NOT COVERED	operator plumbing
-graph/src/runtime/ops/remove.rs	remove_batch	62	NOT COVERED	operator plumbing
-graph/src/runtime/ops/remove.rs	remove	74	MODELLED	Labels.removeOp (filter to present labels; passes the graph to remove_node_labels since #3459), removeOp_no_dup_push, removeOp_committed
-graph/src/graph/graph.rs	node_id_bound	1709	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
-graph/src/graph/graph.rs	relationship_id_bound	1715	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
-graph/src/graph/graph.rs	create_nodes	1748	MODELLED	Snapshot.createRust (bin-first) (proved in proofs/graph_queries Ids)
+graph/src/runtime/ops/delete.rs	delete_nodes_bulk	213	PROVEN	see proofs/ops_apply Delete.delNodesBulk_spec, bulkScan_spec; DeleteCancel.delNodesBulkE_ok; the snapshot map and the pending marks: Snapshot.del, Stats.step, PS.deletedNode
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	319	PROVEN	see proofs/ops_apply Delete.delRelsBulk_spec, relScan_cls, foldl_delRel; Snapshot.del (relationship map)
+graph/src/runtime/ops/delete.rs	delete_entity	415	PROVEN	see proofs/ops_apply Delete.delEntity_spec, delNode_gone, delRel_gone; DeleteCancel.delEntityE_ok; the pending-node unwind is PS.deletePendingNode_spec (CancelRust.deletePendingNode_spec_rust)
+graph/src/runtime/ops/remove.rs	new	30	PROVEN	see proofs/ops_apply SetRemove.removeNew_spec
+graph/src/runtime/ops/remove.rs	next	48	PROVEN	see proofs/ops_apply SetRemove.opNext_spec
+graph/src/runtime/ops/remove.rs	remove_batch	62	PROVEN	see proofs/ops_apply SetRemove.perRow_spec
+graph/src/runtime/ops/remove.rs	remove	74	PROVEN	see proofs/ops_apply SetRemove.removeItem_spec; here Labels.removeOp (filter to present labels; the graph passed to remove_node_labels since #3459), removeOp_no_dup_push, removeOp_committed
+graph/src/graph/graph.rs	node_id_bound	1709	PROVEN	see proofs/graph_queries Ids.maxNodeId_lt, returnNode_bound (IdSpaceContract discharged: IdRust.rustIdOps_contract); here Snapshot.fresh
+graph/src/graph/graph.rs	relationship_id_bound	1715	PROVEN	see proofs/graph_queries Ids.maxRelId_lt, returnRel_bound (IdRust.rustIdOps_contract)
+graph/src/graph/graph.rs	create_nodes	1748	PROVEN	see proofs/graph_queries Ids.markNodesLive_spec, createNodes_refused, createNodes_ok (IdRust.rustIdOps_contract); here Snapshot.createRust_Wf (the ids a segment reserves, #3641)
 graph/src/graph/graph.rs	set_nodes_attributes	1864	PROVEN	via insert_attrs: Span.mergeSpan_correct
 graph/src/graph/graph.rs	import_node_attrs	1901	PROVEN	via import_attrs: Props.read_your_writes_new
-graph/src/graph/graph.rs	import_node_attrs_resolved	1949	MODELLED	bulk path, no null filter
+graph/src/graph/graph.rs	import_node_attrs_resolved	1949	PROVEN	see proofs/graph_queries Attrs.importResolvedTrack (rowsOfLabels_mem per node); the store import is StoreApi.importResolved_spec here
 graph/src/graph/graph.rs	import_relationship_attrs	2064	PROVEN	via import_attrs: Props.read_your_writes_new
 graph/src/graph/graph.rs	set_relationships_attributes	2872	PROVEN	via insert_attrs: Span.mergeSpan_correct
 graph/src/graph/graph.rs	set_node_labels_product	2150	AXIOMATISED	GraphBLAS assign as set product
 graph/src/graph/graph.rs	set_nodes_labels_bulk	2230	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
 graph/src/graph/graph.rs	remove_nodes_labels	2276	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
-graph/src/graph/graph.rs	delete_nodes	2310	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
-graph/src/graph/graph.rs	create_relationships_bulk	2710	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_relationships	2965	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_implicit_edges	3102	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	get_or_create_node_attr_id	1982	NOT COVERED	name interning
-graph/src/graph/graph.rs	get_or_create_rel_attr_id	2057	NOT COVERED	name interning
-graph/src/graph/graph.rs	commit_index	3954	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index	3977	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index_locked	3989	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_index_kind	4070	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	delete_nodes	2310	PROVEN	see proofs/graph_queries Labels.deleteNodes_spec, deleteNodes_refused, deleteNodes_ids; the attributes it drops are StoreApi.removeAll_spec here (hypothesis of Props.read_your_writes_new)
+graph/src/graph/graph.rs	create_relationships_bulk	2710	PROVEN	see proofs/graph_queries Delete.createRelsBulk_endpoints, createRelsBulk_ragged, createRelsBulk_dup (tensor: proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_relationships	2965	PROVEN	see proofs/graph_queries Delete.deleteRels_clears, deleteRels_adj, deleteRels_refused (tensor: proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_implicit_edges	3102	PROVEN	see proofs/graph_queries Delete.collectImplicit_mem, deleteImplicit_no_dangling, deleteImplicit_freed (tensor: proofs/versioned_matrix)
+graph/src/graph/graph.rs	get_or_create_node_attr_id	1982	PROVEN	see proofs/graph_queries Attrs.getOrCreate_spec, getOrCreate_cap; here NameMap.getOrCreate_spec
+graph/src/graph/graph.rs	get_or_create_rel_attr_id	2057	PROVEN	see proofs/graph_queries Attrs.getOrCreate_spec; here NameMap.getOrCreate_spec
+graph/src/graph/graph.rs	commit_index	3954	PROVEN	see proofs/graph_queries Index.commitDocs_noop, commitDocs_every_id; the documents come from PD (PendingDocs) here
+graph/src/graph/graph.rs	commit_edge_index	3977	PROVEN	see proofs/graph_queries Index.commitEdgeDocs_mem
+graph/src/graph/graph.rs	commit_edge_index_locked	3989	PROVEN	see proofs/graph_queries Index.commitEdgeDocs_mem
+graph/src/graph/graph.rs	commit_index_kind	4070	PROVEN	see proofs/graph_queries Index.commitDocs_noop, commitDocs_every_id
 graph/src/graph/attribute_store.rs	get_index_of	143	PROVEN	NameMap.getIndexOf = idOf: accessors
 graph/src/graph/attribute_store.rs	insert	155	PROVEN	NameMap.insert (= getOrInsert MAX, #3757): insert_wf; schema-hash key chain: insertC_inv, insertC_model
 graph/src/graph/attribute_store.rs	get_or_create	182	PROVEN	NameMap.getOrCreate (getOrInsert MAX, then u16::try_from, else NONE; #3757): getOrCreate_spec, getOrCreate_wf, getOrCreate_prefix, mint_cast_exact, uncapped_try_from_none; schema-hash key chain: getOrCreateC_inv, getOrCreateC_model
@@ -175,16 +175,16 @@ graph/src/runtime/pending.rs	pending_deleted_outdegree	1343	PROVEN	PS.deletedDeg
 graph/src/runtime/pending.rs	commit	1367	PROVEN	PC.commit_spec, PC.stCancelTypes_registers/stCancelTypes_mono (#3461: every cancelled relationship's type registered) (stats, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled; labels_removed adds staged_labels_removed (#3459, commit_spec)
 graph/src/runtime/pending.rs	enforce_constraints	1526	PROVEN	PC.enforce_spec, affected_spec, PC.enforce_operational, PC.enforce_underConstruction, PC.enforce_skips_failed
 graph/src/runtime/pending.rs	constraint_node_has_label	1607	PROVEN	PC.constraintHas_eq
-graph/src/runtime/pending.rs	check_node_constraint	1631	CONDITIONAL	UQ.checkNode2 (#3334, #3547; is_candidate = `!deleted_nodes.contains(n)` ∧ PC.constraintHas): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_nodes`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live nodes not written by this commit that carries the key; plus hScan: the label matrix lists every live member
-graph/src/runtime/pending.rs	check_edge_constraint	1723	CONDITIONAL	UQ.checkEdge2 (#3334, #3547; membership PC.edgeMember_spec; is_candidate = `!deleted_relationships.contains(e)`): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_edges`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live edges not written by this commit that carries the key; plus hScan: the tensor lists every live member
+graph/src/runtime/pending.rs	check_node_constraint	1631	CONDITIONAL	UQ.checkNode2 (#3334, #3547; is_candidate = `!deleted_nodes.contains(n)` ∧ PC.constraintHas): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_nodes`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live nodes not written by this commit that carries the key; plus hScan: the label matrix lists every live member || Re-attempted: hScan is graph_queries' LabCons (label matrix = node_labels_matrix), kept step by step (`setLabelsProduct_spec`, `removeLabels_spec`, `deleteNodes_spec`) but not as a reachability closure, and an RDB load takes both matrices from the file unchecked (decoder/mod.rs), so it is not established for a loaded graph; native hIdx needs native_index's column invariant (open there)
+graph/src/runtime/pending.rs	check_edge_constraint	1723	CONDITIONAL	UQ.checkEdge2 (#3334, #3547; membership PC.edgeMember_spec; is_candidate = `!deleted_relationships.contains(e)`): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_edges`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live edges not written by this commit that carries the key; plus hScan: the tensor lists every live member || Re-attempted: same as check_node_constraint (hScan = tensor lists every live member of the type: the relation tensors and relationship_type_matrix come unchecked from an RDB; native hIdx open in native_index)
 graph/src/runtime/pending.rs	take_deferred_indexes	1822	PROVEN	PD.commitDeferred_spec (takeDeferred)
 graph/src/runtime/pending.rs	resync_published_indexes	1844	PROVEN	PD.resync_spec
 graph/src/runtime/pending.rs	commit_deferred_indexes	1898	PROVEN	PD.commitDeferred_spec
 graph/src/runtime/pending.rs	effects_count	2013	PROVEN	PD.effectsCount_eq_pre, PD.effects_counts_cancelled, PD.effects_cancelled_node, PD.effects_counts_staged_removal (definition = documented sum + 2 per cancelled entity, #3461, + staged_labels_removed, #3459; history pre3461_effects_ignores_cancelled)
 graph/src/runtime/pending.rs	end_segment	1939	PROVEN	PD.clear_spec (incl. staged_labels_removed = 0), endSegment_spec; CommitOpNext.commitNext_endSegment_err
-graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	SaveLayout.encRoarPR_eq (select/advance_to/take seek = skip/take = graph_persist encRoar, every count/offset), encRoarMain_eq; encodeGraphPR_eq, load_encode_pr, multi_load_pr (whole stream = pre-#3438's, so graph_persist's round trips hold); RSet.select/iterFrom (SaveRoaring)
-graph/src/graph/schema.rs	hash	27	MODELLED	NameMap.M.index is keyed by the name itself: Key's Hash hashes the str it Borrows as (std HashMap plumbing, no logic to prove)
-graph/src/graph/schema.rs	borrow	36	MODELLED	NameMap.M.index keyed by String (Key borrows as its str); see Key::hash
+graph/src/graph/graphblas/serialization.rs	encode_with_range	185	PROVEN	SaveLayout.encRoarPR_eq (select/advance_to/take seek = skip/take = graph_persist encRoar, every count/offset), encRoarMain_eq; encodeGraphPR_eq, load_encode_pr, multi_load_pr (whole stream = pre-#3438's, so graph_persist's round trips hold); RSet.select/iterFrom (SaveRoaring)
+graph/src/graph/schema.rs	hash	27	PROVEN	KeyBorrow.hash_eq_str_hash (Key hashes as the str it borrows as), borrow_contract; NameMap.M.index keyed by the name is exact: KeyBorrow.lookup_insert, lookup_other
+graph/src/graph/schema.rs	borrow	36	PROVEN	KeyBorrow.borrow_eq_iff, eq_iff, borrow_contract (equal borrowed forms => equal keys and hashes: the Borrow<str> requirement of HashMap::get(&str))
 graph/src/graph/schema.rs	from_names	76	PROVEN	NameMap.fromNames (truncate to capacity, entry().or_insert = first position, chain_of): fromNames_first, fromNames_vec, fromNames_chainInv, fromNames_eq_inserts; graph_queries Ids.restore_LInv_any
 graph/src/graph/schema.rs	tag	94	PROVEN	NameMap.Kind.tag: getOrInsertC_inv, fromNames_chainInv (labels 0, types 1, keys 2 = graph_queries SchemaHash.listsHash tags)
 graph/src/graph/schema.rs	capacity	105	PROVEN	NameMap.Kind.capacity (MAX for property keys, usize::MAX else): getOrInsert_spec, getOrInsert_some, getOrCreate_spec

@@ -22,6 +22,7 @@ import RedisLayer.MultiDb
 import RedisLayer.KeyName
 import RedisLayer.ErrorText
 import RedisLayer.RelLookup
+import RedisLayer.EnvBuild
 
 /-!
 # The Redis-facing layer (`src/`, excluding `redis_type.rs`)
@@ -35,25 +36,25 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 
 | here | there |
 | --- | --- |
-| `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`up_to_nul`, `src/commands/query_args.rs:56-125` (#3010, `557f18868`; #3757 `SCHEMA_HASH`) |
-| `QueryArgs.queryFront`/`roQueryFront`/`profileFront`/`explainFront` | `query.rs:46-51`, `ro_query.rs:34-39`, `profile.rs:22`, `explain.rs:65` |
+| `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`parse_schema_hash`/`up_to_nul`, `src/commands/query_args.rs:56-125` (#3010, `557f18868`; #3757 `SCHEMA_HASH`) |
+| `QueryArgs.queryFront`/`roQueryFront`/`profileFront`/`explainFront` | `query.rs:44-51`, `ro_query.rs:32-39`, `profile.rs:22`, `explain.rs:65` |
 | `Args.rustParseI64`     | `str::parse::<i64>` (GRAPH.CONFIG) |
 | `Args.string2ll`        | Redis `string2ll` (`RedisModule_StringToLongLong`, `parse_integer`) |
 | `QueryArgs.cReadFlags`  | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`) |
-| `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:886-921` |
-| `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:114-202`, `:210-242`, `:251-291`, `:342-390` (as of #3021) |
-| `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:308-343` (#3021) |
+| `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:1064-1099` |
+| `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:123-212`, `:216-263`, `:271-314`, `:331-412` (as of #3021; #3816 `WRITE_LOCK_POLL_INTERVAL`) |
+| `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:331-358` (#3021) |
 | `Config.cSet`           | C `_Config_set` (`cmd_config.c`) |
 | `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_query` (`ReplyFormat::Compact`), `src/reply.rs:152-361`, `:688-747` |
 | `Compact.dec/decReply`  | falkordb-py `query_result.py` `parse_scalar`, `__parse_records` |
-| `Ro.plan`               | parser `write` flag (`graph/src/parser/cypher.rs:780-910`) + Commit insertion (`planner/mod.rs:2416`, `:2749`) |
-| `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:597-608`; guards `runtime/eval.rs:936,956` |
-| `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs:95-176` |
-| `Bulk.cstr`             | `read_cstring`, `:31-45` |
-| `Bulk.records/readN`    | `process_node_token` record loop, `:419-440` |
-| `Bulk.PropColumns.new/readRecord`, `keepFirst` | `PropColumns::new`/`read_record`, `:178-235` (#3026, `fb3d516d0`) |
-| `Bulk.parseCount`       | `parse_count`, `:647-666` |
-| `Bulk.getOrCreate/slotLen` | `attribute_store.rs:224-238`, `:598-610` |
+| `Ro.plan`               | parser `write` flag (`graph/src/parser/cypher.rs:806-938`) + Commit insertion (`planner/mod.rs:2806`, `:3166`) |
+| `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:657-668`; guards `runtime/eval.rs:964,984` |
+| `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs:102-183` |
+| `Bulk.cstr`             | `read_cstring`, `:38-52` |
+| `Bulk.records/readN`    | `process_node_token` record loop, `:438-515` |
+| `Bulk.PropColumns.new/readRecord`, `keepFirst` | `PropColumns::new`/`read_record`, `:204-241` (#3026, `fb3d516d0`) |
+| `Bulk.parseCount`       | `parse_count`, `:697-716` |
+| `Bulk.getOrCreate/slotLen` | `attribute_store.rs:182-189` (`get_or_create`), `:538`, `:549` (`len: n as u16`) |
 
 ## Proven (headline theorems)
 
@@ -153,6 +154,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | `Commands`, `Commands2` | `src/commands/*.rs` |
 | `SlowLog` | `src/slow_log.rs` |
 | `RelLookup` | relationship lookups of `src/reply.rs:252-293`, `:472-492` (#3447, #3449; line pins re-targeted to 5e475e6c9) |
+| `EnvBuild` | `sync_deepbind_environ` (`module_init.rs:158`) + `graph::env_snapshot::leak_deep_copy` (`env_snapshot.rs:22`, #3494 #3493) and `RedisBuildHost` (`graph_core.rs:1752-1768`, #3585): `copy_read_back`, `copy_fresh`, `sync_unchanged`, `sync_installs`, `publish_holds`, `publish_log` |
 
 Headline theorems:
 * `writeAll_flatten` — buffered writes = concatenation of the logical writes for every
@@ -331,6 +333,21 @@ The MVCC write slot is gone. `QuerySession`: `Slot`/`claimFork`/`releaseSlot`/`c
 `slotFree` input; `Commands2`: `attempt` takes `commit`'s refusal instead of a slot flag
 (`attempt_stale`, `attempt_invalid`; the retry arm is `paused | stale`); `bulkFlow` has no
 rollback step. Counterexamples and theorems about the slot are gone with it.
+
+## Re-target to 256ab4d3f (93 commits since 43936bab9, proofs-sync 2026-11-22)
+Most of the layer was already re-modelled by the PR proof bot (#3816/#3819 write-lock slices and writer gate,
+#3850/#3851/#3855/#3863 `key_of_write`, #3559 bounded stale retry, #3757 `SCHEMA_HASH`, #3844 node-local
+telemetry and the persistence strip, #3257 `GRAPH.MEMORY` texts); this pass re-checked every changed row and added:
+`QuerySession.checkFork` is now **PROVEN**: since #3683 `rebase_onto_indexer_batches` returns `()` (it had the one
+`Err(Stale)` arm the old CONDITIONAL hypothesis assumed away), and `fork` is passed by `&mut`; `LoadArgs`/`ModuleInit.table`
+gain `INDEX_BUILD_THREAD_COUNT` (#3585: load argument `1..=1024`, immutable, not settable at run time: `index_build_range`);
+`EnvBuild` (above). `register_graph` lost its `debug_assert!` (Valkey flushes asynchronously, so a name can legitimately be
+registered again before the old value's `graph_free`): `GraphCore.register` already models the displacement, and the
+#2782 debug-build note in the `MultiDb` section below no longer applies (debug and release both take the release path).
+The Valkey migration (#3601: `redis-module` → `valkey-module`, `ValkeyString`/`ValkeyValue`, fallible `open_key_writable`,
+`wrong_type_compat` in `redis_type.rs`/`graph_persist`) and the clippy sweep (#3787) changed no modelled behaviour.
+Not modelled in this project: `open_key_writable(..)?` failing (a server-side refusal to open a key), whose error text is the
+server's own. `ENCODING_VERSION` is 20 (#3793); the header/schema layout proved here is unchanged.
 -/
 #print axioms RedisLayer.Serial.decField_encFieldC
 #print axioms RedisLayer.Serial.decField_encField

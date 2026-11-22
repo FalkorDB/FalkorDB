@@ -68,7 +68,7 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
 | `unchecked_fork_cannot_write` | In every reachable state a thread with an unchecked fork can neither mutate nor commit | `Mvcc.lean` |
 | `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, except the store-to-ticket window (the theorem assumes `owed = false`; see "One remaining window", `store_window_operational_incomplete`) | `Tickets.lean` |
-| `within_in_time`, `detached_workers_exit` | `threadpool.rs` after #3502: named workers; `shutdown_within` returns in time and detaches stuck workers without leaking them; two bugs stay open (`second_call_true_despite_straggler`, `within_blocks_behind_shutdown`) | `PoolWithin.lean` |
+| `within_in_time`, `second_call_reports_straggler`, `left_behind_workers_exit` | `threadpool.rs` after #3502 and #3585: named workers; `shutdown_within` returns in time, keeps a stuck worker and reports it on every later call until it exits (the second-call bug is fixed by #3585), and leaks none; one bug stays open (`within_blocks_behind_shutdown`) | `PoolWithin.lean` |
 | `never_stuck_3014`, `main_never_blocks` | Since #3014 the main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
 | `shutdown_drains` | Pool shutdown runs every queued job once, in order, then all workers exit | `Pool.lean` |
@@ -111,27 +111,29 @@ A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`,
 | `Tickets.lean` | Index population tickets (`Slots`): counter soundness, `main_operational_complete` (#3086) |
 | `Search.lean` | `Document::set` with RediSearch as a hypothesis structure, vector and fulltext option parsing: `docSet_vector_sound`, `doc_always_accepted`, `rust_eq_c` |
 | `Knn.lean` | `vector_query_nodes`/`vector_query_edges` with the #3088 `k` clamp: `alloc_bounded`, `candidates_topk` |
-| `Once.lean` | Set-once globals in `thread_id.rs` and `storage/registry.rs` |
+| `Once.lean` | Set-once globals in `thread_id.rs` and `storage/registry.rs`, and the `POOL_THREAD` cell |
+| `Glue.lean` | `graph_core.rs` C name rules (`upToNul_idem`, `cGraphName_eq_lossy_key`) and the graph registry (`registerGraph_*`, `renameGraph_moves`) |
+| `Exec.lean` | `ThreadedGraph` constructors, `WriteQueryOk::modified`, `execute_query`/`execute_profile` write detection and admission hand-off (`execQuery_read`, `execQuery_write_keeps_slot`), `compute_effective_timeout`, the two replies |
+| `Session.lean` | `QuerySession`'s own state and drop order, `check_fork` (`checkFork_verdict`), the GIL guard (`acquire_nested`, `acquire_drop`), `must_run_inline`, `reauthorize_write`, `MvccGraph::new`/`from_graph`/`Drop`, `CommitOp::next`'s lock path |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 120 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
+`COVERAGE.tsv` has 126 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 69 |
-| CONDITIONAL | 1 |
+| PROVEN | 106 |
+| CONDITIONAL | 0 |
 | AXIOMATISED | 20 |
-| MODELLED | 17 |
-| NOT COVERED | 13 |
+| MODELLED | 0 |
+| NOT COVERED | 0 |
 
-- **CONDITIONAL:** `QuerySession::check_fork`: `Mvcc.checkFork` is exact, but the Rust also rebases the fork onto indexer batches (`MvccGraph::rebase_onto_indexer_batches`), which refuses a fork that is still borrowed. That the escalating writer's fork is never borrowed is a runtime lifecycle invariant this project does not prove.
+- **CONDITIONAL (none left):** `QuerySession::check_fork` used to rest on "the escalating writer's fork is not borrowed" (`rebase_onto_indexer_batches`' `try_borrow_mut`). #3683 made the fork an owned `Graph` passed as `&mut` and the rebase returns `()`, so the premise no longer exists; `Session.checkFork` has two outcomes only.
 - **AXIOMATISED:** thin wrappers over the Redis module API (blocking and unblocking clients, thread-safe contexts, the GIL lock and unlock, replication, string helpers), and `Index::add_document`, whose RediSearch behaviour is the `RediSearch` hypothesis structure in `Search.lean` (a whole document is rejected or accepted).
-- **MODELLED:** functions that appear as a step of the transition system without a theorem of their own: `MvccGraph::new`/`from_graph` (`init`), `register_graph`, `execute_query`/`execute_profile`/`profile_sync` (a read on a snapshot), the `QuerySession` constructors, lock release and drop order, `must_run_inline`, and the `Field` constructors, and `CommitOp::next` (its lock path only, #3226).
-- **NOT COVERED:** string and reply-formatting helpers, config arithmetic (`compute_effective_timeout`), `rename_graph` (RENAME is not modelled), `reauthorize_write` (Redis pause and role flags), borrow helpers, and `MvccGraph::drop`. `reply_profile` is proven in `redis_layer`.
+- **Formerly MODELLED / NOT COVERED (31 rows, now PROVEN in `Glue`, `Exec`, `Session`, `Search`):** the C name helpers, `register_graph`/`rename_graph`, the `ThreadedGraph` constructors, `execute_query`/`execute_profile`/`profile_sync`, `compute_effective_timeout`, the two replies, the `QuerySession` constructors, accessors, release and drop order, `Gil::acquire`/`drop`, `must_run_inline`, `reauthorize_write`, `MvccGraph::new`/`from_graph`/`Drop`, the `Field` constructors and `CommitOp::next` (its lock path, with the #3226 property refuted).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across projects.
 
@@ -143,7 +145,7 @@ No path dependencies.
 - **Index population.** `Tickets` models `CREATE INDEX` on one label and the populate jobs. It does not model the write path, `DROP INDEX` with fields remaining (recreate and repopulate), or `populate_indexes_sync`.
 - **Exhaustive checks are bounded.** The `write_loop` hand-off is checked exhaustively for 2 producers only.
 - **The fork child.** Beyond "it sees the committed version", what the child does (GraphBLAS `wait_all`, OpenMP) is not modelled.
-- **Write detection.** How `execute_query` decides a query writes is not modelled.
+- **Plan classification.** `Exec.isWritePlan` models the test on plan node kinds; which nodes the planner emits for a query is the planner's (other projects).
 
 ## Build and check
 

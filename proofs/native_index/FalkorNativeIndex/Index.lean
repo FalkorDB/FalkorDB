@@ -78,7 +78,9 @@ deriving DecidableEq, Repr
 /-- `IndexKey = (label, attribute)`. -/
 abbrev IndexKey := String × String
 
-/-- `IndexColumn` (`falkordb_index.rs:41-43`): one kind today. -/
+/-- `IndexColumn` (`falkordb_index.rs:41-43`): `Range(RangeIndex)`; the model's `numeric` is the
+    `RangeIndex { numeric }` (its only kind so far, `range.rs:418-420`), so the column's methods are the
+    `RangeIndex` ones, which the `NumericIndex` defs of `Numeric.lean` model. -/
 inductive IndexColumn where
   | numeric (ix : NumericIndex)
 deriving Repr
@@ -86,40 +88,50 @@ deriving Repr
 def IndexColumn.ix : IndexColumn → NumericIndex
   | .numeric ix => ix
 
-/-- `IndexColumn::add` (`:48-56`). -/
+/-- `IndexColumn::add` (`:52-59`). -/
 def IndexColumn.add (c : IndexColumn) (v : Value) (id : Nat) : IndexColumn :=
   match c with | .numeric ix => .numeric (ix.add v id)
-/-- `IndexColumn::remove` (`:59-67`). -/
+/-- `IndexColumn::remove` (`:63-70`). -/
 def IndexColumn.remove (c : IndexColumn) (v : Value) (id : Nat) : IndexColumn :=
   match c with | .numeric ix => .numeric (ix.remove v id)
-/-- `IndexColumn::add_batch` (`:70-78`). -/
-def IndexColumn.addBatch (c : IndexColumn) (es : List (Value × Nat)) (scratch : List Nat) : IndexColumn × List Nat :=
-  match c with | .numeric ix => let r := ix.addBatch es scratch; (.numeric r.1, r.2)
-/-- `IndexColumn::remove_batch` (`:81-89`). -/
-def IndexColumn.removeBatch (c : IndexColumn) (es : List (Value × Nat)) (scratch : List Nat) : IndexColumn × List Nat :=
-  match c with | .numeric ix => let r := ix.removeBatch es scratch; (.numeric r.1, r.2)
-/-- `IndexColumn::encode_value` (`:94-101`). -/
-def IndexColumn.encodeValue (c : IndexColumn) (v : Value) : Option Nat :=
-  match c with | .numeric _ => encodeNumeric v
-/-- `IndexColumn::push_encoded` (`:106-115`): append the tuple `(key, id)` to `out` if the column
-    indexes `v`. A tuple is its tree entry `enc key id`. -/
+/-- `IndexColumn::add_batch` (`:74-82`). -/
+def IndexColumn.addBatch (c : IndexColumn) (es : List (Value × Nat)) : IndexColumn × EncodedTuples :=
+  match c with | .numeric ix => let r := ix.addBatch es; (.numeric r.1, r.2)
+/-- `IndexColumn::remove_batch` (`:85-93`). -/
+def IndexColumn.removeBatch (c : IndexColumn) (es : List (Value × Nat)) : IndexColumn × EncodedTuples :=
+  match c with | .numeric ix => let r := ix.removeBatch es; (.numeric r.1, r.2)
+/-- `IndexColumn::encode_value` (`:98-105`, `RangeIndex::encode_value` `range.rs:553-560`): the scalar tree
+    and key `value` takes, or `None` when no kind indexes it as a scalar (a list, a temporal, a map). -/
+def IndexColumn.encodeValue (c : IndexColumn) (v : Value) : Option (KeyKind × Nat) :=
+  match c with
+  | .numeric _ => if isNumericKind v then (encodeNumeric v).map (fun k => (KeyKind.scalar, k)) else none
+/-- `IndexColumn::for_each_stored_key` (`:111-118`): each key a stored value takes in this column, and
+    its kind (`encode::for_each_stored_key`). -/
+def IndexColumn.storedKeys (c : IndexColumn) (v : Value) : List (KeyKind × Nat) :=
+  match c with | .numeric _ => forEachStoredKey v
+/-- `IndexColumn::push_encoded` (`:124-132`): append the tuples `(v, id)` takes in this column to `out`,
+    each with the tuples of its kind. A tuple is its tree entry `enc key id`. -/
 def IndexColumn.pushEncoded (c : IndexColumn) (v : Value) (id : Nat) (out : EncodedTuples) : EncodedTuples :=
-  match c.encodeValue v with
-  | some key => ⟨out.scalar ++ [enc key id]⟩
-  | none => out
-/-- `IndexColumn::add_encoded` (`:118-125`). -/
+  match c with | .numeric _ => pushStored v id out
+/-- `IndexColumn::add_encoded` (`:136-143`). -/
 def IndexColumn.addEncoded (c : IndexColumn) (tuples : EncodedTuples) : IndexColumn × EncodedTuples :=
   match c with | .numeric ix => let r := ix.addEncoded tuples; (.numeric r.1, r.2)
-/-- `IndexColumn::remove_encoded` (`:128-135`). -/
+/-- `IndexColumn::remove_encoded` (`:146-153`). -/
 def IndexColumn.removeEncoded (c : IndexColumn) (tuples : EncodedTuples) : IndexColumn × EncodedTuples :=
   match c with | .numeric ix => let r := ix.removeEncoded tuples; (.numeric r.1, r.2)
-/-- `IndexColumn::is_empty` (`:139-143`). -/
+/-- `IndexColumn::is_empty` (`:157-161`). -/
 def IndexColumn.isEmpty (c : IndexColumn) : Bool :=
   match c with | .numeric ix => ix.isEmpty
-/-- `IndexColumn::rows_at` (`:147-153`): the ids stored under `key`, a key `encode_value` gave
-    (`NumericIndex::point_key`). -/
-def IndexColumn.rowsAt (c : IndexColumn) (key : Nat) : List Nat :=
-  match c with | .numeric ix => ix.pointKey key
+/-- `IndexColumn::rows_at` (`:166-174`, `RangeIndex::rows_at` `range.rs:564-571`): the ids stored under
+    `key` in the tree of `kind`. -/
+def IndexColumn.rowsAt (c : IndexColumn) (kind : KeyKind) (key : Nat) : List Nat :=
+  match c with
+  | .numeric ix => match kind with
+    | .scalar => ix.lookup (.point key)
+    | .array => ix.listsHolding key
+/-- `IndexColumn::lookup` (`:178-186`): the entities a selection selects. -/
+def IndexColumn.lookup (c : IndexColumn) (sel : Selection) : List Nat :=
+  match c with | .numeric ix => ix.lookupSel sel
 
 /-! ## Build state (`versioned.rs`, `BuildCursor` in `falkordb_index.rs`) -/
 
@@ -252,8 +264,14 @@ def setNumeric (x : FalkorDbIndex) (e : EntityType) (label attr : String) (f : N
 /-- `has_column` (`:478-486`). -/
 def hasColumn (x : FalkorDbIndex) (e : EntityType) (label attr : String) : Bool :=
   (x.entry e label attr).isSome
-/-- `encode_value` (`:491-502`). -/
-def encodeValue (x : FalkorDbIndex) (e : EntityType) (label attr : String) (v : Value) : Option Nat :=
+/-- `encode_value`'s staging counterpart `for_each_stored_key` (`:909-925`): each key `value` takes in column
+    `(entity, label, attr)` and its kind; nothing when there is no such column. -/
+def storedKeys (x : FalkorDbIndex) (e : EntityType) (label attr : String) (v : Value) : List (KeyKind × Nat) :=
+  match x.entry e label attr with
+  | none => []
+  | some en => en.index.storedKeys v
+/-- The column's `encode_value` (`IndexColumn::encode_value` through `entry`), used by `equal_candidates`. -/
+def encodeValue (x : FalkorDbIndex) (e : EntityType) (label attr : String) (v : Value) : Option (KeyKind × Nat) :=
   (x.entry e label attr).bind (fun en => en.index.encodeValue v)
 /-- The `Ready` numeric column, the only one a read is served from. -/
 def readyNumeric (x : FalkorDbIndex) (e : EntityType) (label attr : String) : Option NumericIndex :=
@@ -357,11 +375,20 @@ theorem setNumeric_state (x : FalkorDbIndex) (e e' : EntityType) (l a l' a' : St
   · simp [h]
 
 theorem encodeValue_spec (x : FalkorDbIndex) (e : EntityType) (l a : String) (v : Value) :
-    x.encodeValue e l a v = if x.hasColumn e l a then encodeNumeric v else none := by
+    x.encodeValue e l a v =
+      if x.hasColumn e l a then (if isNumericKind v then (encodeNumeric v).map (fun k => (KeyKind.scalar, k)) else none)
+      else none := by
   unfold encodeValue hasColumn
   cases h : x.entry e l a with
   | none => simp
   | some c => obtain ⟨⟨_⟩, _⟩ := c; simp [IndexColumn.encodeValue]
+
+theorem storedKeys_spec (x : FalkorDbIndex) (e : EntityType) (l a : String) (v : Value) :
+    x.storedKeys e l a v = if x.hasColumn e l a then forEachStoredKey v else [] := by
+  unfold storedKeys hasColumn
+  cases h : x.entry e l a with
+  | none => simp
+  | some c => obtain ⟨⟨_⟩, _⟩ := c; simp [IndexColumn.storedKeys]
 
 theorem hasColumns_spec (x : FalkorDbIndex) (e : EntityType) : x.hasColumns e = !(x.columns e).isEmpty := rfl
 theorem isEmpty_spec' (x : FalkorDbIndex) : x.isEmpty = (x.nodeColumns.isEmpty && x.edgeColumns.isEmpty) := rfl

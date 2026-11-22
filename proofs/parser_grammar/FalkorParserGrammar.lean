@@ -38,6 +38,27 @@ are in `proofs/lexer`, which this project does not repeat.
 * **`parse_deterministic`**: the parse is a function of the input
   (backtracking restores the saved position and anonymous counter).
 
+## Re-target to 256ab4d3f (2026-11-22): #3525, #2900, #3890 (and #3019, #2981, #3303 already in)
+
+* **#3525 (`56d00c3d8`, #2309)** `parse_expr_inner` level 9 reads any run of `+` / `-` (cypher.rs:2211-2250)
+  and folds it by the parity of the `-`: none pushes `(9, None)`, `n` of them push `2 - n % 2`
+  `Negate` frames, as the `NOT` run does. Model: `countSigns`, `signFrames` replace `signs` (kept as
+  `pre3525_signs`); `signFrames_ok` re-proves the no-panic invariant (`parseExpr_no_panic` is unchanged);
+  `sign_runs` replaces `sign_sequences`, `countSigns_rest` says the run is consumed whole; `known` in
+  `BoundedDefs` now lists every pair of adjacent signs, and `bounded_agree` / `bounded_bal` hold on the
+  same 9,724 lists. A parameter value parsed through the expression fallback sets `legacy_signs`
+  (`parse_param_value`, cypher.rs:442-450): `C.legacySigns` models the loop (`legacySigns_runs`,
+  `legacySigns_neg_le`: at most one `-`, `+`, `-` or `+-`). The Rust-side `Parser::new` field is false.
+* **#2900** `parse_update_target` (cypher.rs:3394) is the `SET` / `REMOVE` target and `.prop` chain that
+  `parse_set_items` / `parse_remove_items` used to inline. `C.updateTargetP` models it, `setItems` and
+  `removeItems` call it, `GUpdate` / `updateTargetP_sound` carry the grammar side; `setItems_sound`,
+  `removeItems_sound`, `np_setItems`, `np_removeItems` are re-proved with unchanged statements. The depth
+  charges (`check_depth` on the target and after every lookup, `nested` on a nested FOREACH) only add
+  failures, so soundness is unaffected; they are in `proofs/lexer`.
+* **#3890** `Variable.name` became `Variable.alias: Option<Alias>`; `name`, `is_unnamed`, `as_str`, `fmt`
+  are derived from it and `filter_visited` keys by `VarKey` (`id`, `scope_id`). `C.Var` is
+  `{alias : Option Alias, id, scope}` with `Var.name`, `Var.isUnnamed`, `Var.fmt`, `Var.key`.
+
 ## Re-target to 80c776385 (2026-11-02): #3289 and #3300
 
 Two parser PRs changed the model; all proofs were re-done on the new code.
@@ -98,7 +119,7 @@ module with the C module (`bin/macos-arm64v8-release/falkordb.so`).
 | --- | --- | --- |
 | `skipFilter_eof_diverges` | **Fixed by #3019** (now `C.shortestP_param_eof_err`, `C.shortestP_map_eof_err`: `$p` is one token, `{...}` is `parse_map`). Before: `shortestPath((a)-[{` at end of input: the filter-skip loop (cypher.rs:1833-1858 at 3f4ea8f40) never ended; a worker thread spun forever, and 11 such queries stopped all graph queries. C: syntax error. | `bug_shortest_path_filter_skip_loops_forever_at_eof` |
 | — | Pattern predicate in a projection swallows the `,` (2103 → parse_pattern's comma loop 1546-1548). Live: `RETURN (a)-->(b), 1` is a syntax error; `RETURN (a)-->(b), (b)-->(a)` returns ONE column; C returns two. Same root cause as W2-binder-1. | `bug_pattern_predicate_swallows_projection_comma` |
-| `sign_sequences` | `+-1` accepted, `- -1` / `-+1` rejected; the grammar allows one sign. `- -1` is #2309. | — |
+| `sign_runs` (was `sign_sequences`) | **Fixed by #3525** (`56d00c3d8`, closes #2309): a run of signs parses and folds by the parity of its `-` (`- -1`, `-+1`, `+-1`, `--5`); the grammar (Cypher.g4:345) allows one sign, so this is now a documented extension (`known` in `BoundedDefs`). A `CYPHER` parameter value keeps the one-sign grammar (`legacy_signs`, `C.legacySigns`). Old shape: `pre3525_signs`. | `chained_unary_signs_parse`, `param_of` tests in cypher.rs |
 
 ### W3-parser-9 fixed by #3104 (`4a4f2a72f`): the pattern-comprehension gate and memo (`C.ListGate`)
 
@@ -157,9 +178,9 @@ succeed up to 8000; the crash is in planning/execution); C runs 5000.
 `SET n.x = 1 SET n.y = n.x` gives Rust 1, C null (C evaluates the folded
 SETs as one batch).
 
-Known and not re-reported: #2309 (`- -1`), #2605 (`.1e-5`), W2-binder-1
+Known and not re-reported: #2605 (`.1e-5`), W2-binder-1
 (`MATCH p MATCH q` folded; `OPTIONAL MATCH p MATCH q`), #2895 (SET chains,
-FOREACH nesting), and the lexer findings of #2909 (fixed by #2910, `dba677942`; see `proofs/lexer`).
+FOREACH nesting; fixed by #2900, see `proofs/lexer`), and the lexer findings of #2909 (fixed by #2910, `dba677942`; see `proofs/lexer`).
 
 ## Places where Rust follows the grammar and C does not
 
@@ -205,21 +226,21 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
 | here | there |
 | --- | --- |
 | `Tok`, `cur`, `adv` | `Token`, `Lexer::current`, `Lexer::next` (lexer.rs:287-292, 336) |
-| `Frame`, `St`, `step`, `loop` | the `(level, Option<tree>, height)` stack of `parse_expr_inner` (2193-2656) |
+| `Frame`, `St`, `step`, `loop` | the `(level, Option<tree>, height)` stack of `parse_expr_inner` (2176-2661) |
 | `ret` | `parse_expr_return!` (macro.rs:115-133) |
 | `binStep`, `opTok` | `parse_operators!` (macro.rs:135-168), levels 0,1,2,6,7,8 |
-| `cmpStep`, `lastCmpIsOrdering` | level 4, chained comparisons (2283-2354) |
-| `predStep`, `isLoop` | level 5 (2355-2534) |
-| `countNots`, `notFrames`, `signs` | level 3 / level 9 prefixes (2208-2246) |
-| `postStep`, `postLoop` | level 10 (2568-2631) |
-| `closeStep` | level 11 (2632-2653) |
-| `primary`, `dotted`, `fnTable`, `exprList` | `parse_primary_expr` (1942-2133), `parse_dotted_ident`, `get_functions`, `parse_expression_list` |
+| `cmpStep`, `lastCmpIsOrdering` | level 4, chained comparisons (2286-2357) |
+| `predStep`, `isLoop` | level 5 (2358-2549) |
+| `countNots`, `notFrames`, `countSigns`, `signFrames` | level 3 / level 9 prefixes (2189-2250; #3525 made the level 9 prefix a run) |
+| `postStep`, `postLoop` | level 10 (2571-2634) |
+| `closeStep` | level 11 (2635-2656) |
+| `primary`, `dotted`, `fnTable`, `exprList` | `parse_primary_expr` (1923-2116), `parse_dotted_ident`, `get_functions`, `parse_expression_list` |
 | `listLit`, `listComp` | `parse_list_literal_or_comprehension`, `parse_list_comprehension` (2818-2876, 2915-2950) |
 | `C.pipeScan`, `C.gateOK`, `C.listLitP`, `C.listLitPU`, `Oracle.seen` | `list_has_top_level_pipe` (2892-2912), the #3104 gate (2845-2878), the merged / pre-#3104 `parse_list_literal_or_comprehension`, `not_pattern_comprehension` |
-| `listOp` | `parse_list_operator_expression` (2136-2165) |
-| `parseMap`, `mapProj*`, `labels` | `parse_map` (3202), `parse_map_projection` (3234), `parse_labels` (3193) |
+| `listOp` | `parse_list_operator_expression` (2117-2147) |
+| `parseMap`, `mapProj*`, `labels` | `parse_map` (3220), `parse_map_projection` (3252), `parse_labels` (3211) |
 | `skipFilter`, `C.skipP` | `parse_shortest_path_expr`'s filter skipper before #3019 (1833-1858 at 3f4ea8f40); `C.spFilterP` is the filter since #3019 (1833-1843) |
-| `setTarget`, `rejectUnparen` | `parse_set_items` / `parse_remove_items` targets (3336, 3432), `reject_unparenthesized_target` (3395) |
+| `C.updateTargetP`, `targetP`, `dotChain`, `rejectUnparenP`, `expectDotP` | `parse_update_target` (3394, #2900), the target of `parse_set_items` / `parse_remove_items` (3340, 3457), `reject_unparenthesized_target` (3420), `expect_property_after_paren` (3434) |
 | `G.*` | `oC_Expression` … `oC_Atom` (Cypher.g4:275-560) |
 | `C.CT`, `C.CK`, `C.P`, `tok`/`opt`/`ident`/`tryIdent` | `Token`, `Keyword` (lexer.rs:63-156), the parser, `match_token!` / `optional_match_token!` (macro.rs:51-113), `parse_ident` / `try_parse_ident` |
 | `C.QG`, `addNode`, `mergeNode`, `addRel`, `addPath`, `mergeAttrs` | `QueryGraph` and its methods, `merge_attr_maps` (ast.rs:622-790) |

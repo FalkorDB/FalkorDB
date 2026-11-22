@@ -1,4 +1,10 @@
 /-
+**HISTORY (pre-#3683).** This module models `HeldRead`/`Arc<AtomicRefCell<Graph>>`, which #3683
+(08616ec29) removed: a read query now holds an `Arc<Graph>` and takes no borrow, a write query an
+owned fork. The current model is `QueryGraph.lean`. Kept because `proofs/pending_commit` (`Hold`)
+imports its definitions.
+-/
+/-
 # Claim 2: holding a read runtime's borrow for its whole life is sound
 
 A transition system over the graph versions of one graph key. Every event is one atomic

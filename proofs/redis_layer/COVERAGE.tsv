@@ -7,12 +7,12 @@ src/allocator.rs	current_thread_usage	108	PROVEN	Allocator.usage: query_accounti
 src/allocator.rs	net_thread_usage	116	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
 src/allocator.rs	reset_counter	125	PROVEN	Allocator.step .reset: reset_zero, query_accounting
 src/dispatch.rs	must_run_inline	36	AXIOMATISED	Redis ctx flags (RM_GetContextFlags); predicate identical to C cmd_dispatcher.c main_thread; not modelled beyond that
-src/divergence_guard.rs	is_replayed	41	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
-src/divergence_guard.rs	on_failure	53	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
-src/divergence_guard.rs	force_full_resync	104	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
-src/divergence_guard.rs	master_address	142	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
-src/divergence_guard.rs	log_payload	168	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
-src/divergence_guard.rs	clip	192	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
+src/divergence_guard.rs	is_replayed	41	PROVEN	reused: proofs/replication Guard.isReplayed: isReplayed_iff, onFailure_client_noop
+src/divergence_guard.rs	on_failure	53	PROVEN	reused: proofs/replication Guard.onFailure: onFailure_client_noop, onFailure_loading_exits, onFailure_replicated_resyncs, onFailure_logs_payload_only_when_replayed; guardReplica_spec, stepNode_failure_matches_guard, guard_loadi
+src/divergence_guard.rs	force_full_resync	104	PROVEN	reused: proofs/replication Guard.forceFullResync: forceFullResync_exit_iff, forceFullResync_no_one_first, forceFullResync_success (ctx.call result is an input)
+src/divergence_guard.rs	master_address	142	PROVEN	reused: proofs/replication Guard.masterAddress: masterAddress_some, masterAddress_none_missing (INFO fields are inputs)
+src/divergence_guard.rs	log_payload	168	PROVEN	reused: proofs/replication Guard.logPayload: logPayload_none, logPayload_length, onFailure_logs_payload_only_when_replayed
+src/divergence_guard.rs	clip	192	PROVEN	reused: proofs/replication Guard.clip/findRev: clip_spec (char boundary, <= budget, longest, cut = rest), clip_prefix_chars + #guard UTF-8 cases
 src/serializers/buffered_io.rs	BufferedWriter::new	43	PROVEN	BufferedIO.writeAll starts from ⟨[],[]⟩: writeAll_flatten
 src/serializers/buffered_io.rs	BufferedWriter::flush	51	PROVEN	BufferedIO.flush: flat_flush, flush_buf, G_bound (never emits an empty chunk)
 src/serializers/buffered_io.rs	BufferedWriter::accommodate	59	PROVEN	BufferedIO.accommodate: flat_accommodate, writer_layout (records never straddle chunks)
@@ -68,23 +68,23 @@ src/serializers/buffered_io.rs	VecWriter::write_double	603	PROVEN	vecWrite: vecW
 src/serializers/buffered_io.rs	VecWriter::write_buffer	611	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
 src/serializers/buffered_io.rs	write_all_fd	626	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
 src/serializers/buffered_io.rs	read_all_fd	641	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
-src/serializers/mod.rs	VirtualKeyState::new	39	PROVEN	Serial.VKS.new: VKS.clear_eq_new
-src/serializers/mod.rs	VirtualKeyState::clear	46	PROVEN	Serial.VKS.clear: VKS.clear_eq_new
-src/serializers/mod.rs	DecodeState::new	101	PROVEN	Serial.DS.new: DS.new_empty
-src/serializers/mod.rs	DecodeState::clear	111	PROVEN	Serial.DS.clear: DS.clear_eq_new
-src/serializers/mod.rs	Header::encode	136	PROVEN	Serial.encH: decH_encH
-src/serializers/mod.rs	Header::null_terminated	140	PROVEN	Serial.nullTerm: strip_nullTerm
-src/serializers/mod.rs	Header::decode	165	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
-src/serializers/mod.rs	Header::from_graph	213	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
-src/serializers/mod.rs	null_terminated	245	PROVEN	Serial.nullTerm: strip_nullTerm
-src/serializers/mod.rs	strip_null_terminator	253	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
-src/serializers/mod.rs	Schema::encode	262	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
-src/serializers/mod.rs	encode_schema_index_block	338	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
-src/serializers/mod.rs	encode_constraint_block	444	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
-src/serializers/mod.rs	Schema::decode	472	PROVEN	Serial.decSchema: decSchema_encSchema
-src/serializers/mod.rs	decode_schema_entry	534	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	636	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
-src/serializers/mod.rs	Schema::from_graph	726	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
+src/serializers/mod.rs	VirtualKeyState::new	47	PROVEN	Serial.VKS.new: VKS.clear_eq_new
+src/serializers/mod.rs	VirtualKeyState::clear	54	PROVEN	Serial.VKS.clear: VKS.clear_eq_new
+src/serializers/mod.rs	DecodeState::new	109	PROVEN	Serial.DS.new: DS.new_empty
+src/serializers/mod.rs	DecodeState::clear	119	PROVEN	Serial.DS.clear: DS.clear_eq_new
+src/serializers/mod.rs	Header::encode	144	PROVEN	Serial.encH: decH_encH
+src/serializers/mod.rs	Header::null_terminated	148	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	Header::decode	173	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
+src/serializers/mod.rs	Header::from_graph	221	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
+src/serializers/mod.rs	null_terminated	253	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	strip_null_terminator	261	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
+src/serializers/mod.rs	Schema::encode	270	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
+src/serializers/mod.rs	encode_schema_index_block	346	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
+src/serializers/mod.rs	encode_constraint_block	452	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
+src/serializers/mod.rs	Schema::decode	480	PROVEN	Serial.decSchema: decSchema_encSchema
+src/serializers/mod.rs	decode_schema_entry	542	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
+src/serializers/mod.rs	decode_index_field	644	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
+src/serializers/mod.rs	Schema::from_graph	734	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	write_f	43	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
 src/reply.rs	format_value_to_string	56	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
 src/reply.rs	reply_with_str	120	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
@@ -146,7 +146,7 @@ src/query_session.rs	QuerySession::facts	246	PROVEN	QuerySession.Facts (returns 
 src/query_session.rs	QuerySession::write_version	260	PROVEN	QuerySession.writeVersion: writeVersion_takes_nothing (infallible; reader Unchecked(ver+1), writer Current; #3657)
 src/query_session.rs	QuerySession::is_stale	276	PROVEN	QuerySession.isStale: stale_sticky
 src/query_session.rs	QuerySession::is_writer	288	PROVEN	QuerySession.SS.writer: writeVersion_takes_nothing
-src/query_session.rs	QuerySession::check_fork	300	CONDITIONAL	QuerySession.checkFork: checkFork_spec, checkFork_noop, current_kept, stale_sticky, upgrade_stale; SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; #3567 rebase_onto_indexer_batches (index progress only; native_index Rebase.V.rebased_keeps_data). CONDITIONAL on one undischarged hypothesis about other code: the rebase's one Err(Stale), a borrowed fork in a release build (graph/src/graph/mvcc_graph.rs rebase_onto_indexer_batches), never happens for an escalating writer's fork; the model has no such error, so checkFork_spec covers the is_stale refusal only
+src/query_session.rs	QuerySession::check_fork	300	PROVEN	QuerySession.checkFork: checkFork_spec, checkFork_noop, current_kept, stale_sticky, upgrade_stale; SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; #3567 rebase_onto_indexer_batches (index progress only; native_index Rebase.V.rebased_keeps_data). Since #3683 the rebase returns () (no Err(Stale)), so the former CONDITIONAL hypothesis (a rebase refusal never happens for an escalating writer) no longer exists and checkFork_spec covers the whole function
 src/query_session.rs	QuerySession::version_is_current	284	PROVEN	QuerySession.versionIsCurrent: writeVersion_takes_nothing, current_kept (abandonSteps resyncs iff current: GraphCore.failed_no_commit)
 src/query_session.rs	WriteAbort::from	95	PROVEN	QuerySession.WriteAbort.ofCommit: ofCommit_stale, ofCommit_invalid, ofCommit_ne (Stale ↦ retry, Invalid ↦ permanent)
 src/query_session.rs	QuerySession::release_locks	338	PROVEN	QuerySession.release: release_none, release_order
@@ -173,8 +173,8 @@ src/query_session.rs	lock_gil	766	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + 
 src/query_session.rs	release_gil	779	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/module_init.rs	pthread_atfork	95	AXIOMATISED	libc pthread_atfork declaration
 src/module_init.rs	on_fork_child	122	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
-src/module_init.rs	sync_deepbind_environ	158	NOT COVERED	Linux-only; not modelled. Bound to ld.so/libc: dlopen(NULL) + dlsym("environ"), then points libc's own environ at graph::env_snapshot::leak_deep_copy of that array. CI reaches only its no-op return; the snapshot path runs only under a valkey-server that copy-relocates environ (#3493).
-graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)
+src/module_init.rs	sync_deepbind_environ	158	PROVEN	EnvBuild.syncDeepbind: sync_unchanged (NULL dlopen handle, NULL dlsym, or the symbol is this module's own environ: environ untouched, the path CI reaches), sync_installs (otherwise environ becomes a NULL-terminated snapshot of the live array's strings); dlopen/dlsym/dlclose results are the inputs of `Ld`, the libc side being FFI
+graph/src/env_snapshot.rs	leak_deep_copy	22	PROVEN	EnvBuild.leakDeepCopy: copy_null_src, copy_length, copy_terminated (len+1 cells, last NULL), copy_read_back (the copy reads back exactly the source's entries in order), copy_fresh (every string cell allocated fresh), copy_indep (depends on the entries' bytes only, so a later setenv/putenv/free of the source cannot change it); the unsafe pointer reads are the `# Safety` contract (NULL-terminated source)
 src/module_init.rs	graph_init	203	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range; historical pre3328_* (W4-redis-3 / #3268, fixed by #3328)
 src/module_init.rs	info_func	494	PROVEN	ModuleInit.infoSections: info_normal
 src/module_init.rs	on_flush	511	PROVEN	ModuleInit.onFlush (#3844 FLUSH_IN_PROGRESS): onFlush_start, onFlush_end
@@ -316,7 +316,6 @@ src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one
 src/commands/udf.rs	udf_flush	170	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
 src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere
 # Online index build (#2355): fns the background builder added, not modelled yet.
-src/graph_core.rs	RedisBuildHost::publish	1752	NOT COVERED	online index build (#2355): not modelled yet
-src/graph_core.rs	RedisBuildHost::warn	1761	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)
+src/graph_core.rs	RedisBuildHost::publish	1752	PROVEN	EnvBuild.publish: publish_holds (the GIL is held while f runs), publish_nested (already holding: no lock events), publish_log (else gilLock, f's events, gilUnlock and no context left)
+src/graph_core.rs	RedisBuildHost::warn	1761	PROVEN	EnvBuild.warn: warn_appends (log_warning appends exactly the message)
 src/query_session.rs	QuerySession::begin_writer_checked	235	PROVEN	QuerySession.beginWriterChecked (#3559, begin_with then escalate): beginWriterChecked_refusal (same refusal as upgrade_to_write), beginWriterChecked_ok, beginWriterChecked_refused_releases, writer_never_stale

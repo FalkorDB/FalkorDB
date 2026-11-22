@@ -24,13 +24,13 @@ def Rd.isEmpty (r : Rd) : Bool := r.remaining == 0
 /-- `Reader::rest` (`:36`): `&self.buf[self.pos..]`. -/
 def Rd.rest (r : Rd) : Bytes := r.buf.drop r.pos
 
-/-- `Reader::take` (`:42`). The slice `buf[pos..pos+n]` is reached only after
+/-- `Reader::take` (`:40`). The slice `buf[pos..pos+n]` is reached only after
 `remaining() >= n`, so it cannot panic. -/
 def Rd.take (r : Rd) (n : Nat) : Except DErr (Bytes × Rd) :=
   if r.remaining < n then .error (.eof n r.remaining)
   else .ok ((r.buf.drop r.pos).take n, { r with pos := r.pos + n })
 
-/-- `Reader::guard_count` (`:70`): `count.saturating_mul(min as u64) > remaining as u64`. -/
+/-- `Reader::guard_count` (`:70`, `const fn` since #3787): `count.saturating_mul(min as u64) > remaining as u64`. -/
 def Rd.guardCount (r : Rd) (count minEach : Nat) : Except DErr Nat :=
   let need := min (count * minEach) (2 ^ 64 - 1)
   if need > r.remaining then .error (.implausible count r.remaining) else .ok count
@@ -54,7 +54,7 @@ def chunks (k : Nat) : Nat → Bytes → List Bytes
   | 0, _ => []
   | n + 1, bs => bs.take k :: chunks k n (bs.drop k)
 
-/-- `Reader::take_n` (`:138`): guard, take `n*W` in one go, then `chunks_exact`. -/
+/-- `Reader::take_n` (`:138`): guard, take `n*W` in one go, then split it into `W`-byte chunks (`as_chunks::<W>().0.iter()` since #3787, was `chunks_exact(W)`: the slice is exactly `n*W` long, so the same chunks and no remainder). -/
 def Rd.takeN {α} (r : Rd) (k count : Nat) (fromLe : Bytes → α) : Except DErr (List α × Rd) :=
   match r.guardCount count k with
   | .error e => .error e

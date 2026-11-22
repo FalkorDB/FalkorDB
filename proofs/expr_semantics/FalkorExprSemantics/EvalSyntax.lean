@@ -153,7 +153,7 @@ def cmpResult (op : CmpOp) (r : Ordering × Flag) : V :=
 /-- The AND/OR/XOR/NOT operand type error (eval.rs:657-662, 680-685, 708-713, 722-726). -/
 def boolMismatchMsg (v : V) : String := s!"Type mismatch: expected Boolean or Null but was {O.name v}"
 
-/-- `logical_xor` (eval.rs:1807). -/
+/-- `logical_xor` (eval.rs:1818). -/
 def logicalXor (a b : Bool) : Bool := (a && !b) || (!a && b)
 
 /-- The `WHEN` test of `eval_case` (eval.rs:510-519): value form `compare_value == (Equal,
@@ -165,7 +165,7 @@ def caseHit (sv : Option V) (w : V) : Bool :=
     | some (some false) | some none => false
     | _ => true
 
-/-- `list_contains` (eval.rs:1760). -/
+/-- `list_contains` (eval.rs:1771). -/
 def listContains (list value : V) : Except String V :=
   match O.asList list with
   | some l => .ok (O.contains l value)

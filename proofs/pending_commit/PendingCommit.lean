@@ -13,6 +13,30 @@ Line numbers are current main (`5c7af54f2`), as are the COVERAGE.tsv rows, excep
 heading names an older commit (the `Re-target to …` sections keep the numbers of the commit they name,
 and `Re-pinned to …` states only the offsets).
 
+## Re-target to 256ab4d3f (from 43936bab9)
+
+* **#3641 (`e0d9c2188`) fixes #2876 / #2759 / W2-pending-1.** `IdSpace::reserve` now skips a
+  per-version quarantine (`quarantined`: ids freed or cancelled by earlier batches of the query).
+  `Snapshot.RS` gains `quar`; `createRust` is the new allocator, `createRust_preserves_Good` /
+  `createRust_Wf` (invariant `Wf` kept by `del`, `commit`, `createRust`), `rust_reads_live_entity`
+  (the #2876 trace now reads `m` itself: live `1|2|[]`, was `0|1|[A]`). The old allocator and
+  counterexample are `pre3641_createRust`, `pre3641_rust_reads_dead_entity` (fixed by #3641, e0d9c2188).
+  `createDeferred` (the proposal) and `EvictPR2964` (open PR #2964, superseded by #3641 and not
+  merged) are deleted. #3641 also makes `remove_pending_relationships_for_node` call
+  `g.get_type_id_mut` per cancelled edge: `PS.RegSpec`, `rmStepG`/`removeRelsG`/`deletePendingNode`
+  take `regT`; `CancelRust.regT_spec` discharges it (`removeRelsG_spec`/`deletePendingNode_spec`
+  now also say every cascaded edge's type is registered).
+* #3683 (`Arc<Graph>`): `Hold` re-modelled against `RuntimeCore.QueryGraph`
+  (`holdMut_panics_iff_graphMut`, `published_read_no_borrow`, `hold_after_publish_panics`).
+* New: `AttrInv` (the two facts runtime_core's accessors assume: `inv_hdisj`, `inv_huniq`, kept by
+  the whole staging API), `KeyBorrow` (`schema::Key`'s `Hash`/`Borrow`), `CommitOpNext.commitNew`.
+  Operator rows (`ops/create|set|delete|remove.rs`) and the graph.rs rows are PROVEN by reference to
+  proofs/ops_apply and proofs/graph_queries. `check_node_constraint`/`check_edge_constraint` stay
+  CONDITIONAL: the native `hIdx` needs native_index's global "a column holds exactly the tuples below
+  its cursor" (open there), and `hScan` is graph_queries' `LabCons` reachability closure (one-step
+  preservation only).
+* Still open at 256ab4d3f (re-run live): W2-pending-2 (`CREATE (a) DELETE a` reports no counters).
+
 ## Folded from `pr3438_review` (#3438, merged as 2b6902217): SAVE walks attributes by seek
 
 `AttributeStore::encode_with_range` (attribute_store.rs:1427) now finds its first live id with
@@ -174,7 +198,6 @@ matrices behave as set insert/delete, so commit is `(C ∪ set) \ remove`
 | `Content`, `ContentMerge`, `ContentCompact` | `Block` with contents: `grow_slots`, `set_span`, `free_span`, `merge_span`, `compact`, `maybe_compact`, `SpanRef` (:560-872) |
 | `Store`, `StoreFold`, `StoreApi`, `StoreCodec`, `StoreMem` | `DataBlock` radix directory and every `AttributeStore` method, RDB encode/decode, `trim`, memory accounting (:896-1497) |
 | `PendingAttrs`, `PendingState`, `PendingRels`, `PendingDeg`, `PendingDocs`, `PendingCommitOp` | all of `pending.rs`: validation, staging, reads, created/cancelled relationships, degrees, label scans, `IndexDocs`, `clear`, `effects_count`, constraints, `commit` |
-| `EvictPR2964` | **models open PR #2964, not `main`**: evict-on-reissue for #2876 |
 
 Headline theorems: `bsearch_ok_iff`/`bsearch_err`; `getOrCreate_spec`;
 `pack_unpack`, `pack_hinv`, `release_hinv`, `compactHeap_unpack`;
@@ -187,7 +210,7 @@ bytes = whole allocation, no underflow); `rustUpsert_eq` (the Rust upsert is
 `Props.upsert`); `setAttr_spec`, `getA_spec`, `updA_spec`; `removeRels_spec`;
 `createdRel_spec`; `deletedDeg_some`; `absorb_spec`, `resync_spec`,
 `clear_spec`; `scan_ok`, `check_spec`, `enforce_spec`, `commit_spec`;
-`evict_preserves_Good`, `evict_reads_live_entity` (PR #2964).
+`createRust_preserves_Good`, `rust_reads_live_entity` (#3641).
 
 Wave-4 findings:
 * #2769 (found as `deg_panics_on_pending_deleted`; **fixed by #3520**) —
@@ -233,8 +256,8 @@ Wave-4 findings:
   the last write per attribute; `read_your_writes_existing`,
   `read_your_writes_new` — what the query read before Commit is exactly what
   the store holds after, for existing and newly created entities.
-* `sound_under_Good`, `del_Good`, `deferred_preserves_Good`,
-  `deferred_reads_live_entity` — snapshot reads are correct as long as no
+* `sound_under_Good`, `del_Good`, `createRust_preserves_Good`,
+  `rust_reads_live_entity` — snapshot reads are correct as long as no
   snapshotted id is live, and deferring id reuse to query end (the #2876
   proposal) maintains that across delete/commit/create.
 * `c_eq_rust_plus_cancelled` — C's `Nodes created/deleted` = Rust's +
@@ -350,7 +373,6 @@ import PendingCommit.Labels
 import PendingCommit.Props
 import PendingCommit.Snapshot
 import PendingCommit.Stats
-import PendingCommit.EvictPR2964
 import PendingCommit.BinSearch
 import PendingCommit.NameMap
 import PendingCommit.Pack
@@ -379,3 +401,8 @@ import PendingCommit.SaveRoaring
 import PendingCommit.SaveNthLive
 import PendingCommit.SaveSlice
 import PendingCommit.SaveLayout
+import PendingCommit.KeyBorrow
+import PendingCommit.AttrInv
+import PendingCommit.AccessorBridge
+import PendingCommit.AttrCallers
+import PendingCommit.AttrAlloc

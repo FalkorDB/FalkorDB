@@ -4,7 +4,7 @@ import FalkorCore.Int64
 
 Rust's `i64` is modelled as a mathematical `Int` together with the two's-complement
 wrap `wrap : Int → Int` onto `[-2^63, 2^63)`. Every Int lane in
-`graph/src/runtime/value.rs:903-1171` uses the `wrapping_*` methods, which are exactly
+`graph/src/runtime/value.rs:946-1212` uses the `wrapping_*` methods, which are exactly
 `wrap ∘ (exact op)` (Rust reference, `i64::wrapping_add` etc.; `wrapping_div` wraps only
 `MIN / -1`, `wrapping_rem` returns 0 for `MIN % -1`).
 
@@ -35,7 +35,7 @@ theorem wrap_wrap (x : Int) : wrap (wrap x) = wrap x := wrap_id (wrap_inI64 x)
 theorem wrap_add_mul (x k : Int) : wrap (x + k * TWO64) = wrap x := by
   unfold wrap; omega
 
-/-! ## Rust `wrapping_*` (value.rs:915, 1048, 1097, 1130, 1158) -/
+/-! ## Rust `wrapping_*` (value.rs:952, 1084, 1130, 1159, 1189) -/
 
 -- `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem` are `FalkorCore`'s.
 

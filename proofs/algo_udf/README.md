@@ -105,8 +105,8 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 10 | removed (17ccc5412) | The validation context at `GRAPH.UDF LOAD` had no `graph` global | Fixed by #3079 (`graph_global_in_both`) |
 | 11 | removed (17ccc5412) | Unbounded recursion in UDF value conversion overflowed the stack | Fixed by #3336, GHSA-frmf-ffvc-mxx5 (`fromJs_frames`, `toJs_frames`) |
 | 12 | `dotted_collision`; rest removed (17ccc5412) | Library and function names could collide after qualification or case folding, and deleting one library could break another | Fixed by #3066 (#3065): `Repo.collision_rejected`, `dotted_collision_rejected`, `load_preserves_crossFold`, `delete_preserves_after3066`, `case_sensitive` |
-| 13 | `self_loop_twice` | `node.getNeighbors()` lists a self-loop's neighbour twice (W4-graph-2) | **Open** (#3083; PR #3084) |
-| 14 | `traverse_self_loop_twice` | `graph.traverse([a], {returnType:'edges'})` returns a self-loop twice: Rust `[1,0,1]`, C `[1,0]` (W5-udf-1) | **Open** |
+| 13 | `self_loop_twice` | `node.getNeighbors()` lists a self-loop's neighbour twice (W4-graph-2) | **Fixed** by #3084 (5f147f10e): `fixed3084_self_loop_once`, `collectEdges_mem`, `collectEdges_nodup` |
+| 14 | `traverse_self_loop_twice` | `graph.traverse([a], {returnType:'edges'})` returned a self-loop twice: Rust `[1,0,1]`, C `[1,0]` (W5-udf-1) | **Fixed** by #3084 (5f147f10e): `fixed3084_traverse_self_loop_once` |
 | 15 | `traverse_drops_self_neighbour` | `graph.traverse([a])` leaves `a` out when it is its own neighbour: Rust `[1]`, C `[0,1]` (W5-udf-2) | **Open** |
 | 16 | `pre2976_getNeighbors_no_arg_errors` | `node.getNeighbors()` with no argument threw "Error converting from js 'undefined'"; C returns the neighbours (W5-udf-3) | Fixed by #2976 (`getNeighbors_no_arg_ok`) |
 | 17 | `empty_lib_name_mismatch` | `GRAPH.UDF LOAD ""` is accepted, but its functions can never be called (registered as `.f`, stored as `f`); C refuses the empty name (W5-udf-4) | **Open** |
@@ -176,7 +176,7 @@ The four AXIOMATISED rows are FFI: `extract_vector_f64`, `extract_vector_i64` an
 - **`pathCount ≥ 2`** completeness assumes `BoundMono`.
 - **LAGraph** is trusted: WCC/CDLP output is a dense vector of indices below n, the MSF component vector is dense, and pageRank rejects n = 0. These are hypotheses, not Lean axioms.
 - **QuickJS** behaviour is assumed: `__proto__` never becomes an own key, array-index keys list first, `JS_IsDate`/`JS_IsRegExp` test the internal class, `new Date(ms)` is NaN beyond ±8.64e15 ms.
-- **`Graph::get_node_relationships`** is assumed to yield out-edges then in-edges, with a self-loop in both.
+- **`Graph::get_node_relationships_by_type`** is modelled (`Neighbors.nodeRels`): outgoing half, then the incoming half without self-loops (#3084).
 - **Timeouts and memory limits** inside the searches only add an error exit and are not modelled.
 - **QuickJS runtime lifetime** (W3-algo-2) is modelled only as `ThreadJsState`'s field drop order; QuickJS object refcounts are not.
 

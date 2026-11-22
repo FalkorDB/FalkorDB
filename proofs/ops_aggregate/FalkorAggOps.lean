@@ -14,12 +14,13 @@ import FalkorAggOps.Discharge
 import FalkorAggOps.SlotReuse
 import FalkorAggOps.LoadCsvRedirect
 import FalkorAggOps.IncludePendingExact
+import FalkorAggOps.MaxScalar
 
 /-!
 # FalkorAggOps — Aggregate, Distinct, Sort, Skip, Limit, Project, Unwind, aggregation functions
 
 Build: `cd proofs/ops_aggregate && lake build` (Lean 4.36.0, core only, no Mathlib).
-No `sorry` / `admit` / `axiom`. 243 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
+No `sorry` / `admit` / `axiom`. 258 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
 Repros: the `bug_*` / `agrees_*` Rust tests named below live in `graph/tests/lean_ops_aggregate.rs`,
 which is kept locally and NOT committed (see README); the bug entries below are also reproduced as
 Cypher against a live server. Run locally with
@@ -49,9 +50,18 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
   `collect` = non-null filter, `count(*)` per-row = batch; avg count law; avg without
   overflow = plain sum; avg of empty/all-null = null; stdev empty = 0.
 * scalar `max` = `max_batch` over an ABSTRACT compare that is antisymmetric away from NaN
-  (`maxScalar_eq_batch`; the premises are not instantiated for `Value`, and a list with a nested NaN
-  breaks them, `compare_list`); `maxScalar_eq_batch_nan` checks one flagged scalar NaN (#2917 made both
-  ignore NaN comparisons). The scalar body is dead code; `max_batch` is covered by `minmax_hom`.
+  (`maxScalar_eq_batch`), now INSTANTIATED for `Value` (`MaxScalar.lean`): `maxV` is the body on
+  value_order's `cmpV`, `maxV_spec` states what it returns, and on NaN-free non-null scalars the three
+  premises are proved (`anti_scalar`, `nanFlag_scalar`, `nullFlag_scalar`), giving `maxV_eq_batch`. A
+  list with a nested NaN breaks them (`compare_list` drops the flag); `maxScalar_eq_batch_nan` checks
+  one flagged scalar NaN (#2917 made both ignore NaN comparisons). The scalar body is dead code
+  (`batch_agg` is always preferred); `max_batch` is covered by `minmax_hom`.
+* `finalizeStdev_small/_big`, `finalizeStdevp_*` (divisors n-1 / n), `avgStep_switch_iff`
+  (`about_to_overflow` drives the incremental-averaging switch), `StreamOps.pcNew_spec`,
+  `srcPos_fallback`, `maskOf_lt` (procedure_call.rs:59, #3303: an unnamed yield reads its yield position).
+* Rows for batch.rs (columnar lanes, `proofs/columnar`) and for the scalar aggregate bodies
+  (`proofs/value_math` `AggScalar`) are not repeated in `COVERAGE.tsv`: they are `#` comments there, the
+  functions are PROVEN by those projects.
 * `LIMIT k` = `take k`, `SKIP s` = `drop s`, `SKIP s LIMIT k` = window, LIMIT 0 = [].
 * Top-k heap = first `cap` of the full sort (`topk_eq_take_sort`); full sort is sorted;
   `ORDER BY … SKIP s LIMIT k` window equals the full-sort window.
@@ -82,6 +92,13 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
    `size([count(x)])` C 1, Rust type error. Main pushes the result and `continue`s (eval.rs:883-893):
    `evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`, `main_count_lit_list`,
    `main_size_singleton_agg`. Test `bug_list_literal_of_aggregates_collapses`.
+
+**Re-target to 256ab4d3f (2026-11-22).** Since 43936bab9 the Rust of this project changed only cosmetically
+(`filter::eval(&self)`, `percentile_batch` let-else, `commit.rs`) and `ProcedureCallOp::new` reads
+`output.name()` (#3303; `srcPosOf` already took `Option String`). New: `MaxScalar.lean` instantiates
+`maxScalar_eq_batch` for `Value` (the `max` row is PROVEN, no longer CONDITIONAL); `finalizeStdev_*`,
+`finalizeStdevp_*`, `avgStep_switch_iff`, `pcNew` theorems close the MODELLED / NOT COVERED rows. #3035
+(`op.per_origin = batch.len() > 1` in `set_argument_batch`) is a `batch.rs` row owned by `proofs/columnar`.
 
 **Re-target to 8621212fc (2026-10-20): W2-agg-4 fixed by #3007.** `pctStep` now stores the
 row's percentile only while no value has been collected, as aggregation.rs:552-555 does at

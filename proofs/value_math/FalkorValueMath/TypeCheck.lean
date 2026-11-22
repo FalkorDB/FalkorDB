@@ -6,7 +6,7 @@ import FalkorValueMath.Value
 | --- | --- |
 | `Ty` | `enum Type` (mod.rs:531) |
 | `valueOfType` | `ValueTypeOf::value_of_type` (value.rs:1323) |
-| `getType` | `ValueGetType::get_type` (value.rs:1328) |
+| `getType` | `ValueGetType::get_type` (value.rs:1373) |
 | `validate` | `GraphFn::validate` (mod.rs:787-823) — arity, called by the parser |
 | `validateArgsType` | `GraphFn::validate_args_type` (mod.rs:828) — per call, eval.rs:955 |
 | `isCompatibleWith` | `Type::is_compatible_with` (mod.rs:590) |
@@ -30,14 +30,14 @@ inductive Ty where
 
 variable {F : Type}
 
-/-- `get_type` (value.rs:1328): lists report `List(Any)`. -/
+/-- `get_type` (value.rs:1373): lists report `List(Any)`. -/
 def getType : V F → Ty
   | .null => .null | .bool _ => .bool | .int _ => .int | .float _ => .float
   | .str _ => .string | .list _ => .list .any | .map _ => .map | .node _ => .node
   | .rel _ => .rel | .path _ => .path | .vec _ => .vecf32 | .point .. => .point
   | .datetime _ => .datetime | .date _ => .date | .time _ => .time | .duration _ => .duration
 
-/-- The "same variant" arms of `value_of_type` (value.rs:1295-1310, without `Any`). -/
+/-- The "same variant" arms of `value_of_type` (value.rs:1343-1359, without `Any`). -/
 def tagMatch : V F → Ty → Bool
   | .null, .null | .bool _, .bool | .int _, .int | .float _, .float | .str _, .string
   | .point .., .point | .vec _, .vecf32 | .map _, .map | .node _, .node | .rel _, .rel
@@ -54,7 +54,7 @@ def Ty.isAny : Ty → Bool
   | _ => false
 
 mutual
-/-- `value_of_type` (value.rs:1282-1320), arms in source order. `none` = accepted,
+/-- `value_of_type` (value.rs:1323-1366), arms in source order. `none` = accepted,
 `some (actual, expected)` = the mismatch reported. -/
 def valueOfType : V F → Ty → Option (Ty × Ty)
   | .list vs, .list ty => listLoop vs ty

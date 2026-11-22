@@ -3,7 +3,7 @@
 
 `V F` is `enum Value` with the `f64` payload abstracted to a type `F` (instantiate it with
 `FalkorCore.F`, `Float`, or a record of operations); `Arc`s are transparent. `V.order` is
-`OrderedEnum::order` (value.rs:1219), `V.name` is `Value::name` (value.rs:1395).
+`OrderedEnum::order` (value.rs:1219), `V.name` is `Value::name` (value.rs:1399).
 From proofs/value_math (pilot of the shared core).
 -/
 namespace FalkorCore
@@ -29,7 +29,7 @@ inductive V (F : Type) where
 
 variable {F : Type}
 
-/-- `Value::name` (value.rs:1395; C's `SIType_ToString` spellings since #2954). -/
+/-- `Value::name` (value.rs:1399; C's `SIType_ToString` spellings since #2954). -/
 def V.name : V F → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float _ => "Float"
   | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"

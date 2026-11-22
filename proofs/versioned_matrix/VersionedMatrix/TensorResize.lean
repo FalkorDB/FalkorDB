@@ -4,11 +4,11 @@ import VersionedMatrix.TensorOps
 
 | here | there (`tensor.rs`, main 1d15bf713) |
 | --- | --- |
-| `nrowsT`/`ncolsT` | `nrows` (:810) / `ncols` (:815) |
-| `resizeT`  | `resize` (:823): clamp to `max` (:834-835), early return (:836), grow (:839-874) |
-| `encVal`/`decVal` | value `encode` (:1474) puts in the C forward matrix / C's reading |
-| `sizeHint` | `EdgeIds::size_hint` (:1706) |
-| `baseStream`/`newTIt`/`seekTIt`/`outT` | `Iter::new` (:1734), `Iter::seek` (:1766), remaining output |
+| `nrowsT`/`ncolsT` | `nrows` (:808) / `ncols` (:813) |
+| `resizeT`  | `resize` (:821): clamp to `max` (:832-833), early return (:834), grow (:837-872) |
+| `encVal`/`decVal` | value `encode` (:1473) puts in the C forward matrix / C's reading |
+| `sizeHint` | `EdgeIds::size_hint` (:1717) |
+| `baseStream`/`newTIt`/`seekTIt`/`outT` | `Iter::new` (:1745), `Iter::seek` (:1777), remaining output |
 
 **W4-matrix-1, fixed by #3250 (#3246).** `resize` now never shrinks: each
 target dimension is clamped to `max(target, current)` (release; debug builds
@@ -39,9 +39,9 @@ def inB (r c : Nat) (p : Pair) : Bool := decide (p.1 < r) && decide (p.2 < c)
 it from every forward layer and from `mt`; `me` is not touched. -/
 def dropFwd (s : PairSt) : PairSt := { s with m := none, dp := none, dm := false, mt := false }
 
-/-- `Tensor::resize` on main (:823, release semantics): clamp each dimension
-to `max(target, current)` (:834-835), return if nothing grows (:836), else
-re-emit every layer at the new dims with unchanged contents (:839-874; the
+/-- `Tensor::resize` on main (:821, release semantics): clamp each dimension
+to `max(target, current)` (:832-833), return if nothing grows (:834), else
+re-emit every layer at the new dims with unchanged contents (:837-872; the
 `grown` precondition always holds, `GBW.resize_clamp_grownOk`). -/
 def resizeT (t : TT) (r c : Nat) : TT :=
   let r := max r t.nrows
@@ -91,7 +91,7 @@ theorem resizeT_hasMultiEdge (t : TT) (r c : Nat) :
     hasMultiEdge (resizeT t r c) = hasMultiEdge t := by
   rw [resizeT_eq]; rfl
 
-/-- `Tensor::nrows` / `ncols` (:810, :815, added by #3250): `m`'s dims. -/
+/-- `Tensor::nrows` / `ncols` (:808, :813, added by #3250): `m`'s dims. -/
 def nrowsT (t : TT) : Nat := t.nrows
 def ncolsT (t : TT) : Nat := t.ncols
 
@@ -108,7 +108,7 @@ theorem effV_dropFwd (s : PairSt) : effV (dropFwd s) = none := rfl
 
 def MSB : Nat := 2 ^ 63
 
-/-- `f_vals` entry (:1469-1478): the id, or `ids.len() | MSB`. -/
+/-- `f_vals` entry (:1508-1514): the id, or `ids.len() | MSB`. -/
 def encVal (s : PairSt) : Option Nat :=
   match effV s with
   | some (.id i) => some i

@@ -1,17 +1,17 @@
 import FalkorBinder.Resolve
 /-
-# WITH / RETURN: `bind_projection` (binder.rs:1059-1301)
+# WITH / RETURN: `bind_projection` (binder.rs:1208-1442)
 
 An expression is abstracted to the names it mentions (in DFS order), whether
 it is an aggregation, and whether it is a bare variable (the case that
-records a `parent_to_child_scope` entry, binder.rs:1156-1158).
+records a `parent_to_child_scope` entry, binder.rs:1279-1283).
 -/
 namespace FalkorBinder
 
 structure PExpr where
   vars  : List Name
   agg   : Bool := false
-  /-- the expression is exactly `ExprIR::Variable` (binder.rs:1156) -/
+  /-- the expression is exactly `ExprIR::Variable` (binder.rs:1279) -/
   bare  : Bool := false
   deriving Repr, DecidableEq
 
@@ -30,7 +30,7 @@ def PExpr.isVar (e : PExpr) : Option Name :=
   | _, _ => none
 
 /-- Bind every name of an expression, left to right, threading the state
-(`bind_expr` → `resolve_name` per `ExprIR::Variable`, binder.rs:1753-1756). -/
+(`bind_expr` → `resolve_name` per `ExprIR::Variable`, binder.rs:2434-2490). -/
 def resolveAll (st : St) : List Name → Except String (St × List Var)
   | [] => .ok (st, [])
   | n :: ns => do
@@ -38,7 +38,7 @@ def resolveAll (st : St) : List Name → Except String (St × List Var)
     let (st, vs) ← resolveAll st ns
     pure (st, v :: vs)
 
-/-- `push_scope` (binder.rs:251) as seen by name resolution. -/
+/-- `push_scope` (binder.rs:349) as seen by name resolution. -/
 def pushScope (st : St) : St :=
   { cur := [], parent := st.cur, depth := st.depth + 1, useParent := true,
     p2c := [], cfp := [], matchRels := st.matchRels }
@@ -46,10 +46,10 @@ def pushScope (st : St) : St :=
 structure Proj where
   items   : List (Name × PExpr)
   orderBy : List PExpr := []
-  /-- WHERE, SKIP and LIMIT: bound after the snapshot at binder.rs:1245 -/
+  /-- WHERE, SKIP and LIMIT: bound after the snapshot at binder.rs:1384-1388 -/
   tail    : List PExpr := []
 
-/-- Project the items into the freshly pushed scope (binder.rs:1147-1171). -/
+/-- Project the items into the freshly pushed scope (binder.rs:1243-1313). -/
 def projectItems (st : St) (seen : List Name) :
     List (Name × PExpr × List Var) → Except String St
   | [] => .ok st
@@ -59,7 +59,7 @@ def projectItems (st : St) (seen : List Name) :
     else
       let (cur, bv) := projectName st.cur st.depth a .any
       let p2c := match e.isVar, vs with
-        -- `var_name.name.as_ref().unwrap()` (binder.rs:1231): a projected variable is named
+        -- `var_name.name.as_ref().unwrap()` (binder.rs:1280): a projected variable is named
         | some _, [v] => match v.name with
           | some n => st.p2c.insert n bv
           | none => st.p2c
@@ -69,29 +69,29 @@ def projectItems (st : St) (seen : List Name) :
 /-- `Binder::bind_projection` for the non-`*` form, returning the scope the
 next clause sees. -/
 def bindProjection (st : St) (p : Proj) : Except String St := do
-  -- 1. items are bound in the scope *before* the projection (binder.rs:1071-1078)
+  -- 1. items are bound in the scope *before* the projection (binder.rs:1220-1228)
   let (st, bound) ← p.items.foldlM (init := (st, ([] : List (Name × PExpr × List Var))))
     fun (st, acc) (a, e) => do
       let (st, vs) ← resolveAll st e.vars
       pure (st, acc ++ [(a, e, vs)])
-  -- 2. push_scope + project (binder.rs:1147-1171)
+  -- 2. push_scope + project (binder.rs:1243-1313)
   let st ← projectItems (pushScope st) [] bound
-  -- 3. grouping names (binder.rs:1177-1192)
+  -- 3. grouping names (binder.rs:1315-1333)
   let groupBy := (p.items.filter (fun ie => !ie.2.agg)).flatMap (fun ie => ie.2.vars)
-  -- 4. ORDER BY, with the parent scope visible (binder.rs:1212-1215)
+  -- 4. ORDER BY, with the parent scope visible (binder.rs:1335-1357)
   let (st, _) ← p.orderBy.foldlM (init := (st, ([] : List Var)))
     fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
-  -- 5. aggregation: copies must be grouping names (binder.rs:1230-1241)
+  -- 5. aggregation: copies must be grouping names (binder.rs:1366-1382)
   if p.items.any (·.2.agg) && st.cfp.any (fun c => !groupBy.contains c.1) then
     throw "ORDER BY cannot reference variables not projected"
-  -- 6. snapshot, then WHERE / SKIP / LIMIT (binder.rs:1245-1255)
+  -- 6. snapshot, then WHERE / SKIP / LIMIT (binder.rs:1384-1396)
   let before := st.cur.keys
   let (st, _) ← p.tail.foldlM (init := (st, ([] : List Var)))
     fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
-  -- 7. remove the copies made only by WHERE / SKIP / LIMIT (binder.rs:1260-1268)
+  -- 7. remove the copies made only by WHERE / SKIP / LIMIT (binder.rs:1398-1409)
   let filterOnly := (st.cfp.map (·.1)).filter (fun k => !before.contains k)
   let cur := st.cur.retain (fun k => !filterOnly.contains k)
-  -- 8. commit_scope (binder.rs:1275-1276)
+  -- 8. commit_scope (binder.rs:1417)
   pure { st with cur, useParent := false, p2c := [], cfp := [] }
 
 /-- The spec: the scope after `WITH`/`RETURN` is exactly its aliases. -/
@@ -172,7 +172,7 @@ theorem Env.has_iff (e : Env) (k : Name) : e.has k = true ↔ k ∈ e.keys := by
     | un => simp at h
 
 /-- Whatever ORDER BY references, the projection scope starts with every
-alias, in order, each under a fresh id (binder.rs:1147-1171). -/
+alias, in order, each under a fresh id (binder.rs:1243-1313). -/
 theorem projectItems_keys (st : St) (seen : List Name) (items : List (Name × PExpr × List Var))
     (st' : St) (hks : keys st = seen.reverse) (h : projectItems st seen items = .ok st') :
     keys st' = keys st ++ items.map (·.1) := by

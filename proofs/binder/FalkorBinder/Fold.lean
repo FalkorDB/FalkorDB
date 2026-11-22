@@ -4,11 +4,11 @@
 | here | there |
 | --- | --- |
 | `Val`, `FD`, `FE`, `insertKV`, `ev` | `Value`, bound `ExprIR` payloads/trees, `OrderMap::insert` (ordermap.rs:76-89), runtime eval of constants / `List` / `Map` (eval.rs:349-359) |
-| `nodeToValue`, `exprTreeToValue` | `expr_tree_to_value` / `node_to_value` binder.rs:2448-2477 |
-| `collectConstArgs` | `collect_constant_args` binder.rs:2480-2489 |
-| `foldCall` | the folding step of `bind_expr_node` binder.rs:2114-2126 |
-| `rewriteStruct` | `rewrite_struct_constructor` binder.rs:2498-2553 |
-| `rewriteRegex` | `rewrite_compiled_regex` binder.rs:2563-2592 |
+| `nodeToValue`, `exprTreeToValue` | `expr_tree_to_value` / `node_to_value` binder.rs:2698-2722 |
+| `collectConstArgs` | `collect_constant_args` binder.rs:2728-2736 |
+| `foldCall` | the folding step of `bind_expr_node` binder.rs:1935-2345 |
+| `rewriteStruct` | `rewrite_struct_constructor` binder.rs:2746-2803 |
+| `rewriteRegex` | `rewrite_compiled_regex` binder.rs:2811-2840 |
 
 * `nodeToValue_sound`: a tree that folds evaluates to the folded value
   (duplicate map keys: last value wins, first position kept, as at runtime);
@@ -229,7 +229,7 @@ theorem collectConstArgs_spec (cs : List FE) (vs : List Val) (h : collectConstAr
         refine ⟨by simp [hl], ?_⟩
         simp [evL, nodeToValue_sound ρ c x h1, he]
 
-/-- The fold of `bind_expr_node` (binder.rs:2114-2126): when the call is pure,
+/-- The fold of `bind_expr_node` (binder.rs:1935-2345): when the call is pure,
 its arguments are all constant, their number and types fit, and `pure_fn`
 succeeds, the call is replaced by its value. -/
 def foldCall (pureFn : Option (List Val → Except String Val)) (arity : Nat) (typeOk : List Val → Bool)

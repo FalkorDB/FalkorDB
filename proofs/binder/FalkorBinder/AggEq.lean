@@ -5,11 +5,11 @@
 | --- | --- |
 | `RV`, `RD`, `RE` | raw (pre-bind) `ExprIR<Arc<String>>` payloads and trees |
 | `disc` | `std::mem::discriminant` of the `ExprIR` variant |
-| `isAggPlaceholder` | binder.rs:2631-2633 |
-| `exprIrEq` | `expr_ir_eq` binder.rs:2665-2683 |
-| `nodesEq` | `nodes_eq` binder.rs:2635-2663 |
-| `structEq` | `raw_exprs_structurally_equal` binder.rs:2627-2684 |
-| `replaceAgg` | `replace_agg_subtrees` binder.rs:2597-2622 |
+| `isAggPlaceholder` | binder.rs:2879-2881 |
+| `exprIrEq` | `expr_ir_eq` binder.rs:2913-2928 |
+| `nodesEq` | `nodes_eq` binder.rs:2883-2911 |
+| `structEq` | `raw_exprs_structurally_equal` binder.rs:2875-2931 |
+| `replaceAgg` | `replace_agg_subtrees` binder.rs:2845-2870 |
 
 Floats are opaque codes compared by a parameter `feq` (f64 `==`, so NaN ≠ NaN).
 
@@ -167,7 +167,7 @@ def aggOf (k : RV) : RE :=
      .node (.var placeholder) []]
 
 /-- The CONFIRMED bug: they compare equal, so ORDER BY `max(n.v % 4.0)` is
-replaced by the alias of `max(n.v % 3)` (binder.rs:2606-2610). C rejects the
+replaced by the alias of `max(n.v % 3)` (binder.rs:2845-2870). C rejects the
 query; Rust sorts by the wrong key. -/
 theorem order_by_wrong_aggregate (f : Nat) : structEq feq (aggOf (.int 3)) (aggOf (.float f)) = true := rfl
 

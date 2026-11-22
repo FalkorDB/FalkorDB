@@ -65,20 +65,20 @@ theorem release_refused (N : Nat) (sp : IdSpace) (requested freed : IdSet)
 /-! ### Rolling a batch (`Graph::roll_id_batches` = `verify` then `open_batch`) -/
 
 /-- **A batch that verifies rolls into a reachable one**: `open_batch` succeeds,
-equals `new_version` (what the next MVCC version forks with), and satisfies the
+equals `rolled` (`new_version` plus the #3164 quarantine) (what the next MVCC version forks with), and satisfies the
 invariant — every free id is now below the new boundary. -/
 theorem roll_inv (N : Nat) (sp : IdSpace) (h : Inv N sp) (hv : sp.verify N = .ok ()) :
-    sp.openBatch N = .ok (sp.newVersion N) ∧ Inv N (sp.newVersion N) := by
+    sp.openBatch N = .ok (sp.rolled N) ∧ Inv N (sp.rolled N) := by
   have ⟨hc, hden⟩ := (verify_ok_iff N sp).mp hv
   have ⟨hfit, hcnt⟩ := (checked_ok_iff N sp).mp hc
-  refine ⟨openBatch_eq_newVersion N sp hc, ?_⟩
+  refine ⟨openBatch_eq_rolled N sp hc, ?_⟩
   have hab : above N sEmpty (sp.bound N) = 0 := by
     rw [above_sFrom N _ (by omega)]; exact cnt_eq_zero.mpr (fun _ _ => rfl)
   refine ⟨(checked_ok_iff N _).mpr ?_, fun i hi hr => .inl ?_, rfl,
-    fun _ _ hr => absurd hr (by simp [IdSpace.newVersion, IdSpace.restored, sEmpty])⟩
-  · simp only [IdSpace.newVersion, IdSpace.restored, IdSpace.bound] at hab ⊢
+    fun _ _ hr => absurd hr (by simp [IdSpace.rolled, IdSpace.newVersion, IdSpace.restored, sEmpty])⟩
+  · simp only [IdSpace.rolled, IdSpace.newVersion, IdSpace.restored, IdSpace.bound] at hab ⊢
     rw [hab]; unfold IdSpace.bound at hcnt; omega
-  · simp only [IdSpace.newVersion, IdSpace.restored]
+  · simp only [IdSpace.rolled, IdSpace.newVersion, IdSpace.restored]
     have : i < sp.bound N := by
       rcases h.binOk i hi hr with a | a
       · omega
@@ -104,9 +104,9 @@ theorem lifecycle_fresh (N L live n : Nat) (hN : live + n < N) (hL : L < N) (hn 
       ((IdSpace.restored N live sEmpty).created N (ival live (live + n)), .ok ()) ∧
     ((IdSpace.restored N live sEmpty).created N (ival live (live + n))).verify N = .ok () := by
   have h0 : cnt N sEmpty = 0 := cnt_eq_zero.mpr (fun _ _ => rfl)
-  have hfree : cnt N (freeOf sEmpty sEmpty sEmpty) = 0 :=
+  have hfree : cnt N (freeOf sEmpty sEmpty sEmpty sEmpty) = 0 :=
     cnt_eq_zero.mpr (fun i _ => by simp [freeOf_spec, sEmpty])
-  have hasc : asc N (freeOf sEmpty sEmpty sEmpty) = [] := by
+  have hasc : asc N (freeOf sEmpty sEmpty sEmpty sEmpty) = [] := by
     apply List.eq_nil_of_length_eq_zero; rw [asc_length, hfree]
   have hab : above N sEmpty live = 0 := by
     rw [above_sFrom N _ (by omega)]; exact cnt_eq_zero.mpr (fun _ _ => rfl)

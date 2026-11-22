@@ -20,6 +20,17 @@ project now depends on versioned_matrix). Fixed by #3492 (a3a99bdbc): the old pa
 one deleted and one live base edge both reach (counterexample removed in bbee75955; the last revision that has them is 17ccc5412); `needs_dm_sub_m` shows the counting
 needs the invariant.
 
+**Re-sync to 256ab4d3f (from 43936bab9).** The GraphBLAS v10.5.3 bump regenerated `mod.rs`'s bindgen block
+(`GraphBLAS.rs`'s extern decls), so 978 `mod.rs` rows moved by +9 and every `matrix.rs` pin moved (+3 to +55);
+all rows were re-cited by function name (`fnchanged.py`, then a script rewrote the MOVED lines; the FFI rows
+stay AXIOMATISED, the C calls are the contract). New or changed since: `Matrix::remove_all`/`select` use
+`GrB_DESC_RSCT0` (the mask is structural, #3471), `element_wise_*`/`set_pattern` write their operand/mask
+selection with `Matrix::inner` paths (#3787): thin wrappers, nothing modelled changes. `Matrix::encode`'s
+private-`dup()` unload (#3438) is `EncodeDup`; the `EncodeState` numbers (`CchIndices = 10`, `Final = 11`,
+#3793) are `Serial.fromU64_cch`. The `#[cfg(test)] impl Matrix<f64>` (#3320) is test-only. The version
+history of the header tables is preserved below; the live pins are the `matrix.rs`/`tensor.rs` lines in the
+tables, re-set by function name at 256ab4d3f.
+
 Lean 4 model of the Rust-side logic around the GraphBLAS C API. The C calls are
 axiomatised (their contracts cited from `GraphBLAS.h` / the GraphBLAS source);
 the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
@@ -37,17 +48,17 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 | --- | --- |
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
-| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:373 behind `Arc<Handle>` (`Matrix::clone` :405), `Iter::drop` :1851 then its `Arc<Handle>` field (#3090) |
+| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:375 behind `Arc<Handle>` (`Matrix::clone` :407), `Iter::drop` :1886 then its `Arc<Handle>` field (#3090) |
 | `Own.step`/`run`/`validTraces` | pre-#3090 `Matrix::drop`/`Iter::drop` (`Arc::get_mut` then Arc drop) |
-| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1934, `Iter::next` :1967 |
+| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1965, `Iter::next` :1998 |
 | `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` |
-| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1564-1573 (#2996) |
-| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1266 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
-| `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1617, per-entry check :1632-1636, final count check :1665-1670 (#3033) |
-| `Misc.grownOk`, `iterExpand`, `iterEdges`, `VIter` | `Matrix::grown` matrix.rs:739, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `Tensor::iter_edges` :1293, `vector::Iter::new`/`next` vector.rs:603-655 (cursor state machine; the C iterator contract is the model `cExhausted`) |
-| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:526, header pointers nulled :550-558 (#3097) |
-| `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1631-1768 (#3492: `F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
-| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :498 / `ptr` :492, `Matrix::count_in_rows` matrix.rs:811 (#3022) |
+| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1230; `Tensor::decode` :1566; layer-size check :1577-1587 (#2996) |
+| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1297 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
+| `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1630, per-entry check :1608-1616, final count check :1676-1680 (#3033) |
+| `Misc.grownOk`, `iterExpand`, `iterEdges`, `VIter` | `Matrix::grown` matrix.rs:742, `Tensor::resize` tensor.rs:821, `tensor::Iter::next` :1794, `Tensor::iter_edges` :1292, `vector::Iter::new`/`next` vector.rs:603-655 (cursor state machine; the C iterator contract is the model `cExhausted`) |
+| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:527, header pointers nulled :554-565 (#3097) |
+| `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1662-1799 (#3492: `F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
+| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :498 / `ptr` :492, `Matrix::count_in_rows` matrix.rs:815 (#3022) |
 
 ## Theorems (all proved, no sorry)
 #3492 (`DeltaLmxm.lean`): **`deltaLmxm_correct`**, `deltaLmxm_spec`, `cnt_split`, `deltaLmxm_eff`, `deltaLmxm_tensor`,
@@ -150,4 +161,5 @@ import GraphblasWrappers.Glue
 import GraphblasWrappers.Serial
 import GraphblasWrappers.Bulk
 import GraphblasWrappers.DeltaLmxm
+import GraphblasWrappers.CountLink
 import GraphblasWrappers.EncodeDup

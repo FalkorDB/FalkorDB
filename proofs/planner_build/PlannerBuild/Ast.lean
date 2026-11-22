@@ -3,17 +3,17 @@
 
 | here | there |
 | --- | --- |
-| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:160-216 (#3303 adds `anon`) |
-| `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs:473-640 |
-| `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs:481-489, 542-566, 643-660 |
-| `mergeAttrs` | `merge_attr_maps` ast.rs:667-683 |
-| `addNode`, `mergeNode`, `replaceNode`, `addRel`, `addPath`, `variables`, accessors | ast.rs:685-791 |
-| `filterVisited` | `filter_visited` ast.rs:795-821 |
-| `dfs`, `components` | `dfs` ast.rs:844-883, `connected_components` ast.rs:823-842 |
-| `QC`, `innerValidate`, `validateSetItems`, `inlinedOk`, `returnColumns` | `validate` / `inner_validate` / `validate_set_items` / `validate_inlined_properties` / `return_column_names` ast.rs:1151-1393 |
+| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:236-238 (#3303 adds `anon`) |
+| `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs:632-1033 |
+| `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs:637-647, 700-722, 801-815 |
+| `mergeAttrs` | `merge_attr_maps` ast.rs:824-839 |
+| `addNode`, `mergeNode`, `replaceNode`, `addRel`, `addPath`, `variables`, accessors | ast.rs:918-924 |
+| `filterVisited` | `filter_visited` ast.rs:952-977 |
+| `dfs`, `components` | `dfs` ast.rs:1001-1033, `connected_components` ast.rs:980-999 |
+| `QC`, `innerValidate`, `validateSetItems`, `inlinedOk`, `returnColumns` | `validate` / `inner_validate` / `validate_set_items` / `validate_inlined_properties` / `return_column_names` ast.rs:1535-1557 |
 
 * FIXED by #3297 (W4-plan-4; main b84473a7f): `inner_validate`'s procedure-call arm
-  (ast.rs:1224-1263) now ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
+  (ast.rs:1316-1492) now ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
   so the clauses after a CALL are validated (`call_validates_rest`): `CALL db.labels() YIELD
   label MATCH (n)`, `… UNWIND [1] AS x` and `… CREATE (a)-[:R|S]->(b)` are rejected as in C
   (`call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
@@ -37,17 +37,17 @@ structure AV where
   scope : Nat
   deriving DecidableEq, Repr
 
-/-- `impl Display for Variable` (ast.rs:171-184): the name; else, for an unnamed pattern
+/-- `impl Display for Variable` (ast.rs:173-181): the name; else, for an unnamed pattern
 entity, `write_anon` (ast.rs:125-130) `@anon_<n>`; else (a planner temporary) `?<id>`. -/
 def AV.fmt (v : AV) : String := match v.name, v.anon with
   | some n, _ => n
   | none, some k => "@anon_" ++ toString k
   | none, none => "?" ++ toString v.id
 
-/-- `PartialEq for Variable`: by id only (ast.rs:186-193). -/
+/-- `PartialEq for Variable`: by id only (ast.rs:185-190). -/
 def AV.eqv (a b : AV) : Bool := a.id == b.id
 
-/-- `Hash for Variable`: hashes the id only (ast.rs:197-204). -/
+/-- `Hash for Variable`: hashes the id only (ast.rs:196-201). -/
 def AV.hashKey (v : AV) : Nat := v.id
 
 def AV.asStr (v : AV) : String := v.name.getD "?"
@@ -108,7 +108,7 @@ end
 
 def isAggD : AD → Bool | .func _ true => true | _ => false
 
-/-- `is_aggregation` (both impls, ast.rs:446-466): some node of the tree is an aggregate call (DFS any). -/
+/-- `is_aggregation` (both impls, ast.rs:599-621): some node of the tree is an aggregate call (DFS any). -/
 def isAggregation (e : AE) : Bool := anyA isAggD e
 
 theorem isAggregation_root (n : String) (cs : List AE) : isAggregation (.node (.func n true) cs) = true := by
@@ -395,7 +395,7 @@ def innerValidate : QC → List QC → Except String Unit
   | .delete, rest => next rest
   | .set s, rest => (setItemsOk s).bind fun _ => next rest
   | .remove nt, rest => if nt then .error "Type mismatch: expected Node or Relationship but was Null" else next rest
-  | .with_, rest => match rest with     -- #3291 (ast.rs:1327-1331)
+  | .with_, rest => match rest with     -- #3291 (ast.rs:1431-1440)
     | [] => .error "Query cannot conclude with WITH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)"
     | c :: cs => innerValidate c cs
   | .loadCsv, rest | .return_, rest | .createIndex, rest | .dropIndex, rest => next rest
@@ -429,7 +429,7 @@ end
 def validate (q : QC) : Except String Unit := innerValidate q []
 
 /-- **PROVEN** (#3297): the procedure-call arm checks the call, then validates the clauses
-after it (ast.rs:1224-1263, `iter.next().map_or(Ok(()), …)`). -/
+after it (ast.rs:1325-1360, `iter.next().map_or(Ok(()), …)`). -/
 theorem call_validates_rest (p : String) (a : Option String) (rest : List QC) :
     innerValidate (.call p a) rest = (callCheck p a).bind fun _ => next rest := by
   rw [innerValidate]

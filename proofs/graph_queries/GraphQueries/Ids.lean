@@ -646,4 +646,19 @@ theorem rebuild_keeps_entries (g : G V) :
 def trimAttrStores (g : G V) : G V := g
 theorem trimAttrStores_id (g : G V) : trimAttrStores g = g := rfl
 
+/-- `end_id_quarantine` (graph.rs:1068, #3641): `node_ids.end_quarantine()` then
+`relationship_ids.end_quarantine()`. `IdSpace::end_quarantine` empties the `quarantined` set and
+changes no other field (proofs/id_space `IdSpace.endQuarantine_spec`); `quarantined` only makes
+`reserve` skip ids (`reserve_not_quarantined`) and is not part of `IdS`, so on this project's
+state (`live`, `recycled`, `entry_bound`, `taken`, both spaces) the call is the identity. -/
+def endIdQuarantine (g : G V) : G V := g
+theorem endIdQuarantine_id (g : G V) : endIdQuarantine g = g := rfl
+
+/-- `finish_version` (graph.rs:1054, #3641): what a version does once, before it is published
+(`MvccGraph::prepare`): `trim_attr_stores` then `end_id_quarantine`. Neither changes the logical
+graph, so publishing a version loses nothing: counters, recycle bins, matrices, schema and
+attribute stores are exactly those of the fork. -/
+def finishVersion (g : G V) : G V := endIdQuarantine (trimAttrStores g)
+theorem finishVersion_id (g : G V) : finishVersion g = g := rfl
+
 end GQ

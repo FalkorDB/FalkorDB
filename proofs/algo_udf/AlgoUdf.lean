@@ -3,7 +3,7 @@
 
 Scope: `graph/src/runtime/functions/algo_procedures.rs` (BFS, WCC, CDLP, pageRank,
 betweenness, HarmonicCentrality, MSF, maxFlow, SPpaths/SSpaths) and
-`graph/src/udf/` (all files). Rust source of truth: origin/main ee21013d6 (re-targeted from 1c0e6c8de: #3045, #3032, #3580 — see "Fixed on main (re-target 1c0e6c8de → ee21013d6)"; before that from e860645bb: #3058, #3586, #3066, #3464 — see "Fixed on main (re-target e860645bb → 1c0e6c8de)"); earlier: 3fec7d7c9, re-checked at 5e475e6c9 (#3436 only: `rt.g.borrow()` -> `rt.graph()` in every `algo_procedures.rs` / `procedures.rs` registration, and `call_udf_bridge` takes `rt.graph_arc()` (the same `Arc` clone `rt.g.clone()` was) for `set_current_graph`; no function moved, nothing modelled changed); `js_globals.rs`
+`graph/src/udf/` (all files). Rust source of truth: origin/main 256ab4d3f (re-targeted from ee21013d6 for #2976: `with_graph` / `Restore::drop` / `call_udf_bridge` now lend and restore the graph (`UdfClasses.withGraphRun`, `UdfContext.bridge`), `traverse` sources via `node_id_of` (`UdfClasses.traverseSources`); #3572/#3015 were already modelled); earlier ee21013d6 (re-targeted from 1c0e6c8de: #3045, #3032, #3580 — see "Fixed on main (re-target 1c0e6c8de → ee21013d6)"; before that from e860645bb: #3058, #3586, #3066, #3464 — see "Fixed on main (re-target e860645bb → 1c0e6c8de)"); earlier: 3fec7d7c9, re-checked at 5e475e6c9 (#3436 only: `rt.g.borrow()` -> `rt.graph()` in every `algo_procedures.rs` / `procedures.rs` registration, and `call_udf_bridge` takes `rt.graph_arc()` (the same `Arc` clone `rt.g.clone()` was) for `set_current_graph`; no function moved, nothing modelled changed); `js_globals.rs`
 re-targeted to 8743953a8 (#3079), `type_convert.rs` to cab3cf192 (#3074, #3336 — see "Fixed on main").
 Per-function buckets: `COVERAGE.tsv` (every function PROVEN except three
 GraphBLAS FFI wrappers, AXIOMATISED). Repros: wave 1-4 in
@@ -42,7 +42,7 @@ Every `bug_*` test asserts C's answer and fails today.
 * LAGraph: WCC/CDLP output is a dense vector of representative indices `< n`
   (`Compact.LagWcc`); `LAGraph_msf` component vector is dense
   (`MsfFlow.msf_dense_no_fallback` hypothesis); PageRank rejects n = 0.
-* `Graph::get_node_relationships` yields out-edges then in-edges (self-loop in both).
+* `Graph::get_node_relationships_by_type` is modelled (`Neighbors.nodeRels`), not assumed: outgoing half, then the incoming half minus self-loops (a self-loop once, #3084).
 * QuickJS: `obj.set("__proto__", v)` never creates an own key; `obj.keys()`
   lists array-index keys first; `obj.get("constructor")` falls back to the
   prototype's constructor; `JS_IsDate` / `JS_IsRegExp`
@@ -75,9 +75,8 @@ Every `bug_*` test asserts C's answer and fails today.
   `UdfRepoOps.deserialize_atomic`, `serialize_roundtrip`, `list_shows_raw`.
 
 ## Wave 5 CONFIRMED bugs (live C 18900 / Rust 18901 and `rtest/tests/w5.rs`)
-5. `graph.traverse([a], {returnType:'edges'})` returns a self-loop twice
-   (js_classes.rs:770 → `collect_edges` :97-127). C `[1,0]`, Rust `[1,0,1]`.
-   `UdfTraverse.traverse_self_loop_twice`; `bug_udf_traverse_self_loop_edge_twice`.
+5. **FIXED by #3084 (5f147f10e)**: `graph.traverse([a], {returnType:'edges'})` returned a self-loop twice
+   (C `[1,0]`, Rust `[1,0,1]`); `UdfTraverse.fixed3084_traverse_self_loop_once`.
 6. `graph.traverse([a])` omits `a` when it is its own neighbour (start pre-marked
    visited, js_classes.rs:744). C `[0,1]`, Rust `[1]` (Rust's `getNeighbors` gives
    `[0,1]`). `traverse_drops_self_neighbour`; `bug_udf_traverse_omits_self_loop_neighbour`.
@@ -114,7 +113,7 @@ Every `bug_*` test asserts C's answer and fails today.
 * `Marshal.int_roundtrip`, `float_rt_iff`, `node_rt`, `rel_rt`, `path_rt`, `point_rt`,
   `datetime_rt`, `vecf32_finite_rt`, `unesc_esc`, `keep_esc`, `map_never_marked`.
 * `Repo.delete_preserves` (under the missing `KeysUnique` check).
-* `Neighbors.outgoing_ok` (no self-loop), `string_types_filter`.
+* `Neighbors.collectEdges_mem`, `collectEdges_nodup` (every direction, self-loops once), `string_types_filter`.
 
 ## CONFIRMED bugs (Rust vs C; Lean counterexample → cargo repro)
 Known before this wave (counterexamples added):
@@ -128,7 +127,7 @@ Known before this wave (counterexamples added):
 * -0.0 → Int 0 — **FIXED by #3074** (see "Fixed on main").
 * Qualified-name collision / case folding (repository.rs:94-137, functions/mod.rs:1121) — **FIXED by #3066**
   (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412; `dotted_collision` stays as the reason the check compares qualified names).
-* getNeighbors self-loop twice (js_classes.rs:97-127) — `Neighbors.self_loop_twice`.
+* getNeighbors self-loop twice — **FIXED by #3084 (5f147f10e)**, `Neighbors.fixed3084_self_loop_once`.
 New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 1. **FIXED by #3113 (`8a66c01e5`)** — SPpaths/SSpaths charged a missing cost as 0
    (algo_procedures.rs bound and enumeration); C charges 1 per edge, so pathCost = hops

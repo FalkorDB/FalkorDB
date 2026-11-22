@@ -21,19 +21,19 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | here | there |
 | --- | --- |
 | `InI64`, `wrap` (proofs/core), `asUsize`, `trunc32` | i64 range (debug panics outside), release wrap, `as usize`, C `(int32_t)` |
-| `getElementIdx`, `getElement` | `ExprIR::GetElement` list arm, `eval.rs:584-596` |
-| `sliceStart`, `sliceEnd`, `getElements` | `get_elements`, `eval.rs:1775-1805` |
+| `getElementIdx`, `getElement` | `ExprIR::GetElement` list arm, `eval.rs:588-600` |
+| `sliceStart`, `sliceEnd`, `getElements` | `get_elements`, `eval.rs:1785-1815` |
 | `cGetElement`, `cGetElements` | C `AR_SUBSCRIPT`, `AR_SLICE` (int32 truncation) |
 | `removeSpan`, `listRemove`, `listRemoveSpec` | `remove_span` `list.rs:38-51`, `list.remove` `list.rs:162-186` (`listRemoveDebug`/`Release`: pre-#2952, historical) |
 | `insertNorm` | `list.insert` / `list.insertListElements`, `list.rs:231-269`, `list.rs:282-330` |
 | `head`, `last`, `tail`, `size`, reverse | `list.rs:61-150` |
 | `rangeLen`, `rangeElems`, `range` | eager `range`, `math.rs:251-308` |
-| `FalkorCore.rangeIter` (`core/FalkorCore/Range.lean`, shared with expr_semantics) | `RangeIter::next` after #2899, `eval.rs:112-128`, built at `eval.rs:1264-1269` (debug: checked `+=`) |
-| `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1665-1711`; loop `eval.rs:1003-1041` |
-| `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1876-1899` (via `list_contains`, `eval.rs:1761`) |
-| `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension` after #2954, `eval.rs:1042-1085` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
+| `FalkorCore.rangeIter` (`core/FalkorCore/Range.lean`, shared with expr_semantics) | `RangeIter::next` after #2899, `eval.rs:112-128`, built at `eval.rs:1274-1279` (debug: checked `+=`) |
+| `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1675-1721`; loop `eval.rs:1007-1045` |
+| `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1880-1903` (via `list_contains`, `eval.rs:1771`) |
+| `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension` after #2954, `eval.rs:1046-1094` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
 | `pre2954_comprehensionRust` | the same arm before #2954 (every source through `eval_iter_expr`'s UNWIND fallback) |
-| `reduceList` | `ExprIR::Reduce`, `eval.rs:1086-1112` |
+| `reduceList` | `ExprIR::Reduce`, `eval.rs:1096-1122` |
 | `Str`, `blen` | `String` as code points (`.chars()`), `s.len()` / `strlen` bytes |
 | `substring2`, `substring3`, `cSubstring3` | `substring`, `string.rs:55-97`; C `AR_SUBSTRING` |
 | `left`, `right`, `cLeft`, `cRight` | `string.rs:198-283`; C `AR_LEFT`, `AR_RIGHT` |
@@ -44,11 +44,11 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `splitRust` | `split`, `string.rs:106-133` |
 | `replaceRust`, `cReplaceEmptyBytes` | `replace`, `string.rs:175-189` (std `str::replace`); C `AR_REPLACE` |
 | `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs:139-165`; C `str_tolower` (utf8proc simple map) |
-| `isMatchRust`, `isMatchSpec` | `internal_regex_matches` `internal.rs:107-119`, `RegexFnKind::Matches` `eval.rs:1324` |
-| `spliceLit`, `spliceRepl`, `callSite` | `Regex::replace_all(_, NoExpand(&str))` literal replacement (#3604), `string.rs:454`, `eval.rs:1350`; `Repl.expand` is the default `&str` replacer the call sites no longer use |
+| `isMatchRust`, `isMatchSpec` | `internal_regex_matches` `internal.rs:107-119`, `RegexFnKind::Matches` `eval.rs:1335` |
+| `spliceLit`, `spliceRepl`, `callSite` | `Regex::replace_all(_, NoExpand(&str))` literal replacement (#3604), `string.rs:454`, `eval.rs:1360`; `Repl.expand` is the default `&str` replacer the call sites no longer use |
 | `joinLen`, `joinStr` | `compute_join_length` / `join_with_preallocate`, `string.rs:309-371` |
 | `startsWith` | `internal_starts_with`, `internal.rs:39-47` (ends/contains analogous) |
-| `cmpFloatModel` | `compare_floats` `value.rs:1915` as used by `list.sort` `list.rs:210` |
+| `cmpFloatModel` | `compare_floats` `value.rs:1919` as used by `list.sort` `list.rs:210` |
 
 ## Proven (91 theorems in this file; main ones)
 
@@ -97,7 +97,7 @@ B. **`list.remove` count overflow — FIXED by #2952 (07e712944).** Was: the
    by accident (proved). C `[1]`. Test `bug_list_remove_count_overflow`.
    The fix (`remove_span`, `saturating_add`) is modelled and proved correct
    (`listRemove_eq_spec`).
-C. **`=~` is unanchored** — `internal_regex_matches` `internal.rs:107-119`, `eval.rs:1324`
+C. **`=~` is unanchored** — `internal_regex_matches` `internal.rs:107-119`, `eval.rs:1335`
    (`Regex::is_match`): `'abc' =~ 'b'` → `true`, `'xabcx' =~ 'abc'` → `true`.
    openCypher/Neo4j require a whole-string match (→ `false`). C rejects `=~`
    ("FalkorDB does not currently support =~"). Test `bug_regex_match_unanchored`.
@@ -205,6 +205,14 @@ error). New `comprehensionRust` over `CSrc`, `comprehension_eq_spec`, `comprehen
 spells `Edge`/`Vectorf32` and `typeOf` reuses it (`Entity.valueName`,
 `typeName_eq_valueName`). eval.rs rows re-pinned (+27 after the arm), entity.rs (−18
 after `type_of`), value.rs (+2 after `Value::name`).
+Re-targeted to main 256ab4d3f (from 43936bab9): #3270 (3643a301c) makes a non-boolean
+list-comprehension WHERE predicate a type error ("expected Boolean but was <name>"; it was
+skipped) — `comprehensionLoop`, `whereKeep`, `comprehensionLoop_nonbool`, `pre3270_nonbool_skipped`,
+`pre3270_loop_agrees`, `comprehensionFull_noWhere`. New `evalIterExpr` models all three
+`eval_iter_expr` arms (`evalIterExpr_range`, `_lit`, `_other`), `evalCompiledRegex` all three
+`eval_compiled_regex` kinds with `checkStringOrNull` (`regex_*`, `evalCompiledRegex_not_unreachable`;
+`=~` stays unanchored, bug C). `string.rs` only widened `regex_captures_list` to `pub`. eval.rs and
+value.rs cites re-pinned (+4 / +10 in eval.rs, +4 after `get_type` in value.rs).
 Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
 `capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
 -/
@@ -231,9 +239,9 @@ theorem asUsize_wrap64 (x : Int) (h0 : 0 ≤ x) (h1 : x < 18446744073709551616) 
     asUsize (wrap x) = x.toNat := by
   unfold asUsize wrap; omega
 
-/-! ## `[l][i]` — `ExprIR::GetElement` (`eval.rs:584-596`) -/
+/-! ## `[l][i]` — `ExprIR::GetElement` (`eval.rs:588-600`) -/
 
-/-- `eval.rs:589-596`: `normalized_index = if i < 0 { len + i } else { i }`,
+/-- `eval.rs:593-600`: `normalized_index = if i < 0 { len + i } else { i }`,
 then `values[normalized_index as usize]` under the guard `0 ≤ n < len`. -/
 def getElementIdx (len : Nat) (i : Int) : Int := if i < 0 then (len : Int) + i else i
 
@@ -284,9 +292,9 @@ theorem cGetElement_truncates :
     cGetElement [1, 2, 3] 4294967296 = some 1 ∧ getElement [1, 2, 3] 4294967296 = none := by
   decide
 
-/-! ## `[l][a..b]` — `get_elements` (`eval.rs:1775-1805`) -/
+/-! ## `[l][a..b]` — `get_elements` (`eval.rs:1785-1815`) -/
 
-/-- `eval.rs:1782-1791`, the two normalisations, line by line. -/
+/-- `eval.rs:1792-1801`, the two normalisations, line by line. -/
 def sliceStart (len : Nat) (s : Int) : Int := if s < 0 then max ((len : Int) + s) 0 else s
 def sliceEnd (len : Nat) (e : Int) : Int := if e < 0 then max ((len : Int) + e) 0 else min e len
 
@@ -295,7 +303,7 @@ def getElements (l : List α) (s e : Int) : List α :=
   let e' := sliceEnd l.length e
   if s' > e' then [] else (l.drop s'.toNat).take (e' - s').toNat
 
-/-- Totality of `values[start as usize..end as usize]` (`eval.rs:1796`): when
+/-- Totality of `values[start as usize..end as usize]` (`eval.rs:1806`): when
 the `start > end` early return is not taken, `0 ≤ start ≤ end ≤ len`, so the
 slice never panics — for every pair of `i64` bounds. -/
 theorem getElements_bounds (len : Nat) (s e : Int) (h : ¬ sliceStart len s > sliceEnd len e) :
@@ -637,7 +645,7 @@ theorem rangeIter_eq_range (start stop step : Int) (h1 : InI64 start) (h2 : InI6
         have := range_elems_between start stop step hs hdir _ hx
         simp only [InI64] at *; omega
 
-/-- `eval_iter_expr`'s `range(..)` arm (`eval.rs:1233-1270`) for integer arguments: the early
+/-- `eval_iter_expr`'s `range(..)` arm (`eval.rs:1243-1280`) for integer arguments: the early
 returns first (`step = 0` is an error, a direction-incompatible range is empty, a length above
 `u32::MAX` is "Range too large"), then the `RangeIter` of `rangeLen` elements. A null or
 non-integer argument is rejected by `validate_args_type` before this point and is not
@@ -680,9 +688,9 @@ theorem rangeIter_examples :
     rangeIter I64MAX 2 (-1) = .ok [-1, I64MAX - 1] := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
 
-/-! ## Quantifiers `all/any/none/single` (`eval_quantifier`, `eval.rs:1665-1711`) -/
+/-! ## Quantifiers `all/any/none/single` (`eval_quantifier`, `eval.rs:1675-1721`) -/
 
-/-- The three predicate outcomes the loop at `eval.rs:1015-1029` counts. -/
+/-- The three predicate outcomes the loop at `eval.rs:1019-1033` counts. -/
 inductive K where | t | f | n
   deriving DecidableEq, Repr
 
@@ -757,7 +765,7 @@ theorem single_spec (xs : List K) :
     · simp only [h2, ite_false]
       by_cases h3 : cnt xs .t = 1 <;> simp [h3] <;> omega
 
-/-! ## `x IN list` — `Contains for ThinVec<Value>` (`value.rs:1876-1899`)
+/-! ## `x IN list` — `Contains for ThinVec<Value>` (`value.rs:1880-1903`)
 
 Parametric in the element comparison `cmp : α → α → (Ordering × Dis)`; the
 comparison itself is `value_order`'s subject. -/
@@ -765,7 +773,7 @@ comparison itself is `value_order`'s subject. -/
 inductive Dis where | none | null | nan | disjoint
   deriving DecidableEq, Repr
 
-/-- `value.rs:1877-1898`, with `is_null` accumulated left to right. -/
+/-- `value.rs:1881-1902`, with `is_null` accumulated left to right. -/
 def containsLoop (cmp : α → Ordering × Dis) : Bool → List α → K
   | isNull, [] => if isNull then .n else .f
   | isNull, x :: xs =>
@@ -800,11 +808,11 @@ theorem contains_nil (cmp : α → Ordering × Dis) : contains cmp [] = .f := rf
 
 /-! ## Comprehension / reduce / quantifier sources
 
-Since #2954 (b6567cb97) `[x IN src ...]` (`eval.rs:1042-1085`) streams a list literal or
-`range(..)` through `eval_iter_expr` (`eval.rs:1227`) and evaluates any other source with
+Since #2954 (b6567cb97) `[x IN src ...]` (`eval.rs:1046-1094`) streams a list literal or
+`range(..)` through `eval_iter_expr` (`eval.rs:1237`) and evaluates any other source with
 `eval_node`: `List` iterates, `Null` gives `null`, anything else is a type error. Before,
 every source went through `eval_iter_expr`, whose fallback arm is UNWIND's (`Null` → no
-rows, scalar → one row). Quantifiers (`eval.rs:1003-1041`) and `reduce` already returned
+rows, scalar → one row). Quantifiers (`eval.rs:1007-1045`) and `reduce` already returned
 `Null` for a null source and raised for a scalar, as does C. -/
 
 inductive Src where | null | scalar (i : Int) | list (l : List Int)
@@ -871,7 +879,224 @@ theorem comprehension_literal_range_unchanged (l : List Int) :
 theorem comprehension_agrees_on_lists (l : List Int) :
     pre2954_comprehensionRust (.list l) = comprehensionSpec (.list l) := rfl
 
-/-- `reduce(acc = init, x IN l | body)` (`eval.rs:1086-1112`) is `foldl`. -/
+/-! ### The per-element loop of `ListComprehension` (`eval.rs:1078-1094`): WHERE and projection
+
+For each element `row.insert(var, value)`, the predicate `eval_node(child(1))?` must be
+`true` (keep), `false` or `null` (skip); any other value is a type error since #3270
+(3643a301c; before it every non-`true` result was skipped by `_ => continue`). A kept
+element is projected by `eval_node(child(2))?`, and the first `Err` ends the loop. -/
+
+/-- What a WHERE predicate evaluates to: a boolean outcome, or any other value (`Value::name`). -/
+inductive PV where | t | f | n | other (name : String)
+  deriving DecidableEq, Repr
+
+/-- The `match` on the predicate result (`eval.rs:1076-1087`): `Ok(true)` = keep. -/
+def whereKeep : PV → Except String Bool
+  | .t => .ok true
+  | .f | .n => .ok false
+  | .other nm => .error s!"Type mismatch: expected Boolean but was {nm}"
+
+/-- The same `match` before #3270: `_ => continue`. Historical. -/
+def pre3270WhereKeep : PV → Bool
+  | .t => true
+  | _ => false
+
+/-- The `for value in result` loop, one element at a time, errors propagating with `?`.
+`pred`/`proj` are the element's `eval_node(child(1))` / `eval_node(child(2))`. -/
+def comprehensionLoop {α β : Type} (pred : α → Except String PV) (proj : α → Except String β) :
+    List α → Except String (List β)
+  | [] => .ok []
+  | x :: xs =>
+    match pred x with
+    | .error e => .error e
+    | .ok p =>
+      match whereKeep p with
+      | .error e => .error e
+      | .ok false => comprehensionLoop pred proj xs
+      | .ok true =>
+        match proj x with
+        | .error e => .error e
+        | .ok y =>
+          match comprehensionLoop pred proj xs with
+          | .error e => .error e
+          | .ok rest => .ok (y :: rest)
+
+/-- The loop before #3270. Historical. -/
+def pre3270ComprehensionLoop {α β : Type} (pred : α → Except String PV)
+    (proj : α → Except String β) : List α → Except String (List β)
+  | [] => .ok []
+  | x :: xs =>
+    match pred x with
+    | .error e => .error e
+    | .ok p =>
+      if pre3270WhereKeep p then
+        match proj x with
+        | .error e => .error e
+        | .ok y =>
+          match pre3270ComprehensionLoop pred proj xs with
+          | .error e => .error e
+          | .ok rest => .ok (y :: rest)
+      else pre3270ComprehensionLoop pred proj xs
+
+section loop
+variable {α β : Type} (pred : α → Except String PV) (proj : α → Except String β)
+
+theorem comprehensionLoop_nil : comprehensionLoop pred proj [] = .ok [] := rfl
+
+/-- A `false` or `null` predicate skips the element. -/
+theorem comprehensionLoop_skip (x : α) (xs : List α) (h : pred x = .ok .f ∨ pred x = .ok .n) :
+    comprehensionLoop pred proj (x :: xs) = comprehensionLoop pred proj xs := by
+  rcases h with h | h <;> simp [comprehensionLoop, h, whereKeep]
+
+/-- **Fixed by #3270.** A predicate that is neither boolean nor null is a type error. -/
+theorem comprehensionLoop_nonbool (x : α) (xs : List α) (nm : String)
+    (h : pred x = .ok (.other nm)) :
+    comprehensionLoop pred proj (x :: xs) =
+      .error s!"Type mismatch: expected Boolean but was {nm}" := by
+  simp [comprehensionLoop, h, whereKeep]
+
+/-- A predicate error ends the loop with that error. -/
+theorem comprehensionLoop_pred_error (x : α) (xs : List α) (e : String)
+    (h : pred x = .error e) : comprehensionLoop pred proj (x :: xs) = .error e := by
+  simp [comprehensionLoop, h]
+
+/-- A `true` predicate keeps the element: project it, then the rest. -/
+theorem comprehensionLoop_keep (x : α) (xs : List α) (h : pred x = .ok .t) :
+    comprehensionLoop pred proj (x :: xs) =
+      (proj x).bind fun y => (comprehensionLoop pred proj xs).map (y :: ·) := by
+  simp only [comprehensionLoop, h, whereKeep]
+  cases proj x <;> cases comprehensionLoop pred proj xs <;> rfl
+
+/-- No WHERE (`child(1)` is the constant `true`) and an identity projection: the list itself. -/
+theorem comprehensionLoop_true_id (l : List α) :
+    comprehensionLoop (fun _ => (.ok .t : Except String PV)) (fun x => (.ok x : Except String α)) l
+      = .ok l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [comprehensionLoop, whereKeep, ih]
+
+/-- Before #3270 a non-boolean predicate was silently skipped; main raises. The two loops
+agree whenever every predicate result is boolean or null. -/
+theorem pre3270_loop_agrees (l : List α) (h : ∀ x ∈ l, ∀ nm, pred x ≠ .ok (.other nm)) :
+    pre3270ComprehensionLoop pred proj l = comprehensionLoop pred proj l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    have hx := h x (by simp)
+    have ih' := ih (fun y hy => h y (by simp [hy]))
+    simp only [pre3270ComprehensionLoop, comprehensionLoop]
+    cases hp : pred x with
+    | error e => rfl
+    | ok p =>
+      cases p with
+      | t => simp [pre3270WhereKeep, whereKeep, ih']
+      | f => simp [pre3270WhereKeep, whereKeep, ih']
+      | n => simp [pre3270WhereKeep, whereKeep, ih']
+      | other nm => exact absurd hp (hx nm)
+
+end loop
+
+/-- `[x IN [1] WHERE 5 | x]`: the pre-#3270 loop returned `[]`, main raises. -/
+theorem pre3270_nonbool_skipped :
+    pre3270ComprehensionLoop (fun _ => (.ok (.other "Integer") : Except String PV))
+      (fun x => (.ok x : Except String Int)) [1] = .ok [] ∧
+    comprehensionLoop (fun _ => (.ok (.other "Integer") : Except String PV))
+      (fun x => (.ok x : Except String Int)) [1] =
+      .error "Type mismatch: expected Boolean but was Integer" := ⟨rfl, rfl⟩
+
+/-- The whole `ListComprehension` arm: the source dispatch of `comprehensionRust`
+(`none` = the arm pushes `Value::Null`) then the element loop. -/
+def comprehensionFull {β : Type} (pred : Int → Except String PV) (proj : Int → Except String β) :
+    CSrc → Except String (Option (List β))
+  | .literal l | .range l => (comprehensionLoop pred proj l).map some
+  | .other .null => .ok none
+  | .other (.scalar _) => .error "Type mismatch: expected List or Null but was Integer"
+  | .other (.list l) => (comprehensionLoop pred proj l).map some
+
+/-- With no WHERE and an identity projection the full arm is `comprehensionRust`. -/
+theorem comprehensionFull_noWhere (s : CSrc) :
+    comprehensionFull (fun _ => (.ok .t : Except String PV))
+      (fun x => (.ok x : Except String Int)) s =
+    match comprehensionRust s with
+    | .list l => .ok (some l)
+    | .null => .ok none
+    | .err => .error "Type mismatch: expected List or Null but was Integer" := by
+  cases s with
+  | literal l => simp [comprehensionFull, comprehensionLoop_true_id, comprehensionRust, Except.map]
+  | range l => simp [comprehensionFull, comprehensionLoop_true_id, comprehensionRust, Except.map]
+  | other v =>
+    cases v <;> simp [comprehensionFull, comprehensionLoop_true_id, comprehensionRust, Except.map]
+
+/-! ### `eval_iter_expr` (`eval.rs:1237-1303`): the three source shapes
+
+`range(..)` (arguments already `eval_node`d and `validate_args_type`d: an error from either is
+the `Except`), a list literal (each child `eval_node`d in order, `?` on the first error) and any
+other expression (the UNWIND fallback). `none` is `Ok(None)` ("the row produces no rows"). -/
+
+inductive IVal where | null | list (l : List Int) | scalar (a : Int)
+  deriving DecidableEq, Repr
+
+inductive IterSrc where
+  | range (start stop step : Except String Int)
+  | lit (elems : List (Except String Int))
+  | other (v : Except String IVal)
+
+def evalIterExpr : IterSrc → Except String (Option (List Int))
+  | .range start stop step =>
+    match start, stop, step with
+    | .error e, _, _ => .error e
+    | _, .error e, _ => .error e
+    | _, _, .error e => .error e
+    | .ok a, .ok b, .ok c =>
+      match rangeLazy a b c with
+      | .err m => .error m
+      | .ok [] => .ok none
+      | .ok l => .ok (some l)
+  | .lit elems => (elems.mapM id).map some
+  | .other v =>
+    match v with
+    | .error e => .error e
+    | .ok (.list l) => .ok (some l)
+    | .ok .null => .ok none
+    | .ok (.scalar a) => .ok (some [a])
+
+/-- A list literal with all elements fine yields them, in order (an empty literal is `Some([])`). -/
+theorem evalIterExpr_lit (l : List Int) :
+    evalIterExpr (.lit (l.map Except.ok)) = .ok (some l) := by
+  have : (l.map (Except.ok : Int → Except String Int)).mapM id = .ok l := by
+    induction l with
+    | nil => rfl
+    | cons x xs ih =>
+      simp [List.mapM_cons, List.map, ih, Bind.bind, Except.bind]
+      rfl
+  simp [evalIterExpr, this, Except.map]
+
+/-- The first failing literal element is the error. -/
+theorem evalIterExpr_lit_error (e : String) :
+    evalIterExpr (.lit [.error e]) = .error e := rfl
+
+/-- The UNWIND fallback: a list iterates, null gives no rows, a scalar one row. -/
+theorem evalIterExpr_other (l : List Int) (a : Int) :
+    evalIterExpr (.other (.ok (.list l))) = .ok (some l) ∧
+    evalIterExpr (.other (.ok .null)) = .ok none ∧
+    evalIterExpr (.other (.ok (.scalar a))) = .ok (some [a]) := ⟨rfl, rfl, rfl⟩
+
+/-- Argument errors propagate left to right. -/
+theorem evalIterExpr_range_arg_error (e : String) (b c : Except String Int) :
+    evalIterExpr (.range (.error e) b c) = .error e := rfl
+
+/-- `range(a, b, step)` over `i64` arguments: the streamed rows are the eager `range` list
+(`rangeLazy_eq_range`); an empty `range` is `None`, "no rows". -/
+theorem evalIterExpr_range (a b c : Int) (h1 : InI64 a) (h2 : InI64 b) :
+    evalIterExpr (.range (.ok a) (.ok b) (.ok c)) =
+      match range a b c with
+      | .err m => .error m
+      | .ok [] => .ok none
+      | .ok l => .ok (some l) := by
+  simp only [evalIterExpr]
+  rw [rangeLazy_eq_range a b c h1 h2]
+
+/-- `reduce(acc = init, x IN l | body)` (`eval.rs:1096-1122`) is `foldl`. -/
 def reduceList (body : β → α → β) (init : β) (l : List α) : β := l.foldl body init
 theorem reduce_nil (body : β → α → β) (init : β) : reduceList body init [] = init := rfl
 theorem reduce_append (body : β → α → β) (init : β) (a b : List α) :
@@ -1344,7 +1569,7 @@ theorem case_size_preserved_if_simple (full : Char → Str) (h : ∀ c, (full c)
   | nil => rfl
   | cons c t ih => simp only [List.flatMap_cons, List.length_append, h, List.length_cons]; rw [ih]; omega
 
-/-! ### `=~` (`internal.rs:107-119`, `eval.rs:1324`)
+/-! ### `=~` (`internal.rs:107-119`, `eval.rs:1335`)
 
 `Regex::is_match` is *unanchored*: it asks for a match anywhere. openCypher
 (and Neo4j, following Java's `Pattern.matches`) requires the pattern to match
@@ -1369,7 +1594,7 @@ theorem regexMatches_unanchored :
     let m : Nat → Nat → Bool := fun i j => i == 1 && j == 2
     isMatchRust 3 m = true ∧ isMatchSpec 3 m = false := by decide
 
-/-! ### `string.replaceRegEx` replacement (`string.rs:454`, `eval.rs:1350`)
+/-! ### `string.replaceRegEx` replacement (`string.rs:454`, `eval.rs:1360`)
 
 Fixed by #3604 (53d694496, closes #2929): both call sites pass `NoExpand(repl)` to
 `Regex::replace_all`, so the replacement is inserted verbatim (`$n`, `$name`, `${name}` are
@@ -1424,7 +1649,7 @@ def spliceRepl (rep : Repl) (cap : Str → Str) : Nat → Str → List (Nat × N
   | off, t, (i, j) :: rest =>
     t.take (i - off) ++ appendRepl cap rep ++ spliceRepl rep cap j (t.drop (j - off)) rest
 
-/-- The call sites of `string.replaceRegEx` (`string.rs:454`, `eval.rs:1350`) pass
+/-- The call sites of `string.replaceRegEx` (`string.rs:454`, `eval.rs:1360`) pass
 `NoExpand(repl)`: that is the `callSite` replacer. -/
 def callSite (r : Str) : Repl := .noExpand r
 
@@ -1455,6 +1680,159 @@ tests, not by this file. -/
 theorem replaceRegex_literal :
     spliceLit "$0x".toList 0 "abc".toList [(1, 2)] = "a$0xc".toList ∧
     spliceLit "[$0]".toList 0 "abc".toList [(1, 2)] = "a[$0]c".toList := by decide +kernel
+
+/-! ### `eval_compiled_regex` (`eval.rs:1313-1376`) and `check_string_or_null` (`eval.rs:1320`)
+
+A regex function whose constant pattern was compiled at bind time. The text (and, for
+`replaceRegEx`, the replacement) are `eval_node`d and checked to be a String or Null (the
+check is `value_of_type(String or Null)`, so the error names `Display for Type` of
+`get_type`, `Entity.tyDisp`); a Null text then gives each kind's null result. The regex
+engine (`Regex::is_match`, `regex_captures_list`, `replace_all`) is the `RegexOps` record. -/
+
+/-- `check_string_or_null` (`eval.rs:1320`). -/
+def checkStringOrNull : Entity.EV → Except String Unit
+  | .null => .ok ()
+  | .str _ => .ok ()
+  | v => .error s!"Type mismatch: expected String or Null but was {Entity.tyDisp v}"
+
+theorem checkStringOrNull_ok_iff (v : Entity.EV) :
+    checkStringOrNull v = .ok () ↔ (v = .null ∨ ∃ s, v = .str s) := by
+  cases v <;> simp [checkStringOrNull]
+
+theorem checkStringOrNull_err (v : Entity.EV) (h1 : v ≠ .null) (h2 : ∀ s, v ≠ .str s) :
+    checkStringOrNull v =
+      .error s!"Type mismatch: expected String or Null but was {Entity.tyDisp v}" := by
+  cases v <;> simp_all [checkStringOrNull]
+
+structure RegexOps where
+  isMatch : String → Bool                  -- `rf.regex.is_match(s)`
+  captures : String → Entity.EV            -- `regex_captures_list(&rf.regex, s)`
+  replaceEmpty : String → String           -- `replace_all(text, "")`
+  replaceNoExpand : String → String → String  -- `replace_all(text, NoExpand(repl))`
+
+inductive RKind where | matches | matchList | replace
+  deriving DecidableEq, Repr
+
+/-- `eval_compiled_regex`, arm by arm. `text` / `repl` are the results of
+`eval_node(child(0))` / `eval_node(child(1))` (`repl = none` when there is one child).
+`Some(_) => unreachable!()` is the sentinel error `"unreachable"`
+(`evalCompiledRegex_not_unreachable`). -/
+def evalCompiledRegex (R : RegexOps) (kind : RKind) (text : Except String Entity.EV)
+    (repl : Option (Except String Entity.EV)) : Except String Entity.EV :=
+  match text with
+  | .error e => .error e
+  | .ok t =>
+    match checkStringOrNull t with
+    | .error e => .error e
+    | .ok () =>
+      match kind with
+      | .matches =>
+        match t with
+        | .str s => .ok (.bool (R.isMatch s))
+        | _ => .ok .null
+      | .matchList =>
+        match t with
+        | .str s => .ok (R.captures s)
+        | _ => .ok (.list [])
+      | .replace =>
+        let r : Except String (Option Entity.EV) :=
+          match repl with
+          | none => .ok none
+          | some (.error e) => .error e
+          | some (.ok r) =>
+            match checkStringOrNull r with
+            | .error e => .error e
+            | .ok () => .ok (some r)
+        match r with
+        | .error e => .error e
+        | .ok r =>
+          match t with
+          | .str s =>
+            match r with
+            | none => .ok (.str (R.replaceEmpty s))
+            | some .null => .ok .null
+            | some (.str rp) => .ok (.str (R.replaceNoExpand s rp))
+            | some _ => .error "unreachable"
+          | _ => .ok .null
+
+section regexArm
+variable (R : RegexOps)
+
+theorem regex_matches_str (s : String) :
+    evalCompiledRegex R .matches (.ok (.str s)) none = .ok (.bool (R.isMatch s)) := rfl
+
+theorem regex_matches_null :
+    evalCompiledRegex R .matches (.ok .null) none = .ok .null := rfl
+
+theorem regex_matchList_str (s : String) :
+    evalCompiledRegex R .matchList (.ok (.str s)) none = .ok (R.captures s) := rfl
+
+/-- A null text gives the empty list (not null). -/
+theorem regex_matchList_null :
+    evalCompiledRegex R .matchList (.ok .null) none = .ok (.list []) := rfl
+
+/-- A text that is neither String nor Null is a type error before any kind-specific work. -/
+theorem regex_text_mismatch (k : RKind) (t : Entity.EV) (r : Option (Except String Entity.EV))
+    (h1 : t ≠ .null) (h2 : ∀ s, t ≠ .str s) :
+    evalCompiledRegex R k (.ok t) r =
+      .error s!"Type mismatch: expected String or Null but was {Entity.tyDisp t}" := by
+  have := checkStringOrNull_err t h1 h2
+  cases k <;> simp [evalCompiledRegex, this]
+
+/-- Evaluation errors of the text propagate. -/
+theorem regex_text_error (k : RKind) (e : String) (r : Option (Except String Entity.EV)) :
+    evalCompiledRegex R k (.error e) r = .error e := rfl
+
+/-- `replaceRegEx(text, pattern)` with no replacement child: `replace_all(text, "")`. -/
+theorem regex_replace_none (s : String) :
+    evalCompiledRegex R .replace (.ok (.str s)) none = .ok (.str (R.replaceEmpty s)) := rfl
+
+/-- A string replacement is spliced with `NoExpand` (#3604). -/
+theorem regex_replace_str (s rp : String) :
+    evalCompiledRegex R .replace (.ok (.str s)) (some (.ok (.str rp))) =
+      .ok (.str (R.replaceNoExpand s rp)) := rfl
+
+/-- A null replacement, or a null text, gives null. -/
+theorem regex_replace_null (s : String) :
+    evalCompiledRegex R .replace (.ok (.str s)) (some (.ok .null)) = .ok .null ∧
+    evalCompiledRegex R .replace (.ok .null) (some (.ok (.str s))) = .ok .null := ⟨rfl, rfl⟩
+
+/-- The replacement is checked even when the text is null (the check precedes the null
+return): `replaceRegEx(null, p, 5)` is a type error. -/
+theorem regex_replace_null_text_bad_repl :
+    evalCompiledRegex R .replace (.ok .null) (some (.ok (.int 5))) =
+      .error "Type mismatch: expected String or Null but was Integer" := rfl
+
+theorem tm_ne_unreachable (b : String) :
+    ("Type mismatch: expected String or Null but was " ++ b) ≠ "unreachable" := by
+  intro h
+  have := congrArg String.length h
+  simp [String.length_append] at this
+  have h1 : "Type mismatch: expected String or Null but was ".length = 47 := by decide
+  have h2 : "unreachable".length = 11 := by decide
+  omega
+
+/-- `unreachable!()` is never hit: with evaluated arguments the result is never the sentinel. -/
+theorem evalCompiledRegex_not_unreachable (k : RKind) (t : Entity.EV)
+    (r : Option (Except String Entity.EV)) (hr : ∀ e, r ≠ some (.error e)) :
+    evalCompiledRegex R k (.ok t) r ≠ .error "unreachable" := by
+  cases t <;> cases k <;> cases r with
+  | none => simp [evalCompiledRegex, checkStringOrNull] <;> exact tm_ne_unreachable _
+  | some r =>
+    cases r with
+    | error e => exact absurd rfl (hr e)
+    | ok r => cases r <;> simp [evalCompiledRegex, checkStringOrNull] <;> exact tm_ne_unreachable _
+
+/-- **Bug C, still open.** `=~` calls `Regex::is_match` (unanchored): the compiled arm answers
+with `isMatchRust`, true for every text that has *some* matching span, where the spec asks for a
+match of the whole text (`regexMatches_unanchored`: `'abc' =~ 'b'`). -/
+theorem regex_matches_isMatchRust (m : String → Nat → Nat → Bool) (s : String) :
+    evalCompiledRegex
+      { isMatch := fun s => isMatchRust s.length (m s), captures := fun _ => .null,
+        replaceEmpty := id, replaceNoExpand := fun s _ => s }
+      .matches (.ok (.str s)) none = .ok (.bool (isMatchRust s.length (m s))) := rfl
+
+end regexArm
 
 /-! ### `string.join` length pre-computation (`string.rs:309-346`) -/
 
@@ -1538,13 +1916,13 @@ theorem startsWith_empty (s : Str) : startsWith (.str s) (.str []) = .t := by
 
 Before #2912: `sort_by(|a, b| a.compare_value(b).0)`; for floats `compare_floats`
 returns `Less` whenever `partial_cmp` is `None`. Main (b033aecc6):
-`sort_by(Value::sort_cmp)`, whose float arm `sort_cmp_f64` (`value.rs:1931`) puts NaN
+`sort_by(Value::sort_cmp)`, whose float arm `sort_cmp_f64` (`value.rs:1935`) puts NaN
 above every number and equal to itself. -/
 
 def cmpFloatModel (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
   if aNaN || bNaN then .lt else o
 
-/-- `sort_cmp_f64` (value.rs:1931): `partial_cmp` (`o`, meaningful when neither is NaN),
+/-- `sort_cmp_f64` (value.rs:1935): `partial_cmp` (`o`, meaningful when neither is NaN),
 else `a.is_nan().cmp(&b.is_nan())`. -/
 def sortCmpF64Model (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
   if aNaN || bNaN then compare aNaN bNaN else o

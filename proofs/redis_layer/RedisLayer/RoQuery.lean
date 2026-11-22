@@ -3,23 +3,24 @@
 
 The write detection is split over three places, all modelled here:
 
-1. the parser's `write` flag (`graph/src/parser/cypher.rs:780-910`,
+1. the parser's `write` flag (`graph/src/parser/cypher.rs:806-938`,
    `parse_single_query`): set by any of CREATE/MERGE/DELETE/DETACH/SET/REMOVE/FOREACH,
    handed to the next WITH/RETURN and reset after it; the final `Query { write }` carries
    the flag of a trailing updating segment;
-2. the planner (`graph/src/planner/mod.rs:2416-2420`, `:2747-2751`): a WITH/RETURN
+2. the planner (`graph/src/planner/mod.rs:2806-2809`, `:3166-3168`): a WITH/RETURN
    whose flag is set gets a `Commit` child; a query whose final flag is set is wrapped in
    `Commit`; `CREATE/DROP INDEX` become `CreateIndex`/`DropIndex`
-   (`planner/mod.rs:3170-3194`), and so does `CALL db.idx.fulltext.drop`
-   (`planner/mod.rs:2844`);
-3. `execute_query` (`src/graph_core.rs:597-608`): a plan with any `Commit`,
+   (`planner/mod.rs:3659-3685`), and so does `CALL db.idx.fulltext.drop`
+   (`planner/mod.rs:3308-3314`);
+3. `execute_query` (`src/graph_core.rs:657-668`): a plan with any `Commit`,
    `CreateIndex` or `DropIndex` node is a write, and RO_QUERY refuses it; and the
    runtime guards for what the plan scan cannot see: write *procedures*
-   (`runtime/eval.rs:936`, `:956` — `!rt.write && func.write`) and index DDL
-   (`runtime/index_ddl.rs:38`, `:90`).
+   (`runtime/eval.rs:964`, `:984` — `!rt.write && func.write`) and index DDL
+   (`runtime/index_ddl.rs:38`, `:94`).
 
-`Runtime::new(.., is_write = false, ..)` for every plan that reaches execution on the
-read path (`graph_core.rs:619-633`), so `rt.write = false` there.
+Since #3683 `Runtime::new` takes no `write` flag: a plan on the read path gets a published
+`Arc<Graph>` (`QueryGraph::Published`, `graph_core.rs:667-713`), whose runtime has `write = fork.is_some() = false`
+(`proofs/runtime_core` `QueryGraph.new_write_iff`).
 -/
 
 namespace RedisLayer.Ro
@@ -51,11 +52,11 @@ abbrev Plan := List Op
 mutual
 /-- Parser + planner for one query. `w` is the running `write` flag. -/
 def plan : List Clause → Bool → Plan
-  | [], w => if w then [.commit] else []                 -- `planner/mod.rs:2749`
+  | [], w => if w then [.commit] else []                 -- `planner/mod.rs:3166`
   | .read :: cs, w => .other :: plan cs w
   | .call p :: cs, w => .call p :: plan cs w
   | .ftDrop :: cs, w => .dropIndex :: plan cs w
-  | .update :: cs, _ => .update :: plan cs true          -- `cypher.rs:824`
+  | .update :: cs, _ => .update :: plan cs true          -- `cypher.rs:850`
   | .createIndex :: cs, w => .createIndex :: plan cs w
   | .dropIndex :: cs, w => .dropIndex :: plan cs w
   | .with_ :: cs, w => (if w then [.other, .commit] else [.other]) ++ plan cs false  -- `:829`, `:879`
@@ -228,7 +229,7 @@ theorem ro_never_writes (q : List Clause) (m : Nat) (h : roQuery q = .ran m) :
         · exact absurd (plan_proc q false hm) hp
 
 /-- The runtime guard is load-bearing: a query whose only mutation is a write procedure
-has a *read* plan, and only `eval.rs:936/956` stops it. -/
+has a *read* plan, and only `eval.rs:964/984` stops it. -/
 theorem write_proc_invisible_to_scan : isWritePlan (plan [.call true] false) = false := by
   simp [plan, isWritePlan, isW]
 

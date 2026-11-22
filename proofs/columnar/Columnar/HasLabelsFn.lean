@@ -4,7 +4,7 @@ import Columnar.FuncLane
 # The registry's `hasLabels` (functions/entity.rs:62-127) satisfies the fast path's `HL`
 
 A copy, over the engine value, of what the per-row call runs: `validate_args_type`'s `Fixed`
-arm (functions/mod.rs:828-856) over `value_of_type` (value.rs:1315-1350) for the declared
+arm (functions/mod.rs:828-856) over `value_of_type` (value.rs:1316-1351) for the declared
 arguments `[Node | Null, List(Any)]`, then `has_labels` (proofs/functions_str_list
 `Entity.hasLabels` models the same body over its own value type). **`hl_hasLabelsFn`**: on a
 node and a list of label names it validates and answers "every label is on the node"
@@ -43,7 +43,7 @@ def sameTy : V F → Ty → Bool
   | _, _ => false
 
 mutual
-/-- `value_of_type` (value.rs:1315): `none` when the value has the type, else
+/-- `value_of_type` (value.rs:1316): `none` when the value has the type, else
 `(actual, expected)`. -/
 def valueOfType : V F → Ty → Option (Ty × Ty)
   | .list vs, .list t => listCheck t vs

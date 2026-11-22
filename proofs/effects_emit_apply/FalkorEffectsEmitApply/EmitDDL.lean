@@ -4,16 +4,16 @@ import FalkorEffectsEmitApply.ApplyHelpers
 
 | here | there (`graph/src/effects/v3/emit.rs`) |
 | --- | --- |
-| `schemaId` | `schema_id` (`:56`) — `u32::try_from(..).expect` |
-| `schemaAdditions` (Emit.lean), `replayNames` | `emit_schema_additions` (`:61`) |
-| `encodeAll` | `encode_all` (`:187`) |
-| `indexFieldFlags` | `index_field_flags` (`:205`) |
+| `schemaId` | `schema_id` (`:55`) — `u32::try_from(..).expect` |
+| `schemaAdditions` (Emit.lean), `replayNames` | `emit_schema_additions` (`:60`) |
+| `encodeAll` | `encode_all` (`:186`) |
+| `indexFieldFlags` | `index_field_flags` (`:204`) |
 | `buildIndexRec`, `buildConstraintRec` | `build_index_buffer` (`:227`), `build_constraint_buffer` (`:111`) |
-| `wireIndexOptions` | `wire_index_options` (`:2080`) |
+| `wireIndexOptions` | `wire_index_options` (`:2082`) |
 -/
 namespace FalkorEA
 
-/-- `schema_id` (`:56`): `none` is the `expect` panic. -/
+/-- `schema_id` (`:55`): `none` is the `expect` panic. -/
 def schemaId (id : Nat) : Option Nat := if id < 2 ^ 32 then some id else none
 theorem schemaId_spec (id : Nat) : schemaId id = some id ↔ id < 2 ^ 32 := by
   unfold schemaId; split <;> simp_all
@@ -53,7 +53,7 @@ theorem suffixRecs_ids (mk : Nat → Name → Rec) : ∀ (base : Nat) (ns : List
   | nil => rfl
   | cons n ns ih => simp [suffixRecs, ih, List.zipIdx_cons]
 
-/-! ### `encode_all` (`:187`): schema additions, stopping at the first failure -/
+/-! ### `encode_all` (`:186`): schema additions, stopping at the first failure -/
 
 def encodeAll {R} (enc : R → Except String (List Nat)) : List R → Option String → List Nat → (List Nat × Option String)
   | [], failed, buf => (buf, failed)
@@ -85,7 +85,7 @@ theorem encodeAll_failed {R} (enc : R → Except String (List Nat)) :
 
 /-! ### Index / constraint DDL -/
 
-/-- `index_field_flags` (`:205`). -/
+/-- `index_field_flags` (`:204`). -/
 def indexFieldFlags : IdxType → Nat
   | .range => 0x02 ||| 0x04 ||| 0x08
   | .fulltext => 0x01
@@ -113,14 +113,14 @@ def resolveRefs (dict attrs : List Name) (label : Name) (fields : List Name) :
     | none => .error "field is not registered"
     | some fs => .ok (lid, fs)
 
-/-- `build_index_buffer` (`:227`): schema additions, then the record. -/
+/-- `build_index_buffer` (`:226`): schema additions, then the record. -/
 def buildIndexRec (dict attrs : List Name) (create : Bool) (label : Name) (fields : List Name) (t : IdxType) :
     Except String (Bool × List (Nat × Name) × Nat × List (Nat × Name)) :=
   match resolveRefs dict attrs label fields with
   | .error e => .error e
   | .ok (lid, fs) => .ok (create, [(lid, label)], indexFieldFlags t, fs)
 
-/-- `build_constraint_buffer` (`:111`): a create must carry a status. -/
+/-- `build_constraint_buffer` (`:110`): a create must carry a status. -/
 def buildConstraintRec {S} (dict attrs : List Name) (create : Bool) (status : Option S) (label : Name)
     (props : List Name) : Except String (Option S × Nat × Name × List (Nat × Name)) :=
   match resolveRefs dict attrs label props with
@@ -191,7 +191,7 @@ theorem buildConstraintRec_verifies {S} (labels types attrs : List Name) (node c
         | none => simp at h
         | some st => simp at h; subst h; exact ⟨hv, fun p hp => (verifyAttribute_ok _ _ _).mpr (h2 p hp), by simp, h1⟩
 
-/-- `wire_index_options` (`:2080`): unparsable or absent options are "none
+/-- `wire_index_options` (`:2082`): unparsable or absent options are "none
 given"; text options fill the text half; vector options the vector half. -/
 def wireIndexOptions {T V} (defaultText : T) (parsed : Option (Sum T V)) : T × Option V :=
   match parsed with

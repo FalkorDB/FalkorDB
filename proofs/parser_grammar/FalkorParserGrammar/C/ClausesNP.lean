@@ -139,10 +139,12 @@ theorem np_dotChain : ∀ n e, NP (dotChain n e)
   | n + 1, e => by have := np_dotChain n; unfold dotChain; np_go
 theorem np_targetP : NP (targetP o) := by
   have := np_pe o ho; have := np_pp o ho; unfold targetP rejectUnparenP; np_go
+theorem np_updateTargetP (F : Nat) : NP (updateTargetP o F) := by
+  have := np_targetP o ho; have := np_dotChain; unfold updateTargetP; np_go
 theorem np_setItems (F : Nat) : ∀ n acc, NP (setItems o F n acc)
   | 0, _ => np_fuelP
   | n + 1, acc => by
-    have := np_setItems F n; have := np_pe o ho; have := np_targetP o ho; have := np_dotChain
+    have := np_setItems F n; have := np_pe o ho; have := np_updateTargetP o ho F
     have := np_labelsP; unfold setItems; np_go
 theorem np_setMore (F : Nat) : ∀ n acc, NP (setMore o F n acc)
   | 0, _ => np_fuelP
@@ -152,7 +154,7 @@ theorem np_setP (F : Nat) : NP (setP o F) := by
 theorem np_removeItems (F : Nat) : ∀ n acc, NP (removeItems o F n acc)
   | 0, _ => np_fuelP
   | n + 1, acc => by
-    have := np_removeItems F n; have := np_targetP o ho; have := np_dotChain
+    have := np_removeItems F n; have := np_updateTargetP o ho F
     have := np_labelsP; unfold removeItems; np_go
 theorem np_removeMore (F : Nat) : ∀ n acc, NP (removeMore o F n acc)
   | 0, _ => np_fuelP

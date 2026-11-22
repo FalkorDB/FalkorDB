@@ -132,7 +132,7 @@ The lakefile depends on `../versioned_matrix` (path dependency), because `DeltaL
 
 ## Coverage
 
-`COVERAGE.tsv` has 1216 rows (1212 below plus 4 NOT COVERED rows for the `#[cfg(test)] impl Matrix<f64>` test kit). Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
+`COVERAGE.tsv` has 1212 rows (the 4 rows of the `#[cfg(test)] impl Matrix<f64>` test kit, #3320, were removed: test code is not in the engine). Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
 
 | Bucket | Rows |
 |---|---|

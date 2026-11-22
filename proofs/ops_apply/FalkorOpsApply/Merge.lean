@@ -518,8 +518,8 @@ theorem per_clause_cache_fixes :
 
 /-! ### The all-bound shortcut (#3040, fixed by #3055) -/
 
-/-- A relationship of the MERGE pattern, as `MergeOp::next` sees it: user-named (not an
-`_anon_*` alias), already bound in the input row, exposed by a path variable. -/
+/-- A relationship of the MERGE pattern, as `MergeOp::next` sees it: named (`!alias.is_unnamed()` since #3303; before it a
+`_anon_*` name), already bound in the input row, exposed by a path variable. -/
 structure RelShape where
   named : Bool
   bound : Bool

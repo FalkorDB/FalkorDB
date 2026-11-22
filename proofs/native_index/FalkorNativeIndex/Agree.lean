@@ -134,6 +134,7 @@ theorem filter_iff_key (op : Op) (d b : Value) (hd : d.WF) (hnb : NotBool d) (hb
   | datetime _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
   | time _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
   | duration _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
+  | list _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
   | other _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
 
 /-! ## Counterexamples -/

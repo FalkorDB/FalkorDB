@@ -44,7 +44,7 @@ openCypher binds a pattern left to right, clause by clause.
 **5. Are the type checks right?**
 
 - `ensureType_table` proves the kind conflicts rejected are exactly a node, relationship or path used as one of the others.
-- `mayBool_sound_except` proves `expr_may_return_boolean` says "maybe" for every expression that can produce a boolean or null, **except** a few listed shapes: `WHERE n.flags[0]` is rejected with "Expected boolean predicate" where C returns rows (`getElement_rejected`, `negate_rejected`).
+- `mayBool_sound_except` proves `expr_may_return_boolean` says "maybe" for every expression that can produce a boolean or null, **except** a few listed shapes: `true AND -null` is rejected where C returns `null` (`negate_rejected`). A subscript (`WHERE n.flags[0]`) was rejected too until #3270 (`getElement_accepted`; the old rejection is `pre3270_getElement_rejected`).
 - `mayEntity_eq` proves `expr_may_return_entity` matches its spec exactly.
 
 **6. Does constant folding preserve meaning?**
@@ -91,7 +91,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committ
 | W2-binder-5 | `orderBy_leaks` | ORDER BY copies leak past WITH/RETURN: a spurious "already declared", and `RETURN *` returns ORDER BY-only variables | **Open** (PR #3016 not merged) |
 | W2-binder-6 | `pre3049_labels_leak`, `labels_leak_fixed` | Labels from CREATE and from pattern comprehensions tighten an earlier MATCH scan: 0 or 1 rows where C returns 3 | **Fixed by PR #3049** (`with_node_labels_rolled_back`) |
 | W2-binder-7 | `defineName_ignores_parent` | A pattern predicate in `WITH … WHERE` rebinds a parent variable as a fresh one: 3 rows where C returns 1 | **Open** (PR #3062 not merged) |
-| W4-plan-2 | `getElement_rejected`, `negate_rejected` | `WHERE n.flags[0]` → "Expected boolean predicate" (C: 1); same for `true AND l[0]` and `true AND -null` | **Open** |
+| W4-plan-2 | `negate_rejected` (subscript half fixed by #3270: `getElement_accepted`, `pre3270_getElement_rejected`) | `RETURN true AND -null` → Rust "Type mismatch", C `null`; `Length`, `ListComprehension`, `MapProjection` are rejected the same way. `WHERE n.flags[0]` and `true AND l[0]` are accepted since #3270 | **Open** (negation/length/comprehension/map-projection part) |
 | W4-plan-3 | `order_by_wrong_aggregate`, `const_kinds_conflated` | `expr_ir_eq` treats all Int/Float/Null/Bool/String constants as equal, so `ORDER BY max(n.v % 4.0)` sorts by the alias of `max(n.v % 3)`; C rejects the query | **Open**; PR #3011 would widen it to non-aggregate ORDER BY, so fix this first |
 | W6-opt-1 | `pushed_read_unbound` | Filter push-down gives an OPTIONAL MATCH inside `CALL {}` the outer query's ids: "Variable n not found" where C returns rows | **Open** |
 | #1334 | `bug1334_pattern_predicate_declares_var` (property `PatternPredDeclaresNothing`) | A WHERE pattern predicate may mint a new named variable: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds and returns every `n0`; C rejects it (issue #1334; the C error message is not recorded here) | **Open** |

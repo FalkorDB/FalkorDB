@@ -11,8 +11,8 @@ b84473a7f, `graph/src/planner/mod.rs`.
 | --- | --- |
 | `rsRemove`    | the `QueryIR::Remove` arm mod.rs:3212-3218: plans `IR::Remove`, `verified_labels` untouched |
 | `specRemove`  | the fix: drop the removed labels from the variable's verified set |
-| `project`     | `plan_project` mod.rs:2479-2492: the verified set of a variable projected as-is is carried to the new variable (`carried_verified`), everything else dropped |
-| `boundLabelFilters` (PlanMatch2) | mod.rs:1840-1856: a bound endpoint gets a `hasLabels` filter only for `unverified_labels` (:1793-1805) |
+| `project`     | `plan_project` mod.rs:2699-2870: the verified set of a variable projected as-is is carried to the new variable (`carried_verified`), everything else dropped |
+| `boundLabelFilters` (PlanMatch2) | mod.rs:2048-2059: a bound endpoint gets a `hasLabels` filter only for `unverified_labels` (:1978-1988) |
 | `NL`, `removeG`, `projectG` | the node labels (per variable of the current row) in the graph state the next operator reads; REMOVE's effect; WITH renaming |
 
 Property `VerifiedSound st gl`: every label `verified_labels` records for a variable is on

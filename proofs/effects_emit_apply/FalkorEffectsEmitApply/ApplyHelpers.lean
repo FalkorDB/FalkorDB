@@ -6,15 +6,15 @@ import FalkorEffectsEmitApply.Digests
 | --- | --- |
 | `AErr`, `ofString` | `ApplyError`, `From<String>` (`:43`) |
 | `idSpaceErrorMap`, `fromNodeOp` | `id_space_error_map` (`:117`), `From<NodeOpError>` (`:102`) (was `node_op`, #2846) |
-| `validateG` | `Graph::validate` → `verify_id_batches`, `verify_created_relationships` (`graph.rs:1629,1679,1646`), as `apply_effects` consumes it |
-| `requireLive` | `require_live` (`:647`, #3022) |
-| `verifyId` | `verify_id` (`:552`) |
+| `validateG` | `Graph::validate` → `verify_id_batches`, `verify_created_relationships` (`graph.rs:1631,1679,1646`), as `apply_effects` consumes it |
+| `requireLive` | `require_live` (`:685`, #3022) |
+| `verifyId` | `verify_id` (`:586`) |
 | `resolved`, `verifySchema`, `verifyAttribute` | `:607`, `:575`, `:595` |
-| `applyAddSchema` | `apply_add_schema` (`:532`) — get-or-create, then `verify_id` |
+| `applyAddSchema` | `apply_add_schema` (`:560`) — get-or-create, then `verify_id` |
 | `resolveType`, `checkedTypeId`, `checkedLabelIds` | `:629`, `:674`, `:690` |
 | `checkAttrShape`, `attrMap` | `:720`, `:764` |
 | `indexOptions`, `singleIndexLabel` | `:807`, `:838` |
-| `applyEffects` | `apply_effects` (`:54`) |
+| `applyEffects` | `apply_effects` (`:58`) |
 -/
 namespace FalkorEA
 
@@ -72,7 +72,7 @@ def IdSpaceErr.divergence : IdSpaceErr → Bool
   | .inconsistent .. | .alreadyTaken _ => false
   | _ => true
 
-/-- `id_space_error_map` (`:117`). -/
+/-- `id_space_error_map` (`:121`). -/
 def idSpaceErrorMap (k : Kind) : IdSpaceErr → AErr
   | .alreadyLive id eb => .alreadyLive k id eb
   | .alreadyRecycled id => .notLive k id "it is already in the recycle bin"
@@ -109,9 +109,9 @@ theorem fromNodeOp_spec (k : Kind) (s : String) (e : IdSpaceErr) (id : Nat) :
     fromNodeOp (.graph s) = .graph s ∧ fromNodeOp (.idSpace k e) = idSpaceErrorMap k e ∧
     fromNodeOp (.danglingRelationship id) = .danglingRelationship id := ⟨rfl, rfl, rfl⟩
 
-/-- `Graph::validate` (`graph.rs:1629`) = `verify_id_batches()?` (the node space,
+/-- `Graph::validate` (`graph.rs:1631`) = `verify_id_batches()?` (the node space,
 then the relationship space, each refusal wrapped with its kind), then — since
-#3022 — `verify_created_relationships()` (`graph.rs:1646`), abstracted here as
+#3022 — `verify_created_relationships()` (`graph.rs:1648`), abstracted here as
 the lowest relationship the batch created whose endpoints are not both live
 (proved against the Rust in `proofs/graph_queries`, `verifyCreatedRels_spec`). -/
 def validateG {G} (verifyN verifyE : G → Except IdSpaceErr Unit) (dangling : G → Option Nat) (g : G) :
@@ -133,7 +133,7 @@ theorem validateG_ok {G} (verifyN verifyE : G → Except IdSpaceErr Unit) (dangl
   cases verifyE g <;> simp
   cases dangling g <;> simp
 
-/-- `require_live` (`:647`, #3022): `refuse_not_live` on the kind's id space,
+/-- `require_live` (`:685`, #3022): `refuse_not_live` on the kind's id space,
 refusals through `id_space_error_map`. `refuse` is `IdSpace::refuse_not_live`,
 which accepts exactly the live ids (`proofs/id_space`, `refuseNotLive_live`) and
 refuses only with `AlreadyRecycled`/`NeverCreated` (`refuseNotLive_err`). -/
@@ -160,14 +160,14 @@ theorem requireLive_notLive {S} (refuse : S → Except IdSpaceErr Unit) (k : Kin
 
 /-! ### Name ↔ id checks -/
 
-/-- `verify_id` (`:552`). -/
+/-- `verify_id` (`:586`). -/
 def verifyId (k : Kind) (name : Name) (expected assigned : Nat) (local_ : Option Name) : Except AErr Unit :=
   if assigned = expected then .ok () else .error (.idMismatch k name expected assigned local_)
 
 theorem verifyId_ok (k name e a l) : verifyId k name e a l = .ok () ↔ a = e := by
   unfold verifyId; split <;> simp_all
 
-/-- `resolved` (`:607`). -/
+/-- `resolved` (`:645`). -/
 def resolved (k : Kind) (name : Name) (id : Nat) (local_ : Option Name) : Except AErr Unit :=
   match local_ with
   | some l => if l = name then .ok () else .error (.nameMismatch k name id l)
@@ -176,11 +176,11 @@ def resolved (k : Kind) (name : Name) (id : Nat) (local_ : Option Name) : Except
 theorem resolved_ok (k name id l) : resolved k name id l = .ok () ↔ l = some name := by
   unfold resolved; split <;> (try split) <;> simp_all
 
-/-- `verify_schema` (`:575`): the replica's own dictionary must hold `name` at `id`. -/
+/-- `verify_schema` (`:609`): the replica's own dictionary must hold `name` at `id`. -/
 def verifySchema (labels types : List Name) (node : Bool) (id : Nat) (name : Name) : Except AErr Unit :=
   if node then resolved .label name id labels[id]? else resolved .relType name id types[id]?
 
-/-- `verify_attribute` (`:595`). -/
+/-- `verify_attribute` (`:633`). -/
 def verifyAttribute (attrs : List Name) (id : Nat) (name : Name) : Except AErr Unit :=
   resolved .attribute name id attrs[id]?
 
@@ -198,7 +198,7 @@ def intern (dict : List Name) (n : Name) : Nat × List Name :=
   | some i => (i, dict)
   | none => (dict.length, dict ++ [n])
 
-/-- `apply_add_schema` (`:532`): intern, then compare the assigned id with the
+/-- `apply_add_schema` (`:560`): intern, then compare the assigned id with the
 record's. The dictionary is updated *before* the check (as in the Rust); a
 refusal fails the whole payload, so that write never survives. -/
 def applyAddSchema (dict : List Name) (id : Nat) (name : Name) (k : Kind) : List Name × Except AErr Unit :=
@@ -217,10 +217,10 @@ theorem applyAddSchema_eq_applyAddName (dict : List Name) (id : Nat) (name : Nam
 
 /-! ### Id bounds -/
 
-/-- `resolve_type` (`:629`). -/
+/-- `resolve_type` (`:667`). -/
 def resolveType (types : List Name) (rid : Nat) : Except AErr Name :=
   match types[rid]? with | some t => .ok t | none => .error (.idOutOfRange .relType rid)
-/-- `checked_type_id` (`:674`). -/
+/-- `checked_type_id` (`:712`). -/
 def checkedTypeId (types : List Name) (rid : Nat) : Except AErr Nat :=
   match resolveType types rid with | .ok _ => .ok rid | .error e => .error e
 
@@ -230,7 +230,7 @@ theorem checkedTypeId_ok (types rid) : checkedTypeId types rid = .ok rid ↔ rid
   | none => simp; exact List.getElem?_eq_none_iff.mp h
   | some t => simp; exact (List.getElem?_eq_some_iff.mp h).1
 
-/-- `checked_label_ids` (`:690`): every label id below the dictionary size, else
+/-- `checked_label_ids` (`:728`): every label id below the dictionary size, else
 the first offender. -/
 def checkedLabelIds (bound : Nat) : List Nat → Except AErr (List Nat)
   | [] => .ok []
@@ -265,7 +265,7 @@ theorem checkedLabelIds_ok (bound : Nat) : ∀ ls, checkedLabelIds bound ls = .o
           have := ih.mpr (fun x hx => hall x (by simp [hx]))
           simp only [Except.ok.injEq] at this; subst this; rfl
 
-/-- `check_attr_shape` (`:720`): in range, strictly ascending, `rows = ids × width`. -/
+/-- `check_attr_shape` (`:758`): in range, strictly ascending, `rows = ids × width`. -/
 def firstNotAsc : List Nat → Option (Nat × Nat)
   | a :: b :: t => if a ≥ b then some (a, b) else firstNotAsc (b :: t)
   | _ => none
@@ -324,7 +324,7 @@ theorem checkAttrShape_ok (bound n attrIds nRows) :
       · rw [ite_eq_left hr]; simp only [reduceCtorEq, false_iff, not_and]; intro _ _ h; exact hr h
       · rw [ite_eq_right hr]; simp only [true_iff]; exact ⟨hall, hp, by omega⟩
 
-/-- `attr_map` (`:764`): check, then `id ↦ [(attr_id, rows[row*w + col])]`.
+/-- `attr_map` (`:802`): check, then `id ↦ [(attr_id, rows[row*w + col])]`.
 `FxHashMap::insert` keeps the last write for a repeated id. -/
 def attrMap {V} [Inhabited V] (bound : Nat) (ids attrIds : List Nat) (rows : List V) : Except AErr (List (Nat × List (Nat × V))) :=
   match checkAttrShape bound ids.length attrIds rows.length with
@@ -368,7 +368,7 @@ theorem attrMap_row {V} [Inhabited V] (bound : Nat) (ids attrIds : List Nat) (ro
 
 inductive IdxType | range | fulltext | vector deriving DecidableEq, Repr
 
-/-- `index_options` (`:807`). -/
+/-- `index_options` (`:845`). -/
 def indexOptions {T Vo} (t : IdxType) (text : T) (vec : Option Vo) : Option (Sum T Vo) :=
   match t with
   | .vector => vec.map .inr
@@ -379,7 +379,7 @@ theorem indexOptions_spec {T Vo} (text : T) (vec : Option Vo) :
     indexOptions .range text vec = none ∧ indexOptions .fulltext text vec = some (.inl text) ∧
     indexOptions .vector text vec = vec.map .inr := ⟨rfl, rfl, rfl⟩
 
-/-- `single_index_label` (`:838`): exactly one schema. -/
+/-- `single_index_label` (`:876`): exactly one schema. -/
 def singleIndexLabel (schemas : List (Nat × Name)) : Except AErr Name :=
   match schemas with
   | [s] => .ok s.2
@@ -394,7 +394,7 @@ theorem singleIndexLabel_ok (schemas : List (Nat × Name)) (n : Name) :
     · rintro ⟨id, rfl⟩; rfl
   · rename_i h; simp; intro id he; exact h _ he
 
-/-! ### `apply_effects` (`:54`) -/
+/-! ### `apply_effects` (`:58`) -/
 
 /-- Open, apply every record in order threading the `IndexDocs` (stop at the
 first refusal), `g.validate()?` (the batch `Graph::new_version` opened: both id

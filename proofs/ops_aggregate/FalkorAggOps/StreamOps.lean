@@ -208,6 +208,32 @@ theorem srcPos_named (schema : List String) (ys : List (Nat × Option String)) (
     (srcPosOf schema ys)[i]'(by simp [srcPosOf]; exact hi) = k := by
   simp [srcPosOf, hn, hk]
 
+/-- A yield with no name (an unnamed pattern entity has none since #3303: `output.name()` is
+`None`) or a name that is not a procedure column reads the column at its yield position. -/
+theorem srcPos_fallback (schema : List String) (ys : List (Nat × Option String)) (i : Nat) (hi : i < ys.length)
+    (h : ((ys[i]).2.bind fun n => schema.idxOf? n) = none) :
+    (srcPosOf schema ys)[i]'(by simp [srcPosOf]; exact hi) = i := by
+  simp [srcPosOf, List.getElem_zipIdx, h]
+
+theorem maskOf_lt_aux (pos : List Nat) (m : Nat) (hm : m < 2 ^ 32) :
+    pos.foldl (fun m p => if p < 32 then m ||| (1 <<< p) else m) m < 2 ^ 32 := by
+  induction pos generalizing m with
+  | nil => simpa using hm
+  | cons p ps ih =>
+    simp only [List.foldl_cons]
+    apply ih
+    by_cases hp : p < 32
+    · simp only [hp, ite_true]
+      apply Nat.or_lt_two_pow hm
+      rw [Nat.shiftLeft_eq, Nat.one_mul]
+      exact Nat.pow_lt_pow_right (by decide) hp
+    · simpa [hp] using hm
+
+/-- The yield mask fits `yield_mask: u32`: positions at or above 32 contribute no bit (no
+overflowing shift). -/
+theorem maskOf_lt (pos : List Nat) : maskOf pos < 2 ^ 32 :=
+  maskOf_lt_aux pos 0 (by decide)
+
 /-- procedure_call.rs:115-123 -/
 structure PcSt where
   pendingRow : Option Nat

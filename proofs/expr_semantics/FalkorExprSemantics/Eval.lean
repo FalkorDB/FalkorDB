@@ -1,6 +1,6 @@
 import FalkorExprSemantics.EvalSyntax
 /-!
-# `ExprEval::eval_node` (eval.rs:340-1134): the evaluator over `E`
+# `ExprEval::eval_node` (eval.rs:341-1135): the evaluator over `E`
 
 The tree `E`, the operations `Ops`, the function record `Fn` and the non-recursive helpers of
 the arms are in `EvalSyntax.lean`; this module is the mutually recursive evaluator and its
@@ -11,7 +11,7 @@ namespace FalkorExpr.Eval
 variable {V : Type} (O : Ops V)
 
 mutual
-/-- `eval_node` (eval.rs:340) with `eval_compound` (:535) and `eval_case` (:495): the arms in
+/-- `eval_node` (eval.rs:341) with `eval_compound` (:535) and `eval_case` (:495): the arms in
 source order. -/
 def evalNode (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) : E V → Except String V
   | .const v => .ok v

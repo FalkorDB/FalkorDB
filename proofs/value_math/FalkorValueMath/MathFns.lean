@@ -252,10 +252,10 @@ theorem log_int_nonpos (n : Int) (hn : n ≤ 0) (hz : m.ln .pzero = .ninf) (hneg
 
 /-! ## `coalesce` (math.rs:314) -/
 
-/-- `OrderedEnum::order` (value.rs:1178): proofs/core's `V.order`. -/
+/-- `OrderedEnum::order` (value.rs:1219): proofs/core's `V.order`. -/
 def order (x : V FC) : Nat := x.order
 
-/-- `compare_value(x, Null).0` (value.rs:1224): no same-variant or Int/Float arm matches
+/-- `compare_value(x, Null).0` (value.rs:1266): no same-variant or Int/Float arm matches
 a `Null` right operand unless `x` is `Null`, so the `(_, Null)` arm compares type
 orders. -/
 def cmpWithNull (x : V FC) : Ordering := compare (order x) (order .null)

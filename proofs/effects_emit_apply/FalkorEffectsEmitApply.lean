@@ -20,25 +20,25 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 
 | Lean                                   | Rust                                                        |
 |----------------------------------------|-------------------------------------------------------------|
-| `Basic.memoStep`, `memoGroup`          | the `slots`/`index`/`last` loop, `emit.rs:523-561`, `814-846` |
+| `Basic.memoStep`, `memoGroup`          | the `slots`/`index`/`last` loop, `emit.rs:520-558`, `808-840` |
 | `Basic.groupBy`                        | first-appearance grouping (spec; also `proofs/replication`) |
 | `Basic.sortDedup`                      | `labels.sort_unstable(); labels.dedup()`                    |
-| `Emit.mergeRow`, `gatherRows`          | `gather_rows`, `emit.rs:921-949`                            |
+| `Emit.mergeRow`, `gatherRows`          | `gather_rows`, `emit.rs:917-945`                            |
 | `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs:60`                       |
 | `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:395`                           |
 | `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:323` (opcode granularity)       |
 | `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:2013` (#3461: +2 per cancelled entity; #3459: + `staged_labels_removed`) |
 | `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
-| `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:532,552`        |
-| `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:210`                    |
-| `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs:318`                    |
-| `Apply.setLabels`                      | `Record::SetLabels` arm, `apply.rs:352`                     |
-| `Apply.deleteNode`, `okDelete`         | `Record::DeleteNode` arm, `apply.rs:378`                    |
+| `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:560,586`        |
+| `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:214`                    |
+| `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs:346`                    |
+| `Apply.setLabels`                      | `Record::SetLabels` arm, `apply.rs:380`                     |
+| `Apply.deleteNode`, `okDelete`         | `Record::DeleteNode` arm, `apply.rs:406`                    |
 | `Apply.RG.WF`                          | "nothing hangs off a dead id; edge endpoints live"          |
-| `Live.applyRec`, `Live.applyAll`       | the checked arms of `apply_record` since #3022 (`apply.rs:160`) |
-| `Live.needLive`, `ApplyHelpers.requireLive` | `require_live`, `apply.rs:647` (#3022)                  |
-| `Live.firstWithRels`                   | `Graph::first_node_with_relationships`, `graph.rs:2421` (spec) |
-| `Live.danglingRel`                     | `verify_created_relationships`, `graph.rs:1646`            |
+| `Live.applyRec`, `Live.applyAll`       | the checked arms of `apply_record` since #3022 (`apply.rs:164`) |
+| `Live.needLive`, `ApplyHelpers.requireLive` | `require_live`, `apply.rs:685` (#3022)                  |
+| `Live.firstWithRels`                   | `Graph::first_node_with_relationships`, `graph.rs:2434` (spec) |
+| `Live.danglingRel`                     | `verify_created_relationships`, `graph.rs:1648`            |
 
 ## Proven (53 theorems)
 
@@ -87,7 +87,7 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 ## Re-target to origin/main `1d15bf713` (from `0f45a8685`)
 
 * **#3298 (`2bb51088b`, issue #3247)** — the `CREATE_NODE` arm refuses an id list with
-  a repeat (`nodes.len() != ids.count()`, `apply.rs:223`). `applyRec .createNode` now
+  a repeat (`nodes.len() != ids.count()`, `apply.rs:226`). `applyRec .createNode` now
   checks `ids.Nodup` first; `applyRec_binv`/`apply_wf` re-proved. New
   `createNode_repeat_refused`, `createNode_ok_nodup`,
   `a_repeated_node_id_in_one_create_is_refused` (an abstract refusal check on the Rust test's input `[2, 3, 2]`: the `.graph` constructor only, the message text is not modelled). The commit gate (W2-effects-1, `commit.rs:107-108`) is unchanged.
@@ -195,7 +195,7 @@ node) — refused since #3298 (`createNode_repeat_refused`).
 
 ## Suspected, unconfirmed
 
-* ~~The documented `rel_bound` gap (`emit.rs:448-454`)~~ — **confirmed as #3447**
+* ~~The documented `rel_bound` gap (`emit.rs:448-451`)~~ — **confirmed as #3447**
   (2026-10-22): when the same segment also creates a surviving edge above the
   cancelled id, the replica's relationship `IdSpace::verify` refuses the hole and
   forces a full resync. Proven in `CancelGap.lean` (`pre3461_bug3447_cancelled_edge_id_gap`); fixed by #3461.
@@ -212,12 +212,12 @@ master's pre-segment state accepts. Two properties, both refuted on b84473a7f:
 | Lean | Rust (b84473a7f) |
 | --- | --- |
 | `CancelGap.verifyRange` | `IdSpace::verify`'s hole check (id_space.rs:737-790) |
-| `CancelGap.typesAfterCommit` | `Pending::commit` (pending.rs:1345-1371, #3461): `created_rels_by_type` keys via `create_relationships_bulk`, then every `cancelled_relationships` type via `get_type_id_mut` (`typesAfterCommitPre3461`: the keys only, before #3461) |
-| `CancelGap.toLive` | opcode records → `apply_record` arms (`RemoveLabels` `require_live`, apply.rs:359-360) |
+| `CancelGap.typesAfterCommit` | `Pending::commit` (pending.rs:1367-1413, #3461): `created_rels_by_type` keys via `create_relationships_bulk`, then every `cancelled_relationships` type via `get_type_id_mut` (`typesAfterCommitPre3461`: the keys only, before #3461) |
+| `CancelGap.toLive` | opcode records → `apply_record` arms (`RemoveLabels` `require_live`, apply.rs:387-388) |
 
 * **#3447** (property `RelIdsCovered`: every relationship id allocated in the
   segment reaches a `CREATE_EDGE`): `digest_cancelled` skips a cancelled edge
-  whose type has no id (emit.rs:455), and a type whose only edges were cascaded
+  whose type has no id (emit.rs:451), and a type whose only edges were cascaded
   is never registered. **Fixed by #3461** (f203972c5: commit registers every
   cancelled type): `relIdsCovered_after_commit` (for every `Pending`),
   `fixed3447_cancelled_edge_id_gap`; history `pre3461_bug3447_cancelled_edge_id_gap` (live repro `CREATE
@@ -248,6 +248,21 @@ master's pre-segment state accepts. Two properties, both refuted on b84473a7f:
   (see `proofs/id_space`).
 * Index/constraint DDL is checked only by a live Rust-vs-C differential (18
   steps, all agree).
+
+## Re-sync to 256ab4d3f (from 43936bab9)
+* **#3446 (`543357f1e`)**: the `CREATE_NODE` arm of `apply_record` checks the attribute shape on the id *count*
+  (`check_attr_shape(g, ids.len(), ..)`, the model's `checkAttrShape` already took a count), materialises the
+  ids only when there are attributes, and otherwise writes the labels `NODE_LABEL_CHUNK = 2^16` ids per call
+  (a record with neither never expands its ids). New in `Apply.lean`: `chunkLoop`, `chunkLoop_eq_write`
+  (any chunk size `n > 0`: the chunked loop is the one-shot label write), `chunkLoop_labels`, so `createOne`
+  / `wf_createOne` / `applyRec .createNode` stand unchanged. The label write now follows the shape check; a
+  refusal is rolled back with the rest of the buffer either way.
+* #3461 / #3459 (#3447, #3448) were already modelled (`CancelGap.lean`, `pre3461_*`); `digest_cancelled`'s
+  comment changed (every cancelled type is registered by `Pending::commit`) and its code did not.
+* #3787 (clippy): `index_field_flags` takes `IndexType` by value, `index_options` likewise, `map_or_default`
+  in `digest_created_edges`, `ok_or_else` in `resolve_type`, `ToString::to_string` paths; no behaviour change.
+* #3683: `commit.rs` calls `runtime.upgrade_to_write()` directly; the effects gate is unchanged (`commit.rs:108`).
+* Cites re-pinned by function name (`apply.rs` arms +28, `emit.rs`, `pending.rs:2013`).
 
 ## Re-pinned to 5e475e6c9 (#3436)
 No model change. `emit.rs` (`for_each_record`, `build_index_buffer`, `digest_*`) takes

@@ -84,7 +84,7 @@ Mostly:
 4. **State the condition.** `Separable f` says `f` on a tagged batch equals the concatenation of `f` on each row alone, re-tagged.
 5. **Prove by rewriting.** Rewrite `f (tag xs 0)` with `Separable`, then `lookup_tagged` shows that looking up each origin in the tagged input finds exactly the row that produced it.
 
-The hypothesis `Separable` is the whole question. It is proven for row-local operators and their pipelines, and refuted for `ValueHashJoin` and `count(*)` (`vhj_not_separable`, `count_not_separable`). For the real child operators of each plan it is not derived from their code; that is why these rows are CONDITIONAL (see [Coverage](#coverage)).
+The hypothesis `Separable` is the whole question. It is proven for row-local operators and their pipelines, and refuted for `count(*)` (`count_not_separable`) and for the pre-#3035 `ValueHashJoin` (`vhj_not_separable`; the join is per-origin since #3035, `CartVhj.vhjRowsPO`). For the real child operators of each plan it is not derived from their code; that is why these rows are CONDITIONAL (see [Coverage](#coverage)).
 
 ## Bugs found
 
@@ -143,14 +143,11 @@ The project has no dependencies beyond Lean core. The id-space `reserve` it call
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 65 |
+| PROVEN | 71 |
 | CONDITIONAL | 6 |
-| MODELLED | 5 |
-| AXIOMATISED | 1 |
 
 - **CONDITIONAL:** `ApplyOp::next_batched`, `OptionalOp::next_batched`, `SemiApplyOp::next`, `OrApplyMultiplexerOp::next`, all resting on `Separable` (above), and the dispatchers `ApplyOp::next` and `OptionalOp::next` that call `next_batched`.
-- **MODELLED:** four `batch.rs` helpers the idiom is built from (`clone_active_rows_seq_origin`, `merge_over_input`, `origin_row`, `gather`). They are modelled as `tag`, the abstract merge, the origin tag and the fallback gather; the column-level code is not. Also `BatchRow::to_owned_row` (`MergeSlot.Row.ofCells`), used only to build the #3368/#3369 rows.
-- **AXIOMATISED:** `BatchOp::set_argument_batch`. It is not an axiom in Lean: its behaviour is what the `Separable` hypothesis describes.
+- **Formerly MODELLED / AXIOMATISED, now PROVEN (`BatchRows`, `MergeSlot`):** `clone_active_rows_seq_origin` (`cloneSeq_spec`, `cloneSeq_tag` = `Correlated.tag`), `merge_over_input` (`mergeOverInput_row`: bound slots equal `Row::merge`'s; only a slot unbound on both sides differs), `origin_row`, `gather`, `BatchRow::to_owned_row` (`ofCells_slot`: one slot per column, trailing `Unbound` kept in scope), `BatchOp::set_argument_batch` (`slots_setArg`: every `Argument` leaf holds the batch, compacted below a join's right child; `per_origin = len > 1`).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 

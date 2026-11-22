@@ -11,10 +11,10 @@ definitions, so the agreement needs no premise.
 
 | here | there |
 | --- | --- |
-| `St` | the state a read sees: `Runtime.deleted_{nodes,relationships}` (association lists: `get` = `lookup`, `is_empty` = `[]`), whether `Pending.{new,existing}_*_attrs` are empty (`pendingN`/`pendingR` are the map lookups of `Pending::get_*_attribute`), the committed stores' `get_attr_by_idx` (`byIdxN`/`byIdxR`, attribute_store.rs:1171), and attribute-id resolution `node_attr_id`/`rel_attr_id` (runtime.rs:1544-1569: memoized `Graph::get_node_attr_id` / `get_rel_attr_id` = `attrs_name.get_index_of(attr) as u16`, graph.rs:1988 / :2006; the memo answers the lookup, proofs/runtime_core `attrIdM_correct`) |
+| `St` | the state a read sees: `Runtime.deleted_{nodes,relationships}` (association lists: `get` = `lookup`, `is_empty` = `[]`), whether `Pending.{new,existing}_*_attrs` are empty (`pendingN`/`pendingR` are the map lookups of `Pending::get_*_attribute`), the committed stores' `get_attr_by_idx` (`byIdxN`/`byIdxR`, attribute_store.rs:1171), and attribute-id resolution `node_attr_id`/`rel_attr_id` (runtime.rs:1544-1569: memoized `Graph::get_node_attr_id` / `get_rel_attr_id` = `attrs_name.get_index_of(attr) as u16`, graph.rs:1991 / :2006; the memo answers the lookup, proofs/runtime_core `attrIdM_correct`) |
 | `pendGetN` / `pendGetR` | `Pending::get_node_attribute` / `get_relationship_attribute` (pending.rs:614-630, :963-979): `None` unless `has_*_attrs()` (:603-611) |
 | `getNodeAttribute` | `Runtime::get_node_attribute` + `_no_delete_check` (runtime.rs:1571-1587, `_no_delete_check` :1591-1602) |
-| `getRelAttribute` | `Runtime::get_relationship_attribute` (runtime.rs:1622-1647); its committed fallback `g.get_relationship_attribute(id, attr)` is `attr_by_name` (graph.rs:3574: `get_index_of(attr)? as u16`, then `get_attr_by_idx`) |
+| `getRelAttribute` | `Runtime::get_relationship_attribute` (runtime.rs:1622-1647); its committed fallback `g.get_relationship_attribute(id, attr)` is `attr_by_name` (graph.rs:3594: `get_index_of(attr)? as u16`, then `get_attr_by_idx`) |
 | `matNode` / `matRel` | `materialize_{node,relationship}_property_values` (runtime.rs:1668-1710, :1728-1770); the hot path's `get_{node,relationship}_attributes_by_idx` (graph.rs:2671, :3514) is `get_attrs_by_idx_batch_into` (attribute_store.rs:1182-1193), the same lookup per key with `Null` as default |
 
 **`matNode_eq`**, **`matRel_eq`**: the bulk read is, id for id, the per-row read (or `Null`),

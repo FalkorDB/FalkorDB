@@ -5,18 +5,19 @@ import SearchConcurrency.Search
 | here | there |
 | --- | --- |
 | `vectorQuery` (generic over the id type) | the shared body of both fns below |
-| `vectorQueryNodes`  | `graph/src/graph/graph.rs:4373-4433` `vector_query_nodes`, `count = node_count()` (`:1145`) |
-| `vectorQueryEdges`  | `graph.rs:4439-4495` `vector_query_edges`, `count = relationship_count()` (`:1162`) |
-| `opOk = false`      | `graph.rs:4381-4385` / `:4447-4451` `!indexer.is_operational(label)` → `Err("Invalid arguments for procedure ..")` (#3382, PR #3581) |
-| `clampK`            | `graph.rs:4399` / `:4464` `k.min(count.max(1) as usize)` |
-| `KnnIndex.query`    | `node_indexer.vector_query` / `edge_indexer.vector_query_edges` (RediSearch FFI) |
-| `dimCheck`          | `graph.rs:4387-4394` / `:4453-4460` dimension-mismatch `Err` |
-| `attrKnown = false` | `graph.rs:4405-4407` / `:4470-4472` `return Ok(Vec::new().into_iter())` |
-| `outCap`            | `graph.rs:4415-4416` / `:4480-4481` `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
-| `filterMap step`    | `graph.rs:4419-4422` / `:4484-4487` `let Value::VecF32 .. else continue` + `vec_distance::distance` |
-| `mergeSort`         | `graph.rs:4431` / `:4493` stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
+| `vectorQueryNodes`  | `graph/src/graph/graph.rs:4400-4461` `vector_query_nodes`, `count = node_count()` (`:4427`; `node_count` `:1137`) |
+| `vectorQueryEdges`  | `graph.rs:4467-4524` `vector_query_edges`, `count = relationship_count()` (`:4493`; `relationship_count` `:1154`) |
+| `opOk = false`      | `graph.rs:4409-4413` / `:4476-4480` `!indexer.is_operational(label)` → `Err("The vector index on '{label}' is under construction")` (#3382, PR #3581; C: "Invalid arguments for procedure") |
+| `clampK`            | `graph.rs:4427` / `:4493` `k.min(count.max(1) as usize)` |
+| `KnnIndex.query`    | `node_indexer.vector_query` (`:4428`) / `edge_indexer.vector_query_edges` (`:4495-4496`) (RediSearch FFI) |
+| `dimCheck`          | `graph.rs:4415-4422` / `:4482-4489` dimension-mismatch `Err` |
+| `attrKnown = false` | `graph.rs:4433-4435` / `:4499-4501` `return Ok(Vec::new().into_iter())` |
+| `outCap`            | `graph.rs:4443` / `:4509` `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
+| `filterMap step`    | `graph.rs:4447-4455` / `:4513-4519` `let Value::VecF32 .. else continue` + `vec_distance::distance` |
+| `mergeSort`         | `graph.rs:4459` / `:4522` stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
 
-(Line numbers are for PR #3581 head d86528bf2; the model was written against 89d68334a, #3088.)
+(Line numbers are for main 256ab4d3f; the model was written against 89d68334a, #3088, and re-checked
+against #3581's gate and #3736's refactors, which leave the arms above unchanged.)
 
 RediSearch is a hypothesis structure (`KnnIndex`), not an axiom: it holds `ranked`, the
 index's documents in its own (approximate-distance) order, at most `count` of them

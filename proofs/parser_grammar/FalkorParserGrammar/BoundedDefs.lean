@@ -40,7 +40,7 @@ check now proves those agree with the grammar. -/
 def known (l : List Tok) : Bool :=
   let pairs := l.zip (l.drop 1)
   pairs.any (fun (x, y) =>
-      (x == .plus && y == .dash) ||                                   -- `+-x` (sign_sequences)
+      ((x == .plus || x == .dash) && (y == .plus || y == .dash)) ||    -- a run of signs (sign_runs)
       (x == .kw .not_ && (y == .kw .in_ || y == .kw .contains))) ||   -- `x NOT IN y` extension
     -- a run of ≥ 3 NOTs folds by parity (not_run_folds); none fits in 3 tokens with an operand
     (l.zip (l.drop 1) |>.zip (l.drop 2) |>.any (fun ((x, y), z) =>

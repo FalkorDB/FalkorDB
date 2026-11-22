@@ -15,9 +15,10 @@ Results:
 * `traverse_nodes_nodup` — node results never repeat and never contain the start.
 * `traverse_both_edges_nodup` — `direction:'both'` edge results never repeat a
   relationship (the `seen_edges` de-dup), given relationship ids identify edges.
-* CONFIRMED divergences from C (live 18900 C / 18901 Rust and `rtest/tests/w5.rs`):
-  `traverse_self_loop_twice` (edges mode returns a self-loop twice: C `[1,0]`,
-  Rust `[1,0,1]`) and `traverse_drops_self_neighbour` (nodes mode omits the start
+* `fixed3084_traverse_self_loop_once` (was `traverse_self_loop_twice`, fixed by #3084 5f147f10e: a
+  self-loop is reported once by `get_node_relationships_by_type`).
+* CONFIRMED divergence from C (live 18900 C / 18901 Rust and `rtest/tests/w5.rs`):
+  `traverse_drops_self_neighbour` (nodes mode omits the start
   even when it is its own neighbour: C `[0,1]`, Rust `[1]`, while Rust's own
   `getNeighbors` gives `[0,1]`).
 -/
@@ -186,7 +187,7 @@ theorem mem_edgesOf_both (es : List E) (c : TCfg) (hd : c.dir = .both) (nid : Na
     · exact (List.mem_filter.mp h).1
   rw [hd] at h'
   simp only [collectEdges, nodeRels, List.mem_append, List.mem_filter, beq_iff_eq] at h'
-  rcases h' with ⟨h1, h2⟩ | ⟨h1, h2⟩
+  rcases h' with ⟨h1, h2⟩ | ⟨⟨h1, h2⟩, _⟩
   · exact ⟨h1, Or.inl h2⟩
   · exact ⟨h1, Or.inr h2⟩
 
@@ -298,9 +299,10 @@ def selfLoopGraph : List E := [⟨0, 0, 1, "R"⟩, ⟨1, 0, 0, "R"⟩, ⟨2, 1, 
 
 def cfg1 (retEdges : Bool) : TCfg := ⟨.outgoing, [], fun _ => true, retEdges, 1⟩
 
-/-- BUG (confirmed): edges mode returns the self-loop e1 twice (C: [1, 0]). -/
-theorem traverse_self_loop_twice :
-    ((traverse1 selfLoopGraph (cfg1 true) 0).2.map (·.id)) = [0, 1, 1] := by decide
+/-- `pre3084_traverse_self_loop_twice` (historical; fixed by #3084 5f147f10e): before it, edges mode
+returned the self-loop e1 twice (`[0, 1, 1]`, C: `[1, 0]`). Now it is listed once. -/
+theorem fixed3084_traverse_self_loop_once :
+    ((traverse1 selfLoopGraph (cfg1 true) 0).2.map (·.id)) = [0, 1] := by decide
 
 /-- BUG (confirmed): nodes mode omits the start although it is its own
 neighbour (C: [0, 1]); `getNeighbors` on the same node gives [1, 0] as a set {0, 1}. -/

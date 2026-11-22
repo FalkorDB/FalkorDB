@@ -29,20 +29,20 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 | `tagEnc`, `escaped`, `hexDigit` | `mod.rs:566` `tag_encode_lower` |
 | `hexEncode`, `leBytes`, `nodeKey` | `mod.rs:582` `hex_encode_into`, `Document::new` `mod.rs:658` |
 | `hexNibble`, `hexDecode`, `fromLe`, `decodeId` | `mod.rs:592` `hex_nibble`, `mod.rs:602` `decode_id` |
-| `edgeKey` | `Document::new_edge` `mod.rs:685`, `decode_triple` `mod.rs:613`, `delete_edge_document` `mod.rs:1946` |
-| `intLosesPrecision` | `mod.rs:1371` `int_loses_f64_precision` |
-| `setRange`, `docOf` | `Document::set` `mod.rs:717` (Range field arm), field names `mod.rs:121` |
-| `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:730-744` (#3087 dimension guard) |
-| `valueToNumeric` | `mod.rs:1356` |
-| `buildNumRange` | `mod.rs:1376` `build_numeric_range_node` |
-| `buildStrRange` | `mod.rs:1419` `build_string_range_node` |
-| `buildEq`, `buildQ` | `mod.rs:1477` `build_query_node` |
-| `indexHit` | `Index::query` `mod.rs:1691` (null node ⇒ empty iterator) |
-| `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,252,249,309` |
-| `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:324 build_op_query` |
-| `Table.add/del`, `commit` | `add_document` `mod.rs:1907` (ADD_REPLACE), `delete_document` `mod.rs:1929`, `Indexer::commit` `indexer.rs:730` |
-| `Slots.inc/dec/bump/countFor` | `mod.rs:2111/2129/1049/2151`, `indexer.rs:624-717` |
-| `TextOpts.phoneticEnabled`, `PHONETIC_OFF` (`Meta.lean`) | `TextIndexOptions::phonetic_enabled` `text_index_options.rs:48`, `PHONETIC_OFF` `:41`; used by `register_fields` `mod.rs:1245` (#3514) |
+| `edgeKey` | `Document::new_edge` `mod.rs:685`, `decode_triple` `mod.rs:613`, `delete_edge_document` `mod.rs:1957` |
+| `intLosesPrecision` | `mod.rs:1382` `int_loses_f64_precision` |
+| `setRange`, `docOf` | `Document::set` `mod.rs:721` (Range field arm), field names `mod.rs:122` |
+| `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:736-748` (#3087 dimension guard) |
+| `valueToNumeric` | `mod.rs:1368` |
+| `buildNumRange` | `mod.rs:1387` `build_numeric_range_node` |
+| `buildStrRange` | `mod.rs:1430` `build_string_range_node` |
+| `buildEq`, `buildQ` | `mod.rs:1488` `build_query_node` |
+| `indexHit` | `Index::query` `mod.rs:1702` (null node ⇒ empty iterator) |
+| `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,256,253,302` |
+| `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:315 build_op_query` |
+| `Table.add/del`, `commit` | `add_document` `mod.rs:1918` (ADD_REPLACE), `delete_document` `mod.rs:1940`, `Indexer::commit` `indexer.rs:749` |
+| `Slots.inc/dec/bump/countFor` | `mod.rs:2122/2140/1053/2162`, `indexer.rs:661-737` |
+| `TextOpts.phoneticEnabled`, `PHONETIC_OFF` (`Meta.lean`) | `TextIndexOptions::phonetic_enabled` `text_index_options.rs:48`, `PHONETIC_OFF` `:41`; used by `register_fields` `mod.rs:1260` (#3514) |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
 Axiomatised boundary. `rsMatch`/`rsStore` state the documented LLAPI
@@ -86,20 +86,20 @@ without and with the index, on Rust (port 18300) and C (port 18301). The C
 module is `bin/macos-arm64v8-release`. Output is shown as full scan → index
 scan.
 
-1. `bug_folded_temporal_constant` (`utilize_index.rs:631-647` plus `node_by_index_scan.rs:252`).
+1. `bug_folded_temporal_constant` (`utilize_index.rs:895-912` (`is_non_indexable_subexpr`) plus `node_by_index_scan.rs:253`).
    - Query: `MATCH (n:L) WHERE n.v = date('2020-01-01')`, and also `(n:L {v: date(..)})`, `n.v > date(..)`, and edges.
    - Rust returns **every** node of the label: `['date']` → `['date','int']`. C: `['date']`.
    - Cause: the constant is folded to `Constant(Date)`, which `is_non_indexable_subexpr` treats as indexable, so the filter is dropped. The runtime then refuses the index and falls back to a label scan.
    - Fix: keep the filter for any non-scalar `Constant`, or treat an index-refused fallback as "filter required".
-2. `bug_point_equality` (`mod.rs:1685`; `node_by_index_scan.rs:257` says Point is indexable).
+2. `bug_point_equality` (`mod.rs:1697`; `node_by_index_scan.rs:256` says Point is indexable).
    - Query: `n.v = point({latitude:1.0, longitude:2.0})`.
    - Rust: `['p']` → `[]`. C: `['p']`.
    - Fix: add a Point `Equal` arm (a geo node with radius 0 plus the kept filter), or mark Point not indexable for `Equal`.
-3. `bug_in_list_drops_item` (`node_by_index_scan.rs:222`).
+3. `bug_in_list_drops_item` (`node_by_index_scan.rs:226-231`, the `keep` filter of the `InList` arm).
    - Query: `n.v IN [date('2020-01-01'), 2]`.
    - Rust: `['date','int']` → `['int']`. C: `['date','int']`.
    - Fix: if any item is dropped, fall back to a label scan (the filter is already kept).
-4. `bug_multilabel_and` / `bug_multilabel_or` (`utilize_index.rs:503-531`, `mod.rs:1572,1589`).
+4. `bug_multilabel_and` / `bug_multilabel_or` (`utilize_index.rs:503-535`, `mod.rs:1587,1603`).
    - Setup: `(n:A:B)`, with A indexing x and B indexing y.
    - `WHERE n.x = 1 AND n.y = 2` → `[]`. `WHERE n.y = 2 OR n.x = 1` loses rows. `{x:1, y:2}` → `[]`.
    - C returns the rows.
@@ -179,7 +179,7 @@ New modules, all `sorry`-free:
   size heuristic picks, `merge_batch` fast paths = slow path = `merge_sorted`, plus
   `partition_point`, gallop, `pack_branches`/`build_root`/`from_sorted`/`insert_batch`.
 
-NEW CONFIRMED BUG 13 (`index/mod.rs:1398,1426,1484,1496,1554,1615`, `queryField` /
+NEW CONFIRMED BUG 13 (`index/mod.rs:1409,1438,1496,1508,1566,1627`, `queryField` /
 `IndexerM.bug_range_after_fulltext`): `build_query_node` targets
 `self.fields.get(key).and_then(|f| f.first())` — the attribute's *first* field whatever its
 type. After `CREATE FULLTEXT INDEX FOR (n:L) ON (n.s)` then `CREATE INDEX FOR (n:L) ON (n.s)`,
@@ -286,27 +286,43 @@ matching the live repro (ports 6640 Rust / 6641 C):
   the existing spec (`indexer.rs:300-313`) and records `['router']` (`:341-343`); Rust
   matches 'router' (1 row), C does not (0). `createIndex_fresh_stopwords_agree`: the
   new-label path agrees.
-- #3382 (`IndexGaps.lean`). `Ixr.vectorQuery` (`indexer.rs:541` → `mod.rs:1798`) has no
-  `is_operational` gate. Property `VectorQueryRequiresOperational` / `VectorQueryComplete`.
-  `bug3382_vector_query_ignores_operational`, `bug3382_partial_answer`: under
-  construction, main answers `Ok` with 0 rows (a KnnSpec-legal answer from a half-built
-  table); live 0 then 3 rows, C "Invalid arguments for procedure". Fix shape:
-  `vectorQueryGuarded_requires_operational`.
+- #3382 (`IndexGaps.lean`), **FIXED by #3581 (aafdc4ae1)**. `Ixr.vectorQuery` (`indexer.rs:560` →
+  `mod.rs:1809`) has no `is_operational` gate. Property `VectorQueryRequiresOperational` /
+  `VectorQueryComplete`. HISTORICAL: `pre3581_vector_query_ignores_operational`, `pre3581_partial_answer`:
+  under construction, the ungated query answered `Ok` with 0 rows (a KnnSpec-legal answer from a
+  half-built table); live 0 then 3 rows, C "Invalid arguments for procedure". Now
+  `Graph::vector_query_nodes`/`_edges` gate it (`graph.rs:4409,4476`): `gated3581_requires_operational`,
+  `gated3581_i3382_refused`, `vectorQueryGuarded_eq_isOperational`.
 - #2781 (`EdgeResync.lean`). The edge arm of `resync_published_indexes`
-  (`pending.rs:1816-1827`) with `commit_edge_index_locked`'s re-resolved key
-  (`graph.rs:3962-4037`), documents keyed by `(src, dst, id)`. Property
+  (`pending.rs:1872-1880`) with `commit_edge_index_locked`'s re-resolved key
+  (`graph.rs:3989-4064`), documents keyed by `(src, dst, id)`. Property
   `RollbackRestoresEdgeIndex`. `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored`:
   the orphan `(c, d, 0)` survives beside `(a, b, 0)`, as in the live index scan.
   `resyncEdgesFixed_restores` proves the fix (delete the private key when endpoints changed).
 
 ## Re-pinned to 5e475e6c9 (#3436, #2383)
-Re-pin only. `Pending::resync_published_indexes` moved to `pending.rs:1789` (at origin/main 5c7af54f2). #2383 (the native
+Re-pin only. `Pending::resync_published_indexes` moved to `pending.rs:1789` (at origin/main 5c7af54f2; `pending.rs:1844` at 256ab4d3f). #2383 (the native
 index serves `IN [...]` as an InList union of point lookups) changes `falkordb/falkordb_index.rs`
 and `falkordb/numeric.rs`, which belong to `native_index`. It also rewrote the `IN` path in
 `runtime/ops/node_by_index_scan.rs` (the `InList` arm and `can_utilize_index`), which is what `expandIn`,
-`indexable` and `canUtilize` in the table above model: that model needs a re-check against the
-new `InList` arm (not redone in this pass). `indexer.rs`, `index/mod.rs` and the RediSearch wrapper are
-unchanged.
+`indexable` and `canUtilize` in the table above model.
+
+## Re-targeted to 256ab4d3f
+- The `InList` arm re-checked (`InList.lean`): `expandIn_eq_filter`, `canUtilize_or`,
+  `canUtilizeInList_eq_or`, `scan_inlist_faithful` prove the `InList` shape (members filtered by
+  `keep`, utilized iff non-empty and every member indexable) the same as the `Or` of `Equal`s that
+  `expandIn`/`canUtilize` model, so the model is unchanged.
+- #3274 (`create_rs_index` options leak, `Meta.Idx.createRsIndex_*`), #3856 (`Indexer::remove_if_empty`),
+  #3581 (`Indexer::is_operational`, `IndexGaps`), #3683 (`Arc<Graph>` slot in `Indexer`): modelled in
+  place. #2453/#3736/#3737 (native index columns) and #3068 (planner `IN` pushdown) leave `mod.rs`'s
+  RediSearch range path untouched; under the optional `index-falkordb` feature (off in the shipped
+  `.so`) a Range index is answered by the native index instead (`proofs/native_index`), so this
+  project's range theorems describe the default build.
+- Live (release module built from this tree, redis 8.6; C = local `master` build): `repro.py`
+  gives the same result as before for bugs 1-4, 7, 8, 12 and 13 (still present); #3081 and #3072
+  stay fixed. Cites in this header and in the module tables now match 256ab4d3f.
+- Both MODELLED rows (`resync_published_indexes`, `commit_edge_index_locked`) are now PROVEN by
+  their membership theorems in `EdgeResync.lean` (the #2781 rollback property stays refuted).
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs
@@ -321,6 +337,7 @@ import FalkorIndexLayer.IndexerM
 import FalkorIndexLayer.Iter
 import FalkorIndexLayer.IndexGaps
 import FalkorIndexLayer.EdgeResync
+import FalkorIndexLayer.InList
 import FalkorIndexLayer.LeafBytes
 import FalkorIndexLayer.LeafMerge
 import FalkorIndexLayer.LeafAos

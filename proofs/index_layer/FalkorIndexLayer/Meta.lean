@@ -8,9 +8,9 @@ Line numbers are from origin/main (5c7af54f2), located by item name.
 | `IType` | `IndexType` `mod.rs:97` |
 | `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:108-168` |
 | `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:193`, `Hash::hash` `mod.rs:204` |
-| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:888`) |
-| `Idx` | `Index` `mod.rs:876` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
-| `Idx.*` accessors / mutators | `mod.rs:1049-2241` (each cited below) |
+| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:892`) |
+| `Idx` | `Index` `mod.rs:880` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
+| `Idx.*` accessors / mutators | `mod.rs:1053-2252` (each cited below) |
 
 A Rust `HashMap` is modelled as an association list with unique keys; its
 iteration order is unspecified in Rust, so every theorem below is either
@@ -88,7 +88,7 @@ def Field.newVec (name : String) (ty : IType) (v : VecOpts) : Field :=
   { name, ty, options := none, vopts := some v,
     numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
 
-/-- `PartialEq for Field` (`mod.rs:192`): name and type only. -/
+/-- `PartialEq for Field` (`mod.rs:193`): name and type only. -/
 def Field.beqF (a b : Field) : Bool := a.name == b.name && a.ty == b.ty
 /-- `Hash for Field` (`mod.rs:204`): hashes the name only (`H` = any hasher). -/
 def Field.hashF (H : String → Nat) (f : Field) : Nat := H f.name

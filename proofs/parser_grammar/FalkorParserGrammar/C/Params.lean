@@ -5,6 +5,7 @@
 import FalkorParserGrammar.C.ClausesNP
 import FalkorParserGrammar.C.ExprC4
 import FalkorParserGrammar.C.Oracle0
+import FalkorParserGrammar.Model
 
 namespace FalkorParserGrammar.C
 
@@ -472,6 +473,58 @@ theorem np_paramsP (evp : ET → Option LV) (n : Nat) : ∀ f acc, NP (paramsP o
     unfold paramsP; np_go
 
 end
+
+/-! ## `legacy_signs` (#3525, cypher.rs:223-226, 2212-2236)
+
+While a `CYPHER` parameter value goes through the expression fallback, `legacy_signs` is set
+and a run of signs is limited to what the grammar took before runs parsed: `+`, `-` or `+-`.
+The expression oracle in `paramValueP` is abstract; this is the one place where its sign
+prefix differs from `countSigns` (the `legacy_signs = false` path). -/
+
+/-- The sign loop with `legacy_signs` set: `.none` is the "Invalid input" error, which fires
+on a `+` or `-` after a `-`, or on a second `+`. Otherwise it returns the `-` count and the rest. -/
+def legacySigns : Nat → Nat → List Tok → Option (Nat × List Tok)
+  | neg, plus, .dash :: r => if neg > 0 then none else legacySigns (neg + 1) plus r
+  | neg, plus, .plus :: r => if neg > 0 ∨ plus > 0 then none else legacySigns neg (plus + 1) r
+  | neg, _, ts => some (neg, ts)
+
+/-- The accepted legacy runs are exactly the empty run, `+`, `-` and `+-`; a run of
+two or more of one sign, `-+`, and anything longer is refused (`--1`, `---1`, `-+-1`, `++1`
+in the Rust test `malformed_params_name_the_parameter`'s neighbour `param_of`). -/
+theorem legacySigns_runs :
+    legacySigns 0 0 [.int 1] = some (0, [.int 1]) ∧
+    legacySigns 0 0 [.plus, .int 1] = some (0, [.int 1]) ∧
+    legacySigns 0 0 [.dash, .int 1] = some (1, [.int 1]) ∧
+    legacySigns 0 0 [.plus, .dash, .int 1] = some (1, [.int 1]) ∧
+    legacySigns 0 0 [.dash, .dash, .int 1] = none ∧
+    legacySigns 0 0 [.dash, .dash, .dash, .int 1] = none ∧
+    legacySigns 0 0 [.dash, .plus, .dash, .int 1] = none ∧
+    legacySigns 0 0 [.plus, .plus, .int 1] = none ∧
+    legacySigns 0 0 [.plus, .dash, .dash, .int 1] = none := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Whatever token list, a legacy-accepted run has at most one `-`. -/
+theorem legacySigns_neg_le (ts : List Tok) : ∀ neg plus r, legacySigns neg plus ts = some r →
+    neg ≤ 1 → r.1 ≤ 1 := by
+  induction ts with
+  | nil => intro neg plus r h hn; simp [legacySigns] at h; subst h; exact hn
+  | cons t rest ih =>
+    intro neg plus r h hn
+    by_cases hd : t = .dash
+    · subst hd
+      simp only [legacySigns] at h
+      split at h
+      · simp at h
+      · exact ih _ _ _ h (by omega)
+    · by_cases hp : t = .plus
+      · subst hp
+        simp only [legacySigns] at h
+        split at h
+        · simp at h
+        · exact ih _ _ _ h hn
+      · have : legacySigns neg plus (t :: rest) = some (neg, t :: rest) := by
+          unfold legacySigns; split <;> simp_all
+        rw [this] at h; cases h; exact hn
 
 /-- `CYPHER a=1 MATCH ...`: the pair loop stops at `MATCH` (no `=` follows)
 and leaves it for the query. -/

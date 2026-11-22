@@ -5,15 +5,15 @@
 forward layers (below, `checkLayers_*`) and made a corrupt id blob an `Err`
 (`Codes.decodeBlob_never_dies`). #3033 adds the promotion-completeness check:
 every tensor-section pair must land on a `MULTI_EDGE` forward entry
-(tensor.rs:1632-1636) and the number of `me` pairs with ids must equal the
+(tensor.rs:1645-1649) and the number of `me` pairs with ids must equal the
 number of markers, counted by `Matrix::<u64>::count_value_eq` (matrix.rs:1232,
-`GrB_select` with `GrB_VALUEEQ_UINT64`) (tensor.rs:1617, 1665-1670). The section
+`GrB_select` with `GrB_VALUEEQ_UINT64`) (tensor.rs:1630, 1675-1680). The section
 "Promotion completeness on decode" below proves it refuses exactly the payloads
 that break the invariant (`decodeCheck_ok_iff`) and accepts every encoded tensor
 (`decodeCheck_accepts_encoded`). The text that follows is the pre-#3033 state;
 its counterexamples were removed (in 17ccc5412).
 
-`Tensor::decode` (tensor.rs:1553) rebuilds the inline forward matrix `m` from the
+`Tensor::decode` (tensor.rs:1566) rebuilds the inline forward matrix `m` from the
 on-disk forward layers, then fills the multi-edge store `me` from the tensor
 section (then tensor.rs:1609-1647). Before #3033 it never checked the
 *promotion-completeness* invariant that ties them together:
@@ -22,14 +22,14 @@ section (then tensor.rs:1609-1647). Before #3033 it never checked the
 > (tensor.rs module docs; `single_me` / `multi_me` in `proofs/versioned_matrix`).
 
 A crafted payload can put a pair in the tensor section (giving it an `me` row)
-without a matching `MULTI_EDGE` forward entry. Then `edge_count` (tensor.rs:1231),
+without a matching `MULTI_EDGE` forward entry. Then `edge_count` (tensor.rs:1230),
 which is *checked* precisely because a decoded blob can break an invariant,
 computes `multi` (number of `me` rows) greater than the effective forward
 pattern and the subtraction underflows — a deliberate `panic!`. Reached from the
 very next `Tensor::encode` (BGSAVE / GRAPH.COPY), so a restored graph can no
 longer be saved.
 
-`edge_count`'s identity (tensor.rs:1231):
+`edge_count`'s identity (tensor.rs:1230):
 `|E| = |m| + |dp| − |dm| − |dp∩m| − multi + |me|`, each step checked.
 
 Confirmed: `bug_tensor_decode_accepts_orphan_me_row_then_edge_count_panics`
@@ -41,7 +41,7 @@ Confirmed: `bug_tensor_decode_accepts_orphan_me_row_then_edge_count_panics`
 namespace GBW
 
 /-- Checked `u64` subtraction, matching `checked_sub().unwrap_or_else(panic)`
-(tensor.rs:1265-1285): `none` = the panic. -/
+(tensor.rs:1264-1284): `none` = the panic. -/
 def csub (x y : Nat) : Option Nat := if y ≤ x then some (x - y) else none
 
 /-- Checked `u64` add — the two additions in `edge_count`
@@ -49,7 +49,7 @@ def csub (x y : Nat) : Option Nat := if y ≤ x then some (x - y) else none
 `Nat` sum does not fit in a `u64`. -/
 def cadd (x y : Nat) : Option Nat := if x + y < 2 ^ 64 then some (x + y) else none
 
-/-- `Tensor::edge_count` (tensor.rs:1231), the exact left-to-right checked
+/-- `Tensor::edge_count` (tensor.rs:1230), the exact left-to-right checked
 sequence. `some n` = returns `n`; `none` = panics (server crash). -/
 def edgeCount (m dp dm shadow multi me : Nat) : Option Nat :=
   (cadd m dp).bind fun a =>
@@ -59,7 +59,7 @@ def edgeCount (m dp dm shadow multi me : Nat) : Option Nat :=
   cadd a me
 
 /-- The delta/promotion invariants `edge_count`'s doc-comment lists as bounding
-each subtraction (tensor.rs:1231-1265):
+each subtraction (tensor.rs:1230-1264):
 `dm ⊆ m` ⇒ `dm ≤ m`; `dp ∩ dm = ∅` bounds the pattern so `shadow ≤ m+dp−dm`;
 promotion-completeness ⇒ `multi ≤ effective pattern`. The two additions are
 bounded by `u64` itself: `|m| + |dp|` and the final `+ |me|` must fit (the
@@ -96,7 +96,7 @@ theorem edgeCount_value (m dp dm shadow multi me : Nat) (h : Wf m dp dm shadow m
   have e1 : dm ≤ m + dp := by omega
   simp only [Option.bind, ite_eq_left h4, ite_eq_left e1, ite_eq_left h2, ite_eq_left h3, ite_eq_left h5]
 
-/-! ## Forward-layer sizes (#2996, tensor.rs:1562-1573)
+/-! ## Forward-layer sizes (#2996, tensor.rs:1577-1587)
 
 `Tensor::decode` merges the on-disk delta-plus / delta-minus layers into a base
 built at the forward base's size. Since #2996 it refuses a payload whose
@@ -107,7 +107,7 @@ abbrev Dims := Nat × Nat
 
 def inDims (d : Dims) (e : Nat × Nat) : Prop := e.1 < d.1 ∧ e.2 < d.2
 
-/-- tensor.rs:1562-1573 on main: `Err` unless both deltas have the base's dims. -/
+/-- tensor.rs:1577-1587 on main: `Err` unless both deltas have the base's dims. -/
 def checkLayers (m dp dm : Dims) : Except String Unit :=
   if dp ≠ m then .error "Tensor decode: forward delta-plus size"
   else if dm ≠ m then .error "Tensor decode: forward delta-minus size"
@@ -134,15 +134,15 @@ theorem checkLayers_merge_in_bounds_dm (m dp dm : Dims) (h : checkLayers m dp dm
 theorem checkLayers_rejects_main_test : checkLayers (4, 4) (8, 8) (4, 4) ≠ .ok () := by
   rw [Ne, checkLayers_ok_iff]; simp
 
-/-! ## Promotion completeness on decode (#3033, tensor.rs:1608-1670)
+/-! ## Promotion completeness on decode (#3033, tensor.rs:1604-1680)
 
-After the forward merge `Tensor::decode` waits `m` (:1610) and counts its
-`MULTI_EDGE` markers with `Matrix::<u64>::count_value_eq` (:1617). Then every
+After the forward merge `Tensor::decode` waits `m` (:1623) and counts its
+`MULTI_EDGE` markers with `Matrix::<u64>::count_value_eq` (:1630). Then every
 tensor-section entry `(src, dst, ids)` (TM then TDP, one loop here) is refused
 unless `src < nrows ∧ dst < ncols ∧ m.get(src,dst) = Some(MULTI_EDGE)`
-(:1632-1636), and its ids are streamed into the pair's `me` row. At the end the
+(:1645-1649), and its ids are streamed into the pair's `me` row. At the end the
 number of `me` pairs with ids (`multi_pairs_in`, versioned_matrix
-`multiPairsIn_eq`) must equal the marker count (:1665-1670).
+`multiPairsIn_eq`) must equal the marker count (:1675-1680).
 
 Model. `m` is the merged forward matrix as its stored entries (coordinates
 distinct, the GraphBLAS matrix invariant `hk`). `me` rows are identified by
@@ -154,7 +154,7 @@ abbrev Pair := Nat × Nat
 
 /-- `MULTI_EDGE` (tensor.rs:300) = `u64::MAX`. -/
 def MULTI_EDGE : Nat := 2 ^ 64 - 1
-/-- `MSB_MASK` (tensor.rs:1470): single inline ids have it clear. -/
+/-- `MSB_MASK` (tensor.rs:1469): single inline ids have it clear. -/
 def MSB : Nat := 2 ^ 63
 
 /-- A `Matrix<u64>` as its stored entries. -/
@@ -173,7 +173,7 @@ structure SelectValueEqSpec where
   select : MatU → Nat → MatU
   select_eq : ∀ A y, select A y = A.filter (fun e => e.2 == y)
 
-/-- `Matrix::<u64>::count_value_eq` (matrix.rs:1232): select, then `nvals`. -/
+/-- `Matrix::<u64>::count_value_eq` (matrix.rs:1297): select, then `nvals`. -/
 def countValueEq (S : SelectValueEqSpec) (A : MatU) (y : Nat) : Nat := (S.select A y).length
 
 theorem countValueEq_spec (S : SelectValueEqSpec) (A : MatU) (y : Nat) :
@@ -227,11 +227,11 @@ exactly what decode built before #3033. -/
 def rowsFrom (rows : List Pair) (ts : List (Pair × List Nat)) : List Pair :=
   ts.foldl (fun r e => addRow r e.1 e.2) rows
 
-/-- tensor.rs:1632: the per-entry check. -/
+/-- tensor.rs:1645: the per-entry check. -/
 def entryOk (nrows ncols : Nat) (m : MatU) (p : Pair) : Bool :=
   decide (p.1 < nrows) && decide (p.2 < ncols) && (mget m p == some MULTI_EDGE)
 
-/-- tensor.rs:1622-1662: the TM/TDP loop; `.error` = the early `return Err`. -/
+/-- tensor.rs:1636-1673: the TM/TDP loop; `.error` = the early `return Err`. -/
 def tensorLoop (nrows ncols : Nat) (m : MatU) :
     List (Pair × List Nat) → List Pair → Except String (List Pair)
   | [], rows => .ok rows
@@ -239,7 +239,7 @@ def tensorLoop (nrows ncols : Nat) (m : MatU) :
     if entryOk nrows ncols m p then tensorLoop nrows ncols m rest (addRow rows p ids)
     else .error "Tensor decode: edge ids for a pair which is not a multi-edge pair"
 
-/-- `Tensor::decode` from the marker count to the final check (tensor.rs:1617-1670);
+/-- `Tensor::decode` from the marker count to the final check (tensor.rs:1630-1680);
 `.ok rows` = decode returns a tensor whose `me` rows are `rows`. -/
 def decodeCheck (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
     (ts : List (Pair × List Nat)) : Except String (List Pair) :=
@@ -466,7 +466,7 @@ def slotVal : Slot → Nat
   | .multi _ => MULTI_EDGE
 
 /-- The forward matrix decode rebuilds from `encode`'s forward layer: a single id
-verbatim, `count | MSB` mapped back to `MULTI_EDGE` (tensor.rs:1595-1607). -/
+verbatim, `count | MSB` mapped back to `MULTI_EDGE` (tensor.rs:1604-1623). -/
 def encFwd (t : TState) : MatU := t.pairs.map fun e => (e.1, slotVal e.2)
 
 def slotIds : Pair × Slot → Option (Pair × List Nat)

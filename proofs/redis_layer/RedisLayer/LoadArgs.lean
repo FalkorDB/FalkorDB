@@ -39,7 +39,7 @@ Divergences (both confirmed live, ports 19470, Rust b080a44c1 vs C `master`):
   `str::parse::<i64>` does not: `--loadmodule … CACHE_SIZE " 10"` loads on C (`CACHE_SIZE 10`)
   and is refused by Rust; same for `GRAPH.CONFIG SET RESULTSET_SIZE " 5"` (C OK, Rust
   "Failed to set config value"). Trailing whitespace is refused by both.
-* `rust_only_names` — `INDEX_WORKER_THREADS`, `BOLT_PORT`, `EFFECTS_COMPRESSION` load on
+* `rust_only_names` — `INDEX_WORKER_THREADS`, `BOLT_PORT`, `EFFECTS_COMPRESSION`, `INDEX_BUILD_THREAD_COUNT` (#3585; 1..=1024) load on
   Rust; C refuses the load ("unknown configuration field"). Intended Rust extensions.
 -/
 namespace RedisLayer.LoadArgs
@@ -53,7 +53,7 @@ inductive N where
   | cmdInfo | maxInfo | effectsThreshold | delayIndexing | importFolder | tempFolder
   | jsHeap | jsStack | writeLockPoll
   -- Rust only
-  | indexWorkerThreads | boltPort | effectsCompression
+  | indexWorkerThreads | boltPort | effectsCompression | indexBuildThreadCount
   deriving DecidableEq, Repr
 
 def N.str : N → List Nat
@@ -70,6 +70,7 @@ def N.str : N → List Nat
   | .writeLockPoll => b "WRITE_LOCK_POLL_INTERVAL"
   | .indexWorkerThreads => b "INDEX_WORKER_THREADS" | .boltPort => b "BOLT_PORT"
   | .effectsCompression => b "EFFECTS_COMPRESSION"
+  | .indexBuildThreadCount => b "INDEX_BUILD_THREAD_COUNT"
 
 /-- C's `Config_Contains_field` chain, in its order. -/
 def cList : List N :=
@@ -77,7 +78,7 @@ def cList : List N :=
    .resultsetSize, .maxQueued, .queryMemCapacity, .deltaMax, .nodeCreationBuffer, .writeLockPoll, .asyncDelete,
    .cmdInfo, .maxInfo, .effectsThreshold, .delayIndexing, .importFolder, .tempFolder, .jsHeap, .jsStack]
 
-def rustOnly : List N := [.indexWorkerThreads, .boltPort, .effectsCompression]
+def rustOnly : List N := [.indexWorkerThreads, .boltPort, .effectsCompression, .indexBuildThreadCount]
 
 /-- A Rust string `match` over these (distinct) literals. -/
 def parseName (s : List Nat) : Option N := (cList ++ rustOnly).find? (fun n => s == n.str)
@@ -108,7 +109,7 @@ def mapE {α : Type} : Except CfgErr α → Except LErr α
 
 inductive LoadArg where
   | cacheSize (v : Int) | threadCount (v : Int) | ompThreadCount (v : Int)
-  | nodeCreationBuffer (v : Int) | indexWorkerThreads (v : Int)
+  | nodeCreationBuffer (v : Int) | indexWorkerThreads (v : Int) | indexBuildThreadCount (v : Int)
   | importFolder (v : List Nat) | tempFolder (v : List Nat) | boltPort
   | runtime (name : N) (value : List Nat) (parsed : Int)
   deriving DecidableEq, Repr
@@ -134,6 +135,8 @@ def validateLoadOnly (fs : FS) (n : N) (v : List Nat) : Option (Except LErr Load
   | .ompThreadCount => req (positive.map .ompThreadCount)
   | .nodeCreationBuffer => req (nonNeg.map .nodeCreationBuffer)
   | .indexWorkerThreads => req (nonNeg.map .indexWorkerThreads)
+  -- #3585: the native index's build pool, `positive.filter(|&v| v <= 1024)`
+  | .indexBuildThreadCount => req ((positive.filter (fun x => decide (x ≤ 1024))).map .indexBuildThreadCount)
   | .importFolder => req (some (.importFolder v))
   | .tempFolder => some (match validateTempFolder fs v with
       | .ok () => .ok (.tempFolder v)
@@ -156,6 +159,7 @@ def validateConfigSet (n : Option N) (v : List Nat) : Except LErr Int :=
   | some .jsHeap | some .jsStack => mapE (validate .jsHeap v)
   | some .threadCount | some .indexWorkerThreads | some .ompThreadCount | some .cacheSize
   | some .nodeCreationBuffer | some .boltPort | some .importFolder | some .tempFolder => .error .readOnly
+  | some .indexBuildThreadCount => .error .unknown   -- not in the read-only arm: `_ => UNKNOWN_FIELD`
   | none => .error .unknown
 
 /-- `check_timeout_constraints` (`config_cmd.rs:220-253`): fold the batch into the two
@@ -221,6 +225,7 @@ def applyLoadArg : LoadArg → List Nat × Int
   | .ompThreadCount v => (b "OMP_THREAD_COUNT", v)
   | .nodeCreationBuffer v => (b "NODE_CREATION_BUFFER", v)
   | .indexWorkerThreads v => (b "INDEX_WORKER_THREADS", v)
+  | .indexBuildThreadCount v => (b "INDEX_BUILD_THREAD_COUNT", v)
   | .importFolder _ => (b "IMPORT_FOLDER", 0) | .tempFolder _ => (b "TEMP_FOLDER", 0)
   | .boltPort => ([], 0)
   | .runtime n _ x => (n.str, x)
@@ -268,7 +273,7 @@ def cSet (fs : FS) (td tm : Int) (n : N) (v : List Nat) : Option (Int × Int) :=
   | .importFolder => some (td, tm)
   | .tempFolder => if fs.exists_ v && fs.isDir v && fs.writable v then some (td, tm) else none
   | .jsHeap | .jsStack => keep (pos.filter (fun x => decide (1048576 ≤ x)))
-  | .indexWorkerThreads | .boltPort | .effectsCompression => none   -- not C fields
+  | .indexWorkerThreads | .boltPort | .effectsCompression | .indexBuildThreadCount => none   -- not C fields
 
 /-- C reads a `RedisModuleString` as a C string: everything from the first NUL is invisible to
 `strcasecmp`/`strtoll`/`access`. Rust (`to_string_lossy`) keeps the whole string. -/
@@ -716,7 +721,19 @@ theorem rust_only_names :
     applyModuleArgs fs0 0 0 [b "BOLT_PORT", b "7687"] = .ok [.boltPort] ∧
     cInit fs0 [b "BOLT_PORT", b "7687"] = false ∧
     applyModuleArgs fs0 0 0 [b "EFFECTS_COMPRESSION", b "1"] = .ok [.runtime .effectsCompression (b "1") 1] ∧
-    cInit fs0 [b "EFFECTS_COMPRESSION", b "1"] = false := by
+    cInit fs0 [b "EFFECTS_COMPRESSION", b "1"] = false ∧
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "4"] = .ok [.indexBuildThreadCount 4] ∧
+    cInit fs0 [b "INDEX_BUILD_THREAD_COUNT", b "4"] = false := by
+  decide
+
+/-- #3585 `INDEX_BUILD_THREAD_COUNT`: a load argument in `1..=1024` (`validate_load_only`, `config.rs:253`),
+refused outside it, and not settable at run time (`GRAPH.CONFIG SET` answers unknown field). -/
+theorem index_build_range :
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "1"] = .ok [.indexBuildThreadCount 1] ∧
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "1024"] = .ok [.indexBuildThreadCount 1024] ∧
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "0"] = .error .failed ∧
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "1025"] = .error .failed ∧
+    validateConfigSet (some .indexBuildThreadCount) (b "2") = .error .unknown := by
   decide
 
 end RedisLayer.LoadArgs

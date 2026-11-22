@@ -267,6 +267,126 @@ def indexInfo {I} (nodeInfos edgeInfos : List I) : List (String × I) :=
 theorem indexInfo_length {I} (a b : List I) : (indexInfo a b).length = a.length + b.length := by
   simp [indexInfo]
 
+/-! ## `add_native_build` / `native_build_total` (`index-falkordb` only, #3585)
+
+Both are `#[cfg(feature = "index-falkordb")]` and run only from `index_info`: under the feature a
+label with a `Building` native Range column reports that build's progress. The column's own state
+is `FalkorDbIndex::building_read` (proofs/native_index), taken here as the per-attribute answer
+`Option Nat` (`none` = not a `Building` column). -/
+
+/-- The `IndexInfo` fields `add_native_build` reads and writes: `pending: i32`,
+`progress: u64`, `total: u64` (graph/src/index/mod.rs:212). -/
+structure BuildInfo where
+  pending : Int
+  progress : Nat
+  total : Nat
+
+/-- `native_build_total` (graph.rs:4587): the label's `nvals` / the type's `edge_count`; a name
+without a matrix counts 0. -/
+def nativeBuildTotal (g : G V) (isNode : Bool) (label : String) : Nat :=
+  if isNode then ((getLabelMat g label).map (·.ents.length)).getD 0
+  else ((getRelMat g label).map Ten.edgeCount).getD 0
+
+/-- One turn of `add_native_build`'s loop over `field_order`: the pair is
+`(is a Range field, building_read)`; the accumulator is `(columns, least read)`. -/
+def nbStep (acc : Option (Int × Nat)) (a : Bool × Option Nat) : Option (Int × Nat) :=
+  if a.1 then
+    match a.2 with
+    | some read => some (match acc with | none => (1, read) | some (columns, least) => (columns + 1, min least read))
+    | none => acc
+  else acc
+
+def nbFold (attrs : List (Bool × Option Nat)) : Option (Int × Nat) := attrs.foldl nbStep none
+
+/-- `add_native_build` (graph.rs:4551). -/
+def addNativeBuild (g : G V) (isNode : Bool) (label : String) (attrs : List (Bool × Option Nat))
+    (info : BuildInfo) : BuildInfo :=
+  match nbFold attrs with
+  | none => info
+  | some (columns, least) =>
+    let total := nativeBuildTotal g isNode label
+    let done := min least total
+    { pending := info.pending + columns,
+      progress := if info.pending > 0 then min done info.progress else done,
+      total := total }
+
+/-- Fields that are building Range columns. -/
+def nbCount (attrs : List (Bool × Option Nat)) : Nat :=
+  (attrs.filter (fun a => a.1 && a.2.isSome)).length
+
+theorem nbCount_cons (r : Bool) (rd : Option Nat) (l : List (Bool × Option Nat)) :
+    nbCount ((r, rd) :: l) = nbCount l + (if r && rd.isSome then 1 else 0) := by
+  simp only [nbCount, List.filter_cons]
+  by_cases h : (r && rd.isSome) = true <;> simp [h] <;> omega
+
+theorem nbFold_cols : ∀ (attrs : List (Bool × Option Nat)) (acc : Option (Int × Nat)),
+    (attrs.foldl nbStep acc).map (·.1) =
+      (match acc with
+       | none => if nbCount attrs = 0 then none else some (nbCount attrs : Int)
+       | some (c, _) => some (c + nbCount attrs))
+  | [], acc => by cases acc <;> simp [nbCount]
+  | a :: l, acc => by
+    obtain ⟨r, rd⟩ := a
+    have ih := nbFold_cols l (nbStep acc (r, rd))
+    simp only [List.foldl_cons, ih, nbCount_cons]
+    cases r <;> cases rd <;> cases acc <;> simp [nbStep] <;> omega
+
+/-- No building Range column: the info is untouched (the label is not under native construction). -/
+theorem addNativeBuild_none (g : G V) (isNode : Bool) (label : String)
+    (attrs : List (Bool × Option Nat)) (info : BuildInfo) (h : nbCount attrs = 0) :
+    addNativeBuild g isNode label attrs info = info := by
+  have := nbFold_cols attrs none
+  have hn : nbFold attrs = none := by
+    unfold nbFold
+    cases hf : attrs.foldl nbStep none with
+    | none => rfl
+    | some x => rw [hf] at this; simp [h] at this
+  simp [addNativeBuild, hn]
+
+/-- Each building Range column counts as one pending index, and the label's total is reported once. -/
+theorem addNativeBuild_pending (g : G V) (isNode : Bool) (label : String)
+    (attrs : List (Bool × Option Nat)) (info : BuildInfo) (h : 0 < nbCount attrs) :
+    (addNativeBuild g isNode label attrs info).pending = info.pending + nbCount attrs ∧
+    (addNativeBuild g isNode label attrs info).total = nativeBuildTotal g isNode label := by
+  have := nbFold_cols attrs none
+  have hne : ¬ nbCount attrs = 0 := by omega
+  cases hf : attrs.foldl nbStep none with
+  | none => rw [hf] at this; simp [hne] at this
+  | some x =>
+    obtain ⟨c, l⟩ := x
+    rw [hf] at this
+    simp [hne] at this
+    simp only [addNativeBuild, nbFold, hf]
+    simp [this]
+
+/-- The reported progress never exceeds the label's entities (so `m/n` shows `m ≤ n`). -/
+theorem addNativeBuild_progress_le (g : G V) (isNode : Bool) (label : String)
+    (attrs : List (Bool × Option Nat)) (info : BuildInfo) (h : 0 < nbCount attrs) :
+    (addNativeBuild g isNode label attrs info).progress ≤ nativeBuildTotal g isNode label := by
+  have := nbFold_cols attrs none
+  have hne : ¬ nbCount attrs = 0 := by omega
+  cases hf : attrs.foldl nbStep none with
+  | none => rw [hf] at this; simp [hne] at this
+  | some x =>
+    obtain ⟨c, l⟩ := x
+    simp only [addNativeBuild, nbFold, hf]
+    split <;> omega
+
+/-- While RediSearch has a field pending, the progress shown is the smaller of the two. -/
+theorem addNativeBuild_progress_min (g : G V) (isNode : Bool) (label : String)
+    (attrs : List (Bool × Option Nat)) (info : BuildInfo) (h : 0 < nbCount attrs)
+    (hp : 0 < info.pending) :
+    (addNativeBuild g isNode label attrs info).progress ≤ info.progress := by
+  have := nbFold_cols attrs none
+  have hne : ¬ nbCount attrs = 0 := by omega
+  cases hf : attrs.foldl nbStep none with
+  | none => rw [hf] at this; simp [hne] at this
+  | some x =>
+    obtain ⟨c, l⟩ := x
+    simp only [addNativeBuild, nbFold, hf]
+    simp [hp]
+    omega
+
 /-! ## `memory_usage_report` -/
 
 /-- `(sampled_mem * count / sampled_count)`, 0 when nothing was sampled. -/

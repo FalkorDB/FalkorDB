@@ -3,7 +3,7 @@ import FalkorEffectsEmitApply.Basic
 /-!
 # The apply side: which records check liveness, and what a missing check costs
 
-Models the node-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:160-529`)
+Models the node-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:164-557`)
 over an abstract replica: a node id space with a recycle bin, per-node labels
 and properties, and edges as endpoint pairs. The question is the one a hostile
 or divergent `GRAPH.EFFECT` asks: does applying a record the checks accept keep
@@ -33,7 +33,7 @@ structure RG.WF (σ : RG) : Prop where
 
 /-! ## The arms as Rust writes them -/
 
-/-- `Graph::create_nodes` for one id (`apply.rs:216-233`, checked by
+/-- `Graph::create_nodes` for one id (`apply.rs:214-240`, since #3446 the label write follows `check_attr_shape`; checked by
     `IdSpace::create`): a recycled id leaves the bin, a fresh id moves
     the boundary. It sets labels and does **not** reset properties — a recycled
     row keeps whatever the store holds for it (observed: `hostile_update_node_on_dead_id`). -/
@@ -43,17 +43,81 @@ def createOne (σ : RG) (id : Nat) (lbls : List Nat) : RG :=
       free   := fun i => if i = id then false else σ.free i
       labels := fun i => if i = id then lbls else σ.labels i }
 
-/-- `UPDATE_NODE`'s store write (`apply.rs:318-330`). Before #3022 the arm ran
+/-! ### #3446: labels written a chunk at a time
+
+Since #3446 (`543357f1e`) the `CREATE_NODE` arm no longer collects the whole `IdList` into a
+`Vec<u64>` first (a few bytes of range-compressed ids name billions of nodes). `check_attr_shape`
+runs on the id *count*; with attributes the ids are materialised once (bounded by the payload: the
+shape check made `rows.len() = count * width`); with labels but no attributes the labels are
+written `NODE_LABEL_CHUNK = 2^16` ids per call (`apply.rs:268-288`), and with neither the ids are
+never expanded. `chunkLoop` is that `loop { chunk = remaining.take(N); if empty { break }; write }`;
+`chunkLoop_eq_write` says the chunking changes nothing: for any chunk size `n > 0` the result is
+the one-shot write of the whole list (the shape `createOne` and `wf_createOne` reason about). -/
+
+/-- The one-shot label write of `set_node_labels_product(&ids, &labels, ..)`: every listed id gets
+exactly `lbls` (`createOne`'s `labels` field, over a list of ids). -/
+def writeLabels (σ : RG) (ids : List Nat) (lbls : List Nat) : RG :=
+  { σ with labels := fun i => if ids.contains i then lbls else σ.labels i }
+
+/-- `apply.rs:277-287`: `chunk.clear(); chunk.extend(remaining.by_ref().take(N)); if chunk.is_empty()
+{ break } write(chunk)`; `fuel` stands for "the loop terminates" (each round drains `min N |remaining|`
+ids). -/
+def chunkLoop (n : Nat) (lbls : List Nat) : Nat → List Nat → RG → RG
+  | 0, _, σ => σ
+  | fuel + 1, rest, σ =>
+    if rest.take n = [] then σ
+    else chunkLoop n lbls fuel (rest.drop n) (writeLabels σ (rest.take n) lbls)
+
+theorem writeLabels_append (σ : RG) (a b lbls : List Nat) :
+    writeLabels (writeLabels σ a lbls) b lbls = writeLabels σ (a ++ b) lbls := by
+  simp only [writeLabels, List.contains_append, Bool.or_eq_true]
+  congr 1
+  funext i
+  by_cases hb : i ∈ b <;> by_cases ha : i ∈ a <;> simp [hb, ha]
+
+/-- Writing a list in chunks of `n > 0` is writing it at once, given enough fuel (`|ids| + 1`
+rounds: every round drains at least one id). Holds for every `σ`, `ids` and label list. -/
+theorem chunkLoop_eq_write (n : Nat) (hn : 0 < n) (lbls : List Nat) :
+    ∀ (fuel : Nat) (ids : List Nat) (σ : RG), ids.length < fuel →
+      chunkLoop n lbls fuel ids σ = writeLabels σ ids lbls
+  | 0, ids, σ, h => by omega
+  | fuel + 1, ids, σ, h => by
+    simp only [chunkLoop]
+    by_cases he : ids.take n = []
+    · have hnil : ids = [] := by
+        rcases List.take_eq_nil_iff.mp he with h' | h'
+        · omega
+        · exact h'
+      subst hnil
+      simp [writeLabels]
+    · simp only [he, if_false]
+      have hpos : 0 < ids.length := by
+        cases ids with
+        | nil => simp at he
+        | cons a t => simp
+      have hlen : (ids.drop n).length < fuel := by
+        simp only [List.length_drop]; omega
+      rw [chunkLoop_eq_write n hn lbls fuel (ids.drop n) _ hlen, writeLabels_append,
+        List.take_append_drop]
+
+/-- The loop is fed `ids.length + 1` rounds at most; the real loop has no fuel and stops on the first
+empty chunk, which `chunkLoop_eq_write` shows it reaches. A record with no labels writes nothing, and
+with `lbls = []` the one-shot write is `createOne`'s own (`labels := lbls`). -/
+theorem chunkLoop_labels (n : Nat) (hn : 0 < n) (lbls ids : List Nat) (σ : RG) :
+    (chunkLoop n lbls (ids.length + 1) ids σ).labels = fun i => if ids.contains i then lbls else σ.labels i := by
+  rw [chunkLoop_eq_write n hn lbls _ ids σ (by omega)]; rfl
+
+/-- `UPDATE_NODE`'s store write (`apply.rs:346-358`). Before #3022 the arm ran
     `check_attr_shape` and `checked_label_ids` only — no liveness check — then
     `set_nodes_attributes_rows_of_labels` writes the store for every id. -/
 def updateNode (σ : RG) (ids : List Nat) (row : List (Nat × Val)) : RG :=
   { σ with props := fun i => if ids.contains i then row ++ σ.props i else σ.props i }
 
-/-- `SET_LABELS`'s store write (`apply.rs:352-357`); before #3022 guarded by `checked_label_ids` only. -/
+/-- `SET_LABELS`'s store write (`apply.rs:380-385`); before #3022 guarded by `checked_label_ids` only. -/
 def setLabels (σ : RG) (ids : List Nat) (lbls : List Nat) : RG :=
   { σ with labels := fun i => if ids.contains i then lbls ++ σ.labels i else σ.labels i }
 
-/-- `DELETE_NODE` (`apply.rs:378-399`): `delete_nodes` refuses a recycled or
+/-- `DELETE_NODE` (`apply.rs:406-427`): `delete_nodes` refuses a recycled or
     never-created id (`okDelete`) and clears the node's labels and properties.
     It does not cascade to incident edges — on a real payload the master's
     `DELETE_EDGE` records came first. Before #3022 nothing checked that there are

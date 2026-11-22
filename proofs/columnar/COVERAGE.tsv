@@ -4,8 +4,8 @@ graph/src/runtime/batch.rs	all	108	PROVEN	VExpr Bits.isNull_all
 graph/src/runtime/batch.rs	from_values	118	PROVEN	Column Bits.ofValues; readN_values
 graph/src/runtime/batch.rs	is_null	133	PROVEN	Column Bits.isNull (used by classifyExact_exact)
 graph/src/runtime/batch.rs	any_null	144	PROVEN	VExpr constNull_spec (the any() scan of constant_nullness)
-graph/src/runtime/batch.rs	set	150	MODELLED	Bits as list; bit ops proved in proofs/ops_aggregate
-graph/src/runtime/batch.rs	clear	160	MODELLED	Bits as list; bit ops proved in proofs/ops_aggregate
+graph/src/runtime/batch.rs	set	150	PROVEN	proofs/ops_aggregate Bitmap.set_isNull (bit set; columnar models Bits as the list view, Bits.isNull_*)
+graph/src/runtime/batch.rs	clear	160	PROVEN	proofs/ops_aggregate Bitmap.clear_isNull (bit clear)
 graph/src/runtime/batch.rs	classify_numeric	191	PROVEN	Column classifyNumeric: classifyExact_exact, classifyStored_toValues, classifyColumn_lossy
 graph/src/runtime/batch.rs	classify_stored_column	241	PROVEN	Column classifyStored_toValues / classifyStored_get? (lossless)
 graph/src/runtime/batch.rs	classify_column	279	PROVEN	Column classifyColumn_lossy (latent: no caller)
@@ -62,7 +62,7 @@ graph/src/runtime/batch.rs	value_at	1424	PROVEN	Row viewAt; toOwned_get_eq_view 
 graph/src/runtime/batch.rs	to_owned_row	1439	PROVEN	Row toOwned_bound_slot, toOwned_unbound_slot, toOwned_get_eq_view, toOwned_trailing_unbound, pushSlots_spec (one Row::push_slot per column, #3059)
 graph/src/runtime/batch.rs	next	1471	PROVEN	Batch.active (active_lt)
 graph/src/runtime/batch.rs	size_hint	1494	PROVEN	sizeHint: sizeHint_spec
-graph/src/runtime/batch.rs	set_argument_batch	1603	PROVEN	OpTree.setArg: setArg_args, setArg_resets
+graph/src/runtime/batch.rs	set_argument_batch	1603	PROVEN	OpTree.setArg: setArg_args, setArg_resets, setArg_join (ValueHashJoin arm: per_origin := batch.len() > 1 and the batch re-installed on both sides, #3012/#3035 25e3c93af)
 graph/src/runtime/batch.rs	inspect_context	1738	PROVEN	inspectCtx: inspectCtx_spec
 graph/src/runtime/batch.rs	next	1787	PROVEN	opNext/leafNext: opNext_spec
 graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	PROVEN	Dispatch fromExprIR: fromExprIR_isSome, fromExprIR_sem, flip_sem, eval_cmp
@@ -98,27 +98,27 @@ graph/src/runtime/vector_expr.rs	arithmetic	881	PROVEN	Arith arithmetic_agree (i
 graph/src/runtime/vector_expr.rs	int_lane	963	PROVEN	Arith intLane_spec
 graph/src/runtime/vector_expr.rs	float_lane	975	PROVEN	Arith floatLane_spec
 graph/src/runtime/vector_expr.rs	float_operand	990	PROVEN	Arith floatStage_agree
-graph/src/runtime/row.rs	value_at	47	MODELLED	trait decl (Row.get / viewAt)
-graph/src/runtime/row.rs	to_owned_row	56	MODELLED	trait decl
-graph/src/runtime/row.rs	new	76	MODELLED	Row.empty
-graph/src/runtime/row.rs	with_capacity	82	MODELLED	Row.empty
-graph/src/runtime/row.rs	from_raw	92	MODELLED	Row structure
+graph/src/runtime/row.rs	value_at	47	PROVEN	trait decl (no body); the Row impl (row.rs:246) is Row.get: get_eq_none_iff, get_isSome_iff; BatchRow impl: viewAt
+graph/src/runtime/row.rs	to_owned_row	56	PROVEN	trait decl (no body); Row impl toOwnedRow_get (row.rs:253); BatchRow impl: toOwned_get_eq_view
+graph/src/runtime/row.rs	new	76	PROVEN	Row.new_spec, fromRaw_nil (= Row.empty: no slots, nothing bound, origin 0)
+graph/src/runtime/row.rs	with_capacity	82	PROVEN	Row.new_spec, fromRaw_nil (capacity is an allocation hint, no semantic content)
+graph/src/runtime/row.rs	from_raw	92	PROVEN	Row.fromRaw_fields (given slots and bound set, origin 0)
 graph/src/runtime/row.rs	insert	104	PROVEN	Row insert_get, get_insert_self
 graph/src/runtime/row.rs	insert_by_id	113	PROVEN	Row insert_get, insert_length, get_insert_self
-graph/src/runtime/row.rs	get_by_id	128	MODELLED	Row.get
-graph/src/runtime/row.rs	get	138	MODELLED	Row.get
+graph/src/runtime/row.rs	get_by_id	128	PROVEN	Row.get_eq_none_iff, get_isSome_iff (none exactly when out of range), insert_get
+graph/src/runtime/row.rs	get	138	PROVEN	Row.get_eq_none_iff, get_isSome_iff (same read as get_by_id)
 graph/src/runtime/row.rs	take	147	PROVEN	Row take_spec
 graph/src/runtime/row.rs	unbind	160	PROVEN	Row unbind_bound, unbind_get
-graph/src/runtime/row.rs	len	169	MODELLED	values.length
-graph/src/runtime/row.rs	is_empty	175	MODELLED	values = []
-graph/src/runtime/row.rs	has_bindings	181	NOT COVERED	BitSet::is_empty (proofs/runtime_ds)
+graph/src/runtime/row.rs	len	169	PROVEN	Row.len_empty, len_isEmpty, insert_length
+graph/src/runtime/row.rs	is_empty	175	PROVEN	Row.len_isEmpty
+graph/src/runtime/row.rs	has_bindings	181	PROVEN	Row.hasBindings_empty, hasBindings_insert, hasBindings_of_bound (BitSet::is_empty itself: proofs/runtime_ds)
 graph/src/runtime/row.rs	clone_with	187	PROVEN	Row get_cloneWith
-graph/src/runtime/row.rs	is_bound_by_id	199	MODELLED	Row.bound
+graph/src/runtime/row.rs	is_bound_by_id	199	PROVEN	Row.isBoundById_insert, isBoundById_unbind, unbind_bound (BitSet::test: proofs/runtime_ds)
 graph/src/runtime/row.rs	merge	209	PROVEN	Row merge_spec
 graph/src/runtime/row.rs	unbind_by_id	237	PROVEN	Row unbind_bound
-graph/src/runtime/row.rs	value_at	246	MODELLED	Row.get
-graph/src/runtime/row.rs	to_owned_row	253	MODELLED	clone
-graph/src/runtime/row.rs	hash	259	NOT COVERED	hashing (proofs/runtime_ds)
+graph/src/runtime/row.rs	value_at	246	PROVEN	Row.get_eq_none_iff, get_isSome_iff (the same read, cloned)
+graph/src/runtime/row.rs	to_owned_row	253	PROVEN	Row.toOwnedRow_get (self.clone(): the same row)
+graph/src/runtime/row.rs	hash	259	PROVEN	Row.hashItems / mem_hashItems (exactly the slots that are not an unbound Null feed the hasher), hashItems_skips_unbound_null, hashItems_bound, hashItems_pad (trailing unbound padding does not change the hash); Value::hash itself: proofs/value_order
 graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	60	PROVEN	Gather.GI.newL + LawfulWith.new_ok (trait decl): gather_spec
 graph/src/runtime/ops/batched_result_emitter.rs	push_into	67	PROVEN	Gather.GI.push + LawfulWith.push_ok (trait decl): gather_spec
 graph/src/runtime/ops/batched_result_emitter.rs	finish	75	PROVEN	Gather.GI.finish + LawfulWith.finish_ok (trait decl): gather_spec, specFinish_get
@@ -148,13 +148,13 @@ graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Gather.RowIter
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Gather.RowIter.many: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Gather.rowIterNext/drainIt: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch (#2973: clamp form replaces the guarded arm); miscompiled_differs (#2922)
-graph/src/runtime/ops/batched_result_emitter.rs	seed	577	MODELLED	Emitter seedRows
+graph/src/runtime/ops/batched_result_emitter.rs	seed	577	PROVEN	proofs/runtime_core Emitter.remaining_seed, drive_flatten (seed pushes the next batch's iterators); columnar Emitter seedRows
 graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
 graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter drain_spec, drain_conserve
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter packRows_spec, stream_rows_active
 graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds
-graph/src/runtime/ops/batched_result_emitter.rs	reset	750	MODELLED	state cleared
+graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	proofs/runtime_core Emitter.reset_remaining (reset drops all queued work)
 graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Gather.emNew/emWithBinding: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)

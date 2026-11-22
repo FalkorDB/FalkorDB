@@ -19,6 +19,11 @@ import OpsTraverse.PathVlt
 import OpsTraverse.ExpandIntoPending
 import OpsTraverse.UnionStream
 import OpsTraverse.UnionGlue
+import OpsTraverse.AlgoPaths
+import OpsTraverse.EvalSP
+import OpsTraverse.NeighborIter
+import OpsTraverse.RecordFound
+import OpsTraverse.RunAlgo
 
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
@@ -37,7 +42,7 @@ row range; `union_stream_eq_merged` = the same pairs in the same order as the me
 heads start empty, `next_new`; each per-type stream ascending by `layerStream_spec`). `delta_lmxm_into` gets a
 `Union` arm: `UnionGlue.deltaInto_eff` (`F*A1 + F*A2 = F*(A1 + A2)` on the pattern) over
 `GBWDelta.deltaLmxm_eff` (graphblas_wrappers: `delta_lmxm` computes `F*(M - DM + DP)`, the #3492 fix of the
-live-path-through-a-deleted-edge bug). `expand_union_row` (:1121): `union_emit_directed_iff`,
+live-path-through-a-deleted-edge bug). `expand_union_row` (:1124): `union_emit_directed_iff`,
 `union_emit_bidir_iff`, `union_collapse_directed_keys_nodup`. `delta_lmxm_into`, `build_unrestricted_iter`,
 `build_transposed_iter` are now PROVEN (no FFI rows left in `cond_traverse.rs`); every `cond_traverse.rs` pin
 moved (`expand_row` +151 from `:749`, `process_pairs` +291 from `:944`). The project now depends on graphblas_wrappers and versioned_matrix.
@@ -57,6 +62,13 @@ date member before the index is asked) is unchanged and still open. `node_by_ind
 `is_indexable` / `next` re-pinned :251/:254/:300, `edge_by_index_scan.rs` `next` :316. #3436 (`rt.g.borrow()` ->
 `rt.graph()`) touches `cond_traverse`, `cond_var_len_traverse`, `all_shortest_paths`, `expand_into`, the label/id
 scans and `eval_shortest_path` without changing what they compute; no other pin moved.
+
+**Re-synced to main 256ab4d3f (2026-11-22)**: `algo_procedures.rs` rows re-pinned (+41); new `AlgoPaths`
+(config parsing, ordering, result assembly, registration of `algo.SPpaths`/`SSpaths`: 13 rows) and `EvalSP`
+(`eval_shortest_path` glue); `record_found_path` (`RecordFound`), `run_path_algo` (`RunAlgo`, glue) and the three `NeighborIter` fns
+(`NeighborIter`, relative to the matrices they read) are PROVEN; `dijkstra_single_path`, `bfs_find_bound`,
+`enumerate_paths` and `bfs_shortest_path` stay NOT COVERED (loop invariants not proved; reasons in COVERAGE.tsv). The index scans' native-index fallback (#2453, #3736: `ScanFilter::resolve`,
+`query_index_nodes`) is outside the RediSearch-contract model (`proofs/native_index`).
 
 **Re-targeted to main b6567cb97** (from 737dfb5da): no change to the traversal
 operators. #2954 grew the `ListComprehension` arm of `eval.rs`, shifting the
@@ -84,12 +96,12 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | here | there |
 | --- | --- |
 | `Basic.pairs`, `edgesBetween`, `step` | relationship-matrix pair iterator, `Tensor::get`, `Graph::get_node_relationships_by_type` (`graph/src/graph/graph.rs`) |
-| `CondTraverse.processPairs`, `expandRow` | `CondTraverseOp::process_pairs` / `expand_row` (`runtime/ops/cond_traverse.rs:1235`, `:900`) |
+| `CondTraverse.processPairs`, `expandRow` | `CondTraverseOp::process_pairs` / `expand_row` (`runtime/ops/cond_traverse.rs:1238`, `:905`) |
 | `CondTraverse.expandInto` | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs:125`) |
-| `CondTraverse.MxmSpec`, `chain` | `Matrix::delta_lmxm` + `expand_batch` (`cond_traverse.rs:594-893`); the multiply itself: `UnionGlue.deltaInto` (`TraversalMatrix::delta_lmxm_into` :86) over `GBWDelta.deltaLmxm` (`matrix.rs:1520`) |
-| `UnionStream.new`, `seek`, `next`, `drain` | `UnionIter::new` / `seek` / `next` (`cond_traverse.rs:245`, `:250`, `:265`) |
+| `CondTraverse.MxmSpec`, `chain` | `Matrix::delta_lmxm` + `expand_batch` (`cond_traverse.rs:594-893`); the multiply itself: `UnionGlue.deltaInto` (`TraversalMatrix::delta_lmxm_into` :86) over `GBWDelta.deltaLmxm` (`matrix.rs:1662`) |
+| `UnionStream.new`, `seek`, `next`, `drain` | `UnionIter::new` / `seek` / `next` (`cond_traverse.rs:249`, `:254`, `:269`) |
 | `UnionStream.layerStream` | the per-type `versioned_matrix::Iter` merge of `m`, `dp`, `dm` (`VMIter`), keyed by row-major position |
-| `UnionGlue.relationshipTensors`, `buildUnion`, `pickMatrix`, `deltaInto`, `expandUnionRow` | `relationship_tensors` (:288), `build_union_iter` (:317), the `TraversalMatrix` selection (:615-680), `delta_lmxm_into` (:86), `expand_union_row` (:1121) |
+| `UnionGlue.relationshipTensors`, `buildUnion`, `pickMatrix`, `deltaInto`, `expandUnionRow` | `relationship_tensors` (:292), `build_union_iter` (:322), the `TraversalMatrix` selection (:615-680), `delta_lmxm_into` (:86), `expand_union_row` (:1124) |
 | `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:155`) |
 | `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
@@ -182,9 +194,16 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 5. **allShortestPaths on a directed cycle returned the edge list backwards -- FIXED by #3112**
    (was `all_shortest_paths.rs:284-288`): `0→1→2→0`, `(a)-[*]->(a)` gave rels `[3,2,1]`; now
    `[1,2,3]`. Lean `directed_cycle_walk_order`, `directed_cycle_is_a_walk`.
-6. **algo.SPpaths / SSpaths default relationship cost 0** (`functions/algo_procedures.rs:2308,
-   2397, 2518`; C: 1 per edge): `maxCost: 1` without `costProp` returns
-   `[0,1,3]` cost 0 (C `[0,3]` cost 1). Test `bug_sppaths_default_cost_is_zero`.
+6. **algo.SPpaths / SSpaths default relationship cost 0** -- **FIXED by #3121**
+   (`functions/algo_procedures.rs`: `bfs_find_bound` / `enumerate_paths` charge `1.0` per edge
+   without a `costProp`, as C does). Re-checked live at 256ab4d3f: `SSpaths({sourceNode: a, maxCost: 1})`
+   on `(0)->(1)->(2)` returns the one path of cost 1, Rust = C (before: `[0,1,3]` with cost 0).
+   Left over, not a Rust bug: with a `costProp` that no edge carries and no `maxLen`/`maxCost`
+   (so the Dijkstra fast path runs), Rust reports cost = hop count (each edge lacking it costs 1,
+   as in the general search) and C reports 0 on its own fast path but the hop count with a `maxLen`
+   (live: `{sourceNode: a, targetNode: c, weightProp: 'w', costProp: 'zz'}` Rust 2, C 0; with
+   `maxLen: 5` both 2). `maxLen` wraps modulo 2^32 in both engines (`AlgoPaths.pMaxLen_wraps`);
+   at `maxLen: 9223372036854775807` Rust returns the path, C returns none.
 7. Out of target: `[x IN null | x]` returns `[]` (C `null`).
 
 8. **#3372: a grouping key's pre-projection slot leaks past `WITH`**

@@ -4,7 +4,8 @@ import AlgoUdf.AlgoGlue
 
 | here | there |
 | --- | --- |
-| `Slot`, `setGraph`, `clearGraph`, `withGraph` | `CURRENT_GRAPH`, `set_current_graph` :72, `clear_current_graph` :78, `with_current_graph` :84 |
+| `Slot`, `setGraph`, `clearGraph`, `withGraph` | `CURRENT_GRAPH` :147, `with_current_graph` :170 (`clearGraph` is the null slot: `set_current_graph` / `clear_current_graph` were replaced by `with_graph`, #2976) |
+| `GState`, `restoreDrop`, `withGraphRun` | `with_graph` :151 and its `Restore` guard's `drop` :158 (lend the graph for one call, restore the one lent before, start a new epoch only when nothing was lent) |
 | `JV`, `Obj`, `set`, `get` | QuickJS values / ordinary objects (AXIOMATISED: `obj.set(k, v)` replaces own key `k`; `"__proto__"` never becomes an own key, cf. `Marshal.objSet`) |
 | `Ent`, `newEntity`, `entityValue`, `nodeIdOf`, `nextEpoch` | `JsEntity` :83-86 (`trace` :93, `constructor` :105), `new_entity_object` :110, `entity_value` :129, `node_id_of` :135, the `CALL_EPOCH` bump in `with_graph` :162-165 (#2976) |
 | `jsNode`                 | `create_js_node` :200 (a `JsEntity` instance holding `Value::Node`; its visible properties below) |
@@ -15,7 +16,7 @@ import AlgoUdf.AlgoGlue
 | `Exc`, `throwJs`, `entryErr` | `throw_js_error` :599, the `Err` arms of `js_get_neighbors_entry` :456-466 / `js_traverse` |
 | `nodeById`               | `js_get_node_by_id` :609, `js_get_node_by_id_impl` :616 |
 | `iterNodes`, `iterEdges` | `js_iterate_nodes(_impl)` :653, :660, `js_iterate_edges(_impl)` :708, :715 (label matrix / tensor scans AXIOMATISED) |
-| `traverseEntry`          | `js_traverse` :760 (body: `UdfTraverse`) |
+| `traverseEntry`          | `js_traverse` :760 (body: `UdfTraverse`; sources via `node_id_of` :821-828, `traverseSources`) |
 -/
 namespace AlgoUdf.UdfClasses
 open AlgoUdf
@@ -163,6 +164,73 @@ def nodeIdOf (epochNow : Nat) (o : Option Ent) : Option Nat :=
 new epoch (`wrapping_add`: the wrap after 2^64 calls is not modelled). -/
 def nextEpoch (prevLent : Bool) (epoch : Nat) : Nat := if prevLent then epoch else epoch + 1
 
+/-! ## `with_graph` and its restore guard (#2976)
+
+`with_graph` (js_classes.rs:151) swaps `CURRENT_GRAPH` for the new graph, bumps `CALL_EPOCH` when
+the slot was null (an outermost call), and returns `f()` while a `Restore` guard puts the
+previous slot back when it is dropped (:158) — on return and on unwind alike. -/
+
+/-- The two thread-locals `with_graph` touches: `CURRENT_GRAPH` and `CALL_EPOCH`. -/
+structure GState (γ : Type) where
+  slot : Option γ
+  epoch : Nat
+
+/-- `Restore::drop` (:158-160): `CURRENT_GRAPH.set(self.0)`. -/
+def restoreDrop {γ : Type} (prev : Option γ) (s : GState γ) : GState γ := { s with slot := prev }
+
+/-- `with_graph` (:151-169). The body `f` sees the state after the swap and the epoch bump
+(`previous = CURRENT_GRAPH.replace(graph)`; `if previous.is_null() { CALL_EPOCH += 1 }`) and returns
+its result with whatever state it leaves; the guard then restores `previous`. -/
+def withGraphRun {γ α : Type} (s : GState γ) (g : γ) (f : GState γ → α × GState γ) : α × GState γ :=
+  let prev := s.slot
+  let s1 : GState γ := { slot := some g, epoch := nextEpoch prev.isSome s.epoch }
+  let r := f s1
+  (r.1, restoreDrop prev r.2)
+
+/-- `Restore::drop` puts back exactly the graph lent before, and touches nothing else. -/
+theorem restoreDrop_spec {γ : Type} (prev : Option γ) (s : GState γ) :
+    (restoreDrop prev s).slot = prev ∧ (restoreDrop prev s).epoch = s.epoch := ⟨rfl, rfl⟩
+
+/-- **The body sees the lent graph**: `with_current_graph` (`withGraph`) on the slot the body
+starts with runs on `g`. -/
+theorem withGraphRun_sees_graph {γ ρ : Type} (s : GState γ) (g : γ) (f' : γ → Except String ρ) :
+    withGraph ({ slot := some g, epoch := nextEpoch s.slot.isSome s.epoch } : GState γ).slot f' = f' g := rfl
+
+/-- **The previous slot is always restored**, whatever the body did to the slot (a body that
+unwinds is the same: the guard runs on drop). -/
+theorem withGraphRun_restores {γ α : Type} (s : GState γ) (g : γ) (f : GState γ → α × GState γ) :
+    (withGraphRun s g f).2.slot = s.slot := rfl
+
+/-- Outermost call (nothing lent): afterwards the slot is null again, as it was before
+`with_graph`'s predecessor `clear_current_graph`, and the epoch advanced by one. -/
+theorem withGraphRun_outermost {γ α : Type} (g : γ) (e : Nat) (f : GState γ → α × GState γ)
+    (hf : ∀ t, (f t).2.epoch = t.epoch) :
+    (withGraphRun ({ slot := none, epoch := e } : GState γ) g f).2.slot = none ∧
+    (withGraphRun ({ slot := none, epoch := e } : GState γ) g f).2.epoch = e + 1 := by
+  refine ⟨rfl, ?_⟩
+  simp [withGraphRun, restoreDrop, hf, nextEpoch]
+
+/-- Nested call (a graph already lent): the outer graph is back afterwards and the epoch does not
+move, so entities made in the outer call stay valid. -/
+theorem withGraphRun_nested {γ α : Type} (g0 g : γ) (e : Nat) (f : GState γ → α × GState γ)
+    (hf : ∀ t, (f t).2.epoch = t.epoch) :
+    (withGraphRun ({ slot := some g0, epoch := e } : GState γ) g f).2.slot = some g0 ∧
+    (withGraphRun ({ slot := some g0, epoch := e } : GState γ) g f).2.epoch = e := by
+  refine ⟨rfl, ?_⟩
+  simp [withGraphRun, restoreDrop, hf, nextEpoch]
+
+/-- **An entity kept from an earlier UDF call is dead in the next one**: an entity made inside
+an outermost call (epoch `e + 1`) is not honoured by the next outermost call. -/
+theorem withGraphRun_stale_entity {γ α : Type} (g : γ) (e : Nat) (v : Marshal.RV)
+    (f : GState γ → α × GState γ) (hf : ∀ t, (f t).2.epoch = t.epoch) :
+    let s1 := (withGraphRun ({ slot := none, epoch := e } : GState γ) g f).2
+    entityValue (nextEpoch s1.slot.isSome s1.epoch) (some (newEntity (nextEpoch false e) v)) = none := by
+  intro s1
+  have h := withGraphRun_outermost g e f hf
+  have h1 : s1.slot = none := h.1
+  have h2 : s1.epoch = e + 1 := h.2
+  simp [h1, h2, entityValue, newEntity, nextEpoch]
+
 theorem entTrace_empty : entTrace = [] ∧ entConstructor = none := ⟨rfl, rfl⟩
 
 /-- **An entity made in this call reads back as itself.** -/
@@ -186,6 +254,28 @@ theorem nodeIdOf_spec (e id : Nat) (v : Marshal.RV) :
     nodeIdOf e (some (newEntity e (.rel id))) = none ∧
     nodeIdOf (nextEpoch false e) (some (newEntity e v)) = none ∧ nodeIdOf e none = none := by
   refine ⟨?_, ?_, ?_, rfl⟩ <;> simp [nodeIdOf, entityValue, newEntity, nextEpoch]
+
+/-- `js_traverse_impl`'s source collection (js_classes.rs:821-828, #2976): every element of the
+`nodes` array must be a current node entity, else `"Node ID error: traverse expects an array of
+nodes"` (a plain object copying `__falkor_node_id` no longer passes). -/
+def traverseSources (epochNow : Nat) (objs : List (Option Ent)) : Except String (List Nat) :=
+  objs.mapM fun o =>
+    match nodeIdOf epochNow o with
+    | some i => .ok i
+    | none => .error "Node ID error: traverse expects an array of nodes"
+
+theorem traverseSources_nodes (e : Nat) (ids : List Nat) :
+    traverseSources e (ids.map fun i => some (newEntity e (.node i))) = .ok ids := by
+  induction ids with
+  | nil => rfl
+  | cons i is ih =>
+    simp only [List.map_cons, traverseSources, List.mapM_cons] at ih ⊢
+    simp only [nodeIdOf, entityValue, newEntity, ite_true] at ih ⊢
+    rw [ih]; rfl
+
+/-- A forged node (a plain object, `none`) anywhere in the array is an error. -/
+theorem traverseSources_forged (e : Nat) :
+    traverseSources e [none] = .error "Node ID error: traverse expects an array of nodes" := rfl
 
 /-- The Marshal model's `JsV.ent ps v current` is the object `entity_value` reads: `current` is
 `entityValue` returning `some v`. -/

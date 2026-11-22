@@ -140,14 +140,15 @@ Line numbers are pinned to main 5e475e6c9. No traversal operator changed since f
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 61 |
-| NOT COVERED | 23 |
+| PROVEN | 80 |
+| NOT COVERED | 4 |
 
 Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled). The rest:
 
 - **`cond_traverse.rs` since #3492:** `delta_lmxm_into` is proved (`UnionGlue.deltaInto_eff`: `F * (A1 + .. + Ak)` on the pattern, via `GBWDelta.deltaLmxm_eff`); the iterator builders and the `UnionIter` merge (`UnionStream.drain_spec`) are modelled and proved. The batched path's one-hop theorems still take `MxmSpec` for the multiply.
-- **NOT COVERED, `algo_procedures.rs` (18):** the `algo.SPpaths`/`algo.SSpaths` procedures (Dijkstra over `f64` weights, config parsing, path enumeration, registration). They are only differential-tested against C.
-- **NOT COVERED, `eval.rs` (5):** `shortestPath()` is a bidirectional BFS in the expression evaluator. It is differential-tested against C; its stopping rule is argued in comments, not formalised.
+- **`algo_procedures.rs`, `eval.rs` (since 2026-11-22):** config parsing, the path comparator, `to_numeric_value`, `edge_numeric_attr`, `far_endpoint`, `node_successors`, the Dijkstra heap order, `build_path_batch` and the two registrations are PROVEN (`AlgoPaths`); `eval_shortest_path` is PROVEN as glue (`EvalSP`, the search is a parameter).
+- **Also PROVEN since the second pass:** `record_found_path` (`RecordFound`), `run_path_algo` (`RunAlgo`, glue over the searches), `NeighborIter::{new,new_reversed,neighbors}` (`NeighborIter`, relative to the matrices they read).
+- **NOT COVERED (4):** `dijkstra_single_path` (f64 addition is not associative; walk/cost-fold properties need the heap/label loop invariant), `bfs_find_bound`, `enumerate_paths`, and `bfs_shortest_path` (loop-invariant proofs over seen/parent/level state, not completed).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 

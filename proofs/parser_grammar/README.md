@@ -100,7 +100,7 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 | W3-parser-1 | `skipFilter_eof_diverges` | `RETURN shortestPath((a)-[{` at end of input: the filter-skip loop never ends, a worker spins forever, and 11 such queries stop all graph queries. C: syntax error | **Open** |
 | #3036 | removed (17ccc5412) | A slice bound that failed to parse became `0` or `i64::MAX`: `[1,2,3][abs()..2]` → `[1, 2]` (C: arity error); `[(1..2]` was accepted | Fixed by #3041: `slice_bound_error_reported`, `listOp_from_err`, `listOp_to_err` |
 | — | (Rust test only) | A pattern predicate in a projection swallows the `,`: `RETURN (a)-->(b), (b)-->(a)` returns one column (C: two). Same root cause as W2-binder-1 | **Open** |
-| — | `sign_sequences` | `+-1` is accepted, `- -1` and `-+1` are rejected; the grammar allows one sign (`- -1` is #2309) | **Open** |
+| — | `sign_runs` (was `sign_sequences`), `pre3525_sign_sequences` | `- -1` and `-+1` were syntax errors while `+-1` parsed (#2309); a run of signs now folds by parity. The grammar allows one sign, so the model and the grammar differ on runs (documented in `known`); a `CYPHER` parameter keeps one sign (`legacySigns`) | **Fixed by #3525** (`56d00c3d8`) |
 | W4-plan-4 | `call_validates_rest`, `match_last_after_call_rejected` | Nothing after a procedure CALL was validated: `… MERGE ()-[:R\|S]->()` created an edge, `… UNWIND [1] AS x` was accepted; C rejects all | **Fixed by #3297** (b774fdfad, main b84473a7f); the `parent().unwrap()` in `utilize_node_by_id` remains as a hazard |
 | W4-parse-1 | `fixed3303_anon_name_distinct` | Anonymous entities were named `_anon_N`, a name users can write: `MATCH (_anon_0:A), (:B) RETURN count(*)` → Rust 0, C 1 | **Fixed by #3303** (unnamed entities are `Alias::Anon`) |
 | W4-parse-2 | `create_named_path_dup_rel_rejected` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` created 1 relationship (C: "already declared") | **Fixed by #3289** (`d15d38a10`) |
@@ -129,7 +129,7 @@ Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS 
 | `Model.lean` | The expression parser: tokens `Tok`, trees, frames, `step`, one function per level, `primary`, `listLit`, `listOp` |
 | `Grammar.lean` | The reference: openCypher's expression rules (`G.*`) as a recursive-descent recogniser |
 | `NoPanic.lean` | `Good`, `Inv`, `parseExpr_no_panic` |
-| `Theorems.lean` | Precedence, associativity, `binary_pairs_agree`, determinism, the #3060 fixes, `sign_sequences`, the #3041 slice fix |
+| `Theorems.lean` | Precedence, associativity, `binary_pairs_agree`, determinism, the #3060 fixes, `sign_runs` (#3525), the #3041 slice fix |
 | `Bounded.lean` | `bounded_agree` and the `known` disagreement classes; `bounded_bal` (balanced consumption) |
 | `Clauses.lean` | Clause-level fragments: the shortestPath filter skipper, SET/REMOVE targets, the projection-comma bug |
 | `Tactic.lean` | Proof helpers |

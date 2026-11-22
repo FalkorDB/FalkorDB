@@ -192,7 +192,7 @@ namespace FalkorExpr.Eval
 
 variable {V : Type}
 
-/-! ## `all_equals` / `all_not_equals` (eval.rs:1713, :1736) -/
+/-! ## `all_equals` / `all_not_equals` (eval.rs:1724, :1736) -/
 
 /-- `all_equals` over a lazy iterator of results. `prev` is the **first** element for every
 comparison (it is never reassigned, eval.rs:1717-1729); a compared null answers `null`,

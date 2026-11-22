@@ -1,5 +1,5 @@
 /-
-# Search layer and concurrency: models, proofs, five confirmed bugs fixed on main, and one open bug (#3226)
+# Search layer and concurrency: models, proofs, six confirmed bugs fixed on main, and open bugs (#3226, `shutdown_within` lock contention)
 
 Project `proofs/search_concurrency`. Modules:
 
@@ -11,6 +11,14 @@ Project `proofs/search_concurrency`. Modules:
                as a transition system with an inductive invariant.
 * `Locks`    — lock-order deadlock freedom, the `write_loop` hand-off (exhaustive),
                and the bounded-queue deadlock.
+* `Glue`     — `graph_core.rs` C name rules (`up_to_nul`, `c_graph_name`/`key`) and the graph
+               registry (`register_graph`, `rename_graph`).
+* `Exec`     — `ThreadedGraph::new`/`from_mvcc`, `WriteQueryOk::modified`, the read/detect phase of
+               `execute_query`/`execute_profile` (write test, admission slot), `profile_sync`'s
+               lock program, `compute_effective_timeout`, the two replies.
+* `Session`  — `QuerySession`'s own state (`begin`, `with_graph[_mut]`, `release_locks`, `Drop`),
+               `check_fork`, the GIL guard, `must_run_inline`, `reauthorize_write`,
+               `MvccGraph::new`/`from_graph`/`Drop`, and `CommitOp::next`'s lock path.
 
 Each module's header has its Lean ↔ Rust `file:line` table. Coverage rows are in
 `COVERAGE.tsv`. Live-server repros are in `repro/` (ports 18470 Rust, 18471 C
@@ -20,20 +28,22 @@ Each module's header has its Lean ↔ Rust `file:line` table. Coverage rows are 
 ## Wave 4 additions
 * `Pool` — `threadpool.rs`: `shutdown_drains` (one sentinel per worker runs every queued job
   once, in order, then all workers exit), `spawn_after_exit`, `global_spec` (OnceCell init).
-* `PoolWithin` — `threadpool.rs` after #3502 (ca36bfa15), Lean ↔ Rust:
+* `PoolWithin` — `threadpool.rs` after #3502 (ca36bfa15) and #3585 (7472d6a8a), Lean ↔ Rust at 256ab4d3f:
 
   | Lean | Rust |
   | --- | --- |
-  | `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs:79`, `new` `:67`, `named` `:72` |
-  | `waitLoop`, `drain`, `within` | `ThreadPool::shutdown_within` `:159` (wait loop `:167-169`, drain `:171-178`) |
-  | `holdEnd` | `ThreadPool::shutdown` `:146` (holds the `workers` lock across `join`) |
+  | `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs:83`, `new` `:70`, `named` `:76` |
+  | `waitLoop`, `drain`, `within` | `ThreadPool::shutdown_within` `:167` (wait loop `:174-178`, partition and put back the running handles `:179-185`) |
+  | `holdEnd` | `ThreadPool::shutdown` `:151` (holds the `workers` lock across `join`) |
 
   `within_in_time`, `within_true_all_finished`, `within_false_unfinished`, `within_partition`,
-  `blocked_reported`, `detached_workers_exit`, `late_job_lost`; two confirmed **unfixed** bugs
-  (`repro/threadpool_within.rs`): `second_call_true_despite_straggler` (a second
-  `shutdown_within` answers `true` with a worker still running) and
+  `blocked_reported`, `left_behind_workers_exit`, `late_job_lost`; two confirmed bugs
+  (`repro/threadpool_within.rs`): `pre3585_second_call_true_despite_straggler` (a second
+  `shutdown_within` answered `true` with a worker still running; **fixed by #3585 (7472d6a8a)**,
+  which keeps the stragglers: `second_call_reports_straggler`, `second_call_joins_when_returned`;
+  live case A is now `false`/`false`) and the still **open**
   `within_blocks_behind_shutdown` (a `shutdown_within` behind a blocking `shutdown` waits on
-  the `workers` lock past its limit, forever if a job never returns).
+  the `workers` lock past its limit, forever if a job never returns; live case B unchanged at 256ab4d3f).
 * `Once` — `thread_id.rs` and `storage/registry.rs` set-once globals.
 
 ## Proven (no sorry / admit / axiom)
@@ -228,6 +238,9 @@ import SearchConcurrency.PoolWithin
 import SearchConcurrency.Once
 import SearchConcurrency.Guarded
 import SearchConcurrency.Knn
+import SearchConcurrency.Glue
+import SearchConcurrency.Exec
+import SearchConcurrency.Session
 
 #print axioms SC.Mvcc.snapshots_are_committed
 #print axioms SC.Locks.no_cycle
@@ -245,8 +258,9 @@ import SearchConcurrency.Knn
 #print axioms SC.Pool.count_eq_live
 #print axioms SC.PoolWithin.within_in_time
 #print axioms SC.PoolWithin.within_true_all_finished
-#print axioms SC.PoolWithin.detached_workers_exit
-#print axioms SC.PoolWithin.second_call_true_despite_straggler
+#print axioms SC.PoolWithin.left_behind_workers_exit
+#print axioms SC.PoolWithin.pre3585_second_call_true_despite_straggler
+#print axioms SC.PoolWithin.second_call_reports_straggler
 #print axioms SC.PoolWithin.within_blocks_behind_shutdown
 #print axioms SC.Locks.never_stuck_3014
 #print axioms SC.Locks.bug3226_open_scan_upgrade
@@ -256,3 +270,10 @@ import SearchConcurrency.Knn
 #print axioms SC.Guarded.rs29_naRef_free
 #print axioms SC.Guarded.h1_fork_vs_populate_race
 #print axioms SC.Guarded.consistent_common_lock
+#print axioms SC.Glue.cGraphName_eq_lossy_key
+#print axioms SC.Glue.renameGraph_moves
+#print axioms SC.Exec.execQuery_write_keeps_slot
+#print axioms SC.Exec.effTimeout_pq
+#print axioms SC.Session.checkFork_verdict
+#print axioms SC.Session.acquire_drop
+#print axioms SC.Session.commitNext_open_scan

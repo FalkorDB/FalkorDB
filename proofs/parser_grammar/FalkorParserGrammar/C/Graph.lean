@@ -10,55 +10,78 @@ import FalkorParserGrammar.C.Core
 
 namespace FalkorParserGrammar.C
 
-/-! ## `Variable` (ast.rs:161-217) -/
+/-! ## `Variable` and `VarKey` (ast.rs:152-262, #3302, #3890) -/
 
-/-- `Variable { name, anon, id, scope_id, ty }`; the type is irrelevant here. `anon` is the
-parser's number of an unnamed entity (#3303, ast.rs:165). -/
+/-- `Variable { alias, id, scope_id, ty }`; the type is irrelevant here. `alias` is what the
+query called it: a written name, or the parser's number for an unnamed pattern entity; `none` for
+a planner temporary that the query never wrote (#3890, ast.rs:150-158). -/
 structure Var where
-  name : Option Nat
+  alias : Option Alias
   id : Nat
   scope : Nat
-  anon : Option Nat := none
   deriving Repr
 
-/-- `impl PartialEq for Variable` (ast.rs:186-193): by id only. -/
+/-- `impl PartialEq for Variable` (ast.rs:185-193): by id only. -/
 instance : BEq Var := ⟨fun a b => a.id == b.id⟩
 
 /-- `Variable::eq`: two variables are equal iff their ids are. -/
 theorem Var.eq_spec (a b : Var) : (a == b) = true ↔ a.id = b.id := by
   show (a.id == b.id) = true ↔ _; simp
 
-/-- `impl Hash for Variable` (ast.rs:197-204) hashes the id alone, so equal
+/-- `impl Hash for Variable` (ast.rs:196-203) hashes the id alone, so equal
 variables hash alike (the `Hash`/`Eq` contract). The hash is modelled as
 the hashed key. -/
 def Var.hashKey (a : Var) : Nat := a.id
 theorem Var.hash_eq (a b : Var) (h : (a == b) = true) : a.hashKey = b.hashKey :=
   (Var.eq_spec a b).1 h
 
-/-- `Variable::as_str` (ast.rs:214-216). Names are ids; `none` is `"?"`. -/
+/-- `Variable::name` (ast.rs:223-227): the name the query wrote, `None` for an unnamed pattern
+entity or a planner temporary. Names are ids. -/
+def Var.name (a : Var) : Option Nat := a.alias.bind Alias.name
+theorem Var.name_spec (a : Var) (n k : Nat) :
+    (a.alias = some (.named n) → a.name = some n) ∧ (a.alias = some (.anon k) → a.name = none) ∧
+      (a.alias = none → a.name = none) := by
+  refine ⟨fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> simp [Var.name, h, Alias.name]
+
+/-- `Variable::as_str` (ast.rs:235-237): the name, `"?"` (here `none`) when there is none. -/
 def Var.asStr (a : Var) : Option Nat := a.name
 theorem Var.asStr_spec (a : Var) : a.asStr = a.name := rfl
 
-/-- `impl Display for Variable` (ast.rs:174-185): the name, else `@anon_<n>` for a parser-unnamed
-entity, else `?<id>`. -/
+/-- `impl Display for Variable` (ast.rs:172-181): the alias if there is one (a name, or
+`@anon_<n>` through `write_anon`), else `?<id>` for a planner temporary. -/
 def Var.fmt (a : Var) : String :=
-  match a.name, a.anon with
-  | some n, _ => toString n
-  | none, some k => "@anon_" ++ toString k
-  | none, none => "?" ++ toString a.id
-theorem Var.fmt_anon (a : Var) (h : a.name = none) (ha : a.anon = none) :
-    a.fmt = "?" ++ toString a.id := by
-  simp [Var.fmt, h, ha]
-/-- An unnamed pattern entity prints as its alias does (`write_anon`, ast.rs:125-130). -/
-theorem Var.fmt_unnamed (a : Var) (k : Nat) (h : a.name = none) (ha : a.anon = some k) :
-    a.fmt = toString (Alias.anon k) := by
-  simp [Var.fmt, h, ha, toString, Alias.fmt]
-theorem Var.fmt_named (a : Var) (n : Nat) (h : a.name = some n) : a.fmt = toString n := by
+  match a.alias with
+  | some al => toString al
+  | none => "?" ++ toString a.id
+theorem Var.fmt_temp (a : Var) (h : a.alias = none) : a.fmt = "?" ++ toString a.id := by
   simp [Var.fmt, h]
-/-- `Variable::is_unnamed` (ast.rs:209-211). -/
+/-- An unnamed pattern entity prints as its alias does (`write_anon`, ast.rs:125-130). -/
+theorem Var.fmt_unnamed (a : Var) (k : Nat) (ha : a.alias = some (.anon k)) :
+    a.fmt = "@anon_" ++ toString k := by
+  simp [Var.fmt, ha, toString, Alias.fmt]
+theorem Var.fmt_named (a : Var) (n : Nat) (h : a.alias = some (.named n)) : a.fmt = toString n := by
+  simp [Var.fmt, h, toString, Alias.fmt]
+/-- `Variable::is_unnamed` (ast.rs:230-232): no query can refer to it, an unnamed pattern entity
+or a planner temporary. -/
 def Var.isUnnamed (a : Var) : Bool := a.name.isNone
 theorem Var.isUnnamed_spec (a : Var) : a.isUnnamed = true ↔ a.name = none := by
   simp [Var.isUnnamed, Option.isNone_iff_eq_none]
+/-- A named variable is not unnamed, an unnamed entity and a temporary are. -/
+theorem Var.isUnnamed_cases (a : Var) (n k : Nat) :
+    (a.alias = some (.named n) → a.isUnnamed = false) ∧ (a.alias = some (.anon k) → a.isUnnamed = true) ∧
+      (a.alias = none → a.isUnnamed = true) := by
+  refine ⟨fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> simp [Var.isUnnamed, Var.name, h, Alias.name]
+
+/-- `VarKey` (ast.rs:205-210) and `Variable::key` (ast.rs:212-219): a variable's identity is its
+`(id, scope_id)`, as ids restart in every scope. -/
+def Var.key (a : Var) : Nat × Nat := (a.id, a.scope)
+theorem Var.key_spec (a : Var) : a.key.1 = a.id ∧ a.key.2 = a.scope := ⟨rfl, rfl⟩
+/-- Same id, different scope: the keys differ though the variables are `==` (`Variable::eq`
+ignores the scope), which is why `filter_visited` keys by `VarKey` and not by the variable. -/
+theorem Var.key_scope (a b : Var) (hid : a.id = b.id) (hs : a.scope ≠ b.scope) :
+    (a == b) = true ∧ a.key ≠ b.key := by
+  refine ⟨(Var.eq_spec a b).2 hid, fun h => hs ?_⟩
+  simpa [Var.key] using congrArg Prod.snd h
 
 /-! ## Nodes, relationships, paths -/
 

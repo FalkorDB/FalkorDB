@@ -113,8 +113,9 @@ theorem foldl_rmStep_remL : ∀ (L : List ((Nat × Nat × Nat) × Nat)) (p : P),
 /-- **`deletePendingNode_clears_remL`** (#3459): whatever the graph's cancels do, a
 successful `delete_pending_node` drops the node's `remove_labels` entry and leaves every
 other node's (before #3459 it left `remove_labels` exactly as it was). -/
-theorem deletePendingNode_clears_remL {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (p : P) (g : Gr)
-    (id : Nat) (p' : P) (g' : Gr) (h : deletePendingNode cancelN cancelR p g id = some (p', g')) :
+theorem deletePendingNode_clears_remL {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr)
+    (regT : Gr → Nat → Gr) (p : P) (g : Gr)
+    (id : Nat) (p' : P) (g' : Gr) (h : deletePendingNode cancelN cancelR regT p g id = some (p', g')) :
     p'.remL = frem p.remL id := by
   unfold deletePendingNode at h
   simp only at h
@@ -128,7 +129,7 @@ theorem deletePendingNode_clears_remL {Gr : Type} (cancelN cancelR : Gr → Nat 
       obtain ⟨rfl, rfl⟩ := h
       unfold removeRelsG at hrm
       have hc : ∀ (L : List ((Nat × Nat × Nat) × Nat)) (q : P) (gq : Gr) (q' : P) (gq' : Gr),
-          L.foldlM (rmStepG cancelR) (q, gq) = some (q', gq') → q'.remL = q.remL := by
+          L.foldlM (rmStepG cancelR regT) (q, gq) = some (q', gq') → q'.remL = q.remL := by
         intro L
         induction L with
         | nil => intro q gq q' gq' h; simp only [List.foldlM_nil, pure, Option.some.injEq, Prod.mk.injEq] at h
@@ -153,10 +154,11 @@ old `remove_node_labels` left (`pCreateRemove`), `delete_pending_node` now drops
 `remove_labels` entry, so the cancelled node satisfies `RemLLive` and no `RemoveLabels [0]` precedes
 its `CreateNode [0]` (before #3459: `fget p'.remL 0 = some [0]`, `¬ RemLLive p'`, and the replica
 refused node 0 as not live). -/
-theorem fixed3448_cancelled_node_clears_remL {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (g : Gr)
-    (p' : P) (g' : Gr) (h : deletePendingNode cancelN cancelR pCreateRemove g 0 = some (p', g')) :
+theorem fixed3448_cancelled_node_clears_remL {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr)
+    (regT : Gr → Nat → Gr) (g : Gr)
+    (p' : P) (g' : Gr) (h : deletePendingNode cancelN cancelR regT pCreateRemove g 0 = some (p', g')) :
     0 ∈ p'.cancelledN ∧ fget p'.remL 0 = none ∧ RemLLive p' := by
-  have hr := deletePendingNode_clears_remL cancelN cancelR pCreateRemove g 0 p' g' h
+  have hr := deletePendingNode_clears_remL cancelN cancelR regT pCreateRemove g 0 p' g' h
   have hc : 0 ∈ p'.cancelledN := by
     unfold deletePendingNode at h
     simp only at h
@@ -173,7 +175,7 @@ theorem fixed3448_cancelled_node_clears_remL {Gr : Type} (cancelN cancelR : Gr �
 
 /-- The unwind does succeed when the graph's cancels do (a trivial graph). -/
 theorem fixed3448_cancelled_node_clears_remL_reached :
-    ∃ p' g', deletePendingNode (fun (g : Unit) _ => some g) (fun g _ => some g) pCreateRemove () 0 = some (p', g') :=
+    ∃ p' g', deletePendingNode (fun (g : Unit) _ => some g) (fun g _ => some g) (fun g _ => g) pCreateRemove () 0 = some (p', g') :=
   ⟨_, _, rfl⟩
 
 /-! ## #3453: `get_pending_nodes_with_labels` (fixed by #3467, a477d9aa3) -/

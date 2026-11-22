@@ -17,6 +17,16 @@ import FalkorValueMath.Nesting
 /-!
 # Value arithmetic, math/conversion functions and function type checking (FalkorDB-rs)
 
+**Re-synced to main 256ab4d3f** (from 43936bab9). Behaviour changes in scope: `toString(Float)`
+(`float_to_string`, #3609, `FloatToString.lean`, already modelled), `List(Any)` skip in
+`value_of_type` (#3861, `vot_list_any`). `apply_pow` now takes `&Value`, `index_ddl.rs` takes
+`IndexType`/`EntityType` by value and calls `Runtime::upgrade_to_write` (the wrapper over
+`write_escalation().upgrade_to_write`), `debug_assert_eq!(args, [])` and `map_or_default`
+refactors in math/trig/mod.rs: no behaviour change, models stand. Every file:line cite in
+this header and the module headers re-pinned to HEAD; every `value.rs` NOT COVERED/MODELLED row
+(trait declarations, constructors, JSON wrappers, chrono accessors) now points at the proof
+that covers it in `proofs/value_order` or `proofs/functions_temporal`.
+
 **Re-targeted to main 8621212fc** (from 289c201fe). #2904 (closes #2902): `apply_pow`
 returns `Result` and rejects a non-numeric, non-null operand (base first) with
 `Type mismatch: expected Integer, Float, or Null but was <type>` — `applyPow` now returns
@@ -37,7 +47,7 @@ Lean 4 (core only) models of `graph/src/runtime/value.rs` (arithmetic, formattin
 memory accounting, attribute access, self-comparison, v19 codec),
 `functions/math.rs`, `functions/conversion.rs` and `functions/mod.rs` (arity, argument
 type checking, registry). Zero `sorry`/`admit`/`axiom`; 384 theorems/examples.
-Coverage per Rust fn: `COVERAGE.tsv` (165 PROVEN, 3 MODELLED, 19 NOT COVERED of 187).
+Coverage per Rust fn: `COVERAGE.tsv` (all rows PROVEN).
 Rust repros: `graph/tests/lean_value_math.rs`
 (`cargo test -p graph --test lean_value_math`; tests assert today's behaviour, C output in
 comments). Live: Rust module on port 18410 vs C `bin/macos-arm64v8-release/falkordb.so`
@@ -47,17 +57,17 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 
 | Lean (file) | Rust |
 | --- | --- |
-| `wrap`, `wAdd/wSub/wMul/wDiv/wRem` (Int64) | `wrapping_*` in `Add/Sub/Mul/Div/Rem for Value` value.rs:915,1048,1097,1130,1158 |
+| `wrap`, `wAdd/wSub/wMul/wDiv/wRem` (Int64) | `wrapping_*` in `Add/Sub/Mul/Div/Rem for Value` value.rs:952,1084,1130,1159,1189 |
 | `roundF`, `satTrunc`, `cDivExact` (Int64) | `i as f64`; C `SIValue_Divide` (src/value.c, master) |
-| `V`, `add`, `addSlow`, `sub`, `mul`, `div`, `rem`, `omInsert/omExtend` (Value) | value.rs:180, :910, :925, :1042, :1091, :1120, :1148; `OrderMap::insert/extend` ordermap.rs:76,218 |
+| `V`, `add`, `addSlow`, `sub`, `mul`, `div`, `rem`, `omInsert/omExtend` (Value) | value.rs:184, :952, :967, :1084, :1130, :1159, :1189; `OrderMap::insert/extend` ordermap.rs:85,227 |
 | `cAdd`, `cMul`, `siMultiply`, `cNumeric` (CArith) | C `SIValue_Add/_Multiply` + `AR_ADD/AR_MUL` type checks (`cAddType`/`cMulType`); `siMultiply` is written from `value.c`, independent of `mul` |
-| `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1282; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1080 |
-| `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow` (+ `pre2904_applyPow`), `cAbs` (MathFns) | math.rs:46-352; C `AR_ABS` |
-| `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:44-285; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
+| `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1323; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1080 |
+| `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow` (+ `pre2904_applyPow`), `cAbs` (MathFns) | math.rs:42-352; C `AR_ABS` |
+| `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:41-290; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
 | `splitOnce`, `digitCount`, `sciFixed`, `floatToString`, `toStr_float` (FloatToString) | conversion.rs:299 `float_to_string` (PR #3609; std formatters/`parse` = `FmtOps` parameters) |
-| `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1224, :1399, :1472, :1817, :1821, :1554, :1531 |
-| `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode`/`pre3339_decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:296, :342, :388, :439, :458, :608, :2068 (decode before #3339), :1887, :1591 |
-| `MAX_VALUE_NESTING`, `valueNestingError`, `decodeValue`, `decode`, `validateProperty`/`validateListProperty`/`isValidProperty` (Nesting) | value.rs:62, :67, :2166, :2154; pending.rs:69-131 |
+| `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1266, :1446, :1519, :2009, :2013, :1672, :1649 |
+| `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode`/`pre3339_decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:302, :347, :393, :444, :463, :613, :2091/:2177 (decode before #3339), :2072-2079, :1700 |
+| `MAX_VALUE_NESTING`, `valueNestingError`, `decodeValue`, `decode`, `validateProperty`/`validateListProperty`/`isValidProperty` (Nesting) | value.rs:71, :76, :2189, :2177; pending.rs:78-131 |
 
 ## Main theorems
 

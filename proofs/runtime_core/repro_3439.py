@@ -1,4 +1,6 @@
-"""Live repro for #3439 (RuntimeCore.Proto.writer_reply_race, pre-existing on main).
+"""Live repro for #3439 — NO LONGER REPRODUCES on main 256ab4d3f (checked: `repro_3439.py P 40 2 1 0` leaves the server
+alive, no panic): #3683 removed the graph cell, so `resync_published_indexes` borrows nothing.
+Originally (RuntimeCore.Proto.writer_reply_race, pre-existing on main).
 
 Usage: python repro_3439.py PORT SECONDS N_QUEUED_WRITERS N_INLINE_FAILING_WRITERS N_READERS
 Setup first: GRAPH.QUERY g "CREATE INDEX FOR (n:L) ON (n.v)".

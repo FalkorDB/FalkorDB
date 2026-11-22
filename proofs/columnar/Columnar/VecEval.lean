@@ -319,7 +319,7 @@ theorem eval_sound {Scope : Nat → Prop} {Rows : Nat → Prop} {HL : Fn Val →
 termination_by e => sizeOf e
 decreasing_by all_goals simp_wf; omega
 
-/-! ## `eval_values` (vector_expr.rs:285-306) -/
+/-! ## `eval_values` (vector_expr.rs:282-303) -/
 
 variable (A)
 

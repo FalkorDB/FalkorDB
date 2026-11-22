@@ -62,10 +62,10 @@ graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2787
 graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2792	PROVEN	Compact.harmonic_complete, unfiltered_keeps_high_ids (#3044 fixed by #3045: source vector sized node_id_bound); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
 graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2956	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
 graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2961	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
-graph/src/udf/js_classes.rs	with_graph	151	NOT COVERED	lends the graph for one UDF call and puts back the one lent before (set, then restore on drop), where set_current_graph/clear_current_graph set and cleared it; not modelled yet. Those were PROVEN: UdfClasses.withGraph_set, withGraph_clear
-graph/src/udf/js_classes.rs	drop	158	NOT COVERED	with_graph's restore guard: puts back the graph lent before; not modelled yet
+graph/src/udf/js_classes.rs	with_graph	151	PROVEN	UdfClasses.withGraphRun (swap, epoch bump when nothing was lent, restore guard), withGraphRun_restores, withGraphRun_outermost, withGraphRun_nested, withGraphRun_sees_graph, withGraphRun_stale_entity (#2976; replaces set_current_graph/clear_current_graph)
+graph/src/udf/js_classes.rs	drop	158	PROVEN	UdfClasses.restoreDrop, restoreDrop_spec (with_graph's Restore guard puts back the graph lent before; also on unwind)
 graph/src/udf/js_classes.rs	with_current_graph	170	PROVEN	UdfClasses.withGraph_set, withGraph_clear
-graph/src/udf/js_classes.rs	collect_edges	183	PROVEN	Neighbors.outgoing_ok, self_loop_twice
+graph/src/udf/js_classes.rs	collect_edges	183	PROVEN	Neighbors.nodeRels (get_node_relationships_by_type, all types), collectEdges_mem, collectEdges_nodup, fixed3084_self_loop_once (self-loop once, fixed by #3084)
 graph/src/udf/js_classes.rs	create_js_node	200	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode, rs_runtime_first, RT.not_differs, jsNode_eq_helpers (fixed by #3464: runtime-first through node_differs_from_committed); Marshal.nodeObj is a JsEntity instance (#2976): node_rt, fromJs_entity
 graph/src/udf/js_classes.rs	set_node_labels	268	PROVEN	UdfNodeView.setNodeLabels, jsNode_eq_helpers, jsNode_labels (QuickJS array/object set AXIOMATISED)
 graph/src/udf/js_classes.rs	set_node_attrs	285	PROVEN	UdfNodeView.setNodeAttrs, jsNode_eq_helpers (UdfClasses.attrLoop: reserved keys not copied; QuickJS object set AXIOMATISED)
@@ -81,7 +81,7 @@ graph/src/udf/js_classes.rs	js_iterate_nodes_impl	660	PROVEN	UdfClasses.iterNode
 graph/src/udf/js_classes.rs	js_iterate_edges	708	PROVEN	UdfClasses.iter_errors
 graph/src/udf/js_classes.rs	js_iterate_edges_impl	715	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
 graph/src/udf/js_classes.rs	js_traverse	760	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
-graph/src/udf/js_classes.rs	js_traverse_impl	778	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG); source ids via node_id_of (UdfClasses.nodeIdOf_spec)
+graph/src/udf/js_classes.rs	js_traverse_impl	778	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, fixed3084_traverse_self_loop_once, traverse_drops_self_neighbour (BUG); source ids via node_id_of (UdfClasses.nodeIdOf_spec); UdfClasses.traverseSources, traverseSources_nodes, traverseSources_forged (sources must be current node entities, #2976)
 graph/src/udf/type_convert.rs	with_stack	81	AXIOMATISED	stacker::maybe_grow (psm stack-switching FFI): runs f and returns its result on a fresh segment when the stack is low; transparent in the model (one fromF/toF level = one with_stack call)
 graph/src/udf/type_convert.rs	udf_nesting_error	88	PROVEN	Nesting.nestErr, nestErr_eq; MarshalCap.self_array_error, fromJs_nestArr_past, toJs_nestList_past
 graph/src/udf/type_convert.rs	value_to_js	98	PROVEN	Marshal.toJs (= toF at depth 0): toJs_frames, toJs_past_cap, nestList_rt, toJs_nestList_past (#3336); int_roundtrip, float_rt_iff, neg_zero_rt, node_rt, rel_rt, point_rt, datetime_rt, vecf32_rt, map_never_marked, constructor_key_roundtrips; cap_asymmetry_vecf32
@@ -100,7 +100,7 @@ graph/src/udf/js_context.rs	compute_effective_js_timeout_ms	130	PROVEN	UdfContex
 graph/src/udf/js_context.rs	validate_script	158	PROVEN	UdfContext.validateScript_spec, validateTimeout_bounds (QuickJS eval AXIOMATISED oracle)
 graph/src/udf/js_context.rs	ensure_context_current	191	PROVEN	UdfContext.ensureCurrent_version
 graph/src/udf/js_context.rs	rebuild_context	208	PROVEN	UdfContext.rebuild_keys, rebuild_fail, threadJsState_drop_safe; Repo.keys
-graph/src/udf/js_context.rs	call_udf_bridge	280	PROVEN	UdfContext.bridge_clears, bridge_timeout, bridge_not_found
+graph/src/udf/js_context.rs	call_udf_bridge	280	PROVEN	UdfContext.bridge (call inside with_graph, #2976): bridge_restores, bridge_clears, bridge_timeout, bridge_not_found
 graph/src/udf/js_globals.rs	setup_validate_globals	45	PROVEN	UdfGlobals.validate_names_nodup, vRegister_rejects, validate_runtime_same_globals (#3079: also calls setup_graph_global) (the eval-ed JS register body; global install AXIOMATISED)
 graph/src/udf/js_globals.rs	collect_validate_names	98	PROVEN	UdfGlobals.collectNames_ok
 graph/src/udf/js_globals.rs	setup_runtime_globals	111	PROVEN	UdfGlobals.runtime_keys_eq_qualified, empty_lib_name_mismatch (BUG), validate_runtime_same_globals

@@ -123,7 +123,7 @@ def bRows (utf8 I : Bytes → Bool) (count attrs : Nat) : Blk (List Val) where
     rw [ite_eq_right (by simp [MIN_VALUE_BYTES]; omega)]
     simp only; rw [← hl, readN_decodeV utf8 I rows bs rest e hw]
 
-/-- `put_opt` (`records.rs:123`) / `take_opt` (`:137`). -/
+/-- `put_opt` (`records.rs:127`) / `take_opt` (`:141`). -/
 def bOpt {α} (A : Blk α) : Blk (Option α) where
   enc
     | none => .ok (w8 0)

@@ -1,4 +1,10 @@
 /-
+**HISTORY (pre-#3683).** This module models `HeldRead`/`Arc<AtomicRefCell<Graph>>`, which #3683
+(08616ec29) removed: a read query now holds an `Arc<Graph>` and takes no borrow, a write query an
+owned fork. The current model is `QueryGraph.lean`. Kept because `proofs/pending_commit` (`Hold`)
+imports its definitions.
+-/
+/-
 # Claims 1 and 4: `Runtime::graph()` reads the same `Graph` that `g.borrow()` would
 
 **Merged: PR #3436 (25babfe4f); folded from the retired `pr3436_review`.** The PR branch @ e30861ea3 is the same code as main (`.rs` identical apart from line numbers: `runtime.rs` cites below are current main, ca36bfa15). Branch history: PR #3436, `perf/read-graph-once` @ e30861ea3 (d7d166e82, 896ba73ef, 653f467a9,

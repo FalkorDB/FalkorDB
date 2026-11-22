@@ -1,15 +1,15 @@
 /-
-# `graph/src/threadpool.rs` (origin/main ca36bfa15): pool lifecycle and `QueueSlot`
+# `graph/src/threadpool.rs` (origin/main 256ab4d3f): pool lifecycle and `QueueSlot`
 
 | Lean | Rust |
 | --- | --- |
-| `PoolS`, `PoolS.new` | `ThreadPool::new` `threadpool.rs:67` (`with_names(size, None)`, `:79`; names and `shutdown_within` are in `PoolWithin.lean`) (since #3014 an **unbounded** MPMC queue, `unbounded_blocking()`; `size` workers, each holding a receiver clone) |
-| `PoolS.step` | a worker's `while let Ok(job) = rx.recv()` loop body (`:98-112`): `Some(j)` runs (panics contained), `None` exits |
-| `PoolS.spawn` | `ThreadPool::spawn` `:124` (the send never waits — unbounded — and fails only once every receiver is gone) |
-| `PoolS.shutdown`, `run` | `ThreadPool::shutdown` `:146` (one `None` per worker, then `join`) |
-| `Global` | `GLOBAL_THREAD_POOL: OnceCell`, `spawn` `:185`, `init_thread_pool` `:201`, `shutdown` `:210` |
-| `acquireLoop` | `QueueSlot::try_acquire_in` `:242` (the CAS loop), `try_acquire` `:238` (on `QUEUED_QUERIES`) |
-| `Loc`, `tr`, `Sys` | a `QueueSlot`'s life: taken by `admit` (`src/graph_core.rs:1007`), carried in the pool job, then (writes) in `WriteMessage.slot`, released by `Drop` (`:258`) |
+| `PoolS`, `PoolS.new` | `ThreadPool::new` `threadpool.rs:70` (`with_names(size, None)`, `:83`; names and `shutdown_within` are in `PoolWithin.lean`) (since #3014 an **unbounded** MPMC queue, `unbounded_blocking()`; `size` workers, each holding a receiver clone) |
+| `PoolS.step` | a worker's `while let Ok(job) = rx.recv()` loop body (`:103-121`): `Some(j)` runs (panics contained), `None` exits |
+| `PoolS.spawn` | `ThreadPool::spawn` `:129` (the send never waits — unbounded — and fails only once every receiver is gone) |
+| `PoolS.shutdown`, `run` | `ThreadPool::shutdown` `:151` (one `None` per worker, then `join`) |
+| `Global` | `GLOBAL_THREAD_POOL: OnceCell`, `spawn` `:191`, `init_thread_pool` `:207`, `shutdown` `:216` |
+| `acquireLoop` | `QueueSlot::try_acquire_in` `:249` (the CAS loop), `try_acquire` `:245` (on `QUEUED_QUERIES`) |
+| `Loc`, `tr`, `Sys` | a `QueueSlot`'s life: taken by `admit` (`src/graph_core.rs:1117`), carried in the pool job, then (writes) in `WriteMessage.slot`, released by `Drop` (`:264`) |
 
 `pending_count` (both) was removed by #3014: the queue is bounded by admission, not by
 the channel. Workers are interchangeable: every `recv` pops the queue head, so the order
@@ -57,7 +57,7 @@ theorem spawn_never_blocks (s : PoolS) (j : Nat) (h : s.alive ≠ 0) :
   simp [PoolS.spawn, h]
 
 /-- A job spawned after every worker exited is dropped, never run, and does
-not panic (the `eprintln!` path, `threadpool.rs:133-138`). -/
+not panic (the `eprintln!` path, `threadpool.rs:136-143`). -/
 theorem spawn_after_exit (s : PoolS) (j : Nat) (h : s.alive = 0) : s.spawn j = s := by
   simp [PoolS.spawn, h]
 
@@ -165,8 +165,8 @@ inductive Loc | main | job | running | writeMsg | writeQ | released
   deriving DecidableEq, Repr
 
 inductive SEv
-  | spawnOk        -- `spawn` sent the job (`graph_core.rs:1077`)
-  | spawnFail      -- send failed: the job (and its slot) dropped (`threadpool.rs:137`)
+  | spawnOk        -- `spawn` sent the job (`ThreadPool::spawn` `threadpool.rs:129`, called from `query_mut`)
+  | spawnFail      -- send failed: the job (and its slot) dropped (`threadpool.rs:143`)
   | poolDropped    -- pool torn down with the job still queued
   | start          -- a worker starts the job (`let mut slot = Some(slot)`, `:1079`)
   | readStarts     -- `execute_query`/`execute_profile` run a read: `admission.take()` (`:631`, `:697`)

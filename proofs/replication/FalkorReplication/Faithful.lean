@@ -46,22 +46,22 @@ theorem internCapF_full (cap : Nat) (d : List String) (n : String) (hf : ¬ d.le
     internCapF cap d n = none := by
   simp [internCapF, hn, hf]
 
-/-- `verify_id` (`apply.rs:552`), success only. -/
+/-- `verify_id` (`apply.rs:586`), success only. -/
 def verifyIdF (expected assigned : Nat) : Bool := assigned == expected
 
-/-- `apply_add_schema` (`apply.rs:532`): intern, then `verify_id`. -/
+/-- `apply_add_schema` (`apply.rs:560`): intern, then `verify_id`. -/
 def applyAddSchemaF (d : List String) (id : Nat) (n : String) : Option (List String) :=
   let (assigned, d') := internF d n
   if verifyIdF id assigned then some d' else none
 
-/-- The attribute arm of `apply_record` (`apply.rs:171`): `add_node_attribute_name` (capped), read the id
+/-- The attribute arm of `apply_record` (`apply.rs:175`): `add_node_attribute_name` (capped), read the id
 back, `AttributeLimitReached` (`none`) if the name is not registered, then `verify_id`. -/
 def applyAddAttributeF (cap : Nat) (d : List String) (id : Nat) (n : String) : Option (List String) :=
   match internCapF cap d n with
   | none => none
   | some (assigned, d') => if verifyIdF id assigned then some d' else none
 
-/-- `IdSpace::reserve` (`id_space.rs:483`) on a batch opened at `bound` that has
+/-- `IdSpace::reserve` (`id_space.rs:516`) on a batch opened at `bound` that has
 taken and been issued nothing: `reclaim_ids` (`:244`) takes the lowest `count`
 ids of `recycled - ∅ - ∅`, then fresh ids from `entry_bound + above(∅) +
 above(∅) = bound + 0`. `bin` is the bin's ascending listing. -/
@@ -69,18 +69,43 @@ def reserveFresh (bound : Nat) (bin : List Nat) (count : Nat) : List Nat :=
   let reclaimed := bin.take count
   reclaimed ++ List.range' (bound + 0) (count - reclaimed.length)
 
+/-- `IdSpace::reserve` since #3164 (`e0d9c2188`, `id_space.rs:516`): `reclaim_ids` also skips the
+`quarantined` ids — what earlier batches of this version freed or cancelled (`open_batch`, `:470`). The
+fresh ids above the boundary are unchanged. -/
+def reserveQ (bound : Nat) (bin quarantined : List Nat) (count : Nat) : List Nat :=
+  let reclaimed := (bin.filter (fun i => !quarantined.contains i)).take count
+  reclaimed ++ List.range' (bound + 0) (count - reclaimed.length)
+
+/-- On the first batch of a version `quarantined` is empty (`IdSpace::new_version`, `restored`, `new`
+all start it empty), and then `reserve` is `reserveFresh`: the replication model's `idsOf`
+(`idsOf_refines`) is exactly that case. A later batch only *removes* candidates from the bin, so what it
+issues is still a free or fresh id (`reserveQ_mem`), which is all the replica's `okCreate` asks. -/
+theorem reserveQ_nil (bound : Nat) (bin : List Nat) (count : Nat) :
+    reserveQ bound bin [] count = reserveFresh bound bin count := by
+  have : bin.filter (fun i => !([] : List Nat).contains i) = bin := by
+    simp
+  simp only [reserveQ, reserveFresh, this]
+
+theorem reserveQ_mem (bound : Nat) (bin q : List Nat) (count i : Nat)
+    (h : i ∈ reserveQ bound bin q count) : i ∈ bin ∨ bound ≤ i := by
+  simp only [reserveQ, List.mem_append, List.mem_range'_1] at h
+  rcases h with h | h
+  · left
+    exact (List.mem_filter.1 (List.mem_of_mem_take h)).1
+  · right; omega
+
 /-- The half of the node `IdSpace` (`id_space.rs:164`) that `Graph` reads since
 #2846: `live` and `recycled` (a set, here a duplicate-free list). -/
 structure Ids where
   live : Nat
   bin  : List Nat
 
-/-- `IdSpace::bound` (`:343`) = `Graph::node_id_bound` (`graph.rs:1607`). -/
+/-- `IdSpace::bound` (`:359`) = `Graph::node_id_bound` (`graph.rs:1709`). -/
 def Ids.bound (s : Ids) : Nat := s.live + s.bin.length
 
-/-- The state `IdSpace::create` (`:582`) moves to on `{id}` once its refusals
+/-- The state `IdSpace::create` (`:621`) moves to on `{id}` once its refusals
 pass: `recycled -= nodes; live += nodes.len()` — what `Graph::create_nodes`
-(`graph.rs:1646`) does to the id space. -/
+(`graph.rs:1748`) does to the id space. -/
 def Ids.create1 (s : Ids) (id : Nat) : Ids := ⟨s.live + 1, s.bin.erase id⟩
 
 /-- Insert `id` into an ascending list at its sorted place. -/
@@ -125,9 +150,9 @@ theorem insAsc_sorted (id : Nat) : ∀ l : List Nat, l.Pairwise (· ≤ ·) → 
       · omega
       · exact h'.1 x hx
 
-/-- The state `IdSpace::release` (`:703`) moves to on `requested = freed = {id}`
+/-- The state `IdSpace::release` (`:739`) moves to on `requested = freed = {id}`
 once its refusals pass (`id` not free): `recycled |= freed; live -= freed.len()`
-— `Graph::delete_nodes` (`graph.rs:2200`). The id goes in at its sorted place, so the bin stays an
+— `Graph::delete_nodes` (`graph.rs:2310`). The id goes in at its sorted place, so the bin stays an
 ascending listing (`release1_sorted`), which `reserveFresh` (`bin.take`) relies on. -/
 def Ids.release1 (s : Ids) (id : Nat) : Ids := ⟨s.live - 1, insAsc id s.bin⟩
 
@@ -135,5 +160,26 @@ theorem Ids.release1_sorted (s : Ids) (id : Nat) (h : s.bin.Pairwise (· ≤ ·)
     (s.release1 id).bin.Pairwise (· ≤ ·) := by
   simp only [Ids.release1]
   exact insAsc_sorted id s.bin h
+
+/-- **`IdSpace::release`'s `self.live -= freed.len()` cannot underflow on a live id** (the u64
+subtraction the model does in `Nat`): in an id space whose bin is a duplicate-free set of ids below the
+boundary, a live id (`id < bound`, not in the bin) forces `1 ≤ live`, because `bound = live + |bin|` and
+the bin misses `id`, so `|bin| ≤ bound - 1`. -/
+theorem Ids.live_pos (s : Ids) (hn : s.bin.Nodup) (hlt : ∀ b ∈ s.bin, b < s.bound)
+    (id : Nat) (hid : id < s.bound) (hnf : id ∉ s.bin) : 1 ≤ s.live := by
+  by_cases h : 1 ≤ s.live
+  · exact h
+  · exfalso
+    have hl : s.live = 0 := by omega
+    have hsub : s.bin ⊆ (List.range s.bound).erase id := by
+      intro b hb
+      have hbl := hlt b hb
+      have hne : b ≠ id := fun e => hnf (e ▸ hb)
+      exact (List.mem_erase_of_ne hne).2 (List.mem_range.2 hbl)
+    have hle := hn.length_le_of_subset hsub
+    have hmem : id ∈ List.range s.bound := List.mem_range.2 hid
+    rw [List.length_erase_of_mem hmem, List.length_range] at hle
+    have hb : s.bound = s.bin.length := by simp [Ids.bound, hl]
+    omega
 
 end FalkorFaithful

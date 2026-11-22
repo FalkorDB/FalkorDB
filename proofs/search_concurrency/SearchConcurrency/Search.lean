@@ -7,18 +7,18 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 
 | here | there |
 | --- | --- |
-| `IndexType`, `Field`            | `graph/src/index/mod.rs:97` `IndexType`, `:107` `Field`, `:138` `Field::new`, `:154` `new_with_vector_options` |
+| `IndexType`, `Field`            | `graph/src/index/mod.rs:97` `IndexType`, `:108` `Field`, `:138` `Field::new`, `:155` `new_with_vector_options` |
 | `arrNames`                      | `mod.rs:122` `Field::make_arr_names` |
-| `docSet`                        | `mod.rs:717-872` `Document::set` @ 8743953a8 (branch for branch; vector arm `:730-744`, #3087; temporal arm `:803`, #3076) |
+| `docSet`                        | `mod.rs:721-875` `Document::set` (branch for branch; vector arm `:736-748`, #3087; temporal arm `:808`, #3076) |
 | `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
-| `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:869` |
-| `buildDoc`                      | the per-attribute loop in `graph.rs:4043` `commit_index_kind` / `graph.rs:729` population `build_doc` |
-| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1907` `Index::add_document`) |
-| `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2021-2030` fulltext unknown-key refusal (#3094) |
-| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2134-2222` `map_to_index_options` (`:2042-2224`), vector branch (PR #3257: name checked at `:2160`) |
-| `parsePhonetic`                 | `runtime.rs:2051-2068` phonetic arm |
-| `metricOf`                      | `mod.rs:1273-1287` similarity match in `Index::register_fields` |
-| `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:143` `eval_vector_args` (k arm) |
+| `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:873` |
+| `buildDoc`                      | the per-attribute loop in `graph.rs:4044` `commit_index_kind` (`:4070`) / `graph.rs:719` population `build_doc` (`:707`) |
+| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1918` `Index::add_document`) |
+| `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2052-2065` fulltext unknown-key refusal (#3094) |
+| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2134-2222` `map_to_index_options` (`:2042-2223`), vector branch (PR #3257: name checked at `:2157-2165`) |
+| `parsePhonetic`                 | `runtime.rs:2085-2125` phonetic arm |
+| `metricOf`                      | `mod.rs:1285-1299` similarity match in `Index::register_fields` (`:1192`) |
+| `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:120` `eval_vector_args` (k arm) |
 | `withCapacity`                  | Rust std `Vec::with_capacity`; historical use: `graph.rs:3883` / `:3938` `Vec::with_capacity(k)` @ 49f698d22 (removed by #3088; current model in `Knn`) |
 -/
 
@@ -69,6 +69,25 @@ deriving Repr
 /-- `Field::make_arr_names` (mod.rs:122): only range fields get array sub-fields. -/
 def arrNames (f : Field) : Option (String × String) :=
   if f.ty = .range then some (f.name ++ ":numeric:arr", f.name ++ ":string:arr") else none
+
+/-- `Field::new` (mod.rs:138): no vector options. -/
+def Field.new (name : String) (ty : IndexType) : Field := { name, ty }
+
+/-- `Field::new_with_vector_options` (mod.rs:155): the options' dimension is kept. -/
+def Field.newVec (name : String) (ty : IndexType) (dim : Nat) : Field := { name, ty, vdim := some dim }
+
+/-- **Constructors**: name and type are kept, `vdim` is the options' dimension (`none` for `new`),
+and both derive the array sub-field names with `make_arr_names`, the same for a given type
+(`arrNames` reads only the name and the type). -/
+theorem Field.new_spec (n : String) (t : IndexType) (d : Nat) :
+    (Field.new n t).name = n ∧ (Field.new n t).ty = t ∧ (Field.new n t).vdim = none ∧
+    (Field.newVec n t d).name = n ∧ (Field.newVec n t d).ty = t ∧ (Field.newVec n t d).vdim = some d ∧
+    arrNames (Field.new n t) = arrNames (Field.newVec n t d) := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Only a range field gets the `:numeric:arr` / `:string:arr` sub-fields. -/
+theorem Field.new_arr (n : String) (t : IndexType) :
+    (arrNames (Field.new n t)).isSome = true ↔ t = .range := by
+  cases t <;> simp [arrNames, Field.new]
 
 def isNumeric : Val → Bool
   | .bool _ | .int _ | .float => true
@@ -300,7 +319,7 @@ theorem range_never_vector_or_text (f : Field) (v : Val) (h : f.ty = .range) :
   cases v <;> simp [docSet, h, RSAdd.isVecOrText]
   all_goals (intro a ha; rcases ha with ⟨_, rfl⟩ | ⟨_, rfl⟩ <;> rfl)
 
-/-! ## Index options (`map_to_index_options`, runtime.rs:2008-2179, lines pinned at main 5c7af54f2)
+/-! ## Index options (`map_to_index_options`, runtime.rs:2042-2223, lines at main 256ab4d3f)
 
 #3094 (`fe619ac5f`'s parent series, fixes #3091) made the vector branch require
 `dimension` and `similarityFunction` (lower-casing the latter) and the fulltext
@@ -317,32 +336,32 @@ deriving Repr, DecidableEq
 
 abbrev Opts := List (String × OptVal)
 
-/-- `get` (runtime.rs:2012-2016): first entry with that key. -/
+/-- `get` (runtime.rs:2046-2050): first entry with that key. -/
 def get (m : Opts) (k : String) : Option OptVal := (m.find? (·.1 == k)).map (·.2)
 
-/-- `FULLTEXT_OPTIONS` (runtime.rs:2021-2022). -/
+/-- `FULLTEXT_OPTIONS` (runtime.rs:2055-2056). -/
 def fulltextOptions : List String := ["weight", "nostem", "phonetic", "language", "stopwords"]
 
-/-- The fulltext unknown-key refusal (runtime.rs:2023-2030): the first key, in map
+/-- The fulltext unknown-key refusal (runtime.rs:2057-2065): the first key, in map
 order, that is not one of `FULLTEXT_OPTIONS`. -/
 def fulltextUnknown (m : Opts) : Option String :=
   (m.find? (fun kv => !fulltextOptions.contains kv.1)).map (·.1)
 
-/-- `dimension` arm (runtime.rs:2101-2119): **required** since #3094 (it used to default to `0`). -/
+/-- `dimension` arm (runtime.rs:2135-2152): **required** since #3094 (it used to default to `0`). -/
 def parseDimension (m : Opts) : Except String Nat :=
   match get m "dimension" with
   | some (.int n) => if n < 0 then .error "dimension must be a non-negative integer" else .ok n.toNat
   | none => .error "dimension is required"
   | some _ => .error "dimension must be an integer"
 
-/-- `M` / `efConstruction` / `efRuntime` arms (runtime.rs:2134-2170). -/
+/-- `M` / `efConstruction` / `efRuntime` arms (runtime.rs:2179-2213). -/
 def parseNatOpt (m : Opts) (k : String) : Except String (Option Nat) :=
   match get m k with
   | some (.int n) => if n < 0 then .error (k ++ " must be a non-negative integer") else .ok (some n.toNat)
   | none => .ok none
   | some _ => .error (k ++ " must be an integer")
 
-/-- The similarity names `map_to_index_options` accepts (runtime.rs:2160, PR #3257). -/
+/-- The similarity names `map_to_index_options` accepts (runtime.rs:2161, PR #3257). -/
 def simNames : List String := ["euclidean", "cosine", "ip"]
 
 /-- `similarityFunction` arm (runtime.rs:2157-2178): **required**, stored as
@@ -534,7 +553,7 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
 #guard rustAccepts [("dimension", .int 2), ("similarityFunction", .str "Euclidean")] = true
 #guard cAccepts [("dimension", .int 2), ("similarityFunction", .str "Euclidean")] = true
 #guard rustAccepts [] = false
--- Fulltext: a misspelt key is refused (runtime.rs:2023-2030), first unknown key in map order.
+-- Fulltext: a misspelt key is refused (runtime.rs:2057-2065), first unknown key in map order.
 #guard fulltextUnknown [("weight", .float), ("nostemm", .bool true), ("lang", .str "x")] = some "nostemm"
 #guard fulltextUnknown [("weight", .float), ("phonetic", .bool true)] = none
 
@@ -611,7 +630,7 @@ theorem rust_eq_c_all (m : Opts)
 #guard cFulltextKeysOk [("weight", .float), ("foo", .bool true)] = true
 #guard cFulltextKeysOk [("foo", .int 1)] = false
 
-/-- `phonetic` arm (runtime.rs:2051-2068). -/
+/-- `phonetic` arm (runtime.rs:2085-2125). -/
 def parsePhonetic : Option OptVal → Except String (Option String)
   | some (.bool b) => .ok (some (if b then "dm:en" else ""))
   | some (.str s) => if s.toLower = "dm:en" then .ok (some "dm:en") else .error "Unsupported phonetic algorithm"

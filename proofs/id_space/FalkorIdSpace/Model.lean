@@ -48,15 +48,15 @@ def above (ids : IdSet) (bound : Nat) : Nat :=
   let below := if bound = 0 then 0 else cnt bound ids
   sLen N ids - below
 
-/-- `reclaim_ids` (`id_space.rs:244`): `free = pool - taken - issued`;
+/-- `reclaim_ids` (`id_space.rs:256`, #3164): `free = pool - taken - issued; free -= quarantined`;
 `out.extend(free.iter().take(count))`; return the number appended. -/
-def freeOf (pool taken issued : IdSet) : IdSet := sDiff (sDiff pool taken) issued
+def freeOf (pool taken issued quar : IdSet) : IdSet := sDiff (sDiff (sDiff pool taken) issued) quar
 
-def reclaimIds (pool taken issued : IdSet) (count : Nat) (out : List Nat) : List Nat × Nat :=
-  let out' := out ++ (asc N (freeOf pool taken issued)).take count
+def reclaimIds (pool taken issued quar : IdSet) (count : Nat) (out : List Nat) : List Nat × Nat :=
+  let out' := out ++ (asc N (freeOf pool taken issued quar)).take count
   (out', out'.length - out.length)
 
-/-- `IdSpace { live, recycled, entry_bound, taken, released }` (`:164`). -/
+/-- `IdSpace { live, recycled, entry_bound, taken, released, quarantined }` (`:164`). -/
 structure IdSpace where
   live     : Nat
   recycled : IdSet
@@ -64,6 +64,9 @@ structure IdSpace where
   taken    : IdSet
   /-- `released` (`:207`, #3022): every id the open batch freed. -/
   released : IdSet := fun _ => false
+  /-- `quarantined` (`:219`, #3164/#3641): every id earlier batches of this version freed
+  or cancelled; `reserve` skips them until the version is dropped. -/
+  quarantined : IdSet := fun _ => false
 
 /-- `IdSpaceError` (`:104`). `Miscounted` is gone (#2846); `Inconsistent` and
 `AlreadyTaken` are new. -/
@@ -78,11 +81,11 @@ inductive IdSpaceError where
 deriving DecidableEq, Repr
 
 /-- `IdSpace::new` (`:266`), also `Default::default` (`:258`). -/
-def IdSpace.new : IdSpace := ⟨0, sEmpty, 0, sEmpty, sEmpty⟩
+def IdSpace.new : IdSpace := ⟨0, sEmpty, 0, sEmpty, sEmpty, sEmpty⟩
 
 /-- `IdSpace::restored` (`:280`): `entry_bound = live + recycled.len()`. -/
 def IdSpace.restored (live : Nat) (recycled : IdSet) : IdSpace :=
-  ⟨live, recycled, live + sLen N recycled, sEmpty, sEmpty⟩
+  ⟨live, recycled, live + sLen N recycled, sEmpty, sEmpty, sEmpty⟩
 
 /-- `taken` (`:311`) — a field read. -/
 def IdSpace.takenSet (sp : IdSpace) : IdSet := sp.taken
@@ -110,21 +113,31 @@ def IdSpace.checked (sp : IdSpace) : Except IdSpaceError Unit :=
     else .error (.inconsistent sp.live (sLen N sp.recycled) bound sp.eb taken expected)
   | none => .error (.inconsistent sp.live (sLen N sp.recycled) bound sp.eb taken (umax N))
 
-/-- `open_batch` (`:447`): `checked()?` then re-anchor and clear `taken` and
-(since #3022) `released`. -/
+/-- What `open_batch` adds to `quarantined` (`:470-482`, #3164): `released |= taken & recycled`
+(a cancelled creation sits in `recycled` without being `released`), then `quarantined` becomes
+`quarantined ∪ released` (the Rust `mem::swap` when `quarantined` is empty is the same union). -/
+def IdSpace.rolledQuar (sp : IdSpace) : IdSet :=
+  sUnion sp.quarantined (sUnion sp.released (sInter sp.taken sp.recycled))
+
+/-- `open_batch` (`:470`): `checked()?` then re-anchor, clear `taken` and (since #3022)
+`released`, and (since #3164) move what the batch freed or cancelled into `quarantined`. -/
 def IdSpace.openBatch (sp : IdSpace) : Except IdSpaceError IdSpace :=
   match sp.checked N with
   | .error e => .error e
-  | .ok () => .ok { sp with eb := sp.bound N, taken := sEmpty, released := sEmpty }
+  | .ok () => .ok { sp with eb := sp.bound N, taken := sEmpty, released := sEmpty,
+                            quarantined := sp.rolledQuar }
 
-/-- `reserve` (`:483`), release build. `allocOk` is whether `try_reserve_exact(count)`
+/-- `end_quarantine` (`:378`, #3164): forget what earlier batches freed. -/
+def IdSpace.endQuarantine (sp : IdSpace) : IdSpace := { sp with quarantined := sEmpty }
+
+/-- `reserve` (`:516`), release build. `allocOk` is whether `try_reserve_exact(count)`
 succeeded (an allocator boundary). The run `start..start + (count - reclaimed)` is a `u64` range whose end
 wraps at `2^64` (`N`): a wrapped end is at or below `start`, so the range is empty and fewer than `count` ids
 come back (a debug build panics on the add instead). -/
 def IdSpace.reserve (sp : IdSpace) (allocOk : Bool) (count : Nat) (issued : IdSet) :
     Except String (List Nat) :=
   if !allocOk then .error s!"failed to reserve {count} ids" else
-  let (ids, reclaimed) := reclaimIds N sp.recycled sp.taken issued count []
+  let (ids, reclaimed) := reclaimIds N sp.recycled sp.taken issued sp.quarantined count []
   let start := sp.eb + above N sp.taken sp.eb + above N issued sp.eb
   .ok (ids ++ List.range' start ((start + (count - reclaimed)) % N - start))
 

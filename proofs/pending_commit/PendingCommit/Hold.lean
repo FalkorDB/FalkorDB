@@ -1,4 +1,27 @@
 /-
+# Re-targeted to #3683 (08616ec29, current main 256ab4d3f)
+
+Since #3683 there is no `Arc<AtomicRefCell<Graph>>`: a read query holds a published `Arc<Graph>`
+(no borrow at all), a write query owns its fork in `Runtime.fork : RefCell<Option<Graph>>`
+(`runtime.rs:583`, `graph_mut` = `fork.borrow_mut()`, `graph()` = `fork.borrow()`), and the
+commit functions below are still called as `&mut self.runtime.graph_mut()` / `&self.runtime.graph()`
+(`ops/commit.rs:89,139,148`, `runtime.rs:617,633`, `index_ddl.rs`). So the theorems below hold with
+the borrow word `E` read as the **fork cell's** word (`RuntimeCore.QG.Rt.forkB`): a `RefCell` is
+`!Sync`, so no other thread can have a borrow out; `E` is only the owner's own outstanding borrows
+from its call stack, which is the same on main-before-#3436 and today (the callers are unchanged).
+What #3683 removed is exactly what the old text had to argue away: the index population thread's
+borrows, since it reads a published `Arc<Graph>` and borrows nothing (`published_read_no_borrow`).
+New here, tying the model to `RuntimeCore.QueryGraph`:
+
+* `holdMut_panics_iff_graphMut` — the held `graph_mut()` panics exactly when
+  `Runtime::graph_mut` does (a borrow out on the fork cell, or no fork);
+* `published_read_no_borrow` — reading a published version takes no borrow, whatever the fork cell's state;
+* `hold_after_publish_panics` — after `publish` the fork is gone, so a held `graph_mut()` panics.
+
+The rest of this header is the original #3436 argument, kept as history (its "main" is pre-#3436;
+its `AtomicRefCell` words now read `RefCell`).
+-/
+/-
 # #3436 (e30861ea3): one borrow held across a call = the old sequential borrows
 
 Merged PR #3436 (25babfe4f); folded from the retired `pr3436_review` (module `Hold`; the borrow-word
@@ -39,6 +62,7 @@ failing writes, range-index CREATE/DROP (population threads) and 4 reader thread
 no panic.
 -/
 import RuntimeCore.Cell
+import RuntimeCore.QueryGraph
 
 namespace PendingCommit.Hold
 open RuntimeCore.Cell
@@ -185,5 +209,44 @@ not. `Pending::commit` is never of this shape (`commitSteps_head_mut`). -/
 theorem empty_body_differs :
     runHoldMut (G := Nat) (.shared 1) 0 [] = .panic ∧ runMain (G := Nat) (.shared 1) 0 [] = .ok 0 :=
   ⟨rfl, rfl⟩
+
+/-! ## Against `RuntimeCore.QG` (the #3683 runtime) -/
+
+theorem runFree_not_panic {G : Type} : ∀ (v : G) (ss : List (St G)), runFree v ss ≠ .panic
+  | _, [] => by simp [runFree]
+  | v, .mut f :: ss => by
+    simp only [runFree]; cases f v with
+    | ok v' => exact runFree_not_panic v' ss
+    | error e => simp
+  | v, .rd f :: ss => by
+    simp only [runFree]; cases f v with
+    | ok u => exact runFree_not_panic v ss
+    | error e => simp
+
+/-- The held `graph_mut()` panics exactly when the exclusive borrow of the fork cell is refused
+(the body never panics inside a held borrow) — which is `Runtime::graph_mut` on a runtime that has
+its fork (`QG.graphMut_panics_iff`: a borrow out, or no fork). -/
+theorem holdMut_panics_iff_graphMut {G : Type} (rt : RuntimeCore.QG.Rt G) (f : G) (hf : rt.fork = some f)
+    (v : G) (ss : List (St G)) :
+    runHoldMut rt.forkB v ss = .panic ↔ RuntimeCore.QG.graphMut rt = .panic := by
+  rw [RuntimeCore.QG.graphMut_panics_iff]
+  unfold runHoldMut
+  cases hb : rt.forkB with
+  | excl => simp [borrowMut]
+  | shared n =>
+    cases n with
+    | zero => simp [borrowMut, hf]; exact runFree_not_panic v ss
+    | succ k => simp [borrowMut]
+
+/-- Reading a published version takes no borrow whatever the fork cell's word is. -/
+theorem published_read_no_borrow {G : Type} (rt : RuntimeCore.QG.Rt G) (g : G) (h : rt.published = some g) :
+    RuntimeCore.QG.graph rt = .ok (.published g, rt) :=
+  RuntimeCore.QG.graph_published rt g h
+
+/-- After `publish` there is no fork: a held `graph_mut()` panics. -/
+theorem hold_after_publish_panics {G : Type} (rt : RuntimeCore.QG.Rt G) (h : rt.fork = none) :
+    RuntimeCore.QG.graphMut rt = .panic := by
+  unfold RuntimeCore.QG.graphMut
+  cases borrowMut rt.forkB <;> simp [h]
 
 end PendingCommit.Hold

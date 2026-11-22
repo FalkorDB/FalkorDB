@@ -24,6 +24,20 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
   from Cypher: the only shrink caller, `rebuild_derived_matrices`, keeps
   `node_cap` ≥ every node id.
 
+Re-sync to 256ab4d3f (from 43936bab9): no model change; the 24 CHANGED rows are behaviour-preserving.
+`should_fold`, `should_fold_read`, `fold_balance`, `delta_dominates_base`, `compound_key(_inverse)` became
+`const fn` (#3787); `Tensor::me_block_mut`/`set_all_from_slices`/`remove_all`/`encode`/`decode` were rewritten
+with `if let`/`map_or_default`/`unwrap_or_else` and reordered `if` branches (same case split);
+`Delta::tombstone_masked` and the `flush` folds (`VersionedMatrix::flush`, `Tensor::flush`) now use the
+structural descriptors `S`/`RSC` (#3471), which on layers that only store `true` select the same coordinates as
+the valued masks the model reads (see `Delta.lean`); the `Tensor::encode` fast path is already `TensorSave`
+(#3438). #3683 made `MvccGraph` hold an `ArcSwap<Graph>` (`fork` returns an owned `Graph`, `commit` takes it by
+value and returns the published `Arc<Graph>`), and split `commit_version` into `prepare` + `publish`: the model
+(`Mvcc`, `sstep .commit`) is the published version only and is unchanged. Every `file:line` cite was re-pinned
+by function name. `VersionedMatrix::count_in_rows` is now PROVEN: `CountRows.vmCountInRowsOn_spec` states the exactness theorem over a
+well-formedness-indexed `LayerCountOn P`, and `proofs/graphblas_wrappers` `CountLink.vmCountInRows_linked` supplies
+`Matrix::count_in_rows` as the counter (the old `LayerCount`/`vmCountInRows_spec` statements are unchanged).
+
 Folded from `pr3438_review` (#3438, merged as 2b6902217): `TensorSave` models `Encode for Tensor`'s
 fast path (tensor.rs:1472-1561): with `dp`/`dm` empty and no multi-edge id it writes the committed `m`
 and two empty matrices instead of rebuilding. `fast_base_eq` (same pattern and values as the rebuild,

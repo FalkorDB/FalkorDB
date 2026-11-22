@@ -3,17 +3,17 @@
 
 | here | there |
 | --- | --- |
-| `Lock.gil < .graph < .indexer` | `graph/src/locks.rs:9` ordering rule; `query_session.rs:30` `Mode` |
+| `Lock.gil < .graph < .indexer` | `graph/src/locks.rs:9` ordering rule; `query_session.rs:52` `Mode` |
 | `writerProg`, `pollWriterProg` | `QuerySession::escalate` (`query_session.rs:420`): release R, then `acquire_write` (`:481`): per slice GIL, timed W; since #3816 the `WriterGate` closes after two misses |
-| `gate`, `rank3816`, `gateReaderProg` | #3816: `WriterGate` (`:590-598`), `read_past_gate` (`:545`) |
+| `gate`, `rank3816`, `gateReaderProg` | #3816: `WriterGate` (`:586`), `read_past_gate` (`:545`) |
 | `inlineWriterProg`             | `QuerySession::begin_writer` (`:205`): GIL, W |
 | `retryWriterProg`              | `QuerySession::begin_writer_checked` (`:235`, #3559) from `execute_query_write`'s / `graph_bulk_insert`'s retry: `begin_with`, then `escalate`; `authorize_write`'s registry check runs under each slice's GIL |
-| `populateProg`                 | `populate_index_batch` (`graph.rs:562`): indexer lock only |
-| `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3799`): GIL, W, indexer |
-| `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
-| `rsGlobal`, `rsSpec`, `writerOpenScanProg` | gap closed 2026-10-20 (#3226): RediSearch's global `RWLOCK` and per-spec `rwlock`, held by an index scan from `handleIterCommon` (`deps/RediSearch src/redisearch_api.c:904-905`) to `ResultsIteratorFree` (:1064); `CommitOp::next` (`runtime/ops/commit.rs:93`) commits with the scan open |
-| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1615`) `write_loop` flag protocol |
-| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1007`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:67`) and write channel (`graph_core.rs:557`), slot released at execution / dequeue |
+| `populateProg`                 | `populate_index_batch` (`graph.rs:577`): indexer lock only |
+| `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3954`): GIL, W, indexer |
+| `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:360`): GIL (main), registry mutex |
+| `rsGlobal`, `rsSpec`, `writerOpenScanProg` | gap closed 2026-10-20 (#3226): RediSearch's global `RWLOCK` and per-spec `rwlock`, held by an index scan from `handleIterCommon` (`deps/RediSearch src/redisearch_api.c:904-905`) to `ResultsIteratorFree` (:1064); `CommitOp::next` (`runtime/ops/commit.rs:96`, `upgrade_to_write`) commits with the scan open |
+| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1769`) `write_loop` flag protocol |
+| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1117`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:70`) and write channel (`graph_core.rs:607`, `unbounded_blocking`), slot released at execution / dequeue |
 | `Pool` (historical)            | before #3014: `bounded_blocking(1024)` pool queue + blocking `spawn` from `query_mut` on the Redis main thread |
 -/
 
@@ -134,16 +134,16 @@ open to scan drop**, not only for the duration of a call:
   (`spec.c:2304`) and aborts the server.
 
 Both are taken by `handleIterCommon` (`src/redisearch_api.c:904-905`, every
-`RediSearch_GetResultsIterator`, i.e. `Index::query` `mod.rs:1691` and the vector and
+`RediSearch_GetResultsIterator`, i.e. `Index::query` `mod.rs:1702` and the vector and
 full-text queries) and released only by `RediSearch_ResultsIteratorFree`
 (`redisearch_api.c:1064`), i.e. when the Rust `IndexResultsIter` drops with the scan op.
 `RediSearch_IndexAddDocument` (`redisearch_api.c:643-645`, reached from
-`Indexer::commit` `indexer.rs:730` → `Index::add_document`) takes both as a **writer**,
+`Indexer::commit` `indexer.rs:749` → `Index::add_document` `mod.rs:1918`) takes both as a **writer**,
 and so do `RediSearch_CreateField` / `CreateIndex` (`redisearch_api.c:164`, …) on the
 RDB-load (`RESTORE`) path, which runs on the main thread under the GIL.
 
 They rank above the indexer lock: populate and commit take the indexer lock first and
-then call into RediSearch (`graph.rs:3828` `commit_index_locked`). -/
+then call into RediSearch (`graph.rs:3967` `commit_index_locked`). -/
 
 def rsGlobal : Nat := 4
 def rsSpec : Nat := 5
@@ -191,10 +191,10 @@ theorem spec_programs_ordered :
 
 /-! ## #3816 (af228a34f): the sliced write-lock wait and the writer gate
 
-Off the main thread `acquire_write` (`query_session.rs:460`) no longer blocks on the write
+Off the main thread `acquire_write` (`query_session.rs:481`) no longer blocks on the write
 lock holding the GIL: each slice takes the GIL, tries `try_write_arc_for(interval)` and on
 a miss gives the GIL back. After `GATE_AFTER_SLICES` misses it closes the graph's
-`WriterGate` (`:569-577`) and holds it until it has the lock; a pool reader in
+`WriterGate` (`:507-509`, `close` `:594`) and holds it until it has the lock; a pool reader in
 `read_past_gate` (`:524`) that finds the gate closed lets its read lock go and waits at the
 gate holding nothing. The gate is a lock the writer takes *before* the GIL, so it ranks
 below it; the timed try is an acquire of `graphR` that may give up (`.rel`). -/
@@ -248,14 +248,14 @@ theorem gate_above_gil_rejected : okProg [] pollWriterProg = false := by decide
 `MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000 RETURN count(n)`.
 The index scan is opened in reader mode (`graphR`, then `handleIterCommon` takes
 `rsGlobal` and `rsSpec` as a reader). `LIMIT` stops pulling but the scan op, and so its
-results iterator, lives until the plan drops. `CommitOp::next` (`commit.rs:93`) then
-escalates (`query_session.rs:386-391`: drop R, take the GIL, take W),
-`commit_deferred_indexes` takes the indexer lock (`pending.rs:1690` → `graph.rs:3815`),
+results iterator, lives until the plan drops. `CommitOp::next` (`commit.rs:96`) then
+escalates (`query_session.rs:398`, `escalate` `:420`: drop R, take the GIL, take W),
+`commit_deferred_indexes` takes the indexer lock (`pending.rs:1898` → `graph.rs:3954`),
 and `Indexer::commit` → `RediSearch_IndexAddDocument` takes `rsGlobal` and `rsSpec` as
 a writer while the same thread still holds them as a reader. -/
 def writerOpenScanProg : List Op :=
   [.acq graphR, .acq rsGlobal, .acq rsSpec,            -- index scan opened, kept open
-   .rel graphR, .acq gil, .acq graphR,                  -- escalate (commit.rs:93)
+   .rel graphR, .acq gil, .acq graphR,                  -- escalate (commit.rs:96)
    .acq indexer, .acq rsGlobal, .acq rsSpec,            -- Indexer::commit → IndexAddDocument
    .rel rsSpec, .rel rsGlobal, .rel indexer, .rel graphR, .rel gil,
    .rel rsSpec, .rel rsGlobal]                          -- scan dropped with the plan
@@ -358,7 +358,7 @@ theorem recheck_needed :
 /-! ## Historical: the bounded-queue deadlock (W3-conc-1, CONFIRMED live; fixed by #3014 b4634fe4b)
 
 Resources that are not locks also block: the pool's job queue (capacity `cap`,
-`threadpool.rs:59`) and a graph's write channel (capacity 1024, `graph_core.rs:548`).
+`threadpool.rs:59` at ca36bfa15) and a graph's write channel (capacity 1024, `graph_core.rs:548` then).
 The Redis main thread holds the GIL for every command callback and `spawn`s into
 the pool with a **blocking** send (`threadpool.rs:96`). A pool worker that has
 started a write escalates and waits for the GIL. So:
@@ -431,7 +431,7 @@ theorem fixed_never_stuck (s : Pool) (hw : 0 < w) :
 
 /-! ## The #3014 protocol: admission-bounded, nothing blocks the main thread
 
-`admit` (`graph_core.rs:1007`) takes a `QueueSlot` on the main thread or replies "Max
+`admit` (`graph_core.rs:1117`) takes a `QueueSlot` on the main thread or replies "Max
 pending queries exceeded" — it never waits; `spawn` sends into an unbounded queue. A read
 gives its slot back when it starts executing (`admission.take()`), a write carries it into
 the graph's (unbounded) write channel and gives it back when the drainer dequeues it. -/

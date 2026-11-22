@@ -7,7 +7,7 @@ operator-tree plumbing (`set_argument_batch`, `inspect_context`, `BatchOp::next`
 
 | here | there |
 | --- | --- |
-| `Column.isEmptyC` | `Column::is_empty` (batch.rs:370) |
+| `Column.isEmptyC` | `Column::is_empty` (batch.rs:372) |
 | `Column.compareAt` | `Column::compare_at` (:399; `sort_cmp`, Floats lane `sort_cmp_f64`) |
 | `CB`, `CB.pushBound`, `CB.pushLeftOf` | `ColumnBuilder::push_bound` (:430), `push_left_of` (:443) |
 | `forRights`, `planWidth` | `MergePlan::for_rights` (:499), `width` (:520) |
@@ -463,27 +463,31 @@ theorem sizeHint_spec (b : Batch F) (pos : Nat) :
 
 /-- The operator tree, by how `set_argument_batch` treats each node: an `Argument` leaf, a
 `Once` leaf, a pass-through node (one child), a reset-then-pass node (emitter-backed ops,
-`ProcedureCall`, `IncludePending`), a fan-out node (`CartesianProduct`, `ValueHashJoin`: the
-compacted batch to every right child too), and a `Union` (stores the compacted batch). -/
+`ProcedureCall`, `IncludePending`), a fan-out node (`CartesianProduct`: the compacted batch to
+every right child too), a `ValueHashJoin` (`join`: a fan-out that also records `per_origin`,
+since #3012/#3035 `25e3c93af`), and a `Union` (stores the compacted batch). -/
 inductive OpTree (B : Type) where
   | argument (slot : Option B)
   | once
   | pass (child : OpTree B)
   | reset (stale : Bool) (child : OpTree B)
   | fanout (rights : List (OpTree B)) (child : OpTree B)
+  | join (perOrigin : Bool) (rights : List (OpTree B)) (child : OpTree B)
   | union (stored : Option B) (current : Option (OpTree B))
 
+-- `compactB` is `Batch::into_compacted`, `many b` is `batch.len() > 1`.
 mutual
-def setArg {B : Type} (compactB : B → B) (b : B) : OpTree B → OpTree B
+def setArg {B : Type} (compactB : B → B) (many : B → Bool) (b : B) : OpTree B → OpTree B
   | .argument _ => .argument (some b)
   | .once => .once
-  | .pass c => .pass (setArg compactB b c)
-  | .reset _ c => .reset false (setArg compactB b c)
-  | .fanout rs c => .fanout (setArgL compactB (compactB b) rs) (setArg compactB b c)
-  | .union _ cur => .union (some (compactB b)) (cur.attach.map fun ⟨c, _⟩ => setArg compactB (compactB b) c)
-def setArgL {B : Type} (compactB : B → B) (b : B) : List (OpTree B) → List (OpTree B)
+  | .pass c => .pass (setArg compactB many b c)
+  | .reset _ c => .reset false (setArg compactB many b c)
+  | .fanout rs c => .fanout (setArgL compactB many (compactB b) rs) (setArg compactB many b c)
+  | .join _ rs c => .join (many b) (setArgL compactB many (compactB b) rs) (setArg compactB many b c)
+  | .union _ cur => .union (some (compactB b)) (cur.attach.map fun ⟨c, _⟩ => setArg compactB many (compactB b) c)
+def setArgL {B : Type} (compactB : B → B) (many : B → Bool) (b : B) : List (OpTree B) → List (OpTree B)
   | [] => []
-  | c :: cs => setArg compactB b c :: setArgL compactB b cs
+  | c :: cs => setArg compactB many b c :: setArgL compactB many b cs
 end
 
 -- The argument slots reachable through pass-through nodes, left to right.
@@ -494,6 +498,7 @@ def args {B : Type} : OpTree B → List (Option B)
   | .pass c => args c
   | .reset _ c => args c
   | .fanout rs c => argsL rs ++ args c
+  | .join _ rs c => argsL rs ++ args c
   | .union _ cur => match cur with | some c => args c | none => []
 def argsL {B : Type} : List (OpTree B) → List (Option B)
   | [] => []
@@ -501,45 +506,61 @@ def argsL {B : Type} : List (OpTree B) → List (Option B)
 end
 
 mutual
-theorem setArg_args {B : Type} (cb : B → B) (b : B) (hidem : ∀ x, cb (cb x) = cb x) :
-    ∀ t : OpTree B, ∀ s ∈ args (setArg cb b t), s = some b ∨ s = some (cb b)
+theorem setArg_args {B : Type} (cb : B → B) (many : B → Bool) (b : B) (hidem : ∀ x, cb (cb x) = cb x) :
+    ∀ t : OpTree B, ∀ s ∈ args (setArg cb many b t), s = some b ∨ s = some (cb b)
   | .argument _ => by simp [setArg, args]
   | .once => by simp [setArg, args]
-  | .pass c => by simpa [setArg, args] using setArg_args cb b hidem c
-  | .reset _ c => by simpa [setArg, args] using setArg_args cb b hidem c
+  | .pass c => by simpa [setArg, args] using setArg_args cb many b hidem c
+  | .reset _ c => by simpa [setArg, args] using setArg_args cb many b hidem c
   | .fanout rs c => by
       intro s hs
       simp only [setArg, args, List.mem_append] at hs
       rcases hs with hs | hs
-      · rcases setArgL_args cb (cb b) hidem rs s hs with h | h
+      · rcases setArgL_args cb many (cb b) hidem rs s hs with h | h
         · exact Or.inr h
         · exact Or.inr (by rw [h, hidem])
-      · exact setArg_args cb b hidem c s hs
+      · exact setArg_args cb many b hidem c s hs
+  | .join _ rs c => by
+      intro s hs
+      simp only [setArg, args, List.mem_append] at hs
+      rcases hs with hs | hs
+      · rcases setArgL_args cb many (cb b) hidem rs s hs with h | h
+        · exact Or.inr h
+        · exact Or.inr (by rw [h, hidem])
+      · exact setArg_args cb many b hidem c s hs
   | .union _ cur => by
       intro s hs
       cases cur with
       | none => simp [setArg, args] at hs
       | some c =>
         simp only [setArg, args, Option.attach_some, Option.map_some] at hs
-        rcases setArg_args cb (cb b) hidem c s hs with h | h
+        rcases setArg_args cb many (cb b) hidem c s hs with h | h
         · exact Or.inr h
         · exact Or.inr (by rw [h, hidem])
-theorem setArgL_args {B : Type} (cb : B → B) (b : B) (hidem : ∀ x, cb (cb x) = cb x) :
-    ∀ ts : List (OpTree B), ∀ s ∈ argsL (setArgL cb b ts), s = some b ∨ s = some (cb b)
+theorem setArgL_args {B : Type} (cb : B → B) (many : B → Bool) (b : B) (hidem : ∀ x, cb (cb x) = cb x) :
+    ∀ ts : List (OpTree B), ∀ s ∈ argsL (setArgL cb many b ts), s = some b ∨ s = some (cb b)
   | [] => by simp [setArgL, argsL]
   | t :: ts => by
       intro s hs
       simp only [setArgL, argsL, List.mem_append] at hs
       rcases hs with hs | hs
-      · exact setArg_args cb b hidem t s hs
-      · exact setArgL_args cb b hidem ts s hs
+      · exact setArg_args cb many b hidem t s hs
+      · exact setArgL_args cb many b hidem ts s hs
 end
+
+/-- **#3012 (#3035, `25e3c93af`)**: a `ValueHashJoin` keeps outer rows apart (`per_origin`)
+exactly when the argument batch carries several rows (`batch.len() > 1`), whatever it was set to
+before; and it re-installs the batch on both sides (the compacted copy on the right). -/
+theorem setArg_join {B : Type} (cb : B → B) (many : B → Bool) (b : B) (po : Bool)
+    (rs : List (OpTree B)) (c : OpTree B) :
+    setArg cb many b (.join po rs c) =
+      .join (many b) (setArgL cb many (cb b) rs) (setArg cb many b c) := by rw [setArg]
 
 /-- **`set_argument_batch`**: every reachable `Argument` leaf now holds the new batch (the
 compacted copy under a fan-out / union), and every emitter-backed node is reset (no stale
 rows survive into the new iteration). -/
-theorem setArg_resets {B : Type} (cb : B → B) (b : B) (st : Bool) (c : OpTree B) :
-    setArg cb b (.reset st c) = .reset false (setArg cb b c) := by rw [setArg]
+theorem setArg_resets {B : Type} (cb : B → B) (many : B → Bool) (b : B) (st : Bool) (c : OpTree B) :
+    setArg cb many b (.reset st c) = .reset false (setArg cb many b c) := by rw [setArg]
 
 /-- `inspect_context` (:1722): `None` exactly for the synthetic leaves. -/
 def inspectCtx {B : Type} : OpTree B → Bool

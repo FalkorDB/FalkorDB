@@ -65,9 +65,9 @@ theorem flatten_pagePut (P : Nat) (hP : 0 < P) :
         rw [this]
 
 namespace PG
-/-- `TierOps::put` (:741): no bounds check of its own; callers pass `at < len`. -/
+/-- `TierOps::put` (:743): no bounds check of its own; callers pass `at < len`. -/
 def put (P : Nat) (g : PG α) (at_ : Nat) (x : α) : PG α := ⟨pagePut P g.pages at_ x, g.len⟩
-/-- `TierOps::vacate` (:750). -/
+/-- `TierOps::vacate` (:752). -/
 def vacate (P : Nat) (fill : α) (g : PG α) (at_ : Nat) : PG α :=
   if at_ < g.len then g.put P at_ fill else g
 end PG
@@ -96,7 +96,7 @@ theorem vacate_spec (P : Nat) (hP : 0 < P) (fill : α) (g : PG α) (hw : g.WF P 
 /-! ## `grow_to`: `ensure_pages` then `len` -/
 
 namespace PG
-/-- `TierOps::grow_to` (:732). -/
+/-- `TierOps::grow_to` (:734). -/
 def growTo (P : Nat) (fill : α) (g : PG α) (n : Nat) : PG α :=
   if n > g.len then ⟨ensurePages P fill g.pages n, n⟩ else g
 end PG
@@ -136,7 +136,7 @@ theorem growTo_spec (P : Nat) (hP : 0 < P) (fill : α) (g : PG α) (hw : g.WF P 
   · rename_i hn
     rw [ite_eq_right (by omega)]
     exact ⟨⟨hs, hl, hd⟩, rfl⟩
-/-! ## `reserve_exact` (:761) -/
+/-! ## `reserve_exact` (:763) -/
 
 /-- `pages.reserve_exact((len + extra).div_ceil(P).saturating_sub(pages.len()))`, with
 `Vec::reserve_exact`'s guarantee `capacity ≥ pages.len() + additional`. -/

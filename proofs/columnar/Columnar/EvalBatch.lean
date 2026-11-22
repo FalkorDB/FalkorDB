@@ -3,13 +3,13 @@ import Columnar.BatchMisc
 import FalkorExprSemantics.EvalMore
 
 /-!
-# `ExprEval::eval_batch` (eval.rs:1150-1206): proofs/expr_semantics' `BatchLaws`, discharged
+# `ExprEval::eval_batch` (eval.rs:1161-1217): proofs/expr_semantics' `BatchLaws`, discharged
 
 expr_semantics proves `evalBatch_eq_perRow` (the bulk `var.attr` path of `eval_batch` gives what
 per-row evaluation gives) under `BatchLaws`: (1) `materialize_node_property_values` is
 `get_node_attribute` per id, and (2) a node column holds the rows' nodes. Here both are proved
 for the real pieces: the batch is columnar's `Batch` with the `BatchRow` views of the `active`
-rows (`batchM`; `extract_node_ids` is `Batch.extractNodeIds`, batch.rs:1377), and the runtime
+rows (`batchM`; `extract_node_ids` is `Batch.extractNodeIds`, batch.rs:1379), and the runtime
 is `RuntimeReads.rtOf` of its attribute state (`matNode_eq`). **`laws`** is the instance;
 **`evalBatch_sound`**: `eval_batch` = `eval_batch_per_row` for every tree and runtime state,
 on a well-formed batch (`hwf : b.WF`) with every active row in range (`hact`); it takes no

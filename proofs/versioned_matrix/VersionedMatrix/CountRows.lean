@@ -5,7 +5,7 @@ import VersionedMatrix.TensorResize
 
 | here | there |
 | --- | --- |
-| `LayerCount` | `Matrix::count_in_rows` (`matrix.rs:811`): hypothesis here, proved from `GrB_mxv` + `GrB_Vector_reduce` in `proofs/graphblas_wrappers` (`countInRows_spec`) |
+| `LayerCount` | `Matrix::count_in_rows` (`matrix.rs:815`): hypothesis here (global: `LayerCount`; for well-formed layers only: `LayerCountOn`), proved from `GrB_mxv` + `GrB_Vector_reduce` in `proofs/graphblas_wrappers` (`countInRows_spec`, linked by `CountLink.vmCountInRows_linked`) |
 | `vmCountInRows` | `VersionedMatrix::count_in_rows` (`versioned_matrix.rs`, fn `count_in_rows`) |
 | `countPairsInto` | `Tensor::count_pairs_into` (`tensor.rs`, fn `count_pairs_into`) = `self.mt.count_in_rows(dsts)` |
 
@@ -107,6 +107,58 @@ theorem vmCountInRows_distinct (C : LayerCount) (v : BVM) (S : List Nat)
     vmCountInRows C v S = ((effKeys v).filter (inRows S)).length := by
   refine ⟨(effKeys_nodup v hm hdp hdisj).sublist List.filter_sublist, ?_⟩
   rw [(vmCountInRows_spec C v S hm hdm hsub).1, List.countP_eq_length_filter]
+
+/-! ## `count_in_rows` for well-formed layers only
+
+`LayerCount.spec` quantifies over every `Mat Unit`, but `Matrix::count_in_rows` is `GrB_mxv` + a reduce,
+which is only specified for the inputs a GraphBLAS call accepts (unique in-bounds coordinates, a sorted
+in-bounds row list of the matrix's height, fewer than `2^64` entries). `LayerCountOn P` states the same
+contract for the pairs `(layer, rows)` satisfying `P`; `proofs/graphblas_wrappers` `CountLink` builds one from
+`countInRows_spec` with `P` = those conditions, and `vmCountInRowsOn_spec` shows the exactness theorem needs
+`P` only for the three layers `count_in_rows` actually calls it on. -/
+
+/-- `Matrix::count_in_rows`'s contract on the layers/row lists satisfying `P`. -/
+structure LayerCountOn (P : Mat Unit → List Nat → Prop) where
+  cr : Mat Unit → List Nat → Nat
+  spec : ∀ l S, P l S → cr l S = (keys l).countP (inRows S)
+
+/-- The `layer` closure over `LayerCountOn` (an empty layer costs nothing). -/
+def layerOn {P : Mat Unit → List Nat → Prop} (C : LayerCountOn P) (l : Mat Unit) (S : List Nat) : Nat :=
+  if nvals l = 0 then 0 else C.cr l S
+
+theorem layerOn_eq {P : Mat Unit → List Nat → Prop} (C : LayerCountOn P) (l : Mat Unit) (S : List Nat)
+    (h : P l S) : layerOn C l S = (keys l).countP (inRows S) := by
+  unfold layerOn; split
+  · rename_i h0
+    have : keys l = [] := by unfold keys; unfold nvals at h0; exact List.map_eq_nil_iff.mpr (List.length_eq_zero_iff.mp h0)
+    rw [this]; rfl
+  · exact C.spec l S h
+
+/-- `count_in_rows` over a `LayerCountOn`. -/
+def vmCountInRowsOn {P : Mat Unit → List Nat → Prop} (C : LayerCountOn P) (v : BVM) (S : List Nat) : Nat :=
+  let w := wait v
+  let m := VMMat.wait w.m
+  layerOn C m S + layerOn C w.dp.layer S - layerOn C w.dm.layer S
+
+/-- The reference `LayerCount` (the spec itself as the counter). -/
+def refCount : LayerCount := ⟨fun l S => (keys l).countP (inRows S), fun _ _ => rfl⟩
+
+/-- **`count_in_rows` is exact when the three layers it counts satisfy `P`** — the exactness theorem
+`vmCountInRows_spec`, with the global `LayerCount` hypothesis replaced by `LayerCountOn P`. -/
+theorem vmCountInRowsOn_spec {P : Mat Unit → List Nat → Prop} (C : LayerCountOn P) (v : BVM) (S : List Nat)
+    (hm : (keys v.m).Nodup) (hdm : (keys v.dm.layer).Nodup)
+    (hsub : ∀ p ∈ keys v.dm.layer, p ∈ keys v.m)
+    (hPm : P (VMMat.wait (wait v).m) S) (hPdp : P (wait v).dp.layer S) (hPdm : P (wait v).dm.layer S) :
+    vmCountInRowsOn C v S = (effKeys v).countP (inRows S) ∧
+    layerOn C (wait v).dm.layer S ≤ layerOn C (VMMat.wait (wait v).m) S := by
+  have e : vmCountInRowsOn C v S = vmCountInRows refCount v S := by
+    unfold vmCountInRowsOn vmCountInRows
+    simp only [layerOn_eq C _ _ hPm, layerOn_eq C _ _ hPdp, layerOn_eq C _ _ hPdm, layer_eq]
+  have h := vmCountInRows_spec refCount v S hm hdm hsub
+  refine ⟨e ▸ h.1, ?_⟩
+  rw [layerOn_eq C _ _ hPdm, layerOn_eq C _ _ hPm]
+  have := h.2
+  simpa only [layer_eq] using this
 
 /-! ## `Tensor::count_pairs_into` -/
 

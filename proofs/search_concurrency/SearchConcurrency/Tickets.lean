@@ -3,16 +3,16 @@
 
 | here | there |
 | --- | --- |
-| `Slots`                 | `graph/src/index/mod.rs:903` `PendingSlots` (`current_generation`, `current_pending`, `stale_pending`) |
-| `inc`                   | `mod.rs:2111` `increment_pending_for_generation` |
-| `dec`                   | `mod.rs:2129` `try_decrement_pending_for_generation` (`if prev > 0 { -= 1 }` = `Nat` truncated `-`) |
-| `pendingFor`            | `mod.rs:2151` `pending_count_for_generation` |
-| `Slots.cur = 0`         | `mod.rs:2084` `is_operational` / `indexer.rs:720` `enabled` (`pending_count() == 0`) |
-| `bump`                  | `mod.rs:1049` `bump_id` (from `recreate_index`, and since #3086 from `create_index` whenever the label already has an entry, `indexer.rs:359-361`) |
-| `acquire`/`release`     | `indexer.rs:642` `acquire_population_snapshot`, `:686` `release_population_ticket` |
-| `batch`                 | `graph/src/graph/graph.rs:594-817` `populate_index_batch` (the three exits: `is_ticket_current` `:625`, `ticket_pending_changes > 1` `:637`, exhausted `:789`, releasing at `:799-800`) |
-| `store`                 | `indexer.rs:181` `create_index` @ 73077bb4a (fields appended, then `bump_id` if `existing.is_some()`); the model bumps iff the label already has fields, Rust iff the entry exists, which differs only in the window after `drop_index` leaves a 0-field entry until `drop_index_bg` removes it (`graph.rs:834`), not modelled |
-| `MState`/`step`/`Reach` | `graph.rs:3670` `Graph::create_index`: `create_index` (store) then `populate_index` (acquire), on the serialized writer |
+| `Slots`                 | `graph/src/index/mod.rs:907` `PendingSlots` (`current_generation`, `current_pending`, `stale_pending`) |
+| `inc`                   | `mod.rs:2122` `increment_pending_for_generation` |
+| `dec`                   | `mod.rs:2140` `try_decrement_pending_for_generation` (`if prev > 0 { -= 1 }` = `Nat` truncated `-`) |
+| `pendingFor`            | `mod.rs:2162` `pending_count_for_generation` |
+| `Slots.cur = 0`         | `mod.rs:2095` `is_operational` / `indexer.rs:739` `enabled` (`pending_count() == 0`) |
+| `bump`                  | `mod.rs:1053` `bump_id` (from `recreate_index` `:2230`, and since #3086 from `create_index` whenever the label already has an entry, `indexer.rs:359-361`) |
+| `acquire`/`release`     | `indexer.rs:661` `acquire_population_snapshot`, `:705` `release_population_ticket` |
+| `batch`                 | `graph/src/graph/graph.rs:577-793` `populate_index_batch` (the exits: `is_ticket_current` `:608`, `indexer.is_cancelled() || ticket_pending_changes > 1` `:620` (the cancelled arm has the shape of the pending arm: release and return), exhausted `:772-776`; `:785` `if do_recurse`) |
+| `store`                 | `indexer.rs:181` `create_index` @ 73077bb4a (fields appended, then `bump_id` if `existing.is_some()`); the model bumps iff the label already has fields, Rust iff the entry exists, which differs only in the window after `drop_index` leaves a 0-field entry until `drop_index_bg` removes it (`graph.rs:807`, `remove_if_empty`), not modelled |
+| `MState`/`step`/`Reach` | `graph.rs:3693` `Graph::create_index`: `create_index` (store) then `populate_index` (acquire), on the serialized writer |
 | `pre3086_createRange`   | `create_index` @ 1d15bf713 (`indexer.rs:319-331`): `register_fields`, no `bump_id` |
 
 The counters are `i32` in Rust; `2^31` outstanding tickets is not reachable (one

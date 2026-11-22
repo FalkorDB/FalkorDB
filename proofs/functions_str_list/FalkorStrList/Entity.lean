@@ -131,7 +131,7 @@ def typeOf : List EV → Res
   | v :: _ => .ok (.str (typeName v))
   | [] => .unreachable
 
-/-- `Value::name` (value.rs:1395). Since #2954 (b6567cb97) it spells `Relationship` as
+/-- `Value::name` (value.rs:1399). Since #2954 (b6567cb97) it spells `Relationship` as
 `Edge` and `VecF32` as `Vectorf32` (C's `SIType_ToString`); before, it printed
 `Relationship`/`VecF32`. -/
 def valueName : EV → String
@@ -144,7 +144,7 @@ def valueName : EV → String
 theorem typeName_eq_valueName : typeName = valueName := by
   funext v; cases v <;> rfl
 
-/-- The source check `ExprIR::ListComprehension` applies (eval.rs:1057-1070, #2954) to a
+/-- The source check `ExprIR::ListComprehension` applies (eval.rs:1058-1076, #2954) to a
 source that is neither a list literal nor `range(..)`: a list is iterated, null gives
 `null` (`none`), anything else is a type error naming `Value::name`. -/
 def comprehensionSourceCheck : EV → Except String (Option (List EV))
@@ -162,7 +162,7 @@ example : comprehensionSourceCheck (.int 5) =
 example (e : Nat) : comprehensionSourceCheck (.rel e) =
     .error "Type mismatch: expected List or Null but was Edge" := rfl
 
-/-- `format!("{}", v.get_type())`: `ValueGetType::get_type` (value.rs:1369) then
+/-- `format!("{}", v.get_type())`: `ValueGetType::get_type` (value.rs:1373) then
 `Display for Type` (functions/mod.rs:610). `List(_)` prints `List`, `Relationship` prints
 `Edge`. -/
 def tyDisp : EV → String

@@ -88,14 +88,64 @@ inductive Cell where
   | bound (v : MV)
   | valueOnly (v : MV)
 
-/-- `BatchRow::to_owned_row` (batch.rs:1431-1442). -/
-def Row.ofCellsGo : Nat → List Cell → Row → Row
-  | _, [], r => r
-  | i, .unbound :: cs, r => Row.ofCellsGo (i + 1) cs r
-  | i, .bound v :: cs, r => Row.ofCellsGo (i + 1) cs (r.insert i v)
-  | i, .valueOnly v :: cs, r => Row.ofCellsGo (i + 1) cs ((r.insert i v).unbind i)
+/-- `Row::push_slot` (row.rs:`push_slot`): append one slot holding `v`, with the bound bit `b`. -/
+def Row.pushSlot (r : Row) (v : MV) (b : Bool) : Row := ⟨r.vals ++ [v], r.bnd ++ [b]⟩
 
-def Row.ofCells (cs : List Cell) : Row := Row.ofCellsGo 0 cs Row.empty
+/-- `BatchRow::to_owned_row` (batch.rs:1439-1457, since #3059): one slot per column, in order. An
+`Unbound` column stays in scope as an unbound `Null` (trailing ones included); a bound column is a
+bound value; a `value_only` column keeps its value with the bound bit cleared. -/
+def Row.ofCellsGo : List Cell → Row → Row
+  | [], r => r
+  | .unbound :: cs, r => Row.ofCellsGo cs (r.pushSlot .null false)
+  | .bound v :: cs, r => Row.ofCellsGo cs (r.pushSlot v true)
+  | .valueOnly v :: cs, r => Row.ofCellsGo cs (r.pushSlot v false)
+
+def Row.ofCells (cs : List Cell) : Row := Row.ofCellsGo cs Row.empty
+
+/-- The value a cell stores: an `Unbound` column stores `Null`. -/
+def Cell.val : Cell → MV
+  | .unbound => .null
+  | .bound v => v
+  | .valueOnly v => v
+
+/-- The bound bit of a cell: only a bound column binds. -/
+def Cell.isB : Cell → Bool
+  | .bound _ => true
+  | _ => false
+
+theorem ofCellsGo_cols (cs : List Cell) : ∀ r : Row,
+    (Row.ofCellsGo cs r).vals = r.vals ++ cs.map Cell.val ∧
+    (Row.ofCellsGo cs r).bnd = r.bnd ++ cs.map Cell.isB := by
+  induction cs with
+  | nil => intro r; simp [Row.ofCellsGo]
+  | cons c cs ih =>
+    intro r
+    cases c <;> simp [Row.ofCellsGo, Row.pushSlot, Cell.val, Cell.isB, (ih _).1, (ih _).2]
+
+/-- **PROVEN** (`BatchRow::to_owned_row`, batch.rs:1439): the owned row has exactly one slot per
+column of the batch row, each holding the cell's value (`Null` for an `Unbound` column) with the
+bound bit set only for a bound column. A `value_only` column keeps its value unbound; trailing
+`Unbound` columns stay in scope (`get` is `some Null`, not out of range; #3059). -/
+theorem ofCells_vals (cs : List Cell) : (Row.ofCells cs).vals = cs.map Cell.val := by
+  have := (ofCellsGo_cols cs Row.empty).1
+  simpa [Row.ofCells, Row.empty] using this
+
+theorem ofCells_bnd (cs : List Cell) : (Row.ofCells cs).bnd = cs.map Cell.isB := by
+  have := (ofCellsGo_cols cs Row.empty).2
+  simpa [Row.ofCells, Row.empty] using this
+
+theorem ofCells_slot (cs : List Cell) (i : Nat) (h : i < cs.length) :
+    (Row.ofCells cs).get i = some (cs[i]).val ∧ (Row.ofCells cs).isBound i = (cs[i]).isB := by
+  simp [Row.get, Row.isBound, ofCells_vals, ofCells_bnd, List.getElem?_map, h]
+
+theorem ofCells_length (cs : List Cell) : (Row.ofCells cs).vals.length = cs.length := by
+  simp [ofCells_vals]
+
+/-- A trailing `Unbound` column is in scope as an unbound `Null`. -/
+theorem ofCells_trailing_unbound (v : MV) :
+    (Row.ofCells [.bound v, .unbound]).get 1 = some .null ∧
+    (Row.ofCells [.bound v, .unbound]).isBound 1 = false := by
+  simpa [Cell.val, Cell.isB] using ofCells_slot [.bound v, .unbound] 1 (by simp)
 
 /-- What `push_row` makes of slot `i` for the next operator / the reply (batch.rs:631-640):
 bound ⇒ the value; unbound but non-null ⇒ the value (`value_only`); otherwise absent. -/

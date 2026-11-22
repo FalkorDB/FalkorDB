@@ -69,7 +69,7 @@ The hypotheses: the RediSearch specification (`RunSpec`, the 82 AXIOMATISED rows
 
 ## Bugs found
 
-Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 73077bb4a: the header's re-targets (cab3cf192, 1d15bf713, 73077bb4a) list bugs 1-4, 7, 8, 10, 12 and 13 as still present, and no later commit touches that code. The last three rows (#3166, #3382, #2781) are not `repro.py` cases: each needs more than one setup and one query (a second `CREATE FULLTEXT INDEX` with options; a vector query while the index is still UNDER CONSTRUCTION; a failed query whose rollback is observed afterwards), so they were reproduced by hand on a Rust and a C server and the results are recorded in those rows and in the per-bug notes of `FalkorIndexLayer.lean`.
+Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 256ab4d3f: re-run of `repro.py` on a release module from this tree (redis 8.6) gives the same result as before for bugs 1-4, 7, 8, 12 (and 10), and the header's re-targets list 13 as still present; no commit since touches that code in a way that changes them. The last three rows (#3166, #3382, #2781) are not `repro.py` cases: each needs more than one setup and one query (a second `CREATE FULLTEXT INDEX` with options; a vector query while the index is still UNDER CONSTRUCTION; a failed query whose rollback is observed afterwards), so they were reproduced by hand on a Rust and a C server and the results are recorded in those rows and in the per-bug notes of `FalkorIndexLayer.lean`.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
@@ -88,7 +88,7 @@ Each was reproduced live with `proofs/index_layer/repro.py`, which runs each que
 | 13 (W4-index-1) | `bug_range_after_fulltext` | After a full-text index and then a range index on the same `n.s`, every range query on `n.s` targets the full-text field and returns `[]`. C correct | **Open**. Fix: pick the field whose type is `IndexType::Range` |
 | 14 (W7-btree-2) | removed (17ccc5412) | `CowBTree` with `DOC_BYTES = 3/5/6/7` passed the const assert but read garbage docs or panicked | Fixed by #3285: `readWidth_admitted`, `admitted_fromPairs_roundtrip` |
 | #3166 | `bug3166_stopwords_not_applied`, `bug3166_violates` (property `StopwordsAgree` / `CreateIndexKeepsStopwords`) | A range index first, then `CREATE FULLTEXT INDEX … OPTIONS {stopwords: ['router']}`: the label reports `['router']`, but its RediSearch spec keeps the default list, because the second call only registers the new field on the existing spec. `queryNodes('L', 'router')` returns 1 row; C returns 0. `createIndex_fresh_stopwords_agree` proves the new-label path agrees | **Open** |
-| #3382 | `bug3382_vector_query_ignores_operational`, `bug3382_partial_answer` (property `VectorQueryRequiresOperational` / `VectorQueryComplete`) | `db.idx.vector.queryNodes` answers while the index is UNDER CONSTRUCTION, with 0 rows and then 3. C refuses with "Invalid arguments for procedure" until OPERATIONAL. `vectorQueryGuarded_requires_operational` is the fix shape | **Open** |
+| #3382 | `pre3581_vector_query_ignores_operational`, `pre3581_partial_answer` (property `VectorQueryRequiresOperational` / `VectorQueryComplete`) | `db.idx.vector.queryNodes` answered while the index was UNDER CONSTRUCTION, with 0 rows and then 3. C refuses with "Invalid arguments for procedure" until OPERATIONAL | Fixed by #3581 (aafdc4ae1): `Graph::vector_query_nodes`/`_edges` gate on `Indexer::is_operational` (`gated3581_requires_operational`, `gated3581_i3382_refused`) |
 | #2781 | `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored` (property `RollbackRestoresEdgeIndex`) | A failed query that deletes edge 0 and reuses id 0 for `c→d` leaves the orphan document `(c, d, 0)` after rollback, beside the restored `(a, b, 0)`. The index scan returns both; a full scan and C return only `a→b`. `resyncEdgesFixed_restores` proves the fix: also delete the private key when the endpoints changed | **Open** |
 | W3-conc-3 | removed (17ccc5412) | A vector of the wrong dimension (or a vector field with no options) made RediSearch reject the whole document, so the node dropped out of the label's other indexes | Fixed by #3087 (issue #3075): `setVector_sound` |
 
@@ -117,6 +117,7 @@ C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a ran
 | `LeafMerge.lean` | `merge_sorted`, `merge_walk`, `partition_point`, gallop |
 | `LeafBlockCopy.lean`, `LeafBlockCopy2.lean` | `block_copy_merge`, list level and byte level |
 | `LeafOps.lean` | `Leaf::merge_batch`: every fast path equals the slow path |
+| `InList.lean` | The `IN` arm of the index scan re-checked at 256ab4d3f: `canUtilizeInList_eq_or`, `scan_inlist_faithful` |
 | `LeafDispatch.lean` | The `Leaf` enum, `from_pairs` format choice, `fromPairs_roundtrip` |
 | `LeafTree.lean` | Tree glue: `pack_branches`, `build_root`, `make_private`, `from_sorted`, `insert_batch` contents |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -125,16 +126,16 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 281 rows: all of `index/mod.rs` (94) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82, plus one commented row for the Redis module ABI types), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
+`COVERAGE.tsv` has 282 rows: all of `index/mod.rs` (94) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 196 |
-| AXIOMATISED | 83 |
-| MODELLED | 2 |
+| PROVEN | 200 |
+| AXIOMATISED | 82 |
+| MODELLED | 0 |
 
-- **MODELLED:** the two #2781 rows: the edge arm of the rollback is modelled and refuted (`bug2781_rollback_not_restored`); the only positive edge-arm result is the fix shape `resyncEdgesFixed_restores` in this project (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
-- **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`. The 83rd row is the commented-out `redis.rs` line for the Redis module ABI types.
+- **Formerly MODELLED, now PROVEN:** the two #2781 rows. `resyncEdgeKeys_spec`/`resyncEdgeKeys_disjoint` state exactly what the edge arm of the rollback re-adds and deletes, and `commitEdgeAddKeys_mem` what `commit_edge_index_locked` writes; the rollback property itself stays refuted (`bug2781_rollback_not_restored`, open), and the only positive result for it is the fix shape `resyncEdgesFixed_restores` (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
+- **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`.
 
 ## What the model does not cover
 

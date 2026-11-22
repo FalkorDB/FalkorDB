@@ -1,22 +1,22 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/value.rs	fmt_json	82	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	new	101	NOT COVERED	trivial constructor
-graph/src/runtime/value.rs	new	119	NOT COVERED	trivial constructor
-graph/src/runtime/value.rs	new	142	NOT COVERED	trivial constructor
-graph/src/runtime/value.rs	distance	153	MODELLED	proofs/functions_temporal Spatial2.distance (SpatialFns.lean; f64 abstract)
-graph/src/runtime/value.rs	clone	225	NOT COVERED	Clone: identity/Arc bump, no logic
+graph/src/runtime/value.rs	fmt_json	82	PROVEN	proofs/value_order Json.DisplayJson class: displayJson_eq
+graph/src/runtime/value.rs	new	101	PROVEN	proofs/value_order Glue.DeletedNode.new: new_fields, new_injective
+graph/src/runtime/value.rs	new	119	PROVEN	proofs/value_order Glue.DeletedRelationship.new: new_fields, new_injective
+graph/src/runtime/value.rs	new	142	PROVEN	proofs/functions_temporal SpatialFns.Point.new: Point.new_fields
+graph/src/runtime/value.rs	distance	153	PROVEN	proofs/functions_temporal SpatialFns.distance: distance_self, distance_finite_coords (f64 abstract = Flt structure)
+graph/src/runtime/value.rs	clone	225	PROVEN	proofs/value_order Glue.W.clone (all 16 arms): clone_eq
 graph/src/runtime/value.rs	get_numeric	250	PROVEN	getNumeric_after_validation
 graph/src/runtime/value.rs	format_datetime	261	PROVEN	proofs/functions_temporal Components.formatDatetime (total, no chrono since #2986): formatDatetime_spec, format_extremes
 graph/src/runtime/value.rs	format_date	281	PROVEN	proofs/functions_temporal Components.formatDate: formatDate_spec, format_extremes
-graph/src/runtime/value.rs	format_time	291	NOT COVERED	chrono formatting (trusted); live-checked
+graph/src/runtime/value.rs	format_time	291	PROVEN	proofs/functions_temporal Components.formatTime: formatTime_length
 graph/src/runtime/value.rs	format_duration	302	PROVEN	fmtDuration_fields, fmtDuration_zero, fmtDuration_ex (decompose_duration from functions_temporal)
 graph/src/runtime/value.rs	heap_size	347	PROVEN	heap_le_amortized, rel_charged
 graph/src/runtime/value.rs	amortized_heap_size	393	PROVEN	heap_le_amortized, shares_le
 graph/src/runtime/value.rs	get_attr	444	PROVEN	getAttr_null, getAttr_map_missing (temporal extractors parameters)
 graph/src/runtime/value.rs	get_point_component	463	PROVEN	point_component_case
-graph/src/runtime/value.rs	get_datetime_component	478	NOT COVERED	chrono Datelike/Timelike accessors; 17 components live-checked vs C
-graph/src/runtime/value.rs	get_date_component	537	NOT COVERED	chrono accessors; live-checked (dayOfQuarter matches spec, C off by one)
-graph/src/runtime/value.rs	get_time_component	585	NOT COVERED	chrono accessors; live-checked
+graph/src/runtime/value.rs	get_datetime_component	478	PROVEN	proofs/functions_temporal Components.getDatetimeComponent: components_invalid, clock_ranges, calendar_ranges
+graph/src/runtime/value.rs	get_date_component	537	PROVEN	proofs/functions_temporal Components.getDateComponent: components_invalid, calendar_ranges
+graph/src/runtime/value.rs	get_time_component	585	PROVEN	proofs/functions_temporal Components.getTimeComponent: components_invalid, clock_ranges, time_component_cases
 graph/src/runtime/value.rs	get_duration_component	613	PROVEN	duration_weeks_zero (pre-chrono dispatch); chrono part live-checked
 graph/src/runtime/value.rs	add_duration_to_timestamp	701	PROVEN	proofs/functions_temporal addDur (checked, #2746)
 graph/src/runtime/value.rs	sub_duration_from_timestamp	711	PROVEN	proofs/functions_temporal subDur (checked, #2746)
@@ -35,32 +35,32 @@ graph/src/runtime/value.rs	sub	1084	PROVEN	sub_int, sub_null_*, sub_dur_date, wS
 graph/src/runtime/value.rs	mul	1130	PROVEN	mul_ok_iff, mul_int_comm, mul_agree_on_numeric, null_mul_str_diverges
 graph/src/runtime/value.rs	div	1159	PROVEN	div_ok_iff, div_int_zero, wDiv_exact, div_rem_identity, min_div_neg1_diverges
 graph/src/runtime/value.rs	rem	1189	PROVEN	rem_ok_iff, rem_int_zero, wRem_exact, rem_bounds, div_rem_identity
-graph/src/runtime/value.rs	order	1215	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	order	1215	PROVEN	proofs/value_order Glue.OrderedEnum class: orderedEnum_order_eq, order_null_gt
 graph/src/runtime/value.rs	order	1219	PROVEN	eq_null_iff (order injective on Null); proofs/value_order: order_injective
-graph/src/runtime/value.rs	compare_value	1250	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	compare_value	1250	PROVEN	proofs/value_order Glue.CompareValue class: partialCmpVia_none_iff, partialCmpVia_some
 graph/src/runtime/value.rs	eq	1257	PROVEN	proofs/value_order: eqV; isNeverEqual_iff
 graph/src/runtime/value.rs	compare_value	1266	PROVEN	mayFail_sound; proofs/value_order: cmp_sane_eq_key, sane_le_trans
-graph/src/runtime/value.rs	value_of_type	1316	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	value_of_type	1316	PROVEN	proofs/value_order Glue.ValueTypeOf class: valueTypeOf_eq (instance = TypeCheck.valueOfType)
 graph/src/runtime/value.rs	value_of_type	1323	PROVEN	valueOfType_none_iff, vot_list_any
-graph/src/runtime/value.rs	get_type	1369	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	get_type	1369	PROVEN	proofs/value_order Glue.ValueGetType class: valueGetType_eq (instance = TypeCheck.getType)
 graph/src/runtime/value.rs	get_type	1373	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
-graph/src/runtime/value.rs	name	1399	MODELLED	V.name (used in error-message theorems)
-graph/src/runtime/value.rs	to_json_string	1421	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	fmt	1431	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	name	1399	PROVEN	proofs/value_order Glue.W.name and FalkorCore.V.name: name_eq_iff_order_eq
+graph/src/runtime/value.rs	to_json_string	1421	PROVEN	proofs/value_order Json.toJsonString: toJsonString_eq
+graph/src/runtime/value.rs	fmt	1431	PROVEN	proofs/value_order Json.jsonWrapperFmt: jsonWrapperFmt_eq
 graph/src/runtime/value.rs	compare_list	1446	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
 graph/src/runtime/value.rs	compare_map	1519	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
 graph/src/runtime/value.rs	is_never_equal	1649	PROVEN	isNeverEqual_iff
 graph/src/runtime/value.rs	may_fail_self_match	1672	PROVEN	mayFail_sound
-graph/src/runtime/value.rs	fmt_json	1700	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
-graph/src/runtime/value.rs	write_json_string	1822	NOT COVERED	json_escape crate (trusted)
-graph/src/runtime/value.rs	write_node_json	1834	NOT COVERED	runtime graph accessors + formatting
-graph/src/runtime/value.rs	contains	1874	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	fmt_json	1700	PROVEN	proofs/value_order Json.fmtS/fmtJson (all arms): fmt_float_nonfinite, fmt_float_finite, fmt_list, fmt_node, fmt_rel; here jsonFloat_nonfinite
+graph/src/runtime/value.rs	write_json_string	1822	PROVEN	proofs/value_order Json.writeJsonString: writeJsonString_plain (escape = JsonEnv parameter, json_escape crate)
+graph/src/runtime/value.rs	write_node_json	1834	PROVEN	proofs/value_order Json.writeNodeJson: writeNodeJson_includeType, writeNodeJson_depth (graph accessors = EntityR record)
+graph/src/runtime/value.rs	contains	1874	PROVEN	proofs/value_order Glue.Contains class: containsImpl_false
 graph/src/runtime/value.rs	contains	1881	PROVEN	proofs/functions_str_list Contains
 graph/src/runtime/value.rs	partial_cmp	1906	PROVEN	partialCmp_null
 graph/src/runtime/value.rs	compare_floats	1919	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
 graph/src/runtime/value.rs	compare_vecf32	2009	PROVEN	chunked_eq_firstDiff
 graph/src/runtime/value.rs	first_difference	2013	PROVEN	firstDiff_append, firstDiff_self
-graph/src/runtime/value.rs	with_capacity	2051	NOT COVERED	constructor
+graph/src/runtime/value.rs	with_capacity	2051	PROVEN	proofs/value_order Glue.withCapacity: withCapacity_first_then_seen, withCapacity_seen_iff
 graph/src/runtime/value.rs	is_seen	2061	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
 graph/src/runtime/value.rs	has_hash	2072	PROVEN	dedup_second_seen
 graph/src/runtime/value.rs	check_and_insert_hash	2079	PROVEN	dedup_second_seen, dedup_first_unseen

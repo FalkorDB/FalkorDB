@@ -41,29 +41,29 @@ graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::expand_row	85	PR
 graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::next	309	PROVEN	Drive.drive: uncapped_stream, drive_flatten
 graph/src/runtime/ops/path_builder.rs	PathBuilderOp::new	44	PROVEN	CTGlue.pathBuilderNew: pathBuilderNew_spec
 graph/src/runtime/ops/path_builder.rs	PathBuilderOp::next	62	PROVEN	ASP.buildNodes (Value::List branch): buildNodes_walk, pathbuilder_on_cycle (forward cycle list); Value::Path branch PathVlt.vltMain: revWalk_reconstructs, vltMain_follows_of_ne (right on non-cyclic walks), property PathFollowsPattern violated on cycles bug3451_main_violates, fix vltFix_follows
-graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1989	NOT COVERED	config parsing (tested against C: defaults differ, see bug 6)
-graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2075	NOT COVERED	config parsing
-graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2111	NOT COVERED	config parsing
-graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2130	NOT COVERED	f64->Int presentation (Rust returns Integer weights, C Float)
-graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2152	NOT COVERED	ordering (weight, cost, hops); tested only
-graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2164	NOT COVERED	confirmed bug by Cypher repro: default cost 0.0 at call sites 2308/2397/2518 (C: 1)
-graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2181	NOT COVERED	tested only
-graph/src/runtime/functions/algo_procedures.rs	node_successors	2213	NOT COVERED	tested only
-graph/src/runtime/functions/algo_procedures.rs	DijkstraItem::cmp	2248	NOT COVERED	f64 heap ordering
-graph/src/runtime/functions/algo_procedures.rs	DijkstraItem::partial_cmp	2263	NOT COVERED	f64 heap ordering
-graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2279	NOT COVERED	f64 Dijkstra; differential-tested vs C
-graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2385	NOT COVERED	differential-tested vs C
-graph/src/runtime/functions/algo_procedures.rs	record_found_path	2470	NOT COVERED	differential-tested vs C
-graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2534	NOT COVERED	differential-tested vs C (maxCost bug 6)
-graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2638	NOT COVERED	result assembly
-graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2669	NOT COVERED	driver
-graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2720	NOT COVERED	registration
-graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2732	NOT COVERED	registration
-graph/src/runtime/eval.rs	NeighborIter::new	164	NOT COVERED	shortestPath() BFS helpers; differential-tested only
-graph/src/runtime/eval.rs	NeighborIter::new_reversed	204	NOT COVERED	idem
-graph/src/runtime/eval.rs	NeighborIter::neighbors	232	NOT COVERED	idem
-graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1374	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
-graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1459	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
+graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	2030	PROVEN	AlgoPaths.parseCommon_ok_iff (success iff the seven fields parse in order; result holds each), parseCommon_first_error, pRelTypes_*/pDir_spec/pMaxLen_spec/pPathCount_spec/pMaxCost_spec; maxLen wraps modulo 2^32 (pMaxLen_wraps; same in C except at i64::MAX)
+graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2116	PROVEN	AlgoPaths.parseSp_ok_iff, parseSp_missing (parse_config result taken as input)
+graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2152	PROVEN	AlgoPaths.parseSs_ok_iff, parseSs_missing
+graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2171	PROVEN	AlgoPaths.toNumeric_spec, toNumeric_nonfinite (f64 operations abstract in FloatOps)
+graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2193	PROVEN	AlgoPaths.cmpFound_lex (weight, then cost, then hops; unordered counts as equal), cmpFound_swap (antisymmetric when partial_cmp is)
+graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2205	PROVEN	AlgoPaths.edgeAttr_spec (default / Float / Int as f64 / absent / other); since #3121 every call site passes the cost default explicitly (1.0, or 0.0 only in dijkstra_single_path with no costProp): bug 6 FIXED for the default case, see OpsTraverse.lean
+graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2222	PROVEN	AlgoPaths.farEndpoint_spec, farEndpoint_incident
+graph/src/runtime/functions/algo_procedures.rs	node_successors	2254	PROVEN	AlgoPaths.mem_successors, successors_length_le (neighbour iterator = list parameter)
+graph/src/runtime/functions/algo_procedures.rs	DijkstraItem::cmp	2289	PROVEN	AlgoPaths.itemCmp_spec (lighter = greater so it pops first; ties: smaller node id), itemCmp_swap
+graph/src/runtime/functions/algo_procedures.rs	DijkstraItem::partial_cmp	2304	PROVEN	AlgoPaths.itemCmp_spec (partial_cmp = Some(cmp)), itemPartialCmp
+graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2320	NOT COVERED	Dijkstra optimality over f64 weights: f64 addition is not associative (the source comments rely on a fixed summation order), so a faithful model has no exact additive structure and the settle-order argument cannot be run; the comparator it uses is PROVEN (DijkstraItem::cmp)
+graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2426	NOT COVERED	level-synchronised BFS with FxHashMap parents and early exit: the seen/frontier/parent-rank invariants (valid acyclic parent chain, first-found length minimal) were attempted-scoped but not proved; weight/cost are folded source-to-target in f64 (non-associative), which the model cannot represent exactly
+graph/src/runtime/functions/algo_procedures.rs	record_found_path	2511	PROVEN	RecordFound.record_one, record_one_len, record_zero (drop heavier / replace lighter / append tie), record_k (<= k kept, ascending by cmp, members old or new, rejected exactly when full and not Less than the worst), ins_sorted; cmp abstract (transitive on not-Greater, antisymmetric = AlgoPaths.cmpFound_swap), gtF/ltF abstract f64 tests
+graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2575	NOT COVERED	iterative DFS with explicit level stack, on_path set, prefix weight/cost in f64 and bound pruning: needs a loop-invariant proof that every simple path within maxLen/maxCost/bound is visited once; not done (differential-tested vs C)
+graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2679	PROVEN	AlgoPaths.buildBatch_spec (one row per result, 2*hops+1 path elements from the source, weight/cost columns = to_numeric_value)
+graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2710	PROVEN	RunAlgo.runAlgo_spec (glue: the Dijkstra fast-path guard, the BFS pre-pass answering an empty batch, the bound seeding for pathCount 0/1 within maxCost, SSpaths from an infinite bound, then sort_by); dijkstra_single_path, bfs_find_bound, enumerate_paths are parameters and nothing is assumed about them
+graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2761	PROVEN	AlgoPaths.reg_spec (name, one Any argument, columns path/pathWeight/pathCost, body = parse_sp_config then run_path_algo)
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2773	PROVEN	AlgoPaths.reg_spec
+graph/src/runtime/eval.rs	NeighborIter::new	164	NOT COVERED	builds one versioned_matrix::Iter per relationship type (and transposes when undirected): its neighbourhood contract needs the VMIterSeek.seek_abs + VMIter.drain_eq chain of proofs/versioned_matrix instantiated on the effective matrix; not done
+graph/src/runtime/eval.rs	NeighborIter::new_reversed	204	NOT COVERED	same as NeighborIter::new (transposed matrices only)
+graph/src/runtime/eval.rs	NeighborIter::neighbors	232	NOT COVERED	seek(node,node) then drain each iterator, sort_unstable + dedup: needs the iterator-row contract of proofs/versioned_matrix (see NeighborIter::new) and a sorted-dedup lemma; not done
+graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1374	PROVEN	EvalSP.evalSP_spec, evalSP_zero_hop, evalSP_search (glue only: bfs is a parameter, nothing assumed about it)
+graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1459	NOT COVERED	bidirectional level-synchronised BFS: the stop rule (first level with a meeting node, minimum other-side depth) is argued in the comments and tested differentially; the BFS-distance invariant over f_map/b_map is not proved
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	58	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	100	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList (one InList since #2383), evalIQ_inList_err (W2-index-3, still open)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	253	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff; InList arm (#2383): canUse_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist

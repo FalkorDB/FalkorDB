@@ -1,4 +1,5 @@
 import AlgoUdf.Repo
+import AlgoUdf.UdfClasses
 /-! # Thread-local QuickJS context management (`graph/src/udf/js_context.rs`)
 
 QuickJS itself (runtime creation, `eval`, function calls) is AXIOMATISED as the
@@ -14,7 +15,8 @@ flow around it.
 | `validateScript`          | `validate_script` :158-188 (setup → eval → collect) |
 | `Cache`, `ensureCurrent`  | `JS_STATE`, `ensure_context_current` :191-206 |
 | `rebuild`                 | `rebuild_context` :208-276 |
-| `bridge`                  | `call_udf_bridge` :280-352 (error mapping :327-337; graph slot cleared :350) |
+| `bridge`                  | `call_udf_bridge` :280-350 (error mapping :325-335; the call runs inside `with_graph` :307, which restores the graph lent before, #2976) |
+| `ThreadJsState` drop order | `struct ThreadJsState` :143, `rebuild_context`'s `drop(state.take())` :213 (#3015) |
 -/
 namespace AlgoUdf.UdfContext
 
@@ -227,14 +229,15 @@ def mapCallErr (msg : List Char) : String :=
     "out of memory"
   else "UDF Exception: " ++ String.ofList msg
 
-/-- `call_udf_bridge`: lookup by exact name (`low = id` since #3066, js_context.rs:292), convert args, call, convert
-back; the graph slot is set before the call and cleared after it whatever the
-outcome. Returns the result and the final graph slot. -/
-def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ) (g : γ)
-    (args : Except String Unit) (call : Except Caught ρ) : Except String ρ × Option γ :=
-  if low name ∉ c.funcs then (.error ("UDF function '" ++ name ++ "' not found in JS context"), slot)
+/-- `call_udf_bridge`: lookup by exact name (`low = id` since #3066), then convert args, call, convert
+back, all inside `with_graph(&graph, ..)` (#2976; js_context.rs:307-345): the graph is lent to the JS
+helpers for this call only, and `with_graph` puts back whichever graph was lent before (null for an
+outermost call). Returns the result and the final thread-local state. -/
+def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (s : UdfClasses.GState γ)
+    (g : γ) (args : Except String Unit) (call : Except Caught ρ) :
+    Except String ρ × UdfClasses.GState γ :=
+  if low name ∉ c.funcs then (.error ("UDF function '" ++ name ++ "' not found in JS context"), s)
   else
-    let _slot := some g
     let r : Except String ρ :=
       match args with
       | .error e => .error e
@@ -242,24 +245,35 @@ def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) 
         match call with
         | .error ce => .error (mapCallErr (errMsg ce false))
         | .ok v => .ok v
-    (r, none)
+    UdfClasses.withGraphRun s g (fun t => (r, t))
 
-/-- Once the function is found, the current-graph slot is always cleared. -/
-theorem bridge_clears {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ)
+/-- Once the function is found, the graph lent before the call (none for an outermost call) is
+back, whatever the outcome (this replaces `clear_current_graph`: a nested call no longer
+clobbers the outer call's graph). -/
+theorem bridge_restores {γ ρ : Type} (low : String → String) (c : Cache) (name : String)
+    (s : UdfClasses.GState γ) (g : γ) (args : Except String Unit) (call : Except Caught ρ)
+    (h : low name ∈ c.funcs) :
+    (bridge low c name s g args call).2.slot = s.slot := by
+  simp [bridge, h, UdfClasses.withGraphRun, UdfClasses.restoreDrop]
+
+/-- An outermost call leaves the slot null, as `clear_current_graph` did. -/
+theorem bridge_clears {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (epoch : Nat)
     (g : γ) (args : Except String Unit) (call : Except Caught ρ) (h : low name ∈ c.funcs) :
-    (bridge low c name slot g args call).2 = none := by
-  simp [bridge, h]
+    (bridge low c name ({ slot := none, epoch := epoch } : UdfClasses.GState γ) g args call).2.slot = none :=
+  bridge_restores low c name _ g args call h
 
-theorem bridge_timeout {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ)
-    (g : γ) (h : low name ∈ c.funcs) :
-    (bridge (ρ := ρ) low c name slot g (.ok ()) (.error (.exception (some "interrupted") none))).1 =
+theorem bridge_timeout {γ ρ : Type} (low : String → String) (c : Cache) (name : String)
+    (s : UdfClasses.GState γ) (g : γ) (h : low name ∈ c.funcs) :
+    (bridge (ρ := ρ) low c name s g (.ok ()) (.error (.exception (some "interrupted") none))).1 =
       .error "UDF Exception: Query timed out" := by
-  simp [bridge, h, errMsg, mapCallErr]
+  simp [bridge, h, errMsg, mapCallErr, UdfClasses.withGraphRun]
   decide
 
-theorem bridge_not_found {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ)
-    (g : γ) (args : Except String Unit) (call : Except Caught ρ) (h : low name ∉ c.funcs) :
-    bridge low c name slot g args call = (.error ("UDF function '" ++ name ++ "' not found in JS context"), slot) := by
+theorem bridge_not_found {γ ρ : Type} (low : String → String) (c : Cache) (name : String)
+    (s : UdfClasses.GState γ) (g : γ) (args : Except String Unit) (call : Except Caught ρ)
+    (h : low name ∉ c.funcs) :
+    bridge low c name s g args call =
+      (.error ("UDF function '" ++ name ++ "' not found in JS context"), s) := by
   simp [bridge, h]
 
 end AlgoUdf.UdfContext

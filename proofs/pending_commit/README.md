@@ -39,7 +39,7 @@ Since #3334, a `UNIQUE` check looks each affected member's key up through the co
 
 **6. Does a deleted entity keep reading correctly for the rest of the query?**
 
-**Not when its id is reused.** `sound_under_Good` proves snapshot reads are correct as long as no snapshotted id belongs to a live entity. The engine's allocator reissues freed ids first, which breaks that: `rust_reads_dead_entity` shows a new node reading the deleted node's data. This is #2876, still open (see [Bugs found](#bugs-found)). Two fixes are proven to restore it: deferring id reuse to the end of the query (`deferred_preserves_Good`), and open PR #2964's evict-on-reissue (`evict_preserves_Good`).
+**Not when its id is reused.** `sound_under_Good` proves snapshot reads are correct as long as no snapshotted id belongs to a live entity. The engine's allocator reissues freed ids first, which breaks that: `rust_reads_dead_entity` shows a new node reading the deleted node's data. That was #2876; **fixed by #3641**: the allocator skips ids the query itself freed until the version is published (`createRust_preserves_Good`, `rust_reads_live_entity`; the old behaviour is `pre3641_rust_reads_dead_entity`).
 
 ## The headline theorems
 
@@ -55,7 +55,7 @@ Since #3334, a `UNIQUE` check looks each affected member's key up through the co
 | `structural_partition` | Memory accounting: structural plus per-entity bytes equal the whole allocation, no underflow | `StoreMem.lean` |
 | `commit_spec` | A successful `Pending::commit` grows each counter (nodes and relationships created, labels removed, nodes deleted, relationships deleted including the implicit ones) by exactly the staged changes, and the constraints hold afterwards | `PendingCommitOp.lean` |
 | `uniqueViolated_spec`, `uniqueViolated_agrees` | The #3334 index-lookup UNIQUE check is right, and agrees with the old label scan | `UniqueIndex.lean` |
-| `sound_under_Good`, `deferred_preserves_Good` | Snapshot reads are right while no snapshotted id is live; deferring id reuse keeps that | `Snapshot.lean` |
+| `sound_under_Good`, `createRust_preserves_Good` | Snapshot reads are right while no snapshotted id is live; the allocator keeps that since #3641 | `Snapshot.lean` |
 | `c_eq_rust_plus_cancelled` | C's created/deleted counts = Rust's + the entities created and deleted in the same segment | `Stats.lean` |
 
 ### How `mergeSpan_correct` is proved
@@ -72,7 +72,7 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| #2876 / W2-pending-1 | `rust_reads_dead_entity` | A deleted entity's snapshot is keyed by id, and a `CREATE` later in the query reuses the id, so the new entity reads the deleted one's labels and properties. `MERGE` then creates a duplicate node (persistent damage). Same for relationships. Confirmed live: `MATCH (n) DELETE n WITH count(*) AS c CREATE (m {v:2}) WITH m MATCH (x) RETURN x.v` over `(:A {v:1})` gives Rust `1`, C `2` | **Open** (#2876). Fix proposed in open PR #2964 (`evict_preserves_Good`, `evict_reads_live_entity`) |
+| #2876 / W2-pending-1 | `pre3641_rust_reads_dead_entity` | A deleted entity's snapshot is keyed by id, and a `CREATE` later in the query reuses the id, so the new entity reads the deleted one's labels and properties. `MERGE` then creates a duplicate node (persistent damage). Same for relationships. Confirmed live: `MATCH (n) DELETE n WITH count(*) AS c CREATE (m {v:2}) WITH m MATCH (x) RETURN x.v` over `(:A {v:1})` gives Rust `1`, C `2` | **Fixed** by #3641 (e0d9c2188): the live query now returns `1|2|[]` (`rust_reads_live_entity`) |
 | W2-pending-2 | `cancel_example`, `c_eq_rust_plus_cancelled` | Entities created and deleted in the same segment vanish from the statistics: `CREATE (a:L {v:1, w:2}) DELETE a` reports only `Labels added`; C reports `Nodes created: 1, Properties set: 2, Nodes deleted: 1` | **Open** |
 | W2-pending-3 | (no Lean theorem; found while modelling) | Writes to a deleted relationship are applied and counted: `REMOVE r.v` after `DELETE r`, and `SET r.v` after a `DETACH DELETE` cascade | **Open** |
 | #2769 | `fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted` (was `deg_panics_on_pending_deleted`) | `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b)` asked the committed graph for the endpoints of an edge that was never committed, and panicked. Now the edge created and deleted in the query is skipped by `pending_deleted_*degree` and not counted by `pending_*degree`; `0`, as C | **Fixed** by #3520 (9ffa9ab04) |
@@ -102,8 +102,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `StoreCodec.lean`, `StoreMem.lean` | RDB codec, `trim`, memory accounting: `encode_decode_roundtrip`, `structural_partition` |
 | `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push` |
 | `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_reads_src` |
-| `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `rust_reads_dead_entity`, `deferred_preserves_Good` |
-| `EvictPR2964.lean` | **Models open PR #2964, not main**: `evict_preserves_Good` |
+| `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `createRust_preserves_Good`, `pre3641_rust_reads_dead_entity` |
 | `Stats.lean` | Write statistics: `c_eq_rust_plus_cancelled`, `cancel_example` |
 | `PendingAttrs.lean`, `PendingState.lean`, `PendingRels.lean`, `PendingDeg.lean`, `PendingDocs.lean` | All of `pending.rs`: validation, staging, reads, created relationships, degrees (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`), `IndexDocs`, `clear`, `effects_count` |
 | `PendingCommitOp.lean` | `Pending::commit` and constraint enforcement: `commit_spec`, `check_spec`, `enforce_spec` |
@@ -159,4 +158,4 @@ bash proofs/coverage.sh                  # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for #2876, #2769 or W2-pending-2 should turn the matching counterexample into a `pre<PR>_` history theorem and add the proof of the fixed behaviour (for #2876, either `deferred_preserves_Good` or `evict_preserves_Good` already covers the two proposed designs).
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for #2876, #2769 or W2-pending-2 should turn the matching counterexample into a `pre<PR>_` history theorem and add the proof of the fixed behaviour (#2876 is done: `createRust_preserves_Good`).

@@ -1,14 +1,14 @@
 import Columnar.CaseLane
 
 /-!
-# `VectorEval::eval_function` (vector_expr.rs:557-622) and `eval_has_labels` (:644-704)
+# `VectorEval::eval_function` (vector_expr.rs:558-623) and `eval_has_labels` (:644-704)
 
 | here | there |
 | --- | --- |
 | `evalFunction` | `eval_function`: every argument column first (`?` in order), then the all-`Scalar` fold or the per-row calls, each `validate_args_type` then `func.func.call` (`Lanes.foldCall`) |
 | `hasLabelsLane` | `eval_has_labels`: `[Variable over NodeIds, List of Constant(String)…]`, names resolved once, unregistered → all `false` |
 | `hasLabelName` | `Runtime::node_has_label` (runtime.rs:1690-1703): `label_id` then `node_has_label_id` |
-| `Ty`, `valueOfType`, `validateFixed` | `Type` (functions/mod.rs:531), `value_of_type` (value.rs:1315), `validate_args_type`'s `Fixed` arm (mod.rs:828-856) |
+| `Ty`, `valueOfType`, `validateFixed` | `Type` (functions/mod.rs:531), `value_of_type` (value.rs:1316), `validate_args_type`'s `Fixed` arm (mod.rs:828-856) |
 | `hasLabelsCall`, `hasLabelsFn` | the registered `hasLabels` (functions/entity.rs:62-127; proofs/functions_str_list `Entity.hasLabels`) |
 
 **`evalFunction_sound`**, **`hasLabelsLane_sound`** (under `HL f`: `f` validates and computes
@@ -30,7 +30,7 @@ def callOf (f : Fn (V F)) (args : List (V F)) : Except String (V F) := do
   let _ ← f.validate args
   f.call args
 
-/-- `eval_function` (vector_expr.rs:557). -/
+/-- `eval_function` (vector_expr.rs:558). -/
 def evalFunction (ev : E (V F) → List Nat → Except String (EC F)) (f : Fn (V F)) (cs : List (E (V F)))
     (rows : List Nat) : Except String (EC F) := do
   let columns ← cs.mapM (fun ch => ev ch rows)
@@ -123,7 +123,7 @@ def strConst : E (V F) → Option String
   | .const (.str s) => some s
   | _ => none
 
-/-- `eval_has_labels` (vector_expr.rs:644): `col` is `batch.column`. -/
+/-- `eval_has_labels` (vector_expr.rs:645): `col` is `batch.column`. -/
 def hasLabelsLane (rt : RT F) (col : Nat → Column F) (cs : List (E (V F))) (rows : List Nat) : Option (EC F) :=
   match cs with
   | [.var id _, .list (e :: es)] =>

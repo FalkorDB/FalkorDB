@@ -148,7 +148,7 @@ def isTrue : Option Bool → Bool
   | _ => false
 
 /-- The Cypher predicate the optimizer replaced by the index query
-(`planner/optimizer/utilize_index.rs:324` `build_op_query`): `n.k = v`,
+(`planner/optimizer/utilize_index.rs:315` `build_op_query`): `n.k = v`,
 `c < n.k` (`min`), `n.k < c` (`max`), `n.k IN list`, `v IN n.k`. -/
 def holds (p : Props) : IQ → Bool
   | .equal k v => isTrue (cyEqScalar (propOr p k) v)
@@ -400,7 +400,7 @@ decreasing_by
   all_goals simp_wf
   all_goals (first | omega | (simp only [List.cons.sizeOf_spec] at *; omega))
 
-/-- `Index::query` (`mod.rs:1691`): a null node yields the empty iterator. -/
+/-- `Index::query` (`mod.rs:1702`): a null node yields the empty iterator. -/
 def indexHit (fields : Attr → Bool) (p : Props) (q : IQ) : Bool :=
   match buildQ fields q with
   | some n => rsMatch (docOf fields p) n
@@ -408,7 +408,7 @@ def indexHit (fields : Attr → Bool) (p : Props) (q : IQ) : Bool :=
 
 /-! ## The runtime side (`runtime/ops/node_by_index_scan.rs`) -/
 
-/-- `IndexQuery::InList` expansion at `node_by_index_scan.rs:216-238`: keep
+/-- `IndexQuery::InList` expansion at `node_by_index_scan.rs:216-246`: keep
 only `Int|Float|String|Bool` items. -/
 def expandIn (k : Attr) : Val → Option IQ
   | .list xs => some (.or ((xs.filter fun
@@ -416,13 +416,13 @@ def expandIn (k : Attr) : Val → Option IQ
       | _ => false).map (IQ.equal k)))
   | _ => none
 
-/-- `is_indexable` (`node_by_index_scan.rs:252`). -/
+/-- `is_indexable` (`node_by_index_scan.rs:256`). -/
 def indexable : Val → Bool
   | .int i => !intLosesPrecision i
   | .flt _ | .str _ | .bool _ | .point _ _ | .null => true
   | _ => false
 
-/-- `can_utilize_index` (`node_by_index_scan.rs:249`). -/
+/-- `can_utilize_index` (`node_by_index_scan.rs:253`). -/
 def canUtilize : IQ → Bool
   | .equal _ v => indexable v
   | .range _ mn mx _ _ => (mn.all indexable) && (mx.all indexable)
@@ -438,7 +438,7 @@ the post-filter when the optimizer kept it (`keep`). -/
 def scanEmits (fields : Attr → Bool) (keep : Bool) (p : Props) (q : IQ) : Bool :=
   (if canUtilize q then indexHit fields p q else true) && (!keep || holds p q)
 
-/-! ## Pending population tickets (`mod.rs:901` `PendingSlots`, `mod.rs:2110-2166`) -/
+/-! ## Pending population tickets (`mod.rs:907` `PendingSlots`, `mod.rs:2121-2177`) -/
 
 structure Slots where
   gen : Nat
@@ -446,35 +446,35 @@ structure Slots where
   stale : Int
   deriving DecidableEq, Repr
 
-/-- `increment_pending_for_generation` (`mod.rs:2111`). -/
+/-- `increment_pending_for_generation` (`mod.rs:2122`). -/
 def Slots.inc (s : Slots) (g : Nat) : Slots :=
   if g = s.gen then { s with cur := s.cur + 1 } else { s with stale := s.stale + 1 }
 
-/-- `try_decrement_pending_for_generation` (`mod.rs:2129`). -/
+/-- `try_decrement_pending_for_generation` (`mod.rs:2140`). -/
 def Slots.dec (s : Slots) (g : Nat) : Slots :=
   if g = s.gen then (if s.cur > 0 then { s with cur := s.cur - 1 } else s)
   else (if s.stale > 0 then { s with stale := s.stale - 1 } else s)
 
-/-- `bump_id` (`mod.rs:1049`): new generation, current work becomes stale. -/
+/-- `bump_id` (`mod.rs:1053`): new generation, current work becomes stale. -/
 def Slots.bump (s : Slots) (g' : Nat) : Slots :=
   { gen := g', cur := 0, stale := s.stale + s.cur }
 
-/-- `pending_count_for_generation` (`mod.rs:2151`). -/
+/-- `pending_count_for_generation` (`mod.rs:2162`). -/
 def Slots.countFor (s : Slots) (g : Nat) : Int := if g = s.gen then s.cur else s.stale
 
-/-! ## Index maintenance: `Indexer::commit` (`indexer.rs:714`) -/
+/-! ## Index maintenance: `Indexer::commit` (`indexer.rs:749`) -/
 
 /-- RS doc table for one label: entity id ↦ stored document. -/
 abbrev Table := Nat → Option Doc
 
-/-- `add_document` with `REDISEARCH_ADD_REPLACE` (`mod.rs:1907`). -/
+/-- `add_document` with `REDISEARCH_ADD_REPLACE` (`mod.rs:1918`). -/
 def Table.add (t : Table) (id : Nat) (d : Doc) : Table := fun j => if j = id then some d else t j
-/-- `delete_document` (`mod.rs:1929`). -/
+/-- `delete_document` (`mod.rs:1940`). -/
 def Table.del (t : Table) (id : Nat) : Table := fun j => if j = id then none else t j
 
 /-- `Indexer::commit`: all adds of the label first, then all removes
-(`indexer.rs:730-752`). Documents are built from the *committed* graph
-(`graph.rs:4043` `commit_index_kind`). -/
+(`indexer.rs:749-777`). Documents are built from the *committed* graph
+(`graph.rs:4070` `commit_index_kind`, `doc.set` `:4103`). -/
 def commit (t : Table) (build : Nat → Doc) (adds removes : List Nat) : Table :=
   removes.foldl Table.del (adds.foldl (fun t id => t.add id (build id)) t)
 

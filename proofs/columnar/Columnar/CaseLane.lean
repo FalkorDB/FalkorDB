@@ -1,7 +1,7 @@
 import Columnar.AndOrLane
 
 /-!
-# `VectorEval::eval_case` (vector_expr.rs:477-551) against the per-row `eval_case`
+# `VectorEval::eval_case` (vector_expr.rs:474-548) against the per-row `eval_case`
 
 The lane evaluates the subject over all rows, then each `WHEN` over the positions no arm has
 claimed yet, its `THEN` over the positions it claims (scattered into `out`), and finally the
@@ -76,7 +76,7 @@ def subjCol : Option (E (V F)) → Except String (Option (EC F))
   | none => .ok none
   | some s => (ev s rows).map some
 
-/-- `eval_case` (vector_expr.rs:477). -/
+/-- `eval_case` (vector_expr.rs:474). -/
 def evalCase (subj : Option (E (V F))) (arms : List (E (V F))) (els : E (V F)) : Except String (EC F) := do
   let subject ← subjCol ev rows subj
   let st ← armLoop rt ev rows subject arms ⟨fun _ => .null, List.range rows.length⟩

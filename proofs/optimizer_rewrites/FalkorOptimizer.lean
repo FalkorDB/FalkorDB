@@ -1,6 +1,8 @@
 /-
 # Optimizer rewrites: which passes preserve the query result, and which do not
 
+**Re-synced to main 256ab4d3f (2026-11-22).** `Variable::is_unnamed` is PROVEN (`Helpers.varIsUnnamed_iff`); every production row is PROVEN (the NOT COVERED rows are test/bench code). #3281 (`push_filters_down`, `PushPlan`), #3303, #3890 (`VarKey` refactor: `var.key() == alias.key()` is the `(id, scope_id)` equality the models already use) and #3593 needed no change to a statement. Line pins inside bug histories below keep the revision they were written for; COVERAGE.tsv is authoritative.
+
 **Re-targeted to main 8621212fc.** #2904 (`fd2c76a6c`, closes #2902): `^` propagates
 operand errors and type-checks its operands. `Basic.eval` gains `pow` (`powV`) and
 `Err.notFound`; `sub`/`div` bodies are factored into `subV`/`divV` (same values).

@@ -38,32 +38,32 @@ structure Idx where
   language : Option String
   stopwords : Option (List String)
   /-- Gap closed 2026-10-20 (#3166): the stopword list the live RediSearch spec was
-  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs:1119-1133`, read by
+  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs:1140-1154`, read by
   `RediSearch_CreateIndex`). RediSearch fixes it at creation: `register_fields`
-  (`mod.rs:1181`) adds fields to the spec and never touches it. `none` = the
-  `SetStopwords(null, 0)` arm (`mod.rs:1132`), i.e. RediSearch's own default. -/
+  (`mod.rs:1192`) adds fields to the spec and never touches it. `none` = the
+  `SetStopwords(null, 0)` arm (`mod.rs:1153`), i.e. RediSearch's own default. -/
   rsStop : Option (List String) := none
 
 namespace Idx
 
-/-- `Default for Index` (`mod.rs:1013`). -/
+/-- `Default for Index` (`mod.rs:1017`). -/
 def default (id : Nat) : Idx :=
   { id, spec := none, rs := [], fields := [], order := [], slots := ⟨id, 0, 0⟩,
     progress := 0, total := 0, language := none, stopwords := none }
 
-/-- `Index::id` (`mod.rs:1040`). -/
+/-- `Index::id` (`mod.rs:1044`). -/
 def idOf (x : Idx) : Nat := x.id
-/-- `Index::bump_id` (`mod.rs:1049`), `g'` the next value of the static counter. -/
+/-- `Index::bump_id` (`mod.rs:1053`), `g'` the next value of the static counter. -/
 def bumpId (x : Idx) (g' : Nat) : Idx := { x with id := g', slots := x.slots.bump g' }
-/-- `Index::clone_for_update` (`mod.rs:1068`): every component copied; `spec`
+/-- `Index::clone_for_update` (`mod.rs:1072`): every component copied; `spec`
 and `pending_slots` are the *same* `Arc`s (shared, not copied). -/
 def cloneForUpdate (x : Idx) : Idx :=
   { id := x.id, spec := x.spec, rs := x.rs, fields := x.fields, order := x.order, slots := x.slots,
     progress := x.progress, total := x.total, language := x.language, stopwords := x.stopwords,
     rsStop := x.rsStop }
-/-- `has_rs_index` (`mod.rs:1088`). -/
+/-- `has_rs_index` (`mod.rs:1092`). -/
 def hasRsIndex (x : Idx) : Bool := x.spec.isSome
-/-- `rs_ptr` (`mod.rs:1095`): `none` is the null pointer. -/
+/-- `rs_ptr` (`mod.rs:1099`): `none` is the null pointer. -/
 def rsPtr (x : Idx) : Option Nat := x.spec
 
 def hasNul (s : String) : Bool := s.toList.contains (Char.ofNat 0)
@@ -84,7 +84,7 @@ def createRsIndex (x : Idx) (label : String) (stop : Option (List String)) (lang
   | none => if hasNul label then .error "nul"
             else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
 
-/-- The metric match of `register_fields` (`mod.rs:1273-1286`). -/
+/-- The metric match of `register_fields` (`mod.rs:1285-1299`). -/
 def metricOf (sim : Option String) : Except String String :=
   match sim.getD "euclidean" with
   | "euclidean" => .ok "L2"
@@ -92,7 +92,7 @@ def metricOf (sim : Option String) : Except String String :=
   | "cosine" => .ok "COSINE"
   | o => .error s!"Unknown similarity function '{o}', expected 'euclidean', 'ip', or 'cosine'"
 
-/-- One iteration of `register_fields` (`mod.rs:1192-1344`). `tieredOk` is
+/-- One iteration of `register_fields` (`mod.rs:1192-1351`). `tieredOk` is
 the result of `VecSimTieredParams_Init` + `VectorFieldSetParams` (FFI). -/
 def registerOne (fo : Option TextOpts) (tieredOk : Bool) (f : Field) : Except String (List RsReg) :=
   match f.ty with
@@ -125,14 +125,14 @@ def registerAll (fo : Option TextOpts) (tieredOk : Bool) : List Field → Except
 
 def allFieldsOf (m : AMap (List Field)) : List Field := m.flatMap (·.2)
 
-/-- `register_fields` (`mod.rs:1181`), applied to the spec. -/
+/-- `register_fields` (`mod.rs:1192`), applied to the spec. -/
 def registerFields (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tieredOk : Bool) :
     Except String Idx :=
   match registerAll fo tieredOk (allFieldsOf m) with
   | .ok r => .ok { x with rs := x.rs ++ r }
   | .error e => .error e
 
-/-! Field-map operations (`mod.rs:1968-2077`). -/
+/-! Field-map operations (`mod.rs:2009-2090`). -/
 def getFields (x : Idx) (a : String) : Option (List Field) := x.fields.get a
 def containsField (x : Idx) (a : String) : Bool := (x.fields.get a).isSome
 def hasFieldWithType (x : Idx) (a : String) (t : IType) : Bool :=
@@ -159,16 +159,16 @@ def languageOf (x : Idx) : Option String := x.language
 def setLanguage (x : Idx) (l : Option String) : Idx := { x with language := l }
 def stopwordsOf (x : Idx) : Option (List String) := x.stopwords
 def setStopwords (x : Idx) (s : Option (List String)) : Idx := { x with stopwords := s }
-/-- `memory_usage` (`mod.rs:2205`); `mem` = `RediSearch_MemUsage` (FFI). -/
+/-- `memory_usage` (`mod.rs:2216`); `mem` = `RediSearch_MemUsage` (FFI). -/
 def memoryUsage (x : Idx) (mem : Nat → Nat) : Nat := match x.spec with | none => 0 | some s => mem s
-/-- `index_count` (`mod.rs:2215`). -/
+/-- `index_count` (`mod.rs:2226`). -/
 def indexCount (x : Idx) : Nat := (x.fields.map (·.2.length)).sum
 
 /-- The field `build_query_node` targets for attribute `a`:
-`self.fields.get(key).and_then(|f| f.first())` (`mod.rs:1397,1426,1484,1496,1554,1615`). -/
+`self.fields.get(key).and_then(|f| f.first())` (`mod.rs:1409,1438,1496,1508,1566,1627`). -/
 def queryField (x : Idx) (a : String) : Option Field := (x.fields.get a).bind (·.head?)
 
-/-- `recreate_index` (`mod.rs:2219`). -/
+/-- `recreate_index` (`mod.rs:2230`). -/
 def recreateIndex (x : Idx) (label : String) (langOk : String → Bool) (tieredOk : Bool)
     (fresh g' : Nat) : Except String Idx :=
   match createRsIndex { x with spec := none } label x.stopwords x.language langOk fresh with

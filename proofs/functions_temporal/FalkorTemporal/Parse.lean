@@ -274,7 +274,9 @@ def chk64 (x : Int) : Option Int := if decide (-2 ^ 63 ≤ x) && decide (x < 2 ^
 /-- The date-part loop (temporal.rs:406-430): digits and `-` accumulate, a letter commits
 the number; since #2987 `W`/`D` use `checked_mul`/`checked_add` and error on overflow. -/
 def dateLoop : List Char → String → DurAcc → Except String DurAcc
-  | [], _, a => .ok a
+  | [], buf, a =>
+    -- since #3574 (e0a34e480): a trailing number with no unit (`P5`, `P1Y5`, `P-`) is an error
+    if buf.isEmpty then .ok a else .error s!"Duration component has no unit: {buf}"
   | ch :: cs, buf, a =>
     if ch.isDigit || ch == '-' then dateLoop cs (buf.push ch) a
     else match C.parseI64 buf with
@@ -293,7 +295,8 @@ def dateLoop : List Char → String → DurAcc → Except String DurAcc
 
 /-- The time-part loop: also accepts `.`, and drops the fraction before parsing. -/
 def timeLoop : List Char → String → DurAcc → Except String DurAcc
-  | [], _, a => .ok a
+  | [], buf, a =>
+    if buf.isEmpty then .ok a else .error s!"Duration component has no unit: {buf}"
   | ch :: cs, buf, a =>
     if ch.isDigit || ch == '-' || ch == '.' then timeLoop cs (buf.push ch) a
     else match C.parseI64 ((buf.splitOn ".").headD buf) with
@@ -335,6 +338,31 @@ theorem parseDuration_noP (s : String) (h : s.startsWith "P" = false) :
     parseDuration C s = .error s!"Duration string must start with 'P': {s}" := by
   simp [parseDuration, h]
 
+/-! ### #3574 (e0a34e480, closes #3117): a trailing number with no unit is an error -/
+
+/-- Date part ends while the number buffer is non-empty (`P5`, `P1Y5`, `P-`): error. Before
+#3574 the buffer was silently dropped and `duration('P5')` was the zero duration. -/
+theorem dateLoop_trailing_number (buf : String) (a : DurAcc) (h : buf.isEmpty = false) :
+    dateLoop C [] buf a = .error s!"Duration component has no unit: {buf}" := by
+  simp [dateLoop, h]
+
+/-- Same for the time part (`PT5`, `P1DT2H3`). -/
+theorem timeLoop_trailing_number (buf : String) (a : DurAcc) (h : buf.isEmpty = false) :
+    timeLoop C [] buf a = .error s!"Duration component has no unit: {buf}" := by
+  simp [timeLoop, h]
+
+/-- A clean end (nothing buffered) still succeeds. -/
+theorem dateLoop_end_ok (a : DurAcc) : dateLoop C [] "" a = .ok a := by simp [dateLoop]
+theorem timeLoop_end_ok (a : DurAcc) : timeLoop C [] "" a = .ok a := by simp [timeLoop]
+
+/-- The one-character string after `P` is `5`: `duration('P5')` errors. -/
+theorem parseDuration_P5 :
+    dateLoop C "5".toList "" {} = .error "Duration component has no unit: 5" := by
+  have : "5".toList = ['5'] := by decide
+  rw [this]
+  simp [dateLoop, Char.isDigit]
+  rfl
+
 /-! ### #2987: the week/day accumulator never wraps -/
 
 /-- `W` with a week count whose `n * 7` leaves i64 is an error, not a wrap
@@ -369,7 +397,10 @@ theorem chk64_some {x y : Int} (h : chk64 x = some y) : y = x ∧ -2 ^ 63 ≤ x 
 theorem dateLoop_days_i64 : ∀ (l : List Char) (buf : String) (a r : DurAcc),
     -2 ^ 63 ≤ a.days → a.days < 2 ^ 63 → dateLoop C l buf a = .ok r →
     -2 ^ 63 ≤ r.days ∧ r.days < 2 ^ 63
-  | [], _, a, r, h0, h1, h => by simp [dateLoop] at h; cases h; exact ⟨h0, h1⟩
+  | [], buf, a, r, h0, h1, h => by
+    simp only [dateLoop] at h; split at h
+    · cases h; exact ⟨h0, h1⟩
+    · cases h
   | ch :: cs, buf, a, r, h0, h1, h => by
     unfold dateLoop at h
     split at h

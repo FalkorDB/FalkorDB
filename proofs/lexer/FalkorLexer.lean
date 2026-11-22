@@ -4,7 +4,7 @@
 A model of FalkorDB-rs's hand-written Cypher lexer (`graph/src/parser/lexer.rs`),
 its string-escape decoder (`graph/src/parser/string_escape.rs`), the literal
 handling in the parser (`graph/src/parser/cypher.rs`) and the expression-height
-/ nesting guards added in `e7daadac8` (Rust line numbers from main `737dfb5da`),
+/ nesting guards added in `e7daadac8` (Rust line numbers re-checked at main `256ab4d3f`, 2026-11-22),
 with machine-checked proofs of:
 
 * **`rs_agrees_spec`** — `read_spaces` skips exactly the openCypher
@@ -29,8 +29,9 @@ with machine-checked proofs of:
 * **`height_sound`** / **`guarded_height_le`** — every height estimate the
   parser keeps is an upper bound on the tree it describes, so a parse that
   passes `check_depth` builds no tree taller than `MAX_TREE_DEPTH`.
-* **`nested_depth_bound`** — every `parse_expr` / `CALL {}` recursion is at
-  most `MAX_NESTING` deep.
+* **`nested_depth_bound`** — every `parse_expr` / `CALL {}` / nested `FOREACH`
+  recursion is at most `MAX_NESTING` deep (`foreach_bounded`, since #2900); the
+  `SET`/`REMOVE` target chain is bounded too (`updateTarget_bounded`).
 
 and machine-checked *counterexamples* for the places where a property is false
 (each one reproduced against the real Rust in `graph/tests/lean_lexer.rs`). The rows marked
@@ -43,8 +44,9 @@ fixed behaviour is now a correctness theorem, named in the row:
 | `pre2908_rs_block_comment_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908 `dfa326583`) `/* ... */` ended at the first `/`, not at `*/` |
 | `pre2908_rs_trailing_slash_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) a lone trailing `/` was skipped as whitespace |
 | `pre2908_rs_unterminated_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) an unterminated `/*` was accepted |
-| `foreach_unbounded`         | `FOREACH` nesting bypasses `nested`, so its recursion is unbounded |
-| `set_target_unbounded`      | `SET n.a.a…` / `REMOVE n.a.a…` targets bypass `check_depth` |
+| `pre2900_foreach_unbounded` | (fixed by #2900 `8312750b5`) `FOREACH` nesting bypassed `nested`, so its recursion was unbounded — now `foreach_bounded`, `foreach_limit` |
+| `pre2900_set_target_unbounded` | (fixed by #2900) `SET n.a.a…` / `REMOVE n.a.a…` targets bypassed `check_depth` — now `updateTarget_bounded`, `updateTarget_chain_limit` |
+| `neg_run_min_wraps`         | (since #3525) `RETURN --9223372036854775808` is `i64::MIN`, not an overflow; matches C (live) |
 | `hop_truncation_bug`        | `*4294967298` is `*2` (`i as u32`) |
 | `pre2910_crlf_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910 `dba677942`) `\r` was not whitespace — now `rs_crlf` |
 | `pre2910_zero_exp_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `0e5` lexed as `0` then `e5` — now `lexNum_zero_exp` |
@@ -69,13 +71,15 @@ fixed behaviour is now a correctness theorem, named in the row:
 | `fromStrRadix16`          | `u32::from_str_radix(_, 16)` (accepts a leading `+`) |
 | `specUnesc`               | openCypher `EscapedChar` (graph/src/Cypher.g4:553-554) |
 | `str2int`                 | `Lexer::str2number_token`, integer half (lexer.rs:700-737) |
-| `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs:2570-2584) + level 9 |
-| `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2545-2565) + `parse_literal` (cypher.rs:445-469) |
-| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1804, 1811, 3108, 3111) |
+| `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs:2575-2589) + level 9 |
+| `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2550-2569) + `parse_literal` (cypher.rs:445-469) |
+| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1809, 1816, 3114, 3117) |
 | `Frame`, `Op`, `step`     | the `(level, tree, height)` frames of `parse_expr_inner` and `parse_expr_return!` / `parse_operators!` (macro.rs) |
 | `Reach`                   | every frame update of `parse_expr_inner`, each with its `check_depth` |
-| `setTarget`               | the property loop of `parse_set_items` / `parse_remove_items` (cypher.rs:3348-3352, 3444-3448) |
-| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:3469-3543) |
+| `lookups`, `updateTarget` | `parse_update_target` (cypher.rs:3394-3416, new in #2900), used by `parse_set_items` (3340) and `parse_remove_items` (3457) |
+| `pre2900_setTarget`       | the property loop of `parse_set_items` / `parse_remove_items` before #2900 |
+| `negFrames`, `applyFrames`, `signedLit`, `evalT` | the level 9 sign run of `parse_expr_inner` (cypher.rs:2211-2250, 2550-2569), #3525 |
+| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:1035 entered directly, 3544 through `nested` since #2900) |
 
 ## What this does NOT cover
 
@@ -1350,7 +1354,7 @@ def level9 : LitTree → Except String LitTree
   | .const v => if v = I64MIN then .error "Integer overflow" else .ok (.const v)
   | e => .ok e
 
-/-- Level 10 since #2910 (`dba677942`, cypher.rs:2570-2584): a bare
+/-- Level 10 since #2910 (`dba677942`, cypher.rs:2575-2589): a bare
 `Constant(i64::MIN)` followed by a postfix token (`[`, `.`, `{`, `:`) is the
 unnegated literal `2^63` and is an overflow, before the postfix loop wraps
 it. Otherwise the postfix (if any) wraps the tree. -/
@@ -1380,7 +1384,62 @@ theorem litExpr_other (neg pf : Bool) (v : Int) (hv : v ≠ I64MIN) :
     ∃ t, litExpr neg pf v = .ok t := by
   cases neg <;> cases pf <;> simp [litExpr, level10, level9, hv]
 
-/-- `i as u32` on an `i64` hop count (cypher.rs:1804, 1811, 3108, 3111). -/
+/-! ### A run of signs and `i64::MIN` (#3525)
+
+Since #3525 (`56d00c3d8`) a run of `+`/`-` folds to `0`, `1` or `2` `Negate` frames by the parity
+of its `-` (cypher.rs:2211-2250); every frame is popped through level 9's check. -/
+
+/-- The `Negate` frames a run of `n` `-` pushes: none for `0`, else `2 - n % 2`. -/
+def negFrames (n : Nat) : Nat := if n = 0 then 0 else 2 - n % 2
+
+/-- Pop `k` `Negate` frames over `t`, innermost first, each through `level9`. -/
+def applyFrames : Nat → LitTree → Except String LitTree
+  | 0, t => .ok t
+  | k + 1, t => (level9 (.negate t)).bind (applyFrames k)
+
+/-- A literal with a postfix and a run of `n` `-` (level 10, then the frames of level 9). -/
+def signedLit (n : Nat) (pf : Bool) (v : Int) : Except String LitTree :=
+  match level10 (.const v) pf with
+  | .error e => .error e
+  | .ok t => if n = 0 then level9 t else applyFrames (negFrames n) t
+
+/-- The runtime value of a literal tree: `Negate` is `checked_neg`, `none` its overflow. -/
+def evalT : LitTree → Option Int
+  | .const v => some v
+  | .negate e => (evalT e).bind fun w => if w = I64MIN then none else some (-w)
+  | .post e => evalT e
+
+/-- For every digit string that is not `2^63`, a run of `n` signs is read as the literal negated
+`n` times: its value is `v` for even `n` and `-v` for odd `n`. -/
+theorem signedLit_exact (n : Nat) (v : Int) (h0 : 0 ≤ v) (hv : v ≤ I64MAX) :
+    ((signedLit n false v).toOption.bind evalT) = some (if n % 2 = 0 then v else -v) := by
+  have hne : v ≠ I64MIN := by unfold I64MIN I64MAX at *; omega
+  have hnm : -v ≠ I64MIN := by unfold I64MIN I64MAX at *; omega
+  rcases Nat.eq_zero_or_pos n with rfl | hn
+  · simp [signedLit, level10, level9, hne, evalT]
+  · have hn0 : n ≠ 0 := by omega
+    by_cases he : n % 2 = 0
+    · have : negFrames n = 2 := by simp [negFrames, he, hn0]
+      simp [signedLit, level10, this, applyFrames, level9, hne, he, evalT, hnm, hn0, Except.bind, Except.toOption, Option.bind]
+    · have : negFrames n = 1 := by simp [negFrames, hn0]; omega
+      simp [signedLit, level10, this, applyFrames, level9, hne, he, evalT, hn0, Except.bind, Except.toOption, Option.bind]
+
+/-- **`- -9223372036854775808` is `i64::MIN`, not an overflow** (confirmed live: Rust and the C
+module both answer `-9223372036854775808` for `RETURN --9223372036854775808`; the explicit
+`-(-9223372036854775808)` is "integer overflow in unary minus" in Rust). The inner frame collapses
+`Negate(Constant(MIN))` to `Constant(MIN)`, which the outer frame takes for another `2^63` literal
+and collapses again. The mathematical value is `+2^63`, out of `i64` range. A run of an odd length
+is right (`-2^63`). -/
+theorem neg_run_min_wraps :
+    ((signedLit 2 false I64MIN).toOption.bind evalT) = some I64MIN ∧
+    ((signedLit 1 false I64MIN).toOption.bind evalT) = some I64MIN ∧
+    ¬ ((2 : Int) ^ 63 ≤ I64MAX) := by
+  refine ⟨?_, ?_, ?_⟩
+  · simp [signedLit, level10, level9, applyFrames, negFrames, evalT, I64MIN, Except.bind, Except.toOption, Option.bind]
+  · simp [signedLit, level10, level9, applyFrames, negFrames, evalT, I64MIN, Except.bind, Except.toOption, Option.bind]
+  · unfold I64MAX; omega
+
+/-- `i as u32` on an `i64` hop count (cypher.rs:1809, 1816, 3114, 3117). -/
 def asU32 (i : Int) : Nat := (i % 2 ^ 32).toNat
 
 /-- `*4294967298` is `*2` and `*4294967296` is `*0`; the i64::MIN token of
@@ -1581,44 +1640,93 @@ theorem chain_rejected : ¬ ∃ e, Reach (chain 256) e := by
   rw [chain_height] at this
   simp [MAX_TREE_DEPTH] at this
 
-/-- …but `parse_set_items` / `parse_remove_items` (cypher.rs:3348-3352,
-3444-3448) build the SET/REMOVE target with `parse_property_lookup` in a bare
-`while` loop, outside `Reach`: no estimate, no check. Modelled literally, it
-accepts every length, so the tree the binder then recurses over is unbounded
-(repro: `MATCH (n) SET n.a.a…(5000) = 1` overflows the binder's stack;
-C FalkorDB rejects it with an error). -/
-def setTarget : Nat → Except String T
+/-- `pre2900_setTarget` (historical, fixed by #2900 `8312750b5`): before the fix,
+`parse_set_items` / `parse_remove_items` built the SET/REMOVE target with `parse_property_lookup`
+in a bare `while` loop, outside `Reach`: no estimate, no check. Modelled literally, it accepted
+every length, so the tree the binder then recursed over was unbounded (repro at the time:
+`MATCH (n) SET n.a.a…(5000) = 1` overflowed the binder's stack; C rejects it). -/
+def pre2900_setTarget : Nat → Except String T
   | 0 => .ok (.mk [])
-  | k + 1 => (setTarget k).map fun t => .mk [t]
+  | k + 1 => (pre2900_setTarget k).map fun t => .mk [t]
 
-theorem set_target_unbounded (k : Nat) :
-    setTarget k = .ok (chain k) ∧ height (chain k) = k + 1 := by
+theorem pre2900_set_target_unbounded (k : Nat) :
+    pre2900_setTarget k = .ok (chain k) ∧ height (chain k) = k + 1 := by
   refine ⟨?_, chain_height k⟩
   induction k with
   | zero => rfl
-  | succ k ih => simp [setTarget, ih, chain, Except.map]
+  | succ k ih => simp [pre2900_setTarget, ih, chain, Except.map]
+
+/-- The `.prop` chain of `parse_update_target` (cypher.rs:3407-3412, new in #2900): each lookup
+wraps the tree, adds one to the estimate and runs `check_depth`, as the postfix chain of
+`parse_expr_inner` does (`Reach.prop`). `error` is the "too deep" refusal. -/
+def lookups : Nat → T → Nat → Except String (T × Nat)
+  | 0, t, e => .ok (t, e)
+  | k + 1, t, e =>
+    if e + 1 ≤ MAX_TREE_DEPTH then lookups k (.mk [t]) (e + 1) else .error "too deep"
+
+/-- `parse_update_target` (cypher.rs:3394-3416): the target (a `Reach` tree and estimate: either
+`parse_primary_expr` charged `child + PRIMARY_LEVELS`, or the `parse_expr` of a parenthesised
+target with its `expr_height`), `check_depth` on it, then the chain. -/
+def updateTarget (t : T) (e : Nat) (k : Nat) : Except String (T × Nat) :=
+  if e ≤ MAX_TREE_DEPTH then lookups k t e else .error "too deep"
+
+theorem lookups_reach : ∀ (k : Nat) (t : T) (e : Nat), Reach t e → ∀ t' e',
+    lookups k t e = .ok (t', e') → Reach t' e'
+  | 0, t, e, h, t', e', hk => by
+    simp only [lookups, Except.ok.injEq, Prod.mk.injEq] at hk
+    obtain ⟨rfl, rfl⟩ := hk; exact h
+  | k + 1, t, e, h, t', e', hk => by
+    simp only [lookups] at hk
+    split at hk
+    · rename_i hc
+      exact lookups_reach k _ _ (.prop h hc) t' e' hk
+    · simp at hk
+
+/-- **The SET/REMOVE target is bounded** (fixes `pre2900_set_target_unbounded`, #2900): whatever
+chain `parse_update_target` accepts on a target the expression parser built is a `Reach` tree,
+so it is no taller than `MAX_TREE_DEPTH`. -/
+theorem updateTarget_bounded {t : T} {e : Nat} (h : Reach t e) (k : Nat) {t' : T} {e' : Nat}
+    (hk : updateTarget t e k = .ok (t', e')) : height t' ≤ MAX_TREE_DEPTH := by
+  unfold updateTarget at hk
+  split at hk
+  · exact guarded_height_le (lookups_reach k t e h t' e' hk)
+  · simp at hk
+
+/-- A variable `n` (estimate `0 + PRIMARY_LEVELS = 2`) takes a chain of 254 lookups and refuses
+255 (`MAX_TREE_DEPTH = 256`): `MATCH (n) SET n.a.a…(5000) = 1` is now "too deep". -/
+theorem updateTarget_chain_limit :
+    (updateTarget (.mk []) 2 254).toBool = true ∧ (updateTarget (.mk []) 2 255).toBool = false := by
+  refine ⟨?_, ?_⟩ <;> decide +kernel
+
+/-- Without a chain the target is only charged for itself (`update_target_without_property_is_bounded`
+in cypher.rs): an estimate over the cap is refused with no lookup to blame. -/
+theorem updateTarget_self_checked (t : T) (e : Nat) (h : MAX_TREE_DEPTH < e) :
+    ∃ m, updateTarget t e 0 = .error m := by
+  unfold updateTarget; rw [if_neg (by omega)]; exact ⟨_, rfl⟩
 
 /-! ## 8. Call-stack recursion: `MAX_NESTING` and `FOREACH` -/
 
 /-- The parser's call-recursive descents. `expr` is a `parse_expr` (or
 `parse_literal_list/map`, `CALL {}`) — all routed through `Parser::nested`;
-`foreach` is `parse_foreach_clause`, whose body re-enters itself directly
-(cypher.rs:3527, in the body loop 3484-3531). -/
+`direct` is `parse_foreach_clause` entered from `parse_writing_clause` (cypher.rs:1035), and
+`foreach` one entered from a FOREACH body (cypher.rs:3544), which since #2900 goes through
+`nested` too. -/
 inductive Call
   | leaf
   | expr (kids : List Call)
+  | direct (body : Call)
   | foreach (body : Call)
 
 def MAX_NESTING : Nat := 100
 
 mutual
 /-- `Parser::nested` (cypher.rs:344-354): refuse at `depth ≥ MAX_NESTING`,
-else `depth + 1` for the callee. `parse_foreach_clause` passes `depth`
-through unchanged. -/
+else `depth + 1` for the callee. `direct` passes `depth` through unchanged. -/
 def runCall : Nat → Call → Bool
   | _, .leaf => true
   | d, .expr ks => if d ≥ MAX_NESTING then false else runAll (d + 1) ks
-  | d, .foreach b => runCall d b
+  | d, .direct b => runCall d b
+  | d, .foreach b => if d ≥ MAX_NESTING then false else runCall (d + 1) b
 def runAll : Nat → List Call → Bool
   | _, [] => true
   | d, k :: ks => runCall d k && runAll d ks
@@ -1629,7 +1737,8 @@ mutual
 def exprDepth : Call → Nat
   | .leaf => 0
   | .expr ks => 1 + exprDepthL ks
-  | .foreach b => exprDepth b
+  | .direct b => exprDepth b
+  | .foreach b => 1 + exprDepth b
 def exprDepthL : List Call → Nat
   | [] => 0
   | k :: ks => max (exprDepth k) (exprDepthL ks)
@@ -1640,6 +1749,7 @@ mutual
 def stackDepth : Call → Nat
   | .leaf => 0
   | .expr ks => 1 + stackDepthL ks
+  | .direct b => 1 + stackDepth b
   | .foreach b => 1 + stackDepth b
 def stackDepthL : List Call → Nat
   | [] => 0
@@ -1657,9 +1767,16 @@ theorem nested_bound : ∀ (d : Nat) (c : Call), runCall d c = true → d ≤ MA
     · rename_i hlt
       have := nested_boundL (d + 1) ks h (by omega)
       simp only [exprDepth]; omega
-  | d, .foreach b, h, hd => by
+  | d, .direct b, h, hd => by
     simp only [runCall] at h
     simpa [exprDepth] using nested_bound d b h hd
+  | d, .foreach b, h, _ => by
+    simp only [runCall] at h
+    split at h
+    · simp at h
+    · rename_i hlt
+      have := nested_bound (d + 1) b h (by omega)
+      simp only [exprDepth]; omega
 theorem nested_boundL : ∀ (d : Nat) (ks : List Call), runAll d ks = true → d ≤ MAX_NESTING →
     d + exprDepthL ks ≤ MAX_NESTING
   | d, [], _, hd => by simp [exprDepthL]; exact hd
@@ -1671,26 +1788,71 @@ theorem nested_boundL : ∀ (d : Nat) (ks : List Call), runAll d ks = true → d
 end
 
 /-- **`MAX_NESTING` bounds every `nested` descent**: a parse that gets
-through has at most 100 levels of `parse_expr` / literal / `CALL {}`
-nesting. -/
+through has at most 100 levels of `parse_expr` / literal / `CALL {}` / nested `FOREACH`
+nesting (the last since #2900). -/
 theorem nested_depth_bound (c : Call) (h : runCall 0 c = true) : exprDepth c ≤ MAX_NESTING := by
   have := nested_bound 0 c h (by decide); omega
 
+/-- `FOREACH (x IN [1] | FOREACH (… | CREATE ()))`, `n + 1` clauses deep: the outer one is
+entered directly, the `n` inner ones from a body. -/
 def foreachChain : Nat → Call
   | 0 => .expr [.leaf]                  -- the innermost `CREATE ()` clause's expression
   | n + 1 => .foreach (foreachChain n)
 
-/-- **…but not `FOREACH`**: `parse_foreach_clause` never passes through
-`nested`, so `FOREACH (x IN [1] | FOREACH (…| CREATE ()))` is accepted at
-every depth, with a call stack as deep as the text. Repro: 100 000 levels
-abort the process with a stack overflow (C FalkorDB crashes as well). -/
-theorem foreach_unbounded (n : Nat) :
-    runCall 0 (foreachChain n) = true ∧ stackDepth (foreachChain n) = n + 1 := by
+/-- The chain's outermost clause, entered directly. -/
+def foreachClause (n : Nat) : Call := .direct (foreachChain n)
+
+/-- `pre2900_runCall` (historical, fixed by #2900 `8312750b5`): before the fix a nested
+`FOREACH` was entered by a plain call, so the depth passed through unchanged. Only the shapes
+`foreachChain` builds matter here. -/
+def pre2900_runCall : Nat → Call → Bool
+  | _, .leaf => true
+  | d, .expr _ => decide (d < MAX_NESTING)
+  | d, .direct b => pre2900_runCall d b
+  | d, .foreach b => pre2900_runCall d b
+
+/-- `pre2900_foreach_unbounded`: `parse_foreach_clause` never passed through `nested`, so a chain
+was accepted at every depth, with a call stack as deep as the text. Repro at the time: 100 000
+levels aborted the process with a stack overflow (C FalkorDB crashes as well). -/
+theorem pre2900_foreach_unbounded (n : Nat) :
+    pre2900_runCall 0 (foreachChain n) = true ∧ stackDepth (foreachChain n) = n + 1 := by
   induction n with
-  | zero => simp [foreachChain, runCall, runAll, stackDepth, stackDepthL, MAX_NESTING]
+  | zero => simp [foreachChain, pre2900_runCall, stackDepth, stackDepthL, MAX_NESTING]
   | succ n ih =>
     obtain ⟨h1, h2⟩ := ih
-    refine ⟨by simpa [foreachChain, runCall] using h1, ?_⟩
+    refine ⟨by simpa [foreachChain, pre2900_runCall] using h1, ?_⟩
     simp [foreachChain, stackDepth, h2]; omega
+
+theorem runCall_foreachChain : ∀ n d : Nat,
+    runCall d (foreachChain n) = decide (d + n < MAX_NESTING)
+  | 0, d => by
+    by_cases h : d ≥ MAX_NESTING
+    · simp [foreachChain, runCall, h]
+    · simp [foreachChain, runCall, runAll, h]; omega
+  | n + 1, d => by
+    by_cases h : d ≥ MAX_NESTING
+    · simp [foreachChain, runCall, h]; omega
+    · have := runCall_foreachChain n (d + 1)
+      simp only [foreachChain, runCall, h, if_false, this]
+      simp only [decide_eq_decide]; omega
+
+theorem stackDepth_foreachChain : ∀ n : Nat, stackDepth (foreachChain n) = n + 1
+  | 0 => by simp [foreachChain, stackDepth, stackDepthL]
+  | n + 1 => by simp [foreachChain, stackDepth, stackDepth_foreachChain n]; omega
+
+/-- **Nested `FOREACH` is bounded** (fixes `pre2900_foreach_unbounded`, #2900): a chain of `n + 1`
+clauses is accepted iff `n < MAX_NESTING`, so an accepted chain has a call stack of at most
+`MAX_NESTING + 1` frames, not one as deep as the text. -/
+theorem foreach_bounded (n : Nat) (h : runCall 0 (foreachClause n) = true) :
+    n < MAX_NESTING ∧ stackDepth (foreachClause n) ≤ MAX_NESTING + 1 := by
+  have h1 : runCall 0 (foreachChain n) = true := by simpa [foreachClause, runCall] using h
+  rw [runCall_foreachChain] at h1
+  have h2 : n < MAX_NESTING := by simpa using h1
+  refine ⟨h2, ?_⟩
+  simp [foreachClause, stackDepth, stackDepth_foreachChain]; omega
+
+/-- Depth 99 is accepted, 100 is refused ("too deep"). -/
+theorem foreach_limit : runCall 0 (foreachClause 99) = true ∧ runCall 0 (foreachClause 100) = false := by
+  refine ⟨?_, ?_⟩ <;> simp [foreachClause, runCall, runCall_foreachChain, MAX_NESTING]
 
 end FalkorLexer

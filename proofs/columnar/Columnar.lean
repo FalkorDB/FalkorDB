@@ -21,6 +21,16 @@ import Columnar.CoreBridge
 import Columnar.RuntimeReads
 import Columnar.EvalBatch
 
+-- Re-targeted to 256ab4d3f (from 43936bab9): #3012 (#3035, 25e3c93af) adds `op.per_origin = batch.len() > 1`
+-- to the `ValueHashJoin` arm of `BatchOp::set_argument_batch`; `OpTree.join` and `setArg_join`
+-- (BatchMisc.lean) model it (`setArg` / `setArg_args` / `setArg_resets` gain a `many : B -> Bool` parameter
+-- = `batch.len() > 1`). #3787 only rewrote the `Property` arm of `VectorEval::eval` as `map_or_else`,
+-- added a `VarKind` bound to `CmpOp::from_expr_ir` and clippy allows on `eval_case`: no model change.
+-- Row.lean gains `fromRaw_fields`, `new_spec`, `len_isEmpty`, `get_eq_none_iff`, `get_isSome_iff`,
+-- `isBoundById_insert/unbind`, `hasBindings_*`, `toOwnedRow_get`, `mem_hashItems`, `hashItems_pad`
+-- (every `row.rs` fn is now PROVEN). The rows that were MODELLED / NOT COVERED only here but proved
+-- in another project (`Bitmap::set/clear`, `BatchedResultEmitter::seed/reset`) now cite that proof.
+
 /-
 # Columnar batch layer: every columnar operation = its row-at-a-time definition
 
@@ -37,7 +47,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | --- | --- |
 | `Column` | `Column`, `classify_*`, `NullBitmap`, `extend_active_slice` (`batch.rs:90-414`) |
 | `Batch` | `Batch` selection / gather / compaction / `set_column` / `write_column` (`batch.rs:805-1394`), selection producers `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs:529` |
-| `Row`, `Row.pushSlot` | `Row` (`row.rs`), `Row::push_slot` (`row.rs:224`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1422-1457`) |
+| `Row`, `Row.pushSlot` | `Row` (`row.rs`), `Row::push_slot` (`row.rs:224`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1424-1459`) |
 | `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
 | `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-787`), ExpandInto trim (`expand_into.rs:285-294`) |
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
@@ -167,7 +177,7 @@ proofs/ops_aggregate.
   by 3-4 (`seed` :578 … `new_without_alias` :784). `matNode_eq` / `matRel_eq` read the same graph.
 
 ## Re-target to 4a4f2a72f (#2912 b033aecc6, #2917 7fdf06a0e)
-* `Column::compare_at` (batch.rs:399): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
+* `Column::compare_at` (batch.rs:401): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
   `x != x`), `cv` = `Value::sort_cmp`: `compareAt_spec` now proves the float lane antisymmetric
   for every pair.
   `compare_rows_at` (:1281) takes `cv = sort_cmp`. Full order laws: proofs/value_order

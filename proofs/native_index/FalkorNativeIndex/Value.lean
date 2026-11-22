@@ -26,6 +26,9 @@ inductive Value where
   | datetime (i : Int)
   | time (i : Int)
   | duration (i : Int)
+  /-- `List`: only what the index reads of an element is kept, its `encode_numeric` (`for_each_stored_key`
+      is `items.iter().filter_map(encode_numeric)`): `some key`, or `none` for an element no tree holds. -/
+  | list (elems : List (Option Nat))
   | other (tag : Nat)
 deriving DecidableEq, Repr
 
@@ -39,7 +42,7 @@ def Value.WF : Value → Prop
 def Value.order : Value → Nat
   | .null => 2 ^ 15 | .bool _ => 2 ^ 12 | .int _ => 2 ^ 13 | .float _ => 2 ^ 14
   | .string _ => 2 ^ 11 | .datetime _ => 2 ^ 6 | .date _ => 2 ^ 7 | .time _ => 2 ^ 8
-  | .duration _ => 2 ^ 10 | .other t => t
+  | .duration _ => 2 ^ 10 | .list _ => 2 ^ 3 | .other t => t
 
 /-- `DisjointOrNull` (`value.rs:1204`). -/
 inductive Flag where

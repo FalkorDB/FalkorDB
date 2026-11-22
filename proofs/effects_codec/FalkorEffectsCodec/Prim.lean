@@ -7,11 +7,11 @@
 | `le k n`           | `to_le_bytes` for a `k`-byte integer (`writer.rs:45-80`, `EffectWrite::u8..f64`, `schema_id`) |
 | `unle`             | `from_le_bytes` (`reader.rs:109-135`) |
 | `R α`              | a `&mut Reader` method returning `Result<α, DecodeError>`; the state is `buf[pos..]` (`reader.rs:12`) |
-| `take`             | `Reader::take` (`reader.rs:42`) |
+| `take`             | `Reader::take` (`reader.rs:40`) |
 | `rdU k`            | `take_array::<k>` + `from_le_bytes` (`reader.rs:103-135`) |
-| `guardCount`       | `Reader::guard_count` (`reader.rs:72`) |
-| `wString`          | `EffectWrite::string` (`writer.rs:158`) |
-| `rString`          | `Reader::string` (`reader.rs:165`) |
+| `guardCount`       | `Reader::guard_count` (`reader.rs:70`) |
+| `wString`          | `EffectWrite::string` (`writer.rs:154`) |
+| `rString`          | `Reader::string` (`reader.rs:161`) |
 
 The reader state is the *unconsumed suffix* of the buffer. `pos` never appears:
 `remaining() = buf.len() - pos` is `r.length`, and `rest()` is `r` itself.
@@ -167,7 +167,7 @@ theorem u64_w64 {n : Nat} (h : n < 2 ^ 64) (rest : Bytes) :
 /-! ## Strings
 
 `EffectWrite::string` (`writer.rs:158-165`): `u64 (len + 1)`, the bytes, a NUL.
-`Reader::string` (`reader.rs:165-181`): reject `len == 0`, `take(len)`, split
+`Reader::string` (`reader.rs:167-183`): reject `len == 0`, `take(len)`, split
 off the last byte, which must be `0`, then `String::from_utf8`.
 
 UTF-8 validity is a parameter: Rust `String`s are valid by construction, so the

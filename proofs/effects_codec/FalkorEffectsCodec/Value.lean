@@ -7,14 +7,14 @@ import FalkorEffectsCodec.Prim
 | `Val`              | `runtime::value::Value` (`graph/src/runtime/value.rs:180`) — floats as their bit patterns, `i64` as its two's-complement bits |
 | `T_*`              | `serialization::si_type` (`graph/src/graph/graphblas/serialization.rs:108-121`) |
 | `encV` / `encL`    | `impl EffectEncode<3> for Value` (`value.rs:33-125`) |
-| `Step`             | `read_one`'s `Option<Value>`: `None` = a frame was pushed (`value.rs:210`) |
+| `Step`             | `read_one`'s `Option<Value>`: `None` = a frame was pushed (`value.rs:212`) |
 | `readOne`          | `read_one` (`value.rs:212-284`); its `owed` argument is the `&mut usize` |
 | `Frame`            | `enum Frame::List { items, left }` (`value.rs:132`) |
 | `deliver`          | the inner `loop` of `decode` (`value.rs:182-200`) |
 | `loop`             | the outer `loop` of `decode` (`value.rs:173-201`), with fuel; `owed` is `decode`'s `owed` |
 | `owedOf`           | the invariant the `owed` comment states: the sum of `left - 1` over the stack |
 | `decodeV`          | `impl EffectDecode<3> for Value::decode` (`value.rs:168`) |
-| `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:63`) |
+| `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:78`) |
 
 **#3267 (`eaa65eeba`).** `read_one`'s array arm now checks the claimed width against
 the whole stack, `guard_count(n + owed, MIN_VALUE_BYTES)`, where `owed` counts the
@@ -850,7 +850,7 @@ theorem decodeV_safe (utf8 : Bytes → Bool) (r : Bytes) :
 
 /-! ## What the primary can hand the encoder -/
 
--- `pending::is_valid_property` (`graph/src/runtime/pending.rs:63-81`).
+-- `pending::is_valid_property` (`graph/src/runtime/pending.rs:61-80`).
 mutual
 def propValid (allowNull : Bool) : Val → Bool
   | .null => allowNull
