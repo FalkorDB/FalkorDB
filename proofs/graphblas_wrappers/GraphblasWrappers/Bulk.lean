@@ -10,7 +10,7 @@ GraphBLAS-spec meaning); the Rust around them is proved.
 | here | there |
 | --- | --- |
 | `fromSortedIndices` | `Vector::<bool>::from_sorted_indices` (vector.rs): `Self::new(nrows)`, early return on empty, else one `GxB_Vector_build_Scalar` of an iso `true` scalar |
-| `VecU.ptr`          | `Vector::<u64>::ptr` (vector.rs) |
+| `VecU.ptr`          | `Vector::<T>::ptr` at `T = u64` (vector.rs) |
 | `VecU.sum`          | `Vector::<u64>::sum` (vector.rs): `let mut sum = 0; GrB_Vector_reduce_UINT64(&sum, NULL, PLUS_MONOID, v, NULL)` |
 | `countInRows`       | `Matrix::count_in_rows` (matrix.rs): `w = Vector::<u64>::new(ncols)`, `GrB_mxv(w, NULL, NULL, PLUS_PAIR_UINT64, A, rows, DESC_T0)`, `w.sum()` |
 

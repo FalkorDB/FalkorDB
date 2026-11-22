@@ -53,7 +53,7 @@ def decodeBlob : Wrapper := ⟨"Vector::<bool>::decode_blob", 211, .propagate⟩
 (vector.rs). -/
 def decodeU64 : Wrapper := ⟨"Vector::<u64>::decode", 256, .propagate⟩
 
-/-- `Vector::<bool>::decode` (vector.rs): the hardened path — validates
+/-- `Vector::<Untyped>::decode` (vector.rs; `Vector::<bool>::decode` before #3080): the hardened path — validates
 lengths and NUL-termination, then `if info != SUCCESS { …free…; return Err }`
 for every GraphBLAS call. -/
 def decodeBoolHardened : Wrapper := ⟨"Vector::<bool>::decode", 350, .propagate⟩
@@ -105,11 +105,11 @@ theorem hardened_eq_blob (i : Info) :
 /-! ### `Matrix::decode` internal asserts (matrix.rs)
 
 `GxB_Container_new` and `GrB_Matrix_new` are called with *fixed* arguments
-(a fresh container, dims `0×0`), so their only non-success code is
-`GrB_OUT_OF_MEMORY`, which is not attacker-reachable through the payload. The
+(a fresh container, dims `0×0`); since #3080 they, the load and the wait all
+return a failure as `Err` (`GBWMatDecode.decodeCalls_never_die`). The
 attacker-controlled decode of the five component vectors goes through
-`Vector::<bool>::decode` — the hardened, propagating path — so `Matrix::decode`
-does not add a code-assertion DoS beyond the container leak (see `Own`/report).
+`Vector::<Untyped>::decode` — the hardened, propagating path. The container's
+ownership is `GBWMatDecode.decode_no_leak_no_double_free`.
 Its `GrB_Matrix_new(_, GrB_BOOL, 0, 0)` always satisfies the dimension bound. -/
 
 /-- The internal `GrB_Matrix_new(_, _, 0, 0)` in `Matrix::decode` always

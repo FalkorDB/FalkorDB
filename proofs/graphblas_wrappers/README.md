@@ -19,6 +19,13 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 - `Vector::<bool>::decode_blob` and `Vector::<u64>::decode` return the code as an `Err`, and pass the expected type so a blob of the wrong type is refused too. `decodeBlob_never_dies`, `decodeU64_never_dies` and `decodeBlob_safe_on_reachable` prove no code can crash through them; `hardened_eq_blob` proves only that `decode_blob` and the already-hardened `Vector::<bool>::decode` (`decodeBool_safe`, `decodeBool_never_dies`) share the same status-code disposition: both propagate the deserialize error code. It says nothing about their decoding of valid input.
 - `Tensor::decode` refuses delta layers whose size differs from the base: `checkLayers_merge_in_bounds` (delta-plus) and `checkLayers_merge_in_bounds_dm` (delta-minus) prove that an accepted payload has both delta layers at the base's size, so every coordinate `m.set` receives is inside the base. They are rewrite lemmas on the size check; the merge loop itself is not modelled.
 
+**Does `Matrix::decode` leak or trust the payload's pointers? (#3080)** No. `MatrixDecode.lean`:
+
+- `decode_no_leak_no_double_free`: whichever of its nine fallible steps fails, `decode` frees every block it allocated exactly once (the five empty vectors `GxB_Container_new` made are freed by `OwnedContainer::replace`, the container by `OwnedContainer::drop`), and only the returned matrix stays live. Before #3080 the header copy overwrote those five vectors on every RDB load, RESTORE and full sync;
+- `adopt_ptr_blind`: only the nine scalar fields are taken from the payload, so the loaded container does not depend on its pointer fields;
+- `field_in_bounds`, `flag_ok_iff`, `formatOk_iff`: `ContainerHeader::parse` reads in range, refuses a flag byte other than 0/1, and `decode` refuses a sparsity format other than hypersparse/sparse/bitmap/full;
+- `decodeCalls_never_die`: `GxB_Container_new`, `GrB_Matrix_new`, the load and the wait return their failure as `Err`.
+
 **2. Can a decoded tensor break its own invariant?**
 
 **No.** Promotion completeness says a pair has an `me` row exactly when its forward value is the `MULTI_EDGE` marker, and `Tensor::decode` checks it.
@@ -61,6 +68,7 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | Theorem | In plain words | File |
 |---|---|---|
 | `decodeBlob_never_dies`, `decodeU64_never_dies` | No status code from a corrupt blob kills the server | `Codes.lean` |
+| `decode_no_leak_no_double_free`, `adopt_ptr_blind` | `Matrix::decode` frees all it allocates, once, on every path, and ignores the payload's pointers | `MatrixDecode.lean` |
 | `checkLayers_merge_in_bounds` | `Tensor::decode` only merges delta entries inside the base | `Decode.lean` |
 | `encodeM_no_heap_addresses` | The encoded container header carries no heap address | `Glue.lean` |
 | `edgeCount_no_panic`, `edgeCount_value` | `edge_count` is total and correct while the tensor invariant holds | `Decode.lean` |
@@ -95,12 +103,10 @@ The repro tests for these bugs are not part of this PR (the file `graph/tests/le
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 3 | — (no repro in tree) | `Matrix::decode` leaks 5 heap blocks per matrix, and 8 on an error path: `copy_nonoverlapping` overwrites vectors `GxB_Container_new` allocated. This happens on every RDB load, RESTORE and full sync | **Open** |
 | 5 | — (no repro in tree) | `vector::Iter` has no lifetime, so safe code can drop the vector and keep iterating freed memory | **Open, latent:** the only in-scope use is `Tensor::decode`; same class as #2898 |
 
 Also noted, not confirmed:
 
-- `Matrix::decode` copies the payload's `*_future` pointer arrays into the live container unchecked; it relies on GraphBLAS never reading them (`PtrBlind`).
 - Every mutating call is only `debug_assert`ed, so a GraphBLAS failure there is silently ignored in release.
 
 There are no CONDITIONAL rows.
@@ -118,6 +124,7 @@ There are no CONDITIONAL rows.
 | `Misc.lean` | `grown`/`resize` policy, `vector::Iter`, the multi-edge `Iter` expansion |
 | `Glue.lean` | Operator/type selection, the descriptor table, accessors, encode round trip, the header scrub |
 | `Serial.lean` | `EncodeState::from_u64` and the `Encode`/`Decode` trait contract (a stated obligation, not a proof about any impl) |
+| `MatrixDecode.lean` | `Matrix::decode` (#3080): `OwnedContainer` ownership, `ContainerHeader::parse`, the header adopted into the fresh container |
 | `Bulk.lean` | `from_sorted_indices`, `Vector::<u64>::sum`/`ptr`, `count_in_rows` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -125,12 +132,12 @@ The lakefile depends on `../versioned_matrix` (path dependency), because `DeltaL
 
 ## Coverage
 
-`COVERAGE.tsv` has 1212 rows (the 4 rows of the `#[cfg(test)] impl Matrix<f64>` test kit, #3320, were removed: test code is not in the engine). Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
+`COVERAGE.tsv` has 1205 rows (the 4 rows of the `#[cfg(test)] impl Matrix<f64>` test kit, #3320, were removed: test code is not in the engine). Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 65 |
-| AXIOMATISED | 1147 |
+| PROVEN | 60 |
+| AXIOMATISED | 1145 |
 
 **AXIOMATISED** means the function is the C library, or a wrapper whose only content is one C call:
 
@@ -147,7 +154,7 @@ None of these has Rust logic left to prove.
 - GraphBLAS semantics (eWise, mxm, resize, the serialized byte format) are taken from the C documentation, not modelled or checked.
 - The row-iterator model treats "skip empty rows that return `GrB_NO_VALUE`" as "advance to the next stored entry", which the GraphBLAS header documents.
 - The `Own` model of main covers any number of owners; it takes `Arc`'s contract (one atomic decrement, the drop runs on the thread that took the count to zero) from std rather than proving it. The older `Arc::get_mut` protocol is modelled for two owners, exhaustively. `has_pending` and lock concurrency beyond `drop` are not modelled.
-- Bugs 3 and 5 have no Lean theorem (and no repro test in this tree); the leak and the dangling iterator are outside what the model expresses.
+- Bug 5 has no Lean theorem (and no repro test in this tree); the dangling iterator is outside what the model expresses.
 
 ## Build and check
 
