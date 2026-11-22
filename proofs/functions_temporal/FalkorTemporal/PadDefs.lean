@@ -13,7 +13,7 @@ def pad (w : Nat) (n : Nat) : String :=
   let s := toString n
   String.ofList (List.replicate (w - s.length) '0') ++ s
 
-/-- `write_two_digits` (value.rs:853): `v / 10 % 10` and `v % 10` as ASCII digits. -/
+/-- `write_two_digits` (value.rs): `v / 10 % 10` and `v % 10` as ASCII digits. -/
 def twoDigits (v : Nat) : String :=
   String.ofList [Char.ofNat (48 + v / 10 % 10), Char.ofNat (48 + v % 10)]
 

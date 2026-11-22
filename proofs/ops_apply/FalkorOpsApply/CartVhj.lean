@@ -1,21 +1,10 @@
 /-
 CartesianProduct and ValueHashJoin (graph/src/runtime/ops/cartesian_product.rs,
 value_hash_join.rs).
-
-| here | there |
-| --- | --- |
-| `adv`, `orbit`, `allTuples` | `RightSide::advance` (cartesian_product.rs:105): the odometer |
-| `rsNew`, `rsEmpty`, `rewind` | `RightSide::new` (:80), `is_empty` (:94), `rewind` (:117) |
-| `CpSt.new`, `materialize`, `cpRows` | `CartesianProductOp::new` (:123), `materialize_right` (:144), `next` (:162) |
-| `JT`, `jtEmpty` | `JoinHashTable`, `is_empty` (value_hash_join.rs:96) |
-| `hashValue`, `keysMatch`, `keyAsI64` | `hash_value` (:118), `keys_match` (:137), `key_as_i64` (:153) |
-| `insertValue`, `promote` | `insert_value` (:176), `promote_int_table` (:196) |
-| `VhjSt.new`, `build`, `fillMatches`, `vhjRows` | `ValueHashJoinOp::new` (:237), `build_hash_table` (:266), `fill_matches` (:352), `next` (:398) |
-| `buildPO`, `fillMatchesPO`, `vhjRowsPO` | the per-origin tables (`per_origin`, #3035): one table per `origin_row`, probed with the left row's origin |
 -/
 namespace CartVhj
 
-/-! ## The odometer (cartesian_product.rs:105-115) -/
+/-! ## The odometer (cartesian_product.rs) -/
 
 /-- Rightmost position first: increment; if it overflows, reset to 0 and carry left.
 `true` = a new combination was reached; `false` = wrapped (all zeros again). -/
@@ -247,7 +236,7 @@ inductive K where
   | float (f : Int) (exact : Bool)   -- `exact` = the float is an integer value `f`
   | other (tag : Nat)
 
-/-- value_hash_join.rs:153: ints as is; a float only when it is an exact integer. -/
+/-- value_hash_join.rs: ints as is; a float only when it is an exact integer. -/
 def keyAsI64 : K → Option Int
   | .int n => some n
   | .float f true => some f
@@ -257,14 +246,14 @@ theorem keyAsI64_spec (n : Int) (f : Int) :
     keyAsI64 (.int n) = some n ∧ keyAsI64 (.float f true) = some f ∧ keyAsI64 (.float f false) = none ∧
     keyAsI64 .null = none := ⟨rfl, rfl, rfl, rfl⟩
 
-/-- value_hash_join.rs:137: equal AND not disjoint-or-null (`cv` = `compare_value`). -/
+/-- value_hash_join.rs: equal AND not disjoint-or-null (`cv` = `compare_value`). -/
 def keysMatch (cv : K → K → Ordering × Bool) (a b : K) : Bool := (cv a b).1 == .eq && !(cv a b).2
 
 theorem keysMatch_spec (cv : K → K → Ordering × Bool) (a b : K) :
     keysMatch cv a b = true ↔ (cv a b).1 = .eq ∧ (cv a b).2 = false := by
   simp [keysMatch]
 
-/-- value_hash_join.rs:118: the seeded hasher — any function of the key. -/
+/-- value_hash_join.rs: the seeded hasher — any function of the key. -/
 def hashValue (h : K → Nat) (k : K) : Nat := h k
 
 theorem hashValue_det (h : K → Nat) (a b : K) (e : a = b) : hashValue h a = hashValue h b := by rw [e]
@@ -276,7 +265,7 @@ def addRef (cv : K → K → Ordering × Bool) (key : K) (slot : Nat) : List (K 
   | [] => [(key, [slot])]
   | (k, rs) :: es => if keysMatch cv k key then (k, rs ++ [slot]) :: es else (k, rs) :: addRef cv key slot es
 
-/-- value_hash_join.rs:176-190: never-equal keys (null, NaN) are skipped. -/
+/-- value_hash_join.rs: never-equal keys (null, NaN) are skipped. -/
 def insertValue (cv : K → K → Ordering × Bool) (h : K → Nat) (neverEq : K → Bool) (t : VT) (key : K)
     (slot : Nat) : VT :=
   if neverEq key then t else fun hk => if hk = h key then addRef cv key slot (t hk) else t hk
@@ -330,7 +319,7 @@ inductive JT where
   | int (t : IT) (dom : List Int)
   | value (t : VT) (dom : List Nat)
 
-/-- value_hash_join.rs:96 (`dom` = the occupied keys / buckets). -/
+/-- value_hash_join.rs (`dom` = the occupied keys / buckets). -/
 def jtEmpty : JT → Bool
   | .int _ dom => dom.isEmpty
   | .value _ dom => dom.isEmpty
@@ -393,7 +382,7 @@ theorem fillMatches_int (cv : K → K → Ordering × Bool) (h : K → Nat) (it 
     fillMatches cv h (.int it d) (.float f false) = [] := ⟨rfl, rfl, rfl⟩
 
 /-- `ValueHashJoinOp::new` (:237): no table, no buffered rows, one shared table (`per_origin`
-false until `set_argument_batch` sees a multi-row argument batch, batch.rs:1728). -/
+false until `set_argument_batch` sees a multi-row argument batch, batch.rs). -/
 structure VhjSt where
   built : Option (Nat → JT)
   perOrigin : Bool
@@ -423,7 +412,7 @@ theorem vhjRows_spec {L R O : Type} (cv : K → K → Ordering × Bool) (h : K �
     vhjRows cv h t rights merge ((l, none) :: rest) = vhjRows cv h t rights merge rest := by
   simp [vhjRows, hne]
 
-/-! ## Per-origin tables (#3035)
+/-! ## Per-origin tables
 
 `build_hash_table` (:266) keys each right row by `origin = if per_origin { origin_row } else { 0 }`
 and runs the integer-then-value build above on that origin's own pair of tables; an origin

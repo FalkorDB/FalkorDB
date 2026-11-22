@@ -5,7 +5,7 @@ Model of the segment builder in `graph/src/effects/v3/id_list.rs`.
 
 | here | there |
 | --- | --- |
-| `Seg`                 | `enum Segment` (id_list.rs:450) — the bitmap variants hold the *set* as its ascending list |
+| `Seg`                 | `enum Segment` (id_list.rs) — the bitmap variants hold the *set* as its ascending list |
 | `Seg.min` / `Seg.max` | `Segment::min` (:570) / `Segment::max` (:557) |
 | `Seg.iter`            | `Segment::iter` (:763) |
 | `flat`                | `IdList::iter` (:1126) |
@@ -16,7 +16,7 @@ Model of the segment builder in `graph/src/effects/v3/id_list.rs`.
 | `extend?`             | the `match self.segments.last_mut()` hot paths (:913-952) |
 | `collapse`            | `IdList::maybe_collapse_run` (:1029), including its `assert!` (:1051) as `none` |
 | `push`                | `IdList::push` (:886) |
-| `fromSegments`        | `IdList::from_segments` (:1183) — `start = segments.len()` since #2920 |
+| `fromSegments`        | `IdList::from_segments` (:1183) — `start = segments.len()` |
 
 **The collapse decision is a free Boolean.** `Run::prefers_bitmap` (:337) is
 roaring-size arithmetic over the run's history. It decides *whether* to build a
@@ -1134,17 +1134,15 @@ theorem segs_le_len {segs : List Seg} (hw : ∀ s ∈ segs, WF s) : segs.length 
 
 /-! ## Pushing onto a *decoded* list (`from_segments`)
 
-Fixed by #2920 (`2ef102ae0`, issue #2919): `from_segments` (:1183) now starts
+`from_segments` (:1183) starts
 the run *after* every decoded segment (`start = segments.len()`), the place
-`maybe_collapse_run` leaves it after a collapse. `fromSegments` below is the
-current code; the correctness theorem (`decoded_then_pushed_keeps_order`) is in
-`Decoded.lean`. The pre-fix model and its two counterexamples were removed in
-bbee75955 (last present at 17ccc5412). -/
+`maybe_collapse_run` leaves it after a collapse. `fromSegments` below models it;
+the correctness theorem (`decoded_then_pushed_keeps_order`) is in `Decoded.lean`. -/
 
-/-- `IdList::from_segments` (:1183), since #2920: `run.start = segments.len()`. -/
+/-- `IdList::from_segments` (:1183): `run.start = segments.len()`. -/
 def fromSegments (segs : List Seg) : St := ⟨segs, (flat segs).length, segs.length, none⟩
 
-/-- The same two inputs on the current `from_segments` keep every id in order. -/
+/-- Two inputs (a descending range and a repeat segment) on `from_segments` keep every id in order. -/
 example : ((pushAll [false, true] (fromSegments [.rdesc 10 3]) [20, 22]).map (fun st => flat st.segs))
     = some [10, 9, 8, 20, 22] := by decide
 example : ((pushAll [false, true] (fromSegments [.rep 7 2]) [20, 22]).map (fun st => flat st.segs))

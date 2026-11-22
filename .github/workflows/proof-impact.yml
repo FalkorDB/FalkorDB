@@ -265,6 +265,11 @@ jobs:
                concrete input), and translate it into the smallest Cypher query or command
                that shows it, with the result the old code gave and the new code gives.
                This is a probable bug in the PR.
+               Exception: if the theorem that no longer holds is the counterexample of a bug
+               that proofs/FINDINGS.md or the project README lists as open, and the PR fixes
+               that bug, the verdict is "model updated": replace the counterexample with the
+               correctness theorem, delete the model of the old code, and remove the bug from
+               FINDINGS.md and the README (git history keeps them).
             For `removed` and `added`, update COVERAGE.tsv rows (renamed fns keep their
             proofs; new fns get a row, with a model and proof when they are small, else
             NOT COVERED with a reason). Line numbers in rows must match ./code.

@@ -1,5 +1,5 @@
 /-!
-# `shortestPath`: `NeighborIter` and the bidirectional BFS (runtime/eval.rs:139-262, :1315-1527)
+# `shortestPath`: `NeighborIter` and the bidirectional BFS (runtime/eval.rs)
 
 Matrix rows are abstract (`Nat → List Nat`); the GraphBLAS reads are the FFI boundary and
 enter only through their row contents. The BFS is modelled level by level, line by line
@@ -33,7 +33,7 @@ structure NI where
   bwd : List (Nat → List Nat)
   dedup : Bool
 
-/-- `NeighborIter::new` (eval.rs:153). -/
+/-- `NeighborIter::new` (eval.rs). -/
 def NI.new (g : G) (relTypes : List String) (directed : Bool) : NI :=
   let (fwd, bwd) :=
     if relTypes = [] then
@@ -42,12 +42,12 @@ def NI.new (g : G) (relTypes : List String) (directed : Bool) : NI :=
       (relTypes.filterMap g.rel, if directed then [] else relTypes.filterMap g.relT)
   ⟨fwd, bwd, fwd.length + bwd.length > 1⟩
 
-/-- `NeighborIter::new_reversed` (eval.rs:193). -/
+/-- `NeighborIter::new_reversed` (eval.rs). -/
 def NI.newReversed (g : G) (relTypes : List String) : NI :=
   let fwd := (if relTypes = [] then g.types else relTypes).filterMap g.relT
   ⟨fwd, [], fwd.length > 1⟩
 
-/-- `neighbors` (eval.rs:221): concatenate the rows; `sort_unstable` + `dedup` when several
+/-- `neighbors` (eval.rs): concatenate the rows; `sort_unstable` + `dedup` when several
 iterators may repeat a neighbour. `sortDedup` is any membership-preserving normaliser. -/
 def NI.neighbors (sortDedup : List Nat → List Nat) (ni : NI) (n : Nat) : List Nat :=
   let buf := (ni.fwd.map (· n)).flatten ++ (ni.bwd.map (· n)).flatten
@@ -103,7 +103,7 @@ theorem newReversed_typed (sd : List Nat → List Nat) (hsd : ∀ l x, x ∈ sd 
     | none => simp [hMT] at hs
     | some MT => exact ⟨MT, ⟨t, ht, hMT⟩, (g.transpose t M MT hM hMT n x).mpr hx⟩
 
-/-! ## `bfs_shortest_path` (eval.rs:1400) -/
+/-! ## `bfs_shortest_path` (eval.rs) -/
 
 /-- Parent map: `key ↦ (parent, depth)`; inserted only when absent. -/
 abbrev PMap := List (Nat × Nat × Nat)
@@ -565,7 +565,7 @@ theorem bfs_sound (fN bN : Nat → List Nat) (maxLevel fuel src dst : Nat) (hne 
         simp only [List.tail_cons]
         simpa using walk_append _ _ ys y w1 w2
 
-/-! ### `eval_shortest_path` (eval.rs:1315) and the path value (eval.rs:1500-1525) -/
+/-! ### `eval_shortest_path` (eval.rs) and the path value (eval.rs) -/
 
 inductive PV where
   | null | node (id : Nat) | rel (id : Nat) | other

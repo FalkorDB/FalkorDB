@@ -8,15 +8,8 @@ pending_commit as membership (`deleted : Nat → Bool` = `contains`). `RSet` is
 that abstraction, defined once here (it mirrors graph_persist's deleted-id list:
 ascending, distinct, `< 2^64`; `contains` is `decide (x ∈ elems)`, pending_commit's
 predicate). The three operations the PR adds are **definitions** on it, from the
-crate's documented semantics (roaring 0.11.5 `treemap/inherent.rs:508-562`,
-`treemap/iter.rs:132-184`):
-
-| here | crate |
-| --- | --- |
-| `RSet.elems` | `iter()` — ascending |
-| `RSet.rank x` = `|{d ∈ s | d ≤ x}|` | `rank(x)`: "the number of integers that are <= value" |
-| `RSet.select n` = the `n`-th smallest | `select(n)`: "the `n`th integer in the set or `None` if `n >= len()`" |
-| `RSet.iterFrom a` = the elements `≥ a`, ascending | `let mut it = iter(); it.advance_to(a);` then `next()`…: "the first position where the item has a value >= `n`" |
+crate's documented semantics (roaring 0.11.5 `treemap/inherent.rs`,
+`treemap/iter.rs`):
 
 **Trust.** The roaring crate is trusted to implement this abstraction, at the
 same level as the owners' `contains`/`iter`: no hypothesis is named, and rows

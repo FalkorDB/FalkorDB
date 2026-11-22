@@ -5,23 +5,21 @@ import PlannerBuild.Clauses
 * `query_correct`: if every clause plan implements its clause (the theorems of
   Clauses.lean), the plan `plan_query` stitches evaluates to the openCypher
   clause-sequence semantics `Fₙ ∘ … ∘ F₂ ∘ ⟦c₁⟧`.
-* `selfloop_ignores_chain` (bug 4 / #2999): `ExpandInto(scan, res)` never runs `res` — the
-  shape the planner built before #3102. **Fixed by #3102 (61284ea4f)**: the planner builds
-  `ExpandInto(Scan(res))` (mod.rs:2262-2285), `selfloop_scan_keeps_chain`.
-* `cp_stitch_loses_correlation` (bug 2) / `cp_stitch_sound`: a MATCH plan
-  prepended to the next MATCH's CartesianProduct (mod.rs:2809-2813) is
-  correct only when no other component reads its variables. Since #2981 the MATCH arm
+* `selfloop_scan_keeps_chain`: the planner builds `ExpandInto(Scan(res))` (mod.rs), so the
+  chain planned so far is the scan's input.
+* `cp_stitch_loses_correlation` / `cp_stitch_sound`: a MATCH plan
+  prepended to the next MATCH's CartesianProduct (mod.rs) is
+  correct only when no other component reads its variables. The MATCH arm
   Apply-wraps a multi-component MATCH that reads a bound variable
-  (`PathBind.planMatchArm_joined_wrapped`), so it is no longer stitched this way.
-* #2981: a MATCH after a MATCH that binds none of the bound variables is wrapped as a
+  (`PathBind.planMatchArm_joined_wrapped`), so it is not stitched this way.
+* A MATCH after a MATCH that binds none of the bound variables is wrapped as a
   one-branch CartesianProduct (`join_as_cartesian_branch`) and the earlier clause becomes
-  its other branch: `disjoint_match_cp`, `disjoint_match_where_cp`, `disjoint_match_sound`
-  (before: `disjoint_match_unwrapped`).
-* `where_scan_indistinguishable` (bug 3): `MATCH (a) WHERE φ MATCH (a)-->(b)`
+  its other branch: `disjoint_match_cp`, `disjoint_match_where_cp`, `disjoint_match_sound`.
+* `where_scan_indistinguishable`: `MATCH (a) WHERE φ MATCH (a)-->(b)`
   stitches into the exact tree shape `is_planner_scan_subtree`
-  (optimizer/select_scan_node.rs:315) treats as prunable. **Fixed by #2390 (d2c42e032)**:
-  the rebuild now carries the spine's Filters along (`filters_of`, select_scan_node.rs:250,
-  re-wrapped by `make_scan_subtree` :214) — `rebuild_keeps_where` (old bare rebuild: counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
+  (optimizer/select_scan_node.rs) treats as prunable. The rebuild carries the spine's
+  Filters along (`filters_of`, select_scan_node.rs, re-wrapped by `make_scan_subtree` ) —
+  `rebuild_keeps_where`.
 -/
 namespace PlannerBuild
 
@@ -79,13 +77,7 @@ theorem query_correct (p1 : Plan) (mid : List (Plan × (Rec V → Res V G → Re
     show ev S (refill last (slotWith walkFirst last) q (nestLoop (q :: rest))) r g = _
     rw [hl q _ r g trivial, ← hmid, nestLoop_correct S mid p1 hm]
 
-/-! ## Bug 4: self-loop hop after other hops -/
-
-/-- `ExpandInto(scan, res)`: the runtime builds child 0 only. Whatever `res`
-is — every hop of the component planned so far — the result is the same. -/
-theorem selfloop_ignores_chain (s : Nat) (scan res res' : Plan) (r : Rec V) (g : G) :
-    ev S (.node (.hop .expandInto s) [scan, res]) r g =
-      ev S (.node (.hop .expandInto s) [scan, res']) r g := rfl
+/-! ## Self-loop hop after other hops -/
 
 /-- **#2999 fixed by #3102 (61284ea4f)**: the planner now builds `ExpandInto(Scan(res))`
 (PlanMatch2 `chainRel_selfloop_unbound`): the chain planned so far is the scan's input, and the
@@ -102,10 +94,10 @@ theorem selfloop_scan_empty_chain (s sc : Nat) (res : Plan) (r : Rec V) (g : G)
     (h : ev S res r g = ([], g)) : ev S (.node (.hop .expandInto s) [.node (.scan sc) [res]]) r g = ([], g) := by
   rw [selfloop_scan_keeps_chain, h]; rfl
 
-/-! ## Bug 2: a MATCH stitched as a CartesianProduct branch -/
+/-! ## A MATCH stitched as a CartesianProduct branch -/
 
 /-- `insertStep` at a CartesianProduct with a plan that does not need wrapping
-(its root is a scan / traversal / Filter over one, mod.rs:2874-2894) makes it
+(its root is a scan / traversal / Filter over one, mod.rs) makes it
 the first branch. -/
 theorem cp_stitch_shape (cs : List Plan) (n : Plan) (h : needsApplyWrapping n = false) :
     fillAt (.node .cartesian cs) [] n = .node .cartesian (n :: cs) := by
@@ -159,18 +151,10 @@ theorem cp_stitch_loses_correlation :
     correlated n c [] = [] ∧ (ev cexS (.node .cartesian [n, c]) [] ()).1 ≠ [] := by
   decide
 
-/-! ## #2981: a disjoint MATCH becomes a CartesianProduct branch -/
+/-! ## A disjoint MATCH becomes a CartesianProduct branch -/
 
 section disjoint
 set_option linter.unusedSimpArgs false
-
-/-- `MATCH (a) MATCH (b)` before #2981: the second scan is stitched *over* the first
-(`Scan_b(Scan_a)`), a shape the scan selection could later re-select and drop. -/
-theorem disjoint_match_unwrapped (s t : Nat) :
-    rustStitch [.node (.scan s) [], .node (.scan t) []] = .node (.scan t) [.node (.scan s) []] := by
-  simp [rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend,
-    descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, firstPass,
-    isApply, clauseMin, applyChain]
 
 /-- Since #2981 the second clause is wrapped (`join_as_cartesian_branch`) and the first one
 becomes the other branch: `CartesianProduct(Scan_a, Scan_b)`. -/
@@ -205,9 +189,9 @@ theorem joinAsCartesianBranch_reads (rb : Plan → Bool) (p q : Plan) (hq : p.ge
 
 end disjoint
 
-/-! ## Bug 3: the WHERE of the previous MATCH looks like a planner scan -/
+/-! ## The WHERE of the previous MATCH looks like a planner scan -/
 
-/-- `is_planner_scan_subtree` (select_scan_node.rs:239-252). -/
+/-- `is_planner_scan_subtree` (select_scan_node.rs). -/
 def isPlannerScanSubtree : Plan → Bool
   | .node (.scan _) _ => true
   | .node (.filter _) [c] => isPlannerScanSubtree c
@@ -215,7 +199,7 @@ def isPlannerScanSubtree : Plan → Bool
 
 /-- Stitching `Filter(φ, Scan a)` (the plan of `MATCH (a) WHERE φ`) below the
 next MATCH's leaf traversal gives a traversal whose child is a planner scan
-subtree — the optimizer prunes it as its own (select_scan_node.rs:1186) and
+subtree — the optimizer prunes it as its own (select_scan_node.rs) and
 the WHERE disappears. -/
 theorem where_scan_indistinguishable (φ s t : Nat) :
     let prev := Plan.node (.filter φ) [.node (.scan s) []]
@@ -228,9 +212,9 @@ theorem where_scan_indistinguishable (φ s t : Nat) :
     exact descendClause_nil _ rfl
   rw [this, fillAt, insertStep_nonCP _ [] _ _ [] rfl (by simp)]; rfl
 
-/-! ### The fix (#2390): the rebuilt scan keeps the spine's Filters -/
+/-! ### The rebuilt scan keeps the spine's Filters -/
 
-/-- `filters_of` (select_scan_node.rs:250-265): the `Filter`s on a scan subtree's single-child
+/-- `filters_of` (select_scan_node.rs): the `Filter`s on a scan subtree's single-child
 spine, outermost first. -/
 def spineFilters : Plan → List Nat
   | .node (.filter φ) [c] => φ :: spineFilters c
@@ -238,7 +222,7 @@ def spineFilters : Plan → List Nat
   | .node _ [c] => spineFilters c
   | .node _ _ => []
 
-/-- `make_scan_subtree`'s tail (select_scan_node.rs:232-235): wrap the new scan in the salvaged
+/-- `make_scan_subtree`'s tail (select_scan_node.rs): wrap the new scan in the salvaged
 filters, innermost first, so the original nesting is preserved. -/
 def wrapFilters (fs : List Nat) (scan : Plan) : Plan :=
   fs.foldr (fun φ p => .node (.filter φ) [p]) scan

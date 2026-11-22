@@ -19,18 +19,18 @@ never read a missing or misaligned column.
 
 | Lean | Rust |
 | --- | --- |
-| `procRegs` | `register` :41 (name, yields, `write procedure:`) |
-| `dbLabels`, `dbTypes`, `dbProps` | `db_labels` :47, `db_types` :64, `db_properties` :81 |
-| `dbIndexes`, `typesOf`, `optionsOf`, `statusOf`, `infoNames` | `db_indexes` :97-284 |
-| `dbMetaStats` | `db_meta_stats` :292 |
+| `procRegs` | `register`  (name, yields, `write procedure:`) |
+| `dbLabels`, `dbTypes`, `dbProps` | `db_labels` , `db_types` , `db_properties`  |
+| `dbIndexes`, `typesOf`, `optionsOf`, `statusOf`, `infoNames` | `db_indexes`  |
+| `dbMetaStats` | `db_meta_stats`  |
 | `ftCreate`, `ftQueryNodes`, `ftQueryRels`, `ftDrop`, `vecQueryNodes`, `vecQueryRels` | :332 :342 :356 :366 :383 :393 |
-| `dbConstraints` | `db_constraints` :403 |
-| `dbmsProcedures` | `dbms_procedures` :437 |
-| `dbmsFunctions`, `mergePicks` | `dbms_functions` :469 (+ `BUILTIN_ENTRIES` :531, `BUILTIN_LOWER_NAMES` :543) |
-| `buildColumns` | `build_columns` :557 |
+| `dbConstraints` | `db_constraints`  |
+| `dbmsProcedures` | `dbms_procedures`  |
+| `dbmsFunctions`, `mergePicks` | `dbms_functions`  (+ `BUILTIN_ENTRIES` , `BUILTIN_LOWER_NAMES` ) |
+| `buildColumns` | `build_columns`  |
 | `tyValue`, `tyString`, `collectTys`/`collectTysL` + `canonTypes` (`DBMS_TYPE_ORDER`), `formatUnion`, `formatUnionStrings` | :613, :646, :705, :717, :729 |
-| `pathNodes`, `pathRels`, `pathSigs` | path.rs `nodes` :29, `relationships` :52, `register` :25 |
-| `EntityType.fmt` | entity_type.rs:26 |
+| `pathNodes`, `pathRels`, `pathSigs` | path.rs `nodes` , `relationships` , `register`  |
+| `EntityType.fmt` | entity_type.rs |
 -/
 
 namespace ValueMath.Proc
@@ -84,7 +84,7 @@ inductive CStatus where | underConstruction | operational | failed
 inductive EntityType where | node | relationship
   deriving DecidableEq
 
-/-- `Display for EntityType` (entity_type.rs:26). -/
+/-- `Display for EntityType` (entity_type.rs). -/
 def EntityType.fmt : EntityType → String
   | .node => "NODE"
   | .relationship => "RELATIONSHIP"
@@ -430,7 +430,7 @@ theorem typesOfFields_sublist (fs : List Field) :
   split <;> split <;> split <;> simp
 
 /-- `fields[attr]` never panics iff every `field_order` key is in `fields` (the
-`IndexInfo` invariant "field_order mirrors fields.keys()", index/mod.rs:217). -/
+`IndexInfo` invariant "field_order mirrors fields.keys()", index/mod.rs). -/
 theorem typesOf_fold_isSome (fs : List (String × List Field)) (l : List String) (m0 : List (String × V F))
     (h : ∀ a ∈ l, (flookup fs a).isSome) :
     (l.foldlM (fun m a => (flookup fs a).map fun fl =>
@@ -725,7 +725,7 @@ def pathRels : List (V F) → Option (V F)
   | .null :: _ => some .null
   | _ => none
 
-/-- `register` (path.rs:25). -/
+/-- `register` (path.rs). -/
 def pathSigs : List (String × List Ty × Ty) :=
   [("nodes", [.union [.path, .null]], .union [.list .node, .null]),
    ("relationships", [.union [.path, .null]], .union [.list .rel, .null])]

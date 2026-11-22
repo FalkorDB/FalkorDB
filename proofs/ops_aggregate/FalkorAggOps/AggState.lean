@@ -1,8 +1,8 @@
 import FalkorAggOps.AggPlan
 /-
 Aggregate operator state: accumulator zeroing / unbinding, `GroupKey` Eq/Hash,
-`args_for`, `new` (graph/src/runtime/ops/aggregate.rs); `hash_u64` is history (removed by #2977).
-Table in `AggPlan.lean`. An environment is `Nat → Option Z` (slot ↦ bound value);
+`args_for`, `new` (graph/src/runtime/ops/aggregate.rs).
+An environment is `Nat → Option Z` (slot ↦ bound value);
 `Row::insert` = `upd`, `Row::unbind` = `clr`.
 -/
 namespace FalkorAggOps.AggPlan
@@ -24,7 +24,7 @@ def outerL : List (Ex Z) → List (Fn Z × List (Ex Z))
   | e :: es => outer e ++ outerL es
 end
 
-/-! ## `set_agg_expr_zero` (aggregate.rs:1099) — `none` = the `unreachable!()` / underflow panic -/
+/-! ## `set_agg_expr_zero` (aggregate.rs) — `none` = the `unreachable!()` / underflow panic -/
 
 mutual
 def setZero : Ex Z → Env Z → Option (Env Z)
@@ -113,7 +113,7 @@ theorem setZero_spec (e : Ex Z) (env : Env Z) (hw : AccWF (outer e)) :
   rw [setZero_eq]
   exact ⟨rfl, foldlM_stepZ_ok _ env hw (outer_agg e)⟩
 
-/-! ## `unbind_agg_accumulators` (aggregate.rs:1251) -/
+/-! ## `unbind_agg_accumulators` (aggregate.rs) -/
 
 mutual
 def unbindAcc : Ex Z → Env Z → Env Z
@@ -183,7 +183,7 @@ end
 
 /-- Every slot `set_agg_expr_zero` wrote is unbound again by `unbind_agg_accumulators`,
 provided every outermost aggregate has an argument besides its accumulator (true of every
-parsed call: `count(*)` is `count(1)`, cypher.rs:2023). Other slots are untouched. -/
+parsed call: `count(*)` is `count(1)`, cypher.rs). Other slots are untouched. -/
 theorem unbind_after_zero (l : List (Fn Z × List (Ex Z))) (env : Env Z) (k : Nat)
     (h2 : ∀ p ∈ l, 2 ≤ p.2.length) (hk : ∃ p ∈ l, p.2.getLast? = some (.var k)) :
     l.foldl stepU env k = none := by
@@ -224,9 +224,9 @@ theorem one_child_not_unbound (f : Fn Z) (z : Z) (k : Nat) (env : Env Z) (hf : f
     unbindAcc (.func f [.var k]) env = env ∧ setZero (.func f [.var k]) env = some (upd env k z) := by
   simp [unbindAcc, setZero, hf]
 
-/-! ## `GroupKey` (aggregate.rs:99 `eq`, :114 `hash`) -/
+/-! ## `GroupKey` (aggregate.rs `eq`, `hash`) -/
 
-/-- `GroupKey::eq` (aggregate.rs:99): same length and pairwise `veq`; on main (#2917
+/-- `GroupKey::eq` (aggregate.rs): same length and pairwise `veq`; on main (#2917
 7fdf06a0e) `veq a b` is `a.sort_cmp(b) == Equal` (before: `Value::eq`). Instantiated in
 `Discharge.lean`. -/
 def gkEq (veq : Z → Z → Bool) : List Z → List Z → Bool
@@ -275,22 +275,7 @@ theorem gkHash_consistent {S : Type} (veq : Z → Z → Bool) (hv : S → Z → 
       rw [hc st x y h.1]
       exact ih _ ys h.2
 
-/-! ## `hash_u64` (history: aggregate.rs:1254 trait decl, :1258 `impl HashU64 for Row` at ca36bfa15;
-removed by #2977, c652e505e: the group id is the insertion index, see `GroupId.lean`) -/
-
-/-- `FxHasher::default()`, `self.hash(&mut hasher)`, `hasher.finish()`. -/
-def hashU64 {R S : Type} (fxDefault : S) (rowHash : S → R → S) (finish : S → Nat) (r : R) : Nat :=
-  finish (rowHash fxDefault r)
-
-/-- `hash_u64` depends only on the row's `Hash` input: rows feeding the same
-`(key, value)` sequence get the same group id. (It is not injective — the
-collision bug was fixed by #2977.) -/
-theorem hashU64_spec {R S : Type} (d : S) (rh : S → R → S) (fin : S → Nat) (r₁ r₂ : R)
-    (heq : rh d r₁ = rh d r₂) : hashU64 d rh fin r₁ = hashU64 d rh fin r₂ ∧
-    hashU64 d rh fin r₁ = fin (rh d r₁) := by
-  simp [hashU64, heq]
-
-/-! ## `VectorizableAgg::args_for` (aggregate.rs:222) -/
+/-! ## `VectorizableAgg::args_for` (aggregate.rs) -/
 
 def argsFor (vt vd : List Z → Except String Unit) (value : Z) (extra : List Z) :
     Except String (List Z) := do
@@ -312,7 +297,7 @@ theorem argsFor_spec (vt vd : List Z → Except String Unit) (v : Z) (extra : Li
   cases h1 : vt (v :: extra) <;> cases h2 : vd (v :: extra) <;>
     simp [h1, h2, bind, Except.bind, pure, Except.pure]
 
-/-! ## `AggregateOp::new` (aggregate.rs:294) -/
+/-! ## `AggregateOp::new` (aggregate.rs) -/
 
 structure AggSt (C E G A : Type) (Z : Type) where
   child : Option C

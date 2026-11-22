@@ -1,36 +1,35 @@
-import FalkorCowBTree.Bugs
+import FalkorCowBTree.Cursor
 
 /-!
-# The batch paths after #2278 (3597b3a82): routing fix and `remove_batch`
+# The batch paths: routing and `remove_batch`
 
-* `route_keeps_all`, `route_routes_TOP`, `route_TOP_example` — the new sweep (last child takes the
-  rest) loses nothing; in particular `(u64::MAX, u64::MAX)` now reaches the last child (Bug 1 fixed).
-* `subtract_eq` — the leaf survivor walk of `remove_batch` (`node.rs:502-514`) is `List.filter`.
+* `route_keeps_all`, `route_routes_TOP`, `route_TOP_example` — the sweep (last child takes the
+  rest) loses nothing; in particular `(u64::MAX, u64::MAX)` reaches the last child.
+* `subtract_eq` — the leaf survivor walk of `remove_batch` (`node.rs`) is `List.filter`.
 * `combine_with_sibling` (`cws`), `strip_empty`, `Node::is_underfull`, `Branch::is_underfull`,
   `Node::is_empty_node` — modelled line by line, with `rebalance_eq_cws` (the single-key repair is
-  exactly one `combine_with_sibling` step). Unchanged by #3283.
-* The pre-#3283 models of `merge_underfull` / `remove_batch` (contents right, shape not) were removed
-  (in 17ccc5412). The current model and its `TreeWF` proof are in `BatchWF.lean`.
+  exactly one `combine_with_sibling` step).
+* The model of `merge_underfull` / `remove_batch` and its `TreeWF` proof are in `BatchWF.lean`.
 -/
 
 namespace CowBTree
 
 /-! ## Model -/
 
-/-- `Node::is_underfull` (`node.rs:576`), reporting through `Branch::is_underfull` (`node.rs:212`). -/
+/-- `Node::is_underfull` (`node.rs`), reporting through `Branch::is_underfull` (`node.rs`). -/
 def isUnderfull (c : Cfg) : Node → Bool
   | .leaf es => decide (es.length < c.L / 2)
   | .branch _ cs => decide (cs.length < c.B / 2)
 
-/-- `Branch::is_underfull` (`node.rs:212`): `children.len() < BRANCH_MAX / 2`. -/
+/-- `Branch::is_underfull` (`node.rs`): `children.len() < BRANCH_MAX / 2`. -/
 def branchUnderfull (c : Cfg) (cs : List Node) : Bool := decide (cs.length < c.B / 2)
 
-/-- `Node::is_empty_node` (`node.rs:585`): a leaf with `count() == 0`. -/
+/-- `Node::is_empty_node` (`node.rs`): a leaf with `count() == 0`. -/
 def isEmptyNode : Node → Bool
   | .leaf es => es.isEmpty
   | .branch _ _ => false
 
-/-- `combine_with_sibling` (`node.rs:113-140`): pair child `ci` with its right neighbour (its left one
+/-- `combine_with_sibling` (`node.rs`): pair child `ci` with its right neighbour (its left one
     when it is the last), combine, and return the new `(seps, children)` and the index to examine next. -/
 def cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) : List E × List Node × Nat :=
   let li := if ci + 1 < cs.length then ci else ci - 1          -- lines 119-123
@@ -94,7 +93,7 @@ theorem cws_measure (c : Cfg) (seps : List E) (cs : List Node) (i : Nat) (h1 : 1
       simp only [Bool.false_eq_true, and_false, ↓reduceIte]
       omega
 
-/-- `strip_empty` (`node.rs:180-195`): drop every empty child, and with it the near separator
+/-- `strip_empty` (`node.rs`): drop every empty child, and with it the near separator
     (`seps[i]`, or the trailing one for the last child). -/
 def stripEmpty (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
   if hi : i < cs.length then
@@ -108,7 +107,7 @@ decreasing_by
   · simp only [delAt, List.length_append, List.length_take, List.length_drop]; omega
   · omega
 
-/-- The leaf arm of `Node::remove_batch` (`node.rs:502-514`): the survivor merge-walk. `bs` is the
+/-- The leaf arm of `Node::remove_batch` (`node.rs`): the survivor merge-walk. `bs` is the
     unconsumed batch suffix (`batch[bi..]`), which persists across entries. -/
 def subtract : List E → List E → List E
   | [], _ => []
@@ -117,7 +116,7 @@ def subtract : List E → List E → List E
     if bs'.head? = some p then subtract ps bs'                         -- lines 495-497
     else p :: subtract ps bs'                                          -- line 498
 
-/-! ## The routing sweep (fix of Bug 1) -/
+/-! ## The routing sweep -/
 
 /-- **The new sweep loses nothing**: the slices handed to the children concatenate back to the batch. -/
 theorem route_keeps_all : ∀ (seps : List E) (cs : List Node) (batch : List E), cs ≠ [] →
@@ -130,7 +129,7 @@ theorem route_keeps_all : ∀ (seps : List E) (cs : List Node) (batch : List E),
     have := List.take_append_drop (batch.takeWhile (fun e => decide (e < seps.head?.getD 0))).length batch
     rwa [take_takeWhile_length] at this
 
-/-- **Bug 1 is fixed** (#2278, 3597b3a82): every batch entry — `TOP = (u64::MAX, u64::MAX)` included —
+/-- **The sweep loses nothing**: every batch entry — `TOP = (u64::MAX, u64::MAX)` included —
     is handed to some child. -/
 theorem route_routes_TOP (seps : List E) (cs : List Node) (batch : List E) (hcs : cs ≠ []) (hT : TOP ∈ batch) :
     ∃ p ∈ route seps cs batch, TOP ∈ p.2 := by
@@ -225,7 +224,7 @@ theorem subtract_eq : ∀ (es bs : List E), Sorted es → SortedLe bs →
 
 /-! ## `Branch::rebalance` is one `combine_with_sibling` step -/
 
-/-- The #2278 refactor of `Branch::rebalance` (`node.rs:219-233`) into `combine_with_sibling` keeps it
+/-- The #2278 refactor of `Branch::rebalance` (`node.rs`) into `combine_with_sibling` keeps it
     the same function: the old model `rebalance` is the new code's first two components. -/
 theorem rebalance_eq_cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) :
     rebalance c seps cs ci = if cs.length < 2 then (seps, cs) else ((cws c seps cs ci).1, (cws c seps cs ci).2.1) := by

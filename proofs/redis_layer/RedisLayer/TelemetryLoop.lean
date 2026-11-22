@@ -1,19 +1,6 @@
 import RedisLayer.TelemetryReg
 /-!
 # Telemetry: flusher control flow and the remaining helpers (`src/telemetry.rs`)
-
-| here | there |
-| --- | --- |
-| `nextIds`          | `next_id` `:519` (`fetch_add(1)`) |
-| `writable`, `streamOps` | `stream_entries` `:269-328` |
-| `deleteStreamKey`  | `delete_stream` `:501` |
-| `runningRow`, `waitingRow` | `running_queries_reply` `:721`, `waiting_queries_reply` `:745` |
-| `distinctAlive`    | `hold_batch_graphs` `:930` |
-| `releaseSpawns`    | `release_batch_graphs` `:961` |
-| `keyHolds`         | `key_holds_graph`, `redis_type.rs:608` (moved there by #3819) |
-| `Flusher`, `start`, `stopped` | `start_flusher_thread` `:1080`, `shutdown_flusher_thread` `:1133` |
-| `iter`, `iterSteps` | one iteration of `flusher_loop` `:1169` (#3844: no role/pause check; freed streams deleted first) |
-| `Pre3844.*`        | historical: the replica/pause branches and `set_is_replica`, removed by #3844 |
 -/
 namespace RedisLayer.Telemetry
 
@@ -28,7 +15,7 @@ theorem nextIds_nodup (start k : Nat) : (nextIds start k).Nodup := by
 /-- Redis key types (`REDISMODULE_KEYTYPE_*`). -/
 inductive KeyType | empty | stream | other
 
-/-- A key of some other type is left alone (`:294-296`). -/
+/-- A key of some other type is left alone. -/
 def writable : KeyType → Bool
   | .empty | .stream => true
   | .other => false
@@ -148,14 +135,14 @@ theorem start_idem (f : Flusher) : start (start f) = start f := by
 
 inductive Wait | sent | dropped | timeout
 
-/-- `shutdown_flusher_thread`: only a timeout means "still running" (`:1011-1016`). -/
+/-- `shutdown_flusher_thread`: only a timeout means "still running". -/
 def stopped (exit : Option Wait) : Bool :=
   match exit with
   | none => true
   | some .timeout => false
   | some _ => true
 
-/-- Field-name strings are freed only after a confirmed stop (`:1017-1035`). -/
+/-- Field-name strings are freed only after a confirmed stop. -/
 def shutdown (f : Flusher) (exit : Option Wait) : Flusher :=
   if stopped exit then ⟨false, false, false⟩ else { f with sender := false, thread := false }
 
@@ -166,7 +153,7 @@ theorem shutdown_frees_on_stop (f : Flusher) (w : Wait) (h : stopped (some w)) :
 theorem shutdown_closes_sender (f : Flusher) (e : Option Wait) : (shutdown f e).sender = false := by
   unfold shutdown; split <;> rfl
 
-/-! ## One flusher iteration (`flusher_loop` `:1169-1352`, since #3844) -/
+/-! ## One flusher iteration (`flusher_loop`, since #3844) -/
 
 inductive Act
   | exitNoWrite          -- disconnected: leave without taking the GIL
@@ -192,8 +179,8 @@ theorem iter_write_iff (d a : Bool) :
 inductive Step | gil | deleteFreed | resolve | write
   deriving DecidableEq, Repr
 
-/-- `timeout`: `recv_timeout` timed out (`:1196-1205`); then only the freed-stream queue is
-served, and not once the channel is closed. Otherwise the batch arm (`:1252-1343`).
+/-- `timeout`: `recv_timeout` timed out; then only the freed-stream queue is
+served, and not once the channel is closed. Otherwise the batch arm.
 `pending` is `FREED_GRAPH_STREAMS.is_pending()`. -/
 def iterSteps (timeout disconnected anyAlive pending : Bool) : List Step :=
   if timeout then (if pending && !disconnected then [.gil, .deleteFreed] else [])
@@ -216,27 +203,5 @@ theorem iterSteps_delete_before_write (t d a p : Bool) (h : Step.write ∈ iterS
 theorem iterSteps_serves_pending (t a : Bool) :
     Step.deleteFreed ∈ iterSteps t false a true := by
   cases t <;> cases a <;> decide
-
-namespace Pre3844
-/-- Historical (before #3844): the iteration also discarded the batch on a replica and held
-it through a replica pause. -/
-inductive Act
-  | exitNoWrite | skip | discard | hold | write
-  deriving DecidableEq, Repr
-
-def iter (disconnected anyAlive isSlave paused : Bool) : Act :=
-  if disconnected then .exitNoWrite
-  else if !anyAlive then .skip
-  else if isSlave then .discard
-  else if paused then .hold
-  else .write
-
-theorem iter_replica_never_writes (d a p : Bool) : iter d a true p ≠ .write := by
-  unfold iter; split <;> (try split) <;> simp_all
-
-/-- `set_is_replica` (removed by #3844). -/
-def setReplica (_old : Bool) (b : Bool) : Bool := b
-theorem setReplica_eq (o b : Bool) : setReplica o b = b := rfl
-end Pre3844
 
 end RedisLayer.Telemetry

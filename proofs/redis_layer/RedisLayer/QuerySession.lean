@@ -6,32 +6,13 @@ Single-thread view of one session; the RwLock, the Redis GIL and the per-graph
 Redis — AXIOMATISED rows for `lock_gil`/`release_gil`, which only call
 `RedisModule_ThreadSafeContext{Lock,Unlock}`). Revision: PR #3816 (af228a34f).
 
-| here | there |
-| --- | --- |
-| `Th`, `holdsGil`, `gilAcquire`, `gilDrop` | `holds_gil` `:702`, `Gil::acquire` `:722`, `Gil::drop` `:745`, `hold_gil` `:695`, `GIL_CTX` |
-| `S`, `begin`, `beginWriter`   | `QuerySession::begin` `:178`, `begin_writer` `:205` (main thread only since #3816: `debug_assert!(holds_gil())`) |
-| `beginWriterChecked`          | `begin_writer_checked` `:235` (#3559): `begin_with`, then `escalate`; a refusal drops the reader `escalate` re-took |
-| `beginWith`, `readPastGate`, `mayWaitAtGate` | `begin_with` `:185`, `read_past_gate` `:545`, `may_wait_at_gate` `:569`; `WriterGate::is_closed`/`close`/`wait_until_open` `:590-577` are the `gateWait`/`gateClose`/`gateOpen` events |
-| `release`                     | `release_locks` `:338`, `Drop` `:673` |
-| `withGraph`, `withGraphMut`   | `with_graph` `:355`, `with_graph_mut` `:371` |
-| `Att`, `pollLoop`, `acquireWrite` | `acquire_write` `:481` (#3816): per attempt GIL, check, `try_write_arc_for(slice)`; the gate closes after `GATE_AFTER_SLICES` = 2 misses; one blocking try when the interval is ≤ 0 or the thread already holds the GIL |
-| `authorize`, `World`          | `authorize_write` `:517`: registry, then `reauthorize_write` |
-| `escalate`, `upgrade`         | `escalate` `:420`, `upgrade_to_write` `:398` (and the trait shim `:660`) |
-| `reauthorize`                 | `reauthorize_write` `:619` |
-| `Version`, `SS`, `writeVersion`, `isStale`, `versionIsCurrent`, `checkFork`, `upgradeS`, `upgradeSt` | #3657: `enum Version` `:128`, `write_version` `:260`, `is_stale` `:276`, `version_is_current` `:284`, `is_writer` `:288`, `check_fork` `:300`, `facts` `:225` |
-| `CommitError`, `WriteAbort.ofCommit` | `From<CommitError> for WriteAbort` `:95` |
-
-**#3816 (af228a34f).** Off the main thread `escalate` waits for the write lock in
+**Write-lock escalation (#3816).** Off the main thread `escalate` waits for the write lock in
 `WRITE_LOCK_POLL_INTERVAL` slices, giving the GIL back between them, and runs the
 registry/role check (`authorize_write`) under each slice's GIL hold, *before* the lock is
 taken. A refusal leaves the session a **reader** again (read lock re-taken), so a second
-`upgrade_to_write` re-runs every check (`upgrade_refused_rechecks`); before, the refused
-session stayed a writer and a second call reported success unchecked
-(`Pre3816.pre3816_upgrade_twice_skips_checks`, the hazard `attempt_settle`'s old comment
-warned about). `escalate_writer` / `upgrade_twice` therefore now speak of a *successful*
-escalation; their old unconditional forms are kept as `Pre3816.escalate_writer` /
-`Pre3816.upgrade_twice` on the old model. `upgradeS`/`upgradeSt` already left a refused
-session's `writer` flag false, as the new code does.
+`upgrade_to_write` re-runs every check (`upgrade_refused_rechecks`). `escalate_writer` /
+`upgrade_twice` speak of a *successful* escalation. `upgradeS`/`upgradeSt`
+leave a refused session's `writer` flag false.
 -/
 namespace RedisLayer.QuerySession
 
@@ -113,7 +94,7 @@ def withGraphMut (s : S) : Bool :=
   | some (.writer _) => true
   | _ => false
 
-/-- `WriteAbort` (query_session.rs:72). `stale` comes from two places: `check_fork`'s refusal and
+/-- `WriteAbort` (query_session.rs). `stale` comes from two places: `check_fork`'s refusal and
 `commit`'s stale refusal (`From<CommitError>`, `ofCommit`); `invalid` (#2846) is `commit`'s only. `WriteSlotBusy` is gone with the write slot (#3657). -/
 inductive WriteAbort | replicaTrafficPaused | notAMaster | graphUnregistered | stale
   | invalid (msg : String)
@@ -142,11 +123,11 @@ def reauthorize (f : Facts) (ctx : Option (Bool × Bool)) : Option WriteAbort :=
     else if f.originatedHere && readonly then some .notAMaster
     else none
 
-/-- `authorize_write` (`:496`): the registry first, then the role/pause re-check. -/
+/-- `authorize_write`: the registry first, then the role/pause re-check. -/
 def authorize (registered : Bool) (ctx : Option (Bool × Bool)) (f : Facts) : Option WriteAbort :=
   if !registered then some .graphUnregistered else reauthorize f ctx
 
-/-! ## Waiting for the write lock (#3816, `acquire_write` `:460`) -/
+/-! ## Waiting for the write lock (#3816, `acquire_write`) -/
 
 /-- One attempt of `acquire_write`: the verdict of `check_before_try` under that attempt's GIL
 hold, and whether the write lock came within the slice. The world decides both. -/
@@ -154,7 +135,7 @@ structure Att where
   check : Option WriteAbort
   got : Bool
 
-/-- `GATE_AFTER_SLICES` (`:430`). -/
+/-- `GATE_AFTER_SLICES`. -/
 def gateAfter : Nat := 2
 
 /-- Dropping the `closed` gate guard (if any). -/
@@ -193,7 +174,7 @@ def acquireWrite (interval : Int) (t : Th) (atts : List Att) : Option (Except Wr
       | none => some (.ok nr, { t1 with log := t1.log ++ [.writeLock] })
   else pollLoop 0 false t atts
 
-/-- `escalate` (`:399`): a writer stays (`Ok(false)`); otherwise drop the read lock *first*,
+/-- `escalate`: a writer stays (`Ok(false)`); otherwise drop the read lock *first*,
 then `acquire_write`. On success a writer; on a refusal the read lock is re-taken directly
 (not through the gate) and the session is a reader again. -/
 def escalate (s : S) (interval : Int) (atts : List Att) : Option (Except WriteAbort Bool × S) :=
@@ -364,7 +345,7 @@ theorem release_order (t : Th) (hm : t.main = false) (hc : t.ctx = false) :
     (release (beginWriter t)).th.log = t.log ++ [.gilLock, .writeLock, .writeUnlock, .gilUnlock] := by
   simp [release, beginWriter, dropMode, gilAcquire, holdsGil, gilDrop, hm, hc]
 
-/-- `begin_writer_checked` (`:235`, #3559): `begin_with` (read lock), then `escalate` — the same
+/-- `begin_writer_checked` (#3559): `begin_with` (read lock), then `escalate` — the same
 wait (`acquire_write`, so off the main thread the GIL is given back between slices) and the same
 `authorize_write` check under the GIL hold the lock is taken under that `upgrade_to_write` makes.
 On a refusal the session is returned out of scope inside the `Err`, so it is dropped: the read
@@ -455,7 +436,7 @@ theorem upgrade_unregistered (t : Th) (i : Int) (c : Option (Bool × Bool)) (g :
 
 /-- **A refused upgrade re-checks** (#3816): the session is a reader again, so calling
 `upgrade_to_write` again runs every check again and reports the same refusal while it
-stands — it no longer reports success (cf. `Pre3816.pre3816_upgrade_twice_skips_checks`). -/
+stands. -/
 theorem upgrade_refused_rechecks (s s' : S) (i : Int) (c : Option (Bool × Bool)) (g : Bool)
     (ws : List World) (f : Facts) (h : upgrade s i (⟨false, c, g⟩ :: ws) f = some (some .graphUnregistered, s')) :
     (upgrade s' i (⟨false, c, g⟩ :: ws) f).map (·.1) = some (some .graphUnregistered) := by
@@ -473,9 +454,9 @@ theorem upgrade_refused_rechecks (s s' : S) (i : Int) (c : Option (Bool × Bool)
       simp_all [upgrade, escalate, dropMode, acquireWrite, pollLoop, World.att, authorize, holdsGil,
         gilAcquire, ite_eq_right hi]
 
-/-! ## Readers and the writer gate (#3816, `read_past_gate` `:524`) -/
+/-! ## Readers and the writer gate (#3816, `read_past_gate`) -/
 
-/-- `may_wait_at_gate` (`:548`): a pool worker that does not hold the GIL. -/
+/-- `may_wait_at_gate`: a pool worker that does not hold the GIL. -/
 def mayWaitAtGate (pool : Bool) (t : Th) : Bool := pool && !holdsGil t
 
 /-- `read_past_gate`: take the read lock; if the gate is closed (the list: what each try
@@ -488,7 +469,7 @@ def readPastGate (mayWait : Bool) : List Bool → Th → Option Th
     if !closed || !mayWait then some t1
     else readPastGate mayWait rest { t1 with log := t1.log ++ [.readUnlock, .gateWait] }
 
-/-- `begin_with` (`:185`): `begin` once the reader is past the gate. -/
+/-- `begin_with`: `begin` once the reader is past the gate. -/
 def beginWith (mayWait : Bool) (gate : List Bool) (t : Th) : Option S :=
   (readPastGate mayWait gate t).map fun t => ⟨some .reader, t⟩
 
@@ -539,33 +520,33 @@ theorem graphArc_id (g : Nat) : graphArc g = g := rfl
 (`new_version`) and `is_stale` is `ver + 1 != fork.version`. There is no slot to claim or
 release: an uncommitted version is dropped with the runtime. -/
 
-/-- `enum Version` (`:108`). `unchecked` holds the fork's `version`. -/
+/-- `enum Version`. `unchecked` holds the fork's `version`. -/
 inductive Version | none | unchecked (fv : Nat) | current | stale
   deriving DecidableEq, Repr
 
 structure SS where
-  writer : Bool          -- `is_writer` (`:239`): `Mode::Writer`
+  writer : Bool          -- `is_writer`: `Mode::Writer`
   version : Version
   ver : Nat              -- published `Graph::version`
   deriving DecidableEq, Repr
 
-/-- `write_version` (`:211-224`): always a fork (`MvccGraph::fork`, version `ver + 1`); in writer
+/-- `write_version`: always a fork (`MvccGraph::fork`, version `ver + 1`); in writer
 mode it is `Current` from the start, in reader mode `Unchecked`. Infallible. -/
 def writeVersion (s : SS) : SS :=
   { s with version := if s.writer then .current else .unchecked (s.ver + 1) }
 
 def isStale (s : SS) : Bool := s.version == .stale
-/-- `version_is_current` (`:235`). -/
+/-- `version_is_current`. -/
 def versionIsCurrent (s : SS) : Bool := s.version == .current
 
-/-- `check_fork` (`:246`): only an `Unchecked` fork is looked at; `MvccGraph::is_stale` fork
-(`mvcc_graph.rs:144`) is `ver + 1 ≠ fork.version`. Stale ⇒ `Version::Stale` and `Err(Stale)`.
-Since #3567 an unchecked fork is also rebased onto the indexer batches published since, as it
-becomes current (inside the `Unchecked` arm: `rebase_onto_indexer_batches`, `query_session.rs:261`; the
-`Current`/`Stale`/`None` arms return at once): index progress only, no data change
-(native_index `Rebase.lean`: `V.rebased_keeps_data`). The rebase fails (`Err(Stale)`, release) only for a
-fork that is still borrowed, which an escalating writer's is not (a debug build panics): that is the one
-assumption this model makes, not proven here. -/
+/-- `check_fork`: only an `Unchecked` fork is looked at (`Current`/`Stale`/`None` return at once);
+`MvccGraph::is_stale` (`mvcc_graph.rs`) is `ver + 1 ≠ fork.version`. Stale ⇒ `Version::Stale` and
+`Err(Stale)`. Since #3567 an unchecked fork that is current is also rebased onto the indexer batches
+published since (`rebase_onto_indexer_batches`, `mvcc_graph.rs`): index progress only, no data change
+(native_index `Rebase.lean`: `V.rebased_keeps_data`). Since #3683 (08616ec29) that rebase returns `()`:
+it has no `Err(Stale)` arm any more, and the fork is passed in by `&mut` (`upgrade_to_write(fork)`), so
+the one assumption this model used to make (a rebase refusal never happens for an escalating writer's
+fork) is gone: `checkFork` is the whole function. -/
 def checkFork (s : SS) : Except Unit SS :=
   match s.version with
   | .unchecked fv =>
@@ -679,7 +660,7 @@ theorem upgrade_stale (s : SS) (fv : Nat) (hw : s.writer = false) (hf : s.versio
   have := (checkFork_spec { s with writer := true } fv hf).2 hv
   simp [upgradeS, hw, this]
 
-/-- `From<CommitError> for WriteAbort` (`:74`). -/
+/-- `From<CommitError> for WriteAbort`. -/
 inductive CommitError | stale | invalid (msg : String)
   deriving DecidableEq, Repr
 
@@ -692,64 +673,5 @@ theorem ofCommit_invalid (m : String) : WriteAbort.ofCommit (.invalid m) = .inva
 /-- The two refusals map to different aborts, which the retry loops tell apart. -/
 theorem ofCommit_ne (m : String) : WriteAbort.ofCommit .stale ≠ WriteAbort.ofCommit (.invalid m) := by
   simp [WriteAbort.ofCommit]
-
-/-! ## Historical: before #3816 (dc05fee89)
-
-`escalate` took the GIL and then the write lock in one go and recorded writer mode
-*before* `upgrade_to_write` ran the registry/role checks, so a refused session stayed a
-writer and a second `upgrade_to_write` took the already-a-writer early return. -/
-namespace Pre3816
-
-def escalate (s : S) : Bool × S :=
-  match s.mode with
-  | some (.writer _) => (false, s)
-  | m =>
-    let t := dropMode m s.th
-    let (nr, t) := gilAcquire t
-    (true, ⟨some (.writer nr), { t with log := t.log ++ [.writeLock] }⟩)
-
-def upgrade (s : S) (registered : Bool) (ctx : Option (Bool × Bool)) (f : Facts) :
-    Option WriteAbort × S :=
-  let (esc, s) := escalate s
-  if esc then
-    if !registered then (some .graphUnregistered, s) else (reauthorize f ctx, s)
-  else (none, s)
-
-theorem escalate_of_writer (s : S) (nr : Bool) (h : s.mode = some (.writer nr)) : escalate s = (false, s) := by
-  simp [escalate, h]
-
-theorem escalate_mode (s : S) : ∃ nr, (escalate s).2.mode = some (.writer nr) := by
-  unfold escalate
-  split
-  · rename_i nr h; exact ⟨nr, h⟩
-  · exact ⟨_, rfl⟩
-
-/-- Pre-#3816 `escalate_writer`: every escalation, refused or not, left a writer. -/
-theorem escalate_writer (s : S) : withGraphMut (escalate s).2 = true := by
-  obtain ⟨nr, h⟩ := escalate_mode s
-  simp [withGraphMut, h]
-
-theorem upgrade_state (s : S) (r : Bool) (c : Option (Bool × Bool)) (f : Facts) :
-    (upgrade s r c f).2 = (escalate s).2 := by
-  unfold upgrade
-  obtain ⟨e, s'⟩ := escalate s
-  simp only
-  split <;> (try split) <;> rfl
-
-/-- Pre-#3816 `upgrade_twice`: a second upgrade reported success unconditionally. -/
-theorem upgrade_twice (s : S) (r : Bool) (c : Option (Bool × Bool)) (f : Facts) :
-    (upgrade (upgrade s r c f).2 r c f).1 = none := by
-  rw [upgrade_state]
-  obtain ⟨nr, h⟩ := escalate_mode s
-  simp [upgrade, escalate_of_writer _ nr h]
-
-/-- **The hazard #3816 removes**: refused (graph gone), then asked again, the old code
-reported success without checking. Fixed: `upgrade_refused_rechecks`. -/
-theorem pre3816_upgrade_twice_skips_checks (t : Th) (c : Option (Bool × Bool)) (f : Facts) :
-    (upgrade (begin t) false c f).1 = some .graphUnregistered ∧
-      (upgrade (upgrade (begin t) false c f).2 false c f).1 = none :=
-  ⟨by simp [upgrade, escalate, begin], upgrade_twice _ _ _ _⟩
-
-end Pre3816
 
 end RedisLayer.QuerySession

@@ -9,9 +9,9 @@ CREATE INDEX FOR (p:Person) ON (p.age)
 MATCH (p:Person) WHERE p.age >= 30 AND p.age <= 40 RETURN p
 ```
 
-the rows the scan returns are a `CowBTree::range` call, and every `SET p.age = …` or `DELETE p` ends in `insert_batch` / `remove_batch` on the tree (since #3307, `FalkorDbIndex::apply_writes`). How the index uses the tree is proven in [`../native_index`](../native_index).
+the rows the scan returns are a `CowBTree::range` call, and every `SET p.age = …` or `DELETE p` ends in `insert_batch` / `remove_batch` on the tree (`FalkorDbIndex::apply_writes`). How the index uses the tree is proven in [`../native_index`](../native_index).
 
-The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models, at origin/main 1d15bf713) is in the header of [`FalkorCowBTree.lean`](FalkorCowBTree.lean). This README explains *what* is proven and *why it matters*.
+The per-function Lean↔Rust mapping is in `COVERAGE.tsv`. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -21,20 +21,19 @@ Yes. `insert_spec` and `remove_spec` prove that a well-formed tree (`TreeWF`, be
 
 `remove` needs `BRANCH_MAX >= 4`:
 
-- **Before #2897, no.** The const assert accepted `BRANCH_MAX = 3`, and at 3 a single remove broke the tree (see [Bugs found](#bugs-found)).
-- **On main, yes.** The assert now requires `BRANCH_MAX >= 4`, and `remove_spec_asserted` proves `remove` correct on every configuration the assert admits, with no extra premise.
+The const assert requires `BRANCH_MAX >= 4`, and `remove_spec_asserted` proves `remove` correct on every configuration the assert admits, with no extra premise.
 
 **2. Does a range scan return exactly the entries in range, in order?**
 
-Yes. `range_spec` proves that `range(lo, hi)` yields exactly the entries whose key is in the inclusive range `[lo, hi]`, in `(key, doc)` order, including every duplicate of a key; `lo > hi` yields nothing. `point_spec` is the `range(k, k)` case. The generic cursor added by #2278, which reads the key lazily, yields the same thing (`nextWith_eq`, `rangeDocs_spec`, `rangeTuples_spec`). `firstDoc_eq_point` shows `first_doc(k)` is the head of the point lookup.
+Yes. `range_spec` proves that `range(lo, hi)` yields exactly the entries whose key is in the inclusive range `[lo, hi]`, in `(key, doc)` order, including every duplicate of a key; `lo > hi` yields nothing. `point_spec` is the `range(k, k)` case. The generic cursor, which reads the key lazily, yields the same thing (`nextWith_eq`, `rangeDocs_spec`, `rangeTuples_spec`). `firstDoc_eq_point` shows `first_doc(k)` is the head of the point lookup.
 
 **3. Do the batch paths keep the right entries and a valid tree?**
 
 Yes, on main.
 
-- `insert_batch` used to drop the entry `(u64::MAX, u64::MAX)`. **Fixed by #2278**: `route_keeps_all` proves the batch sweep hands every entry to some child. `insertBatch_wf` proves `insert_batch` keeps `TreeWF` and leaves exactly the old entries plus the batch, strictly sorted.
+- `route_keeps_all` proves the batch sweep hands every entry to some child, including `(u64::MAX, u64::MAX)`. `insertBatch_wf` proves `insert_batch` keeps `TreeWF` and leaves exactly the old entries plus the batch, strictly sorted.
 - `remove_batch` on a sorted batch leaves exactly the entries not in the batch, still sorted. An unsorted batch is the Rust `assert!` panic (`removeBatchTree_unsorted`).
-- Before #3283, `remove_batch` did **not** keep the tree well-formed: it could leave a non-root branch with one child (Bug 3; counterexample removed in bbee75955; the last revision that has them is 17ccc5412). **Fixed by #3283**: `removeBatchTree_wf` proves it now keeps `TreeWF`.
+- `removeBatchTree_wf` proves `remove_batch` keeps `TreeWF`.
 - `from_sorted` builds a well-formed tree holding exactly its input (`fromSorted_wf`).
 
 **4. Is every tree a caller can hold well-formed?**
@@ -55,15 +54,15 @@ It counts every page once (`heapBytes_eq`). With AoS leaves it is `entries × (8
 |---|---|---|
 | `insert_spec` | `insert` keeps `TreeWF` (growing a level on a root split) and adds exactly the new entry | `Insert.lean` |
 | `remove_spec` | For `BRANCH_MAX >= 4`, `remove` keeps `TreeWF` (losing root levels as needed) and removes exactly the entry | `Remove.lean` |
-| `remove_spec_asserted` | The same, with `4 ≤ BRANCH_MAX` discharged by the const assert (#2897) | `Assert.lean` |
+| `remove_spec_asserted` | The same, with `4 ≤ BRANCH_MAX` discharged by the const assert | `Assert.lean` |
 | `range_spec` | `range(lo, hi)` = the entries with key in `[lo, hi]`, in order | `Cursor.lean` |
 | `firstDoc_eq_point` | `first_doc(k)` is the first doc of `point(k)` | `Lookup.lean` |
-| `removeBatchTree_wf` | For `BRANCH_MAX >= 4`, `remove_batch` keeps `TreeWF` and leaves exactly `List.filter (∉ batch)` (#3283) | `BatchWF.lean` |
+| `removeBatchTree_wf` | For `BRANCH_MAX >= 4`, `remove_batch` keeps `TreeWF` and leaves exactly `List.filter (∉ batch)` | `BatchWF.lean` |
 | `insertBatch_wf` | `insert_batch` keeps `TreeWF`; its entries are the old ones plus the batch, strictly sorted | `InsertBatchWF.lean` |
 | `fromSorted_wf` | `from_sorted` builds a well-formed tree holding exactly its input | `InsertBatchWF.lean` |
 | `Reachable_wf_asserted` | Every tree reachable through the API is well-formed | `InsertBatchWF.lean` |
-| `route_keeps_all` | The `insert_batch` sweep routes every batch entry to a child (the #2278 fix) | `Batch.lean` |
-| `rebalance_eq_cws` | The #2278 refactor of `Branch::rebalance` computes the same thing as before | `Batch.lean` |
+| `route_keeps_all` | The `insert_batch` sweep routes every batch entry to a child  | `Batch.lean` |
+| `rebalance_eq_cws` | The refactored `Branch::rebalance` computes the same thing as the original | `Batch.lean` |
 | `snapshot_isolated` | A clone's range scans are unchanged by any later writes | `Snapshot.lean` |
 | `heapBytes_aos` | `heap_bytes` with AoS leaves = `entries × (8 + DOC_BYTES)` + branch vectors | `Extract.lean` |
 | `enc_lt_iff` | Encoding `(key, doc)` as one number keeps the lexicographic order | `Basic.lean` |
@@ -78,28 +77,17 @@ It counts every page once (`heapBytes_eq`). With AoS leaves it is `entries × (8
 
 The hypotheses: `TreeWF` on the input, and entries below `2¹²⁸` (every `(u64, u64)` pair is). `TreeWF` is not an assumption about callers: `Reachable_wf_asserted` proves every tree the API can build satisfies it.
 
-### How `removeBatchTree_wf` is proved (#3283)
+### How `removeBatchTree_wf` is proved
 
-1. **Model the new loop.** `merge_underfull` is `muLoop`: each step is `combine_with_sibling` (`muStep_id`) followed by `merge_underfull_below` on the produced node(s). `merge_underfull_below` re-runs the loop one level down, so the model builds it by recursion on the height (`mubF`), together with the fact that it never grows a node and keeps its under-flow flag unless it shrank it (`Mono`). That fact is what proves the Rust loop terminates: a merge, or a repair that shrinks, drops the node count; a borrow whose repairs don't shrink leaves two nodes that are not under-full.
-2. **State what a batch can leave.** `Good`: a node that is well-formed, or an under-full branch with exactly one child that is itself `Good`. A chain of such lone children is exactly Bug 3's shape.
+1. **Model the loop.** `merge_underfull` is `muLoop`: each step is `combine_with_sibling` (`muStep_id`) followed by `merge_underfull_below` on the produced node(s). `merge_underfull_below` re-runs the loop one level down, so the model builds it by recursion on the height (`mubF`), together with the fact that it never grows a node and keeps its under-flow flag unless it shrank it (`Mono`). That fact is what proves the Rust loop terminates: a merge, or a repair that shrinks, drops the node count; a borrow whose repairs don't shrink leaves two nodes that are not under-full.
+2. **State what a batch can leave.** `Good`: a node that is well-formed, or an under-full branch with exactly one child that is itself `Good`.
 3. **Combine `Good` siblings.** `combine_good`: two `Good` siblings (neither need be well-formed) combine into nodes with at least two `Good` children. `mubF_spec`: the repair turns those into `Good` nodes.
 4. **The loop.** `muLoop_good`: it ends with every child `Good` and, if two or more remain, none under-full. A `Good` node that is not under-full is well-formed (`Good_wf`, needs `BRANCH_MAX >= 4`). So every branch with two or more children has well-formed children.
 5. **The root.** `collapse_good`: the root collapse walks down the lone-child chain to a node with two or more children, or a leaf, which is well-formed.
 
 ## Bugs found
 
-The Rust repros were run against the `cow_btree` sources (see [`../FINDINGS.md`](../FINDINGS.md), wave 1 #13 and wave 7).
-
-| # | Theorem (counterexample) | What it means | Status |
-|---|---|---|---|
-| 1 | removed (17ccc5412) | `insert_batch` routed `(u64::MAX, u64::MAX)` to no child, so the entry was silently lost | Fixed by #2278 (`route_keeps_all`, `route_routes_TOP`) |
-| 2 | removed (17ccc5412) | `BRANCH_MAX = 3` passed the const assert, but one `remove` broke the tree; after draining it, `is_empty` was wrong and `Node::min` panicked | Fixed by #2897 (issue #2893): `constAssert_rejects_B3` |
-| 3 (W7-btree-1) | removed (17ccc5412) | `remove_batch` could leave a non-root branch with one child at any `BRANCH_MAX >= 4`. One later single-key `remove` then left an empty non-root leaf, and the next `insert_batch` panicked in `Node::min` | Fixed by #3283 (issue #3237): `removeBatchTree_wf`, `removeBatchTree_wf_asserted`, `rb_remove_batch_fixed`, `rb_then_remove_fixed` |
-| W7-btree-2 | removed (17ccc5412), in `../index_layer` | `DOC_BYTES ∈ {3,5,6,7}` passed the const assert but `read_width` reads only 1/2/4/8, so `CowBTree::<256,256,3>` panicked on its second insert | Fixed by #3285 (issue #3238): the assert now requires `is_read_width(DOC_BYTES)` (`isReadWidth`, `constAssert`) |
-
-Bug 3 in more detail: before #3283 the batch path repaired under-full children one level at a time. If a branch ended with one child and its parent also ended with only that branch, the parent's merge loop did not run, and the lone-child branch was pushed into the merged node one level up, where nothing looked at it again. `BugsBatch.lean` used to replay this on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4`; that pre-#3283 model was removed in bbee75955 (the last revision that has it is 17ccc5412). Its header keeps the Rust repro, which #3283 added as the test `remove_batch_never_leaves_a_single_child_branch`. On main the same input gives a well-formed tree (`rb_remove_batch_fixed`), and `removeBatchTree_wf` proves it for every input.
-
-Bug 3 was why [`../native_index`](../native_index) had 13 **CONDITIONAL** rows. With `Reachable_wf_asserted` their hypothesis is discharged, and they are PROVEN (`native_index/FalkorNativeIndex/Contract.lean`).
+No open bugs. Fixed ones are in this file's git history.
 
 ## Files
 
@@ -113,13 +101,12 @@ Bug 3 was why [`../native_index`](../native_index) had 13 **CONDITIONAL** rows. 
 | `Remove.lean` | The underflow contract (`Weak`), `rebalance`, `combine`, `remove_spec` |
 | `Cursor.lean` | The range cursor: `seek_rest`, `next_spec`, `range_spec` |
 | `Snapshot.lean` | Writer operations (`Op`, `applyOps`), `snapshot_isolated`, `insertOne_shares_siblings` |
-| `Bugs.lean` | Historical notes on Bug 1 (#2278) and Bug 2 (#2897), both fixed; their counterexample theorems were removed in bbee75955 |
-| `Batch.lean` | The batch paths after #2278: routing fix, `subtract_eq`, `cws`, `stripEmpty`, the shape lemmas; the pre-#3283 `remove_batch` model and its counterexamples were removed in bbee75955 |
-| `BatchWF.lean` | `remove_batch` after #3283: `muLoop`, `mubF`, `mergeUnderfull`, `removeBatch`, `removeBatchTree`; `Good`, `combine_good`, `muLoop_good`, `removeBatchTree_wf` |
+| `Batch.lean` | The batch paths: routing, `subtract_eq`, `cws`, `stripEmpty`, the shape lemmas |
+| `BatchWF.lean` | `remove_batch`: `muLoop`, `mubF`, `mergeUnderfull`, `removeBatch`, `removeBatchTree`; `Good`, `combine_good`, `muLoop_good`, `removeBatchTree_wf` |
 | `InsertBatchWF.lean` | `mergeWalk_spec`, `MinChain`, `packBranches_chain`, `buildRoot_wf`, `applyBatch_chain`, `insertBatch_wf`, `fromSorted_wf`, `Reachable`, `Reachable_wf` |
-| `Lookup.lean` | #2278 read-side additions: `firstDoc`, `containsKey`, insert/remove return flags |
+| `Lookup.lean` | Read-side additions: `firstDoc`, `containsKey`, insert/remove return flags |
 | `Extract.lean` | The generic cursor (`Extract`, `DocExtract`, `TupleExtract`) and `heap_bytes` |
-| `BugsBatch.lean` | Bug 3: the pre-#3283 `remove_batch` single-child branch (history note with the Rust repro; the counterexample theorems were removed in bbee75955), the same input on main, `removeBatchTree_wf_asserted` |
+| `BatchAssert.lean` | `removeBatchTree_wf_asserted`: `remove_batch` on every configuration the const assert admits |
 | `Assert.lean` | The const assert (`constAssert`, `isReadWidth`) and `remove_spec_asserted` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

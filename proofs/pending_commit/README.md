@@ -33,13 +33,13 @@ No. A `Block` tracks `dead` and `slack` entries in `u32` counters updated with p
 
 Yes, under the model's preconditions. `encode_decode_roundtrip` assumes a well-formed store (`SInv`) whose spans are sorted and null-free (`SOK`), attribute ids below both the decode limit and 65,536, and at most 65,535 entries per entity; it proves decoding what was encoded into an empty store restores exactly the encoded entities' spans. `pack_unpack` assumes a well-formed block heap (`HInv`) of fewer than 2^32 cells and proves the 12-byte packed value round-trips, with floats as IEEE bits so NaN payloads and `-0.0` survive. A malformed RDB or an oversized store is outside what these theorems cover.
 
-**5. Are UNIQUE constraints enforced correctly since #3334?**
+**5. Are UNIQUE constraints enforced correctly?**
 
-Since #3334, a `UNIQUE` check looks each affected member's key up through the constraint's index (`query_for` then `lookup`) instead of scanning the whole label. When the index cannot answer for a member (no operational index, or a value that is not exactly indexable, such as NaN) the whole set falls back to a label or type scan (`uniqueViolated_declined`: no lookup runs and the verdict does not depend on it). `uniqueViolated_spec` proves the check reports a violation iff two members share a full key, or a member's key is held by a live entity outside the affected set. `uniqueViolated_agrees` proves this equals the old label-scan verdict. Both rely on two separate completeness contracts (see CONDITIONAL below): `hIdx`, the index returns every live candidate carrying the key that this commit did not write, and `hScan`, the label matrix or tensor lists every live member.
+A `UNIQUE` check looks each affected member's key up through the constraint's index (`query_for` then `lookup`) instead of scanning the whole label. When the index cannot answer for a member (no operational index, or a value that is not exactly indexable, such as NaN) the whole set falls back to a label or type scan (`uniqueViolated_declined`: no lookup runs and the verdict does not depend on it). `uniqueViolated_spec` proves the check reports a violation iff two members share a full key, or a member's key is held by a live entity outside the affected set. `uniqueViolated_agrees` proves this equals the old label-scan verdict. Both rely on two separate completeness contracts (see CONDITIONAL below): `hIdx`, the index returns every live candidate carrying the key that this commit did not write, and `hScan`, the label matrix or tensor lists every live member.
 
 **6. Does a deleted entity keep reading correctly for the rest of the query?**
 
-**Not when its id is reused.** `sound_under_Good` proves snapshot reads are correct as long as no snapshotted id belongs to a live entity. The engine's allocator reissues freed ids first, which breaks that: `rust_reads_dead_entity` shows a new node reading the deleted node's data. This is #2876, still open (see [Bugs found](#bugs-found)). Two fixes are proven to restore it: deferring id reuse to the end of the query (`deferred_preserves_Good`), and open PR #2964's evict-on-reissue (`evict_preserves_Good`).
+**Yes, including when its id is reused.** `sound_under_Good` proves snapshot reads are correct as long as no snapshotted id belongs to a live entity. The allocator skips ids the query itself freed until the version is published (`createRust_preserves_Good`, `rust_reads_live_entity`). The alternative, reissuing freed ids first, would break it: a new node would read the deleted node's data (`rust_reads_dead_entity`).
 
 ## The headline theorems
 
@@ -54,9 +54,11 @@ Since #3334, a `UNIQUE` check looks each affected member's key up through the co
 | `encode_decode_roundtrip` | RDB encode then decode restores every span | `StoreCodec.lean` |
 | `structural_partition` | Memory accounting: structural plus per-entity bytes equal the whole allocation, no underflow | `StoreMem.lean` |
 | `commit_spec` | A successful `Pending::commit` grows each counter (nodes and relationships created, labels removed, nodes deleted, relationships deleted including the implicit ones) by exactly the staged changes, and the constraints hold afterwards | `PendingCommitOp.lean` |
-| `uniqueViolated_spec`, `uniqueViolated_agrees` | The #3334 index-lookup UNIQUE check is right, and agrees with the old label scan | `UniqueIndex.lean` |
-| `sound_under_Good`, `deferred_preserves_Good` | Snapshot reads are right while no snapshotted id is live; deferring id reuse keeps that | `Snapshot.lean` |
+| `uniqueViolated_spec`, `uniqueViolated_agrees` | The index-lookup UNIQUE check is right, and agrees with the old label scan | `UniqueIndex.lean` |
+| `sound_under_Good`, `createRust_preserves_Good` | Snapshot reads are right while no snapshotted id is live; the allocator keeps that | `Snapshot.lean` |
 | `c_eq_rust_plus_cancelled` | C's created/deleted counts = Rust's + the entities created and deleted in the same segment | `Stats.lean` |
+| `nthLive_spec`, `prEncode_eq_main`, `encRoarPR_eq` | `SAVE` finds its first live id by rank/select (`nth_live_id`) and seeks the roaring bitmap instead of skipping; the output equals the earlier windowed encoding for every `count > 0` (`count = 0` is unreachable: `encoder_counts_pos`). The roaring crate is trusted at the `RSet` level (`SaveRoaring.lean`), checked by a randomized scratch test | `SaveNthLive.lean`, `SaveSlice.lean`, `SaveLayout.lean` |
+| `enforce_spec`, `enforce_skips_failed` | `enforce_constraints` skips only FAILED constraints, as C's `Schema_EnforceConstraints`; an UNDER CONSTRUCTION one binds writes | `PendingCommitOp.lean` |
 
 ### How `mergeSpan_correct` is proved
 
@@ -64,7 +66,7 @@ Since #3334, a `UNIQUE` check looks each affected member's key up through the co
 2. **Write one reference.** `refGet` says what reading attribute `k` after the merge must return (the update's value if it has one, a removal if it is null, else the old value). `refRemoved` and `refSet` are the counts `insert_attrs` documents.
 3. **Model each path with the Rust loop structure.** `patch` is fast path 1, `pureRemove` with `skipBelow` is fast path 2, and `mergeGen` is the general two-pass merge. `mergeSpan` picks the path as `Block::merge_span` does.
 4. **Prove each path against the reference**, by induction on the two sorted lists: `patch_get`/`patch_counts`, `pureRemove_ref`/`pureRemove_count`, and `mergeGen_get`/`mergeGen_sorted`/`mergeGen_removed`. The headline is a case split on the chosen path.
-5. **Hypotheses.** The old span is sorted and null-free, and the update is sorted. The store keeps the first two everywhere (that is what this theorem and `Content.lean` re-establish); `Pending` hands updates sorted (`stage_sorted_lastWrite`). One exception was `import_attrs_resolved`, which could pass duplicate ids before #3063.
+5. **Hypotheses.** The old span is sorted and null-free, and the update is sorted. The store keeps the first two everywhere (that is what this theorem and `Content.lean` re-establish); `Pending` hands updates sorted (`stage_sorted_lastWrite`).
 
 ## Bugs found
 
@@ -72,17 +74,10 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| #2876 / W2-pending-1 | `rust_reads_dead_entity` | A deleted entity's snapshot is keyed by id, and a `CREATE` later in the query reuses the id, so the new entity reads the deleted one's labels and properties. `MERGE` then creates a duplicate node (persistent damage). Same for relationships. Confirmed live: `MATCH (n) DELETE n WITH count(*) AS c CREATE (m {v:2}) WITH m MATCH (x) RETURN x.v` over `(:A {v:1})` gives Rust `1`, C `2` | **Open** (#2876). Fix proposed in open PR #2964 (`evict_preserves_Good`, `evict_reads_live_entity`) |
 | W2-pending-2 | `cancel_example`, `c_eq_rust_plus_cancelled` | Entities created and deleted in the same segment vanish from the statistics: `CREATE (a:L {v:1, w:2}) DELETE a` reports only `Labels added`; C reports `Nodes created: 1, Properties set: 2, Nodes deleted: 1` | **Open** |
 | W2-pending-3 | (no Lean theorem; found while modelling) | Writes to a deleted relationship are applied and counted: `REMOVE r.v` after `DELETE r`, and `SET r.v` after a `DETACH DELETE` cascade | **Open** |
-| #2769 | `fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted` (was `deg_panics_on_pending_deleted`) | `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b)` asked the committed graph for the endpoints of an edge that was never committed, and panicked. Now the edge created and deleted in the query is skipped by `pending_deleted_*degree` and not counted by `pending_*degree`; `0`, as C | **Fixed** by #3520 (9ffa9ab04) |
-| #2776 | removed (17ccc5412); `fixed3524_replace_clears_staged`, `replace_reads_src` | `SET x = m` / `SET r = {…}` kept attributes staged earlier in the query instead of replacing them | Fixed by #3524 (af45ca776) |
-| setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a GRAPH.BULK header with that many columns or a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | Bulk side fixed by #3063 (`normResolved_fits`); the malformed-RDB side remains, not reproduced |
-| #3063 | removed (17ccc5412) | A GRAPH.BULK header naming a property twice stored two entries for one id | Fixed by #3063 (`resolved_duplicate_fixed`: the first column wins, as in C) |
-| #3448 | `pre3459_bug3448_remove_of_staged_label` (property `RemLCommitted`; now `fixed3448_run_remL_committed`, `fixed3448_remove_of_staged_label`), `fixed3448_cancelled_node_clears_remL` (property `RemLLive`) | `remove_node_labels` stages the removal of a label the node only had staged (a created node, an earlier `SET`), and `delete_pending_node` keeps the node's `remove_labels`. `CREATE (n:Foo) REMOVE n:Foo DELETE n` then ships `RemoveLabels` before the node's `CreateNode` and the replica forces a full resync (effects_emit_apply). | **Fixed by #3459** (`Labels removed` still counts such a removal, as C does, through `staged_labels_removed`: `removeLabelsC_count`) |
-| #3453 | `pendingWithLabels_live` (property `PendingWithLabelsLive`), `fixed3453_*` | `get_pending_nodes_with_labels` ignored deletion and committed labels. Now it takes the graph and returns the live nodes gaining a pattern label. The composed MERGE scan property is in ops_aggregate | **Fixed** by #3467 (a477d9aa3) |
+| setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | **Open**, not reproduced |
 | #3447 | `bug3447_cascade_drops_type_key` (property `CancelledTypeRegistered`) | A pending edge of a new type cascaded by `DETACH DELETE` empties its `created_rels_by_type` group, which is dropped, so commit never registers the type; the replica then sees an id gap (effects_emit_apply) | **Open** (#3447) |
-| #3339 | removed (17ccc5412) | Property validation accepted lists nested to any depth | Fixed by #3339 (`validate_depth`: accepted values have depth ≤ 4096) |
 
 Also confirmed live: property counters are net at commit in Rust and per clause in C (`CREATE (n {v:1}) SET n.v = 2`: Rust set 1, C set 2 / removed 1). That is a policy question, not a bug, and is recorded in `FINDINGS.md`. W4-fn-1 (labels staged before a `DELETE` are missing from the deleted snapshot) is also in that area; it was confirmed by another project and its repro tests are in the same test file.
 
@@ -102,16 +97,15 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `StoreCodec.lean`, `StoreMem.lean` | RDB codec, `trim`, memory accounting: `encode_decode_roundtrip`, `structural_partition` |
 | `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push` |
 | `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_reads_src` |
-| `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `rust_reads_dead_entity`, `deferred_preserves_Good` |
-| `EvictPR2964.lean` | **Models open PR #2964, not main**: `evict_preserves_Good` |
+| `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `createRust_preserves_Good` |
 | `Stats.lean` | Write statistics: `c_eq_rust_plus_cancelled`, `cancel_example` |
 | `PendingAttrs.lean`, `PendingState.lean`, `PendingRels.lean`, `PendingDeg.lean`, `PendingDocs.lean` | All of `pending.rs`: validation, staging, reads, created relationships, degrees (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`), `IndexDocs`, `clear`, `effects_count` |
 | `PendingCommitOp.lean` | `Pending::commit` and constraint enforcement: `commit_spec`, `check_spec`, `enforce_spec` |
-| `UniqueIndex.lean` | #3334's index-lookup UNIQUE check: `uniqueViolated_spec`, `uniqueViolated_agrees`, `checkUnique_spec` |
+| `UniqueIndex.lean` | The index-lookup UNIQUE check: `uniqueViolated_spec`, `uniqueViolated_agrees`, `checkUnique_spec` |
 | `PendingCancel.lean`, `CancelRust.lean` | Unwinding a pending node and handing ids back to the graph: `deletePendingNode_spec_rust`, `cancelN_spec` |
 | `CommitOpNext.lean` | `CommitOp::next` with `end_segment`: `commitNext_ok` |
-| `StagedBugs.lean` | Staged label/type state that outlives its entity: #3447 and #3448 counterexamples, #3453's `fixed3453_*` repros (fixed by #3467), `deletePendingNode_clears_remL` |
-| `Hold.lean` | #3436/#3439-era borrow holding: a caller-held `graph_mut()` / `graph()` across `Pending::commit`, `end_segment`, `IndexDocs::commit` equals main's sequential borrows (`commit_same`, `single_mut_same`, `single_rd_same`), on `runtime_core`'s `RuntimeCore.Cell` borrow-word model |
+| `StagedBugs.lean` | Staged label/type state that outlives its entity: the #3447 counterexample, `fixed3453_*`, `deletePendingNode_clears_remL` |
+| `Hold.lean` | Borrows around `Pending::commit`: a write query owns its fork cell, so a held `graph_mut()` panics exactly when `Runtime::graph_mut` does (`holdMut_panics_iff_graphMut`); a published read takes no borrow (`published_read_no_borrow`); after `publish` a held `graph_mut()` panics (`hold_after_publish_panics`), on `runtime_core`'s `RuntimeCore.Cell` borrow-word model |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for the atomic_refcell borrow-word model `RuntimeCore.Cell` that `Hold.lean` runs on; and [`../graph_queries`](../graph_queries), for its model of the graph's id spaces (`GQ.IdS`, `GQ.rCancel`), which `CancelRust.lean` uses to prove the cancel contract instead of assuming it.
@@ -159,4 +153,4 @@ bash proofs/coverage.sh                  # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for #2876, #2769 or W2-pending-2 should turn the matching counterexample into a `pre<PR>_` history theorem and add the proof of the fixed behaviour (for #2876, either `deferred_preserves_Good` or `evict_preserves_Good` already covers the two proposed designs).
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for W2-pending-2 should turn the matching counterexample into a `pre<PR>_` history theorem and add the proof of the fixed behaviour.

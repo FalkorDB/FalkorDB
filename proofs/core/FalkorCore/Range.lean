@@ -1,17 +1,17 @@
 import FalkorCore.Int64
 
 /-!
-# Lazy `UNWIND range(..)`: `RangeIter` after #2899 (`graph/src/runtime/eval.rs:112-133`)
+# Lazy `UNWIND range(..)`: `RangeIter` (`graph/src/runtime/eval.rs`)
 
-One model of what `functions_str_list` (eager `range`, `math.rs:251`) and `expr_semantics`
-(`eval_iter_expr`, `RangeIter::next`) each used to carry. `eval_iter_expr` (`eval.rs:1227-1270`)
+One model of what `functions_str_list` (eager `range`, `math.rs`) and `expr_semantics`
+(`eval_iter_expr`, `RangeIter::next`) each carried. `eval_iter_expr` (`eval.rs`)
 builds `RangeIter { current: start, step, remaining: length }` with the signed `step` and
 `length = |end - start| / |step| + 1` (`rangeLen`, computed in `i128`, so exact). `next` yields
 `current`, decrements `remaining` and advances `current += step` only while `remaining > 0`.
 
 | here | there |
 | --- | --- |
-| `rangeLen`     | the `length` of `eval_iter_expr` (`eval.rs:1252-1263`) and of eager `range` (`math.rs:251-308`), when they get that far (see `rangeLen`) |
+| `rangeLen`     | the `length` of `eval_iter_expr` (`eval.rs`) and of eager `range` (`math.rs`), when they get that far (see `rangeLen`) |
 | `rangeList`    | the elements `start + k*step`, `k < n` (`(start..=end).step_by(step)`) |
 | `rangeIter`    | `RangeIter::next`, debug build (checked `+=`) |
 | `rangeIterRel` | `RangeIter::next`, release build (wrapping `+=`) |
@@ -19,9 +19,9 @@ builds `RangeIter { current: start, step, remaining: length }` with the signed `
 namespace FalkorCore
 
 /-- `length` as `eval_iter_expr` computes it (in `i128`/`u128`, so exactly), **for the arguments that reach
-that computation**: `step ≠ 0` (a zero step is an error, `eval.rs:1245`), a compatible direction (not
-`start > end` with `step > 0`, nor `start < end` with `step < 0`: those yield no rows, `:1249`), and a length of at
-most `u32::MAX` (a longer one is the error `Range too large`, `:1261-1263`). Outside those conditions the Rust
+that computation**: `step ≠ 0` (a zero step is an error, `eval.rs`), a compatible direction (not
+`start > end` with `step > 0`, nor `start < end` with `step < 0`: those yield no rows), and a length of at
+most `u32::MAX` (a longer one is the error `Range too large`). Outside those conditions the Rust
 returns no rows or an error where `rangeLen` still returns a positive count: this is the formula, not the
 iterator's result. -/
 def rangeLen (a e s : Int) : Nat := (e - a).natAbs / s.natAbs + 1
@@ -35,7 +35,7 @@ theorem rangeLen_eq_cases (a e s : Int) :
 def rangeList (a s : Int) (n : Nat) : List Int :=
   (List.range n).map fun (k : Nat) => a + (k : Int) * s
 
-/-- `RangeIter::next` after #2899, debug build (checked `+=`): `remaining` counts the elements
+/-- `RangeIter::next`, debug build (checked `+=`): `remaining` counts the elements
 still due and `current` advances only while another one is. -/
 def rangeIter (step : Int) : Nat → Int → Except String (List Int)
   | 0, _ => .ok []
