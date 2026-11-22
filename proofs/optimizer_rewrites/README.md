@@ -65,7 +65,7 @@ Several passes collapse an edge, a bound edge or a variable-length path when nob
 
 - **Per operator, yes.** `refsNew_complete` proves the oracle reports every read of every IR variant, for plans the planner builds; `refsNew_sound` proves it reports only variables the operator reads or binds (a binder's own variable only keeps a flag on).
 - **For fusion, yes.** Fusion checks the whole plan (`anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound`).
-- **For the three `reduce_*` passes, no.** They walk ancestors only, so a reader in a sibling subtree is missed: `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3 (`main_misses_call_sibling`). The oracle also ignores `sibling_edges` (`refsNew_misses_sibling_edges`).
+- **For the three `reduce_*` passes, yes, up to `sibling_edges`.** Since #2918 they use `variable_read_outside`: the ancestors and every branch that receives the traverse's rows (the `CALL {}` body, the right side of an OPTIONAL MATCH or pattern-predicate Apply, a pattern comprehension, a `FOREACH` body), skipping `Union`/`CartesianProduct`/hash-join siblings and nested `Union` branches that bind the variable themselves (`variableReadOutside_iff`, `_sound`, `_complete`, `call_sibling_read_seen`). A `FOREACH` loop variable is no longer a read (`refsNew_foreach_loop_var_not_read`). The oracle still ignores `sibling_edges` (`refsNew_misses_sibling_edges`).
 
 **7. Do the remaining passes keep the result?**
 
@@ -114,7 +114,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | 3 (W2-rewrites-2) | `id_gt_neg_empty`, `id_le_neg_all` | `id(n) > -1` → 0 rows (C: 5); `id(n) <= -1` returns every node on both (#2266) | **Open** |
 | 4 (W2-rewrites-2) | `id_eq_null_errors` | `id(n) = null`, `= 1.0`, `> 1.5` → "Node ID must be an integer" (C: 0 rows) | **Open** |
 | 5 (W2-rewrites-3) | `hash_join_drops_row` | The hash join drops Int/Float pairs near 2⁵³: 2 rows where C gives 4 | **Open** |
-| 7 | `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | **Open** (PR #2918 not merged) |
+| 7 | `refsNew_misses_sibling_edges` | An edge read only by a sibling traverse's uniqueness check is collapsed (W2-traverse-1) | **Open** |
 | #2556 | `bug2556_filter_below_binding`, `bug2556_t_seeded`, `bug2556_plan` (property `KeepsFiltersBound`) | `… WITH collect(x) AS fs UNWIND fs AS f MATCH (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}), (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)`: `select_scan_node` picks `t` as the best endpoint, seeds it into `initial_bound` although the outer `Unwind` child is kept and no scan for `t` is built, and places `t.id = 100` after the first hop, before `t` is bound. Rust 0, C 3 (the issue's query: a type error). Not `push_filters_down` (`bug2556_push_not_cause`); `bug2556_fixed` gives the C plan | **Open** |
 
 Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`).
@@ -131,8 +131,8 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | `AndOf.lean` | `ExprIR::and_of`: splicing an AND into an AND keeps the runtime value |
 | `Helpers.lean` | Syntactic helpers: parameters, variable references, count extraction, fusion preconditions, Project/Aggregate outputs |
 | `Passes.lean` | Fusion, optional fusion, the id seek, `reduce_count`, `reorder_labels`, hash join, push-down routing and the exclusion list |
-| `References.lean` | The "is this variable read?" oracle (`refsNew`) and the PR #2918 walk |
-| `References2.lean` | The tree walks: ancestors only for the `reduce_*` passes, whole plan for fusion |
+| `References.lean` | The "is this variable read?" oracle (`refsNew`) |
+| `References2.lean` | The tree walks: `variable_read_outside` for the `reduce_*` passes (#2918), whole plan for fusion |
 | `Sequence.lean` | `optimize` sequencing, the tree rebuilds (`rebuild_with_hash_joins`), edge-filter absorption |
 | `CallBoundary.lean` | Push-down across the `CALL {}` entry projection (namespace `Pr2845`): the Case-2 walk stops at a two-child `Optional` (#3281) |
 | `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
@@ -142,11 +142,11 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 80 function rows:
+`COVERAGE.tsv` has 85 function rows:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 38 |
+| PROVEN | 43 |
 | NOT COVERED | 42 |
 
 - **PROVEN:** every production function in the optimizer files this project owns. The five planner helpers in `optimizer/mod.rs` added by the var-length anchor change (#2558: `collect_expr_scoped_variables`, `collect_single_variable_conjuncts`, `walk`, `endpoint_scan_score`, `walk_scans_to_endpoint`) are proven in `planner_build` (`Anchor.lean`), next to the `plan_match` model that uses them.
@@ -154,7 +154,6 @@ The project has no Lake dependencies.
 
 ## Open PRs touching these files
 
-- #2918: `variable_read_outside` for the three `reduce_*` passes (its per-operator oracle is superseded by `references.rs`): modelled as `readOutside` (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
 - #3092: `collect_subtree_variables` stops at Project/Aggregate (their outputs only) instead of `get_variables` of the whole subtree, the same direction as the Apply-left routing of `branch_visible_variables`; `mem_subtreeIds` describes origin/main.
 - #3100: exports `ir_references_variable` for the planner's CP-correlation check (planner bug 2); no change to the oracle itself.
 - #3054: `reduce_expand_into` removes a collapsed (no longer emitted) edge from its siblings' `sibling_edges` uniqueness lists (`forget_sibling_edge`); the emit-flag decision (`refsMain`) is unchanged.

@@ -8,7 +8,8 @@ one per-operator oracle, `optimizer/references.rs`.
 
 Theorems: `iqLoop_iff` (the stack loop = "some operand mentions v", at any And/Or depth),
 `refsNew_complete` (under `PlanInv`, every read is seen), `refsNew_sound` (only reads or
-bound variables are reported), `refsPR_complete`, `refsNew_sees_*`; open:
+bound variables are reported), `refsPR_complete`, `refsNew_sees_*`,
+`refsNew_foreach_loop_var_not_read` (#2918); open:
 `refsNew_misses_sibling_edges` (W2-traverse-1). The tree walks are in References2.lean.
 -/
 import FalkorOptimizer.Basic
@@ -139,7 +140,7 @@ def reads : IR → List Var
 
 /-- Variables the oracle also reports although the operator *binds* them. -/
 def binds : IR → List Var
-  | .unwind _ x | .forEach _ x => [x]
+  | .unwind _ x => [x]
   | .aggregate _ _ _ ps => ps.map Prod.snd
   | .condVarLenTraverse _ _ pv => pv.toList
   | _ => []
@@ -309,7 +310,10 @@ def refsNew (ir : IR) (v : Var) : Bool :=
   | .aggregate _ ks as ps => ks.any (fun e => exprRefs e.2 v) || as.any (fun e => exprRefs e.2 v) ||
       ps.any (fun c => c.1 == v || c.2 == v)
   | .pathBuilder ps => ps.any (mem v)
-  | .unwind e x | .forEach e x => exprRefs e v || x == v
+  | .unwind e x => exprRefs e v || x == v
+  /- Since #2918 the FOREACH loop variable is not reported: it is bound only into the body's
+  own environment, and `FOREACH (r IN [1] | …)` may reuse an outer edge's name. -/
+  | .forEach e _ => exprRefs e v
   | .delete es | .remove es => es.any (exprRefs · v)
   | .set items => setItemsRefs items v
   | .merge na ra oc om => qgRefs na ra v || setItemsRefs oc v || setItemsRefs om v
@@ -365,7 +369,7 @@ theorem refsNew_complete (ir : IR) (v : Var) (hinv : PlanInv ir) (h : v ∈ read
     | skip
 
 /-- …and **sound up to bound variables**: whatever it reports is read, or is a variable the
-operator binds (UNWIND/FOREACH's own variable, an Aggregate's output, a CVLT's path
+operator binds (UNWIND's own variable, an Aggregate's output, a CVLT's path
 variable) — which only ever keeps a flag on. -/
 theorem refsNew_sound (ir : IR) (v : Var) (h : refsNew ir v = true) : v ∈ reads ir ∨ v ∈ binds ir := by
   cases ir <;> simp only [refsNew, Bool.or_eq_true, List.any_eq_true, exprRefs_iff, beq_iff_eq,
@@ -473,5 +477,9 @@ theorem refsPR_complete (ir : IR) (v : Var) (h : v ∈ reads ir) : refsPR ir v =
 theorem refsNew_sees_unwind : refsNew (.unwind [r] xV) r = true := by decide
 theorem refsNew_sees_create : refsNew (.create [[r]] []) r = true := by decide
 theorem refsNew_sees_foreach : refsNew (.forEach [r] xV) r = true := by decide
+
+/-- #2918: `FOREACH (r IN [1] | CREATE (:Q))` after `MATCH (a)-[r]->(b)` — the loop variable,
+which shares the outer edge's name, is not a read of the edge. -/
+theorem refsNew_foreach_loop_var_not_read : refsNew (.forEach [] r) r = false := by decide
 
 end Falkor.Opt.Refs
