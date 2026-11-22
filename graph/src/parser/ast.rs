@@ -569,7 +569,7 @@ pub struct NestedPlanRef<TVar> {
 }
 
 /// Quantifier types for list predicates (all, any, none, single).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QuantifierType {
     All,
     Any,
