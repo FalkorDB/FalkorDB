@@ -113,3 +113,4 @@ graph/src/effects/announce.rs	SchemaBaseline::of	39	PROVEN	Format.baselineOf: ba
 graph/src/effects/payload.rs	take_effects_buffer	25	PROVEN	Format.takeEffectsBuffer: takeEffectsBuffer_spec
 graph/src/effects/error.rs	LocalName::fmt	460	PROVEN	Format.localName: localName_none, localName_some
 graph/src/effects/v3/value.rs	Value::decode_value	197	NOT COVERED	(#3610): not modelled yet
+graph/src/effects/v3/value.rs	EffectDecode::decode	148	NOT COVERED	(#3610): not modelled yet (v3 legacy one-i64 duration layout)
