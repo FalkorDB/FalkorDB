@@ -85,11 +85,7 @@ impl<T> Drop for Vector<T> {
 /// the matrix's values. Their codec ([`Encode`]/[`Decode`] below) carries the
 /// real type by name, so nothing is converted; the marker only keeps the Rust
 /// side from claiming a type the vector does not have.
-#[allow(
-    clippy::empty_enums,
-    reason = "a type-level marker that is never constructed; `!` is not stable"
-)]
-pub enum Untyped {}
+pub type Untyped = !;
 
 impl From<GrB_Vector> for Vector<Untyped> {
     fn from(v: GrB_Vector) -> Self {

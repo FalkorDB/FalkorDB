@@ -583,6 +583,8 @@ impl<T> Decode<19> for Matrix<T> {
 
             // Create matrix and load from container
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            // `GrB_BOOL` is a placeholder: `GxB_load_Matrix_from_Container` revises the
+            // matrix's type to that of the container's `x` vector.
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, 0, 0);
             if info != GrB_Info::GrB_SUCCESS {
                 return Err(format!("GrB_Matrix_new failed: {info:?}"));
