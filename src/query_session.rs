@@ -220,6 +220,27 @@ impl QuerySession {
         }
     }
 
+    /// Enter **writer** mode for a write that began as a reader and keeps losing
+    /// its version to other writers: it takes the GIL and the write lock first and
+    /// holds them for the whole query, so nothing can commit under it. It waits for
+    /// the lock the way [`Self::upgrade_to_write`] does ([`acquire_write`]: off the
+    /// main thread the GIL is given back between slices), and runs the checks
+    /// escalation runs under the same GIL hold, since the write may have waited a
+    /// long time since it was admitted.
+    ///
+    /// # Errors
+    ///
+    /// The refusal [`Self::upgrade_to_write`] would give: the graph was removed, or
+    /// this instance may no longer originate the write.
+    pub fn begin_writer_checked(
+        graph: &Arc<RwLock<ThreadedGraph>>,
+        facts: WriteFacts,
+    ) -> Result<Self, WriteAbort> {
+        let session = Self::begin_with(graph, facts);
+        session.escalate()?;
+        Ok(session)
+    }
+
     /// The facts this session was begun with, to begin another for the same
     /// write.
     pub const fn facts(&self) -> WriteFacts {

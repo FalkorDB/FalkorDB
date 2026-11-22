@@ -1,4 +1,5 @@
 use crate::dispatch::must_run_inline;
+use crate::graph_core::{MAX_STALE_RETRIES, SLOW_STALE_RUN};
 use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
@@ -21,6 +22,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::ptr::null_mut;
 use std::sync::Arc;
+use std::time::Instant;
 use valkey_module::{
     Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
 };
@@ -985,13 +987,30 @@ pub fn graph_bulk_insert(
             // when this block ends — before the client is unblocked below.
             // A loop only to run the insert again if an inline writer commits while
             // phase 1 builds (see the escalation below); every other path breaks.
+            //
+            // The retry is bounded, like `execute_query_write`'s: after a few stale
+            // builds, or one that took long, the insert runs as a writer from the
+            // start — the GIL and write lock held for the whole build, as in C — so
+            // a steady stream of inline writes cannot starve it.
+            let mut stale_runs = 0;
+            let mut as_writer = false;
             let result: Result<(), String> = 'phase: loop {
-                let session = QuerySession::begin_with(&graph, facts);
-                // Phase 1: build the new version as a reader, GIL-free, into a private
-                // fork. Forking takes nothing, so an inline writer is never refused
-                // because this insert is building; phase 2's escalation checks whether
-                // one committed meanwhile. Every early exit below drops the fork with
-                // the session — there is nothing else to release.
+                let attempt_start = Instant::now();
+                let session = if as_writer {
+                    match QuerySession::begin_writer_checked(&graph, facts) {
+                        Ok(session) => session,
+                        Err(e) => break 'phase Err(e.to_string()),
+                    }
+                } else {
+                    QuerySession::begin_with(&graph, facts)
+                };
+                // Phase 1: build the new version into a private fork. As a reader (every
+                // run but an escalated one) that is GIL-free, and forking takes nothing,
+                // so an inline writer is never refused because this insert is building;
+                // phase 2's escalation checks whether one committed meanwhile. An
+                // escalated run is already a writer and builds under the GIL and the
+                // write lock, so there is nothing to check. Every early exit below drops
+                // the fork with the session — there is nothing else to release.
                 let mut fork = session.write_version();
                 let mut docs = IndexDocs::default();
                 let tokens: Vec<&[u8]> = token_data.iter().map(std::vec::Vec::as_slice).collect();
@@ -1014,6 +1033,9 @@ pub fn graph_bulk_insert(
                     // An inline writer committed while phase 1 built: nothing was
                     // published, so build again on top of its version.
                     if session.is_stale() {
+                        stale_runs += 1;
+                        as_writer = stale_runs >= MAX_STALE_RETRIES
+                            || attempt_start.elapsed() >= SLOW_STALE_RUN;
                         continue 'phase;
                     }
                     break 'phase Err(e.to_string());
@@ -1035,9 +1057,10 @@ pub fn graph_bulk_insert(
                 // cannot resolve against its own snapshot.
                 //
                 // Every token has succeeded by now, so nothing reaches the index for an
-                // insert that later rolls back. The cost is a GIL hold proportional to
-                // the number of indexed rows — paid only when the graph actually has an
-                // index, since `docs` is otherwise empty.
+                // insert that later rolls back. For a run that built as a reader the cost
+                // is a GIL hold proportional to the number of indexed rows — paid only
+                // when the graph actually has an index, since `docs` is otherwise empty;
+                // an escalated run holds the GIL for the whole build anyway.
                 //
                 // Validated before publishing, as on the inline path above and
                 // for the same reason: RediSearch is not MVCC, so a document
