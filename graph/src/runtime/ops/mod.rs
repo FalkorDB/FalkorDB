@@ -224,7 +224,11 @@ impl Parallel<'_> {
                 continue;
             };
             let bound_raw = u64::from(bound);
-            if g.endpoints_for_edge(bound_raw) != Some((src, dst)) {
+            // A binding deleted by this query is not among `live` below, so it
+            // must not count against it either.
+            if (self.deleted)(RelationshipId::from(bound_raw))
+                || g.endpoints_for_edge(bound_raw) != Some((src, dst))
+            {
                 continue;
             }
             let bound_tidx = if bound == edge_id {
