@@ -2,16 +2,16 @@ import FalkorNativeIndex.IntF
 set_option linter.unusedSimpArgs false
 
 /-!
-# Values, `encode_numeric` (`encode.rs:29-41`) and the evaluator's comparison
+# Values, `encode_numeric` (`encode.rs`) and the evaluator's comparison
 
 `Value` keeps every variant the index path can meet with its real payload: `Int` (an `i64`), `Float`
 (the `f64` bits, so `-0.0` and every NaN payload are distinct values), `Bool`, the four temporals
 (raw `i64`), `String`, `Null`, and `other` for the variants no numeric index ever stores or queries
 (List/Map/Path/Node/Relationship/Point/VecF32, `tag` = their `order()`).
 
-`compareValue` is `CompareValue::compare_value` (`value.rs:1227-1270`) on these variants;
-`cmpPred` is the Filter's `<`/`>`/`<=`/`>=` (`eval.rs:446-462`) and `=` (`all_equals`,
-`eval.rs:1665-1686`). A row survives a Filter iff the predicate is `some true`.
+`compareValue` is `CompareValue::compare_value` (`value.rs`) on these variants;
+`cmpPred` is the Filter's `<`/`>`/`<=`/`>=` (`eval.rs`) and `=` (`all_equals`,
+`eval.rs`). A row survives a Filter iff the predicate is `some true`.
 -/
 
 namespace NI
@@ -26,6 +26,9 @@ inductive Value where
   | datetime (i : Int)
   | time (i : Int)
   | duration (i : Int)
+  /-- `List`: only what the index reads of an element is kept, its `encode_numeric` (`for_each_stored_key`
+      is `items.iter().filter_map(encode_numeric)`): `some key`, or `none` for an element no tree holds. -/
+  | list (elems : List (Option Nat))
   | other (tag : Nat)
 deriving DecidableEq, Repr
 
@@ -35,13 +38,13 @@ def Value.WF : Value → Prop
   | .float x => x < W
   | _ => True
 
-/-- `OrderedEnum::order` (`value.rs:1181-1199`). -/
+/-- `OrderedEnum::order` (`value.rs`). -/
 def Value.order : Value → Nat
   | .null => 2 ^ 15 | .bool _ => 2 ^ 12 | .int _ => 2 ^ 13 | .float _ => 2 ^ 14
   | .string _ => 2 ^ 11 | .datetime _ => 2 ^ 6 | .date _ => 2 ^ 7 | .time _ => 2 ^ 8
-  | .duration _ => 2 ^ 10 | .other t => t
+  | .duration _ => 2 ^ 10 | .list _ => 2 ^ 3 | .other t => t
 
-/-- `DisjointOrNull` (`value.rs:1204`). -/
+/-- `DisjointOrNull` (`value.rs`). -/
 inductive Flag where
   | disjoint | comparedNull | nan | none
 deriving DecidableEq, Repr
@@ -50,13 +53,13 @@ def cmpI (a b : Int) : Ordering := if a < b then .lt else if a = b then .eq else
 def cmpB (a b : Bool) : Ordering := cmpN a.toNat b.toNat
 def cmpS (a b : String) : Ordering := compare a b
 
-/-- `compare_floats` (`value.rs:1875-1885`). -/
+/-- `compare_floats` (`value.rs`). -/
 def compareFloats (a b : Nat) : Ordering × Flag :=
   match fpcmp a b with
   | some o => (o, .none)
   | none => (.lt, .nan)
 
-/-- `compare_value` (`value.rs:1227-1270`), arm by arm. -/
+/-- `compare_value` (`value.rs`), arm by arm. -/
 def compareValue : Value → Value → Ordering × Flag
   | .bool a, .bool b => (cmpB a b, .none)
   | .float a, .float b => compareFloats a b
@@ -77,7 +80,7 @@ inductive Op where
   | lt | gt | le | ge | eq
 deriving DecidableEq, Repr
 
-/-- The Filter's value for `d <op> b` (`eval.rs:446-462`; `=` is `all_equals`, `eval.rs:1665`).
+/-- The Filter's value for `d <op> b` (`eval.rs`; `=` is `all_equals`, `eval.rs`).
     `none` is `Value::Null`. -/
 def cmpPred (op : Op) (d b : Value) : Option Bool :=
   match op with
@@ -97,7 +100,7 @@ def cmpPred (op : Op) (d b : Value) : Option Bool :=
       | .le => o != .gt
       | _ => o != .lt)
 
-/-- `encode_numeric` (`encode.rs:29-41`): `Int` → `i as f64`, `Float` as is, `Bool` → `0.0`/`1.0`
+/-- `encode_numeric` (`encode.rs`): `Int` → `i as f64`, `Float` as is, `Bool` → `0.0`/`1.0`
     (`f64::from(b)`: `+1.0` is `0x3FF0_0000_0000_0000`); everything else, and NaN, is `None`. -/
 def encodeNumeric : Value → Option Nat
   | v =>
@@ -115,7 +118,7 @@ def keyPred (op : Op) (k kb : Nat) : Bool :=
   match op with
   | .lt => k < kb | .gt => kb < k | .le => k ≤ kb | .ge => kb ≤ k | .eq => k == kb
 
-/-- `int_loses_f64_precision` (`index/mod.rs:1371-1373`): `i.unsigned_abs() & 0x7FF0…0 != 0`. -/
+/-- `int_loses_f64_precision` (`index/mod.rs`): `i.unsigned_abs() & 0x7FF0…0 != 0`. -/
 def intLosesPrecision (i : Int) : Bool := i.natAbs &&& 0x7FF0000000000000 != 0
 
 /-! ## The precision guard -/
@@ -153,13 +156,13 @@ theorem pos_i64 (i : Int) (hi : I64 i) :
   refine ⟨fun h => by subst h; decide, fun h => ?_, fun h => ?_⟩
   · have hne : i ≠ 0 := by omega
     have := magBits_finite i.toNat (by omega) (by omega)
-    simp only [i64ToF64, hne, h, if_false, if_true, pos, INF, SIGN] at *
-    rw [if_pos (by omega)]
+    simp only [i64ToF64, hne, h, ite_false, ite_true, pos, INF, SIGN] at *
+    rw [ite_eq_left (by omega)]
   · have hne : i ≠ 0 := by omega
     have hn : ¬ 0 < i := by omega
     have := magBits_finite (-i).toNat (by omega) (by omega)
-    simp only [i64ToF64, hne, hn, if_false, pos, INF, SIGN, W] at *
-    rw [if_neg (by omega)]
+    simp only [i64ToF64, hne, hn, ite_false, pos, INF, SIGN, W] at *
+    rw [ite_eq_right (by omega)]
     omega
 
 theorem cmpI_congr {a b : Int} {c d : Nat} (h1 : a < b ↔ c < d) (h2 : a = b ↔ c = d) :
@@ -174,7 +177,7 @@ theorem cmpI_congr {a b : Int} {c d : Nat} (h1 : a < b ↔ c < d) (h2 : a = b �
       simp [x, y, z, w]
 
 /-- **The guard is sound for `|j| < 2^52`**: against such a bound, the exact `i64` order
-    (`a.cmp(b)`, `value.rs:1260`) equals the order of the `f64` images, whatever the data `i`. -/
+    (`a.cmp(b)`, `value.rs`) equals the order of the `f64` images, whatever the data `i`. -/
 theorem int_cmp_agrees (i j : Int) (hi : I64 i) (hj : I64 j) (hjs : j.natAbs < 2 ^ 52) :
     cmpI i j = cmpN (pos (i64ToF64 i)) (pos (i64ToF64 j)) := by
   have Pi := pos_i64 i hi

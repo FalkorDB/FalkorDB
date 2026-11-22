@@ -5,25 +5,13 @@ The logic of these functions lives in the JavaScript they `eval` into the
 context; that JavaScript is modelled here. Installing properties on the global
 object is QuickJS (AXIOMATISED: `globals.set(k, v)` makes `k` resolve to `v`).
 
-| here | there |
-| --- | --- |
-| `vRegister`              | `globalThis.__falkor_register` of `setup_validate_globals` :62-72 |
-| `validateGlobals`        | `setup_validate_globals` :45-95 (installs `falkor.register`, a no-op `falkor.log`, then `setup_graph_global` :94, since #3079) |
-| `collectNames`           | `collect_validate_names` :98-108 (`names_arr.get::<String>`) |
-| `rRegister`              | `__falkor_register` of `setup_runtime_globals` :121-127 |
-| `runtimeGlobals`         | `setup_runtime_globals` :111-158 (`falkor.{register,log}`, then `setup_graph_global` :157) |
-| `graphGlobal`            | `setup_graph_global` :163-197 (`graph.{traverse,getNodeById,iterateNodes,iterateEdges}`; shared since #3079) |
-| `collectFuncs`           | `collect_runtime_funcs` :200-227 |
-| `logString`              | `js_value_to_log_string` :229-255 |
-
 Results: validation rejects non-functions and exact duplicate names and
 returns names in registration order (`validate_names_nodup`); at runtime a
 library `L` (non-empty name) registering the same sequence stores exactly the
 keys `L.name` — the qualified names `UdfRepo::load` computes
 (`runtime_keys_eq_qualified`). An empty library name breaks that agreement
-(`empty_lib_name_mismatch`). Since #3079 (`006428fc5`, issue #3077) both contexts
-install the same `graph` global (`graph_global_in_both`, `validate_runtime_same_graph`);
-before it the validation context had none.
+(`empty_lib_name_mismatch`). Both contexts
+install the same `graph` global (`graph_global_in_both`, `validate_runtime_same_graph`).
 -/
 namespace AlgoUdf.UdfGlobals
 
@@ -52,7 +40,7 @@ def vRun : List String → List (String × JVal) → Except String (List String)
 def graphGlobal : List String :=
   ["graph.traverse", "graph.getNodeById", "graph.iterateNodes", "graph.iterateEdges"]
 
-/-- Globals installed by `setup_validate_globals`: `falkor.*`, then `setup_graph_global` (#3079). -/
+/-- Globals installed by `setup_validate_globals`: `falkor.*`, then `setup_graph_global`. -/
 def validateGlobals : List String := ["falkor.register", "falkor.log"] ++ graphGlobal
 
 /-- `collect_validate_names`: every element must convert to a String. -/
@@ -112,7 +100,7 @@ def rRun (lib : String) : List (String × Nat) → List (String × JVal) → Exc
 /-- Globals installed by `setup_runtime_globals`: `falkor.*`, then `setup_graph_global`. -/
 def runtimeGlobals : List String := ["falkor.register", "falkor.log"] ++ graphGlobal
 
-/-- **#3079: the validation and runtime contexts define the same globals**, so a
+/-- **The validation and runtime contexts define the same globals**, so a
 library that validates is one whose top level sees what it will see at runtime. -/
 theorem validate_runtime_same_globals : validateGlobals = runtimeGlobals := rfl
 
@@ -142,7 +130,7 @@ theorem rRun_keys (lib : String) (hl : lib ≠ "") :
       · unfold rRegister at hr
         split at hr
         · cases hr
-          simp only [hl, if_false, List.map_append, List.mem_append, List.mem_map, List.mem_filter,
+          simp only [hl, ite_false, List.map_append, List.mem_append, List.mem_map, List.mem_filter,
             List.map_cons, List.map_nil, List.mem_singleton] at h1
           rcases h1 with ⟨q, ⟨hq, _⟩, rfl⟩ | h1
           · exact Or.inl (List.mem_map_of_mem hq)

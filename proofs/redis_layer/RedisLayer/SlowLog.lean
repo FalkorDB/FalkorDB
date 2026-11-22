@@ -1,22 +1,9 @@
 /-!
 # `src/slow_log.rs` — per-graph slow log
 
-| here | there (`origin/main`) |
-| --- | --- |
-| `boundary`, `slice`   | `str::is_char_boundary`, `str` indexing `&s[..n]` (panics off a char boundary) |
-| `floorCB`             | `str::floor_char_boundary` (std contract: the greatest `x ≤ index` with `is_char_boundary(x)`; `len` when `index ≥ len`) |
-| `prefix`              | `prefix` `:32` (`&s[..s.floor_char_boundary(STR_MAX_LEN)]`) |
-| `truncate`            | `truncate` `:38` |
-| `hashInput`           | `entry_hash` `:51` (hashes `prefix(query)`, `:58`) |
-| `E`, `add`, `reset`   | `SlowLog::new` `:81`, `add` `:97`, `reset` `:171` |
-| `replyLen`            | `SlowLog::reply` `:181` (5-element rows) |
-| `MinCache`, `SlowestKept`, `add` | #3442 (fixed by #3456): the `min_latency` cache (`:77`, `:114`, `:162-169`); main's update arm `:121-139` falls through to the recompute (b84473a7f returned early there) |
-
-**Fixed crash** (W4-redis-1, fixed by #3234 `3660a5fc3`): `entry_hash` and `truncate`
-used to cut the query at *byte* 2048, so a query longer than 2048 bytes with a multi-byte
-character across byte 2048 panicked (counterexamples removed in bbee75955; the last
-revision that has them is 17ccc5412). Both now
-go through `prefix`, which backs up to `floor_char_boundary(2048)`:
+**Truncation** (W4-redis-1): `entry_hash` and `truncate`
+go through `prefix`, which backs up to `floor_char_boundary(2048)` (a cut at byte 2048
+inside a multi-byte character would panic):
 `hashInput_total`/`truncate_total` (never panics, for every byte string),
 `prefix_le`/`prefix_isPrefix`/`prefix_boundary`/`prefix_longest` (the cut is the longest
 char-boundary prefix of at most 2048 bytes), `prefix_short` (≤ 2048 bytes: untouched).
@@ -47,7 +34,7 @@ def floorB (s : Bytes) : Nat → Nat
 def floorCB (s : Bytes) (n : Nat) : Nat :=
   if n ≥ s.length then s.length else floorB s n
 
-/-- `prefix` (`:32`): `&s[..s.floor_char_boundary(STR_MAX_LEN)]`. -/
+/-- `prefix`: `&s[..s.floor_char_boundary(STR_MAX_LEN)]`. -/
 def strPrefix (s : Bytes) : Option Bytes := slice s (floorCB s STR_MAX_LEN)
 
 /-- `entry_hash`'s hashed slice (`prefix(query)`). -/
@@ -137,7 +124,7 @@ theorem prefix_longest (s p : Bytes) (h : strPrefix s = some p) (m : Nat)
 
 /-- Queries of at most 2048 bytes are hashed / kept whole. -/
 theorem prefix_short (q : Bytes) (h : q.length ≤ STR_MAX_LEN) : strPrefix q = some q := by
-  rw [prefix_eq]; unfold floorCB; rw [if_pos h]; simp
+  rw [prefix_eq]; unfold floorCB; rw [ite_eq_left h]; simp
 
 theorem hashInput_short (q : Bytes) (h : q.length ≤ STR_MAX_LEN) : hashInput q = some q :=
   prefix_short q h
@@ -149,13 +136,13 @@ theorem truncate_short (s : Bytes) (h : s.length ≤ STR_MAX_LEN) : truncate s =
 theorem prefix_ascii (q : Bytes) (h : ∀ b ∈ q, b < 0x80) (hl : STR_MAX_LEN < q.length) :
     strPrefix q = some (q.take STR_MAX_LEN) := by
   have hl' : 2048 < q.length := hl
-  rw [prefix_eq]; unfold floorCB; rw [if_neg (by omega)]
+  rw [prefix_eq]; unfold floorCB; rw [ite_eq_right (by omega)]
   have hg : q.getD 2048 0 = q[2048]'hl' := by
     rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hl']; rfl
   have hb := h _ (List.getElem_mem hl')
   have : boundary q 2048 = true := by
     simp only [boundary, cont, hg]; simp; omega
-  rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, if_pos this]
+  rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, ite_eq_left this]
 
 /-- 2047 ASCII bytes then `é` (`C3 A9`): byte 2048 is a continuation byte. -/
 def bad : Bytes := List.replicate 2047 97 ++ [0xC3, 0xA9]
@@ -167,21 +154,16 @@ theorem getD_bad (p t : Bytes) (hp : p.length = 2047) : (p ++ 0xC3 :: 0xA9 :: t)
 theorem hashInput_bad (p t : Bytes) (hp : p.length = 2047) :
     hashInput (p ++ 0xC3 :: 0xA9 :: t) = some p := by
   unfold hashInput; rw [prefix_eq]; unfold floorCB
-  rw [if_neg (by simp [STR_MAX_LEN, hp]; omega)]
+  rw [ite_eq_right (by simp [STR_MAX_LEN, hp]; omega)]
   have hb : boundary (p ++ 0xC3 :: 0xA9 :: t) (2047 + 1) = false := by
     unfold boundary; rw [show 2047 + 1 = 2048 from rfl, getD_bad p t hp]; simp [cont, hp]; omega
   have hb' : boundary (p ++ 0xC3 :: 0xA9 :: t) (2046 + 1) = true := by
     unfold boundary
     rw [List.getD_eq_getElem?_getD, List.getElem?_append_right (by omega), hp]
     simp [cont]
-  rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, if_neg (by simp [hb]),
-    show (2047 : Nat) = 2046 + 1 from rfl, floorB_succ, if_pos hb']
+  rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, ite_eq_right (by simp [hb]),
+    show (2047 : Nat) = 2046 + 1 from rfl, floorB_succ, ite_eq_left hb']
   simp [hp]
-
-/-! ## Historical: before #3234 (`3660a5fc3`)
-
-The old code sliced at byte 2048 directly (`query[..min(len, 2048)]` and
-`s[..STR_MAX_LEN]`). Kept as the record of W4-redis-1. -/
 
 /-! ## Entries -/
 
@@ -209,7 +191,7 @@ def argmin : List E → Nat
     | [] => 0
     | _ => let j := argmin es; if (es.getD j e).latency < e.latency then j + 1 else 0
 
-/-- `SlowLog::add` on origin/main (5e475e6c9, #3456; `slow_log.rs:97-175`): an update that
+/-- `SlowLog::add` on origin/main (5e475e6c9, #3456; `slow_log.rs`): an update that
 does not raise the latency returns unchanged; one that does raises it and falls through to
 the `min_latency` recompute, like every other arm. -/
 def add (s : SL) (h lat : Nat) : SL :=
@@ -284,7 +266,7 @@ theorem add_nodup (s : SL) (h lat : Nat) (hs : (s.entries.map (·.hash)).Nodup)
       have := List.find?_eq_none.1 hn x hx
       simp at this
     simp only; split
-    · simp [List.nodup_append, hs, hnot]
+    · simp [List.nodup_append, hs]
       intro x hx e; exact hnot (List.mem_map.2 ⟨x, hx, e⟩)
     · exact nodup_map_set _ _ _ _ hs (fun x hx e => hnot (List.mem_map.2 ⟨x, hx, e⟩))
 
@@ -318,7 +300,7 @@ theorem add_repeat_max (s : SL) (h lat : Nat) (e : E) (he : e ∈ s.entries) (he
   have hxe : x = e := nodup_map_inj_E _ hnd x e hxm he (by rw [hxh, heh])
   subst hxe
   unfold add
-  rw [if_neg (by omega), if_neg hc, hx]
+  rw [ite_eq_right (by omega), ite_eq_right hc, hx]
   simp only
   split
   · rename_i hle
@@ -336,15 +318,11 @@ theorem reset_empty (s : SL) : (reset s).entries = [] := rfl
 def replyLen (s : SL) : List Nat := s.entries.map fun _ => 5
 theorem replyLen_len (s : SL) : (replyLen s).length = s.entries.length := by simp [replyLen]
 
-/-! ## Gap closed: #3442 (fixed by #3456) — the update arm left `min_latency` stale
+/-! ## The update arm keeps `min_latency` fresh
 
-On b84473a7f `SlowLog::add`'s existing-entry branch (`src/slow_log.rs:120-132`) raised the
-entry's latency and `return`ed before the recompute at `:172-177`, leaving `minLat` alone. Once the cached minimum was below the real
-one, the pre-check at `:114` admitted a query faster than every retained entry and the
-replace path evicted the real fastest entry. C (`SlowLog_Add`) sends the update path through
-`cleanup`, which recomputes the minimum. #3456 makes the branch fall through to the recompute
-(`:120-139`, `:178`); `add` above is that main code. The refutations were removed in bbee75955 (the last revision that has them is
-17ccc5412); `add_minCache` and `fixed3442_trace` prove the fix on main. -/
+`SlowLog::add`'s existing-entry branch (`src/slow_log.rs`) raises the entry's latency and
+falls through to the recompute, as C (`SlowLog_Add`) does through `cleanup`; `add` above
+is that code. `add_minCache` and `fixed3442_trace` state the property. -/
 
 /-- Cache invariant: a non-empty log caches the minimum of its latencies. -/
 def MinCache (s : SL) : Prop := s.entries ≠ [] → s.minLat = minOf s.entries

@@ -7,56 +7,56 @@ Constructors, accessors, `Hash` and `Index`, on the same list model as
 
 | here | there |
 | --- | --- |
-| `emptyM`        | `Default::default` (ordermap.rs:33) |
-| `withCapacity`  | `OrderMap::with_capacity` (ordermap.rs:42) |
-| `fromUniqueKeys`| `OrderMap::from_unique_keys` (ordermap.rs:66) |
-| `reserveExact`  | `OrderMap::reserve_exact` (ordermap.rs:78) |
-| `iterM`         | `OrderMap::iter` (ordermap.rs:123) |
-| `lenM`          | `OrderMap::len` (ordermap.rs:128) |
-| `isEmptyM`      | `OrderMap::is_empty` (ordermap.rs:133) |
-| `keysM`         | `OrderMap::keys` (ordermap.rs:137) |
-| `valuesM`       | `OrderMap::values` (ordermap.rs:141) |
-| `getStr`        | `OrderMap::get_str` (ordermap.rs:149) |
-| `hashInput`     | `Hash for OrderMap` (ordermap.rs:167) — `len`, then pairs `sorted_by_key` |
-| `indexM`        | `Index<&K>` (ordermap.rs:209) — `.error` = the `expect` panic |
-| `intoIterM`     | `IntoIterator` (ordermap.rs:221) |
+| `emptyM`        | `Default::default` (ordermap.rs) |
+| `withCapacity`  | `OrderMap::with_capacity` (ordermap.rs) |
+| `fromUniqueKeys`| `OrderMap::from_unique_keys` (ordermap.rs) |
+| `reserveExact`  | `OrderMap::reserve_exact` (ordermap.rs) |
+| `iterM`         | `OrderMap::iter` (ordermap.rs) |
+| `lenM`          | `OrderMap::len` (ordermap.rs) |
+| `isEmptyM`      | `OrderMap::is_empty` (ordermap.rs) |
+| `keysM`         | `OrderMap::keys` (ordermap.rs) |
+| `valuesM`       | `OrderMap::values` (ordermap.rs) |
+| `getStr`        | `OrderMap::get_str` (ordermap.rs) |
+| `hashInput`     | `Hash for OrderMap` (ordermap.rs) — `len`, then pairs `sorted_by_key` |
+| `indexM`        | `Index<&K>` (ordermap.rs) — `.error` = the `expect` panic |
+| `intoIterM`     | `IntoIterator` (ordermap.rs) |
 -/
 set_option linter.unusedSectionVars false
 namespace FalkorRuntimeDS.OrderMapModel
 
 variable {K V : Type}
 
-/-- ordermap.rs:33 -/
+/-- ordermap.rs -/
 def emptyM : List (K × V) := []
-/-- ordermap.rs:42 — `ThinVec::with_capacity`: no entries. -/
+/-- ordermap.rs — `ThinVec::with_capacity`: no entries. -/
 def withCapacity (_capacity : Nat) : List (K × V) := []
-/-- ordermap.rs:78 — allocation only. -/
+/-- ordermap.rs — allocation only. -/
 def reserveExact (l : List (K × V)) (_additional : Nat) : List (K × V) := l
-/-- ordermap.rs:123 -/
+/-- ordermap.rs -/
 def iterM (l : List (K × V)) : List (K × V) := l.map (fun p => (p.1, p.2))
-/-- ordermap.rs:128 -/
+/-- ordermap.rs -/
 def lenM (l : List (K × V)) : Nat := l.length
-/-- ordermap.rs:133 -/
+/-- ordermap.rs -/
 def isEmptyM (l : List (K × V)) : Bool := l.isEmpty
-/-- ordermap.rs:137 -/
+/-- ordermap.rs -/
 def keysM (l : List (K × V)) : List K := l.map (fun p => p.1)
-/-- ordermap.rs:141 -/
+/-- ordermap.rs -/
 def valuesM (l : List (K × V)) : List V := l.map (fun p => p.2)
-/-- ordermap.rs:221 -/
+/-- ordermap.rs -/
 def intoIterM (l : List (K × V)) : List (K × V) := l
 
-/-- ordermap.rs:149 — scan comparing `k.as_ref() == key_str`. -/
+/-- ordermap.rs — scan comparing `k.as_ref() == key_str`. -/
 def getStr : List (String × V) → String → Option V
   | [], _ => none
   | (k, v) :: t, s => if k == s then some v else getStr t s
 
-/-- ordermap.rs:209 — `self.get(index).expect("no entry found for key")`. -/
+/-- ordermap.rs — `self.get(index).expect("no entry found for key")`. -/
 def indexM [BEq K] (l : List (K × V)) (k : K) : Except String V :=
   match getL l k with
   | some v => .ok v
   | none => .error "no entry found for key"
 
-/-- ordermap.rs:167 — what is fed to the hasher: `len`, then every pair in key
+/-- ordermap.rs — what is fed to the hasher: `len`, then every pair in key
 order (`sorted_by_key` is a stable sort; `mergeSort` is stable too, and for
 unique keys any sort gives the same list, see `hash_consistent`). -/
 def hashInput (le : K → K → Bool) (l : List (K × V)) : Nat × List (K × V) :=

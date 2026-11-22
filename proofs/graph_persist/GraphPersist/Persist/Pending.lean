@@ -1,5 +1,5 @@
 import GraphPersist.Persist.Fold
-/-! # `DECODE_STATE` for one multi-key graph (decoder/mod.rs:69-174)
+/-! # `DECODE_STATE` for one multi-key graph (decoder/mod.rs)
 
 After a key's reads, `rdb_load_graph`'s `key_count > 1` branch: record a virtual key
 (`key_name != hdr.graph_name`), create the pending graph on the first key
@@ -37,8 +37,8 @@ def finalizePG (pg : PG M Tn Nm Ix Cn) : Restore M Tn Nm Ix Cn :=
   ⟨pg.hdr.name, pg.hdr.nodeCount, pg.hdr.edgeCount, pg.acc, pg.sch.labels, pg.sch.types, pg.sch.attrs,
     pg.sch.indexes, pg.sch.constraints⟩
 
-/-- One key of a multi-key graph, after its reads (`:69-173`). Returns the new state and
-`is_virtual` (`:171-173`). -/
+/-- One key of a multi-key graph, after its reads. Returns the new state and
+`is_virtual`. -/
 def stepKey (C : Codecs M Tn Nm Ix Cn) (ds : DS M Tn Nm Ix Cn) (kn : Nm) (h : Hdr Nm) (s : Sch Nm Ix Cn)
     (prs : List (PR M Tn)) : DS M Tn Nm Ix Cn × Bool :=
   let mk := if kn ≠ h.name then ds.metaKeys ++ [kn] else ds.metaKeys
@@ -60,7 +60,7 @@ def metaOf (h : Hdr Nm) (items : List (Nm × List (PR M Tn))) : List Nm :=
 
 theorem metaOf_cons (h : Hdr Nm) (kn : Nm) (prs : List (PR M Tn)) (rest : List (Nm × List (PR M Tn))) :
     metaOf h ((kn, prs) :: rest) = (if kn ≠ h.name then [kn] else []) ++ metaOf h rest := by
-  by_cases hk : kn = h.name <;> simp [metaOf, List.filter_cons, hk]
+  by_cases hk : kn = h.name <;> simp [metaOf, hk]
 
 /-- Later keys: each decrements, the last finalizes. -/
 theorem run_later (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) :
@@ -76,7 +76,7 @@ theorem run_later (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) :
     simp only [List.length_cons] at hr
     by_cases hz : rest = []
     · subst hz
-      simp only [hr, Nat.add_sub_cancel, ite_true, List.flatMap_cons, List.flatMap_nil, List.append_nil,
+      simp only [hr, Nat.add_sub_cancel, List.flatMap_cons, List.flatMap_nil, List.append_nil,
         runKeys, metaOf_cons]
       congr 1
       by_cases hk : kn = h.name <;> simp [hk, metaOf]

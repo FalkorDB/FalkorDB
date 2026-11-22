@@ -5,21 +5,21 @@ import Columnar.Column
 
 | here | there |
 | --- | --- |
-| `Batch` | `Batch` (`runtime/batch.rs:805-826`); `vo` = `value_only` BitSet as a predicate |
-| `Batch.column` | `Batch::column` (`batch.rs:1213-1223`) |
-| `Batch.active` | `Batch::active_indices` / `ActiveIndices::next` (`batch.rs:1204`, `:1458-1479`) |
-| `Batch.activeLen` | `Batch::active_len` (`batch.rs:1178`) |
-| `Batch.isBound` | `Batch::is_bound_at` (`batch.rs:1336-1343`) — column-level |
-| `Batch.valueAt` | `Batch::value_at` (`batch.rs:1264-1273`) |
-| `Batch.originRow` | `Batch::origin_row` (`batch.rs:1298-1303`) |
-| `Batch.gather` | `Batch::gather` (`batch.rs:897-918`); `none` = panic |
-| `Batch.compact` | `Batch::into_compacted` (`batch.rs:884-892`) |
-| `Batch.setSel` | `Batch::set_selection` (`batch.rs:1195-1200`) |
-| `filterSel`, `takeSel`, `dropSel` | selection producers: `filter.rs:69-112`, `limit.rs:78-84`, `skip.rs:72-78`, `runtime.rs:529-534` |
+| `Batch` | `Batch` (`runtime/batch.rs`); `vo` = `value_only` BitSet as a predicate |
+| `Batch.column` | `Batch::column` (`batch.rs`) |
+| `Batch.active` | `Batch::active_indices` / `ActiveIndices::next` (`batch.rs`) |
+| `Batch.activeLen` | `Batch::active_len` (`batch.rs`) |
+| `Batch.isBound` | `Batch::is_bound_at` (`batch.rs`) — column-level |
+| `Batch.valueAt` | `Batch::value_at` (`batch.rs`) |
+| `Batch.originRow` | `Batch::origin_row` (`batch.rs`) |
+| `Batch.gather` | `Batch::gather` (`batch.rs`); `none` = panic |
+| `Batch.compact` | `Batch::into_compacted` (`batch.rs`) |
+| `Batch.setSel` | `Batch::set_selection` (`batch.rs`) |
+| `filterSel`, `takeSel`, `dropSel` | selection producers: `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs` |
 | `toU16` | the `as u16` cast every producer applies |
-| `Batch.setColumn` | `Batch::set_column` (`batch.rs:1226-1256`) |
-| `Batch.writeColumn`, `scatter` | `Batch::write_column` (`batch.rs:1347-1367`) |
-| `Batch.WF` | the invariants the code relies on (documented at `batch.rs:806-818`, debug-asserted at `:1241`, `:1323`) |
+| `Batch.setColumn` | `Batch::set_column` (`batch.rs`) |
+| `Batch.writeColumn`, `scatter` | `Batch::write_column` (`batch.rs`) |
+| `Batch.WF` | the invariants the code relies on (documented at `batch.rs`, debug-asserted ) |
 -/
 
 namespace Columnar
@@ -97,7 +97,7 @@ def originRow (b : Batch F) (r : Nat) : Nat :=
   | some o => o[r]?.getD 0
 
 /-- Invariants: every bound column has `len` rows; the selection lists
-in-range, strictly increasing (sorted, deduplicated — `batch.rs:808`) rows;
+in-range, strictly increasing (sorted, deduplicated — `batch.rs`) rows;
 the origin sidecar has `len` entries. -/
 structure WF (b : Batch F) : Prop where
   cols_len : ∀ c ∈ b.cols, c.isUnbound = false → c.len = b.len
@@ -215,8 +215,8 @@ theorem gather_originRow {b b' : Batch F} {idx : List Nat} (h : b.gather idx = s
         · rename_i hany
           simp [originRow, ho, hget]
         · rename_i hany
-          simp only [originRow, ho, Option.getD_none]
-          simp only [List.any_eq_true, ne_eq, decide_eq_true_eq, not_exists, not_and,
+          simp only [originRow, ho]
+          simp only [not_exists, not_and,
             Decidable.not_not] at hany
           cases hx : o[idx[k]]? with
           | none => rfl
@@ -422,7 +422,7 @@ theorem column_setColumn [FloatModel F] (b : Batch F) (id : Nat) (c : Column F) 
   · subst hj
     rw [List.getElem?_set_self (by simp; omega)]
     simp
-  · rw [if_neg hj, List.getElem?_set_ne (Ne.symm hj)]
+  · rw [ite_eq_right hj, List.getElem?_set_ne (Ne.symm hj)]
     rcases Nat.lt_or_ge j b.cols.length with hl | hl
     · rw [List.getElem?_append_left hl]
     · rw [List.getElem?_append_right hl, List.getElem?_eq_none hl]
@@ -446,7 +446,7 @@ theorem setColumn_obs [FloatModel F] (b : Batch F) (id : Nat) (c : Column F) (r 
       (if c.isUnbound then none else c.toValues.bind (·[r]?), !c.isUnbound) ∧
     ∀ j, j ≠ id → (b.setColumn id c).obs j r = b.obs j r := by
   constructor
-  · simp only [obs, valueAt, isBound, column_setColumn, if_true, normCol_isUnbound]
+  · simp only [obs, valueAt, isBound, column_setColumn, ite_true, normCol_isUnbound]
     cases hu : c.isUnbound
     · obtain ⟨vs, hv⟩ := Column.toValues_isSome hu
       have hv' := normCol_toValues c
@@ -455,11 +455,11 @@ theorem setColumn_obs [FloatModel F] (b : Batch F) (id : Nat) (c : Column F) (r 
     · simp [setColumn]
   · intro j hj
     have hc := column_setColumn b id c j
-    rw [if_neg hj] at hc
+    rw [ite_eq_right hj] at hc
     have hv : (b.setColumn id c).vo j = b.vo j := by simp [setColumn, hj]
     simp only [obs, valueAt, isBound, hc, hv]
 
-/-- Scatter `(value, row)` pairs into `l` (`full[row] = val`, `batch.rs:1359-1361`). -/
+/-- Scatter `(value, row)` pairs into `l` (`full[row] = val`, `batch.rs`). -/
 def scatter {α : Type} : List α → List (α × Nat) → List α
   | l, [] => l
   | l, (v, r) :: ps => scatter (l.set r v) ps
@@ -488,7 +488,7 @@ theorem scatter_getElem?_mem {α : Type} :
     · apply scatter_getElem?_mem _ ps hnd.2 _ p hp
       intro q hq; rw [List.length_set]; exact hlt q (by simp [hq])
 
-/-- `write_column` (`batch.rs:1347-1367`). -/
+/-- `write_column` (`batch.rs`). -/
 def writeColumn [FloatModel F] (b : Batch F) (id : Nat) (vals : List (V F)) : Batch F :=
   match b.sel with
   | some s =>
