@@ -2,14 +2,6 @@ import PlannerBuild.Ast
 /-
 # parser/ast.rs: connected components and the `Display` impls
 
-| here | there |
-| --- | --- |
-| `dfs`, `components` | `QueryGraph::dfs` ast.rs:844-883, `connected_components` ast.rs:823-842 |
-| `exprFmt` | `Display for ExprIR` ast.rs:330-412 |
-| `quantFmt` | `Display for QuantifierType` ast.rs:424-436 |
-| `setItemFmt` | `Display for SetItem` ast.rs:896-923 |
-| `clauseFmt` | `Display for QueryIR` ast.rs:1041-1146 |
-
 `dfs` keeps ONE visited set of ids for nodes, relationships and paths (ids
 only, as `HashSet<u32>`); the fuel bounds the recursion (each call marks a new node).
 -/

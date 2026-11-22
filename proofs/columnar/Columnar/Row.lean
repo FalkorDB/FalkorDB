@@ -5,16 +5,16 @@ import Columnar.Batch
 
 | here | there |
 | --- | --- |
-| `Row` | `Row` (`runtime/row.rs:65-71`); `bound` = the `BitSet` as a predicate (BitSet itself: proofs/runtime_ds) |
-| `Row.insert` | `Row::insert_by_id` / `insert` (`row.rs:104-124`) |
-| `Row.get` | `Row::get_by_id` / `get` / `RowView::value_at` (`row.rs:128-143`, `:231-236`) |
-| `Row.unbind` | `Row::unbind_by_id` / `unbind` (`row.rs:160-165`, `:222-227`) |
-| `Row.take` | `Row::take` (`row.rs:147-157`) |
-| `Row.cloneWith` | `Row::clone_with` (`row.rs:187-195`) |
+| `Row` | `Row` (`runtime/row.rs`); `bound` = the `BitSet` as a predicate (BitSet itself: proofs/runtime_ds) |
+| `Row.insert` | `Row::insert_by_id` / `insert` (`row.rs`) |
+| `Row.get` | `Row::get_by_id` / `get` / `RowView::value_at` (`row.rs`) |
+| `Row.unbind` | `Row::unbind_by_id` / `unbind` (`row.rs`) |
+| `Row.take` | `Row::take` (`row.rs`) |
+| `Row.cloneWith` | `Row::clone_with` (`row.rs`) |
 | `fillRow` | the loop of `Row::merge` (`BatchRow::to_owned_row` no longer shares it: it pushes one slot per column, `pushSlots`) |
-| `Row.merge` | `Row::merge` (`row.rs:209-218`) |
-| `viewAt` | `BatchRow::value_at` (`batch.rs:1422-1435`) |
-| `toOwned`, `pushSlots`, `Row.pushSlot` | `BatchRow::to_owned_row` (`batch.rs:1437-1457`), `Row::push_slot` (`row.rs:224`) |
+| `Row.merge` | `Row::merge` (`row.rs`) |
+| `viewAt` | `BatchRow::value_at` (`batch.rs`) |
+| `toOwned`, `pushSlots`, `Row.pushSlot` | `BatchRow::to_owned_row` (`batch.rs`), `Row::push_slot` (`row.rs`) |
 -/
 
 namespace Columnar
@@ -54,25 +54,25 @@ theorem pad_getElem? (l : List (V F)) (id j : Nat) :
     (if l.length ≤ id then l ++ List.replicate (id + 1 - l.length) V.null else l)[j]? =
       if j < l.length then l[j]? else if j ≤ id then some .null else none := by
   by_cases h : l.length ≤ id
-  · rw [if_pos h]
+  · rw [ite_eq_left h]
     by_cases hj : j < l.length
-    · rw [if_pos hj, List.getElem?_append_left hj]
-    · rw [if_neg hj, List.getElem?_append_right (by omega), List.getElem?_replicate]
+    · rw [ite_eq_left hj, List.getElem?_append_left hj]
+    · rw [ite_eq_right hj, List.getElem?_append_right (by omega), List.getElem?_replicate]
       by_cases hj2 : j ≤ id
-      · rw [if_pos hj2, if_pos (by omega)]
-      · rw [if_neg hj2, if_neg (by omega)]
-  · rw [if_neg h]
+      · rw [ite_eq_left hj2, ite_eq_left (by omega)]
+      · rw [ite_eq_right hj2, ite_eq_right (by omega)]
+  · rw [ite_eq_right h]
     by_cases hj : j < l.length
-    · rw [if_pos hj]
-    · rw [if_neg hj, if_neg (by omega)]
+    · rw [ite_eq_left hj]
+    · rw [ite_eq_right hj, ite_eq_right (by omega)]
       exact List.getElem?_eq_none (by omega)
 
 theorem pad_length (l : List (V F)) (id : Nat) :
     (if l.length ≤ id then l ++ List.replicate (id + 1 - l.length) V.null else l).length =
       max l.length (id + 1) := by
   by_cases h : l.length ≤ id
-  · rw [if_pos h]; simp; omega
-  · rw [if_neg h]; omega
+  · rw [ite_eq_left h]; simp; omega
+  · rw [ite_eq_right h]; omega
 
 theorem insert_length (r : Row F) (id : Nat) (v : V F) :
     (r.insert id v).values.length = max r.values.length (id + 1) := by
@@ -85,14 +85,14 @@ theorem insert_get (r : Row F) (id : Nat) (v : V F) (j : Nat) :
   simp only [insert, get]
   by_cases h : j = id
   · subst h
-    rw [if_pos rfl, List.getElem?_set_self (by rw [pad_length]; omega)]
-  · rw [if_neg h, List.getElem?_set_ne (Ne.symm h), pad_getElem?]
+    rw [ite_eq_left rfl, List.getElem?_set_self (by rw [pad_length]; omega)]
+  · rw [ite_eq_right h, List.getElem?_set_ne (Ne.symm h), pad_getElem?]
     by_cases hj : j < r.values.length
-    · rw [if_pos hj, if_pos hj]
-    · rw [if_neg hj, if_neg hj]
+    · rw [ite_eq_left hj, ite_eq_left hj]
+    · rw [ite_eq_right hj, ite_eq_right hj]
       by_cases h2 : j < id
-      · rw [if_pos (by omega), if_pos h2]
-      · rw [if_neg (by omega), if_neg h2]
+      · rw [ite_eq_left (by omega), ite_eq_left h2]
+      · rw [ite_eq_right (by omega), ite_eq_right h2]
 
 theorem insert_bound (r : Row F) (id : Nat) (v : V F) (k : Nat) :
     (r.insert id v).bound k = if k = id then true else r.bound k := rfl
@@ -123,6 +123,155 @@ theorem take_spec (r : Row F) (id : Nat) (v : V F) (h : r.get id = some v) :
     · exact h'
     · simp [List.getElem?_eq_none h'] at h
   simp [List.getElem?_set_self hl]
+
+
+/-! ### The remaining `Row` accessors (`row.rs`)
+
+`bound` is the `BitSet` as a predicate (its `test`/`set`/`clear`/`is_empty` are proved in
+proofs/runtime_ds), so a bit read is `r.bound id` and `BitSet::is_empty` is "no `id` is set". -/
+
+/-- `Row::from_raw` (row.rs): the given slots and bound set, `origin_row = 0`. `Row::new`
+(row.rs) and `Row::with_capacity` (row.rs) are `fromRaw [] (fun _ => false)`: the
+capacity is an allocation hint with no semantic content. -/
+def fromRaw (values : List (V F)) (bound : Nat → Bool) : Row F := ⟨values, bound, 0⟩
+
+theorem fromRaw_fields (values : List (V F)) (bound : Nat → Bool) :
+    (fromRaw values bound).values = values ∧ (fromRaw values bound).bound = bound ∧
+      (fromRaw values bound).origin = 0 := ⟨rfl, rfl, rfl⟩
+
+/-- `Row::new` / `Row::with_capacity` build `Row.empty`: no slots, nothing bound, origin 0. -/
+theorem new_spec : (empty : Row F).values = [] ∧ (∀ k, (empty : Row F).bound k = false) ∧
+    (empty : Row F).origin = 0 := ⟨rfl, fun _ => rfl, rfl⟩
+
+theorem fromRaw_nil : fromRaw ([] : List (V F)) (fun _ => false) = empty := rfl
+
+/-- `Row::len` (row.rs). -/
+def len (r : Row F) : Nat := r.values.length
+
+/-- `Row::is_empty` (row.rs). -/
+def isEmpty (r : Row F) : Bool := r.values.isEmpty
+
+theorem len_isEmpty (r : Row F) : r.isEmpty = true ↔ r.len = 0 := by
+  simp [isEmpty, len, List.isEmpty_iff_length_eq_zero]
+
+theorem len_empty : (empty : Row F).len = 0 := rfl
+
+/-- `Row::get_by_id` / `Row::get` (row.rs) read `values.get(id)`: `Row.get`, `none`
+exactly when `id` is out of range. `RowView::value_at` for `Row` (row.rs) is the same read,
+cloned. -/
+theorem get_eq_none_iff (r : Row F) (id : Nat) : r.get id = none ↔ r.len ≤ id := by
+  simp [get, len, List.getElem?_eq_none_iff]
+
+theorem get_isSome_iff (r : Row F) (id : Nat) : (r.get id).isSome = true ↔ id < r.len := by
+  constructor
+  · intro h
+    cases hv : r.values[id]? with
+    | none => simp [get, hv] at h
+    | some v => exact (List.getElem?_eq_some_iff.mp hv).1
+  · intro h
+    simp [get, len, List.getElem?_eq_getElem h]
+
+/-- `Row::is_bound_by_id` (row.rs): the bound bit. -/
+def isBoundById (r : Row F) (id : Nat) : Bool := r.bound id
+
+theorem isBoundById_insert (r : Row F) (id : Nat) (v : V F) (k : Nat) :
+    (r.insert id v).isBoundById k = (k == id || r.isBoundById k) := by
+  simp only [isBoundById, insert]
+  by_cases h : k = id <;> simp [h]
+
+theorem isBoundById_unbind (r : Row F) (id : Nat) (k : Nat) :
+    (r.unbind id).isBoundById k = (k != id && r.isBoundById k) := by
+  simp only [isBoundById, unbind]
+  by_cases h : k = id <;> simp [h]
+
+/-- `Row::has_bindings` (row.rs): `!bound.is_empty()`, i.e. some bit is set. -/
+def hasBindings (r : Row F) : Prop := ∃ k, r.bound k = true
+
+theorem hasBindings_empty : ¬ (empty : Row F).hasBindings := by
+  rintro ⟨k, hk⟩; exact absurd hk (by simp [empty])
+
+theorem hasBindings_insert (r : Row F) (id : Nat) (v : V F) : (r.insert id v).hasBindings :=
+  ⟨id, by simp [insert]⟩
+
+theorem hasBindings_of_bound (r : Row F) (id : Nat) (h : r.bound id = true) : r.hasBindings :=
+  ⟨id, h⟩
+
+/-- `RowView::to_owned_row` for `Row` (row.rs) is `self.clone()`: the same row. -/
+def toOwnedRow (r : Row F) : Row F := r
+
+theorem toOwnedRow_get (r : Row F) (id : Nat) : r.toOwnedRow.get id = r.get id := rfl
+
+theorem filterMap_range_congr {α : Type} (f g : Nat → Option α) (n : Nat)
+    (h : ∀ k, k < n → f k = g k) : (List.range n).filterMap f = (List.range n).filterMap g := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+    simp only [List.range_succ, List.filterMap_append]
+    rw [ih (fun k hk => h k (by omega))]
+    have := h n (by omega)
+    simp [List.filterMap, this]
+
+/-- The `(key, value)` pairs `impl Hash for Row` (row.rs) feeds the hasher, in order: every
+slot except an unbound `Null` (padding / a deliberately unbound slot). -/
+def hashItems (r : Row F) : List (Nat × V F) :=
+  (List.range r.values.length).filterMap fun k =>
+    match r.values[k]? with
+    | none => none
+    | some v => if v.isNull && !r.bound k then none else some (k, v)
+
+theorem mem_hashItems (r : Row F) (k : Nat) (v : V F) :
+    (k, v) ∈ r.hashItems ↔ r.values[k]? = some v ∧ ¬ (v.isNull = true ∧ r.bound k = false) := by
+  simp only [hashItems, List.mem_filterMap, List.mem_range, Prod.mk.injEq]
+  constructor
+  · rintro ⟨a, ha, h⟩
+    cases hv : r.values[a]? with
+    | none => simp [hv] at h
+    | some w =>
+      simp only [hv] at h
+      by_cases hc : (w.isNull && !r.bound a) = true
+      · simp [hc] at h
+      · simp only [hc] at h; simp at h
+        obtain ⟨rfl, rfl⟩ := h
+        refine ⟨hv, ?_⟩
+        intro ⟨h1, h2⟩; apply hc; simp [h1, h2]
+  · rintro ⟨hv, hn⟩
+    have hk : k < r.values.length := (List.getElem?_eq_some_iff.mp hv).1
+    refine ⟨k, hk, ?_⟩
+    simp only [hv]
+    have : ¬ ((v.isNull && !r.bound k) = true) := by
+      intro h; apply hn; simp at h; simpa using h
+    simp [this]
+
+/-- An unbound `Null` slot is skipped: it contributes nothing to the hash. -/
+theorem hashItems_skips_unbound_null (r : Row F) (k : Nat) (hn : r.get k = some .null)
+    (hb : r.bound k = false) : (k, (V.null : V F)) ∉ r.hashItems := by
+  rw [mem_hashItems]; intro ⟨_, h⟩; exact h ⟨rfl, hb⟩
+
+/-- A bound slot (even a bound `Null`) and every non-`Null` slot is hashed. -/
+theorem hashItems_bound (r : Row F) (k : Nat) (v : V F) (hv : r.get k = some v)
+    (hb : r.bound k = true) : (k, v) ∈ r.hashItems := by
+  rw [mem_hashItems]; exact ⟨hv, fun ⟨_, h⟩ => by simp [hb] at h⟩
+
+/-- Appending an unbound `Null` slot does not change the hashed items (so `Row`s that differ
+only by trailing unbound padding hash alike). -/
+theorem hashItems_pad (r : Row F) (hb : r.bound r.values.length = false) :
+    ({ r with values := r.values ++ [V.null] } : Row F).hashItems = r.hashItems := by
+  unfold hashItems
+  simp only [List.length_append, List.length_singleton, List.range_succ,
+    List.filterMap_append]
+  have hmap : (List.range r.values.length).filterMap (fun k =>
+      match (r.values ++ [(V.null : V F)])[k]? with
+      | none => none
+      | some v => if v.isNull && !r.bound k then none else some (k, v)) =
+      (List.range r.values.length).filterMap (fun k =>
+      match r.values[k]? with
+      | none => none
+      | some v => if v.isNull && !r.bound k then none else some (k, v)) := by
+    apply filterMap_range_congr
+    intro k hk'
+    simp [List.getElem?_append_left hk']
+  rw [hmap]
+  simp [List.getElem?_append_right, hb, V.isNull]
 
 end Row
 
@@ -201,7 +350,7 @@ theorem fillRow_spec (f : Nat → Option (V F × Bool)) (acc : Row F) :
             rcases Nat.lt_or_ge j (fillRow n f acc).values.length with h' | h'
             · exact h'
             · simp [Row.get, List.getElem?_eq_none h'] at g
-          rw [if_neg hjn, if_pos hjl, if_neg hjn]
+          rw [ite_eq_right hjn, ite_eq_left hjl, ite_eq_right hjn]
           exact ⟨g, bnd⟩
         · have : j = n := by omega
           subst this
@@ -210,15 +359,15 @@ theorem fillRow_spec (f : Nat → Option (V F × Bool)) (acc : Row F) :
           simp
       · have hjn : j ≠ n := by intro e; subst e; rw [hn (by omega)] at hfn; simp at hfn
         obtain ⟨u1, u2, u3⟩ := ihu (fun hj => hn (by omega))
-        rw [fillStep_get, fillStep_bound, insert_get, if_neg hjn, if_neg hjn]
+        rw [fillStep_get, fillStep_bound, insert_get, ite_eq_right hjn, ite_eq_right hjn]
         refine ⟨fun hl => ?_, ?_, u3⟩
-        · rw [if_pos (by omega), u1 hl]
+        · rw [ite_eq_left (by omega), u1 hl]
         · by_cases hl : j < (fillRow n f acc).values.length
-          · rw [if_pos hl]; exact u2
-          · rw [if_neg hl]
+          · rw [ite_eq_left hl]; exact u2
+          · rw [ite_eq_right hl]
             by_cases h2 : j < n
-            · rw [if_pos h2]; right; rfl
-            · rw [if_neg h2]
+            · rw [ite_eq_left h2]; right; rfl
+            · rw [ite_eq_right h2]
               have : (fillRow n f acc).get j = none := by
                 simp [Row.get, List.getElem?_eq_none (Nat.le_of_not_lt hl)]
               rw [← this]; exact u2
@@ -239,7 +388,7 @@ theorem merge_spec (a b : Row F) (j : Nat) :
   obtain ⟨-, hf, hu⟩ := fillRow_spec (fun id => if b.bound id then some ((b.get id).getD .null, true) else none)
     a b.values.length j
   refine ⟨fun ⟨hl, hb⟩ => ?_, fun hn hl => ?_⟩
-  · have hf' := hf ((b.get j).getD .null) true hl (by rw [if_pos hb])
+  · have hf' := hf ((b.get j).getD .null) true hl (by rw [ite_eq_left hb])
     refine ⟨?_, hf'.2⟩
     unfold merge
     rw [hf'.1]
@@ -266,13 +415,13 @@ def viewAt (b : Batch F) (r i : Nat) : Option (V F) :=
   | some v => some v
   | none => if i < b.cols.length then some .null else none
 
-/-- `Row::push_slot` (`row.rs:224`, #3059): append one slot after the last, holding `v`, with the
+/-- `Row::push_slot` (`row.rs`): append one slot after the last, holding `v`, with the
 bound bit set to `b` (a `false` leaves the bitmap alone). -/
 def Row.pushSlot (r : Row F) (v : V F) (b : Bool) : Row F :=
   { r with values := r.values ++ [v],
            bound := if b then (fun j => if j = r.values.length then true else r.bound j) else r.bound }
 
-/-- The slot `to_owned_row` pushes for column `id` (`batch.rs:1442-1449`): an `Unbound` column
+/-- The slot `to_owned_row` pushes for column `id` (`batch.rs`): an `Unbound` column
 is an unbound `Null`; any other keeps its value, bound unless the column is value-only. -/
 def slotOf (b : Batch F) (r id : Nat) : V F × Bool :=
   if (b.column id).isUnbound then (.null, false)
@@ -302,12 +451,12 @@ theorem pushSlots_spec (b : Batch F) (r : Nat) : ∀ n,
       simp only [Row.get] at hgi ⊢
       simp only [Row.pushSlot, hl]
       by_cases h2 : i < n
-      · rw [List.getElem?_append_left (by omega), hgi, if_pos h2, if_pos (by omega)]
+      · rw [List.getElem?_append_left (by omega), hgi, ite_eq_left h2, ite_eq_left (by omega)]
       · by_cases hi : i = n
         · subst hi
           rw [List.getElem?_append_right (by omega), hl]; simp
         · rw [List.getElem?_append_right (by omega), List.getElem?_eq_none (by simp; omega),
-            if_neg (by omega)]
+            ite_eq_right (by omega)]
     · have hbi := hb i
       have key : (slotOf b r n).2 = true ∨ (slotOf b r n).2 = false := by cases (slotOf b r n).2 <;> simp
       by_cases hi : i = n
@@ -315,12 +464,12 @@ theorem pushSlots_spec (b : Batch F) (r : Nat) : ∀ n,
         have h0 : (pushSlots b r i).bound i = false := by rw [hb i]; simp
         rcases key with hs | hs <;> simp [Row.pushSlot, hs, hl, h0]
       · rcases key with hs | hs
-        · simp only [Row.pushSlot, hs, hl, if_true, if_neg hi]
+        · simp only [Row.pushSlot, hs, hl, ite_true, ite_eq_right hi]
           rw [hbi]
           by_cases h2 : i < n
           · simp [h2, show i < n + 1 by omega]
           · simp [h2, show ¬ i < n + 1 by omega]
-        · simp only [Row.pushSlot, hs, hl, Bool.false_eq_true, if_false]
+        · simp only [Row.pushSlot, hs, hl, Bool.false_eq_true, ite_false]
           rw [hbi]
           by_cases h2 : i < n
           · simp [h2, show i < n + 1 by omega]
@@ -364,7 +513,7 @@ theorem toOwned_bound_slot {b : Batch F} (h : b.WF) {r i : Nat} (hr : r ∈ b.ac
   rw [ho]
   refine ⟨?_, ?_⟩
   · simp only [Row.get] at hg ⊢
-    rw [hg i, if_pos hi]; simp [slotOf, hu, hget, viewAt, hv]
+    rw [hg i, ite_eq_left hi]; simp [slotOf, hu, hget, viewAt, hv]
   · simp only [] at hb ⊢
     rw [hb i]; simp [slotOf, hu, hi]
 
@@ -386,7 +535,7 @@ theorem toOwned_unbound_slot (b : Batch F) (r i : Nat) (hu : (b.column i).isUnbo
     · left; simp [hi]
 
 /-- **The owned snapshot answers `value_at` exactly like the view on every slot**, trailing
-`Unbound` columns included (#3059: `to_owned_row` pushes one slot per column, so an unbound
+`Unbound` columns included (`to_owned_row` pushes one slot per column, so an unbound
 column stays in scope as `Some(Null)` and a slot past the column space is `None`). -/
 theorem toOwned_get_eq_view {b : Batch F} (h : b.WF) {r : Nat} (hr : r ∈ b.active) (i : Nat) :
     (toOwned b r).get i = viewAt b r i := by
@@ -404,7 +553,7 @@ theorem toOwned_get_eq_view {b : Batch F} (h : b.WF) {r : Nat} (hr : r ∈ b.act
 
 /-- The former latent divergence, now closed: for a trailing `Unbound` column the view
 answers `Some(Null)` and so does the owned snapshot (it used to answer `None`, which
-`ExprEval::resolve_var` (`eval.rs:287`) turned into "Variable not found"). -/
+`ExprEval::resolve_var` (`eval.rs`) turned into "Variable not found"). -/
 def trailingEx (F : Type) : Batch F :=
   { len := 1, sel := none, cols := [.ints [1], .unbound, .unbound], origins := none, vo := fun _ => false }
 

@@ -10,7 +10,7 @@ ARG SERVER=redis
 # without editing the Dockerfile. Every Dockerfile that builds a server pins
 # the same versions; build/check-server-pins.sh enforces it in CI.
 ARG REDIS_VERSION=8.10.2
-ARG VALKEY_VERSION=9.1.2
+ARG VALKEY_VERSION=9.2.0
 
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
@@ -223,6 +223,7 @@ LABEL com.falkordb.server.name="${FALKORDB_SERVER}" \
 
 WORKDIR ${FALKORDB_HOME}
 
+COPY LICENSE LICENSE-SSPL LICENSE-AGPL /usr/local/share/licenses/falkordb/
 COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh

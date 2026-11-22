@@ -1,6 +1,6 @@
 import GraphQueries.Attrs
 /-
-# The `IdSpace` contract graph.rs relies on (since #2846)
+# The `IdSpace` contract graph.rs relies on
 
 `IdSpace` (graph/src/graph/id_space.rs) is proved in proofs/id_space, which
 this project does not own. What graph.rs needs from it is stated here as the
@@ -23,7 +23,7 @@ def ins (l : List Nat) (x : Nat) : List Nat := if x ∈ l then l else l ++ [x]
 def union (a b : List Nat) : List Nat := a ++ b.filter (fun x => x ∉ a)
 def diff (a b : List Nat) : List Nat := a.filter (fun x => x ∉ b)
 
-/-- `struct IdSpace` (id_space.rs:164). -/
+/-- `struct IdSpace` (id_space.rs; it also carries `quarantined`, which `reserve` skips and `end_quarantine` clears, proofs/id_space — not part of `IdS`, graph.rs never reads it). -/
 structure IdS where
   live : Nat
   recycled : List Nat
@@ -31,33 +31,33 @@ structure IdS where
   taken : List Nat
 
 namespace IdS
-/-- `bound` (id_space.rs:343): `live + recycled.len()`. -/
+/-- `bound` (id_space.rs): `live + recycled.len()`. -/
 def bound (s : IdS) : Nat := s.live + s.recycled.length
-/-- `max_id` (id_space.rs:353). -/
+/-- `max_id` (id_space.rs). -/
 def maxId (s : IdS) : Nat := if s.live = 0 then 0 else s.bound - 1
-/-- `is_free` (id_space.rs:329). -/
+/-- `is_free` (id_space.rs). -/
 def isFree (s : IdS) (id : Nat) : Bool := decide (id ∈ s.recycled)
-/-- `recycled_count` (id_space.rs:323). -/
+/-- `recycled_count` (id_space.rs). -/
 def recycledCount (s : IdS) : Nat := s.recycled.length
-/-- `restored` (id_space.rs:280): a fresh batch at the restored boundary. -/
+/-- `restored` (id_space.rs): a fresh batch at the restored boundary. -/
 def restored (live : Nat) (recycled : List Nat) : IdS := ⟨live, recycled, live + recycled.length, []⟩
-/-- `new` (id_space.rs:266). -/
+/-- `new` (id_space.rs). -/
 def new : IdS := ⟨0, [], 0, []⟩
-/-- `new_version` (id_space.rs:367). -/
+/-- `new_version` (id_space.rs). -/
 def newVersion (s : IdS) : IdS := restored s.live s.recycled
 end IdS
 
 /-- The mutating half of `IdSpace`; `none` = `Err(IdSpaceError)`. -/
 structure IdSpaceOps where
-  /-- `create` (id_space.rs:582). -/
+  /-- `create` (id_space.rs). -/
   create : IdS → List Nat → Option IdS
-  /-- `release(requested, freed)` (id_space.rs:703). -/
+  /-- `release(requested, freed)` (id_space.rs). -/
   release : IdS → List Nat → List Nat → Option IdS
-  /-- `cancel` (id_space.rs:529). -/
+  /-- `cancel` (id_space.rs). -/
   cancel : IdS → Nat → Option IdS
-  /-- `open_batch` (id_space.rs:447). -/
+  /-- `open_batch` (id_space.rs; it also folds `released ∪ (taken ∩ recycled)` into `quarantined`, which is outside `IdS`). -/
   openBatch : IdS → Option IdS
-  /-- `verify` (id_space.rs:737): `true` = `Ok(())`. -/
+  /-- `verify` (id_space.rs): `true` = `Ok(())`. -/
   verify : IdS → Bool
 
 /-- **Hypothesis** (owned by proofs/id_space): what each mutator does to the
@@ -80,15 +80,15 @@ structure IdSpaceContract (O : IdSpaceOps) : Prop where
   `AlreadyLive`): the in-batch double create is refused. -/
   create_refuses_taken : ∀ s ns n, n ∈ ns → n ∉ s.recycled → n ∈ s.taken →
     O.create s ns = none
-  /-- #2911 (`fe619ac5f`): `nodes.max().filter(|&id| id >= ID_LIMIT)` (id_space.rs:586);
-  `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs:100). Proven in proofs/id_space as
+  /-- `nodes.max().filter(|&id| id >= ID_LIMIT)` (id_space.rs);
+  `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs). Proven in proofs/id_space as
   `create_out_of_range`. -/
   create_refuses_limit : ∀ s ns n, n ∈ ns → 2 ^ 60 - 1 ≤ n → O.create s ns = none
   release_ok : ∀ s req fr s', O.release s req fr = some s' →
     s'.recycled = union s.recycled fr ∧ s'.live = s.live - fr.length
   release_refuses_recycled : ∀ s req fr n, n ∈ req → n ∈ s.recycled →
     O.release s req fr = none
-  /-- `refuse_undeletable` (id_space.rs:638): an id at or above the batch's `entry_bound` that this
+  /-- `refuse_undeletable` (id_space.rs): an id at or above the batch's `entry_bound` that this
   batch did not create (not in `taken`) cannot be released. -/
   release_refuses_undeletable : ∀ s req fr n, n ∈ req → s.entryBound ≤ n → n ∉ s.taken →
     O.release s req fr = none

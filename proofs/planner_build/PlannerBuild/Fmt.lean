@@ -1,11 +1,5 @@
 /-
-# EXPLAIN text (mod.rs:341-536)
-
-| here | there |
-| --- | --- |
-| `FRel`, `typesStr`, `hopsStr`, `fmtVarLen` | `fmt_var_len_rel` mod.rs:347-372 |
-| `fmtRelDir`, `fmtRel` | `fmt_rel_with_labels_dir` mod.rs:379-415, `fmt_rel_with_labels` mod.rs:375-377 |
-| `IRK`, `irName`, `irDetail`, `irFmt` | `impl Display for IR` mod.rs:419-536 |
+# EXPLAIN text (mod.rs)
 
 Strings are built exactly as the `format!` calls do (payload `Display`s are
 parameters: the node/relationship/pattern text is passed in already rendered).
@@ -21,6 +15,8 @@ structure FRel where
   to : String
   toLabels : List String
   bidirectional : Bool
+  /-- `rel.alias.is_unnamed()` (ast.rs, #3303): the relationship has no name. -/
+  unnamed : Bool
 
 def typesStr (r : FRel) : String :=
   if r.types.isEmpty then "" else ":" ++ "|".intercalate r.types
@@ -57,7 +53,7 @@ def fmtNode (alias : String) (labels : List String) : String :=
 def fmtRelDir (r : FRel) (transposed : Bool) : String :=
   let (l, rt) := arrows r.bidirectional transposed
   let toS := fmtNode r.to r.toLabels
-  if r.alias.startsWith "_anon" then "(" ++ r.frm ++ ")" ++ l ++ "-" ++ rt ++ "(" ++ toS ++ ")"
+  if r.unnamed then "(" ++ r.frm ++ ")" ++ l ++ "-" ++ rt ++ "(" ++ toS ++ ")"
   else if r.types.isEmpty then
     "(" ++ r.frm ++ ")" ++ l ++ "-[" ++ r.alias ++ "]-" ++ rt ++ "(" ++ toS ++ ")"
   else "(" ++ r.frm ++ ")" ++ l ++ "-[" ++ r.alias ++ ":" ++ "|".intercalate r.types ++ "]-" ++ rt ++
@@ -71,7 +67,7 @@ theorem arrows_table (b t : Bool) :
     arrows b t = (if b then ("", "") else if t then ("<", "") else ("", ">")) := rfl
 
 /-- Anonymous edges print no bracket at all. -/
-theorem fmtRelDir_anon (r : FRel) (t : Bool) (h : r.alias.startsWith "_anon" = true) :
+theorem fmtRelDir_anon (r : FRel) (t : Bool) (h : r.unnamed = true) :
     fmtRelDir r t = "(" ++ r.frm ++ ")" ++ (arrows r.bidirectional t).1 ++ "-" ++
       (arrows r.bidirectional t).2 ++ "(" ++ fmtNode r.to r.toLabels ++ ")" := by
   simp [fmtRelDir, h]

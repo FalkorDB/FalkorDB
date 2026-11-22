@@ -17,13 +17,13 @@ logical contents: the list of ids in the pair's `me` row (set semantics,
 | --- | --- |
 | `Val`          | the UINT64 forward value: an edge id, or `MULTI_EDGE = u64::MAX` (:300) |
 | `PairSt`       | one pair's `m`/`dp`/`dm` entries (:272-276), `mt` bit (:280), `me` row (:291) |
-| `effV`         | `eff_get` (:442): `dp` wins, else `m` unless `dm` |
-| `edges`        | `get` (:463) — the inline id, or the `me` row |
-| `vacant`/`occupied`/`writeEntry`/`addBatch` | `set_all_from_slices` (:497): read phase (:536-596), write phase (:603-621) |
-| `initPlan`/`planStep`/`writePlan`/`removeBatch` | `remove_all` slow path (:672-806) |
-| `removeFast`   | `remove_all` fast path (:642-670), taken when no `me` row exists anywhere |
-| `foldP`        | `Tensor::flush` fold (:880-931), eWiseAdd `SECOND` so `dp` wins |
-| `countTerms`   | the pair's terms in `edge_count` (:1221-1275) |
+| `effV`         | `eff_get` (:441): `dp` wins, else `m` unless `dm` |
+| `edges`        | `get` (:462) — the inline id, or the `me` row |
+| `vacant`/`occupied`/`writeEntry`/`addBatch` | `set_all_from_slices` (:496): read phase (:535-594), write phase (:601-619) |
+| `initPlan`/`planStep`/`writePlan`/`removeBatch` | `remove_all` slow path (:670-804) |
+| `removeFast`   | `remove_all` fast path (:640-668), taken when no `me` row exists anywhere |
+| `foldP`        | `Tensor::flush` fold (:888-940), eWiseAdd `SECOND` so `dp` wins |
+| `countTerms`   | the pair's terms in `edge_count` (:1230-1284) |
 | `compoundKey`  | `compound_key` (:222); `compoundKeyInv` = `compound_key_inverse` (:241) |
 -/
 
@@ -42,13 +42,13 @@ structure PairSt where
   me : List Nat
 deriving DecidableEq, Repr
 
-/-- `eff_get` (:442). -/
+/-- `eff_get` (:441). -/
 def effV (s : PairSt) : Option Val :=
   match s.dp with
   | some v => some v
   | none => if s.dm then none else s.m
 
-/-- `get` (:463): the pair's edge ids. -/
+/-- `get` (:462): the pair's edge ids. -/
 def edges (s : PairSt) : List Nat :=
   match effV s with
   | some (.id i) => [i]
@@ -82,7 +82,7 @@ structure Entry where
   masked : Option Val
 
 /-- Read phase for the pair's first edge in the batch (`Entry::Vacant`,
-:553-594). Returns the `me` row, the queued entry, and whether the pair is
+:551-592). Returns the `me` row, the queued entry, and whether the pair is
 known multi (`batch` slot = `usize::MAX`). -/
 def vacant (s : PairSt) (i : Nat) : List Nat × Option Entry × Bool :=
   let cur := match s.dp with
@@ -95,13 +95,13 @@ def vacant (s : PairSt) (i : Nat) : List Nat × Option Entry × Bool :=
   | none => (s.me, some ⟨.id i, if s.dm then s.m else none⟩, false)
 
 /-- Read phase for a later edge of the same pair (`Entry::Occupied`,
-:539-552): the first occupied hit promotes the pending inline slot. -/
+:538-550): the first occupied hit promotes the pending inline slot. -/
 def occupied (st : List Nat × Option Entry × Bool) (i : Nat) : List Nat × Option Entry × Bool :=
   match st with
   | (me, some ⟨.id first, msk⟩, false) => (meIns (meIns me first) i, some ⟨.multi, msk⟩, true)
   | (me, e, k) => (meIns me i, e, k)
 
-/-- Write phase (:603-621). -/
+/-- Write phase (:601-619). -/
 def writeEntry (s : PairSt) (me : List Nat) : Option Entry → PairSt
   | none => { s with me := me }
   | some e =>
@@ -125,14 +125,14 @@ inductive Plan where
   | emptied
   | absent
 
-/-- The initial plan, from the pair's effective state (:700-720). -/
+/-- The initial plan, from the pair's effective state (:698-718). -/
 def initPlan (s : PairSt) : Plan :=
   match effV s with
   | some .multi => .multi s.me
   | some (.id i) => .single i false
   | none => .absent
 
-/-- One removal replayed against the plan (:722-763), accumulating the `me`
+/-- One removal replayed against the plan (:720-761), accumulating the `me`
 entries to drop. `ids.len() == 0` is `unreachable!` in Rust. -/
 def planStep (p : Plan × List Nat) (id : Nat) : Plan × List Nat :=
   match p with
@@ -147,7 +147,7 @@ def planStep (p : Plan × List Nat) (id : Nat) : Plan × List Nat :=
 
 def dropMe (me del : List Nat) : List Nat := me.filter (fun x => !(decide (x ∈ del)))
 
-/-- Write phase (:773-805). -/
+/-- Write phase (:771-803). -/
 def writePlan (s : PairSt) (del : List Nat) : Plan → PairSt
   | .emptied =>
     { s with me := dropMe s.me del, dp := none,
@@ -161,7 +161,7 @@ def removeBatch (s : PairSt) (ids : List Nat) : PairSt :=
   let r := ids.foldl planStep (initPlan s, [])
   writePlan s r.2 r.1
 
-/-- Fast path (:642-670): `dm<mask> = mask ∩ m`, `dp &= ¬mask`,
+/-- Fast path (:640-668): `dm<mask> = mask ∩ m`, `dp &= ¬mask`,
 `mt.remove_mask`. Taken only when *no* pair has an `me` row. -/
 def removeFast (s : PairSt) : PairSt :=
   { s with dm := s.dm || s.m.isSome, dp := none, mt := false }
@@ -184,7 +184,7 @@ def foldP (s : PairSt) (a b : Bool) : PairSt :=
 
 def b2i (b : Bool) : Int := if b then 1 else 0
 
-/-- The running totals of `edge_count` (:1248-1274) restricted to one pair:
+/-- The running totals of `edge_count` (:1257-1283) restricted to one pair:
 `|m| + |dp|`, `− |dm|`, `− |dp ∩ m|`, `− multi`, `+ |me|`. -/
 def partials (s : PairSt) : List Int :=
   let a := b2i s.m.isSome + b2i s.dp.isSome
