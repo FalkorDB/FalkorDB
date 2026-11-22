@@ -1036,10 +1036,16 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
                       "MATCH (a:N)-[r:P]-(b:N) WHERE r.v > 590 RETURN id(r), a.id, b.id",
                       "MATCH (a:N)-[r:P {v: 77}]->(b:N) RETURN id(r), a.id, b.id",
                       "MATCH (a:N {id: 3})-[r:P]->(b) WHERE r.v > 100 RETURN id(r), b.id",
-                      "MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 RETURN id(r), a.id, b.id"]:
+                      "MATCH (a:N) WITH a MATCH (a)-[r:P]->(b:N) WHERE r.v >= 500 RETURN id(r), a.id, b.id"]:
                 self.env.assertContains('Edge By Index Scan', str(with_idx.explain(q)))
                 self.env.assertEqual(sorted(with_idx.query(q).result_set),
                                      sorted(no_idx.query(q).result_set), message=q)
+            # Both endpoints bound by a cartesian product: the planner closes the
+            # pattern with an Expand Into, not an edge index scan, so only the
+            # result is checked.
+            q = "MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 RETURN id(r), a.id, b.id"
+            self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                 sorted(no_idx.query(q).result_set), message=q)
             q = "MATCH (a:N)-[r:P]->(a) WHERE r.v > 1 RETURN id(r), a.id"
             self.env.assertEqual(sorted(with_idx.query(q).result_set),
                                  sorted(no_idx.query(q).result_set), message=q)
@@ -1087,7 +1093,7 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
             q = ("MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 "
                  "RETURN count(r) AS c LIMIT 1")
             self.env.assertEqual(with_idx.query(q).result_set, no_idx.query(q).result_set)
-            for q in ["MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 RETURN id(r) LIMIT 5",
+            for q in ["MATCH (a:N) WITH a MATCH (a)-[r:P]->(b:N) WHERE r.v >= 500 RETURN id(r) LIMIT 5",
                       "MATCH (a:N)-[r:P]->(b:N) WHERE r.v >= 500 RETURN id(r) LIMIT 5"]:
                 self.env.assertContains('Edge By Index Scan', str(with_idx.explain(q)))
                 full = {row[0] for row in no_idx.query(q.replace(" LIMIT 5", "")).result_set}
