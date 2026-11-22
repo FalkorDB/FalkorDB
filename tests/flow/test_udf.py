@@ -2059,3 +2059,179 @@ class test_udf_javascript():
             res = self.graph.query(f"MATCH (a {{id:7}}) RETURN lib_tre.te(a, '{d}')").result_set[0][0]
             self.env.assertEqual(len(res), len(set(res)), message=f"{d}: {res}")
             self.env.assertEqual(len(res), 3, message=f"{d}: {res}")
+
+    def test_forged_entity_by_prototype_tricks(self):
+        """
+        An object that shares a real entity's prototype or constructor is still
+        not that entity: only the instances the engine made are references to
+        graph entities.
+        """
+
+        script = """
+        function viaCreate(n) { return Object.create(Object.getPrototypeOf(n)); }
+        function viaSetProto(n) {
+            return Object.setPrototypeOf({id: 1000}, Object.getPrototypeOf(n));
+        }
+        function viaNew(n) { return new n.constructor(); }
+        function viaConstruct(n) { return Reflect.construct(n.constructor, []); }
+        function viaAssign(n) { return Object.assign(Object.create(n), {id: 1000}); }
+        falkor.register('viaCreate', viaCreate);
+        falkor.register('viaSetProto', viaSetProto);
+        falkor.register('viaNew', viaNew);
+        falkor.register('viaConstruct', viaConstruct);
+        falkor.register('viaAssign', viaAssign);
+        """
+        self.db.udf_load("protoforge", script)
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+
+        for f in ["viaCreate", "viaSetProto", "viaNew", "viaConstruct", "viaAssign"]:
+            for q in [f"MATCH (a {{id:0}}) WITH protoforge.{f}(a) AS n "
+                      "MATCH (b {id:1}) CREATE (b)-[:R]->(n)",
+                      f"MATCH (a {{id:0}}) RETURN startNode(protoforge.{f}(a))"]:
+                # a forged object is not an entity: each of these is refused
+                with self.env.assertResponseError():
+                    self.graph.query(q)
+
+        # the server is alive and the graph is unchanged
+        self.env.assertEqual(self.graph.query("MATCH ()-[r]->() RETURN count(r)").result_set, [[1]])
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[2]])
+
+    def test_stale_entity_kept_in_global(self):
+        """
+        A UDF may keep a node/edge in a JS global, and the context outlives the
+        call. A later call must not be able to use that stale reference (here
+        the edge was deleted since): it must be refused, not crash the server.
+        """
+
+        script = """
+        function stash(a) { globalThis.se = a.getNeighbors({returnType: 'edges'})[0]; return 1; }
+        function stashN(a) { globalThis.sn = a; return 1; }
+        function edge(x) { return globalThis.se; }
+        function nb(x) { return globalThis.sn.getNeighbors().length; }
+        falkor.register('stash', stash);
+        falkor.register('stashN', stashN);
+        falkor.register('edge', edge);
+        falkor.register('nb', nb);
+        """
+        self.db.udf_load("stale", script)
+        self.graph.query("CREATE (:A {id:5})-[:R]->(:A {id:6})")
+        # the calls run on a pool of threads, each with its own JS context:
+        # repeat so that the later calls reach a context holding the stash
+        for _ in range(60):
+            self.graph.query("MATCH (a {id:5}) RETURN stale.stash(a), stale.stashN(a)")
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:A {id:7})")
+
+        for q in ["RETURN startNode(stale.edge(1))", "RETURN stale.nb(1)"]:
+            for _ in range(60):
+                try:
+                    self.graph.query(q)
+                except ResponseError:
+                    pass
+
+        # the server is alive
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[1]])
+
+    def test_forged_entity_markers(self):
+        """
+        A plain JS object that copies the node/edge markers is a Map, not a
+        reference to a graph entity: it must not crash the server or create
+        an edge to a node that does not exist. Real entities still round-trip.
+        """
+
+        script = """
+        function fn(n) { return {__falkor_type:'node', __falkor_node_id: n}; }
+        function fe(n) { return {__falkor_type:'edge', __falkor_edge_id: n}; }
+        function same(x) { return x; }
+        function retag(x) { x.__falkor_node_id = 1000; return x; }
+        function nb(x) { return x.getNeighbors.call({__falkor_node_id: 1000}, {}); }
+        function tr(x) { return graph.traverse([{__falkor_node_id: 1000}]); }
+        falkor.register('fn', fn);
+        falkor.register('fe', fe);
+        falkor.register('same', same);
+        falkor.register('retag', retag);
+        falkor.register('nb', nb);
+        falkor.register('tr', tr);
+        """
+        self.db.udf_load("forge", script)
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+
+        for q in ["RETURN startNode(forge.fe(1000))",
+                  "RETURN type(forge.fe(1000))",
+                  "WITH forge.fn(7) AS n MATCH (a {id:0}) CREATE (a)-[:R]->(n)",
+                  "MATCH (a {id:0}) RETURN forge.nb(a)",
+                  "MATCH (a {id:0}) RETURN forge.tr(a)"]:
+            with self.env.assertResponseError():
+                self.graph.query(q)
+
+        # the server is alive and the graph is unchanged
+        res = self.graph.query("MATCH (a)-[r]->(b) RETURN count(r), max(id(b))").result_set
+        self.env.assertEqual(res, [[1, 1]])
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[2]])
+
+        # real entities round-trip, and editing their markers does not retarget them
+        res = self.graph.query("""MATCH p=(a {id:0})-[r]->(b)
+                                  RETURN forge.same(a) = a, forge.same(r) = r,
+                                         forge.same(p) = p, id(forge.retag(a))""").result_set
+        self.env.assertEqual(res, [[True, True, True, 0]])
+
+    def test_get_neighbors_without_config(self):
+        """
+        node.getNeighbors() with no argument uses the default config.
+        """
+
+        script = """
+        falkor.register('n', function(x) {
+            return x.getNeighbors().map(function(y) { return y.id; });
+        });
+        """
+        self.db.udf_load("lib_nocfg", script)
+        self.graph.query("CREATE (a {id:0})-[:R]->(:B {id:1}), (a)<-[:R]-(:C {id:2})")
+
+        res = self.graph.query("MATCH (a {id:0}) RETURN lib_nocfg.n(a)").result_set
+        self.env.assertEqual(res, [[[1]]])
+
+
+class testUDFShutdown():
+    """A UDF run on the Redis main thread (GRAPH.QUERY inside MULTI) leaves
+    the main thread's QuickJS state alive until exit. Dropping it must free
+    the cached functions before the runtime, or QuickJS aborts during
+    SHUTDOWN (signal 6)."""
+
+    def __init__(self):
+        # A moduleArgs value unique to this class, so RLTest starts a fresh
+        # server that this test is free to shut down.
+        self.env, self.db = Env(moduleArgs="MAX_INFO_QUERIES 1001")
+        self.conn = self.env.getConnection()
+
+    def test_shutdown_after_main_thread_udf(self):
+        # Only meaningful when RLTest owns the server process.
+        proc = getattr(self.env.envRunner, 'masterProcess', None)
+        if proc is None:
+            self.env.skip()
+            return
+
+        self.db.udf_load("sd", "falkor.register('f', function(x) { return x; });")
+        pipe = self.conn.pipeline(transaction=True)
+        pipe.execute_command("GRAPH.QUERY", "g", "RETURN sd.f(1)")
+        res = pipe.execute()
+        self.env.assertEqual(res[0][1][0][0], 1)
+
+        try:
+            self.conn.execute_command("SHUTDOWN", "NOSAVE")
+        except Exception:
+            # SHUTDOWN closes the socket before any reply is read; the exit
+            # status checked below is what proves the shutdown was clean.
+            pass
+
+        deadline = time.time() + 30
+        while time.time() < deadline and proc.poll() is None:
+            time.sleep(0.1)
+        if proc.poll() is None:
+            proc.kill()
+        self.env.assertEqual(proc.poll(), 0)
+
+        # The server is gone; keep RLTest from trying to talk to it on the way out.
+        self.env.envRunner.masterProcess = None
+        self.env.envRunner.envIsUp = False
+        self.env.envRunner.envIsHealthy = False

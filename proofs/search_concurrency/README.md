@@ -1,6 +1,6 @@
 # search_concurrency: snapshot isolation, deadlock freedom and the RediSearch document path
 
-This project proves the concurrency guarantees FalkorDB-rs gives its clients, and shows with counterexamples where they used to break. It models the Redis main thread, the worker pool, the per-graph write lock and fork-and-commit versions (no write slot since #3657), the GIL, `GRAPH.DELETE` and the `BGSAVE` fork as a transition system, and proves properties that hold over **every** interleaving. It also covers the RediSearch side of indexing: what `Document::set` sends, index option parsing, index population tickets, and vector KNN queries.
+This project proves the concurrency guarantees FalkorDB-rs gives its clients, and shows with counterexamples where they break. It models the Redis main thread, the worker pool, the per-graph write lock and fork-and-commit versions (no write slot), the GIL, `GRAPH.DELETE` and the `BGSAVE` fork as a transition system, and proves properties that hold over **every** interleaving. It also covers the RediSearch side of indexing: what `Document::set` sends, index option parsing, index population tickets, and vector KNN queries.
 
 User-facing behaviour that depends on it:
 
@@ -26,33 +26,29 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, fork a private versio
 
 **2. Can an inline write fail because a queued write is in progress?**
 
-- **Before #3290, yes.** A queued write claimed the write slot while still matching, as a reader. A `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC` arriving then was refused with "another write is in progress" (counterexample removed in bbee75955; the last revision that has them is 17ccc5412); C creates the node (`multi_write_ok_in_c`).
-- **On main, no.** The queued write builds on a fork that takes nothing (since #3657 there is no write slot at all) and checks it only after it holds the GIL. If an inline write committed in between, the check finds it stale and the queued write re-runs (`checkFork_stale`, `stale_then_rerun`); the inline write succeeds (`inline_write_ok`). In every reachable state a thread with an unchecked fork cannot mutate or commit (`unchecked_fork_cannot_write`; `reader_cannot_commit` is the one-trace instance): the model refuses `forkCur` for a thread that already holds a version, as a real session (one version at a time) does. An indexer batch in between does not make a fork stale (`batch_does_not_stale`).
+- **No.** The queued write builds on a fork that takes nothing (there is no write slot at all) and checks it only after it holds the GIL. If an inline write committed in between, the check finds it stale and the queued write re-runs (`checkFork_stale`, `stale_then_rerun`); the inline write succeeds (`inline_write_ok`). In every reachable state a thread with an unchecked fork cannot mutate or commit (`unchecked_fork_cannot_write`; `reader_cannot_commit` is the one-trace instance): the model refuses `forkCur` for a thread that already holds a version, as a real session (one version at a time) does. An indexer batch in between does not make a fork stale (`batch_does_not_stale`).
 
 **3. Can the server deadlock?**
 
 - **Lock order.** `no_cycle` proves threads that acquire locks in rank order cannot form a wait-for cycle. `all_programs_ordered` checks that every locking path (the writer including escalation, the inline writer, index population, background index drop, the fork preparation, telemetry flush) obeys GIL < graph < indexer < registry. `bad_escalate_rejected` shows the checker catches a wrong order.
 - **RediSearch's locks (gap closed 2026-10-20, #3226).** The ranks now include RediSearch's global `RWLOCK` and per-spec lock, which an index scan holds from opening to dropping. A write that commits with its scan still open re-takes the spec lock as a writer (`bug3226_open_scan_upgrade`, a live abort) and takes the GIL while holding RediSearch's locks (`bug3226_open_scan_unordered`, `bug3226_restore_stall_cycle`). Read scans, population, `RESTORE` and writers whose scan closes before the commit are ordered (`spec_programs_ordered`).
 - **The write queue hand-off.** `drain_no_lost_message` checks exhaustively, for 2 producers, that the `write_loop` flag protocol never strands a queued write; `recheck_needed` shows it would without its `is_empty` re-check.
-- **Queue overflow.** Before #3014, more than 1024 queued queries hung the server forever (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). On main, `never_stuck_3014` and `main_never_blocks` prove the main thread never waits and some step is always possible, and `flood_drains` that a flood drains.
+- **Queue overflow.** More than 1024 queued queries cannot hang the server: `never_stuck_3014` and `main_never_blocks` prove the main thread never waits and some step is always possible, and `flood_drains` that a flood drains.
 
 **4. Is a new index always populated?**
 
-- **Before #3086, not a second one on the same label.** After `CREATE INDEX … (n.a)` and then `(n.b)` on a label, the new job saw two pending tickets and bailed, the old job finished with its `{a}` field list, and the index reported OPERATIONAL with `b` in no document (Bug 2 below; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
-- **On main, yes.** `create_index` now bumps the generation whenever the label already has an index, so the old job fails `is_ticket_current` at its next batch and the new job indexes everything. `main_operational_complete` proves, over every interleaving of any number of `CREATE INDEX`es on a label with the batches of every populate job, that an OPERATIONAL index has every field in every batch. The proof is an inductive invariant (`MInv`, `reach_inv`): at most one job owns the current generation, it holds the current field list, and the batches before its cursor are complete. `main_lost_order_complete` replays the interleaving that used to lose `b`.
+- **Yes.** `create_index` bumps the generation whenever the label already has an index, so the old job fails `is_ticket_current` at its next batch and the new job indexes everything. `main_operational_complete` proves, over every interleaving of any number of `CREATE INDEX`es on a label with the batches of every populate job, that an OPERATIONAL index has every field in every batch. The proof is an inductive invariant (`MInv`, `reach_inv`): at most one job owns the current generation, it holds the current field list, and the batches before its cursor are complete. `main_lost_order_complete` replays the second-index interleaving.
 - **One remaining window.** The theorem excludes the moment between `Indexer::create_index` storing the entry and `populate_index` taking its ticket. In that window the entry has no pending ticket, so it looks OPERATIONAL while the new field is in no document (`store_window_operational_incomplete`). The window is a few instructions long and has not been seen on a live server.
 
 The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv`, `release_exact`, `operational_iff`, `stale_release_isolated`).
 
 **5. Can a bad vector remove an entity from its other indexes?**
 
-- **Before #3087, yes.** A vector of the wrong dimension made RediSearch reject the whole document, so the node vanished from every index on its label (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
-- **On main, no.** `docSet_vector_sound` proves a vector is added only with the field's own non-zero dimension, for any value and any options; `doc_always_accepted` and `other_fields_never_dropped` prove the document is accepted and the other fields stay.
+- **No.** `docSet_vector_sound` proves a vector is added only with the field's own non-zero dimension, for any value and any options; `doc_always_accepted` and `other_fields_never_dropped` prove the document is accepted and the other fields stay.
 
 **6. Can a KNN query with a huge `k` crash the server?**
 
-- **Before #3088, yes.** `db.idx.vector.queryNodes('L', 'v', 1000000000000000, …)` allocated `k` entries up front and crashed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
-- **On main, no.** `k` is clamped to the entity count: `alloc_bounded` proves every buffer is at most the live entity count, and `candidates_topk` that the result is still the top `k` (the query from #3085 returns its one row, `huge_k_one_row`).
+- **No.** `k` is clamped to the entity count: `alloc_bounded` proves every buffer is at most the live entity count, and `candidates_topk` that the result is still the top `k` (a query with a huge `k` returns its one row, `huge_k_one_row`).
 
 ## The headline theorems
 
@@ -60,19 +56,20 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 |---|---|---|
 | `snapshots_are_committed` | Readers and the BGSAVE child only see whole committed versions | `Mvcc.lean` |
 | `no_lost_writes`, `history_linear` | Committed state = acknowledged writes, in order; history only grows | `Mvcc.lean` |
-| `one_commit_per_version`, `inline_write_ok` | Writes are serialized; since #3290 an inline write is never refused by a queued one | `Mvcc.lean` |
+| `one_commit_per_version`, `inline_write_ok` | Writes are serialized; an inline write is never refused by a queued one | `Mvcc.lean` |
 | `delete_blocks_writes`, `fork_excludes_commit` | After `GRAPH.DELETE` no write can proceed; a fork never runs during a commit | `Mvcc.lean` |
-| `swap_overtaken_publishes_nothing`, `swap_unchanged_publishes` | #3545: a commit publishes by compare-and-swap against the pointer it loaded; another publisher slipping in refuses it (`Stale`) and nothing is published; with nothing in between it publishes | `Mvcc.lean` |
+| `swap_overtaken_publishes_nothing`, `swap_unchanged_publishes` | A commit publishes by compare-and-swap against the pointer it loaded; another publisher slipping in refuses it (`Stale`) and nothing is published; with nothing in between it publishes | `Mvcc.lean` |
 | `refused_commit_publishes_nothing`, `current_not_stale` | A commit refused by `Graph::validate` publishes nothing and the version is dropped; a version made under the write lock is never refused as stale | `Mvcc.lean` |
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
 | `unchecked_fork_cannot_write` | In every reachable state a thread with an unchecked fork can neither mutate nor commit | `Mvcc.lean` |
-| `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, except the store-to-ticket window (the theorem assumes `owed = false`; see "One remaining window", `store_window_operational_incomplete`) | `Tickets.lean` |
-| `within_in_time`, `detached_workers_exit` | `threadpool.rs` after #3502: named workers; `shutdown_within` returns in time and detaches stuck workers without leaking them; two bugs stay open (`second_call_true_despite_straggler`, `within_blocks_behind_shutdown`) | `PoolWithin.lean` |
-| `never_stuck_3014`, `main_never_blocks` | Since #3014 the main thread never blocks on a full queue | `Locks.lean` |
+| `main_operational_complete` | An OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, except the store-to-ticket window (the theorem assumes `owed = false`; see "One remaining window", `store_window_operational_incomplete`) | `Guarded.lean` | Eraser-style locksets: which locks every access to shared state holds (`consistent`, `h1_fork_vs_populate_race`) |
+| `Tickets.lean` |
+| `within_in_time`, `second_call_reports_straggler`, `left_behind_workers_exit` | `threadpool.rs`: named workers; `shutdown_within` returns in time, keeps a stuck worker and reports it on every later call until it exits, and leaks none; one bug stays open (`within_blocks_behind_shutdown`) | `PoolWithin.lean` |
+| `never_stuck_3014`, `main_never_blocks` | The main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
 | `shutdown_drains` | Pool shutdown runs every queued job once, in order, then all workers exit | `Pool.lean` |
-| `docSet_vector_sound`, `other_fields_never_dropped` | A bad vector can no longer drop the entity from other indexes | `Search.lean` |
+| `docSet_vector_sound`, `other_fields_never_dropped` | A bad vector cannot drop the entity from other indexes | `Search.lean` |
 | `alloc_bounded`, `candidates_topk` | KNN never allocates more than the entity count and still returns the top `k` | `Knn.lean` |
 
 ### How `snapshots_are_committed` is proved
@@ -90,14 +87,12 @@ All reproduced on live servers, Rust against C (scripts in `repro/`).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 (W3-conc-1) | removed (17ccc5412) | Over 1024 queued queries: the main thread, holding the GIL, blocks on the full pool queue while workers wait for the GIL. Permanent hang, `PING` times out; C completes | Fixed by #3014 (issue #3013): `never_stuck_3014`, `acquire_bounded`, `release_exactly_once` |
-| 2 | removed (17ccc5412) | A second index on a label was never populated: `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes, and `n.b < 300000` through the index returned 0 rows (C: 300000). `repro/poprace.py` (writes racing population) was attributed to the same mechanism; it has not been re-run on main | Fixed by #3086 (issue #3069): `main_operational_complete`, `main_lost_order_complete` |
-| 3 (W3-conc-3) | removed (17ccc5412) | A wrong-dimension vector removed the node from every index on its label | Fixed by #3087 (issue #3075): `docSet_vector_sound`, `vector_dim_mismatch_keeps_range_entry` |
-| 4 (W3-conc-4) | removed (17ccc5412) | A huge KNN `k` crashed the server | Fixed by #3088 (issue #3085): `alloc_bounded`, `huge_k_one_row` |
-| 5 | removed (17ccc5412) | An inline (`MULTI`/`EXEC`) write failed with "another write is in progress" while a queued write was matching. C creates it | Fixed by #3290 (issue #3093): `inline_write_ok`, `one_commit_per_version` |
 | #3226 | `bug3226_open_scan_upgrade`, `bug3226_open_scan_unordered`, `bug3226_restore_stall_cycle` (properties `noReacquire`, `LockOrdered`) | A write that commits while its own index scan is still open (`MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000`) takes RediSearch's spec lock as a writer while it holds it as a reader. The server aborts with `attempted to upgrade a spec read lock to a write lock`; C returns 10. The same path takes the GIL while it holds RediSearch's global lock, which makes a wait-for cycle with a `RESTORE` on the main thread. Paths that close the scan before the commit stay ordered (`spec_programs_ordered`). The BGSAVE-child half of the issue (a `pending_slots` mutex inherited across the fork) is not modelled | **Open** |
 
-Index option validation also differed from C: missing `dimension`/`similarityFunction` were accepted and `'Euclidean'` refused. That was fixed by #3094 (`rust_refuses_missing`, `rust_eq_c`). Two DDL-only differences remain and are pinned by `#guard`s: `OPTIONS {dimension:0, similarityFunction:'bogus'}` creates an index (C refuses), and fulltext `OPTIONS {weight:1.0, foo:true}` is refused (C creates it; `rust_keys_ok_imp_c`).
+| `shutdown_within` | `within_blocks_behind_shutdown` (`repro/threadpool_within.rs`, case B) | A `shutdown_within(t)` called while another thread is inside `shutdown` blocks on the `workers` lock for as long as `shutdown`'s `join`, forever if a job never returns, so the time limit does not hold | **Open** |
+| H1 | `Guarded.h1_fork_vs_populate_race` | ForkGC takes only the GIL around `RM_Fork` while background population writes the index under RediSearch's locks but not the GIL, so the child can snapshot a half-written block (`h1_fix_populate_gil`, `h1_fix_gc_spec_lock`: either fix restores a common lock) | **Open** |
+
+Index option validation matches C (`rust_refuses_missing`, `rust_eq_c`, `rust_eq_c_all`) except for one DDL-only difference, pinned by a `#guard`: fulltext `OPTIONS {weight:1.0, foo:true}` is refused (C creates it; `rust_keys_ok_imp_c`).
 
 A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`, `BGSAVE` every 0.3 s) found no partial commit, non-monotonic read, gap, duplicate or lost write, on Rust or C.
 
@@ -105,33 +100,36 @@ A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`,
 
 | File | What's in it |
 |---|---|
-| `Mvcc.lean` | The transition system: `S`, `Ev`, `step`, `Reach`, the invariant `Inv`; snapshot isolation, no lost writes, #3290/#3657's fork-and-commit (`unchecked_fork_cannot_write`), delete and fork exclusion |
-| `Locks.lean` | Lock-order deadlock freedom (`no_cycle`), the `write_loop` hand-off (`drain_no_lost_message`), the pre-#3014 deadlock and the #3014 model (`never_stuck_3014`) |
-| `Pool.lean` | `threadpool.rs` and #3014's `QueueSlot`: `shutdown_drains`, `acquire_bounded`, `release_exactly_once`, `count_eq_live` |
-| `Tickets.lean` | Index population tickets (`Slots`): counter soundness, `main_operational_complete` (#3086) |
+| `Mvcc.lean` | The transition system: `S`, `Ev`, `step`, `Reach`, the invariant `Inv`; snapshot isolation, no lost writes, fork-and-commit (`unchecked_fork_cannot_write`), delete and fork exclusion |
+| `Locks.lean` | Lock-order deadlock freedom (`no_cycle`), the `write_loop` hand-off (`drain_no_lost_message`), the admission protocol (`never_stuck_3014`) |
+| `Pool.lean` | `threadpool.rs` and `QueueSlot`: `shutdown_drains`, `acquire_bounded`, `release_exactly_once`, `count_eq_live` |
+| `Guarded.lean` | Eraser-style locksets: which locks every access to shared state holds (`consistent`, `h1_fork_vs_populate_race`) |
+| `Tickets.lean` | Index population tickets (`Slots`): counter soundness, `main_operational_complete` |
 | `Search.lean` | `Document::set` with RediSearch as a hypothesis structure, vector and fulltext option parsing: `docSet_vector_sound`, `doc_always_accepted`, `rust_eq_c` |
-| `Knn.lean` | `vector_query_nodes`/`vector_query_edges` with the #3088 `k` clamp: `alloc_bounded`, `candidates_topk` |
-| `Once.lean` | Set-once globals in `thread_id.rs` and `storage/registry.rs` |
+| `Knn.lean` | `vector_query_nodes`/`vector_query_edges` with the `k` clamp: `alloc_bounded`, `candidates_topk` |
+| `Once.lean` | Set-once globals in `thread_id.rs` and `storage/registry.rs`, and the `POOL_THREAD` cell |
+| `Glue.lean` | `graph_core.rs` C name rules (`upToNul_idem`, `cGraphName_eq_lossy_key`) and the graph registry (`registerGraph_*`, `renameGraph_moves`) |
+| `Exec.lean` | `ThreadedGraph` constructors, `WriteQueryOk::modified`, `execute_query`/`execute_profile` write detection and admission hand-off (`execQuery_read`, `execQuery_write_keeps_slot`), `compute_effective_timeout`, the two replies |
+| `Session.lean` | `QuerySession`'s own state and drop order, `check_fork` (`checkFork_verdict`), the GIL guard (`acquire_nested`, `acquire_drop`), `must_run_inline`, `reauthorize_write`, `MvccGraph::new`/`from_graph`/`Drop`, `CommitOp::next`'s lock path |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 120 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
+`COVERAGE.tsv` has 126 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 69 |
-| CONDITIONAL | 1 |
+| PROVEN | 106 |
+| CONDITIONAL | 0 |
 | AXIOMATISED | 20 |
-| MODELLED | 17 |
-| NOT COVERED | 13 |
+| MODELLED | 0 |
+| NOT COVERED | 0 |
 
-- **CONDITIONAL:** `QuerySession::check_fork`: `Mvcc.checkFork` is exact, but the Rust also rebases the fork onto indexer batches (`MvccGraph::rebase_onto_indexer_batches`), which refuses a fork that is still borrowed. That the escalating writer's fork is never borrowed is a runtime lifecycle invariant this project does not prove.
+- **CONDITIONAL (none left):** `Session.checkFork` has two outcomes only.
 - **AXIOMATISED:** thin wrappers over the Redis module API (blocking and unblocking clients, thread-safe contexts, the GIL lock and unlock, replication, string helpers), and `Index::add_document`, whose RediSearch behaviour is the `RediSearch` hypothesis structure in `Search.lean` (a whole document is rejected or accepted).
-- **MODELLED:** functions that appear as a step of the transition system without a theorem of their own: `MvccGraph::new`/`from_graph` (`init`), `register_graph`, `execute_query`/`execute_profile`/`profile_sync` (a read on a snapshot), the `QuerySession` constructors, lock release and drop order, `must_run_inline`, and the `Field` constructors, and `CommitOp::next` (its lock path only, #3226).
-- **NOT COVERED:** string and reply-formatting helpers, config arithmetic (`compute_effective_timeout`), `rename_graph` (RENAME is not modelled), `reauthorize_write` (Redis pause and role flags), borrow helpers, and `MvccGraph::drop`. `reply_profile` is proven in `redis_layer`.
+- **Formerly MODELLED / NOT COVERED (31 rows, now PROVEN in `Glue`, `Exec`, `Session`, `Search`):** the C name helpers, `register_graph`/`rename_graph`, the `ThreadedGraph` constructors, `execute_query`/`execute_profile`/`profile_sync`, `compute_effective_timeout`, the two replies, the `QuerySession` constructors, accessors, release and drop order, `Gil::acquire`/`drop`, `must_run_inline`, `reauthorize_write`, `MvccGraph::new`/`from_graph`/`Drop`, the `Field` constructors and `CommitOp::next` (its lock path, with the #3226 property refuted).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across projects.
 
@@ -143,7 +141,7 @@ No path dependencies.
 - **Index population.** `Tickets` models `CREATE INDEX` on one label and the populate jobs. It does not model the write path, `DROP INDEX` with fields remaining (recreate and repopulate), or `populate_indexes_sync`.
 - **Exhaustive checks are bounded.** The `write_loop` hand-off is checked exhaustively for 2 producers only.
 - **The fork child.** Beyond "it sees the committed version", what the child does (GraphBLAS `wait_all`, OpenMP) is not modelled.
-- **Write detection.** How `execute_query` decides a query writes is not modelled.
+- **Plan classification.** `Exec.isWritePlan` models the test on plan node kinds; which nodes the planner emits for a query is the planner's (other projects).
 
 ## Build and check
 

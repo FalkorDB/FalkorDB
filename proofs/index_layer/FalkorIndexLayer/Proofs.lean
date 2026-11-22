@@ -318,17 +318,4 @@ theorem numRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
   simp [ENum.le, ENum.lt, ENum.eq] <;>
   omega
 
-/-- The pre-#3081 statement (finite or NaN stored numbers) is an instance. -/
-theorem numRange_exact_fin (fields : Attr → Bool) (p : Props) (k : Attr)
-    (mn mx : Option Val) (imn imx : Bool) (hf : fields k = true)
-    (hb : mn.isSome ∨ mx.isSome)
-    (hmn : ∀ v, mn = some v → NumConst v) (hmx : ∀ v, mx = some v → NumConst v)
-    (hp : ∀ v, p k = some v → FinNum v) :
-    indexHit fields p (.range k mn mx imn imx) = holds p (.range k mn mx imn imx) :=
-  numRange_exact fields p k mn mx imn imx hf hb hmn hmx (fun v hv => by
-    cases hp v hv with
-    | int i => exact .int i
-    | flt i => exact .flt _
-    | nan => exact .flt _)
-
 end IndexLayer

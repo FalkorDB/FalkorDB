@@ -84,7 +84,8 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    return Err("fulltext query expects a string label".into());
+                    // A non-string label matches nothing: this row yields no rows.
+                    return Ok(None);
                 };
                 let Value::String(query_str) = ExprEval::from_runtime(self.runtime).eval(
                     self.query,
@@ -93,7 +94,8 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    return Err("fulltext query expects a string query".into());
+                    // Likewise a non-string query.
+                    return Ok(None);
                 };
                 let g = self.runtime.graph();
                 let iter = Box::new(g.fulltext_query_nodes(&label_str, &query_str)?)

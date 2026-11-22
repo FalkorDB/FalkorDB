@@ -371,9 +371,7 @@ fn bare_property_of(
     };
     // `Variable` equality is by id only; ids repeat across scopes.
     match node.get_child(0).map(|c| c.data()) {
-        Some(ExprIR::Variable(v)) if v.id == alias.id && v.scope_id == alias.scope_id => {
-            Some(attr.clone())
-        }
+        Some(ExprIR::Variable(v)) if v.key() == alias.key() => Some(attr.clone()),
         _ => None,
     }
 }
@@ -1103,12 +1101,23 @@ fn prune_all_node_scan_child(
     let IR::AllNodeScan(child_node) = child.data() else {
         return false;
     };
-    let (child_alias_id, child_scope_id) = (child_node.alias.id, child_node.alias.scope_id);
     let child_idx = child.idx();
     // Safety: don't drop the scan that binds the child alias if the
     // edge-index query still depends on it.
-    if index_query_references_variable(&query, child_alias_id, child_scope_id) {
+    if index_query_references_variable(&query, child_node.alias.key()) {
         return false;
+    }
+    // The scan may sit on rows an earlier clause supplies (an `UNWIND`, a
+    // `WITH`); those rows still have to reach the edge scan, so what is beneath
+    // the scan stays and only the scan goes.
+    let below: Vec<DynTree<IR>> = plan
+        .node(child_idx)
+        .children()
+        .map(|c| c.clone_as_tree())
+        .collect();
+    // Reattach before pruning: `prune` can reclaim memory and invalidate `idx`.
+    for t in below {
+        plan.node_mut(idx).push_child_tree(t);
     }
     plan.node_mut(child_idx).prune();
     true

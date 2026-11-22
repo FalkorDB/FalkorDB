@@ -101,6 +101,7 @@ impl Request {
             "GRAPHBLAS_PREFIX",
             "LAGRAPH_PREFIX",
             "LIBOMP_PREFIX",
+            "MACOSX_DEPLOYMENT_TARGET",
             "REDISEARCH_PREFIX",
             "REDISEARCH_SAN",
         ]

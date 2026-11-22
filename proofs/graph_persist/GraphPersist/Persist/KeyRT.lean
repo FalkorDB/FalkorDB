@@ -1,7 +1,7 @@
 import GraphPersist.Persist.MultiKey
 /-! # One RDB key of a multi-key graph reads back its slices
 
-`rdb_load_graph` (decoder/mod.rs:112-128) checks the encoding version, reads header, schema and directory, then — with
+`rdb_load_graph` (decoder/mod.rs) checks the encoding version, reads header, schema and directory, then — with
 `key_count > 1` — `decode_payloads_into_pending` (:260-307) reads the payloads into the
 pending graph. `rdbKey` is that read; `key_rt` says every key `build_multi_key_payloads`
 lays out (entity slices `(offset, count)` and, on key 0, the matrices) reads back as the
@@ -159,7 +159,7 @@ theorem key_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (K
 
 /-! ## The encoding-version gate (#3793) -/
 
-/-- `check_encoding_version` (decoder/mod.rs:82): `DECODE_MIN_VERSION = 19 ≤ encver ≤
+/-- `check_encoding_version` (decoder/mod.rs): `DECODE_MIN_VERSION = 19 ≤ encver ≤
 ENCODING_VERSION = 20` (serializers/mod.rs). -/
 def checkVer (encver : Int) : Bool := decide (19 ≤ encver) && decide (encver ≤ 20)
 
