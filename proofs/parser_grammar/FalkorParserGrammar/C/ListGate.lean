@@ -385,7 +385,7 @@ theorem cn_relP (F : Nat) (cl : CK) (src : QNode Alias) (d : Nat) : Cn (relP o F
         if inc == out then
           if cl = .create then fail
           else pure (QRel.new dd.1 dd.2.1 dd.2.2.1 src dst true mn mx, dst)
-        else if inc then pure (QRel.new dd.1 dd.2.1 dd.2.2.1 dst src false mn mx, dst)
+        else if inc then pure ({ QRel.new dd.1 dd.2.1 dd.2.2.1 dst src false mn mx with winc := true }, dst)
         else pure (QRel.new dd.1 dd.2.1 dd.2.2.1 src dst false mn mx, dst)) d d := by
     intro dd
     refine cn_bind (cn_tok_atom rfl _) fun _ => ?_

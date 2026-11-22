@@ -77,6 +77,17 @@ after cypher.rs:1413 shifted by +3 (COVERAGE.tsv). Docstring cites elsewhere in 
 point past line 1413 are from earlier targets and are not all re-pinned; COVERAGE.tsv is the
 authoritative line list.
 
+## #3460 (written direction recorded)
+
+`parse_relationship_pattern` sets `written_incoming = is_incoming && !is_outgoing` and returns it
+(`QRel.winc`, set only by `relP`'s swapped `<-` branch; `QRel.new` leaves it `false`):
+`GRel.written_ends`/`relP_written_ends` (the written start is `dst` iff `winc`, so it is the node
+before the relationship), `GRel.winc_not_bidir`. `parse_pattern` collects one flag per
+relationship into `QueryPath::incoming` (`QPath.incoming`; `chainN`/`aspLoop` carry `inc`,
+`GChainN`/`GAsp` too) and `aspLoop` passes `rr.1.winc` to `aspRel` instead of `c = .lt`
+(`aspRel_bidir_inc`: they differ only on a bidirectional `<-[*]->`, where it is unread).
+`QueryPath::is_incoming` is `QPath.isIncoming` (`QPath.isIncoming_spec`).
+
 ## Gap closed 2026-10-20: #2502
 
 `C.PredicateBugs`: the property `PredEndsBeforeClause` (a WHERE pattern

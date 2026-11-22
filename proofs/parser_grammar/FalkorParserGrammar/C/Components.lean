@@ -335,7 +335,7 @@ theorem connectedComponents_spec (g : G) (f : Nat) (out : List G)
 def exG : G :=
   let a : QNode Var := ⟨⟨none, 0, 0, none⟩, [], leaf .map⟩
   let b : QNode Var := ⟨⟨none, 1, 0, none⟩, [], leaf .map⟩
-  ⟨[a, b], [⟨⟨none, 2, 0, none⟩, [7], leaf .map, a, b, false, none, none, .no⟩], []⟩
+  ⟨[a, b], [⟨⟨none, 2, 0, none⟩, [7], leaf .map, a, b, false, none, none, .no, false⟩], []⟩
 #guard ((connectedComponents exG 10).map (·.length)) == some 1
 
 /-- `QueryGraph::filter_visited` (ast.rs:795-821): keep the entities whose
