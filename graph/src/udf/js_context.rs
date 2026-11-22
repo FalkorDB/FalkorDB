@@ -136,11 +136,15 @@ pub fn compute_effective_js_timeout_ms() -> u64 {
     }
 }
 
+/// Fields drop in declaration order, and QuickJS aborts when the runtime is
+/// freed while objects are still alive, so the persistent functions must be
+/// declared before the context, and the context before the runtime. This
+/// order also applies when the thread-local is destroyed at thread exit.
 struct ThreadJsState {
-    runtime: JsRuntime,
-    context: Context,
     /// Cached function references: "lib.func" -> persistent JS function
     functions: HashMap<String, Persistent<Function<'static>>>,
+    context: Context,
+    runtime: JsRuntime,
     /// Version of the UdfRepo when this context was last rebuilt.
     version: u64,
 }
@@ -205,13 +209,8 @@ fn rebuild_context(
     state: &mut Option<ThreadJsState>,
     target_version: u64,
 ) -> Result<(), String> {
-    // Drop old state in correct order: functions first, then context, then runtime.
-    // Persistent references must be dropped while the runtime is still alive.
-    if let Some(old) = state.take() {
-        drop(old.functions);
-        drop(old.context);
-        drop(old.runtime);
-    }
+    // Field order drops functions, then context, then runtime (see ThreadJsState).
+    drop(state.take());
 
     let heap_size = JS_HEAP_SIZE.load(Ordering::Relaxed);
     let stack_size = JS_STACK_SIZE.load(Ordering::Relaxed);
@@ -267,9 +266,9 @@ fn rebuild_context(
     })?;
 
     *state = Some(ThreadJsState {
-        runtime: rt,
-        context: ctx,
         functions,
+        context: ctx,
+        runtime: rt,
         version: target_version,
     });
 

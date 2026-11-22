@@ -271,3 +271,33 @@ class testMap(FlowTestsBase):
         self.env.assertEqual(len(res), 1)
         self.env.assertEqual(res[0][1], {'name': 'John', 'age': 30, 'x': [{'z':1}]})
 
+
+    def test11_map_projection_in_named_entity_attrs(self):
+        # A `.a` map projection selector is a childless Property node (`.*` is
+        # a childless MapProjection item). The binder's self-reference check
+        # on a *named* entity's inline attributes used to index the selector's
+        # (missing) operand and panic, crashing the server. A non-map base must
+        # be a clean error, as in C.
+        projection_error = "Encountered unhandled type evaluating map projection"
+        queries = [
+            ("UNWIND range(1,5) AS i CREATE (ZS {f: i {.Zi}})", projection_error),
+            ("UNWIND range(1,5) AS i CREATE (ZS {f: i {.*}})", projection_error),
+            ("UNWIND range(1,5) AS i CREATE (ZS {f: i {k: 1}})", projection_error),
+            ("CREATE (a {f: 1 {.a}})", projection_error),
+            ("CREATE (a:L {f: 'x' {.a}})", projection_error),
+            ("WITH 1 AS i CREATE (a:L {f: i {.a}})", projection_error),
+            ("WITH 1 AS i CREATE (a)-[r:R {f: i {.a}}]->(b)", projection_error),
+            ("WITH 1 AS i MERGE (a:L {f: i {.a}})", projection_error),
+            ("WITH 1 AS i MERGE (a)-[r:R {f: i {.a}}]->(b)", projection_error),
+            # a real self-reference is still refused by the binder
+            ("CREATE (a {f: a {.x}})", "'a' not defined"),
+        ]
+        for q, expected in queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False, depth=1, message=q)
+            except redis.ResponseError as e:
+                self.env.assertContains(expected, str(e), message=q)
+            # the server is still alive and nothing was created
+            res = self.graph.query("MATCH (n) WHERE n.f IS NOT NULL RETURN count(n)")
+            self.env.assertEqual(res.result_set[0][0], 0)

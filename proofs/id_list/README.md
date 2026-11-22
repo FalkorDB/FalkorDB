@@ -10,7 +10,7 @@ This project proves that `IdList` (`graph/src/effects/v3/id_list.rs`) keeps ever
 
 The order matters: the replica pairs the *n*-th id with the *n*-th row of attributes. If ids are reordered, properties land on the wrong entity (the class of #2842). If decoding is not total, a malformed payload can crash the replica.
 
-The full Lean↔Rust mapping is in the header of [`FalkorIdList.lean`](FalkorIdList.lean), in the `file:line` table at the top of `Push.lean` and `Wire.lean`, and in [`REPORT.md`](REPORT.md). This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -39,8 +39,7 @@ This is a guarantee about the modelled decoder, not about every malformed real p
 
 **4. Is it safe to push onto a decoded list?**
 
-- **Before #2920, no.** `from_segments` started the run at the last decoded segment. A later collapse could read a descending range back ascending (decoded `[10,9,8]` plus `20,22` came back `[8,9,10,20,22]`) or hit the `assert!`.
-- **On main, yes.** `decoded_then_pushed_keeps_order` proves pushing any ids onto any well-formed decoded list gives the decoded ids followed by the new ones. `readIds_then_pushed_keeps_order` proves the same end to end from the wire. Both assume the total id count stays below 2^32 (the `u32` segment length is not modelled; see "What the model does not cover").
+Yes. `decoded_then_pushed_keeps_order` proves pushing any ids onto any well-formed decoded list gives the decoded ids followed by the new ones. `readIds_then_pushed_keeps_order` proves the same end to end from the wire. Both assume the total id count stays below 2^32 (the `u32` segment length is not modelled; see "What the model does not cover").
 
 **5. Does collapsing to a bitmap actually save space?**
 
@@ -60,7 +59,7 @@ No, and that is allowed. `decode ∘ encode` is the identity, but the decoder ac
 | `push_encode_decode` | Build, encode, decode gives back the pushed ids | `Wire.lean` |
 | `readIds_encodeIds`, `decode_encodeSeg` | Decoding an encoded list returns its segments and stops exactly at its end | `Wire.lean` |
 | `readIds_never_panics`, `readIds_safe` | No input panics the decoder; what it accepts is well-formed, totals `count`, and was read in bounds | `Wire.lean` |
-| `decoded_then_pushed_keeps_order` | Pushing onto a decoded list keeps every id in order (#2920) | `Decoded.lean` |
+| `decoded_then_pushed_keeps_order` | Pushing onto a decoded list keeps every id in order | `Decoded.lean` |
 | `collapse_shrinks` | When the bitmap is chosen, it is smaller than the ranges it replaces | `CostProps.lean` |
 | `toRoaring_spec`, `eqList_iff` | `to_roaring` is exactly the id set; `==` compares ids, not segmentation | `Misc.lean` |
 
@@ -81,13 +80,9 @@ No, and that is allowed. `decode ∘ encode` is the identity, but the decoder ac
 
 ## Bugs found
 
-See [`../FINDINGS.md`](../FINDINGS.md) and [`REPORT.md`](REPORT.md) for the repros.
+See [`../FINDINGS.md`](../FINDINGS.md) for the repros.
 
-| # | Theorem (counterexample) | What it means | Status |
-|---|---|---|---|
-| 1 | removed (17ccc5412) | Pushing onto a decoded `IdList` reordered ids (decoded `[10,9,8]` + `20,22,…` → `[8,9,10,20,22,…]`) or panicked on a decoded `Repeat`. Latent: no production path pushed onto a decoded list | Fixed by #2920 (closes #2919; `decoded_then_pushed_keeps_order`) |
-
-There are no open bugs and no CONDITIONAL rows.
+No open bugs. Fixed ones are in this file's git history. There are no CONDITIONAL rows.
 
 Suspected, not confirmed: a roaring blob with the same high key twice keeps only the last partition in roaring-rs. CRoaring may keep the first, so the two engines could decode the same bytes differently. This has not been checked against the C module.
 
@@ -95,14 +90,13 @@ Suspected, not confirmed: a roaring blob with the same high key twice keeps only
 
 | File | What's in it |
 |---|---|
-| `Push.lean` | `Seg`, `St`, `push`, `collapse`, `from_segments`; the invariant `Inv`, `push_ok`, `pushAll_ok`, `fromIter_iter` (the pre-#2920 counterexamples were removed in bbee75955) |
-| `Decoded.lean` | The decoded-list invariant `DInv` and `decoded_then_pushed_keeps_order` (#2920) |
+| `Push.lean` | `Seg`, `St`, `push`, `collapse`, `from_segments`; the invariant `Inv`, `push_ok`, `pushAll_ok`, `fromIter_iter` |
+| `Decoded.lean` | The decoded-list invariant `DInv` and `decoded_then_pushed_keeps_order` |
 | `Wire.lean` | The byte format: narrow integers, headers, `Segment::encode`/`decode`, `read_ids`; round trip, safety, refusals, non-canonical inputs |
 | `Cost.lean` | The collapse arithmetic: `bucket_body`, `bitmap_header`, `Run` and its tally, `encoded_len` |
 | `CostProps.lean` | Its theorems: `bucketBody_spec`, `addLoop_eq`, `encodedLen_eq`, `collapse_shrinks`, `no_collapse_below_floor` |
 | `PushT.lean` | `push` with the real collapse decision: `pushT_st`, `pushAllT_ok` |
 | `Misc.lean` | `is_empty`, `count`, `to_roaring`, the `PartialEq`s, the `From`s, `Debug` |
-| `REPORT.md` | The long-form report; some counts and the "free Boolean" note predate `Cost`/`PushT`, and the root `.lean` header is current |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The lakefile has no path dependencies.
@@ -124,7 +118,7 @@ Every function is proven.
   - `serialized_size` is the blob length and fits a `u32`;
   - whatever deserializes is a sorted set of `u64`s.
 
-  The actual blob bytes and `optimize()` are not modelled. That `serialized_size()` equals the tally is a hypothesis of `collapse_shrinks`, checked by the Rust test `predicted_matches_roaring`.
+  The actual blob bytes and `optimize()` are not modelled. Trailing bytes inside a blob's stated length are ignored: roaring reads from the slice and stops at its own end. That `serialized_size()` equals the tally is a hypothesis of `collapse_shrinks`, checked by the Rust test `predicted_matches_roaring`.
 - A segment's `u32` length overflowing inside `push` (`*len += 1`) is not modelled: lengths are `Nat`. It needs 2^32 pushes, or a decoded segment of length `u32::MAX` extended by one push. The wire theorems and the two decoded-push theorems therefore assume fewer than 2^32 ids.
 - The cached `len`/`min`/`max` of bitmap segments are derived from the set, so cache maintenance is not checked.
 - `Reader` is a byte list. Allocation bounds inside roaring's deserializer were read, not modelled.

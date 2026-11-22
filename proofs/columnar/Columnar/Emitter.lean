@@ -10,16 +10,15 @@ gathers the parent columns by the packed parent rows.
 
 | here | there |
 | --- | --- |
-| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:560-584`; the clamp is `:569`) — since #2973 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`; #2922 was an LLVM miscompile of the guarded `match` it replaced on aarch64-apple-darwin |
-| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:754`) |
-| `drain` | `drain_pending_entry` (`:631-655`) |
-| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:686-727`, `:748-753`) |
-| `emitLazy` | `emit_lazy` (`:739-760`) |
-| `parentRows` | `parent_rows` / `record_parent_rows` after `emit_lazy` (`:756-774`, #3110) |
+| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs`; the clamp is) — `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))` |
+| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` |
+| `drain` | `drain_pending_entry` |
+| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` |
+| `emitLazy` | `emit_lazy` |
 | `stream` | the flattened `(row, item)` sequence of `pending` + unread rows |
 | `emitAll` | repeated `emit_lazy` until `Ok(None)` |
-| `finishLen` | `finish_batch` (`:661-679`) row count incl. the `should_expand` switch (`start_batch`, `:613-625`) |
-| `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs:293-299`) |
+| `finishLen` | `finish_batch` row count incl. the `should_expand` switch (`start_batch`) |
+| `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs`) |
 -/
 
 namespace Columnar
@@ -27,7 +26,7 @@ open FalkorCore (V)
 
 def BATCH_SIZE : Nat := 1024
 
-/-- `with_binding` since #2973 (`batched_result_emitter.rs:569`):
+/-- `with_binding` (`batched_result_emitter.rs`):
 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`. -/
 def withBinding (recordCap : Option Nat) : Nat :=
   match recordCap with
@@ -37,8 +36,8 @@ def withBinding (recordCap : Option Nat) : Nat :=
 /-- The doubling after each `emit_lazy`. -/
 def grow (c : Nat) : Nat := min (c * 2) BATCH_SIZE
 
-/-- **The ceiling is always in `[1, BATCH_SIZE]`** (in the source; #2922's
-miscompiled binary yields `cap` itself for `cap ≥ BATCH_SIZE`). -/
+/-- **The ceiling is always in `[1, BATCH_SIZE]`** (in the source; the
+miscompiled form below yields `cap` itself for `cap ≥ BATCH_SIZE`). -/
 theorem withBinding_le_batch (rc : Option Nat) : 1 ≤ withBinding rc ∧ withBinding rc ≤ BATCH_SIZE := by
   cases rc with
   | none => simp [withBinding, BATCH_SIZE]
@@ -50,7 +49,7 @@ theorem grow_bounds {c : Nat} (h : 1 ≤ c ∧ c ≤ BATCH_SIZE) : 1 ≤ grow c 
 /-- A lowered ceiling reaches `BATCH_SIZE` again (here: 10 → … → 1024 in 7 steps). -/
 theorem grow_reaches : Nat.repeat grow 7 (withBinding (some 10)) = BATCH_SIZE := by decide
 
-/-- The miscompile's effect on the pre-#2973 form, for the record: the guard dropped, `cap` passes
+/-- The effect of dropping the guard of the earlier `match` form, kept as a historical model: `cap` passes
 through. The clamp form has no guard to drop. -/
 def withBindingMiscompiled (recordCap : Option Nat) : Nat :=
   match recordCap with
@@ -255,38 +254,7 @@ theorem batch_rows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List 
     obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hi
     exact (stream_rows_active h f x (hsub x hx)).2)
 
-/-- `parent_rows` after one `emit_lazy` (`:756-758`, #3110): with `record_parent_rows` set
-(`:764-766`) it is the packed parent-row list `indices` (filled when
-`should_expand || record_parent_rows`, `:619`, `:639`); otherwise it keeps its previous value
-(initially empty, `with_binding`). -/
-def parentRows (rec : Bool) (prev : List Nat) (c : Nat) (p : Option (Nat × List I))
-    (t : List (Nat × List I)) : List Nat :=
-  if rec then (emitLazy c p t).1.map (·.1) else prev
-
-/-- **`parent_rows` names, row for row, the parent of each emitted row**: it is the emitted
-batch's parent-row column, so it has the emitted batch's length. -/
-theorem parentRows_spec (prev : List Nat) (c : Nat) (p : Option (Nat × List I))
-    (t : List (Nat × List I)) :
-    parentRows true prev c p t = (emitLazy c p t).1.map (·.1) ∧
-    (parentRows true prev c p t).length = min c (stream p t).length ∧
-    parentRows false prev c p t = prev := by
-  refine ⟨rfl, ?_, rfl⟩
-  simp [parentRows, (emitLazy_spec c p t).2]
-
-/-- Every recorded parent row is an active row of the seeded batch (`< len`), so a
-consumer may index per-parent-row state by it. -/
-theorem parentRows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List I)
-    (prev : List Nat) (c : Nat) :
-    ∀ r ∈ parentRows true prev c none (seedRows b f), r ∈ b.active ∧ r < b.len := by
-  intro r hr
-  simp only [parentRows, ite_true, List.mem_map] at hr
-  obtain ⟨x, hx, rfl⟩ := hr
-  have hs := (emitLazy_spec c none (seedRows b f)).1
-  have : x ∈ stream none (seedRows b f) := by
-    rw [← hs]; exact List.mem_append_left _ hx
-  exact stream_rows_active h f x this
-
-/-- `finish_batch`'s row count: gathered when `start_batch` (`:613-625`) sets
+/-- `finish_batch`'s row count: gathered when `start_batch` sets
 `should_expand` — the parent has a column **or carries correlation origins**
 (`has_origins`, since #2845) — else a fresh `Batch::new(0)` whose length comes from
 the first installed column (`set_column` on an empty batch), or stays 0 when the
@@ -306,13 +274,13 @@ theorem finishLen_origins_kept : finishLen 0 true false 5 = 5 := rfl
 
 /-- **Latent row loss**: a no-alias emitter over a parent with no column and no
 origins emits `count` results as a 0-row batch. The only no-alias user, ExpandInto
-(`expand_into.rs:95`), always has both endpoint columns bound, so this is not
+(`expand_into.rs`), always has both endpoint columns bound, so this is not
 reachable today. -/
 theorem finishLen_drops : finishLen 0 false false 5 = 0 := rfl
 
 /-! ## ExpandInto's record-cap trim -/
 
-/-- `ExpandIntoOp::next` (`expand_into.rs:293-299`) on a dense output batch of
+/-- `ExpandIntoOp::next` (`expand_into.rs`) on a dense output batch of
 `n` rows: `(new selection, rows counted)`. -/
 def expandTrim (cap produced n : Nat) : Option (List Nat) × Nat :=
   let remaining := cap - produced
@@ -320,7 +288,7 @@ def expandTrim (cap produced n : Nat) : Option (List Nat) × Nat :=
   else (none, produced + n)
 
 /-- **The trim suspicion is refuted**: the emitted batch is dense with `n` rows,
-`n ≤ BATCH_SIZE` (or, under the #2922 miscompile, the first batch has
+`n ≤ BATCH_SIZE` (or, under the miscompiled form, the first batch has
 `n ≤ cap = remaining` so the trim does not fire). Whenever the trim fires, every
 selected index is `< n` and survives the `u16` cast, the selection is the first
 `remaining` rows, and `produced` never exceeds `cap`. -/

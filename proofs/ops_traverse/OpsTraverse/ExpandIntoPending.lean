@@ -1,41 +1,32 @@
 import OpsTraverse.CondTraverse
 import OpsTraverse.ShortestPaths
 /-
-# ExpandInto over uncommitted deletes (#3452)
+# ExpandInto over uncommitted deletes
 
 `CondTraverse.expandInto` models `ExpandIntoOp::expand_row` over one committed
 graph. Within a commit segment the operator also reads `Pending`; this file adds
 the pending deletes the operator sees.
 
-| here | there (origin/main b29a2885c) |
+| here | there |
 | --- | --- |
-| `Pending.delNodes` | `Pending::deleted_nodes` (`runtime/pending.rs:304`), read by `is_node_deleted` (`:1115-1120`); `DETACH DELETE` of a committed node only inserts it here (`runtime/ops/delete.rs:191-216`, `pending.rs:771-777`) and defers its incident edges to commit (`delete_implicit_edges`, `pending.rs:1325-1330`) |
-| `Pending.delRels`  | `Pending::deleted_relationships`, read by `is_relationship_deleted` (`pending.rs:1129-1134`) |
-| `expandIntoP`      | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs:125-245`): no row when `pending.is_node_deleted(src) \|\| is_node_deleted(dst)` (`:158-160`, added by #3463); pairs `:183-184`; collapse `:204-222` and emit `:224-235` skip `pending.is_relationship_deleted(id)` and sibling-used edges |
-| `expandIntoPre`    | the operator before #3463 (b29a2885c^): the same without the endpoint check; the historical model, still the fall-through branch of `expandIntoP` |
+| `Pending.delNodes` | `Pending::deleted_nodes` (`runtime/pending.rs`), read by `is_node_deleted`; `DETACH DELETE` of a committed node only inserts it here (`runtime/ops/delete.rs`, `pending.rs`) and defers its incident edges to commit (`delete_implicit_edges`, `pending.rs`) |
+| `Pending.delRels`  | `Pending::deleted_relationships`, read by `is_relationship_deleted` (`pending.rs`) |
+| `expandIntoP`      | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs`): no row when `pending.is_node_deleted(src) \|\| is_node_deleted(dst)`; pairs; collapse and emit skip `pending.is_relationship_deleted(id)` and sibling-used edges. Excludes the synthetic-label branch (a multi-label self-loop: one row with the placeholder `RelationshipId::from(0u64)`, no relationship bound), which this relationship-level model does not cover |
+| `expandIntoRows`   | the pair and edge loop after the endpoint check (the fall-through branch of `expandIntoP`) |
 
 `expandIntoP` with empty `Pending` is literally `CondTraverse.expandInto`
 (`expandIntoP_empty`), so every earlier ExpandInto theorem is the
 no-pending-deletes instance of this model.
 
-## The bug (fixed by #3463, b29a2885c)
+## The scenario
 
 `CREATE (:A)-[:R]->(:B)`; `MATCH (a:A), (b:B) DETACH DELETE a MERGE (a)-[r:R]->(b)
 RETURN count(r)`: Merge sits directly over ExpandInto (no Commit between), `a`
-is in `deleted_nodes` but the edge `a→b` is not yet in `deleted_relationships`,
-so the pre-#3463 ExpandInto matched it: Rust returned 1 with "Relationships
-created: 0". The edge is doomed (deleted implicitly at commit). Main now yields
-no row for a pending-deleted endpoint, so MERGE takes its create branch, which
+is in `deleted_nodes` but the edge `a→b` is not yet in `deleted_relationships`.
+The edge is doomed (deleted implicitly at commit), so ExpandInto yields
+no row for a pending-deleted endpoint, and MERGE takes its create branch, which
 refuses a deleted endpoint. Property `LiveExpandInto`: proved for main
-(`expandIntoP_live`); the pre-#3463 counterexamples on `expandIntoPre` were removed in bbee75955 (the last revision that has them is 17ccc5412).
-
-The issue's other half (the `synthetic_label` branch, `expand_into.rs:162-173`,
-reads committed labels only) has no valid-Cypher route to pending label state
-(a MATCH after a write needs `WITH`, which plans a Commit; MERGE cannot
-re-declare a bound node's labels), so it is not claimed here. (The new endpoint
-check runs before that branch, so it applies there too; the model covers
-relationship mode only.)
--/
+(`expandIntoP_live`). -/
 
 namespace OpsTraverse.EIP
 
@@ -47,9 +38,9 @@ structure Pending where
   delRels  : List Nat
 deriving DecidableEq, Repr
 
-/-- `ExpandIntoOp::expand_row` (relationship mode) with `Pending` as it was
-before #3463: no endpoint check. -/
-def expandIntoPre (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
+/-- `ExpandIntoOp::expand_row` (relationship mode) after the endpoint check: the pairs, then
+the edges between them that are not pending-deleted or used by a sibling. -/
+def expandIntoRows (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
     (used : List Nat) : List Nat :=
   let ps := if bidir && src != dst then [(src, dst), (dst, src)] else [(src, dst)]
   ps.flatMap fun q =>
@@ -57,17 +48,17 @@ def expandIntoPre (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
       !(p.delRels.contains e) && !(used.contains e)
     if emit then es else es.take 1
 
-/-- `ExpandIntoOp::expand_row` (relationship mode) on main (`expand_into.rs:158-235`):
+/-- `ExpandIntoOp::expand_row` (relationship mode) on main (`expand_into.rs`):
 `is_node_deleted(src) || is_node_deleted(dst)` ⇒ no row (#3463). -/
 def expandIntoP (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
     (used : List Nat) : List Nat :=
   if p.delNodes.contains src || p.delNodes.contains dst then []
-  else expandIntoPre g p bidir emit src dst used
+  else expandIntoRows g p bidir emit src dst used
 
 /-- With nothing pending, the model is the committed-graph `expandInto`. -/
 theorem expandIntoP_empty (g : Graph) (b em : Bool) (s d : Nat) (u : List Nat) :
     expandIntoP g ⟨[], []⟩ b em s d u = expandInto g b em s d u := by
-  simp [expandIntoP, expandIntoPre, expandInto]
+  simp [expandIntoP, expandIntoRows, expandInto]
 
 /-- An edge is live in the effective graph: not deleted itself, and neither
 endpoint deleted (a deleted node's edges go with it at commit). -/
@@ -79,11 +70,11 @@ def LiveExpandInto
     (op : Graph → Pending → Bool → Bool → Nat → Nat → List Nat → List Nat) : Prop :=
   ∀ g p b em s d u, g.WF → ∀ e ∈ op g p b em s d u, Live g p e
 
-theorem mem_expandIntoPre {g : Graph} {p : Pending} {b em : Bool} {s d e : Nat}
-    {u : List Nat} (h : e ∈ expandIntoPre g p b em s d u) :
+theorem mem_expandIntoRows {g : Graph} {p : Pending} {b em : Bool} {s d e : Nat}
+    {u : List Nat} (h : e ∈ expandIntoRows g p b em s d u) :
     e ∉ p.delRels ∧ e ∉ u ∧ ∃ x ∈ g, x.id = e ∧
       ((x.src = s ∧ x.dst = d) ∨ (x.src = d ∧ x.dst = s)) := by
-  unfold expandIntoPre at h
+  unfold expandIntoRows at h
   simp only [List.mem_flatMap] at h
   obtain ⟨q, hq, he⟩ := h
   have he' : e ∈ (edgesBetween g q.1 q.2).filter fun e =>
@@ -112,7 +103,7 @@ theorem expandIntoP_live : LiveExpandInto expandIntoP := by
   · simp at he
   · rename_i hn
     simp only [Bool.or_eq_true, List.contains_eq_mem, decide_eq_true_eq, not_or] at hn
-    obtain ⟨hdr, _, x, hx, hid, hdir⟩ := mem_expandIntoPre he
+    obtain ⟨hdr, _, x, hx, hid, hdir⟩ := mem_expandIntoRows he
     refine ⟨hdr, fun y hy hyid => ?_⟩
     have : y = x := eq_of_mem_of_id hwf hy hx (hyid.trans hid.symm)
     subst this
@@ -126,9 +117,9 @@ theorem expandIntoP_not_delRel {g : Graph} {p : Pending} {b em : Bool} {s d e : 
   unfold expandIntoP at h
   split at h
   · simp at h
-  · exact (mem_expandIntoPre h).1
+  · exact (mem_expandIntoRows h).1
 
-/-! ## #3452 (fixed by #3463): `DETACH DELETE a MERGE (a)-[r:R]->(b)` -/
+/-! ## `DETACH DELETE a MERGE (a)-[r:R]->(b)` -/
 
 /-- `CREATE (:A)-[:R]->(:B)`: node `a = 0`, `b = 1`, edge `0`. -/
 def gAB1 : Graph := [⟨0, 0, 1⟩]
@@ -142,17 +133,17 @@ theorem main_3463_empty : expandIntoP gAB1 pDetach false true 0 1 [] = [] := by 
 
 theorem main_3463_empty_dst : expandIntoP gAB1 ⟨[1], []⟩ false true 0 1 [] = [] := by decide
 
-/-! ## Open: the CondTraverse path of the same query (#3463 follow-up)
+/-! ## Open: the CondTraverse path of the same query
 
 `CondTraverseOp` (one endpoint unbound, e.g. `DETACH DELETE a MERGE (a)-[r:R]->(x:B)`)
 never reads `Pending`: `cond_traverse.rs` has no `is_node_deleted` /
-`is_relationship_deleted` call at all (`expand_row` `:749`, `process_pairs` `:944`
+`is_relationship_deleted` call at all (`expand_row`, `process_pairs`
 read the relationship matrices only). So its model is `CondTraverse.expandRow`
 unchanged, and it still matches the doomed edge of a pending-deleted `a` (and the
 edge of an explicitly `DELETE`d `r`, and an edge into a pending-deleted target).
 Expected: no match (the pending-deleted endpoint is gone), so MERGE takes its
-create branch, which refuses a deleted endpoint, exactly as #3463 makes ExpandInto
-do. Not fixed in Rust here. -/
+create branch, which refuses a deleted endpoint, exactly as ExpandInto
+does. Not fixed in Rust here. -/
 
 /-- `CondTraverseOp::expand_row` with `Pending`: it ignores `Pending`, so this is
 `expandRow`. Rows are `(from, to, edge)`. -/

@@ -4,16 +4,16 @@ CondTraverse / ExpandInto / scan operator glue and constructors.
 
 | here | there |
 | --- | --- |
-| `ncolsT`               | `TraversalMatrix::ncols` (cond_traverse.rs:75) |
-| `emptyIter`            | `empty_edge_iter` (cond_traverse.rs:379) |
-| `ctNew`                | `CondTraverseOp::new` (cond_traverse.rs:421) |
-| `buildState`           | `CondTraverseOp::build_state` (cond_traverse.rs:539; multi-type branch, #3492) |
-| `trimToCap`            | `CondTraverseOp::trim_to_cap` (cond_traverse.rs:1405) |
-| `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs:1428) |
-| `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs:1443) |
-| `ctPack`               | one child batch of `CondTraverseOp::next` (cond_traverse.rs:1464) |
-| `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs:72), `next` (:251) |
-| `EmitCfg` constructors | `NodeByLabelScanOp::new` (node_by_label_scan.rs:56), `NodeByIdSeekOp::new` (node_by_id_seek.rs:32), `NodeByLabelAndIdScanOp::new` (node_by_label_and_id_scan.rs:34), `PathBuilderOp::new` (path_builder.rs:44), `AllShortestPathsOp::new` (all_shortest_paths.rs:59) |
+| `ncolsT`               | `TraversalMatrix::ncols` (cond_traverse.rs) |
+| `emptyIter`            | `empty_edge_iter` (cond_traverse.rs) |
+| `ctNew`                | `CondTraverseOp::new` (cond_traverse.rs) |
+| `buildState`           | `CondTraverseOp::build_state` (cond_traverse.rs; multi-type branch :506-535, #3492) |
+| `trimToCap`            | `CondTraverseOp::trim_to_cap` (cond_traverse.rs) |
+| `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs) |
+| `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs) |
+| `ctPack`               | one child batch of `CondTraverseOp::next` (cond_traverse.rs) |
+| `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs), `next` |
+| `EmitCfg` constructors | `NodeByLabelScanOp::new` (node_by_label_scan.rs), `NodeByIdSeekOp::new` (node_by_id_seek.rs), `NodeByLabelAndIdScanOp::new` (node_by_label_and_id_scan.rs), `PathBuilderOp::new` (path_builder.rs), `AllShortestPathsOp::new` (all_shortest_paths.rs) |
 
 GraphBLAS matrices are their entry lists (`(row, col)` pairs) with a declared shape.
 -/
@@ -31,7 +31,7 @@ inductive TM where
   | u64 (fwd : Mat)   -- a tensor; only its forward layer is read
   | union (fwds : List Mat)   -- several types kept apart (#3492); forward layers
 
-/-- cond_traverse.rs:75-83: the union's column count is the first tensor's (every
+/-- cond_traverse.rs: the union's column count is the first tensor's (every
 relationship tensor is sized to the node capacity), 0 for an (unreachable) empty list. -/
 def ncolsT : TM → Nat
   | .bool m => m.ncols
@@ -50,80 +50,93 @@ theorem ncolsT_union_all (fs : List Mat) (c : Nat) (hne : fs ≠ []) (h : ∀ f 
   | nil => exact absurd rfl hne
   | cons a t => simp [ncolsT, h a (by simp)]
 
-/-- cond_traverse.rs:379-381: an iterator over a fresh 0×0 matrix. -/
+/-- cond_traverse.rs: an iterator over a fresh 0×0 matrix. -/
 def emptyMat : Mat := ⟨0, 0, []⟩
 def iterOf (m : Mat) (lo hi : Nat) : List (Nat × Nat) := m.entries.filter fun p => lo ≤ p.1 ∧ p.1 ≤ hi
 def emptyIter : List (Nat × Nat) := iterOf emptyMat 0 (2 ^ 64 - 1)
 
 theorem emptyIter_nil : emptyIter = [] := rfl
 
-/-! `attrs_is_static_empty` (formerly cond_traverse.rs:240) was removed by #2390
-(d2c42e032): the planner now lowers every fixed-length traverse's inline attrs to a
-`Filter` above the operator and embeds a stripped pattern (`planner/mod.rs:644`
+/-! There is no `attrs_is_static_empty` check: the planner lowers every fixed-length traverse's inline attrs to a
+`Filter` above the operator and embeds a stripped pattern (`planner/mod.rs`
 `strip_rel_attrs`; proofs/planner_build `E.planMatch_stripped`, `E.firstRel_edge_pred`), so the batched path no
 longer needs to inspect them. -/
 
-/-! ## `CondTraverseOp::new` (cond_traverse.rs:421) -/
+/-! ## `CondTraverseOp::new` (cond_traverse.rs) -/
 
-/-- An alias is `(id, scope_id)`; `fromName` is the `from` alias's name. -/
 structure RelPat where
   fromAlias : Nat
-  fromScope : Nat
   fromName : Option String
   toAlias : Nat
   relAlias : Nat
   bidir : Bool
 
-/-- What `new` reads of a child `CondTraverse` (its pattern's `to` alias, since #3110). -/
 structure ChildCT where
   emitRel : Bool
   bidir : Bool
   fromAlias : Nat
-  toAlias : Nat
-  toScope : Nat
 
-/-- `dedup`: `bidir_dedup` is `Some`; `childTracks`: `new` set the child's `track_lineage` and
-`emitter.record_parent_rows()` (cond_traverse.rs:466-467). -/
 structure CtCfg where
   dedup : Bool
-  childTracks : Bool
+  dedupSrc : Option Nat
   eligible : Bool
   toCol : Option Nat
   produced : Nat
 
-/-- cond_traverse.rs:448-472 (#3110: the child's `to` alias must be this CT's `from`). -/
 def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : List Bool)
     (child : Option ChildCT) : CtCfg :=
-  let anon := rp.fromName.any (·.startsWith "_anon")
-  let dedup :=
-    match child with
-    | some c => !emitRel && rp.bidir && anon && !c.emitRel && c.bidir &&
-        c.toAlias == rp.fromAlias && c.toScope == rp.fromScope
-    | none => false
-  -- cond_traverse.rs:486-490 (#2390: the inline-attr emptiness test is gone)
+  -- cond_traverse.rs `rp.from.alias.is_unnamed()` (no name)
+  let anon := rp.fromName.isNone
+  let (dedup, src) :=
+    if !emitRel && rp.bidir && anon then
+      match child with
+      | some c => if !c.emitRel && c.bidir then (true, some c.fromAlias) else (false, none)
+      | none => (false, none)
+    else (false, none)
+  -- cond_traverse.rs (#2390: the inline-attr emptiness test is gone)
   let eligible := !emitRel && !rp.bidir && !dedup && siblings.isEmpty &&
     chainBidir.all (!·)
-  { dedup, childTracks := dedup, eligible,
-    toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none, produced := 0 }
+  { dedup, dedupSrc := src, eligible, toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none,
+    produced := 0 }
 
 /-- Cross-row bidirectional dedup is armed exactly for an anonymous-intermediate,
-non-emitting bidirectional hop over a non-emitting bidirectional child CT whose `to` alias is
-this hop's `from` alias, and then the child is told to track lineage (the dedup key's record);
-the F·A batched path is taken only for directed, non-emitting, sibling-free hops whose chain
-hops are all directed; a self-loop binds one endpoint column. -/
+non-emitting bidirectional hop over a non-emitting bidirectional child CT, keyed by the
+child's source alias; the F·A batched path is taken only for directed, non-emitting,
+sibling-free hops whose chain hops are all directed; a self-loop
+binds one endpoint column. -/
 theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (ch : Option ChildCT) :
     let c := ctNew rp er sib cb ch
-    (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName.any (·.startsWith "_anon") = true ∧
-      ∃ x, ch = some x ∧ x.emitRel = false ∧ x.bidir = true ∧
-        x.toAlias = rp.fromAlias ∧ x.toScope = rp.fromScope) ∧
-    (c.childTracks = c.dedup) ∧
+    (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName = none ∧
+      ∃ x, ch = some x ∧ x.emitRel = false ∧ x.bidir = true) ∧
+    (c.dedup = true → c.dedupSrc = ch.map (·.fromAlias)) ∧
     (c.eligible = true → er = false ∧ rp.bidir = false ∧ sib = [] ∧ ∀ b ∈ cb, b = false) ∧
     (c.toCol = none ↔ rp.toAlias = rp.fromAlias) ∧ c.produced = 0 := by
   simp only [ctNew]
-  refine ⟨?_, by first | rfl | trivial, ?_, ?_, by first | rfl | trivial⟩
-  · cases ch with
-    | none => simp
-    | some x => simp [and_assoc]
+  refine ⟨?_, ?_, ?_, ?_, by first | rfl | trivial⟩
+  · by_cases h : (!er && rp.bidir && rp.fromName.isNone) = true
+    · simp only [h, ite_true]
+      simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+      obtain ⟨⟨h1, h2⟩, h3⟩ := h
+      rw [Option.isNone_iff_eq_none] at h3
+      cases ch with
+      | none => simp
+      | some x => by_cases hx : (!x.emitRel && x.bidir) = true
+                  · simp only [hx, ite_true]; simp at hx; simp [h1, h2, h3, hx]
+                  · simp only [hx, Bool.false_eq_true, ite_false]; simp at hx
+                    constructor
+                    · intro h; cases h
+                    · rintro ⟨_, _, _, y, hy, h4, h5⟩
+                      cases hy; simp [hx h4] at h5
+    · simp only [h, Bool.false_eq_true, ite_false, false_iff, not_and]
+      intro h1 h2 h3; simp [h1, h2, h3] at h
+  · intro hd
+    split at hd
+    · split at hd
+      · split at hd
+        · simp_all
+        · simp at hd
+      · simp at hd
+    · simp at hd
   · intro he
     simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_iff, List.all_eq_true] at he
     obtain ⟨⟨⟨⟨h1, h2⟩, _⟩, h4⟩, h6⟩ := he
@@ -131,7 +144,7 @@ theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (
   · by_cases h : rp.toAlias = rp.fromAlias <;> simp [h]
 
 /-- The F·A batched path is taken exactly for non-emitting, directed, dedup-free,
-sibling-free hops whose fused chain is all directed (cond_traverse.rs:486-490). -/
+sibling-free hops whose fused chain is all directed (cond_traverse.rs). -/
 theorem ctNew_eligible_iff (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
     (ch : Option ChildCT) :
     (ctNew rp er sib cb ch).eligible = true ↔
@@ -143,7 +156,7 @@ theorem ctNew_eligible_iff (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List
   · rintro ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩; exact ⟨h1, h2, h3, h4, h6⟩
   · rintro ⟨h1, h2, h3, h4, h6⟩; exact ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩
 
-/-! ## `build_state` (cond_traverse.rs:539) -/
+/-! ## `build_state` (cond_traverse.rs) -/
 
 structure CtState where
   fwdSrc : List Nat
@@ -210,7 +223,7 @@ theorem buildState_multi (resolve : List String → Option (List Nat)) (typeId :
 
 /-! ## `trim_to_cap`, `out_alias_id`, `null_pad` -/
 
-/-- cond_traverse.rs:1405-1425: keep the first `cap - produced` active rows. -/
+/-- cond_traverse.rs: keep the first `cap - produced` active rows. -/
 def trimToCap {R : Type} (cap : Option Nat) (produced : Nat) (rows : List R) : List R × Nat :=
   match cap with
   | none => (rows, produced)
@@ -232,7 +245,7 @@ theorem trimToCap_spec {R : Type} (cap : Nat) (p : Nat) (rows : List R) :
     have : rows.take (cap - p) = rows := List.take_of_length_le (by omega)
     simp [this]
 
-/-- cond_traverse.rs:1428-1440 -/
+/-- cond_traverse.rs -/
 def outAlias (chainLastTo : Option Nat) (transposed : Bool) (fromA toA : Nat) : Nat :=
   match chainLastTo with
   | some t => t
@@ -242,7 +255,7 @@ theorem outAlias_spec (c : Option Nat) (tr : Bool) (f t : Nat) :
     (∀ x, c = some x → outAlias c tr f t = x) ∧ outAlias none true f t = f ∧ outAlias none false f t = t := by
   refine ⟨fun x hx => by simp [outAlias, hx], rfl, rfl⟩
 
-/-- cond_traverse.rs:1443-1461: gather the unmatched rows, bind the edge and the out alias to
+/-- cond_traverse.rs: gather the unmatched rows, bind the edge and the out alias to
 `Null` (`none`). -/
 def nullPad {V : Type} (rows : List (Nat → Option V)) (unmatched : List Nat) (relA outA : Nat)
     (nul : V) : List (Nat → Option V) :=
@@ -274,14 +287,11 @@ theorem nullPad_spec {V : Type} (rows : List (Nat → Option V)) (un : List Nat)
       simp only [List.getElem_cons_succ]
       exact hg k (by simpa using hk) (by simpa using hk')
 
-/-! ## `CondTraverseOp::next` (cond_traverse.rs:1464) -/
+/-! ## `CondTraverseOp::next` (cond_traverse.rs) -/
 
 /-- Output batches for one child batch: the batched F·A path's batches when it handles the
 batch, else the emitter's packed batches followed (for OPTIONAL) by one null-padded batch of the
-rows that expanded to nothing. Since #3110 `next` also records, when `track_lineage`, the
-lineage of every row it returns (`stamp_lineage`, `BidirDedup.Lin.stampStart`/`stampFwd`) and, for
-a dedup CT, installs the child's lineage on each new child batch; neither changes the rows. The
-dedup state is no longer cleared per child batch (`BidirDedup.Lin.runBatches_eq`). -/
+rows that expanded to nothing. -/
 def ctPack {C R : Type} (batched : C → Option (List (List R))) (emitted : C → List (List R))
     (padded : C → List R) (optional : Bool) (c : C) : List (List R) :=
   match batched c with
@@ -296,14 +306,14 @@ theorem ctNext_stream {C R : Type} (batched : C → Option (List (List R))) (emi
       (cs.flatMap (ctPack batched emitted padded opt)).flatten.take cap := by
   rw [Drive.capDrive_flatten]; simp
 
-/-! ## `ExpandIntoOp::new` / `next` (expand_into.rs:72, :251) -/
+/-! ## `ExpandIntoOp::new` / `next` (expand_into.rs) -/
 
 structure EiCfg where
   synthetic : Bool
   relCol : Option Nat
   produced : Nat
 
-/-- expand_into.rs:84-97: a synthetic multi-label check `(a:A:B)` (same alias, labels only on
+/-- expand_into.rs: a synthetic multi-label check `(a:A:B)` (same alias, labels only on
 `to`) binds no relationship column. -/
 def eiNew (fromA toA relA : Nat) (fromLabels toLabels : List String) : EiCfg :=
   let synthetic := fromA == toA && fromLabels.isEmpty && !toLabels.isEmpty
@@ -316,7 +326,7 @@ theorem eiNew_spec (f t r : Nat) (fl tl : List String) :
   refine ⟨by simp [eiNew, and_assoc], ?_, rfl⟩
   simp only [eiNew]; split <;> simp_all
 
-/-- expand_into.rs:290-298: `set_selection(0..remaining)` keeps the first `remaining` rows. -/
+/-- expand_into.rs: `set_selection(0..remaining)` keeps the first `remaining` rows. -/
 theorem eiNext_stream {C R : Type} (pack : C → List (List R)) (cap : Nat) (cs : List C) :
     (Drive.capDrive pack cap 0 [] cs).flatten = (cs.flatMap pack).flatten.take cap := by
   rw [Drive.capDrive_flatten]; simp

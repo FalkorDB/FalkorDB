@@ -5,11 +5,10 @@ Shared primitives for the query-command argument models (`QueryArgs.lean`) and
 `GRAPH.CONFIG` (`Config.lean`):
 
 * `string2ll`     — Redis `util.c:string2ll`, which `RedisModule_StringToLongLong`
-  (`RedisString::parse_integer`) calls: what both engines use for `TIMEOUT`/`version`
-  since #3010 (`557f18868`).
+  (`RedisString::parse_integer`) calls: what both engines use for `TIMEOUT`/`version`.
 * `rustParseI64`  — `core::str::parse::<i64>` (`from_str_radix`, radix 10), used by
   `GRAPH.CONFIG SET` (`Config.lean`).
-* `rustTimeout`   — `compute_effective_timeout` (`src/graph_core.rs:886-921`).
+* `rustTimeout`   — `compute_effective_timeout` (`src/graph_core.rs`).
 
 Bytes are `Nat`s; `eq_ignore_ascii_case` is byte-wise (`eqIC`).
 -/
@@ -73,7 +72,7 @@ instance instDecEqExcept {ε α : Type} [DecidableEq ε] [DecidableEq α] :
   | .ok _, .error _ => isFalse (by intro e; cases e)
   | .error _, .ok _ => isFalse (by intro e; cases e)
 
-/-! ## `compute_effective_timeout` (`graph_core.rs:886-923`) -/
+/-! ## `compute_effective_timeout` (`graph_core.rs`) -/
 
 structure TCfg where
   timeoutMax : Int
@@ -85,11 +84,11 @@ inductive TErr where
   | exceedsMax
   deriving DecidableEq, Repr
 
-/-- C's `timeout_rw` (`graph_core.rs:895`): the new-style configs make timeouts apply
+/-- C's `timeout_rw` (`graph_core.rs`): the new-style configs make timeouts apply
 to writes too. -/
 def timeoutRw (c : TCfg) : Bool := decide (c.timeoutMax > 0 ∨ c.timeoutDefault > 0)
 
-/-- The global fallback (`graph_core.rs:907-920`). -/
+/-- The global fallback (`graph_core.rs`). -/
 def fallback (c : TCfg) (isWrite : Bool) : Except TErr (Option Nat) :=
   if c.timeoutDefault > 0 then .ok (some c.timeoutDefault.toNat)
   else if c.timeoutMax > 0 then .ok (some c.timeoutMax.toNat)
@@ -189,7 +188,7 @@ theorem string2ll_dec (n : Nat) (h : n ≤ i64Max) :
     rw [hd] at hv hl ⊢
     simp only [List.length_cons] at hl
     unfold string2ll
-    rw [if_neg (by simp; omega), if_neg (by intro heq; simp at heq; omega)]
+    rw [ite_eq_right (by simp; omega), ite_eq_right (by intro heq; simp at heq; omega)]
     simp [show d ≠ 45 by omega, show 49 ≤ d by omega, h2, hv]
     exact ⟨n, ⟨rfl, h⟩, rfl⟩
 
@@ -230,14 +229,14 @@ theorem fallback_spec (c : TCfg) (w : Bool) (t : Nat) (h : fallback c w = .ok (s
       (c.timeoutDefault ≤ 0 → c.timeoutMax > 0 → (t : Int) = c.timeoutMax) := by
   unfold fallback at h
   by_cases h1 : c.timeoutDefault > 0
-  · rw [if_pos h1] at h; simp at h; omega
-  · rw [if_neg h1] at h
+  · rw [ite_eq_left h1] at h; simp at h; omega
+  · rw [ite_eq_right h1] at h
     by_cases h2 : c.timeoutMax > 0
-    · rw [if_pos h2] at h; simp at h; omega
-    · rw [if_neg h2] at h
+    · rw [ite_eq_left h2] at h; simp at h; omega
+    · rw [ite_eq_right h2] at h
       by_cases h3 : c.legacy > 0 ∧ w = false
-      · rw [if_pos h3] at h; simp at h; omega
-      · rw [if_neg h3] at h; simp at h
+      · rw [ite_eq_left h3] at h; simp at h; omega
+      · rw [ite_eq_right h3] at h; simp at h
 
 /-- Under the configuration invariant `GRAPH.CONFIG SET` maintains
 (`TIMEOUT_DEFAULT ≤ TIMEOUT_MAX` when both are set, see `Config.lean`), no query ever
@@ -252,11 +251,11 @@ theorem rustTimeout_le_max (c : TCfg) (pq : Option Int) (w : Bool) (t : Nat)
   | some p =>
     simp only [rustTimeout] at h
     by_cases h1 : c.timeoutMax > 0 ∧ p > c.timeoutMax
-    · rw [if_pos h1] at h; simp at h
-    · rw [if_neg h1] at h
+    · rw [ite_eq_left h1] at h; simp at h
+    · rw [ite_eq_right h1] at h
       by_cases h2 : p > 0 ∧ (w = false ∨ timeoutRw c = true)
-      · rw [if_pos h2] at h; simp at h; omega
-      · rw [if_neg h2] at h
+      · rw [ite_eq_left h2] at h; simp at h; omega
+      · rw [ite_eq_right h2] at h
         have := fallback_spec c w t h
         by_cases hd : c.timeoutDefault > 0 <;> omega
 
@@ -268,11 +267,11 @@ theorem rustTimeout_pos (c : TCfg) (pq : Option Int) (w : Bool) (t : Nat)
   | some p =>
     simp only [rustTimeout] at h
     by_cases h1 : c.timeoutMax > 0 ∧ p > c.timeoutMax
-    · rw [if_pos h1] at h; simp at h
-    · rw [if_neg h1] at h
+    · rw [ite_eq_left h1] at h; simp at h
+    · rw [ite_eq_right h1] at h
       by_cases h2 : p > 0 ∧ (w = false ∨ timeoutRw c = true)
-      · rw [if_pos h2] at h; simp at h; omega
-      · rw [if_neg h2] at h; exact (fallback_spec c w t h).1
+      · rw [ite_eq_left h2] at h; simp at h; omega
+      · rw [ite_eq_right h2] at h; exact (fallback_spec c w t h).1
 
 /-- Negative per-query timeout on a read: `compute_effective_timeout` alone falls back to
 the global value. Since #3010 (`557f18868`) no command can hand it a negative value:
