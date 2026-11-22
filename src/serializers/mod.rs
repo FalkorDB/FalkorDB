@@ -830,6 +830,9 @@ mod tests {
         let future = blob(Some(GRAPH_ENCODING_VERSION + 1));
         let err = BufferedReader::from_blob(&future).err().unwrap();
         assert!(err.contains("this build reads up to"), "{err}");
+        let ancient = blob(Some(18));
+        let err = BufferedReader::from_blob(&ancient).err().unwrap();
+        assert!(err.contains("this build reads from"), "{err}");
 
         assert!(
             BufferedReader::from_blob(&[]).is_ok(),

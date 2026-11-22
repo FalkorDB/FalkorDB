@@ -236,6 +236,11 @@ impl BufferedReader {
                 "graph blob is encoding version {encver}, this build reads up to {ENCODING_VERSION}"
             ));
         }
+        if encver < UNVERSIONED_BLOB_ENCVER {
+            return Err(format!(
+                "graph blob is encoding version {encver}, this build reads from {UNVERSIONED_BLOB_ENCVER}"
+            ));
+        }
         r.encver = encver;
         Ok(r)
     }

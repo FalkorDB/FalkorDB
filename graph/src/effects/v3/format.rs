@@ -4,7 +4,7 @@
 //! than beside the trait so the trait's module stays free of any single
 //! version's rules. This impl is the version this build writes (4); it also
 //! applies a v3 payload, since the two differ only in how `T_DURATION` is read
-//! and the header names which.
+//! and the payload header names which of the two a payload is.
 
 use super::emit::{build_constraint_buffer, build_index_buffer, for_each_record};
 use super::{

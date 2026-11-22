@@ -308,14 +308,12 @@ fn read_one(
         si_type::T_DATE => Value::Date(r.i64()?),
         si_type::T_TIME => Value::Time(r.i64()?),
         // v3 carried one epoch offset; v4 carries the components themselves.
-        si_type::T_DURATION if legacy_duration => Value::Duration(
-            duration_from_legacy(r.i64()?).map_err(|_| DecodeError::BadValueType(t as u32))?,
-        ),
+        si_type::T_DURATION if legacy_duration => {
+            Value::Duration(duration_from_legacy(r.i64()?).map_err(DecodeError::BadDuration)?)
+        }
         si_type::T_DURATION => {
             let (months, days, seconds) = (r.i64()?, r.i64()?, r.i64()?);
-            Value::Duration(
-                Dur::new(months, days, seconds).map_err(|_| DecodeError::BadValueType(t as u32))?,
-            )
+            Value::Duration(Dur::new(months, days, seconds).map_err(DecodeError::BadDuration)?)
         }
         // Back to `u32` for the error: the tag is four bytes on the wire and
         // `other` was widened from exactly those, so this cannot truncate.

@@ -153,6 +153,11 @@ pub enum DecodeError {
     #[error("unknown SIValue type {0:#x}")]
     BadValueType(u32),
 
+    /// A `T_DURATION` whose components the engine cannot represent; the
+    /// string is the constructor's own message.
+    #[error("{0}")]
+    BadDuration(String),
+
     /// A string field that is not valid UTF-8, or is missing its NUL.
     #[error("malformed string in effects buffer")]
     BadString,

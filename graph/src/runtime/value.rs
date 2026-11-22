@@ -757,8 +757,8 @@ fn shift_months(
     } else {
         (adj_year, adj_month, d)
     };
-    // `days_from_civil` steps the year back for January and February.
-    if final_year == i32::MIN {
+    // `days_from_civil` steps the year back for January and February only.
+    if final_year == i32::MIN && final_month <= 2 {
         return Err(out_of_range());
     }
 
@@ -3091,5 +3091,18 @@ mod value_of_type_tests {
         let sig = Type::union([Type::List(Box::new(Type::Any)), Type::String, Type::Null]);
         let big = Value::List(Arc::new(thin_vec![Value::Int(0); 1000]));
         assert!(big.value_of_type(&sig).is_none());
+    }
+}
+
+#[cfg(test)]
+mod shift_months_tests {
+    use super::{days_from_civil, shift_months};
+
+    // Only January and February step the year back inside `days_from_civil`, so
+    // a zero shift of a date in the smallest year after February is the identity.
+    #[test]
+    fn zero_shift_in_the_minimum_year_is_identity_after_february() {
+        let days = days_from_civil(i32::MIN, 3, 1);
+        assert_eq!(shift_months(days * 86400, 0), Ok((days, 0)));
     }
 }
