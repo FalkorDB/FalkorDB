@@ -123,11 +123,11 @@ theorem deletePendingNode_clears_remL {Gr : Type} (cancelN cancelR : Gr → Nat 
             simp only [hx, Option.map_some, Option.bind_some] at h
             rw [ih _ _ _ _ h]; simp [rmStep]
       rw [hc _ _ _ _ _ hrm]
-      split <;> rfl
+      unfold takeAttrs dropNode; split <;> rfl
 
 /-- `CREATE (n:Foo) REMOVE n:Foo` as staged **before #3459** for node 0: created, `Foo` (id 0) in
 `remove_labels`, no `set_labels`. -/
-def pCreateRemove : P := ⟨[0], [], [], [], [], [], [], [], [], [], [], [], [], [(0, [0])], 0⟩
+def pCreateRemove : P := ⟨[0], [], [], [], [], [], [], [], [], [], [], [], [], [(0, [0])], 0, 0⟩
 
 /-- **#3448 repro, fixed by #3459**: `CREATE (n:Foo) REMOVE n:Foo DELETE n`. Even from the state the
 old `remove_node_labels` left (`pCreateRemove`), `delete_pending_node` now drops the node's
@@ -175,7 +175,7 @@ theorem pendingWithLabels_live (p : P) (C : Nat → Nat → Bool) (hk : (p.setL.
   · exact hd
 
 /-- `MATCH (n:A) SET n:B` on committed node 0 (`B` = 1 staged). -/
-def pSetB : P := ⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], [], 0⟩
+def pSetB : P := ⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], [], 0, 0⟩
 
 /-- **#3453 (1), fixed**: `MATCH (n:A) SET n:B DELETE n MERGE (m:B)`: the deleted node is not a pending `:B`
 node any more (before the fix the list was `[0]`). -/
@@ -185,7 +185,7 @@ theorem fixed3453_deleted_not_pending :
 /-- **#3453 (2), fixed**: `MATCH (n:A) SET n:A`: the node already has `A` committed, so it is left to the
 scan, not listed again (before the fix: a second row). -/
 theorem fixed3453_resets_committed_label :
-    pendingWithLabels ⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [0])], [], 0⟩
+    pendingWithLabels ⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [0])], [], 0, 0⟩
       (fun _ l => l == 0) [0] = [] := by decide
 
 /-- **#3453 (3), fixed**: `MATCH (n:A) SET n:B MERGE (m:A:B)`: node 0 has `A` committed and `B` staged; it

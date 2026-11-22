@@ -108,7 +108,8 @@ def incident (id : Nat) (e : Nat × Nat × Nat) : Bool := e.2.1 == id || e.2.2 =
 def collect (p : P) (id : Nat) : List ((Nat × Nat × Nat) × Nat) :=
   p.relsByType.flatMap (fun g => (g.2.filter (incident id)).map (·, g.1))
 
-/-- One iteration of the second loop. -/
+/-- One iteration of the second loop. The edge's staged attributes leave
+`new_relationships_attrs` and (#3030) their `count_set` is added to `cancelled_properties`. -/
 def rmStep (p : P) (x : (Nat × Nat × Nat) × Nat) : P :=
   let (e, t) := x
   let rb := match fget p.relsByType t with
@@ -117,7 +118,8 @@ def rmStep (p : P) (x : (Nat × Nat × Nat) × Nat) : P :=
     | none => p.relsByType
   { p with relTypes := frem p.relTypes e.1, relsByType := rb, newR := frem p.newR e.1,
            deletedR := p.deletedR.filter (· != e.1), taken := p.taken.filter (· != e.1),
-           cancelledR := p.cancelledR ++ [(e.1, t, e.2.1, e.2.2)] }
+           cancelledR := p.cancelledR ++ [(e.1, t, e.2.1, e.2.2)],
+           cancelledP := p.cancelledP + ((fget p.newR e.1).map countSet).getD 0 }
 
 def removeRels (p : P) (id : Nat) : P := (collect p id).foldl rmStep p
 

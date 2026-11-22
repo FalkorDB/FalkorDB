@@ -360,8 +360,9 @@ def newFull : Full := ⟨PS.P0, ⟨Docs.empty, Docs.empty, Docs.empty⟩, [], []
 
 theorem new_spec : newFull.st.created = [] ∧ newFull.st.relsByType = [] ∧ newFull.st.deletedN = [] ∧
     newFull.st.cancelledN = [] ∧ newFull.st.newN = [] ∧ newFull.st.setL = [] ∧ newFull.logs.published = Docs.empty ∧
-    newFull.st.taken = [] ∧ newFull.schema = (0, 0, 0, 0) ∧ newFull.st.remL = [] ∧ newFull.st.stagedRem = 0 := by
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    newFull.st.taken = [] ∧ newFull.schema = (0, 0, 0, 0) ∧ newFull.st.remL = [] ∧ newFull.st.stagedRem = 0 ∧
+    newFull.st.cancelledR = [] ∧ newFull.st.cancelledP = 0 := by
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `set_schema_baseline` (:547): the four dictionary sizes. -/
 def setSchemaBaseline (f : Full) (labels types nattrs rattrs : Nat) : Full := { f with schema := (labels, types, nattrs, rattrs) }
@@ -381,7 +382,7 @@ def clearBranch (f : Full) (offload : Bool) : Full :=
   let st1 : PS.P := if offload then clearMaps f.st else clearMaps f.st
   let st2 : PS.P :=
     { st1 with created := [], relTypes := [], deletedN := [], deletedR := [], cancelledN := [], stagedRem := 0 }
-  let st3 : PS.P := { st2 with taken := [], cancelledR := [] }
+  let st3 : PS.P := { st2 with taken := [], cancelledR := [], cancelledP := 0 }
   { f with st := st3, endpoints := [], nodeLabels := [], logs := { f.logs with docs := Docs.empty } }
 
 def bigEntries (f : Full) : Nat :=
@@ -400,10 +401,10 @@ theorem clear_spec (f : Full) :
     c.st.cancelledN = [] ∧ c.st.cancelledR = [] ∧ c.st.taken = [] ∧ c.st.newN = [] ∧ c.st.existN = [] ∧
     c.st.newR = [] ∧ c.st.existR = [] ∧ c.st.setL = [] ∧ c.st.remL = [] ∧ c.endpoints = [] ∧
     c.nodeLabels = [] ∧ c.logs.docs = Docs.empty ∧ c.logs.published = f.logs.published ∧
-    c.logs.deferred = f.logs.deferred ∧ c.schema = f.schema ∧ c.st.stagedRem = 0 := by
+    c.logs.deferred = f.logs.deferred ∧ c.schema = f.schema ∧ c.st.stagedRem = 0 ∧ c.st.cancelledP = 0 := by
   refine ⟨by simp [clearBranch], ?_⟩
   unfold clear clearBranch; cases decide (bigEntries f ≥ 4096) <;>
-    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `end_segment` (:1939): the reset above, then `g.roll_id_batches()`
 (graph.rs; `roll` here, `none` = its `Err`). The `Pending` reset happens
