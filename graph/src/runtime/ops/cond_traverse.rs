@@ -1382,15 +1382,21 @@ impl<'a> CondTraverseOp<'a> {
         );
         if let Some(in_lineage) = forward {
             let in_lineage = in_lineage.borrow();
-            out_lineage.extend(parent_rows.iter().map(|&r| in_lineage[r]));
+            out_lineage.extend(parent_rows.iter().take(out.len()).map(|&r| in_lineage[r]));
         } else {
-            out_lineage.extend(parent_rows.iter().enumerate().map(|(i, &r)| {
-                let source = match out.value_at(from_alias, i) {
-                    Some(Value::Node(id)) => u64::from(id),
-                    _ => u64::MAX,
-                };
-                (lineage_base + r as u64, source)
-            }));
+            out_lineage.extend(
+                parent_rows
+                    .iter()
+                    .take(out.len())
+                    .enumerate()
+                    .map(|(i, &r)| {
+                        let source = match out.value_at(from_alias, i) {
+                            Some(Value::Node(id)) => u64::from(id),
+                            _ => u64::MAX,
+                        };
+                        (lineage_base + r as u64, source)
+                    }),
+            );
         }
     }
 

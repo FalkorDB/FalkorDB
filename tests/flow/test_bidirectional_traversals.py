@@ -347,8 +347,8 @@ class testBidirectionalTraversals(FlowTestsBase):
                              [[1, 2], [1, 4], [2, 1], [2, 3], [2, 5], [3, 2],
                               [3, 4], [4, 1], [4, 3], [4, 5], [5, 2], [5, 4]])
 
-        # a start node whose first hop spans several batches (more than the
-        # runtime's 1024-row batch)
+        # a start node whose first hop spans several batches (wide enough
+        # that its fan-out is larger than one runtime batch)
         g = self.db.select_graph("bidir_chain_wide")
         g.query("""CREATE (u:U {id:1}), (v:U {id:2}) WITH u, v UNWIND range(1,3000) AS i
                    CREATE (u)-[:R]->(:L {id:i})<-[:R]-(v)""")
