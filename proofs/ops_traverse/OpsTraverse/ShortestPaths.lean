@@ -4,13 +4,13 @@ import OpsTraverse.VarLen
 
 | here | there |
 | --- | --- |
-| `St`, `relax`       | the BFS body of `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:141-265`): cycle case `:215-238`, same-distance predecessor `:240-248`, first discovery `:249-263` |
-| `bfs`               | the `while let Some(current) = queue.pop_front()` loop (`:146-265`), fuel-bounded; neighbours via `step` (`:161-191`, self-loop once when undirected) |
-| `back`              | the DFS backtrack iterator (`:278-304`): push `edge` then continue at `prev`, stop at `src` with a non-empty list |
-| `asp`               | the whole row: reverse always, cycles included (#3112; `:283-289`), reverse again for `AllShortestPaths::Reversed` (`:289-291`) |
-| `ends`, `buildNodes`| `PathBuilderOp`'s `Value::List` branch (`runtime/ops/path_builder.rs:102-130`): next node = the edge endpoint that differs from the previous node, via `Runtime::get_relationship_endpoints` |
+| `St`, `relax`       | the BFS body of `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs`): cycle case, same-distance predecessor, first discovery |
+| `bfs`               | the `while let Some(current) = queue.pop_front()` loop, fuel-bounded; neighbours via `step` (self-loop once when undirected) |
+| `back`              | the DFS backtrack iterator: push `edge` then continue at `prev`, stop at `src` with a non-empty list |
+| `asp`               | the whole row: reverse always, cycles included (#3112), reverse again for `AllShortestPaths::Reversed` |
+| `ends`, `buildNodes`| `PathBuilderOp`'s `Value::List` branch (`runtime/ops/path_builder.rs`): next node = the edge endpoint that differs from the previous node, via `Runtime::get_relationship_endpoints` |
 
-Edge-attribute filters (`:193-208`) are a pure pre-filter of the neighbour
+Edge-attribute filters are a pure pre-filter of the neighbour
 list and are not modelled. *Minimality*, *completeness* and *exactly-once* are proved in
 `ASPFold`/`ASPInv`/`ASPStep`/`ASPFinal`/`ASPMain`/`ASPFuel` (`asp_minimal`,
 `asp_complete'`, `asp_nodup`; non-cycle, `min_hops = 1` as the planner enforces).
@@ -70,7 +70,7 @@ def back (st : St) (src : Nat) : Nat → Nat → List Nat → List (List Nat)
     if node == src && !acc.isEmpty then [acc]
     else (predsOf st node).flatMap fun p => back st src fuel p.1 (acc ++ [p.2])
 
-/-- `distances = {src: 0}`, `queue = [src]` (`:141-142`). -/
+/-- `distances = {src: 0}`, `queue = [src]`. -/
 def st0 (src : Nat) : St where
   dist := upd (fun _ => none) src 0
   preds := []
@@ -237,7 +237,7 @@ def ends (g : Graph) (e : Nat) : Nat × Nat :=
   | some x => (x.src, x.dst)
   | none => (0, 0)
 
-/-- Nodes PathBuilder appends after `prev` for an edge list (`path_builder.rs:102-130`). -/
+/-- Nodes PathBuilder appends after `prev` for an edge list (`path_builder.rs`). -/
 def buildNodes (g : Graph) : Nat → List Nat → List Nat
   | _, [] => []
   | prev, e :: es =>

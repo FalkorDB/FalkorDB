@@ -1,7 +1,7 @@
 /-
 # No panics at the clause level
 
-The two `unreachable!()` of the clause dispatchers (cypher.rs:978, 1027)
+The two `unreachable!()` of the clause dispatchers (cypher.rs)
 are reached only through `parse_single_query`'s and FOREACH's keyword
 guards, so the whole clause layer never panics whenever the expression
 parser does not (`parseExpr_no_panic`).
@@ -73,16 +73,15 @@ theorem np_chainA (F : Nat) (cl : CK) : ∀ n left gs, NP (chainA o F cl n left 
   | n + 1, left, gs => by
     unfold chainA; have := np_chainA F cl n; have := np_relP o ho F cl; np_go
 
-theorem np_chainN (F : Nat) (cl : CK) (p : Nat) :
-    ∀ n left vars inc gs, NP (chainN o F cl p n left vars inc gs)
-  | 0, _, _, _, _ => np_fuelP
-  | n + 1, left, vars, inc, gs => by
+theorem np_chainN (F : Nat) (cl : CK) (p : Nat) : ∀ n left vars gs, NP (chainN o F cl p n left vars gs)
+  | 0, _, _, _ => np_fuelP
+  | n + 1, left, vars, gs => by
     unfold chainN; have := np_chainN F cl p n; have := np_relP o ho F cl; np_go
 
 theorem np_aspLoop (F : Nat) (cl : CK) (la : Alias) :
-    ∀ n prev found vars inc gs, NP (aspLoop o F cl la n prev found vars inc gs)
-  | 0, _, _, _, _, _ => np_fuelP
-  | n + 1, prev, found, vars, inc, gs => by
+    ∀ n prev found vars gs, NP (aspLoop o F cl la n prev found vars gs)
+  | 0, _, _, _, _ => np_fuelP
+  | n + 1, prev, found, vars, gs => by
     unfold aspLoop; have := np_aspLoop F cl la n; have := np_relP o ho F cl; np_go
 
 theorem np_partP (F : Nat) (cl : CK) (gs : QG Alias × List Alias) : NP (partP o F cl gs) := by
@@ -140,10 +139,12 @@ theorem np_dotChain : ∀ n e, NP (dotChain n e)
   | n + 1, e => by have := np_dotChain n; unfold dotChain; np_go
 theorem np_targetP : NP (targetP o) := by
   have := np_pe o ho; have := np_pp o ho; unfold targetP rejectUnparenP; np_go
+theorem np_updateTargetP (F : Nat) : NP (updateTargetP o F) := by
+  have := np_targetP o ho; have := np_dotChain; unfold updateTargetP; np_go
 theorem np_setItems (F : Nat) : ∀ n acc, NP (setItems o F n acc)
   | 0, _ => np_fuelP
   | n + 1, acc => by
-    have := np_setItems F n; have := np_pe o ho; have := np_targetP o ho; have := np_dotChain
+    have := np_setItems F n; have := np_pe o ho; have := np_updateTargetP o ho F
     have := np_labelsP; unfold setItems; np_go
 theorem np_setMore (F : Nat) : ∀ n acc, NP (setMore o F n acc)
   | 0, _ => np_fuelP
@@ -153,7 +154,7 @@ theorem np_setP (F : Nat) : NP (setP o F) := by
 theorem np_removeItems (F : Nat) : ∀ n acc, NP (removeItems o F n acc)
   | 0, _ => np_fuelP
   | n + 1, acc => by
-    have := np_removeItems F n; have := np_targetP o ho; have := np_dotChain
+    have := np_removeItems F n; have := np_updateTargetP o ho F
     have := np_labelsP; unfold removeItems; np_go
 theorem np_removeMore (F : Nat) : ∀ n acc, NP (removeMore o F n acc)
   | 0, _ => np_fuelP

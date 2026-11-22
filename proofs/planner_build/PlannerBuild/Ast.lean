@@ -1,27 +1,13 @@
 /-
 # parser/ast.rs: variables, pattern graphs, validation
 
-| here | there |
-| --- | --- |
-| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:160-216 (#3303 adds `anon`) |
-| `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs:473-640 |
-| `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs:481-489, 542-566, 643-660 |
-| `mergeAttrs` | `merge_attr_maps` ast.rs:667-683 |
-| `addNode`, `mergeNode`, `replaceNode`, `addRel`, `addPath`, `variables`, accessors | ast.rs:685-791 |
-| `filterVisited` | `filter_visited` ast.rs:795-821 |
-| `dfs`, `components` | `dfs` ast.rs:844-883, `connected_components` ast.rs:823-842 |
-| `QC`, `innerValidate`, `validateSetItems`, `inlinedOk`, `returnColumns` | `validate` / `inner_validate` / `validate_set_items` / `validate_inlined_properties` / `return_column_names` ast.rs:1151-1393 |
-
-* FIXED by #3297 (W4-plan-4; main b84473a7f): `inner_validate`'s procedure-call arm
-  (ast.rs:1224-1263) now ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
+* W4-plan-4: `inner_validate`'s procedure-call arm
+  (ast.rs) ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
   so the clauses after a CALL are validated (`call_validates_rest`): `CALL db.labels() YIELD
   label MATCH (n)`, `… UNWIND [1] AS x` and `… CREATE (a)-[:R|S]->(b)` are rejected as in C
   (`call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
-  History: before #3297 the arm returned `Ok(())`; `CALL db.labels() YIELD label MATCH (n)` then reached the
-  optimizer with a scan at the plan root (`utilize_node_by_id.rs` `parent().unwrap()`).
-* FIXED by #3291 (608b62542): a query ending in `WITH` is rejected (`with_last_rejected`,
-  `MATCH (n) WITH n`: "Query cannot conclude with WITH …"), as in C and openCypher. Before, the
-  `With`/`Return` arm accepted it and the query returned rows.
+* A query ending in `WITH` is rejected (`with_last_rejected`,
+  `MATCH (n) WITH n`: "Query cannot conclude with WITH …"), as in C and openCypher.
 * `validate_ends`: away from those, a query cannot end in MATCH / UNWIND / a
   returning subquery.
 -/
@@ -37,22 +23,22 @@ structure AV where
   scope : Nat
   deriving DecidableEq, Repr
 
-/-- `impl Display for Variable` (ast.rs:171-184): the name; else, for an unnamed pattern
-entity, `write_anon` (ast.rs:125-130) `@anon_<n>`; else (a planner temporary) `?<id>`. -/
+/-- `impl Display for Variable` (ast.rs): the name; else, for an unnamed pattern
+entity, `write_anon` (ast.rs) `@anon_<n>`; else (a planner temporary) `?<id>`. -/
 def AV.fmt (v : AV) : String := match v.name, v.anon with
   | some n, _ => n
   | none, some k => "@anon_" ++ toString k
   | none, none => "?" ++ toString v.id
 
-/-- `PartialEq for Variable`: by id only (ast.rs:186-193). -/
+/-- `PartialEq for Variable`: by id only (ast.rs). -/
 def AV.eqv (a b : AV) : Bool := a.id == b.id
 
-/-- `Hash for Variable`: hashes the id only (ast.rs:197-204). -/
+/-- `Hash for Variable`: hashes the id only (ast.rs). -/
 def AV.hashKey (v : AV) : Nat := v.id
 
 def AV.asStr (v : AV) : String := v.name.getD "?"
 
-/-- `Variable::key` (ast.rs:214-219): the `VarKey { id, scope_id }` naming the variable's identity. -/
+/-- `Variable::key` (ast.rs): the `VarKey { id, scope_id }` naming the variable's identity. -/
 def AV.key (v : AV) : Nat × Nat := (v.id, v.scope)
 
 /-- Two variables share a `VarKey` exactly when both id and scope agree. -/
@@ -108,7 +94,7 @@ end
 
 def isAggD : AD → Bool | .func _ true => true | _ => false
 
-/-- `is_aggregation` (both impls, ast.rs:446-466): some node of the tree is an aggregate call (DFS any). -/
+/-- `is_aggregation` (both impls, ast.rs): some node of the tree is an aggregate call (DFS any). -/
 def isAggregation (e : AE) : Bool := anyA isAggD e
 
 theorem isAggregation_root (n : String) (cs : List AE) : isAggregation (.node (.func n true) cs) = true := by
@@ -139,34 +125,28 @@ structure QR where
   minHops : Option Nat
   maxHops : Option Nat
   shortest : Bool := false
-  /-- `written_incoming` (#3460): written `<-`, so `frm`/`to` are swapped. -/
-  writtenIncoming : Bool := false
 
-/-- `QueryPath`; `incoming` (#3460): one `<-` flag per relationship, in pattern order. -/
 structure QP where
   var : AV
   vars : List AV
-  incoming : List Bool := []
 
 structure QG where
   nodes : List QN := []
   rels : List QR := []
   paths : List QP := []
 
-/-- `QueryNode::new`, `QueryRelationship::new` (no allShortestPaths, not `written_incoming`),
-`QueryPath::new`, `QueryGraph::default`. -/
+/-- `QueryNode::new`, `QueryRelationship::new` (no allShortestPaths), `QueryPath::new`, `QueryGraph::default`. -/
 def QN.new (a : AV) (ls : List String) (at' : List (String × AE)) : QN := ⟨a, ls, at'⟩
 def QR.new (a : AV) (ts : List String) (at' : List (String × AE)) (f t : QN) (b : Bool) (mn mx : Option Nat) : QR :=
-  ⟨a, ts, at', f, t, b, mn, mx, false, false⟩
-def QP.new (v : AV) (vs : List AV) (inc : List Bool) : QP := ⟨v, vs, inc⟩
+  ⟨a, ts, at', f, t, b, mn, mx, false⟩
+def QP.new (v : AV) (vs : List AV) : QP := ⟨v, vs⟩
 def QG.default : QG := {}
 
 theorem new_spec (a : AV) (ls : List String) (at' : List (String × AE)) (ts : List String) (f t : QN) (b : Bool)
-    (mn mx : Option Nat) (v : AV) (vs : List AV) (inc : List Bool) :
+    (mn mx : Option Nat) (v : AV) (vs : List AV) :
     (QN.new a ls at').alias = a ∧ (QN.new a ls at').labels = ls ∧
     (QR.new a ts at' f t b mn mx).shortest = false ∧ (QR.new a ts at' f t b mn mx).frm = f ∧
-    (QR.new a ts at' f t b mn mx).to = t ∧ (QR.new a ts at' f t b mn mx).writtenIncoming = false ∧
-    (QP.new v vs inc).vars = vs ∧ (QP.new v vs inc).incoming = inc ∧
+    (QR.new a ts at' f t b mn mx).to = t ∧ (QP.new v vs).vars = vs ∧
     QG.default.nodes = [] ∧ QG.default.rels = [] ∧ QG.default.paths = [] := by
   simp [QN.new, QR.new, QP.new, QG.default]
 
@@ -401,7 +381,7 @@ def innerValidate : QC → List QC → Except String Unit
   | .delete, rest => next rest
   | .set s, rest => (setItemsOk s).bind fun _ => next rest
   | .remove nt, rest => if nt then .error "Type mismatch: expected Node or Relationship but was Null" else next rest
-  | .with_, rest => match rest with     -- #3291 (ast.rs:1327-1331)
+  | .with_, rest => match rest with     -- #3291 (ast.rs)
     | [] => .error "Query cannot conclude with WITH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)"
     | c :: cs => innerValidate c cs
   | .loadCsv, rest | .return_, rest | .createIndex, rest | .dropIndex, rest => next rest
@@ -435,7 +415,7 @@ end
 def validate (q : QC) : Except String Unit := innerValidate q []
 
 /-- **PROVEN** (#3297): the procedure-call arm checks the call, then validates the clauses
-after it (ast.rs:1224-1263, `iter.next().map_or(Ok(()), …)`). -/
+after it (ast.rs, `iter.next().map_or(Ok(()), …)`). -/
 theorem call_validates_rest (p : String) (a : Option String) (rest : List QC) :
     innerValidate (.call p a) rest = (callCheck p a).bind fun _ => next rest := by
   rw [innerValidate]

@@ -1,64 +1,87 @@
 /-
-# `QueryGraph` and friends (`graph/src/parser/ast.rs:470-890`)
+# `QueryGraph` and friends (`graph/src/parser/ast.rs`)
 
 The pattern graph a MATCH / CREATE / MERGE builds, generic over the alias
 type `V` exactly as the Rust is generic over `TVar` (`Arc<String>` before
 binding, `Variable` after). Alias equality is `==` on `V`; for `Variable`
-that is `Variable::eq`, which compares ids only (ast.rs:186-193).
+that is `Variable::eq`, which compares ids only (ast.rs).
 -/
 import FalkorParserGrammar.C.Core
 
 namespace FalkorParserGrammar.C
 
-/-! ## `Variable` (ast.rs:161-217) -/
+/-! ## `Variable` and `VarKey` (ast.rs) -/
 
-/-- `Variable { name, anon, id, scope_id, ty }`; the type is irrelevant here. `anon` is the
-parser's number of an unnamed entity (#3303, ast.rs:165). -/
+/-- `Variable { alias, id, scope_id, ty }`; the type is irrelevant here. `alias` is what the
+query called it: a written name, or the parser's number for an unnamed pattern entity; `none` for
+a planner temporary that the query never wrote (#3890, ast.rs). -/
 structure Var where
-  name : Option Nat
+  alias : Option Alias
   id : Nat
   scope : Nat
-  anon : Option Nat := none
   deriving Repr
 
-/-- `impl PartialEq for Variable` (ast.rs:186-193): by id only. -/
+/-- `impl PartialEq for Variable` (ast.rs): by id only. -/
 instance : BEq Var := ⟨fun a b => a.id == b.id⟩
 
 /-- `Variable::eq`: two variables are equal iff their ids are. -/
 theorem Var.eq_spec (a b : Var) : (a == b) = true ↔ a.id = b.id := by
   show (a.id == b.id) = true ↔ _; simp
 
-/-- `impl Hash for Variable` (ast.rs:197-204) hashes the id alone, so equal
+/-- `impl Hash for Variable` (ast.rs) hashes the id alone, so equal
 variables hash alike (the `Hash`/`Eq` contract). The hash is modelled as
 the hashed key. -/
 def Var.hashKey (a : Var) : Nat := a.id
 theorem Var.hash_eq (a b : Var) (h : (a == b) = true) : a.hashKey = b.hashKey :=
   (Var.eq_spec a b).1 h
 
-/-- `Variable::as_str` (ast.rs:214-216). Names are ids; `none` is `"?"`. -/
+/-- `Variable::name` (ast.rs): the name the query wrote, `None` for an unnamed pattern
+entity or a planner temporary. Names are ids. -/
+def Var.name (a : Var) : Option Nat := a.alias.bind Alias.name
+theorem Var.name_spec (a : Var) (n k : Nat) :
+    (a.alias = some (.named n) → a.name = some n) ∧ (a.alias = some (.anon k) → a.name = none) ∧
+      (a.alias = none → a.name = none) := by
+  refine ⟨fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> simp [Var.name, h, Alias.name]
+
+/-- `Variable::as_str` (ast.rs): the name, `"?"` (here `none`) when there is none. -/
 def Var.asStr (a : Var) : Option Nat := a.name
 theorem Var.asStr_spec (a : Var) : a.asStr = a.name := rfl
 
-/-- `impl Display for Variable` (ast.rs:174-185): the name, else `@anon_<n>` for a parser-unnamed
-entity, else `?<id>`. -/
+/-- `impl Display for Variable` (ast.rs): the alias if there is one (a name, or
+`@anon_<n>` through `write_anon`), else `?<id>` for a planner temporary. -/
 def Var.fmt (a : Var) : String :=
-  match a.name, a.anon with
-  | some n, _ => toString n
-  | none, some k => "@anon_" ++ toString k
-  | none, none => "?" ++ toString a.id
-theorem Var.fmt_anon (a : Var) (h : a.name = none) (ha : a.anon = none) :
-    a.fmt = "?" ++ toString a.id := by
-  simp [Var.fmt, h, ha]
-/-- An unnamed pattern entity prints as its alias does (`write_anon`, ast.rs:125-130). -/
-theorem Var.fmt_unnamed (a : Var) (k : Nat) (h : a.name = none) (ha : a.anon = some k) :
-    a.fmt = toString (Alias.anon k) := by
-  simp [Var.fmt, h, ha, toString, Alias.fmt]
-theorem Var.fmt_named (a : Var) (n : Nat) (h : a.name = some n) : a.fmt = toString n := by
+  match a.alias with
+  | some al => toString al
+  | none => "?" ++ toString a.id
+theorem Var.fmt_temp (a : Var) (h : a.alias = none) : a.fmt = "?" ++ toString a.id := by
   simp [Var.fmt, h]
-/-- `Variable::is_unnamed` (ast.rs:209-211). -/
+/-- An unnamed pattern entity prints as its alias does (`write_anon`, ast.rs). -/
+theorem Var.fmt_unnamed (a : Var) (k : Nat) (ha : a.alias = some (.anon k)) :
+    a.fmt = "@anon_" ++ toString k := by
+  simp [Var.fmt, ha, toString, Alias.fmt]
+theorem Var.fmt_named (a : Var) (n : Nat) (h : a.alias = some (.named n)) : a.fmt = toString n := by
+  simp [Var.fmt, h, toString, Alias.fmt]
+/-- `Variable::is_unnamed` (ast.rs): no query can refer to it, an unnamed pattern entity
+or a planner temporary. -/
 def Var.isUnnamed (a : Var) : Bool := a.name.isNone
 theorem Var.isUnnamed_spec (a : Var) : a.isUnnamed = true ↔ a.name = none := by
   simp [Var.isUnnamed, Option.isNone_iff_eq_none]
+/-- A named variable is not unnamed, an unnamed entity and a temporary are. -/
+theorem Var.isUnnamed_cases (a : Var) (n k : Nat) :
+    (a.alias = some (.named n) → a.isUnnamed = false) ∧ (a.alias = some (.anon k) → a.isUnnamed = true) ∧
+      (a.alias = none → a.isUnnamed = true) := by
+  refine ⟨fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> simp [Var.isUnnamed, Var.name, h, Alias.name]
+
+/-- `VarKey` (ast.rs) and `Variable::key` (ast.rs): a variable's identity is its
+`(id, scope_id)`, as ids restart in every scope. -/
+def Var.key (a : Var) : Nat × Nat := (a.id, a.scope)
+theorem Var.key_spec (a : Var) : a.key.1 = a.id ∧ a.key.2 = a.scope := ⟨rfl, rfl⟩
+/-- Same id, different scope: the keys differ though the variables are `==` (`Variable::eq`
+ignores the scope), which is why `filter_visited` keys by `VarKey` and not by the variable. -/
+theorem Var.key_scope (a b : Var) (hid : a.id = b.id) (hs : a.scope ≠ b.scope) :
+    (a == b) = true ∧ a.key ≠ b.key := by
+  refine ⟨(Var.eq_spec a b).2 hid, fun h => hs ?_⟩
+  simpa [Var.key] using congrArg Prod.snd h
 
 /-! ## Nodes, relationships, paths -/
 
@@ -80,60 +103,39 @@ structure QRel (V : Type) where
   minH : Option Nat
   maxH : Option Nat
   asp : ASP
-  /-- `written_incoming` (#3460, ast.rs:686): written `<-`, so `src`/`dst` are stored swapped. -/
-  winc : Bool := false
 
-/-- `QueryPath { var, vars, incoming }` (ast.rs:766-771); `incoming` (#3460) has one entry per
-relationship of the path, in pattern order: whether it was written `<-`. -/
 structure QPath (V : Type) where
   var : V
   vars : List V
-  incoming : List Bool := []
 
-/-- `QueryNode::new` (ast.rs:494-505). -/
+/-- `QueryNode::new` (ast.rs). -/
 def QNode.new {V} (alias : V) (labels : List Nat) (attrs : ET) : QNode V := ⟨alias, labels, attrs⟩
 theorem QNode.new_spec {V} (a : V) (l : List Nat) (t : ET) :
     (QNode.new a l t).alias = a ∧ (QNode.new a l t).labels = l ∧ (QNode.new a l t).attrs = t :=
   ⟨rfl, rfl, rfl⟩
 
-/-- `QueryRelationship::new` (ast.rs:731-753): `all_shortest_paths = No`, `written_incoming = false`. -/
+/-- `QueryRelationship::new` (ast.rs): `all_shortest_paths = No`. -/
 def QRel.new {V} (alias : V) (types : List Nat) (attrs : ET) (src dst : QNode V) (bidir : Bool)
-    (minH maxH : Option Nat) : QRel V := ⟨alias, types, attrs, src, dst, bidir, minH, maxH, .no, false⟩
+    (minH maxH : Option Nat) : QRel V := ⟨alias, types, attrs, src, dst, bidir, minH, maxH, .no⟩
 theorem QRel.new_spec {V} (a : V) ts t (s d : QNode V) b mn mx :
     let r := QRel.new a ts t s d b mn mx
     r.alias = a ∧ r.types = ts ∧ r.src.alias = s.alias ∧ r.dst.alias = d.alias ∧ r.bidir = b ∧
-      r.minH = mn ∧ r.maxH = mx ∧ r.asp = .no ∧ r.winc = false :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      r.minH = mn ∧ r.maxH = mx ∧ r.asp = .no :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- `QueryPath::new` (ast.rs:775-786). -/
-def QPath.new {V} (var : V) (vars : List V) (incoming : List Bool) : QPath V := ⟨var, vars, incoming⟩
-theorem QPath.new_spec {V} (v : V) (vs : List V) (inc : List Bool) :
-    (QPath.new v vs inc).var = v ∧ (QPath.new v vs inc).vars = vs ∧
-      (QPath.new v vs inc).incoming = inc := ⟨rfl, rfl, rfl⟩
+/-- `QueryPath::new` (ast.rs). -/
+def QPath.new {V} (var : V) (vars : List V) : QPath V := ⟨var, vars⟩
+theorem QPath.new_spec {V} (v : V) (vs : List V) :
+    (QPath.new v vs).var = v ∧ (QPath.new v vs).vars = vs := ⟨rfl, rfl⟩
 
-/-- `QueryPath::is_incoming` (ast.rs:789-794, #3460): `incoming.get(var_idx / 2)`, `false` when
-absent. -/
-def QPath.isIncoming {V} (p : QPath V) (i : Nat) : Bool := p.incoming.getD (i / 2) false
-
-/-- The relationship at `vars[2k+1]` (the `k`-th one) reads `incoming[k]`; its following node
-`vars[2k+2]` reads `incoming[k+1]`, and past the list it is `false`. -/
-theorem QPath.isIncoming_spec {V} (p : QPath V) (k : Nat) :
-    p.isIncoming (2 * k + 1) = p.incoming.getD k false ∧
-      p.isIncoming (2 * k) = p.incoming.getD k false ∧
-      (p.incoming.length ≤ k → p.isIncoming (2 * k + 1) = false) := by
-  have h1 : (2 * k + 1) / 2 = k := by omega
-  have h2 : (2 * k) / 2 = k := by omega
-  refine ⟨by simp [QPath.isIncoming, h1], by simp [QPath.isIncoming, h2], fun h => ?_⟩
-  simp [QPath.isIncoming, h1, List.getD_eq_getElem?_getD, List.getElem?_eq_none h]
-
-/-! ## `QueryGraph` (ast.rs:622-790) -/
+/-! ## `QueryGraph` (ast.rs) -/
 
 structure QG (V : Type) where
   nodes : List (QNode V)
   rels : List (QRel V)
   paths : List (QPath V)
 
-/-- `QueryGraph::default` (ast.rs:630-637). -/
+/-- `QueryGraph::default` (ast.rs). -/
 def QG.empty {V} : QG V := ⟨[], [], []⟩
 theorem QG.default_spec {V} : (QG.empty : QG V).nodes = [] ∧ (QG.empty : QG V).rels = [] ∧
     (QG.empty : QG V).paths = [] := ⟨rfl, rfl, rfl⟩
@@ -141,17 +143,17 @@ theorem QG.default_spec {V} : (QG.empty : QG V).nodes = [] ∧ (QG.empty : QG V)
 section ops
 variable {V : Type} [BEq V]
 
-/-- `QueryGraph::add_node` (ast.rs:685-694). -/
+/-- `QueryGraph::add_node` (ast.rs). -/
 def QG.addNode (g : QG V) (n : QNode V) : Bool × QG V :=
   if g.nodes.any (fun m => m.alias == n.alias) then (false, g)
   else (true, { g with nodes := g.nodes ++ [n] })
 
-/-- `QueryGraph::add_relationship` (ast.rs:733-747). -/
+/-- `QueryGraph::add_relationship` (ast.rs). -/
 def QG.addRel (g : QG V) (r : QRel V) : Bool × QG V :=
   if g.rels.any (fun m => m.alias == r.alias) then (false, g)
   else (true, { g with rels := g.rels ++ [r] })
 
-/-- `QueryGraph::add_path` (ast.rs:749-759). -/
+/-- `QueryGraph::add_path` (ast.rs). -/
 def QG.addPath (g : QG V) (p : QPath V) : Bool × QG V :=
   if g.paths.any (fun m => m.var == p.var) then (false, g)
   else (true, { g with paths := g.paths ++ [p] })
@@ -206,7 +208,7 @@ theorem QG.addRel_distinct [LawfulBEq V] (g : QG V) (r : QRel V)
   · exact h
   · exact DistinctBy.append _ _ _ h h2
 
-/-- `merge_attr_maps` (ast.rs:667-683): concatenate the entries of two maps;
+/-- `merge_attr_maps` (ast.rs): concatenate the entries of two maps;
 an empty side returns the other one unchanged. -/
 def mergeAttrs (lhs rhs : ET) : ET :=
   if rhs.kids = [] then lhs
@@ -214,7 +216,7 @@ def mergeAttrs (lhs rhs : ET) : ET :=
   else .node lhs.root (lhs.kids ++ rhs.kids)
 
 /-- **merge_attr_maps keeps every entry of both sides, in order** (repeated
-keys stay repeated, ast.rs:663-665). -/
+keys stay repeated, ast.rs). -/
 theorem mergeAttrs_kids (l r : ET) : (mergeAttrs l r).kids = l.kids ++ r.kids := by
   unfold mergeAttrs
   by_cases hr : r.kids = []
@@ -248,7 +250,7 @@ def findIdx {α} (p : α → Bool) : List α → Option Nat
   | [] => none
   | a :: as => if p a then some 0 else (findIdx p as).map (· + 1)
 
-/-- `QueryGraph::merge_node` (ast.rs:705-721). -/
+/-- `QueryGraph::merge_node` (ast.rs). -/
 def QG.mergeNode (g : QG V) (n : QNode V) : QG V :=
   match findIdx (fun m => m.alias == n.alias) g.nodes with
   | none => { g with nodes := g.nodes ++ [n] }
@@ -259,7 +261,7 @@ def QG.mergeNode (g : QG V) (n : QNode V) : QG V :=
       let m : QNode V := ⟨ex.alias, extendSet ex.labels n.labels, mergeAttrs ex.attrs n.attrs⟩
       { g with nodes := g.nodes.set pos m }
 
-/-- `QueryGraph::replace_node` (ast.rs:723-731). -/
+/-- `QueryGraph::replace_node` (ast.rs). -/
 def QG.replaceNode (g : QG V) (a : V) (n : QNode V) : QG V :=
   match findIdx (fun m => m.alias == a) g.nodes with
   | none => g
@@ -319,7 +321,7 @@ theorem QG.replaceNode_spec (g : QG V) (a : V) (n : QNode V) :
   | none => exact .inl ⟨findIdx_none _ _ e, rfl⟩
   | some pos => exact .inr ⟨pos, (findIdx_lt _ _ _ e).1, rfl⟩
 
-/-- `QueryGraph::variables` (ast.rs:761-767). -/
+/-- `QueryGraph::variables` (ast.rs). -/
 def QG.variables (g : QG V) : List V :=
   g.nodes.map (·.alias) ++ g.rels.map (·.alias) ++ g.paths.map (·.var)
 theorem QG.variables_length (g : QG V) :
@@ -328,7 +330,7 @@ theorem QG.variables_length (g : QG V) :
 
 end ops
 
-/-! Accessors (ast.rs:769-790): `nodes`, `nodes_mut`, `relationships`,
+/-! Accessors (ast.rs): `nodes`, `nodes_mut`, `relationships`,
 `relationships_mut`, `paths` return the field itself. -/
 theorem QG.accessors {V} (g : QG V) :
     g.nodes = QG.nodes g ∧ g.rels = QG.rels g ∧ g.paths = QG.paths g := ⟨rfl, rfl, rfl⟩

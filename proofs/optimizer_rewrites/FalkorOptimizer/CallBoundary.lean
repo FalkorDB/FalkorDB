@@ -1,26 +1,22 @@
 /-
-# The boundary is invisible to `push_filters_down` (claim 2 REFUTED in general)
+# The CALL boundary and `push_filters_down` (Case 2 inheritance)
 
 Model of the "Case 2" inheritance in
-graph/src/planner/optimizer/push_filters_down.rs:207-249 as of 343e077f2
-(`inheritedPre3281`; #3281's walk, push_filters_down.rs:288-341, is `inherited`): from a Filter, walk the ancestors; at the first
-`Apply` whose left child does not contain the Filter, every variable id of
-that left subtree (`collect_subtree_variables`, ids only, `HashSet<u32>`)
-is "inherited"; the walk stops at the first `Apply` (inheriting its left variables, or
-nothing when the Filter sits in its left child) and at `Merge` (inheriting nothing), and at
-nothing else. Inherited
+graph/src/planner/optimizer/push_filters_down.rs (the walk is `inherited`): from a Filter, walk the
+ancestors; at the first `Apply` whose left child does not contain the Filter, every variable id
+of that left subtree (`branch_visible_variables`, ids only) is "inherited"; the walk stops at the
+first `Apply` or two-child `Optional` (inheriting its left variables, or nothing when the Filter
+sits in its left child) and at `Merge` (inheriting nothing). Inherited
 ids are added to every child subtree that contains an `Argument` and is not
 env-resetting (:252-262); a conjunct is pushed into a child whose set covers
 its variables.
 
-The PR's entry `Project` sits at the bottom of the body, below the Filter's
+The CALL body's entry `Project` sits at the bottom of the body, below the Filter's
 ancestors, and the Filter's `Argument` belongs to an `Optional` inside the
-body — whose rows are that `Optional`'s left input (the entry projection's
-output), not the Apply's left rows. The walk ignores both, so ids of the
-OUTER left branch are believed available at that `Argument`, while the
-runtime row there has the slot unbound (proofs/binder
-`FalkorBinder.Pr2845.body_own_unbound`, `pushed_read_unbound`). W6-opt-1.
-Folded in from the retired proofs/pr2845_review (#2845, eb470521b).
+body, whose rows are that `Optional`'s left input (the entry projection's
+output), not the Apply's left rows. A walk that ignores both would believe ids of the
+OUTER left branch are available at that `Argument` while the runtime row has the slot
+unbound (proofs/binder `FalkorBinder.Pr2845.body_own_unbound`, `pushed_read_unbound`). W6-opt-1.
 -/
 namespace Falkor.Opt.Pr2845
 
@@ -32,15 +28,7 @@ inductive K
   | other
   deriving DecidableEq, Repr
 
-/-- The walk before #3281 (343e077f2, push_filters_down.rs:213-249), ancestors
-listed from the Filter's parent up: an `Optional` is walked through. -/
-def inheritedPre3281 : List K → List Nat
-  | [] => []
-  | .apply lv inLeft :: _ => if inLeft then [] else lv
-  | .merge :: _ => []
-  | _ :: rest => inheritedPre3281 rest
-
-/-- The walk since #3281 (push_filters_down.rs:288-341): a two-child `Optional`
+/-- The walk since #3281 (push_filters_down.rs): a two-child `Optional`
 (one with a left input, `.optional`) ends it like an `Apply`, inheriting its left
 branch's `branch_visible_variables` (`lv`/`leftOut`), or nothing when the Filter sits in
 its left child. A single-child `Optional` is `.other` (walked through). -/
@@ -77,13 +65,6 @@ child (the scan subtree) contains an `Argument`, so `n.id = 3` is pushed
 under the scan, onto the Optional's `Argument`. -/
 def callOptAncestors : List K := [.optional [] false, .other, .apply [0] false]
 
-/-- Historical (W6-opt-1, fixed by #3281): the pre-PR walk passes the Optional
-and pushes `n.id = 3` onto the Optional's `Argument`. -/
-theorem filter_pushed_through_boundary :
-    inheritedPre3281 callOptAncestors = [0] ∧
-      pushable [0] [] (inheritedPre3281 callOptAncestors) = true := by
-  decide
-
 /-- #3281: the walk ends at the Optional, whose left input (the empty entry
 projection) exposes nothing; the conjunct stays above. -/
 theorem keeps_filter_main :
@@ -102,15 +83,6 @@ def NoOpt : List K → Prop
   | .apply _ _ :: _ | .merge :: _ => True
   | .optional _ inLeft :: rest => inLeft = true ∧ NoOpt rest
   | .other :: rest => NoOpt rest
-
-theorem fixed_conservative : ∀ (as : List K), NoOpt as → inheritedFixed as = inheritedPre3281 as
-  | [], _ => rfl
-  | .apply _ _ :: _, _ => rfl
-  | .merge :: _, _ => rfl
-  | .optional _ inLeft :: rest, h => by
-    obtain ⟨hl, hr⟩ := h
-    simp [inheritedFixed, inheritedPre3281, hl, fixed_conservative rest hr]
-  | .other :: rest, h => fixed_conservative rest h
 
 /-- With the fix, what an Optional's right branch inherits is exactly what
 its left input binds. True by definition (`rfl`): it only restates `inheritedFixed`. The

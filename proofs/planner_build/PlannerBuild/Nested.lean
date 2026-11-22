@@ -2,21 +2,6 @@ import PlannerBuild.Expr
 /-
 # Pattern comprehensions: extraction, hoisting vs nested plans, their sub-plans
 
-| here | there |
-| --- | --- |
-| `PSt` | `Planner` fields `scope_vars` (as lengths), `visited`, `loop_vars`, `pattern_vars`, `nested_plans` (mod.rs:719-746); `minted` is a ghost log of `fresh_var` results |
-| `fresh` | `Planner::fresh_var` mod.rs:837-852 |
-| `EC` | `ExtractedComprehension` mod.rs:751-766 |
-| `CP` | the IR built for a comprehension (Aggregate / Filter / Apply / PathBuilder / plan_match) |
-| `build`, `buildL` | `build_pattern_comprehension_plan` mod.rs:1401-1482 |
-| `walkComps` | path components, mod.rs:1116-1140 (#3460: each relationship walked in its written direction) |
-| `interleave` | path components before #3460 (dedup'd `nodes()` interleaved with `relationships()`) |
-| `hoist` | `hoist_or_nest` mod.rs:1195-1240 |
-| `extract`, `extractL` | `extract_pattern_comprehensions` mod.rs:1059-1208 |
-| `chainOf`, `extractClause` | `extract_clause_expr_comprehensions` mod.rs:1304-1336 / `extract_list_expr_comprehensions` mod.rs:1287-1294 |
-| `extractFilter` | `extract_filter_comprehensions` mod.rs:1359-1396 |
-| `finish` | `Planner::finish` mod.rs:823-835 |
-
 `plan_match`'s own plan is abstract (`CP.matchG g visited`); it marks the
 pattern's variables visited (here: `g.vars`); verified-label bookkeeping is in
 PlanMatch.lean.
@@ -73,24 +58,11 @@ def buildL (st : PSt) (sub : CP) : List EC → CP × PSt
     buildL p.2 (.apply sub p.1) is
 end
 
-/-- Path components before #3460: node, rel, node, rel, …, node from the deduplicated nodes. -/
+/-- Path components: node, rel, node, rel, …, node (mod.rs). -/
 def interleave : List V → List V → List V
   | [], _ => []
   | n :: ns, r :: rs => n :: r :: interleave ns rs
   | n :: ns, [] => n :: interleave ns []
-
-/-- #3460, mod.rs:1123-1131: the first relationship's written start (`to` if written `<-`). -/
-def walkStart : List RelEnd → List V
-  | [] => []
-  | e :: _ => [if e.inc then e.to else e.frm]
-
-/-- #3460, mod.rs:1132-1140: per relationship its alias and its written end (`from` if `<-`). -/
-def walkSteps : List RelEnd → List V
-  | [] => []
-  | e :: es => e.alias :: (if e.inc then e.frm else e.to) :: walkSteps es
-
-/-- #3460: the path components of an existential pattern, walking the relationships. -/
-def walkComps (rs : List RelEnd) : List V := walkStart rs ++ walkSteps rs
 
 def isLCQ : D → Bool
   | .listComp _ | .quant _ => true
@@ -141,7 +113,7 @@ def extract (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) : Ex → Ex × PSt 
         let a := fresh st sc
         let b := fresh a.2 sc
         let h := hoist b.2 acc (.node d cs)
-          (.mk a.1 g none (Ex.v b.1) (some (b.1, walkComps g.relEnds)) [])
+          (.mk a.1 g none (Ex.v b.1) (some (b.1, interleave g.nodes g.rels)) [])
         (if m = .exists_ then gt0 h.1 else h.1, h.2.1, h.2.2)
     | _ =>
       let x := extractL sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs
@@ -203,7 +175,7 @@ theorem fresh_frame (st : PSt) (s : Nat) : Frame st (fresh st s).2 := ⟨rfl, rf
 
 mutual
 /-- Extraction restores `visited`, `loop_vars` and `pattern_vars` (the
-truncations at mod.rs:1095 and 1181; the visited save/restore at mod.rs:1216/1228). -/
+truncations in mod.rs; the visited save/restore at mod.rs). -/
 theorem extract_frame (sc : Nat) : ∀ (st : PSt) acc m (e : Ex), Frame st (extract sc st acc m e).2.1
   | st, acc, m, .node d cs => by
     have hL := extractL_frame sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs
@@ -362,7 +334,7 @@ theorem extract_fresh (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) (e : Ex) 
 
 mutual
 /-- `PatternComprehension` nodes carry their WHERE and result children (the parser
-always builds both, parser/cypher.rs:2957-3006; planner mod.rs:1078/1090 read `child(0)`/`child(1)`). -/
+always builds both, parser/cypher.rs; planner mod.rs read `child(0)`/`child(1)`). -/
 def pcOK : Ex → Bool
   | .node (.patComp _) cs => decide (2 ≤ cs.length) && pcOKL cs
   | .node _ cs => pcOKL cs

@@ -11,13 +11,10 @@ in *traversal* order, and PathBuilder splices it into the named path.
 | --- | --- |
 | `PV` | the `Value::Node` / `Value::Relationship` elements of a `Value::Path` |
 | `enc` | the VLT binding `Value::Path([Node(s), Rel(e₁), Node(n₁), …])` (`runtime/ops/cond_var_len_traverse.rs`, `path_value`) |
-| `lastNode` | `elems.iter().rev().find_map(Node)` (`runtime/ops/path_builder.rs:95-101`) |
-| `revWalk` | the reversed loop `path_elems.iter().rev().skip(1)` (`path_builder.rs:115-137`): push the rel, next node = the endpoint other than the last node in `elems` (`:119-130`), intermediate nodes skipped (`:132-134`) |
-| `vltMain` | `PathBuilderOp::next`'s `Value::Path` arm (`path_builder.rs:88-139`): `vlt_first_matches` (`:102-105`) picks forward `skip(1)` (`:106-110`) or `revWalk` (`:111-138`) |
+| `lastNode` | `elems.iter().rev().find_map(Node)` (`runtime/ops/path_builder.rs`) |
+| `revWalk` | the reversed loop `path_elems.iter().rev().skip(1)` (`path_builder.rs`): push the rel, next node = the endpoint other than the last node in `elems`, intermediate nodes skipped |
+| `vltMain` | `PathBuilderOp::next`'s `Value::Path` arm (`path_builder.rs`): `vlt_first_matches` picks forward `skip(1)` or `revWalk` |
 | `vltFix` | the suggested fix: the pattern direction (`<-`) recorded at plan time picks the branch |
-| `vltPR` | #3460's `Value::Path` arm (`path_builder.rs:88-102`): `path.is_incoming(var_idx)` (the `<-` recorded at parse time, `QueryPath::incoming`) picks `iter().rev().skip(1)` or `iter().skip(1)` |
-
-`vltMain` is the code before #3460; #3460 replaces it by `vltPR` (`vltPR_follows`).
 
 For an incoming pattern `(m)<-[*]-(n)` the parser swaps the endpoints, so the
 VLT walks `n → … → m` and binds `[Node n, …, Node m]`; PathBuilder must emit it
@@ -57,11 +54,11 @@ def Linked (g : Graph) : Nat → List (Nat × Nat) → Prop
   | s, (e, n) :: r =>
     (∃ x ∈ g, x.id = e ∧ ((x.src = s ∧ x.dst = n) ∨ (x.src = n ∧ x.dst = s))) ∧ Linked g n r
 
-/-- `elems.iter().rev().find_map(Node)` (`path_builder.rs:95-101`). -/
+/-- `elems.iter().rev().find_map(Node)` (`path_builder.rs`). -/
 def lastNode (elems : List PV) : Option Nat :=
   elems.reverse.findSome? fun | .node n => some n | _ => none
 
-/-- `path_builder.rs:115-137`, with `cur` = the last node already in `elems`. -/
+/-- `path_builder.rs`, with `cur` = the last node already in `elems`. -/
 def revWalk (g : Graph) : Option Nat → List PV → List PV
   | _, [] => []
   | cur, .node _ :: r => revWalk g cur r
@@ -69,7 +66,7 @@ def revWalk (g : Graph) : Option Nat → List PV → List PV
     let next := if cur == some (ends g e).1 then (ends g e).2 else (ends g e).1
     .rel e :: .node next :: revWalk g (some next) r
 
-/-- Main: `PathBuilderOp::next`, `Value::Path` arm (`path_builder.rs:88-139`).
+/-- Main: `PathBuilderOp::next`, `Value::Path` arm (`path_builder.rs`).
 The pattern direction is not an input. -/
 def vltMain (g : Graph) (elems pe : List PV) : List PV :=
   if pe.length ≤ 1 then elems
@@ -206,34 +203,7 @@ theorem vltMain_follows_of_ne {g : Graph} {s : Nat} {steps : List (Nat × Nat)}
     rw [hlast]
     exact congrArg (elems ++ ·) (revWalk_reconstructs hwf s steps hl)
 
-/-! ## #3460: the recorded direction picks the branch -/
-
-/-- #3460: `PathBuilderOp::next`, `Value::Path` arm (`path_builder.rs:88-102`). `rev` is
-`path.is_incoming(var_idx)`; the binding (oriented `from → to` by
-`VarLenIter::path_value`) is spliced reversed or as is, minus the end at the
-preceding node. No length test: a 0-hop `[Node s]` loses its only element either way. -/
-def vltPR (_g : Graph) (rev : Bool) (elems pe : List PV) : List PV :=
-  if rev then elems ++ pe.reverse.tail else elems ++ pe.tail
-
-/-- **#3460 satisfies the property** (cycles included, fixing #3451). -/
-theorem vltPR_follows : PathFollowsPattern vltPR := by
-  intro g s steps elems rev _ _ _ _
-  cases rev <;> rfl
-
-/-- #3460 agrees with the suggested fix on every real walk. -/
-theorem vltPR_eq_vltFix {g : Graph} (hwf : g.WF) (s : Nat) (steps : List (Nat × Nat))
-    (elems : List PV) (rev : Bool) (hl : Linked g s steps) (hne : steps ≠ [])
-    (hlast : lastNode elems = some (if rev then endOf s steps else s)) :
-    vltPR g rev elems (enc s steps) = vltFix g rev elems (enc s steps) := by
-  rw [vltFix_follows g s steps elems rev hwf hl hne hlast]
-  exact vltPR_follows g s steps elems rev hwf hl hne hlast
-
-/-- A 0-hop binding `[Node s]` adds nothing, as before #3460 (`vltMain`'s `len > 1` test). -/
-theorem vltPR_zero_hop (g : Graph) (rev : Bool) (elems : List PV) (s : Nat) :
-    vltPR g rev elems [.node s] = elems ∧ vltMain g elems [.node s] = elems := by
-  cases rev <;> simp [vltPR, vltMain]
-
-/-! ## #3451: the cyclic incoming case (before #3460) -/
+/-! ## The cyclic incoming case -/
 
 /-- The issue's triangle `0→1→2→0`, edge ids = the `w` values 1, 2, 3. -/
 def gTri : Graph := [⟨1, 0, 1⟩, ⟨2, 1, 2⟩, ⟨3, 2, 0⟩]
@@ -266,10 +236,5 @@ theorem bug3451_main_violates : ¬ PathFollowsPattern (fun g _ elems pe => vltMa
      ⟨⟨3, 2, 0⟩, by decide, rfl, Or.inl ⟨rfl, rfl⟩⟩, trivial⟩
     (by decide) (by decide)
   revert this; decide
-
-/-- #3451's triangle on #3460: nodes `[0,2,1,0]`, rels `[3,2,1]`. -/
-theorem pr3460_cycle_reversed :
-    vltPR gTri true [.node 0] (enc 0 triWalk) =
-      [.node 0, .rel 3, .node 2, .rel 2, .node 1, .rel 1, .node 0] := by decide
 
 end OpsTraverse.PathVlt

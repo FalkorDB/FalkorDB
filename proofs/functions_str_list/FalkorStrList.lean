@@ -3,210 +3,11 @@ import FalkorStrList.Entity
 import FalkorCore.Int64
 import FalkorCore.Range
 /-
-# String and list functions: totality and spec agreement
+# functions_str_list
 
-A Lean 4 model of FalkorDB-rs's Cypher string and list functions
-(`graph/src/runtime/functions/{string,list,internal}.rs`, eager `range` in
-`math.rs`, and the list/regex/quantifier arms of `graph/src/runtime/eval.rs`),
-checked against the openCypher spec and the C implementation (`master`
-branch, `src/arithmetic/{string,list}_funcs/*.c`, `src/util/strutil.c`).
-Build: `cd proofs/functions_str_list && lake build` (Lean 4.36, core only).
-No `sorry`/`admit`/`axiom`; headline theorems use only `propext`,
-`Quot.sound`, `Classical.choice`. Repros: `graph/tests/lean_functions_str_list.rs`
-(`cargo test -p graph --test lean_functions_str_list -- --nocapture`).
-Coverage per Rust fn: `COVERAGE.tsv`.
-
-## What is modelled
-
-| here | there |
-| --- | --- |
-| `InI64`, `wrap` (proofs/core), `asUsize`, `trunc32` | i64 range (debug panics outside), release wrap, `as usize`, C `(int32_t)` |
-| `getElementIdx`, `getElement` | `ExprIR::GetElement` list arm, `eval.rs:584-596` |
-| `sliceStart`, `sliceEnd`, `getElements` | `get_elements`, `eval.rs:1775-1805` |
-| `cGetElement`, `cGetElements` | C `AR_SUBSCRIPT`, `AR_SLICE` (int32 truncation) |
-| `removeSpan`, `listRemove`, `listRemoveSpec` | `remove_span` `list.rs:38-51`, `list.remove` `list.rs:162-186` (`listRemoveDebug`/`Release`: pre-#2952, historical) |
-| `insertNorm` | `list.insert` / `list.insertListElements`, `list.rs:231-269`, `list.rs:282-330` |
-| `head`, `last`, `tail`, `size`, reverse | `list.rs:61-150` |
-| `rangeLen`, `rangeElems`, `range` | eager `range`, `math.rs:251-308` |
-| `FalkorCore.rangeIter` (`core/FalkorCore/Range.lean`, shared with expr_semantics) | `RangeIter::next` after #2899, `eval.rs:112-128`, built at `eval.rs:1264-1269` (debug: checked `+=`) |
-| `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1665-1711`; loop `eval.rs:1003-1041` |
-| `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1876-1899` (via `list_contains`, `eval.rs:1761`) |
-| `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension` after #2954, `eval.rs:1042-1085` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
-| `pre2954_comprehensionRust` | the same arm before #2954 (every source through `eval_iter_expr`'s UNWIND fallback) |
-| `reduceList` | `ExprIR::Reduce`, `eval.rs:1086-1112` |
-| `Str`, `blen` | `String` as code points (`.chars()`), `s.len()` / `strlen` bytes |
-| `substring2`, `substring3`, `cSubstring3` | `substring`, `string.rs:55-97`; C `AR_SUBSTRING` |
-| `left`, `right`, `cLeft`, `cRight` | `string.rs:198-283`; C `AR_LEFT`, `AR_RIGHT` |
-| `cReverseBytes` | C `AR_REVERSE` (writes each code point's bytes leftwards) |
-| `ltrim`, `rtrim`, `trimRust`, `trimC` | `string.rs:221-258`; C `AR_LTRIM`/`AR_RTRIM`/`AR_TRIM` |
-| `splitAux` | std `str::split` contract, used by `split`, `string.rs:122-126` |
-| `findFirst`, `cSplit`, `splitC` | C `AR_SPLIT` |
-| `splitRust` | `split`, `string.rs:106-133` |
-| `replaceRust`, `cReplaceEmptyBytes` | `replace`, `string.rs:175-189` (std `str::replace`); C `AR_REPLACE` |
-| `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs:139-165`; C `str_tolower` (utf8proc simple map) |
-| `isMatchRust`, `isMatchSpec` | `internal_regex_matches` `internal.rs:107-119`, `RegexFnKind::Matches` `eval.rs:1324` |
-| `spliceLit`, `spliceRepl`, `callSite` | `Regex::replace_all(_, NoExpand(&str))` literal replacement (#3604), `string.rs:454`, `eval.rs:1350`; `Repl.expand` is the default `&str` replacer the call sites no longer use |
-| `joinLen`, `joinStr` | `compute_join_length` / `join_with_preallocate`, `string.rs:309-371` |
-| `startsWith` | `internal_starts_with`, `internal.rs:39-47` (ends/contains analogous) |
-| `cmpFloatModel` | `compare_floats` `value.rs:1915` as used by `list.sort` `list.rs:210` |
-
-## Proven (91 theorems in this file; main ones)
-
-* Indexing `l[i]` is total for every i64 (incl. `i64::MIN`), `len+i` cannot
-  overflow, and equals the spec (negative from the end, else null)
-  (`getElement_noOverflow`, `getElement_inBounds`, `getElement_spec`).
-* Slicing `l[a..b]` never panics: after the early return, `0 ≤ s ≤ e ≤ len`
-  (`getElements_bounds`); it equals the clamped spec (`getElements_spec`).
-* `list.remove`: since #2952 (`remove_span`, saturating end) it equals the spec
-  for all i64 inputs in every build and never panics (`listRemove_eq_spec`,
-  `removeSpan_wf`, `listRemove_huge_count`). Historical: before #2952 release
-  matched the spec by accident (`listRemoveRelease_eq_spec`) and debug
-  overflowed.
-* `list.insert*` normalisation can't overflow and yields a valid split point (`insertNorm_safe`).
-* Eager `range`: every element lies between start and end, so no overflow
-  for any i64 arguments (`range_elems_between`, `range_noOverflow`).
-* Quantifiers: `all` = Kleene AND fold, `any` = Kleene OR fold,
-  `none = NOT any`, `single` characterised (`all_is_kand`, `any_is_kor`,
-  `none_is_not_any`, `single_spec`).
-* `IN`: false iff no element compares Equal and none touches NULL (`contains_false_iff`).
-* `substring`: the byte-length guard is harmless (`substring2_spec`,
-  `substring3_spec`); Rust = C on all inputs (`substring3_agrees_C`).
-* `left`/`right`: Rust = C on all inputs (`left_agrees_C`, `right_agrees_C`), spec (`left_right_spec`).
-* `reverse` on strings: C's byte output = UTF-8 of Rust's `chars().rev()` (`reverse_agrees_C`).
-* `trim`: Rust (`ltrim∘rtrim`) = C (`rtrim∘ltrim`) (`trim_agrees_C`); `ltrim_idem`, `ltrim_head`.
-* `toLower`/`toUpper` never error since #2953 (`toLower_total`) and equal C when the
-  case mapping is simple (`case_agrees_C_if_simple`).
-* `split`: std's scanner = C's find-first algorithm for every non-empty
-  delimiter (`splitAux_eq_cSplit`), and all empty-string branches agree (`split_agrees_C`).
-* `string.join`: when `compute_join_length` succeeds it equals the joined
-  length, so the `debug_assert_eq!` holds (`joinLen_correct`).
-* `size` counts code points, `size ≤ bytes`, additive under `+`.
-
-## CONFIRMED bugs (Rust repro fails; outputs recorded live vs C on ports 18270/18271)
-
-A. **`list.sort` panics on NaN — FIXED by #2912 (b033aecc6).** Was: `list.rs:213` (pre-#2912 line)
-   (`sort_by` with `compare_value`): NaN is `Less` both ways, so std's sort panicked
-   and killed the server. Query:
-   `WITH [x IN range(1,40) | CASE WHEN x % 3 = 0 THEN 0.0/0.0 ELSE toFloat(x % 7) END] AS l RETURN size(list.sort(l))`
-   (C 40). Main sorts by `Value::sort_cmp` (`list.rs:210`), a total preorder
-   (proofs/value_order `Main.scMain_total`); the float arm is modelled here
-   (`listSort_float_cmp_antisymmetric`).
-B. **`list.remove` count overflow — FIXED by #2952 (07e712944).** Was: the
-   inline `(normalized + count)`: `list.remove([1,2,3], 1, 9223372036854775807)`
-   panicked in debug ("attempt to add with overflow"); release returned `[1]`
-   by accident (proved). C `[1]`. Test `bug_list_remove_count_overflow`.
-   The fix (`remove_span`, `saturating_add`) is modelled and proved correct
-   (`listRemove_eq_spec`).
-C. **`=~` is unanchored** — `internal_regex_matches` `internal.rs:107-119`, `eval.rs:1324`
-   (`Regex::is_match`): `'abc' =~ 'b'` → `true`, `'xabcx' =~ 'abc'` → `true`.
-   openCypher/Neo4j require a whole-string match (→ `false`). C rejects `=~`
-   ("FalkorDB does not currently support =~"). Test `bug_regex_match_unanchored`.
-   Fix: compile `^(?:pat)$` (binder `rewrite_compiled_regex` and runtime path).
-D. **`toLower`/`toUpper` rejected valid strings containing U+FFFD — FIXED by
-   #2953 (e7eb853b1).** Was: `toLower('A�')` → error "Invalid UTF8 string";
-   C → `'a�'`. A Rust `String` is always valid UTF-8, so the check could only
-   misfire. Test `bug_case_map_rejects_replacement_char`. The fix deleted the
-   check: main maps every string (`toLower_total`, `toLower_accepts_replacement`)
-   and equals C whenever the mapping is simple (`case_agrees_C_if_simple`).
-E. **`string.replaceRegEx` expanded `$` references** — FIXED by #3604 (53d694496): both call
-   sites now pass `regex::NoExpand(repl)`, so `replaceRegEx('abc','b','$0x')` → `'a$0xc'`, as in C
-   (`replaceRegex_literal`, `spliceLit_single`).
-   Fix: `regex::NoExpand(repl)`.
-F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
-   #2928).** Was: every source went through `eval_iter_expr`'s UNWIND fallback, so
-   `[x IN null | x]` → `[]` (C `null`), `[x IN 5 | x]` → `[5]` (C type error);
-   Main streams only a list
-   literal or `range(..)` and evaluates any other source with `eval_node`: List
-   iterates, Null gives null, anything else errors "Type mismatch: expected List or
-   Null but was <name>" (`comprehension_eq_spec`, `comprehension_null`,
-   `comprehension_scalar_err`, `comprehensionSourceCheck_err` in `Entity.lean`).
-
-## Divergences recorded, not bugs (or C is wrong)
-
-* Case mapping: Rust uses full Unicode mapping, C simple: `toUpper('ß')` Rust
-  `'SS'` (size 2) vs C `'ẞ'`; `toLower('İ')` `'i̇'` vs `'i'`; `toLower('ΑΣ')`
-  final sigma `'ας'` vs `'ασ'`; `toUpper('ﬁ')` `'FI'` vs `'ﬁ'`. Neo4j matches Rust.
-* `string.matchRegEx('ab','(a)|(b)')`: Rust `null` for non-participating
-  groups, C `''` (deliberate per the comment on `regex_captures_list`, `string.rs:474`).
-* `'a' + (0.0/0.0)`: Rust `'aNaN'`, C `'anan'`.
-* `STARTS WITH`/`ENDS WITH`/`CONTAINS` with a non-string: Rust `null` (openCypher), C error.
-* C bugs: index/slice bounds truncated to int32 (`[1,2,3][4294967296]` → C `1`,
-  `[1,2,3][MIN..MAX]` → C `[1, 2]`) (`cGetElement_truncates`, `cGetElements_truncates`);
-  `replace(s,'',t)` inserts inside multibyte chars → invalid UTF-8
-  (`cReplace_empty_breaks_utf8`); `range(0, 5000000000)` crashed the C server (Rust: "Range too large").
-* Regex dialect: Rust `regex` crate vs C oniguruma Java syntax (no
-  backreferences/lookaround in Rust) — not modelled.
-
-## Unconfirmed / variants of known issues
-
-* (fixed by #2899) `RangeIter` with `step = i64::MIN`: `step.unsigned_abs() as i64`
-  was `i64::MIN` and `-self.step` overflowed — debug panic "attempt to negate with
-  overflow" for `UNWIND range(10, 0, -9223372036854775808)`; release was correct
-  (`[10]`). Variant of #2894; now
-  `rangeIter_eq_range` / `rangeIter_examples`.
-
-## Gaps / assumptions
-
-* Strings are lists of code points; UTF-8 byte-level facts used are
-  `utf8Size ≥ 1` only. C's byte-wise `strstr`/`strncmp` matching is assumed to
-  coincide with code-point matching for valid UTF-8 (self-synchronisation),
-  which is not proven; `prefix_chars_to_bytes` proves one direction.
-* std `str::split`/`str::replace`/`step_by`, the `regex` crate, and Unicode case
-  tables are specified, not verified; the regex engine is an abstract span predicate.
-* `Value::compare_value` is abstract here (see `proofs/value_order`).
-* `keys`, `labels`, `properties` read graph attribute storage: not covered.
-* `string.join` lengths are modelled as code-point lengths; Rust uses bytes,
-  and the identity is the same.
-
-
-## Wave 5 (`FalkorStrList/Entity.lean`, `FalkorStrList/Misc.lean`)
-
-entity.rs (all 15 fns) over an accessor model (deleted snapshot > pending > committed),
-plus the remaining string.rs / list.rs / internal.rs fns: all PROVEN. House decision
-(deleted entities keep all details): `deleteRel_preserves`, `deleteNode_preserves`,
-`deleteNode_labels_preserved`, `deleteNode_preserves_all`. W4-fn-1 (the DELETE snapshot copied
-the committed labels, so labels staged by SET/REMOVE earlier in the same query were lost) is
-**fixed by #3288** (`7fd3c12a0`, closes #3245): the snapshot takes `Runtime::staged_label_ids`
-(`ops/delete.rs:196`), the committed ids with the staged adds and removes applied.
-`deleteNode_labels_preserved` proves the snapshot's labels equal what `labels(n)` / `n:L` showed
-before the DELETE, with `staged_set_kept_after_delete` (`MATCH (n:A) SET n:C DELETE n RETURN
-labels(n), n:C` is `['A','C']|true`) and `staged_remove_kept_after_delete` as the two shapes
-(the pre-fix counterexample `labels_lost_after_delete` is gone). proofs/pending_commit
-`stagedLabelIds_eq_overlay` shows `staged_label_ids` is the overlay `pendingLabels` models.
-Earlier re-check at 5e475e6c9: #3436 only swapped `rt.g.borrow()` for `rt.graph()` (borrow plumbing); #3462 made
-`DeleteOp`'s snapshot flag `runtime.inspect || snapshot_required(..)` (`Entity.lean`'s `deleteNode` /
-`deleteRel` are the `snapshot = true` case); #2988 is `temporal.rs` (functions_temporal).
-
-Re-targeted to e8f8a3017: #3127 (`d739765e1`) received-type names in the `hasLabels` /
-`parse_degree_args` errors (`hasLabels_mismatch_names`, `parseDegreeArgs_mismatch_names`,
-`parseDegreeArgs_examples`); #3132 (`58d7c2c49`) `startNode(null)`/`endNode(null)` = null
-(`startEndNode_null`, `startEndNode_total`); house-decision theorems unchanged and still true.
-Re-targeted to 289c201fe: #2953 (`e7eb853b1`) removed the U+FFFD rejection from
-`toLower`/`toUpper` (bug D fixed; `toLower_total`, `case_agrees_C_if_simple`); COVERAGE.tsv line numbers re-pinned
-(string.rs −4/−16 after the deletion; the eval.rs shift was +13 after #3294/#2951, and every pin has
-since been regenerated by name). The eval.rs
-changes of #3294 (AND/OR/XOR error text) and #2951 (aggregate inside a list
-literal) touch no arm modelled here.
-Re-targeted to 8621212fc: no modelled function changed. #2904 (`fd2c76a6c`, `^` in eval.rs
-and `apply_pow` in math.rs), #2984 (`5986f4df1`, value.rs date − duration), #3007, #3043 and
-#3419 touch no row of this project; value.rs rows re-pinned (+7 after the import block,
-`add_slow` :961, `Contains::contains` impl :1867).
-Re-targeted to 737dfb5da: #2899 (`e63165cb5`, closes #2894) rewrote `RangeIter` (exact
-`remaining` count, signed `step`, advance only while another element is due): the
-`i64::MIN` negation variant is gone;
-new model `rangeIter`, `rangeIter_of_inRange`, `rangeIter_eq_range` (lazy = eager `range`,
-no overflow, every `i64` input), `rangeIter_examples`. #3041 (`2023af648`) only changes how
-the parser reads a slice bound — `get_elements` (eval.rs) is unchanged — and #2950
-(temporal.rs) touches nothing here. eval.rs rows re-pinned (+3 to +10 after #2899).
-Re-targeted to b6567cb97: #2954 (closes #2928) fixes bug F — `ListComprehension` now
-evaluates a non-literal, non-`range` source with `eval_node` (null → null, scalar → type
-error). New `comprehensionRust` over `CSrc`, `comprehension_eq_spec`, `comprehension_null`,
-`comprehension_scalar_err`, `comprehension_literal_range_unchanged`. `Value::name` now
-spells `Edge`/`Vectorf32` and `typeOf` reuses it (`Entity.valueName`,
-`typeName_eq_valueName`). eval.rs rows re-pinned (+27 after the arm), entity.rs (−18
-after `type_of`), value.rs (+2 after `Value::name`).
-Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
-`capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
+String, list, entity and regex scalar functions: `string.rs`, `list.rs`, `entity.rs`, `internal.rs`
+(`graph/src/runtime/functions/`), the list-comprehension arm of `eval.rs` and `RangeIter`.
+See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
 -/
 
 namespace FalkorStrList
@@ -231,9 +32,9 @@ theorem asUsize_wrap64 (x : Int) (h0 : 0 ≤ x) (h1 : x < 18446744073709551616) 
     asUsize (wrap x) = x.toNat := by
   unfold asUsize wrap; omega
 
-/-! ## `[l][i]` — `ExprIR::GetElement` (`eval.rs:584-596`) -/
+/-! ## `[l][i]` — `ExprIR::GetElement` (`eval.rs`) -/
 
-/-- `eval.rs:589-596`: `normalized_index = if i < 0 { len + i } else { i }`,
+/-- `eval.rs`: `normalized_index = if i < 0 { len + i } else { i }`,
 then `values[normalized_index as usize]` under the guard `0 ≤ n < len`. -/
 def getElementIdx (len : Nat) (i : Int) : Int := if i < 0 then (len : Int) + i else i
 
@@ -284,9 +85,9 @@ theorem cGetElement_truncates :
     cGetElement [1, 2, 3] 4294967296 = some 1 ∧ getElement [1, 2, 3] 4294967296 = none := by
   decide
 
-/-! ## `[l][a..b]` — `get_elements` (`eval.rs:1775-1805`) -/
+/-! ## `[l][a..b]` — `get_elements` (`eval.rs`) -/
 
-/-- `eval.rs:1782-1791`, the two normalisations, line by line. -/
+/-- `eval.rs`, the two normalisations, line by line. -/
 def sliceStart (len : Nat) (s : Int) : Int := if s < 0 then max ((len : Int) + s) 0 else s
 def sliceEnd (len : Nat) (e : Int) : Int := if e < 0 then max ((len : Int) + e) 0 else min e len
 
@@ -295,7 +96,7 @@ def getElements (l : List α) (s e : Int) : List α :=
   let e' := sliceEnd l.length e
   if s' > e' then [] else (l.drop s'.toNat).take (e' - s').toNat
 
-/-- Totality of `values[start as usize..end as usize]` (`eval.rs:1796`): when
+/-- Totality of `values[start as usize..end as usize]` (`eval.rs`): when
 the `start > end` early return is not taken, `0 ≤ start ≤ end ≤ len`, so the
 slice never panics — for every pair of `i64` bounds. -/
 theorem getElements_bounds (len : Nat) (s e : Int) (h : ¬ sliceStart len s > sliceEnd len e) :
@@ -340,39 +141,13 @@ theorem cGetElements_truncates :
     cGetElements [1, 2, 3] I64MIN I64MAX = [1, 2] ∧
     getElements [1, 2, 3] I64MIN I64MAX = [1, 2, 3] := by decide
 
-/-! ## `list.remove(l, idx, count)` (`list.rs:162-186`, `remove_span` `list.rs:38-51`)
+/-! ## `list.remove(l, idx, count)` (`list.rs`, `remove_span` `list.rs`)
 
-Since #2952 (07e712944) the span is computed by `remove_span`, which clamps the
+The span is computed by `remove_span`, which clamps the
 end with `saturating_add`: `listRemove` / `removeSpan` below model that code.
-`listRemoveDebug` / `listRemoveRelease` are kept as the **historical** model of
-the pre-#2952 inline arithmetic (`(normalized + count) as usize`), whose debug
-build overflowed. -/
-
-inductive Out (α : Type) where
-  | ok (l : List α)
-  | panic (msg : String)
-  deriving DecidableEq, Repr
+-/
 
 def removeNorm (len : Nat) (idx : Int) : Int := if idx < 0 then (len : Int) + idx else idx
-
-/-- Historical (pre-#2952) debug build: `(normalized + count)` was a checked add. -/
-def listRemoveDebug (l : List α) (idx count : Int) : Out α :=
-  let len : Int := l.length
-  let n := removeNorm l.length idx
-  if n < 0 ∨ n ≥ len ∨ count ≤ 0 then .ok l
-  else if ¬ InI64 (n + count) then .panic "attempt to add with overflow"
-  else
-    let e := min (n + count).toNat l.length
-    .ok (l.take n.toNat ++ l.drop e)
-
-/-- Historical (pre-#2952) release build: the add wraps, then `as usize`, then `.min(vs.len())`. -/
-def listRemoveRelease (l : List α) (idx count : Int) : List α :=
-  let len : Int := l.length
-  let n := removeNorm l.length idx
-  if n < 0 ∨ n ≥ len ∨ count ≤ 0 then l
-  else
-    let e := min (asUsize (wrap (n + count))) l.length
-    l.take n.toNat ++ l.drop e
 
 /-- Spec (and C): drop `count` elements starting at the normalised index. -/
 def listRemoveSpec (l : List α) (idx count : Int) : List α :=
@@ -381,38 +156,16 @@ def listRemoveSpec (l : List α) (idx count : Int) : List α :=
   if n < 0 ∨ n ≥ len ∨ count ≤ 0 then l
   else l.take n.toNat ++ l.drop (n + count).toNat
 
-/-- …but the release build is right by accident: a wrapped (negative) sum
-becomes `≥ 2^63` under `as usize`, and `.min(len)` clamps it. Proven for every
-list shorter than `i64::MAX` and every `i64` pair. -/
+/-- The normalised index is an `i64` for every list shorter than `i64::MAX` and every `i64` index. -/
 theorem removeNorm_range (len : Nat) (idx : Int) (hl : (len : Int) ≤ I64MAX) (hi : InI64 idx) :
     InI64 (removeNorm len idx) := by
   unfold removeNorm at *; simp only [InI64, I64MAX] at *; split <;> omega
-
-theorem listRemoveRelease_eq_spec (l : List α) (idx count : Int)
-    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
-    listRemoveRelease l idx count = listRemoveSpec l idx count := by
-  have hn := removeNorm_range l.length idx hl hi
-  unfold listRemoveRelease listRemoveSpec
-  simp only []
-  generalize removeNorm l.length idx = n at *
-  simp only [InI64, I64MAX] at *
-  split
-  · rfl
-  · rename_i hg
-    have h0 : 0 ≤ n + count := by omega
-    have h1 : n + count < 18446744073709551616 := by omega
-    rw [asUsize_wrap64 _ h0 h1]
-    congr 1
-    by_cases hle : (n + count).toNat ≤ l.length
-    · rw [Nat.min_eq_left hle]
-    · rw [Nat.min_eq_right (by omega), List.drop_eq_nil_of_le (Nat.le_refl _),
-        List.drop_eq_nil_of_le (by omega)]
 
 /-- `i64::saturating_add`. -/
 def satAdd64 (a b : Int) : Int :=
   if a + b > I64MAX then I64MAX else if a + b < I64MIN then I64MIN else a + b
 
-/-- `remove_span` (`list.rs:38-51`): `None` when nothing is removed, else the
+/-- `remove_span` (`list.rs`): `None` when nothing is removed, else the
 `start..end` span; `end = (normalized.saturating_add(count) as usize).min(len)`.
 `normalized ≥ 0` there, so the saturated sum is non-negative and `as usize` is
 the identity (`toNat`). -/
@@ -421,7 +174,7 @@ def removeSpan (len : Nat) (idx count : Int) : Option (Nat × Nat) :=
   if n < 0 ∨ n ≥ (len : Int) ∨ count ≤ 0 then none
   else some (n.toNat, min (satAdd64 n count).toNat len)
 
-/-- `list_remove` (`list.rs:162-186`) on a list argument: the original list when
+/-- `list_remove` (`list.rs`) on a list argument: the original list when
 `remove_span` is `None`, else `vs[..start] ++ vs[end..]`. The same in debug and
 release: no arithmetic in it can overflow (`removeSpan_wf`). -/
 def listRemove (l : List α) (idx count : Int) : List α :=
@@ -429,7 +182,7 @@ def listRemove (l : List α) (idx count : Int) : List α :=
   | none => l
   | some (s, e) => l.take s ++ l.drop e
 
-/-- The unit test `remove_span_clamps_huge_count` (`list.rs:361`), as a theorem. -/
+/-- The unit test `remove_span_clamps_huge_count` (`list.rs`), as a theorem. -/
 theorem removeSpan_clamps_huge_count :
     removeSpan 3 1 I64MAX = some (1, 3) ∧ removeSpan 3 (-1) I64MAX = some (2, 3) ∧
     removeSpan 3 0 2 = some (0, 2) ∧ removeSpan 3 3 1 = none ∧
@@ -479,15 +232,8 @@ theorem listRemove_eq_spec (l : List α) (idx count : Int)
           List.drop_eq_nil_of_le (by omega)]
     · rw [List.drop_eq_nil_of_le (as := l) (by omega), List.drop_eq_nil_of_le (as := l) (by omega)]
 
-/-- The fix agrees with the old release build wherever that was defined: the
-historical release model already matched the spec (`listRemoveRelease_eq_spec`). -/
-theorem listRemove_eq_preRelease (l : List α) (idx count : Int)
-    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
-    listRemove l idx count = listRemoveRelease l idx count := by
-  rw [listRemove_eq_spec l idx count hl hi hc, listRemoveRelease_eq_spec l idx count hl hi hc]
-
 /-! ## `list.insert` / `list.insertListElements` normalisation
-(`list.rs:231-269`, `list.rs:282-330`) -/
+(`list.rs`, `list.rs`) -/
 
 def insertNorm (len : Nat) (idx : Int) : Int := if idx < 0 then (len : Int) + idx + 1 else idx
 
@@ -505,7 +251,7 @@ theorem insertNorm_safe (len : Nat) (idx : Int) (hl : (len : Int) < I64MAX) (hi 
 theorem insertNorm_minus_one (len : Nat) : insertNorm len (-1) = len := by
   unfold insertNorm; simp only [show (-1 : Int) < 0 by decide, ite_true]; omega
 
-/-! ## `head` / `last` / `tail` / `reverse` / `size` on lists (`list.rs:61-150`) -/
+/-! ## `head` / `last` / `tail` / `reverse` / `size` on lists (`list.rs`) -/
 
 def head (l : List α) : Option α := if l.isEmpty then none else l[0]?
 def last (l : List α) : Option α := l.getLast?
@@ -520,9 +266,9 @@ theorem last_eq_head_reverse (l : List α) : last l = l.reverse.head? := by
 theorem reverse_involutive (l : List α) : l.reverse.reverse = l := List.reverse_reverse l
 theorem size_concat (a b : List α) : (a ++ b).length = a.length + b.length := List.length_append
 
-/-! ## Eager `range(start, end, step)` (`math.rs:251-308`) -/
+/-! ## Eager `range(start, end, step)` (`math.rs`) -/
 
-/-! `rangeLen` (`math.rs:251-308`, the length `|end - start| / |step| + 1`, computed in `i128`, so no
+/-! `rangeLen` (`math.rs`, the length `|end - start| / |step| + 1`, computed in `i128`, so no
 overflow is possible) and `rangeList` (the `step_by` elements `start + k*step`) are the shared
 definitions in `proofs/core` (`FalkorCore/Range.lean`). `(start..=end).step_by(step)` yields
 `start + k*step` while it stays inside the range and never computes an element outside it, so the
@@ -602,13 +348,7 @@ theorem range_examples :
     range 0 10 3 = .ok [0, 3, 6, 9] ∧ range 10 0 (-3) = .ok [10, 7, 4, 1] ∧
     range 10 0 I64MIN = .ok [10] ∧ range 1 0 1 = .ok [] := ⟨rfl, rfl, rfl, rfl⟩
 
-/-! ## Lazy `RangeIter::next` before #2899 (history)
-
-Before #2899 the constructor stored `step: step.unsigned_abs() as i64` (`RangeIter` constructor at
-8621212fc); for `step = i64::MIN` that is `i64::MIN` again, and `next` then evaluated
-`-self.step`, which overflowed before the (#2894) `+=`. -/
-
-/-! ## Lazy `RangeIter::next` after #2899 (`eval.rs:112-128`)
+/-! ## Lazy `RangeIter::next` (`eval.rs`)
 
 The iterator model `rangeIter` (debug build, checked `+=`) and `rangeIter_of_inRange` are in
 `proofs/core` (`FalkorCore/Range.lean`), shared with `expr_semantics`. -/
@@ -637,7 +377,7 @@ theorem rangeIter_eq_range (start stop step : Int) (h1 : InI64 start) (h2 : InI6
         have := range_elems_between start stop step hs hdir _ hx
         simp only [InI64] at *; omega
 
-/-- `eval_iter_expr`'s `range(..)` arm (`eval.rs:1233-1270`) for integer arguments: the early
+/-- `eval_iter_expr`'s `range(..)` arm (`eval.rs`) for integer arguments: the early
 returns first (`step = 0` is an error, a direction-incompatible range is empty, a length above
 `u32::MAX` is "Range too large"), then the `RangeIter` of `rangeLen` elements. A null or
 non-integer argument is rejected by `validate_args_type` before this point and is not
@@ -680,9 +420,9 @@ theorem rangeIter_examples :
     rangeIter I64MAX 2 (-1) = .ok [-1, I64MAX - 1] := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
 
-/-! ## Quantifiers `all/any/none/single` (`eval_quantifier`, `eval.rs:1665-1711`) -/
+/-! ## Quantifiers `all/any/none/single` (`eval_quantifier`, `eval.rs`) -/
 
-/-- The three predicate outcomes the loop at `eval.rs:1015-1029` counts. -/
+/-- The three predicate outcomes the loop at `eval.rs` counts. -/
 inductive K where | t | f | n
   deriving DecidableEq, Repr
 
@@ -757,7 +497,7 @@ theorem single_spec (xs : List K) :
     · simp only [h2, ite_false]
       by_cases h3 : cnt xs .t = 1 <;> simp [h3] <;> omega
 
-/-! ## `x IN list` — `Contains for ThinVec<Value>` (`value.rs:1876-1899`)
+/-! ## `x IN list` — `Contains for ThinVec<Value>` (`value.rs`)
 
 Parametric in the element comparison `cmp : α → α → (Ordering × Dis)`; the
 comparison itself is `value_order`'s subject. -/
@@ -765,7 +505,7 @@ comparison itself is `value_order`'s subject. -/
 inductive Dis where | none | null | nan | disjoint
   deriving DecidableEq, Repr
 
-/-- `value.rs:1877-1898`, with `is_null` accumulated left to right. -/
+/-- `value.rs`, with `is_null` accumulated left to right. -/
 def containsLoop (cmp : α → Ordering × Dis) : Bool → List α → K
   | isNull, [] => if isNull then .n else .f
   | isNull, x :: xs =>
@@ -800,11 +540,10 @@ theorem contains_nil (cmp : α → Ordering × Dis) : contains cmp [] = .f := rf
 
 /-! ## Comprehension / reduce / quantifier sources
 
-Since #2954 (b6567cb97) `[x IN src ...]` (`eval.rs:1042-1085`) streams a list literal or
-`range(..)` through `eval_iter_expr` (`eval.rs:1227`) and evaluates any other source with
-`eval_node`: `List` iterates, `Null` gives `null`, anything else is a type error. Before,
-every source went through `eval_iter_expr`, whose fallback arm is UNWIND's (`Null` → no
-rows, scalar → one row). Quantifiers (`eval.rs:1003-1041`) and `reduce` already returned
+`[x IN src ...]` (`eval.rs`) streams a list literal or
+`range(..)` through `eval_iter_expr` (`eval.rs`) and evaluates any other source with
+`eval_node`: `List` iterates, `Null` gives `null`, anything else is a type error (an
+earlier version sent every source through `eval_iter_expr`, whose fallback arm is UNWIND's). Quantifiers (`eval.rs`) and `reduce` already returned
 `Null` for a null source and raised for a scalar, as does C. -/
 
 inductive Src where | null | scalar (i : Int) | list (l : List Int)
@@ -825,13 +564,6 @@ def CSrc.val : CSrc → Src
 
 inductive COut where | null | list (l : List Int) | err
   deriving DecidableEq, Repr
-
-/-- `ListComprehension` before #2954 (no WHERE, identity projection): every source
-through `eval_iter_expr`'s UNWIND fallback. Historical. -/
-def pre2954_comprehensionRust : Src → COut
-  | .null => .list []
-  | .scalar i => .list [i]
-  | .list l => .list l
 
 /-- `ListComprehension` on main (no WHERE, identity projection): literal / `range`
 stream, any other source is matched on its evaluated value. -/
@@ -860,18 +592,181 @@ theorem comprehension_null : comprehensionRust (.other .null) = .null := rfl
 /-- `[x IN 5 | x]` is a type error. -/
 theorem comprehension_scalar_err (i : Int) : comprehensionRust (.other (.scalar i)) = .err := rfl
 
-/-- List-valued sources are unchanged by #2954: a literal, a `range`, or any expression
-evaluating to a list gives what the pre-#2954 code gave. -/
-theorem comprehension_literal_range_unchanged (l : List Int) :
-    comprehensionRust (.literal l) = pre2954_comprehensionRust (.list l) ∧
-    comprehensionRust (.range l) = pre2954_comprehensionRust (.list l) ∧
-    comprehensionRust (.other (.list l)) = pre2954_comprehensionRust (.list l) :=
-  ⟨rfl, rfl, rfl⟩
+/-! ### The per-element loop of `ListComprehension` (`eval.rs`): WHERE and projection
 
-theorem comprehension_agrees_on_lists (l : List Int) :
-    pre2954_comprehensionRust (.list l) = comprehensionSpec (.list l) := rfl
+For each element `row.insert(var, value)`, the predicate `eval_node(child(1))?` must be
+`true` (keep), `false` or `null` (skip); any other value is a type error
+(an earlier version skipped every non-`true` result by `_ => continue`). A kept
+element is projected by `eval_node(child(2))?`, and the first `Err` ends the loop. -/
 
-/-- `reduce(acc = init, x IN l | body)` (`eval.rs:1086-1112`) is `foldl`. -/
+/-- What a WHERE predicate evaluates to: a boolean outcome, or any other value (`Value::name`). -/
+inductive PV where | t | f | n | other (name : String)
+  deriving DecidableEq, Repr
+
+/-- The `match` on the predicate result (`eval.rs`): `Ok(true)` = keep. -/
+def whereKeep : PV → Except String Bool
+  | .t => .ok true
+  | .f | .n => .ok false
+  | .other nm => .error s!"Type mismatch: expected Boolean but was {nm}"
+
+/-- The `for value in result` loop, one element at a time, errors propagating with `?`.
+`pred`/`proj` are the element's `eval_node(child(1))` / `eval_node(child(2))`. -/
+def comprehensionLoop {α β : Type} (pred : α → Except String PV) (proj : α → Except String β) :
+    List α → Except String (List β)
+  | [] => .ok []
+  | x :: xs =>
+    match pred x with
+    | .error e => .error e
+    | .ok p =>
+      match whereKeep p with
+      | .error e => .error e
+      | .ok false => comprehensionLoop pred proj xs
+      | .ok true =>
+        match proj x with
+        | .error e => .error e
+        | .ok y =>
+          match comprehensionLoop pred proj xs with
+          | .error e => .error e
+          | .ok rest => .ok (y :: rest)
+
+section loop
+variable {α β : Type} (pred : α → Except String PV) (proj : α → Except String β)
+
+theorem comprehensionLoop_nil : comprehensionLoop pred proj [] = .ok [] := rfl
+
+/-- A `false` or `null` predicate skips the element. -/
+theorem comprehensionLoop_skip (x : α) (xs : List α) (h : pred x = .ok .f ∨ pred x = .ok .n) :
+    comprehensionLoop pred proj (x :: xs) = comprehensionLoop pred proj xs := by
+  rcases h with h | h <;> simp [comprehensionLoop, h, whereKeep]
+
+/-- **Fixed by #3270.** A predicate that is neither boolean nor null is a type error. -/
+theorem comprehensionLoop_nonbool (x : α) (xs : List α) (nm : String)
+    (h : pred x = .ok (.other nm)) :
+    comprehensionLoop pred proj (x :: xs) =
+      .error s!"Type mismatch: expected Boolean but was {nm}" := by
+  simp [comprehensionLoop, h, whereKeep]
+
+/-- A predicate error ends the loop with that error. -/
+theorem comprehensionLoop_pred_error (x : α) (xs : List α) (e : String)
+    (h : pred x = .error e) : comprehensionLoop pred proj (x :: xs) = .error e := by
+  simp [comprehensionLoop, h]
+
+/-- A `true` predicate keeps the element: project it, then the rest. -/
+theorem comprehensionLoop_keep (x : α) (xs : List α) (h : pred x = .ok .t) :
+    comprehensionLoop pred proj (x :: xs) =
+      (proj x).bind fun y => (comprehensionLoop pred proj xs).map (y :: ·) := by
+  simp only [comprehensionLoop, h, whereKeep]
+  cases proj x <;> cases comprehensionLoop pred proj xs <;> rfl
+
+/-- No WHERE (`child(1)` is the constant `true`) and an identity projection: the list itself. -/
+theorem comprehensionLoop_true_id (l : List α) :
+    comprehensionLoop (fun _ => (.ok .t : Except String PV)) (fun x => (.ok x : Except String α)) l
+      = .ok l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [comprehensionLoop, whereKeep, ih]
+
+end loop
+
+/-- `[x IN [1] WHERE 5 | x]` raises (#3270). -/
+theorem comprehension_nonbool_raises :
+    comprehensionLoop (fun _ => (.ok (.other "Integer") : Except String PV))
+      (fun x => (.ok x : Except String Int)) [1] =
+      .error "Type mismatch: expected Boolean but was Integer" := rfl
+
+/-- The whole `ListComprehension` arm: the source dispatch of `comprehensionRust`
+(`none` = the arm pushes `Value::Null`) then the element loop. -/
+def comprehensionFull {β : Type} (pred : Int → Except String PV) (proj : Int → Except String β) :
+    CSrc → Except String (Option (List β))
+  | .literal l | .range l => (comprehensionLoop pred proj l).map some
+  | .other .null => .ok none
+  | .other (.scalar _) => .error "Type mismatch: expected List or Null but was Integer"
+  | .other (.list l) => (comprehensionLoop pred proj l).map some
+
+/-- With no WHERE and an identity projection the full arm is `comprehensionRust`. -/
+theorem comprehensionFull_noWhere (s : CSrc) :
+    comprehensionFull (fun _ => (.ok .t : Except String PV))
+      (fun x => (.ok x : Except String Int)) s =
+    match comprehensionRust s with
+    | .list l => .ok (some l)
+    | .null => .ok none
+    | .err => .error "Type mismatch: expected List or Null but was Integer" := by
+  cases s with
+  | literal l => simp [comprehensionFull, comprehensionLoop_true_id, comprehensionRust, Except.map]
+  | range l => simp [comprehensionFull, comprehensionLoop_true_id, comprehensionRust, Except.map]
+  | other v =>
+    cases v <;> simp [comprehensionFull, comprehensionLoop_true_id, comprehensionRust, Except.map]
+
+/-! ### `eval_iter_expr` (`eval.rs`): the three source shapes
+
+`range(..)` (arguments already `eval_node`d and `validate_args_type`d: an error from either is
+the `Except`), a list literal (each child `eval_node`d in order, `?` on the first error) and any
+other expression (the UNWIND fallback). `none` is `Ok(None)` ("the row produces no rows"). -/
+
+inductive IVal where | null | list (l : List Int) | scalar (a : Int)
+  deriving DecidableEq, Repr
+
+inductive IterSrc where
+  | range (start stop step : Except String Int)
+  | lit (elems : List (Except String Int))
+  | other (v : Except String IVal)
+
+def evalIterExpr : IterSrc → Except String (Option (List Int))
+  | .range start stop step =>
+    match start, stop, step with
+    | .error e, _, _ => .error e
+    | _, .error e, _ => .error e
+    | _, _, .error e => .error e
+    | .ok a, .ok b, .ok c =>
+      match rangeLazy a b c with
+      | .err m => .error m
+      | .ok [] => .ok none
+      | .ok l => .ok (some l)
+  | .lit elems => (elems.mapM id).map some
+  | .other v =>
+    match v with
+    | .error e => .error e
+    | .ok (.list l) => .ok (some l)
+    | .ok .null => .ok none
+    | .ok (.scalar a) => .ok (some [a])
+
+/-- A list literal with all elements fine yields them, in order (an empty literal is `Some([])`). -/
+theorem evalIterExpr_lit (l : List Int) :
+    evalIterExpr (.lit (l.map Except.ok)) = .ok (some l) := by
+  have : (l.map (Except.ok : Int → Except String Int)).mapM id = .ok l := by
+    induction l with
+    | nil => rfl
+    | cons x xs ih =>
+      simp [List.mapM_cons, List.map, ih, Bind.bind, Except.bind]
+      rfl
+  simp [evalIterExpr, this, Except.map]
+
+/-- The first failing literal element is the error. -/
+theorem evalIterExpr_lit_error (e : String) :
+    evalIterExpr (.lit [.error e]) = .error e := rfl
+
+/-- The UNWIND fallback: a list iterates, null gives no rows, a scalar one row. -/
+theorem evalIterExpr_other (l : List Int) (a : Int) :
+    evalIterExpr (.other (.ok (.list l))) = .ok (some l) ∧
+    evalIterExpr (.other (.ok .null)) = .ok none ∧
+    evalIterExpr (.other (.ok (.scalar a))) = .ok (some [a]) := ⟨rfl, rfl, rfl⟩
+
+/-- Argument errors propagate left to right. -/
+theorem evalIterExpr_range_arg_error (e : String) (b c : Except String Int) :
+    evalIterExpr (.range (.error e) b c) = .error e := rfl
+
+/-- `range(a, b, step)` over `i64` arguments: the streamed rows are the eager `range` list
+(`rangeLazy_eq_range`); an empty `range` is `None`, "no rows". -/
+theorem evalIterExpr_range (a b c : Int) (h1 : InI64 a) (h2 : InI64 b) :
+    evalIterExpr (.range (.ok a) (.ok b) (.ok c)) =
+      match range a b c with
+      | .err m => .error m
+      | .ok [] => .ok none
+      | .ok l => .ok (some l) := by
+  simp only [evalIterExpr]
+  rw [rangeLazy_eq_range a b c h1 h2]
+
+/-- `reduce(acc = init, x IN l | body)` (`eval.rs`) is `foldl`. -/
 def reduceList (body : β → α → β) (init : β) (l : List α) : β := l.foldl body init
 theorem reduce_nil (body : β → α → β) (init : β) : reduceList body init [] = init := rfl
 theorem reduce_append (body : β → α → β) (init : β) (a b : List α) :
@@ -920,16 +815,16 @@ inductive SOut where
   | err (msg : String)
   deriving DecidableEq, Repr
 
-/-! ### `substring` (`string.rs:55-97`) -/
+/-! ### `substring` (`string.rs`) -/
 
-/-- `string.rs:61-73`. Note the guard compares the *code point* index against
+/-- `string.rs`. Note the guard compares the *code point* index against
 the *byte* length `s.len()`. -/
 def substring2 (s : Str) (start : Int) : SOut :=
   if start < 0 then .err "start must be a non-negative integer"
   else if start ≥ blen s then .ok []
   else .ok (s.drop start.toNat)
 
-/-- `string.rs:74-94`. -/
+/-- `string.rs`. -/
 def substring3 (s : Str) (start length : Int) : SOut :=
   if start < 0 then .err "start must be a non-negative integer"
   else if start.toNat ≥ blen s then .ok []
@@ -999,12 +894,12 @@ theorem substring_multibyte :
     substring3 "héllo".toList 1 3 = .ok "éll".toList ∧ substring2 "héllo".toList 5 = .ok [] := by
   decide
 
-/-! ### `left` / `right` (`string.rs:198-283`) -/
+/-! ### `left` / `right` (`string.rs`) -/
 
 def left (s : Str) (n : Int) : SOut :=
   if n < 0 then .err "length must be a non-negative integer" else .ok (s.take n.toNat)
 
-/-- `string.rs:274`: `chars().count().saturating_sub(n as usize)`. -/
+/-- `string.rs`: `chars().count().saturating_sub(n as usize)`. -/
 def right (s : Str) (n : Int) : SOut :=
   if n < 0 then .err "length must be a non-negative integer"
   else .ok (s.drop (s.length - n.toNat))
@@ -1044,7 +939,7 @@ theorem left_right_spec (s : Str) (n : Nat) :
   · unfold right; simp
   · simp; omega
 
-/-! ### `size` / `reverse` (`list.rs:61-68`, `list.rs:139-150`) -/
+/-! ### `size` / `reverse` (`list.rs`, `list.rs`) -/
 
 /-- `size(s)` counts code points, like C's `str_length`. -/
 def size (s : Str) : Nat := s.length
@@ -1076,7 +971,7 @@ moves to the other letter (`reverse('éa')` = `'áe'`, live on both). -/
 theorem reverse_moves_combining_mark :
     ['e', '́', 'a'].reverse = ['a', '́', 'e'] := by decide
 
-/-! ### `trim` / `ltrim` / `rtrim` (`string.rs:221-258`) -/
+/-! ### `trim` / `ltrim` / `rtrim` (`string.rs`) -/
 
 def isSp (c : Char) : Bool := c == ' '
 /-- `trim_start_matches(' ')` and C `AR_LTRIM`. Only U+0020 is trimmed. -/
@@ -1142,7 +1037,7 @@ theorem ltrim_idem (s : Str) : ltrim (ltrim s) = ltrim s := by
 /-- Only spaces: tabs and newlines survive (both engines). -/
 theorem trim_only_spaces : trimRust ['\t', ' ', 'a', '\n'] = ['\t', ' ', 'a', '\n'] := by decide
 
-/-! ### `split(s, delim)` (`string.rs:106-133`)
+/-! ### `split(s, delim)` (`string.rs`)
 
 Rust delegates to std `str::split`, whose contract is: the pieces between
 non-overlapping matches found left to right. `splitAux` is that contract
@@ -1246,7 +1141,7 @@ decreasing_by
   have : d.length ≠ 0 := fun h0 => hd (List.length_eq_zero_iff.mp h0)
   simp only [List.length_drop]; omega
 
-/-- `string.rs:109-128`. -/
+/-- `string.rs`. -/
 def splitRust (s d : Str) : List Str :=
   if s = [] then [[]]
   else if hd : d = [] then s.map (fun c => [c])
@@ -1268,7 +1163,7 @@ theorem split_examples :
     splitRust [] [','] = [[]] ∧
     splitRust "hé".toList [] = [['h'], ['é']] := by decide +kernel
 
-/-! ### `replace(s, search, repl)` (`string.rs:175-189`)
+/-! ### `replace(s, search, repl)` (`string.rs`)
 
 std `str::replace` with a non-empty pattern is `split` then join; with an
 empty pattern it inserts `repl` before every code point and at the end. C
@@ -1297,17 +1192,16 @@ theorem replace_examples :
     replaceRust [] [] ['x'] = ['x'] ∧
     replaceRust "abc".toList ['b'] [] = "ac".toList := by decide +kernel
 
-/-! ### `toLower` / `toUpper` (`string.rs:139-165`)
+/-! ### `toLower` / `toUpper` (`string.rs`)
 
 `caseMap` abstracts Unicode case mapping. Rust uses std's *full* mapping
 (`char::to_lowercase` may yield several code points, and `str::to_lowercase`
 applies the final-sigma rule); C uses utf8proc's *simple* one-to-one mapping.
 C errors only on invalid byte sequences, which a Rust `String` cannot contain.
 
-Before #2953 (e7eb853b1) Rust errored whenever U+FFFD occurred;
-main maps every string (`caseRust`). -/
+Rust maps every string (`caseRust`; an earlier version errored whenever U+FFFD occurred). -/
 
-/-- Main (`string.rs:142`, `:158`): `s.to_lowercase()` / `s.to_uppercase()`. -/
+/-- Main (`string.rs`): `s.to_lowercase()` / `s.to_uppercase()`. -/
 def caseRust (full : Char → Str) (s : Str) : SOut := .ok (s.flatMap full)
 
 def caseC (simple : Char → Char) (s : Str) : SOut := .ok (s.map simple)
@@ -1344,7 +1238,7 @@ theorem case_size_preserved_if_simple (full : Char → Str) (h : ∀ c, (full c)
   | nil => rfl
   | cons c t ih => simp only [List.flatMap_cons, List.length_append, h, List.length_cons]; rw [ih]; omega
 
-/-! ### `=~` (`internal.rs:107-119`, `eval.rs:1324`)
+/-! ### `=~` (`internal.rs`, `eval.rs`)
 
 `Regex::is_match` is *unanchored*: it asks for a match anywhere. openCypher
 (and Neo4j, following Java's `Pattern.matches`) requires the pattern to match
@@ -1369,9 +1263,9 @@ theorem regexMatches_unanchored :
     let m : Nat → Nat → Bool := fun i j => i == 1 && j == 2
     isMatchRust 3 m = true ∧ isMatchSpec 3 m = false := by decide
 
-/-! ### `string.replaceRegEx` replacement (`string.rs:454`, `eval.rs:1350`)
+/-! ### `string.replaceRegEx` replacement (`string.rs`, `eval.rs`)
 
-Fixed by #3604 (53d694496, closes #2929): both call sites pass `NoExpand(repl)` to
+Both call sites pass `NoExpand(repl)` to
 `Regex::replace_all`, so the replacement is inserted verbatim (`$n`, `$name`, `${name}` are
 not interpreted), like C. `NoExpand::replace_append` appends the string unchanged. Model:
 each matched span `[i, j)` of the text is replaced by the replacement as it is. -/
@@ -1392,8 +1286,7 @@ theorem spliceLit_single (r t : Str) (i j : Nat) :
 
 /-! The two replacers of `Regex::replace_all`. A plain `&str` replacement is *expanded*: `$name`
 (the longest run of letters, digits and `_`) is the capture group of that name or number, `$$`
-is `$`, and an unknown group is empty; `NoExpand` is appended unchanged. This is what bug E
-was: both call sites passed a `&str`. The model covers the `$name` and `$$` forms (not the
+is `$`, and an unknown group is empty; `NoExpand` is appended unchanged. Passing a `&str` instead is the expanding behaviour. The model covers the `$name` and `$$` forms (not the
 `${name}` form) with the capture lookup `cap` abstract. -/
 
 inductive Repl where
@@ -1424,7 +1317,7 @@ def spliceRepl (rep : Repl) (cap : Str → Str) : Nat → Str → List (Nat × N
   | off, t, (i, j) :: rest =>
     t.take (i - off) ++ appendRepl cap rep ++ spliceRepl rep cap j (t.drop (j - off)) rest
 
-/-- The call sites of `string.replaceRegEx` (`string.rs:454`, `eval.rs:1350`) pass
+/-- The call sites of `string.replaceRegEx` (`string.rs`, `eval.rs`) pass
 `NoExpand(repl)`: that is the `callSite` replacer. -/
 def callSite (r : Str) : Repl := .noExpand r
 
@@ -1456,7 +1349,160 @@ theorem replaceRegex_literal :
     spliceLit "$0x".toList 0 "abc".toList [(1, 2)] = "a$0xc".toList ∧
     spliceLit "[$0]".toList 0 "abc".toList [(1, 2)] = "a[$0]c".toList := by decide +kernel
 
-/-! ### `string.join` length pre-computation (`string.rs:309-346`) -/
+/-! ### `eval_compiled_regex` (`eval.rs`) and `check_string_or_null` (`eval.rs`)
+
+A regex function whose constant pattern was compiled at bind time. The text (and, for
+`replaceRegEx`, the replacement) are `eval_node`d and checked to be a String or Null (the
+check is `value_of_type(String or Null)`, so the error names `Display for Type` of
+`get_type`, `Entity.tyDisp`); a Null text then gives each kind's null result. The regex
+engine (`Regex::is_match`, `regex_captures_list`, `replace_all`) is the `RegexOps` record. -/
+
+/-- `check_string_or_null` (`eval.rs`). -/
+def checkStringOrNull : Entity.EV → Except String Unit
+  | .null => .ok ()
+  | .str _ => .ok ()
+  | v => .error s!"Type mismatch: expected String or Null but was {Entity.tyDisp v}"
+
+theorem checkStringOrNull_ok_iff (v : Entity.EV) :
+    checkStringOrNull v = .ok () ↔ (v = .null ∨ ∃ s, v = .str s) := by
+  cases v <;> simp [checkStringOrNull]
+
+theorem checkStringOrNull_err (v : Entity.EV) (h1 : v ≠ .null) (h2 : ∀ s, v ≠ .str s) :
+    checkStringOrNull v =
+      .error s!"Type mismatch: expected String or Null but was {Entity.tyDisp v}" := by
+  cases v <;> simp_all [checkStringOrNull]
+
+structure RegexOps where
+  isMatch : String → Bool                  -- `rf.regex.is_match(s)`
+  captures : String → Entity.EV            -- `regex_captures_list(&rf.regex, s)`
+  replaceEmpty : String → String           -- `replace_all(text, "")`
+  replaceNoExpand : String → String → String  -- `replace_all(text, NoExpand(repl))`
+
+inductive RKind where | matches | matchList | replace
+  deriving DecidableEq, Repr
+
+/-- `eval_compiled_regex`, arm by arm. `text` / `repl` are the results of
+`eval_node(child(0))` / `eval_node(child(1))` (`repl = none` when there is one child).
+`Some(_) => unreachable!()` is the sentinel error `"unreachable"`
+(`evalCompiledRegex_not_unreachable`). -/
+def evalCompiledRegex (R : RegexOps) (kind : RKind) (text : Except String Entity.EV)
+    (repl : Option (Except String Entity.EV)) : Except String Entity.EV :=
+  match text with
+  | .error e => .error e
+  | .ok t =>
+    match checkStringOrNull t with
+    | .error e => .error e
+    | .ok () =>
+      match kind with
+      | .matches =>
+        match t with
+        | .str s => .ok (.bool (R.isMatch s))
+        | _ => .ok .null
+      | .matchList =>
+        match t with
+        | .str s => .ok (R.captures s)
+        | _ => .ok (.list [])
+      | .replace =>
+        let r : Except String (Option Entity.EV) :=
+          match repl with
+          | none => .ok none
+          | some (.error e) => .error e
+          | some (.ok r) =>
+            match checkStringOrNull r with
+            | .error e => .error e
+            | .ok () => .ok (some r)
+        match r with
+        | .error e => .error e
+        | .ok r =>
+          match t with
+          | .str s =>
+            match r with
+            | none => .ok (.str (R.replaceEmpty s))
+            | some .null => .ok .null
+            | some (.str rp) => .ok (.str (R.replaceNoExpand s rp))
+            | some _ => .error "unreachable"
+          | _ => .ok .null
+
+section regexArm
+variable (R : RegexOps)
+
+theorem regex_matches_str (s : String) :
+    evalCompiledRegex R .matches (.ok (.str s)) none = .ok (.bool (R.isMatch s)) := rfl
+
+theorem regex_matches_null :
+    evalCompiledRegex R .matches (.ok .null) none = .ok .null := rfl
+
+theorem regex_matchList_str (s : String) :
+    evalCompiledRegex R .matchList (.ok (.str s)) none = .ok (R.captures s) := rfl
+
+/-- A null text gives the empty list (not null). -/
+theorem regex_matchList_null :
+    evalCompiledRegex R .matchList (.ok .null) none = .ok (.list []) := rfl
+
+/-- A text that is neither String nor Null is a type error before any kind-specific work. -/
+theorem regex_text_mismatch (k : RKind) (t : Entity.EV) (r : Option (Except String Entity.EV))
+    (h1 : t ≠ .null) (h2 : ∀ s, t ≠ .str s) :
+    evalCompiledRegex R k (.ok t) r =
+      .error s!"Type mismatch: expected String or Null but was {Entity.tyDisp t}" := by
+  have := checkStringOrNull_err t h1 h2
+  cases k <;> simp [evalCompiledRegex, this]
+
+/-- Evaluation errors of the text propagate. -/
+theorem regex_text_error (k : RKind) (e : String) (r : Option (Except String Entity.EV)) :
+    evalCompiledRegex R k (.error e) r = .error e := rfl
+
+/-- `replaceRegEx(text, pattern)` with no replacement child: `replace_all(text, "")`. -/
+theorem regex_replace_none (s : String) :
+    evalCompiledRegex R .replace (.ok (.str s)) none = .ok (.str (R.replaceEmpty s)) := rfl
+
+/-- A string replacement is spliced with `NoExpand` (#3604). -/
+theorem regex_replace_str (s rp : String) :
+    evalCompiledRegex R .replace (.ok (.str s)) (some (.ok (.str rp))) =
+      .ok (.str (R.replaceNoExpand s rp)) := rfl
+
+/-- A null replacement, or a null text, gives null. -/
+theorem regex_replace_null (s : String) :
+    evalCompiledRegex R .replace (.ok (.str s)) (some (.ok .null)) = .ok .null ∧
+    evalCompiledRegex R .replace (.ok .null) (some (.ok (.str s))) = .ok .null := ⟨rfl, rfl⟩
+
+/-- The replacement is checked even when the text is null (the check precedes the null
+return): `replaceRegEx(null, p, 5)` is a type error. -/
+theorem regex_replace_null_text_bad_repl :
+    evalCompiledRegex R .replace (.ok .null) (some (.ok (.int 5))) =
+      .error "Type mismatch: expected String or Null but was Integer" := rfl
+
+theorem tm_ne_unreachable (b : String) :
+    ("Type mismatch: expected String or Null but was " ++ b) ≠ "unreachable" := by
+  intro h
+  have := congrArg String.length h
+  simp [String.length_append] at this
+  have h1 : "Type mismatch: expected String or Null but was ".length = 47 := by decide
+  have h2 : "unreachable".length = 11 := by decide
+  omega
+
+/-- `unreachable!()` is never hit: with evaluated arguments the result is never the sentinel. -/
+theorem evalCompiledRegex_not_unreachable (k : RKind) (t : Entity.EV)
+    (r : Option (Except String Entity.EV)) (hr : ∀ e, r ≠ some (.error e)) :
+    evalCompiledRegex R k (.ok t) r ≠ .error "unreachable" := by
+  cases t <;> cases k <;> cases r with
+  | none => simp [evalCompiledRegex, checkStringOrNull] <;> exact tm_ne_unreachable _
+  | some r =>
+    cases r with
+    | error e => exact absurd rfl (hr e)
+    | ok r => cases r <;> simp [evalCompiledRegex, checkStringOrNull] <;> exact tm_ne_unreachable _
+
+/-- **Bug C, still open.** `=~` calls `Regex::is_match` (unanchored): the compiled arm answers
+with `isMatchRust`, true for every text that has *some* matching span, where the spec asks for a
+match of the whole text (`regexMatches_unanchored`: `'abc' =~ 'b'`). -/
+theorem regex_matches_isMatchRust (m : String → Nat → Nat → Bool) (s : String) :
+    evalCompiledRegex
+      { isMatch := fun s => isMatchRust s.length (m s), captures := fun _ => .null,
+        replaceEmpty := id, replaceNoExpand := fun s _ => s }
+      .matches (.ok (.str s)) none = .ok (.bool (isMatchRust s.length (m s))) := rfl
+
+end regexArm
+
+/-! ### `string.join` length pre-computation (`string.rs`) -/
 
 /-- `compute_join_length`, `i32` checked arithmetic as `Option`. -/
 def joinLen (ls : List Nat) (dl : Nat) : Option Nat :=
@@ -1490,7 +1536,7 @@ theorem joinStr_length (d : Str) (l : List Str) :
       simp only [joinStr, List.length_append, ih]
       simp [Nat.mul_succ]; omega
 
-/-- The `debug_assert_eq!(result.len(), capacity)` at `string.rs:369` holds:
+/-- The `debug_assert_eq!(result.len(), capacity)` at `string.rs` holds:
 whenever `compute_join_length` succeeds its value is the joined length (here
 in code points of a byte-alphabet model: the lengths are byte lengths in Rust
 and the identity is the same). -/
@@ -1506,11 +1552,11 @@ theorem joinLen_correct (d : Str) (l : List Str) (c : Nat)
     · cases h
     · cases h; simp [hl]
 
-/-! ### String `+` (the String arms of `add_slow`, `value.rs:967`) -/
+/-! ### String `+` (the String arms of `add_slow`, `value.rs`) -/
 
 theorem str_concat_size (a b : Str) : size (a ++ b) = size a + size b := List.length_append
 
-/-! ### `STARTS WITH` / `ENDS WITH` / `CONTAINS` (`internal.rs:39-83`) -/
+/-! ### `STARTS WITH` / `ENDS WITH` / `CONTAINS` (`internal.rs`) -/
 
 inductive SV where | str (s : Str) | int (i : Int) | null
   deriving DecidableEq, Repr
@@ -1534,22 +1580,21 @@ theorem startsWith_nonString : startsWith (.str ['a']) (.int 1) = .n ∧
 theorem startsWith_empty (s : Str) : startsWith (.str s) (.str []) = .t := by
   simp [startsWith]
 
-/-! ### `list.sort` (`list.rs:197`, comparator `:210`)
+/-! ### `list.sort` (`list.rs`, comparator)
 
-Before #2912: `sort_by(|a, b| a.compare_value(b).0)`; for floats `compare_floats`
-returns `Less` whenever `partial_cmp` is `None`. Main (b033aecc6):
-`sort_by(Value::sort_cmp)`, whose float arm `sort_cmp_f64` (`value.rs:1931`) puts NaN
+`sort_by(Value::sort_cmp)` (an earlier `sort_by(|a, b| a.compare_value(b).0)` used `compare_floats`,
+which returns `Less` whenever `partial_cmp` is `None`), whose float arm `sort_cmp_f64` (`value.rs`) puts NaN
 above every number and equal to itself. -/
 
 def cmpFloatModel (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
   if aNaN || bNaN then .lt else o
 
-/-- `sort_cmp_f64` (value.rs:1931): `partial_cmp` (`o`, meaningful when neither is NaN),
+/-- `sort_cmp_f64` (value.rs): `partial_cmp` (`o`, meaningful when neither is NaN),
 else `a.is_nan().cmp(&b.is_nan())`. -/
 def sortCmpF64Model (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
   if aNaN || bNaN then compare aNaN bNaN else o
 
-/-- **Bug A fixed.** Main's float comparator is antisymmetric (swapping the operands,
+/-- Main's float comparator is antisymmetric (swapping the operands,
 whose `partial_cmp` swaps too, reverses the answer) and NaN is equal to NaN and above
 every number. The whole of `sort_cmp` is a total preorder: proofs/value_order
 `Main.scMain_total`. -/

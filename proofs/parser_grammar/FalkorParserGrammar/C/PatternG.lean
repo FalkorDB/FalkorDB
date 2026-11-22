@@ -14,7 +14,7 @@ namespace FalkorParserGrammar.C
 structure Ext where
   /-- `MATCH a MATCH b` / `CREATE a CREATE b`: the next clause's keyword
   continues the same pattern (W2-binder-1). Off in Rust since #2981: the
-  keyword ends the pattern (cypher.rs:1581-1587), and starts a new clause. -/
+  keyword ends the pattern (cypher.rs), and starts a new clause. -/
   fold : Bool
   /-- `p = allShortestPaths(...)` in MATCH (Neo4j syntax, not in Cypher.g4). -/
   asp : Bool
@@ -198,7 +198,7 @@ theorem varLenP_sound (s : PS) r s' (h : varLenP s = .ok r s') : GRange s r s' :
       exact .star hs (.dots ga hd (hopP_sound _ _ _ h4))
 
 /-- `oC_RelationshipDetail` (Cypher.g4:246-247) after `[`, with the
-`[*1..1]` → single hop normalisation (cypher.rs:3112-3116). -/
+`[*1..1]` → single hop normalisation (cypher.rs). -/
 inductive GDetail (o : Oracle) (x : Ext) : PS → Alias × List Nat × ET × Option (Nat × Option Nat) → PS → Prop
   | mk {s a s1 ts s2 r s3 m s4} : GOptVar s a s1 →
       (ts = [] ∧ s2 = s1 ∨ s1.cur = .colon ∧ GTypes x s1.adv [] ts s2) →
@@ -218,7 +218,7 @@ inductive GRel (o : Oracle) (x : Ext) : QNode Alias → PS → QRel Alias × QNo
       GNode o s3 dst s4 →
       GRel o x src s
         ((if inc == out then QRel.new d.1 d.2.1 d.2.2.1 src dst true (d.2.2.2.map (·.1)) (d.2.2.2.bind (·.2))
-          else if inc then { QRel.new d.1 d.2.1 d.2.2.1 dst src false (d.2.2.2.map (·.1)) (d.2.2.2.bind (·.2)) with winc := true }
+          else if inc then QRel.new d.1 d.2.1 d.2.2.1 dst src false (d.2.2.2.map (·.1)) (d.2.2.2.bind (·.2))
           else QRel.new d.1 d.2.1 d.2.2.1 src dst false (d.2.2.2.map (·.1)) (d.2.2.2.bind (·.2))), dst) s4
 
 theorem detailP_sound (o : Oracle) (F : Nat) (cl : CK) (s : PS) d s'
@@ -293,27 +293,5 @@ theorem relP_sound (o : Oracle) (F : Nat) (cl : CK) (src : QNode Alias) (s : PS)
     | (split at h
        · simp at h
        · obtain ⟨rfl, rfl⟩ := pure_ok h; simpa using key)
-
-/-- #3460: `written_incoming` marks exactly the swapped relationship, so the written start of the
-relationship (`to` if written `<-`, else `from`) is the node before it, and its written end the
-node after it; this is what the binder and planner read to walk a path in pattern order. -/
-theorem GRel.written_ends {o : Oracle} {x : Ext} {src : QNode Alias} {s : PS} {rr} {s'}
-    (h : GRel o x src s rr s') :
-    (if rr.1.winc then rr.1.dst else rr.1.src).alias = src.alias ∧
-      (if rr.1.winc then rr.1.src else rr.1.dst).alias = rr.2.alias := by
-  cases h with
-  | @mk inc _ _ _ out _ _ _ _ _ _ _ _ _ _ => cases inc <;> cases out <;> simp [QRel.new]
-
-theorem relP_written_ends (o : Oracle) (F : Nat) (cl : CK) (src : QNode Alias) (s : PS) rr s'
-    (h : relP o F cl src s = .ok rr s') :
-    (if rr.1.winc then rr.1.dst else rr.1.src).alias = src.alias ∧
-      (if rr.1.winc then rr.1.src else rr.1.dst).alias = rr.2.alias :=
-  (relP_sound o F cl src s rr s' h).written_ends
-
-/-- #3460: only `<-...-` sets `written_incoming`; `<-...->` and `-...-` are bidirectional. -/
-theorem GRel.winc_not_bidir {o : Oracle} {x : Ext} {src : QNode Alias} {s : PS} {rr} {s'}
-    (h : GRel o x src s rr s') : rr.1.winc = true → rr.1.bidir = false := by
-  cases h with
-  | @mk inc _ _ _ out _ _ _ _ _ _ _ _ _ _ => cases inc <;> cases out <;> simp [QRel.new]
 
 end FalkorParserGrammar.C

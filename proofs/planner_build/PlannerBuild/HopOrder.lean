@@ -1,17 +1,8 @@
 /-
-# `self_loops_after_binders` (planner/hop_order.rs, #3102 61284ea4f; fixes #2999)
-
-| Lean | Rust |
-| --- | --- |
-| `HopShape`, `touches`, `movable`, `isBinder` | `HopShape` hop_order.rs:5, the closures `touches` :35, `movable` :31 |
-| `deferP` | the `if` condition :41-46 (`!x.self_loop && touches(x, s.from)` = `isBinder`) |
-| `flush` | the latest-first `for k in (0..deferred.len()).rev()` loop :52-56 |
-| `step` | one iteration of `for (i, (hop, s)) in hops.into_iter().zip(&shapes).enumerate()` :39-58 |
-| `selfLoopsAfterBinders` | `self_loops_after_binders` :25 (early return :32-34, `foldl` = the loop) |
-| `pre3102_loop`, `pre3102_reference` | the loop #3102's first commit used, kept as `tests::reference` hop_order.rs:84-107 |
+# `self_loops_after_binders` (planner/hop_order.rs)
 
 Generic over the hop type `T` and the node type `N` (the planner instantiates `T = QR`,
-`N = (id, scope_id)`, `bound = self.visited.contains`, mod.rs:1917-1926).
+`N = (id, scope_id)`, `bound = self.visited.contains`, mod.rs).
 
 * `selfLoops_perm` — the output is a permutation of the input (no hop lost or doubled; the
   deferred list is always empty at the end, `run_D_nil`).
@@ -19,8 +10,8 @@ Generic over the hop type `T` and the node type `N` (the planner instantiates `T
 * `deferred_after_binder` — a deferred self-loop comes after the first later hop that binds
   its node (with only other self-loops flushed by that binder between them).
 * `single_pass` — the result is one left fold over the input (each hop is stepped exactly once,
-  `length (zipIdx) = length hops`) — vs. the old loop, which revisits every hop it moves.
-* **`eq_reference`** — it equals the pre-#3102 loop (`pre3102_reference`) whenever a hop flagged
+  `length (zipIdx) = length hops`) — vs. the earlier loop, which revisits every hop it moves.
+* **`eq_reference`** — it equals the earlier loop (`pre3102_reference`) whenever a hop flagged
   `self_loop` has `from = to` (`WF`; in the planner, an alias id names one variable per pattern).
   `wf_needed` shows the premise matters for the generic function.
 * `early_return_sound` — the `!(1..len).any(movable)` fast path returns what the loop would.
@@ -48,7 +39,7 @@ def movable (ss : List (HopShape N)) (k : Nat) : Bool :=
     | some s => s.selfLoop && s.fixed
     | none => false
 
-/-- The deferral test (hop_order.rs:41-46). -/
+/-- The deferral test (hop_order.rs). -/
 def deferP (ss : List (HopShape N)) (bound : N → Bool) (i : Nat) (s : HopShape N) : Bool :=
   movable ss i && !bound s.frm &&
   !((List.range i).any fun k => match ss[k]? with
@@ -73,7 +64,7 @@ def step (ss : List (HopShape N)) (bound : N → Bool) (st : List (N × T) × Li
     let out := st.2 ++ [x.1.1]
     if !x.1.2.selfLoop then ((flush x.1.2 st.1).2, out ++ (flush x.1.2 st.1).1) else (st.1, out)
 
-/-- `self_loops_after_binders(hops, shape, bound)` (hop_order.rs:25). -/
+/-- `self_loops_after_binders(hops, shape, bound)` (hop_order.rs). -/
 def selfLoopsAfterBinders (hops : List T) (shape : T → HopShape N) (bound : N → Bool) : List T :=
   let ss := hops.map shape
   if !((List.range' 1 (ss.length - 1)).any (movable ss)) then hops
@@ -500,9 +491,9 @@ theorem deferred_after_binder (m : Nat) (h : T) (A : List T) (b : T) (C : List T
 
 end
 
-/-! ## The pre-#3102 loop (`tests::reference`) -/
+/-! ## The earlier loop (`tests::reference`) -/
 
-/-- The loop #3102's first commit planned with (hop_order.rs:84-107 keeps it verbatim):
+/-- The loop #3102's first commit planned with (hop_order.rs keeps it verbatim):
 `remove(i)` the self-loop and `insert(i + j + 1)` it right after its first later binder, then
 look at index `i` again. Fuel bounds the `while`. -/
 def pre3102_loop (shape : T → HopShape N) (bound : N → Bool) : Nat → List T → Nat → List T
@@ -680,7 +671,7 @@ theorem skip_touched (shape : T → HopShape N) (bound : N → Bool) : ∀ (P pr
     simp only [List.length_cons, List.append_assoc, List.singleton_append]
     rw [show f + 1 - (P.length + 1) = f - P.length by omega]
 
-/-! ## The new loop equals the old one -/
+/-! ## The loop equals the earlier one -/
 
 section
 variable (hops : List T) (shape : T → HopShape N) (bound : N → Bool)
@@ -1000,7 +991,7 @@ theorem wf_needed :
   decide
 
 /-- The PR's case `(a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)` sorted `R, L, S*` becomes `R, S*, L`
-(hop_order.rs:133-136); two self-loops on `c` go latest-first. -/
+(hop_order.rs); two self-loops on `c` go latest-first. -/
 theorem pr_cases :
     selfLoopsAfterBinders ([⟨0, 1, false, true⟩, ⟨2, 2, true, true⟩, ⟨1, 2, false, false⟩] : List (HopShape Nat))
         id (fun _ => false) = [⟨0, 1, false, true⟩, ⟨1, 2, false, false⟩, ⟨2, 2, true, true⟩] ∧

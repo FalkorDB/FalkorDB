@@ -5,21 +5,21 @@ import PlannerBuild.HopOrder
 # `plan_match`: components, bound-label filters, path elision, joining
 
 Continues PlanMatch.lean. Theorems: `chainRel_core` (operator table for the
-later hops — including the self-loop case `ExpandInto(scan, res)` behind bug 4),
+later hops — including the self-loop case `ExpandInto(scan, res)` (see `Match.lean`)),
 `planComp_binds` (every endpoint and edge alias of a component is bound
 afterwards), `boundLabels_spec` (an already-bound endpoint with labels not yet
 enforced gets exactly a `hasLabels(alias, missing)` filter, after which none
 are missing), `nodeOnly_*`, `planMatch_join`, `elide_spec`,
-`buildPatternSubPlan_restores`. #2390: `chainRel_lowers_from`/`_to`, `chainRel_edge_pred`,
+`buildPatternSubPlan_restores`. `chainRel_lowers_from`/`_to`, `chainRel_edge_pred`,
 `nodeOnly_bound_filter`, the `stripped` invariant (`bindPath_stripped`, `elide_stripped`,
-`planComp_stripped`, `planMatch_stripped`). #2981: `planMatch` = `planFrom` (the component loop)
+`planComp_stripped`, `planMatch_stripped`). `planMatch` = `planFrom` (the component loop)
 on `liftPattern`'s rewritten components, the lifted filters first (`planMatch_nolift`,
-`planMatch_join`, `planMatch_join_nolift`); `q2923_unlifted` / `q2923_lifted`,
+`planMatch_join`, `planMatch_join_nolift`); `q2923_lifted`,
 `q2923_bound_not_lifted`, `lifted_rel_emitted`.
 -/
 namespace PlannerBuild.E
 
-/-- The operator of a later hop (mod.rs:2230-2310), stacked on `res`. An unbound self-loop
+/-- The operator of a later hop (mod.rs), stacked on `res`. An unbound self-loop
 scans its node on top of `res` (#3102). -/
 def chainOp (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) : MP :=
   match r.kind with
@@ -33,7 +33,7 @@ def chainOp (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) : MP :=
     else .condTr (opRel r) (opEmit c lw r) [res]
 
 /-- A later hop: the operator, its edge Filter, then both endpoints — `from` included, which
-before #2390 had no lowering here at all (mod.rs:2295-2315). -/
+before #2390 had no lowering here at all (mod.rs). -/
 def chainRel (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) : MP × LW :=
   topFilters lw r (chainOp st c lw res r)
 
@@ -119,7 +119,7 @@ def qB : QR := { alias := ⟨5, 0⟩, named := false, frm := { alias := bV, attr
                  to := { alias := ⟨4, 0⟩, ptr := 0 }, ptr := 0 }
 def stB : MSt := { visited := [bV], verified := [] }
 
-/-! ## Labels on already-bound endpoints (mod.rs:1858-1872) -/
+/-! ## Labels on already-bound endpoints (mod.rs) -/
 
 def labelStep (acc : MSt × List Ex) (n : QN) : MSt × List Ex :=
   if acc.1.bound n.alias then
@@ -175,7 +175,7 @@ theorem boundLabelFilters_visited (st : MSt) (rels : List QR) :
   | nil => intro; rfl
   | cons n ns ih => intro acc; simp only [List.foldl_cons]; rw [ih, labelStep_visited]
 
-/-! ## Node-only components (mod.rs:1913-1990) -/
+/-! ## Node-only components (mod.rs) -/
 
 def u32max : Nat := 4294967295
 
@@ -199,7 +199,7 @@ theorem nodeOnly_bound_plain (st : MSt) (lw : LW) (n : QN) (ps : List (V × List
   simp [nodeOnly, hb, hl]
 
 /-- Extra labels on a bound node: a synthetic self-loop `ExpandInto` whose
-edge id is `u32::MAX - id` (mod.rs:1936-1941) checks them. -/
+edge id is `u32::MAX - id` (mod.rs) checks them. -/
 theorem nodeOnly_bound_labels (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
     (hb : st.bound n.alias = true) (hl : n.labels ≠ []) :
     ∃ r, (nodeOnly st lw n ps).1 = .expandInto r false [.arg] ∧
@@ -238,41 +238,12 @@ theorem nodeOnly_stripped (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V)
 
 /-! ## A component with relationships -/
 
-/-- Path elision (mod.rs:2355-2408): a named path over the single var-length
-hop `(from)-[rel]->(to)` is bound by the CondVarLenTraverse itself. #3460: not when that hop was
-written `<-` (`!path.is_incoming(1)`, i.e. `incoming[0]`): PathBuilder must reverse it. -/
-def elidable (rels : List QR) (inc : List Bool) (p : V × List V) : Bool :=
-  match rels with
-  | [r] => r.kind == .varLen && !(inc.getD 0 false) &&
-      (p.2.map V.id == [r.frm.alias.id, r.alias.id, r.to.alias.id])
-  | _ => false
-
-/-- The pre-#3460 condition, without the direction check. -/
-def elidablePre3460 (rels : List QR) (p : V × List V) : Bool :=
+/-- Path elision (mod.rs): a named path over the single var-length
+hop `(from)-[rel]->(to)` is bound by the CondVarLenTraverse itself. -/
+def elidable (rels : List QR) (p : V × List V) : Bool :=
   match rels with
   | [r] => r.kind == .varLen && (p.2.map V.id == [r.frm.alias.id, r.alias.id, r.to.alias.id])
   | _ => false
-
-/-- #3460: a path whose hop was written `<-` is never elided. -/
-theorem elidable_incoming (rels : List QR) (inc : List Bool) (p : V × List V)
-    (h : inc.getD 0 false = true) : elidable rels inc p = false := by
-  rw [List.getD_eq_getElem?_getD] at h
-  unfold elidable; split <;> simp [h]
-
-/-- Written forward, the condition is the pre-#3460 one. -/
-theorem elidable_forward (rels : List QR) (inc : List Bool) (p : V × List V)
-    (h : inc.getD 0 false = false) : elidable rels inc p = elidablePre3460 rels p := by
-  rw [List.getD_eq_getElem?_getD] at h
-  unfold elidable elidablePre3460; split <;> simp [h]
-
-/-- `MATCH p = (a)<-[r*]-(a)`: stored `from = to = a`, so the ids match and before #3460 the
-path was elided onto the traverse (which emits it `from → to`, unreversed); now it is not. -/
-theorem pr3460_selfloop_not_elided (a r : V) :
-    let rel : QR := { alias := r, named := true, frm := { alias := a, ptr := 0 },
-                      to := { alias := a, ptr := 0 }, kind := .varLen, ptr := 0 }
-    let p : V × List V := (⟨9, 0⟩, [a, r, a])
-    elidablePre3460 [rel] p = true ∧ elidable [rel] [true] p = false := by
-  simp [elidablePre3460, elidable]
 
 /-- Bind the path variable on the first CondVarLenTraverse of that relationship
 still without one (pre-order). -/
@@ -296,9 +267,8 @@ where
       | some c' => some (c' :: cs)
       | none => (bindPathL rid pv cs).map (c :: ·)
 
-def elideStep (rels : List QR) (inc : V → List Bool) (acc : MP × List (V × List V)) (p : V × List V) :
-    MP × List (V × List V) :=
-  if elidable rels (inc p.1) p then
+def elideStep (rels : List QR) (acc : MP × List (V × List V)) (p : V × List V) : MP × List (V × List V) :=
+  if elidable rels p then
     match p.2[1]? with
     | some rv => match bindPath rv.id p.1 acc.1 with
       | some res' => (res', acc.2)
@@ -306,13 +276,13 @@ def elideStep (rels : List QR) (inc : V → List Bool) (acc : MP × List (V × L
     | none => (acc.1, acc.2 ++ [p])
   else (acc.1, acc.2 ++ [p])
 
-def elide (rels : List QR) (inc : V → List Bool) (paths : List (V × List V)) (res : MP) : MP :=
-  let x := paths.foldl (elideStep rels inc) (res, [])
+def elide (rels : List QR) (paths : List (V × List V)) (res : MP) : MP :=
+  let x := paths.foldl (elideStep rels) (res, [])
   if x.2.isEmpty then x.1 else .pathB x.2 x.1
 
-theorem elide_fold (rels : List QR) (inc : V → List Bool) (paths : List (V × List V))
-    (acc : MP × List (V × List V)) (h : ∀ p ∈ paths, elidable rels (inc p.1) p = false) :
-    paths.foldl (elideStep rels inc) acc = (acc.1, acc.2 ++ paths) := by
+theorem elide_fold (rels : List QR) (paths : List (V × List V)) (acc : MP × List (V × List V))
+    (h : ∀ p ∈ paths, elidable rels p = false) :
+    paths.foldl (elideStep rels) acc = (acc.1, acc.2 ++ paths) := by
   induction paths generalizing acc with
   | nil => simp
   | cons p ps ih =>
@@ -320,21 +290,15 @@ theorem elide_fold (rels : List QR) (inc : V → List Bool) (paths : List (V × 
     rw [ih _ (fun q hq => h q (by simp [hq]))]; simp
 
 /-- No elidable path: one PathBuilder with all of them (none: nothing). -/
-theorem elide_none (rels : List QR) (inc : V → List Bool) (paths : List (V × List V)) (res : MP)
-    (h : ∀ p ∈ paths, elidable rels (inc p.1) p = false) :
-    elide rels inc paths res = if paths.isEmpty then res else .pathB paths res := by
-  simp [elide, elide_fold rels inc paths _ h]
-
-/-- #3460: paths whose hop was written `<-` all go to the PathBuilder. -/
-theorem elide_incoming (rels : List QR) (inc : V → List Bool) (paths : List (V × List V)) (res : MP)
-    (h : ∀ p ∈ paths, (inc p.1).getD 0 false = true) :
-    elide rels inc paths res = if paths.isEmpty then res else .pathB paths res :=
-  elide_none rels inc paths res (fun p hp => elidable_incoming _ _ _ (h p hp))
+theorem elide_none (rels : List QR) (paths : List (V × List V)) (res : MP)
+    (h : ∀ p ∈ paths, elidable rels p = false) :
+    elide rels paths res = if paths.isEmpty then res else .pathB paths res := by
+  simp [elide, elide_fold rels paths _ h]
 
 /-- The single var-length hop's own path is bound on the traverse, no PathBuilder. -/
-theorem elide_varlen (r : QR) (inc : V → List Bool) (p : V × List V) (res res' : MP) (rv : V)
-    (he : elidable [r] (inc p.1) p = true) (h1 : p.2[1]? = some rv) (hb : bindPath rv.id p.1 res = some res') :
-    elide [r] inc [p] res = res' := by
+theorem elide_varlen (r : QR) (p : V × List V) (res res' : MP) (rv : V)
+    (he : elidable [r] p = true) (h1 : p.2[1]? = some rv) (hb : bindPath rv.id p.1 res = some res') :
+    elide [r] [p] res = res' := by
   simp [elide, elideStep, he, h1, hb]
 
 def planRels (c : Comp) : List QR → MP → MSt → LW → MP × MSt × LW
@@ -343,42 +307,42 @@ def planRels (c : Comp) : List QR → MP → MSt → LW → MP × MSt × LW
     let x := chainRel st c lw res r
     planRels c rs x.1 (visit st r) x.2
 
-/-- The `HopShape` closure (mod.rs:1919-1924): nodes are `(id, scope_id)`; `self_loop`
+/-- The `HopShape` closure (mod.rs): nodes are `(id, scope_id)`; `self_loop`
 compares ids only; `fixed` = neither var-length nor shortest. -/
 def hopShape (r : QR) : HopOrder.HopShape V :=
   { frm := r.frm.alias, to := r.to.alias, selfLoop := r.frm.alias.id == r.to.alias.id,
     fixed := r.kind == .fixed }
 
-/-! ## The promoted walk (#2558, PR #3593: mod.rs:2064-2219) -/
+/-! ## The promoted walk (#2558: mod.rs) -/
 
-/-- `is_constrained` (mod.rs:2067-2070): inline attributes, or a WHERE anchor. -/
+/-- `is_constrained` (mod.rs): inline attributes, or a WHERE anchor. -/
 def isConstrained (wi : WI) (n : QN) : Bool := !n.attrs.isEmpty || wi.anchors.contains n.alias
 
-/-- `anchored` (mod.rs:2071-2073). -/
+/-- `anchored` (mod.rs). -/
 def anchored (wi : WI) (r : QR) : Bool := isConstrained wi r.frm || isConstrained wi r.to
 
-/-- `references_variable` (mod.rs:2100-2105): the edge's or an endpoint's attribute map reads a
+/-- `references_variable` (mod.rs): the edge's or an endpoint's attribute map reads a
 variable (the map's variables are those of its values). -/
 def refsVar (r : QR) : Bool :=
   [r.attrs, r.frm.attrs, r.to.attrs].any fun m => m.any fun p => !(scopedVars p.2).isEmpty
 
-/-- `where_visible` (mod.rs:2113-2114): the only component of the clause, the WHERE holds no
+/-- `where_visible` (mod.rs): the only component of the clause, the WHERE holds no
 pattern (`wi.single`, set by `planFrom`), and the component is a tree. -/
 def whereVisible (wi : WI) (c : Comp) : Bool := wi.single && c.rels.length + 1 == c.nodes.length
 
-/-- `scan_score` (mod.rs:2115-2121). -/
+/-- `scan_score` (mod.rs). -/
 def scanScore (wi : WI) (c : Comp) (n : QN) : Nat :=
   endpointScanScore (!n.attrs.isEmpty || (whereVisible wi c && wi.fv.contains n.alias)) (!n.labels.isEmpty)
 
-/-- `is_anchored_end` (mod.rs:2122-2125). -/
+/-- `is_anchored_end` (mod.rs). -/
 def anchoredEnd (wi : WI) (c : Comp) (n : QN) : Bool :=
   !n.attrs.isEmpty || (whereVisible wi c && wi.anchors.contains n.alias)
 
-/-- `leads_from_anchor` (mod.rs:2126-2133): the end `select_var_len_scan_node` will scan is anchored. -/
+/-- `leads_from_anchor` (mod.rs): the end `select_var_len_scan_node` will scan is anchored. -/
 def leadsFromAnchor (wi : WI) (c : Comp) (r : QR) : Bool :=
   anchoredEnd wi c (if walkScansTo (scanScore wi c r.frm) (scanScore wi c r.to) then r.to else r.frm)
 
-/-- `leading_walk` (mod.rs:2094-2152): nothing bound before the clause, no fixed hop anchored, every
+/-- `leading_walk` (mod.rs): nothing bound before the clause, no fixed hop anchored, every
 hop free to move (no allShortestPaths, no attribute map reading a variable); then the first
 var-length hop with distinct end ids that leads from an anchor. -/
 def leadingWalk (wi : WI) (c : Comp) : Option V :=
@@ -413,7 +377,7 @@ theorem leadingWalk_spec (wi : WI) (c : Comp) (x : V) (h : leadingWalk wi c = so
     · have := hm q hq; simpa using this
   · simp at h
 
-/-! ## Outward order (mod.rs:2195-2219) -/
+/-! ## Outward order (mod.rs) -/
 
 /-- The two endpoints of a hop (what the Rust inserts into `bound`). -/
 def ends (r : QR) : List V := [r.frm.alias, r.to.alias]
@@ -499,7 +463,7 @@ def outwardGo : Nat → List V → QR → List QR → List QR
       | none => []
       | some x => outwardGo n (b ++ ends r) x.1 x.2
 
-/-- `if let Some(lead) = leading_walk { … }` (mod.rs:2195-2219): the promoted walk first, then
+/-- `if let Some(lead) = leading_walk { … }` (mod.rs): the promoted walk first, then
 outward. (`expect`: the walk is one of the component's hops — `leadingWalk_spec`.) -/
 def leadOrder (lead : Option V) (rs : List QR) : List QR :=
   match lead with
@@ -586,7 +550,7 @@ theorem leadOrder_spec (x : V) (rs : List QR) (h : ∃ r ∈ rs, r.alias = x) :
 theorem leadOrder_none (rs : List QR) : leadOrder none rs = rs := rfl
 
 /-- `sort_by_key`, the promoted walk's outward reorder, then
-`self_loops_after_binders(…, |node| self.visited.contains(node))` (mod.rs:2153-2235, #3102, #3593). -/
+`self_loops_after_binders(…, |node| self.visited.contains(node))` (mod.rs, #3102, #3593). -/
 def orderRels (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) : List QR :=
   HopOrder.selfLoopsAfterBinders (leadOrder lead (sortRels st fv lead rs)) hopShape st.bound
 
@@ -628,7 +592,7 @@ def planComp (st : MSt) (wi : WI) (lw : LW) (c : Comp) : MP × MSt × List Ex ×
   | r :: rs =>
     let f := firstRel lb.1 c lw r
     let x := planRels c rs f.1 (visit lb.1 r) f.2
-    (elide c.rels c.pathInc c.paths x.1, x.2.1, lb.2, x.2.2)
+    (elide c.rels c.paths x.1, x.2.1, lb.2, x.2.2)
 
 theorem visit_binds (st : MSt) (r : QR) (v : V) (hv : v = r.frm.alias ∨ v = r.to.alias ∨ v = r.alias) :
     (visit st r).bound v = true := by
@@ -658,7 +622,7 @@ theorem planRels_binds (c : Comp) (rs : List QR) (res : MP) (st : MSt) (lw : LW)
     · exact ih _ _ _ hr
 
 /-- After a component with relationships, every endpoint and every edge alias
-is bound for the clauses that follow (mod.rs:2189-2196, 2317-2324). -/
+is bound for the clauses that follow (mod.rs). -/
 theorem planComp_binds (st : MSt) (wi : WI) (lw : LW) (c : Comp) (r : QR) (hr : r ∈ c.rels) (v : V)
     (hv : v = r.frm.alias ∨ v = r.to.alias ∨ v = r.alias) : (planComp st wi lw c).2.1.bound v = true := by
   have hp := orderRels_perm (boundLabelFilters st c.rels).1 wi.fv (leadingWalk wi c) c.rels
@@ -736,10 +700,10 @@ theorem bindPathL_stripped (rid : Nat) (pv : V) : (cs cs' : List MP) →
       simp [MP.stripped.strippedL, bindPathL_stripped rid pv cs cs'' hcs]
 end
 
-theorem elide_stripped (rels : List QR) (inc : V → List Bool) (paths : List (V × List V)) (res : MP)
-    (h : res.stripped = true) : (elide rels inc paths res).stripped = true := by
+theorem elide_stripped (rels : List QR) (paths : List (V × List V)) (res : MP) (h : res.stripped = true) :
+    (elide rels paths res).stripped = true := by
   have hf : ∀ (ps : List (V × List V)) (acc : MP × List (V × List V)), acc.1.stripped = true →
-      (ps.foldl (elideStep rels inc) acc).1.stripped = true := by
+      (ps.foldl (elideStep rels) acc).1.stripped = true := by
     intro ps
     induction ps with
     | nil => intro acc h; exact h
@@ -777,11 +741,11 @@ theorem planComp_stripped (st : MSt) (wi : WI) (lw : LW) (c : Comp) :
     cases c.nodes with
     | nil => rfl
     | cons n _ => exact nodeOnly_stripped _ _ _ _
-  | cons r rs => exact elide_stripped _ _ _ _ (planRels_stripped _ _ _ _ _ (firstRel_stripped _ _ _ _))
+  | cons r rs => exact elide_stripped _ _ _ (planRels_stripped _ _ _ _ _ (firstRel_stripped _ _ _ _))
 
 /-! ## The whole pattern -/
 
-/-- The clause-level facts `plan_match` adds (mod.rs:2032-2039): `bound_before_clause` (anything
+/-- The clause-level facts `plan_match` adds (mod.rs): `bound_before_clause` (anything
 bound before the component loop) and `single_component` (one component, no pattern in the WHERE). -/
 def WI.forClause (wi : WI) (st : MSt) (comps : List Comp) : WI :=
   { wi with boundBefore := !st.visited.isEmpty, single := comps.length == 1 && !wi.patternWhere }
@@ -804,7 +768,7 @@ def planFrom (st : MSt) (wi : WI) (comps : List Comp) (pf : Option (MP → MP)) 
     | fs => .filter (andOf fs) res   -- `ExprIR::and_of(bound_filters)` (#3335)
   (res, x.2.1)
 
-/-- `plan_match`: lift the cross-entity inline attrs (#2981, mod.rs:2014-2019), then plan the
+/-- `plan_match`: lift the cross-entity inline attrs (#2981, mod.rs), then plan the
 rewritten components with the lifted filters first in `bound_filters`. -/
 def planMatch (st : MSt) (wi : WI) (comps : List Comp) (pf : Option (MP → MP)) : MP × MSt :=
   planFrom st wi (liftPattern st comps).1 pf (liftPattern st comps).2
@@ -826,14 +790,6 @@ def bDotV : Ex := .node (.prop "v") [Ex.v v2923b]
 /-- `MATCH (b), (c {v: b.v})`: two components. -/
 def q2923c : Comp := { nodes := [{ alias := v2923c, attrs := [("v", bDotV)], ptr := 1 }], rels := [] }
 def q2923 : List Comp := [{ nodes := [{ alias := v2923b, ptr := 0 }], rels := [] }, q2923c]
-
-/-- Before #2981 (the components planned as written): `c.v = b.v` is a Filter inside the
-second CartesianProduct branch, where `b` is not bound, so no row passes. -/
-theorem q2923_unlifted :
-    (planFrom ⟨[], []⟩ {} q2923 none []).1 =
-      .cp [.allScan { alias := v2923b, ptr := 0 } [],
-           .filter (andOf [attrEq v2923c ("v", bDotV)]) (.allScan { alias := v2923c, ptr := 1 } [])] := by
-  simp [planFrom, planComp, q2923, q2923c, boundLabelFilters, orderRels, sortRels, leadingWalk, leadOrder, WI.forClause, HopOrder.selfLoopsAfterBinders, nodeOnly, lowerN, lowerInline, lwKey, MSt.bound, withF, scanOf, stripNode, inlineAttrsToFilter, markLabels, v2923b, v2923c, rewriteComp, keepNode, keepAttrs, readsPending, bDotV, nodes, nodesL, Ex.v]
 
 /-- Since #2981 the entry is lifted above the product, where both are bound. -/
 theorem q2923_lifted :
@@ -869,7 +825,7 @@ theorem lifted_rel_emitted :
 end lift2923
 
 /-- One component: its plan; several: a CartesianProduct of them in order
-(mod.rs:2567-2571); the lifted (#2981) then bound-label/attr filters on top (mod.rs:2584-2587). -/
+(mod.rs); the lifted (#2981) then bound-label/attr filters on top (mod.rs). -/
 theorem planMatch_join (st : MSt) (wi : WI) (c : Comp) :
     (planMatch st wi [c] none).1 =
       let c' := rewriteComp (pendingOf st [c]) c
@@ -931,7 +887,7 @@ theorem planMatch_stripped (st : MSt) (wi : WI) (comps : List Comp) :
     · simpa [MP.stripped] using h0
   split <;> simp [MP.stripped, hr]
 
-/-! ## `build_pattern_sub_plan` (mod.rs:1038-1049) -/
+/-! ## `build_pattern_sub_plan` (mod.rs) -/
 
 def buildPatternSubPlan (st : MSt) (wi : WI) (comps : List Comp) (addArgs : MP → MP) : MP × MSt :=
   ((addArgs (planMatch st wi comps none).1), st)
@@ -942,7 +898,7 @@ theorem buildPatternSubPlan_restores (st : MSt) (wi : WI) (comps : List Comp) (a
     (buildPatternSubPlan st wi comps aa).2 = st ∧
     (buildPatternSubPlan st wi comps aa).1 = aa (planMatch st wi comps none).1 := ⟨rfl, rfl⟩
 
-/-! ### #3340: the `Argument` payload (`argument_vars`, mod.rs:1221-1223)
+/-! ### #3340: the `Argument` payload (`argument_vars`, mod.rs)
 
 The runtime ignores the payload (`IR::Argument(_)`), so `addArgs` and the row
 semantics are unchanged; only `select_scan_node` reads it. Here: the payload
@@ -967,7 +923,6 @@ theorem buildPatternSubPlanV_payload (st : MSt) (wi : WI) (comps : List Comp) (a
     (buildPatternSubPlanV st wi comps aa).1 = aa st.visited (planMatch st wi comps none).1 ∧
     (buildPatternSubPlanV st wi comps (fun _ => aa [])).1 =
       (buildPatternSubPlan st wi comps (aa [])).1 := ⟨rfl, rfl, rfl⟩
-
 
 /-! ### #2558: `MATCH (a)-[:R]->(b)-[*]->(c {id: …})` — the walk on the anchored `c` leads -/
 
