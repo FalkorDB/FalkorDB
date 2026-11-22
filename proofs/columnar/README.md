@@ -114,6 +114,7 @@ This project has no CONDITIONAL rows.
 | `AndOrLane.lean`, `CaseLane.lean`, `FuncLane.lean`, `HasLabelsFn.lean`, `LaneWF.lean` | `eval_and_or`, `eval_case`, `eval_function`, `eval_has_labels` (and the registry's `hasLabels`) against `ExprEval`; every lane returns `len` rows |
 | `CoreBridge.lean` | the `Lawful` instance over a batch (`lawful`, `vec_sound`) |
 | `RuntimeReads.lean` | the runtime's attribute reads: bulk fetch = per-row read (`matNode_eq`, `matRel_eq`, `propReads`) |
+| `IntLane.lean` | #3437 integer-lane property fetch: `get_int_attrs_by_idx_batch_into` (`intBatch_sound`) and `materialize_node_property_exact` = `classify_exact_column` of the `Value` fetch (`matNodeExact_eq`) |
 | `EvalBatch.lean` | expr_semantics' `BatchLaws` for `eval_batch`, discharged |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

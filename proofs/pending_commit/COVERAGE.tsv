@@ -155,4 +155,3 @@ graph/src/graph/schema.rs	chain	189	PROVEN	NameMap.chain (getter): ChainInvT kep
 graph/src/graph/schema.rs	index	197	PROVEN	NameMap.idx (none = panic): accessors
 graph/src/graph/schema.rs	into_iter	209	PROVEN	NameMap.intoIter (= iter): accessors
 graph/src/graph/schema.rs	default	232	PROVEN	NameMap.default_chainInv (empty lists, chains 0); graph_queries SchemaHash.newGC_inv, empty_hash
-graph/src/graph/attribute_store.rs	AttributeStore::get_int_attrs_by_idx_batch_into	1126	NOT COVERED	(#3437): same span lookup as get_attr_by_idx; Tag::Int payload / Tag::Null decode as unpack does, any other tag returns false; not modelled
