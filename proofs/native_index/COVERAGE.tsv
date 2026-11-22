@@ -442,3 +442,5 @@ graph/src/index/falkordb/numeric.rs	KeySet::windows	218	NOT COVERED	(#2527): not
 graph/src/index/falkordb/numeric.rs	WindowIter::next	328	NOT COVERED	(#2527): not modelled yet
 graph/src/index/falkordb/range.rs	Scalars::geo	185	NOT COVERED	(#2527): not modelled yet
 graph/src/index/falkordb/range.rs	Selection::within	420	NOT COVERED	(#2527): not modelled yet
+graph/src/index/falkordb/numeric.rs	DocIter::next/Windows	67	NOT COVERED	(#2527): the Windows arm (WindowIter::next) is not modelled yet
+graph/src/index/falkordb/numeric.rs	KeySet::contains/Windows	171	NOT COVERED	(#2527): the Windows arm (a binary search over sorted disjoint windows) is not modelled yet

@@ -14,6 +14,7 @@
 //!             │ IndexQuery::    │
 //!             │  Equal          │  key = value
 //!             │  Range          │  min <= key <= max
+//!             │  Point          │  within radius of point
 //!             │  And([...])     │  conjunction of the above
 //!             └────────┬────────┘
 //!                      │

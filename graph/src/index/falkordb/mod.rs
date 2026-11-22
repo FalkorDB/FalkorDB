@@ -160,7 +160,7 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
             )
         }
         Q::Point { key, .. } => format!("a geo predicate on `{key}`"),
-        // The array trees hold numbers and strings, mirroring RediSearch's `numeric:arr` and
+        // The array trees hold numbers (a boolean coerces to one) and strings, mirroring RediSearch's `numeric:arr` and
         // `string:arr` sub-fields. Nothing indexes a point (or a nested list) inside a list, so
         // that probe names its own type.
         Q::ArrayContains { key, value } => {
