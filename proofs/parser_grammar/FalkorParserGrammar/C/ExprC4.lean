@@ -5,7 +5,7 @@ import FalkorParserGrammar.C.ExprC3
 
 namespace FalkorParserGrammar.C
 
-/-- shortestPath's type list: pushed in order (`parse_relationship_types`, cypher.rs:3057-3064,
+/-- shortestPath's type list: pushed in order (`parse_relationship_types`, cypher.rs,
 #3300): a name, then a `|` (with an optional `:` after it) and another name. A bare `:` after a
 name does not continue the list. -/
 inductive GSpTypes : PS → List Nat → List Nat → PS → Prop
@@ -15,12 +15,12 @@ inductive GSpTypes : PS → List Nat → List Nat → PS → Prop
       (s.adv.adv.cur = .colon ∧ s1 = s.adv.adv.adv ∨ s.adv.adv.cur ≠ .colon ∧ s1 = s.adv.adv) →
       GSpTypes s1 (acc ++ [t]) out s' → GSpTypes s acc out s'
 
-/-- shortestPath's `*` range (cypher.rs:1800-1823). -/
+/-- shortestPath's `*` range (cypher.rs). -/
 inductive GSpRange : PS → Nat × Option Nat → PS → Prop
   | none {s} : s.cur ≠ .star → GSpRange s (1, some 1) s
   | star {s r s'} : s.cur = .star → GRangeBody s.adv r s' → GSpRange s r s'
 
-/-- shortestPath's `[ ... ]` (cypher.rs:1781-1866), with no edge filter. -/
+/-- shortestPath's `[ ... ]` (cypher.rs), with no edge filter. -/
 inductive GSpDet : PS → List Nat × Nat × Option Nat → PS → Prop
   | bare {s} : s.cur ≠ .lbrack → GSpDet s ([], 1, some 1) s
   | det {s sa ts sb r sc} : s.cur = .lbrack →
@@ -49,14 +49,13 @@ theorem np_spTypes : ∀ n acc, NP (spTypes n acc)
   | 0, _ => np_fuelP
   | n + 1, acc => by have := np_spTypes n; unfold spTypes; np_go
 
-theorem np_skipP : ∀ n d, NP (skipP n d)
-  | 0, _ => np_fuelP
-  | n + 1, d => by have := np_skipP n; unfold skipP; np_go
-
 theorem np_spRangeP : NP spRangeP := by have := np_hopP; unfold spRangeP; np_go
 
-theorem np_shortestP (F : Nat) : NP (shortestP F) := by
-  have := np_spTypes; have := np_skipP; have := np_spRangeP
+theorem np_spFilterP (pmap : P ET) (hm : NP pmap) (c : CT) : NP (spFilterP pmap c) := by
+  unfold spFilterP; split <;> np_go
+
+theorem np_shortestP (pmap : P ET) (hm : NP pmap) (F : Nat) : NP (shortestP pmap F) := by
+  have := np_spTypes; have := np_spFilterP pmap hm; have := np_spRangeP
   unfold shortestP; np_go
 
 theorem np_caseAlts (pe : PE) (hpe : NP pe) : ∀ n acc, NP (caseAlts pe n acc)

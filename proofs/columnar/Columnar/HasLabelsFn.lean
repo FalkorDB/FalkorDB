@@ -1,10 +1,10 @@
 import Columnar.FuncLane
 
 /-!
-# The registry's `hasLabels` (functions/entity.rs:62-127) satisfies the fast path's `HL`
+# The registry's `hasLabels` (functions/entity.rs) satisfies the fast path's `HL`
 
 A copy, over the engine value, of what the per-row call runs: `validate_args_type`'s `Fixed`
-arm (functions/mod.rs:828-856) over `value_of_type` (value.rs:1315-1350) for the declared
+arm (functions/mod.rs) over `value_of_type` (value.rs) for the declared
 arguments `[Node | Null, List(Any)]`, then `has_labels` (proofs/functions_str_list
 `Entity.hasLabels` models the same body over its own value type). **`hl_hasLabelsFn`**: on a
 node and a list of label names it validates and answers "every label is on the node"
@@ -21,19 +21,19 @@ variable {F : Type} [FloatModel F]
 
 set_option linter.unusedSectionVars false
 
-/-- `Type` (functions/mod.rs:531). -/
+/-- `Type` (functions/mod.rs). -/
 inductive Ty where
   | null | bool | int | float | string | list (t : Ty) | map | node | rel | path | vecf32 | point
   | datetime | date | time | duration | any | union (ts : List Ty) | optional (t : Ty)
 
-/-- `Value::get_type` (value.rs:1361). -/
+/-- `Value::get_type` (value.rs). -/
 def getType : V F → Ty
   | .null => .null | .bool _ => .bool | .int _ => .int | .float _ => .float | .str _ => .string
   | .list _ => .list .any | .map _ => .map | .node _ => .node | .rel _ => .rel | .path _ => .path
   | .vec _ => .vecf32 | .point .. => .point | .datetime _ => .datetime | .date _ => .date
   | .time _ => .time | .duration _ => .duration
 
-/-- The same-type arms of `value_of_type` (value.rs:1328-1343). -/
+/-- The same-type arms of `value_of_type` (value.rs). -/
 def sameTy : V F → Ty → Bool
   | .null, .null | .bool _, .bool | .int _, .int | .float _, .float | .str _, .string
   | .point .., .point | .vec _, .vecf32 | .map _, .map | .node _, .node | .rel _, .rel
@@ -43,7 +43,7 @@ def sameTy : V F → Ty → Bool
   | _, _ => false
 
 mutual
-/-- `value_of_type` (value.rs:1315): `none` when the value has the type, else
+/-- `value_of_type` (value.rs): `none` when the value has the type, else
 `(actual, expected)`. -/
 def valueOfType : V F → Ty → Option (Ty × Ty)
   | .list vs, .list t => listCheck t vs
@@ -63,7 +63,7 @@ def listCheck (t : Ty) : List (V F) → Option (Ty × Ty)
     | none => listCheck t vs
 end
 
-/-- The union spelling: `A or B`, `A, B, or C` (functions/mod.rs:633-649). -/
+/-- The union spelling: `A or B`, `A, B, or C` (functions/mod.rs). -/
 def unionName : List String → String
   | [] => ""
   | [a] => a
@@ -72,7 +72,7 @@ def unionName : List String → String
       (if rest.length > 1 then "," else "") ++ " or " ++ (rest.getLast?.getD "")
 
 mutual
-/-- `Display for Type` (functions/mod.rs:610-653). -/
+/-- `Display for Type` (functions/mod.rs). -/
 def tyName : Ty → String
   | .null => "Null" | .bool => "Boolean" | .int => "Integer" | .float => "Float" | .string => "String"
   | .list _ => "List" | .map => "Map" | .node => "Node" | .rel => "Edge" | .path => "Path"
@@ -86,7 +86,7 @@ end
 
 def isOptional : Ty → Bool | .optional _ => true | _ => false
 
-/-- `validate_args_type`'s `Fixed` arm (mod.rs:833-852). The `Missing argument` text prints
+/-- `validate_args_type`'s `Fixed` arm (mod.rs). The `Missing argument` text prints
 the type with `{:?}`; it is kept abstract (`dbg`), the call sites here never miss one. -/
 def validateFixed (name : String) (dbg : Ty → String) (tys : List Ty) (args : List (V F)) : Except String Unit :=
   go 0 tys
@@ -101,7 +101,7 @@ where
       else if isOptional t then go (i + 1) ts
       else .error s!"Missing argument {i + 1} for function '{name}', expected type {dbg t}"
 
-/-- The label loop of `has_labels` (entity.rs:72-118): the whole list is type-checked. -/
+/-- The label loop of `has_labels` (entity.rs): the whole list is type-checked. -/
 def labelsLoop (rt : RT F) (id : Nat) : List (V F) → Bool → Except String (V F)
   | [], acc => .ok (.bool acc)
   | .str n :: ls, acc => labelsLoop rt id ls (acc && hasLabelName rt id n)
@@ -110,14 +110,14 @@ def labelsLoop (rt : RT F) (id : Nat) : List (V F) → Bool → Except String (V
   | .bool _ :: _, _ => .error "Type mismatch: expected String but was Boolean"
   | v :: _, _ => .error s!"Type mismatch: expected String but was {v.name}"
 
-/-- `has_labels` (entity.rs:68): `match (iter.next(), iter.next())`. -/
+/-- `has_labels` (entity.rs): `match (iter.next(), iter.next())`. -/
 def hasLabelsCall (rt : RT F) : List (V F) → Except String (V F)
   | .node id :: .list ls :: _ => labelsLoop rt id ls true
   | .null :: _ => .ok .null
   | _ :: .null :: _ => .ok .null
   | _ => .error "unreachable!() in has_labels"
 
-/-- The registered `hasLabels` (entity.rs:62-67: `args: [Node | Null, List(Any)]`). -/
+/-- The registered `hasLabels` (entity.rs: `args: [Node | Null, List(Any)]`). -/
 def hasLabelsFn (rt : RT F) (dbg : Ty → String) : Fn (V F) where
   name := "hasLabels"
   write := false

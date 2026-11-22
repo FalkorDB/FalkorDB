@@ -48,7 +48,7 @@ theorem levels_spec {g : G} {src tgt : Nat} :
     intro h fr st I
     by_cases hfr : fr = []
     · subst hfr
-      simp only [levels, if_pos]
+      simp only [levels, ite_eq_left]
       intro es hw
       have := reach_all I hw I.srcSeen
       rw [I.tgtUnseen] at this; cases this
@@ -64,11 +64,11 @@ theorem levels_spec {g : G} {src tgt : Nat} :
       cases hres : scanFrontier g tgt (h + 1) fr { st with next := [] } with
       | inl st' =>
         rw [hres] at this
-        simp only [levels, if_neg hfr, hres]
+        simp only [levels, ite_eq_right hfr, hres]
         exact ⟨this.1, this.2.1, by omega⟩
       | inr st' =>
         rw [hres] at this
-        simp only [levels, if_neg hfr, hres]
+        simp only [levels, ite_eq_right hfr, hres]
         have I1 : LInv g src tgt (h + 1) st'.next st' := by
           refine ⟨this.toPInv, this.distLe, ?_, ?_, ?_, this.tgtUnseen⟩
           · intro y hy hdy x r ha
@@ -125,7 +125,7 @@ theorem chain_ok {g : G} {src : Nat} {st : BS} (P : PInv g src st) :
     · obtain ⟨p, r, h1, h2, h3, h4⟩ := P.par x hx hxs
       obtain ⟨es, ns, hc, hw, hl, hnd, hall⟩ := ih p (r :: acc) (by omega) h3
       refine ⟨es ++ [r], ns ++ [x], ?_, hw.snoc h2, by simp [hl], ?_, ?_⟩
-      · rw [chain, if_neg hxs, h1]; dsimp only; rw [hc]; simp
+      · rw [chain, ite_eq_right hxs, h1]; dsimp only; rw [hc]; simp
       · rw [← List.cons_append, List.nodup_append]
         refine ⟨hnd, by simp, ?_⟩
         intro a ha b hb; simp at hb; subst hb
@@ -147,7 +147,7 @@ theorem bfs_sound (g : G) (src tgt maxLen : Nat) (hne : src ≠ tgt) :
   unfold bfsFindBound
   by_cases h0 : maxLen = 0
   · simp [h0]
-  · simp only [h0, if_false]
+  · simp only [h0, ite_false]
     have := levels_spec maxLen 0 [src] (init src) (linv_init g src tgt hne)
     split
     · simp
@@ -176,7 +176,7 @@ theorem bfs_complete (g : G) (src tgt maxLen : Nat) (hne : src ≠ tgt) :
     cases es with
     | nil => exact absurd hw.nil_eq hne
     | cons _ _ => simp
-  · simp only [h0, if_false] at h
+  · simp only [h0, ite_false] at h
     have := levels_spec maxLen 0 [src] (init src) (linv_init g src tgt hne)
     split at h
     · rename_i heq; rw [heq] at this; have := this es hw; omega
@@ -202,7 +202,7 @@ theorem scanRels_seen_tgt {g : G} {tgt u h : Nat} :
       · exact ih st hs
       · rename_i hsf
         have hft : far ≠ tgt := by intro h; subst h; exact hsf hs
-        rw [if_neg hft]
+        rw [ite_eq_right hft]
         apply ih
         have : tgt ≠ far := Ne.symm hft
         simp [mark, upd_ne _ _ _ _ this, hs]

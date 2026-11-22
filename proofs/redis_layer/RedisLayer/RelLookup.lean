@@ -1,25 +1,11 @@
 /-!
-# Relationship lookups behind the reply encoders (#3447, #3449)
+# Relationship lookups behind the reply encoders (#3447)
 
 `RespCompact.encC` / `RespVerbose.encVb` take an edge's type id / type name, source and
 destination as given fields. On `origin/main` those fields are *looked up*
 while the reply is written, and some of the lookups panic when the id is not where the
-code expects it (#3447 still; #3449 fixed by #3462, 5e475e6c9). This file models the lookups over the three places a relationship id can
+code expects it (#3447). This file models the lookups over the three places a relationship id can
 live during a query, and the two ways a reply's id can end up in none of the expected ones.
-
-| here | there (`5e475e6c9`; line numbers of #3449's code moved by #3436/#3462) |
-| --- | --- |
-| `Rel`, `St.graph`, `St.types` | committed edges in `runtime.g` (`edge_endpoints`, `relationship_type_matrix`) and `Graph::relationship_types` (`graph/src/graph/graph.rs`) |
-| `St.deleted` | `runtime.deleted_relationships` (snapshots: src, dst, type *name*) |
-| `St.pending` | `Pending::created_rels_by_type` (`graph/src/runtime/pending.rs:293`) |
-| `endpoints` | `Runtime::get_relationship_endpoints` (`graph/src/runtime/runtime.rs:1783-1794`): deleted → pending → `Graph::get_relationship_endpoints` (`graph.rs:3373-3382`, `panic!("relationship {} not found")`) |
-| `graphTyId` | `Graph::get_relationship_type_id` (`graph.rs:3339-3349`, `.expect("relationship must have a type in type_matrix")`) |
-| `typeId` | `Graph::get_type_id` (`graph.rs:1214`): position of the name in the registry |
-| `compactRel` | `reply_compact_value`, `Value::Relationship` arm (`src/reply.rs:252-293`): endpoints `:253`; deleted → `get_type_id(&x.type_name).unwrap()` `:260`; else `get_relationship_type_id` `:276` |
-| `verboseRel` | `reply_verbose_value`, `Value::Relationship` arm (`src/reply.rs:472-490`): endpoints `:475`; type name from `Runtime::get_relationship_type` (`runtime.rs:1902-1914`: deleted → pending → graph) since #3462 |
-| `commitCascade` | `CREATE … DETACH DELETE` of an endpoint: the cascade (`delete.rs:253-265` → `Pending::remove_pending_relationships_for_node`, `pending.rs:839-897`, drops an emptied type group `:872-873`) snapshots the edge into `deleted_relationships`; `Pending::commit` (`pending.rs:1239-1253`) registers types only through `create_relationships_bulk` over the surviving groups |
-| `recordDelete` | `GRAPH.RECORD` of a top-level `DELETE r`: `DeleteOp::new` (`delete.rs:99-101`) snapshots when `runtime.inspect || snapshot_required` (`:69-81`; `snapshot_required` is false under a bare `Commit`; before #3462 only `snapshot_required`); `record_mut` (`src/commands/record.rs:100-132`) renders the captured rows after `finish_write` |
-| `recordAbort` | `GRAPH.RECORD` of `CREATE (a)-[r:R]->(b) SET a.x = 1/0`: the error comes before `Commit`, `abandon_write` (`record.rs:106`), then the rows are rendered anyway (`:113-132`) with `r` still pending |
 
 `none` is the panic (the server dies). C has no `GRAPH.RECORD`; its compact reply of a
 deleted edge resolves the type by the edge's own schema (issue #3447: C returns the edge).
@@ -62,12 +48,12 @@ def endpoints (s : St) (id : Nat) : Option (Nat × Nat) :=
 def compactRel (s : St) (id : Nat) : Option (Nat × Nat × Nat) := do
   let (a, b) ← endpoints s id
   let t ← match look s.deleted id with
-    | some r => typeId s.types r.ty            -- `:260` `.unwrap()`
-    | none => graphTyId s id                   -- `:276` `.expect(..)`
+    | some r => typeId s.types r.ty            -- `.unwrap()`
+    | none => graphTyId s id                   -- `.expect(..)`
   pure (t, a, b)
 
 /-- `reply_verbose_value` on `Value::Relationship` on main (#3462): the type name comes from
-`Runtime::get_relationship_type` (`runtime.rs:1902-1914`): deleted → pending → graph. -/
+`Runtime::get_relationship_type` (`runtime.rs`): deleted → pending → graph. -/
 def verboseRel (s : St) (id : Nat) : Option (String × Nat × Nat) := do
   let (a, b) ← endpoints s id
   let t ← match look s.deleted id with
@@ -138,7 +124,7 @@ def commitCascade (pre : List String) (rels : List (Rel × Bool)) : St :=
 def s3447 : St := commitCascade [] [(⟨0, "NEW_TYPE", 0, 1⟩, true)]
 
 /-- **#3447**: the snapshot of `r` names `NEW_TYPE`, which nothing registered, so the compact
-reply's `get_type_id(..).unwrap()` (`reply.rs:260`) panics, while the verbose reply renders
+reply's `get_type_id(..).unwrap()` (`reply.rs`) panics, while the verbose reply renders
 it (`NEW_TYPE`, 0 → 1). `RegisteredTypes` and `ReplyTotal` both fail after commit. -/
 theorem bug3447_compact_cancelled_new_type_panics :
     Known s3447 0 ∧ compactRel s3447 0 = none ∧
@@ -161,7 +147,7 @@ theorem s3447_survivor_ok :
 /-! ## #3449 (fixed by #3462): `GRAPH.RECORD` rendered ids the runtime no longer (or not yet) described -/
 
 /-- `MATCH ()-[r]->() DELETE r` under `GRAPH.RECORD`: `r` leaves the graph at commit and is
-snapshotted only when `snap` (`DeleteOp::new`, `delete.rs:99-101`). -/
+snapshotted only when `snap` (`DeleteOp::new`, `delete.rs`). -/
 def recordDelete (snap : Bool) (g : List Rel) (types : List String) (r : Rel) : St :=
   { graph := g.filter (· ≠ r), types, deleted := if snap then [r] else [], pending := [] }
 

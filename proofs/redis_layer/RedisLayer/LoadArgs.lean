@@ -1,21 +1,10 @@
 import RedisLayer.Config
 /-!
-# Module load arguments (`src/config.rs`, #3328 `ded0b7c3f`)
+# Module load arguments (`src/config.rs`)
 
-`graph_init` (`src/module_init.rs:139`) hands every `--loadmodule … NAME VALUE …`
-argument (`to_string_lossy`) to `apply_module_args` (`src/config.rs:296-354`); `lib.rs`
+`graph_init` (`src/module_init.rs`) hands every `--loadmodule … NAME VALUE …`
+argument (`to_string_lossy`) to `apply_module_args` (`src/config.rs`); `lib.rs`
 sets `module_args_as_configuration: false`, so redismodule-rs no longer reads them.
-
-| here | there (`origin/main` b080a44c1) |
-| --- | --- |
-| `N`, `N.str`, `parseName`        | the string `match`es on the upper-cased name (`config.rs:236-247`, `config_cmd.rs:118-198`) |
-| `validateTempFolder`             | `validate_temp_folder` `config.rs:205` |
-| `validateLoadOnly`               | `validate_load_only` `config.rs:223` |
-| `validateConfigSet`              | `validate_config_set` `config_cmd.rs:114` — each arm *is* `Config.validate` (#3021 model) |
-| `checkTimeouts`                  | `check_timeout_constraints` `config_cmd.rs:220` |
-| `rstep`, `loop`, `applyModuleArgs` | `apply_module_args` `config.rs:296` (loop body `:316-347`, final check `:349-355`, apply `:357-359`) |
-| `LoadArg`, `applyLoadArg`        | `enum LoadArg` `config.rs:185`, `apply_load_arg` `:252` |
-| `cParseInteger`, `cYesNo`, `cSet`, `cLookup`, `cInit` | C `_Config_ParseInteger` (`strtoll`), `_Config_ParseYesNo`, `Config_Option_set`, `Config_Contains_field`, `Config_Init` (`src/configuration/config.c` on `master`) |
 
 `FS` is the file system as both engines see it (libc `access`/`stat`, Rust
 `Path::exists`/`is_dir`/`File::create`): FFI, a hypothesis structure. `ConfigValue::Uint`
@@ -31,15 +20,14 @@ Proven:
   `File::create` in a directory succeeds iff `access(W_OK)` does.
 * `error_applies_nothing`, `ok_applies_each_pair` — every pair is validated before any is
   applied: an error applies nothing; success applies one `apply_load_arg` per pair, in order.
-* `fixed3328_*` — the W4-redis-3 / #3268 counterexamples now load as in C;
-  `ModuleInit.pre3328_*` keep the old behaviour.
+* `fixed3328_*` — the W4-redis-3 / #3268 cases load as in C.
 
 Divergences (both confirmed live, ports 19470, Rust b080a44c1 vs C `master`):
 * `leading_space_divergence` — C's `strtoll` skips leading whitespace, Rust's
   `str::parse::<i64>` does not: `--loadmodule … CACHE_SIZE " 10"` loads on C (`CACHE_SIZE 10`)
   and is refused by Rust; same for `GRAPH.CONFIG SET RESULTSET_SIZE " 5"` (C OK, Rust
   "Failed to set config value"). Trailing whitespace is refused by both.
-* `rust_only_names` — `INDEX_WORKER_THREADS`, `BOLT_PORT`, `EFFECTS_COMPRESSION` load on
+* `rust_only_names` — `INDEX_WORKER_THREADS`, `BOLT_PORT`, `EFFECTS_COMPRESSION`, `INDEX_BUILD_THREAD_COUNT` (#3585; 1..=1024) load on
   Rust; C refuses the load ("unknown configuration field"). Intended Rust extensions.
 -/
 namespace RedisLayer.LoadArgs
@@ -51,9 +39,9 @@ inductive N where
   | threadCount | timeout | timeoutDefault | timeoutMax | ompThreadCount | vkeyMax | cacheSize
   | resultsetSize | maxQueued | queryMemCapacity | deltaMax | nodeCreationBuffer | asyncDelete
   | cmdInfo | maxInfo | effectsThreshold | delayIndexing | importFolder | tempFolder
-  | jsHeap | jsStack
+  | jsHeap | jsStack | writeLockPoll
   -- Rust only
-  | indexWorkerThreads | boltPort | effectsCompression
+  | indexWorkerThreads | boltPort | effectsCompression | indexBuildThreadCount
   deriving DecidableEq, Repr
 
 def N.str : N → List Nat
@@ -67,16 +55,18 @@ def N.str : N → List Nat
   | .effectsThreshold => b "EFFECTS_THRESHOLD" | .delayIndexing => b "DELAY_INDEXING"
   | .importFolder => b "IMPORT_FOLDER" | .tempFolder => b "TEMP_FOLDER"
   | .jsHeap => b "JS_HEAP_SIZE" | .jsStack => b "JS_STACK_SIZE"
+  | .writeLockPoll => b "WRITE_LOCK_POLL_INTERVAL"
   | .indexWorkerThreads => b "INDEX_WORKER_THREADS" | .boltPort => b "BOLT_PORT"
   | .effectsCompression => b "EFFECTS_COMPRESSION"
+  | .indexBuildThreadCount => b "INDEX_BUILD_THREAD_COUNT"
 
 /-- C's `Config_Contains_field` chain, in its order. -/
 def cList : List N :=
   [.threadCount, .timeout, .timeoutDefault, .timeoutMax, .ompThreadCount, .vkeyMax, .cacheSize,
-   .resultsetSize, .maxQueued, .queryMemCapacity, .deltaMax, .nodeCreationBuffer, .asyncDelete,
+   .resultsetSize, .maxQueued, .queryMemCapacity, .deltaMax, .nodeCreationBuffer, .writeLockPoll, .asyncDelete,
    .cmdInfo, .maxInfo, .effectsThreshold, .delayIndexing, .importFolder, .tempFolder, .jsHeap, .jsStack]
 
-def rustOnly : List N := [.indexWorkerThreads, .boltPort, .effectsCompression]
+def rustOnly : List N := [.indexWorkerThreads, .boltPort, .effectsCompression, .indexBuildThreadCount]
 
 /-- A Rust string `match` over these (distinct) literals. -/
 def parseName (s : List Nat) : Option N := (cList ++ rustOnly).find? (fun n => s == n.str)
@@ -107,12 +97,12 @@ def mapE {α : Type} : Except CfgErr α → Except LErr α
 
 inductive LoadArg where
   | cacheSize (v : Int) | threadCount (v : Int) | ompThreadCount (v : Int)
-  | nodeCreationBuffer (v : Int) | indexWorkerThreads (v : Int)
+  | nodeCreationBuffer (v : Int) | indexWorkerThreads (v : Int) | indexBuildThreadCount (v : Int)
   | importFolder (v : List Nat) | tempFolder (v : List Nat) | boltPort
   | runtime (name : N) (value : List Nat) (parsed : Int)
   deriving DecidableEq, Repr
 
-/-- `validate_temp_folder` (`config.rs:205-218`). -/
+/-- `validate_temp_folder` (`config.rs`). -/
 def validateTempFolder (fs : FS) (p : List Nat) : Except LErr Unit :=
   if !fs.exists_ p then .error .tempNoExist
   else if !fs.isDir p then .error .tempNotDir
@@ -122,7 +112,7 @@ def validateTempFolder (fs : FS) (p : List Nat) : Except LErr Unit :=
 def req (c : Option LoadArg) : Option (Except LErr LoadArg) :=
   some (match c with | some a => .ok a | none => .error .failed)
 
-/-- `validate_load_only` (`config.rs:223-249`). -/
+/-- `validate_load_only` (`config.rs`). -/
 def validateLoadOnly (fs : FS) (n : N) (v : List Nat) : Option (Except LErr LoadArg) :=
   let int := rustParseI64 v
   let positive := int.filter (fun x => decide (0 < x))
@@ -133,6 +123,8 @@ def validateLoadOnly (fs : FS) (n : N) (v : List Nat) : Option (Except LErr Load
   | .ompThreadCount => req (positive.map .ompThreadCount)
   | .nodeCreationBuffer => req (nonNeg.map .nodeCreationBuffer)
   | .indexWorkerThreads => req (nonNeg.map .indexWorkerThreads)
+  -- #3585: the native index's build pool, `positive.filter(|&v| v <= 1024)`
+  | .indexBuildThreadCount => req ((positive.filter (fun x => decide (x ≤ 1024))).map .indexBuildThreadCount)
   | .importFolder => req (some (.importFolder v))
   | .tempFolder => some (match validateTempFolder fs v with
       | .ok () => .ok (.tempFolder v)
@@ -140,12 +132,13 @@ def validateLoadOnly (fs : FS) (n : N) (v : List Nat) : Option (Except LErr Load
   | .boltPort => req (some .boltPort)
   | _ => none
 
-/-- `validate_config_set` (`config_cmd.rs:114-202`); the arms share code in Rust, so each
+/-- `validate_config_set` (`config_cmd.rs`); the arms share code in Rust, so each
 is the #3021 model `Config.validate` of one member of the arm. `none` = no literal matched. -/
 def validateConfigSet (n : Option N) (v : List Nat) : Except LErr Int :=
   match n with
   | some .timeout | some .timeoutDefault | some .timeoutMax | some .queryMemCapacity
-  | some .deltaMax | some .effectsCompression | some .effectsThreshold => mapE (validate .timeout v)
+  | some .deltaMax | some .effectsCompression | some .effectsThreshold
+  | some .writeLockPoll => mapE (validate .timeout v)   -- #3816
   | some .asyncDelete | some .cmdInfo | some .delayIndexing => mapE (validate .cmdInfo v)
   | some .resultsetSize => mapE (validate .resultsetSize v)
   | some .maxQueued => mapE (validate .maxQueued v)
@@ -154,9 +147,10 @@ def validateConfigSet (n : Option N) (v : List Nat) : Except LErr Int :=
   | some .jsHeap | some .jsStack => mapE (validate .jsHeap v)
   | some .threadCount | some .indexWorkerThreads | some .ompThreadCount | some .cacheSize
   | some .nodeCreationBuffer | some .boltPort | some .importFolder | some .tempFolder => .error .readOnly
+  | some .indexBuildThreadCount => .error .unknown   -- not in the read-only arm: `_ => UNKNOWN_FIELD`
   | none => .error .unknown
 
-/-- `check_timeout_constraints` (`config_cmd.rs:220-253`): fold the batch into the two
+/-- `check_timeout_constraints` (`config_cmd.rs`): fold the batch into the two
 values, then the two checks. -/
 def checkTimeouts (td tm : Int) (vs : List (N × Int)) : Except LErr (Int × Int) :=
   let td' := vs.foldl (fun a p => if p.1 = .timeoutDefault then p.2 else a) td
@@ -167,7 +161,7 @@ def checkTimeouts (td tm : Int) (vs : List (N × Int)) : Except LErr (Int × Int
     .error (if vs.any (·.1 == .timeoutDefault) then .defaultAboveMax else .maxBelowDefault)
   else .ok (td', tm')
 
-/-- One iteration of `apply_module_args`' pair loop (`config.rs:316-347`). -/
+/-- One iteration of `apply_module_args`' pair loop (`config.rs`). -/
 def rstep (fs : FS) (td tm : Int) (n : N) (v : List Nat) : Except LErr (LoadArg × Int × Int) :=
   match validateLoadOnly fs n v with
   | some (.error e) => .error e
@@ -196,7 +190,7 @@ def loop (fs : FS) : Int → Int → Bool → Bool → List (List Nat × List Na
       match rstep fs td tm n v with
       | .error e => .error e
       | .ok (a, td', tm') =>
-        -- the flags are set in the run-time branch (`:340-344`); TIMEOUT* never take the
+        -- the flags are set in the run-time branch; TIMEOUT* never take the
         -- load-only one (`timeouts_runtime`)
         let old' := old || n == .timeout
         let new' := new || n == .timeoutDefault || n == .timeoutMax
@@ -205,20 +199,21 @@ def loop (fs : FS) : Int → Int → Bool → Bool → List (List Nat × List Na
         | .ok (l, o, w) => .ok (a :: l, o, w)
 
 /-- `apply_module_args`: the list returned is the sequence of `apply_load_arg` calls
-made (`:357-359`), i.e. what gets applied. -/
+made, i.e. what gets applied. -/
 def applyModuleArgs (fs : FS) (td0 tm0 : Int) (args : List (List Nat)) : Except LErr (List LoadArg) :=
   if args.length % 2 = 1 then .error .odd
   else match loop fs td0 tm0 false false (pairs args) with
     | .error e => .error e
     | .ok (vs, old, new) => if old && new then .error .timeoutMix else .ok vs
 
-/-- What `apply_load_arg` (`config.rs:252-283`) writes: the config it sets and the value
+/-- What `apply_load_arg` (`config.rs`) writes: the config it sets and the value
 (`Runtime` goes through `apply_config_set`, i.e. `Config.apply1` for the shared names). -/
 def applyLoadArg : LoadArg → List Nat × Int
   | .cacheSize v => (b "CACHE_SIZE", v) | .threadCount v => (b "THREAD_COUNT", v)
   | .ompThreadCount v => (b "OMP_THREAD_COUNT", v)
   | .nodeCreationBuffer v => (b "NODE_CREATION_BUFFER", v)
   | .indexWorkerThreads v => (b "INDEX_WORKER_THREADS", v)
+  | .indexBuildThreadCount v => (b "INDEX_BUILD_THREAD_COUNT", v)
   | .importFolder _ => (b "IMPORT_FOLDER", 0) | .tempFolder _ => (b "TEMP_FOLDER", 0)
   | .boltPort => ([], 0)
   | .runtime n _ x => (n.str, x)
@@ -260,12 +255,13 @@ def cSet (fs : FS) (td tm : Int) (n : N) (v : List Nat) : Option (Int × Int) :=
     | none => none
     | some x => if x ≠ tm then (if x ≠ 0 ∧ td > x then none else some (td, x)) else some (td, tm)
   | .resultsetSize => keep int
-  | .vkeyMax | .queryMemCapacity | .deltaMax | .nodeCreationBuffer | .maxInfo | .effectsThreshold => keep nn
+  | .vkeyMax | .queryMemCapacity | .deltaMax | .nodeCreationBuffer | .maxInfo | .effectsThreshold
+  | .writeLockPoll => keep nn
   | .asyncDelete | .cmdInfo | .delayIndexing => keep (cYesNo v)
   | .importFolder => some (td, tm)
   | .tempFolder => if fs.exists_ v && fs.isDir v && fs.writable v then some (td, tm) else none
   | .jsHeap | .jsStack => keep (pos.filter (fun x => decide (1048576 ≤ x)))
-  | .indexWorkerThreads | .boltPort | .effectsCompression => none   -- not C fields
+  | .indexWorkerThreads | .boltPort | .effectsCompression | .indexBuildThreadCount => none   -- not C fields
 
 /-- C reads a `RedisModuleString` as a C string: everything from the first NUL is invisible to
 `strcasecmp`/`strtoll`/`access`. Rust (`to_string_lossy`) keeps the whole string. -/
@@ -401,52 +397,43 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < td <;> by_cases a2 : 0 < tm <;> by_cases a3 : tm < td <;> by_cases a4 : td = 0 <;> by_cases a5 : tm = 0 <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case timeoutDefault =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
       by_cases a2 : x = td
       · subst a2
-        by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : tm = 0 <;>
-          by_cases a4 : 0 < tm <;> by_cases a5 : tm < x <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
-      · by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : tm = 0 <;>
-          by_cases a4 : 0 < tm <;> by_cases a5 : tm < x <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+        simp [Option.filter, TOk] at * <;> grind
+      · simp [Option.filter, TOk] at * <;> grind
   case timeoutMax =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
       by_cases a2 : x = tm
       · subst a2
-        by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : td = 0 <;>
-          by_cases a4 : 0 < td <;> by_cases a5 : x < td <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
-      · by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < x <;> by_cases a3 : td = 0 <;>
-          by_cases a4 : 0 < td <;> by_cases a5 : x < td <;> simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+        simp [Option.filter, TOk] at * <;> grind
+      · simp [Option.filter, TOk] at * <;> grind
   case threadCount =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case ompThreadCount =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case cacheSize =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case maxQueued =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : x ≤ 0 <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case vkeyMax =>
     cases rustParseI64 v with
     | none => simp
@@ -460,6 +447,12 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
       by_cases a0 : x < 0 <;> by_cases a1 : 0 ≤ x <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
         simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
   case deltaMax =>
+    cases rustParseI64 v with
+    | none => simp
+    | some x =>
+      by_cases a0 : x < 0 <;> by_cases a1 : 0 ≤ x <;> by_cases a2 : 0 < td <;> by_cases a3 : 0 < tm <;> by_cases a4 : tm < td <;>
+        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+  case writeLockPoll =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
@@ -487,23 +480,20 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases a0 : x < 0 <;> by_cases a1 : 0 < td <;> by_cases a2 : 0 < tm <;> by_cases a3 : tm < td <;>
-        simp [Option.filter, TOk, *] at * <;> first | omega | (exfalso; omega)
+      simp [TOk] at * <;> grind
   case jsHeap =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : 1048576 ≤ x <;> by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
-        simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case jsStack =>
     cases rustParseI64 v with
     | none => simp
     | some x =>
-      by_cases b0 : 0 ≤ x <;> by_cases b1 : x < 0 <;> by_cases a0 : 0 < x <;> by_cases a1 : 1048576 ≤ x <;> by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
-        simp [Option.filter, TOk, *] <;> first | omega | (exfalso; omega)
+      simp [Option.filter, TOk] at * <;> grind
   case asyncDelete | cmdInfo | delayIndexing =>
     cases y : eqIC v (b "yes") <;> cases z : eqIC v (b "no") <;>
-      simp only [y, z, Bool.false_eq_true, ite_false, ite_true] <;>
+      simp only [Bool.false_eq_true, ite_false, ite_true] <;>
       by_cases a3 : 0 < td <;> by_cases a4 : 0 < tm <;> by_cases a5 : tm < td <;>
       simp [TOk, *] at * <;> first | omega | (exfalso; omega)
   case importFolder =>
@@ -513,9 +503,9 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases e1 : fs.exists_ v <;> cases e2 : fs.isDir v <;> simp [TOk] <;> rw [hfs v e1 e2] <;>
       cases fs.writable v <;> simp <;> omega
 
-/-! ## `check_timeout_constraints` is the #3021 cross check
+/-! ## `check_timeout_constraints` is the cross check
 
-`validate_timeout_cross_constraints` (`config_cmd.rs:206`) now loads the two stored values
+`validate_timeout_cross_constraints` (`config_cmd.rs`) loads the two stored values
 and calls `check_timeout_constraints`; `Config.cross` models it. On the names they share
 the two models agree. -/
 
@@ -523,6 +513,7 @@ def toN : Name → N
   | .timeout => .timeout | .timeoutDefault => .timeoutDefault | .timeoutMax => .timeoutMax
   | .resultsetSize => .resultsetSize | .maxQueued => .maxQueued | .vkeyMax => .vkeyMax
   | .maxInfo => .maxInfo | .jsHeap => .jsHeap | .cmdInfo => .cmdInfo | .cacheSize => .cacheSize
+  | .writeLockPoll => .writeLockPoll
 
 theorem fold_td (vs : List (Name × Int)) (c : Cfg) :
     (vs.foldl apply1 c).timeoutDefault =
@@ -569,13 +560,13 @@ theorem cross_eq (c : Cfg) (vs : List (Name × Int)) :
   rw [← fold_td, ← fold_tm, h1, h2]
   by_cases a : (vs.any (·.1 == .timeout) = true ∧
       ((vs.foldl apply1 c).timeoutDefault > 0 ∨ (vs.foldl apply1 c).timeoutMax > 0))
-  · simp only [a, if_true]; rfl
-  · simp only [a, if_false]
+  · simp only [a]; rfl
+  · simp only [a, ite_false]
     by_cases b' : ((vs.foldl apply1 c).timeoutDefault > 0 ∧ (vs.foldl apply1 c).timeoutMax > 0 ∧
         (vs.foldl apply1 c).timeoutDefault > (vs.foldl apply1 c).timeoutMax)
-    · simp only [b', if_true]
+    · simp only [b']
       cases vs.any (·.1 == Name.timeoutDefault) <;> rfl
-    · simp only [b', if_false]; rfl
+    · simp only [b', ite_false]; rfl
 
 /-! ## The whole load -/
 
@@ -624,8 +615,8 @@ theorem rust_c_same_accept (fs : FS) (hfs : FsOk fs) (args : List (List Nat))
     (match applyModuleArgs fs 0 0 args with | .ok _ => true | .error _ => false) = cInit fs args := by
   unfold applyModuleArgs cInit
   by_cases hp : args.length % 2 = 1
-  · simp only [hp, if_true]
-  · simp only [hp, if_false]
+  · simp only [hp, ite_true]
+  · simp only [hp, ite_false]
     rw [← loop_agree fs hfs (pairs args) 0 0 false false ⟨by omega, by omega, by omega⟩ hv hz hr]
     cases loop fs 0 0 false false (pairs args) with
     | error e => rfl
@@ -634,7 +625,7 @@ theorem rust_c_same_accept (fs : FS) (hfs : FsOk fs) (args : List (List Nat))
       cases o <;> cases w <;> rfl
 
 /-- A refused load applies nothing (`apply_load_arg` runs only after every pair and the
-TIMEOUT check passed, `config.rs:357`). -/
+TIMEOUT check passed, `config.rs`). -/
 theorem error_applies_nothing (fs : FS) (td tm : Int) (args : List (List Nat)) (e : LErr)
     (h : applyModuleArgs fs td tm args = .error e) : applied (applyModuleArgs fs td tm args) = [] := by
   rw [h]; rfl
@@ -673,7 +664,7 @@ theorem ok_applies_each_pair (fs : FS) (td tm : Int) (args : List (List Nat)) (v
       · cases h
       · cases h; rw [loop_length fs _ _ _ _ _ _ _ _ hl, pairs_length]
 
-/-! ## The #3268 / W4-redis-3 counterexamples, and what still differs -/
+/-! ## The W4-redis-3 cases, and what still differs -/
 
 /-- A file system where every path is a writable directory (none of these touch it). -/
 def fs0 : FS := ⟨fun _ => true, fun _ => true, fun _ => true, fun _ => true⟩
@@ -718,7 +709,19 @@ theorem rust_only_names :
     applyModuleArgs fs0 0 0 [b "BOLT_PORT", b "7687"] = .ok [.boltPort] ∧
     cInit fs0 [b "BOLT_PORT", b "7687"] = false ∧
     applyModuleArgs fs0 0 0 [b "EFFECTS_COMPRESSION", b "1"] = .ok [.runtime .effectsCompression (b "1") 1] ∧
-    cInit fs0 [b "EFFECTS_COMPRESSION", b "1"] = false := by
+    cInit fs0 [b "EFFECTS_COMPRESSION", b "1"] = false ∧
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "4"] = .ok [.indexBuildThreadCount 4] ∧
+    cInit fs0 [b "INDEX_BUILD_THREAD_COUNT", b "4"] = false := by
+  decide
+
+/-- #3585 `INDEX_BUILD_THREAD_COUNT`: a load argument in `1..=1024` (`validate_load_only`, `config.rs`),
+refused outside it, and not settable at run time (`GRAPH.CONFIG SET` answers unknown field). -/
+theorem index_build_range :
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "1"] = .ok [.indexBuildThreadCount 1] ∧
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "1024"] = .ok [.indexBuildThreadCount 1024] ∧
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "0"] = .error .failed ∧
+    applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "1025"] = .error .failed ∧
+    validateConfigSet (some .indexBuildThreadCount) (b "2") = .error .unknown := by
   decide
 
 end RedisLayer.LoadArgs

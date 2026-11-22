@@ -4,19 +4,19 @@ import GraphQueries.Index
 
 | here | there |
 | --- | --- |
-| `ctStr`, `csStr` | `Display for ConstraintType` / `ConstraintStatus` (constraint.rs:14,34) |
-| `cnew`           | `Constraint::new` (constraint.rs:60), `NEXT_CONSTRAINT_ID` counter |
-| `cmatches`       | `Constraint::matches` (constraint.rs:79) |
-| `addRaw`         | `add_constraint_raw` (graph.rs:4555) |
-| `upsert`         | `upsert_constraint_raw` (graph.rs:4571) |
-| `entityCount`    | `get_constraint_entity_count` (graph.rs:4593) |
-| `validate`       | `validate_constraint` (graph.rs:4605) |
-| `validatePending`| `validate_pending_constraints` (graph.rs:4616) |
-| `computePending` | `compute_pending_constraint_results` (graph.rs:4645) |
-| `applyResults`   | `apply_constraint_validation_results` (graph.rs:4657), ids unique |
-| `dropC`          | `drop_constraint` (graph.rs:4790) — `swap_remove` |
-| `hasSupporting`  | `has_supporting_index` (graph.rs:4813) |
-| `dependsOn`      | `constraint_depends_on_index` (graph.rs:4832) |
+| `ctStr`, `csStr` | `Display for ConstraintType` / `ConstraintStatus` (constraint.rs) |
+| `cnew`           | `Constraint::new` (constraint.rs), `NEXT_CONSTRAINT_ID` counter |
+| `cmatches`       | `Constraint::matches` (constraint.rs) |
+| `addRaw`         | `add_constraint_raw` (graph.rs) |
+| `upsert`         | `upsert_constraint_raw` (graph.rs) |
+| `entityCount`    | `get_constraint_entity_count` (graph.rs) |
+| `validate`       | `validate_constraint` (graph.rs) |
+| `validatePending`| `validate_pending_constraints` (graph.rs) |
+| `computePending` | `compute_pending_constraint_results` (graph.rs) |
+| `applyResults`   | `apply_constraint_validation_results` (graph.rs), ids unique |
+| `dropC`          | `drop_constraint` (graph.rs) — `swap_remove` |
+| `hasSupporting`  | `has_supporting_index` (graph.rs) |
+| `dependsOn`      | `constraint_depends_on_index` (graph.rs) |
 -/
 namespace GQ
 variable {V : Type}
@@ -90,7 +90,7 @@ theorem upsert_twice (cs : List Constraint) (ctr : Nat) (ct : CType) (et : EType
       obtain ⟨hi, h1, h2⟩ := h
       refine ⟨by simpa using hi, ?_, ?_⟩
       · simp only [List.getElem_modify, ite_true]; simpa [sameKey] using h1
-      · intro j hj; simp only [List.getElem_modify]; rw [if_neg (Nat.ne_of_gt hj)]
+      · intro j hj; simp only [List.getElem_modify]; rw [ite_eq_right (Nat.ne_of_gt hj)]
         exact h2 j hj
     simp only [upsert, h]; rw [this]; simp
   | none =>
@@ -131,7 +131,7 @@ theorem lookup_compute (val : Constraint → Bool) :
     simp only [List.map_cons, List.nodup_cons] at hn
     simp only [computePending, List.filter_cons] at *
     rcases List.mem_cons.1 hm with rfl | hm'
-    · simp [hu, List.lookup]
+    · simp [hu]
     · have hne : d.id ≠ c.id := fun h => hn.1 (h ▸ List.mem_map_of_mem hm')
       have ih := lookup_compute val cs c hn.2 hm' hu
       have hb : (c.id == d.id) = false := by simp [Ne.symm hne]

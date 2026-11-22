@@ -5,25 +5,23 @@ Every GraphBLAS call returns a `GrB_Info` (see `GrbInfo.lean`). The deserialize
 wrappers in `vector.rs` / `matrix.rs` / `tensor.rs` decode an **entirely
 attacker-controlled** buffer (`GRAPH.RESTORE`, `GRAPH.COPY`, replica full sync).
 For those, an `assert_eq!` on the returned code is a remote crash: the module's
-panic hook calls `std::process::exit(1)` (`src/module_init.rs:158`).
+panic hook calls `std::process::exit(1)` (`src/module_init.rs`).
 
 This file assigns each deserialize wrapper a `Disposition` (from `GrbInfo`) at
 its cited line, axiomatises which codes the underlying GraphBLAS call can return
 on a crafted blob (from the C source), and proves which wrappers are DoS-safe.
 
 **Fixed by #2996 (main 1d15bf713).** `Vector::<bool>::decode_blob`
-(vector.rs:211) and `Vector::<u64>::decode` (vector.rs:256) used to
+(vector.rs) and `Vector::<u64>::decode` (vector.rs) used to
 `assert_eq!` on `GxB_Vector_deserialize`, which returns `GrB_INVALID_OBJECT` on
-a corrupt blob (`GB_deserialize.c:51,83`); `Tensor::decode` (tensor.rs:1622)
+a corrupt blob (`GB_deserialize.c:51,83`); `Tensor::decode` (tensor.rs)
 calls `decode_blob` for every multi-edge pair, so a crafted `GRAPH.RESTORE`
 killed the server (repro then: `graph/tests/lean_graphblas_wrappers.rs`
 `bug_tensor_decode_panics_on_corrupt_multi_edge_blob`). Both now
-`if info != SUCCESS { return Err(..) }` (vector.rs:226-228, 271-273) and pass the
+`if info != SUCCESS { return Err(..) }` (vector.rs) and pass the
 expected type (`GrB_BOOL` / `GrB_UINT64`) so a well-formed blob of another type
 is refused too (`GrB_DOMAIN_MISMATCH`). `decodeBlob_never_dies` /
-`decodeU64_never_dies` prove no code kills the process. The pre-#2996
-wrapper-specific counterexamples were removed from this revision (bbee75955);
-they remain available in 17ccc5412 for historical reference.
+`decodeU64_never_dies` prove no code kills the process.
 -/
 
 import GraphblasWrappers.GrbInfo
@@ -47,15 +45,15 @@ structure Wrapper where
   line : Nat
   disp : Disposition
 
-/-- `Vector::<bool>::decode_blob` (vector.rs:211) on main: `GxB_Vector_deserialize`
-with `GrB_BOOL`, any non-success code returned as `Err` (vector.rs:226-228). -/
+/-- `Vector::<bool>::decode_blob` (vector.rs) on main: `GxB_Vector_deserialize`
+with `GrB_BOOL`, any non-success code returned as `Err` (vector.rs). -/
 def decodeBlob : Wrapper := ⟨"Vector::<bool>::decode_blob", 211, .propagate⟩
 
-/-- `Vector::<u64>::decode` (vector.rs:256) on main: same, with `GrB_UINT64`
-(vector.rs:271-273). -/
+/-- `Vector::<u64>::decode` (vector.rs) on main: same, with `GrB_UINT64`
+(vector.rs). -/
 def decodeU64 : Wrapper := ⟨"Vector::<u64>::decode", 256, .propagate⟩
 
-/-- `Vector::<bool>::decode` (vector.rs:350): the hardened path — validates
+/-- `Vector::<bool>::decode` (vector.rs): the hardened path — validates
 lengths and NUL-termination, then `if info != SUCCESS { …free…; return Err }`
 for every GraphBLAS call. -/
 def decodeBoolHardened : Wrapper := ⟨"Vector::<bool>::decode", 350, .propagate⟩
@@ -104,7 +102,7 @@ theorem decodeBool_never_dies (i : Info) :
 theorem hardened_eq_blob (i : Info) :
     Disposition.run decodeBlob.disp i = Disposition.run decodeBoolHardened.disp i := rfl
 
-/-! ### `Matrix::decode` internal asserts (matrix.rs:445, 477)
+/-! ### `Matrix::decode` internal asserts (matrix.rs)
 
 `GxB_Container_new` and `GrB_Matrix_new` are called with *fixed* arguments
 (a fresh container, dims `0×0`), so their only non-success code is
@@ -112,8 +110,6 @@ theorem hardened_eq_blob (i : Info) :
 attacker-controlled decode of the five component vectors goes through
 `Vector::<bool>::decode` — the hardened, propagating path — so `Matrix::decode`
 does not add a code-assertion DoS beyond the container leak (see `Own`/report).
-Since #3080 both calls propagate their code as `Err` and the leak is fixed
-(`MatrixDecode.run_no_leak`, `MatrixDecode.decode_never_dies`).
 Its `GrB_Matrix_new(_, GrB_BOOL, 0, 0)` always satisfies the dimension bound. -/
 
 /-- The internal `GrB_Matrix_new(_, _, 0, 0)` in `Matrix::decode` always

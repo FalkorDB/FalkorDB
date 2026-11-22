@@ -38,4 +38,16 @@ theorem allRange_spec (p : Nat → Bool) (lo : Nat) : ∀ n, allRange p lo n = t
     · subst hk; exact h.1
     · exact ih h.2 k h1 (by omega)
 
+theorem allRange_append (p : Nat → Bool) (lo n m : Nat) (h1 : allRange p lo n = true)
+    (h2 : allRange p (lo + n) m = true) : allRange p lo (n + m) = true := by
+  induction m with
+  | zero => simpa using h1
+  | succ m ih =>
+    have h2' : allRange p (lo + n) m = true ∧ p (lo + n + m) = true := by
+      have := h2; simp only [allRange, Bool.and_eq_true] at this; exact ⟨this.2, this.1⟩
+    have := ih h2'.1
+    show (p (lo + (n + m)) && allRange p lo (n + m)) = true
+    rw [this, Nat.add_assoc] at *
+    simp [h2'.2]
+
 end FalkorTemporal
