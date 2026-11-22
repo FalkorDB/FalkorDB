@@ -306,10 +306,10 @@ impl IndexQuery<Value> {
                 min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
             }
             Self::And(children) | Self::Or(children) => {
-                // An empty `Or([])` / `And([])` is not a valid index query:
-                // the RediSearch backend treats it as match-all, which is
-                // unsafe when an IN list had only null items (`IN [NULL]`).
-                // Fall back so the retained post-filter decides.
+                // An empty `Or([])` / `And([])` has no servable member (e.g. an
+                // IN list that held only null items: `IN [NULL]`), so there is
+                // nothing for the index to answer. Fall back so the retained
+                // post-filter decides.
                 !children.is_empty() && children.iter().all(Self::can_be_served)
             }
             Self::ArrayContains { value, .. } => {

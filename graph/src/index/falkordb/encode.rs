@@ -32,9 +32,9 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
         Value::Float(f) => *f,
         Value::Bool(b) => f64::from(*b),
         // Temporals are not indexed, matching the RediSearch path (`index/mod.rs`): stored as
-        // their raw number they land among the numbers, so `n.v > 0` returns dates. No index
-        // query is ever built for a temporal value — `IndexQuery::can_be_served` refuses them — so an
-        // entry here could only ever surface as a wrong row.
+        // their raw number they land among the numbers, so `n.v > 0` returns dates. No query
+        // holding a temporal value is ever sent to the index — `IndexQuery::can_be_served`
+        // refuses it — so an entry here could only ever surface as a wrong row.
         _ => return None,
     };
     (!x.is_nan()).then(|| encode_f64(x))
