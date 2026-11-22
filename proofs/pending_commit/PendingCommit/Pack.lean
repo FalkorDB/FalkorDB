@@ -1,12 +1,20 @@
 import Std.Tactic.BVDecide
+import RedisLayer.Dur
 /-
 # Packed entries and the block heap: `pack_value` / `unpack` / free list
 
 attribute_store.rs (`Tag`, `PackedAttr`, `heap_index`) and the
-`Block` methods :430-532. A stored value is a 12-byte `(id u16, tag u8,
+`Block` methods :371-485. A stored value is a 12-byte `(id u16, tag u8,
 [u8; 8])`; scalars are their little-endian bytes, everything else (`String`,
 `List`, `VecF32`, `Map`, …: `V.other`) goes to the block's `heap` and the
-payload's first four bytes are its `u32` index. Removed heap values leave a
+payload's first four bytes are its `u32` index.
+
+**#3610.** A duration is a `RedisLayer.Temporal.Dur` (three components). One whose components
+fit the inline word (`Dur::inline_bits` is `Some`) is stored as `Tag::Duration` with that word's
+little-endian bytes and rebuilt by `Dur::from_inline_bits` (whose `assert!` on bit 0 never fires
+on a word `pack_value` wrote: `inline_roundtrip`); any other duration goes to the heap like a
+`String`. `pack_unpack` covers both forms; `pack_hinv` holds for every value packed to the heap
+(`pack_hinv_heap`). Removed heap values leave a
 `Null` hole whose index is pushed on `heap_free` and reused first.
 
 Floats are modelled by their IEEE bits: `f.to_le_bytes()` / `from_le_bytes`
@@ -21,13 +29,14 @@ head of the list.
   `pack_value` (`pack_hinv`) and `release_heap_value` (`release_hinv`);
   `release_span_values` = releasing each live entry (`releaseSpan_hinv`).
 * `store_packed_value` writes exactly one arena cell (`store_get`).
-* `compactHeap_unpack` — `compact`'s heap remap (:798-822) keeps every live
+* `compactHeap_unpack` — `compact`'s heap remap (:743-769) keeps every live
   entry's value, given live entries reference distinct heap slots (which is
   `HInv.refs_nodup`; with a shared index `mem::replace` would hand the second
   entry a `Null`).
-* `heapBytes_eq` — `SpanRef::heap_bytes` (:883).
+* `heapBytes_eq` — `SpanRef::heap_bytes` (:828).
 -/
 namespace PendingCommit.Pack
+open RedisLayer.Temporal (Dur inlineBits ofInlineBits inline_roundtrip)
 
 abbrev Byte := BitVec 8
 
@@ -40,7 +49,7 @@ inductive V where
   | datetime (x : BitVec 64)
   | date (x : BitVec 64)
   | time (x : BitVec 64)
-  | duration (x : BitVec 64)
+  | duration (d : Dur)
   | other (o : Nat)
   deriving DecidableEq, Repr
 
@@ -71,14 +80,20 @@ theorem le32_roundtrip (x : BitVec 32) : fromLe32 (le32 x) = x := by
 
 def zeros (n : Nat) : List Byte := List.replicate n 0
 
-/-- `PackedAttr::heap_index` (:282): `u32::from_le_bytes(payload[..4]) as usize`. -/
+/-- `PackedAttr::heap_index` (:223): `u32::from_le_bytes(payload[..4]) as usize`. -/
 def heapIndex (p : List Byte) : Nat := (fromLe32 (p.take 4)).toNat
 
 structure Heap where
   heap : List V
   free : List Nat
 
-/-- `pack_value` (:430): `(tag, payload)` and the heap after the side effect. -/
+/-- The out-of-line arm of `pack_value` (:396-406): reuse the last `heap_free` hole, else push. -/
+def heapPut (H : Heap) (v : V) : Tag × List Byte × Heap :=
+  match H.free with
+  | i :: rest => (.heap, le32 (BitVec.ofNat 32 i) ++ zeros 4, ⟨H.heap.set i v, rest⟩)
+  | [] => (.heap, le32 (BitVec.ofNat 32 H.heap.length) ++ zeros 4, ⟨H.heap ++ [v], []⟩)
+
+/-- `pack_value` (:371): `(tag, payload)` and the heap after the side effect. -/
 def pack (H : Heap) : V → Tag × List Byte × Heap
   | .null => (.null, zeros 8, H)
   | .bool b => (.bool, (if b then 1 else 0) :: zeros 7, H)
@@ -88,13 +103,14 @@ def pack (H : Heap) : V → Tag × List Byte × Heap
   | .datetime t => (.datetime, le64 t, H)
   | .date t => (.date, le64 t, H)
   | .time t => (.time, le64 t, H)
-  | .duration t => (.duration, le64 t, H)
-  | .other o =>
-    match H.free with
-    | i :: rest => (.heap, le32 (BitVec.ofNat 32 i) ++ zeros 4, ⟨H.heap.set i (.other o), rest⟩)
-    | [] => (.heap, le32 (BitVec.ofNat 32 H.heap.length) ++ zeros 4, ⟨H.heap ++ [.other o], []⟩)
+  | .duration d =>
+    match inlineBits d with
+    | some b => (.duration, le64 (BitVec.ofNat 64 b.toNat), H)  -- `inline_bits().to_le_bytes()`
+    | none => heapPut H (.duration d)
+  | .other o => heapPut H (.other o)
 
-/-- `unpack` (:486). -/
+/-- `unpack` (:429). A `Tag::Duration` payload is `Dur::from_inline_bits(u64::from_le_bytes)`;
+its `assert!` panic on an even word (never written by `pack_value`) is modelled as `Null`. -/
 def unpack (H : Heap) (t : Tag) (p : List Byte) : V :=
   match t with
   | .null => .null
@@ -105,7 +121,10 @@ def unpack (H : Heap) (t : Tag) (p : List Byte) : V :=
   | .datetime => .datetime (fromLe64 p)
   | .date => .date (fromLe64 p)
   | .time => .time (fromLe64 p)
-  | .duration => .duration (fromLe64 p)
+  | .duration =>
+    match ofInlineBits (fromLe64 p).toNat with
+    | some d => .duration d
+    | none => .null
   | .heap => H.heap.getD (heapIndex p) .null
 
 /-- Heap well-formedness: the indices live entries reference (`refs`) and the
@@ -135,9 +154,37 @@ theorem getD_append_lt {l : List V} {j : Nat} (h : j < l.length) (v : V) : (l ++
 /-- The heap index `pack_value` hands an out-of-line value. -/
 def newIdx (H : Heap) : Nat := match H.free with | i :: _ => i | [] => H.heap.length
 
+/-- The heap arm of `pack_unpack`, for any value. -/
+theorem heapPut_unpack (H : Heap) (refs : List Nat) (hI : HInv H refs) (hcap : H.heap.length < 2 ^ 32)
+    (v : V) :
+    let r := heapPut H v
+    unpack r.2.2 r.1 r.2.1 = v ∧ ∀ j ∈ refs, r.2.2.heap.getD j .null = H.heap.getD j .null := by
+  simp only [heapPut]
+  cases hf : H.free with
+  | cons i rest =>
+    have hi : i < H.heap.length := (hI.cover i).2 (.inr (by rw [hf]; simp))
+    simp only [unpack]
+    rw [heapIndex_le32 i (by omega), getD_set_eq hi]
+    refine ⟨rfl, fun j hj => getD_set_ne _ ?_ _⟩
+    intro e; subst e; exact hI.disj _ hj (by rw [hf]; simp)
+  | nil =>
+    simp only [unpack]
+    rw [heapIndex_le32 _ hcap]
+    refine ⟨by simp [List.getD_eq_getElem?_getD], fun j hj => getD_append_lt ?_ _⟩
+    exact (hI.cover j).2 (.inl hj)
+
+/-- The inline duration word survives the 8 little-endian payload bytes and is rebuilt as the
+same `Dur`. -/
+theorem unpack_inline_dur (H : Heap) (d : Dur) (b : Int) (hb : inlineBits d = some b) :
+    unpack H .duration (le64 (BitVec.ofNat 64 b.toNat)) = .duration d := by
+  obtain ⟨_, h0, h64, hof⟩ := inline_roundtrip d b hb
+  have hn : ((BitVec.ofNat 64 b.toNat).toNat : Int) = b := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]; omega
+  simp only [unpack, le64_roundtrip, hn, hof]
+
 /-- **`pack_unpack`**: unpacking what `pack_value` produced gives the value back,
 and heap cells referenced by other live entries are untouched. Needs the heap
-to stay within `u32` indices (`(heap.len() - 1) as u32`, :458). -/
+to stay within `u32` indices (`(heap.len() - 1) as u32`, :402). -/
 theorem pack_unpack (H : Heap) (refs : List Nat) (hI : HInv H refs) (hcap : H.heap.length < 2 ^ 32)
     (v : V) :
     let r := pack H v
@@ -150,33 +197,27 @@ theorem pack_unpack (H : Heap) (refs : List Nat) (hI : HInv H refs) (hcap : H.he
   | datetime x => exact ⟨by simp [pack, unpack, le64_roundtrip], fun _ _ => rfl⟩
   | date x => exact ⟨by simp [pack, unpack, le64_roundtrip], fun _ _ => rfl⟩
   | time x => exact ⟨by simp [pack, unpack, le64_roundtrip], fun _ _ => rfl⟩
-  | duration x => exact ⟨by simp [pack, unpack, le64_roundtrip], fun _ _ => rfl⟩
+  | duration d =>
+    cases hb : inlineBits d with
+    | some b =>
+      simp only [pack, hb]
+      exact ⟨unpack_inline_dur H d b hb, by simp⟩
+    | none =>
+      simp only [pack, hb]
+      exact heapPut_unpack H refs hI hcap _
   | point a o =>
     refine ⟨?_, fun _ _ => rfl⟩
     simp only [pack, unpack]
     have h1 : (le32 a ++ le32 o).take 4 = le32 a := by simp [le32]
     have h2 : (le32 a ++ le32 o).drop 4 = le32 o := by simp [le32]
     rw [h1, h2, le32_roundtrip, le32_roundtrip]
-  | other o =>
-    simp only [pack]
-    cases hf : H.free with
-    | cons i rest =>
-      have hi : i < H.heap.length := (hI.cover i).2 (.inr (by rw [hf]; simp))
-      simp only [unpack]
-      rw [heapIndex_le32 i (by omega), getD_set_eq hi]
-      refine ⟨rfl, fun j hj => getD_set_ne _ ?_ _⟩
-      intro e; subst e; exact hI.disj _ hj (by rw [hf]; simp)
-    | nil =>
-      simp only [unpack]
-      rw [heapIndex_le32 _ hcap]
-      refine ⟨by simp [List.getD_eq_getElem?_getD], fun j hj => getD_append_lt ?_ _⟩
-      exact (hI.cover j).2 (.inl hj)
+  | other o => exact heapPut_unpack H refs hI hcap _
 
-/-- `pack_value` of an out-of-line value keeps `HInv`, with the new index
-added to the live references. -/
-theorem pack_hinv (H : Heap) (refs : List Nat) (hI : HInv H refs) (o : Nat) :
-    newIdx H ∉ refs ∧ HInv (pack H (.other o)).2.2 (newIdx H :: refs) := by
-  simp only [pack, newIdx]
+/-- The heap arm of `pack_value` keeps `HInv`, with the new index added to the live
+references, whatever value it stores. -/
+theorem heapPut_hinv (H : Heap) (refs : List Nat) (hI : HInv H refs) (v : V) :
+    newIdx H ∉ refs ∧ HInv (heapPut H v).2.2 (newIdx H :: refs) := by
+  simp only [heapPut, newIdx]
   cases hf : H.free with
   | cons i rest =>
     have hfr : H.free = i :: rest := hf
@@ -216,7 +257,40 @@ theorem pack_hinv (H : Heap) (refs : List Nat) (hI : HInv H refs) (o : Nat) :
       · omega
       · have := this.2 h; omega
 
-/-- `release_heap_value` (:510) of a heap entry with index `i`: the hole gets
+/-- `pack_value` of any value it sends to the heap (`Tag::Heap`: an out-of-line `String`,
+`List`, … or, since #3610, a duration too large for the inline word) is `heapPut`. -/
+theorem pack_heap (H : Heap) (v : V) (h : (pack H v).1 = .heap) : pack H v = heapPut H v := by
+  cases v with
+  | duration d =>
+    cases hb : inlineBits d with
+    | some b => simp [pack, hb] at h
+    | none => simp [pack, hb]
+  | other o => rfl
+  | bool b => cases b <;> simp [pack] at h
+  | _ => simp [pack] at h
+
+/-- `pack_value` of a value it sends to the heap keeps `HInv`, with the new index added to
+the live references; a value it keeps inline leaves the heap as it was. -/
+theorem pack_hinv_heap (H : Heap) (refs : List Nat) (hI : HInv H refs) (v : V) :
+    ((pack H v).1 = .heap → newIdx H ∉ refs ∧ HInv (pack H v).2.2 (newIdx H :: refs)) ∧
+      ((pack H v).1 ≠ .heap → (pack H v).2.2 = H) := by
+  refine ⟨fun h => pack_heap H v h ▸ heapPut_hinv H refs hI v, fun h => ?_⟩
+  cases v with
+  | duration d =>
+    cases hb : inlineBits d with
+    | some b => simp [pack, hb]
+    | none => simp [pack, hb, heapPut] at h; split at h <;> simp at h
+  | other o => simp [pack, heapPut] at h; split at h <;> simp at h
+  | bool b => cases b <;> rfl
+  | _ => rfl
+
+/-- `pack_value` of an out-of-line value keeps `HInv`, with the new index
+added to the live references. -/
+theorem pack_hinv (H : Heap) (refs : List Nat) (hI : HInv H refs) (o : Nat) :
+    newIdx H ∉ refs ∧ HInv (pack H (.other o)).2.2 (newIdx H :: refs) :=
+  heapPut_hinv H refs hI (.other o)
+
+/-- `release_heap_value` (:455) of a heap entry with index `i`: the hole gets
 `Null` and `i` goes on the free list. -/
 def release (H : Heap) (i : Nat) : Heap := ⟨H.heap.set i .null, i :: H.free⟩
 
@@ -247,7 +321,7 @@ theorem release_hinv (H : Heap) (refs : List Nat) (hI : HInv H refs) (i : Nat) (
       · exact hI.holes j hj
   · intro j hj; rw [hmemE] at hj; exact getD_set_ne _ hj.1 _
 
-/-- `release_span_values` (:522): release every live heap entry of the span. -/
+/-- `release_span_values` (:467): release every live heap entry of the span. -/
 def releaseSpan (H : Heap) : List Nat → Heap
   | [] => H
   | i :: is => releaseSpan (release H i) is
@@ -281,7 +355,7 @@ theorem releaseSpan_hinv : ∀ (span : List Nat) (H : Heap) (refs : List Nat), H
     have hje : j ∈ refs.erase i := by rw [List.Nodup.mem_erase_iff hI.refs_nodup]; exact ⟨hjn.1, hj⟩
     simp only [releaseSpan]; rw [h4 j hje hjn.2, h2 j hje]
 
-/-- `store_packed_value` (:471): write at `index`, appending when it is `len`. -/
+/-- `store_packed_value` (:414): write at `index`, appending when it is `len`. -/
 def store (arena : List PA) (index : Nat) (e : PA) : List PA :=
   if index = arena.length then arena ++ [e] else arena.set index e
 
@@ -307,7 +381,7 @@ theorem store_get (arena : List PA) (index : Nat) (e : PA) (h : index ≤ arena.
     · subst hj; simp [show j < arena.length by omega]
     · simp [hj, List.getElem?_set_ne (Ne.symm hj)]
 
-/-! ## `compact`'s heap remap (:806-816) -/
+/-! ## `compact`'s heap remap (:747-763) -/
 
 /-- Entries are `(tag, value index)` pairs after unpacking the payload. Walk
 the live entries in order; a heap entry takes `heap[idx]` (leaving `Null`
@@ -377,7 +451,7 @@ theorem compactHeap_unpack (f : Nat → V) : ∀ (es : List (Tag × Nat)) (old n
       simp only [remap, ht, ite_false]
       exact ⟨⟨rfl, fun h => absurd h ht, fun _ => rfl⟩, hrest⟩
 
-/-- `SpanRef::heap_bytes` (:883): `len * 12` plus, per heap entry,
+/-- `SpanRef::heap_bytes` (:828): `len * 12` plus, per heap entry,
 `size_of::<Value>() + amortized_heap_size()` (the latter an opaque function). -/
 def heapBytes (sizeV : Nat) (amort : V → Nat) (H : Heap) (es : List (Tag × Nat)) : Nat :=
   es.foldl (fun b e => if e.1 = .heap then b + sizeV + amort (H.heap.getD e.2 .null) else b) (es.length * 12)

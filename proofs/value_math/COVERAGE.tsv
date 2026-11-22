@@ -1,16 +1,16 @@
 file	function	line	bucket	lean_name_or_reason
 graph/src/runtime/value.rs	get_numeric	250	PROVEN	getNumeric_after_validation
-graph/src/runtime/value.rs	format_duration	302	PROVEN	fmtDuration_fields, fmtDuration_zero, fmtDuration_ex (decompose_duration from functions_temporal)
-graph/src/runtime/value.rs	heap_size	347	PROVEN	heap_le_amortized, rel_charged
-graph/src/runtime/value.rs	amortized_heap_size	393	PROVEN	heap_le_amortized, shares_le
-graph/src/runtime/value.rs	get_attr	444	PROVEN	getAttr_null, getAttr_map_missing (temporal extractors parameters)
-graph/src/runtime/value.rs	get_point_component	463	PROVEN	point_component_case
-graph/src/runtime/value.rs	is_never_equal	1649	PROVEN	isNeverEqual_iff
-graph/src/runtime/value.rs	may_fail_self_match	1672	PROVEN	mayFail_sound
+graph/src/runtime/value.rs	format_duration	302	PROVEN	fmtDuration (Dur, Neo4j per-component, #3610): fmtDuration_parts, fmtDuration_fields, fmtDuration_zero, fmtDuration_ex, fmtDuration_ex2, fmtDuration_neo4j (pre-#3610 model kept: pre3610_fmtDuration_zero/_ex/_ex2)
+graph/src/runtime/value.rs	heap_size	346	PROVEN	heap_le_amortized, rel_charged, dur_heap_charged (#3610 heap Dur)
+graph/src/runtime/value.rs	amortized_heap_size	394	PROVEN	heap_le_amortized, shares_le, dur_heap_charged (#3610 heap Dur)
+graph/src/runtime/value.rs	get_attr	447	PROVEN	getAttr_null, getAttr_map_missing (temporal extractors parameters; duration extractor takes Dur, #3610)
+graph/src/runtime/value.rs	get_point_component	466	PROVEN	point_component_case
+graph/src/runtime/value.rs	is_never_equal	1644	PROVEN	isNeverEqual_iff
+graph/src/runtime/value.rs	may_fail_self_match	1667	PROVEN	mayFail_sound
 graph/src/runtime/value.rs	value_nesting_error	76	PROVEN	Nesting.valueNestingError_text (decoder message; decodeValue_refuses_past_cap, decode_nest_deep); the property validator's own message (`validate_list_property`, "Property values can only be nested up to N levels deep") is a different string and its text is not proved
-graph/src/runtime/value.rs	encode	2091	PROVEN	decodeUncapped_encode, decode_encode, stored_roundtrip, encode_map_is_null
-graph/src/runtime/value.rs	decode	2177	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
-graph/src/runtime/value.rs	decode_value	2189	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
+graph/src/runtime/value.rs	encode	2086	PROVEN	decodeUncapped_encode, decode_encode, stored_roundtrip, stored_roundtrip_current (duration = 3 signed values at encver 21, #3610), decDur_encode, durReadable_current, encode_map_is_null
+graph/src/runtime/value.rs	decode	2178	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip, stored_roundtrip_current, decode_legacy_duration (encver < 21 reads one legacy i64, #3610)
+graph/src/runtime/value.rs	decode_value	2190	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1); duration arm decDur: decDur_encode, decDur_legacy, decDur_some, decode_legacy_duration (#3610)
 graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
 graph/src/runtime/functions/math.rs	abs	46	PROVEN	abs_agree_except, abs_min_diverges, abs_nzero_diverges, unary_no_panic
 graph/src/runtime/functions/math.rs	ceil	63	PROVEN	int_rounding_identity, unary_no_panic

@@ -22,7 +22,6 @@ A bug is **confirmed** only if a repro against the real Rust shows it, and it is
   - `toFloat('0x10')` gives null (C 16).
 - Minor: `date({year:2020, month:null})` treats null as absent (C errors).
 - Minor: type-mismatch errors from `check_string_or_null` spell a vector `VecF32` (the type's Display) where C and Rust's other mismatch errors say `Vectorf32`: `RETURN toUpper(vecf32([1.0,2.0]))` → Rust "expected String or Null but was VecF32", C "... but was Vectorf32" (live on 256ab4d3f; same for `trim`).
-- **W9-temporal-1** — `Value::get_duration_component` (`value.rs:613`) goes through chrono's `Utc.timestamp_opt` (about ±262,143 years), so a duration that `check_date_range`, `decompose_duration`, `format_duration` and `+` all accept returns null for every component once its instant leaves chrono's range: `RETURN duration({years: 262000, days: 3}).years, duration({years: 262000, days: 3}).days` → Rust null, null; C 262000, 3 (`years: 1000000` likewise; `toString` agrees, `P1000000Y3D`). Lean `functions_temporal` `bug_duration_component_null`; `durComp_agrees_decompose` shows computing the components from `decompose_duration` is exact. (C returns 0, 0, 3, 6 for `years: -1000000`, which also looks wrong; not filed.)
 
 ## Server & configuration
 

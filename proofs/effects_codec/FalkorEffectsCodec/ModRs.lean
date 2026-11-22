@@ -24,13 +24,14 @@ decreasing_by simp; have : buf.length ≠ 0 := by simpa using h
               omega
 
 /-- `EffectsPayload::describe` (`effects/mod.rs`): size line, the format's
-own lines for version 3 (`v3lines`), the first 2 KiB as hex, and a tail note. -/
+own lines for version 4 or 3 (#3610; `v3lines`, the one `EffectsFormat` impl),
+the first 2 KiB as hex, and a tail note. -/
 def describeTop (v3lines : Bytes → List Line) (buf : Bytes) : List DLine :=
   let head := [DLine.size buf.length]
   match buf.head? with
   | none => head
   | some v =>
-    let body := if v.toNat = 3 then (v3lines buf).map .v3 else [.unknownVersion v.toNat]
+    let body := if v.toNat = 4 ∨ v.toNat = 3 then (v3lines buf).map .v3 else [.unknownVersion v.toNat]
     let hex := ((chunks32 buf).take (DESCRIBE_BYTE_LIMIT / DESCRIBE_BYTES_PER_LINE)).zipIdx.map
       fun (c, i) => DLine.hex (i * DESCRIBE_BYTES_PER_LINE) c
     let tail := if buf.length > DESCRIBE_BYTE_LIMIT then [DLine.moreBytes (buf.length - DESCRIBE_BYTE_LIMIT)] else []
@@ -50,18 +51,40 @@ theorem describeTop_spec (v3lines : Bytes → List Line) (buf : Bytes) :
   · intro h; subst h; rfl
   · unfold describeTop; split <;> simp
 
-/-- `EffectsPayload::apply` (`effects/mod.rs`): empty is a no-op, version 3
-goes to the v3 format, any other version is `UnsupportedVersion`. -/
+/-- `EffectsPayload::apply` (`effects/mod.rs`): empty is a no-op, version 4
+or 3 (#3610) goes to the one `EffectsFormat` impl (which reads in the header's
+version), any other version is `UnsupportedVersion`. -/
 def applyTop {G E} (v3apply : G → Bytes → Except E G) (unsupported : Nat → E) (g : G) (buf : Bytes) : Except E G :=
   match buf.head? with
   | none => .ok g
-  | some v => if v.toNat = 3 then v3apply g buf else .error (unsupported v.toNat)
+  | some v => if v.toNat = 4 ∨ v.toNat = 3 then v3apply g buf else .error (unsupported v.toNat)
 
 theorem applyTop_spec {G E} (f : G → Bytes → Except E G) (u : Nat → E) (g : G) (buf : Bytes) :
     (buf = [] → applyTop f u g buf = .ok g) ∧
     (∀ rest, applyTop f u g (3 :: rest) = f g (3 :: rest)) ∧
-    (∀ v rest, v.toNat ≠ 3 → applyTop f u g (v :: rest) = .error (u v.toNat)) := by
-  refine ⟨fun h => by subst h; rfl, fun rest => rfl, fun v rest h => by simp [applyTop, h]⟩
+    (∀ rest, applyTop f u g (4 :: rest) = f g (4 :: rest)) ∧
+    (∀ v rest, v.toNat ≠ 3 → v.toNat ≠ 4 → applyTop f u g (v :: rest) = .error (u v.toNat)) := by
+  refine ⟨fun h => by subst h; rfl, fun rest => rfl, fun rest => rfl,
+    fun v rest h3 h4 => by simp [applyTop, h3, h4]⟩
+
+/-- `describe` decodes versions 4 and 3 and only those; any other first byte
+gets the one "no format in this build reads it" line. -/
+theorem describeTop_versions (v3lines : Bytes → List Line) (v : UInt8) (rest : Bytes) :
+    ((v.toNat = 3 ∨ v.toNat = 4) →
+      describeTop v3lines (v :: rest) = [DLine.size (rest.length + 1)] ++ (v3lines (v :: rest)).map .v3 ++
+        (((chunks32 (v :: rest)).take (DESCRIBE_BYTE_LIMIT / DESCRIBE_BYTES_PER_LINE)).zipIdx.map
+          fun (c, i) => DLine.hex (i * DESCRIBE_BYTES_PER_LINE) c) ++
+        (if rest.length + 1 > DESCRIBE_BYTE_LIMIT then
+          [DLine.moreBytes (rest.length + 1 - DESCRIBE_BYTE_LIMIT)] else [])) ∧
+    (v.toNat ≠ 3 → v.toNat ≠ 4 →
+      ∃ hex, describeTop v3lines (v :: rest) = [DLine.size (rest.length + 1), .unknownVersion v.toNat] ++ hex) := by
+  constructor
+  · intro h
+    have : v.toNat = 4 ∨ v.toNat = 3 := by omega
+    simp [describeTop, this]
+  · intro h3 h4
+    have : ¬(v.toNat = 4 ∨ v.toNat = 3) := by omega
+    simp [describeTop, this]
 
 /-! ### `EffectsBuffer` -/
 
@@ -78,7 +101,7 @@ theorem eb_is_vec : ebEffectWrite = vecWrite := rfl
 `is_empty` = the format's; `build*`/`replicate` delegate. -/
 def ebNew : Bytes := fmtNewBuffer
 theorem ebNew_isEmpty : fmtIsEmpty ebNew = true := rfl
-theorem ebNew_eq : ebNew = [3, 0] := rfl
+theorem ebNew_eq : ebNew = [4, 0] := rfl
 
 /-! ### `v3/mod.rs` -/
 
@@ -115,7 +138,7 @@ theorem indexTypeOf_mixed : (indexTypeOf 0x11).toOption = none ∧ (indexTypeOf 
 /-- `seal` (`v3/mod.rs`) — `sealBuf` (`seal` is a Lean keyword): `maybe_compress(buf, compression_min_bytes())`. -/
 def sealBuf (Z : Codec) (setting : Int) (buf : Bytes) : Bytes := (maybeCompress Z buf (compressionMinBytes setting)).1
 theorem seal_transparent (Z : Codec) (hZ : CodecOK Z) (v : Int) (body : Bytes) :
-    openPayload Z (sealBuf Z v (newBuffer ++ body)) = .ok (body, []) :=
+    openPayload Z (sealBuf Z v (newBuffer ++ body)) = .ok ((body, EFFECTS_VERSION), []) :=
   openPayload_maybeCompress Z hZ body _
 
 end FalkorCodec

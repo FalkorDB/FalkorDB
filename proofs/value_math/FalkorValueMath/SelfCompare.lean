@@ -129,8 +129,9 @@ def cmpV : V F → V F → Ordering × DN
       | none => (.lt, .nan)
     | some o => (o, .none)
     | none => (.lt, .nan)
-  | .int a, .int b | .datetime a, .datetime b | .date a, .date b | .time a, .time b
-  | .duration a, .duration b => (compare a b, .none)
+  | .int a, .int b | .datetime a, .datetime b | .date a, .date b | .time a, .time b =>
+    (compare a b, .none)
+  | .duration a, .duration b => (durationCmp a b, .none)
   | .int i, .float f => cmpFloats fc (fc.ofInt i) f
   | .float f, .int i => cmpFloats fc f (fc.ofInt i)
   | .null, b => (compare (orderF (V.null : V F)) (orderF b), .comparedNull)
@@ -273,7 +274,7 @@ theorem mayFail_sound : ∀ (n : Nat) (v : V F), sizeOf v < n → mayFail fc v =
     | datetime t => simp [cmpV]
     | date t => simp [cmpV]
     | time t => simp [cmpV]
-    | duration t => simp [cmpV]
+    | duration t => simp [cmpV, durationCmp_refl]
     | float f =>
       simp only [mayFail] at hm
       simp [cmpV, cmpFloats, fc.pc_self f hm]

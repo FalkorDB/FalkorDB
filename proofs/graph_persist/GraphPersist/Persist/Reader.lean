@@ -97,7 +97,7 @@ theorem readU_rt (n : Nat) (h : n < 2 ^ 64) : RT readU (encU n) n := by
       obtain ⟨rfl, h2⟩ := hpq
       exact absurd h2.2 hq
 
-/-! ## Scalar values (`impl Decode<19> for Value`, value.rs) -/
+/-! ## Scalar values (`impl Decode<21> for Value`, value.rs, at the current version) -/
 
 /-- The tags `decOne` recognises that carry payload words (every scalar tag but NULL). -/
 def payloadTags : List UInt64 :=
@@ -111,6 +111,9 @@ def owes : Stream → Bool
   | [] => true
   | [.u t] => payloadTags.contains t
   | [.u t, .d _] => t == siType.T_POINT
+  -- a duration is three signed words at version 21 (#3610)
+  | [.u t, .s _] => t == siType.T_DURATION
+  | [.u t, .s _, .s _] => t == siType.T_DURATION
   | _ => false
 
 /-- `Value::decode` as an `Out` reader: `decOne`, with "ran out of words" told apart. -/
@@ -126,7 +129,7 @@ theorem decV_unknown_tag (t : UInt64) (h : payloadTags.contains t = false)
   simp only [payloadTags, List.contains_cons, List.contains_nil, Bool.or_eq_false_iff, Bool.or_false] at h
   obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10⟩ := h
   simp at h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
-  simp [decV, decOne, owes, payloadTags, hn, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10]
+  simp [decV, decOne, decOneAt, owes, payloadTags, hn, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10]
 
 theorem strictPre_take {p toks : Stream} (h : StrictPre p toks) :
     p = toks.take p.length ∧ p.length < toks.length := by
@@ -141,11 +144,12 @@ theorem decV_rt (v : Val) (h : v.isScalar = true) : RT decV v.encode v := by
   rw [hp]
   generalize p.length = k at hl
   cases v <;> simp [Val.isScalar] at h <;> simp only [Val.encode, List.length_cons, List.length_nil] at hl ⊢ <;>
-    (rcases k with _ | _ | _ | k) <;>
+    (rcases k with _ | _ | _ | _ | k) <;>
     first
     | omega
     | rfl
-    | (cases ‹Bool› <;> simp (config := { decide := true }) [decV, decOne, owes])
-    | simp (config := { decide := true }) [decV, decOne, owes]
+    | (simp only [List.take, decV, decOne, decOneAt_dur]; unfold durArm; simp [owes])
+    | (cases ‹Bool› <;> simp (config := { decide := true }) [decV, decOne, decOneAt, owes])
+    | simp (config := { decide := true }) [decV, decOne, decOneAt, owes]
 
 end GraphPersist.Persist

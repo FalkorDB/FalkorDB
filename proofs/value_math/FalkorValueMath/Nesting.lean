@@ -81,8 +81,8 @@ def decodeValue : Nat → Nat → List (Tok F) → Except DErr (V F × List (Tok
         | .s i :: r => .ok (.date i, r) | _ => .error .other
       else if tag = T_TIME then match rest with
         | .s i :: r => .ok (.time i, r) | _ => .error .other
-      else if tag = T_DURATION then match rest with
-        | .s i :: r => .ok (.duration i, r) | _ => .error .other
+      else if tag = T_DURATION then match decDur co rest with
+        | some p => .ok p | none => .error .other
       else .error .other
     | _ => .error .other
 where
@@ -326,7 +326,11 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
         · simp only [t11, ite_true]; split <;> simp [Except.toOption, capped, within, hd']
         simp only [t11, ite_false]
         by_cases t12 : tag = T_DURATION
-        · simp only [t12, ite_true]; split <;> simp [Except.toOption, capped, within, hd']
+        · simp only [t12, ite_true]
+          rcases hq : decDur co rest with _ | ⟨v, r⟩
+          · simp [Except.toOption, capped]
+          · obtain ⟨c, rfl⟩ := decDur_some co hq
+            simp [Except.toOption, capped, within, hd']
         simp only [t12, ite_false]
         simp [Except.toOption, capped]
       · simp [Except.toOption, capped]
@@ -338,43 +342,46 @@ theorem toOption_some {α ε : Type} {e : Except ε α} {a : α} (h : e.toOption
 
 /-- **Round-trip below the cap**: a storable value `within` the cap decodes to itself. -/
 theorem decodeValue_encode (fuel d : Nat) (v : V F) (rest : List (Tok F)) (hs : sizeOf v < fuel)
-    (hst : Storable v) (hw : within d v = true) :
+    (hst : Storable v) (hdr : DurReadable co v) (hw : within d v = true) :
     decodeValue co fuel d (encode co v ++ rest) = .ok (v, rest) := by
   apply toOption_some
-  rw [decodeValue_agrees, decodeUncapped_encode co fuel v rest hs hst]
+  rw [decodeValue_agrees, decodeUncapped_encode co fuel v rest hs hst hdr]
   simp [capped, hw]
 
 theorem decode_encode (fuel : Nat) (v : V F) (rest : List (Tok F)) (hs : sizeOf v < fuel)
-    (hst : Storable v) (hw : within 0 v = true) :
+    (hst : Storable v) (hdr : DurReadable co v) (hw : within 0 v = true) :
     decode co fuel (encode co v ++ rest) = .ok (v, rest) :=
-  decodeValue_encode co fuel 0 v rest hs hst hw
+  decodeValue_encode co fuel 0 v rest hs hst hdr hw
 
 /-- **Refused past the cap**: a storable value that is not `within` the cap is the
 nesting error, not some other failure. -/
 theorem decodeValue_encode_deep : ∀ (fuel d : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel →
-    Storable v → within d v = false → decodeValue co fuel d (encode co v ++ rest) = .error .nesting := by
+    Storable v → DurReadable co v → within d v = false →
+    decodeValue co fuel d (encode co v ++ rest) = .error .nesting := by
   intro fuel
   induction fuel with
   | zero => intro d v rest h; omega
   | succ f ih =>
-    intro d v rest hs hst hw
+    intro d v rest hs hst hdr hw
     by_cases hd : d > MAX_VALUE_NESTING
     · exact decodeValue_refuses_past_cap co _ _ _ hd
     have hd' : d ≤ MAX_VALUE_NESTING := by omega
     have hN : ∀ (d' : Nat) (l : List (V F)) (r : List (Tok F)), sizeOf l < f → StorableList l →
+        DurReadableList co l →
         withinL d' l = false → decodeValue.decodeN co f d' l.length (encodeList co l ++ r) = .error .nesting := by
       intro d' l
       induction l with
-      | nil => intro r _ _ h; simp [withinL] at h
+      | nil => intro r _ _ _ h; simp [withinL] at h
       | cons x xs ihl =>
-        intro r hsz hsl hwl
+        intro r hsz hsl hdl hwl
         simp only [StorableList] at hsl
+        simp only [DurReadableList] at hdl
         simp only [encodeList, List.length_cons, List.append_assoc, decodeValue.decodeN]
         by_cases hx : within d' x = true
-        · rw [decodeValue_encode co f d' x _ (by simp at hsz; omega) hsl.1 hx]
+        · rw [decodeValue_encode co f d' x _ (by simp at hsz; omega) hsl.1 hdl.1 hx]
           have hxs : withinL d' xs = false := by simpa [withinL, hx] using hwl
-          simp [ihl r (by simp at hsz; omega) hsl.2 hxs, Except.map]
-        · rw [ih d' x _ (by simp at hsz; omega) hsl.1 (by simpa using hx)]
+          simp [ihl r (by simp at hsz; omega) hsl.2 hdl.2 hxs, Except.map]
+        · rw [ih d' x _ (by simp at hsz; omega) hsl.1 hdl.1 (by simpa using hx)]
     cases v with
     | list l =>
       simp only [Storable] at hst
@@ -382,7 +389,7 @@ theorem decodeValue_encode_deep : ∀ (fuel d : Nat) (v : V F) (rest : List (Tok
       simp only [encode, List.cons_append, List.nil_append]
       unfold decodeValue
       simp [hd, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
-        hN (d + 1) l rest (by simp at hs; omega) hst hwl, Except.map]
+        hN (d + 1) l rest (by simp at hs; omega) hst hdr hwl, Except.map]
     | _ => simp [within, hd'] at hw
 
 /-! ## Depth -/
@@ -662,9 +669,26 @@ theorem validateProperty_storable (v : V F) (h : validateProperty v = .ok ()) (h
 /-- **The save/load guarantee**: every value a property write accepts (with vectors
 that fit the u32 dimension) round-trips through `Encode<19>` / `Decode<19>`. -/
 theorem stored_roundtrip (v : V F) (rest : List (Tok F)) (h : validateProperty v = .ok ())
-    (hv : VecsFit v) : decode co (sizeOf v + 1) (encode co v ++ rest) = .ok (v, rest) :=
-  decode_encode co _ v rest (by omega) (validateProperty_storable v h hv)
+    (hv : VecsFit v) (hdr : DurReadable co v) :
+    decode co (sizeOf v + 1) (encode co v ++ rest) = .ok (v, rest) :=
+  decode_encode co _ v rest (by omega) (validateProperty_storable v h hv) hdr
     (within_of_depth (sizeOf v + 1) v 0 (by omega) (by have := validateProperty_depth v h; omega))
+
+/-- **The save/load guarantee at this build's version** (#3610): a reader at encver ≥ 21
+(what `Encode<{ENCODING_VERSION}>` output is read with) gets back every accepted value,
+durations included. -/
+theorem stored_roundtrip_current (v : V F) (rest : List (Tok F)) (h : validateProperty v = .ok ())
+    (hv : VecsFit v) (hver : ENCVER_DURATION_COMPONENTS ≤ co.encver) :
+    decode co (sizeOf v + 1) (encode co v ++ rest) = .ok (v, rest) :=
+  stored_roundtrip co v rest h hv (durReadable_current co hver (sizeOf v + 1) v (by omega))
+
+/-- A pre-#3610 stored duration (one legacy `i64`, reader below encver 21) loads through
+`duration_from_legacy`. -/
+theorem decode_legacy_duration (fuel : Nat) (hver : co.encver < ENCVER_DURATION_COMPONENTS)
+    (x : Int) (c : Dur) (hc : co.fromLegacy x = some c) (rest : List (Tok F)) :
+    decode co (fuel + 1) (.u T_DURATION :: .s x :: rest) = .ok (.duration c, rest) := by
+  simp [decode, decodeValue, MAX_VALUE_NESTING, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN,
+    T_ARRAY, T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME, T_DURATION, decDur_legacy co hver, hc]
 
 /-- `validate_list_property`'s cut on `k` lists around a primitive: accepted iff
 `k ≤ MAX` (the tests `a_property_at_the_cap_is_valid` / `…_past_the_cap_is_refused`). -/
@@ -707,7 +731,11 @@ theorem decode_nest_deep (k : Nat) (hk : k > MAX_VALUE_NESTING) :
     intro k; induction k with
     | zero => trivial
     | succ k ih => exact ⟨ih, trivial⟩
-  have := decodeValue_encode_deep co (sizeOf (nest k (.null : V F)) + 1) 0 (nest k .null) [] (by omega) (hs k)
+  have hr : ∀ k, DurReadable co (nest k (.null : V F)) := by
+    intro k; induction k with
+    | zero => trivial
+    | succ k ih => exact ⟨ih, trivial⟩
+  have := decodeValue_encode_deep co (sizeOf (nest k (.null : V F)) + 1) 0 (nest k .null) [] (by omega) (hs k) (hr k)
     (by rw [within_nest_scalar k _ (by intro l h; cases h)]; simp; omega)
   simpa [decode] using this
 

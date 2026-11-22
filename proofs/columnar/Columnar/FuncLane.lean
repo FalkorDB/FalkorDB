@@ -167,6 +167,12 @@ theorem all_labels_none (rt : RT F) (x : Nat) : ∀ (names : List String),
       | none => simp [all_labels_none rt x as hr]
       | some r => simp [hr, pure] at h
 
+theorem strConst_some (e : E (V F)) (n : String) (h : strConst e = some n) :
+    e = .const (.str n) := by
+  cases e with
+  | const v => cases v <;> simp_all [strConst]
+  | _ => simp [strConst] at h
+
 theorem strConst_eval (rt : RT F) (c : Compound (V F)) (env : Option (Nat → Option (V F))) :
     ∀ (es : List (E (V F))) (names : List String), es.mapM strConst = some names →
       evalRev (coreOps rt) (ev0 rt) c env es = .ok (names.map .str)
@@ -175,10 +181,8 @@ theorem strConst_eval (rt : RT F) (c : Compound (V F)) (env : Option (Nat → Op
     simp only [List.mapM_cons, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.pure_def,
       Option.some.injEq] at h
     obtain ⟨n, hn, ns, hns, rfl⟩ := h
-    match e, hn with
-    | .const (.str s), hn =>
-      simp only [strConst, Option.some.injEq] at hn; subst hn
-      simp [evalRev, strConst_eval rt c env es ns hns, evalNode, bind, Except.bind]
+    rw [strConst_some e n hn]
+    simp [evalRev, strConst_eval rt c env es ns hns, evalNode, bind, Except.bind]
 
 /-- **The `hasLabels` column kernel = the per-row call**, given `HL` (proved for the registry's
 function in `hl_hasLabelsFn`). The per-row environment is the batch row `BatchRow::value_at`. -/

@@ -3,10 +3,10 @@ import FalkorEffectsCodec.Cursor
 /-! # `read_record ∘ Record::encode = id`, for every variant -/
 namespace FalkorCodec
 
-variable (C : IdCodec) (utf8 I : Bytes → Bool)
+variable (C : IdCodec) (utf8 : Bytes → Bool) (lg : Bool) (I : Bytes → Bool)
 
 theorem readRecord_batched (op c : Nat) (hop : 1 ≤ op ∧ op ≤ 8) (hc : 0 < c ∧ c < 2 ^ 32) (body : Bytes) :
-    readRecord C utf8 I (w32 op ++ w32 c ++ body) = arm C utf8 I op c body := by
+    readRecord C utf8 lg I (w32 op ++ w32 c ++ body) = arm C utf8 lg I op c body := by
   have hb : isBatchable op = true := by simp [isBatchable]; omega
   simp only [readRecord, bind_apply, List.append_assoc]
   rw [u32_w32 (by omega)]
@@ -17,7 +17,7 @@ theorem readRecord_batched (op c : Nat) (hop : 1 ≤ op ∧ op ≤ 8) (hc : 0 < 
   simp only [true_and, hc0, ite_false]
 
 theorem readRecord_single (op : Nat) (hop : 9 ≤ op ∧ op ≤ 14) (body : Bytes) :
-    readRecord C utf8 I (w32 op ++ body) = arm C utf8 I op 0 body := by
+    readRecord C utf8 lg I (w32 op ++ body) = arm C utf8 lg I op 0 body := by
   have hb : isBatchable op = false := by simp [isBatchable]; omega
   simp only [readRecord, bind_apply]
   rw [u32_w32 (by omega)]
@@ -29,11 +29,11 @@ block's `ok` (fits its width, valid UTF-8, rows = count × attrs, schemas sorted
 by id, similarity name canonical), and a batch of at least one id. -/
 def RecOk : Record C.T → Prop
   | .createNode ids ls as rows | .updateNode ids ls as rows =>
-      0 < C.count ids ∧ (bodyNode C utf8 I (C.count ids)).ok (ls, as, ids, rows)
+      0 < C.count ids ∧ (bodyNode C utf8 lg I (C.count ids)).ok (ls, as, ids, rows)
   | .updateEdge ids rel as rows =>
-      0 < C.count ids ∧ (bodyUpdEdge C utf8 I (C.count ids)).ok (rel, as, ids, rows)
+      0 < C.count ids ∧ (bodyUpdEdge C utf8 lg I (C.count ids)).ok (rel, as, ids, rows)
   | .createEdge ids rel src dst as rows =>
-      0 < C.count ids ∧ (bodyCrEdge C utf8 I (C.count ids)).ok (rel, as, ids, src, dst, rows)
+      0 < C.count ids ∧ (bodyCrEdge C utf8 lg I (C.count ids)).ok (rel, as, ids, src, dst, rows)
   | .deleteNode ids ls | .setLabels ids ls | .removeLabels ids ls =>
       0 < C.count ids ∧ (bodyLabels C (C.count ids)).ok (ls, ids)
   | .deleteEdge ids rel src dst => 0 < C.count ids ∧ (bodyDelEdge C (C.count ids)).ok (rel, ids, src, dst)
@@ -75,77 +75,77 @@ theorem thenE_ok {x : Except EErr Unit} {y : Except EErr Bytes} {bs : Bytes} (h 
 /-- **Every record round-trips**: whatever follows it, `read_record` gives back
 exactly the record `Record::encode` wrote, for all fourteen opcodes. -/
 theorem readRecord_encRecord (r : Record C.T) (bs rest : Bytes)
-    (h : encRecord C utf8 I r = .ok bs) (hw : RecOk C utf8 I r) :
-    readRecord C utf8 I (bs ++ rest) = .ok (r, rest) := by
+    (h : encRecord C utf8 lg I r = .ok bs) (hw : RecOk C utf8 lg I r) :
+    readRecord C utf8 lg I (bs ++ rest) = .ok (r, rest) := by
   cases r with
   | createNode ids ls as rows =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 3) (by omega) (thenE_ok h)
-    rw [List.append_assoc, readRecord_batched C utf8 I 3 _ (by omega) ⟨hw.1, hc⟩]
-    simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyNode C utf8 I _).rt _ b rest hw.2 hb]; rfl
+    rw [List.append_assoc, readRecord_batched C utf8 lg I 3 _ (by omega) ⟨hw.1, hc⟩]
+    simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyNode C utf8 lg I _).rt _ b rest hw.2 hb]; rfl
   | updateNode ids ls as rows =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 1) (by omega) (thenE_ok h)
-    rw [List.append_assoc, readRecord_batched C utf8 I 1 _ (by omega) ⟨hw.1, hc⟩]
-    simp only [arm, ↓reduceIte, bind_apply]; rw [(bodyNode C utf8 I _).rt _ b rest hw.2 hb]; rfl
+    rw [List.append_assoc, readRecord_batched C utf8 lg I 1 _ (by omega) ⟨hw.1, hc⟩]
+    simp only [arm, ↓reduceIte, bind_apply]; rw [(bodyNode C utf8 lg I _).rt _ b rest hw.2 hb]; rfl
   | updateEdge ids rel as rows =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 2) (by omega) (thenE_ok h)
-    rw [List.append_assoc, readRecord_batched C utf8 I 2 _ (by omega) ⟨hw.1, hc⟩]
-    simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyUpdEdge C utf8 I _).rt _ b rest hw.2 hb]; rfl
+    rw [List.append_assoc, readRecord_batched C utf8 lg I 2 _ (by omega) ⟨hw.1, hc⟩]
+    simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyUpdEdge C utf8 lg I _).rt _ b rest hw.2 hb]; rfl
   | createEdge ids rel src dst as rows =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 4) (by omega) (thenE_ok (thenE_ok h))
-    rw [List.append_assoc, readRecord_batched C utf8 I 4 _ (by omega) ⟨hw.1, hc⟩]
-    simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyCrEdge C utf8 I _).rt _ b rest hw.2 hb]; rfl
+    rw [List.append_assoc, readRecord_batched C utf8 lg I 4 _ (by omega) ⟨hw.1, hc⟩]
+    simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyCrEdge C utf8 lg I _).rt _ b rest hw.2 hb]; rfl
   | deleteNode ids ls =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 5) (by omega) h
-    rw [List.append_assoc, readRecord_batched C utf8 I 5 _ (by omega) ⟨hw.1, hc⟩]
+    rw [List.append_assoc, readRecord_batched C utf8 lg I 5 _ (by omega) ⟨hw.1, hc⟩]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyLabels C _).rt _ b rest hw.2 hb]; rfl
   | deleteEdge ids rel src dst =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 6) (by omega) (thenE_ok h)
-    rw [List.append_assoc, readRecord_batched C utf8 I 6 _ (by omega) ⟨hw.1, hc⟩]
+    rw [List.append_assoc, readRecord_batched C utf8 lg I 6 _ (by omega) ⟨hw.1, hc⟩]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyDelEdge C _).rt _ b rest hw.2 hb]; rfl
   | setLabels ids ls =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 7) (by omega) h
-    rw [List.append_assoc, readRecord_batched C utf8 I 7 _ (by omega) ⟨hw.1, hc⟩]
+    rw [List.append_assoc, readRecord_batched C utf8 lg I 7 _ (by omega) ⟨hw.1, hc⟩]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyLabels C _).rt _ b rest hw.2 hb]; rfl
   | removeLabels ids ls =>
     obtain ⟨_, hc, b, hb, rfl⟩ := batched_ok C (op := 8) (by omega) h
-    rw [List.append_assoc, readRecord_batched C utf8 I 8 _ (by omega) ⟨hw.1, hc⟩]
+    rw [List.append_assoc, readRecord_batched C utf8 lg I 8 _ (by omega) ⟨hw.1, hc⟩]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyLabels C _).rt _ b rest hw.2 hb]; rfl
   | addLabel id name =>
     simp only [encRecord] at h
     obtain ⟨b, hb, rfl⟩ := single_ok (op := 9) (by omega) h
-    rw [List.append_assoc, readRecord_single C utf8 I 9 (by omega)]
+    rw [List.append_assoc, readRecord_single C utf8 lg I 9 (by omega)]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodySchema utf8).rt _ b rest hw hb]; rfl
   | addRelType id name =>
     simp only [encRecord] at h
     obtain ⟨b, hb, rfl⟩ := single_ok (op := 9) (by omega) h
-    rw [List.append_assoc, readRecord_single C utf8 I 9 (by omega)]
+    rw [List.append_assoc, readRecord_single C utf8 lg I 9 (by omega)]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodySchema utf8).rt _ b rest hw hb]; rfl
   | addAttribute id name =>
     simp only [encRecord] at h
     obtain ⟨b, hb, rfl⟩ := single_ok (op := 10) (by omega) h
-    rw [List.append_assoc, readRecord_single C utf8 I 10 (by omega)]
+    rw [List.append_assoc, readRecord_single C utf8 lg I 10 (by omega)]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyAttr utf8).rt _ b rest hw hb]; rfl
   | createIndex st schemas ft fields opts =>
     simp only [encRecord] at h
     have h := thenE_ok h
     split at h; · cases h
     obtain ⟨b, hb, rfl⟩ := single_ok (op := 11) (by omega) h
-    rw [List.append_assoc, readRecord_single C utf8 I 11 (by omega)]
+    rw [List.append_assoc, readRecord_single C utf8 lg I 11 (by omega)]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyIndex utf8 true).rt _ b rest hw hb]; rfl
   | dropIndex st schemas ft fields =>
     simp only [encRecord] at h
     obtain ⟨b, hb, rfl⟩ := single_ok (op := 12) (by omega) (thenE_ok h)
-    rw [List.append_assoc, readRecord_single C utf8 I 12 (by omega)]
+    rw [List.append_assoc, readRecord_single C utf8 lg I 12 (by omega)]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyIndex utf8 false).rt _ b rest hw hb]; rfl
   | createConstraint ct et status lid label props =>
     simp only [encRecord] at h
     obtain ⟨b, hb, rfl⟩ := single_ok (op := 13) (by omega) h
-    rw [List.append_assoc, readRecord_single C utf8 I 13 (by omega)]
+    rw [List.append_assoc, readRecord_single C utf8 lg I 13 (by omega)]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyConstraint utf8 true).rt _ b rest hw hb]; rfl
   | dropConstraint ct et lid label props =>
     simp only [encRecord] at h
     obtain ⟨b, hb, rfl⟩ := single_ok (op := 14) (by omega) h
-    rw [List.append_assoc, readRecord_single C utf8 I 14 (by omega)]
+    rw [List.append_assoc, readRecord_single C utf8 lg I 14 (by omega)]
     simp only [arm, Nat.reduceEqDiff, ↓reduceIte, bind_apply]; rw [(bodyConstraint utf8 false).rt _ b rest hw hb]; rfl
 
 /-- `write_header` refuses exactly a shape mismatch; every `encode` arm calls

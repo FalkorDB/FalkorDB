@@ -31,7 +31,7 @@ No. A `Block` tracks `dead` and `slack` entries in `u32` counters updated with p
 
 **4. Do properties survive an RDB save and load?**
 
-Yes, under the model's preconditions. `encode_decode_roundtrip` assumes a well-formed store (`SInv`) whose spans are sorted and null-free (`SOK`), attribute ids below both the decode limit and 65,536, and at most 65,535 entries per entity; it proves decoding what was encoded into an empty store restores exactly the encoded entities' spans. `pack_unpack` assumes a well-formed block heap (`HInv`) of fewer than 2^32 cells and proves the 12-byte packed value round-trips, with floats as IEEE bits so NaN payloads and `-0.0` survive. A malformed RDB or an oversized store is outside what these theorems cover.
+Yes, under the model's preconditions. `encode_decode_roundtrip` assumes a well-formed store (`SInv`) whose spans are sorted and null-free (`SOK`), attribute ids below both the decode limit and 65,536, and at most 65,535 entries per entity; it proves decoding what was encoded into an empty store restores exactly the encoded entities' spans. `pack_unpack` assumes a well-formed block heap (`HInv`) of fewer than 2^32 cells and proves the 12-byte packed value round-trips, with floats as IEEE bits so NaN payloads and `-0.0` survive. Durations (three components since #3610) round-trip both as the inline `Tag::Duration` word and through the heap. A malformed RDB or an oversized store is outside what these theorems cover.
 
 **5. Are UNIQUE constraints enforced correctly?**
 

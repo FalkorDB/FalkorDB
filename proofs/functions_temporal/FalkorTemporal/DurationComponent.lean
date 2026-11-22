@@ -1,143 +1,83 @@
 import FalkorTemporal.Components
 import FalkorTemporal.Constructors
 /-!
-# `get_duration_component` (value.rs): chrono-bounded, unlike every other duration path
+# `get_duration_component` (value.rs): read straight off the duration's components
 
-`getDurationComponent` goes through chrono, so a duration whose instant leaves chrono's year range
-yields `null` for years/months/days/hours/minutes/seconds, although `check_date_range` (±`MAX_DATE_YEAR`
-≈ 2.1·10⁹ years) accepts the duration and `decompose_duration` / `format_duration` handle it.
-`durComp_agrees_decompose`: inside chrono's range every component equals the `decompose_duration`
-one. `durComp_null_but_representable` / `bug_duration_component_null`: outside it they do not (BUG,
-confirmed live: Rust `null`, C the exact component).
+Since #3610 a duration is its signed (months, days, seconds) (`Dur::components`), and
+`get_duration_component` splits them the way `format_duration` prints them: years and months
+from the months component, hours/minutes/seconds from the seconds component, each with Rust's
+truncating `/` and `%` (`Int.tdiv`/`Int.tmod`), so every component carries the sign of its part.
+No calendar or chrono step is involved, so every duration has all its components
+(`durComp_total`); `durComp_years_months` / `durComp_hms` show they reassemble the stored
+components exactly, and `duration_component_far` is the far-off duration (a million years)
+whose components were `null` before #3610.
 -/
 namespace FalkorTemporal.Fns
-
-/-- chrono's timestamp range as a `ChronoDT`; the weekday is the real one (1970-01-01 is a
-Thursday), the ISO-week fields are irrelevant to durations. -/
-def chronoK : ChronoDT where
-  valid t := chronoYearOk (yearOf t)
-  dowSun d := ((d + 4) % 7).toNat
-  dowSun_lt d := by omega
-  ordinal _ := 0
-  isoWeek _ := 0
-  isoYear _ := 0
 
 def knownDurationComponent (c : String) : Bool :=
   eqIC c "years" || eqIC c "months" || eqIC c "weeks" || eqIC c "days" || eqIC c "hours" ||
     eqIC c "minutes" || eqIC c "seconds"
 
-/-- `get_duration_component` (value.rs). The `Float` result is the integer it carries
-(every component is a small integer, exact in `f64`); `none` is `Value::Null`. `month_diff < 0`
-is dead (`dt.month() >= 1`) and omitted. -/
-def getDurationComponent (K : ChronoDT) (t : Int) (c : String) : Except String (Option Int) :=
-  if !knownDurationComponent c then .error s!"unknown duration component {c}"
-  else if eqIC c "weeks" then .ok (some 0)
-  else if !K.valid t then .ok none
-  else
-    let yd := yearOf t - 1970
-    let md := monthOf t - 1
-    if eqIC c "years" then .ok (some yd)
-    else if eqIC c "months" then .ok (some md)
-    else
-      let anchor := daysFromCivil (1970 + yd) (1 + md) 1 * 86400
-      if !K.valid anchor then
-        .error s!"Invalid anchor date for duration decomposition (duration_secs={t})"
-      else
-        let rem := t - anchor
-        if eqIC c "days" then .ok (some (rem / 86400))
-        else if eqIC c "hours" then .ok (some (rem % 86400 / 3600))
-        else if eqIC c "minutes" then .ok (some (rem % 3600 / 60))
-        else .ok (some (rem % 60))
+/-- `get_duration_component` (value.rs). The `Float` result is the integer it carries; a
+component is at most `|i64|`, and `val as f64` is the cast of that integer. -/
+def getDurationComponent (dur : Dur) (c : String) : Except String Int :=
+  if eqIC c "years" then .ok (dur.months.tdiv 12)
+  else if eqIC c "months" then .ok (dur.months.tmod 12)
+  else if eqIC c "weeks" then .ok 0
+  else if eqIC c "days" then .ok dur.days
+  else if eqIC c "hours" then .ok (dur.secs.tdiv 3600)
+  else if eqIC c "minutes" then .ok ((dur.secs.tmod 3600).tdiv 60)
+  else if eqIC c "seconds" then .ok (dur.secs.tmod 60)
+  else .error s!"unknown duration component {c}"
 
-theorem durComp_unknown (K : ChronoDT) (t : Int) (c : String) (h : knownDurationComponent c = false) :
-    getDurationComponent K t c = .error s!"unknown duration component {c}" := by
+theorem durComp_unknown (dur : Dur) (c : String) (h : knownDurationComponent c = false) :
+    getDurationComponent dur c = .error s!"unknown duration component {c}" := by
+  simp only [knownDurationComponent, Bool.or_eq_false_iff] at h
   simp [getDurationComponent, h]
 
-/-- `weeks` is always `0`, for every duration (no chrono work). -/
-theorem durComp_weeks (K : ChronoDT) (t : Int) : getDurationComponent K t "weeks" = .ok (some 0) := by
-  simp [getDurationComponent, knownDurationComponent, eqIC]
+/-- `weeks` is always `0` (weeks are folded into days on construction). -/
+theorem durComp_weeks (dur : Dur) : getDurationComponent dur "weeks" = .ok 0 := by
+  simp [getDurationComponent, eqIC]
 
-/-- Outside chrono's range every other component is `null`. -/
-theorem durComp_invalid_null (K : ChronoDT) (t : Int) (c : String) (hk : knownDurationComponent c = true)
-    (hw : eqIC c "weeks" = false) (h : K.valid t = false) :
-    getDurationComponent K t c = .ok none := by
-  simp [getDurationComponent, hk, hw, h]
+/-- **Every known component of every duration is a number** (never `null`, never an error). -/
+theorem durComp_total (dur : Dur) (c : String) (h : knownDurationComponent c = true) :
+    ∃ v, getDurationComponent dur c = .ok v := by
+  unfold getDurationComponent
+  simp only [knownDurationComponent, Bool.or_eq_true] at h
+  repeat' split
+  all_goals first | exact ⟨_, rfl⟩ | (exfalso; simp_all)
 
-theorem chronoK_valid_iff (t : Int) : chronoK.valid t = chronoYearOk (yearOf t) := rfl
+/-- `years * 12 + months` is the months component, sign included. -/
+theorem durComp_years_months (dur : Dur) :
+    ∃ y m, getDurationComponent dur "years" = .ok y ∧ getDurationComponent dur "months" = .ok m ∧
+      y * 12 + m = dur.months := by
+  refine ⟨dur.months.tdiv 12, dur.months.tmod 12, by simp [getDurationComponent, eqIC],
+    by simp [getDurationComponent, eqIC], ?_⟩
+  have := Int.mul_tdiv_add_tmod dur.months 12
+  omega
 
-private theorem yearOk_bounds (y : Int) (h : chronoYearOk y = true) : -262143 ≤ y ∧ y ≤ 262142 := by
-  unfold chronoYearOk at h; simp only [Bool.and_eq_true, decide_eq_true_eq] at h
-  exact h
+/-- `hours * 3600 + minutes * 60 + seconds` is the seconds component, sign included. -/
+theorem durComp_hms (dur : Dur) :
+    ∃ h mi s, getDurationComponent dur "hours" = .ok h ∧
+      getDurationComponent dur "minutes" = .ok mi ∧ getDurationComponent dur "seconds" = .ok s ∧
+      h * 3600 + mi * 60 + s = dur.secs := by
+  refine ⟨dur.secs.tdiv 3600, (dur.secs.tmod 3600).tdiv 60, dur.secs.tmod 60,
+    by simp [getDurationComponent, eqIC], by simp [getDurationComponent, eqIC],
+    by simp [getDurationComponent, eqIC], ?_⟩
+  have h1 := Int.mul_tdiv_add_tmod dur.secs 3600
+  have h2 := Int.mul_tdiv_add_tmod (dur.secs.tmod 3600) 60
+  have h3 : (dur.secs.tmod 3600).tmod 60 = dur.secs.tmod 60 :=
+    Int.tmod_tmod_of_dvd _ ⟨60, by decide⟩
+  rw [← h3]; omega
 
-/-- **Agreement inside chrono's range**: for a timestamp chrono accepts, each component equals the
-one `decompose_duration` gives (the `(years, months, remaining_seconds)` triple split into days,
-hours, minutes, seconds as `format_duration` does). -/
-theorem durComp_agrees_decompose (t : Int) (hv : chronoYearOk (yearOf t) = true) :
-    getDurationComponent chronoK t "years" = .ok (some (decomposeDuration t).1) ∧
-    getDurationComponent chronoK t "months" = .ok (some (decomposeDuration t).2.1) ∧
-    getDurationComponent chronoK t "days" = .ok (some ((decomposeDuration t).2.2 / 86400)) ∧
-    getDurationComponent chronoK t "hours" = .ok (some ((decomposeDuration t).2.2 % 86400 / 3600)) ∧
-    getDurationComponent chronoK t "minutes" = .ok (some ((decomposeDuration t).2.2 % 3600 / 60)) ∧
-    getDurationComponent chronoK t "seconds" = .ok (some ((decomposeDuration t).2.2 % 60)) := by
-  obtain ⟨y, m, d, hc⟩ : ∃ y m d, civilFromDaysI (t / 86400) = (y, m, d) := ⟨_, _, _, rfl⟩
-  have hy : yearOf t = y := by simp [yearOf, dayOf, hc]
-  have hm : monthOf t = m := by simp [monthOf, dayOf, hc]
-  have hd : mdayOf t = d := by simp [mdayOf, dayOf, hc]
-  have hv' : ValidDate y m d := by have := civil_valid (t / 86400); rw [hc] at this; exact this
-  have hrt : daysFromCivil y m d = t / 86400 := by have := dfc_civil (t / 86400); rw [hc] at this; exact this
-  rw [hy] at hv
-  have hb := yearOk_bounds _ hv
-  have hi : I32 y := ⟨by omega, by omega⟩
-  have t0 := Int.emod_nonneg t (by decide : (86400:Int) ≠ 0)
-  have t1 := Int.emod_lt_of_pos t (by decide : (0:Int) < 86400)
-  have hdiv : 86400 * (t / 86400) + t % 86400 = t := Int.mul_ediv_add_emod _ _
-  have hday := daysFromCivil_day y m d
-  have i2 : I32 (y - 1970) := ⟨by omega, by omega⟩
-  have hdec : decomposeDuration t = (y - 1970, m - 1, (d - 1) * 86400 + t % 86400) := by
-    simp only [decomposeDuration, civilFromDays, hc, toI32_id _ hi, toI32_id _ i2]
-  obtain ⟨a1, a2, a3, a4⟩ := hv'
-  have hmv : ValidDate y m 1 := ⟨a1, a2, by omega, by omega⟩
-  have e1 : 1970 + (y - 1970) = y := by omega
-  have e2 : 1 + (m - 1) = m := by omega
-  have hanch : yearOf (daysFromCivil y m 1 * 86400) = y := by
-    unfold yearOf dayOf
-    have : daysFromCivil y m 1 * 86400 / 86400 = daysFromCivil y m 1 := by omega
-    rw [this, civil_dfc _ _ _ hmv]
-  have hrem : t - daysFromCivil y m 1 * 86400 = (d - 1) * 86400 + t % 86400 := by omega
-  have hval : chronoK.valid (daysFromCivil y m 1 * 86400) = true := by
-    rw [chronoK_valid_iff, hanch]; exact hv
-  have hvt : chronoK.valid t = true := by rw [chronoK_valid_iff, hy]; exact hv
-  have hr0 : 0 ≤ (d - 1) * 86400 + t % 86400 := by omega
-  rw [hdec]
-  simp +decide [getDurationComponent, knownDurationComponent, eqIC, hvt, hy, hm, e1, e2, hval, hrem]
-
-/-- Outside chrono's range the components are `null` for a duration that is nevertheless a valid
-Cypher duration (`check_date_range` accepts it): the whole computation is skipped, so
-`years` etc. disagree with `decompose_duration`. -/
-theorem durComp_null_but_representable (t : Int) (hbad : chronoYearOk (yearOf t) = false)
-    (hr : minDateDays ≤ t / 86400 ∧ t / 86400 ≤ maxDateDays) :
-    (checkDateRange t).isSome = true ∧
-    getDurationComponent chronoK t "years" = .ok none ∧
-    getDurationComponent chronoK t "days" = .ok none := by
-  have hw : ∀ c : String, knownDurationComponent c = true → eqIC c "weeks" = false →
-      getDurationComponent chronoK t c = .ok none := fun c hk hw =>
-    durComp_invalid_null chronoK t c hk hw (by rw [chronoK_valid_iff]; exact hbad)
-  refine ⟨?_, hw "years" (by decide) (by decide), hw "days" (by decide) (by decide)⟩
-  simp [checkDateRange, hr]
-
-/-- **BUG (confirmed live)**: a duration of one million years prints as `P1000000Y3D` and adds
-and subtracts, but `.years` / `.days` are `null` (C: `1000000` / `3`). The witness is the real
-`construct_duration_secs(1_000_000, 0, 0, 3, 0, 0, 0)`. -/
-theorem bug_duration_component_null :
-    ∃ t, constructDuration 1000000 0 0 3 0 0 0 = some t ∧
-      getDurationComponent chronoK t "years" = .ok none ∧
-      getDurationComponent chronoK t "days" = .ok none ∧
-      (decomposeDuration t).1 = 1000000 ∧ (decomposeDuration t).2.2 / 86400 = 3 := by
-  refine ⟨daysFromCivil 1001970 1 1 * 86400 + 3 * 86400, ?_, ?_, ?_, ?_, ?_⟩
-  · decide +kernel
-  · rfl
-  · rfl
-  · decide +kernel
-  · decide +kernel
+/-- The duration of one million years and three days (`duration({years: 1000000, days: 3})`):
+`.years` is `1000000` and `.days` is `3` (before #3610 both were `null`: the old reader went
+through chrono's ±262,143-year range). -/
+theorem duration_component_far :
+    ∃ dur, constructDuration 1000000 0 0 3 0 0 0 = some dur ∧
+      getDurationComponent dur "years" = .ok 1000000 ∧
+      getDurationComponent dur "days" = .ok 3 := by
+  refine ⟨⟨12000000, 3, 0⟩, by decide +kernel, by simp [getDurationComponent, eqIC],
+    by simp [getDurationComponent, eqIC]⟩
 
 end FalkorTemporal.Fns
