@@ -219,10 +219,15 @@ struct ImplicitKeys {
     items: Option<Vec<(Variable, QueryExpr<Variable>)>>,
 }
 
-/// The highest variable id the tree reads.
+/// The highest variable id the tree reads or binds: a comprehension's,
+/// quantifier's or `reduce`'s own variables take row slots while it is
+/// evaluated, so a fresh slot must not reuse one either.
 fn max_variable_id(node: &DynNode<'_, ExprIR<Variable>>) -> u32 {
     let own = match node.data() {
-        ExprIR::Variable(var) => var.id,
+        ExprIR::Variable(var) | ExprIR::Quantifier { var, .. } | ExprIR::ListComprehension(var) => {
+            var.id
+        }
+        ExprIR::Reduce(reduce) => reduce.accumulator.id.max(reduce.iterator.id),
         _ => 0,
     };
     node.children()
@@ -327,8 +332,19 @@ fn implicit_keys(
         }
         let inner = [bound, &binds(node)].concat();
         // Under a CASE any term may be skipped, the first condition included
-        // when it is not the one that holds.
-        let guarded = guarded || matches!(node.data(), ExprIR::Case { .. });
+        // when it is not the one that holds. AND / OR skip their later
+        // operands, and a comprehension, quantifier or `reduce` body does not
+        // run on an empty list, so those are guarded the same way.
+        let guarded = guarded
+            || matches!(
+                node.data(),
+                ExprIR::Case { .. }
+                    | ExprIR::And
+                    | ExprIR::Or
+                    | ExprIR::Quantifier { .. }
+                    | ExprIR::ListComprehension(_)
+                    | ExprIR::Reduce(_)
+            );
         let is_map = matches!(node.data(), ExprIR::Map | ExprIR::MapProjection);
         for child in node.children() {
             // A map entry is a key constant whose one child is the value; the

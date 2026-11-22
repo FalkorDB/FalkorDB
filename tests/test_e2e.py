@@ -1573,6 +1573,28 @@ def test_aggregation_item_implicit_key_under_case_is_lazy():
     assert res.result_set == [[2], [3], [4]]
 
 
+def test_aggregation_item_implicit_key_under_and_or_and_comprehension_is_lazy():
+    # AND / OR skip their later operand, and a comprehension body does not run
+    # on an empty list, so a key there cannot fail the query when it is skipped.
+    res = query("UNWIND [1] AS x RETURN count(*) > 0 OR x.foo AS v")
+    assert res.result_set == [[True]]
+    res = query("UNWIND [1] AS x RETURN count(*) < 0 AND x.foo AS v")
+    assert res.result_set == [[False]]
+    res = query("UNWIND [1] AS x RETURN [v IN [] | x.foo] + [count(*)] AS v")
+    assert res.result_set == [[[1]]]
+
+
+def test_aggregation_slot_does_not_reuse_a_comprehension_variable():
+    # A key's slot must not take the id a comprehension variable binds while
+    # the item is evaluated, even when the body never reads that variable.
+    res = query(
+        "UNWIND [10, 20] AS x "
+        "RETURN [x + 1, [w IN [1, 2] | 0], x + 2, count(*)] AS r",
+        compare_results=False,
+    )
+    assert sorted(res.result_set) == [[[11, [0, 0], 12, 1]], [[21, [0, 0], 22, 1]]]
+
+
 def test_pipelined_match_after_aggregating_with():
     # #3372: a path split by an aggregating WITH, joined on the middle node.
     query(
