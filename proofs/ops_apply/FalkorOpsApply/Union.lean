@@ -3,7 +3,7 @@
 
 `UnionOp` concatenates its children's streams: each branch is instantiated
 lazily (`run_batch`) once the previous one is exhausted.  `UNION` (distinct) is
-planned as `Distinct` over this operator (`planner/mod.rs:3302`), so the operator
+planned as `Distinct` over this operator (`planner/mod.rs`), so the operator
 itself is always the `ALL` form.
 
 State refinement: Rust keeps `current_child : usize` and indexes
@@ -12,7 +12,7 @@ not yet started (`rest`), i.e. `children.drop (current_child + 1)` while a branc
 is being drained and `children.drop current_child` otherwise.  `run_batch` is a
 child that is either `.error e` (plan instantiation failed) or `.ok items` (the
 iterator's full item sequence; items are themselves `Result`s and are passed
-through untouched, `union.rs:71-73`).
+through untouched, `union.rs`).
 -/
 
 namespace Union
@@ -26,7 +26,7 @@ structure St (ε β : Type) where
   current : Option (List (Except ε β))
   rest : List (Child ε β)
 
-/-- `UnionOp::next` (`union.rs:68-96`), the `loop` unrolled by well-founded
+/-- `UnionOp::next` (`union.rs`), the `loop` unrolled by well-founded
 recursion. -/
 def next : St ε β → Option (Except ε β) × St ε β
   | ⟨some (x :: xs), rest⟩ => (some x, ⟨some xs, rest⟩)                 -- 71-72
@@ -87,13 +87,13 @@ theorem drain_eq (st : St ε β) (fuel : Nat) (h : (pendingItems st).length < fu
     | cons x xs =>
       obtain ⟨h1, h2⟩ := hs
       rcases hn : next st with ⟨o, st'⟩
-      rw [hn] at h1 h2; simp only [Option.some.injEq] at h1; subst h1; simp only
+      rw [hn] at h1 h2; simp only at h1; subst h1; simp only
       rw [ih _ (by rw [h2]; simp at h; omega), h2]
 
 /-- **UNION ALL = concatenation.**  Starting state of a fresh `UnionOp`
-(`union.rs:43-54`: `current = None`, `current_child = 0`): the operator emits
+(`union.rs`: `current = None`, `current_child = 0`): the operator emits
 every branch's items in branch order, and a failing `run_batch` emits its error
-and ends the stream (`union.rs:90-92`). -/
+and ends the stream (`union.rs`). -/
 theorem union_drain (children : List (Child ε β)) (fuel : Nat)
     (h : (stream children).length < fuel) :
     drain fuel ⟨none, children⟩ = stream children := by
@@ -108,7 +108,7 @@ theorem stream_all_ok (bs : List (List (Except ε β))) :
   | cons b bs ih => simp [stream, ih]
 
 /-- Once `None` is returned the operator stays exhausted (fused), as the
-`current_child >= num_children` check (`union.rs:78`) guarantees. -/
+`current_child >= num_children` check (`union.rs`) guarantees. -/
 theorem next_none_stays (st : St ε β) (h : (next st).1 = none) :
     (next (next st).2).1 = none := by
   have hs := next_spec st

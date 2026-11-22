@@ -11,7 +11,7 @@ Replication, AOF, and client `GRAPH.EFFECT` all go through this codec. A codec b
 
 What happens *before* encoding (which records a query emits) and *after* decoding (how the replica applies them to the graph) is proven in [`../effects_emit_apply`](../effects_emit_apply). This project is only about bytes.
 
-The full Lean↔Rust mapping is in the header of [`FalkorEffectsCodec.lean`](FalkorEffectsCodec.lean) and in the header table of each file under `FalkorEffectsCodec/`. This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv) and the header table of each file under `FalkorEffectsCodec/`. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -19,20 +19,18 @@ The full Lean↔Rust mapping is in the header of [`FalkorEffectsCodec.lean`](Fal
 
 The payload is a list of records. There are fourteen opcodes (`Opcode` in `v3/mod.rs`): `UPDATE_NODE`, `UPDATE_EDGE`, `CREATE_NODE`, `CREATE_EDGE`, `DELETE_NODE`, `DELETE_EDGE`, `SET_LABELS`, `REMOVE_LABELS`, `ADD_SCHEMA` (a new label or relationship type), `ADD_ATTRIBUTE`, `CREATE_INDEX`, `DROP_INDEX`, `CREATE_CONSTRAINT` and `DROP_CONSTRAINT`.
 
-- **Before #2916, no.** `Record::encode` happily wrote two shapes that `read_record` cannot read: a batch with zero ids, and a row block whose length is not `count × attrs`. A `CREATE_NODE` with one id, one attribute and two values was written fine; the reader took one value, then parsed the spare value as the next opcode.
-- **On main, yes.** `readRecord_encRecord_wf`: for every one of the fifteen `Record` constructors (fourteen opcodes), if the encoder returns bytes, the reader returns exactly that record and leaves whatever follows untouched. The conditions left are the model's explicit well-formedness predicate `RecWF` (`RecShape.lean`): integers fit their width (label and attribute ids, relation ids), strings are valid UTF-8 (including the values in the row block), and, for the index and constraint records, the schema list is sorted by id and the similarity name is canonical. The id lists are an abstract `IdCodec` parameter whose round trip (`IdCodec.roundtrip`) is a field of the structure; it is proven for the real `IdList` in `id_list`, not here. The encoder already enforces the batch shape (at least one id, rows = count × attrs). Anything the engine stores satisfies the per-value conditions.
+- `readRecord_encRecord_wf`: for every one of the fifteen `Record` constructors (fourteen opcodes), if the encoder returns bytes, the reader returns exactly that record and leaves whatever follows untouched. The conditions left are the model's explicit well-formedness predicate `RecWF` (`RecShape.lean`): integers fit their width (label and attribute ids, relation ids), strings are valid UTF-8 (including the values in the row block), and, for the index and constraint records, the schema list is sorted by id and the similarity name is canonical. The id lists are an abstract `IdCodec` parameter whose round trip (`IdCodec.roundtrip`) is a field of the structure; `IdLink.idListCodec` instantiates it with the real `IdList` model of `id_list` (assuming only `RoaringOK`, the roaring crate's contract), so the theorems hold for the real codec. The encoder already enforces the batch shape (at least one id, rows = count × attrs). Anything the engine stores satisfies the per-value conditions.
 
 **2. Can a hostile or corrupt payload crash the replica?**
 
 No, for the value decoder. `decodeV_safe` says that for *any* bytes, `Value::decode`:
 
-- never panics (every `panic!` and every out-of-bounds slice in Rust is modelled as an error `panic`, and the theorem says that error never happens; this includes #3267's `owed -= 1`, because `owed` is always the number of children the open frames still need);
+- never panics (every `panic!` and every out-of-bounds slice in Rust is modelled as an error `panic`, and the theorem says that error never happens; this includes `owed -= 1`, because `owed` is always the number of children the open frames still need);
 - never reads past the input (on success, the input is the bytes consumed followed by the rest);
 - terminates (the Lean model needs a step budget, and `loop_fuel_enough` proves the budget never runs out: every turn reads a 4-byte tag);
 - reserves memory linearly (`decode_reserves_linear`): the list capacities one decode asks for sum to at most a quarter of the input's length.
 
-- **Before #3267, not the last one.** Each list's claimed width was checked against the remaining bytes alone, so every level of `[[[…` could claim the whole remainder. `hostile 10` (80 bytes) reserved 90 elements; 1 MB asked for about 256 GB of capacity (a reservation, not resident memory), while a client-sent `GRAPH.EFFECT` was observed at 2.3 GB RSS (per the comment at `value.rs:459`, not a test assertion).
-- **On main, yes.** `read_one` checks the claim together with the siblings its ancestors still owe (`guard_count(n + owed)`). `capTrace_linear` proves the bound for every input, and `hostile_refused_second_level` shows the crafted input is refused at its second level, as the Rust test asserts.
+- `read_one` checks the claim together with the siblings its ancestors still owe (`guard_count(n + owed)`). `capTrace_linear` proves the bound for every input, and `hostile_refused_second_level` shows the crafted input is refused at its second level, as the Rust test asserts.
 
 **3. Do floats survive exactly, including NaN and `-0.0`?**
 
@@ -42,14 +40,13 @@ Yes. On this wire a float *is* its 64-bit pattern, so "round-trips" means bit fo
 
 Yes, under one stated assumption about zstd. `openPayload_maybeCompress`: whatever `maybe_compress` produces, `open_payload` returns the original record bytes, for payloads of any length.
 
-- **Before #3278, only below 4 GiB.** Both frame lengths were written `as u32`. A payload of 4 GiB of records or more that zstd shrank was framed with a wrapped length, and no zstd can make such a frame open to its records (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). The replica would refuse it and loop on forced resyncs.
-- **On main, yes.** `maybe_compress` leaves such a payload uncompressed, and `frame_prefix` refuses a length that does not fit (`framePrefix_none`). `fmtReplicate_transparent` lifts this to `EffectsFormat::replicate`: what the replica receives opens to exactly the records the master built. `maybeCompress_shrinks`: a payload is only ever compressed when that makes it smaller.
+- `maybe_compress` leaves such a payload uncompressed, and `frame_prefix` refuses a length that does not fit (`framePrefix_none`). `fmtReplicate_transparent` lifts this to `EffectsFormat::replicate`: what the replica receives opens to exactly the records the master built. `maybeCompress_shrinks`: a payload is only ever compressed when that makes it smaller.
 
 zstd and crc32 are outside Rust, so the proof does not model them. It takes their contract as the hypothesis `CodecOK`: decompressing what zstd compressed gives the input back, and crc32 returns a 32-bit number.
 
 **5. Does a payload of several records come back as the same list, in order?**
 
-Yes: `records_concat`. If each record's bytes read back as that record whatever follows (question 1), then the concatenation reads back as the list, in order, with nothing left over and nothing skipped. This is what `Payload::records` and `Records::next` do. Those two rows are **CONDITIONAL** (see [Coverage](#coverage)).
+Yes: `records_concat`. If each record's bytes read back as that record whatever follows (question 1), then the concatenation reads back as the list, in order, with nothing left over and nothing skipped. This is what `Payload::records` and `Records::next` do. Those two rows are PROVEN through `IdLink` (see [Coverage](#coverage)).
 
 **6. Does every index option survive the trip?**
 
@@ -65,7 +62,7 @@ All but one. `bSim_lossy`: the similarity function of a vector index is normalis
 | `encRecord_empty_refused`, `encRecord_rowShape_refused` | …and a record without that shape is refused, with the error that names why | `RecShape.lean` |
 | `decodeV_encV` | `decode(encode(v)) = v` for every value, bit for bit, and the decoder consumes exactly the encoding | `Value.lean` |
 | `decodeV_safe` | On any bytes at all, the value decoder never panics, never over-reads, and always terminates | `Value.lean` |
-| `capTrace_linear`, `decode_reserves_linear` | #3267: the capacities the decoder reserves sum to at most a quarter of the input | `Value.lean` |
+| `capTrace_linear`, `decode_reserves_linear` | The capacities the decoder reserves sum to at most a quarter of the input | `Value.lean` |
 | `encV_total` | Every value the engine accepts as a property encodes; the encoder's `panic!` arm (maps, nodes, edges, paths) is unreachable because those are refused where the value is stored | `Value.lean` |
 | `openPayload_maybeCompress`, `fmtReplicate_transparent` | Compression is invisible: the replica opens exactly the records the master built, at any length (assuming `CodecOK`) | `Payload.lean`, `Format.lean` |
 | `records_concat` | A payload built from encoded records yields those records, in order | `Payload.lean` |
@@ -80,62 +77,57 @@ All but one. `bSim_lossy`: the similarity function of a vector index is normalis
 3. **Prove blocks once, compose them.** A `Blk α` bundles a writer, a reader, and a proof that the reader inverts the writer whatever bytes follow. `Blk.seq` composes two blocks the way a Rust `encode` writes one field after another, including when the second depends on the first (the id list's length comes from the header count), and its round trip is proven once. Labels, attribute ids, rows, options, index fields and constraint properties are all blocks.
 4. **Model the records.** `Record` has all fifteen constructors (fourteen opcodes). `encRecord` is `Record::encode`, `readRecord` is `read_record`, `writeHeader` is `write_header`, `checkRowShape` is `check_row_shape`. `readRecord_encRecord` is then a case split on the variant, each arm built from the block lemmas.
 5. **Remove the shape hypothesis.** `readRecord_encRecord` needs `RecOk`, which includes "at least one id" and "rows = count × attrs". `encRecord_ok_shape` proves the encoder now checks both, so `readRecord_encRecord_wf` needs only `RecWF`: integers fit their width and strings are valid UTF-8.
-6. **The id lists are abstract.** Node and edge ids travel as an `IdList`. Here that codec is a parameter, `IdCodec`, that comes with its own round-trip law. That law is proven in [`../id_list`](../id_list), but the two projects are not linked, which is why the two payload-level rows are CONDITIONAL.
+6. **The id lists are linked to `id_list`.** Node and edge ids travel as an `IdList`. The record theorems take the codec as a parameter, `IdCodec`; `IdLink.idListCodec` builds one from [`../id_list`](../id_list)'s `encodeIds`/`readIds` (Lake path dependency) and proves its round-trip law and hostile-input safety, so the two payload-level rows are PROVEN (`records_concat_idList`). The one assumption left is `RoaringOK`, the contract of the external `roaring` crate, as in `id_list`.
 
 ## Bugs found
 
-| # | Theorem (counterexample) | What it means | Status |
-|---|---|---|---|
-| 1 | the wave-1 `CREATE_NODE` counterexample, now the `#guard`s after `encRec_refuses_shape` in `Records.lean` | The v3 encoder wrote records its own reader rejects: a batch of zero ids, and a row block that is not `count × attrs`. The spare value was parsed as the next opcode | Fixed by #2916 (closes #2914); now `encRecord_ok_shape`, `readRecord_encRecord_wf` |
-| 2 | removed (17ccc5412) | Nested lists could each claim the whole remaining buffer, so the decoder's reservations grew with the square of the payload (2.3 GB RSS from 1 MB) | Fixed by #3267 (`eaa65eeba`); now `capTrace_linear`, `hostile_refused_second_level` |
-| 3 | removed (17ccc5412) | A payload of 4 GiB of records or more was compressed with a wrapped length that no replica can open | Fixed by #3278 (`dcbd445d1`, issue #3276); now `openPayload_maybeCompress` with no length hypothesis, `framePrefix_none` |
+No open bugs. Fixed ones are in this file's git history.
 
 Two findings are modelled but not bugs on main:
 
 - **Vector similarity normalisation** (`bSim_lossy`): an unknown name becomes `euclidean` on the replica. Harmless, because the index layer refuses unknown names.
-- **Deep nesting** (`nest_decodes`): a value `d` levels deep costs only `8d + 4` bytes and decodes. The Rust decoder itself is iterative and does not overflow the stack; dropping the value is recursive (see below). The quadratic *width* reservation that used to come with it is bug 2 above.
+- **Deep nesting** (`nest_decodes`): a value `d` levels deep costs only `8d + 4` bytes and decodes. The Rust decoder itself is iterative and does not overflow the stack; dropping the value is recursive (see below).
 
 ## Files
 
 | File | What's in it |
 |---|---|
-| `FalkorEffectsCodec.lean` | Root: the report header, imports, `#print axioms` for the headline theorems |
+| `FalkorEffectsCodec.lean` | Root: a short header, imports, `#print axioms` for the headline theorems |
 | `Prim.lean` | `Bytes`, decode errors `DErr`, little-endian integers, `take`, `guardCount`, strings; "never panics" and "only consumes" combinators |
 | `Cursor.lean` | The real `Reader { buf, pos }` (`Rd`) and `EffectWrite`; every method refines the suffix model |
-| `Value.lean` | `Val`, the type tags, `encV`, the iterative `decodeV` with #3267's `owed`; `decodeV_encV`, `decodeV_safe`, `encV_total`, `capTrace_linear`; the pre-#3267 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
+| `Value.lean` | `Val`, the type tags, `encV`, the iterative `decodeV` with its `owed` count; `decodeV_encV`, `decodeV_safe`, `encV_total`, `capTrace_linear` |
 | `Records.lean` | The original model of a subset of records (`Rec`, `encRec`, `readRec`, `readAll`), the abstract `IdCodec`, `readAll_concat`, the refused-shape `#guard`s |
 | `RecBlocks.lean` | `Blk` and `Blk.seq`: blocks for integers, strings, label sets, attribute ids, ids, rows, optional fields, counted lists |
 | `RecArms.lean` | Entity, constraint and status tags; `indexTypeOf`; attribute and schema references; index schemas (the encoder sorts them by id) |
 | `RecOpts.lean` | `IndexFieldOptions`: booleans, the similarity function (`bSim_lossy`), stopwords, vector options |
 | `RecFull.lean` | `Record` with all fifteen constructors, `writeHeader`, `checkRowShape`, `encRecord`, `readRecord` |
 | `RecRT.lean` | `readRecord_encRecord` for every variant, `writeHeader_spec`, `checkEndpoints_ok`, `checkIndex_ok`, `relType_rt` |
-| `RecShape.lean` | #2916: `encRecord_ok_shape`, the refusal theorems, `readRecord_empty`, `readRecord_encRecord_wf` |
-| `Payload.lean` | `openPayload`, `maybeCompress`, `framePrefix`, the `Codec`/`CodecOK` hypothesis, `readAllRecords`, `records_concat`; the pre-#3278 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
+| `RecShape.lean` | `encRecord_ok_shape`, the refusal theorems, `readRecord_empty`, `readRecord_encRecord_wf` |
+| `Payload.lean` | `openPayload`, `maybeCompress`, `framePrefix`, the `Codec`/`CodecOK` hypothesis, `readAllRecords`, `records_concat` |
 | `Format.lean` | `format.rs`: `fmtReplicate_transparent`, `describe_spec`, `build_ok`, `payload.rs`/`announce.rs` glue, `LocalName` |
+| `IdLink.lean` | `idListCodec`: the `IdCodec` built from `id_list`'s `encodeIds`/`readIds`; `records_concat_idList` |
 | `ModRs.lean` | `effects/mod.rs`: version dispatch (`describeTop_spec`, `applyTop_spec`), `EffectsBuffer`; `v3/mod.rs` tags and `seal` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-The project has no Lake dependencies.
+The project depends on `../id_list` (Lake path dependency) for `IdLink`.
 
 ## Coverage
 
-`COVERAGE.tsv` has 141 rows, covering `graph/src/effects/**`:
+`COVERAGE.tsv` has 119 rows, covering `graph/src/effects/**`:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 116 |
-| CONDITIONAL | 2 |
+| PROVEN | 118 |
 | AXIOMATISED | 1 |
-| NOT COVERED | 22 |
 
-- **CONDITIONAL:** `Payload::records` and `Records::next` rest on `records_concat`, which assumes the `IdCodec` round trip. That round trip is proven in `id_list` but not linked here.
+- **Payload-level rows:** `Payload::records` and `Records::next` are PROVEN by `IdLink.records_concat_idList` (`records_concat` at the `IdCodec` built from `id_list`); the one assumption is `RoaringOK`, the contract of the external `roaring` crate.
 - **AXIOMATISED:** `ReplicationSink::replicate` is implemented in `src/` by `RedisModule_Replicate` (Redis FFI). `format.rs`'s `replicate` is proven up to the sink (`fmtReplicate_transparent`).
-- **NOT COVERED:** all 22 are test-only: `v3/staging.rs` and `v3/test_aux.rs` are `#[cfg(test)]` modules and are not compiled into the engine.
+- `v3/staging.rs` and `v3/test_aux.rs` are `#[cfg(test)]` modules, not compiled into the engine, so they have no rows (their 22 NOT COVERED rows were removed).
 
 ## What the model does not cover
 
 - **zstd and crc32** are the hypothesis `CodecOK`, not proven.
-- **`IdList`** is the abstract `IdCodec`; its round trip is proven in `id_list`, not here.
+- **`IdList`**: the record theorems use the abstract `IdCodec`; `IdLink` instantiates it with `id_list`'s model (assuming `RoaringOK`).
 - **Applying the records to the graph**, and which records a query emits, are parameters here (`fmtApply`, `fmtBuildIndex`, `fmtBuildConstraint`). They are proven in `effects_emit_apply`.
 - **Stack depth on drop.** The decoder is iterative, but `Value` is recursive and its `Drop` is not. The model proves arbitrarily deep values decode (`nest_decodes`); it says nothing about the stack used to drop them.
 - **Allocation.** Memory is not modelled byte for byte; `capTrace_linear` covers the list-frame capacities (the `ThinVec::with_capacity(n)` of each `Frame::List`), not every `with_capacity` request (the `T_VECTOR_F32` read allocates its own, `value.rs:269`), and not the allocator's behaviour.

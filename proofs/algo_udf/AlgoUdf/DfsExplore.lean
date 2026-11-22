@@ -83,7 +83,7 @@ theorem explore {g : G} {cfg : Cfg} (hm : BoundMono g cfg) :
       have hs1o : s1.onPath = upd st.onPath x true := by rw [← hs1]
       have hs1l : ∀ f, cfg.tgt.all (· == x) = true →
           f = (⟨pathOf (fr :: below) ++ [r], fr.pw + c, fr.pc + g.cost r.2.2⟩ : FP) → f ∈ s1.log := by
-        intro f hat hf; rw [← hs1]; simp only [hat, if_true, pathOf_lv]; rw [hf]; simp
+        intro f hat hf; rw [← hs1]; simp only [hat, ite_true, pathOf_lv]; rw [hf]; simp
       -- from the state after returning to this frame (successor popped), finish with `IH`
       have finish : ∀ s3, Star g cfg st s3 → Inv g cfg s3 →
           s3.frames = { fr with lv := some rest } :: below →
@@ -105,7 +105,7 @@ theorem explore {g : G} {cfg : Cfg} (hm : BoundMono g cfg) :
         have hlen : below.length + 1 < cfg.maxLen := by
           simp only [Bool.and_eq_true, decide_eq_true_eq] at hexp; exact hexp.2
         have hnf : s1.frames = ⟨some (succsRev g x), x, fr.pw + c, fr.pc + g.cost r.2.2, some r⟩ ::
-            { fr with lv := some rest } :: below := by rw [hs1f, if_pos hexp]
+            { fr with lv := some rest } :: below := by rw [hs1f, ite_eq_left hexp]
         obtain ⟨s2, h12, h2f, h2o, h2e⟩ := OH (cfg.maxLen - (below.length + 1)) (by omega)
           (succsRev g x) s1 _ _ I1 hnf rfl (by simp)
         have I2 := Star.inv I1 h12
@@ -134,7 +134,7 @@ theorem explore {g : G} {cfg : Cfg} (hm : BoundMono g cfg) :
             exact this
       · -- not expanded: the next step backtracks at once
         have hnf : s1.frames = ⟨none, x, fr.pw + c, fr.pc + g.cost r.2.2, some r⟩ ::
-            { fr with lv := some rest } :: below := by rw [hs1f, if_neg hexp]
+            { fr with lv := some rest } :: below := by rw [hs1f, ite_eq_right hexp]
         have hback := step_back (g := g) (cfg := cfg) hnf (Or.inl rfl) (by simp)
         have I3 := inv_step I1 hback
         apply finish _ ((Star.refl _).tail hstep |>.tail hback) I3 rfl

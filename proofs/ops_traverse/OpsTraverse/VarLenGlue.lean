@@ -6,7 +6,7 @@ Variable-length traverse glue (graph/src/runtime/ops/cond_var_len_traverse.rs).
 | --- | --- |
 | `pathValue`, `Alt`   | `VarLenIter::path_value` (:139) |
 | `Frame`, `vlNext`, `run` | `Iterator for VarLenIter::next` (:392): pop the frame buffer, stop on a parked error, else begin the next start node or `advance` one DFS frame |
-| `rowPlan`            | `CondVarLenTraverseOp::expand_row` (:500): endpoint resolution, reversal, start nodes, destination, hop defaults |
+| `rowPlan`            | `CondVarLenTraverseOp::expand_row` (:526): endpoint resolution, reversal, start nodes, destination, hop defaults |
 | `VlSt.new`, `findPrev` | `CondVarLenTraverseOp::new` (:441) |
 | `vlOpNext`           | `CondVarLenTraverseOp::next` (:611) — `Drive.driveE` with the parked-error check |
 
@@ -152,7 +152,7 @@ theorem run_complete {I : Type} : ∀ (n : Nat) (s : It I), s.err = false → po
 theorem run_err {I : Type} (n : Nat) (st sts : List (Frame I)) :
     run (n + 1) ⟨[], st, sts, true⟩ = [] := by simp [run, vlStep]
 
-/-! ## `expand_row` (:500) -/
+/-! ## `expand_row` (:526) -/
 
 inductive EV where
   | node (n : Nat)
@@ -169,7 +169,7 @@ def asNode : Option EV → Option Nat
   | some (.node n) => some n
   | _ => none
 
-/-- cond_var_len_traverse.rs:531-570. `fromBound`/`toBound` = `batch.is_bound_at`. -/
+/-- cond_var_len_traverse.rs. `fromBound`/`toBound` = `batch.is_bound_at`. -/
 def rowPlan (fromV toV : Option EV) (fromBound toBound bidir : Bool) (minH maxH : Option Nat) :
     Option Plan :=
   let fromId := asNode fromV
@@ -177,7 +177,8 @@ def rowPlan (fromV toV : Option EV) (fromBound toBound bidir : Bool) (minH maxH 
   if fromId.isNone && fromBound then none
   else if toId.isNone && toBound then none
   else
-    let reversed := fromId.isNone && toId.isSome && !bidir
+    let _ := bidir   -- read by the iterator (`step`), no longer by the reversal (#3593)
+    let reversed := fromId.isNone && toId.isSome
     some { reversed
            starts := if reversed then toId.map ([·]) else fromId.map ([·])
            dest := if reversed then fromId else toId
@@ -185,13 +186,14 @@ def rowPlan (fromV toV : Option EV) (fromBound toBound bidir : Bool) (minH maxH 
            maxH := maxH.getD 4294967295 }
 
 /-- A bound non-node endpoint skips the row; hops default to `*1..u32::MAX`; the walk is
-reversed exactly when only `to` is a node and the edge is directed; the start set is the bound
+reversed exactly when only `to` is a node (since #3593 for an undirected edge too, which
+`VarLen.varLen_bidir_reverse_iff` shows is sound); the start set is the bound
 endpoint (or the `from` label scan) and the destination the other endpoint. -/
 theorem rowPlan_spec (fromV toV : Option EV) (fb tb bidir : Bool) (mn mx : Option Nat) :
     (asNode fromV = none → fb = true → rowPlan fromV toV fb tb bidir mn mx = none) ∧
     (∀ p, rowPlan fromV toV fb tb bidir mn mx = some p →
       p.minH = mn.getD 1 ∧ p.maxH = mx.getD 4294967295 ∧
-      (p.reversed = true ↔ (asNode fromV = none ∧ (asNode toV).isSome ∧ bidir = false)) ∧
+      (p.reversed = true ↔ (asNode fromV = none ∧ (asNode toV).isSome)) ∧
       (p.reversed = true → p.starts = (asNode toV).map ([·]) ∧ p.dest = asNode fromV) ∧
       (p.reversed = false → p.starts = (asNode fromV).map ([·]) ∧ p.dest = asNode toV)) := by
   constructor
@@ -205,7 +207,7 @@ theorem rowPlan_spec (fromV toV : Option EV) (fb tb bidir : Bool) (mn mx : Optio
       · simp only [Option.some.injEq] at hp
         subst hp
         refine ⟨rfl, rfl, ?_, fun h => ?_, fun h => ?_⟩
-        · simp [Bool.and_eq_true, Option.isNone_iff_eq_none, and_assoc]
+        · simp [Bool.and_eq_true, Option.isNone_iff_eq_none]
         · simp only at h; simp [h]
         · simp only at h; simp [h]
 

@@ -2,7 +2,7 @@ import FalkorValueMath.MathFns
 /-!
 # `compare_value`, `is_never_equal`, `may_fail_self_match`, `compare_vecf32`
 
-A structural model of `CompareValue for Value` (value.rs:1224-1272) with its helpers
+A structural model of `CompareValue for Value` (value.rs) with its helpers
 `compare_list` (:1399), `compare_map` (:1472), `compare_floats` (:1801) and
 `compare_vecf32` (:1817), used here for two contracts the code states in comments:
 
@@ -41,20 +41,20 @@ def orderF : V F → Nat
   | .rel _ => 2 ^ 2 | .path _ => 2 ^ 4 | .point .. => 2 ^ 5 | .datetime _ => 2 ^ 6
   | .date _ => 2 ^ 7 | .time _ => 2 ^ 8 | .duration _ => 2 ^ 10 | .vec _ => 2 ^ 18
 
-/-- `compare_floats` (value.rs:1801). -/
+/-- `compare_floats` (value.rs). -/
 def cmpFloats (a b : F) : Ordering × DN :=
   match fc.pc a b with
   | some o => (o, .none)
   | none => (.lt, .nan)
 
-/-- `first_difference` (value.rs:1821). -/
+/-- `first_difference` (value.rs). -/
 def firstDiff : List F → List F → Ordering
   | x :: xs, y :: ys => if fc.ne x y then (if fc.gt x y then .gt else .lt) else firstDiff xs ys
   | _, _ => .eq
 
-/-- `compare_vecf32`'s block loop (value.rs:1841-1848) for equal lengths. -/
+/-- `compare_vecf32`'s block loop (value.rs) for equal lengths. -/
 def chunked (a b : List F) : Ordering :=
-  if h : 16 ≤ a.length then
+  if _h : 16 ≤ a.length then
     if ((a.take 16).zip (b.take 16)).any (fun p => fc.ne p.1 p.2) then firstDiff fc (a.take 16) (b.take 16)
     else chunked (a.drop 16) (b.drop 16)
   else firstDiff fc a b
@@ -70,7 +70,7 @@ theorem firstDiff_append (x y x' y' : List F) (hl : x.length = x'.length) :
     firstDiff fc (x ++ y) (x' ++ y') =
       if (x.zip x').any (fun p => fc.ne p.1 p.2) then firstDiff fc x x' else firstDiff fc y y' := by
   induction x generalizing x' with
-  | nil => cases x' <;> simp_all [firstDiff]
+  | nil => cases x' <;> simp_all
   | cons a as ih =>
     cases x' with
     | nil => simp at hl
@@ -92,7 +92,7 @@ theorem chunked_eq_firstDiff (a b : List F) (hl : a.length = b.length) :
   induction n with
   | zero =>
     intro a b ha hl
-    rw [chunked, dif_neg (by omega)]
+    rw [chunked, dite_eq_right (by omega)]
   | succ n ih0 =>
     intro a b ha hl
     have ih : ∀ m, m < a.length → ∀ (a' b' : List F), a'.length = b'.length → a'.length = m →
@@ -111,7 +111,7 @@ theorem chunked_eq_firstDiff (a b : List F) (hl : a.length = b.length) :
     · rfl
 
 mutual
-/-- `compare_value` (value.rs:1224), arms in source order. -/
+/-- `compare_value` (value.rs), arms in source order. -/
 def cmpV : V F → V F → Ordering × DN
   | .bool a, .bool b => (compare a b, .none)
   | .float a, .float b => cmpFloats fc a b
@@ -138,7 +138,7 @@ def cmpV : V F → V F → Ordering × DN
   | a, b => (compare (orderF a) (orderF b), .disjoint)
   termination_by a _ => (sizeOf a, 2)
 
-/-- `compare_list` (value.rs:1399-1470). -/
+/-- `compare_list` (value.rs). -/
 def cmpList (a b : List (V F)) : Ordering × DN :=
   if a.length = 0 ∧ b.length = 0 then (.eq, .none) else
   let minLen := min a.length b.length
@@ -163,7 +163,7 @@ def listLoop2 : List (V F) → List (V F) → Ordering × Nat × Nat × Nat → 
   | _, _, st => st
   termination_by a _ _ => (sizeOf a, 0)
 
-/-- `compare_map` (value.rs:1472) on key-sorted entry lists. -/
+/-- `compare_map` (value.rs) on key-sorted entry lists. -/
 def cmpMap (a b : List (String × V F)) : Ordering × DN :=
   if a.length ≠ b.length then (compare a.length b.length, .none) else
   match keysCmp a b with
@@ -188,7 +188,7 @@ def mapLoop : List (String × V F) → List (String × V F) → Ordering × DN
 end
 
 mutual
-/-- `may_fail_self_match` (value.rs:1554). -/
+/-- `may_fail_self_match` (value.rs). -/
 def mayFail : V F → Bool
   | .bool _ | .int _ | .str _ | .node _ | .rel _ | .datetime _ | .date _ | .time _
   | .duration _ => false
@@ -206,7 +206,7 @@ def mayFailMap : List (String × V F) → Bool
   | (_, x) :: xs => mayFail x || mayFailMap xs
 end
 
-/-- `is_never_equal` (value.rs:1531). -/
+/-- `is_never_equal` (value.rs). -/
 def isNeverEqual (v : V F) : Bool := mayFail fc v && !(decide (cmpV fc v v = (.eq, .none)))
 
 theorem listLoop2_self (xs : List (V F)) (h : ∀ x ∈ xs, cmpV fc x x = (.eq, .none)) :
@@ -285,12 +285,12 @@ theorem mayFail_sound : ∀ (n : Nat) (v : V F), sizeOf v < n → mayFail fc v =
       simp only [mayFail] at hm
       have hall := hlist items (by simp at hs; omega) hm
       rw [cmpV, cmpList, listLoop2_self fc items hall]
-      by_cases h0 : items.length = 0 <;> simp [h0, compare_self_eq]
+      by_cases h0 : items.length = 0 <;> simp [h0]
     | path items =>
       simp only [mayFail] at hm
       have hall := hlist items (by simp at hs; omega) hm
       rw [cmpV, cmpList, listLoop2_self fc items hall]
-      by_cases h0 : items.length = 0 <;> simp [h0, compare_self_eq]
+      by_cases h0 : items.length = 0 <;> simp [h0]
     | map entries =>
       simp only [mayFail] at hm
       have hall : ∀ p ∈ entries, cmpV fc p.2 p.2 = (.eq, .none) := by
