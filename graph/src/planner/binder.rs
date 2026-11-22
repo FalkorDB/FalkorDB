@@ -2287,6 +2287,12 @@ impl Binder {
                         // unnamed entity has no name to resolve.
                         for alias in pattern.variables() {
                             if let Some(name) = alias.name() {
+                                // The ORDER BY placeholder is the one name
+                                // `resolve_name` always mints; a query can
+                                // spell it, so it is undefined here too.
+                                if name.as_str() == "__agg_order_by_placeholder__" {
+                                    return Err(format!("'{name}' not defined"));
+                                }
                                 self.resolve_name(name, locals)?;
                             }
                         }
