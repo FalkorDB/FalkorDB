@@ -14,48 +14,49 @@ graph/src/planner/binder.rs	Scope::retain	126	PROVEN	Table.Env.retain; Env.retai
 graph/src/planner/binder.rs	Binder::default	171	PROVEN	Stack.default_spec (one empty scope, no parent lookup); #2981 no MATCH relationship aliases yet (BSt.default.matchRels = [])
 graph/src/planner/binder.rs	Binder::bind	197	PROVEN	mergeSV_ge, mergeSV_covers (bind merges live + retired scope_vars)
 graph/src/planner/binder.rs	Binder::scope_vars	212	PROVEN	Stack.scopeVars_lengths (one sorted table per live scope, lengths preserved); sortedScopeVars_spec
-graph/src/planner/binder.rs	Binder::update_all_node_labels	220	PROVEN	accumulate/specScanLabels: labels_agree_match_only, labels_leak (counterexample, bug); REMOVE ignored, RemoveLabels.bug3450_remove_label_kept_across_with (open #3450, property StampedLabelsHeld)
+graph/src/planner/binder.rs	Binder::update_all_node_labels	220	PROVEN	accumulate/specScanLabels: labels_agree_match_only, accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels (#3049; pre3049_labels_leak historical); REMOVE ignored, RemoveLabels.bug3450_remove_label_kept_across_with (open #3450, property StampedLabelsHeld)
 graph/src/planner/binder.rs	Binder::update_graph_labels	258	PROVEN	Stack.updNode_replace (MATCH: accumulated set), updNode_union (OPTIONAL: own labels kept + accumulated added), updNode_none, updNode_idem
 graph/src/planner/binder.rs	Binder::current_env	338	PROVEN	Stack.BSt.current, current_setCurrent
 graph/src/planner/binder.rs	Binder::current_env_mut	344	PROVEN	Stack.current_setCurrent, setCurrent_outer (only the innermost table changes)
 graph/src/planner/binder.rs	Binder::push_scope	350	PROVEN	Stack.push_current, push_toSt (empty child table, parent = old current, p2c/cfp kept)
 graph/src/planner/binder.rs	Binder::commit_scope	355	PROVEN	Stack.commit_spec
 graph/src/planner/binder.rs	Binder::bind_ir	361	PROVEN	BindIR.bindIR (every arm) : shortestOk_iff, match_shortest_unbound, match_nonbool, match_rel_reused / match_records_rels / relReused_fresh / relReused_unnamed (#2981: a named relationship variable of an earlier MATCH is rejected; aliases are Table.Alias, unnamed ones skipped), optional_labels_restored, mergeOk_*, unwind_order, delete_nonentity, return_star_empty, yieldLoop_ok/yield_duplicate/yield_requires_entity, bindYield_alias/hidden, query_seq, union_columns/union_state; foreachRestore_covers; unionCheck_ok_iff
-graph/src/planner/binder.rs	Binder::bind_call_subquery	837	PROVEN	BindIR.bindCallSubquery: callSubquery_nonreturning, callSubquery_collision, subqueryReturns_noInternal, callSubquery_covers; Scopes.callBody_query_disjoint; #2981 pruneMatchRels_spec (the body's MATCH relationship aliases do not leak out); #3891 pruneVarlen_spec, pruneVarlen_prop_on_path (the body's [r*] marks do not leak out: a later path with the same key still rejects p.prop)
-graph/src/planner/binder.rs	Binder::bind_call_body	964	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::build_import_projections	1125	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::validate_import_with	1145	PROVEN	validateImport_ok, validateImport_rejects_expr
-graph/src/planner/binder.rs	Binder::bind_projection	1201	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::bind_graph	1473	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_accepts, node_attr_on_own_rel_accepts, node_attr_later_rel, node_attr_later_node_rejected, foldGrow_mono, q2923_fixed, defRels_named_only (#2981 defRels: named relationship aliases defined first; Elem aliases are Table.Alias), rel_attr_forward_node, self_reference_ok; defineName_ignores_parent; merged_occurrences (endpoint shares the node's merged attrs) abstracted: Elem.node carries every occurrence's attrs
-graph/src/planner/binder.rs	Binder::bind_graph_create	1727	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, createCheck_anon, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak
-graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1852	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct, selfRef_leaf_prop
-graph/src/planner/binder.rs	Binder::bind_set_items	1874	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
-graph/src/planner/binder.rs	Binder::bind_expr	1899	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
-graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1906	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
-graph/src/planner/binder.rs	Binder::bind_expr_node	1920	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::define_name_in_scope	2328	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::define_alias_in_scope	2354	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::lookup_alias	2375	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::resolve_alias	2387	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::project_name	2401	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::resolve_name	2415	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::fresh_var	2473	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::ensure_type	2489	PROVEN	ensureType_table, ensureType_accepts_any_binding
-graph/src/planner/binder.rs	Binder::validate_boolean_operands	2510	PROVEN	Types.validate_logical, validate_nonlogical
-graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2514	PROVEN	Types.validate (recursive), validate_logical/nonlogical
-graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2536	PROVEN	Types.mayBool_sound_except; getElement_rejected (CONFIRMED bug binder.rs:2347), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
-graph/src/planner/binder.rs	Binder::expr_may_return_entity	2604	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
-graph/src/planner/binder.rs	expr_tree_to_value	2677	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
-graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2679	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
-graph/src/planner/binder.rs	collect_constant_args	2709	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
-graph/src/planner/binder.rs	rewrite_struct_constructor	2727	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
-graph/src/planner/binder.rs	rewrite_compiled_regex	2792	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
-graph/src/planner/binder.rs	replace_agg_subtrees	2826	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
-graph/src/planner/binder.rs	raw_exprs_structurally_equal	2856	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_wrong_aggregate (CONFIRMED bug), order_by_int_distinguished
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2860	PROVEN	AggEq.isAggPlaceholder_iff
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2864	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2894	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause: the `_ =>` discriminant fallback, binder.rs:2695)
-graph/src/planner/binder.rs	denotes	2916	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	sorted_scope_vars	2923	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
-graph/src/planner/binder.rs	merge_scope_vars	2931	PROVEN	mergeSV_ge, mergeSV_covers
+graph/src/planner/binder.rs	Binder::bind_call_subquery	845	PROVEN	BindIR.bindCallSubquery: callSubquery_nonreturning, callSubquery_collision, subqueryReturns_noInternal, callSubquery_covers; Scopes.callBody_query_disjoint; #2981 pruneMatchRels_spec (the body's MATCH relationship aliases do not leak out); #3891 pruneVarlen_spec, pruneVarlen_prop_on_path (the body's [r*] marks do not leak out: a later path with the same key still rejects p.prop)
+graph/src/planner/binder.rs	Binder::bind_call_body	972	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::build_import_projections	1133	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::validate_import_with	1153	PROVEN	validateImport_ok, validateImport_rejects_expr
+graph/src/planner/binder.rs	Binder::bind_projection	1209	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::bind_graph	1481	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_accepts, node_attr_on_own_rel_accepts, node_attr_later_rel, node_attr_later_node_rejected, foldGrow_mono, q2923_fixed, defRels_named_only (#2981 defRels: named relationship aliases defined first; Elem aliases are Table.Alias), rel_attr_forward_node, self_reference_ok; defineName_ignores_parent; merged_occurrences (endpoint shares the node's merged attrs) abstracted: Elem.node carries every occurrence's attrs
+graph/src/planner/binder.rs	Binder::bind_graph_create	1760	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, createCheck_anon, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak
+graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1885	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct, selfRef_leaf_prop
+graph/src/planner/binder.rs	Binder::bind_set_items	1907	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
+graph/src/planner/binder.rs	Binder::bind_expr	1932	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
+graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1939	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
+graph/src/planner/binder.rs	Binder::bind_expr_node	1953	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::define_name_in_scope	2365	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::define_alias_in_scope	2391	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::lookup_alias	2412	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::resolve_alias	2424	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::project_name	2438	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::resolve_name	2452	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::fresh_var	2510	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::ensure_type	2526	PROVEN	ensureType_table, ensureType_accepts_any_binding
+graph/src/planner/binder.rs	Binder::validate_boolean_operands	2547	PROVEN	Types.validate_logical, validate_nonlogical
+graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2551	PROVEN	Types.validate (recursive), validate_logical/nonlogical
+graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2573	PROVEN	Types.mayBool_sound_except; getElement_rejected (CONFIRMED bug binder.rs:2347), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
+graph/src/planner/binder.rs	Binder::expr_may_return_entity	2641	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
+graph/src/planner/binder.rs	expr_tree_to_value	2714	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
+graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2716	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
+graph/src/planner/binder.rs	collect_constant_args	2746	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
+graph/src/planner/binder.rs	rewrite_struct_constructor	2764	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
+graph/src/planner/binder.rs	rewrite_compiled_regex	2829	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
+graph/src/planner/binder.rs	replace_agg_subtrees	2863	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
+graph/src/planner/binder.rs	raw_exprs_structurally_equal	2893	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_wrong_aggregate (CONFIRMED bug), order_by_int_distinguished
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2897	PROVEN	AggEq.isAggPlaceholder_iff
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2901	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2931	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause: the `_ =>` discriminant fallback, binder.rs:2695)
+graph/src/planner/binder.rs	denotes	2953	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	sorted_scope_vars	2960	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
+graph/src/planner/binder.rs	merge_scope_vars	2968	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	1018	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1741	PROVEN	Scopes.accumulateFrom (create: keep_new, comprehension: !keep_new): accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels
