@@ -940,8 +940,10 @@ impl Tensor {
     /// decision `wait_fwd` latched) or by `fold_latched`, so calling this on
     /// every write is a single atomic load in the common case.
     pub fn flush(&mut self) {
+        // Reset unconditionally: callers such as `remove_all` rely on a flush
+        // dropping the derived caches before they change the layers.
+        self.derived = Arc::default();
         if self.needs_flush.load(Ordering::Relaxed) {
-            self.derived = Arc::default();
             // The layers may be shared with the committed snapshot and carry
             // pending work; nvals/eWiseAdd/select below materialize it (a
             // mutation), so wait first under the readers' lock.
@@ -2098,6 +2100,24 @@ mod tests {
         assert!(
             after_t > after,
             "transposed surplus cache not counted: {after} -> {after_t}"
+        );
+    }
+
+    /// Deleting an edge drops the derived caches built before it.
+    #[test]
+    fn remove_all_drops_the_surplus_cache() {
+        ensure_init();
+        let mut t = Tensor::new(64, 64);
+        t.set_all_from_slices(&[0, 0, 1], &[1, 1, 2], &[0, 1, 2]);
+        let mut t = t.dup();
+        t.flush();
+        t.wait();
+        assert!(t.parallel_edge_surplus_cached().is_some());
+        t.remove_all(&[(1, 0, 1)]);
+        t.wait();
+        assert!(
+            t.parallel_edge_surplus_cached().is_none(),
+            "the pair has one edge left, so no surplus remains"
         );
     }
 
