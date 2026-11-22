@@ -688,6 +688,19 @@ void EffectsV3Grouping_AddEdge
 	}
 }
 
+// does this record INTRODUCE an id, rather than reference one?
+//
+// ADD_SCHEMA and ADD_ATTRIBUTE are what every other record's bare ids refer
+// back to, so they are the half of the announcement list that has to be
+// written first. Everything else in that list - the index and constraint DDL -
+// names ids rather than introducing them.
+static bool _introduces_an_id
+(
+	EffectType opcode  // the record's opcode
+) {
+	return opcode == EFFECT_ADD_SCHEMA || opcode == EFFECT_ADD_ATTRIBUTE;
+}
+
 static EffectsV3Record *_new_announcement(EffectsV3Grouping *g) {
 	const EffectsV3Record blank = { 0 };
 	arr_append(g->announcements, blank);
@@ -1815,10 +1828,34 @@ void EffectsV3Grouping_Encode
 	// staged updates become groups before anything is counted or written
 	_flush_updates(g);
 
-	// announcements first: a bulk record carries a bare id, so the replica has
-	// to have seen the name before anything references it
+	// ANNOUNCEMENTS FIRST, IN TWO PASSES OVER ONE LIST. A bulk or DDL record
+	// carries a bare schema or attribute id, so the replica has to have seen
+	// the name before anything references it. EffectsV3_Apply states the rule
+	// it relies on and does not re-check: records 9 and 10 are normatively
+	// ahead of anything referencing the ids they introduce, and nothing on the
+	// reading side reorders.
+	//
+	// TWO PASSES BECAUSE THE DDL RECORDS SHARE THIS LIST AND FOLD BACKWARDS.
+	// AddIndexField appends a later field into an EARLIER record, so a
+	// statement whose second field introduces a new attribute leaves its
+	// CREATE_INDEX sitting ahead of that attribute's own announcement - and
+	// _VerifyDDLRefs refuses a DDL record naming an id that does not resolve
+	// locally, which costs the whole payload and marks the replica diverged.
+	//
+	// A STABLE PARTITION, not a sort: every announcement goes before every
+	// record that can name one, and arrival order is kept within each half,
+	// because two announcements of the same kind have no order between them
+	// that means anything and the DDL records do.
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
-		EffectsV3_EncodeRecord(g->announcements + i, out);
+		if(_introduces_an_id(g->announcements[i].opcode)) {
+			EffectsV3_EncodeRecord(g->announcements + i, out);
+		}
+	}
+
+	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
+		if(!_introduces_an_id(g->announcements[i].opcode)) {
+			EffectsV3_EncodeRecord(g->announcements + i, out);
+		}
 	}
 
 	// RULE 2: sorted by key. A scan finds groups in arrival order, which is a

@@ -1107,6 +1107,105 @@ void test_effectsV3Group_updatedEdgeHasNoEndpoints(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// step over an ADD_SCHEMA or ADD_ATTRIBUTE record
+//
+// The two announcement shapes are fixed - no count, no list - so walking them
+// needs no decoder. A name is a u64 length that INCLUDES the NUL followed by
+// that many bytes. Sizes come from the real types, as elsewhere in this file.
+static size_t _skip_announcement
+(
+	const unsigned char *b,  // payload
+	size_t o,                // offset of the record
+	uint32_t opcode          // its opcode, already read at 'o'
+) {
+	o += sizeof(EffectType);
+
+	if(opcode == EFFECT_ADD_SCHEMA) {
+		o += sizeof(SchemaType) + sizeof(int);
+	} else {
+		o += sizeof(AttributeID);
+	}
+
+	uint64_t len;
+	memcpy(&len, b + o, 8);
+	return o + 8 + len;
+}
+
+// A FOLDED FIELD MUST NOT CARRY ITS RECORD AHEAD OF ITS OWN ANNOUNCEMENT
+//
+// GraphHub_AddIndex announces the attribute and THEN emits the index effect,
+// once per field (graph_hub.c:671 and :710, called once per field from
+// index_operations.c). The fold appends the second field into the record the
+// first one created, which sits EARLIER in the list than the second field's
+// own ADD_ATTRIBUTE - so written in list order the CREATE_INDEX names an
+// attribute the replica has not been told about yet.
+//
+// That order is not merely untidy, it is refused. EffectsV3_Apply applies
+// records in the order they arrive and says so in as many words - "records 9
+// and 10 are normatively ahead of anything referencing the ids they introduce,
+// so nothing here reorders" - and _VerifyDDLRefs turns a CREATE_INDEX naming
+// an unresolvable attribute id into a false return (effects_v3_apply.c, and
+// VerifyAttribute at effects_apply.c:554). The master loses the whole payload
+// and the replica is marked diverged.
+//
+// WHAT FAILS HERE IS THE ORDER, NOT THE CONTENT. Collapse the two passes in
+// EffectsV3Grouping_Encode back into one and the record count is still 4, the
+// fold still works and every field is still on the record - and only this
+// test notices. RecordCount cannot see it: the records are all present.
+void test_effectsV3Group_announcementsPrecedeTheIndexRecord(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	SIValue opts = SI_NullVal();
+
+	// `CREATE INDEX FOR (n:P) ON (n.a, n.b)` on a graph that has seen neither
+	// attribute before, which is what the hub does call by call
+	EffectsV3Grouping_AddSchema(g, SCHEMA_NODE, 3, "P");
+
+	EffectsV3Grouping_AddAttribute(g, 12, "a");
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+			"P", INDEX_FLD_RANGE, 12, "a", opts);
+
+	// the second field's attribute is new too, and is announced AFTER the
+	// record its field folds into
+	EffectsV3Grouping_AddAttribute(g, 13, "b");
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+			"P", INDEX_FLD_RANGE, 13, "b", opts);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 4,
+			"one schema, two attributes and one folded index record is 4, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n = 0;
+	unsigned char *p = _encode(g, &n);
+
+	const uint32_t want[] = {
+		EFFECT_ADD_SCHEMA,
+		EFFECT_ADD_ATTRIBUTE,
+		EFFECT_ADD_ATTRIBUTE,
+		EFFECT_CREATE_INDEX
+	};
+
+	size_t o = 0;
+	for(int i = 0; i < 4; i++) {
+		TEST_ASSERT_(o + sizeof(EffectType) <= n,
+				"payload ends after %zu of %zu bytes, before record %d", o, n, i);
+
+		const uint32_t op = _u32(p + o);
+		TEST_ASSERT_(op == want[i],
+				"record %d is opcode %u, expected %u - every attribute "
+				"announcement must be written before the index record that "
+				"names it", i, op, want[i]);
+
+		if(op == EFFECT_CREATE_INDEX) {
+			break;
+		}
+
+		o = _skip_announcement(p, o, op);
+	}
+
+	free(p);
+	EffectsV3Grouping_Free(g);
+}
+
 // walk a payload holding ONE CREATE_INDEX record to the start of its options
 //
 // The record is `opcode . schema_type . SCHEMAS . field_type . fields .
@@ -1648,6 +1747,8 @@ void test_effectsV3Group_vectorOptions(void) {
 TEST_LIST = {
 	{ "EffectsV3Group:indexFieldsFoldIntoOneRecord",
 		test_effectsV3Group_indexFieldsFoldIntoOneRecord },
+	{ "EffectsV3Group:announcementsPrecedeTheIndexRecord",
+		test_effectsV3Group_announcementsPrecedeTheIndexRecord },
 	{ "EffectsV3Group:indexFieldNotAddedTwice",
 		test_effectsV3Group_indexFieldNotAddedTwice },
 	{ "EffectsV3Group:cchIsOneRecordOverEveryType",
