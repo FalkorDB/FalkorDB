@@ -3,12 +3,12 @@
 
 | here | there |
 | --- | --- |
-| `passes`, `optimize` | `optimize` optimizer/mod.rs:125-168 (pass order; NestedPlans recursion) |
-| `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs:80-97 |
+| `passes`, `optimize` | `optimize` optimizer/mod.rs (pass order; NestedPlans recursion) |
+| `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs |
 | `guardHJ`, `T.anyD` | its `!reads_argument_rows(&child)` guard (:84) / `reads_argument_rows` :105-109 |
-| `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs:389-466 |
-| `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs:58-83 |
-| `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs:90-181 |
+| `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs |
+| `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs |
+| `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs |
 
 * `optimize_sound`: if every pass preserves a relation `R` (reflexive,
   transitive), so does `optimize`; `optimize_nested` — each nested plan is
@@ -35,7 +35,7 @@ inductive Pass
   | utilizeIndex | utilizeNodeById | reorderLabels | fuseOptionalTraverse | reduceBoundEdge
   deriving DecidableEq, Repr
 
-/-- mod.rs:135-164, in order. -/
+/-- mod.rs, in order. -/
 def passes : List Pass :=
   [.reduceCount, .reduceExpandInto, .reduceVarLenPath, .eliminateTrueFilters, .selectScanNode,
    .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
@@ -144,7 +144,7 @@ decreasing_by
   · simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; right; omega
   · simp_wf; omega
 
-/-- The local rewrite Rust tries (replace_cartesian_with_hash_join.rs:81-85, #2981): the
+/-- The local rewrite Rust tries (replace_cartesian_with_hash_join.rs, #2981): the
 `try_hash_join_rewrite` step `rw` is attempted only when no node of the CartesianProduct
 `cp` (the Filter's child) is an `Argument` (`reads_argument_rows`, :105-109), i.e. no branch
 is re-run per outer row of an enclosing `Apply`/`Optional`. -/

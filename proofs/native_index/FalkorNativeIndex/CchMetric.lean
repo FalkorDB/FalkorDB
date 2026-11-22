@@ -111,7 +111,7 @@ theorem isMin_fw (wt : Nat → Nat → Wt) (k u v : Nat) (d0 d1 d2 : Wt)
     · rw [ifN hl] at he
       exact (h0.2 e he).mono (by omega)
 
-/-! ## The sweep (`relax`, `customize.rs:264-310`)
+/-! ## The sweep (`relax`, `customize.rs`)
 
 For each rank `x` in increasing order, every ordered pair `y ≠ z` of its upper neighbours is offered the detour
 `y → x → z`, taking it on a strict improvement and recording `x` as the middle. (The Rust visits each unordered
@@ -135,7 +135,7 @@ def relaxM (up : Nat → List Nat) (x : Nat) (A : Nat → Nat → Wt) (M : Nat �
 def relaxStep (up : Nat → List Nat) (x : Nat) (st : (Nat → Nat → Wt) × (Nat → Nat → Option Nat)) :
     (Nat → Nat → Wt) × (Nat → Nat → Option Nat) := (relaxA up x st.1, relaxM up x st.1 st.2)
 
-/-- The seed (`seed`, `customize.rs:204-250`): every original edge's weight, the diagonal dropped. -/
+/-- The seed (`seed`, `customize.rs`): every original edge's weight, the diagonal dropped. -/
 def seedA (w : Nat → Nat → Wt) : Nat → Nat → Wt := fun u v => if u = v then none else w u v
 
 /-- `customize` on ranks `0 .. n-1`: seed, then the sweep. -/
@@ -320,7 +320,7 @@ theorem customize_correct (adj : Nat → List Nat) (hs : ∀ u v, v ∈ adj u �
   · obtain ⟨a1, _, a3, a4, a5⟩ := (h2 u v harc).2 m hm
     exact ⟨a1, a3, a4, a5⟩
 
-/-! ## Path unpacking (`query.rs:206-229`) -/
+/-! ## Path unpacking (`query.rs`) -/
 
 /-- The walk `a → l₀ → l₁ → ...` uses original edges only, with total weight `c`. -/
 inductive EdgesFrom (wt : Nat → Nat → Wt) : Nat → List Nat → Nat → Prop where

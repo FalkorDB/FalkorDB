@@ -1,11 +1,11 @@
 import FalkorExprSemantics.Eval
 /-!
-# `evaluate_param` (eval.rs:1825): parameter expressions of `CYPHER p=…`
+# `evaluate_param` (eval.rs): parameter expressions of `CYPHER p=…`
 (split out of `Eval.lean` on 2026-10-21)
 -/
 namespace FalkorExpr.Eval
 
-/-! ## `evaluate_param` (eval.rs:1825) — parameter expressions of `CYPHER p=…` -/
+/-! ## `evaluate_param` (eval.rs) — parameter expressions of `CYPHER p=…` -/
 
 inductive PV where
   | null | int (i : Int) | float (f : Int) | str (s : String) | list (vs : List PV)

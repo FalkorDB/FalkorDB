@@ -8,9 +8,9 @@ the configuration separate.
 
 | here | there |
 | --- | --- |
-| `edgeNumericAttr` | `edge_numeric_attr` `algo_procedures.rs:2167-2180` (`prop.map_or(default, …)`, one `default` for both cases) |
-| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `missing_cost` = 1 if `costProp` is configured else 0 (`:2372-2375`) |
-| `rustEnumCost`    | `bfs_find_bound` `:2465` and `enumerate_paths` `:2587`, default `1.0` |
+| `edgeNumericAttr` | `edge_numeric_attr` `algo_procedures.rs` (`prop.map_or(default, …)`, one `default` for both cases) |
+| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `missing_cost` = 1 if `costProp` is configured else 0 |
+| `rustEnumCost`    | `bfs_find_bound` and `enumerate_paths`, default `1.0` |
 | `cResolve`        | `GraphContext_GetAttributeID` (`proc_sp_paths.c:350`): an unknown name is `ATTRIBUTE_ID_NONE` |
 | `cFastCost`       | C `_sum_path_cost` as run live on the pre-`ae9ef2a73` (#2656) `c.so` build: `ATTRIBUTE_ID_NONE` → 0, else missing → `SI_LongVal(1)`. Current origin/master charges 1 in both cases, so only the configured-`costProp` conjuncts are parity claims against master |
 | `cEnumCost`       | C DFS `GraphEntity_GetNumericPropertyOrDefault(.., cost_prop, SI_LongVal(1))` (`proc_sp_paths.c:633,670`) |

@@ -5,18 +5,18 @@
 list of `(attr_id, value)` strictly ascending by id, with no `Null` stored
 (FalkorDB never stores a null — a null in an update means "remove").
 
-`merge_span` (attribute_store.rs:636) has three code paths:
+`merge_span` (attribute_store.rs) has three code paths:
 
-* fast path 1 (`:648-667`): every pair non-null and already present — patch
+* fast path 1: every pair non-null and already present — patch
   in place, return `(pairs.len(), pairs.len())`;
-* fast path 2 (`:671-696`): every pair null — shift the survivors left;
-* the general two-pass merge (`:699-792`).
+* fast path 2: every pair null — shift the survivors left;
+* the general two-pass merge.
 
 Each is modelled with the same loop structure as the Rust and proved to
 compute the *same* span and the *same* `(nremoved, nset)` as one reference
 (`refGet` / `refCounts`). The first pass of the general path (`newLen`) is
 proved to equal the length of what the second pass emits, which is the
-`debug_assert!(new_len == 0 || w - dst == new_len)` at `:765`.
+`debug_assert!(new_len == 0 || w - dst == new_len)` at.
 -/
 namespace PendingCommit
 
@@ -43,7 +43,7 @@ def get : List Entry → Nat → Option Val
 def mem (l : List Entry) (k : Nat) : Bool := (get l k).isSome
 
 /-- Strictly ascending by attribute id: `debug_assert!(attrs.windows(2).all(|w| w[0].0 < w[1].0))`
-(pending.rs:412, `insert_attrs_rows` :1231). -/
+(pending.rs, `insert_attrs_rows` :1231). -/
 def Sorted (l : List Entry) : Prop := List.Pairwise (fun a b => a.1 < b.1) l
 
 /-- No stored nulls. -/
@@ -60,7 +60,7 @@ def refGet (span pairs : List Entry) (k : Nat) : Option Val :=
   | none => get span k
 
 /-- Reference counts, with `AttributeStore::insert_attrs` semantics
-(attribute_store.rs:1306-1313): `nremoved` = pairs whose id the span already
+(attribute_store.rs): `nremoved` = pairs whose id the span already
 held (replaced *or* removed), `nset` = non-null pairs. -/
 def refRemoved (span pairs : List Entry) : Nat :=
   (pairs.filter (fun p => mem span p.1)).length
@@ -68,7 +68,7 @@ def refRemoved (span pairs : List Entry) : Nat :=
 def refSet (pairs : List Entry) : Nat :=
   (pairs.filter (fun p => !p.2.isNull)).length
 
-/-! ## General path: `merge_span` second pass (attribute_store.rs:735-764) -/
+/-! ## General path: `merge_span` second pass (attribute_store.rs) -/
 
 /-- The emit loop. `c` is `scratch` (the old span), `p` the pairs. Returns
 (emitted entries, nremoved, nset). Same branch order as the Rust:
@@ -95,7 +95,7 @@ def mergeGen : List Entry → List Entry → List Entry × Nat × Nat
         if p.2.isNull then r else (p :: r.1, r.2.1, r.2.2 + 1)
 termination_by c p => c.length + p.length
 
-/-- The first pass (attribute_store.rs:706-729): merged length only. -/
+/-- The first pass (attribute_store.rs): merged length only. -/
 def newLen : List Entry → List Entry → Nat
   | [], [] => 0
   | _ :: cs, [] => newLen cs [] + 1
@@ -108,17 +108,17 @@ termination_by c p => c.length + p.length
 
 /-! ## Fast paths -/
 
-/-- Fast-path-1 guard (`:653-656`). -/
+/-- Fast-path-1 guard. -/
 def allPresentNonNull (span pairs : List Entry) : Bool :=
   pairs.all (fun p => !p.2.isNull && mem span p.1)
 
-/-- Fast path 1 body: each pair overwrites its entry in place (`:657-665`). -/
+/-- Fast path 1 body: each pair overwrites its entry in place. -/
 def patch (span pairs : List Entry) : List Entry :=
   span.map (fun e => (e.1, match get pairs e.1 with
     | some v => v
     | none => e.2))
 
-/-- Fast-path-2 guard (`:671`). -/
+/-- Fast-path-2 guard. -/
 def allNull (pairs : List Entry) : Bool := pairs.all (fun p => p.2.isNull)
 
 /-- Drop pairs with id below `k` — the `while ni < pairs.len() && pairs.id(ni) < e.id` loop. -/
@@ -126,7 +126,7 @@ def skipBelow (k : Nat) : List Entry → List Entry
   | [] => []
   | p :: ps => if p.1 < k then skipBelow k ps else p :: ps
 
-/-- Fast path 2 body (`:672-685`): survivors and the removal count. -/
+/-- Fast path 2 body: survivors and the removal count. -/
 def pureRemove : List Entry → List Entry → List Entry × Nat
   | [], _ => ([], 0)
   | e :: es, ps =>
@@ -194,7 +194,7 @@ theorem get_cons_eq {e : Entry} {l : List Entry} : get (e :: l) e.1 = some e.2 :
   simp [get]
 
 /-- The first pass counts exactly what the second pass emits
-(`debug_assert!(new_len == 0 || w - dst == new_len)`, attribute_store.rs:765). -/
+(`debug_assert!(new_len == 0 || w - dst == new_len)`, attribute_store.rs). -/
 theorem newLen_eq : ∀ (c p : List Entry), newLen c p = (mergeGen c p).1.length
   | [], [] => by simp [newLen, mergeGen]
   | c :: cs, [] => by

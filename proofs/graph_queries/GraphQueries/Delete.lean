@@ -16,7 +16,7 @@ its behaviour take `IdSpaceContract O`.
 `remove_mask` builds its mask as `relationship_cap × relationship_types.len()`
 (`remove_mask` calls in `delete_relationships`, :3049, :3069). `Mat.removeMask` is a no-op on a dimension mismatch, which is
 what the release build does (`GrB_DIMENSION_MISMATCH` is only
-`debug_assert`ed, matrix.rs:927).
+`debug_assert`ed, matrix.rs).
 -/
 namespace GQ
 variable {V : Type}

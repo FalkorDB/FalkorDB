@@ -2,7 +2,7 @@
 # `versioned_matrix::Iter`: the three-way sorted merge yields the logical
 # matrix, sorted, each entry exactly once
 
-Model of `impl Iterator for Iter<E>` (`versioned_matrix.rs:1486-1529`).
+Model of `impl Iterator for Iter<E>` (`versioned_matrix.rs`).
 
 A GraphBLAS row iterator yields a layer's stored entries in ascending
 `(row, col)` order; a coordinate is modelled by its position in that order, a

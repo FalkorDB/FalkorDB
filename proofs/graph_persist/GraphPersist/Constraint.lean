@@ -1,11 +1,10 @@
 /-
 # UNIQUE / MANDATORY constraint enforcement, and how it diverges from C
 
-Models `Graph::build_composite_key` (graph.rs:4771), the unique/mandatory
+Models `Graph::build_composite_key` (graph.rs), the unique/mandatory
 enforcement decisions in `Pending::check_node_constraint` /
-`check_edge_constraint` (pending.rs:1580, :1672) and the whole-graph validators
-`validate_unique_constraint` / `validate_mandatory_constraint` (graph.rs:4715,
-:4676), and `create_constraint`'s inline-vs-background split (graph.rs:4500, the
+`check_edge_constraint` (pending.rs) and the whole-graph validators
+`validate_unique_constraint` / `validate_mandatory_constraint` (graph.rs), and `create_constraint`'s inline-vs-background split (graph.rs, the
 `count <= 10_000` test at :4537).
 
 The reference is C FalkorDB (`bin/macos-arm64v8-release/falkordb.so`). Two
@@ -17,11 +16,11 @@ Here ↔ there:
 | Lean | Rust |
 | --- | --- |
 | `KVal`                         | the subset of `Value` a property can hold |
-| `rustKey`                      | `build_composite_key`'s `format!("{v:?}")` per component (graph.rs:4779) |
+| `rustKey`                      | `build_composite_key`'s `format!("{v:?}")` per component (graph.rs) |
 | `cNumEq`                       | C's `SIValue` equality used by its exact-match index / `EnforceUniqueEntity` |
 | `uniqueRust` / `uniqueC`       | whether a *pair* of values collides under each engine |
 | `keyEmpty`                     | `build_composite_key` returns `[]` if any component is NULL/absent |
-| `validateInline`               | `create_constraint`: `count ≤ 10_000` ⇒ synchronous validate (graph.rs:4536) |
+| `validateInline`               | `create_constraint`: `count ≤ 10_000` ⇒ synchronous validate (graph.rs) |
 -/
 
 set_option linter.unusedSimpArgs false
@@ -117,7 +116,7 @@ theorem disagreement_two_sided :
 /-! ## Constraint *creation over existing violating data*
 
 `create_constraint` validates inline when the label's entity count ≤ 10_000
-(graph.rs:4536), setting `Operational` if `validate_unique_constraint` finds no
+(graph.rs), setting `Operational` if `validate_unique_constraint` finds no
 duplicate and `Failed` otherwise. Because `validate_unique_constraint` uses the
 same `build_composite_key`, a graph that already holds `1` and `1.0` is judged
 **non-violating** by Rust and the constraint becomes `Operational`, while C marks
@@ -144,10 +143,10 @@ theorem constraint_creation_diverges :
 
 /-! ## Enforcement cost: the earlier nested-scan model of `check_node_constraint`
 
-`check_node_constraint` (pending.rs:1580) calls `unique_violated` (pending.rs:217): the affected
+`check_node_constraint` (pending.rs) calls `unique_violated` (pending.rs): the affected
 members' keys go into one set, and each member is answered by an index lookup (`query_for`/`lookup`),
 or the label is scanned once for the whole set when the index cannot answer (the closure over
-`get_label_matrix(label)` at pending.rs:1634-1642). That is O(affected) lookups or
+`get_label_matrix(label)` at pending.rs). That is O(affected) lookups or
 O(affected + label_size), not the product; it is modelled in `pending_commit`
 (`uniqueViolated_spec`). The definitions below keep the earlier behaviour, which
 rebuilt a `seen` map over **every** entity carrying the label for each affected entity. In one

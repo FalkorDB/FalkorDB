@@ -5,17 +5,17 @@ import FalkorAggOps.StreamOps
 
 | here | there |
 | --- | --- |
-| `step`             | `get_node_relationships_by_type(current, types, direction)` cached in `adj_cache` (`cond_var_len_traverse.rs:239-242`); `bidir` = `EdgeDirection::Both` |
-| `dfs`              | `VarLenIter::advance` (`cond_var_len_traverse.rs:196-396`): skip used edges (`:247`), `will_emit = hop >= min_hops` (`:324`), `will_continue = hop < max_hops` (`:329`), push `(dest, used+[e], hop)` |
-| fuel               | `max_hops - depth` (`if hop > max_hops continue`, `:222`) |
-| `varLen`           | `VarLenIter::begin_start_node` (`:152-183`, the 0-hop emission when `min_hops == 0`) + the DFS |
+| `step`             | `get_node_relationships_by_type(current, types, direction)` cached in `adj_cache` (`cond_var_len_traverse.rs`); `bidir` = `EdgeDirection::Both` |
+| `dfs`              | `VarLenIter::advance` (`cond_var_len_traverse.rs`): skip used edges, `will_emit = hop >= min_hops`, `will_continue = hop < max_hops`, push `(dest, used+[e], hop)` |
+| fuel               | `max_hops - depth` (`if hop > max_hops continue`) |
+| `varLen`           | `VarLenIter::begin_start_node` (, the 0-hop emission when `min_hops == 0`) + the DFS |
 | `Walk`, trail      | openCypher variable-length semantics: a walk whose relationships are pairwise distinct |
 
 Modelled as a recursive DFS; the engine uses an explicit stack, which changes
 only the *order* of emissions (it pops the last pushed neighbour first), not
 the multiset. Destination id / label filters and edge-attribute / WHERE
 filters are pure post-filters on each candidate and are not modelled; the
-reversed traversal (`reversed`, `:571`) is the same DFS on the transposed
+reversed traversal (`reversed`) is the same DFS on the transposed
 direction, and for an undirected walk (reversed since #3593) the same DFS from
 the other end: `varLen_bidir_reverse_iff`.
 -/
@@ -205,10 +205,10 @@ single hop, e.g. `(a)-[*1..1]->(b)-[r]->(c)`, the self-loop `e0` is used by
 both. openCypher forbids it. -/
 theorem no_sibling_uniqueness : ([0], 3) ∈ varLen [⟨0, 3, 3⟩] false 3 1 1 := by decide
 
-/-! ## Absorbed WHERE edge filter: per-edge verdict (`cond_var_len_traverse.rs:282-308`)
+/-! ## Absorbed WHERE edge filter: per-edge verdict (`cond_var_len_traverse.rs`)
 
 A non-boolean, non-null verdict is a type error, exactly as
-`FilterOp` answers it (`filter.rs:95-101`; proofs/ops_aggregate `StreamOps.filterEval`). -/
+`FilterOp` answers it (`filter.rs`; proofs/ops_aggregate `StreamOps.filterEval`). -/
 
 /-- An evaluated predicate value (`Value` restricted to what the match distinguishes). -/
 inductive PV where
@@ -219,7 +219,7 @@ inductive EdgeVerdict where
   | keep | skip | err (msg : String)
   deriving DecidableEq, Repr
 
-/-- The `match evaluator.eval(..)` arms (`:288-306`). -/
+/-- The `match evaluator.eval(..)` arms. -/
 def edgeVerdict : Except String PV → EdgeVerdict
   | .ok .t => .keep
   | .ok .f | .ok .null => .skip

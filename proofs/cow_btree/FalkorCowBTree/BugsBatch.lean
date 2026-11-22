@@ -9,7 +9,7 @@ import FalkorCowBTree.Assert
 leaves a well-formed tree with the same contents (`rb_remove_batch_fixed`), so a follow-up single-key
 `remove` keeps it well-formed (`rb_then_remove_fixed`); `removeBatchTree_wf_asserted` is the general
 statement (`BatchWF.lean`: `removeBatchTree_wf`). The Rust test is
-`remove_batch_never_leaves_a_single_child_branch` (`tests.rs:1640`):
+`remove_batch_never_leaves_a_single_child_branch` (`tests.rs`):
 
 ```rust
 let pairs: Vec<(u64, u64)> = (0..96u64).map(|d| (d, 0)).collect();

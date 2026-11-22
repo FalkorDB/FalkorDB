@@ -52,9 +52,7 @@ graph/src/planner/mod.rs	Planner::joins_components	3212	PROVEN	Stitch.joinsCompo
 graph/src/planner/mod.rs	needs_apply_wrapping	3233	PROVEN	needsApplyWrapping; cp_stitch_shape, cp_stitch_loses_correlation (bug 2; PR #3100 also wraps when the CP reads its variables)
 graph/src/planner/mod.rs	ensure_apply_has_input	3270	PROVEN	Misc.ensureInput_ev_local (Apply(Argument, s) = Apply(s)), ensureInput_saturates
 graph/src/planner/mod.rs	Planner::plan	3293	PROVEN	per-clause plans: unwind/create/set/remove/delete/proc/merge/foreach/call/unit_call/optional/optional_apply/match_bound/union/project _correct; planCreate (PathBuilder over Create since #2829): create_loop_correct, create_first_correct, create_path_last_misplaced/_skips_create (bug 8); MATCH arm with its all_visited/any_visited decision: PathBind.planMatchArm (#2981: also wraps when attrs read earlier variables and joins_components), planMatchArm_path_unwrapped (a new path variable blocks the Apply wrap when the components do not join; bugs #2744/#2743/#2727/#2725), planMatchArm_joined_wrapped, planMatchArm_disjoint; REMOVE arm: remove_correct is the row semantics only (graph effect opaque in specWrite) and the arm leaves verified_labels as is: RemoveVerified.bug3450_remove_keeps_verified_label (open #3450); abstractions (re-read 2026-11-22): no expression-comprehension Apply chain, SET split, LOAD CSV, index DDL, fulltext/vector scan leaves (see Clauses.lean header)
-graph/src/parser/ast.rs	Variable::fmt	173	PROVEN	Ast.AV.fmt: AV.fmt_named, AV.fmt_unnamed (`@anon_<n>` from the parser number, #3303), AV.fmt_anon (`?<id>` for a planner temporary)
 graph/src/parser/ast.rs	Variable::eq	185	PROVEN	Ast.AV.eqv_iff (id only), AV.eqv_other_scope, AV.eqv_equivalence
-graph/src/parser/ast.rs	Variable::hash	196	PROVEN	Ast.AV.hash_consistent (hash agrees with Eq)
 graph/src/parser/ast.rs	Variable::key	214	PROVEN	Ast.AV.key: AV.key_eq_iff (id and scope), AV.key_eq_eqv, AV.key_other_scope, notVisited_key
 graph/src/parser/ast.rs	Variable::as_str	236	PROVEN	Ast.AV.asStr: AV.asStr_spec (the written name, else `?`)
 graph/src/parser/ast.rs	ExprIR::and_of	444	PROVEN	E.andOf = flat .and true (Expr.lean); AndOf.tv_andOf (three-valued value = Kleene AND of the operands), passes_andOf; andOf_nested_in_order, andOf_keeps_or (the Rust unit tests); with runtime errors: optimizer_rewrites AndOf.flat_eval, flat_passes
@@ -66,33 +64,16 @@ graph/src/parser/ast.rs	SupportAggregation::is_aggregation	599	PROVEN	Ast.isAggr
 graph/src/parser/ast.rs	is_aggregation	603	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf
 graph/src/parser/ast.rs	is_aggregation	614	PROVEN	Ast.isAggregation (raw-name impl, same DFS any)
 graph/src/parser/ast.rs	QueryNode::fmt	639	PROVEN	Ast.fmtNode, fmtNode_plain
-graph/src/parser/ast.rs	QueryNode::new	652	PROVEN	Ast.new_spec
-graph/src/parser/ast.rs	QueryRelationship::fmt	700	PROVEN	Ast.fmtRel, fmtRel_untyped
-graph/src/parser/ast.rs	QueryRelationship::new	728	PROVEN	Ast.new_spec (all_shortest_paths = No)
-graph/src/parser/ast.rs	QueryPath::new	765	PROVEN	Ast.new_spec
 graph/src/parser/ast.rs	QueryGraph::default	788	PROVEN	Ast.new_spec (empty nodes/rels/paths)
 graph/src/parser/ast.rs	QueryGraph::fmt	801	PROVEN	Ast.fmtGraph, fmtGraph_empty
 graph/src/parser/ast.rs	merge_attr_maps	824	PROVEN	Ast.mergeAttrs_eq (entries concatenated, duplicates kept)
-graph/src/parser/ast.rs	QueryGraph::add_node	842	PROVEN	Ast.addNode_spec
 graph/src/parser/ast.rs	QueryGraph::merge_node	862	PROVEN	Ast.mergeNode_present (labels unioned via extendLabels_mem, attrs concatenated, same position), mergeNode_absent
-graph/src/parser/ast.rs	QueryGraph::replace_node	880	PROVEN	Ast.replaceNode_spec
-graph/src/parser/ast.rs	QueryGraph::add_relationship	890	PROVEN	Ast.addRel_spec
-graph/src/parser/ast.rs	QueryGraph::add_path	906	PROVEN	Ast.addPath_spec
 graph/src/parser/ast.rs	QueryGraph::variables	918	PROVEN	Ast.variables_order (nodes, then rels, then paths)
-graph/src/parser/ast.rs	QueryGraph::nodes	927	PROVEN	Ast.accessors
-graph/src/parser/ast.rs	QueryGraph::nodes_mut	931	PROVEN	Ast.accessors
-graph/src/parser/ast.rs	QueryGraph::relationships	936	PROVEN	Ast.accessors
-graph/src/parser/ast.rs	QueryGraph::relationships_mut	940	PROVEN	Ast.accessors
-graph/src/parser/ast.rs	QueryGraph::paths	945	PROVEN	Ast.accessors
-graph/src/parser/ast.rs	QueryGraph::filter_visited	952	PROVEN	Ast.filterVisited_nodes (only unvisited (id, scope) entities survive); notVisited_key (tests `alias.key()`)
-graph/src/parser/ast.rs	QueryGraph::connected_components	980	PROVEN	Ast2.components_cover (every node visited / in some component), dfs_mono
 graph/src/parser/ast.rs	QueryGraph::dfs	1001	PROVEN	Ast2.dfs (one id-only visited set for nodes, rels, paths): dfs_mono, dfs_marks, relStep_mono
 graph/src/parser/ast.rs	SetItem::fmt	1056	PROVEN	Ast2.setItemFmt_replace, setItemFmt_merge
 graph/src/parser/ast.rs	QueryIR::fmt	1201	PROVEN	Ast2.clauseFmt, clauseFmt_union, clauseFmt_match
 graph/src/parser/ast.rs	QueryIR::validate	1310	PROVEN	Ast.validate: call_then_match_rejected, call_then_unwind_rejected, call_then_create_multi_type_rejected (#3297), with_last_rejected (#3291), validate_ends
-graph/src/parser/ast.rs	QueryIR::inner_validate	1316	PROVEN	Ast.innerValidate: call_validates_rest, call_transparent (#3297 fixes W4-plan-4), with_last_rejected (#3291), validate_ends, create_multi_type
 graph/src/parser/ast.rs	validate_set_items	1494	PROVEN	Ast.setItemsOk_spec
-graph/src/parser/ast.rs	validate_inlined_properties	1513	PROVEN	Ast.inlinedOk_spec
 graph/src/parser/ast.rs	QueryIR::return_column_names	1535	PROVEN	Ast.returnColumns: returnColumns_last_return, returnColumns_skips_updates, returnColumns_nonquery
 graph/src/planner/hop_order.rs	self_loops_after_binders	25	PROVEN	HopOrder.selfLoopsAfterBinders: selfLoops_perm (permutation; run_inv: deferred list empty at the end), kept_sublist (non-deferred hops keep their order), deferred_after_binder (a deferred self-loop follows its first later binder), single_pass (one fold, one step per hop), early_return_sound, pr_cases; eq_reference = pre-#3102 loop (pre3102_reference, tests::reference) under WF (self_loop ⇒ from = to; planner: orderRels_eq_reference when alias ids are unique per pattern), wf_needed (#3102 61284ea4f, fixes #2999)
 graph/src/planner/optimizer/mod.rs	collect_expr_scoped_variables	105	PROVEN	E.scopedVars (Anchor.lean): mem_scopedVars (exactly the (scope,id) of the variables the expression reads), scopedVars_keeps_scope

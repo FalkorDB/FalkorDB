@@ -35,9 +35,9 @@ names an older commit (it keeps that commit's numbers).
 
 ## SAVE walks attributes by seek
 
-`AttributeStore::encode_with_range` (attribute_store.rs:1427) now finds its first live id with
+`AttributeStore::encode_with_range` (attribute_store.rs) now finds its first live id with
 `nth_live_id` (:1485: rank/select on the deleted-id `RoaringTreemap`) and `take(count)`s, instead of
-`window … (max count 1)`; `Encode for RoaringTreemap::encode_with_range` (serialization.rs:180) seeks
+`window … (max count 1)`; `Encode for RoaringTreemap::encode_with_range` (serialization.rs) seeks
 with `select`/`advance_to` instead of `skip`. The earlier model `Content.encode_spec` stays as a
 statement; every `file:line` cite in these four files was re-read against main.
 
@@ -46,7 +46,7 @@ statement; every `file:line` cite in these four files was re-read against main.
 | `SaveRoaring` | roaring 0.11.5 `rank`/`select`/`advance_to` as definitions on `RSet` (the owners' abstraction) | `RSet.rank_spec`, `select_spec`, `iterFrom_spec` |
 | `SaveNthLive` | `nth_live_id` :1485 | `nthLive_spec`, `nthLive_drop`, `nthLive_empty_deleted`, `nthLive_past_end`, `bsearch_spec`, `mid_bounds`, `rank_le`, `liveThrough_no_overflow` |
 | `SaveSlice` | `encode_with_range` :1427 | `prEncode_spec`, `prEncode_eq_main` (= the earlier `Content.encode` for `count > 0`), `count_zero_differs` / `count_zero_witness`, `pr_encode_decode_roundtrip`, `walk_spec` |
-| `SaveLayout` | serialization.rs:180, `Graph::encode_payload` graph.rs:5172, `encode_graph` encoder/mod.rs:68 | `encRoarPR_eq` (every `count`/`offset`), `encoder_counts_pos` (`count = 0` unreachable), `chunk_concat`, `encodeGraphPR_eq`, `load_encode_pr`, `multi_load_pr` |
+| `SaveLayout` | serialization.rs, `Graph::encode_payload` graph.rs, `encode_graph` encoder/mod.rs | `encRoarPR_eq` (every `count`/`offset`), `encoder_counts_pos` (`count = 0` unreachable), `chunk_concat`, `encodeGraphPR_eq`, `load_encode_pr`, `multi_load_pr` |
 
 `SaveLayout` needs graph_persist's layout, so pending_commit now requires `../graph_persist`
 (graph_persist requires nothing: no cycle; pending_commit already sat above it for `SaveSlice`).
@@ -58,7 +58,7 @@ matrix halves of this change are in versioned_matrix `TensorSave` and graphblas_
 
 ## Unique enforcement through `query_for` + `lookup` (#3547 / #2386)
 
-`unique_violated` (pending.rs:217) takes
+`unique_violated` (pending.rs) takes
 `query_for: Fn(Vec<Value>) -> Option<Q>` and `lookup: Fn(Q) -> L`. `use_index` starts `true`, and a
 member for which `query_for` is `None` sends the whole set to the label scan (the lookups gathered so far
 are dropped, none runs). The RediSearch pair is `redisearch_unique_query` (:174, new) + `get_indexed_*`;
@@ -83,7 +83,7 @@ The check rows stay CONDITIONAL: the native `(query_for, lookup)` contract (`hId
 
 ## `node_has_changes`
 
-`node_has_changes` (pending.rs:760, inner `has` :764): `PC.nodeHasChanges_spec` (true iff the node is a key of `set_labels`,
+`node_has_changes` (pending.rs, inner `has` :764): `PC.nodeHasChanges_spec` (true iff the node is a key of `set_labels`,
 `remove_labels`, `new_nodes_attrs`, `existing_nodes_attrs`), `hasKey_eq` (the `is_empty` short-cut
 is a no-op), `nodeHasChanges_false_labels` / `_false_attrs` (false ⇒ both overlays are the
 identity), `nodeHasChanges_overapprox` (sufficient, not exact). Runtime side: runtime_core
@@ -92,7 +92,7 @@ identity), `nodeHasChanges_overapprox` (sufficient, not exact). Runtime side: ru
 ## Index-backed UNIQUE enforcement and bulk attribute import
 
 * UNIQUE constraints are enforced by an index lookup
-  per member (`unique_violated`, pending.rs:178; `is_value_valid_for_index_lookup` :153)
+  per member (`unique_violated`, pending.rs; `is_value_valid_for_index_lookup` :153)
   instead of a label scan per member. `UniqueIndex.lean`: `uniqueViolated_spec` (violated
   iff two members share a full key or a member's key is carried by a live candidate outside
   the affected set), `uniqueViolated_agrees` (equals the label-scan verdict `PC.check`
@@ -113,11 +113,11 @@ identity), `nodeHasChanges_overapprox` (sufficient, not exact). Runtime side: ru
 
 | Lean | Rust |
 | --- | --- |
-| `PS.P` (no `nodeEntry`/`relEntry`) | `struct Pending` (pending.rs:307): the boundary fields and the id-space builders are gone |
+| `PS.P` (no `nodeEntry`/`relEntry`) | `struct Pending` (pending.rs): the boundary fields and the id-space builders are gone |
 | `PS.rmStep` (+ `taken` removal), `removeRelsG` | `remove_pending_relationships_for_node(id, g)` (:902): `taken_relationship_ids.remove` + `g.cancel_relationship_id(rel_id)?` (:944-947) |
 | `PS.deletePendingNode` | `delete_pending_node(id, g)` (:851): unwinds and hands the id back via `g.cancel_node_id(id)?` (:888) |
 | `PD.endSegment`, `clear` | `end_segment` (:1885), which replaced `clear` + `open_id_boundaries` |
-| `CommitOpNext.*` | `CommitOp::next` (ops/commit.rs:69) with `end_segment` (:139) |
+| `CommitOpNext.*` | `CommitOp::next` (ops/commit.rs) with `end_segment` (:139) |
 
 New theorems: `removeRelsG_spec`, `foldl_rmStep_taken`, `deletePendingNode_spec`,
 `deletePendingNode_refused`, `endSegment_spec`, `commitNext_ok`,
@@ -126,7 +126,7 @@ New theorems: `removeRelsG_spec`, `foldl_rmStep_taken`, `deletePendingNode_spec`
 cancel is the hypothesis `PS.CancelSpec freeN freeR` (= `IdSpace::cancel` inserts into the
 free set of its own id space and shrinks neither; proofs/id_space, and `IdSpaceContract.cancel_ok` in proofs/graph_queries).
 **Discharged (2026-10-11):** `CancelRust.lean` models `cancel_node_id` /
-`cancel_relationship_id` over the two id spaces (`IdSpace::cancel`, id_space.rs:529)
+`cancel_relationship_id` over the two id spaces (`IdSpace::cancel`, id_space.rs)
 and proves `cancelN_spec`/`cancelR_spec`; `deletePendingNode_spec_rust`,
 `removeRelsG_spec_rust` are the instantiated theorems.
 
@@ -134,7 +134,7 @@ and proves `cancelN_spec`/`cancelR_spec`; `deletePendingNode_spec_rust`,
 
 | Lean | Rust |
 | --- | --- |
-| `Span.mergeGen`, `newLen`         | `Block::merge_span` general path, 2nd / 1st pass (attribute_store.rs:699-792) |
+| `Span.mergeGen`, `newLen`         | `Block::merge_span` general path, 2nd / 1st pass (attribute_store.rs) |
 | `Span.patch`                      | `merge_span` fast path 1, in-place replace (:648-667) |
 | `Span.pureRemove`, `skipBelow`    | `merge_span` fast path 2, pure removal (:671-696) |
 | `Span.mergeSpan`                  | `Block::merge_span` path selection (:636) |
@@ -143,18 +143,18 @@ and proves `cancelN_spec`/`cancelR_spec`; `deletePendingNode_spec_rust`,
 | `Arena.retire/resize/grow`        | `retire_span` (:535), `resize_span_slack` (:548), `grow_slots` (:560) |
 | `Arena.setSpan/freeSpan/mergeSpan`| `Block::set_span` (:573), `free_span` (:616), `merge_span` slot effects |
 | `Arena.compact`, `live`           | `Block::compact` (:798) and its `debug_assert_eq!` (:821) |
-| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:691), `remove_node_labels` (:741), `node_has_label` (:778), `update_node_labels` (:806) |
-| `Labels.stagedNodeLabels/updateNodeLabels/stagedLabelIds` | `staged_node_labels` (pending.rs:824), `update_node_labels` over it, `Runtime::staged_label_ids` (ops/delete.rs:196) |
-| `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-145) |
-| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1405-1421) |
-| `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:595, :1005) |
-| `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1591) + evaluator's null |
-| `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1898, attribute_store.rs:1351) |
-| existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs:1861/:1871) |
-| `Props.replaceFrom`               | `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace` + the source's entries, every `SET e = …` branch (ops/set.rs:125-148, and the node/relationship-target arms of `set_inner` :151) |
-| `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1571-1999: `get_node_attribute` to `get_node_outdegree_by_type`) |
+| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs), `remove_node_labels` (:741), `node_has_label` (:778), `update_node_labels` (:806) |
+| `Labels.stagedNodeLabels/updateNodeLabels/stagedLabelIds` | `staged_node_labels` (pending.rs), `update_node_labels` over it, `Runtime::staged_label_ids` (ops/delete.rs) |
+| `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs) |
+| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs) |
+| `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs) |
+| `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs) + evaluator's null |
+| `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs, attribute_store.rs) |
+| existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs/:1871) |
+| `Props.replaceFrom`               | `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace` + the source's entries, every `SET e = …` branch (ops/set.rs, and the node/relationship-target arms of `set_inner` :151) |
+| `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs: `get_node_attribute` to `get_node_outdegree_by_type`) |
 | `Snapshot.del/commit/createRust`  | `delete_nodes_bulk`/`delete_entity` (ops/delete.rs), `CommitOp` (ops/commit.rs), `IdSpace::reserve` bin-first |
-| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:851), commit counters (:1344-1415) |
+| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs), commit counters (:1344-1415) |
 
 Hypotheses (the AXIOMATISED rows): GraphBLAS `set_all`/`remove` on the label
 matrices behave as set insert/delete, so commit is `(C ∪ set) \ remove`
@@ -165,8 +165,8 @@ matrices behave as set insert/delete, so commit is `(C ∪ set) \ remove`
 
 | Lean module | Rust |
 | --- | --- |
-| `BinSearch` | std `binary_search_by` (rustc 1.98.1 `core/src/slice/mod.rs:2976`), used by every sorted lookup |
-| `NameMap` | `AttrNameMap` (attribute_store.rs:131-252), the `MAX_ATTRIBUTES` cap and `as u16` mint |
+| `BinSearch` | std `binary_search_by` (rustc 1.98.1 `core/src/slice/mod.rs`), used by every sorted lookup |
+| `NameMap` | `AttrNameMap` (attribute_store.rs), the `MAX_ATTRIBUTES` cap and `as u16` mint |
 | `Pack` | `Tag`/`PackedAttr`/`heap_index`, `pack_value`, `store_packed_value`, `unpack`, `release_*`, `compact`'s heap remap, `SpanRef::heap_bytes` (:256-532, :806-816, :883) |
 | `Content`, `ContentMerge`, `ContentCompact` | `Block` with contents: `grow_slots`, `set_span`, `free_span`, `merge_span`, `compact`, `maybe_compact`, `SpanRef` (:560-872) |
 | `Store`, `StoreFold`, `StoreApi`, `StoreCodec`, `StoreMem` | `DataBlock` radix directory and every `AttributeStore` method, RDB encode/decode, `trim`, memory accounting (:896-1497) |
@@ -233,12 +233,12 @@ Wave-4 findings:
    Inconsistent within Rust too: a pending edge deleted directly is counted
    created + deleted. Fix: add `cancelled_nodes.len()` /
    `cancelled_relationships.len()` (and their staged props/labels) to both sides
-   (pending.rs:1344-1415). Tests `bug_cancelled_*`.
+   (pending.rs). Tests `bug_cancelled_*`.
 3. **Writes to a deleted relationship are applied and counted.** `REMOVE r.v`
-   after `DELETE r` (ops/remove.rs:144-146 has no deletion check for relationships;
+   after `DELETE r` (ops/remove.rs has no deletion check for relationships;
    nodes have one at :119-121) → Rust `Properties removed: 1`, C none. `SET r.v = 2`
    after `DETACH DELETE a` cascades `r` → Rust set 1/removed 1, C none: the
-   cascade is recorded only in `Runtime::deleted_relationships`, which set.rs:274-278
+   cascade is recorded only in `Runtime::deleted_relationships`, which set.rs
    does not consult. Test `bug_writes_to_deleted_relationship_are_counted`.
 
 Also confirmed vs C (stats only, no Rust test): property counters are net at
@@ -254,7 +254,7 @@ Re-found but already known: `Labels added` counts schema labels (#2655), plain D
 * `decode_with_count` does not deduplicate attribute ids before `set_span`, which
   assumes a strictly sorted null-free span; reachable only via a malformed RDB.
   (`import_attrs_resolved` deduplicates; its GRAPH.BULK callers drop
-  `Null` values before calling it, src/commands/bulk_insert.rs:227, call :460.)
+  `Null` values before calling it, src/commands/bulk_insert.rs, call :460.)
 
 ## Modelling assumptions
 
@@ -287,7 +287,7 @@ commit/replay is stated in `StagedBugs.lean`:
   (redis_layer `RelLookup`).
 
 ## UNDER CONSTRUCTION constraints bind writes
-`enforce_constraints` (pending.rs:1500) skips only FAILED constraints (as C's
+`enforce_constraints` (pending.rs) skips only FAILED constraints (as C's
 `Schema_EnforceConstraints`), not every non-OPERATIONAL one. `PC.Constraint.operational : Bool`
 became `status : CStatus`; `enforce_spec` now reads "passes iff every non-FAILED constraint's check
 passes"; added `enforce_operational`, `enforce_underConstruction`, `enforce_skips_failed`.

@@ -45,11 +45,11 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 
 | module | there |
 | --- | --- |
-| `Column` | `Column`, `classify_*`, `NullBitmap`, `extend_active_slice` (`batch.rs:90-414`) |
-| `Batch` | `Batch` selection / gather / compaction / `set_column` / `write_column` (`batch.rs:805-1394`), selection producers `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs:529` |
-| `Row`, `Row.pushSlot` | `Row` (`row.rs`), `Row::push_slot` (`row.rs:224`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1424-1459`) |
-| `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
-| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-787`), ExpandInto trim (`expand_into.rs:285-294`) |
+| `Column` | `Column`, `classify_*`, `NullBitmap`, `extend_active_slice` (`batch.rs`) |
+| `Batch` | `Batch` selection / gather / compaction / `set_column` / `write_column` (`batch.rs`), selection producers `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs` |
+| `Row`, `Row.pushSlot` | `Row` (`row.rs`), `Row::push_slot` (`row.rs`), `BatchRow::value_at` / `to_owned_row` (`batch.rs`) |
+| `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs`) |
+| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs`), ExpandInto trim (`expand_into.rs`) |
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
 | `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` (`/` is `checked_div`: `i64::MIN / -1` errors and the int lane refuses it; `%` still wraps to 0) |
 | `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |
@@ -59,7 +59,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 * **Values** are proofs/core's `FalkorCore.V F` (all sixteen variants; `Column.lean`), so the
   lanes and expr_semantics' evaluator share one value type; `compare_value`'s null arms order
   by `OrderedEnum::order` and `NOT` names the operand type, as in Rust.
-* **`VecEval`**: `VectorEval::eval` (vector_expr.rs:211-271) over proofs/expr_semantics' `E`, arms
+* **`VecEval`**: `VectorEval::eval` (vector_expr.rs) over proofs/expr_semantics' `E`, arms
   in source order with their guards; `eval_sound` (every tree in scope, every set of valid
   rows) and `evalValues_sound` (`eval_values`, :285). `Dispatch.lean` stays as the coarser
   `Kind`/`Node` model of the same walk.
@@ -72,7 +72,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
   (`eval_case`: a `WHEN` over the unclaimed rows, a `THEN` over the rows it claims),
   `FuncLane.evalFunction_sound` (`eval_function`, the all-`Scalar` fold included),
   `FuncLane.hasLabelsLane_sound` + `HasLabelsFn.hl_hasLabelsFn` (`eval_has_labels` against the
-  registry's `hasLabels`, entity.rs:62-127, with `validate_args_type` / `value_of_type`),
+  registry's `hasLabels`, entity.rs, with `validate_args_type` / `value_of_type`),
   `LaneWF` (every lane returns `len` rows).
 * **`CoreBridge.lawful`**: the `Lawful` instance over a batch — every field proved from the
   lane theorems; **`vec_sound`**: whenever `VectorEval::eval` returns a column, entry `i` is
@@ -80,7 +80,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
   bulk property fetch = the per-row read), is a theorem for the runtime built from its
   attribute state: **`RuntimeReads.matNode_eq` / `matRel_eq` / `propReads`**
   (`materialize_{node,relationship}_property_values` vs `get_{node,relationship}_attribute`,
-  runtime.rs:1459-1658, the graph's batch and by-name reads being their definitions).
+  runtime.rs, the graph's batch and by-name reads being their definitions).
 * **`EvalBatch`**: proofs/expr_semantics' `BatchLaws` for `eval_batch` discharged
   (`evalBatch_sound`).
 
@@ -149,7 +149,7 @@ proofs/ops_aggregate.
 
 ## Re-target to 5e475e6c9 (#3436)
 * `BatchedResultEmitter::with_binding`'s ceiling is `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1,
-  BATCH_SIZE))` (batched_result_emitter.rs:562), plus two `debug_assert!`s (`pack_ceiling` in `[1,
+  BATCH_SIZE))` (batched_result_emitter.rs), plus two `debug_assert!`s (`pack_ceiling` in `[1,
   BATCH_SIZE]` in `with_binding`, `<= BATCH_SIZE` in `start_batch`): `Emitter.withBinding` is the clamp;
   `withBinding_le_batch` (the debug-asserted range) and `miscompiled_differs`. The `u16`
   selection hazard (`skip_u16_wraps`) keeps its premise that the ceiling is capped.
@@ -158,23 +158,23 @@ proofs/ops_aggregate.
   by 3-4 (`seed` :578 … `new_without_alias` :784). `matNode_eq` / `matRel_eq` read the same graph.
 
 ## Re-target to 4a4f2a72f
-* `Column::compare_at` (batch.rs:401): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
+* `Column::compare_at` (batch.rs): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
   `x != x`), `cv` = `Value::sort_cmp`: `compareAt_spec` now proves the float lane antisymmetric
   for every pair.
   `compare_rows_at` (:1281) takes `cv = sort_cmp`. Full order laws: proofs/value_order
   `Main.scMain_total`, `Main.compareAt_eq_scMain`.
-* `compare_values` (vectorized.rs:239) `Neq`: NaN/disjoint are `true`.
+* `compare_values` (vectorized.rs) `Neq`: NaN/disjoint are `true`.
 
 ## Re-target to a9377c636 (#2845)
-* `BatchMisc.rowsOnly` (`Batch::rows_only`, batch.rs:853): `rowsOnly_spec` (len rows, no
-  column, origin 0, WF). `BatchMisc.hasOrigins` (`Batch::has_origins`, batch.rs:1312):
+* `BatchMisc.rowsOnly` (`Batch::rows_only`, batch.rs): `rowsOnly_spec` (len rows, no
+  column, origin 0, WF). `BatchMisc.hasOrigins` (`Batch::has_origins`, batch.rs):
   `hasOrigins_spec`, `hasOrigins_zero_not_unset` (it separates "all origins 0" from
   "never stamped", which `origin_row` cannot). `Emitter.finishLen` takes the new
   `has_origins` arm of `start_batch`. The per-row origin argument is in
   `CallBoundary.lean` (`Pr2845.emit_origin_sound`, folded in from the retired pr2845_review).
 
 ## Row and concat
-`Row.lean`: `Row.pushSlot` (`Row::push_slot`, `row.rs:224`), `slotOf`/`pushSlots` (the loop of `to_owned_row`),
+`Row.lean`: `Row.pushSlot` (`Row::push_slot`, `row.rs`), `slotOf`/`pushSlots` (the loop of `to_owned_row`),
 `pushSlots_spec`, `toOwned_unbound_slot`, `toOwned_get_eq_view`, `toOwned_trailing_unbound`. `Concat.lean`:
 `concatGeneric`'s `boundAny` requires `0 < b.activeLen`; `concat_obs_eq` holds with empty batches, and
 `empty_batch_ignored` states that an empty batch binds nothing.

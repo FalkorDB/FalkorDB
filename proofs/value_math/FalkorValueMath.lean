@@ -41,17 +41,17 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 
 | Lean (file) | Rust |
 | --- | --- |
-| `wrap`, `wAdd/wSub/wMul/wDiv/wRem` (Int64) | `wrapping_*` in `Add/Sub/Mul/Div/Rem for Value` value.rs:952,1084,1130,1159,1189 |
+| `wrap`, `wAdd/wSub/wMul/wDiv/wRem` (Int64) | `wrapping_*` in `Add/Sub/Mul/Div/Rem for Value` value.rs |
 | `roundF`, `satTrunc`, `cDivExact` (Int64) | `i as f64`; C `SIValue_Divide` (src/value.c, master) |
-| `V`, `add`, `addSlow`, `sub`, `mul`, `div`, `rem`, `omInsert/omExtend` (Value) | value.rs:184, :952, :967, :1084, :1130, :1159, :1189; `OrderMap::insert/extend` ordermap.rs:85,227 |
+| `V`, `add`, `addSlow`, `sub`, `mul`, `div`, `rem`, `omInsert/omExtend` (Value) | value.rs; `OrderMap::insert/extend` ordermap.rs |
 | `cAdd`, `cMul`, `siMultiply`, `cNumeric` (CArith) | C `SIValue_Add/_Multiply` + `AR_ADD/AR_MUL` type checks (`cAddType`/`cMulType`); `siMultiply` is written from `value.c`, independent of `mul` |
-| `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1323; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1080 |
-| `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow` (+ `pre2904_applyPow`), `cAbs` (MathFns) | math.rs:42-352; C `AR_ABS` |
-| `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:41-290; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
-| `splitOnce`, `digitCount`, `sciFixed`, `floatToString`, `toStr_float` (FloatToString) | conversion.rs:299 `float_to_string` (PR #3609; std formatters/`parse` = `FmtOps` parameters) |
-| `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1266, :1446, :1519, :2009, :2013, :1672, :1649 |
-| `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode`/`pre3339_decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:302, :347, :393, :444, :463, :613, :2091/:2177 (decode before #3339), :2072-2079, :1700 |
-| `MAX_VALUE_NESTING`, `valueNestingError`, `decodeValue`, `decode`, `validateProperty`/`validateListProperty`/`isValidProperty` (Nesting) | value.rs:71, :76, :2189, :2177; pending.rs:78-131 |
+| `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs; mod.rs |
+| `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow` (+ `pre2904_applyPow`), `cAbs` (MathFns) | math.rs; C `AR_ABS` |
+| `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
+| `splitOnce`, `digitCount`, `sciFixed`, `floatToString`, `toStr_float` (FloatToString) | conversion.rs `float_to_string` (PR #3609; std formatters/`parse` = `FmtOps` parameters) |
+| `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs |
+| `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode`/`pre3339_decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs/:2177 (decode before #3339), :2072-2079, :1700 |
+| `MAX_VALUE_NESTING`, `valueNestingError`, `decodeValue`, `decode`, `validateProperty`/`validateListProperty`/`isValidProperty` (Nesting) | value.rs; pending.rs |
 
 ## Main theorems
 
@@ -92,7 +92,7 @@ never), **`validateProperty_depth`** (every accepted property has depth ≤ MAX)
 `decode_nest_deep` is a current theorem: the decoder refuses depth past the cap.
 Note (`within_nest_empty`): the decoder's cut is one level more lenient than the writers' —
 `MAX` arrays around `[]` (depth MAX+1) decode; harmless (still bounded, never stored).
-`GRAPH.BULKINSERT`'s bound (bulk_insert.rs:132) is in proofs/redis_layer (`Bulk`).
+`GRAPH.BULKINSERT`'s bound (bulk_insert.rs) is in proofs/redis_layer (`Bulk`).
 
 ## Confirmed bugs (Rust repro + live Rust vs C)
 
@@ -120,7 +120,7 @@ No open confirmed bugs. Fixed ones are in this file's git history. The latent on
 
 ## Suspicions / latent
 
-- `Functions::is_aggregate(name)` (mod.rs:1080) does not lowercase; no caller today
+- `Functions::is_aggregate(name)` (mod.rs) does not lowercase; no caller today
   (`isAggregate_case_sensitive`).
 - `heap_size`/`amortized_heap_size` charge a `Relationship` 24 bytes it does not own.
 - `Encode<19>` writes Map/Node/Rel/Path as NULL after only a `debug_assert!`
@@ -148,14 +148,14 @@ f64 ops and the RNG are structures (`Lower`, `FM`, `Rng`). Highlights: `add_spec
 ## Union display and UDF names
 
 - `dbms.functions` union spelling: `type_to_dbms_string` flattens
-  (`collect_dbms_types`, procedures.rs:705), sorts by `DBMS_TYPE_ORDER` and dedups.
+  (`collect_dbms_types`, procedures.rs), sorts by `DBMS_TYPE_ORDER` and dedups.
   `union_order_is_c` (the member
   list is strictly increasing in C's type order with exactly the collected members),
   `canon_eq_of`, `union_perm_invariant` (declaration order irrelevant), and the concrete rows
   `union_point_null` (`Null or Point`), `union_tofloat` (`String, Integer, Float, or Null`),
   `union_nested`, `union_any`.
 - UDF names are case-sensitive: `register_udf`/`unregister_udf`
-  (mod.rs:1131/:1142) and the `Functions::get` UDF fallback (:1048) key by the exact name.
+  (mod.rs/:1142) and the `Functions::get` UDF fallback (:1048) key by the exact name.
   `Registry.udf_case_sensitive` and `TypeCheck.regGet_udf_case_sensitive`; built-ins stay
   case-insensitive (`regGet_builtin_ci`). `dbms_functions` drops a UDF whose lowercase name equals a
   built-in's (`keepUdf`).
@@ -179,7 +179,7 @@ Divergences: `db.indexes`/`db.constraints` same rows, different row order; `db.i
 for hasLabels/length/nodes/relationships, internal-op rows differ; `createNodeIndex`
 C form `('L','p')` rejected (known stub, test_effects_shapes.py:670) and alone under
 GRAPH.QUERY it fails with the misleading "graph.RO_QUERY is to be executed only on read-only
-queries" (procedure_call.rs:67: a lone write procedure is planned as read-only);
+queries" (procedure_call.rs: a lone write procedure is planned as read-only);
 `db.idx.fulltext.drop` of a missing index errors (C: no-op); `queryNodes(1, 2)` errors
 (C: empty).
 

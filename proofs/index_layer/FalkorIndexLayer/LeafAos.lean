@@ -11,10 +11,10 @@ this model at `DOC_BYTES = 8`. `aosRead` is the former `AosLeaf::read` helper, i
 | Lean | Rust |
 | --- | --- |
 | `lexLe` | `(u64, u64)` tuple `<=` |
-| `aosEnc`, `aosBuild` | `AosLeaf::build` `aos.rs:39` |
+| `aosEnc`, `aosBuild` | `AosLeaf::build` `aos.rs` |
 | `aosCount`, `aosRead`, `aosKey`, `aosDoc` | `count` 18, (`read`, inlined), `key` 23, `doc` 31 |
 | `aosMerge` | `AosLeaf::merge_batch` 51 (via `merge_walk`) |
-| `pairsOf` | `Leaf::iter` / `to_pairs` (`leaf/mod.rs:233,238`) |
+| `pairsOf` | `Leaf::iter` / `to_pairs` (`leaf/mod.rs`) |
 -/
 namespace IndexLayer.Leaf
 

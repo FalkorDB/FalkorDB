@@ -1,7 +1,7 @@
 /-
 # Deleted-entity snapshots vs. id reuse
 
-`Runtime::deleted_nodes` / `deleted_relationships` (runtime.rs:193/:195) are
+`Runtime::deleted_nodes` / `deleted_relationships` (runtime.rs/:195) are
 query-lifetime maps **keyed by id** holding what a deleted entity looked like,
 so a later clause can still read it (`DELETE n WITH n RETURN n.v`). Every
 entity read consults them *first*:
@@ -64,7 +64,7 @@ structure RS where
   quar : List Nat
   deriving Repr
 
-/-- `DELETE` of a live node: snapshot it (`delete_nodes_bulk`, delete.rs:301-312; `delete_entity`, :485-491), drop it from the graph. -/
+/-- `DELETE` of a live node: snapshot it (`delete_nodes_bulk`, delete.rs; `delete_entity`, :485-491), drop it from the graph. -/
 def del (s : RS) (id : Nat) : RS :=
   match find s.live id with
   | some e => { s with live := s.live.filter (·.1 != id), freed := id :: s.freed,

@@ -6,10 +6,10 @@ This is the general cause behind issue #2923 (an inline property map that
 references an earlier variable): `MATCH (a)-[r]->(b) MATCH (c:B {v: id(r)*0})`
 fails with "'r' not defined".
 
-* The parser ends a pattern on any token but `,` (cypher.rs:1581-1587); an earlier parser folded
+* The parser ends a pattern on any token but `,` (cypher.rs); an earlier parser folded
   consecutive `MATCH` (and `CREATE`) clauses into one pattern and a pattern *predicate*
   swallowed the next MATCH. `fold` below is that earlier parser, kept for the historical theorems.
-* `bind_graph` first defines every named relationship alias (binder.rs:1498-1512), then the nodes
+* `bind_graph` first defines every named relationship alias (binder.rs), then the nodes
   (1522-1534), then the relationships (1527-1706): a node's attrs see every relationship of the
   pattern, and the planner checks such attrs once all they read is bound
   (`lift_cross_entity_attrs`). (An earlier `bind_graph` defined all nodes before any relationship,
@@ -24,7 +24,7 @@ namespace FalkorBinder
 /-- A written name stands for its `Alias::Named` (the test patterns below name every entity). -/
 instance : Coe Name Alias := ⟨Alias.named⟩
 
-/-- `Alias::name(..).is_some()` (ast.rs:97-102). -/
+/-- `Alias::name(..).is_some()` (ast.rs). -/
 def Alias.isNamed : Alias → Bool
   | .named _ => true
   | .anon _ => false
@@ -74,16 +74,15 @@ def stepAll (scope : List Alias) : List Elem → Except String (List Alias)
 def specBind (scope : List Alias) (p : List Elem) : Except String (List Alias) :=
   stepAll scope p
 
-/-- The named relationship aliases `bind_graph` defines first (binder.rs:1481-1716; an
+/-- The named relationship aliases `bind_graph` defines first (binder.rs; an
 unnamed one, `alias.name()` = `None`, is skipped). -/
 def defRels (scope : List Alias) (p : List Elem) : List Alias :=
   ((split p).2.filter (fun e => e.alias.isNamed)).foldl (fun s e => grow s e.alias) scope
 
-/-- `bind_graph` (binder.rs:1481): named relationship aliases, then nodes, then
+/-- `bind_graph` (binder.rs): named relationship aliases, then nodes, then
 relationships (#2981; before it, nodes then relationships). A node `Elem`'s attrs are
 those of every occurrence of its alias (`Parser::add_pattern_node` merges them for MATCH), so
-a repeated endpoint that shares the node's bound map (`merged_occurrences`, binder.rs:1576,
-1634) checks no name the node step did not already check. -/
+a repeated endpoint that shares the node's bound map (`merged_occurrences`, binder.rs) checks no name the node step did not already check. -/
 def rustBind (scope : List Alias) (p : List Elem) : Except String (List Alias) :=
   do stepAll (← stepAll (defRels scope p) (split p).1) (split p).2
 
@@ -208,8 +207,8 @@ inductive RawClause
   deriving Repr, DecidableEq
 
 /-- `parse_pattern`'s loop before #2981 (`if token == *clause { next; continue }`, removed at
-cypher.rs:1581-1587): a MATCH whose pattern was directly followed by `MATCH` absorbed it — WHERE comes after the pattern
-(`parse_match_clause`, cypher.rs:1109-1117), so only a WHERE-less clause
+cypher.rs): a MATCH whose pattern was directly followed by `MATCH` absorbed it — WHERE comes after the pattern
+(`parse_match_clause`, cypher.rs), so only a WHERE-less clause
 absorbs; the absorbed clause's own WHERE becomes the merged clause's. -/
 def fold : List RawClause → List RawClause
   | [] => []

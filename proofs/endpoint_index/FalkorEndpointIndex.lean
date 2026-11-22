@@ -39,7 +39,7 @@ endpoints no longer fit.
 | `Ix.clear`                      | `clear` (:694) |
 | `Ix.prepare`                    | `prepare` (:522) — `reserve_exact` has no semantic effect and is dropped |
 | `Ix.prepareTiers`, `clampStarts` | `prepare_tiers` (:607), its clamp (:612-616) |
-| `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs:2710`; `prepare` at `:2777`, then `set` per edge), `delete_relationships` (`graph.rs:2965`) and `delete_implicit_edges` (`graph.rs:3102`) via `clear_edge_endpoint` (`graph.rs:3464`), `Graph::restore` (`graph.rs:900`; `prepare_tiers` at `:958`, then `set`) |
+| `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs`; `prepare` at, then `set` per edge), `delete_relationships` (`graph.rs`) and `delete_implicit_edges` (`graph.rs`) via `clear_edge_endpoint` (`graph.rs`), `Graph::restore` (`graph.rs`; `prepare_tiers` at, then `set`) |
 
 ## What is proved (all without `sorry`; see `#print axioms` at the end)
 
@@ -262,7 +262,7 @@ theorem clampStarts_mono (s1 s2 s3 len : Nat) :
   simp only [clampStarts]; omega
 
 /-- Already-ordered starts (what `Graph::restore` passes, its own clamp: the
-"clamped monotone" loop at graph.rs:951-955) are left unchanged: the clamp is a no-op on the restore path. -/
+"clamped monotone" loop at graph.rs) are left unchanged: the clamp is a no-op on the restore path. -/
 theorem clampStarts_ordered {s1 s2 s3 len : Nat} (h : s1 ≤ s2 ∧ s2 ≤ s3 ∧ s3 ≤ len) :
     clampStarts s1 s2 s3 len = (s1, s2, s3) := by
   simp only [clampStarts, Prod.mk.injEq]; omega
@@ -951,7 +951,7 @@ theorem snapshot_isolated (ops₁ ops₂ : List Op) (hv₁ : ∀ op ∈ ops₁, 
     snap.get i = refRun (fun _ => none) ops₁ i :=
   fresh_refines ops₁ hv₁ i
 
-/-- `Graph::restore` (`graph.rs:900`, `prepare_tiers` at `:958`): `prepare_tiers` with any boundaries,
+/-- `Graph::restore` (`graph.rs`, `prepare_tiers` at): `prepare_tiers` with any boundaries,
 then `set` for every edge of every tensor. The index answers exactly the
 restored edge set (the last `set` of an id wins, which cannot matter since a
 tensor holds each edge id once). -/
@@ -1142,7 +1142,7 @@ theorem ensurePages_spec {α} (P : Nat) (hP : 0 < P) (fill : α) (pages : List (
 
 /-! ## Detach-delete: which edges `delete_implicit_edges` clears
 
-`Graph::delete_implicit_edges` (`graph.rs:3102`) builds, per relationship
+`Graph::delete_implicit_edges` (`graph.rs`) builds, per relationship
 type, the list of edges to remove for a set `N` of deleted nodes: for each
 `n ∈ N`, the outgoing edges of `n`, then the incoming edges of `n` whose source
 is neither `n` (a self-loop, already seen outgoing) nor another deleted node

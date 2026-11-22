@@ -12,15 +12,15 @@ Coverage per Rust fn: `COVERAGE.tsv`. Repro: `graph/tests/lean_graph_persist.rs`
 
 | Lean | Rust |
 | --- | --- |
-| `Codec.Tok`, `Val.encode/decode`, `decOne` | `BufferedWriter/Reader` tagged words; `impl Encode/Decode<19> for Value` (value.rs:2084,2170) |
-| `Codec.nulTerm/stripNul` | `null_terminated`/`strip_null_terminator` (serializers/mod.rs:245,253), `save_string_nul`/`strip_trailing_nul` (redis_type.rs:248,266) |
-| `Layout.chunkType`, `covered` | `build_multi_key_payloads` entity loop (encoder/mod.rs:95-153) + `encode_with_range` offsets (attribute_store.rs:1425) |
-| `Layout.roaringRT` | `Encode/Decode<19> for RoaringTreemap` (serialization.rs:172-241) |
-| `Layout.decodeSpanFilter` | `AttributeStore::decode_with_count` filter (attribute_store.rs:1476) |
-| `Constraint.rustFrag`, `uniqueCollideRust` | `Graph::build_composite_key` `format!("{v:?}")` (graph.rs:4771), `check_node_constraint`/`check_edge_constraint` (pending.rs:1580,1672) |
+| `Codec.Tok`, `Val.encode/decode`, `decOne` | `BufferedWriter/Reader` tagged words; `impl Encode/Decode<19> for Value` (value.rs) |
+| `Codec.nulTerm/stripNul` | `null_terminated`/`strip_null_terminator` (serializers/mod.rs), `save_string_nul`/`strip_trailing_nul` (redis_type.rs) |
+| `Layout.chunkType`, `covered` | `build_multi_key_payloads` entity loop (encoder/mod.rs) + `encode_with_range` offsets (attribute_store.rs) |
+| `Layout.roaringRT` | `Encode/Decode<19> for RoaringTreemap` (serialization.rs) |
+| `Layout.decodeSpanFilter` | `AttributeStore::decode_with_count` filter (attribute_store.rs) |
+| `Constraint.rustFrag`, `uniqueCollideRust` | `Graph::build_composite_key` `format!("{v:?}")` (graph.rs), `check_node_constraint`/`check_edge_constraint` (pending.rs) |
 | `Constraint.uniqueCollideC` | C `EnforceUniqueEntity` (observed behaviour) |
-| `Constraint.hasDup`, `rustConstraintOK` | `validate_unique_constraint` (graph.rs:4715) via `create_constraint` (graph.rs:4500) |
-| `Constraint.rustEnforceKeyBuilds` | the nested scan in `check_node_constraint` (the earlier enforcement, kept as a historical model; `unique_violated`, pending.rs:217, replaces it) |
+| `Constraint.hasDup`, `rustConstraintOK` | `validate_unique_constraint` (graph.rs) via `create_constraint` (graph.rs) |
+| `Constraint.rustEnforceKeyBuilds` | the nested scan in `check_node_constraint` (the earlier enforcement, kept as a historical model; `unique_violated`, pending.rs, replaces it) |
 
 ## Proven (headline)
 
@@ -49,7 +49,7 @@ vanish on reload — is identical in C (both write only operational ones).
 
 ## CONFIRMED bugs (Rust vs C on live servers)
 
-1. **UNIQUE key is type-tagged, C's is value-equal** (graph.rs:4779
+1. **UNIQUE key is type-tagged, C's is value-equal** (graph.rs
    `format!("{v:?}")`). Under `UNIQUE NODE L (v)`: `CREATE (:L {v:1})` then
    `{v:1.0}` / `{v:true}`, and `{v:0.0}` then `{v:-0.0}` — Rust admits, C rejects
    ("unique constraint violation"). Conversely duplicate lists, points, dates,
@@ -58,7 +58,7 @@ vanish on reload — is identical in C (both write only operational ones).
    `unique_key_int_eq_float_like_c`, `unique_key_neg_zero_eq_zero_like_c`,
    `unique_key_bool_eq_int_like_c` FAIL (keys `Int(1)|` vs `Float(1.0)|`).
 2. **Constraint created over already-violating data comes up OPERATIONAL**
-   (consequence of 1, graph.rs:4715): graph with `(:L {v:1}),(:L {v:1.0})`,
+   (consequence of 1, graph.rs): graph with `(:L {v:1}),(:L {v:1.0})`,
    `(:M {v:0.0}),(:M {v:-0.0})`, `(:K {v:1}),(:K {v:true})` + range indexes +
    `GRAPH.CONSTRAINT CREATE g UNIQUE NODE <X> PROPERTIES 1 v` →
    `db.constraints()` Rust: all OPERATIONAL; C: all FAILED.
@@ -77,12 +77,12 @@ vanish on reload — is identical in C (both write only operational ones).
 
 | Lean | Rust |
 | --- | --- |
-| `Persist.Reader` — `Out`, `RT`, `RT_bind`, `RT_rep`, `readU`, `decV` | `BufferedReader` words; `Value::decode` (value.rs:2170) as an `Out` reader |
-| `Persist.Store` — `encRoar`/`decRoar`, `encEnt`/`decEnt`, `applyEnt`, `fold_ents` | `RoaringTreemap` codec (serialization.rs:172-241), `AttributeStore::encode_with_range`/`decode_with_count` (attribute_store.rs:1409-1497) |
-| `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs:4925), `load_graph_from_reader` |
-| `Persist.MultiKey` — `fillKey`, `keysFrom`, `buildMulti` | `build_multi_key_payloads` (encoder/mod.rs:95-189) |
-| `Persist.KeyRT`, `Fold`, `Pending`, `MultiLoad*` — `rdbKey`, `stepKey`, `runKeys`, `fold_char` | `rdb_load_graph` (decoder/mod.rs:44-174), `decode_payloads_into_pending`, `finalize_pending_graph`, `DECODE_STATE` |
-| `Persist.Indexes` — `rebuild` | `rebuild_indexes` (decoder/mod.rs:345-400) |
+| `Persist.Reader` — `Out`, `RT`, `RT_bind`, `RT_rep`, `readU`, `decV` | `BufferedReader` words; `Value::decode` (value.rs) as an `Out` reader |
+| `Persist.Store` — `encRoar`/`decRoar`, `encEnt`/`decEnt`, `applyEnt`, `fold_ents` | `RoaringTreemap` codec (serialization.rs), `AttributeStore::encode_with_range`/`decode_with_count` (attribute_store.rs) |
+| `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs), `load_graph_from_reader` |
+| `Persist.MultiKey` — `fillKey`, `keysFrom`, `buildMulti` | `build_multi_key_payloads` (encoder/mod.rs) |
+| `Persist.KeyRT`, `Fold`, `Pending`, `MultiLoad*` — `rdbKey`, `stepKey`, `runKeys`, `fold_char` | `rdb_load_graph` (decoder/mod.rs), `decode_payloads_into_pending`, `finalize_pending_graph`, `DECODE_STATE` |
+| `Persist.Indexes` — `rebuild` | `rebuild_indexes` (decoder/mod.rs) |
 | `RedisType.AuxData`, `Uuid`, `VKeys`, `Load` | `redis_type.rs`: aux save/load, `on_persistence`, `pre_fork_prepare`, `uuid_v4`, virtual keys, `graph_rdb_save`, `graph_rdb_load`, `finalize_pending_graphs`, `install_graph`, `graphmeta_*` |
 
 Sub-codecs enter as the laws of `Persist.Codecs` (hypotheses, not axioms): header/schema
@@ -128,7 +128,7 @@ ports 18910/18911, `CACHE_SIZE 1`):
    `BufferedReader::ensure_available`; C also dies).
 
 ## Virtual keys as `graphmeta`, and `IdSpace`
-* `save_key_slice` (redis_type.rs:210) is `saveKeySlice`; `graph_rdb_save` (:185) is
+* `save_key_slice` (redis_type.rs) is `saveKeySlice`; `graph_rdb_save` (:185) is
   `rdbSave = saveKeySlice.getD whole` (same `save_main`/`save_vkey`/`save_single`);
   `graphmeta_rdb_save` (:881) is `metaSave = saveKeySlice` — it now writes the slice
   (`metaSave_of_slice`, `metaSave_rdbSave`) and nothing for a leftover key

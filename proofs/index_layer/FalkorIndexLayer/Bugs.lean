@@ -26,7 +26,7 @@ def both : Props := fun k => if k = 0 then some (.int 1) else if k = 1 then some
 def both' : Props := fun k => if k = 0 then some (.int 1) else if k = 1 then some (.int 3) else none
 
 /-- [bool_int_conflated] `Document::set` stores `true` as numeric 1.0
-(`mod.rs:765`) and `value_to_numeric` maps `1` to 1.0 (`mod.rs:1372`): the
+(`mod.rs`) and `value_to_numeric` maps `1` to 1.0 (`mod.rs`): the
 index says `true = 1`. The optimizer drops the filter for a literal, so the
 wrong row is returned. (C: same bug.) -/
 theorem bug_bool_eq_int :
@@ -40,8 +40,8 @@ theorem fixed3076_temporal_in_numeric_range :
 
 /-- [folded_temporal_constant_drops_filter] a temporal *constant*
 (constant-folded `date(...)`) is not `can_utilize_index`
-(`node_by_index_scan.rs:253`), so the scan falls back to a label scan; but
-`is_non_indexable_subexpr` (`utilize_index.rs:895`) only flags
+(`node_by_index_scan.rs`), so the scan falls back to a label scan; but
+`is_non_indexable_subexpr` (`utilize_index.rs`) only flags
 `Constant(Int)` among constants, so no post-filter is kept: every node of
 the label is returned. -/
 theorem bug_folded_temporal_constant :
@@ -50,7 +50,7 @@ theorem bug_folded_temporal_constant :
     holds (one (.int 7)) (.equal 0 (.temporal 0 5)) = false := by bugsimp
 
 /-- [point_equality_empty] `is_indexable(Point) = true` but
-`build_query_node` has no `Equal`-`Point` arm (`mod.rs:1697` → null), so
+`build_query_node` has no `Equal`-`Point` arm (`mod.rs` → null), so
 `n.p = point(...)` returns nothing even with the filter kept. (C: correct.) -/
 theorem bug_point_equality :
     canUtilize (.equal 0 (.point 1 2)) = true ∧
@@ -58,7 +58,7 @@ theorem bug_point_equality :
     holds (one (.point 1 2)) (.equal 0 (.point 1 2)) = true := by bugsimp
 
 /-- [in_list_drops_temporal_item] the `InList` expansion silently drops list
-items that are not Int/Float/String/Bool (`node_by_index_scan.rs:226-231`), so
+items that are not Int/Float/String/Bool (`node_by_index_scan.rs`), so
 the node whose value is the dropped item is never produced. -/
 theorem bug_in_list_drops_item :
     expandIn 0 (.list [.temporal 0 5, .int 2]) = some (.or [.equal 0 (.int 2)]) ∧
@@ -108,14 +108,14 @@ theorem fixed3081_open_bound_includes_inf :
 
 /-- [multilabel_and] `try_filter_pushdown` merges conjuncts found on
 *different* labels into one query against the *first* label's index
-(`utilize_index.rs:503`); `build_query_node` returns null for the unknown
-field and the whole AND becomes empty (`mod.rs:1587`). (C: correct.) -/
+(`utilize_index.rs`); `build_query_node` returns null for the unknown
+field and the whole AND becomes empty (`mod.rs`). (C: correct.) -/
 theorem bug_multilabel_and :
     indexHit fieldsA both (.and [.equal 0 (.int 1), .equal 1 (.int 2)]) = false ∧
     holds both (.and [.equal 0 (.int 1), .equal 1 (.int 2)]) = true := by bugsimp
 
-/-- [multilabel_or] same for OR (`utilize_index.rs:521`); the unknown-field
-branch is dropped from the union (`mod.rs:1603`) and the filter is gone. -/
+/-- [multilabel_or] same for OR (`utilize_index.rs`); the unknown-field
+branch is dropped from the union (`mod.rs`) and the filter is gone. -/
 theorem bug_multilabel_or :
     indexHit fieldsB both' (.or [.equal 1 (.int 2), .equal 0 (.int 1)]) = false ∧
     holds both' (.or [.equal 1 (.int 2), .equal 0 (.int 1)]) = true := by bugsimp

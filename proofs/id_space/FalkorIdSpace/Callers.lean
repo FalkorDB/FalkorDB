@@ -5,9 +5,9 @@ import FalkorIdSpace.Quarantine
 `release_no_underflow`/`release_succeeds` take that as `hsub`. The engine has exactly three call
 sites (`grep '\.release(' graph/src`), and each builds its two sets so that the premise holds:
 
-* `Graph::delete_nodes` (`graph.rs:2320`): `.release(deleted_nodes, deleted_nodes)`.
-* the implicit-edge sweep (`graph.rs:3249`): `.release(&freed, &freed)`, one set built once.
-* `Graph::delete_relationships` (`graph.rs:3006`): `.release(rels, &resolved)` where phase 1 is
+* `Graph::delete_nodes` (`graph.rs`): `.release(deleted_nodes, deleted_nodes)`.
+* the implicit-edge sweep (`graph.rs`): `.release(&freed, &freed)`, one set built once.
+* `Graph::delete_relationships` (`graph.rs`): `.release(rels, &resolved)` where phase 1 is
   `for edge_id in rels { … resolved.insert(edge_id) }` — `resolved` is `rels` thinned by whether the
   edge resolved to endpoints and a type (`resolveFrom`), so it is a subset by construction.
 
@@ -16,7 +16,7 @@ and `release` is total and keeps `Inv`.
 -/
 namespace IdSpaceModel
 
-/-- `graph.rs:3006`'s `resolved`: the members of `rels` the phase-1 walk resolved (`resolves`
+/-- `graph.rs`'s `resolved`: the members of `rels` the phase-1 walk resolved (`resolves`
 is the `endpoints_for_edge` / type-matrix lookup, whatever it answers). -/
 def resolveFrom (rels : IdSet) (resolves : Nat → Bool) : IdSet := fun i => rels i && resolves i
 

@@ -4,14 +4,14 @@ import RedisLayer.RespCompact
 
 | here | there |
 | --- | --- |
-| `wf`                          | `write_f` `:36-45` |
-| `fmtS` / `fmtList` / `fmtMap` | `format_value_to_string` `:49-111` |
-| `encVb`, `specVb`, `pointStr` | `reply_verbose_value` `:364-546` (top-level point `:536-545`) |
-| `statCalls`, `statLines`      | `reply_stats` `:548-635` |
-| `resultCalls`                 | `reply_query` `:688-747` on `(compact, client_schema)` (`:694-697`) |
-| `ReplyFormat`, `queryCalls`   | `enum ReplyFormat` `:672-685`, `reply_query` `:688-747` (#3757) |
-| `Schema`, `schemaCalls`, `i64OfU64` | `reply_schema` `:644-670` (#3757), `u64::cast_signed` |
-| `E.fmt` (`Compact.Env`)       | `format_g(x, 15)` `:123-142` (libc `snprintf`, AXIOMATISED as an abstract function) |
+| `wf`                          | `write_f` |
+| `fmtS` / `fmtList` / `fmtMap` | `format_value_to_string` |
+| `encVb`, `specVb`, `pointStr` | `reply_verbose_value` (top-level point) |
+| `statCalls`, `statLines`      | `reply_stats` |
+| `resultCalls`                 | `reply_query` on `(compact, client_schema)` |
+| `ReplyFormat`, `queryCalls`   | `enum ReplyFormat`, `reply_query` (#3757) |
+| `Schema`, `schemaCalls`, `i64OfU64` | `reply_schema` (#3757), `u64::cast_signed` |
+| `E.fmt` (`Compact.Env`)       | `format_g(x, 15)` (libc `snprintf`, AXIOMATISED as an abstract function) |
 
 Number/temporal formatting is abstract (`Fmt`): `{:.6}`, `%.15g`, `Value::format_*`.
 
@@ -44,11 +44,11 @@ def joinSep : List String → String
   | [s] => s
   | s :: ss => s ++ ", " ++ joinSep ss
 
-/-- `write_f` (`:36-45`, #3043): C's `%f` spelling of NaN, `{:.6}` otherwise. -/
+/-- `write_f` (, #3043): C's `%f` spelling of NaN, `{:.6}` otherwise. -/
 def wf (x : F) : String := if M.nan x then "nan" else M.f6 x
 
 mutual
-/-- `format_value_to_string` (`:49-111`). -/
+/-- `format_value_to_string`. -/
 def fmtS : V F → String
   | .null => "NULL"
   | .bool b => if b then "true" else "false"
@@ -74,12 +74,12 @@ def fmtMap : List (String × V F) → List String
   | (k, v) :: kvs => (k ++ ": " ++ fmtS v) :: fmtMap kvs
 end
 
-/-- The top-level verbose point (`:531-540`, #3043): no space after the colons. -/
+/-- The top-level verbose point (, #3043): no space after the colons. -/
 def pointStr (a o : F) : String :=
   "point({latitude:" ++ M.f6 a ++ ", longitude:" ++ M.f6 o ++ "})"
 
 mutual
-/-- `reply_verbose_value` (`:364-546`). -/
+/-- `reply_verbose_value`. -/
 def encVb : V F → List (Call F)
   | .null => [.null]
   | .bool x => [.str (if x then "true" else "false")]
@@ -213,7 +213,7 @@ theorem vprops_emits : ∀ ps : List (Nat × V F), Emits E.vfmt (encVbProps E M 
     simpa [encVbProps, specVbProps] using this
 end
 
-/-! ## Statistics (`reply_stats`, `:548-635`) -/
+/-! ## Statistics (`reply_stats`) -/
 
 structure Stats (F : Type) where
   labelsAdded : Nat
@@ -232,7 +232,7 @@ structure Stats (F : Type) where
 def opt (n : Nat) (label : String) : List String :=
   if n > 0 then [label ++ toString n] else []
 
-/-- The lines in emission order (`:581-629`). -/
+/-- The lines in emission order. -/
 def statLines (st : Stats F) (version : Nat) : List String :=
   opt st.labelsAdded "Labels added: " ++ opt st.labelsRemoved "Labels removed: "
   ++ opt st.nodesCreated "Nodes created: " ++ opt st.propertiesSet "Properties set: "
@@ -246,7 +246,7 @@ def statLines (st : Stats F) (version : Nat) : List String :=
 
 def c1 (n : Nat) : Nat := if n > 0 then 1 else 0
 
-/-- `stats_len`, computed in the *counting* order (`:548-578`). -/
+/-- `stats_len`, computed in the *counting* order. -/
 def statsLen (st : Stats F) : Nat :=
   3 + c1 st.labelsAdded + c1 st.labelsRemoved + c1 st.nodesCreated + c1 st.nodesDeleted
     + c1 st.propertiesSet + c1 st.propertiesRemoved + c1 st.relationshipsCreated
@@ -277,7 +277,7 @@ theorem stats_emits (st : Stats F) (version : Nat) :
   rw [List.length_map, ← statsLen_eq] at h
   exact h
 
-/-! ## The `SCHEMA_HASH` element (`reply_schema`, `:644-670`, #3757) -/
+/-! ## The `SCHEMA_HASH` element (`reply_schema`, #3757) -/
 
 /-- What `reply_schema` reads from the graph version the query ran on: `schema_hash()`
 (a `u64`) and the three name lists, in id order. -/
@@ -292,7 +292,7 @@ def i64OfU64 (h : Nat) : Int := if h < 2 ^ 63 then h else (h : Int) - 2 ^ 64
 
 def strsCalls (ls : List String) : List (Call F) := .arr ls.length :: ls.map Call.str
 
-/-- `reply_schema` (`:644-670`). `reply_with_map(n)` is RESP2's flat `2n`-array (the RESP
+/-- `reply_schema`. `reply_with_map(n)` is RESP2's flat `2n`-array (the RESP
 framing this model uses); the lists are `graph.schema()`'s three `NameMap::names()`. -/
 def schemaCalls (sc : Schema) (client : Nat) : List (Call F) :=
   if sc.hash = client then [.arr 2, .str "hash", .ll (i64OfU64 sc.hash)]
@@ -331,13 +331,13 @@ theorem i64OfU64_spec (h : Nat) (hh : h < 2 ^ 64) :
     -2 ^ 63 ≤ i64OfU64 h ∧ i64OfU64 h < 2 ^ 63 ∧ (i64OfU64 h - h) % 2 ^ 64 = 0 := by
   unfold i64OfU64; split <;> omega
 
-/-! ## Whole replies (`reply_query`, `:688-747`) -/
+/-! ## Whole replies (`reply_query`) -/
 
 def rowCalls (compact : Bool) (row : List (V F)) : List (Call F) :=
   .arr row.length :: (row.map fun v => if compact then .arr 2 :: encC E v else encVb E M v).flatten
 
-/-- `reply_query` (`:688-747`) on the pair `(compact, client_schema)` it reads from its
-`ReplyFormat` (`:694-697`): `schema = some (graph, client_hash)` appends `reply_schema`
+/-- `reply_query` on the pair `(compact, client_schema)` it reads from its
+`ReplyFormat`: `schema = some (graph, client_hash)` appends `reply_schema`
 (#3757). `queryCalls` is the `ReplyFormat` entry point. -/
 def resultCalls (compact : Bool) (names : List String) (rows : List (List (V F)))
     (st : Stats F) (version : Nat) (schema : Option (Schema × Nat)) : List (Call F) :=
@@ -374,7 +374,7 @@ theorem flat_single {α β} (l : List α) (f : α → β) : (l.map fun a => [f a
 
 /-- **Compact reply**: `GRAPH.QUERY … --compact` sends exactly `Compact.encReply`, which
 `Compact.decReply_enc` proves the client decodes. Rows have one cell per return name
-(`batch.value_at(name.id, row)` for each name, `:666-675`). -/
+(`batch.value_at(name.id, row)` for each name). -/
 theorem compact_reply (names : List String) (rows : List (List (V F))) (st : Stats F)
     (version : Nat) (hn : names ≠ []) :
     Emits E.vfmt (resultCalls E M true names rows st version none)
@@ -397,7 +397,7 @@ theorem compact_reply (names : List String) (rows : List (List (V F))) (st : Sta
   have := (((hh.append _ hr).append _ (stats_emits E M st version))).array
   simpa [resultCalls, hn, encReply, Function.comp_def, List.map_map] using this
 
-/-- A query without `RETURN` gets `[stats]` only (`:637-642`). -/
+/-- A query without `RETURN` gets `[stats]` only. -/
 theorem noreturn_reply (compact : Bool) (rows : List (List (V F))) (st : Stats F) (version : Nat) :
     Emits E.vfmt (resultCalls E M compact [] rows st version none)
       [.arr [.arr ((statLines M st version).map R.bulk)]] := by
@@ -480,7 +480,7 @@ theorem verbose_schema_reply (names : List String) (rows : List (List (V F))) (s
     (schema_emits E sc client))).array
   simpa [resultCalls, hn, flat_single] using this
 
-/-! ## `ReplyFormat` (`:672-685`, #3757) -/
+/-! ## `ReplyFormat` (, #3757) -/
 
 /-- `enum ReplyFormat`: `Verbose` (the default) or `Compact { schema }`, the client's
 cached hash when it sent `SCHEMA_HASH h`. -/
@@ -488,8 +488,8 @@ inductive ReplyFormat where
   | verbose
   | compact (schema : Option Nat)
 
-/-- `reply_query(ctx, runtime, result, format)` (`:688-747`): `Compact { schema }` is
-`(true, schema)`, `Verbose` is `(false, None)` (`:694-697`); `sc` is the graph version
+/-- `reply_query(ctx, runtime, result, format)`: `Compact { schema }` is
+`(true, schema)`, `Verbose` is `(false, None)`; `sc` is the graph version
 the query ran on, which `reply_schema` reads. -/
 def queryCalls (fmt : ReplyFormat) (sc : Schema) (names : List String)
     (rows : List (List (V F))) (st : Stats F) (version : Nat) : List (Call F) :=
@@ -576,7 +576,7 @@ theorem fmtS_vec_c (H : CPf M) (xs : List F) :
   simp [fmtS, this]
 
 /-- **The top-level verbose point is C's text.** Point coordinates are finite
-(`Point::validate`, `value.rs:177-190`), hence not NaN. -/
+(`Point::validate`, `value.rs`), hence not NaN. -/
 theorem pointStr_c (H : CPf M) (a o : F) (ha : M.nan a = false) (ho : M.nan o = false) :
     pointStr M a o = cPointStr H.cf a o := by
   simp [pointStr, cPointStr, H.f6_agree a ha, H.f6_agree o ho]

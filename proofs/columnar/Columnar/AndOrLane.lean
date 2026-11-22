@@ -1,7 +1,7 @@
 import Columnar.CoreOps
 
 /-!
-# `VectorEval::eval_and_or` (vector_expr.rs:388-464) against the per-row `AND` / `OR`
+# `VectorEval::eval_and_or` (vector_expr.rs) against the per-row `AND` / `OR`
 
 The lane keeps, per position into `rows`, the verdict `result[pos]` (starting at the neutral
 element `!sc`), a null bit, and the `live` positions; each child is evaluated over the live
@@ -37,7 +37,7 @@ def pairsOf (get : Nat → V F) : List Nat → Nat → List (Nat × V F)
   | [], _ => []
   | p :: ps, k => (p, get k) :: pairsOf get ps (k + 1)
 
-/-- The pass over the live positions (vector_expr.rs:428-470). -/
+/-- The pass over the live positions (vector_expr.rs). -/
 def scanP (sc : Bool) : List (Nat × V F) → (Nat → Bool) → (Nat → Bool) →
     Except String ((Nat → Bool) × (Nat → Bool) × List Nat)
   | [], res, nul => .ok (res, nul, [])
@@ -54,7 +54,7 @@ structure St where
   nul : Nat → Bool
   live : List Nat
 
-/-- The child loop (vector_expr.rs:409-472). -/
+/-- The child loop (vector_expr.rs). -/
 def loop (ev : E (V F) → List Nat → Except String (EC F)) (sc : Bool) (rows : List Nat) :
     List (E (V F)) → St → Except String St
   | [], st => .ok st
@@ -65,7 +65,7 @@ def loop (ev : E (V F) → List Nat → Except String (EC F)) (sc : Bool) (rows 
       let t ← scanP sc (pairsOf col.get st.live 0) st.res st.nul
       loop ev sc rows cs ⟨t.1, t.2.1, t.2.2⟩
 
-/-- `eval_and_or` (vector_expr.rs:388). -/
+/-- `eval_and_or` (vector_expr.rs). -/
 def evalAndOr (ev : E (V F) → List Nat → Except String (EC F)) (cs : List (E (V F))) (rows : List Nat)
     (sc : Bool) : Except String (EC F) := do
   let st ← loop ev sc rows cs ⟨fun _ => !sc, fun _ => false, List.range rows.length⟩

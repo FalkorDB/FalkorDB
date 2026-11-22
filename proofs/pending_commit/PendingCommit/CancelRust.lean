@@ -8,9 +8,9 @@ Here the graph's two id spaces are proofs/graph_queries' `GQ.IdS` / `GQ.rCancel`
 (`IdRust.lean`, imported via a Lake path dependency) and the hypothesis is
 proved for the Rust bodies:
 
-* `cancel_node_id` (graph.rs:1549) = `self.node_ids.cancel(id)?`,
-* `cancel_relationship_id` (graph.rs:1562) = `self.relationship_ids.cancel(id)?`,
-* `IdSpace::cancel` (id_space.rs:529) = `if !taken.insert(id) {Err}; recycled.insert(id); checked()`.
+* `cancel_node_id` (graph.rs) = `self.node_ids.cancel(id)?`,
+* `cancel_relationship_id` (graph.rs) = `self.relationship_ids.cancel(id)?`,
+* `IdSpace::cancel` (id_space.rs) = `if !taken.insert(id) {Err}; recycled.insert(id); checked()`.
 
 `freeN g` / `freeR g` are the recycled sets of the node and relationship id
 space; `CancelSpec` is stated per space (`cancelN` makes its id free in
@@ -29,11 +29,11 @@ def freeN (g : Gr) : List Nat := g.1.recycled
 def freeR (g : Gr) : List Nat := g.2.1.recycled
 def types (g : Gr) : List Nat := g.2.2
 
-/-- `cancel_node_id` (graph.rs:1549). -/
+/-- `cancel_node_id` (graph.rs). -/
 def cancelN (g : Gr) (id : Nat) : Option Gr := (rCancel g.1 id).map (fun s => (s, g.2))
-/-- `cancel_relationship_id` (graph.rs:1562). -/
+/-- `cancel_relationship_id` (graph.rs). -/
 def cancelR (g : Gr) (id : Nat) : Option Gr := (rCancel g.2.1 id).map (fun s => (g.1, s, g.2.2))
-/-- `get_type_id_mut(name)` (graph.rs:1346, #3641's call in `remove_pending_relationships_for_node`):
+/-- `get_type_id_mut(name)` (graph.rs, #3641's call in `remove_pending_relationships_for_node`):
 a known name is left alone, a new one is appended to `relationship_types`
 (graph_queries `Schema.getTypeIdMut`; its tensor and resize touch no id space). -/
 def regT (g : Gr) (t : Nat) : Gr := (g.1, g.2.1, if t ∈ g.2.2 then g.2.2 else g.2.2 ++ [t])

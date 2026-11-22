@@ -4,9 +4,9 @@
 | here | there |
 | --- | --- |
 | `TK`, `CK`, `TE` | `ExprIR` variants (bound), constant value kinds |
-| `mayBool` | `expr_may_return_boolean` binder.rs:2556-2621 |
-| `mayEntity` | `expr_may_return_entity` binder.rs:2624-2689 |
-| `validate` | `validate_boolean_operands` / `_impl` binder.rs:2530-2532 |
+| `mayBool` | `expr_may_return_boolean` binder.rs |
+| `mayEntity` | `expr_may_return_entity` binder.rs |
+| `validate` | `validate_boolean_operands` / `_impl` binder.rs |
 | `canBN`, `canEnt` | reference: can the expression *evaluate* (without error) to a Bool/Null, to an entity/Null |
 
 `TE` is a *bound* tree, and no bound tree holds a `Paren`
@@ -15,7 +15,7 @@
 `Distinct` is the one transparent wrapper.
 
 `mayBool` is used to reject a WHERE / list-comprehension predicate ("Expected
-boolean predicate", binder.rs:467, 784, 1395, 2013) and logical operands
+boolean predicate", binder.rs) and logical operands
 (`validate_boolean_operands`); a check is *sound* if it never rejects an
 expression that can produce a boolean or null.
 
@@ -160,7 +160,7 @@ end
 
 /-- #3270: the subscript `l[0]` (a list of booleans, a property list …) can be `true`, and is now
 accepted as a predicate and as a logical operand (the `GetElement` arm of the "runtime-typed → true"
-list, binder.rs:2598). -/
+list, binder.rs). -/
 theorem getElement_accepted (l i : TE) :
     canBN (.node .getElement [l, i]) = true ∧ mayBool (.node .getElement [l, i]) = true ∧
     mayBoolAll [.node (.const .bool) [], .node .getElement [l, i]] = true := by

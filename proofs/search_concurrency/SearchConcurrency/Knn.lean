@@ -5,16 +5,16 @@ import SearchConcurrency.Search
 | here | there |
 | --- | --- |
 | `vectorQuery` (generic over the id type) | the shared body of both fns below |
-| `vectorQueryNodes`  | `graph/src/graph/graph.rs:4400-4461` `vector_query_nodes`, `count = node_count()` (`:4427`; `node_count` `:1137`) |
-| `vectorQueryEdges`  | `graph.rs:4466-4523` `vector_query_edges`, `count = relationship_count()` (`:4493`; `relationship_count` `:1154`) |
-| `opOk = false`      | `graph.rs:4408-4412` / `:4476-4480` `!indexer.is_operational(label)` → `Err("The vector index on '{label}' is under construction")` (#3382, PR #3581; C: "Invalid arguments for procedure") |
-| `clampK`            | `graph.rs:4426` / `:4493` `k.min(count.max(1) as usize)` |
-| `KnnIndex.query`    | `node_indexer.vector_query` (`:4428`) / `edge_indexer.vector_query_edges` (`:4495-4496`) (RediSearch FFI) |
-| `dimCheck`          | `graph.rs:4414-4421` / `:4482-4489` dimension-mismatch `Err` |
-| `attrKnown = false` | `graph.rs:4432-4434` / `:4499-4501` `return Ok(Vec::new().into_iter())` |
-| `outCap`            | `graph.rs:4442` / `:4509` `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
-| `filterMap step`    | `graph.rs:4446-4454` / `:4513-4519` `let Value::VecF32 .. else continue` + `vec_distance::distance` |
-| `mergeSort`         | `graph.rs:4458` / `:4522` stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
+| `vectorQueryNodes`  | `graph/src/graph/graph.rs` `vector_query_nodes`, `count = node_count()` (; `node_count`) |
+| `vectorQueryEdges`  | `graph.rs` `vector_query_edges`, `count = relationship_count()` (; `relationship_count`) |
+| `opOk = false`      | `graph.rs` / `!indexer.is_operational(label)` → `Err("The vector index on '{label}' is under construction")` (#3382, PR #3581; C: "Invalid arguments for procedure") |
+| `clampK`            | `graph.rs` / `k.min(count.max(1) as usize)` |
+| `KnnIndex.query`    | `node_indexer.vector_query` / `edge_indexer.vector_query_edges` (RediSearch FFI) |
+| `dimCheck`          | `graph.rs` / dimension-mismatch `Err` |
+| `attrKnown = false` | `graph.rs` / `return Ok(Vec::new().into_iter())` |
+| `outCap`            | `graph.rs` / `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
+| `filterMap step`    | `graph.rs` / `let Value::VecF32 .. else continue` + `vec_distance::distance` |
+| `mergeSort`         | `graph.rs` / stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
 
 (Line numbers are for main 256ab4d3f; the model was written against 89d68334a, #3088, and re-checked
 against #3581's gate and #3736's refactors, which leave the arms above unchanged.)
@@ -43,7 +43,7 @@ structure KnnIndex (α : Type) (count : Nat) where
   query : Nat → List α
   query_spec : ∀ k, query k = ranked.take k
 
-/-- `k.min(count.max(1) as usize)` (graph.rs:4398 / :4464). -/
+/-- `k.min(count.max(1) as usize)` (graph.rs / :4464). -/
 def clampK (k count : Nat) : Nat := min k (max count 1)
 
 /-- One loop iteration: `let Value::VecF32(v) = entity else continue;` then

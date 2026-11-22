@@ -36,7 +36,7 @@ Also modelled here:
   attribute is named, as C.
 * `Ids.rebuildNodeMs`, `rebuild_never_shrinks`, `rebuild_keeps_entries`: `rebuild_derived_matrices` takes
   `node_cap.max(saved)` before resizing.
-* `Schema.registerRelType` (graph.rs:1371), which `get_type_id_mut` and `get_relationship_matrix_mut` both call, so every
+* `Schema.registerRelType` (graph.rs), which `get_type_id_mut` and `get_relationship_matrix_mut` both call, so every
   type registration resizes: `registerRelType_width`, `getTypeIdMut_width`, `getRelMatMut_new`,
   `Delete.type_cleared_after_registration`.
 * Open: `first_node_with_relationships` stays CONDITIONAL on `AdjExact`: the adjacency matrix equals the union of
@@ -98,7 +98,7 @@ no longer needs a Nodup hypothesis),
 
 ## CONFIRMED bugs (Rust vs C, live) — bug 3 re-checked live at 256ab4d3f: still present
 (the code bug 3 cites is unchanged at fe619ac5f)
-3. **Constraint identity is property-order sensitive** (constraint.rs:79):
+3. **Constraint identity is property-order sensitive** (constraint.rs):
    `UNIQUE NODE L (a,b)` then `(b,a)` — Rust creates both, C "Constraint
    already exists" (2c874022a: unchanged). Lean `cmatches_order_sensitive`; test
    `constraint_property_order_is_irrelevant`.

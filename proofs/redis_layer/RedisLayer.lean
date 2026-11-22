@@ -36,25 +36,25 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 
 | here | there |
 | --- | --- |
-| `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`parse_schema_hash`/`up_to_nul`, `src/commands/query_args.rs:56-125` (#3757 `SCHEMA_HASH`) |
-| `QueryArgs.queryFront`/`roQueryFront`/`profileFront`/`explainFront` | `query.rs:44-51`, `ro_query.rs:32-39`, `profile.rs:22`, `explain.rs:64` |
+| `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`parse_schema_hash`/`up_to_nul`, `src/commands/query_args.rs` (#3757 `SCHEMA_HASH`) |
+| `QueryArgs.queryFront`/`roQueryFront`/`profileFront`/`explainFront` | `query.rs`, `ro_query.rs`, `profile.rs`, `explain.rs` |
 | `Args.rustParseI64`     | `str::parse::<i64>` (GRAPH.CONFIG) |
 | `Args.string2ll`        | Redis `string2ll` (`RedisModule_StringToLongLong`, `parse_integer`) |
 | `QueryArgs.cReadFlags`  | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`) |
-| `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:1064-1099` |
-| `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:123-212`, `:216-263`, `:271-314`, `:331-412` (#3816 `WRITE_LOCK_POLL_INTERVAL`) |
-| `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:331-358` |
+| `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs` |
+| `Config.validate/cross/apply1/rustSet` | `config_cmd.rs` (#3816 `WRITE_LOCK_POLL_INTERVAL`) |
+| `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs` |
 | `Config.cSet`           | C `_Config_set` (`cmd_config.c`) |
-| `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_query` (`ReplyFormat::Compact`), `src/reply.rs:152-361`, `:688-747` |
+| `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_query` (`ReplyFormat::Compact`), `src/reply.rs` |
 | `Compact.dec/decReply`  | falkordb-py `query_result.py` `parse_scalar`, `__parse_records` |
-| `Ro.plan`               | parser `write` flag (`graph/src/parser/cypher.rs:806-938`) + Commit insertion (`planner/mod.rs:2806`, `:3166`) |
-| `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:655-666`; guards `runtime/eval.rs:964,984` |
-| `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs:102-183` |
-| `Bulk.cstr`             | `read_cstring`, `:38-52` |
-| `Bulk.records/readN`    | `process_node_token` record loop, `:438-515` |
-| `Bulk.PropColumns.new/readRecord`, `keepFirst` | `PropColumns::new`/`read_record`, `:204-241` |
-| `Bulk.parseCount`       | `parse_count`, `:697-716` |
-| `Bulk.getOrCreate/slotLen` | `attribute_store.rs:182-189` (`get_or_create`), `:538`, `:549` (`len: n as u16`) |
+| `Ro.plan`               | parser `write` flag (`graph/src/parser/cypher.rs`) + Commit insertion (`planner/mod.rs`) |
+| `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs`; guards `runtime/eval.rs` |
+| `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs` |
+| `Bulk.cstr`             | `read_cstring` |
+| `Bulk.records/readN`    | `process_node_token` record loop |
+| `Bulk.PropColumns.new/readRecord`, `keepFirst` | `PropColumns::new`/`read_record` |
+| `Bulk.parseCount`       | `parse_count` |
+| `Bulk.getOrCreate/slotLen` | `attribute_store.rs` (`get_or_create`) (`len: n as u16`) |
 
 ## Proven (headline theorems)
 
@@ -97,8 +97,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    its labels (C `[]`, intended), and `CREATE (a:A) DELETE a` reports no `Nodes
    created/deleted` stats.
 
-Also seen / root cause for known issues: `Slot.len = n as u16` (`attribute_store.rs:598`,
-`:609`) is why 65536 properties vanish (#2539; 65537 keeps one, `slot_len_truncates`);
+Also seen / root cause for known issues: `Slot.len = n as u16` (`attribute_store.rs`) is why 65536 properties vanish (#2539; 65537 keeps one, `slot_len_truncates`);
 GRAPH.BULK can no longer reach it (the resolved span has at most
 65,535 entries, proofs/pending_commit `Content.normResolved_fits`), a malformed RDB still can;
 GRAPH.RESTORE `""` SIGSEGV (#2537); createNodeIndex arity (#2540); Labels-added (#2655).
@@ -109,18 +108,18 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | here | there |
 | --- | --- |
 | `BufferedIO.*`, `BufferedReader`, `RoundTrip` | `src/serializers/buffered_io.rs` (all 55 fns) |
-| `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field` `:637-725`, `encField`/`encPh` = field loop `:383-427`) |
+| `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field`, `encField`/`encPh` = field loop) |
 | `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (the pre-#3514 behaviour is kept as a historical counterexample) |
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
 | `Telemetry`, `TelemetryReg`, `TelemetryLoop`, `TelemetryFreed` | `src/telemetry.rs`; `TelemetryFreed`: the #3844 persistence strip (`strip_stream`, the freed-graph queue, `redis_type.rs` `strip_telemetry_streams`) |
 | `ModuleInit` | `src/module_init.rs`, `src/lib.rs` config table, `src/config.rs` |
-| `ConfigRewrite` | `CONFIG REWRITE` of the `lib.rs:97-116` native configs vs. what `GRAPH.CONFIG SET` / load arguments store |
+| `ConfigRewrite` | `CONFIG REWRITE` of the `lib.rs` native configs vs. what `GRAPH.CONFIG SET` / load arguments store |
 | `QuerySession` | `src/query_session.rs` |
 | `GraphCore` | `src/graph_core.rs` |
 | `Commands`, `Commands2` | `src/commands/*.rs` |
 | `SlowLog` | `src/slow_log.rs` |
-| `RelLookup` | relationship lookups of `src/reply.rs:252-293`, `:472-492` (#3447) |
-| `EnvBuild` | `sync_deepbind_environ` (`module_init.rs:158`) + `graph::env_snapshot::leak_deep_copy` (`env_snapshot.rs:22`) and `RedisBuildHost` (`graph_core.rs:1750-1766`, #3585): `copy_read_back`, `copy_fresh`, `sync_unchanged`, `sync_installs`, `publish_holds`, `publish_log` |
+| `RelLookup` | relationship lookups of `src/reply.rs` (#3447) |
+| `EnvBuild` | `sync_deepbind_environ` (`module_init.rs`) + `graph::env_snapshot::leak_deep_copy` (`env_snapshot.rs`) and `RedisBuildHost` (`graph_core.rs`, #3585): `copy_read_back`, `copy_fresh`, `sync_unchanged`, `sync_installs`, `publish_holds`, `publish_log` |
 
 Headline theorems:
 * `writeAll_flatten` — buffered writes = concatenation of the logical writes for every
@@ -169,7 +168,7 @@ leaves exactly the following bytes). `keepFirst_nodup` (at most one entry per at
 repeated name → the plain per-column read), `repeated_header_null_first`.
 
 ## Verbose-format floats and points
-`Resp.wf` = `write_f` (`reply.rs:36`, NaN as `nan`) in the float and
+`Resp.wf` = `write_f` (`reply.rs`, NaN as `nan`) in the float and
 vector leaves of `fmtS`; `Resp.pointStr` (top-level point) without a space after the
 colons. Against C's `%f` (hypothesis `CPf`): `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`,
 `pointStr_c`, `verbose_point_c`, `fixed3043_nan_in_list`. Glibc prints a NaN with the sign bit set as `-nan`, which `write_f`
@@ -224,8 +223,8 @@ non-ASCII), `legalResp_clean`, `legalResp_cjk`, `legalResp_latin1`, `bytesOf_toU
 
 ## #3447 `RelLookup` (compact-reply part, **Open**)
 The reply's type id of a deleted edge
-is a *lookup* by name (`reply.rs:260`), which `RespCompact.encC` takes as given.
-`commitCascade` registers only surviving edge types (`pending.rs:872-873`, `:1242-1251`);
+is a *lookup* by name (`reply.rs`), which `RespCompact.encC` takes as given.
+`commitCascade` registers only surviving edge types (`pending.rs`);
 `bug3447_compact_cancelled_new_type_panics` (compact `none` = panic, verbose renders;
 `RegisteredTypes`, `ReplyTotal` fail); `replyTotal_of_registered` — after commit,
 `RegisteredTypes` makes both encoders total; `s3447_survivor_ok`. The compact encoder

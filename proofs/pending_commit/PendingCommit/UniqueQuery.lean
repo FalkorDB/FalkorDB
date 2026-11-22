@@ -1,6 +1,6 @@
 import PendingCommit.UniqueIndex
 /-
-# `redisearch_unique_query` (pending.rs:174) and the RediSearch `(query_for, lookup)` pair
+# `redisearch_unique_query` (pending.rs) and the RediSearch `(query_for, lookup)` pair
 
 `check_node_constraint` / `check_edge_constraint` without `index-falkordb` build
 `query_for = |values| redisearch_unique_query(indexed, &constraint.properties, values)` and

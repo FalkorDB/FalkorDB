@@ -6,17 +6,17 @@ Argument handling and reply shapes; key access, locks and replication calls are 
 
 | here | there |
 | --- | --- |
-| `debugCmd`        | `debug.rs` `graph_debug` `:5`, `debug_aux` `:23` |
-| `deleteCmd`       | `delete.rs` `graph_delete` `:37` |
-| `effectCmd`       | `effect.rs` `graph_effect` `:25` |
-| `explainLine`, `explainCmd`, `explainCmdA` | `explain.rs` `explain` `:36`, `graph_explain` `:60` (flags `:65`) |
-| `infoSections`, `formatAvg` | `info.rs` `graph_info` `:22`, `format_avg` `:88` |
-| `cReplyName`, `replyBytes`, `scanPage`, `scanLoop` | `list.rs` `c_reply_name` `:48`, `reply_bytes` `:59`, `graph_list` `:67` |
-| `memArgs`, `upToNul`, `memTotal`, `cSchemaName` | `memory.rs` `graph_memory` `:185` (#3053; PR #3257 C error texts), `memory_report` `:73`, `c_schema_name` `:69` |
-| `slowlogCmd`      | `slowlog.rs` `graph_slowlog` `:19` |
-| `udfCmd`, `udfLoadArgs`, `udfListArgs` | `udf.rs` `:47-229` |
-| `exited`, `exitCode` | `copy.rs` `graph_copy` `:29` (`waitpid` status decoding) |
-| `restoreCmd`      | `restore.rs` `graph_restore` `:14` |
+| `debugCmd`        | `debug.rs` `graph_debug`, `debug_aux` |
+| `deleteCmd`       | `delete.rs` `graph_delete` |
+| `effectCmd`       | `effect.rs` `graph_effect` |
+| `explainLine`, `explainCmd`, `explainCmdA` | `explain.rs` `explain`, `graph_explain` (flags) |
+| `infoSections`, `formatAvg` | `info.rs` `graph_info`, `format_avg` |
+| `cReplyName`, `replyBytes`, `scanPage`, `scanLoop` | `list.rs` `c_reply_name`, `reply_bytes`, `graph_list` |
+| `memArgs`, `upToNul`, `memTotal`, `cSchemaName` | `memory.rs` `graph_memory` (#3053; PR #3257 C error texts), `memory_report`, `c_schema_name` |
+| `slowlogCmd`      | `slowlog.rs` `graph_slowlog` |
+| `udfCmd`, `udfLoadArgs`, `udfListArgs` | `udf.rs` |
+| `exited`, `exitCode` | `copy.rs` `graph_copy` (`waitpid` status decoding) |
+| `restoreCmd`      | `restore.rs` `graph_restore` |
 | `bulkReply`       | `bulk_insert.rs` `graph_bulk_insert` success reply |
 -/
 namespace RedisLayer.Commands
@@ -64,7 +64,7 @@ inductive EffOut | okNoop | okApplied | failed
 
 /-- `graph_effect`: an empty payload is a no-op; otherwise fork (nothing to take since #3657),
 apply, commit and replicate, or drop the version and report through the divergence guard. Since
-#2846 the commit is folded into the result (effect.rs:85): a version `Graph::validate`
+#2846 the commit is folded into the result (effect.rs): a version `Graph::validate`
 refuses (`valid = false`) takes the same failure arm as a rejected buffer. -/
 def effectCmd (empty applyOk : Bool) (valid : Bool := true) : EffOut × List String :=
   if empty then (.okNoop, [])
@@ -161,7 +161,7 @@ def scanPage : List ScanElem → Option (List (List Nat))
 /-- `graph_list`'s `SCAN … TYPE graphdata` loop over a finite cursor chain: the names of
 every page, in order, or `none` as soon as a page has an element that is not a string.
 
-Taken as given rather than modelled: the arity check (list.rs:71); the shape of each reply,
+Taken as given rather than modelled: the arity check (list.rs); the shape of each reply,
 an array whose first two elements are the cursor and an array of keys; a reply that is not an
 array, or lacks those two, is also `ERR Failed to list graphs` (:86-92); a
 `SCAN` error reply, passed through as the server's own error (:86); the cursor, read through
@@ -262,10 +262,10 @@ theorem scanLoop_page_none (p : List ScanElem) (hp : scanPage p = none) :
 
 def MB : Nat := 2^20
 
-/-- `up_to_nul` (`graph_core.rs:92`): the text before the first NUL, as C's `%s` prints it. -/
+/-- `up_to_nul` (`graph_core.rs`): the text before the first NUL, as C's `%s` prints it. -/
 def upToNul (s : String) : String := String.ofList (s.toList.takeWhile (· ≠ '\x00'))
 
-/-- `graph_memory` argument handling (`memory.rs:184-233`): arity 2 or 4, `USAGE`, optional
+/-- `graph_memory` argument handling (`memory.rs`): arity 2 or 4, `USAGE`, optional
 `SAMPLES n` with any non-negative `n` (#3053, `fe619ac5f`: `parse::<u64>`, `try_into` →
 `unwrap_or(usize::MAX)`, the identity on 64-bit), default 100. `parse` is `str::parse::<u64>`.
 The clamp to `1..=10000` happens later, in `memory_usage_report`. Since PR #3257 the error
@@ -389,7 +389,7 @@ def udfLoadParse : List String → Except String Udf
       | [] => .ok (.load false first a)
       | x :: _ => .error ("Unknown option given: '" ++ x ++ "'")
 
-/-- udf.rs:117-122 (#3263, e860645bb): after the option parse, an empty library name and then an
+/-- udf.rs (#3263, e860645bb): after the option parse, an empty library name and then an
 empty script are refused (before it, `LOAD "" code` registered functions named `.f` that no
 query can call: W5-udf-4). -/
 def udfLoadCheck : Udf → Except String Udf
@@ -399,7 +399,7 @@ def udfLoadCheck : Udf → Except String Udf
     else .ok (.load r lib code)
   | u => .ok u
 
-/-- `udf_load`'s argument handling (udf.rs:68-122). -/
+/-- `udf_load`'s argument handling (udf.rs). -/
 def udfLoadArgs (args : List String) : Except String Udf :=
   (udfLoadParse args).bind udfLoadCheck
 
@@ -522,14 +522,14 @@ def bulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toStri
 def cBulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toString e ++ " edges created"
 
 /-- **Fixed by #3301 (dd333fe32)**: the success reply names relationships as C does
-(`bulk_insert.rs:889,1044`; both bulk paths). This is `rfl` between two copies of the text, so it
+(`bulk_insert.rs`; both bulk paths). This is `rfl` between two copies of the text, so it
 records the wording only; it would not notice a change to the `format!` in `bulk_insert.rs`. -/
 theorem bulk_reply_c (n e : Nat) : bulkReply n e = cBulkReply n e := rfl
 
 /-! ## GRAPH.PROFILE / GRAPH.EXPLAIN flags (`QueryArgs.profileFront`, `explainFront`)
 
-Both go through `parse_query_flags` (`profile.rs:22`,
-`explain.rs:64`). An earlier PROFILE loop silently dropped a garbage
+Both go through `parse_query_flags` (`profile.rs`,
+`explain.rs`). An earlier PROFILE loop silently dropped a garbage
 timeout (historical `profile_timeout_garbage`, now `profile_timeout_garbage_rejected`), and EXPLAIN
 validated no flags at all. -/
 
@@ -540,7 +540,7 @@ theorem profile_timeout_garbage_rejected :
 theorem profile_other_args_ignored :
     profileFront 0 (pre ++ [b "--compact"]) = .ok none := by decide
 
-/-- `graph_explain` (`explain.rs:59-101`): the flags are checked first, then the key. -/
+/-- `graph_explain` (`explain.rs`): the flags are checked first, then the key. -/
 def explainCmdA (tmax : Int) (args : List Bytes) (isGraph inline : Bool) : Except QErr ExOut :=
   (explainFront tmax args).map fun _ => explainCmd isGraph inline
 

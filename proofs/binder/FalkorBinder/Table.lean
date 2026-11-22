@@ -1,18 +1,18 @@
 /-
 # Scope tables and id minting
 
-`Binder.env_stack : Vec<Scope>` (binder.rs:141), a `Scope` being the named variables by name and,
-the unnamed pattern entities in a list of their own (`Scope`, binder.rs:42-132). A
+`Binder.env_stack : Vec<Scope>` (binder.rs), a `Scope` being the named variables by name and,
+the unnamed pattern entities in a list of their own (`Scope`, binder.rs). A
 variable's id is minted as the *current size* of its scope's table
-(`fresh_var`, binder.rs:2493-2507; the parent copy in `resolve_name`,
-binder.rs:2435), and the planner mints its own ids the same way, as
+(`fresh_var`, binder.rs; the parent copy in `resolve_name`,
+binder.rs), and the planner mints its own ids the same way, as
 `scope_vars[scope].len()`, pushing each one so the next is one larger
-(`Planner::fresh_var`, planner/mod.rs:1018-1032).
+(`Planner::fresh_var`, planner/mod.rs).
 
 A `Scope` is modelled as one association list whose keys are a name (`Key.nm`, the `named`
 map, distinct keys) or `Key.un` (an entry of `unnamed`, which no name reaches). `insert`
 replaces the value of a present name and appends otherwise, so `length` is `Scope::len()`
-(`named.len() + unnamed.len()`, binder.rs:122-124).
+(`named.len() + unnamed.len()`, binder.rs).
 -/
 namespace FalkorBinder
 
@@ -23,8 +23,8 @@ inductive Ty
   | any | node | rel | path
   deriving DecidableEq, Repr
 
-/-- `parser::ast::Variable` (ast.rs:163-169). Equality in Rust is by `id` alone
-(ast.rs:185-190) — the record slot. `name` is `none` for an unnamed pattern entity, whose
+/-- `parser::ast::Variable` (ast.rs). Equality in Rust is by `id` alone
+(ast.rs) — the record slot. `name` is `none` for an unnamed pattern entity, whose
 parser number is `anon` (#3303). -/
 structure Var where
   name  : Option Name
@@ -34,7 +34,7 @@ structure Var where
   anon  : Option Nat := none
   deriving DecidableEq, Repr
 
-/-- What names a pattern entity before binding: `parser::ast::Alias` (ast.rs:87-92, #3303). -/
+/-- What names a pattern entity before binding: `parser::ast::Alias` (ast.rs, #3303). -/
 inductive Alias
   | named (n : Name)
   | anon (k : Nat)
@@ -55,33 +55,33 @@ abbrev Env := List (Key × Var)
 
 namespace Env
 
-/-- `Scope::get` (binder.rs:54-59): the named map only. -/
+/-- `Scope::get` (binder.rs): the named map only. -/
 def find? (e : Env) (k : Name) : Option Var := e.lookup (.nm k)
 
-/-- `Scope::contains_key` (binder.rs:61-66). -/
+/-- `Scope::contains_key` (binder.rs). -/
 def has (e : Env) (k : Name) : Bool := e.any (·.1 == .nm k)
 
-/-- `Scope::insert` (binder.rs:68-74), `HashMap::insert` on `named`. -/
+/-- `Scope::insert` (binder.rs), `HashMap::insert` on `named`. -/
 def insert (e : Env) (k : Name) (v : Var) : Env :=
   if e.has k then e.map (fun p => if p.1 == .nm k then (.nm k, v) else p) else e ++ [(.nm k, v)]
 
-/-- `Scope::remove` (binder.rs:76-81). -/
+/-- `Scope::remove` (binder.rs). -/
 def erase (e : Env) (k : Name) : Env := e.filter (fun p => p.1 != .nm k)
 
-/-- `Scope::retain` (binder.rs:127-132): filters the named entries; unnamed ones always stay. -/
+/-- `Scope::retain` (binder.rs): filters the named entries; unnamed ones always stay. -/
 def retain (e : Env) (keep : Name → Bool) : Env := e.filter (fun p => match p.1 with
   | .nm n => keep n
   | .un => true)
 
-/-- `Scope::push_unnamed` (binder.rs:95-100). -/
+/-- `Scope::push_unnamed` (binder.rs). -/
 def pushUnnamed (e : Env) (v : Var) : Env := e ++ [(.un, v)]
 
-/-- `Scope::keys` (binder.rs:108-110): the names; unnamed entries have none. -/
+/-- `Scope::keys` (binder.rs): the names; unnamed entries have none. -/
 def keys (e : Env) : List Name := e.filterMap (fun p => match p.1 with
   | .nm n => some n
   | .un => none)
 
-/-- `Scope::iter` (binder.rs:103-105): the named entries. -/
+/-- `Scope::iter` (binder.rs): the named entries. -/
 def named (e : Env) : List (Name × Var) := e.filterMap (fun p => match p.1 with
   | .nm n => some (n, p.2)
   | .un => none)
@@ -91,11 +91,11 @@ def unnamed (e : Env) : List Var := e.filterMap (fun p => match p.1 with
   | .un => some p.2
   | .nm _ => none)
 
-/-- `Scope::lookup_anon` (binder.rs:85-92): the unnamed variable the parser numbered `k`
+/-- `Scope::lookup_anon` (binder.rs): the unnamed variable the parser numbered `k`
 (`find` over `unnamed`, so the first). -/
 def lookupAnon (e : Env) (k : Nat) : Option Var := e.unnamed.find? (fun v => v.anon == some k)
 
-/-- `Scope::values` (binder.rs:113-115) / `into_values` (binder.rs:118-120): every variable. -/
+/-- `Scope::values` (binder.rs) / `into_values` (binder.rs): every variable. -/
 def values (e : Env) : List Var := e.map (·.2)
 
 def ids (e : Env) : List Nat := e.map (·.2.id)
@@ -105,16 +105,16 @@ def Covers (e : Env) : Prop := ∀ i ∈ e.ids, i < e.length
 
 end Env
 
-/-- `Binder::fresh_var` (binder.rs:2493-2507): the id is the table's size. -/
+/-- `Binder::fresh_var` (binder.rs): the id is the table's size. -/
 def freshVar (e : Env) (name : Name) (ty : Ty) (scope : Nat) : Var :=
   { name := some name, id := e.length, scope, ty }
 
-/-- The unnamed variable `define_alias_in_scope` mints for `Alias::Anon k` (binder.rs:2374-2392):
+/-- The unnamed variable `define_alias_in_scope` mints for `Alias::Anon k` (binder.rs):
 `fresh_var(None, …)` with `anon = Some(k)`. -/
 def freshAnon (e : Env) (k : Nat) (ty : Ty) (scope : Nat) : Var :=
   { name := none, id := e.length, scope, ty, anon := some k }
 
-/-- `Scope::len` counts the unnamed entries (binder.rs:122-124). -/
+/-- `Scope::len` counts the unnamed entries (binder.rs). -/
 theorem Env.pushUnnamed_length (e : Env) (v : Var) : (e.pushUnnamed v).length = e.length + 1 := by
   simp [Env.pushUnnamed]
 
@@ -310,7 +310,7 @@ theorem mint_new_covers' {e : Env} (h : e.Covers) {k : Name} (hk : e.has k = fal
   · omega
 
 /-- The same key re-inserted with an id already below `len()` (the
-`YIELD field AS alias` re-insert, binder.rs:755) keeps the table covering. -/
+`YIELD field AS alias` re-insert, binder.rs) keeps the table covering. -/
 theorem reinsert_covers {e : Env} (h : e.Covers) {k : Name} (hk : e.has k = true)
     (v : Var) (hv : v.id < e.length) : (e.insert k v).Covers := by
   intro i hi
@@ -325,7 +325,7 @@ theorem reinsert_covers {e : Env} (h : e.Covers) {k : Name} (hk : e.has k = true
 /-! ## The planner's side: `mint_fresh_iff`
 
 The planner receives `scope_vars[s]` (the table sorted by id,
-`sorted_scope_vars`, binder.rs:2991) and mints `len`, `len + 1`, … in that
+`sorted_scope_vars`, binder.rs) and mints `len`, `len + 1`, … in that
 scope. None of those collides with an id `H` the bound IR uses in `s` iff
 every such id is below `len`. So *the* soundness condition of length-based
 minting is `∀ i ∈ H, i < len` — and `Env.Covers` alone is not enough: an
@@ -344,7 +344,7 @@ theorem mint_fresh_iff (len : Nat) (H : List Nat) :
     have := h _ hj
     omega
 
-/-- `Planner::fresh_var` (planner/mod.rs:1018-1032): the planner's copy of one scope's
+/-- `Planner::fresh_var` (planner/mod.rs): the planner's copy of one scope's
 `scope_vars[scope_id]` (a list of variables); the new variable is nameless (`alias: None`), has id
 `len()`, and is pushed so the next mint is one larger. -/
 def plannerFresh (sv : List Var) (scope : Nat) (ty : Ty) : Var × List Var :=
@@ -382,7 +382,7 @@ theorem erase_length_le (e : Env) (k : Name) : (e.erase k).length ≤ e.length :
 
 /-- A covering table stays covering after `erase`/`retain` **only** for the
 ids it still holds; an id the IR still uses may now be `≥ len()`.
-Concretely (binder.rs:127-132): after `MATCH (n) WITH n.v AS k WHERE n.v = 0`
+Concretely (binder.rs): after `MATCH (n) WITH n.v AS k WHERE n.v = 0`
 the WITH scope is `{k ↦ 0, n ↦ 1}` (`n` copied for the WHERE, id 1, used by
 the Filter), then `n` is removed: the table is `{k ↦ 0}` and the next
 variable of the scope, `x` in `MATCH (x)-->(y)`, is minted with id 1. -/

@@ -1,7 +1,7 @@
 import Columnar.AndOrLane
 
 /-!
-# `VectorEval::eval_case` (vector_expr.rs:474-548) against the per-row `eval_case`
+# `VectorEval::eval_case` (vector_expr.rs) against the per-row `eval_case`
 
 The lane evaluates the subject over all rows, then each `WHEN` over the positions no arm has
 claimed yet, its `THEN` over the positions it claims (scattered into `out`), and finally the
@@ -15,7 +15,7 @@ claimed yet, its `THEN` over the positions it claims (scattered into `out`), and
 | `evalCase` | the whole lane, `Ok(ExprColumn::Values(out))` |
 
 **`evalCase_sound`**: entry `i` of a returned column is the per-row `CASE` of row `rows[i]`
-(expr_semantics' `evalNode (.case ..)`, eval.rs:495-528): a `WHEN` is evaluated columnarly for
+(expr_semantics' `evalNode (.case ..)`, eval.rs): a `WHEN` is evaluated columnarly for
 exactly the rows still unclaimed — the rows whose per-row loop reaches it — and a `THEN` only
 for the rows it claims.
 -/
@@ -60,7 +60,7 @@ def fill (e : E (V F)) (out : Nat → V F) (ps : List Nat) : Except String (Nat 
     let col ← ev e (ps.map (rowOf rows))
     .ok (scatter out (pairsOf col.get ps 0))
 
-/-- The arm loop (vector_expr.rs:499-540). -/
+/-- The arm loop (vector_expr.rs). -/
 def armLoop (subject : Option (EC F)) : List (E (V F)) → CSt F → Except String (CSt F)
   | w :: t :: rest, st =>
     if st.unclaimed = [] then .ok st
@@ -71,12 +71,12 @@ def armLoop (subject : Option (EC F)) : List (E (V F)) → CSt F → Except Stri
       armLoop subject rest ⟨out, hs.2⟩
   | _, st => .ok st
 
-/-- The subject column (vector_expr.rs:484-488). -/
+/-- The subject column (vector_expr.rs). -/
 def subjCol : Option (E (V F)) → Except String (Option (EC F))
   | none => .ok none
   | some s => (ev s rows).map some
 
-/-- `eval_case` (vector_expr.rs:474). -/
+/-- `eval_case` (vector_expr.rs). -/
 def evalCase (subj : Option (E (V F))) (arms : List (E (V F))) (els : E (V F)) : Except String (EC F) := do
   let subject ← subjCol ev rows subj
   let st ← armLoop rt ev rows subject arms ⟨fun _ => .null, List.range rows.length⟩

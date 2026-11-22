@@ -9,9 +9,9 @@ the pending deletes the operator sees.
 
 | here | there |
 | --- | --- |
-| `Pending.delNodes` | `Pending::deleted_nodes` (`runtime/pending.rs:304`), read by `is_node_deleted` (`:1115-1120`); `DETACH DELETE` of a committed node only inserts it here (`runtime/ops/delete.rs:191-216`, `pending.rs:771-777`) and defers its incident edges to commit (`delete_implicit_edges`, `pending.rs:1325-1330`) |
-| `Pending.delRels`  | `Pending::deleted_relationships`, read by `is_relationship_deleted` (`pending.rs:1129-1134`) |
-| `expandIntoP`      | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs:125-245`): no row when `pending.is_node_deleted(src) \|\| is_node_deleted(dst)` (`:158-160`); pairs `:183-184`; collapse `:204-222` and emit `:224-235` skip `pending.is_relationship_deleted(id)` and sibling-used edges |
+| `Pending.delNodes` | `Pending::deleted_nodes` (`runtime/pending.rs`), read by `is_node_deleted`; `DETACH DELETE` of a committed node only inserts it here (`runtime/ops/delete.rs`, `pending.rs`) and defers its incident edges to commit (`delete_implicit_edges`, `pending.rs`) |
+| `Pending.delRels`  | `Pending::deleted_relationships`, read by `is_relationship_deleted` (`pending.rs`) |
+| `expandIntoP`      | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs`): no row when `pending.is_node_deleted(src) \|\| is_node_deleted(dst)`; pairs; collapse and emit skip `pending.is_relationship_deleted(id)` and sibling-used edges |
 | `expandIntoPre`    | the same without the endpoint check (the earlier operator, kept as the historical model and the fall-through branch of `expandIntoP`) |
 
 `expandIntoP` with empty `Pending` is literally `CondTraverse.expandInto`
@@ -48,7 +48,7 @@ def expandIntoPre (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
       !(p.delRels.contains e) && !(used.contains e)
     if emit then es else es.take 1
 
-/-- `ExpandIntoOp::expand_row` (relationship mode) on main (`expand_into.rs:158-235`):
+/-- `ExpandIntoOp::expand_row` (relationship mode) on main (`expand_into.rs`):
 `is_node_deleted(src) || is_node_deleted(dst)` ⇒ no row (#3463). -/
 def expandIntoP (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
     (used : List Nat) : List Nat :=
@@ -137,7 +137,7 @@ theorem main_3463_empty_dst : expandIntoP gAB1 ⟨[1], []⟩ false true 0 1 [] =
 
 `CondTraverseOp` (one endpoint unbound, e.g. `DETACH DELETE a MERGE (a)-[r:R]->(x:B)`)
 never reads `Pending`: `cond_traverse.rs` has no `is_node_deleted` /
-`is_relationship_deleted` call at all (`expand_row` `:749`, `process_pairs` `:944`
+`is_relationship_deleted` call at all (`expand_row`, `process_pairs`
 read the relationship matrices only). So its model is `CondTraverse.expandRow`
 unchanged, and it still matches the doomed edge of a pending-deleted `a` (and the
 edge of an explicitly `DELETE`d `r`, and an edge into a pending-deleted target).

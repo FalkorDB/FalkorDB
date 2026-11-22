@@ -21,24 +21,24 @@ what does not.
 
 | here | there |
 | --- | --- |
-| `V`                      | `enum Value` (`graph/src/runtime/value.rs:184`) — Null, Bool, Int, Float, String, List, Map, Node, VecF32 (components), Point (lat, lon) |
+| `V`                      | `enum Value` (`graph/src/runtime/value.rs`) — Null, Bool, Int, Float, String, List, Map, Node, VecF32 (components), Point (lat, lon) |
 | `F`                      | `f64`/`f32`: NaN (sign, payload), `-0.0`, integral, non-integral (`frac lo r`), ±inf |
 | `fpcmp`, `F.nkey`        | `partial_cmp` on floats (`-0.0 == 0.0`, NaN unordered) |
-| `cmpVec`, `firstDifference`, `cmpPoint` | `compare_vecf32` (`value.rs:2009`), the Point arm of `compare_value` (`:1288`) |
+| `cmpVec`, `firstDifference`, `cmpPoint` | `compare_vecf32` (`value.rs`), the Point arm of `compare_value` |
 | `bits64`, `bits32`, `asI64`, `diffZero` | `to_bits`, `as i64`, the `x - casted == 0` test of the Float hash arm |
-| `Tag`, `order`           | `impl OrderedEnum for Value` (`value.rs:1219`) — all 16 variants |
+| `Tag`, `order`           | `impl OrderedEnum for Value` (`value.rs`) — all 16 variants |
 | `roundF`                 | `i as f64` for `i: i64` (round-to-nearest, ties-to-even at 53 bits) |
-| `cmpF`                   | `compare_floats` (`value.rs:1919`) — `partial_cmp`, NaN ↦ `(Less, NaN)` |
-| `cmpV`                   | `impl CompareValue for Value::compare_value` (`value.rs:1266`) |
-| `St`, `step`, `listLoop`, `listFinish` | `Value::compare_list` (`value.rs:1446`) — the four counters, line by line |
-| `keysCmp`, `mapVals`     | `Value::compare_map` (`value.rs:1519`), maps held with keys already sorted |
-| `eqV`                    | `impl PartialEq for Value` (`value.rs:1256`) — `compare_value(..).0 == Equal` |
-| `sortCmp`                | `compare_value(..).0`, the old ORDER BY comparator (kept as history); main sorts by `Main.scMain` (`OrderedKey::cmp_key` `ops/sort.rs:76`, `Column::compare_at` `batch.rs:399`: `Main.cmpKey`, `Main.compareAt`) |
-| `evalEq`, `evalNeq`      | `compare_values` `CmpOp::Eq`/`Neq` (`runtime/vectorized.rs:239`) |
-| `hwords`, `floatWord`, `f32HashBits` | `impl Hash for Value` (`value.rs:861`) as the word stream it feeds a `Hasher`; `f32_hash_bits` (`:1961`) |
+| `cmpF`                   | `compare_floats` (`value.rs`) — `partial_cmp`, NaN ↦ `(Less, NaN)` |
+| `cmpV`                   | `impl CompareValue for Value::compare_value` (`value.rs`) |
+| `St`, `step`, `listLoop`, `listFinish` | `Value::compare_list` (`value.rs`) — the four counters, line by line |
+| `keysCmp`, `mapVals`     | `Value::compare_map` (`value.rs`), maps held with keys already sorted |
+| `eqV`                    | `impl PartialEq for Value` (`value.rs`) — `compare_value(..).0 == Equal` |
+| `sortCmp`                | `compare_value(..).0`, the old ORDER BY comparator (kept as history); main sorts by `Main.scMain` (`OrderedKey::cmp_key` `ops/sort.rs`, `Column::compare_at` `batch.rs`: `Main.cmpKey`, `Main.compareAt`) |
+| `evalEq`, `evalNeq`      | `compare_values` `CmpOp::Eq`/`Neq` (`runtime/vectorized.rs`) |
+| `hwords`, `floatWord`, `f32HashBits` | `impl Hash for Value` (`value.rs`) as the word stream it feeds a `Hasher`; `f32_hash_bits` |
 | `fxAdd`, `fxFinish`, `fx`| `rustc_hash::FxHasher` 2.1.3 (`add_to_hash`, `finish` = `rotate_left(26)`) |
-| `rowHash`                | `DistinctOp::next` (`ops/distinct.rs:62`), `ValuesDeduper::is_seen` (`value.rs:2061`) |
-| `minFold`                | `min_batch` (`functions/aggregation.rs:498`) |
+| `rowHash`                | `DistinctOp::next` (`ops/distinct.rs`), `ValuesDeduper::is_seen` (`value.rs`) |
+| `minFold`                | `min_batch` (`functions/aggregation.rs`) |
 
 ## Findings (each one reproduced against the real engine, see REPORT.md)
 
@@ -105,11 +105,11 @@ open outside grouping. 7 is open.
 
 | here | there |
 | --- | --- |
-| `Glue.W` (16 variants), `W.clone`, `W.order`, `W.getType`, `W.valueOfType`, `W.name` | value.rs:184, :223, :1219, :1373, :1323, :1399 |
-| `DeletedNode.new`, `DeletedRelationship.new` | value.rs:101, :119 |
-| classes `OrderedEnum`, `CompareValue`, `ValueTypeOf`, `ValueGetType`, `Contains` | trait decls value.rs:1214, :1249, :1315, :1368, :1873 |
-| `withCapacity`, `checkAndInsert` | value.rs:2051, :2079 |
-| `Json.fmtS`/`fmtJson`, `writeJsonString`, `writeNodeJson`, `relJson`, `toJsonString` | value.rs:1700, :1822, :1834, :1740, :1421 |
+| `Glue.W` (16 variants), `W.clone`, `W.order`, `W.getType`, `W.valueOfType`, `W.name` | value.rs |
+| `DeletedNode.new`, `DeletedRelationship.new` | value.rs |
+| classes `OrderedEnum`, `CompareValue`, `ValueTypeOf`, `ValueGetType`, `Contains` | trait decls value.rs |
+| `withCapacity`, `checkAndInsert` | value.rs |
+| `Json.fmtS`/`fmtJson`, `writeJsonString`, `writeNodeJson`, `relJson`, `toJsonString` | value.rs |
 
 f64/f32 Display, `escape_str` and the runtime accessors are fields of the `JsonEnv`
 structure (no axioms). Theorems: `clone_eq`, `name_eq_iff_order_eq`, `valueOfType_self`,

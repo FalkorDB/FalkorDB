@@ -32,9 +32,9 @@ Each module's header has its Lean ↔ Rust `file:line` table. Coverage rows are 
 
   | Lean | Rust |
   | --- | --- |
-  | `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs:83`, `new` `:70`, `named` `:76` |
-  | `waitLoop`, `drain`, `within` | `ThreadPool::shutdown_within` `:167` (wait loop `:174-178`, partition and put back the running handles `:179-185`) |
-  | `holdEnd` | `ThreadPool::shutdown` `:151` (holds the `workers` lock across `join`) |
+  | `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs`, `new`, `named` |
+  | `waitLoop`, `drain`, `within` | `ThreadPool::shutdown_within` (wait loop, partition and put back the running handles) |
+  | `holdEnd` | `ThreadPool::shutdown` (holds the `workers` lock across `join`) |
 
   `within_in_time`, `within_true_all_finished`, `within_false_unfinished`, `within_partition`,
   `blocked_reported`, `left_behind_workers_exit`, `late_job_lost`; one confirmed bug, still **open**
@@ -80,7 +80,7 @@ escalate, release, mutate, commit, indexer batch, delete, fork):
 `paths_release_once`, `count_eq_live`, `spawn_never_blocks`.
 `Tickets` (at 73077bb4a): `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`,
 `operational_iff`, `stale_release_isolated`; on main `create_index` bumps the generation
-whenever the label already has an entry (indexer.rs:359-361): `main_operational_complete`
+whenever the label already has an entry (indexer.rs): `main_operational_complete`
 (key property: over every interleaving of any number of `CREATE INDEX`es on a label and the
 batches of every populate job, an OPERATIONAL index has every field in every batch, outside
 the store→`populate_index` window), via the inductive invariant `MInv` (`reach_inv`);
@@ -98,8 +98,7 @@ value, any field options — a vector add always has the field's own non-zero di
 `phonetic_false_no_flag`, `phonetic_true_flag`,
 `capped_capacity_ok`, `evalK_accepts_huge`; plus `#guard`s for the option checks.
 
-`Knn` (89d68334a): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4354`,
-`:4415`) with `k` clamped to `count.max(1)`: `alloc_bounded` (every buffer and the RediSearch
+`Knn` (89d68334a): `vector_query_nodes` / `vector_query_edges` (`graph.rs`) with `k` clamped to `count.max(1)`: `alloc_bounded` (every buffer and the RediSearch
 `k` ≤ live entity count, for any user `k`), `no_abort_any_k`, `candidates_topk` (clamped
 query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_one_row`
 (a huge `k` returns its 1 row, as C), `empty_graph`.
@@ -124,23 +123,23 @@ replaced". Same on C. (A first run showed "duplicates": redis-py's
 retry-on-timeout re-sent writes — a harness artefact, see the MEMORY note.)
 
 ## Commit validation and `create_index` generations
-`MvccGraph::commit` (mvcc_graph.rs:139) runs `Graph::validate` first and, on a
+`MvccGraph::commit` (mvcc_graph.rs) runs `Graph::validate` first and, on a
 refusal, performs the rollback itself (:148-151). `Mvcc.step` takes `valid` as a
 parameter; every invariant theorem holds for any `valid`; `refused_commit_publishes_nothing`
 (nothing published or acked, the next writer can fork — the property the Rust test
 `a_refused_commit_publishes_nothing` checks) and `commit_publishes`. `commit_and_replicate` treats a refusal as
-`unreachable!` (graph_core.rs:1487).
+`unreachable!` (graph_core.rs).
 
 `create_index` bumps the generation whenever the label already has an entry
-(indexer.rs:359-361). `Tickets` keeps the earlier `create_index` as `pre3086_createRange` and models
+(indexer.rs). `Tickets` keeps the earlier `create_index` as `pre3086_createRange` and models
 `store`/`acquire`/`step`/`Reach`, the invariant `MInv` (`inv_create`, `inv_populate`, `inv_batch`,
 `reach_inv`) and `main_operational_complete`.
 
 ## Gaps
 
 Index population (73077bb4a): between `Indexer::create_index` storing the entry and
-`populate_index` acquiring its ticket (graph.rs:3681-3688, no lock held across them) the
-entry has pending 0, so `is_label_indexed` (indexer.rs:454) reports the new field usable
+`populate_index` acquiring its ticket (graph.rs, no lock held across them) the
+entry has pending 0, so `is_label_indexed` (indexer.rs) reports the new field usable
 while no document has it (`store_window_operational_incomplete`). Unconfirmed live; the
 window is a few instructions. `Tickets` does not model write-path tickets, `drop_index`
 with fields remaining (recreate + populate), or `populate_indexes_sync`.
@@ -159,7 +158,7 @@ behaviour beyond "sees `pub`" (GraphBLAS `wait_all`, OpenMP) is not modelled.
 dropped. Properties: `LockOrdered` (`okProg`, the premise of `no_cycle`) and
 `noReacquire` (the `spec.c:2304` assertion). `writerOpenScanProg` is the live repro
 `MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000 RETURN count(n)`:
-the scan stays open below `LIMIT`, `CommitOp::next` escalates (`commit.rs:93`) and
+the scan stays open below `LIMIT`, `CommitOp::next` escalates (`commit.rs`) and
 `Indexer::commit` → `RediSearch_IndexAddDocument` (:643-645) takes both locks as a
 writer. `bug3226_open_scan_upgrade` (live abort: "attempted to upgrade a spec read lock
 to a write lock", port 6640; C returns 10 on 6641), `bug3226_open_scan_unordered`, and

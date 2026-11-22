@@ -2,8 +2,8 @@
 # The boundary is invisible to `push_filters_down` (claim 2 REFUTED in general)
 
 Model of the "Case 2" inheritance in
-graph/src/planner/optimizer/push_filters_down.rs:207-249 as of 343e077f2
-(`inheritedPre3281`; the current walk, push_filters_down.rs:288-341, is `inherited`): from a Filter, walk the ancestors; at the first
+graph/src/planner/optimizer/push_filters_down.rs as of 343e077f2
+(`inheritedPre3281`; the current walk, push_filters_down.rs, is `inherited`): from a Filter, walk the ancestors; at the first
 `Apply` whose left child does not contain the Filter, every variable id of
 that left subtree (`collect_subtree_variables`, ids only, `HashSet<u32>`)
 is "inherited"; the walk stops at the first `Apply` (inheriting its left variables, or
@@ -32,7 +32,7 @@ inductive K
   | other
   deriving DecidableEq, Repr
 
-/-- The walk before #3281 (343e077f2, push_filters_down.rs:213-249), ancestors
+/-- The walk before #3281 (343e077f2, push_filters_down.rs), ancestors
 listed from the Filter's parent up: an `Optional` is walked through. -/
 def inheritedPre3281 : List K → List Nat
   | [] => []
@@ -40,7 +40,7 @@ def inheritedPre3281 : List K → List Nat
   | .merge :: _ => []
   | _ :: rest => inheritedPre3281 rest
 
-/-- The walk since #3281 (push_filters_down.rs:288-341): a two-child `Optional`
+/-- The walk since #3281 (push_filters_down.rs): a two-child `Optional`
 (one with a left input, `.optional`) ends it like an `Apply`, inheriting its left
 branch's `branch_visible_variables` (`lv`/`leftOut`), or nothing when the Filter sits in
 its left child. A single-child `Optional` is `.other` (walked through). -/

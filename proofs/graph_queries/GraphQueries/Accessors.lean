@@ -23,8 +23,8 @@ theorem nodeId_roundtrip' (n : NodeId) : nodeIdOf (nodeIdTo n) = n := rfl
 /-- `RelationshipId`, `LabelId`, `TypeId` are the same shape. -/
 abbrev RelId := NodeId
 
-/-- `NodeOpError` (graph.rs:334): `IdSpace { kind, source }`;
-`DanglingRelationship { id }` (graph.rs:376), raised by
+/-- `NodeOpError` (graph.rs): `IdSpace { kind, source }`;
+`DanglingRelationship { id }` (graph.rs), raised by
 `verify_created_relationships` (`Ids.verifyCreatedRels`). -/
 inductive NodeOpError | graph (s : String) | idSpace (kind : String) (code : Nat)
   | danglingRelationship (id : Nat) deriving DecidableEq

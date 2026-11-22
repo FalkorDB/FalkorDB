@@ -1,11 +1,11 @@
 import PlannerBuild.Filter
 /-
-# `plan_filter` (mod.rs:2881-2920)
+# `plan_filter` (mod.rs)
 
 `planFilter` follows the Rust after `extract_filter_comprehensions` has
 returned the predicate unchanged (no pattern comprehension, no pattern outside
 an AND/OR/NOT chain — `needsExtraction e .semiApply = false`, the early
-return at mod.rs:1565): rebuild, then `expr_to_plan` if the inline map is
+return at mod.rs): rebuild, then `expr_to_plan` if the inline map is
 non-empty, else a `Filter` unless the rebuilt root is the literal `true`, then
 one SemiApply/AntiSemiApply per extracted pattern, in extraction order.
 -/

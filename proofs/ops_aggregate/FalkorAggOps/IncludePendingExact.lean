@@ -16,8 +16,8 @@ is the node id):
 | `stage` | `stage_node_labels` (pending.rs), reached by `SetOp` `SetItem::Label` (ops/set.rs) without checking the committed matrix |
 | `deletedNode` | `deleted_node`: inserts into `deleted_nodes`, `set_labels` untouched |
 | `removedFor` | `nodes_with_pending_label_removes` |
-| `pendingWith` | `get_pending_nodes_with_labels(label_ids, g)` (pending.rs:1114): live nodes gaining a pattern label |
-| `includePendingMain` | `IncludePendingOp::next` (include_pending.rs:166-224) = `StreamOps.childRows` (skipping deleted, label-removed and `extra_nodes`) then `StreamOps.pendingRows` over `extra_nodes` |
+| `pendingWith` | `get_pending_nodes_with_labels(label_ids, g)` (pending.rs): live nodes gaining a pattern label |
+| `includePendingMain` | `IncludePendingOp::next` (include_pending.rs) = `StreamOps.childRows` (skipping deleted, label-removed and `extra_nodes`) then `StreamOps.pendingRows` over `extra_nodes` |
 
 Property `IncludePendingExact`: the emitted node rows are duplicate-free and
 are exactly the live nodes (committed or created, not deleted) whose effective
@@ -51,7 +51,7 @@ def look (m : List (Nat × List Nat)) (n : Nat) : List Nat := ((m.find? (·.1 ==
 /-- `NodeByLabelScan` over the committed graph (pattern labels non-empty). -/
 def scan (g : Gc) (ls : List Nat) : List Nat := g.nodes.filter fun n => ls.all (· ∈ g.labels n)
 
-/-- `stage_node_labels` (pending.rs:661-676): append to the node's `set_labels`
+/-- `stage_node_labels` (pending.rs): append to the node's `set_labels`
 entry (created if absent), drop those labels from its `remove_labels`. -/
 def stage (p : Pd) (n : Nat) (ls : List Nat) : Pd :=
   { p with
@@ -60,10 +60,10 @@ def stage (p : Pd) (n : Nat) (ls : List Nat) : Pd :=
     remL := (p.remL.map fun e => if e.1 == n then (n, e.2.filter (· ∉ ls)) else e).filter
               fun e => !(e.1 == n && e.2.isEmpty) }
 
-/-- `deleted_node` (pending.rs:772-777). -/
+/-- `deleted_node` (pending.rs). -/
 def deletedNode (p : Pd) (n : Nat) : Pd := { p with deleted := if n ∈ p.deleted then p.deleted else p.deleted ++ [n] }
 
-/-- `nodes_with_pending_label_removes` (pending.rs:1060-1076). -/
+/-- `nodes_with_pending_label_removes` (pending.rs). -/
 def removedFor (p : Pd) (ls : List Nat) : List Nat :=
   if ls = [] then [] else (p.remL.filter fun e => ls.any (· ∈ e.2)).map (·.1)
 
@@ -72,7 +72,7 @@ def removedFor (p : Pd) (ls : List Nat) : List Nat :=
 def committedL (g : Gc) (p : Pd) (n l : Nat) : Bool :=
   !decide (n ∈ p.created) && !decide (l ∈ look p.remL n) && decide (l ∈ g.labels n)
 
-/-- `get_pending_nodes_with_labels(label_ids, g)` (pending.rs:1114-1146): created nodes for no label; else the
+/-- `get_pending_nodes_with_labels(label_ids, g)` (pending.rs): created nodes for no label; else the
 `set_labels` entries that are not pending-deleted, whose every pattern label is committed or staged, and not
 all committed. -/
 def pendingWith (g : Gc) (p : Pd) (ls : List Nat) : List Nat :=
@@ -90,7 +90,7 @@ def includePendingMain (g : Gc) (p : Pd) (ls : List Nat) : List Nat :=
 /-- Live after the pending changes. -/
 def live (g : Gc) (p : Pd) (n : Nat) : Prop := (n ∈ g.nodes ∨ n ∈ p.created) ∧ n ∉ p.deleted
 
-/-- Effective labels: what `update_node_labels` overlays (pending.rs:754-770). -/
+/-- Effective labels: what `update_node_labels` overlays (pending.rs). -/
 def eff (g : Gc) (p : Pd) (n : Nat) : List Nat :=
   (if n ∈ p.created then [] else (g.labels n).filter (· ∉ look p.remL n)) ++ look p.setL n
 

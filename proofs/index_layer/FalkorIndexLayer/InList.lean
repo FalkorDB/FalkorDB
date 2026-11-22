@@ -8,13 +8,13 @@ proves the two shapes the same, so the model needs no change:
 
 | Lean | Rust |
 | --- | --- |
-| `keepItem` | `keep` in `evaluate_index_query`, `node_by_index_scan.rs:226-231` (only `Int/Float/String/Bool` members reach the index) |
-| `canUtilizeInList` | the `IndexQuery::InList` arm of `can_utilize_index`, `:279-282` (non-empty, every member indexable) |
-| `expandIn` (`Model.lean`) | the `InList { key, list }` that `evaluate_index_query` builds `:216-246`; `Index::build_query_node`'s `InList` arm `index/mod.rs:1610-1627` is a union of `Equal` children, empty list → the empty node |
+| `keepItem` | `keep` in `evaluate_index_query`, `node_by_index_scan.rs` (only `Int/Float/String/Bool` members reach the index) |
+| `canUtilizeInList` | the `IndexQuery::InList` arm of `can_utilize_index` (non-empty, every member indexable) |
+| `expandIn` (`Model.lean`) | the `InList { key, list }` that `evaluate_index_query` builds; `Index::build_query_node`'s `InList` arm `index/mod.rs` is a union of `Equal` children, empty list → the empty node |
 -/
 namespace IndexLayer
 
-/-- `keep` (`node_by_index_scan.rs:226-231`). -/
+/-- `keep` (`node_by_index_scan.rs`). -/
 def keepItem : Val → Bool
   | .int _ | .flt _ | .str _ | .bool _ => true
   | _ => false
@@ -26,10 +26,10 @@ theorem expandIn_eq_filter (k : Attr) (xs : List Val) :
   simp only [expandIn]
   congr 3
 
-/-- The `InList` arm of `can_utilize_index` (`:279-282`): `!items.is_empty() && items.iter().all(is_indexable)`. -/
+/-- The `InList` arm of `can_utilize_index`: `!items.is_empty() && items.iter().all(is_indexable)`. -/
 def canUtilizeInList (items : List Val) : Bool := !items.isEmpty && items.all indexable
 
-/-- `can_utilize_index` on `Or` (`:269-271`): non-empty and every child utilizable. -/
+/-- `can_utilize_index` on `Or`: non-empty and every child utilizable. -/
 theorem canUtilize_or (qs : List IQ) : canUtilize (.or qs) = (!qs.isEmpty && qs.all canUtilize) := by
   rw [canUtilize]
   congr 1

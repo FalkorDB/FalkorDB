@@ -2,15 +2,15 @@ import RedisLayer.Args
 /-!
 # `GRAPH.CONFIG SET` (`src/commands/config_cmd.rs`)
 
-* `validate` — `validate_config_set` (`config_cmd.rs:114-202`), the integer/boolean
+* `validate` — `validate_config_set` (`config_cmd.rs`), the integer/boolean
   configs that change behaviour (TIMEOUT family, RESULTSET_SIZE, MAX_QUEUED_QUERIES,
   VKEY_MAX_ENTITY_COUNT, MAX_INFO_QUERIES, JS sizes, CMD_INFO), .
 * `dispatch` — the arity / sub-command / name-folding head of `graph_config`
-  (`config_cmd.rs:318-353`).
-* `cross` — `validate_timeout_cross_constraints` (`config_cmd.rs:206`), which loads the
-  stored values and calls `check_timeout_constraints` (`:220`); `LoadArgs.cross_eq` proves the two agree.
-* `apply1` — `apply_config_set` (`config_cmd.rs:261-301`).
-* `rustSet` — the `SET` arm of `graph_config` (`config_cmd.rs:318-390`): validate all,
+  (`config_cmd.rs`).
+* `cross` — `validate_timeout_cross_constraints` (`config_cmd.rs`), which loads the
+  stored values and calls `check_timeout_constraints`; `LoadArgs.cross_eq` proves the two agree.
+* `apply1` — `apply_config_set` (`config_cmd.rs`).
+* `rustSet` — the `SET` arm of `graph_config` (`config_cmd.rs`): validate all,
   cross-check once against the *final* values, then apply all.
 * `cSet` — C's `_Config_set` (`cmd_config.c`): dry-run each pair against the *current*
   configuration, then apply each in order. C's per-field validators are only modelled
@@ -31,51 +31,51 @@ structure Cfg where
   timeoutDefault : Int := 0
   timeoutMax : Int := 0
   resultsetSize : Int := -1
-  maxQueued : Nat := 10000   -- `MAX_QUEUED_QUERIES` default since #3014 (`config.rs:80`; was `u32::MAX`)
+  maxQueued : Nat := 10000   -- `MAX_QUEUED_QUERIES` default since #3014 (`config.rs`; was `u32::MAX`)
   vkeyMax : Int := 100000
   maxInfo : Int := 1000
   jsHeap : Int := 268435456
   cmdInfo : Bool := true
-  writeLockPoll : Int := 5   -- `config.rs:130`, C's default
+  writeLockPoll : Int := 5   -- `config.rs`, C's default
   deriving DecidableEq, Repr
 
 inductive CfgErr where
   | failed | readOnly | deprecated | defaultAboveMax | maxBelowDefault
-  | jsTooSmall   -- "`{name}` must be at least 1MB (1048576)" (#3021, `config_cmd.rs:185-188`)
+  | jsTooSmall   -- "`{name}` must be at least 1MB (1048576)" (#3021, `config_cmd.rs`)
   deriving DecidableEq, Repr
 
-/-- `JS_MIN_SIZE` (`config_cmd.rs:54`). -/
+/-- `JS_MIN_SIZE` (`config_cmd.rs`). -/
 def jsMinSize : Int := 1048576
 
-/-- `validate_config_set` (`config_cmd.rs:114-202`) since #3021: the parsed value, or
+/-- `validate_config_set` (`config_cmd.rs`) since #3021: the parsed value, or
 the error. -/
 def validate (n : Name) (v : List Nat) : Except CfgErr Int :=
   match n with
-  | .timeout | .timeoutDefault | .timeoutMax | .writeLockPoll =>     -- `:128-142`
+  | .timeout | .timeoutDefault | .timeoutMax | .writeLockPoll =>     --
     match rustParseI64 v with
     | some x => if x < 0 then .error .failed else .ok x
     | none => .error .failed
-  | .resultsetSize =>                               -- `:148-154`
+  | .resultsetSize =>                               --
     match rustParseI64 v with
     | some x => .ok (if x < 0 then -1 else x)
     | none => .error .failed
-  | .maxQueued =>                                   -- `:155-163`
+  | .maxQueued =>                                   --
     match rustParseI64 v with
     | some x => if x ≤ 0 then .error .failed else .ok x
     | none => .error .failed
-  | .vkeyMax =>                                     -- `:164-172`: negative now refused
+  | .vkeyMax =>                                     --: negative now refused
     match rustParseI64 v with
     | some x => if x < 0 then .error .failed else .ok x
     | none => .error .failed
-  | .maxInfo =>                                     -- `:173-183`
+  | .maxInfo =>                                     --
     match rustParseI64 v with
     | some x => if x < 0 then .error .failed else .ok (min x 1000)
     | none => .error .failed
-  | .jsHeap =>                                      -- `:185-188`: at least 1MB, one message
+  | .jsHeap =>                                      --: at least 1MB, one message
     match rustParseI64 v with
     | some x => if x ≥ jsMinSize then .ok x else .error .jsTooSmall
     | none => .error .jsTooSmall
-  | .cmdInfo =>                                     -- `:138-147`: `eq_ignore_ascii_case` yes / no
+  | .cmdInfo =>                                     --: `eq_ignore_ascii_case` yes / no
     if eqIC v (b "yes") then .ok 1
     else if eqIC v (b "no") then .ok 0
     else .error .failed
@@ -273,7 +273,7 @@ theorem cmdinfo_ok_iff (v : List Nat) (x : Int) :
       simp only [h2', Bool.false_eq_true, ite_false, false_and, iff_false]
       intro h; cases h
 
-/-! ## `graph_config` head (`config_cmd.rs:318-353`)
+/-! ## `graph_config` head (`config_cmd.rs`)
 
 `argc` counts `GRAPH.CONFIG` itself. Sub-command and names fold with
 `to_ascii_uppercase` (`upA`), so a dotless `ı` (U+0131) is not folded onto `I`
@@ -315,7 +315,7 @@ theorem set_pairs_complete (argc : Nat) (sub : List Nat) (h : dispatch argc sub 
 theorem dotless_i_not_folded : upA (b "tımeout") ≠ b "TIMEOUT" ∧ upA (b "timeout") = b "TIMEOUT" := by
   decide
 
-/-- `ASYNC_DELETE`'s default (`src/config.rs:110`) is now C's `1` (was `0`). -/
+/-- `ASYNC_DELETE`'s default (`src/config.rs`) is now C's `1` (was `0`). -/
 def asyncDeleteDefault : Int := 1
 theorem asyncDelete_default_matches_C : asyncDeleteDefault = 1 := rfl
 

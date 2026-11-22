@@ -1,5 +1,5 @@
 import AlgoUdf.Neighbors
-/-! # `graph.traverse` (`js_traverse_impl`, udf/js_classes.rs:709-892)
+/-! # `graph.traverse` (`js_traverse_impl`, udf/js_classes.rs)
 
 | here | there |
 | --- | --- |

@@ -8,13 +8,13 @@ one per-operator oracle, `optimizer/references.rs`.
 
 | here | there (origin/main 8743953a8) |
 | --- | --- |
-| `IR`                 | `planner::IR` (`graph/src/planner/mod.rs:65-326`), every expression field abstracted to the variables its BFS finds (`Ex := List Var`) |
+| `IR`                 | `planner::IR` (`graph/src/planner/mod.rs`), every expression field abstracted to the variables its BFS finds (`Ex := List Var`) |
 | `IQ`, `IQ.vars`      | `IndexQuery<QueryExpr<Variable>>` (`index/indexer.rs`), its operand expressions |
 | `reads`              | specification: every variable any expression field of the operator mentions |
 | `binds`              | variables an operator binds that the oracle also counts (harmless: only keeps a flag) |
 | `PlanInv`            | the planner's invariant: scans / fixed-length operators carry no inline map, walks only their edge's (proofs/planner_build `E.planMatch_stripped`) |
-| `refsNew`            | `ir_references_variable` (`references.rs:41-198`) |
-| `iqLoop`, `iqRefs`   | `index_query_references_variable` (`references.rs:204-233`), its explicit stack |
+| `refsNew`            | `ir_references_variable` (`references.rs`) |
+| `iqLoop`, `iqRefs`   | `index_query_references_variable` (`references.rs`), its explicit stack |
 | `qgRefs`, `setItemsRefs`, `exprRefs`, `subtreeRefs` | `query_graph_references_variable` (:287-300), `set_items_reference_variable` (:302-314), `expr_references_variable` (:317-323), `subtree_references_variable` (:327-334) |
 | `refsPR`             | `ir_references_variable` of PR #2918 (superseded by this oracle; its walk is not merged) |
 
@@ -119,8 +119,8 @@ def QRel.reads (r : QRel) : List Var := r.attrs ++ r.src.attrs ++ r.dst.attrs
 
 /-- **Specification**: the variables an operator's expressions mention
 (bound aliases are not reads; `Project`/`Aggregate` copies read their source,
-the *first* component — `binder.rs:2234` inserts `(parent, copy)`,
-`project.rs:115` iterates `(old_var, new_var)`). `sibling_edges` hold ids, not
+the *first* component — `binder.rs` inserts `(parent, copy)`,
+`project.rs` iterates `(old_var, new_var)`). `sibling_edges` hold ids, not
 expressions; see `runtimeReadsIds`. -/
 def reads : IR → List Var
   | .argument | .optional _ | .cartesianProduct | .apply | .semiApply | .antiSemiApply
@@ -312,7 +312,7 @@ def iqRefs (q : IQ) (v : Var) : Bool := iqLoop v [q]
 theorem iqRefs_iff (q : IQ) (v : Var) : iqRefs q v = true ↔ v ∈ q.vars := by
   rw [iqRefs, iqLoop_iff v _ [q] (Nat.le_refl _)]; simp
 
-/-- `ir_references_variable` (references.rs:41-198): an exhaustive match (no `_` arm). -/
+/-- `ir_references_variable` (references.rs): an exhaustive match (no `_` arm). -/
 def refsNew (ir : IR) (v : Var) : Bool :=
   match ir with
   | .project es cs => es.any (fun e => exprRefs e.2 v) || cs.any (fun c => c.1 == v)
@@ -403,7 +403,7 @@ theorem refsNew_sound (ir : IR) (v : Var) (h : refsNew ir v = true) : v ∈ read
 /-! ## `runtimeReadsIds`: the sibling-edge columns (W2-traverse-1, still open) -/
 
 /-- What the operator reads *at runtime*, by id: also the columns of `sibling_edges`
-(`edge_already_used`, `runtime/ops/mod.rs:155`). -/
+(`edge_already_used`, `runtime/ops/mod.rs`). -/
 def runtimeReadsIds (ir : IR) : List Nat :=
   (reads ir).map Var.id ++ match ir with
     | .condTraverse _ _ sib | .expandInto _ sib => sib

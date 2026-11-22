@@ -8,14 +8,14 @@ Companion of `Glue` (names, registry). Pure models of the parts of `graph_core.r
 
 | Lean | Rust (origin/main 256ab4d3f) |
 | --- | --- |
-| `Tg.new`, `Tg.fromMvcc`        | `ThreadedGraph::new` `graph_core.rs:601`, `from_mvcc` `:620` |
-| `WStats.modified`              | `WriteQueryOk::new` `:306` (the `modified` predicate `:314-325`) |
-| `isWritePlan`, `execQuery`     | `execute_query` `:639` (`is_write` `:652-658`, `admission.take()` `:677`) |
-| `execProfile`                  | `execute_profile` `:721` |
-| `profileSyncProg`              | `profile_sync` `:1569` |
-| `effTimeout`                   | `compute_effective_timeout` `:1064` |
-| `invalidVersionReply`, `versionMismatch` | `reply_invalid_graph_version` `:1103`, the check in `query_mut` `:1016` |
-| `replyProfile`                 | `reply_profile` `:1001` |
+| `Tg.new`, `Tg.fromMvcc`        | `ThreadedGraph::new` `graph_core.rs`, `from_mvcc` |
+| `WStats.modified`              | `WriteQueryOk::new` (the `modified` predicate) |
+| `isWritePlan`, `execQuery`     | `execute_query` (`is_write`, `admission.take()`) |
+| `execProfile`                  | `execute_profile` |
+| `profileSyncProg`              | `profile_sync` |
+| `effTimeout`                   | `compute_effective_timeout` |
+| `invalidVersionReply`, `versionMismatch` | `reply_invalid_graph_version`, the check in `query_mut` |
+| `replyProfile`                 | `reply_profile` |
 -/
 namespace SC.Exec
 
@@ -31,12 +31,12 @@ structure Tg where
   gateClosed : Bool
 deriving DecidableEq, Repr
 
-/-- `from_mvcc` (`:620`): wraps the given `MvccGraph` as it is, with an empty queue, `write_loop`
+/-- `from_mvcc`: wraps the given `MvccGraph` as it is, with an empty queue, `write_loop`
 off, an empty slow log and an open gate (`Arc::default()` of `WriterGate(RwLock<()>)`). -/
 def Tg.fromMvcc (g : Nat) : Tg :=
   { graph := g, queue := [], writeLoop := false, slowLog := [], gateClosed := false }
 
-/-- `new` (`:603`): the same with a freshly made `MvccGraph` (`fresh`). -/
+/-- `new`: the same with a freshly made `MvccGraph` (`fresh`). -/
 def Tg.new (fresh : Nat) : Tg := Tg.fromMvcc fresh
 
 theorem Tg.fromMvcc_spec (g : Nat) :
@@ -68,7 +68,7 @@ structure WStats where
   indexesDropped : Nat
   effectsCount : Nat
 
-/-- `modified` (`:314-325`). -/
+/-- `modified`. -/
 def WStats.modified (s : WStats) : Bool :=
   decide (s.nodesCreated > 0 ∨ s.nodesDeleted > 0 ∨ s.relsCreated > 0 ∨ s.relsDeleted > 0 ∨
     s.propsSet > 0 ∨ s.propsRemoved > 0 ∨ s.labelsAdded > 0 ∨ s.labelsRemoved > 0 ∨
@@ -86,7 +86,7 @@ theorem WStats.untouched_not_modified :
     (WStats.mk 0 0 0 0 0 0 0 0 0 0 0).modified = false := by decide
 
 /-- Index DDL moves no counter but replicates an effect (`effects_count`), so it is `modified`:
-the reason the predicate reads `effects_count` too (the comment at `:311-312`). -/
+the reason the predicate reads `effects_count` too (the comment at). -/
 theorem WStats.effect_alone_modified (n : Nat) (h : 0 < n) :
     (WStats.mk 0 0 0 0 0 0 0 0 0 0 n).modified = true := by
   simp [WStats.modified, h]
@@ -125,7 +125,7 @@ inductive QOut
   | timeoutErr
 deriving DecidableEq, Repr
 
-/-- `execute_query` (`:639`) for a plan: `write` is the command's flag (`GRAPH.QUERY` vs
+/-- `execute_query` for a plan: `write` is the command's flag (`GRAPH.QUERY` vs
 `RO_QUERY`), `admission` whether the query still holds its `QueueSlot`, `tmo` whether the timeout
 computation succeeds. Returns the outcome and the admission slot afterwards. -/
 def execQuery (plan : List Node) (write admission tmo : Bool) : QOut × Bool :=
@@ -161,7 +161,7 @@ inductive PDetect
   | timeoutErr
 deriving DecidableEq, Repr
 
-/-- `execute_profile` (`:721`): a write is not executed here (it goes through the write queue and
+/-- `execute_profile`: a write is not executed here (it goes through the write queue and
 `execute_query_write` replies it in profile mode); a read releases its slot, profiles and replies. -/
 def execProfile (plan : List Node) (admission tmo : Bool) : PDetect × Bool :=
   if isWritePlan plan then (.write, admission)
@@ -179,8 +179,8 @@ theorem execProfile_agrees_execQuery (plan : List Node) (adm tmo : Bool) :
   by_cases h : isWritePlan plan = true <;> simp [execProfile, execQuery, h] <;> split <;> rfl
 
 open SC.Locks in
-/-- `profile_sync` (`:1569`) as a lock program: the detect phase takes the read lock in
-`QuerySession::begin` and drops it with the session (the block at `:1578`); a write then runs
+/-- `profile_sync` as a lock program: the detect phase takes the read lock in
+`QuerySession::begin` and drops it with the session (the block at); a write then runs
 under `begin_writer` (GIL, write lock) and commits like an inline `GRAPH.QUERY` write. -/
 def profileSyncProg : PDetect → List Op
   | .write => [.acq graphR, .rel graphR] ++ inlineWriterProg
@@ -203,7 +203,7 @@ structure TCfg where
   tdef : Int
   legacy : Int
 
-/-- `compute_effective_timeout` (`:1064`), `Err` as `none`. -/
+/-- `compute_effective_timeout`, `Err` as `none`. -/
 def effTimeout (c : TCfg) (pq : Option Int) (isWrite : Bool) : Option (Option Nat) :=
   let rw := decide (c.tmax > 0 ∨ c.tdef > 0)
   let perQuery : Option (Option (Option Nat)) :=
@@ -269,7 +269,7 @@ inductive R
   | str (s : String)
 deriving DecidableEq, Repr
 
-/-- `reply_invalid_graph_version` (`:1103`): `[error, current_version]`. -/
+/-- `reply_invalid_graph_version`: `[error, current_version]`. -/
 def invalidVersionReply (v : Int) : List R := [.arr 2, .err "ERR invalid graph version", .int v]
 
 /-- The array header counts exactly the two elements that follow. -/
@@ -277,7 +277,7 @@ theorem invalidVersionReply_shape (v : Int) :
     invalidVersionReply v = [.arr 2, .err "ERR invalid graph version", .int v] ∧
     (invalidVersionReply v).length = 1 + 2 := ⟨rfl, rfl⟩
 
-/-- `query_mut`'s client-supplied schema version check (`:1016-1022`): the reply is sent exactly on
+/-- `query_mut`'s client-supplied schema version check: the reply is sent exactly on
 a mismatch. -/
 def versionMismatch (provided : Option Nat) (cur : Nat) : Bool :=
   match provided with
@@ -303,7 +303,7 @@ def profileLine (fmt : Nat → String) (d : Nat → Option (Nat × Nat)) (o : PO
   String.join (List.replicate o.depth "    ") ++ o.name ++ " | Records produced: " ++
     toString (pdata d o.idx).1 ++ ", Execution time: " ++ fmt (pdata d o.idx).2 ++ " ms"
 
-/-- `reply_profile` (`:1001`): the array length, then one string per operator in DFS order. -/
+/-- `reply_profile`: the array length, then one string per operator in DFS order. -/
 def replyProfile (fmt : Nat → String) (d : Nat → Option (Nat × Nat)) (ops : List POp) :
     Nat × List String :=
   (ops.length, ops.map (profileLine fmt d))

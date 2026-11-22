@@ -2,7 +2,7 @@ import FalkorIndexLayer.Proofs
 
 /-! # Temporals are not indexed
 
-`Document::set` skips `Datetime`/`Date`/`Time`/`Duration` (`mod.rs:808`). So a stored temporal
+`Document::set` skips `Datetime`/`Date`/`Time`/`Duration` (`mod.rs`). So a stored temporal
 contributes nothing to its attribute's RediSearch document, and every numeric or scalar index query
 over that attribute is exact for it: the index does not return it, and Cypher's comparison of a
 temporal with a number or string is null (not true). These are the theorems for

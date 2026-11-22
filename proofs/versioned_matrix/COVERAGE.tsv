@@ -116,16 +116,12 @@ graph/src/graph/graphblas/tensor.rs	Iter::new	1745	PROVEN	VMTensorOps.newTIt: se
 graph/src/graph/graphblas/tensor.rs	Iter::seek	1777	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
 graph/src/graph/graphblas/tensor.rs	Iter::next	1794	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
 graph/src/graph/cow.rs	Cow::new	84	PROVEN	VMCow.cowWrap (aliasing modelled): cowWrap_private_iff (private iff the handle is unpublished), cowWrap_shared_leaks, cowWrap_private_write_isolated, cowWrap_newVersion_isolated; every in-tree caller allocates then wraps (cowNew_eq, cowNew_spec), listed in CowGlue.lean
-graph/src/graph/cow.rs	Cow::new_version	97	PROVEN	Cow.newVersion: newVersion_iso
-graph/src/graph/cow.rs	Cow::replace	112	PROVEN	replace: wstep_iso
 graph/src/graph/cow.rs	Cow::deref	128	PROVEN	VMCow.deref: deref_view
-graph/src/graph/cow.rs	Cow::deref_mut	134	PROVEN	derefMut: wstep_iso; old_write_leaks_into_new_version (release hazard; debug-asserted since #2905, runtime_ds CowModel.dbg_write_through_branched_source_panics)
 graph/src/graph/mvcc_graph.rs	MvccGraph::new	106	PROVEN	VMCow.mvccNew: mvccNew_ready
 graph/src/graph/mvcc_graph.rs	MvccGraph::from_graph	118	PROVEN	VMCow.mvccNew: mvccNew_ready
 graph/src/graph/mvcc_graph.rs	MvccGraph::read	129	PROVEN	reader_view_frozen, snapshot_isolation
 graph/src/graph/mvcc_graph.rs	MvccGraph::fork	141	PROVEN	Mvcc.begin/sstep .begin: fork_takes_nothing, newVersion_iso
 graph/src/graph/mvcc_graph.rs	MvccGraph::commit	205	PROVEN	sstep .commit (Graph::validate as `valid`): snapshot_isolation, refused_commit_publishes_nothing; #3683: takes the fork by value and returns the published Arc<Graph>, prepare+publish unchanged in effect; #3585 also enqueues background index builds after publish (not logical graph data, not modelled)
-graph/src/graph/mvcc_graph.rs	MvccGraph::commit_indexer_batch	262	PROVEN	publishes a version at the same logical data version (the batch changes no logical data): sstep .commit (snapshot_isolation); the fit decision (Same/Swap/CatchUp/Discarded) is in native_index; the shared `prepare` tail (schema_version bump, finish_version, fold_oversized_deltas) and `publish`'s set_indexer_graph are not modelled; since #3683 `prepared` is taken by value (a plain Graph), `commit` returns the published Arc<Graph>
 graph/src/graph/mvcc_graph.rs	MvccGraph::is_stale	155	PROVEN	reads two version numbers, no heap access: SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; isolation: fork_takes_nothing; the 2026-11-03 index-progress gap (a fork overtaken by an indexer batch) is closed by #3567 (rebase_onto_indexer_batches, native_index Rebase.lean), not modelled in this project
 graph/src/graph/mvcc_graph.rs	MvccGraph::prepare	293	PROVEN	(the checks and last changes of the former commit_version) sstep .commit (valid ⇒ publish, else drop): snapshot_isolation, refused_commit_publishes_nothing
 graph/src/graph/mvcc_graph.rs	MvccGraph::publish	354	PROVEN	(the compare-and-swap and set_indexer_graph of the former commit_version) sstep .commit (valid ⇒ publish, else drop): snapshot_isolation, refused_commit_publishes_nothing

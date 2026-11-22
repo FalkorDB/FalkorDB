@@ -166,7 +166,7 @@ def nextEpoch (prevLent : Bool) (epoch : Nat) : Nat := if prevLent then epoch el
 
 /-! ## `with_graph` and its restore guard
 
-`with_graph` (js_classes.rs:151) swaps `CURRENT_GRAPH` for the new graph, bumps `CALL_EPOCH` when
+`with_graph` (js_classes.rs) swaps `CURRENT_GRAPH` for the new graph, bumps `CALL_EPOCH` when
 the slot was null (an outermost call), and returns `f()` while a `Restore` guard puts the
 previous slot back when it is dropped (:158) — on return and on unwind alike. -/
 
@@ -255,7 +255,7 @@ theorem nodeIdOf_spec (e id : Nat) (v : Marshal.RV) :
     nodeIdOf (nextEpoch false e) (some (newEntity e v)) = none ∧ nodeIdOf e none = none := by
   refine ⟨?_, ?_, ?_, rfl⟩ <;> simp [nodeIdOf, entityValue, newEntity, nextEpoch]
 
-/-- `js_traverse_impl`'s source collection (js_classes.rs:821-828): every element of the
+/-- `js_traverse_impl`'s source collection (js_classes.rs): every element of the
 `nodes` array must be a current node entity, else `"Node ID error: traverse expects an array of
 nodes"` (a plain object copying `__falkor_node_id` no longer passes). -/
 def traverseSources (epochNow : Nat) (objs : List (Option Ent)) : Except String (List Nat) :=

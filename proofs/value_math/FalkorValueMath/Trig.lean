@@ -7,7 +7,7 @@ uses (`*`, `/`, `-`) are fields of `TrigOps`. What is proved is everything the R
 around them: argument dispatch, `Int → f64` promotion, `Null` propagation, the exact
 formula each Cypher function evaluates (`cot = cos/sin`, `haversin = (1-cos)/2`,
 `degrees = x·(180/π)`, `radians = x·(π/180)` — the last two are Rust std's own
-`to_degrees`/`to_radians`, core/src/num/f64.rs:871-895), that every `unreachable!()` is
+`to_degrees`/`to_radians`, core/src/num/f64.rs), that every `unreachable!()` is
 dead after `validate_args_type`, that the result type is the declared return type, and
 that each function is **the same expression tree as C** (`AR_SIN` … `AR_HAVERSIN`,
 `src/arithmetic/numeric_funcs/numeric_funcs.c:250-392` on master), so Rust = C

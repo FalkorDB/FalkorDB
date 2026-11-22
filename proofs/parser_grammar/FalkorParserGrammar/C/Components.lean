@@ -1,5 +1,5 @@
 /-
-# `QueryGraph::filter_visited`, `connected_components`, `dfs` (ast.rs:792-887)
+# `QueryGraph::filter_visited`, `connected_components`, `dfs` (ast.rs)
 
 The bound graph (`QueryGraph<_, _, Variable>`). `visited` is one
 `HashSet<u32>` shared by node, relationship and path ids, modelled as a
@@ -17,7 +17,7 @@ theorem mem_vins {x y : Nat} {vis : List Nat} : y ∈ vins x vis ↔ y ∈ vis �
   unfold vins; split <;> simp_all <;> constructor <;> intro h <;> (try rcases h with h | h) <;>
     simp_all
 
-/-- The path step at the end of `dfs` (ast.rs:878-882). -/
+/-- The path step at the end of `dfs` (ast.rs). -/
 def pathStep (ps : List (QPath Var)) (vis : List Nat) (c : G) : List Nat × G :=
   match ps with
   | [] => (vis, c)
@@ -26,13 +26,13 @@ def pathStep (ps : List (QPath Var)) (vis : List Nat) (c : G) : List Nat × G :=
       pathStep ps (vis ++ [p.var.id]) (c.addPath p).2
     else pathStep ps vis c
 
-/-- One relationship's own bookkeeping in the loop (ast.rs:854-856 / 865-867):
+/-- One relationship's own bookkeeping in the loop (ast.rs / 865-867):
 `if visited.insert(relationship.alias.id) { component.add_relationship(..) }`. -/
 def relPart (r : QRel Var) (vis : List Nat) (c : G) : List Nat × G :=
   if r.alias.id ∈ vis then (vis, c) else (vis ++ [r.alias.id], (c.addRel r).2)
 
 mutual
-/-- `QueryGraph::dfs` (ast.rs:844-883); `none` = model budget exhausted. -/
+/-- `QueryGraph::dfs` (ast.rs); `none` = model budget exhausted. -/
 def dfs (g : G) : Nat → QNode Var → List Nat → G → Option (List Nat × G)
   | 0, _, _, _ => none
   | f + 1, n, vis, c =>
@@ -40,7 +40,7 @@ def dfs (g : G) : Nat → QNode Var → List Nat → G → Option (List Nat × G
     | none => none
     | some p => some (pathStep g.paths p.1 p.2)
 termination_by f _ _ _ => (f, 0)
-/-- The `for relationship in &self.relationships` loop (ast.rs:852-876). -/
+/-- The `for relationship in &self.relationships` loop (ast.rs). -/
 def dfsRels (g : G) : Nat → QNode Var → List (QRel Var) → List Nat → G → Option (List Nat × G)
   | _, _, [], vis, c => some (vis, c)
   | f, n, r :: rs, vis, c =>
@@ -58,7 +58,7 @@ def dfsRels (g : G) : Nat → QNode Var → List (QRel Var) → List Nat → G �
 termination_by f _ rs _ _ => (f, rs.length + 1)
 end
 
-/-- `connected_components` (ast.rs:823-842). -/
+/-- `connected_components` (ast.rs). -/
 def ccLoop (g : G) (f : Nat) : List (QNode Var) → List Nat → List G → Option (List G)
   | [], _, acc => some acc
   | n :: ns, vis, acc =>
@@ -321,7 +321,7 @@ the components' nodes are pairwise distinct by id (no node is in two
 components or twice in one), each is a node of the graph or an endpoint of
 one of its relationships, and every node of the graph is in some component
 *unless its id is also a relationship or path id* (`visited` is one set for
-all three kinds of id, ast.rs:827,849,855,880). -/
+all three kinds of id, ast.rs). -/
 theorem connectedComponents_spec (g : G) (f : Nat) (out : List G)
     (h : connectedComponents g f = some out) :
     (ids (allNodes out)).Nodup ∧ (∀ x ∈ allNodes out, Cand g x) ∧
@@ -338,7 +338,7 @@ def exG : G :=
   ⟨[a, b], [⟨⟨none, 2, 0⟩, [7], leaf .map, a, b, false, none, none, .no⟩], []⟩
 #guard ((connectedComponents exG 10).map (·.length)) == some 1
 
-/-- `QueryGraph::filter_visited` (ast.rs:795-821): keep the entities whose
+/-- `QueryGraph::filter_visited` (ast.rs): keep the entities whose
 `(id, scope_id)` is not in `visited`, re-adding them with `add_*`. -/
 def filterVisited (g : G) (vis : List (Nat × Nat)) : G :=
   let g1 := (g.nodes.filter (fun n => !((n.alias.id, n.alias.scope) ∈ vis))).foldl

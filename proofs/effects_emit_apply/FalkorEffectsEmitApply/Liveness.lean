@@ -3,21 +3,21 @@ import FalkorEffectsEmitApply.Apply
 /-!
 # The apply side: every record that acts on an entity checks it is live
 
-The node- and edge-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:164`)
+The node- and edge-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs`)
 refuse a record naming an entity this replica does not hold live:
 
 | here | there (`apply.rs`) |
 | --- | --- |
-| `needLive` | `require_live` (`:685`) over `IdSpace::refuse_not_live` (accepts exactly the live ids: `proofs/id_space` `refuseNotLive_live`) |
-| `firstWithRels` | `Graph::first_node_with_relationships` (`graph.rs:2434`; its Rust is proved against this spec in `proofs/graph_queries`) |
-| `applyRec .createNode` | `CreateNode` arm (`:214`) — a repeated id is refused (`nodes.len() != ids.count()`, `:226`), then `create_nodes` refuses a live id |
-| `applyRec .createEdge` | `CreateEdge` arm (`:291`) — `require_live((src ∪ dst) − released)` (`:318`), then `create_relationships_bulk` refuses a live or repeated id |
-| `applyRec .updateNode` | `UpdateNode` arm (`:346`) — `require_live` (`:352`) |
-| `applyRec .updateEdge` | `UpdateEdge` arm (`:360`) — `require_live` (`:366`) |
-| `applyRec .setLabels/.removeLabels` | `:380` / `:387` — `require_live` (`:381`, `:388`) |
-| `applyRec .deleteNode` | `DeleteNode` arm (`:406`) — `require_live` (`:413`), `NodeHasRelationships` (`:417-419`), then `delete_nodes` (records `released`) |
-| `applyRec .deleteEdge` | `DeleteEdge` arm (`:429`) — `delete_relationships` refuses a non-live id |
-| `danglingRel` | `Graph::validate`'s `verify_created_relationships` (`graph.rs:1648`), run by `apply_effects` (`g.validate()`, `:90`) |
+| `needLive` | `require_live` over `IdSpace::refuse_not_live` (accepts exactly the live ids: `proofs/id_space` `refuseNotLive_live`) |
+| `firstWithRels` | `Graph::first_node_with_relationships` (`graph.rs`; its Rust is proved against this spec in `proofs/graph_queries`) |
+| `applyRec .createNode` | `CreateNode` arm — a repeated id is refused (`nodes.len() != ids.count()`), then `create_nodes` refuses a live id |
+| `applyRec .createEdge` | `CreateEdge` arm — `require_live((src ∪ dst) − released)`, then `create_relationships_bulk` refuses a live or repeated id |
+| `applyRec .updateNode` | `UpdateNode` arm — `require_live` |
+| `applyRec .updateEdge` | `UpdateEdge` arm — `require_live` |
+| `applyRec .setLabels/.removeLabels` | / — `require_live` |
+| `applyRec .deleteNode` | `DeleteNode` arm — `require_live`, `NodeHasRelationships`, then `delete_nodes` (records `released`) |
+| `applyRec .deleteEdge` | `DeleteEdge` arm — `delete_relationships` refuses a non-live id |
+| `danglingRel` | `Graph::validate`'s `verify_created_relationships` (`graph.rs`), run by `apply_effects` (`g.validate()`) |
 
 The replica is abstract (as in `Apply.lean`): node liveness, labels, properties,
 live relationships `(id, src, dst)` with properties, and the batch's `released`
@@ -88,7 +88,7 @@ def upd {α} (ids : List Nat) (f : Nat → α) (v : Nat → α) : Nat → α :=
 
 def applyRec (g : G) : Rec → Except AErr G
   | .createNode ids lbls => do
-    -- (`apply.rs:226`): the id set must be as long as the id list
+    -- (`apply.rs`): the id set must be as long as the id list
     if !ids.Nodup then .error (.graph "bulk node create got repeated ids; an id names one node") else
     needDead g.nlive .node ids
     pure { g with nlive := upd ids g.nlive (fun _ => true), labels := upd ids g.labels (fun _ => lbls) }
@@ -451,7 +451,7 @@ theorem detach_delete_applies :
 /-! ## A repeated id in one `CREATE_NODE` -/
 
 /-- **On main a repeated id is refused**, whatever the graph. The message is a stand-in for
-Rust's formatted one (`apply.rs:227-232`); only the `.graph` constructor is modelled. -/
+Rust's formatted one (`apply.rs`); only the `.graph` constructor is modelled. -/
 theorem createNode_repeat_refused (g : G) (ids lbls : List Nat) (h : ¬ ids.Nodup) :
     applyRec g (.createNode ids lbls) =
       .error (.graph "bulk node create got repeated ids; an id names one node") := by
@@ -469,7 +469,7 @@ theorem createNode_ok_nodup {g g' : G} {ids lbls : List Nat}
 /-- An abstract refusal check for the `a_repeated_node_id_in_one_create_is_refused` input of
 the `apply.rs` test (#3247): `[2, 3, 2]` is refused with a `Graph` error. Only the error
 constructor is claimed; the message is a stand-in (Rust formats the id and distinct counts,
-`apply.rs:227-232`, and its test asserts on the word `distinct`), so the payload is not modelled. -/
+`apply.rs`, and its test asserts on the word `distinct`), so the payload is not modelled. -/
 theorem a_repeated_node_id_in_one_create_is_refused :
     ∃ m, errOf (applyRec s0 (.createNode [2, 3, 2] [])) = some (.graph m) :=
   ⟨"bulk node create got repeated ids; an id names one node", by decide⟩

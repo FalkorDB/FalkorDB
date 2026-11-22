@@ -1,6 +1,6 @@
 import PlannerBuild.Decomp
 /-
-# `ExprIR::and_of` / `or_of` keep the three-valued meaning (ast.rs:450-452)
+# `ExprIR::and_of` / `or_of` keep the three-valued meaning (ast.rs)
 
 `flat` splices an operand of the same connective into its parent. Kleene
 AND/OR are associative, so the spliced tree has the same truth value on every

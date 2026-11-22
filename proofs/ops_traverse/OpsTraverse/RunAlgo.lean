@@ -1,6 +1,6 @@
 import OpsTraverse.AlgoPaths
 /-
-# `run_path_algo` (algo_procedures.rs:2710): which search runs, and what it is seeded with
+# `run_path_algo` (algo_procedures.rs): which search runs, and what it is seeded with
 
 Glue over the three searches. `dij` is the result of `dijkstra_single_path`, `bfsb` of
 `bfs_find_bound`, `enum bound` of `enumerate_paths bound`, `sortF` is `sort_by(cmp_found_path)` and

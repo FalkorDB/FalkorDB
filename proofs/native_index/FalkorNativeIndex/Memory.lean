@@ -4,11 +4,11 @@ import FalkorNativeIndex.Rebase
 
 | Lean | Rust |
 | --- | --- |
-| `NumericIndex.memoryUsage` | `NumericIndex::memory_usage` (`numeric.rs:296`) = `tree.heap_bytes()` |
-| `IndexColumn.memoryUsage` | `VersionedIndex::memory_usage` for `IndexColumn` (`falkordb_index.rs:405`) |
-| `EN.memoryUsage` | `IndexEntry::memory_usage` (`versioned.rs:351`) |
-| `memoryUsage` | `FalkorDbIndex::memory_usage` (`falkordb_index.rs:582`) |
-| `IndexColumn.batchLen` | `VersionedIndex::batch_len` for `IndexColumn` (`falkordb_index.rs:382`) = `EncodedTuples::len` |
+| `NumericIndex.memoryUsage` | `NumericIndex::memory_usage` (`numeric.rs`) = `tree.heap_bytes()` |
+| `IndexColumn.memoryUsage` | `VersionedIndex::memory_usage` for `IndexColumn` (`falkordb_index.rs`) |
+| `EN.memoryUsage` | `IndexEntry::memory_usage` (`versioned.rs`) |
+| `memoryUsage` | `FalkorDbIndex::memory_usage` (`falkordb_index.rs`) |
+| `IndexColumn.batchLen` | `VersionedIndex::batch_len` for `IndexColumn` (`falkordb_index.rs`) = `EncodedTuples::len` |
 
 `CowBTree::heap_bytes` (a walk of every page) is proved in `proofs/cow_btree` (`heapBytes_eq`, for a tree
 satisfying `TreeWF`; every tree reachable through the public API does: `Reachable_wf_asserted`); it is the
@@ -59,7 +59,7 @@ theorem memoryUsage_add (hb : NumericIndex → Nat) (ser : List Nat → Nat) (ns
       (ns.map (EN.memoryUsage hb ser)).sum + (es.map (EN.memoryUsage hb ser)).sum := by
   simp [memoryUsage, List.map_append, List.sum_append]
 
-/-- `NumericIndex::memory_usage` (`numeric.rs:474-476`) walks the two trees: with `ht` = `CowBTree::heap_bytes`
+/-- `NumericIndex::memory_usage` (`numeric.rs`) walks the two trees: with `ht` = `CowBTree::heap_bytes`
     of one tree, the parameter `hb` is `ht` of the scalar tree plus `ht` of the array tree (#2453). -/
 theorem memoryUsage_two_trees (ht : List Nat → Nat) (ix : NumericIndex) :
     ix.memoryUsage (fun i => ht i.tree + ht i.arrayTree) = ht ix.tree + ht ix.arrayTree := rfl

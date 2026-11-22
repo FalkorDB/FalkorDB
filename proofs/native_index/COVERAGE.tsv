@@ -62,11 +62,9 @@ graph/src/index/falkordb/graph_writes.rs	remove_node_under_label	551	PROVEN	remo
 graph/src/index/falkordb/graph_writes.rs	node_label_ids_into	569	PROVEN	nodeLabelIdsInto: nodeLabelIdsInto_spec
 graph/src/index/falkordb/graph_writes.rs	edge_type	584	PROVEN	edgeType: edgeType_spec
 graph/src/graph/graph.rs	apply_index_writes	3916	PROVEN	applyIndexWrites (with `G.place`: a node by id, an edge by its endpoints, None once deleted): applyIndexWrites_spec, runUnit_spec, kind_place; since #3567 the closure is `BuildCursor::from_id`: Rebase.fromId_spec (= G.place)
-graph/src/graph/graph.rs	commit_index_docs	3939	PROVEN	commitIndexDocs (native part; RediSearch commit_index/commit_edge_index are FFI): commitIndexDocs_native, applyIndexWrites_spec
 graph/src/graph/graph.rs	query_index_nodes	4245	PROVEN	queryIndexNumericNodes (raw docs mapped to NodeId, identity): queryIndexNumericNodes_spec, nodeScan_building_agrees
 graph/src/graph/graph.rs	query_index_edges	4263	PROVEN	queryIndexNumericEdges (endpoints from the edge_id reverse index; an unknown id skipped; a ScanFilter passes through): queryIndexNumericEdges_scan/_none, edgeScan_building_agrees
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	PROVEN	nodeScanOp/scanOp (rows, the resolved filtered scan, or the error): scanOp_spec, scanOp_none_iff, nodeScanOp_error_iff, nodeScanOp_range_served, nodeFilteredScan_agrees
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	PROVEN	edgeScanOp/scanOp: edgeScanOp_error_iff, edgeScanOp_range_served, edgeFilteredScan_agrees
 graph/src/index/falkordb/numeric.rs	EncodedTuples::scalars	271	PROVEN	EncodedTuples.scalars: encodedTuples_spec
 graph/src/index/falkordb/numeric.rs	EncodedTuples::is_empty	279	PROVEN	EncodedTuples.isEmpty: encodedTuples_spec
 graph/src/index/falkordb/numeric.rs	EncodedTuples::len	285	PROVEN	EncodedTuples.len: encodedTuples_spec

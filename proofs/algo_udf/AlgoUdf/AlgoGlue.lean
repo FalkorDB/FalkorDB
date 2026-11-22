@@ -11,7 +11,7 @@ import AlgoUdf.Dfs
 | `scoreOf`                | `msf_score_of` :266 |
 | `nodeValue`              | `node_value` :474 |
 | `collectNodeIds`         | `collect_node_ids` :498 (label scans AXIOMATISED as `scan`; FxHashSet + `sort_unstable`) |
-| `activeNodes`            | `active_node_set` :522 / `Graph::get_nodes(∅, 0)` (graph.rs:2565) |
+| `activeNodes`            | `active_node_set` :522 / `Graph::get_nodes(∅, 0)` (graph.rs) |
 | `Own`, `lifecycle`       | `create_lagraph_graph` :372, `delete_lagraph_graph` :397, `_borrowed` :404, `_maybe_borrowed` :417 under the LAGraph ownership contract |
 | `cmpKey`                 | `cmp_found_path` :2155 (= `Dfs.fpLt`) |
 -/
@@ -104,7 +104,7 @@ theorem nodeValue_spec (id : Nat) : nodeValue id = .node id := rfl
 
 /-! ## Node collection -/
 
-/-- `Graph::get_nodes(&∅, 0)` (`Graph::get_nodes`, graph.rs:2565). -/
+/-- `Graph::get_nodes(&∅, 0)` (`Graph::get_nodes`, graph.rs). -/
 def activeNodes (nodeCount maxId : Nat) (deleted : Nat → Bool) : List Nat :=
   if nodeCount = 0 then [] else (List.range (maxId + 1)).filter (fun i => !deleted i)
 

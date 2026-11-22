@@ -3,7 +3,7 @@ import FalkorEffectsEmitApply.Basic
 /-!
 # The apply side: which records check liveness, and what a missing check costs
 
-Models the node-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:164-557`)
+Models the node-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs`)
 over an abstract replica: a node id space with a recycle bin, per-node labels
 and properties, and edges as endpoint pairs. The question is the one a hostile
 or divergent `GRAPH.EFFECT` asks: does applying a record the checks accept keep
@@ -33,7 +33,7 @@ structure RG.WF (σ : RG) : Prop where
 
 /-! ## The arms as Rust writes them -/
 
-/-- `Graph::create_nodes` for one id (`apply.rs:214-240`, since #3446 the label write follows `check_attr_shape`; checked by
+/-- `Graph::create_nodes` for one id (`apply.rs`, since #3446 the label write follows `check_attr_shape`; checked by
     `IdSpace::create`): a recycled id leaves the bin, a fresh id moves
     the boundary. It sets labels and does **not** reset properties — a recycled
     row keeps whatever the store holds for it (observed: `hostile_update_node_on_dead_id`). -/
@@ -49,7 +49,7 @@ Since #3446 (`543357f1e`) the `CREATE_NODE` arm no longer collects the whole `Id
 `Vec<u64>` first (a few bytes of range-compressed ids name billions of nodes). `check_attr_shape`
 runs on the id *count*; with attributes the ids are materialised once (bounded by the payload: the
 shape check made `rows.len() = count * width`); with labels but no attributes the labels are
-written `NODE_LABEL_CHUNK = 2^16` ids per call (`apply.rs:268-288`), and with neither the ids are
+written `NODE_LABEL_CHUNK = 2^16` ids per call (`apply.rs`), and with neither the ids are
 never expanded. `chunkLoop` is that `loop { chunk = remaining.take(N); if empty { break }; write }`;
 `chunkLoop_eq_write` says the chunking changes nothing: for any chunk size `n > 0` the result is
 the one-shot write of the whole list (the shape `createOne` and `wf_createOne` reason about). -/
@@ -59,7 +59,7 @@ exactly `lbls` (`createOne`'s `labels` field, over a list of ids). -/
 def writeLabels (σ : RG) (ids : List Nat) (lbls : List Nat) : RG :=
   { σ with labels := fun i => if ids.contains i then lbls else σ.labels i }
 
-/-- `apply.rs:277-287`: `chunk.clear(); chunk.extend(remaining.by_ref().take(N)); if chunk.is_empty()
+/-- `apply.rs`: `chunk.clear(); chunk.extend(remaining.by_ref().take(N)); if chunk.is_empty()
 { break } write(chunk)`; `fuel` stands for "the loop terminates" (each round drains `min N |remaining|`
 ids). -/
 def chunkLoop (n : Nat) (lbls : List Nat) : Nat → List Nat → RG → RG
@@ -107,17 +107,17 @@ theorem chunkLoop_labels (n : Nat) (hn : 0 < n) (lbls ids : List Nat) (σ : RG) 
     (chunkLoop n lbls (ids.length + 1) ids σ).labels = fun i => if ids.contains i then lbls else σ.labels i := by
   rw [chunkLoop_eq_write n hn lbls _ ids σ (by omega)]; rfl
 
-/-- `UPDATE_NODE`'s store write (`apply.rs:346-358`). Before #3022 the arm ran
+/-- `UPDATE_NODE`'s store write (`apply.rs`). Before #3022 the arm ran
     `check_attr_shape` and `checked_label_ids` only — no liveness check — then
     `set_nodes_attributes_rows_of_labels` writes the store for every id. -/
 def updateNode (σ : RG) (ids : List Nat) (row : List (Nat × Val)) : RG :=
   { σ with props := fun i => if ids.contains i then row ++ σ.props i else σ.props i }
 
-/-- `SET_LABELS`'s store write (`apply.rs:380-385`); before #3022 guarded by `checked_label_ids` only. -/
+/-- `SET_LABELS`'s store write (`apply.rs`); before #3022 guarded by `checked_label_ids` only. -/
 def setLabels (σ : RG) (ids : List Nat) (lbls : List Nat) : RG :=
   { σ with labels := fun i => if ids.contains i then lbls ++ σ.labels i else σ.labels i }
 
-/-- `DELETE_NODE` (`apply.rs:406-427`): `delete_nodes` refuses a recycled or
+/-- `DELETE_NODE` (`apply.rs`): `delete_nodes` refuses a recycled or
     never-created id (`okDelete`) and clears the node's labels and properties.
     It does not cascade to incident edges — on a real payload the master's
     `DELETE_EDGE` records came first. Before #3022 nothing checked that there are

@@ -15,30 +15,30 @@ structure Rd where
   buf : Bytes
   pos : Nat
 
-/-- `Reader::new` (`reader.rs:18`). -/
+/-- `Reader::new` (`reader.rs`). -/
 def Rd.new (buf : Bytes) : Rd := ⟨buf, 0⟩
-/-- `Reader::remaining` (`:24`). -/
+/-- `Reader::remaining`. -/
 def Rd.remaining (r : Rd) : Nat := r.buf.length - r.pos
-/-- `Reader::is_empty` (`:30`). -/
+/-- `Reader::is_empty`. -/
 def Rd.isEmpty (r : Rd) : Bool := r.remaining == 0
-/-- `Reader::rest` (`:36`): `&self.buf[self.pos..]`. -/
+/-- `Reader::rest`: `&self.buf[self.pos..]`. -/
 def Rd.rest (r : Rd) : Bytes := r.buf.drop r.pos
 
-/-- `Reader::take` (`:40`). The slice `buf[pos..pos+n]` is reached only after
+/-- `Reader::take`. The slice `buf[pos..pos+n]` is reached only after
 `remaining() >= n`, so it cannot panic. -/
 def Rd.take (r : Rd) (n : Nat) : Except DErr (Bytes × Rd) :=
   if r.remaining < n then .error (.eof n r.remaining)
   else .ok ((r.buf.drop r.pos).take n, { r with pos := r.pos + n })
 
-/-- `Reader::guard_count` (`:70`, a `const fn`): `count.saturating_mul(min as u64) > remaining as u64`. -/
+/-- `Reader::guard_count` (, a `const fn`): `count.saturating_mul(min as u64) > remaining as u64`. -/
 def Rd.guardCount (r : Rd) (count minEach : Nat) : Except DErr Nat :=
   let need := min (count * minEach) (2 ^ 64 - 1)
   if need > r.remaining then .error (.implausible count r.remaining) else .ok count
 
-/-- `take_array::<N>` (`:93`): `copy_from_slice(take(N)?)`. -/
+/-- `take_array::<N>`: `copy_from_slice(take(N)?)`. -/
 def Rd.takeArray (r : Rd) (n : Nat) : Except DErr (Bytes × Rd) := r.take n
 
-/-- `Reader::i64` (`:115`), `f32` (`:119`), `f64` (`:123`): `from_le_bytes` of the
+/-- `Reader::i64`, `f32`, `f64`: `from_le_bytes` of the
 array, i.e. the little-endian bit pattern (`f32/f64::from_le_bytes` is a bit
 transmute; NaN payloads and `-0.0` are preserved as bits). -/
 def Rd.bits (r : Rd) (k : Nat) : Except DErr (BitVec (8 * k) × Rd) :=
@@ -54,7 +54,7 @@ def chunks (k : Nat) : Nat → Bytes → List Bytes
   | 0, _ => []
   | n + 1, bs => bs.take k :: chunks k n (bs.drop k)
 
-/-- `Reader::take_n` (`:138`): guard, take `n*W` in one go, then split it into `W`-byte chunks (`as_chunks::<W>().0.iter()`: the slice is exactly `n*W` long, so no remainder). -/
+/-- `Reader::take_n`: guard, take `n*W` in one go, then split it into `W`-byte chunks (`as_chunks::<W>().0.iter()`: the slice is exactly `n*W` long, so no remainder). -/
 def Rd.takeN {α} (r : Rd) (k count : Nat) (fromLe : Bytes → α) : Except DErr (List α × Rd) :=
   match r.guardCount count k with
   | .error e => .error e
@@ -170,14 +170,14 @@ structure EffectWrite (W : Type) where
   written : W → Nat
   reserve : W → Nat → W := fun w _ => w
 
-/-- `impl EffectWrite for Vec<u8>` (`writer.rs:163-180`): `extend_from_slice`,
+/-- `impl EffectWrite for Vec<u8>` (`writer.rs`): `extend_from_slice`,
 `len()`, `Vec::reserve` (capacity only — the contents are unchanged). -/
 def vecWrite : EffectWrite Bytes where
   bytes w b := w ++ b
   written w := w.length
   reserve w _ := w
 
-/-- `EffectWrite::schema_id` (`writer.rs:95`): `bytes(v.to_le_bytes())`. -/
+/-- `EffectWrite::schema_id` (`writer.rs`): `bytes(v.to_le_bytes())`. -/
 def schemaId {W} (E : EffectWrite W) (w : W) (v : Nat) : W := E.bytes w (w32 v)
 
 /-- The trait's laws, for the `Vec` instance: `bytes` appends, `written` counts,

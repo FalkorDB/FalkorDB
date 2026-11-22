@@ -38,7 +38,7 @@ import OpsTraverse.BspWire
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
 
 **Re-targeted to main e860645bb** (from ca36bfa15): #3492 (a3a99bdbc) streams multi-type traversals
-instead of materialising the union. `UnionIter` (`cond_traverse.rs:245-278`) merges the per-type iterators
+instead of materialising the union. `UnionIter` (`cond_traverse.rs`) merges the per-type iterators
 (`UnionStream`: `drain_spec` = strictly ascending, each pair once, exactly the union of the types in the
 row range; `union_stream_eq_merged` = the same pairs in the same order as the merged matrix it replaces;
 heads start empty, `next_new`; each per-type stream ascending by `layerStream_spec`). `delta_lmxm_into` gets a
@@ -46,7 +46,7 @@ heads start empty, `next_new`; each per-type stream ascending by `layerStream_sp
 `GBWDelta.deltaLmxm_eff` (graphblas_wrappers: `delta_lmxm` computes `F*(M - DM + DP)`). `expand_union_row` (:1124): `union_emit_directed_iff`,
 `union_emit_bidir_iff`, `union_collapse_directed_keys_nodup`. `delta_lmxm_into`, `build_unrestricted_iter`,
 `build_transposed_iter` are now PROVEN (no FFI rows left in `cond_traverse.rs`); every `cond_traverse.rs` pin
-moved (`expand_row` +151 from `:749`, `process_pairs` +291 from `:944`). The project now depends on graphblas_wrappers and versioned_matrix.
+moved (`expand_row` +151 from, `process_pairs` +291 from). The project now depends on graphblas_wrappers and versioned_matrix.
 
 **Open item**: CondTraverse ignores `Pending` (`bug_condTraverse_*`; ExpandInto's `expandIntoP`
 satisfies `LiveExpandInto`, `expandIntoP_live`).
@@ -94,25 +94,25 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | here | there |
 | --- | --- |
 | `Basic.pairs`, `edgesBetween`, `step` | relationship-matrix pair iterator, `Tensor::get`, `Graph::get_node_relationships_by_type` (`graph/src/graph/graph.rs`) |
-| `CondTraverse.processPairs`, `expandRow` | `CondTraverseOp::process_pairs` / `expand_row` (`runtime/ops/cond_traverse.rs:1238`, `:905`) |
-| `CondTraverse.expandInto` | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs:125`) |
-| `CondTraverse.MxmSpec`, `chain` | `Matrix::delta_lmxm` + `expand_batch` (`cond_traverse.rs:594-893`); the multiply itself: `UnionGlue.deltaInto` (`TraversalMatrix::delta_lmxm_into` :86) over `GBWDelta.deltaLmxm` (`matrix.rs:1662`) |
-| `UnionStream.new`, `seek`, `next`, `drain` | `UnionIter::new` / `seek` / `next` (`cond_traverse.rs:249`, `:254`, `:269`) |
+| `CondTraverse.processPairs`, `expandRow` | `CondTraverseOp::process_pairs` / `expand_row` (`runtime/ops/cond_traverse.rs`) |
+| `CondTraverse.expandInto` | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs`) |
+| `CondTraverse.MxmSpec`, `chain` | `Matrix::delta_lmxm` + `expand_batch` (`cond_traverse.rs`); the multiply itself: `UnionGlue.deltaInto` (`TraversalMatrix::delta_lmxm_into` :86) over `GBWDelta.deltaLmxm` (`matrix.rs`) |
+| `UnionStream.new`, `seek`, `next`, `drain` | `UnionIter::new` / `seek` / `next` (`cond_traverse.rs`) |
 | `UnionStream.layerStream` | the per-type `versioned_matrix::Iter` merge of `m`, `dp`, `dm` (`VMIter`), keyed by row-major position |
 | `UnionGlue.relationshipTensors`, `buildUnion`, `pickMatrix`, `deltaInto`, `expandUnionRow` | `relationship_tensors` (:292), `build_union_iter` (:322), the `TraversalMatrix` selection (:615-680), `delta_lmxm_into` (:86), `expand_union_row` (:1124) |
-| `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:155`) |
-| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
-| `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
-| `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
-| `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
-| `PathVlt.vltMain`, `revWalk` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs:88-139`, direction inferred at `:102-105`) |
-| `EIP.expandIntoP`, `Pending` | `ExpandIntoOp::expand_row` with pending deletes (`expand_into.rs:158-235`; `pending.rs:1115-1134`) |
-| `Scans.labelScan`, `idSeek`, `labelIdScan` | `node_by_label_scan.rs:77`, `node_by_id_seek.rs:55`, `node_by_label_and_id_scan.rs:59` |
-| `ASPFold.Rel`, `ASPInv.Inv`, `bstep`, `ASPStep`, `ASPFinal`, `ASPMain`, `ASPFuel` | the BFS of `all_shortest_paths.rs:141-265` (one `pop_front` iteration = `bstep`), its invariant, and the backtrack `:278-304` |
+| `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs`) |
+| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs`, reset) |
+| `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs`) |
+| `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs`) |
+| `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs`) |
+| `PathVlt.vltMain`, `revWalk` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs`, direction inferred at) |
+| `EIP.expandIntoP`, `Pending` | `ExpandIntoOp::expand_row` with pending deletes (`expand_into.rs`; `pending.rs`) |
+| `Scans.labelScan`, `idSeek`, `labelIdScan` | `node_by_label_scan.rs`, `node_by_id_seek.rs`, `node_by_label_and_id_scan.rs` |
+| `ASPFold.Rel`, `ASPInv.Inv`, `bstep`, `ASPStep`, `ASPFinal`, `ASPMain`, `ASPFuel` | the BFS of `all_shortest_paths.rs` (one `pop_front` iteration = `bstep`), its invariant, and the backtrack |
 | `Drive.drive`, `capDrive`, `driveE` | the emitter-driven `next` loops (scans, CondTraverse with `trim_to_cap`, ExpandInto, CondVarLenTraverse, AllShortestPaths) |
 | `CTGlue` | `CondTraverseOp::new`/`build_state`/`trim_to_cap`/`out_alias_id`/`null_pad`/`next`, `ExpandIntoOp::new`, scan/builder constructors |
 | `VarLenGlue` | `path_value`, `VarLenIter::next` (frame-tree machine), `expand_row` endpoint plan, `new` |
-| `SlotFeed.aggRow`, `inputRow`, `declare` | how an Aggregate row feeds a later CondTraverse across `WITH`: `aggregate.rs:1150-1213`, `cond_traverse.rs:799-803,915-928`, binder slot ids `binder.rs:2155-2269` |
+| `SlotFeed.aggRow`, `inputRow`, `declare` | how an Aggregate row feeds a later CondTraverse across `WITH`: `aggregate.rs`, `cond_traverse.rs`, binder slot ids `binder.rs` |
 | `IndexScan` | node/edge index scans (`evaluate_index_query`, `can_utilize_index`, `next` with the RediSearch contract `IndexSound` as hypothesis), fulltext and vector scans |
 
 ## What is proved (plain English)
@@ -164,7 +164,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 ## Confirmed bugs (Rust repro fails; C and/or openCypher disagree)
 
 1. **Unreferenced named edge collapsed while a sibling traverse reads it for
-   uniqueness** — `planner/optimizer/reduce_expand_into.rs:30-55` (its
+   uniqueness** — `planner/optimizer/reduce_expand_into.rs` (its
    `ir_references_variable` ignores ancestor `sibling_edges`).
    `MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)` on `a⇉b→c`: Rust 1, C 2 (Cypher 2),
    while `RETURN r.w, s.w` lists 2 rows. Lean `twoHop_collapse_changes_count`.
@@ -180,11 +180,11 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    Lean `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result`.
    Still present on 8743953a8 (live: `UNWIND [1,2]` 5 vs C 10; 3-hop star 7 vs C 12).
 3. **Undirected anonymous collapse is per direction, not per pair**
-   (`cond_traverse.rs:985-1082`, `expand_into.rs:183-222`): `a→b, b→a, a→b`,
+   (`cond_traverse.rs`, `expand_into.rs`): `a→b, b→a, a→b`,
    `MATCH (a)-[]-(b) RETURN a.id, b.id` Rust 4 rows, C 2.
    Lean `bidir_collapse_duplicates_pair`. Still present on 8743953a8 (live: 4 rows vs C 2).
 4. **Consecutive MATCH clauses are merged into one pattern**
-   (`parser/cypher.rs:1549-1556`, outside the target files but it decides
+   (`parser/cypher.rs`, outside the target files but it decides
    uniqueness scope): `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)` Rust 2 rows, C 4
    (Cypher 4); `OPTIONAL MATCH (y:Nope) MATCH (z:B) RETURN y, z.id` Rust
    `null|null` (Cypher `null|2`; C rejects the query).
@@ -198,16 +198,16 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 7. Out of target: `[x IN null | x]` returns `[]` (C `null`).
 
 8. **#3372: a grouping key's pre-projection slot leaks past `WITH`**
-   (`aggregate.rs:1187-1196` re-binds `c` at its scope-0 id; the binder numbers
-   each scope from 0, `binder.rs:2261`; CondTraverse reads the stale node as a bound
-   destination, `cond_traverse.rs:799-803,922-928`). `MATCH (a)-[:E]->(b)-[:E]->(c)
+   (`aggregate.rs` re-binds `c` at its scope-0 id; the binder numbers
+   each scope from 0, `binder.rs`; CondTraverse reads the stale node as a bound
+   destination, `cond_traverse.rs`). `MATCH (a)-[:E]->(b)-[:E]->(c)
    WITH c, count(*) AS k MATCH (c)-[:E]->(d)`: old `c` and new `d` are both slot 2,
    Rust 0 rows (expected 4). Property `SlotFeed.ScopedRow`; Lean
    `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`,
    `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes`.
 
 9. **#3451: incoming var-length cycle in a named path is not reversed**
-   (`path_builder.rs:102-110`: the direction is inferred by comparing the VLT path's
+   (`path_builder.rs`: the direction is inferred by comparing the VLT path's
    first node with the previous path node; on a cycle `n = m` it says "forward").
    `MATCH p=(a {id:0})<-[:R*3..3]-(a)` on `0→1→2→0`: Rust `[0,1,2,0]`/`[1,2,3]`,
    expected `[0,2,1,0]`/`[3,2,1]` (C `[0,2,1,0]`/`[1,2,3]`). Property
@@ -217,7 +217,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    at plan time fixes it (`vltFix_follows`).
 
 11. **CondTraverse matches an edge of a pending-deleted node**
-   (`cond_traverse.rs` never reads `Pending`; `expand_row` `:900`, `process_pairs` `:1235`).
+   (`cond_traverse.rs` never reads `Pending`; `expand_row`, `process_pairs`).
    `MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)` takes the CondTraverse path
    (`x` unbound) and matches the doomed edge. Property `EIP.LiveCondTraverse`; Lean
    `EIP.bug_condTraverse_main_violates`, `bug_condTraverse_matches_doomed_edge`.
@@ -254,7 +254,7 @@ is now modelled at slot level (`SlotFeed.lean`), which catches #3372.
 * allShortestPaths minimality/completeness are proved for the non-cycle case only;
   the cycle case (`src = dst`) is only checked on examples (`directed_cycle_walk_order`,
   `directed_cycle_is_a_walk`, `directed_cycle_reversed_order`).
-* `shortestPath()` (bidirectional BFS in `runtime/eval.rs:1421`) and the
+* `shortestPath()` (bidirectional BFS in `runtime/eval.rs`) and the
   `algo.*paths` procedures are differential-tested against C only.
 * Record caps, OPTIONAL null padding and emitter loops are modelled at row level
   (the emitter's batch packing is proved in proofs/columnar).

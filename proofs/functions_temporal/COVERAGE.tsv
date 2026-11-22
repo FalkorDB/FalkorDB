@@ -36,7 +36,6 @@ graph/src/runtime/value.rs	Point::distance	153	PROVEN	SpatialFns.distance (Flt s
 graph/src/runtime/value.rs	Value::format_datetime	261	PROVEN	Components.formatDatetime: formatDatetime_spec, format_extremes (total, no chrono since #2986)
 graph/src/runtime/value.rs	Value::format_date	281	PROVEN	Components.formatDate: formatDate_spec, pushDate_eq, format_extremes, format_wide_years, formatDate_wide_distinct (#2986/#2746 fixed)
 graph/src/runtime/value.rs	Value::format_time	291	PROVEN	Components.formatTime: formatTime_length, format_invalid, pad2_length
-graph/src/runtime/value.rs	Value::format_duration	302	PROVEN	proofs/value_math Misc.fmtDuration_fields over decompose_duration (decomposeDuration here: construct_decompose, decompose_monthsDur); DurationComponent.bug_duration_component_null shows format_duration handles durations that get_duration_component cannot
 graph/src/runtime/value.rs	Value::get_datetime_component	478	PROVEN	Components.getDatetimeComponent (ChronoDT structure): components_invalid, clock_ranges, calendar_ranges, fields_roundtrip, datetime_unknown
 graph/src/runtime/value.rs	Value::get_date_component	537	PROVEN	Components.getDateComponent: components_invalid, calendar_ranges
 graph/src/runtime/value.rs	Value::get_time_component	585	PROVEN	Components.getTimeComponent: components_invalid, clock_ranges, time_component_cases
@@ -51,17 +50,6 @@ graph/src/runtime/value.rs	civil_from_days	804	PROVEN	civilFromDays: dfc_civil, 
 graph/src/runtime/value.rs	civil_from_days_wide	812	PROVEN	civilFromDaysI (the same Hinnant arithmetic with the i64 year, no `as i32`): dfc_civil, civil_valid, civil_dfc; civilFromDays_exact/_trunc relate the two
 graph/src/runtime/value.rs	push_date	828	PROVEN	Components.pushDate: pushDate_eq, format_wide_years, formatDate_wide_distinct
 graph/src/runtime/value.rs	write_two_digits	853	PROVEN	Components.twoDigits: twoDigits_eq_pad, fourDigits_eq_pad
-graph/src/runtime/functions/conversion.rs	register	41	PROVEN	proofs/value_math ConvReg convSigs_lower_nodup, orNull_aliases, orNull_accepts
-graph/src/runtime/functions/conversion.rs	value_to_integer	45	PROVEN	proofs/value_math toInteger_int_literal_agrees_c, toInteger_neg_overflow_null (f64 parse = parameter)
-graph/src/runtime/functions/conversion.rs	value_to_float	104	PROVEN	proofs/value_math ConvReg toFloat_ret, toFloat_arms, toFloatArgs_spec, toFloat_unsupported
-graph/src/runtime/functions/conversion.rs	value_to_string	126	PROVEN	proofs/value_math ConvReg toStr_no_panic, arity_one, toStr_ret, toStr_unsupported; float arm = float_to_string (#3609): FloatToString.toStr_float
-graph/src/runtime/functions/conversion.rs	to_json	160	PROVEN	proofs/value_math ConvReg toJson_spec, toJson_ret
-graph/src/runtime/functions/conversion.rs	is_empty	174	PROVEN	proofs/value_math isEmpty_no_panic
-graph/src/runtime/functions/conversion.rs	to_boolean	188	PROVEN	proofs/value_math toBoolean_roundtrip
-graph/src/runtime/functions/conversion.rs	to_boolean_list	218	PROVEN	proofs/value_math toBooleanList_eq
-graph/src/runtime/functions/conversion.rs	to_float_list	245	PROVEN	proofs/value_math toFloatList_eq
-graph/src/runtime/functions/conversion.rs	to_integer_list	264	PROVEN	proofs/value_math toIntegerList_eq
-graph/src/runtime/functions/conversion.rs	to_string_list	280	PROVEN	proofs/value_math toStringList_eq
 graph/src/runtime/functions/spatial.rs	point_from_map_entries	38	PROVEN	SpatialFns.pointFromMapEntries: point_key_count, point_missing_lat, point_null_not_numeric, point_nan_refused, point_nan_lon_refused, point_ok_iff (range test on the f64 before `as f32`), point_range_msgs
 graph/src/runtime/functions/spatial.rs	numeric	74	PROVEN	SpatialFns.numeric (Float and Int numeric, all else none): used by point_ok_iff, point_null_not_numeric
 graph/src/runtime/functions/spatial.rs	register	82	PROVEN	SpatialFns.registered: register_wf
@@ -74,32 +62,6 @@ graph/src/runtime/vec_distance.rs	euclidean	30	PROVEN	VecDistance euclidean: euc
 graph/src/runtime/vec_distance.rs	cosine	40	PROVEN	VecDistance cosine: cosine_spec, mismatch
 graph/src/runtime/vec_distance.rs	inner_product	49	PROVEN	VecDistance innerProduct: innerProduct_spec (-dot), mismatch
 graph/src/runtime/vec_distance.rs	distance	59	PROVEN	VecDistance distance: distance_default, distance_table, distance_none_iff
-graph/src/runtime/vector_expr.rs	ExprColumn::get	80	PROVEN	proofs/columnar VExpr EC.get: bools_get, ints_get, floats_get; VExpr.finish here (Bools read-back)
-graph/src/runtime/vector_expr.rs	ExprColumn::into_values	114	PROVEN	proofs/columnar VExpr EC.intoValues_get, intoValues_length
-graph/src/runtime/vector_expr.rs	ExprColumn::nulls_or_none	127	PROVEN	proofs/columnar VExpr nullsOrNone_spec (Bits.isNull_all / isNull_none: the bit-list view)
-graph/src/runtime/vector_expr.rs	ExprColumn::constant_nullness	139	PROVEN	proofs/columnar VExpr constNull_spec
-graph/src/runtime/vector_expr.rs	ExprColumn::is_null	150	PROVEN	proofs/columnar VExpr EC.isNull_eq
-graph/src/runtime/vector_expr.rs	union_nulls	168	PROVEN	proofs/columnar VExpr unionNulls_exact, unionNulls_length; laneRow isNull flag = union here
-graph/src/runtime/vector_expr.rs	VectorEval::new	202	PROVEN	proofs/columnar Dispatch VectorEval.new: new_runtime
-graph/src/runtime/vector_expr.rs	VectorEval::eval	211	PROVEN	proofs/columnar VecEval.eval: eval_sound; CoreBridge.vec_sound (#3787 only rewrote the Property arm's match as map_or_else)
-graph/src/runtime/vector_expr.rs	VectorEval::eval_values	282	PROVEN	proofs/columnar VecEval.evalValues: evalValues_sound
-graph/src/runtime/vector_expr.rs	VectorEval::eval_variable	306	PROVEN	proofs/columnar Lanes evalVariable_agree, evalVariable_beyond; LaneWF evalVariable_wf
-graph/src/runtime/vector_expr.rs	VectorEval::eval_property	330	PROVEN	proofs/columnar CoreBridge.evalProperty/toEC: toEC_exact; RuntimeReads.matNode_eq (bulk fetch = per-row read)
-graph/src/runtime/vector_expr.rs	VectorEval::property_values	353	PROVEN	proofs/columnar Dispatch propertyValues: propertyValues_spec, propertyValues_none_iff
-graph/src/runtime/vector_expr.rs	VectorEval::eval_and_or	388	PROVEN	VExpr.colEval: colEval_eq, colEval_rows, rowEval_short
-graph/src/runtime/vector_expr.rs	VectorEval::eval_case	474	PROVEN	proofs/columnar CaseLane.evalCase: evalCase_sound, armLoop_sound; proofs/expr_semantics case_agrees, case_match_agrees (#3787 only added an allow attribute)
-graph/src/runtime/vector_expr.rs	VectorEval::eval_function	558	PROVEN	proofs/columnar FuncLane.evalFunction: evalFunction_sound; Lanes foldCall_agree
-graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	645	PROVEN	proofs/columnar FuncLane.hasLabelsLane: hasLabelsLane_sound; Dispatch hasLabels_sound, hasLabels_typecheck_first
-graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	709	PROVEN	VExpr.rowEval here is the per-row reference; proofs/columnar Dispatch perRow_spec, perRow_error
-graph/src/runtime/vector_expr.rs	compare_columns	734	PROVEN	proofs/columnar VExpr compareColumns_agree, typedLane_agree; proofs/expr_semantics compareColumns_agrees
-graph/src/runtime/vector_expr.rs	compare_i64_pairs	798	PROVEN	proofs/columnar VExpr kernelI_get, icmp_agree; proofs/expr_semantics vec_cmp_int
-graph/src/runtime/vector_expr.rs	compare_f64_pairs	821	PROVEN	proofs/columnar VExpr kernelF_get, fcmp_agree_ff; proofs/expr_semantics vec_cmp_float
-graph/src/runtime/vector_expr.rs	mask_out_nulls	843	PROVEN	proofs/columnar VExpr maskOut_get
-graph/src/runtime/vector_expr.rs	negate_bools	857	PROVEN	proofs/columnar Lanes negate_agree; LaneWF negate_wf; CoreOps notRow_eq (3VL NOT)
-graph/src/runtime/vector_expr.rs	arithmetic	881	PROVEN	VExpr.intLane: intLane_eq (int lane); float/generic lanes not modelled
-graph/src/runtime/vector_expr.rs	int_lane	963	PROVEN	VExpr.intLane
-graph/src/runtime/vector_expr.rs	float_lane	975	PROVEN	proofs/columnar Arith floatLane_spec; proofs/expr_semantics floatLane_vals, arith_agrees
-graph/src/runtime/vector_expr.rs	float_operand	990	PROVEN	proofs/columnar Arith floatStage_agree; proofs/expr_semantics floatOperand_allF
 graph/src/runtime/value.rs	Point::new	142	PROVEN	SpatialFns.Point.new: Point.new_fields
 graph/src/runtime/value.rs	Value::add_slow (Time/Duration arm)	967	PROVEN	Duration.timeAddDur (arm at value.rs:1069, #2985): timeAddDur_eq_tod, timeAddDur_range, timeAddDur_eq, time_normalised
 graph/src/runtime/value.rs	Sub::sub (Time/Duration arm)	1084	PROVEN	Duration.timeSubDur (arm at value.rs:1111, #2985): timeSubDur_range, timeSubDur_eq, timeSub_timeAdd, time_normalised

@@ -4,10 +4,10 @@ import FalkorValueMath.Misc
 
 | Lean | Rust |
 | --- | --- |
-| `MAX_VALUE_NESTING`, `valueNestingError` | value.rs:71, `value_nesting_error` :76 |
-| `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs:2189-2256 (the `for _ in 0..len` loop = `decodeN`) |
-| `decode` | `Decode<19>::decode` value.rs:2177 (= `decode_value(r, 0)`) |
-| `isValidProperty`, `validateListProperty`, `validateProperty` | pending.rs:69, :98, :115 (copied from proofs/pending_commit `PA`, here over `V F` so the codec theorems apply) |
+| `MAX_VALUE_NESTING`, `valueNestingError` | value.rs, `value_nesting_error` :76 |
+| `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs (the `for _ in 0..len` loop = `decodeN`) |
+| `decode` | `Decode<19>::decode` value.rs (= `decode_value(r, 0)`) |
+| `isValidProperty`, `validateListProperty`, `validateProperty` | pending.rs (copied from proofs/pending_commit `PA`, here over `V F` so the codec theorems apply) |
 
 `depth` is the doc-comment's measure (`[]` and `{}` are 1, `[[]]` is 2, a scalar 0).
 `within d v` says that no `decode_value` call made while decoding `v` at depth `d` sees
@@ -32,7 +32,7 @@ variable {F : Type}
 
 def MAX_VALUE_NESTING : Nat := 4096
 
-/-- `value_nesting_error()` (value.rs:76). -/
+/-- `value_nesting_error()` (value.rs). -/
 def valueNestingError : String :=
   "Value nesting exceeds the maximum depth of " ++ toString MAX_VALUE_NESTING
 
@@ -46,7 +46,7 @@ inductive DErr | nesting | other
 
 variable (co : CodecOps F)
 
-/-- `decode_value(r, depth)` (value.rs:2189): the depth check first, then the old
+/-- `decode_value(r, depth)` (value.rs): the depth check first, then the old
 decoder with `depth + 1` for array elements. -/
 def decodeValue : Nat → Nat → List (Tok F) → Except DErr (V F × List (Tok F))
   | 0, depth, _ => if depth > MAX_VALUE_NESTING then .error .nesting else .error .other
@@ -93,7 +93,7 @@ where
     | .ok (x, r') => (decodeN fuel depth n r').map (fun (xs, r'') => (x :: xs, r''))
     | .error e => .error e
 
-/-- `Decode<19>::decode` (value.rs:2177). -/
+/-- `Decode<19>::decode` (value.rs). -/
 def decode (fuel : Nat) (toks : List (Tok F)) : Except DErr (V F × List (Tok F)) :=
   decodeValue co fuel 0 toks
 
@@ -499,21 +499,21 @@ theorem within_nest_empty : within 0 (nest MAX_VALUE_NESTING (.list ([] : List (
   refine ⟨?_, hd _⟩
   rw [within_nest]; simp [within, withinL]
 
-/-! ## Property writes (pending.rs:69-131) -/
+/-! ## Property writes (pending.rs) -/
 
-/-- `is_valid_property` (pending.rs:69): a non-list primitive, or NULL when allowed. -/
+/-- `is_valid_property` (pending.rs): a non-list primitive, or NULL when allowed. -/
 def isValidProperty : V F → Bool → Bool
   | .null, allowNull => allowNull
   | .bool _, _ | .int _, _ | .float _, _ | .str _, _ | .point _ _, _ | .vec _, _
   | .datetime _, _ | .date _, _ | .time _, _ | .duration _, _ => true
   | _, _ => false
 
-/-- The two error strings: the nesting message (pending.rs:103) and `INVALID_PROPERTY_MSG`. -/
+/-- The two error strings: the nesting message (pending.rs) and `INVALID_PROPERTY_MSG`. -/
 inductive PErr | nesting | invalid
   deriving DecidableEq
 
 mutual
-/-- The `try_for_each` body of `validate_list_property` (pending.rs:108-112) at nesting
+/-- The `try_for_each` body of `validate_list_property` (pending.rs) at nesting
 `depth`; a nested list is `validate_list_property(inner, depth + 1)`, whose depth check is
 inlined here (`validateListProperty` is the same check around `validateItems`). -/
 def validateItems : Nat → List (V F) → Except PErr Unit
@@ -527,11 +527,11 @@ def validateItem : Nat → V F → Except PErr Unit
   | _, v => if isValidProperty v false then .ok () else .error .invalid
 end
 
-/-- `validate_list_property(items, depth)` (pending.rs:98). -/
+/-- `validate_list_property(items, depth)` (pending.rs). -/
 def validateListProperty (items : List (V F)) (depth : Nat) : Except PErr Unit :=
   if depth > MAX_VALUE_NESTING then .error .nesting else validateItems depth items
 
-/-- `validate_property` (pending.rs:115); `validate_node_property` (:124) and
+/-- `validate_property` (pending.rs); `validate_node_property` (:124) and
 `validate_relationship_property` (:129) are this function. -/
 def validateProperty : V F → Except PErr Unit
   | .list items => validateListProperty items 1

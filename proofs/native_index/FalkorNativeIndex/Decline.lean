@@ -2,7 +2,7 @@ import FalkorNativeIndex.Query
 set_option linter.unusedSimpArgs false
 
 /-!
-# `unsupported_by_native_index` and `describe_predicate` (`graph/src/index/falkordb/mod.rs:43-165`)
+# `unsupported_by_native_index` and `describe_predicate` (`graph/src/index/falkordb/mod.rs`)
 
 Under `index-falkordb` a predicate the native index declines (`query_numeric` = `None`) raises an
 error, never an empty result (`nodeScanOp_error_iff`, `Scan.lean`). The message names the entity kind,
@@ -55,7 +55,7 @@ inductive Desc where
 deriving Repr
 
 mutual
-/-- `union_members` (`mod.rs:145-163`): the attribute of every member of a union, with whether the
+/-- `union_members` (`mod.rs`): the attribute of every member of a union, with whether the
     native union serves that member kind (an `Equal` or an `IN` list, directly in the union). Nested
     combinators count by their attributes but are not served. -/
 def unionMembers : Bool → List Pred → List (String × Bool)
@@ -71,12 +71,12 @@ def unionMembers : Bool → List Pred → List (String × Bool)
       | .arrayContains k _ => [(k, false)]) ++ unionMembers top cs
 end
 
-/-- The attribute every member names, if there is one (`one_key`, `mod.rs:98-101`). -/
+/-- The attribute every member names, if there is one (`one_key`, `mod.rs`). -/
 def oneKey (ms : List (String × Bool)) : Option String :=
   (ms.head?.map Prod.fst).filter (fun first => ms.all (fun m => m.1 == first))
 
 mutual
-/-- `describe_predicate` (`mod.rs:59-143`). -/
+/-- `describe_predicate` (`mod.rs`). -/
 def describe : Pred → Desc
   | .equal k v => .equality k (encodeNumeric v).isSome
   | .range k mn mx _ _ =>
@@ -99,7 +99,7 @@ def describeAll : List Pred → List Desc
   | c :: cs => describe c :: describeAll cs
 end
 
-/-- `unsupported_by_native_index` (`mod.rs:43-57`): what the error names. -/
+/-- `unsupported_by_native_index` (`mod.rs`): what the error names. -/
 structure Unsupported where
   entity : String
   label : String

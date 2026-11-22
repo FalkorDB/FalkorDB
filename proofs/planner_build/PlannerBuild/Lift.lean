@@ -1,6 +1,6 @@
 import PlannerBuild.PlanMatch
 /-
-# Lifting cross-entity inline attributes (mod.rs:581-751)
+# Lifting cross-entity inline attributes (mod.rs)
 
 `plan_match` first rewrites the pattern: an inline-attribute entry whose value
 reads a variable the pattern binds, other than the entity itself (and, for a
@@ -11,11 +11,11 @@ edge is put in `lifted_rels`: it must be emitted for the filter to read it.
 | here | there |
 | --- | --- |
 | `patVars` | `QueryGraph::variables` (nodes, relationships, paths) over every component |
-| `readsPending` | `split_inline_attrs::reads_pending` mod.rs:589-597 |
-| `keepAttrs`, `liftItem` | `split_inline_attrs` mod.rs:581-619 (`seen` = `lowered`-style key `(alias, map)`) |
-| `keepNode`, `keepRel` | the rewritten `QueryNode` / `QueryRelationship` (mod.rs:665-690, 734-748) |
-| `liftItems`, `liftPattern` | `lift_cross_entity_attrs` mod.rs:648-751 |
-| `attrsReadVisited` | `pattern_attrs_read_visited` mod.rs:622-634 |
+| `readsPending` | `split_inline_attrs::reads_pending` mod.rs |
+| `keepAttrs`, `liftItem` | `split_inline_attrs` mod.rs (`seen` = `lowered`-style key `(alias, map)`) |
+| `keepNode`, `keepRel` | the rewritten `QueryNode` / `QueryRelationship` (mod.rs) |
+| `liftItems`, `liftPattern` | `lift_cross_entity_attrs` mod.rs |
+| `attrsReadVisited` | `pattern_attrs_read_visited` mod.rs |
 
 Abstractions (documented, not load-bearing for a theorem here):
 * the lifted filters are listed in component order; Rust walks
@@ -23,7 +23,7 @@ Abstractions (documented, not load-bearing for a theorem here):
   same order when the components are listed in pattern order;
 * a kept map keeps its map identity `ptr` (Rust allocates a fresh `Arc` for it);
   `lower_inline_attrs` keys on it, and the old map is gone from the rewritten pattern;
-* an endpoint's entry in `nodes()` lifts into `dropped` (mod.rs:724-731): its map was
+* an endpoint's entry in `nodes()` lifts into `dropped` (mod.rs): its map was
   already handled through the relationship, so the model skips it.
 -/
 namespace PlannerBuild.E

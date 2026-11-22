@@ -6,13 +6,6 @@ src/allocator.rs	disable_tracking	99	PROVEN	Allocator.step .disable: disable_cle
 src/allocator.rs	current_thread_usage	108	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
 src/allocator.rs	net_thread_usage	116	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
 src/allocator.rs	reset_counter	125	PROVEN	Allocator.step .reset: reset_zero, query_accounting
-src/dispatch.rs	must_run_inline	36	AXIOMATISED	Redis ctx flags (RM_GetContextFlags); predicate identical to C cmd_dispatcher.c main_thread; not modelled beyond that
-src/divergence_guard.rs	is_replayed	41	PROVEN	reused: proofs/replication Guard.isReplayed: isReplayed_iff, onFailure_client_noop
-src/divergence_guard.rs	on_failure	53	PROVEN	reused: proofs/replication Guard.onFailure: onFailure_client_noop, onFailure_loading_exits, onFailure_replicated_resyncs, onFailure_logs_payload_only_when_replayed; guardReplica_spec, stepNode_failure_matches_guard, guard_loadi
-src/divergence_guard.rs	force_full_resync	104	PROVEN	reused: proofs/replication Guard.forceFullResync: forceFullResync_exit_iff, forceFullResync_no_one_first, forceFullResync_success (ctx.call result is an input)
-src/divergence_guard.rs	master_address	142	PROVEN	reused: proofs/replication Guard.masterAddress: masterAddress_some, masterAddress_none_missing (INFO fields are inputs)
-src/divergence_guard.rs	log_payload	168	PROVEN	reused: proofs/replication Guard.logPayload: logPayload_none, logPayload_length, onFailure_logs_payload_only_when_replayed
-src/divergence_guard.rs	clip	192	PROVEN	reused: proofs/replication Guard.clip/findRev: clip_spec (char boundary, <= budget, longest, cut = rest), clip_prefix_chars + #guard UTF-8 cases
 src/serializers/buffered_io.rs	BufferedWriter::new	43	PROVEN	BufferedIO.writeAll starts from ⟨[],[]⟩: writeAll_flatten
 src/serializers/buffered_io.rs	BufferedWriter::flush	51	PROVEN	BufferedIO.flush: flat_flush, flush_buf, G_bound (never emits an empty chunk)
 src/serializers/buffered_io.rs	BufferedWriter::accommodate	59	PROVEN	BufferedIO.accommodate: flat_accommodate, writer_layout (records never straddle chunks)
@@ -94,13 +87,10 @@ src/reply.rs	reply_verbose_value	364	PROVEN	Resp.encVb: verbose_emits given the 
 src/reply.rs	reply_stats	548	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
 src/reply.rs	reply_query	688	PROVEN	Resp.queryCalls (ReplyFormat::Verbose = (false, None), Compact{schema} = (true, schema), #3757) over Resp.resultCalls: query_verbose_reply, query_verbose_noreturn (verbose never sends the schema element), query_compact_reply + Compact.decReply_enc, query_compact_schema_reply, query_schema_noreturn; resultCalls: compact_reply, verbose_reply, noreturn_reply, noreturn_schema_reply, compact_schema_reply, verbose_schema_reply; bytes_of_emits (RESP2 bytes)
 src/reply.rs	reply_schema	644	PROVEN	Resp.schemaCalls (#3757): schema_emits (hash alone, or hash + labels/relationshipTypes/propertyKeys as a 2n-element map), i64OfU64_spec (u64 hash sent as its i64 bit pattern)
-src/graph_core.rs	up_to_nul	92	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
 src/graph_core.rs	c_graph_name	106	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); GraphCore.Lossy (from_utf8_lossy kept as a core-library hypothesis structure; KeyName.lossy is a separate concrete model, not bridged to it) — #2653: bug2653_nonutf8_key_mangled
-src/graph_core.rs	c_graph_key	121	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key
 src/graph_core.rs	register_graph	142	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
 src/graph_core.rs	graph_is_registered	188	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered), bug2782_invariant_broken: OPEN BUG #2782 refutes KeyspaceRegistered on main (kept PROVEN, bug named)
 src/graph_core.rs	key_of_write	221	PROVEN	GraphCore.keyOfWrite (#3850/#3851; key_holds_graph as keyspace lookup, TelemetryLoop.keyHolds_iff): keyOfWrite_main, keyOfWrite_admitted, keyOfWrite_renamed, keyOfWrite_holds, keyOfWrite_unheld
-src/graph_core.rs	rename_graph	251	PROVEN	GraphCore.rename: rename_moves, rename_absent
 src/graph_core.rs	WriteQueryOk::new	304	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
 src/graph_core.rs	ffi::sanitise_error	363	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
 src/graph_core.rs	ffi::block_client	378	AXIOMATISED	one RedisModule_* call (Redis module API contract)
@@ -118,21 +108,13 @@ src/graph_core.rs	ffi::trim_string_allocation	527	AXIOMATISED	one RedisModule_* 
 src/graph_core.rs	ffi::replicate_argv	542	AXIOMATISED	one RedisModule_* call (Redis module API contract)
 src/graph_core.rs	ThreadedGraph::new	601	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
 src/graph_core.rs	ThreadedGraph::from_mvcc	618	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	execute_query	637	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
-src/graph_core.rs	execute_profile	719	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
 src/graph_core.rs	execute_query_write	791	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent; GraphCore.loopW/escalateNext (#3559 bounded retry): escalate_after_max, reader_before_max, loopW_readers, loopW_length, loopW_bounded, loopW_has_result, loopW_decided, loopW_not_stale, loopW_first (writer runs never stale: QuerySession.writer_never_stale)
 src/graph_core.rs	try_query_write	884	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon; #3850/#3851 refused finish_write abandons and fails; #3559 one timeout for all runs: a run past it fails before forking, no write step): reply_after_commit, reply_only_after_commit, failed_no_commit, unkeyed_refused, stale_run_silent, unregistered_not_stale; GraphCore.resolveT/runBudget (#3559): resolveT_kept, runBudget_le, runBudget_unlimited
 src/graph_core.rs	WriteAttempt::from	862	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
-src/graph_core.rs	reply_profile	999	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
 src/graph_core.rs	BlockedClient::new	1036	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
 src/graph_core.rs	BlockedClient::drop	1044	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	compute_effective_timeout	1062	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
-src/graph_core.rs	reply_invalid_graph_version	1101	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
-src/graph_core.rs	admit	1115	PROVEN	GraphCore.admitQ: admit_bounded, capped (QueueSlot::try_acquire; never waits)
-src/graph_core.rs	query_mut	1126	PROVEN	GraphCore.dispatch/admitQ (#3014): stale_version, inline_uncapped, capped, admit_bounded
 src/graph_core.rs	query_sync	1330	PROVEN	GraphCore.syncOutcome/logsTelemetry (#3844 log_query): sync_err, sync_write_logs, sync_read_logs, sync_unserved_silent, sync_log_only
 src/graph_core.rs	profile_mut	1466	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
-src/graph_core.rs	profile_sync	1567	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
 src/graph_core.rs	finish_write	1638	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657; escalated: published under GraphCore.keyOfWrite's key, or refused, #3850/#3851): reply_after_commit, reply_only_after_commit, unkeyed_refused, unescalated_silent
 src/graph_core.rs	abandon_write	1673	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
 src/graph_core.rs	commit_and_replicate	1689	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
@@ -162,7 +144,6 @@ src/query_session.rs	may_wait_at_gate	569	PROVEN	QuerySession.mayWaitAtGate (poo
 src/query_session.rs	WriterGate::is_closed	590	AXIOMATISED	parking_lot Mutex<bool> read; QuerySession.readPastGate input (the gate states it sees)
 src/query_session.rs	WriterGate::close	594	AXIOMATISED	parking_lot Mutex<bool> + Condvar; QuerySession.Ev.gateClose/gateOpen (guard drop notifies all), gateBal balanced by pollLoop_spec
 src/query_session.rs	WriterGate::wait_until_open	598	AXIOMATISED	parking_lot Condvar wait loop; QuerySession.Ev.gateWait
-src/query_session.rs	reauthorize_write	619	PROVEN	QuerySession.reauthorize: reauth_paused, reauth_replica, reauth_replay, reauth_main
 src/query_session.rs	QuerySession::upgrade_to_write	660	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_refused_rechecks, upgrade_unregistered, upgrade_state
 src/query_session.rs	QuerySession::drop	673	PROVEN	QuerySession.release: release_none
 src/query_session.rs	hold_gil	695	PROVEN	QuerySession.gilAcquire (via holdsGil): gil_nested, gil_stack, gil_main, gil_out_of_order
@@ -288,7 +269,6 @@ src/commands/copy.rs	waitpid	22	AXIOMATISED	libc waitpid(2)
 src/commands/copy.rs	graph_copy	29	PROVEN	Commands.copyOut/tz/exitCode: copy_ok_iff, exited_iff (trailing_zeros>=7 = WIFEXITED); replica gets GRAPH.RESTORE of VecWriter bytes: BufferedIO.vec_roundtrip
 src/commands/debug.rs	graph_debug	5	PROVEN	Commands.debugCmd: debug_start
 src/commands/debug.rs	debug_aux	23	PROVEN	Commands.debugCmd: debug_bad_action_replicated
-src/commands/delete.rs	graph_delete	37	PROVEN	Commands.deleteCmd: delete_stream_first, delete_nongraph
 src/commands/effect.rs	graph_effect	25	PROVEN	Commands.effectCmd: effect_replicates_iff
 src/commands/explain.rs	explain	36	PROVEN	Commands.explainLine: explainLine_indent
 src/commands/explain.rs	graph_explain	59	PROVEN	Commands.explainCmd/explainCmdA: explain_missing, explain_inline, explain_flags_first, explain_flags_ok; QueryArgs.explainFront (parse_query_flags, explain.rs:65): four_commands_share

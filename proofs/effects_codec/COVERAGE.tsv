@@ -8,7 +8,6 @@ graph/src/effects/writer.rs	EffectWrite::f64	75	PROVEN	w64 of the bit pattern: i
 graph/src/effects/writer.rs	EffectWrite::string	154	PROVEN	wString: rString_wString
 graph/src/effects/reader.rs	Reader::take	40	PROVEN	take: take_append', take_consumes, take_noPanic
 graph/src/effects/reader.rs	Reader::guard_count	70	PROVEN	guardCount: guardCount_bound, guardCount_noPanic, guardCount_consumes
-graph/src/effects/reader.rs	Reader::u8	99	PROVEN	rdU 1: u8_w8, rdU_noPanic
 graph/src/effects/reader.rs	Reader::u16	103	PROVEN	rdU 2: u16_w16, rdU_noPanic
 graph/src/effects/reader.rs	Reader::u32	107	PROVEN	rdU 4: u32_w32, rdU_noPanic
 graph/src/effects/reader.rs	Reader::u64	111	PROVEN	rdU 8: u64_w64, rdU_noPanic
@@ -65,13 +64,8 @@ graph/src/effects/reader.rs	Reader::take_array	93	PROVEN	Cursor.Rd.takeArray = t
 graph/src/effects/reader.rs	Reader::f64	123	PROVEN	Cursor.Rd.f64 (bit transmute): Rd.bits_refines
 graph/src/effects/reader.rs	Reader::take_n	138	PROVEN	Cursor.Rd.takeN (one slice + chunks_exact): Rd.takeN_refines (= per-element reads), readN_take_chunks
 graph/src/effects/v3/format.rs	EffectsPayload::new_buffer	20	PROVEN	Format.fmtNewBuffer: fmtIsEmpty_iff, ebNew_eq
-graph/src/effects/v3/format.rs	EffectsPayload::is_empty	25	PROVEN	Format.fmtIsEmpty: fmtIsEmpty_iff
-graph/src/effects/v3/format.rs	EffectsPayload::replicate	30	PROVEN	Format.fmtReplicate (seal then sink): fmtReplicate_transparent
 graph/src/effects/v3/format.rs	EffectsPayload::describe	44	PROVEN	Format.describe/describeLoop: describe_spec, describeLoop_spec
-graph/src/effects/v3/format.rs	EffectsPayload::apply	106	PROVEN	Format.fmtApply delegates to apply_effects (proofs/effects_emit_apply): fmtApply_eq
 graph/src/effects/v3/format.rs	EffectsPayload::build	113	PROVEN	Format.build/buildLoop: build_ok, buildLoop_after_fail
-graph/src/effects/v3/format.rs	EffectsPayload::build_index	142	PROVEN	Format.fmtBuildIndex delegates to build_index_buffer: fmtBuildIndex_eq
-graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	152	PROVEN	Format.fmtBuildConstraint delegates: fmtBuildConstraint_eq
 graph/src/effects/v3/mod.rs	compression_min_bytes	108	PROVEN	Format.compressionMinBytes: compressionMinBytes_neg, seal_disabled
 graph/src/effects/v3/mod.rs	seal	122	PROVEN	ModRs.sealBuf: seal_transparent
 graph/src/effects/v3/mod.rs	Opcode::is_batchable	182	PROVEN	RecFull.isBatchable: isBatchable_spec

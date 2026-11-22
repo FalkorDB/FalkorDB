@@ -11,21 +11,21 @@ pinned to main 256ab4d3f.
 
 | here | there |
 | --- | --- |
-| `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs:710`), `effective_skip` (`:745`), `record_cap` (`:777`) |
-| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs`: stop `:1384-1390`, `trim_to_cap` `:1324-1345`), `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), SortOp top-k (`ops/sort.rs:509-511`) |
-| `QueryGraph.*` | **current**: `QueryGraph`, `GraphRef`/`Deref`, `Runtime::new`/`graph()`/`graph_mut()`/`publish()`/`upgrade_to_write()` (`runtime.rs:109-147`, `:471-500`, `:563-629`): a published `Arc<Graph>` (read with no borrow) or an owned fork in a `RefCell`; `new_inv`, `graph_published`, `graph_panics_iff`, `graph_same_result`, `graphMut_panics_iff`, `publish_ok`, `publish_refused`, `publish_twice_panics`, `graph_after_publish`, `upgrade_spec` |
+| `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs`), `effective_skip`, `record_cap` |
+| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs`: stop, `trim_to_cap`), `ExpandIntoOp` (`ops/expand_into.rs`: stop, trim), SortOp top-k (`ops/sort.rs`) |
+| `QueryGraph.*` | **current**: `QueryGraph`, `GraphRef`/`Deref`, `Runtime::new`/`graph()`/`graph_mut()`/`publish()`/`upgrade_to_write()` (`runtime.rs`): a published `Arc<Graph>` (read with no borrow) or an owned fork in a `RefCell`; `new_inv`, `graph_published`, `graph_panics_iff`, `graph_same_result`, `graphMut_panics_iff`, `publish_ok`, `publish_refused`, `publish_twice_panics`, `graph_after_publish`, `upgrade_spec` |
 | `Cell.*`      | HISTORY (the earlier cell design; imported by `pending_commit`'s `Hold`, so kept): `Runtime::graph()` / `graph_mut()` / `GraphRef` / `HeldRead` over `Arc<AtomicRefCell<Graph>>`, an atomic_refcell borrow-word model; `graph_deref`, `graph_same_result`, `read_program_same`, `sites_same`, `graph_mut_write_same`, `graph_mut_same_cell`. The code it models no longer exists |
 | `Drop.*` (`DropOrder.lean`) | HISTORY (the earlier cell design): `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()` (both gone): `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
 | `Proto.*`     | HISTORY (the earlier cell design): the read-guard protocol over `MvccGraph`, `QuerySession` and every graph-cell `borrow_mut`: `reader_guard_sound`, `guard_never_excl`, `readNew_never_panics`, `priv_borrows_owner_only`; `writer_reply_race` is a historical counterexample of that design (the cell no longer exists) |
 | `Reuse.*`     | `read_plan_no_update` (a read plan has no updating operator, from `redis_layer`'s `RedisLayer.Ro`), `accessor_unchanged`, `materialize_unchanged` (accessor theorems transfer through `graph()`) |
-| `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs:455-785`) |
-| `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:649-697`) |
-| `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:845`), `children_to_recurse` (`:787`) |
-| `Accessors.*` | entity accessors `runtime.rs:1517-2035` (attrs, memo, labels, degrees, endpoints/type) |
-| `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs:1812`) + `Pending::node_has_changes` (`pending.rs:807`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
+| `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs`) |
+| `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs`) |
+| `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs`), `children_to_recurse` |
+| `Accessors.*` | entity accessors `runtime.rs` (attrs, memo, labels, degrees, endpoints/type) |
+| `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs`) + `Pending::node_has_changes` (`pending.rs`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
 | `Discharge.*` | proves the store contracts the accessor theorems took as hypotheses, from copies of the `Graph` models in `proofs/graph_queries` (`Attrs.lean`): `reach_nodup`, `reach_cap`, `nameOk_of_reach`, `hc_of_reach`, `hName_of_reach`, `hbg_rfl`; then `materialize_discharged`, `getRelAttribute_discharged`, `materializeRel_discharged`, `materializeNodeProp_discharged`, `materializeRelProp_discharged`, `attrs_agree_discharged`, `relAttrs_agree_discharged`. Left: `hdisj`/`huniq` about `Pending` |
-| `Misc.*`      | `check_timeout` (`:538`), `check_mem_capacity` (`:548`), `map_to_index_options` (`:2042`; required vector keys, fulltext unknown-key refusal, similarity name check), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
-| (reused)      | `evaluate_id_filter` (`:1444-1515`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: no range on a graph with no nodes) |
+| `Misc.*`      | `check_timeout`, `check_mem_capacity`, `map_to_index_options` (; required vector keys, fulltext unknown-key refusal, similarity name check), `drain_pending` / `edge_already_used` (`ops/mod.rs`) |
+| (reused)      | `evaluate_id_filter` is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: no range on a graph with no nodes) |
 
 ## Proven (plain English)
 - Budget: the reference budget `need` (Skip adds, Project passes, anything else is a
@@ -61,9 +61,9 @@ pinned to main 256ab4d3f.
   outside `FULLTEXT_OPTIONS` (`fulltextUnknown_none_iff`); phonetic yields only "dm:en" or "".
 
 ## CONFIRMED bugs (Rust repro in `graph/tests/lean_runtime_core.rs`, C = `bin/macos-arm64v8-release/falkordb.so`)
-B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`), but
-    `CondTraverseOp`/`ExpandIntoOp` treat it as a HARD stop (`cond_traverse.rs:1378-1383`,
-    `expand_into.rs:253`). A traverse feeding another row-reducing traverse stops after
+B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs`), but
+    `CondTraverseOp`/`ExpandIntoOp` treat it as a HARD stop (`cond_traverse.rs`,
+    `expand_into.rs`). A traverse feeding another row-reducing traverse stops after
     LIMIT rows and the answer is lost.
     `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` (a1→b1, a2⇄b2): Rust [] , C [2].
     `MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 1` (a1→b1 dead end, a2→b2→c): Rust [], C [30].
@@ -71,7 +71,7 @@ B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`
     Tests `bug_limit_through_expand_into_drops_rows`, `bug_limit_through_two_hops_drops_rows`,
     `bug_skip_limit_through_two_hops_drops_rows`. Lean `hard_cap_unsound_expandInto`,
     `hard_cap_unsound_condTraverse`, `hard_cap_unsound_through_traverse`.
-B2. `effective_skip` returns only the FIRST Skip (`runtime.rs:723-731`), so stacked Skips
+B2. `effective_skip` returns only the FIRST Skip (`runtime.rs`), so stacked Skips
     under one Limit under-budget the hard cap:
     `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1`: Rust [], C [20].
     Test `bug_stacked_skip_under_limit_drops_rows`; Lean `hard_cap_unsound_stacked_skip`.
@@ -82,14 +82,14 @@ B3. (shared with C, openCypher violation) SortOp's top-k uses the same walk thro
     CondTraverse: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1`
     → Rust [], C [] ; expected [20]. Test `bug_sort_topk_through_traverse_drops_rows`.
     The stacked-Skip Sort variant is issue #2659 (also in C).
-Also seen (known): `Labels added` counts new schema labels (`runtime.rs:661`) — #2655;
+Also seen (known): `Labels added` counts new schema labels (`runtime.rs`) — #2655;
 deleted-id reuse breaks the one-map assumption of `attrs_agree` — #2876
 (`Accessors.reuse_diverges`).
 
 ## Suspected, unconfirmed
 - `Accessors.reuse_diverges`: with a node id present in both pending attribute maps,
   `n.a` falls through `new_nodes_attrs` to `existing_nodes_attrs` while
-  `properties(n)` reads only `new_nodes_attrs` (`pending.rs:474-481` vs `:490-493`).
+  `properties(n)` reads only `new_nodes_attrs` (`pending.rs` vs).
   Only reachable via id reuse (#2876), where `deleted_nodes` shadows both anyway.
 - `check_mem_capacity`: `usage_fn() as i64` wraps at 2^63 (`Misc.checkMem_wrap`); latent.
 

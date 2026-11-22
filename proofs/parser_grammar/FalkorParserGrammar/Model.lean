@@ -1,8 +1,8 @@
 /-
 # Model of the expression parser of `graph/src/parser/cypher.rs`
 
-A line-by-line model of `Parser::parse_expr_inner` (cypher.rs:2195-2658), the
-`parse_expr_return!` / `parse_operators!` macros (macro.rs:115-168) and the
+A line-by-line model of `Parser::parse_expr_inner` (cypher.rs), the
+`parse_expr_return!` / `parse_operators!` macros (macro.rs) and the
 primaries it calls. Line numbers refer to cypher.rs unless stated otherwise.
 
 Scope of the token alphabet (see the header of `FalkorParserGrammar.lean`):
@@ -46,13 +46,13 @@ def cur : List Tok → Tok
   | [] => .eof
   | t :: _ => t
 
-/-- The lexer's `next()`; at end of input it stays there (lexer.rs:287-292,
-`get_token` returns `(EndOfFile, 0)` at the end, lexer.rs:484). -/
+/-- The lexer's `next()`; at end of input it stays there (lexer.rs,
+`get_token` returns `(EndOfFile, 0)` at the end, lexer.rs). -/
 def adv : List Tok → List Tok
   | [] => []
   | _ :: r => r
 
-/-- Keyword text as an identifier (`parse_ident` accepts keywords, cypher.rs:2684). -/
+/-- Keyword text as an identifier (`parse_ident` accepts keywords, cypher.rs). -/
 def kwCode : Kw → Nat
   | .or_ => 1000 | .xor => 1001 | .and_ => 1002 | .not_ => 1003 | .in_ => 1004
   | .starts => 1005 | .ends => 1006 | .with_ => 1007 | .contains => 1008
@@ -146,7 +146,7 @@ def Res.rest {α} : Res α → List Tok → List Tok
   | .err ts, _ => ts
   | _, d => d
 
-/-! ## `parse_expr_return!` (macro.rs:115-133) -/
+/-! ## `parse_expr_return!` (macro.rs) -/
 
 /-- A stack frame `(precedence level, Option<tree>)`; the height component
 is not modelled here. The stack is a list with its top at the head. -/
@@ -167,9 +167,9 @@ def ret (t : RT) : List Frame → List Tok → St
   | (l, none) :: K, ts => .run ((l, some t) :: K) ts
   | [], ts => .done t ts
 
-/-! ## `parse_operators!` (macro.rs:135-168), levels 0, 1, 2, 6, 7, 8 -/
+/-! ## `parse_operators!` (macro.rs), levels 0, 1, 2, 6, 7, 8 -/
 
-/-- The operator tokens of each binary level (cypher.rs:2269-2545). The
+/-- The operator tokens of each binary level (cypher.rs). The
 multi-token form tries its tokens in order and `continue`s on the first
 match, so a lookup table is the same thing. -/
 def opTok : Nat → Tok → Option Op
@@ -193,7 +193,7 @@ def binStep (l : Nat) (res : RT) (K : List Frame) (ts : List Tok) : St :=
     .run ((l + 1, none) :: (l, some (if res.root = op then res else .node op [res])) :: K) (adv ts)
   | none => ret res K ts
 
-/-! ## Level 4: comparison with chained-range desugaring (cypher.rs:2283-2354) -/
+/-! ## Level 4: comparison with chained-range desugaring (cypher.rs) -/
 
 def cmpTok : Tok → Option Op
   | .eq => some .eq | .neq => some .neq | .lt => some .lt
@@ -231,7 +231,7 @@ def cmpStep (res : RT) (K : List Frame) (ts : List Tok) : St :=
     else
       .run ((5, none) :: (4, some (.node op [res])) :: K) ts
 
-/-! ## Level 5: string, list and null predicates (cypher.rs:2355-2534) -/
+/-! ## Level 5: string, list and null predicates (cypher.rs) -/
 
 /-- The `while optional_match_token!(Is)` loop (2418-2434). -/
 def isLoop (res : RT) : List Tok → Res RT
@@ -565,7 +565,7 @@ def notFrames (n : Nat) (K : List Frame) : List Frame :=
   else if n % 2 = 1 then (3, some (lf .not_)) :: K
   else (3, some (lf .not_)) :: (3, some (lf .not_)) :: K
 
-/-- Level 9 prefix since #3525 (`56d00c3d8`, cypher.rs:2212-2236): any run of `+` and `-`.
+/-- Level 9 prefix since #3525 (`56d00c3d8`, cypher.rs): any run of `+` and `-`.
 The number of `-` is what counts (`+` is dropped); `legacy_signs` is only set while a
 `CYPHER` parameter value is parsed (see `C.Params`), never on this path. Before #3525 the
 prefix was one optional `+` then one optional `-` (`pre3525_signs`). -/
@@ -582,7 +582,7 @@ def signFrames (n : Nat) (K : List Frame) : List Frame :=
   else if n % 2 = 1 then (9, some (lf .neg)) :: K
   else (9, some (lf .neg)) :: (9, some (lf .neg)) :: K
 
-/-- Level 9 prefix before #3525 (cypher.rs:2230-2246 at `43936bab9`): an optional `+`, then an
+/-- Level 9 prefix before #3525 (cypher.rs at `43936bab9`): an optional `+`, then an
 optional `-`. Kept as the historical shape: `- -x` and `-+x` were syntax errors. -/
 def pre3525_signs : List Tok → Bool × List Tok
   | .plus :: .dash :: r => (true, r)

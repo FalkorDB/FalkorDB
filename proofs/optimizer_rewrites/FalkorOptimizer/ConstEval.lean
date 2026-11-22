@@ -5,9 +5,9 @@ import FalkorOptimizer.Basic
 `eliminate_true_filters` removes a `Filter` (or one `AND` conjunct) when
 `is_constant_true` holds: `ExprEval::constant().eval(..)` — the *same* `eval_node`
 as at runtime, run with no row and no runtime — returns `Ok(Bool(true))`
-(eliminate_true_filters.rs:48-71). Every variable then evaluates to an error
+(eliminate_true_filters.rs). Every variable then evaluates to an error
 ("Variable … not found"), and so do parameters, properties of entities and
-function calls (`self.rt()?`, eval.rs:278-282).
+function calls (`self.rt()?`, eval.rs).
 
 Soundness needs: whenever an operator's result is `Ok`, every child it consulted
 was `Ok`, i.e. no operator swallows a child's error. Every modelled arm propagates
@@ -17,9 +17,9 @@ verdict on every row; this discharges `eliminate_whole_filter`'s and
 
 | here | there |
 | --- | --- |
-| `evalG look` | `ExprEval::eval_node` with variable lookup `look` (`resolve_var`, eval.rs:287-293) |
+| `evalG look` | `ExprEval::eval_node` with variable lookup `look` (`resolve_var`, eval.rs) |
 | `constEval`  | `ExprEval::constant().eval(.., NO_ROW, None)` — `look` always errors |
-| `constTrue`  | `is_constant_true`'s fast path: `matches!(.., Ok(Value::Bool(true)))` (eliminate_true_filters.rs:52-57); the slow path re-runs it on `substitute_params`' tree (`substP`; `constTrue_slow`, parameters modelled as marked variable leaves) |
+| `constTrue`  | `is_constant_true`'s fast path: `matches!(.., Ok(Value::Bool(true)))` (eliminate_true_filters.rs); the slow path re-runs it on `substitute_params`' tree (`substP`; `constTrue_slow`, parameters modelled as marked variable leaves) |
 -/
 namespace Falkor.Opt
 
@@ -110,14 +110,14 @@ theorem constTrue_eval (c : Expr) (h : constTrue c = true) (r : Row) :
   · rename_i heq; exact constEval_rows c _ heq r
   · cases h
 
-/-- **`eliminate_true_filters`, whole filter** (eliminate_true_filters.rs:111-115):
+/-- **`eliminate_true_filters`, whole filter** (eliminate_true_filters.rs):
 removing a `Filter` whose predicate `is_constant_true` keeps every row —
 `eliminate_whole_filter` with `hconst` discharged. -/
 theorem constTrue_filter (c : Expr) (xs : List Row) (h : constTrue c = true) :
     filterRows c xs = .ok xs :=
   eliminate_whole_filter c xs (constTrue_eval c h)
 
-/-- **`eliminate_true_filters`, AND conjuncts** (eliminate_true_filters.rs:118-143):
+/-- **`eliminate_true_filters`, AND conjuncts** (eliminate_true_filters.rs):
 dropping the conjuncts `is_constant_true` accepts leaves the AND loop's result
 unchanged on every row — `andLoop_drop_true` with `htrue` discharged. -/
 theorem andLoop_drop_constTrue (r : Row) (cs : List Expr) (n : Bool) :
@@ -143,7 +143,7 @@ theorem pow_true_type_error (x : Var) (r : Row) :
 in `evX`). `substP` is `substitute_params`: it replaces the parameters present in `ps` by
 literals and leaves a missing one as the (erroring) leaf. -/
 
-/-- `substitute_params` (eliminate_true_filters.rs:83-98). -/
+/-- `substitute_params` (eliminate_true_filters.rs). -/
 def substP (pv : Var → Option String) (ps : List (String × Val)) : Expr → Expr
   | .lit v => .lit v
   | .var v =>

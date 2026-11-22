@@ -3,11 +3,11 @@ set_option linter.unusedSimpArgs false
 set_option linter.unusedVariables false
 
 /-!
-# The route: predecessors, unpacking, loop erasure (`cch/query.rs:136-152`, `:206-229`, `:309-352`)
+# The route: predecessors, unpacking, loop erasure (`cch/query.rs`)
 -/
 namespace NI
 
-/-- `Chain::arcs_up_to` (`query.rs:136-150`): follow the predecessors from `at` back to the start, then reverse;
+/-- `Chain::arcs_up_to` (`query.rs`): follow the predecessors from `at` back to the start, then reverse;
     `fuel` bounds the walk (a predecessor is a lower rank). -/
 def arcsUp (pr : Nat → Option Nat) : Nat → Nat → List (Nat × Nat)
   | 0, _ => []
@@ -52,7 +52,7 @@ theorem arcsUp_spec {up wt A N} (h : Ctx up wt A N) {wf s done best ds} (inv : D
         rw [he]
         exact Arcs.snoc this hpm hw
 
-/-- `query`'s loop over the route's arcs (`query.rs:324-335`): unpack each in order; one missing arc fails. -/
+/-- `query`'s loop over the route's arcs (`query.rs`): unpack each in order; one missing arc fails. -/
 def unpackArcs (up : Nat → List Nat) (M : Nat → Nat → Option Nat) (f : Nat) : List (Nat × Nat) → Option (List Nat)
   | [] => some []
   | (a, b) :: r =>
@@ -118,7 +118,7 @@ theorem unpack_bwd {up wt A N} (h : Ctx up wt A N) (M : Nat → Nat → Option N
     · have := hw2.append (by rw [hv2]; exact hwalk)
       rwa [Nat.add_comm w e] at this
 
-/-! ## `erase_loops` (`query.rs:352-368`)
+/-! ## `erase_loops` (`query.rs`)
 
 The Rust keeps `at[node] = position in the output` and, on a repeated node, drops everything since its first visit
 (removing the dropped nodes from `at`). With `at` = the position of each node of the output, that is: a node already
@@ -321,7 +321,7 @@ theorem edges_wp {up wt A N} (h : Ctx up wt A N) {a l c} (he : EdgesFrom wt a l 
       have := WP.step hw hxN (ih hxN (by simp))
       simpa [lastOr] using this
 
-/-! ## `Cch::query` end to end (`query.rs:231-345`), in rank space -/
+/-! ## `Cch::query` end to end (`query.rs`), in rank space -/
 
 /-- The search state after both halves and the climb, exactly as `query` builds it: the chains, the shared count,
     phase one (`relax_from` over each chain below the lowest common ancestor), then the climb over the shared ranks. -/
@@ -333,7 +333,7 @@ def queryState {up wt A N} (h : Ctx up wt A N) (s t : Nat) : LS :=
     (b.take (b.length - c)).foldl (fun d o => relaxFrom up (fun x y => A y x) o d) (DS.init t), none, none⟩
   (f.drop (f.length - c)).foldl (fun l o => stepL up A o l) ls0
 
-/-- The route and its unpacking (`query.rs:309-345`): the forward arcs, then the backward arcs reversed and flipped,
+/-- The route and its unpacking (`query.rs`): the forward arcs, then the backward arcs reversed and flipped,
     each unpacked, the nodes joined and cleaned of loops. `None` if nothing met or an arc is missing. -/
 def queryNodes (up : Nat → List Nat) (M : Nat → Nat → Option Nat) (N s : Nat) (ls : LS) : Option (List Nat) :=
   match ls.meet with

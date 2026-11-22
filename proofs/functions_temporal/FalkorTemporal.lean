@@ -35,26 +35,26 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 
 | Lean | Rust |
 | --- | --- |
-| `isLeap`, `daysInMonth` | `is_leap` `value.rs:777`, `days_in_month` `value.rs:765` |
-| `daysFromCivil` | `days_from_civil` `value.rs:784` |
-| `daysFromCivilT` | `days_from_civil` `temporal.rs:471` (second copy, truncating i32 `/`) |
-| `civilFromDaysI` / `civilFromDays` | `civil_from_days_wide` `value.rs:812` (i64 year) / `civil_from_days` `value.rs:804` (with `y as i32`) |
-| `constructDuration` | `construct_duration_secs` `temporal.rs:487` (ends in `check_date_range`) |
-| `MAX_DATE_YEAR`, `checkDateRange` | `MAX_DATE_YEAR` `temporal.rs:533`, `check_date_range` `temporal.rs:541` |
-| `decomposeDuration` | `decompose_duration` `temporal.rs:549` |
-| `shiftMonths` / `shiftMonthsR` | `shift_months` `value.rs:725` (shared by `+`/`-`); arithmetic / with the `MAX_DATE_YEAR` guard |
-| `addDur` / `subDur` (`addDurRaw` / `subDurRaw`: the unchecked arithmetic) | `add_duration_to_timestamp` `value.rs:701` / `sub_duration_from_timestamp` `value.rs:711` (range-checked) |
-| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1069` / `Sub` `value.rs:1111` |
-| `dateFromComponents`, `weekPath`, `quarterPath`, `ymdPath` | `date_from_components` `temporal.rs:82` (range-checked) |
-| `checkRange`, `inRange`, `i32Ok`, `u32Ok` | `check_range` `temporal.rs:63`, `i32::try_from`/`u32::try_from` |
+| `isLeap`, `daysInMonth` | `is_leap` `value.rs`, `days_in_month` `value.rs` |
+| `daysFromCivil` | `days_from_civil` `value.rs` |
+| `daysFromCivilT` | `days_from_civil` `temporal.rs` (second copy, truncating i32 `/`) |
+| `civilFromDaysI` / `civilFromDays` | `civil_from_days_wide` `value.rs` (i64 year) / `civil_from_days` `value.rs` (with `y as i32`) |
+| `constructDuration` | `construct_duration_secs` `temporal.rs` (ends in `check_date_range`) |
+| `MAX_DATE_YEAR`, `checkDateRange` | `MAX_DATE_YEAR` `temporal.rs`, `check_date_range` `temporal.rs` |
+| `decomposeDuration` | `decompose_duration` `temporal.rs` |
+| `shiftMonths` / `shiftMonthsR` | `shift_months` `value.rs` (shared by `+`/`-`); arithmetic / with the `MAX_DATE_YEAR` guard |
+| `addDur` / `subDur` (`addDurRaw` / `subDurRaw`: the unchecked arithmetic) | `add_duration_to_timestamp` `value.rs` / `sub_duration_from_timestamp` `value.rs` (range-checked) |
+| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs` / `Sub` `value.rs` |
+| `dateFromComponents`, `weekPath`, `quarterPath`, `ymdPath` | `date_from_components` `temporal.rs` (range-checked) |
+| `checkRange`, `inRange`, `i32Ok`, `u32Ok` | `check_range` `temporal.rs`, `i32::try_from`/`u32::try_from` |
 | `checkedAddDays`, `tdDaysOk`, `chronoYearOk` | chrono 0.4.45 `checked_add_signed` / `NaiveDate + TimeDelta`, `TimeDelta::days`, `MIN_YEAR`/`MAX_YEAR` |
-| `weekSlice`, `sliceOk` | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` `temporal.rs:279-289` |
-| `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:417-428` (the trailing-number-without-unit errors at `:433-435` and `:460-462`) (`checked_mul`/`checked_add`, #2987) |
-| `formatDate`, `formatDatetime`, `pushDate`, `twoDigits` (`Components.lean`) | `format_date` `value.rs:281`, `format_datetime` `value.rs:261`, `push_date` `value.rs:828`, `write_two_digits` `value.rs:853` (i64 year, all digits, sign) |
-| `SpatialFns.pointFromMapEntries`, `numeric`, `point` | `point_from_map_entries` `spatial.rs:38`, `numeric` `spatial.rs:74`, `point` `spatial.rs:110` |
-| `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:388` / `ExprIR::Or` `eval.rs:644` / `ExprIR::And` `eval.rs:695` |
-| `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:881` / `Add..Rem for Value` `value.rs:946-1216` |
-| `Spatial2.distance` (`Spatial` holds only the `#guard`ed rounding mechanism) | `Point::distance` `value.rs:153` (clamped `a`) |
+| `weekSlice`, `sliceOk` | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` `temporal.rs` |
+| `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs` (the trailing-number-without-unit errors at and) (`checked_mul`/`checked_add`, #2987) |
+| `formatDate`, `formatDatetime`, `pushDate`, `twoDigits` (`Components.lean`) | `format_date` `value.rs`, `format_datetime` `value.rs`, `push_date` `value.rs`, `write_two_digits` `value.rs` (i64 year, all digits, sign) |
+| `SpatialFns.pointFromMapEntries`, `numeric`, `point` | `point_from_map_entries` `spatial.rs`, `numeric` `spatial.rs`, `point` `spatial.rs` |
+| `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs` / `ExprIR::Or` `eval.rs` / `ExprIR::And` `eval.rs` |
+| `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs` / `Add..Rem for Value` `value.rs` |
+| `Spatial2.distance` (`Spatial` holds only the `#guard`ed rounding mechanism) | `Point::distance` `value.rs` (clamped `a`) |
 
 ## Proven (160 theorems + 30 kernel-checked era chunks)
 
@@ -87,7 +87,7 @@ On main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_
 10. **Divergences, conversions (live only; `conversion.rs` is private)**:
     `toString(1.0)` = "1" (C "1.000000", openCypher "1.0" — looks like an Integer);
     `toString(0.1+0.2)` = "0.30000000000000004" (C "0.300000"); `toString(0.0/0)` "NaN"
-    vs "nan"; `toString(1e300)` differs in every digit past 17 (`conversion.rs:131`
+    vs "nan"; `toString(1e300)` differs in every digit past 17 (`conversion.rs`
     `format!("{f}")` vs C `%f`). `toInteger('1e3')` = 1000 (C null);
     `toInteger(' 12')`, `toFloat(' 1')` null (C 12, 1); `toFloat('0x10')` null (C 16).
 11. **Divergences, constructor validation** (Rust stricter or looser than C):
@@ -105,7 +105,7 @@ C's `date('2021-01-03').dayOfQuarter` is 4 (Rust 3, correct).
 ## Suspected, not confirmed
 
 - `decompose_duration`: `y - 1970` in i32 and `ya + yb` in `Duration + Duration`
-  (`value.rs:1053`) overflow in debug for durations whose year wraps (`civilFromDays_trunc`);
+  (`value.rs`) overflow in debug for durations whose year wraps (`civilFromDays_trunc`);
   release wraps silently. Not triggered in release (construct rejects afterwards).
 - `shift_months` (shared by `+`/`-`): `y + years` (i32), and in
   `sub_duration_from_timestamp` `-years` (i32::MIN), plus `days * 86400` (i64), unchecked;
@@ -135,7 +135,7 @@ positional-slot rewrite preserves values), `datePure_midnight`, `localtimePure_r
 `clock_fns_shape`, `transaction_consistent`, `calendar_ranges`, `fields_roundtrip`,
 `formatTime_length`, `distance_self`, `point_eq_struct`, `vecDist_kernel`.
 The compact date/time branches reject
-any non-digit (`allDigits` guard, temporal.rs:220, :335) instead of silently dropping it —
+any non-digit (`allDigits` guard, temporal.rs) instead of silently dropping it —
 `parseDate_compact_rejects`, `parseDate_compact_ok_allDigits`, `parseTime_compact_rejects`,
 `compact_junk_examples`. The `W` path is separate (`parseDate_week_first`; `date('2020W1é')`
 is covered by `weekSlice_err_iff`).
@@ -152,7 +152,7 @@ the time loop (`Fns.dateLoop` / `timeLoop` end-of-input arms; theorems
 `parseDuration_P5`; live: all four strings error, `P1D` still parses).
 `toString(Float)` is `conversion.rs`, proved in proofs/value_math.
 
-**`DurationComponent.lean` — `Value::get_duration_component` (value.rs:613) is chrono-bounded.**
+**`DurationComponent.lean` — `Value::get_duration_component` (value.rs) is chrono-bounded.**
 `durComp_agrees_decompose`: inside chrono's year range (-262143..=262142, `chronoK`) every component
 equals the `decompose_duration` one; `durComp_weeks`, `durComp_unknown`, `durComp_invalid_null`.
 **BUG** (`durComp_null_but_representable`, `bug_duration_component_null`): a duration whose instant

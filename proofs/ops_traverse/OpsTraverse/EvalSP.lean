@@ -1,5 +1,5 @@
 /-
-# `ExprEval::eval_shortest_path` (`graph/src/runtime/eval.rs:1374`)
+# `ExprEval::eval_shortest_path` (`graph/src/runtime/eval.rs`)
 
 The glue in front of the bidirectional BFS: evaluate the two endpoint expressions, reject or
 short-circuit on their values, take the graph, answer the zero-hop case, then hand the search its
@@ -8,7 +8,7 @@ anything about it.
 
 | here | there |
 | --- | --- |
-| `evalSP` | `eval_shortest_path` (eval.rs:1374-1440) |
+| `evalSP` | `eval_shortest_path` (eval.rs) |
 | `maxLevel` | `max_hops.map_or(u64::MAX, |m| m as u64)` (:1409) |
 -/
 namespace OpsTraverse.EvalSP

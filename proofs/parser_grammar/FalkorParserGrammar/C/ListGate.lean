@@ -1,5 +1,5 @@
 /-
-# The pattern-comprehension gate and memo (cypher.rs:2818-2912)
+# The pattern-comprehension gate and memo (cypher.rs)
 
 The exponential backtracking of
 `parse_list_literal_or_comprehension` (W3-parser-9) is stopped two ways:
@@ -577,7 +577,7 @@ theorem listLitP_eq_ungated (o : Oracle) (hs : o.Safe) (hb : o.Bal) (F : Nat) (h
 /-! ## 5. History: `Oracle.Bal` with a swallowed slice bound, a changed parse -/
 
 /-- An expression parser with the pre-#3041 Rust's swallowed slice bound
-(cypher.rs:2136-2156 at 8621212fc): `[1][(1..2]` is accepted,
+(cypher.rs at 8621212fc): `[1][(1..2]` is accepted,
 consuming a `(` it never closes. Abstracted: on a name it reads the name, on
 anything else it reads up to the next `|`. -/
 def peBad : P ET := fun s =>
@@ -599,8 +599,8 @@ def rootOf : R (ET × Bool) → Option (EOp × Bool)
 
 /-! ## 6. The memo: a failed attempt is never repeated, so failures are linear -/
 
-/-- `PatternComprehensionAttempt` (cypher.rs:228-234): `forb` ranges over the
-three `ForbiddenPatternComprehension` places (cypher.rs:130-145). -/
+/-- `PatternComprehensionAttempt` (cypher.rs): `forb` ranges over the
+three `ForbiddenPatternComprehension` places (cypher.rs). -/
 structure PCKey where
   pos : Nat
   allow : Bool
@@ -616,7 +616,7 @@ structure Visit where
   /-- Both attempts would fail. -/
   fails : Bool
 
-/-- Alternatives 2-3 over a run of calls (cypher.rs:2845-2878): an attempt
+/-- Alternatives 2-3 over a run of calls (cypher.rs): an attempt
 is made when the gate is open and the memo lacks the key; a failure is
 inserted. Returns the memo and the keys of the failed attempts. -/
 def memoRun : List PCKey → List Visit → List PCKey × List PCKey

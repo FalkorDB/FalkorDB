@@ -1,6 +1,6 @@
 import Std.Tactic.BVDecide
 /-
-# `RowFilter` (`versioned_matrix.rs:218-293`)
+# `RowFilter` (`versioned_matrix.rs`)
 
 Faithful bit-level model: rows are `u64` (`BitVec 64`), the Fibonacci hash
 wraps (`wrapping_mul`), the bitmap is 512 words of `u64`.

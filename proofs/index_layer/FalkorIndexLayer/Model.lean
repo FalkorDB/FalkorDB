@@ -127,7 +127,7 @@ def cyLe (a b : Val) : Option Bool :=
   | some l, some e => some (l || e)
   | _, _ => none
 
-/-! ## `IndexQuery<Value>` (`index/mod.rs:229`) and its Cypher meaning -/
+/-! ## `IndexQuery<Value>` (`index/mod.rs`) and its Cypher meaning -/
 
 inductive IQ where
   | equal (key : Attr) (v : Val)
@@ -148,7 +148,7 @@ def isTrue : Option Bool → Bool
   | _ => false
 
 /-- The Cypher predicate the optimizer replaced by the index query
-(`planner/optimizer/utilize_index.rs:315` `build_op_query`): `n.k = v`,
+(`planner/optimizer/utilize_index.rs` `build_op_query`): `n.k = v`,
 `c < n.k` (`min`), `n.k < c` (`max`), `n.k IN list`, `v IN n.k`. -/
 def holds (p : Props) : IQ → Bool
   | .equal k v => isTrue (cyEqScalar (propOr p k) v)
@@ -167,12 +167,12 @@ def holds (p : Props) : IQ → Bool
       | .list ys => ys.any (fun y => isTrue (cyEqScalar y v))
       | _ => false
 
-/-! ## `tag_encode_lower` (`index/mod.rs:566`) -/
+/-! ## `tag_encode_lower` (`index/mod.rs`) -/
 
 def HEX : List Nat := [48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102]  -- "0123456789abcdef"
 def hexDigit (n : Nat) : Nat := HEX.getD n 0
 
-/-- The escaped bytes: `b <= 0x20 || b == b'\\' || b == b'_'` (`mod.rs:568`). -/
+/-- The escaped bytes: `b <= 0x20 || b == b'\\' || b == b'_'` (`mod.rs`). -/
 def escaped (b : Nat) : Bool := b ≤ 0x20 || b == 0x5c || b == 0x5f
 
 /-- `tag_encode_lower`, byte for byte. -/
@@ -181,7 +181,7 @@ def tagEnc : Bytes → Bytes
   | b :: bs => if escaped b then 0x5f :: hexDigit (b / 16) :: hexDigit (b % 16) :: tagEnc bs
                else b :: tagEnc bs
 
-/-- `hex_nibble` (`mod.rs:592`). -/
+/-- `hex_nibble` (`mod.rs`). -/
 def hexNibble (c : Nat) : Nat :=
   if 48 ≤ c ∧ c ≤ 57 then c - 48 else if 97 ≤ c ∧ c ≤ 102 then c - 97 + 10 else 0
 
@@ -191,7 +191,7 @@ def tagDec : Bytes → Bytes
   | c :: rest => c :: tagDec rest
   | [] => []
 
-/-! ## Document keys (`hex_encode_into` `mod.rs:582`, `decode_id` `mod.rs:602`) -/
+/-! ## Document keys (`hex_encode_into` `mod.rs`, `decode_id` `mod.rs`) -/
 
 /-- `u64::to_le_bytes` (little-endian: byte `i` is `id / 256^i % 256`). -/
 def leBytesN : Nat → Nat → List Nat
@@ -217,7 +217,7 @@ def nodeKey (id : Nat) : List Nat := hexEncode (leBytes id)
 def decodeId (key : List Nat) : Nat := fromLe (hexDecode key)
 def edgeKey (src dst eid : Nat) : List Nat := nodeKey src ++ nodeKey dst ++ nodeKey eid
 
-/-! ## `int_loses_f64_precision` (`mod.rs:1371`) -/
+/-! ## `int_loses_f64_precision` (`mod.rs`) -/
 
 def MASK : Nat := 0x7FF0000000000000
 /-- `i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0`. -/
@@ -226,8 +226,8 @@ def intLosesPrecision (i : Int) : Bool := i.natAbs &&& MASK != 0
 /-! ## RediSearch documents and queries (the axiomatised boundary) -/
 
 /-- Field of the RS spec. `main` = `range:{attr}` (NUMERIC|GEO|TAG, created
-at `mod.rs:1194`), `numArr` = `range:{attr}:numeric:arr`, `strArr` =
-`range:{attr}:string:arr` (`mod.rs:121`). -/
+at `mod.rs`), `numArr` = `range:{attr}:numeric:arr`, `strArr` =
+`range:{attr}:string:arr` (`mod.rs`). -/
 inductive Sub where
   | main | numArr | strArr
   deriving DecidableEq, Repr
@@ -254,7 +254,7 @@ inductive QN where
   deriving Repr
 
 /-- RS indexing rule: a TAG value is stored as one token (separator is `\x01`,
-case-sensitive, `mod.rs:1202-1203`); an empty TAG value is not indexed
+case-sensitive, `mod.rs`); an empty TAG value is not indexed
 (RediSearch: "empty values are not indexed unless INDEXEMPTY"). Numeric and
 geo values are stored as is. -/
 def rsStore : RsV → List RsV
@@ -280,7 +280,7 @@ def rsMatch (d : Doc) : QN → Bool
   | .union cs => cs.attach.any fun ⟨c, _⟩ => rsMatch d c
   | .empty => false
 
-/-! ## `Document::set` (`mod.rs:717`) for a Range field -/
+/-! ## `Document::set` (`mod.rs`) for a Range field -/
 
 /-- What `Document::set` hands RediSearch for one attribute value of a Range
 field, per sub-field (before `rsStore`). `Null/Map/Node/..` are
@@ -288,18 +288,18 @@ field, per sub-field (before `rsStore`). `Null/Map/Node/..` are
 stored as null), so they produce nothing here. -/
 def setRange (v : Val) (s : Sub) : List RsV :=
   match s, v with
-  | .main, .bool b => [.num (.fin (if b then 1 else 0))]           -- mod.rs:760
-  | .main, .int i => [.num (.fin i)]                               -- mod.rs:768
-  | .main, .flt f => [.num f]                                      -- mod.rs:776
-  | .main, .str t => [.tag (tagEnc t)]                             -- mod.rs:784
-  | .main, .temporal _ _ => []                                     -- mod.rs:803 (#3076: not indexed)
-  | .main, .point la lo => [.geo la lo]                            -- mod.rs:855
-  | .numArr, .list xs => xs.filterMap fun                          -- mod.rs:808-835
+  | .main, .bool b => [.num (.fin (if b then 1 else 0))]           -- mod.rs
+  | .main, .int i => [.num (.fin i)]                               -- mod.rs
+  | .main, .flt f => [.num f]                                      -- mod.rs
+  | .main, .str t => [.tag (tagEnc t)]                             -- mod.rs
+  | .main, .temporal _ _ => []                                     -- mod.rs (#3076: not indexed)
+  | .main, .point la lo => [.geo la lo]                            -- mod.rs
+  | .numArr, .list xs => xs.filterMap fun                          -- mod.rs
       | .bool b => some (.num (.fin (if b then 1 else 0)))
       | .int i => some (.num (.fin i))
       | .flt f => some (.num f)
       | _ => none
-  | .strArr, .list xs => xs.filterMap fun                          -- mod.rs:815-852
+  | .strArr, .list xs => xs.filterMap fun                          -- mod.rs
       | .str t => some (.tag (tagEnc t))
       | _ => none
   | _, _ => []
@@ -314,19 +314,19 @@ def docOf (fields : Attr → Bool) (p : Props) : Doc := fun k s =>
     | none => []
   else []
 
-/-! ## `build_query_node` (`mod.rs:1477`) -/
+/-! ## `build_query_node` (`mod.rs`) -/
 
-/-- `value_to_numeric` (`mod.rs:1357`). -/
+/-- `value_to_numeric` (`mod.rs`). -/
 def valueToNumeric : Val → Option ENum
   | .int i => some (.fin i)
   | .flt f => some f
   | .bool b => some (.fin (if b then 1 else 0))
   | _ => none
 
-/-- `build_numeric_range_node` (`mod.rs:1376-1410`). Open bounds become
+/-- `build_numeric_range_node` (`mod.rs`). Open bounds become
 `RSRANGE_NEG_INF`/`RSRANGE_INF`, and since #3081 (`ff3d24ba7`) an absent
 bound is inclusive whatever the caller's flag (`include_min || min.is_none()`,
-`mod.rs:1402-1403`), so the infinity standing in for it is itself selected. -/
+`mod.rs`), so the infinity standing in for it is itself selected. -/
 def buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Val) (imn imx : Bool) :
     Option QN := do
   let lo ← match mn with
@@ -337,15 +337,15 @@ def buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Val) (imn 
     | none => some .posInf
   if fields k then some (.numeric k .main lo hi (imn || mn.isNone) (imx || mx.isNone)) else none
 
-/-- `build_string_range_node` (`mod.rs:1419`). -/
+/-- `build_string_range_node` (`mod.rs`). -/
 def buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (imn imx : Bool) :
     Option QN :=
   if fields k then
     match mn, mx with
     | some lo, some hi =>
       if lo = hi then
-        if !(imn && imx) then some .empty                                        -- mod.rs:1433-1438 (#3072)
-        else some (.tagToken k .main (tagEnc lo))                                -- mod.rs:1443-1452
+        if !(imn && imx) then some .empty                                        -- mod.rs (#3072)
+        else some (.tagToken k .main (tagEnc lo))                                -- mod.rs
       else some (.tagLex k (some (tagEnc lo)) (some (tagEnc hi)) imn imx)
     | lo, hi => some (.tagLex k (lo.map tagEnc) (hi.map tagEnc) imn imx)
   else none
@@ -359,14 +359,14 @@ def isStrVal : Option Val → Bool
   | some (.str _) => true
   | _ => false
 
-/-- The `IndexQuery::Equal` arms of `build_query_node` (`mod.rs:1482-1508`),
-factored out because `InList` re-enters them (`mod.rs:1604`). -/
+/-- The `IndexQuery::Equal` arms of `build_query_node` (`mod.rs`),
+factored out because `InList` re-enters them (`mod.rs`). -/
 def buildEq (fields : Attr → Bool) (k : Attr) (v : Val) : Option QN :=
   match valueToNumeric v with
-  | some d => if fields k then some (.numeric k .main d d true true) else none      -- mod.rs:1482
+  | some d => if fields k then some (.numeric k .main d d true true) else none      -- mod.rs
   | none => match v with
-    | .str s => if fields k then some (.tagToken k .main (tagEnc s)) else none      -- mod.rs:1492
-    | _ => none                                                                      -- mod.rs:1685
+    | .str s => if fields k then some (.tagToken k .main (tagEnc s)) else none      -- mod.rs
+    | _ => none                                                                      -- mod.rs
 
 /-- `build_query_node`. `none` is Rust's null pointer. -/
 def buildQ (fields : Attr → Bool) : IQ → Option QN
@@ -375,19 +375,19 @@ def buildQ (fields : Attr → Bool) : IQ → Option QN
       if isStrVal mn || isStrVal mx then
         match strBound mn, strBound mx with
         | some a, some b => buildStrRange fields k a b imn imx
-        | _, _ => none                                                               -- mod.rs:1525
+        | _, _ => none                                                               -- mod.rs
       else buildNumRange fields k mn mx imn imx
-  | .and qs =>                                                                       -- mod.rs:1568
+  | .and qs =>                                                                       -- mod.rs
       (qs.attach.mapM (m := Option) (fun (x : {q // q ∈ qs}) =>
         have := List.sizeOf_lt_of_mem x.2; buildQ fields x.1)).map QN.inter
-  | .or [] => some .empty                                                            -- mod.rs:1583
+  | .or [] => some .empty                                                            -- mod.rs
   | .or (q :: qs) => some (.union ((q :: qs).attach.filterMap (fun (x : {q' // q' ∈ q :: qs}) =>
-        have := List.sizeOf_lt_of_mem x.2; buildQ fields x.1)))                      -- mod.rs:1586
+        have := List.sizeOf_lt_of_mem x.2; buildQ fields x.1)))                      -- mod.rs
   | .inList k (.list xs) =>
       if xs.isEmpty then some .empty
-      else some (.union (xs.filterMap fun x => buildEq fields k x))                  -- mod.rs:1602
+      else some (.union (xs.filterMap fun x => buildEq fields k x))                  -- mod.rs
   | .inList _ _ => none
-  | .arrayContains k v =>                                                            -- mod.rs:1614
+  | .arrayContains k v =>                                                            -- mod.rs
       if fields k then
         match v with
         | .int i => some (.numeric k .numArr (.fin i) (.fin i) true true)
@@ -400,7 +400,7 @@ decreasing_by
   all_goals simp_wf
   all_goals (first | omega | (simp only [List.cons.sizeOf_spec] at *; omega))
 
-/-- `Index::query` (`mod.rs:1702`): a null node yields the empty iterator. -/
+/-- `Index::query` (`mod.rs`): a null node yields the empty iterator. -/
 def indexHit (fields : Attr → Bool) (p : Props) (q : IQ) : Bool :=
   match buildQ fields q with
   | some n => rsMatch (docOf fields p) n
@@ -408,7 +408,7 @@ def indexHit (fields : Attr → Bool) (p : Props) (q : IQ) : Bool :=
 
 /-! ## The runtime side (`runtime/ops/node_by_index_scan.rs`) -/
 
-/-- `IndexQuery::InList` expansion at `node_by_index_scan.rs:216-246`: keep
+/-- `IndexQuery::InList` expansion at `node_by_index_scan.rs`: keep
 only `Int|Float|String|Bool` items. -/
 def expandIn (k : Attr) : Val → Option IQ
   | .list xs => some (.or ((xs.filter fun
@@ -416,13 +416,13 @@ def expandIn (k : Attr) : Val → Option IQ
       | _ => false).map (IQ.equal k)))
   | _ => none
 
-/-- `is_indexable` (`node_by_index_scan.rs:256`). -/
+/-- `is_indexable` (`node_by_index_scan.rs`). -/
 def indexable : Val → Bool
   | .int i => !intLosesPrecision i
   | .flt _ | .str _ | .bool _ | .point _ _ | .null => true
   | _ => false
 
-/-- `can_utilize_index` (`node_by_index_scan.rs:253`). -/
+/-- `can_utilize_index` (`node_by_index_scan.rs`). -/
 def canUtilize : IQ → Bool
   | .equal _ v => indexable v
   | .range _ mn mx _ _ => (mn.all indexable) && (mx.all indexable)
@@ -438,7 +438,7 @@ the post-filter when the optimizer kept it (`keep`). -/
 def scanEmits (fields : Attr → Bool) (keep : Bool) (p : Props) (q : IQ) : Bool :=
   (if canUtilize q then indexHit fields p q else true) && (!keep || holds p q)
 
-/-! ## Pending population tickets (`mod.rs:907` `PendingSlots`, `mod.rs:2121-2177`) -/
+/-! ## Pending population tickets (`mod.rs` `PendingSlots`, `mod.rs`) -/
 
 structure Slots where
   gen : Nat
@@ -446,35 +446,35 @@ structure Slots where
   stale : Int
   deriving DecidableEq, Repr
 
-/-- `increment_pending_for_generation` (`mod.rs:2122`). -/
+/-- `increment_pending_for_generation` (`mod.rs`). -/
 def Slots.inc (s : Slots) (g : Nat) : Slots :=
   if g = s.gen then { s with cur := s.cur + 1 } else { s with stale := s.stale + 1 }
 
-/-- `try_decrement_pending_for_generation` (`mod.rs:2140`). -/
+/-- `try_decrement_pending_for_generation` (`mod.rs`). -/
 def Slots.dec (s : Slots) (g : Nat) : Slots :=
   if g = s.gen then (if s.cur > 0 then { s with cur := s.cur - 1 } else s)
   else (if s.stale > 0 then { s with stale := s.stale - 1 } else s)
 
-/-- `bump_id` (`mod.rs:1053`): new generation, current work becomes stale. -/
+/-- `bump_id` (`mod.rs`): new generation, current work becomes stale. -/
 def Slots.bump (s : Slots) (g' : Nat) : Slots :=
   { gen := g', cur := 0, stale := s.stale + s.cur }
 
-/-- `pending_count_for_generation` (`mod.rs:2162`). -/
+/-- `pending_count_for_generation` (`mod.rs`). -/
 def Slots.countFor (s : Slots) (g : Nat) : Int := if g = s.gen then s.cur else s.stale
 
-/-! ## Index maintenance: `Indexer::commit` (`indexer.rs:749`) -/
+/-! ## Index maintenance: `Indexer::commit` (`indexer.rs`) -/
 
 /-- RS doc table for one label: entity id ↦ stored document. -/
 abbrev Table := Nat → Option Doc
 
-/-- `add_document` with `REDISEARCH_ADD_REPLACE` (`mod.rs:1918`). -/
+/-- `add_document` with `REDISEARCH_ADD_REPLACE` (`mod.rs`). -/
 def Table.add (t : Table) (id : Nat) (d : Doc) : Table := fun j => if j = id then some d else t j
-/-- `delete_document` (`mod.rs:1940`). -/
+/-- `delete_document` (`mod.rs`). -/
 def Table.del (t : Table) (id : Nat) : Table := fun j => if j = id then none else t j
 
 /-- `Indexer::commit`: all adds of the label first, then all removes
-(`indexer.rs:749-777`). Documents are built from the *committed* graph
-(`graph.rs:4069` `commit_index_kind`, `doc.set` `:4103`). -/
+(`indexer.rs`). Documents are built from the *committed* graph
+(`graph.rs` `commit_index_kind`, `doc.set`). -/
 def commit (t : Table) (build : Nat → Doc) (adds removes : List Nat) : Table :=
   removes.foldl Table.del (adds.foldl (fun t id => t.add id (build id)) t)
 

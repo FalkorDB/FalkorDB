@@ -5,13 +5,13 @@ Reference semantics shared by every pass model.
 
 | here | there |
 | --- | --- |
-| `Var`            | `parser::ast::Variable` (`graph/src/parser/ast.rs:92`) — `(id, scope_id)`; `id` is scope-local |
+| `Var`            | `parser::ast::Variable` (`graph/src/parser/ast.rs`) — `(id, scope_id)`; `id` is scope-local |
 | `Val`            | `runtime::value::Value` (only the constructors the passes care about) |
 | `Row`, `Row.get` | a row of the batch env; an unbound column reads as NULL |
-| `Expr`, `eval`   | `ExprEval::eval_node` (`graph/src/runtime/eval.rs`) — `And` at `eval.rs:674` |
-| `powV`, `subV`, `divV` | `apply_pow` (`math.rs:328`), `Value` `-` and `/` |
-| `andL`           | the n-ary `ExprIR::And` loop (`eval.rs:674-699`), as a right fold of the binary step |
-| `passes`         | per-row verdict of `FilterOp::eval` (`graph/src/runtime/ops/filter.rs:48-80`) |
+| `Expr`, `eval`   | `ExprEval::eval_node` (`graph/src/runtime/eval.rs`) — `And` at `eval.rs` |
+| `powV`, `subV`, `divV` | `apply_pow` (`math.rs`), `Value` `-` and `/` |
+| `andL`           | the n-ary `ExprIR::And` loop (`eval.rs`), as a right fold of the binary step |
+| `passes`         | per-row verdict of `FilterOp::eval` (`graph/src/runtime/ops/filter.rs`) |
 | `filterRows`     | `FilterOp` over the whole input: any row error fails the query |
 | `cp`             | `CartesianProduct` (`runtime/ops/cartesian_product.rs`) |
 | `extend`         | any per-row expanding operator that keeps its input columns (`Unwind`, `CondTraverse`, `Apply` right side, `ProcedureCall`, …) |
@@ -38,7 +38,7 @@ inductive Err where
   | typeMismatch
   /-- `Variable … not found` / `not a constant expression`: what the plan-time
   constant evaluator (`ExprEval::constant()`, no env, no runtime) returns for any
-  non-constant leaf (eval.rs:278-293). -/
+  non-constant leaf (eval.rs). -/
   | notFound
 deriving DecidableEq, Repr
 
@@ -63,7 +63,7 @@ inductive Expr where
   | div (a b : Expr)
   /-- one step of the `ExprIR::And` loop: `and a rest` -/
   | and (a b : Expr)
-  /-- `a ^ b` (`ExprIR::Pow`, eval.rs:828-834, since #2904) -/
+  /-- `a ^ b` (`ExprIR::Pow`, eval.rs, since #2904) -/
   | pow (a b : Expr)
 deriving Repr
 
@@ -89,7 +89,7 @@ def notV : Val → Val
   | .bool b => .bool (!b)
   | v => v
 
-/-- The `ExprIR::And` step (eval.rs:674): evaluate left; `false` short-circuits,
+/-- The `ExprIR::And` step (eval.rs): evaluate left; `false` short-circuits,
 an error propagates immediately (`?`), `null` is remembered, a non-boolean is a
 type error. -/
 def andStep (a : Except Err Val) (rest : Unit → Except Err Val) : Except Err Val :=
@@ -112,7 +112,7 @@ instance : Inhabited Val := ⟨.null⟩
 
 opaque powNum : Int → Int → Val
 
-/-- `apply_pow` (math.rs:328, since #2904): a non-numeric non-null operand is a
+/-- `apply_pow` (math.rs, since #2904): a non-numeric non-null operand is a
 type error (base checked first), a null operand gives null, else `powf`. -/
 def powV : Val → Val → Except Err Val
   | .bool _, _ | .str _, _ => .error .typeMismatch
@@ -150,7 +150,7 @@ def andL : List Expr → Expr
   | [] => .lit (.bool true)
   | c :: cs => .and c (andL cs)
 
-/-- The literal loop of eval.rs:674-699, for comparison with `andL`. -/
+/-- The literal loop of eval.rs, for comparison with `andL`. -/
 def andLoop (r : Row) : List Expr → Bool → Except Err Val
   | [], isNull => .ok (if isNull then .null else .bool true)
   | c :: cs, isNull =>
@@ -214,7 +214,7 @@ theorem eval_andL (r : Row) (cs : List Expr) : eval r (andL cs) = andLoop r cs f
         · cases b <;> rfl
     · rfl
 
-/-- FilterOp per-row verdict (filter.rs:48-80): `true` keeps, `false`/`null`
+/-- FilterOp per-row verdict (filter.rs): `true` keeps, `false`/`null`
 drop, anything else is "expected Boolean". -/
 def passes (p : Expr) (r : Row) : Except Err Bool :=
   match eval r p with
@@ -394,7 +394,7 @@ theorem push_limit_const (p : Expr) (n : Nat) (xs : List Row) (b : Bool)
     · simp only [↓reduceIte]; rw [List.filter_eq_self]; intro x hx; simp [hc x hx]
   rw [h1, h2]; cases b <;> simp
 
-/-! ### Counterexamples: LIMIT / SKIP are not transparent (push_filters_down.rs:165-178
+/-! ### Counterexamples: LIMIT / SKIP are not transparent (push_filters_down.rs
 does not exclude them). -/
 
 def vN : Var := ⟨0, 0⟩
@@ -411,7 +411,7 @@ theorem skip_not_transparent :
     ([rowV 1, rowV 5].drop 1).filter (passB (.eq (.var vN) (.lit (.int 5)))) ≠
     ([rowV 1, rowV 5].filter (passB (.eq (.var vN) (.lit (.int 5))))).drop 1 := by decide
 
-/-! ## Filter merging (push_filters_down.rs:113-140)
+/-! ## Filter merging (push_filters_down.rs)
 
 Stacked `Filter(outer p) → Filter(inner q)` is merged into one `AND`. The Rust code lists the *child* (inner) conjuncts first
 (`for f in [&child_filter, &filter]`, line 128): `mergeRust`.
@@ -442,7 +442,7 @@ theorem merge_child_first_row (p q : Expr) (r : Row) (b : Bool) (hq : eval r q =
   · simp only [bind, Except.bind]
     split <;> simp_all
 
-/-- The merged filter built by push_filters_down.rs:127-137 since #3006: the child's
+/-- The merged filter built by push_filters_down.rs since #3006: the child's
 conjuncts, then the outer ones (`and_of` flattening is `AndOf.flat_passes`). -/
 def mergeRust (p q : Expr) : Expr := .and q p
 
@@ -488,7 +488,7 @@ theorem filter_true (xs : List Row) : filterRows (.lit (.bool true)) xs = .ok xs
   | cons r rs ih => simp [filterRows, passes, eval, ih, bind, Except.bind, pure, Except.pure]
 
 /-- Dropping conjuncts that evaluate to `true` on the row leaves the AND loop's
-result unchanged (eliminate_true_filters.rs:123-143). -/
+result unchanged (eliminate_true_filters.rs). -/
 theorem andLoop_drop_true (r : Row) (keep : Expr → Bool) (cs : List Expr)
     (htrue : ∀ c ∈ cs, keep c = false → eval r c = .ok (.bool true)) (n : Bool) :
     andLoop r (cs.filter keep) n = andLoop r cs n := by

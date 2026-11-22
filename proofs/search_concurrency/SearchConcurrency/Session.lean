@@ -11,16 +11,16 @@ bookkeeping that they leave out: the lock mode and write-version state a session
 
 | Lean | Rust (origin/main 256ab4d3f) |
 | --- | --- |
-| `Sess`, `Mode`, `Ver`          | `QuerySession` `query_session.rs:105` (`mode: RefCell<Option<Mode>>`, `version: RefCell<Version>`), `enum Mode` `:52`, `enum Version` `:128` |
-| `Sess.beginWith`, `Sess.begin` | `begin_with` `:185` (reader mode), `begin` `:178` (`WriteFacts::CLIENT`) |
-| `Sess.withGraph`, `withGraphMut`, `graphArc` | `with_graph` `:355`, `with_graph_mut` `:371`, `graph_arc` `:346` |
-| `Sess.releaseLocks`, `Sess.drop` | `release_locks` `:338`, `Drop for QuerySession` `:673` |
-| `checkFork`                    | `check_fork` `:300` (verdict from `MvccGraph::is_stale` `mvcc_graph.rs:155`) |
-| `G`, `acquire`, `dropGuard`    | `Gil::acquire` `:722`, `Drop for Gil` `:745`, `holds_gil` `:702` |
-| `mustRunInline`                | `dispatch.rs::must_run_inline` `:36` |
-| `reauthorize`                  | `reauthorize_write` `:619` |
-| `MG`, `MG.fromGraph`, `MG.new`, `MG.drop` | `MvccGraph::from_graph` `mvcc_graph.rs:118`, `new` `:106`, `Drop` `:370` |
-| `commitNext_*`                 | `CommitOp::next` `runtime/ops/commit.rs:69`: the lock path of its escalation (`self.runtime.upgrade_to_write()` `:96`) and index publish (`commit_deferred_indexes` `:104`) |
+| `Sess`, `Mode`, `Ver`          | `QuerySession` `query_session.rs` (`mode: RefCell<Option<Mode>>`, `version: RefCell<Version>`), `enum Mode`, `enum Version` |
+| `Sess.beginWith`, `Sess.begin` | `begin_with` (reader mode), `begin` (`WriteFacts::CLIENT`) |
+| `Sess.withGraph`, `withGraphMut`, `graphArc` | `with_graph`, `with_graph_mut`, `graph_arc` |
+| `Sess.releaseLocks`, `Sess.drop` | `release_locks`, `Drop for QuerySession` |
+| `checkFork`                    | `check_fork` (verdict from `MvccGraph::is_stale` `mvcc_graph.rs`) |
+| `G`, `acquire`, `dropGuard`    | `Gil::acquire`, `Drop for Gil`, `holds_gil` |
+| `mustRunInline`                | `dispatch.rs::must_run_inline` |
+| `reauthorize`                  | `reauthorize_write` |
+| `MG`, `MG.fromGraph`, `MG.new`, `MG.drop` | `MvccGraph::from_graph` `mvcc_graph.rs`, `new`, `Drop` |
+| `commitNext_*`                 | `CommitOp::next` `runtime/ops/commit.rs`: the lock path of its escalation (`self.runtime.upgrade_to_write()`) and index publish (`commit_deferred_indexes`) |
 -/
 namespace SC.Session
 
@@ -41,11 +41,11 @@ structure Sess where
   originatedHere : Bool
 deriving DecidableEq, Repr
 
-/-- `begin_with` (`:185`): `read_past_gate` takes the read lock; no write version yet. -/
+/-- `begin_with`: `read_past_gate` takes the read lock; no write version yet. -/
 def Sess.beginWith (g : Nat) (replicates originated : Bool) : Sess :=
   { graph := g, mode := some .reader, ver := .none, replicates, originatedHere := originated }
 
-/-- `begin` (`:178`): `WriteFacts::CLIENT`, both facts true. -/
+/-- `begin`: `WriteFacts::CLIENT`, both facts true. -/
 def Sess.begin (g : Nat) : Sess := Sess.beginWith g true true
 
 theorem Sess.begin_spec (g : Nat) :
@@ -57,21 +57,21 @@ theorem Sess.beginWith_spec (g : Nat) (a b : Bool) :
     (Sess.beginWith g a b).replicates = a ∧ (Sess.beginWith g a b).originatedHere = b :=
   ⟨rfl, rfl, rfl, rfl⟩
 
-/-- `with_graph` (`:355`): the graph the session locks, in either mode; a session that holds no
+/-- `with_graph`: the graph the session locks, in either mode; a session that holds no
 lock panics (`expect("session holds no lock")`), `none` here. -/
 def Sess.withGraph (s : Sess) : Option Nat := s.mode.map (fun _ => s.graph)
 
-/-- `with_graph_mut` (`:371`): `Some` only in writer mode, which is the proof that the write
+/-- `with_graph_mut`: `Some` only in writer mode, which is the proof that the write
 lock is held and mutation is allowed. -/
 def Sess.withGraphMut (s : Sess) : Option Nat :=
   match s.mode with
   | some .writer => some s.graph
   | _ => none
 
-/-- `graph_arc` (`:346`): the same graph handle, whatever the mode. -/
+/-- `graph_arc`: the same graph handle, whatever the mode. -/
 def Sess.graphArc (s : Sess) : Nat := s.graph
 
-/-- `release_locks` (`:338`) and `Drop` (`:673`) both do `*self.mode.borrow_mut() = None`. -/
+/-- `release_locks` and `Drop` both do `*self.mode.borrow_mut() = None`. -/
 def Sess.releaseLocks (s : Sess) : Sess := { s with mode := none }
 def Sess.drop (s : Sess) : Sess := { s with mode := none }
 
@@ -124,10 +124,10 @@ theorem sessionDrop_releases_all :
 
 /-! ## `check_fork` -/
 
-/-- `MvccGraph::is_stale` (`mvcc_graph.rs:155`): `published.version + 1 != fork.version`. -/
+/-- `MvccGraph::is_stale` (`mvcc_graph.rs`): `published.version + 1 != fork.version`. -/
 def isStale (published fork : Nat) : Bool := decide (published + 1 ≠ fork)
 
-/-- `check_fork` (`:300`): the new state and whether it answered `Ok`. Only an `Unchecked` fork is
+/-- `check_fork`: the new state and whether it answered `Ok`. Only an `Unchecked` fork is
 checked; a stale one is gone (`Err(Stale)`), a current one is rebased onto the indexer batches
 published since and becomes `Current`. `rebase_onto_indexer_batches` takes the fork by `&mut`
 and returns `()` since #3683: there is no third outcome (the borrowed-fork `Err(Stale)` of the
@@ -174,15 +174,15 @@ structure G where
   locked : Bool
 deriving DecidableEq, Repr
 
-/-- `holds_gil` (`:702`): the main thread implicitly, any other through `GIL_CTX`. -/
+/-- `holds_gil`: the main thread implicitly, any other through `GIL_CTX`. -/
 def G.holds (g : G) : Bool := g.isMain || g.ctx
 
-/-- `Gil::acquire` (`:722`): no-op when the thread already holds it (the GIL is not recursive),
+/-- `Gil::acquire`: no-op when the thread already holds it (the GIL is not recursive),
 else lock it and record the context. The `Bool` is `need_release`. -/
 def acquire (g : G) : G × Bool :=
   if g.holds then (g, false) else ({ g with ctx := true, locked := true }, true)
 
-/-- `Drop for Gil` (`:745`): only the guard that took the GIL releases it, taking the context out
+/-- `Drop for Gil`: only the guard that took the GIL releases it, taking the context out
 of the thread-local so nothing can release it twice. -/
 def dropGuard (g : G) (needRelease : Bool) : G :=
   if needRelease then { g with ctx := false, locked := false } else g
@@ -259,7 +259,7 @@ structure RFlags where
   readonly : Bool
   avoidReplication : Bool
 
-/-- `reauthorize_write` (`:619`). `ctx = none` is `GIL_CTX.get() == None`: the main thread, where
+/-- `reauthorize_write`. `ctx = none` is `GIL_CTX.get() == None`: the main thread, where
 Redis gated the command at dispatch. -/
 def reauthorize (ctx : Option RFlags) (replicates originated : Bool) : Option Abort :=
   match ctx with
@@ -302,10 +302,10 @@ structure MG where
   cancelled : Bool
 deriving DecidableEq, Repr
 
-/-- `from_graph` (`mvcc_graph.rs:118`): publishes the given graph as it is. -/
+/-- `from_graph` (`mvcc_graph.rs`): publishes the given graph as it is. -/
 def MG.fromGraph (g ver : Nat) : MG := { pub := g, ver, cancelled := false }
 
-/-- `new` (`:106`): `from_graph(Graph::new(n, e, cache_size, 0, name))`, data version 0. -/
+/-- `new`: `from_graph(Graph::new(n, e, cache_size, 0, name))`, data version 0. -/
 def MG.new (g : Nat) : MG := MG.fromGraph g 0
 
 /-- `read` right after construction returns the graph given (`from_graph`'s whole contract). -/
@@ -319,7 +319,7 @@ theorem MG.new_is_init (g : Nat) {valid : List SC.Mvcc.W → Bool} :
     (MG.new g).ver = SC.Mvcc.init.ver ∧ (MG.new g).cancelled = false ∧
     SC.Mvcc.Reach valid SC.Mvcc.init := ⟨rfl, rfl, SC.Mvcc.Reach.init⟩
 
-/-- `Drop for MvccGraph` (`:370`): `self.graph.load().cancel_indexing()`: the indexers of the
+/-- `Drop for MvccGraph`: `self.graph.load().cancel_indexing()`: the indexers of the
 published version are cancelled (`index_layer`: `Ixr.cancel`), nothing else changes. -/
 def MG.drop (m : MG) : MG := { m with cancelled := true }
 
@@ -330,8 +330,8 @@ theorem MG.drop_spec (m : MG) :
 /-! ## `CommitOp::next`: the lock path (#3226) -/
 
 open SC.Locks in
-/-- `CommitOp::next` escalates (`upgrade_to_write`, `:96`: drop the read lock, take the GIL and the
-write lock) and then publishes index documents (`commit_deferred_indexes`, `:104`: indexer lock,
+/-- `CommitOp::next` escalates (`upgrade_to_write`: drop the read lock, take the GIL and the
+write lock) and then publishes index documents (`commit_deferred_indexes`: indexer lock,
 then RediSearch as a writer). With the plan's index scan already dropped, this path is
 ordered and never re-acquires a lock it holds. -/
 theorem commitNext_closed_scan :

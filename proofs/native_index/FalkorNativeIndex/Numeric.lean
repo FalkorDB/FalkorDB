@@ -4,9 +4,9 @@ set_option linter.unusedSimpArgs false
 /-!
 # `NumericIndex` (`graph/src/index/falkordb/numeric.rs`)
 
-The index is its tree (`tree: Tree`, `numeric.rs:139-141`), here the tree's content list (`Tree.lean`).
+The index is its tree (`tree: Tree`, `numeric.rs`), here the tree's content list (`Tree.lean`).
 Each function is modelled line by line. Theorems:
-* `range_keys` — the inclusive key bounds `range` computes (`numeric.rs:269-316`) select exactly the
+* `range_keys` — the inclusive key bounds `range` computes (`numeric.rs`) select exactly the
   keys satisfying the value bounds, including the exclusive `k ± 1` steps and their `checked_*`
   guards (no stored key is `0` or `u64::MAX`, `encodeF64_bounds`).
 * `range_agrees`, `point_agrees` — **index scan ≡ label scan + filter**: a column built from
@@ -18,14 +18,14 @@ Each function is modelled line by line. Theorems:
 
 namespace NI
 
-/-- `KeyKind` (`encode.rs:44-48`): which of a column's trees a key lives in. A scalar value's key goes in
+/-- `KeyKind` (`encode.rs`): which of a column's trees a key lives in. A scalar value's key goes in
     the scalar tree; each numeric element of a list value goes in the array tree. -/
 inductive KeyKind where
   | scalar
   | array
 deriving DecidableEq, Repr
 
-/-- `for_each_stored_key` (`encode.rs:74-92`): a list is stored under each numeric element's key in the
+/-- `for_each_stored_key` (`encode.rs`): a list is stored under each numeric element's key in the
     array tree (`items.iter().filter_map(encode_numeric)`), anything else under its own `encode_numeric`
     key in the scalar tree. -/
 def forEachStoredKey : Value → List (KeyKind × Nat)
@@ -34,7 +34,7 @@ def forEachStoredKey : Value → List (KeyKind × Nat)
     | some k => [(KeyKind.scalar, k)]
     | none => []
 
-/-- `EncodedTuples { by_kind }` (`numeric.rs:231-233`): the encoded `(key, doc)` tuples a column's
+/-- `EncodedTuples { by_kind }` (`numeric.rs`): the encoded `(key, doc)` tuples a column's
     changes move in, kept apart by `KeyKind` (`scalar` = `by_kind[Scalar]`, `array` = `by_kind[Array]`).
     A tuple `(key, doc)` is its tree entry `enc key doc` (`Tree.lean`). -/
 structure EncodedTuples where
@@ -45,33 +45,33 @@ deriving Repr, DecidableEq
 namespace EncodedTuples
 /-- `Default` -/
 def empty : EncodedTuples := ⟨[], []⟩
-/-- `Index<KeyKind>` (`numeric.rs:235-243`). -/
+/-- `Index<KeyKind>` (`numeric.rs`). -/
 def get (t : EncodedTuples) : KeyKind → List Nat
   | .scalar => t.scalar
   | .array => t.array
-/-- `tuples[kind].push(x)` (`IndexMut<KeyKind>`, `numeric.rs:245-252`). -/
+/-- `tuples[kind].push(x)` (`IndexMut<KeyKind>`, `numeric.rs`). -/
 def push (t : EncodedTuples) : KeyKind → Nat → EncodedTuples
   | .scalar, x => { t with scalar := t.scalar ++ [x] }
   | .array, x => { t with array := t.array ++ [x] }
-/-- `scalars` (`numeric.rs:269-273`). -/
+/-- `scalars` (`numeric.rs`). -/
 def scalars (s : List Nat) : EncodedTuples := ⟨s, []⟩
-/-- `is_empty` (`numeric.rs:277-279`): no tuple of either kind. -/
+/-- `is_empty` (`numeric.rs`): no tuple of either kind. -/
 def isEmpty (t : EncodedTuples) : Bool := t.scalar.isEmpty && t.array.isEmpty
-/-- `len` (`numeric.rs:285-287`): every kind's tuples. -/
+/-- `len` (`numeric.rs`): every kind's tuples. -/
 def len (t : EncodedTuples) : Nat := t.scalar.length + t.array.length
-/-- `clear` (`numeric.rs:290-292`). -/
+/-- `clear` (`numeric.rs`). -/
 def clear (_t : EncodedTuples) : EncodedTuples := ⟨[], []⟩
-/-- `sort_dedup` (`numeric.rs:296-301`): each kind `sort_unstable()` then `dedup()`. -/
+/-- `sort_dedup` (`numeric.rs`): each kind `sort_unstable()` then `dedup()`. -/
 def sortDedup (t : EncodedTuples) : EncodedTuples := ⟨NI.sortDedup t.scalar, NI.sortDedup t.array⟩
 end EncodedTuples
 
-/-- `NumericIndex { tree, array_tree }` (`numeric.rs:316-327`). -/
+/-- `NumericIndex { tree, array_tree }` (`numeric.rs`). -/
 structure NumericIndex where
   tree : List Nat
   arrayTree : List Nat
 deriving Repr
 
-/-- `NumericIndex::default` (`numeric.rs:316`). -/
+/-- `NumericIndex::default` (`numeric.rs`). -/
 def NumericIndex.new : NumericIndex := ⟨[], []⟩
 
 /-- The scalar `(key, id)` entries of `(value, id)` pairs: the `filter_map` over `encode_numeric`. -/
@@ -84,7 +84,7 @@ def encodeArrayPairs (entries : List (Value × Nat)) : List Nat :=
     | .list es => (es.filterMap _root_.id).map (fun k => enc k id)
     | _ => [])
 
-/-- `RangeIndex::push_encoded` (`range.rs:452-459`): `for_each_stored_key`, pushing `(key, id)` onto the
+/-- `RangeIndex::push_encoded` (`range.rs`): `for_each_stored_key`, pushing `(key, id)` onto the
     tuples of the key's kind. -/
 def pushStored (v : Value) (id : Nat) (out : EncodedTuples) : EncodedTuples :=
   (forEachStoredKey v).foldl (fun o kk => o.push kk.1 (enc kk.2 id)) out
@@ -95,40 +95,40 @@ def pushStored (v : Value) (id : Nat) (out : EncodedTuples) : EncodedTuples :=
 def NumericIndex.fromEntries (entries : List (Value × Nat)) : NumericIndex :=
   ⟨tFromSorted (sortDedup (encodePairs entries)), tFromSorted (sortDedup (encodeArrayPairs entries))⟩
 
-/-- `RangeKind::add_encoded` for one tree (`numeric.rs:438-455`): skip an empty share; into an empty
+/-- `RangeKind::add_encoded` for one tree (`numeric.rs`): skip an empty share; into an empty
     tree `Tree::from_sorted` (a bulk build), else `insert_batch`. -/
 def addTree (t new : List Nat) : List Nat :=
   if new.isEmpty then t else if tIsEmpty t then tFromSorted new else tInsertBatch t new
 
-/-- `RangeKind::remove_encoded` for one tree (`numeric.rs:456-463`). -/
+/-- `RangeKind::remove_encoded` for one tree (`numeric.rs`). -/
 def removeTree (t rm : List Nat) : List Nat :=
   if rm.isEmpty then t else tRemoveBatch t rm
 
-/-- `NumericIndex::add_encoded` (`numeric.rs:438-455`, the `RangeKind` impl): takes tuples the column
+/-- `NumericIndex::add_encoded` (`numeric.rs`, the `RangeKind` impl): takes tuples the column
     already sorted, one tree per kind. -/
 def NumericIndex.addTrees (ix : NumericIndex) (tuples : EncodedTuples) : NumericIndex :=
   ⟨addTree ix.tree tuples.scalar, addTree ix.arrayTree tuples.array⟩
 
-/-- `NumericIndex::remove_encoded` (`numeric.rs:456-463`). -/
+/-- `NumericIndex::remove_encoded` (`numeric.rs`). -/
 def NumericIndex.removeTrees (ix : NumericIndex) (tuples : EncodedTuples) : NumericIndex :=
   ⟨removeTree ix.tree tuples.scalar, removeTree ix.arrayTree tuples.array⟩
 
-/-- `RangeIndex::add_encoded` (`range.rs:516-523`): `tuples.sort_dedup()`, then the numeric kind's
+/-- `RangeIndex::add_encoded` (`range.rs`): `tuples.sort_dedup()`, then the numeric kind's
     `add_encoded`. Returns the index and the (sorted) tuples. -/
 def NumericIndex.addEncoded (ix : NumericIndex) (tuples : EncodedTuples) : NumericIndex × EncodedTuples :=
   let tuples := tuples.sortDedup
   (ix.addTrees tuples, tuples)
 
-/-- `RangeIndex::remove_encoded` (`range.rs:526-533`). -/
+/-- `RangeIndex::remove_encoded` (`range.rs`). -/
 def NumericIndex.removeEncoded (ix : NumericIndex) (tuples : EncodedTuples) : NumericIndex × EncodedTuples :=
   let tuples := tuples.sortDedup
   (ix.removeTrees tuples, tuples)
 
-/-- `RangeIndex::add` (`range.rs:462-469`): the tuples of `(v, id)` in an empty buffer, `add_encoded`. -/
+/-- `RangeIndex::add` (`range.rs`): the tuples of `(v, id)` in an empty buffer, `add_encoded`. -/
 def NumericIndex.add (ix : NumericIndex) (v : Value) (id : Nat) : NumericIndex :=
   (ix.addEncoded (pushStored v id EncodedTuples.empty)).1
 
-/-- `RangeIndex::remove` (`range.rs:474-481`). -/
+/-- `RangeIndex::remove` (`range.rs`). -/
 def NumericIndex.remove (ix : NumericIndex) (v : Value) (id : Nat) : NumericIndex :=
   (ix.removeEncoded (pushStored v id EncodedTuples.empty)).1
 
@@ -136,24 +136,24 @@ def NumericIndex.remove (ix : NumericIndex) (v : Value) (id : Nat) : NumericInde
 def pushAll (entries : List (Value × Nat)) : EncodedTuples :=
   entries.foldl (fun o p => pushStored p.1 p.2 o) EncodedTuples.empty
 
-/-- `RangeIndex::add_batch` (`range.rs:489-496`); returns the index and the scratch buffer (sorted by
+/-- `RangeIndex::add_batch` (`range.rs`); returns the index and the scratch buffer (sorted by
     `add_encoded`). -/
 def NumericIndex.addBatch (ix : NumericIndex) (entries : List (Value × Nat)) :
     NumericIndex × EncodedTuples :=
   ix.addEncoded (pushAll entries)
 
-/-- `RangeIndex::remove_batch` (`range.rs:502-509`). -/
+/-- `RangeIndex::remove_batch` (`range.rs`). -/
 def NumericIndex.removeBatch (ix : NumericIndex) (entries : List (Value × Nat)) :
     NumericIndex × EncodedTuples :=
   ix.removeEncoded (pushAll entries)
 
-/-- `RangeKind::is_empty` / `RangeIndex::is_empty` (`numeric.rs:466-468`): no tuple in either tree. -/
+/-- `RangeKind::is_empty` / `RangeIndex::is_empty` (`numeric.rs`): no tuple in either tree. -/
 def NumericIndex.isEmpty (ix : NumericIndex) : Bool := tIsEmpty ix.tree && tIsEmpty ix.arrayTree
 
 /-- `NumericIndex::empty` (`numeric.rs`, `range(1, 0)`): nothing. -/
 def NumericIndex.empty (ix : NumericIndex) : List Nat := tRange ix.tree 1 0
 
-/-- `KeySet` (`numeric.rs:58-72`): the keys a numeric predicate selects. A column looks them up to
+/-- `KeySet` (`numeric.rs`): the keys a numeric predicate selects. A column looks them up to
     answer; a scan standing in for a column still building checks each entity's key against them. -/
 inductive KeySet where
   | empty
@@ -162,10 +162,10 @@ inductive KeySet where
   | keys (ks : List Nat)
 deriving Repr, DecidableEq
 
-/-- `KeySet::distinct` (`numeric.rs:77-81`): `sort_unstable(); dedup()`. -/
+/-- `KeySet::distinct` (`numeric.rs`): `sort_unstable(); dedup()`. -/
 def KeySet.distinct (keys : List Nat) : KeySet := .keys (sortDedup keys)
 
-/-- `KeySet::contains` (`numeric.rs:85-92`). `Keys` is a `binary_search`, modelled here as plain list
+/-- `KeySet::contains` (`numeric.rs`). `Keys` is a `binary_search`, modelled here as plain list
     membership, which equals the search exactly when the list is sorted. The model does not carry that as a
     type invariant: it is the separate theorem `keysOf_sorted` (every `Keys` the column builds comes from
     `distinct`, so it is sorted), and a `KeySet.keys` built any other way is outside what these specs
@@ -176,7 +176,7 @@ def KeySet.contains : KeySet → Nat → Bool
   | .range lo hi, key => decide (lo ≤ key ∧ key ≤ hi)
   | .keys ks, key => decide (key ∈ ks)
 
-/-- `KeySet::of_keys` (`numeric.rs:143-151`): the set of `keys`, in any order and possibly repeated;
+/-- `KeySet::of_keys` (`numeric.rs`): the set of `keys`, in any order and possibly repeated;
     none is `Empty`, one is a `Point`, more is `Keys`. -/
 def KeySet.ofKeys (keys : List Nat) : KeySet :=
   match KeySet.distinct keys with
@@ -184,7 +184,7 @@ def KeySet.ofKeys (keys : List Nat) : KeySet :=
   | .keys [k] => .point k
   | ks => ks
 
-/-- `KeySet::and` (`numeric.rs:173-199`), arm by arm: two windows meet in one window, a point set keeps
+/-- `KeySet::and` (`numeric.rs`), arm by arm: two windows meet in one window, a point set keeps
     the points the other side holds. -/
 def KeySet.and : KeySet → KeySet → KeySet
   | .range a b, .range c d => if max a c ≤ min b d then .range (max a c) (min b d) else .empty
@@ -195,13 +195,13 @@ def KeySet.and : KeySet → KeySet → KeySet
   | .empty, _ => .empty
   | _, .empty => .empty
 
-/-- `point_keys` (`numeric.rs:385-387`). -/
+/-- `point_keys` (`numeric.rs`). -/
 def pointKeys (value : Value) : KeySet :=
   match encodeNumeric value with
   | some k => .point k
   | none => .empty
 
-/-- `range` (`numeric.rs:389-441`, `range_keys`), branch for branch (`none` = an early `return
+/-- `range` (`numeric.rs`, `range_keys`), branch for branch (`none` = an early `return
     KeySet::Empty`). -/
 def rangeBounds (min max : Option Value) (incMin incMax : Bool) : Option (Nat × Nat) := do
   let lo ← match min with
@@ -221,7 +221,7 @@ def rangeKeys (min max : Option Value) (incMin incMax : Bool) : KeySet :=
   | none => .empty
   | some (lo, hi) => .range lo hi
 
-/-- `lookup` (`numeric.rs:367-383`): the entity ids under `keys`. `Keys` is the lazy chain of point
+/-- `lookup` (`numeric.rs`): the entity ids under `keys`. `Keys` is the lazy chain of point
     cursors (`UnionIter`); as a set of ids it is the concatenation of the point scans. The chain is
     deliberately *not* id-ordered (`DocIter` doc): every theorem is about membership. The tree
     snapshot is pinned by `tree.clone()`; here the tree is an immutable value, which is that
@@ -232,13 +232,13 @@ def NumericIndex.lookup (ix : NumericIndex) : KeySet → List Nat
   | .range lo hi => tRange ix.tree lo hi
   | .keys ks => ks.flatMap (fun k => tRange ix.tree k k)
 
-/-- `point` (`numeric.rs:295-301`) = `lookup (point_keys value)`. -/
+/-- `point` (`numeric.rs`) = `lookup (point_keys value)`. -/
 def NumericIndex.point (ix : NumericIndex) (v : Value) : List Nat := ix.lookup (pointKeys v)
 
-/-- `point_key` (`numeric.rs:304-310`): the ids stored under one encoded key. -/
+/-- `point_key` (`numeric.rs`): the ids stored under one encoded key. -/
 def NumericIndex.pointKey (ix : NumericIndex) (key : Nat) : List Nat := tRange ix.tree key key
 
-/-- `range` (`numeric.rs:315-327`) = `lookup (range_keys ..)`. -/
+/-- `range` (`numeric.rs`) = `lookup (range_keys ..)`. -/
 def NumericIndex.range (ix : NumericIndex) (min max : Option Value) (incMin incMax : Bool) : List Nat :=
   ix.lookup (rangeKeys min max incMin incMax)
 
@@ -263,37 +263,37 @@ inductive IndexQuery where
   | and (children : List IndexQuery)
   | point (key : String)
 
-/-! ## `Selection` (`range.rs:113-340`): what a column answers a predicate on one attribute with -/
+/-! ## `Selection` (`range.rs`): what a column answers a predicate on one attribute with -/
 
-/-- `Selection` (`range.rs:121-129`): scalars with a key in the set, or lists holding an element under
+/-- `Selection` (`range.rs`): scalars with a key in the set, or lists holding an element under
     `first` and under each of `rest`. -/
 inductive Selection where
   | scalars (keys : KeySet)
   | listsHolding (first : Nat) (rest : List Nat)
 deriving Repr, DecidableEq
 
-/-- `Selection::empty` (`range.rs:133-135`). -/
+/-- `Selection::empty` (`range.rs`). -/
 def Selection.empty : Selection := .scalars .empty
 
-/-- `Selection::is_empty` (`range.rs:139-141`): `matches!(self, Scalars(KeySet::Empty))`. -/
+/-- `Selection::is_empty` (`range.rs`): `matches!(self, Scalars(KeySet::Empty))`. -/
 def Selection.isEmpty : Selection → Bool
   | .scalars .empty => true
   | _ => false
 
-/-- `Kind::of` (`range.rs:105-107`): the numeric kind holds `Int`, `Float` and `Bool`; nothing else
+/-- `Kind::of` (`range.rs`): the numeric kind holds `Int`, `Float` and `Bool`; nothing else
     (`NULL`, a string, a point, a temporal, a list, ...) is a scalar any kind routes by. -/
 def isNumericKind : Value → Bool
   | .int _ | .float _ | .bool _ => true
   | _ => false
 
-/-- `Selection::equal` (`range.rs:188-194`): a numeric value selects its key (`Empty` for NaN); `NULL`
+/-- `Selection::equal` (`range.rs`): a numeric value selects its key (`Empty` for NaN); `NULL`
     matches nothing (answered empty); any other value is declined. -/
 def Selection.equal (v : Value) : Option Selection :=
   if isNumericKind v then some (.scalars (pointKeys v))
   else if v == Value.null then some Selection.empty
   else none
 
-/-- `Selection::push_equal_keys` (`range.rs:211-217`): the key `equal` selects for each value, a decline
+/-- `Selection::push_equal_keys` (`range.rs`): the key `equal` selects for each value, a decline
     at a value no kind holds. The `unreachable!` arm (an equality selecting anything but one key or
     none) is modelled as a decline; `pushEqualKeys_spec` shows it never fires. -/
 def pushEqualKeys : List Value → List Nat → Option (List Nat)
@@ -305,11 +305,11 @@ def pushEqualKeys : List Value → List Nat → Option (List Nat)
     | some (.scalars .empty) => pushEqualKeys vs keys
     | some _ => none
 
-/-- `Selection::equal_to_any` (`range.rs:203-209`). -/
+/-- `Selection::equal_to_any` (`range.rs`). -/
 def Selection.equalToAny (values : List Value) : Option Selection :=
   (pushEqualKeys values []).map (fun keys => .scalars (KeySet.ofKeys keys))
 
-/-- `Selection::range` (`range.rs:231-237`): a bound of a type no kind holds declines; a `NULL` bound
+/-- `Selection::range` (`range.rs`): a bound of a type no kind holds declines; a `NULL` bound
     answers empty; else the window. -/
 def Selection.range (min max : Option Value) (incMin incMax : Bool) : Option Selection :=
   let bounds := (min.toList ++ max.toList)
@@ -317,17 +317,17 @@ def Selection.range (min max : Option Value) (incMin incMax : Bool) : Option Sel
   else if bounds.any (fun b => b == Value.null) then some Selection.empty
   else some (.scalars (rangeKeys min max incMin incMax))
 
-/-- `Selection::lists_holding` (`range.rs:256-262`): the lists holding a numeric `value`; a probe of any
+/-- `Selection::lists_holding` (`range.rs`): the lists holding a numeric `value`; a probe of any
     other type (a `NULL` included) is declined. -/
 def Selection.listsHoldingOf (v : Value) : Option Selection :=
   if isNumericKind v then
     some ((encodeNumeric v).elim Selection.empty (fun first => .listsHolding first []))
   else none
 
-/-! ### Attributes and atoms (`range.rs:356-399`) -/
+/-! ### Attributes and atoms (`range.rs`) -/
 
 mutual
-/-- `attributes_of` (`range.rs:392-399`): `some` of the attributes a predicate constrains, flattening
+/-- `attributes_of` (`range.rs`): `some` of the attributes a predicate constrains, flattening
     nested composites; `none` when the shape names no attribute (an empty `And`/`Or`). -/
 def attrsOf : IndexQuery → Option (List String)
   | .equal k _ => some [k]
@@ -348,7 +348,7 @@ def allSame : List String → Bool
   | a :: b :: r => a == b && allSame (b :: r)
   | _ => true
 
-/-- `on_one_attribute` (`range.rs:379-386`): every query constrains the same single attribute. -/
+/-- `on_one_attribute` (`range.rs`): every query constrains the same single attribute. -/
 def onOneAttribute (qs : List IndexQuery) : Bool :=
   match (qs.mapM attrsOf) with
   | none => false
@@ -361,7 +361,7 @@ def sameCombinator (isAnd : Bool) : IndexQuery → Bool
   | _ => false
 
 mutual
-/-- `atoms` (`range.rs:356-363`): the members of an `AND` or `OR`, each member that is the same
+/-- `atoms` (`range.rs`): the members of an `AND` or `OR`, each member that is the same
     combinator opened into its own; any other predicate is its own only atom; `none` when the
     combinator or one opened in it has no members. -/
 def atoms : IndexQuery → Option (List IndexQuery)
@@ -379,14 +379,14 @@ end
 
 /-! ### Unions and conjunctions -/
 
-/-- The values one member of a union contributes (`range.rs:276-283`): an `Equal`'s, or a **non-empty**
+/-- The values one member of a union contributes (`range.rs`): an `Equal`'s, or a **non-empty**
     `IN` list's; any other member declines the union. -/
 def disjMemberValues : IndexQuery → Option (List Value)
   | .equal _ v => some [v]
   | .inList _ (some items) => if items.isEmpty then none else some items
   | _ => none
 
-/-- The loop of `disjunction` (`range.rs:276-283`). -/
+/-- The loop of `disjunction` (`range.rs`). -/
 def disjGo : List IndexQuery → List Nat → Option (List Nat)
   | [], keys => some keys
   | m :: ms, keys =>
@@ -394,24 +394,24 @@ def disjGo : List IndexQuery → List Nat → Option (List Nat)
     | none => none
     | some vs => (pushEqualKeys vs keys).bind (disjGo ms)
 
-/-- `Selection::disjunction` (`range.rs:276-283`): an `OR` of `=`s and `IN` lists, all on one attribute. -/
+/-- `Selection::disjunction` (`range.rs`): an `OR` of `=`s and `IN` lists, all on one attribute. -/
 def Selection.disjunction (members : List IndexQuery) : Option Selection :=
   if !onOneAttribute members then none
   else (disjGo members []).map (fun keys => .scalars (KeySet.ofKeys keys))
 
-/-- `Selection::and` (`range.rs:329-336`): what both select. A value is a scalar or a list, never
+/-- `Selection::and` (`range.rs`): what both select. A value is a scalar or a list, never
     both, so a scalar selection and a list selection select nothing together. -/
 def Selection.and : Selection → Selection → Selection
   | .scalars a, .scalars b => .scalars (a.and b)
   | .listsHolding f r, .listsHolding f' r' => .listsHolding f (r ++ [f'] ++ r')
   | _, _ => Selection.empty
 
-/-- The selection of one query that is not a combinator: `Selection::of` (`range.rs:160-181`) on a
+/-- The selection of one query that is not a combinator: `Selection::of` (`range.rs`) on a
     leaf. -/
 def Selection.ofLeaf : IndexQuery → Option Selection
   | .equal _ v => Selection.equal v
   | .range _ min max a b => Selection.range min max a b
-  -- An empty list is declined rather than answered as "no rows" (`range.rs:169-172`).
+  -- An empty list is declined rather than answered as "no rows" (`range.rs`).
   | .inList _ (some items) => if items.isEmpty then none else Selection.equalToAny items
   | .inList _ none => none
   | .arrayContains _ v => Selection.listsHoldingOf v
@@ -420,14 +420,14 @@ def Selection.ofLeaf : IndexQuery → Option Selection
   | .and _ => none
 
 /-- `Selection::of` on a conjunct, as `conjunction` calls it. A conjunct is an atom — no conjunct is
-    itself an `AND` (`debug_assert!`, `range.rs:307-312`; `atoms_and_no_and` shows it never is), so
+    itself an `AND` (`debug_assert!`, `range.rs`; `atoms_and_no_and` shows it never is), so
     that arm is modelled as a decline. An `OR` conjunct is its own disjunction. -/
 def Selection.ofAtom : IndexQuery → Option Selection
   | .or ms => (atoms (.or ms)).bind Selection.disjunction
   | .and _ => none
   | q => Selection.ofLeaf q
 
-/-- `Selection::conjunction` (`range.rs:307-314`): on one attribute, what every conjunct selects. A
+/-- `Selection::conjunction` (`range.rs`): on one attribute, what every conjunct selects. A
     conjunct selecting nothing empties the conjunction, even beside one no kind serves; otherwise a
     conjunct no kind serves declines it. -/
 def Selection.conjunction (cs : List IndexQuery) : Option Selection :=
@@ -441,7 +441,7 @@ def Selection.conjunction (cs : List IndexQuery) : Option Selection :=
       | some [] => none
       | some (s :: ss) => some (ss.foldl Selection.and s)
 
-/-- `Selection::of` (`range.rs:160-181`): the selection of a predicate on **one** attribute, or `none`
+/-- `Selection::of` (`range.rs`): the selection of a predicate on **one** attribute, or `none`
     when no kind serves it. -/
 def Selection.of (q : IndexQuery) : Option Selection :=
   match q with
@@ -449,15 +449,15 @@ def Selection.of (q : IndexQuery) : Option Selection :=
   | .and _ => (atoms q).bind Selection.conjunction
   | _ => Selection.ofLeaf q
 
-/-- `Selection::matches` (`range.rs:146-148`) given the encoder's keys: the scan's check while the
+/-- `Selection::matches` (`range.rs`) given the encoder's keys: the scan's check while the
     column builds. -/
 def stores (v : Value) (kind : KeyKind) (wanted : Nat → Bool) : Bool :=
   (forEachStoredKey v).any (fun kk => decide (kk.1 = kind) && wanted kk.2)
 
-/-- `NumericIndex::is_scalar_in` (`numeric.rs:507-512`). -/
+/-- `NumericIndex::is_scalar_in` (`numeric.rs`). -/
 def isScalarIn (keys : KeySet) (v : Value) : Bool := stores v .scalar keys.contains
 
-/-- `NumericIndex::is_list_holding` (`numeric.rs:514-519`). -/
+/-- `NumericIndex::is_list_holding` (`numeric.rs`). -/
 def isListHolding (key : Nat) (v : Value) : Bool := stores v .array (fun k => k == key)
 
 /-- `Selection::matches`. -/
@@ -465,18 +465,18 @@ def Selection.matches : Selection → Value → Bool
   | .scalars ks, v => isScalarIn ks v
   | .listsHolding first rest, v => (first :: rest).all (fun k => isListHolding k v)
 
-/-- `NumericIndex::lists_holding` (`numeric.rs:487-495`): a point lookup into the **array** tree; the
+/-- `NumericIndex::lists_holding` (`numeric.rs`): a point lookup into the **array** tree; the
     scalar tree is deliberately not consulted. -/
 def NumericIndex.listsHolding (ix : NumericIndex) (key : Nat) : List Nat := tRange ix.arrayTree key key
 
-/-- `RangeIndex::lookup`, the `ListsHolding` arm (`range.rs:582-606`): the first probe's lists, each
+/-- `RangeIndex::lookup`, the `ListsHolding` arm (`range.rs`): the first probe's lists, each
     later probe keeping only those it also reaches (a set probe: a probe yields docs in key order). -/
 def NumericIndex.lookupLists (ix : NumericIndex) (first : Nat) (rest : List Nat) : List Nat :=
   rest.foldl (fun found e =>
     if found.isEmpty then found else (ix.listsHolding e).filter (fun d => found.contains d))
     (ix.listsHolding first)
 
-/-- `RangeIndex::lookup` (`range.rs:577-606`): the entities a selection selects. -/
+/-- `RangeIndex::lookup` (`range.rs`): the entities a selection selects. -/
 def NumericIndex.lookupSel (ix : NumericIndex) : Selection → List Nat
   | .scalars ks => ix.lookup ks
   | .listsHolding first rest => ix.lookupLists first rest
@@ -991,7 +991,7 @@ theorem keyset_and_sorted (a b : KeySet) (ks : List Nat) (h : KeySet.and a b = .
     | (split at h <;> simp_all)
     | skip
 
-/-! ### The lazy chain (`UnionIter::next`, `numeric.rs:79-90`)
+/-! ### The lazy chain (`UnionIter::next`, `numeric.rs`)
 
 State `(keys, cur)`: the keys still to visit and the cursor over the current one (`None` until the
 first `next`). `next` yields from `cur` if it has an item, else builds the cursor for the next key
@@ -1067,7 +1067,7 @@ While a column is `Building` the read is answered with a `ScanFilter` (`KeySet` 
 of rows; the scan op keeps every entity whose value's key is in the set. Both are driven by the one
 `KeySet`, which is why the scan "keeps exactly what the column will answer". -/
 
-/-- `ScanFilter::matches` on a key set (`falkordb_index.rs:272-277`):
+/-- `ScanFilter::matches` on a key set (`falkordb_index.rs`):
     `encode_numeric(value).is_some_and(|key| keys.contains(key))`. -/
 def KeySet.matchesValue (ks : KeySet) (v : Value) : Bool := (encodeNumeric v).any ks.contains
 
@@ -1340,7 +1340,7 @@ theorem removeEncoded_array_spec (ix : NumericIndex) (tuples : EncodedTuples) (e
   simp only [NumericIndex.removeEncoded, NumericIndex.removeTrees, EncodedTuples.sortDedup, removeTree_spec,
     (sortDedup_spec _).2]
 
-/-- `EncodedTuples`' accessors (`numeric.rs:269-301`). -/
+/-- `EncodedTuples`' accessors (`numeric.rs`). -/
 theorem encodedTuples_spec (s : List Nat) (t : EncodedTuples) :
     (EncodedTuples.scalars s).scalar = s ∧ (EncodedTuples.scalars s).array = [] ∧
     (t.isEmpty = true ↔ t.scalar = [] ∧ t.array = []) ∧ t.len = t.scalar.length + t.array.length ∧
@@ -1350,14 +1350,14 @@ theorem encodedTuples_spec (s : List Nat) (t : EncodedTuples) :
     fun e => (sortDedup_spec _).2 e, fun e => (sortDedup_spec _).2 e⟩
   simp [EncodedTuples.isEmpty]
 
-/-- `EncodedTuples::index` / `index_mut` (`numeric.rs:235-252`): `tuples[kind]`, and a push onto it. -/
+/-- `EncodedTuples::index` / `index_mut` (`numeric.rs`): `tuples[kind]`, and a push onto it. -/
 theorem encodedTuples_get_push (t : EncodedTuples) (x : Nat) :
     t.get .scalar = t.scalar ∧ t.get .array = t.array ∧
     (t.push .scalar x).scalar = t.scalar ++ [x] ∧ (t.push .scalar x).array = t.array ∧
     (t.push .array x).array = t.array ++ [x] ∧ (t.push .array x).scalar = t.scalar :=
   ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- `NumericIndex::tree_mut` (`numeric.rs:333-340`) picks the tree of the kind: the model's two fields. -/
+/-- `NumericIndex::tree_mut` (`numeric.rs`) picks the tree of the kind: the model's two fields. -/
 theorem forEachStoredKey_scalar (v : Value) (k : Nat) :
     (KeyKind.scalar, k) ∈ forEachStoredKey v ↔ encodeNumeric v = some k ∧ ∀ es, v ≠ .list es := by
   cases v with
@@ -1466,7 +1466,7 @@ theorem empty_spec (ix : NumericIndex) : ix.empty = [] := tRange_empty _
 
 theorem new_spec : NumericIndex.new.tree = [] ∧ NumericIndex.new.arrayTree = [] := ⟨rfl, rfl⟩
 
-/-- Temporal values never reach either tree (`encode.rs:34-38`). -/
+/-- Temporal values never reach either tree (`encode.rs`). -/
 theorem temporal_not_added (ix : NumericIndex) (i : Int) (id : Nat) :
     (ix.add (.date i) id).tree = ix.tree ∧ (ix.add (.date i) id).arrayTree = ix.arrayTree := by
   simp [NumericIndex.add, NumericIndex.addEncoded, NumericIndex.addTrees, pushStored, forEachStoredKey,

@@ -2,7 +2,7 @@ import VersionedMatrix.DeltaBook
 /-
 # `VersionedMatrix<bool>` with its bookkeeping: the remaining methods
 
-`BVM` is `struct VersionedMatrix` (`versioned_matrix.rs:652`) with the full
+`BVM` is `struct VersionedMatrix` (`versioned_matrix.rs`) with the full
 `Delta` bookkeeping of `DeltaBook.lean` (the set-level layer algebra of
 `set`/`remove`/`flush`/… is `Delta.lean`/`DeltaProofs.lean`).
 

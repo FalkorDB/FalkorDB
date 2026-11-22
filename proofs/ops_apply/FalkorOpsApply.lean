@@ -26,33 +26,33 @@ asserts C's answer and FAILS today).
 
 | here | there |
 | --- | --- |
-| `Correlated.tag`                          | `Batch::clone_active_rows_seq_origin` (`batch.rs:1170`) |
-| `Correlated.SubPlan`, `Separable`         | `run_batch` + `set_argument_batch` (`batch.rs:1603`); separability = origin-respecting, row-local |
-| `Correlated.applyBatched`                 | `ApplyOp::next_batched` (`apply.rs:152`), `merge_over_input` (`batch.rs:944`) |
-| `Correlated.applyPerRow`                  | `ApplyOp::next_per_row` (`apply.rs:238`) |
-| `Correlated.optionalBatched`              | `OptionalOp::next_batched` (`optional.rs:125`), Optional arm of `apply.rs:210-229` |
-| `Correlated.optionalPerRow`               | `OptionalOp::next_per_row` (`optional.rs:195`) |
-| `Correlated.semiBatched`                  | `SemiApplyOp::next` (`semi_apply.rs:66`) |
-| `Correlated.orApply`                      | `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73`) |
-| `Correlated.canBatchApply/Optional`       | `can_batch` in `ApplyOp::new` (`apply.rs:119`), `OptionalOp::new` (`optional.rs:104`) |
+| `Correlated.tag`                          | `Batch::clone_active_rows_seq_origin` (`batch.rs`) |
+| `Correlated.SubPlan`, `Separable`         | `run_batch` + `set_argument_batch` (`batch.rs`); separability = origin-respecting, row-local |
+| `Correlated.applyBatched`                 | `ApplyOp::next_batched` (`apply.rs`), `merge_over_input` (`batch.rs`) |
+| `Correlated.applyPerRow`                  | `ApplyOp::next_per_row` (`apply.rs`) |
+| `Correlated.optionalBatched`              | `OptionalOp::next_batched` (`optional.rs`), Optional arm of `apply.rs` |
+| `Correlated.optionalPerRow`               | `OptionalOp::next_per_row` (`optional.rs`) |
+| `Correlated.semiBatched`                  | `SemiApplyOp::next` (`semi_apply.rs`) |
+| `Correlated.orApply`                      | `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs`) |
+| `Correlated.canBatchApply/Optional`       | `can_batch` in `ApplyOp::new` (`apply.rs`), `OptionalOp::new` (`optional.rs`) |
 | `OpSep.Adm`, `DSep`, `expandF`/`optF`/`semiF`/`orF`/`vhjF`/`perRowF` | the operators `can_batch` admits under a batched sub-plan (inventory in `OpSep.lean`'s header); `Adm.dsep` = separability on distinct-origin arguments |
-| `OpSep.applyBatched_rel`, `applyNext`, `optionalBatched_perm_ref_adm`, `semiBatched_eq_ref_adm`, `orApply_eq_ref_adm` | `ApplyOp::next_batched`/`next` (`apply.rs:152,343`), `OptionalOp::next_batched`/`next` (`optional.rs:125,292`), `SemiApplyOp::next` (`semi_apply.rs:66`), `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73`) |
-| `Correlated.vhj`                          | the pre-per-origin `ValueHashJoinOp::next` (`value_hash_join.rs:366-446` at 343e077f2; now per-origin, `CartVhj.vhjRowsPO`) |
-| `Union.next`, `Union.St`                  | `UnionOp::next` (`union.rs:68`), `current`/`current_child` |
-| `ForEach.chunks`, `execList`, `runChunks` | `ForEachOp::execute_list` (`foreach.rs:86`) |
-| `ForEach.inner`, `go`, `next`             | `ForEachOp::next` (`foreach.rs:124`) |
-| `ForEach.drainP`                          | `ops::drain_pending` (`ops/mod.rs:127`) |
-| `Merge.createFallback`, `Cache`           | `MergeOp::do_create_fallback` (`merge.rs:117`), `Runtime::merge_pattern_cache` (`runtime.rs:201`) |
-| `MergeEager.matchAll`                     | `MergeOp::match_all` (`merge.rs:260`) |
-| `MergeEager.rowMain`, `mainMerge`         | `MergeOp::next` (`merge.rs:329`) |
+| `OpSep.applyBatched_rel`, `applyNext`, `optionalBatched_perm_ref_adm`, `semiBatched_eq_ref_adm`, `orApply_eq_ref_adm` | `ApplyOp::next_batched`/`next` (`apply.rs`), `OptionalOp::next_batched`/`next` (`optional.rs`), `SemiApplyOp::next` (`semi_apply.rs`), `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs`) |
+| `Correlated.vhj`                          | the pre-per-origin `ValueHashJoinOp::next` (`value_hash_join.rs` at 343e077f2; now per-origin, `CartVhj.vhjRowsPO`) |
+| `Union.next`, `Union.St`                  | `UnionOp::next` (`union.rs`), `current`/`current_child` |
+| `ForEach.chunks`, `execList`, `runChunks` | `ForEachOp::execute_list` (`foreach.rs`) |
+| `ForEach.inner`, `go`, `next`             | `ForEachOp::next` (`foreach.rs`) |
+| `ForEach.drainP`                          | `ops::drain_pending` (`ops/mod.rs`) |
+| `Merge.createFallback`, `Cache`           | `MergeOp::do_create_fallback` (`merge.rs`), `Runtime::merge_pattern_cache` (`runtime.rs`) |
+| `MergeEager.matchAll`                     | `MergeOp::match_all` (`merge.rs`) |
+| `MergeEager.rowMain`, `mainMerge`         | `MergeOp::next` (`merge.rs`) |
 | `Merge.phaseA`, `rustBatch`, `rustMerge`  | the per-batch-match `MergeOp::next` (history) |
-| `Merge.phaseB`                            | `MergeOp::drain_pending` (`merge.rs:302`) |
-| `SetRemove.clearForReplace`, `setFrom`    | `clear_node_attrs_for_replace` (`set.rs:125`), `clear_relationship_attrs_for_replace` (`set.rs:138`), `set_inner` (`set.rs:151`) |
+| `Merge.phaseB`                            | `MergeOp::drain_pending` (`merge.rs`) |
+| `SetRemove.clearForReplace`, `setFrom`    | `clear_node_attrs_for_replace` (`set.rs`), `clear_relationship_attrs_for_replace` (`set.rs`), `set_inner` (`set.rs`) |
 | `Merge.refMerge`                          | openCypher MERGE, per row |
-| `BatchRows.Bat`, `gather`, `intoCompacted`, `cloneSeq`, `originRow` | `Batch`, `gather` (`batch.rs:898`), `into_compacted`, `clone_active_rows_seq_origin` (`:1170`), `origin_row` (`:1305`) |
-| `BatchRows.mergeOverInput`                | `Batch::merge_over_input` (`batch.rs:944`) |
-| `BatchRows.setArg`                        | `BatchOp::set_argument_batch` (`batch.rs:1603`) |
-| `MergeSlot.Row.ofCells`                   | `BatchRow::to_owned_row` (`batch.rs:1439`, one slot per column) |
+| `BatchRows.Bat`, `gather`, `intoCompacted`, `cloneSeq`, `originRow` | `Batch`, `gather` (`batch.rs`), `into_compacted`, `clone_active_rows_seq_origin`, `origin_row` |
+| `BatchRows.mergeOverInput`                | `Batch::merge_over_input` (`batch.rs`) |
+| `BatchRows.setArg`                        | `BatchOp::set_argument_batch` (`batch.rs`) |
+| `MergeSlot.Row.ofCells`                   | `BatchRow::to_owned_row` (`batch.rs`, one slot per column) |
 
 ## Proven (headline)
 
@@ -135,7 +135,7 @@ Properties stated (each refuted on main, each live-reproduced Rust vs C):
 ## MERGE reads a value-only slot as its node (`MergeSlot`) — open (#3368)
 `Merge.lean` keyed MERGE by the property alone, so the input row never mattered.
 `MergeSlot` adds the row (values + bound bits, `to_owned_row`) and the real hash input
-(`Ctors.mergeHashInput` with `get_by_id`, merge.rs:193): a value-only leftover at the
+(`Ctors.mergeHashInput` with `get_by_id`, merge.rs): a value-only leftover at the
 variable's id (ops_aggregate `bug3368/3369_count_acc_in_merge_slot`) becomes the hash.
 Properties: `KeyFromBoundNodeOnly`, `MergeBindsOwnNode` (fix target: `fixKey_from_bound_node`,
 `fixed_binds_own_node`). The cache key is `(op, hash)` (`Merge.Clause.op` / `MergeSlot.MClause.op`), so

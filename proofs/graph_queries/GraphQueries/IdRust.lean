@@ -58,15 +58,15 @@ theorem smax_ge : ∀ (l : List Nat) (n : Nat), n ∈ l → ∃ m, smax l = some
 /-- `above(set, bound)`: how many ids of `set` are `≥ bound`. -/
 def above (t : List Nat) (eb : Nat) : Nat := (t.filter (fun x => decide (eb ≤ x))).length
 
-/-- `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs:100). -/
+/-- `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs). -/
 def ID_LIMIT : Nat := 2 ^ 60 - 1
 
-/-- `checked` (id_space.rs:426): `entry_bound.checked_add(taken) == Some(bound)`. -/
+/-- `checked` (id_space.rs): `entry_bound.checked_add(taken) == Some(bound)`. -/
 def rChecked (s : IdS) : Bool :=
   let e := s.entryBound + above s.taken s.entryBound
   decide (e < 2 ^ 64) && e == s.bound
 
-/-- `create` (id_space.rs:621). `ns` is a `RoaringTreemap` in Rust, so callers must pass a
+/-- `create` (id_space.rs). `ns` is a `RoaringTreemap` in Rust, so callers must pass a
 duplicate-free list (`IdSpaceContract.create_ok` takes `ns.Nodup`); `ns.length` is then the
 set's `len()`. -/
 def rCreate (s : IdS) (ns : List Nat) : Option IdS :=
@@ -83,15 +83,15 @@ def rCreate (s : IdS) (ns : List Nat) : Option IdS :=
                                  taken := union s.taken ns }
         if rChecked s' then some s' else none
 
-/-- `refuse_recycled` (id_space.rs:590): `true` = `Ok(())`. -/
+/-- `refuse_recycled` (id_space.rs): `true` = `Ok(())`. -/
 def rRefuseRecycled (s : IdS) (ns : List Nat) : Bool := (smin (inter ns s.recycled)).isNone
 
-/-- `refuse_undeletable` (id_space.rs:677): `true` = `Ok(())`. -/
+/-- `refuse_undeletable` (id_space.rs): `true` = `Ok(())`. -/
 def rRefuseUndeletable (s : IdS) (ns : List Nat) : Bool :=
   if (smax ns).all (· < s.entryBound) then true
   else ((smax (diff ns s.taken)).filter (· ≥ s.entryBound)).isNone
 
-/-- `release` (id_space.rs:739): `refuse_not_live(requested)?` (= `refuse_recycled` then
+/-- `release` (id_space.rs): `refuse_not_live(requested)?` (= `refuse_recycled` then
 `refuse_undeletable`, :715), then `recycled |= freed; live -= freed.len()`. -/
 def rRelease (s : IdS) (req fr : List Nat) : Option IdS :=
   if rRefuseRecycled s req && rRefuseUndeletable s req then
@@ -99,7 +99,7 @@ def rRelease (s : IdS) (req fr : List Nat) : Option IdS :=
     if rChecked s' then some s' else none
   else none
 
-/-- `cancel` (id_space.rs:569): `taken.insert(id)` (refuse if present), `recycled.insert(id)`,
+/-- `cancel` (id_space.rs): `taken.insert(id)` (refuse if present), `recycled.insert(id)`,
 `checked()`. -/
 def rCancel (s : IdS) (id : Nat) : Option IdS :=
   if id ∈ s.taken then none
@@ -107,11 +107,11 @@ def rCancel (s : IdS) (id : Nat) : Option IdS :=
     let s' : IdS := { s with taken := ins s.taken id, recycled := ins s.recycled id }
     if rChecked s' then some s' else none
 
-/-- `open_batch` (id_space.rs:470): `checked()?`, then `entry_bound = bound()`, clear `taken`. -/
+/-- `open_batch` (id_space.rs): `checked()?`, then `entry_bound = bound()`, clear `taken`. -/
 def rOpen (s : IdS) : Option IdS :=
   if rChecked s then some { s with entryBound := s.bound, taken := [] } else none
 
-/-- `verify` (id_space.rs:773): `checked()?`, then the hole test: the lowest id of `taken`
+/-- `verify` (id_space.rs): `checked()?`, then the hole test: the lowest id of `taken`
 at or above the boundary must be the boundary, and the ids above it contiguous. -/
 def rVerify (s : IdS) : Bool :=
   rChecked s &&

@@ -2,8 +2,8 @@ import FalkorNativeIndex.Index
 set_option linter.unusedSimpArgs false
 
 /-!
-# `query_column` (`falkordb_index.rs:978-1130`), `combine_columns`, `ScanFilter` (`:442-536`),
-# `equal_candidates` (`:1159-1177`)
+# `query_column` (`falkordb_index.rs`), `combine_columns`, `ScanFilter`,
+# `equal_candidates`
 
 Since #3547 / #2386 the native index is the ONLY Range index under `index-falkordb` (there is no
 RediSearch to fall through to), and since #3736 / #3737 the layer asks the column only for a `Selection`
@@ -22,17 +22,17 @@ over several attributes is `combine_columns`: one column per attribute, intersec
 
 namespace NI
 
-/-- `ScanFilter<A>` (`falkordb_index.rs:446-451`): every attribute the query constrains with what the
+/-- `ScanFilter<A>` (`falkordb_index.rs`): every attribute the query constrains with what the
     built column for it selects; `all` = a conjunction, `any` = a union across attributes. `A` names an
     attribute: as the query names it (`String`), or as a scan resolved it (`Nat`, the graph's id). -/
 inductive ScanFilter (A : Type) where
   | all (conditions : List (A × Selection))
   | any (conditions : List (A × Selection))
 
-/-- `ScanFilter::one` (`:459-465`): the filter of a query on one attribute. -/
+/-- `ScanFilter::one`: the filter of a query on one attribute. -/
 def ScanFilter.one (attr : String) (sel : Selection) : ScanFilter String := .all [(attr, sel)]
 
-/-- `value_of(attribute).is_some_and(|value| selection.matches(&value))` (`:503-515`). -/
+/-- `value_of(attribute).is_some_and(|value| selection.matches(&value))`. -/
 def Selection.matchesOpt (sel : Selection) : Option Value → Bool
   | some v => sel.matches v
   | none => false
@@ -40,7 +40,7 @@ def Selection.matchesOpt (sel : Selection) : Option Value → Bool
 @[simp] theorem matchesOpt_none (sel : Selection) : sel.matchesOpt none = false := rfl
 @[simp] theorem matchesOpt_some (sel : Selection) (v : Value) : sel.matchesOpt (some v) = sel.matches v := rfl
 
-/-- `ScanFilter::matches` (`:503-515`): whether the built columns answer the query with an entity whose
+/-- `ScanFilter::matches`: whether the built columns answer the query with an entity whose
     attributes `valueOf` reads. An entity missing an attribute does not match its condition. -/
 def ScanFilter.matches {A : Type} (f : ScanFilter A) (valueOf : A → Option Value) : Bool :=
   let holds : A × Selection → Bool := fun c => c.2.matchesOpt (valueOf c.1)
@@ -48,7 +48,7 @@ def ScanFilter.matches {A : Type} (f : ScanFilter A) (valueOf : A → Option Val
   | .all cs => cs.all holds
   | .any cs => cs.any holds
 
-/-- The loop of `ScanFilter::resolve` (`:471-493`): a conjunction needs every attribute, a union only one. -/
+/-- The loop of `ScanFilter::resolve`: a conjunction needs every attribute, a union only one. -/
 def resolveGo {A B : Type} (isAll : Bool) (r : A → Option B) : List (A × Selection) →
     Option (List (B × Selection))
   | [] => some []
@@ -57,7 +57,7 @@ def resolveGo {A B : Type} (isAll : Bool) (r : A → Option B) : List (A × Sele
     | some b => (resolveGo isAll r rest).map (fun l => (b, sel) :: l)
     | none => if isAll then none else resolveGo isAll r rest
 
-/-- `ScanFilter::resolve` (`:471-493`): the same filter with each attribute resolved; `None` when the whole
+/-- `ScanFilter::resolve`: the same filter with each attribute resolved; `None` when the whole
     filter therefore matches nothing. -/
 def ScanFilter.resolve {A B : Type} (f : ScanFilter A) (r : A → Option B) : Option (ScanFilter B) :=
   match f with
@@ -70,11 +70,11 @@ def ScanFilter.resolve {A B : Type} (f : ScanFilter A) (r : A → Option B) : Op
     | some [] => none
     | some l => some (.any l)
 
-/-- `DistinctIter` (`numeric.rs:97-113`): the streams read one after another, each doc yielded once, at
+/-- `DistinctIter` (`numeric.rs`): the streams read one after another, each doc yielded once, at
     its first appearance. As a list of docs, the concatenation with later repeats dropped. -/
 def distinctDocs (streams : List (List Nat)) : List Nat := streams.flatten.eraseDups
 
-/-- The intersection of `combine_columns` (`:1100-1115`): the first column's docs, each later column
+/-- The intersection of `combine_columns`: the first column's docs, each later column
     keeping those it also holds (`None` when there is no column). -/
 def interDocs : List (List Nat) → Option (List Nat)
   | [] => none
@@ -90,7 +90,7 @@ def pushGroup (acc : List (String × List IndexQuery)) (k : String) (child : Ind
   if acc.any (fun p => p.1 == k) then acc.map (fun p => if p.1 == k then (p.1, p.2 ++ [child]) else p)
   else acc ++ [(k, [child])]
 
-/-- The leaf of `group` (`:1049-1066`): a child naming one attribute joins that attribute's members; one
+/-- The leaf of `group`: a child naming one attribute joins that attribute's members; one
     naming none, or spanning attributes, is not groupable. -/
 def groupLeaf (acc : List (String × List IndexQuery)) (child : IndexQuery) :
     Option (List (String × List IndexQuery)) :=
@@ -114,7 +114,7 @@ def groupList (any : Bool) (acc : List (String × List IndexQuery)) :
   | c :: cs => (groupOne any acc c).bind (fun acc' => groupList any acc' cs)
 end
 
-/-- `combine_columns` (`:1041-1148`): a conjunction (`any = false`) or union (`any = true`) spanning
+/-- `combine_columns`: a conjunction (`any = false`) or union (`any = true`) spanning
     several attributes: one column per attribute. Every column must exist and every share must translate
     before any is read; one `Building` column makes the whole query a scan. -/
 def FalkorDbIndex.combineColumns (x : FalkorDbIndex) (e : EntityType) (label : String)
@@ -134,7 +134,7 @@ def FalkorDbIndex.combineColumns (x : FalkorDbIndex) (e : EntityType) (label : S
         some (.ok (distinctDocs (cols.map (fun c => c.2.1.index.lookup c.2.2))))
       else (interDocs (cols.map (fun c => c.2.1.index.lookup c.2.2))).map .ok
 
-/-- `query_column` (`:978-1019`): `Some(Ok(rows))` for a `Ready` column, `Some(Err(scan_filter))` for a
+/-- `query_column`: `Some(Ok(rows))` for a `Ready` column, `Some(Err(scan_filter))` for a
     `Building` one, `None` otherwise. The selection is translated even while the column builds, so a
     shape no kind serves is `None` whatever its state. -/
 def FalkorDbIndex.queryColumn (x : FalkorDbIndex) (e : EntityType) (label : String) (q : IndexQuery) :
@@ -399,10 +399,10 @@ theorem combine_building (x : FalkorDbIndex) (e : EntityType) (l : String) (cs :
       some (.error (let conds := cols.map (fun c => (c.1, c.2.2)); if any then .any conds else .all conds)) := by
   simp [FalkorDbIndex.combineColumns, hg, hc, hb]
 
-/-! ## `equal_candidates` (`falkordb_index.rs:1159-1177`) -/
+/-! ## `equal_candidates` (`falkordb_index.rs`) -/
 
-/-- `EqualCandidates` (`:290-294`): the column a lookup was made against, the tree and the key it reads.
-    The Rust holds `&'g IndexColumn`; its address (`id`, `:303-305`) is determined by the column's slot
+/-- `EqualCandidates`: the column a lookup was made against, the tree and the key it reads.
+    The Rust holds `&'g IndexColumn`; its address (`id`) is determined by the column's slot
     `(entity, label, attr)` in one index (distinct entries are distinct objects). -/
 structure EqualCandidates where
   entity : EntityType
@@ -412,14 +412,14 @@ structure EqualCandidates where
   kind : KeyKind
   key : Nat
 
-/-- `EqualCandidates::rows` (`:299-301`): every entity holding the value, and possibly others. -/
+/-- `EqualCandidates::rows`: every entity holding the value, and possibly others. -/
 def EqualCandidates.rows (c : EqualCandidates) : List Nat := c.column.rowsAt c.kind c.key
 
-/-- `EqualCandidates::id` (`:306-308`): the column's address, the tree and the key. -/
+/-- `EqualCandidates::id`: the column's address, the tree and the key. -/
 def EqualCandidates.id (c : EqualCandidates) : (EntityType × String × String) × KeyKind × Nat :=
   ((c.entity, c.label, c.attr), c.kind, c.key)
 
-/-- `FalkorDbIndex::equal_candidates` (`:1159-1177`). -/
+/-- `FalkorDbIndex::equal_candidates`. -/
 def FalkorDbIndex.equalCandidates (x : FalkorDbIndex) (e : EntityType) (label attr : String) (v : Value) :
     Option EqualCandidates :=
   match x.entry e label attr with

@@ -1,5 +1,5 @@
 /-!
-# `Point::distance` (`graph/src/runtime/value.rs:153-176`)
+# `Point::distance` (`graph/src/runtime/value.rs`)
 
 `a = cos φ₁ cos φ₂ · sin²(Δλ/2) + sin²(Δφ/2)` is ≤ 1 over the reals, but in f64 it can
 round to `1 + 2⁻⁵²` for antipodal points, where an unclamped `(1.0 - a).sqrt()` would be
@@ -11,7 +11,7 @@ the clamp) is `Spatial2.distance` in `SpatialFns.lean`; this file only checks th
 -/
 namespace FalkorTemporal.Spatial
 
-/-- Rust's `EARTH_RADIUS` (value.rs:157). -/
+/-- Rust's `EARTH_RADIUS` (value.rs). -/
 def EARTH_RADIUS : Float := 6378140.0
 
 -- The mechanism, checked at build time (`#guard` fails the build on a mismatch): one ulp above 1

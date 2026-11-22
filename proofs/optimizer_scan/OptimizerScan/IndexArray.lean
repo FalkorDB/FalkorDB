@@ -5,7 +5,7 @@ import OptimizerScan.IndexPipeline
 `utilize_sound` (`IndexPipeline`) assumes `goodA` conjuncts, which exclude `x IN n.k`. This file
 closes that gap for the AND branch and the single-atom branch (the `try_filter_pushdown/array-contains`
 row): an array-contains conjunct is pushed as `IndexQuery::ArrayContains` (`Q.contains`) **and its
-filter is kept** (`is_array_contains`, `utilize_index.rs:816`), because the array tree answers with
+filter is kept** (`is_array_contains`, `utilize_index.rs`), because the array tree answers with
 false positives (`1 IN [true]`: Bool and Int share the numeric key, `arrEnc`).
 
 * `contains_no_fn`: the index never loses a row — if `x IN n.k` is true, the array tree has it.

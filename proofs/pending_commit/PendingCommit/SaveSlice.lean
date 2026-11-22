@@ -1,7 +1,7 @@
 import PendingCommit.SaveNthLive
 import PendingCommit.StoreCodec
 /-
-# `AttributeStore::encode_with_range` (attribute_store.rs:1427-1476)
+# `AttributeStore::encode_with_range` (attribute_store.rs)
 
 ```rust
 if count == 0 { return; }

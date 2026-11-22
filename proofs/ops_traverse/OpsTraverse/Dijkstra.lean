@@ -1,7 +1,7 @@
 import OpsTraverse.AlgoPaths
 import OpsTraverse.BfsFind
 /-
-# `dijkstra_single_path` (graph/src/runtime/functions/algo_procedures.rs:2320)
+# `dijkstra_single_path` (graph/src/runtime/functions/algo_procedures.rs)
 
 Lazy-deletion Dijkstra with one label per reached node. `step u` is `node_successors` (far endpoint
 and edge, in iterator order). The `f64` operations are the record `FO` (`0.0`, `+`, `<`,

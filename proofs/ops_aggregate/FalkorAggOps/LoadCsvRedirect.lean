@@ -4,7 +4,7 @@ import FalkorAggOps.LoadCsv
 
 `LoadCsv.lean` treats a remote LOAD CSV as one request to the URL that
 `validate_remote_url` accepted. The request is a ureq 3.4.2 agent
-(`open_csv_records`, load_csv.rs:376-398) built from `http_config()`
+(`open_csv_records`, load_csv.rs) built from `http_config()`
 (:224-234). `http_config` sets the two timeouts, `https_only(true)` and
 `max_redirects(0)`; its resolver `PinnedResolver` (:193-214) ignores the `_uri` it
 is asked about and returns the addresses validated for the first URL, which is

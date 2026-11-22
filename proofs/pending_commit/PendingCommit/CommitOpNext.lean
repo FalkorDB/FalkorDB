@@ -1,5 +1,5 @@
 /-
-# `CommitOp::next` (graph/src/runtime/ops/commit.rs:69)
+# `CommitOp::next` (graph/src/runtime/ops/commit.rs)
 
 The first call drains the child (:71-82), then runs, each fallible step
 short-circuiting with `Some(Err(..))`: `Pending::commit` (:85-92), the writer
@@ -21,7 +21,7 @@ The runtime is abstract (`S`, with the six steps as functions), batches are `B`.
 -/
 namespace PendingCommit.CommitOpNext
 
-/-! ## `CommitOp::new` (ops/commit.rs:45)
+/-! ## `CommitOp::new` (ops/commit.rs)
 
 ```rust
 if !runtime.write { return Err("graph.RO_QUERY is to be executed only on read-only queries"); }

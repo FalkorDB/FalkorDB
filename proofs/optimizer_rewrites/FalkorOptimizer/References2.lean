@@ -4,8 +4,8 @@
 | here | there (origin/main 8743953a8) |
 | --- | --- |
 | `Plan`, `Frame`, `Ctx`, `plug` | an `orx_tree` node addressed by a zipper: parents with their other children |
-| `ancestorsRead`      | the `while let Some(parent)` walk of `reduce_expand_into` (`reduce_expand_into.rs:36-45`), `reduce_bound_edge` (`reduce_bound_edge.rs:45-54`), `reduce_var_len_path` (`reduce_var_len_path.rs:39-48`) |
-| `wholeRead`          | `intermediate_unreferenced` (`fuse_anonymous_traverse.rs:70-79`: BFS of the *whole* plan) |
+| `ancestorsRead`      | the `while let Some(parent)` walk of `reduce_expand_into` (`reduce_expand_into.rs`), `reduce_bound_edge` (`reduce_bound_edge.rs`), `reduce_var_len_path` (`reduce_var_len_path.rs`) |
+| `wholeRead`          | `intermediate_unreferenced` (`fuse_anonymous_traverse.rs`: BFS of the *whole* plan) |
 | `readOutside`        | `variable_read_outside` of PR #2918 (parents *and* their other subtrees; not merged) |
 
 Theorems: `anyRead_iff`, `readOutside_iff` (the PR's walk is exactly "some operator outside the

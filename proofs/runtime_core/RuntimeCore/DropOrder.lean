@@ -8,31 +8,30 @@ imports its definitions.
 # Claim 3: the `'static` guard never outlives the cell it borrows
 
 Cites: `runtime.rs` of the `graph()`/`graph_mut()` version unless marked. The
-guard lives in `HeldRead { guard, _owner }` (`runtime.rs:115-118`): `new` clones `g` into
-`_owner` and borrows through it (`:476-491`). The soundness argument therefore rests on
+guard lives in `HeldRead { guard, _owner }` (`runtime.rs`): `new` clones `g` into
+`_owner` and borrows through it. The soundness argument therefore rests on
 `HeldRead`'s own `Arc`, not on `Runtime`'s field order.
 
 | here | there |
 | --- | --- |
 | `Alloc`, `H`           | an `Arc<AtomicRefCell<Graph>>` heap allocation: strong count, borrow word (`Cell.B`); `none` = freed |
-| `Field.guard a`        | `HeldRead.guard: AtomicRef<'static, Graph>` into the cell at `a` (`runtime.rs:116`); dropping it is `AtomicBorrowRef::drop` — `fetch_sub(1)` on the cell's borrow word (atomic_refcell `lib.rs:273-283`), a write into the allocation |
-| `Field.arc a`          | an `Arc` to the cell: `HeldRead._owner` (`:117`), `Runtime.g` (`:161`), or any other holder (`MvccGraph.graph`, the session's clone, the UDF thread-local, …); dropping it decrements the strong count and frees at 0 |
+| `Field.guard a`        | `HeldRead.guard: AtomicRef<'static, Graph>` into the cell at `a` (`runtime.rs`); dropping it is `AtomicBorrowRef::drop` — `fetch_sub(1)` on the cell's borrow word (atomic_refcell `lib.rs`), a write into the allocation |
+| `Field.arc a`          | an `Arc` to the cell: `HeldRead._owner`, `Runtime.g`, or any other holder (`MvccGraph.graph`, the session's clone, the UDF thread-local, …); dropping it decrements the strong count and frees at 0 |
 | `heldFields a`         | `HeldRead`'s drop glue: `guard` then `_owner` (declaration order) |
 | `runtimeFields`        | `struct Runtime` (`:152-…`): `parameters`, `read_guard: Option<HeldRead>`, `g`, `write`, … |
 | `dropFields`           | Rust drop glue for a struct without `Drop` impl: fields in declaration order (Reference, "Destructors"). Neither `Runtime` nor `HeldRead` has a `Drop` impl (grep) |
 | `GUse`                 | every mention of the field `g` in `runtime.rs` (`g_uses_never_write`) |
 
-**`g` is never reassigned** (`g_never_reassigned`). `g` is private (`runtime.rs:161`) and
+**`g` is never reassigned** (`g_never_reassigned`). `g` is private (`runtime.rs`) and
 `runtime.rs` declares no child module, so only `runtime.rs` can name it. Since e30861ea3
 the field appears there exactly four times (`grep -nE "\.g\b|^\s+g,$"`): the struct
-literal in `new` (`:495`, the initialisation) and three reads, all inside `&self` methods —
-`graph` `:562` (`self.g.borrow()`), `graph_mut` `:578` (`self.g.borrow_mut()`, after
-`assert!(self.write)`; a borrow of the *cell*, not of the field) and `graph_arc` `:588`
+literal in `new` (, the initialisation) and three reads, all inside `&self` methods —
+`graph` (`self.g.borrow()`), `graph_mut` (`self.g.borrow_mut()`, after
+`assert!(self.write)`; a borrow of the *cell*, not of the field) and `graph_arc`
 (`Arc::clone(&self.g)`). Everyone else gets a `GraphRef`, an `AtomicRefMut<Graph>` or an
 owned `Arc` *clone* (`graph_arc_keeps_g`) — none of which can assign the field.
 `runtime.rs` has no `&mut self` method at all, and the tree has no `&mut Runtime` /
-`let mut runtime` / `let mut rt`. `HeldRead._owner` is written only by its constructor
-(`:487-490`). Since 653f467a9 none of this is needed for soundness (`held_survives` holds
+`let mut runtime` / `let mut rt`. `HeldRead._owner` is written only by its constructor. Since 653f467a9 none of this is needed for soundness (`held_survives` holds
 whatever happens to `g`); it is what makes `graph()`, `graph_mut()` and `graph_arc()` name
 the same cell. The 653f467a9 enumeration (six uses incl. `graph_cell`) is kept as
 `pre_e30861e_GUse`.
@@ -138,7 +137,7 @@ theorem drop_arcs (a : Addr) : ∀ (fs : List Field) (h : H) (n : Nat), OnlyArcs
 
 /-! ### Since 653f467a9: `HeldRead` owns its cell -/
 
-/-- `HeldRead`'s drop glue: `guard` (declared first, `runtime.rs:116`), then `_owner`. -/
+/-- `HeldRead`'s drop glue: `guard` (declared first, `runtime.rs`), then `_owner`. -/
 def heldFields (a : Addr) : List Field := [.guard a, .arc a]
 
 /-- **Claim 3 (653f467a9).** The guard never dangles, whatever happens to every *other*
@@ -197,7 +196,7 @@ def swappedFields (rt : Rt) : List Field :=
   [.other, .arc rt.g] ++ (match rt.guard with | some a => heldFields a | none => []) ++ [.other]
 
 /-- A read runtime holds two strong references (`g` and `HeldRead._owner`, the clone made
-in `new`, `:476`); a write runtime one. -/
+in `new`); a write runtime one. -/
 def ownRefs (rt : Rt) : Nat := if rt.write then 1 else 2
 
 theorem only_app (a : Addr) : ∀ (xs ys : List Field), OnlyArcs a xs → OnlyArcs a ys →
@@ -270,7 +269,7 @@ theorem drop_restores_borrow (rt : Rt) (hr : rt.ok) (hw : rt.write = false) (h :
 
 /-- A `Runtime` value holds addresses into the heap, never into itself: moving it (a
 bitwise copy to a new location) leaves every field — and so the drop sequence — unchanged.
-Likewise moving `owner` into `HeldRead` after `owner.borrow()` (`:482-489`) moves the
+Likewise moving `owner` into `HeldRead` after `owner.borrow()` moves the
 `Arc` pointer, not the cell the guard points into. -/
 theorem move_irrelevant (rt : Rt) (moved : Rt) (hm : moved = rt) :
     runtimeFields moved = runtimeFields rt := by rw [hm]
@@ -279,9 +278,9 @@ theorem move_irrelevant (rt : Rt) (moved : Rt) (hm : moved = rt) :
 
 /-- Every mention of the private field `g` in `runtime.rs` after initialisation. -/
 inductive GUse where
-  | borrowShared      -- `graph`, `:562`: `self.g.borrow()`
-  | borrowMut         -- `graph_mut`, `:578`: `self.g.borrow_mut()` (after `assert!(self.write)`)
-  | arcClone          -- `graph_arc`, `:588`: `Arc::clone(&self.g)`
+  | borrowShared      -- `graph`: `self.g.borrow()`
+  | borrowMut         -- `graph_mut`: `self.g.borrow_mut()` (after `assert!(self.write)`)
+  | arcClone          -- `graph_arc`: `Arc::clone(&self.g)`
   deriving DecidableEq, Repr
 
 /-- Each use, as it acts on the `Runtime` record: all three are `&self` reads of the field
@@ -304,9 +303,9 @@ theorem g_uses_keep_ok (rt : Rt) (hr : rt.ok) (us : List GUse) :
   | nil => exact hr
   | cons u us ih => exact ih (u.apply rt) hr
 
-/-- `Runtime::graph_arc` (`runtime.rs:587-589`): a new strong reference to `g`'s cell,
-handed to the caller (graph_core's published version `src/graph_core.rs:263`, the JS UDF
-context `udf/js_context.rs:314`). The runtime record is untouched. -/
+/-- `Runtime::graph_arc` (`runtime.rs`): a new strong reference to `g`'s cell,
+handed to the caller (graph_core's published version `src/graph_core.rs`, the JS UDF
+context `udf/js_context.rs`). The runtime record is untouched. -/
 def graphArc (h : H) (rt : Rt) : Option (Addr × H × Rt) :=
   match h rt.g with
   | some al => some (rt.g, h.set rt.g (some { al with strong := al.strong + 1 }), rt)
@@ -325,12 +324,12 @@ theorem graph_arc_keeps_g (h : H) (rt : Rt) (al : Alloc) (ha : h rt.g = some al)
 
 /-- Every mention of the private field `g` in `runtime.rs` after initialisation. -/
 inductive pre_e30861e_GUse where
-  | borrowShared      -- `graph`, `:557`: `self.g.borrow()`
-  | cellRef           -- `graph_cell`, `:566`: `&self.g`
-  | resyncRef         -- `resync_published_indexes`, `:588`: `&self.g`
-  | deferredRef       -- `commit_deferred_indexes`, `:593`: `&self.g`
-  | borrowMutNode     -- `set_pending_node_attr`, `:1467`: `self.g.borrow_mut()`
-  | borrowMutRel      -- `set_pending_relationship_attr`, `:1486`: `self.g.borrow_mut()`
+  | borrowShared      -- `graph`: `self.g.borrow()`
+  | cellRef           -- `graph_cell`: `&self.g`
+  | resyncRef         -- `resync_published_indexes`: `&self.g`
+  | deferredRef       -- `commit_deferred_indexes`: `&self.g`
+  | borrowMutNode     -- `set_pending_node_attr`: `self.g.borrow_mut()`
+  | borrowMutRel      -- `set_pending_relationship_attr`: `self.g.borrow_mut()`
   deriving DecidableEq, Repr
 
 /-- Each use, as it acts on the `Runtime` record: all six are `&self` reads of the field

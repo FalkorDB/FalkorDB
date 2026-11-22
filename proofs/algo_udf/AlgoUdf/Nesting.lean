@@ -37,9 +37,9 @@ def Rget {α} : R α → Except String α
   | some r => r
   | none => .error "stack overflow"
 
-/-- `MAX_UDF_VALUE_NESTING` (`type_convert.rs:67`). -/
+/-- `MAX_UDF_VALUE_NESTING` (`type_convert.rs`). -/
 def MAX : Nat := 1024
-/-- `udf_nesting_error()` (`type_convert.rs:87-89`). -/
+/-- `udf_nesting_error()` (`type_convert.rs`). -/
 def nestErr : String := "UDF value nesting exceeds the maximum depth of 1024"
 
 /-- `depth >= MAX_UDF_VALUE_NESTING`; `none` = no check (unbounded variant). -/

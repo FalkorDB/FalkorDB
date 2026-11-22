@@ -6,7 +6,7 @@ import FalkorParserGrammar.Model
 
 namespace FalkorParserGrammar
 
-/-! ## `parse_shortest_path_expr`'s filter skipper (cypher.rs:1833-1858)
+/-! ## `parse_shortest_path_expr`'s filter skipper (cypher.rs)
 
 ```rust
 let mut depth = 0i32;
@@ -43,7 +43,7 @@ theorem skipFilter_prefix_diverges (n : Nat) (d : Int) :
   | 0 | 1 | 2 | 3 | 4 => rfl
   | k + 5 => simp only [skipFilter, cur, adv]; exact skipFilter_eof_diverges k _
 
-/-! ## `parse_set_items` / `parse_remove_items` targets (cypher.rs:3341-3347, 3437-3443)
+/-! ## `parse_set_items` / `parse_remove_items` targets (cypher.rs)
 
 ```rust
 let (mut expr, recurse) = self.parse_primary_expr(false)?;

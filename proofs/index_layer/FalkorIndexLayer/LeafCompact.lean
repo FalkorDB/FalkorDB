@@ -118,7 +118,7 @@ theorem cBuild_roundtrip (ps : List P) (min vw dw : Nat) (hn : ps.length < 2 ^ 1
 def insAt {α : Type} (l : List α) (i : Nat) (x : α) : List α := l.take i ++ x :: l.drop i
 def delAt {α : Type} (l : List α) (i : Nat) : List α := l.take i ++ l.drop (i + 1)
 
-/-- `CompactLayout::read` (`compact.rs:49`): offsets of the index and doc bodies. -/
+/-- `CompactLayout::read` (`compact.rs`): offsets of the index and doc bodies. -/
 def layout (b : List Nat) : Nat × Nat :=
   let n := readU16 b 0
   let dc := readU16 b 11
@@ -126,10 +126,10 @@ def layout (b : List Nat) : Nat × Nat :=
   let io := 14 + dc * vw
   (io, io + if dc < n then n else 0)
 
-/-- `is_indexed` (`compact.rs:28`). -/
+/-- `is_indexed` (`compact.rs`). -/
 def isIndexed (b : List Nat) : Bool := decide (readU16 b 11 < readU16 b 0)
 
-/-- `packing_fits` (`compact.rs:108`). -/
+/-- `packing_fits` (`compact.rs`). -/
 def packingFits (b : List Nat) (key doc : Nat) : Bool :=
   decide (readU64 b 2 ≤ key) && decide (widthFor (key - readU64 b 2) ≤ byteAt b 10) &&
     decide (widthFor doc ≤ byteAt b 13)

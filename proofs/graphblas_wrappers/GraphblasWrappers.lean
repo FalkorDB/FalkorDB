@@ -1,7 +1,7 @@
 /-
 # GraphBLAS FFI wrappers (`graph/src/graph/graphblas/{matrix,vector,mod}.rs`, `tensor.rs` decode/iter)
 
-`EncodeDup` models `Encode<19> for Matrix<T>` (matrix.rs:527) unloading a private `dup()` instead of `self`.
+`EncodeDup` models `Encode<19> for Matrix<T>` (matrix.rs) unloading a private `dup()` instead of `self`.
 `decode_pr` (decode-equivalent under `UnloadLoad` + `PtrBlind` + `DupSpec`; NOT byte-equal:
 `pr3438_bytes_can_differ`, live 4096 vs 2400 byte `x` array for a 300-entry matrix), `encodePR_bytes_eq`,
 `pr_self_never_unloaded`, `pr_no_leak_no_double_free`, `pr_writes_self_content`, `pr_panic_after_dup`,
@@ -9,7 +9,7 @@
 unloads `self`. FFI: `UnloadLoad`, `PtrBlind`, `DupSpec`, and `step`'s per-call C contract.
 
 **Re-targeted to main e860645bb** (from ca36bfa15): #3492 (a3a99bdbc) rewrites `Matrix::delta_lmxm`
-(then matrix.rs:1520) and adds `GrB_GT_UINT64` / `GrB_VALUEEQ_BOOL` / `GrB_Matrix_select_BOOL` imports (+3 lines before :1520,
+(then matrix.rs) and adds `GrB_GT_UINT64` / `GrB_VALUEEQ_BOOL` / `GrB_Matrix_select_BOOL` imports (+3 lines before :1520,
 +55 after, so every `matrix.rs` pin moved). It is now modelled (`DeltaLmxm.lean`) and PROVEN, no longer a
 bare FFI row: `deltaLmxm_spec` (output stored iff `F*M` reaches it with no `F*DM` path, or `F*M` has strictly
 more paths than `F*DM`, or `F*DP` reaches it; no assumption on the layers), `deltaLmxm_correct` (= `F*(M-DM+DP)`
@@ -32,7 +32,7 @@ Lean 4 model of the Rust-side logic around the GraphBLAS C API. The C calls are
 axiomatised (their contracts cited from `GraphBLAS.h` / the GraphBLAS source);
 the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
 Earlier re-targets: #3090 replaced `Matrix::drop`'s `Arc::get_mut` free with `Arc<Handle>` +
-`Handle::drop` (matrix.rs:371); #3033 added `Matrix::<u64>::count_value_eq` and made `Tensor::decode`
+`Handle::drop` (matrix.rs); #3033 added `Matrix::<u64>::count_value_eq` and made `Tensor::decode`
 enforce promotion completeness; #3026 touches only `bulk_insert.rs` and #3086 only `indexer.rs`
 (not here).
 
@@ -41,18 +41,18 @@ enforce promotion completeness; #3026 touches only `bulk_insert.rs` and #3086 on
 | here | there |
 | --- | --- |
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
-| `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
-| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:375 behind `Arc<Handle>` (`Matrix::clone` :407), `Iter::drop` :1886 then its `Arc<Handle>` field |
+| `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs` constants |
+| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs behind `Arc<Handle>` (`Matrix::clone` :407), `Iter::drop` :1886 then its `Arc<Handle>` field |
 | `Own.step`/`run`/`validTraces` | the earlier `Matrix::drop`/`Iter::drop` (`Arc::get_mut` then Arc drop), kept as the historical protocol |
-| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1965, `Iter::next` :1998 |
-| `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` |
-| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1230; `Tensor::decode` :1566; layer-size check :1577-1587 |
-| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1297 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
+| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs, `Iter::next` :1998 |
+| `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs` `decode_blob` `Vector<u64>::decode` `Vector<bool>::decode` |
+| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs; `Tensor::decode` :1566; layer-size check :1577-1587 |
+| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
 | `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1630, per-entry check :1608-1616, final count check :1676-1680 |
-| `Misc.grownOk`, `iterExpand`, `iterEdges`, `VIter` | `Matrix::grown` matrix.rs:742, `Tensor::resize` tensor.rs:821, `tensor::Iter::next` :1794, `Tensor::iter_edges` :1292, `vector::Iter::new`/`next` vector.rs:603-655 (cursor state machine; the C iterator contract is the model `cExhausted`) |
-| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:527, header pointers nulled :554-565 |
-| `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1662-1799 (`F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
-| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :498 / `ptr` :492, `Matrix::count_in_rows` matrix.rs:815 |
+| `Misc.grownOk`, `iterExpand`, `iterEdges`, `VIter` | `Matrix::grown` matrix.rs, `Tensor::resize` tensor.rs, `tensor::Iter::next` :1794, `Tensor::iter_edges` :1292, `vector::Iter::new`/`next` vector.rs (cursor state machine; the C iterator contract is the model `cExhausted`) |
+| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs, header pointers nulled :554-565 |
+| `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs (`F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
+| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs, `Vector::<u64>::sum` :498 / `ptr` :492, `Matrix::count_in_rows` matrix.rs |
 
 ## Theorems (all proved, no sorry)
 `DeltaLmxm.lean`: **`deltaLmxm_correct`**, `deltaLmxm_spec`, `cnt_split`, `deltaLmxm_eff`, `deltaLmxm_tensor`,
@@ -87,7 +87,7 @@ entries in the selected rows — the double-counting argument over columns), `co
 `countInRows_fromSorted`. The four C calls are the hypothesis `BulkSpec`, not axioms.
 
 ## Confirmed bugs (the repro tests named below are not in this tree)
-3. **`Matrix::decode` leaks 5 heap blocks per matrix** (matrix.rs:467):
+3. **`Matrix::decode` leaks 5 heap blocks per matrix** (matrix.rs):
    `copy_nonoverlapping` overwrites the p/h/b/i/x vectors `GxB_Container_new`
    allocated. Every RDB load / RESTORE / full sync. 8 blocks per call on the `?`
    error paths (container + decoded components). Tests

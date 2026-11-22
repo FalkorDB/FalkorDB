@@ -16,41 +16,41 @@ main's `g.borrow_mut()`).
 | here | there |
 | --- | --- |
 | `C`, `S.next`          | a version = one `Arc<AtomicRefCell<Graph>>` allocation; `next` = a fresh one |
-| `S.pub`, `S.published` | `MvccGraph.graph` (`mvcc_graph.rs:64`) and every version it has ever held |
-| `S.lock`               | the per-graph `parking_lot::RwLock<ThreadedGraph>` (`QuerySession.mode`, `query_session.rs:31-41`) |
-| `S.guards`             | read runtimes' `read_guard` (`runtime.rs:157`, a `HeldRead` taken `:476-491`) — the PR's new state |
-| `S.shared`             | live per-access `AtomicRef`s: write runtimes' `graph()`/`g.borrow()` on their own version, and anyone's borrow of *any* published version — `MvccGraph`'s own (`fork :130`, `is_stale :144`, `commit_version :214-296`) and the index-population thread's `indexer.get_graph().borrow()` (`graph.rs:582,609,696,712`): the indexer's graph is set only by `set_indexer_graph`, called with a version being published (`mvcc_graph.rs:294`) or a freshly built one before registration (`redis_type.rs:109,125,771`, `copy.rs:152`, `restore.rs:54`), never with a private fork |
+| `S.pub`, `S.published` | `MvccGraph.graph` (`mvcc_graph.rs`) and every version it has ever held |
+| `S.lock`               | the per-graph `parking_lot::RwLock<ThreadedGraph>` (`QuerySession.mode`, `query_session.rs`) |
+| `S.guards`             | read runtimes' `read_guard` (`runtime.rs`, a `HeldRead` taken) — the PR's new state |
+| `S.shared`             | live per-access `AtomicRef`s: write runtimes' `graph()`/`g.borrow()` on their own version, and anyone's borrow of *any* published version — `MvccGraph`'s own (`fork :130`, `is_stale :144`, `commit_version :214-296`) and the index-population thread's `indexer.get_graph().borrow()` (`graph.rs`): the indexer's graph is set only by `set_indexer_graph`, called with a version being published (`mvcc_graph.rs`) or a freshly built one before registration (`redis_type.rs`, `copy.rs`, `restore.rs`), never with a private fork |
 | `S.excl`               | live `AtomicRefMut`s (every `borrow_mut()` on a graph cell, table below) |
-| `S.priv`               | a thread's private version (`QuerySession.version`'s fork, `query_session.rs:96-120`, or the `tg.graph.fork()` of `effect.rs:63`, `bulk_insert.rs:847`, `constraint.rs:324,522`) |
-| `S.cur`                | the thread whose private version is `Version::Current` (`query_session.rs:108`): forked in writer mode, or checked by `check_fork`; no write slot exists |
-| `S.done`               | a write runtime still alive after its version was published (reply serialization, `graph_core.rs:856-870`) |
+| `S.priv`               | a thread's private version (`QuerySession.version`'s fork, `query_session.rs`, or the `tg.graph.fork()` of `effect.rs`, `bulk_insert.rs`, `constraint.rs`) |
+| `S.cur`                | the thread whose private version is `Version::Current` (`query_session.rs`): forked in writer mode, or checked by `check_fork`; no write slot exists |
+| `S.done`               | a write runtime still alive after its version was published (reply serialization, `graph_core.rs`) |
 
 | event | Rust |
 | --- | --- |
-| `rlock t`     | `QuerySession::begin`/`begin_with` → `RwLock::read_arc` (`query_session.rs:158-177`) |
-| `runlock t`   | dropping a reader session (`Drop` `:430`) or `escalate`'s `*mode = None` (`:352`). Enabled only once `t`'s read runtime is gone: the runtime is a local of `execute_query` / `execute_profile` (`graph_core.rs:633-669`, `:700-716`) that borrows `&session` from its caller (`:1094-1114`, `:1254-1255`, `:1383-1389`, `:1466-1467`), and `record.rs` drops it explicitly (`:142`) before the session (`:61`) |
-| `wlock t`     | `begin_writer` (`:180-197`) / `escalate` (`:345-365`) → `RwLock::write_arc`; `graph.write()` in `effect.rs:62`, `bulk_insert.rs:847`, `constraint.rs:569` |
-| `wunlock t`   | `release_locks` (`:268`) / session drop |
-| `readNew t`   | `Runtime::new(g = tg.graph.read(), write = false)` — the only three: `graph_core.rs:630→635`, `:698→700`, `record.rs:84→86`, each under its reader session; `owner.borrow()` at `runtime.rs:484` (`owner = Arc::clone(&g)`) |
+| `rlock t`     | `QuerySession::begin`/`begin_with` → `RwLock::read_arc` (`query_session.rs`) |
+| `runlock t`   | dropping a reader session (`Drop`) or `escalate`'s `*mode = None`. Enabled only once `t`'s read runtime is gone: the runtime is a local of `execute_query` / `execute_profile` (`graph_core.rs`) that borrows `&session` from its caller, and `record.rs` drops it explicitly before the session |
+| `wlock t`     | `begin_writer` / `escalate` → `RwLock::write_arc`; `graph.write()` in `effect.rs`, `bulk_insert.rs`, `constraint.rs` |
+| `wunlock t`   | `release_locks` / session drop |
+| `readNew t`   | `Runtime::new(g = tg.graph.read(), write = false)` — the only three: `graph_core.rs→635`, `:698→700`, `record.rs→86`, each under its reader session; `owner.borrow()` at `runtime.rs` (`owner = Arc::clone(&g)`) |
 | `readDrop`    | `Runtime` drop: `read_guard` released (`DropOrder`) |
-| `fork t`      | `MvccGraph::fork` (`mvcc_graph.rs:130`), takes nothing: reader mode `write_version` → `Version::Unchecked` (`query_session.rs:211-224`); writer mode → `Version::Current` (`cur := some t`), also `tg.graph.fork()` under `graph.write()` in `effect.rs:63`, `bulk_insert.rs:847`, `constraint.rs:324,522` |
-| `check t`     | `check_fork` → `MvccGraph::is_stale` (`query_session.rs:246-261`, `mvcc_graph.rs:144`), writer mode only (`upgrade_to_write` `:319`); success makes the version `Current`, a stale one goes to `abandon` |
+| `fork t`      | `MvccGraph::fork` (`mvcc_graph.rs`), takes nothing: reader mode `write_version` → `Version::Unchecked` (`query_session.rs`); writer mode → `Version::Current` (`cur := some t`), also `tg.graph.fork()` under `graph.write()` in `effect.rs`, `bulk_insert.rs`, `constraint.rs` |
+| `check t`     | `check_fork` → `MvccGraph::is_stale` (`query_session.rs`, `mvcc_graph.rs`), writer mode only (`upgrade_to_write`); success makes the version `Current`, a stale one goes to `abandon` |
 | `abandon t`   | dropping an uncommitted version with the runtime/session (nothing is released or rolled back), or a stale fork |
 | `mutAcq t c`  | `borrow_mut()` on `t`'s own private version, see the audit table |
-| `mutAcqPub t` | `Pending::resync_published_indexes` (`pending.rs:1789`, `committed.borrow_mut()` `:1838`), reached only from `abandon_write` (`graph_core.rs:1535-1541`) when `session.version_is_current()`, i.e. in writer mode (`cur = some t`) |
-| `publish t c` | `MvccGraph::commit` → `commit_version` (`mvcc_graph.rs:166`, `:214-297`): its `borrow_mut`s `:229,:265,:268,:285` are on `new_graph` *before* `self.graph = new_graph` (`:296`); called under the write lock on a `Current` version (`graph_core.rs:1569`, `bulk_insert.rs:884,1004`, `constraint.rs:329,560`, `effect.rs:81`). `commit_indexer_batch` (`:193`) has no production caller yet and is not modelled |
+| `mutAcqPub t` | `Pending::resync_published_indexes` (`pending.rs`, `committed.borrow_mut()`), reached only from `abandon_write` (`graph_core.rs`) when `session.version_is_current()`, i.e. in writer mode (`cur = some t`) |
+| `publish t c` | `MvccGraph::commit` → `commit_version` (`mvcc_graph.rs`): its `borrow_mut`s `:229,:265,:268,:285` are on `new_graph` *before* `self.graph = new_graph`; called under the write lock on a `Current` version (`graph_core.rs`, `bulk_insert.rs`, `constraint.rs`, `effect.rs`). `commit_indexer_batch` has no production caller yet and is not modelled |
 
 **`borrow_mut()` audit** (every call on a graph cell in `graph/src` + `src`, PR branch;
 tests/`test_aux.rs`/`emit.rs`/`apply.rs` test modules excluded):
 
 | site | target | model |
 | --- | --- | --- |
-| `runtime.rs:1491,1510` (`set_pending_*_attr`), `ops/create.rs:176,212,299,331,363,378,387`, `ops/set.rs:107`, `ops/remove.rs:138`, `ops/delete.rs:259,413,454` (all `graph_mut()`), `ops/merge.rs:171` (via `set_pending_*_attr`) | `runtime.g` of a runtime running a SET/CREATE/REMOVE/DELETE/MERGE op | write runtime ⇒ private fork: `mutAcq`. A read runtime never runs these ops (`Reuse.read_plan_no_update`) |
-| `ops/commit.rs:89` (`Pending::commit`), `:139` (`end_segment`), `runtime.rs:617` (`commit_deferred_indexes` → `IndexDocs::commit`): one `graph_mut()` held across each call (main borrowed inside, `pending.rs:480,1235-1366,1799` there; `Hold`) | `runtime.g` via `CommitOp` (`ops/commit.rs:85-148`) | write runtime (`CommitOp` refuses `!write`, `commit.rs:50`): `mutAcq` |
-| `index_ddl.rs:71,102` | `runtime.graph_mut()` | write runtime (`:38,:94` refuse `!write`; `graph_mut` asserts it too): `mutAcq` |
-| `mvcc_graph.rs:229,265,268,285` | `new_graph` | still private: `mutAcq`, then `publish` |
-| `pending.rs:1838` | `committed` = **the published version** | `mutAcqPub`, under the write lock |
-| `bulk_insert.rs:847-884,953-1004`, `constraint.rs:324-329,522-560`, `effect.rs:63-81` | `g_arc` from `graph.write()` / `fork()` / `write_version()` before `commit` | private: `mutAcq` |
+| `runtime.rs` (`set_pending_*_attr`), `ops/create.rs`, `ops/set.rs`, `ops/remove.rs`, `ops/delete.rs` (all `graph_mut()`), `ops/merge.rs` (via `set_pending_*_attr`) | `runtime.g` of a runtime running a SET/CREATE/REMOVE/DELETE/MERGE op | write runtime ⇒ private fork: `mutAcq`. A read runtime never runs these ops (`Reuse.read_plan_no_update`) |
+| `ops/commit.rs` (`Pending::commit`) (`end_segment`), `runtime.rs` (`commit_deferred_indexes` → `IndexDocs::commit`): one `graph_mut()` held across each call (main borrowed inside, `pending.rs` there; `Hold`) | `runtime.g` via `CommitOp` (`ops/commit.rs`) | write runtime (`CommitOp` refuses `!write`, `commit.rs`): `mutAcq` |
+| `index_ddl.rs` | `runtime.graph_mut()` | write runtime (`:38,:94` refuse `!write`; `graph_mut` asserts it too): `mutAcq` |
+| `mvcc_graph.rs` | `new_graph` | still private: `mutAcq`, then `publish` |
+| `pending.rs` | `committed` = **the published version** | `mutAcqPub`, under the write lock |
+| `bulk_insert.rs`, `constraint.rs`, `effect.rs` | `g_arc` from `graph.write()` / `fork()` / `write_version()` before `commit` | private: `mutAcq` |
 
 So the PR's comment "a published version is never mutably borrowed again" is **false**
 as stated (`published_borrowed_mut`): `resync_published_indexes` mutably borrows the
@@ -117,7 +117,7 @@ def hasT (l : List (Tid × C)) (t : Tid) : Bool := l.any (·.1 == t)
 def onC (l : List (Tid × C)) (c : C) : Bool := l.any (·.2 == c)
 
 /-- One atomic step. A failed `borrow`/`borrow_mut` is `panic` (atomic_refcell
-`lib.rs:132,158`); `blocked` = not enabled. -/
+`lib.rs`); `blocked` = not enabled. -/
 def step (s : S) : Ev → Out
   | .rlock t => match s.lock with
     | .free => .ok { s with lock := .readers [t] }
@@ -700,7 +700,7 @@ theorem run_reach : ∀ {s : S} (es : List Ev) {s' : S}, Reach s → run s es = 
 /-- **Refutes the PR's literal premise.** A published version *is* mutably borrowed again:
 writer 1 publishes version 1, writer 2 forks (a `Current` version), its query fails after a `Commit`
 published index documents, and `abandon_write` → `resync_published_indexes` calls
-`committed.borrow_mut()` on version 1 (`pending.rs:1838`). Harmless to readers only
+`committed.borrow_mut()` on version 1 (`pending.rs`). Harmless to readers only
 because of the write lock (`reader_guard_sound`). -/
 def resyncTrace : List Ev :=
   [.wlock 1, .fork 1, .publish 1 1, .wunlock 1, .wlock 2, .fork 2, .mutAcqPub 2]
@@ -719,7 +719,7 @@ theorem resync_excludes_readers :
 
 /-- **Historical counterexample** (the cell design; the cell no longer exists). Writer 1
 publishes, releases its locks, and serializes its reply through per-access borrows of its
-own — now published — version (`graph_core.rs:855-870`, `release_locks` *before*
+own — now published — version (`graph_core.rs`, `release_locks` *before*
 `reply_verbose`). Writer 2 then takes the lock and forks, fails after a `Commit`, and
 resyncs: its `borrow_mut` of that same version meets writer 1's live `AtomicRef` and
 panics ("already immutably borrowed"); the converse order panics writer 1's reply

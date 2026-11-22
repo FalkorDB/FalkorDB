@@ -25,7 +25,7 @@ variable {V : Type}
 
 /-! ## Incident edges -/
 
-/-- `get_node_relationships` (graph.rs:2390): per tensor the outgoing
+/-- `get_node_relationships` (graph.rs): per tensor the outgoing
 half, then the incoming half minus its self-loops (`src != dest`; a self-loop is on the diagonal
 of both halves and the outgoing one already produced it). -/
 def nodeRels (g : G V) (n : Nat) : Ten :=
@@ -37,7 +37,7 @@ def pre3084_nodeRels (g : G V) (n : Nat) : Ten :=
 
 inductive Dir | outgoing | incoming | both deriving DecidableEq
 
-/-- `EdgeDirection::from_str` (graph.rs:216). -/
+/-- `EdgeDirection::from_str` (graph.rs). -/
 def dirOfStr : String → Option Dir
   | "outgoing" => some .outgoing | "incoming" => some .incoming | "both" => some .both | _ => none
 

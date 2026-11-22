@@ -4,10 +4,10 @@ import FalkorIdSpace.Callers
 # `IdSpace::release`'s `live -= freed.len()` on the replica's delete, discharged
 
 `Faithful.Ids.release1` subtracts in `Nat`; Rust subtracts in `u64` (`self.live -= freed.len()`,
-`id_space.rs:739`). `deleteOne_refines` took `1 ≤ live` as a premise. `proofs/id_space` proves the
+`id_space.rs`). `deleteOne_refines` took `1 ≤ live` as a premise. `proofs/id_space` proves the
 count can never wrap on a reachable id space (`release_no_underflow`, whose `freed ⊆ requested` premise
 is discharged at all three call sites by `release_call_sites`); here the node delete is `release({id}, {id})`
-(`Graph::delete_nodes`, `graph.rs:2320` passes one set twice), so `1 ≤ live` follows for any id space
+(`Graph::delete_nodes`, `graph.rs` passes one set twice), so `1 ≤ live` follows for any id space
 satisfying id_space's `Inv` whose refusals pass, whether the id is below the entry boundary or was taken by
 the batch (the case `deleteOne_refines_live` could not reach).
 -/

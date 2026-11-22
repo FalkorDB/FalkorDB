@@ -8,9 +8,9 @@ defaults and the "one source per requested sample" property can be stated.
 
 | here | there |
 | --- | --- |
-| `Config.samplingSize` (existing) | default `16` at `algo_procedures.rs:966` |
-| `samplingSeed`  | `samplingSeed` parse `algo_procedures.rs:976-981` (absent/null → `0`, `i64 as u64`) |
-| `lcg`, `drawLoop`, `rustSources` | source selection `algo_procedures.rs:1032-1057` (seed 0: `i % n`; else the 64-bit LCG, `(rng >> 33) % n`, *deduplicated through `used`*) |
+| `Config.samplingSize` (existing) | default `16` at `algo_procedures.rs` |
+| `samplingSeed`  | `samplingSeed` parse `algo_procedures.rs` (absent/null → `0`, `i64 as u64`) |
+| `lcg`, `drawLoop`, `rustSources` | source selection `algo_procedures.rs` (seed 0: `i % n`; else the 64-bit LCG, `(rng >> 33) % n`, *deduplicated through `used`*) |
 | `cDefaultSize`  | C `BETWEENNESS_DEFAULT_SAMPLE_SIZE 32` (`src/procedures/proc_betweenness.c:21`, origin/master d7cf86675) |
 | `cEffSeed`      | C `if(samplingSeed == 0) samplingSeed = (uint32_t)time(NULL)` (`proc_betweenness.c:318-319`) |
 | `xorshift`, `cDraws` | C `_Random_Sources` (`proc_betweenness.c:46-96`) + `simple_rand` (`src/util/simple_rand.h`): exactly `MIN(nvals, samplingSize)` draws, duplicates kept |
@@ -49,7 +49,7 @@ def drawLoop (n : Nat) : Nat → Nat → List Nat → List Nat
 def seed0Loop (n : Nat) (s : Nat) : List Nat :=
   (List.range s).foldl (fun acc i => if i % n ∈ acc then acc else acc ++ [i % n]) []
 
-/-- `sources` (`algo_procedures.rs:1032-1057`) for `samplingSize s`, `n` compact
+/-- `sources` (`algo_procedures.rs`) for `samplingSize s`, `n` compact
 indices and seed `seed`. -/
 def rustSources (s n seed : Nat) : List Nat :=
   if n = 0 then []
@@ -57,8 +57,8 @@ def rustSources (s n seed : Nat) : List Nat :=
   else if seed = 0 then seed0Loop n s
   else drawLoop n s seed []
 
-/-- The Rust run with no `samplingSeed`: nothing reads a clock (`:966` gives 0 and the
-seed-0 branch `:1035` is `i % n_nodes`), so the clock argument is ignored. -/
+/-- The Rust run with no `samplingSeed`: nothing reads a clock ( gives 0 and the
+seed-0 branch is `i % n_nodes`), so the clock argument is ignored. -/
 def rustSeedless (s n : Nat) (_clock : Nat) : List Nat := rustSources s n 0
 
 /-- The Rust run from a parsed config map: `samplingSize` (`Config.samplingSize`, :965-974),

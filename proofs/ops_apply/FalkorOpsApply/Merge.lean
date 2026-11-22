@@ -13,19 +13,19 @@ matchesK in the *current* graph (including everything earlier rows of the same
 clause created), bind every match (and apply `ON MATCH SET`), otherwise create
 the pattern once (and apply `ON CREATE SET`).
 
-Rust (`MergeOp::next`, `merge.rs:279-447`): per input batch of up to
-`BATCH_SIZE` rows, the match sub-plan runs ONCE over all rows (`merge.rs:313-343`)
+Rust (`MergeOp::next`, `merge.rs`): per input batch of up to
+`BATCH_SIZE` rows, the match sub-plan runs ONCE over all rows (`merge.rs`)
 against the graph as it is at the start of the batch (the scans see pending
 creations of *earlier batches* through `IncludePending`,
-`planner/mod.rs:3112`); then rows are processed in order (`merge.rs:347-434`):
+`planner/mod.rs`); then rows are processed in order (`merge.rs`):
 
-* no match → `do_create_fallback` (`merge.rs:113-178`): look the pattern hash up
-  in `runtime.merge_pattern_cache` (`runtime.rs:201`); on a hit bind the cached
+* no match → `do_create_fallback` (`merge.rs`): look the pattern hash up
+  in `runtime.merge_pattern_cache` (`runtime.rs`); on a hit bind the cached
   `(var id, value)` pairs and apply ON MATCH; on a miss create, cache, apply
   ON CREATE;
 * matchesK → first match emitted inline, the rest queued in `pending` and emitted
-  after the batch (`drain_pending`, `merge.rs:252-273`) — unless every pattern
-  variable is bound (`all_vars_bound`, `merge.rs:369-388`), in which case only
+  after the batch (`drain_pending`, `merge.rs`) — unless every pattern
+  variable is bound (`all_vars_bound`, `merge.rs`), in which case only
   the first match is used.
 
 The model is one node pattern `MERGE (n:L {k: key(row)})`: a node is `(id, k)`,
@@ -100,7 +100,7 @@ def refMerge (cl : Clause α) (st : RState (α := α)) (rows : List α) : RState
 /-- `merge_pattern_cache`: key `(operator idx, pattern hash)` ↦ cached `(var id, entity id)` binding. -/
 abbrev Cache := List ((Nat × Nat) × (Nat × Nat))
 
-/-- Since #3050 the key is `(operator idx, pattern hash)` (`merge.rs:124,174`). -/
+/-- Since #3050 the key is `(operator idx, pattern hash)` (`merge.rs`). -/
 def lookup (c : Cache) (h : Nat × Nat) : Option (Nat × Nat) := (c.find? (fun e => e.1 == h)).map Prod.snd
 
 structure SState where
@@ -110,11 +110,11 @@ structure SState where
   out : List (α × Option Nat)
 
 /-- Binding of the clause's own variable after inserting the cached pairs by
-*their* variable ids (`vars.insert_by_id(*id, …)`, `merge.rs:128-130`). -/
+*their* variable ids (`vars.insert_by_id(*id, …)`, `merge.rs`). -/
 def bindCached (cl : Clause α) (cv : Nat × Nat) : Option Nat :=
   if cv.1 == cl.var then some cv.2 else none
 
-/-- `do_create_fallback` (`merge.rs:117-182`). -/
+/-- `do_create_fallback` (`merge.rs`). -/
 def createFallback (cl : Clause α) (st : SState (α := α)) (r : α) :
     SState (α := α) × (α × Option Nat) :=
   match lookup st.cache (cl.op, cl.key r) with
@@ -126,7 +126,7 @@ def createFallback (cl : Clause α) (st : SState (α := α)) (r : α) :
        cache := ((cl.op, cl.key r), (cl.var, st.next)) :: st.cache, out := st.out },
      (r, some st.next))
 
-/-- Phase A of one batch (pre-#3067 `merge.rs:347-434`): row by row against the batch-start
+/-- Phase A of one batch (pre-#3067 `merge.rs`): row by row against the batch-start
 match groups. Returns the state (with `out` extended) and the queue of remaining
 matchesK. -/
 def phaseA (cl : Clause α) (allBound : Bool) :
@@ -140,7 +140,7 @@ def phaseA (cl : Clause α) (allBound : Bool) :
     let (st'', q) := phaseA cl allBound st' rest
     (st'', if allBound || ms.isEmpty then q else (r, ms) :: q)
 
-/-- Phase B (`drain_pending`, `merge.rs:302-322`; since #3067 called per row, see `MergeEager.rowMain`): the queued matchesK, row by row. -/
+/-- Phase B (`drain_pending`, `merge.rs`; since #3067 called per row, see `MergeEager.rowMain`): the queued matchesK, row by row. -/
 def phaseB (cl : Clause α) : SState (α := α) → List (α × List Node) → SState (α := α)
   | st, [] => st
   | st, (r, ms) :: rest =>
@@ -148,7 +148,7 @@ def phaseB (cl : Clause α) : SState (α := α) → List (α × List Node) → S
                         out := st.out ++ ms.map (fun m => (r, some m.id)) } rest
 
 /-- One input batch: match groups computed ONCE against the batch-start graph
-(pre-#3067 `merge.rs:313-343`), then phase A, then phase B. -/
+(pre-#3067 `merge.rs`), then phase A, then phase B. -/
 def rustBatch (cl : Clause α) (allBound : Bool) (st : SState (α := α)) (rows : List α) :
     SState (α := α) :=
   let groups := rows.map (fun r => (r, matchesK st.g (cl.key r)))

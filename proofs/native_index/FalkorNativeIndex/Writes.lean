@@ -42,13 +42,13 @@ namespace G
 def labelName (g : G) (l : Nat) : String := g.labels.getD l ""
 def typeName (g : G) (t : Nat) : String := g.types.getD t ""
 def attrName (g : G) (a : Nat) : Option String := g.attrNames[a]?
-/-- `get_node_all_attrs` (`graph.rs:3532`): `(name, value)` of every attribute the node has. -/
+/-- `get_node_all_attrs` (`graph.rs`): `(name, value)` of every attribute the node has. -/
 def nodeAllAttrs (g : G) (id : Nat) : List (String × Value) :=
   (List.range g.attrNames.length).filterMap (fun a =>
     match g.attrNames[a]?, g.nodeAttr id a with
     | some n, some v => some (n, v)
     | _, _ => none)
-/-- `get_relationship_all_attrs` (`graph.rs:3563`). -/
+/-- `get_relationship_all_attrs` (`graph.rs`). -/
 def relAllAttrs (g : G) (id : Nat) : List (String × Value) :=
   (List.range g.attrNames.length).filterMap (fun a =>
     match g.attrNames[a]?, g.relAttr id a with
@@ -68,7 +68,7 @@ structure StageOp where
   old : Option Value
   new : Option Value
 
-/-- What `push` appends (`pending_writes.rs:81-95`). -/
+/-- What `push` appends (`pending_writes.rs`). -/
 def pushL (ix : FalkorDbIndex) (ent : EntityType) (label attr : String) (v : Value) (id : Nat) (add : Bool) :
     List (IndexKey × IndexWrite) :=
   (ix.storedKeys ent label attr v).map (fun kk => ((label, attr), ⟨kk.2, id, kk.1, add⟩))
@@ -349,10 +349,10 @@ theorem lastOp_ops (ix : FalkorDbIndex) (ent : EntityType) (ops : List StageOp) 
 
 /-! ## The staging functions, loop for loop -/
 
-/-- `node_label_ids_into` (`graph_writes.rs:488-495`): clear, then the label matrix row. -/
+/-- `node_label_ids_into` (`graph_writes.rs`): clear, then the label matrix row. -/
 def nodeLabelIdsInto (g : G) (id : Nat) (_out : List Nat) : List Nat := g.nodeLabels id
 
-/-- `edge_type` (`graph_writes.rs:503-508`). -/
+/-- `edge_type` (`graph_writes.rs`). -/
 def edgeType (g : G) (id : Nat) : String := g.typeName (g.relType id)
 
 /-- Generic: a fold whose step appends a block is a `flatMap`. -/
@@ -380,7 +380,7 @@ theorem foldl_appends' {α} (ent : EntityType) (f : IndexChanges → α → Inde
     simp [List.append_assoc]
 
 /-- The per-label body shared by the set paths: `remove old` (if any), then `add new`
-    (`graph_writes.rs:79-85`, `:116-122`). -/
+    (`graph_writes.rs`). -/
 def setUnderLabel (g : G) (attr : String) (old : Option Value) (nv : Value) (id : Nat)
     (ch : IndexChanges) (label : String) : IndexChanges :=
   let ch := match old with | some o => ch.remove g.idx label attr o id | none => ch
@@ -413,7 +413,7 @@ theorem filterMap_split {α β} (f : α → Option β) (l : List α) :
   | nil => rfl
   | cons x xs ih => rw [List.filterMap_cons, List.flatMap_cons, ← ih]; cases h : f x <;> simp [h]
 
-/-- `node_attrs_set`'s attribute loop (`graph_writes.rs:73-86`). -/
+/-- `node_attrs_set`'s attribute loop (`graph_writes.rs`). -/
 def naAttrLoop (g : G) (id : Nat) (labels : List Nat) (ch : IndexChanges) (an : Nat × Value) : IndexChanges :=
   match g.attrName an.1 with
   | none => ch
@@ -421,7 +421,7 @@ def naAttrLoop (g : G) (id : Nat) (labels : List Nat) (ch : IndexChanges) (an : 
     let old := g.nodeAttr id an.1   -- hoisted out of the label loop
     (labels.map g.labelName).foldl (setUnderLabel g attr old an.2 id) ch
 
-/-- `node_attrs_set` (`graph_writes.rs:62-89`). -/
+/-- `node_attrs_set` (`graph_writes.rs`). -/
 def nodeAttrsSet (g : G) (attrs : List (Nat × List (Nat × Value))) : IndexChanges :=
   if !g.idx.hasColumns .node then IndexChanges.new .node else
   (attrs.foldl (fun (st : IndexChanges × List Nat) (iw : Nat × List (Nat × Value)) =>
@@ -626,7 +626,7 @@ def chunksGo (n : Nat) : Nat → List Value → List (List Value)
   | f + 1, l => if n ≤ l.length then l.take n :: chunksGo n f (l.drop n) else []
 def chunksExact (n : Nat) (_hn : 0 < n) (l : List Value) : List (List Value) := chunksGo n l.length l
 
-/-- `node_rows_set` (`graph_writes.rs:98-126`): node `ids[i]` takes `rows[i*n + j]` for `attr_ids[j]`,
+/-- `node_rows_set` (`graph_writes.rs`): node `ids[i]` takes `rows[i*n + j]` for `attr_ids[j]`,
     under the record's labels. -/
 def nodeRowsSet (g : G) (ids labelIds attrIds : List Nat) (rows : List Value) : IndexChanges :=
   if h : !g.idx.hasColumns .node || attrIds.isEmpty then IndexChanges.new .node else
@@ -667,7 +667,7 @@ theorem nodeRowsSet_changes (g : G) (ids labelIds attrIds : List Nat) (rows : Li
       | none => simp [ha, opsChanges]
       | some attr => simp only [ha]; rw [stage_labels _ _ _ _ _ _ _ .node hcx]; simp [opsChanges]
 
-/-- `new_node_attrs` (`graph_writes.rs:133-157`): adds under `new_labels[id]`. -/
+/-- `new_node_attrs` (`graph_writes.rs`): adds under `new_labels[id]`. -/
 def newNodeAttrs (g : G) (attrs : List (Nat × List (Nat × Value))) (newLabels : List (Nat × List Nat)) : IndexChanges :=
   if !g.idx.hasColumns .node then IndexChanges.new .node else
   attrs.foldl (fun ch iw =>
@@ -723,7 +723,7 @@ theorem newNodeAttrs_changes (g : G) (attrs : List (Nat × List (Nat × Value)))
         | none => simp [opsChanges]
         | some attr => simp only; rw [addLabels _ _ _ _ _ _ .node hca]; simp [opsChanges]
 
-/-- `bulk_node_attrs` (`graph_writes.rs:161-182`). -/
+/-- `bulk_node_attrs` (`graph_writes.rs`). -/
 def bulkNodeAttrs (g : G) (rows : List (Nat × List (Nat × Value))) (labelIds : List Nat) : IndexChanges :=
   if !g.idx.hasColumns .node then IndexChanges.new .node else
   rows.foldl (fun ch iw => iw.2.foldl (fun ch an =>
@@ -753,12 +753,12 @@ theorem bulkNodeAttrs_changes (g : G) (rows : List (Nat × List (Nat × Value)))
       | none => simp [opsChanges]
       | some attr => simp only; rw [addLabels _ _ _ _ _ _ .node hca]; simp [opsChanges]
 
-/-- `add_node_under_label` (`graph_writes.rs:438-448`). -/
+/-- `add_node_under_label` (`graph_writes.rs`). -/
 def addNodeUnderLabel (ch : IndexChanges) (g : G) (id lid : Nat) : IndexChanges :=
   let label := g.labelName lid
   (g.nodeAllAttrs id).foldl (fun ch av => ch.add g.idx label av.1 av.2 id) ch
 
-/-- `remove_node_under_label` (`graph_writes.rs:451-461`). -/
+/-- `remove_node_under_label` (`graph_writes.rs`). -/
 def removeNodeUnderLabel (ch : IndexChanges) (g : G) (id lid : Nat) : IndexChanges :=
   let label := g.labelName lid
   (g.nodeAllAttrs id).foldl (fun ch av => ch.remove g.idx label av.1 av.2 id) ch
@@ -781,17 +781,17 @@ theorem removeNodeUnderLabel_eq (ch : IndexChanges) (g : G) (id lid : Nat) (h : 
   · simp [flatMap_single]
   · intro c av hc; rw [remove_is_stage, stage_eq _ _ _ _ _ _ _ .node hc]; simp [opsChanges]
 
-/-- `labels_added` (`graph_writes.rs:189-202`). -/
+/-- `labels_added` (`graph_writes.rs`). -/
 def labelsAdded (g : G) (rowsIds colsLabels : List Nat) : IndexChanges :=
   if !g.idx.hasColumns .node then IndexChanges.new .node else
   (rowsIds.zip colsLabels).foldl (fun ch p => addNodeUnderLabel ch g p.1 p.2) (IndexChanges.new .node)
 
-/-- `labels_product_added` (`graph_writes.rs:206-221`). -/
+/-- `labels_product_added` (`graph_writes.rs`). -/
 def labelsProductAdded (g : G) (ids labelIds : List Nat) : IndexChanges :=
   if !g.idx.hasColumns .node then IndexChanges.new .node else
   labelIds.foldl (fun ch lid => ids.foldl (fun ch id => addNodeUnderLabel ch g id lid) ch) (IndexChanges.new .node)
 
-/-- `labels_removed` (`graph_writes.rs:226-239`). -/
+/-- `labels_removed` (`graph_writes.rs`). -/
 def labelsRemoved (g : G) (rowsIds colsLabels : List Nat) : IndexChanges :=
   if !g.idx.hasColumns .node then IndexChanges.new .node else
   (rowsIds.zip colsLabels).foldl (fun ch p => removeNodeUnderLabel ch g p.1 p.2) (IndexChanges.new .node)
@@ -820,7 +820,7 @@ theorem labelsProductAdded_changes (g : G) (ids labelIds : List Nat) (hc : g.idx
   · intro c lid h
     rw [foldl_ops .node g.idx _ (fun id => underLabelOps g id lid true) (fun c id h => addNodeUnderLabel_eq c g id lid h) _ _ h]
 
-/-- `nodes_deleted` (`graph_writes.rs:243-262`): every indexed value under every label. -/
+/-- `nodes_deleted` (`graph_writes.rs`): every indexed value under every label. -/
 def nodesDeleted (g : G) (ids : List Nat) : IndexChanges :=
   if !g.idx.hasColumns .node then IndexChanges.new .node else
   (ids.foldl (fun (st : IndexChanges × List Nat) id =>
@@ -856,11 +856,11 @@ theorem nodesDeleted_changes (g : G) (ids : List Nat) (hc : g.idx.hasColumns .no
 
 /-! ### Relationships -/
 
-/-- `match type_id { Some(t) => &types[t], None => edge_type(g, id) }` (`graph_writes.rs:304-307`). -/
+/-- `match type_id { Some(t) => &types[t], None => edge_type(g, id) }` (`graph_writes.rs`). -/
 def edgeTypeOf (g : G) (typeId : Option Nat) (id : Nat) : String :=
   match typeId with | some t => g.typeName t | none => edgeType g id
 
-/-- `edge_attrs_set_with` (`graph_writes.rs:291-321`). -/
+/-- `edge_attrs_set_with` (`graph_writes.rs`). -/
 def edgeAttrsSetWith (g : G) (attrs : List (Nat × List (Nat × Value))) (typeId : Option Nat) : IndexChanges :=
   if !g.idx.hasColumns .relationship then IndexChanges.new .relationship else
   attrs.foldl (fun ch iw =>
@@ -872,9 +872,9 @@ def edgeAttrsSetWith (g : G) (attrs : List (Nat × List (Nat × Value))) (typeId
       | some attr => stage g attr (g.relAttr iw.1 an.1) (some an.2) iw.1 ch typeName) ch)
     (IndexChanges.new .relationship)
 
-/-- `edge_attrs_set` (`graph_writes.rs:273-278`). -/
+/-- `edge_attrs_set` (`graph_writes.rs`). -/
 def edgeAttrsSet (g : G) (attrs : List (Nat × List (Nat × Value))) : IndexChanges := edgeAttrsSetWith g attrs none
-/-- `edge_attrs_set_of_type` (`graph_writes.rs:282-288`). -/
+/-- `edge_attrs_set_of_type` (`graph_writes.rs`). -/
 def edgeAttrsSetOfType (g : G) (t : Nat) (attrs : List (Nat × List (Nat × Value))) : IndexChanges :=
   edgeAttrsSetWith g attrs (some t)
 
@@ -902,7 +902,7 @@ theorem edgeAttrsSetWith_changes (g : G) (attrs : List (Nat × List (Nat × Valu
         | none => simp [opsChanges]
         | some attr => simp only; rw [stage_eq _ _ _ _ _ _ _ .relationship hca]; simp [opsChanges]
 
-/-- `new_edge_attrs` (`graph_writes.rs:324-344`). -/
+/-- `new_edge_attrs` (`graph_writes.rs`). -/
 def newEdgeAttrs (g : G) (attrs : List (Nat × List (Nat × Value))) : IndexChanges :=
   if !g.idx.hasColumns .relationship then IndexChanges.new .relationship else
   attrs.foldl (fun ch iw =>
@@ -938,7 +938,7 @@ theorem newEdgeAttrs_changes (g : G) (attrs : List (Nat × List (Nat × Value)))
         | none => simp [opsChanges]
         | some attr => simp only; rw [add_is_stage, stage_eq _ _ _ _ _ _ _ .relationship hca]; simp [opsChanges]
 
-/-- `bulk_edge_attrs` (`graph_writes.rs:350-368`). -/
+/-- `bulk_edge_attrs` (`graph_writes.rs`). -/
 def bulkEdgeAttrs (g : G) (rows : List (Nat × List (Nat × Value))) (t : Nat) : IndexChanges :=
   if !g.idx.hasColumns .relationship then IndexChanges.new .relationship else
   let typeName := g.typeName t
@@ -969,7 +969,7 @@ theorem bulkEdgeAttrs_changes (g : G) (rows : List (Nat × List (Nat × Value)))
       | none => simp [opsChanges]
       | some attr => simp only; rw [add_is_stage, stage_eq _ _ _ _ _ _ _ .relationship hca]; simp [opsChanges]
 
-/-- `edges_deleted` (`graph_writes.rs:372-393`). -/
+/-- `edges_deleted` (`graph_writes.rs`). -/
 def edgesDeleted (g : G) (ids : List Nat) : IndexChanges :=
   if !g.idx.hasColumns .relationship then IndexChanges.new .relationship else
   ids.foldl (fun ch id =>

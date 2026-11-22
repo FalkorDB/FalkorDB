@@ -17,6 +17,3 @@ graph/src/parser/string_escape.rs	cypher_unescape	71	PROVEN	unescF: unesc_agrees
 graph/src/parser/string_escape.rs	cypher_escape	161	PROVEN	FalkorLexerExtra unesc_escape (cypher_unescape ∘ cypher_escape = id)
 graph/src/parser/cypher.rs	check_depth	308	PROVEN	check_depth guard in Reach: guarded, guarded_height_le, chain_rejected
 graph/src/parser/cypher.rs	nested	349	PROVEN	Call/runCall: nested_bound, nested_boundL, nested_depth_bound
-graph/src/parser/cypher.rs	parse_literal	455	PROVEN	evalLit: int_literal_correct (i64::MIN special case, checked_neg)
-graph/src/parser/cypher.rs	parse_expr	2165	PROVEN	runCall (parse_expr under nested): nested_depth_bound
-graph/src/parser/cypher.rs	parse_expr_inner	2176	PROVEN	Frame/Op/step/Reach: height_sound, guarded_height_le, chain_rejected; level10/litExpr: litExpr_min, litExpr_other (2^63 guard, #2910); bug fixed by #2910 dba677942

@@ -1,4 +1,4 @@
-/-! # Loading keys into the keyspace (redis_type.rs:84-183, :729-787, :858-877)
+/-! # Loading keys into the keyspace (redis_type.rs)
 
 | here | there |
 | --- | --- |
@@ -211,7 +211,7 @@ def ioCacheSize (configured : Nat) : Nat := configured
 /-- The plan-cache size an RDB-loaded graph gets (`graph_rdb_load` :104 and its placeholder
 :148, `graphmeta_rdb_load` :863 all pass `io_cache_size(rdb)`). Graphs created by
 `GRAPH.QUERY` / `GRAPH.COPY` / effects get `CONFIGURATION_CACHE_SIZE`
-(`commands/query.rs:129`, `copy.rs`, `effect.rs:47`). -/
+(`commands/query.rs`, `copy.rs`, `effect.rs`). -/
 def cacheOnLoad (configured : Nat) : Nat := ioCacheSize configured
 def cacheOnCreate (configured : Nat) : Nat := configured
 

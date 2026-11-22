@@ -3,9 +3,9 @@ import PendingCommit.Snapshot
 /-!
 # A reserved id has no staged existing attributes (the premise of `AttrInv.created_inv`)
 
-`created_nodes(ids)` (pending.rs:557) adds ids to `created`, which routes later writes to
+`created_nodes(ids)` (pending.rs) adds ids to `created`, which routes later writes to
 `new_nodes_attrs`. `AttrInv.created_inv` keeps the staged maps disjoint provided the id has no entry in
-`existing_nodes_attrs`. The ids come from `IdSpace::reserve` (create.rs:176), modelled by
+`existing_nodes_attrs`. The ids come from `IdSpace::reserve` (create.rs), modelled by
 `Snapshot.createRust` (`Wf`: a reserved id is neither live nor freed by this segment, nor quarantined).
 Here the staged-existing map joins that model:
 
@@ -13,7 +13,7 @@ Here the staged-existing map joins that model:
   (`freed`): writes to `existing_*_attrs` only target a live entity, because `SET`/`REMOVE` skip a
   committed-deleted id (unless pending-created, which routes to `new`) and a pending-deleted one
   (ops_apply `SetRemove.setAttrItem`, `removeItem_spec`: the `is_node_deleted`/`is_node_deleted` guards,
-  set.rs:196-201, remove.rs:117-122); that guard is `stageEx`'s premise;
+  set.rs, remove.rs); that guard is `stageEx`'s premise;
 * `del` keeps it (the id moves from `live` to `freed`), `commit` keeps it (`end_segment` clears the
   pending maps, `ex := []`), `createRust` keeps it (live only grows), `stageEx` keeps it (premise);
 * **`reserved_not_ex`** — under `Wf` and `ExLive` a reserved id has no staged existing entry: the premise of

@@ -6,13 +6,13 @@ import FalkorOpsApply.MergeSlot
 | here | there |
 | --- | --- |
 | `Col`, `Bat`, `Bat.cell` | `Column`, `Batch` (columns, `value_only` bitset, `selection`, `origin_rows`), `value_at` / `is_bound_at` |
-| `Bat.originRow`, `Bat.hasOrigins` | `Batch::origin_row` (batch.rs:1305), `has_origins` |
-| `Bat.gather` | `Batch::gather` (batch.rs:898) |
-| `Bat.intoCompacted` | `Batch::into_compacted` (batch.rs:884) |
-| `Bat.cloneSeq` | `Batch::clone_active_rows_seq_origin` (batch.rs:1170) |
-| `Bat.mergeOverInput` | `Batch::merge_over_input` (batch.rs:944) |
-| `setArg`, `OT` | `BatchOp::set_argument_batch` (batch.rs:1603) |
-| `MergeSlot.Row.ofCells` (in `MergeSlot`) | `BatchRow::to_owned_row` (batch.rs:1439) |
+| `Bat.originRow`, `Bat.hasOrigins` | `Batch::origin_row` (batch.rs), `has_origins` |
+| `Bat.gather` | `Batch::gather` (batch.rs) |
+| `Bat.intoCompacted` | `Batch::into_compacted` (batch.rs) |
+| `Bat.cloneSeq` | `Batch::clone_active_rows_seq_origin` (batch.rs) |
+| `Bat.mergeOverInput` | `Batch::merge_over_input` (batch.rs) |
+| `setArg`, `OT` | `BatchOp::set_argument_batch` (batch.rs) |
+| `MergeSlot.Row.ofCells` (in `MergeSlot`) | `BatchRow::to_owned_row` (batch.rs) |
 
 Columns are a function from variable id to `Col` (everything past `ncols` is `Unbound`).
 Out-of-range indices are modelled by a default (Rust panics there; callers keep them in range).
@@ -38,7 +38,7 @@ def Col.gather : List Nat → Col V → Col V
   | _, .unbound => .unbound
   | idx, .vals xs => .vals (idx.map (fun i => xs.getD i default))
 
-/-- `origin_row` (batch.rs:1305): `0` when no origin has been assigned. -/
+/-- `origin_row` (batch.rs): `0` when no origin has been assigned. -/
 def Bat.originRow (b : Bat V) (row : Nat) : Nat :=
   match b.origin with
   | none => 0
@@ -52,7 +52,7 @@ theorem originRow_spec (b : Bat V) (row : Nat) :
     (∀ o, b.origin = some o → b.originRow row = o.getD row 0 ∧ b.hasOrigins = true) := by
   refine ⟨fun h => ?_, fun o h => ?_⟩ <;> simp [Bat.originRow, Bat.hasOrigins, h]
 
-/-- `Batch::gather` (batch.rs:898): the sidecar is kept only when it holds a non-zero origin. -/
+/-- `Batch::gather` (batch.rs): the sidecar is kept only when it holds a non-zero origin. -/
 def Bat.gather (b : Bat V) (idx : List Nat) : Bat V :=
   { cols := fun id => (b.cols id).gather idx
     ncols := b.ncols
@@ -113,7 +113,7 @@ def Bat.activeIdx (b : Bat V) : List Nat :=
 
 def Bat.activeLen (b : Bat V) : Nat := b.activeIdx.length
 
-/-- `Batch::into_compacted` (batch.rs:884): a batch without a selection is returned unchanged,
+/-- `Batch::into_compacted` (batch.rs): a batch without a selection is returned unchanged,
 else it is gathered at the selection. -/
 def Bat.intoCompacted (b : Bat V) : Bat V :=
   match b.sel with
@@ -144,7 +144,7 @@ theorem intoCompacted_sel_len (b : Bat V) :
     b.intoCompacted.sel = none ∧ b.intoCompacted.len = b.activeLen := by
   cases hs : b.sel <;> simp [Bat.intoCompacted, hs, Bat.activeLen, Bat.activeIdx, Bat.gather]
 
-/-- `Batch::clone_active_rows_seq_origin` (batch.rs:1170): compact the active rows, then stamp
+/-- `Batch::clone_active_rows_seq_origin` (batch.rs): compact the active rows, then stamp
 row `i` with origin `i`; the sidecar is omitted when `n ≤ 1`. -/
 def Bat.cloneSeq (b : Bat V) : Bat V :=
   let c := b.intoCompacted
@@ -192,7 +192,7 @@ theorem cloneSeq_tag {α : Type} [Inhabited α] (b : Bat V) (rows : List α)
   have := (cloneSeq_spec b).2.2.2 k (List.mem_range.mp hk)
   simp [this.1]
 
-/-! ## `merge_over_input` (batch.rs:944) -/
+/-! ## `merge_over_input` (batch.rs) -/
 
 /-- `is_bound_at(id, _)`: the row argument is ignored; a column is bound unless `Unbound` or
 flagged `value_only`. -/
@@ -201,7 +201,7 @@ def Bat.isBound (b : Bat V) (id : Nat) : Bool :=
   | .unbound => false
   | .vals _ => !b.vo id
 
-/-- `set_column` (batch.rs:1233): installs the column and clears the `value_only` marker. -/
+/-- `set_column` (batch.rs): installs the column and clears the `value_only` marker. -/
 def Bat.setColumn (b : Bat V) (id : Nat) (col : Col V) : Bat V :=
   { b with cols := fun j => if j = id then col else b.cols j,
            vo := fun j => if j = id then false else b.vo j,
@@ -213,7 +213,7 @@ def Bat.mergeOverInput (self input : Bat V) (origins : List Nat) : Bat V :=
   let missing := (List.range input.ncols).filter (fun id => input.isBound id && !self.isBound id)
   missing.foldl (fun out id => out.setColumn id ((input.cols id).gather origins)) self.intoCompacted
 
-/-- `Row::merge` on one slot (row.rs:209): a slot bound in `other` replaces it, anything else
+/-- `Row::merge` on one slot (row.rs): a slot bound in `other` replaces it, anything else
 keeps `self`'s slot (value *and* bound bit). -/
 def mergeCell (inp sub : Option (V × Bool)) : Option (V × Bool) :=
   match sub with
@@ -342,7 +342,7 @@ example : let self : Bat Nat := ⟨fun _ => .vals [7], 1, fun _ => true, 1, none
     (self.mergeOverInput input [0]).cell 0 0 = some (7, false) ∧
     mergeCell (input.cell 0 0) (self.cell 0 0) = some (3, false) := by decide
 
-/-! ## `set_argument_batch` (batch.rs:1603)
+/-! ## `set_argument_batch` (batch.rs)
 
 The operator tree is modelled by what the dispatch does to it: an `Argument` leaf stores the batch,
 `Once` ignores it, every other operator resets its queued state (`emitter.reset()`,
@@ -447,7 +447,7 @@ theorem slots_setArg_idem (compact : B → B) (len : B → Nat) (hid : ∀ x, co
   · left; exact hn
   · right; rw [hn]; exact congrArg some (hit m b)
 
-/-- `ValueHashJoin`'s `per_origin` after the dispatch is `len batch > 1` (batch.rs:1700). -/
+/-- `ValueHashJoin`'s `per_origin` after the dispatch is `len batch > 1` (batch.rs). -/
 theorem setArg_vhj_perOrigin (compact : B → B) (len : B → Nat) (b : B) (st : St) (hv : st.isVhj = true)
     (rs cs : List (OT B)) :
     ∃ st' rs' cs', setArg compact len b (.node st rs cs) = .node st' rs' cs' ∧

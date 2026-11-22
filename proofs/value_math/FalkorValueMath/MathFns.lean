@@ -76,7 +76,7 @@ structure MathOps where
 
 variable (m : MathOps)
 
-/-- `abs` (math.rs:46). -/
+/-- `abs` (math.rs). -/
 def mAbs : V FC → Res
   | .int n => if n = I64MIN then .err "ArgumentError: integer overflow in abs()" else .ok (.int n.natAbs)
   | .float f => .ok (.float (ieeeAbs f))
@@ -107,15 +107,15 @@ def fcGt0 : FC → Bool
 /-- `bool as i64` (`i64::from(b)`). -/
 def b2i (b : Bool) : Int := if b then 1 else 0
 
-/-- `sign` (math.rs:210-219): the Float arm is
-`Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs:214). -/
+/-- `sign` (math.rs): the Float arm is
+`Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs). -/
 def mSign : V FC → Res
   | .int n => .ok (.int (signumI n))
   | .float f => .ok (.int (b2i (fcGt0 f) - b2i (fcLt0 f)))
   | .null => .ok .null
   | _ => .panic
 
-/-- `sqrt` (math.rs:225): an explicit negative check before `f64::sqrt`. -/
+/-- `sqrt` (math.rs): an explicit negative check before `f64::sqrt`. -/
 def mSqrt : V FC → Res
   | .int n => if n < 0 then .ok (.float .nan) else .ok (.float (ieeeSqrt (fcOfInt n)))
   | .float f => if fcGe0 f then .ok (.float (ieeeSqrt f)) else .ok (.float .nan)
@@ -226,7 +226,7 @@ theorem sign_float_agrees_int (n : Int) : mSign (.float (fcOfInt n)) = mSign (.i
     · have : n < 0 := by omega
       simp [h0, hp, this, mSign, fcGt0, fcLt0, b2i, signumI]
 
-/-- **The declared return type holds** (`ret: Integer | Null`, math.rs:209): every
+/-- **The declared return type holds** (`ret: Integer | Null`, math.rs): every
 validated `sign` call returns a value that `Integer | Null` accepts. -/
 theorem sign_ret (v : V FC) (h : validateArgsType (.fixed [numArg]) [v] = none) :
     ∃ r, mSign v = .ok r ∧ Accepts r (.union [.int, .null]) := by
@@ -249,12 +249,12 @@ theorem log_int_nonpos (n : Int) (hn : n ≤ 0) (hz : m.ln .pzero = .ninf) (hneg
   · have : ¬ n > 0 := by omega
     simp [h, this, hneg]
 
-/-! ## `coalesce` (math.rs:314) -/
+/-! ## `coalesce` (math.rs) -/
 
-/-- `OrderedEnum::order` (value.rs:1219): proofs/core's `V.order`. -/
+/-- `OrderedEnum::order` (value.rs): proofs/core's `V.order`. -/
 def order (x : V FC) : Nat := x.order
 
-/-- `compare_value(x, Null).0` (value.rs:1266): no same-variant or Int/Float arm matches
+/-- `compare_value(x, Null).0` (value.rs): no same-variant or Int/Float arm matches
 a `Null` right operand unless `x` is `Null`, so the `(_, Null)` arm compares type
 orders. -/
 def cmpWithNull (x : V FC) : Ordering := compare (order x) (order .null)
@@ -279,7 +279,7 @@ theorem coalesce_spec (args : List (V FC)) :
       have hn : a.isNull = false := by cases a <;> simp_all [V.isNull]
       simp [coalesce, this, hn]
 
-/-! ## `randomUUID` (math.rs:143) -/
+/-! ## `randomUUID` (math.rs) -/
 
 def hi (b : Nat) : Nat := b / 16
 def lo (b : Nat) : Nat := b % 16
@@ -336,7 +336,7 @@ theorem uuid_shape (bs : List Nat) (b6 b8 : Fin 256)
   refine ⟨by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout],
     by simp [uuidLayout], by simp [uuidLayout, hv], ⟨_, hw.1, hw.2, by simp [uuidLayout]⟩⟩
 
-/-! ## `pow` / `^` (math.rs:328) -/
+/-! ## `pow` / `^` (math.rs) -/
 
 /-- `Value::get_numeric` on a numeric value, at class level (`i as f64`). -/
 def numFC : V FC → FC
@@ -347,7 +347,7 @@ def numFC : V FC → FC
 /-- The type error `apply_pow` raises for a non-numeric, non-null operand. -/
 def powMsg (v : V FC) : String := s!"Type mismatch: expected Integer, Float, or Null but was {v.name}"
 
-/-- `apply_pow` (math.rs:328): reject a non-numeric non-null operand
+/-- `apply_pow` (math.rs): reject a non-numeric non-null operand
 (base first), then `null` if either side is null, else `powf` of both operands
 converted to `f64` (C's `pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))`). -/
 def applyPow (powf : FC → FC → FC) (base exponent : V FC) : Res :=
@@ -399,7 +399,7 @@ theorem pow_numeric_unchanged (powf : FC → FC → FC) (a b : V FC)
     applyPow powf a b = .ok (pre2904_applyPow powf a b) := by
   cases a <;> cases b <;> simp_all [applyPow, pre2904_applyPow, V.isNum, V.isNull, numFC]
 
-/-- `pow()` (math.rs:176) declares `Int | Float | Null` arguments, so the function
+/-- `pow()` (math.rs) declares `Int | Float | Null` arguments, so the function
 form never reaches the new error: on its domain it returns `Ok`, and the value
 is the pre-#2904 one. -/
 theorem pow_fn_in_domain (powf : FC → FC → FC) (a b : V FC)

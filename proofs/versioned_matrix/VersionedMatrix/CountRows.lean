@@ -5,7 +5,7 @@ import VersionedMatrix.TensorResize
 
 | here | there |
 | --- | --- |
-| `LayerCount` | `Matrix::count_in_rows` (`matrix.rs:815`): hypothesis here (global: `LayerCount`; for well-formed layers only: `LayerCountOn`), proved from `GrB_mxv` + `GrB_Vector_reduce` in `proofs/graphblas_wrappers` (`countInRows_spec`, linked by `CountLink.vmCountInRows_linked`) |
+| `LayerCount` | `Matrix::count_in_rows` (`matrix.rs`): hypothesis here (global: `LayerCount`; for well-formed layers only: `LayerCountOn`), proved from `GrB_mxv` + `GrB_Vector_reduce` in `proofs/graphblas_wrappers` (`countInRows_spec`, linked by `CountLink.vmCountInRows_linked`) |
 | `vmCountInRows` | `VersionedMatrix::count_in_rows` (`versioned_matrix.rs`, fn `count_in_rows`) |
 | `countPairsInto` | `Tensor::count_pairs_into` (`tensor.rs`, fn `count_pairs_into`) = `self.mt.count_in_rows(dsts)` |
 

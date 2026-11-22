@@ -27,7 +27,7 @@ theorem foldl_del_lookup : ∀ (removes : List Nat) (t : Table) (j : Nat),
       · simp [Table.del, h1, h2]
 
 /-- What `Indexer::commit` leaves for one id: removed ids have no document
-(removes run after adds, `indexer.rs:749`), otherwise an added id has the
+(removes run after adds, `indexer.rs`), otherwise an added id has the
 freshly built document (`ADD_REPLACE`), otherwise the old one. -/
 theorem commit_lookup (t : Table) (build : Nat → Doc) (adds removes : List Nat) (j : Nat) :
     commit t build adds removes j =

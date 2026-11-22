@@ -31,7 +31,7 @@ well-formedness-indexed `LayerCountOn P`, and `proofs/graphblas_wrappers` `Count
 `Matrix::count_in_rows` as the counter (the old `LayerCount`/`vmCountInRows_spec` statements are unchanged).
 
 `TensorSave` models `Encode for Tensor`'s
-fast path (tensor.rs:1472-1561): with `dp`/`dm` empty and no multi-edge id it writes the committed `m`
+fast path (tensor.rs): with `dp`/`dm` empty and no multi-edge id it writes the committed `m`
 and two empty matrices instead of rebuilding. `fast_base_eq` (same pattern and values as the rebuild,
 and the rebuild's `multi` list is empty, from `AllInv`/`BlkInv`), `encPR_eq_encMain` (the earlier
 rebuild is `encMain`), `encode_one_state` (check, write and `edge_count` read one state),
@@ -40,7 +40,7 @@ rebuild is `encMain`), `encode_one_state` (check, write and `edge_count` read on
 fast-path tensors decode as the rebuild (15 byte-identical).
 
 
-Re-target to main 1d15bf713 (#2905): `Tensor::resize` (tensor.rs:823) never
+Re-target to main 1d15bf713 (#2905): `Tensor::resize` (tensor.rs) never
 shrinks; `resizeT` clamps to `max` and keeps every pair state and `me` row:
 `resizeT_eq`, `resizeT_edges` (no entry dropped), `resizeT_allInv`, `resizeT_blkInv`,
 `resizeT_hasMultiEdge`, `resizeT_dims`; accessors `Tensor::nrows`/`ncols`
@@ -52,7 +52,7 @@ Re-target to e8f8a3017 (#3022): `CountRows` — `VersionedMatrix::count_in_rows`
 (`vmCountInRows_spec`: `|m| + |dp| − |dm|` over the selected rows = the effective entries
 there, no underflow, given `dm ⊆ m`), `Tensor::count_pairs_into` (`countPairsInto_spec`).
 
-Re-target to 2c874022a (#2846): `MvccGraph::commit` (mvcc_graph.rs:139) validates the
+Re-target to 2c874022a (#2846): `MvccGraph::commit` (mvcc_graph.rs) validates the
 write version first and rolls back on a refusal (:148-151). `sstep` takes `valid`
 (= `Graph::validate`); `snapshot_isolation`/`reader_view_frozen` hold for every
 `valid`; new `refused_commit_rolls_back` (committed version unchanged, write flag

@@ -6,17 +6,17 @@ import FalkorOptimizer.Basic
 | --- | --- |
 | `XD`, `X` | `ExprIR<Variable>` payloads / trees (variables, parameters, constants, calls, the rest) |
 | `anyX` | a BFS `walk().any(..)` over an expression |
-| `hasParam` | `expr_has_parameter` eliminate_true_filters.rs:75-79 |
-| `subst`, `evX` | `substitute_params` eliminate_true_filters.rs:83-98; a parameter-aware evaluator |
-| `refsVar` | `expr_references_variable` / `subtree_references_variable` references.rs:317-334 (a BFS, by `(id, scope)`) |
-| `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
-| `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
-| `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
-| `isUnnamed`, `attrsEmpty` | `Variable::is_unnamed` ast.rs:231 (`name().is_none()`; `Alias`, `varIsUnnamed`), `rel_attrs_empty` fuse_anonymous_traverse.rs:37-47 (`node_attrs_empty` removed by #2390) |
-| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:78-187 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
-| `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
-| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-92 |
-| `VT`, `visT` | `branch_visible_variables` push_filters_down.rs:99-119 (on the plan tree: `PushPlan.bv`) |
+| `hasParam` | `expr_has_parameter` eliminate_true_filters.rs |
+| `subst`, `evX` | `substitute_params` eliminate_true_filters.rs; a parameter-aware evaluator |
+| `refsVar` | `expr_references_variable` / `subtree_references_variable` references.rs (a BFS, by `(id, scope)`) |
+| `refsVarId` | `references_var` utilize_node_by_id.rs (`Variable ==` is by id only, ast.rs) |
+| `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs |
+| `countVar` | `extract_count_variable` reduce_count.rs |
+| `isUnnamed`, `attrsEmpty` | `Variable::is_unnamed` ast.rs (`name().is_none()`; `Alias`, `varIsUnnamed`), `rel_attrs_empty` fuse_anonymous_traverse.rs (`node_attrs_empty` removed by #2390) |
+| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
+| `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs |
+| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs |
+| `VT`, `visT` | `branch_visible_variables` push_filters_down.rs (on the plan tree: `PushPlan.bv`) |
 -/
 namespace Falkor.Opt
 
@@ -205,7 +205,7 @@ theorem countVar_spec (e : X) (i : Nat) :
 
 /-! ## `fuse_anonymous_traverse` preconditions -/
 
-/-- `Variable::is_unnamed` (ast.rs:231, #3303): an unnamed pattern entity has no name.
+/-- `Variable::is_unnamed` (ast.rs, #3303): an unnamed pattern entity has no name.
 Before #3303 the test was the `_anon` prefix of the name (`is_anon`), which a user name such
 as `_anon_x` also passed. -/
 def isUnnamed (name : Option String) : Bool := name.isNone
@@ -224,12 +224,12 @@ theorem isUnnamed_none : isUnnamed none = true := rfl
 /-- No written name, `_anon…` included, counts as unnamed (#3303). -/
 theorem isUnnamed_some (n : String) : isUnnamed (some n) = false := rfl
 
-/-- `Alias` (ast.rs:87-92): a name the query wrote, or a numbered unnamed entity. -/
+/-- `Alias` (ast.rs): a name the query wrote, or a numbered unnamed entity. -/
 inductive Alias
   | named (n : String)
   | anon (k : Nat)
 
-/-- `Alias::name` (ast.rs:97-102). -/
+/-- `Alias::name` (ast.rs). -/
 def Alias.name : Alias → Option String
   | .named n => some n
   | .anon _ => none
@@ -336,8 +336,8 @@ theorem fusedCT_spec (c : CT) : (fusedCT c).optional = true ∧ { fusedCT c with
 /-! ## `branch_output_variables` -/
 
 /-- `Project.copies` and `Aggregate.projections` hold `(old, new)` pairs
-(binder.rs:2234; project.rs:115 and aggregate.rs:716 write `new_var`). Since
-#3281 `branch_output_variables(node, include_copies)` (push_filters_down.rs:59-92)
+(binder.rs; project.rs and aggregate.rs write `new_var`). Since
+#3281 `branch_output_variables(node, include_copies)` (push_filters_down.rs)
 reads the second component (the slot the copy is written to), and only when
 `include_copies` (the routing sets, :251); `branch_visible_variables` (:99) passes `false`. -/
 inductive OutIR
@@ -390,7 +390,7 @@ theorem pre3281_branchOut_copy_old :
 
 /-! ## `branch_visible_variables` -/
 
-/-- A plan node as `branch_visible_variables` (push_filters_down.rs:99-119) sees it:
+/-- A plan node as `branch_visible_variables` (push_filters_down.rs) sees it:
 `reset` is a `Project`/`Aggregate` with `branch_output_variables(_, false)` =
 `outs`; `semi` a `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer`; `plain` any
 other operator. `own` is `collect_subtree_variables` of the lone node. -/
@@ -439,7 +439,7 @@ def parentPath : List Nat → Option (List Nat)
   | [] => none
   | p => some p.dropLast
 
-/-- `utilize_node_by_id.rs:118` unwraps the parent of every label/all-node scan;
+/-- `utilize_node_by_id.rs` unwraps the parent of every label/all-node scan;
 a scan at the root (the plan of `CALL … YIELD … MATCH (n)`, which validation lets
 through — planner_build `call_then_match_accepted`) has none: the server panics. -/
 theorem root_scan_has_no_parent : parentPath [] = none := rfl

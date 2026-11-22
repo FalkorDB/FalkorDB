@@ -5,15 +5,15 @@ import FalkorTemporal.CalendarLaws
 | here | there |
 | --- | --- |
 | `chk`, `chkMul`, `chkAdd` | `i64::checked_*` |
-| `constructDuration`       | `construct_duration_secs` — `temporal.rs:487` (ends in `check_date_range`) |
-| `decomposeDuration`       | `decompose_duration` — `temporal.rs:549` (`y - 1970` is i32: `toI32`) |
-| `shiftMonths`             | `shift_months` — `value.rs:725`, arithmetic only (shared by `+` and `-`) |
-| `addDur` / `addDurRaw`    | `add_duration_to_timestamp` — `value.rs:701` (checked / the unchecked arithmetic inside it) |
-| `subDur` / `subDurRaw`    | `sub_duration_from_timestamp` — `value.rs:711` |
-| `shiftMonthsR`            | `shift_months` — `value.rs:725`, with its `MAX_DATE_YEAR` guard |
-| `checkDateRange`          | `check_date_range` — `temporal.rs:541` |
-| (not modelled)            | `Add for Value`, `(Duration, Duration)` arm — `value.rs:1048` (`add_slow`): only the `construct_decompose` round-trip it rests on is proved |
-| `timeAddDur` / `timeSubDur` | `Add`/`Sub for Value`, `(Time, Duration)` arms — `add_slow` `value.rs:1069-1070`, `Sub` `:1111-1112` |
+| `constructDuration`       | `construct_duration_secs` — `temporal.rs` (ends in `check_date_range`) |
+| `decomposeDuration`       | `decompose_duration` — `temporal.rs` (`y - 1970` is i32: `toI32`) |
+| `shiftMonths`             | `shift_months` — `value.rs`, arithmetic only (shared by `+` and `-`) |
+| `addDur` / `addDurRaw`    | `add_duration_to_timestamp` — `value.rs` (checked / the unchecked arithmetic inside it) |
+| `subDur` / `subDurRaw`    | `sub_duration_from_timestamp` — `value.rs` |
+| `shiftMonthsR`            | `shift_months` — `value.rs`, with its `MAX_DATE_YEAR` guard |
+| `checkDateRange`          | `check_date_range` — `temporal.rs` |
+| (not modelled)            | `Add for Value`, `(Duration, Duration)` arm — `value.rs` (`add_slow`): only the `construct_decompose` round-trip it rests on is proved |
+| `timeAddDur` / `timeSubDur` | `Add`/`Sub for Value`, `(Time, Duration)` arms — `add_slow` `value.rs`, `Sub` |
 
 Every Temporal value is one `i64` of seconds; a Duration is "the instant
 1970-01-01 + years/months + days/seconds", so its *components* are recovered by
@@ -39,11 +39,11 @@ def MAX_DATE_YEAR : Int := 2147481647
 def minDateDays : Int := daysFromCivil (-MAX_DATE_YEAR) 1 1
 def maxDateDays : Int := daysFromCivil MAX_DATE_YEAR 12 31
 
-/-- `check_date_range` (`temporal.rs:541`): `Err("Date out of range")` ↦ `none`. -/
+/-- `check_date_range` (`temporal.rs`): `Err("Date out of range")` ↦ `none`. -/
 def checkDateRange (ts : Int) : Option Int :=
   if minDateDays ≤ ts / 86400 ∧ ts / 86400 ≤ maxDateDays then some ts else none
 
-/-- `construct_duration_secs` (`temporal.rs:487-526`), `Err` ↦ `none`; ends with `check_date_range`. -/
+/-- `construct_duration_secs` (`temporal.rs`), `Err` ↦ `none`; ends with `check_date_range`. -/
 def constructDuration (years months weeks days hours minutes seconds : Int) : Option Int := do
   let tmo ← chkMul years 12 >>= fun y => chkAdd y months
   let tmo32 ← chk32 tmo
@@ -69,7 +69,7 @@ theorem construct_ym_s (Y M S : Int) (h1 : I64 (Y * 12)) (h2 : I64 (Y * 12 + M))
   simp only [Int.zero_mul, Int.zero_add, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
     chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind, checkDateRange, h7, and_self, ite_true]
 
-/-- `decompose_duration` (`temporal.rs:549-559`) as built in release (i32 wrap). -/
+/-- `decompose_duration` (`temporal.rs`) as built in release (i32 wrap). -/
 def decomposeDuration (dur : Int) : Int × Int × Int :=
   let days := dur / 86400
   let tod := dur % 86400
@@ -113,7 +113,7 @@ theorem construct_decompose (dur : Int) (hd : I64 dur)
 
 /-! ## Date ± Duration -/
 
-/-- `shift_months` (`value.rs:725`, since #2984): move `ts` by whole years and months,
+/-- `shift_months` (`value.rs`, since #2984): move `ts` by whole years and months,
 returning (days since epoch, time of day). A day past the end of the target month rolls
 over into the next month (`2020-03-31` minus one month is `2020-03-02`), as C's `timegm`
 does. Int arithmetic: the i32 `y + years` / `-years` overflow is out of scope here (see
@@ -135,13 +135,13 @@ def shiftMonths (ts years months : Int) : Int × Int :=
     else (adjYear, adjMonth, d)
   (daysFromCivil fy fm fd, tod)
 
-/-- `add_duration_to_timestamp` (`value.rs:701`). -/
+/-- `add_duration_to_timestamp` (`value.rs`). -/
 def addDurRaw (ts dur : Int) : Int :=
   let (years, months, rem) := decomposeDuration dur
   let (days, tod) := shiftMonths ts years months
   days * 86400 + tod + rem
 
-/-- `sub_duration_from_timestamp` (`value.rs:711`, since #2984): the same
+/-- `sub_duration_from_timestamp` (`value.rs`, since #2984): the same
 `shift_months` with the years and months negated, so it rolls over like `addDurRaw`. -/
 def subDurRaw (ts dur : Int) : Int :=
   let (years, months, rem) := decomposeDuration dur
@@ -259,8 +259,8 @@ theorem subDur_eq_shift (ts dur : Int) :
 
 /-! ## Range checks: `check_date_range`, the `shift_months` guard
 
-`MAX_DATE_YEAR = i32::MAX - 2000` (`temporal.rs:523`). `MIN_DATE_DAYS`/`MAX_DATE_DAYS` are
-`days_from_civil(∓MAX_DATE_YEAR, 1 / 12, 1 / 31)` (`temporal.rs:528-529`). -/
+`MAX_DATE_YEAR = i32::MAX - 2000` (`temporal.rs`). `MIN_DATE_DAYS`/`MAX_DATE_DAYS` are
+`days_from_civil(∓MAX_DATE_YEAR, 1 / 12, 1 / 31)` (`temporal.rs`). -/
 
 theorem minDateDays_val : minDateDays = -784352284982 := by decide +kernel
 theorem maxDateDays_val : maxDateDays = 784350846291 := by decide +kernel
@@ -327,7 +327,7 @@ theorem MAX_DATE_YEAR_margin : MAX_DATE_YEAR + 2000 < 2 ^ 31 := by decide
 def adjYear (ts years months : Int) : Int :=
   (civilFromDays (ts / 86400)).1 + years + ((civilFromDays (ts / 86400)).2.1 + months - 1) / 12
 
-/-- `shift_months` (`value.rs:725`, since #2746): the arithmetic above, behind the guard
+/-- `shift_months` (`value.rs`, since #2746): the arithmetic above, behind the guard
 `adj_year.abs() > MAX_DATE_YEAR + 1 → Err("Date out of range")`. -/
 def shiftMonthsR (ts years months : Int) : Option (Int × Int) :=
   if (adjYear ts years months).natAbs > (MAX_DATE_YEAR + 1).toNat then none
@@ -355,13 +355,13 @@ theorem shiftMonthsR_no_wrap (ts years months : Int) (r : Int × Int)
   · cases h
   · unfold I32 MAX_DATE_YEAR at *; omega
 
-/-- `add_duration_to_timestamp` (`value.rs:701`, since #2746): `shift_months`, then
+/-- `add_duration_to_timestamp` (`value.rs`, since #2746): `shift_months`, then
 `check_date_range` on the sum. `decompose_duration` is modelled as total. -/
 def addDur (ts dur : Int) : Option Int :=
   let (years, months, rem) := decomposeDuration dur
   (shiftMonthsR ts years months).bind fun (days, tod) => checkDateRange (days * 86400 + tod + rem)
 
-/-- `sub_duration_from_timestamp` (`value.rs:711`, since #2746). -/
+/-- `sub_duration_from_timestamp` (`value.rs`, since #2746). -/
 def subDur (ts dur : Int) : Option Int :=
   let (years, months, rem) := decomposeDuration dur
   (shiftMonthsR ts (-years) (-months)).bind fun (days, tod) => checkDateRange (days * 86400 + tod - rem)
@@ -458,7 +458,7 @@ theorem neg_days_encoding :
     addDurRaw (dateTs 2020 3 1) ((constructDuration 0 0 0 (-1) 0 0 0).getD 0) = dateTs 2020 3 2 := by
   decide +kernel
 
-/-! ## `Time ± Duration` (`add_slow` `value.rs:1069-1070`, `Sub` `:1111-1112`)
+/-! ## `Time ± Duration` (`add_slow` `value.rs`, `Sub`)
 
 `(t.rem_euclid(86400) ± dur.rem_euclid(86400)).rem_euclid(86400)`. Lean's `%` on `Int`
 with a positive divisor is `rem_euclid`. Both sides lie in `[0, 86400)` and their sum or
@@ -504,11 +504,11 @@ theorem time_normalised :
     timeAddDur 3600 plus1M = 3600 ∧ timeSubDur 3600 plus1M = 3600 := by decide +kernel
 
 /-- #2987: `n * 7` for `n = 2635249153387078803` is out of i64 (it used to wrap to `P5D` in
-release: unchecked `n * 7` at `temporal.rs:391` of 9d3869aa8^), so `checked_mul` returns
+release: unchecked `n * 7` at `temporal.rs` of 9d3869aa8^), so `checked_mul` returns
 `None` and `duration('P…W')` is an error. -/
 theorem week_string_checked_none : chkMul 2635249153387078803 7 = none := by decide
 
-/-! ## Ordering: Date/Time/Duration compare as their `i64` (`compare_value`, `value.rs:1266`), a total order -/
+/-! ## Ordering: Date/Time/Duration compare as their `i64` (`compare_value`, `value.rs`), a total order -/
 
 theorem temporal_order_total (a b : Int) : a ≤ b ∨ b ≤ a := Int.le_total a b
 theorem temporal_order_trans (a b c : Int) (h1 : a ≤ b) (h2 : b ≤ c) : a ≤ c := Int.le_trans h1 h2

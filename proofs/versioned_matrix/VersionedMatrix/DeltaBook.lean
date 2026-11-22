@@ -2,7 +2,7 @@ import VersionedMatrix.Mat
 import VersionedMatrix.RowFilter
 import VersionedMatrix.Policy
 /-
-# `Delta<T>`: one delta layer plus its bookkeeping (`versioned_matrix.rs:301-641`)
+# `Delta<T>`: one delta layer plus its bookkeeping (`versioned_matrix.rs`)
 
 | here | there |
 | --- | --- |

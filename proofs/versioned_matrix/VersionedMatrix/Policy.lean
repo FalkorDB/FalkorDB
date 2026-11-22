@@ -1,5 +1,5 @@
 /-
-# Fold policy (`versioned_matrix.rs:141-201`)
+# Fold policy (`versioned_matrix.rs`)
 
 | here | there |
 | --- | --- |

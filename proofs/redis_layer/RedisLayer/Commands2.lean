@@ -7,16 +7,16 @@ import RedisLayer.GraphCore
 
 | here | there |
 | --- | --- |
-| `validIdent`              | `constraint.rs` `is_valid_identifier` `:19` |
-| `consArgs`, `string2ll`   | `graph_constraint` `:384`, argument parsing `:388-475`; `parse_integer` = `RedisModule_StringToLongLong` = Redis `string2ll` (util.c) |
-| `registerSchema`          | `register_constraint_schema` `:63` |
-| `findStatus`              | `find_status` `:82` |
-| `settle`, `attempt`       | `settle_constraint` `:178`, `attempt_settle` `:284` |
-| `applyCons`, `consWorker` | `apply_constraint` `:599`; `graph_constraint` pool path `:547-585` (#3819) |
-| `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:180` |
-| `copyOut`                 | `copy.rs` `graph_copy` `:27` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
-| `bulkFlow`, `heldReplicate`, `heldRekey`, `bulkArgv`, `discardCreated`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:249-1148` (#3863: `discard_created_graph` `:298`, `HeldArgs::rekey` `:398`, the worker's `key_of_write` `:1048`; #3559 bounded stale retry escalates to `begin_writer_checked`, a refusal is the same failure path) |
-| `getNames`, `getOne`, `asI64`, `asU64` | `config_cmd.rs` `config_get_one` `:57`, `ConfigValue::as_i64/as_u64` `:294-306` |
+| `validIdent`              | `constraint.rs` `is_valid_identifier` |
+| `consArgs`, `string2ll`   | `graph_constraint`, argument parsing; `parse_integer` = `RedisModule_StringToLongLong` = Redis `string2ll` (util.c) |
+| `registerSchema`          | `register_constraint_schema` |
+| `findStatus`              | `find_status` |
+| `settle`, `attempt`       | `settle_constraint`, `attempt_settle` |
+| `applyCons`, `consWorker` | `apply_constraint`; `graph_constraint` pool path (#3819) |
+| `recordShape`             | `record.rs` `record_mut`, `graph_record` |
+| `copyOut`                 | `copy.rs` `graph_copy` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
+| `bulkFlow`, `heldReplicate`, `heldRekey`, `bulkArgv`, `discardCreated`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` (#3863: `discard_created_graph`, `HeldArgs::rekey`, the worker's `key_of_write`; #3559 bounded stale retry escalates to `begin_writer_checked`, a refusal is the same failure path) |
+| `getNames`, `getOne`, `asI64`, `asU64` | `config_cmd.rs` `config_get_one`, `ConfigValue::as_i64/as_u64` |
 -/
 namespace RedisLayer.Commands
 
@@ -188,7 +188,7 @@ inductive Abort | paused | unregistered | notMaster | invalid | stale
   deriving DecidableEq, Repr
 
 /-- `attempt_settle`'s outcome given: nothing pending, the upgrade result, and `commit`'s
-refusal if any (constraint.rs:329, `tg.graph.commit(g_arc)?`). The closure forks under the write
+refusal if any (constraint.rs, `tg.graph.commit(g_arc)?`). The closure forks under the write
 lock, so its version is current: `commit` cannot report `stale` here
 (`QuerySession.current_kept`), but the mapping is total. -/
 def attempt (nothingPending : Bool) (upgrade : Option Abort) (commit : Option Abort := none) :
@@ -201,7 +201,7 @@ def attempt (nothingPending : Bool) (upgrade : Option Abort) (commit : Option Ab
 theorem attempt_nothing (u c : Option Abort) : attempt true u c = none := rfl
 theorem attempt_ok : attempt false none none = none := rfl
 theorem attempt_upgrade_fail (a : Abort) (c : Option Abort) : attempt false (some a) c = some a := rfl
-/-- A refused version is reported as `Invalid`, not flattened to a transient (constraint.rs:316-329: the comment on the mapping, then the `?`):
+/-- A refused version is reported as `Invalid`, not flattened to a transient (constraint.rs: the comment on the mapping, then the `?`):
 the retry loop must not spend its whole budget on a permanent engine fault. -/
 theorem attempt_invalid : attempt false none (some .invalid) = some .invalid := rfl
 theorem attempt_stale : attempt false none (some .stale) = some .stale := rfl
@@ -213,9 +213,9 @@ def settle : List (Option Abort) → Nat → Nat × Bool
   | o :: os, budget =>
     match o with
     | none => (1, true)
-    | some .paused | some .stale =>   -- transient (constraint.rs:215-218)
+    | some .paused | some .stale =>   -- transient (constraint.rs)
       if budget = 0 then (1, false) else let r := settle os (budget - 1); (r.1 + 1, r.2)
-    | some _ => (1, false)   -- unregistered, notMaster, invalid (constraint.rs:254-265): break
+    | some _ => (1, false)   -- unregistered, notMaster, invalid (constraint.rs): break
 
 /-- The loop never makes more than `budget + 1` attempts. -/
 theorem settle_bounded (os : List (Option Abort)) (b : Nat) : (settle os b).1 ≤ b + 1 := by
@@ -397,13 +397,13 @@ def heldReplicate (argv : List String) : Option (String × List String) :=
 theorem heldReplicate_verbatim (c : String) (rest : List String) :
     heldReplicate (c :: rest) = some (c, rest) := rfl
 
-/-- `HeldArgs::rekey` (`:396`, #3863): argument 1 (the graph key) is replaced by `key`. -/
+/-- `HeldArgs::rekey` (, #3863): argument 1 (the graph key) is replaced by `key`. -/
 def heldRekey (argv : List String) (key : String) : List String :=
   match argv with
   | c :: _ :: rest => c :: key :: rest
   | _ => argv
 
-/-- The worker's replicated vector (`:1092-1096`): rekeyed only when `key_of_write`'s `live`
+/-- The worker's replicated vector: rekeyed only when `key_of_write`'s `live`
 differs from the `admitted` key. -/
 def bulkArgv (admitted live : String) (argv : List String) : List String :=
   if live ≠ admitted then heldRekey argv live else argv
@@ -420,7 +420,7 @@ theorem bulkArgv_renamed (a l c k : String) (rest : List String) :
 
 /-- The publish step of `graph_bulk_insert` (`g.commit_index_docs(&mut docs)`, :830 / :952;
 `BulkIndexDocs::publish` before #3307): bulk only adds, so `node_removes`/`edge_removes` are
-empty and `commit_index_docs` (graph.rs:3784, `GQ.commitIndexDocs` in proofs/graph_queries)
+empty and `commit_index_docs` (graph.rs, `GQ.commitIndexDocs` in proofs/graph_queries)
 applies the native index's remainder, then commits each non-empty RediSearch batch.
 Each token already applied its native changes (`apply_index_writes` in
 `process_node_token` :405 / `process_edge_token` :480). -/
@@ -445,7 +445,7 @@ theorem edgeRecords_bound (r : Nat) (rs : List (List (Option Nat))) (out : List 
 def discardOps (name live : List Char) : List String :=
   ["DEL " ++ String.ofList (Telemetry.streamName name), "delete key " ++ String.ofList live]
 
-/-- `discard_created_graph` (`:296`, #3863): `key_of_write` first; `Err` deletes nothing. -/
+/-- `discard_created_graph` (, #3863): `key_of_write` first; `Err` deletes nothing. -/
 def discardCreated (main : Bool) (ks : List Char → Option Nat) (reg : GraphCore.Reg) (g : Nat)
     (name : List Char) : List String :=
   match GraphCore.keyOfWrite main ks reg g name with
@@ -484,11 +484,11 @@ theorem publishOps_nonempty (a b : Bool) :
     ("commit_index" ∈ publishOps a b ↔ a = false) ∧ ("commit_edge_index" ∈ publishOps a b ↔ b = false) := by
   cases a <;> cases b <;> decide
 
-/-- `graph_bulk_insert` outcome (inline path, bulk_insert.rs:828-832; deferred path :964-975): since #2846 the version is
+/-- `graph_bulk_insert` outcome (inline path, bulk_insert.rs; deferred path :964-975): since #2846 the version is
 validated *before* the index documents are published, then committed; a refusal of
 either joins the token error, so a failed `BEGIN` load removes the graph it created
 and no RediSearch document outlives the discarded fork. -/
-/- `keyed` (#3863): the worker's `key_of_write` (`:1026`), asked after escalation and before
+/- `keyed` (#3863): the worker's `key_of_write`, asked after escalation and before
 `validate`; `false` = `Err`, the batch is refused. The inline path is on the main thread, where
 `key_of_write` always answers (`GraphCore.keyOfWrite_main`), so it is `true` there. -/
 def bulkFlow (begin ok : Bool) (valid : Bool := true) (keyed : Bool := true) : List String :=

@@ -3,10 +3,10 @@ import PendingCommit.AttrInv
 # The callers of `set_node_attributes` / `set_relationship_attributes` pass sorted attributes
 
 `Pending::set_*_attributes` documents "`attrs` must be attribute-id-resolved, sorted by id, and
-unique" and checks it only with `debug_assert!` (pending.rs:593, :1025). `AttrInv.stageAll_inv`
+unique" and checks it only with `debug_assert!` (pending.rs). `AttrInv.stageAll_inv`
 takes `Sorted attrs` as its premise. The one production caller is `CreateOp`
-(ops/create.rs:223, :341), which builds each row's list from `build_attr_template`
-(create.rs:55-82):
+(ops/create.rs), which builds each row's list from `build_attr_template`
+(create.rs):
 
 ```rust
 let mut template = [];                              // one entry per distinct attribute id, written order
@@ -15,7 +15,7 @@ let mut order: Vec<usize> = (0..template.len()).collect();
 order.sort_unstable_by_key(|&i| template[i].0);     // ids are distinct, so the order is unique
 for (pos, &i) in order.iter().enumerate() { template[i].1 = pos; }     // pos = #smaller ids
 ...
-let mut out = vec![(0u16, Value::Null); t.len()];                      // (create.rs:157, :312)
+let mut out = vec![(0u16, Value::Null); t.len()];                      // (create.rs)
 for (attr_id, pos, value_node) in t { out[*pos] = (*attr_id, eval(value_node)); }
 ```
 
@@ -33,7 +33,7 @@ properties."), so it is unreachable from Cypher. The effects staging that calls 
 namespace PendingCommit.PA
 open PendingCommit
 
-/-- `pos`: the number of smaller ids (create.rs:77-80). -/
+/-- `pos`: the number of smaller ids (create.rs). -/
 def rank (ids : List Nat) (id : Nat) : Nat := ids.countP (· < id)
 
 theorem rank_cons (x : Nat) (xs : List Nat) (a : Nat) :
@@ -154,7 +154,7 @@ def SortedP {V : Type} (l : List (Nat × V)) : Prop := List.Pairwise (fun a b =>
 /-- A template entry: attribute id, position, value. -/
 abbrev Tpl (V : Type) := List (Nat × Nat × V)
 
-/-- `out = vec![dflt; t.len()]; for (id, pos, v) in t { out[pos] = (id, v) }` (create.rs:157-163). -/
+/-- `out = vec![dflt; t.len()]; for (id, pos, v) in t { out[pos] = (id, v) }` (create.rs). -/
 def placed {V : Type} (dflt : Nat × V) (t : Tpl V) : List (Nat × V) :=
   writeAll (List.replicate t.length dflt) (t.map (fun e => (e.2.1, (e.1, e.2.2))))
 

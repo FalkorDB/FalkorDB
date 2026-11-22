@@ -3,7 +3,7 @@ set_option linter.unusedSimpArgs false
 
 /-!
 # Staged writes (`graph/src/index/falkordb/pending_writes.rs`) and `FalkorDbIndex::apply`
-# (`falkordb_index.rs:516-549`) — #3307's "apply once per unit of work"
+# (`falkordb_index.rs`) — #3307's "apply once per unit of work"
 
 Proven (`writerRecord_eq_sequential`): collapsing a column's staged log with
 `last_write_wins` and applying one `remove_batch` + one `insert_batch` gives **the same tree as
@@ -27,7 +27,7 @@ theorem M_pos : 0 < M := by unfold M; exact Nat.mul_pos W_pos W_pos
 
 theorem enc_eq (k d : Nat) : enc k d = k * W + d := rfl
 
-/-- `IndexWrite` (`pending_writes.rs:24-31`): one staged change of a `(key, id)` tuple in the tree of
+/-- `IndexWrite` (`pending_writes.rs`): one staged change of a `(key, id)` tuple in the tree of
     `kind`. -/
 structure IndexWrite where
   key : Nat
@@ -46,7 +46,7 @@ def KeyKind.rank : KeyKind → Nat
 
 def IndexWrite.rank (w : IndexWrite) : Nat := w.kind.rank
 
-/-- The sort key of `last_write_wins`' `tuple = |w| (w.kind, w.key, w.id)` (`pending_writes.rs:162`),
+/-- The sort key of `last_write_wins`' `tuple = |w| (w.kind, w.key, w.id)` (`pending_writes.rs`),
     as one number: the kind's rank above the tuple's `enc key id` (cow_btree's `enc_lt_iff`, ids
     `< 2^64`). For `key, id < 2^64` its order is the lexicographic order of `(kind, key, id)` and two
     writes share it iff they name one tuple of one tree (`tup_eq_iff`). -/
@@ -71,26 +71,26 @@ theorem tup_cond (w : IndexWrite) (hw : w.key < W ∧ w.id < W) (kd : KeyKind) (
   unfold IndexWrite.tup IndexWrite.rank
   cases hk : w.kind <;> cases kd <;> simp [KeyKind.rank] <;> omega
 
-/-- `IndexChanges` (`pending_writes.rs:33-36`). -/
+/-- `IndexChanges` (`pending_writes.rs`). -/
 structure IndexChanges where
   entity : EntityType
   changes : List (IndexKey × IndexWrite)
 
 namespace IndexChanges
-/-- `new` (`:49-54`). -/
+/-- `new`. -/
 def new (e : EntityType) : IndexChanges := ⟨e, []⟩
-/-- `is_empty` (`:58-60`). -/
+/-- `is_empty`. -/
 def isEmpty (c : IndexChanges) : Bool := c.changes.isEmpty
-/-- `push` (`:90-105`): `for_each_stored_key`, staging one write per key the column stores `v` under
+/-- `push`: `for_each_stored_key`, staging one write per key the column stores `v` under
     (none when there is no such column or it does not index `v`; a list stages one per numeric element). -/
 def push (c : IndexChanges) (ix : FalkorDbIndex) (label attr : String) (v : Value) (id : Nat) (add : Bool) :
     IndexChanges :=
   { c with changes := c.changes ++
       ((ix.storedKeys c.entity label attr v).map (fun kk => ((label, attr), ⟨kk.2, id, kk.1, add⟩))) }
-/-- `remove` (`:56-65`). -/
+/-- `remove`. -/
 def remove (c : IndexChanges) (ix : FalkorDbIndex) (label attr : String) (v : Value) (id : Nat) : IndexChanges :=
   c.push ix label attr v id false
-/-- `add` (`:69-78`). -/
+/-- `add`. -/
 def add (c : IndexChanges) (ix : FalkorDbIndex) (label attr : String) (v : Value) (id : Nat) : IndexChanges :=
   c.push ix label attr v id true
 end IndexChanges
@@ -104,41 +104,41 @@ def pushWrite (m : ColumnWrites) (k : IndexKey) (w : IndexWrite) : ColumnWrites 
   | some _ => hmUpdate m k (fun l => l ++ [w])
   | none => m ++ [(k, [w])]
 
-/-- `PendingIndexWrites` (`pending_writes.rs:107-110`). -/
+/-- `PendingIndexWrites` (`pending_writes.rs`). -/
 structure PendingIndexWrites where
   nodes : ColumnWrites
   edges : ColumnWrites
 
 namespace PendingIndexWrites
 def empty : PendingIndexWrites := ⟨[], []⟩
-/-- `is_empty` (`:115-117`). -/
+/-- `is_empty`. -/
 def isEmpty (p : PendingIndexWrites) : Bool := p.nodes.isEmpty && p.edges.isEmpty
-/-- `drain` (`:121-129`): the entity's columns, leaving that side empty. -/
+/-- `drain`: the entity's columns, leaving that side empty. -/
 def drain (p : PendingIndexWrites) : EntityType → ColumnWrites × PendingIndexWrites
   | .node => (p.nodes, { p with nodes := [] })
   | .relationship => (p.edges, { p with edges := [] })
-/-- `clear` (`:132-135`). -/
+/-- `clear`. -/
 def clear (_p : PendingIndexWrites) : PendingIndexWrites := ⟨[], []⟩
-/-- `extend` (`:138-149`). -/
+/-- `extend`. -/
 def extend (p : PendingIndexWrites) (c : IndexChanges) : PendingIndexWrites :=
   match c.entity with
   | .node => { p with nodes := c.changes.foldl (fun m kw => pushWrite m kw.1 kw.2) p.nodes }
   | .relationship => { p with edges := c.changes.foldl (fun m kw => pushWrite m kw.1 kw.2) p.edges }
 end PendingIndexWrites
 
-/-! ## `last_write_wins` (`pending_writes.rs:158-179`) -/
+/-! ## `last_write_wins` (`pending_writes.rs`) -/
 
 /-- `log.sort_by_key(tuple)`, `tuple = |w| (w.kind, w.key, w.id)` — stable. -/
 def sortLog (log : List IndexWrite) : List IndexWrite := log.mergeSort (fun a b => decide (a.tup ≤ b.tup))
 
-/-- The loop body: keep `w` unless `log[i + 1]` is the same tuple (`:166-172`). -/
+/-- The loop body: keep `w` unless `log[i + 1]` is the same tuple. -/
 def lwwGo : List IndexWrite → List IndexWrite
   | [] => []
   | [w] => [w]
   | w :: w' :: r => if w'.tup = w.tup then lwwGo (w' :: r) else w :: lwwGo (w' :: r)
 
 /-- The tuples of one side of `last_write_wins`' output: each kept write of that side pushes its
-    `(key, id)` onto `side[w.kind]` (`pending_writes.rs:174-178`). -/
+    `(key, id)` onto `side[w.kind]` (`pending_writes.rs`). -/
 def sideTuples (kept : List IndexWrite) (pick : IndexWrite → Bool) : EncodedTuples :=
   ⟨(kept.filter (fun w => pick w && decide (w.kind = .scalar))).map IndexWrite.ent,
    (kept.filter (fun w => pick w && decide (w.kind = .array))).map IndexWrite.ent⟩
@@ -152,7 +152,7 @@ theorem lwwGo_sublist : ∀ (s : List IndexWrite), (lwwGo s).Sublist s
     · exact (lwwGo_sublist (w' :: r)).cons _
     · exact (lwwGo_sublist (w' :: r)).cons₂ _
 
-/-- `last_write_wins(log, removes, adds)`: both outputs cleared first, then filled (`:163-178`).
+/-- `last_write_wins(log, removes, adds)`: both outputs cleared first, then filled.
     Returns `(sorted log, removes, adds)`. -/
 def lastWriteWins (log : List IndexWrite) (_removes _adds : EncodedTuples) :
     List IndexWrite × EncodedTuples × EncodedTuples :=
@@ -425,7 +425,7 @@ theorem mem_seqOps (ops : List (Nat × Bool)) : ∀ (t : List Nat), Sorted t →
 def seqIndex (ix : NumericIndex) (log : List IndexWrite) : NumericIndex :=
   ⟨seqOps ix.tree (kindOps .scalar log), seqOps ix.arrayTree (kindOps .array log)⟩
 
-/-- The `log.retain(..)` of `writer_record` (`falkordb_index.rs:184-189`), `Building` only: keep every
+/-- The `log.retain(..)` of `writer_record` (`falkordb_index.rs`), `Building` only: keep every
     removal, and an addition only for an entity `place` puts below the cursor (`precedes next`);
     `place = None` (an edge this unit deleted) drops it (`is_some_and`). A `Ready` column keeps the
     whole log. `retain` is stable, so the order of the survivors is kept. -/
@@ -438,7 +438,7 @@ def stateLog (state : BuildState) (place : Nat → Option BuildCursor) (log : Li
 theorem stateLog_ready (place : Nat → Option BuildCursor) (log : List IndexWrite) :
     stateLog .ready place log = log := rfl
 
-/-- `IndexColumn::writer_record` (`falkordb_index.rs:177-193`): drop what the state excludes, collapse
+/-- `IndexColumn::writer_record` (`falkordb_index.rs`): drop what the state excludes, collapse
     to each tuple's last change (`last_write_wins`), **remove** what ended removed then **add** what
     ended added, one batched tree op each (per tree). Returns the column and the two (sorted) buffers. -/
 def IndexColumn.writerRecord (c : IndexColumn) (state : BuildState) (log : List IndexWrite)
@@ -450,7 +450,7 @@ def IndexColumn.writerRecord (c : IndexColumn) (state : BuildState) (log : List 
   let (c, adds) := c.addEncoded ad
   (c, removes, adds)
 
-/-- `IndexEntry::writer_record` (`versioned.rs:148-156`): the column's `writer_record` at its state; the
+/-- `IndexEntry::writer_record` (`versioned.rs`): the column's `writer_record` at its state; the
     state itself is unchanged. -/
 def IndexEntry.writerRecord (en : IndexEntry) (log : List IndexWrite) (place : Nat → Option BuildCursor)
     (sc : EncodedTuples × EncodedTuples) : IndexEntry × (EncodedTuples × EncodedTuples) :=
@@ -547,7 +547,7 @@ theorem kindOps_single (key id : Nat) (b : Bool) :
     kindOps .scalar [⟨key, id, .scalar, b⟩] = [(enc key id, b)] := by
   simp [kindOps, ent_eq']
 
-/-- **A dropped addition does not cancel an earlier removal** (`versioned.rs:27-34`, `:96-98`): within
+/-- **A dropped addition does not cancel an earlier removal** (`versioned.rs`): within
     one unit, tuple `t` is removed and then added back for an entity at or above the cursor (as a
     reused edge id's new edge can be); the filter drops the addition *before* the collapse, so the
     removal still applies and the column ends without `t`. -/
@@ -591,7 +591,7 @@ theorem ready_reuse_kept (ix : NumericIndex) (hs : Sorted ix.tree) (ha : Sorted 
 
 /-! ## `FalkorDbIndex::apply_writes` / `apply` -/
 
-/-- One iteration of `apply_writes`' loop (`falkordb_index.rs:543-548`): the column's entry records the
+/-- One iteration of `apply_writes`' loop (`falkordb_index.rs`): the column's entry records the
     log at its state; a column dropped since staging is skipped. `sc` is the unit's one pair of buffers. -/
 def applyStep (place : EntityType → Nat → Option BuildCursor) (e : EntityType)
     (st : FalkorDbIndex × (EncodedTuples × EncodedTuples)) (kl : IndexKey × List IndexWrite) :
@@ -602,12 +602,12 @@ def applyStep (place : EntityType → Nat → Option BuildCursor) (e : EntityTyp
     let r := entry.writerRecord kl.2 (place e) st.2
     (st.1.setColumns e (hmInsert (st.1.columns e) kl.1 r.1), r.2)
 
-/-- `apply_writes` (`falkordb_index.rs:535-549`): one pair of buffers for the whole unit of work. -/
+/-- `apply_writes` (`falkordb_index.rs`): one pair of buffers for the whole unit of work. -/
 def FalkorDbIndex.applyWrites (x : FalkorDbIndex) (place : EntityType → Nat → Option BuildCursor)
     (e : EntityType) (writes : ColumnWrites) : FalkorDbIndex :=
   (writes.foldl (applyStep place e) (x, (EncodedTuples.empty, EncodedTuples.empty))).1
 
-/-- `apply` (`falkordb_index.rs:516-530`): nodes then relationships; leaves `writes` empty. -/
+/-- `apply` (`falkordb_index.rs`): nodes then relationships; leaves `writes` empty. -/
 def FalkorDbIndex.apply (x : FalkorDbIndex) (w : PendingIndexWrites)
     (place : EntityType → Nat → Option BuildCursor) : FalkorDbIndex × PendingIndexWrites :=
   if w.isEmpty then (x, w)
@@ -803,7 +803,7 @@ theorem push_spec (c : IndexChanges) (ix : FalkorDbIndex) (l a : String) (v : Va
 theorem add_remove_spec (c : IndexChanges) (ix : FalkorDbIndex) (l a : String) (v : Value) (id : Nat) :
     c.add ix l a v id = c.push ix l a v id true ∧ c.remove ix l a v id = c.push ix l a v id false := ⟨rfl, rfl⟩
 
-/-- The scenario of the doc comment (`pending_writes.rs:100-105`): `SET n.v = 5` then `DELETE n`
+/-- The scenario of the doc comment (`pending_writes.rs`): `SET n.v = 5` then `DELETE n`
     stages `add (5, n)` then `remove (5, n)`; the collapsed batch leaves the node unindexed. -/
 theorem set_then_delete (place : Nat → Option BuildCursor) (rm ad : EncodedTuples) :
     (IndexColumn.writerRecord (.numeric ⟨[], []⟩) .ready [⟨5, 7, .scalar, true⟩, ⟨5, 7, .scalar, false⟩]

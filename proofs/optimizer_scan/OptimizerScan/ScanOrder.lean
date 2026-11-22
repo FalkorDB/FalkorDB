@@ -11,12 +11,12 @@ only affects cost — it is the modelling gap stated in `OptimizerScan.lean`.
 | here | there |
 | --- | --- |
 | `Hop`, `Hop.holds`         | `IR::CondTraverse { relationship, transposed, .. }` and `CondTraverseOp` reading the relation matrix, or its transpose when `transposed` (`runtime/ops/cond_traverse.rs`) |
-| `Hop.swap`                 | `swap_relationship(rel, rel.to, rel.from)` + `transposed = true`, `select_scan_node.rs:372-389, 1051-1056` |
-| `pick`, `order`            | the greedy hop ordering loop, `select_scan_node.rs:1000-1060` |
+| `Hop.swap`                 | `swap_relationship(rel, rel.to, rel.from)` + `transposed = true`, `select_scan_node.rs` |
+| `pick`, `order`            | the greedy hop ordering loop, `select_scan_node.rs` |
 | `hasAll`                   | label conjunction checked by `NodeByLabelScan` / `get_nodes(labels)` |
-| `reorderLabels`            | `reorder_labels` (stable sort by schema id), `optimizer/reorder_labels.rs:16-47` |
-| `withPrimary`              | `IndexSubject::with_primary_label`, `utilize_index.rs:199-215, 286-309` |
-| `placeFilters`             | re-attachment of inter-CT filters "as soon as their inputs are bound", `select_scan_node.rs:1185-1235` |
+| `reorderLabels`            | `reorder_labels` (stable sort by schema id), `optimizer/reorder_labels.rs` |
+| `withPrimary`              | `IndexSubject::with_primary_label`, `utilize_index.rs` |
+| `placeFilters`             | re-attachment of inter-CT filters "as soon as their inputs are bound", `select_scan_node.rs` |
 -/
 namespace OptimizerScan.ScanOrder
 
@@ -37,7 +37,7 @@ def Hop.holds (E : Store) (σ : Nat → Nat) (h : Hop) : Bool :=
   if h.transposed then E h.rel (σ h.dst) (σ h.src) (σ h.edge)
   else E h.rel (σ h.src) (σ h.dst) (σ h.edge)
 
-/-- `swap_relationship` + flipping `transposed` (`select_scan_node.rs:1051-1056`, `1001-1003`). -/
+/-- `swap_relationship` + flipping `transposed` (`select_scan_node.rs`, `1001-1003`). -/
 def Hop.swap (h : Hop) : Hop :=
   { h with src := h.dst, dst := h.src, transposed := !h.transposed }
 
@@ -77,7 +77,7 @@ theorem run_append (E : Store) (a b : List Op) (rows : List (Nat → Nat)) :
   simp only [run, List.filter_filter, List.all_append]
   congr 1; funext σ; exact Bool.and_comm _ _
 
-/-! ### The greedy ordering (`select_scan_node.rs:1000-1060`) -/
+/-! ### The greedy ordering (`select_scan_node.rs`) -/
 
 /-- Pick the first pending hop with an already-bound endpoint (the Rust loop picks the
 best-scoring such hop; which one is chosen does not matter for soundness, so the model
@@ -90,7 +90,7 @@ def pick (bound : List Nat) : List Hop → Option (Hop × List Hop)
       | some (h', rest) => some (h', h :: rest)
       | none => none
 
-/-- Orient the picked hop to start from its bound endpoint (`select_scan_node.rs:1051-1056`). -/
+/-- Orient the picked hop to start from its bound endpoint (`select_scan_node.rs`). -/
 def orient (bound : List Nat) (h : Hop) : Hop :=
   if h.src ∈ bound then h else h.swap
 
@@ -192,7 +192,7 @@ id cannot change which nodes a `NodeByLabelScan` yields. -/
 theorem hasAll_perm (ls ls' labels : List Nat) (hp : ls.Perm ls') :
     hasAll ls labels = hasAll ls' labels := List.Perm.all_eq hp
 
-/-- Insertion sort by key, stable (`sort_by_key`, `reorder_labels.rs:32`). -/
+/-- Insertion sort by key, stable (`sort_by_key`, `reorder_labels.rs`). -/
 def insertBy (key : Nat → Nat) (x : Nat) : List Nat → List Nat
   | [] => [x]
   | y :: ys => if key x < key y then x :: y :: ys else y :: insertBy key x ys
@@ -247,7 +247,7 @@ theorem primary_split (label : Nat) (ls labels : List Nat) (h : label ∈ ls) :
   simpa [hasAll, withPrimary] using this
 
 
-/-! ### Binding-aware semantics and filter placement (`select_scan_node.rs:979-1235`)
+/-! ### Binding-aware semantics and filter placement (`select_scan_node.rs`)
 
 Generate-and-test hides one thing: a `Filter` evaluated before its variable is bound reads
 Null and drops the row. `runScoped` is the sequential semantics with a bound set `B`: a hop
@@ -285,7 +285,7 @@ theorem runScoped_wellScoped (E : Store) (σ : Nat → Nat) :
     have : vs.all (· ∈ B) = true := List.all_eq_true.mpr (fun v h => by simpa using hv v h)
     rw [this, runScoped_wellScoped E σ B rest hw, Bool.true_and]
 
-/-- Filter placement after each hop (`select_scan_node.rs:1202-1229`): emit the hop, add its
+/-- Filter placement after each hop (`select_scan_node.rs`): emit the hop, add its
 destination and edge to `placed`, then emit every pending filter whose variables are all in
 `placed`. Returns the steps and the filters left over (non-empty ⇒ rewrite abandoned). -/
 def place : List Nat → List Hop → List (List Nat × ((Nat → Nat) → Bool)) →
@@ -336,8 +336,8 @@ theorem place_wellScoped : ∀ (placed B : List Nat) (hs : List Hop) fs,
 /-! #### Salvaged filters: re-attached above the re-ordered hops
 
 When `select_scan_node` discards a planner scan subtree, `filters_of` takes the `Filter`s off its
-spine (`select_scan_node.rs:958`, `:1114`, `:1315`). On a swap they go back *above* the re-ordered
-chain (`:1240-1246`) or above the reversed CondTraverse (`:1156-1176`), never inside the new scan
+spine (`select_scan_node.rs`). On a swap they go back *above* the re-ordered
+chain or above the reversed CondTraverse, never inside the new scan
 (their variable is the old scan endpoint, which the hops now bind). At the top of the chain every
 variable the hops bind is bound, so the result is well-scoped, and by `run_append` the filters
 are applied exactly as before (generate-and-test is a conjunction) — *provided* they read only
@@ -395,7 +395,7 @@ theorem boundAfter_hop : ∀ (B : List Nat) (steps : List Step) (h : Hop), Step.
     · cases he
     · exact boundAfter_hop B rest h hm
 
-/-! #### The seed bound set `initial_bound` (`select_scan_node.rs:983-986`)
+/-! #### The seed bound set `initial_bound` (`select_scan_node.rs`)
 
 `best_node` is bound only by the scan built for it (`make_scan_subtree`, used only when
 `existing_child` is `None`, line 1198). The seed is `{best_node}` without a kept
@@ -418,7 +418,7 @@ theorem initialBound_wellScoped (best : Nat) (child : Option (List Nat)) (B : Li
   | none => intro v hv; simp [initialBound] at hv; subst hv; exact hbest rfl
   | some vs => intro v hv; exact hchild vs rfl v hv
 
-/-! #### The outer subtree beneath the new scan (`select_scan_node.rs:1198-1224`)
+/-! #### The outer subtree beneath the new scan (`select_scan_node.rs`)
 
 When the new scan carries `preserved_argument` (an `Argument` leaf, or a whole outer
 `Unwind`/`Project` subtree that binds none of the chain's variables), the seed also takes the ids

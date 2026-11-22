@@ -3,7 +3,7 @@ set_option linter.unusedSimpArgs false
 set_option linter.unusedVariables false
 
 /-!
-# `relax`'s sequential pair loop is the simultaneous update (`customize.rs:264-310`)
+# `relax`'s sequential pair loop is the simultaneous update (`customize.rs`)
 
 The Rust walks `up(x)` as `i`, then `j > i`, and for each pair `{y, z}` improves the upward arc `y -> z` through
 `x` (`y -> x -> z`) and the downward arc `z -> y` (`z -> x -> y`), one pair after the other. `relaxA`/`relaxM`
@@ -250,7 +250,7 @@ theorem relax_sequential (up : Nat → List Nat) (hgt : ∀ r w, w ∈ up r → 
       obtain ⟨h3, h4, h5⟩ := (covB_pairsOf _ (hs x) a b).1 h
       exact hc ⟨h3, h4, h5, h'⟩
 
-/-! ## The hierarchy as a whole (`Cch`, `customize.rs:324-410`) -/
+/-! ## The hierarchy as a whole (`Cch`, `customize.rs`) -/
 
 /-- `Cch`: the shared topology and the four per-arc arrays. -/
 structure CchM where
@@ -260,7 +260,7 @@ structure CchM where
   um : List (Option Nat)
   dm : List (Option Nat)
 
-/-- `Cch::node_count`, `topology`, and the four accessors (`customize.rs:363-410`; an out-of-range slot is a panic,
+/-- `Cch::node_count`, `topology`, and the four accessors (`customize.rs`; an out-of-range slot is a panic,
     modelled by the default). -/
 def CchM.nodeCount (c : CchM) : Nat := c.topo.nodeCount
 def CchM.topology (c : CchM) : Topo := c.topo

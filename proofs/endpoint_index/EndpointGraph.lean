@@ -11,13 +11,13 @@ What each function does to stores other projects prove is stated as what it pass
 
 | Lean | Rust (origin/main 256ab4d3f) |
 | --- | --- |
-| `Scan`, `scanStep`            | the first pass of `Graph::restore` (`graph.rs:900`): `max_edge_id` and `starts` over `tensor.iter_edges()` (`:932-942`) |
-| `restoreLen`, `restoreStarts` | `len` (`:944-948`), the monotone clamp loop (`:951-955`) |
-| `restoreIndex`                | `EndpointIndex::default()` then `prepare_tiers` (`:958`) then `set` per edge (`:959-962`) |
-| `capOf`, `Restored`           | `node_cap`/`relationship_cap` `next_multiple_of(chunk).max(64)`, `schema_version` (`:970`), `version: 0` (`:1002`), empty indexers/constraints (`:996-1001`), (`:973-974`) |
-| `deletedEdges`, `DE`          | the per-type collection and `all_implicit` of `Graph::delete_implicit_edges` (`:3102`) |
-| `stagedDocs`                  | `index_remove_edge_docs.entry(type_id).or_default().insert(edge_id, (src, dst))` for an indexed type (`:3191`) |
-| `tensorsAfter`, `emptiedPairs`, `clearedPairs` | `Tensor::remove_all` (`:3210`) and the adjacency clearing (`dead_adj_pairs` `:3223`, `check_adj_pairs` `:3225`, the bulk clear `:3267-3279`) |
+| `Scan`, `scanStep`            | the first pass of `Graph::restore` (`graph.rs`): `max_edge_id` and `starts` over `tensor.iter_edges()` |
+| `restoreLen`, `restoreStarts` | `len`, the monotone clamp loop |
+| `restoreIndex`                | `EndpointIndex::default()` then `prepare_tiers` then `set` per edge |
+| `capOf`, `Restored`           | `node_cap`/`relationship_cap` `next_multiple_of(chunk).max(64)`, `schema_version`, `version: 0`, empty indexers/constraints, |
+| `deletedEdges`, `DE`          | the per-type collection and `all_implicit` of `Graph::delete_implicit_edges` |
+| `stagedDocs`                  | `index_remove_edge_docs.entry(type_id).or_default().insert(edge_id, (src, dst))` for an indexed type |
+| `tensorsAfter`, `emptiedPairs`, `clearedPairs` | `Tensor::remove_all` and the adjacency clearing (`dead_adj_pairs`, `check_adj_pairs`, the bulk clear) |
 -/
 namespace Falkor.EndpointIndex
 
@@ -178,7 +178,7 @@ structure Restored where
   constraintsEmpty : Bool
 deriving DecidableEq, Repr
 
-/-- The scalar fields of `Self { .. }` (`graph.rs:969-1010`): `bound`s from `IdSpace::restored(count,
+/-- The scalar fields of `Self { .. }` (`graph.rs`): `bound`s from `IdSpace::restored(count,
 deleted).bound()`, `chunk` is `NODE_CREATION_BUFFER`. `none` is the `next_multiple_of(0)` panic. -/
 def restoredFields (nodeBound relBound chunk labels types : Nat) : Option Restored := do
   let nc ← capOf nodeBound chunk
@@ -237,8 +237,8 @@ structure DE where
   typ : Nat
 deriving DecidableEq, Repr
 
-/-- `all_implicit` (`graph.rs:3102`): per relationship type in order, the edges `collect` finds, as
-`DeletedEdge`s (`:3180`). `N` = `deleted_nodes`, `X` = `explicit_rels`, `T` = the tensors, edges
+/-- `all_implicit` (`graph.rs`): per relationship type in order, the edges `collect` finds, as
+`DeletedEdge`s. `N` = `deleted_nodes`, `X` = `explicit_rels`, `T` = the tensors, edges
 `(edge_id, src, dst)`. No tensors: the early `Ok(Vec::new())`. -/
 def deletedEdges (N X : List Nat) (T : List (List Edge)) : List DE :=
   if T.isEmpty then []
@@ -355,7 +355,7 @@ theorem stagedDocs_mem (isIdx : Nat → Bool) (N X : List Nat) (T : List (List E
   · rintro ⟨hi, E, h1, h2, h3, h4⟩
     exact ⟨⟨i, s, d, t⟩, ⟨(deletedEdges_mem N X T ⟨i, s, d, t⟩).2 ⟨E, h1, h2, h3, h4⟩, hi⟩, rfl, rfl, rfl, rfl⟩
 
-/-- The endpoint index after the clear loop (`clear_edge_endpoint` per collected id, `graph.rs:3209`). -/
+/-- The endpoint index after the clear loop (`clear_edge_endpoint` per collected id, `graph.rs`). -/
 def clearImplicit (ix : Ix) (N X : List Nat) (T : List (List Edge)) : Ix :=
   run ix ((deletedEdges N X T).map fun d => Op.clear d.id)
 

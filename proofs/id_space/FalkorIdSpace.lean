@@ -124,7 +124,7 @@ def ver (sp : IdSpace) : Option IdSpaceError :=
 def resv (r : Except String (List Nat)) : Option (List Nat) := r.toOption
 def ob (sp : IdSpace) : IdSpace := match sp.openBatch 32 with | .ok s => s | .error _ => sp
 
--- Mirrors the Rust unit tests (`id_space.rs:788-1567`), universe N = 32 (`u64::MAX` = 31), ID_LIMIT = 28.
+-- Mirrors the Rust unit tests (`id_space.rs`), universe N = 32 (`u64::MAX` = 31), ID_LIMIT = 28.
 def g0 : IdSpace := ob IdSpace.new
 -- ids_arriving_out_of_order_still_fill_the_range (scaled: 5..10 then 0..5)
 #guard ver ((g0.create 32 28 (set [5,6,7,8,9])).1.create 32 28 (set [0,1,2,3,4])).1 == none

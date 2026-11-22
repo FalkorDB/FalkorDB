@@ -4,11 +4,11 @@ import PlannerBuild.Expr
 
 | here | there |
 | --- | --- |
-| `varsOf`, `scopedVars` | `collect_expr_scoped_variables` optimizer/mod.rs:105-113 (BFS, `(scope_id, id)`) |
-| `singleVarConj`, `singleVarConjL` | `collect_single_variable_conjuncts` optimizer/mod.rs:120-154 and its `walk` :125-153 |
-| `endpointScanScore` | `endpoint_scan_score` optimizer/mod.rs:160-165 |
-| `walkScansTo` | `walk_scans_to_endpoint` optimizer/mod.rs:171-176 |
-| `WI` | what `plan_match` derives from its WHERE: `filter_vars`, `anchor_vars`, `has_pattern_expr` (mod.rs:1119-1124) |
+| `varsOf`, `scopedVars` | `collect_expr_scoped_variables` optimizer/mod.rs (BFS, `(scope_id, id)`) |
+| `singleVarConj`, `singleVarConjL` | `collect_single_variable_conjuncts` optimizer/mod.rs and its `walk` :125-153 |
+| `endpointScanScore` | `endpoint_scan_score` optimizer/mod.rs |
+| `walkScansTo` | `walk_scans_to_endpoint` optimizer/mod.rs |
+| `WI` | what `plan_match` derives from its WHERE: `filter_vars`, `anchor_vars`, `has_pattern_expr` (mod.rs) |
 
 A `HashSet` is modelled by a list (membership is all the planner reads).
 -/
@@ -145,7 +145,7 @@ theorem singleVarConj_and :
       .node .eq [.node (.prop "y") [Ex.v ⟨1, 0⟩], .node (.const (.int 2)) []]]) = [⟨0, 0⟩, ⟨1, 0⟩] := by
   decide
 
-/-- `p.id = length(r)` reads two variables: it anchors nothing (the comment at mod.rs:2012-2013). -/
+/-- `p.id = length(r)` reads two variables: it anchors nothing (the comment at mod.rs). -/
 theorem singleVarConj_two_vars :
     singleVarConj (.node .eq [.node (.prop "id") [Ex.v ⟨0, 0⟩], .node .length [Ex.v ⟨1, 0⟩]]) = [] := by
   decide
@@ -193,7 +193,7 @@ structure WI where
   boundBefore : Bool := false
   single : Bool := false
 
-/-- mod.rs:2008-2022 and the `has_pattern_expr` test of mod.rs:1119-1124. -/
+/-- mod.rs and the `has_pattern_expr` test of mod.rs. -/
 def WI.ofWhere : Option Ex → WI
   | none => {}
   | some f => { fv := scopedVars f, anchors := singleVarConj f, patternWhere := hasPatternExpr f }

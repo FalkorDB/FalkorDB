@@ -4,7 +4,7 @@ import FalkorOpsApply.VhjSep
 
 `Correlated`/`VhjSep` proved the batched idiom equal to the per-row reference *under* a hypothesis
 on the sub-plan (`Separable`/`SepT`).  This file discharges it for the operators the real
-`can_batch` guards admit (`apply.rs:119-133`, `optional.rs:104-106`), by modelling each one's
+`can_batch` guards admit (`apply.rs`, `optional.rs`), by modelling each one's
 batched run on a tagged argument list `List (origin × row)` and proving separability composes
 through the operator tree.
 
@@ -16,35 +16,35 @@ origins instead of requiring them distinct: `DSep b f` says `f` is separable on 
 whose origins are pairwise distinct (`Nodup`).  Only the *argument* of a sub-plan needs distinct
 origins; every operator above it consumes its child's output through a per-row `flatMap` that
 carries each row's origin along (`BatchedResultEmitter`: "gather parent columns + origin per
-result", `batched_result_emitter.rs:28-31`), so the property is stated, and proved, per operator.
+result", `batched_result_emitter.rs`), so the property is stated, and proved, per operator.
 The batches Apply/Optional/SemiApply/OR-apply build are `tag xs 0` (`Correlated.tag`), whose origins
 are distinct (`tag_origins_nodup`), and a per-row Apply hands its sub-plan one row (`Nodup` trivially).
 
 `b : Bool` is the *exactness* index: `Rel true` is list equality, `Rel false` is permutation
 (`Rel`).  Every operator is separable exactly except the fused optional `CondTraverse`, whose
-NULL-padded rows come after the matched rows of its input batch (`cond_traverse.rs:1441-1451`), so
+NULL-padded rows come after the matched rows of its input batch (`cond_traverse.rs`), so
 a sub-plan containing one is separable up to permutation only (issue #3070's family).
 
-## Operator inventory (`build_batch_op`, `runtime.rs:878-1400`) and the combinator modelling it
+## Operator inventory (`build_batch_op`, `runtime.rs`) and the combinator modelling it
 
 | Rust operators | origin handling in the Rust | here |
 | --- | --- | --- |
-| `Argument` | returns the argument batch (`set_argument_batch`, `batch.rs:1603`) | `id` (`Adm.argument`) |
-| `AllNodeScan`/`NodeByLabelScan`, `NodeByIdSeek`, `NodeByLabelAndIdScan`, `NodeBy/EdgeByIndexScan`, `NodeBy/EdgeByFulltextScan`, `NodeBy/EdgeByVectorScan`, `Unwind`, `LoadCsv`, `CondVarLenTraverse`, `AllShortestPaths`, `ExpandInto`, plain `CondTraverse` | all drive `BatchedResultEmitter::emit_lazy` (`batched_result_emitter.rs:714`): the per-row closure sees one parent row, results are `gather`ed with the parent's origin; memo caches (`edge_type_indices`, `all_edges_cache`) are pure | `expandF g c` (`Adm.expand`) |
-| `ProcedureCall` | `pending_origin = batch.origin_row(source_row)`, `push_merged(.., origin)` (`procedure_call.rs:141,268,295`) | `expandF` |
-| `Filter` | `set_selection` on the child batch (`filter.rs:99`), origins untouched | `expandF` with `g x = if p x then [x] else []` |
-| `Project`, `PathBuilder` | per-row origin copy (`project.rs:86,100,111`), in-place `write_column` (`path_builder.rs:180`) | `expandF` with `g x = [h x]` |
-| fused optional `CondTraverse` | matched rows, then ONE NULL-padded batch per seeded child batch (`cond_traverse.rs:1441-1451`) | `optF` (`Adm.optExpand`, permutation only) |
-| `SemiApply`/`AntiSemiApply` | emits the *input* batch with a selection (`semi_apply.rs:109`): outer origins kept; its own tagging is internal (`clone_active_rows_seq_origin`) | `semiF` (equals `expandF` of a filter, `semiF_eq`) |
-| `OrApplyMultiplexer` | same shape over several branches (`or_apply_multiplexer.rs:82-129`) | `orF` (`orF_eq`) |
-| `ValueHashJoin` (per-origin) | build/probe tables keyed by origin, output origin = left row's (`value_hash_join.rs:302,456`) | `vhjF` (`Adm.vhj`) |
-| `Apply` in per-row mode | env keeps the outer origin (`apply.rs:251-253`, `Row::merge` ignores origins); planner-built `Apply`s inside another plan are pattern-comprehension chains ending in `Aggregate` (`planner/mod.rs:1645-1660`), so `can_batch` is false for them | `perRowF` (`Adm.perRow`) |
+| `Argument` | returns the argument batch (`set_argument_batch`, `batch.rs`) | `id` (`Adm.argument`) |
+| `AllNodeScan`/`NodeByLabelScan`, `NodeByIdSeek`, `NodeByLabelAndIdScan`, `NodeBy/EdgeByIndexScan`, `NodeBy/EdgeByFulltextScan`, `NodeBy/EdgeByVectorScan`, `Unwind`, `LoadCsv`, `CondVarLenTraverse`, `AllShortestPaths`, `ExpandInto`, plain `CondTraverse` | all drive `BatchedResultEmitter::emit_lazy` (`batched_result_emitter.rs`): the per-row closure sees one parent row, results are `gather`ed with the parent's origin; memo caches (`edge_type_indices`, `all_edges_cache`) are pure | `expandF g c` (`Adm.expand`) |
+| `ProcedureCall` | `pending_origin = batch.origin_row(source_row)`, `push_merged(.., origin)` (`procedure_call.rs`) | `expandF` |
+| `Filter` | `set_selection` on the child batch (`filter.rs`), origins untouched | `expandF` with `g x = if p x then [x] else []` |
+| `Project`, `PathBuilder` | per-row origin copy (`project.rs`), in-place `write_column` (`path_builder.rs`) | `expandF` with `g x = [h x]` |
+| fused optional `CondTraverse` | matched rows, then ONE NULL-padded batch per seeded child batch (`cond_traverse.rs`) | `optF` (`Adm.optExpand`, permutation only) |
+| `SemiApply`/`AntiSemiApply` | emits the *input* batch with a selection (`semi_apply.rs`): outer origins kept; its own tagging is internal (`clone_active_rows_seq_origin`) | `semiF` (equals `expandF` of a filter, `semiF_eq`) |
+| `OrApplyMultiplexer` | same shape over several branches (`or_apply_multiplexer.rs`) | `orF` (`orF_eq`) |
+| `ValueHashJoin` (per-origin) | build/probe tables keyed by origin, output origin = left row's (`value_hash_join.rs`) | `vhjF` (`Adm.vhj`) |
+| `Apply` in per-row mode | env keeps the outer origin (`apply.rs`, `Row::merge` ignores origins); planner-built `Apply`s inside another plan are pattern-comprehension chains ending in `Aggregate` (`planner/mod.rs`), so `can_batch` is false for them | `perRowF` (`Adm.perRow`) |
 
 NOT separable, with a counterexample theorem each:
 * `Aggregate`, `CartesianProduct`, `Sort`, `Limit`, `Skip`, `Distinct`, `Union`, `Merge`, `Optional`,
   `Apply` (batched): blacklisted by Apply's guard (`applyGuard`); `Correlated.count_not_separable`,
   `limitF_not_separable`.
-* anonymous-bidirectional chained `CondTraverse` (`bidir_dedup`, `cond_traverse.rs:402-440,1092-1106`):
+* anonymous-bidirectional chained `CondTraverse` (`bidir_dedup`, `cond_traverse.rs`):
   `dedupF_not_separable` (**known bug #3106**, confirmed live: see the report; also wrong at top level).
 * the writing operators (`Create`, `Delete`, `Set`, `Remove`, `Commit`, `ForEach`): admitted by the
   guard, rows are not row-local in effect: `RowWrites.bug2738_batched_call_hides_writes` (**known bug
@@ -207,7 +207,7 @@ theorem expandF_dsep (b : Bool) (g : ρ → List ρ) (c : SubPlan ρ ρ) (hc : D
   rw [h4] at h3
   exact Rel.symm h3
 
-/-- Fused optional `CondTraverse` (`cond_traverse.rs:1383-1451`): matched rows of the input
+/-- Fused optional `CondTraverse` (`cond_traverse.rs`): matched rows of the input
 batch first, then ONE NULL-padded batch (`null_pad`) for the rows that matched nothing. -/
 def optF (g : ρ → List ρ) (nf : ρ → ρ) (c : SubPlan ρ ρ) : SubPlan ρ ρ :=
   fun a =>
@@ -236,7 +236,7 @@ theorem optF_dsep (g : ρ → List ρ) (nf : ρ → ρ) (c : SubPlan ρ ρ) (hc 
     DSep false (optF g nf c) :=
   dsep_congr (optF_perm g nf c) (expandF_dsep false _ c hc)
 
-/-- `SemiApplyOp::next` as a sub-plan step (`semi_apply.rs:66-113`): the sub-plan runs once over
+/-- `SemiApplyOp::next` as a sub-plan step (`semi_apply.rs`): the sub-plan runs once over
 the child's rows tagged `0..n` (`clone_active_rows_seq_origin`); a child row passes iff its
 position has a result, xor `is_anti`; the passing rows keep their OWN (outer) origins. -/
 def semiF (anti : Bool) (c sub : SubPlan ρ ρ) : SubPlan ρ ρ :=
@@ -284,7 +284,7 @@ theorem semiF_dsep (b : Bool) (anti : Bool) (c sub : SubPlan ρ ρ) (hc : DSep b
     (hs : DSep false sub) : DSep b (semiF anti c sub) := by
   rw [semiF_eq anti c sub hs]; exact expandF_dsep b _ c hc
 
-/-- `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73-129`): every branch runs over a fresh
+/-- `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs`): every branch runs over a fresh
 tagged copy of the child's rows; a row passes iff some branch has `matched ^^ anti_flag`. -/
 def orF (c : SubPlan ρ ρ) (brs : List (SubPlan ρ ρ × Bool)) : SubPlan ρ ρ :=
   fun a =>
@@ -310,7 +310,7 @@ theorem orF_dsep (b : Bool) (c : SubPlan ρ ρ) (brs : List (SubPlan ρ ρ × Bo
     (hs : ∀ b ∈ brs, DSep false b.1) : DSep b (orF c brs) := by
   rw [orF_eq c brs hs]; exact expandF_dsep b _ c hc
 
-/-- A nested `Apply` in per-row mode (`next_per_row`, `apply.rs:238-337`): each row of the child
+/-- A nested `Apply` in per-row mode (`next_per_row`, `apply.rs`): each row of the child
 runs a fresh one-row sub-plan, results merged into that row, which keeps its outer origin. -/
 def perRowF (mg : ρ → ρ → ρ) (c sub : SubPlan ρ ρ) : SubPlan ρ ρ :=
   fun a => (c a).flatMap (fun p => (single sub p.2).map (fun y => (p.1, mg p.2 y)))
@@ -325,7 +325,7 @@ theorem perRowF_dsep (b : Bool) (mg : ρ → ρ → ρ) (c sub : SubPlan ρ ρ) 
     DSep b (perRowF mg c sub) := by
   rw [perRowF_eq]; exact expandF_dsep b _ c hc
 
-/-- The per-origin `ValueHashJoin` (#3035, `value_hash_join.rs:302,456`): a left row joins the
+/-- The per-origin `ValueHashJoin` (#3035, `value_hash_join.rs`): a left row joins the
 right rows carrying the same origin whose keys match (`m`); the output keeps the left origin. -/
 def joinO (m : ρ → ρ → Bool) (mg : ρ → ρ → ρ) (L R : List (Nat × ρ)) : List (Nat × ρ) :=
   L.flatMap (fun lp => (R.filter (fun rp => rp.1 == lp.1 && m lp.2 rp.2)).map
@@ -486,7 +486,7 @@ theorem Adm.dsep {b : Bool} {f : SubPlan ρ ρ} (h : Adm b f) : DSep b f := by
 
 variable {γ : Type}
 
-/-- **`ApplyOp::next_batched`** (`apply.rs:152-232`): for every admitted sub-plan, batched Apply
+/-- **`ApplyOp::next_batched`** (`apply.rs`): for every admitted sub-plan, batched Apply
 returns the per-row reference's rows (same multiset; in the same order when the plan has no fused
 optional traverse). -/
 theorem applyBatched_rel {b : Bool} (merge : ρ → ρ → γ) {f : SubPlan ρ ρ} (hf : Adm b f)
@@ -509,7 +509,7 @@ theorem applyBatched_eq_ref_adm (merge : ρ → ρ → γ) {f : SubPlan ρ ρ} (
     (xs : List ρ) : applyBatched merge f xs = applyRef merge f xs :=
   applyBatched_rel merge hf xs
 
-/-- `ApplyOp::next` (`apply.rs:343-350`): the `can_batch` dispatch. -/
+/-- `ApplyOp::next` (`apply.rs`): the `can_batch` dispatch. -/
 def applyNext (cb : Bool) (merge : ρ → ρ → γ) (f : SubPlan ρ ρ) (xs : List ρ) : List γ :=
   if cb then applyBatched merge f xs else applyPerRow merge f xs
 
@@ -567,7 +567,7 @@ theorem optAux (merge : ρ → ρ → γ) (nullFill : ρ → γ) (f : SubPlan ρ
     · simp only [h, ite_false, List.nil_append, List.append_assoc]
       exact List.Perm.append_left _ ih
 
-/-- **`OptionalOp::next_batched`** (`optional.rs:125-189`; the Optional arm of `apply.rs:210-229`):
+/-- **`OptionalOp::next_batched`** (`optional.rs`; the Optional arm of `apply.rs`):
 a permutation of the per-row reference for every admitted sub-plan. -/
 theorem optionalBatched_perm_ref_adm {b : Bool} (merge : ρ → ρ → γ) (nullFill : ρ → γ)
     {f : SubPlan ρ ρ} (hf : Adm b f) (xs : List ρ) :
@@ -579,7 +579,7 @@ theorem optionalBatched_perm_ref_adm {b : Bool} (merge : ρ → ρ → γ) (null
   unfold applyRef optionalRef
   exact optAux merge nullFill f xs
 
-/-- `OptionalOp::next` (`optional.rs:292-299`): the `can_batch` dispatch. -/
+/-- `OptionalOp::next` (`optional.rs`): the `can_batch` dispatch. -/
 def optionalNext (cb : Bool) (merge : ρ → ρ → γ) (nullFill : ρ → γ) (f : SubPlan ρ ρ)
     (xs : List ρ) : List γ :=
   if cb then optionalBatched merge nullFill f xs else optionalPerRow merge nullFill f xs
@@ -593,7 +593,7 @@ theorem optionalNext_perm_ref {b : Bool} (cb : Bool) (merge : ρ → ρ → γ) 
   · exact (optionalPerRow_eq_ref merge nullFill f xs) ▸ List.Perm.refl _
   · exact optionalBatched_perm_ref_adm merge nullFill (hadm rfl) xs
 
-/-- **`SemiApplyOp::next`** (`semi_apply.rs:66-113`): (anti-)semi-apply over an admitted
+/-- **`SemiApplyOp::next`** (`semi_apply.rs`): (anti-)semi-apply over an admitted
 sub-plan is exactly the per-row EXISTS filter. -/
 theorem semiBatched_eq_ref_adm {b : Bool} (isAnti : Bool) {f : SubPlan ρ ρ} (hf : Adm b f)
     (xs : List ρ) : semiBatched isAnti f xs = semiRef isAnti f xs := by
@@ -601,7 +601,7 @@ theorem semiBatched_eq_ref_adm {b : Bool} (isAnti : Bool) {f : SubPlan ρ ρ} (h
   exact filter_tag_eq (fun i => (matchedOrigins f xs).contains i ^^ isAnti) _ xs 0
     (fun i x h => by simp only [matchedOrigins, matched_iff_P hf.mono.dsep xs i x h])
 
-/-- **`OrApplyMultiplexerOp::next`** (`or_apply_multiplexer.rs:73-129`): over admitted branches,
+/-- **`OrApplyMultiplexerOp::next`** (`or_apply_multiplexer.rs`): over admitted branches,
 exactly the per-row disjunction. -/
 theorem orApply_eq_ref_adm (branches : List (SubPlan ρ ρ × Bool))
     (hs : ∀ b ∈ branches, ∃ e, Adm e b.1) (xs : List ρ) :
@@ -614,7 +614,7 @@ theorem orApply_eq_ref_adm (branches : List (SubPlan ρ ρ × Bool))
 
 /-! ## The guards and the operator inventory -/
 
-/-- The IR variants of `planner/mod.rs:150-330`, with the fused optional and anonymous-bidirectional
+/-- The IR variants of `planner/mod.rs`, with the fused optional and anonymous-bidirectional
 `CondTraverse` split out (they behave differently). -/
 inductive IRv
   | argument | optional | procedureCall | unwind | create | merge | delete | set | remove
@@ -627,13 +627,13 @@ inductive IRv
   | nestedPlans | union | commit | forEach | createIndex | dropIndex
   deriving DecidableEq, Repr
 
-/-- `ApplyOp::new`'s blacklist (`apply.rs:119-133`). -/
+/-- `ApplyOp::new`'s blacklist (`apply.rs`). -/
 def applyBlacklisted : IRv → Bool
   | .aggregate | .cartesianProduct | .optional | .apply | .merge | .union | .sort | .limit
   | .skip | .distinct => true
   | _ => false
 
-/-- `OptionalOp::new`'s blacklist (`optional.rs:104-106`). -/
+/-- `OptionalOp::new`'s blacklist (`optional.rs`). -/
 def optionalBlacklisted : IRv → Bool
   | .aggregate | .cartesianProduct => true
   | _ => false
@@ -643,7 +643,7 @@ inductive Verdict
   | permOnly       -- `Adm false` only (fused optional traverse)
   | bug (issue : Nat)
   | guarded        -- on Apply's blacklist
-  | mergeOnly      -- appears only under `Merge` (`planner/mod.rs:3487`)
+  | mergeOnly      -- appears only under `Merge` (`planner/mod.rs`)
   | ddl            -- standalone index command, never inside a sub-plan
   deriving DecidableEq, Repr
 
@@ -684,9 +684,9 @@ theorem guard_admits_classified (k : IRv) (h : applyBlacklisted k = false) :
 
 /-! ## What is NOT separable (counterexamples) -/
 
-/-- The anonymous-bidirectional chained `CondTraverse` (`cond_traverse.rs:402-440,1092-1106`),
+/-- The anonymous-bidirectional chained `CondTraverse` (`cond_traverse.rs`),
 KNOWN BUG #3106: a `(source, destination)` pair set shared by every row of the input batch
-(cleared only per batch, `:1473`), keyed by the source column value, never by origin. -/
+(cleared only per batch), keyed by the source column value, never by origin. -/
 def dedupRow (src : Nat) (kd : ρ → Nat) (seen : List (Nat × Nat)) :
     List ρ → List ρ × List (Nat × Nat)
   | [] => ([], seen)

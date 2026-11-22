@@ -3,9 +3,9 @@
 
 There is no `Arc<AtomicRefCell<Graph>>`: a read query holds a published `Arc<Graph>`
 (no borrow at all), a write query owns its fork in `Runtime.fork : RefCell<Option<Graph>>`
-(`runtime.rs:583`, `graph_mut` = `fork.borrow_mut()`, `graph()` = `fork.borrow()`), and the
+(`runtime.rs`, `graph_mut` = `fork.borrow_mut()`, `graph()` = `fork.borrow()`), and the
 commit functions below are still called as `&mut self.runtime.graph_mut()` / `&self.runtime.graph()`
-(`ops/commit.rs:89,139,148`, `runtime.rs:617,633`, `index_ddl.rs`). So the theorems below hold with
+(`ops/commit.rs`, `runtime.rs`, `index_ddl.rs`). So the theorems below hold with
 the borrow word `E` read as the **fork cell's** word (`RuntimeCore.QG.Rt.forkB`): a `RefCell` is
 `!Sync`, so no other thread can have a borrow out; `E` is only the owner's own outstanding borrows
 from its call stack. The index population thread borrows nothing, since it reads a published
@@ -33,10 +33,10 @@ origin/main b97da5a1c/b84473a7f, identical `.rs`):
 
 | function | main's borrows (inside) | e30861ea3 (caller holds) | model |
 | --- | --- | --- | --- |
-| `Pending::commit` (`pending.rs:1226-1367`) | `borrow_mut` per mutation group, each *conditional* on non-empty pending state (`create_nodes`, rel creation, `set_nodes_labels_bulk`, `remove_nodes_labels`, node/rel attrs, deletes, `delete_implicit_edges`), then **unconditional** `g.borrow_mut().apply_index_writes` (main `:1366`), then `enforce_constraints` (`let g = g.borrow()`, main `:1389`) | `&mut self.runtime.graph_mut()` (`ops/commit.rs:89`) | `commitSteps`: optional `mut`s ++ [`mut` apply_index_writes, `rd` enforce_constraints] |
-| `IndexDocs::commit` (`pending.rs:473`), `Pending::commit_deferred_indexes` (`:1676`) | one `let mut g = g.borrow_mut()` held for the body | `&mut self.graph_mut()` (`runtime.rs:617`) | single `mut` |
-| `Pending::end_segment` (`:1717`) | one `g.borrow_mut().roll_id_batches()` (main `:1799`) | `&mut self.runtime.graph_mut()` (`ops/commit.rs:139`) | single `mut` |
-| `set_schema_baseline` (`:523`), `enforce_constraints` (`:1372`), `resync_published_indexes`' `private` (`:1621`), `EffectsBuffer::build{,_index}` (`effects/mod.rs:483,496`), `for_each_record` (`effects/v3/emit.rs:323`), `build_index_buffer` (`:226`) | one `g.borrow()` held for the body | `&self.runtime.graph()` (`ops/commit.rs:116,148`, `runtime.rs:611`, `index_ddl.rs:130`), `&g.borrow()` (`runtime.rs:466`) | single `rd` |
+| `Pending::commit` (`pending.rs`) | `borrow_mut` per mutation group, each *conditional* on non-empty pending state (`create_nodes`, rel creation, `set_nodes_labels_bulk`, `remove_nodes_labels`, node/rel attrs, deletes, `delete_implicit_edges`), then **unconditional** `g.borrow_mut().apply_index_writes` (main), then `enforce_constraints` (`let g = g.borrow()`, main) | `&mut self.runtime.graph_mut()` (`ops/commit.rs`) | `commitSteps`: optional `mut`s ++ [`mut` apply_index_writes, `rd` enforce_constraints] |
+| `IndexDocs::commit` (`pending.rs`), `Pending::commit_deferred_indexes` | one `let mut g = g.borrow_mut()` held for the body | `&mut self.graph_mut()` (`runtime.rs`) | single `mut` |
+| `Pending::end_segment` | one `g.borrow_mut().roll_id_batches()` (main) | `&mut self.runtime.graph_mut()` (`ops/commit.rs`) | single `mut` |
+| `set_schema_baseline`, `enforce_constraints`, `resync_published_indexes`' `private`, `EffectsBuffer::build{,_index}` (`effects/mod.rs`), `for_each_record` (`effects/v3/emit.rs`), `build_index_buffer` | one `g.borrow()` held for the body | `&self.runtime.graph()` (`ops/commit.rs`, `runtime.rs`, `index_ddl.rs`), `&g.borrow()` (`runtime.rs`) | single `rd` |
 
 Within a call no step re-borrows the cell: the functions now take `&mut Graph`/`&Graph`
 and call `Graph` methods (`&mut self`), and the only graph-cell borrows anywhere in

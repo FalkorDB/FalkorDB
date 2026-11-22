@@ -13,8 +13,8 @@ is an `IdCodec` built from `proofs/id_list`'s byte-exact model (`IdListWire.enco
 | --- | --- |
 | `IdT`        | an `IdList` the encoder accepts: segments well-formed, `sum len < 2^32` (the `u32` record count), at most one segment per id |
 | `count`      | `IdList::count` = the total number of ids = the record count that `read_ids` is given |
-| `idEnc`      | `impl EffectEncode<3> for IdList` (`id_list.rs:1200`), bytes as `u8` |
-| `idDec n`    | `read_ids(r, n: u32)` (`id_list.rs:1337`); an `n ≥ 2^32` is not a `u32`, so it is refused |
+| `idEnc`      | `impl EffectEncode<3> for IdList` (`id_list.rs`), bytes as `u8` |
+| `idDec n`    | `read_ids(r, n: u32)` (`id_list.rs`); an `n ≥ 2^32` is not a `u32`, so it is refused |
 
 The only assumption left is `RoaringOK ρ` of `id_list` (the `roaring` crate's serialize /
 deserialize pair, an external library exactly as in `proofs/id_list`); the other two

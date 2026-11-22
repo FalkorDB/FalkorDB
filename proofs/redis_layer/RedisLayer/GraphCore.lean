@@ -4,23 +4,23 @@ import RedisLayer.Resp
 
 | here | there (`origin/main`) |
 | --- | --- |
-| `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:92`, `c_graph_name` `:106`, `c_graph_key` `:121` |
-| `Reg.*`                     | `register_graph` `:142`, `graph_is_registered` `:190`, `rename_graph` `:250`, `graph_free` `:1862` (stream queue: `Telemetry.graphFree`) |
-| `keyOfWrite`                | `key_of_write` `:223` (#3850/#3851) |
-| `modified`                  | `WriteQueryOk::new` `:303` |
-| `sanitise`                  | `ffi::sanitise_error` `:362` |
-| `invalidVersionBytes`       | `reply_invalid_graph_version` `:1038` |
-| `profileDepth`, `profileOps`| `reply_profile` `:936` (all ops, plain depth, since #2390) |
-| `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:636` / `execute_profile` `:722` write detection and `admission.take()` |
-| `writeSteps`                | `try_query_write` `:886`, `finish_write` `:1633`, `abandon_write` `:1668`, `commit_and_replicate` `:1684` |
-| `executeWrite`, `Attempt`   | `execute_query_write` `:793` (retry loop, #3290), `WriteAttempt::from` `:863` |
-| `WTimeout`, `resolveT`, `runBudget` | `try_query_write` `:886` one timeout for all runs (`WriteTimeout` `:870`, #3559) |
-| `loopW`, `escalateNext`, `Run` | `execute_query_write` `:793` bounded retry (#3559), `MAX_STALE_RETRIES` `:847`, `SLOW_STALE_RUN` `:854` |
-| `admitQ`, `dispatch`        | `admit` `:1052`, `query_mut` `:1063` (#3014) |
-| `syncOutcome`, `logsTelemetry` | `query_sync` `:1264` (`log_query`, #3844), `dispatch::logs_telemetry` `dispatch.rs:63`, `profile_sync` `:1501`, `profile_mut` `:1400` |
-| `loopExit`                  | `process_write_queued_query` `:1697` |
-| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1845` |
-| `TG`                        | `ThreadedGraph::new` `:600`, `from_mvcc` `:617` (unbounded write channel since #3014) |
+| `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul`, `c_graph_name`, `c_graph_key` |
+| `Reg.*`                     | `register_graph`, `graph_is_registered`, `rename_graph`, `graph_free` (stream queue: `Telemetry.graphFree`) |
+| `keyOfWrite`                | `key_of_write` (#3850/#3851) |
+| `modified`                  | `WriteQueryOk::new` |
+| `sanitise`                  | `ffi::sanitise_error` |
+| `invalidVersionBytes`       | `reply_invalid_graph_version` |
+| `profileDepth`, `profileOps`| `reply_profile` (all ops, plain depth, since #2390) |
+| `isWrite`, `profileDetect`, `admissionKept` | `execute_query` / `execute_profile` write detection and `admission.take()` |
+| `writeSteps`                | `try_query_write`, `finish_write`, `abandon_write`, `commit_and_replicate` |
+| `executeWrite`, `Attempt`   | `execute_query_write` (retry loop, #3290), `WriteAttempt::from` |
+| `WTimeout`, `resolveT`, `runBudget` | `try_query_write` one timeout for all runs (`WriteTimeout`, #3559) |
+| `loopW`, `escalateNext`, `Run` | `execute_query_write` bounded retry (#3559), `MAX_STALE_RETRIES`, `SLOW_STALE_RUN` |
+| `admitQ`, `dispatch`        | `admit`, `query_mut` (#3014) |
+| `syncOutcome`, `logsTelemetry` | `query_sync` (`log_query`, #3844), `dispatch::logs_telemetry` `dispatch.rs`, `profile_sync`, `profile_mut` |
+| `loopExit`                  | `process_write_queued_query` |
+| `EFFECT_COMMAND`            | `CtxSink::replicate` |
+| `TG`                        | `ThreadedGraph::new`, `from_mvcc` (unbounded write channel since #3014) |
 -/
 namespace RedisLayer.GraphCore
 
@@ -148,9 +148,9 @@ theorem rename_moves (r : Reg) (o n : List Char) (g : Nat) (h : r.get o = some g
     congr 2; congr 1; funext p; simp [Bool.and_comm]
   rw [e, get_filter_self]
 
-/-! ## `key_of_write` (`:223`, #3850/#3851): the key a write is published under
+/-! ## `key_of_write` (, #3850/#3851): the key a write is published under
 
-`ks k` is the graph allocation the keyspace holds at key `k` (`key_holds_graph`, `redis_type.rs:577`,
+`ks k` is the graph allocation the keyspace holds at key `k` (`key_holds_graph`, `redis_type.rs`,
 is `ks k = some g`: TelemetryLoop `keyHolds_iff`). `main` is `is_main_thread()`. The registry
 lookup is `GRAPH_REGISTRY.iter().find(data_ptr = target)`; `'\uFFFD' ∈ admitted` is
 `admitted.contains(char::REPLACEMENT_CHARACTER)` (a lossily decoded, non-UTF-8 key). `none` is
@@ -232,7 +232,7 @@ inductive Step | commit | signal | replicate | warnNoEffects | resync | release 
 def commitSteps (mod : Bool) (hasBuf : Bool) : List Step :=
   [.commit, .signal] ++ (if !mod then [] else if hasBuf then [.replicate] else [.warnNoEffects])
 
-/-- `commit_and_replicate` (graph_core.rs:1617) since #2846: `MvccGraph::commit` validates
+/-- `commit_and_replicate` (graph_core.rs) since #2846: `MvccGraph::commit` validates
 (and since #3657 refuses a stale fork too: `unreachable!` in `current_not_stale`, see
 SearchConcurrency `Mvcc`), and a refusal here is `unreachable!()` — the panic step. The
 argument it rests on: every write query ends its last segment through
@@ -245,7 +245,7 @@ def commitStepsV (valid mod hasBuf : Bool) : Option (List Step) :=
 theorem commitStepsV_valid (mod buf : Bool) : commitStepsV true mod buf = some (commitSteps mod buf) := rfl
 theorem commitStepsV_refused (mod buf : Bool) : commitStepsV false mod buf = none := rfl
 
-/-- `abandon_write` (`:1603`) since #3657: resync the index only if the session's version is
+/-- `abandon_write` since #3657: resync the index only if the session's version is
 current (`version_is_current`: a version still matching, stale or refused at escalation
 published no document), and nothing else: the version is dropped with the runtime, so there
 is no slot to release and nothing to roll back. -/
@@ -304,7 +304,7 @@ bounded retry below escalates, #3559). -/
 inductive Attempt | stale | failed (e : String) | ok
   deriving DecidableEq, Repr
 
-/-- `impl From<String> for WriteAttempt` (`:863`): every other error is `Failed`. -/
+/-- `impl From<String> for WriteAttempt`: every other error is `Failed`. -/
 def Attempt.ofString (e : String) : Attempt := .failed e
 theorem ofString_not_stale (e : String) : Attempt.ofString e ≠ .stale := by simp [Attempt.ofString]
 
@@ -328,8 +328,8 @@ theorem stale_run_silent (w k m b : Bool) :
 
 /-! ### The bounded retry (#3559)
 
-`execute_query_write` (`:793`) counts stale runs; after `MAX_STALE_RETRIES` (`:847`) of them, or
-at once after a stale run that took `SLOW_STALE_RUN` (`:854`, 10 ms) or longer, the next run
+`execute_query_write` counts stale runs; after `MAX_STALE_RETRIES` of them, or
+at once after a stale run that took `SLOW_STALE_RUN` (, 10 ms) or longer, the next run
 begins as a writer (`QuerySession::begin_writer_checked`) instead of a reader
 (`begin_with`). A run is a function of the mode it begins in; a refused
 `begin_writer_checked` is that run's `failed` outcome (`map_err(…)?`). Times are nanoseconds. -/
@@ -471,7 +471,7 @@ theorem loopW_decided (runs : List (Bool → Run)) (hw : ∀ f ∈ runs, (f true
 
 /-! ### One timeout for every run (#3559)
 
-`try_query_write` (`:886`) resolves `WriteTimeout` on the first run only
+`try_query_write` resolves `WriteTimeout` on the first run only
 (`compute_effective_timeout`, here its answer `cfg`) and keeps it for the retries; each run then
 gets what is left since `started` (`spent` ms), or fails with `Query timed out` before forking. -/
 
@@ -549,7 +549,7 @@ def invalidVersionBytes (v : Int) : String :=
 
 theorem invalidVersion_shape : invalidVersionBytes 7 = "*2\r\n-ERR invalid graph version\r\n:7\r\n" := by decide
 
-/-! ## `reply_profile` (`:891-913`)
+/-! ## `reply_profile`
 
 Since #2390 (`d2c42e032`) every plan node is listed, `Commit` included, at its plain
 tree depth — the same rows `GRAPH.EXPLAIN` prints. -/
@@ -600,7 +600,7 @@ def executeQuery (plan : List Op) (writeAllowed : Bool) : QOut :=
 theorem ro_write_rejected (plan : List Op) (h : isWrite plan) : executeQuery plan false = .roError := by
   simp [executeQuery, h]
 
-/-! ## `admit` and `query_mut` dispatch (`:1052`, `:1063-1265`, #3014) -/
+/-! ## `admit` and `query_mut` dispatch (, #3014) -/
 
 /-- `admit`: `QueueSlot::try_acquire(MAX_QUEUED_QUERIES)` (the count after admission), or
 the reply "Max pending queries exceeded" (`none`). Never waits. -/
@@ -629,7 +629,7 @@ theorem capped (s p m : Nat) (h : m ≤ p) : dispatch none s false p m = .maxPen
   simp [dispatch, admitQ]; omega
 
 /-- Which admission slot a job still holds after `execute_query`/`execute_profile`
-(`slot.filter(..)`, `:1171`, `:1434`): only a write keeps it, to carry into the write queue. -/
+(`slot.filter(..)`): only a write keeps it, to carry into the write queue. -/
 def admissionKept (ok isWrite : Bool) : Bool := ok && isWrite
 theorem read_releases_admission (ok : Bool) : admissionKept ok false = false := by simp [admissionKept]
 
@@ -639,7 +639,7 @@ inductive Out | errNoTelemetry | readTelemetry | writeTelemetry | writeErr | pro
   | readUnlogged | writeUnlogged
   deriving DecidableEq
 
-/-- `dispatch::logs_telemetry` (`dispatch.rs:63`, #3844): a query is this node's to log
+/-- `dispatch::logs_telemetry` (`dispatch.rs`, #3844): a query is this node's to log
 unless it came from the master (`REPLICATED`) or from AOF replay (`LOADING`). -/
 def logsTelemetry (replicated loading : Bool) : Bool := !(replicated || loading)
 
@@ -649,7 +649,7 @@ theorem logsTelemetry_iff (r l : Bool) : logsTelemetry r l = true ↔ r = false 
 /-- `query_sync`: read errors return without telemetry; reads log a read entry; writes run
 under `begin_writer` and log a write entry with zero wait, or fail through the divergence
 guard. Since #3844 an entry is enqueued only if `log_query` (`logsTelemetry` of the
-context, `:1287`); the reply is the same either way. -/
+context); the reply is the same either way. -/
 def syncOutcome (readOk isWrite writeOk logQuery : Bool) : Out :=
   if !readOk then .errNoTelemetry
   else if !isWrite then (if logQuery then .readTelemetry else .readUnlogged)
@@ -682,7 +682,7 @@ theorem profile_write_runs_as_write (w : Bool) :
     profileOutcome true .write w = (if w then .writeTelemetry else .writeErr) := rfl
 theorem profile_read_replied (w : Bool) : profileOutcome true .readReplied w = .profileRead := rfl
 
-/-! ## `process_write_queued_query` exit protocol (`:1697`) -/
+/-! ## `process_write_queued_query` exit protocol -/
 
 /-- After `try_recv` finds nothing: release the flag, then return only if the queue is
 still empty or another thread won the flag back; otherwise loop again as owner. -/

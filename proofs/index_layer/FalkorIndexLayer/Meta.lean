@@ -5,12 +5,12 @@ Line numbers are from origin/main (5c7af54f2), located by item name.
 
 | Lean | Rust |
 | --- | --- |
-| `IType` | `IndexType` `mod.rs:97` |
-| `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:108-168` |
-| `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:193`, `Hash::hash` `mod.rs:204` |
-| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:892`) |
-| `Idx` | `Index` `mod.rs:880` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
-| `Idx.*` accessors / mutators | `mod.rs:1053-2252` (each cited below) |
+| `IType` | `IndexType` `mod.rs` |
+| `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs` |
+| `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs`, `Hash::hash` `mod.rs` |
+| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs`) |
+| `Idx` | `Index` `mod.rs` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
+| `Idx.*` accessors / mutators | `mod.rs` (each cited below) |
 
 A Rust `HashMap` is modelled as an association list with unique keys; its
 iteration order is unspecified in Rust, so every theorem below is either
@@ -30,16 +30,16 @@ structure TextOpts where
   stopwords : Option (List String) := none
   deriving DecidableEq, Repr
 
-/-- `PHONETIC_OFF` (`text_index_options.rs:41`): C's code for "phonetic matching off"
+/-- `PHONETIC_OFF` (`text_index_options.rs`): C's code for "phonetic matching off"
 (`INDEX_FIELD_DEFAULT_PHONETIC`), written on every fulltext field C did not enable. -/
 def PHONETIC_OFF : String := "no"
 
-/-- `TextIndexOptions::phonetic_enabled` (`text_index_options.rs:48-52`, #3514): any code but
+/-- `TextIndexOptions::phonetic_enabled` (`text_index_options.rs`, #3514): any code but
 absent, empty or `"no"` turns RediSearch's phonetic flag on. -/
 def TextOpts.phoneticEnabled (o : TextOpts) : Bool :=
   o.phonetic.any fun p => decide (p ≠ "" ∧ p ≠ PHONETIC_OFF)
 
-/-- Mirror of the Rust unit test `phonetic_off_spellings` (`text_index_options.rs:66-74`). -/
+/-- Mirror of the Rust unit test `phonetic_off_spellings` (`text_index_options.rs`). -/
 theorem phoneticEnabled_off_spellings (o : TextOpts) (h : o.phonetic = none ∨ o.phonetic = some ""
     ∨ o.phonetic = some PHONETIC_OFF) : o.phoneticEnabled = false := by
   rcases h with h | h | h <;> simp [TextOpts.phoneticEnabled, h, PHONETIC_OFF]
@@ -72,25 +72,25 @@ structure Field where
   strArr : Option String
   deriving DecidableEq, Repr
 
-/-- `Field::make_arr_names` (`mod.rs:122`). The `name` is a `CString` built from
+/-- `Field::make_arr_names` (`mod.rs`). The `name` is a `CString` built from
 a Rust `String`, so `to_str()` succeeds and `format!` adds no NUL: both
 `CString::new(..).ok()` are `Some`. -/
 def makeArrNames (name : String) (ty : IType) : Option String × Option String :=
   if ty = .range then (some (name ++ ":numeric:arr"), some (name ++ ":string:arr")) else (none, none)
 
-/-- `Field::new` (`mod.rs:138`). -/
+/-- `Field::new` (`mod.rs`). -/
 def Field.new (name : String) (ty : IType) (o : Option TextOpts) : Field :=
   { name, ty, options := o, vopts := none,
     numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
 
-/-- `Field::new_with_vector_options` (`mod.rs:155`). -/
+/-- `Field::new_with_vector_options` (`mod.rs`). -/
 def Field.newVec (name : String) (ty : IType) (v : VecOpts) : Field :=
   { name, ty, options := none, vopts := some v,
     numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
 
-/-- `PartialEq for Field` (`mod.rs:193`): name and type only. -/
+/-- `PartialEq for Field` (`mod.rs`): name and type only. -/
 def Field.beqF (a b : Field) : Bool := a.name == b.name && a.ty == b.ty
-/-- `Hash for Field` (`mod.rs:204`): hashes the name only (`H` = any hasher). -/
+/-- `Hash for Field` (`mod.rs`): hashes the name only (`H` = any hasher). -/
 def Field.hashF (H : String → Nat) (f : Field) : Nat := H f.name
 
 theorem makeArrNames_range (n : String) :
@@ -113,7 +113,7 @@ theorem Field.newVec_spec (n : String) (t : IType) (v : VecOpts) :
   by_cases h : t = .range <;> simp [Field.newVec, makeArrNames, h]
 
 /-- Accessors `options`/`vector_options`/`numeric_arr_name`/`string_arr_name`
-(`mod.rs:171-188`) return the stored components. -/
+(`mod.rs`) return the stored components. -/
 theorem Field.accessors (n : String) (t : IType) (o : Option TextOpts) (v : Option VecOpts)
     (na sa : Option String) :
     let f : Field := ⟨n, t, o, v, na, sa⟩

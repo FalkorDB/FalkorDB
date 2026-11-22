@@ -30,7 +30,7 @@ never read a missing or misaligned column.
 | `buildColumns` | `build_columns` :557 |
 | `tyValue`, `tyString`, `collectTys`/`collectTysL` + `canonTypes` (`DBMS_TYPE_ORDER`), `formatUnion`, `formatUnionStrings` | :613, :646, :705, :717, :729 |
 | `pathNodes`, `pathRels`, `pathSigs` | path.rs `nodes` :29, `relationships` :52, `register` :25 |
-| `EntityType.fmt` | entity_type.rs:26 |
+| `EntityType.fmt` | entity_type.rs |
 -/
 
 namespace ValueMath.Proc
@@ -84,7 +84,7 @@ inductive CStatus where | underConstruction | operational | failed
 inductive EntityType where | node | relationship
   deriving DecidableEq
 
-/-- `Display for EntityType` (entity_type.rs:26). -/
+/-- `Display for EntityType` (entity_type.rs). -/
 def EntityType.fmt : EntityType → String
   | .node => "NODE"
   | .relationship => "RELATIONSHIP"
@@ -430,7 +430,7 @@ theorem typesOfFields_sublist (fs : List Field) :
   split <;> split <;> split <;> simp
 
 /-- `fields[attr]` never panics iff every `field_order` key is in `fields` (the
-`IndexInfo` invariant "field_order mirrors fields.keys()", index/mod.rs:217). -/
+`IndexInfo` invariant "field_order mirrors fields.keys()", index/mod.rs). -/
 theorem typesOf_fold_isSome (fs : List (String × List Field)) (l : List String) (m0 : List (String × V F))
     (h : ∀ a ∈ l, (flookup fs a).isSome) :
     (l.foldlM (fun m a => (flookup fs a).map fun fl =>
@@ -725,7 +725,7 @@ def pathRels : List (V F) → Option (V F)
   | .null :: _ => some .null
   | _ => none
 
-/-- `register` (path.rs:25). -/
+/-- `register` (path.rs). -/
 def pathSigs : List (String × List Ty × Ty) :=
   [("nodes", [.union [.path, .null]], .union [.list .node, .null]),
    ("relationships", [.union [.path, .null]], .union [.list .rel, .null])]

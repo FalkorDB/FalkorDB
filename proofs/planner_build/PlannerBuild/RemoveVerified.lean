@@ -9,10 +9,10 @@ b84473a7f, `graph/src/planner/mod.rs`.
 
 | here | there |
 | --- | --- |
-| `rsRemove`    | the `QueryIR::Remove` arm mod.rs:3212-3218: plans `IR::Remove`, `verified_labels` untouched |
+| `rsRemove`    | the `QueryIR::Remove` arm mod.rs: plans `IR::Remove`, `verified_labels` untouched |
 | `specRemove`  | the fix: drop the removed labels from the variable's verified set |
-| `project`     | `plan_project` mod.rs:2699-2870: the verified set of a variable projected as-is is carried to the new variable (`carried_verified`), everything else dropped |
-| `boundLabelFilters` (PlanMatch2) | mod.rs:2048-2059: a bound endpoint gets a `hasLabels` filter only for `unverified_labels` (:1978-1988) |
+| `project`     | `plan_project` mod.rs: the verified set of a variable projected as-is is carried to the new variable (`carried_verified`), everything else dropped |
+| `boundLabelFilters` (PlanMatch2) | mod.rs: a bound endpoint gets a `hasLabels` filter only for `unverified_labels` (:1978-1988) |
 | `NL`, `removeG`, `projectG` | the node labels (per variable of the current row) in the graph state the next operator reads; REMOVE's effect; WITH renaming |
 
 Property `VerifiedSound st gl`: every label `verified_labels` records for a variable is on
@@ -36,7 +36,7 @@ def VerifiedSound (st : MSt) (gl : NL) : Prop :=
 def removeG (gl : NL) (v : V) (ls : List String) : NL :=
   fun w => if w = v then (gl w).filter (fun l => !ls.contains l) else gl w
 
-/-- mod.rs:3212-3218: the planner state is unchanged. -/
+/-- mod.rs: the planner state is unchanged. -/
 def rsRemove (st : MSt) (_v : V) (_ls : List String) : MSt := st
 
 /-- The fix: `v`'s verified set loses the removed labels. -/

@@ -26,20 +26,20 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 ## Lean ↔ Rust
 | Lean | Rust |
 | --- | --- |
-| `insert`, `insertOne`, `insertFlag`, `insertRet` | `mod.rs:223`, `node.rs:321-379` |
-| `remove`, `removeOne`, `collapse`, `removeRet` | `mod.rs:260-279`, `node.rs:471-490` |
-| `rebalance`, `cws`, `combine` | `node.rs:219`, `:113` (`combine_with_sibling`), `:384` (+ `aos_combine` `:447`) |
-| `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:498-555`, `:180` |
-| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:155-175` (`merge_underfull`), `:563-574` (`merge_underfull_below`) |
-| `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:576`, `:212`, `:585` |
-| `route`, `applyBatch`, `insertBatch` | `node.rs:284-304`, `:259`, `mod.rs:241` |
-| `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:56`, `:90`, `mod.rs:190`, `leaf/mod.rs:50`/`:97`, `:471` |
-| `Cursor.new`/`seek`, `descendLeft`, `advanceLeaf`, `wholeOf` | `cursor.rs:82-116`, `:140`, `:160`, `:129` |
-| `Cursor.next`, `Cursor.nextWith`, `Extract`, `DocExtract`, `TupleExtract` | `cursor.rs:181-207`, `:16-53` |
-| `range`, `rangeWith` | `mod.rs:314` (`range`), `:324` (`point`), `:408` (`range_tuples`) |
-| `firstDocGo`, `firstDoc`, `containsKey`, `minOpt` | `mod.rs:357-400`, `:343`, `node.rs:245` |
-| `heapWalk`, `heapBytes`, `Mem` | `mod.rs:419-442` |
-| `constAssert`, `isReadWidth`, `Cfg.ofAssert` (`Assert.lean`) | the const asserts `mod.rs:151-160`, `:173-182`, `:191-200`; `is_read_width` `mod.rs:88` |
+| `insert`, `insertOne`, `insertFlag`, `insertRet` | `mod.rs`, `node.rs` |
+| `remove`, `removeOne`, `collapse`, `removeRet` | `mod.rs`, `node.rs` |
+| `rebalance`, `cws`, `combine` | `node.rs` (`combine_with_sibling`) (+ `aos_combine`) |
+| `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs`, `node.rs` |
+| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs` (`merge_underfull`) (`merge_underfull_below`) |
+| `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs` |
+| `route`, `applyBatch`, `insertBatch` | `node.rs`, `mod.rs` |
+| `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs`, `mod.rs`, `leaf/mod.rs`/ |
+| `Cursor.new`/`seek`, `descendLeft`, `advanceLeaf`, `wholeOf` | `cursor.rs` |
+| `Cursor.next`, `Cursor.nextWith`, `Extract`, `DocExtract`, `TupleExtract` | `cursor.rs` |
+| `range`, `rangeWith` | `mod.rs` (`range`) (`point`) (`range_tuples`) |
+| `firstDocGo`, `firstDoc`, `containsKey`, `minOpt` | `mod.rs`, `node.rs` |
+| `heapWalk`, `heapBytes`, `Mem` | `mod.rs` |
+| `constAssert`, `isReadWidth`, `Cfg.ofAssert` (`Assert.lean`) | the const asserts `mod.rs`; `is_read_width` `mod.rs` |
 
 ## Proven
 - **Every tree the Rust API can build is well-formed** (`InsertBatchWF.lean`): `Reachable_wf`,

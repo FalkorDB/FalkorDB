@@ -18,12 +18,12 @@ RediSearch LLAPI audit (2026-10-26: C side at `deps/RediSearch@a272834a6`, compa
 | `naRef`                  | refcount of RediSearch's global `NA_rstr` (`src/info/index_error.c:29`), a plain `int` |
 | `idxMem`                 | an index's inverted-index / numeric-tree memory, which ForkGC's child scans unlocked (`src/fork_gc.c:443-456`) |
 
-**Accesses to `naRef` at ea1a6f40c** (all reach `IndexError_Init` `:42` or `IndexError_Clear` `:91`):
+**Accesses to `naRef` at ea1a6f40c** (all reach `IndexError_Init` or `IndexError_Clear`):
 * `RediSearch_CreateIndex` (`api:47-78`, takes no RediSearch lock) from `Index::create_rs_index`
-  (`graph/src/index/mod.rs:1101`), GIL held on every path: `{gil, indexer}`.
+  (`graph/src/index/mod.rs`), GIL held on every path: `{gil, indexer}`.
 * `RediSearch_CreateField` (`api:167-242`, RWLOCK W): `{gil, indexer, rsGlobal}`.
 * `RediSearch_DropIndex` (`api:80-92`, RWLOCK W) from `SpecHandle::drop` on `graph_free`'s
-  spawned thread (`src/graph_core.rs:1794`): `{rsGlobal}`.
+  spawned thread (`src/graph_core.rs`): `{rsGlobal}`.
 * `RediSearch_IndexRelease` dropping the last ref (`api:99-101`, no lock) from
   `OwnedIndex::drop` on a reader after a concurrent drop: `{}`.
 At a272834a6 (FalkorDB/RediSearch#29) errors borrow `NA_rstr`: none of these touch it.
@@ -32,8 +32,8 @@ At a272834a6 (FalkorDB/RediSearch#29) errors borrow `NA_rstr`: none of these tou
 * ForkGC: `RM_Fork` under the GIL only (`fork_gc.c:1050-1065`): `{gil}`.
 * Writer commit `Indexer::commit` → `IndexAddDocument` (`api:648-688`, RWLOCK W + spec W):
   `{gil, graphW, indexer, rsGlobal, rsSpec}`.
-* Background population `populate_index_batch` (`graph/src/graph/graph.rs:594` `populate_index_batch`,
-  the "Deliberately no global lock" comment at `:618`) → `IndexAddDocument`: `{indexer, rsGlobal, rsSpec}`.
+* Background population `populate_index_batch` (`graph/src/graph/graph.rs` `populate_index_batch`,
+  the "Deliberately no global lock" comment at) → `IndexAddDocument`: `{indexer, rsGlobal, rsSpec}`.
 -/
 
 namespace SC.Guarded

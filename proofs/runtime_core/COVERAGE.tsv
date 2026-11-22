@@ -25,7 +25,6 @@ graph/src/runtime/runtime.rs	children_to_recurse	787	PROVEN	RunBatch.childrenToR
 graph/src/runtime/runtime.rs	run_nested_plan	813	PROVEN	Plan.runNested: runNested_spec
 graph/src/runtime/runtime.rs	run_batch	845	PROVEN	RunBatch.runBatch_eq_rec, RunBatch.runBatch_ok_single
 graph/src/runtime/runtime.rs	build_batch_op	878	PROVEN	Plan.buildOp/popOrOnce/popOrArgument: buildOp_spec; RunBatch.runBatch_eq_rec
-graph/src/runtime/runtime.rs	evaluate_id_filter	1444	PROVEN	reused: proofs/optimizer_scan OptimizerScan.IdSeek.fold_some, go_eq_fold, seek_sound, empty_graph_seek_none, seek_eq_pre2979 (#3394: no range on a graph with no nodes; #2979: initial max = node_id_bound - 1)
 graph/src/runtime/runtime.rs	set_pending_node_attr	1517	PROVEN	RelAccessors.setPendingAttr: setPendingAttr_spec
 graph/src/runtime/runtime.rs	set_pending_relationship_attr	1536	PROVEN	RelAccessors.setPendingAttr (rel tables): setPendingAttr_spec
 graph/src/runtime/runtime.rs	memo_lookup	1553	PROVEN	Accessors.memoLookup_ok
@@ -37,7 +36,6 @@ graph/src/runtime/runtime.rs	get_node_attribute_no_delete_check	1625	CONDITIONAL
 graph/src/runtime/runtime.rs	get_relationship_attribute_no_delete_check	1639	PROVEN	RelAccessors.relNoDelete: relNoDelete_eq, relNoDelete_spec
 graph/src/runtime/runtime.rs	get_relationship_attribute	1656	PROVEN	RelAccessors.getRelAttribute: getRelAttribute_eq; Discharge.getRelAttribute_discharged (hName proved: Discharge.hName_of_reach, from the model of the name-table fns getOrCreate/nmInsert and the u16 id read; copied from graph_queries Attrs)
 graph/src/runtime/runtime.rs	materialize_node_property	1688	PROVEN	RelAccessors.materializeNodeProp: materializeNodeProp_eq; Discharge.materializeNodeProp_discharged (hbg proved: Discharge.hbg_rfl, get_node_attributes_by_idx is the per-id read)
-graph/src/runtime/runtime.rs	materialize_node_property_values	1702	PROVEN	Accessors.materialize_eq; Discharge.materialize_discharged (hbg proved: Discharge.hbg_rfl)
 graph/src/runtime/runtime.rs	materialize_relationship_property	1750	PROVEN	RelAccessors.materializeRelProp: materializeRelProp_eq; Discharge.materializeRelProp_discharged (hName: Discharge.hName_of_reach, hbg: Discharge.hbg_rfl)
 graph/src/runtime/runtime.rs	materialize_relationship_property_values	1762	PROVEN	RelAccessors.materializeRel: materializeRel_eq; Discharge.materializeRel_discharged (hName: Discharge.hName_of_reach, hbg: Discharge.hbg_rfl)
 graph/src/runtime/runtime.rs	node_differs_from_committed	1812	PROVEN	Accessors.differs_spec, not_differs_labels (guard false ⇒ get_node_labels = committed labels), not_differs_attrs (⇒ get_node_attrs = committed all-attrs), reads_differ_imp_differs; differs_overapprox (sufficient, not exact; #3464); Pending side proofs/pending_commit PC.nodeHasChanges_spec
@@ -53,45 +51,15 @@ graph/src/runtime/runtime.rs	get_node_indegree	1965	PROVEN	Accessors.degree_exac
 graph/src/runtime/runtime.rs	get_node_indegree_by_type	1982	PROVEN	Accessors.degree_exact (endp = dst)
 graph/src/runtime/runtime.rs	get_node_outdegree	2000	PROVEN	Accessors.degree_exact (endp = src, types = [])
 graph/src/runtime/runtime.rs	get_node_outdegree_by_type	2017	PROVEN	Accessors.degree_exact (endp = src)
-graph/src/runtime/runtime.rs	map_to_index_options	2042	PROVEN	Misc.vectorOptions/fulltextUnknown/phonetic: vector_requires_dimension, vector_requires_similarity, vector_similarity_lowered (#3094), vector_unknown_similarity_refused, vector_similarity_known (PR #3257), vector_negative_refused, natOpt_ok, fulltextUnknown_none_iff, phonetic_codes (other fulltext keys are direct type matches)
-graph/src/runtime/ops/mod.rs	drain_pending	127	PROVEN	Misc.drainPending_spec
 graph/src/runtime/ops/mod.rs	edge_already_used	155	PROVEN	Misc.edgeAlreadyUsed_iff
-graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	60	PROVEN	reused: proofs/columnar Gather.GI.newL + LawfulWith.new_ok (trait decl): gather_spec
-graph/src/runtime/ops/batched_result_emitter.rs	push_into	67	PROVEN	reused: proofs/columnar Gather.GI.push + LawfulWith.push_ok (trait decl): gather_spec
-graph/src/runtime/ops/batched_result_emitter.rs	finish	75	PROVEN	reused: proofs/columnar Gather.GI.finish + LawfulWith.finish_ok (trait decl): gather_spec, specFinish_get
-graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	87	PROVEN	reused: proofs/columnar Gather.giNode/giIds newL: giNode_lawful, gather_node
-graph/src/runtime/ops/batched_result_emitter.rs	push_into	94	PROVEN	reused: proofs/columnar Gather.giNode/giIds push: giNode_lawful, gather_node
-graph/src/runtime/ops/batched_result_emitter.rs	finish	102	PROVEN	reused: proofs/columnar Gather.giNode/giIds finish: giNode_lawful, gather_node
-graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	118	PROVEN	reused: proofs/columnar Gather.giRel/giIds newL: giRel_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	push_into	125	PROVEN	reused: proofs/columnar Gather.giRel/giIds push: giRel_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	finish	133	PROVEN	reused: proofs/columnar Gather.giRel/giIds finish: giRel_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	157	PROVEN	reused: proofs/columnar Gather.giScoredN newL: giScoredN_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	push_into	170	PROVEN	reused: proofs/columnar Gather.giScoredN push: giScoredN_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	finish	182	PROVEN	reused: proofs/columnar Gather.giScoredN finish: giScoredN_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	199	PROVEN	reused: proofs/columnar Gather.giScoredR newL: giScoredR_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	push_into	211	PROVEN	reused: proofs/columnar Gather.giScoredR push: giScoredR_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	finish	223	PROVEN	reused: proofs/columnar Gather.giScoredR finish: giScoredR_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	264	PROVEN	reused: proofs/columnar Gather.giEdge newL: giEdge_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	push_into	281	PROVEN	reused: proofs/columnar Gather.giEdge push: giEdge_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	finish	299	PROVEN	reused: proofs/columnar Gather.giEdge finish: giEdge_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	346	PROVEN	reused: proofs/columnar Gather.giVarLen newL: giVarLen_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	push_into	368	PROVEN	reused: proofs/columnar Gather.giVarLen push: giVarLen_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	finish	387	PROVEN	reused: proofs/columnar Gather.giVarLen finish: giVarLen_lawful
-graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	412	PROVEN	reused: proofs/columnar Gather.giValue newL: giValue_lawful, gather_value
-graph/src/runtime/ops/batched_result_emitter.rs	push_into	419	PROVEN	reused: proofs/columnar Gather.giValue push: giValue_lawful, gather_value
-graph/src/runtime/ops/batched_result_emitter.rs	finish	427	PROVEN	reused: proofs/columnar Gather.giValue finish: giValue_lawful, gather_value
 graph/src/runtime/ops/batched_result_emitter.rs	one	458	PROVEN	Emitter.RowIter.one; reused: proofs/columnar Gather.RowIter.one: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Emitter.RowIter.spread; reused: proofs/columnar Gather.RowIter.spread: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Emitter.RowIter.many; reused: proofs/columnar Gather.RowIter.many: rowIter_spec
-graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Emitter.next_none, next_some
-graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter.initCeiling_pos, initCeiling_cases
 graph/src/runtime/ops/batched_result_emitter.rs	seed	577	PROVEN	Emitter.seed, remaining_seed, drive_flatten
 graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs; reused: proofs/columnar Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
 graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	output = packed (row,item) pairs; gather not modelled; reused: proofs/columnar Emitter batch_rows_active (gather never panics), finishLen_eq
-graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter.refill_none, refill_some
 graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
 graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
-graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	reused: proofs/columnar Gather.emBatch: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)

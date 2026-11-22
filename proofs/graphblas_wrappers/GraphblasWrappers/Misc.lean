@@ -8,14 +8,14 @@ import GraphblasWrappers.RowIter
 
 namespace GBW
 
-/-! ## `Matrix::grown` (matrix.rs:742) and `resize` (tensor.rs:821)
+/-! ## `Matrix::grown` (matrix.rs) and `resize` (tensor.rs)
 
-`grown` asserts `nrows ≥ r0 && ncols ≥ c0` (matrix.rs:748-751) — it cannot shrink,
-because `GrB_Matrix_resize` on smaller dims drops entries. `Tensor::resize` (tensor.rs:821) never shrinks: it clamps each target to
+`grown` asserts `nrows ≥ r0 && ncols ≥ c0` (matrix.rs) — it cannot shrink,
+because `GrB_Matrix_resize` on smaller dims drops entries. `Tensor::resize` (tensor.rs) never shrinks: it clamps each target to
 `max(target, current)` (:832-833) and re-emits each layer with `grown`, whose
 precondition therefore always holds (`resize_clamp_grownOk`). -/
 
-/-- The `grown` precondition (matrix.rs:748-751). -/
+/-- The `grown` precondition (matrix.rs). -/
 def grownOk (r0 c0 nrows ncols : Nat) : Bool := decide (nrows ≥ r0 ∧ ncols ≥ c0)
 
 /-- The assert fires (returns `false`) exactly on a shrink of either dimension —
@@ -25,7 +25,7 @@ theorem grown_rejects_shrink (r0 c0 nrows ncols : Nat) :
   simp only [grownOk, decide_eq_false_iff_not]
   omega
 
-/-- `Tensor::resize` on main (tensor.rs:832-833): the clamped dims always
+/-- `Tensor::resize` on main (tensor.rs): the clamped dims always
 satisfy `grown`'s precondition, so the assert never fires and nothing is
 dropped. -/
 theorem resize_clamp_grownOk (r0 c0 nrows ncols : Nat) :
@@ -37,7 +37,7 @@ theorem resize_clamp_grownOk (r0 c0 nrows ncols : Nat) :
 theorem resize_clamp_not_shrink (r0 c0 nrows ncols : Nat) :
     ¬ (max nrows r0 < r0 ∨ max ncols c0 < c0) := by omega
 
-/-! ## `Vector::Iter` (vector.rs:601-658): the cursor state machine
+/-! ## `Vector::Iter` (vector.rs): the cursor state machine
 
 `Iter::new` attaches and calls `GxB_Vector_Iterator_seek(0)` (`depleted` iff that returns
 `GxB_EXHAUSTED`, :619-625); `next` returns `None` once `depleted`, otherwise reads
@@ -61,10 +61,10 @@ structure VIter where
 /-- `GxB_*_Iterator_next` / `seek` report `EXHAUSTED` iff no entry is left at `pos`. -/
 def cExhausted (es : List α) (pos : Nat) : Bool := decide (es.length ≤ pos)
 
-/-- `Iter::new`: `seek(0)`, `depleted := (info == GxB_EXHAUSTED)` (vector.rs:619-625). -/
+/-- `Iter::new`: `seek(0)`, `depleted := (info == GxB_EXHAUSTED)` (vector.rs). -/
 def VIter.new (es : List α) : VIter := ⟨0, cExhausted es 0⟩
 
-/-- `Iterator::next` (vector.rs:632 for `bool`, :647 for `u64`): `getIndex`/`get` at the
+/-- `Iterator::next` (vector.rs for `bool`, :647 for `u64`): `getIndex`/`get` at the
 cursor, then `GxB_Vector_Iterator_next` and `depleted := EXHAUSTED`. -/
 def VIter.next (es : List α) (s : VIter) : Option α × VIter :=
   if s.depleted then (none, s)
@@ -153,7 +153,7 @@ theorem VIter.drain_new_count [DecidableEq α] (es : List α) (x : α) :
   rw [VIter.drain_new]
 end VecIter
 
-/-! ## `Tensor::iter` multi-edge expansion (tensor.rs:1794) / `EdgeIds`
+/-! ## `Tensor::iter` multi-edge expansion (tensor.rs) / `EdgeIds`
 
 `Iter::next` yields the inline id of a single-edge pair, or every id of a
 `MULTI_EDGE` pair's `me` row (ascending), buffered and drained one at a time
@@ -168,13 +168,13 @@ inductive PairEdges where
   | multi (ids : List Nat)
 deriving Repr
 
-/-- Expand one pair to its edge ids — `EdgeIds` (tensor.rs:1702). -/
+/-- Expand one pair to its edge ids — `EdgeIds` (tensor.rs). -/
 def expand : PairEdges → List Nat
   | .single id => [id]
   | .multi ids => ids
 
 /-- `Iter::next` streamed over the base pairs: the inline id, or the buffered
-`me` row, for each pair in turn (tensor.rs:1794-1852). -/
+`me` row, for each pair in turn (tensor.rs). -/
 def iterExpand : List PairEdges → List Nat
   | [] => []
   | p :: rest => expand p ++ iterExpand rest
@@ -195,14 +195,14 @@ theorem iterExpand_length (ps : List PairEdges) :
   | cons p r ih => simp [iterExpand, ih, List.length_append]
 
 /-- A single-edge graph (`me` empty everywhere) iterates as one id per pair —
-the allocation-free common case (tensor.rs:1292 `iter_edges` doc). -/
+the allocation-free common case (tensor.rs `iter_edges` doc). -/
 theorem iterExpand_all_single (ids : List Nat) :
     iterExpand (ids.map .single) = ids := by
   induction ids with
   | nil => rfl
   | cons i r ih => simp [iterExpand, expand, ih]
 
-/-! ### `Tensor::iter_edges` (tensor.rs:1292): singles first, then every `me` id
+/-! ### `Tensor::iter_edges` (tensor.rs): singles first, then every `me` id
 
 Unlike `Iter::next` above, `iter_edges` does **not** stream pair by pair: it filters the
 `MULTI_EDGE` sentinels out of the forward adjacency (`fwd_iter(..).filter(id != MULTI_EDGE)`,

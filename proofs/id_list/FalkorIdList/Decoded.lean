@@ -1,7 +1,7 @@
 import FalkorIdList.Wire
 /-! # Pushing onto a decoded `IdList` keeps every id in order
 
-`from_segments` (`id_list.rs:1183`) adopts decoded segments verbatim and
+`from_segments` (`id_list.rs`) adopts decoded segments verbatim and
 starts the run *after* all of them. `Inv` (the builder's
 invariant) need not hold there — the last decoded segment may be a range outside
 the run — so this file carries a second invariant, `DInv`, for "the run is empty

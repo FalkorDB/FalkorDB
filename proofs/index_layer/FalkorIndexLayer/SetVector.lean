@@ -1,6 +1,6 @@
 import FalkorIndexLayer.IndexM
 /-
-# `Document::set`, vector arm (`graph/src/index/mod.rs:731-744`)
+# `Document::set`, vector arm (`graph/src/index/mod.rs`)
 
 ```rust
 if field.ty == IndexType::Vector {
@@ -29,7 +29,7 @@ W5-idx-2's no-options shape); kept as the earlier behaviour.
 -/
 namespace IndexLayer.Meta
 
-/-- The vector arm of `Document::set` (mod.rs:730-744), literally. -/
+/-- The vector arm of `Document::set` (mod.rs), literally. -/
 def setVector (f : Field) (vec : Option Nat) : Option Nat :=
   if f.ty = .vector then
     match vec with

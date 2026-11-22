@@ -26,23 +26,23 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 
 | Lean (`Model.lean`) | Rust |
 | --- | --- |
-| `tagEnc`, `escaped`, `hexDigit` | `mod.rs:566` `tag_encode_lower` |
-| `hexEncode`, `leBytes`, `nodeKey` | `mod.rs:582` `hex_encode_into`, `Document::new` `mod.rs:658` |
-| `hexNibble`, `hexDecode`, `fromLe`, `decodeId` | `mod.rs:592` `hex_nibble`, `mod.rs:602` `decode_id` |
-| `edgeKey` | `Document::new_edge` `mod.rs:685`, `decode_triple` `mod.rs:613`, `delete_edge_document` `mod.rs:1957` |
-| `intLosesPrecision` | `mod.rs:1382` `int_loses_f64_precision` |
-| `setRange`, `docOf` | `Document::set` `mod.rs:721` (Range field arm), field names `mod.rs:122` |
-| `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:736-748` (dimension guard) |
-| `valueToNumeric` | `mod.rs:1368` |
-| `buildNumRange` | `mod.rs:1387` `build_numeric_range_node` |
-| `buildStrRange` | `mod.rs:1430` `build_string_range_node` |
-| `buildEq`, `buildQ` | `mod.rs:1488` `build_query_node` |
-| `indexHit` | `Index::query` `mod.rs:1702` (null node ⇒ empty iterator) |
-| `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,256,253,302` |
-| `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:315 build_op_query` |
-| `Table.add/del`, `commit` | `add_document` `mod.rs:1918` (ADD_REPLACE), `delete_document` `mod.rs:1940`, `Indexer::commit` `indexer.rs:749` |
-| `Slots.inc/dec/bump/countFor` | `mod.rs:2122/2140/1053/2162`, `indexer.rs:661-737` |
-| `TextOpts.phoneticEnabled`, `PHONETIC_OFF` (`Meta.lean`) | `TextIndexOptions::phonetic_enabled` `text_index_options.rs:48`, `PHONETIC_OFF` `:41`; used by `register_fields` `mod.rs:1260` |
+| `tagEnc`, `escaped`, `hexDigit` | `mod.rs` `tag_encode_lower` |
+| `hexEncode`, `leBytes`, `nodeKey` | `mod.rs` `hex_encode_into`, `Document::new` `mod.rs` |
+| `hexNibble`, `hexDecode`, `fromLe`, `decodeId` | `mod.rs` `hex_nibble`, `mod.rs` `decode_id` |
+| `edgeKey` | `Document::new_edge` `mod.rs`, `decode_triple` `mod.rs`, `delete_edge_document` `mod.rs` |
+| `intLosesPrecision` | `mod.rs` `int_loses_f64_precision` |
+| `setRange`, `docOf` | `Document::set` `mod.rs` (Range field arm), field names `mod.rs` |
+| `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs` (dimension guard) |
+| `valueToNumeric` | `mod.rs` |
+| `buildNumRange` | `mod.rs` `build_numeric_range_node` |
+| `buildStrRange` | `mod.rs` `build_string_range_node` |
+| `buildEq`, `buildQ` | `mod.rs` `build_query_node` |
+| `indexHit` | `Index::query` `mod.rs` (null node ⇒ empty iterator) |
+| `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs` |
+| `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs build_op_query` |
+| `Table.add/del`, `commit` | `add_document` `mod.rs` (ADD_REPLACE), `delete_document` `mod.rs`, `Indexer::commit` `indexer.rs` |
+| `Slots.inc/dec/bump/countFor` | `mod.rs/2140/1053/2162`, `indexer.rs` |
+| `TextOpts.phoneticEnabled`, `PHONETIC_OFF` (`Meta.lean`) | `TextIndexOptions::phonetic_enabled` `text_index_options.rs`, `PHONETIC_OFF`; used by `register_fields` `mod.rs` |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
 Axiomatised boundary. `rsMatch`/`rsStore` state the documented LLAPI
@@ -86,30 +86,30 @@ without and with the index, on Rust (port 18300) and C (port 18301). The C
 module is `bin/macos-arm64v8-release`. Output is shown as full scan → index
 scan.
 
-1. `bug_folded_temporal_constant` (`utilize_index.rs:895-912` (`is_non_indexable_subexpr`) plus `node_by_index_scan.rs:253`).
+1. `bug_folded_temporal_constant` (`utilize_index.rs` (`is_non_indexable_subexpr`) plus `node_by_index_scan.rs`).
    - Query: `MATCH (n:L) WHERE n.v = date('2020-01-01')`, and also `(n:L {v: date(..)})`, `n.v > date(..)`, and edges.
    - Rust returns **every** node of the label: `['date']` → `['date','int']`. C: `['date']`.
    - Cause: the constant is folded to `Constant(Date)`, which `is_non_indexable_subexpr` treats as indexable, so the filter is dropped. The runtime then refuses the index and falls back to a label scan.
    - Fix: keep the filter for any non-scalar `Constant`, or treat an index-refused fallback as "filter required".
-2. `bug_point_equality` (`mod.rs:1697`; `node_by_index_scan.rs:256` says Point is indexable).
+2. `bug_point_equality` (`mod.rs`; `node_by_index_scan.rs` says Point is indexable).
    - Query: `n.v = point({latitude:1.0, longitude:2.0})`.
    - Rust: `['p']` → `[]`. C: `['p']`.
    - Fix: add a Point `Equal` arm (a geo node with radius 0 plus the kept filter), or mark Point not indexable for `Equal`.
-3. `bug_in_list_drops_item` (`node_by_index_scan.rs:226-231`, the `keep` filter of the `InList` arm).
+3. `bug_in_list_drops_item` (`node_by_index_scan.rs`, the `keep` filter of the `InList` arm).
    - Query: `n.v IN [date('2020-01-01'), 2]`.
    - Rust: `['date','int']` → `['int']`. C: `['date','int']`.
    - Fix: if any item is dropped, fall back to a label scan (the filter is already kept).
-4. `bug_multilabel_and` / `bug_multilabel_or` (`utilize_index.rs:503-535`, `mod.rs:1587,1603`).
+4. `bug_multilabel_and` / `bug_multilabel_or` (`utilize_index.rs`, `mod.rs`).
    - Setup: `(n:A:B)`, with A indexing x and B indexing y.
    - `WHERE n.x = 1 AND n.y = 2` → `[]`. `WHERE n.y = 2 OR n.x = 1` loses rows. `{x:1, y:2}` → `[]`.
    - C returns the rows.
    - Fix: merge only conjuncts and disjuncts whose label matches the first one. Leave the rest in the post-filter, and bail on OR.
-7. `bug_string_range_order` / `_gt`, `tagEnc_not_monotone` (`mod.rs:565` used by `mod.rs:1457`).
+7. `bug_string_range_order` / `_gt`, `tagEnc_not_monotone` (`mod.rs` used by `mod.rs`).
    - The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong in both directions.
    - `n.v < 'JohnA'` with `'John Smith'` stored: `['js']` → `[]`. `n.v > 'a!'` with `'a b'` stored: `[]` → `['ab']`.
    - C is also wrong, differently (it does not encode). Batch runs show C's string range index is much worse.
    - Fix: use an order-preserving escape. For example, map bytes b ≤ 0x20 to `0x21 0x21+b`, shift `!` itself, and so on. Or keep the filter for string ranges.
-8. `bug_bool_eq_int` (`mod.rs:760,1360`).
+8. `bug_bool_eq_int` (`mod.rs`).
    - Query: `n.v = 1` also returns `v = true`, and `n.v = true` returns `v = 1`: `['int']` → `['bool','int']`.
    - C has the same bug.
 10. `bug_empty_string_not_indexed`: `n.v = ''` → `[]`, and `n.v < 'a'` misses `''`. C has the same bug. Fix: an INDEXEMPTY equivalent, or a sentinel encoding for the empty string.
@@ -165,7 +165,7 @@ New modules, all `sorry`-free:
   size heuristic picks, `merge_batch` fast paths = slow path = `merge_sorted`, plus
   `partition_point`, gallop, `pack_branches`/`build_root`/`from_sorted`/`insert_batch`.
 
-NEW CONFIRMED BUG 13 (`index/mod.rs:1412,1438,1496,1508,1566,1627`, `queryField` /
+NEW CONFIRMED BUG 13 (`index/mod.rs`, `queryField` /
 `IndexerM.bug_range_after_fulltext`): `build_query_node` targets
 `self.fields.get(key).and_then(|f| f.first())` — the attribute's *first* field whatever its
 type. After `CREATE FULLTEXT INDEX FOR (n:L) ON (n.s)` then `CREATE INDEX FOR (n:L) ON (n.s)`,
@@ -182,7 +182,7 @@ unsupported-language check, so `createRsIndex_lang_err` is false (`createRsIndex
 ## `SetVector`
 `Document::set` adds a `VecF32` only if
 `vector_options.is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`
-(`mod.rs:730-744`). `SetVector.lean`: `setVector_sound` (key property: for any options and value, a vector add
+(`mod.rs`). `SetVector.lean`: `setVector_sound` (key property: for any options and value, a vector add
 carries the field's own non-zero dimension), `setVector_good`, `setVector_wrong_dim`,
 `setVector_noparams`, `setVector_has_params` / `setVector_none_of_noparams` (link to
 `registerOne`: an add only ever targets a field registered *with* params), `setVector_sub_pre`.
@@ -194,7 +194,7 @@ holds `docOf` of every entity: a vector cannot make RediSearch reject the docume
 (`docLeBytes_spec`: the assert passes iff the doc fits; `docLeBytes_lossless`), the D-wide page
 (`aos_roundtripD`, `aosMergeD_spec`, `docLayoutD_spec`, `aosBuildD_length`, `fromPairsD_roundtrip`
 for every `DOC_BYTES ∈ {1, 2, 4, 8}`) and proves it is the width-8 model at 8 (`aosD8_*`, `fromPairsD8`).
-`is_read_width` (`cow_btree/mod.rs:88`, `LeafBytes.isReadWidth`) gates `DOC_BYTES` in the const asserts:
+`is_read_width` (`cow_btree/mod.rs`, `LeafBytes.isReadWidth`) gates `DOC_BYTES` in the const asserts:
 `readWidth_admitted` (`read_width` loads exactly `w` bytes on
 every admitted width), `isReadWidth_upto16`, `docBytesAssert_iff`, `admitted_doc_read`,
 `admitted_fromPairs_roundtrip`, `docBytesAssert_rejects_3` (the old and new asserts differ on exactly 3/5/6/7), and
@@ -205,7 +205,7 @@ tree-level contents theorems (`Leaf.fromSorted_contents`, `Leaf.insertBatch_cont
 
 ## `create_index` bumps the generation
 `indexer.rs` adds `bump_id` at the end of `create_index` when the
-label already had an entry (`indexer.rs:357-359`, after every fallible step).
+label already had an entry (`indexer.rs`, after every fallible step).
 `IndexerM.build` ends with `regen` (`Env.regenTo` is the next `NEXT_INDEX_ID`):
 `createIndex_regen` (the stored entry has
 id = generation = `regenTo`, current pending 0, and total pending is conserved: every earlier
@@ -215,8 +215,8 @@ bumped). The protocol-level consequence (an OPERATIONAL index never misses a fie
 `SC.Tickets.main_operational_complete` in `proofs/search_concurrency`.
 
 ## Phonetic option
-`TextIndexOptions::phonetic_enabled` (`text_index_options.rs:48`) is what `register_fields` asks
-(`mod.rs:1245`): C's `"no"` (`PHONETIC_OFF`, written on every fulltext field C did not enable) is off,
+`TextIndexOptions::phonetic_enabled` (`text_index_options.rs`) is what `register_fields` asks
+(`mod.rs`): C's `"no"` (`PHONETIC_OFF`, written on every fulltext field C did not enable) is off,
 like absent and empty. Modelled as `Meta.TextOpts.phoneticEnabled`; `registerOne_text` is stated on it.
 `phoneticEnabled_off_spellings` (the Rust unit test), `phoneticEnabled_code`, `phoneticEnabled_iff_ne_no`,
 `fixed3514_phonetic_no_is_off`. The RDB side is in `proofs/redis_layer` (`SerialSchema.decField`).
@@ -225,22 +225,22 @@ like absent and empty. Modelled as `Meta.TextOpts.phoneticEnabled`; `registerOne
 Two open bugs the proofs missed, each a stated property and a counterexample
 matching the live repro (ports 6640 Rust / 6641 C):
 - #3166 (`IndexGaps.lean`). `Idx.rsStop` records the stopwords the RediSearch spec was
-  created with (`mod.rs:1119-1133`); `register_fields` never changes them. Property
+  created with (`mod.rs`); `register_fields` never changes them. Property
   `StopwordsAgree` / `CreateIndexKeepsStopwords`: what `db.indexes()` reports is what
   RediSearch applies. `bug3166_stopwords_not_applied`, `bug3166_violates`: a range index
   first, then a fulltext index with `stopwords: ['router']` only registers the field on
-  the existing spec (`indexer.rs:300-313`) and records `['router']` (`:341-343`); Rust
+  the existing spec (`indexer.rs`) and records `['router']`; Rust
   matches 'router' (1 row), C does not (0). `createIndex_fresh_stopwords_agree`: the
   new-label path agrees.
 - #2781 (`EdgeResync.lean`). The edge arm of `resync_published_indexes`
-  (`pending.rs:1872-1880`) with `commit_edge_index_locked`'s re-resolved key
-  (`graph.rs:3988-4063`), documents keyed by `(src, dst, id)`. Property
+  (`pending.rs`) with `commit_edge_index_locked`'s re-resolved key
+  (`graph.rs`), documents keyed by `(src, dst, id)`. Property
   `RollbackRestoresEdgeIndex`. `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored`:
   the orphan `(c, d, 0)` survives beside `(a, b, 0)`, as in the live index scan.
   `resyncEdgesFixed_restores` proves the fix (delete the private key when endpoints changed).
 
 ## Vector queries and `InList`
-`Graph::vector_query_nodes`/`_edges` gate vector queries on `is_operational` (`graph.rs:4408,4476`):
+`Graph::vector_query_nodes`/`_edges` gate vector queries on `is_operational` (`graph.rs`):
 `gated3581_requires_operational`, `gated3581_i3382_refused`, `vectorQueryGuarded_eq_isOperational`
 (`Ixr.vectorQuery` itself has no gate: `Property VectorQueryRequiresOperational` / `VectorQueryComplete`;
 historical `pre3581_vector_query_ignores_operational`, `pre3581_partial_answer`).

@@ -2,16 +2,15 @@
 # Module load: configuration table and event handlers (`src/module_init.rs`, `src/lib.rs`)
 
 Load-time configuration has one source: `graph_init`
-(`module_init.rs:139`) collects the arguments (`to_string_lossy`) and calls
-`config::apply_module_args`, refusing the load (`Status::Err`) on any error
-(`:163-168`); `lib.rs` sets `module_args_as_configuration: false`, so redismodule-rs no
+(`module_init.rs`) collects the arguments (`to_string_lossy`) and calls
+`config::apply_module_args`, refusing the load (`Status::Err`) on any error; `lib.rs` sets `module_args_as_configuration: false`, so redismodule-rs no
 longer reads them. That function is modelled in `LoadArgs.lean`; `rust_c_same_accept` proves it
 accepts exactly what C's `Config_Init` accepts, for arguments with no embedded NUL, no leading
 whitespace in a value and no Rust-only name, given `FsOk` (`File::create` agrees with
 `access(W_OK)`); `error_applies_nothing` is a separate property (a refused load applies nothing). `graph_init`'s own
 work here is "args → `apply_module_args` → `Err` ⇒ `Status::Err`" (`graphInitArgs`).
 
-`table` (the `redis_module!` `configurations:` list, `lib.rs:97-116`) still registers the
+`table` (the `redis_module!` `configurations:` list, `lib.rs`) still registers the
 `graph.*` redis.conf configs; its defaults are checked below.
 
 The earlier module-argument handling (`module_args_as_configuration: true`, redismodule-rs
@@ -32,7 +31,7 @@ def documented : List String :=
 inductive Kind | i64 (dflt lo hi : Int) | str (dflt : String) | bool (dflt : Bool)
   deriving DecidableEq, Repr
 
-/-- `redis_module!` `configurations:` (`lib.rs:97-116`): the `graph.*` redis.conf configs.
+/-- `redis_module!` `configurations:` (`lib.rs`): the `graph.*` redis.conf configs.
 `VKEY_MAX_ENTITY_COUNT` is `0..i64::MAX` since #3419 (`8621212fc`; was `1..1073741824`). -/
 def table : List (String × Kind) :=
   [("CACHE_SIZE", .i64 25 0 1000), ("THREAD_COUNT", .i64 0 0 1024),
@@ -57,7 +56,7 @@ def cBool (v : String) : Option Bool :=
   let l := v.toList.map Char.toLower
   if l == "yes".toList then some true else if l == "no".toList then some false else none
 
-/-! ## Historical: `graph_init`'s argument loop (earlier code, `:154-223`) -/
+/-! ## Historical: `graph_init`'s argument loop (earlier code) -/
 
 def MAX_INFO_QUERIES_CAP : Int := 1000
 
@@ -74,7 +73,7 @@ def target (upper : String) : Tgt :=
 
 /-! ## `graph_init` -/
 
-/-- `graph_init`'s argument step (`module_init.rs:159-168`): any `apply_module_args`
+/-- `graph_init`'s argument step (`module_init.rs`): any `apply_module_args`
 error is logged and refuses the load; otherwise initialisation continues. -/
 def graphInitArgs {ε α : Type} (applyArgs : Except ε α) : Bool :=
   match applyArgs with | .ok _ => true | .error _ => false
@@ -84,7 +83,7 @@ theorem graphInitArgs_ok {ε α : Type} (a : α) : graphInitArgs (.ok a : Except
 
 /-! ## Event handlers -/
 
-/-- `on_role_change` (`:549`): sticky consumer latch, promotion work. Since #3844 it no
+/-- `on_role_change`: sticky consumer latch, promotion work. Since #3844 it no
 longer sets a replica flag (telemetry does not ask about the role). -/
 def onRoleChange (subevent : Nat) : Bool × Bool :=
   (true, subevent == 0)
@@ -92,24 +91,24 @@ def onRoleChange (subevent : Nat) : Bool × Bool :=
 theorem onRoleChange_promote : onRoleChange 0 = (true, true) := rfl
 theorem onRoleChange_demote : onRoleChange 1 = (true, false) := rfl
 
-/-- `on_replica_change` (`:564`): always latches. -/
+/-- `on_replica_change`: always latches. -/
 def onReplicaChange (_subevent : Nat) : Bool := true
 
 theorem onReplicaChange_latches (s : Nat) : onReplicaChange s = true := rfl
 
-/-- `on_loading` (`:576`): virtual-key cleanup after `ENDED` (3) or `FAILED` (4). -/
+/-- `on_loading`: virtual-key cleanup after `ENDED` (3) or `FAILED` (4). -/
 def onLoading (subevent : Nat) : Bool := subevent == 3 || subevent == 4
 theorem onLoading_only_end (s : Nat) : onLoading s = true ↔ s = 3 ∨ s = 4 := by
   simp [onLoading]
 
-/-- `on_flush` (`:511`, #3844): the new `FLUSH_IN_PROGRESS`, raised by
+/-- `on_flush` (, #3844): the new `FLUSH_IN_PROGRESS`, raised by
 `REDISMODULE_SUBEVENT_FLUSHDB_START` (0) and lowered by `..._END` (1)
 (see `Telemetry.queue_flushing`). -/
 def onFlush (subevent : Nat) : Bool := subevent == 0
 theorem onFlush_start : onFlush 0 = true := rfl
 theorem onFlush_end : onFlush 1 = false := rfl
 
-/-- `on_shutdown` (`:465`): the teardown order. With the native index (`nativeIndex`) the index
+/-- `on_shutdown`: the teardown order. With the native index (`nativeIndex`) the index
 builder is stopped before the pool, and GraphBLAS and RediSearch are torn down only if every
 builder worker exited (`builderExited`, what `online_build::stop` returns): one left behind may
 still read or free a graph version. -/
@@ -130,7 +129,7 @@ theorem onShutdown_without_native_index (b : Bool) :
       "matrix::shutdown", "RediSearch_CleanupModule"] := by
   cases b <;> rfl
 
-/-- `on_fork_child` (`:118`): abort iff this is the main-thread (BGSAVE) fork and some
+/-- `on_fork_child`: abort iff this is the main-thread (BGSAVE) fork and some
 graph is not fully synced. -/
 def forkChildAborts (mainThread : Bool) (synced : List Bool) : Bool :=
   mainThread && synced.any (! ·)
@@ -139,7 +138,7 @@ theorem fork_all_synced (s : List Bool) (h : ∀ b ∈ s, b = true) : forkChildA
   simp only [forkChildAborts, Bool.true_and]
   rw [List.any_eq_false]; intro b hb; simp [h b hb]
 
-/-- `enforce_pending_constraints_after_promotion` (`:496`): per registered graph, the
+/-- `enforce_pending_constraints_after_promotion`: per registered graph, the
 constraints still under construction; graphs with none are skipped. -/
 def pendingPerGraph {G C} (underConstruction : C → Bool) (graphs : List (G × List C)) : List (G × List C) :=
   (graphs.map fun (g, cs) => (g, cs.filter underConstruction)).filter (fun p => !p.2.isEmpty)
@@ -158,7 +157,7 @@ theorem pending_only_uc {G C} (u : C → Bool) (gs : List (G × List C)) :
   have : x ∈ cs.filter u := List.mem_filter.2 ⟨hx, hu⟩
   rw [e] at this; simp at this
 
-/-! ## `on_keyspace_event` (`:597`): two-phase RENAME -/
+/-! ## `on_keyspace_event`: two-phase RENAME -/
 
 structure KS where
   oldName : Option String

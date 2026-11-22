@@ -3,9 +3,9 @@ import FalkorNativeIndex.Query
 set_option linter.unusedSimpArgs false
 
 /-!
-# Index DDL (`graph_writes.rs:396-501`), the graph's index entry points
-# (`graph.rs:3878-3923`, `:4205-4246`), the scan routing (`node_by_index_scan.rs:302`,
-# `edge_by_index_scan.rs:318`), and folded-roots MVCC (`graph.rs:1084`)
+# Index DDL (`graph_writes.rs`), the graph's index entry points
+# (`graph.rs`), the scan routing (`node_by_index_scan.rs`,
+# `edge_by_index_scan.rs`), and folded-roots MVCC (`graph.rs`)
 -/
 
 namespace NI
@@ -44,19 +44,19 @@ structure G.Fits (g : G) : Prop where
   nodes : ∀ label lm, g.labelNodes label = some lm → lm.length ≤ usizeMax
   edges : ∀ label t, g.typeEdges label = some t → t.length ≤ usizeMax
 
-/-- `build_in_one_batch` (`graph_writes.rs:412-424`): create the column `Building`, then one indexer
+/-- `build_in_one_batch` (`graph_writes.rs`): create the column `Building`, then one indexer
     batch with no limit on its size, which reaches the end and flips it `Ready`. -/
 def buildInOneBatch (g : G) (e : EntityType) (label attr : String) : G :=
   let g := { g with idx := g.idx.createBuilding e label attr }
   (g.indexerPrepare (.column e (label, attr)) usizeMax).1
 
-/-- `create_index` (`graph_writes.rs:394-406`): each listed attribute's column created `Building`, its cursor at
+/-- `create_index` (`graph_writes.rs`): each listed attribute's column created `Building`, its cursor at
     the start, for the background builder to fill (`online_build.rs`, the online build, #2355). -/
 def createIndex (g : G) (t : FalkorDbIndex.IndexType) (e : EntityType) (label : String) (attrs : List String) : G :=
   if t = .range then { g with idx := attrs.foldl (fun x a => x.createBuilding e label a) g.idx } else g
 
 /-- Every listed attribute's column built in one unlimited batch each (`build_in_one_batch`): what the RDB load
-    builds for a label's Range fields (`populate`, `graph_writes.rs:492-503`), and what `create_index` did before
+    builds for a label's Range fields (`populate`, `graph_writes.rs`), and what `create_index` did before
     the online build (#2355). -/
 def buildColumns (g : G) (e : EntityType) (label : String) (attrs : List String) : G :=
   attrs.foldl (fun g a => buildInOneBatch g e label a) g
@@ -65,7 +65,7 @@ def buildColumns (g : G) (e : EntityType) (label : String) (attrs : List String)
 structure Field where
   ty : FalkorDbIndex.IndexType
 
-/-- `populate` (`graph_writes.rs:492-503`). -/
+/-- `populate` (`graph_writes.rs`). -/
 def populate (g : G) (e : EntityType) (label : String) (fields : List (String × List Field)) : G :=
   fields.foldl (fun g af => if af.2.any (fun f => f.ty == .range) then buildInOneBatch g e label af.1 else g) g
 
@@ -523,17 +523,17 @@ theorem populate_eq_buildColumns (g : G) (e : EntityType) (label : String) (fiel
 
 /-! ## The graph's entry points (`graph.rs`) -/
 
-/-- The slice of `IndexDocs` (`index_docs.rs:585-600`) the native index owns. -/
+/-- The slice of `IndexDocs` (`index_docs.rs`) the native index owns. -/
 structure IndexDocs where
   native : PendingIndexWrites
 
-/-- `Graph::apply_index_writes` (`graph.rs:3889-3903`): `apply` with the graph's `place` (a node by its
+/-- `Graph::apply_index_writes` (`graph.rs`): `apply` with the graph's `place` (a node by its
     id, an edge by its endpoints, `None` for an edge this unit deleted). -/
 def applyIndexWrites (g : G) (docs : IndexDocs) : G × IndexDocs :=
   let r := g.idx.apply docs.native g.place
   ({ g with idx := r.1 }, ⟨r.2⟩)
 
-/-- `Graph::commit_index_docs` (`graph.rs:3912-3923`): the native part, then the RediSearch documents
+/-- `Graph::commit_index_docs` (`graph.rs`): the native part, then the RediSearch documents
     (`commit_index` / `commit_edge_index`: the RediSearch C API, AXIOMATISED in index_layer). -/
 def commitIndexDocs (g : G) (docs : IndexDocs) : G × IndexDocs := applyIndexWrites g docs
 
@@ -545,12 +545,12 @@ theorem applyIndexWrites_spec (g : G) (docs : IndexDocs) :
 theorem commitIndexDocs_native (g : G) (docs : IndexDocs) :
     commitIndexDocs g docs = applyIndexWrites g docs := rfl
 
-/-- `Graph::query_index_numeric_nodes` (`graph.rs:4204-4212`): `query_numeric`'s three-way answer,
+/-- `Graph::query_index_numeric_nodes` (`graph.rs`): `query_numeric`'s three-way answer,
     raw docs mapped to `NodeId` (the map is the identity here). -/
 def queryIndexNumericNodes (g : G) (label : String) (q : IndexQuery) : Option (Except (ScanFilter String) (List Nat)) :=
   (g.idx.queryColumn .node label q).map (fun a => a.map (fun rows => rows.map id))
 
-/-- `Graph::query_index_numeric_edges` (`graph.rs:4222-4245`): endpoints from the `edge_id → (src, dst)`
+/-- `Graph::query_index_numeric_edges` (`graph.rs`): endpoints from the `edge_id → (src, dst)`
     reverse index; an id it does not know (a deleted, not reused edge) is skipped. The map runs on
     `Ok` only, so a `ScanFilter` passes through untouched. -/
 def queryIndexNumericEdges (g : G) (endpoints : Nat → Option (Nat × Nat)) (typeName : String) (q : IndexQuery) :
@@ -592,7 +592,7 @@ theorem queryIndexNumericEdges_none (g : G) (ep : Nat → Option (Nat × Nat)) (
     queryIndexNumericEdges g ep t q = none ↔ g.idx.queryColumn .relationship t q = none := by
   unfold queryIndexNumericEdges; cases g.idx.queryColumn .relationship t q <;> simp
 
-/-! ## The scan ops (`node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318`)
+/-! ## The scan ops (`node_by_index_scan.rs`, `edge_by_index_scan.rs`)
 
 Under `index-falkordb` the index branch of `next` is: `can_utilize_index(q)` false → scan (the planner
 kept a filter); else the three-way answer: rows, or the scan the `ScanFilter` describes, or the error
@@ -697,7 +697,7 @@ theorem nodeScan_native_inList_agrees (g : G) (label key : String) (items : List
 
 /-! ## Folded-roots MVCC -/
 
-/-- `Graph::new_version` (`graph.rs:1084`): the index is a field of the version and is cloned
+/-- `Graph::new_version` (`graph.rs`): the index is a field of the version and is cloned
     with it (`O(1)` per column: root `Arc` bumps; pages are immutable once built, cow_btree
     `Snapshot.lean`), so as a value the new version's index *is* the old one. -/
 def newVersion (g : G) : G := { g with idx := g.idx }

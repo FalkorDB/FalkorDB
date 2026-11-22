@@ -5,18 +5,18 @@ Line numbers: `origin/main` (`3fec7d7c9`).
 
 | here | there |
 | --- | --- |
-| `truncate`             | `truncate` `:34`, `truncate_arc` `:50` |
-| `upToNul`, `streamName`| `graph_core::up_to_nul` `:87`, `stream_name` `:66` |
+| `truncate`             | `truncate`, `truncate_arc` |
+| `upToNul`, `streamName`| `graph_core::up_to_nul`, `stream_name` |
 | `hashTag`              | Redis Cluster `keyHashSlot` tag rule (documentation of the key scheme) |
-| `Reg`, `register*` … `snapshot*` | `shard_for` `:404`, `register_running` `:409` … `snapshot_waiting` `:534` |
-| `WE.*`                 | `WaitingEntry::register/promote/drop` `:481-502` |
-| `enqueueOk`            | `enqueue_entry` gates `:1038-1077` (no role check since #3844) |
-| `drain`                | `drain_queued` `:977` |
+| `Reg`, `register*` … `snapshot*` | `shard_for`, `register_running` … `snapshot_waiting` |
+| `WE.*`                 | `WaitingEntry::register/promote/drop` |
+| `enqueueOk`            | `enqueue_entry` gates (no role check since #3844) |
+| `drain`                | `drain_queued` |
 | `Pre3844.capDeferred`  | historical: `deferred.drain(..len - DEFERRED_XADD_MAX)` (removed by #3844) |
-| `resolve`              | `resolve_current_names` `:854-914` |
+| `resolve`              | `resolve_current_names` |
 | `groupOrder`           | `batch.sort_by(graph_name)` + `chunk_by` (`flusher_loop`) |
-| `fieldValues`          | `StreamTemplate::add` value array `:176-201` |
-| `failMsg`              | `StreamTemplate::report_failures` `:228-240` |
+| `fieldValues`          | `StreamTemplate::add` value array |
+| `failMsg`              | `StreamTemplate::report_failures` |
 -/
 namespace RedisLayer.Telemetry
 
@@ -51,7 +51,7 @@ theorem truncateArc_eq : truncateArc = truncate := rfl
 
 /-! ## Stream names -/
 
-/-- `up_to_nul` (`graph_core.rs:87`): the prefix before the first NUL. -/
+/-- `up_to_nul` (`graph_core.rs`): the prefix before the first NUL. -/
 def upToNul : List Char → List Char
   | [] => []
   | c :: cs => if c = '\x00' then [] else c :: upToNul cs

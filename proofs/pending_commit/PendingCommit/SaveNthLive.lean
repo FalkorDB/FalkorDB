@@ -1,6 +1,6 @@
 import PendingCommit.SaveRoaring
 /-
-# `nth_live_id` (attribute_store.rs:1485-1506)
+# `nth_live_id` (attribute_store.rs)
 
 ```rust
 fn nth_live_id(deleted: &RoaringTreemap, max_id: u64, n: u64) -> Option<u64> {

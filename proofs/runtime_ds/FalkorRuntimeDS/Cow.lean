@@ -1,22 +1,22 @@
 /-
 # `Cow` (`graph/src/graph/cow.rs`): copy-on-write isolation
 
-`T: Clone` for a GraphBLAS `Matrix` is a *shallow* handle clone (matrix.rs:374
+`T: Clone` for a GraphBLAS `Matrix` is a *shallow* handle clone (matrix.rs
 shares the `Arc<GrB_Matrix>`), and `Dup::dup` is the deep copy. So the model is
 a heap of handles: `Cow = { h : handle, dup : Bool }`, `Clone` copies `h`,
 `dup()` allocates a fresh handle holding a copy of the contents.
 
 | here | there (main 1d15bf713) |
 | --- | --- |
-| `Cow`          | `struct Cow<T> { inner: T, dup: bool, branched }` (cow.rs:60); `branched` exists in debug builds only |
-| `new`          | `Cow::new` (cow.rs:84) — `dup: false` |
-| `newVersion`   | `Cow::new_version` (cow.rs:97) — shallow clone, `dup: true` |
-| `clone`        | `impl Clone for Cow` (cow.rs:73) — shallow clone, `dup` copied (and, in debug, the `branched` `Arc` shared) |
-| `read`         | `Deref` (cow.rs:128) |
-| `derefMut`     | `DerefMut` (cow.rs:134) — `if dup { inner = inner.dup(); dup = false }` |
+| `Cow`          | `struct Cow<T> { inner: T, dup: bool, branched }` (cow.rs); `branched` exists in debug builds only |
+| `new`          | `Cow::new` (cow.rs) — `dup: false` |
+| `newVersion`   | `Cow::new_version` (cow.rs) — shallow clone, `dup: true` |
+| `clone`        | `impl Clone for Cow` (cow.rs) — shallow clone, `dup` copied (and, in debug, the `branched` `Arc` shared) |
+| `read`         | `Deref` (cow.rs) |
+| `derefMut`     | `DerefMut` (cow.rs) — `if dup { inner = inner.dup(); dup = false }` |
 | `write`        | `derefMut` followed by an in-place mutation of the handle |
-| `replace`      | `Cow::replace` (cow.rs:112) — a freshly built inner, `dup: false` |
-| `DCow`/`dNewVersion`/`dDerefMut`/`dWrite`/`dReplace` | the same functions in a debug build, with the `branched: Arc<AtomicBool>` flag (cow.rs:69, 101, 117-120, 138-148) |
+| `replace`      | `Cow::replace` (cow.rs) — a freshly built inner, `dup: false` |
+| `DCow`/`dNewVersion`/`dDerefMut`/`dWrite`/`dReplace` | the same functions in a debug build, with the `branched: Arc<AtomicBool>` flag (cow.rs) |
 
 The release model (`Cow`, `derefMut`, ...) is unchanged by the debug flag: every
 `#[cfg(debug_assertions)]` line is erased in release. `dbg_agrees_with_release`
@@ -42,7 +42,7 @@ def newVersion (c : Cow) : Cow := { h := c.h, dup := true }
 
 def read (H : Heap V) (c : Cow) : V := H.mem c.h
 
-/-- cow.rs:134 -/
+/-- cow.rs -/
 def derefMut (H : Heap V) (c : Cow) : Heap V × Cow :=
   if c.dup then let r := alloc H (H.mem c.h); (r.1, { h := r.2, dup := false }) else (H, c)
 
@@ -50,7 +50,7 @@ def write (H : Heap V) (c : Cow) (f : V → V) : Heap V × Cow :=
   let r := derefMut H c
   ({ r.1 with mem := upd r.1.mem r.2.h (f (r.1.mem r.2.h)) }, r.2)
 
-/-- cow.rs:112 — the new inner is a fresh allocation. -/
+/-- cow.rs — the new inner is a fresh allocation. -/
 def replace (H : Heap V) (_c : Cow) (v : V) : Heap V × Cow :=
   let r := alloc H v; (r.1, { h := r.2, dup := false })
 
@@ -119,7 +119,7 @@ theorem siblings_isolated (H : Heap V) (v1 : Cow) (hv : v1.h < H.next) (f : V �
   have : v1.h ≠ H.next := by omega
   simp [upd, this]
 
-/-- cow.rs:73 — release: copy the (shallow) inner handle and the `dup` flag. -/
+/-- cow.rs — release: copy the (shallow) inner handle and the `dup` flag. -/
 def clone (c : Cow) : Cow := { h := c.h, dup := c.dup }
 
 theorem clone_eq (c : Cow) : clone c = c := rfl
@@ -170,20 +170,20 @@ structure DState (V : Type) where
 /-- The release view of a debug `Cow`: drop the flag. -/
 def DCow.rel (c : DCow) : Cow := ⟨c.h, c.dup⟩
 
-/-- cow.rs:84 — a fresh `false` flag. -/
+/-- cow.rs — a fresh `false` flag. -/
 def dNew (S : DState V) (h : Nat) : DState V × DCow :=
   let r := alloc S.F false; ({ S with F := r.1 }, ⟨h, false, r.2⟩)
 
-/-- cow.rs:73 — the `Arc` is cloned, so the cell is shared. -/
+/-- cow.rs — the `Arc` is cloned, so the cell is shared. -/
 def dClone (c : DCow) : DCow := c
 
-/-- cow.rs:97-106 — `self.branched.store(true)`, new version gets a fresh cell. -/
+/-- cow.rs — `self.branched.store(true)`, new version gets a fresh cell. -/
 def dNewVersion (S : DState V) (c : DCow) : DState V × DCow :=
   let F1 : Heap Bool := { S.F with mem := upd S.F.mem c.b true }
   let r := alloc F1 false
   ({ S with F := r.1 }, ⟨c.h, true, r.2⟩)
 
-/-- cow.rs:134-149 — copy if `dup` (fresh inner, fresh flag), then
+/-- cow.rs — copy if `dup` (fresh inner, fresh flag), then
 `debug_assert!(!branched)`. -/
 def dDerefMut (S : DState V) (c : DCow) : Option (DState V × DCow) :=
   let p : DState V × DCow :=
@@ -198,7 +198,7 @@ def dWrite (S : DState V) (c : DCow) (f : V → V) : Option (DState V × DCow) :
   (dDerefMut S c).map fun p =>
     ({ p.1 with H := { p.1.H with mem := upd p.1.H.mem p.2.h (f (p.1.H.mem p.2.h)) } }, p.2)
 
-/-- cow.rs:112-121 — fresh inner, fresh flag. -/
+/-- cow.rs — fresh inner, fresh flag. -/
 def dReplace (S : DState V) (_c : DCow) (v : V) : DState V × DCow :=
   let rH := alloc S.H v
   let rF := alloc S.F false

@@ -3,8 +3,8 @@ import FalkorBinder.Resolve
 # CALL {} entry projection as a record boundary
 
 Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
-(graph/src/planner/binder.rs:971-1126) and `build_import_projections`
-(binder.rs:1133-1151); scope tables, `freshVar`, `mint_fresh_iff`,
+(graph/src/planner/binder.rs) and `build_import_projections`
+(binder.rs); scope tables, `freshVar`, `mint_fresh_iff`,
 `projectName` are this project's (Table.lean, Resolve.lean).
 
 * Every CALL body gets an entry projection (`bodyNew_entry`, `bodyNew_empty`,
@@ -20,7 +20,7 @@ Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
 -/
 namespace FalkorBinder.Pr2845
 
-/-- `build_import_projections` (binder.rs:1133): one `project_name` per
+/-- `build_import_projections` (binder.rs): one `project_name` per
 imported variable, in the HashMap's iteration order (`imported`, any order),
 paired with the outer variable it reads. The final `sort_by` name only
 reorders the pairs. -/
@@ -37,7 +37,7 @@ inductive Clause
   | other (tag : Nat)
   deriving DecidableEq, Repr
 
-/-- The merged Query arm (binder.rs:978-1021): push a fresh scope (index
+/-- The merged Query arm (binder.rs): push a fresh scope (index
 `outerLen`), always emit the entry projection, then the remaining clauses. -/
 def bodyNew (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause) : List Clause :=
   .with_ (importProj [] outerLen imported).2 :: rest
@@ -46,9 +46,9 @@ def bodyNew (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause
 def bodyOld (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause) : List Clause :=
   if imported.isEmpty then rest else .with_ (importProj [] outerLen imported).2 :: rest
 
-/-- The UNION arm (binder.rs:1024-1119): each branch binder starts with
+/-- The UNION arm (binder.rs): each branch binder starts with
 `env_stack: vec![HashMap::new(); self.env_stack.len() + 1]` (#3027, d42d121c6,
-binder.rs:1051-1059), so its scope is `outerLen`, above the live outer scopes. -/
+binder.rs), so its scope is `outerLen`, above the live outer scopes. -/
 def branchScope (outerLen : Nat) : Nat := outerLen
 
 def branchNew (outerLen : Nat) (imported : List (Name × Var))
@@ -164,7 +164,7 @@ theorem body_scope_disjoint (outerLen s : Nat) (h : s < outerLen) : outerLen ≠
 /-! ## Claim 2 for UNION bodies: (scope, id) keys still alias -/
 
 /-- `node_labels: HashMap<(u32,u32), OrderSet<..>>` and `update_graph_labels`
-(binder.rs:259-336) for a non-optional MATCH node: the accumulated labels
+(binder.rs) for a non-optional MATCH node: the accumulated labels
 for the key `(scope_id, id)` replace the node's own. -/
 abbrev Labels := List ((Nat × Nat) × List Name)
 
@@ -174,9 +174,9 @@ def relabel (L : Labels) (v : Var) (own : List Name) : List Name :=
   | none => own
 
 /-- `MATCH (n:A) CALL { MATCH (q:B) RETURN q UNION MATCH (q:B) RETURN q }`:
-step 2b of `bind_call_subquery` (binder.rs:845) runs the OUTER binder's
+step 2b of `bind_call_subquery` (binder.rs) runs the OUTER binder's
 `update_all_node_labels` over the bound body, recursing into the UNION
-branches (binder.rs:221-253). The outer table holds `(0,0) ↦ [A]` for `n`;
+branches (binder.rs). The outer table holds `(0,0) ↦ [A]` for `n`;
 the branch's `q` is minted at scope 0 (the branch binder's only scope) after
 its entry projection (no imports), id 0: same key. The branch scans `(q:A)`. -/
 def outerLabels : Labels := [((0, 0), ["A"])]
@@ -206,7 +206,7 @@ theorem relabel_3027 (L : Labels) (outerLen : Nat) (hL : ∀ p ∈ L, p.1.1 < ou
 
 theorem union_branch_label_fixed : relabel outerLabels branchQ ["B"] = ["B"] := by decide
 
-/-- Step 2b as merged (binder.rs:861-871, #3641): a UNION body skips the outer
+/-- Step 2b as merged (binder.rs, #3641): a UNION body skips the outer
 `update_all_node_labels` (`if !matches!(bound_body, QueryIR::Union { .. })`) — each branch was
 already labelled by its own binder. -/
 def relabelBody (isUnion : Bool) (L : Labels) (v : Var) (own : List Name) : List Name :=
@@ -230,7 +230,7 @@ A runtime row is a dense array indexed by `Variable.id` alone
 `Nat → Option V` (`none` = unbound slot).
 
 * `Argument` (runtime/ops/argument.rs) hands the sub-plan the outer row as is.
-* `ProjectOp::eval` (runtime/ops/project.rs:54-147) builds a fresh row from
+* `ProjectOp::eval` (runtime/ops/project.rs) builds a fresh row from
   its projections only (`Row::with_capacity`, `result.insert(target, …)`,
   then `BatchBuilder::push_row`) and drops its input.
 -/

@@ -5,10 +5,10 @@ import GraphQueries.Basic
 | here | there (graph.rs) |
 | --- | --- |
 | `nextMul`      | `u64::next_multiple_of` (core) |
-| `grbMax`, `ckAdd`, `ckNextMul` | `GrB_INDEX_MAX` (tensor.rs:144), `checked_add`, `checked_next_multiple_of` |
+| `grbMax`, `ckAdd`, `ckNextMul` | `GrB_INDEX_MAX` (tensor.rs), `checked_add`, `checked_next_multiple_of` |
 | `growStep`, `growCap` | `grow_cap` :842 (loop body :847-852) |
 | `resizeNodeMs`/`resizeRelMs`/`resize` | `resize_node_matrices` :3543 / `resize_relationship_matrices` :3555 / `resize` :3562 |
-| `idx`          | `NameMap::id_of` (schema.rs:159; first position, `FirstInv` in pending_commit `NameMap`) |
+| `idx`          | `NameMap::id_of` (schema.rs; first position, `FirstInv` in pending_commit `NameMap`) |
 | `internLabel`  | `intern_label` :1247 |
 | `getLabelId`   | `get_label_id` :1279 |
 | `getLabelIdMut`| `get_label_id_mut` :1259 |
@@ -44,7 +44,7 @@ theorem nextMul_dvd (c x : Nat) (hc : 0 < c) : nextMul c x % c = 0 := by
     have h4 : x - x % c = c * (x / c) := by omega
     rw [h4, Nat.mul_mod_right]
 
-/-- `GrB_INDEX_MAX` (`tensor.rs:144`): `2^60 - 1`, the largest dimension GraphBLAS accepts. -/
+/-- `GrB_INDEX_MAX` (`tensor.rs`): `2^60 - 1`, the largest dimension GraphBLAS accepts. -/
 def grbMax : Nat := 2 ^ 60 - 1
 
 /-- `u64::checked_add`. -/
@@ -466,9 +466,9 @@ theorem getLabelMatMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String
 def nodeHasLabelId (g : G V) (n l : Nat) : Bool := g.nodeLabels.get n l
 def nodeHasLabel (g : G V) (n : Nat) (s : String) : Bool :=
   match getLabelId g s with | some l => g.nodeLabels.get n l | none => false
-/-- `edge_has_type_id` (`graph.rs:1338`): the relationship-type matrix at `(edge, type)`, no string lookup. -/
+/-- `edge_has_type_id` (`graph.rs`): the relationship-type matrix at `(edge, type)`, no string lookup. -/
 def edgeHasTypeId (g : G V) (e t : Nat) : Bool := g.relType.get e t
-/-- `edge_has_type` (`graph.rs:1327`): the type's id by name, then `edge_has_type_id`. -/
+/-- `edge_has_type` (`graph.rs`): the type's id by name, then `edge_has_type_id`. -/
 def edgeHasType (g : G V) (e : Nat) (s : String) : Bool :=
   match getTypeId g s with | some t => edgeHasTypeId g e t | none => false
 

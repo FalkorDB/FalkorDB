@@ -1,12 +1,12 @@
 import FalkorExprSemantics.Eval
 /-!
 # Batch evaluation, UNWIND iteration, compiled regex, map projection
-(runtime/eval.rs:86-95, :1102-1260, :1529-1610)
+(runtime/eval.rs)
 -/
 namespace FalkorExpr.Eval
 
-/-! ## `classify_join_keys` (eval.rs:87) over `classify_numeric(_, true, FloatLane::None)`
-(batch.rs:191) -/
+/-! ## `classify_join_keys` (eval.rs) over `classify_numeric(_, true, FloatLane::None)`
+(batch.rs) -/
 
 inductive JV (W : Type) where
   | null | int (i : Int) | other (w : W)
@@ -52,7 +52,7 @@ theorem classifyJoinKeys_lossless (vs : List (JV W)) : decode (classifyJoinKeys 
       | other w => simp [allIntOrNull] at h
   · rfl
 
-/-! ## `eval_batch` (eval.rs:1102), `try_eval_batch_property` (:1118),
+/-! ## `eval_batch` (eval.rs), `try_eval_batch_property` (:1118),
 `eval_batch_per_row` (:1148) -/
 
 variable {V : Type} (O : Ops V)
@@ -144,7 +144,7 @@ theorem evalBatch_eq_perRow (b : BatchM V) (params : String → Option V)
     | _ => simp [bind, Except.bind]
   | _ => simp [bind, Except.bind]
 
-/-! ## `eval_iter_expr` (eval.rs:1199): what `UNWIND` iterates -/
+/-! ## `eval_iter_expr` (eval.rs): what `UNWIND` iterates -/
 
 /-- The emitted rows: `none` = no rows. `rangeVals` is `RangeIter`'s output (PROVEN
 `rangeIter_correct`, wired in by `evalIter_range_is_iter`); here a parameter fixed by start/end/step. -/
@@ -178,7 +178,7 @@ theorem evalIter_list (isList : V → Option (List V)) (isNull : V → Bool) (rv
     (v : V) (xs : List V) (h : isList v = some xs) :
     evalIterExpr isList isNull rv (.value v) = .ok (some xs) := by simp [evalIterExpr, h]
 
-/-! ## `eval_compiled_regex` (eval.rs:1254) and `check_string_or_null` (:1261) -/
+/-! ## `eval_compiled_regex` (eval.rs) and `check_string_or_null` (:1261) -/
 
 inductive RV where
   | null | str (s : String) | bool (b : Bool) | list (vs : List RV) | other (name : String)
@@ -202,7 +202,7 @@ structure Regex where
   captures : String → RV             -- `regex_captures_list` (PROVEN in functions_str_list)
   replaceAll : String → String → String
 
-/-- `eval_compiled_regex` (eval.rs:1254) after the children are evaluated. -/
+/-- `eval_compiled_regex` (eval.rs) after the children are evaluated. -/
 def evalCompiledRegex (re : Regex) (k : RxKind) (text : RV) (repl : Option RV) : Except String RV := do
   checkStringOrNull text
   match k with
@@ -236,7 +236,7 @@ theorem compiledRegex_spec (re : Regex) :
       .error "Type mismatch: expected String or Null but was Boolean" := by
   refine ⟨rfl, rfl, rfl, fun t => rfl, rfl⟩
 
-/-! ## `eval_map_projection` (eval.rs:1529) -/
+/-! ## `eval_map_projection` (eval.rs) -/
 
 inductive Item (V : Type) where
   | all                      -- `.*`

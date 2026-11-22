@@ -1,5 +1,5 @@
 import AlgoUdf.Graph
-/-! # `bfs_find_bound` (algo_procedures.rs:2388-2469)
+/-! # `bfs_find_bound` (algo_procedures.rs)
 
 | here | there |
 | --- | --- |

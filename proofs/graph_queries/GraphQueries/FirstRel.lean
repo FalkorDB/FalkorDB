@@ -1,6 +1,6 @@
 import GraphQueries.Accessors
 /-
-# `Graph::first_node_with_relationships` (graph.rs:2421, #3022)
+# `Graph::first_node_with_relationships` (graph.rs, #3022)
 
 The `DELETE_NODE` arm of `apply_record` refuses a node that still has a
 relationship. The Rust answers it in bulk: one `Aᵀ·x` over the adjacency matrix

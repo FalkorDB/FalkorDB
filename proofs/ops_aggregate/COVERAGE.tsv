@@ -17,8 +17,6 @@ graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1099	PROVEN	setZero: setZer
 graph/src/runtime/ops/aggregate.rs	next	1128	PROVEN	aggNext/finishGroup (GroupMap value is a 3-tuple since #2977; the id is ignored at emit) (unbind before keys since #3522, aggregate.rs:1192-1218): aggNext_error_first, aggNext_ok, drain_all, finishGroup_outputs, finishGroup_err, finishGroup_keys_bound/keysBound_main (KeysBound on main, fixed3522_null_key_bound, keysBound_swap_3522); keyed_empty, keyless_one_row; with binder ids (SlotReuse projLayout, finishCore/finishVals/cell) OutputsOwnAcc/EmitsOnlyScope are still refuted: bug3375_output_overwrites_next_acc, bug3375_avg_panics, bug3333_alias_binds_next_var, bug3369_count_acc_in_merge_slot, bug3368_count_acc_in_merge_slot (BUGs)
 graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1251	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound; unbind runs before the keys are written since #3522, so an accumulator id equal to a null key's id no longer drops the key: fixed3522_null_key_bound
 graph/src/runtime/ops/distinct.rs	new	42	PROVEN	DistinctSt.new: distinct_new_spec
-graph/src/runtime/ops/distinct.rs	next	62	PROVEN	dedup_injective (correct iff hash injective); dedup_collision_drops (known #2780)
-graph/src/runtime/ops/sort.rs	cmp_key	76	PROVEN	SortCmp.cmpKey (cv = Value::sort_cmp, #2912): cmpKey_spec, cmpKey_lawful with Lawful discharged: Discharge.cmpKey_lawful_main, Discharge.cmpKey_trans_main (from proofs/value_order Main.scMain_total, copied under VO/)
 graph/src/runtime/ops/sort.rs	eq	90	PROVEN	SortCmp.okEq: cmpKey_spec
 graph/src/runtime/ops/sort.rs	partial_cmp	99	PROVEN	SortCmp.okPartialCmp: cmpKey_spec
 graph/src/runtime/ops/sort.rs	cmp	107	PROVEN	SortCmp.okCmp: cmpKey_spec, Discharge.cmpKey_lawful_main, Discharge.cmpKey_trans_main (Lawful sort_cmp discharged: Discharge.lawful_main)
@@ -64,10 +62,6 @@ graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	642	PROVEN	c
 # value_math owns: graph/src/runtime/functions/aggregation.rs	modf	676	(PROVEN there: AggScalar.modf: modf_recombine)
 graph/src/runtime/functions/aggregation.rs	finalize_stdev	682	PROVEN	Agg.finalizeStdev: finalizeStdev_small (n<=1 -> 0.0), finalizeStdev_big (divisor n-1), stdev_empty
 graph/src/runtime/functions/aggregation.rs	finalize_stdevp	704	PROVEN	Agg.finalizeStdevp: finalizeStdevp_empty, finalizeStdevp_nonempty (divisor n)
-graph/src/runtime/batch.rs	none	98	PROVEN	none_isNull
-graph/src/runtime/batch.rs	all	108	PROVEN	all_isNull
-graph/src/runtime/batch.rs	from_values	118	PROVEN	fromNulls_isNull
-graph/src/runtime/batch.rs	is_null	133	PROVEN	isNull_iff
 # columnar owns: graph/src/runtime/batch.rs	any_null	144	(PROVEN there: VExpr constNull_spec (the any() scan of constant_nullness))
 graph/src/runtime/batch.rs	set	150	PROVEN	set_isNull
 graph/src/runtime/batch.rs	clear	160	PROVEN	clear_isNull
@@ -128,7 +122,6 @@ graph/src/runtime/batch.rs	clear	160	PROVEN	clear_isNull
 # columnar owns: graph/src/runtime/batch.rs	set_argument_batch	1603	(PROVEN there: OpTree.setArg: setArg_args, setArg_resets)
 # columnar owns: graph/src/runtime/batch.rs	inspect_context	1738	(PROVEN there: inspectCtx: inspectCtx_spec)
 # columnar owns: graph/src/runtime/batch.rs	next	1787	(PROVEN there: opNext/leafNext: opNext_spec)
-graph/src/runtime/ops/commit.rs	new	45	PROVEN	CommitSt.new: commit_new_ro, commit_new_write
 graph/src/runtime/ops/filter.rs	new	39	PROVEN	StreamOps.FilterSt.new: filterNew_spec
 graph/src/runtime/ops/filter.rs	eval	57	PROVEN	StreamOps.filterEval: filterEval_bools, filter_mem, filterEval_empty, filterEval_type_error
 graph/src/runtime/ops/filter.rs	next	121	PROVEN	StreamOps.filterNext: filterNext_skips

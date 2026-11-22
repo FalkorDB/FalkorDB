@@ -1,6 +1,6 @@
 import GraphPersist.Codec
 /-!
-# `Encode` / `Decode`: the trait declarations and their defaults (serialization.rs:32-92)
+# `Encode` / `Decode`: the trait declarations and their defaults (serialization.rs)
 
 ```rust
 pub trait Encode<const VERSION: u64> {

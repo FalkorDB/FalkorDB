@@ -7,13 +7,13 @@ protocol as a small-step machine: the current one and the earlier one (kept as h
 ## Main: `Arc<Handle>`
 
 ```rust
-struct Handle(GrB_Matrix);                       // matrix.rs:372
-impl Drop for Handle {                           // matrix.rs:374
+struct Handle(GrB_Matrix);                       // matrix.rs
+impl Drop for Handle {                           // matrix.rs
     fn drop(&mut self) { GrB_Matrix_free(&raw mut self.0); }
 }
 pub struct Matrix<T> { m: Arc<Handle>, .. }      // no Drop impl
 pub struct Iter<E>   { m: Arc<Handle>, inner: GxB_Iterator, .. }
-impl Drop for Iter<E> {                          // matrix.rs:1882
+impl Drop for Iter<E> {                          // matrix.rs
     fn drop(&mut self) { if !self.inner.is_null() { GxB_Iterator_free(..) } }
 }   // then the field `m: Arc<Handle>` drops
 ```
@@ -186,7 +186,7 @@ theorem single_owner_frees_once :
     liveRun { count := 1, frees := 0 } [.release] = some { count := 0, frees := 1 } := by
   decide
 
-/-! ### `Iter::drop` (matrix.rs:1886): iterator before matrix
+/-! ### `Iter::drop` (matrix.rs): iterator before matrix
 
 `Iter::drop`'s body frees the `GxB_Iterator` (when attached); the `m:
 Arc<Handle>` field drops after the body (Rust drops fields after `Drop::drop`),
@@ -222,7 +222,7 @@ theorem detached_iter_frees_only_matrix (s : St) :
 an `Iter` is just another owner in `arc_frees_once`. -/
 theorem iterDrop_state (a : Bool) (s : St) : (iterDrop a s).1 = arcStep s .release := rfl
 
-/-! ### `dup` (matrix.rs:1236-1291) — deep copy, fresh ownership
+/-! ### `dup` (matrix.rs) — deep copy, fresh ownership
 
 `dup` calls `GrB_Matrix_dup` into a *new* `Arc<Handle>` with a fresh `Mutex`
 and a fresh `has_pending`. So a dup shares no handle with its source: the two

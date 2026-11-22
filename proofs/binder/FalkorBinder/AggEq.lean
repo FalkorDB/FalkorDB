@@ -5,12 +5,12 @@
 | --- | --- |
 | `RV`, `RD`, `RE` | raw (pre-bind) `ExprIR<Arc<String>>` payloads and trees |
 | `disc` | `std::mem::discriminant` of the `ExprIR` variant |
-| `constEq` | `constants_equal` binder.rs:2843-2853 (`Value` `==` = `compare_value` value.rs:1256) |
-| `isAggPlaceholder` | binder.rs:2862-2864 |
-| `exprIrEq` | `expr_ir_eq` binder.rs:2896-2939 |
-| `nodesEq` | `nodes_eq` binder.rs:2866-2894 |
-| `structEq` | `raw_exprs_structurally_equal` binder.rs:2858-2942 |
-| `replaceAgg` | `replace_agg_subtrees` binder.rs:2809-2834 |
+| `constEq` | `constants_equal` binder.rs (`Value` `==` = `compare_value` value.rs) |
+| `isAggPlaceholder` | binder.rs |
+| `exprIrEq` | `expr_ir_eq` binder.rs |
+| `nodesEq` | `nodes_eq` binder.rs |
+| `structEq` | `raw_exprs_structurally_equal` binder.rs |
+| `replaceAgg` | `replace_agg_subtrees` binder.rs |
 
 Floats are opaque codes compared by a parameter `feq` (f64 `==`, so NaN ≠ NaN);
 `fint f = some i` says the float `f` is exactly the `i64` `i` (`fract() == 0`,
@@ -99,7 +99,7 @@ def exprIrEq : RD → RD → Bool
   | .regex k s, .regex l t => k == l && s == t
   | a, b => disc a == disc b
 
-/-- `expr_ir_eq` before #3254 (binder.rs:2871 at 24fc0a7): constants of different
+/-- `expr_ir_eq` before #3254 (binder.rs at 24fc0a7): constants of different
 kinds, quantifiers and comprehensions fall back to the discriminant. -/
 def exprIrEqPre3254 : RD → RD → Bool
   | .var a, .var b => a == b

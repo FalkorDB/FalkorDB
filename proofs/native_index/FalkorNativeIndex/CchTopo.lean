@@ -7,7 +7,7 @@ set_option linter.unusedVariables false
 -/
 namespace NI
 
-/-! ## `chordal_supergraph` with its linked lists (`order.rs:381-428`) -/
+/-! ## `chordal_supergraph` with its linked lists (`order.rs`) -/
 
 /-- The loop's state: the finished rows, each rank's first elimination-tree child (`first_child`) and the next
     sibling of each rank (`next_sibling`). -/
@@ -23,13 +23,13 @@ def walk (ns : Nat → Option Nat) : Nat → Option Nat → List Nat
   | _ + 1, none => []
   | f + 1, some c => c :: walk ns f (ns c)
 
-/-- The row `chordal_supergraph` builds for rank `r` (`order.rs:403-421`): its higher skeleton neighbours, each
+/-- The row `chordal_supergraph` builds for rank `r` (`order.rs`): its higher skeleton neighbours, each
     child's row less `r` (the children walked from `first_child[r]`), sorted and deduplicated. -/
 def csRow (adj : Nat → List Nat) (s : CS) (r : Nat) : List Nat :=
   sortDedup ((adj r).filter (fun h => decide (r < h)) ++
     (walk s.ns s.rows.length (s.fc r)).flatMap (fun c => (s.rows.getD c []).filter (fun h => h != r)))
 
-/-- One iteration of the loop for rank `r` (`order.rs:403-428`): the row is pushed, and the rank becomes the first
+/-- One iteration of the loop for rank `r` (`order.rs`): the row is pushed, and the rank becomes the first
     child of its parent (the first entry of its row), the old first child its next sibling. -/
 def csStep (adj : Nat → List Nat) (s : CS) (r : Nat) : CS :=
   match (csRow adj s r).head? with
@@ -184,7 +184,7 @@ theorem csRun_inv (adj : Nat → List Nat) : ∀ n, CSInv adj n (csRun adj n) :=
     (`row_iff`). -/
 theorem csRun_rows (adj : Nat → List Nat) (n : Nat) : (csRun adj n).rows = buildRows adj n := (csRun_inv adj n).1
 
-/-! ## The flat layout: offsets and neighbours (`RankRows`, `row_slots`, `order.rs:152-165`, `:324`) -/
+/-! ## The flat layout: offsets and neighbours (`RankRows`, `row_slots`, `order.rs`) -/
 
 /-- The loop's two pushes after each row (`neighbors.extend_from_slice(&row); offsets.push(neighbors.len())`). -/
 def pushRow (st : List Nat × List Nat) (row : List Nat) : List Nat × List Nat :=
@@ -250,7 +250,7 @@ theorem slice_row {α : Type} (rows : List (List α)) (r : Nat) (h : r < rows.le
   rw [← this, List.drop_left, List.take_left']
   rfl
 
-/-! ## `invert` (`order.rs:333-358`): the order is a permutation, or it is refused
+/-! ## `invert` (`order.rs`): the order is a permutation, or it is refused
 
 `node_to_rank: Vec<Option<Rank>>` is modelled as a function from a node to `Some slot` inside the vector
 (`slot : Option Nat`, `None` = not yet set) and `None` outside it (the `get_mut` miss). -/
@@ -441,7 +441,7 @@ theorem invert_spec (r2n : List Nat) (n : Nat) (n2r : List Nat) (h : invert r2n 
         omega
       rw [← this]; exact hj'
 
-/-! ## `transpose` (`order.rs:441-470`)
+/-! ## `transpose` (`order.rs`)
 
 The counting sort writes each `(lower, higher)` pair of `upward`, in row order, at the next free slot of `higher`'s
 downward row (`next_free[higher] = offsets[higher]` plus what is already placed there). Modelled per downward row:
@@ -497,7 +497,7 @@ theorem downRows_spec (up : List (List Nat)) (hn : ∀ r ∈ up, r.Nodup) (h : N
       · rw [ifN hm]; simp only [List.filter_cons, List.filter_nil, hm, decide_false, ite_false]; simp
   exact key _ (Nat.le_refl _)
 
-/-! ## `Topology` (`order.rs:100-310`) -/
+/-! ## `Topology` (`order.rs`) -/
 
 /-- `Topology`: the order both ways, and the two `RankRows` (offsets and neighbours), as lists. -/
 structure Topo where
@@ -531,7 +531,7 @@ def Topo.ranks (t : Topo) : List Nat := List.range t.nodeCount
 def BsIdxSpec (bs : List Nat → Nat → Option Nat) : Prop :=
   ∀ l x, l.Pairwise (· < ·) → bs l x = if x ∈ l then some (l.idxOf x) else none
 
-/-- `Topology::arc_slot` (`order.rs:287-300`). -/
+/-- `Topology::arc_slot` (`order.rs`). -/
 def Topo.arcSlot (bs : List Nat → Nat → Option Nat) (t : Topo) (e o : Nat) : Option Nat :=
   let lower := if e < o then e else o
   let higher := if e < o then o else e
@@ -705,7 +705,7 @@ theorem fromOrder_fill_in (skel : Cch.Csr) (r2n n2r : List Nat) (hw : skel.isWel
   · exact (adjR_symm skel r2n n2r hw hsym hinv u v hu hv).1
   · simp [adjR, hu] at hv
 
-/-! ## `nested_dissection_order` (`nd.rs:46-125`)
+/-! ## `nested_dissection_order` (`nd.rs`)
 
 The ordering backend (`feral_metis::metis_order`) is another crate; it is modelled as an arbitrary function from
 the renumbered skeleton (`m`, offsets, neighbours) to an order, or a refusal, and every statement below holds
@@ -827,7 +827,7 @@ theorem ndOrder_checks (backend : Nat → List Nat → List Nat → Option (List
   · simp [h1, h2, h3] at h
   exact ⟨by simpa using h2, by simpa using h3, h1⟩
 
-/-- `Topology::build` (`order.rs:180-185`): the order, then the elimination game. -/
+/-- `Topology::build` (`order.rs`): the order, then the elimination game. -/
 def topoBuild (backend : Nat → List Nat → List Nat → Option (List Nat)) (bs : List Nat → Nat → Bool)
     (skel : Cch.Csr) : Option Topo :=
   (ndOrder backend bs skel).bind (fromOrder skel)
@@ -863,7 +863,7 @@ theorem topoBuild_correct (backend : Nat → List Nat → List Nat → Option (L
       rw [hr, hn2] at *
       exact fromOrder_fill_in skel o n2r hw hsym' hinv t h r w hr'
 
-/-! ## Index conversions (`mod.rs:58-66`, `order.rs:317`, `nd.rs:126`)
+/-! ## Index conversions (`mod.rs`, `order.rs`, `nd.rs`)
 
 `id_index` (`usize::try_from(u64)`), `index_id` (`u64::try_from(usize)`), `node_index` and `backend_index`
 (`i64::try_from(usize)`) only change the width of a number that is below `MAX_NODES < 2^60`, so no conversion

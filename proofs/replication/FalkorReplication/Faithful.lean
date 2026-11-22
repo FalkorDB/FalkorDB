@@ -46,31 +46,31 @@ theorem internCapF_full (cap : Nat) (d : List String) (n : String) (hf : ¬ d.le
     internCapF cap d n = none := by
   simp [internCapF, hn, hf]
 
-/-- `verify_id` (`apply.rs:586`), success only. -/
+/-- `verify_id` (`apply.rs`), success only. -/
 def verifyIdF (expected assigned : Nat) : Bool := assigned == expected
 
-/-- `apply_add_schema` (`apply.rs:560`): intern, then `verify_id`. -/
+/-- `apply_add_schema` (`apply.rs`): intern, then `verify_id`. -/
 def applyAddSchemaF (d : List String) (id : Nat) (n : String) : Option (List String) :=
   let (assigned, d') := internF d n
   if verifyIdF id assigned then some d' else none
 
-/-- The attribute arm of `apply_record` (`apply.rs:175`): `add_node_attribute_name` (capped), read the id
+/-- The attribute arm of `apply_record` (`apply.rs`): `add_node_attribute_name` (capped), read the id
 back, `AttributeLimitReached` (`none`) if the name is not registered, then `verify_id`. -/
 def applyAddAttributeF (cap : Nat) (d : List String) (id : Nat) (n : String) : Option (List String) :=
   match internCapF cap d n with
   | none => none
   | some (assigned, d') => if verifyIdF id assigned then some d' else none
 
-/-- `IdSpace::reserve` (`id_space.rs:516`) on a batch opened at `bound` that has
-taken and been issued nothing: `reclaim_ids` (`:244`) takes the lowest `count`
+/-- `IdSpace::reserve` (`id_space.rs`) on a batch opened at `bound` that has
+taken and been issued nothing: `reclaim_ids` takes the lowest `count`
 ids of `recycled - ∅ - ∅`, then fresh ids from `entry_bound + above(∅) +
 above(∅) = bound + 0`. `bin` is the bin's ascending listing. -/
 def reserveFresh (bound : Nat) (bin : List Nat) (count : Nat) : List Nat :=
   let reclaimed := bin.take count
   reclaimed ++ List.range' (bound + 0) (count - reclaimed.length)
 
-/-- `IdSpace::reserve` (`id_space.rs:516`): `reclaim_ids` also skips the
-`quarantined` ids — what earlier batches of this version freed or cancelled (`open_batch`, `:470`). The
+/-- `IdSpace::reserve` (`id_space.rs`): `reclaim_ids` also skips the
+`quarantined` ids — what earlier batches of this version freed or cancelled (`open_batch`). The
 fresh ids above the boundary are unchanged. -/
 def reserveQ (bound : Nat) (bin quarantined : List Nat) (count : Nat) : List Nat :=
   let reclaimed := (bin.filter (fun i => !quarantined.contains i)).take count
@@ -94,18 +94,18 @@ theorem reserveQ_mem (bound : Nat) (bin q : List Nat) (count i : Nat)
     exact (List.mem_filter.1 (List.mem_of_mem_take h)).1
   · right; omega
 
-/-- The half of the node `IdSpace` (`id_space.rs:164`) that `Graph` reads:
+/-- The half of the node `IdSpace` (`id_space.rs`) that `Graph` reads:
 `live` and `recycled` (a set, here a duplicate-free list). -/
 structure Ids where
   live : Nat
   bin  : List Nat
 
-/-- `IdSpace::bound` (`:359`) = `Graph::node_id_bound` (`graph.rs:1709`). -/
+/-- `IdSpace::bound` = `Graph::node_id_bound` (`graph.rs`). -/
 def Ids.bound (s : Ids) : Nat := s.live + s.bin.length
 
-/-- The state `IdSpace::create` (`:621`) moves to on `{id}` once its refusals
+/-- The state `IdSpace::create` moves to on `{id}` once its refusals
 pass: `recycled -= nodes; live += nodes.len()` — what `Graph::create_nodes`
-(`graph.rs:1748`) does to the id space. -/
+(`graph.rs`) does to the id space. -/
 def Ids.create1 (s : Ids) (id : Nat) : Ids := ⟨s.live + 1, s.bin.erase id⟩
 
 /-- Insert `id` into an ascending list at its sorted place. -/
@@ -150,9 +150,9 @@ theorem insAsc_sorted (id : Nat) : ∀ l : List Nat, l.Pairwise (· ≤ ·) → 
       · omega
       · exact h'.1 x hx
 
-/-- The state `IdSpace::release` (`:739`) moves to on `requested = freed = {id}`
+/-- The state `IdSpace::release` moves to on `requested = freed = {id}`
 once its refusals pass (`id` not free): `recycled |= freed; live -= freed.len()`
-— `Graph::delete_nodes` (`graph.rs:2310`). The id goes in at its sorted place, so the bin stays an
+— `Graph::delete_nodes` (`graph.rs`). The id goes in at its sorted place, so the bin stays an
 ascending listing (`release1_sorted`), which `reserveFresh` (`bin.take`) relies on. -/
 def Ids.release1 (s : Ids) (id : Nat) : Ids := ⟨s.live - 1, insAsc id s.bin⟩
 

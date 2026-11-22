@@ -1,4 +1,4 @@
-/-! # `uuid_v4` / `uuid_fields` (redis_type.rs:790-830) and virtual-key names (:463-468)
+/-! # `uuid_v4` / `uuid_fields` (redis_type.rs) and virtual-key names (:463-468)
 
 `uuid_v4` keeps the clock and the counter in separate
 fields: `uuid_fields(t, seq)` prints `t` in the first three fields and
@@ -76,7 +76,7 @@ theorem xor_lt (x y : Nat) (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) : x ^^^ y < 2 ^ 6
 
 /-! ## On main: `uuid_fields` -/
 
-/-- `uuid_fields(t, seq)` (redis_type.rs:812-830): `[a >> 32, (a >> 16) & 0xFFFF,
+/-- `uuid_fields(t, seq)` (redis_type.rs): `[a >> 32, (a >> 16) & 0xFFFF,
 a & 0xFFF, 0x8000 | (b & 0x3FFF), b & 0xFFFF_FFFF_FFFF]` with `a = t`,
 `b = seq.wrapping_mul(MUL).wrapping_add(INC)`. `0x8000 | x` is `0x8000 + x` for
 `x < 0x4000`. -/
@@ -117,7 +117,7 @@ theorem mixB_mod48 (a : Nat) : mixB a % 2 ^ 48 = ((a % 2 ^ 48) * MUL + INC) % 2 
   rw [Nat.mul_mod (a % 2 ^ 48) MUL, Nat.mod_mod]
 
 /-- **The counter field is a bijection of `seq` modulo 2^48** — what the Rust
-`const _` block (`redis_type.rs:839-889`) checks on sample points, for every `seq`. -/
+`const _` block (`redis_type.rs`) checks on sample points, for every `seq`. -/
 theorem counter_field_bijective (s s' : Nat) :
     (uuidFields 0 s).2.2.2.2 = (uuidFields 0 s').2.2.2.2 ↔ s % 2 ^ 48 = s' % 2 ^ 48 := by
   simp only [uuidFields]

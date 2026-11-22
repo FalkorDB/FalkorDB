@@ -1,6 +1,6 @@
 import VersionedMatrix.DeltaBook
 /-
-# `versioned_matrix::Iter` construction and `seek` (`versioned_matrix.rs:1382-1484`)
+# `versioned_matrix::Iter` construction and `seek` (`versioned_matrix.rs`)
 
 A layer's `matrix::Iter` is `LIt`: the layer it is bound to plus the entries
 it has yet to yield in the current row range (`GxB_rowIterator_seekRow` +

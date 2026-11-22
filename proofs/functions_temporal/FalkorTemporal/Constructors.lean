@@ -4,19 +4,19 @@ import FalkorTemporal.Duration
 
 | here | there |
 | --- | --- |
-| `chronoYearOk`      | chrono 0.4.45 `MIN_YEAR = -262143`, `MAX_YEAR = 262142` (`naive/date/mod.rs:2446`) |
-| `tdDaysOk`          | chrono `TimeDelta::days` panics unless `days * 86400 ∈ [MIN.secs, MAX.secs]` (`time_delta.rs:86,150`) |
+| `chronoYearOk`      | chrono 0.4.45 `MIN_YEAR = -262143`, `MAX_YEAR = 262142` (`naive/date/mod.rs`) |
+| `tdDaysOk`          | chrono `TimeDelta::days` panics unless `days * 86400 ∈ [MIN.secs, MAX.secs]` (`time_delta.rs`) |
 | `Outcome`           | `Result<NaiveDate, String>` plus the panic that kills the server |
-| `inRange`, `checkRange` | `check_range` — `temporal.rs:63` (`None` passes) |
-| `i32Ok`, `u32Ok`    | `i32::try_from` / `u32::try_from` — `temporal.rs:92,122-125` |
+| `inRange`, `checkRange` | `check_range` — `temporal.rs` (`None` passes) |
+| `i32Ok`, `u32Ok`    | `i32::try_from` / `u32::try_from` — `temporal.rs` |
 | `checkedAddDays`    | `NaiveDate::checked_add_signed(Duration::days(n))` (`None` ↦ `.err`) |
-| `weekPath`          | `date_from_components`, `week` branch — `temporal.rs:94-107` |
-| `quarterPath`       | `date_from_components`, `quarter` branch — `temporal.rs:109-119` |
-| `ymdPath`           | `date_from_components`, year/month/day tail — `temporal.rs:122-128` |
-| `dateFromComponents`| `date_from_components` — `temporal.rs:82` |
-| `weekSlice`         | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:279-289` |
+| `weekPath`          | `date_from_components`, `week` branch — `temporal.rs` |
+| `quarterPath`       | `date_from_components`, `quarter` branch — `temporal.rs` |
+| `ymdPath`           | `date_from_components`, year/month/day tail — `temporal.rs` |
+| `dateFromComponents`| `date_from_components` — `temporal.rs` |
+| `weekSlice`         | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs` |
 | `sliceOk`, `byteLen` | byte 2 of `rest` is a char boundary / `rest.len()` |
-| (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs:281`, `push_date` `value.rs:828` |
+| (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs`, `push_date` `value.rs` |
 -/
 namespace FalkorTemporal
 
@@ -50,7 +50,7 @@ theorem jan4_bound (year : Int) (hy : -200000 ≤ year ∧ year ≤ 200000) :
 
 def inRange (v lo hi : Int) : Bool := decide (lo ≤ v) && decide (v ≤ hi)
 
-/-- `check_range(name, value, min, max)` (`temporal.rs:63`): `None` passes. -/
+/-- `check_range(name, value, min, max)` (`temporal.rs`): `None` passes. -/
 def checkRange (v : Option Int) (lo hi : Int) : Bool :=
   match v with
   | some x => inRange x lo hi
@@ -66,7 +66,7 @@ def checkedAddDays (day n : Int) : Outcome :=
   if !tdDaysOk n then .panic "TimeDelta::days out of bounds"
   else if chronoYearOk (civilFromDaysI (day + n)).1 then .ok (day + n) else .err
 
-/-- `date_from_components`, week branch (`temporal.rs:94-107`). `check_range("week", 1, 53)`
+/-- `date_from_components`, week branch (`temporal.rs`). `check_range("week", 1, 53)`
 comes first, so `(week - 1) * 7 + day_offset - weekday_of_jan4` is in `-6..=370` and no i64
 operation can overflow. Since #2988 `dayOfWeek` is ISO `1..=7` (7 = Sunday), as in the
 string form and C (`check_range("dayOfWeek", day_of_week, 1, 7)`, `day_of_week - 1`). -/
@@ -81,21 +81,21 @@ def weekPath (year week dow : Int) : Outcome :=
     let off := dow - 1
     checkedAddDays jan4 ((week - 1) * 7 + off - wd)
 
-/-- `date_from_components`, quarter branch (`temporal.rs:109-119`). -/
+/-- `date_from_components`, quarter branch (`temporal.rs`). -/
 def quarterPath (year quarter : Int) (doq : Option Int) : Outcome :=
   if !inRange quarter 1 4 then .err
   else if !checkRange doq 1 92 then .err
   else if !chronoYearOk year then .err             -- `from_ymd_opt(year, qsm, 1)`
   else checkedAddDays (daysFromCivil year ((quarter - 1) * 3 + 1) 1) (doq.getD 1 - 1)
 
-/-- The year/month/day tail (`temporal.rs:122-128`): `u32::try_from` on month and day (no
+/-- The year/month/day tail (`temporal.rs`): `u32::try_from` on month and day (no
 more `as u32` truncation), then `NaiveDate::from_ymd_opt`. -/
 def ymdPath (year month day : Int) : Outcome :=
   if u32Ok month && u32Ok day && chronoYearOk year && inRange month 1 12 &&
       inRange day 1 (daysInMonth year month) then .ok (daysFromCivil year month day)
   else .err
 
-/-- `date_from_components` (`temporal.rs:82`): `i32::try_from(year)` (no more `as i32`
+/-- `date_from_components` (`temporal.rs`): `i32::try_from(year)` (no more `as i32`
 truncation), then the week, quarter or year/month/day branch. -/
 def dateFromComponents (year month day week dow quarter doq : Option Int) : Outcome :=
   let y := year.getD 1970
@@ -281,7 +281,7 @@ inductive SliceOutcome where
   | ok
   deriving DecidableEq, Repr
 
-/-- `parse_week_date` (`temporal.rs:279-289`) up to the two numeric parses: `rest.len() <= 2`
+/-- `parse_week_date` (`temporal.rs`) up to the two numeric parses: `rest.len() <= 2`
 takes `rest` whole as the week (no slice), otherwise `rest.split_at_checked(2).ok_or_else(..)?`
 errors exactly when byte 2 is not a char boundary. The result only says whether the split is
 reached and succeeds; the numeric parses behind it (`Parse.parseWeek`) are abstract. The

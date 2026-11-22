@@ -2,7 +2,7 @@ import FalkorEffectsCodec.RecRT
 /-!
 # Payload framing: `open_payload`, `maybe_compress`, `frame_prefix`, `Payload`, `Records`
 
-`graph/src/effects/v3/records.rs:1219-1431`.
+`graph/src/effects/v3/records.rs`.
 
 `maybe_compress` declines to compress a payload of 4 GiB of records or more (`u32::try_from(..).is_err()`), and builds
 the prefix through `frame_prefix`, which refuses a length that does not fit
@@ -29,7 +29,7 @@ structure CodecOK (Z : Codec) : Prop where
   roundtrip : ∀ b f, Z.compress b = some f → Z.decompress f b.length = some b
   crc_lt : ∀ b, Z.crc b < 2 ^ 32
 
-/-- `open_payload` (`records.rs:1269`): the plain record bytes, or why not. -/
+/-- `open_payload` (`records.rs`): the plain record bytes, or why not. -/
 def openPayload (Z : Codec) : R Bytes := do
   let version ← u8
   if version ≠ EFFECTS_VERSION then fail (.unsupportedVersion version) else
@@ -49,7 +49,7 @@ def openPayload (Z : Codec) : R Bytes := do
       else if Z.crc plain ≠ checksum then .error (.checksumMismatch checksum (Z.crc plain))
       else .ok (plain, [])
 
-/-- `frame_prefix` (`records.rs:1419`): `u32 plain_len · u32 comp_len · u32
+/-- `frame_prefix` (`records.rs`): `u32 plain_len · u32 comp_len · u32
 checksum`, or `None` when a length does not fit its `u32`. -/
 def framePrefix (plainLen compLen checksum : Nat) : Option Bytes :=
   if plainLen < 2 ^ 32 ∧ compLen < 2 ^ 32 then
@@ -71,7 +71,7 @@ theorem framePrefix_length {p c k : Nat} {b : Bytes} (h : framePrefix p c k = so
   · cases h; simp [w32, COMPRESSED_PREFIX]
   · cases h
 
-/-- `maybe_compress` (`records.rs:1369`): the new buffer and whether it compressed. -/
+/-- `maybe_compress` (`records.rs`): the new buffer and whether it compressed. -/
 def maybeCompress (Z : Codec) (buf : Bytes) (minBytes : Nat) : Bytes × Bool :=
   if minBytes = 0 ∨ buf.length < 2 ∨ buf.length - 2 < minBytes then (buf, false) else
   -- `u32::try_from(buf.len() - HEADER).is_err()` 
@@ -188,7 +188,7 @@ theorem maybeCompress_shrinks (Z : Codec) (buf : Bytes) (m : Nat) (h : (maybeCom
       simp only [List.length_append, List.length_cons, List.length_nil]
       simp [COMPRESSED_PREFIX] at d this; omega
 
-/-- `Records::next` (`records.rs:1250`): stop at the end, yield one record,
+/-- `Records::next` (`records.rs`): stop at the end, yield one record,
 fuse after the first error. -/
 def readAllRecords (C : IdCodec) (utf8 I : Bytes → Bool) : Nat → R (List (Record C.T))
   | 0 => fun _ => .error .outOfFuel

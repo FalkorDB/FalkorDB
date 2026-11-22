@@ -3,7 +3,7 @@ import GraphPersist.Persist.Reader
 namespace GraphPersist.Persist
 open GraphPersist
 
-/-! ## The deleted-id bitmap (`impl Encode/Decode<19> for RoaringTreemap`, serialization.rs:172-241) -/
+/-! ## The deleted-id bitmap (`impl Encode/Decode<19> for RoaringTreemap`, serialization.rs) -/
 
 /-- `id.to_le_bytes()`. -/
 def le8 (n : Nat) : List UInt8 :=
@@ -54,7 +54,7 @@ theorem decRoar_rt (l : List Nat) (h : ∀ i ∈ l, i < 2 ^ 64) :
     | cons t ts => simp at hl
 
 /-! ## Attribute spans (`AttributeStore::encode_with_range` / `decode_with_count`,
-attribute_store.rs:1425-1503) -/
+attribute_store.rs) -/
 
 abbrev Span := List (Nat × Val)
 /-- An attribute store: entity id ↦ its span (absent = no attributes). -/

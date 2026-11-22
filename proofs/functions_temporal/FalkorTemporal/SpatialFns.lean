@@ -1,7 +1,7 @@
 import FalkorTemporal.Pure
 /-!
-# Spatial and vector functions (functions/spatial.rs:38-193), `Point::new` / `Point::distance`
-(value.rs:142-176)
+# Spatial and vector functions (functions/spatial.rs), `Point::new` / `Point::distance`
+(value.rs)
 
 f64/f32 are abstract (`Flt`), with only the IEEE facts the theorems use stated as fields.
 `simsimd` (vec_distance.rs, FFI) is two partial functions whose only assumed law is the
@@ -69,14 +69,14 @@ structure Point (F32 : Type) where
   latitude : F32
   longitude : F32
 
-/-- `Point::new` (value.rs:142). -/
+/-- `Point::new` (value.rs). -/
 def Point.new (latitude longitude : F32) : Point F32 := { latitude, longitude }
 
 theorem Point.new_fields (a b : F32) : (Point.new a b).latitude = a ∧ (Point.new a b).longitude = b :=
   ⟨rfl, rfl⟩
 
 /-- The haversine term `a = cos φ₁ cos φ₂ · sin²(Δλ/2) + sin²(Δφ/2)` of `Point::distance`
-(value.rs:167-171), before the clamp. -/
+(value.rs), before the clamp. -/
 def havA (p q : Point F32) : F :=
   let lat1 := L.toRadF64 p.latitude
   let lon1 := L.toRadF64 p.longitude
@@ -87,11 +87,11 @@ def havA (p q : Point F32) : F :=
   L.mulAdd (L.mul (L.cos lat1) (L.cos lat2)) (L.sq (L.sin (L.div dlon L.two)))
     (L.sq (L.sin (L.div dlat L.two)))
 
-/-- `c = 2·atan2(√a, √(1 − a))`, times `EARTH_RADIUS` (value.rs:172-175). -/
+/-- `c = 2·atan2(√a, √(1 − a))`, times `EARTH_RADIUS` (value.rs). -/
 def havFinish (a : F) : F :=
   L.mul L.radius (L.mul L.two (L.atan2 (L.sqrt a) (L.sqrt (L.sub L.one a))))
 
-/-- `Point::distance` (value.rs:153), haversine, operation by operation; since #2983
+/-- `Point::distance` (value.rs), haversine, operation by operation; since #2983
 (86dcd5a11) `a` is clamped to `[0, 1]`. -/
 def distance (p q : Point F32) : F := havFinish L (L.clamp01 (havA L p q))
 
@@ -180,7 +180,7 @@ inductive SV (F F32 : Type) where
   | null | int (i : Int) | float (f : F) | str (s : String) | map (kvs : List (String × SV F F32))
   | list (vs : List (SV F F32)) | vec (v : List F32) | point (p : Point F32) | other (name : String)
 
-/-- `Value::name` (value.rs:1399) on the variants spatial.rs inspects; `Vectorf32` since
+/-- `Value::name` (value.rs) on the variants spatial.rs inspects; `Vectorf32` since
 #2954 (b6567cb97), `VecF32` before. -/
 def SV.name {F F32} : SV F F32 → String
   | .null => "Null" | .int _ => "Integer" | .float _ => "Float" | .str _ => "String"
@@ -190,7 +190,7 @@ def SV.name {F F32} : SV F F32 → String
 inductive Res (α : Type) where
   | ok (a : α) | err (s : String) | unreachable
 
-/-- The f64 facts `point_from_map_entries` (spatial.rs:38) needs: `numeric` of an `Int` is
+/-- The f64 facts `point_from_map_entries` (spatial.rs) needs: `numeric` of an `Int` is
 `i as f64`, a NaN test, and the two closed range tests `-90.0..=90.0`, `-180.0..=180.0`
 (false on NaN, as in Rust). They are separate from `Flt` so that structure stays as it was. -/
 structure PtRng (F : Type) where
@@ -203,14 +203,14 @@ structure PtRng (F : Type) where
 
 variable {R : PtRng F}
 
-/-- `numeric` (spatial.rs:74): Float and Int are numbers, anything else (`null`
+/-- `numeric` (spatial.rs): Float and Int are numbers, anything else (`null`
 included) is not. -/
 def numeric (R : PtRng F) : SV F F32 → Option F
   | .float f => some f
   | .int i => some (R.ofInt i)
   | _ => none
 
-/-- `point_from_map_entries` (spatial.rs:38-72, since #3301): C's checks and messages.
+/-- `point_from_map_entries` (spatial.rs, since #3301): C's checks and messages.
 `keyCount` is the map's length; `lat`/`lon` are `map.get_str(..)` (`none` = key absent,
 `some .null` = key set to `null`). The range tests run on the `f64`s; `as f32` happens only
 in the result. -/
@@ -230,7 +230,7 @@ def pointFromMapEntries (L : Flt F F32) (R : PtRng F) (keyCount : Nat)
     else .err "latitude should be within the -90 to 90 range"
   | _, _ => .err "'latitude' and 'longitude' values in point map were not both valid numerics"
 
-/-- The `point` fn (spatial.rs:110): a map goes to `pointFromMapEntries`, `null` to `null`. -/
+/-- The `point` fn (spatial.rs): a map goes to `pointFromMapEntries`, `null` to `null`. -/
 def point (L : Flt F F32) (R : PtRng F) : List (SV F F32) → Res (SV F F32)
   | .map m :: _ => pointFromMapEntries L R m.length (m.lookup "latitude") (m.lookup "longitude")
   | .null :: _ => .ok .null
@@ -304,7 +304,7 @@ def numF32 : SV F F32 → F32
   | .float f => L.ofF64 f
   | _ => L.ofI64 0
 
-/-- `vecf32` (spatial.rs:89). -/
+/-- `vecf32` (spatial.rs). -/
 def vecf32 : List (SV F F32) → Res (SV F F32)
   | .list vs :: _ =>
     if vs.all isNum then .ok (.vec (vs.map (numF32 L)))
@@ -318,7 +318,7 @@ theorem vecf32_ok (vs : List (SV F F32)) (v : List F32) (h : vecf32 L [.list vs]
   · cases h; simp_all
   · cases h
 
-/-- `distance` (spatial.rs:130): `Null` (here `none`) if either side is null, else
+/-- `distance` (spatial.rs): `Null` (here `none`) if either side is null, else
 `Point::distance`. -/
 def distanceV (args : List (SV F F32)) : Res (Option F) :=
   match args with
@@ -341,7 +341,7 @@ structure Simd (F F32 : Type) where
   euclidean_some : ∀ a b, a.length = b.length → (euclidean a b).isSome
   cosine_some : ∀ a b, a.length = b.length → (cosine a b).isSome
 
-/-- `vec.euclideanDistance` / `vec.cosineDistance` (spatial.rs:146, :176); `dflt` is the
+/-- `vec.euclideanDistance` / `vec.cosineDistance` (spatial.rs); `dflt` is the
 `unwrap_or` value (0.0 resp. 1.0). -/
 def vecDist (k : List F32 → List F32 → Option F) (dflt : F) (args : List (SV F F32)) : Res (Option F) :=
   match args with
@@ -374,10 +374,10 @@ theorem vecDist_mismatch (k : List F32 → List F32 → Option F) (d : F) (a b :
     vecDist k d [.vec a, .vec b] = .err s!"Vector dimension mismatch, expected {a.length} but got {b.length}" := by
   simp [vecDist, h]
 
-/-- `register` (spatial.rs:82): five `cypher_fn!`s. -/
+/-- `register` (spatial.rs): five `cypher_fn!`s. -/
 def registered : List (String × Nat) :=
   [("vecf32", 1), ("point", 1), ("distance", 2), ("vec.euclideanDistance", 2), ("vec.cosineDistance", 2)]
-/-- `register` (spatial.rs:82): since #3301 `point` has no struct form any more
+/-- `register` (spatial.rs): since #3301 `point` has no struct form any more
 (`set_struct_fn("point", ..)` is gone). -/
 theorem register_wf : (registered.map (·.1)).Nodup := by decide
 

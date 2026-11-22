@@ -7,7 +7,7 @@ one field entry per index type, so its type word always has exactly one type. C 
 one entry per *attribute* with every type in the bitmask (`IndexField_Init`,
 `_RdbSaveIndexField` in C's `src/serializers/encoder/v20/encode_schema.c`; the loader
 accepts any non-empty subset, `decode_graph_schema.c:127`). `SerialSchema.decField` is
-`decode_index_field` (`src/serializers/mod.rs:637-724`) and decodes every type in the word;
+`decode_index_field` (`src/serializers/mod.rs`) and decodes every type in the word;
 the three theorems below hold on it.
 
 * `encFieldC` — C's entry for an attribute with the types `r`, `ft`, `v`.
@@ -69,7 +69,7 @@ theorem decField_empty_refused (attr ph : Bytes) (w ns : Nat) (vw : VWords) (ts 
     decField U (encFieldC attr false false false w ns ph vw ++ ts) = none := by
   simp [decField, encFieldC, maskOf, Dec.bind, rdB, rdU, rdD, failD]
 
-/-- An unknown bit (here `0x20`) is refused too (`:655-660`). -/
+/-- An unknown bit (here `0x20`) is refused too. -/
 theorem decField_unknown_bit_refused (attr ph : Bytes) (w ns : Nat) (ts : List W) :
     decField U ([.buf (nullTerm attr), .u 0x20, .d w, .u ns, .buf (nullTerm ph)] ++ ts) = none := by
   simp [decField, Dec.bind, rdB, rdU, rdD, failD, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR,

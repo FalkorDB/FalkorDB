@@ -13,16 +13,16 @@ computes it, so both families are visible.
 | here | there (Rust at fb3d516d0) |
 | --- | --- |
 | `G` | the graph a query sees and writes: node count, labels, edges |
-| `Op` | `IR` (`graph/src/planner/mod.rs:200-300`), the operators these repros use |
-| `run` | the runtime ops, eager: `apply.rs:102-340` (right branch re-run per left row with `Argument` = that row), `optional.rs:91-292` (one null row when the branch is empty), `aggregate.rs:288` (no keys → one row even on empty input), `create.rs:101-160`, `merge.rs:67-300` (match else create), `filter.rs:48-80` (`Basic.filterRows`), `unwind.rs`, `node_by_label_scan.rs`, `cond_traverse.rs` (bound destination) |
-| `gv` | `GetVariables::get_variables` (`runtime/runtime.rs:212-330`): `Aggregate` adds `names` and keeps walking, `Project` adds its outputs and `break`s |
-| `branchOut` | `branch_output_variables` (`optimizer/push_filters_down.rs:59-92`; the model's `Project`/`Aggregate` carry no copies, so `include_copies` makes no difference) |
-| `excluded` | the child exclusion list (`push_filters_down.rs:181-200`) |
+| `Op` | `IR` (`graph/src/planner/mod.rs`), the operators these repros use |
+| `run` | the runtime ops, eager: `apply.rs` (right branch re-run per left row with `Argument` = that row), `optional.rs` (one null row when the branch is empty), `aggregate.rs` (no keys → one row even on empty input), `create.rs`, `merge.rs` (match else create), `filter.rs` (`Basic.filterRows`), `unwind.rs`, `node_by_label_scan.rs`, `cond_traverse.rs` (bound destination) |
+| `gv` | `GetVariables::get_variables` (`runtime/runtime.rs`): `Aggregate` adds `names` and keeps walking, `Project` adds its outputs and `break`s |
+| `branchOut` | `branch_output_variables` (`optimizer/push_filters_down.rs`; the model's `Project`/`Aggregate` carry no copies, so `include_copies` makes no difference) |
+| `excluded` | the child exclusion list (`push_filters_down.rs`) |
 | `isWriteOp`, `locked` | `is_write` (:86-99) and `holds_write`/`locked` (:213-223, used at :306), `Cfg.pr3582` |
-| `pushAt` | one Filter's routing (`push_filters_down.rs:138-364`): grandchild variable sets (:176-185), Case 1 (:196-201), Case 2 inherited (`inh`, :210-244), augmentation of `Argument` subtrees (:247-257), the `all` test over ids (:264-276) |
+| `pushAt` | one Filter's routing (`push_filters_down.rs`): grandchild variable sets (:176-185), Case 1 (:196-201), Case 2 inherited (`inh`, :210-244), augmentation of `Argument` subtrees (:247-257), the `all` test over ids (:264-276) |
 | `childInh` | Case 2's ancestor walk, top-down (:288-341): below an `Apply`'s right child the left branch's visible ids (`bv`, `branch_visible_variables` :99-119; the earlier `bvPre3281` is kept as history), below its left child nothing, below `Merge` nothing; with `Cfg.walk3281` a two-child `Optional` (`optApply`) ends the walk like an `Apply` |
 | `sweep`, `pushFilters` | the restart loop (:103-370), as a top-down sweep that follows each pushed filter |
-| `Cfg.main` | ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs:92-110`), no write barrier |
+| `Cfg.main` | ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs`), no write barrier |
 | `Cfg.pr3281` | Rust at 21a34f5a3: `Cfg.pr3582` with the new walk and `bv` |
 | `Cfg.pr3582` | Rust at 7c04fa598: ids only, write kinds excluded, siblings of a writing branch locked; the CP split's `!holds_write` guard (:322) is not modelled (no CP split here) |
 
@@ -78,7 +78,7 @@ inductive Op where
   /-- `(fr:l)-[e]->(to)` with `to` bound by the input row. -/
   | condTraverse (e fr to : Var) (l : Nat) (c : Op)
   /-- `IR::CondTraverse` as it carries its relationship (`fr`)-[`e`]->(`to`)
-  and `transposed` (`planner/mod.rs:200-300`, `runtime/ops/cond_traverse.rs`):
+  and `transposed` (`planner/mod.rs`, `runtime/ops/cond_traverse.rs`):
   the walk starts from `fr`, read from the input row, and binds `e` and `to`
   (which must carry `to.lbl`). `transposed` reads each stored edge backwards,
   so a pattern edge `a → b` started from `b` is `hop e b a true`. -/
@@ -89,7 +89,7 @@ inductive Op where
   | create (v : Var) (c : Op)
   | merge (v : Var) (c : Op)
   | apply (l r : Op)
-  /-- A two-child `IR::Optional(vs)` (`optional.rs:98-102`): its right branch
+  /-- A two-child `IR::Optional(vs)` (`optional.rs`): its right branch
   runs per row of its left child (that row is the `Argument`), and a left row
   with no right row gets `vs` null-padded. -/
   | optApply (vs : List Var) (l r : Op)
@@ -218,7 +218,7 @@ structure Cfg where
   writeBarrier : Bool
   /-- #3582: write operators (`Create`, `Commit`, …) join the exclusion list,
   and a grandchild is locked when a sibling subtree writes (`is_write`,
-  `holds_write`/`locked`, push_filters_down.rs:86-99, :213-223, :306). -/
+  `holds_write`/`locked`, push_filters_down.rs). -/
   lockSiblings : Bool
   /-- #3281: Case 2 inherits the new `branch_visible_variables` (`bv`; before it
   `bvPre3281`) and a two-child `Optional` (`optApply`) ends the walk like an
@@ -240,7 +240,7 @@ def Cfg.pr3582 : Cfg := ⟨fun a b => a.id == b.id, false, true, false⟩
 new `branch_visible_variables` and stops at a two-child `Optional`. -/
 def Cfg.pr3281 : Cfg := ⟨fun a b => a.id == b.id, false, true, true⟩
 
-/-- `get_variables` (runtime.rs:212-330). -/
+/-- `get_variables` (runtime.rs). -/
 def gv : Op → List Var
   | .argument | .unit => []
   | .project bs _ => bs.map Prod.fst
@@ -253,7 +253,7 @@ def gv : Op → List Var
   | .apply l r => gv l ++ gv r
   | .optApply vs l r => vs ++ gv l ++ gv r
 
-/-- `branch_output_variables` (push_filters_down.rs:59-92); no copies in the model. -/
+/-- `branch_output_variables` (push_filters_down.rs); no copies in the model. -/
 def branchOut : Op → Option (List Var)
   | .project bs _ => some (bs.map Prod.fst)
   | .aggregate keys cnt _ => some (aggNames keys cnt)
@@ -262,7 +262,7 @@ def branchOut : Op → Option (List Var)
 /-- The ids of `xs` that are not ids of `ys` (`HashSet<u32>::difference`). -/
 def idsMinus (xs ys : List Var) : List Var := xs.filter fun v => !ys.any (·.id == v.id)
 
-/-- `branch_visible_variables` before #3281 (push_filters_down.rs:88-104 at b65fcac00, #2981): an env-resetting
+/-- `branch_visible_variables` before #3281 (push_filters_down.rs at b65fcac00, #2981): an env-resetting
 operator's outputs; otherwise the ids the operator itself adds (its `get_variables` minus its
 children's) and, recursively, what its children's rows carry. -/
 def bvPre3281 : Op → List Var
@@ -324,7 +324,7 @@ theorem bvPre3281_sub_gv : ∀ (op : Op), ∀ v ∈ bvPre3281 op, v ∈ gv op :=
     · simp [gv, ihl x h]
     · simp [gv, ihr x h]
 
-/-- `branch_visible_variables` (push_filters_down.rs:99-119, #3281): an env-resetting
+/-- `branch_visible_variables` (push_filters_down.rs, #3281): an env-resetting
 operator's named outputs (`branch_output_variables(_, false)`: no copies); otherwise
 the variables of the lone operator (`collect_subtree_variables` of a one-node tree, its
 `get_variables` without its children) and, recursively, what its children expose.
@@ -413,7 +413,7 @@ theorem bvPre3281_sub_bv : ∀ (op : Op), ∀ v ∈ bvPre3281 op, v ∈ bv op :=
     · simp [bv, ihl x h]
     · simp [bv, ihr x h]
 
-/-- `subtree_contains(…, Argument)` (planner/mod.rs:333). -/
+/-- `subtree_contains(…, Argument)` (planner/mod.rs). -/
 def hasArg : Op → Bool
   | .argument => true
   | .unit => false
@@ -430,12 +430,12 @@ def hasWrite : Op → Bool
     hasWrite c
   | .apply l r | .optApply _ l r => hasWrite l || hasWrite r
 
-/-- push_filters_down.rs:181-200 before #3582 (the kinds that occur here). -/
+/-- push_filters_down.rs before #3582 (the kinds that occur here). -/
 def excluded : Op → Bool
   | .project _ _ | .aggregate _ _ _ | .merge _ _ | .argument | .optional _ _ | .optApply _ _ _ => true
   | _ => false
 
-/-- `is_write` (push_filters_down.rs:86-99), the kinds that occur here; #3582
+/-- `is_write` (push_filters_down.rs), the kinds that occur here; #3582
 adds `Create`/`Commit` (and `Delete`/`Set`/`Remove`/`ForEach`, not modelled)
 to the exclusion list (:188-193). -/
 def isWriteOp : Op → Bool
@@ -490,7 +490,7 @@ def avail (inh : List Var) (k : Op) : List Var :=
   let (vs, reset) := info k
   if !inh.isEmpty && !reset && hasArg k then vs ++ inh else vs
 
-/-- `locked[i]` (push_filters_down.rs:217-223): some other grandchild's subtree
+/-- `locked[i]` (push_filters_down.rs): some other grandchild's subtree
 writes (`subtree_contains(…, is_write)`; in the model a `Commit` always wraps a
 `Create`/`Merge`, so `hasWrite` is that test). -/
 def locked (cfg : Cfg) (ks : List Op) (i : Nat) : Bool :=
@@ -648,7 +648,7 @@ WITH p, count(r0) AS n
 OPTIONAL MATCH (r:Rule)-[:SCOPED_TO]->(p) WHERE r.status = 'revoked'
 RETURN n, r.decided_at AS e
 ```
-Ids are scope-local (`binder.rs:2257-2268`, id = env length): before the WITH
+Ids are scope-local (`binder.rs`, id = env length): before the WITH
 `p, r0, _anon` are 0, 1, 2 of scope 0; after it `p, n, r, _anon` are 0, 1, 2, 3
 of scope 1. `get_variables` walks through the `Aggregate` into the pre-WITH
 subtree, so Case 2 inherits id 2 and believes `r` is bound at the `Argument`. -/
@@ -922,8 +922,8 @@ RETURN count(post)
 ```
 The planner emits the chain bottom-up `(post)->(f)`, `(post)->(t:Tag)`,
 `Filter(t.id = 100)`, `(post)->(tag:Tag)` over `Unwind` (the inline-attr
-Filter directly above the hop that binds `t`, `planner/mod.rs:2178-2186`).
-`select_scan_node` then re-orders the chain (`select_scan_node.rs:681-1260`):
+Filter directly above the hop that binds `t`, `planner/mod.rs`).
+`select_scan_node` then re-orders the chain (`select_scan_node.rs`):
 
 * the best endpoint is `t`: `f` scores 3 (bound by `Unwind`), `t` 3
   (filtered 2 + labelled 1), and `t` wins on label cardinality (`f` has no
@@ -960,7 +960,7 @@ abbrev Hop := Var × Node × Node
 
 def BIG : Nat := 2 ^ 64
 
-/-- `collect_output_aliases` (select_scan_node.rs:391-440), the kinds used
+/-- `collect_output_aliases` (select_scan_node.rs), the kinds used
 here; scans and `Filter` children give no bound vars (:779-795). -/
 def outAliases : Op → List Nat
   | .unwind v _ _ => [v.id]

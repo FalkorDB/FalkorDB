@@ -8,11 +8,11 @@ its own models; these are this project's, so the rows here do not lean on anothe
 
 | Lean | Rust (origin/main 256ab4d3f) |
 | --- | --- |
-| `upToNul`                      | `up_to_nul` `graph_core.rs:92` |
-| `cGraphKey`, `cGraphName`      | `c_graph_key` `:121` (bytes up to the first NUL), `c_graph_name` `:106` (`up_to_nul` of the lossy string) |
-| `regPut`, `registerGraph`      | `register_graph` `:142` (`GRAPH_REGISTRY.lock().insert`, the displaced entry is dropped on another thread) |
-| `isRegistered`                 | `graph_is_registered` `:190` (a scan for the same `Arc`) |
-| `renameGraph`                  | `rename_graph` `:253` (`remove(old).and_then(insert(new))`) |
+| `upToNul`                      | `up_to_nul` `graph_core.rs` |
+| `cGraphKey`, `cGraphName`      | `c_graph_key` (bytes up to the first NUL), `c_graph_name` (`up_to_nul` of the lossy string) |
+| `regPut`, `registerGraph`      | `register_graph` (`GRAPH_REGISTRY.lock().insert`, the displaced entry is dropped on another thread) |
+| `isRegistered`                 | `graph_is_registered` (a scan for the same `Arc`) |
+| `renameGraph`                  | `rename_graph` (`remove(old).and_then(insert(new))`) |
 
 `String::from_utf8_lossy` is a std function: the two properties of it that `c_graph_name` needs
 are a hypothesis structure (`Lossy`), not an axiom.
@@ -80,7 +80,7 @@ theorem upToNul_split : ∀ (s : List Nat), (∀ x ∈ s, x ≠ 0) ∨ ∃ b, s 
         simp only [upToNul, h, ite_false, List.cons_append]
         rw [← hb]
 
-/-- `c_graph_key` (`:121`): the key's bytes up to the first NUL (it works on the bytes, so a
+/-- `c_graph_key`: the key's bytes up to the first NUL (it works on the bytes, so a
 key that is not UTF-8 is kept as it is). -/
 def cGraphKey (key : List Nat) : List Nat := upToNul key
 
@@ -97,7 +97,7 @@ structure Lossy (lossy : List Nat → List Nat) : Prop where
   nonul : ∀ a, (∀ x ∈ a, x ≠ 0) → ∀ x ∈ lossy a, x ≠ 0
   split : ∀ a b, (∀ x ∈ a, x ≠ 0) → lossy (a ++ 0 :: b) = lossy a ++ 0 :: lossy b
 
-/-- `c_graph_name` (`:106`): `up_to_nul(&key.to_string_lossy())`. -/
+/-- `c_graph_name`: `up_to_nul(&key.to_string_lossy())`. -/
 def cGraphName (lossy : List Nat → List Nat) (key : List Nat) : List Nat := upToNul (lossy key)
 
 /-- **The name is the key `c_graph_key` stores a new graph under** (read back as text): both

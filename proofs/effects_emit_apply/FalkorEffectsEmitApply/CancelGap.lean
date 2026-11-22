@@ -3,7 +3,7 @@ import FalkorEffectsEmitApply.Liveness
 /-!
 # Emit then apply, with cancellation: replica divergences
 
-`Emit.forEachRecord` (`for_each_record`, emit.rs:323-375 on 5e475e6c9) and
+`Emit.forEachRecord` (`for_each_record`, emit.rs on 5e475e6c9) and
 `Live.applyAll` (the checked arms of `apply_record`) were proven separately;
 nothing related what the master emits to what a replica *at the master's
 pre-segment state* accepts. Two properties:
@@ -11,9 +11,9 @@ pre-segment state* accepts. Two properties:
 * **`RelIdsCovered`** — every relationship id the master allocated in
   the segment (created or cancelled) is named by some `CREATE_EDGE`, so the
   replica's relationship `IdSpace` ends with the same contiguous range
-  (`IdSpace::verify`, id_space.rs:773-821, refuses a hole above the entry
-  bound). `digest_cancelled` (emit.rs:451) skips a cancelled edge whose type has
-  no id, so `Pending::commit` (pending.rs:1367) must register every cancelled type
+  (`IdSpace::verify`, id_space.rs, refuses a hole above the entry
+  bound). `digest_cancelled` (emit.rs) skips a cancelled edge whose type has
+  no id, so `Pending::commit` (pending.rs) must register every cancelled type
   (`relIdsCovered_after_commit`; proofs/pending_commit `bug3447_cascade_drops_type_key`).
   `pre3461_bug3447_cancelled_edge_id_gap` is the historical counterexample over the
   commit that registered only `created_rels_by_type` keys: live repro `CREATE ()-[:EXISTING]->()` then
@@ -24,10 +24,10 @@ pre-segment state* accepts. Two properties:
   `Pending`.
 * **`ReplayApplies`** — the emitted stream, translated to apply records
   (`toLive`), applies on the replica. `digest_labels(&p.remove_labels, None, …)`
-  (emit.rs:370) runs before `digest_cancelled` (:374) and does not skip created
+  (emit.rs) runs before `digest_cancelled` (:374) and does not skip created
   or cancelled nodes, so `delete_pending_node` must clear the node's `remove_labels`
   (proofs/pending_commit `fixed3448_cancelled_node_clears_remL`); the
-  `RemoveLabels` arm calls `require_live` (apply.rs:387-388).
+  `RemoveLabels` arm calls `require_live` (apply.rs).
   `bug3448_removeLabels_before_create_refused`: `CREATE (n:Foo) REMOVE n:Foo
   DELETE n` with the stale entry emits `AddLabel Foo, RemoveLabels [0], CreateNode [0], DeleteNode [0]`,
   refused with `NotLive node 0`; without it the same segment applies
@@ -42,7 +42,7 @@ open FalkorEA
 
 /-! ## Relationship ids -/
 
-/-- `IdSpace::verify` (id_space.rs:773-821), the hole half: the ids taken at or
+/-- `IdSpace::verify` (id_space.rs), the hole half: the ids taken at or
 above `entry` are exactly `[entry, entry + k)`. -/
 def verifyRange (entry : Nat) (taken : List Nat) : Bool :=
   let c := taken.filter (entry ≤ ·)
@@ -65,12 +65,12 @@ def RelIdsCovered (p : Pending) (g : Schema) : Prop := ∀ i ∈ allocated p, i 
 def regName (ts : List Name) (n : Name) : List Name := if n ∈ ts then ts else ts ++ [n]
 
 /-- The relationship-type dictionary after `Pending::commit` before #3461:
-each `created_rels_by_type` key is get-or-created (pending.rs:1236-1249 on
+each `created_rels_by_type` key is get-or-created (pending.rs on
 343e077f2); cancelled types are not looked at. -/
 def typesAfterCommitPre3461 (base : List Name) (p : Pending) : List Name :=
   p.createdRelTypes.foldl (fun ts q => regName ts q.1) base
 
-/-- The relationship-type dictionary after `Pending::commit` (pending.rs:1367-1413,
+/-- The relationship-type dictionary after `Pending::commit` (pending.rs,
 #3461): each `created_rels_by_type` key is get-or-created by
 `create_relationships_bulk`, then the type of every `cancelled_relationships`
 entry by `get_type_id_mut` (the `FxHashSet` only skips repeats, which

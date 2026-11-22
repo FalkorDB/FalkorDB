@@ -10,11 +10,11 @@ fully populated.
 
 | Lean | Rust (fb3d516d0) |
 | --- | --- |
-| `Idx.rsStop` (`IndexM.lean`) | the stopword list `create_rs_index` hands to `RediSearch_IndexOptionsSetStopwords` (`mod.rs:1119-1133`); fixed for the spec's lifetime |
-| `StopwordsAgree`, `CreateIndexKeepsStopwords` | the property: what `db.indexes()` / the RDB report (`Index::stopwords` `mod.rs:2189`) is what RediSearch applies |
-| `scenario3166` | `create_index` `indexer.rs:300-313` (existing spec: `register_fields` only) and `:341-343` (`set_stopwords` on the metadata) |
-| `incTicket` | `populate_index` taking its ticket: `try_increment_pending` (`mod.rs:2110`) on the published entry (shared `Arc` counters) |
-| `vectorQuery` | `Indexer::vector_query` `indexer.rs:560-571` → `Index::vector_query` `mod.rs:1809-1864` (no `is_operational` `mod.rs:2095` check) |
+| `Idx.rsStop` (`IndexM.lean`) | the stopword list `create_rs_index` hands to `RediSearch_IndexOptionsSetStopwords` (`mod.rs`); fixed for the spec's lifetime |
+| `StopwordsAgree`, `CreateIndexKeepsStopwords` | the property: what `db.indexes()` / the RDB report (`Index::stopwords` `mod.rs`) is what RediSearch applies |
+| `scenario3166` | `create_index` `indexer.rs` (existing spec: `register_fields` only) and (`set_stopwords` on the metadata) |
+| `incTicket` | `populate_index` taking its ticket: `try_increment_pending` (`mod.rs`) on the published entry (shared `Arc` counters) |
+| `vectorQuery` | `Indexer::vector_query` `indexer.rs` → `Index::vector_query` `mod.rs` (no `is_operational` `mod.rs` check) |
 | `VectorQueryRequiresOperational`, `VectorQueryComplete` | the property: a KNN query refuses until OPERATIONAL (C: "Invalid arguments for procedure") |
 -/
 namespace IndexLayer.Meta
@@ -127,7 +127,7 @@ def step2_3166 : Except String Ixr :=
 
 /-- **BUG #3166.** Both `CREATE`s succeed; the label reports stopwords `['router']`
 but its RediSearch spec was created (by the range index) with RediSearch's default
-list, and the second call only registers the new field on it (`indexer.rs:313`).
+list, and the second call only registers the new field on it (`indexer.rs`).
 Live (port 6640 Rust main 9d3869aa8 / 6641 C): `db.idx.fulltext.queryNodes('L', 'router')`
 → Rust 1 row, C 0; `db.indexes()` reports `[router]` on both. -/
 theorem bug3166_stopwords_not_applied :
@@ -159,15 +159,15 @@ theorem bug3166_violates : ¬ CreateIndexKeepsStopwords E0 := by
 /-! ## A vector query answers while the index is UNDER CONSTRUCTION -/
 
 /-- `populate_index` taking its ticket for generation `g` on the published entry
-(`try_increment_pending` `mod.rs:2110`; the counters are a shared `Arc`, so the
+(`try_increment_pending` `mod.rs`; the counters are a shared `Arc`, so the
 published index itself changes, as in `updateProgress`). -/
 def incTicket (I : Ixr) (l : String) (g : Nat) : Ixr :=
   match I.map.get l with
   | some x => { I with map := I.map.upd l { x with slots := x.slots.inc g } }
   | none => I
 
-/-- `Indexer::vector_query` (`indexer.rs:560-571`) → `Index::vector_query`
-(`mod.rs:1809-1864`): route by label (no index ⇒ `Ok(empty)`), `CString::new` of
+/-- `Indexer::vector_query` (`indexer.rs`) → `Index::vector_query`
+(`mod.rs`): route by label (no index ⇒ `Ok(empty)`), `CString::new` of
 `vector:{field}` (NUL ⇒ `Err`), then `Iter.vectorQ` with the FFI outcomes
 `cloneOk` (`try_clone_ref`), `nodeOk` (`CreateVecSimNode`), `iterOk`
 (`GetResultsIterator`) and RediSearch's answer `res`. Nothing consults
@@ -206,8 +206,8 @@ theorem vectorQueryGuarded_requires_operational (c n i : Bool) (res : List (Key 
   refine ⟨"Invalid arguments for procedure", ?_⟩
   simp [vectorQueryGuarded, route, hx, hop]
 
-/-- `Indexer::is_operational` (`indexer.rs:542-551`, PR #3581): no index on the label ⇒
-`true` (`is_none_or`), else `Index::is_operational` (`mod.rs:2088`, `operational`). -/
+/-- `Indexer::is_operational` (`indexer.rs`, PR #3581): no index on the label ⇒
+`true` (`is_none_or`), else `Index::is_operational` (`mod.rs`, `operational`). -/
 def isOperational (I : Ixr) (l : String) : Bool :=
   match I.route l with
   | some x => operational x
@@ -221,7 +221,7 @@ theorem isOperational_some (I : Ixr) (l : String) (x : Idx) (h : I.map.get l = s
     isOperational I l = operational x := by
   simp [isOperational, route, h]
 
-/-- PR #3581's gate in `Graph::vector_query_nodes`/`_edges` (`graph.rs:4408,4476`):
+/-- PR #3581's gate in `Graph::vector_query_nodes`/`_edges` (`graph.rs`):
 `if !indexer.is_operational(label) { Err } else indexer.vector_query ..` is exactly the
 fix shape `vectorQueryGuarded`, so it satisfies `VectorQueryRequiresOperational`. -/
 theorem vectorQueryGuarded_eq_isOperational (I : Ixr) (l a : String) (c n i : Bool)
@@ -233,7 +233,7 @@ theorem vectorQueryGuarded_eq_isOperational (I : Ixr) (l a : String) (c n i : Bo
   cases route I l <;> simp
 
 /-- **Fixed (#3581): the entry point on main, `Graph::vector_query_nodes`/`_edges`**
-(`graph.rs:4408,4476`): `if !indexer.is_operational(label) { Err } else indexer.vector_query ..`.
+(`graph.rs`): `if !indexer.is_operational(label) { Err } else indexer.vector_query ..`.
 It refuses a label whose index is not OPERATIONAL, for every FFI outcome and every RediSearch
 answer. -/
 def gated3581 (I : Ixr) (l a : String) (c n i : Bool) (res : List (Key × Nat)) : Except String RIter :=

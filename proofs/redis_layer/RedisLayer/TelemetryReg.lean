@@ -139,7 +139,7 @@ theorem removeId_absent (id : Nat) (l : List Q) (h : ∀ q ∈ l, q.id ≠ id) :
     have hx := h x (by simp)
     simp [removeId, hx, ih (fun q hq => h q (by simp [hq]))]
 
-/-! ## `WaitingEntry` (`:477-502`) -/
+/-! ## `WaitingEntry` -/
 
 /-- The guard: `some id` while armed. -/
 structure WE where
@@ -170,7 +170,7 @@ theorem WE.promote_twice (w : WE) (r : Reg) :
     ((w.promote r).2.1.promote (w.promote r).2.2).1 = none := by
   cases h : w.slot <;> simp [WE.promote, h]
 
-/-! ## Producer gate (`enqueue_entry`, `:1038-1077`) -/
+/-! ## Producer gate (`enqueue_entry`) -/
 
 def QUEUE_MAX := 4 * 256
 
@@ -238,7 +238,7 @@ theorem capDeferred_suffix {α} (d : List α) : ∃ p, p ++ capDeferred d = d :=
   · exact ⟨[], rfl⟩
 end Pre3844
 
-/-! ## Re-keying (`resolve_current_names`, `:854-914`) -/
+/-! ## Re-keying (`resolve_current_names`) -/
 
 /-- A graph is identified by its allocation (`data_ptr`). -/
 structure PE where

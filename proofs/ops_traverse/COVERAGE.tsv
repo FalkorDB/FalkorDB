@@ -58,7 +58,6 @@ graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2575	PROVEN	Enum.
 graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2679	PROVEN	AlgoPaths.buildBatch_spec (one row per result, 2*hops+1 path elements from the source, weight/cost columns = to_numeric_value)
 graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2710	PROVEN	RunAlgo.runAlgo_spec (glue: the Dijkstra fast-path guard, the BFS pre-pass answering an empty batch, the bound seeding for pathCount 0/1 within maxCost, SSpaths from an infinite bound, then sort_by); dijkstra_single_path, bfs_find_bound, enumerate_paths are parameters and nothing is assumed about them
 graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2761	PROVEN	AlgoPaths.reg_spec (name, one Any argument, columns path/pathWeight/pathCost, body = parse_sp_config then run_path_algo)
-graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2773	PROVEN	AlgoPaths.reg_spec
 graph/src/runtime/eval.rs	NeighborIter::new	164	PROVEN	NeighborIter.newNI: newNI_spec (iterator set per case, dedup iff more than one iterator), relative to the matrices it reads (Row)
 graph/src/runtime/eval.rs	NeighborIter::new_reversed	204	PROVEN	NeighborIter.newRev: newRev_spec (transposed matrices only, never a backward side)
 graph/src/runtime/eval.rs	NeighborIter::neighbors	232	PROVEN	NeighborIter.neighbors: neighbors_spec (columns of the node's row in each iterator; with dedup sorted ascending without repeats), relative to the iterator row contract
@@ -68,7 +67,6 @@ graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	58	PROVEN	Ind
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	100	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList (one InList since #2383), evalIQ_inList_err (W2-index-3, still open)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	253	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff; InList arm (#2383): canUse_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist
 graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	256	PROVEN	IndexScan.indexable/losesPrecision: canUse_spec
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	PROVEN	IndexScan.scanRow (IndexSound = RediSearch contract): scanRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::new	47	PROVEN	IndexScan.VecSt.new: vecNew_spec
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::next	83	PROVEN	IndexScan.vecRow: vecRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	IndexScan.vecArgs: vecArgs_ok, vecArgs_bad_k

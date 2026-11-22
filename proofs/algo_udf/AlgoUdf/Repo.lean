@@ -8,7 +8,7 @@ already owns, compared ignoring ASCII case, as C does.
 | --- | --- |
 | `Lib`                 | `UdfLibrary` :42 (name, qualified `function_names`) |
 | `qual`                | `format!("{name}.{fn_name}")` :102-105 |
-| `load`                | `UdfRepo::load` :94-153 (replace branch :134-139, collision check :118-132) + the caller's `register_udf` loop (`src/commands/udf.rs`); registry key is the qualified name as given (`register_udf` `runtime/functions/mod.rs:1131-1138`, `persistent_funcs` `udf/js_context.rs:261`) |
+| `load`                | `UdfRepo::load` :94-153 (replace branch :134-139, collision check :118-132) + the caller's `register_udf` loop (`src/commands/udf.rs`); registry key is the qualified name as given (`register_udf` `runtime/functions/mod.rs`, `persistent_funcs` `udf/js_context.rs`) |
 | `collides`            | the `eq_ignore_ascii_case` scan over the other libraries' `function_names` :118-127 |
 | `delete`              | `UdfRepo::delete` :156 + the caller's `unregister_udf` loop (`unregister_udf` :1142) |
 | `Consistent`          | "LIST shows f ⇔ calling f runs f's body" |

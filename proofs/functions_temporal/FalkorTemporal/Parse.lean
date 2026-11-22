@@ -26,10 +26,10 @@ def ymd (y : Int) (m d : Nat) (s : String) : Except String Int :=
   match C.fromYmd y m d with | some z => .ok z | none => .error s!"Invalid date: {s}"
 
 /-- `s.chars().all(|c| c.is_ascii_digit())` — the guard #3125 (`1ea868116`) added to the
-compact branches (temporal.rs:220, :335). `Char.isDigit` is ASCII `'0'..='9'`. -/
+compact branches (temporal.rs). `Char.isDigit` is ASCII `'0'..='9'`. -/
 def allDigits (s : String) : Bool := s.toList.all Char.isDigit
 
-/-- `parse_date_string` (temporal.rs:173-266). -/
+/-- `parse_date_string` (temporal.rs). -/
 def parseDate (s : String) : Except String Int :=
   if s.contains 'W' then C.parseWeek s
   else if s.startsWith "-" then .error s!"Unsupported date string: {s}"
@@ -48,7 +48,7 @@ def parseDate (s : String) : Except String Int :=
           let d ← pU32 C p2 s!"Invalid day: {s}"
           ymd C y m d s
       | _ => .error s!"Invalid date string: {s}"
-    else if !allDigits s then .error s!"Invalid date string: {s}"   -- temporal.rs:220-222 (#3125)
+    else if !allDigits s then .error s!"Invalid date string: {s}"   -- temporal.rs (#3125)
     else
       match digits.length with
       | 4 => do let y ← pI32 C digits s!"Invalid year: {s}"; ymd C y 1 1 s
@@ -127,7 +127,7 @@ theorem parseDate_negative (s : String) (hW : s.contains 'W' = false) (h : s.sta
 def optPart (parts : List String) (i : Nat) (err : String) : Except String Nat :=
   if parts.length > i then pU32 C (parts.getD i "") err else .ok 0
 
-/-- `parse_time_string` (temporal.rs:308-367). -/
+/-- `parse_time_string` (temporal.rs). -/
 def parseTime (s0 : String) : Except String Nat :=
   let s := (s0.splitOn ".").headD s0
   let hms (h m sec : Nat) : Except String Nat :=
@@ -141,7 +141,7 @@ def parseTime (s0 : String) : Except String Nat :=
       hms hour minute second
   else
     let digits := digitsOnly s
-    if !allDigits s then .error s!"Invalid time string: {s}"   -- temporal.rs:335-337 (#3125)
+    if !allDigits s then .error s!"Invalid time string: {s}"   -- temporal.rs (#3125)
     else
     match digits.length with
     | 2 => do let h ← pU32 C digits s!"Invalid hour: {s}"; hms h 0 0
@@ -218,7 +218,7 @@ theorem parseTime_compact_rejects (s0 : String) (hc : ((s0.splitOn ".").headD s0
 /-- The `W` dispatch comes before the #3125 guard, so the guard does not reach
 `parse_week_date`. That used to crash on `date('2020W1é')` (`&rest[..2]`, W2-temporal-3);
 since #2950 it splits with `split_at_checked`
-(temporal.rs:279-289, `weekSlice`) and errors (`weekSlice_err_iff`, `week_slice_errors`). -/
+(temporal.rs, `weekSlice`) and errors (`weekSlice_err_iff`, `week_slice_errors`). -/
 theorem parseDate_week_first (s : String) (hW : s.contains 'W' = true) :
     parseDate C s = C.parseWeek s := by
   simp [parseDate, hW]
@@ -235,7 +235,7 @@ theorem compact_junk_examples :
    parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide),
    parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide)⟩
 
-/-- `parse_datetime_string` (temporal.rs:370): split at the first `T`. -/
+/-- `parse_datetime_string` (temporal.rs): split at the first `T`. -/
 def parseDatetime (s : String) : Except String (Int × Nat) :=
   match s.splitOn "T" with
   | [] | [_] => do let d ← parseDate C s; pure (d, 0)
@@ -257,7 +257,7 @@ theorem parseDatetime_noT (s : String) (h : s.splitOn "T" = [s]) :
     parseDatetime C s = (do let d ← parseDate C s; pure (d, 0)) := by
   simp [parseDatetime, h]
 
-/-! ## `parse_duration_string` (temporal.rs:388) -/
+/-! ## `parse_duration_string` (temporal.rs) -/
 
 /-- The seven accumulators `(years, months, 0, days, hours, minutes, seconds)`. -/
 structure DurAcc where
@@ -271,7 +271,7 @@ structure DurAcc where
 /-- `i64::checked_*`: `some x` iff `x` is in i64 range. -/
 def chk64 (x : Int) : Option Int := if decide (-2 ^ 63 ≤ x) && decide (x < 2 ^ 63) then some x else none
 
-/-- The date-part loop (temporal.rs:406-430): digits and `-` accumulate, a letter commits
+/-- The date-part loop (temporal.rs): digits and `-` accumulate, a letter commits
 the number; since #2987 `W`/`D` use `checked_mul`/`checked_add` and error on overflow. -/
 def dateLoop : List Char → String → DurAcc → Except String DurAcc
   | [], buf, a =>

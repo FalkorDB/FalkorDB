@@ -18,7 +18,7 @@ inductive Step where
   | more | tooLarge | failed | done | cancelled
 deriving DecidableEq, Repr
 
-/-- `standing` (`:437-446`): `None` while the job's generation is `Building` here; `Done` once it is `Ready`;
+/-- `standing`: `None` while the job's generation is `Building` here; `Done` once it is `Ready`;
     `Cancelled` when the index is gone or is another generation. -/
 def standing (en : Option EN) (generation : Nat) : Option Step :=
   match en.map (fun e => (e.generation, e.isBuilding)) with
@@ -26,13 +26,13 @@ def standing (en : Option EN) (generation : Nat) : Option Step :=
   | some (g, false) => if g = generation then some .done else some .cancelled
   | none => some .cancelled
 
-/-- `Sizing` (`:100-130`). -/
+/-- `Sizing`. -/
 structure Sizing where
   floor : Nat
   cap : Nat
   catchUpMax : Nat
 
-/-- A job (`:222-238`): the generation it builds and its batch limit (starts at `cap`). -/
+/-- A job: the generation it builds and its batch limit (starts at `cap`). -/
 structure Job where
   generation : Nat
   limit : Nat
@@ -47,7 +47,7 @@ structure World where
   stopped : Bool
   alive : Bool
 
-/-- `Job::read` (`:322-362`): the batch size, or the step that ends the job before reading. -/
+/-- `Job::read`: the batch size, or the step that ends the job before reading. -/
 def readPhase (sz : Sizing) (w : World) (j : Job) : Except Step Nat :=
   if w.stopped then .error .cancelled
   else if !w.alive then .error .cancelled
@@ -66,7 +66,7 @@ deriving DecidableEq, Repr
 def commitEntry (work : EncodedTuples) (next : Option BuildCursor) (entities : Nat) (w : World) : World :=
   { w with pub := w.pub.map (fun e => (e.indexerApply work next entities).1) }
 
-/-- `Job::step` (`:260-320`) after the read: publish holding the host's lock. After the stop, nothing is
+/-- `Job::step` after the read: publish holding the host's lock. After the stop, nothing is
     published (`builder.stopped()` is checked again under the lock). -/
 def publishPhase (work : EncodedTuples) (next : Option BuildCursor) (entities : Nat) (generation : Nat)
     (o : Outcome) (w : World) : Step × World :=
@@ -78,7 +78,7 @@ def publishPhase (work : EncodedTuples) (next : Option BuildCursor) (entities : 
       ((standing w'.pub generation).getD .more, w')
     | .refused => (.failed, w)
 
-/-- The new limit (`:311-316`). -/
+/-- The new limit. -/
 def nextLimit (sz : Sizing) (st : Step) (entities limit : Nat) : Nat :=
   match st with
   | .more => min (limit * 2) sz.cap
@@ -178,7 +178,7 @@ structure QJob where
   job : Job
 deriving DecidableEq
 
-/-- One pool step (`Job::run`, `:240-250`): any queued job (the interleaving) runs a step; `more`/`tooLarge`
+/-- One pool step (`Job::run`): any queued job (the interleaving) runs a step; `more`/`tooLarge`
     submit it again, the others end it. -/
 def PoolStep (sz : Sizing) (work : EncodedTuples) (next : Option BuildCursor) (o : Outcome) (q : List QJob)
     (w : World) (qj : QJob) : List QJob × World :=
@@ -207,14 +207,14 @@ theorem poolStep_keys_nodup (sz : Sizing) (work : EncodedTuples) (next : Option 
 
 /-! ## Starting, submitting and stopping -/
 
-/-- `Builder::submit` (`:235-247`): the job joins the pool's queue. -/
+/-- `Builder::submit`: the job joins the pool's queue. -/
 def submit (q : List QJob) (qj : QJob) : List QJob := q ++ [qj]
 
-/-- `Builder::enqueue` (`:222-230`): a new job at the index's generation, limit `cap`, submitted. -/
+/-- `Builder::enqueue`: a new job at the index's generation, limit `cap`, submitted. -/
 def enqueue (sz : Sizing) (q : List QJob) (id generation : Nat) : List QJob :=
   submit q ⟨(id, generation), Job.new sz generation⟩
 
-/-- `Builder::stop_within` (`:213-221`): the stop is for good. (The bounded wait for the pool's workers is a
+/-- `Builder::stop_within`: the stop is for good. (The bounded wait for the pool's workers is a
     timing statement and is not modelled.) -/
 def stopWorld (w : World) : World := { w with stopped := true }
 

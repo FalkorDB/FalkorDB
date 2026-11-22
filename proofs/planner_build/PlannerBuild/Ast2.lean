@@ -4,11 +4,11 @@ import PlannerBuild.Ast
 
 | here | there |
 | --- | --- |
-| `dfs`, `components` | `QueryGraph::dfs` ast.rs:1001-1033, `connected_components` ast.rs:980-999 |
-| `exprFmt` | `Display for ExprIR` ast.rs:980-999 |
-| `quantFmt` | `Display for QuantifierType` ast.rs:582-592 |
-| `setItemFmt` | `Display for SetItem` ast.rs:1056-1082 |
-| `clauseFmt` | `Display for QueryIR` ast.rs:1200-1306 |
+| `dfs`, `components` | `QueryGraph::dfs` ast.rs, `connected_components` ast.rs |
+| `exprFmt` | `Display for ExprIR` ast.rs |
+| `quantFmt` | `Display for QuantifierType` ast.rs |
+| `setItemFmt` | `Display for SetItem` ast.rs |
+| `clauseFmt` | `Display for QueryIR` ast.rs |
 
 `dfs` keeps ONE visited set of ids for nodes, relationships and paths (ids
 only, as `HashSet<u32>`); the fuel bounds the recursion (each call marks a new node).

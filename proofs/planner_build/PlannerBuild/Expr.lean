@@ -1,24 +1,24 @@
 /-
 # Expressions as the planner sees them (`ExprIR<Variable>` trees)
 
-`Ex` is `DynTree<ExprIR<Variable>>` (parser/ast.rs:155-330): a node payload `D`
+`Ex` is `DynTree<ExprIR<Variable>>` (parser/ast.rs): a node payload `D`
 and an ordered child list. Variables are `(id, scope_id)` pairs (`V`), compared
 exactly as the planner's `HashSet<(u32, u32)>` / `is_loop_var` do. A pattern
 payload (`QG`, `QueryGraph`) keeps what the planner reads of it: its
-`variables()` (nodes, then relationships, then paths — ast.rs:918-924) and the
+`variables()` (nodes, then relationships, then paths — ast.rs) and the
 variables its inline attribute maps mention (`attrVars`; the attribute trees
 themselves are not re-modelled).
 
 | here | there |
 | --- | --- |
-| `containsInlineVar` | `Planner::contains_inline_var` mod.rs:1108-1115 |
-| `hasPatternExpr` | `Planner::has_pattern_expr` mod.rs:1119-1124 |
-| `patternExprScope` | `Planner::pattern_expr_scope` mod.rs:1528-1535 |
-| `Mode`, `Mode.descend` | `PatternMode`, `PatternMode::descend` mod.rs:975-984 |
-| `needsExtraction` | `extract_filter_comprehensions::needs_extraction` mod.rs:1552-1564 |
-| `inlineAttrsToFilter` | `inline_attrs_to_filter` mod.rs:545-571 |
-| `hasLabelsFilter` | `has_labels_filter` mod.rs:876-888 |
-| `patternExprVariables` | `Planner::pattern_expr_variables` mod.rs:1435-1464 |
+| `containsInlineVar` | `Planner::contains_inline_var` mod.rs |
+| `hasPatternExpr` | `Planner::has_pattern_expr` mod.rs |
+| `patternExprScope` | `Planner::pattern_expr_scope` mod.rs |
+| `Mode`, `Mode.descend` | `PatternMode`, `PatternMode::descend` mod.rs |
+| `needsExtraction` | `extract_filter_comprehensions::needs_extraction` mod.rs |
+| `inlineAttrsToFilter` | `inline_attrs_to_filter` mod.rs |
+| `hasLabelsFilter` | `has_labels_filter` mod.rs |
+| `patternExprVariables` | `Planner::pattern_expr_variables` mod.rs |
 -/
 namespace PlannerBuild.E
 
@@ -102,7 +102,7 @@ theorem anyL_eq (p : D → Bool) : ∀ l, anyL p l = (nodesL l).any p
   | c :: cs => by simp [anyL, nodesL, anyN_eq p c, anyL_eq p cs]
 end
 
-/-! ## `contains_inline_var` (mod.rs:1108-1115): BFS `any` over the subtree, id only -/
+/-! ## `contains_inline_var` (mod.rs): BFS `any` over the subtree, id only -/
 
 def isInl (ids : List Nat) : D → Bool
   | .var v => ids.contains v.id
@@ -130,7 +130,7 @@ theorem containsInlineVar_ignores_scope (i s s' : Nat) :
   · exact Or.inr h
   · exact Or.inl ⟨by simp [containsInlineVar, Ex.v, anyN, isInl, anyL], h⟩
 
-/-! ## `has_pattern_expr` (mod.rs:1119-1124) -/
+/-! ## `has_pattern_expr` (mod.rs) -/
 
 def isPat : D → Bool
   | .pat _ | .patComp _ => true
@@ -155,7 +155,7 @@ theorem hasPatternExprL_eq : ∀ l, hasPatternExprL l = (nodesL l).any isPat
   | c :: cs => by simp [hasPatternExprL, nodesL, hasPatternExpr_eq c, hasPatternExprL_eq cs]
 end
 
-/-! ## `pattern_expr_scope` (mod.rs:1528-1535) -/
+/-! ## `pattern_expr_scope` (mod.rs) -/
 
 def patScope : D → Option Nat
   | .pat g | .patComp g => g.vars.head?.map V.scope
@@ -210,14 +210,14 @@ theorem patternExprScopeL_eq : ∀ l, PatsNamed (nodesL l) →
     cases (nodes c).findSome? patScope <;> rfl
 end
 
-/-! ## `PatternMode` (mod.rs:953-984) and `needs_extraction` (mod.rs:1552-1564) -/
+/-! ## `PatternMode` (mod.rs) and `needs_extraction` (mod.rs) -/
 
 inductive Mode | collect | semiApply | exists_
   deriving DecidableEq, Repr
 
-/-- The connectives `PatternMode::descend` keeps SemiApply under (mod.rs:975-984).
+/-- The connectives `PatternMode::descend` keeps SemiApply under (mod.rs).
 Since #3335 `Paren` is not among them: the binder removes every `Paren`
-(binder.rs:2150-2160), so none reaches the planner. -/
+(binder.rs), so none reaches the planner. -/
 def isConn : D → Bool
   | .and | .or | .not => true
   | _ => false
@@ -259,7 +259,7 @@ theorem needs_semi_xor (g : QG) (b : Ex) :
     needsExtraction (.node .xor [.node (.pat g) [], b]) .semiApply = true := by
   simp [needsExtraction, needsExtractionL, Mode.descend, isConn]
 
-/-! ## `ExprIR::and_of` / `or_of` / `flat` (ast.rs:457-483)
+/-! ## `ExprIR::and_of` / `or_of` / `flat` (ast.rs)
 
 `flat op operands identity`: an `op` node over `operands`, where an operand whose
 root is `op` itself contributes its children in place (orx_tree `take_out` keeps
@@ -272,25 +272,25 @@ constant; one operand left after splicing is returned on its own. Semantics in
 def spliceOp (op : D) : Ex → List Ex
   | .node d cs => if d = op then cs else [.node d cs]
 
-/-- `discriminant(e) == discriminant(op)` (ast.rs:457-483; `op` is `And` or `Or`, payload-free). -/
+/-- `discriminant(e) == discriminant(op)` (ast.rs; `op` is `And` or `Or`, payload-free). -/
 def isOp (op : D) (e : Ex) : Bool := decide (e.d = op)
 
-/-- The tree built after the early return (ast.rs:457-483). -/
+/-- The tree built after the early return (ast.rs). -/
 def flatBody (op : D) (identity : Bool) (xs : List Ex) : Ex :=
   match xs.flatMap (spliceOp op) with
   | [] => .node (.const (.bool identity)) []
   | [c] => c
   | cs => .node op cs
 
-/-- `ExprIR::flat` (ast.rs:457-483). -/
+/-- `ExprIR::flat` (ast.rs). -/
 def flat (op : D) (identity : Bool) (xs : List Ex) : Ex :=
   match xs with
   | [x] => if isOp op x then flatBody op identity [x] else x
   | xs => flatBody op identity xs
 
-/-- `ExprIR::and_of` (ast.rs:444-446). -/
+/-- `ExprIR::and_of` (ast.rs). -/
 def andOf (xs : List Ex) : Ex := flat .and true xs
-/-- `ExprIR::or_of` (ast.rs:450-452). -/
+/-- `ExprIR::or_of` (ast.rs). -/
 def orOf (xs : List Ex) : Ex := flat .or false xs
 
 /-- The early return is only a shortcut: a lone non-`op` operand splices to itself. -/
@@ -341,7 +341,7 @@ theorem spliceOp_other (op : D) (x : Ex) (h : x.d ≠ op) : spliceOp op x = [x] 
   have : ¬ (d = op) := h
   simp [spliceOp, this]
 
-/-- The Rust unit test `nested_and_is_flattened_in_order` (ast.rs:1599). -/
+/-- The Rust unit test `nested_and_is_flattened_in_order` (ast.rs). -/
 theorem andOf_nested_in_order (a b c d e : Ex) (hc : c.d ≠ .and) :
     andOf [.node .and [a, b], c, .node .and [d, e]] = .node .and [a, b, c, d, e] := by
   unfold andOf
@@ -349,7 +349,7 @@ theorem andOf_nested_in_order (a b c d e : Ex) (hc : c.d ≠ .and) :
     simp only [List.flatMap_cons, List.flatMap_nil, spliceOp_same, spliceOp_other _ _ hc,
       List.append_nil, List.cons_append, List.nil_append, List.length_cons] <;> omega
 
-/-- `different_operators_are_not_merged` (ast.rs:1617): an OR operand of AND stays a child. -/
+/-- `different_operators_are_not_merged` (ast.rs): an OR operand of AND stays a child. -/
 theorem andOf_keeps_or (a b c : Ex) (hc : c.d ≠ .and) :
     andOf [.node .or [a, b], c] = .node .and [.node .or [a, b], c] := by
   have ho : spliceOp .and (.node .or [a, b]) = [.node .or [a, b]] := spliceOp_other _ _ (by simp [Ex.d])
@@ -358,7 +358,7 @@ theorem andOf_keeps_or (a b c : Ex) (hc : c.d ≠ .and) :
     simp only [List.flatMap_cons, List.flatMap_nil, ho, spliceOp_other _ _ hc,
       List.append_nil, List.cons_append, List.nil_append, List.length_cons] <;> omega
 
-/-! ## `inline_attrs_to_filter` (mod.rs:545-571) and `has_labels_filter` (mod.rs:876-888) -/
+/-! ## `inline_attrs_to_filter` (mod.rs) and `has_labels_filter` (mod.rs) -/
 
 /-- `alias.k = value` -/
 def attrEq (alias : V) (kv : String × Ex) : Ex :=
@@ -430,7 +430,7 @@ theorem hasLabelsFilter_shape (v : V) (labels : List String) :
   | nil => rfl
   | cons l ls ih => simp [nodesL, nodes, ih]
 
-/-! ## `pattern_expr_variables` (mod.rs:1435-1464)
+/-! ## `pattern_expr_variables` (mod.rs)
 
 A stack walk: pop, record, push. Popping the children pushed last-first is a
 pre-order walk with children right-to-left (`pevL` folds the tail first); a pattern's attribute maps are

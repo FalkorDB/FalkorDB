@@ -1,6 +1,6 @@
 import OpsTraverse.SearchBase
 /-
-# `ExprEval::bfs_shortest_path` (graph/src/runtime/eval.rs:1459): bidirectional BFS
+# `ExprEval::bfs_shortest_path` (graph/src/runtime/eval.rs): bidirectional BFS
 
 `nf` / `nb` are `fwd_nbrs.neighbors` / `bwd_nbrs.neighbors` (`NeighborIter`, per node, already sorted
 and deduplicated; the iterators are stateless between calls). `f_map`/`b_map` are `FxHashMap<u64,

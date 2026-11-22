@@ -2,19 +2,19 @@ import RedisLayer.Config
 /-!
 # Module load arguments (`src/config.rs`)
 
-`graph_init` (`src/module_init.rs:139`) hands every `--loadmodule … NAME VALUE …`
-argument (`to_string_lossy`) to `apply_module_args` (`src/config.rs:296-354`); `lib.rs`
+`graph_init` (`src/module_init.rs`) hands every `--loadmodule … NAME VALUE …`
+argument (`to_string_lossy`) to `apply_module_args` (`src/config.rs`); `lib.rs`
 sets `module_args_as_configuration: false`, so redismodule-rs no longer reads them.
 
 | here | there (`origin/main` b080a44c1) |
 | --- | --- |
-| `N`, `N.str`, `parseName`        | the string `match`es on the upper-cased name (`config.rs:236-247`, `config_cmd.rs:118-198`) |
-| `validateTempFolder`             | `validate_temp_folder` `config.rs:205` |
-| `validateLoadOnly`               | `validate_load_only` `config.rs:223` |
-| `validateConfigSet`              | `validate_config_set` `config_cmd.rs:114` — each arm *is* `Config.validate` |
-| `checkTimeouts`                  | `check_timeout_constraints` `config_cmd.rs:220` |
-| `rstep`, `loop`, `applyModuleArgs` | `apply_module_args` `config.rs:296` (loop body `:316-347`, final check `:349-355`, apply `:357-359`) |
-| `LoadArg`, `applyLoadArg`        | `enum LoadArg` `config.rs:185`, `apply_load_arg` `:252` |
+| `N`, `N.str`, `parseName`        | the string `match`es on the upper-cased name (`config.rs`, `config_cmd.rs`) |
+| `validateTempFolder`             | `validate_temp_folder` `config.rs` |
+| `validateLoadOnly`               | `validate_load_only` `config.rs` |
+| `validateConfigSet`              | `validate_config_set` `config_cmd.rs` — each arm *is* `Config.validate` |
+| `checkTimeouts`                  | `check_timeout_constraints` `config_cmd.rs` |
+| `rstep`, `loop`, `applyModuleArgs` | `apply_module_args` `config.rs` (loop body, final check, apply) |
+| `LoadArg`, `applyLoadArg`        | `enum LoadArg` `config.rs`, `apply_load_arg` |
 | `cParseInteger`, `cYesNo`, `cSet`, `cLookup`, `cInit` | C `_Config_ParseInteger` (`strtoll`), `_Config_ParseYesNo`, `Config_Option_set`, `Config_Contains_field`, `Config_Init` (`src/configuration/config.c` on `master`) |
 
 `FS` is the file system as both engines see it (libc `access`/`stat`, Rust
@@ -114,7 +114,7 @@ inductive LoadArg where
   | runtime (name : N) (value : List Nat) (parsed : Int)
   deriving DecidableEq, Repr
 
-/-- `validate_temp_folder` (`config.rs:205-218`). -/
+/-- `validate_temp_folder` (`config.rs`). -/
 def validateTempFolder (fs : FS) (p : List Nat) : Except LErr Unit :=
   if !fs.exists_ p then .error .tempNoExist
   else if !fs.isDir p then .error .tempNotDir
@@ -124,7 +124,7 @@ def validateTempFolder (fs : FS) (p : List Nat) : Except LErr Unit :=
 def req (c : Option LoadArg) : Option (Except LErr LoadArg) :=
   some (match c with | some a => .ok a | none => .error .failed)
 
-/-- `validate_load_only` (`config.rs:223-249`). -/
+/-- `validate_load_only` (`config.rs`). -/
 def validateLoadOnly (fs : FS) (n : N) (v : List Nat) : Option (Except LErr LoadArg) :=
   let int := rustParseI64 v
   let positive := int.filter (fun x => decide (0 < x))
@@ -144,7 +144,7 @@ def validateLoadOnly (fs : FS) (n : N) (v : List Nat) : Option (Except LErr Load
   | .boltPort => req (some .boltPort)
   | _ => none
 
-/-- `validate_config_set` (`config_cmd.rs:114-202`); the arms share code in Rust, so each
+/-- `validate_config_set` (`config_cmd.rs`); the arms share code in Rust, so each
 is the #3021 model `Config.validate` of one member of the arm. `none` = no literal matched. -/
 def validateConfigSet (n : Option N) (v : List Nat) : Except LErr Int :=
   match n with
@@ -162,7 +162,7 @@ def validateConfigSet (n : Option N) (v : List Nat) : Except LErr Int :=
   | some .indexBuildThreadCount => .error .unknown   -- not in the read-only arm: `_ => UNKNOWN_FIELD`
   | none => .error .unknown
 
-/-- `check_timeout_constraints` (`config_cmd.rs:220-253`): fold the batch into the two
+/-- `check_timeout_constraints` (`config_cmd.rs`): fold the batch into the two
 values, then the two checks. -/
 def checkTimeouts (td tm : Int) (vs : List (N × Int)) : Except LErr (Int × Int) :=
   let td' := vs.foldl (fun a p => if p.1 = .timeoutDefault then p.2 else a) td
@@ -173,7 +173,7 @@ def checkTimeouts (td tm : Int) (vs : List (N × Int)) : Except LErr (Int × Int
     .error (if vs.any (·.1 == .timeoutDefault) then .defaultAboveMax else .maxBelowDefault)
   else .ok (td', tm')
 
-/-- One iteration of `apply_module_args`' pair loop (`config.rs:316-347`). -/
+/-- One iteration of `apply_module_args`' pair loop (`config.rs`). -/
 def rstep (fs : FS) (td tm : Int) (n : N) (v : List Nat) : Except LErr (LoadArg × Int × Int) :=
   match validateLoadOnly fs n v with
   | some (.error e) => .error e
@@ -202,7 +202,7 @@ def loop (fs : FS) : Int → Int → Bool → Bool → List (List Nat × List Na
       match rstep fs td tm n v with
       | .error e => .error e
       | .ok (a, td', tm') =>
-        -- the flags are set in the run-time branch (`:340-344`); TIMEOUT* never take the
+        -- the flags are set in the run-time branch; TIMEOUT* never take the
         -- load-only one (`timeouts_runtime`)
         let old' := old || n == .timeout
         let new' := new || n == .timeoutDefault || n == .timeoutMax
@@ -211,14 +211,14 @@ def loop (fs : FS) : Int → Int → Bool → Bool → List (List Nat × List Na
         | .ok (l, o, w) => .ok (a :: l, o, w)
 
 /-- `apply_module_args`: the list returned is the sequence of `apply_load_arg` calls
-made (`:357-359`), i.e. what gets applied. -/
+made, i.e. what gets applied. -/
 def applyModuleArgs (fs : FS) (td0 tm0 : Int) (args : List (List Nat)) : Except LErr (List LoadArg) :=
   if args.length % 2 = 1 then .error .odd
   else match loop fs td0 tm0 false false (pairs args) with
     | .error e => .error e
     | .ok (vs, old, new) => if old && new then .error .timeoutMix else .ok vs
 
-/-- What `apply_load_arg` (`config.rs:252-283`) writes: the config it sets and the value
+/-- What `apply_load_arg` (`config.rs`) writes: the config it sets and the value
 (`Runtime` goes through `apply_config_set`, i.e. `Config.apply1` for the shared names). -/
 def applyLoadArg : LoadArg → List Nat × Int
   | .cacheSize v => (b "CACHE_SIZE", v) | .threadCount v => (b "THREAD_COUNT", v)
@@ -517,7 +517,7 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
 
 /-! ## `check_timeout_constraints` is the cross check
 
-`validate_timeout_cross_constraints` (`config_cmd.rs:206`) loads the two stored values
+`validate_timeout_cross_constraints` (`config_cmd.rs`) loads the two stored values
 and calls `check_timeout_constraints`; `Config.cross` models it. On the names they share
 the two models agree. -/
 
@@ -637,7 +637,7 @@ theorem rust_c_same_accept (fs : FS) (hfs : FsOk fs) (args : List (List Nat))
       cases o <;> cases w <;> rfl
 
 /-- A refused load applies nothing (`apply_load_arg` runs only after every pair and the
-TIMEOUT check passed, `config.rs:357`). -/
+TIMEOUT check passed, `config.rs`). -/
 theorem error_applies_nothing (fs : FS) (td tm : Int) (args : List (List Nat)) (e : LErr)
     (h : applyModuleArgs fs td tm args = .error e) : applied (applyModuleArgs fs td tm args) = [] := by
   rw [h]; rfl
@@ -726,7 +726,7 @@ theorem rust_only_names :
     cInit fs0 [b "INDEX_BUILD_THREAD_COUNT", b "4"] = false := by
   decide
 
-/-- #3585 `INDEX_BUILD_THREAD_COUNT`: a load argument in `1..=1024` (`validate_load_only`, `config.rs:253`),
+/-- #3585 `INDEX_BUILD_THREAD_COUNT`: a load argument in `1..=1024` (`validate_load_only`, `config.rs`),
 refused outside it, and not settable at run time (`GRAPH.CONFIG SET` answers unknown field). -/
 theorem index_build_range :
     applyModuleArgs fs0 0 0 [b "INDEX_BUILD_THREAD_COUNT", b "1"] = .ok [.indexBuildThreadCount 1] ∧

@@ -35,13 +35,13 @@ no clock and no plan choice for the two sides to disagree about.
 | here | there |
 | --- | --- |
 | `intern`                 | `Graph::get_label_id_mut`, `get_type_id_mut` (`graph/src/graph/graph.rs`) — append-only, id = index |
-| `internCap`              | `add_node_attribute_name` + `AttrNameMap::insert` (`attribute_store.rs`), refusing a new name at 65,535 (`MAX_ATTRIBUTES`); `applyRec` refuses the buffer (`AttributeLimitReached`, `apply.rs:195`): `applyRec_addAttribute_full_refused` |
-| `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1709`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:359`) — `absIds`, `createOne_refines` |
+| `internCap`              | `add_node_attribute_name` + `AttrNameMap::insert` (`attribute_store.rs`), refusing a new name at 65,535 (`MAX_ATTRIBUTES`); `applyRec` refuses the buffer (`AttributeLimitReached`, `apply.rs`): `applyRec_addAttribute_full_refused` |
+| `GState.bound`           | `Graph::node_id_bound` (`graph.rs`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs`) — `absIds`, `createOne_refines` |
 | `GState.free`            | the recycle bin (a `RoaringTreemap`, hence a set — modelled as a predicate) |
 | `createOne` / `deleteOne`| `Graph::create_nodes` / `delete_nodes`, one node at a time |
-| `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs:516`) — recycled first, then fresh (minus the ids an earlier batch of the same version freed: `quarantined`, empty on the first batch of a version, which is the batch this model reserves on) |
+| `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs`) — recycled first, then fresh (minus the ids an earlier batch of the same version freed: `quarantined`, empty on the first batch of a version, which is the batch this model reserves on) |
 | `Pending`                | `runtime::pending::Pending` |
-| `commit`                 | `Pending::commit` (`runtime/pending.rs:1367`), driven by `CommitOp::next` (`runtime/ops/commit.rs:69`) |
+| `commit`                 | `Pending::commit` (`runtime/pending.rs`), driven by `CommitOp::next` (`runtime/ops/commit.rs`) |
 | `emit`                   | `EffectsFormat::build` → `for_each_record` (`graph/src/effects/v3/emit.rs`) |
 | `groupBy NodeSpec.shape` | `digest_created_nodes`' `slots`/`index`/`last` memo |
 | `groupBy Prod.snd`       | `digest_deleted_nodes`, grouped by label set |
@@ -49,11 +49,11 @@ no clock and no plan choice for the two sides to disagree about.
 | `schemaRecs`             | `emit_schema_additions`, against the `SchemaBaseline` |
 | `Record`                 | `effects::v3::Record` (`graph/src/effects/v3/records.rs`) |
 | `applyRec` / `applyRecs` | `apply_effects` (`graph/src/effects/v3/apply.rs`) |
-| `okCreate`               | `verify_schema`, `verify_attribute`, the refusals of `IdSpace::create` (`id_space.rs:621`) |
-| `okDelete`               | the refusals of `IdSpace::release` (`:739`): `refuse_not_live` (`:715`) = `refuse_recycled`, `refuse_undeletable` |
+| `okCreate`               | `verify_schema`, `verify_attribute`, the refusals of `IdSpace::create` (`id_space.rs`) |
+| `okDelete`               | the refusals of `IdSpace::release`: `refuse_not_live` = `refuse_recycled`, `refuse_undeletable` |
 | `createOne` / `deleteOne` id-space half | `IdSpace::create` / `IdSpace::release` on one id: `createOne_refines`, `deleteOne_refines` (`Faithful.Ids`) |
 | `addLabel`'s id check    | `apply_add_schema` / `verify_id` — the replica re-derives the id and compares |
-| `Batch.verify`           | `IdSpace::verify` (`:773`) via `Graph::validate` — `taken ∩ [entry, ∞) == [entry_bound, entry_bound + created)`; the batch lives on the graph, opened by `Graph::new_version` at `bound` (= `{ entry := σ.bound, created := [] }`) |
+| `Batch.verify`           | `IdSpace::verify` via `Graph::validate` — `taken ∩ [entry, ∞) == [entry_bound, entry_bound + created)`; the batch lives on the graph, opened by `Graph::new_version` at `bound` (= `{ entry := σ.bound, created := [] }`) |
 | `PendingWF.disjoint`     | why `digest_cancelled` exists: a node created and deleted in one segment is unwound out of `Pending` and travels as its own create/delete pair |
 | `Replica.resync`         | `divergence_guard::on_failure` → `REPLICAOF NO ONE` + `REPLICAOF <master>` |
 | `Replica.halted`         | the same guard under `LOADING` → `std::process::exit(1)` |
@@ -199,7 +199,7 @@ def intern (d : List Name) (n : Name) : Nat × List Name :=
   | some i => (i, d)
   | none   => (d.length, d ++ [n])
 
-/-- `AttrNameMap::insert` with its capacity (`MAX_ATTRIBUTES` = 65,535, `attribute_store.rs:134`): a known
+/-- `AttrNameMap::insert` with its capacity (`MAX_ATTRIBUTES` = 65,535, `attribute_store.rs`): a known
 name keeps its id; a new one is refused (`none`) once the dictionary holds `cap` names. Labels and types
 have no such cap, so they use `intern`. `internCap_refines` ties it to `FalkorFaithful.internCapF`. -/
 def internCap (cap : Nat) (d : List Name) (n : Name) : Option (Nat × List Name) :=
@@ -726,8 +726,8 @@ def specsOf (ids labels attrIds : List Nat) (rows : List Val) : List NodeSpec :=
   (ids.zip (chunk ids.length attrIds.length rows)).map
     (fun pr => ⟨pr.1, labels, attrIds.zip pr.2⟩)
 
-/-- `ID_LIMIT` (`id_space.rs:100`) = `GrB_INDEX_MAX` = `2^60 - 1`: `IdSpace::create` refuses
-    any id at or above it (`id_space.rs:625`). -/
+/-- `ID_LIMIT` (`id_space.rs`) = `GrB_INDEX_MAX` = `2^60 - 1`: `IdSpace::create` refuses
+    any id at or above it (`id_space.rs`). -/
 def idLimit : Nat := 2 ^ 60 - 1
 
 /-- `verify_schema` + `verify_attribute` + `IdSpace::create`'s refusals.
@@ -735,7 +735,7 @@ def idLimit : Nat := 2 ^ 60 - 1
     right now is neither live nor a double claim, which is what tells a genuine
     re-create from a collision. The last conjunct is the `ID_LIMIT` refusal,
     which the Rust checks first; a `Bool` conjunction's order is immaterial.
-    `nodupB ids` is the `CREATE_NODE` arm's repeated-id refusal (`apply.rs:226`;
+    `nodupB ids` is the `CREATE_NODE` arm's repeated-id refusal (`apply.rs`;
     effects_emit_apply `createNode_repeat_refused`). -/
 def okCreate (σ : GState) (b : Batch) (ids labels attrIds : List Nat) (rows : List Val) : Bool :=
   labels.all (fun l => decide (l < σ.labels.length))
@@ -760,7 +760,7 @@ def applyRec : Record → GState × Batch → Option (GState × Batch)
         some ({ σ with labels := (intern σ.labels nm).2 }, b) else none
   | .addAttribute id nm, (σ, b) =>
       match internCap FalkorFaithful.attrCap σ.attrs nm with
-      | none => none  -- `ApplyError::AttributeLimitReached` (`apply.rs:199`)
+      | none => none  -- `ApplyError::AttributeLimitReached` (`apply.rs`)
       | some (a, d') => if a = id then some ({ σ with attrs := d' }, b) else none
   | .createNode ids labels attrIds rows, (σ, b) =>
       if okCreate σ b ids labels attrIds rows then
@@ -1620,7 +1620,7 @@ theorem internCap_refines (cap : Nat) (d : List Name) (n : Name) :
   rw [idxOf_findIdx]
   cases d.findIdx? (· == n) <;> simp
 
-/-- **`applyRec`'s `ADD_ATTRIBUTE` arm is the attribute path of `apply_record` (`apply.rs:175`)**, cap and
+/-- **`applyRec`'s `ADD_ATTRIBUTE` arm is the attribute path of `apply_record` (`apply.rs`)**, cap and
 refusal included: the faithful copy is `FalkorFaithful.applyAddAttributeF` (insert, read the id back, refuse
 with `AttributeLimitReached` if there is none, then `verify_id`). -/
 theorem applyRec_addAttribute_refines (id : Nat) (nm : Name) (σ : GState) (b : Batch) :
@@ -1743,7 +1743,7 @@ theorem deleteOne_refines (σ : GState) (s : FalkorFaithful.Ids)
     exact propext (FalkorFaithful.insAsc_nodup id s.bin hnf)
 
 /-- **`deleteOne_refines` with its `live ≥ 1` premise discharged.** The `u64` subtraction in
-`IdSpace::release` (`self.live -= freed.len()`, id_space.rs:739) agrees with the model's `Nat` one
+`IdSpace::release` (`self.live -= freed.len()`, id_space.rs) agrees with the model's `Nat` one
 for every live id of a well-formed state: `1 ≤ live` follows from `σ.WF` (the bin is below the
 boundary) and `id < bound`, not free (`FalkorFaithful.Ids.live_pos`). For an id below the entry
 boundary (`i < b.entry ≤ σ.bound`, the first disjunct of `okDelete`) both hold, so the premise is

@@ -1,13 +1,13 @@
 import FalkorAggOps.Agg
 import FalkorValueOrder.Model
 /-!
-# The scalar `max` body on `Value` (aggregation.rs:119)
+# The scalar `max` body on `Value` (aggregation.rs)
 
 `Agg.maxScalar_eq_batch` relates the scalar `max` body to `max_batch` for any abstract comparison
 `c` with three properties (`anti`, `nanSymm`, `noflag`). Those are properties of
 `Value::compare_value`, so until instantiated they were an undischarged hypothesis about other
 Rust code (the row was CONDITIONAL). Here `c` is the real model `cmpV` (proofs/value_order
-`Model.lean`, `compare_value` value.rs:1266):
+`Model.lean`, `compare_value` value.rs):
 
 * `maxV` is the scalar body, line by line, on `cmpV`; `maxV_spec` states what it returns.
 * On NaN-free, non-null scalars (the `scalarOk` fragment: Bool, i64-exact Int, finite Float, String,
@@ -16,7 +16,7 @@ Rust code (the row was CONDITIONAL). Here `c` is the real model `cmpV` (proofs/v
   and `max_batch` agree there.
 * Outside that fragment they fail (a list with a nested NaN: `[NaN]` against `[5]` is
   `(Less, None)` both ways, `value_order Main` / `compare_list`), so the two bodies can differ. The
-  scalar body is unreachable: every aggregate registers `batch_agg`, which aggregate.rs:236/:1061
+  scalar body is unreachable: every aggregate registers `batch_agg`, which aggregate.rs/:1061
   always prefer, so `max_batch` (covered by `Agg.minmax_hom`) is what runs.
 -/
 namespace FalkorAggOps.MaxScalar
@@ -28,7 +28,7 @@ def cmpOfV : Cmp ValueOrder.V where
   nullFlag a b := decide ((cmpV a b).2 = .comparedNull)
   nanFlag a b := decide ((cmpV a b).2 = .nan)
 
-/-- The scalar `max` body (aggregation.rs:119-133) on `Value`: `args = [a, b]` with `a` the new
+/-- The scalar `max` body (aggregation.rs) on `Value`: `args = [a, b]` with `a` the new
 value and `b` the accumulator (`None` = `Null` accumulator takes `a` in `max_batch`). -/
 def maxV (a : ValueOrder.V) (b : Option ValueOrder.V) : Option ValueOrder.V := maxScalar cmpOfV a b
 

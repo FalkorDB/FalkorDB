@@ -5,24 +5,24 @@ Aggregate operator: expression analysis, accumulator zeroing/unbinding, `GroupKe
 | here | there |
 | --- | --- |
 | `Ex`, `Fn`, `Cst`            | `ExprIR<Variable>` tree (`DynNode`), `GraphFn`, `ExprIR::Constant` |
-| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs:167) |
-| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs:382) |
-| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs:313) |
-| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs:1082) |
-| `unbindAcc` / `unbindAccL`   | `unbind_agg_accumulators` (aggregate.rs:1230) |
-| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs:90, :101) |
-| `hashU64` (history)          | `HashU64::hash_u64` (an earlier `Row` hash; was aggregate.rs:1254/:1258) |
-| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs:208) |
-| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs:280) |
+| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs) |
+| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs) |
+| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs) |
+| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs) |
+| `unbindAcc` / `unbindAccL`   | `unbind_agg_accumulators` (aggregate.rs) |
+| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs) |
+| `hashU64` (history)          | `HashU64::hash_u64` (an earlier `Row` hash; was aggregate.rs/:1258) |
+| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs) |
+| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs) |
 
-`is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs:783), and the
+`is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs), and the
 `initial` value lives in that variant, so a function is aggregate iff `init = some z`.
 -/
 namespace FalkorAggOps.AggPlan
 
 variable {Z : Type}
 
-/-- Literal kinds that matter: `count(<non-null literal>)` is `count(*)` (aggregate.rs:449). -/
+/-- Literal kinds that matter: `count(<non-null literal>)` is `count(*)` (aggregate.rs). -/
 inductive Cst where
   | btrue | bfalse | int | float | str | null | other
   deriving DecidableEq
@@ -47,7 +47,7 @@ def isAggNode : Ex Z → Bool
   | .func f _ => f.init.isSome
   | _ => false
 
-/-! ## `subtree_has_aggregate` (aggregate.rs:167) -/
+/-! ## `subtree_has_aggregate` (aggregate.rs) -/
 
 mutual
 def hasAgg : Ex Z → Bool
@@ -88,7 +88,7 @@ aggregate call. -/
 theorem hasAgg_iff (e : Ex Z) : hasAgg e = true ↔ ∃ n ∈ nodes e, isAggNode n = true := by
   rw [hasAgg_spec]; simp
 
-/-! ## `analyze_agg_tree` (aggregate.rs:382) -/
+/-! ## `analyze_agg_tree` (aggregate.rs) -/
 
 inductive Input (Z : Type) where
   | var (v : Nat)
@@ -107,7 +107,7 @@ def countStarLit : Cst → Bool
   | .btrue | .int | .float | .str => true
   | _ => false
 
-/-- Single argument (aggregate.rs:442-467). `none` = whole analysis bails. -/
+/-- Single argument (aggregate.rs). `none` = whole analysis bails. -/
 def singleArg (f : Fn Z) (arg : Ex Z) : Option (Option (Input Z)) :=
   match arg with
   | .var v => some (some (.var v))
@@ -115,7 +115,7 @@ def singleArg (f : Fn Z) (arg : Ex Z) : Option (Option (Input Z)) :=
                 else if hasAgg arg then none else some (some (.computed arg))
   | _ => if hasAgg arg then none else some (some (.computed arg))
 
-/-- Multi-argument tail check (aggregate.rs:478-483): children `1..n-1` all constants. -/
+/-- Multi-argument tail check (aggregate.rs): children `1..n-1` all constants. -/
 def constsOf : List (Ex Z) → Option (List Cst)
   | [] => some []
   | e :: es => match isConst e, constsOf es with
@@ -134,7 +134,7 @@ def distinctInput (ds : List (Ex Z)) : Option (Input Z) :=
     | _ => if hasAgg inner then none else some (.computed inner)
   | _ => none
 
-/-- The per-shape body of aggregate.rs:404-505, once `acc` (the last child) is known. -/
+/-- The per-shape body of aggregate.rs, once `acc` (the last child) is known. -/
 def aggBody (f : Fn Z) (acc : Nat) (cs : List (Ex Z)) : Option (VAgg Z) :=
   match cs with
   | [.distinct ds, _] => (distinctInput ds).map fun i => ⟨f, some i, acc, true, []⟩
@@ -240,7 +240,7 @@ theorem distinctInput_computed (ds : List (Ex Z)) (x : Ex Z) (h : distinctInput 
       · rename_i hh; cases h; exact ⟨rfl, by simpa using hh⟩
   · cases h
 
-/-- `count(*)` (parsed as `count(1)`, cypher.rs:2023) needs no input column. -/
+/-- `count(*)` (parsed as `count(1)`, cypher.rs) needs no input column. -/
 theorem countStar_no_input (f : Fn Z) (z : Z) (acc : Nat) (hf : f.init = some z) (hc : f.isCount = true) :
     analyzeAgg (.func f [.const .int, .var acc]) = some ⟨f, none, acc, false, []⟩ := by
   simp [analyzeAgg, aggBody, hf, isVar, singleArg, countStarLit, hc]
@@ -275,14 +275,14 @@ theorem multi_extra (f : Fn Z) (z : Z) (v acc : Nat) (cs : List Cst) (hf : f.ini
   unfold aggBody
   simp only [hd, hcs, multiArg]
 
-/-! ## `analyze` (aggregate.rs:313) -/
+/-! ## `analyze` (aggregate.rs) -/
 
 inductive KeyKind (Z : Type) where
   | var (v : Nat)
   | prop (v : Nat) (attr : Nat)
   | computed (e : Ex Z)
 
-/-- One key (aggregate.rs:316-370). `none` = the whole operator bails. -/
+/-- One key (aggregate.rs). `none` = the whole operator bails. -/
 def analyzeKey (e : Ex Z) : Option (KeyKind Z) :=
   match e with
   | .var v => some (.var v)

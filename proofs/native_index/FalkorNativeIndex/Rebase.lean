@@ -10,29 +10,29 @@ whose fork was made before a batch committed is rebased onto the batch's progres
 compares only the data version, which a batch does not move). Concretely:
 
 * the index keeps, while `Building`, the entities writers changed in it (`Written`: `since_last_indexer_step`,
-  `by_this_version`, `versioned.rs:68-81`);
-* a writer, as it escalates (`QuerySession::check_fork`, `query_session.rs:246`), is *rebased* onto the batches
-  published since its fork (`MvccGraph::rebase_onto_indexer_batches`, `mvcc_graph.rs:166` ->
-  `Graph::rebase_onto_indexer_batches`, `versioned.rs:486`): each index a batch moved on becomes the published
+  `by_this_version`, `versioned.rs`);
+* a writer, as it escalates (`QuerySession::check_fork`, `query_session.rs`), is *rebased* onto the batches
+  published since its fork (`MvccGraph::rebase_onto_indexer_batches`, `mvcc_graph.rs` ->
+  `Graph::rebase_onto_indexer_batches`, `versioned.rs`): each index a batch moved on becomes the published
   copy, with the fork's own changes re-applied;
 * a batch that writers committed after (`IndexerCommit::CatchUp`) is caught up on what they changed
-  (`Graph::caught_up_onto`, `versioned.rs:438`), instead of being discarded.
+  (`Graph::caught_up_onto`, `versioned.rs`), instead of being discarded.
 
-Both use one function, `IndexColumn::refresh` (`falkordb_index.rs:169`).
+Both use one function, `IndexColumn::refresh` (`falkordb_index.rs`).
 
 | Lean | Rust |
 | --- | --- |
 | `Ver` (`has`, `attr`, `place`), `tupl` | what a `Graph` version says of a column's entities: the label / type check (`node_has_label_id`, `edge_has_type_id`), the attribute read, `build_place` |
 | `G.ver` | the model `G` read as a `Ver` of one column |
-| `rawTuples` | the removes of `refresh` (`:178-199`): the attribute read from `from`, no label check |
-| `entityTuples` | `graph_writes::entity_tuples` (`graph_writes.rs:444`): the label or type is checked per id |
+| `rawTuples` | the removes of `refresh`: the attribute read from `from`, no label check |
+| `entityTuples` | `graph_writes::entity_tuples` (`graph_writes.rs`): the label or type is checked per id |
 | `placedBelow` | `placed_below` (`refresh` calls `placed_in(.., None, Some(next), ..)`: `placedIn_none_eq_placedBelow_*`) |
-| `placedIn`, `IndexColumn.indexerInsert`, `catchUpBy` | `placed_in` (`falkordb_index.rs:222`), `indexer_insert` (`:356`), `catch_up_by` (`versioned.rs:209`) (#3568) |
-| `IndexColumn.refresh` | `IndexColumn::refresh` (`:169`), `writer_rebase` (`:326`), `indexer_catch_up` (`:337`) |
+| `placedIn`, `IndexColumn.indexerInsert`, `catchUpBy` | `placed_in` (`falkordb_index.rs`), `indexer_insert`, `catch_up_by` (`versioned.rs`) (#3568) |
+| `IndexColumn.refresh` | `IndexColumn::refresh`, `writer_rebase`, `indexer_catch_up` |
 | `Written`, `BS`, `EN` | `Written`, `BuildState<BuildCursor>`, `IndexEntry<IndexColumn>` |
-| `EN.writerRecord`, `EN.indexerApply`, `EN.publish` | `IndexEntry::writer_record` (`:280`), `indexer_apply` (`:293`), `publish` (`:324`) |
-| `overtaken`, `EN.rebase` | `Graph::overtaken` (`:514`), `rebase_index` (`:533`) |
-| `EN.catchUp` | `Graph::catch_up_index` (`:454`) |
+| `EN.writerRecord`, `EN.indexerApply`, `EN.publish` | `IndexEntry::writer_record`, `indexer_apply`, `publish` |
+| `overtaken`, `EN.rebase` | `Graph::overtaken`, `rebase_index` |
+| `EN.catchUp` | `Graph::catch_up_index` |
 
 The per-index model (`BuildState.building next`, `SE`) is the *projection* of this one that forgets `written`:
 `EN.proj`. `writerRecord_proj`, `indexerApply_proj` and `publish_proj` show each operation projects onto
@@ -81,10 +81,10 @@ def tuplA (c : IndexColumn) (v : Ver) (id : Nat) : List Nat :=
 def tupl (c : IndexColumn) (v : Ver) (id : Nat) : List Nat :=
   if v.has id then tupleOf c v.attr id else []
 
-/-- `entity_tuples` (`graph_writes.rs:444-486`): for each id, its tuple if the label or type holds. -/
+/-- `entity_tuples` (`graph_writes.rs`): for each id, its tuple if the label or type holds. -/
 def entityTuples (c : IndexColumn) (v : Ver) (ids : List Nat) : List Nat := ids.flatMap (tupl c v)
 
-/-- The removes of `refresh` (`falkordb_index.rs:178-199`): the attribute read from `from`, no label
+/-- The removes of `refresh` (`falkordb_index.rs`): the attribute read from `from`, no label
     check. -/
 def rawTuples (c : IndexColumn) (v : Ver) (ids : List Nat) : List Nat := ids.flatMap (tupleOf c v.attr)
 
@@ -112,7 +112,7 @@ def G.ver (g : G) (e : EntityType) (k : IndexKey) : Ver where
 
 theorem G.ver_place (g : G) (e : EntityType) (k : IndexKey) : (g.ver e k).place = g.place e := rfl
 
-/-- `placed_below` (`falkordb_index.rs:225-244`): the ids of `ws` that `to` places below `next`: for a node
+/-- `placed_below` (`falkordb_index.rs`): the ids of `ws` that `to` places below `next`: for a node
     cursor one range of the set (`remove_range(next..)`), for an edge cursor one `build_place` lookup each. -/
 def placedBelow (to : Ver) (ws : List Nat) (next : BuildCursor) : List Nat :=
   match next with
@@ -148,7 +148,7 @@ theorem placedBelow_mem (to : Ver) (ws : List Nat) (next : BuildCursor)
 
 /-! ## `refresh` -/
 
-/-- `IndexColumn::refresh` (`falkordb_index.rs:169-222`): the tuples of `ws` as `frm` has them come out, and as
+/-- `IndexColumn::refresh` (`falkordb_index.rs`): the tuples of `ws` as `frm` has them come out, and as
     `to` has them go in, while `st` is `Building` only for an entity `to` places below the cursor. -/
 def IndexColumn.refresh (c : IndexColumn) (st : BuildState) (ws : List Nat) (frm to : Ver) : IndexColumn :=
   if ws.isEmpty then c else
@@ -314,18 +314,18 @@ theorem refresh_inv (c : IndexColumn) (st : BuildState) (ws : List Nat) (frm to 
 
 /-! ## The entries: `Written`, `BuildState<BuildCursor>`, `IndexEntry` -/
 
-/-- `Written` (`versioned.rs:70-81`): the entities writers changed in a `Building` index. `since` is
+/-- `Written` (`versioned.rs`): the entities writers changed in a `Building` index. `since` is
     `since_last_indexer_step`, `byThis` is `by_this_version`; sets modelled as lists, only membership matters. -/
 structure Written where
   since : List Nat
   byThis : List Nat
 
-/-- `BuildState<BuildCursor>` with its `Written` (`versioned.rs:44-52`). -/
+/-- `BuildState<BuildCursor>` with its `Written` (`versioned.rs`). -/
 inductive BS where
   | building (next : BuildCursor) (w : Written)
   | ready
 
-/-- `BuildState::building` (`:55-61`): no entity written yet. -/
+/-- `BuildState::building`: no entity written yet. -/
 def BS.mk (next : BuildCursor) : BS := .building next ⟨[], []⟩
 
 /-- The old model's state: forget `written`. -/
@@ -333,7 +333,7 @@ def BS.proj : BS → BuildState
   | .building n _ => .building n
   | .ready => .ready
 
-/-- `BuildState::next` (`:63-68`). -/
+/-- `BuildState::next`. -/
 def BS.next : BS → Option BuildCursor
   | .building n _ => some n
   | .ready => none
@@ -341,7 +341,7 @@ def BS.next : BS → Option BuildCursor
 theorem BS.next_proj (s : BS) : s.proj = (match s.next with | some n => .building n | none => .ready) := by
   cases s <;> rfl
 
-/-- `IndexEntry<IndexColumn>` (`:96-110`): column, state with its `Written`, generation, commit count. -/
+/-- `IndexEntry<IndexColumn>`: column, state with its `Written`, generation, commit count. -/
 structure EN where
   index : IndexColumn
   state : BS
@@ -361,8 +361,8 @@ def EN.isBuilding (e : EN) : Bool := match e.state with | .building _ _ => true 
 theorem EN.isBuilding_proj (e : EN) : e.proj.en.isBuilding = e.isBuilding := by
   cases e with | mk i s g c r => cases s <;> rfl
 
-/-- `IndexEntry::writer_record` (`versioned.rs:280`) with `IndexColumn::writer_record`
-    (`falkordb_index.rs:306-324`): while `Building`, the id of every change goes into `by_this_version`, applied
+/-- `IndexEntry::writer_record` (`versioned.rs`) with `IndexColumn::writer_record`
+    (`falkordb_index.rs`): while `Building`, the id of every change goes into `by_this_version`, applied
     or not; the column is recorded as before. -/
 def EN.writerRecord (e : EN) (log : List IndexWrite) (place : Nat → Option BuildCursor)
     (sc : EncodedTuples × EncodedTuples) : EN × (EncodedTuples × EncodedTuples) :=
@@ -396,7 +396,7 @@ theorem writerRecord_ready_state (e : EN) (log : List IndexWrite) (place : Nat �
     (e.writerRecord log place sc).1.state = .ready := by
   cases e with | mk i s g c r => simp only at h; subst h; rfl
 
-/-- `IndexEntry::indexer_apply` (`versioned.rs:293-322`): the batch goes in, the commit count rises, the cursor
+/-- `IndexEntry::indexer_apply` (`versioned.rs`): the batch goes in, the commit count rises, the cursor
     moves on (or the index is `Ready`), and `since_last_indexer_step` is emptied: the batch read every entity at
     this version's values, writers' changes included. `by_this_version` stays. -/
 def EN.indexerApply (e : EN) (work : EncodedTuples) (next : Option BuildCursor) (read : Nat) :
@@ -409,12 +409,12 @@ def EN.indexerApply (e : EN) (work : EncodedTuples) (next : Option BuildCursor) 
       e.generation, e.commits + 1,
       (match next with | none => e.read | some _ => min (e.read + read) (W - 1))⟩, r.2, true)
 
-/-- `BuildState::Building { read }` as `FalkorDbIndex::building_read` reports it (`falkordb_index.rs:863-875`):
+/-- `BuildState::Building { read }` as `FalkorDbIndex::building_read` reports it (`falkordb_index.rs`):
     `Some(read)` while `Building`, `None` once `Ready`. -/
 def EN.buildingRead (e : EN) : Option Nat :=
   match e.state with | .building _ _ => some e.read | .ready => none
 
-/-- `Graph::index_build_read` (`versioned.rs:782-794`): the entry's count, `None` if absent or `Ready`. -/
+/-- `Graph::index_build_read` (`versioned.rs`): the entry's count, `None` if absent or `Ready`. -/
 def indexBuildRead (en : Option EN) : Option Nat := en.bind EN.buildingRead
 
 theorem indexBuildRead_spec (en : Option EN) (r : Nat) :
@@ -428,7 +428,7 @@ theorem indexBuildRead_spec (en : Option EN) (r : Nat) :
     | building n w => simp [EN.buildingRead, hs]
 
 /-- **A batch that does not reach the end adds what it read to the count** (`so_far.saturating_add(read)`,
-    `versioned.rs:419`); one that reaches the end flips the entry `Ready`, which reports no count. -/
+    `versioned.rs`); one that reaches the end flips the entry `Ready`, which reports no count. -/
 theorem indexerApply_read (e : EN) (work : EncodedTuples) (n' : BuildCursor) (read : Nat)
     (hb : e.isBuilding = true) :
     ((e.indexerApply work (some n') read).1).buildingRead = some (min (e.read + read) (W - 1)) ∧
@@ -460,7 +460,7 @@ theorem indexerApply_clears_since (e : EN) (work : EncodedTuples) (read : Nat) (
     simp only at h; subst h
     exact ⟨⟨[], w.byThis⟩, by simp [EN.indexerApply], rfl, rfl⟩
 
-/-- `IndexEntry::publish` (`:324-334`): while `Building`, what this version changed joins `since`. -/
+/-- `IndexEntry::publish`: while `Building`, what this version changed joins `since`. -/
 def EN.publish (e : EN) : EN :=
   match e.state with
   | .building n w => { e with state := .building n ⟨w.since ++ w.byThis, []⟩ }
@@ -488,13 +488,13 @@ theorem publish_since (e : EN) (n : BuildCursor) (w : Written) (h : e.state = .b
 
 /-! ## The writer's rebase and the batch's catch-up -/
 
-/-- `VersionedIndex::writer_rebase` for `IndexColumn` (`falkordb_index.rs:326-335`): `refresh` from the published
-    version to the fork. The trait declaration is `versioned.rs:213-225`. -/
+/-- `VersionedIndex::writer_rebase` for `IndexColumn` (`falkordb_index.rs`): `refresh` from the published
+    version to the fork. The trait declaration is `versioned.rs`. -/
 def IndexColumn.writerRebase (c : IndexColumn) (st : BuildState) (ws : List Nat) (published fork : Ver) : IndexColumn :=
   c.refresh st ws published fork
 
-/-- `VersionedIndex::indexer_catch_up` for `IndexColumn` (`falkordb_index.rs:337-348`): `refresh` from the
-    batch's version to the published one. The trait declaration is `versioned.rs:227-237`. -/
+/-- `VersionedIndex::indexer_catch_up` for `IndexColumn` (`falkordb_index.rs`): `refresh` from the
+    batch's version to the published one. The trait declaration is `versioned.rs`. -/
 def IndexColumn.indexerCatchUp (c : IndexColumn) (st : BuildState) (ws : List Nat) (batchVer published : Ver) :
     IndexColumn :=
   c.refresh st ws batchVer published
@@ -505,12 +505,12 @@ theorem writerRebase_spec (c : IndexColumn) (st : BuildState) (ws : List Nat) (p
 theorem indexerCatchUp_spec (c : IndexColumn) (st : BuildState) (ws : List Nat) (batchVer published : Ver) :
     c.indexerCatchUp st ws batchVer published = c.refresh st ws batchVer published := rfl
 
-/-- `Graph::overtaken` (`versioned.rs:514-531`): an index still `Building` here that a batch moved on in the
+/-- `Graph::overtaken` (`versioned.rs`): an index still `Building` here that a batch moved on in the
     published copy: the same index (generation), more batches committed on it. -/
 def overtaken (ours theirs : EN) : Bool :=
   ours.isBuilding && theirs.generation == ours.generation && theirs.commits != ours.commits
 
-/-- `Graph::rebase_index` (`versioned.rs:533-565`), the slot after it, with `published` and `fork` the two
+/-- `Graph::rebase_index` (`versioned.rs`), the slot after it, with `published` and `fork` the two
     versions: the published copy, with the fork's recorded writes re-applied (`refresh`) and still recorded. -/
 def EN.rebase (ours theirs : EN) (published fork : Ver) : EN :=
   if overtaken ours theirs then
@@ -567,7 +567,7 @@ theorem rebase_inv (ours theirs : EN) (published fork : Ver) (n : BuildCursor) (
   rw [rebase_index_spec ours theirs published fork n w hs h]
   exact refresh_inv _ _ _ _ _ hk hinv hf hws hb
 
-/-- `Graph::catch_up_index` (`versioned.rs:454-484`): the batch's copy, its index refreshed over the entities
+/-- `Graph::catch_up_index` (`versioned.rs`): the batch's copy, its index refreshed over the entities
     writers changed (`since` of the published copy, none if it is `Ready`) from the batch's version to the
     published one. -/
 def EN.catchUp (ours theirs : EN) (batchVer published : Ver) : EN :=
@@ -595,11 +595,11 @@ theorem catchUp_inv (ours theirs : EN) (batchVer published : Ver)
 /-! ## Catching up by insertion (#3568)
 
 A batch that writers overtook either refreshes the entities they changed (above) or, when that costs
-more, inserts itself into the *published* copy of the index (`CatchUp::Insert`, `versioned.rs:146-183`,
-`Graph::insert_index`, `VersionedIndex::indexer_insert`, `falkordb_index.rs:356-374`). `placed_below` became
+more, inserts itself into the *published* copy of the index (`CatchUp::Insert`, `versioned.rs`,
+`Graph::insert_index`, `VersionedIndex::indexer_insert`, `falkordb_index.rs`). `placed_below` became
 `placed_in`, with an optional lower end. -/
 
-/-- `placed_in` (`falkordb_index.rs:222-254`): the ids of `ws` whose place in `to` is at or after `frm` and
+/-- `placed_in` (`falkordb_index.rs`): the ids of `ws` whose place in `to` is at or after `frm` and
     before `next` (a `None` end leaves that side open). A node column cuts the set by id at the ends
     (`remove_range`, whatever `to` says of the place); a relationship column keeps the edges `to` still has
     whose place is not before `frm` and is before `next`, one `build_place` lookup each. -/
@@ -646,7 +646,7 @@ theorem placedIn_rel_mem (to : Ver) (ws : List Nat) (frm next : Option BuildCurs
     cases frm <;> cases next <;> simp_all
 
 /-- With no lower end, `placed_in` is the old `placed_below` (the call `refresh` now makes,
-    `placed_in(written, entity, None, Some(next), to)`, `falkordb_index.rs:213`). -/
+    `placed_in(written, entity, None, Some(next), to)`, `falkordb_index.rs`). -/
 theorem placedIn_none_eq_placedBelow_node (to : Ver) (ws : List Nat) (m : Nat) :
     placedIn .node to ws none (some (.node m)) = placedBelow to ws (.node m) := by
   simp [placedIn, placedBelow]
@@ -655,7 +655,7 @@ theorem placedIn_none_eq_placedBelow_edge (to : Ver) (ws : List Nat) (s d : Nat)
     placedIn .relationship to ws none (some (.edge s d)) = placedBelow to ws (.edge s d) := by
   simp [placedIn, placedBelow]
 
-/-- `VersionedIndex::indexer_insert` for `IndexColumn` (`falkordb_index.rs:356-374`): the batch's tuples of the
+/-- `VersionedIndex::indexer_insert` for `IndexColumn` (`falkordb_index.rs`): the batch's tuples of the
     entities writers did not change, plus the written entities placed in `[frm, next)` with their values in
     `published`, added to `c` (the published copy's column, whose cursor is at `frm`). -/
 def IndexColumn.indexerInsert (c : IndexColumn) (e : EntityType) (published : Ver) (batch : EncodedTuples)
@@ -792,7 +792,7 @@ theorem insertedOnto_eq_caughtUpOnto {R : Type} (ours pub : V R) (g : SE → SE 
   simp only [V.insertedOnto, V.caughtUpOnto, V.newBuildVersion, V.newVersion, ho, hp, hb, ite_true]
   cases o with | mk oen og oc => cases oen; simp_all
 
-/-! `CatchUp`, `REFRESH_COST` and `catchUpBy` (`versioned.rs:149-191`) are in `Batch.lean`, where `indexerFit`
+/-! `CatchUp`, `REFRESH_COST` and `catchUpBy` (`versioned.rs`) are in `Batch.lean`, where `indexerFit`
 chooses the way; `V.insertedOnto` (`Graph::insert_index`) is there too. -/
 
 theorem catchUpBy_refresh_iff (written batch : Nat) :
@@ -832,7 +832,7 @@ theorem overtaken_proj (ours theirs : EN) : overtakenSE ours.proj theirs.proj = 
 def rebasedSE (ours theirs : SE) (f : IndexColumn) : SE :=
   if overtakenSE ours theirs then ⟨⟨f, theirs.en.state⟩, theirs.generation, theirs.commits, theirs.since⟩ else ours
 
-/-- `rebase_onto_indexer_batches` on a `V` (`versioned.rs:486-496`): only the batch's index slot changes; the
+/-- `rebase_onto_indexer_batches` on a `V` (`versioned.rs`): only the batch's index slot changes; the
     data version and the rest of the graph are the fork's. -/
 def V.rebased {R : Type} (fork pub : V R) (f : SE → SE → IndexColumn) : V R :=
   match fork.entry, pub.entry with
@@ -883,7 +883,7 @@ theorem rebased_batch_fits {R : Type} (work : EncodedTuples) (fork pub prepared 
 
 /-! ## The smaller functions around them -/
 
-/-- `BuildCursor::from_id` (`falkordb_index.rs:437-448`) and `Graph::build_place` (`graph.rs:3875`, which passes
+/-- `BuildCursor::from_id` (`falkordb_index.rs`) and `Graph::build_place` (`graph.rs`, which passes
     its `edge_endpoints`): a node by its id, an edge by its endpoints, `None` for an edge the version does not
     have. -/
 def BuildCursor.fromId (e : EntityType) (id : Nat) (endpoints : Nat → Option (Nat × Nat)) : Option BuildCursor :=
@@ -903,10 +903,10 @@ theorem fromId_kind (e : EntityType) (id : Nat) (endpoints : Nat → Option (Nat
     simp only [BuildCursor.fromId, Option.map_eq_some_iff] at h
     obtain ⟨_, _, rfl⟩ := h; trivial
 
-/-- `BuildState::building` (`versioned.rs:55-61`): no entity written yet. -/
+/-- `BuildState::building` (`versioned.rs`): no entity written yet. -/
 theorem BS.mk_spec (next : BuildCursor) : (BS.mk next).next = some next ∧ (BS.mk next).proj = .building next := ⟨rfl, rfl⟩
 
-/-- `FalkorDbIndex::publish` (`falkordb_index.rs:716-722`): `IndexEntry::publish` on every column entry. -/
+/-- `FalkorDbIndex::publish` (`falkordb_index.rs`): `IndexEntry::publish` on every column entry. -/
 def publishAll (l : List (IndexKey × EN)) : List (IndexKey × EN) := l.map (fun p => (p.1, p.2.publish))
 
 /-- Publishing changes no entry's projected content (column, cursor or `Ready`, generation, commits). -/
@@ -920,7 +920,7 @@ theorem publishAll_proj (l : List (IndexKey × EN)) :
     obtain ⟨h1, h2, h3⟩ := publish_proj p.2
     rw [ih, h1, h2, h3]
 
-/-- `FalkorDbIndex::column_names` (`falkordb_index.rs:724-736`): every column, by kind and key. -/
+/-- `FalkorDbIndex::column_names` (`falkordb_index.rs`): every column, by kind and key. -/
 def FalkorDbIndex.columnNames (x : FalkorDbIndex) : List (EntityType × IndexKey) :=
   [EntityType.node, EntityType.relationship].flatMap (fun e => (x.columns e).map (fun p => (e, p.1)))
 
@@ -928,7 +928,7 @@ theorem columnNames_mem (x : FalkorDbIndex) (e : EntityType) (k : IndexKey) :
     (e, k) ∈ x.columnNames ↔ k ∈ (x.columns e).map (·.1) := by
   cases e <;> simp [FalkorDbIndex.columnNames, List.mem_flatMap, List.mem_map]
 
-/-- `Graph::rebase_onto_indexer_batches` (`versioned.rs:486-496`): `rebase_index` on every column of the fork;
+/-- `Graph::rebase_onto_indexer_batches` (`versioned.rs`): `rebase_index` on every column of the fork;
     `pub k` is the published version's entry under `k`. A column with no published counterpart, or one no batch
     moved on, keeps the fork's entry. -/
 def rebaseAll (fork : List (IndexKey × EN)) (pub : IndexKey → Option EN) (published forkV : Ver) :
@@ -948,7 +948,7 @@ theorem rebaseAll_entry (fork : List (IndexKey × EN)) (pub : IndexKey → Optio
   unfold rebaseAll
   exact List.mem_map.2 ⟨(k, e), h, rfl⟩
 
-/-- `Graph::overtaken_by_indexer_batches` (`versioned.rs:498-512`): a batch was published since this version
+/-- `Graph::overtaken_by_indexer_batches` (`versioned.rs`): a batch was published since this version
     was made (`batch_published_since`) and one of its columns was overtaken. The batch count gate is the cheap
     test every escalating write pays. -/
 def overtakenAny (batchPublished : Bool) (cols : List Bool) : Bool := batchPublished && cols.any id
@@ -960,7 +960,7 @@ theorem overtakenAny_iff (b : Bool) (cols : List Bool) :
 /-- No batch published since: nothing to do, however the columns look. -/
 theorem overtakenAny_no_batch (cols : List Bool) : overtakenAny false cols = false := rfl
 
-/-- `MvccGraph::rebase_onto_indexer_batches` (`mvcc_graph.rs:166-188`), the decision: nothing overtaken is `Ok`
+/-- `MvccGraph::rebase_onto_indexer_batches` (`mvcc_graph.rs`), the decision: nothing overtaken is `Ok`
     with the fork untouched; a borrowed fork is a debug panic and a release `Err(Stale)`; otherwise the fork is
     rebased (`V.rebased`). -/
 inductive RebaseOutcome where

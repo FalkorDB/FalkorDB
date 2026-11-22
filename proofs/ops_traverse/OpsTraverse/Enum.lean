@@ -1,6 +1,6 @@
 import OpsTraverse.SearchBase
 /-
-# `enumerate_paths` (graph/src/runtime/functions/algo_procedures.rs:2575)
+# `enumerate_paths` (graph/src/runtime/functions/algo_procedures.rs)
 
 Iterative DFS with an explicit level stack. `step u` order: the Rust pops from the END of the successor
 `Vec`, so a level holds `(succ u).reverse` and pops from its head (`succ` is `node_successors`).

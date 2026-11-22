@@ -1,5 +1,5 @@
 /-!
-# `schema::Key`: a name as a map key, looked up by `&str` (schema.rs:21-39)
+# `schema::Key`: a name as a map key, looked up by `&str` (schema.rs)
 
 ```rust
 #[derive(Clone, PartialEq, Eq)]

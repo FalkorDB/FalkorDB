@@ -8,7 +8,7 @@ The existing theorems prove the query-time views (`overlay_eq_ref`,
 that the staged maps only name entities that exist when the batch is
 committed or replayed. Line numbers are current main (5c7af54f2).
 
-* `remove_node_labels` (pending.rs:741-768): a removal that only cancels a staged
+* `remove_node_labels` (pending.rs): a removal that only cancels a staged
   add bumps `staged_labels_removed` instead (`Labels.removeOneC`), and
   `delete_pending_node` (:897) clears `remove_labels`. Properties: `RemLCommitted`
   (every staged removal is of a committed label), proven for every run of
@@ -25,7 +25,7 @@ committed or replayed. Line numbers are current main (5c7af54f2).
   (:1348-1371, `create_relationships_bulk` → `get_type_id_mut`) therefore registers a
   type whose every edge was cascaded away from `cancelled_relationships` instead
   (`PC.stCancelTypes_registers`); `CreateOp::resolve_pattern`
-  (ops/create.rs:353-400) registers labels eagerly but not types. Property
+  (ops/create.rs) registers labels eagerly but not types. Property
   `CancelledTypeRegistered`. The group-dropping model is `bug3447_cascade_drops_type_key`; the
   emitter consequence (an id gap on the replica) is proofs/effects_emit_apply
   `CancelGap.lean`. #3447 stays open in the compact reply (redis_layer `RelLookup`).
@@ -39,7 +39,7 @@ open PA
 committed node carries. -/
 def RemLCommitted (C : Nat → Bool) (s : Labels.St) : Prop := ∀ l, s.remL.contains l = true → C l = true
 
-/-- `remove_node_labels` before #3459 (pending.rs:729-746 on 3f4ea8f40): every label left
+/-- `remove_node_labels` before #3459 (pending.rs on 3f4ea8f40): every label left
 `set_labels` and was pushed onto `remove_labels`. History for `pre3459_*`. -/
 def removeLabelsPre3459 (s : Labels.St) (ls : List Nat) : Labels.St :=
   ls.foldl (fun s l => { setL := s.setL.filter (· != l), remL := s.remL ++ [l] }) s

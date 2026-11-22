@@ -1,6 +1,6 @@
 import GraphblasWrappers.Glue
 /-
-# `Encode<19> for Matrix<T>` unloads a private `dup()` (matrix.rs:527-582, #3438)
+# `Encode<19> for Matrix<T>` unloads a private `dup()` (matrix.rs, #3438)
 
 ```rust
 let copy = self.dup();                                     // GrB_Matrix_dup (+ hyper-hash opt-out)

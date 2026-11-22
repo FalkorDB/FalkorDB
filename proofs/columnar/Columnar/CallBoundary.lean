@@ -86,11 +86,11 @@ def builderFinishEmptyRows {V : Type} (origins : List Nat) : Batch V :=
   else ⟨origins.length, none, [], if origins.any (· != 0) then some origins else none⟩
 
 /-- origin/main's path for `trees = [] ∧ copy_from_parent = []`: one empty
-`Row` per active row with `origin_row = batch.origin_row(row)` (project.rs:111-129). -/
+`Row` per active row with `origin_row = batch.origin_row(row)` (project.rs). -/
 def projectEmptyGeneral {V : Type} (b : Batch V) : Batch V :=
   builderFinishEmptyRows (b.active.map b.originRow)
 
-/-- The PR's fast path (project.rs:98-105). -/
+/-- The PR's fast path (project.rs). -/
 def projectEmptyFast {V : Type} (b : Batch V) : Batch V :=
   let os := b.active.map b.originRow
   let out : Batch V := rowsOnly b.active.length
@@ -192,7 +192,7 @@ theorem emit_len {V : Type} [Inhabited V] (p : Batch V) (idx : List Nat) (lane :
 
 /-- Residual (unchanged from proofs/columnar `finishLen_drops`): a no-alias
 emitter over a parent with no column AND no origin yields 0 rows. Its one
-user, ExpandInto (expand_into.rs:95), always has both endpoint columns. -/
+user, ExpandInto (expand_into.rs), always has both endpoint columns. -/
 theorem emit_len_residual :
     (finishBatch (V := Nat) (shouldExpandNew (rowsOnly 3 : Batch Nat)) (rowsOnly 3) [0, 1, 2] none).len = 0 := by
   decide

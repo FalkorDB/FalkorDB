@@ -2,12 +2,12 @@ import GraphQueries.IdContract
 /-
 # Id spaces, construction and versioning
 
-`Graph` keeps two `IdSpace`s (`node_ids`/`relationship_ids`, graph.rs:429/432)
+`Graph` keeps two `IdSpace`s (`node_ids`/`relationship_ids`, graph.rs/432)
 and no counter of its own. `nodeIds g`/`relIds g` reassemble one from `G`'s
 fields; `setNodeIds`/`setRelIds` write one back. Every mutation goes through
 `O : IdSpaceOps`, whose behaviour is the hypothesis `IdSpaceContract O`
 (IdContract.lean; proofs/id_space owns its proof). Errors carry the entity
-kind (`NodeOpError::node`/`relationship`, graph.rs:382/391) as `Except String`.
+kind (`NodeOpError::node`/`relationship`, graph.rs/391) as `Except String`.
 
 | here | there (graph.rs) |
 | --- | --- |
@@ -422,7 +422,7 @@ def newG (n e version : Nat) (name : String) : G V :=
     nodeAttrs := fun _ => [], relAttrs := fun _ => [], labels := [], labelsIndex := fun _ => none,
     types := [], constraints := [], version, schemaVersion := 0 }
 
-/-- `Graph::new` (:818): both id spaces are `IdSpace::new()` (id_space.rs:266). -/
+/-- `Graph::new` (:818): both id spaces are `IdSpace::new()` (id_space.rs). -/
 theorem newG_spec (n e v : Nat) (name : String) :
     let g : G V := newG n e v name
     LInv g ∧ TInv g ∧ nodeBound g = 0 ∧ relBound g = 0 ∧ maxNodeId g = 0 ∧
@@ -460,7 +460,7 @@ theorem clampTiers_mono (len s0 s1 s2 : Nat) :
     r.1 ≤ r.2.1 ∧ r.2.1 ≤ r.2.2 ∧ r.2.2 ≤ len := by
   simp only [clampTiers]; omega
 
-/-- `NameMap::from_names` (schema.rs:76-91, #3757) builds the label (and type) index by
+/-- `NameMap::from_names` (schema.rs, #3757) builds the label (and type) index by
 `ids.entry(name).or_insert(id)` over `names.iter().enumerate()`: a name listed twice keeps
 its first position. -/
 def fromNamesIdx : List String → Nat → (String → Option Nat) → (String → Option Nat)
@@ -645,7 +645,7 @@ theorem rebuild_keeps_entries (g : G V) :
 def trimAttrStores (g : G V) : G V := g
 theorem trimAttrStores_id (g : G V) : trimAttrStores g = g := rfl
 
-/-- `end_id_quarantine` (graph.rs:1068, #3641): `node_ids.end_quarantine()` then
+/-- `end_id_quarantine` (graph.rs, #3641): `node_ids.end_quarantine()` then
 `relationship_ids.end_quarantine()`. `IdSpace::end_quarantine` empties the `quarantined` set and
 changes no other field (proofs/id_space `IdSpace.endQuarantine_spec`); `quarantined` only makes
 `reserve` skip ids (`reserve_not_quarantined`) and is not part of `IdS`, so on this project's
@@ -653,7 +653,7 @@ state (`live`, `recycled`, `entry_bound`, `taken`, both spaces) the call is the 
 def endIdQuarantine (g : G V) : G V := g
 theorem endIdQuarantine_id (g : G V) : endIdQuarantine g = g := rfl
 
-/-- `finish_version` (graph.rs:1054, #3641): what a version does once, before it is published
+/-- `finish_version` (graph.rs, #3641): what a version does once, before it is published
 (`MvccGraph::prepare`): `trim_attr_stores` then `end_id_quarantine`. Neither changes the logical
 graph, so publishing a version loses nothing: counters, recycle bins, matrices, schema and
 attribute stores are exactly those of the fork. -/

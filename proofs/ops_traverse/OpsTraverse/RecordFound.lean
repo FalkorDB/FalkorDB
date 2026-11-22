@@ -1,5 +1,5 @@
 /-
-# `record_found_path` (graph/src/runtime/functions/algo_procedures.rs:2511)
+# `record_found_path` (graph/src/runtime/functions/algo_procedures.rs)
 
 Folds a newly found path into the result set and tightens the weight bound. Three disciplines by
 `path_count`: `1` the single best by `cmp_found_path`, `0` every path tied at the minimum weight,

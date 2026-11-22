@@ -1,5 +1,5 @@
 import AlgoUdf.Graph
-/-! # `dijkstra_single_path` (algo_procedures.rs:2282-2378) and the `DijkstraItem` heap order
+/-! # `dijkstra_single_path` (algo_procedures.rs) and the `DijkstraItem` heap order
 
 | here | there |
 | --- | --- |

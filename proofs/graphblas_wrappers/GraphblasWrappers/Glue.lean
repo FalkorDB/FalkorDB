@@ -4,15 +4,15 @@
 
 | here | there |
 | --- | --- |
-| `addOp`/`applyOp` | `EWiseAdd::add_op` (matrix.rs:275, impls :279 bool, :287 u64) |
+| `addOp`/`applyOp` | `EWiseAdd::add_op` (matrix.rs, impls :279 bool, :287 u64) |
 | `newMatrix`       | `MatrixType::new_matrix` (:298, impls :305, :314) |
 | `Desc`/`descOf`   | `enum Descriptor` (:232) / `From<Descriptor> for GrB_Descriptor` (:323) |
 | `encodeM`/`scrub` | `Encode<19> for Matrix` (:528), header pointers nulled (:554-565) |
 | `MatH.inner`/`isSynced` | `inner` (:762) / `is_synced` (:874) |
 | `sparsityName`    | `sparsity_status` (:1183) |
 | `posB`/`posU`     | `IterExtract::pos` (:1826, impls :1843 bool, :1863 u64) |
-| `vecFrom`/`ptr`   | `From<GrB_Vector>` (vector.rs:82, :91) / `ptr` (:174) |
-| `vIterNew`        | `vector::Iter::new` (vector.rs:603) |
+| `vecFrom`/`ptr`   | `From<GrB_Vector>` (vector.rs) / `ptr` (:174) |
+| `vIterNew`        | `vector::Iter::new` (vector.rs) |
 
 The GraphBLAS constants are named by their C meaning (`GrB_DESC_RC` =
 replace + complemented mask, …); that naming is the C API spec, here a
@@ -146,7 +146,7 @@ struct bytes then the five component vectors `x, h, p, i, b`, and loads the
 container back. The C spec relied on (`GxB_unload`/`GxB_load` are inverse, and
 leave/restore the matrix contents) is the hypothesis `UnloadLoad`.
 
-The header (matrix.rs:554-565) is written from a copy whose
+The header (matrix.rs) is written from a copy whose
 pointer fields (`p, h, b, i, x, vector_future[11], Y, matrix_future[15],
 void_future[16]`) are nulled, so a DUMP / GRAPH.COPY / RDB payload carries no
 heap address of this process. A header is a list of fields, each a pointer or
@@ -158,7 +158,7 @@ structure HField where
   val : Nat
 deriving DecidableEq
 
-/-- matrix.rs:554-565: copy the header, null every pointer field. -/
+/-- matrix.rs: copy the header, null every pointer field. -/
 def scrub (hd : List HField) : List HField :=
   hd.map fun f => if f.ptr then ⟨true, 0⟩ else f
 
@@ -182,7 +182,7 @@ def UnloadLoad {M α : Type} (unload : M → Container α) (load : Container α 
   ∀ m, load (unload m) = m
 
 /-- C-side contract the decode relies on (data, not an axiom):
-`Matrix::decode` (matrix.rs:448) re-populates `x,h,p,i,b` from the payload
+`Matrix::decode` (matrix.rs) re-populates `x,h,p,i,b` from the payload
 and nulls `Y`, and `GxB_load_Matrix_from_Container` reads no other pointer
 field (the `*_future` arrays are reserved), so the loaded matrix does not
 depend on the pointer fields of the header. -/
@@ -245,7 +245,7 @@ def vecFrom (h : Nat) : VecH := ⟨h⟩
 def VecH.ptr (x : VecH) : Nat := x.v
 theorem ptr_vecFrom (h : Nat) : (vecFrom h).ptr = h := rfl
 
-/-- `Iter::new` (vector.rs:603): attach, `GxB_Vector_Iterator_seek(0)`;
+/-- `Iter::new` (vector.rs): attach, `GxB_Vector_Iterator_seek(0)`;
 `depleted` iff the seek reported `GxB_EXHAUSTED`, which per the GraphBLAS
 spec happens iff the vector has no entry at position ≥ 0, i.e. is empty. -/
 def vIterNew (entries : List Nat) (seekExhausted : Bool) : List Nat × Bool := (entries, seekExhausted)

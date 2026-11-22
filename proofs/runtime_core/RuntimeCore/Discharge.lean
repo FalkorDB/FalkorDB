@@ -14,7 +14,7 @@ that imports this one):
 | here | there |
 | --- | --- |
 | `idx`, `getOrCreate`, `nmInsert` | `AttrNameMap::get_or_create` (`graph.rs`, `get_or_create_node_attr_id` / `_rel_`), `AttrNameMap::insert` (`add_node_attribute_name`, `add_rel_attribute_name`): the only two ways the name table grows; both stop at `MAX_ATTRIBUTES = u16::MAX` |
-| `Store`, `byIdx`, `attrByName`, `attrPairs`, `batchByIdx` | `Graph::get_node_attribute_by_idx` / `get_relationship_attribute` (by name, through `u16`) / `get_node_all_attrs` / `get_node_attributes_by_idx` (`graph.rs:2676`, `:3496`, `:3639`, `:2687`) |
+| `Store`, `byIdx`, `attrByName`, `attrPairs`, `batchByIdx` | `Graph::get_node_attribute_by_idx` / `get_relationship_attribute` (by name, through `u16`) / `get_node_all_attrs` / `get_node_attributes_by_idx` (`graph.rs`) |
 | `Reach` | the name tables a graph can have: empty, grown by `getOrCreate` or `nmInsert` |
 | `Backed` | the `Accessors.W` a read sees over a graph with name table `nm` and store `st` |
 

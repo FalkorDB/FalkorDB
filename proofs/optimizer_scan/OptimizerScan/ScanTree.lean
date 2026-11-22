@@ -64,7 +64,7 @@ structure EP where
   alias : Var
   labels : List Nat
 
-/-- `FilteredVars` (`select_scan_node.rs:153-166`): variables of the Filters *above* the chain,
+/-- `FilteredVars` (`select_scan_node.rs`): variables of the Filters *above* the chain,
     `above` plus those of the Filters on the chain's own single-child spine, and (#3821) `equality`:
     the variables some of those Filters pin with a top-level `v.prop = <variable-free expr>`. -/
 structure FV where
@@ -72,7 +72,7 @@ structure FV where
   all : List Var
   equality : List Var
 
-/-- `score_endpoint` (`select_scan_node.rs:106-141`):
+/-- `score_endpoint` (`select_scan_node.rs`):
     `(score, has_equality, filter_runs_late, cardinality)`. -/
 def scoreEndpoint (n : EP) (fv : FV) (bound : List Nat) (count : Nat → Nat) : Nat × Bool × Bool × Nat :=
   ((if n.alias.1 ∈ bound then 3 else 0) + (if n.alias ∈ fv.all then 2 else 0) +
@@ -120,7 +120,7 @@ theorem score_equality_filtered (n : EP) (fv : FV) (b : List Nat) (c : Nat → N
   have he : n.alias ∈ fv.equality := by simpa [scoreEndpoint] using h
   exact (scoreEndpoint_spec n fv b c).2.2.1 (hsub _ he)
 
-/-- The start-point comparison key of `select_scan_node` (`select_scan_node.rs:911-931`), compared
+/-- The start-point comparison key of `select_scan_node` (`select_scan_node.rs`), compared
     lexicographically, larger wins: score, then (#3821) the equality flag, then the late-filter flag,
     then the lower cardinality (the remaining chain-position / `from` tie-breaks are not modelled). -/
 def startKeyLt (a b : Nat × Bool × Bool × Nat) : Prop :=
@@ -146,7 +146,7 @@ inductive Ex where
   | var (v : Var)
   | other (cs : List Ex)
 
-/-- The `Variable`s of an expression (the BFS of `collect`, `select_scan_node.rs:221-225`). -/
+/-- The `Variable`s of an expression (the BFS of `collect`, `select_scan_node.rs`). -/
 def exprVars : Ex → List Var
   | .and cs | .eq cs | .prop cs | .other cs => exprVarsL cs
   | .var v => [v]
@@ -159,7 +159,7 @@ def propertyVar : Ex → Option Var
   | .prop [.var v] => some v
   | _ => none
 
-/-- `collect_equalities` (`select_scan_node.rs:171-209`): descend through `And` only; an `Eq` with
+/-- `collect_equalities` (`select_scan_node.rs`): descend through `And` only; an `Eq` with
     two children records `v` when one side is `v.prop` and the other references no variable
     (left side tried first). -/
 def collectEqualities : Ex → List Var
@@ -280,7 +280,7 @@ def pruneAt : PT → List Nat → Nat → PT
   | .node ir cs, [], i => .node ir (cs.eraseIdx i)
   | .node ir cs, j :: p, i => .node ir (cs.modify j (fun c => pruneAt c p i))
 
-/-- "pruning a child never changes the parent's path" (`select_scan_node.rs:612,663`). -/
+/-- "pruning a child never changes the parent's path" (`select_scan_node.rs`). -/
 theorem pruneAt_parent : ∀ (t : PT) (p : List Nat) (i : Nat),
     (getAt t p).isSome → (getAt (pruneAt t p i) p).isSome
   | .node _ _, [], _, _ => by simp [getAt, pruneAt]
@@ -379,7 +379,7 @@ theorem argumentLeafOf_spec : ∀ (t : PT) (a : IRk), argumentLeafOf t = some a 
 
 /-! ## `make_scan_subtree` and `filters_of` -/
 
-/-- `make_scan_subtree` (`select_scan_node.rs:276-298`): scan, optional subtree beneath it (since
+/-- `make_scan_subtree` (`select_scan_node.rs`): scan, optional subtree beneath it (since
     #3594 a whole `DynTree`: an `Argument` leaf, or an outer `Unwind`/`Project` subtree, attached with
     `push_child_tree`), optional `IncludePending`, then the salvaged `filters` wrapped innermost-first
     (`filters[0]` outermost). -/
@@ -390,7 +390,7 @@ def makeScanSubtree (alias : Var) (labels : List Nat) (pending : Bool)
   let s1 := if pending then PT.node .includePending [s0] else s0
   filters.foldr (fun vs t => PT.node (.filter vs) [t]) s1
 
-/-- `filters_of` (`select_scan_node.rs:250-266`): the `Filter`s on a subtree's single-child spine,
+/-- `filters_of` (`select_scan_node.rs`): the `Filter`s on a subtree's single-child spine,
     outermost first. -/
 def filtersOf : PT → List (List Var)
   | .node ir cs =>
@@ -485,7 +485,7 @@ def collectLoop : List IRk → List Var
   | .filter vs :: rest => vs ++ collectLoop rest
   | ir :: rest => if transparent ir then collectLoop rest else []
 
-/-- The upward walk of `collect_filtered_vars` (`select_scan_node.rs:171-181`): `above`. -/
+/-- The upward walk of `collect_filtered_vars` (`select_scan_node.rs`): `above`. -/
 def collectFilteredVars (t : PT) (p : List Nat) : List Var :=
   collectLoop ((ancestors p).filterMap (fun q => (getAt t q).map PT.ir))
 
@@ -493,7 +493,7 @@ def contOK : IRk → Bool
   | .filter _ => true
   | ir => transparent ir
 
-/-- The nested `collect` (`select_scan_node.rs:160-169`): every `Variable` of the filter expression,
+/-- The nested `collect` (`select_scan_node.rs`): every `Variable` of the filter expression,
     which is how a `Filter` is modelled here (`IRk.filter vars`). -/
 def filterVars : IRk → List Var
   | .filter vs => vs
@@ -508,7 +508,7 @@ theorem collectLoop_eq (l : List IRk) : collectLoop l = (l.takeWhile contOK).fla
   | cons ir rest ih =>
     cases ir <;> simp [collectLoop, contOK, transparent, filterVars, List.takeWhile_cons, ih]
 
-/-- The downward walk (`select_scan_node.rs:183-199`): from `start` itself, through
+/-- The downward walk (`select_scan_node.rs`): from `start` itself, through
     Filter / CondTraverse / CondVarLenTraverse / PathBuilder nodes while they have one child. -/
 def spineVars : PT → List Var
   | .node ir cs =>
@@ -520,18 +520,18 @@ def filterEqs (eqOf : List Var → List Var) : IRk → List Var
   | .filter vs => eqOf vs
   | _ => []
 
-/-- The upward loop's `equality` collection (`select_scan_node.rs:228-238`): same walk as `collectLoop`. -/
+/-- The upward loop's `equality` collection (`select_scan_node.rs`): same walk as `collectLoop`. -/
 def eqLoop (eqOf : List Var → List Var) : List IRk → List Var
   | [] => []
   | .filter vs :: rest => eqOf vs ++ eqLoop eqOf rest
   | ir :: rest => if transparent ir then eqLoop eqOf rest else []
 
-/-- The downward loop's `equality` collection (`select_scan_node.rs:248-259`): same walk as `spineVars`. -/
+/-- The downward loop's `equality` collection (`select_scan_node.rs`): same walk as `spineVars`. -/
 def spineEqs (eqOf : List Var → List Var) : PT → List Var
   | .node ir cs =>
     if contOK ir then filterEqs eqOf ir ++ (match cs with | [c] => spineEqs eqOf c | _ => []) else []
 
-/-- `collect_filtered_vars` (`select_scan_node.rs:211-265`). A `Filter` is modelled by its variable
+/-- `collect_filtered_vars` (`select_scan_node.rs`). A `Filter` is modelled by its variable
     list `vs`; `eqOf vs` is what `collect_equalities` records for its expression (instantiated by
     `filterEqOf`, an expression per filter). -/
 def filteredVars (eqOf : List Var → List Var) (t : PT) (p : List Nat) : FV :=
@@ -662,7 +662,7 @@ theorem inMergeLoop_spec (l : List (IRk × Nat × Nat)) :
 
 /-! ## `collect_output_aliases` and `child_subtree_binds` -/
 
-/-- `projected_outputs` (`select_scan_node.rs:459-477`, #3594): the `(id, scope)` a projection or a
+/-- `projected_outputs` (`select_scan_node.rs`, #3594): the `(id, scope)` a projection or a
     known `Argument` writes — a `Project`'s expression aliases and each copy's `new` end, an
     `Aggregate`'s names and each projection's `new` end, a known `Argument`'s variables. -/
 def projectedOutputs : IRk → List Var
@@ -671,7 +671,7 @@ def projectedOutputs : IRk → List Var
   | .argument (some vs) => vs
   | _ => []
 
-/-- `collect_output_pairs` (`select_scan_node.rs:484-498`, #3594): `projected_outputs` plus each
+/-- `collect_output_pairs` (`select_scan_node.rs`, #3594): `projected_outputs` plus each
     copy's source `old`, carried with its scope. -/
 def copiesOf : IRk → List (Var × Var)
   | .project _ cs => cs
@@ -681,7 +681,7 @@ def copiesOf : IRk → List (Var × Var)
 def collectOutputPairs (ir : IRk) : List Var :=
   projectedOutputs ir ++ (copiesOf ir).map Prod.fst
 
-/-- `collect_output_aliases` (`select_scan_node.rs:502-535`); since #3594 a `Project`, `Aggregate` or
+/-- `collect_output_aliases` (`select_scan_node.rs`); since #3594 a `Project`, `Aggregate` or
     known `Argument` contributes the ids of `projected_outputs`. -/
 def collectOutputAliases : IRk → List Nat
   | .allNodeScan a | .labelScan a _ | .indexScan a => [a.1]
@@ -842,7 +842,7 @@ theorem vl_reverse_sound_symm (R : Nat → Nat → Prop) (hs : ∀ a b, R a b �
 
 /-! ### `subtree_may_bind` (#3593) -/
 
-/-- `subtree_may_bind` (`select_scan_node.rs:568-583`): some child of the scan holds an opaque
+/-- `subtree_may_bind` (`select_scan_node.rs`): some child of the scan holds an opaque
 `Argument(None)` or binds `alias` (its `GetVariables`, full `(id, scope)` pair). -/
 def subtreeMayBind (getVars : PT → List Var) (t : PT) (alias : Var) : Bool :=
   t.cs.any fun c => c.walk.contains (.argument none) || (getVars c).contains alias
@@ -861,7 +861,7 @@ theorem childSubtreeBinds_mayBind (gv : PT → List Var) (t : PT) (a : Var)
 
 /-! ### The rewrite decision -/
 
-/-- What `select_var_len_scan_node` (`select_scan_node.rs:594-791`) inspects. `bidirectional` and
+/-- What `select_var_len_scan_node` (`select_scan_node.rs`) inspects. `bidirectional` and
 `scanOnlyArgBelow` are read only by the history (`vlGuards3264`, `vlLeaf3264`): #3593 dropped both
 refusals. -/
 structure VLCase where
@@ -888,14 +888,14 @@ structure VLCase where
 def vlGuards (c : VLCase) : Bool :=
   !c.expandInto && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan
 
-/-- The non-leaf rewrite (`select_scan_node.rs:698-718`): drop the planner's scan *and its wrapper
+/-- The non-leaf rewrite (`select_scan_node.rs`): drop the planner's scan *and its wrapper
     chain*, keeping what is under the scan. A `Filter` in the wrapper refuses it (#2390), and since
     #3593 so do edge attributes reading `from` (which the drop unbinds). -/
 def vlNonLeaf (c : VLCase) : Bool :=
   vlGuards c && !c.wrapperHasPending && !c.wrapperHasFilter && !c.attrsReadFrom && c.childBindsTo &&
     c.scanHasChildren
 
-/-- The leaf rewrite (`select_scan_node.rs:720-791`): scan `to` instead, re-hanging *every* child of
+/-- The leaf rewrite (`select_scan_node.rs`): scan `to` instead, re-hanging *every* child of
     the planner's scan under the new scan (`kept`, :755-759 and :782-785). Refused when the edge
     attributes read an endpoint, the `Argument` leaf is opaque or binds `to`, the wrapper chain holds
     a `Filter`, or anything below may bind `to` (`subtree_may_bind`). -/

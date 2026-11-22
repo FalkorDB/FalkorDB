@@ -2,7 +2,7 @@
 # `parse_expr_inner` never panics
 
 The four panic sites of `parse_expr_inner` are
-`children().last().unwrap()` (cypher.rs:2323, 2328), `child(0)` of a
+`children().last().unwrap()` (cypher.rs), `child(0)` of a
 `Negate` (2549) and of a `Paren` (2636), and the two `unreachable!()`
 (2652, 2655). They are all safe because of one stack invariant:
 

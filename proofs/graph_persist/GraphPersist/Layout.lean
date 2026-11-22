@@ -3,27 +3,27 @@
 
 Three structural pieces of `load(save(G)) = G` above the leaf value codec:
 
-* `build_multi_key_payloads` (encoder/mod.rs:95) distributes a graph's entities
+* `build_multi_key_payloads` (encoder/mod.rs) distributes a graph's entities
   across `key_count` RDB keys of at most `vkey_max` entities each. Correctness =
   the per-key entity slices *partition* the entity stream: every entity encoded
   exactly once, in order. Proven here for the entity dimension.
 * the deleted-id bitmap round-trips through `RoaringTreemap`'s
-  `encode`/`decode_with_count` (serialization.rs:172) — 8 little-endian bytes per
+  `encode`/`decode_with_count` (serialization.rs) — 8 little-endian bytes per
   id, count-checked.
-* `AttributeStore::decode_with_count` (attribute_store.rs:1476) drops any attribute
+* `AttributeStore::decode_with_count` (attribute_store.rs) drops any attribute
   whose id is `≥ attr_limit` or whose value is `Null`. This is the load-side guard
-  the comment on `Decode::decode_with_count` (serialization.rs:76) describes; it is
+  the comment on `Decode::decode_with_count` (serialization.rs) describes; it is
   what keeps a hand-edited or version-skewed RDB from binding a span to attribute 0.
 
 Here ↔ there:
 
 | Lean | Rust |
 | --- | --- |
-| `distribute`               | `build_multi_key_payloads` entity loop (encoder/mod.rs:129-153) |
-| `PEntry`                   | `PayloadEntry {state,count,offset}` (serialization.rs:166) |
-| `roaringRT`                | `RoaringTreemap` encode∘decode (serialization.rs:172,194) |
-| `expectedLen`, `countCheck` | `RoaringTreemap::decode_with_count`'s checks (serialization.rs:216-235, #2996) |
-| `decodeSpanFilter`         | `AttributeStore::decode_with_count` filter (attribute_store.rs:1499-1502) |
+| `distribute`               | `build_multi_key_payloads` entity loop (encoder/mod.rs) |
+| `PEntry`                   | `PayloadEntry {state,count,offset}` (serialization.rs) |
+| `roaringRT`                | `RoaringTreemap` encode∘decode (serialization.rs) |
+| `expectedLen`, `countCheck` | `RoaringTreemap::decode_with_count`'s checks (serialization.rs, #2996) |
+| `decodeSpanFilter`         | `AttributeStore::decode_with_count` filter (attribute_store.rs) |
 -/
 
 namespace GraphPersist
@@ -52,7 +52,7 @@ def encodedByteLen (ids : List UInt64) : Nat := ids.length * 8
 theorem encoded_len_mult8 (ids : List UInt64) : encodedByteLen ids % 8 = 0 := by
   simp [encodedByteLen, Nat.mul_mod_left]
 
-/-! ### The count check (`decode_with_count`, serialization.rs:216-244)
+/-! ### The count check (`decode_with_count`, serialization.rs)
 
 `count` comes from the payload. The expected byte length is
 `usize::try_from(count).ok().and_then(|c| c.checked_mul(8))`, refusing a count whose
@@ -184,7 +184,7 @@ theorem chunkType_count (cap : Nat) (hcap : 0 < cap) :
 /-! ## `decode_with_count` attribute-id / null filter
 
 Per stored `(attr_id, value)` the decoder keeps it iff `attr_id < attr_limit`
-**and** `value ≠ Null` (attribute_store.rs:1499-1502). Values that fail either
+**and** `value ≠ Null` (attribute_store.rs). Values that fail either
 test are read (to keep the stream in sync) then discarded. -/
 
 /-- A decoded raw entry, as it comes off the wire. `id` is the u64 attribute id

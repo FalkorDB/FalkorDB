@@ -20,7 +20,7 @@ import FalkorParserGrammar.C.Oracle0
 namespace FalkorParserGrammar.C
 
 /-- The keywords that start a clause (`parse_single_query`'s loops,
-cypher.rs:796-927, and `parse_query`'s `UNION`, 771-789). -/
+cypher.rs, and `parse_query`'s `UNION`, 771-789). -/
 def isClauseKw : CK → Bool
   | .match_ | .optional | .unwind | .call | .load | .create | .merge | .delete | .detach
   | .set | .remove | .foreach | .with_ | .return_ | .union => true
@@ -53,7 +53,7 @@ def restR : List CT :=
    .lparen, .ident 2, .rparen, .kw .return_, .ident 2]
 
 /-- **#2502 fixed by #2981** (`sepP` no longer continues on the clause keyword,
-cypher.rs:1581-1587). `(a)-[:Q]->()` followed by `MATCH (a)-[:R]->(m) RETURN m`
+cypher.rs). `(a)-[:Q]->()` followed by `MATCH (a)-[:R]->(m) RETURN m`
 is the same pattern predicate and stops right before `MATCH`: the instance of
 `PredEndsBeforeClause` that main refuted before (`bug2502_pred_swallows_match`,
 pre-#2981: the arm ate `MATCH` and stopped only at `RETURN`, state

@@ -4,11 +4,11 @@ import VersionedMatrix.Cow
 
 | here | there |
 | --- | --- |
-| `cowWrap`  | `Cow::new` (`pub fn new`, cow.rs:84): stores the handle it is given, no allocation, `dup = false`. The handle may be shared (a `Matrix` clone aliases the `Arc<GrB_Matrix>`), so both cases are modelled: `cowWrap_private_iff` (the wrapper is private iff the handle is unpublished), `cowWrap_shared_leaks` (a write through a wrapper over a published handle lands on it), `cowWrap_private_write_isolated`, `cowWrap_newVersion_isolated` (a `new_version` of any wrapper writes through a dup) |
+| `cowWrap`  | `Cow::new` (`pub fn new`, cow.rs): stores the handle it is given, no allocation, `dup = false`. The handle may be shared (a `Matrix` clone aliases the `Arc<GrB_Matrix>`), so both cases are modelled: `cowWrap_private_iff` (the wrapper is private iff the handle is unpublished), `cowWrap_shared_leaks` (a write through a wrapper over a published handle lands on it), `cowWrap_private_write_isolated`, `cowWrap_newVersion_isolated` (a `new_version` of any wrapper writes through a dup) |
 | `alloc`, `cowNew` | `Matrix::new` / `decode` / `transpose` (each allocates a GraphBLAS handle) followed by `Cow::new`: `cowNew = cowWrap ∘ alloc` (`cowNew_eq`). Every in-tree caller of `Cow::new` is of this shape (below), so `cowNew_spec` (fresh and unpublished, no hypothesis about the caller beyond published handles being allocated) covers them |
 | callers of `Cow::new` | in `versioned_matrix.rs`: `Delta::new` (fed `Matrix::new` or `decode`), `Delta::transposed` (a `transpose` result), `VersionedMatrix::new` (`Matrix::new`), `from_matrix` (its only caller, `Tensor::rebuild_backward`'s `extract().transpose()` in `tensor.rs`, passes a fresh matrix), `VersionedMatrix::transpose`, `decode`; in `tensor.rs`: `Tensor::new` (`Matrix::new`), `decode`: none passes a clone or a matrix a published version holds |
-| `deref`    | `Cow::deref` (cow.rs:128) |
-| `mvccNew`  | `MvccGraph::new` (mvcc_graph.rs:106) / `from_graph` (:118): the published version (since #3683 an `Arc<MvccGraph>` holding an `ArcSwap<Graph>`; the model is the published version only) |
+| `deref`    | `Cow::deref` (cow.rs) |
+| `mvccNew`  | `MvccGraph::new` (mvcc_graph.rs) / `from_graph` (:118): the published version (since #3683 an `Arc<MvccGraph>` holding an `ArcSwap<Graph>`; the model is the published version only) |
 | `dropG`    | `impl Drop for MvccGraph` (:370): cancels the committed graph's indexing, once its owner and every build that reached it have let go |
 -/
 namespace VMCow

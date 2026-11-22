@@ -1,14 +1,14 @@
 import Columnar.VectorExpr
 
 /-
-# Arithmetic lanes (`vector_expr.rs:881-995`) against `Value` arithmetic
+# Arithmetic lanes (`vector_expr.rs`) against `Value` arithmetic
 
 | here | there |
 | --- | --- |
-| `wrap` | two's-complement `i64` wrap-around for `+ - *` and `%` (`wrapping_add/sub/mul/rem`); `Int / Int` does not wrap: it is `checked_div`, so a zero divisor and `i64::MIN / -1` are errors (`value.rs:1163-1169`, `minDivNegOne`, `divOverflow`, #3603), and the lane's `wrapping_div` (`vector_expr.rs:910`) runs only when no live lane is `MIN / -1` (guard `:898-901`), so it never wraps either |
-| `AOp`, `valueArith` | `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs:904-1170`), numeric + null arms; every other shape is an abstract `other` (the generic lane calls it too) |
-| `intLane`, `floatLane`, `floatOperand` | `int_lane`, `float_lane`, `float_operand` (`vector_expr.rs:963-995`) |
-| `arithmetic` | `arithmetic` (`vector_expr.rs:881-960`) |
+| `wrap` | two's-complement `i64` wrap-around for `+ - *` and `%` (`wrapping_add/sub/mul/rem`); `Int / Int` does not wrap: it is `checked_div`, so a zero divisor and `i64::MIN / -1` are errors (`value.rs`, `minDivNegOne`, `divOverflow`, #3603), and the lane's `wrapping_div` (`vector_expr.rs`) runs only when no live lane is `MIN / -1` (guard), so it never wraps either |
+| `AOp`, `valueArith` | `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs`), numeric + null arms; every other shape is an abstract `other` (the generic lane calls it too) |
+| `intLane`, `floatLane`, `floatOperand` | `int_lane`, `float_lane`, `float_operand` (`vector_expr.rs`) |
+| `arithmetic` | `arithmetic` (`vector_expr.rs`) |
 -/
 
 namespace Columnar
@@ -35,7 +35,7 @@ def floatOp : AOp → F → F → F
   | .add => FloatModel.add | .sub => FloatModel.sub | .mul => FloatModel.mul
   | .div => FloatModel.div | .rem => FloatModel.rem
 
-/-- The error `Value / Value` raises for `i64::MIN / -1` (`value.rs:1163-1167`, `checked_div`). -/
+/-- The error `Value / Value` raises for `i64::MIN / -1` (`value.rs`, `checked_div`). -/
 def divOverflow : String := "ArgumentError: integer overflow in division"
 
 /-- The one `Int / Int` quotient that is not an `i64`. -/
@@ -76,7 +76,7 @@ def floatOperand (c : EC F) : Bool :=
   | .scalar (.float _) => true
   | _ => false
 
-/-- The int lane (`vector_expr.rs:887-923`). `/` and `%` take it only when no divisor is zero, and `/`
+/-- The int lane (`vector_expr.rs`). `/` and `%` take it only when no divisor is zero, and `/`
 also only when no non-null row is `i64::MIN / -1` (that row is left to the generic lane,
 which raises the overflow error). -/
 def intStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
@@ -93,7 +93,7 @@ def intStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
     else some (.ints (List.zipWith (intOp op) a b) nulls)
   | _, _ => none
 
-/-- The float lane (`vector_expr.rs:925-942`). -/
+/-- The float lane (`vector_expr.rs`). -/
 def floatStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
   if floatOperand lhs || floatOperand rhs then
     match floatLane lhs len, floatLane rhs len with
@@ -101,12 +101,12 @@ def floatStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
     | _, _ => none
   else none
 
-/-- The generic lane (`vector_expr.rs:944-958`). -/
+/-- The generic lane (`vector_expr.rs`). -/
 def genericStage (other : AOp → V F → V F → Except String (V F)) (op : AOp) (lhs rhs : EC F) (len : Nat) :
     Except String (EC F) :=
   ((List.range len).mapM (fun i => valueArith other op (lhs.get i) (rhs.get i))).map EC.values
 
-/-- `arithmetic` (`vector_expr.rs:881-960`). -/
+/-- `arithmetic` (`vector_expr.rs`). -/
 def arithmetic (other : AOp → V F → V F → Except String (V F)) (op : AOp) (lhs rhs : EC F) (len : Nat) :
     Except String (EC F) :=
   match intStage op lhs rhs len with
@@ -352,13 +352,13 @@ theorem arithmetic_agree (other : AOp → V F → V F → Except String (V F)) (
 
 /-! ### `i64::MIN / -1` is an error, `i64::MIN % -1` stays 0 -/
 
-/-- **PROVEN** (`value.rs:1163-1167`): `Int / Int` is `checked_div`, so the one unrepresentable
+/-- **PROVEN** (`value.rs`): `Int / Int` is `checked_div`, so the one unrepresentable
 quotient raises the overflow error instead of wrapping (formerly `wrap (tdiv MIN -1) = MIN`). -/
 theorem div_min_neg_one (other : AOp → V F → V F → Except String (V F)) :
     valueArith other .div (.int (-2 ^ 63)) (.int (-1)) = .error divOverflow := by
   simp [valueArith, minDivNegOne]
 
-/-- `i64::MIN % -1` stays `0` (`wrapping_rem`, `value.rs:1195`). -/
+/-- `i64::MIN % -1` stays `0` (`wrapping_rem`, `value.rs`). -/
 theorem rem_min_neg_one (other : AOp → V F → V F → Except String (V F)) :
     valueArith other .rem (.int (-2 ^ 63)) (.int (-1)) = .ok (.int 0) := by
   simp [valueArith, minDivNegOne, intOp, wrap]

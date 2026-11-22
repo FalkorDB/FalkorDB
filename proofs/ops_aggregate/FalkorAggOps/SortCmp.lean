@@ -3,12 +3,12 @@ Sort comparators and key classification (graph/src/runtime/ops/sort.rs).
 
 | here | there |
 | --- | --- |
-| `cmpKey`            | `OrderedKey::cmp_key` (sort.rs:76) |
-| `okEq`/`okPartialCmp`/`okCmp` | `PartialEq`/`PartialOrd`/`Ord for OrderedKey` (sort.rs:90, :99, :107) |
-| `rowContent`        | `compare_row_content` (sort.rs:125) |
-| `heapCmp`           | `Ord for HeapEntry` (sort.rs:173); `heEq` / `hePartialCmp` (:156, :165) |
-| `classifySortKey`   | `classify_sort_key` (sort.rs:203), `classify_numeric(_, false, Pure)` (batch.rs:191) |
-| `tiebreak`, `tbCols` | `tiebreak` (sort.rs:237) |
+| `cmpKey`            | `OrderedKey::cmp_key` (sort.rs) |
+| `okEq`/`okPartialCmp`/`okCmp` | `PartialEq`/`PartialOrd`/`Ord for OrderedKey` (sort.rs) |
+| `rowContent`        | `compare_row_content` (sort.rs) |
+| `heapCmp`           | `Ord for HeapEntry` (sort.rs); `heEq` / `hePartialCmp` (:156, :165) |
+| `classifySortKey`   | `classify_sort_key` (sort.rs), `classify_numeric(_, false, Pure)` (batch.rs) |
+| `tiebreak`, `tbCols` | `tiebreak` (sort.rs) |
 
 The value comparison is the parameter `cv : V → V → Ordering`; on main
 it is `Value::sort_cmp`. Its laws (`Lawful`: reflexive, antisymmetric) are hypotheses
@@ -28,12 +28,12 @@ structure OKey (V : Type) where
   value : V
   desc : Bool
 
-/-- sort.rs:76 -/
+/-- sort.rs -/
 def cmpKey (cv : V → V → Ordering) (a b : OKey V) : Ordering :=
   let o := cv a.value b.value
   if a.desc then o.swap else o
 
-/-- sort.rs:90 / :99 / :107 -/
+/-- sort.rs / :99 / :107 -/
 def okEq (cv : V → V → Ordering) (a b : OKey V) : Bool := cmpKey cv a b == .eq
 def okCmp (cv : V → V → Ordering) (a b : OKey V) : Ordering := cmpKey cv a b
 def okPartialCmp (cv : V → V → Ordering) (a b : OKey V) : Option Ordering := some (okCmp cv a b)
@@ -78,7 +78,7 @@ theorem lexCmp_refl (c : V → V → Ordering) (h : ∀ a, c a a = .eq) :
   | [] => rfl
   | a :: as => by simp [lexCmp, h a, lexCmp_refl c h as, Ordering.then]
 
-/-! ## `compare_row_content` (sort.rs:125) -/
+/-! ## `compare_row_content` (sort.rs) -/
 
 /-- A row = its slot list (`get_by_id` = `rs[i]?`); `nul` = `Value::Null`. -/
 def slotCmp (cv : V → V → Ordering) (nul : V) : Option V → Option V → Ordering
@@ -93,7 +93,7 @@ def rcLoop (cv : V → V → Ordering) (nul : V) (a b : List V) : List Nat → O
     let o := slotCmp cv nul a[id]? b[id]?
     if o != .eq then o else rcLoop cv nul a b ids
 
-/-- sort.rs:125-143: `for id in 0..max(len a, len b)`, first non-Equal wins. -/
+/-- sort.rs: `for id in 0..max(len a, len b)`, first non-Equal wins. -/
 def rowContent (cv : V → V → Ordering) (nul : V) (a b : List V) : Ordering :=
   rcLoop cv nul a b (List.range (max a.length b.length))
 
@@ -136,14 +136,14 @@ theorem rowContent_refl (cv : V → V → Ordering) (h : ∀ a, cv a a = .eq) (n
     simp only [List.foldr_cons, ih]
     cases a[id]? <;> simp [slotCmp, h, Ordering.then]
 
-/-! ## `HeapEntry` order (sort.rs:156-197) -/
+/-! ## `HeapEntry` order (sort.rs) -/
 
 structure HEntry (V : Type) where
   keys : List (OKey V)
   seq : Nat
   row : List V
 
-/-- sort.rs:173 — keys lexicographically, then row content, then `seq`. -/
+/-- sort.rs — keys lexicographically, then row content, then `seq`. -/
 def heapCmp (cv : V → V → Ordering) (nul : V) (x y : HEntry V) : Ordering :=
   ((lexCmp (cmpKey cv) x.keys y.keys).then (rowContent cv nul x.row y.row)).then
     (compare x.seq y.seq)
@@ -204,7 +204,7 @@ theorem heEq_partial (cv : V → V → Ordering) (nul : V) (x y : HEntry V) :
     (heEq cv nul x y = true ↔ heapCmp cv nul x y = .eq) := by
   refine ⟨rfl, ?_⟩; unfold heEq; cases heapCmp cv nul x y <;> simp
 
-/-! ## `tiebreak` (sort.rs:237, out of line since 4a4f2a72f) -/
+/-! ## `tiebreak` (sort.rs, out of line since 4a4f2a72f) -/
 
 /-- The content loop: `for id in 0..num_columns { combined.compare_rows_at(id, a, b) }`,
 first non-Equal wins, else arrival order `a.cmp(&b)`. -/
@@ -213,7 +213,7 @@ def tbCols (cols : List (Nat → Nat → Ordering)) (a b : Nat) : Ordering :=
   | c :: cs => if c a b != .eq then c a b else tbCols cs a b
   | [] => compare a b
 
-/-- sort.rs:237-258: the remaining keys (`trees.iter().enumerate().skip(1)`, each
+/-- sort.rs: the remaining keys (`trees.iter().enumerate().skip(1)`, each
 `typed_keys[k].compare_at(a, b)`, reversed when `desc`), then `tbCols`. -/
 def tiebreak (keys : List ((Nat → Nat → Ordering) × Bool)) (cols : List (Nat → Nat → Ordering))
     (a b : Nat) : Ordering :=

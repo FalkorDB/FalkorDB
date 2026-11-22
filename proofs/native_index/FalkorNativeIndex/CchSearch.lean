@@ -3,11 +3,11 @@ set_option linter.unusedSimpArgs false
 set_option linter.unusedVariables false
 
 /-!
-# The elimination-tree query's search (`cch/query.rs:60-135`)
+# The elimination-tree query's search (`cch/query.rs`)
 -/
 namespace NI
 
-/-- `Chain::new`'s ranks (`query.rs:67-90`): the start, then repeatedly the first entry of the row. -/
+/-- `Chain::new`'s ranks (`query.rs`): the start, then repeatedly the first entry of the row. -/
 def chain {up wt A N} (h : Ctx up wt A N) (r : Nat) : List Nat :=
   match hh : (up r).head? with
   | none => [r]
@@ -207,7 +207,7 @@ structure DS where
 /-- `Chain::new`'s initial state: distance `0` at the start. -/
 def DS.init (s : Nat) : DS := ⟨fun a => if a = s then some 0 else none, fun _ => none⟩
 
-/-- `Chain::relax_from` (`query.rs:99-127`) for the rank `r`: offer every upward arc the distance through `r`;
+/-- `Chain::relax_from` (`query.rs`) for the rank `r`: offer every upward arc the distance through `r`;
     take the offer on a strict improvement and record `r` as the predecessor. An unreached `r` (distance `+inf`)
     offers `+inf`, which never wins, so the early return changes nothing. -/
 def relaxFrom (up : Nat → List Nat) (wf : Nat → Nat → Wt) (r : Nat) (ds : DS) : DS :=
@@ -463,7 +463,7 @@ theorem dp_fold_const {up wt A N} (h : Ctx up wt A N) (wf s ch best) (hch : ch =
     have := ih (done ++ [o]) tl (gstep up wf best o ds) (by rw [hc]; simp) inv'
     simpa using this
 
-/-! ## The meeting climb (`query.rs:276-309`) -/
+/-! ## The meeting climb (`query.rs`) -/
 
 /-- The climb's state: both halves, the best total so far, and the rank it met at. -/
 structure LS where
@@ -652,7 +652,7 @@ theorem query_core {up wt A N} (h : Ctx up wt A N) (s t : Nat) (hst : s ≠ t) (
     · exact ⟨fun _ => hb, fun _ => hm⟩
     · exact ⟨fun h => (by rw [hm] at h; cases h), fun h => (by rw [hb] at h; cases h)⟩
 
-/-! ## The shared tail (`query.rs:253-275`) -/
+/-! ## The shared tail (`query.rs`) -/
 
 /-- `forward.ranks.iter().rev().zip(backward.ranks.iter().rev()).take_while(equal).count()`. -/
 def commonCount (f b : List Nat) : Nat :=

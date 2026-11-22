@@ -2,10 +2,10 @@ import PendingCommit.PendingDocs
 /-
 # Unwinding a pending node, paired with the graph's id space
 
-`delete_pending_node` (pending.rs:851) and
+`delete_pending_node` (pending.rs) and
 `remove_pending_relationships_for_node` (:902) take `g: &mut Graph` and hand
 every unwound id back through `Graph::cancel_node_id` /
-`cancel_relationship_id` (graph.rs:1549/:1562) themselves. Each call is `?`:
+`cancel_relationship_id` (graph.rs/:1562) themselves. Each call is `?`:
 the first refusal aborts the unwind.
 
 The graph is abstract here (`Gr`); what is needed of its cancel is the
@@ -13,7 +13,7 @@ hypothesis `CancelSpec freeN freeR cancel` — each id space has its own free
 predicate (`freeN` for node ids, `freeR` for relationship ids): after
 `cancel g id = some g'`, `id` is free in `g'` *in the cancel's own space*, and
 nothing free in either space stops being free. That is `IdSpace::cancel`'s
-`recycled.insert(id)` (id_space.rs:536) read through `is_free`; proofs/id_space
+`recycled.insert(id)` (id_space.rs) read through `is_free`; proofs/id_space
 owns it, and proofs/graph_queries states it as `IdSpaceContract.cancel_ok`.
 
 * `removeRelsG_spec`: on success the `Pending` side is exactly the pure
@@ -33,7 +33,7 @@ structure CancelSpec {Gr : Type} (free other : Gr → List Nat) (cancel : Gr →
   ok : ∀ g id g', cancel g id = some g' →
     id ∈ free g' ∧ (∀ x ∈ free g, x ∈ free g') ∧ ∀ x ∈ other g, x ∈ other g'
 
-/-- **Hypothesis on `Graph::get_type_id_mut`** (graph.rs:1346; proofs/graph_queries
+/-- **Hypothesis on `Graph::get_type_id_mut`** (graph.rs; proofs/graph_queries
 `getTypeIdMut_spec`): afterwards the type is registered, every registered type stays registered,
 and neither id space loses a free id (registering a type touches names and tensors only). `types`
 is the graph's relationship-type list (names as `Nat`s here). Added for #3641, which makes

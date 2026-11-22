@@ -16,7 +16,7 @@ namespace FalkorParserGrammar.C
 def nmAnon0 : Nat := 2000000
 
 /-- **`MATCH (_anon_0:A), (:B)` has two nodes** (W4-parse-1, fixed by #3303). Before, the
-unnamed node was named `_anon_0` (cypher.rs:3037), the same as the user's node, so
+unnamed node was named `_anon_0` (cypher.rs), the same as the user's node, so
 `add_pattern_node` merged them into one node with labels A and B: on `CREATE (:A), (:B)` Rust
 returned 0 rows, C 1. Now the unnamed node is `Alias::Anon(0)`, which no written name equals. -/
 theorem fixed3303_anon_name_distinct :
@@ -26,7 +26,7 @@ theorem fixed3303_anon_name_distinct :
       some [[1], [2]] := by decide
 
 /-- **`CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` is rejected** (#3289, W4-parse-2): every
-relationship goes through `add_pattern_relationship` (cypher.rs:1378), which refuses an alias the
+relationship goes through `add_pattern_relationship` (cypher.rs), which refuses an alias the
 pattern already holds in any clause ("The bound variable 'r' can't be redeclared in a CREATE
 clause"), as C does. Before it only MATCH rejected a repeat in a named path: CREATE silently
 dropped the second relationship (Rust created 4 nodes and 1 relationship). -/

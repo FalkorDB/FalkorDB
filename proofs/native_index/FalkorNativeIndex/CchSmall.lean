@@ -8,7 +8,7 @@ set_option linter.unusedVariables false
 -/
 namespace NI
 
-/-! ## `gallop_to` (`query.rs:156-170`) -/
+/-! ## `gallop_to` (`query.rs`) -/
 
 /-- The first position at or after `from` holding a rank `≥ rank`, as a count: `from` plus the leading smaller ranks. -/
 def firstAtLeast (ranks : List Nat) (from_ rank : Nat) : Nat :=
@@ -153,7 +153,7 @@ theorem gallopTo_spec (ranks : List Nat) (from_ rank : Nat) (hs : ranks.Pairwise
   rw [tw_take, Nat.min_eq_left hTle]
   omega
 
-/-! ## `arc` (`query.rs:179-190`) and `Cch::query` (`mod.rs:309-315`) -/
+/-! ## `arc` (`query.rs`) and `Cch::query` (`mod.rs`) -/
 
 /-- `arc(cch, from, to)`: the weight and middle of the arc directed `from -> to`, `None` if the ranks are not
     adjacent in the chordal supergraph. (Pair-indexed; the slot arrays are `CchMetric`/`mkArr` below.) -/
@@ -181,7 +181,7 @@ theorem queryWrap_spec (n src dst run) :
   refine ⟨fun h => by unfold queryWrap; rw [ifP h], fun h1 h2 => ?_, fun h1 h2 h3 => by simp [queryWrap, h1, h2, h3]⟩
   subst h2; simp [queryWrap, h1]
 
-/-! ## Weight validation and the entry iterator (`customize.rs:136-170`) -/
+/-! ## Weight validation and the entry iterator (`customize.rs`) -/
 
 /-- The weight check `weight.is_nan() || *weight < 0.0` on an `f64` given as its bits (`Float.lean`). -/
 def badWeight (w : Nat) : Bool := isNaN w || fpcmp w 0 == some .lt
@@ -219,7 +219,7 @@ inductive VErr where
   | needsRebuild | internal | invalidWeight
 deriving DecidableEq
 
-/-- `validate` (`customize.rs:136-160`), in its three checks' order. `n` is the topology's node count; `csr` the
+/-- `validate` (`customize.rs`), in its three checks' order. `n` is the topology's node count; `csr` the
     weight CSR with its `values`. -/
 def validate (n : Nat) (csr : Cch.Csr) (values : List Nat) : Option VErr :=
   if csr.n ≠ n then some .needsRebuild
@@ -359,7 +359,7 @@ theorem entries_mem (csr : Cch.Csr) (values : List Nat) (hwf : csr.isWellFormed 
     · rw [slice_getElem?, ifP (by omega), show a + (k - a) = k by omega]; exact hv
     · rw [slice_getElem?, ifP (by omega), show a + (k - a) = k by omega]; exact hw
 
-/-! ## `order_connected_nodes` (`nd.rs:91-124`)
+/-! ## `order_connected_nodes` (`nd.rs`)
 
 The skeleton's connected nodes (non-empty rows), renumbered `0..m` in id order, with their rows copied into the
 backend's offsets and neighbours (`row_offsets.push(neighbors.len())` after each row). The backend itself is not
@@ -409,7 +409,7 @@ theorem backendCsr_spec (skel : Cch.Csr) (hw : skel.isWellFormed = true)
     rw [List.getElem?_eq_getElem hlt]
     simp [List.getElem_idxOf hlt]
 
-/-! ## The slot arrays (`Metric`, `customize.rs:60-80`, `:382-410`)
+/-! ## The slot arrays (`Metric`, `customize.rs`)
 
 An arc slot is `up_range(lower).start + position of higher in lower's row`. The four per-arc arrays are indexed
 by it. `slotArr rows n f` is the array whose slot of the arc `(r, x)` holds `f r x`: rows in rank order, each row's

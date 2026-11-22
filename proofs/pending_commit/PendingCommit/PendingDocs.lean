@@ -1,7 +1,7 @@
 import PendingCommit.PendingDeg
 /-
 # `IndexDocs`, the deferred/published document logs, `clear`, `effects_count`,
-# constructors and `end_segment` (pending.rs `impl IndexDocs` :409-507, constructors :510-560, deferred-index methods and `end_segment` :1771-1978; the `IndexDocs` struct itself now lives in `index/index_docs.rs:27`)
+# constructors and `end_segment` (pending.rs `impl IndexDocs` :409-507, constructors :510-560, deferred-index methods and `end_segment` :1771-1978; the `IndexDocs` struct itself now lives in `index/index_docs.rs`)
 
 * `IndexDocs::is_empty`/`absorb`/`merge`/`ids_by_slot` (:413-471): per slot,
   `absorb` and `merge` make `self` the union (`absorb_spec`, `merge_spec`;
@@ -23,7 +23,7 @@ import PendingCommit.PendingDeg
   (`endSegment_spec`).
 * `IndexDocs` also carries the native index's staged changes (`native`, feature
   `index-falkordb`). `absorb` only `debug_assert!`s it is empty (`Pending::commit` applies
-  it first, `apply_index_writes` call :1465, defined graph.rs:3889) and never touches it; `end_segment` clears it with
+  it first, `apply_index_writes` call :1465, defined graph.rs) and never touches it; `end_segment` clears it with
   the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
   modelled here are unchanged.
 * `effects_count` (:2013) is the documented sum; it counts each
@@ -407,7 +407,7 @@ theorem clear_spec (f : Full) :
     exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `end_segment` (:1939): the reset above, then `g.roll_id_batches()`
-(graph.rs:1611; `roll` here, `none` = its `Err`). The `Pending` reset happens
+(graph.rs; `roll` here, `none` = its `Err`). The `Pending` reset happens
 whether or not the roll succeeds; the error is returned to `CommitOp`. -/
 def endSegment {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) : Full × Option Gr :=
   (clear f, roll g)

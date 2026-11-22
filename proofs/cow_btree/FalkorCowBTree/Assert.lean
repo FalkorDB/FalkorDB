@@ -2,10 +2,10 @@ import FalkorCowBTree.Lookup
 import FalkorCowBTree.Bugs
 
 /-!
-# The const assert of `CowBTree::{default,new,from_sorted}` (`mod.rs:151-160`, `:173-182`, `:191-200`)
+# The const assert of `CowBTree::{default,new,from_sorted}` (`mod.rs`)
 
 The const assert demands `BRANCH_MAX >= 4` and gates `DOC_BYTES` with
-`is_read_width` (`mod.rs:88`). `Cfg` keeps the weaker `3 ≤ B` that `pack_branches` needs, so that the
+`is_read_width` (`mod.rs`). `Cfg` keeps the weaker `3 ≤ B` that `pack_branches` needs, so that the
 `BRANCH_MAX = 3` configuration (`Bugs.lean`) can still be stated; `constAssert` is the
 assert a configuration must pass to build a tree at all.
 
@@ -20,10 +20,10 @@ assert a configuration must pass to build a tree at all.
 
 namespace CowBTree
 
-/-- `is_read_width` (`mod.rs:88-90`): `matches!(width, 1 | 2 | 4 | 8)` (bytes proven in `proofs/index_layer`). -/
+/-- `is_read_width` (`mod.rs`): `matches!(width, 1 | 2 | 4 | 8)` (bytes proven in `proofs/index_layer`). -/
 def isReadWidth (w : Nat) : Bool := w == 1 || w == 2 || w == 4 || w == 8
 
-/-- The const assert (`mod.rs:152-159`): `LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 4` and
+/-- The const assert (`mod.rs`): `LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 4` and
     `is_read_width(DOC_BYTES)`. -/
 def constAssert (L B D : Nat) : Bool := decide (2 ≤ L) && decide (L ≤ 256) && decide (4 ≤ B) && isReadWidth D
 
@@ -35,14 +35,14 @@ def Cfg.ofAssert (L B D : Nat) (h : constAssert L B D = true) : Cfg :=
   ⟨L, B, by simp only [constAssert, Bool.and_eq_true, decide_eq_true_eq] at h; exact ⟨h.1.1.1, h.1.1.2⟩,
     by have := constAssert_B4 h; omega⟩
 
-/-- **Under the assert, a single-child branch is flagged under-full** (`node.rs:212`), so its
+/-- **Under the assert, a single-child branch is flagged under-full** (`node.rs`), so its
     parent repairs it. -/
 theorem asserted_single_child_underfull (c : Cfg) (D : Nat) (h : constAssert c.L c.B D = true) (n : Node) :
     branchUnderfull c [n] = true := by
   have := constAssert_B4 h
   simp only [branchUnderfull, List.length_singleton, decide_eq_true_eq]; omega
 
-/-- **`CowBTree::remove` (`mod.rs:260`) is correct on every configuration the assert admits.** -/
+/-- **`CowBTree::remove` (`mod.rs`) is correct on every configuration the assert admits.** -/
 theorem remove_spec_asserted (c : Cfg) (D : Nat) (ha : constAssert c.L c.B D = true) (h : Nat) (t : Node)
     (x : E) (hw : TreeWF c h t) (hx : x < HI) :
     TreeWF c (remove c h t x).2 (remove c h t x).1 ∧
@@ -64,7 +64,7 @@ theorem constAssert_default : constAssert 256 256 8 = true := rfl
 
 /-! ## The empty tree and `is_empty` -/
 
-/-- `CowBTree::default` / `CowBTree::new` (`mod.rs:150`, `:172`): `root: Node::Leaf(Leaf::from_pairs(&[]))`,
+/-- `CowBTree::default` / `CowBTree::new` (`mod.rs`): `root: Node::Leaf(Leaf::from_pairs(&[]))`,
     at ghost height 0. -/
 def emptyTree : Node × Nat := (.leaf [], 0)
 
@@ -93,7 +93,7 @@ theorem WFb_nonroot_toList_ne_nil (c : Cfg) :
       intro he
       exact this (List.append_eq_nil_iff.1 he).1
 
-/-- **`CowBTree::is_empty` (`mod.rs:463`) is correct on a well-formed tree**: it reports empty exactly
+/-- **`CowBTree::is_empty` (`mod.rs`) is correct on a well-formed tree**: it reports empty exactly
     when the tree holds no entry (a root branch has `>= 2` non-empty children, so it is never empty). -/
 theorem isEmpty_iff (c : Cfg) {h : Nat} {n : Node} (hw : TreeWF c h n) :
     isEmpty n = true ↔ toList h n = [] := by

@@ -34,7 +34,7 @@ theorem lawful_main : Lawful cvMain :=
 theorem cvMain_trans (a b d : WV) : cvMain a b ≠ .gt → cvMain b d ≠ .gt → cvMain a d ≠ .gt :=
   (scMain_total a.1 b.1 d.1 a.2 b.2 d.2).2.2
 
-/-- `OrderedKey::cmp_key` (sort.rs:76) on main: antisymmetric and reflexive in either
+/-- `OrderedKey::cmp_key` (sort.rs) on main: antisymmetric and reflexive in either
 direction (`cmpKey_lawful` instantiated). -/
 theorem cmpKey_lawful_main (d : Bool) : Lawful (fun x y => SortCmp.cmpKey cvMain ⟨x, d⟩ ⟨y, d⟩) :=
   cmpKey_lawful cvMain lawful_main d
@@ -50,7 +50,7 @@ theorem cmpKey_trans_main (d : Bool) (a b c : WV) :
     intro h1 h2
     exact cvMain_trans c b a h2 h1
 
-/-- `Ord for HeapEntry` (sort.rs:173) on main: antisymmetric (shared directions) and
+/-- `Ord for HeapEntry` (sort.rs) on main: antisymmetric (shared directions) and
 reflexive; with `heapCmp_seq_strict`, a strict total order on distinct arrivals. -/
 theorem heapCmp_main (nul : WV) (x y : HEntry WV) (hd : x.keys.map (·.desc) = y.keys.map (·.desc)) :
     heapCmp cvMain nul y x = (heapCmp cvMain nul x y).swap ∧ heapCmp cvMain nul x x = .eq :=
@@ -68,13 +68,13 @@ theorem hc_main : ∀ s x y, veqMain x y = true → hvMain s x = hvMain s y := b
   simp only [veqMain, beq_iff_eq] at h
   simp only [hvMain, main_hash_consistent x.1 y.1 x.2 y.2 h]
 
-/-- **The `HashMap<GroupKey, _>` contract on main** (aggregate.rs:94/:110): equal keys hash
+/-- **The `HashMap<GroupKey, _>` contract on main** (aggregate.rs/:110): equal keys hash
 alike. -/
 theorem gk_hash_consistent_main (st : List UInt64) (a b : List WV) (h : gkEq veqMain a b = true) :
     gkHash hvMain st a = gkHash hvMain st b :=
   gkHash_consistent veqMain hvMain hc_main st a b h
 
-/-- `GroupKey::eq` (aggregate.rs:94) written directly: same length, and every zipped pair
+/-- `GroupKey::eq` (aggregate.rs) written directly: same length, and every zipped pair
 `sort_cmp`-equal. -/
 def gkEqR (a b : List V) : Bool :=
   a.length == b.length && (a.zip b).all (fun p => scMain p.1 p.2 == .eq)

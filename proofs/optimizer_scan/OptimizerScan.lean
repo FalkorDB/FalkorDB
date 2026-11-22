@@ -5,7 +5,7 @@ Targets: `graph/src/planner/optimizer/select_scan_node.rs`, `utilize_index.rs`,
 `utilize_node_by_id.rs`, `reorder_labels.rs`, plus the runtime pieces their rewrites hand
 work to (`Runtime::evaluate_id_filter`, `NodeByIndexScanOp`, `Index::build_query_node`).
 
-**Re-synced to main 256ab4d3f (2026-11-22)**: new `IndexArray` (the array-contains arm of `try_filter_pushdown`, `utilize_sound_ac`, and the OR branch that keeps no filter: bug 7); `faithV` now admits list-valued properties (the array tree), every existing theorem unchanged. Table pins below are the function starts at 256ab4d3f; COVERAGE.tsv is authoritative for every row. IdSeek/IndexSound/ScanOrder header cites that point *inside* a body (e.g. `select_scan_node.rs:983`) keep the line of the revision they were written for.
+**Re-synced to main 256ab4d3f (2026-11-22)**: new `IndexArray` (the array-contains arm of `try_filter_pushdown`, `utilize_sound_ac`, and the OR branch that keeps no filter: bug 7); `faithV` now admits list-valued properties (the array tree), every existing theorem unchanged. Table pins below are the function starts at 256ab4d3f; COVERAGE.tsv is authoritative for every row. IdSeek/IndexSound/ScanOrder header cites that point *inside* a body (e.g. `select_scan_node.rs`) keep the line of the revision they were written for.
 
 Build: `lake build` (Lean 4.36, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
 `utilize_sound` and `seek_sound` depend only on `propext`, `Quot.sound`, `Classical.choice`.
@@ -24,28 +24,28 @@ Re-targeted to origin/main 5e475e6c9: #2383 keeps an `IN [...]` list whole as `I
 (node and edge index scans) instead of an `Or` of `Equal`s; `Index.Q` gained `inList`, `evalIQ`
 builds it, `canUtilize` has its arm, and the new query builds the same union and is accepted/refused by `can_utilize_index` exactly as the old `Or`
 (the equivalence is proved as `build_inList_eq_or` and `canUtilize_inList_eq_or` in `Index.lean`). `utilize_sound` is unchanged in statement. #3436 only
-shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs:1415`.
+shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs`.
 
 ## Lean ↔ Rust
 
 | Lean | Rust |
 | --- | --- |
-| `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:52-92, 106-119` |
-| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1444-1506` (`id as u64` at 1463) |
-| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1507-1510` (`node_count() == 0 → Ok(None)`) |
-| `IdSeek.maxNodeId`, `seek` (`pre3394_seek` is the version that needs `nodeCount ≠ 0`, kept as a stepping stone) | `graph/graph.rs:1785` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:55-84` (`range -= deleted_nodes()` at :67) |
-| `IdSeek.idMax` (`pre2979_seek` is the earlier range loop, kept as history) | `runtime/runtime.rs:1455`: the loop starts at `node_id_bound().saturating_sub(1)`; `seek_eq_pre2979` |
-| `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
-| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1480-1690`, `Index::query` 1690 |
-| `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:100-300` |
-| `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:360-381, 569-621, 816-920` |
-| `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-358, 624-733, 503-566` |
-| `IndexArray.contains_no_fn`, `pushAnd_spec_ac`, `utilize_sound_ac` | `is_array_contains` (`utilize_index.rs:816`): the array-contains conjunct pushed as `ArrayContains` with its filter kept |
-| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs:752-835` |
-| `Index.utilize`, `Plan.sel` | `utilize_index.rs:981-1090`, `node_by_index_scan.rs:302-360` |
-| `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:434-451, 836-1330` |
-| `ScanOrder.place`, `runScoped`, `initialBound` | `select_scan_node.rs:983-986, 1185-1235` |
-| `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
+| `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs` |
+| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs` (`id as u64` at 1463) |
+| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs` (`node_count() == 0 → Ok(None)`) |
+| `IdSeek.maxNodeId`, `seek` (`pre3394_seek` is the version that needs `nodeCount ≠ 0`, kept as a stepping stone) | `graph/graph.rs` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs` (`range -= deleted_nodes()` at :67) |
+| `IdSeek.idMax` (`pre2979_seek` is the earlier range loop, kept as history) | `runtime/runtime.rs`: the loop starts at `node_id_bound().saturating_sub(1)`; `seek_eq_pre2979` |
+| `Index.enc`, `arrEnc` | `index/mod.rs` (`Document::set`) |
+| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs`, `Index::query` 1690 |
+| `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs` |
+| `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs` |
+| `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs` |
+| `IndexArray.contains_no_fn`, `pushAnd_spec_ac`, `utilize_sound_ac` | `is_array_contains` (`utilize_index.rs`): the array-contains conjunct pushed as `ArrayContains` with its filter kept |
+| `Index.pushAnd`/`mergeInto`, `isArrayContains`, `pushOr`, `tryPushdown` | `utilize_index.rs` |
+| `Index.utilize`, `Plan.sel` | `utilize_index.rs`, `node_by_index_scan.rs` |
+| `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs` |
+| `ScanOrder.place`, `runScoped`, `initialBound` | `select_scan_node.rs` |
+| `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs`, `utilize_index.rs` |
 
 ## Proven (plain English)
 
@@ -83,17 +83,17 @@ Scan selection (`ScanOrder.lean`):
 ## CONFIRMED bugs (new in this wave)
 
 3. **Computed constants ≥ 2^52 return every node** — `is_non_indexable_subexpr`
-   (`utilize_index.rs:855-873`) flags only literal lossy ints; `4503599627370495 +
+   (`utilize_index.rs`) flags only literal lossy ints; `4503599627370495 +
    4503599627370495 + 3` is not flagged, the Filter is dropped, `can_utilize_index` rejects
    the runtime value and the op falls back to a label scan with no Filter. Lean `IndexCex` C4.
    `MATCH (n:L) WHERE n.v = 4503599627370495 + 4503599627370495 + 3` → Rust all 6 nodes,
    Rust without index 0, C 0 (same for `n.v > 4503599627370495 * 2`). Fix: keep the Filter
    whenever the op may fall back (any non-literal value side), or have the fallback re-apply it.
 6. **`select_scan_node` salvages a filter whose variable the pruned child bound (`Unwind`/`WITH`)** (W2-scan-6, #2972, fixed by open PR #3099) —
-   `is_planner_scan_subtree` (`:315`) accepts a scan with *any* child; `argument_leaf_of` (`:276`)
+   `is_planner_scan_subtree` accepts a scan with *any* child; `argument_leaf_of`
    keeps only an `Argument`, so the rest of the subtree (an `Unwind` that the planner stitched
-   below the scan) is pruned (`:1131`, `:1294`) while the `Filter` above the scan is salvaged and
-   re-attached above the chain (`filters_of`, `:250`). The filter reads `k`, which nothing in the
+   below the scan) is pruned while the `Filter` above the scan is salvaged and
+   re-attached above the chain (`filters_of`). The filter reads `k`, which nothing in the
    rebuilt plan binds. Lean `Salvage.premise_fails`, `salvage_loses_row`, `rebuilt_drops_unwind`.
    `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` on
    `(:B {v:1})-[:H]->(:C {v:1}), (:B {v:2})-[:H]->(:C {v:5})`: Rust 0, C 1.
@@ -110,7 +110,7 @@ Scan selection (`ScanOrder.lean`):
   `id as u64` (`bug_id_seek_negative_operand` here), non-integer id operands error.
 7. **The OR branch of `try_filter_pushdown` keeps no filter for an array-contains disjunct** — the same
    family as #3736 (which fixed AND and the single atom): `try_filter_pushdown` OR arm
-   (`utilize_index.rs:782-801`) pushes `1 IN n.arr` as an `ArrayContains` and returns no leftover
+   (`utilize_index.rs`) pushes `1 IN n.arr` as an `ArrayContains` and returns no leftover
    filter, `needs_post_filter` flags nothing, and the array tree answers `1 IN [true]` (Bool and Int
    share the numeric key). Lean `IndexArray.tryPushdown_or_ac_drops_filter`, `Cex C12` (by `decide`).
    Live at 256ab4d3f on `CREATE INDEX FOR (n:L) ON (n.arr, n.k)` and nodes `{arr:[true], k:0}`,
@@ -121,7 +121,7 @@ Scan selection (`ScanOrder.lean`):
    original filter whenever any OR branch `is_array_contains`.
 
 ## Suspected / hazards (not confirmed as wrong results)
-- `utilize_node_by_id.rs:106` `parent().unwrap()` panics if a scan is the plan root. W4-plan-4's
+- `utilize_node_by_id.rs` `parent().unwrap()` panics if a scan is the plan root. W4-plan-4's
   repro (`CALL db.labels() YIELD label MATCH (n) RETURN label`) is rejected by validation, so the scan has a parent; the `unwrap` remains (hazard).
 - `evaluate_id_filter` stops at the first empty conjunct, so a type error in a later one is
   masked: `id(n) = 100 AND id(n) = 'x'` → 0 rows, swapped → error (`probe_id_seek_error_order`).
@@ -162,7 +162,7 @@ Scan selection (`ScanOrder.lean`):
   Remark (not a bug): `score_bound_not_dominant` — a filtered+attributed+labelled endpoint (5)
   outscores a bare bound one (3), contrary to the "bound has highest priority" doc comment.
 - `prune_all_node_scan_child` re-attaches the scan's children beneath the edge scan
-  (`utilize_index.rs:1113-1122`); `Cleanup.prune_sound_rows` proves the rows are kept per input row.
+  (`utilize_index.rs`); `Cleanup.prune_sound_rows` proves the rows are kept per input row.
 
 ## Outer-context child beneath the new scan (#3594)
 - `make_scan_subtree` takes a whole subtree beneath the scan (`ScanTree.makeScanSubtree` with
@@ -177,7 +177,7 @@ Scan selection (`ScanOrder.lean`):
   is untouched, so `Salvage.premise_fails`/`salvage_loses_row` (#2972) still describe it
   (`rebuilt_drops_unwind` now with `argument_leaf_of(..).map(tree!)`).
 - The no-swap leaf rewrite salvages Filters only from a discarded planner scan (`if has_planner_scan`,
-  `select_scan_node.rs:1564`, `17547791c`); a transparent child keeps its own beneath the new scan:
+  `select_scan_node.rs`, `17547791c`); a transparent child keeps its own beneath the new scan:
   `Salvage.leafSteps3594`, `leafSteps3594_planner`, `leafSteps3594_transparent_wellScoped`,
   `transparent_filters_once`.
 
@@ -209,13 +209,13 @@ optimizer's own inline paths are gone. Model changes (every citation re-mapped):
   (`getIdFilter_spec`, `getIdFilter_other_scope`).
 
 `select_var_len_scan_node`'s leaf rewrite refuses a `Filter` in the wrapper chain and any
-operator under the scan other than a childless `Argument` (`select_scan_node.rs:623-641`). Model:
+operator under the scan other than a childless `Argument` (`select_scan_node.rs`). Model:
 `VLCase.scanOnlyArgBelow`, `vlLeaf` vs `vlLeafPre` (the earlier rewrite, kept as history);
 `vlLeaf_keeps_filter`, `vl_never_drops_filter`, `vlLeaf_eq_pre`, `vl_leaf_bug_case_fixed`
 (`ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter` show what `vlLeafPre` did).
 
 ## PR #3593 (var-length leaf rewrite keeps children, allows undirected walks)
-`select_var_len_scan_node` (`select_scan_node.rs:594`) no longer refuses an undirected walk (the
+`select_var_len_scan_node` (`select_scan_node.rs`) no longer refuses an undirected walk (the
 runtime now reverses it: `vlLeaf_bidir`, sound by `vl_reverse_sound_symm`), keeps every child of the
 old scan under the new `to` scan (`leafScan_keeps_below`, `vlLeaf_over_input`), and refuses when the
 edge attrs read an endpoint (`vlNonLeaf_attrs`) or a kept child may bind `to` (`subtree_may_bind`

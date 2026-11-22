@@ -13,13 +13,13 @@ fork is a plain `Graph`; `Runtime` holds
 
 | here | there |
 | --- | --- |
-| `QueryGraph`, `From<Arc<Graph>>`, `From<Graph>` | `runtime.rs:109-128` |
-| `GraphRef`, `GraphRef.deref` | `GraphRef` `:130-138`, `impl Deref` `:140-147` (`Published(&Graph)` / `Fork(Ref<Graph>)`) |
-| `Rt`, `new` | the graph fields of `Runtime` (`published`, `fork`, `write`) and `Runtime::new` `:471-500` (`write = fork.is_some()`, `set_schema_baseline(fork)` iff a fork) |
-| `graph`, `dropRef` | `Runtime::graph` `:563-575` (`published.get().map_or_else(.. Ref::map(fork.borrow(), as_ref().expect(..)) .., ..)`) |
-| `graphMut`, `dropMut` | `Runtime::graph_mut` `:583-587` (`RefMut::map(fork.borrow_mut(), as_mut().expect(..))`) |
-| `publish` | `Runtime::publish` `:600-613`: `fork.borrow_mut().take().expect(..)`, `commit(fork)?`, `published.set(p)` asserted `is_ok` |
-| `upgradeToWrite` | `Runtime::upgrade_to_write` `:626-629`: `write_escalation.upgrade_to_write(&mut self.graph_mut())` |
+| `QueryGraph`, `From<Arc<Graph>>`, `From<Graph>` | `runtime.rs` |
+| `GraphRef`, `GraphRef.deref` | `GraphRef`, `impl Deref` (`Published(&Graph)` / `Fork(Ref<Graph>)`) |
+| `Rt`, `new` | the graph fields of `Runtime` (`published`, `fork`, `write`) and `Runtime::new` (`write = fork.is_some()`, `set_schema_baseline(fork)` iff a fork) |
+| `graph`, `dropRef` | `Runtime::graph` (`published.get().map_or_else(.. Ref::map(fork.borrow(), as_ref().expect(..)) .., ..)`) |
+| `graphMut`, `dropMut` | `Runtime::graph_mut` (`RefMut::map(fork.borrow_mut(), as_mut().expect(..))`) |
+| `publish` | `Runtime::publish`: `fork.borrow_mut().take().expect(..)`, `commit(fork)?`, `published.set(p)` asserted `is_ok` |
+| `upgradeToWrite` | `Runtime::upgrade_to_write`: `write_escalation.upgrade_to_write(&mut self.graph_mut())` |
 
 The borrow word is `std::cell::RefCell`'s, the same shape as the atomic one in `Cell` (shared count
 or exclusive; `borrow` panics only on an exclusive borrow, `borrow_mut` only unless the count is 0),
@@ -43,7 +43,7 @@ namespace RuntimeCore.QG
 
 open RuntimeCore.Cell (B R borrow release borrowMut releaseMut)
 
-/-- `QueryGraph` (`runtime.rs:109-114`). -/
+/-- `QueryGraph` (`runtime.rs`). -/
 inductive QueryGraph (G : Type) where
   | published (g : G)
   | fork (g : G)
@@ -58,23 +58,23 @@ structure Rt (G : Type) where
   write : Bool
   baseline : Bool
 
-/-- `Runtime::new` (`:471-500`): `(published, fork)` from the `QueryGraph`, `write = fork.is_some()`,
+/-- `Runtime::new`: `(published, fork)` from the `QueryGraph`, `write = fork.is_some()`,
 the schema baseline only for a fork. -/
 def new {G : Type} : QueryGraph G → Rt G
   | .published g => { published := some g, fork := none, forkB := .shared 0, write := false, baseline := false }
   | .fork f => { published := none, fork := some f, forkB := .shared 0, write := true, baseline := true }
 
-/-- `GraphRef` (`:130-138`): the arm says how it was got; the payload is what it derefs to. -/
+/-- `GraphRef`: the arm says how it was got; the payload is what it derefs to. -/
 inductive GraphRef (G : Type) where
   | published (g : G)
   | fork (g : G)
 
-/-- `impl Deref for GraphRef` (`:140-147`): both arms are the graph they hold. -/
+/-- `impl Deref for GraphRef`: both arms are the graph they hold. -/
 def GraphRef.deref {G : Type} : GraphRef G → G
   | .published g => g
   | .fork g => g
 
-/-- `Runtime::graph` (`:563-575`). A published version is returned as is. Otherwise the fork cell is
+/-- `Runtime::graph`. A published version is returned as is. Otherwise the fork cell is
 borrowed shared first (`fork.borrow()`, which panics iff it is exclusively borrowed), and only then
 `expect` panics if the fork is gone. -/
 def graph {G : Type} (rt : Rt G) : R (GraphRef G × Rt G) :=
@@ -93,7 +93,7 @@ def dropRef {G : Type} (rt : Rt G) : GraphRef G → Rt G
   | .published _ => rt
   | .fork _ => { rt with forkB := release rt.forkB }
 
-/-- `Runtime::graph_mut` (`:583-587`): `fork.borrow_mut()` (panics unless no borrow is out), then
+/-- `Runtime::graph_mut`: `fork.borrow_mut()` (panics unless no borrow is out), then
 `expect` (panics without a fork). The `RefMut` derefs to the fork. -/
 def graphMut {G : Type} (rt : Rt G) : R (G × Rt G) :=
   match borrowMut rt.forkB with
@@ -106,7 +106,7 @@ def graphMut {G : Type} (rt : Rt G) : R (G × Rt G) :=
 /-- Dropping the `RefMut` returned by `graph_mut`. -/
 def dropMut {G : Type} (rt : Rt G) : Rt G := { rt with forkB := releaseMut rt.forkB }
 
-/-- `Runtime::publish` (`:600-613`). `fork.borrow_mut()` is a temporary of the first statement, so
+/-- `Runtime::publish`. `fork.borrow_mut()` is a temporary of the first statement, so
 the borrow word is back to what it was after `take`; `take().expect(..)` panics without a fork;
 `commit` consumes the fork and either refuses (`Err`: the fork stays gone, nothing is published) or
 returns the published version, which `OnceCell::set` stores (it fails, and the `assert!` panics, if a
@@ -126,7 +126,7 @@ def publish {G E : Type} (commit : G → Except E G) (rt : Rt G) : R (Rt G × Ex
         | some _ => .panic
         | none => .ok ({ rt1 with published := some p }, .ok ())
 
-/-- `Runtime::upgrade_to_write` (`:626-629`): the host (`esc`, `WriteEscalation::upgrade_to_write`)
+/-- `Runtime::upgrade_to_write`: the host (`esc`, `WriteEscalation::upgrade_to_write`)
 receives `&mut` the fork borrowed by `graph_mut()` and may change it; the `RefMut` temporary is
 dropped at the end of the statement. -/
 def upgradeToWrite {G : Type} (esc : G → Except String Unit × G) (rt : Rt G) :

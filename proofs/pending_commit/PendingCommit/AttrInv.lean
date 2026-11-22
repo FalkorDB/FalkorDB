@@ -3,7 +3,7 @@ import PendingCommit.PendingState
 # Pending's staged attribute maps: disjoint, and each list sorted with unique keys
 
 `Pending` keeps node attributes in two maps, `new_nodes_attrs` (ids this query created) and
-`existing_nodes_attrs` (everything else), and the same for relationships (pending.rs:568-662 nodes,
+`existing_nodes_attrs` (everything else), and the same for relationships (pending.rs nodes,
 :979-1066 relationships). Readers (`Runtime::get_node_attribute`, `get_node_attrs`,
 `get_relationship_attrs`, proofs/runtime_core `Accessors`/`RelAccessors`) rest on two facts:
 

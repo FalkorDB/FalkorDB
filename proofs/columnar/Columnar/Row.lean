@@ -5,16 +5,16 @@ import Columnar.Batch
 
 | here | there |
 | --- | --- |
-| `Row` | `Row` (`runtime/row.rs:65-71`); `bound` = the `BitSet` as a predicate (BitSet itself: proofs/runtime_ds) |
-| `Row.insert` | `Row::insert_by_id` / `insert` (`row.rs:104-124`) |
-| `Row.get` | `Row::get_by_id` / `get` / `RowView::value_at` (`row.rs:128-143`, `:231-236`) |
-| `Row.unbind` | `Row::unbind_by_id` / `unbind` (`row.rs:160-165`, `:222-227`) |
-| `Row.take` | `Row::take` (`row.rs:147-157`) |
-| `Row.cloneWith` | `Row::clone_with` (`row.rs:187-195`) |
+| `Row` | `Row` (`runtime/row.rs`); `bound` = the `BitSet` as a predicate (BitSet itself: proofs/runtime_ds) |
+| `Row.insert` | `Row::insert_by_id` / `insert` (`row.rs`) |
+| `Row.get` | `Row::get_by_id` / `get` / `RowView::value_at` (`row.rs`) |
+| `Row.unbind` | `Row::unbind_by_id` / `unbind` (`row.rs`) |
+| `Row.take` | `Row::take` (`row.rs`) |
+| `Row.cloneWith` | `Row::clone_with` (`row.rs`) |
 | `fillRow` | the loop of `Row::merge` (`BatchRow::to_owned_row` no longer shares it: it pushes one slot per column, `pushSlots`) |
-| `Row.merge` | `Row::merge` (`row.rs:209-218`) |
-| `viewAt` | `BatchRow::value_at` (`batch.rs:1424-1437`) |
-| `toOwned`, `pushSlots`, `Row.pushSlot` | `BatchRow::to_owned_row` (`batch.rs:1439-1459`), `Row::push_slot` (`row.rs:224`) |
+| `Row.merge` | `Row::merge` (`row.rs`) |
+| `viewAt` | `BatchRow::value_at` (`batch.rs`) |
+| `toOwned`, `pushSlots`, `Row.pushSlot` | `BatchRow::to_owned_row` (`batch.rs`), `Row::push_slot` (`row.rs`) |
 -/
 
 namespace Columnar
@@ -125,13 +125,13 @@ theorem take_spec (r : Row F) (id : Nat) (v : V F) (h : r.get id = some v) :
   simp [List.getElem?_set_self hl]
 
 
-/-! ### The remaining `Row` accessors (`row.rs:47-259`)
+/-! ### The remaining `Row` accessors (`row.rs`)
 
 `bound` is the `BitSet` as a predicate (its `test`/`set`/`clear`/`is_empty` are proved in
 proofs/runtime_ds), so a bit read is `r.bound id` and `BitSet::is_empty` is "no `id` is set". -/
 
-/-- `Row::from_raw` (row.rs:92): the given slots and bound set, `origin_row = 0`. `Row::new`
-(row.rs:76) and `Row::with_capacity` (row.rs:82) are `fromRaw [] (fun _ => false)`: the
+/-- `Row::from_raw` (row.rs): the given slots and bound set, `origin_row = 0`. `Row::new`
+(row.rs) and `Row::with_capacity` (row.rs) are `fromRaw [] (fun _ => false)`: the
 capacity is an allocation hint with no semantic content. -/
 def fromRaw (values : List (V F)) (bound : Nat → Bool) : Row F := ⟨values, bound, 0⟩
 
@@ -145,10 +145,10 @@ theorem new_spec : (empty : Row F).values = [] ∧ (∀ k, (empty : Row F).bound
 
 theorem fromRaw_nil : fromRaw ([] : List (V F)) (fun _ => false) = empty := rfl
 
-/-- `Row::len` (row.rs:169). -/
+/-- `Row::len` (row.rs). -/
 def len (r : Row F) : Nat := r.values.length
 
-/-- `Row::is_empty` (row.rs:175). -/
+/-- `Row::is_empty` (row.rs). -/
 def isEmpty (r : Row F) : Bool := r.values.isEmpty
 
 theorem len_isEmpty (r : Row F) : r.isEmpty = true ↔ r.len = 0 := by
@@ -156,8 +156,8 @@ theorem len_isEmpty (r : Row F) : r.isEmpty = true ↔ r.len = 0 := by
 
 theorem len_empty : (empty : Row F).len = 0 := rfl
 
-/-- `Row::get_by_id` / `Row::get` (row.rs:128, 138) read `values.get(id)`: `Row.get`, `none`
-exactly when `id` is out of range. `RowView::value_at` for `Row` (row.rs:246) is the same read,
+/-- `Row::get_by_id` / `Row::get` (row.rs) read `values.get(id)`: `Row.get`, `none`
+exactly when `id` is out of range. `RowView::value_at` for `Row` (row.rs) is the same read,
 cloned. -/
 theorem get_eq_none_iff (r : Row F) (id : Nat) : r.get id = none ↔ r.len ≤ id := by
   simp [get, len, List.getElem?_eq_none_iff]
@@ -171,7 +171,7 @@ theorem get_isSome_iff (r : Row F) (id : Nat) : (r.get id).isSome = true ↔ id 
   · intro h
     simp [get, len, List.getElem?_eq_getElem h]
 
-/-- `Row::is_bound_by_id` (row.rs:199): the bound bit. -/
+/-- `Row::is_bound_by_id` (row.rs): the bound bit. -/
 def isBoundById (r : Row F) (id : Nat) : Bool := r.bound id
 
 theorem isBoundById_insert (r : Row F) (id : Nat) (v : V F) (k : Nat) :
@@ -184,7 +184,7 @@ theorem isBoundById_unbind (r : Row F) (id : Nat) (k : Nat) :
   simp only [isBoundById, unbind]
   by_cases h : k = id <;> simp [h]
 
-/-- `Row::has_bindings` (row.rs:181): `!bound.is_empty()`, i.e. some bit is set. -/
+/-- `Row::has_bindings` (row.rs): `!bound.is_empty()`, i.e. some bit is set. -/
 def hasBindings (r : Row F) : Prop := ∃ k, r.bound k = true
 
 theorem hasBindings_empty : ¬ (empty : Row F).hasBindings := by
@@ -196,7 +196,7 @@ theorem hasBindings_insert (r : Row F) (id : Nat) (v : V F) : (r.insert id v).ha
 theorem hasBindings_of_bound (r : Row F) (id : Nat) (h : r.bound id = true) : r.hasBindings :=
   ⟨id, h⟩
 
-/-- `RowView::to_owned_row` for `Row` (row.rs:253) is `self.clone()`: the same row. -/
+/-- `RowView::to_owned_row` for `Row` (row.rs) is `self.clone()`: the same row. -/
 def toOwnedRow (r : Row F) : Row F := r
 
 theorem toOwnedRow_get (r : Row F) (id : Nat) : r.toOwnedRow.get id = r.get id := rfl
@@ -211,7 +211,7 @@ theorem filterMap_range_congr {α : Type} (f g : Nat → Option α) (n : Nat)
     have := h n (by omega)
     simp [List.filterMap, this]
 
-/-- The `(key, value)` pairs `impl Hash for Row` (row.rs:259) feeds the hasher, in order: every
+/-- The `(key, value)` pairs `impl Hash for Row` (row.rs) feeds the hasher, in order: every
 slot except an unbound `Null` (padding / a deliberately unbound slot). -/
 def hashItems (r : Row F) : List (Nat × V F) :=
   (List.range r.values.length).filterMap fun k =>
@@ -415,13 +415,13 @@ def viewAt (b : Batch F) (r i : Nat) : Option (V F) :=
   | some v => some v
   | none => if i < b.cols.length then some .null else none
 
-/-- `Row::push_slot` (`row.rs:224`): append one slot after the last, holding `v`, with the
+/-- `Row::push_slot` (`row.rs`): append one slot after the last, holding `v`, with the
 bound bit set to `b` (a `false` leaves the bitmap alone). -/
 def Row.pushSlot (r : Row F) (v : V F) (b : Bool) : Row F :=
   { r with values := r.values ++ [v],
            bound := if b then (fun j => if j = r.values.length then true else r.bound j) else r.bound }
 
-/-- The slot `to_owned_row` pushes for column `id` (`batch.rs:1442-1449`): an `Unbound` column
+/-- The slot `to_owned_row` pushes for column `id` (`batch.rs`): an `Unbound` column
 is an unbound `Null`; any other keeps its value, bound unless the column is value-only. -/
 def slotOf (b : Batch F) (r id : Nat) : V F × Bool :=
   if (b.column id).isUnbound then (.null, false)
@@ -553,7 +553,7 @@ theorem toOwned_get_eq_view {b : Batch F} (h : b.WF) {r : Nat} (hr : r ∈ b.act
 
 /-- The former latent divergence, now closed: for a trailing `Unbound` column the view
 answers `Some(Null)` and so does the owned snapshot (it used to answer `None`, which
-`ExprEval::resolve_var` (`eval.rs:287`) turned into "Variable not found"). -/
+`ExprEval::resolve_var` (`eval.rs`) turned into "Variable not found"). -/
 def trailingEx (F : Type) : Batch F :=
   { len := 1, sel := none, cols := [.ints [1], .unbound, .unbound], origins := none, vo := fun _ => false }
 

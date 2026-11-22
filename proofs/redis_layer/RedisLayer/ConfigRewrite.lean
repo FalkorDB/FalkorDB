@@ -3,9 +3,9 @@ import RedisLayer.LoadArgs
 /-!
 # `CONFIG REWRITE` and the native `graph.*` configs
 
-Every integer config in `ModuleInit.table` (`lib.rs:97-116`) is a Redis module numeric
-config backed by the same `RedisGILGuard` that `GRAPH.CONFIG SET` (`config_cmd.rs:286-288`)
-and the module-load arguments (`config.rs:252-283`) write. `CONFIG REWRITE` therefore saves
+Every integer config in `ModuleInit.table` (`lib.rs`) is a Redis module numeric
+config backed by the same `RedisGILGuard` that `GRAPH.CONFIG SET` (`config_cmd.rs`)
+and the module-load arguments (`config.rs`) write. `CONFIG REWRITE` therefore saves
 `graph.<NAME> <value>` for whatever those paths stored, and on the next start Redis applies
 that line through the table's range; a value outside it unloads the module and aborts the
 server.
@@ -14,9 +14,9 @@ server.
 | --- | --- |
 | `nativeLoad` | Redis `numericParseString` (`string2ll`, no flags) + `numericBoundaryCheck` (inclusive) for a module numeric config |
 | `rewriteVal` | `rewriteConfigNumericalOption`: the stored `long long` as `%lld` |
-| `ModuleInit.table` | `redis_module!` `configurations:` (`lib.rs:97-116`) |
-| `Config.validate .vkeyMax` | `GRAPH.CONFIG SET` (`config_cmd.rs:164-172`) |
-| `LoadArgs.applyModuleArgs` | the module-load arguments (`config.rs:296`) |
+| `ModuleInit.table` | `redis_module!` `configurations:` (`lib.rs`) |
+| `Config.validate .vkeyMax` | `GRAPH.CONFIG SET` (`config_cmd.rs`) |
+| `LoadArgs.applyModuleArgs` | the module-load arguments (`config.rs`) |
 
 `VKEY_MAX_ENTITY_COUNT` is registered with range `0..i64::MAX`, as both other paths accept.
 `vkey_rewrite_reloads_config` / `vkey_rewrite_reloads_load`: any value either path accepts

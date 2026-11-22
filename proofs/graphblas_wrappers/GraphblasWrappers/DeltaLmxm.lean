@@ -2,7 +2,7 @@ import VersionedMatrix.Delta
 import VersionedMatrix.DeltaProofs
 import VersionedMatrix.Tensor
 /-
-# `Matrix::delta_lmxm` (matrix.rs:1631-1768): `F * (M - DM + DP)` on the pattern
+# `Matrix::delta_lmxm` (matrix.rs): `F * (M - DM + DP)` on the pattern
 
 `delta_lmxm` multiplies a frontier `F` by a versioned matrix's three layers
 (`m` base, `dp` additions, `dm` deletions) without merging them. It keeps an output that one deleted base edge reaches but another,
@@ -77,7 +77,7 @@ theorem nz_false {X : Pat} (h : nz X = false) (i j : Nat) : X i j = false := by
 theorem nz_true_of {X : Pat} {i j : Nat} (h : X i j = true) : nz X = true :=
   (nz_iff X).2 ⟨i, j, h⟩
 
-/-- `Matrix::delta_lmxm`, branch for branch (matrix.rs:1631-1768). -/
+/-- `Matrix::delta_lmxm`, branch for branch (matrix.rs). -/
 noncomputable def deltaLmxm (n : Nat) (F M DP DM : Pat) : Pat :=
   if (!nz DP && !nz DM) = true then
     mxmAny n F M                                              -- :1680 hot path: `lmxm(m)`
@@ -296,7 +296,7 @@ theorem deltaLmxm_tensor (n : Nat) (F : Pat) (st : Nat → Nat → VMTensor.Pair
 /-! ## Examples: an output a live edge still reaches -/
 
 /-- Node `1 = x`, `2 = y`, `3 = z`; frontier row `0 = {x, y}`; base edges `x→z`, `y→z`
-(`delta_lmxm_keeps_an_output_one_live_edge_still_reaches`, matrix.rs:2096). -/
+(`delta_lmxm_keeps_an_output_one_live_edge_still_reaches`, matrix.rs). -/
 def cxF : Pat := fun i k => decide ((i, k) ∈ [(0, 1), (0, 2)])
 def cxM : Pat := fun k j => decide ((k, j) ∈ [(1, 3), (2, 3)])
 def cxNone : Pat := fun _ _ => false

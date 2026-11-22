@@ -2,7 +2,7 @@ import FalkorNativeIndex.Rows
 set_option linter.unusedSimpArgs false
 
 /-!
-# CCH topology: the chordal supergraph (`cch/order.rs:381`, `chordal_supergraph`)
+# CCH topology: the chordal supergraph (`cch/order.rs`, `chordal_supergraph`)
 
 Over ranks. `adj r` is the skeleton's row of the node of rank `r`, as ranks (`Csr` is symmetric and simple:
 `Cch.lean`, `isSymmetricSimple_iff`). `chordal_supergraph` builds each rank's upward row in rank order from
@@ -43,7 +43,7 @@ theorem Pth.symm {adj : Nat → List Nat} (hs : ∀ u v, v ∈ adj u → u ∈ a
   | edge hv => exact .edge (hs _ _ hv)
   | @step u v w hv hb _ ih => exact Pth.trans ih hb (.edge (hs _ _ hv))
 
-/-- Rank `r`'s upward row (`chordal_supergraph`'s loop body, `order.rs:403-428`): its higher neighbours, and
+/-- Rank `r`'s upward row (`chordal_supergraph`'s loop body, `order.rs`): its higher neighbours, and
     each child's row without `r`, sorted and deduplicated. `rows` are the rows of the ranks before `r`. -/
 def rowAt (adj : Nat → List Nat) (rows : List (List Nat)) (r : Nat) : List Nat :=
   sortDedup ((adj r).filter (fun h => decide (r < h)) ++
@@ -166,7 +166,7 @@ where
     · have := head_le adj c x p hh hwc
       omega
 
-/-! ## `Rank` (`order.rs:40-60`) -/
+/-! ## `Rank` (`order.rs`) -/
 
 /-- `Rank::new(index)` stores `index + 1` (a `NonZeroUsize`); `Rank::index` subtracts it again. -/
 def rankStore (index : Nat) : Nat := index + 1

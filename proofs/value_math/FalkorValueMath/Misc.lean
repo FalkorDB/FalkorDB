@@ -185,7 +185,7 @@ theorem shares_le (x rc : Nat) (h : 0 < rc) : rc * (x / rc) ≤ x ∧ x < rc * (
     have := Nat.mod_lt x h
     rw [Nat.mul_comm] at *; omega
 
-/-- A `Relationship` value owns no heap (it is an id, value.rs:184-222), yet both
+/-- A `Relationship` value owns no heap (it is an id, value.rs), yet both
 estimates charge it 24 bytes — a fixed over-count (suspicion; no user-visible effect
 known, relationships are never stored as attributes). -/
 theorem rel_charged : heapSize .rel = 24 ∧ amortized .rel = 24 := ⟨rfl, rfl⟩
@@ -198,7 +198,7 @@ def asciiLowerStr (s : List Char) : List Char := s.map lowerAscii
 
 def eqIC (a : String) (b : String) : Bool := asciiLowerStr a.toList == asciiLowerStr b.toList
 
-/-- `get_point_component` (value.rs:463): ASCII case-insensitive. -/
+/-- `get_point_component` (value.rs): ASCII case-insensitive. -/
 def pointComponent (widen : F → F) (la lo : F) (attr : String) : V F :=
   if eqIC attr "latitude" then .float (widen la)
   else if eqIC attr "longitude" then .float (widen lo)
@@ -210,7 +210,7 @@ theorem point_component_case (widen : F → F) (la lo : F) :
     pointComponent widen la lo "LATITUDE" = .float (widen la) := by
   simp [pointComponent, eqIC, asciiLowerStr] <;> decide
 
-/-- The part of `get_duration_component` (value.rs:613-640) before chrono is consulted:
+/-- The part of `get_duration_component` (value.rs) before chrono is consulted:
 unknown names error, `weeks` is always `0.0`. -/
 def durationComponentPre (zero : F) (c : String) : Option (Except String (V F)) :=
   let known := ["years", "months", "weeks", "days", "hours", "minutes", "seconds"]
@@ -223,7 +223,7 @@ live; openCypher expects 2). -/
 theorem duration_weeks_zero (zero : F) : durationComponentPre zero "weeks" = some (.ok (.float zero)) := by
   simp [durationComponentPre, eqIC, asciiLowerStr] <;> decide
 
-/-- `get_attr` dispatch (value.rs:444); temporal component extractors are parameters
+/-- `get_attr` dispatch (value.rs); temporal component extractors are parameters
 (chrono-backed). -/
 def getAttr (widen : F → F) (dt d t du : Int → String → Except String (V F)) (v : V F) (attr : String) :
     Except String (V F) :=
@@ -252,7 +252,7 @@ def getNumeric (ofInt : Int → F) (zero : F) : V F → Option F
   | .null => some zero
   | _ => none   -- unreachable!() panics
 
-/-- `validate_args_domain` (mod.rs:862) calls `get_numeric` on `args[1]` of
+/-- `validate_args_domain` (mod.rs) calls `get_numeric` on `args[1]` of
 `percentile*` after `validate_args_type`: with the declared `Int | Float` slot (and the
 explicit Null test) the panic arm is dead. -/
 theorem getNumeric_after_validation (ofInt : Int → F) (zero : F) (v : V F)
@@ -270,7 +270,7 @@ theorem partialCmp_null (fc : FloatCmp F) (a : V F) : partialCmp fc .null a = no
 /-! There is no `Point::validate`: `point()` checks NaN and range in `point_from_map_entries`
 (`proofs/functions_temporal` `SpatialFns.pointFromMapEntries`). -/
 
-/-! ## JSON of a Float (value.rs:1700) -/
+/-! ## JSON of a Float (value.rs) -/
 
 /-- NaN/±∞ are emitted as JSON `null` (valid JSON; C emits `nan`, live). -/
 def jsonFloat (display : FC → String) : FC → String
@@ -293,8 +293,8 @@ theorem dedup_second_seen (seen : List Nat) (h : Nat) :
 theorem dedup_first_unseen (seen : List Nat) (h : Nat) (hn : h ∉ seen) : (dedupStep seen h).1 = false := by
   simp [dedupStep, hn]
 
-/-! ## v19 value codec (`Encode<19>` value.rs:2091; the uncapped `Decode<19>` — the current
-decoder `decode_value` value.rs:2189 is `decodeValue` in Nesting.lean) -/
+/-! ## v19 value codec (`Encode<19>` value.rs; the uncapped `Decode<19>` — the current
+decoder `decode_value` value.rs is `decodeValue` in Nesting.lean) -/
 
 def T_NULL : Nat := 2 ^ 15
 def T_BOOL : Nat := 2 ^ 12
@@ -370,7 +370,7 @@ def readVec (bytes : List Nat) : Option (List F) :=
   if body.length < 4 * dim then none
   else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
 
-/- Historical uncapped `Decode<19>` (value.rs:2131 at 4a4f2a72f): no depth
+/- Historical uncapped `Decode<19>` (value.rs at 4a4f2a72f): no depth
 bound, so `GRAPH.RESTORE` input recursed once per `T_ARRAY` header. Fuel bounds the nesting.
 The current decoder is `decodeValue` (Nesting.lean). -/
 def pre3339_decode : Nat → List (Tok F) → Option (V F × List (Tok F))

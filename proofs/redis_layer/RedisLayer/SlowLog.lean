@@ -5,12 +5,12 @@
 | --- | --- |
 | `boundary`, `slice`   | `str::is_char_boundary`, `str` indexing `&s[..n]` (panics off a char boundary) |
 | `floorCB`             | `str::floor_char_boundary` (std contract: the greatest `x ≤ index` with `is_char_boundary(x)`; `len` when `index ≥ len`) |
-| `prefix`              | `prefix` `:32` (`&s[..s.floor_char_boundary(STR_MAX_LEN)]`) |
-| `truncate`            | `truncate` `:38` |
-| `hashInput`           | `entry_hash` `:51` (hashes `prefix(query)`, `:58`) |
-| `E`, `add`, `reset`   | `SlowLog::new` `:81`, `add` `:97`, `reset` `:171` |
-| `replyLen`            | `SlowLog::reply` `:181` (5-element rows) |
-| `MinCache`, `SlowestKept`, `add` | the `min_latency` cache (`:77`, `:114`, `:162-169`); the update arm `:121-139` falls through to the recompute |
+| `prefix`              | `prefix` (`&s[..s.floor_char_boundary(STR_MAX_LEN)]`) |
+| `truncate`            | `truncate` |
+| `hashInput`           | `entry_hash` (hashes `prefix(query)`) |
+| `E`, `add`, `reset`   | `SlowLog::new`, `add`, `reset` |
+| `replyLen`            | `SlowLog::reply` (5-element rows) |
+| `MinCache`, `SlowestKept`, `add` | the `min_latency` cache; the update arm falls through to the recompute |
 
 **Truncation** (W4-redis-1): `entry_hash` and `truncate`
 go through `prefix`, which backs up to `floor_char_boundary(2048)` (a cut at byte 2048
@@ -45,7 +45,7 @@ def floorB (s : Bytes) : Nat → Nat
 def floorCB (s : Bytes) (n : Nat) : Nat :=
   if n ≥ s.length then s.length else floorB s n
 
-/-- `prefix` (`:32`): `&s[..s.floor_char_boundary(STR_MAX_LEN)]`. -/
+/-- `prefix`: `&s[..s.floor_char_boundary(STR_MAX_LEN)]`. -/
 def strPrefix (s : Bytes) : Option Bytes := slice s (floorCB s STR_MAX_LEN)
 
 /-- `entry_hash`'s hashed slice (`prefix(query)`). -/
@@ -207,7 +207,7 @@ def argmin : List E → Nat
     | [] => 0
     | _ => let j := argmin es; if (es.getD j e).latency < e.latency then j + 1 else 0
 
-/-- `SlowLog::add` on origin/main (5e475e6c9, #3456; `slow_log.rs:97-175`): an update that
+/-- `SlowLog::add` on origin/main (5e475e6c9, #3456; `slow_log.rs`): an update that
 does not raise the latency returns unchanged; one that does raises it and falls through to
 the `min_latency` recompute, like every other arm. -/
 def add (s : SL) (h lat : Nat) : SL :=
@@ -336,8 +336,8 @@ theorem replyLen_len (s : SL) : (replyLen s).length = s.entries.length := by sim
 
 /-! ## The update arm keeps `min_latency` fresh
 
-`SlowLog::add`'s existing-entry branch (`src/slow_log.rs:120-139`) raises the entry's latency and
-falls through to the recompute (`:178`), as C (`SlowLog_Add`) does through `cleanup`; `add` above
+`SlowLog::add`'s existing-entry branch (`src/slow_log.rs`) raises the entry's latency and
+falls through to the recompute, as C (`SlowLog_Add`) does through `cleanup`; `add` above
 is that code. `add_minCache` and `fixed3442_trace` state the property. -/
 
 /-- Cache invariant: a non-empty log caches the minimum of its latencies. -/

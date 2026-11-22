@@ -1,24 +1,24 @@
 import PlannerBuild.Anchor
 /-
-# `plan_match`: per-component operator choice (mod.rs:1999-2687)
+# `plan_match`: per-component operator choice (mod.rs)
 
 | here | there |
 | --- | --- |
-| `QN`, `QR`, `Comp` | `QueryNode`, `QueryRelationship`, a connected component (ast.rs:632-1033) |
+| `QN`, `QR`, `Comp` | `QueryNode`, `QueryRelationship`, a connected component (ast.rs) |
 | `MSt` | `Planner.visited` / `verified_labels` |
-| `markLabels`, `unverified` | `mark_labels_verified` mod.rs:1959-1974, `unverified_labels` mod.rs:1978-1988 |
-| `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1978-1988 (stable; lead key -1, filter vars by scope) |
-| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2320-2327; `emit_rel(r) \|\| edge_pred.is_some()` |
+| `markLabels`, `unverified` | `mark_labels_verified` mod.rs, `unverified_labels` mod.rs |
+| `relKey`, `sortRels` | the `sort_by_key` of mod.rs (stable; lead key -1, filter vars by scope) |
+| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs; `emit_rel(r) \|\| edge_pred.is_some()` |
 | `scanOf`, `withF` | `AllNodeScan`/`NodeByLabelScan` choice; optional inline-attribute `Filter` |
-| `LW`, `lowerInline` | `lowered_attrs` mod.rs:2030, `lower_inline_attrs` mod.rs:778-787 |
-| `stripNode`, `stripRel`, `stripEndpoints` | `strip_node_attrs` mod.rs:803-814, `strip_rel_attrs` :644-667, `strip_endpoint_attrs` :673-693 |
-| `opRel`, `edgePred`, `topFilters` | mod.rs:853-873 (and 2201-2212); the edge Filter :2162-2169 / 2295-2301; both endpoints :2182-2187 / 2310-2315 |
-| `firstOp`/`firstRel`, `chainOp`/`chainRel` | first relationship mod.rs:2228-2495, the others mod.rs:2496-2615 |
+| `LW`, `lowerInline` | `lowered_attrs` mod.rs, `lower_inline_attrs` mod.rs |
+| `stripNode`, `stripRel`, `stripEndpoints` | `strip_node_attrs` mod.rs, `strip_rel_attrs` :644-667, `strip_endpoint_attrs` :673-693 |
+| `opRel`, `edgePred`, `topFilters` | mod.rs (and 2201-2212); the edge Filter :2162-2169 / 2295-2301; both endpoints :2182-2187 / 2310-2315 |
+| `firstOp`/`firstRel`, `chainOp`/`chainRel` | first relationship mod.rs, the others mod.rs |
 | `MP.stripped` | the invariant `optimizer/references.rs` relies on (scan / fixed-length operators carry no inline map) |
-| `nodeOnly` | node-only component mod.rs:2228-2315 |
-| `boundLabelFilters` | mod.rs:2048-2059 |
-| `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs:1999-2687 |
-| `QR.lifted` | `lifted_rels` mod.rs:2024 (set by `liftPattern`, Lift.lean) |
+| `nodeOnly` | node-only component mod.rs |
+| `boundLabelFilters` | mod.rs |
+| `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs |
+| `QR.lifted` | `lifted_rels` mod.rs (set by `liftPattern`, Lift.lean) |
 
 Inline maps are lowered once: `lowerInline_once` (a map is lowered at most once —
 the `And(p, p)` duplicate is gone), `lowerInline_two_maps` (two maps on one alias are both
@@ -27,7 +27,7 @@ and `chainRel_lowers_from`/`_to` (both endpoints lowered for every operator kind
 not), `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Filter directly
 above an operator that emits every parallel edge), `walk_keeps_edge_attrs`,
 `firstRel_stripped`/`chainRel_stripped`/`planComp_stripped`/`planMatch_stripped`.
-| `buildPatternSubPlan` | `build_pattern_sub_plan` mod.rs:1226-1237 |
+| `buildPatternSubPlan` | `build_pattern_sub_plan` mod.rs |
 
 Expressions and the WHERE (`plan_filter`, FilterPlan.lean) are parameters;
 operators are recorded with the relationship they traverse.
@@ -55,7 +55,7 @@ structure QR where
   kind : Kind := .fixed
   attrs : List (String × Ex) := []
   ptr : Nat
-  /-- In `lifted_rels` (mod.rs:2024): `lift_cross_entity_attrs` moved part of this edge's map
+  /-- In `lifted_rels` (mod.rs): `lift_cross_entity_attrs` moved part of this edge's map
   into a Filter above the pattern (#2981). Set by `liftPattern`, never by a pattern literal. -/
   lifted : Bool := false
 
@@ -137,7 +137,7 @@ inductive MP
 
 def scanOf (n : QN) : MP := if n.labels.isEmpty then .allScan n [] else .labelScan n []
 
-/-- A scan on top of `res` (#3102: `tree!(IR::AllNodeScan(..), res)`, mod.rs:2538-2550). -/
+/-- A scan on top of `res` (#3102: `tree!(IR::AllNodeScan(..), res)`, mod.rs). -/
 def scanOn (n : QN) (res : MP) : MP := if n.labels.isEmpty then .allScan n [res] else .labelScan n [res]
 
 def withF : Option Ex → MP → MP
@@ -145,7 +145,7 @@ def withF : Option Ex → MP → MP
   | none, c => c
 
 /-- `emit_relationship`: a named edge, one whose attrs were lifted (#2981), or one a named path
-lists (by id only, mod.rs:2320-2327). -/
+lists (by id only, mod.rs). -/
 def emitRel (c : Comp) (r : QR) : Bool :=
   r.named || r.lifted || c.paths.any fun p => p.2.any fun v => v.id == r.alias.id
 
@@ -171,12 +171,12 @@ def MP.isCtEi : MP → Bool
 
 /-! ## Lowering inline attributes once -/
 
-/-- `lowered_attrs` (mod.rs:2030): (alias id, scope, attrs-map identity) already lowered. -/
+/-- `lowered_attrs` (mod.rs): (alias id, scope, attrs-map identity) already lowered. -/
 abbrev LW := List (Nat × Nat × Nat)
 
 def lwKey (alias : V) (ptr : Nat) : Nat × Nat × Nat := (alias.id, alias.scope, ptr)
 
-/-- `lower_inline_attrs` (mod.rs:778-787): `HashSet::insert` returns false on a repeat → `None`;
+/-- `lower_inline_attrs` (mod.rs): `HashSet::insert` returns false on a repeat → `None`;
 otherwise the key is recorded and the map is lowered with `inline_attrs_to_filter`. -/
 def lowerInline (lw : LW) (alias : V) (attrs : List (String × Ex)) (ptr : Nat) : Option Ex × LW :=
   if lw.contains (lwKey alias ptr) then (none, lw)
@@ -228,16 +228,16 @@ theorem lowerInline_two_maps (a : V) (as bs : List (String × Ex)) (p q : Nat) (
     rw [lowerInline_other _ _ _ _ _ (by simp [lwKey]; exact fun h => hpq h.symm)]; rfl
   rw [lowerInline_fresh _ _ _ _ this]
 
-/-- `strip_node_attrs` (mod.rs:803-814): the same node when there is nothing to strip. -/
+/-- `strip_node_attrs` (mod.rs): the same node when there is nothing to strip. -/
 def stripNode (n : QN) : QN := if n.attrs.isEmpty then n else { n with attrs := [] }
 
-/-- `strip_rel_attrs` (mod.rs:824-847). `Arc::ptr_eq(&from, &rel.from)` holds exactly when
+/-- `strip_rel_attrs` (mod.rs). `Arc::ptr_eq(&from, &rel.from)` holds exactly when
 `strip_node_attrs` returned its argument, i.e. when `from` has no attrs (`stripNode_self`). -/
 def stripRel (r : QR) : QR :=
   if r.attrs.isEmpty && r.frm.attrs.isEmpty && r.to.attrs.isEmpty then r
   else { r with attrs := [], frm := stripNode r.frm, to := stripNode r.to }
 
-/-- `strip_endpoint_attrs` (mod.rs:853-873): the walks keep their edge's own attrs. -/
+/-- `strip_endpoint_attrs` (mod.rs): the walks keep their edge's own attrs. -/
 def stripEndpoints (r : QR) : QR :=
   if r.frm.attrs.isEmpty && r.to.attrs.isEmpty then r
   else { r with frm := stripNode r.frm, to := stripNode r.to }
@@ -310,7 +310,7 @@ def tier (r : QR) : Nat :=
   | .varLen => 1
   | .shortest => 2
 
-/-- `(base, has_bound, unfiltered)` (mod.rs:2152-2190); `has_bound` is 0 when an endpoint is
+/-- `(base, has_bound, unfiltered)` (mod.rs); `has_bound` is 0 when an endpoint is
 bound; `unfiltered` only distinguishes hops leaving a bound node. `base` is shifted by one from the
 Rust's `i32` (-1 for the promoted walk `lead`, #3593; then fixed 0, var-length 1, shortest 2), and
 the WHERE variables are keyed by `(id, scope)` since #3593. -/
@@ -342,7 +342,7 @@ theorem keyLe_total (a b : Nat × Nat × Nat) : (keyLe a b || keyLe b a) = true 
 
 /-- The order is a permutation, sorted by key: the promoted walk (#3593) first, then fixed-length
 hops, then variable-length, then shortest paths; within a tier, hops touching a bound node first
-(mod.rs:2152-2190). -/
+(mod.rs). -/
 theorem sortRels_spec (st : MSt) (fv : List V) (lead : Option V) (rs : List QR) :
     (sortRels st fv lead rs).Perm rs ∧
     (sortRels st fv lead rs).Pairwise
@@ -394,17 +394,17 @@ def visit (st : MSt) (r : QR) : MSt :=
 
 def isWalk (r : QR) : Bool := r.kind != .fixed
 
-/-- The pattern the operator embeds (mod.rs:2343-2349 / 2498-2504). -/
+/-- The pattern the operator embeds (mod.rs / 2498-2504). -/
 def opRel (r : QR) : QR := if isWalk r then stripEndpoints r else stripRel r
 
-/-- The edge predicate (mod.rs:2350-2355 / 2505-2510): walks never get one. -/
+/-- The edge predicate (mod.rs / 2505-2510): walks never get one. -/
 def edgePred (lw : LW) (r : QR) : Option Ex × LW :=
   if isWalk r then (none, lw) else lowerInline lw r.alias r.attrs r.ptr
 
 /-- `emit_rel(relationship) || edge_pred.is_some()`. -/
 def opEmit (c : Comp) (lw : LW) (r : QR) : Bool := emitRel c r || (edgePred lw r).1.isSome
 
-/-- The operator of the first hop (mod.rs:2356-2461), before any Filter. -/
+/-- The operator of the first hop (mod.rs), before any Filter. -/
 def firstOp (st : MSt) (c : Comp) (lw : LW) (r : QR) : MP :=
   match r.kind with
   | .shortest => .shortest (opRel r) []
@@ -419,8 +419,8 @@ def firstOp (st : MSt) (c : Comp) (lw : LW) (r : QR) : MP :=
     else if st.bound r.frm.alias && st.bound r.to.alias then .expandInto (opRel r) (opEmit c lw r) []
     else .condTr (opRel r) (opEmit c lw r) []
 
-/-- Edge Filter on a CondTraverse/ExpandInto (mod.rs:2462-2468), then both endpoints'
-inline attrs, `to` then `from`, **whether or not they are bound** (mod.rs:2482-2489). -/
+/-- Edge Filter on a CondTraverse/ExpandInto (mod.rs), then both endpoints'
+inline attrs, `to` then `from`, **whether or not they are bound** (mod.rs). -/
 def topFilters (lw : LW) (r : QR) (op : MP) : MP × LW :=
   let (ep, lw) := edgePred lw r
   let res := if op.isCtEi then withF ep op else op
@@ -499,7 +499,7 @@ theorem firstRel_lowers_to (st : MSt) (c : Comp) (lw : LW) (r : QR) (f : Ex)
 
 /-- A fixed-length hop with an inline edge map: the predicate is a Filter right above the
 operator, and the operator is told to emit every parallel edge (`emit_relationship`), so the
-Filter can test each one (mod.rs:2455-2468). -/
+Filter can test each one (mod.rs). -/
 theorem firstRel_edge_pred (st : MSt) (c : Comp) (lw : LW) (r : QR) (f : Ex)
     (hfix : r.kind = .fixed) (hk : lw.contains (lwKey r.alias r.ptr) = false)
     (hf : inlineAttrsToFilter r.alias r.attrs = some f) :
@@ -541,7 +541,7 @@ theorem firstRel_stripped (st : MSt) (c : Comp) (lw : LW) (r : QR) :
     by_cases h4 : r.frm.alias.id = r.to.alias.id <;>
     simp [hb1, hb2, h4, MP.stripped, MP.stripped.strippedL, h1, h2, hs, h3', hk]
 
-/-! ### Historical: lowering without the once-only guard (a9377c636 mod.rs:1890-2048) -/
+/-! ### Historical: lowering without the once-only guard (a9377c636 mod.rs) -/
 
 def attrF (n : QN) : Option Ex := inlineAttrsToFilter n.alias n.attrs
 def relF (r : QR) : Option Ex := inlineAttrsToFilter r.alias r.attrs

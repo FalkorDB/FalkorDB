@@ -12,8 +12,8 @@ a subscript may be a predicate; a UNION CALL body skips the outer label pass).
 ## The one invariant that matters
 
 Every id is minted as the **current size of its scope table**: `fresh_var`
-(binder.rs:2493), the parent copy in `resolve_name` (binder.rs:2435, minting at `len()` in the parent-copy arm), and the
-planner's `fresh_var` (planner/mod.rs:1018, called at 1261, 1301, 1307 and 1649), which gets
+(binder.rs), the parent copy in `resolve_name` (binder.rs, minting at `len()` in the parent-copy arm), and the
+planner's `fresh_var` (planner/mod.rs, called at 1261, 1301, 1307 and 1649), which gets
 `scope_vars[s] = sorted_scope_vars(env_stack[s])`. `mint_fresh_iff` proves the
 planner's ids `len, len+1, …` avoid every id `H` the bound IR uses iff
 `∀ i ∈ H, i < len`. Minting under a new key keeps that (`mint_new_covers`,
@@ -23,7 +23,7 @@ in two places while the removed ids are still in the IR
 (`erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks`).
 
 ## Gap closed 2026-10-20: pattern predicates may declare variables (#1334)
-`bind_expr_node`'s `Pattern` arm (binder.rs:2271-2298) binds a WHERE pattern predicate with
+`bind_expr_node`'s `Pattern` arm (binder.rs) binds a WHERE pattern predicate with
 `bind_graph(…, false)`, which mints any unknown alias fresh. Property `PatternPredDeclaresNothing`
 (an accepted pattern predicate names only visible variables); refuted by
 `bug1334_pattern_predicate_declares_var`: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds with
@@ -32,7 +32,7 @@ The slot-reuse family (#3333, #3369, #3375, #3368, #3150) is modelled in proofs/
 `SlotReuse.lean` (`projLayout` = this binder's per-scope minting fed to the aggregate).
 
 ## Gap closed 2026-10-22: REMOVE does not clear accumulated labels (#3450)
-`LClause` gains `.remove` (`bind_ir` QueryIR::Remove, binder.rs:600-605, leaves `node_labels`
+`LClause` gains `.remove` (`bind_ir` QueryIR::Remove, binder.rs, leaves `node_labels`
 alone); `bind_projection` copies the parent's label set to the `WITH` child (`node_labels.insert(bound_var.key(), labels)`, :1254-1310) and
 `update_all_node_labels` (:220-252) stamps it on the next MATCH. Property `StampedLabelsHeld` (a stamped
 label is written by that MATCH or still held, point-in-time via `held`); `specStamp_held` proves the fix
@@ -46,11 +46,11 @@ Rust source: origin/main `256ab4d3f`; every line below is read off that tree.
 
 | here | there |
 | --- | --- |
-| `Env`, `Env.insert/erase/retain/lookupAnon/pushUnnamed` | `Scope` (named map + unnamed list), binder.rs:47-132 (`get` :55, `insert` :69, `lookup_anon` :86, `push_unnamed` :96, `retain` :128) |
-| `freshVar`, `freshAnon` | `Binder::fresh_var` binder.rs:2493-2507 |
-| `plannerFresh`, `mint_fresh_iff` | `Planner::fresh_var` planner/mod.rs:1018-1030 |
+| `Env`, `Env.insert/erase/retain/lookupAnon/pushUnnamed` | `Scope` (named map + unnamed list), binder.rs (`get` :55, `insert` :69, `lookup_anon` :86, `push_unnamed` :96, `retain` :128) |
+| `freshVar`, `freshAnon` | `Binder::fresh_var` binder.rs |
+| `plannerFresh`, `mint_fresh_iff` | `Planner::fresh_var` planner/mod.rs |
 | `St`, `pushScope` | `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`; `push_scope` :350, `commit_scope` :355 |
-| `resolve`, `resolveName`, `lookupLocals` | `resolve_name` binder.rs:2435-2491 |
+| `resolve`, `resolveName`, `lookupLocals` | `resolve_name` binder.rs |
 | `defineName`, `defineAlias`, `lookupAlias`, `resolveAlias`, `denotes`, `ensureType` | `define_name_in_scope` :2348, `define_alias_in_scope` :2374, `lookup_alias` :2395, `resolve_alias` :2407, `denotes` :2984, `ensure_type` :2509 |
 | `projectName` | `project_name` :2421 |
 | `bindProjection`, `projectItems` | `bind_projection` :1210-1444 (non-`*` form) |
@@ -102,17 +102,17 @@ Rust source: origin/main `256ab4d3f`; every line below is read off that tree.
   `body_import_value`, `union_branch_label_fixed`, `pushed_read_unbound` (W6-opt-1).
 
 ## Confirmed bugs (live Rust vs C repros; the former `graph/tests/lean_binder` test file no longer exists)
-3. **Removed-key id reuse** (binder.rs:1402-1410 WHERE/SKIP/LIMIT copies removed; :2087-2120 / :2273-2297 comprehension/pattern locals; **not reproduced live on 2026-11-22**: `MATCH (n:A) WITH n.v AS k WHERE n.v = 0 MATCH (x)-[]->(y) RETURN k, id(x), id(y)` gives C's `[0,0,1]` — the Lean collision is real at the binder level, the wrong-answer link is unconfirmed):
+3. **Removed-key id reuse** (binder.rs WHERE/SKIP/LIMIT copies removed; :2087-2120 / :2273-2297 comprehension/pattern locals; **not reproduced live on 2026-11-22**: `MATCH (n:A) WITH n.v AS k WHERE n.v = 0 MATCH (x)-[]->(y) RETURN k, id(x), id(y)` gives C's `[0,0,1]` — the Lean collision is real at the binder level, the wrong-answer link is unconfirmed):
    `bug_with_where_copy_id_reused_by_next_match` ([] vs [[0,1,0]]), `..._by_pattern_comprehension`,
    `bug_pattern_comprehension_locals_reused` (4 rows vs 3), `bug_where_comprehension_locals_reused`
    (runtime error "Invalid node id for 'to' in relationship pattern").
-5. **ORDER BY copies cross the projection** (the `env_keys_before_filter` snapshot, binder.rs:1385-1410, is after ORDER BY; live 2026-11-22: `MATCH (n:N) WITH n.v AS k ORDER BY n.v RETURN *` → Rust columns `k, n`, C `k`): `bug_order_by_variable_crosses_with`
+5. **ORDER BY copies cross the projection** (the `env_keys_before_filter` snapshot, binder.rs, is after ORDER BY; live 2026-11-22: `MATCH (n:N) WITH n.v AS k ORDER BY n.v RETURN *` → Rust columns `k, n`, C `k`): `bug_order_by_variable_crosses_with`
    (`WITH n.v AS k ORDER BY n.v RETURN n` accepted, `RETURN *` returns `k, n`), `bug_order_by_variable_returned_from_call`
    ("Variable `n` already declared in outer scope"; C returns rows).
 7. **Pattern predicate in WITH … WHERE rebinds a parent name** (`define_name_in_scope` :2347 ignores the parent copy that
    pattern comprehensions pre-make at :2068-2085; live 2026-11-22: `CREATE (:A {v:1})-[:R]->(:B), (:C {v:2})`, `MATCH (n) WITH n.v AS k WHERE (n)-->() RETURN k` → Rust `1, 2`, C `1`): `bug_with_where_pattern_predicate_ignores_outer_variable` (3 rows vs 1).
 
-8. **Null-capable unary forms are never accepted as a boolean** (`expr_may_return_boolean` binder.rs:2556 lists
+8. **Null-capable unary forms are never accepted as a boolean** (`expr_may_return_boolean` binder.rs lists
    `Negate`, `Length`, `ListComprehension`, `MapProjection` as non-boolean, though they can be null). (`GetElement` is accepted: `getElement_accepted`,
    `pre3270_getElement_rejected` is the earlier behaviour.)
    Live, Rust vs C, 2026-11-22: `RETURN true AND -null` → Rust `Type mismatch: expected Boolean`, C `null`.

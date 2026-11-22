@@ -5,13 +5,13 @@ import SearchConcurrency.Pool
 
 | Lean | Rust |
 | --- | --- |
-| `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs:83-128` (`builder.name(format!("{name}-{i}"))`, `i in 0..size`; `set_pool_thread()` first thing in each worker `:102`, `Once.setPoolThread`); `new` `:70` is `with_names(size, None)`, `named` `:76` is `with_names(size, Some(name))` |
+| `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs` (`builder.name(format!("{name}-{i}"))`, `i in 0..size`; `set_pool_thread()` first thing in each worker, `Once.setPoolThread`); `new` is `with_names(size, None)`, `named` is `with_names(size, Some(name))` |
 | `Fin`, `Fin.done` | a worker's `JoinHandle`: `is_finished()` (std; AXIOMATISED as a monotone predicate of time, see below) |
-| `waitLoop` | `shutdown_within`'s `while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) { thread::sleep(1ms) }` `:174-178` |
-| `drain` | `workers.drain(..).partition(JoinHandle::is_finished)` `:179-180`: a finished handle is joined `:181-183`, an unfinished one is kept (`*workers = running` `:184`) and the answer is `workers.is_empty()` `:185` |
-| `within` | `ThreadPool::shutdown_within` `:167-186` (sentinels sent first, `:170-172`) |
-| `holdEnd` | `ThreadPool::shutdown` `:151-158`: holds the `workers` lock across every `join` |
-| `PoolS.shutdownSend`, `PoolS.spawn` (Pool.lean) | the sentinel loop shared by `shutdown` and `shutdown_within`; `spawn` `:129` |
+| `waitLoop` | `shutdown_within`'s `while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) { thread::sleep(1ms) }` |
+| `drain` | `workers.drain(..).partition(JoinHandle::is_finished)`: a finished handle is joined, an unfinished one is kept (`*workers = running`) and the answer is `workers.is_empty()` |
+| `within` | `ThreadPool::shutdown_within` (sentinels sent first) |
+| `holdEnd` | `ThreadPool::shutdown`: holds the `workers` lock across every `join` |
+| `PoolS.shutdownSend`, `PoolS.spawn` (Pool.lean) | the sentinel loop shared by `shutdown` and `shutdown_within`; `spawn` |
 
 OS and std primitives are hypotheses, not axioms: `JoinHandle::is_finished` is
 monotone in time (`Fin.done_mono`, by construction: a worker finishes at one instant or
@@ -33,7 +33,7 @@ Findings on the code (confirmed live, `repro/threadpool_within.rs`):
   (`second_call_reports_straggler`, `second_call_joins_when_returned`; the Rust test
   `shutdown_within_leaves_a_blocked_job_behind` checks both).
 * **BUG (open)** a `shutdown_within(t)` called while another thread is inside `shutdown` blocks on
-  the `workers` lock for as long as `shutdown`'s `join` (`:156-157`): with a job that never
+  the `workers` lock for as long as `shutdown`'s `join`: with a job that never
   returns, never (`within_blocks_behind_shutdown`), so the time limit does not hold.
 * Benign, same as `shutdown`: a job spawned after the sentinels is accepted (send `Ok`, no
   log) and never runs (`late_job_lost`).

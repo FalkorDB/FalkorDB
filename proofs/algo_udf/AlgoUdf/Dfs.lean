@@ -1,5 +1,5 @@
 import AlgoUdf.Graph
-/-! # `enumerate_paths` (algo_procedures.rs:2537-2638) and `record_found_path` with its bound (:2473-2526)
+/-! # `enumerate_paths` (algo_procedures.rs) and `record_found_path` with its bound (:2473-2526)
 
 | here | there |
 | --- | --- |

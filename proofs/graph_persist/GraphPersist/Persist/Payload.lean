@@ -3,7 +3,7 @@ import GraphPersist.Persist.Store
 namespace GraphPersist.Persist
 open GraphPersist
 
-/-! ## Payload directory (`EncodeState`, serialization.rs:120-158) -/
+/-! ## Payload directory (`EncodeState`, serialization.rs) -/
 
 inductive St where
   | init | nodes | delNodes | edges | delEdges | schema | labelsM | relM | adj | lblsM | cch | final
@@ -40,7 +40,7 @@ theorem St.ofU_iff (v : Nat) (s : St) : St.ofU v = some s ↔ s.toU = v := by
     · rw [St.ofU_none v (by omega)] at h; cases h
   · rintro rfl; exact St.ofU_toU s
 
-/-- The states `decode_payload_directory` (decoder/mod.rs:48) accepts: all but
+/-- The states `decode_payload_directory` (decoder/mod.rs) accepts: all but
 `CchIndices` (no CCH index in this module), `Init` and `Final` (never saved). -/
 def St.accepted : St → Bool
   | .init | .cch | .final => false
@@ -57,7 +57,7 @@ structure Entry where
 def encDir (es : List Entry) : Stream :=
   encU es.length ++ es.flatMap fun e => encU e.st.toU ++ encU e.count
 
-/-- The directory loop of `decode_payload_directory` (decoder/mod.rs:48-72), which
+/-- The directory loop of `decode_payload_directory` (decoder/mod.rs), which
 `rdb_load_graph` (:128) and `load_graph_from_reader` (:509) call: both words are read
 before the state is checked, and an unknown, `CchIndices`, `Init` or `Final` state fails. -/
 def decDirEntry : Dec (St × Nat) :=
@@ -145,7 +145,7 @@ theorem decIdx_rt {β : Type} (C : Codec β) (xs : List β) (hn : xs.length < 2 
 
 /-! ## The graph -/
 
-/-- `Header` (serializers/mod.rs:123). -/
+/-- `Header` (serializers/mod.rs). -/
 structure Hdr (Nm : Type) where
   name : Nm
   nodeCount : Nat
@@ -157,7 +157,7 @@ structure Hdr (Nm : Type) where
   multiEdge : List Bool
   keyCount : Nat
 
-/-- `Schema` (serializers/mod.rs:237). -/
+/-- `Schema` (serializers/mod.rs). -/
 structure Sch (Nm Ix Cn : Type) where
   attrs : List Nm
   labels : List Nm
@@ -194,15 +194,15 @@ structure G (M Tn Nm Ix Cn : Type) where
 variable {M Tn Nm Ix Cn : Type}
 
 /-- The ids `encode_with_range` walks: `0..=max_id` (`max_id = count + |deleted| - 1`,
-`Graph::max_node_id`, graph.rs:1783; the loop is `encode_with_range`, attribute_store.rs:1425-1437), skipping deleted ones. -/
+`Graph::max_node_id`, graph.rs; the loop is `encode_with_range`, attribute_store.rs), skipping deleted ones. -/
 def live (n : Nat) (del : List Nat) : List Nat := (List.range (n + del.length)).filter fun i => decide (i ∉ del)
 
-/-- `Header::from_graph(graph, graph_name, key_count)` (serializers/mod.rs:213). -/
+/-- `Header::from_graph(graph, graph_name, key_count)` (serializers/mod.rs). -/
 def hdrOf (g : G M Tn Nm Ix Cn) (name : Nm) (k : Nat) : Hdr Nm :=
   ⟨name, g.nodeCount, g.edgeCount, g.delNodes.length, g.delEdges.length, g.labelMats.length,
    g.tensors.length, g.multiEdge, k⟩
 
-/-- `build_payloads` (encoder/mod.rs:192-255). -/
+/-- `build_payloads` (encoder/mod.rs). -/
 def buildPayloads (g : G M Tn Nm Ix Cn) : List Entry :=
   (if g.nodeCount > 0 then [⟨.nodes, g.nodeCount, 0⟩] else []) ++
   (if g.delNodes.length > 0 then [⟨.delNodes, g.delNodes.length, 0⟩] else []) ++
@@ -218,7 +218,7 @@ still writes one — never reached: every payload entry has `count > 0`). -/
 def encRange (S : Store) (ids : List Nat) (count off : Nat) : Stream :=
   ((ids.drop off).take (max count 1)).flatMap (encEnt S)
 
-/-- `Graph::encode_payload` (graph.rs:5092-5145). -/
+/-- `Graph::encode_payload` (graph.rs). -/
 def encPayload (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (e : Entry) : Stream :=
   match e.st with
   | .nodes => encRange g.nodes (live g.nodeCount g.delNodes) e.count e.offset
@@ -231,7 +231,7 @@ def encPayload (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (e : Entry) : St
   | .lblsM => C.Mx.enc g.lbls
   | _ => []
 
-/-- `encode_graph` (encoder/mod.rs:68-88). -/
+/-- `encode_graph` (encoder/mod.rs). -/
 def encodeGraph (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (name : Nm) (ps : List Entry) (k : Nat) :
     Stream :=
   C.H.enc (hdrOf g name k) ++ C.S.enc g.sch ++ encDir ps ++ ps.flatMap (encPayload C g)
@@ -319,7 +319,7 @@ structure Restore (M Tn Nm Ix Cn : Type) where
   indexes : List Ix
   constraints : List Cn
 
-/-- `load_graph_from_reader` (decoder/mod.rs:431-537), behind `pipe_load_graph` (:406)
+/-- `load_graph_from_reader` (decoder/mod.rs), behind `pipe_load_graph` (:406)
 and `vec_load_graph` (:421). `attrs_name.len()` is the schema's attribute count (the
 names are distinct; `AttrNameMap` is an index set). -/
 def finish (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (nc ec : Nat) (s : Sch Nm Ix Cn) (prs : List (PR M Tn)) :

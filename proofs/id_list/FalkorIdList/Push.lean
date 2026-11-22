@@ -5,7 +5,7 @@ Model of the segment builder in `graph/src/effects/v3/id_list.rs`.
 
 | here | there |
 | --- | --- |
-| `Seg`                 | `enum Segment` (id_list.rs:450) — the bitmap variants hold the *set* as its ascending list |
+| `Seg`                 | `enum Segment` (id_list.rs) — the bitmap variants hold the *set* as its ascending list |
 | `Seg.min` / `Seg.max` | `Segment::min` (:570) / `Segment::max` (:557) |
 | `Seg.iter`            | `Segment::iter` (:763) |
 | `flat`                | `IdList::iter` (:1126) |

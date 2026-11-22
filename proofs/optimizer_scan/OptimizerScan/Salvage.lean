@@ -10,17 +10,17 @@ reads as the Rust computes them, and decides the premise.
 
 | here | there |
 | --- | --- |
-| `ScanTree.IRk.filter vs`, `filtersOf`  | `IR::Filter(expr)`, `filters_of` `select_scan_node.rs:250`; `vs` = the `(id, scope_id)` of every `ExprIR::Variable` of the filter (`collect`, `:160`) |
-| `ScanTree.isPlannerScan`, `argumentLeafOf` | `is_planner_scan_subtree` `:315` (a scan is accepted whatever its children are), `argument_leaf_of` `:276` |
-| `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`, `:979-986`) and the preserved `Argument` leaf (`preserved_argument`, `:952`, `:1181`) |
-| `salvagedSteps`                        | `salvaged_filters` wrapped above the chain (`:1240-1246`, `:1156-1176`) |
-| `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` (`:214`) |
-| `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981, `:1402-1477`) |
-| `leafSteps3594`                        | the same rewrite since #3594: filters salvaged only `if has_planner_scan` (`:1579`); a transparent child keeps its own |
+| `ScanTree.IRk.filter vs`, `filtersOf`  | `IR::Filter(expr)`, `filters_of` `select_scan_node.rs`; `vs` = the `(id, scope_id)` of every `ExprIR::Variable` of the filter (`collect`) |
+| `ScanTree.isPlannerScan`, `argumentLeafOf` | `is_planner_scan_subtree` (a scan is accepted whatever its children are), `argument_leaf_of` |
+| `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`) and the preserved `Argument` leaf (`preserved_argument`) |
+| `salvagedSteps`                        | `salvaged_filters` wrapped above the chain |
+| `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` |
+| `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981) |
+| `leafSteps3594`                        | the same rewrite since #3594: filters salvaged only `if has_planner_scan`; a transparent child keeps its own |
 
 Result: the premise is **not** a fact about the Rust. `is_planner_scan_subtree` accepts a scan
 with *any* child, but `argument_leaf_of` keeps only an `Argument`; a child such as `Unwind`
-is pruned with the scan (`prune`, `:1131`, `:1294`). The filters on the spine then read a
+is pruned with the scan (`prune`). The filters on the spine then read a
 variable (`k`) that nothing in the rebuilt plan binds (`premise_fails`), and `runScoped` loses a
 row generate-and-test keeps (`salvage_loses_row`). Query:
 `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` (Rust 0, C 1; also
@@ -28,8 +28,7 @@ row generate-and-test keeps (`salvage_loses_row`). Query:
 operator itself is gone from the plan). `premise_of_spine` gives sufficient conditions under which the premise holds (the converse is not proved).
 
 The bound sets here are keyed on the variable id alone, as the Rust keys them: `initial_bound` and `placed_bound`
-are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (`:979-986`, `:1185`,
-`:1221-1222`; `:424-428` notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
+are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (; notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
 `v.1` of each `(id, scope_id)` exactly where the Rust drops the scope; `filtersOf` still carries the pairs.
 -/
 namespace OptimizerScan.Salvage
@@ -158,7 +157,7 @@ theorem salvage_loses_row :
   simp [wellScoped, exSteps, salvagedSteps, filtersOf, exChild, seedBound, b, k, argVars,
     argumentLeafOf] at hw
 
-/-! ### The no-swap leaf rewrite (`select_scan_node.rs:1402-1477`)
+/-! ### The no-swap leaf rewrite (`select_scan_node.rs`)
 
 When the bottom traverse keeps its direction (`effectively_leaf`) and its child is a planner scan,
 the scan is pruned and `make_scan_subtree(from, ..)` scans the traverse's `from`. Before #2981 the
@@ -230,7 +229,7 @@ theorem fixed2981_filter_above_hop :
 
 end Leaf2981
 
-/-! ### The no-swap leaf rewrite over a transparent child (#3594, `select_scan_node.rs:1564-1577`)
+/-! ### The no-swap leaf rewrite over a transparent child (#3594, `select_scan_node.rs`)
 
 Since #3594 the bottom traverse's child may be an outer subtree (`transparent_child`: an `Unwind`,
 a `Project`, an earlier clause's plan) that binds none of the chain's variables. It is not discarded:

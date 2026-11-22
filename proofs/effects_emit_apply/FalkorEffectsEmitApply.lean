@@ -9,8 +9,8 @@ import FalkorEffectsEmitApply.CancelGap
 # effects v3: emit / apply (wave 2) — report
 
 Target: `graph/src/effects/v3/emit.rs`, `graph/src/effects/v3/apply.rs`, and the
-gate in front of the emitter (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:2013`). Coverage per Rust fn:
+gate in front of the emitter (`runtime/ops/commit.rs`,
+`Pending::effects_count` at `runtime/pending.rs`). Coverage per Rust fn:
 `COVERAGE.tsv` (36 rows, all PROVEN). Repros:
 `graph/tests/lean_effects_emit_apply.rs`
 (`cargo test -p graph --test lean_effects_emit_apply -- --nocapture --test-threads=1`).
@@ -20,25 +20,25 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 
 | Lean                                   | Rust                                                        |
 |----------------------------------------|-------------------------------------------------------------|
-| `Basic.memoStep`, `memoGroup`          | the `slots`/`index`/`last` loop, `emit.rs:520-558`, `808-840` |
+| `Basic.memoStep`, `memoGroup`          | the `slots`/`index`/`last` loop, `emit.rs`, `808-840` |
 | `Basic.groupBy`                        | first-appearance grouping (spec; also `proofs/replication`) |
 | `Basic.sortDedup`                      | `labels.sort_unstable(); labels.dedup()`                    |
-| `Emit.mergeRow`, `gatherRows`          | `gather_rows`, `emit.rs:917-945`                            |
-| `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs:60`                       |
-| `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:395`                           |
-| `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:323` (opcode granularity)       |
-| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:2013` (+2 per cancelled entity, plus `staged_labels_removed`) |
-| `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
-| `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:560,586`        |
-| `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:214`                    |
-| `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs:346`                    |
-| `Apply.setLabels`                      | `Record::SetLabels` arm, `apply.rs:380`                     |
-| `Apply.deleteNode`, `okDelete`         | `Record::DeleteNode` arm, `apply.rs:406`                    |
+| `Emit.mergeRow`, `gatherRows`          | `gather_rows`, `emit.rs`                            |
+| `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs`                       |
+| `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs`                           |
+| `Emit.forEachRecord`                   | `for_each_record`, `emit.rs` (opcode granularity)       |
+| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs` (+2 per cancelled entity, plus `staged_labels_removed`) |
+| `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs`       |
+| `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs`        |
+| `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs`                    |
+| `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs`                    |
+| `Apply.setLabels`                      | `Record::SetLabels` arm, `apply.rs`                     |
+| `Apply.deleteNode`, `okDelete`         | `Record::DeleteNode` arm, `apply.rs`                    |
 | `Apply.RG.WF`                          | "nothing hangs off a dead id; edge endpoints live"          |
-| `Live.applyRec`, `Live.applyAll`       | the checked arms of `apply_record` (`apply.rs:164`) |
-| `Live.needLive`, `ApplyHelpers.requireLive` | `require_live`, `apply.rs:685`                         |
-| `Live.firstWithRels`                   | `Graph::first_node_with_relationships`, `graph.rs:2434` (spec) |
-| `Live.danglingRel`                     | `verify_created_relationships`, `graph.rs:1648`            |
+| `Live.applyRec`, `Live.applyAll`       | the checked arms of `apply_record` (`apply.rs`) |
+| `Live.needLive`, `ApplyHelpers.requireLive` | `require_live`, `apply.rs`                         |
+| `Live.firstWithRels`                   | `Graph::first_node_with_relationships`, `graph.rs` (spec) |
+| `Live.danglingRel`                     | `verify_created_relationships`, `graph.rs`            |
 
 ## Proven (53 theorems)
 
@@ -86,9 +86,9 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 
 ## `CREATE_NODE` refuses a repeated id
 
-* The `CREATE_NODE` arm refuses an id list with a repeat (`nodes.len() != ids.count()`, `apply.rs:226`).
+* The `CREATE_NODE` arm refuses an id list with a repeat (`nodes.len() != ids.count()`, `apply.rs`).
   `applyRec .createNode` checks `ids.Nodup` first. `createNode_repeat_refused`, `createNode_ok_nodup`,
-  `a_repeated_node_id_in_one_create_is_refused` (an abstract refusal check on the Rust test's input `[2, 3, 2]`: the `.graph` constructor only, the message text is not modelled). The commit gate (W2-effects-1, `commit.rs:107-108`) is as above.
+  `a_repeated_node_id_in_one_create_is_refused` (an abstract refusal check on the Rust test's input `[2, 3, 2]`: the `.graph` constructor only, the message text is not modelled). The commit gate (W2-effects-1, `commit.rs`) is as above.
 
 ## Wave 4 additions (`Digests`, `ApplyHelpers`, `EmitDDL`)
 
@@ -129,8 +129,8 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 Still present on main (2026-10-04 live release build, Redis 8.6.2; the code is unchanged since):
 1 and 4 below.
 
-1. **A write that only registers schema replicates nothing** — `runtime/ops/commit.rs:108`
-   gates `buf.build` on `effects_count() > 0` (`pending.rs:2013`), which does not count
+1. **A write that only registers schema replicates nothing** — `runtime/ops/commit.rs`
+   gates `buf.build` on `effects_count() > 0` (`pending.rs`), which does not count
    names registered since the `SchemaBaseline`, so `emit_schema_additions` never runs.
    The master keeps the new label/attr and the moved id space; the next payload's
    `ADD_SCHEMA` is refused ("assigns label 'B' id 1, but this replica would
@@ -141,7 +141,7 @@ Still present on main (2026-10-04 live release build, Redis 8.6.2; the code is u
    also forces a resync. C: replica and AOF reload agree, no resync.
    Fix: gate on "the emitter produced a record" (or add the schema delta to the count).
 4. **A refused buffer is not rolled back for CREATE_INDEX**
-   (`apply_effects`, `apply.rs:54`; `Graph::create_index`, `graph.rs:3670`): the
+   (`apply_effects`, `apply.rs`; `Graph::create_index`, `graph.rs`): the
    `Indexer` is shared by `Arc` across versions (`Graph::new_version` clones the
    handle), so `MvccGraph::rollback` cannot undo it. Live: payload
    `[ADD_ATTRIBUTE 1 zz, CREATE_INDEX A(zz), CREATE_NODE 0]` -> `ERR ... the
@@ -164,17 +164,17 @@ master's pre-segment state accepts. Two properties:
 
 | Lean | Rust (b84473a7f) |
 | --- | --- |
-| `CancelGap.verifyRange` | `IdSpace::verify`'s hole check (id_space.rs:737-790) |
-| `CancelGap.typesAfterCommit` | `Pending::commit` (pending.rs:1367-1413, #3461): `created_rels_by_type` keys via `create_relationships_bulk`, then every `cancelled_relationships` type via `get_type_id_mut` (`typesAfterCommitPre3461`, the pre-#3461 behaviour kept as a historical counterexample: the keys only) |
-| `CancelGap.toLive` | opcode records → `apply_record` arms (`RemoveLabels` `require_live`, apply.rs:387-388) |
+| `CancelGap.verifyRange` | `IdSpace::verify`'s hole check (id_space.rs) |
+| `CancelGap.typesAfterCommit` | `Pending::commit` (pending.rs, #3461): `created_rels_by_type` keys via `create_relationships_bulk`, then every `cancelled_relationships` type via `get_type_id_mut` (`typesAfterCommitPre3461`, the pre-#3461 behaviour kept as a historical counterexample: the keys only) |
+| `CancelGap.toLive` | opcode records → `apply_record` arms (`RemoveLabels` `require_live`, apply.rs) |
 
 * **`RelIdsCovered`** (every relationship id allocated in the segment reaches a `CREATE_EDGE`):
-  `digest_cancelled` skips a cancelled edge whose type has no id (emit.rs:451), so commit must
+  `digest_cancelled` skips a cancelled edge whose type has no id (emit.rs), so commit must
   register every cancelled type. `relIdsCovered_after_commit` (for every `Pending`),
   `fixed3447_cancelled_edge_id_gap`; `relIdsCovered_of_registered` (holds for every `Pending`
   once all created and cancelled types are registered). `pre3461_bug3447_cancelled_edge_id_gap`
   is the historical counterexample, where the payload has `CreateEdge [2]` and nothing for 1.
-* **`ReplayApplies`**: `digest_labels(&p.remove_labels, None, …)` (emit.rs:370) precedes
+* **`ReplayApplies`**: `digest_labels(&p.remove_labels, None, …)` (emit.rs) precedes
   `digest_cancelled` (:374), so a cancelled node must not keep its `remove_labels`.
   `fixed3448_replay_applies` (pending_commit `fixed3448_cancelled_node_clears_remL`); the gate
   counts `staged_labels_removed` (`gate_keeps_staged_removal`). `bug3448_removeLabels_before_create_refused`
@@ -206,12 +206,12 @@ master's pre-segment state accepts. Two properties:
   refusal is rolled back with the rest of the buffer either way.
 * #3787 (clippy): `index_field_flags` takes `IndexType` by value, `index_options` likewise, `map_or_default`
   in `digest_created_edges`, `ok_or_else` in `resolve_type`, `ToString::to_string` paths; no behaviour change.
-* #3683: `commit.rs` calls `runtime.upgrade_to_write()` directly; the effects gate is unchanged (`commit.rs:108`).
-* Cites re-pinned by function name (`apply.rs` arms +28, `emit.rs`, `pending.rs:2013`).
+* #3683: `commit.rs` calls `runtime.upgrade_to_write()` directly; the effects gate is unchanged (`commit.rs`).
+* Cites re-pinned by function name (`apply.rs` arms +28, `emit.rs`, `pending.rs`).
 
 ## Re-pinned to 5e475e6c9 (#3436)
 No model change. `emit.rs` (`for_each_record`, `build_index_buffer`, `digest_*`) takes
 `&Graph` instead of `&AtomicRefCell<Graph>` and no longer borrows inside; the emitted records
 are the same. Pins shifted by -1 or -2 in `emit.rs`, `pending.rs` -14 after `enforce_constraints`;
-`CommitOp::next`'s effects gate is still `commit.rs:108`.
+`CommitOp::next`'s effects gate is still `commit.rs`.
 -/

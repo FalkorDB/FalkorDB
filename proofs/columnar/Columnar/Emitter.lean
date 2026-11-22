@@ -10,15 +10,15 @@ gathers the parent columns by the packed parent rows.
 
 | here | there |
 | --- | --- |
-| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-570`; the clamp is `:562`) — `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))` |
-| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:744`) |
-| `drain` | `drain_pending_entry` (`:622-647`) |
-| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:676-717`, `:738-743`) |
-| `emitLazy` | `emit_lazy` (`:729-746`) |
+| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs`; the clamp is) — `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))` |
+| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` |
+| `drain` | `drain_pending_entry` |
+| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` |
+| `emitLazy` | `emit_lazy` |
 | `stream` | the flattened `(row, item)` sequence of `pending` + unread rows |
 | `emitAll` | repeated `emit_lazy` until `Ok(None)` |
-| `finishLen` | `finish_batch` (`:651-669`) row count incl. the `should_expand` switch (`start_batch`, `:604-617`) |
-| `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs:293-299`) |
+| `finishLen` | `finish_batch` row count incl. the `should_expand` switch (`start_batch`) |
+| `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs`) |
 -/
 
 namespace Columnar
@@ -26,7 +26,7 @@ open FalkorCore (V)
 
 def BATCH_SIZE : Nat := 1024
 
-/-- `with_binding` (`batched_result_emitter.rs:562`):
+/-- `with_binding` (`batched_result_emitter.rs`):
 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`. -/
 def withBinding (recordCap : Option Nat) : Nat :=
   match recordCap with
@@ -254,7 +254,7 @@ theorem batch_rows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List 
     obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hi
     exact (stream_rows_active h f x (hsub x hx)).2)
 
-/-- `finish_batch`'s row count: gathered when `start_batch` (`:604-617`) sets
+/-- `finish_batch`'s row count: gathered when `start_batch` sets
 `should_expand` — the parent has a column **or carries correlation origins**
 (`has_origins`, since #2845) — else a fresh `Batch::new(0)` whose length comes from
 the first installed column (`set_column` on an empty batch), or stays 0 when the
@@ -274,13 +274,13 @@ theorem finishLen_origins_kept : finishLen 0 true false 5 = 5 := rfl
 
 /-- **Latent row loss**: a no-alias emitter over a parent with no column and no
 origins emits `count` results as a 0-row batch. The only no-alias user, ExpandInto
-(`expand_into.rs:95`), always has both endpoint columns bound, so this is not
+(`expand_into.rs`), always has both endpoint columns bound, so this is not
 reachable today. -/
 theorem finishLen_drops : finishLen 0 false false 5 = 0 := rfl
 
 /-! ## ExpandInto's record-cap trim -/
 
-/-- `ExpandIntoOp::next` (`expand_into.rs:293-299`) on a dense output batch of
+/-- `ExpandIntoOp::next` (`expand_into.rs`) on a dense output batch of
 `n` rows: `(new selection, rows counted)`. -/
 def expandTrim (cap produced n : Nat) : Option (List Nat) × Nat :=
   let remaining := cap - produced

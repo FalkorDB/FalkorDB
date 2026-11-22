@@ -19,8 +19,8 @@ A Lean 4 model of the optimizer passes in `graph/src/planner/optimizer/`
 the #2556 chain-rebuild is modelled here (`PushPlan.selectScan`); the pass itself is in
 `proofs/optimizer_scan`. Each pass is judged against a reference semantics of the IR:
 rows are association lists (`Basic.Row`), expressions follow `eval.rs`
-(three-valued, errors short-circuit, `AND` exactly as `eval.rs:674`), `Filter`
-keeps `true` and drops `false`/`null` (`filter.rs:48-80`), and operators are
+(three-valued, errors short-circuit, `AND` exactly as `eval.rs`), `Filter`
+keeps `true` and drops `false`/`null` (`filter.rs`), and operators are
 list functions (`cp`, `extend`, `take`, `drop`, `mergeSort`, …). A rewrite is
 correct if it preserves the result multiset — and row order where ORDER BY
 applies — and does not make a succeeding query fail.
@@ -99,7 +99,7 @@ COVERAGE.tsv is PROVEN (the NOT COVERED rows are test/bench code). The four `red
 ## CONFIRMED bugs (Rust repro: `cargo test -p graph --test lean_optimizer_rewrites`;
 ## Cypher compared on live servers, Rust release module vs C `bin/macos-arm64v8-release/falkordb.so`)
 
-1. **Filter pushed below LIMIT / SKIP** — `push_filters_down.rs:165-178` does not
+1. **Filter pushed below LIMIT / SKIP** — `push_filters_down.rs` does not
    exclude `Limit`/`Skip` (Lean `limit_skip_not_excluded`, `limit_not_transparent`,
    `skip_not_transparent`). 5 nodes v=1..5:
    `MATCH (n:N) WITH n ORDER BY n.v LIMIT 2 MATCH (m:N) WHERE n.v > 1 RETURN count(*)`
@@ -107,25 +107,25 @@ COVERAGE.tsv is PROVEN (the NOT COVERED rows are test/bench code). The four `red
    Shared with C (spec bug). Fix: add `IR::Limit | IR::Skip` to the exclusion list
    (or allow only conjuncts whose vars are all Apply-inherited — `push_limit_const`).
    Tests `bug_filter_pushed_below_limit`, `bug_filter_pushed_below_skip`.
-3. **NodeByIdSeek with a negative bound** — `runtime.rs:1319` `id as u64`:
+3. **NodeByIdSeek with a negative bound** — `runtime.rs` `id as u64`:
    `MATCH (n) WHERE id(n) > -1 RETURN count(n)` → Rust 0, C 5 (also `>= -5`: both 0,
    `<= -1`: both all = #2266). Lean `id_gt_neg_empty`, `id_le_neg_all`. Fix: clamp
    negative Int bounds (Gt/Ge → no constraint; Lt/Le/Eq → empty) before the cast.
    Test `bug_node_by_id_gt_negative_returns_nothing`.
-4. **NodeByIdSeek errors on non-integer bounds** — `runtime.rs:1324`: `id(n) = null`,
+4. **NodeByIdSeek errors on non-integer bounds** — `runtime.rs`: `id(n) = null`,
    `= 1.0`, `= '1'`, `> 1.5`, `= true` → Rust "Node ID must be an integer"; C returns
    0 rows; the Filter being replaced returns 0 rows (null) or, for `1.0`, node 1.
    Lean `id_eq_null_errors`. Fix: only rewrite when the bound is an Int at runtime,
    else fall back to a Filter (Null → empty, whole Float → Int). Test `bug_node_by_id_null_errors`.
 5. **Hash join drops Int/Float pairs near 2^53** — `replace_cartesian_with_hash_join.rs`
-   introduces `ValueHashJoin`, whose key (`value_hash_join.rs:153 key_as_i64`) is exact
+   introduces `ValueHashJoin`, whose key (`value_hash_join.rs key_as_i64`) is exact
    while `=` compares via `i as f64`. Nodes x=9007199254740993, x=9007199254740992.0:
    `MATCH (a:L),(b:L) WHERE a.x = b.x RETURN count(*)` → Rust 2, C 4; `(a.x=b.x)=true`
    → 4 on both. Lean `hash_join_drops_row` (and `vhj_correct` for when it is safe).
    Root is the Int/Float equality of #2891, but this is the optimizer changing a
    result. Test `bug_hash_join_disagrees_with_filter_on_int_float`.
-6. (model only) `id_only_routing_unsound`: push-down routing uses bare ids (mod.rs:91-109) and Apply Case 2
-   inheritance (push_filters_down.rs:214-261); the uncorrelated `CALL {}` repro (known #2557,
+6. (model only) `id_only_routing_unsound`: push-down routing uses bare ids (mod.rs) and Apply Case 2
+   inheritance (push_filters_down.rs); the uncorrelated `CALL {}` repro (known #2557,
    `MATCH (o1:N) CALL { MATCH (q:N) WHERE q.v = 1 RETURN q } RETURN o1.v, q.v`) no longer reproduces live.
 7. **(known #2896) Sibling readers.** The three `reduce_*` passes walk
    ancestors only, so a reader in a sibling subtree is missed —
@@ -150,13 +150,13 @@ The push-down proofs judged where `push_filters_down` moves a Filter, but no
 model followed an inline-attr Filter through `select_scan_node`'s chain
 rebuild. `PushPlan` now has `IR::CondTraverse` with its relationship and
 `transposed` (`Op.hop`), the rebuild branch of `select_scan_node`
-(`selectScan`, select_scan_node.rs:681-1260) and the property
+(`selectScan`, select_scan_node.rs) and the property
 `KeepsFiltersBound` (a rewrite never moves a Filter below the operator that
 binds what it reads).
 
 11. **#2556: an inline property filter lands below the hop that binds it** —
    with the bottom hop's outer child kept (`Unwind`), `initial_bound` still
-   seeds the best endpoint (`select_scan_node.rs:979-990`); `t {id:100}` wins
+   seeds the best endpoint (`select_scan_node.rs`); `t {id:100}` wins
    the endpoint choice on cardinality, so `t` is "bound" before any hop and
    its Filter is placed after the first hop (:1202-1230).
    `MATCH (x:Person {id:2}) WITH collect(x) AS fs UNWIND fs AS f MATCH
@@ -180,7 +180,7 @@ binds what it reads).
 
 ## Suspected, unconfirmed
 
-* `utilize_node_by_id.rs:106` `optimized_plan.node(idx).parent().unwrap()` panics on a root scan
+* `utilize_node_by_id.rs` `optimized_plan.node(idx).parent().unwrap()` panics on a root scan
   (Lean `root_scan_has_no_parent`); no known query reaches it, since validation rejects
   `CALL db.labels() YIELD label MATCH (n)` (planner_build `call_then_match_rejected`). Hazard only.
 * Filters on zero-variable conjuncts (`rand() < 0.5`) are pushed into every CP/Apply branch.

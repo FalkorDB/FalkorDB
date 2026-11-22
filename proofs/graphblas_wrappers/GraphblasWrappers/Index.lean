@@ -28,13 +28,13 @@ def GB_NMAX : Nat := 1 <<< 60
 32-bit index arrays while a dimension is `≤ GB_NMAX32`. -/
 def GB_NMAX32 : Nat := 1 <<< 31
 
-/-- `tensor.rs:144` `GrB_INDEX_MAX = (1 << 60) - 1`. -/
+/-- `tensor.rs` `GrB_INDEX_MAX = (1 << 60) - 1`. -/
 def GrB_INDEX_MAX : Nat := (1 <<< 60) - 1
 
-/-- `tensor.rs:153` `ME_DIM = GrB_INDEX_MAX + 1`. -/
+/-- `tensor.rs` `ME_DIM = GrB_INDEX_MAX + 1`. -/
 def ME_DIM : Nat := GrB_INDEX_MAX + 1
 
-/-- `tensor.rs:169` `ME_NARROW_NCOLS = 1 << 31`. -/
+/-- `tensor.rs` `ME_NARROW_NCOLS = 1 << 31`. -/
 def ME_NARROW_NCOLS : Nat := 1 <<< 31
 
 /-- AXIOM-OK: `GB_Matrix_new` (`Source/matrix/GB_Matrix_new.c:28-31`) returns
@@ -45,7 +45,7 @@ def matrixNewOk (nrows ncols : Nat) : Bool :=
 
 /-- `ME_DIM` is exactly the largest dimension GraphBLAS accepts. So an `me`
 block declared with `ME_DIM` rows always constructs — the comment at
-tensor.rs:153 ("one more than the largest key `compound_key` can produce") is
+tensor.rs ("one more than the largest key `compound_key` can produce") is
 consistent with the C bound, not one past it. -/
 theorem me_dim_is_max : ME_DIM = GB_NMAX := by
   unfold ME_DIM GrB_INDEX_MAX GB_NMAX
@@ -103,7 +103,7 @@ theorem len_cast_lossless (n : Nat) (h : n < 2 ^ 64) : (n % 2 ^ 64) = n := Nat.m
 /-! ### `u64 → usize` blob-size casts (`vector.rs`)
 
 `n_bytes as usize`, `blob_size as usize`. On 64-bit this is the identity. The
-`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs:365)
+`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs)
 before the cast drives `copy_nonoverlapping`, so even under truncation the copy
 length matches the source buffer. This is the check that makes it safe. -/
 

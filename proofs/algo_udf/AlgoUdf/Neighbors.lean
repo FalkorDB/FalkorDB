@@ -2,7 +2,7 @@
 
 | here | there |
 | --- | --- |
-| `nodeRels`       | `Graph::get_node_relationships_by_type(v, &[], direction)` (graph.rs:2485, all types; a self-loop is reported once, from the outgoing half only when that half is enumerated); the edge list stands for the tensors. Same as proofs/graph_queries `nodeRelsByType` / `nodeRels_once` (not imported: that project is not a dependency) |
+| `nodeRels`       | `Graph::get_node_relationships_by_type(v, &[], direction)` (graph.rs, all types; a self-loop is reported once, from the outgoing half only when that half is enumerated); the edge list stands for the tensors. Same as proofs/graph_queries `nodeRelsByType` / `nodeRels_once` (not imported: that project is not a dependency) |
 | `collectEdges`   | `collect_edges` :183 |
 | `typeFilters`    | `types` parsing in `js_get_neighbors` :419-428 (non-string elements skipped) |
 | `applyTypes`     | the `type_filters` retain :486-493 |
@@ -19,7 +19,7 @@ structure E where
 
 inductive Dir | outgoing | incoming | both deriving DecidableEq
 
-/-- `get_node_relationships_by_type` with no type filter (graph.rs:2503-2526): the outgoing half if
+/-- `get_node_relationships_by_type` with no type filter (graph.rs): the outgoing half if
 enumerated, then the incoming half, which drops the self-loop (`src != id`) when the outgoing half
 is also enumerated. -/
 def nodeRels (es : List E) (v : Nat) : Dir → List E
@@ -27,7 +27,7 @@ def nodeRels (es : List E) (v : Nat) : Dir → List E
   | .incoming => es.filter (·.dst == v)
   | .both => es.filter (·.src == v) ++ (es.filter (·.dst == v)).filter (·.src != v)
 
-/-- `collect_edges` (js_classes.rs:183): the direction is handed to the graph. -/
+/-- `collect_edges` (js_classes.rs): the direction is handed to the graph. -/
 def collectEdges (es : List E) (v : Nat) (d : Dir) : List E := nodeRels es v d
 
 /-- What C returns: each incident edge once. -/

@@ -75,11 +75,11 @@ Every `bug_*` test asserts C's answer and fails today.
 
 ## Wave 5 CONFIRMED bugs (live C 18900 / Rust 18901 and `rtest/tests/w5.rs`)
 6. `graph.traverse([a])` omits `a` when it is its own neighbour (start pre-marked
-   visited, js_classes.rs:744). C `[0,1]`, Rust `[1]` (Rust's `getNeighbors` gives
+   visited, js_classes.rs). C `[0,1]`, Rust `[1]` (Rust's `getNeighbors` gives
    `[0,1]`). `traverse_drops_self_neighbour`; `bug_udf_traverse_omits_self_loop_neighbour`.
-8. `GRAPH.UDF LOAD "" …` is accepted (src/commands/udf.rs:117 checks only the max
+8. `GRAPH.UDF LOAD "" …` is accepted (src/commands/udf.rs checks only the max
    length) and its functions are uncallable ("UDF function '.f' not found in JS
-   context": repository.rs:105 qualifies `.f`, js_globals.rs:125 stores `f`).
+   context": repository.rs qualifies `.f`, js_globals.rs stores `f`).
    C: "empty lib name". `UdfGlobals.empty_lib_name_mismatch`; `bug_udf_empty_library_name_accepted`.
 
 ## Wave 5 shared with C (live-checked)
@@ -127,7 +127,7 @@ Every `bug_*` test asserts C's answer and fails today.
 * getNeighbors `types: [123]` silently disables the type filter
   (`Neighbors.non_string_types_disable_filter`); C crashes on that input (C bug).
 * betweenness samples deleted slots on the unfiltered path (`Compact.seed0_samples_deleted`).
-* Datetime `ts * 1000` is unchecked i64 arithmetic (type_convert.rs:215, 224): the release profile sets no
+* Datetime `ts * 1000` is unchecked i64 arithmetic (type_convert.rs): the release profile sets no
   `overflow-checks`, so it wraps (`Marshal.wrapI64`, `toJs_datetime`); a debug build would panic.
 
 ## Gaps (earlier waves)

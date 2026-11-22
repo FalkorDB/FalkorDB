@@ -125,7 +125,7 @@ structure Cache where
 /-- `rebuild_context`: the old state is dropped first (so a failed rebuild
 leaves `None`); every library is evaluated in order, the first failure aborts
 with its formatted message; then each qualified name found in the JS registry
-is cached under its name as registered (`low` = identity, js_context.rs:261). -/
+is cached under its name as registered (`low` = identity, js_context.rs). -/
 def rebuild (low : String → String) (libs : List Lib) (evalLib : Lib → Except Caught Unit)
     (raw : List String) (v : Nat) : Except String Cache :=
   match libs.findSome? (fun l => match evalLib l with | .error c => some (l, c) | .ok () => none) with
@@ -188,7 +188,7 @@ theorem rebuild_fail (low : String → String) (l : Lib) (rest : List Lib) (ev :
 
 /-! ## ThreadJsState drop order (W3-algo-2)
 
-`struct ThreadJsState` (js_context.rs:143-151) has no `Drop` impl, so Rust drops its
+`struct ThreadJsState` (js_context.rs) has no `Drop` impl, so Rust drops its
 fields in declaration order; `rebuild_context` (`drop(state.take())`, :213) and
 thread-local destruction both use that glue. QuickJS aborts if the runtime is freed
 while a context or a persistent function is alive. -/
@@ -230,7 +230,7 @@ def mapCallErr (msg : List Char) : String :=
   else "UDF Exception: " ++ String.ofList msg
 
 /-- `call_udf_bridge`: lookup by exact name (`low = id`), then convert args, call, convert
-back, all inside `with_graph(&graph, ..)` (js_context.rs:307-345): the graph is lent to the JS
+back, all inside `with_graph(&graph, ..)` (js_context.rs): the graph is lent to the JS
 helpers for this call only, and `with_graph` puts back whichever graph was lent before (null for an
 outermost call). Returns the result and the final thread-local state. -/
 def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (s : UdfClasses.GState γ)

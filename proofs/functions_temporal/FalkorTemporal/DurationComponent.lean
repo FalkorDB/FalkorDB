@@ -1,13 +1,13 @@
 import FalkorTemporal.Components
 import FalkorTemporal.Constructors
 /-!
-# `get_duration_component` (value.rs:613): chrono-bounded, unlike every other duration path
+# `get_duration_component` (value.rs): chrono-bounded, unlike every other duration path
 
 | here | there |
 | --- | --- |
 | `chronoK`                 | chrono `Utc.timestamp_opt(t, 0)`: `Single` iff the year is within `MIN_YEAR = -262143 ..= MAX_YEAR = 262142` (`chronoYearOk`, Constructors.lean) |
-| `getDurationComponent`    | `Value::get_duration_component` — `value.rs:613-700`, the `if … else if` chain in source order (the C `duration.c` decomposition) |
-| `decomposeDuration`       | `decompose_duration` — `temporal.rs:549`, what `format_duration`, `Duration ± Duration` and `construct_duration_secs` use (Duration.lean) |
+| `getDurationComponent`    | `Value::get_duration_component` — `value.rs`, the `if … else if` chain in source order (the C `duration.c` decomposition) |
+| `decomposeDuration`       | `decompose_duration` — `temporal.rs`, what `format_duration`, `Duration ± Duration` and `construct_duration_secs` use (Duration.lean) |
 
 `getDurationComponent` goes through chrono, so a duration whose instant leaves chrono's year range
 yields `null` for years/months/days/hours/minutes/seconds, although `check_date_range` (±`MAX_DATE_YEAR`
@@ -32,7 +32,7 @@ def knownDurationComponent (c : String) : Bool :=
   eqIC c "years" || eqIC c "months" || eqIC c "weeks" || eqIC c "days" || eqIC c "hours" ||
     eqIC c "minutes" || eqIC c "seconds"
 
-/-- `get_duration_component` (value.rs:613). The `Float` result is the integer it carries
+/-- `get_duration_component` (value.rs). The `Float` result is the integer it carries
 (every component is a small integer, exact in `f64`); `none` is `Value::Null`. `month_diff < 0`
 is dead (`dt.month() >= 1`) and omitted. -/
 def getDurationComponent (K : ChronoDT) (t : Int) (c : String) : Except String (Option Int) :=

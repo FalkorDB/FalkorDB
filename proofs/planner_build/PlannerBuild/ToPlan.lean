@@ -1,8 +1,8 @@
 import PlannerBuild.AndOf
 /-
-# `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` (mod.rs:1802-1843)
+# `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` (mod.rs)
 
-The binder removes every `Paren` (binder.rs:2150-2160), so
+The binder removes every `Paren` (binder.rs), so
 `expr_to_plan` does not unwrap one: a `Paren` is not a connective here
 (`wfI` admits inline variables only under AND/OR/NOT) and is planned like any
 other scalar. The scalar conjunction is `ExprIR::and_of` (`scalarFilter`).
@@ -12,12 +12,12 @@ meaning: every operator filters the rows of child 0 (`input` = the upstream
 stream `up`, `Argument` = the argument row); `SemiApply`/`AntiSemiApply` keep a
 row iff the sub-plan run on it is non-empty / empty; `OrApplyMultiplexer`
 keeps it iff some branch `i` has `has_result ^ anti_flags[i]`
-(or_apply_multiplexer.rs:80-86).
+(or_apply_multiplexer.rs).
 
 * `toPlan_correct`: with two-valued atoms, the plan keeps exactly the rows on
   which the predicate is `true` (`tv ι e`).
 * `toPlan_not_null_bug`: without that hypothesis it is false — `NOT (x OR p)`
-  with `x` null and no `p` match keeps the row (mod.rs:1717-1732 plans
+  with `x` null and no `p` match keeps the row (mod.rs plans
   `NOT(complex)` as `AntiSemiApply(input, plan(complex))`, which inverts
   "not true", not "false"). CONFIRMED Rust vs C (see PlannerBuild.lean).
 -/
@@ -58,7 +58,7 @@ def notInl (ι : List (Nat × QG)) : Ex → Option QG
 
 def keysOf (ι : List (Nat × QG)) : List Nat := ι.map Prod.fst
 
-/-- The scalar conjunction of `and_expr_to_plan` (mod.rs:1802-1843): `Filter(and_of(scalars))`. -/
+/-- The scalar conjunction of `and_expr_to_plan` (mod.rs): `Filter(and_of(scalars))`. -/
 def scalarFilter (xs : List Ex) (inp : FP) : FP :=
   match xs with
   | [] => inp
@@ -80,7 +80,7 @@ def toPlan (ι : List (Nat × QG)) : Ex → FP → FP
                 (cs.filter (fun c => !containsInlineVar (keysOf ι) c && !isTT c)) inp)
             | .not, c :: _ => .anti inp (toPlan ι c .arg)
             | d, cs => .filter (.node d cs) inp
-/-- `or_expr_to_plan`'s branch classification (mod.rs:1736-1798): scalar
+/-- `or_expr_to_plan`'s branch classification (mod.rs): scalar
 branches, and (plan, anti) branches, each in child order. -/
 def orClass (ι : List (Nat × QG)) : List Ex → List FP × List (FP × Bool)
   | [] => ([], [])
@@ -92,13 +92,13 @@ def orClass (ι : List (Nat × QG)) : List Ex → List FP × List (FP × Bool)
       | none =>
         if containsInlineVar (keysOf ι) c = false then (.filter c .arg :: (orClass ι cs).1, (orClass ι cs).2)
         else ((orClass ι cs).1, (toPlan ι c .arg, false) :: (orClass ι cs).2)
-/-- `and_expr_to_plan`'s loop over the non-scalar conjuncts (mod.rs:1802-1843). -/
+/-- `and_expr_to_plan`'s loop over the non-scalar conjuncts (mod.rs). -/
 def andFold (ι : List (Nat × QG)) : List Ex → FP → FP
   | [], p => p
   | c :: cs, p => andFold ι cs (if containsInlineVar (keysOf ι) c then toPlan ι c p else p)
 end
 
-/-- The body of `expr_to_plan` (mod.rs:1676-1732), by connective. -/
+/-- The body of `expr_to_plan` (mod.rs), by connective. -/
 def toPlanGen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) : FP :=
   match inlVar ι (.node d cs) with
   | some g => .semi inp (.patSub g)

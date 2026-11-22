@@ -11,9 +11,9 @@ in *traversal* order, and PathBuilder splices it into the named path.
 | --- | --- |
 | `PV` | the `Value::Node` / `Value::Relationship` elements of a `Value::Path` |
 | `enc` | the VLT binding `Value::Path([Node(s), Rel(e₁), Node(n₁), …])` (`runtime/ops/cond_var_len_traverse.rs`, `path_value`) |
-| `lastNode` | `elems.iter().rev().find_map(Node)` (`runtime/ops/path_builder.rs:95-101`) |
-| `revWalk` | the reversed loop `path_elems.iter().rev().skip(1)` (`path_builder.rs:115-137`): push the rel, next node = the endpoint other than the last node in `elems` (`:119-130`), intermediate nodes skipped (`:132-134`) |
-| `vltMain` | `PathBuilderOp::next`'s `Value::Path` arm (`path_builder.rs:88-139`): `vlt_first_matches` (`:102-105`) picks forward `skip(1)` (`:106-110`) or `revWalk` (`:111-138`) |
+| `lastNode` | `elems.iter().rev().find_map(Node)` (`runtime/ops/path_builder.rs`) |
+| `revWalk` | the reversed loop `path_elems.iter().rev().skip(1)` (`path_builder.rs`): push the rel, next node = the endpoint other than the last node in `elems`, intermediate nodes skipped |
+| `vltMain` | `PathBuilderOp::next`'s `Value::Path` arm (`path_builder.rs`): `vlt_first_matches` picks forward `skip(1)` or `revWalk` |
 | `vltFix` | the suggested fix: the pattern direction (`<-`) recorded at plan time picks the branch |
 
 For an incoming pattern `(m)<-[*]-(n)` the parser swaps the endpoints, so the
@@ -54,11 +54,11 @@ def Linked (g : Graph) : Nat → List (Nat × Nat) → Prop
   | s, (e, n) :: r =>
     (∃ x ∈ g, x.id = e ∧ ((x.src = s ∧ x.dst = n) ∨ (x.src = n ∧ x.dst = s))) ∧ Linked g n r
 
-/-- `elems.iter().rev().find_map(Node)` (`path_builder.rs:95-101`). -/
+/-- `elems.iter().rev().find_map(Node)` (`path_builder.rs`). -/
 def lastNode (elems : List PV) : Option Nat :=
   elems.reverse.findSome? fun | .node n => some n | _ => none
 
-/-- `path_builder.rs:115-137`, with `cur` = the last node already in `elems`. -/
+/-- `path_builder.rs`, with `cur` = the last node already in `elems`. -/
 def revWalk (g : Graph) : Option Nat → List PV → List PV
   | _, [] => []
   | cur, .node _ :: r => revWalk g cur r
@@ -66,7 +66,7 @@ def revWalk (g : Graph) : Option Nat → List PV → List PV
     let next := if cur == some (ends g e).1 then (ends g e).2 else (ends g e).1
     .rel e :: .node next :: revWalk g (some next) r
 
-/-- Main: `PathBuilderOp::next`, `Value::Path` arm (`path_builder.rs:88-139`).
+/-- Main: `PathBuilderOp::next`, `Value::Path` arm (`path_builder.rs`).
 The pattern direction is not an input. -/
 def vltMain (g : Graph) (elems pe : List PV) : List PV :=
   if pe.length ≤ 1 then elems

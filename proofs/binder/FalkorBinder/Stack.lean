@@ -5,13 +5,13 @@ import FalkorBinder.Scopes
 
 | here | there |
 | --- | --- |
-| `BSt` | `Binder` fields `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`, `match_rel_vars`, `retired_scope_vars` (binder.rs:139-169) |
-| `BSt.default` | `Default for Binder` binder.rs:172-183 |
-| `BSt.current`, `BSt.setCurrent` | `current_env` / `current_env_mut` binder.rs:344-348 |
-| `BSt.push`, `BSt.commit` | `push_scope` / `commit_scope` binder.rs:355-358 |
-| `sortedScopeVars`, `BSt.scopeVars` | `sorted_scope_vars` binder.rs:2991-2995, `scope_vars` binder.rs:213-215 |
+| `BSt` | `Binder` fields `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`, `match_rel_vars`, `retired_scope_vars` (binder.rs) |
+| `BSt.default` | `Default for Binder` binder.rs |
+| `BSt.current`, `BSt.setCurrent` | `current_env` / `current_env_mut` binder.rs |
+| `BSt.push`, `BSt.commit` | `push_scope` / `commit_scope` binder.rs |
+| `sortedScopeVars`, `BSt.scopeVars` | `sorted_scope_vars` binder.rs, `scope_vars` binder.rs |
 | `toSt` | the two innermost scopes as name resolution sees them (Resolve.lean `St`) |
-| `mergedLabels`, `updNode`, `updGraph` | `update_graph_labels` binder.rs:259-336 |
+| `mergedLabels`, `updNode`, `updGraph` | `update_graph_labels` binder.rs |
 -/
 namespace FalkorBinder
 
@@ -117,7 +117,7 @@ def updNode (nl : List (VKey × List Name)) (union : Bool) (n : VKey × List Nam
   | some acc => (n.1, mergedLabels union n.2 acc)
   | none => n
 
-/-- Nodes, then each relationship's two endpoints (binder.rs:277-336). -/
+/-- Nodes, then each relationship's two endpoints (binder.rs). -/
 def updGraph (nl : List (VKey × List Name)) (union : Bool) (nodes : List (VKey × List Name))
     (rels : List ((VKey × List Name) × (VKey × List Name))) :
     List (VKey × List Name) × List ((VKey × List Name) × (VKey × List Name)) :=

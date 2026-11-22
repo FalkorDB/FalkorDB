@@ -8,8 +8,8 @@ pending_commit as membership (`deleted : Nat → Bool` = `contains`). `RSet` is
 that abstraction, defined once here (it mirrors graph_persist's deleted-id list:
 ascending, distinct, `< 2^64`; `contains` is `decide (x ∈ elems)`, pending_commit's
 predicate). The three operations the PR adds are **definitions** on it, from the
-crate's documented semantics (roaring 0.11.5 `treemap/inherent.rs:508-562`,
-`treemap/iter.rs:132-184`):
+crate's documented semantics (roaring 0.11.5 `treemap/inherent.rs`,
+`treemap/iter.rs`):
 
 | here | crate |
 | --- | --- |

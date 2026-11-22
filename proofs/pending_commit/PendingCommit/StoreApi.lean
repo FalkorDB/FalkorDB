@@ -1,6 +1,6 @@
 import PendingCommit.StoreFold
 /-
-# `AttributeStore` API (attribute_store.rs:1150-1400)
+# `AttributeStore` API (attribute_store.rs)
 
 The store is a `DataBlock` (`D`). Every read below is stated in terms of
 `dread` (the entity's span) and every write in terms of the

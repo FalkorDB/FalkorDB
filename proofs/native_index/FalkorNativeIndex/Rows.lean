@@ -67,7 +67,7 @@ theorem keyset_and_contains (a b : KeySet) (k : Nat) : (a.and b).contains k = (a
   · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
   · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
 
-/-! ## `atoms` (`range.rs:356-363`) -/
+/-! ## `atoms` (`range.rs`) -/
 
 mutual
 theorem atomsGo_notSame (b : Bool) : ∀ (ms as : List IndexQuery), atomsGo b ms = some as →
@@ -127,7 +127,7 @@ theorem atoms_same : ∀ (m : IndexQuery) (b : Bool) (as : List IndexQuery), sam
   | .point _, b, as, hs, h => by simp [sameCombinator] at hs
 end
 
-/-- **No atom of an `AND` is itself an `AND`** (`conjunction`'s `debug_assert!`, `range.rs:307-312`): the
+/-- **No atom of an `AND` is itself an `AND`** (`conjunction`'s `debug_assert!`, `range.rs`): the
     members that are `And`s are opened, so `Selection.ofAtom`'s decline of an `And` conjunct is never
     reached from `Selection.of`. -/
 theorem atoms_and_no_and (ms as : List IndexQuery) (h : atoms (.and ms) = some as) :
@@ -136,7 +136,7 @@ theorem atoms_and_no_and (ms as : List IndexQuery) (h : atoms (.and ms) = some a
 theorem atoms_or_no_or (ms as : List IndexQuery) (h : atoms (.or ms) = some as) :
     ∀ a ∈ as, sameCombinator false a = false := atoms_same (.or ms) false as rfl h
 
-/-! ## `Selection::and` (`range.rs:329-336`) -/
+/-! ## `Selection::and` (`range.rs`) -/
 
 theorem encodeNumeric_list (es : List (Option Nat)) : encodeNumeric (.list es) = none := by
   simp [encodeNumeric]
@@ -184,12 +184,12 @@ theorem selection_and_matches (a b : Selection) (v : Value) :
       simp only [Selection.and, Selection.matches]
       simp [List.all_append, Bool.and_assoc]
 
-/-! ## `DistinctIter` (`numeric.rs:85-113`)
+/-! ## `DistinctIter` (`numeric.rs`)
 
 The streams of a union across attributes, read one after another, each doc yielded once. State: the
 streams not started, the rest of the current stream, the docs yielded so far. -/
 
-/-- `DistinctIter::next`'s loop (`numeric.rs:97-111`), with a fuel that every iteration spends (each one
+/-- `DistinctIter::next`'s loop (`numeric.rs`), with a fuel that every iteration spends (each one
     consumes a doc of the current stream or starts a stream, so it terminates). -/
 def distinctGo : Nat → List Nat → List (List Nat) → List Nat →
     Option (Nat × List (List Nat) × List Nat × List Nat)
@@ -282,12 +282,12 @@ theorem distinctRem_initial (streams : List (List Nat)) : distinctRem [] [] [] =
   congr 1
   exact List.filter_eq_self.2 (fun x _ => by simp)
 
-/-! ## What the builder asks of a version (`versioned.rs:782-844`) -/
+/-! ## What the builder asks of a version (`versioned.rs`) -/
 
-/-- `Graph::index_generation` (`versioned.rs:796-806`): the entry's generation and whether it is `Building`. -/
+/-- `Graph::index_generation` (`versioned.rs`): the entry's generation and whether it is `Building`. -/
 def indexGeneration (en : Option EN) : Option (Nat × Bool) := en.map (fun e => (e.generation, e.isBuilding))
 
-/-- `Graph::building_since` (`versioned.rs:831-844`): the generation of an entry that is `Building` here and,
+/-- `Graph::building_since` (`versioned.rs`): the generation of an entry that is `Building` here and,
     in `older`, absent or another generation. -/
 def buildingSince (ours older : Option EN) : Option Nat :=
   (ours.filter (fun o => o.isBuilding && older.all (fun t => t.generation != o.generation))).map (·.generation)
@@ -305,7 +305,7 @@ theorem buildingSince_iff (ours older : Option EN) (g : Nat) :
       by_cases hb : o.isBuilding = true <;> by_cases hg : t.generation = o.generation <;>
         simp [Option.filter, hb, hg] <;> omega
 
-/-- `Graph::indexes_to_build_since` (`versioned.rs:812-825`): the indexes `ours` holds `Building` that `older`
+/-- `Graph::indexes_to_build_since` (`versioned.rs`): the indexes `ours` holds `Building` that `older`
     does not hold as the same index, with their generations. -/
 def indexesToBuildSince {α : Type} (names : List α) (ours older : α → Option EN) : List (α × Nat) :=
   names.filterMap (fun n => (buildingSince (ours n) (older n)).map (fun g => (n, g)))
@@ -328,7 +328,7 @@ theorem indexesToBuildSince_idle {α : Type} (names : List α) (ours older : α 
 
 /-! ## The accessors of the managed index and the builder's sizing -/
 
-/-- `FalkorDbIndex::is_ready` (`falkordb_index.rs:851-861`): the column exists and is not `Building`. -/
+/-- `FalkorDbIndex::is_ready` (`falkordb_index.rs`): the column exists and is not `Building`. -/
 def FalkorDbIndex.isReady (x : FalkorDbIndex) (e : EntityType) (l a : String) : Bool :=
   (x.entry e l a).any (fun en => !en.isBuilding)
 
@@ -345,7 +345,7 @@ theorem isReady_readyNumeric (x : FalkorDbIndex) (e : EntityType) (l a : String)
   | none => simp
   | some en => cases hb : en.isBuilding <;> simp [hb]
 
-/-- `FalkorDbIndex::has_building_columns` (`falkordb_index.rs:1198-1203`): some column of either kind is
+/-- `FalkorDbIndex::has_building_columns` (`falkordb_index.rs`): some column of either kind is
     `Building`. -/
 def FalkorDbIndex.hasBuildingColumns (x : FalkorDbIndex) : Bool :=
   x.nodeColumns.any (fun p => p.2.isBuilding) || x.edgeColumns.any (fun p => p.2.isBuilding)
@@ -355,12 +355,12 @@ theorem hasBuildingColumns_iff (x : FalkorDbIndex) :
       (∃ p ∈ x.nodeColumns, p.2.isBuilding = true) ∨ (∃ p ∈ x.edgeColumns, p.2.isBuilding = true) := by
   simp [FalkorDbIndex.hasBuildingColumns, List.any_eq_true]
 
-/-- `FalkorDbIndex::column` / `column_mut` (`falkordb_index.rs:802-833`) reach the `RangeIndex` of the
+/-- `FalkorDbIndex::column` / `column_mut` (`falkordb_index.rs`) reach the `RangeIndex` of the
     entry (`IndexColumn::Range`, the only variant): the model's `numeric`/`setNumeric`. -/
 theorem column_is_numeric (x : FalkorDbIndex) (e : EntityType) (l a : String) :
     x.numeric e l a = (x.entry e l a).map (fun en => en.index.ix) := rfl
 
-/-- `Sizing::batch` (`online_build.rs:137-145`): `read`, between `floor` and `limit`. -/
+/-- `Sizing::batch` (`online_build.rs`): `read`, between `floor` and `limit`. -/
 def sizingBatch (floor read limit : Nat) : Nat := max (min read limit) floor
 
 theorem sizingBatch_spec (floor read limit : Nat) :
@@ -369,7 +369,7 @@ theorem sizingBatch_spec (floor read limit : Nat) :
   unfold sizingBatch
   refine ⟨by omega, by omega, by intro h1 h2; omega⟩
 
-/-- `RangeIndex::query` (`range.rs:609-616`): `Selection::of(query).map(|s| self.lookup(s))`. -/
+/-- `RangeIndex::query` (`range.rs`): `Selection::of(query).map(|s| self.lookup(s))`. -/
 def NumericIndex.queryRange (ix : NumericIndex) (q : IndexQuery) : Option (List Nat) :=
   (Selection.of q).map ix.lookupSel
 

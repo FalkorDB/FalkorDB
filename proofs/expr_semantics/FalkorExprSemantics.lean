@@ -17,7 +17,7 @@ proofs/columnar, `math.rs`/`conversion.rs`/`init_functions` in proofs/value_math
 `compare_floats` in proofs/value_order, `eval_quantifier`/`get_elements`/`range` in
 proofs/functions_str_list, `is_constant_true` in proofs/optimizer_rewrites; those rows cite the theorems.
 `toString(Float)`, `duration()` strings and the list-comprehension non-Boolean `WHERE` error
-(eval.rs:1082-1088) are modelled in proofs/value_math, proofs/functions_temporal and
+(eval.rs) are modelled in proofs/value_math, proofs/functions_temporal and
 proofs/functions_str_list. `FnRegistry.rustNames` holds the 134 registered names. The only rows left
 CONDITIONAL are `NeighborIter::new` and `new_reversed` (graph-wide adjacency/transpose invariants nobody
 proves; reason in COVERAGE.tsv).
@@ -25,7 +25,7 @@ proves; reason in COVERAGE.tsv).
 **2026-10-21 — every arm a list-comprehension body can reach (`Eval.lean`, `Frame.lean`,
 `EvalArms.lean`; `evaluate_param` moved to `EvalParam.lean`).** The expression tree `E` now has
 a faithful constructor for each `ExprIR` arm `eval_node` / `eval_compound` / `eval_case`
-(eval.rs:340-1134) treat specially: `AND` / `OR` (`andOrLoop`: Kleene logic, the first operand
+(eval.rs) treat specially: `AND` / `OR` (`andOrLoop`: Kleene logic, the first operand
 equal to the short-circuit value settles it and nothing after it is evaluated —
 `and_false_short_circuits`, `or_true_short_circuits`, `andOr_error_first`, `andOr_kleene`,
 `andOr_mismatch`), `XOR` (`xorLoop`: a `null` settles it, `xor_null_settles`, `xor_two`), `NOT`
@@ -106,37 +106,37 @@ and with a counterexample, reproduced against the real engine
 
 | here | there |
 | --- | --- |
-| `wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem` | `i64::wrapping_*` (`Value` ops, `graph/src/runtime/value.rs:946-1216`) |
-| `checkedNeg`             | `ExprIR::Negate` (`graph/src/runtime/eval.rs:733`) |
+| `wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem` | `i64::wrapping_*` (`Value` ops, `graph/src/runtime/value.rs`) |
+| `checkedNeg`             | `ExprIR::Negate` (`graph/src/runtime/eval.rs`) |
 | `FloatModel`             | `f64` — abstract; IEEE comparisons defined from `partial_cmp` |
 | `V`                      | `runtime::value::Value` (scalar subset: Null, Bool, Int, Float, String) |
-| `V.order`                | `OrderedEnum::order` (`value.rs:1219`) |
-| `compareFloats`          | `compare_floats` (`value.rs:1919`) |
-| `compareValue`           | `CompareValue::compare_value` (`value.rs:1250`) |
-| `vAdd` … `vRem`          | `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs:946-1216`) |
-| `evalCmp`                | `all_equals`, `all_not_equals` (`eval.rs:1724,1747`), `Lt/Gt/Le/Ge` (`eval.rs:447-466`, `754-797`) |
-| `compareValues`          | `vectorized::compare_values` (`vectorized.rs:239`) |
-| `kI64`, `kF64`, `cmpRow` | `compare_i64_column` / `compare_f64_column` (`vectorized.rs:105,162`), `compare_*_pairs` (`vector_expr.rs:798-840`) |
-| `CmpOp.flip`             | `CmpOp::flip` (`vectorized.rs:84`) |
-| `Col`, `Col.vals`        | `vector_expr::ExprColumn`, `ExprColumn::get` (`vector_expr.rs:80`) |
-| `typedLane`, `compareColumns` | `compare_columns` (`vector_expr.rs:734`) |
-| `arith`, `intLane`, `floatLane`, `floatOperand` | `arithmetic`, `int_lane`, `float_lane`, `float_operand` (`vector_expr.rs:881-988`) |
-| `scalarAndOr`            | `ExprIR::Or` / `ExprIR::And` in `eval_compound` (`eval.rs:644`, `695`) |
-| `scalarXor`              | `ExprIR::Xor` (`eval.rs:672`) |
-| `RowSt`, `stepRow`, `vecAndOr` | `VectorEval::eval_and_or` (`vector_expr.rs:388`) — per-position state |
-| `scalarCase`, `caseMatchScalar` | `ExprEval::eval_case` (`eval.rs:496`) |
-| `CSt`, `whenPhase`/`thenPhase`/`elsePhase`, `vecCase`, `caseMatchVec` | `VectorEval::eval_case` (`vector_expr.rs:474`) |
+| `V.order`                | `OrderedEnum::order` (`value.rs`) |
+| `compareFloats`          | `compare_floats` (`value.rs`) |
+| `compareValue`           | `CompareValue::compare_value` (`value.rs`) |
+| `vAdd` … `vRem`          | `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs`) |
+| `evalCmp`                | `all_equals`, `all_not_equals` (`eval.rs`), `Lt/Gt/Le/Ge` (`eval.rs`, `754-797`) |
+| `compareValues`          | `vectorized::compare_values` (`vectorized.rs`) |
+| `kI64`, `kF64`, `cmpRow` | `compare_i64_column` / `compare_f64_column` (`vectorized.rs`), `compare_*_pairs` (`vector_expr.rs`) |
+| `CmpOp.flip`             | `CmpOp::flip` (`vectorized.rs`) |
+| `Col`, `Col.vals`        | `vector_expr::ExprColumn`, `ExprColumn::get` (`vector_expr.rs`) |
+| `typedLane`, `compareColumns` | `compare_columns` (`vector_expr.rs`) |
+| `arith`, `intLane`, `floatLane`, `floatOperand` | `arithmetic`, `int_lane`, `float_lane`, `float_operand` (`vector_expr.rs`) |
+| `scalarAndOr`            | `ExprIR::Or` / `ExprIR::And` in `eval_compound` (`eval.rs`, `695`) |
+| `scalarXor`              | `ExprIR::Xor` (`eval.rs`) |
+| `RowSt`, `stepRow`, `vecAndOr` | `VectorEval::eval_and_or` (`vector_expr.rs`) — per-position state |
+| `scalarCase`, `caseMatchScalar` | `ExprEval::eval_case` (`eval.rs`) |
+| `CSt`, `whenPhase`/`thenPhase`/`elsePhase`, `vecCase`, `caseMatchVec` | `VectorEval::eval_case` (`vector_expr.rs`) |
 | `omap`, `ofold`          | Rust's `?` over a row set / over the children |
-| `containsGo`, `contains` | `impl Contains for ThinVec<Value>` (`value.rs:1881`), used by `ExprIR::In` (`eval.rs:798`) |
-| `applyPow`, `powStep`, `powFold` | `apply_pow` (`math.rs:328`); `ExprIR::Pow` in `eval_compound` (`eval.rs:843-851`, `reduce` calling `apply_pow(&acc?, &value?)`) |
-| `pow_constant_not_true`  | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:48`) |
-| `FalkorCore.rangeIter` / `rangeIterRel` (`core/FalkorCore/Range.lean`, shared with functions_str_list) | `RangeIter::next` (`eval.rs:115-128`), debug / release build |
-| `rangeIterSizeHint`      | `RangeIter::size_hint` (`eval.rs:130-133`, `usize::try_from(remaining).unwrap_or(usize::MAX)`) |
-| `rangeLen`, `rangeList`  | `length` in `eval_iter_expr` (`eval.rs:1237`, `length` inside `eval_iter_expr`; `core/FalkorCore/Range.lean`); the eager `range()` list |
-| `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs:251`) |
-| `signRust`               | `sign` (`math.rs:210`) |
-| `toIntegerFloat` / `toIntegerString` | `tointeger` (`graph/src/runtime/functions/conversion.rs:45`) |
-| `coalesce`               | `coalesce` (`math.rs:314`) |
+| `containsGo`, `contains` | `impl Contains for ThinVec<Value>` (`value.rs`), used by `ExprIR::In` (`eval.rs`) |
+| `applyPow`, `powStep`, `powFold` | `apply_pow` (`math.rs`); `ExprIR::Pow` in `eval_compound` (`eval.rs`, `reduce` calling `apply_pow(&acc?, &value?)`) |
+| `pow_constant_not_true`  | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs`) |
+| `FalkorCore.rangeIter` / `rangeIterRel` (`core/FalkorCore/Range.lean`, shared with functions_str_list) | `RangeIter::next` (`eval.rs`), debug / release build |
+| `rangeIterSizeHint`      | `RangeIter::size_hint` (`eval.rs`, `usize::try_from(remaining).unwrap_or(usize::MAX)`) |
+| `rangeLen`, `rangeList`  | `length` in `eval_iter_expr` (`eval.rs`, `length` inside `eval_iter_expr`; `core/FalkorCore/Range.lean`); the eager `range()` list |
+| `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs`) |
+| `signRust`               | `sign` (`math.rs`) |
+| `toIntegerFloat` / `toIntegerString` | `tointeger` (`graph/src/runtime/functions/conversion.rs`) |
+| `coalesce`               | `coalesce` (`math.rs`) |
 
 ## Modelling choices (what this does not cover)
 
@@ -252,7 +252,7 @@ inductive V (F : Type) where
   | str (s : String)
   | other (tag : Nat)   -- list / map / temporal / …: carries only its type order
 
-/-- `OrderedEnum::order` (value.rs:1219). -/
+/-- `OrderedEnum::order` (value.rs). -/
 def V.order : V F → Nat
   | .null => 32768 | .bool _ => 4096 | .int _ => 8192 | .flt _ => 16384
   | .str _ => 2048 | .other t => t
@@ -263,13 +263,13 @@ def cmpNat (a b : Nat) : Ordering := if a < b then .lt else if a = b then .eq el
 def cmpInt (a b : Int) : Ordering := if a < b then .lt else if a = b then .eq else .gt
 def cmpBool (a b : Bool) : Ordering := cmpNat a.toNat b.toNat
 
-/-- `compare_floats` (value.rs:1919). -/
+/-- `compare_floats` (value.rs). -/
 def compareFloats (a b : F) : Ordering × Flag :=
   match FM.pcmp a b with
   | some o => (o, .none)
   | none => (.lt, .nan)
 
-/-- `compare_value` restricted to scalars (value.rs:1250). Arm order matters:
+/-- `compare_value` restricted to scalars (value.rs). Arm order matters:
 same-type arms first, then mixed numerics, then null, then disjoint. -/
 def compareValue : V F → V F → Ordering × Flag
   | .bool a, .bool b => (cmpBool a b, .none)
@@ -302,7 +302,7 @@ def CmpOp.flip : CmpOp → CmpOp
   | .eq => .eq | .neq => .neq | .lt => .gt | .le => .ge | .gt => .lt | .ge => .le
 
 /-- The per-row evaluator (eval.rs): `=` is `all_equals`, `<>` is
-`all_not_equals` (eval.rs:1747: null makes it null, disjoint
+`all_not_equals` (eval.rs: null makes it null, disjoint
 types and NaN are unequal, else `ord != Equal`), the orderings are the `Lt/Gt/Le/Ge` arms. -/
 def evalCmp (op : CmpOp) (a b : V F) : V F :=
   let (o, fl) := compareValue a b
@@ -324,7 +324,7 @@ def evalCmp (op : CmpOp) (a b : V F) : V F :=
   | .ge => match fl with
     | .comparedNull | .disjoint => .null | .nan => .bool false | .none => .bool (!oLt o)
 
-/-- `vectorized::compare_values` (vectorized.rs:239; `Neq` arm as `all_not_equals`): `none` is null. -/
+/-- `vectorized::compare_values` (vectorized.rs; `Neq` arm as `all_not_equals`): `none` is null. -/
 def compareValues (a b : V F) (op : CmpOp) : Option Bool :=
   let (o, fl) := compareValue a b
   match op with
@@ -442,12 +442,12 @@ def AOp.flt : AOp → F → F → F
 def AOp.isDiv : AOp → Bool
   | .div | .rem => true | _ => false
 
-/-- `i64::MIN / -1` is an error (value.rs:1169, `checked_div`). -/
+/-- `i64::MIN / -1` is an error (value.rs, `checked_div`). -/
 def divOverflow : String := "ArgumentError: integer overflow in division"
 
 def typeMismatch : String := "Type mismatch: expected Integer, Float, or Null"
 
-/-- `impl Add/Sub/Mul/Div/Rem for Value` on scalars (value.rs:904-1175). `+`
+/-- `impl Add/Sub/Mul/Div/Rem for Value` on scalars (value.rs). `+`
 tests `Int/Float` before `Null` and the others test `Null` first; for these
 shapes the order is unobservable. Strings concatenate under `+`. -/
 def vArith (op : AOp) : V F → V F → Except String (V F)
@@ -480,7 +480,7 @@ def optV {α : Type} (g : α → V F) : Option α → V F
   | none => .null
   | some x => g x
 
-/-- `ExprColumn` (vector_expr.rs:64). A typed lane's null bitmap is the `Option`. -/
+/-- `ExprColumn` (vector_expr.rs). A typed lane's null bitmap is the `Option`. -/
 inductive Col (F : Type) where
   | scalar (v : V F)
   | ints (xs : List (Option Int))
@@ -500,13 +500,13 @@ def Col.WF (len : Nat) : Col F → Prop
   | .floats xs => xs.length = len
   | .values xs => xs.length = len
 
-/-- `int_lane` (vector_expr.rs:963). -/
+/-- `int_lane` (vector_expr.rs). -/
 def intLane (len : Nat) : Col F → Option (List (Option Int))
   | .ints xs => some xs
   | .scalar (.int v) => some (List.replicate len (some v))
   | _ => none
 
-/-- `float_lane` (vector_expr.rs:975), keeping which cells were promoted. -/
+/-- `float_lane` (vector_expr.rs), keeping which cells were promoted. -/
 def floatLane (len : Nat) : Col F → Option (List (Option (Cell F)))
   | .floats xs => some (xs.map (Option.map Cell.f))
   | .ints xs => some (xs.map (Option.map Cell.i))
@@ -514,7 +514,7 @@ def floatLane (len : Nat) : Col F → Option (List (Option (Cell F)))
   | .scalar (.int v) => some (List.replicate len (some (Cell.i v)))
   | _ => none
 
-/-- `float_operand` (vector_expr.rs:990). -/
+/-- `float_operand` (vector_expr.rs). -/
 def floatOperand : Col F → Bool
   | .floats _ => true
   | .scalar (.flt _) => true
@@ -526,7 +526,7 @@ def intRow (op : AOp) (x y : Option Int) : Option Int := do
 def fltRow (op : AOp) (x y : Option (Cell F)) : Option F := do
   let x ← x; let y ← y; pure (op.flt x.toF y.toF)
 
-/-- The divide gate (vector_expr.rs:892-902): no non-null row divides by zero and, for `/`,
+/-- The divide gate (vector_expr.rs): no non-null row divides by zero and, for `/`,
 none is `i64::MIN / -1`; either row is left to the scalar path. -/
 def divGate (op : AOp) (a b : List (Option Int)) : Bool :=
   (List.zip a b).all fun p => match p with
@@ -537,7 +537,7 @@ def divGate (op : AOp) (a b : List (Option Int)) : Bool :=
 def generic (op : AOp) (len : Nat) (l r : Col F) : Except String (Col F) :=
   ((List.zip (l.vals len) (r.vals len)).mapM fun p => vArith op p.1 p.2).map Col.values
 
-/-- `arithmetic` (vector_expr.rs:881), lane by lane in the Rust order. -/
+/-- `arithmetic` (vector_expr.rs), lane by lane in the Rust order. -/
 def arith (op : AOp) (len : Nat) (l r : Col F) : Except String (Col F) :=
   match intLane len l, intLane len r with
   | some a, some b =>
@@ -799,7 +799,7 @@ def cmpRow {α β : Type} (k : α → β → Bool) : Option α → Option β →
   | some x, some y => some (k x y)
   | _, _ => none
 
-/-- `compare_columns`' typed arms (vector_expr.rs:737-765); `none` is the
+/-- `compare_columns`' typed arms (vector_expr.rs); `none` is the
 `_ => None` fallthrough to the generic lane. The `Scalar` operand of a kernel
 is the threshold broadcast to every row. -/
 def typedLane (op : CmpOp) (len : Nat) : Col F → Col F → Option (List (Option Bool))
@@ -978,20 +978,20 @@ theorem fold_omap_comm {α σ γ : Type} (f : γ → α → σ → Option σ) :
 
 variable {R : Type}
 
-/-- `Value::name` (value.rs:1399) on the scalar subset. `.other` stands for every
+/-- `Value::name` (value.rs) on the scalar subset. `.other` stands for every
 non-scalar variant and carries only its type order, not its name: the model does not
 say what message a non-scalar operand produces, and no theorem below depends on it. -/
 def V.name : V F → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .flt _ => "Float"
   | .str _ => "String" | .other _ => "Other"
 
-/-- The `AND`/`OR`/`XOR` operand type error (eval.rs:644, :672, :695; vector_expr.rs:456).
+/-- The `AND`/`OR`/`XOR` operand type error (eval.rs; vector_expr.rs).
 It names the operand's type like C — `… but was {ir.name()}`. -/
 def boolMismatch (v : V F) : String :=
   s!"Type mismatch: expected Boolean or Null but was {v.name}"
 
 /-- Per-row `AND` (`sc = false`) / `OR` (`sc = true`) of `eval_compound`
-(eval.rs:629-700): children left to right, stop at the first child equal to
+(eval.rs): children left to right, stop at the first child equal to
 `sc`, remember a `null`, reject any other type. -/
 def scalarAndOr (sc : Bool) (r : R) : List (R → Except String (V F)) → Bool → Except String (V F)
   | [], isNull => .ok (if isNull then .null else .bool (!sc))
@@ -1007,7 +1007,7 @@ inductive RowSt where
   | live (isNull : Bool)
   | done
 
-/-- What one child does to one position (vector_expr.rs:421-454). A settled
+/-- What one child does to one position (vector_expr.rs). A settled
 position is not in `live`, so the child is not evaluated for it. -/
 def stepRow (sc : Bool) (c : R → Except String (V F)) (r : R) : RowSt → Option RowSt
   | .done => some .done
@@ -1162,7 +1162,7 @@ theorem and_short_circuit (r : R) (e : String) :
 theorem and_null_evaluates_rhs (r : R) (e : String) :
     scalarAndOr false r [constChild (.null : V F), fun _ => .error e] false = .error e := rfl
 
-/-- `XOR` (eval.rs:604-625): any null makes it null, otherwise parity. -/
+/-- `XOR` (eval.rs): any null makes it null, otherwise parity. -/
 def scalarXor : List (V F) → Option Bool → Except String (V F)
   | [], last => .ok (.bool (last.getD false))
   | .bool b :: vs, last => scalarXor vs (some (last.elim b (fun l => l != b)))
@@ -1209,14 +1209,14 @@ theorem xor_kleene (a b : Option Bool) :
 
 /-! ## `CASE` -/
 
-/-- The value form's match test in the per-row `eval_case` (eval.rs:500):
+/-- The value form's match test in the per-row `eval_case` (eval.rs):
 `compare_value == (Equal, None)`. -/
 def caseMatchScalar (w subj : V F) : Bool :=
   match compareValue w subj with
   | (.eq, .none) => true
   | _ => false
 
-/-- …and in the columnar `eval_case` (vector_expr.rs:505):
+/-- …and in the columnar `eval_case` (vector_expr.rs):
 `compare_values(.., Eq) == Some(true)`. -/
 def caseMatchVec (w subj : V F) : Bool := compareValues w subj .eq == some true
 
@@ -1241,7 +1241,7 @@ structure Arm (R F : Type) where
   whenE : R → Except String (V F)
   thenE : R → Except String (V F)
 
-/-- Per-row `eval_case` (eval.rs:485): arms in order, lazily; `ELSE` last. -/
+/-- Per-row `eval_case` (eval.rs): arms in order, lazily; `ELSE` last. -/
 def scalarCase (subj : Option (V F)) (r : R) (els : R → Except String (V F)) :
     List (Arm R F) → Except String (V F)
   | [] => els r
@@ -1256,19 +1256,19 @@ inductive CSt (F : Type) where
   | pend
   | got (v : V F)
 
-/-- Phase 1 of an arm: `WHEN` over the unclaimed rows (vector_expr.rs:493-520). -/
+/-- Phase 1 of an arm: `WHEN` over the unclaimed rows (vector_expr.rs). -/
 def whenPhase (subj : Option (V F)) (a : Arm R F) (r : R) : CSt F → Option (CSt F)
   | .un => match a.whenE r with
     | .error _ => none
     | .ok w => some (if caseMatch subj w then .pend else .un)
   | st => some st
 
-/-- Phase 2 of an arm: `THEN` over the rows it claimed (vector_expr.rs:522-528). -/
+/-- Phase 2 of an arm: `THEN` over the rows it claimed (vector_expr.rs). -/
 def thenPhase (a : Arm R F) (r : R) : CSt F → Option (CSt F)
   | .pend => (a.thenE r).toOption.map CSt.got
   | st => some st
 
-/-- The final `ELSE` over what no arm claimed (vector_expr.rs:535-541). -/
+/-- The final `ELSE` over what no arm claimed (vector_expr.rs). -/
 def elsePhase (els : R → Except String (V F)) (r : R) : CSt F → Option (CSt F)
   | .un => (els r).toOption.map CSt.got
   | st => some st
@@ -1349,7 +1349,7 @@ theorem case_agrees (subj : Option (V F)) (els : R → Except String (V F))
 
 /-! ## `IN` -/
 
-/-- `impl Contains for ThinVec<Value>` (value.rs:1762). -/
+/-- `impl Contains for ThinVec<Value>` (value.rs). -/
 def containsGo (v : V F) : List (V F) → Bool → V F
   | [], isNull => if isNull then .null else .bool false
   | x :: xs, isNull =>
@@ -1497,7 +1497,7 @@ theorem null_in (l : List (V F)) :
 
 The `Pow` arm folds its children with `?`, so an `Err` operand is never dropped. -/
 
-/-- The `apply_pow` type error (math.rs:328): `… but was {v.name()}`. -/
+/-- The `apply_pow` type error (math.rs): `… but was {v.name()}`. -/
 def powMismatch (v : V F) : String :=
   s!"Type mismatch: expected Integer, Float, or Null but was {v.name}"
 
@@ -1505,7 +1505,7 @@ def V.numOrNull : V F → Bool
   | .null | .int _ | .flt _ => true
   | _ => false
 
-/-- `apply_pow` (math.rs:328): a non-numeric, non-null operand (base
+/-- `apply_pow` (math.rs): a non-numeric, non-null operand (base
 first) is a type error; else `null` if either side is null; else `powf` of the two
 operands as `f64` (`get_numeric`). -/
 def applyPow (pw : F → F → F) (a b : V F) : Except String (V F) :=
@@ -1525,7 +1525,7 @@ def powStep (pw : F → F → F) (acc v : Except String (V F)) : Except String (
   | .ok _, .error e => .error e
   | .ok x, .ok y => applyPow pw x y
 
-/-- `ExprIR::Pow` in `eval_compound` (eval.rs:828-834):
+/-- `ExprIR::Pow` in `eval_compound` (eval.rs):
 `children.map(eval_node).reduce(|acc, value| apply_pow(acc?, value?))`, then
 `ok_or_else(..)??`. A single child is returned as is. -/
 def powFold (pw : F → F → F) : List (Except String (V F)) → Except String (V F)
@@ -1604,7 +1604,7 @@ theorem pow_bool_type_error (pw : F → F → F) (x : V F) (hx : x.numOrNull = t
 `rangeMath` is the eager sequence. -/
 
 /-- The mathematical sequence, which is what the eager `range()` function
-(math.rs:251, `(start..=end).step_by(step)`) returns. -/
+(math.rs, `(start..=end).step_by(step)`) returns. -/
 def rangeMath (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
   | 0, _ => []
   | fuel + 1, cur =>
@@ -1615,7 +1615,7 @@ def rangeMath (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
 
 /-! `rangeLen`, `rangeList`, `rangeIter` (debug), `rangeIterRel` (release) and `rangeIter_of_inRange`
 are the shared model in `proofs/core` (`FalkorCore/Range.lean`; `open FalkorCore`): `RangeIter::next`
-(`eval.rs:114-127`), `length` as `eval_iter_expr` computes it (`eval.rs:1224-1233`). -/
+(`eval.rs`), `length` as `eval_iter_expr` computes it (`eval.rs`). -/
 
 /-- Arithmetic facts about the element count `length` the caller computes. -/
 theorem rangeLen_bounds (a e s : Int) (hs : s ≠ 0)
@@ -1714,7 +1714,7 @@ theorem rangeIter_correct (a e s : Int) (ha : InI64 a) (he : InI64 e) (hs : s �
         · simp [h]; exact hdn (by omega))
   rw [this, hsa]
 
-/-- `RangeIter::size_hint` (`eval.rs:130-133`) is
+/-- `RangeIter::size_hint` (`eval.rs`) is
 `let n = usize::try_from(self.remaining).unwrap_or(usize::MAX); (n, Some(n))`, with
 `remaining: u64`. `usizeMax` is `usize::MAX` of the target (`2^64 - 1` on a 64-bit target,
 where the conversion never fails; `2^32 - 1` on a 32-bit one, where it saturates). -/
@@ -1759,7 +1759,7 @@ theorem rangeIter_max_fixed :
     rangeIter (-1) (rangeLen (I64MIN + 1) I64MIN (-1)) (I64MIN + 1) = .ok [I64MIN + 1, I64MIN] :=
   ⟨rfl, rfl⟩
 
-/-- `eval_iter_expr`'s `range` arm (`eval.rs:1205-1243`) wired to the real iterator:
+/-- `eval_iter_expr`'s `range` arm (`eval.rs`) wired to the real iterator:
 whenever it emits rows, they are exactly what `RangeIter` yields from
 `remaining = length`, with no overflow (debug) — the same list as the eager `range()`. -/
 theorem evalIter_range_is_iter (isList : Int → Option (List Int)) (isNull : Int → Bool)
@@ -1796,8 +1796,8 @@ theorem int_float_eq_not_transitive (a b : Int) (f : F) (hab : a ≠ b)
 
 /-! ## `sign`, `toInteger`, `coalesce` -/
 
-/-- `sign` (math.rs:210-219): the Float arm is
-`Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs:214), read
+/-- `sign` (math.rs): the Float arm is
+`Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs), read
 through `partial_cmp` against `0.0` (`FM.ofInt 0`), so NaN gives `0`. -/
 def signRust : V F → V F
   | .int n => .int (if n > 0 then 1 else if n < 0 then -1 else 0)
@@ -1835,7 +1835,7 @@ theorem toInteger_float_vs_string (m : Int) (h : m > I64MAX) :
   · congr 1; omega
   · simp only [ite_eq_right_iff, reduceCtorEq, imp_false]; omega
 
-/-- `coalesce` (math.rs:314) tests `*arg == Value::Null` through `PartialEq`,
+/-- `coalesce` (math.rs) tests `*arg == Value::Null` through `PartialEq`,
 i.e. the ordering half of `compare_value`. For every value whose type order is
 not `Null`'s, that is exactly "is not null". -/
 def coalesce : List (V F) → V F

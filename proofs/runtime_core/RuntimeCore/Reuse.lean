@@ -6,13 +6,12 @@ The borrow-free read of a published version is `QueryGraph.graph_published`/`gra
 
 * **"A read runtime runs no `borrow_mut` site."** Every `borrow_mut` on `runtime.g`
   (audit in `Protocol`) sits in a SET/CREATE/REMOVE/DELETE/MERGE operator, in `CommitOp`
-  (refuses `!write`, `ops/commit.rs:50`) or in index DDL (refuses `!write`,
-  `index_ddl.rs:38,94`); write procedures are refused on a read runtime
-  (`eval.rs:959,979`, `ops/procedure_call.rs:67`). A read runtime is built only for a plan
-  with no `Commit`/`CreateIndex`/`DropIndex` (`graph_core.rs:607-631`, `:687-698`,
-  `record.rs:67-83`). `redis_layer`'s `RedisLayer.Ro` models the parser's `write` flag and
-  the planner's `Commit` insertion (`cypher.rs:780-926`, `planner/mod.rs:2522-2524`,
-  `:2853-2856`); here we prove from it that such a plan contains no updating operator
+  (refuses `!write`, `ops/commit.rs`) or in index DDL (refuses `!write`,
+  `index_ddl.rs`); write procedures are refused on a read runtime
+  (`eval.rs`, `ops/procedure_call.rs`). A read runtime is built only for a plan
+  with no `Commit`/`CreateIndex`/`DropIndex` (`graph_core.rs`,
+  `record.rs`). `redis_layer`'s `RedisLayer.Ro` models the parser's `write` flag and
+  the planner's `Commit` insertion (`cypher.rs`, `planner/mod.rs`); here we prove from it that such a plan contains no updating operator
   (`read_plan_no_update`), discharging the premise.
 * **Claim 5.** runtime_core's accessor models (`RuntimeCore.Accessors`) are functions of
   the world `W` the read sees (deleted snapshot, pending, *committed graph*) and never of

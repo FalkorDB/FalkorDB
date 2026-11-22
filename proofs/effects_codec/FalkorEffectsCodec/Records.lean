@@ -5,13 +5,13 @@ import FalkorEffectsCodec.Value
 | here | there |
 | --- | --- |
 | `IdCodec`        | `IdList` + `read_ids` (`id_list.rs`) — abstract here, instantiated by `IdLink.idListCodec` with `proofs/id_list`'s model |
-| `wLabelSet`/`rLabelSet` | `LabelSet` (`blocks.rs:54-81`) |
-| `wAttrIds`/`rAttrIds`   | `AttrIds` (`blocks.rs:100-124`) |
-| `wRows`/`rRows`         | `AttrValues` (`blocks.rs:154-189`) |
-| `Rec`            | `Record` (`records.rs:497`) — batchable variants and `ADD_ATTRIBUTE` |
-| `encRec`         | `impl EffectEncode<3> for Record` (`records.rs:925`) |
-| `readRec`        | `read_record` (`records.rs:619`) |
-| `readAll`        | `Records::next` (`records.rs:1250`) |
+| `wLabelSet`/`rLabelSet` | `LabelSet` (`blocks.rs`) |
+| `wAttrIds`/`rAttrIds`   | `AttrIds` (`blocks.rs`) |
+| `wRows`/`rRows`         | `AttrValues` (`blocks.rs`) |
+| `Rec`            | `Record` (`records.rs`) — batchable variants and `ADD_ATTRIBUTE` |
+| `encRec`         | `impl EffectEncode<3> for Record` (`records.rs`) |
+| `readRec`        | `read_record` (`records.rs`) |
+| `readAll`        | `Records::next` (`records.rs`) |
 
 Modelled: `CREATE_NODE`, `UPDATE_NODE`, `DELETE_NODE`, `SET_LABELS`,
 `REMOVE_LABELS`, `CREATE_EDGE`, `DELETE_EDGE`, `ADD_ATTRIBUTE`. Not modelled:
@@ -44,10 +44,10 @@ def rAttrIds : R (List Nat) := do
   let n ← u16; let n ← guardCount n 2; readN n u16
 
 /-- `AttrValues` writes every row it holds; **it does not check** that there
-are `count × attrs` of them (`blocks.rs:155-168`). -/
+are `count × attrs` of them (`blocks.rs`). -/
 def wRows : List Val → Except EErr Bytes := encL I
 
-/-- `AttrValues::decode_sized` (`blocks.rs:177-188`). -/
+/-- `AttrValues::decode_sized` (`blocks.rs`). -/
 def rRows (count attrs : Nat) : R (List Val) := do
   let total ← guardCount (count * attrs) MIN_VALUE_BYTES
   readN total (decodeV utf8)
@@ -65,7 +65,7 @@ def seqE (xs : List (Except EErr Bytes)) : Except EErr Bytes :=
     | .error e, _ => .error e
     | _, .error e => .error e) (.ok [])
 
-/-- `records.rs:956-968`: `check_row_shape`, header `opcode · count`
+/-- `records.rs`: `check_row_shape`, header `opcode · count`
 from `ids.count()` (`write_header` refuses a zero count), then the
 blocks. Both conditions the decoder needs are now checked here. -/
 def encRec : Rec C.T → Except EErr Bytes
@@ -217,7 +217,7 @@ theorem readRec_addAttribute (id : Nat) (name rest : Bytes) (hid : id < 2 ^ 16)
 
 /-! ## Framing: a payload is its records, back to back -/
 
-/-- `Records::next` (`records.rs:1250-1257`): stop when the reader is empty,
+/-- `Records::next` (`records.rs`): stop when the reader is empty,
 yield one record otherwise, fuse on the first error. -/
 def readAll : Nat → R (List (Rec C.T))
   | 0 => fun _ => .error .outOfFuel

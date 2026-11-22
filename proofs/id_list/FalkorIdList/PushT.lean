@@ -4,35 +4,34 @@ import FalkorIdList.CostProps
 
 `IdListPush.push c` takes the decision `c` as a parameter and its theorems hold
 for every `c`. Here the tally is threaded through `push` exactly where the Rust
-touches `self.run` (`restart` at `:875`, `:989`, `:1023`, `:1105`; `absorb` at
-`:1015`), and `c` *is* `prefers_bitmap()` of the tally after the absorb. So every
+touches `self.run` (`restart` at; `absorb` at), and `c` *is* `prefers_bitmap()` of the tally after the absorb. So every
 `IdListPush` theorem (`push_ok`, `pushAll_ok`, `fromIter_iter`) applies to the
 list the Rust actually builds (`pushT_st`, `pushAllT_ok`).
 -/
 namespace IdListCost
 open IdListPush IdListWire
 
-/-- `claim_direction` (`:857`) on the tally: it restarts the run on a flip. -/
+/-- `claim_direction` on the tally: it restarts the run on a flip. -/
 def claimT (st : St) (d : Bool) (t : Tally) : Tally :=
   match st.desc with
   | none => t
   | some d' => if d' = d then t else restart
 
-/-- The pre-extension `claim_direction` calls (`:896-908`) on the tally. -/
+/-- The pre-extension `claim_direction` calls on the tally. -/
 def claimStepT (st : St) (id : Nat) (t : Tally) : Tally :=
   match st.segs.getLast? with
   | some (.range b 1) => if b + 1 = id then claimT st false t else t
   | some (.rdesc b 1) => if id + 1 = b then claimT st true t else t
   | _ => t
 
-/-- The tally after `:1012-1016`: the superseded last segment is absorbed iff it
+/-- The tally after: the superseded last segment is absorbed iff it
 is a `Range`/`RangeDescending`. -/
 def absorbedT (R : Roaring) (st : St) (t : Tally) : Tally :=
   match st.segs.getLast? with
   | some s => if Seg.RL s then absorb R t s else t
   | none => t
 
-/-- The decision `maybe_collapse_run` (`:1029`) takes: `prefers_bitmap()`. -/
+/-- The decision `maybe_collapse_run` takes: `prefers_bitmap()`. -/
 def decision (R : Roaring) (st0 : St) (t0 : Tally) (id : Nat) : Bool :=
   let st := claimStep { st0 with len := st0.len + 1 } id
   prefersBitmap (absorbedT R st (claimStepT { st0 with len := st0.len + 1 } id t0))

@@ -9,9 +9,9 @@ is keyed by `(db, key)` while the registry stays keyed by the name only, as in R
 | here | there (fb3d516d0) |
 | --- | --- |
 | `Srv.keys`  | the Redis keyspace, one per database (`RedisModule_OpenKey` is per selected db) |
-| `Srv.reg`   | `GRAPH_REGISTRY: Mutex<HashMap<String, Arc<…>>>` `src/graph_core.rs:136-138` — no db index |
-| `query`     | `graph_query` `src/commands/query.rs:72-147`: open the key in the current db; existing graph → `query_mut`; absent → new graph, `set_value` at `:145`, `register_graph(name, graph)` `:146` (`GraphCore.register`, which displaces the old entry, `graph_core.rs:150`) |
-| `writeCheck`| `QuerySession` writer escalation `src/query_session.rs:360`: `graph_is_registered` (`GraphCore.isRegistered`) else "graph was deleted or replaced while the query was running, aborting" |
+| `Srv.reg`   | `GRAPH_REGISTRY: Mutex<HashMap<String, Arc<…>>>` `src/graph_core.rs` — no db index |
+| `query`     | `graph_query` `src/commands/query.rs`: open the key in the current db; existing graph → `query_mut`; absent → new graph, `set_value` at, `register_graph(name, graph)` (`GraphCore.register`, which displaces the old entry, `graph_core.rs`) |
+| `writeCheck`| `QuerySession` writer escalation `src/query_session.rs`: `graph_is_registered` (`GraphCore.isRegistered`) else "graph was deleted or replaced while the query was running, aborting" |
 
 Every query in the repro is a write (`CREATE`), so it reaches the writer check.
 -/

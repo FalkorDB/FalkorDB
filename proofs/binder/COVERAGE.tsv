@@ -58,6 +58,5 @@ graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2933	PROVEN
 graph/src/planner/binder.rs	denotes	2984	PROVEN	Resolve.denotes: denotes_freshVar, denotes_freshAnon, denotes_anon_iff, denotes_exclusive (no name denotes an unnamed variable)
 graph/src/planner/binder.rs	sorted_scope_vars	2991	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2999	PROVEN	mergeSV_ge, mergeSV_covers
-graph/src/planner/mod.rs	Planner::fresh_var	1018	PROVEN	Table.plannerFresh: plannerFresh_spec, plannerFresh_covers, mint_fresh_iff (planner mints len, len+1, ...)
 graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1724	PROVEN	Scopes.accumulateFrom (create: keep_new, comprehension: !keep_new): accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels
 graph/src/planner/binder.rs	constants_equal	2880	PROVEN	AggEq.constEq (Int/Float exact via fint, else Value == = compare_value): constEq_refl, constEq_symm, int_float_iff

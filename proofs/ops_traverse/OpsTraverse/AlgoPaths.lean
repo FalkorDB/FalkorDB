@@ -37,7 +37,7 @@ inductive CV (F : Type) where
 inductive Dir | outgoing | incoming | both
   deriving DecidableEq
 
-/-- `EdgeDirection::from_str` (graph.rs:216). -/
+/-- `EdgeDirection::from_str` (graph.rs). -/
 def Dir.parse : String → Option Dir
   | "outgoing" => some .outgoing
   | "incoming" => some .incoming

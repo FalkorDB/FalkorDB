@@ -6,39 +6,39 @@ Same list model as `OrderSet.lean` (the `Vec<T>` *is* the list).
 
 | here | there |
 | --- | --- |
-| `emptyS`     | `Default::default` (orderset.rs:27) |
-| `fromVecGo`/`fromVec` | `OrderSet::from_vec` (orderset.rs:42) — drops later duplicates in every build, first wins (loop state `acc` = `vec[..i]`) |
-| `iterS`      | `OrderSet::iter` (orderset.rs:77) |
-| `lenS`       | `OrderSet::len` (orderset.rs:82) |
-| `isEmptyS`   | `OrderSet::is_empty` (orderset.rs:87) |
-| `clearS`     | `OrderSet::clear` (orderset.rs:112) |
-| `getS`       | `OrderSet::get` (orderset.rs:129) — `Vec::get` |
-| `indexS`     | `Index<usize>` (orderset.rs:148) — `.error` = the `expect` panic |
-| `intoIterS`  | `IntoIterator` (orderset.rs:160) |
+| `emptyS`     | `Default::default` (orderset.rs) |
+| `fromVecGo`/`fromVec` | `OrderSet::from_vec` (orderset.rs) — drops later duplicates in every build, first wins (loop state `acc` = `vec[..i]`) |
+| `iterS`      | `OrderSet::iter` (orderset.rs) |
+| `lenS`       | `OrderSet::len` (orderset.rs) |
+| `isEmptyS`   | `OrderSet::is_empty` (orderset.rs) |
+| `clearS`     | `OrderSet::clear` (orderset.rs) |
+| `getS`       | `OrderSet::get` (orderset.rs) — `Vec::get` |
+| `indexS`     | `Index<usize>` (orderset.rs) — `.error` = the `expect` panic |
+| `intoIterS`  | `IntoIterator` (orderset.rs) |
 -/
 set_option linter.unusedSectionVars false
 namespace FalkorRuntimeDS.OrderSetModel
 
 variable {α : Type}
 
-/-- orderset.rs:27 -/
+/-- orderset.rs -/
 def emptyS : List α := []
-/-- orderset.rs:77 -/
+/-- orderset.rs -/
 def iterS (l : List α) : List α := l
-/-- orderset.rs:82 -/
+/-- orderset.rs -/
 def lenS (l : List α) : Nat := l.length
-/-- orderset.rs:87 -/
+/-- orderset.rs -/
 def isEmptyS (l : List α) : Bool := l.isEmpty
-/-- orderset.rs:112 -/
+/-- orderset.rs -/
 def clearS (_l : List α) : List α := []
-/-- orderset.rs:129 -/
+/-- orderset.rs -/
 def getS (l : List α) (i : Nat) : Option α := l[i]?
-/-- orderset.rs:148 — `self.vec.get(index).expect("no entry found for key")`. -/
+/-- orderset.rs — `self.vec.get(index).expect("no entry found for key")`. -/
 def indexS (l : List α) (i : Nat) : Except String α :=
   match l[i]? with
   | some x => .ok x
   | none => .error "no entry found for key"
-/-- orderset.rs:160 -/
+/-- orderset.rs -/
 def intoIterS (l : List α) : List α := l
 
 section Props
@@ -77,19 +77,19 @@ theorem foldl_insertS_unique (acc l : List α) (h : Nodup (acc ++ l)) :
     rw [ih (acc ++ [x]) (by simpa using h)]
     simp
 
-/-! ### `from_vec` (orderset.rs:42): drop later duplicates, first wins -/
+/-! ### `from_vec` (orderset.rs): drop later duplicates, first wins -/
 
 section FromVec
 variable [EquivBEq α]
 
-/-- orderset.rs:43-51, the `while i < vec.len()` loop. `acc` is the kept
+/-- orderset.rs, the `while i < vec.len()` loop. `acc` is the kept
 prefix `vec[..i]`, the second list the unvisited suffix: a visited element
 already `contains`ed in the prefix is `vec.remove(i)`d, else `i += 1`. -/
 def fromVecGo : List α → List α → List α
   | acc, [] => acc
   | acc, x :: t => if containsS acc x then fromVecGo acc t else fromVecGo (acc ++ [x]) t
 
-/-- orderset.rs:42 -/
+/-- orderset.rs -/
 def fromVec (l : List α) : List α := fromVecGo [] l
 
 theorem fromVecGo_nodup (acc l : List α) (h : Nodup acc) : Nodup (fromVecGo acc l) := by

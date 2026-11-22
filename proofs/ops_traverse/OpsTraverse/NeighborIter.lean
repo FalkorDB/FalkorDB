@@ -1,5 +1,5 @@
 /-
-# `NeighborIter` (graph/src/runtime/eval.rs:164-250): the `shortestPath()` neighbour source
+# `NeighborIter` (graph/src/runtime/eval.rs): the `shortestPath()` neighbour source
 
 | here | there |
 | --- | --- |

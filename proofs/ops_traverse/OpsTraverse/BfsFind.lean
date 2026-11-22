@@ -1,6 +1,6 @@
 import OpsTraverse.SearchBase
 /-
-# `bfs_find_bound` (graph/src/runtime/functions/algo_procedures.rs:2426)
+# `bfs_find_bound` (graph/src/runtime/functions/algo_procedures.rs)
 
 Level-synchronised BFS from the source for the target, one parent per node, then the parent chain
 folded source-to-target. `step u` is `node_successors` (far endpoint and the edge, in iterator

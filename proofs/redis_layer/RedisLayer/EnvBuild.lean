@@ -5,9 +5,9 @@ import RedisLayer.QuerySession
 
 | here | there |
 | --- | --- |
-| `scanLen`, `entriesOf`, `leakDeepCopy`, `view` | `graph::env_snapshot::leak_deep_copy`, `graph/src/env_snapshot.rs:22-37` |
-| `Ld`, `syncDeepbind` | `sync_deepbind_environ`, `src/module_init.rs:158-199` (Linux only; called from `graph_init` after the `KMP_*` `set_var` calls) |
-| `publish`, `warn` | `RedisBuildHost::publish` / `warn`, `src/graph_core.rs:1752-1768` (`impl BuildHost`, feature `index-falkordb`) |
+| `scanLen`, `entriesOf`, `leakDeepCopy`, `view` | `graph::env_snapshot::leak_deep_copy`, `graph/src/env_snapshot.rs` |
+| `Ld`, `syncDeepbind` | `sync_deepbind_environ`, `src/module_init.rs` (Linux only; called from `graph_init` after the `KMP_*` `set_var` calls) |
+| `publish`, `warn` | `RedisBuildHost::publish` / `warn`, `src/graph_core.rs` (`impl BuildHost`, feature `index-falkordb`) |
 
 **`leak_deep_copy`.** A C `environ` is a pointer to a NULL-terminated array of pointers to
 NUL-terminated strings. `src : Option (List (Option Bytes))` is that pointer (`none` = NULL) and the

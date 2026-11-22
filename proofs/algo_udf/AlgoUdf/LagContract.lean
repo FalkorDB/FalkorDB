@@ -15,10 +15,10 @@ The compact matrix and the cached transpose are pinned by row
 | `newOrient`   | GraphBLAS `GxB_Matrix_new_arena` (`deps/GraphBLAS` ea79e35, `Source/matrix/GxB_Matrix_new_arena.c:89-101`): `ncols == 1` → by column; `nrows == 1` → by row; else the global format (by row) |
 | `checkGraph`  | `LAGraph_CheckGraph` (`deps/LAGraph` d01064d, `src/utility/LAGraph_CheckGraph.c:46-56`): non-square or not `GrB_ROWMAJOR` → `LAGRAPH_INVALID_GRAPH` |
 | `Algo`, `checks` | `LAGr_ConnectedComponents` → `LG_CC_FastSV6/7` (`CheckGraph` at :263/:279), `LAGr_PageRank` (:76), `LAGr_Betweenness` (:131) check; `LAGraph_cdlp` does not |
-| `pinRowMajor` | `pin_row_major` `:584`: `GrB_Matrix_set_INT32(m, GrB_ROWMAJOR, GrB_STORAGE_ORIENTATION_HINT)` (held by row afterwards, whatever the shape) |
-| `newCompactBoolMatrix`, `compactBuild` | `new_compact_bool_matrix` `:596` (`GrB_Matrix_new(&m, GrB_BOOL, n, n)` `:600`, then `pin_row_major`), called by `build_compact_adj_from_tensors` `:624` (`:680`) / `..._symmetric_...` `:689` (`:749`), `n` = projection size |
-| `cachedAT`, `cacheTranspose`, `usesAT` | `LAGraph_Cached_AT` (transpose made by `GrB_Matrix_new(ncols, nrows)`); `cache_transpose` `:608` pins `G->AT` by row; called by `algo_pagerank` `:838`, `algo_betweenness` `:1069` (and `algo_maxflow` `:3326`, not on the compact path); `algo_wcc` caches no `AT` |
-| `projectedRun` | `algo_wcc` `:896` (check `:959`), `algo_pagerank` `:777` (check `:856`), `algo_betweenness` `:997` (check `:1111`): `if info != 0 { return Err(format!("… failed: {info}")) }` |
+| `pinRowMajor` | `pin_row_major`: `GrB_Matrix_set_INT32(m, GrB_ROWMAJOR, GrB_STORAGE_ORIENTATION_HINT)` (held by row afterwards, whatever the shape) |
+| `newCompactBoolMatrix`, `compactBuild` | `new_compact_bool_matrix` (`GrB_Matrix_new(&m, GrB_BOOL, n, n)`, then `pin_row_major`), called by `build_compact_adj_from_tensors` / `..._symmetric_...`, `n` = projection size |
+| `cachedAT`, `cacheTranspose`, `usesAT` | `LAGraph_Cached_AT` (transpose made by `GrB_Matrix_new(ncols, nrows)`); `cache_transpose` pins `G->AT` by row; called by `algo_pagerank`, `algo_betweenness` (and `algo_maxflow`, not on the compact path); `algo_wcc` caches no `AT` |
+| `projectedRun` | `algo_wcc` (check), `algo_pagerank` (check), `algo_betweenness` (check): `if info != 0 { return Err(format!("… failed: {info}")) }` |
 | `compactBuildPre3572`, `projectedRunPre3572` | the same without the pinning (the pre-#3572 behaviour, kept as a historical counterexample): `GrB_Matrix_new` unpinned (1×1 by column) and `LAGraph_Cached_AT` unpinned |
 
 AXIOMATISED (as definitions, no Lean `axiom`): the two FFI functions above. When the
