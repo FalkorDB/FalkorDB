@@ -13,16 +13,16 @@ namespace FalkorParserGrammar.C
 /-- Places where the Rust parser accepts more than Cypher.g4. -/
 structure Ext where
   /-- `MATCH a MATCH b` / `CREATE a CREATE b`: the next clause's keyword
-  continues the same pattern (cypher.rs:1571-1576, W2-binder-1). -/
+  continues the same pattern (W2-binder-1). Off in Rust since #2981: the
+  keyword ends the pattern (cypher.rs), and starts a new clause. -/
   fold : Bool
   /-- `p = allShortestPaths(...)` in MATCH (Neo4j syntax, not in Cypher.g4). -/
   asp : Bool
 
 def Ext.g4 : Ext := ⟨false, false⟩
-def Ext.rust : Ext := ⟨true, true⟩
+def Ext.rust : Ext := ⟨false, true⟩
 
-/-- `( oC_Variable SP? )?` with the action of `parse_alias_or_unnamed` (#3528): a written
-variable is `Alias.named`, an absent one the next unnamed number `Alias.anon`. -/
+/-- `( oC_Variable SP? )?` with the fresh-name action for an absent one. -/
 inductive GOptVar : PS → Alias → PS → Prop
   | named {s v} : identOf s.cur = some v → GOptVar s (.named v) s.adv
   | anon {s} : identOf s.cur = none → GOptVar s (.anon s.2) (s.1, s.2 + 1)
@@ -77,7 +77,7 @@ theorem optVar_sound {a : Option Nat} {s s1 s2 : PS} {al : Alias}
     (h1 : tryIdent s = .ok a s1) (h2 : aliasOr a s1 = .ok al s2) :
     GOptVar s al s2 := by
   rcases tryIdent_ok h1 with ⟨v, rfl, hv, rfl⟩ | ⟨rfl, hv, rfl⟩
-  · obtain ⟨rfl, rfl⟩ := pure_ok (show (pure (.named v) : P Alias) s.adv = _ from h2); exact .named hv
+  · obtain ⟨rfl, rfl⟩ := pure_ok (show (pure (Alias.named v) : P Alias) s.adv = _ from h2); exact .named hv
   · simp only [aliasOr, anonFresh, R.ok.injEq] at h2; obtain ⟨rfl, rfl⟩ := h2; exact .anon hv
 
 /-- **parse_node_pattern is sound**: an accepted node pattern is an
@@ -198,7 +198,7 @@ theorem varLenP_sound (s : PS) r s' (h : varLenP s = .ok r s') : GRange s r s' :
       exact .star hs (.dots ga hd (hopP_sound _ _ _ h4))
 
 /-- `oC_RelationshipDetail` (Cypher.g4:246-247) after `[`, with the
-`[*1..1]` → single hop normalisation (cypher.rs:3112-3116). -/
+`[*1..1]` → single hop normalisation (cypher.rs). -/
 inductive GDetail (o : Oracle) (x : Ext) : PS → Alias × List Nat × ET × Option (Nat × Option Nat) → PS → Prop
   | mk {s a s1 ts s2 r s3 m s4} : GOptVar s a s1 →
       (ts = [] ∧ s2 = s1 ∨ s1.cur = .colon ∧ GTypes x s1.adv [] ts s2) →
@@ -212,7 +212,7 @@ inductive GRel (o : Oracle) (x : Ext) : QNode Alias → PS → QRel Alias × QNo
       (inc = true ∧ s.cur = .lt ∧ s1 = s.adv.adv ∨ inc = false ∧ s1 = s.adv) →
       (inc = true → s.adv.cur = .dash) → (inc = false → s.cur = .dash) →
       (s1.cur = .lbrack ∧ GDetail o x s1.adv d s2 ∨
-        d = (.anon s1.2, [], leaf .map, none) ∧ s2 = (s1.1, s1.2 + 1)) →
+        d = (Alias.anon s1.2, [], leaf .map, none) ∧ s2 = (s1.1, s1.2 + 1)) →
       s2.cur = .dash →
       (out = true ∧ s2.adv.cur = .gt ∧ s3 = s2.adv.adv ∨ out = false ∧ s3 = s2.adv) →
       GNode o s3 dst s4 →
@@ -269,7 +269,7 @@ theorem relP_sound (o : Oracle) (F : Nat) (cl : CK) (src : QNode Alias) (s : PS)
     · have := (opt_eq h1).2 rfl; subst this; exact ⟨.inr ⟨rfl, rfl⟩, by simp, fun _ => hd2⟩
     · obtain ⟨hl, rfl⟩ := (opt_eq h1).1 rfl; exact ⟨.inl ⟨rfl, hl, rfl⟩, fun _ => hd2, by simp⟩
   have gd : s1.adv.cur = .lbrack ∧ GDetail o Ext.rust s1.adv.adv d s4 ∨
-      d = (.anon s1.adv.2, [], leaf .map, none) ∧ s4 = (s1.adv.1, s1.adv.2 + 1) := by
+      d = (Alias.anon s1.adv.2, [], leaf .map, none) ∧ s4 = (s1.adv.1, s1.adv.2 + 1) := by
     cases det
     · have := (opt_eq h3).2 rfl; subst this
       simp only [Bool.false_eq_true, ite_false] at h4

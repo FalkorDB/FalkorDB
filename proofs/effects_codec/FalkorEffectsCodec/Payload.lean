@@ -2,13 +2,9 @@ import FalkorEffectsCodec.RecRT
 /-!
 # Payload framing: `open_payload`, `maybe_compress`, `frame_prefix`, `Payload`, `Records`
 
-`graph/src/effects/v3/records.rs:1211-1423`.
+`graph/src/effects/v3/records.rs`.
 
-**#3278 (`dcbd445d1`, issue #3276).** `maybe_compress` used to write both lengths
-`as u32`; a payload of 4 GiB of records or more was framed with a wrapped
-`plain_len`, which the reader takes as the decompress ceiling, so the replica
-refused it and looped on forced resyncs. It
-now declines to compress such a payload (`u32::try_from(..).is_err()`) and builds
+`maybe_compress` declines to compress a payload of 4 GiB of records or more (`u32::try_from(..).is_err()`), and builds
 the prefix through `frame_prefix`, which refuses a length that does not fit
 (`framePrefix_none`). `openPayload_maybeCompress` therefore holds for every
 payload, with no length hypothesis. zstd and crc32 are external C/
@@ -33,7 +29,7 @@ structure CodecOK (Z : Codec) : Prop where
   roundtrip : ∀ b f, Z.compress b = some f → Z.decompress f b.length = some b
   crc_lt : ∀ b, Z.crc b < 2 ^ 32
 
-/-- `open_payload` (`records.rs:1261`): the plain record bytes, or why not. -/
+/-- `open_payload` (`records.rs`): the plain record bytes, or why not. -/
 def openPayload (Z : Codec) : R Bytes := do
   let version ← u8
   if version ≠ EFFECTS_VERSION then fail (.unsupportedVersion version) else
@@ -53,7 +49,7 @@ def openPayload (Z : Codec) : R Bytes := do
       else if Z.crc plain ≠ checksum then .error (.checksumMismatch checksum (Z.crc plain))
       else .ok (plain, [])
 
-/-- `frame_prefix` (`records.rs:1413`): `u32 plain_len · u32 comp_len · u32
+/-- `frame_prefix` (`records.rs`): `u32 plain_len · u32 comp_len · u32
 checksum`, or `None` when a length does not fit its `u32`. -/
 def framePrefix (plainLen compLen checksum : Nat) : Option Bytes :=
   if plainLen < 2 ^ 32 ∧ compLen < 2 ^ 32 then
@@ -66,7 +62,7 @@ theorem framePrefix_some {p c k : Nat} (hp : p < 2 ^ 32) (hc : c < 2 ^ 32) :
 
 /-- **A length that does not fit is refused, not truncated.** -/
 theorem framePrefix_none {p c k : Nat} (h : 2 ^ 32 ≤ p ∨ 2 ^ 32 ≤ c) : framePrefix p c k = none := by
-  unfold framePrefix; rw [if_neg (by omega)]
+  unfold framePrefix; rw [ite_eq_right (by omega)]
 
 /-- The prefix is `COMPRESSED_PREFIX` bytes whenever it exists (`[u8; 12]`). -/
 theorem framePrefix_length {p c k : Nat} {b : Bytes} (h : framePrefix p c k = some b) :
@@ -75,10 +71,10 @@ theorem framePrefix_length {p c k : Nat} {b : Bytes} (h : framePrefix p c k = so
   · cases h; simp [w32, COMPRESSED_PREFIX]
   · cases h
 
-/-- `maybe_compress` (`records.rs:1361`): the new buffer and whether it compressed. -/
+/-- `maybe_compress` (`records.rs`): the new buffer and whether it compressed. -/
 def maybeCompress (Z : Codec) (buf : Bytes) (minBytes : Nat) : Bytes × Bool :=
   if minBytes = 0 ∨ buf.length < 2 ∨ buf.length - 2 < minBytes then (buf, false) else
-  -- `u32::try_from(buf.len() - HEADER).is_err()` (#3278)
+  -- `u32::try_from(buf.len() - HEADER).is_err()` 
   if 2 ^ 32 ≤ buf.length - 2 then (buf, false) else
   if (buf[1]!.toNat &&& FLAG_COMPRESSED) ≠ 0 then (buf, false) else
   match Z.compress (buf.drop 2) with
@@ -127,7 +123,7 @@ theorem openPayload_plain (Z : Codec) (body : Bytes) :
 
 /-- **Compression is transparent**: sealing a fresh buffer — compressed or
 left alone — and opening it gives back exactly the record bytes, for records of
-any length (#3278: a payload too long for the `u32` lengths ships uncompressed). -/
+any length (a payload too long for the `u32` lengths ships uncompressed). -/
 theorem openPayload_maybeCompress (Z : Codec) (hZ : CodecOK Z) (body : Bytes) (m : Nat) :
     openPayload Z (maybeCompress Z (newBuffer ++ body) m).1 = .ok (body, []) := by
   have hl : (newBuffer ++ body).length - 2 = body.length := by simp [newBuffer]
@@ -176,8 +172,8 @@ theorem maybeCompress_shrinks (Z : Codec) (buf : Bytes) (m : Nat) (h : (maybeCom
   · simp only [a2, ite_true] at h; cases h
   simp only [a2, ite_false] at h ⊢
   by_cases b : (buf[1]!.toNat &&& FLAG_COMPRESSED) ≠ 0
-  · rw [if_pos b] at h; cases h
-  rw [if_neg b] at h ⊢
+  · rw [ite_eq_left b] at h; cases h
+  rw [ite_eq_right b] at h ⊢
   cases hc : Z.compress (buf.drop 2) with
   | none => simp only [hc] at h; cases h
   | some frame =>
@@ -192,7 +188,7 @@ theorem maybeCompress_shrinks (Z : Codec) (buf : Bytes) (m : Nat) (h : (maybeCom
       simp only [List.length_append, List.length_cons, List.length_nil]
       simp [COMPRESSED_PREFIX] at d this; omega
 
-/-- `Records::next` (`records.rs:1236`): stop at the end, yield one record,
+/-- `Records::next` (`records.rs`): stop at the end, yield one record,
 fuse after the first error. -/
 def readAllRecords (C : IdCodec) (utf8 I : Bytes → Bool) : Nat → R (List (Record C.T))
   | 0 => fun _ => .error .outOfFuel
@@ -219,7 +215,7 @@ theorem records_concat (C : IdCodec) (utf8 I : Bytes → Bool) :
     have hb := h (b, x) (by simp)
     have ih := records_concat C utf8 I items (fun p hp => h p (by simp [hp])) f (by simp at hf; omega)
     simp only [List.map_cons, List.flatten_cons, readAllRecords]
-    rw [if_neg (by simp [hb.1])]
+    rw [ite_eq_right (by simp [hb.1])]
     rw [readRecord_encRecord C utf8 I x b _ hb.2.1 hb.2.2]
     simp only [ih]
 

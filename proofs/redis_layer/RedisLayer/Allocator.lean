@@ -1,20 +1,11 @@
 /-!
 # `src/allocator.rs` — per-thread allocation accounting
 
-`ThreadCountingAllocator` (`:31-84`) forwards every request to `RedisAlloc` (FFI: here an
+`ThreadCountingAllocator` forwards every request to `RedisAlloc` (FFI: here an
 input — whether it returned a non-null pointer, and the pointer itself is passed through
 unchanged) and, when the calling thread's `TRACKING_ENABLED` is set, adds `layout.size()`
-to that thread's `THREAD_ALLOCATED` / `THREAD_DEALLOCATED`. The helpers (`:89-126`) flip
+to that thread's `THREAD_ALLOCATED` / `THREAD_DEALLOCATED`. The helpers flip
 the flag, read and reset the counters, and compute the net with `saturating_sub`.
-
-| here | there |
-| --- | --- |
-| `TLS`, `TLS.init`       | the three `thread_local!` cells (`:33-41`; `TRACKING_ENABLED` starts `true`) |
-| `Ev.alloc ok n`         | `GlobalAlloc::alloc` (`:44`): counted iff the pointer is non-null and tracking is on. #3514 added `#[cfg(test)]` branches (`:49-51`, `:70-73`) that call the system allocator in unit tests (Redis's does not exist there); the counting is unchanged and the model is the non-test build |
-| `Ev.dealloc n`          | `GlobalAlloc::dealloc` (`:65`): counted iff tracking is on |
-| `Ev.enable/disable/reset` | `enable_tracking` (`:89`), `disable_tracking` (`:97`), `reset_counter` (`:123`) |
-| `usage`, `net`          | `current_thread_usage` (`:106`), `net_thread_usage` (`:114`) |
-| `World`, `World.step`   | one `TLS` per thread: every event touches only its own thread's cells |
 
 `usize` arithmetic: `c.get() + layout.size()` wraps in the release profile (no
 `overflow-checks`), so counters are taken mod `2^64`; `no_wrap` shows wrapping needs more
@@ -57,9 +48,9 @@ def allocRet (p : Option Nat) : Option Nat := p
 
 theorem alloc_passthrough (p : Option Nat) : allocRet p = p := rfl
 
-/-- `current_thread_usage` (`:106`). -/
+/-- `current_thread_usage`. -/
 def usage (t : TLS) : Nat × Nat := (t.allocated, t.deallocated)
-/-- `net_thread_usage` (`:114`): `allocated.saturating_sub(deallocated)` (Nat `-` is saturating). -/
+/-- `net_thread_usage`: `allocated.saturating_sub(deallocated)` (Nat `-` is saturating). -/
 def net (t : TLS) : Nat := t.allocated - t.deallocated
 
 theorem net_saturates (t : TLS) : net t ≤ t.allocated ∧ (t.allocated ≤ t.deallocated → net t = 0) := by
@@ -144,7 +135,7 @@ theorem run_traffic (es : List Ev) : ∀ (t : TLS), t.enabled = true → Bounded
     | disable => simp [Traffic] at hte
     | reset => simp [Traffic] at hte
 
-/-- **Per-query accounting** (`graph_core.rs:1012-1067`: `reset_counter(); enable_tracking();`
+/-- **Per-query accounting** (`graph_core.rs`: `reset_counter(); enable_tracking();`
 … query … `current_thread_usage()`): from any prior thread state, the counters report
 exactly the bytes this query's traffic allocated and freed on this thread (below `2^64`
 total — wrapping needs 16 EiB of traffic), and `net_thread_usage` is their saturating

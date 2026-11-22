@@ -1,17 +1,8 @@
 /-
-# `self_loops_after_binders` (planner/hop_order.rs, #3102 61284ea4f; fixes #2999)
-
-| Lean | Rust |
-| --- | --- |
-| `HopShape`, `touches`, `movable`, `isBinder` | `HopShape` hop_order.rs:5, the closures `touches` :35, `movable` :31 |
-| `deferP` | the `if` condition :41-46 (`!x.self_loop && touches(x, s.from)` = `isBinder`) |
-| `flush` | the latest-first `for k in (0..deferred.len()).rev()` loop :52-56 |
-| `step` | one iteration of `for (i, (hop, s)) in hops.into_iter().zip(&shapes).enumerate()` :39-58 |
-| `selfLoopsAfterBinders` | `self_loops_after_binders` :25 (early return :32-34, `foldl` = the loop) |
-| `pre3102_loop`, `pre3102_reference` | the loop #3102's first commit used, kept as `tests::reference` hop_order.rs:84-107 |
+# `self_loops_after_binders` (planner/hop_order.rs)
 
 Generic over the hop type `T` and the node type `N` (the planner instantiates `T = QR`,
-`N = (id, scope_id)`, `bound = self.visited.contains`, mod.rs:1917-1926).
+`N = (id, scope_id)`, `bound = self.visited.contains`, mod.rs).
 
 * `selfLoops_perm` — the output is a permutation of the input (no hop lost or doubled; the
   deferred list is always empty at the end, `run_D_nil`).
@@ -19,8 +10,8 @@ Generic over the hop type `T` and the node type `N` (the planner instantiates `T
 * `deferred_after_binder` — a deferred self-loop comes after the first later hop that binds
   its node (with only other self-loops flushed by that binder between them).
 * `single_pass` — the result is one left fold over the input (each hop is stepped exactly once,
-  `length (zipIdx) = length hops`) — vs. the old loop, which revisits every hop it moves.
-* **`eq_reference`** — it equals the pre-#3102 loop (`pre3102_reference`) whenever a hop flagged
+  `length (zipIdx) = length hops`) — vs. the earlier loop, which revisits every hop it moves.
+* **`eq_reference`** — it equals the earlier loop (`pre3102_reference`) whenever a hop flagged
   `self_loop` has `from = to` (`WF`; in the planner, an alias id names one variable per pattern).
   `wf_needed` shows the premise matters for the generic function.
 * `early_return_sound` — the `!(1..len).any(movable)` fast path returns what the loop would.
@@ -48,7 +39,7 @@ def movable (ss : List (HopShape N)) (k : Nat) : Bool :=
     | some s => s.selfLoop && s.fixed
     | none => false
 
-/-- The deferral test (hop_order.rs:41-46). -/
+/-- The deferral test (hop_order.rs). -/
 def deferP (ss : List (HopShape N)) (bound : N → Bool) (i : Nat) (s : HopShape N) : Bool :=
   movable ss i && !bound s.frm &&
   !((List.range i).any fun k => match ss[k]? with
@@ -73,7 +64,7 @@ def step (ss : List (HopShape N)) (bound : N → Bool) (st : List (N × T) × Li
     let out := st.2 ++ [x.1.1]
     if !x.1.2.selfLoop then ((flush x.1.2 st.1).2, out ++ (flush x.1.2 st.1).1) else (st.1, out)
 
-/-- `self_loops_after_binders(hops, shape, bound)` (hop_order.rs:25). -/
+/-- `self_loops_after_binders(hops, shape, bound)` (hop_order.rs). -/
 def selfLoopsAfterBinders (hops : List T) (shape : T → HopShape N) (bound : N → Bool) : List T :=
   let ss := hops.map shape
   if !((List.range' 1 (ss.length - 1)).any (movable ss)) then hops
@@ -94,9 +85,9 @@ theorem flush_perm (s : HopShape N) : ∀ D : List (N × T),
     have ih := flush_perm s ds
     unfold flush
     by_cases h : touches s d.1 = true
-    · simp only [h, if_true, List.map_cons, List.append_assoc, List.singleton_append]
+    · simp only [h, ite_true, List.map_cons, List.append_assoc, List.singleton_append]
       exact (List.perm_middle).trans (List.Perm.cons _ ih)
-    · simp only [h, Bool.false_eq_true, if_false, List.map_cons]
+    · simp only [h, Bool.false_eq_true, ite_false, List.map_cons]
       exact (List.perm_middle).trans (List.Perm.cons _ ih)
 
 theorem flush_kept_sub (s : HopShape N) : ∀ (D : List (N × T)), ∀ d ∈ (flush s D).2, d ∈ D ∧ touches s d.1 = false
@@ -106,9 +97,9 @@ theorem flush_kept_sub (s : HopShape N) : ∀ (D : List (N × T)), ∀ d ∈ (fl
     have ih := flush_kept_sub s ds
     unfold flush at hx
     by_cases h : touches s d.1 = true
-    · simp only [h, if_true] at hx
+    · simp only [h, ite_true] at hx
       exact ⟨List.mem_cons_of_mem _ (ih x hx).1, (ih x hx).2⟩
-    · simp only [h, Bool.false_eq_true, if_false, List.mem_cons] at hx
+    · simp only [h, Bool.false_eq_true, ite_false, List.mem_cons] at hx
       rcases hx with rfl | hx
       · exact ⟨List.mem_cons_self, by simpa using h⟩
       · exact ⟨List.mem_cons_of_mem _ (ih x hx).1, (ih x hx).2⟩
@@ -129,12 +120,12 @@ theorem flush_pushed_mem (s : HopShape N) : ∀ (D : List (N × T)) (x : T), x �
   | e :: es, x, hx => by
     unfold flush at hx
     by_cases h : touches s e.1 = true
-    · simp only [h, if_true, List.mem_append, List.mem_singleton] at hx
+    · simp only [h, ite_true, List.mem_append, List.mem_singleton] at hx
       rcases hx with hx | rfl
       · obtain ⟨d, hd, h1, h2⟩ := flush_pushed_mem s es x hx
         exact ⟨d, List.mem_cons_of_mem _ hd, h1, h2⟩
       · exact ⟨e, List.mem_cons_self, rfl, h⟩
-    · simp only [h, Bool.false_eq_true, if_false] at hx
+    · simp only [h, Bool.false_eq_true, ite_false] at hx
       obtain ⟨d, hd, h1, h2⟩ := flush_pushed_mem s es x hx
       exact ⟨d, List.mem_cons_of_mem _ hd, h1, h2⟩
 
@@ -191,7 +182,7 @@ theorem drop_succ_of_drop {α : Type} (l : List α) (m : Nat) (h : α) (t : List
 
 theorem take_succ_of_drop {α : Type} (l : List α) (m : Nat) (h : α) (t : List α) (ht : l.drop m = h :: t) :
     l.take (m + 1) = l.take m ++ [h] := by
-  rw [List.take_succ, getElem?_of_drop l m h t ht]; rfl
+  rw [List.take_add_one, getElem?_of_drop l m h t ht]; rfl
 
 theorem movable_spec (ss : List (HopShape N)) (m : Nat) (s : HopShape N) (hs : ss[m]? = some s) :
     movable ss m = (decide (0 < m) && s.selfLoop && s.fixed) := by
@@ -401,14 +392,14 @@ theorem kept_run : ∀ (t : List T) (m : Nat) (st : List (N × T) × List T) (K 
         simp [keptFrom, List.zipIdx_cons, hd]
     rw [hk]
     cases hd : deferP (hops.map shape) bound m (shape h)
-    · simp only [Bool.false_eq_true, if_false, ← List.append_assoc]
+    · simp only [Bool.false_eq_true, ite_false, ← List.append_assoc]
       apply ih
       cases hl : (shape h).selfLoop
       · rw [step_keep_bind hops shape bound m h _ hd hl]
         exact (hK.append_right [h]).trans (List.sublist_append_left _ _)
       · rw [step_keep_loop hops shape bound m h _ hd hl]
         exact hK.append_right [h]
-    · simp only [if_true, List.nil_append]
+    · simp only [ite_true, List.nil_append]
       apply ih
       rw [step_defer hops shape bound m h _ hd]
       exact hK
@@ -500,9 +491,9 @@ theorem deferred_after_binder (m : Nat) (h : T) (A : List T) (b : T) (C : List T
 
 end
 
-/-! ## The pre-#3102 loop (`tests::reference`) -/
+/-! ## The earlier loop (`tests::reference`) -/
 
-/-- The loop #3102's first commit planned with (hop_order.rs:84-107 keeps it verbatim):
+/-- The loop #3102's first commit planned with (hop_order.rs keeps it verbatim):
 `remove(i)` the self-loop and `insert(i + j + 1)` it right after its first later binder, then
 look at index `i` again. Fuel bounds the `while`. -/
 def pre3102_loop (shape : T → HopShape N) (bound : N → Bool) : Nat → List T → Nat → List T
@@ -604,7 +595,7 @@ theorem ins_insert (shape : T → HopShape N) (n : N) (h : T) : ∀ (t : List T)
       have ht : touches (shape b) n = true := by simp [isBinder] at hbb; simpa [touches] using hbb.2
       refine ⟨0, ?_, ?_⟩
       · simp [ins, hl, List.findIdx?_cons, hbb]
-      · simp only [ins, hl, Bool.false_eq_true, if_false]
+      · simp only [ins, hl, Bool.false_eq_true, ite_false]
         rw [flush_snoc_touch (shape b) (n, h) ht D]
         simp [List.insertIdx_succ_cons]
     · have hbf : isBinder n (shape b) = false := by simpa using hbb
@@ -615,17 +606,17 @@ theorem ins_insert (shape : T → HopShape N) (n : N) (h : T) : ∀ (t : List T)
         have hP : ∀ x ∈ (flush (shape b) D).1, isBinder n (shape x) = false := by
           intro x hx; simp [isBinder, flush_pushed_loops shape _ D hD x hx]
         refine ⟨1 + (flush (shape b) D).1.length + j, ?_, ?_⟩
-        · simp only [ins, hl, Bool.false_eq_true, if_false, List.findIdx?_cons, hbf]
+        · simp only [ins, hl, Bool.false_eq_true, ite_false, List.findIdx?_cons, hbf]
           rw [List.findIdx?_append, findIdx?_none_of _ _ hP, hj]
           simp; omega
-        · simp only [ins, hl, Bool.false_eq_true, if_false]
+        · simp only [ins, hl, Bool.false_eq_true, ite_false]
           rw [flush_snoc_notouch (shape b) (n, h) hnt D]
           rw [show 1 + (flush (shape b) D).1.length + j + 1 = ((flush (shape b) D).1.length + (j + 1)) + 1 by omega,
             List.insertIdx_succ_cons, insertIdx_append_left, hins]
       · obtain ⟨j, hj, hins⟩ := ih D hD hb'
         refine ⟨j + 1, ?_, ?_⟩
         · simp [ins, hl, List.findIdx?_cons, hbf, hj]
-        · simp only [ins, hl, if_true]
+        · simp only [ins, hl, ite_true]
           rw [List.insertIdx_succ_cons, hins]
 
 theorem mem_ins (shape : T → HopShape N) : ∀ (t : List T) (D : List (N × T)) (x : T), x ∈ ins shape D t →
@@ -671,7 +662,7 @@ theorem skip_touched (shape : T → HopShape N) (bound : N → Bool) : ∀ (P pr
     have htake : (pre ++ p :: P ++ rest).take pre.length = pre := by simp
     have hany : (pre.any fun y => touches (shape y) (shape p).frm) = true := List.any_eq_true.2 ⟨x, hx, htx⟩
     rw [pre3102_loop, hget]
-    simp only [htake, hany, Bool.not_true, Bool.and_false, Bool.false_eq_true, if_false]
+    simp only [htake, hany, Bool.not_true, Bool.and_false, Bool.false_eq_true, ite_false]
     have e : pre ++ p :: P ++ rest = (pre ++ [p]) ++ P ++ rest := by simp
     rw [e, show pre.length + 1 = (pre ++ [p]).length by simp,
       ih (pre ++ [p]) rest f (fun q hq => by
@@ -680,7 +671,7 @@ theorem skip_touched (shape : T → HopShape N) (bound : N → Bool) : ∀ (P pr
     simp only [List.length_cons, List.append_assoc, List.singleton_append]
     rw [show f + 1 - (P.length + 1) = f - P.length by omega]
 
-/-! ## The new loop equals the old one -/
+/-! ## The loop equals the earlier one -/
 
 section
 variable (hops : List T) (shape : T → HopShape N) (bound : N → Bool)
@@ -864,7 +855,7 @@ theorem sim (hwf : WF hops shape) : ∀ (t : List T) (m : Nat) (D : List (N × T
           pre3102_loop shape bound f (out ++ ins shape D (h :: t)) (out.length + 1) := by
         by_cases hc : ((shape h).selfLoop && (shape h).fixed && !bound (shape h).frm &&
             !(out.any fun x => touches (shape x) (shape h).frm)) = true
-        · rw [if_pos hc]
+        · rw [ite_eq_left hc]
           simp only [Bool.and_eq_true, Bool.not_eq_true'] at hc
           obtain ⟨⟨⟨hsl, hfx⟩, hbd⟩, hout⟩ := hc
           have hdrop : (out ++ ins shape D (h :: t)).drop (out.length + 1) = ins shape D t := by
@@ -909,7 +900,7 @@ theorem sim (hwf : WF hops shape) : ∀ (t : List T) (m : Nat) (D : List (N × T
               simp only [deferP, movable_spec _ m _ hs, hsl, hfx, hbd, hnone, hbt]
               simp; omega
             rw [hdef] at this; cases this
-        · rw [if_neg hc]
+        · rw [ite_eq_right hc]
       rw [hstep]
       cases hl : (shape h).selfLoop
       · rw [step_keep_bind hops shape bound m h _ hdef hl]
@@ -945,7 +936,7 @@ theorem sim (hwf : WF hops shape) : ∀ (t : List T) (m : Nat) (D : List (N × T
       have hc : ((shape h).selfLoop && (shape h).fixed && !bound (shape h).frm &&
           !(out.any fun x => touches (shape x) (shape h).frm)) = true := by
         simp [hsl, hfx, hbd, hout]
-      rw [if_pos hc]
+      rw [ite_eq_left hc]
       have hdrop : (out ++ ins shape D (h :: t)).drop (out.length + 1) = ins shape D t := by
         simp [ins, hsl]
       rw [hdrop]
@@ -1000,7 +991,7 @@ theorem wf_needed :
   decide
 
 /-- The PR's case `(a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)` sorted `R, L, S*` becomes `R, S*, L`
-(hop_order.rs:133-136); two self-loops on `c` go latest-first. -/
+(hop_order.rs); two self-loops on `c` go latest-first. -/
 theorem pr_cases :
     selfLoopsAfterBinders ([⟨0, 1, false, true⟩, ⟨2, 2, true, true⟩, ⟨1, 2, false, false⟩] : List (HopShape Nat))
         id (fun _ => false) = [⟨0, 1, false, true⟩, ⟨1, 2, false, false⟩, ⟨2, 2, true, true⟩] ∧

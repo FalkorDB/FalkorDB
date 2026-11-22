@@ -13,7 +13,7 @@ User-facing behaviour that depends on it:
 - commit-time validation (`Graph::validate`), which refuses a write whose ids do not add up;
 - `GRAPH.EFFECT` replay on a replica, which must refuse records that create an id that is already live, or act on an entity that is not live (#3022).
 
-The full Lean↔Rust mapping (every Lean name next to the `id_space.rs` line it models) is in the header of [`FalkorIdSpace.lean`](FalkorIdSpace.lean). This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -31,7 +31,7 @@ Yes. `verify_ok_iff` proves `verify` passes exactly when two things hold:
 With respect to their refusals, yes. Once the refusals pass, both apply the whole batch and then run a final consistency check (`checked`); that check can still return `Inconsistent`, and the mutation is kept in that case (`create_spec`, `release_spec` state the new space and the `checked` result together).
 
 - `create_spec` proves `create` either passes all its refusals and applies the whole batch (returning the trailing `checked` result), or changes nothing and returns `AlreadyLive` or `IdOutOfRange`.
-- `create_out_of_range` proves an id `≥ ID_LIMIT` (`GrB_INDEX_MAX`) is refused before anything is sized; this is the #2892 fix in #2911.
+- `create_out_of_range` proves an id `≥ ID_LIMIT` (`GrB_INDEX_MAX`) is refused before anything is sized.
 - `release_spec` proves the same refusal-level all-or-nothing for `release`, judged over every *requested* id. A free id gives `AlreadyRecycled` and a never-created one gives `NeverCreated`.
 
 **3. Can the live count underflow?**
@@ -94,9 +94,7 @@ No (#3022). `refuseNotLive_live` proves `refuse_not_live` accepts exactly the li
 
 ## Bugs found
 
-No confirmed bugs in the current `id_space.rs`.
-
-Historical: #2892 (fixed by #2911). Before the fix, `create` refused only `u64::MAX`. A `GRAPH.EFFECT` with id 2^61 asserted in `GrB_Matrix_new`, and `u64::MAX - 1` made `grow_cap` hang. Now `create` refuses every id `≥ ID_LIMIT = GrB_INDEX_MAX` before anything is sized (`create_out_of_range`). `grow_cap`'s side is proven in `proofs/graph_queries` (`growCap_le_max`).
+No open bugs. Fixed ones are in this file's git history.
 
 There are no CONDITIONAL rows.
 
@@ -113,7 +111,7 @@ There are no CONDITIONAL rows.
 | `Inv.lean` | The invariant `Inv`, `live_eq`, and preservation by `create`, `cancel`, `reserve` |
 | `Lifecycle.lean` | `release` in a reachable state, `roll_inv`, `lifecycle_fresh` |
 | `Released.lean` | `released`, `taken()`, `released()`, `refuse_not_live` (#3022) |
-| `FalkorIdSpace.lean` | The report header and `#guard` replays of the Rust unit tests at `N = 32` |
+| `FalkorIdSpace.lean` | A short header and `#guard` replays of the Rust unit tests at `N = 32` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The lakefile has no path dependencies. `proofs/graph_queries` depends on this project's results without importing it. Its `IdRust.lean` copies this model into list form to prove the `IdSpaceContract` that `graph.rs` relies on (`rustIdOps_contract`).
@@ -133,7 +131,7 @@ Every function is proven.
 - `u64` arithmetic outside `checked_add` and `live -=` is `Nat` here: `bound()`, `restored`'s sum, `start`'s adds and `live += nodes.len()`. `reserve`'s run end is modelled: it wraps at 2^64 in a release build (`reserve_spec`; a debug build panics), so a space restored with a boundary within `count` of 2^64 (`restored(u64::MAX, ∅)`, one id: `reserve_wraps_example`) gets fewer ids than asked. `reserve_length` takes the end-fits hypothesis; whether an RDB can restore such a boundary is not proven here (a space built through this API stays below `ID_LIMIT`).
 - That callers settle every reservation before `open_batch` is not proven; `roll_inv` covers the verified path.
 - Error messages are modelled only as the variant and its fields.
-- The header's title still cites `e8f8a3017`. `id_space.rs` has had one small change since (#3307), and the `COVERAGE.tsv` line numbers match main.
+- `RoaringTreemap` is modelled by its set semantics (roaring is a pure-Rust crate); mutators return `(state after, result)`, and an `Inconsistent` from the trailing `checked()` leaves the mutated state behind.
 
 ## Build and check
 

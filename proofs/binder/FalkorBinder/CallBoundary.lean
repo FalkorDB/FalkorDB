@@ -1,13 +1,11 @@
 import FalkorBinder.Resolve
 /-
-# CALL {} entry projection as a record boundary (#2845, eb470521b)
+# CALL {} entry projection as a record boundary
 
 Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
-(graph/src/planner/binder.rs:824-978) and `build_import_projections`
-(binder.rs:984-1006); scope tables, `freshVar`, `mint_fresh_iff`,
-`projectName` are this project's (Table.lean, Resolve.lean). Counterexamples
-on main before #2845 (da6f808c3) were removed in bbee75955 (the last revision that has them is
-17ccc5412) (fixed by #2845, eb470521b; closes #2601, #2602).
+(graph/src/planner/binder.rs) and `build_import_projections`
+(binder.rs); scope tables, `freshVar`, `mint_fresh_iff`,
+`projectName` are this project's (Table.lean, Resolve.lean).
 
 * Every CALL body gets an entry projection (`bodyNew_entry`, `bodyNew_empty`,
   `branchNew_entry`), unchanged when something is imported (`bodyNew_eq_old`).
@@ -15,14 +13,13 @@ on main before #2845 (da6f808c3) were removed in bbee75955 (the last revision th
   `entry_ids_below`); body scope disjoint from outer scopes (`body_scope_disjoint`).
 * No slot aliasing for plain bodies at runtime (`body_own_unbound`,
   `body_import_value`, `new_scan_scans`).
-* UNION bodies alias binder keys `(scope_id, id)` (fixed by #3027: `relabel_3027`, `union_branch_label_fixed`).
-* W6-opt-1 (push_filters_down Case 2, see proofs/optimizer_rewrites
-  `filter_pushed_through_boundary`): the pushed read is unbound
-  (`pushed_read_unbound`).
+* UNION bodies alias binder keys `(scope_id, id)` (`relabel_3027`, `union_branch_label_fixed`).
+* W6-opt-1 (push_filters_down Case 2, see proofs/optimizer_rewrites `CallBoundary`): a read
+  pushed onto the body's `Argument` is unbound (`pushed_read_unbound`).
 -/
 namespace FalkorBinder.Pr2845
 
-/-- `build_import_projections` (binder.rs:984): one `project_name` per
+/-- `build_import_projections` (binder.rs): one `project_name` per
 imported variable, in the HashMap's iteration order (`imported`, any order),
 paired with the outer variable it reads. The final `sort_by` name only
 reorders the pairs. -/
@@ -39,7 +36,7 @@ inductive Clause
   | other (tag : Nat)
   deriving DecidableEq, Repr
 
-/-- The merged Query arm (binder.rs:845-871): push a fresh scope (index
+/-- The merged Query arm (binder.rs): push a fresh scope (index
 `outerLen`), always emit the entry projection, then the remaining clauses. -/
 def bodyNew (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause) : List Clause :=
   .with_ (importProj [] outerLen imported).2 :: rest
@@ -48,9 +45,9 @@ def bodyNew (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause
 def bodyOld (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause) : List Clause :=
   if imported.isEmpty then rest else .with_ (importProj [] outerLen imported).2 :: rest
 
-/-- The UNION arm (binder.rs:899-925): each branch binder starts with
+/-- The UNION arm (binder.rs): each branch binder starts with
 `env_stack: vec![HashMap::new(); self.env_stack.len() + 1]` (#3027, d42d121c6,
-binder.rs:897-905), so its scope is `outerLen`, above the live outer scopes. -/
+binder.rs), so its scope is `outerLen`, above the live outer scopes. -/
 def branchScope (outerLen : Nat) : Nat := outerLen
 
 def branchNew (outerLen : Nat) (imported : List (Name × Var))
@@ -85,46 +82,45 @@ theorem bodyNew_eq_old (o : Nat) (imp : List (Name × Var)) (rest : List Clause)
 /-- Names distinct: what a `HashMap` key set guarantees. -/
 def Distinct (imp : List (Name × Var)) : Prop := (imp.map (·.1)).Nodup
 
-theorem has_false_of_not_mem (e : Env) (k : Name) (h : k ∉ e.names) : e.has k = false := by
+theorem has_false_of_not_mem (e : Env) (k : Name) (h : Key.nm k ∉ e.map (·.1)) : e.has k = false := by
   simp only [Env.has]
   rw [List.any_eq_false]
   intro p hp hk
   apply h
   simp only [beq_iff_eq] at hk
-  exact List.mem_filterMap.mpr ⟨p, hp, hk⟩
+  exact List.mem_map.mpr ⟨p, hp, hk⟩
 
 /-- The import projections mint ids `len e, len e + 1, …` in order, all in
 the body scope, and leave a table of size `len e + k` whose keys are the
 old keys followed by the imported names. -/
 theorem importProj_spec (s : Nat) :
     ∀ (imp : List (Name × Var)) (e : Env), Distinct imp →
-      (∀ p ∈ imp, p.1 ∉ e.names) →
+      (∀ p ∈ imp, Key.nm p.1 ∉ e.map (·.1)) →
       (importProj e s imp).1.length = e.length + imp.length ∧
-      (importProj e s imp).1.names = e.names ++ imp.map (·.1) ∧
+      (importProj e s imp).1.map (·.1) = e.map (·.1) ++ imp.map (Key.nm ·.1) ∧
       (importProj e s imp).2.map (·.1.id) = (List.range imp.length).map (e.length + ·) ∧
       ((importProj e s imp).1.ids = e.ids ++ (List.range imp.length).map (e.length + ·)) ∧
       ∀ q ∈ (importProj e s imp).2, q.1.scope = s
   | [], e, _, _ => by simp [importProj]
   | (n, v) :: rest, e, hd, hfresh => by
-    have hn : n ∉ e.names := hfresh (n, v) (by simp)
+    have hn : Key.nm n ∉ e.map (·.1) := hfresh (n, v) (by simp)
     have hk := has_false_of_not_mem e n hn
     have hdist : Distinct rest := (List.nodup_cons.mp hd).2
     have hnr : n ∉ rest.map (·.1) := (List.nodup_cons.mp hd).1
-    have hfresh' : ∀ p ∈ rest, p.1 ∉ (e.insert n (freshVar e n v.ty s)).names := by
+    have hfresh' : ∀ p ∈ rest, Key.nm p.1 ∉ (e.insert n (freshVar e n v.ty s)).map (·.1) := by
       intro p hp
       rw [Env.insert_new_eq hk]
-      simp only [Env.names, List.filterMap_append, List.filterMap_cons, List.filterMap_nil,
-        List.mem_append, List.mem_singleton]
+      simp only [List.map_append, List.map_cons, List.map_nil, List.mem_append, List.mem_singleton]
       rintro (h | h)
       · exact hfresh p (by simp [hp]) h
-      · exact hnr (h ▸ List.mem_map.mpr ⟨p, hp, rfl⟩)
+      · exact hnr (Key.nm.inj h ▸ List.mem_map.mpr ⟨p, hp, rfl⟩)
     obtain ⟨ih1, ih2, ih3, ih4, ih5⟩ := importProj_spec s rest _ hdist hfresh'
     have hins := Env.insert_new_eq (v := freshVar e n v.ty s) hk
     simp only [hins] at ih1 ih2 ih3 ih4 ih5
     simp only [importProj, projectName, hins]
     refine ⟨?_, ?_, ?_, ?_, ?_⟩
     · rw [ih1]; simp; omega
-    · rw [ih2]; simp [Env.names]
+    · rw [ih2]; simp
     · simp only [freshVar] at ih3
       simp only [List.map_cons, freshVar, List.length_cons]
       rw [ih3, List.range_succ_eq_map]
@@ -152,7 +148,7 @@ mints afterwards (`fresh_var` at `len()`) avoids them. -/
 theorem entry_ids_below (s : Nat) (imp : List (Name × Var)) (hd : Distinct imp) :
     let r := importProj [] s imp
     r.1.Covers ∧ (∀ j, r.1.length + j ∉ r.2.map (·.1.id)) ∧ r.1.length = imp.length := by
-  obtain ⟨h1, -, h3, h4, -⟩ := importProj_spec s imp [] hd (by simp [Env.names])
+  obtain ⟨h1, -, h3, h4, -⟩ := importProj_spec s imp [] hd (by simp)
   simp only [List.length_nil, Nat.zero_add, List.map_id'] at h1 h3 h4
   refine ⟨?_, ?_, h1⟩
   · intro i hi
@@ -167,7 +163,7 @@ theorem body_scope_disjoint (outerLen s : Nat) (h : s < outerLen) : outerLen ≠
 /-! ## Claim 2 for UNION bodies: (scope, id) keys still alias -/
 
 /-- `node_labels: HashMap<(u32,u32), OrderSet<..>>` and `update_graph_labels`
-(binder.rs:160-190) for a non-optional MATCH node: the accumulated labels
+(binder.rs) for a non-optional MATCH node: the accumulated labels
 for the key `(scope_id, id)` replace the node's own. -/
 abbrev Labels := List ((Nat × Nat) × List Name)
 
@@ -177,9 +173,9 @@ def relabel (L : Labels) (v : Var) (own : List Name) : List Name :=
   | none => own
 
 /-- `MATCH (n:A) CALL { MATCH (q:B) RETURN q UNION MATCH (q:B) RETURN q }`:
-step 2b of `bind_call_subquery` (binder.rs:731) runs the OUTER binder's
+step 2b of `bind_call_subquery` (binder.rs) runs the OUTER binder's
 `update_all_node_labels` over the bound body, recursing into the UNION
-branches (binder.rs:140-143). The outer table holds `(0,0) ↦ [A]` for `n`;
+branches (binder.rs). The outer table holds `(0,0) ↦ [A]` for `n`;
 the branch's `q` is minted at scope 0 (the branch binder's only scope) after
 its entry projection (no imports), id 0: same key. The branch scans `(q:A)`. -/
 def outerLabels : Labels := [((0, 0), ["A"])]
@@ -209,6 +205,22 @@ theorem relabel_3027 (L : Labels) (outerLen : Nat) (hL : ∀ p ∈ L, p.1.1 < ou
 
 theorem union_branch_label_fixed : relabel outerLabels branchQ ["B"] = ["B"] := by decide
 
+/-- Step 2b as merged (binder.rs, #3641): a UNION body skips the outer
+`update_all_node_labels` (`if !matches!(bound_body, QueryIR::Union { .. })`) — each branch was
+already labelled by its own binder. -/
+def relabelBody (isUnion : Bool) (L : Labels) (v : Var) (own : List Name) : List Name :=
+  if isUnion then own else relabel L v own
+
+/-- #3641: whatever the outer table holds, a UNION body's node keeps the labels its own binder
+gave it (`MATCH (a:N) CALL { RETURN 0 AS x UNION CREATE (:New) RETURN 1 AS x }` creates `:New`).
+Unlike `relabel_3027` this needs no disjointness hypothesis on the outer keys. -/
+theorem union_body_never_relabelled (L : Labels) (v : Var) (own : List Name) :
+    relabelBody true L v own = own := rfl
+
+/-- A plain body is still relabelled by step 2b (its scopes are the outer binder's own). -/
+theorem query_body_relabelled (L : Labels) (v : Var) (own : List Name) :
+    relabelBody false L v own = relabel L v own := rfl
+
 /-! ## Runtime side: the entry projection is a record boundary
 
 
@@ -217,7 +229,7 @@ A runtime row is a dense array indexed by `Variable.id` alone
 `Nat → Option V` (`none` = unbound slot).
 
 * `Argument` (runtime/ops/argument.rs) hands the sub-plan the outer row as is.
-* `ProjectOp::eval` (runtime/ops/project.rs:54-147) builds a fresh row from
+* `ProjectOp::eval` (runtime/ops/project.rs) builds a fresh row from
   its projections only (`Row::with_capacity`, `result.insert(target, …)`,
   then `BatchBuilder::push_row`) and drops its input.
 -/
@@ -283,7 +295,7 @@ theorem body_own_unbound {V : Type} (s : Nat) (imp : List (Name × Var)) (hd : D
     (r : RowF V) (j : Nat) (hj : imp.length ≤ j) :
     bodyInputNew (importProj [] s imp).2 r j = none := by
   apply projRow_unbound
-  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp [Env.names])
+  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp)
   rw [h3]; simp; omega
 
 /-- … and every imported variable reads its outer value. -/
@@ -291,7 +303,7 @@ theorem body_import_value {V : Type} (s : Nat) (imp : List (Name × Var)) (hd : 
     (r : RowF V) (p : Var × Var) (hp : p ∈ (importProj [] s imp).2) :
     bodyInputNew (importProj [] s imp).2 r p.1.id = r p.2.id := by
   apply projRow_import _ _ _ hp
-  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp [Env.names])
+  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp)
   rw [h3]; simp only [List.length_nil, Nat.zero_add, List.map_id']
   exact List.nodup_range
 

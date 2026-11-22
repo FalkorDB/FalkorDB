@@ -1,6 +1,6 @@
 import PendingCommit.StoreCodec
 /-
-# `DataBlock::trim` and the memory partition (attribute_store.rs:1038-1145)
+# `DataBlock::trim` and the memory partition (attribute_store.rs)
 
 See `StoreCodec.lean`'s header for the statements; `trim` is modelled with an
 `owned bi` predicate standing for `Arc::get_mut` succeeding on the root, the

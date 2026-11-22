@@ -1,8 +1,8 @@
 /-
-# The pattern-comprehension gate and memo of #3104 (cypher.rs:2818-2912)
+# The pattern-comprehension gate and memo (cypher.rs)
 
-#3104 (`4a4f2a72f`) stops the exponential backtracking of
-`parse_list_literal_or_comprehension` (W3-parser-9) two ways:
+The exponential backtracking of
+`parse_list_literal_or_comprehension` (W3-parser-9) is stopped two ways:
 
 * a **gate**: alternatives 2 and 3 (pattern comprehensions) are only tried
   after `[` when the next token is `(` or a name and `list_has_top_level_pipe`
@@ -20,27 +20,20 @@ What is proved here:
    counter *is* the stack depth. On mismatched input the two can differ
    (`pipeScan_mismatch`), which only decides what is tried first.
 2. **The gate and memo do not change the parse** (`listLitP_eq_ungated`):
-   `listLitP` (merged) and `listLitPU` (before #3104) return the same result
+   `listLitP` (merged) and `listLitPU` (ungated) return the same result
    on every state where the old parser does not run out of model fuel,
    *provided* (a) the expression and map parsers only ever consume
    bracket-balanced token runs with no top-level `|` or `,` (`Oracle.Bal`),
    and (b) the memo only holds attempts that fail (`MemoSound`).
    (a) is what makes a successful pattern comprehension imply an open gate
    (`patCompP_pipe`, through `parse_node_pattern` / `parse_relationship_pattern`).
-   **(a) was false for the Rust expression parser before #3041**: a failed
-   slice bound was swallowed, so
-   `[1][(1..2]` was accepted while consuming an unmatched `(`.
-   The resulting counterexample (removed in bbee75955; the last revision that has them is 17ccc5412):
-   `[(a)-->(b) WHERE [1][(1..2] | b]` was a pattern comprehension before #3104
-   and a syntax error after it (CONFIRMED live, see the project header).
-   #3041 (`2023af648`) makes a failed bound an error, which removes that
-   counterexample: `[1][(1..2]` is refused (`slice_unclosed_paren_refused`) and
+   A failed slice bound is an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`) and
    the expression fragment of `Model.lean` consumes balanced runs on every
    input checked (`bounded_bal`). (a) is not proved for the whole Rust
    expression parser (the oracle covers CASE, comprehensions, maps, ... that
    the fragment lacks), so the theorem stays conditional on it. (b) holds when an attempt's outcome is a function of
    the key (`memo_hits_fail`); the key leaves out `anon_counter`, which the
-   outcome can carry through unnamed aliases `Alias.anon N` (see the project header).
+   outcome can read through anonymous names (see the project header).
 3. **Failed attempts are linear in the input** (`failed_attempts_linear`, a result about the
    abstract `memoRun` model over any visit list, not linked to parser runs):
    along any run, each key fails at most once, so with keys bounded by the
@@ -516,11 +509,11 @@ theorem listLitRest_lit (o : Oracle) (hs : o.Safe) (F : Nat) (forb : Bool) (save
         pure (leaf .list, !rb) : P (ET × Bool)) s0 = listLitLit saved s0 := by
     simp only [run_bind, run_setS, peek]
     by_cases hl : saved.cur = .lparen
-    · simp only [hl, if_true]
+    · simp only [hl, ite_true]
       rcases attempt_none_or_fuel (np none saved) (hf.2 hl) with h | h
       · rw [h]; exact .inr rfl
       · rw [h]; exact .inl rfl
-    · simp only [hl, if_false, run_pure]; exact .inr rfl
+    · simp only [hl, ite_false, run_pure]; exact .inr rfl
   unfold listLitRest
   simp only [run_bind, run_setS, tryIdent]
   cases hv : identOf saved.cur with
@@ -528,14 +521,14 @@ theorem listLitRest_lit (o : Oracle) (hs : o.Safe) (F : Nat) (forb : Bool) (save
   | some v =>
     simp only [opt, peek]
     by_cases he : saved.adv.cur = .eq
-    · simp only [he, if_true]
+    · simp only [he, ite_true]
       by_cases hl : saved.adv.adv.cur = .lparen
       · simp only [hl]
         rcases attempt_none_or_fuel (np (some v) saved.adv.adv) (hf.1 v hv he hl) with h | h
         · rw [h]; exact alt3
         · rw [h]; exact .inl rfl
       · cases hc : saved.adv.adv.cur <;> simp only [run_pure] <;> first | exact alt3 | exact absurd hc hl
-    · simp only [he, if_false]
+    · simp only [he, ite_false]
       cases hc : saved.adv.cur <;> simp only [run_pure] <;> exact alt3
 
 /-- **#3104 does not change the parse** — given that the expression and map
@@ -576,38 +569,15 @@ theorem listLitP_eq_ungated (o : Oracle) (hs : o.Safe) (hb : o.Bal) (F : Nat) (h
     | some v =>
       simp only [optK, opt] at hnf ⊢
       by_cases hin : s2.cur = .kw .in_
-      · simp only [hin, if_true]
-      · simp only [hin, if_false] at hnf ⊢
+      · simp only [hin, ite_true]
+      · simp only [hin, ite_false] at hnf ⊢
         exact hrest s2 hnf
   | _ => rfl
 
-/-! ## 5. History: `Oracle.Bal` failed for the Rust before #3041, a changed parse -/
-
-/-- An expression parser with the pre-#3041 Rust's swallowed slice bound
-(cypher.rs:2136-2156 at 8621212fc): `[1][(1..2]` is accepted,
-consuming a `(` it never closes. Abstracted: on a name it reads the name, on
-anything else it reads up to the next `|`. -/
-def peBad : P ET := fun s =>
-  match s.cur with
-  | .ident v => .ok (leaf (.var v)) s.adv
-  | _ => .ok (leaf .null) (s.1.dropWhile (· != .pipe), s.2)
-
-def oBad : Oracle := ⟨fun _ => peBad, fail, fail, fun _ _ => 0, fun _ => none, fun _ => false⟩
-
-/-- `(a)-->(b) WHERE [1][(1..2] | b]`, the tokens after the `[`. -/
-def badInput : List CT :=
-  [.lparen, .ident 1, .rparen, .dash, .dash, .gt, .lparen, .ident 2, .rparen,
-   .kw .where_, .lbrack, .int 1, .rbrack, .lbrack, .lparen, .int 1, .dotdot, .int 2, .rbrack,
-   .pipe, .ident 2, .rbrack]
-
-def rootOf : R (ET × Bool) → Option (EOp × Bool)
-  | .ok (t, b) _ => some (t.root, b)
-  | _ => none
-
 /-! ## 6. The memo: a failed attempt is never repeated, so failures are linear -/
 
-/-- `PatternComprehensionAttempt` (cypher.rs:228-234): `forb` ranges over the
-three `ForbiddenPatternComprehension` places (cypher.rs:130-145). -/
+/-- `PatternComprehensionAttempt` (cypher.rs): `forb` ranges over the
+three `ForbiddenPatternComprehension` places (cypher.rs). -/
 structure PCKey where
   pos : Nat
   allow : Bool
@@ -623,7 +593,7 @@ structure Visit where
   /-- Both attempts would fail. -/
   fails : Bool
 
-/-- Alternatives 2-3 over a run of calls (cypher.rs:2845-2878): an attempt
+/-- Alternatives 2-3 over a run of calls (cypher.rs): an attempt
 is made when the gate is open and the memo lacks the key; a failure is
 inserted. Returns the memo and the keys of the failed attempts. -/
 def memoRun : List PCKey → List Visit → List PCKey × List PCKey

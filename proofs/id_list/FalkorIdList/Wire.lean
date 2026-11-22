@@ -3,15 +3,15 @@
 
 | here | there (`graph/src/effects/v3/id_list.rs` unless noted) |
 | --- | --- |
-| `le n v` / `ofLe`    | `to_le_bytes` of `v as uN` / `uN::from_le_bytes` (`Reader::u16/u32/u64`, `graph/src/effects/reader.rs:99-113`) |
-| `widthFor`           | `narrow_int::width_for` (`graph/src/narrow_int.rs:19`) |
+| `le n v` / `ofLe`    | `to_le_bytes` of `v as uN` / `uN::from_le_bytes` (`Reader::u16/u32/u64`, `graph/src/effects/reader.rs`) |
+| `widthFor`           | `narrow_int::width_for` (`graph/src/narrow_int.rs`) |
 | `widthCode` / `widthOfCode` | `width_code` (:78) / `width_of_code` (:89) |
 | `writePair`          | `Segment::write_pair` (:652) + `write_narrow` (:1282) |
 | `encodeSeg`          | `Segment::encode` (:601) |
 | `encodeIds`          | `impl EffectEncode<3> for IdList` (:1200) |
-| `take` / `readU`     | `Reader::take` (reader.rs:40) / `Reader::u8..u64`, `read_narrow` (:1296) |
+| `take` / `readU`     | `Reader::take` (reader.rs) / `Reader::u8..u64`, `read_narrow` (:1296) |
 | `decodeSeg`          | `Segment::decode` (:673) |
-| `readIds` / `loop`   | `read_ids` (:1337), incl. `Reader::guard_count` (reader.rs:70) |
+| `readIds` / `loop`   | `read_ids` (:1337), incl. `Reader::guard_count` (reader.rs) |
 | `Roaring`            | `RoaringTreemap::{serialize_into, serialized_size, deserialize_from}` — abstract |
 
 Bytes are `Nat`s; the decoder theorems hold for **every** input list, with the
@@ -21,7 +21,7 @@ The roaring blob is abstract: `Roaring` is a structure of three functions over
 the *set* (as its ascending list), and `RoaringOK` states the two things the
 format relies on — a serialized set deserializes back to itself, and whatever
 deserializes is a set of `u64`s. Nothing is assumed about *which* blobs are
-accepted; see `REPORT.md` for what roaring 0.11.5 actually accepts.
+accepted (what roaring 0.11.5 actually accepts is not modelled).
 
 A Rust `panic!`/arithmetic overflow is `Err.panic`; `readIds_never_panics`
 proves it unreachable.
@@ -190,7 +190,7 @@ def encodeIds (R : Roaring) (segs : List Seg) : Except Err (List Nat) := do
 
 /-! ## Decoder -/
 
-/-- `Reader::take` (reader.rs:40): refuses rather than over-reads. -/
+/-- `Reader::take` (reader.rs): refuses rather than over-reads. -/
 def take (n : Nat) (bs : List Nat) : Except Err (List Nat × List Nat) :=
   if bs.length < n then .error .eof else .ok (bs.take n, bs.drop n)
 
@@ -291,13 +291,13 @@ theorem decode_writePair (R : Roaring) (k v c rest remaining) (hk : k ∈ [0, 0x
   obtain ⟨h1, h2, h3, h4, h5, _⟩ :=
     pairHeader_fields k hk (widthCode (widthFor v)) (widthCode_lt v) (widthCode (widthFor c)) (widthCode_lt c)
   have hk1 : k &&& 3 ≠ 1 := by simp at hk; rcases hk with rfl | rfl | rfl <;> decide
-  simp only [SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK, SEG_KIND_ASCENDING, ne_eq] at h1 h2 h3
+  simp only [SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK, ne_eq] at h1 h2 h3
   simp only [writePair, decodeSeg, List.cons_append, SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK,
-    SEG_KIND_ASCENDING, h1, h3, hk1, ne_eq, not_true_eq_false, if_false]
+    SEG_KIND_ASCENDING, h1, h3, hk1, ne_eq, not_true_eq_false, ite_false]
   rw [widthOfCode_widthCode v _ h4, List.append_assoc, readU_le _ _ _ (widthFor_fits v hv)]
   simp only
   rw [widthOfCode_widthCode c _ h5, readU_le _ _ _ (widthFor_fits c hc)]
-  simp only [ne_eq, h2]
+  simp only [h2]
 
 theorem decode_encodeSeg (R : Roaring) (hR : RoaringOK R) (s : Seg) (remaining : Nat)
     (he : Encodable s remaining) (rest : List Nat) :
@@ -309,21 +309,21 @@ theorem decode_encodeSeg (R : Roaring) (hR : RoaringOK R) (s : Seg) (remaining :
     refine ⟨_, rfl, ?_⟩
     rw [decode_writePair R _ _ _ _ _ (by simp [SEG_KIND_RANGE]) (by unfold W at *; omega) (by unfold W at *; omega)]
     simp [SEG_KIND_RANGE]
-    repeat (rw [if_neg (by unfold W at *; omega)])
+    repeat (rw [ite_eq_right (by unfold W at *; omega)])
     rw [Nat.mod_eq_of_lt (by omega)]
   | rdesc b l =>
     simp [Seg.WF] at hw; simp [Seg.len] at hl
     refine ⟨_, rfl, ?_⟩
     rw [decode_writePair R _ _ _ _ _ (by simp [SEG_KIND_RANGE, SEG_DESCENDING]) (by omega) (by unfold W at *; omega)]
     simp [SEG_KIND_RANGE, SEG_DESCENDING]
-    repeat (rw [if_neg (by unfold W at *; omega)])
+    repeat (rw [ite_eq_right (by unfold W at *; omega)])
     rw [Nat.mod_eq_of_lt (by omega)]
   | rep i c =>
     simp [Seg.WF] at hw; simp [Seg.len] at hl
     refine ⟨_, rfl, ?_⟩
     rw [decode_writePair R _ _ _ _ _ (by simp [SEG_KIND_REPEAT]) (by omega) (by unfold W at *; omega)]
     simp [SEG_KIND_REPEAT, SEG_KIND_RANGE]
-    repeat (rw [if_neg (by unfold W at *; omega)])
+    repeat (rw [ite_eq_right (by unfold W at *; omega)])
     rw [Nat.mod_eq_of_lt (by omega)]
   | asc bm =>
     simp [Seg.WF] at hw; simp [Seg.len] at hl
@@ -335,9 +335,9 @@ theorem decode_encodeSeg (R : Roaring) (hR : RoaringOK R) (s : Seg) (remaining :
     have hlen : ¬ (bm.length = 0 ∨ bm.length > remaining) := by
       have := List.length_pos_iff.2 hne; omega
     simp only [decodeSeg, List.cons_append, SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK,
-      SEG_KIND_ASCENDING, Nat.reduceAnd, Nat.reduceOr]
+      SEG_KIND_ASCENDING, Nat.reduceAnd]
     rw [List.append_assoc, readU_le _ _ _ hsz']
-    simp [take_append, hR.roundtrip bm hne hs hlt, hlen]
+    simp [take_append, hR.roundtrip bm hne hs hlt]
     exact ⟨hne, hl⟩
   | dsc bm =>
     simp [Seg.WF] at hw; simp [Seg.len] at hl
@@ -351,7 +351,7 @@ theorem decode_encodeSeg (R : Roaring) (hR : RoaringOK R) (s : Seg) (remaining :
     simp only [decodeSeg, List.cons_append, SEG_RESERVED, SEG_DESCENDING, SEG_KIND_MASK,
       SEG_KIND_ASCENDING, Nat.reduceAnd, Nat.reduceOr]
     rw [List.append_assoc, readU_le _ _ _ hsz']
-    simp [take_append, hR.roundtrip bm hne hs hlt, hlen]
+    simp [take_append, hR.roundtrip bm hne hs hlt]
     exact ⟨hne, hl⟩
 
 theorem encodeSeg_len (R : Roaring) (s : Seg) (bytes : List Nat) (h : encodeSeg R s = .ok bytes) :
@@ -371,10 +371,10 @@ theorem encodeSeg_exists (R : Roaring) (hR : RoaringOK R) (s : Seg) : ∃ bytes,
   | range b l | rdesc b l | rep b l => exact ⟨_, rfl⟩
   | asc bm =>
     exact ⟨(SEG_KIND_ASCENDING ||| 0) :: (le 4 (R.size bm) ++ R.ser bm), by
-      simp only [encodeSeg, encodeSeg.bitmap]; rw [if_neg (by rw [hR.size_eq]; simp)]⟩
+      simp only [encodeSeg, encodeSeg.bitmap]; rw [ite_eq_right (by rw [hR.size_eq]; simp)]⟩
   | dsc bm =>
     exact ⟨(SEG_KIND_ASCENDING ||| SEG_DESCENDING) :: (le 4 (R.size bm) ++ R.ser bm), by
-      simp only [encodeSeg, encodeSeg.bitmap]; rw [if_neg (by rw [hR.size_eq]; simp)]⟩
+      simp only [encodeSeg, encodeSeg.bitmap]; rw [ite_eq_right (by rw [hR.size_eq]; simp)]⟩
 
 def sumLen (segs : List Seg) : Nat := (segs.map Seg.len).sum
 
@@ -408,7 +408,7 @@ theorem encodeSegs_loop (R : Roaring) (hR : RoaringOK R) (count : Nat) (hc : cou
       have hle : ¬ len > count := by omega
       obtain ⟨bytes', hb', hdec⟩ := hex (count - len) (by omega) (by omega) (body ++ rest)
       rw [hbytes] at hb'; cases hb'
-      simp only [List.length_cons, loop, hle, if_false, List.append_assoc, hdec]
+      simp only [List.length_cons, loop, hle, ite_false, List.append_assoc, hdec]
       rw [hloop (len + s.len) (acc ++ [s]) rest (by simp only [sumLen] at *; omega)]
       simp
 
@@ -426,7 +426,7 @@ theorem readIds_encodeIds (R : Roaring) (hR : RoaringOK R) (segs : List Seg)
   simp only [readIds, List.append_assoc]
   rw [readU_le _ _ _ (by show segs.length < 256 ^ 4; simp; omega)]
   simp only
-  rw [if_neg (by omega), if_neg (by simp; omega)]
+  rw [ite_eq_right (by omega), ite_eq_right (by simp; omega)]
   rw [hloop 0 [] rest (by omega)]
   simp
 
@@ -582,7 +582,7 @@ theorem loop_safe (R : Roaring) (hR : RoaringOK R) (count : Nat) (hc : count < 4
     simp [loop] at h; obtain ⟨rfl, rfl, rfl⟩ := h
     exact ⟨[], by simp, rfl, by simp, by simp [sumLen], hle, [], by simp, by simp⟩
   | k + 1, len, acc, bs, segs, len', rest, hle, hb, h => by
-    simp only [loop, show ¬ len > count by omega, if_false] at h
+    simp only [loop, show ¬ len > count by omega, ite_false] at h
     split at h
     · cases h
     rename_i seg bs1 hdec
@@ -602,7 +602,7 @@ theorem loop_never_panics (R : Roaring) (count : Nat) :
     loop R count k len acc bs ≠ .error .panic
   | 0, _, _, _, _ => by simp [loop]
   | k + 1, len, acc, bs, hle => by
-    simp only [loop, show ¬ len > count by omega, if_false]
+    simp only [loop, show ¬ len > count by omega, ite_false]
     split
     · rename_i e he; intro h; cases h; exact decodeSeg_never_panics R bs _ he
     · rename_i seg bs1 hdec

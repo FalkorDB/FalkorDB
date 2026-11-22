@@ -3,7 +3,7 @@
 
 The clause parsers of `graph/src/parser/cypher.rs` (line numbers are from
 origin/main, commit 737dfb5da) are modelled over a token type `CT`
-that has every `Token` / `Keyword` of `lexer.rs:63-156`.
+that has every `Token` / `Keyword` of `lexer.rs`.
 
 Expressions are an *oracle*: `parse_expr`, `parse_primary_expr(false)`,
 `parse_map` and the projection-text slice are parameters (`Oracle`). Every
@@ -14,7 +14,7 @@ subject of `FalkorParserGrammar.Model` (`parseExpr_no_panic`,
 -/
 namespace FalkorParserGrammar.C
 
-/-- `Keyword` (lexer.rs:63-123), all 59 of them. -/
+/-- `Keyword` (lexer.rs), all 59 of them. -/
 inductive CK
   | call | yield_ | optional | match_ | unwind | merge | create | detach | delete | set
   | remove | where_ | with_ | return_ | as_ | null | or_ | xor | and_ | not_ | is_ | in_
@@ -24,7 +24,7 @@ inductive CK
   | vector | options | for_ | foreach | on | union
   deriving DecidableEq, Repr
 
-/-- `Token` (lexer.rs:125-157). `lbrack`/`rbrack` are `[ ]` (Rust `LBrace`/`RBrace`),
+/-- `Token` (lexer.rs). `lbrack`/`rbrack` are `[ ]` (Rust `LBrace`/`RBrace`),
 `lbrace`/`rbrace` are `{ }` (Rust `LBracket`/`RBracket`). `op` is any other
 operator token (`+ / % ^ <> <= >= =~`). `float` carries no value. -/
 inductive CT
@@ -54,10 +54,35 @@ def identOf : CT → Option Nat
   | .kw k => some (kwId k)
   | _ => none
 
-/-- The identifier `_anon_k` as a name id: a valid name a query may write. Before #3528 the
-parser also named the `k`-th unnamed entity so (`format!("_anon_{}")`), hence W4-parse-1; since
-#3528 an unnamed entity is `Alias.anon k` (C.Graph), so this is an ordinary name. -/
-def anonName (k : Nat) : Nat := 2000000 + k
+/-- `parser::ast::Alias` (ast.rs, #3303): what names a pattern entity before binding —
+a name the query wrote (`Named`), or the parser's number for an unnamed node, relationship or
+path (`Anon`). No identifier, backquoted or not, is an `Anon`. -/
+inductive Alias
+  | named (n : Nat)
+  | anon (k : Nat)
+  deriving DecidableEq, Repr
+
+/-- `impl Display for Alias` (ast.rs) with `write_anon` (ast.rs). -/
+def Alias.fmt : Alias → String
+  | .named n => toString n
+  | .anon k => "@anon_" ++ toString k
+
+instance : ToString Alias := ⟨Alias.fmt⟩
+
+/-- `Alias::name` (ast.rs): the written name, `None` for an unnamed entity. -/
+def Alias.name : Alias → Option Nat
+  | .named n => some n
+  | .anon _ => none
+
+theorem Alias.name_spec (n k : Nat) :
+    (Alias.named n).name = some n ∧ (Alias.anon k).name = none := ⟨rfl, rfl⟩
+theorem Alias.fmt_spec (n k : Nat) :
+    toString (Alias.named n) = toString n ∧ toString (Alias.anon k) = "@anon_" ++ toString k :=
+  ⟨rfl, rfl⟩
+/-- `impl From<Arc<String>> for Alias` (ast.rs) is `Named`. -/
+theorem Alias.from_spec (n : Nat) : (Alias.named n).name = some n := rfl
+/-- A written name never equals an unnamed entity's alias (the point of #3303). -/
+theorem Alias.named_ne_anon (n k : Nat) : Alias.named n ≠ Alias.anon k := by simp
 
 /-! ## Expression trees (`ExprIR`, ast.rs) as far as the clause level looks into them -/
 
@@ -77,7 +102,7 @@ def ET.root : ET → EOp | .node o _ => o
 def ET.kids : ET → List ET | .node _ cs => cs
 abbrev leaf (o : EOp) : ET := .node o []
 
-/- `find_aggregate_name` (cypher.rs:3563-3573): the first aggregate function
+/- `find_aggregate_name` (cypher.rs): the first aggregate function
 met by a preorder DFS. -/
 mutual
 def aggName : ET → Option Nat
@@ -220,7 +245,7 @@ theorem np_fail {α} : NP (fail : P α) := ⟨fun _ => by simp⟩
 theorem np_ite {α} {c : Prop} [Decidable c] {x y : P α} (hx : NP x) (hy : NP y) :
     NP (if c then x else y) := by split <;> assumption
 
-/-! ## Token primitives (`match_token!` / `optional_match_token!`, macro.rs:51-113) -/
+/-! ## Token primitives (`match_token!` / `optional_match_token!`, macro.rs) -/
 
 /-- `match_token!(lexer, T)` / `match_token!(lexer => K)`. -/
 def tok (t : CT) : P Unit := fun s => if s.cur = t then .ok () s.adv else .err
@@ -231,7 +256,7 @@ def peek : P CT := fun s => .ok s.cur s
 /-- `self.lexer.next()`. -/
 def next : P Unit := fun s => .ok () s.adv
 
-/-- `parse_ident` (cypher.rs:2682-2694); identifier-length validation
+/-- `parse_ident` (cypher.rs); identifier-length validation
 (`validate_identifier_len`) is not modelled (it can only add errors). -/
 def ident : P Nat := fun s => match identOf s.cur with
   | some v => .ok v s.adv
@@ -291,17 +316,17 @@ structure FnInfo where
 
 /-- What the clause parsers take from the expression level. -/
 structure Oracle where
-  /-- `parse_expr(allow_pattern_predicate)` (cypher.rs:2184). -/
+  /-- `parse_expr(allow_pattern_predicate)` (cypher.rs). -/
   pe : Bool → P ET
-  /-- `parse_primary_expr(false)` (cypher.rs:1942): tree and `recurse`. -/
+  /-- `parse_primary_expr(false)` (cypher.rs): tree and `recurse`. -/
   pp : P (ET × Bool)
-  /-- `parse_map` (cypher.rs:3202), modelled in `Model.parseMap`. -/
+  /-- `parse_map` (cypher.rs), modelled in `Model.parseMap`. -/
   pmap : P ET
   /-- `self.lexer.str[pos..pos(true)]` of a projection, as a name id. -/
   txt : PS → PS → Nat
-  /-- `get_functions().get(name, Procedure)` (cypher.rs:1052). -/
+  /-- `get_functions().get(name, Procedure)` (cypher.rs). -/
   proc : List Nat → Option FnInfo
-  /-- `self.not_pattern_comprehension.contains(&attempt)` (cypher.rs:2852):
+  /-- `self.not_pattern_comprehension.contains(&attempt)` (cypher.rs):
   whether the memo of failed pattern-comprehension attempts (#3104) holds the
   key `(pos, allow_pattern_predicate, forbidden, depth)` of an attempt from this
   state. The memo is parser state the clause model does not thread, so it is a

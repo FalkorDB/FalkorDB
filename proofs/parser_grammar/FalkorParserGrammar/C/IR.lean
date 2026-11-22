@@ -1,11 +1,11 @@
 /-
-# `QueryIR` and its validation (`graph/src/parser/ast.rs:885-1395`)
+# `QueryIR` and its validation (`graph/src/parser/ast.rs`)
 -/
 import FalkorParserGrammar.C.Graph
 
 namespace FalkorParserGrammar.C
 
-/-- `SetItem` (ast.rs:891-898). -/
+/-- `SetItem` (ast.rs). -/
 inductive SetItem
   | attr (target value : ET) (replace : Bool)
   | label (v : Nat) (ls : List Nat)
@@ -22,7 +22,7 @@ structure Proj where
 inductive IdxTy | range | fulltext | vector
   deriving DecidableEq, Repr
 
-/-- `QueryIR<Arc<String>>` (ast.rs:928-1040); names are ids, a procedure is
+/-- `QueryIR<Arc<String>>` (ast.rs); names are ids, a procedure is
 its dotted name. -/
 inductive IR
   | call (f : List Nat) (args : List ET) (yields : List Nat) (aliases : List (Option Nat))
@@ -44,10 +44,10 @@ inductive IR
   | forEach (l : ET) (v : Nat) (body : List IR)
   | callSub (body : IR) (ret : Bool)
 
-/-- The two procedure names `inner_validate` looks at (ast.rs:1171, 1194). -/
+/-- The two procedure names `inner_validate` looks at (ast.rs). -/
 def procCNI : List Nat := [3000001]    -- db.idx.fulltext.createNodeIndex
 def procFTDrop : List Nat := [3000002] -- db.idx.fulltext.drop
-/-- The string `"label"` (ast.rs:1177). -/
+/-- The string `"label"` (ast.rs). -/
 def strLabel : Nat := 3000003
 
 /-- Validation outcome; `panic` is an out-of-bounds `args[0]` / `child(0)`. -/
@@ -58,7 +58,7 @@ def V.andThen : V → V → V
   | .ok, b => b
   | a, _ => a
 
-/-- `validate_set_items` (ast.rs:1329-1345). -/
+/-- `validate_set_items` (ast.rs). -/
 def vSetItems : List SetItem → V
   | [] => .ok
   | .label _ _ :: is => vSetItems is
@@ -70,7 +70,7 @@ def vSetItems : List SetItem → V
     | .node (.var _) _ => vSetItems is
     | _ => .err
 
-/-- `validate_inlined_properties` (ast.rs:1348-1367). -/
+/-- `validate_inlined_properties` (ast.rs). -/
 def vInlined (p : QG Alias) : V :=
   if p.nodes.all (fun n => n.attrs.root == .map) && p.rels.all (fun r => r.attrs.root == .map)
   then .ok else .err
@@ -82,14 +82,14 @@ theorem vInlined_spec (p : QG Alias) :
   unfold vInlined
   split <;> simp_all
 
-/-- The REMOVE check (ast.rs:1235-1240). -/
+/-- The REMOVE check (ast.rs). -/
 def vRemove : List ET → V
   | [] => .ok
   | .node (.prop _) [] :: _ => .panic
   | .node (.prop _) (.node .null _ :: _) :: _ => .err
   | _ :: is => vRemove is
 
-/-- The CALL argument check (ast.rs:1224-1261). Since #3297 the arm then
+/-- The CALL argument check (ast.rs). Since #3297 the arm then
 validates the clauses after the CALL (`vClause`); before, it returned here. -/
 def vCall (f : List Nat) (args : List ET) : V :=
   let first : V :=
@@ -108,7 +108,7 @@ def vCall (f : List Nat) (args : List ET) : V :=
 def relTypesOne (p : QG Alias) : Bool := p.rels.all (fun r => r.types.length == 1)
 
 mutual
-/-- `return_column_names` (ast.rs:1370-1392). -/
+/-- `return_column_names` (ast.rs). -/
 def returnCols : IR → List Nat
   | .query cs _ => (colsL cs).getD []
   | _ => []
@@ -130,7 +130,7 @@ theorem sz_list_pos (l : List IR) : 0 < sizeOf l := by cases l <;> simp <;> omeg
 theorem sz_ir_pos (c : IR) : 0 < sizeOf c := by cases c <;> simp <;> omega
 
 mutual
-/-- `inner_validate(self, iter)` (ast.rs:1157-1326). -/
+/-- `inner_validate(self, iter)` (ast.rs). -/
 def vClause : IR → List IR → V
   | .call f args _ _ _ _, rest => (vCall f args).andThen (vNext rest)
   | .match_ p _ _, rest => (vInlined p).andThen (match rest with
@@ -186,7 +186,7 @@ termination_by l => sizeOf l
 decreasing_by all_goals (simp_wf; have := sz_list_pos bs; omega)
 end
 
-/-- `QueryIR::validate` (ast.rs:1151-1153). -/
+/-- `QueryIR::validate` (ast.rs). -/
 def validate (q : IR) : V := vClause q []
 
 /-! ## What validation is meant to establish, and where it falls short -/
@@ -223,7 +223,7 @@ theorem vClause_simple (p : QG Alias) (hp : vInlined p = .ok) :
 
 /-- **PROVEN** (#3297, closes W4-plan-4): the CALL arm checks the call's
 arguments and then validates the clauses after it
-(`iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`, ast.rs:1262-1263). -/
+(`iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`, ast.rs). -/
 theorem call_validates_rest (f : List Nat) (args : List ET) ys as fl ex (rest : List IR) :
     vClause (.call f args ys as fl ex) rest = (vCall f args).andThen (vNext rest) := by
   rw [vClause]
@@ -238,11 +238,11 @@ theorem match_last_rejected (p : QG Alias) (hp : vInlined p = .ok) :
     validate (.query [.match_ p none false] false) = .err := by
   simp [validate, vClause, hp, V.andThen]
 
-/-- **PROVEN** (#3291, ast.rs:1327-1331): a query ending in `WITH` is rejected
+/-- **PROVEN** (#3291, ast.rs): a query ending in `WITH` is rejected
 ("Query cannot conclude with WITH …"), as in C. -/
 theorem with_last_rejected (p : Proj) (f : Option ET) (w : Bool) :
     validate (.query [.with_ p f w] false) = .err := by
-  simp [validate, vClause, V.andThen]
+  simp [validate, vClause]
 
 /-- **PROVEN** (#3297): a MATCH-terminated tail is rejected after a CALL as
 well (`CALL db.labels() YIELD label MATCH (n)`; C rejects it too). -/
@@ -250,9 +250,7 @@ theorem match_last_after_call_rejected (p : QG Alias) (hp : vInlined p = .ok) :
     validate (.query [.call [5] [] [] [] none true, .match_ p none false] false) = .err := by
   simp [validate, vClause, vCall, vNext, procCNI, procFTDrop, hp, V.andThen]
 
-/-! ### History: before #3297 (b6567cb97 and earlier) -/
-
-/-- `body_has_return` (cypher.rs:1105-1113). -/
+/-- `body_has_return` (cypher.rs). -/
 def bodyHasReturn : IR → Bool
   | .query cs _ => match cs.getLast? with
     | some (.return_ _ _) => true
@@ -292,8 +290,8 @@ theorem returnCols_last_return (cs : List IR) (p : Proj) (w b : Bool) :
 `args[0]` sites cannot fire when every property node has a child (the
 parser builds properties only through `parse_property_lookup`, which
 always attaches one) and createNodeIndex has an argument (its registry
-entry requires one: `args: [Type::Map]`, procedures.rs:328-330, checked by
-`func.validate` at cypher.rs:1064). -/
+entry requires one: `args: [Type::Map]`, procedures.rs, checked by
+`func.validate` at cypher.rs). -/
 def ET.propOk : ET → Bool
   | .node (.prop _) [] => false
   | _ => true
@@ -332,7 +330,7 @@ theorem vCall_np (f : List Nat) (args : List ET) (h : f = procCNI → args ≠ [
     · simp
   · split <;> (try split) <;> simp
 
-/-! ## `is_aggregation` (ast.rs:440-466) -/
+/-! ## `is_aggregation` (ast.rs) -/
 
 /-- Both `SupportAggregation::is_aggregation` impls (bound and raw trees)
 are `find_aggregate_name(..).is_some()` up to the tree's variable type. -/

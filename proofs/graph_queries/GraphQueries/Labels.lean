@@ -9,10 +9,10 @@ are set insert/delete on logical contents (proofs/versioned_matrix
 
 | here | there (graph.rs) |
 | --- | --- |
-| `setLabelsProduct` | `set_node_labels_product` :2141 |
-| `setLabelsBulk`    | `set_nodes_labels_bulk` :2220 |
-| `removeLabels`     | `remove_nodes_labels` :2266 |
-| `deleteNodes`      | `delete_nodes` :2300 |
+| `setLabelsProduct` | `set_node_labels_product`  |
+| `setLabelsBulk`    | `set_nodes_labels_bulk`  |
+| `removeLabels`     | `remove_nodes_labels`  |
+| `deleteNodes`      | `delete_nodes`  |
 -/
 namespace GQ
 variable {V : Type}
@@ -94,7 +94,7 @@ theorem removeLabels_spec (g : G V) (pairs : List (Nat × Nat)) (hc : LabCons g)
     LabCons (removeLabels g pairs) ∧ ∀ p ∈ pairs, p ∉ (removeLabels g pairs).nodeLabels.ents := by
   refine ⟨fun n l => ?_, fun p hp => by simp [removeLabels, hp]⟩
   have h0 := hc n l
-  simp only [LabCons, lm, removeLabels] at h0 ⊢
+  simp only [lm, removeLabels] at h0 ⊢
   rw [lm_mapIdx]
   cases hm : g.labelMs[l]? with
   | none =>

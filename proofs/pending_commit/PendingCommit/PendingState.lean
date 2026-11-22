@@ -1,6 +1,6 @@
 import PendingCommit.PendingAttrs
 /-
-# `Pending` bookkeeping (pending.rs:307-1225: `struct Pending` and its accessors)
+# `Pending` bookkeeping (pending.rs: `struct Pending` and its accessors)
 
 The struct with every field as a finite set (`RoaringTreemap`: a duplicate-free
 list) or finite map (`FxHashMap`: `PA.FMap`), and each accessor/mutator as a
@@ -20,7 +20,7 @@ function on it. Relationship type names (`Arc<String>`) are `Nat`s.
   `get_created_relationship_endpoints` answers from the unique entry.
 * degrees: `pendingDeg_spec` (created, not deleted edges); `pending_deleted_*degree` skips edges created
   since the last commit, so it asks the committed graph only for committed ids (`deletedDeg_skips_created`,
-  `fixed2769_created_deleted`, #2769 fixed by #3520).
+  `fixed2769_created_deleted`).
 -/
 namespace PendingCommit.PS
 open PA
@@ -39,7 +39,7 @@ theorem sins_nodup (s : List Nat) (h : s.Nodup) (x : Nat) : (sins s x).Nodup := 
   · exact h
   · rename_i hx; exact List.nodup_cons.2 ⟨hx, h⟩
 
-/-- `struct Pending` (pending.rs:307). Since #2846 it keeps no id boundary
+/-- `struct Pending` (pending.rs). Since #2846 it keeps no id boundary
 (`node_entry`/`rel_entry` are gone): the graph holds the batch.
 `created` (`created_nodes`, :316) is what the allocator must not reissue —
 reserved, not yet recorded by the id space; `taken`
@@ -60,6 +60,8 @@ structure P where
   existR : FMap (List Entry)
   setL : FMap (List Nat)
   remL : FMap (List Nat)
+  /-- `staged_labels_removed` (#3459): removals that only cancelled a staged add. -/
+  stagedRem : Nat
 
 /-! ## Sets -/
 
@@ -106,9 +108,9 @@ theorem sets_spec (p : P) (ids : List Nat) (id y : Nat) :
     (isRelCreated p y = true ↔ (getRelType p y).isSome) := by
   refine ⟨foldl_sins _ _ _, mem_sins _ _ _, mem_sins _ _ _, foldl_sins _ _ _, by simp [isNodeCreated],
     by simp [isNodeDeleted], by simp [isRelDeleted], rfl, ?_, ?_, ?_, by simp [isRelCreated, getRelType]⟩
-  · simp [hasDeletedNodes, List.isEmpty_iff]
-  · simp [hasDeletedRels, List.isEmpty_iff]
-  · simp [hasCreatedRels, List.isEmpty_iff]
+  · simp [hasDeletedNodes]
+  · simp [hasDeletedRels]
+  · simp [hasCreatedRels]
 
 /-! ## Attribute staging, generic over the (new, existing) pair -/
 
@@ -263,7 +265,7 @@ theorem oget_orem (m : OM) (s t : String) : oget (orem m s) t = if t = s then no
       · simp [ht, Ne.symm ht]
     · simp only [List.filter_cons, bne_iff_ne, ne_eq, ha, not_false_eq_true, ite_true, oget, ih]
       by_cases ht : a = t
-      · subst ht; simp [ha, Ne.symm ha]
+      · subst ht; simp [ha]
       · simp [ht]
 
 /-- One staged entry applied (`update_node_attrs` loop body, :673-681). -/

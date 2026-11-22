@@ -1,27 +1,13 @@
 /-
 # parser/ast.rs: variables, pattern graphs, validation
 
-| here | there |
-| --- | --- |
-| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.isUnnamed`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`is_unnamed`/`as_str` ast.rs:149-219 (Display ast.rs:172, `write_anon` ast.rs:125) |
-| `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs:473-640 |
-| `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs:481-489, 542-566, 643-660 |
-| `mergeAttrs` | `merge_attr_maps` ast.rs:667-683 |
-| `addNode`, `mergeNode`, `replaceNode`, `addRel`, `addPath`, `variables`, accessors | ast.rs:685-791 |
-| `filterVisited` | `filter_visited` ast.rs:795-821 |
-| `dfs`, `components` | `dfs` ast.rs:844-883, `connected_components` ast.rs:823-842 |
-| `QC`, `innerValidate`, `validateSetItems`, `inlinedOk`, `returnColumns` | `validate` / `inner_validate` / `validate_set_items` / `validate_inlined_properties` / `return_column_names` ast.rs:1151-1393 |
-
-* FIXED by #3297 (W4-plan-4; main b84473a7f): `inner_validate`'s procedure-call arm
-  (ast.rs:1224-1263) now ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
+* W4-plan-4: `inner_validate`'s procedure-call arm
+  (ast.rs) ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
   so the clauses after a CALL are validated (`call_validates_rest`): `CALL db.labels() YIELD
   label MATCH (n)`, `… UNWIND [1] AS x` and `… CREATE (a)-[:R|S]->(b)` are rejected as in C
   (`call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
-  History: before #3297 the arm returned `Ok(())`; `CALL db.labels() YIELD label MATCH (n)` then reached the
-  optimizer with a scan at the plan root (`utilize_node_by_id.rs` `parent().unwrap()`).
-* FIXED by #3291 (608b62542): a query ending in `WITH` is rejected (`with_last_rejected`,
-  `MATCH (n) WITH n`: "Query cannot conclude with WITH …"), as in C and openCypher. Before, the
-  `With`/`Return` arm accepted it and the query returned rows.
+* A query ending in `WITH` is rejected (`with_last_rejected`,
+  `MATCH (n) WITH n`: "Query cannot conclude with WITH …"), as in C and openCypher.
 * `validate_ends`: away from those, a query cannot end in MATCH / UNWIND / a
   returning subquery.
 -/
@@ -29,51 +15,56 @@ namespace PlannerBuild.Ast
 
 /-! ## `Variable` -/
 
-/-- `Variable`: `anon` is the parser's number of an unnamed pattern entity (#3528); planner
-temporaries have neither a name nor an `anon` number. -/
 structure AV where
   name : Option String
+  /-- The parser's number of an unnamed pattern entity (#3303), shown in plans. -/
+  anon : Option Nat
   id : Nat
   scope : Nat
-  anon : Option Nat := none
   deriving DecidableEq, Repr
 
-/-- `Display for Variable` (ast.rs:172): the name, else `@anon_k` (`write_anon`, ast.rs:125),
-else `?id`. -/
+/-- `impl Display for Variable` (ast.rs): the name; else, for an unnamed pattern
+entity, `write_anon` (ast.rs) `@anon_<n>`; else (a planner temporary) `?<id>`. -/
 def AV.fmt (v : AV) : String := match v.name, v.anon with
   | some n, _ => n
   | none, some k => "@anon_" ++ toString k
   | none, none => "?" ++ toString v.id
 
-/-- `Variable::is_unnamed` (ast.rs:209): no name — independent of what the variable prints as. -/
-def AV.isUnnamed (v : AV) : Bool := v.name.isNone
-
-/-- `PartialEq for Variable`: by id only (ast.rs:113-119). -/
+/-- `PartialEq for Variable`: by id only (ast.rs). -/
 def AV.eqv (a b : AV) : Bool := a.id == b.id
 
-/-- `Hash for Variable`: hashes the id only (ast.rs:124-130). -/
+/-- `Hash for Variable`: hashes the id only (ast.rs). -/
 def AV.hashKey (v : AV) : Nat := v.id
 
 def AV.asStr (v : AV) : String := v.name.getD "?"
 
-theorem AV.fmt_named (n : String) (i s : Nat) (a : Option Nat) : AV.fmt ⟨some n, i, s, a⟩ = n := rfl
-theorem AV.fmt_anon (i s : Nat) : AV.fmt ⟨none, i, s, none⟩ = "?" ++ toString i := rfl
-theorem AV.fmt_unnamed (k i s : Nat) : AV.fmt ⟨none, i, s, some k⟩ = "@anon_" ++ toString k := rfl
-theorem AV.isUnnamed_spec (v : AV) : v.isUnnamed = true ↔ v.name = none := by
-  cases h : v.name <;> simp [AV.isUnnamed, h]
-/-- A query can write the name `@anon_0` (backquoted); that variable prints exactly like the
-unnamed entity `0`, yet it is not unnamed: anonymity cannot be read off the rendered text. -/
-theorem AV.unnamed_not_from_text (i j s : Nat) :
-    AV.fmt ⟨some "@anon_0", i, s, none⟩ = AV.fmt ⟨none, j, s, some 0⟩ ∧
-    AV.isUnnamed ⟨some "@anon_0", i, s, none⟩ = false ∧ AV.isUnnamed ⟨none, j, s, some 0⟩ = true :=
-  ⟨rfl, rfl, rfl⟩
+/-- `Variable::key` (ast.rs): the `VarKey { id, scope_id }` naming the variable's identity. -/
+def AV.key (v : AV) : Nat × Nat := (v.id, v.scope)
+
+/-- Two variables share a `VarKey` exactly when both id and scope agree. -/
+theorem AV.key_eq_iff (a b : AV) : a.key = b.key ↔ a.id = b.id ∧ a.scope = b.scope := by
+  simp [AV.key]
+
+/-- A shared `VarKey` implies `Variable` equality (which compares ids only). -/
+theorem AV.key_eq_eqv (a b : AV) (h : a.key = b.key) : a.eqv b = true := by
+  simp [AV.key, AV.eqv] at *; exact h.1
+
+/-- Unlike `Eq`, the key separates equal ids in different scopes. -/
+theorem AV.key_other_scope : AV.key ⟨some "a", none, 3, 0⟩ ≠ AV.key ⟨some "b", none, 3, 1⟩ := by
+  decide
+
+theorem AV.fmt_named (n : String) (a : Option Nat) (i s : Nat) : AV.fmt ⟨some n, a, i, s⟩ = n := rfl
+/-- A nameless variable that is not a pattern entity (a planner temporary) prints `?<id>`. -/
+theorem AV.fmt_anon (i s : Nat) : AV.fmt ⟨none, none, i, s⟩ = "?" ++ toString i := rfl
+/-- An unnamed pattern entity prints `@anon_<n>` from the parser's number (#3303). -/
+theorem AV.fmt_unnamed (k i s : Nat) : AV.fmt ⟨none, some k, i, s⟩ = "@anon_" ++ toString k := rfl
 theorem AV.asStr_spec (v : AV) : v.asStr = v.name.getD "?" := rfl
 
 /-- Equality ignores scope and name — two variables of different scopes with
 the same id are "equal" (the root of the id-only issues noted elsewhere). -/
 theorem AV.eqv_iff (a b : AV) : a.eqv b = true ↔ a.id = b.id := by simp [AV.eqv]
 
-theorem AV.eqv_other_scope : AV.eqv ⟨some "a", 3, 0, none⟩ ⟨some "b", 3, 1, none⟩ = true := rfl
+theorem AV.eqv_other_scope : AV.eqv ⟨some "a", none, 3, 0⟩ ⟨some "b", none, 3, 1⟩ = true := rfl
 
 /-- `Hash` is consistent with `Eq` (as `HashMap`/`HashSet` require). -/
 theorem AV.hash_consistent (a b : AV) (h : a.eqv b = true) : a.hashKey = b.hashKey := by
@@ -103,7 +94,7 @@ end
 
 def isAggD : AD → Bool | .func _ true => true | _ => false
 
-/-- `is_aggregation` (both impls, ast.rs:446-466): some node of the tree is an aggregate call (DFS any). -/
+/-- `is_aggregation` (both impls, ast.rs): some node of the tree is an aggregate call (DFS any). -/
 def isAggregation (e : AE) : Bool := anyA isAggD e
 
 theorem isAggregation_root (n : String) (cs : List AE) : isAggregation (.node (.func n true) cs) = true := by
@@ -295,6 +286,9 @@ theorem accessors (g : QG) (ns : List QN) (rs : List QR) :
 
 def notVisited (vis : List (Nat × Nat)) (v : AV) : Bool := !vis.contains (v.id, v.scope)
 
+/-- `filter_visited` tests `visited.contains(&alias.key())`. -/
+theorem notVisited_key (vis : List (Nat × Nat)) (v : AV) : notVisited vis v = !vis.contains v.key := rfl
+
 def filterVisited (g : QG) (vis : List (Nat × Nat)) : QG :=
   let g1 := (g.nodes.filter (fun n => notVisited vis n.alias)).foldl (fun acc n => (addNode eqv acc n).1) QG.default
   let g2 := (g.rels.filter (fun r => notVisited vis r.alias)).foldl (fun acc r => (addRel eqv acc r).1) g1
@@ -387,7 +381,7 @@ def innerValidate : QC → List QC → Except String Unit
   | .delete, rest => next rest
   | .set s, rest => (setItemsOk s).bind fun _ => next rest
   | .remove nt, rest => if nt then .error "Type mismatch: expected Node or Relationship but was Null" else next rest
-  | .with_, rest => match rest with     -- #3291 (ast.rs:1327-1331)
+  | .with_, rest => match rest with     -- #3291 (ast.rs)
     | [] => .error "Query cannot conclude with WITH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)"
     | c :: cs => innerValidate c cs
   | .loadCsv, rest | .return_, rest | .createIndex, rest | .dropIndex, rest => next rest
@@ -421,7 +415,7 @@ end
 def validate (q : QC) : Except String Unit := innerValidate q []
 
 /-- **PROVEN** (#3297): the procedure-call arm checks the call, then validates the clauses
-after it (ast.rs:1224-1263, `iter.next().map_or(Ok(()), …)`). -/
+after it (ast.rs, `iter.next().map_or(Ok(()), …)`). -/
 theorem call_validates_rest (p : String) (a : Option String) (rest : List QC) :
     innerValidate (.call p a) rest = (callCheck p a).bind fun _ => next rest := by
   rw [innerValidate]
