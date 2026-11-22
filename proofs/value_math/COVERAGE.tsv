@@ -1,16 +1,16 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/value.rs	get_numeric	250	PROVEN	getNumeric_after_validation
-graph/src/runtime/value.rs	format_duration	302	PROVEN	fmtDuration_fields, fmtDuration_zero, fmtDuration_ex (decompose_duration from functions_temporal)
-graph/src/runtime/value.rs	heap_size	347	PROVEN	heap_le_amortized, rel_charged
-graph/src/runtime/value.rs	amortized_heap_size	393	PROVEN	heap_le_amortized, shares_le
-graph/src/runtime/value.rs	get_attr	444	PROVEN	getAttr_null, getAttr_map_missing (temporal extractors parameters)
-graph/src/runtime/value.rs	get_point_component	463	PROVEN	point_component_case
-graph/src/runtime/value.rs	is_never_equal	1649	PROVEN	isNeverEqual_iff
-graph/src/runtime/value.rs	may_fail_self_match	1672	PROVEN	mayFail_sound
-graph/src/runtime/value.rs	value_nesting_error	76	PROVEN	Nesting.valueNestingError_text (decoder message; decodeValue_refuses_past_cap, decode_nest_deep); the property validator's own message (`validate_list_property`, "Property values can only be nested up to N levels deep") is a different string and its text is not proved
-graph/src/runtime/value.rs	encode	2091	PROVEN	decodeUncapped_encode, decode_encode, stored_roundtrip, encode_map_is_null
-graph/src/runtime/value.rs	decode	2177	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
-graph/src/runtime/value.rs	decode_value	2189	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
+graph/src/runtime/value.rs	get_numeric	252	PROVEN	getNumeric_after_validation
+graph/src/runtime/value.rs	format_duration	304	PROVEN	fmtDuration_fields, fmtDuration_zero, fmtDuration_ex (decompose_duration from functions_temporal)
+graph/src/runtime/value.rs	heap_size	349	PROVEN	heap_le_amortized, rel_charged
+graph/src/runtime/value.rs	amortized_heap_size	395	PROVEN	heap_le_amortized, shares_le
+graph/src/runtime/value.rs	get_attr	446	PROVEN	getAttr_null, getAttr_map_missing (temporal extractors parameters)
+graph/src/runtime/value.rs	get_point_component	465	PROVEN	point_component_case
+graph/src/runtime/value.rs	is_never_equal	1651	PROVEN	isNeverEqual_iff
+graph/src/runtime/value.rs	may_fail_self_match	1674	PROVEN	mayFail_sound
+graph/src/runtime/value.rs	value_nesting_error	78	PROVEN	Nesting.valueNestingError_text (decoder message; decodeValue_refuses_past_cap, decode_nest_deep); the property validator's own message (`validate_list_property`, "Property values can only be nested up to N levels deep") is a different string and its text is not proved
+graph/src/runtime/value.rs	encode	2093	PROVEN	decodeUncapped_encode, decode_encode, stored_roundtrip, encode_map_is_null
+graph/src/runtime/value.rs	decode	2179	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
+graph/src/runtime/value.rs	decode_value	2191	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1); #3643 vector blob length must be exactly 4 * dim: Misc.readVec_exact
 graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
 graph/src/runtime/functions/math.rs	abs	46	PROVEN	abs_agree_except, abs_min_diverges, abs_nzero_diverges, unary_no_panic
 graph/src/runtime/functions/math.rs	ceil	63	PROVEN	int_rounding_identity, unary_no_panic
@@ -101,7 +101,7 @@ graph/src/runtime/functions/procedures.rs	register	41	PROVEN	Procedures procRegs
 graph/src/runtime/functions/procedures.rs	db_labels	47	PROVEN	Procedures dbLabels: yields_labels, dbLabels_rows; live = C (empty+populated)
 graph/src/runtime/functions/procedures.rs	db_types	63	PROVEN	Procedures dbTypes: yields_types; live = C
 graph/src/runtime/functions/procedures.rs	db_properties	79	PROVEN	Procedures dbProps: yields_props; live = C
-graph/src/runtime/functions/procedures.rs	db_indexes	94	PROVEN	Procedures dbIndexes: yields_indexes, typesOfFields_spec/_sublist, typesOf_isSome, attrOpts_defaults/_novec, dimToI64_le, statusOf_spec, infoNames_last; live vs C (row order + info detail differ)
+graph/src/runtime/functions/procedures.rs	db_indexes	94	PROVEN	Procedures dbIndexes: yields_indexes, typesOfFields_spec/_sublist, typesOf_isSome, attrOpts_defaults/_novec, dimToI64_le, statusOf_spec, infoNames_last; live vs C (row order + info detail differ); #3643 M / efConstruction / efRuntime saturate at i64::MAX: attrOpts_saturates
 graph/src/runtime/functions/procedures.rs	db_meta_stats	289	PROVEN	Procedures dbMetaStats: yields_meta, metaStats_labels (map = label->count, no key overwritten); live = C
 graph/src/runtime/functions/procedures.rs	db_fulltext_create_node_index	329	PROVEN	Procedures ftCreate: stubs (zero-row batch; known stub, live C creates index)
 graph/src/runtime/functions/procedures.rs	db_fulltext_query_nodes	339	PROVEN	Procedures ftQueryNodes: stubs (planner-rewritten)

@@ -105,13 +105,11 @@ Yes:
 
 ## Bugs found
 
-All confirmed live against C (`repro_live.py` in this folder, and the scripts named in [`../FINDINGS.md`](../FINDINGS.md)), except row 5, which is a model result only (Lean-only, not confirmed live: `repro_live.py` has no 65,536-entry RDB case).
+All confirmed live against C (`repro_live.py` in this folder, and the scripts named in [`../FINDINGS.md`](../FINDINGS.md)).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 5 | `slot_len_truncates` | `Slot.len = n as u16`: 65,536 properties on one entity vanish | **Open**, model-only. Reachable from a malformed RDB: `AttributeStore::decode_with_count` (`attribute_store.rs`) reads the per-entity attribute count from the stream with no bound below 65,536, does not deduplicate ids, and passes the whole vector to `set_span`, whose `n as u16` wraps the stored length. Not reachable from `GRAPH.BULK` (deduplicated, `Bulk.lean`) |
 | 10 | `leading_space_divergence` | `CACHE_SIZE " 10"` and `GRAPH.CONFIG SET RESULTSET_SIZE " 5"` succeed on C and are refused by Rust | **Open** (confirmed live, not filed) |
-| 11 | `from_slice_past_end` | Any truncated `GRAPH.RESTORE` payload calls `RedisModule_LoadStringBuffer(NULL)`; a cut at a record boundary SIGSEGVs. C crashes too | **Open** (#2537; external PR #3167) |
 | 13 | none | `CREATE (a:A) DELETE a` reports no node stats in the verbose format (minor) | **Open**, not filed |
 | 14 | `bug2782_same_name_other_db_aborts`, `bug2782_invariant_broken` (`MultiDb.lean`) | `GRAPH_REGISTRY` is keyed by name only, so creating `shared` in db1 displaces db0's `shared`; the next write to db0's graph aborts ("graph was deleted or replaced…"; debug build: assert). Property `KeyspaceRegistered` / `WritesSucceed` | **Open** (#2782) |
 | 15 | `bug2653_nonutf8_key_mangled` (`KeyName.lean`) | A non-UTF-8 graph key is replicated and signalled under its `from_utf8_lossy` form: `\xc3(bin` → `\xef\xbf\xbd(bin`, so the replica writes a different key. Property `ReplicatedKeyIsStored` (C: `c_ok`) | **Open** (#2653) |

@@ -3,7 +3,7 @@ import RedisLayer.SerialEntry
 namespace RedisLayer.Serial
 open RedisLayer.BufferedIO (W Bytes)
 
-variable (U : Utf8) (one : Nat) (simCode : Option Bytes → Nat)
+variable (U : Utf8) (one : Nat) (simCode : Option Bytes → Fin 3)
 
 theorem pos_some (l : List Bytes) (p : Bytes) (h : p ∈ l) :
     ∃ k, pos l p = some k ∧ l[k]? = some p := by

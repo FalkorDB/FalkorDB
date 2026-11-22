@@ -9,7 +9,8 @@ number of markers, counted by `Matrix::<u64>::count_value_eq` (matrix.rs,
 `GrB_select` with `GrB_VALUEEQ_UINT64`) (tensor.rs). The section
 "Promotion completeness on decode" below proves it refuses exactly the payloads
 that break the invariant (`decodeCheck_ok_iff`) and accepts every encoded tensor
-(`decodeCheck_accepts_encoded`).
+(`decodeCheck_accepts_encoded`). Under a load (#3643) an edge id past the header's
+bound is refused too (`decodeCheckL_ok_iff`, `decodeCheckL_accepts_encoded`).
 
 `Tensor::decode` (tensor.rs) rebuilds the inline forward matrix `m` from the
 on-disk forward layers, then fills the multi-edge store `me` from the tensor
@@ -545,5 +546,66 @@ theorem marker_without_ids_refused (S : SelectValueEqSpec) :
   unfold decodeCheck
   rw [this]
   rfl
+
+/-! ### The edge-id bound (#3643)
+
+Under a load, `check_header` installs `DecodeLimits` and `Tensor::decode` refuses a streamed
+edge id at or past `edge_bound` (live + deleted edge ids). Outside a load (`limits = None`) it is
+`decodeCheck`. The ids are refused as they stream, so which error comes first differs, but the
+accepted inputs and the rows built are exactly these. -/
+
+def idsBelow (lim : Option Nat) (ts : List (Pair × List Nat)) : Bool :=
+  match lim with
+  | none => true
+  | some b => ts.all fun e => e.2.all fun id => decide (id < b)
+
+/-- `Tensor::decode` with `DecodeLimits::current()` = `lim`. -/
+def decodeCheckL (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU) (lim : Option Nat)
+    (ts : List (Pair × List Nat)) : Except String (List Pair) :=
+  if idsBelow lim ts then decodeCheck S nrows ncols m ts
+  else .error "Tensor decode: edge id is out of range"
+
+theorem decodeCheckL_none (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
+    (ts : List (Pair × List Nat)) : decodeCheckL S nrows ncols m none ts = decodeCheck S nrows ncols m ts := rfl
+
+/-- **`decodeCheckL_ok_iff`**: under a bound `b`, decode accepts iff every id is below `b` and
+`decodeCheck_ok_iff`'s conditions hold. -/
+theorem decodeCheckL_ok_iff (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU) (b : Nat)
+    (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup) :
+    (∃ rows, decodeCheckL S nrows ncols m (some b) ts = .ok rows) ↔
+      (∀ e ∈ ts, ∀ id ∈ e.2, id < b) ∧ (∀ e ∈ ts, entryOk nrows ncols m e.1 = true) ∧
+        PromotionComplete m (rowsFrom [] ts) := by
+  have hb : idsBelow (some b) ts = true ↔ ∀ e ∈ ts, ∀ id ∈ e.2, id < b := by
+    simp [idsBelow]
+  unfold decodeCheckL
+  by_cases h : idsBelow (some b) ts = true
+  · simp only [h, ite_true]
+    rw [decodeCheck_ok_iff S nrows ncols m ts hk]
+    exact ⟨fun hh => ⟨hb.1 h, hh⟩, fun hh => hh.2⟩
+  · simp only [h, Bool.false_eq_true, ite_false]
+    constructor
+    · rintro ⟨_, hc⟩; cases hc
+    · rintro ⟨hi, -⟩; exact absurd (hb.2 hi) h
+
+/-- **`decodeCheckL_accepts_encoded`**: a tensor whose edge ids are below the bound (every id
+of a saved graph is below its live + deleted edge count) is accepted, as before. -/
+theorem decodeCheckL_accepts_encoded (S : SelectValueEqSpec) (t : TState) (h : t.Wf) (b : Nat)
+    (hids : ∀ p ids, (p, Slot.multi ids) ∈ t.pairs → ∀ id ∈ ids, id < b) :
+    ∃ rows, decodeCheckL S t.nrows t.ncols (encFwd t) (some b) (encTs t) = .ok rows := by
+  have hi : idsBelow (some b) (encTs t) = true := by
+    simp only [idsBelow, List.all_eq_true, decide_eq_true_eq]
+    rintro ⟨p, ids⟩ he id hid
+    exact hids p ids ((mem_encTs t p ids).1 he) id hid
+  simp only [decodeCheckL, hi, ite_true]
+  exact decodeCheck_accepts_encoded S t h
+
+/-- The test `decode_rejects_an_edge_id_past_the_edge_bound`: ids `0, 1, 2` of pair `(1, 2)`
+load under a bound of 3 and are refused under 2. -/
+theorem edge_bound_test (S : SelectValueEqSpec) :
+    (∃ rows, decodeCheckL S 64 64 [((1, 2), MULTI_EDGE)] (some 3) [((1, 2), [0, 1, 2])] = .ok rows) ∧
+    ∃ err, decodeCheckL S 64 64 [((1, 2), MULTI_EDGE)] (some 2) [((1, 2), [0, 1, 2])] = .error err := by
+  refine ⟨⟨[(1, 2)], ?_⟩, ⟨_, rfl⟩⟩
+  simp [decodeCheckL, idsBelow, decodeCheck, countValueEq_spec, tensorLoop, entryOk, mget, addRow,
+    MULTI_EDGE]
 
 end GBW

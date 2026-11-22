@@ -36,14 +36,14 @@ graph/src/runtime/eval.rs	all_not_equals	1747	PROVEN	EvalArms.allNotEquals: allN
 graph/src/runtime/eval.rs	list_contains	1771	PROVEN	Eval.listContains (List / Null / type error): in_spec; Contains::contains: contains_is_kleene_any, null_in
 graph/src/runtime/eval.rs	logical_xor	1818	PROVEN	Eval.logicalXor: logicalXor_eq, xor_two; scalarXor: xor_kleene
 graph/src/runtime/eval.rs	evaluate_param	1825	PROVEN	EvalParam.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
-graph/src/runtime/value.rs	Add::add	952	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
-graph/src/runtime/value.rs	Value::add_slow	967	PROVEN	vArith add arms here (null, String concat: add_exact, arith_agrees); every arm proved in proofs/value_math Value: add_list_*, add_str_*, add_*_dur_comm; Time/Duration arm: proofs/functions_temporal timeAddDur_*
-graph/src/runtime/value.rs	Sub::sub	1084	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
-graph/src/runtime/value.rs	Mul::mul	1130	PROVEN	vArith .mul: arith_agrees (scalar subset)
-graph/src/runtime/value.rs	Div::div	1159	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
-graph/src/runtime/value.rs	Rem::rem	1189	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
+graph/src/runtime/value.rs	Add::add	954	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
+graph/src/runtime/value.rs	Value::add_slow	969	PROVEN	vArith add arms here (null, String concat: add_exact, arith_agrees); every arm proved in proofs/value_math Value: add_list_*, add_str_*, add_*_dur_comm; Time/Duration arm: proofs/functions_temporal timeAddDur_*
+graph/src/runtime/value.rs	Sub::sub	1086	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
+graph/src/runtime/value.rs	Mul::mul	1132	PROVEN	vArith .mul: arith_agrees (scalar subset)
+graph/src/runtime/value.rs	Div::div	1161	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
+graph/src/runtime/value.rs	Rem::rem	1191	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
 graph/src/runtime/value.rs	OrderedEnum::order	1221	PROVEN	V.order here (scalar subset); full 16-variant table: proofs/value_order orderTag: order_injective, no_tag_between_int_and_float, null_not_greatest
-graph/src/runtime/value.rs	CompareValue::compare_value	1250	PROVEN	compareValue here (scalar subset, abstract f64); full table: proofs/value_order cmpV (cmp_sane_eq_key, nan_breaks_antisymmetry, mixed_numeric_not_transitive) and Glue partialCmpVia_none_iff
-graph/src/runtime/value.rs	compare_floats	1919	PROVEN	compareFloats_flag, cf_ne here; proofs/value_order cmpF: nan_breaks_antisymmetry, proofs/value_math cmpFloats
+graph/src/runtime/value.rs	CompareValue::compare_value	1252	PROVEN	compareValue here (scalar subset, abstract f64); full table: proofs/value_order cmpV (cmp_sane_eq_key, nan_breaks_antisymmetry, mixed_numeric_not_transitive) and Glue partialCmpVia_none_iff
+graph/src/runtime/value.rs	compare_floats	1921	PROVEN	compareFloats_flag, cf_ne here; proofs/value_order cmpF: nan_breaks_antisymmetry, proofs/value_math cmpFloats
 graph/src/runtime/functions/math.rs	range	251	PROVEN	rangeMath here (spec of rangeIter_correct); argument validation: proofs/functions_str_list range_elems_between, range_noOverflow
 graph/src/runtime/functions/mod.rs	init_functions	1104	PROVEN	FnRegistry.rustNames (re-extracted at 256ab4d3f: 134 names, identical to the sources): covers_all_but_prev, #2724 bug2724_prev_missing; registration soundness: proofs/value_math Registry.registerAll_ok, initFunctions_once

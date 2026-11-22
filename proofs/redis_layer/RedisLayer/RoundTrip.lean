@@ -261,7 +261,7 @@ theorem rdb_roundtrip (B : Nat) (h9 : 9 ≤ B) (hB : B < 256^8) (xs : List W)
     (hok : ∀ x ∈ xs, x.ok) (rest : List Bytes) :
     readSeq (listSrc false) xs ⟨[], writeAll B xs ++ rest⟩ = .ok (xs, ⟨[], rest⟩) := by
   have := roundtrip B (listSrc false) (fun cs t => cs ++ t)
-    (by intro c cs t _ _; simp [listSrc]) (by intro c cs t _ _; simp [listSrc]) h9 hB xs rest hok
+    (by intro c cs t hc _; simp [listSrc, hc]) (by intro c cs t _ _; simp [listSrc]) h9 hB xs rest hok
   simpa using this
 
 /-- Production buffer size. -/
@@ -306,11 +306,75 @@ theorem vec_roundtrip (xs : List W) (hok : ∀ x ∈ xs, x.ok) (T : Bytes) :
       rw [vecWrite_cons, List.append_assoc, hc]; simp [ensure]
     · exact ih (fun y hy => hok y (by simp [hy]))
 
-/-- …but one read past the end of a `from_slice` reader is not an error: `ensure_available`
-calls `load_chunk`, i.e. `RedisModule_LoadStringBuffer(NULL)` (`BufferedReader::from_slice` sets `rdb` to NULL). Every truncated `GRAPH.RESTORE` payload therefore reaches it — the root cause of
-#2537 (`GRAPH.RESTORE k ""` SIGSEGV), and not only for the empty payload. -/
-theorem from_slice_past_end (x : W) :
-    readW (listSrc true) x ⟨[], []⟩ = .crash := by
+/-- …and one read past the end of a `from_slice` reader is an error, not a crash:
+`ensure_available` calls `load_chunk`, which refuses a NULL `rdb` (`BufferedReader::from_slice`
+sets it) before reaching `RedisModule_LoadStringBuffer`. Before #3643 it called
+`RedisModule_LoadStringBuffer(NULL)`, so every truncated `GRAPH.RESTORE` payload crashed
+(#2537). -/
+theorem from_slice_past_end_err (x : W) :
+    readW (listSrc true) x ⟨[], []⟩ = .err := by
   cases x <;> simp [readW, readTag, ensure, listSrc, Res.bind]
+
+/-- `ensure_available` on an RDB or slice reader errs or leaves a byte to read: `load_chunk`
+refuses a NULL `rdb` and an empty chunk (#3643). -/
+theorem ensure_listSrc (n : Bool) (r : Rd (List Bytes)) :
+    ensure (listSrc n) r = .err ∨ ∃ t rs s, ensure (listSrc n) r = .ok ⟨t :: rs, s⟩ := by
+  obtain ⟨rest, src⟩ := r
+  cases rest with
+  | cons t rs => exact Or.inr ⟨t, rs, src, by simp [ensure]⟩
+  | nil =>
+    cases n
+    · cases src with
+      | nil => left; rfl
+      | cons c cs =>
+        cases c with
+        | nil => left; rfl
+        | cons t rs => right; exact ⟨t, rs, cs, rfl⟩
+    · left; rfl
+
+theorem Res.bind_ne_crash {α β} {a : Res α} {f : α → Res β} (ha : a ≠ .crash)
+    (hf : ∀ x, f x ≠ .crash) : a.bind f ≠ .crash := by
+  cases a <;> simp_all [Res.bind]
+
+theorem readTag_listSrc_no_crash (n : Bool) (e : Nat) (r : Rd (List Bytes)) :
+    readTag (listSrc n) e r ≠ .crash := by
+  unfold readTag
+  rcases ensure_listSrc n r with h | ⟨t, rs, s, h⟩ <;> rw [h]
+  · simp [Res.bind]
+  · simp only [Res.bind]; split <;> simp
+
+/-- **No read crashes** (#2537 closed): whatever the payload — truncated, empty, or with
+empty chunks — no word read of a `BufferedReader` (`new` or `from_slice`) is `crash`. -/
+theorem readW_listSrc_no_crash (n : Bool) (x : W) (r : Rd (List Bytes)) :
+    readW (listSrc n) x r ≠ .crash := by
+  have hb : ∀ (n' : Nat) (r' : Rd (List Bytes)), readBytes n' r' ≠ .crash := by
+    intro n' r'; unfold readBytes; split <;> simp
+  cases x
+  case buf =>
+    simp only [readW]
+    rcases ensure_listSrc n r with h | ⟨t, rs, s, h⟩ <;> rw [h]
+    · simp [Res.bind]
+    · simp only [Res.bind]
+      split
+      · exact Res.bind_ne_crash (hb _ _) (fun p => Res.bind_ne_crash (hb _ _) (fun _ => by simp))
+      · split
+        · refine Res.bind_ne_crash ?_ (fun _ => by simp)
+          simp only [listSrc]; split
+          · simp
+          · split <;> simp
+        · simp
+  all_goals
+    simp only [readW]
+    exact Res.bind_ne_crash (readTag_listSrc_no_crash n _ r)
+      (fun _ => Res.bind_ne_crash (hb _ _) (fun p => by obtain ⟨_, _⟩ := p; simp))
+
+theorem readSeq_listSrc_no_crash (n : Bool) (xs : List W) (r : Rd (List Bytes)) :
+    readSeq (listSrc n) xs r ≠ .crash := by
+  induction xs generalizing r with
+  | nil => simp [readSeq]
+  | cons x xs ih =>
+    simp only [readSeq]
+    exact Res.bind_ne_crash (readW_listSrc_no_crash n x r)
+      (fun p => Res.bind_ne_crash (ih p.2) (fun _ => by simp))
 
 end RedisLayer.BufferedIO

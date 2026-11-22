@@ -109,12 +109,12 @@ graph/src/graph/graphblas/tensor.rs	Tensor::wait_all	1432	PROVEN	VMTensorOps.wai
 graph/src/graph/graphblas/tensor.rs	Tensor::is_synced	1445	PROVEN	VMTensorOps.isSyncedT: waitAll_synced
 graph/src/graph/graphblas/tensor.rs	Tensor::memory_usage	1454	PROVEN	VMTensorOps.memoryUsage: memoryUsage_eq
 graph/src/graph/graphblas/tensor.rs	Tensor::encode	1473	PROVEN	VMTensorOps.encVal: encVal_roundtrip, msb_or (+ count_correct for the total) for the rebuild branch; #3438 fast path (no dp/dm/multi-edge: write the committed m + two empties): TensorSave.fast_base_eq, encPR_eq_encMain (= the pre-#3438 rebuild under AllInv/BlkInv), encode_one_state (no TOCTOU), decode_same (FFI hypothesis MatrixRT)
-graph/src/graph/graphblas/tensor.rs	Tensor::decode	1566	PROVEN	graphblas_wrappers Decode.checkLayers_merge_in_bounds (#2996); Decode.decodeCheck_ok_iff / decodeCheck_accepts_encoded: promotion completeness (single_me/multi_me) enforced on decode (#3033)
-graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1710	PROVEN	graphblas_wrappers Misc.expand
-graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1717	PROVEN	VMTensorOps.sizeHint: sizeHint_sound
-graph/src/graph/graphblas/tensor.rs	Iter::new	1745	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome
-graph/src/graph/graphblas/tensor.rs	Iter::seek	1777	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
-graph/src/graph/graphblas/tensor.rs	Iter::next	1794	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
+graph/src/graph/graphblas/tensor.rs	Tensor::decode	1566	PROVEN	graphblas_wrappers Decode.checkLayers_merge_in_bounds (#2996); Decode.decodeCheck_ok_iff / decodeCheck_accepts_encoded: promotion completeness (single_me/multi_me) enforced on decode (#3033); #3643 edge_bound (DecodeLimits): Decode.decodeCheckL_ok_iff, decodeCheckL_accepts_encoded, decodeCheckL_none, edge_bound_test
+graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1718	PROVEN	graphblas_wrappers Misc.expand
+graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1725	PROVEN	VMTensorOps.sizeHint: sizeHint_sound
+graph/src/graph/graphblas/tensor.rs	Iter::new	1753	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome
+graph/src/graph/graphblas/tensor.rs	Iter::seek	1785	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
+graph/src/graph/graphblas/tensor.rs	Iter::next	1802	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
 graph/src/graph/cow.rs	Cow::new	84	PROVEN	VMCow.cowWrap (aliasing modelled): cowWrap_private_iff (private iff the handle is unpublished), cowWrap_shared_leaks, cowWrap_private_write_isolated, cowWrap_newVersion_isolated; every in-tree caller allocates then wraps (cowNew_eq, cowNew_spec), listed in CowGlue.lean
 graph/src/graph/cow.rs	Cow::deref	128	PROVEN	VMCow.deref: deref_view
 graph/src/graph/mvcc_graph.rs	MvccGraph::new	106	PROVEN	VMCow.mvccNew: mvccNew_ready

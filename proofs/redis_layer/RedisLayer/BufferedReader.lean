@@ -74,12 +74,13 @@ def readSeq : List W → Rd σ → Res (List W × Rd σ)
 /-! ## Sources -/
 
 /-- `BufferedReader::new` (`rdb` live) / `from_slice` (`rdb` NULL): chunks are the RDB's
-string buffers. `load_string_buffer(NULL)` is UB (`crash`); the blob arm checks NULL first
-and errors. -/
+string buffers. `load_chunk` (buffered_io.rs:220) errors on a NULL `rdb` (no
+`load_string_buffer(NULL)` since #3643) and on an empty chunk; the blob arm checks NULL
+first and errors. -/
 def listSrc (null : Bool) : Src (List Bytes) where
-  load := fun l => if null then .crash else match l with
+  load := fun l => if null then .err else match l with
     | [] => .err
-    | c :: cs => .ok (c, cs)
+    | c :: cs => if c = [] then .err else .ok (c, cs)
   blob := fun l => if null then .err else match l with
     | [] => .err
     | c :: cs => .ok (c, cs)

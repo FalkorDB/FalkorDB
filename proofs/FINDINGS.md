@@ -97,13 +97,10 @@ A bug is **confirmed** only if a repro against the real Rust shows it, and it is
 - **W2-effects-1**: a write that only registers a name ships no payload (`runtime/ops/commit.rs:107`, `pending.rs:2013` `effects_count`; Lean `gate_drops_schema_only`). Example: `OPTIONAL MATCH (n:Nope) SET n:L6`. The next payload is refused, which forces a full resync, and during AOF load the server exits.
 - **W2-effects-4**: a refused buffer's CREATE_INDEX is not rolled back, because the Indexer is shared by `Arc` across versions (`effects/v3/apply.rs:435`, `index/indexer.rs:148-161`).
 - #2653 (store): a non-UTF-8 graph key is replicated and signalled through from_utf8_lossy (`\xc3(bin` → `\xef\xbf\xbd(bin`), so the replica writes a different key. Lean bug2653_nonutf8_key_mangled; property ReplicatedKeyIsStored. Fix pending in #3485 (open).
-- #2537, wider: any truncated GRAPH.RESTORE payload calls `LoadStringBuffer(NULL)` (fix open as #3167), not only an empty one; a payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer` (`decoder/mod.rs:426` → `buffered_io.rs:212`), a cut inside a record errors cleanly; C crashes on both.
-- Lean-only, not confirmed live (the malformed-RDB path): `set_span` stores `n as u16` (`attribute_store.rs:538`, `:549-550`), so 65,536+ entries per entity wrap in a malformed RDB.
 - Unconfirmed (model only): the RDB loader takes the adjacency matrix, label matrices and `node_labels_matrix` from the file (`decoder/mod.rs:286,363,558`; `Graph::restore`, `graph.rs:907`) without checking them against the relation tensors, so a corrupt RDB can break the invariants `first_node_with_relationships` and the constraint checks rely on (why those rows stay CONDITIONAL). C also loads them from the file (not re-checked).
 - **GraphBLAS / matrices**:
   - unconfirmed follow-up to #3033: `Tensor::decode` still accepts a multi-edge pair with exactly one id, or one edge id under two pairs (`edge_count` stays consistent; `PairPlan` assumes >= 2 ids);
-  - `Matrix::decode` leaks 5 blocks per matrix (fix pending in #3080 (open));
-  - unverified follow-up to #3097: `Matrix::decode` still copies the header's reserved `*_future` pointer arrays from the payload; safe only if GraphBLAS never reads or frees them.
+  - `Matrix::decode` leaks the 5 empty component vectors `GxB_Container_new` allocated, on every successful decode: it stores the loaded vectors over them without freeing them (#3643 fixed the error paths only; Lean `Codes.decode_ok_leaks_initial_components`; fix pending in #3080 (open));
 - **#2898**: the `versioned_matrix::Iter` lifetime (needs a design choice; no PR). Latent: `vector::Iter` can outlive its vector (the same class).
 - A duplicate roaring high key in an IdList bitmap: roaring-rs keeps the last partition, and CRoaring may keep the first (unconfirmed).
 

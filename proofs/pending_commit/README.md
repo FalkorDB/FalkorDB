@@ -31,7 +31,7 @@ No. A `Block` tracks `dead` and `slack` entries in `u32` counters updated with p
 
 **4. Do properties survive an RDB save and load?**
 
-Yes, under the model's preconditions. `encode_decode_roundtrip` assumes a well-formed store (`SInv`) whose spans are sorted and null-free (`SOK`), attribute ids below both the decode limit and 65,536, and at most 65,535 entries per entity; it proves decoding what was encoded into an empty store restores exactly the encoded entities' spans. `pack_unpack` assumes a well-formed block heap (`HInv`) of fewer than 2^32 cells and proves the 12-byte packed value round-trips, with floats as IEEE bits so NaN payloads and `-0.0` survive. A malformed RDB or an oversized store is outside what these theorems cover.
+Yes, under the model's preconditions. `encode_decode_roundtrip` assumes a well-formed store (`SInv`) whose spans are sorted and null-free (`SOK`), attribute ids below both the decode limit and 65,536, and at most 65,535 entries per entity; it proves decoding what was encoded into an empty store restores exactly the encoded entities' spans. Since #3643 the decoder refuses an entity id past the store's id bound and more than 65,535 attributes on one entity (`decodeChecked_spec`); every encoded store passes both (`encode_decode_roundtrip_checked`), and the `set_span` wrap (`setSpan_u16_wrap`) is no longer reachable from a load (`decodeChecked_refuses_u16_wrap`). `pack_unpack` assumes a well-formed block heap (`HInv`) of fewer than 2^32 cells and proves the 12-byte packed value round-trips, with floats as IEEE bits so NaN payloads and `-0.0` survive. A malformed RDB or an oversized store is outside what these theorems cover.
 
 **5. Are UNIQUE constraints enforced correctly?**
 
@@ -76,7 +76,6 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 |---|---|---|---|
 | W2-pending-2 | `cancel_example`, `c_eq_rust_plus_cancelled` | Entities created and deleted in the same segment vanish from the statistics: `CREATE (a:L {v:1, w:2}) DELETE a` reports only `Labels added`; C reports `Nodes created: 1, Properties set: 2, Nodes deleted: 1` | **Open** |
 | W2-pending-3 | (no Lean theorem; found while modelling) | Writes to a deleted relationship are applied and counted: `REMOVE r.v` after `DELETE r`, and `SET r.v` after a `DETACH DELETE` cascade | **Open** |
-| setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | **Open**, not reproduced |
 | #3447 | `bug3447_cascade_drops_type_key` (property `CancelledTypeRegistered`) | A pending edge of a new type cascaded by `DETACH DELETE` empties its `created_rels_by_type` group, which is dropped, so commit never registers the type; the replica then sees an id gap (effects_emit_apply) | **Open** (#3447) |
 
 Also confirmed live: property counters are net at commit in Rust and per clause in C (`CREATE (n {v:1}) SET n.v = 2`: Rust set 1, C set 2 / removed 1). That is a policy question, not a bug, and is recorded in `FINDINGS.md`. W4-fn-1 (labels staged before a `DELETE` are missing from the deleted snapshot) is also in that area; it was confirmed by another project and its repro tests are in the same test file.

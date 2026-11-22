@@ -363,11 +363,13 @@ def encodeList : List (V F) → List (Tok F)
   | x :: xs => encode x ++ encodeList xs
 end
 
+/-- The `T_VECTOR_F32` arm of `decode_value`: a 4-byte LE `dim`, then exactly `dim` floats.
+Since #3643 a buffer longer than `4 + 4 * dim` is refused too (both writers emit exactly that). -/
 def readVec (bytes : List Nat) : Option (List F) :=
   if bytes.length < 4 then none else
   let dim := fromLe4 (bytes.take 4)
   let body := bytes.drop 4
-  if body.length < 4 * dim then none
+  if body.length ≠ 4 * dim then none
   else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
 
 /- `Decode<19>` without the nesting cap (fuel bounds the recursion). The current decoder is
@@ -461,6 +463,22 @@ theorem readVec_vecBytes (v : List F) (hl : v.length < 2 ^ 32) : readVec co (vec
   intro i h1 h2
   simp only [List.getElem_map, List.getElem_range]
   rw [chunks_get co v i h2, fromLe4_le4 _ (co.bits_lt _), co.ofBits_bits]
+
+/-- **`readVec_exact`** (#3643): a vector buffer decodes only when its length is exactly
+`4 + 4 * dim`; trailing bytes (which used to be ignored, restoring the first `dim` floats) are
+refused. -/
+theorem readVec_exact (bytes : List Nat) (v : List F) (h : readVec co bytes = some v) :
+    bytes.length = 4 + 4 * fromLe4 (bytes.take 4) ∧ v.length = fromLe4 (bytes.take 4) := by
+  unfold readVec at h
+  split at h
+  · cases h
+  · simp only at h
+    split at h
+    · cases h
+    · rename_i h1 h2
+      cases h
+      simp only [List.length_drop, ne_eq, Decidable.not_not] at h2
+      refine ⟨by omega, by simp⟩
 
 /-- **Codec roundtrip**: every storable value decodes to itself, leaving the rest of
 the stream untouched (fuel: any bound above the value's size). -/
