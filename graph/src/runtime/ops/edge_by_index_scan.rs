@@ -185,9 +185,9 @@ fn indexed_edges<'r>(
 }
 
 /// Most hits (both orientations of an undirected pattern counted) a hit cache may
-/// keep. A kept hit costs about 48 bytes (the list plus its place in an endpoint
-/// bucket), so this is some 50 MB; a query with more hits streams the index per
-/// row, as it did before the cache, and its memory stays that of a scan.
+/// keep. A kept hit costs 24 bytes in the list, and once an endpoint is bound
+/// about 100 more in its bucket (copy, allocation, table entry): up to some
+/// 130 MB. A query with more hits streams the index per row, as before the cache.
 const MAX_CACHED_HITS: usize = 1 << 20;
 
 /// `hits`, oriented as the pattern matches them (an undirected pattern lists an edge

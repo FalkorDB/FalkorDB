@@ -1017,7 +1017,7 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
 
     # A row-invariant index query under bound endpoints is answered from the
     # kept hit set after the first row (#3376). Every shape must still agree
-    # with the same query on a graph that has no index.
+    # with the same query on a graph that has no edge index.
     def test_bound_endpoint_hit_cache(self):
         with_idx = self.db.select_graph("edge_idx_bound_cache")
         no_idx = self.db.select_graph("edge_idx_bound_cache_plain")
@@ -1071,7 +1071,8 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
 
     # A LIMIT above a bound-endpoint edge index scan, with or without a Filter
     # between them (a labelled destination adds one), keeps the answer equal to
-    # the unindexed graph; the hit cache stays off so the scan streams.
+    # the graph without the edge index. The hit cache is off while a LIMIT caps
+    # the operator, so the scan streams.
     def test_bound_endpoint_hit_cache_under_limit(self):
         with_idx = self.db.select_graph("edge_idx_bound_cache_lim")
         no_idx = self.db.select_graph("edge_idx_bound_cache_lim_plain")
