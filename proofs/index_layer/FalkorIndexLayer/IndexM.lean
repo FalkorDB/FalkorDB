@@ -1,7 +1,7 @@
 import FalkorIndexLayer.Meta
 import FalkorIndexLayer.Model
 /-
-# `Index` (`graph/src/index/mod.rs:875-2248`): metadata, RS spec lifecycle
+# `Index` (`graph/src/index/mod.rs`): metadata, RS spec lifecycle
 
 The RediSearch spec is abstract: `spec : Option Nat` is the handle identity
 (`None` = the former null), `rs` the list of fields registered on it. The FFI
@@ -38,80 +38,53 @@ structure Idx where
   language : Option String
   stopwords : Option (List String)
   /-- Gap closed 2026-10-20 (#3166): the stopword list the live RediSearch spec was
-  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs:1119-1133`, read by
+  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs`, read by
   `RediSearch_CreateIndex`). RediSearch fixes it at creation: `register_fields`
-  (`mod.rs:1181`) adds fields to the spec and never touches it. `none` = the
-  `SetStopwords(null, 0)` arm (`mod.rs:1132`), i.e. RediSearch's own default. -/
+  (`mod.rs`) adds fields to the spec and never touches it. `none` = the
+  `SetStopwords(null, 0)` arm (`mod.rs`), i.e. RediSearch's own default. -/
   rsStop : Option (List String) := none
-  /-- `population_owed` (#3680, `mod.rs:907`): set by `owe_population` on an `Index` a DDL
-  statement built, taken once by the publisher (`take_population_owed`). -/
-  owed : Bool := false
-  /-- `deferred_fields` (#3680, `mod.rs:913`): fields added to a spec this `Index` shares
-  with the published one, registered in it only at publish. -/
-  deferred : List (AMap (List Field) × Option TextOpts) := []
 
 namespace Idx
 
-/-- `Default for Index` (`mod.rs:1056`): no owed population, no deferred fields (#3680). -/
+/-- `Default for Index` (`mod.rs`). -/
 def default (id : Nat) : Idx :=
   { id, spec := none, rs := [], fields := [], order := [], slots := ⟨id, 0, 0⟩,
     progress := 0, total := 0, language := none, stopwords := none }
 
-/-- `Index::id` (`mod.rs:1084`). -/
+/-- `Index::id` (`mod.rs`). -/
 def idOf (x : Idx) : Nat := x.id
-/-- `Index::bump_id` (`mod.rs:1093`), `g'` the next value of the static counter. -/
+/-- `Index::bump_id` (`mod.rs`), `g'` the next value of the static counter. -/
 def bumpId (x : Idx) (g' : Nat) : Idx := { x with id := g', slots := x.slots.bump g' }
-/-- `Index::fork_for_ddl` (#3680, `mod.rs:1118`; replaces `clone_for_update`): a copy with
-*fresh* pending counters (`PendingSlots { current_generation: id, 0, 0 }`), then
-`bump_id` to `g'` (the next `NEXT_INDEX_ID`). The RediSearch spec (and what is
-registered in it, and the stopwords it was created with) is carried only when
-`share`; so are the deferred fields. `population_owed` starts `false`. -/
-def forkForDdl (x : Idx) (share : Bool) (g' : Nat) : Idx :=
-  ({ x with spec := if share then x.spec else none, rs := if share then x.rs else [],
-            rsStop := if share then x.rsStop else none, slots := ⟨x.id, 0, 0⟩, owed := false,
-            deferred := if share then x.deferred else [] } : Idx).bumpId g'
-/-- `Index::defer_fields` (`mod.rs:1149`). -/
-def deferFields (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) : Idx :=
-  { x with deferred := x.deferred ++ [(m, fo)] }
-/-- `Index::owe_population` (`mod.rs:1172`): the creation ticket
-(`increment_pending_for_generation(self.id)`) and the flag. -/
-def owePopulation (x : Idx) : Idx := { x with slots := x.slots.inc x.id, owed := true }
-/-- `Index::take_population_owed` (`mod.rs:1180`): the flag, and the index with it cleared
-(`swap(false)`). -/
-def takePopulationOwed (x : Idx) : Bool × Idx := (x.owed, { x with owed := false })
-/-- `has_rs_index` (`mod.rs:1088`). -/
+/-- `Index::clone_for_update` (`mod.rs`): every component copied; `spec`
+and `pending_slots` are the *same* `Arc`s (shared, not copied). -/
+def cloneForUpdate (x : Idx) : Idx :=
+  { id := x.id, spec := x.spec, rs := x.rs, fields := x.fields, order := x.order, slots := x.slots,
+    progress := x.progress, total := x.total, language := x.language, stopwords := x.stopwords,
+    rsStop := x.rsStop }
+/-- `has_rs_index` (`mod.rs`). -/
 def hasRsIndex (x : Idx) : Bool := x.spec.isSome
-/-- `rs_ptr` (`mod.rs:1095`): `none` is the null pointer. -/
+/-- `rs_ptr` (`mod.rs`): `none` is the null pointer. -/
 def rsPtr (x : Idx) : Option Nat := x.spec
 
 def hasNul (s : String) : Bool := s.toList.contains (Char.ofNat 0)
 
-/-- `l.eq_ignore_ascii_case("english")` (`mod.rs:1232`): `Char.toLower` lowers ASCII only. -/
-def isEnglish (l : String) : Bool := l.toList.map Char.toLower == "english".toList
-
-/-- The FFI fact the English filter relies on: RediSearch's `RSLanguage_Find`
-supports English (its own default), in any ASCII case. -/
-def EnglishOk (langOk : String → Bool) : Prop := ∀ l, isEnglish l = true → langOk l = true
-
-/-- `create_rs_index` (`mod.rs:1203`). #3680: an English language is not passed
-(`language.filter(..)`, `mod.rs:1232`), so it is neither checked nor set on the spec.
-Error order as in Rust (#3274): stopwords
+/-- `create_rs_index` (`mod.rs`). Error order as in Rust (#3274): stopwords
 `CString::new` (1113-1120), language `CString::new` (1127-1129), label
 `CString::new` (1130), all before the options block is allocated; then
 unsupported language (1156-1160). On success the spec is fresh and carries only
 `NONE_INDEXABLE_FIELDS` (1175-1186), and (#3166 gap) is created with the stopword
-list `stop` (`mod.rs:1144-1154`), recorded as `rsStop`. -/
+list `stop` (`mod.rs`), recorded as `rsStop`. -/
 def createRsIndex (x : Idx) (label : String) (stop : Option (List String)) (lang : Option String)
     (langOk : String → Bool) (fresh : Nat) : Except String Idx :=
   if (stop.getD []).any hasNul then .error "nul" else
-  match lang.filter (fun l => !isEnglish l) with
+  match lang with
   | some l => if hasNul l then .error "nul" else if hasNul label then .error "nul"
               else if !langOk l then .error s!"Language is not supported: {l}"
               else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
   | none => if hasNul label then .error "nul"
             else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
 
-/-- The metric match of `register_fields` (`mod.rs:1273-1286`). -/
+/-- The metric match of `register_fields` (`mod.rs`). -/
 def metricOf (sim : Option String) : Except String String :=
   match sim.getD "euclidean" with
   | "euclidean" => .ok "L2"
@@ -119,7 +92,7 @@ def metricOf (sim : Option String) : Except String String :=
   | "cosine" => .ok "COSINE"
   | o => .error s!"Unknown similarity function '{o}', expected 'euclidean', 'ip', or 'cosine'"
 
-/-- One iteration of `register_fields` (`mod.rs:1192-1344`). `tieredOk` is
+/-- One iteration of `register_fields` (`mod.rs`). `tieredOk` is
 the result of `VecSimTieredParams_Init` + `VectorFieldSetParams` (FFI). -/
 def registerOne (fo : Option TextOpts) (tieredOk : Bool) (f : Field) : Except String (List RsReg) :=
   match f.ty with
@@ -152,30 +125,14 @@ def registerAll (fo : Option TextOpts) (tieredOk : Bool) : List Field → Except
 
 def allFieldsOf (m : AMap (List Field)) : List Field := m.flatMap (·.2)
 
-/-- `register_fields` (`mod.rs:1311`), applied to the spec. -/
+/-- `register_fields` (`mod.rs`), applied to the spec. -/
 def registerFields (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tieredOk : Bool) :
     Except String Idx :=
   match registerAll fo tieredOk (allFieldsOf m) with
   | .ok r => .ok { x with rs := x.rs ++ r }
   | .error e => .error e
 
-/-- The fields in declaration order: attribute by attribute along `field_order`. -/
-def orderedFields (x : Idx) : List Field := x.order.flatMap (fun a => (x.fields.get a).getD [])
-
-/-- `register_all_fields` (#3680, `mod.rs:1300`): one `register_fields(.., None)` per
-attribute of `field_order`, stopping at the first error. -/
-def registerAllFields (x : Idx) (tieredOk : Bool) : Except String Idx :=
-  match registerAll none tieredOk x.orderedFields with
-  | .ok r => .ok { x with rs := x.rs ++ r }
-  | .error e => .error e
-
-/-- `register_deferred_fields` (#3680, `mod.rs:1159`): every deferred batch, in order, with its
-options; an error is ignored (`let _ =`) and the next batch still runs. The list is taken. -/
-def registerDeferredFields (x : Idx) (tieredOk : Bool) : Idx :=
-  { (x.deferred.foldl (fun y p => match y.registerFields p.1 p.2 tieredOk with
-      | .ok z => z | .error _ => y) x) with deferred := [] }
-
-/-! Field-map operations (`mod.rs:1968-2077`). -/
+/-! Field-map operations (`mod.rs`). -/
 def getFields (x : Idx) (a : String) : Option (List Field) := x.fields.get a
 def containsField (x : Idx) (a : String) : Bool := (x.fields.get a).isSome
 def hasFieldWithType (x : Idx) (a : String) (t : IType) : Bool :=
@@ -202,22 +159,21 @@ def languageOf (x : Idx) : Option String := x.language
 def setLanguage (x : Idx) (l : Option String) : Idx := { x with language := l }
 def stopwordsOf (x : Idx) : Option (List String) := x.stopwords
 def setStopwords (x : Idx) (s : Option (List String)) : Idx := { x with stopwords := s }
-/-- `memory_usage` (`mod.rs:2205`); `mem` = `RediSearch_MemUsage` (FFI). -/
+/-- `memory_usage` (`mod.rs`); `mem` = `RediSearch_MemUsage` (FFI). -/
 def memoryUsage (x : Idx) (mem : Nat → Nat) : Nat := match x.spec with | none => 0 | some s => mem s
-/-- `index_count` (`mod.rs:2215`). -/
+/-- `index_count` (`mod.rs`). -/
 def indexCount (x : Idx) : Nat := (x.fields.map (·.2.length)).sum
 
 /-- The field `build_query_node` targets for attribute `a`:
-`self.fields.get(key).and_then(|f| f.first())` (`mod.rs:1397,1426,1484,1496,1554,1615`). -/
+`self.fields.get(key).and_then(|f| f.first())` (`mod.rs`). -/
 def queryField (x : Idx) (a : String) : Option Field := (x.fields.get a).bind (·.head?)
 
-/-- `recreate_index` (`mod.rs:2349`): since #3680 the fields go in through
-`register_all_fields` (declaration order). -/
+/-- `recreate_index` (`mod.rs`). -/
 def recreateIndex (x : Idx) (label : String) (langOk : String → Bool) (tieredOk : Bool)
     (fresh g' : Nat) : Except String Idx :=
   match createRsIndex { x with spec := none } label x.stopwords x.language langOk fresh with
   | .error e => .error e
-  | .ok x2 => match registerAllFields x2 tieredOk with
+  | .ok x2 => match registerFields x2 x2.fields none tieredOk with
     | .error e => .error e
     | .ok x3 => .ok (x3.bumpId g')
 
@@ -225,8 +181,7 @@ def recreateIndex (x : Idx) (label : String) (langOk : String → Bool) (tieredO
 
 theorem default_spec (id : Nat) :
     (default id).spec = none ∧ (default id).fields = [] ∧ (default id).order = [] ∧
-    (default id).slots = ⟨id, 0, 0⟩ ∧ (default id).slots.countFor id = 0 ∧
-    (default id).owed = false ∧ (default id).deferred = [] := by
+    (default id).slots = ⟨id, 0, 0⟩ ∧ (default id).slots.countFor id = 0 := by
   simp [default, Slots.countFor]
 
 theorem idOf_spec (x : Idx) : x.idOf = x.id := rfl
@@ -235,132 +190,34 @@ theorem bumpId_spec (x : Idx) (g' : Nat) :
     (x.bumpId g').id = g' ∧ (x.bumpId g').slots = { gen := g', cur := 0, stale := x.slots.stale + x.slots.cur } ∧
     (x.bumpId g').fields = x.fields ∧ (x.bumpId g').spec = x.spec := ⟨rfl, rfl, rfl, rfl⟩
 
-/-- **`fork_for_ddl`** (#3680): a new generation `g'` with counters of its own and no
-pending ticket (none of the original's tickets, current or stale, is carried), the same
-fields, order and metadata, nothing owed; the spec is the original's exactly when `share`. -/
-theorem forkForDdl_spec (x : Idx) (share : Bool) (g' : Nat) :
-    (x.forkForDdl share g').id = g' ∧ (x.forkForDdl share g').slots = ⟨g', 0, 0⟩ ∧
-    (x.forkForDdl share g').fields = x.fields ∧ (x.forkForDdl share g').order = x.order ∧
-    (x.forkForDdl share g').spec = (if share then x.spec else none) ∧
-    (x.forkForDdl share g').language = x.language ∧
-    (x.forkForDdl share g').stopwords = x.stopwords ∧
-    (x.forkForDdl share g').progressOf = x.progressOf ∧
-    (x.forkForDdl share g').owed = false ∧
-    (x.forkForDdl share g').deferred = (if share then x.deferred else []) := by
-  simp [forkForDdl, bumpId, Slots.bump, progressOf]
-
-/-- Unshared, the fork has no spec: the DDL statement must build one. -/
-theorem forkForDdl_unshared (x : Idx) (g' : Nat) :
-    (x.forkForDdl false g').hasRsIndex = false ∧ (x.forkForDdl false g').rs = [] := by
-  simp [forkForDdl, bumpId, hasRsIndex]
-
-/-- `owe_population` on a fresh generation: exactly one pending ticket of it, flagged owed. -/
-theorem owePopulation_spec (x : Idx) :
-    x.owePopulation.slots = x.slots.inc x.id ∧ x.owePopulation.owed = true ∧
-    x.owePopulation.id = x.id ∧ x.owePopulation.fields = x.fields ∧
-    x.owePopulation.spec = x.spec := ⟨rfl, rfl, rfl, rfl, rfl⟩
-
-/-- `take_population_owed` answers `true` once: a second take answers `false`. -/
-theorem takePopulationOwed_once (x : Idx) :
-    (x.takePopulationOwed).1 = x.owed ∧ ((x.takePopulationOwed).2.takePopulationOwed).1 = false ∧
-    (x.takePopulationOwed).2.slots = x.slots := ⟨rfl, rfl, rfl⟩
-
-/-- `defer_fields` registers nothing: the spec and what it holds are unchanged (the
-published version sharing it sees no change), the batch is queued last. -/
-theorem deferFields_spec (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) :
-    (x.deferFields m fo).spec = x.spec ∧ (x.deferFields m fo).rs = x.rs ∧
-    (x.deferFields m fo).fields = x.fields ∧ (x.deferFields m fo).slots = x.slots ∧
-    (x.deferFields m fo).deferred = x.deferred ++ [(m, fo)] := ⟨rfl, rfl, rfl, rfl, rfl⟩
-
+/-- `clone_for_update` is observationally the same index (same spec handle, same
+ticket slots, equal metadata). -/
+theorem cloneForUpdate_eq (x : Idx) : x.cloneForUpdate = x := by cases x; rfl
 
 theorem hasRsIndex_spec (x : Idx) : x.hasRsIndex = true ↔ x.rsPtr ≠ none := by
   cases h : x.spec <;> simp [hasRsIndex, rsPtr, h]
 
-/-- `create_rs_index` success. The language check: a language that is not English was
-accepted by `RSLanguage_Find` (`langOk`); `createRsIndex_ok_langOk` gives the
-pre-#3680 conclusion `lang.all langOk` from the FFI fact `EnglishOk`. -/
 theorem createRsIndex_ok (x : Idx) (label : String) (stop : Option (List String)) (lang : Option String)
     (langOk : String → Bool) (fresh : Nat) (y : Idx) (h : createRsIndex x label stop lang langOk fresh = .ok y) :
     y.spec = some fresh ∧ y.rs = [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩] ∧ y.fields = x.fields ∧
-    y.order = x.order ∧ y.slots = x.slots ∧ y.id = x.id ∧
-    (lang.all (fun l => isEnglish l || langOk l)) = true := by
+    y.order = x.order ∧ y.slots = x.slots ∧ y.id = x.id ∧ (lang.all langOk) = true := by
   unfold createRsIndex at h
   split at h; · cases h
   split at h
-  · next l hl =>
+  · split at h; · cases h
     split at h; · cases h
     split at h; · cases h
-    split at h; · cases h
-    next h3 =>
-    cases h
-    cases lang with
-    | none => simp at hl
-    | some l0 =>
-      simp only [Option.filter] at hl
-      split at hl
-      · cases hl; simp_all
-      · cases hl
-  · next hl =>
-    split at h; · cases h
-    cases h
-    cases lang with
-    | none => simp
-    | some l0 =>
-      simp only [Option.filter] at hl
-      split at hl
-      · cases hl
-      · next he => simp_all
-
-theorem createRsIndex_ok_langOk (x : Idx) (label : String) (stop : Option (List String))
-    (lang : Option String) (langOk : String → Bool) (hen : EnglishOk langOk) (fresh : Nat) (y : Idx)
-    (h : createRsIndex x label stop lang langOk fresh = .ok y) : (lang.all langOk) = true := by
-  have := (createRsIndex_ok x label stop lang langOk fresh y h).2.2.2.2.2.2
-  cases lang with
-  | none => rfl
-  | some l =>
-    simp only [Option.all] at this ⊢
-    cases he : isEnglish l
-    · simpa [he] using this
-    · exact hen l he
-
-/-- #3680: an English language (any ASCII case) is not passed to RediSearch: the spec is
-created exactly as with no language (no schema rule, so a range field keeps the value 0). -/
-theorem createRsIndex_english (x : Idx) (label : String) (stop : Option (List String)) (l : String)
-    (langOk : String → Bool) (fresh : Nat) (he : isEnglish l = true) :
-    createRsIndex x label stop (some l) langOk fresh = createRsIndex x label stop none langOk fresh := by
-  simp [createRsIndex, Option.filter, he]
-
-/-- The pre-#3274 statement of `createRsIndex_lang_err`: with NUL-free stopwords
-and language, an unsupported language is always reported, whatever the label. -/
-def LangErrSpec (x : Idx) : Prop :=
-  ∀ (label : String) (stop : Option (List String)) (l : String)
-    (langOk : String → Bool) (fresh : Nat), (stop.getD []).any hasNul = false →
-    hasNul l = false → langOk l = false →
-    createRsIndex x label stop (some l) langOk fresh = .error s!"Language is not supported: {l}"
-
-/-- Counterexample (#3274): the label `CString::new` now runs before the language
-check, so a label with a NUL byte and an unsupported language `x` reports the NUL
-error, not `Language is not supported: x`. -/
-theorem createRsIndex_lang_err_fails (x : Idx) : ¬ LangErrSpec x := by
-  intro h
-  have := h "L\x00" none "x" (fun _ => false) 0 rfl (by decide) rfl
-  have hx : isEnglish "x" = false := by decide
-  simp [createRsIndex, hasNul, Option.filter, hx] at this
-  exact absurd this (by decide)
+    next l _ _ h2 _ => cases h; simp_all
+  · split at h; · cases h
+    cases h; simp
 
 /-- What still holds on the new code: an unsupported language is reported when
-the stopwords, language and label are all NUL-free. `hen` is the FFI fact that
-RediSearch supports English (`EnglishOk`), which #3680's filter no longer asks it. -/
+the stopwords, language and label are all NUL-free. -/
 theorem createRsIndex_lang_err_cleanLabel (x : Idx) (label : String) (stop : Option (List String))
     (l : String) (langOk : String → Bool) (fresh : Nat) (h1 : (stop.getD []).any hasNul = false)
-    (h2 : hasNul l = false) (h4 : hasNul label = false) (h3 : langOk l = false)
-    (hen : EnglishOk langOk) :
+    (h2 : hasNul l = false) (h4 : hasNul label = false) (h3 : langOk l = false) :
     createRsIndex x label stop (some l) langOk fresh = .error s!"Language is not supported: {l}" := by
-  have he : isEnglish l = false := by
-    cases h : isEnglish l
-    · rfl
-    · rw [hen l h] at h3; cases h3
-  simp [createRsIndex, h1, h2, h3, h4, Option.filter, he]
+  simp [createRsIndex, h1, h2, h3, h4]
 
 theorem metricOf_ok (sim : Option String) (m : String) (h : metricOf sim = .ok m) :
     sim.getD "euclidean" ∈ ["euclidean", "ip", "cosine"] := by
@@ -419,41 +276,6 @@ theorem registerFields_ok (x : Idx) (m : AMap (List Field)) (fo : Option TextOpt
     obtain ⟨rf, h1, h2⟩ := registerAll_ok fo tk _ r hr f hf
     exact ⟨rf, h1, fun g hg => List.mem_append_right _ (h2 g hg)⟩
   · cases h
-
-theorem registerFields_spec_rs (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tk : Bool)
-    (y : Idx) (h : registerFields x m fo tk = .ok y) :
-    y.spec = x.spec ∧ y.fields = x.fields ∧ y.slots = x.slots ∧ y.id = x.id ∧
-    y.deferred = x.deferred ∧ y.owed = x.owed := by
-  unfold registerFields at h; split at h <;> cases h; exact ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
-
-theorem registerDeferred_fold (tk : Bool) :
-    ∀ (ds : List (AMap (List Field) × Option TextOpts)) (x : Idx),
-      let y := ds.foldl (fun y p => match y.registerFields p.1 p.2 tk with
-        | .ok z => z | .error _ => y) x
-      y.spec = x.spec ∧ y.fields = x.fields ∧ y.slots = x.slots ∧ y.id = x.id ∧
-        (∀ r ∈ x.rs, r ∈ y.rs) ∧ y.owed = x.owed
-  | [], x => by simp
-  | p :: ds, x => by
-    simp only [List.foldl_cons]
-    split
-    · next z hz =>
-      obtain ⟨a, b, c, d, -, f⟩ := registerFields_spec_rs _ _ _ _ _ hz
-      obtain ⟨-, -, -, -, r, -⟩ := registerFields_ok _ _ _ _ _ hz
-      obtain ⟨a', b', c', d', r', f'⟩ := registerDeferred_fold tk ds z
-      exact ⟨a'.trans a, b'.trans b, c'.trans c, d'.trans d, fun q hq => r' q (r q hq), f'.trans f⟩
-    · exact registerDeferred_fold tk ds x
-
-/-- `register_deferred_fields`: registers into the *same* spec, leaves the fields, generation
-and tickets alone, keeps every registration already there, and empties the queue (so a second
-call registers nothing). -/
-theorem registerDeferredFields_spec (x : Idx) (tk : Bool) :
-    (x.registerDeferredFields tk).spec = x.spec ∧ (x.registerDeferredFields tk).fields = x.fields ∧
-    (x.registerDeferredFields tk).slots = x.slots ∧ (x.registerDeferredFields tk).id = x.id ∧
-    (∀ r ∈ x.rs, r ∈ (x.registerDeferredFields tk).rs) ∧ (x.registerDeferredFields tk).deferred = [] ∧
-    ((x.registerDeferredFields tk).registerDeferredFields tk).rs = (x.registerDeferredFields tk).rs := by
-  obtain ⟨a, b, c, d, r, -⟩ := registerDeferred_fold tk x.deferred x
-  refine ⟨a, b, c, d, r, rfl, ?_⟩
-  simp [registerDeferredFields]
 
 /-! Field map -/
 
@@ -564,50 +386,14 @@ theorem retainFields_inv (x : Idx) (a : String) (t : IType) (h : Inv x) : Inv (x
   exact ⟨by simp only [retainFields]; rw [AMap.keys_modify]; exact h1, h2,
     fun b => by simp only [retainFields]; rw [AMap.keys_modify]; exact h3 b⟩
 
-theorem get_of_mem_nodup {β : Type} :
-    ∀ (m : AMap β) (p : String × β), (AMap.keys m).Nodup → p ∈ m → m.get p.1 = some p.2
-  | [], _, _, h => by simp at h
-  | q :: m, p, hn, h => by
-    rw [AMap.get_cons]
-    simp only [AMap.keys, List.map_cons, List.nodup_cons] at hn
-    rcases List.mem_cons.mp h with rfl | h
-    · simp
-    · have hne : q.1 ≠ p.1 := fun e => hn.1 (by rw [e]; exact List.mem_map.mpr ⟨p, h, rfl⟩)
-      simp only [hne, ite_false]
-      exact get_of_mem_nodup m p hn.2 h
-
-/-- Under the `field_order` invariant, declaration order lists every field
-(`register_all_fields` misses none). -/
-theorem orderedFields_complete (x : Idx) (h : Inv x) (f : Field) (hf : f ∈ x.allFields) :
-    f ∈ x.orderedFields := by
-  obtain ⟨h1, -, h3⟩ := h
-  obtain ⟨p, hp, hfp⟩ := (allFields_mem x f).mp hf
-  have hk : p.1 ∈ AMap.keys x.fields := List.mem_map.mpr ⟨p, hp, rfl⟩
-  simp only [orderedFields, List.mem_flatMap]
-  exact ⟨p.1, (h3 _).mpr hk, by rw [get_of_mem_nodup _ _ h1 hp]; exact hfp⟩
-
-theorem registerAllFields_ok (x : Idx) (tk : Bool) (y : Idx) (h : registerAllFields x tk = .ok y) :
-    y.spec = x.spec ∧ y.fields = x.fields ∧ y.order = x.order ∧ y.slots = x.slots ∧
-    (∀ r ∈ x.rs, r ∈ y.rs) ∧
-    ∀ f ∈ x.orderedFields, ∃ rf, registerOne none tk f = .ok rf ∧ ∀ g ∈ rf, g ∈ y.rs := by
-  unfold registerAllFields at h
-  split at h
-  · next r hr =>
-    cases h
-    refine ⟨rfl, rfl, rfl, rfl, fun r h => List.mem_append_left _ h, fun f hf => ?_⟩
-    obtain ⟨rf, h1, h2⟩ := registerAll_ok none tk _ r hr f hf
-    exact ⟨rf, h1, fun g hg => List.mem_append_right _ (h2 g hg)⟩
-  · cases h
-
-/-- `recreate_index`: on success the spec is fresh, every field in declaration
-order is registered again (#3680: `register_all_fields`), the metadata is
-unchanged and the generation is bumped (so stale populate workers bail:
-`Maintenance.bump_fresh`). -/
+/-- `recreate_index`: on success the spec is fresh, every current field is
+registered again, the metadata is unchanged and the generation is bumped (so
+stale populate workers bail: `Maintenance.bump_fresh`). -/
 theorem recreateIndex_ok (x : Idx) (label : String) (langOk : String → Bool) (tk : Bool)
     (fresh g' : Nat) (y : Idx) (h : recreateIndex x label langOk tk fresh g' = .ok y) :
     y.spec = some fresh ∧ y.fields = x.fields ∧ y.order = x.order ∧ y.id = g' ∧
     y.slots = x.slots.bump g' ∧ ⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩ ∈ y.rs ∧
-    ∀ f ∈ x.orderedFields, ∃ rf, registerOne none tk f = .ok rf ∧ ∀ g ∈ rf, g ∈ y.rs := by
+    ∀ f ∈ x.allFields, ∃ rf, registerOne none tk f = .ok rf ∧ ∀ g ∈ rf, g ∈ y.rs := by
   unfold recreateIndex at h
   split at h
   · cases h
@@ -617,7 +403,7 @@ theorem recreateIndex_ok (x : Idx) (label : String) (langOk : String → Bool) (
     · cases h
     · next x3 h3 =>
       cases h
-      obtain ⟨s3, f3, o3, sl3, r3, a3⟩ := registerAllFields_ok _ _ _ h3
+      obtain ⟨s3, f3, o3, sl3, r3, a3⟩ := registerFields_ok _ _ _ _ _ h3
       simp only at f2 o2 sl2
       refine ⟨?_, ?_, ?_, rfl, ?_, ?_, ?_⟩
       · simp only [bumpId]; rw [s3, s2]
@@ -626,20 +412,9 @@ theorem recreateIndex_ok (x : Idx) (label : String) (langOk : String → Bool) (
       · simp only [bumpId]; rw [sl3, sl2]
       · simp only [bumpId]; exact r3 _ (by rw [r2]; simp)
       · intro f hf
-        have : f ∈ x2.orderedFields := by simp only [orderedFields] at hf ⊢; rw [f2, o2]; exact hf
+        have : f ∈ allFieldsOf x2.fields := by rw [f2]; exact hf
         obtain ⟨rf, h1, h2⟩ := a3 f this
         exact ⟨rf, h1, fun g hg => by simp only [bumpId]; exact h2 g hg⟩
-
-/-- The pre-#3680 statement of `recreateIndex_ok` (every field registered again), on
-every index satisfying the `field_order` invariant (all reachable ones: `Inv` is
-preserved by every field-map operation above). -/
-theorem recreateIndex_ok_all (x : Idx) (hi : Inv x) (label : String) (langOk : String → Bool)
-    (tk : Bool) (fresh g' : Nat) (y : Idx) (h : recreateIndex x label langOk tk fresh g' = .ok y) :
-    y.spec = some fresh ∧ y.fields = x.fields ∧ y.order = x.order ∧ y.id = g' ∧
-    y.slots = x.slots.bump g' ∧ ⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩ ∈ y.rs ∧
-    ∀ f ∈ x.allFields, ∃ rf, registerOne none tk f = .ok rf ∧ ∀ g ∈ rf, g ∈ y.rs := by
-  obtain ⟨a, b, c, d, e, f, g⟩ := recreateIndex_ok x label langOk tk fresh g' y h
-  exact ⟨a, b, c, d, e, f, fun q hq => g q (orderedFields_complete x hi q hq)⟩
 
 end Idx
 end IndexLayer.Meta

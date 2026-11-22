@@ -11,13 +11,6 @@ graph_persist models main's payload encoders on its graph `G` (entity ids
 about the layout, not about how a slice is found, so the PR can only break them
 by changing the bytes of a payload. It does not:
 
-| here | there (main, #3438) |
-| --- | --- |
-| `encRangePR` | `AttributeStore::encode_with_range` (attribute_store.rs:1427) writing `encEnt` per entity |
-| `encRoarPR`  | `Encode for RoaringTreemap::encode_with_range` (serialization.rs:180-197): `select(offset)`, `advance_to`, `take(count)` |
-| `encPayloadPR` | `Graph::encode_payload` (graph.rs:5173-5226) with the two above |
-| `encodeGraphPR` | `encode_graph` (encoder/mod.rs:68-88) |
-
 * **`encRoarPR_eq`** (claim 3) — the deleted-ids seek writes main's bytes for
   every `count` and `offset` (main: `iter().skip(offset).take(count)` =
   graph_persist `encRoar`), including `offset` past the end.
@@ -25,8 +18,8 @@ by changing the bytes of a payload. It does not:
 * **`encoder_counts_pos`** — every entity entry `build_payloads` and
   `build_multi_key_payloads` emit has `count > 0`, so the `count == 0` early
   return is unreachable from `encode_payload` (its only caller,
-  encoder/mod.rs:86; the payload lists come from those two builders only:
-  encoder/mod.rs:16/48/60, redis_type.rs:457).
+  encoder/mod.rs; the payload lists come from those two builders only:
+  encoder/mod.rs, redis_type.rs).
 * **`encodeGraphPR_eq`** — on any layout of such entries the PR's whole stream
   *is* main's stream; hence **`load_encode_pr`** and **`multi_load_pr`**: the
   single- and multi-key round trips hold for the PR word for word.

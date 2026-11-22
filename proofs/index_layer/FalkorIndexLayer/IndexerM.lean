@@ -1,7 +1,7 @@
 import FalkorIndexLayer.IndexM
 import FalkorIndexLayer.Proofs
 /-
-# `Indexer` (`graph/src/index/indexer.rs`, origin/main 3fec7d7c9; `create_index` re-targeted to 73077bb4a, #3086)
+# `Indexer` (`graph/src/index/indexer.rs`, origin/main 3fec7d7c9)
 
 The `ArcSwap<HashMap<label, Arc<Index>>>` is `map : AMap Idx`; a store is a
 functional update (readers see either the old or the new map, which is what
@@ -15,7 +15,7 @@ inductive IdxOptions
   | vector (v : VecOpts)
 
 /-- `IndexOptions::language` / `stopwords` / `field_options` / `vector_options`
-(`indexer.rs:102-145`). -/
+(`indexer.rs`). -/
 def IdxOptions.language : IdxOptions → Option String
   | .text o => o.language | .vector _ => none
 def IdxOptions.stopwords : IdxOptions → Option (List String)
@@ -39,7 +39,7 @@ theorem IdxOptions.spec (o : TextOpts) (v : VecOpts) :
   · simp only [IdxOptions.fieldOptions]; split <;> simp_all [or_assoc]
   · intro fo h; simp only [IdxOptions.fieldOptions] at h; split at h <;> cases h; simp
 
-/-- `PopulationTicket` (`indexer.rs:76-97`). -/
+/-- `PopulationTicket` (`indexer.rs`). -/
 structure Ticket where
   label : String
   gen : Nat
@@ -72,11 +72,11 @@ def memoryUsage (I : Ixr) (mem : Nat → Nat) : Nat := (I.map.map (·.2.memoryUs
 def fieldName (t : IType) (a : String) : String :=
   match t with | .range => "range:" ++ a | .fulltext => a | .vector => "vector:" ++ a
 
-/-- The field built for one attribute (`indexer.rs:269-287`). -/
+/-- The field built for one attribute (`indexer.rs`). -/
 def mkField (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) (a : String) : Field :=
   match vo with | some v => Field.newVec (fieldName t a) t v | none => Field.new (fieldName t a) t fo
 
-/-- The attribute loop of `create_index` (`indexer.rs:268-299`). -/
+/-- The attribute loop of `create_index` (`indexer.rs`). -/
 def addAttrs (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
     Idx → AMap (List Field) → List String → Except String (Idx × AMap (List Field))
   | x, nf, [] => .ok (x, nf)
@@ -88,7 +88,7 @@ def addAttrs (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
     let x' := if x.containsField a then x.addFieldToExisting a f else x.insertField a f
     addAttrs t fo vo x' nf' as
 
-/-- The validation loop (`indexer.rs:247-259`). -/
+/-- The validation loop (`indexer.rs`). -/
 def validate (existing : Option Idx) (t : IType) : List String → List String → Except String Unit
   | _, [] => .ok ()
   | seen, a :: as =>
@@ -103,7 +103,7 @@ def optParts (lower : String → String) (opts : Option IdxOptions) :
   | some (.vector v) => (none, none, none, some v)
   | none => (none, none, none, none)
 
-/-- The pre-validation of `create_index` (`indexer.rs:222-241`). -/
+/-- The pre-validation of `create_index` (`indexer.rs`). -/
 def preCheck (existing : Option Idx) (t : IType) (label : String)
     (p : Option String × Option (List String) × Option TextOpts × Option VecOpts) : Except String Unit :=
   if existing.any (·.hasFulltextField) && p.1.isSome then
@@ -113,55 +113,47 @@ def preCheck (existing : Option Idx) (t : IType) (label : String)
   else if p.2.2.1.isSome && t != .fulltext then .error "Text index options are only valid for fulltext indexes"
   else .ok ()
 
-/-- `share_spec` (#3680, `indexer.rs:357-361`): a statement that only adds fields to a
-label whose index has a spec shares that spec (the fields are registered into it at
-publish); a vector field, a language or stopword list, or a synchronous caller
-(`owes = false`) gets a fresh spec. -/
-def shareSpec (owes : Bool) (existing : Option Idx) (t : IType) (language : Option String)
-    (stopwords : Option (List String)) : Bool :=
-  owes && t != .vector && language.isNone && stopwords.isNone && existing.any (·.hasRsIndex)
-
-/-- The private copy `create_index` mutates (`indexer.rs:362-363`): `fork_for_ddl` of the
-existing entry (new generation `regenTo`), or `Index::default` for a new label. -/
-def x0Of (E : Env) (existing : Option Idx) (share : Bool) : Idx :=
-  match existing with
-  | some x => x.forkForDdl share E.regenTo
-  | none => Idx.default E.freshId
-
-/-- The RS spec step of `create_index` (#3680, `indexer.rs:397-412`): when shared, the new
-fields are deferred to publish; otherwise a fresh spec (the statement's stopwords and
-language, else the entry's) with every field registered in declaration order. -/
-def specStep (E : Env) (label : String) (share : Bool) (language : Option String)
+/-- The RS spec step of `create_index` (`indexer.rs`). -/
+def specStep (E : Env) (t : IType) (label : String) (language : Option String)
     (stopwords : Option (List String)) (fo : Option TextOpts) (x1 : Idx) (nf : AMap (List Field)) :
     Except String Idx :=
-  if share then .ok (x1.deferFields nf fo)
+  if x1.hasRsIndex then
+    (if t = .vector then x1.recreateIndex label E.langOk E.tieredOk E.fresh E.bumpTo
+     else x1.registerFields nf fo E.tieredOk)
   else match x1.createRsIndex label (stopwords.or x1.stopwords) (language.or x1.language) E.langOk E.fresh with
     | .error e => .error e
-    | .ok x' => x'.registerAllFields E.tieredOk
+    | .ok x' => x'.registerFields nf fo E.tieredOk
 
-/-- Language/stopwords metadata and progress (#3680, `indexer.rs:420-429`): an explicit
-language or stopword list is recorded (the spec above was built with it); a fulltext
-index with no language records "english". -/
+/-- Language/stopwords defaults and progress (`indexer.rs`). -/
 def finish (t : IType) (language : Option String) (stopwords : Option (List String)) (total : Nat)
     (x2 : Idx) : Idx :=
-  let x3 := match language with
-    | some l => x2.setLanguage (some l)
-    | none => if x2.language.isNone && t = IType.fulltext then x2.setLanguage (some "english") else x2
-  let x4 := if stopwords.isSome then x3.setStopwords stopwords else x3
+  let x3 := if x2.language.isNone && t = .fulltext then
+      x2.setLanguage (some (language.getD "english"))
+    else if language.isSome && x2.language.isNone then x2.setLanguage language else x2
+  let x4 := if stopwords.isSome && x3.stopwords.isNone then x3.setStopwords stopwords else x3
   x4.setProgress 0 total
 
-/-- `if owes_population { owe_population() }` (`indexer.rs:435-437`). -/
-def owe (owes : Bool) (x : Idx) : Idx := if owes then x.owePopulation else x
+/-- #3086 (73077bb4a, `indexer.rs`): every field added to an existing
+entry starts a new population generation (`bump_id`), after every fallible step. -/
+def regen (existing : Option Idx) (g : Nat) (x : Idx) : Idx :=
+  if existing.isSome then x.bumpId g else x
 
-/-- Everything after validation (`indexer.rs:362-444`). -/
-def build (E : Env) (I : Ixr) (owes : Bool) (t : IType) (label : String) (attrs : List String) (total : Nat)
+theorem regen_fields (ex : Option Idx) (g : Nat) (x : Idx) :
+    (regen ex g x).fields = x.fields ∧ (regen ex g x).spec = x.spec ∧
+    (regen ex g x).progressOf = x.progressOf := by
+  unfold regen; split <;> simp [Idx.bumpId, Idx.progressOf]
+
+/-- Everything after validation (`indexer.rs`). -/
+def build (E : Env) (I : Ixr) (t : IType) (label : String) (attrs : List String) (total : Nat)
     (p : Option String × Option (List String) × Option TextOpts × Option VecOpts) : Except String Ixr :=
-  let share := shareSpec owes (I.map.get label) t p.1 p.2.1
-  match addAttrs t p.2.2.1 p.2.2.2 (x0Of E (I.map.get label) share) [] attrs with
+  let x0 := match I.map.get label with | some x => x.cloneForUpdate | none => Idx.default E.freshId
+  match addAttrs t p.2.2.1 p.2.2.2 x0 [] attrs with
   | .error e => .error e
-  | .ok (x1, nf) => match specStep E label share p.1 p.2.1 p.2.2.1 x1 nf with
+  | .ok (x1, nf) => match specStep E t label p.1 p.2.1 p.2.2.1 x1 nf with
     | .error e => .error e
-    | .ok x2 => .ok { I with map := I.map.upd label (owe owes (finish t p.1 p.2.1 total x2)) }
+    | .ok x2 =>
+      let x3 := regen (I.map.get label) E.regenTo (finish t p.1 p.2.1 total x2)
+      .ok { I with map := I.map.upd label x3 }
 
 theorem finish_fields (t : IType) (l : Option String) (s : Option (List String)) (n : Nat) (x : Idx) :
     (finish t l s n x).fields = x.fields ∧ (finish t l s n x).spec = x.spec ∧
@@ -169,31 +161,35 @@ theorem finish_fields (t : IType) (l : Option String) (s : Option (List String))
   simp only [finish]; repeat' split
   all_goals simp [Idx.setLanguage, Idx.setStopwords, Idx.setProgress, Idx.progressOf]
 
-theorem specStep_ok (E : Env) (label : String) (share : Bool) (la : Option String) (st : Option (List String))
+theorem specStep_ok (E : Env) (t : IType) (label : String) (la : Option String) (st : Option (List String))
     (fo : Option TextOpts) (x1 : Idx) (nf : AMap (List Field)) (x2 : Idx)
-    (hs : share = true → x1.hasRsIndex = true)
-    (h : specStep E label share la st fo x1 nf = .ok x2) : x2.fields = x1.fields ∧ x2.hasRsIndex = true := by
+    (h : specStep E t label la st fo x1 nf = .ok x2) : x2.fields = x1.fields ∧ x2.hasRsIndex = true := by
   unfold specStep at h
   split at h
-  · next hsh => cases h; exact ⟨rfl, hs hsh⟩
+  · next hrs =>
+    split at h
+    · obtain ⟨s, f, -⟩ := Idx.recreateIndex_ok _ _ _ _ _ _ _ h
+      exact ⟨f, by simp [Idx.hasRsIndex, s]⟩
+    · obtain ⟨s, f, -⟩ := Idx.registerFields_ok _ _ _ _ _ h
+      exact ⟨f, by simp [Idx.hasRsIndex, s]; simpa [Idx.hasRsIndex] using hrs⟩
   · split at h
     · cases h
     · next x' hx' =>
       obtain ⟨s1, -, f1, -⟩ := Idx.createRsIndex_ok _ _ _ _ _ _ _ hx'
-      obtain ⟨s2, f2, -⟩ := Idx.registerAllFields_ok _ _ _ h
+      obtain ⟨s2, f2, -⟩ := Idx.registerFields_ok _ _ _ _ _ h
       exact ⟨f2.trans f1, by simp [Idx.hasRsIndex, s2, s1]⟩
 
-/-- `Indexer::create_index` (`indexer.rs:262`); `owes` is `owes_population` (#3680). -/
+/-- `Indexer::create_index` (`indexer.rs`). -/
 def createIndex (E : Env) (I : Ixr) (t : IType) (label : String) (attrs : List String) (total : Nat)
-    (opts : Option IdxOptions) (owes : Bool) : Except String Ixr :=
+    (opts : Option IdxOptions) : Except String Ixr :=
   let p := optParts E.lower opts
   match preCheck (I.map.get label) t label p with
   | .error e => .error e
   | .ok () => match validate (I.map.get label) t [] attrs with
     | .error e => .error e
-    | .ok () => build E I owes t label attrs total p
+    | .ok () => build E I t label attrs total p
 
-/-- The drop loop (`indexer.rs:487-501`). -/
+/-- The drop loop (`indexer.rs`). -/
 def dropAttrs (t : IType) : Idx → Bool → List String → Idx × Bool
   | x, r, [] => (x, r)
   | x, r, a :: as =>
@@ -204,26 +200,24 @@ def dropAttrs (t : IType) : Idx → Bool → List String → Idx × Bool
         dropAttrs t (if fs.length = 1 then (x.removeField a).2 else x.retainFields a t) true as
       else dropAttrs t x r as
 
-/-- `Indexer::drop_index` (#3680, `indexer.rs:458`): on a private `fork_for_ddl(false)`
-copy (generation `regenTo`). Nothing removed: the map is unchanged. No field left: the
-label leaves the map. Otherwise `recreate_index` (fresh spec over the remaining fields,
-generation `bumpTo`), progress reset, population owed. A RediSearch error leaves the map
-unchanged. -/
-def dropIndex (E : Env) (I : Ixr) (label : String) (attrs : List String) (t : IType) (total : Nat) :
-    Except String (Option (Nat × Nat) × Ixr) :=
+/-- `Indexer::drop_index` (`indexer.rs`). -/
+def dropIndex (I : Ixr) (label : String) (attrs : List String) (t : IType) (total : Nat) :
+    Option (Nat × Nat) × Ixr :=
   match I.map.get label with
-  | none => .ok (none, I)
+  | none => (none, I)
   | some x0 =>
-    let x := x0.forkForDdl false E.regenTo
+    let x := x0.cloneForUpdate
     let before := x.indexCount
     let targets := if attrs.isEmpty then (x.fields.filter (·.2.any (·.ty == t))).map (·.1) else attrs
     let (x', removed) := dropAttrs t x false targets
-    if !removed then .ok (some (0, before), I)
-    else if x'.indexCount = 0 then .ok (some (before, 0), { I with map := I.map.erase label })
-    else match x'.recreateIndex label E.langOk E.tieredOk E.fresh E.bumpTo with
-      | .error e => .error e
-      | .ok y => .ok (some (before - x'.indexCount, x'.indexCount),
-                      { I with map := I.map.upd label (y.setProgress 0 total).owePopulation })
+    let x'' := if removed then x'.setProgress 0 total else x'
+    (some (before - x''.indexCount, x''.indexCount), { I with map := I.map.upd label x'' })
+
+/-- `Indexer::remove_if_empty` (`indexer.rs`, #3856; was `remove`): erase the
+entry only while it still has no fields (`index_count() == 0`), since a
+`CREATE INDEX` may have re-filled it before the background drop ran. -/
+def removeIfEmpty (I : Ixr) (label : String) : Ixr :=
+  if (I.map.get label).any (·.indexCount == 0) then { I with map := I.map.erase label } else I
 
 def hasFieldForLabel (I : Ixr) (l a : String) (t : IType) : Bool :=
   match I.map.get l with | some x => x.hasFieldWithType a t | none => false
@@ -233,32 +227,32 @@ def isLabelIndexed (I : Ixr) (l a : String) (t : IType) : Bool :=
 def isAttrIndexed (I : Ixr) (l a : String) : Bool :=
   match I.map.get l with | some x => operational x && x.containsField a | none => false
 /-- Routing shared by `query`, `query_edges`, `fulltext_query(_edges)`,
-`vector_query(_edges)` (`indexer.rs:467-551`): the per-label index, or the
+`vector_query(_edges)` (`indexer.rs`): the per-label index, or the
 empty iterator when the label has none. -/
 def route (I : Ixr) (l : String) : Option Idx := I.map.get l
 def vectorField (I : Ixr) (l a : String) : Option Field := do
   let x ← I.map.get l
   let fs ← x.getFields a
   fs.find? (fun f => f.ty == .vector && f.vopts.isSome)
-/-- `get_vector_metric` (`indexer.rs:562`). -/
+/-- `get_vector_metric` (`indexer.rs`). -/
 def getVectorMetric (I : Ixr) (l a : String) : Option String := do
   let x ← I.map.get l
   let fs ← x.getFields a
   (fs.find? (fun f => f.ty == .vector && (f.vopts.bind (·.sim)).isSome)).bind (fun f => f.vopts.bind (·.sim))
-/-- `get_vector_dimension` (`indexer.rs:585`). -/
+/-- `get_vector_dimension` (`indexer.rs`). -/
 def getVectorDimension (I : Ixr) (l a : String) : Option Nat :=
   (vectorField I l a).bind (fun f => f.vopts.map (·.dimension))
 def getFields (I : Ixr) (l : String) : AMap (List Field) := ((I.map.get l).map (·.fields)).getD []
 def getAllFields (I : Ixr) : List (String × AMap (List Field)) :=
   (I.map.filter (fun p => !p.2.isEmpty)).map (fun p => (p.1, p.2.fields))
-/-- `index_info` (`indexer.rs:793`): non-empty indexes, sorted by label (`le`
+/-- `index_info` (`indexer.rs`): non-empty indexes, sorted by label (`le`
 is `String`'s `Ord`, passed in so that only its order laws are used). -/
 def indexInfo (I : Ixr) (le : String → String → Bool) : List (String × Idx) :=
   (I.map.filter (fun p => !p.2.isEmpty)).mergeSort (fun a b => le a.1 b.1)
 def hasIndex (I : Ixr) (l : String) : Bool := (I.map.get l).isSome
 def hasIndexedAttr (I : Ixr) (l a : String) : Bool :=
   match I.map.get l with | some x => x.containsField a | none => false
-/-- `update_progress` (`indexer.rs:840`): the atomics are interior-mutable, so
+/-- `update_progress` (`indexer.rs`): the atomics are interior-mutable, so
 the published index itself changes. -/
 def updateProgress (I : Ixr) (l : String) (p : Nat) : Ixr :=
   match I.map.get l with
@@ -267,6 +261,12 @@ def updateProgress (I : Ixr) (l : String) (p : Nat) : Ixr :=
 def writeLock (I : Ixr) : Nat := I.lock
 def cancel (I : Ixr) : Ixr := { I with cancelled := true, graph := none }
 def isCancelled (I : Ixr) : Bool := I.cancelled
+def recreate (E : Env) (I : Ixr) (l : String) : Except String Ixr :=
+  match I.map.get l with
+  | some x => do
+    let y ← x.cloneForUpdate.recreateIndex l E.langOk E.tieredOk E.fresh E.bumpTo
+    pure { I with map := I.map.upd l y }
+  | none => .ok I
 def setGraph (I : Ixr) (g : Nat) : Ixr := { I with graph := some g }
 def getGraph (I : Ixr) : Option Nat := I.graph
 
@@ -298,7 +298,7 @@ re-adds a type an attribute already has (so each attribute keeps at most one
 field per type), and `create_index` with text options on a non-fulltext index
 fails. -/
 theorem createIndex_validates (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
-    (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (h : createIndex E I t l as tot o owes = .ok I') :
+    (o : Option IdxOptions) (I' : Ixr) (h : createIndex E I t l as tot o = .ok I') :
     as.Nodup ∧ ∀ a ∈ as, (I.map.get l).all (fun x => !x.hasFieldWithType a t) = true := by
   unfold createIndex at h
   simp only at h
@@ -309,8 +309,8 @@ theorem createIndex_validates (E : Env) (I : Ixr) (t : IType) (l : String) (as :
   exact ⟨h2, fun a ha => (h1 a ha).2⟩
 
 theorem createIndex_textopts_err (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
-    (o : TextOpts) (owes : Bool) (ht : t ≠ .fulltext) (hf : (I.map.get l).any (·.hasFulltextField) = false) :
-    createIndex E I t l as tot (some (.text o)) owes = .error "Text index options are only valid for fulltext indexes" := by
+    (o : TextOpts) (ht : t ≠ .fulltext) (hf : (I.map.get l).any (·.hasFulltextField) = false) :
+    createIndex E I t l as tot (some (.text o)) = .error "Text index options are only valid for fulltext indexes" := by
   have : (t != .fulltext) = true := by cases t <;> simp_all
   simp [createIndex, preCheck, optParts, hf, this]
 
@@ -370,45 +370,11 @@ theorem addAttrs_spec (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
 theorem hft_fields (x y : Idx) (h : y.fields = x.fields) (a : String) (t : IType) :
     y.hasFieldWithType a t = x.hasFieldWithType a t := by simp [Idx.hasFieldWithType, h]
 
-theorem addAttrs_slots (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
-    ∀ (as : List String) (x : Idx) (nf : AMap (List Field)) (y : Idx) (nf' : AMap (List Field)),
-      addAttrs t fo vo x nf as = .ok (y, nf') → y.slots = x.slots ∧ y.id = x.id ∧ y.spec = x.spec
-  | [], x, nf, y, nf', h => by simp [addAttrs] at h; obtain ⟨rfl, -⟩ := h; exact ⟨rfl, rfl, rfl⟩
-  | a :: as, x, nf, y, nf', h => by
-    simp only [addAttrs] at h
-    split at h; · cases h
-    have ih := addAttrs_slots t fo vo as _ _ y nf' h
-    refine ⟨ih.1.trans ?_, ih.2.1.trans ?_, ih.2.2.trans ?_⟩ <;>
-      (split <;> simp [Idx.addFieldToExisting, Idx.insertField] <;> split <;> rfl)
-
-theorem owe_fields (owes : Bool) (x : Idx) :
-    (owe owes x).fields = x.fields ∧ (owe owes x).spec = x.spec ∧ (owe owes x).progressOf = x.progressOf ∧
-    (owe owes x).id = x.id ∧ (owe owes x).slots = (if owes then x.slots.inc x.id else x.slots) ∧
-    (owe owes x).stopwords = x.stopwords ∧ (owe owes x).rsStop = x.rsStop := by
-  unfold owe; cases owes <;> simp [Idx.owePopulation, Idx.progressOf]
-
-/-- **The copy `create_index` starts from** (#3680): it carries the existing entry's spec
-exactly when the spec is shared, and a shared spec exists. -/
-theorem x0Of_share (E : Env) (ex : Option Idx) (share : Bool) :
-    (x0Of E ex share).spec = (if share then ex.bind (·.spec) else none) ∧
-    (x0Of E ex share).fields = ((ex.map (·.fields)).getD []) := by
-  cases ex with
-  | none => cases share <;> simp [x0Of, Idx.default]
-  | some x => cases share <;> simp [x0Of, Idx.forkForDdl, Idx.bumpId]
-
-theorem shareSpec_rs (owes : Bool) (ex : Option Idx) (t : IType) (la : Option String)
-    (st : Option (List String)) (h : shareSpec owes ex t la st = true) :
-    owes = true ∧ t ≠ .vector ∧ la = none ∧ st = none ∧ (ex.bind (·.spec)).isSome := by
-  unfold shareSpec at h
-  cases ex with
-  | none => simp at h
-  | some x => cases la <;> cases st <;> cases t <;> simp_all [Idx.hasRsIndex]
-
 /-- **`create_index` success**: only the target label's entry changes; it now
 has a field of the requested type for every requested attribute, its progress
 is `(0, total)`, and it has a RediSearch spec. -/
 theorem createIndex_ok (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
-    (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (h : createIndex E I t l as tot o owes = .ok I') :
+    (o : Option IdxOptions) (I' : Ixr) (h : createIndex E I t l as tot o = .ok I') :
     (∀ l', l' ≠ l → I'.map.get l' = I.map.get l') ∧
     ∃ x, I'.map.get l = some x ∧ (∀ a ∈ as, x.hasFieldWithType a t = true) ∧
       x.progressOf = (0, tot) ∧ x.hasRsIndex = true := by
@@ -421,21 +387,15 @@ theorem createIndex_ok (E : Env) (I : Ixr) (t : IType) (l : String) (as : List S
   split at h; · cases h
   next x1 nf hr1 =>
   obtain ⟨-, hadd⟩ := addAttrs_spec t _ _ as _ [] x1 nf hr1
-  obtain ⟨-, -, sp1⟩ := addAttrs_slots t _ _ as _ [] x1 nf hr1
   split at h; · cases h
   next x2 hx2 =>
-  have hs : shareSpec owes (I.map.get l) t (optParts E.lower o).1 (optParts E.lower o).2.1 = true →
-      x1.hasRsIndex = true := by
-    intro hsh
-    obtain ⟨-, -, -, -, hr⟩ := shareSpec_rs _ _ _ _ _ hsh
-    rw [Idx.hasRsIndex, sp1, (x0Of_share E _ _).1, hsh]; simpa using hr
-  obtain ⟨hf2, hs2⟩ := specStep_ok _ _ _ _ _ _ _ _ _ hs hx2
+  obtain ⟨hf2, hs2⟩ := specStep_ok _ _ _ _ _ _ _ _ _ hx2
   cases h
   obtain ⟨ff, fs, fp⟩ := finish_fields t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2
-  obtain ⟨of, os, op, -⟩ := owe_fields owes (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2)
-  refine ⟨fun l' hl' => by simp [AMap.get_upd, hl'], _, by simp [AMap.get_upd], fun a ha => ?_, op.trans fp, ?_⟩
-  · rw [hft_fields x1 _ (of.trans (ff.trans hf2))]; exact hadd a ha
-  · simp only [Idx.hasRsIndex, os, fs]; exact hs2
+  obtain ⟨rf, rs, rp⟩ := regen_fields (I.map.get l) E.regenTo (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2)
+  refine ⟨fun l' hl' => by simp [AMap.get_upd, hl'], _, by simp [AMap.get_upd], fun a ha => ?_, rp.trans fp, ?_⟩
+  · rw [hft_fields x1 _ (rf.trans (ff.trans hf2))]; exact hadd a ha
+  · simp only [Idx.hasRsIndex, rs, fs]; exact hs2
 
 /-! ## `drop_index`: never leaves an attribute with an empty field list -/
 
@@ -483,116 +443,62 @@ theorem dropAttrs_wf (t : IType) :
           · exact h b gs hb
       · exact dropAttrs_wf t as x r h
 
-theorem dropAttrs_slots (t : IType) :
-    ∀ (as : List String) (x : Idx) (r : Bool),
-      (dropAttrs t x r as).1.slots = x.slots ∧ (dropAttrs t x r as).1.id = x.id ∧
-      (dropAttrs t x r as).1.spec = x.spec ∧ (dropAttrs t x r as).1.stopwords = x.stopwords ∧
-      (dropAttrs t x r as).1.language = x.language
-  | [], x, r => by simp [dropAttrs]
-  | a :: as, x, r => by
-    simp only [dropAttrs]
-    split
-    · exact dropAttrs_slots t as x r
-    · next fs _ =>
-      split
-      · have hstep : ∀ y : Idx, (y = (x.removeField a).2 ∨ y = x.retainFields a t) →
-            y.slots = x.slots ∧ y.id = x.id ∧ y.spec = x.spec ∧ y.stopwords = x.stopwords ∧
-            y.language = x.language := by
-          rintro y (rfl | rfl)
-          · unfold Idx.removeField; split <;> simp
-          · simp [Idx.retainFields]
-        have hy := hstep (if fs.length = 1 then (x.removeField a).2 else x.retainFields a t)
-          (by split <;> simp)
-        obtain ⟨h1, h2, h3, h4, h5⟩ := dropAttrs_slots t as
-          (if fs.length = 1 then (x.removeField a).2 else x.retainFields a t) true
-        exact ⟨h1.trans hy.1, h2.trans hy.2.1, h3.trans hy.2.2.1, h4.trans hy.2.2.2.1, h5.trans hy.2.2.2.2⟩
-      · exact dropAttrs_slots t as x r
-
-theorem indexCount_fields (x y : Idx) (h : y.fields = x.fields) : y.indexCount = x.indexCount := by
-  rw [Idx.indexCount_eq, Idx.indexCount_eq]; simp [Idx.allFields, h]
-
-/-- **`drop_index`**: `None` exactly when the label has no index; only the label's
-entry changes; and from a well-formed entry, either the label leaves the map (every
-field dropped, reported `(before, 0)`, #3680: as the pre-#3680 `drop_index_bg` did) or
-it holds a well-formed entry (no attribute is left with an empty field list) and the
-reported counts are `(before - after, after)`. -/
-theorem dropIndex_spec (E : Env) (I : Ixr) (l : String) (as : List String) (t : IType) (tot : Nat)
-    (r : Option (Nat × Nat) × Ixr) (h : I.dropIndex E l as t tot = .ok r) :
-    (r.1 = none ↔ I.map.get l = none) ∧
-    (∀ l', l' ≠ l → r.2.map.get l' = I.map.get l') ∧
+/-- **`drop_index`**: `None` exactly when the label has no index; otherwise the
+reported `(dropped, remaining)` counts are `(before - after, after)`, only the
+label's entry changes, and a well-formed entry stays well-formed (no attribute
+is left with an empty field list). -/
+theorem dropIndex_spec (I : Ixr) (l : String) (as : List String) (t : IType) (tot : Nat) :
+    ((I.dropIndex l as t tot).1 = none ↔ I.map.get l = none) ∧
+    (∀ l', l' ≠ l → (I.dropIndex l as t tot).2.map.get l' = I.map.get l') ∧
     (∀ x, I.map.get l = some x → WF x →
-      (r.2.map.get l = none ∧ r.1 = some (x.indexCount, 0)) ∨
-      ∃ y, r.2.map.get l = some y ∧ WF y ∧ r.1 = some (x.indexCount - y.indexCount, y.indexCount)) := by
-  unfold dropIndex at h
-  split at h
-  · next h0 => cases h; simp [h0]
+      ∃ y, (I.dropIndex l as t tot).2.map.get l = some y ∧ WF y ∧
+        (I.dropIndex l as t tot).1 = some (x.indexCount - y.indexCount, y.indexCount)) := by
+  unfold dropIndex
+  split
+  · next h => simp [h]
   · next x0 h0 =>
-    simp only at h
-    have hfk : (x0.forkForDdl false E.regenTo).fields = x0.fields := (Idx.forkForDdl_spec _ _ _).2.2.1
-    have hb : (x0.forkForDdl false E.regenTo).indexCount = x0.indexCount := indexCount_fields _ _ hfk
-    generalize hd : dropAttrs t (x0.forkForDdl false E.regenTo) false _ = d at h
-    obtain ⟨x', rm⟩ := d
-    have hw : ∀ x, I.map.get l = some x → WF x → WF x' := by
-      intro x hx hwx; rw [h0] at hx; cases hx
-      have e := congrArg Prod.fst hd; simp only at e; rw [← e]
-      exact dropAttrs_wf t _ (x0.forkForDdl false E.regenTo) false
-        (fun a fs hf => hwx a fs (by rw [hfk] at hf; exact hf))
-    simp only at h
-    split at h
-    · cases h
-      refine ⟨by simp [h0], fun _ _ => rfl, fun x hx hwx => Or.inr ⟨x, hx, hwx, ?_⟩⟩
-      rw [h0] at hx; cases hx; simp [hb]
-    · split at h
-      · next hz =>
-        cases h
-        refine ⟨by simp [h0], fun l' hl' => by simp [AMap.get_erase, hl'], fun x hx _ => Or.inl ?_⟩
-        rw [h0] at hx; cases hx
-        simp [AMap.get_erase, hb]
-      · split at h
-        · cases h
-        · next y hy =>
-          cases h
-          obtain ⟨-, fy, -⟩ := Idx.recreateIndex_ok _ _ _ _ _ _ _ hy
-          refine ⟨by simp [h0], fun l' hl' => by simp [AMap.get_upd, hl'], fun x hx hwx => Or.inr ⟨(y.setProgress 0 tot).owePopulation, by simp [AMap.get_upd], ?_, ?_⟩⟩
-          · intro a gs hg
-            exact hw x hx hwx a gs (by
-              simpa [Idx.owePopulation, Idx.setProgress, fy] using hg)
-          · rw [h0] at hx; cases hx
-            have : ((y.setProgress 0 tot).owePopulation).indexCount = x'.indexCount :=
-              indexCount_fields _ _ (by simp [Idx.owePopulation, Idx.setProgress, fy])
-            simp [this, hb]
+    refine ⟨by simp [h0], fun l' hl' => by simp [AMap.get_upd, hl'], fun x hx hw => ?_⟩
+    rw [h0] at hx; cases hx
+    have key : ∀ tg r, WF (dropAttrs t x0.cloneForUpdate r tg).1 := fun tg r =>
+      dropAttrs_wf t tg _ r (by rw [Idx.cloneForUpdate_eq]; exact hw)
+    refine ⟨_, by simp [AMap.get_upd], ?_, rfl⟩
+    repeat' split
+    all_goals first | exact key _ _ | (intro a gs hg; exact key _ _ a gs (by simpa [Idx.setProgress] using hg))
 
-/-- **`drop_index` rebuilds** (#3680): when the label keeps fields, its new entry has a
-fresh spec (built over the remaining fields), generation `bumpTo`, exactly one pending
-ticket of it (the owed population), progress `(0, total)`, and owes its population; the
-published entry (its spec and counters) is not touched (the map is a new value). -/
-theorem dropIndex_rebuilt (E : Env) (I : Ixr) (l : String) (as : List String) (t : IType) (tot : Nat)
-    (r : Option (Nat × Nat) × Ixr) (h : I.dropIndex E l as t tot = .ok r) (y : Idx)
-    (hy : r.2.map.get l = some y) (hne : r.2.map.get l ≠ I.map.get l) :
-    y.spec = some E.fresh ∧ y.id = E.bumpTo ∧ y.slots = ⟨E.bumpTo, 1, 0⟩ ∧ y.owed = true ∧
-      y.progressOf = (0, tot) := by
-  unfold dropIndex at h
-  split at h
-  · cases h; exact absurd rfl hne
-  · next x0 h0 =>
-    simp only at h
-    generalize hd : dropAttrs t (x0.forkForDdl false E.regenTo) false _ = d at h
-    obtain ⟨x', rm⟩ := d
-    have hsl : x'.slots = ⟨E.regenTo, 0, 0⟩ := by
-      have e := congrArg Prod.fst hd; simp only at e; rw [← e, (dropAttrs_slots t _ _ false).1]
-      exact (Idx.forkForDdl_spec _ _ _).2.1
-    simp only at h
-    split at h
-    · cases h; exact absurd rfl hne
-    · split at h
-      · cases h; simp [AMap.get_erase] at hy
-      · split at h
-        · cases h
-        · next y0 hy0 =>
-          cases h
-          simp [AMap.get_upd] at hy; subst hy
-          obtain ⟨s0, -, -, i0, sl0, -⟩ := Idx.recreateIndex_ok _ _ _ _ _ _ _ hy0
-          simp [Idx.owePopulation, Idx.setProgress, Idx.progressOf, s0, i0, sl0, hsl, Slots.bump, Slots.inc]
+/-- **PROVEN** (`remove_if_empty`): a fieldless entry for `l` is erased, every
+other entry (and a filled entry for `l`) is untouched. -/
+theorem removeIfEmpty_spec (I : Ixr) (l l' : String) :
+    (I.removeIfEmpty l).map.get l' =
+      if l' = l ∧ (I.map.get l).any (·.indexCount == 0) then none else I.map.get l' := by
+  unfold removeIfEmpty; split
+  · next h => rw [AMap.get_erase]; by_cases hl : l' = l <;> simp [hl, h]
+  · next h => simp [h]
+
+/-- **PROVEN** (#3856): an entry a racing `CREATE INDEX` re-filled survives. -/
+theorem removeIfEmpty_keeps_filled (I : Ixr) (l : String) (x : Idx)
+    (hx : I.map.get l = some x) (hn : x.indexCount ≠ 0) :
+    (I.removeIfEmpty l).map.get l = some x := by
+  rw [removeIfEmpty_spec]; simp [hx, hn]
+
+/-- **PROVEN**: the old `remove_spec` contract still holds on the path
+`drop_index` → `drop_index_bg` with no interleaving: `drop_index` reported
+`remaining = 0`, so the entry is fieldless and `remove_if_empty` erases it. -/
+theorem dropIndex_removeIfEmpty_erases (I : Ixr) (l l' : String) (as : List String) (t : IType) (tot d : Nat)
+    (h : (I.dropIndex l as t tot).1 = some (d, 0)) :
+    ((I.dropIndex l as t tot).2.removeIfEmpty l).map.get l' =
+      if l' = l then none else I.map.get l' := by
+  have hs := dropIndex_spec I l as t tot
+  rw [removeIfEmpty_spec]
+  by_cases hl : l' = l
+  · subst hl
+    have hz : ((I.dropIndex l' as t tot).2.map.get l').any (·.indexCount == 0) = true := by
+      unfold dropIndex at h ⊢; split
+      · next h0 => simp [h0] at h
+      · next x0 h0 =>
+        simp only [h0, Option.some.injEq, Prod.mk.injEq] at h
+        simp only [AMap.get_upd, ite_true, Option.any_some, beq_iff_eq]; exact h.2
+    simp [hz]
+  · simp [hl, hs.2.1 l' hl]
 
 theorem lookups (I : Ixr) (l a : String) (t : IType) :
     I.hasFieldForLabel l a t = (I.map.get l).any (·.hasFieldWithType a t) ∧
@@ -681,102 +587,111 @@ theorem misc (I : Ixr) (g : Nat) :
     (I.setGraph g).map = I.map := by
   simp [writeLock, cancel, isCancelled, getGraph, setGraph]
 
-/-! ## #3086 (73077bb4a): adding a field to an existing entry starts a new generation -/
+/-- `Indexer::recreate_index`: a no-op for an unknown label; otherwise only the
+label's entry changes, to a recreated index (fresh spec, bumped generation,
+same fields). -/
+theorem recreate_spec (E : Env) (I I' : Ixr) (l : String) (h : I.recreate E l = .ok I') :
+    (∀ l', l' ≠ l → I'.map.get l' = I.map.get l') ∧
+    (∀ x, I.map.get l = some x → ∃ y, I'.map.get l = some y ∧ y.spec = some E.fresh ∧
+      y.fields = x.fields ∧ y.id = E.bumpTo) := by
+  unfold recreate at h
+  split at h
+  · next x hx =>
+    simp only [bind, Except.bind, pure, Except.pure] at h
+    split at h; · cases h
+    next y hy =>
+    cases h
+    obtain ⟨s, f, -, i, -⟩ := Idx.recreateIndex_ok _ _ _ _ _ _ _ hy
+    refine ⟨fun l' hl' => by simp [AMap.get_upd, hl'], fun x' hx' => ?_⟩
+    rw [hx] at hx'; cases hx'
+    exact ⟨y, by simp [AMap.get_upd], s, by rw [f, Idx.cloneForUpdate_eq], i⟩
+  · next hx => cases h; exact ⟨fun _ _ => rfl, fun x h => by rw [h] at hx; cases hx⟩
 
-/-- `is_ticket_current` (`indexer.rs:698`). -/
+/-! ## Adding a field to an existing entry starts a new generation -/
+
+/-- `is_ticket_current` (`indexer.rs`). -/
 def isTicketCurrent (I : Ixr) (tk : Ticket) : Bool :=
   match I.map.get tk.label with | some x => x.id == tk.gen | none => false
+
+theorem addAttrs_slots (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
+    ∀ (as : List String) (x : Idx) (nf : AMap (List Field)) (y : Idx) (nf' : AMap (List Field)),
+      addAttrs t fo vo x nf as = .ok (y, nf') → y.slots = x.slots ∧ y.id = x.id ∧ y.spec = x.spec
+  | [], x, nf, y, nf', h => by simp [addAttrs] at h; obtain ⟨rfl, -⟩ := h; exact ⟨rfl, rfl, rfl⟩
+  | a :: as, x, nf, y, nf', h => by
+    simp only [addAttrs] at h
+    split at h; · cases h
+    have ih := addAttrs_slots t fo vo as _ _ y nf' h
+    refine ⟨ih.1.trans ?_, ih.2.1.trans ?_, ih.2.2.trans ?_⟩ <;>
+      (split <;> simp [Idx.addFieldToExisting, Idx.insertField] <;> split <;> rfl)
 
 theorem registerFields_id (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tk : Bool) (y : Idx)
     (h : x.registerFields m fo tk = .ok y) : y.id = x.id := by
   unfold Idx.registerFields at h; split at h <;> cases h; rfl
 
-theorem registerAllFields_id (x : Idx) (tk : Bool) (y : Idx)
-    (h : x.registerAllFields tk = .ok y) : y.id = x.id := by
-  unfold Idx.registerAllFields at h; split at h <;> cases h; rfl
-
-/-- The RS step keeps the generation and its counters (#3680: a vector field no longer
-recreates an existing spec here: the fork has none, `fork_for_ddl(false)`). -/
-theorem specStep_slots (E : Env) (label : String) (share : Bool) (la : Option String)
+/-- The RS step keeps the generation, except a vector field added to an existing
+spec, which recreates it under `bumpTo`. -/
+theorem specStep_slots (E : Env) (t : IType) (label : String) (la : Option String)
     (st : Option (List String)) (fo : Option TextOpts) (x1 : Idx) (nf : AMap (List Field)) (x2 : Idx)
-    (h : specStep E label share la st fo x1 nf = .ok x2) :
-    x2.slots = x1.slots ∧ x2.id = x1.id := by
+    (h : specStep E t label la st fo x1 nf = .ok x2) :
+    (x2.slots = x1.slots ∧ x2.id = x1.id) ∨
+      (x1.hasRsIndex = true ∧ x2.slots = x1.slots.bump E.bumpTo ∧ x2.id = E.bumpTo) := by
   unfold specStep at h
   split at h
-  · cases h; exact ⟨rfl, rfl⟩
+  · next hrs =>
+    split at h
+    · obtain ⟨-, -, -, i, sl, -⟩ := Idx.recreateIndex_ok _ _ _ _ _ _ _ h
+      exact Or.inr ⟨hrs, sl, i⟩
+    · obtain ⟨-, -, -, sl, -⟩ := Idx.registerFields_ok _ _ _ _ _ h
+      exact Or.inl ⟨sl, registerFields_id _ _ _ _ _ h⟩
   · split at h
     · cases h
     · next x' hx' =>
       obtain ⟨-, -, -, -, sl1, i1, -⟩ := Idx.createRsIndex_ok _ _ _ _ _ _ _ hx'
-      obtain ⟨-, -, -, sl2, -⟩ := Idx.registerAllFields_ok _ _ _ h
-      exact ⟨sl2.trans sl1, (registerAllFields_id _ _ _ h).trans i1⟩
+      obtain ⟨-, -, -, sl2, -⟩ := Idx.registerFields_ok _ _ _ _ _ h
+      exact Or.inl ⟨sl2.trans sl1, (registerFields_id _ _ _ _ _ h).trans i1⟩
 
 theorem finish_slots (t : IType) (l : Option String) (s : Option (List String)) (n : Nat) (x : Idx) :
     (finish t l s n x).slots = x.slots ∧ (finish t l s n x).id = x.id := by
   simp only [finish]; repeat' split
   all_goals simp [Idx.setLanguage, Idx.setStopwords, Idx.setProgress]
 
-/-- The entry `create_index` stores, from the copy it started from. -/
-theorem createIndex_entry (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
-    (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (h : createIndex E I t l as tot o owes = .ok I') :
-    ∃ x, I'.map.get l = some x ∧
-      x.id = (x0Of E (I.map.get l) (shareSpec owes (I.map.get l) t (optParts E.lower o).1 (optParts E.lower o).2.1)).id ∧
-      x.slots = (owe owes (x0Of E (I.map.get l) (shareSpec owes (I.map.get l) t (optParts E.lower o).1 (optParts E.lower o).2.1))).slots := by
+/-- **#3086 on main**: `create_index` on a label that already has an entry
+publishes it under the fresh generation `regenTo` with no pending ticket of that
+generation, and every ticket outstanding before (any generation) is still
+counted, now as stale, so the old job's release stays balanced. -/
+theorem createIndex_regen (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
+    (o : Option IdxOptions) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
+    (h : createIndex E I t l as tot o = .ok I') :
+    ∃ x, I'.map.get l = some x ∧ x.id = E.regenTo ∧ x.slots.gen = E.regenTo ∧ x.slots.cur = 0 ∧
+      x.slots.cur + x.slots.stale = x0.slots.cur + x0.slots.stale := by
   unfold createIndex at h
   simp only at h
   split at h; · cases h
   split at h; · cases h
   unfold build at h
-  simp only at h
+  simp only [hx0, Idx.cloneForUpdate_eq] at h
   split at h; · cases h
   next x1 nf hr1 =>
-  obtain ⟨sl1, i1, -⟩ := addAttrs_slots t _ _ as _ [] x1 nf hr1
+  obtain ⟨sl1, -, -⟩ := addAttrs_slots t _ _ as _ [] x1 nf hr1
   split at h; · cases h
   next x2 hx2 =>
   cases h
-  obtain ⟨sl2, i2⟩ := specStep_slots _ _ _ _ _ _ _ _ _ hx2
-  obtain ⟨sl3, i3⟩ := finish_slots t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2
-  refine ⟨owe owes (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2), by simp [AMap.get_upd], ?_, ?_⟩
-  · rw [(owe_fields _ _).2.2.2.1, i3, i2, i1]
-  · rw [(owe_fields _ _).2.2.2.2.1, (owe_fields _ _).2.2.2.2.1, sl3, i3, sl2, i2, sl1, i1]
+  obtain ⟨sl3, -⟩ := finish_slots t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2
+  refine ⟨regen (some x0) E.regenTo (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2),
+    by simp [AMap.get_upd], ?_⟩
+  simp only [regen, Option.isSome_some, ite_true, Idx.bumpId, Slots.bump, sl3, true_and]
+  rcases specStep_slots _ _ _ _ _ _ _ _ _ hx2 with ⟨sl2, -⟩ | ⟨-, sl2, -⟩
+  · rw [sl2, sl1]; omega
+  · rw [sl2, sl1]; simp [Slots.bump]; omega
 
-/-- **#3086, #3680**: `create_index` on a label that already has an entry stores it
-under the fresh generation `regenTo` with counters of its own: one pending ticket of
-that generation exactly when it owes its population (the publisher's job takes it
-over), none otherwise, and no stale ticket (the old job's tickets stay on the published
-entry it acquired them from: `createIndex_old_release_noop`). -/
-theorem createIndex_regen (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
-    (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
-    (h : createIndex E I t l as tot o owes = .ok I') :
-    ∃ x, I'.map.get l = some x ∧ x.id = E.regenTo ∧
-      x.slots = ⟨E.regenTo, if owes then 1 else 0, 0⟩ := by
-  obtain ⟨x, hx, hi, hs⟩ := createIndex_entry E I t l as tot o owes I' h
-  refine ⟨x, hx, ?_, ?_⟩
-  · rw [hi]; simp only [hx0, x0Of]; exact (Idx.forkForDdl_spec _ _ _).1
-  · rw [hs]; simp only [hx0, x0Of]
-    cases owes <;> simp [owe, Idx.owePopulation, Idx.forkForDdl, Idx.bumpId, Slots.bump, Slots.inc]
-
-/-- **#3680**: a ticket of any other generation (a job of the published entry, still
-running) released into the stored entry changes nothing: its counters only count the
-new generation's ticket, so the old job can never mark the new entry OPERATIONAL. -/
-theorem createIndex_old_release_noop (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String)
-    (tot : Nat) (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
-    (h : createIndex E I t l as tot o owes = .ok I') (g : Nat) (hg : g ≠ E.regenTo) :
-    ∃ x, I'.map.get l = some x ∧ x.slots.dec g = x.slots ∧
-      x.slots.countFor E.regenTo = (if owes then 1 else 0) := by
-  obtain ⟨x, hx, -, hs⟩ := createIndex_regen E I t l as tot o owes I' x0 hx0 h
-  refine ⟨x, hx, ?_, ?_⟩
-  · rw [hs]; simp [Slots.dec, hg]
-  · rw [hs]; simp [Slots.countFor]
-
-/-- Hence the job the publisher starts for `regenTo` passes `is_ticket_current`, and a populate job
+/-- Hence the job `populate_index` spawns for `regenTo` passes `is_ticket_current`, and a populate job
 of any generation other than `regenTo` fails it at its next batch (`createIndex_old_ticket_stale_ne`;
 an earlier generation is stale exactly when it is not `regenTo`). -/
 theorem createIndex_old_ticket_stale (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String)
-    (tot : Nat) (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
-    (h : createIndex E I t l as tot o owes = .ok I') (g : Nat) :
+    (tot : Nat) (o : Option IdxOptions) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
+    (h : createIndex E I t l as tot o = .ok I') (g : Nat) :
     I'.isTicketCurrent ⟨l, g⟩ = (g == E.regenTo) := by
-  obtain ⟨x, hx, hid, -⟩ := createIndex_regen E I t l as tot o owes I' x0 hx0 h
+  obtain ⟨x, hx, hid, -⟩ := createIndex_regen E I t l as tot o I' x0 hx0 h
   simp only [isTicketCurrent, hx, hid]
   by_cases hg : g = E.regenTo
   · subst hg; simp only [beq_self_eq_true]
@@ -785,24 +700,37 @@ theorem createIndex_old_ticket_stale (E : Env) (I : Ixr) (t : IType) (l : String
 
 /-- A populate job of a generation other than `regenTo` (in particular any earlier one) is stale. -/
 theorem createIndex_old_ticket_stale_ne (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String)
-    (tot : Nat) (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
-    (h : createIndex E I t l as tot o owes = .ok I') (g : Nat) (hg : g ≠ E.regenTo) :
+    (tot : Nat) (o : Option IdxOptions) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
+    (h : createIndex E I t l as tot o = .ok I') (g : Nat) (hg : g ≠ E.regenTo) :
     I'.isTicketCurrent ⟨l, g⟩ = false := by
-  rw [createIndex_old_ticket_stale E I t l as tot o owes I' x0 hx0 h g]
+  rw [createIndex_old_ticket_stale E I t l as tot o I' x0 hx0 h g]
   exact beq_false_of_ne hg
 
-/-- A brand-new entry is not bumped: it keeps `Index::default`'s generation, with the
-owed ticket when it owes its population. -/
+/-- A brand-new entry is not bumped: it keeps `Index::default`'s generation. -/
 theorem createIndex_new_entry (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
-    (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (hx0 : I.map.get l = none)
-    (h : createIndex E I t l as tot o owes = .ok I') :
-    ∃ x, I'.map.get l = some x ∧ x.id = E.freshId ∧
-      x.slots = ⟨E.freshId, if owes then 1 else 0, 0⟩ := by
-  obtain ⟨x, hx, hi, hs⟩ := createIndex_entry E I t l as tot o owes I' h
-  refine ⟨x, hx, ?_, ?_⟩
-  · rw [hi]; simp [hx0, x0Of, Idx.default]
-  · rw [hs]; simp only [hx0, x0Of]
-    cases owes <;> simp [owe, Idx.owePopulation, Idx.default, Slots.inc]
+    (o : Option IdxOptions) (I' : Ixr) (hx0 : I.map.get l = none)
+    (h : createIndex E I t l as tot o = .ok I') :
+    ∃ x, I'.map.get l = some x ∧ x.id = E.freshId ∧ x.slots = ⟨E.freshId, 0, 0⟩ := by
+  unfold createIndex at h
+  simp only at h
+  split at h; · cases h
+  split at h; · cases h
+  unfold build at h
+  simp only [hx0] at h
+  split at h; · cases h
+  next x1 nf hr1 =>
+  obtain ⟨sl1, i1, sp1⟩ := addAttrs_slots t _ _ as _ [] x1 nf hr1
+  split at h; · cases h
+  next x2 hx2 =>
+  cases h
+  obtain ⟨sl3, i3⟩ := finish_slots t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2
+  refine ⟨regen none E.regenTo (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2),
+    by simp [AMap.get_upd], ?_⟩
+  simp only [regen, Option.isSome_none, Bool.false_eq_true, ite_false, sl3, i3]
+  rcases specStep_slots _ _ _ _ _ _ _ _ _ hx2 with ⟨sl2, i2⟩ | ⟨hrs, -, -⟩
+  · rw [sl2, sl1, i2, i1]; exact ⟨rfl, rfl⟩
+  · have : x1.hasRsIndex = false := by simp [Idx.hasRsIndex, sp1, Idx.default]
+    rw [this] at hrs; cases hrs
 
 /-! ## BUG (new): a range index on an attribute that already has a fulltext
 index is never used correctly. `build_query_node` takes the attribute's *first*
@@ -813,8 +741,8 @@ def E0 : Env := { langOk := fun _ => true, tieredOk := true, fresh := 7, freshId
 def I0 : Ixr := { map := [], cancelled := false, graph := none, lock := 0 }
 
 def scenario : Option (Option Field) :=
-  match createIndex E0 I0 .fulltext "L" ["s"] 0 none true with
-  | .ok I1 => match createIndex E0 I1 .range "L" ["s"] 0 none true with
+  match createIndex E0 I0 .fulltext "L" ["s"] 0 none with
+  | .ok I1 => match createIndex E0 I1 .range "L" ["s"] 0 none with
     | .ok I2 => some ((I2.route "L").bind (·.queryField "s"))
     | .error _ => none
   | .error _ => none

@@ -5,27 +5,27 @@ import SearchConcurrency.Search
 | here | there |
 | --- | --- |
 | `vectorQuery` (generic over the id type) | the shared body of both fns below |
-| `vectorQueryNodes`  | `graph/src/graph/graph.rs:4373-4433` `vector_query_nodes`, `count = node_count()` (`:1145`) |
-| `vectorQueryEdges`  | `graph.rs:4439-4495` `vector_query_edges`, `count = relationship_count()` (`:1162`) |
-| `opOk = false`      | `graph.rs:4381-4385` / `:4447-4451` `!indexer.is_operational(label)` → `Err("Invalid arguments for procedure ..")` (#3382, PR #3581) |
-| `clampK`            | `graph.rs:4399` / `:4464` `k.min(count.max(1) as usize)` |
+| `vectorQueryNodes`  | `graph/src/graph/graph.rs` `vector_query_nodes`, `count = node_count()` (`node_count`) |
+| `vectorQueryEdges`  | `graph.rs` `vector_query_edges`, `count = relationship_count()` (`relationship_count`) |
+| `opOk = false`      | `graph.rs` / `!indexer.is_operational(label)` → `Err("The vector index on '{label}' is under construction")` (#3382, PR #3581; C: "Invalid arguments for procedure") |
+| `clampK`            | `graph.rs` / `k.min(count.max(1) as usize)` |
 | `KnnIndex.query`    | `node_indexer.vector_query` / `edge_indexer.vector_query_edges` (RediSearch FFI) |
-| `dimCheck`          | `graph.rs:4387-4394` / `:4453-4460` dimension-mismatch `Err` |
-| `attrKnown = false` | `graph.rs:4405-4407` / `:4470-4472` `return Ok(Vec::new().into_iter())` |
-| `outCap`            | `graph.rs:4415-4416` / `:4480-4481` `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
-| `filterMap step`    | `graph.rs:4419-4422` / `:4484-4487` `let Value::VecF32 .. else continue` + `vec_distance::distance` |
-| `mergeSort`         | `graph.rs:4431` / `:4493` stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
+| `dimCheck`          | `graph.rs` / dimension-mismatch `Err` |
+| `attrKnown = false` | `graph.rs` / `return Ok(Vec::new().into_iter())` |
+| `outCap`            | `graph.rs` / `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
+| `filterMap step`    | `graph.rs` / `let Value::VecF32 .. else continue` + `vec_distance::distance` |
+| `mergeSort`         | `graph.rs` / stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
 
-(Line numbers are for PR #3581 head d86528bf2; the model was written against 89d68334a, #3088.)
+(Line numbers are for main 256ab4d3f; the model was written against 89d68334a, #3088, and re-checked
+against #3581's gate and #3736's refactors, which leave the arms above unchanged.)
 
 RediSearch is a hypothesis structure (`KnnIndex`), not an axiom: it holds `ranked`, the
 index's documents in its own (approximate-distance) order, at most `count` of them
 because every indexed document is a live entity, and `query k = ranked.take k`.
 Floats are abstract (`FloatOps`).
 
-HISTORICAL (W3-conc-4 / #3085, fixed by #3088 at 89d68334a): before the fix both fns did
-`Vec::with_capacity(k)` with the raw user `k` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now
-every buffer is bounded by the live entity count: `alloc_bounded`, `no_abort_any_k`.
+Every buffer is bounded by the live entity count, not by the raw user `k`: `alloc_bounded`,
+`no_abort_any_k`.
 -/
 
 namespace SC.Knn
@@ -43,7 +43,7 @@ structure KnnIndex (α : Type) (count : Nat) where
   query : Nat → List α
   query_spec : ∀ k, query k = ranked.take k
 
-/-- `k.min(count.max(1) as usize)` (graph.rs:4399 / :4464). -/
+/-- `k.min(count.max(1) as usize)` (graph.rs). -/
 def clampK (k count : Nat) : Nat := min k (max count 1)
 
 /-- One loop iteration: `let Value::VecF32(v) = entity else continue;` then

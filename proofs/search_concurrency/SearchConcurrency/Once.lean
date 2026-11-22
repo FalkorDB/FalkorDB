@@ -13,9 +13,9 @@ def setOnce {α : Type} (c : Option α) (v : α) : Option α × Bool :=
 
 /-! `thread_id.rs` -/
 
-/-- `set_main_thread` (`thread_id.rs:15`): first call wins. -/
+/-- `set_main_thread` (`thread_id.rs`): first call wins. -/
 def setMainThread (c : Option Nat) (tid : Nat) : Option Nat := (setOnce c tid).1
-/-- `is_main_thread` (`:25`): false before registration. -/
+/-- `is_main_thread`: false before registration. -/
 def isMainThread (c : Option Nat) (tid : Nat) : Bool := c.any (· == tid)
 /-- `set_process_is_child` / `process_is_child` (`:57,64`). -/
 def setChild (_old v : Bool) : Bool := v
@@ -31,8 +31,7 @@ theorem thread_id_spec (t1 t2 : Nat) (b v : Bool) :
   simp [isMainThread, setMainThread, setOnce]; exact h
 
 /-- `POOL_THREAD` (#3816): a thread-local `Cell<bool>`, `false` on every new thread;
-`set_pool_thread` (`thread_id.rs:39`) sets it on the calling thread only, `is_pool_thread`
-(`:50`) reads it. Threads are indices into the per-thread cells. -/
+`set_pool_thread` (`thread_id.rs`) sets it on the calling thread only, `is_pool_thread` reads it. Threads are indices into the per-thread cells. -/
 def setPoolThread (cells : Nat → Bool) (me : Nat) : Nat → Bool := fun t => if t = me then true else cells t
 def isPoolThread (cells : Nat → Bool) (me : Nat) : Bool := cells me
 
@@ -46,7 +45,7 @@ theorem pool_thread_spec (me other : Nat) (h : other ≠ me) :
 
 inductive Res (α : Type) | ok (a : α) | panic
 
-/-- `register_index_backend` / `register_attr_backend` (`registry.rs:31,52`):
+/-- `register_index_backend` / `register_attr_backend` (`registry.rs`):
 `assert!` panics on a second registration. -/
 def register {α : Type} (c : Option α) (b : α) : Res (Option α) :=
   match setOnce c b with | (c', true) => .ok c' | (_, false) => .panic

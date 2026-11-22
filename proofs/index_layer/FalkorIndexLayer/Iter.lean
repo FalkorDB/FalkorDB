@@ -4,17 +4,6 @@ import FalkorIndexLayer.Maintenance
 # Result iterators, RS handle refcounts, and the query entry points
 (`graph/src/index/mod.rs`, origin/main 3fec7d7c9)
 
-| Lean | Rust |
-| --- | --- |
-| `nextN`, `drainN` | `IndexResultsIter::next` `mod.rs:312`, `EdgeTripleIter::next` 381, `ScoredEdgeTripleIter::next` 445 (skip keys of the wrong length, decode) |
-| `RIter`, `RIter.empty`, `RIter.next` | `IndexResultsIter::{new,empty,empty_scored}` 277/288/299, `EdgeTripleIter::{new,empty}` 362/370, `ScoredEdgeTripleIter::{new,empty}` 426/434, vector wrappers 498-537 |
-| `decTriple` | `decode_triple` 612 |
-| `RC`, `RC.clone/release/dropSpec` | `OwnedIndex::{from_owned,as_ptr,try_clone,into_raw,drop}` 926-964, `SpecHandle::{new,as_ptr,try_clone_ref,drop}` 980-1010 |
-| `DocLife` | `Document::drop` 641, `add_document` 1893 (`consumed`) |
-| `queryN`, `queryE` | `Index::query` 1677, `Index::query_edges` 1700 |
-| `fulltextQ`, `vectorQ` | `Index::fulltext_query(_edges)` 1718/1747, `vector_query(_edges)` 1784/1846 |
-| `delKey`, `delEdgeKey`, `commitEdge` | `delete_document` 1915, `delete_edge_document` 1932, `Indexer::commit_edge` `indexer.rs:744` |
-
 RediSearch is a *hypothesis*: `run n` is the list of `(key, score)` pairs the
 results iterator returns for query node `n`, and `RunSpec` states the documented
 LLAPI contract (it returns the keys of exactly the stored documents that match).
@@ -109,19 +98,17 @@ theorem mem_drainN {β : Type} (len : Nat) (dec : Key → β) (l : List (Key × 
 
 /-- `rc`: strong refs on the RS spec; `owned`: live `OwnedIndex` clones (held by
 iterators); `specAlive`: the shared `SpecHandle` (creation ref); `valid`: not yet
-`DropIndex`ed; `freed`: `IndexSpec_Free` ran; `doomed` (#3680): the creation ref
-handed from a dropped `SpecHandle` to a `DoomedSpec` (`mod.rs:1039`) not yet dropped. -/
+`DropIndex`ed; `freed`: `IndexSpec_Free` ran. -/
 structure RC where
   rc : Nat
   owned : Nat
   specAlive : Bool
   valid : Bool
   freed : Bool
-  doomed : Bool
   deriving DecidableEq, Repr
 
 /-- `RediSearch_CreateIndex` + `OwnedIndex::from_owned` + `SpecHandle::new`. -/
-def RC.create : RC := ⟨1, 0, true, true, false, false⟩
+def RC.create : RC := ⟨1, 0, true, true, false⟩
 /-- `SpecHandle::try_clone_ref` → `OwnedIndex::try_clone` → `RediSearch_IndexClone`
 (NULL once invalidated ⇒ `from_owned` gives `None`). -/
 def RC.clone (r : RC) : Option RC :=
@@ -129,87 +116,50 @@ def RC.clone (r : RC) : Option RC :=
 /-- `OwnedIndex::drop` → `RediSearch_IndexRelease`. -/
 def RC.release (r : RC) : RC :=
   { r with rc := r.rc - 1, owned := r.owned - 1, freed := r.rc - 1 == 0 }
-/-- `SpecHandle::drop` (#3680, `mod.rs:1021`): `ManuallyDrop::take` + `into_raw` (no
-release by `OwnedIndex`), the raw creation ref moved into a `DoomedSpec` handed to the
-thread pool (`try_spawn`; dropped in place when there is no pool). Nothing is released yet. -/
-def RC.doom (r : RC) : RC := { r with specAlive := false, doomed := true }
-/-- `DoomedSpec::drop` (`mod.rs:1045`), on a pool thread or in place:
-`RediSearch_DropIndex` (invalidate and release the creation ref). -/
-def RC.dropDoomed (r : RC) : RC :=
-  { r with doomed := false, valid := false, rc := r.rc - 1, freed := r.rc - 1 == 0 }
-/-- The whole drop of the spec handle: `doom` then, whenever the job runs, `dropDoomed`. -/
-def RC.dropSpec (r : RC) : RC := r.doom.dropDoomed
+/-- `SpecHandle::drop`: `ManuallyDrop::take` + `into_raw` (no release by
+`OwnedIndex`) + `RediSearch_DropIndex` (invalidate and release the creation ref). -/
+def RC.dropSpec (r : RC) : RC :=
+  { r with specAlive := false, valid := false, rc := r.rc - 1, freed := r.rc - 1 == 0 }
 /-- What a buggy `SpecHandle::drop` without `into_raw` would do: the inner
 `OwnedIndex` also releases. -/
 def RC.dropSpecNoIntoRaw (r : RC) : RC := (r.dropSpec).release
 
 def RC.Inv (r : RC) : Prop :=
-  r.rc = r.owned + (if r.specAlive then 1 else 0) + (if r.doomed then 1 else 0) ∧
-  (r.freed = true ↔ r.rc = 0) ∧
-  (r.specAlive = true → r.valid = true) ∧ (r.doomed = true → r.valid = true) ∧
-  ¬ (r.specAlive = true ∧ r.doomed = true)
+  r.rc = r.owned + (if r.specAlive then 1 else 0) ∧ (r.freed = true ↔ r.rc = 0) ∧
+  (r.specAlive = true → r.valid = true)
 
 theorem RC.create_inv : RC.create.Inv := by simp [RC.create, RC.Inv]
 
 theorem RC.clone_inv (r r' : RC) (h : r.Inv) (hc : r.clone = some r') : r'.Inv := by
-  obtain ⟨rc, owned, sa, v, f, d⟩ := r
   unfold RC.clone at hc; split at hc
   · next hv =>
-    cases hc; obtain ⟨h1, h2, h3, h4, h5⟩ := h
-    simp only at hv h1 h2 h3 h4 h5
-    refine ⟨?_, ?_, h3, h4, h5⟩
-    · simp only; cases sa <;> cases d <;> simp at h1 ⊢ <;> omega
-    · simp [hv.2]
+    cases hc; obtain ⟨h1, h2, h3⟩ := h
+    refine ⟨by cases hsa : r.specAlive <;> simp [hsa] at h1 ⊢ <;> omega, ?_, h3⟩
+    simp [hv.2]
   · cases hc
 
 theorem RC.release_inv (r : RC) (h : r.Inv) (ho : r.owned > 0) : r.release.Inv := by
-  obtain ⟨rc, owned, sa, v, f, d⟩ := r
-  obtain ⟨h1, h2, h3, h4, h5⟩ := h
-  simp only at h1 ho
-  refine ⟨?_, by simp [RC.release], h3, h4, h5⟩
-  simp only [RC.release]
-  cases sa <;> cases d <;> simp at h1 ⊢ <;> omega
+  obtain ⟨h1, h2, h3⟩ := h
+  refine ⟨by cases hsa : r.specAlive <;> simp [RC.release, hsa] at h1 ⊢ <;> omega, by simp [RC.release], h3⟩
 
-/-- `SpecHandle::drop` keeps the invariant: the creation ref is now the `DoomedSpec`'s. -/
-theorem RC.doom_inv (r : RC) (h : r.Inv) (hs : r.specAlive = true) :
-    r.doom.Inv ∧ r.doom.rc = r.rc ∧ r.doom.freed = r.freed ∧ r.doom.valid = true := by
-  obtain ⟨h1, h2, h3, h4, h5⟩ := h
-  have hd : r.doomed = false := by cases hd : r.doomed <;> simp_all
-  refine ⟨⟨?_, h2, by simp [RC.doom], by simp [RC.doom, h3 hs], by simp [RC.doom]⟩, rfl, rfl, h3 hs⟩
-  simp only [RC.doom]; simp [hs, hd] at h1 ⊢; omega
-
-/-- `DoomedSpec::drop` keeps the invariant. -/
-theorem RC.dropDoomed_inv (r : RC) (h : r.Inv) (hd : r.doomed = true) : r.dropDoomed.Inv := by
-  obtain ⟨h1, h2, h3, h4, h5⟩ := h
-  have hs : r.specAlive = false := by cases hs : r.specAlive <;> simp_all
-  refine ⟨?_, by simp [RC.dropDoomed], by simp [RC.dropDoomed, hs], by simp [RC.dropDoomed], by simp [RC.dropDoomed]⟩
-  simp only [RC.dropDoomed]; simp [hs, hd] at h1 ⊢; omega
-
-theorem RC.dropSpec_inv (r : RC) (h : r.Inv) (hs : r.specAlive = true) : r.dropSpec.Inv :=
-  RC.dropDoomed_inv _ (RC.doom_inv r h hs).1 rfl
+theorem RC.dropSpec_inv (r : RC) (h : r.Inv) (hs : r.specAlive = true) : r.dropSpec.Inv := by
+  obtain ⟨h1, h2, h3⟩ := h
+  refine ⟨by simp [RC.dropSpec]; simp [hs] at h1; omega, by simp [RC.dropSpec], by simp [RC.dropSpec]⟩
 
 /-- **No use-after-free**: while an iterator holds a clone, or the spec handle
-is alive, or its creation ref awaits its `DoomedSpec` drop, the spec is not freed. -/
-theorem RC.not_freed (r : RC) (h : r.Inv) (hl : r.owned > 0 ∨ r.specAlive = true ∨ r.doomed = true) :
-    r.freed = false := by
+is alive, the spec is not freed. -/
+theorem RC.not_freed (r : RC) (h : r.Inv) (hl : r.owned > 0 ∨ r.specAlive = true) : r.freed = false := by
   obtain ⟨h1, h2, -⟩ := h
   cases hf : r.freed
   · rfl
   · have := h2.mp hf
-    rcases hl with hl | hl | hl
+    rcases hl with hl | hl
     · omega
     · simp [hl] at h1; omega
-    · simp [hl] at h1; omega
-
-/-- A `DoomedSpec` the pool has not run yet frees nothing: the spec stays alive (and
-valid) until its drop. -/
-theorem RC.doomed_not_freed (r : RC) (h : r.Inv) (hd : r.doomed = true) :
-    r.freed = false ∧ r.valid = true :=
-  ⟨RC.not_freed r h (Or.inr (Or.inr hd)), h.2.2.2.1 hd⟩
 
 /-- After `DROP INDEX` a new query cannot clone: `Index::query` returns the empty iterator. -/
 theorem RC.clone_after_drop (r : RC) : r.dropSpec.clone = none := by
-  simp [RC.dropSpec, RC.doom, RC.dropDoomed, RC.clone]
+  simp [RC.dropSpec, RC.clone]
 
 /-- `into_raw` is load-bearing: without it, dropping the spec while one
 iterator holds a clone frees the spec under that iterator. -/
@@ -230,7 +180,7 @@ theorem DocLife.freed_once (d : DocLife) :
 
 /-! ## Query entry points -/
 
-/-- `Index::query` (`mod.rs:1691`): no spec or a dead spec ⇒ empty; a null
+/-- `Index::query` (`mod.rs`): no spec or a dead spec ⇒ empty; a null
 query node ⇒ empty; else the results iterator over `run n`. -/
 def queryN (spec : Option Nat) (cloneOk : Bool) (node : Option QN) (run : QN → List (Key × Nat)) : RIter :=
   match spec with
@@ -238,7 +188,7 @@ def queryN (spec : Option Nat) (cloneOk : Bool) (node : Option QN) (run : QN →
   | some _ => if cloneOk then (match node with | none => RIter.empty | some n => RIter.new (run n)) else RIter.empty
 
 /-- The RediSearch LLAPI contract for a node-index table `t` (doc keys are
-`nodeKey id`, `mod.rs:657`): the iterator returns exactly the keys of the
+`nodeKey id`, `mod.rs`): the iterator returns exactly the keys of the
 stored documents that match `n`. -/
 def RunSpec (t : Table) (run : QN → List (Key × Nat)) : Prop :=
   ∀ n k, (∃ s, (k, s) ∈ run n) ↔ ∃ id d, id < 2 ^ 64 ∧ t id = some d ∧ rsMatch d n ∧ k = nodeKey id
@@ -356,7 +306,7 @@ theorem queryE_eq_scan_filter (fields : Attr → Bool) (P : Nat × Nat × Nat �
 
 /-! ### Full-text and vector queries (abstract RediSearch semantics) -/
 
-/-- `fulltext_query` (`mod.rs:1732`): `CString::new` fails on a NUL ⇒ `Err`;
+/-- `fulltext_query` (`mod.rs`): `CString::new` fails on a NUL ⇒ `Err`;
 no / dead spec ⇒ `Ok(empty)`; `RediSearch_IterateQuery` error ⇒ `Err(msg)`;
 otherwise the scored iterator. `ft s str` is RediSearch's answer (FFI). -/
 def fulltextQ (hasNul : Bool) (spec : Option Nat) (cloneOk : Bool)
@@ -391,7 +341,7 @@ theorem fulltextQ_errors (spec : Option Nat) (c : Bool) (ft : Nat → Except Str
     (∀ s e, ft s = .error e → fulltextQ false (some s) true ft = .error e) := by
   refine ⟨rfl, rfl, fun s e h => by simp [fulltextQ, h]⟩
 
-/-- `vector_query` (`mod.rs:1798`): the field is `vector:{attr}`; a null node or
+/-- `vector_query` (`mod.rs`): the field is `vector:{attr}`; a null node or
 a null results iterator ⇒ empty; else the scored iterator. `node`/`iterOk` are
 `CreateVecSimNode`/`GetResultsIterator` (FFI). -/
 def vectorQ (spec : Option Nat) (cloneOk nodeOk iterOk : Bool) (l : List (Key × Nat)) : RIter :=

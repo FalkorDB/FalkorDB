@@ -44,7 +44,7 @@ structure FmtOps (F : Type) where
 
 variable {F : Type} (o : FmtOps F)
 
-/-- `sci` after the tie fix (conversion.rs:309-322). -/
+/-- `sci` after the tie fix (conversion.rs). -/
 def sciFixed (f : F) : Str :=
   let sci0 := o.sci f
   let digits := match splitOnce 'e' sci0 with
@@ -53,7 +53,7 @@ def sciFixed (f : F) : Str :=
   if digits > 1 && o.roundTrips (o.sciPrec (digits - 1) f) f then o.sciPrec (digits - 1) f
   else sci0
 
-/-- `float_to_string` (conversion.rs:299). -/
+/-- `float_to_string` (conversion.rs). -/
 def floatToString (f : F) : Str :=
   if o.plain f then o.debug f
   else if !o.isFinite f then o.display f
@@ -113,7 +113,7 @@ theorem splitOnce_append (c : Char) (m e : Str) (hm : c ∉ m) :
     simp only [List.mem_cons, not_or] at hm
     simp [splitOnce, Ne.symm hm.1, ih hm.2]
 
-/-- `value_to_string`'s Float arm (conversion.rs:130) is `float_to_string`. -/
+/-- `value_to_string`'s Float arm (conversion.rs) is `float_to_string`. -/
 theorem toStr_float (c : ConvOps F) (hd : ∀ x, c.display x = String.ofList (floatToString o x))
     (f : F) : toStr c (.float f) = .str (String.ofList (floatToString o f)) := by
   simp [toStr, hd]

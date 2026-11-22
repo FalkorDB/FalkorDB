@@ -3398,3 +3398,26 @@ updating clause.")
             [['Q'], ['Q2']])
         self.env.assertEqual(
             g.query("MATCH (n:X) RETURN count(n)").result_set, [[4]])
+
+    def test_64_body_varlen_marks_do_not_reach_an_outer_path(self):
+        """`r.prop` binds on a variable-length relationship `[r*]` and is a
+        type error on a named path. A named path in the outer query that gets
+        the scope and id a body's `[r*]` had must still be a path, as in C."""
+
+        g = self.graph
+        g.query("MATCH (n) DETACH DELETE n")
+        g.query("CREATE (:N {name: 'a'})-[:R {name: 'r1'}]->(:N {name: 'b'})-[:R {name: 'r2'}]->(:N {name: 'c'})")
+
+        # In the body, `r` is id 3 of scope 1, after `u0`, `u1` and `u2`.
+        # After the body, `WITH c, 1 AS k1, 2 AS k2` opens scope 1 again, so
+        # `p` is id 3 of scope 1 as well. The id differs from the scope id so
+        # that the check depends on which part of the key is the scope.
+        # This engine raises the same error when it reads `p.name`, so the
+        # CASE keeps the read out: the error must come from binding `p.name`.
+        self.expect_error(
+            """CALL { UNWIND [1] AS u0 UNWIND [1] AS u1 UNWIND [1] AS u2
+                      MATCH (a)-[r*]->(b) RETURN count(*) AS c }
+               WITH c, 1 AS k1, 2 AS k2
+               MATCH p = ()-->()
+               RETURN CASE WHEN false THEN p.name END AS x""",
+            "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path")

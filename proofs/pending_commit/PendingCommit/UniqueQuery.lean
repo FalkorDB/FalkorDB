@@ -1,16 +1,10 @@
 import PendingCommit.UniqueIndex
 /-
-# `redisearch_unique_query` (pending.rs:174) and the RediSearch `(query_for, lookup)` pair
+# `redisearch_unique_query` (pending.rs) and the RediSearch `(query_for, lookup)` pair
 
 `check_node_constraint` / `check_edge_constraint` without `index-falkordb` build
 `query_for = |values| redisearch_unique_query(indexed, &constraint.properties, values)` and
 `lookup = |query| g.get_indexed_nodes(label, query)` (edges: `get_indexed_edges`).
-
-| Lean | Rust |
-| --- | --- |
-| `Query` (`equal` / `and`) | `IndexQuery::Equal` / `IndexQuery::And` |
-| `redisearchQuery exact indexed props vals` | `redisearch_unique_query(indexed, properties, values)` (:174) |
-| `evalQ ix` | `get_indexed_*` of a query: `Equal` is the index's exact-match set, `And` their intersection |
 
 Results:
 * `redisearchQuery_none_iff` — `None` iff the properties are not all Range-indexed or some

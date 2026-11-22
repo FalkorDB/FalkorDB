@@ -976,7 +976,9 @@ impl Drop for OwnedIndex {
     fn drop(&mut self) {
         // No global lock, even for the last release: `IndexSpec_Free` touches no
         // Redis timer (it asserts the temporary-index timer is already stopped, and
-        // the ForkGC timer self-terminates by not rescheduling — RediSearch `gc.c`).
+        // the ForkGC timer self-terminates by not rescheduling — RediSearch `gc.c`)
+        // and no Redis object another thread can reach (its index errors borrow the
+        // shared "N/A" key rather than refcount it: a refcount is not atomic, #3483).
         // Only index *creation* needs it, via `RM_CreateTimer`.
         //
         // That is load-bearing for #726: an index-scan iterator drops its cloned

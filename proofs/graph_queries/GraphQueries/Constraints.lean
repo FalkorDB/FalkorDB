@@ -4,19 +4,19 @@ import GraphQueries.Index
 
 | here | there |
 | --- | --- |
-| `ctStr`, `csStr` | `Display for ConstraintType` / `ConstraintStatus` (constraint.rs:14,34) |
-| `cnew`           | `Constraint::new` (constraint.rs:60), `NEXT_CONSTRAINT_ID` counter |
-| `cmatches`       | `Constraint::matches` (constraint.rs:79) |
-| `addRaw`         | `add_constraint_raw` (graph.rs:4555) |
-| `upsert`         | `upsert_constraint_raw` (graph.rs:4571) |
-| `entityCount`    | `get_constraint_entity_count` (graph.rs:4593) |
-| `validate`       | `validate_constraint` (graph.rs:4605) |
-| `validatePending`| `validate_pending_constraints` (graph.rs:4616) |
-| `computePending` | `compute_pending_constraint_results` (graph.rs:4645) |
-| `applyResults`   | `apply_constraint_validation_results` (graph.rs:4657), ids unique |
-| `dropC`          | `drop_constraint` (graph.rs:4790) — `swap_remove` |
-| `hasSupporting`  | `has_supporting_index` (graph.rs:4813) |
-| `dependsOn`      | `constraint_depends_on_index` (graph.rs:4832) |
+| `ctStr`, `csStr` | `Display for ConstraintType` / `ConstraintStatus` (constraint.rs) |
+| `cnew`           | `Constraint::new` (constraint.rs), `NEXT_CONSTRAINT_ID` counter |
+| `cmatches`       | `Constraint::matches` (constraint.rs) |
+| `addRaw`         | `add_constraint_raw` (graph.rs) |
+| `upsert`         | `upsert_constraint_raw` (graph.rs) |
+| `entityCount`    | `get_constraint_entity_count` (graph.rs) |
+| `validate`       | `validate_constraint` (graph.rs) |
+| `validatePending`| `validate_pending_constraints` (graph.rs) |
+| `computePending` | `compute_pending_constraint_results` (graph.rs) |
+| `applyResults`   | `apply_constraint_validation_results` (graph.rs), ids unique |
+| `dropC`          | `drop_constraint` (graph.rs) — `swap_remove` |
+| `hasSupporting`  | `has_supporting_index` (graph.rs) |
+| `dependsOn`      | `constraint_depends_on_index` (graph.rs) |
 -/
 namespace GQ
 variable {V : Type}
@@ -188,10 +188,10 @@ def dependsOn (cs : List Constraint) (et : EType) (label attr : String) (isRange
 
 /-- An index backing a UNIQUE constraint cannot be dropped. -/
 theorem drop_blocked (cs : List Constraint) (et : EType) (label : String) (fieldsOfType attrs : List String)
-    (res : Except String Nat) (c : Constraint) (hc : c ∈ cs) (hu : c.ct = .unique) (he : c.et = et)
+    (dropped : Nat) (c : Constraint) (hc : c ∈ cs) (hu : c.ct = .unique) (he : c.et = et)
     (hl : c.label = label) (a : String) (ha : a ∈ (if attrs = [] then fieldsOfType else attrs))
     (hp : a ∈ c.props) :
-    dropIndex (fun x => dependsOn cs et label x true) fieldsOfType label attrs res =
+    dropIndex (fun x => dependsOn cs et label x true) fieldsOfType label attrs dropped =
       .error "Index supports constraint" := by
   apply dropIndex_protects _ _ _ _ _ a ha
   simp only [dependsOn, Bool.true_and, List.any_eq_true, Bool.and_eq_true, beq_iff_eq,

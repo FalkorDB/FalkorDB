@@ -1,29 +1,25 @@
 import FalkorValueOrder.SortCmp
 /-!
-# Main (4a4f2a72f): `sort_cmp` with #2917's `sort_cmp_f32`, and `Hash for Value`
+# Main (4a4f2a72f): `sort_cmp` with `sort_cmp_f32`, and `Hash for Value`
 
-#2917 (7fdf06a0e) is merged; the files it touched in this area are byte-identical to the
-PR head 14e341cf4. The retired proofs/pr2917_review (its review project) is folded in
-here: `scF32`, `fkey32`, the hash-consistency proof, the per-shape key claims and the
-203f2022c counterexamples (`pre14e341_*`), re-stated for this project's `hwords`
-(Model.lean, now main's hash).
+`scF32`, `fkey32`, the hash-consistency proof, and the per-shape key claims, stated for this project's `hwords` (Model.lean, main's hash).
 
 | here | there (origin/main 4a4f2a72f, graph/src/runtime/value.rs) |
 | --- | --- |
-| `scF32`      | `sort_cmp_f32` (:1905): `-0.0` sorts before `0.0`, NaN on top |
-| `scMain`     | `Value::sort_cmp` (:1529) / `sort_cmp_map` (:1566) = `sc scF32` |
-| `hwords`, `floatWord`, `f32HashBits` | `Hash for Value` (:823, Float arm :839-850, VecF32/Point :876-886), `f32_hash_bits` (:1919) — Model.lean |
-| `cmpKey`     | `OrderedKey::cmp_key` (ops/sort.rs:76) |
-| `compareAt`  | `Column::compare_at` (batch.rs:399) |
-| `compareRowsAt` | `Batch::compare_rows_at` (batch.rs:1287) |
-| `listSort`   | `list.sort` (functions/list.rs:197): `sort_by(Value::sort_cmp)` |
+| `scF32`      | `sort_cmp_f32` (:1947): `-0.0` sorts before `0.0`, NaN on top |
+| `scMain`     | `Value::sort_cmp` (:1573) / `sort_cmp_map` (:1610) = `sc scF32` |
+| `hwords`, `floatWord`, `f32HashBits` | `Hash for Value` (:861, Float arm :878-891, VecF32/Point :915-930), `f32_hash_bits` (:1961) — Model.lean |
+| `cmpKey`     | `OrderedKey::cmp_key` (ops/sort.rs) |
+| `compareAt`  | `Column::compare_at` (batch.rs) |
+| `compareRowsAt` | `Batch::compare_rows_at` (batch.rs) |
+| `listSort`   | `list.sort` (functions/list.rs): `sort_by(Value::sort_cmp)` |
 -/
 namespace ValueOrder.Main
 open FalkorCore ValueOrder FalkorCore.Laws ValueOrder.SC
 
 /-! ## `sort_cmp_f32` -/
 
-/-- `sort_cmp_f32` (value.rs:1945). -/
+/-- `sort_cmp_f32` (value.rs). -/
 def scF32 (a b : F) : Ordering :=
   match fpcmp a b with
   | some .eq => cmpB (isSignNeg b) (isSignNeg a)
@@ -96,7 +92,7 @@ theorem scF32_refl (x : F) : scF32 x x = .eq := by rw [scF32_key]; exact cmp3_re
 
 /-! ## Main's `sort_cmp` is a total preorder -/
 
-/-- `Value::sort_cmp` on main (value.rs:1569). -/
+/-- `Value::sort_cmp` on main (value.rs). -/
 def scMain : V → V → Ordering := sc scF32
 
 /-- **Main's `sort_cmp` is a total preorder** on every well-formed value (Ints are `i64`,
@@ -249,7 +245,7 @@ theorem hash_consistent : ∀ n (a b : V), vsize a ≤ n → vsize b ≤ n → w
       exact absurd ((cmpN_eq_iff _ _).1 h) hr
 
 /-- **On main, `sort_cmp`-equal ⇒ `hash`-equal** for every well-formed value: the
-`HashMap<GroupKey, _>` contract (`GroupKey::eq` is `sort_cmp`, aggregate.rs:94). -/
+`HashMap<GroupKey, _>` contract (`GroupKey::eq` is `sort_cmp`, aggregate.rs). -/
 theorem main_hash_consistent (a b : V) (wa : wf a = true) (wb : wf b = true)
     (h : scMain a b = .eq) : hwords a = hwords b :=
   hash_consistent (vsize a + vsize b) a b (by omega) (by omega) wa wb h
@@ -276,7 +272,7 @@ theorem signed_zeros_apart :
 
 /-! ## The sorts that use it -/
 
-/-- `OrderedKey::cmp_key` (ops/sort.rs:76): `sort_cmp`, reversed for DESC. -/
+/-- `OrderedKey::cmp_key` (ops/sort.rs): `sort_cmp`, reversed for DESC. -/
 def cmpKey (desc : Bool) (a b : V) : Ordering :=
   if desc then (scMain a b).swap else scMain a b
 
@@ -312,7 +308,7 @@ def Col.get : Col → Nat → V
   | .nodeIds v, i => .node (v.getD i 0)
   | .unbound, _ => .null
 
-/-- `Column::compare_at` (batch.rs:399): raw lanes, else `sort_cmp` on `get`. -/
+/-- `Column::compare_at` (batch.rs): raw lanes, else `sort_cmp` on `get`. -/
 def compareAt : Col → Nat → Nat → Ordering
   | .ints v, a, b => cmpI (v.getD a 0) (v.getD b 0)
   | .floats v, a, b => scF64 (v.getD a (.num 0)) (v.getD b (.num 0))
@@ -324,7 +320,7 @@ fast paths sort exactly like the `Values` path, and like `list.sort`). -/
 theorem compareAt_eq_scMain (c : Col) (a b : Nat) : compareAt c a b = scMain (c.get a) (c.get b) := by
   cases c <;> rfl
 
-/-- `Batch::compare_rows_at` (batch.rs:1287): Unbound columns tie, else `sort_cmp`. -/
+/-- `Batch::compare_rows_at` (batch.rs): Unbound columns tie, else `sort_cmp`. -/
 def compareRowsAt (c : Col) (a b : Nat) : Ordering :=
   match c with
   | .unbound => .eq
@@ -334,8 +330,8 @@ theorem compareRowsAt_eq_scMain (c : Col) (a b : Nat) :
     compareRowsAt c a b = scMain (c.get a) (c.get b) := by
   cases c <;> simp [compareRowsAt, Col.get, scMain, sc, order, V.tag, orderTag, cmpN, cmpI]
 
-/-- `list.sort`'s comparator (functions/list.rs:197) is `sort_cmp`; with `scMain_total`,
-`sort_by` sees a total order (W2-strlist-1 fixed by #2912). Its insertion-sort model: -/
+/-- `list.sort`'s comparator (functions/list.rs) is `sort_cmp`; with `scMain_total`,
+`sort_by` sees a total order . Its insertion-sort model: -/
 def insertBy (c : V → V → Ordering) (x : V) : List V → List V
   | [] => [x]
   | y :: ys => if c x y = .gt then y :: insertBy c x ys else x :: y :: ys
@@ -399,7 +395,7 @@ theorem listSort_sorted :
     exact insertBy_sorted x (hw x (by simp)) _
       (fun y hy => hw y (by simp [(listSort_perm xs).mem_iff.1 hy])) ih
 
-/-! ## #2917's per-shape key claims (folded in from the retired proofs/pr2917_review) -/
+/-! ## Per-shape key claims -/
 
 /-- Float `-0.0` and `0.0` are one key. -/
 theorem float_signed_zero_one_key :
@@ -432,52 +428,6 @@ theorem point_nans_one_key (s s' : Bool) (p p' : Nat) (y : F) :
 /-- Signed zeros nested in a list stay apart too. -/
 theorem signed_zeros_apart_nested :
     scMain (.list [.vecf32 [.negZero]]) (.list [.vecf32 [.num 0]]) = .lt := by decide
-
-/-! ## The PR at 203f2022c (before its head 14e341cf4): history
-
-`sort_cmp_f32` was main's `sort_cmp_f64` order and vector/point components were hashed
-by `to_bits`, so `sort_cmp`-equal components could hash apart (CodeRabbit on #2917). -/
-
-mutual
-def hwordsPre14e341 : V → List UInt64
-  | .null => [0]
-  | .bool b => [1, if b then 1 else 0]
-  | .int i => [2, w i]
-  | .flt f => [2, floatWord f]
-  | .str s => [3, UInt64.ofNat s, 0xff]
-  | .list xs => [4, UInt64.ofNat xs.length] ++ hwordsListPre14e341 xs
-  | .map ks vs => [5, UInt64.ofNat ks.length] ++ hwordsMapPre14e341 ks vs
-  | .node n => [6, UInt64.ofNat n]
-  | .vecf32 xs => [9] ++ xs.map (fun f => UInt64.ofNat (bits32 f))
-  | .point lat lon => [10, UInt64.ofNat (bits32 lat), UInt64.ofNat (bits32 lon)]
-
-def hwordsListPre14e341 : List V → List UInt64
-  | [] => []
-  | x :: xs => hwordsPre14e341 x ++ hwordsListPre14e341 xs
-
-def hwordsMapPre14e341 : List Nat → List V → List UInt64
-  | k :: ks, v :: vs => [UInt64.ofNat k, 0xff] ++ hwordsPre14e341 v ++ hwordsMapPre14e341 ks vs
-  | _, _ => []
-end
-
-def scPre14e341 : V → V → Ordering := sc scF64
-
-def nan2 : F := .nan true (2 ^ 51 - 1)
-
-/-- Two vector NaNs were `sort_cmp`-equal but hashed apart (Rust 2 groups, C 1). -/
-theorem pre14e341_vec_nan_hash_differs :
-    scPre14e341 (.vecf32 [F.qnan]) (.vecf32 [nan2]) = .eq ∧
-    hwordsPre14e341 (.vecf32 [F.qnan]) ≠ hwordsPre14e341 (.vecf32 [nan2]) := by decide
-
-/-- `-0.0`/`0.0` vector components were `sort_cmp`-equal but hashed apart. -/
-theorem pre14e341_vec_zero_eq_but_hash_differs :
-    scPre14e341 (.vecf32 [.negZero]) (.vecf32 [.num 0]) = .eq ∧
-    hwordsPre14e341 (.vecf32 [.negZero]) ≠ hwordsPre14e341 (.vecf32 [.num 0]) := by decide
-
-theorem pre14e341_point_zero_eq_but_hash_differs :
-    scPre14e341 (.point .negZero (.num 0)) (.point (.num 0) (.num 0)) = .eq ∧
-    hwordsPre14e341 (.point .negZero (.num 0)) ≠ hwordsPre14e341 (.point (.num 0) (.num 0)) := by
-  decide
 
 #print axioms scMain_total
 #print axioms main_hash_consistent

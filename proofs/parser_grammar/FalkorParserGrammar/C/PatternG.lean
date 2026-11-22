@@ -14,7 +14,7 @@ namespace FalkorParserGrammar.C
 structure Ext where
   /-- `MATCH a MATCH b` / `CREATE a CREATE b`: the next clause's keyword
   continues the same pattern (W2-binder-1). Off in Rust since #2981: the
-  keyword ends the pattern (cypher.rs:1581-1587), and starts a new clause. -/
+  keyword ends the pattern (cypher.rs), and starts a new clause. -/
   fold : Bool
   /-- `p = allShortestPaths(...)` in MATCH (Neo4j syntax, not in Cypher.g4). -/
   asp : Bool
@@ -198,7 +198,7 @@ theorem varLenP_sound (s : PS) r s' (h : varLenP s = .ok r s') : GRange s r s' :
       exact .star hs (.dots ga hd (hopP_sound _ _ _ h4))
 
 /-- `oC_RelationshipDetail` (Cypher.g4:246-247) after `[`, with the
-`[*1..1]` → single hop normalisation (cypher.rs:3112-3116). -/
+`[*1..1]` → single hop normalisation (cypher.rs). -/
 inductive GDetail (o : Oracle) (x : Ext) : PS → Alias × List Nat × ET × Option (Nat × Option Nat) → PS → Prop
   | mk {s a s1 ts s2 r s3 m s4} : GOptVar s a s1 →
       (ts = [] ∧ s2 = s1 ∨ s1.cur = .colon ∧ GTypes x s1.adv [] ts s2) →
