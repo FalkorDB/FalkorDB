@@ -11,7 +11,7 @@ theorem length_filter_split (p : Nat → Bool) (l : List Nat) :
     (l.filter p).length + (l.filter fun x => !p x).length = l.length := by
   induction l with
   | nil => rfl
-  | cons x xs ih => by_cases h : p x <;> simp [List.filter_cons, h] <;> omega
+  | cons x xs ih => by_cases h : p x <;> simp [h] <;> omega
 
 /-- `encode_with_range` walks exactly `count` live ids: the deleted ids are distinct and
 all below `count + |deleted|`. -/
@@ -126,7 +126,7 @@ theorem kind_store (limit n : Nat) (del : List Nat) (S : Store) (hl : limit ≤ 
   funext j
   by_cases h : j ∈ live n del ∧ S j ≠ none
   · simp [h]
-  · rw [if_neg h]
+  · rw [ite_eq_right h]
     cases hs : S j with
     | none => rfl
     | some sp => exact absurd ⟨(hk.2.2.2 j sp hs).1, by simp [hs]⟩ h
@@ -173,6 +173,13 @@ theorem buildPayloads_bounds (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (h
     rcases he with ((((((he | he) | he) | he) | he) | he) | he | he) <;>
       (try (split at he <;> simp at he)) <;> subst he <;> simp <;> omega
 
+/-- `build_payloads` lists only states `decode_payload_directory` accepts. -/
+theorem buildPayloads_accepted (g : G M Tn Nm Ix Cn) : ∀ e ∈ buildPayloads g, e.st.accepted = true := by
+  intro e he
+  simp only [buildPayloads, List.mem_append, List.mem_cons, List.mem_nil_iff, or_false] at he
+  rcases he with ((((((he | he) | he) | he) | he) | he) | he | he) <;>
+    (try (split at he <;> simp at he)) <;> subst he <;> rfl
+
 /-- **`load_graph_from_reader ∘ encode_graph = id` on the graph state**, with truncation:
 the single-key payload of a well-formed graph decodes to exactly the `Graph::restore`
 arguments of that graph (under any destination name), and every word-boundary truncation
@@ -190,7 +197,7 @@ theorem load_encode (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C 
   rw [hf] at hfin
   have hdir : RT (kSch C g.tensors.length dest g.nodeCount g.edgeCount g.sch)
       (encDir (buildPayloads g) ++ ((buildPayloads g).flatMap (encPayload C g) ++ [])) (restoreOf g dest) :=
-    RT_bind (decDir_rt (buildPayloads g) hPn hPc) hfin
+    RT_bind (decDir_rt (buildPayloads g) hPn hPc (buildPayloads_accepted g)) hfin
   have hsch : RT (C.S.dec.bind (kSch C g.tensors.length dest g.nodeCount g.edgeCount))
       (C.S.enc g.sch ++ (encDir (buildPayloads g) ++ ((buildPayloads g).flatMap (encPayload C g) ++ [])))
       (restoreOf g dest) :=
@@ -211,7 +218,7 @@ theorem load_encode (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C 
 boundary short of its end, makes `load_graph_from_reader` ask for another word. Behind
 `vec_load_graph` the reader is `BufferedReader::from_slice` (`rdb = NULL`), whose
 `ensure_available → load_chunk` then calls `RedisModule_LoadStringBuffer(NULL)`
-(`buffered_io.rs:212-224`; redis_layer `from_slice_past_end`): a crash, not an `Err`. -/
+(`buffered_io.rs`; redis_layer `from_slice_past_end`): a crash, not an `Err`. -/
 theorem truncated_payload_eof (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm)
     (p : Stream) (hp : StrictPre p (encodeGraph C g g.name (buildPayloads g) 1)) :
     loadFromReader C dest p = .eof :=

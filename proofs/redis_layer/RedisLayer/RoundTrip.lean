@@ -283,7 +283,7 @@ theorem pipe_roundtrip (B : Nat) (h9 : 9 ≤ B) (hB : B < 256^8) (xs : List W)
 
 /-! ## `VecWriter` / `BufferedReader::from_slice` (`GRAPH.RESTORE` replication) -/
 
-/-- `VecWriter` (`:576-620`): every write inlined, no chunking, no blob sentinel. -/
+/-- `VecWriter`: every write inlined, no chunking, no blob sentinel. -/
 def vecWrite (xs : List W) : Bytes := (xs.map record).flatten
 
 /-- `VecWriter::into_vec` returns exactly the buffer: the concatenation of the records. -/
@@ -307,8 +307,7 @@ theorem vec_roundtrip (xs : List W) (hok : ∀ x ∈ xs, x.ok) (T : Bytes) :
     · exact ih (fun y hy => hok y (by simp [hy]))
 
 /-- …but one read past the end of a `from_slice` reader is not an error: `ensure_available`
-calls `load_chunk`, i.e. `RedisModule_LoadStringBuffer(NULL)` (`:213`, `rdb` is NULL from
-`:205`). Every truncated `GRAPH.RESTORE` payload therefore reaches it — the root cause of
+calls `load_chunk`, i.e. `RedisModule_LoadStringBuffer(NULL)` (`BufferedReader::from_slice` sets `rdb` to NULL). Every truncated `GRAPH.RESTORE` payload therefore reaches it — the root cause of
 #2537 (`GRAPH.RESTORE k ""` SIGSEGV), and not only for the empty payload. -/
 theorem from_slice_past_end (x : W) :
     readW (listSrc true) x ⟨[], []⟩ = .crash := by

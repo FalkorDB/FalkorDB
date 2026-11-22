@@ -100,8 +100,8 @@ use crate::entity_type::EntityType;
 use crate::identifier_limits::{is_identifier_too_long, validate_identifier_len};
 use crate::index::indexer::IndexType;
 use crate::parser::ast::{
-    AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
+    Alias, AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode,
+    QueryPath, QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
 };
 use crate::parser::lexer::{Keyword, Lexer, Token};
 use crate::runtime::orderset::OrderSet;
@@ -1368,7 +1368,7 @@ impl<'a> Parser<'a> {
     /// the entity being created, it does not add predicates.
     fn add_pattern_node(
         query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
-        nodes_alias: &mut HashSet<Arc<String>>,
+        nodes_alias: &mut HashSet<Alias>,
         node: &Arc<QueryNode<Arc<String>, Arc<String>>>,
         clause: &Keyword,
     ) {
@@ -1530,7 +1530,7 @@ impl<'a> Parser<'a> {
                         }
 
                         match_token!(self.lexer, RParen); // consume outer ')'
-                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
+                        query_graph.add_path(Arc::new(QueryPath::new(Alias::Named(ident), vars)));
 
                         // Continue to next pattern or end
                         if self.lexer.current()? != Token::Comma {
@@ -1555,7 +1555,7 @@ impl<'a> Parser<'a> {
                         Self::add_pattern_relationship(&mut query_graph, relationship, clause)?;
                         Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                     } else {
-                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
+                        query_graph.add_path(Arc::new(QueryPath::new(Alias::Named(ident), vars)));
                         break;
                     }
                 }
@@ -1579,16 +1579,11 @@ impl<'a> Parser<'a> {
                 Token::Comma => {
                     self.lexer.next();
                 }
-                Token::IdentifierOrKeyword {
-                    keyword: Some(token),
-                    ..
-                } => {
-                    if token == *clause {
-                        self.lexer.next();
-                        continue;
-                    }
-                    break;
-                }
+                // Anything else ends the pattern, including a repeated MATCH or
+                // CREATE keyword: it starts a new clause and is not folded into
+                // this one. Relationship uniqueness is scoped per MATCH clause,
+                // and a variable bound by one CREATE clause is visible to the
+                // next.
                 _ => break,
             }
         }
@@ -1832,42 +1827,20 @@ impl<'a> Parser<'a> {
                 (1, Some(1)) // no *, fixed 1-hop
             };
 
-            // Check for edge filter properties (not allowed)
-            let has_filter = if let Token::Parameter(_) = self.lexer.current()? {
-                true
-            } else {
-                self.lexer.current()? == Token::LBracket
-            };
-
-            // Skip filter content if present (consume until we reach `]`)
-            if has_filter {
-                let mut depth = 0i32;
-                loop {
-                    let tok = self.lexer.current()?;
-                    match tok {
-                        Token::LBracket => {
-                            // Nested `{`
-                            depth += 1;
-                            self.lexer.next();
-                        }
-                        Token::RBracket => {
-                            // Closing `}`
-                            depth -= 1;
-                            self.lexer.next();
-                            if depth <= 0 {
-                                break;
-                            }
-                        }
-                        Token::RBrace => {
-                            // `]` - stop before consuming it
-                            break;
-                        }
-                        _ => {
-                            self.lexer.next();
-                        }
-                    }
+            // An edge filter is not allowed, but it is parsed like any other
+            // so that a malformed or unterminated one is a syntax error; the
+            // caller rejects it once the pattern is known to be complete.
+            let has_filter = match self.lexer.current()? {
+                Token::Parameter(_) => {
+                    self.lexer.next();
+                    true
                 }
-            }
+                Token::LBracket => {
+                    self.parse_map()?;
+                    true
+                }
+                _ => false,
+            };
 
             match_token!(self.lexer, RBrace);
             (types, min, max, has_filter)
@@ -3018,7 +2991,7 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(pv) = path_var {
-            graph.add_path(Arc::new(QueryPath::new(pv, vec![])));
+            graph.add_path(Arc::new(QueryPath::new(Alias::Named(pv), vec![])));
         }
 
         // Optional WHERE
@@ -3061,15 +3034,22 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// A new number for an unnamed pattern entity.
+    const fn next_unnamed(&mut self) -> Alias {
+        let id = self.anon_counter;
+        self.anon_counter += 1;
+        Alias::Anon(id)
+    }
+
+    /// The identifier at the cursor, or a fresh unnamed alias if there is none.
+    fn parse_alias_or_unnamed(&mut self) -> Alias {
+        self.try_parse_ident()
+            .map_or_else(|| self.next_unnamed(), Alias::Named)
+    }
+
     fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
-        let alias = if let Some(id) = self.try_parse_ident() {
-            id
-        } else {
-            let name = Arc::new(format!("_anon_{}", self.anon_counter));
-            self.anon_counter += 1;
-            name
-        };
+        let alias = self.parse_alias_or_unnamed();
         let labels = self.parse_labels()?;
         let attrs = if let Token::Parameter(param) = self.lexer.current()? {
             self.lexer.next();
@@ -3111,13 +3091,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (alias, types, attrs, var_len) = if has_details {
-            let alias = if let Some(id) = self.try_parse_ident() {
-                id
-            } else {
-                let name = Arc::new(format!("_anon_{}", self.anon_counter));
-                self.anon_counter += 1;
-                name
-            };
+            let alias = self.parse_alias_or_unnamed();
             let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
                 types.extend(self.parse_relationship_types()?);
@@ -3183,9 +3157,7 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, RBrace);
             (alias, types.into_iter().collect(), attrs, var_len)
         } else {
-            let name = Arc::new(format!("_anon_{}", self.anon_counter));
-            self.anon_counter += 1;
-            (name, vec![], tree!(ExprIR::Map), None)
+            (self.next_unnamed(), vec![], tree!(ExprIR::Map), None)
         };
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
@@ -4258,6 +4230,34 @@ mod tests {
         assert_eq!(rest.trim_start(), "MATCH (n) RETURN n");
         assert_eq!(format!("{:?}", params["a"]), format!("{:?}", Value::Int(3)));
         assert_eq!(params.len(), 2);
+    }
+
+    // The edge filter of a shortestPath used to be skipped token by token until
+    // `]` or `}`; at end of input that loop never ended and pinned a worker.
+    #[test]
+    fn shortest_path_edge_filter_at_end_of_input_is_an_error() {
+        with_functions();
+        for query in [
+            "RETURN shortestPath((a)-[{",
+            "RETURN shortestPath((a)-[$p",
+            "RETURN shortestPath((a)-[{x: [1, {y: 2",
+            "MATCH (a), (b) RETURN shortestPath((a)-[* {x: 1",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        // A complete filter is still parsed and rejected for being a filter.
+        for query in [
+            "MATCH (a), (b) RETURN shortestPath((a)-[{x: {y: [1]}}]->(b))",
+            "MATCH (a), (b) RETURN shortestPath((a)-[$p]->(b))",
+        ] {
+            let Err(err) = Parser::new(query).parse() else {
+                panic!("accepted {query:?}");
+            };
+            assert!(
+                err.contains("filters on relationships in shortestPath are not allowed"),
+                "{query:?}: {err}"
+            );
+        }
     }
 
     // The speculative-ident path must still recognise what it probes for.

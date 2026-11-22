@@ -4,23 +4,21 @@ import FalkorEffectsCodec.Prim
 
 | here | there |
 | --- | --- |
-| `Val`              | `runtime::value::Value` (`graph/src/runtime/value.rs:180`) — floats as their bit patterns, `i64` as its two's-complement bits |
-| `T_*`              | `serialization::si_type` (`graph/src/graph/graphblas/serialization.rs:108-121`) |
-| `encV` / `encL`    | `impl EffectEncode<3> for Value` (`value.rs:33-125`) |
-| `Step`             | `read_one`'s `Option<Value>`: `None` = a frame was pushed (`value.rs:210`) |
-| `readOne`          | `read_one` (`value.rs:212-284`); its `owed` argument is the `&mut usize` |
-| `Frame`            | `enum Frame::List { items, left }` (`value.rs:132`) |
-| `deliver`          | the inner `loop` of `decode` (`value.rs:182-200`) |
-| `loop`             | the outer `loop` of `decode` (`value.rs:173-201`), with fuel; `owed` is `decode`'s `owed` |
+| `Val`              | `runtime::value::Value` (`graph/src/runtime/value.rs`) — floats as their bit patterns, `i64` as its two's-complement bits |
+| `T_*`              | `serialization::si_type` (`graph/src/graph/graphblas/serialization.rs`) |
+| `encV` / `encL`    | `impl EffectEncode<3> for Value` (`value.rs`) |
+| `Step`             | `read_one`'s `Option<Value>`: `None` = a frame was pushed (`value.rs`) |
+| `readOne`          | `read_one` (`value.rs`); its `owed` argument is the `&mut usize` |
+| `Frame`            | `enum Frame::List { items, left }` (`value.rs`) |
+| `deliver`          | the inner `loop` of `decode` (`value.rs`) |
+| `loop`             | the outer `loop` of `decode` (`value.rs`), with fuel; `owed` is `decode`'s `owed` |
 | `owedOf`           | the invariant the `owed` comment states: the sum of `left - 1` over the stack |
-| `decodeV`          | `impl EffectDecode<3> for Value::decode` (`value.rs:168`) |
-| `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:63`) |
+| `decodeV`          | `impl EffectDecode<3> for Value::decode` (`value.rs`) |
+| `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs`) |
 
-**#3267 (`eaa65eeba`).** `read_one`'s array arm now checks the claimed width against
+`read_one`'s array arm checks the claimed width against
 the whole stack, `guard_count(n + owed, MIN_VALUE_BYTES)`, where `owed` counts the
-children the open frames still need after this one. Before, it checked `n` alone and
-every level of `[[[…` could claim the whole remainder (the pre-#3267 counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412: the
-reservations sum to `k (k-1)` elements from `8k` bytes). Now `capTrace_linear`: the
+children the open frames still need after this one. So `capTrace_linear`: the
 capacities one decode reserves sum to at most `remaining / 4`.
 
 Floats: `f64::to_le_bytes`/`from_le_bytes` are the identity on the bit pattern
@@ -36,7 +34,7 @@ most `remaining/4` times; `loop_fuel_enough` proves `decodeV`'s fuel
 
 namespace FalkorCodec
 
-/-- `si_type` constants (`serialization.rs:108-121`). -/
+/-- `si_type` constants (`serialization.rs`). -/
 def T_MAP : Nat := 1
 def T_ARRAY : Nat := 8
 def T_DATETIME : Nat := 32
@@ -57,7 +55,7 @@ def T_ISTRING : Nat := 526336
 theorem T_ISTRING_eq : T_ISTRING = T_INTERN ||| T_STRING := by decide
 
 /-- Tags are unambiguous: the fifteen values `read_one` dispatches on are
-pairwise distinct, and each fits the 4-byte wire (`mod.rs:486` checks the
+pairwise distinct, and each fits the 4-byte wire (`mod.rs` checks the
 same thing on the Rust side). -/
 def valueTags : List Nat :=
   [T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_ISTRING, T_ARRAY, T_MAP, T_POINT,
@@ -85,8 +83,8 @@ inductive Val where
   | duration (x : BitVec 64)
 deriving Repr, Inhabited
 
-/-- Encode errors: `EncodeError::BlockCountTooLarge` (`error.rs:99`) and the
-`panic!` of `value.rs:121`. -/
+/-- Encode errors: `EncodeError::BlockCountTooLarge` (`error.rs`) and the
+`panic!` of `value.rs`. -/
 inductive EErr where
   | blockCountTooLarge
   | headerShapeMismatch
@@ -96,16 +94,16 @@ inductive EErr where
   | emptyIndexSchemaList
   | idList
   | panic
-  /-- `EncodeError::RowShapeMismatch` (`error.rs:46`, #2916). -/
+  /-- `EncodeError::RowShapeMismatch` (`error.rs`). -/
   | rowShapeMismatch
-  /-- `EncodeError::EmptyRecord` (`error.rs:57`, #2916). -/
+  /-- `EncodeError::EmptyRecord` (`error.rs`). -/
   | emptyRecord
 deriving Repr, DecidableEq
 
 def f32s (xs : List (BitVec 32)) : Bytes := xs.flatMap (fun f => w32 f.toNat)
 
--- `EffectEncode<3> for Value` (`value.rs:34-124`). `interned` is
--- `string_pool::global().is_interned` (`value.rs:59`), which only chooses the tag.
+-- `EffectEncode<3> for Value` (`value.rs`). `interned` is
+-- `string_pool::global().is_interned` (`value.rs`), which only chooses the tag.
 mutual
 def encV (interned : Bytes → Bool) : Val → Except EErr Bytes
   | .null => .ok (w32 T_NULL)
@@ -114,7 +112,7 @@ def encV (interned : Bytes → Bool) : Val → Except EErr Bytes
   | .float f => .ok (w32 T_DOUBLE ++ w64 f.toNat)
   | .str s => .ok (w32 (if interned s then T_ISTRING else T_STRING) ++ wString s)
   | .list xs =>
-    -- `u32::try_from(items.len())` (`value.rs:70`)
+    -- `u32::try_from(items.len())` (`value.rs`)
     if xs.length < 2 ^ 32 then
       match encL interned xs with
       | .ok b => .ok (w32 T_ARRAY ++ w32 xs.length ++ b)
@@ -128,7 +126,7 @@ def encV (interned : Bytes → Bool) : Val → Except EErr Bytes
   | .date x => .ok (w32 T_DATE ++ w64 x.toNat)
   | .time x => .ok (w32 T_TIME ++ w64 x.toNat)
   | .duration x => .ok (w32 T_DURATION ++ w64 x.toNat)
-  -- `other => panic!("value cannot appear in an effect")` (`value.rs:121`)
+  -- `other => panic!("value cannot appear in an effect")` (`value.rs`)
   | .map _ | .node _ | .rel _ | .path _ => .error .panic
 def encL (interned : Bytes → Bool) : List Val → Except EErr Bytes
   | [] => .ok []
@@ -149,15 +147,15 @@ inductive Step where
 def f32 : R (BitVec 32) := do let n ← u32; pure (BitVec.ofNat 32 n)
 def i64 : R (BitVec 64) := do let n ← u64; pure (BitVec.ofNat 64 n)
 
-/-- `for _ in 0..n { v.push(r.f32()?) }` (`value.rs:251`). -/
+/-- `for _ in 0..n { v.push(r.f32()?) }` (`value.rs`). -/
 def readN : Nat → R α → R (List α)
   | 0, _ => pure []
   | n + 1, m => do let a ← m; let as ← readN n m; pure (a :: as)
 
-/-- The smallest a value can encode to (`value.rs:17`). -/
+/-- The smallest a value can encode to (`value.rs`). -/
 def MIN_VALUE_BYTES : Nat := 4
 
-/-- `read_one` (`value.rs:212-284`), arm for arm and in the same order. `owed` is
+/-- `read_one` (`value.rs`), arm for arm and in the same order. `owed` is
 read only by the array arm; its update `*owed += n - 1` is done by `loop` on
 `.opened n`. `n + owed` cannot overflow the Rust `u64`: `n < 2^32`, and `owed` only
 grows past a guard that bounds it by `remaining / 4`. -/
@@ -200,7 +198,7 @@ inductive Deliv where
   | more (st : List Frame)
   | panic
 
-/-- The inner loop (`value.rs:173-188`). `*left -= 1` on `left = 0` is an
+/-- The inner loop (`value.rs`). `*left -= 1` on `left = 0` is an
 overflow panic in debug (and a wrap in release); it is modelled as `panic`
 and `loop_noPanic` proves it cannot happen. -/
 def deliver : Val → List Frame → Deliv
@@ -210,9 +208,9 @@ def deliver : Val → List Frame → Deliv
     else if f.left - 1 > 0 then .more (⟨f.items ++ [v], f.left - 1⟩ :: st)
     else deliver (.list (f.items ++ [v])) st
 
-/-- The outer loop (`value.rs:173-201`). `owed` is `decode`'s counter: `read_one`
+/-- The outer loop (`value.rs`). `owed` is `decode`'s counter: `read_one`
 adds `n - 1` when it opens a frame of `n`, and the inner loop subtracts one when
-a frame takes a child and still waits for more (`owed -= 1`, `value.rs:191`) — an
+a frame takes a child and still waits for more (`owed -= 1`, `value.rs`) — an
 underflow there would be a debug panic, modelled as `panic`, and `loop_noPanic`
 proves it cannot happen. -/
 def loop (utf8 : Bytes → Bool) : Nat → List Frame → Nat → R Val
@@ -328,7 +326,7 @@ theorem readN_f32s (xs : List (BitVec 32)) (rest : Bytes) :
   | cons x xs ih =>
     simp only [List.length_cons, readN, f32s, List.flatMap_cons, List.append_assoc, bind_apply]
     rw [f32_w32]
-    simp only [bind_apply]
+    simp only
     rw [show List.flatMap (fun f => w32 f.toNat) xs = f32s xs from rfl, ih]
     rfl
 
@@ -548,7 +546,7 @@ end
 /-- **`read(write(v)) = v`**, for every value `encV` accepts: the decoder
 consumes exactly the encoding, returns exactly `v` — bit-for-bit, since every
 float is its bit pattern — and leaves `rest` untouched, so the next field
-parses from the right offset. Still true with #3267's tighter guard: an honest
+parses from the right offset. Still true with the whole-stack guard: an honest
 encoding always has the bytes every open frame owes. -/
 theorem decodeV_encV (utf8 I : Bytes → Bool) (v : Val) (bs rest : Bytes)
     (h : encV I v = .ok bs) (hw : WF utf8 v) :
@@ -726,7 +724,7 @@ theorem ends_readBody (utf8 : Bytes → Bool) (owed t : Nat) : Ends owed (readBo
 
 /-- A frame is only opened for a count that is non-zero and that the bytes
 still unread could hold at four bytes per child *together with* the `owed`
-siblings: this is the bound on each `ThinVec::with_capacity(n)` (`value.rs:245`). -/
+siblings: this is the bound on each `ThinVec::with_capacity(n)` (`value.rs`). -/
 theorem readOne_opened_bound {utf8 : Bytes → Bool} {owed : Nat} {r : Bytes} {n : Nat} {r' : Bytes}
     (h : readOne utf8 owed r = .ok (.opened n, r')) : 1 ≤ n ∧ 4 * (n + owed) ≤ r'.length := by
   rw [readOne_eq] at h
@@ -748,7 +746,7 @@ theorem deliver_ok : ∀ (v : Val) (st : List Frame), FramesOk st →
     have hf : 1 ≤ f.left := h f (by simp)
     have hst : FramesOk st := fun g hg => h g (by simp [hg])
     simp only [deliver]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     split
     · rename_i hgt
       refine ⟨by simp, ?_⟩
@@ -768,8 +766,8 @@ theorem deliver_ok : ∀ (v : Val) (st : List Frame), FramesOk st →
       omega
 
 /-- **The decoder never panics**, on any input whatsoever — neither the
-`*left -= 1` of `value.rs:188`, which would underflow on a frame of zero, nor
-#3267's `owed -= 1` (`value.rs:191`): `owed` is always `owedOf` the stack. -/
+`*left -= 1` of `value.rs`, which would underflow on a frame of zero, nor
+the `owed -= 1` (`value.rs`): `owed` is always `owedOf` the stack. -/
 theorem loop_noPanic (utf8 : Bytes → Bool) :
     ∀ fuel st owed r, FramesOk st → owed = owedOf st → loop utf8 fuel st owed r ≠ .error .panic
   | 0, _, _, _, _, _ => by simp [loop]
@@ -850,7 +848,7 @@ theorem decodeV_safe (utf8 : Bytes → Bool) (r : Bytes) :
 
 /-! ## What the primary can hand the encoder -/
 
--- `pending::is_valid_property` (`graph/src/runtime/pending.rs:63-81`).
+-- `pending::is_valid_property` (`graph/src/runtime/pending.rs`).
 mutual
 def propValid (allowNull : Bool) : Val → Bool
   | .null => allowNull
@@ -863,7 +861,7 @@ def propValidL : List Val → Bool
   | v :: vs => propValid false v && propValidL vs
 end
 
--- Container lengths fit the `u32` counts (`value.rs:70`, `value.rs:93`).
+-- Container lengths fit the `u32` counts (`value.rs`, `value.rs`).
 mutual
 def Fits : Val → Prop
   | .list xs => xs.length < 2 ^ 32 ∧ FitsL xs
@@ -876,7 +874,7 @@ end
 
 mutual
 /-- A property value the engine accepts never reaches the `panic!` of
-`value.rs:121`: maps, nodes, edges and paths are refused where the value is
+`value.rs`: maps, nodes, edges and paths are refused where the value is
 stored, which is the only reason that arm is unreachable. -/
 theorem encV_total (I : Bytes → Bool) : ∀ (v : Val) (a : Bool), propValid a v = true → Fits v →
     ∃ bs, encV I v = .ok bs
@@ -931,9 +929,9 @@ theorem nest_wf (utf8 : Bytes → Bool) : ∀ d, WF utf8 (nest d)
 
 /-- **Depth is unbounded and costs eight bytes a level**: the decoder returns
 a value `d` deep from `8d + 4` bytes, for every `d`. The decode itself is
-iterative (`value.rs:137-160`), but `Value` is recursive and its `Drop` is not,
+iterative (`value.rs`), but `Value` is recursive and its `Drop` is not,
 so this is the input that overflows the stack *after* a successful decode —
-see `REPORT.md`, `hostile_deep_nesting_*`. -/
+see `README.md`, `hostile_deep_nesting_*`. -/
 theorem nest_bytes_length : ∀ d,
     ((List.replicate d (w32 T_ARRAY ++ w32 1)).flatten ++ w32 T_NULL).length = 8 * d + 4
   | 0 => rfl
@@ -950,7 +948,7 @@ theorem nest_decodes (utf8 : Bytes → Bool) (d : Nat) :
   simpa using this
 
 /-- The capacities `loop` asks for, turn by turn: `n` for every
-`Frame::List` it pushes (`ThinVec::with_capacity(n)`, `value.rs:245`). A
+`Frame::List` it pushes (`ThinVec::with_capacity(n)`, `value.rs`). A
 mirror of `loop` that records instead of building. -/
 def capTrace (utf8 : Bytes → Bool) : Nat → List Frame → Nat → Bytes → List Nat
   | 0, _, _, _ => []
@@ -963,7 +961,7 @@ def capTrace (utf8 : Bytes → Bool) : Nat → List Frame → Nat → Bytes → 
       | .more st' => if owed = 0 then [] else capTrace utf8 fuel st' (owed - 1) r'
       | _ => []
 
-/-- **#3267: the reservations are linear in the input.** Whatever the bytes, the
+/-- **The reservations are linear in the input.** Whatever the bytes, the
 capacities one decode reserves sum to at most a quarter of what is left once the
 `owed` siblings are set aside: each claim is checked against the bytes no
 ancestor has already claimed. -/

@@ -1,97 +1,11 @@
 /-
 # The Cypher lexer: total, boundary-safe, and where it disagrees with the spec
 
-A model of FalkorDB-rs's hand-written Cypher lexer (`graph/src/parser/lexer.rs`),
-its string-escape decoder (`graph/src/parser/string_escape.rs`), the literal
-handling in the parser (`graph/src/parser/cypher.rs`) and the expression-height
-/ nesting guards added in `e7daadac8` (Rust line numbers from main `737dfb5da`),
-with machine-checked proofs of:
-
-* **`rs_agrees_spec`** — `read_spaces` skips exactly the openCypher
-  `Comment` run and the four-character subset of `WHITESPACE` that `specSkip`
-  models (space, `\t`, `\r`, `\n`) wherever the spec accepts one (since #2908,
-  `dfa326583`); the other `WHITESPACE` characters of Cypher.g4:697-728 (VT, FF,
-  FS, GS, RS, US and the Unicode spaces) are not skipped by `read_spaces` and
-  are outside the theorem (a divergence from the grammar, not modelled); an unterminated `/*` is not skipped (`rs_unterminated_general`);
-  `\r` is whitespace since #2910 (`rs_crlf`).
-* **`lexAll_total_cover`** — on every input the lexer never slices a `&str` off
-  a char boundary (so never panics), and the whitespace/comment runs and token
-  texts it walks over concatenate back to exactly the input.
-* **`unesc_agrees_spec`** — `cypher_unescape` equals the openCypher
-  `EscapedChar` decoding on every string whose escapes are the spec's
-  lower-case ones (`\\ \' \" \b \f \n \r \t \uXXXX`); since #2910 a
-  `\u`/`\U` run must be all hex digits (`unesc_plus_rejected`, `hexRun_spec`).
-* **`int_literal_correct`** — an integer literal in any spelling (leading
-  zeros included, since #2910), negated or not, evaluates to its mathematical
-  value when that is in `i64` range and is rejected otherwise — overflow is
-  never wrapped; `litExpr_min`: the literal `2^63` is accepted only directly
-  negated, never under a postfix operator (since #2910).
-* **`height_sound`** / **`guarded_height_le`** — every height estimate the
-  parser keeps is an upper bound on the tree it describes, so a parse that
-  passes `check_depth` builds no tree taller than `MAX_TREE_DEPTH`.
-* **`nested_depth_bound`** — every `parse_expr` / `CALL {}` recursion is at
-  most `MAX_NESTING` deep.
-
-and machine-checked *counterexamples* for the places where a property is false
-(each one reproduced against the real Rust in `graph/tests/lean_lexer.rs`). The rows marked
-"removed" are bugs that have since been fixed: their counterexample theorems are no longer
-in the tree (removed in bbee75955; the last revision that has them is 17ccc5412), and the
-fixed behaviour is now a correctness theorem, named in the row:
-
-| theorem | what is wrong |
-| --- | --- |
-| `pre2908_rs_block_comment_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908 `dfa326583`) `/* ... */` ended at the first `/`, not at `*/` |
-| `pre2908_rs_trailing_slash_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) a lone trailing `/` was skipped as whitespace |
-| `pre2908_rs_unterminated_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) an unterminated `/*` was accepted |
-| `foreach_unbounded`         | `FOREACH` nesting bypasses `nested`, so its recursion is unbounded |
-| `set_target_unbounded`      | `SET n.a.a…` / `REMOVE n.a.a…` targets bypass `check_depth` |
-| `hop_truncation_bug`        | `*4294967298` is `*2` (`i as u32`) |
-| `pre2910_crlf_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910 `dba677942`) `\r` was not whitespace — now `rs_crlf` |
-| `pre2910_zero_exp_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `0e5` lexed as `0` then `e5` — now `lexNum_zero_exp` |
-| `pre2910_min_noncanonical_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `-0x08000000000000000` was rejected — now `min_noncanonical_fixed`, `int_literal_correct` (any spelling) |
-| `pre2910_min_postfix_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `9223372036854775808.x` escaped the overflow check — now `litExpr_min` |
-| `pre2910_unesc_plus_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `\u+041` decoded to `A` — now `unesc_plus_rejected` |
-
-## What is modelled, and where it lives in the tree
-
-| here | there |
-| --- | --- |
-| `u8`, `bytes`             | `char::len_utf8`, `str::len` |
-| `splitBytes`              | `&s[..n]` / `&s[n..]` — `none` is the panic "byte index is not a char boundary" |
-| `rs`, `rsSlash`, `rsLine`, `rsBlock` | `Lexer::read_spaces` (lexer.rs:311-334) |
-| `strScan`                 | `Lexer::lex_string_literal` (lexer.rs:487-521) |
-| `btScan`                  | backtick identifier arm of `get_token` (lexer.rs:458-479) |
-| `btpScan`                 | backtick parameter arm (lexer.rs:402-418) |
-| `identRun`                | ASCII identifier / plain parameter arms (lexer.rs:419-424, 431-457) |
-| `getTok`                  | `Lexer::get_token` (lexer.rs:351-485) |
-| `lexAll`                  | the `Lexer::new` / `Lexer::next` loop (lexer.rs:279-292) |
-| `unescF`, `isHexDigit`    | `cypher_unescape` (string_escape.rs:71-129), `char::is_ascii_hexdigit` |
-| `fromStrRadix16`          | `u32::from_str_radix(_, 16)` (accepts a leading `+`) |
-| `specUnesc`               | openCypher `EscapedChar` (graph/src/Cypher.g4:553-554) |
-| `str2int`                 | `Lexer::str2number_token`, integer half (lexer.rs:700-737) |
-| `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs:2570-2584) + level 9 |
-| `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2545-2565) + `parse_literal` (cypher.rs:445-469) |
-| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1804, 1811, 3108, 3111) |
-| `Frame`, `Op`, `step`     | the `(level, tree, height)` frames of `parse_expr_inner` and `parse_expr_return!` / `parse_operators!` (macro.rs) |
-| `Reach`                   | every frame update of `parse_expr_inner`, each with its `check_depth` |
-| `setTarget`               | the property loop of `parse_set_items` / `parse_remove_items` (cypher.rs:3348-3352, 3444-3448) |
-| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:3469-3543) |
-
-## What this does NOT cover
-
-* (Wave 4: `FalkorLexerExtra.lean` models `lex_numeric`'s scan and proves
-  its slices safe, `lexNum_slices_ascii`, plus `pos`, `current_str`,
-  `set_pos`, `err_ctx`, `format_error`, `Display` and `cypher_escape`.)
-* The numeric *scanner* (`lex_numeric`) is abstracted here to "some number of chars
-  ≥ 1": its final length is `str[pos..].chars().take(len).collect().len()`,
-  a char-prefix byte length by construction, and its inner slices
-  (lexer.rs:541,558,579,606,639) sit after an ASCII-only prefix
-  (`ascii_boundary`). Its *values* are covered by `str2int`.
-* Floats (`str::parse::<f64>`) are not modelled.
-* Keyword lookup (`phf`) does not affect lengths and is omitted.
-* The height model is over an abstract tree; the "primary adds ≤ 2 levels"
-  premise (`PRIMARY_LEVELS`) is checked constructor by constructor in
-  `primary_levels`, against the tree shapes read off `parse_primary_expr`.
+A model of FalkorDB-rs's Cypher lexer (`graph/src/parser/lexer.rs`), its string-escape
+decoder (`string_escape.rs`), and the literal handling and depth guards of
+`graph/src/parser/cypher.rs`, with proofs that the lexer never panics, reads whitespace,
+comments, escapes and integer literals as openCypher says, and bounds parser recursion.
+See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
 -/
 
 namespace FalkorLexer
@@ -194,9 +108,9 @@ theorem ascii_boundary (cs : List Char) (k : Nat)
     simp only [bytes, List.length_cons]
     rw [h c (by simp), ih (fun x hx => h x (by simp [hx]))]; omega
 
-/-! ## 2. `read_spaces` (lexer.rs:311-334)
+/-! ## 2. `read_spaces` (lexer.rs)
 
-Since #2908 (`dfa326583`) the Rust walks bytes with a cursor `end`:
+The Rust walks bytes with a cursor `end`:
 whitespace advances it, `//` jumps past the next `'\n'` (or to `str.len()`),
 `/*` jumps past the first `*/` after it, and anything else — a lone `/`, an
 unterminated `/*` — `break`s with `end` on that `/`. `end` only ever moves
@@ -206,7 +120,7 @@ at `end` is `/`"; the model therefore works on chars. `rs` is the outer
 `loop`, `rsSlash` the `Some(b'/')` arm, `rsLine` the `find('\n')` jump and
 `rsBlock` the `find("*/")` jump (`none` = not found ⇒ `break`). -/
 
-/-- `b' ' | b'\t' | b'\r' | b'\n'`, lexer.rs:319 (`\r` since #2910, `dba677942`). -/
+/-- `b' ' | b'\t' | b'\r' | b'\n'`, lexer.rs (`\r` since #2910, `dba677942`). -/
 def isWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\r' || c == '\n'
 
 mutual
@@ -357,7 +271,7 @@ theorem rsLine_spec : ∀ r : List Char,
     · subst hc; simp [rsLine, bytes]; rfl
     · have ih := rsLine_spec r
       have hne : (c != '\n') = true := by simp [hc]
-      simp only [rsLine, if_neg hc, List.takeWhile_cons, hne, ite_true, List.length_cons,
+      simp only [rsLine, ite_eq_right hc, List.takeWhile_cons, hne, ite_true, List.length_cons,
         List.drop_succ_cons, bytes]
       rw [ih]
       generalize List.drop (List.takeWhile (fun x => x != '\n') r).length r = d
@@ -383,11 +297,11 @@ theorem rs_agrees_spec : ∀ f : Nat,
       | c :: r =>
         simp only [specSkip] at h
         by_cases hw : isWs c = true
-        · rw [if_pos hw] at h
+        · rw [ite_eq_left hw] at h
           cases hs : specSkip f r with
           | none => simp [hs] at h
           | some k => simp [hs] at h; subst h; simp [rs, hw, ihS r k hs]
-        · rw [if_neg hw] at h
+        · rw [ite_eq_right hw] at h
           have hrs : rs (c :: r) = if c = '/' then rsSlash r else 0 := by simp [rs, hw]
           rw [hrs]
           split at h
@@ -440,17 +354,7 @@ theorem rs_agrees_spec : ∀ f : Nat,
         · exact hgen (specSkip.blockSpec.eq_4 _ _ _ _ (by intro _ h _; exact hc h))
             (rsBlock.eq_3 _ _ (by intro _ h _; exact hc h))
 
-/-! ### Before #2908 (historical)
-
-The pre-`dfa326583` `read_spaces` (lexer.rs:314-362 at `8743953a8`) kept a
-one-char lookahead `next` in three states: the outer loop (`top`), inside
-`// ...` (`line`) and inside `/* ...` (`block`). It had three counterexamples
-against `specSkip` (FINDINGS: #2901; `pre2908_rs_block_comment_bug`,
-`pre2908_rs_trailing_slash_bug`, `pre2908_rs_unterminated_bug`), all fixed by #2908
-(`dfa326583`). That model and its counterexamples were removed in bbee75955; the last
-revision that has them is 17ccc5412. -/
-
-/-! ### Now: the three inputs, and the Rust regression tests of #2908 -/
+/-! ### The three inputs, and the Rust regression tests -/
 
 /-- The whole block comment is skipped, `/` inside it included, so
 `RETURN 5 /* a/ -1 //*/` is 5, as in C. -/
@@ -478,7 +382,7 @@ example : rs " /* a/b */ + 1".toList = 11 ∧ rs " /*/ ** / * */ 2 /**/".toList 
     rs " // a /* b\n2".toList = 11 ∧ rs " / 2".toList = 1 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> simp [rs, rsSlash, rsBlock, rsLine, isWs] <;> decide
 
-/-! ### `\r` is whitespace (#2909, fixed by #2910 `dba677942`) -/
+/-! ### `\r` is whitespace -/
 
 /-- **CRLF is whitespace** (`carriage_return_is_whitespace`): `read_spaces`
 skips a `\r`, alone or before `\n`, exactly as the openCypher `WHITESPACE`
@@ -488,7 +392,7 @@ theorem rs_crlf (r : List Char) : rs ('\r' :: r) = 1 + rs r := by simp [rs, isWs
 example : rs "\r\n2".toList = 2 ∧ rs "\r3".toList = 1 ∧ specSkip 5 "\r\n2".toList = some 2 := by
   refine ⟨?_, ?_, by decide⟩ <;> simp [rs, isWs]
 
-/-! ## 3. Token scanners and `get_token` (lexer.rs:351-521) -/
+/-! ## 3. Token scanners and `get_token` (lexer.rs) -/
 
 theorem bytes_append (a b : List Char) : bytes (a ++ b) = bytes a + bytes b := by
   induction a with
@@ -561,7 +465,7 @@ theorem strScan_spec {q : Char} : ∀ {r : List Char} {n : Nat}, strScan q r = s
           refine ⟨k + 1, t, ?_, by simpa using h2⟩
           simp [bytes, h1]; omega
 
-/-- Backtick identifier scan (lexer.rs:459-467), after the opening backtick:
+/-- Backtick identifier scan (lexer.rs), after the opening backtick:
 `some n` = `n` body bytes, then a closing backtick. -/
 def btScan : List Char → Option Nat
   | [] => none                                  -- !end ⇒ Err(&str[pos..pos + len])
@@ -581,7 +485,7 @@ theorem btScan_spec : ∀ {r : List Char} {n : Nat}, btScan r = some n →
         obtain ⟨k, t, h1, h2⟩ := btScan_spec hs
         exact ⟨k + 1, t, by simp [bytes, h1]; omega, by simpa using h2⟩
 
-/-- Backtick parameter scan (lexer.rs:405-411): the closing backtick is
+/-- Backtick parameter scan (lexer.rs): the closing backtick is
 counted (`len += ch.len_utf8()` before the `==` test). -/
 def btpScan : List Char → Option Nat
   | [] => none
@@ -639,7 +543,7 @@ theorem identRun_bytes : ∀ r : List Char, bytes (r.take (identRun r)) = identR
       simp only [bytes, isIdChar_u8 h, identRun_bytes r]; omega
     · rfl
 
-/-- One-char tokens of `get_token` (lexer.rs:358-367, 372, 386-387, 393, 480). -/
+/-- One-char tokens of `get_token` (lexer.rs). -/
 def singles : List Char := ['[', ']', '{', '}', '(', ')', '%', '^', '*', '/', '-', ',', ':', '|', ';']
 
 @[simp] theorem us_dollar : '$'.utf8Size = 1 := rfl
@@ -650,7 +554,7 @@ def singles : List Char := ['[', ']', '{', '}', '(', ')', '%', '^', '*', '/', '-
 
 theorem singles_u8 : ∀ c ∈ singles, u8 c = 1 := by decide
 
-/-- `Lexer::get_token` (lexer.rs:351-485), reduced to what decides lengths
+/-- `Lexer::get_token` (lexer.rs), reduced to what decides lengths
 and slices. `none` = a panic (a slice off a char boundary); `.ok n` = a token
 of `n` bytes (`0` only for `EndOfFile`); `.error` = an `Err` token, at which the
 parser stops. `num cs` is the char count `lex_numeric` settles on (≥ 1, or
@@ -726,46 +630,46 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
     show TokOk (c :: r) (getTokC num esc c r)
     unfold getTokC
     by_cases h1 : c ∈ singles
-    · rw [if_pos h1]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one (singles_u8 c h1))⟩
-    rw [if_neg h1]
+    · rw [ite_eq_left h1]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one (singles_u8 c h1))⟩
+    rw [ite_eq_right h1]
     by_cases h2 : c = '+'
-    · rw [if_pos h2]; subst h2; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+    · rw [ite_eq_left h2]; subst h2; refine ⟨_, rfl, fun n e => ?_⟩; cases e
       by_cases h : r.head? = some '='
-      · rw [if_pos h]; exact .inr (tok_two (t := []) rfl h rfl)
-      · rw [if_neg h]; exact .inr (tok_one rfl)
-    rw [if_neg h2]
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h2]
     by_cases h3 : c = '='
-    · rw [if_pos h3]; subst h3; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+    · rw [ite_eq_left h3]; subst h3; refine ⟨_, rfl, fun n e => ?_⟩; cases e
       by_cases h : r.head? = some '~'
-      · rw [if_pos h]; exact .inr (tok_two (t := []) rfl h rfl)
-      · rw [if_neg h]; exact .inr (tok_one rfl)
-    rw [if_neg h3]
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h3]
     by_cases h4 : c = '<'
-    · rw [if_pos h4]; subst h4; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+    · rw [ite_eq_left h4]; subst h4; refine ⟨_, rfl, fun n e => ?_⟩; cases e
       by_cases h : r.head? = some '=' ∨ r.head? = some '>'
-      · rw [if_pos h]; rcases h with h | h
+      · rw [ite_eq_left h]; rcases h with h | h
         · exact .inr (tok_two (t := []) rfl h rfl)
         · exact .inr (tok_two (t := []) rfl h rfl)
-      · rw [if_neg h]; exact .inr (tok_one rfl)
-    rw [if_neg h4]
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h4]
     by_cases h5 : c = '>'
-    · rw [if_pos h5]; subst h5; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+    · rw [ite_eq_left h5]; subst h5; refine ⟨_, rfl, fun n e => ?_⟩; cases e
       by_cases h : r.head? = some '='
-      · rw [if_pos h]; exact .inr (tok_two (t := []) rfl h rfl)
-      · rw [if_neg h]; exact .inr (tok_one rfl)
-    rw [if_neg h5]
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h5]
     by_cases h6 : c = '.'
-    · rw [if_pos h6]; subst h6
+    · rw [ite_eq_left h6]; subst h6
       by_cases h : r.head? = some '.'
-      · rw [if_pos h]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_two (t := []) rfl h rfl)⟩
-      rw [if_neg h]
+      · rw [ite_eq_left h]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_two (t := []) rfl h rfl)⟩
+      rw [ite_eq_right h]
       by_cases h' : r.head?.map isDigit = some true
-      · rw [if_pos h']
+      · rw [ite_eq_left h']
         exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨max 2 (num ('.' :: r)), by omega, rfl⟩⟩
-      · rw [if_neg h']; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one rfl)⟩
-    rw [if_neg h6]
+      · rw [ite_eq_right h']; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one rfl)⟩
+    rw [ite_eq_right h6]
     by_cases h7 : c = '\'' ∨ c = '"'
-    · rw [if_pos h7]
+    · rw [ite_eq_left h7]
       have hc : u8 c = 1 := by rcases h7 with rfl | rfl <;> rfl
       cases hs : strScan c r with
       | none => exact ⟨_, rfl, fun n e => by cases e⟩
@@ -778,25 +682,25 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
         refine ⟨_, rfl, fun m e => ?_⟩
         simp only at e
         by_cases he : esc b = true
-        · rw [if_pos he] at e
+        · rw [ite_eq_left he] at e
           cases e
           refine .inr ⟨k + 2, by omega, ?_⟩
           have h3 : bytes (r.take (k + 1)) = bytes (r.take k) + u8 c := bytes_take_succ h2
           simp only [List.take_succ_cons, bytes, h3, h1, hc]; omega
-        · rw [if_neg he] at e; cases e
-    rw [if_neg h7]
+        · rw [ite_eq_right he] at e; cases e
+    rw [ite_eq_right h7]
     by_cases h8 : isDigit c = true
-    · rw [if_pos h8]
+    · rw [ite_eq_left h8]
       exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨max 1 (num (c :: r)), by omega, rfl⟩⟩
-    rw [if_neg h8]
+    rw [ite_eq_right h8]
     by_cases h9 : c = '$'
-    · rw [if_pos h9]; subst h9
+    · rw [ite_eq_left h9]; subst h9
       match r with
       | [] => exact ⟨_, rfl, fun n e => by cases e⟩
       | f :: r' =>
         simp only
         by_cases hf : f = '`'
-        · rw [if_pos hf]; subst hf
+        · rw [ite_eq_left hf]; subst hf
           cases hs : btpScan r' with
           | none => exact ⟨_, rfl, fun n e => by cases e⟩
           | some m =>
@@ -811,9 +715,9 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
             have h3 := bytes_take_succ h2
             simp only [List.take_succ_cons, bytes, h3]
             simp [u8] at h1 ⊢; omega
-        rw [if_neg hf]
+        rw [ite_eq_right hf]
         by_cases hf' : isIdChar f = true
-        · rw [if_pos hf']
+        · rw [ite_eq_left hf']
           have hb2 : bytes (('$' :: f :: r').take (2 + identRun r')) = 2 + identRun r' := by
             rw [Nat.add_comm, List.take_succ_cons, List.take_succ_cons]
             simp only [bytes, isIdChar_u8 hf', identRun_bytes]; simp [u8]; omega
@@ -821,10 +725,10 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
             (by rfl) hb2 (by omega)
           rw [hb]
           exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨_, by omega, hb2⟩⟩
-        · rw [if_neg hf']; exact ⟨_, rfl, fun n e => by cases e⟩
-    rw [if_neg h9]
+        · rw [ite_eq_right hf']; exact ⟨_, rfl, fun n e => by cases e⟩
+    rw [ite_eq_right h9]
     by_cases h10 : isIdStart c = true
-    · rw [if_pos h10]
+    · rw [ite_eq_left h10]
       have hc : u8 c = 1 := isIdChar_u8 (by simp [isIdChar, h10])
       have hb2 : bytes ((c :: r).take (1 + identRun r)) = 1 + identRun r := by
         rw [Nat.add_comm, List.take_succ_cons]
@@ -832,9 +736,9 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
       obtain ⟨b, hb⟩ := slice_ok' (c :: r) (i := 0) (j := 1 + identRun r) (ki := 0) (kj := 1 + identRun r) rfl hb2 (by omega)
       rw [hb]
       exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨_, by omega, hb2⟩⟩
-    rw [if_neg h10]
+    rw [ite_eq_right h10]
     by_cases h11 : c = '`'
-    · rw [if_pos h11]; subst h11
+    · rw [ite_eq_left h11]; subst h11
       cases hs : btScan r with
       | none =>
         simp only
@@ -852,13 +756,13 @@ theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : Lis
         refine .inr ⟨k + 2, by omega, ?_⟩
         have h3 := bytes_take_succ h2
         simp only [List.take_succ_cons, bytes, h3, h1]; simp [u8]; omega
-    rw [if_neg h11]
+    rw [ite_eq_right h11]
     exact ⟨_, rfl, fun n e => by cases e⟩
 
 /-! ## 4. The token loop: never panics, and covers the input exactly -/
 
 /-- `Lexer::new` then `Lexer::next` until `EndOfFile` or an `Err` token
-(lexer.rs:279-292): skip `read_spaces`, slice there, take `get_token`, slice
+(lexer.rs): skip `read_spaces`, slice there, take `get_token`, slice
 after it. Returns the whitespace runs and token texts in order, or `none` if
 any slice would panic. -/
 def lexAll (num : List Char → Nat) (esc : List Char → Bool) :
@@ -939,7 +843,7 @@ def fromStrRadix16 (s : List Char) : Option Nat :=
     | _ => some s
   (ds.bind (hexVal · 0)).bind fun v => if v < 2 ^ 32 then some v else none
 
-/-- The one-char escapes of string_escape.rs:78-88. -/
+/-- The one-char escapes of string_escape.rs. -/
 def simpleEsc (e : Char) : Option Char :=
   if e = 'a' then some '\x07' else if e = 'b' then some '\x08'
   else if e = 'f' then some '\x0c' else if e = 'n' then some '\n'
@@ -951,9 +855,9 @@ def simpleEsc (e : Char) : Option Char :=
 /-- `char::is_ascii_hexdigit`. -/
 def isHexDigit (c : Char) : Bool := (hexDigit? c).isSome
 
-/-- `cypher_unescape` (string_escape.rs:71-129), with fuel (≥ input length is
+/-- `cypher_unescape` (string_escape.rs), with fuel (≥ input length is
 enough). `take(w).collect()` then `hex.len() != w` compares *bytes*; since #2910
-(`dba677942`) every char must also be `is_ascii_hexdigit` (string_escape.rs:92, 104). -/
+(`dba677942`) every char must also be `is_ascii_hexdigit` (string_escape.rs). -/
 def unescF : Nat → List Char → Except String (List Char)
   | 0, _ => .error "fuel"
   | _ + 1, [] => .ok []
@@ -1116,7 +1020,7 @@ theorem hexN_rust {w : Nat} {l : List Char} {v : Nat} (hw0 : 0 < w) (hw : w ≤ 
         · rename_i heq; simp at heq; exact absurd heq.1 hc
         · simp at *
         · rfl
-      simp only [this, Option.bind_some, h, hlt, if_true]
+      simp only [this, Option.bind_some, h, hlt, ite_true]
   · simp at h
 
 theorem hexVal_all : ∀ {l : List Char} {acc v : Nat}, hexVal l acc = some v → l.all isHexDigit = true
@@ -1147,7 +1051,7 @@ theorem unesc_agrees_spec : ∀ (f : Nat) (cs out : List Char),
     simp only [specUnescF] at h
     simp only [unescF]
     by_cases hc : c = '\\'
-    · rw [if_pos hc] at h ⊢
+    · rw [ite_eq_left hc] at h ⊢
       match r, h with
       | [], h => simp at h
       | e :: r', h =>
@@ -1164,10 +1068,10 @@ theorem unesc_agrees_spec : ∀ (f : Nat) (cs out : List Char),
           rw [hs] at h
           simp only at h
           by_cases hu : e = 'u' ∨ e = 'U'
-          · rw [if_pos hu] at h
+          · rw [ite_eq_left hu] at h
             have hse : simpleEsc e = none := by
               rcases hu with rfl | rfl <;> decide
-            rw [hse]; simp only; rw [if_pos hu]
+            rw [hse]; simp only; rw [ite_eq_left hu]
             generalize hw : (if e = 'u' then 4 else 8) = w at h ⊢
             have hw8 : w ≤ 8 := by rw [← hw]; split <;> omega
             have hw0 : 0 < w := by rw [← hw]; split <;> omega
@@ -1178,18 +1082,18 @@ theorem unesc_agrees_spec : ∀ (f : Nat) (cs out : List Char),
               obtain ⟨hb, hf⟩ := hexN_rust hw0 hw8 hx
               have hall := hexN_all hx
               simp only [hb, hall, ne_eq, not_true_eq_false, Bool.not_true, Bool.false_eq_true,
-                or_self, if_false, hf]
+                or_self, ite_false, hf]
               simp only at h
               by_cases hv : v.isValidChar
-              · rw [if_pos hv] at h; rw [if_pos hv]
+              · rw [ite_eq_left hv] at h; rw [ite_eq_left hv]
                 cases h2 : specUnescF f (r'.drop w) with
                 | none => simp [h2] at h
                 | some t =>
                   simp [h2] at h; subst h
                   simp [unesc_agrees_spec f _ t h2, Except.map]
-              · rw [if_neg hv] at h; simp at h
-          · rw [if_neg hu] at h; simp at h
-    · rw [if_neg hc] at h ⊢
+              · rw [ite_eq_right hv] at h; simp at h
+          · rw [ite_eq_right hu] at h; simp at h
+    · rw [ite_eq_right hc] at h ⊢
       cases h2 : specUnescF f r with
       | none => simp [h2] at h
       | some t => simp [h2] at h; subst h; simp [unesc_agrees_spec f r t h2, Except.map]
@@ -1253,10 +1157,10 @@ def canonF (radix : Nat) : Nat → Nat → List Nat
 
 def canon (radix n : Nat) : List Nat := canonF radix (n + 1) n
 
-/-- `Lexer::str2number_token`, integer half (lexer.rs:713-736), on the digits
+/-- `Lexer::str2number_token`, integer half (lexer.rs), on the digits
 after the radix prefix (`0x`, `0o`, `0b`, or the leading `0` of an octal).
 Since #2910 (`dba677942`) `2^63` is recognised by value, however it is spelled
-(`u64::from_str_radix(number_str, radix) == Ok(1 << 63)`, lexer.rs:726), and
+(`u64::from_str_radix(number_str, radix) == Ok(1 << 63)`, lexer.rs), and
 returned as `i64::MIN` for the parser to sort out. `u64::from_str_radix` errs on
 the empty string and on any value past `u64::MAX`, so the test is exactly
 "non-empty and worth `2^63`". A digit `≥ radix` (not a digit of that radix) makes
@@ -1267,8 +1171,8 @@ def str2int (radix : Nat) (ds : List Nat) : Except String Int :=
   else if (digitsVal radix ds : Int) ≤ I64MAX then .ok (digitsVal radix ds)
   else .error "Integer overflow"                -- IntErrorKind::PosOverflow
 
-/-- Level 9 of `parse_expr_inner` (cypher.rs:2228-2244, 2545-2565) — and
-`parse_literal` (cypher.rs:445-469), which has the same three cases — applied
+/-- Level 9 of `parse_expr_inner` (cypher.rs) — and
+`parse_literal` (cypher.rs), which has the same three cases — applied
 to one literal token, optionally preceded by `-`; a `Negate` node over a
 constant then evaluates by `checked_neg`, which cannot fail on `0..=i64::MAX`. -/
 def evalLit (neg : Bool) : Except String Int → Except String Int
@@ -1301,8 +1205,8 @@ theorem int_literal_correct (neg : Bool) (radix : Nat) (ds : List Nat) (hne : ds
   · simp [str2int, specLit, hb, evalLit]
   have hc : ¬ (ds = [] ∨ ds.any (fun d => radix ≤ d) = true) := by simp [hne, hb]
   unfold str2int specLit
-  rw [if_neg hc, if_neg hc]
-  simp only [ne_eq, hne, not_false_eq_true, true_and]
+  rw [ite_eq_right hc, ite_eq_right hc]
+  simp only
   generalize digitsVal radix ds = v
   have e1 : I64MIN = -9223372036854775808 := rfl
   have e2 : I64MAX = 9223372036854775807 := rfl
@@ -1311,25 +1215,25 @@ theorem int_literal_correct (neg : Bool) (radix : Nat) (ds : List Nat) (hne : ds
   by_cases hv : v = 9223372036854775808
   · subst hv
     cases neg
-    · simp only [if_true, evalLit, Bool.false_eq_true, if_false]
-      rw [if_neg (by rw [e1, e2]; omega)]; rfl
-    · simp only [if_true, evalLit]
-      rw [if_pos (by rw [e1, e2]; omega)]; rfl
-  · simp only [hv, if_false]
+    · simp only [ite_true, evalLit, Bool.false_eq_true, ite_false]
+      rw [ite_eq_right (by rw [e1, e2]; omega)]; rfl
+    · simp only [ite_true, evalLit]
+      rw [ite_eq_left (by rw [e1, e2]; omega)]; rfl
+  · simp only [hv, ite_false]
     by_cases hle : (v : Int) ≤ I64MAX
-    · rw [if_pos hle]
+    · rw [ite_eq_left hle]
       have h0 : (v : Int) ≠ I64MIN := by rw [e1]; omega
       cases neg
-      · simp only [evalLit, if_neg h0, Bool.false_eq_true, if_false, toOption_ok]
-        rw [if_pos (by rw [e1, e2] at *; omega)]
-      · simp only [evalLit, if_neg h0, if_true, toOption_ok]
-        rw [if_pos (by rw [e1, e2] at *; omega)]
-    · rw [if_neg hle]
+      · simp only [evalLit, ite_eq_right h0, Bool.false_eq_true, ite_false, toOption_ok]
+        rw [ite_eq_left (by rw [e1, e2] at *; omega)]
+      · simp only [evalLit, ite_eq_right h0, ite_true, toOption_ok]
+        rw [ite_eq_left (by rw [e1, e2] at *; omega)]
+    · rw [ite_eq_right hle]
       cases neg
-      · simp only [evalLit, toOption_err, Bool.false_eq_true, if_false]
-        rw [if_neg (by rw [e1, e2] at *; omega)]
-      · simp only [evalLit, toOption_err, if_true]
-        rw [if_neg (by rw [e1, e2] at *; omega)]
+      · simp only [evalLit, toOption_err, Bool.false_eq_true, ite_false]
+        rw [ite_eq_right (by rw [e1, e2] at *; omega)]
+      · simp only [evalLit, toOption_err, ite_true]
+        rw [ite_eq_right (by rw [e1, e2] at *; omega)]
 
 /-- `every_spelling_of_two_to_the_63_lexes_as_min`: `-0x08000000000000000`
 (a leading zero) is `-2^63`, as in C FalkorDB. -/
@@ -1337,7 +1241,7 @@ theorem min_noncanonical_fixed :
     (evalLit true (str2int 16 (0 :: canon 16 (2 ^ 63)))).toOption = some I64MIN ∧
     specLit true 16 (0 :: canon 16 (2 ^ 63)) = some I64MIN := by decide
 
-/-- The tree shapes level 9 inspects (cypher.rs:2549-2564). -/
+/-- The tree shapes level 9 inspects (cypher.rs). -/
 inductive LitTree
   | const (v : Int)
   | negate (e : LitTree)
@@ -1350,7 +1254,7 @@ def level9 : LitTree → Except String LitTree
   | .const v => if v = I64MIN then .error "Integer overflow" else .ok (.const v)
   | e => .ok e
 
-/-- Level 10 since #2910 (`dba677942`, cypher.rs:2570-2584): a bare
+/-- Level 10 since #2910 (`dba677942`, cypher.rs): a bare
 `Constant(i64::MIN)` followed by a postfix token (`[`, `.`, `{`, `:`) is the
 unnegated literal `2^63` and is an overflow, before the postfix loop wraps
 it. Otherwise the postfix (if any) wraps the tree. -/
@@ -1380,7 +1284,62 @@ theorem litExpr_other (neg pf : Bool) (v : Int) (hv : v ≠ I64MIN) :
     ∃ t, litExpr neg pf v = .ok t := by
   cases neg <;> cases pf <;> simp [litExpr, level10, level9, hv]
 
-/-- `i as u32` on an `i64` hop count (cypher.rs:1804, 1811, 3108, 3111). -/
+/-! ### A run of signs and `i64::MIN` (#3525)
+
+Since #3525 (`56d00c3d8`) a run of `+`/`-` folds to `0`, `1` or `2` `Negate` frames by the parity
+of its `-` (cypher.rs); every frame is popped through level 9's check. -/
+
+/-- The `Negate` frames a run of `n` `-` pushes: none for `0`, else `2 - n % 2`. -/
+def negFrames (n : Nat) : Nat := if n = 0 then 0 else 2 - n % 2
+
+/-- Pop `k` `Negate` frames over `t`, innermost first, each through `level9`. -/
+def applyFrames : Nat → LitTree → Except String LitTree
+  | 0, t => .ok t
+  | k + 1, t => (level9 (.negate t)).bind (applyFrames k)
+
+/-- A literal with a postfix and a run of `n` `-` (level 10, then the frames of level 9). -/
+def signedLit (n : Nat) (pf : Bool) (v : Int) : Except String LitTree :=
+  match level10 (.const v) pf with
+  | .error e => .error e
+  | .ok t => if n = 0 then level9 t else applyFrames (negFrames n) t
+
+/-- The runtime value of a literal tree: `Negate` is `checked_neg`, `none` its overflow. -/
+def evalT : LitTree → Option Int
+  | .const v => some v
+  | .negate e => (evalT e).bind fun w => if w = I64MIN then none else some (-w)
+  | .post e => evalT e
+
+/-- For every digit string that is not `2^63`, a run of `n` signs is read as the literal negated
+`n` times: its value is `v` for even `n` and `-v` for odd `n`. -/
+theorem signedLit_exact (n : Nat) (v : Int) (h0 : 0 ≤ v) (hv : v ≤ I64MAX) :
+    ((signedLit n false v).toOption.bind evalT) = some (if n % 2 = 0 then v else -v) := by
+  have hne : v ≠ I64MIN := by unfold I64MIN I64MAX at *; omega
+  have hnm : -v ≠ I64MIN := by unfold I64MIN I64MAX at *; omega
+  rcases Nat.eq_zero_or_pos n with rfl | hn
+  · simp [signedLit, level10, level9, hne, evalT]
+  · have hn0 : n ≠ 0 := by omega
+    by_cases he : n % 2 = 0
+    · have : negFrames n = 2 := by simp [negFrames, he, hn0]
+      simp [signedLit, level10, this, applyFrames, level9, hne, he, evalT, hnm, hn0, Except.bind, Except.toOption, Option.bind]
+    · have : negFrames n = 1 := by simp [negFrames, hn0]; omega
+      simp [signedLit, level10, this, applyFrames, level9, hne, he, evalT, hn0, Except.bind, Except.toOption, Option.bind]
+
+/-- **`- -9223372036854775808` is `i64::MIN`, not an overflow** (confirmed live: Rust and the C
+module both answer `-9223372036854775808` for `RETURN --9223372036854775808`; the explicit
+`-(-9223372036854775808)` is "integer overflow in unary minus" in Rust). The inner frame collapses
+`Negate(Constant(MIN))` to `Constant(MIN)`, which the outer frame takes for another `2^63` literal
+and collapses again. The mathematical value is `+2^63`, out of `i64` range. A run of an odd length
+is right (`-2^63`). -/
+theorem neg_run_min_wraps :
+    ((signedLit 2 false I64MIN).toOption.bind evalT) = some I64MIN ∧
+    ((signedLit 1 false I64MIN).toOption.bind evalT) = some I64MIN ∧
+    ¬ ((2 : Int) ^ 63 ≤ I64MAX) := by
+  refine ⟨?_, ?_, ?_⟩
+  · simp [signedLit, level10, level9, applyFrames, negFrames, evalT, I64MIN, Except.bind, Except.toOption, Option.bind]
+  · simp [signedLit, level10, level9, applyFrames, negFrames, evalT, I64MIN, Except.bind, Except.toOption, Option.bind]
+  · unfold I64MAX; omega
+
+/-- `i as u32` on an `i64` hop count (cypher.rs). -/
 def asU32 (i : Int) : Nat := (i % 2 ^ 32).toNat
 
 /-- `*4294967298` is `*2` and `*4294967296` is `*0`; the i64::MIN token of
@@ -1403,7 +1362,7 @@ inductive T
   | mk (kids : List T)
 
 mutual
-/-- `Parser::tree_height` (cypher.rs:330-338): a lone root is 1. -/
+/-- `Parser::tree_height` (cypher.rs): a lone root is 1. -/
 def height : T → Nat
   | .mk ks => 1 + hl ks
 def hl : List T → Nat
@@ -1440,7 +1399,7 @@ tree `t` with recorded height `e`. Each constructor names the Rust site and
 carries that site's `check_depth` as the premise `e ≤ MAX_TREE_DEPTH` — or
 has none when the site performs none. -/
 inductive Reach : T → Nat → Prop
-  /-- A complete primary (cypher.rs:2247-2263): whatever `parse_primary_expr`
+  /-- A complete primary (cypher.rs): whatever `parse_primary_expr`
   built above the sub-expressions it parsed — each `parse_expr` result
   `(cᵢ, eᵢ)` — is charged `max eᵢ + PRIMARY_LEVELS` and checked. The premise
   `hshape` is the per-constructor fact `primary_levels` checks. -/
@@ -1449,37 +1408,36 @@ inductive Reach : T → Nat → Prop
       (hshape : height t ≤ hl (cs.map Prod.fst) + PRIMARY_LEVELS)
       (hck : m + PRIMARY_LEVELS ≤ MAX_TREE_DEPTH) : Reach t (m + PRIMARY_LEVELS)
   /-- A run of `NOT`s (one frame for an odd count, two for an even one since #3060,
-  cypher.rs:2218-2228), unary `-`, a recursing `(`/`[` primary, `NOT IN`'s pushed `Not`
-  (cypher.rs:2231, 2245, 2416ff): each a childless node at 1. -/
+  cypher.rs), unary `-`, a recursing `(`/`[` primary, `NOT IN`'s pushed `Not`
+  (cypher.rsff): each a childless node at 1. -/
   | opener : Reach (.mk []) 1
   /-- `tree!(Op, res)` then `height + 1` and `check_depth`: `parse_operators!`
-  (macro.rs), the comparison and predicate wraps (cypher.rs:2335-2337,
-  2374-2405, 2513-2515). -/
+  (macro.rs), the comparison and predicate wraps (cypher.rs). -/
   | wrap {t : T} {e : Nat} : Reach t e → e + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [t]) (e + 1)
   /-- `parse_expr_return!`'s `Some(expr)` arm: `push_child_tree(res)`,
   `*h = max(*h, height + 1)`, `check_depth(*h)`. Also an n-ary operator's next
   operand (`parse_operators!` keeps the node, then this attaches). -/
   | attach {ks : List T} {ep : Nat} {c : T} {ec : Nat} : Reach (.mk ks) ep → Reach c ec →
       max ep (ec + 1) ≤ MAX_TREE_DEPTH → Reach (.mk (ks ++ [c])) (max ep (ec + 1))
-  /-- `((x))` → `(x)` (cypher.rs:2636-2642): the inner `Paren` is taken out,
+  /-- `((x))` → `(x)` (cypher.rs): the inner `Paren` is taken out,
   `height.saturating_sub(1)`; no check (the estimate shrinks). -/
   | collapse {ks : List T} {e : Nat} : Reach (.mk [.mk ks]) e → Reach (.mk ks) (e - 1)
-  /-- The chained comparison's cloned middle operand (cypher.rs:2326-2342):
+  /-- The chained comparison's cloned middle operand (cypher.rs):
   measured exactly by `tree_height`, plus one for the new comparison. -/
   | chainMid (m : T) : height m + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [m]) (height m + 1)
-  /-- Postfix `[i]` / `[a..b]` (cypher.rs:2595-2602): `GetElement(s)(lhs, idx…)`,
+  /-- Postfix `[i]` / `[a..b]` (cypher.rs): `GetElement(s)(lhs, idx…)`,
   `height = max(height + 1, index_height + 1)`, checked. -/
   | index {t e} {is : List T} {ei : Nat} : Reach t e → (∀ i ∈ is, height i ≤ ei) →
       max (e + 1) (ei + 1) ≤ MAX_TREE_DEPTH → Reach (.mk (t :: is)) (max (e + 1) (ei + 1))
-  /-- Postfix `.prop` (cypher.rs:2603-2606): `height += 1`, checked at the
+  /-- Postfix `.prop` (cypher.rs): `height += 1`, checked at the
   end of the step. -/
   | prop {t : T} {e : Nat} : Reach t e → e + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [t]) (e + 1)
-  /-- Postfix map projection `{k: v, .p, .*}` (cypher.rs:2607-2613):
+  /-- Postfix map projection `{k: v, .p, .*}` (cypher.rs):
   `MapProjection(base, Constant(k) → v …)`, `max(height + 1, value_height + 2)`. -/
   | mapProj {t e} {vs : List T} {ev : Nat} : Reach t e → (∀ v ∈ vs, height v ≤ ev) →
       max (e + 1) (ev + 2) ≤ MAX_TREE_DEPTH →
       Reach (.mk (t :: vs.map (fun v => .mk [v]))) (max (e + 1) (ev + 2))
-  /-- `x:L1:L2` (cypher.rs:2618-2628): `hasLabels(res, List(Constant…))`,
+  /-- `x:L1:L2` (cypher.rs): `hasLabels(res, List(Constant…))`,
   `max(height + 1, 3)`. -/
   | labels {t : T} {e n : Nat} : Reach t e → max (e + 1) 3 ≤ MAX_TREE_DEPTH →
       Reach (.mk [t, .mk (List.replicate n (.mk []))]) (max (e + 1) 3)
@@ -1541,8 +1499,7 @@ theorem guarded_height_le {t : T} {e : Nat} (h : Reach t e) : height t ≤ MAX_T
   Nat.le_trans (height_sound h) (guarded h)
 
 /-- `PRIMARY_LEVELS = 2` covers each shape `parse_primary_expr` builds over its
-sub-expressions `cs` (read off cypher.rs:1584-1614, 1942-2107, 2915-2995,
-3120-3150): `FuncInvocation(Distinct(args…), placeholder)`,
+sub-expressions `cs` (read off cypher.rs): `FuncInvocation(Distinct(args…), placeholder)`,
 `Map(Constant(k) → v…)`, `Case(subject, List(conds…), else)`,
 `ListComprehension(l, c, e)`, `Quantifier(l, c)`, `Reduce(i, l, b)`,
 `PatternComprehension(c, e)`, and `count(*)`'s two leaves. -/
@@ -1581,44 +1538,77 @@ theorem chain_rejected : ¬ ∃ e, Reach (chain 256) e := by
   rw [chain_height] at this
   simp [MAX_TREE_DEPTH] at this
 
-/-- …but `parse_set_items` / `parse_remove_items` (cypher.rs:3348-3352,
-3444-3448) build the SET/REMOVE target with `parse_property_lookup` in a bare
-`while` loop, outside `Reach`: no estimate, no check. Modelled literally, it
-accepts every length, so the tree the binder then recurses over is unbounded
-(repro: `MATCH (n) SET n.a.a…(5000) = 1` overflows the binder's stack;
-C FalkorDB rejects it with an error). -/
-def setTarget : Nat → Except String T
-  | 0 => .ok (.mk [])
-  | k + 1 => (setTarget k).map fun t => .mk [t]
+/-- The `.prop` chain of `parse_update_target` (cypher.rs, new in #2900): each lookup
+wraps the tree, adds one to the estimate and runs `check_depth`, as the postfix chain of
+`parse_expr_inner` does (`Reach.prop`). `error` is the "too deep" refusal. -/
+def lookups : Nat → T → Nat → Except String (T × Nat)
+  | 0, t, e => .ok (t, e)
+  | k + 1, t, e =>
+    if e + 1 ≤ MAX_TREE_DEPTH then lookups k (.mk [t]) (e + 1) else .error "too deep"
 
-theorem set_target_unbounded (k : Nat) :
-    setTarget k = .ok (chain k) ∧ height (chain k) = k + 1 := by
-  refine ⟨?_, chain_height k⟩
-  induction k with
-  | zero => rfl
-  | succ k ih => simp [setTarget, ih, chain, Except.map]
+/-- `parse_update_target` (cypher.rs): the target (a `Reach` tree and estimate: either
+`parse_primary_expr` charged `child + PRIMARY_LEVELS`, or the `parse_expr` of a parenthesised
+target with its `expr_height`), `check_depth` on it, then the chain. -/
+def updateTarget (t : T) (e : Nat) (k : Nat) : Except String (T × Nat) :=
+  if e ≤ MAX_TREE_DEPTH then lookups k t e else .error "too deep"
+
+theorem lookups_reach : ∀ (k : Nat) (t : T) (e : Nat), Reach t e → ∀ t' e',
+    lookups k t e = .ok (t', e') → Reach t' e'
+  | 0, t, e, h, t', e', hk => by
+    simp only [lookups, Except.ok.injEq, Prod.mk.injEq] at hk
+    obtain ⟨rfl, rfl⟩ := hk; exact h
+  | k + 1, t, e, h, t', e', hk => by
+    simp only [lookups] at hk
+    split at hk
+    · rename_i hc
+      exact lookups_reach k _ _ (.prop h hc) t' e' hk
+    · simp at hk
+
+/-- **The SET/REMOVE target is bounded** (#2900): whatever
+chain `parse_update_target` accepts on a target the expression parser built is a `Reach` tree,
+so it is no taller than `MAX_TREE_DEPTH`. -/
+theorem updateTarget_bounded {t : T} {e : Nat} (h : Reach t e) (k : Nat) {t' : T} {e' : Nat}
+    (hk : updateTarget t e k = .ok (t', e')) : height t' ≤ MAX_TREE_DEPTH := by
+  unfold updateTarget at hk
+  split at hk
+  · exact guarded_height_le (lookups_reach k t e h t' e' hk)
+  · simp at hk
+
+/-- A variable `n` (estimate `0 + PRIMARY_LEVELS = 2`) takes a chain of 254 lookups and refuses
+255 (`MAX_TREE_DEPTH = 256`): `MATCH (n) SET n.a.a…(5000) = 1` is now "too deep". -/
+theorem updateTarget_chain_limit :
+    (updateTarget (.mk []) 2 254).toBool = true ∧ (updateTarget (.mk []) 2 255).toBool = false := by
+  refine ⟨?_, ?_⟩ <;> decide +kernel
+
+/-- Without a chain the target is only charged for itself (`update_target_without_property_is_bounded`
+in cypher.rs): an estimate over the cap is refused with no lookup to blame. -/
+theorem updateTarget_self_checked (t : T) (e : Nat) (h : MAX_TREE_DEPTH < e) :
+    ∃ m, updateTarget t e 0 = .error m := by
+  unfold updateTarget; rw [if_neg (by omega)]; exact ⟨_, rfl⟩
 
 /-! ## 8. Call-stack recursion: `MAX_NESTING` and `FOREACH` -/
 
 /-- The parser's call-recursive descents. `expr` is a `parse_expr` (or
 `parse_literal_list/map`, `CALL {}`) — all routed through `Parser::nested`;
-`foreach` is `parse_foreach_clause`, whose body re-enters itself directly
-(cypher.rs:3527, in the body loop 3484-3531). -/
+`direct` is `parse_foreach_clause` entered from `parse_writing_clause` (cypher.rs), and
+`foreach` one entered from a FOREACH body (cypher.rs), which since #2900 goes through
+`nested` too. -/
 inductive Call
   | leaf
   | expr (kids : List Call)
+  | direct (body : Call)
   | foreach (body : Call)
 
 def MAX_NESTING : Nat := 100
 
 mutual
-/-- `Parser::nested` (cypher.rs:344-354): refuse at `depth ≥ MAX_NESTING`,
-else `depth + 1` for the callee. `parse_foreach_clause` passes `depth`
-through unchanged. -/
+/-- `Parser::nested` (cypher.rs): refuse at `depth ≥ MAX_NESTING`,
+else `depth + 1` for the callee. `direct` passes `depth` through unchanged. -/
 def runCall : Nat → Call → Bool
   | _, .leaf => true
   | d, .expr ks => if d ≥ MAX_NESTING then false else runAll (d + 1) ks
-  | d, .foreach b => runCall d b
+  | d, .direct b => runCall d b
+  | d, .foreach b => if d ≥ MAX_NESTING then false else runCall (d + 1) b
 def runAll : Nat → List Call → Bool
   | _, [] => true
   | d, k :: ks => runCall d k && runAll d ks
@@ -1629,7 +1619,8 @@ mutual
 def exprDepth : Call → Nat
   | .leaf => 0
   | .expr ks => 1 + exprDepthL ks
-  | .foreach b => exprDepth b
+  | .direct b => exprDepth b
+  | .foreach b => 1 + exprDepth b
 def exprDepthL : List Call → Nat
   | [] => 0
   | k :: ks => max (exprDepth k) (exprDepthL ks)
@@ -1640,6 +1631,7 @@ mutual
 def stackDepth : Call → Nat
   | .leaf => 0
   | .expr ks => 1 + stackDepthL ks
+  | .direct b => 1 + stackDepth b
   | .foreach b => 1 + stackDepth b
 def stackDepthL : List Call → Nat
   | [] => 0
@@ -1657,9 +1649,16 @@ theorem nested_bound : ∀ (d : Nat) (c : Call), runCall d c = true → d ≤ MA
     · rename_i hlt
       have := nested_boundL (d + 1) ks h (by omega)
       simp only [exprDepth]; omega
-  | d, .foreach b, h, hd => by
+  | d, .direct b, h, hd => by
     simp only [runCall] at h
     simpa [exprDepth] using nested_bound d b h hd
+  | d, .foreach b, h, _ => by
+    simp only [runCall] at h
+    split at h
+    · simp at h
+    · rename_i hlt
+      have := nested_bound (d + 1) b h (by omega)
+      simp only [exprDepth]; omega
 theorem nested_boundL : ∀ (d : Nat) (ks : List Call), runAll d ks = true → d ≤ MAX_NESTING →
     d + exprDepthL ks ≤ MAX_NESTING
   | d, [], _, hd => by simp [exprDepthL]; exact hd
@@ -1671,26 +1670,50 @@ theorem nested_boundL : ∀ (d : Nat) (ks : List Call), runAll d ks = true → d
 end
 
 /-- **`MAX_NESTING` bounds every `nested` descent**: a parse that gets
-through has at most 100 levels of `parse_expr` / literal / `CALL {}`
-nesting. -/
+through has at most 100 levels of `parse_expr` / literal / `CALL {}` / nested `FOREACH`
+nesting (the last since #2900). -/
 theorem nested_depth_bound (c : Call) (h : runCall 0 c = true) : exprDepth c ≤ MAX_NESTING := by
   have := nested_bound 0 c h (by decide); omega
 
+/-- `FOREACH (x IN [1] | FOREACH (… | CREATE ()))`, `n + 1` clauses deep: the outer one is
+entered directly, the `n` inner ones from a body. -/
 def foreachChain : Nat → Call
   | 0 => .expr [.leaf]                  -- the innermost `CREATE ()` clause's expression
   | n + 1 => .foreach (foreachChain n)
 
-/-- **…but not `FOREACH`**: `parse_foreach_clause` never passes through
-`nested`, so `FOREACH (x IN [1] | FOREACH (…| CREATE ()))` is accepted at
-every depth, with a call stack as deep as the text. Repro: 100 000 levels
-abort the process with a stack overflow (C FalkorDB crashes as well). -/
-theorem foreach_unbounded (n : Nat) :
-    runCall 0 (foreachChain n) = true ∧ stackDepth (foreachChain n) = n + 1 := by
-  induction n with
-  | zero => simp [foreachChain, runCall, runAll, stackDepth, stackDepthL, MAX_NESTING]
-  | succ n ih =>
-    obtain ⟨h1, h2⟩ := ih
-    refine ⟨by simpa [foreachChain, runCall] using h1, ?_⟩
-    simp [foreachChain, stackDepth, h2]; omega
+/-- The chain's outermost clause, entered directly. -/
+def foreachClause (n : Nat) : Call := .direct (foreachChain n)
+
+theorem runCall_foreachChain : ∀ n d : Nat,
+    runCall d (foreachChain n) = decide (d + n < MAX_NESTING)
+  | 0, d => by
+    by_cases h : d ≥ MAX_NESTING
+    · simp [foreachChain, runCall, h]
+    · simp [foreachChain, runCall, runAll, h]; omega
+  | n + 1, d => by
+    by_cases h : d ≥ MAX_NESTING
+    · simp [foreachChain, runCall, h]; omega
+    · have := runCall_foreachChain n (d + 1)
+      simp only [foreachChain, runCall, h, if_false, this]
+      simp only [decide_eq_decide]; omega
+
+theorem stackDepth_foreachChain : ∀ n : Nat, stackDepth (foreachChain n) = n + 1
+  | 0 => by simp [foreachChain, stackDepth, stackDepthL]
+  | n + 1 => by simp [foreachChain, stackDepth, stackDepth_foreachChain n]; omega
+
+/-- **Nested `FOREACH` is bounded** (#2900): a chain of `n + 1`
+clauses is accepted iff `n < MAX_NESTING`, so an accepted chain has a call stack of at most
+`MAX_NESTING + 1` frames, not one as deep as the text. -/
+theorem foreach_bounded (n : Nat) (h : runCall 0 (foreachClause n) = true) :
+    n < MAX_NESTING ∧ stackDepth (foreachClause n) ≤ MAX_NESTING + 1 := by
+  have h1 : runCall 0 (foreachChain n) = true := by simpa [foreachClause, runCall] using h
+  rw [runCall_foreachChain] at h1
+  have h2 : n < MAX_NESTING := by simpa using h1
+  refine ⟨h2, ?_⟩
+  simp [foreachClause, stackDepth, stackDepth_foreachChain]; omega
+
+/-- Depth 99 is accepted, 100 is refused ("too deep"). -/
+theorem foreach_limit : runCall 0 (foreachClause 99) = true ∧ runCall 0 (foreachClause 100) = false := by
+  refine ⟨?_, ?_⟩ <;> simp [foreachClause, runCall, runCall_foreachChain, MAX_NESTING]
 
 end FalkorLexer

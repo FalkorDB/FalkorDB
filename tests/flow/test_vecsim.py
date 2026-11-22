@@ -1,3 +1,4 @@
+import time
 from common import *
 from index_utils import *
 
@@ -354,3 +355,56 @@ class testVecsim():
             res = query_edge_vector_index(self.graph, "Points", "embeddings", k, [50, 50])
             self.env.assertGreater(len(res.result_set), 0)
         self.env.assertTrue(self.conn.ping())
+
+    def test13_query_while_index_is_under_construction(self):
+        # regression (#3382): a vector query used to answer from the half-built
+        # index. Like C, it is refused until that index is OPERATIONAL, for node
+        # and relationship queries alike, whatever the number of rows it would
+        # have returned.
+        g = self.db.select_graph("vecsim_under_construction")
+        # Population runs in the background, 10k entities per batch. This many
+        # keeps each index UNDER CONSTRUCTION for about a second, orders of
+        # magnitude longer than it takes to issue the first query after CREATE.
+        # (There is no hook to pause population; if it ever finished before the
+        # first query, the refused > 0 check below fails loudly, never silently.)
+        g.query("""UNWIND range(1, 100000) AS i
+                   CREATE (:V {e: vecf32([toFloat(i), 1.0])})-[:R {e: vecf32([toFloat(i), 1.0])}]->(:W)""")
+
+        def constructing(label):
+            # only the index the query targets matters: another label's index
+            # may still be building while this one is already operational
+            res = g.ro_query("CALL db.indexes() YIELD label, status RETURN label, status")
+            return any(l == label and "UNDER CONSTRUCTION" in status
+                       for l, status in res.result_set)
+
+        def check_refused_until_operational(label, name, q):
+            refused = 0
+            deadline = time.time() + 120
+            while constructing(label):
+                if time.time() >= deadline:
+                    self.env.assertTrue(False, message=f"{name}: index still under construction after 120s")
+                    raise TimeoutError(f"{name}: index still under construction after 120s")
+                try:
+                    g.ro_query(q)
+                except Exception as e:
+                    self.env.assertContains(f"The vector index on '{label}' is under construction", str(e))
+                    refused += 1
+                    time.sleep(0.01)
+                    continue
+                # answered: only acceptable if population finished meanwhile
+                self.env.assertFalse(constructing(label),
+                                     message=f"{name} answered from an index under construction")
+            self.env.assertGreater(refused, 0, message=f"{name} was never refused")
+            self.env.assertEqual(g.ro_query(q).result_set, [[3]])
+
+        create_node_vector_index(g, "V", "e", dim=2)
+        check_refused_until_operational(
+            "V", "db.idx.vector.queryNodes",
+            "CALL db.idx.vector.queryNodes('V', 'e', 3, vecf32([1.0, 1.0])) YIELD node RETURN count(node)")
+
+        create_edge_vector_index(g, "R", "e", dim=2)
+        check_refused_until_operational(
+            "R", "db.idx.vector.queryRelationships",
+            "CALL db.idx.vector.queryRelationships('R', 'e', 3, vecf32([1.0, 1.0])) YIELD relationship RETURN count(relationship)")
+
+        wait_for_indices_to_sync(g)

@@ -4,160 +4,9 @@ import FalkorReplication.Faithful
 /-
 # Effects v3: emit and apply agree, so master and replica cannot silently diverge
 
-A model of FalkorDB's `GRAPH.EFFECT` replication and a machine-checked proof of
-two things:
-
-* **`emit_apply`** — the payload `build` produces from a `Pending`, replayed by
-  `apply` on the state `commit` ran against, *succeeds* and lands on *exactly*
-  the state `commit` produced.
-* **`replica_never_serves_a_different_graph`** — therefore no stream of writes
-  reaches a state where the replica is serving a graph that differs from its
-  master's.
-
-The first is the load-bearing one, and it is a theorem rather than a definition
-because `commit` and `emit` are two separate functions here, over one shared
-`Pending`, exactly as they are in the engine. The interesting content is that
-`emit` does not ship the mutations in the order `commit` applied them: it
-partitions the created nodes by shape and the deleted ones by label set, so the
-replica rebuilds the same graph from a different ordering. `createBatch_perm`
-and `deleteBatch_perm` are what say that is sound, and `specsOf_group` is what
-says a record decodes back to exactly the group it came from — that row *k*
-belongs to the k-th id in the `IdList` and nothing is dropped, duplicated or
-transposed.
-
-Since `ed5b31553` ("feat(effects)!: emit, apply, and effects as the only
-replication mechanism") there is no query replay, which is what makes any of
-this provable: the replica never re-evaluates anything, so there is no `rand()`,
-no clock and no plan choice for the two sides to disagree about.
-
-## What is modelled, and where it lives in the tree
-
-| here | there |
-| --- | --- |
-| `intern`                 | `Graph::get_label_id_mut`, `get_type_id_mut` (`graph/src/graph/graph.rs`) — append-only, id = index |
-| `internCap`              | `add_node_attribute_name` + `AttrNameMap::insert` (`attribute_store.rs`), refusing a new name at 65,535 (`MAX_ATTRIBUTES`); `applyRec` refuses the buffer (`AttributeLimitReached`, `apply.rs:195`): `applyRec_addAttribute_full_refused` |
-| `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1607`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:343`, #2846) — `absIds`, `createOne_refines` |
-| `GState.free`            | the recycle bin (a `RoaringTreemap`, hence a set — modelled as a predicate) |
-| `createOne` / `deleteOne`| `Graph::create_nodes` / `delete_nodes`, one node at a time |
-| `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs:483`) — recycled first, then fresh |
-| `Pending`                | `runtime::pending::Pending` |
-| `commit`                 | `Pending::commit` (`runtime/pending.rs:1338`), driven by `CommitOp::next` (`runtime/ops/commit.rs:69`) |
-| `emit`                   | `EffectsFormat::build` → `for_each_record` (`graph/src/effects/v3/emit.rs`) |
-| `groupBy NodeSpec.shape` | `digest_created_nodes`' `slots`/`index`/`last` memo |
-| `groupBy Prod.snd`       | `digest_deleted_nodes`, grouped by label set |
-| `gatherRows`             | `gather_rows` — row-major, one row per id, in `IdList` order |
-| `schemaRecs`             | `emit_schema_additions`, against the `SchemaBaseline` |
-| `Record`                 | `effects::v3::Record` (`graph/src/effects/v3/records.rs`) |
-| `applyRec` / `applyRecs` | `apply_effects` (`graph/src/effects/v3/apply.rs`) |
-| `okCreate`               | `verify_schema`, `verify_attribute`, the refusals of `IdSpace::create` (`id_space.rs:582`) |
-| `okDelete`               | the refusals of `IdSpace::release` (`:703`): `refuse_not_live` (`:679`) = `refuse_recycled`, `refuse_undeletable` |
-| `createOne` / `deleteOne` id-space half | `IdSpace::create` / `IdSpace::release` on one id: `createOne_refines`, `deleteOne_refines` (`Faithful.Ids`) |
-| `addLabel`'s id check    | `apply_add_schema` / `verify_id` — the replica re-derives the id and compares |
-| `Batch.verify`           | `IdSpace::verify` (`:737`) via `Graph::validate` — `taken ∩ [entry, ∞) == [entry_bound, entry_bound + created)`; since #2846 the batch lives on the graph, opened by `Graph::new_version` at `bound` (= `{ entry := σ.bound, created := [] }`) |
-| `PendingWF.disjoint`     | why `digest_cancelled` exists: a node created and deleted in one segment is unwound out of `Pending` and travels as its own create/delete pair |
-| `Replica.resync`         | `divergence_guard::on_failure` → `REPLICAOF NO ONE` + `REPLICAOF <master>` |
-| `Replica.halted`         | the same guard under `LOADING` → `std::process::exit(1)` |
-| `Guard.*` (`Guard.lean`) | every fn of `src/divergence_guard.rs` line by line: `onFailure_client_noop`, `onFailure_loading_exits`, `onFailure_replicated_resyncs`, `forceFullResync_exit_iff`, `masterAddress_some`, `clip_spec`; `guardReplica_spec`, `stepNode_failure_matches_guard` tie them to `stepNode` |
-| refinement (wave 4)      | `intern_refines`, `internCap_refines`, `applyRec_addLabel_refines` (= `apply_add_schema`), `applyRec_addAttribute_refines` (= the attribute arm of `apply_record`, cap and refusal included), `idsOf_refines` (= `IdSpace::reserve` on a fresh batch), `memo_refines_groupBy`/`emit_refines` (= the `slots`/`index`/`last` loops, effects_emit_apply `Basic.lean`) |
-
-## Three mechanisms the proof turns on
-
-1. **Values travel as literals.** A `Record` carries `Val`, never an expression,
-   and `applyRec` has no evaluator. Determinism is not a theorem about the
-   replica, it is the shape of `applyRec`'s signature: state and record in,
-   state out, no oracle.
-2. **Entity ids are transmitted and then *validated*.** The replica is told which
-   ids to create, so it never allocates; `Batch.verify` is what stops it
-   accepting an id space its master does not have.
-3. **Schema ids are *re-derived* and then compared.** `applyRec` interns the name
-   locally and refuses the buffer unless its own answer matches the master's —
-   the one place the two dictionaries are checked against each other.
-
-## A note on the boundary
-
-`createOne` raises `bound` once per id that was **not** in the recycle bin, not
-once per id at or above the old boundary. Those agree for one contiguous batch
-and diverge the moment records are grouped by shape, since a later record can
-carry an id below the boundary an earlier one pushed up. The engine gets this
-right by construction — its boundary is `live + recycled.len()`, so a
-recycled id moves an entry from the bin to the count and leaves the boundary
-alone. A first draft of this model did not, and `createBatch_bound` is where it
-failed to compile.
-
-## What is proved
-
-* `specsOf_group`, `chunk_flatMap`, `lookup_row` — a record decodes back to its
-  group, rows and ids aligned.
-* `createBatch_perm`, `deleteBatch_perm` — regrouping is sound.
-* `emit_apply` — emit and apply agree, per payload.
-* `stream_simulation` — the same over any sequence of writes.
-* `step_preserves` / `no_divergence` /
-  `replica_never_serves_a_different_graph` — over the guarded state machine,
-  including the failure branch: every reachable state has the replica either
-  serving exactly the master's graph, resyncing, or halted.
-* `no_spurious_resync` — the guard does not fire on a healthy pair, so the
-  checks are not bought by resyncing at the first difficulty.
-* The `#guard`s at the bottom are executable and non-vacuous: a replica that
-  missed a payload, or that numbered its schema differently, is **refused**.
-
-No `sorry`: the `#print axioms` lines at the end pin every headline theorem to
-Lean's three standard axioms.
-
-## What is still assumed
-
-1. **The bytes.** This model pivots on `Record`, exactly as the engine does
-   (`emit`: `Pending → Record → bytes`; `apply`: `bytes → Record → Graph`).
-   `EffectEncode`/`EffectDecode` and the `IdList` segment encoding — `Range`,
-   `Repeat`, the ascending roaring bitmap — are **not** modelled. That codec is
-   where a wrong width or a reordering encoder would land, and proving
-   `decode (encode r) = r` is the obvious next piece.
-2. **Coverage.** `Record` here covers schema registration, node create and node
-   delete. Edges, `UPDATE_NODE`/`UPDATE_EDGE`, `SET_LABELS`/`REMOVE_LABELS`,
-   the index and constraint DDL, and `digest_cancelled`'s create/delete pair are
-   not modelled; `PendingWF.disjoint` assumes the last of those rather than
-   deriving it.
-   #3022 (`18fc277b9`) added liveness checks to the apply arms: on the arms
-   modelled here they change nothing — `DELETE_NODE`'s `require_live` is the
-   same `refuse_not_live` that `release` (= `okDelete`) already ran, and its
-   `NodeHasRelationships` refusal is vacuous in an edge-free graph — so every
-   theorem stands as is. The checked edge/update/label arms are proved in
-   `proofs/effects_emit_apply` (`Liveness.lean`, `apply_wf`).
-3. **Transport.** `stepsNode` folds the payloads in order; Redis replication
-   supplies that ordering, and `GRAPH.EFFECT` supplies the atomicity by rolling
-   the graph back on any error.
-4. **The master's own batch check.** Since #2846 the master verifies its id
-   space too (`Pending::end_segment` → `Graph::roll_id_batches`, and
-   `MvccGraph::commit` → `Graph::validate`); `commit` here is total. That the
-   master's check never refuses a well-formed write is not proven here (the
-   replica-side analogue is the `Batch.verify` half of `emit_apply`; the
-   id-space half is `proofs/id_space` `roll_inv`/`lifecycle_fresh`).
-   `PendingWF.inLimit` (new with #2911, `fe619ac5f`): every id the master committed is below
-   `ID_LIMIT`, because the master's `IdSpace::create` refuses the rest (`proofs/id_space`
-   `create_out_of_range`); the replica's `okCreate` now checks the same bound, so a
-   `GRAPH.EFFECT` naming 2^61 is refused instead of sizing a matrix to it (#2892).
-5. **Every modifying write produces a payload.** `commit_and_replicate` logs a
-   warning and returns when `wq.modified` is set but `effects_buffer` is `None`;
-   the `build_effects` gate is `REPLICATION_CONSUMERS || AOF`, evaluated when the
-   query starts. A replica that attaches mid-query is outside this model and is
-   covered by its full sync.
-6. **That the Lean `emit`/`applyRec` are faithful to the Rust.** This is a
-   correspondence to review, clause by clause, against the table above — not
-   something the proof can establish.
-
-## Re-checked against origin/main `1d15bf713`
-
-#3298 (`2bb51088b`) makes the `CREATE_NODE` arm refuse a repeated id. `okCreate`
-already required `nodupB ids`, so no theorem changes: the conjunct, stricter than the
-Rust until #3298, is now exactly its check (effects_emit_apply `createNode_repeat_refused`).
-
-## Checking it
-
-    cd proofs/replication && lake build
-
-
-## Re-pinned to 5e475e6c9 (#3436)
-No model change (emit/format take `&Graph`; `Pending::commit` takes `&mut Graph`). Pins shifted
-in `emit.rs`, `format.rs`, `pending.rs`.
+Models `GRAPH.EFFECT` replication (`effects/v3/{emit,apply,format}.rs`, `divergence_guard.rs`) and proves `emit_apply`:
+the payload `build` produces replays on the replica to exactly the state `commit` produced.
+See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
 -/
 
 namespace Falkor
@@ -197,7 +46,7 @@ def intern (d : List Name) (n : Name) : Nat × List Name :=
   | some i => (i, d)
   | none   => (d.length, d ++ [n])
 
-/-- `AttrNameMap::insert` with its capacity (`MAX_ATTRIBUTES` = 65,535, `attribute_store.rs:130`): a known
+/-- `AttrNameMap::insert` with its capacity (`MAX_ATTRIBUTES` = 65,535, `attribute_store.rs`): a known
 name keeps its id; a new one is refused (`none`) once the dictionary holds `cap` names. Labels and types
 have no such cap, so they use `intern`. `internCap_refines` ties it to `FalkorFaithful.internCapF`. -/
 def internCap (cap : Nat) (d : List Name) (n : Name) : Option (Nat × List Name) :=
@@ -724,19 +573,17 @@ def specsOf (ids labels attrIds : List Nat) (rows : List Val) : List NodeSpec :=
   (ids.zip (chunk ids.length attrIds.length rows)).map
     (fun pr => ⟨pr.1, labels, attrIds.zip pr.2⟩)
 
-/-- `ID_LIMIT` (`id_space.rs:100`) = `GrB_INDEX_MAX` = `2^60 - 1`: `IdSpace::create` refuses
-    any id at or above it (#2911, `fe619ac5f`; `id_space.rs:586`). -/
+/-- `ID_LIMIT` (`id_space.rs`) = `GrB_INDEX_MAX` = `2^60 - 1`: `IdSpace::create` refuses
+    any id at or above it (`id_space.rs`). -/
 def idLimit : Nat := 2 ^ 60 - 1
 
 /-- `verify_schema` + `verify_attribute` + `IdSpace::create`'s refusals.
     Note the two id checks are guarded by the recycle bin: an id that is free
     right now is neither live nor a double claim, which is what tells a genuine
-    re-create from a collision. The last conjunct is the `ID_LIMIT` refusal
-    (#2911), which the Rust checks first; a `Bool` conjunction's order is immaterial.
-    `nodupB ids` is the `CREATE_NODE` arm's repeated-id refusal (`apply.rs:222`,
-    #3298 / `2bb51088b`, issue #3247). Before #3298 the Rust had no such check (the
-    list was folded into a set and one node created for two ids), so this conjunct
-    was stricter than the code; it is now exactly the code's check. -/
+    re-create from a collision. The last conjunct is the `ID_LIMIT` refusal,
+    which the Rust checks first; a `Bool` conjunction's order is immaterial.
+    `nodupB ids` is the `CREATE_NODE` arm's repeated-id refusal (`apply.rs`;
+    effects_emit_apply `createNode_repeat_refused`). -/
 def okCreate (σ : GState) (b : Batch) (ids labels attrIds : List Nat) (rows : List Val) : Bool :=
   labels.all (fun l => decide (l < σ.labels.length))
   && attrIds.all (fun a => decide (a < σ.attrs.length))
@@ -748,7 +595,7 @@ def okCreate (σ : GState) (b : Batch) (ids labels attrIds : List Nat) (rows : L
   && ids.all (fun i => decide (i < idLimit))
 
 /-- `IdSpace::release`'s refusals: `refuse_not_live` (= `refuse_recycled` +
-`refuse_undeletable`, #3022). -/
+`refuse_undeletable`). -/
 def okDelete (σ : GState) (b : Batch) (ids : List Nat) : Bool :=
   nodupB ids
   && ids.all (fun i => !σ.free i)
@@ -760,7 +607,7 @@ def applyRec : Record → GState × Batch → Option (GState × Batch)
         some ({ σ with labels := (intern σ.labels nm).2 }, b) else none
   | .addAttribute id nm, (σ, b) =>
       match internCap FalkorFaithful.attrCap σ.attrs nm with
-      | none => none  -- `ApplyError::AttributeLimitReached` (`apply.rs:195`)
+      | none => none  -- `ApplyError::AttributeLimitReached` (`apply.rs`)
       | some (a, d') => if a = id then some ({ σ with attrs := d' }, b) else none
   | .createNode ids labels attrIds rows, (σ, b) =>
       if okCreate σ b ids labels attrIds rows then
@@ -1175,7 +1022,7 @@ structure PendingWF (p : Pending) (σ : GState) : Prop where
   delsLive    : ∀ i ∈ p.dels, σ.liveB i = true
   disjoint    : ∀ i ∈ p.ids, i ∉ p.dels
   /-- The master's own `IdSpace::create` (`Graph::create_nodes`) refused any id at or above
-      `ID_LIMIT` (#2911), so every id a committed `Pending` carries is below it. -/
+      `ID_LIMIT`, so every id a committed `Pending` carries is below it. -/
   inLimit     : ∀ i ∈ p.ids, i < idLimit
 
 /-- **emit and apply agree.** The payload `build` produces from a `Pending`,
@@ -1620,7 +1467,7 @@ theorem internCap_refines (cap : Nat) (d : List Name) (n : Name) :
   rw [idxOf_findIdx]
   cases d.findIdx? (· == n) <;> simp
 
-/-- **`applyRec`'s `ADD_ATTRIBUTE` arm is the attribute path of `apply_record` (`apply.rs:171`)**, cap and
+/-- **`applyRec`'s `ADD_ATTRIBUTE` arm is the attribute path of `apply_record` (`apply.rs`)**, cap and
 refusal included: the faithful copy is `FalkorFaithful.applyAddAttributeF` (insert, read the id back, refuse
 with `AttributeLimitReached` if there is none, then `verify_id`). -/
 theorem applyRec_addAttribute_refines (id : Nat) (nm : Name) (σ : GState) (b : Batch) :
@@ -1693,9 +1540,9 @@ theorem emit_refines (p : Pending) (σ : GState) :
       ++ (FalkorEA.memoGroup Prod.snd p.deleted).map deleteRec := by
   simp only [emit, memo_refines_groupBy]
 
-/-! ## The id space the engine keeps (#2846)
+/-! ## The id space the engine keeps
 
-Since #2846 `Graph` holds no counter or bin of its own: `node_id_bound` is
+`Graph` holds no counter or bin of its own: `node_id_bound` is
 `IdSpace::bound` = `live + recycled.len()`, `create_nodes` is `IdSpace::create`
 and `delete_nodes` is `IdSpace::release`. `GState.bound`/`free` are that space
 abstracted (`absIds`), and `createOne`/`deleteOne` move it exactly as those two
@@ -1737,10 +1584,31 @@ theorem deleteOne_refines (σ : GState) (s : FalkorFaithful.Ids)
     omega
   · simp only [deleteOne, FalkorFaithful.Ids.release1]
     by_cases e : i = id
-    · subst e; simp [List.contains_iff_mem, FalkorFaithful.insAsc_mem]
-    · simp [e, hf i, List.contains_iff_mem, FalkorFaithful.insAsc_mem]
+    · subst e; simp [FalkorFaithful.insAsc_mem]
+    · simp [e, hf i, FalkorFaithful.insAsc_mem]
   · simp only [FalkorFaithful.Ids.release1]
     exact propext (FalkorFaithful.insAsc_nodup id s.bin hnf)
+
+/-- **`deleteOne_refines` with its `live ≥ 1` premise discharged.** The `u64` subtraction in
+`IdSpace::release` (`self.live -= freed.len()`, id_space.rs) agrees with the model's `Nat` one
+for every live id of a well-formed state: `1 ≤ live` follows from `σ.WF` (the bin is below the
+boundary) and `id < bound`, not free (`FalkorFaithful.Ids.live_pos`). For an id below the entry
+boundary (`i < b.entry ≤ σ.bound`, the first disjunct of `okDelete`) both hold, so the premise is
+discharged there. For an id this batch created *above* the boundary (the second disjunct), `id < bound` can
+fail mid-batch (a gap that `Batch.verify` only closes at the end), and `1 ≤ live` is the id space's count
+invariant (`live` counts every created id), which this model's `Ids` does not carry: that case is why the
+`IdSpace::release` row needed more: see `IdLink.deleteOne_refines_idspace`, which closes it. -/
+theorem deleteOne_refines_live (σ : GState) (s : FalkorFaithful.Ids) (hw : WF σ) (hn : s.bin.Nodup)
+    (hb : σ.bound = s.bound) (hf : ∀ i, σ.free i = s.bin.contains i) (id : Nat)
+    (hid : id < σ.bound) (hnf : id ∉ s.bin) :
+    (deleteOne σ id).bound = (s.release1 id).bound ∧
+    ∀ i, (deleteOne σ id).free i = (s.release1 id).bin.contains i ∧ (s.release1 id).bin.Nodup = s.bin.Nodup := by
+  have hlt : ∀ b ∈ s.bin, b < s.bound := by
+    intro b hbm
+    have h1 : σ.free b = true := by rw [hf b]; simpa using hbm
+    rw [← hb]; exact hw.binOk b h1
+  exact deleteOne_refines σ s hb hf id
+    (FalkorFaithful.Ids.live_pos s hn hlt id (hb ▸ hid) hnf) hnf
 
 end Falkor
 
