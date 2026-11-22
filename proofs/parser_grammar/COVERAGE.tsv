@@ -98,6 +98,7 @@ graph/src/parser/ast.rs	QueryNode::new	652	PROVEN	C.Graph QNode.new_spec
 graph/src/parser/ast.rs	QueryRelationship::fmt	703	PROVEN	C.Fmt fmtRel_untyped_undirected
 graph/src/parser/ast.rs	QueryRelationship::new	731	PROVEN	C.Graph QRel.new_spec (all_shortest_paths = No)
 graph/src/parser/ast.rs	QueryPath::new	775	PROVEN	C.Graph QPath.new_spec
+graph/src/parser/ast.rs	QueryPath::is_incoming	789	NOT COVERED	(#3460): not modelled yet; the proof bot adds the parser_grammar model of QueryPath::incoming
 graph/src/parser/ast.rs	QueryGraph::default	812	PROVEN	C.Graph QG.default_spec
 graph/src/parser/ast.rs	QueryGraph::fmt	825	PROVEN	C.Fmt fmtGraph_empty
 graph/src/parser/ast.rs	merge_attr_maps	848	PROVEN	C.Graph mergeAttrs_kids, mergeAttrs_map
