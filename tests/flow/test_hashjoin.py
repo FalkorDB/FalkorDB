@@ -165,6 +165,9 @@ class testHashJoin(FlowTestsBase):
         self.env.assertEqual(joined("(a), (b)", "a.x", "b.x"), [[7]])
         # the same one level down, inside a list key
         self.env.assertEqual(joined("(a), (b)", "[a.x]", "[b.x]"), [[7]])
+        # and inside a map key, including entries given in a different order
+        self.env.assertEqual(joined("(a), (b)", "{k: a.x}", "{k: b.x}"), [[7]])
+        self.env.assertEqual(joined("(a), (b)", "{p: a.x, q: 1}", "{q: 1, p: b.x}"), [[7]])
 
     def test_distinct_ints_above_2_pow_53(self):
         # the join's Int/Float key handling must not leak into the shared
