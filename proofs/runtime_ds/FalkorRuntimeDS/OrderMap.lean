@@ -8,13 +8,13 @@ sane `PartialEq` for `Arc<String>` keys satisfies). A replaced entry keeps its
 
 | here | there |
 | --- | --- |
-| `OrderMap`        | `struct OrderMap<K, V> { vec: ThinVec<(K, V)> }` (ordermap.rs:28) |
-| `insertL`         | `OrderMap::insert` (ordermap.rs:85) |
-| `posL`, `removeL` | `OrderMap::remove` (ordermap.rs:100) — `position` then `ThinVec::remove(pos)` |
-| `getL`            | `OrderMap::get` (ordermap.rs:111), `get_str` (ordermap.rs:149) |
-| `fromList`        | `FromIterator` (ordermap.rs:192), `from_vec` (ordermap.rs:49), `Extend` (ordermap.rs:226) |
-| `fromUniqueKeys`  | `OrderMap::from_unique_keys` (ordermap.rs:66) — `debug_assert!` only |
-| `eqM`             | `PartialEq for OrderMap` (ordermap.rs:178) |
+| `OrderMap`        | `struct OrderMap<K, V> { vec: ThinVec<(K, V)> }` (ordermap.rs) |
+| `insertL`         | `OrderMap::insert` (ordermap.rs) |
+| `posL`, `removeL` | `OrderMap::remove` (ordermap.rs) — `position` then `ThinVec::remove(pos)` |
+| `getL`            | `OrderMap::get` (ordermap.rs), `get_str` (ordermap.rs) |
+| `fromList`        | `FromIterator` (ordermap.rs), `from_vec` (ordermap.rs), `Extend` (ordermap.rs) |
+| `fromUniqueKeys`  | `OrderMap::from_unique_keys` (ordermap.rs) — `debug_assert!` only |
+| `eqM`             | `PartialEq for OrderMap` (ordermap.rs) |
 -/
 namespace FalkorRuntimeDS.OrderMapModel
 
@@ -23,7 +23,7 @@ variable {K V : Type}
 section Defs
 variable [BEq K]
 
-/-- ordermap.rs:85 — scan for `*k == key`; replace value in place, else push. -/
+/-- ordermap.rs — scan for `*k == key`; replace value in place, else push. -/
 def insertL : List (K × V) → K → V → List (K × V) × Option V
   | [], k, v => ([(k, v)], none)
   | (k', v') :: t, k, v =>
@@ -35,14 +35,14 @@ def posL : List (K × V) → K → Option Nat
   | [], _ => none
   | (k', _) :: t, k => if k' == k then some 0 else (posL t k).map (· + 1)
 
-/-- ordermap.rs:100 — first match removed, returned. -/
+/-- ordermap.rs — first match removed, returned. -/
 def removeL : List (K × V) → K → List (K × V) × Option V
   | [], _ => ([], none)
   | (k', v') :: t, k =>
     if k' == k then (t, some v')
     else let r := removeL t k; ((k', v') :: r.1, r.2)
 
-/-- ordermap.rs:111 — first `k == key`. -/
+/-- ordermap.rs — first `k == key`. -/
 def getL : List (K × V) → K → Option V
   | [], _ => none
   | (k', v') :: t, k => if k' == k then some v' else getL t k
@@ -54,7 +54,7 @@ def fromList (l : List (K × V)) : List (K × V) :=
 /-- `from_unique_keys`: the pairs verbatim (the uniqueness check is a `debug_assert!`). -/
 def fromUniqueKeys (l : List (K × V)) : List (K × V) := l
 
-/-- ordermap.rs:178 — same length, and every `(k, v)` of `a` has `b.get(k) == Some(v')`
+/-- ordermap.rs — same length, and every `(k, v)` of `a` has `b.get(k) == Some(v')`
 with `v' == v`. -/
 def eqM [BEq V] (a b : List (K × V)) : Bool :=
   a.length == b.length &&
@@ -334,7 +334,7 @@ end Eq
 build a duplicate key produces a map for which `==` is not symmetric and
 `remove` leaves the key reachable. (Reproduced against Rust in
 `graph/tests/lean_runtime_ds.rs::ordermap_from_unique_keys_duplicates`.)
-Still so on main 1d15bf713: #2905 documents the contract and keeps the check
+Still so: #2905 documents the contract and keeps the check
 debug-only on purpose (a release check measured 1.2x-5x slower). -/
 
 /-- `a == b` but `b != a`. -/

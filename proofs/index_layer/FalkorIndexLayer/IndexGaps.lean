@@ -1,21 +1,12 @@
 import FalkorIndexLayer.IndexerM
 import FalkorIndexLayer.Iter
 /-
-# Gaps closed 2026-10-20: #3166 (stopwords) and #3382 (vector query before OPERATIONAL)
+# Gaps closed 2026-10-20: #3166 (stopwords, open) and the vector-query gate
 
-Both bugs were invisible to the model: `IndexerM` recorded the label's stopwords
+Both were invisible to the model: `IndexerM` recorded the label's stopwords
 but not the ones its RediSearch spec was created with, and the query entry points
 were proven sound against the RS table without ever asking whether that table was
 fully populated.
-
-| Lean | Rust (fb3d516d0) |
-| --- | --- |
-| `Idx.rsStop` (`IndexM.lean`) | the stopword list `create_rs_index` hands to `RediSearch_IndexOptionsSetStopwords` (`mod.rs:1119-1133`); fixed for the spec's lifetime |
-| `StopwordsAgree`, `CreateIndexKeepsStopwords` | the property: what `db.indexes()` / the RDB report (`Index::stopwords` `mod.rs:2189`) is what RediSearch applies |
-| `scenario3166` | `create_index` `indexer.rs:300-313` (existing spec: `register_fields` only) and `:341-343` (`set_stopwords` on the metadata) |
-| `incTicket` | `populate_index` taking its ticket: `try_increment_pending` (`mod.rs:2110`) on the published entry (shared `Arc` counters) |
-| `vectorQuery` | `Indexer::vector_query` `indexer.rs:541-553` → `Index::vector_query` `mod.rs:1798-1853` (no `is_operational` `mod.rs:2084` check) |
-| `VectorQueryRequiresOperational`, `VectorQueryComplete` | the property: a KNN query refuses until OPERATIONAL (C: "Invalid arguments for procedure") |
 -/
 namespace IndexLayer.Meta
 namespace Ixr
@@ -127,7 +118,7 @@ def step2_3166 : Except String Ixr :=
 
 /-- **BUG #3166.** Both `CREATE`s succeed; the label reports stopwords `['router']`
 but its RediSearch spec was created (by the range index) with RediSearch's default
-list, and the second call only registers the new field on it (`indexer.rs:313`).
+list, and the second call only registers the new field on it (`indexer.rs`).
 Live (port 6640 Rust main 9d3869aa8 / 6641 C): `db.idx.fulltext.queryNodes('L', 'router')`
 → Rust 1 row, C 0; `db.indexes()` reports `[router]` on both. -/
 theorem bug3166_stopwords_not_applied :
@@ -156,18 +147,18 @@ theorem bug3166_violates : ¬ CreateIndexKeepsStopwords E0 := by
       have := hP I1 .fulltext "L" ["name"] 0 opt3166 I2 x hpre h2 hx hx'.1
       rw [hx'.2.1, hx'.2.2] at this; cases this
 
-/-! ## #3382: a vector query answers while the index is UNDER CONSTRUCTION -/
+/-! ## A vector query answers while the index is UNDER CONSTRUCTION -/
 
 /-- `populate_index` taking its ticket for generation `g` on the published entry
-(`try_increment_pending` `mod.rs:2110`; the counters are a shared `Arc`, so the
+(`try_increment_pending` `mod.rs`; the counters are a shared `Arc`, so the
 published index itself changes, as in `updateProgress`). -/
 def incTicket (I : Ixr) (l : String) (g : Nat) : Ixr :=
   match I.map.get l with
   | some x => { I with map := I.map.upd l { x with slots := x.slots.inc g } }
   | none => I
 
-/-- `Indexer::vector_query` (`indexer.rs:541-553`) → `Index::vector_query`
-(`mod.rs:1798-1853`): route by label (no index ⇒ `Ok(empty)`), `CString::new` of
+/-- `Indexer::vector_query` (`indexer.rs`) → `Index::vector_query`
+(`mod.rs`): route by label (no index ⇒ `Ok(empty)`), `CString::new` of
 `vector:{field}` (NUL ⇒ `Err`), then `Iter.vectorQ` with the FFI outcomes
 `cloneOk` (`try_clone_ref`), `nodeOk` (`CreateVecSimNode`), `iterOk`
 (`GetResultsIterator`) and RediSearch's answer `res`. Nothing consults
@@ -206,6 +197,45 @@ theorem vectorQueryGuarded_requires_operational (c n i : Bool) (res : List (Key 
   refine ⟨"Invalid arguments for procedure", ?_⟩
   simp [vectorQueryGuarded, route, hx, hop]
 
+/-- `Indexer::is_operational` (`indexer.rs`, PR #3581): no index on the label ⇒
+`true` (`is_none_or`), else `Index::is_operational` (`mod.rs`, `operational`). -/
+def isOperational (I : Ixr) (l : String) : Bool :=
+  match I.route l with
+  | some x => operational x
+  | none => true
+
+theorem isOperational_none (I : Ixr) (l : String) (h : I.map.get l = none) :
+    isOperational I l = true := by
+  simp [isOperational, route, h]
+
+theorem isOperational_some (I : Ixr) (l : String) (x : Idx) (h : I.map.get l = some x) :
+    isOperational I l = operational x := by
+  simp [isOperational, route, h]
+
+/-- PR #3581's gate in `Graph::vector_query_nodes`/`_edges` (`graph.rs`):
+`if !indexer.is_operational(label) { Err } else indexer.vector_query ..` is exactly the
+fix shape `vectorQueryGuarded`, so it satisfies `VectorQueryRequiresOperational`. -/
+theorem vectorQueryGuarded_eq_isOperational (I : Ixr) (l a : String) (c n i : Bool)
+    (res : List (Key × Nat)) :
+    vectorQueryGuarded I l a c n i res =
+      (if isOperational I l then vectorQuery I l a c n i res
+       else .error "Invalid arguments for procedure") := by
+  unfold vectorQueryGuarded isOperational
+  cases route I l <;> simp
+
+/-- **Fixed (#3581): the entry point on main, `Graph::vector_query_nodes`/`_edges`**
+(`graph.rs`): `if !indexer.is_operational(label) { Err } else indexer.vector_query ..`.
+It refuses a label whose index is not OPERATIONAL, for every FFI outcome and every RediSearch
+answer. -/
+def gated3581 (I : Ixr) (l a : String) (c n i : Bool) (res : List (Key × Nat)) : Except String RIter :=
+  if isOperational I l then vectorQuery I l a c n i res else .error "Invalid arguments for procedure"
+
+theorem gated3581_requires_operational (c n i : Bool) (res : List (Key × Nat)) :
+    VectorQueryRequiresOperational (fun I l a => gated3581 I l a c n i res) := by
+  intro I l a x hx hop
+  refine ⟨"Invalid arguments for procedure", ?_⟩
+  simp [gated3581, isOperational_some I l x hx, hop]
+
 /-- `CREATE VECTOR INDEX FOR (n:V) ON (n.e) OPTIONS {dimension:2, similarityFunction:'euclidean'}`,
 then `populate_index` takes its ticket for the entry's generation. -/
 def I3382 : Ixr :=
@@ -219,37 +249,14 @@ theorem i3382_under_construction :
     (I3382.map.get "V").map (fun x => (x.hasRsIndex, operational x)) = some (true, false) := by
   decide
 
-/-- **BUG #3382 (gate).** On main the query answers `Ok` while the index is under
-construction, whatever RediSearch returns. -/
-theorem bug3382_vector_query_ignores_operational (res : List (Key × Nat)) :
-    ¬ VectorQueryRequiresOperational (fun I l a => vectorQuery I l a true true true res) := by
-  intro hP
+/-- The live state, `I3382` (one ticket pending: UNDER CONSTRUCTION), is now refused:
+`vector_query_nodes` replies the error instead of 0 rows. -/
+theorem gated3581_i3382_refused (c n i : Bool) (res : List (Key × Nat)) :
+    ∃ e, gated3581 I3382 "V" "e" c n i res = .error e := by
   have e := i3382_under_construction
   simp only [Option.map_eq_some_iff, Prod.mk.injEq] at e
   obtain ⟨x, hx, -, hop⟩ := e
-  obtain ⟨err, he⟩ := hP I3382 "V" "e" x hx hop
-  simp [vectorQuery, route, hx, Iter.vectorField, Idx.hasNul] at he
-
-/-- **BUG #3382 (result).** Three labelled nodes carry a vector and the populate job
-has written none of them yet (the RS table is empty). The empty answer is exactly
-what the RediSearch KNN contract allows for that table (`KnnSpec`), and main returns
-it as `Ok` with 0 rows. Live (port 6640, 200k `:V` nodes): `queryNodes('V','e',3,…)`
-right after `CREATE VECTOR INDEX` → count 0, then 3, while `db.indexes()` reports
-`[Indexing] 0/200000: UNDER CONSTRUCTION`; C (6641) errors
-`Invalid arguments for procedure 'db.idx.vector.queryNodes'` until OPERATIONAL. -/
-theorem bug3382_partial_answer :
-    KnnSpec (fun _ => none) (fun _ => True) 3 [] ∧
-    ¬ VectorQueryComplete [0, 1, 2] 3 (vectorQuery I3382 "V" "e" true true true []) := by
-  refine ⟨⟨by simp, by simp⟩, fun h => ?_⟩
-  have e := i3382_under_construction
-  simp only [Option.map_eq_some_iff, Prod.mk.injEq] at e
-  obtain ⟨x, hx, -, -⟩ := e
-  have hq : vectorQuery I3382 "V" "e" true true true [] = .ok (Iter.vectorQ x.spec true true true []) := by
-    simp [vectorQuery, route, hx, Iter.vectorField, Idx.hasNul]
-  have := h (by decide) _ hq 0 (by simp)
-  revert this
-  unfold Iter.vectorQ
-  split <;> simp [scoredIds, RIter.empty, RIter.new, RIter.items, Iter.drainN]
+  exact gated3581_requires_operational c n i res I3382 "V" "e" x hx hop
 
 end Ixr
 end IndexLayer.Meta

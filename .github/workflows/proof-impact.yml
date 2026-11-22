@@ -265,6 +265,11 @@ jobs:
                concrete input), and translate it into the smallest Cypher query or command
                that shows it, with the result the old code gave and the new code gives.
                This is a probable bug in the PR.
+               Exception: if the theorem that no longer holds is the counterexample of a bug
+               that proofs/FINDINGS.md or the project README lists as open, and the PR fixes
+               that bug, the verdict is "model updated": replace the counterexample with the
+               correctness theorem, delete the model of the old code, and remove the bug from
+               FINDINGS.md and the README (git history keeps them).
             For `removed` and `added`, update COVERAGE.tsv rows (renamed fns keep their
             proofs; new fns get a row, with a model and proof when they are small, else
             NOT COVERED with a reason). Line numbers in rows must match ./code.
@@ -441,6 +446,8 @@ jobs:
             note="Suggested proof update: comment \`/proofs apply\` to commit this patch (people with write access; it is committed only while the PR head is still \`${HEAD:0:9}\`), or download \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) and apply it yourself (\`git apply proofs.patch\`)."
           elif [[ "$GATES" == pass ]]; then
             note="No proof change was needed."
+          elif [[ "$GATES" == held && -s out/proofs.patch ]] && head -n 1 out/gates.md | grep -q '^Gates: `lean_ci.sh` \*\*pass\*\*; `coverage.sh --unmatched` \*\*pass\*\*'; then
+            note="Both gates passed; held only so someone looks at the changed statements or coverage rows above. Comment \`/proofs apply\` to commit this patch (people with write access; only while the PR head is still \`${HEAD:0:9}\`), or apply \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) yourself."
           else
             note="Gates: **${GATES:-did not run}**, so the patch is not suggested as is; it and the logs are in the [run's \`proof-gate\` artifact]($RUN_URL)."
           fi

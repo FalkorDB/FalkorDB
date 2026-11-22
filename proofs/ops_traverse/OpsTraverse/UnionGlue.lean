@@ -7,7 +7,7 @@ import GraphblasWrappers.DeltaLmxm
 
 | here | there |
 | --- | --- |
-| `relationshipTensors`        | `relationship_tensors` (`cond_traverse.rs:288`) |
+| `relationshipTensors`        | `relationship_tensors` (`cond_traverse.rs`) |
 | `buildUnrestricted` | `build_unrestricted_iter` (:302) and `build_transposed_iter` (:337): untyped or single type (the transposed builder is the same function over the transposed sources) |
 | `buildUnion`, `transposedPairs` | `build_union_iter` (:317); `build_transposed_union_iter` (:352), whose pair set is the forward union's swapped back (`transposedPairs`) |
 | `fwdOkOf`                    | the `fwd_ok` / `rev_ok` of `build_state` (:512-531) |
@@ -31,14 +31,14 @@ theorem relationshipTensors_none {T Ty : Type} (get : Ty → Option T) (types : 
     relationshipTensors get types = none ↔ ∀ t ∈ types, get t = none := by
   unfold relationshipTensors
   by_cases h : (types.filterMap get).isEmpty = true
-  · simp only [h, if_true, true_iff]
+  · simp only [h, ite_true, true_iff]
     intro t ht
     cases hg : get t with
     | none => rfl
     | some x =>
       have : x ∈ types.filterMap get := List.mem_filterMap.2 ⟨t, ht, hg⟩
       simp [List.isEmpty_iff.1 h] at this
-  · simp only [h, Bool.false_eq_true, if_false]
+  · simp only [h, Bool.false_eq_true, ite_false]
     have : types.filterMap get ≠ [] := by simpa using h
     obtain ⟨x, hx⟩ := List.exists_mem_of_ne_nil _ this
     obtain ⟨t, ht, hg⟩ := List.mem_filterMap.1 hx
@@ -52,7 +52,7 @@ theorem relationshipTensors_some {T Ty : Type} (get : Ty → Option T) (types : 
   unfold relationshipTensors at h
   by_cases hE : (types.filterMap get).isEmpty = true
   · simp [hE] at h
-  · simp only [hE, Bool.false_eq_true, if_false, Option.some.injEq] at h
+  · simp only [hE, Bool.false_eq_true, ite_false, Option.some.injEq] at h
     subst h
     refine ⟨rfl, by simpa using hE, fun x hx => ?_⟩
     obtain ⟨t, ht, hg⟩ := List.mem_filterMap.1 hx
@@ -182,7 +182,7 @@ theorem foldl_eadd (n : Nat) (F : Pat) (rest : List VM.VM) :
     rw [List.foldl_cons, ih]
     simp [eadd, or_assoc]
 
-/-- `TraversalMatrix::delta_lmxm_into` (cond_traverse.rs:86-112): one `delta_lmxm`, or for the union
+/-- `TraversalMatrix::delta_lmxm_into` (cond_traverse.rs): one `delta_lmxm`, or for the union
 the first type into `f` and each further type, from a copy of the original frontier, OR-ed in. -/
 noncomputable def deltaInto (n : Nat) (F : Pat) : TMat → Pat
   | .bool v => lm n F v
@@ -297,7 +297,7 @@ theorem processPairs_seek (g : Graph) (isRev emit : Bool) (r : RowIn) (p : Nat �
   | q :: ps, h => by
     have ih := processPairs_seek g isRev emit r p ps (fun x hx => h x (List.mem_cons_of_mem _ hx))
     by_cases hp : p q = true
-    · simp only [List.filter_cons, hp, if_true, processPairs, List.flatMap_cons] at ih ⊢
+    · simp only [List.filter_cons, hp, ite_true, processPairs, List.flatMap_cons] at ih ⊢
       rw [ih]
     · have hc : pcond r isRev q = false := by
         cases hh : pcond r isRev q
@@ -305,7 +305,7 @@ theorem processPairs_seek (g : Graph) (isRev emit : Bool) (r : RowIn) (p : Nat �
         · exact absurd (h q (by simp) hh) hp
       have e : pairRows g isRev r emit q = [] := by
         unfold pairRows; simp [hc]
-      simp only [List.filter_cons, hp, if_false, processPairs, List.flatMap_cons, e, List.nil_append] at ih ⊢
+      simp only [List.filter_cons, hp, processPairs, List.flatMap_cons, e, List.nil_append] at ih ⊢
       exact ih
 
 /-- **Multi-type, directed, emit mode**: `expand_union_row` produces `(f,t,e)` iff `e` is an edge
@@ -317,9 +317,9 @@ theorem union_emit_directed_iff {S : Graph → List (Nat × Nat)} (hS : StructIt
       ∃ x ∈ gs.flatten, x.id = e ∧ x.src = f ∧ x.dst = t ∧ e ∉ r.used ∧
         okBound r.fromId f ∧ okBound r.toId t := by
   have hs := (unionStream_spec hS gs (fun _ => true)).2.2
-  simp only [expandUnionRow, expandRowP, Bool.false_eq_true, if_false, List.append_nil]
+  simp only [expandUnionRow, expandRowP, Bool.false_eq_true, ite_false, List.append_nil]
   rw [mem_processPairs (fun _ _ => True) (fun s d => by rw [hs]; simp)]
-  simp only [Bool.false_eq_true, if_false]
+  simp only [Bool.false_eq_true, ite_false]
   constructor
   · rintro ⟨x, hx, h1, h2, h3, h4, _, h5, h6⟩; exact ⟨x, hx, h1, h5, h6, h2, h3, h4⟩
   · rintro ⟨x, hx, h1, h5, h6, h2, h3, h4⟩; exact ⟨x, hx, h1, h2, h3, h4, trivial, h5, h6⟩
@@ -334,10 +334,10 @@ theorem union_emit_bidir_iff {S : Graph → List (Nat × Nat)} (hS : StructIter 
   have hf : ∀ s d, (s, d) ∈ (unionStream S gs (fun _ => true)).filter (fun q => q.1 != q.2) ↔
       (∃ x ∈ gs.flatten, x.src = s ∧ x.dst = d) ∧ s ≠ d := by
     intro s d; simp [List.mem_filter, hs]
-  simp only [expandUnionRow, expandRowP, if_true, List.mem_append]
+  simp only [expandUnionRow, expandRowP, ite_true, List.mem_append]
   rw [mem_processPairs (fun _ _ => True) (fun s d => by rw [hs]; simp),
     mem_processPairs (fun s d => s ≠ d) hf]
-  simp only [Bool.false_eq_true, if_false, if_true]
+  simp only [Bool.false_eq_true, ite_false, ite_true]
   constructor
   · rintro (⟨x, hx, h1, h2, h3, h4, _, h5⟩ | ⟨x, hx, h1, h2, h3, h4, hne, h5⟩)
     · exact ⟨x, hx, h1, h2, h3, h4, Or.inl h5⟩
@@ -351,7 +351,7 @@ the `UnionIter` docs: a pair joined by several types is emitted once). -/
 theorem union_collapse_directed_keys_nodup {S : Graph → List (Nat × Nat)} (hS : StructIter S)
     (gs : List Graph) (p : Nat × Nat → Bool) (r : RowIn) :
     ((expandUnionRow S gs p false false r).map fun x => (x.1, x.2.1)).Nodup := by
-  simp only [expandUnionRow, expandRowP, Bool.false_eq_true, if_false, List.append_nil]
+  simp only [expandUnionRow, expandRowP, Bool.false_eq_true, ite_false, List.append_nil]
   exact (unionStream_spec hS gs p).2.1.sublist (collapse_keys_sublist gs.flatten r _)
 
 /-- The per-type *transposed* iterator (`Tensor::matrix_t`): dst-major, `(dst, src)` ascending. -/
@@ -403,7 +403,7 @@ theorem union_bwd_emit_directed_iff {S : Graph → List (Nat × Nat)} (hS : Stru
         okBound r.fromId f ∧ okBound r.toId t := by
   have hs := (transposedPairs_spec hS gs (fun _ => true)).2
   rw [mem_processPairs (fun _ _ => True) (fun s d => by rw [hs]; simp)]
-  simp only [Bool.false_eq_true, if_false]
+  simp only [Bool.false_eq_true, ite_false]
   constructor
   · rintro ⟨x, hx, h1, h2, h3, h4, _, h5, h6⟩; exact ⟨x, hx, h1, h5, h6, h2, h3, h4⟩
   · rintro ⟨x, hx, h1, h5, h6, h2, h3, h4⟩; exact ⟨x, hx, h1, h2, h3, h4, trivial, h5, h6⟩

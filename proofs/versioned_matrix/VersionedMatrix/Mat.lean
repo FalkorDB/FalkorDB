@@ -15,7 +15,7 @@ rows of `graphblas_wrappers`; they are definitions here, not axioms):
 | `resizeM`   | `GrB_Matrix_resize` (drops out-of-range, waits) | `Matrix::resize` |
 | `transposeM`| `GrB_transpose`                          | `Matrix::transpose` |
 | `removeAllM`| `C<!M,replace> = C`                      | `Matrix::remove_all` |
-| `maskMult`  | `C<M> = M .* B` (`ANY_PAIR`, no accum, no replace) | `element_wise_multiply` |
+| `maskMult`  | `C<M> = M .* B` (`ANY_PAIR`, no accum, no replace; the mask is structural, `Descriptor::S`, since #3471, which on a layer that only stores `true` is the same set) | `element_wise_multiply` |
 | `assignProd`| `GrB_Matrix_assign` of `true` over `rows×cols` | `assign_product_true` |
 | `nvals`     | `GrB_Matrix_nvals` (number of stored keys) | `Matrix::nvals` |
 -/

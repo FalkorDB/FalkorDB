@@ -8,33 +8,26 @@ their `sel` agree on every node of the graph.
 | here | there |
 | --- | --- |
 | `P`, `V`                   | `runtime::value::Value` restricted to Bool / Int / String / temporal / list-of-scalars (strings as `Nat` codes; Float, Point, Map not modelled) |
-| (build)                    | the DEFAULT build: `index-falkordb` off, so `cfg!(feature = "index-falkordb")` is `false` (a Bool is an exact index literal) |
 | `eq3`, `ord3`, `Op.holds`  | Cypher three-valued `=`/`<`/… as a WHERE predicate (`runtime/value.rs` compare_value, `eval.rs`) — the reference semantics |
-| `Fld`, `enc`, `arrEnc`     | `Document::set`, `index/mod.rs:842-1007` (Int NUMERIC; String→TAG `tag_encode_lower`; Bool→its own TAG key `tag_key` 692, `[0xFF,'t'/'f']`, since #2975 (1/0 NUMERIC before); temporal not indexed since #3076; list→`:numeric:arr`/`:string:arr`, a Bool element to `:string:arr`) |
+| `Fld`, `enc`, `arrEnc`     | `Document::set`, `index/mod.rs` (Bool→0/1, Int NUMERIC; temporal not indexed; String→TAG; list→`:numeric:arr`/`:string:arr`) |
 | `Q`                        | `IndexQuery<Value>` after evaluation, `index/indexer.rs` |
-| `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs:1502-1508` (Int/Float only since #2975) |
-| `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1515-1517` |
-| `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1630-1826` (`null_mut` ↦ `none`) |
-| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1829`, `graph/graph.rs:4205`) |
-| `isIndexable`, `canBeServed`| `IndexQuery::<Value>::can_be_served` and its inner `is_indexable`, `index/mod.rs:304-345` (#2975; replaced `NodeByIndexScanOp::can_utilize_index`) |
-| `notNull`, `evalIQ`        | `IndexQuery::<Value>::in_list` (`index/mod.rs:284-299`, drops only Null since #2975) and `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:100-231` (InList → one `InList` since #2383) |
+| `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs` |
+| `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs` |
+| `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs` (`null_mut` ↦ `none`) |
+| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs`, `graph/graph.rs`) |
+| `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs` |
+| `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs` (InList → one `InList` of the scalar items) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |
-| `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs:547-566` |
-| `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs:357-368` |
-| `exactLit`, `litFlag`      | `is_exact_index_literal`, `utilize_index.rs:937-946` |
-| `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr` (an allow-list since #2975), `utilize_index.rs:912-932` |
-| `boolRangeBound`, `needsPost` | `needs_post_filter` (`bool_range_bound`; `bool_valued_operand` never fires on these trees), `utilize_index.rs:816-886`; `is_comparison` 888, `is_boolean_operator` 895 |
-| `pushedNeedsPost`          | `pushed_needs_post_filter` (`is_array_contains || needs_post_filter`), `utilize_index.rs:789-798` |
-| `buildOp`                  | `build_op_query`, `utilize_index.rs:315-355` |
-| `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` + `extract_attribute_and_expression_from_filter`, `utilize_index.rs:376-418, 602-704` |
-| `mergeRange`               | `merge_range_queries`, `utilize_index.rs:481-544` |
-| `tryPushdown`, `pushedKeep` | `try_filter_pushdown` (4th component `needs_post` since #2975), `utilize_index.rs:730-782` |
-| `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs:1045-1117` |
-| `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index when `can_be_served`, else label-scan fallback, then extra labels), `node_by_index_scan.rs:237-324` |
-
-Not modelled: `bool_valued_operand` of `needs_post_filter` (a comparison or AND/OR nested under a
-range operator): the terms `T` below have no Boolean-valued node, so on these trees it is `false`.
-Under the default build it never fires below `=`/`IN`, only below `<`/`>`/`<=`/`>=`.
+| `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs` |
+| `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs` |
+| `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr`, `utilize_index.rs` |
+| `needsPost`                | `needs_post_filter`, `utilize_index.rs` |
+| `buildOp`                  | `build_op_query`, `utilize_index.rs` |
+| `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` (+ `bare_property_of`) + `extract_attribute_and_expression_from_filter`, `utilize_index.rs` |
+| `mergeRange`               | `merge_range_queries`, `utilize_index.rs` |
+| `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs` |
+| `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs` |
+| `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index or label-scan fallback, then extra labels), `node_by_index_scan.rs` |
 -/
 namespace OptimizerScan.Index
 
@@ -96,7 +89,7 @@ theorem eq3_swap (a b : V) : eq3 b a = eq3 a b := by
   cases a <;> cases b <;> first | rfl | exact congrArg some (beq_symm _ _)
 
 /-- **PROVEN**: the operator flip used when the property is on the right
-(`utilize_index.rs:687-698`) is sound: `b op a ↔ a (flip op) b`. -/
+(`utilize_index.rs`) is sound: `b op a ↔ a (flip op) b`. -/
 theorem flip_correct (op : Op) (a b : V) : op.holds b a = op.flip.holds a b := by
   cases op <;> simp only [Op.holds, Op.flip, ord3_swap a b, eq3_swap a b] <;>
     cases h : ord3 a b <;> (try rename_i o; cases o) <;> simp [Ordering.swap]
@@ -108,22 +101,18 @@ structure Node where
 
 /-! ## The index engine -/
 
-/-- A stored index key: NUMERIC, a string's TAG key, or a Bool's TAG key (`tag_key`,
-`[0xFF,'t'/'f']`, which no UTF-8 string encodes to — the strings `.tag` stand for are the
-`tag_encode_lower` images, order-preserving and injective since #2975). -/
-inductive Fld | num (x : Int) | tag (x : Nat) | btag (x : Bool)
+inductive Fld | num (x : Int) | tag (x : Nat)
   deriving DecidableEq, Repr
 
 def encP : P → Fld
-  | .b x => .btag x
+  | .b x => .num (bI x)
   | .i x => .num x
   | .s x => .tag x
 
-/-- `Document::set` (`index/mod.rs:842-1007`). Since #3076 (e20300436) temporal values are not
-    indexed (before, they went in as NUMERIC timestamps — `IndexCex` C2). Since #2975 a Bool is
-    its own TAG key (before, NUMERIC 1/0 — `IndexCex` C1). -/
+/-- `Document::set` (`index/mod.rs`). Since #3076 (e20300436) temporal values are not
+    indexed (`index/mod.rs`; before, they went in as NUMERIC timestamps — `IndexCex` C2). -/
 def enc : V → Option Fld
-  | .b x => some (.btag x)
+  | .b x => some (.num (bI x))
   | .i x => some (.num x)
   | .s x => some (.tag x)
   | .date _ => none
@@ -139,13 +128,14 @@ inductive Q
   | eq (k : Nat) (v : V)
   | range (k : Nat) (lo hi : Option V) (il ih : Bool)
   | contains (k : Nat) (v : V)
-  | inList (k : Nat) (vs : List V)   -- `IndexQuery::InList` (#2383): one attribute, scalar members
+  | inList (k : Nat) (vs : List V)   -- `IndexQuery::InList`: one attribute, scalar members
   | and (qs : List Q)
   | or (qs : List Q)
   deriving Repr
 
 def valueToNumeric : V → Option Int
   | .i x => some x
+  | .b x => some (bI x)
   | _ => none
 
 /-- `int_loses_f64_precision`: `unsigned_abs & 0x7FF0_0000_0000_0000 != 0`. -/
@@ -172,20 +162,19 @@ def within (x : Int) (lo hi : Option Int) (il ih : Bool) : Bool :=
   (match lo with | none => true | some c => geB x c il) &&
   (match hi with | none => true | some c => leB x c ih)
 
-/-- The `Equal` arm of `build_query_node`: numeric, or a TAG token of `tag_key` (String, Bool). -/
+/-- The `Equal` arm of `build_query_node`. -/
 def buildEq (F : List Nat) (k : Nat) (v : V) : Option (Node → Bool) :=
   if k ∈ F then
     match valueToNumeric v, v with
     | some d, _ => some (fun n => enc (n.prop k) == some (.num d))
     | none, .s x => some (fun n => enc (n.prop k) == some (.tag x))
-    | none, .b x => some (fun n => enc (n.prop k) == some (.btag x))
     | none, _ => none
   else none
 
 attribute [simp] buildEq
 
 mutual
-/-- `Index::build_query_node` (`index/mod.rs:1630-1826`); `none` is a null query node. -/
+/-- `Index::build_query_node` (`index/mod.rs`); `none` is a null query node. -/
 def build (F : List Nat) : Q → Option (Node → Bool)
   | .eq k v => buildEq F k v
   | .range k lo hi il ih =>
@@ -194,8 +183,8 @@ def build (F : List Nat) : Q → Option (Node → Bool)
         match strB lo, strB hi with
         | some lo', some hi' =>
           -- `build_string_range_node`: equal bounds with an exclusive side select nothing
-          -- (#3072); both inclusive become an exact token match (`build_string_range_node`,
-          -- `index/mod.rs:1563`). An open upper end stops at `[0xFE]`, below every Bool key.
+          -- (`index/mod.rs`); both inclusive become an exact token match
+          -- (`index/mod.rs`).
           some (fun n =>
             if lo'.isSome ∧ lo' = hi' then (il && ih) && enc (n.prop k) == some (.tag (lo'.getD 0))
             else match enc (n.prop k) with
@@ -213,25 +202,25 @@ def build (F : List Nat) : Q → Option (Node → Bool)
   | .contains k v =>
     if k ∈ F then
       match v with
-      | .b x => some (fun n => (arrEnc (n.prop k)).contains (.btag x))
+      | .b x => some (fun n => (arrEnc (n.prop k)).contains (.num (bI x)))
       | .i x => some (fun n => (arrEnc (n.prop k)).contains (.num x))
       | .s x => some (fun n => (arrEnc (n.prop k)).contains (.tag x))
       | _ => none
     else none
   | .inList k vs =>
-    -- the `InList` arm: a union of `Equal` children, null ones skipped
+    -- the `InList` arm (`index/mod.rs`): a union of `Equal` children, null ones skipped
     some (fun n => (vs.filterMap (buildEq F k)).any (· n))
   | .and qs => (buildAll F qs).map (fun fs n => fs.all (· n))
   | .or qs => some (fun n => (buildSome F qs).any (· n))
 
-/-- AND: one null child nulls the whole intersection. -/
+/-- AND: one null child nulls the whole intersection (`index/mod.rs`). -/
 def buildAll (F : List Nat) : List Q → Option (List (Node → Bool))
   | [] => some []
   | q :: qs => match build F q, buildAll F qs with
     | some f, some fs => some (f :: fs)
     | _, _ => none
 
-/-- OR: null children are silently skipped. -/
+/-- OR: null children are silently skipped (`index/mod.rs`). -/
 def buildSome (F : List Nat) : List Q → List (Node → Bool)
   | [] => []
   | q :: qs => match build F q with
@@ -262,8 +251,6 @@ def bsel (F : List Nat) (q : Q) (n : Node) : Bool :=
 def idxSel (idx : Nat → List Nat) (L : Nat) (q : Q) (n : Node) : Bool :=
   L ∈ n.labels && bsel (idx L) q n
 
-/-- The inner `is_indexable` of `can_be_served` (`index/mod.rs:309-318`); a Bool is indexable
-in the default build (`!cfg!(feature = "index-falkordb")`). -/
 def isIndexable : V → Bool
   | .i x => !lossy x
   | .b _ | .s _ => true
@@ -271,34 +258,29 @@ def isIndexable : V → Bool
   | .date _ => false
   | .arr _ => false
 
-/-- A range bound `can_be_served` accepts: indexable and not a Bool. -/
-def rangeBoundOK (v : V) : Bool :=
-  isIndexable v && !(match v with | .b _ => true | _ => false)
-
 mutual
-/-- `IndexQuery::<Value>::can_be_served` (`index/mod.rs:304-345`, #2975), shared by the node and
-edge scan ops (it replaced `NodeByIndexScanOp::can_utilize_index`). -/
-def canBeServed : Q → Bool
+/-- `can_utilize_index` (`node_by_index_scan.rs`). -/
+def canUtilize : Q → Bool
   | .eq _ v => isIndexable v
-  | .range _ lo hi _ _ => (lo.map rangeBoundOK).getD true && (hi.map rangeBoundOK).getD true
-  | .contains _ v => v != .null && isIndexable v
-  | .inList _ vs => !vs.isEmpty && vs.all isIndexable
+  | .range _ lo hi _ _ => (lo.map isIndexable).getD true && (hi.map isIndexable).getD true
+  | .contains _ v => match v with | .b _ | .i _ | .s _ => true | _ => false
+  | .inList _ vs => !vs.isEmpty && vs.all isIndexable   -- node_by_index_scan.rs (#2383)
   | .and qs => !qs.isEmpty && canAll qs
   | .or qs => !qs.isEmpty && canAll qs
 def canAll : List Q → Bool
   | [] => true
-  | q :: qs => canBeServed q && canAll qs
+  | q :: qs => canUtilize q && canAll qs
 end
 
-/-- **#2383**: `can_be_served` decides an `InList` on the same terms as the `Or` of
+/-- **#2383**: `can_utilize_index` decides an `InList` on the same terms as the `Or` of
 `Equal`s it replaced (the Rust test `in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members`). -/
-theorem canBeServed_inList_eq_or (k : Nat) (vs : List V) :
-    canBeServed (.inList k vs) = canBeServed (.or (vs.map (Q.eq k))) := by
+theorem canUtilize_inList_eq_or (k : Nat) (vs : List V) :
+    canUtilize (.inList k vs) = canUtilize (.or (vs.map (Q.eq k))) := by
   have : ∀ vs : List V, canAll (vs.map (Q.eq k)) = vs.all isIndexable := by
     intro vs; induction vs with
     | nil => rfl
-    | cons v vs ih => simp [canAll, canBeServed, ih]
-  simp [canBeServed, this]
+    | cons v vs ih => simp [canAll, canUtilize, ih]
+  simp [canUtilize, this]
 
 /-! ## Filter expressions -/
 
@@ -372,27 +354,17 @@ def firstR : R → Option Nat
   | .list ts => ts.findSome? firstP
   | .term t => firstP t
 
-/-- `is_exact_index_literal` (`utilize_index.rs:937-946`, #2975), default build (a Bool is exact). -/
-def exactLit : V → Bool
-  | .i x => !lossy x
-  | .b _ => true
-  | .null | .s _ => true
-  | .date _ => false
-  | .arr _ => false
+def litFlag : V → Bool
+  | .i x => lossy x
+  | .arr _ => true            -- a list literal is an `ExprIR::List` node
+  | _ => false                -- note: a folded `date(...)` constant is NOT flagged
 
-/-- A literal `is_non_indexable_subexpr` flags: one that is not an exact index literal (a list
-literal is an `ExprIR::List` node, flagged as well). Since #2975 a folded `date(...)` is flagged. -/
-def litFlag (v : V) : Bool := !exactLit v
-
-/-- `is_non_indexable_subexpr` over a term's nodes (an allow-list since #2975): the scanned
-`Property`, exact literals and the comparison/boolean structure pass; a `Parameter` / other
-variable, a function call and an arithmetic node (`ExprIR::Add`) are flagged. -/
 def nonIdxT : T → Bool
   | .prop _ => false
   | .lit v => litFlag v
   | .param _ => true
   | .abs _ => true
-  | .add _ _ => true
+  | .add a b => nonIdxT a || nonIdxT b
 
 def nonIdxR : R → Bool
   | .list _ => true
@@ -408,21 +380,13 @@ def scalarLit : T → Bool
   | .lit (.b _) | .lit (.s _) => true
   | _ => false
 
-/-- `bool_range_bound` of `needs_post_filter`: a `<`/`>`/`<=`/`>=` with a direct `Constant(Bool)`
-child (`can_be_served` refuses a Bool range bound). -/
-def boolRangeBound : A → Bool
-  | .cmp op l r =>
-    op != .eq && ((match l with | .lit (.b _) => true | _ => false) ||
-                  (match r with | .lit (.b _) => true | _ => false))
-  | _ => false
-
-/-- `needs_post_filter` (`utilize_index.rs:816-886`) on one pushed conjunct / branch / atom
-(since #2975 it is asked only of what is pushed). The RHS of `n.k IN [scalar literals]` is
-whitelisted (`scalarLit`: Float, String, Bool (exact in the default build), non-lossy Int). -/
-def needsPost : A → Bool
-  | .inn (.prop _) (.list ts) =>
+/-- `needs_post_filter` (`utilize_index.rs`). -/
+def needsPost : F → Bool
+  | .atom (.inn (.prop _) (.list ts)) =>
     if !ts.isEmpty && ts.all scalarLit then false else true
-  | a => boolRangeBound a || nonIdxA a
+  | .atom a => nonIdxA a
+  | .and as => as.any nonIdxA
+  | .or as => as.any nonIdxA
 
 /-- Unevaluated index queries (`IndexQuery<QueryExpr<Variable>>`). -/
 inductive IQ
@@ -434,7 +398,7 @@ inductive IQ
   | or (qs : List IQ)
   deriving Repr
 
-/-- `build_op_query` (`utilize_index.rs:315-355`). -/
+/-- `build_op_query` (`utilize_index.rs`). -/
 def buildOp (op : Op) (k : Nat) (c : T) : IQ :=
   match op with
   | .eq => .eq k c
@@ -452,18 +416,21 @@ def nestedList : R → Bool
 
 def anyPropR : R → Bool := hasR
 
-/-- `try_single_filter_scan` / `try_in_filter_scan` (`utilize_index.rs:602-704`). -/
+/-- `try_single_filter_scan` / `try_in_filter_scan` (`utilize_index.rs`). Since #3068 the
+`IN` arm needs the index side to be the bare property (`bare_property_of`). -/
 def trySingle (idx : Nat → List Nat) (ls : List Nat) : A → Option (Nat × IQ)
   | .inn l r =>
     match hasT l, hasR r with
-    | true, false => do
-      let k ← firstP l
-      let L ← findLabel idx ls k
-      if nestedList r || anyPropR r then none else some (L, .inList k r)
-    | false, true => do
-      let k ← firstR r
-      let L ← findLabel idx ls k
-      some (L, .contains k l)
+    | true, false => match l with
+      | .prop k => do
+        let L ← findLabel idx ls k
+        if nestedList r || anyPropR r then none else some (L, .inList k r)
+      | _ => none                -- `bare_property_of`: the side must be `n.k` itself
+    | false, true => match r with
+      | .term (.prop k) => do
+        let L ← findLabel idx ls k
+        some (L, .contains k l)
+      | _ => none
     | _, _ => none
   | .cmp op l r =>
     match hasT l, hasT r with
@@ -482,7 +449,7 @@ def trySingle (idx : Nat → List Nat) (ls : List Nat) : A → Option (Nat × IQ
     | _, _ => none
   | .opq _ => none
 
-/-- `merge_range_queries` (`utilize_index.rs:481-544`). -/
+/-- `merge_range_queries` (`utilize_index.rs`). -/
 def mergeRange : IQ → IQ → IQ
   | .range k lo hi il ih, .range k' lo' hi' il' ih' =>
     if k = k' then
@@ -496,57 +463,49 @@ def mergeRange : IQ → IQ → IQ
   | a, b => .and [a, b]
 
 /-- Fold one pushed conjunct into the running query: the first one fixes the label, later
-ones are merged into it on that label (`utilize_index.rs:739-744`). -/
+ones are merged into it on that label (`utilize_index.rs`). -/
 def mergeInto (m : Option (Nat × IQ)) (L : Nat) (q : IQ) : Option (Nat × IQ) :=
   match m with
   | none => some (L, q)
   | some (L0, q0) => some (L0, mergeRange q0 q)
 
 /-- `value IN n.prop` (array-contains): the index may answer it with false positives, so its
-filter is always kept (the `is_array_contains` part of `pushed_needs_post_filter`). -/
+filter is always kept (`is_array_contains`, `utilize_index.rs`). -/
 def isArrayContains : A → Bool
   | .inn l r => !hasT l && hasR r
   | _ => false
 
-/-- `pushed_needs_post_filter` (`utilize_index.rs:789-798`, #2975). -/
-def pushedNeedsPost (a : A) : Bool := isArrayContains a || needsPost a
-
-/-- The AND branch of `try_filter_pushdown` (`utilize_index.rs:736-755`): the merged query and the
-leftovers (only the conjuncts that did not convert, since #2975). -/
+/-- The AND branch of `try_filter_pushdown` (`utilize_index.rs`). A pushed
+array-contains conjunct also stays among the leftovers, as it does on its own. -/
 def pushAnd (idx : Nat → List Nat) (ls : List Nat) :
     List A → Option (Nat × IQ) → List A → Option (Nat × IQ) × List A
   | [], m, rem => (m, rem)
   | a :: as, m, rem =>
     match trySingle idx ls a with
-    | some (L, q) => pushAnd idx ls as (mergeInto m L q) rem
+    | some (L, q) =>
+      pushAnd idx ls as (mergeInto m L q) (if isArrayContains a then rem ++ [a] else rem)
     | none => pushAnd idx ls as m (rem ++ [a])
 
-/-- The `needs_post` flag the AND and OR loops accumulate: `pushed_needs_post_filter` of every
-conjunct / branch that was pushed (`needs_post |= …`, `utilize_index.rs:743, 763`). -/
-def pushedKeep (idx : Nat → List Nat) (ls : List Nat) (as : List A) : Bool :=
-  as.any (fun a => (trySingle idx ls a).isSome && pushedNeedsPost a)
-
-/-- The OR branch: every disjunct must convert (`utilize_index.rs:756-776`). -/
+/-- The OR branch: every disjunct must convert (`utilize_index.rs`). -/
 def pushOr (idx : Nat → List Nat) (ls : List Nat) : List A → Option (Option Nat × List IQ)
   | [] => some (none, [])
   | a :: as => match trySingle idx ls a, pushOr idx ls as with
     | some (L, q), some (_, qs) => some (some L, q :: qs)   -- label of the first disjunct
     | _, _ => none
 
-/-- `try_filter_pushdown` (`utilize_index.rs:730-782`): label, query, leftovers and (#2975) the
-`needs_post` flag. -/
-def tryPushdown (idx : Nat → List Nat) (ls : List Nat) : F → Option (Nat × IQ × List A × Bool)
+/-- `try_filter_pushdown` (`utilize_index.rs`). -/
+def tryPushdown (idx : Nat → List Nat) (ls : List Nat) : F → Option (Nat × IQ × List A)
   | .and as =>
     match pushAnd idx ls as none [] with
-    | (some (L, q), rem) => some (L, q, rem, pushedKeep idx ls as)
+    | (some (L, q), rem) => some (L, q, rem)
     | (none, _) => none
   | .or as =>
     match pushOr idx ls as with
-    | some (some L, qs) => some (L, .or qs, [], pushedKeep idx ls as)
+    | some (some L, qs) => some (L, .or qs, [])
     | _ => none
   | .atom a =>
     match trySingle idx ls a with
-    | some (L, q) => some (L, q, [], pushedNeedsPost a)
+    | some (L, q) => some (L, q, if isArrayContains a then [a] else [])
     | none => none
 
 /-! ## Plans and their semantics -/
@@ -557,16 +516,14 @@ def listVals : R → List V
   | .list ts => ts.map evalC
   | .term t => match evalC t with | .arr xs => xs.map P.toV | _ => []
 
-/-- `IndexQuery::in_list` keeps every item but Null (`index/mod.rs:284-299`, #2975; before, only
-the Bool/Int/String items were kept — `IndexCex` C9). -/
-def notNull (v : V) : Bool := v != .null
+def isPrim : V → Bool | .b _ | .i _ | .s _ => true | _ => false
 
 mutual
-/-- `evaluate_index_query` (`node_by_index_scan.rs:100-231`). -/
+/-- `evaluate_index_query` (`node_by_index_scan.rs`). -/
 def evalIQ : IQ → Q
   | .eq k t => .eq k (evalC t)
   | .range k lo hi il ih => .range k (lo.map evalC) (hi.map evalC) il ih
-  | .inList k r => .inList k ((listVals r).filter notNull)   -- #2383: kept whole, not an `Or` of `Equal`s
+  | .inList k r => .inList k ((listVals r).filter isPrim)   -- kept whole, not an `Or` of `Equal`s
   | .contains k t => .contains k (evalC t)
   | .and qs => .and (evalIQs qs)
   | .or qs => .or (evalIQs qs)
@@ -586,15 +543,15 @@ def Plan.sel (idx : Nat → List Nat) (opq : Nat → Node → Bool) : Plan → N
   | .labelScan ls, n => hasAll ls n
   | .idxScan ls L q, n =>
     let qv := evalIQ q
-    (if canBeServed qv then idxSel idx L qv n else hasAll ls n) && hasAll (ls.erase L) n
+    (if canUtilize qv then idxSel idx L qv n else hasAll ls n) && hasAll (ls.erase L) n
   | .filter f p, n => Plan.sel idx opq p n && evalF opq n f
 
-/-- `apply_filter_pushdown` driven by `try_index_rewrite` (`utilize_index.rs:1045-1117`); since
-#2975 `keep_filter` is the `needs_post` flag of `try_filter_pushdown`. -/
+/-- `apply_filter_pushdown` driven by `try_index_rewrite` (`utilize_index.rs`). -/
 def utilize (idx : Nat → List Nat) (ls : List Nat) (f : F) : Plan :=
   match tryPushdown idx ls f with
   | none => .filter f (.labelScan ls)
-  | some (L, q, rem, keep) =>
+  | some (L, q, rem) =>
+    let keep := needsPost f
     let scan := Plan.idxScan ls L q
     if rem.isEmpty then (if keep then .filter f scan else scan)
     else if keep then .filter f scan else .filter (.and rem) scan

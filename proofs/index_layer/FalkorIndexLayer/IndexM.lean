@@ -1,7 +1,7 @@
 import FalkorIndexLayer.Meta
 import FalkorIndexLayer.Model
 /-
-# `Index` (`graph/src/index/mod.rs:875-2248`): metadata, RS spec lifecycle
+# `Index` (`graph/src/index/mod.rs`): metadata, RS spec lifecycle
 
 The RediSearch spec is abstract: `spec : Option Nat` is the handle identity
 (`None` = the former null), `rs` the list of fields registered on it. The FFI
@@ -14,8 +14,7 @@ open IndexLayer (Slots)
 /-- A field registered on the RS spec by `RediSearch_CreateField`. -/
 inductive RsKind
   | noneTag                          -- `NONE_INDEXABLE_FIELDS` (TAG, sep `\x01`, case-sensitive)
-  | rangeMain                        -- NUMERIC|TAG, sep `\x01`, case-sensitive (GEO dropped by #2975)
-  | geo                              -- GEO (`range:{attr}:geo`, #2975)
+  | rangeMain                        -- NUMERIC|GEO|TAG, sep `\x01`, case-sensitive
   | numArr                           -- NUMERIC
   | strArr                           -- TAG, sep `\x01`, case-sensitive
   | text (weight : Nat) (nostem phonetic : Bool)
@@ -39,52 +38,53 @@ structure Idx where
   language : Option String
   stopwords : Option (List String)
   /-- Gap closed 2026-10-20 (#3166): the stopword list the live RediSearch spec was
-  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs:1119-1133`, read by
+  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs`, read by
   `RediSearch_CreateIndex`). RediSearch fixes it at creation: `register_fields`
-  (`mod.rs:1181`) adds fields to the spec and never touches it. `none` = the
-  `SetStopwords(null, 0)` arm (`mod.rs:1132`), i.e. RediSearch's own default. -/
+  (`mod.rs`) adds fields to the spec and never touches it. `none` = the
+  `SetStopwords(null, 0)` arm (`mod.rs`), i.e. RediSearch's own default. -/
   rsStop : Option (List String) := none
 
 namespace Idx
 
-/-- `Default for Index` (`mod.rs:1013`). -/
+/-- `Default for Index` (`mod.rs`). -/
 def default (id : Nat) : Idx :=
   { id, spec := none, rs := [], fields := [], order := [], slots := ⟨id, 0, 0⟩,
     progress := 0, total := 0, language := none, stopwords := none }
 
-/-- `Index::id` (`mod.rs:1040`). -/
+/-- `Index::id` (`mod.rs`). -/
 def idOf (x : Idx) : Nat := x.id
-/-- `Index::bump_id` (`mod.rs:1049`), `g'` the next value of the static counter. -/
+/-- `Index::bump_id` (`mod.rs`), `g'` the next value of the static counter. -/
 def bumpId (x : Idx) (g' : Nat) : Idx := { x with id := g', slots := x.slots.bump g' }
-/-- `Index::clone_for_update` (`mod.rs:1068`): every component copied; `spec`
+/-- `Index::clone_for_update` (`mod.rs`): every component copied; `spec`
 and `pending_slots` are the *same* `Arc`s (shared, not copied). -/
 def cloneForUpdate (x : Idx) : Idx :=
   { id := x.id, spec := x.spec, rs := x.rs, fields := x.fields, order := x.order, slots := x.slots,
     progress := x.progress, total := x.total, language := x.language, stopwords := x.stopwords,
     rsStop := x.rsStop }
-/-- `has_rs_index` (`mod.rs:1088`). -/
+/-- `has_rs_index` (`mod.rs`). -/
 def hasRsIndex (x : Idx) : Bool := x.spec.isSome
-/-- `rs_ptr` (`mod.rs:1095`): `none` is the null pointer. -/
+/-- `rs_ptr` (`mod.rs`): `none` is the null pointer. -/
 def rsPtr (x : Idx) : Option Nat := x.spec
 
 def hasNul (s : String) : Bool := s.toList.contains (Char.ofNat 0)
 
-/-- `create_rs_index` (`mod.rs:1101`). Error order as in Rust: stopwords
-`CString::new` (1108), language `CString::new`/unsupported (1129-1133), label
-`CString::new` (1140). On success the spec is fresh and carries only
-`NONE_INDEXABLE_FIELDS` (1155-1163), and (#3166 gap) is created with the stopword
-list `stop` (`mod.rs:1119-1133`), recorded as `rsStop`. -/
+/-- `create_rs_index` (`mod.rs`). Error order as in Rust (#3274): stopwords
+`CString::new` (1113-1120), language `CString::new` (1127-1129), label
+`CString::new` (1130), all before the options block is allocated; then
+unsupported language (1156-1160). On success the spec is fresh and carries only
+`NONE_INDEXABLE_FIELDS` (1175-1186), and (#3166 gap) is created with the stopword
+list `stop` (`mod.rs`), recorded as `rsStop`. -/
 def createRsIndex (x : Idx) (label : String) (stop : Option (List String)) (lang : Option String)
     (langOk : String → Bool) (fresh : Nat) : Except String Idx :=
   if (stop.getD []).any hasNul then .error "nul" else
   match lang with
-  | some l => if hasNul l then .error "nul" else if !langOk l then .error s!"Language is not supported: {l}"
-              else if hasNul label then .error "nul"
+  | some l => if hasNul l then .error "nul" else if hasNul label then .error "nul"
+              else if !langOk l then .error s!"Language is not supported: {l}"
               else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
   | none => if hasNul label then .error "nul"
             else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
 
-/-- The metric match of `register_fields` (`mod.rs:1420-1434`). -/
+/-- The metric match of `register_fields` (`mod.rs`). -/
 def metricOf (sim : Option String) : Except String String :=
   match sim.getD "euclidean" with
   | "euclidean" => .ok "L2"
@@ -92,13 +92,12 @@ def metricOf (sim : Option String) : Except String String :=
   | "cosine" => .ok "COSINE"
   | o => .error s!"Unknown similarity function '{o}', expected 'euclidean', 'ip', or 'cosine'"
 
-/-- One iteration of `register_fields` (`mod.rs:1323-1494`). `tieredOk` is
+/-- One iteration of `register_fields` (`mod.rs`). `tieredOk` is
 the result of `VecSimTieredParams_Init` + `VectorFieldSetParams` (FFI). -/
 def registerOne (fo : Option TextOpts) (tieredOk : Bool) (f : Field) : Except String (List RsReg) :=
   match f.ty with
   | .range =>
-    .ok ([⟨f.name, .rangeMain⟩] ++ (f.geo.map (fun n => [⟨n, .geo⟩])).getD [] ++
-         (f.numArr.map (fun n => [⟨n, .numArr⟩])).getD [] ++
+    .ok ([⟨f.name, .rangeMain⟩] ++ (f.numArr.map (fun n => [⟨n, .numArr⟩])).getD [] ++
          (f.strArr.map (fun n => [⟨n, .strArr⟩])).getD [])
   | .fulltext =>
     let eo := fo.or f.options
@@ -126,14 +125,14 @@ def registerAll (fo : Option TextOpts) (tieredOk : Bool) : List Field → Except
 
 def allFieldsOf (m : AMap (List Field)) : List Field := m.flatMap (·.2)
 
-/-- `register_fields` (`mod.rs:1317`), applied to the spec. -/
+/-- `register_fields` (`mod.rs`), applied to the spec. -/
 def registerFields (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tieredOk : Bool) :
     Except String Idx :=
   match registerAll fo tieredOk (allFieldsOf m) with
   | .ok r => .ok { x with rs := x.rs ++ r }
   | .error e => .error e
 
-/-! Field-map operations (`mod.rs:1968-2077`). -/
+/-! Field-map operations (`mod.rs`). -/
 def getFields (x : Idx) (a : String) : Option (List Field) := x.fields.get a
 def containsField (x : Idx) (a : String) : Bool := (x.fields.get a).isSome
 def hasFieldWithType (x : Idx) (a : String) (t : IType) : Bool :=
@@ -160,16 +159,16 @@ def languageOf (x : Idx) : Option String := x.language
 def setLanguage (x : Idx) (l : Option String) : Idx := { x with language := l }
 def stopwordsOf (x : Idx) : Option (List String) := x.stopwords
 def setStopwords (x : Idx) (s : Option (List String)) : Idx := { x with stopwords := s }
-/-- `memory_usage` (`mod.rs:2205`); `mem` = `RediSearch_MemUsage` (FFI). -/
+/-- `memory_usage` (`mod.rs`); `mem` = `RediSearch_MemUsage` (FFI). -/
 def memoryUsage (x : Idx) (mem : Nat → Nat) : Nat := match x.spec with | none => 0 | some s => mem s
-/-- `index_count` (`mod.rs:2215`). -/
+/-- `index_count` (`mod.rs`). -/
 def indexCount (x : Idx) : Nat := (x.fields.map (·.2.length)).sum
 
 /-- The field `build_query_node` targets for attribute `a`:
-`self.fields.get(key).and_then(|f| f.first())` (`mod.rs:1397,1426,1484,1496,1554,1615`). -/
+`self.fields.get(key).and_then(|f| f.first())` (`mod.rs`). -/
 def queryField (x : Idx) (a : String) : Option Field := (x.fields.get a).bind (·.head?)
 
-/-- `recreate_index` (`mod.rs:2219`). -/
+/-- `recreate_index` (`mod.rs`). -/
 def recreateIndex (x : Idx) (label : String) (langOk : String → Bool) (tieredOk : Bool)
     (fresh g' : Nat) : Except String Idx :=
   match createRsIndex { x with spec := none } label x.stopwords x.language langOk fresh with
@@ -212,23 +211,24 @@ theorem createRsIndex_ok (x : Idx) (label : String) (stop : Option (List String)
   · split at h; · cases h
     cases h; simp
 
-theorem createRsIndex_lang_err (x : Idx) (label : String) (stop : Option (List String)) (l : String)
-    (langOk : String → Bool) (fresh : Nat) (h1 : (stop.getD []).any hasNul = false)
-    (h2 : hasNul l = false) (h3 : langOk l = false) :
+/-- What still holds on the new code: an unsupported language is reported when
+the stopwords, language and label are all NUL-free. -/
+theorem createRsIndex_lang_err_cleanLabel (x : Idx) (label : String) (stop : Option (List String))
+    (l : String) (langOk : String → Bool) (fresh : Nat) (h1 : (stop.getD []).any hasNul = false)
+    (h2 : hasNul l = false) (h4 : hasNul label = false) (h3 : langOk l = false) :
     createRsIndex x label stop (some l) langOk fresh = .error s!"Language is not supported: {l}" := by
-  simp [createRsIndex, h1, h2, h3]
+  simp [createRsIndex, h1, h2, h3, h4]
 
 theorem metricOf_ok (sim : Option String) (m : String) (h : metricOf sim = .ok m) :
     sim.getD "euclidean" ∈ ["euclidean", "ip", "cosine"] := by
   unfold metricOf at h; split at h <;> simp_all
 
-/-- `register_fields` on a Range field registers the main field (NUMERIC|TAG), the
-GEO sub-field (#2975) and both array sub-fields — exactly the four RS fields
-`Model.Sub` (`main`, `geo`, `numArr`, `strArr`) reads and writes. -/
+/-- `register_fields` on a Range field registers the main field and both array
+sub-fields — exactly the three RS fields `Model.Sub` (`main`, `numArr`, `strArr`)
+reads and writes. -/
 theorem registerOne_range (fo : Option TextOpts) (tk : Bool) (n : String) (o : Option TextOpts) :
     registerOne fo tk (Field.new n .range o) =
-      .ok [⟨n, .rangeMain⟩, ⟨n ++ ":geo", .geo⟩, ⟨n ++ ":numeric:arr", .numArr⟩,
-        ⟨n ++ ":string:arr", .strArr⟩] := by
+      .ok [⟨n, .rangeMain⟩, ⟨n ++ ":numeric:arr", .numArr⟩, ⟨n ++ ":string:arr", .strArr⟩] := by
   simp [registerOne, Field.new, makeArrNames]
 
 /-- Fulltext: the per-call options win over the field's own, weight defaults to
@@ -350,7 +350,7 @@ theorem insertField_inv (x : Idx) (a : String) (f : Field) (h : Inv x) : Inv (x.
   by_cases hs : a ∈ AMap.keys x.fields
   · have e1 : (x.insertField a f).order = x.order := by simp [insertField, hk.mpr hs]
     have e2 : AMap.keys (x.insertField a f).fields = AMap.keys x.fields := by
-      simp only [insertField]; rw [AMap.keys_upd, if_pos hs]
+      simp only [insertField]; rw [AMap.keys_upd, ite_eq_left hs]
     refine ⟨?_, ?_, fun b => ?_⟩
     · rw [e2]; exact h1
     · rw [e1]; exact h2
@@ -361,7 +361,7 @@ theorem insertField_inv (x : Idx) (a : String) (f : Field) (h : Inv x) : Inv (x.
       · exact absurd (hk.mp hh) hs
     have e1 : (x.insertField a f).order = x.order ++ [a] := by simp [insertField, hn]
     have e2 : AMap.keys (x.insertField a f).fields = AMap.keys x.fields ++ [a] := by
-      simp only [insertField]; rw [AMap.keys_upd, if_neg hs]
+      simp only [insertField]; rw [AMap.keys_upd, ite_eq_right hs]
     refine ⟨?_, ?_, fun b => ?_⟩
     · rw [e2]; exact List.nodup_append.mpr ⟨h1, by simp, by simp; intro y hy hya; subst hya; exact hs hy⟩
     · rw [e1]; exact List.nodup_append.mpr ⟨h2, by simp, by simp; intro y hy hya; subst hya; exact hs ((h3 y).mp hy)⟩

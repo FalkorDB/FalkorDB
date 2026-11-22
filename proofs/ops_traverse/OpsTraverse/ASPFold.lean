@@ -109,7 +109,7 @@ theorem rel_step (g : Graph) (b : Bool) (src dst maxH cur dcur : Nat) (G X : St)
         · exact h3
       · exact ⟨rfl, hp, by simp [hupd]⟩
     · by_cases hm : dcur + 1 < maxH
-      · rw [if_pos hm]
+      · rw [ite_eq_left hm]
         refine ⟨news ++ [n], by simp [hq1], ?_, ?_, ?_⟩
         · rw [List.nodup_append]
           refine ⟨hq2, by simp, ?_⟩
@@ -129,7 +129,7 @@ theorem rel_step (g : Graph) (b : Bool) (src dst maxH cur dcur : Nat) (G X : St)
           by_cases hvn : v = n
           · subst hvn; simp
           · simp only [hvn, ite_false] at hXv; exact List.mem_append_left _ (hq4 v hGv hXv hlt)
-      · rw [if_neg hm]
+      · rw [ite_eq_right hm]
         refine ⟨news, hq1, hq2, ?_, fun v _ _ hlt => absurd hlt hm⟩
         intro v hv
         obtain ⟨h1, h2, h3⟩ := hq3 v hv

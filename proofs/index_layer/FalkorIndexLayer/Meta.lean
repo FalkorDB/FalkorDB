@@ -3,15 +3,6 @@
 
 Line numbers are from origin/main (5c7af54f2), located by item name.
 
-| Lean | Rust |
-| --- | --- |
-| `IType` | `IndexType` `mod.rs:97` |
-| `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:108-201` (geo sub-field since #2975) |
-| `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:205`, `Hash::hash` `mod.rs:217` |
-| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:888`) |
-| `Idx` | `Index` `mod.rs:876` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
-| `Idx.*` accessors / mutators | `mod.rs:1049-2241` (each cited below) |
-
 A Rust `HashMap` is modelled as an association list with unique keys; its
 iteration order is unspecified in Rust, so every theorem below is either
 order-independent or about `field_order`, which is the order-carrying list.
@@ -30,16 +21,16 @@ structure TextOpts where
   stopwords : Option (List String) := none
   deriving DecidableEq, Repr
 
-/-- `PHONETIC_OFF` (`text_index_options.rs:41`): C's code for "phonetic matching off"
+/-- `PHONETIC_OFF` (`text_index_options.rs`): C's code for "phonetic matching off"
 (`INDEX_FIELD_DEFAULT_PHONETIC`), written on every fulltext field C did not enable. -/
 def PHONETIC_OFF : String := "no"
 
-/-- `TextIndexOptions::phonetic_enabled` (`text_index_options.rs:48-52`, #3514): any code but
+/-- `TextIndexOptions::phonetic_enabled` (`text_index_options.rs`, #3514): any code but
 absent, empty or `"no"` turns RediSearch's phonetic flag on. -/
 def TextOpts.phoneticEnabled (o : TextOpts) : Bool :=
   o.phonetic.any fun p => decide (p ≠ "" ∧ p ≠ PHONETIC_OFF)
 
-/-- Mirror of the Rust unit test `phonetic_off_spellings` (`text_index_options.rs:66-74`). -/
+/-- Mirror of the Rust unit test `phonetic_off_spellings` (`text_index_options.rs`). -/
 theorem phoneticEnabled_off_spellings (o : TextOpts) (h : o.phonetic = none ∨ o.phonetic = some ""
     ∨ o.phonetic = some PHONETIC_OFF) : o.phoneticEnabled = false := by
   rcases h with h | h | h <;> simp [TextOpts.phoneticEnabled, h, PHONETIC_OFF]
@@ -70,63 +61,54 @@ structure Field where
   vopts : Option VecOpts
   numArr : Option String
   strArr : Option String
-  /-- `geo_name` (#2975): the GEO sub-field `range:{attr}:geo` of a Range field. -/
-  geo : Option String := none
   deriving DecidableEq, Repr
 
-/-- `Field::make_arr_names` (`mod.rs:127`). The `name` is a `CString` built from
-a Rust `String`, so `to_str()` succeeds and `format!` adds no NUL: every
-`CString::new(..).ok()` is `Some`. Since #2975 it also names the GEO sub-field. -/
-def makeArrNames (name : String) (ty : IType) : Option String × Option String × Option String :=
-  if ty = .range then (some (name ++ ":numeric:arr"), some (name ++ ":string:arr"), some (name ++ ":geo"))
-  else (none, none, none)
+/-- `Field::make_arr_names` (`mod.rs`). The `name` is a `CString` built from
+a Rust `String`, so `to_str()` succeeds and `format!` adds no NUL: both
+`CString::new(..).ok()` are `Some`. -/
+def makeArrNames (name : String) (ty : IType) : Option String × Option String :=
+  if ty = .range then (some (name ++ ":numeric:arr"), some (name ++ ":string:arr")) else (none, none)
 
-/-- `Field::new` (`mod.rs:144`). -/
+/-- `Field::new` (`mod.rs`). -/
 def Field.new (name : String) (ty : IType) (o : Option TextOpts) : Field :=
   { name, ty, options := o, vopts := none,
-    numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2.1,
-    geo := (makeArrNames name ty).2.2 }
+    numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
 
-/-- `Field::new_with_vector_options` (`mod.rs:162`). -/
+/-- `Field::new_with_vector_options` (`mod.rs`). -/
 def Field.newVec (name : String) (ty : IType) (v : VecOpts) : Field :=
   { name, ty, options := none, vopts := some v,
-    numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2.1,
-    geo := (makeArrNames name ty).2.2 }
+    numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
 
-/-- `PartialEq for Field` (`mod.rs:209`): name and type only. -/
+/-- `PartialEq for Field` (`mod.rs`): name and type only. -/
 def Field.beqF (a b : Field) : Bool := a.name == b.name && a.ty == b.ty
-/-- `Hash for Field` (`mod.rs:221`): hashes the name only (`H` = any hasher). -/
+/-- `Hash for Field` (`mod.rs`): hashes the name only (`H` = any hasher). -/
 def Field.hashF (H : String → Nat) (f : Field) : Nat := H f.name
 
 theorem makeArrNames_range (n : String) :
-    makeArrNames n .range =
-      (some (n ++ ":numeric:arr"), some (n ++ ":string:arr"), some (n ++ ":geo")) := rfl
+    makeArrNames n .range = (some (n ++ ":numeric:arr"), some (n ++ ":string:arr")) := rfl
 theorem makeArrNames_other (n : String) (t : IType) (h : t ≠ .range) :
-    makeArrNames n t = (none, none, none) := by simp [makeArrNames, h]
+    makeArrNames n t = (none, none) := by simp [makeArrNames, h]
 
-/-- `Field::new`: name/type/options kept, no vector options, array and geo
-sub-field names present exactly for Range fields. -/
+/-- `Field::new`: name/type/options kept, no vector options, array sub-field
+names present exactly for Range fields. -/
 theorem Field.new_spec (n : String) (t : IType) (o : Option TextOpts) :
     (Field.new n t o).name = n ∧ (Field.new n t o).ty = t ∧ (Field.new n t o).options = o ∧
     (Field.new n t o).vopts = none ∧
-    ((Field.new n t o).numArr.isSome ↔ t = .range) ∧ ((Field.new n t o).strArr.isSome ↔ t = .range) ∧
-    ((Field.new n t o).geo.isSome ↔ t = .range) := by
+    ((Field.new n t o).numArr.isSome ↔ t = .range) ∧ ((Field.new n t o).strArr.isSome ↔ t = .range) := by
   by_cases h : t = .range <;> simp [Field.new, makeArrNames, h]
 
 theorem Field.newVec_spec (n : String) (t : IType) (v : VecOpts) :
     (Field.newVec n t v).name = n ∧ (Field.newVec n t v).ty = t ∧ (Field.newVec n t v).options = none ∧
     (Field.newVec n t v).vopts = some v ∧
-    ((Field.newVec n t v).numArr.isSome ↔ t = .range) ∧ ((Field.newVec n t v).strArr.isSome ↔ t = .range) ∧
-    ((Field.newVec n t v).geo.isSome ↔ t = .range) := by
+    ((Field.newVec n t v).numArr.isSome ↔ t = .range) ∧ ((Field.newVec n t v).strArr.isSome ↔ t = .range) := by
   by_cases h : t = .range <;> simp [Field.newVec, makeArrNames, h]
 
-/-- Accessors `options`/`vector_options`/`numeric_arr_name`/`string_arr_name`/`geo_name`
-(`mod.rs:180-201`) return the stored components. -/
+/-- Accessors `options`/`vector_options`/`numeric_arr_name`/`string_arr_name`
+(`mod.rs`) return the stored components. -/
 theorem Field.accessors (n : String) (t : IType) (o : Option TextOpts) (v : Option VecOpts)
-    (na sa ga : Option String) :
-    let f : Field := ⟨n, t, o, v, na, sa, ga⟩
-    f.options = o ∧ f.vopts = v ∧ f.numArr = na ∧ f.strArr = sa ∧ f.geo = ga :=
-  ⟨rfl, rfl, rfl, rfl, rfl⟩
+    (na sa : Option String) :
+    let f : Field := ⟨n, t, o, v, na, sa⟩
+    f.options = o ∧ f.vopts = v ∧ f.numArr = na ∧ f.strArr = sa := ⟨rfl, rfl, rfl, rfl⟩
 
 /-- `Eq`/`Hash` consistency (the `HashMap`/`HashSet` contract): equal fields hash equal. -/
 theorem Field.eq_hash (H : String → Nat) (a b : Field) (h : a.beqF b = true) :
@@ -187,7 +169,7 @@ theorem keys_erase (m : AMap β) (a : String) : keys (erase m a) = (keys m).filt
 
 theorem get_cons (p : String × β) (m : AMap β) (a : String) :
     get (p :: m) a = if p.1 = a then some p.2 else get m a := by
-  by_cases h : p.1 = a <;> simp [get, List.find?_cons, h]
+  by_cases h : p.1 = a <;> simp [get, h]
 
 theorem get_isSome (m : AMap β) (a : String) : (get m a).isSome ↔ a ∈ keys m := by
   induction m with
@@ -266,13 +248,13 @@ theorem get_erase (m : AMap β) (a b : String) :
   | nil => simp [erase, get]
   | cons p m ih =>
     by_cases h1 : p.1 = a
-    · have e : erase (p :: m) a = erase m a := by simp [erase, List.filter_cons, h1]
+    · have e : erase (p :: m) a = erase m a := by simp [erase, h1]
       rw [e, ih, get_cons]
       by_cases h2 : b = a
       · simp [h2]
       · have : ¬ p.1 = b := fun h => h2 (h.symm.trans h1)
         simp [h2, this]
-    · have e : erase (p :: m) a = p :: erase m a := by simp [erase, List.filter_cons, h1]
+    · have e : erase (p :: m) a = p :: erase m a := by simp [erase, h1]
       rw [e, get_cons, ih, get_cons]
       by_cases h2 : p.1 = b
       · have : ¬ b = a := fun h => h1 (h2.trans h)
