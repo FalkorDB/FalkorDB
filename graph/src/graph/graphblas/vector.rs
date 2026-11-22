@@ -412,8 +412,8 @@ fn check_blob_header(blob: &[u8]) -> Result<u64, String> {
 /// `GxB_Vector_deserialize` of an untrusted blob, as the type `ty`.
 ///
 /// The header is checked first (see [`check_blob_header`]), and the vector that
-/// comes out is held to the index array it was given, so that iterating it
-/// cannot leave the arrays. The indices themselves are untrusted.
+/// comes out is held to what its index array and, unless iso or a bitmap, its
+/// value array can hold, so that iterating it cannot leave the arrays. The indices themselves are untrusted.
 fn deserialize_untrusted(
     blob: &[u8],
     ty: GrB_Type,
@@ -438,8 +438,9 @@ fn deserialize_untrusted(
         }
         let mut v = v.assume_init();
         // The entry count is the pointer array's last word, which the blob sets,
-        // and iterating reads that many indices. Held to the index array that was
-        // allocated, an iteration cannot leave it; what the indices say is the
+        // and iterating reads that many indices (and values). Held to what the
+        // index array, and the value array when it matters, can hold, an
+        // iteration cannot leave them; what the indices say is the
         // caller's to check, as it must for any index it reads.
         //
         // GraphBLAS has a full consistency check (`GxB_Vector_fprint` at

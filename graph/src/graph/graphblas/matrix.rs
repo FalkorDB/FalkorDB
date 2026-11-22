@@ -487,10 +487,10 @@ impl ContainerHeader {
         }
         let h = Self {
             nrows: u64::from_le_bytes(at(bytes, OFF_NROWS)),
-            ncols: u64::from_le_bytes(at(bytes, OFF_NROWS + 8)),
-            nvals: u64::from_le_bytes(at(bytes, OFF_NROWS + 32)),
+            ncols: u64::from_le_bytes(at(bytes, OFF_NCOLS)),
+            nvals: u64::from_le_bytes(at(bytes, OFF_NVALS)),
             format: i32::from_le_bytes(at(bytes, OFF_FORMAT)),
-            orientation: i32::from_le_bytes(at(bytes, OFF_FORMAT + 4)),
+            orientation: i32::from_le_bytes(at(bytes, OFF_ORIENTATION)),
             iso: bytes[OFF_ISO] != 0,
         };
         // Pinned sparse or hypersparse on both ends (`pin_sparse`); bitmap and
@@ -515,6 +515,9 @@ impl ContainerHeader {
 }
 
 const OFF_NROWS: usize = std::mem::offset_of!(super::GxB_Container_struct, nrows);
+const OFF_NCOLS: usize = std::mem::offset_of!(super::GxB_Container_struct, ncols);
+const OFF_NVALS: usize = std::mem::offset_of!(super::GxB_Container_struct, nvals);
+const OFF_ORIENTATION: usize = std::mem::offset_of!(super::GxB_Container_struct, orientation);
 const OFF_FORMAT: usize = std::mem::offset_of!(super::GxB_Container_struct, format);
 const OFF_ISO: usize = std::mem::offset_of!(super::GxB_Container_struct, iso);
 

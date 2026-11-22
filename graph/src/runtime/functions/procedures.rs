@@ -180,15 +180,15 @@ pub fn register(funcs: &mut Functions) {
                                     );
                                     attr_opts.insert(
                                         Arc::new(String::from("M")),
-                                        Value::Int(vopts.m.unwrap_or(16) as i64),
+                                        Value::Int(i64::try_from(vopts.m.unwrap_or(16)).unwrap_or(i64::MAX)),
                                     );
                                     attr_opts.insert(
                                         Arc::new(String::from("efConstruction")),
-                                        Value::Int(vopts.ef_construction.unwrap_or(200) as i64),
+                                        Value::Int(i64::try_from(vopts.ef_construction.unwrap_or(200)).unwrap_or(i64::MAX)),
                                     );
                                     attr_opts.insert(
                                         Arc::new(String::from("efRuntime")),
-                                        Value::Int(vopts.ef_runtime.unwrap_or(10) as i64),
+                                        Value::Int(i64::try_from(vopts.ef_runtime.unwrap_or(10)).unwrap_or(i64::MAX)),
                                     );
                                 }
                                 options_map.insert(attr.clone(), Value::Map(Arc::new(attr_opts)));

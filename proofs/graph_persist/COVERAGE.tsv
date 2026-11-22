@@ -13,8 +13,8 @@ graph/src/graph/graphblas/serialization.rs	decode	257	PROVEN	Traits.decode_call 
 graph/src/graph/graphblas/serialization.rs	decode_with_count	269	PROVEN	Traits.decode_with_count_default_panics (unimplemented!(): panics whatever the arguments, reads nothing), decode_with_count_override
 graph/src/graph/graphblas/serialization.rs	from_u64	150	PROVEN	Persist.St.ofU_iff (from_u64 v = Some s iff s as u64 = v), St.ofU_none (v >= 12 refused: CchIndices = 10, Final = 11 are the last tags), St.ofU_toU
 graph/src/graph/graphblas/serialization.rs	encode	281	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
-graph/src/graph/graphblas/serialization.rs	decode	257	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
-graph/src/graph/graphblas/serialization.rs	decode_with_count	269	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
+graph/src/graph/graphblas/serialization.rs	decode	309	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
+graph/src/graph/graphblas/serialization.rs	decode_with_count	330	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
 src/redis_type.rs	io_cache_size	72	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
 src/redis_type.rs	io_key_name	87	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
 src/redis_type.rs	graph_rdb_load	100	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1)
@@ -69,8 +69,6 @@ graph/src/graph/graphblas/serialization.rs	DecodeLimits::scope	227	NOT COVERED	(
 graph/src/graph/graphblas/serialization.rs	DecodeLimits::current	233	NOT COVERED	(#3643): not modelled yet
 graph/src/graph/graphblas/serialization.rs	DecodeLimits::max_dim	239	NOT COVERED	(#3643): not modelled yet
 graph/src/graph/graphblas/serialization.rs	DecodeLimitsGuard::drop	250	NOT COVERED	(#3643): not modelled yet
-graph/src/graph/graphblas/serialization.rs	RoaringTreemap::decode	309	NOT COVERED	(#3643): not modelled yet
-graph/src/graph/graphblas/serialization.rs	RoaringTreemap::decode_with_count	330	NOT COVERED	(#3643): not modelled yet
 src/serializers/decoder/validate.rs	check_header	26	NOT COVERED	(#3643): not modelled yet
 src/serializers/decoder/validate.rs	check_directory	50	NOT COVERED	(#3643): not modelled yet
 src/serializers/decoder/validate.rs	label_matrix_count	72	NOT COVERED	(#3643): not modelled yet
