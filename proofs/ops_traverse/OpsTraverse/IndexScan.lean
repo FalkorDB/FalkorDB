@@ -246,7 +246,7 @@ theorem scans_stream {C R : Type} (pack : C → List (List R)) (cs : List C) :
 
 /-! ## Edge index scan (edge_by_index_scan.rs) -/
 
-/-- edge_by_index_scan.rs:541-586: as `canUse`, except `ArrayContains` also refuses integers that
+/-- edge_by_index_scan.rs:595-640: as `canUse`, except `ArrayContains` also refuses integers that
 lose precision as `f64`. -/
 def canUseE : IQ V → Bool
   | .arr _ v => match v with
@@ -279,7 +279,7 @@ theorem canUseE_spec (k : String) (v : V) (lo hi : Option V) (a b : Bool) :
     canUseE (.arr k (.int (2 ^ 60))) = false ∧ canUse (.arr k (.int (2 ^ 60))) = true := by
   refine ⟨by simp [canUseE], by simp [canUseE], by simp only [canUseE]; decide, rfl⟩
 
-/-- edge_by_index_scan.rs:346-390: `to` is not bound separately for a self-loop alias. -/
+/-- edge_by_index_scan.rs:399-444: `to` is not bound separately for a self-loop alias. -/
 structure EdgeCfg where
   fromA : Nat
   toA : Option Nat
@@ -294,23 +294,51 @@ theorem edgeIxNew_spec (f t e : Nat) (tr : Bool) :
     ((edgeIxNew f t e tr).toA = none ↔ t = f) ∧ (edgeIxNew f t e tr).cap = none := by
   refine ⟨by by_cases h : t = f <;> simp [edgeIxNew, h], rfl⟩
 
-/-- edge_by_index_scan.rs:654-665 (#3081, `ff3d24ba7`): an undirected pattern
+/-- edge_by_index_scan.rs:713-723 (#3081, `ff3d24ba7`): an undirected pattern
 (`rp.bidirectional`) sees each edge the index yields once, `src -> dst`, in both
 orientations — a self-loop once — as `CondTraverse` does. -/
 def orient (bidir : Bool) (base : List (Nat × Nat × Nat)) : List (Nat × Nat × Nat) :=
   if bidir then base.flatMap fun (s, d, e) => (s, d, e) :: (if s ≠ d then [(d, s, e)] else [])
   else base
 
-/-- edge_by_index_scan.rs:645-693 (`indexed_edges` :145 / `scan_type` :105): the index answer (or the cached full edge list), oriented
-(`orient`), then the bound-endpoint and same-alias filter (orientation by `transposed`). -/
+/-- edge_by_index_scan.rs:65-70 `pattern_endpoints`: the pattern's `(from, to)` of a hit
+`(src, dst, edge)`; a transposed scan matches `from` on the edge's destination. -/
+def patternEnds (transposed : Bool) (h : Nat × Nat × Nat) : Nat × Nat :=
+  if transposed then (h.2.1, h.1) else (h.1, h.2.1)
+
+/-- edge_by_index_scan.rs:76-82 `EndpointFilter`: the endpoints the row binds, whether the
+pattern is a self-loop (one alias on both ends), and `transposed`. -/
+structure EndpointFilter where
+  bFrom : Option Nat
+  bTo : Option Nat
+  sameAlias : Bool
+  transposed : Bool
+
+/-- edge_by_index_scan.rs:87-89 `EndpointFilter::keeps_all`. -/
+def EndpointFilter.keepsAll (f : EndpointFilter) : Bool :=
+  f.bFrom.isNone && f.bTo.isNone && !f.sameAlias
+
+/-- edge_by_index_scan.rs:91-99 `EndpointFilter::keeps`: the one per-hit test of `next`, used by
+the cached and the streaming path alike. -/
+def EndpointFilter.keeps (f : EndpointFilter) (h : Nat × Nat × Nat) : Bool :=
+  let e := patternEnds f.transposed h
+  (f.bFrom.all (· == e.1)) && (f.bTo.all (· == e.2)) && (!f.sameAlias || e.1 == e.2)
+
+/-- `keeps_all` is sound: skipping the filter when it holds drops nothing. -/
+theorem EndpointFilter.keepsAll_keeps (f : EndpointFilter) (h : f.keepsAll = true)
+    (x : Nat × Nat × Nat) : f.keeps x = true := by
+  obtain ⟨bf, bt, sa, tr⟩ := f
+  simp only [keepsAll, Bool.and_eq_true, Option.isNone_iff_eq_none, Bool.not_eq_true'] at h
+  obtain ⟨⟨rfl, rfl⟩, rfl⟩ := h
+  simp [keeps]
+
+/-- edge_by_index_scan.rs:705-732 (`indexed_edges` :199 / `scan_type` :165): the index answer (or
+the cached full edge list), oriented (`orient`), then `EndpointFilter` unless it keeps all. -/
 def edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
     (bFrom bTo : Option Nat) (sameAlias transposed bidir : Bool) : List (Nat × Nat × Nat) :=
   let base := orient bidir (if canUseE q then idx q else all)
-  if bFrom.isSome || bTo.isSome || sameAlias then
-    base.filter fun (s, d, _) =>
-      let (f, t) := if transposed then (d, s) else (s, d)
-      (bFrom.all (· == f)) && (bTo.all (· == t)) && (!sameAlias || f == t)
-  else base
+  let f : EndpointFilter := ⟨bFrom, bTo, sameAlias, transposed⟩
+  if f.keepsAll then base else base.filter f.keeps
 
 /-- Every emitted edge agrees with the bound endpoints (in pattern orientation) and is a loop
 when both endpoints share an alias. -/
@@ -321,17 +349,19 @@ theorem edgeRow_sound (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat
     (sa = true → (if tr then d else s) = (if tr then s else d)) := by
   unfold edgeRow at h
   generalize orient bd (if canUseE q = true then idx q else all) = base at h
-  by_cases hc : (bf.isSome || bt.isSome || sa) = true
-  · rw [if_pos hc, List.mem_filter] at h
+  dsimp only at h
+  split at h
+  · rename_i hk
+    simp only [EndpointFilter.keepsAll, Bool.and_eq_true, Option.isNone_iff_eq_none,
+      Bool.not_eq_true'] at hk
+    obtain ⟨⟨h1, h2⟩, h3⟩ := hk
+    refine ⟨fun x hx => by simp [h1] at hx, fun x hx => by simp [h2] at hx, fun hs => by simp [h3] at hs⟩
+  · rw [List.mem_filter] at h
     obtain ⟨_, hp⟩ := h
-    cases tr <;> simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true', beq_iff_eq] at hp <;>
-      simp only [Bool.false_eq_true, ite_false, ite_true] <;>
+    cases tr <;> simp only [EndpointFilter.keeps, patternEnds, Bool.and_eq_true, Bool.or_eq_true,
+        Bool.not_eq_true', beq_iff_eq, Bool.false_eq_true, ite_false, ite_true] at hp ⊢ <;>
       obtain ⟨⟨h1, h2⟩, h3⟩ := hp <;>
       refine ⟨fun x hx => ?_, fun x hx => ?_, fun hs => ?_⟩ <;> simp_all
-  · rw [if_neg hc] at h
-    simp only [Bool.or_eq_true, not_or, Bool.not_eq_true, Option.isSome_eq_false_iff, Option.isNone_iff_eq_none] at hc
-    obtain ⟨⟨h1, h2⟩, h3⟩ := hc
-    refine ⟨fun x hx => by simp [h1] at hx, fun x hx => by simp [h2] at hx, fun hs => by simp [h3] at hs⟩
 
 /-- **Undirected scans see both orientations** (#3081): an oriented hit is an index hit read
 either way round. -/
@@ -369,9 +399,9 @@ theorem orient_length (base : List (Nat × Nat × Nat)) :
     · simp [h]; omega
     · simp [h, List.filter_cons]; omega
 
-/-! ### The hit cache (#3376): edge_by_index_scan.rs:187-308, 592-693 -/
+/-! ### The hit cache (#3376): edge_by_index_scan.rs:249-362, 646-744 -/
 
-/-- edge_by_index_scan.rs:195-216 `collect_hits`, from an accumulator `acc`: append each hit
+/-- edge_by_index_scan.rs:257-278 `collect_hits`, from an accumulator `acc`: append each hit
 oriented as `orient` does, refusing (`none`) before an append that would pass `max`. -/
 def collectHits (bidir : Bool) (max : Nat) :
     List (Nat × Nat × Nat) → List (Nat × Nat × Nat) → Option (List (Nat × Nat × Nat))
@@ -444,97 +474,268 @@ theorem collectHits_spec (bidir : Bool) (max : Nat) (hs : List (Nat × Nat × Na
       if (orient bidir hs).length ≤ max then some (orient bidir hs) else none := by
   rw [collectHits_acc bidir max hs [] (Nat.zero_le _)]; simp
 
-/-- The per-hit test of `next`'s filter (edge_by_index_scan.rs:633-641 and 680-689). -/
-def keepHit (bFrom bTo : Option Nat) (sameAlias transposed : Bool) (h : Nat × Nat × Nat) : Bool :=
-  let (s, d, _) := h
-  let (f, t) := if transposed then (d, s) else (s, d)
-  (bFrom.all (· == f)) && (bTo.all (· == t)) && (!sameAlias || f == t)
+/-- edge_by_index_scan.rs:280-297 `HitCacheState`. `built` holds the oriented hits; the
+by-endpoint maps are `groupByEndpoint` of them, built on demand. -/
+inductive CacheState where
+  | off
+  | cold
+  | warm
+  | built (all : List (Nat × Nat × Nat))
+  | overBudget
 
-/-- edge_by_index_scan.rs:289-291: the pattern-side endpoint (`from` when `wantFrom`) of a hit. -/
-def endpointOf (transposed wantFrom : Bool) (h : Nat × Nat × Nat) : Nat :=
-  if wantFrom == transposed then h.2.1 else h.1
+/-- edge_by_index_scan.rs:433-441 (`EdgeByIndexScanOp::new`): the cache is off for a write
+query or a row-dependent index query, decided once instead of on every row. -/
+def initState (write rowInv : Bool) : CacheState :=
+  if write || !rowInv then .off else .cold
 
-/-- edge_by_index_scan.rs:292-307: the bucket of the bound `from` (else `to`): the kept hits whose
-endpoint is that id, in list order (the `HashMap` groups `all` by endpoint, pushing in order). -/
-def bucket (all : List (Nat × Nat × Nat)) (bFrom bTo : Option Nat) (transposed : Bool) :
-    List (Nat × Nat × Nat) :=
-  match bFrom, bTo with
-  | some id, _ => all.filter fun h => endpointOf transposed true h == id
-  | none, some id => all.filter fun h => endpointOf transposed false h == id
-  | none, none => []
+/-- edge_by_index_scan.rs:54-60 `shared_hits`: index `0..len` into the shared slice, by value. -/
+def sharedHits (hits : List (Nat × Nat × Nat)) : List (Nat × Nat × Nat) :=
+  (List.range hits.length).map fun i => hits.getD i (0, 0, 0)
 
-/-- edge_by_index_scan.rs:243-308 `HitCache::lookup`: `none` (stream) on a write query, a
-row-dependent query, a cache over budget, no bound endpoint, or the first bound row (`seen = 0`);
-otherwise the bucket of the hits `built` (`collect_hits`, `none` when over budget). -/
-def lookup (write rowInv overBudget : Bool) (seen : Nat) (built : Option (List (Nat × Nat × Nat)))
-    (bFrom bTo : Option Nat) (transposed : Bool) : Option (List (Nat × Nat × Nat)) :=
-  if write || !rowInv || overBudget || (bFrom.isNone && bTo.isNone) then none
-  else if seen = 0 then none
-  else (built.map fun all => bucket all bFrom bTo transposed)
+/-- `shared_hits` walks the slice exactly, in order. -/
+theorem sharedHits_eq (hits : List (Nat × Nat × Nat)) : sharedHits hits = hits := by
+  apply List.ext_getElem
+  · simp [sharedHits]
+  · intro i _ h2
+    simp [sharedHits, List.getElem?_eq_getElem h2]
 
-/-- edge_by_index_scan.rs:592-693, one input row: a usable query tries the hit cache (built from
-the index answer for the row's query; a row-invariant query is the same on every row, so the
-same answer as the row that built it), else streams `edgeRow`. -/
+/-- The key `group_by_endpoint` files a hit under: its pattern `from` (`byFrom`) or `to`. -/
+def endpointKey (transposed byFrom : Bool) (h : Nat × Nat × Nat) : Nat :=
+  if byFrom then (patternEnds transposed h).1 else (patternEnds transposed h).2
+
+/-- edge_by_index_scan.rs:115-134 `group_by_endpoint`, with the `HashMap` as a function: each hit
+is pushed onto its key's group in list order, and a node with no group reads `[]` (the
+`unwrap_or_default` of `lookup`). -/
+def groupByEndpoint (hits : List (Nat × Nat × Nat)) (transposed byFrom : Bool) :
+    Nat → List (Nat × Nat × Nat) :=
+  hits.foldl (fun g h n => if n = endpointKey transposed byFrom h then g n ++ [h] else g n)
+    (fun _ => [])
+
+theorem groupByEndpoint_acc (hits : List (Nat × Nat × Nat)) (tr bf : Bool)
+    (g : Nat → List (Nat × Nat × Nat)) (n : Nat) :
+    hits.foldl (fun g h n => if n = endpointKey tr bf h then g n ++ [h] else g n) g n =
+      g n ++ hits.filter (fun h => endpointKey tr bf h == n) := by
+  induction hits generalizing g with
+  | nil => simp
+  | cons h t ih =>
+    simp only [List.foldl_cons, ih, List.filter_cons]
+    by_cases hn : n = endpointKey tr bf h
+    · simp [hn]
+    · have : (endpointKey tr bf h == n) = false := by
+        simp only [beq_eq_false_iff_ne, ne_eq]; exact fun e => hn e.symm
+      simp [hn, this]
+
+/-- A group is the hits whose key is that node, in list order. -/
+theorem groupByEndpoint_spec (hits : List (Nat × Nat × Nat)) (tr bf : Bool) (n : Nat) :
+    groupByEndpoint hits tr bf n = hits.filter (fun h => endpointKey tr bf h == n) := by
+  simp [groupByEndpoint, groupByEndpoint_acc]
+
+/-- edge_by_index_scan.rs:323-327, the first `match` of `HitCache::lookup`: the bound node and
+whether it is the pattern's `from`; `none` when the row binds neither endpoint. -/
+def boundKey : Option Nat → Option Nat → Option (Nat × Bool)
+  | some id, _ => some (id, true)
+  | none, some id => some (id, false)
+  | none, none => none
+
+/-- edge_by_index_scan.rs:332-345, the `Warm` step of `HitCache::lookup`: keep the hits
+(`collect_hits`), or go over budget; any other state is left alone. -/
+def build (idx : IQ V → List (Nat × Nat × Nat)) (bidir : Bool) (max : Nat) (q : IQ V) :
+    CacheState → CacheState
+  | .warm => match collectHits bidir max [] (idx q) with
+    | some all => .built all
+    | none => .overBudget
+  | s => s
+
+/-- edge_by_index_scan.rs:314-361 `HitCache::lookup`: the next state, and the bucket of the bound
+node (`none` = stream). An unbound row leaves the state alone; `cold` warms and streams; `warm`
+builds; then a `built` cache answers and `off` / `overBudget` stream. -/
+def lookup (idx : IQ V → List (Nat × Nat × Nat)) (bidir : Bool) (max : Nat) (q : IQ V)
+    (bFrom bTo : Option Nat) (transposed : Bool) (s : CacheState) :
+    CacheState × Option (List (Nat × Nat × Nat)) :=
+  match boundKey bFrom bTo with
+  | none => (s, none)
+  | some (node, byFrom) =>
+    match s with
+    | .cold => (.warm, none)
+    | s =>
+      match build idx bidir max q s with
+      | .built all => (.built all, some (sharedHits (groupByEndpoint all transposed byFrom node)))
+      | s' => (s', none)
+
+/-- edge_by_index_scan.rs:658-732, one input row: a usable query asks the hit cache, and a
+bucket it returns is filtered by the same `EndpointFilter` as the streaming path (`edgeRow`). An
+empty bucket skips the row (:696-700), which emits the same nothing as filtering it. -/
 def edgeNextRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
-    (bFrom bTo : Option Nat) (sameAlias transposed bidir : Bool)
-    (write rowInv overBudget : Bool) (seen max : Nat) : List (Nat × Nat × Nat) :=
+    (bFrom bTo : Option Nat) (sameAlias transposed bidir : Bool) (max : Nat) (s : CacheState) :
+    CacheState × List (Nat × Nat × Nat) :=
   if canUseE q then
-    match lookup write rowInv overBudget seen (collectHits bidir max [] (idx q)) bFrom bTo transposed with
-    | some b => b.filter (keepHit bFrom bTo sameAlias transposed)
-    | none => edgeRow idx all q bFrom bTo sameAlias transposed bidir
-  else edgeRow idx all q bFrom bTo sameAlias transposed bidir
+    match lookup idx bidir max q bFrom bTo transposed s with
+    | (s', some b) => (s', b.filter (EndpointFilter.keeps ⟨bFrom, bTo, sameAlias, transposed⟩))
+    | (s', none) => (s', edgeRow idx all q bFrom bTo sameAlias transposed bidir)
+  else (s, edgeRow idx all q bFrom bTo sameAlias transposed bidir)
 
-/-- A bucket filtered by the row's test is the whole hit list filtered by it: the bucket key is
-one conjunct of the test. -/
+/-- What a built cache holds: the hits of `q`, oriented as the pattern matches them. -/
+def CacheInv (idx : IQ V → List (Nat × Nat × Nat)) (bidir : Bool) (q : IQ V) : CacheState → Prop
+  | .built all => all = orient bidir (idx q)
+  | _ => True
+
+/-- `build` keeps exactly `q`'s oriented hits, by `collectHits_spec`. -/
+theorem build_inv (idx : IQ V → List (Nat × Nat × Nat)) (bd : Bool) (max : Nat) (q : IQ V)
+    (s : CacheState) (h : CacheInv idx bd q s) : CacheInv idx bd q (build idx bd max q s) := by
+  cases s with
+  | warm =>
+    simp only [build, collectHits_spec]
+    split <;> rename_i h' <;> split at h' <;> simp_all [CacheInv]
+  | _ => exact h
+
+theorem lookup_bound (idx : IQ V → List (Nat × Nat × Nat)) (bd : Bool) (max : Nat) (q : IQ V)
+    (bf bt : Option Nat) (tr : Bool) (node : Nat) (byFrom : Bool)
+    (hk : boundKey bf bt = some (node, byFrom)) (s : CacheState) (hs : s ≠ .cold) :
+    lookup idx bd max q bf bt tr s =
+      match build idx bd max q s with
+      | .built all => (.built all, some (sharedHits (groupByEndpoint all tr byFrom node)))
+      | s' => (s', none) := by
+  unfold lookup
+  rw [hk]
+  cases s <;> first | exact absurd rfl hs | rfl
+
+/-- The bound node's group, filtered by the row's test, is the whole list filtered by it: the
+group key is one conjunct of the test. -/
 theorem bucket_filter (all : List (Nat × Nat × Nat)) (bf bt : Option Nat) (sa tr : Bool)
-    (hb : bf.isSome || bt.isSome) :
-    (bucket all bf bt tr).filter (keepHit bf bt sa tr) = all.filter (keepHit bf bt sa tr) := by
+    (node : Nat) (byFrom : Bool) (hk : boundKey bf bt = some (node, byFrom)) :
+    (groupByEndpoint all tr byFrom node).filter (EndpointFilter.keeps ⟨bf, bt, sa, tr⟩) =
+      all.filter (EndpointFilter.keeps ⟨bf, bt, sa, tr⟩) := by
+  rw [groupByEndpoint_spec, List.filter_filter]
+  apply List.filter_congr
+  intro ⟨s, d, e⟩ _
   match bf, bt with
-  | none, none => simp at hb
+  | none, none => simp [boundKey] at hk
   | some id, _ =>
-    simp only [bucket, List.filter_filter]
-    apply List.filter_congr
-    intro ⟨s, d, e⟩ _
+    simp only [boundKey, Option.some.injEq, Prod.mk.injEq] at hk
+    obtain ⟨hid, hbf⟩ := hk
+    subst hbf; subst hid
     cases tr <;> by_cases h1 : s = id <;> by_cases h2 : d = id <;>
-      simp only [keepHit, endpointOf] <;> simp [h1, h2] <;> intro hx <;> subst hx <;> simp_all
+      simp [EndpointFilter.keeps, endpointKey, patternEnds, h1, h2] <;> intros <;> simp_all
   | none, some id =>
-    simp only [bucket, List.filter_filter]
-    apply List.filter_congr
-    intro ⟨s, d, e⟩ _
+    simp only [boundKey, Option.some.injEq, Prod.mk.injEq] at hk
+    obtain ⟨hid, hbf⟩ := hk
+    subst hbf; subst hid
     cases tr <;> by_cases h1 : s = id <;> by_cases h2 : d = id <;>
-      simp only [keepHit, endpointOf] <;> simp [h1, h2] <;> intro hx <;> subst hx <;> simp_all
+      simp [EndpointFilter.keeps, endpointKey, patternEnds, h1, h2] <;> intros <;> simp_all
 
-/-- **The hit cache changes no row** (#3376): every input row emits exactly what the
-streaming scan `edgeRow` emits, in the same order, whatever the cache state. -/
-theorem edgeNextRow_eq_edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
-    (q : IQ V) (bf bt : Option Nat) (sa tr bd write rowInv over : Bool) (seen max : Nat) :
-    edgeNextRow idx all q bf bt sa tr bd write rowInv over seen max =
-      edgeRow idx all q bf bt sa tr bd := by
-  unfold edgeNextRow
+/-- A usable query's streamed row is its oriented index answer through `EndpointFilter`. -/
+theorem edgeRow_usable (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (q : IQ V) (bf bt : Option Nat) (sa tr bd : Bool) (hq : canUseE q = true) :
+    edgeRow idx all q bf bt sa tr bd =
+      (orient bd (idx q)).filter (EndpointFilter.keeps ⟨bf, bt, sa, tr⟩) := by
+  unfold edgeRow
+  simp only [hq, ite_true]
   split
-  · rename_i hq
-    split
-    · rename_i b hl
-      unfold lookup at hl
-      split at hl
-      · simp at hl
-      · rename_i hg
-        split at hl
-        · simp at hl
-        · rw [collectHits_spec] at hl
-          split at hl
-          · simp only [Option.map_some, Option.some.injEq] at hl
-            subst hl
-            have hb : (bf.isSome || bt.isSome) = true := by
-              cases bf <;> cases bt <;> simp_all
-            rw [bucket_filter _ _ _ _ _ hb]
-            simp only [edgeRow, hq, hb, if_true, Bool.true_or]
-            apply List.filter_congr
-            intro ⟨s, d, e⟩ _
-            cases tr <;> rfl
-          · simp at hl
-    · rfl
+  · rename_i h
+    exact (List.filter_eq_self.mpr fun x _ => EndpointFilter.keepsAll_keeps _ h x).symm
   · rfl
+
+/-- **The hit cache changes no row** (#3376): while the cache holds `q`'s hits (or none), a row
+emits exactly what streaming `q` emits, in the same order, and the cache still holds `q`'s hits
+afterwards. -/
+theorem edgeNextRow_eq_edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (q : IQ V) (bf bt : Option Nat) (sa tr bd : Bool) (max : Nat) (s : CacheState)
+    (hinv : CacheInv idx bd q s) :
+    (edgeNextRow idx all q bf bt sa tr bd max s).2 = edgeRow idx all q bf bt sa tr bd ∧
+      CacheInv idx bd q (edgeNextRow idx all q bf bt sa tr bd max s).1 := by
+  unfold edgeNextRow
+  by_cases hq : canUseE q = true
+  · simp only [hq, ite_true]
+    cases hk : boundKey bf bt with
+    | none =>
+      have : lookup idx bd max q bf bt tr s = (s, none) := by unfold lookup; rw [hk]
+      rw [this]; exact ⟨rfl, hinv⟩
+    | some k =>
+      obtain ⟨node, byFrom⟩ := k
+      by_cases hc : s = .cold
+      · subst hc
+        have : lookup idx bd max q bf bt tr .cold = (.warm, none) := by unfold lookup; rw [hk]
+        rw [this]; exact ⟨rfl, trivial⟩
+      · rw [lookup_bound idx bd max q bf bt tr node byFrom hk s hc]
+        have hb := build_inv idx bd max q s hinv
+        revert hb
+        generalize build idx bd max q s = s'
+        intro hb
+        cases s' with
+        | built a =>
+          simp only [CacheInv] at hb
+          subst hb
+          refine ⟨?_, rfl⟩
+          simp only [sharedHits_eq]
+          rw [bucket_filter _ _ _ _ _ _ _ hk, edgeRow_usable _ _ _ _ _ _ _ _ hq]
+        | _ => exact ⟨rfl, hb⟩
+  · simp only [hq]
+    exact ⟨rfl, hinv⟩
+
+/-- The operator over its input rows, each with its evaluated index query and bound endpoints,
+threading the cache state from row to row. -/
+def edgeRun (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (sa tr bd : Bool) (max : Nat) :
+    CacheState → List (IQ V × Option Nat × Option Nat) → List (List (Nat × Nat × Nat))
+  | _, [] => []
+  | s, (q, bf, bt) :: rows =>
+    (edgeNextRow idx all q bf bt sa tr bd max s).2 ::
+      edgeRun idx all sa tr bd max (edgeNextRow idx all q bf bt sa tr bd max s).1 rows
+
+theorem edgeNextRow_off (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (q : IQ V) (bf bt : Option Nat) (sa tr bd : Bool) (max : Nat) :
+    edgeNextRow idx all q bf bt sa tr bd max .off = (.off, edgeRow idx all q bf bt sa tr bd) := by
+  unfold edgeNextRow lookup
+  by_cases hq : canUseE q = true
+  · simp only [hq, ite_true]
+    cases boundKey bf bt <;> rfl
+  · simp [hq]
+
+/-- An off cache (a write query, or a row-dependent index query) stays off, and every row
+streams its own query. -/
+theorem edgeRun_off (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (sa tr bd : Bool) (max : Nat) (rows : List (IQ V × Option Nat × Option Nat)) :
+    edgeRun idx all sa tr bd max .off rows =
+      rows.map fun (q, bf, bt) => edgeRow idx all q bf bt sa tr bd := by
+  induction rows with
+  | nil => rfl
+  | cons r rows ih =>
+    obtain ⟨q, bf, bt⟩ := r
+    simp only [edgeRun, edgeNextRow_off, ih, List.map_cons]
+
+/-- Rows that all ask the same query `q`, from a state holding `q`'s hits (or none): the run
+emits what streaming emits, row by row. -/
+theorem edgeRun_same_query (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (sa tr bd : Bool) (max : Nat) (q : IQ V) (rows : List (IQ V × Option Nat × Option Nat))
+    (hq : ∀ r ∈ rows, r.1 = q) (s : CacheState) (hinv : CacheInv idx bd q s) :
+    edgeRun idx all sa tr bd max s rows =
+      rows.map fun (q, bf, bt) => edgeRow idx all q bf bt sa tr bd := by
+  induction rows generalizing s with
+  | nil => rfl
+  | cons r rows ih =>
+    obtain ⟨q', bf, bt⟩ := r
+    have hq' : q' = q := hq _ (List.mem_cons_self ..)
+    subst hq'
+    obtain ⟨h1, h2⟩ := edgeNextRow_eq_edgeRow idx all q' bf bt sa tr bd max s hinv
+    simp only [edgeRun, List.map_cons, h1]
+    rw [ih (fun r hr => hq r (List.mem_cons_of_mem _ hr)) _ h2]
+
+/-- **The operator emits the streamed rows** (#3376): from the state `new` sets, every input row
+emits exactly what streaming its own index query emits, in order. The premise `hrow` is the claim
+of `query_is_row_invariant` (unmodelled, see COVERAGE.tsv): a row-invariant index query evaluates
+to the same `q` on every row. It is needed only when the cache can turn on (a read query); off
+needs none. -/
+theorem edgeScan_eq_streamed (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (sa tr bd : Bool) (max : Nat) (write rowInv : Bool) (q : IQ V)
+    (rows : List (IQ V × Option Nat × Option Nat))
+    (hrow : (!write && rowInv) = true → ∀ r ∈ rows, r.1 = q) :
+    edgeRun idx all sa tr bd max (initState write rowInv) rows =
+      rows.map fun (q, bf, bt) => edgeRow idx all q bf bt sa tr bd := by
+  unfold initState
+  cases hw : (write || !rowInv)
+  · have hr : (!write && rowInv) = true := by cases write <;> cases rowInv <;> simp_all
+    exact edgeRun_same_query idx all sa tr bd max q rows (hrow hr) .cold trivial
+  · exact edgeRun_off ..
 
 /-! ## Fulltext scans and the edge vector scan -/
 
