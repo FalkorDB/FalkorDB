@@ -76,3 +76,6 @@ graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	237	PROVEN	CartVhj
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	266	PROVEN	CartVhj.build/buildPO: build_int, build_append, buildPO_origin (one table per origin_row, #3035), buildPO_single, buildPO_int_probe
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	352	PROVEN	CartVhj.fillMatches/fillMatchesPO/probe: fillMatches_int, fillMatches_absent, probe_insert_fresh, buildPO_int_probe
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	398	PROVEN	CartVhj.vhjRows/vhjRowsPO: vhjRows_spec, vhjRowsPO_spec, vhjRowsPO_single
+graph/src/runtime/ops/value_hash_join.rs	JoinKey::hash	136	NOT COVERED	(#3034): not modelled yet
+graph/src/runtime/ops/value_hash_join.rs	JoinKey::f32_join_bits	193	NOT COVERED	(#3034): not modelled yet
+graph/src/runtime/ops/value_hash_join.rs	same_build_key	259	NOT COVERED	(#3034): not modelled yet
