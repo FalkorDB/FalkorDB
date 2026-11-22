@@ -81,3 +81,9 @@ graph/src/graph/graphblas/me_delta_bench.rs	per_op	43	NOT COVERED	TEST-ONLY: ben
 graph/src/graph/graphblas/me_delta_bench.rs	committed_multi	58	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_step	84	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_attach_vs_seek	140	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	replace_cartesian_with_index_seek	58	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	rebuild	67	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	scan_chain	93	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	try_seek_rewrite	117	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	estimate_rows	226	NOT COVERED	(#3889): not modelled yet
+graph/src/planner/optimizer/replace_cartesian_with_index_seek.rs	unwound_len	273	NOT COVERED	(#3889): not modelled yet
