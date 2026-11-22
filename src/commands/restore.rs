@@ -33,7 +33,7 @@ pub fn graph_restore(
     let graph_name = up_to_nul(dest_name);
 
     // Verify dest key does not already exist.
-    let dest_key = ctx.open_key_writable(&dest_key_name);
+    let dest_key = ctx.open_key_writable(&dest_key_name)?;
     if dest_key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
         .map_err(wrong_type_compat)?

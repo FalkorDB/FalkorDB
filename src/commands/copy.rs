@@ -63,7 +63,7 @@ pub fn graph_copy(
     };
 
     // Verify dest key does not already exist.
-    let dest_key = ctx.open_key_writable(&dest_key_name);
+    let dest_key = ctx.open_key_writable(&dest_key_name)?;
     if dest_key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
         .map_err(wrong_type_compat)?

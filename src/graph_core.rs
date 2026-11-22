@@ -34,7 +34,7 @@ use crate::{
         CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
         TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
     },
-    reply::{reply_compact, reply_verbose},
+    reply::{ReplyFormat, reply_query},
     slow_log::SlowLog,
     telemetry,
 };
@@ -50,6 +50,7 @@ use graph::{
     graph::{graph::Plan, mvcc_graph::MvccGraph},
     planner::IR,
     runtime::runtime::{QueryStatistics, Runtime},
+    thread_id::is_main_thread,
     threadpool::{QueueSlot, spawn},
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
@@ -61,7 +62,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use valkey_module::logging::{ValkeyLogLevel, log_warning};
 use valkey_module::{
@@ -71,11 +72,12 @@ use valkey_module::{
 use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
 };
-use crate::dispatch::must_run_inline;
+use crate::dispatch::{logs_telemetry, must_run_inline};
 use crate::divergence_guard;
-use crate::query_session::QuerySession;
 #[cfg(feature = "index-falkordb")]
 use crate::query_session::hold_gil;
+use crate::query_session::{QuerySession, WriteAbort, WriterGate};
+use crate::redis_type::key_holds_graph;
 
 /// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
 ///
@@ -223,6 +225,56 @@ pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
     GRAPH_REGISTRY.lock().contains_key(&graph_id(arc))
 }
 
+/// The key a write on `graph` is published under, or why it must not be
+/// published.
+///
+/// A queued write is admitted on the main thread under the key the client named,
+/// and commits later, from a worker. By then that key may no longer hold the graph,
+/// and [`graph_is_registered`] cannot tell: it asks the module's registry, which a
+/// `RENAME` re-keys but keeps, and which a background flush (`FLUSHALL ASYNC`, and a
+/// plain `FLUSHALL` on Valkey and Redis 8) empties only when the lazy-free thread
+/// gets to `graph_free`. So this asks the keyspace, under the GIL the write holds
+/// until it has committed and replicated:
+///
+/// * the admitted key still holds the graph: that key;
+/// * the graph was renamed: the key it lives at now. Replicated under the admitted
+///   key instead, the write went to a key the replica no longer had, and
+///   `GRAPH.EFFECT` created a graph there: the master kept `b` with the write, the
+///   replica kept `a` with it and `b` without. C follows the rename;
+/// * no key holds it: [`WriteAbort::GraphUnregistered`]. Committed anyway, the write
+///   was answered OK into a graph no key held, and its payload resurrected the key
+///   on the replica. C refuses it ("Encountered an empty key").
+///
+/// A key that is not valid UTF-8 is the exception. `admitted` is the lossy rendering
+/// of its bytes, so nothing here can open it, and it is taken as it was before this
+/// check existed, on the registry's word.
+///
+/// `GRAPH.BULK` asks the same question of a batch it built on a worker, and of a
+/// failed `BEGIN` batch before taking its graph back out of the keyspace.
+pub fn key_of_write(
+    ctx: &Context,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    admitted: &Arc<str>,
+) -> Result<Arc<str>, WriteAbort> {
+    // An inline command runs in one main-thread turn, so nothing can have moved its
+    // key — and a graph it is creating is stored at its key only after it returns.
+    if is_main_thread() || key_holds_graph(ctx, admitted.as_bytes(), graph) {
+        return Ok(Arc::clone(admitted));
+    }
+    // Only a key of the database `ctx` is in counts: the write is replicated into it,
+    // so a graph that a `MOVE` or `SWAPDB` took to another database is not where this
+    // write can be published, whatever the registry says of its key.
+    let registered = GRAPH_REGISTRY
+        .lock()
+        .get(&graph_id(graph))
+        .map(|e| e.name.clone());
+    match registered {
+        Some(name) if key_holds_graph(ctx, name.as_bytes(), graph) => Ok(Arc::from(name)),
+        Some(_) if admitted.contains(char::REPLACEMENT_CHARACTER) => Ok(Arc::clone(admitted)),
+        _ => Err(WriteAbort::GraphUnregistered),
+    }
+}
+
 /// The database `arc` is registered in, if it is registered.
 pub fn registered_db(arc: &Arc<RwLock<ThreadedGraph>>) -> Option<i32> {
     GRAPH_REGISTRY.lock().get(&graph_id(arc)).map(|e| e.db)
@@ -260,7 +312,7 @@ pub fn swap_graph_dbs(
 pub struct WriteMessage {
     pub bc: BlockedClient,
     pub query: Arc<str>,
-    pub compact: bool,
+    pub format: ReplyFormat,
     pub cached: bool,
     pub key_name: Arc<str>,
     pub timeout: Option<i64>,
@@ -580,6 +632,9 @@ pub struct ThreadedGraph {
     pub receiver: Rx<List<Box<WriteMessage>>>,
     pub write_loop: AtomicBool,
     pub slow_log: SlowLog,
+    /// Where readers wait while a writer is kept from the write lock. Inside the
+    /// lock because there is nowhere else to put it — see [`WriterGate`].
+    pub writer_gate: Arc<WriterGate>,
 }
 
 unsafe impl Send for ThreadedGraph {}
@@ -597,6 +652,7 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
+            writer_gate: Arc::default(),
         }
     }
 
@@ -610,6 +666,7 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
+            writer_gate: Arc::default(),
         }
     }
 }
@@ -624,7 +681,7 @@ pub fn execute_query(
     session: &QuerySession,
     ctx: &Context,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     write: bool,
     cmd: &str,
     per_query_timeout: Option<i64>,
@@ -683,11 +740,7 @@ pub fn execute_query(
     );
     let mut result = runtime.query()?;
     result.stats.cached = cached;
-    if compact {
-        reply_compact(ctx, &runtime, &result);
-    } else {
-        reply_verbose(ctx, &runtime, &result);
-    }
+    reply_query(ctx, &runtime, &result, format);
     let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
     let execution_time_ms = result.stats.execution_time;
     session.with_graph(|tg| tg.slow_log.add(cmd, query, params_offset, latency));
@@ -762,42 +815,84 @@ pub fn execute_profile(
 /// long-lived `&ThreadedGraph` would be invalidated mid-query; every access here is a
 /// short-lived `session.with_graph` borrow instead.
 ///
-/// Returns `(params_offset, execution_time_ms)` for telemetry.
+/// Returns `(params_offset, execution_time_ms)` for telemetry. The execution time spans
+/// every attempt and the wait for the write lock, as the caller's wall clock does.
 ///
 /// A write that started as a reader and lost its version to a writer that
 /// committed while it was matching ([`QuerySession::is_stale`]) has mutated and
 /// replied nothing, so it is run again from the start on a fresh session.
+///
+/// Retrying is bounded. Every retry loses to the next writer that commits during
+/// its matching window, so under a steady stream of writes it could run forever
+/// while C finishes in one pass. After [`MAX_STALE_RETRIES`] stale runs, or at once
+/// after a stale run that took [`SLOW_STALE_RUN`] or longer, the write runs again
+/// as a writer, holding the write lock from the start like C does, which no one
+/// can make stale. All attempts share one clock and one timeout,
+/// resolved on the first attempt, so `TIMEOUT` and the slow log count from the
+/// first attempt, and a config change during a retry cannot move the deadline.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_query_write(
     session: QuerySession,
     ctx: &Context,
     key_name: &Arc<str>,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     first_cached: bool,
     per_query_timeout: Option<i64>,
     profile: bool,
 ) -> Result<(usize, f64), String> {
     let graph = session.graph_arc();
     let facts = session.facts();
+    let started = Instant::now();
+    let mut timeout = WriteTimeout::Unresolved;
+    let mut stale_runs = 0;
     let mut session = session;
     loop {
-        match try_query_write(
+        let attempt_start = Instant::now();
+        let r = try_query_write(
             session,
             ctx,
             key_name,
             query,
-            compact,
+            format,
             first_cached,
             per_query_timeout,
+            &mut timeout,
             profile,
-        ) {
-            Err(WriteAttempt::Stale) => session = QuerySession::begin_with(&graph, facts),
+            started,
+        );
+        let wasted = attempt_start.elapsed();
+        match r {
+            Err(WriteAttempt::Stale) => {
+                stale_runs += 1;
+                session = if stale_runs >= MAX_STALE_RETRIES || wasted >= SLOW_STALE_RUN {
+                    QuerySession::begin_writer_checked(&graph, facts).map_err(|e| e.to_string())?
+                } else {
+                    QuerySession::begin_with(&graph, facts)
+                };
+            }
             Err(WriteAttempt::Failed(err)) => return Err(err),
-            Ok(done) => return Ok(done),
+            Ok((params_offset, exec_ms)) => {
+                // The caller's wall clock spans every attempt and the wait for the lock, so
+                // the execution time reported with it does too: only the reply is left to
+                // `wall - exec`, as for a write that ran once.
+                let before_last = attempt_start.duration_since(started).as_secs_f64() * 1000.0;
+                return Ok((params_offset, before_last + exec_ms));
+            }
         }
     }
 }
+
+/// Stale runs a write that began as a reader may lose before it runs as a writer
+/// for the whole query.
+pub const MAX_STALE_RETRIES: u32 = 3;
+
+/// A stale run that took this long is not retried as a reader at all. Rerunning it
+/// as a reader risks losing the same race again for as long as it took here,
+/// while waiting for the write lock costs about one more run. Cheap matches keep
+/// retrying (up to [`MAX_STALE_RETRIES`]), since a retry there is cheaper than
+/// queueing for the lock.
+pub const SLOW_STALE_RUN: Duration = Duration::from_millis(10);
 
 /// Why one run of [`try_query_write`] did not succeed.
 enum WriteAttempt {
@@ -812,7 +907,18 @@ impl From<String> for WriteAttempt {
     }
 }
 
-/// One run of [`execute_query_write`].
+/// The timeout of one write, resolved by its first run and kept for the retries.
+enum WriteTimeout {
+    /// No run has resolved it yet.
+    Unresolved,
+    /// Resolved: the write has no timeout.
+    Unlimited,
+    /// Resolved: the whole write, retries included, has this many milliseconds.
+    Total(u64),
+}
+
+/// One run of [`execute_query_write`]. `timeout` is the write's resolved timeout,
+/// set by the first run and kept for the retries.
 #[allow(
     clippy::too_many_arguments,
     clippy::needless_pass_by_value,
@@ -823,12 +929,13 @@ fn try_query_write(
     ctx: &Context,
     key_name: &Arc<str>,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     first_cached: bool,
     per_query_timeout: Option<i64>,
+    timeout: &mut WriteTimeout,
     profile: bool,
+    wall_start: Instant,
 ) -> Result<(usize, f64), WriteAttempt> {
-    let wall_start = Instant::now();
     let Plan {
         plan,
         parameters,
@@ -841,7 +948,21 @@ fn try_query_write(
         IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
     )));
 
-    let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
+    // The budget is for the whole write, so a retry gets what the earlier runs left.
+    if matches!(timeout, WriteTimeout::Unresolved) {
+        *timeout = compute_effective_timeout(per_query_timeout, true)?
+            .map_or(WriteTimeout::Unlimited, WriteTimeout::Total);
+    }
+    let timeout_ms = match *timeout {
+        WriteTimeout::Total(total) => {
+            let spent = u64::try_from(wall_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if spent >= total {
+                return Err(WriteAttempt::Failed("Query timed out".to_string()));
+            }
+            Some(total - spent)
+        }
+        WriteTimeout::Unlimited | WriteTimeout::Unresolved => None,
+    };
 
     // The private COW version to build into. Forking takes nothing, so an
     // inline writer is never refused because we are still matching; if one
@@ -883,7 +1004,10 @@ fn try_query_write(
 
     // Commit → signal WATCH → replicate, the last work that needs the GIL.
     let graph = session.graph_arc();
-    finish_write(&session, ctx, key_name, &runtime, &result.stats);
+    if let Err(abort) = finish_write(&session, ctx, key_name, &runtime, &result.stats) {
+        abandon_write(&session, &runtime);
+        return Err(WriteAttempt::Failed(abort.to_string()));
+    }
     session.release_locks();
 
     // Writer window is closed. Serializing the reply reads this query's own MVCC
@@ -895,10 +1019,8 @@ fn try_query_write(
         // Everything else — effects, commit, replication — is identical to a
         // GRAPH.QUERY write.
         reply_profile(ctx, &runtime, &runtime.plan);
-    } else if compact {
-        reply_compact(ctx, &runtime, &result);
     } else {
-        reply_verbose(ctx, &runtime, &result);
+        reply_query(ctx, &runtime, &result, format);
     }
 
     let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
@@ -1048,7 +1170,7 @@ pub fn query_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     write: bool,
     track_mem: bool,
     key_name: Arc<str>,
@@ -1075,7 +1197,7 @@ pub fn query_mut(
             ctx,
             graph,
             query,
-            compact,
+            format,
             write,
             &key_name,
             per_query_timeout,
@@ -1144,7 +1266,7 @@ pub fn query_mut(
                 &session,
                 &ctx,
                 &query,
-                compact,
+                format,
                 write,
                 cmd,
                 per_query_timeout,
@@ -1179,7 +1301,7 @@ pub fn query_mut(
                         let msg = Box::new(WriteMessage {
                             bc,
                             query,
-                            compact,
+                            format,
                             cached: read_result.cached,
                             key_name,
                             timeout: per_query_timeout,
@@ -1252,7 +1374,7 @@ fn query_sync(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    compact: bool,
+    format: ReplyFormat,
     write: bool,
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
@@ -1269,6 +1391,9 @@ fn query_sync(
     }
 
     let received_at = telemetry::unix_now_secs();
+    // This is the only path a replicated or replayed command takes, so it is the only
+    // one that has to ask whether the query is this node's to log.
+    let log_query = logs_telemetry(ctx);
     let cmd = if write {
         "GRAPH.QUERY"
     } else {
@@ -1285,7 +1410,7 @@ fn query_sync(
             &session,
             ctx,
             query,
-            compact,
+            format,
             write,
             cmd,
             per_query_timeout,
@@ -1308,7 +1433,7 @@ fn query_sync(
                     ctx,
                     key_name,
                     query,
-                    compact,
+                    format,
                     read_result.cached,
                     per_query_timeout,
                     false,
@@ -1334,7 +1459,9 @@ fn query_sync(
                             is_write: true,
                             timed_out: false,
                         };
-                        telemetry::enqueue_entry(key_name, graph, entry);
+                        if log_query {
+                            telemetry::enqueue_entry(key_name, graph, entry);
+                        }
                     }
                     Err(err) => {
                         // execute_query_write already discarded the private
@@ -1366,7 +1493,9 @@ fn query_sync(
                     is_write: false,
                     timed_out: read_result.timed_out,
                 };
-                telemetry::enqueue_entry(key_name, graph, entry);
+                if log_query {
+                    telemetry::enqueue_entry(key_name, graph, entry);
+                }
             }
         }
         Err(err) => {
@@ -1437,7 +1566,7 @@ pub fn profile_mut(
                     let msg = Box::new(WriteMessage {
                         bc,
                         query,
-                        compact: false,
+                        format: ReplyFormat::default(),
                         cached: false,
                         key_name,
                         timeout: per_query_timeout,
@@ -1506,7 +1635,7 @@ fn profile_sync(
                 ctx,
                 key_name,
                 query,
-                false,
+                ReplyFormat::default(),
                 false,
                 per_query_timeout,
                 true,
@@ -1545,20 +1674,34 @@ fn profile_sync(
 /// publish it identically. Both carried a copy of this, and of
 /// [`abandon_write`] below, which is how the effects decision came to be made
 /// in two places.
+///
+/// Refused when no key holds the graph any more ([`key_of_write`]): nothing was
+/// published, and the caller undoes the write as it would a failed one
+/// ([`abandon_write`]).
 pub fn finish_write(
     session: &QuerySession,
     ctx: &Context,
     key_name: &Arc<str>,
     runtime: &Runtime<'_>,
     stats: &QueryStatistics,
-) {
+) -> Result<(), WriteAbort> {
     let wq = WriteQueryOk::new(runtime, stats);
+    let graph = session.graph_arc();
     // `with_graph_mut` skips the closure for a session still in reader mode:
     // it never escalated, so the plan's `Commit` never ran and nothing was
     // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There is
     // nothing to publish or replicate, and the private version goes with the
     // runtime.
-    session.with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, runtime, wq));
+    session
+        .with_graph_mut(|tg| {
+            // Writer mode: the GIL has been held since the write was authorized,
+            // so what the keyspace says now is what it said then, and stays so
+            // until the commit and its payload are out.
+            let key_name = key_of_write(ctx, &graph, key_name)?;
+            commit_and_replicate(tg, ctx, &key_name, runtime, wq);
+            Ok(())
+        })
+        .unwrap_or(Ok(()))
 }
 
 /// Discard a write that failed, leaving the published state as it was.
@@ -1699,7 +1842,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         let WriteMessage {
             bc,
             query,
-            compact,
+            format,
             cached,
             key_name,
             timeout: per_query_timeout,
@@ -1743,7 +1886,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             &ctx,
             &key_name,
             &query,
-            compact,
+            format,
             cached,
             per_query_timeout,
             profile,
@@ -1833,11 +1976,18 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // registry entry whose clone shares this inner allocation is removed.
         let boxed = Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>());
         let removed = GRAPH_REGISTRY.lock().remove(&graph_id(&boxed));
-        // Drop off the main Redis thread so Index::drop routes through the
-        // GIL-acquiring path. Index::drop -> RediSearch_DropIndex queues a
-        // destroyCallback to RediSearch's GC thread pool when its timer can't be
-        // stopped synchronously; that callback asserts gc->stopped == 1 and aborts
-        // under the resulting race on the main thread.
+        // The graph has just left the registry, and the registry is what the
+        // persistence strip walks: its telemetry stream is queued for deletion
+        // now, in the same callback, or a save could persist a stream nothing
+        // will strip again. Queued, not deleted: the server is part-way through
+        // removing this graph's key.
+        if let Some(e) = &removed {
+            telemetry::queue_streams_of_freed_graph(vec![(e.db, e.name.clone())]);
+        }
+        // Drop off the main Redis thread, without the GIL: `SpecHandle::drop`
+        // calls `RediSearch_DropIndex` without it (#726), so that call must not
+        // touch the GIL's state. RediSearch hands the GC timer stop to the main
+        // thread and leaves the shared "N/A" error key's refcount alone (#3483).
         std::thread::spawn(move || {
             drop(boxed);
             drop(removed);

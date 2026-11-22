@@ -44,7 +44,7 @@ pub fn graph_query(
     args: Vec<ValkeyString>,
 ) -> ValkeyResult {
     let QueryFlags {
-        compact,
+        format,
         track_memory,
         timeout,
         version: version_check,
@@ -82,7 +82,7 @@ pub fn graph_query(
             ctx,
             &graph,
             query,
-            compact,
+            format,
             true,
             track_memory,
             key_name,
@@ -93,7 +93,7 @@ pub fn graph_query(
 
     // Graph doesn't exist - open writable key to create it.
     drop(read_key);
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
     // Re-check: another client may have created it between our read and write open.
     if let Some(graph) = key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
@@ -104,7 +104,7 @@ pub fn graph_query(
             ctx,
             &graph,
             query,
-            compact,
+            format,
             true,
             track_memory,
             key_name,
@@ -132,22 +132,24 @@ pub fn graph_query(
         return Ok(ValkeyValue::NoReply);
     }
 
+    // Stored under the name, not under the key that was looked up — this is
+    // `GraphContext_SetKey`, and it is why a graph addressed as `a\0b` lands at key
+    // `a`, replacing whatever graph was there. Opened before the query runs: once
+    // `query_mut` has replied or blocked the client, a refused open could no longer
+    // be reported without a second reply.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
     let result = query_mut(
         ctx,
         &graph,
         query,
-        compact,
+        format,
         true,
         track_memory,
         key_name,
         timeout,
         None,
     );
-    // Stored under the name, not under the key that was looked up — this is
-    // `GraphContext_SetKey`, and it is why a graph addressed as `a\0b` lands at key
-    // `a`, replacing whatever graph was there. `key` is dropped unset, leaving the
-    // addressed key absent, exactly as in C.
-    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+    // `key` is dropped unset, leaving the addressed key absent, exactly as in C.
     drop(key);
     create_key
         .set_value(&GRAPH_TYPE, graph.clone())

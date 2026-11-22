@@ -38,7 +38,7 @@ pub fn graph_effect(
     // Open existing graph or create a new one. Looked up by the full key bytes
     // and created under the truncated name, which is C's own asymmetry — see
     // `c_graph_key`.
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
     let graph = if let Some(g) = key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
         .map_err(wrong_type_compat)?
@@ -56,7 +56,7 @@ pub fn graph_effect(
         // name, from the one every other command would have made — and this is
         // the replication path, so the divergence would be between a replica
         // and the master it is meant to be copying.
-        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
         create_key
             .set_value(&GRAPH_TYPE, g.clone())
             .map_err(wrong_type_compat)?;

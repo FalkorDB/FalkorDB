@@ -1,5 +1,5 @@
 /-!
-# Scalar aggregation bodies (functions/aggregation.rs:49-720) and math.rs `register`/`e`/`rand`
+# Scalar aggregation bodies (functions/aggregation.rs) and math.rs `register`/`e`/`rand`
 
 Each aggregate's per-row `func(value, acc)` folded over a column. (The vectorised operator
 prefers `batch_agg`, see ops_aggregate; these bodies are what `func` computes and what the
@@ -44,7 +44,7 @@ def num : AV F → F
   | .float f => f
   | _ => M.zero
 
-/-! ## collect (aggregation.rs:55) -/
+/-! ## collect (aggregation.rs) -/
 
 def collect : AV F → AV F → Res (AV F)
   | a, .null => .ok (.list [a])
@@ -71,7 +71,7 @@ theorem collect_fold (vs : List (AV F)) :
     intro l
     cases v <;> simp [foldAgg, collect, ih, isNull]
 
-/-! ## count (aggregation.rs:77) -/
+/-! ## count (aggregation.rs) -/
 
 def count : AV F → AV F → Res (AV F)
   | .null, s => .ok s
@@ -86,7 +86,7 @@ theorem count_fold (vs : List (AV F)) :
     intro n
     cases v <;> simp [foldAgg, count, ih, isNull] <;> omega
 
-/-! ## sum (aggregation.rs:95) -/
+/-! ## sum (aggregation.rs) -/
 
 def sum : AV F → AV F → Res (AV F)
   | .null, acc => .ok acc
@@ -113,7 +113,7 @@ theorem sum_fold (vs : List (AV F)) (h : vs.all numOrNull) :
     simp only [List.all_cons, Bool.and_eq_true] at h
     cases v <;> simp_all [foldAgg, sum, isNull, numOrNull]
 
-/-! ## min (aggregation.rs:142) -/
+/-! ## min (aggregation.rs) -/
 
 /-- `b.compare_value(&a)` abstracted: ordering + `ComparedNull` flag + `NaN` flag. -/
 def min (cmp : AV F → AV F → Ordering × Bool × Bool) : AV F → AV F → Res (AV F)
@@ -136,7 +136,7 @@ theorem min_nan_keeps (cmp : AV F → AV F → Ordering × Bool × Bool) (a b : 
     (hnan : (cmp b a).2.2 = true) (hcn : (cmp b a).2.1 = false) : min cmp a b = .ok b := by
   simp [min, hnan, hcn]
 
-/-! ## avg (aggregation.rs:162) and `about_to_overflow` (:331) -/
+/-! ## avg (aggregation.rs) and `about_to_overflow` (:331) -/
 
 /-- `a.signum() == b.signum() && a.abs() >= (f64::MAX - b.abs())` -/
 def aboutToOverflow (a b : F) : Bool := M.beq (M.signum a) (M.signum b) && M.le (M.sub M.max (M.abs b)) (M.abs a)
@@ -195,7 +195,7 @@ theorem avgStep_plain (val s : F) (c : Int) (h : aboutToOverflow M s val = false
     avgStep M val (s, c, false) = (M.add s val, c + 1, false) := by
   simp [avgStep, h]
 
-/-! ## percentile (aggregation.rs:226) and stdev (:286) -/
+/-! ## percentile (aggregation.rs) and stdev (:286) -/
 
 /-- `percentileDisc`/`percentileCont` step (since #3007): the percentile is stored
 only while nothing has been collected yet — the first non-null row's percentile is
@@ -339,7 +339,7 @@ theorem finalize_divisors (s : F) (xs : List F) (h : 2 ≤ xs.length) :
   have h2 : xs.length ≠ 0 := by omega
   simp [finalizeStdev, finalizeStdevp, h1, h2]
 
-/-! ## register (aggregation.rs:49) -/
+/-! ## register (aggregation.rs) -/
 
 def aggRegistered : List String :=
   ["collect", "count", "sum", "max", "min", "avg", "percentileDisc", "percentileCont", "stDev", "stDevP"]

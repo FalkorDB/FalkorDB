@@ -2,13 +2,12 @@ import FalkorEffectsCodec.RecOpts
 /-!
 # Every `Record` (`graph/src/effects/v3/records.rs`)
 
-`Record` with all fourteen opcodes, `write_header` (`:21`), `check_row_shape`
-(`:864`), `Record::encode` (`:917`), `read_record` (`:611`), and a roundtrip
-theorem for each variant. Since #2916 (`2c874022a`) the encoder refuses the two
+`Record` with all fourteen opcodes, `write_header`, `check_row_shape`, `Record::encode`, `read_record`, and a roundtrip
+theorem for each variant. The encoder refuses the two
 shapes `read_record` rejects: a batch of zero ids (`EmptyRecord`, in
 `write_header`) and a row block that is not `count × attrs` (`RowShapeMismatch`).
-The ids codec `C` is the abstract `IdCodec` (its roundtrip is proven in
-proofs/id_list).
+The ids codec `C` is the abstract `IdCodec`; `IdLink.idListCodec` instantiates it with
+proofs/id_list's `encodeIds`/`readIds`, so every theorem here holds for the real codec.
 -/
 namespace FalkorCodec
 
@@ -34,8 +33,8 @@ inductive Record (T : Type) where
 /-- `Opcode` values and `is_batchable` (`v3/mod.rs`). -/
 def isBatchable (op : Nat) : Bool := 1 ≤ op ∧ op ≤ 8
 
-/-- `write_header` (`records.rs:21`): refuses a count on a non-batchable opcode
-and vice versa, then (#2916) a count of zero. -/
+/-- `write_header` (`records.rs`): refuses a count on a non-batchable opcode
+and vice versa, then a count of zero. -/
 def writeHeader (op : Nat) (count : Option Nat) : Except EErr Bytes :=
   if count.isSome != isBatchable op then .error .headerShapeMismatch
   else if count = some 0 then .error .emptyRecord
@@ -67,12 +66,12 @@ def bodyConstraint (create : Bool) := bCType.seq fun _ => bEntityTag.seq fun _ =
 
 instance : Inhabited TextT := ⟨(none, none, none, none, none)⟩
 
-/-- `check_endpoint_columns` (`:838`). -/
+/-- `check_endpoint_columns`. -/
 def checkEndpoints (ids src dst : C.T) : Except EErr Unit :=
   if C.count src ≠ C.count ids then .error .endpointMisaligned
   else if C.count dst ≠ C.count ids then .error .endpointMisaligned else .ok ()
 
-/-- `check_index_record` (`:456`). -/
+/-- `check_index_record`. -/
 def checkIndex (ft : Nat) (schemas : List Ref) : Except EErr Unit :=
   match indexTypeOf ft with
   | .error e => .error e
@@ -81,7 +80,7 @@ def checkIndex (ft : Nat) (schemas : List Ref) : Except EErr Unit :=
 def thenE (x : Except EErr Unit) (y : Except EErr Bytes) : Except EErr Bytes :=
   match x with | .error e => .error e | .ok () => y
 
-/-- `check_row_shape` (`:864`, #2916): `ids.len().checked_mul(attr_ids.len()) ==
+/-- `check_row_shape`: `ids.len().checked_mul(attr_ids.len()) ==
 Some(rows.len())`. An overflowing product cannot equal a `usize` length, so the
 `Nat` equality is the same test. -/
 def checkRowShape (ids : C.T) (attrs : List Nat) (rows : List Val) : Except EErr Unit :=
@@ -92,8 +91,8 @@ def batched (op : Nat) (ids : C.T) (body : Nat → Except EErr Bytes) : Except E
   | .error e => .error e
   | .ok c => eseq (writeHeader op (some c)) (body c)
 
-/-- `impl EffectEncode<3> for Record` (`records.rs:917`), arm by arm. The
-row-bearing arms call `check_row_shape` first (`:954,977,1011,1025`), after
+/-- `impl EffectEncode<3> for Record` (`records.rs`), arm by arm. The
+row-bearing arms call `check_row_shape` first (`:962,985,1019,1033`), after
 `check_endpoint_columns` on `CREATE_EDGE`. -/
 def encRecord : Record C.T → Except EErr Bytes
   | .addLabel id name => eseq (writeHeader 9 none) ((bodySchema utf8).enc (.node, id, name))
@@ -123,7 +122,7 @@ def encRecord : Record C.T → Except EErr Bytes
   | .dropConstraint ct et lid label props =>
       eseq (writeHeader 14 none) ((bodyConstraint utf8 false).enc (ct, et, none, lid, label, props))
 
-/-- The `match opcode` of `read_record` (`records.rs:633-815`). -/
+/-- The `match opcode` of `read_record` (`records.rs`). -/
 def arm (op count : Nat) : R (Record C.T) :=
   if op = 1 then do let (ls, as, ids, rows) ← (bodyNode C utf8 I count).dec; pure (.updateNode ids ls as rows)
   else if op = 2 then do let (rel, as, ids, rows) ← (bodyUpdEdge C utf8 I count).dec; pure (.updateEdge ids rel as rows)
@@ -147,7 +146,7 @@ def arm (op count : Nat) : R (Record C.T) :=
     pure (.createConstraint ct et (status.getD .operational) lid label props)
   else do let (ct, et, _, lid, label, props) ← (bodyConstraint utf8 false).dec; pure (.dropConstraint ct et lid label props)
 
-/-- `read_record` (`records.rs:611`): opcode (`Opcode::try_from` → `BadOpcode`),
+/-- `read_record` (`records.rs`): opcode (`Opcode::try_from` → `BadOpcode`),
 the count for batchable opcodes (`EmptyRecord` on 0), then the arm. -/
 def readRecord : R (Record C.T) := do
   let op ← u32

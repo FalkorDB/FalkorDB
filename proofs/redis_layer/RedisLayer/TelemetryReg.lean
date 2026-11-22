@@ -1,4 +1,3 @@
-import RedisLayer.GraphCore
 import RedisLayer.Telemetry
 /-!
 # Telemetry: registry, flusher batching, re-keying and grouping (`src/telemetry.rs`)
@@ -140,7 +139,7 @@ theorem removeId_absent (id : Nat) (l : List Q) (h : ∀ q ∈ l, q.id ≠ id) :
     have hx := h x (by simp)
     simp [removeId, hx, ih (fun q hq => h q (by simp [hq]))]
 
-/-! ## `WaitingEntry` (`:477-502`) -/
+/-! ## `WaitingEntry` -/
 
 /-- The guard: `some id` while armed. -/
 structure WE where
@@ -171,25 +170,27 @@ theorem WE.promote_twice (w : WE) (r : Reg) :
     ((w.promote r).2.1.promote (w.promote r).2.2).1 = none := by
   cases h : w.slot <;> simp [WE.promote, h]
 
-/-! ## Producer gate (`enqueue_entry`, `:892-937`) -/
+/-! ## Producer gate (`enqueue_entry`) -/
 
 def QUEUE_MAX := 4 * 256
 
-/-- Whether an entry is sent: `CMD_INFO` on, not a replica, queue below the cap, flusher
-running. -/
-def enqueueOk (cmdInfo isReplica : Bool) (queued : Nat) (senderUp : Bool) : Bool :=
-  cmdInfo && !isReplica && decide (queued < QUEUE_MAX) && senderUp
+/-- Whether an entry is sent: `CMD_INFO` on, queue below the cap, flusher running. Since
+#3844 there is no role check: telemetry is node-local, and which commands are logged at all
+is decided at dispatch (`GraphCore.logsTelemetry`, `dispatch::logs_telemetry`). -/
+def enqueueOk (cmdInfo : Bool) (queued : Nat) (senderUp : Bool) : Bool :=
+  cmdInfo && decide (queued < QUEUE_MAX) && senderUp
 
-theorem enqueue_off (r q : Bool) (n : Nat) : enqueueOk false r n q = false := by simp [enqueueOk]
-theorem enqueue_replica (c q : Bool) (n : Nat) : enqueueOk c true n q = false := by simp [enqueueOk]
-theorem enqueue_full (c r q : Bool) (n : Nat) (h : QUEUE_MAX ≤ n) : enqueueOk c r n q = false := by
+theorem enqueue_off (q : Bool) (n : Nat) : enqueueOk false n q = false := by simp [enqueueOk]
+theorem enqueue_full (c q : Bool) (n : Nat) (h : QUEUE_MAX ≤ n) : enqueueOk c n q = false := by
   simp [enqueueOk]; intros; omega
+/-- Exactly the three gates. -/
+theorem enqueue_iff (c q : Bool) (n : Nat) :
+    enqueueOk c n q = true ↔ c = true ∧ n < QUEUE_MAX ∧ q = true := by
+  simp [enqueueOk, Bool.and_eq_true, decide_eq_true_eq, and_assoc]
 
 /-! ## Flusher batching -/
 
 def FLUSH_BATCH_MAX := 256
-def DEFERRED_XADD_MAX := 4 * FLUSH_BATCH_MAX
-
 /-- `drain_queued`: move queued entries into `batch` until it holds `FLUSH_BATCH_MAX`;
 `true` iff the channel reported `Disconnected` (empty and closed). -/
 def drain {α} (batch queue : List α) (closed : Bool) : List α × List α × Bool :=
@@ -207,70 +208,63 @@ theorem drain_conserves {α} (b q : List α) (c : Bool) :
     (drain b q c).1 ++ (drain b q c).2.1 = b ++ q := by
   simp only [drain]; split <;> simp
 
-/-- `deferred.drain(..len - DEFERRED_XADD_MAX)`: keep the newest. -/
-def capDeferred {α} (d : List α) : List α :=
-  if d.length > DEFERRED_XADD_MAX then d.drop (d.length - DEFERRED_XADD_MAX) else d
+/-! ## Re-keying (`resolve_current_names`) -/
 
-theorem capDeferred_len {α} (d : List α) : (capDeferred d).length ≤ DEFERRED_XADD_MAX := by
-  unfold capDeferred; split
-  · simp; omega
-  · omega
-
-theorem capDeferred_suffix {α} (d : List α) : ∃ p, p ++ capDeferred d = d := by
-  unfold capDeferred; split
-  · exact ⟨d.take (d.length - DEFERRED_XADD_MAX), List.take_append_drop _ _⟩
-  · exact ⟨[], rfl⟩
-
-/-! ## Re-keying (`resolve_current_names`, `:738`)
-
-Since #3424 `GRAPH_REGISTRY` is keyed by graph identity (`GraphCore.Reg`: id → (db, key)),
-so each batch graph is resolved by one lookup of its own id; the old two-pass name search
-is gone. Reusing `captured` when it equals the entry's name is an allocation saving only:
-both branches yield the same characters. -/
-
-/-- A graph is identified by its allocation (`data_ptr`); `db` is set on re-keying. -/
+/-- A graph is identified by its allocation (`data_ptr`). -/
 structure PE where
   name : List Char
-  db : Int
   graph : Nat
   deriving DecidableEq, Repr
 
 structure BG where
   graph : Nat
   captured : List Char
-  current : Option (Int × List Char)
+  current : Option (List Char)
 
-/-- One batch graph: `registry.get(&graph_id(..)).map(|e| (e.db, name))`. -/
-def resolveOne (reg : GraphCore.Reg) (b : BG) : BG :=
-  { b with current := (reg.get b.graph).map fun e =>
-      (e.1, if b.captured = e.2 then b.captured else e.2) }
+/-- The registry's view: key → graph. -/
+abbrev Registry := List (List Char × Nat)
 
-def resolveGraphs (reg : GraphCore.Reg) (gs : List BG) : List BG := gs.map (resolveOne reg)
+def lookup (reg : Registry) (k : List Char) : Option Nat := (reg.find? (·.1 = k)).map (·.2)
 
-def nameOf (gs : List BG) (g : Nat) : Option (Int × List Char) :=
+/-- First pass: the captured key still names this graph. -/
+def pass1 (reg : Registry) (b : BG) : BG :=
+  if lookup reg b.captured = some b.graph then { b with current := some b.captured } else b
+
+/-- Second pass, one registry entry at a time: the first unresolved batch graph with this
+allocation takes its name. (The early `break` once all are resolved does not change the
+result.) -/
+def pass2Step (gs : List BG) (e : List Char × Nat) : List BG :=
+  match gs.findIdx? (fun b => b.current.isNone && b.graph == e.2) with
+  | none => gs
+  | some i => gs.modify i fun b => { b with current := some e.1 }
+
+def resolveGraphs (reg : Registry) (gs : List BG) : List BG :=
+  reg.foldl pass2Step (gs.map (pass1 reg))
+
+def nameOf (gs : List BG) (g : Nat) : Option (List Char) :=
   (gs.find? (·.graph = g)).bind (·.current)
 
-/-- `deferred.retain_mut`: keep an entry iff its graph resolved, re-keyed to that (db, name). -/
+/-- `batch.retain_mut`: keep an entry iff its graph resolved, re-keyed to that name. -/
 def retain (gs : List BG) : List PE → List PE
   | [] => []
   | pe :: ps => match nameOf gs pe.graph with
-    | some (d, n) => ⟨n, d, pe.graph⟩ :: retain gs ps
+    | some n => ⟨n, pe.graph⟩ :: retain gs ps
     | none => retain gs ps
 
-def resolve (reg : GraphCore.Reg) (gs : List BG) (d : List PE) : List PE :=
+def resolve (reg : Registry) (gs : List BG) (d : List PE) : List PE :=
   retain (resolveGraphs reg gs) d
 
-/-- Every surviving entry is keyed by the (db, name) its graph's batch slot resolved to, and
-no entry changes graph. -/
+/-- Every surviving entry is keyed by a name its graph's batch slot resolved to, and no
+entry changes graph. -/
 theorem retain_sound (gs : List BG) (d : List PE) :
-    ∀ pe ∈ retain gs d, nameOf gs pe.graph = some (pe.db, pe.name) ∧ ∃ pe0 ∈ d, pe0.graph = pe.graph := by
+    ∀ pe ∈ retain gs d, nameOf gs pe.graph = some pe.name ∧ ∃ pe0 ∈ d, pe0.graph = pe.graph := by
   induction d with
   | nil => simp [retain]
   | cons p ps ih =>
     intro pe hpe
     simp only [retain] at hpe
     split at hpe
-    · rename_i dn n hn
+    · rename_i n hn
       simp at hpe; rcases hpe with rfl | h
       · exact ⟨hn, p, by simp⟩
       · obtain ⟨a, b, c, d⟩ := ih pe h; exact ⟨a, b, by simp [c], d⟩
@@ -283,46 +277,50 @@ theorem retain_drops (gs : List BG) (d : List PE) (g : Nat) (h : nameOf gs g = n
   have := (retain_sound gs d pe hpe).1
   rw [e, h] at this; cases this
 
-/-- **Resolution is exactly the registry's current place of the graph** — whether its key
-moved (`RENAME`/`MOVE`/`SWAPDB`) or not. -/
-theorem resolveOne_current (reg : GraphCore.Reg) (b : BG) :
-    (resolveOne reg b).current = reg.get b.graph := by
-  unfold resolveOne
-  cases reg.get b.graph with
-  | none => rfl
-  | some e =>
-    simp only [Option.map_some]
-    by_cases h : b.captured = e.2 <;> simp [h]
+/-- Pass 1 resolves an unmoved graph to the key the query addressed. -/
+theorem pass1_unmoved (reg : Registry) (b : BG) (h : lookup reg b.captured = some b.graph) :
+    (pass1 reg b).current = some b.captured := by
+  simp [pass1, h]
 
-/-- An unmoved graph resolves to the key the query addressed. -/
-theorem resolve_unmoved (reg : GraphCore.Reg) (b : BG) (db : Int)
-    (h : reg.get b.graph = some (db, b.captured)) :
-    (resolveOne reg b).current = some (db, b.captured) := by
-  rw [resolveOne_current, h]
+/-- Pass 1 never resolves to a key that names a different graph (`FLUSHALL` + rebind). -/
+theorem pass1_rebound (reg : Registry) (b : BG) (g' : Nat) (h : lookup reg b.captured = some g')
+    (hne : g' ≠ b.graph) : (pass1 reg b).current = b.current := by
+  simp [pass1, h, hne]
 
-/-- A graph no longer registered (deleted, or flushed and its key rebound to another graph)
-resolves to nothing, so its entries are dropped. -/
-theorem resolve_unregistered (reg : GraphCore.Reg) (b : BG) (h : reg.get b.graph = none) :
-    (resolveOne reg b).current = none := by
-  rw [resolveOne_current, h]
-
-/-- Resolution never changes which graph a batch slot holds. -/
-theorem resolveGraphs_graph (reg : GraphCore.Reg) (gs : List BG) :
-    (resolveGraphs reg gs).map (·.graph) = gs.map (·.graph) := by
-  simp [resolveGraphs, resolveOne, Function.comp_def]
+/-- Pass 2 only ever assigns a registered name of the very same graph. -/
+theorem pass2Step_sound (gs : List BG) (e : List Char × Nat) (i : Nat) (b : BG)
+    (hb : (pass2Step gs e)[i]? = some b) (hn : b.current ≠ gs[i]?.bind (·.current)) :
+    b.current = some e.1 ∧ b.graph = e.2 := by
+  unfold pass2Step at hb
+  split at hb
+  · rename_i h; simp_all
+  · rename_i j hj
+    rw [List.findIdx?_eq_some_iff_getElem] at hj
+    obtain ⟨hjl, hjp, _⟩ := hj
+    simp at hjp
+    by_cases hij : i = j
+    · subst hij
+      simp at hb
+      obtain ⟨b0, hb0, rfl⟩ := hb
+      simp [List.getElem?_eq_getElem hjl] at hb0
+      subst hb0
+      exact ⟨rfl, hjp.2⟩
+    · simp [List.getElem?_modify] at hb
+      obtain ⟨a, ha, hab⟩ := hb
+      rw [ite_eq_right (Ne.symm hij)] at hab; subst hab
+      simp [ha] at hn
 
 /-! ## Grouping by stream (`sort_by` + `chunk_by`) -/
 section Group
 
-variable {α κ : Type} [DecidableEq κ] (key : α → κ) (le : κ → κ → Bool)
+variable {α : Type} (key : α → Nat) (le : Nat → Nat → Bool)
   (trans : ∀ a b c, le a b → le b c → le a c) (total : ∀ a b, le a b || le b a)
   (refl : ∀ a, le a a)
 include trans total refl
 
 /-- Rust's `sort_by` is stable; `List.mergeSort` is too. Each graph's entries therefore
-reach `stream_entries` in arrival order — the order consumers read. Generic in the key
-type: since #3424 the key is `(db, graph address, graph_name)`. -/
-theorem group_keeps_order (l : List α) (k : κ) :
+reach `stream_entries` in arrival order — the order consumers read. -/
+theorem group_keeps_order (l : List α) (k : Nat) :
     (l.mergeSort (fun a b => le (key a) (key b))).filter (fun a => key a = k)
       = l.filter (fun a => key a = k) := by
   have hpair : (l.filter (fun a => key a = k)).Pairwise (fun a b => le (key a) (key b)) := by

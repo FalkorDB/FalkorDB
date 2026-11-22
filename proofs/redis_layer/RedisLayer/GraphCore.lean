@@ -1,23 +1,6 @@
 import RedisLayer.Resp
 /-!
 # `src/graph_core.rs` — names, registry, write commit, dispatch decisions
-
-| here | there (`origin/main`) |
-| --- | --- |
-| `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:87`, `c_graph_name` `:104`, `c_graph_key` `:119` |
-| `Reg.*`, `registerAt`, `register`, `isRegistered`, `registeredDb`, `relocate`, `swapDbs`, `free` | `register_graph_at` `:186`, `register_graph` `:173`, `graph_is_registered` `:222`, `registered_db` `:227`, `relocate_graph` `:233`, `swap_graph_dbs` `:247`, `graph_free` `:1828` (registry keyed by graph identity since #3424) |
-| `modified`                  | `WriteQueryOk::new` `:256` |
-| `sanitise`                  | `ffi::sanitise_error` `:318` |
-| `invalidVersionBytes`       | `reply_invalid_graph_version` `:986` |
-| `profileDepth`, `profileOps`| `reply_profile` `:884` (all ops, plain depth, since #2390) |
-| `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:587` / `execute_profile` `:674` write detection and `admission.take()` |
-| `writeSteps`                | `try_query_write` `:783`, `finish_write` `:1512`, `abandon_write` `:1537`, `commit_and_replicate` `:1553` |
-| `executeWrite`, `Attempt`   | `execute_query_write` `:737` (retry loop, #3290), `WriteAttempt::from` `:776` |
-| `admitQ`, `dispatch`        | `admit` `:1000`, `query_mut` `:1011` (#3014) |
-| `syncOutcome`               | `query_sync` `:1215`, `profile_sync` `:1445`, `profile_mut` `:1344` |
-| `loopExit`                  | `process_write_queued_query` `:1599` |
-| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1748` |
-| `TG`                        | `ThreadedGraph::new` `:553`, `from_mvcc` `:569` (unbounded write channel since #3014) |
 -/
 namespace RedisLayer.GraphCore
 
@@ -72,7 +55,7 @@ theorem upToNulB_split (k : Bytes) :
   | cons b bs ih =>
     by_cases hb : b = 0
     · subst hb; simp [upToNulB]
-    · simp only [upToNulB, hb, if_false]
+    · simp only [upToNulB, hb, ite_false]
       refine ⟨fun h => ?_, fun h => ?_⟩
       · have : 0 ∈ bs := by simp at h; rcases h with h | h; exact absurd h.symm hb; exact h
         obtain ⟨t, ht⟩ := ih.1 this
@@ -91,92 +74,30 @@ theorem cGraphName_key (L : Lossy) (key : Bytes) : cGraphName L key = L.dec (cGr
     exact upToNulC_split _ _ (L.nonul _ (upToNulB_nonul key))
   · rw [(upToNulB_split key).2 h0, upToNulC_nofree _ (L.nonul _ h0)]
 
-/-! ## Registry (`GRAPH_REGISTRY`: graph identity → (database, key name), #2782)
+/-! ## Registry (`GRAPH_REGISTRY`: key → graph allocation) -/
 
-Since #3424 the registry is keyed by `graph_id` (the address of the graph's shared state)
-and each entry records where the graph lives: its logical database and its (lossy) key
-name. A graph is a `Nat` (its identity), a database an `Int` (`i32`). -/
+abbrev Reg := List (List Char × Nat)
 
-abbrev Reg := List (Nat × (Int × List Char))
+def Reg.insert (r : Reg) (k : List Char) (g : Nat) : Reg := (k, g) :: r.filter (·.1 ≠ k)
+def Reg.get (r : Reg) (k : List Char) : Option Nat := (r.find? (·.1 = k)).map (·.2)
 
-/-- `HashMap::get` by identity: where the graph is registered. -/
-def Reg.get (r : Reg) (g : Nat) : Option (Int × List Char) := (r.find? (·.1 = g)).map (·.2)
-
-/-- `register_graph_at` (`:186`): `entry(graph_id).and_modify(set db, name).or_insert(..)`.
-Re-registering a graph only moves it; no other entry is touched. -/
-def registerAt (r : Reg) (db : Int) (k : List Char) (g : Nat) : Reg := (g, (db, k)) :: r.filter (·.1 ≠ g)
-/-- `register_graph` (`:173`): `register_graph_at(selected_db(ctx), ..)`; `db` is the
-database the command's context has selected (`RedisModule_GetSelectedDb`, FFI). -/
-def register (r : Reg) (db : Int) (k : List Char) (g : Nat) : Reg := registerAt r db k g
-/-- `graph_is_registered` (`:222`): `contains_key(graph_id)`. -/
-def isRegistered (r : Reg) (g : Nat) : Bool := r.any (·.1 = g)
-/-- `registered_db` (`:227`). -/
-def registeredDb (r : Reg) (g : Nat) : Option Int := (r.get g).map (·.1)
-/-- `relocate_graph` (`:233`): move an entry, returning where it was; `None` (and no
-change) for a graph that is not registered. Replaces `rename_graph`. -/
-def relocate (r : Reg) (g : Nat) (db : Int) (k : List Char) : Reg × Option (Int × List Char) :=
-  match r.get g with
+/-- `register_graph`; returns the displaced graph (dropped on another thread). -/
+def register (r : Reg) (k : List Char) (g : Nat) : Reg × Option Nat := (r.insert k g, r.get k)
+/-- `graph_is_registered`: by allocation, under any key. -/
+def isRegistered (r : Reg) (g : Nat) : Bool := r.any (·.2 = g)
+/-- `rename_graph`: `remove(old).and_then(|arc| insert(new, arc))`. -/
+def rename (r : Reg) (old new : List Char) : Reg × Option Nat :=
+  match r.get old with
   | none => (r, none)
-  | some old => (registerAt r db k g, some old)
-/-- `swap_graph_dbs` (`:247`): `SWAPDB a b`. -/
-def swapDb (a b d : Int) : Int := if d = a then b else if d = b then a else d
-def swapDbs (r : Reg) (a b : Int) : Reg := r.map fun e => (e.1, (swapDb a b e.2.1, e.2.2))
-/-- `graph_free` (`:1828`): `remove(graph_id)`. -/
-def free (r : Reg) (g : Nat) : Reg := r.filter (·.1 ≠ g)
+  | some g => let r' := r.filter (·.1 ≠ old); (Reg.insert r' new g, Reg.get r' new)
+/-- `graph_free`: remove every key mapping to this allocation. -/
+def free (r : Reg) (g : Nat) : Reg := r.filter (·.2 ≠ g)
 
-theorem get_filter_self (r : Reg) (g : Nat) : Reg.get (r.filter (·.1 ≠ g)) g = none := by
-  unfold Reg.get
-  rw [List.find?_eq_none.2]; · rfl
-  intro x hx; simp at hx ⊢; exact hx.2
+theorem register_registered (r : Reg) (k : List Char) (g : Nat) : isRegistered (register r k g).1 g := by
+  simp [register, Reg.insert, isRegistered]
 
-theorem get_filter_other (r : Reg) (g h : Nat) (hne : h ≠ g) :
-    Reg.get (r.filter (·.1 ≠ g)) h = Reg.get r h := by
-  unfold Reg.get
-  rw [List.find?_filter]
-  congr 2; funext a
-  by_cases ha : a.1 = h
-  · simp [ha, hne]
-  · simp [ha]
-
-theorem isRegistered_iff (r : Reg) (g : Nat) : isRegistered r g = (r.get g).isSome := by
-  unfold isRegistered Reg.get
-  rw [Option.isSome_map]
-  induction r with
-  | nil => rfl
-  | cons x xs ih => by_cases hx : x.1 = g <;> simp [List.find?_cons, hx] at ih ⊢ <;> exact ih
-
-theorem registerAt_get (r : Reg) (db : Int) (k : List Char) (g : Nat) :
-    (registerAt r db k g).get g = some (db, k) := by
-  simp [registerAt, Reg.get]
-
-theorem registerAt_get_other (r : Reg) (db : Int) (k : List Char) (g h : Nat) (hne : h ≠ g) :
-    (registerAt r db k g).get h = r.get h := by
-  have : (Reg.get ((g, (db, k)) :: r.filter (·.1 ≠ g)) h) = Reg.get (r.filter (·.1 ≠ g)) h := by
-    simp [Reg.get, Ne.symm hne]
-  unfold registerAt; rw [this, get_filter_other _ _ _ hne]
-
-theorem register_registered (r : Reg) (db : Int) (k : List Char) (g : Nat) :
-    isRegistered (register r db k g) g := by
-  simp [register, registerAt, isRegistered]
-
-/-- The entry records the key and the database the graph was registered at. -/
-theorem register_get (r : Reg) (db : Int) (k : List Char) (g : Nat) :
-    (register r db k g).get g = some (db, k) := registerAt_get r db k g
-
-/-- **#2782 fixed**: registering a graph never displaces another — every other graph keeps
-its entry, wherever it is and whatever its name. -/
-theorem register_keeps_others (r : Reg) (db : Int) (k : List Char) (g h : Nat) (hne : h ≠ g) :
-    (register r db k g).get h = r.get h := registerAt_get_other r db k g h hne
-
-theorem register_keeps_registered (r : Reg) (db : Int) (k : List Char) (g h : Nat)
-    (hh : isRegistered r h = true) : isRegistered (register r db k g) h = true := by
-  by_cases e : h = g
-  · subst e; exact register_registered r db k h
-  · rw [isRegistered_iff] at hh ⊢; rw [register_keeps_others r db k g h e]; exact hh
-
-theorem registeredDb_register (r : Reg) (db : Int) (k : List Char) (g : Nat) :
-    registeredDb (register r db k g) g = some db := by
-  simp [registeredDb, register_get]
+theorem register_get (r : Reg) (k : List Char) (g : Nat) : (register r k g).1.get k = some g := by
+  simp [register, Reg.insert, Reg.get]
 
 theorem free_unregisters (r : Reg) (g : Nat) : isRegistered (free r g) g = false := by
   simp [free, isRegistered]
@@ -184,43 +105,83 @@ theorem free_unregisters (r : Reg) (g : Nat) : isRegistered (free r g) g = false
 theorem free_keeps_others (r : Reg) (g h : Nat) (hne : h ≠ g) :
     isRegistered (free r g) h = isRegistered r h := by
   simp only [free, isRegistered, List.any_filter]
-  congr 1; funext p; by_cases hp : p.1 = h <;> simp [hp, hne]
+  congr 1; funext p; by_cases hp : p.2 = h <;> simp [hp, hne]
 
-/-- A graph the registry does not know is not moved (renamed from `rename_absent`). -/
-theorem relocate_absent (r : Reg) (g : Nat) (db : Int) (k : List Char) (h : r.get g = none) :
-    relocate r g db k = (r, none) := by
-  simp [relocate, h]
+theorem rename_absent (r : Reg) (o n : List Char) (h : r.get o = none) : rename r o n = (r, none) := by
+  simp [rename, h]
 
-/-- **Relocation moves exactly the graph**: it is now registered at `(db, k)`, the old
-location is returned, and every other graph keeps its entry (renamed from `rename_moves`). -/
-theorem relocate_moves (r : Reg) (g : Nat) (db : Int) (k : List Char) (old : Int × List Char)
-    (h : r.get g = some old) :
-    (relocate r g db k).1.get g = some (db, k) ∧ (relocate r g db k).2 = some old ∧
-      ∀ h' ≠ g, (relocate r g db k).1.get h' = r.get h' := by
-  simp only [relocate, h]
-  exact ⟨registerAt_get r db k g, trivial, fun h' hne => registerAt_get_other r db k g h' hne⟩
+theorem get_filter_self (l : Reg) (o : List Char) : Reg.get (l.filter (·.1 ≠ o)) o = none := by
+  unfold Reg.get
+  rw [List.find?_eq_none.2]; · rfl
+  intro x hx; simp at hx ⊢; exact hx.2
 
-theorem swapDbs_get (r : Reg) (a b : Int) (g : Nat) :
-    (swapDbs r a b).get g = (r.get g).map fun e => (swapDb a b e.1, e.2) := by
-  unfold swapDbs Reg.get
-  rw [List.find?_map]
-  simp only [Function.comp_def]
-  cases r.find? (·.1 = g) <;> rfl
+theorem rename_moves (r : Reg) (o n : List Char) (g : Nat) (h : r.get o = some g) :
+    (rename r o n).1.get n = some g ∧ ((o ≠ n) → (rename r o n).1.get o = none) := by
+  unfold rename; rw [h]; simp only
+  refine ⟨by simp [Reg.insert, Reg.get], fun hne => ?_⟩
+  unfold Reg.insert
+  have e : Reg.get ((n, g) :: List.filter (fun x => decide (x.1 ≠ n)) (List.filter (fun x => decide (x.1 ≠ o)) r)) o
+      = Reg.get (List.filter (fun x => decide (x.1 ≠ o)) (List.filter (fun x => decide (x.1 ≠ n)) r)) o := by
+    simp only [Reg.get, List.find?_cons]
+    have : (decide ((n, g).1 = o)) = false := by simp [Ne.symm hne]
+    simp only [this, List.filter_filter]
+    congr 2; congr 1; funext p; simp [Bool.and_comm]
+  rw [e, get_filter_self]
 
-/-- **`SWAPDB a b`**: a graph of `a` is now in `b` and the other way round; every other
-graph, and every key name, stays; nothing is (un)registered. -/
-theorem swapDbs_spec (r : Reg) (a b : Int) (g : Nat) (k : List Char) :
-    ((r.get g = some (a, k)) → (swapDbs r a b).get g = some (b, k)) ∧
-    ((r.get g = some (b, k)) → (swapDbs r a b).get g = some (a, k)) ∧
-    (∀ d, d ≠ a → d ≠ b → r.get g = some (d, k) → (swapDbs r a b).get g = some (d, k)) ∧
-    isRegistered (swapDbs r a b) g = isRegistered r g := by
-  refine ⟨fun h => ?_, fun h => ?_, fun d ha hb h => ?_, ?_⟩
-  · rw [swapDbs_get, h]; simp [swapDb]
-  · rw [swapDbs_get, h]; by_cases e : b = a
-    · subst e; simp [swapDb]
-    · simp [swapDb, e]
-  · rw [swapDbs_get, h]; simp [swapDb, ha, hb]
-  · rw [isRegistered_iff, isRegistered_iff, swapDbs_get]; cases r.get g <;> rfl
+/-! ## `key_of_write` (#3850/#3851): the key a write is published under
+
+`ks k` is the graph allocation the keyspace holds at key `k` (`key_holds_graph`, `redis_type.rs`,
+is `ks k = some g`: TelemetryLoop `keyHolds_iff`). `main` is `is_main_thread()`. The registry
+lookup is `GRAPH_REGISTRY.iter().find(data_ptr = target)`; `'\uFFFD' ∈ admitted` is
+`admitted.contains(char::REPLACEMENT_CHARACTER)` (a lossily decoded, non-UTF-8 key). `none` is
+`Err(WriteAbort::GraphUnregistered)`. -/
+def keyOfWrite (main : Bool) (ks : List Char → Option Nat) (reg : Reg) (g : Nat)
+    (admitted : List Char) : Option (List Char) :=
+  if main || ks admitted == some g then some admitted
+  else match reg.find? (·.2 = g) with
+    | some (name, _) =>
+      if ks name == some g then some name
+      else if '\uFFFD' ∈ admitted then some admitted else none
+    | none => none
+
+/-- An inline (main-thread) write is published under the key the client named. -/
+theorem keyOfWrite_main (ks : List Char → Option Nat) (reg : Reg) (g : Nat) (a : List Char) :
+    keyOfWrite true ks reg g a = some a := by simp [keyOfWrite]
+
+/-- The admitted key still holds the graph: that key. -/
+theorem keyOfWrite_admitted (m : Bool) (ks : List Char → Option Nat) (reg : Reg) (g : Nat)
+    (a : List Char) (h : ks a = some g) : keyOfWrite m ks reg g a = some a := by
+  simp [keyOfWrite, h]
+
+/-- **Renamed**: the admitted key no longer holds the graph, the registry's key does — the
+write (and its `GRAPH.EFFECT`) goes to the key the graph lives at now. -/
+theorem keyOfWrite_renamed (ks : List Char → Option Nat) (reg : Reg) (g : Nat) (a n : List Char)
+    (ha : ks a ≠ some g) (hr : reg.find? (·.2 = g) = some (n, g)) (hn : ks n = some g) :
+    keyOfWrite false ks reg g a = some n := by
+  simp [keyOfWrite, ha, hr, hn]
+
+/-- **Sound for UTF-8 keys**: a queued write is only ever published under a key that holds
+its graph. -/
+theorem keyOfWrite_holds (ks : List Char → Option Nat) (reg : Reg) (g : Nat) (a k : List Char)
+    (hu : '\uFFFD' ∉ a) (h : keyOfWrite false ks reg g a = some k) : ks k = some g := by
+  unfold keyOfWrite at h
+  by_cases ha : ks a = some g
+  · simp [ha] at h; exact h ▸ ha
+  · simp only [Bool.false_or, ha, beq_iff_eq, ite_false] at h
+    split at h
+    · rename_i name _ _
+      by_cases hn : ks name = some g
+      · simp [hn] at h; exact h ▸ hn
+      · simp [hn, hu] at h
+    · simp at h
+
+/-- **Refused**: no key holds the graph (deleted, flushed — even before the lazy-free thread
+reaches `graph_free`): `GraphUnregistered`, whatever the registry still says. -/
+theorem keyOfWrite_unheld (ks : List Char → Option Nat) (reg : Reg) (g : Nat) (a : List Char)
+    (hu : '\uFFFD' ∉ a) (h : ∀ k, ks k ≠ some g) : keyOfWrite false ks reg g a = none := by
+  cases e : keyOfWrite false ks reg g a with
+  | none => rfl
+  | some k => exact absurd (keyOfWrite_holds ks reg g a k hu e) (h k)
 
 /-! ## Write bookkeeping -/
 
@@ -251,7 +212,7 @@ inductive Step | commit | signal | replicate | warnNoEffects | resync | release 
 def commitSteps (mod : Bool) (hasBuf : Bool) : List Step :=
   [.commit, .signal] ++ (if !mod then [] else if hasBuf then [.replicate] else [.warnNoEffects])
 
-/-- `commit_and_replicate` (graph_core.rs:1553) since #2846: `MvccGraph::commit` validates
+/-- `commit_and_replicate` (graph_core.rs) since #2846: `MvccGraph::commit` validates
 (and since #3657 refuses a stale fork too: `unreachable!` in `current_not_stale`, see
 SearchConcurrency `Mvcc`), and a refusal here is `unreachable!()` — the panic step. The
 argument it rests on: every write query ends its last segment through
@@ -264,7 +225,7 @@ def commitStepsV (valid mod hasBuf : Bool) : Option (List Step) :=
 theorem commitStepsV_valid (mod buf : Bool) : commitStepsV true mod buf = some (commitSteps mod buf) := rfl
 theorem commitStepsV_refused (mod buf : Bool) : commitStepsV false mod buf = none := rfl
 
-/-- `abandon_write` (`:1537`) since #3657: resync the index only if the session's version is
+/-- `abandon_write` since #3657: resync the index only if the session's version is
 current (`version_is_current`: a version still matching, stale or refused at escalation
 published no document), and nothing else: the version is dropped with the runtime, so there
 is no slot to release and nothing to roll back. -/
@@ -272,38 +233,58 @@ def abandonSteps (cur : Bool) : List Step := if cur then [.resync] else []
 
 /-- `try_query_write` from `runtime.query()` on: abandon on error; else `finish_write`
 (`commit_and_replicate` if the session escalated; otherwise nothing, the version drops with
-the runtime), release locks, then reply. -/
-def writeSteps (ok writer cur mod hasBuf : Bool) : List Step :=
+the runtime), release locks, then reply. Since #3850/#3851 an escalated `finish_write` first
+asks `key_of_write` (`keyed` = `keyOfWrite … ≠ none`); refused, nothing is published and the
+caller abandons the write (`abandon_write`) and returns `WriteAttempt::Failed`. A session still
+in reader mode skips the check (`with_graph_mut` … `.unwrap_or(Ok(()))`). `record_mut` takes
+the same two paths. -/
+def writeSteps (ok writer keyed cur mod hasBuf : Bool) : List Step :=
   if !ok then abandonSteps cur
+  else if writer && !keyed then abandonSteps cur
   else (if writer then commitSteps mod hasBuf else []) ++ [.release, .reply]
 
 /-- The client is answered only after the commit is published and the locks are gone. -/
 theorem reply_after_commit (h mod buf : Bool) :
-    writeSteps true true h mod buf = commitSteps mod buf ++ [.release, .reply] := by
+    writeSteps true true true h mod buf = commitSteps mod buf ++ [.release, .reply] := by
   simp [writeSteps]
+
+/-- The same, for every input: an escalated write that replies has committed first. -/
+theorem reply_only_after_commit (ok k h mod buf : Bool)
+    (hr : .reply ∈ writeSteps ok true k h mod buf) :
+    writeSteps ok true k h mod buf = commitSteps mod buf ++ [.release, .reply] := by
+  cases ok <;> cases k <;> cases h <;> simp_all [writeSteps, abandonSteps]
 
 /-- A failed write never commits and never replies here (the caller sends the error, or
 re-runs a stale one); it resyncs the index only for a current version. -/
-theorem failed_no_commit (w h m b : Bool) :
-    .commit ∉ writeSteps false w h m b ∧ .reply ∉ writeSteps false w h m b ∧
-    (.resync ∈ writeSteps false w h m b ↔ h = true) := by
+theorem failed_no_commit (w k h m b : Bool) :
+    .commit ∉ writeSteps false w k h m b ∧ .reply ∉ writeSteps false w k h m b ∧
+    (.resync ∈ writeSteps false w k h m b ↔ h = true) := by
+  cases h <;> simp [writeSteps, abandonSteps]
+
+/-- **#3850/#3851**: an escalated write whose graph no key holds is undone like a failed
+one: no commit, no `GRAPH.EFFECT`, no reply here (the caller sends `GraphUnregistered`). -/
+theorem unkeyed_refused (h m b : Bool) :
+    writeSteps true true false h m b = abandonSteps h ∧
+    .commit ∉ writeSteps true true false h m b ∧ .replicate ∉ writeSteps true true false h m b ∧
+    .reply ∉ writeSteps true true false h m b := by
   cases h <;> simp [writeSteps, abandonSteps]
 
 /-- A write that never escalated (`LIMIT 0` short-circuits above `Commit`) publishes and
 replicates nothing: the session answers and the version is dropped. -/
-theorem unescalated_silent (h m b : Bool) :
-    writeSteps true false h m b = [.release, .reply] := by simp [writeSteps]
+theorem unescalated_silent (k h m b : Bool) :
+    writeSteps true false k h m b = [.release, .reply] := by simp [writeSteps]
 
 /-! ### `execute_query_write`'s retry (#3290)
 
 `try_query_write` returns `WriteAttempt::Stale` only from the error arm after
 `abandon_write` when `session.is_stale()` — nothing mutated, published or replied — and the
-loop re-runs on a fresh session (`QuerySession::begin_with`). -/
+loop re-runs on a fresh session (`QuerySession::begin_with`, or `begin_writer_checked` once the
+bounded retry below escalates, #3559). -/
 
 inductive Attempt | stale | failed (e : String) | ok
   deriving DecidableEq, Repr
 
-/-- `impl From<String> for WriteAttempt` (`:776`): every other error is `Failed`. -/
+/-- `impl From<String> for WriteAttempt`: every other error is `Failed`. -/
 def Attempt.ofString (e : String) : Attempt := .failed e
 theorem ofString_not_stale (e : String) : Attempt.ofString e ≠ .stale := by simp [Attempt.ofString]
 
@@ -322,8 +303,198 @@ theorem executeWrite_first (k : Nat) (a : Attempt) (rest : List Attempt) (h : a 
 
 /-- A stale run took no write step a client could see: it is not `current`, so it resyncs
 nothing, and it committed and replied nothing. -/
-theorem stale_run_silent (w m b : Bool) :
-    writeSteps false w false m b = [] := by simp [writeSteps, abandonSteps]
+theorem stale_run_silent (w k m b : Bool) :
+    writeSteps false w k false m b = [] := by simp [writeSteps, abandonSteps]
+
+/-! ### The bounded retry (#3559)
+
+`execute_query_write` counts stale runs; after `MAX_STALE_RETRIES` of them, or
+at once after a stale run that took `SLOW_STALE_RUN` (10 ms) or longer, the next run
+begins as a writer (`QuerySession::begin_writer_checked`) instead of a reader
+(`begin_with`). A run is a function of the mode it begins in; a refused
+`begin_writer_checked` is that run's `failed` outcome (`map_err(…)?`). Times are nanoseconds. -/
+
+def maxStaleRetries : Nat := 3
+def slowStaleRun : Nat := 10000000
+
+/-- `stale_runs >= MAX_STALE_RETRIES || wasted >= SLOW_STALE_RUN`, after the increment. -/
+def escalateNext (staleRuns wasted : Nat) : Bool :=
+  decide (maxStaleRetries ≤ staleRuns) || decide (slowStaleRun ≤ wasted)
+
+/-- One run's report: its outcome and how long it took. -/
+structure Run where
+  a : Attempt
+  wasted : Nat
+
+/-- The loop: `s` stale runs so far, `w` whether this run begins as a writer; `runs` the
+successive runs, each given the mode it begins in. Returns the result (`none`: still
+running) and the mode of every run taken. -/
+def loopW (s : Nat) (w : Bool) : List (Bool → Run) → Option Attempt × List Bool
+  | [] => (none, [])
+  | f :: rest =>
+    match (f w).a with
+    | .stale =>
+      let p := loopW (s + 1) (escalateNext (s + 1) (f w).wasted) rest
+      (p.1, w :: p.2)
+    | a => (some a, [w])
+
+theorem escalate_after_max (n t : Nat) (h : maxStaleRetries ≤ n) : escalateNext n t = true := by
+  simp [escalateNext, h]
+
+theorem reader_before_max (n t : Nat) (h : n < maxStaleRetries) (ht : t < slowStaleRun) :
+    escalateNext n t = false := by
+  simp [escalateNext]; omega
+
+/-- **Still the first run that was not stale** (as `executeWrite_first`), each run taken in the
+mode the loop chose for it. -/
+theorem loopW_first (s : Nat) (w : Bool) (runs : List (Bool → Run)) :
+    (loopW s w runs).1 =
+      executeWrite (List.zipWith (fun f m => (f m).a) runs (loopW s w runs).2) := by
+  induction runs generalizing s w with
+  | nil => simp [loopW, executeWrite]
+  | cons f rest ih =>
+    cases ha : (f w).a <;> simp [loopW, ha, executeWrite, ih]
+
+/-- A stale run is never the result. -/
+theorem loopW_not_stale (s : Nat) (w : Bool) (runs : List (Bool → Run)) :
+    (loopW s w runs).1 ≠ some .stale := by
+  induction runs generalizing s w with
+  | nil => simp [loopW]
+  | cons f rest ih =>
+    cases ha : (f w).a <;> simp [loopW, ha, ih]
+
+/-- **Bounded**: at most `MAX_STALE_RETRIES` runs begin as readers, whatever the outcomes. -/
+theorem loopW_readers (s : Nat) (w : Bool) (runs : List (Bool → Run)) :
+    ((loopW s w runs).2.filter (· = false)).length ≤
+      (if w then 0 else 1) + (maxStaleRetries - 1 - s) := by
+  induction runs generalizing s w with
+  | nil => simp [loopW]
+  | cons f rest ih =>
+    cases ha : (f w).a
+    case stale =>
+      have h1 := ih (s + 1) (escalateNext (s + 1) (f w).wasted)
+      simp only [loopW, ha]
+      cases he : escalateNext (s + 1) (f w).wasted
+      · have hlt : s + 1 < maxStaleRetries := by
+          refine Nat.lt_of_not_le fun hc => ?_
+          rw [escalate_after_max _ _ hc] at he; cases he
+        rw [he] at h1
+        simp only [maxStaleRetries] at hlt h1 ⊢
+        cases w <;> simp at h1 ⊢ <;> omega
+      · rw [he] at h1
+        simp only [maxStaleRetries] at h1 ⊢
+        cases w <;> simp at h1 ⊢ <;> omega
+    all_goals cases w <;> simp [loopW, ha]
+
+/-- The number of runs the loop takes when writer runs are never stale. -/
+theorem loopW_length (s : Nat) (w : Bool) (runs : List (Bool → Run))
+    (hw : ∀ f ∈ runs, (f true).a ≠ .stale) :
+    (loopW s w runs).2.length ≤ (if w then 1 else max 2 (maxStaleRetries + 1 - s)) := by
+  induction runs generalizing s w with
+  | nil => cases w <;> simp [loopW]
+  | cons f rest ih =>
+    have hrest : ∀ g ∈ rest, (g true).a ≠ .stale := fun g hg => hw g (by simp [hg])
+    cases ha : (f w).a
+    case stale =>
+      cases w
+      · have h1 := ih (s + 1) (escalateNext (s + 1) (f false).wasted) hrest
+        simp only [loopW, ha, List.length_cons]
+        cases he : escalateNext (s + 1) (f false).wasted
+        · have hlt : s + 1 < maxStaleRetries := by
+            refine Nat.lt_of_not_le fun hc => ?_
+            rw [escalate_after_max _ _ hc] at he; cases he
+          rw [he] at h1
+          simp only [maxStaleRetries] at hlt h1 ⊢
+          simp at h1 ⊢; omega
+        · rw [he] at h1; simp at h1 ⊢; omega
+      · exact absurd ha (hw f (by simp))
+    all_goals cases w <;> simp [loopW, ha] <;> omega
+
+/-- Writer runs are never stale (`QuerySession.writer_never_stale`), so the loop takes at most
+`MAX_STALE_RETRIES + 1` runs from a reader start, at most `MAX_STALE_RETRIES` of them readers. -/
+theorem loopW_bounded (runs : List (Bool → Run)) (hw : ∀ f ∈ runs, (f true).a ≠ .stale) :
+    (loopW 0 false runs).2.length ≤ maxStaleRetries + 1 ∧
+    ((loopW 0 false runs).2.filter (· = false)).length ≤ maxStaleRetries := by
+  refine ⟨?_, ?_⟩
+  · have := loopW_length 0 false runs hw; simp [maxStaleRetries] at this ⊢; omega
+  · have := loopW_readers 0 false runs; simpa [maxStaleRetries] using this
+
+/-- The loop has its result once it has as many runs as `loopW_length` bounds. -/
+theorem loopW_has_result (s : Nat) (w : Bool) (runs : List (Bool → Run))
+    (hw : ∀ f ∈ runs, (f true).a ≠ .stale)
+    (hl : (if w then 1 else max 2 (maxStaleRetries + 1 - s)) ≤ runs.length) :
+    (loopW s w runs).1.isSome := by
+  induction runs generalizing s w with
+  | nil => simp at hl; split at hl <;> omega
+  | cons f rest ih =>
+    have hrest : ∀ g ∈ rest, (g true).a ≠ .stale := fun g hg => hw g (by simp [hg])
+    cases ha : (f w).a
+    case stale =>
+      cases w
+      · simp only [loopW, ha]
+        apply ih _ _ hrest
+        simp only [List.length_cons, Bool.false_eq_true, ite_false] at hl
+        cases he : escalateNext (s + 1) (f false).wasted
+        · have hlt : s + 1 < maxStaleRetries := by
+            refine Nat.lt_of_not_le fun hc => ?_
+            rw [escalate_after_max _ _ hc] at he; cases he
+          simp only [maxStaleRetries] at hlt hl ⊢
+          simp; omega
+        · simp only [maxStaleRetries] at hl ⊢; simp; omega
+      · exact absurd ha (hw f (by simp))
+    all_goals simp [loopW, ha]
+
+/-- **Decided**: given `MAX_STALE_RETRIES + 1` runs, the loop has its result. -/
+theorem loopW_decided (runs : List (Bool → Run)) (hw : ∀ f ∈ runs, (f true).a ≠ .stale)
+    (hl : maxStaleRetries + 1 ≤ runs.length) : (loopW 0 false runs).1.isSome :=
+  loopW_has_result 0 false runs hw (by simp [maxStaleRetries] at hl ⊢; omega)
+
+/-! ### One timeout for every run (#3559)
+
+`try_query_write` resolves `WriteTimeout` on the first run only
+(`compute_effective_timeout`, here its answer `cfg`) and keeps it for the retries; each run then
+gets what is left since `started` (`spent` ms), or fails with `Query timed out` before forking. -/
+
+inductive WTimeout | unresolved | unlimited | total (ms : Nat)
+  deriving DecidableEq, Repr
+
+/-- `if matches!(timeout, Unresolved) { *timeout = cfg.map_or(Unlimited, Total) }`. -/
+def resolveT (t : WTimeout) (cfg : Option Nat) : WTimeout :=
+  match t with
+  | .unresolved => match cfg with | some n => .total n | none => .unlimited
+  | t => t
+
+/-- The run's `timeout_ms`: `.inl ()` is the `Query timed out` failure, `.inr` the budget. -/
+def runBudget (t : WTimeout) (spent : Nat) : Unit ⊕ Option Nat :=
+  match t with
+  | .total total => if total ≤ spent then .inl () else .inr (some (total - spent))
+  | _ => .inr none
+
+/-- Once resolved, a config change during a retry cannot move the timeout. -/
+theorem resolveT_kept (t : WTimeout) (cfg cfg' : Option Nat) :
+    resolveT (resolveT t cfg) cfg' = resolveT t cfg := by
+  cases t <;> try rfl
+  cases cfg <;> rfl
+
+/-- A run never gets more than the whole budget less what earlier runs spent, and is refused
+exactly when the budget is gone. -/
+theorem runBudget_le (total spent : Nat) :
+    (runBudget (.total total) spent = .inl () ↔ total ≤ spent) ∧
+    ∀ b, runBudget (.total total) spent = .inr (some b) → b + spent = total := by
+  unfold runBudget
+  constructor
+  · by_cases h : total ≤ spent <;> simp [h]
+  · intro b hb
+    by_cases h : total ≤ spent <;> simp [h] at hb; omega
+
+/-- With no timeout configured, no retry is ever refused for time. -/
+theorem runBudget_unlimited (spent : Nat) : runBudget .unlimited spent = .inr none := rfl
+
+/-- The refusal `try_query_write` returns (`WriteAttempt::Failed(abort.to_string())`) is not
+`Stale`: `execute_query_write` surfaces it instead of re-running. -/
+def unregisteredAttempt : Attempt :=
+  .failed "graph was deleted or replaced while the query was running, aborting"
+theorem unregistered_not_stale : unregisteredAttempt ≠ .stale := by simp [unregisteredAttempt]
 
 /-- Every modified commit either replicates or logs that it could not. -/
 theorem modified_replicates_or_warns (buf : Bool) :
@@ -358,7 +529,7 @@ def invalidVersionBytes (v : Int) : String :=
 
 theorem invalidVersion_shape : invalidVersionBytes 7 = "*2\r\n-ERR invalid graph version\r\n:7\r\n" := by decide
 
-/-! ## `reply_profile` (`:891-913`)
+/-! ## `reply_profile`
 
 Since #2390 (`d2c42e032`) every plan node is listed, `Commit` included, at its plain
 tree depth — the same rows `GRAPH.EXPLAIN` prints. -/
@@ -409,7 +580,7 @@ def executeQuery (plan : List Op) (writeAllowed : Bool) : QOut :=
 theorem ro_write_rejected (plan : List Op) (h : isWrite plan) : executeQuery plan false = .roError := by
   simp [executeQuery, h]
 
-/-! ## `admit` and `query_mut` dispatch (`:1007`, `:1018-1210`, #3014) -/
+/-! ## `admit` and `query_mut` dispatch (#3014) -/
 
 /-- `admit`: `QueueSlot::try_acquire(MAX_QUEUED_QUERIES)` (the count after admission), or
 the reply "Max pending queries exceeded" (`none`). Never waits. -/
@@ -438,25 +609,47 @@ theorem capped (s p m : Nat) (h : m ≤ p) : dispatch none s false p m = .maxPen
   simp [dispatch, admitQ]; omega
 
 /-- Which admission slot a job still holds after `execute_query`/`execute_profile`
-(`slot.filter(..)`, `:1126`, `:1390`): only a write keeps it, to carry into the write queue. -/
+(`slot.filter(..)`): only a write keeps it, to carry into the write queue. -/
 def admissionKept (ok isWrite : Bool) : Bool := ok && isWrite
 theorem read_releases_admission (ok : Bool) : admissionKept ok false = false := by simp [admissionKept]
 
 /-! ## Sync paths (`query_sync`, `profile_sync`, `profile_mut`) -/
 
 inductive Out | errNoTelemetry | readTelemetry | writeTelemetry | writeErr | profileRead
+  | readUnlogged | writeUnlogged
   deriving DecidableEq
+
+/-- `dispatch::logs_telemetry` (`dispatch.rs`, #3844): a query is this node's to log
+unless it came from the master (`REPLICATED`) or from AOF replay (`LOADING`). -/
+def logsTelemetry (replicated loading : Bool) : Bool := !(replicated || loading)
+
+theorem logsTelemetry_iff (r l : Bool) : logsTelemetry r l = true ↔ r = false ∧ l = false := by
+  cases r <;> cases l <;> decide
 
 /-- `query_sync`: read errors return without telemetry; reads log a read entry; writes run
 under `begin_writer` and log a write entry with zero wait, or fail through the divergence
-guard. -/
-def syncOutcome (readOk isWrite writeOk : Bool) : Out :=
+guard. Since #3844 an entry is enqueued only if `log_query` (`logsTelemetry` of the
+context); the reply is the same either way. -/
+def syncOutcome (readOk isWrite writeOk logQuery : Bool) : Out :=
   if !readOk then .errNoTelemetry
-  else if !isWrite then .readTelemetry
-  else if writeOk then .writeTelemetry else .writeErr
+  else if !isWrite then (if logQuery then .readTelemetry else .readUnlogged)
+  else if writeOk then (if logQuery then .writeTelemetry else .writeUnlogged) else .writeErr
 
-theorem sync_write_logs : syncOutcome true true true = .writeTelemetry := rfl
-theorem sync_err (w o : Bool) : syncOutcome false w o = .errNoTelemetry := rfl
+theorem sync_write_logs : syncOutcome true true true true = .writeTelemetry := rfl
+theorem sync_read_logs : syncOutcome true false true true = .readTelemetry := rfl
+theorem sync_err (w o l : Bool) : syncOutcome false w o l = .errNoTelemetry := rfl
+
+/-- #3844: a replicated or replayed query is never logged on this node. -/
+theorem sync_unserved_silent (rd w o r l : Bool) (h : r = true ∨ l = true) :
+    syncOutcome rd w o (logsTelemetry r l) ≠ .readTelemetry ∧
+    syncOutcome rd w o (logsTelemetry r l) ≠ .writeTelemetry := by
+  cases r <;> cases l <;> simp at h <;> cases rd <;> cases w <;> cases o <;> decide
+
+/-- …and the decision does not change what is executed: same outcome up to logging. -/
+theorem sync_log_only (rd w o : Bool) :
+    (syncOutcome rd w o true = .readTelemetry ↔ syncOutcome rd w o false = .readUnlogged) ∧
+    (syncOutcome rd w o true = .writeTelemetry ↔ syncOutcome rd w o false = .writeUnlogged) := by
+  cases rd <;> cases w <;> cases o <;> decide
 
 /-- `profile_sync`/`profile_mut`: same detection, write plans run with `profile = true`. -/
 def profileOutcome (detectOk : Bool) (d : Detect) (writeOk : Bool) : Out :=
@@ -469,7 +662,7 @@ theorem profile_write_runs_as_write (w : Bool) :
     profileOutcome true .write w = (if w then .writeTelemetry else .writeErr) := rfl
 theorem profile_read_replied (w : Bool) : profileOutcome true .readReplied w = .profileRead := rfl
 
-/-! ## `process_write_queued_query` exit protocol (`:1615-1660`) -/
+/-! ## `process_write_queued_query` exit protocol -/
 
 /-- After `try_recv` finds nothing: release the flag, then return only if the queue is
 still empty or another thread won the flag back; otherwise loop again as owner. -/

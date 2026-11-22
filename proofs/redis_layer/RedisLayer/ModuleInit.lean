@@ -1,29 +1,17 @@
-import RedisLayer.GraphCore
 /-!
 # Module load: configuration table and event handlers (`src/module_init.rs`, `src/lib.rs`)
 
-Since #3328 (`ded0b7c3f`) load-time configuration has one source: `graph_init`
-(`module_init.rs:139`) collects the arguments (`to_string_lossy`) and calls
-`config::apply_module_args`, refusing the load (`Status::Err`) on any error
-(`:163-168`); `lib.rs` sets `module_args_as_configuration: false`, so redismodule-rs no
+Load-time configuration has one source: `graph_init`
+(`module_init.rs`) collects the arguments (`to_string_lossy`) and calls
+`config::apply_module_args`, refusing the load (`Status::Err`) on any error; `lib.rs` sets `module_args_as_configuration: false`, so redismodule-rs no
 longer reads them. That function is modelled in `LoadArgs.lean`; `rust_c_same_accept` proves it
 accepts exactly what C's `Config_Init` accepts, for arguments with no embedded NUL, no leading
 whitespace in a value and no Rust-only name, given `FsOk` (`File::create` agrees with
 `access(W_OK)`); `error_applies_nothing` is a separate property (a refused load applies nothing). `graph_init`'s own
 work here is "args → `apply_module_args` → `Err` ⇒ `Status::Err`" (`graphInitArgs`).
 
-`table` (the `redis_module!` `configurations:` list, `lib.rs:97-116`) still registers the
+`table` (the `redis_module!` `configurations:` list, `lib.rs`) still registers the
 `graph.*` redis.conf configs; its defaults are checked below.
-
-**Historical (before #3328, 4a4f2a72f) — W4-redis-3 / #3268, fixed by #3328 (`ded0b7c3f`).**
-The table was also fed the module arguments (`module_args_as_configuration: true`,
-redismodule-rs `get_*_default_config_value`: the value after the first argument
-*byte-equal* to the name; a bool is `value == "yes"`), and `graph_init` had its own
-upper-casing loop for the atomics. Confirmed live then (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412):
-`CMD_INFO YES` → Rust 0, C 1; `CMD_INFO garbage` loaded with 0,
-C refuses; `cache_size 10` ignored;
-`ASYNC_DELETE yes` ignored. All four now load as in C
-(`LoadArgs.fixed3328_counterexamples`, re-checked live on b080a44c1).
 -/
 namespace RedisLayer.ModuleInit
 
@@ -33,12 +21,12 @@ def documented : List String :=
    "RESULTSET_SIZE", "OMP_THREAD_COUNT", "VKEY_MAX_ENTITY_COUNT", "MAX_QUEUED_QUERIES",
    "QUERY_MEM_CAPACITY", "DELTA_MAX_PENDING_CHANGES", "NODE_CREATION_BUFFER", "CMD_INFO",
    "MAX_INFO_QUERIES", "EFFECTS_THRESHOLD", "DELAY_INDEXING", "IMPORT_FOLDER", "TEMP_FOLDER",
-   "JS_HEAP_SIZE", "JS_STACK_SIZE"]
+   "JS_HEAP_SIZE", "JS_STACK_SIZE", "WRITE_LOCK_POLL_INTERVAL"]
 
 inductive Kind | i64 (dflt lo hi : Int) | str (dflt : String) | bool (dflt : Bool)
   deriving DecidableEq, Repr
 
-/-- `redis_module!` `configurations:` (`lib.rs:97-116`): the `graph.*` redis.conf configs.
+/-- `redis_module!` `configurations:` (`lib.rs`): the `graph.*` redis.conf configs.
 `VKEY_MAX_ENTITY_COUNT` is `0..i64::MAX` since #3419 (`8621212fc`; was `1..1073741824`). -/
 def table : List (String × Kind) :=
   [("CACHE_SIZE", .i64 25 0 1000), ("THREAD_COUNT", .i64 0 0 1024),
@@ -46,7 +34,8 @@ def table : List (String × Kind) :=
    ("VKEY_MAX_ENTITY_COUNT", .i64 100000 0 9223372036854775807), ("JS_HEAP_SIZE", .i64 268435456 0 4294967296),
    ("JS_STACK_SIZE", .i64 1048576 0 4294967296),
    ("IMPORT_FOLDER", .str "/var/lib/FalkorDB/import/"), ("TEMP_FOLDER", .str "/tmp"),
-   ("CMD_INFO", .bool true), ("DELAY_INDEXING", .bool false)]
+   ("CMD_INFO", .bool true), ("DELAY_INDEXING", .bool false),
+   ("INDEX_BUILD_THREAD_COUNT", .i64 1 1 1024)]   -- #3585, `IMMUTABLE`
 
 /-- Table defaults lie inside their declared bounds. -/
 def defaultOk : Kind → Bool
@@ -55,31 +44,9 @@ def defaultOk : Kind → Bool
 
 theorem table_defaults_in_range : table.all (fun e => defaultOk e.2) = true := by decide
 
-/-! ## Historical: redismodule-rs `find_config_value` / `get_*_default_config_value` (before #3328) -/
+/-! ## `graph_init` -/
 
-/-- C (`_Config_ParseYesNo`): case-insensitive yes/no, anything else an error. -/
-def cBool (v : String) : Option Bool :=
-  let l := v.toList.map Char.toLower
-  if l == "yes".toList then some true else if l == "no".toList then some false else none
-
-/-! ## Historical: `graph_init`'s argument loop (old `:154-223`, removed by #3328) -/
-
-def MAX_INFO_QUERIES_CAP : Int := 1000
-
-inductive Tgt | i64 (n : String) | maxInfo | maxQueued | none
-  deriving DecidableEq
-
-def target (upper : String) : Tgt :=
-  if upper ∈ ["TIMEOUT", "TIMEOUT_DEFAULT", "TIMEOUT_MAX", "RESULTSET_SIZE", "QUERY_MEM_CAPACITY",
-      "DELTA_MAX_PENDING_CHANGES", "EFFECTS_COMPRESSION", "EFFECTS_THRESHOLD", "OMP_THREAD_COUNT"]
-  then .i64 upper
-  else if upper = "MAX_INFO_QUERIES" then .maxInfo
-  else if upper = "MAX_QUEUED_QUERIES" then .maxQueued
-  else .none
-
-/-! ## `graph_init` since #3328 -/
-
-/-- `graph_init`'s argument step (`module_init.rs:159-168`): any `apply_module_args`
+/-- `graph_init`'s argument step (`module_init.rs`): any `apply_module_args`
 error is logged and refuses the load; otherwise initialisation continues. -/
 def graphInitArgs {ε α : Type} (applyArgs : Except ε α) : Bool :=
   match applyArgs with | .ok _ => true | .error _ => false
@@ -89,28 +56,32 @@ theorem graphInitArgs_ok {ε α : Type} (a : α) : graphInitArgs (.ok a : Except
 
 /-! ## Event handlers -/
 
-/-- `on_role_change` (`:466`): replica flag, sticky consumer latch, promotion work. -/
-def onRoleChange (subevent : Nat) : Bool × Bool × Bool :=
-  (subevent == 1, true, subevent == 0)
+/-- `on_role_change`: sticky consumer latch, promotion work. Since #3844 it no
+longer sets a replica flag (telemetry does not ask about the role). -/
+def onRoleChange (subevent : Nat) : Bool × Bool :=
+  (true, subevent == 0)
 
-theorem onRoleChange_promote : onRoleChange 0 = (false, true, true) := rfl
-theorem onRoleChange_demote : onRoleChange 1 = (true, true, false) := rfl
+theorem onRoleChange_promote : onRoleChange 0 = (true, true) := rfl
+theorem onRoleChange_demote : onRoleChange 1 = (true, false) := rfl
 
-/-- `on_replica_change` (`:564`): always latches. -/
+/-- `on_replica_change`: always latches. -/
 def onReplicaChange (_subevent : Nat) : Bool := true
 
 theorem onReplicaChange_latches (s : Nat) : onReplicaChange s = true := rfl
 
-/-- `on_loading` (`:576`): virtual-key cleanup after `ENDED` (3) or `FAILED` (4). -/
+/-- `on_loading`: virtual-key cleanup after `ENDED` (3) or `FAILED` (4). -/
 def onLoading (subevent : Nat) : Bool := subevent == 3 || subevent == 4
 theorem onLoading_only_end (s : Nat) : onLoading s = true ↔ s = 3 ∨ s = 4 := by
   simp [onLoading]
 
-/-- `on_flush` (`:438`): nothing. -/
-def onFlush {σ} (s : σ) : σ := s
-theorem onFlush_id {σ} (s : σ) : onFlush s = s := rfl
+/-- `on_flush` (#3844): the new `FLUSH_IN_PROGRESS`, raised by
+`REDISMODULE_SUBEVENT_FLUSHDB_START` (0) and lowered by `..._END` (1)
+(see `Telemetry.queue_flushing`). -/
+def onFlush (subevent : Nat) : Bool := subevent == 0
+theorem onFlush_start : onFlush 0 = true := rfl
+theorem onFlush_end : onFlush 1 = false := rfl
 
-/-- `on_shutdown` (`:465`): the teardown order. With the native index (`nativeIndex`) the index
+/-- `on_shutdown`: the teardown order. With the native index (`nativeIndex`) the index
 builder is stopped before the pool, and GraphBLAS and RediSearch are torn down only if every
 builder worker exited (`builderExited`, what `online_build::stop` returns): one left behind may
 still read or free a graph version. -/
@@ -131,7 +102,7 @@ theorem onShutdown_without_native_index (b : Bool) :
       "matrix::shutdown", "RediSearch_CleanupModule"] := by
   cases b <;> rfl
 
-/-- `on_fork_child` (`:118`): abort iff this is the main-thread (BGSAVE) fork and some
+/-- `on_fork_child`: abort iff this is the main-thread (BGSAVE) fork and some
 graph is not fully synced. -/
 def forkChildAborts (mainThread : Bool) (synced : List Bool) : Bool :=
   mainThread && synced.any (! ·)
@@ -140,7 +111,7 @@ theorem fork_all_synced (s : List Bool) (h : ∀ b ∈ s, b = true) : forkChildA
   simp only [forkChildAborts, Bool.true_and]
   rw [List.any_eq_false]; intro b hb; simp [h b hb]
 
-/-- `enforce_pending_constraints_after_promotion` (`:496`): per registered graph, the
+/-- `enforce_pending_constraints_after_promotion`: per registered graph, the
 constraints still under construction; graphs with none are skipped. -/
 def pendingPerGraph {G C} (underConstruction : C → Bool) (graphs : List (G × List C)) : List (G × List C) :=
   (graphs.map fun (g, cs) => (g, cs.filter underConstruction)).filter (fun p => !p.2.isEmpty)
@@ -159,123 +130,39 @@ theorem pending_only_uc {G C} (u : C → Bool) (gs : List (G × List C)) :
   have : x ∈ cs.filter u := List.mem_filter.2 ⟨hx, hu⟩
   rw [e] at this; simp at this
 
-/-! ## `on_keyspace_event` (`:761`), `on_swapdb` (`:744`): the registry follows the keyspace
-
-Since #3424 a graph's registry entry is found by the value now at the key, not by a name
-remembered from `rename_from`: `relocate_graph_at_key` (`:700`) opens the key in the
-event's database and, if it holds a graph (`held`, the `OpenKey`/`ModuleTypeGetType`
-FFI answer: the graph's identity or none), moves that graph's entry there
-(`GraphCore.relocate`), returning where it was. The telemetry stream of the old place is
-deleted only when no other graph of that database shares the name (`name_is_shared`,
-`:733`) and the key holds a stream (`delete_stream_if_stream`, `isStream`). -/
-
-open RedisLayer.GraphCore in
-/-- `name_is_shared` (`:733`). -/
-def nameIsShared (r : Reg) (db : Int) (name : List Char) : Bool := r.any fun e => e.2.1 = db && e.2.2 = name
+/-! ## `on_keyspace_event`: two-phase RENAME -/
 
 structure KS where
-  registry : GraphCore.Reg
-  /-- `(db, graph name)` of every telemetry stream `DEL`ed. -/
-  deleted : List (Int × List Char)
+  oldName : Option String
+  registry : List (String × Nat)
+  deleted : List String     -- telemetry streams `DEL`ed
 
-/-- `relocate_graph_at_key` (`:700`): `held` is the graph the key now holds, if any. -/
-def relocateAtKey (r : GraphCore.Reg) (held : Option Nat) (db : Int) (k : List Char) :
-    GraphCore.Reg × Option (Int × List Char) :=
-  match held with
-  | none => (r, none)
-  | some g => GraphCore.relocate r g db k
+def renameReg (reg : List (String × Nat)) (old new : String) : List (String × Nat) :=
+  match reg.find? (·.1 = old) with
+  | none => reg
+  | some (_, g) => (new, g) :: (reg.filter (fun p => p.1 ≠ old && p.1 ≠ new))
 
-/-- `delete_stream_if_stream` in database `db`: `DEL` only a stream (`TYPE` = `stream`). -/
-def delIfStream (isStream : Int → List Char → Bool) (del : List (Int × List Char)) (db : Int)
-    (name : List Char) : List (Int × List Char) :=
-  if isStream db name then del ++ [(db, name)] else del
-
-/-- `on_keyspace_event` for an event in database `db` (the one `ctx` has selected) on
-key `key`. `rename_from` / `move_from` and every other event: nothing. -/
-def onKeyspace (isStream : Int → List Char → Bool) (s : KS) (event : String) (db : Int)
-    (key : List Char) (held : Option Nat) : KS :=
-  if event = "rename_to" then
-    match relocateAtKey s.registry held db key with
-    | (r, some (d, old)) =>
-      if nameIsShared r d old then { s with registry := r }
-      else ⟨r, delIfStream isStream s.deleted db old⟩
-    | (r, none) => { s with registry := r }
-  else if event = "move_to" then
-    match relocateAtKey s.registry held db key with
-    | (r, some (d, old)) =>
-      if d ≠ db ∧ nameIsShared r d old = false then ⟨r, delIfStream isStream s.deleted d old⟩
-      else { s with registry := r }
-    | (r, none) => { s with registry := r }
+def onKeyspace (s : KS) (event key : String) : KS :=
+  if event = "rename_from" then { s with oldName := some key }
+  else if event = "rename_to" then
+    match s.oldName with
+    | some old => ⟨none, renameReg s.registry old key, s.deleted ++ [old]⟩
+    | none => s
   else s
 
-/-- **A renamed or moved key that holds no registered graph changes nothing** — neither
-the registry nor any stream (`telemetry{k}` of a plain key `k` is nobody's history). -/
-theorem not_a_graph (isStream : Int → List Char → Bool) (s : KS) (e : String) (db : Int)
-    (k : List Char) (held : Option Nat) (h : ∀ g, held = some g → s.registry.get g = none) :
-    onKeyspace isStream s e db k held = s := by
-  have hr : relocateAtKey s.registry held db k = (s.registry, none) := by
-    cases held with
-    | none => rfl
-    | some g => simp [relocateAtKey, GraphCore.relocate, h g rfl]
-  unfold onKeyspace; simp only [hr]; split <;> (try split) <;> rfl
+/-- `rename_to` without a preceding `rename_from` changes nothing. -/
+theorem rename_to_alone (s : KS) (k : String) (h : s.oldName = none) : onKeyspace s "rename_to" k = s := by
+  simp [onKeyspace, h]
 
-/-- **A RENAME re-keys the graph and deletes the old key's stream** (when it is one and no
-other graph of the database shares the name). -/
-theorem rename_pair (isStream : Int → List Char → Bool) (s : KS) (db : Int) (a b : List Char) (g : Nat)
-    (h : s.registry.get g = some (db, a)) :
-    let s' := onKeyspace isStream s "rename_to" db b (some g)
-    s'.registry.get g = some (db, b) ∧
-    (nameIsShared s'.registry db a = false → isStream db a = true → s'.deleted = s.deleted ++ [(db, a)]) ∧
-    (∀ g' ≠ g, s'.registry.get g' = s.registry.get g') := by
-  obtain ⟨m1, m2, m3⟩ := GraphCore.relocate_moves s.registry g db b (db, a) h
-  have e : relocateAtKey s.registry (some g) db b = ((GraphCore.relocate s.registry g db b).1, some (db, a)) := by
-    simp only [relocateAtKey]; rw [← m2]
-  simp only [onKeyspace, if_true, e]
-  split
-  · exact ⟨m1, fun h1 => by simp_all, m3⟩
-  · exact ⟨m1, fun _ h2 => by simp [delIfStream, h2], m3⟩
-
-/-- **A MOVE re-keys the graph into the destination database and deletes its stream in
-the source database** (when it is one and no other graph there shares the name). -/
-theorem move_pair (isStream : Int → List Char → Bool) (s : KS) (src dst : Int) (k : List Char) (g : Nat)
-    (h : s.registry.get g = some (src, k)) (hne : src ≠ dst) :
-    let s' := onKeyspace isStream s "move_to" dst k (some g)
-    s'.registry.get g = some (dst, k) ∧
-    (nameIsShared s'.registry src k = false → isStream src k = true → s'.deleted = s.deleted ++ [(src, k)]) ∧
-    (∀ g' ≠ g, s'.registry.get g' = s.registry.get g') := by
-  obtain ⟨m1, m2, m3⟩ := GraphCore.relocate_moves s.registry g dst k (src, k) h
-  have e : relocateAtKey s.registry (some g) dst k = ((GraphCore.relocate s.registry g dst k).1, some (src, k)) := by
-    simp only [relocateAtKey]; rw [← m2]
-  have hm : ("move_to" = "rename_to") = False := by simp
-  simp only [onKeyspace, hm, if_false, if_true, e]
-  split
-  · exact ⟨m1, fun _ h2 => by simp [delIfStream, h2], m3⟩
-  · rename_i hc
-    exact ⟨m1, fun h1 _ => absurd ⟨hne, h1⟩ hc, m3⟩
-
-/-- `rename_from` and `move_from` are ignored: the old place comes from the registry. -/
-theorem from_events_ignored (isStream : Int → List Char → Bool) (s : KS) (db : Int) (k : List Char)
-    (held : Option Nat) :
-    onKeyspace isStream s "rename_from" db k held = s ∧ onKeyspace isStream s "move_from" db k held = s := by
-  constructor <;> simp [onKeyspace]
+/-- A full RENAME re-keys the graph and deletes the old key's stream. -/
+theorem rename_pair (s : KS) (a b : String) (g : Nat) (h : s.registry.find? (·.1 = a) = some (a, g)) :
+    let s' := onKeyspace (onKeyspace s "rename_from" a) "rename_to" b
+    (s'.registry.find? (·.1 = b) = some (b, g)) ∧ s'.deleted = s.deleted ++ [a] ∧ s'.oldName = none := by
+  simp [onKeyspace, renameReg, h]
 
 /-- Other events are ignored. -/
-theorem other_event (isStream : Int → List Char → Bool) (s : KS) (e : String) (db : Int)
-    (k : List Char) (held : Option Nat) (h1 : e ≠ "rename_to") (h2 : e ≠ "move_to") :
-    onKeyspace isStream s e db k held = s := by simp [onKeyspace, h1, h2]
-
-/-- `on_swapdb` (`:744`): `swap_graph_dbs(first, second)`; a null `data` changes nothing. -/
-def onSwapDb (r : GraphCore.Reg) (info : Option (Int × Int)) : GraphCore.Reg :=
-  match info with
-  | none => r
-  | some (a, b) => GraphCore.swapDbs r a b
-
-theorem onSwapDb_spec (r : GraphCore.Reg) (a b : Int) :
-    onSwapDb r none = r ∧ onSwapDb r (some (a, b)) = GraphCore.swapDbs r a b := ⟨rfl, rfl⟩
-
-theorem nameIsShared_spec (r : GraphCore.Reg) (db : Int) (n : List Char) :
-    nameIsShared r db n = true ↔ ∃ e ∈ r, e.2 = (db, n) := by
-  simp [nameIsShared, Prod.ext_iff]
+theorem other_event (s : KS) (e k : String) (h1 : e ≠ "rename_from") (h2 : e ≠ "rename_to") :
+    onKeyspace s e k = s := by simp [onKeyspace, h1, h2]
 
 /-- `info_func`: nothing unless for a crash report. -/
 def infoSections (forCrash : Bool) (running : List String) : List String :=

@@ -3,17 +3,16 @@
 
 | here | there |
 | --- | --- |
-| `Slots`                 | `graph/src/index/mod.rs:903` `PendingSlots` (`current_generation`, `current_pending`, `stale_pending`) |
-| `inc`                   | `mod.rs:2111` `increment_pending_for_generation` |
-| `dec`                   | `mod.rs:2129` `try_decrement_pending_for_generation` (`if prev > 0 { -= 1 }` = `Nat` truncated `-`) |
-| `pendingFor`            | `mod.rs:2151` `pending_count_for_generation` |
-| `Slots.cur = 0`         | `mod.rs:2084` `is_operational` / `indexer.rs:720` `enabled` (`pending_count() == 0`) |
-| `bump`                  | `mod.rs:1049` `bump_id` (from `recreate_index`, and since #3086 from `create_index` whenever the label already has an entry, `indexer.rs:359-361`) |
-| `acquire`/`release`     | `indexer.rs:642` `acquire_population_snapshot`, `:686` `release_population_ticket` |
-| `batch`                 | `graph/src/graph/graph.rs:594-817` `populate_index_batch` (the three exits: `is_ticket_current` `:625`, `ticket_pending_changes > 1` `:637`, exhausted `:789`, releasing at `:799-800`) |
-| `store`                 | `indexer.rs:181` `create_index` @ 73077bb4a (fields appended, then `bump_id` if `existing.is_some()`); the model bumps iff the label already has fields, Rust iff the entry exists, which differs only in the window after `drop_index` leaves a 0-field entry until `drop_index_bg` removes it (`graph.rs:834`), not modelled |
-| `MState`/`step`/`Reach` | `graph.rs:3670` `Graph::create_index`: `create_index` (store) then `populate_index` (acquire), on the serialized writer |
-| `pre3086_createRange`   | `create_index` @ 1d15bf713 (`indexer.rs:319-331`): `register_fields`, no `bump_id` |
+| `Slots`                 | `graph/src/index/mod.rs` `PendingSlots` (`current_generation`, `current_pending`, `stale_pending`) |
+| `inc`                   | `mod.rs` `increment_pending_for_generation` |
+| `dec`                   | `mod.rs` `try_decrement_pending_for_generation` (`if prev > 0 { -= 1 }` = `Nat` truncated `-`) |
+| `pendingFor`            | `mod.rs` `pending_count_for_generation` |
+| `Slots.cur = 0`         | `mod.rs` `is_operational` / `indexer.rs` `enabled` (`pending_count() == 0`) |
+| `bump`                  | `mod.rs` `bump_id` (from `recreate_index`, and since #3086 from `create_index` whenever the label already has an entry, `indexer.rs`) |
+| `acquire`/`release`     | `indexer.rs` `acquire_population_snapshot` `release_population_ticket` |
+| `batch`                 | `graph/src/graph/graph.rs` `populate_index_batch` (the exits: `is_ticket_current`, `indexer.is_cancelled() || ticket_pending_changes > 1` (the cancelled arm has the shape of the pending arm: release and return), exhausted; `if do_recurse`) |
+| `store`                 | `indexer.rs` `create_index` @ 73077bb4a (fields appended, then `bump_id` if `existing.is_some()`); the model bumps iff the label already has fields, Rust iff the entry exists, which differs only in the window after `drop_index` leaves a 0-field entry until `drop_index_bg` removes it (`graph.rs`, `remove_if_empty`), not modelled |
+| `MState`/`step`/`Reach` | `graph.rs` `Graph::create_index`: `create_index` (store) then `populate_index` (acquire), on the serialized writer |
 
 The counters are `i32` in Rust; `2^31` outstanding tickets is not reachable (one
 ticket per populate job), so `Nat` is faithful.
@@ -132,7 +131,7 @@ deriving DecidableEq, Repr
 def setAt (l : List (List String)) (i : Nat) (f : List String → List String) : List (List String) :=
   l.modify i f
 
-/-- `populate_index_batch` for worker `i` over `nb` batches (graph.rs:594-817: `is_ticket_current` `:625`, pending check `:637`, exhausted/release `:789-800`). -/
+/-- `populate_index_batch` for worker `i` over `nb` batches (graph.rs: `is_ticket_current`, pending check, exhausted/release). -/
 def batch (nb : Nat) (s : PState) (i : Nat) : PState :=
   match s.workers[i]? with
   | none => s
@@ -149,15 +148,6 @@ def batch (nb : Nat) (s : PState) (i : Nat) : PState :=
       else
         { s with docs, workers := s.workers.set i { w with cursor := w.cursor + 1 } }
 
-/-- HISTORICAL (1d15bf713, before #3086): `CREATE INDEX` of a range field on a label
-that already has an RS spec: `register_fields` on the shared spec, **no** `bump_id`
-(indexer.rs:319-331), then
-`populate_index` acquires a ticket with the *new* field snapshot. -/
-def pre3086_createRange (s : PState) (attr : String) : PState :=
-  let fields := s.fields ++ [attr]
-  { s with fields, slots := inc s.slots s.slots.gen,
-           workers := s.workers ++ [{ gen := s.slots.gen, attrs := fields, cursor := 0 }] }
-
 /-- Every batch carries every field of the index. -/
 def complete (s : PState) : Bool := s.docs.all fun d => s.fields.all (d.contains ·)
 
@@ -166,32 +156,13 @@ def operational (s : PState) : Bool := s.slots.cur = 0
 def init (nb : Nat) : PState :=
   { slots := { gen := 1, cur := 0, stale := 0 }, fields := [], docs := List.replicate nb [], workers := [] }
 
-/-- Fix: bump the generation on every schema change (what `recreate_index` already
-does for vector fields), so the older worker fails `is_ticket_current` and the
-newer one owns the index. -/
-def createRangeFixed (s : PState) (attr : String) (g' : Nat) : PState :=
-  let fields := s.fields ++ [attr]
-  let slots := inc (bump s.slots g') g'
-  { s with fields, slots, workers := s.workers ++ [{ gen := g', attrs := fields, cursor := 0 }] }
-
-def fixedTrace : PState :=
-  let s := pre3086_createRange (init 3) "a"
-  let s := batch 3 s 0
-  let s := createRangeFixed s "b" 2
-  let s := batch 3 s 1            -- the order that lost `b` above
-  let s := batch 3 s 0            -- P1: stale ticket → bails
-  let s := batch 3 s 1
-  batch 3 s 1
-
-theorem fixed_trace_complete : operational fixedTrace = true ∧ complete fixedTrace = true := by decide
-
 /-! ## On main (#3086, 73077bb4a): every field addition starts a new generation
 
-`Graph::create_index` (graph.rs:3670) runs two steps on the serialized writer:
+`Graph::create_index` (graph.rs) runs two steps on the serialized writer:
 `Indexer::create_index` stores the entry (fields appended; since #3086 `bump_id`
-when the label already had one, indexer.rs:359-361), then `populate_index`
+when the label already had one, indexer.rs), then `populate_index`
 acquires a ticket of the current generation with the current field snapshot
-(`acquire_population_snapshot`, indexer.rs:642). Batches of every job interleave
+(`acquire_population_snapshot`, indexer.rs). Batches of every job interleave
 arbitrarily with both. `NEXT_INDEX_ID` is a monotone static counter, so the bumped
 generation is fresh; `gen + 1` stands for its next value. -/
 
@@ -563,7 +534,7 @@ theorem main_lost_order_complete :
 /-- The hypothesis `owed = false` is needed: between `Indexer::create_index`
 storing the entry (bumped, pending 0) and `populate_index` acquiring its ticket,
 the entry is OPERATIONAL with the new field in no document. A concurrent reader's
-`is_label_indexed` (indexer.rs:454) can plan an index scan in that window. -/
+`is_label_indexed` (indexer.rs) can plan an index scan in that window. -/
 def storeWindow : PState :=
   let s := acquire (store (init 3) "a")
   let s := batch 3 (batch 3 (batch 3 s 0) 0) 0
