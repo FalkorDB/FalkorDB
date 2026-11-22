@@ -15,7 +15,8 @@ import FalkorOptimizer.Basic
 | `isUnnamed`, `attrsEmpty` | `Variable::is_unnamed` ast.rs:209-211 (#3303: `name.is_none()`, replacing the `_anon` prefix test `is_anon`), `rel_attrs_empty` fuse_anonymous_traverse.rs:37-47 (`node_attrs_empty` removed by #2390) |
 | `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:78-187 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
 | `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
-| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-87 |
+| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-92 |
+| `VT`, `visT` | `branch_visible_variables` push_filters_down.rs:99-119 (#3281; on the plan tree: `PushPlan.bv`) |
 -/
 namespace Falkor.Opt
 
@@ -307,33 +308,102 @@ theorem fusedCT_spec (c : CT) : (fusedCT c).optional = true ∧ { fusedCT c with
 
 /-! ## `branch_output_variables` -/
 
-/-- `Project.copies` holds `(old, new)` pairs (binder.rs:2234; project.rs:115
-inserts `new_var`); `branch_output_variables` reads the first component. -/
+/-- `Project.copies` and `Aggregate.projections` hold `(old, new)` pairs
+(binder.rs:2234; project.rs:115 and aggregate.rs:716 write `new_var`). Since
+#3281 `branch_output_variables(node, include_copies)` (push_filters_down.rs:59-92)
+reads the second component (the slot the copy is written to), and only when
+`include_copies` (the routing sets, :251); `branch_visible_variables` (:99) passes `false`. -/
 inductive OutIR
   | project (exprs : List Var) (copies : List (Var × Var))
-  | aggregate (names projections : List Var)
+  | aggregate (names : List Var) (projections : List (Var × Var))
   | other
 
-def branchOut : OutIR → Option (List Nat)
-  | .project es cs => some (es.map Var.id ++ cs.map (·.1.id))
-  | .aggregate ns ps => some (ns.map Var.id ++ ps.map Var.id)
+def copied (inc : Bool) (cs : List (Var × Var)) : List Nat :=
+  if inc then cs.map (·.2.id) else []
+
+def branchOut (inc : Bool) : OutIR → Option (List Nat)
+  | .project es cs => some (es.map Var.id ++ copied inc cs)
+  | .aggregate ns ps => some (ns.map Var.id ++ copied inc ps)
   | .other => none
 
-/-- Above a Project/Aggregate only its outputs are visible; elsewhere `none`
-(the subtree's variables). Ids only — scope is dropped (see `id_only_routing_unsound`). -/
-theorem branchOut_spec (o : OutIR) :
-    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOut o).getD [] ↔ ∃ v ∈ es ++ cs.map Prod.fst, v.id = i) ∧
-    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOut o).getD [] ↔ ∃ v ∈ ns ++ ps, v.id = i) ∧
-    (o = .other → branchOut o = none) := by
+/-- Above a Project/Aggregate only its outputs are visible (the named ones, and
+the copies' destinations when `inc`); elsewhere `none` (the subtree's variables).
+Ids only — scope is dropped (see `id_only_routing_unsound`). -/
+theorem branchOut_spec (inc : Bool) (o : OutIR) :
+    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOut inc o).getD [] ↔
+      ∃ v ∈ es ++ (if inc then cs.map Prod.snd else []), v.id = i) ∧
+    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOut inc o).getD [] ↔
+      ∃ v ∈ ns ++ (if inc then ps.map Prod.snd else []), v.id = i) ∧
+    (o = .other → branchOut inc o = none) := by
   refine ⟨?_, ?_, ?_⟩
-  · rintro es cs rfl i; simp [branchOut, or_and_right, exists_or]
-  · rintro ns ps rfl i; simp [branchOut, or_and_right, exists_or]
+  · rintro es cs rfl i
+    cases inc <;> simp [branchOut, copied, or_and_right, exists_or]
+    exact or_congr_right ⟨fun ⟨a, b, h1, h2⟩ => ⟨b, ⟨a, h1⟩, h2⟩, fun ⟨b, ⟨a, h1⟩, h2⟩ => ⟨a, b, h1, h2⟩⟩
+  · rintro ns ps rfl i
+    cases inc <;> simp [branchOut, copied, or_and_right, exists_or]
+    exact or_congr_right ⟨fun ⟨a, b, h1, h2⟩ => ⟨b, ⟨a, h1⟩, h2⟩, fun ⟨b, ⟨a, h1⟩, h2⟩ => ⟨a, b, h1, h2⟩⟩
   · rintro rfl; rfl
 
-/-- The copy's *new* variable — what the Project actually outputs — is not
-reported (only the parent-scope id is). Suspected, see the root header. -/
+/-- Since #3281 the copy's *new* variable — what the Project actually outputs — is
+reported for routing, and no copy is visible to a later clause. -/
 theorem branchOut_copy_new :
-    branchOut (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
+    branchOut true (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [5] ∧
+    branchOut false (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [] := ⟨rfl, rfl⟩
+
+/-- Before #3281 (343e077f2): the source (`old`) id of each copy was reported. -/
+def branchOutPre3281 : OutIR → Option (List Nat)
+  | .project es cs => some (es.map Var.id ++ cs.map (·.1.id))
+  | .aggregate ns ps => some (ns.map Var.id ++ ps.map (·.1.id))
+  | .other => none
+
+/-- Historical (fixed by #3281): the parent-scope source id `0` was reported
+instead of the copy's destination `5` (`… WITH 1 AS k ORDER BY c OPTIONAL MATCH …`). -/
+theorem pre3281_branchOut_copy_old :
+    branchOutPre3281 (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
+
+/-! ## `branch_visible_variables` (#3281) -/
+
+/-- A plan node as `branch_visible_variables` (push_filters_down.rs:99-119) sees it:
+`reset` is a `Project`/`Aggregate` with `branch_output_variables(_, false)` =
+`outs`; `semi` a `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer`; `plain` any
+other operator. `own` is `collect_subtree_variables` of the lone node. -/
+inductive VT where
+  | reset (outs : List Nat) (kids : List VT)
+  | semi (own : List Nat) (kids : List VT)
+  | plain (own : List Nat) (kids : List VT)
+
+mutual
+def visT : VT → List Nat
+  | .reset outs _ => outs
+  | .semi own [] => own
+  | .semi own (k :: _) => own ++ visT k
+  | .plain own ks => own ++ visL ks
+def visL : List VT → List Nat
+  | [] => []
+  | k :: ks => visT k ++ visL ks
+end
+
+/-- A `Project`/`Aggregate` hides everything beneath it. -/
+theorem visT_reset (outs : List Nat) (ks : List VT) : visT (.reset outs ks) = outs := by
+  simp [visT]
+
+/-- A (anti) semi-join or `OrApplyMultiplexer` exposes only its first child:
+the existence sub-plans' variables never count. -/
+theorem visT_semi_first (own : List Nat) (k : VT) (ks ks' : List VT) :
+    visT (.semi own (k :: ks)) = visT (.semi own (k :: ks')) := by
+  simp [visT]
+
+/-- Any other operator exposes its own variables and every child's. -/
+theorem visT_plain (own : List Nat) (ks : List VT) :
+    visT (.plain own ks) = own ++ visL ks := by
+  simp [visT]
+
+/-- `MATCH (x:A:B) WHERE (x)-[:R]->() CALL { OPTIONAL MATCH (n:A:B {id: 3}) … }`
+(the PR's test): the left branch is `SemiApply(Scan x, Traverse(_anon…, Argument))`;
+only `x` (id 0) is visible, not the existence sub-plan's anonymous ids 1, 2. -/
+theorem visT_pattern_predicate :
+    visT (.semi [] [.plain [0] [], .plain [1, 0, 2] [.plain [] []]]) = [0] := by
+  simp [visT, visL]
 
 /-! ## `utilize_node_by_id`'s parent lookup -/
 
