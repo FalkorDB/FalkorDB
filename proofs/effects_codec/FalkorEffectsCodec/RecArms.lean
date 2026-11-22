@@ -8,9 +8,9 @@ import FalkorEffectsCodec.RecBlocks
 | `entityTag`/`entityFromTag`                 | `entity_tag`, `entity_from_tag` |
 | `CType`, `CStatus` + tags                   | `constraint_tag`, `constraint_from_tag`, `constraint_status_tag`, `…_from_tag` |
 | `indexTypeOf`                               | `index_type_of`, `field_type_bits` |
-| `bOpts`                                     | `IndexFieldOptions::{encode_sized, decode_sized}` (`records.rs:162`, `:217`) |
-| `bAttrRef`, `bFields`, `bProps`             | `AttrRef`, `IndexFields` (`:324`, `:346`), `read_constraint_props` (`:818`) |
-| `bSchemas`                                  | `IndexSchemas` (`:388`, `:421`) — the encoder sorts by id |
+| `bOpts`                                     | `IndexFieldOptions::{encode_sized, decode_sized}` (`records.rs`) |
+| `bAttrRef`, `bFields`, `bProps`             | `AttrRef`, `IndexFields`, `read_constraint_props` |
+| `bSchemas`                                  | `IndexSchemas` — the encoder sorts by id |
 -/
 namespace FalkorCodec
 
@@ -122,14 +122,14 @@ def bSchemaRef (utf8 : Bytes → Bool) : Blk Ref :=
       simp only [bind_apply, List.append_assoc]; rw [u32_w32 h1]; simp only
       rw [rString_wString utf8 name rest h2 h3]; rfl }
 
-/-- `IndexFields` (`records.rs:324/337`): `u16` count (`BlockCountTooLarge`
+/-- `IndexFields` (`records.rs`): `u16` count (`BlockCountTooLarge`
 past it), `guard_count(n, 11)`, items. -/
 def bFields (utf8 : Bytes → Bool) : Blk (List Ref) :=
   bItems 2 11 .blockCountTooLarge (bAttrRef utf8) (by
     intro r bs e; simp only [bAttrRef, eseq, Except.ok.injEq] at e; subst e
     have := wString_len r.name; simp [w16]; omega)
 
-/-- `read_constraint_props` (`:818`) / `write_constraint_tail` (`:850`): `u8`
+/-- `read_constraint_props` / `write_constraint_tail`: `u8`
 count — the encoder `expect`s ≤ 255 (`panic`). -/
 def bProps (utf8 : Bytes → Bool) : Blk (List Ref) :=
   bItems 1 11 .panic (bAttrRef utf8) (by
@@ -158,7 +158,7 @@ theorem readN_length {α} (A : R α) : ∀ (n : Nat) (r : Bytes) (l : List α) (
     simp only [pure_apply, Except.ok.injEq, Prod.mk.injEq] at h
     rw [← h.1]; simp [ih _ _ _ h2]
 
-/-- `IndexSchemas` (`:379/:412`): the encoder sorts by id; the decoder refuses an
+/-- `IndexSchemas` (`:396/:429`): the encoder sorts by id; the decoder refuses an
 empty list. -/
 def bSchemas (utf8 : Bytes → Bool) : Blk (List Ref) where
   enc xs := (bSchemaItems utf8).enc (sortById xs)

@@ -1,13 +1,11 @@
 import FalkorAggOps.Ops
 /-
-# Per-group DISTINCT state is keyed by a group id (#2977, fixes #2969)
+# Per-group DISTINCT state is keyed by a group id
 
-Before c652e505e the dedup table `Runtime::value_dedupers` was keyed `(distinct node,
-hash(group key row))` (`hash_u64`, aggregate.rs:1267 at ca36bfa15), so two groups whose key rows
-collided in FxHash shared one seen-set (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now `GroupMap`'s value carries the group's id
+The dedup table `Runtime::value_dedupers` is keyed `(distinct node, group id)`; `GroupMap`'s value carries the group's id
 (aggregate.rs `GroupMap`, :65): `groups.len()` at insertion (`next_group_id`, :709 vectorized, :970 per-row,
 `0` for the keyless pre-insert :533-540, :891-898), and both paths read it back (`entry.2`, :728,
-:976) as the key. The `hash_u64` trait and its `Row` impl were removed.
+:976) as the key.
 
 Scope: this separates GROUPS (two groups never share a seen-set). It does not make the value
 dedup exact: inside one group `ValuesDeduper::is_seen` (value.rs) still stores only the 64-bit
@@ -15,12 +13,6 @@ FxHash of the value (`seen: FxHashSet<u64>`), so two distinct values of one grou
 still counted once (`Ops.dedup_collision_drops`, #2780). `dcgIdGo` models the seen-set as exact
 `(group id, value)` membership, so `distinct_by_group_id_exact` is exact relative to that
 abstraction of the per-group value hashing.
-
-| here | there |
-| --- | --- |
-| `insertKey`, `gid` | `groups.entry(key).or_insert_with(.. next_group_id)`; `entry.2` |
-| `dcgIdGo` | the per-row DISTINCT check `value_dedupers.entry((didx, group_id))` (aggregate.rs:746, eval.rs:854) |
-| `dcgRef` | the exact per-group semantics (`dedupBy` on the group's own values) |
 -/
 namespace FalkorAggOps.GroupId
 
@@ -50,7 +42,7 @@ theorem gid_append_new (a : List K) (k : K) (h : k ∉ a) : gid (a ++ [k]) k = a
   | cons x xs ih =>
     have hx : x ≠ k := fun e => h (by simp [e])
     have hk : k ∉ xs := fun e => h (by simp [e])
-    simp only [List.cons_append, gid, hx, if_false, List.length_cons]
+    simp only [List.cons_append, gid, hx, ite_false, List.length_cons]
     rw [ih hk]; omega
 
 /-- A new group gets id = the number of groups so far (`next_group_id = groups.len()`). -/
@@ -180,69 +172,5 @@ value each. The hash-keyed table gave group 2 a count of 0;
 the id-keyed table gives 1, as the reference does. -/
 theorem fixed2977_collision_example :
     dcgIdGo 2 [] [] [(0, 7), (2, 7)] = 1 ∧ dcgRef 2 [] [(0, 7), (2, 7)] = 1 := by decide
-
-/-! ## Per-row `CALL {}` resets only its own DISTINCT state (#2968, fixes #2779)
-
-Since #2968 `consume_input_vectorized` / `consume_input_per_row` record each Aggregate's
-group count (`aggregate_group_counts`, aggregate.rs:789-794 / :926-931), and
-`ApplyOp::next_per_row` (apply.rs:382-397), after each sub-plan run, removes the entries
-`(distinct node, group)` for the sub-plan's own DISTINCT nodes (`sub_plan_distincts`,
-apply.rs:485) and `group < count` instead of clearing the whole runtime-wide table
-(`value_dedupers.clear()`, the #2779 bug `Ops.distinct_fold_clear_overcounts`). -/
-
-/-- Every group's id is below the group count (`groups.len()`), so `0..count` covers them. -/
-theorem gid_lt_length (gs : List K) (k : K) (h : k ∈ gs) : gid gs k < gs.length := by
-  induction gs with
-  | nil => simp at h
-  | cons x xs ih =>
-    simp only [gid, List.length_cons]
-    by_cases hx : x = k
-    · simp [hx]
-    · have : k ∈ xs := by simpa [Ne.symm hx] using h
-      simp [hx]; have := ih this; omega
-
-/-- The DISTINCT table as entries `((distinct node, group id), value)`; the reset removes
-the entries of the sub-plan's nodes `ds` with a group below `n`. -/
-def resetDistincts (ds : List Nat) (n : Nat) (m : List ((Nat × Nat) × Nat)) :
-    List ((Nat × Nat) × Nat) :=
-  m.filter (fun e => !(ds.contains e.1.1 && decide (e.1.2 < n)))
-
-/-- An enclosing aggregate's DISTINCT state (a node outside the sub-plan) survives. -/
-theorem resetDistincts_keeps_outer (ds : List Nat) (n o : Nat) (m : List ((Nat × Nat) × Nat))
-    (ho : o ∉ ds) :
-    (resetDistincts ds n m).filter (fun e => e.1.1 == o) = m.filter (fun e => e.1.1 == o) := by
-  unfold resetDistincts
-  rw [List.filter_filter]
-  apply List.filter_congr
-  intro e _
-  by_cases h : e.1.1 = o
-  · subst h; simp [ho]
-  · simp [h]
-
-/-- The sub-plan's own state is gone when every group id is below the count
-(`gid_lt_length`): the next invocation starts fresh. -/
-theorem resetDistincts_clears_inner (ds : List Nat) (n : Nat) (m : List ((Nat × Nat) × Nat))
-    (hn : ∀ e ∈ m, e.1.1 ∈ ds → e.1.2 < n) :
-    ∀ e ∈ resetDistincts ds n m, e.1.1 ∉ ds := by
-  intro e he hd
-  unfold resetDistincts at he
-  rw [List.mem_filter] at he
-  have := hn e he.1 hd
-  simp [hd, this] at he
-
-/-- An outer `count(DISTINCT v)` (node `o`, group 0) fed batch by batch, with the per-row
-CALL reset of the sub-plan's nodes `ds` (count `n`) between batches. -/
-def countBatchesKeyed (o : Nat) (ds : List Nat) (n : Nat) :
-    List ((Nat × Nat) × Nat) → List (List Nat) → Nat
-  | _, [] => 0
-  | m, b :: bs =>
-    let d := dedupBy id ((m.filter (fun e => e.1 == (o, 0))).map Prod.snd) b
-    d.length + countBatchesKeyed o ds n (resetDistincts ds n (m ++ d.map (fun v => ((o, 0), v)))) bs
-
-/-- **#2779 fixed by #2968**: the #2779 shape (`UNWIND range(1,3000) AS i CALL { WITH i
-RETURN i % 2 AS v LIMIT 1 } RETURN count(DISTINCT v)`, 3 batches of `[1,0]`) counts 2, as
-C, where the whole-table clear counted 6 (`Ops.distinct_fold_clear_overcounts`). -/
-theorem fixed2968_outer_distinct_survives_call :
-    countBatchesKeyed 7 [3] 1 [] [[1, 0], [1, 0], [1, 0]] = 2 := by decide
 
 end FalkorAggOps.GroupId

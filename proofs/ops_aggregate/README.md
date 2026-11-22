@@ -29,7 +29,7 @@ Some consequences the project also proves directly:
 
 Yes. `groupAll_spec` proves that each group holds exactly the rows with its key, in arrival order, so the aggregate of group `k` is the aggregate of "rows where key = k". `null` is an ordinary key, as in C. A keyed aggregate over no rows has no groups (`keyed_empty`); a keyless one has exactly one (`keyless_one_row`), which is why `MATCH (n:Missing) RETURN count(n)` returns one row with 0.
 
-Caveat: that is the model of the per-group row. The real `AggregateOp::next` is refuted against the row property `AggRowSpec` under the ids the binder assigns, by four open slot-reuse bugs (#3375, #3333, #3368, #3369; `SlotReuse.lean`; the fifth of the family, #3150, is fixed by #3522), so the row it emits can still be wrong until those are fixed.
+Caveat: that is the model of the per-group row. The real `AggregateOp::next` is refuted against the row property `AggRowSpec` under the ids the binder assigns, by four open slot-reuse bugs (#3375, #3333, #3368, #3369; `SlotReuse.lean`), so the row it emits can still be wrong until those are fixed.
 
 Grouping uses a `HashMap<GroupKey, _>`, which is only correct if equal keys hash the same. `gk_hash_consistent_main` proves that on main, using `value_order`'s `main_hash_consistent`.
 
@@ -43,7 +43,7 @@ All of this needs the value comparison to be a valid total order. On main it is 
 
 **4. Does `DISTINCT` keep exactly one row per value?**
 
-Only if the hash it keys on never collides. `dedup_injective` proves `DISTINCT` is correct when the hash is injective. `dedup_collision_drops` shows the other side: with a collision, a row is dropped. The engine keys on a 64-bit FxHash, so this is the known #2780. The project also found two new places where DISTINCT state is shared wrongly (see [Bugs found](#bugs-found)).
+Only if the hash it keys on never collides. `dedup_injective` proves `DISTINCT` is correct when the hash is injective. `dedup_collision_drops` shows the other side: with a collision, a row is dropped. The engine keys on a 64-bit FxHash, so this is the known #2780. The project also found one new place where DISTINCT state is shared wrongly (see [Bugs found](#bugs-found)).
 
 **5. Is `LOAD CSV` safe?**
 
@@ -75,11 +75,12 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `bug3375_output_overwrites_next_acc` … `bug3368_count_acc_in_merge_slot` | With the ids the binder really assigns, `next` breaks `AggRowSpec` in four open issues (#3375, #3333, #3368, #3369) | `SlotReuse.lean` |
 | `unbind_after_zero` | Every accumulator the aggregate zeroes is unbound again afterwards | `AggState.lean` |
 | `pctCmp_total` | The percentile sort comparator is a total preorder, so it cannot panic on NaN | `Ops.lean` |
-| `pct_first_wins`, `pct_stable` | A per-row percentile argument is taken from the first non-null row and never overwritten, as in C (#3007) | `Agg.lean` |
+| `pct_first_wins`, `pct_stable` | A per-row percentile argument is taken from the first non-null row and never overwritten, as in C | `Agg.lean` |
 | `validateRemote_spec`, `erRun_le`, `resolvePath_spec` | LOAD CSV: public addresses only, byte cap, path containment | `LoadCsv.lean` |
-| `fixed3443_eachHopValidated` | Main's `loadRemote` (https_only, no redirects, pinned resolver, since #3458) makes only https connections to addresses validated for their own host (the property #3443 broke) | `LoadCsvRedirect.lean` |
+| `fixed3443_eachHopValidated` | For a successful `loadRemote` (https_only, no redirects, pinned resolver) every connection is https to an address validated for its own host. A 3xx reply makes `loadRemote` an error without a connection list, so that trace is covered by `noRedirect_single` (the `fetch` trace) and `fixed3443_redirect_is_error` | `LoadCsvRedirect.lean` |
 | `fixed_eachHopValidated` | The general fix shape: with `https_only` and a resolver that validates and pins per request, every hop of any redirect chain is https and goes to an address validated for its own host | `LoadCsvRedirect.lean` |
-| `includePendingMain_exact` | main's `IncludePendingOp` (Phase 1 skipping deleted, label-removed and `extra_nodes`, Phase 2 emitting `extra_nodes`) shows MERGE's node scan each live matching node exactly once (the property #3453 broke), for a non-empty pattern, an uncorrelated scan, and these hypotheses about `Pending`, not discharged here: committed node ids distinct, created ids apart from them, `set_labels`/`remove_labels` keyed uniquely, `set_labels` naming only committed-or-created nodes | `IncludePendingExact.lean` |
+| `includePendingMain_exact` | main's `IncludePendingOp` (Phase 1 skipping deleted, label-removed and `extra_nodes`, Phase 2 emitting `extra_nodes`) shows MERGE's node scan each live matching node exactly once, for a non-empty pattern, an uncorrelated scan, and these hypotheses about `Pending`, not discharged here: committed node ids distinct, created ids apart from them, `set_labels`/`remove_labels` keyed uniquely, `set_labels` naming only committed-or-created nodes | `IncludePendingExact.lean` |
+| `finishGroup_keys_bound`, `keysBound_main`, `fixed3522_null_key_bound` | `AggregateOp::next` unbinds the accumulators before it writes the keys (#3522), so every grouping key stays bound, a null key included | `AggNext.lean`, `SlotReuse.lean` |
 
 ### How `vectorized_eq_rowwise` is proved
 
@@ -97,49 +98,41 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-agg-1 | `distinct_fold_clear_overcounts` | `CALL {}` clears the runtime-wide DISTINCT state after each run (`apply.rs:283`), wiping an outer `count(DISTINCT)`'s state every batch. `UNWIND range(1,3000) AS i CALL { WITH i RETURN i % 2 AS v LIMIT 1 } RETURN count(DISTINCT v)` gives 6; C gives 2 | **Fixed by #2968** (`GroupId.fixed2968_outer_distinct_survives_call`) |
-| W2-agg-2 | removed (17ccc5412), `distinct_by_group_id_exact`, `fixed2977_collision_example` | **Fixed by #2977 (c652e505e, closes #2969): the state is keyed by a group id (the insertion index; `aggregate.rs:709`, `:970`), so groups never share a seen-set; two distinct values of one group that collide in the 64-bit value hash are still merged (`dedup_collision_drops`).** Was: per-group DISTINCT state keyed by the FxHash of the group key (`aggregate.rs:724`, `:968` at ca36bfa15), so two groups whose keys collide share one seen-set. Keys `[0,0]` and `[1,-1452335207727870361]`: C counts 1 and 1, Rust 1 and 0 | Fixed by #2977 |
-| W2-agg-3 | removed (17ccc5412) | `percentileDisc`/`percentileCont` sorted with `partial_cmp().unwrap_or(Equal)`, which is not transitive with NaN; the sort panicked and the server crashed | Fixed by #2912 (`pctCmp_total`) |
-| W2-agg-4 | removed (17ccc5412) | A per-row percentile argument was overwritten by every row, so the last row won. `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Low severity | Fixed by #3007 (`pct_first_wins`, `pct_stable`, `pct_repro_first_row`; main's test `test_row_dependent_percentile_uses_first_row`) |
-| W2-agg-5 | removed (17ccc5412) | An aggregate inside a list literal `return`ed out of the expression stack machine (`eval.rs:886-889` before #2951). `[min(x), max(x)]` gave `2` where C gives `[1,2]`; `size([count(x)])` was a type error | Fixed by #2951 (`evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`, `main_count_lit_list`, `main_size_singleton_agg`; main's test `test_list_literal_of_aggregates`) |
+| W2-agg-1 | `distinct_fold_clear_overcounts` | `CALL {}` clears the runtime-wide DISTINCT state after each run (`apply.rs:283`), wiping an outer `count(DISTINCT)`'s state every batch. `UNWIND range(1,3000) AS i CALL { WITH i RETURN i % 2 AS v LIMIT 1 } RETURN count(DISTINCT v)` gives 6; C gives 2 | **Open** |
 | #3375 | `bug3375_output_overwrites_next_acc`, `bug3375_avg_panics` (property `OutputsOwnAcc`) | The binder gives `count(x)`'s output the same id as `sum(x)`'s accumulator, and `next` writes the output into `combined` before `sum` reads it. `UNWIND [1,2,3] AS x RETURN 'a', 'b', count(x), sum(x)`: Rust 3, 3; C 3, 6. With `avg` the server panics (`finalize_avg expects a list`) | **Open** (PR #3374) |
-| #3150 | removed (17ccc5412) (property `KeysBound`) | `RETURN null AS x, count(1)`: the accumulator had id 0, the id of `x`; unbinding it unbound `x`, the null column was dropped and `reply.rs:655` panicked. With `'a' AS x` the value survived unbound, so the reply still printed it | **Fixed by #3522** (accumulators are unbound before the keys are written): `finishGroup_keys_bound`, `keysBound_main`, `fixed3522_null_key_bound`, `keysBound_swap_3522` |
 | #3333 | `bug3333_alias_binds_next_var` (property `EmitsOnlyScope`) | `… (x)-[:R]->(m) WITH m, count(*) AS c1 MATCH (m)-[r]->(b …)`: the pre-projection alias of `m` (id 2) is bound on the emitted row, and `b` gets id 2, so `b` starts bound to `m`. Rust `[]`, C `[3,1,4]` | **Open** |
 | #3369 | `bug3369_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Two `count(*)` accumulators are left, unbound but present, at the ids of the next segments' MERGE nodes (2 and 3). The MERGE that then treats them as bound is in `merge.rs`, which this project does not model | **Open** |
 | #3368 | `bug3368_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Same cause as #3369: the counts are left at id 2, which is `b` in the second segment and `c` in the last. Rust returns `[B] b1` for `c`; C `[C] c1` | **Open** |
-| #3443 | removed (17ccc5412) (property `EachHopValidated`) | ureq followed redirects (default `max_redirects = 10`), but `PinnedResolver` ignores the URI and returns the first host's addresses, and `https_only` was off. A cross-host redirect connected to the first host's IP (live: TLS "certificate not valid for name"); a redirect to `http://` was attempted (live: `http status: 400`). C follows no redirect | **Fixed by #3458** (`https_only(true)`, `max_redirects(0)`, a 3xx is an error): `fixed3443_eachHopValidated`, `fixed3443_redirect_is_error` |
-| #3453 | `fixed3453_deleted_node`, `fixed3453_duplicate_row`, `fixed3453_split_multilabel` (property `IncludePendingExact`, `includePendingMain_exact`) | MERGE's pending-node scan used to read `set_labels` only: a deleted node was matched, a re-`SET` committed label yielded the node twice, and `MERGE (m:A:B)` missed a node with `A` committed and `B` staged. All three now match C | **Fixed** by #3467 (a477d9aa3) |
 | — | `dedup_collision_drops` | `DISTINCT`, `count(DISTINCT)` and the MERGE cache keep only a 64-bit FxHash; a collision drops a row | **Present on main** (#2780 closed as not planned) |
-| — | removed (17ccc5412) | The scalar `max` body and `max_batch` disagreed on NaN | Fixed by #2917 (`maxScalar_eq_batch_nan`); harmless anyway, the scalar body is never called |
 | — | `one_child_not_unbound` | An aggregate call with only an accumulator child would be zeroed but never unbound, leaking its accumulator downstream | Latent: no parsed call has that shape |
 
 ## Gap closed 2026-10-20: slot ids shared across the projection
 
-Until this date the aggregate model kept outputs, accumulators and pre-projection key aliases in separate slots, so `finishGroup_outputs` and `unbind_other` could not see that the binder gives them overlapping ids. `SlotReuse.lean` now mints the ids as the binder does and models that `unbind` keeps the value (a value-present-but-unbound column). Five open issues come from this one cause; see the bug table. The MERGE half of #3369 and #3368 (a value-only Int read as a bound node) lives in `merge.rs` and is not modelled here.
+Until this date the aggregate model kept outputs, accumulators and pre-projection key aliases in separate slots, so `finishGroup_outputs` and `unbind_other` could not see that the binder gives them overlapping ids. `SlotReuse.lean` now mints the ids as the binder does and models that `unbind` keeps the value (a value-present-but-unbound column). Four open issues come from this one cause; see the bug table. The MERGE half of #3369 and #3368 (a value-only Int read as a bound node) lives in `merge.rs` and is not modelled here.
 
 ### CONDITIONAL rows, and how they were discharged
 
-Until #2912 and #2917, four rows rested on hypotheses about `Value` that were false on main:
+Two hypotheses about `Value` underlie the sort and grouping rows:
 
-- `GroupKey::hash` assumed "`Value`'s hash agrees with key equality" (`hc` in `gkHash_consistent`). `value_order` refuted it on the old code.
-- sort.rs `cmp_key` and the two `cmp`s assumed the value comparison is lawful (`Lawful cv`). It was not, before #2912.
+- `GroupKey::hash` assumes "`Value`'s hash agrees with key equality" (`hc` in `gkHash_consistent`).
+- sort.rs `cmp_key` and the two `cmp`s assume the value comparison is lawful (`Lawful cv`).
 
-They were tagged CONDITIONAL. On main, `Discharge.lean` proves both hypotheses from `value_order` (`hc_main` from `main_hash_consistent`, `lawful_main` from `scMain_total`), so the rows are PROVEN again. This project has no CONDITIONAL rows today.
+On main, `Discharge.lean` proves both hypotheses from `value_order` (`hc_main` from `main_hash_consistent`, `lawful_main` from `scMain_total`), so the rows are PROVEN. This project has no CONDITIONAL rows today.
 
 ## Files
 
 | File | What's in it |
 |---|---|
-| `Agg.lean` | The aggregate value type `V`, the null-skipping fold, both drivers, every `*_batch` kernel, the batch-independence theorems, `max` and NaN, the percentile first-row rule (`pct_first_wins`) and its pre-#3007 history |
-| `LoadCsvRedirect.lean` | LOAD CSV's ureq redirect loop and pinned resolver: #3443, `fixed3443_eachHopValidated`, `fixed_eachHopValidated` |
-| `IncludePendingExact.lean` | `IncludePendingOp` composed with `Pending`'s label scans: `includePendingMain_exact`, the three #3453 repros as `fixed3453_*` |
-| `Ops.lean` | Limit, Skip, the full sort and top-k heap, Project, Unwind, grouping, DISTINCT and its counterexamples, the stack-machine `return` bug, percentile index bounds and comparator |
+| `Agg.lean` | The aggregate value type `V`, the null-skipping fold, both drivers, every `*_batch` kernel, the batch-independence theorems, `max` and NaN, the percentile first-row rule (`pct_first_wins`) |
+| `LoadCsvRedirect.lean` | LOAD CSV's ureq redirect loop and pinned resolver: `fixed3443_eachHopValidated`, `fixed_eachHopValidated` |
+| `IncludePendingExact.lean` | `IncludePendingOp` composed with `Pending`'s label scans: `includePendingMain_exact`, the three repros as `fixed3453_*` |
+| `Ops.lean` | Limit, Skip, the full sort and top-k heap, Project, Unwind, grouping, DISTINCT and its counterexamples, the stack-machine `return`, percentile index bounds and comparator |
 | `SortCmp.lean` | `OrderedKey` and `HeapEntry` comparators, `compare_row_content`, `tiebreak`, over an abstract value comparison `cv` |
 | `SortKey.lean` | `classify_sort_key`: the typed key column reads back the evaluated key |
 | `AggPlan.lean` | Aggregate operator setup: `subtree_has_aggregate`, `analyze`, `analyze_agg_tree`, `args_for`, `new` |
-| `AggState.lean` | Accumulator zeroing and unbinding, `GroupKey` equality and hash, `hash_u64` |
+| `AggState.lean` | Accumulator zeroing and unbinding, `GroupKey` equality and hash |
 | `AggNext.lean` | Column extraction and the aggregate's `next`: groups finished and emitted in batches |
-| `SlotReuse.lean` | Binder ids for one projection (`projLayout`), what the emitted row stores and what a reader sees (`finishVals`, `cell`), the properties `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`, and the #3375/#3150/#3333/#3369/#3368 counterexamples |
+| `SlotReuse.lean` | Binder ids for one projection (`projLayout`), what the emitted row stores and what a reader sees (`finishVals`, `cell`), the properties `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`, and the #3375/#3333/#3369/#3368 counterexamples |
 | `Discharge.lean` | Instantiates `SortCmp` and `AggState` with main's `sort_cmp` and hash from `value_order` |
 | `Bitmap.lean` | `NullBitmap` from `batch.rs`: set, clear, `all`, `from_values` |
 | `Ctors.lean` | `new` of Limit, Skip, Distinct, Project, Unwind, Sort and Commit |
@@ -176,7 +169,7 @@ All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.
 - **Sort keys.** The top-k proofs model rows by their position in the sort's total order (`Nat`). That the real comparator is a total order is proven separately, in `value_order`, and connected through `Discharge.lean`.
 - **The columnar batch.** Typed lanes, builders, `concat` and `gather` are not modelled; `proofs/columnar` covers the batch layout.
 - **`HashMap` iteration order.** Groups may come out in any order; the theorems hold for every order.
-- **LOAD CSV I/O.** DNS, HTTP and path canonicalisation are parameters. The theorems say what the code does with their answers. Since #3443 the ureq agent's redirect loop is modelled (`LoadCsvRedirect.fetch`, with ureq 3.4.2's `max_redirects`/`https_only` defaults); TLS, the response body and `Location` parsing are not.
+- **LOAD CSV I/O.** DNS, HTTP and path canonicalisation are parameters. The theorems say what the code does with their answers. The ureq agent's redirect loop is modelled (`LoadCsvRedirect.fetch`, with ureq 3.4.2's `max_redirects`/`https_only` defaults); TLS, the response body and `Location` parsing are not.
 
 ## Build and check
 

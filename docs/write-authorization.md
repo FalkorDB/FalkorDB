@@ -89,19 +89,29 @@ flowchart TD
     C2 --> CZ
 
     B -->|no| D[block client, hand to pool]
-    D --> G[escalate: drop read lock,<br/>take GIL, take write lock]
+    D --> G[escalate: drop read lock,<br/>take GIL]
     G --> H{graph still registered?}
     H -->|no| X1[abort: GraphUnregistered]
     H -->|yes| J{facts.replicates<br/>AND traffic paused?}
     J -->|yes| X2[abort: ReplicaTrafficPaused]
     J -->|no| K{facts.originated_here<br/>AND READONLY?}
     K -->|yes| X3[abort: NotAMaster]
-    K -->|no| L([commit and propagate])
+    K -->|no| I{interval 0 when the wait began,<br/>or this thread already held the GIL?}
+    I -->|yes| Z[wait for the write lock,<br/>holding the GIL] --> L
+    I -->|no| W{write lock within<br/>WRITE_LOCK_POLL_INTERVAL?}
+    W -->|no| Y[release GIL, sleep 1 ms] --> G
+    W -->|yes| L([commit and propagate])
 
     S[spawned thread<br/>constraint validation] --> G
 ```
 
-Everything from the `graph_is_registered` check to the commit happens under **one
+The checks run on every attempt, because the GIL is released between attempts: a writer
+waits for the write lock in slices so that it never holds the GIL for longer than one
+slice (`acquire_write` in `src/query_session.rs`). Two cases wait once instead, holding
+the GIL until the lock is free: every writer when `WRITE_LOCK_POLL_INTERVAL` is 0, and a
+thread that already held the GIL, which cannot give it back mid-wait. On the attempt
+that gets the lock,
+everything from the `graph_is_registered` check to the commit happens under **one
 continuous GIL hold**. That is what makes the check race-free rather than merely
 well-timed: `CLIENT PAUSE` and role-change events both run on the main thread, which
 needs the GIL we are holding, so neither can move between the check and the commit.
@@ -119,21 +129,22 @@ but are identical here:
 
 * **with a session** — `query_sync` / `profile_sync` use `begin_writer`, which is already
   a writer, so `escalate` never runs and the check is never consulted;
-* **with no session at all** — `GRAPH.CONSTRAINT`, `GRAPH.DELETE`, `GRAPH.RESTORE`,
-  `GRAPH.UDF`, `GRAPH.COPY` and `GRAPH.EFFECT` take the graph write lock directly, commit,
-  and replicate inline. They never enter this machinery.
+* **with no session at all** — `GRAPH.DELETE`, `GRAPH.RESTORE`, `GRAPH.UDF`, `GRAPH.COPY`
+  and `GRAPH.EFFECT` take the graph write lock directly, commit, and replicate inline, and
+  so does `GRAPH.CONSTRAINT` when `must_run_inline` keeps it on the main thread. They never
+  enter this machinery.
 
 So `GRAPH.CONSTRAINT` appears **twice** in the table below, and the two rows have
-different answers for different reasons: the command mutates and replicates inline and is
-covered by dispatch, while the validation thread it spawns is a separate write that
-outlives the command and has to answer for itself.
+different answers for different reasons: a client's command waits for the write lock on
+the pool like a write query, and is re-authorized there, while the validation thread it
+spawns is a separate write that outlives the command and has to answer for itself.
 
 ## Coverage
 
 | write origin | runs | escalates | re-authorized | why |
 | --- | --- | --- | --- | --- |
-| client command (`GRAPH.QUERY` / `PROFILE` / `RECORD` / `BULK`) | pool | yes | **yes** | the case the guard exists for |
-| client command, no session (`CONSTRAINT` / `DELETE` / `RESTORE` / `UDF` / `COPY`) | inline | no | n/a | mutates and replicates on the main thread; dispatch already gated it |
+| client command (`GRAPH.QUERY` / `PROFILE` / `RECORD` / `BULK` / `CONSTRAINT`) | pool | yes | **yes** | the case the guard exists for |
+| client command, no session (`DELETE` / `RESTORE` / `UDF` / `COPY`) | inline | no | n/a | mutates and replicates on the main thread; dispatch already gated it |
 | replication stream (`REPLICATED`) | inline | no | n/a | our master committed it; rejecting diverges us |
 | AOF/RDB replay (`LOADING`) | inline | no | n/a | in `must_run_inline`, so it never reaches a worker |
 | diskless load (`ASYNC_LOADING`) | pool | yes | **no** | not in `must_run_inline`, so it does reach the check — bypassed there, and captured at admission by `bulk_insert` |
@@ -148,7 +159,7 @@ path that later starts replicating flips the field named after replication.
 
 | site | `replicates` | `originated_here` | why |
 | --- | --- | --- | --- |
-| query drainer, `record`, `bulk` (normal) | `true` | `true` | `WriteFacts::CLIENT`, the default |
+| query drainer, `record`, `bulk` (normal), `constraint` command | `true` | `true` | `WriteFacts::CLIENT`, the default |
 | `bulk` under `ASYNC_LOADING` | `true` | `false` | already authorized and persisted, but it still replicates, so only the role check is waived |
 | `constraint` validation thread | `false` | `false` | emits no replication of its own; also runs on a replica applying the master's command |
 | — once #2419 adds the re-announce | **`true`** | `false` | one field, flipped in the commit that adds the replication |

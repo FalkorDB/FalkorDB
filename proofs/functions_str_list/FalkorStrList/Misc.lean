@@ -22,7 +22,7 @@ inductive Res where
 
 /-! ## internal.rs -/
 
-/-- `ends_with` / `contains` (internal.rs:57, :75): `Null` unless both are strings. -/
+/-- `ends_with` / `contains` (internal.rs): `Null` unless both are strings. -/
 def internalEndsWith : List SV → Res
   | .str s :: .str t :: _ => .ok (.bool (t.isSuffixOf s))
   | _ => .ok .null
@@ -50,7 +50,7 @@ def SV.isNull : SV → Bool
   | .null => true
   | _ => false
 
-/-- `is_null` (internal.rs:90): `x IS NULL` is `is_null(false, x)`, `IS NOT NULL` is
+/-- `is_null` (internal.rs): `x IS NULL` is `is_null(false, x)`, `IS NOT NULL` is
 `is_null(true, x)`. -/
 def internalIsNull : List SV → Res
   | .bool isNot :: .null :: _ => .ok (.bool (!isNot))
@@ -62,7 +62,7 @@ theorem internalIsNull_spec (isNot : Bool) (v : SV) :
       .ok (.bool (if isNot then !v.isNull else v.isNull)) := by
   cases v <;> cases isNot <;> rfl
 
-/-- `case` / `add` (internal.rs:130, :145): enumeration-only stubs that always fail. -/
+/-- `case` / `add` (internal.rs): enumeration-only stubs that always fail. -/
 def internalCase (_ : List SV) : Res := .err "Internal function 'case' should not be called directly"
 def internalAdd (_ : List SV) : Res := .err "Internal function 'add' should not be called directly"
 
@@ -71,7 +71,7 @@ theorem internal_stubs (a b : List SV) :
     (∀ v, internalCase a ≠ .ok v) ∧ (∀ v, internalAdd a ≠ .ok v) := by
   simp [internalCase, internalAdd]
 
-/-- `register` (internal.rs:31): names, all flagged `internal`. -/
+/-- `register` (internal.rs): names, all flagged `internal`. -/
 def internalRegistered : List String :=
   ["starts_with", "ends_with", "contains", "is_null", "regex_matches", "case", "add"]
 
@@ -84,7 +84,7 @@ structure Pool where
   intern : List Char → List Char
   intern_eq : ∀ s, intern s = s
 
-/-- `intern` (string.rs:37). -/
+/-- `intern` (string.rs). -/
 def intern (P : Pool) : List SV → Res
   | .str s :: _ => .ok (.str (P.intern s))
   | .null :: _ => .ok .null
@@ -97,7 +97,7 @@ theorem intern_id (P : Pool) (v : SV) (h : v = .null ∨ ∃ s, v = .str s) : in
 
 /-! ### Discharging `Pool.intern_eq` for the Rust pool
 
-`StringPool::intern` (string_pool.rs:28; modelled in proofs/runtime_ds
+`StringPool::intern` (string_pool.rs; modelled in proofs/runtime_ds
 `StringPoolModel.intern`): `m.get(&*a)` looks the entry up *by content* and
 returns a clone of it; a miss inserts and returns `Arc::new((*a).clone())`.
 The pool is its list of `(content, pointer)` entries; `rustPool` is the content
@@ -126,7 +126,7 @@ theorem intern_id_rust (es : List (List Char × Nat)) (next : Nat) (v : SV)
     (h : v = .null ∨ ∃ s, v = .str s) : intern (rustPool es next) [v] = .ok v :=
   intern_id _ v h
 
-/-- `str::replace` (`string.rs:180`, in `string_replace`) for a non-empty pattern: left-to-right, non-overlapping. -/
+/-- `str::replace` (`string.rs`, in `string_replace`) for a non-empty pattern: left-to-right, non-overlapping. -/
 def replaceNE (pat rep : List Char) (hp : pat ≠ []) : List Char → List Char
   | [] => []
   | c :: cs =>
@@ -171,7 +171,7 @@ theorem strReplace_self (s pat : List Char) : strReplace s pat pat = s := by
     | cons c cs ih => simp [replaceEmpty, ih]
   · exact replaceNE_self _ _ s
 
-/-- `replace` (string.rs:175): strings only, any `null` argument gives `null`. -/
+/-- `replace` (string.rs): strings only, any `null` argument gives `null`. -/
 def stringReplace : List SV → Res
   | [.str s, .str p, .str r] => .ok (.str (strReplace s p r))
   | [.null, _, _] | [_, .null, _] | [_, _, .null] => .ok .null
@@ -182,7 +182,7 @@ theorem stringReplace_null (a b : SV) :
     stringReplace [a, b, .null] = .ok .null := by
   refine ⟨rfl, ?_, ?_⟩ <;> cases a <;> cases b <;> rfl
 
-/-- `to_string_vec` (string.rs:294), the `string.join` argument check. -/
+/-- `to_string_vec` (string.rs), the `string.join` argument check. -/
 def toStringVec : List SV → Except String (List (List Char))
   | [] => .ok []
   | .str s :: vs => (toStringVec vs).map (s :: ·)
@@ -208,7 +208,7 @@ structure Rx (R : Type) where
 
 variable {R : Type} (X : Rx R)
 
-/-- `regex_captures_list` (string.rs:475). -/
+/-- `regex_captures_list` (string.rs). -/
 def capturesList (re : R) (text : List Char) : SV :=
   .list ((X.captures re text).map fun caps =>
     .list (caps.map fun c => match c with | some m => .str m | none => .null))
@@ -220,7 +220,7 @@ theorem capturesList_shape (re : R) (text : List Char) :
       .list (caps.map fun c => c.elim .null .str)) := by
   simp only [capturesList]; congr; funext caps; congr; funext c; cases c <;> rfl
 
-/-- `string.matchRegEx` (string.rs:402). -/
+/-- `string.matchRegEx` (string.rs). -/
 def matchRegEx : List SV → Res
   | [.str t, .str p] => match X.compile p with
     | .ok re => .ok (capturesList X re t)
@@ -232,7 +232,7 @@ theorem matchRegEx_null (v : SV) : matchRegEx X [.null, v] = .ok (.list []) ∧
     matchRegEx X [v, .null] = .ok (.list []) := by
   constructor <;> cases v <;> rfl
 
-/-- `string.replaceRegEx` (string.rs:425). -/
+/-- `string.replaceRegEx` (string.rs). -/
 def replaceRegEx (args : List SV) : Res :=
   match args with
   | .null :: _ :: _ => .ok .null
@@ -255,7 +255,7 @@ theorem replaceRegEx_default (t p : List Char) :
 theorem replaceRegEx_null (t p : List Char) (re : R) (h : X.compile p = .ok re) :
     replaceRegEx X [.str t, .str p, .null] = .ok .null := by simp [replaceRegEx, h]
 
-/-- `register` (string.rs:32). -/
+/-- `register` (string.rs). -/
 def stringRegistered : List String :=
   ["intern", "substring", "split", "tolower", "toupper", "replace", "left", "ltrim", "rtrim", "trim",
    "right", "string.join", "string.matchRegEx", "string.replaceRegEx"]
@@ -269,7 +269,7 @@ structure Sorter where
   sortBy : (SV → SV → Ordering) → List SV → List SV
   perm : ∀ c l, (sortBy c l).Perm l
 
-/-- `list.sort` (list.rs:197); `cmp` is `Value::sort_cmp` on main (#2912). -/
+/-- `list.sort` (list.rs); `cmp` is `Value::sort_cmp` on main (#2912). -/
 def listSort (S : Sorter) (cmp : SV → SV → Ordering) : List SV → Res
   | .null :: _ => .ok .null
   | .list vs :: rest =>
@@ -297,7 +297,7 @@ theorem listSort_default (S : Sorter) (cmp : SV → SV → Ordering) (vs : List 
 theorem listSort_badAsc (S : Sorter) (cmp : SV → SV → Ordering) (vs : List SV) (i : Int) :
     listSort S cmp [.list vs, .int i] = .ok .null := rfl
 
-/-- `list.dedup` (list.rs:338): `seen.contains(v)` is `PartialEq` (`compare_value == Equal`). -/
+/-- `list.dedup` (list.rs): `seen.contains(v)` is `PartialEq` (`compare_value == Equal`). -/
 def dedupLoop (eq : SV → SV → Bool) : List SV → List SV → List SV
   | [], seen => seen
   | v :: vs, seen => dedupLoop eq vs (if seen.any (fun s => eq s v) then seen else seen ++ [v])
@@ -349,7 +349,7 @@ theorem listDedup_spec (eq : SV → SV → Bool) (vs : List SV) :
   obtain ⟨ks, h1, h2⟩ := dedupLoop_sublist eq vs []
   refine ⟨dedupLoop eq vs [], rfl, by simpa [h1] using h2, dedupLoop_pairwise eq vs [] (by simp)⟩
 
-/-- `register` (list.rs:53). -/
+/-- `register` (list.rs). -/
 def listRegistered : List String :=
   ["size", "head", "last", "tail", "reverse", "list.remove", "list.sort", "list.insert",
    "list.insertListElements", "list.dedup"]

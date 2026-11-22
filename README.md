@@ -24,7 +24,7 @@
     <img src="https://github.com/FalkorDB/FalkorDB/actions/workflows/rust-push.yml/badge.svg?branch=main" alt="Rust" />
   </a>
   <a href="https://github.com/FalkorDB/FalkorDB/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-Server_Side_Public_License-green" alt="license" />
+    <img src="https://img.shields.io/badge/license-SSPLv1%20%7C%20AGPLv3-green" alt="license: SSPLv1 or AGPLv3" />
   </a>
 </div>
 
@@ -285,7 +285,7 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 
 * **Contributing**: We welcome contributions! See the [Developer Guide](#developer-guide) below to build FalkorDB from source and run the test suites.
 
-* **License**: This project is licensed under the Server Side Public License v1 (SSPLv1). See the [LICENSE](LICENSE) file for details.
+* **License**: FalkorDB is available under either [SSPLv1](LICENSE-SSPL) or [AGPLv3](LICENSE-AGPL), at your option. See [LICENSE](LICENSE).
 
 ## Developer Guide
 
@@ -446,7 +446,12 @@ TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 
 ## LICENSE
 
-Licensed under the Server Side Public License v1 (SSPLv1). See [LICENSE](LICENSE).
+Unless otherwise noted, FalkorDB is dual-licensed under the [Server Side Public
+License v1](LICENSE-SSPL) (SSPLv1) or the [GNU Affero General Public License
+v3](LICENSE-AGPL) (AGPLv3), at your option. Third-party components may be
+subject to their own license terms and notices. See [LICENSE](LICENSE).
+The license notice and texts are also included in container images under
+`/usr/local/share/licenses/falkordb/` and as release assets.
 
 ### Support our work
 

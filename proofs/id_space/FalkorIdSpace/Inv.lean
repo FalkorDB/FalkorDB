@@ -4,7 +4,7 @@ import FalkorIdSpace.Verify
 `Inv` = the count half (`checked` passes: `entry + |taken ≥ entry| = live +
 |recycled|`, no overflow), plus the two structural facts the Rust relies on
 without checking: every free id is below the entry boundary or was taken by the
-batch, and the batch never took `u64::MAX`; plus (#3022) every id the batch
+batch, and the batch never took `u64::MAX`; plus every id the batch
 *released* is below the entry boundary or was taken by it (`relOk`).
 
 From it: `live` is exactly the number of live ids (`live_eq`), so `release`
@@ -18,7 +18,7 @@ structure Inv (N : Nat) (sp : IdSpace) : Prop where
   checked : sp.checked N = .ok ()
   binOk   : ∀ i, i < N → sp.recycled i = true → i < sp.eb ∨ sp.taken i = true
   noMax   : sp.taken (umax N) = false
-  /-- #3022: everything the open batch released was live in it — below the
+  /-- Everything the open batch released was live in it — below the
   entry boundary (live when the batch began) or taken by the batch. -/
   relOk   : ∀ i, i < N → sp.released i = true → i < sp.eb ∨ sp.taken i = true
 
