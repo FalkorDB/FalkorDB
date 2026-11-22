@@ -902,7 +902,8 @@ fn needs_post_filter(
                 .find(|p| !matches!(p.data(), ExprIR::Paren))
                 .is_some_and(|p| {
                     matches!(p.data(), ExprIR::Lt | ExprIR::Gt | ExprIR::Le | ExprIR::Ge)
-                        || (cfg!(feature = "index-falkordb") && is_comparison(p.data()))
+                        || (cfg!(feature = "index-falkordb")
+                            && (is_comparison(p.data()) || matches!(p.data(), ExprIR::List)))
                 });
         bool_range_bound
             || bool_valued_operand

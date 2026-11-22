@@ -1562,9 +1562,10 @@ class testIndexScanFlow():
             " (:L {v:5, w:5, age:7, k:'c'}), (:L {v:date('2020-01-01'), w:date('2020-01-01'), k:'d'})",
             ["MATCH (n:L) WHERE n.v = n.w RETURN n.k",
              "MATCH (n:L) WHERE n.age = (1 < 2) RETURN n.k",
-             "MATCH (n:L) WHERE n.v >= (false) RETURN n.k"],
+             "MATCH (n:L) WHERE n.v >= (false) RETURN n.k",
+             "MATCH (n:L) WHERE n.age IN [(1 < 2)] RETURN n.k"],
             expect_index=False,
-            expected_rows=[[['b'], ['c'], ['d']], [['b']], [['b']]])
+            expected_rows=[[['b'], ['c'], ['d']], [['b']], [['b']], [['b']]])
         self._index_vs_scan(
             [('L', 'arr')],
             "CREATE (:L {k:4, arr:[true,'X']}), (:L {k:5, arr:[1,'x']})",
