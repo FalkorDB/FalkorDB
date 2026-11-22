@@ -3,7 +3,8 @@
 
 * `optimize_sound`: if every pass preserves a relation `R` (reflexive,
   transitive), so does `optimize`; `optimize_nested` — each nested plan is
-  optimized independently; `passes_order` — the exact order (reduce_var_len_path twice).
+  optimized independently; `passes_order` — the exact order (reduce_var_len_path twice);
+  `passes_index_seek_before_hash_join` (#3889).
 * `rebuildHJ_id` (no rewrite: a plain copy) and `rebuildHJ_sound` (a
   congruence `R` + sound local rewrites ⇒ the rebuilt tree is `R`-equal);
   `rebuildHJ_guard_sound`, `guardHJ_argument`: the #2981 guard (no rewrite over a
@@ -22,22 +23,31 @@ namespace Falkor.Opt.Seq
 
 inductive Pass
   | reduceCount | reduceExpandInto | reduceVarLenPath | eliminateTrueFilters | selectScanNode
-  | pushFiltersDown | fuseAnonymousTraverse | replaceCartesianWithHashJoin | absorbEdgeFiltersIntoVlt
+  | pushFiltersDown | fuseAnonymousTraverse | replaceCartesianWithIndexSeek | replaceCartesianWithHashJoin
+  | absorbEdgeFiltersIntoVlt
   | utilizeIndex | utilizeNodeById | reorderLabels | fuseOptionalTraverse | reduceBoundEdge
   deriving DecidableEq, Repr
 
 /-- mod.rs, in order. -/
 def passes : List Pass :=
   [.reduceCount, .reduceExpandInto, .reduceVarLenPath, .eliminateTrueFilters, .selectScanNode,
-   .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
+   .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithIndexSeek,
+   .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
    .reduceVarLenPath, .utilizeIndex, .utilizeNodeById, .reorderLabels, .fuseOptionalTraverse,
    .reduceBoundEdge]
 
 theorem passes_order :
-    passes.length = 15 ∧ passes.count .reduceVarLenPath = 2 ∧
+    passes.length = 16 ∧ passes.count .reduceVarLenPath = 2 ∧
     passes.head? = some .reduceCount ∧ passes.getLast? = some .reduceBoundEdge ∧
-    passes.idxOf .absorbEdgeFiltersIntoVlt < 9 ∧ passes[9]? = some .reduceVarLenPath ∧
-    passes.idxOf .fuseOptionalTraverse = 13 := by decide
+    passes.idxOf .absorbEdgeFiltersIntoVlt < 10 ∧ passes[10]? = some .reduceVarLenPath ∧
+    passes.idxOf .fuseOptionalTraverse = 14 := by decide
+
+/-- #3889: `replace_cartesian_with_index_seek` runs once, right before
+`replace_cartesian_with_hash_join`. -/
+theorem passes_index_seek_before_hash_join :
+    passes.count .replaceCartesianWithIndexSeek = 1 ∧
+    passes.idxOf .replaceCartesianWithIndexSeek + 1 = passes.idxOf .replaceCartesianWithHashJoin := by
+  decide
 
 /-- A plan tree whose root may be `NestedPlans`. -/
 inductive OPlan (P : Type)
