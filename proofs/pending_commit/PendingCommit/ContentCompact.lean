@@ -3,7 +3,7 @@ import PendingCommit.BinSearch
 /-
 # `Block::compact` / `maybe_compact` with contents, and `SpanRef` reads
 
-* **`compactC_ok`** — `compact` (attribute_store.rs:798) rebuilds the arena
+* **`compactC_ok`** — `compact` (attribute_store.rs) rebuilds the arena
   from the live spans in slot order: every slot reads exactly what it read
   before, `CInv` holds, `dead = slack = 0`, and the arena is `Σ len` long
   (`Arena.compact_ok` for the counters). The heap remap is

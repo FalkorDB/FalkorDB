@@ -218,7 +218,7 @@ theorem load_encode (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C 
 boundary short of its end, makes `load_graph_from_reader` ask for another word. Behind
 `vec_load_graph` the reader is `BufferedReader::from_slice` (`rdb = NULL`), whose
 `ensure_available → load_chunk` then calls `RedisModule_LoadStringBuffer(NULL)`
-(`buffered_io.rs:212-224`; redis_layer `from_slice_past_end`): a crash, not an `Err`. -/
+(`buffered_io.rs`; redis_layer `from_slice_past_end`): a crash, not an `Err`. -/
 theorem truncated_payload_eof (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm)
     (p : Stream) (hp : StrictPre p (encodeGraph C g g.name (buildPayloads g) 1)) :
     loadFromReader C dest p = .eof :=

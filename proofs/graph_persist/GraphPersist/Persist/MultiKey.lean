@@ -1,5 +1,5 @@
 import GraphPersist.Persist.RoundTrip
-/-! # `build_multi_key_payloads` (encoder/mod.rs:95-189)
+/-! # `build_multi_key_payloads` (encoder/mod.rs)
 
 The greedy split of the four entity kinds over `key_count` RDB keys of at most `vkey_max`
 entities each, modelled loop for loop: `fillKey` is the inner `while` (:135-153), one
@@ -161,17 +161,17 @@ theorem keysFrom_spec (cap : Nat) : ∀ (n : Nat) (ts : List Kind), KInv ts →
       · exact g2 es hes
     · simp only [leftAfter]; rw [g3, h2, Nat.succ_mul]; omega
 
-/-- `entity_types`: the four kinds in encoding order, empty ones dropped (`:112-120`). -/
+/-- `entity_types`: the four kinds in encoding order, empty ones dropped. -/
 def kindsOf (g : G M Tn Nm Ix Cn) : List Kind :=
   ([(St.nodes, g.nodeCount), (St.delNodes, g.delNodes.length), (St.edges, g.edgeCount),
     (St.delEdges, g.delEdges.length)].filter fun p => p.2 > 0).map fun p => (p.1, p.2, 0)
 
 def U64MAX : Nat := 2 ^ 64 - 1
 
-/-- `key_count` (`:104-109`). -/
+/-- `key_count`. -/
 def keyCount (total vmax : Nat) : Nat := if total = 0 ∨ vmax = 0 then 1 else (total + vmax - 1) / vmax
 
-/-- The matrix payloads key 0 appends (`:155-183`). -/
+/-- The matrix payloads key 0 appends. -/
 def matrixEntries (g : G M Tn Nm Ix Cn) : List Entry :=
   (if g.labelMats.length > 0 then [⟨.labelsM, g.labelMats.length, 0⟩] else []) ++
   (if g.tensors.length > 0 then [⟨.relM, g.tensors.length, 0⟩] else []) ++

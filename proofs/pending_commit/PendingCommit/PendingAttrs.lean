@@ -1,7 +1,7 @@
 import PendingCommit.Props
 import PendingCommit.ContentCompact
 /-
-# `Pending` property staging, validation and reads (pending.rs: validation and `flatten_label_map` :61-144, node attributes :568-662, relationship attributes :979-1066)
+# `Pending` property staging, validation and reads (pending.rs: validation and `flatten_label_map` , node attributes :568-662, relationship attributes :979-1066)
 
 * `rustUpsert_eq` — the `binary_search_by_key` + `entry[pos].1 = value` /
   `Vec::insert(pos, …)` in `set_node_attribute` (:595) and
@@ -11,9 +11,8 @@ import PendingCommit.ContentCompact
 * `validate_spec`, `validate_depth`, `validate_nest` — `is_valid_property` (:79),
   `validate_list_property` (:108), `validate_property` (:125), `validate_*` (:134, :139):
   scalars, `String`, `Point`, `VecF32`, temporal values, and lists whose elements are
-  (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep (#3339,
-  b080a44c1); `Null` only at top level. Every accepted value was valid before (`isValid`, the
-  pre-#3339 check) and has depth ≤ 4096. (Same as C on
+  (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep;
+  `Null` only at top level. Every accepted value is `isValid` (the check without the depth bound) and has depth ≤ 4096. (Same as C on
   live servers: `[[1]]` accepted, `[1, null]`, maps and lists of maps rejected.)
 * `flatten_spec` — `flatten_label_map` (:61) emits parallel arrays whose zip
   is every `(node, label)` pair, total length = Σ labels.
@@ -176,7 +175,7 @@ def validateProperty : PV → Except PErr Unit
 
 def validate (v : PV) : Bool := (validateProperty v).toBool
 
-/-- Historical `is_valid_property` before #3339 (`is_valid_property` at 4a4f2a72f): lists of any depth. -/
+/-- The shape check without the depth bound (what `is_valid_property` accepted before #3339): lists of any depth. -/
 def isValid : PV → Bool → Bool
   | .null, allowNull => allowNull
   | .bool, _ | .int, _ | .float, _ | .string, _ | .point, _ | .vecf32, _

@@ -1,23 +1,23 @@
 import AlgoUdf.MarshalThm
 set_option linter.unusedSimpArgs false
 set_option linter.unusedVariables false
-/-! # #3336 (`33a956360`, GHSA-frmf-ffvc-mxx5): UDF value conversion is depth-capped
+/-! # UDF value conversion is depth-capped
 
 Both conversions are instances of `Step` (`Nesting.lean`): `fromStep H` is `js_to_value_level` over
 the QuickJS heap `H`, `toStep` is `value_to_js_at`'s check + `value_to_js_level`.
 
 Main results (`MAX = MAX_UDF_VALUE_NESTING = 1024`):
 * `fromJs_frames`, `toJs_frames`: **`MAX + 1` conversion levels always suffice**, for every input —
-  including a self-containing JS array (`Hself`), which the old code recursed into forever.
+  including a self-containing JS array (`Hself`).
 * `fromJs_past_cap`, `toJs_past_cap`: an input nested past the cap is an `Err`, never an overflow;
   exactly `udf_nesting_error()` for the Rust tests' shapes (`fromJs_nestArr_past`, `self_array_error`,
   `toJs_nestList_past`).
 * `fromJs_needs_all_frames`: the bound is tight (`MAX` frames do not suffice for `MAX` nested arrays);
   the uncapped conversion (`cap = none`) needs `n + 1` frames for `n` nested arrays, which is why
-  the bound is exactly `MAX + 1` (the advisory's 300,000-deep array).
+  the bound is exactly `MAX + 1`.
 * `cap_asymmetry_vecf32`: the two caps count differently — `value_to_js` does not count a VecF32
   leaf as a level, `js_to_value` does, so `MAX` lists around a vecf32 convert into JS but not
-  back. (A Path is a leaf both ways since #2976: `js_to_value` reads it from the entity class.)
+  back. (A Path is a leaf both ways: `js_to_value` reads it from the entity class.)
 -/
 namespace AlgoUdf.Marshal
 
@@ -269,7 +269,7 @@ theorem toF_eq_run (cap : Option Nat) : ∀ f d v, toF cap f d v = toStep.run ca
 theorem classify_arr_nil (items : List JsV) : classify (.arr items []) = .list items := rfl
 theorem deref_arr (H : Heap) (items ps) : deref H (.arr items ps) = .arr items ps := rfl
 
-/-! ## #3336, `js_to_value` -/
+/-! ## `js_to_value` -/
 
 /-- `v` nests at most `MAX` levels (as `js_to_value` counts them). -/
 def fitsJs (H : Heap) (v : JsV) : Bool := (fromStep H).within MAX v
@@ -383,7 +383,7 @@ theorem fromJs_needs_all_frames (H : Heap) : fromF H (some MAX) MAX 0 (nestArr M
       simp only [fromF, fromLevel, nestArr, deref_arr, classify_arr_nil]
       simp only [runShape, chk, Bool.false_eq_true, ite_false, listLoop, ih f (d + 1) (by omega), R.bind_none]
 
-/-! ## #3336, `value_to_js` -/
+/-! ## `value_to_js` -/
 
 /-- `v` nests at most `MAX` lists / maps. -/
 def fitsV (v : RV) : Bool := toStep.within MAX v

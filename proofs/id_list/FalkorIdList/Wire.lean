@@ -3,15 +3,15 @@
 
 | here | there (`graph/src/effects/v3/id_list.rs` unless noted) |
 | --- | --- |
-| `le n v` / `ofLe`    | `to_le_bytes` of `v as uN` / `uN::from_le_bytes` (`Reader::u16/u32/u64`, `graph/src/effects/reader.rs:99-113`) |
-| `widthFor`           | `narrow_int::width_for` (`graph/src/narrow_int.rs:19`) |
+| `le n v` / `ofLe`    | `to_le_bytes` of `v as uN` / `uN::from_le_bytes` (`Reader::u16/u32/u64`, `graph/src/effects/reader.rs`) |
+| `widthFor`           | `narrow_int::width_for` (`graph/src/narrow_int.rs`) |
 | `widthCode` / `widthOfCode` | `width_code` (:78) / `width_of_code` (:89) |
 | `writePair`          | `Segment::write_pair` (:652) + `write_narrow` (:1282) |
 | `encodeSeg`          | `Segment::encode` (:601) |
 | `encodeIds`          | `impl EffectEncode<3> for IdList` (:1200) |
-| `take` / `readU`     | `Reader::take` (reader.rs:40) / `Reader::u8..u64`, `read_narrow` (:1296) |
+| `take` / `readU`     | `Reader::take` (reader.rs) / `Reader::u8..u64`, `read_narrow` (:1296) |
 | `decodeSeg`          | `Segment::decode` (:673) |
-| `readIds` / `loop`   | `read_ids` (:1337), incl. `Reader::guard_count` (reader.rs:70) |
+| `readIds` / `loop`   | `read_ids` (:1337), incl. `Reader::guard_count` (reader.rs) |
 | `Roaring`            | `RoaringTreemap::{serialize_into, serialized_size, deserialize_from}` — abstract |
 
 Bytes are `Nat`s; the decoder theorems hold for **every** input list, with the
@@ -21,7 +21,7 @@ The roaring blob is abstract: `Roaring` is a structure of three functions over
 the *set* (as its ascending list), and `RoaringOK` states the two things the
 format relies on — a serialized set deserializes back to itself, and whatever
 deserializes is a set of `u64`s. Nothing is assumed about *which* blobs are
-accepted; see `REPORT.md` for what roaring 0.11.5 actually accepts.
+accepted (what roaring 0.11.5 actually accepts is not modelled).
 
 A Rust `panic!`/arithmetic overflow is `Err.panic`; `readIds_never_panics`
 proves it unreachable.
@@ -190,7 +190,7 @@ def encodeIds (R : Roaring) (segs : List Seg) : Except Err (List Nat) := do
 
 /-! ## Decoder -/
 
-/-- `Reader::take` (reader.rs:40): refuses rather than over-reads. -/
+/-- `Reader::take` (reader.rs): refuses rather than over-reads. -/
 def take (n : Nat) (bs : List Nat) : Except Err (List Nat × List Nat) :=
   if bs.length < n then .error .eof else .ok (bs.take n, bs.drop n)
 

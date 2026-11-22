@@ -1,5 +1,5 @@
 /-
-# Soundness of `parse_shortest_path_expr` (cypher.rs:1753-1940)
+# Soundness of `parse_shortest_path_expr` (cypher.rs)
 -/
 import FalkorParserGrammar.C.ExprC4
 

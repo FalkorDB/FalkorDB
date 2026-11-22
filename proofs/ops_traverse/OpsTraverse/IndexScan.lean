@@ -4,11 +4,11 @@ Index and vector scans (graph/src/runtime/ops/node_by_index_scan.rs, node_by_vec
 
 | here | there |
 | --- | --- |
-| `IQ`, `evalIQ`        | `IndexQuery`, `NodeByIndexScanOp::evaluate_index_query` (node_by_index_scan.rs:98) |
+| `IQ`, `evalIQ`        | `IndexQuery`, `NodeByIndexScanOp::evaluate_index_query` (node_by_index_scan.rs) |
 | `indexable`, `canUse` | `can_utilize_index` (:250) and its inner `is_indexable` (:253) |
 | `extraLabels`, `IxSt.new` | `NodeByIndexScanOp::new` (:56) |
 | `scanRow`             | the per-row closure of `NodeByIndexScanOp::next` (:293) |
-| `vecArgs`             | `eval_vector_args` (node_by_vector_scan.rs:120) |
+| `vecArgs`             | `eval_vector_args` (node_by_vector_scan.rs) |
 | `VecSt.new`           | `NodeByVectorScanOp::new` (:47) |
 | `vecRow`              | the per-row closure of `NodeByVectorScanOp::next` (:83) |
 
@@ -40,7 +40,7 @@ def isScalar : V → Bool
   | .int _ | .float | .str _ | .bool _ => true
   | _ => false
 
-/-- node_by_index_scan.rs:98-246. `ev` = `ExprEval::eval` on the row; `asList` = the
+/-- node_by_index_scan.rs. `ev` = `ExprEval::eval` on the row; `asList` = the
 `Value::List` match of the `InList` arm. -/
 def evalIQ {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V))) :
     IQ E → Except String (IQ V)
@@ -63,17 +63,17 @@ where
   | [] => pure []
   | q :: qs => do let a ← evalIQ ev asList q; let b ← evalL ev asList qs; pure (a :: b)
 
-/-- `Index::int_loses_f64_precision` (index/mod.rs:1359): `i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0`
+/-- `Index::int_loses_f64_precision` (index/mod.rs): `i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0`
 (conservative: any |i| ≥ 2^52 except 2^63 falls back). -/
 def losesPrecision (i : Int) : Bool := (i.natAbs &&& 0x7FF0000000000000) != 0
 
-/-- node_by_index_scan.rs:253-263 -/
+/-- node_by_index_scan.rs -/
 def indexable : V → Bool
   | .int i => !losesPrecision i
   | .float | .str _ | .bool _ | .point | .null => true
   | _ => false
 
-/-- node_by_index_scan.rs:250-283 -/
+/-- node_by_index_scan.rs -/
 def canUse : IQ V → Bool
   | .eq _ v => indexable v
   | .range _ lo hi _ _ => (lo.all indexable) && (hi.all indexable)
@@ -136,7 +136,7 @@ theorem evalIQ_eq {E : Type} (ev : E → Except String V) (asList : E → Except
 
 /-! ## `new` and the per-row node set -/
 
-/-- node_by_index_scan.rs:65-69: labels after the first are post-filtered. -/
+/-- node_by_index_scan.rs: labels after the first are post-filtered. -/
 def extraLabels {L : Type} (labels : List L) : Option (List L) :=
   if labels.length > 1 then some labels.tail else none
 
@@ -151,7 +151,7 @@ theorem ixNew_spec {L : Type} (alias : Nat) (l : L) (ls : List L) :
   refine ⟨rfl, ?_⟩
   cases ls <;> simp [IxSt.new, extraLabels]
 
-/-- node_by_index_scan.rs:297-323: index answer (or label scan), then the extra-label filter. -/
+/-- node_by_index_scan.rs: index answer (or label scan), then the extra-label filter. -/
 def scanRow {N L : Type} (idx : IQ V → List N) (byLabel : List N) (hasLabel : N → L → Bool)
     (extra : Option (List L)) (q : IQ V) : List N :=
   let base := if canUse q then idx q else byLabel
@@ -195,7 +195,7 @@ theorem scanRow_spec {N L : Type} (idx : IQ V → List N) (byLabel : List N) (ha
 inductive VA where
   | str (s : String) | int (i : Int) | vec (n : Nat) | other
 
-/-- node_by_vector_scan.rs:120-155: label, attribute (strings), `k > 0`, a `vecf32`;
+/-- node_by_vector_scan.rs: label, attribute (strings), `k > 0`, a `vecf32`;
 anything else is "Invalid arguments for procedure '…'"; evaluation errors pass through. -/
 def vecArgs (proc : String) (l a k v : Except String VA) : Except String (String × String × Nat × Nat) := do
   let invalid := s!"Invalid arguments for procedure '{proc}'"
@@ -214,7 +214,7 @@ theorem vecArgs_bad_k (proc ls as : String) (n : Int) (v : Except String VA) (hn
       .error s!"Invalid arguments for procedure '{proc}'" := by
   simp [vecArgs, hn, bind, Except.bind, throw, throwThe, MonadExceptOf.throw, pure, Except.pure]
 
-/-- node_by_vector_scan.rs:58-65: bind the node id, plus the score column when named. -/
+/-- node_by_vector_scan.rs: bind the node id, plus the score column when named. -/
 structure VecSt where
   nodeCol : Nat
   scoreCol : Option Nat
@@ -246,7 +246,7 @@ theorem scans_stream {C R : Type} (pack : C → List (List R)) (cs : List C) :
 
 /-! ## Edge index scan (edge_by_index_scan.rs) -/
 
-/-- edge_by_index_scan.rs:265-301: as `canUse`, except `ArrayContains` also refuses integers that
+/-- edge_by_index_scan.rs: as `canUse`, except `ArrayContains` also refuses integers that
 lose precision as `f64`. -/
 def canUseE : IQ V → Bool
   | .arr _ v => match v with
@@ -279,7 +279,7 @@ theorem canUseE_spec (k : String) (v : V) (lo hi : Option V) (a b : Bool) :
     canUseE (.arr k (.int (2 ^ 60))) = false ∧ canUse (.arr k (.int (2 ^ 60))) = true := by
   refine ⟨by simp [canUseE], by simp [canUseE], by simp only [canUseE]; decide, rfl⟩
 
-/-- edge_by_index_scan.rs:78-112: `to` is not bound separately for a self-loop alias. -/
+/-- edge_by_index_scan.rs: `to` is not bound separately for a self-loop alias. -/
 structure EdgeCfg where
   fromA : Nat
   toA : Option Nat
@@ -294,14 +294,14 @@ theorem edgeIxNew_spec (f t e : Nat) (tr : Bool) :
     ((edgeIxNew f t e tr).toA = none ↔ t = f) ∧ (edgeIxNew f t e tr).cap = none := by
   refine ⟨by by_cases h : t = f <;> simp [edgeIxNew, h], rfl⟩
 
-/-- edge_by_index_scan.rs:355-366 (#3081, `ff3d24ba7`): an undirected pattern
+/-- edge_by_index_scan.rs (#3081, `ff3d24ba7`): an undirected pattern
 (`rp.bidirectional`) sees each edge the index yields once, `src -> dst`, in both
 orientations — a self-loop once — as `CondTraverse` does. -/
 def orient (bidir : Bool) (base : List (Nat × Nat × Nat)) : List (Nat × Nat × Nat) :=
   if bidir then base.flatMap fun (s, d, e) => (s, d, e) :: (if s ≠ d then [(d, s, e)] else [])
   else base
 
-/-- edge_by_index_scan.rs:317-403: the index answer (or the cached full edge list), oriented
+/-- edge_by_index_scan.rs: the index answer (or the cached full edge list), oriented
 (`orient`), then the bound-endpoint and same-alias filter (orientation by `transposed`). -/
 def edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
     (bFrom bTo : Option Nat) (sameAlias transposed bidir : Bool) : List (Nat × Nat × Nat) :=
@@ -371,7 +371,7 @@ theorem orient_length (base : List (Nat × Nat × Nat)) :
 
 /-! ## Fulltext scans and the edge vector scan -/
 
-/-- node_by_fulltext_scan.rs:73-112 / edge_by_fulltext_scan.rs:78-119: label and query must be
+/-- node_by_fulltext_scan.rs / edge_by_fulltext_scan.rs: label and query must be
 strings; a non-string one matches nothing (`.ok none`: the parent row yields no rows, as C);
 otherwise the index answer (FFI) is emitted with its scores. -/
 def ftArgs (_what : String) (label query : Option String) : Except String (Option (String × String)) :=
@@ -395,19 +395,6 @@ theorem ftArgs_nonstring_empty (w : String) (l q : Option String) (h : l = none 
     ftArgs w l q = .ok none := by
   cases l <;> cases q <;> simp_all [ftArgs]
 
-/-- Historical (pre-#3269): a non-string label/query was an error, C returns empty
-(FINDINGS W5-proc-3). Fixed by #3269 (c23975b98). -/
-def pre3269_ftArgs (what : String) (label query : Option String) : Except String (String × String) :=
-  match label with
-  | none => .error s!"fulltext query expects a string {what}"
-  | some l => match query with
-    | none => .error "fulltext query expects a string query"
-    | some q => .ok (l, q)
-
-theorem pre3269_ftArgs_errors (w : String) :
-    pre3269_ftArgs w none none = .error s!"fulltext query expects a string {w}" ∧
-    ftArgs w none none = .ok none := ⟨rfl, rfl⟩
-
 /-- `NodeByFulltextScanOp::new` (:42) / `EdgeByFulltextScanOp::new` (:47): scored column with the
 operator's record cap; `EdgeByVectorScanOp::new` (:40): scored column, no cap. -/
 def ftNew (ent : Nat) (score : Option Nat) (cap : Option Nat) : VecSt := ⟨ent, score, cap⟩
@@ -416,7 +403,7 @@ theorem ftNew_spec (e : Nat) (s c : Option Nat) :
     (ftNew e s c).nodeCol = e ∧ (ftNew e s c).scoreCol = s ∧ (ftNew e s c).cap = c ∧
     VecSt.new e s = ftNew e s none := ⟨rfl, rfl, rfl, rfl⟩
 
-/-- edge_by_vector_scan.rs:75-105: the relationship KNN answer `(src, dst, edge, score)` is
+/-- edge_by_vector_scan.rs: the relationship KNN answer `(src, dst, edge, score)` is
 projected to `(edge, score)`. -/
 def edgeVecRow (q : String → String → Nat → Nat → Except String (List (Nat × Nat × Nat × Float)))
     (args : Except String (String × String × Nat × Nat)) : Except String (List (Nat × Float)) := do

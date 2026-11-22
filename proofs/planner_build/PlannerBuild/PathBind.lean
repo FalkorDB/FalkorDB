@@ -6,31 +6,22 @@ import PlannerBuild.PlanMatch2
 Open issues #2311, #2727, #2737, #2743, #2744, #2725: one root cause, two places.
 
 1. **`plan_match` never builds the path.** The node-only, already-bound branch
-   (mod.rs:1915-1962) emits `Argument` (no labels) or a synthetic self-loop
+   (mod.rs) emits `Argument` (no labels) or a synthetic self-loop
    `ExpandInto(Argument)` (labels; the binder copies the node's labels onto every
    later occurrence, so `MATCH (n0:A) … MATCH p=(n0)` takes this branch). Only the
-   unbound branch adds `PathBuilder(component.paths())` (mod.rs:1977-1980). So
+   unbound branch adds `PathBuilder(component.paths())` (mod.rs). So
    `p = (n)` with `n` bound is never bound (`nodeOnly_bound_no_paths`).
-2. **The MATCH arm does not Apply-wrap it.** `all_visited` (mod.rs:3067-3069) runs
-   over `pattern.variables()`, which includes the path variables (ast.rs:816-822).
+2. **The MATCH arm does not Apply-wrap it.** `all_visited` (mod.rs) runs
+   over `pattern.variables()`, which includes the path variables (ast.rs).
    A new path variable is never visited, so the plan of `MATCH p=(n0)` is not
-   wrapped in `Apply` (mod.rs:3075-3080) although its only leaf is an `Argument`
+   wrapped in `Apply` (mod.rs) although its only leaf is an `Argument`
    (`planMatchArm_path_unwrapped`). Stitching then puts the previous clause *under*
-   that `Argument` (mod.rs:2809-2816), and the runtime never builds an Argument's
-   children (`children_to_recurse`, runtime.rs:658-660): it emits one empty row
-   (runtime.rs:1285). `ev` already models that (`argument_fill_ignores_input`).
+   that `Argument` (mod.rs), and the runtime never builds an Argument's
+   children (`children_to_recurse`, runtime.rs): it emits one empty row
+   (runtime.rs). `ev` already models that (`argument_fill_ignores_input`).
 
-OPTIONAL MATCH is Apply-wrapped (`any_visited`, mod.rs:3044-3064), so its rows
+OPTIONAL MATCH is Apply-wrapped (`any_visited`, mod.rs), so its rows
 survive, but the path is still missing: `RETURN p` gives null.
-
-| here | there |
-| --- | --- |
-| `MP.pathVars` | the variables a match plan binds as paths: `PathBuilder` entries, a CondVarLenTraverse's elided path (mod.rs:2350-2387) |
-| `BindsAllPaths` | the property: every named path of the pattern is bound by the plan |
-| `compVars` | `QueryGraph::variables` ast.rs:816-822 (nodes, relationships, paths) |
-| `planMatchArm` | `Planner::plan`'s MATCH arm mod.rs:3295-3364 (#2981: `joins_components` Apply wrap, `planMatchArm_joined_wrapped`, `planMatchArm_disjoint`) |
-| `MP.toPlan` | the `plan_match` result as an IR tree (operator kinds; payloads dropped) |
-| `Plan.argIsLeaf` | the property: no `Argument` has a child |
 
 Bug theorems: `bug2311_optional_path_null`, `bug2737_optional_path_null`,
 `bug2743_bound_path_drops_rows`, `bug2744_bound_path_unfed_argument`,
@@ -72,13 +63,13 @@ def BindsAllPaths (st : MSt) (wi : WI) (comps : List Comp) : Prop :=
 
 /-! ## Root cause 1: the bound node-only branch -/
 
-/-- The bound branch (mod.rs:1915-1962) builds no path, whatever paths the component has. -/
+/-- The bound branch (mod.rs) builds no path, whatever paths the component has. -/
 theorem nodeOnly_bound_no_paths (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
     (hb : st.bound n.alias = true) : (nodeOnly st lw n ps).1.pathVars = [] := by
   unfold nodeOnly; simp only [hb, ↓reduceIte]
   split <;> rfl
 
-/-- The unbound branch does (mod.rs:1977-1980). -/
+/-- The unbound branch does (mod.rs). -/
 theorem nodeOnly_unbound_binds_paths (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
     (hb : st.bound n.alias = false) (p : V × List V) (hp : p ∈ ps) :
     p.1 ∈ (nodeOnly st lw n ps).1.pathVars := by
@@ -95,7 +86,7 @@ theorem keepNode_alias (pending : List V) (n : QN) : (keepNode pending n).alias 
 
 /-- A single node-only component: `plan_match` = the node-only plan of its node with the
 cross-entity entries lifted (`n'`), under the `and_of` of the lifted and bound filters if any
-(mod.rs:2014-2019, 2567-2587). -/
+(mod.rs). -/
 theorem planMatch_nodeOnly (st : MSt) (wi : WI) (n : QN) (ps : List (V × List V)) :
     planMatch st wi [{ nodes := [n], rels := [], paths := ps }] none =
       let n' := keepNode (pendingOf st [{ nodes := [n], rels := [], paths := ps }]) n
@@ -132,7 +123,7 @@ theorem boundNode_path_not_built (st : MSt) (wi : WI) (n : QN) (p : V)
 
 /-! ## Root cause 2: the MATCH arm's Apply decision -/
 
-/-- `pattern.variables()` of a one-component pattern (ast.rs:816-822). -/
+/-- `pattern.variables()` of a one-component pattern (ast.rs). -/
 def compVars (c : Comp) : List V := c.nodes.map (·.alias) ++ c.rels.map (·.alias) ++ c.paths.map (·.1)
 
 mutual
@@ -154,7 +145,7 @@ def MP.toPlanL : List MP → List Plan
   | c :: cs => c.toPlan :: MP.toPlanL cs
 end
 
-/-- `Planner::plan`'s MATCH arm (mod.rs:3295-3364) around the `plan_match` result
+/-- `Planner::plan`'s MATCH arm (mod.rs) around the `plan_match` result
 `m`; `vars` = `pattern.variables()`, `ar` = `pattern_attrs_read_visited` (an inline map
 reads a bound variable, #2981), `st` = the planner state *before* `plan_match`.
 OPTIONAL: `Optional(new vars)`, under `Apply` if any variable is bound; MATCH:
@@ -210,7 +201,7 @@ theorem refill_eiArg (s : Nat) (q y : Plan) :
   simp [refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
 
 /-- Stitched under an unwrapped `Argument`, the previous clauses are never run: the
-clause yields the argument row whatever they are (runtime.rs:658-660, 1285). -/
+clause yields the argument row whatever they are (runtime.rs). -/
 theorem argument_fill_ignores_input {Val Gr : Type} (S : Sem Val Gr) (q y : Plan)
     (r : Rec Val) (g : Gr) :
     ev S (refill (.node .argument []) (slotLoop (.node .argument [])) q y) r g = ([r], g) := by
@@ -233,7 +224,7 @@ namespace PlannerBuild
 
 mutual
 /-- **No `Argument` has a child.** The runtime never builds an Argument's children
-(runtime.rs:658-660), so a clause stitched under one never runs. A fix keeps every
+(runtime.rs), so a clause stitched under one never runs. A fix keeps every
 `Argument` a leaf of an `Apply`/`Optional`/`Merge` sub-plan. -/
 def Plan.argIsLeaf : Plan → Bool
   | .node .argument cs => cs.isEmpty
@@ -412,7 +403,7 @@ def aliasSt : MSt := { visited := [alias4], verified := [] }
 
 /-- **#2727** (`MATCH (n0:A) WITH n0 AS alias4 MATCH (alias4), p1=(alias4) RETURN alias4.k0`
 → Rust 0 rows, C `'x'`; the full repro errors `Variable alias4 not found`). The pattern
-has one node-only component carrying `p1` (`connected_components`, ast.rs:926-928);
+has one node-only component carrying `p1` (`connected_components`, ast.rs);
 the binder copies `:A` onto `alias4`, so the plan is `ExpandInto(Argument)` again. -/
 theorem bug2727_alias_path_drops_rows :
     ¬ BindsAllPaths aliasSt {} [pathComp { alias := alias4, labels := ["A"], ptr := 0 } p0] ∧

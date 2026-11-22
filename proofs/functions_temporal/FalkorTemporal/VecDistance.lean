@@ -1,8 +1,8 @@
 /-!
 # `graph/src/runtime/vec_distance.rs` (origin/main 3fec7d7c9)
 
-The simsimd 6.5.16 Rust wrappers (`rust/lib.rs:659-685`, `impl SpatialSimilarity for f32`
-:966-1006) are modelled exactly: `sqeuclidean = l2sq`, `cosine = cos`, and each of
+The simsimd 6.5.16 Rust wrappers (`rust/lib.rs`, `impl SpatialSimilarity for f32`
+) are modelled exactly: `sqeuclidean = l2sq`, `cosine = cos`, and each of
 `l2sq`/`cos`/`dot` is `if a.len() != b.len() { None } else { Some(kernel(a, b)) }`, the
 kernel being the C FFI routine (`simsimd_l2sq_f32` etc.) — a parameter (`Kernels`), its
 numeric value is not modelled. `f64::sqrt` and negation are parameters too.
@@ -11,9 +11,9 @@ Proved: each metric's exact composition (`euclidean = sqrt ∘ l2sq`, `inner_pro
 `cosine = cos`), the dispatch table of `distance` (`None` ⇒ euclidean, unknown name ⇒
 `None`, names are case-sensitive), and **`distance_none_iff`**: the result is `None`
 exactly when the metric is unknown or the lengths differ. The callers do not report either
-reason: `vec.euclideanDistance` / `vec.cosineDistance` (`spatial.rs:146-190`) check the lengths
+reason: `vec.euclideanDistance` / `vec.cosineDistance` (`spatial.rs`) check the lengths
 first and raise the dimension-mismatch error themselves (their `unwrap_or` is unreachable),
-and the vector KNN paths (`graph.rs:4398`, `:4457`) silently skip an entity whose `distance`
+and the vector KNN paths (`graph.rs`) silently skip an entity whose `distance`
 is `None` (an unknown metric or a length mismatch).
 -/
 

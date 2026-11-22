@@ -1,17 +1,17 @@
 import FalkorIdList.Wire
 /-
-# `width_for` (`graph/src/narrow_int.rs:19`) picks the narrowest lossless width
+# `width_for` (`graph/src/narrow_int.rs`) picks the narrowest lossless width
 
 | here | there |
 | --- | --- |
-| `widthFor`  | `narrow_int::width_for` (narrow_int.rs:19) |
+| `widthFor`  | `narrow_int::width_for` (narrow_int.rs) |
 | `narrow`    | the `as u8` / `as u16` / `as u32` / `u64` truncation a writer applies at that width |
 
 `max : u64` is modelled as `Nat` with `max < 2^64`.
 -/
 namespace FalkorRuntimeDS.NarrowIntModel
 
-/-- narrow_int.rs:19 — the four match arms, in order. `runtime_ds` and `id_list` share one
+/-- narrow_int.rs — the four match arms, in order. `runtime_ds` and `id_list` share one
 model, `IdListWire.widthFor` (`proofs/id_list`, which the id-list wire format also uses), so a
 threshold change cannot leave those two inconsistent. `proofs/index_layer` still has its own
 `widthFor` (LeafBytes.lean, for the leaf's `pow2_bytes_for` path): a threshold change must be

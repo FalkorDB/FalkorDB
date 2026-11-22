@@ -3,7 +3,7 @@ import RedisLayer.QueryArgs
 /-!
 # `parse_query_flags` agrees with C's `_read_flags`
 
-`RustCAgree` (proved as `rust_c_agree` from #3010 until #3757): for every argument vector,
+`RustCAgree` (the unrestricted statement, refuted below): for every argument vector,
 under the configuration invariant that `GRAPH.CONFIG SET` maintains (`CfgOk`), Rust's
 `parseQueryFlags` and C's `cReadFlags` either both fail with corresponding errors
 (`QErr.toC`) or both succeed with corresponding flags (`Rel`: same compact flag, same
@@ -14,7 +14,7 @@ version, same timeout, where C's `TIMEOUT 0` → default substitution is the one
 or non-integer value (`Failed to parse schema hash value`); C skips both tokens as
 unknown flags. `rust_c_agree_refuted` proves `¬ RustCAgree` on
 `GRAPH.QUERY g "RETURN 1" SCHEMA_HASH abc`; `rust_c_same_accept_refuted` likewise.
-Since `SCHEMA_HASH requires --compact` (#3757, `a908d8a23`) Rust also refuses a well-formed
+Since `SCHEMA_HASH requires --compact` (#3757) Rust also refuses a well-formed
 `SCHEMA_HASH h` sent without `--compact` (`schemaVerbose`), which C skips too:
 `rust_c_agree_except_schemaParse_refuted` proves that the first #3757 form of the headline
 (only `schemaParse` excepted) no longer holds, on `GRAPH.QUERY g "RETURN 1" SCHEMA_HASH 5`.

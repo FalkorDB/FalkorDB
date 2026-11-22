@@ -7,17 +7,17 @@ import FalkorExprSemantics.EvalArms
 
 `coreOps rt` instantiates proofs/expr_semantics' abstract `Ops` over the engine value
 `FalkorCore.V F` with the *same* models the columnar lanes use: `compare_value` is
-`compareValue rt.oc` (value.rs:1255; its numeric/null arms concrete, `rt.oc` the remaining
-arms), `+ - * / %` are `valueArith rt.oa` (value.rs:904-1170), `all_equals` /
-`all_not_equals` are expr_semantics' `allEquals` / `allNotEquals` (eval.rs:1713, :1736), and
+`compareValue rt.oc` (value.rs; its numeric/null arms concrete, `rt.oc` the remaining
+arms), `+ - * / %` are `valueArith rt.oa` (value.rs), `all_equals` /
+`all_not_equals` are expr_semantics' `allEquals` / `allNotEquals` (eval.rs), and
 everything the lanes never compute (attribute reads, `get_attr`, `Contains`, map building,
 …) is read from the runtime record `rt`, shared by both evaluators.
 
 The shared forms agree (the gap item 3 of the PR #3437 review):
 * `allEq_rowCmp` / `allNeq_rowCmp`: expr_semantics' `all_equals` / `all_not_equals` on two
-  values = columnar's `rowCmp` (`compare_values`, vectorized.rs:239) for `=` / `<>`;
-* `cmpResult_rowCmp`: the `< > <= >=` fast path (eval.rs:454-472) = `rowCmp`;
-* `caseHit_caseMatch`: `eval_case`'s arm test = columnar's `caseMatch` (vector_expr.rs:513-529);
+  values = columnar's `rowCmp` (`compare_values`, vectorized.rs) for `=` / `<>`;
+* `cmpResult_rowCmp`: the `< > <= >=` fast path (eval.rs) = `rowCmp`;
+* `caseHit_caseMatch`: `eval_case`'s arm test = columnar's `caseMatch` (vector_expr.rs);
 * `notRow_eq`: the per-row `NOT` arm = columnar's `notRow`;
 * the arithmetic arms *are* `valueArith` (`coreOps_add`, `coreOps_arith`), the function
   `arithmetic_agree` compares the lanes against.

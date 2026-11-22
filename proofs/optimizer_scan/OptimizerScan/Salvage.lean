@@ -2,7 +2,7 @@ import OptimizerScan.ScanTree
 import OptimizerScan.ScanOrder
 
 /-
-# Salvaged filters: what `filters_of` hands `select_scan_node` to re-attach (#2390)
+# Salvaged filters: what `filters_of` hands `select_scan_node` to re-attach
 
 `ScanOrder.salvage_wellScoped` takes the premise "every salvaged filter reads only variables
 the new chain binds". This file models where those filters come from, with the variables each
@@ -10,17 +10,17 @@ reads as the Rust computes them, and decides the premise.
 
 | here | there |
 | --- | --- |
-| `ScanTree.IRk.filter vs`, `filtersOf`  | `IR::Filter(expr)`, `filters_of` `select_scan_node.rs:250`; `vs` = the `(id, scope_id)` of every `ExprIR::Variable` of the filter (`collect`, `:160`) |
-| `ScanTree.isPlannerScan`, `argumentLeafOf` | `is_planner_scan_subtree` `:315` (a scan is accepted whatever its children are), `argument_leaf_of` `:276` |
-| `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`, `:979-986`) and the preserved `Argument` leaf (`preserved_argument`, `:952`, `:1181`) |
-| `salvagedSteps`                        | `salvaged_filters` wrapped above the chain (`:1240-1246`, `:1156-1176`) |
-| `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` (`:214`) |
-| `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981, `:1402-1477`) |
-| `leafSteps3594`                        | the same rewrite since #3594: filters salvaged only `if has_planner_scan` (`:1579`); a transparent child keeps its own |
+| `ScanTree.IRk.filter vs`, `filtersOf`  | `IR::Filter(expr)`, `filters_of` `select_scan_node.rs`; `vs` = the `(id, scope_id)` of every `ExprIR::Variable` of the filter (`collect`) |
+| `ScanTree.isPlannerScan`, `argumentLeafOf` | `is_planner_scan_subtree` (a scan is accepted whatever its children are), `argument_leaf_of` |
+| `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`) and the preserved `Argument` leaf (`preserved_argument`) |
+| `salvagedSteps`                        | `salvaged_filters` wrapped above the chain |
+| `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` |
+| `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981) |
+| `leafSteps3594`                        | the same rewrite since #3594: filters salvaged only `if has_planner_scan`; a transparent child keeps its own |
 
 Result: the premise is **not** a fact about the Rust. `is_planner_scan_subtree` accepts a scan
 with *any* child, but `argument_leaf_of` keeps only an `Argument`; a child such as `Unwind`
-is pruned with the scan (`prune`, `:1131`, `:1294`). The filters on the spine then read a
+is pruned with the scan (`prune`). The filters on the spine then read a
 variable (`k`) that nothing in the rebuilt plan binds (`premise_fails`), and `runScoped` loses a
 row generate-and-test keeps (`salvage_loses_row`). Query:
 `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` (Rust 0, C 1; also
@@ -28,8 +28,7 @@ row generate-and-test keeps (`salvage_loses_row`). Query:
 operator itself is gone from the plan). `premise_of_spine` gives sufficient conditions under which the premise holds (the converse is not proved).
 
 The bound sets here are keyed on the variable id alone, as the Rust keys them: `initial_bound` and `placed_bound`
-are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (`:979-986`, `:1185`,
-`:1221-1222`; `:424-428` notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
+are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
 `v.1` of each `(id, scope_id)` exactly where the Rust drops the scope; `filtersOf` still carries the pairs.
 -/
 namespace OptimizerScan.Salvage
@@ -158,7 +157,7 @@ theorem salvage_loses_row :
   simp [wellScoped, exSteps, salvagedSteps, filtersOf, exChild, seedBound, b, k, argVars,
     argumentLeafOf] at hw
 
-/-! ### The no-swap leaf rewrite (#2981, `select_scan_node.rs:1402-1477`)
+/-! ### The no-swap leaf rewrite (`select_scan_node.rs`)
 
 When the bottom traverse keeps its direction (`effectively_leaf`) and its child is a planner scan,
 the scan is pruned and `make_scan_subtree(from, ..)` scans the traverse's `from`. Before #2981 the
@@ -170,17 +169,17 @@ in, `MATCH (a {v: 1}) MATCH (a)<-[]-(b {v: 0})`), was evaluated before anything 
 
 /-- The chain this branch builds from the seed (the new scan's node and the `Argument`): the
 salvaged filters inside the scan subtree (below the hop), or, when the pruned scan was for another
-node, above the hop. `old := true` is the pre-#2981 placement (always inside). -/
-def leafSteps (old : Bool) (fr : Var) (child : PT) (h : Hop) (pred : List Var → (Nat → Nat) → Bool) :
+node, above the hop (#2981). -/
+def leafSteps (fr : Var) (child : PT) (h : Hop) (pred : List Var → (Nat → Nat) → Bool) :
     List Step :=
-  if !old && isPlannerScan child && (plannerScanAlias child).any (· != fr) then
+  if isPlannerScan child && (plannerScanAlias child).any (· != fr) then
     .hop h :: salvagedSteps child pred
   else salvagedSteps child pred ++ [.hop h]
 
 /-- **PROVEN**: a scan for the same node keeps its filters inside, as before. -/
-theorem leafSteps_same (old : Bool) (fr : Var) (child : PT) (h : Hop) pred
+theorem leafSteps_same (fr : Var) (child : PT) (h : Hop) pred
     (hs : plannerScanAlias child = some fr) :
-    leafSteps old fr child h pred = salvagedSteps child pred ++ [.hop h] := by
+    leafSteps fr child h pred = salvagedSteps child pred ++ [.hop h] := by
   simp [leafSteps, hs]
 
 /-- **PROVEN**: when the pruned scan was for the hop's other endpoint `a` and its filters read only
@@ -188,10 +187,10 @@ theorem leafSteps_same (old : Bool) (fr : Var) (child : PT) (h : Hop) pred
 theorem leafSteps_other_wellScoped (fr a : Var) (child : PT) (h : Hop) pred
     (hs : plannerScanAlias child = some a) (hne : a ≠ fr) (ha : a.1 = h.src ∨ a.1 = h.dst)
     (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ argVars (argumentLeafOf child)) :
-    wellScoped (seedBound fr.1 child) (leafSteps false fr child h pred) := by
+    wellScoped (seedBound fr.1 child) (leafSteps fr child h pred) := by
   have hp : isPlannerScan child = true := by
     have := (plannerScan_agree child).2.1; rw [this, hs]; rfl
-  have e : leafSteps false fr child h pred = [.hop h] ++ salvagedSteps child pred := by
+  have e : leafSteps fr child h pred = [.hop h] ++ salvagedSteps child pred := by
     simp [leafSteps, hp, hs, hne]
   rw [e]
   apply salvaged_wellScoped child _ [.hop h] pred (by simp [wellScoped])
@@ -214,23 +213,19 @@ def E : Store := fun r x y e => r == 0 && x == 11 && y == 10 && e == 12
 def σ : Nat → Nat := fun x => x + 10
 def pred : List Var → (Nat → Nat) → Bool := fun _ σ => (if σ a.1 == 10 then 1 else 0) == 1
 
-/-- **PROVEN** (#2981 fixes the placement): before, the filter on `a` sat inside the scan of `b`, below
-the hop that binds `a` — not well-scoped, and the row generate-and-test keeps is lost; now it sits above
-the hop, and the row is kept. -/
+/-- **PROVEN** (#2981): the filter on `a` sits above the hop that binds `a`, so the placement is
+well-scoped and the row generate-and-test keeps is kept. -/
 theorem fixed2981_filter_above_hop :
-    (leafSteps true bN child hop pred).all (fullHolds E σ) = true ∧
-    ¬ wellScoped (seedBound bN.1 child) (leafSteps true bN child hop pred) ∧
-    runScoped E σ (seedBound bN.1 child) (leafSteps true bN child hop pred) = false ∧
-    wellScoped (seedBound bN.1 child) (leafSteps false bN child hop pred) ∧
-    runScoped E σ (seedBound bN.1 child) (leafSteps false bN child hop pred) = true := by
-  refine ⟨by decide, ?_, by decide, ?_, by decide⟩
-  · simp [leafSteps, wellScoped, salvagedSteps, filtersOf, child, seedBound, a, bN, argVars, argumentLeafOf]
-  · exact leafSteps_other_wellScoped bN a child hop pred (by decide) (by decide) (by decide)
+    (leafSteps bN child hop pred).all (fullHolds E σ) = true ∧
+    wellScoped (seedBound bN.1 child) (leafSteps bN child hop pred) ∧
+    runScoped E σ (seedBound bN.1 child) (leafSteps bN child hop pred) = true := by
+  refine ⟨by decide, ?_, by decide⟩
+  exact leafSteps_other_wellScoped bN a child hop pred (by decide) (by decide) (by decide)
       (by intro vs hvs v hv; simp [filtersOf, child] at hvs; subst hvs; simp at hv; exact Or.inl hv)
 
 end Leaf2981
 
-/-! ### The no-swap leaf rewrite over a transparent child (#3594, `select_scan_node.rs:1564-1577`)
+/-! ### The no-swap leaf rewrite over a transparent child (#3594, `select_scan_node.rs`)
 
 Since #3594 the bottom traverse's child may be an outer subtree (`transparent_child`: an `Unwind`,
 a `Project`, an earlier clause's plan) that binds none of the chain's variables. It is not discarded:
@@ -242,12 +237,12 @@ discarded planner scan (`if has_planner_scan`); otherwise none are. -/
 and the bare hop otherwise (a transparent child keeps its Filters beneath the new scan). -/
 def leafSteps3594 (hasPlanner : Bool) (fr : Var) (child : PT) (h : Hop)
     (pred : List Var → (Nat → Nat) → Bool) : List Step :=
-  if hasPlanner then leafSteps false fr child h pred else [.hop h]
+  if hasPlanner then leafSteps fr child h pred else [.hop h]
 
 /-- **PROVEN** (#3594): over a planner scan the rewrite is the #2981 one, so `leafSteps_same`,
 `leafSteps_other_wellScoped` and `Leaf2981.fixed2981_filter_above_hop` still describe it. -/
 theorem leafSteps3594_planner (fr : Var) (child : PT) (h : Hop) pred :
-    leafSteps3594 true fr child h pred = leafSteps false fr child h pred := rfl
+    leafSteps3594 true fr child h pred = leafSteps fr child h pred := rfl
 
 /-- **PROVEN** (#3594, `17547791c`): over a transparent child nothing is salvaged, so the chain is
 the bare hop, well-scoped from any seed. -/
