@@ -378,6 +378,18 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: e2e-tck
+
+  # The macOS module, falkordb-macos-arm64v8.so: built natively, checked to
+  # stand alone, tested, and uploaded. In the merge queue, so every commit that
+  # lands on a trunk has one, and a release publishes that file instead of
+  # rebuilding it (#3893). A pull request runs it only when
+  # labelled `ci-macos` (read from the event, so push after adding the label).
+  macos:
+    if: ${{ github.event_name == 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci-macos') }}
+    uses: ./.github/workflows/_build-macos.yml
+    permissions:
+      contents: read
+
   fuzz:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -483,21 +495,25 @@ jobs:
       - native-index
       - coverage
       - fuzz
+      - macos
     steps:
       - name: Assert every prerequisite actually succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           echo "$RESULTS" | jq .
           # Not `all(success or skipped)`. That is how a gate goes green while
           # nothing ran: one prerequisite fails, everything downstream skips,
-          # and the assertion sees nothing wrong. `docker` is the only job with
-          # a legitimate skip — it runs only when the toolchain changed — so it
-          # is the only one allowed to report anything but success.
-          echo "$RESULTS" | jq -e '
+          # and the assertion sees nothing wrong. Two jobs have a legitimate
+          # skip: `docker` runs only when the toolchain changed, and `macos`
+          # runs on a pull request only when labelled. In the merge queue
+          # `macos` must succeed: the release publishes the file it uploads.
+          echo "$RESULTS" | jq -e --arg event "$EVENT" '
             (.docker.result | . == "success" or . == "skipped")
+            and (.macos.result | . == "success" or (. == "skipped" and $event != "merge_group"))
             and (to_entries
-                 | map(select(.key != "docker"))
+                 | map(select(.key != "docker" and .key != "macos"))
                  | all(.value.result == "success"))
           ' > /dev/null

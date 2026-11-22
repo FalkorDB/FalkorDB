@@ -34,7 +34,7 @@ theorem reading_match_at_adv (o : Oracle) (s : PS) r s' (h1 : s.cur = .kw .match
 
 /-- The pattern after the first MATCH would have to start at the second
 MATCH keyword: no `oC_PatternPart` starts with a keyword followed by `(`. -/
-theorem g4_pattern_part_not_kw_lparen (o : Oracle) (cl : CK) (gs : QG Nat × List Nat) (s : PS) e s'
+theorem g4_pattern_part_not_kw_lparen (o : Oracle) (cl : CK) (gs : QG Alias × List Alias) (s : PS) e s'
     (h1 : s.cur = .kw .match_) (h2 : s.adv.cur = .lparen) (g : GPart o Ext.rust GExt.rust cl gs s e s') :
     False := by
   cases g with

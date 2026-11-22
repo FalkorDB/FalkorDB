@@ -14,7 +14,7 @@ Lean 4 models of `graph/src/runtime/ops/{merge,apply,optional,semi_apply,
 or_apply_multiplexer,foreach,union}.rs` (plus the argument-batch idiom of
 `runtime/batch.rs`), proved against per-row openCypher reference semantics and
 checked against the C engine on live servers.  Build: `lake build` (core Lean
-4.35, no Mathlib); no `sorry`/`admit`/`axiom`.  Machine-readable coverage:
+4.36, no Mathlib); no `sorry`/`admit`/`axiom`.  Machine-readable coverage:
 `COVERAGE.tsv`.  Repros: `graph/tests/lean_ops_apply.rs`
 (`cargo test -p graph --test lean_ops_apply -- --nocapture`; every `bug_*` test
 asserts C's answer and FAILS today).
@@ -32,7 +32,7 @@ asserts C's answer and FAILS today).
 | `Correlated.semiBatched`                  | `SemiApplyOp::next` (`semi_apply.rs:66`) |
 | `Correlated.orApply`                      | `OrApplyMultiplexerOp::next` (`or_apply_multiplexer.rs:73`) |
 | `Correlated.canBatchApply/Optional`       | `can_batch` in `ApplyOp::new` (`apply.rs:119`), `OptionalOp::new` (`optional.rs:104`) |
-| `Correlated.vhj`                          | `ValueHashJoinOp::next` (`value_hash_join.rs:366-446`) |
+| `Correlated.vhj`                          | `ValueHashJoinOp::next` before #3035 (`value_hash_join.rs:366-446` at 343e077f2; now per-origin, `CartVhj.vhjRowsPO`) |
 | `Union.next`, `Union.St`                  | `UnionOp::next` (`union.rs:68`), `current`/`current_child` |
 | `ForEach.chunks`, `execList`, `runChunks` | `ForEachOp::execute_list` (`foreach.rs:86`) |
 | `ForEach.inner`, `go`, `next`             | `ForEachOp::next` (`foreach.rs:124`) |

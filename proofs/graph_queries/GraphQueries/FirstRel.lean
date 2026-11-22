@@ -168,10 +168,10 @@ theorem firstNodeWithRels_spec (g : G V) (hx : AdjExact g) (B : BulkOps g) (node
   · simp only [h1, ↓reduceIte]; rw [List.isEmpty_iff.mp h1]; rfl
   simp only [h1, Bool.false_eq_true, ↓reduceIte]
   by_cases h2 : (decide (B.countInRows ids > 0) || g.relMs.any (fun t => decide (B.pairsInto t ids > 0))) = true
-  · rw [h2]; simp only [Bool.not_true, Bool.false_eq_true, if_false]
+  · rw [h2]; simp only [Bool.not_true, Bool.false_eq_true, ite_false]
     congr 1; funext id; exact probe_iff g hx B id
   · simp only [Bool.not_eq_true] at h2
-    rw [h2]; simp only [Bool.not_false, if_true]
+    rw [h2]; simp only [Bool.not_false, ite_true]
     symm; apply find_none_of
     intro i hi
     rw [Bool.or_eq_false_iff] at h2

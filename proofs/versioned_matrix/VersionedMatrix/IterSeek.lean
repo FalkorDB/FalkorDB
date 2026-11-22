@@ -147,11 +147,11 @@ theorem fromLayersDetaching_bound (m dp dm : List Pair) (a b : Bool) (lo hi : Na
   · simp only [fromLayersDetaching, optIt]
     by_cases h : dp = []
     · exact Or.inl ⟨by simp [h], h⟩
-    · rw [if_neg h]; split <;> exact Or.inr ⟨_, rfl, rfl⟩
+    · rw [ite_eq_right h]; split <;> exact Or.inr ⟨_, rfl, rfl⟩
   · simp only [fromLayersDetaching, optIt]
     by_cases h : dm = []
     · exact Or.inl ⟨by simp [h, startDm], by simp [h, startDm], h⟩
-    · rw [if_neg h]; split
+    · rw [ite_eq_right h]; split
       · obtain ⟨it, h1, h2⟩ := startDm_ents (LIt.detached dm); exact Or.inr ⟨it, h1, h2⟩
       · obtain ⟨it, h1, h2⟩ := startDm_ents (LIt.new dm lo hi); exact Or.inr ⟨it, h1, h2⟩
 

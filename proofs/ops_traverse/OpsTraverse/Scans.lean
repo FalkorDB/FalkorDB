@@ -48,7 +48,7 @@ theorem filter_takeWhile_sorted (max : Nat) (P : Nat → Bool) (hP : ∀ x, P x 
   | a :: l, h => by
     have ih := filter_takeWhile_sorted max P hP l (List.pairwise_cons.1 h).2
     by_cases ha : a ≤ max
-    · simp [List.takeWhile_cons, ha, List.filter_cons, ih]
+    · simp [ha, List.filter_cons, ih]
     · have hnone : ∀ y ∈ a :: l, P y = false := by
         intro y hy
         rcases List.mem_cons.1 hy with rfl | hy
@@ -60,7 +60,7 @@ theorem filter_takeWhile_sorted (max : Nat) (P : Nat → Bool) (hP : ∀ x, P x 
           · rfl
           · have := hP y h'; omega
       have hnil : (a :: l).filter P = [] := List.filter_eq_nil_iff.2 (by simpa using hnone)
-      simp [List.takeWhile_cons, ha, hnil]
+      simp [ha, hnil]
 
 /-- **The id-range label scan returns exactly the labelled nodes in the range**,
 given a sorted `get_nodes` and a range inside `[min, max]`. -/

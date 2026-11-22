@@ -696,3 +696,44 @@ class testVariableLengthTraversals(FlowTestsBase):
                 self.env.assertEqual(g.query(q).result_set, expected, message=q)
         finally:
             g.delete()
+
+    def test20_incoming_path_segments_chained_on_one_node(self):
+        # three var-len segments through the same two nodes, with the middle
+        # one forward, incoming or undirected; each is spliced in its written
+        # direction (#3451)
+        g = self.db.select_graph("vlt_incoming_chain")
+        try:
+            g.delete()
+        except ResponseError:
+            # the graph does not exist yet on a fresh server
+            pass
+        # b -> p1 -> p2 -> a, a -> q1 -> q2 -> b and the cycle b -> c1 -> c2 -> b
+        g.query("""CREATE (a:A {id: 'a'}), (b:B {id: 'b'}),
+                          (p1:M {id: 'p1'}), (p2:M {id: 'p2'}),
+                          (c1:M {id: 'c1'}), (c2:M {id: 'c2'}),
+                          (q1:M {id: 'q1'}), (q2:M {id: 'q2'}),
+                          (b)-[:R]->(p1), (p1)-[:R]->(p2), (p2)-[:R]->(a),
+                          (a)-[:R]->(q1), (q1)-[:R]->(q2), (q2)-[:R]->(b),
+                          (b)-[:R]->(c1), (c1)-[:R]->(c2), (c2)-[:R]->(b)""")
+
+        try:
+            ret = " RETURN [n IN nodes(p) | n.id]"
+            head = ["a", "p2", "p1", "b"]
+            tail = ["b", "q2", "q1", "a"]
+            forward = ["b", "c1", "c2", "b"]
+            backward = ["b", "c2", "c1", "b"]
+            queries = [
+                ("(a:A)<-[:R*3..3]-(b:B)-[:R*3..3]->(b)<-[:R*3..3]-(a)",
+                 [head + forward[1:] + tail[1:]]),
+                ("(a:A)<-[:R*3..3]-(b:B)<-[:R*3..3]-(b)<-[:R*3..3]-(a)",
+                 [head + backward[1:] + tail[1:]]),
+                ("(a:A)<-[:R*3..3]-(b:B)-[:R*3..3]-(b)<-[:R*3..3]-(a)",
+                 [head + forward[1:] + tail[1:],
+                  head + backward[1:] + tail[1:]]),
+            ]
+            for pattern, expected in queries:
+                q = "MATCH p = " + pattern + ret
+                res = [r[0] for r in g.query(q).result_set]
+                self.env.assertEqual(sorted(res), sorted(expected), message=q)
+        finally:
+            g.delete()

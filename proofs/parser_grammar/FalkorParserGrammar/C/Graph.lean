@@ -4,48 +4,61 @@
 The pattern graph a MATCH / CREATE / MERGE builds, generic over the alias
 type `V` exactly as the Rust is generic over `TVar` (`Arc<String>` before
 binding, `Variable` after). Alias equality is `==` on `V`; for `Variable`
-that is `Variable::eq`, which compares ids only (ast.rs:112-118).
+that is `Variable::eq`, which compares ids only (ast.rs:186-193).
 -/
 import FalkorParserGrammar.C.Core
 
 namespace FalkorParserGrammar.C
 
-/-! ## `Variable` (ast.rs:90-139) -/
+/-! ## `Variable` (ast.rs:161-217) -/
 
-/-- `Variable { name, id, scope_id, ty }`; the type is irrelevant here. -/
+/-- `Variable { name, anon, id, scope_id, ty }`; the type is irrelevant here. `anon` is the
+parser's number of an unnamed entity (#3303, ast.rs:165). -/
 structure Var where
   name : Option Nat
   id : Nat
   scope : Nat
+  anon : Option Nat := none
   deriving Repr
 
-/-- `impl PartialEq for Variable` (ast.rs:112-118): by id only. -/
+/-- `impl PartialEq for Variable` (ast.rs:186-193): by id only. -/
 instance : BEq Var := ⟨fun a b => a.id == b.id⟩
 
 /-- `Variable::eq`: two variables are equal iff their ids are. -/
 theorem Var.eq_spec (a b : Var) : (a == b) = true ↔ a.id = b.id := by
   show (a.id == b.id) = true ↔ _; simp
 
-/-- `impl Hash for Variable` (ast.rs:122-129) hashes the id alone, so equal
+/-- `impl Hash for Variable` (ast.rs:197-204) hashes the id alone, so equal
 variables hash alike (the `Hash`/`Eq` contract). The hash is modelled as
 the hashed key. -/
 def Var.hashKey (a : Var) : Nat := a.id
 theorem Var.hash_eq (a b : Var) (h : (a == b) = true) : a.hashKey = b.hashKey :=
   (Var.eq_spec a b).1 h
 
-/-- `Variable::as_str` (ast.rs:133-136). Names are ids; `none` is `"?"`. -/
+/-- `Variable::as_str` (ast.rs:214-216). Names are ids; `none` is `"?"`. -/
 def Var.asStr (a : Var) : Option Nat := a.name
 theorem Var.asStr_spec (a : Var) : a.asStr = a.name := rfl
 
-/-- `impl Display for Variable` (ast.rs:99-109): the name, or `?<id>`. -/
+/-- `impl Display for Variable` (ast.rs:174-185): the name, else `@anon_<n>` for a parser-unnamed
+entity, else `?<id>`. -/
 def Var.fmt (a : Var) : String :=
-  match a.name with
-  | some n => toString n
-  | none => "?" ++ toString a.id
-theorem Var.fmt_anon (a : Var) (h : a.name = none) : a.fmt = "?" ++ toString a.id := by
-  simp [Var.fmt, h]
+  match a.name, a.anon with
+  | some n, _ => toString n
+  | none, some k => "@anon_" ++ toString k
+  | none, none => "?" ++ toString a.id
+theorem Var.fmt_anon (a : Var) (h : a.name = none) (ha : a.anon = none) :
+    a.fmt = "?" ++ toString a.id := by
+  simp [Var.fmt, h, ha]
+/-- An unnamed pattern entity prints as its alias does (`write_anon`, ast.rs:125-130). -/
+theorem Var.fmt_unnamed (a : Var) (k : Nat) (h : a.name = none) (ha : a.anon = some k) :
+    a.fmt = toString (Alias.anon k) := by
+  simp [Var.fmt, h, ha, toString, Alias.fmt]
 theorem Var.fmt_named (a : Var) (n : Nat) (h : a.name = some n) : a.fmt = toString n := by
   simp [Var.fmt, h]
+/-- `Variable::is_unnamed` (ast.rs:209-211). -/
+def Var.isUnnamed (a : Var) : Bool := a.name.isNone
+theorem Var.isUnnamed_spec (a : Var) : a.isUnnamed = true ↔ a.name = none := by
+  simp [Var.isUnnamed, Option.isNone_iff_eq_none]
 
 /-! ## Nodes, relationships, paths -/
 
@@ -67,14 +80,10 @@ structure QRel (V : Type) where
   minH : Option Nat
   maxH : Option Nat
   asp : ASP
-  /-- `written_incoming` (#3460): written `<-` (not `<-[]->`), so `src`/`dst` are swapped. -/
-  inc : Bool := false
 
-/-- `QueryPath`: `incoming` (#3460) has one entry per relationship, in pattern order. -/
 structure QPath (V : Type) where
   var : V
   vars : List V
-  incoming : List Bool := []
 
 /-- `QueryNode::new` (ast.rs:494-505). -/
 def QNode.new {V} (alias : V) (labels : List Nat) (attrs : ET) : QNode V := ⟨alias, labels, attrs⟩
@@ -82,38 +91,19 @@ theorem QNode.new_spec {V} (a : V) (l : List Nat) (t : ET) :
     (QNode.new a l t).alias = a ∧ (QNode.new a l t).labels = l ∧ (QNode.new a l t).attrs = t :=
   ⟨rfl, rfl, rfl⟩
 
-/-- `QueryRelationship::new` (ast.rs:629-651): `all_shortest_paths = No`,
-`written_incoming = false`. -/
+/-- `QueryRelationship::new` (ast.rs:569-594): `all_shortest_paths = No`. -/
 def QRel.new {V} (alias : V) (types : List Nat) (attrs : ET) (src dst : QNode V) (bidir : Bool)
-    (minH maxH : Option Nat) : QRel V := ⟨alias, types, attrs, src, dst, bidir, minH, maxH, .no, false⟩
+    (minH maxH : Option Nat) : QRel V := ⟨alias, types, attrs, src, dst, bidir, minH, maxH, .no⟩
 theorem QRel.new_spec {V} (a : V) ts t (s d : QNode V) b mn mx :
     let r := QRel.new a ts t s d b mn mx
     r.alias = a ∧ r.types = ts ∧ r.src.alias = s.alias ∧ r.dst.alias = d.alias ∧ r.bidir = b ∧
-      r.minH = mn ∧ r.maxH = mx ∧ r.asp = .no ∧ r.inc = false :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      r.minH = mn ∧ r.maxH = mx ∧ r.asp = .no :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- `relationship.written_incoming = true` (cypher.rs:3245-3246). -/
-def QRel.incoming {V} (r : QRel V) : QRel V := { r with inc := true }
-
-/-- `QueryPath::new` (ast.rs:673-684). -/
-def QPath.new {V} (var : V) (vars : List V) (incoming : List Bool) : QPath V := ⟨var, vars, incoming⟩
-theorem QPath.new_spec {V} (v : V) (vs : List V) (inc : List Bool) :
-    (QPath.new v vs inc).var = v ∧ (QPath.new v vs inc).vars = vs ∧
-      (QPath.new v vs inc).incoming = inc := ⟨rfl, rfl, rfl⟩
-
-/-- `QueryPath::is_incoming` (ast.rs:687-692): `incoming.get(var_idx / 2)`, `false` past the end. -/
-def QPath.isIncoming {V} (p : QPath V) (varIdx : Nat) : Bool := p.incoming.getD (varIdx / 2) false
-
-/-- The relationship at `vars[2i+1]` (node, rel, node, … layout) reads entry `i`. -/
-theorem QPath.isIncoming_rel {V} (p : QPath V) (i : Nat) :
-    p.isIncoming (2 * i + 1) = p.incoming.getD i false := by
-  simp only [QPath.isIncoming]
-  congr 1; omega
-
-/-- Past the recorded relationships it is `false` (an outgoing hop). -/
-theorem QPath.isIncoming_past {V} (p : QPath V) (k : Nat) (h : p.incoming.length ≤ k / 2) :
-    p.isIncoming k = false := by
-  simp [QPath.isIncoming, List.getD, List.getElem?_eq_none h]
+/-- `QueryPath::new` (ast.rs:607-613). -/
+def QPath.new {V} (var : V) (vars : List V) : QPath V := ⟨var, vars⟩
+theorem QPath.new_spec {V} (v : V) (vs : List V) :
+    (QPath.new v vs).var = v ∧ (QPath.new v vs).vars = vs := ⟨rfl, rfl⟩
 
 /-! ## `QueryGraph` (ast.rs:622-790) -/
 
@@ -207,10 +197,10 @@ keys stay repeated, ast.rs:663-665). -/
 theorem mergeAttrs_kids (l r : ET) : (mergeAttrs l r).kids = l.kids ++ r.kids := by
   unfold mergeAttrs
   by_cases hr : r.kids = []
-  · rw [if_pos hr, hr, List.append_nil]
+  · rw [ite_eq_left hr, hr, List.append_nil]
   · by_cases hl : l.kids = []
-    · rw [if_neg hr, if_pos hl, hl, List.nil_append]
-    · rw [if_neg hr, if_neg hl]; rfl
+    · rw [ite_eq_right hr, ite_eq_left hl, hl, List.nil_append]
+    · rw [ite_eq_right hr, ite_eq_right hl]; rfl
 
 theorem mergeAttrs_map (l r : ET) (hl : l.root = .map) (hr : r.root = .map) :
     (mergeAttrs l r).root = .map := by

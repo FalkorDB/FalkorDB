@@ -73,7 +73,7 @@ operators; COVERAGE.tsv line numbers in `eval.rs` and `algo_procedures.rs` re-pi
 A Lean 4 model of FalkorDB-rs's pattern-matching operators, checked against
 openCypher's semantics (relationship isomorphism inside one MATCH, direction,
 self-loops, `*min..max` including `*0`) and against C FalkorDB on live servers.
-249 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
+253 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
 the only FFI primitive the batched-path proofs lean on, and it enters as a *hypothesis*
 (`CondTraverse.MxmSpec`: the GrB_mxm ANY_PAIR spec), discharged once by the
 reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
@@ -94,7 +94,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
-| `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:102-127`) |
+| `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:102-130`) |
 | `PathVlt.vltPR` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs:88-102`, direction `path.is_incoming(var_idx)`, #3460) |
 | `PathVlt.vltMain`, `revWalk` | the same branch before #3460 (direction inferred from the first node) |
 | `EIP.expandIntoP`, `Pending` | `ExpandIntoOp::expand_row` with pending deletes (`expand_into.rs:158-235`; `pending.rs:1115-1134`) |

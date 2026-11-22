@@ -228,7 +228,7 @@ values are Null/Int/String, for filters built from `n.k op literal`, `literal op
 AND (no strict string bound) or OR, the rewritten plan selects exactly the nodes the original
 `Filter → NodeByLabelScan` does. Every counterexample in `IndexCex` breaks one hypothesis:
 two labels (C5, C6), a Bool value (C1; C2, temporal, fixed by #3076), a Date literal or computed
-constant (C3, C4), a computed attribute side (C7, C7', C8), a Date inside IN (C9), array-contains
+constant (C3, C4), a computed attribute side (C7, C7', C8: fixed by #3068, now agree), a Date inside IN (C9), array-contains
 (C10, the hypothesis only: array-contains in an AND keeps its filter since #3736); C11 (strict
 string bound in an AND) was fixed by #3072. -/
 theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true)
@@ -274,7 +274,7 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
     have hsel : ∀ q, (Plan.idxScan [L] L q).sel idx opq n =
         (if canUtilize (evalIQ q) then qsem idx L q n else true) := by
       intro q
-      simp [Plan.sel, hasAll_single, hL, qsem, hasAll]
+      simp [Plan.sel, hL, qsem, hasAll]
     have href : (reference [L] f).sel idx opq n = evalF opq n f := by
       simp [reference, Plan.sel, hasAll_single, hL]
     rw [href]
@@ -349,11 +349,11 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
       have sel_filter : ∀ (g : F) (p : Plan), (Plan.filter g p).sel idx opq n =
           (p.sel idx opq n && evalF opq n g) := fun _ _ => rfl
       cases hk : needsPost f <;> cases hr : rem.isEmpty <;>
-        simp only [hk, hr, ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
-      · rw [if_pos (hcu hk)]; exact hs
+        simp only [ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
+      · rw [ite_eq_left (hcu hk)]; exact hs
       · have : rem = [] := List.isEmpty_iff.mp hr
         subst this
-        rw [if_pos (hcu hk)]; simpa using hs
+        rw [ite_eq_left (hcu hk)]; simpa using hs
       · split <;> cases hq : qsem idx L' q n <;> cases hf' : evalF opq n f <;> simp_all
       · split <;> cases hq : qsem idx L' q n <;> cases hf' : evalF opq n f <;> simp_all
 

@@ -24,7 +24,7 @@ The full Lean↔Rust mapping is in the header of [`RedisLayer.lean`](RedisLayer.
   - `RO_QUERY` and `PROFILE` ignored a garbage or missing timeout;
   - `version 4294967296` was accepted;
   - there was no limit on the number of arguments.
-- **On main, yes, for every argument vector.** `rust_c_agree`: under the invariant `GRAPH.CONFIG` maintains (`CfgOk`), Rust's `parse_query_flags` and C's `_read_flags` either both fail, with corresponding errors, or both succeed with the same compact flag, version and timeout. `rust_c_same_accept` is the "accept the same vectors" corollary.
+- **Not since #3757.** Rust refuses a missing or malformed `SCHEMA_HASH` value (`Failed to parse schema hash value`) that C skips as an unknown flag: `rust_c_agree_refuted` and `rust_c_same_accept_refuted` (repro `GRAPH.QUERY g "RETURN 1" SCHEMA_HASH abc`). For every other vector, `rust_c_agree_except_schema`: under the invariant `GRAPH.CONFIG` maintains (`CfgOk`), Rust's `parse_query_flags` and C's `_read_flags` either both fail, with corresponding errors, or both succeed with the same compact flag, version and timeout. `rust_ok_c_ok`: whatever Rust accepts, C accepts with the same flags.
 
 Related results about the parser itself:
 
@@ -84,7 +84,7 @@ Yes:
 
 | Theorem | In plain words | File |
 |---|---|---|
-| `rust_c_agree` | For every argument vector, Rust's query-flag parser and C's agree on success or failure and on every flag | `QueryArgsAgree.lean` |
+| `rust_c_agree_except_schema` | For every argument vector, unless Rust refuses a `SCHEMA_HASH` value or a `SCHEMA_HASH` without `--compact`, Rust's query-flag parser and C's agree on success or failure and on every flag; `rust_c_agree_refuted` (#3757) shows the exception is real, `rust_c_agree_except_schemaParse_refuted` that the second one is needed | `QueryArgsAgree.lean` |
 | `parse_ok_iff`, `parse_documented`, `four_commands_share` | What the parser accepts, exactly; the four query commands share it | `QueryArgsSpec.lean`, `QueryArgs.lean` |
 | `rustTimeout_le_max`, `rustTimeout_rw_uniform` | The effective timeout is bounded and, once configured, applies to writes as to reads | `Args.lean` |
 | `rustSet_inv` | `GRAPH.CONFIG SET` keeps `TIMEOUT_DEFAULT ≤ TIMEOUT_MAX` | `Config.lean` |
@@ -101,12 +101,12 @@ Yes:
 | `checkFork_spec`, `current_kept`, `executeWrite_first`, `admit_bounded` | Write sessions: a check succeeds only on a fork of the current version, a `Current` one is never refused as stale (#3290, #3657); a stale attempt is invisible; the queue never exceeds `MAX_QUEUED_QUERIES` (#3014) | `QuerySession.lean`, `GraphCore.lean` |
 | `query_accounting`, `other_thread_invisible` | Per-query memory accounting counts exactly the query's own allocations, on its own thread | `Allocator.lean` |
 
-### How `rust_c_agree` is proved
+### How `rust_c_agree_except_schema` is proved
 
 1. **Model the bytes.** Arguments are byte lists, so non-UTF-8 input is a legal input. `eqIC` is ASCII case-insensitive comparison, which both engines use for flag names.
 2. **Model both parsers.** `parseQueryFlags` and `scanFlags` follow `parse_query_flags` in `query_args.rs` line by line. `cReadFlags` follows C's `_read_flags` plus `_validate_command_arity` from `cmd_dispatcher.c`. Integers go through `string2ll` (Redis's own parser, which both engines end up calling) on both sides.
 3. **Relate the results.** `Rel` says what a Rust flag record means in C's terms: same compact flag, same version, same timeout. C replaces `TIMEOUT 0` by the default in the parser, and Rust does it later in `compute_effective_timeout`; `Rel` accounts for that. `QErr.toC` maps each Rust error to the C error it corresponds to.
-4. **Induct over the flag loop.** `scan_agree` proves the two loops stay related at every step, flag by flag. The ten small lemmas `k1` … `k10` say no two flag names are equal ignoring case, so at most one branch matches.
+4. **Induct over the flag loop.** `scan_agree` proves the two loops stay related at every step, flag by flag. The small lemmas `k1` … `k17` say no two flag names are equal ignoring case, so at most one branch matches.
 5. **The hypothesis `CfgOk`** says configured timeouts are non-negative and `TIMEOUT_DEFAULT ≤ TIMEOUT_MAX` when a maximum is set. `rustSet_inv` proves `GRAPH.CONFIG SET` keeps it, so it holds on any running server.
 
 ## Bugs found
@@ -115,7 +115,7 @@ All confirmed live against C, except where a row says otherwise (row 20 is on th
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `nonutf8_keeps_compact`, `timeout_noncanonical_rejected`, `garbage_timeout_rejected`, `version_above_uint_rejected`, `arity_capped` (now theorems) | Query flags: a non-UTF-8 flag dropped `--compact`; malformed timeouts and versions accepted; no arity cap | Fixed by #3010 (closes #3009); `rust_c_agree` |
+| 1 | `nonutf8_keeps_compact`, `timeout_noncanonical_rejected`, `garbage_timeout_rejected`, `version_above_uint_rejected`, `arity_capped` (now theorems) | Query flags: a non-UTF-8 flag dropped `--compact`; malformed timeouts and versions accepted; no arity cap | Fixed by #3010 (closes #3009); `rust_c_agree_except_schema` |
 | 2 | removed (17ccc5412) | Writes ignored the per-query `TIMEOUT` | Fixed by #3000 (closes #2998); `write_timeout_agrees` |
 | 3 | removed (17ccc5412) | `GRAPH.CONFIG` accepted invalid values, extra arguments, and non-ASCII case folding; `ASYNC_DELETE` reported 0 (C 1) | Fixed by #3021 (closes #3020); `fixed3021_counterexamples` |
 | 4 | removed (17ccc5412) | A `GRAPH.BULK` header naming a property twice stored both values | Fixed at import by #3063 (`pending_commit` `resolved_duplicate_fixed`), and at the parse by #3026 (closes #3024): `readRecord_enc`, `keepFirst_nodup`, `keepFirst_find` |
@@ -162,7 +162,7 @@ C-side bugs seen along the way: C crashes on some malformed bulk tokens, and cou
 | `KeyName.lean` | #2653: key names as bytes, a concrete `from_utf8_lossy`, the replicated key |
 | `ErrorText.lean` | #3428: `str_as_legal_resp_string` (error and simple-string reply text) on bytes; history pre-#3428 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) |
 | `Commands.lean`, `Commands2.lean` | The smaller command handlers: constraint, record, copy, bulk, memory, config get, and others |
-| `Telemetry.lean`, `TelemetryReg.lean`, `TelemetryLoop.lean` | `telemetry.rs`: stream names, the query registry, batching, the flusher |
+| `Telemetry.lean`, `TelemetryReg.lean`, `TelemetryLoop.lean`, `TelemetryFreed.lean` | `telemetry.rs`: stream names, the query registry, batching, the flusher, the #3844 persistence strip and freed-graph stream queue |
 | `SlowLog.lean` | `slow_log.rs` (incl. #3442, fixed by #3456: `MinCache`, `SlowestKept`, `add`) |
 | `RelLookup.lean` | #3447 (open) / #3449 (fixed by #3462): the relationship lookups behind the reply encoders (endpoints, type id/name over graph, snapshots and pending), the cascade commit and `GRAPH.RECORD` |
 | `Allocator.lean` | `allocator.rs`: per-thread allocation counters |
@@ -208,4 +208,4 @@ venv/bin/python proofs/redis_layer/repro_live.py   # live Rust-vs-C repros (Rust
 2. Update its Lean model to match.
 3. Re-run the build.
 
-Changing argument parsing or reply formatting usually means re-checking against C as well: `rust_c_agree` and the `LoadArgs` agreement theorem compare against a model of C, so a change that is meant to diverge from C must say so in the theorem. If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.
+Changing argument parsing or reply formatting usually means re-checking against C as well: `rust_c_agree_except_schema` and the `LoadArgs` agreement theorem compare against a model of C, so a change that is meant to diverge from C must say so in the theorem. If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.

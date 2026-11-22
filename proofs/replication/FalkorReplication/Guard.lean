@@ -113,7 +113,7 @@ theorem onFailure_replicated_resyncs (c) (f : Flags) (g m1 m2 l)
   have hr' : isReplayed f = true := by simp [isReplayed, hr]
   refine ⟨?_, ?_⟩
   · simp only [onFailure, hr', hl]
-    simp only [Bool.not_true, Bool.false_eq_true, ite_false, ite_true]; exact List.getLast?_concat
+    simp only [Bool.not_true, Bool.false_eq_true, ite_false]; exact List.getLast?_concat
   · intro hm
     simp [onFailure, hr', hl, logPayload] at hm
     cases l <;> simp_all

@@ -41,8 +41,8 @@ theorem decCons1_enc (attrs : List Bytes) (name : Bytes) (c : Cons)
     conv => rhs; rw [← List.map_id c.props]
     apply List.map_congr_left
     intro p hp'; exact lookup_attrId attrs p (hp p hp')
-  simp only [List.map_map, Function.comp_def] at hm
-  simp only [decCons1, Dec.bind, rdU, List.cons_append, List.append_assoc, List.nil_append]
+  simp only [Function.comp_def] at hm
+  simp only [decCons1, Dec.bind, rdU, List.cons_append, List.nil_append]
   rw [hm]
   simp only [pure', List.map_map, hmap]
   cases c.unique <;> simp

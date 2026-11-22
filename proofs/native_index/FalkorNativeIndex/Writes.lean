@@ -124,7 +124,7 @@ theorem lastOp_flatMap_common {α} (l : List α) (F : α → List IndexWrite) (e
       by_cases hc : ∃ y ∈ xs, lastOp (F y) e ≠ none
       · have : ∃ y ∈ x :: xs, lastOp (F y) e ≠ none := by
           obtain ⟨y, hy, h'⟩ := hc; exact ⟨y, List.mem_cons_of_mem _ hy, h'⟩
-        simp only [hc, this, if_true]; cases r <;> rfl
+        simp only [hc, this, ite_true]; cases r <;> rfl
       · have : ¬ ∃ y ∈ x :: xs, lastOp (F y) e ≠ none := by
           rintro ⟨y, hy, h'⟩
           rcases List.mem_cons.1 hy with rfl | hy
@@ -139,7 +139,7 @@ theorem lastOp_flatMap_common {α} (l : List α) (F : α → List IndexWrite) (e
         have hc : ¬ ∃ y ∈ xs, lastOp (F y) e ≠ none := fun ⟨y, hy, h'⟩ => this ⟨y, List.mem_cons_of_mem _ hy, h'⟩
         simp [hc, this, hx]
       · have : ∃ y ∈ x :: xs, lastOp (F y) e ≠ none := ⟨x, List.mem_cons_self, by rw [hx]; exact hr⟩
-        rw [if_pos this, hx]
+        rw [ite_eq_left this, hx]
         split <;> cases r <;> simp_all
 
 /-! ## One op on one tuple -/
@@ -152,7 +152,7 @@ theorem colLog_pushL (ix : FalkorDbIndex) (ent : EntityType) (l a : String) (v :
   unfold pushL colLog
   rw [encodeValue_spec]
   by_cases hc : ix.hasColumn ent l a = true
-  · simp only [hc, if_true]
+  · simp only [hc, ite_true]
     cases encodeNumeric v <;> by_cases hk : (l, a) = k <;> simp [hk]
   · simp [hc]
 
@@ -203,7 +203,7 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
         by_cases hk : (l, op.attr) = (L, A)
         · simp only [Prod.mk.injEq] at hk
           obtain ⟨rfl, rfl⟩ := hk
-          simp only [hcol, and_self, if_true, true_and, encIs]
+          simp only [hcol, and_self, ite_true, true_and, encIs]
           cases hv : encodeNumeric o with
           | none => simp [lastOp]
           | some k' =>
@@ -213,11 +213,11 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
               obtain ⟨rfl, rfl⟩ := hm
               simp
             · have : ¬ (k' = kk ∧ op.id = id0) := fun h => hm (by rw [h.1, h.2])
-              simp only [hm, decide_false, Bool.false_eq_true, if_false, List.getLast?_nil, Option.map_none]
+              simp only [hm, decide_false, Bool.false_eq_true, ite_false, List.getLast?_nil, Option.map_none]
               split
               · rename_i hh; exfalso; apply this; simp_all
               · rfl
-        · simp only [hk, false_and, if_false, lastOp, colLog, List.filter_nil, List.map_nil, List.getLast?_nil,
+        · simp only [hk, false_and, ite_false, lastOp, colLog, List.filter_nil, List.map_nil, List.getLast?_nil,
             Option.map_none]
           split
           · rename_i hh; exact absurd (by rw [hh.1, hh.2.1]) hk
@@ -225,7 +225,7 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
     rw [one op.old false, one op.new true]
     by_cases hl : l = L
     · subst hl
-      simp only [true_and, if_true, r]
+      simp only [true_and, ite_true, r]
       by_cases ha : op.attr = A <;> by_cases hi : op.id = id0 <;> simp [ha, hi] <;>
         cases encIs op.new kk <;> cases encIs op.old kk <;> simp
     · simp [hl]
@@ -241,13 +241,13 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
       rw [hl]
       simp only [r] at hr
       by_cases hc : op.id = id0 ∧ op.attr = A
-      · rw [if_pos hc] at hr; rw [if_pos ⟨hc.1, hc.2, hL⟩, hr]
-      · rw [if_neg (fun h => hc ⟨h.1, h.2.1⟩)]
+      · rw [ite_eq_left hc] at hr; rw [ite_eq_left ⟨hc.1, hc.2, hL⟩, hr]
+      · rw [ite_eq_right (fun h => hc ⟨h.1, h.2.1⟩)]
     · have : ∃ x ∈ op.labels, lastOp (colLog (L, A)
           ((match op.old with | some o => pushL ix ent x op.attr o op.id false | none => []) ++
            (match op.new with | some v => pushL ix ent x op.attr v op.id true | none => []))) (enc kk id0) ≠ none :=
         ⟨L, hL, by rw [blk L hL]; simpa using hr⟩
-      rw [if_pos this]
+      rw [ite_eq_left this]
       simp only [r] at hr ⊢
       by_cases hc : op.id = id0 ∧ op.attr = A
       · simp [hc, hL]
@@ -260,7 +260,7 @@ theorem lastOp_op (ix : FalkorDbIndex) (ent : EntityType) (op : StageOp) (L A : 
       by_cases h : x = L
       · subst h; exact hL hx
       · simp [h] at h'
-    rw [if_neg this]; simp [hL]
+    rw [ite_eq_right this]; simp [hL]
 
 /-- **A list of ops on one tuple**: if all ops for `(id0, A)` under `L` agree (they are one op, or
     copies of it), the tuple ends as that op says; untouched otherwise. -/
@@ -277,22 +277,22 @@ theorem lastOp_ops (ix : FalkorDbIndex) (ent : EntityType) (ops : List StageOp) 
   rw [lastOp_flatMap_common ops _ _ r (by
     intro op h; rw [hop op h]
     by_cases hc : op.id = id0 ∧ op.attr = A ∧ L ∈ op.labels
-    · right; rw [if_pos hc]; exact huniq op h hc.1 hc.2.1 hc.2.2
-    · left; rw [if_neg hc])]
+    · right; rw [ite_eq_left hc]; exact huniq op h hc.1 hc.2.1 hc.2.2
+    · left; rw [ite_eq_right hc])]
   by_cases hex : ∃ op ∈ ops, op.id = id0 ∧ op.attr = A ∧ L ∈ op.labels
   · obtain ⟨op, hm, hc⟩ := hex
     by_cases hr : r = none
     · subst hr; split <;> split <;> rfl
     · have : ∃ x ∈ ops, lastOp (colLog (L, A) (opChanges ix ent x)) (enc kk id0) ≠ none :=
-        ⟨op, hm, by rw [hop op hm, if_pos hc, huniq op hm hc.1 hc.2.1 hc.2.2]; exact hr⟩
-      rw [if_pos this, if_pos ⟨op, hm, hc⟩]
+        ⟨op, hm, by rw [hop op hm, ite_eq_left hc, huniq op hm hc.1 hc.2.1 hc.2.2]; exact hr⟩
+      rw [ite_eq_left this, ite_eq_left ⟨op, hm, hc⟩]
   · have : ¬ ∃ x ∈ ops, lastOp (colLog (L, A) (opChanges ix ent x)) (enc kk id0) ≠ none := by
       rintro ⟨x, hx, h'⟩
       rw [hop x hx] at h'
       split at h'
       · rename_i hc; exact hex ⟨x, hx, hc⟩
       · exact h' rfl
-    rw [if_neg this, if_neg hex]
+    rw [ite_eq_right this, ite_eq_right hex]
 
 /-! ## The staging functions, loop for loop -/
 
@@ -397,7 +397,7 @@ theorem nodeAttrsSet_changes (g : G) (attrs : List (Nat × List (Nat × Value)))
       if g.idx.hasColumns .node then opsChanges g.idx .node (nodeAttrsSetOps g attrs) else [] := by
   unfold nodeAttrsSet
   by_cases hc : g.idx.hasColumns .node = true
-  · simp only [hc, Bool.not_true, Bool.false_eq_true, if_false, if_true]
+  · simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false, ite_true]
     have outer : ∀ (l : List (Nat × List (Nat × Value))) (c : IndexChanges) (buf : List Nat), c.entity = .node →
         (l.foldl (fun (st : IndexChanges × List Nat) (iw : Nat × List (Nat × Value)) =>
           let labels := nodeLabelIdsInto g iw.1 st.2
@@ -467,14 +467,14 @@ theorem nodeAttrsSet_hit (g : G) (hn : g.attrNames.Nodup) (attrs : List (Nat × 
     cases h : g.idx.columns .node with
     | nil => simp [h, hmGet] at hcol
     | cons _ _ => simp
-  rw [nodeAttrsSet_changes, if_pos hcols]
+  rw [nodeAttrsSet_changes, ite_eq_left hcols]
   have hops : ∀ op ∈ nodeAttrsSetOps g attrs, op.id < W := by
     intro op hop
     simp only [nodeAttrsSetOps, List.mem_flatMap, naOps, List.mem_filterMap, Option.map_eq_some_iff] at hop
     obtain ⟨iw, hiw, an, _, attr, _, rfl⟩ := hop
     exact hids iw hiw
   rw [lastOp_ops g.idx .node _ L A kk id0 hops hid0 hcol (outcome (g.nodeAttr id0 aid) (some nv) kk)]
-  · rw [if_pos]
+  · rw [ite_eq_left]
     refine ⟨⟨id0, (g.nodeLabels id0).map g.labelName, A, g.nodeAttr id0 aid, some nv⟩, ?_, rfl, rfl, hL⟩
     simp only [nodeAttrsSetOps, List.mem_flatMap, naOps, List.mem_filterMap, Option.map_eq_some_iff]
     exact ⟨(id0, written), hmem, (aid, nv), hamem, A, hA, rfl⟩
@@ -601,7 +601,7 @@ theorem nodeRowsSet_changes (g : G) (ids labelIds attrIds : List Nat) (rows : Li
     (nodeRowsSet g ids labelIds attrIds rows).changes = opsChanges g.idx .node (nodeRowsSetOps g ids labelIds attrIds rows hn) := by
   have hne : attrIds.isEmpty = false := by cases attrIds <;> simp_all
   unfold nodeRowsSet
-  rw [dif_neg (by simp [hc, hne])]
+  rw [dite_eq_right (by simp [hc, hne])]
   rw [foldl_ops .node g.idx _ (fun idRow => ((attrIds.zip (attrIds.map g.attrName)).zip idRow.2).filterMap (fun x =>
       x.1.2.map (fun attr => (⟨idRow.1, labelIds.map g.labelName, attr, g.nodeAttr idRow.1 x.1.1, some x.2⟩ : StageOp)))) ?_ _ _ rfl]
   · simp [IndexChanges.new, nodeRowsSetOps]
@@ -651,7 +651,7 @@ theorem newNodeAttrs_changes (g : G) (attrs : List (Nat × List (Nat × Value)))
     (hc : g.idx.hasColumns .node = true) :
     (newNodeAttrs g attrs newLabels).changes = opsChanges g.idx .node (newNodeAttrsOps g attrs newLabels) := by
   unfold newNodeAttrs
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .node g.idx _ (fun iw => match hmGet newLabels iw.1 with
     | none => []
     | some labelIds => iw.2.filterMap (fun an =>
@@ -687,7 +687,7 @@ theorem bulkNodeAttrs_changes (g : G) (rows : List (Nat × List (Nat × Value)))
     (hc : g.idx.hasColumns .node = true) :
     (bulkNodeAttrs g rows labelIds).changes = opsChanges g.idx .node (bulkNodeAttrsOps g rows labelIds) := by
   unfold bulkNodeAttrs
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .node g.idx _ (fun iw => iw.2.filterMap (fun an =>
     (g.attrName an.1).map (fun attr => (⟨iw.1, labelIds.map g.labelName, attr, none, some an.2⟩ : StageOp)))) ?_ _ _ rfl]
   · simp [IndexChanges.new, bulkNodeAttrsOps]
@@ -746,14 +746,14 @@ def labelsRemoved (g : G) (rowsIds colsLabels : List Nat) : IndexChanges :=
 theorem labelsAdded_changes (g : G) (r c : List Nat) (hc : g.idx.hasColumns .node = true) :
     (labelsAdded g r c).changes = opsChanges g.idx .node ((r.zip c).flatMap (fun p => underLabelOps g p.1 p.2 true)) := by
   unfold labelsAdded
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .node g.idx _ (fun p => underLabelOps g p.1 p.2 true) (fun c p h => addNodeUnderLabel_eq c g p.1 p.2 h) _ _ rfl]
   simp [IndexChanges.new]
 
 theorem labelsRemoved_changes (g : G) (r c : List Nat) (hc : g.idx.hasColumns .node = true) :
     (labelsRemoved g r c).changes = opsChanges g.idx .node ((r.zip c).flatMap (fun p => underLabelOps g p.1 p.2 false)) := by
   unfold labelsRemoved
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .node g.idx _ (fun p => underLabelOps g p.1 p.2 false) (fun c p h => removeNodeUnderLabel_eq c g p.1 p.2 h) _ _ rfl]
   simp [IndexChanges.new]
 
@@ -761,7 +761,7 @@ theorem labelsProductAdded_changes (g : G) (ids labelIds : List Nat) (hc : g.idx
     (labelsProductAdded g ids labelIds).changes =
       opsChanges g.idx .node (labelIds.flatMap (fun lid => ids.flatMap (fun id => underLabelOps g id lid true))) := by
   unfold labelsProductAdded
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .node g.idx _ (fun lid => ids.flatMap (fun id => underLabelOps g id lid true)) ?_ _ _ rfl]
   · simp [IndexChanges.new]
   · intro c lid h
@@ -782,7 +782,7 @@ def nodesDeletedOps (g : G) (ids : List Nat) : List StageOp :=
 theorem nodesDeleted_changes (g : G) (ids : List Nat) (hc : g.idx.hasColumns .node = true) :
     (nodesDeleted g ids).changes = opsChanges g.idx .node (nodesDeletedOps g ids) := by
   unfold nodesDeleted
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   have outer : ∀ (l : List Nat) (c : IndexChanges) (buf : List Nat), c.entity = .node →
       (l.foldl (fun (st : IndexChanges × List Nat) id =>
         let labels := nodeLabelIdsInto g id st.2
@@ -833,14 +833,14 @@ theorem edgeAttrsSetWith_changes (g : G) (attrs : List (Nat × List (Nat × Valu
     (hc : g.idx.hasColumns .relationship = true) :
     (edgeAttrsSetWith g attrs typeId).changes = opsChanges g.idx .relationship (edgeAttrsSetOps g attrs typeId) := by
   unfold edgeAttrsSetWith
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .relationship g.idx _ (fun iw => iw.2.filterMap (fun an => (g.attrName an.1).map (fun attr =>
     (⟨iw.1, [edgeTypeOf g typeId iw.1], attr, g.relAttr iw.1 an.1, some an.2⟩ : StageOp)))) ?_ _ _ rfl]
   · simp [IndexChanges.new, edgeAttrsSetOps]
   · intro c iw hc'
     by_cases he : iw.2.isEmpty = true
     · simp [he, opsChanges, List.isEmpty_iff.1 he]
-    · simp only [he, Bool.false_eq_true, if_false]
+    · simp only [he, Bool.false_eq_true, ite_false]
       rw [foldl_ops .relationship g.idx _ (fun an => ((g.attrName an.1).map (fun attr =>
         (⟨iw.1, [edgeTypeOf g typeId iw.1], attr, g.relAttr iw.1 an.1, some an.2⟩ : StageOp))).toList) ?_ _ _ hc']
       · simp only [filterMap_toList]
@@ -869,14 +869,14 @@ theorem newEdgeAttrs_changes (g : G) (attrs : List (Nat × List (Nat × Value)))
     (hc : g.idx.hasColumns .relationship = true) :
     (newEdgeAttrs g attrs).changes = opsChanges g.idx .relationship (newEdgeAttrsOps g attrs) := by
   unfold newEdgeAttrs
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .relationship g.idx _ (fun iw => iw.2.filterMap (fun an => (g.attrName an.1).map (fun attr =>
     (⟨iw.1, [edgeType g iw.1], attr, none, some an.2⟩ : StageOp)))) ?_ _ _ rfl]
   · simp [IndexChanges.new, newEdgeAttrsOps]
   · intro c iw hc'
     by_cases he : iw.2.isEmpty = true
     · simp [he, opsChanges, List.isEmpty_iff.1 he]
-    · simp only [he, Bool.false_eq_true, if_false]
+    · simp only [he, Bool.false_eq_true, ite_false]
       rw [foldl_ops .relationship g.idx _ (fun an => ((g.attrName an.1).map (fun attr =>
         (⟨iw.1, [edgeType g iw.1], attr, none, some an.2⟩ : StageOp))).toList) ?_ _ _ hc']
       · simp only [filterMap_toList]
@@ -903,7 +903,7 @@ theorem bulkEdgeAttrs_changes (g : G) (rows : List (Nat × List (Nat × Value)))
     (hc : g.idx.hasColumns .relationship = true) :
     (bulkEdgeAttrs g rows t).changes = opsChanges g.idx .relationship (bulkEdgeAttrsOps g rows t) := by
   unfold bulkEdgeAttrs
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .relationship g.idx _ (fun iw => iw.2.filterMap (fun an => (g.attrName an.1).map (fun attr =>
     (⟨iw.1, [g.typeName t], attr, none, some an.2⟩ : StageOp)))) ?_ _ _ rfl]
   · simp [IndexChanges.new, bulkEdgeAttrsOps]
@@ -932,14 +932,14 @@ def edgesDeletedOps (g : G) (ids : List Nat) : List StageOp :=
 theorem edgesDeleted_changes (g : G) (ids : List Nat) (hc : g.idx.hasColumns .relationship = true) :
     (edgesDeleted g ids).changes = opsChanges g.idx .relationship (edgesDeletedOps g ids) := by
   unfold edgesDeleted
-  simp only [hc, Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [hc, Bool.not_true, Bool.false_eq_true, ite_false]
   rw [foldl_ops .relationship g.idx _ (fun id => (g.relAllAttrs id).map (fun av =>
     (⟨id, [edgeType g id], av.1, some av.2, none⟩ : StageOp))) ?_ _ _ rfl]
   · simp [IndexChanges.new, edgesDeletedOps]
   · intro c id hc'
     by_cases he : (g.relAllAttrs id).isEmpty = true
     · simp [he, opsChanges, List.isEmpty_iff.1 he]
-    · simp only [he, Bool.false_eq_true, if_false]
+    · simp only [he, Bool.false_eq_true, ite_false]
       rw [foldl_ops .relationship g.idx _ (fun av => [(⟨id, [edgeType g id], av.1, some av.2, none⟩ : StageOp)])
         (fun c av hca => by rw [remove_is_stage, stage_eq _ _ _ _ _ _ _ .relationship hca]; simp [opsChanges]) _ _ hc']
       simp [flatMap_single]
@@ -996,7 +996,7 @@ theorem nodesDeleted_hit (g : G) (hn : g.attrNames.Nodup) (ids : List Nat) (hids
     intro op hop; simp only [nodesDeletedOps, List.mem_flatMap, List.mem_map] at hop
     obtain ⟨i, hi, _, _, rfl⟩ := hop; exact hids i hi
   rw [lastOp_ops g.idx .node _ L A kk id0 hops hid0 hcol (outcome (some v) none kk)]
-  · rw [if_pos]
+  · rw [ite_eq_left]
     exact ⟨⟨id0, (g.nodeLabels id0).map g.labelName, A, some v, none⟩,
       by simp only [nodesDeletedOps, List.mem_flatMap, List.mem_map]; exact ⟨id0, hmem, (A, v), hv, rfl⟩, rfl, rfl, hL⟩
   · intro op hop hid hattr _
@@ -1047,15 +1047,15 @@ theorem labelsRemoved_hit (g : G) (hn : g.attrNames.Nodup) (r c : List Nat) (hid
     lastOp (colLog (L, A) (labelsRemoved g r c).changes) (enc kk id0) = outcome (some v) none kk := by
   rw [labelsRemoved_changes g r c (hasColumns_of_hasColumn _ _ _ _ hcol)]
   have hops : ∀ op ∈ (r.zip c).flatMap (fun p => underLabelOps g p.1 p.2 false), op.id < W := by
-    intro op hop; simp only [underLabelOps, List.mem_flatMap, List.mem_map, Bool.false_eq_true, if_false] at hop
+    intro op hop; simp only [underLabelOps, List.mem_flatMap, List.mem_map, Bool.false_eq_true, ite_false] at hop
     obtain ⟨p, hp, _, _, rfl⟩ := hop; exact hids _ (List.of_mem_zip hp).1
   rw [lastOp_ops g.idx .node _ L A kk id0 hops hid0 hcol (outcome (some v) none kk)]
-  · rw [if_pos]
+  · rw [ite_eq_left]
     exact ⟨⟨id0, [g.labelName lid], A, some v, none⟩, by
-      simp only [underLabelOps, List.mem_flatMap, List.mem_map, Bool.false_eq_true, if_false]
+      simp only [underLabelOps, List.mem_flatMap, List.mem_map, Bool.false_eq_true, ite_false]
       exact ⟨(id0, lid), hmem, (A, v), hv, rfl⟩, rfl, rfl, by simp [hL]⟩
   · intro op hop hid hattr _
-    simp only [underLabelOps, List.mem_flatMap, List.mem_map, Bool.false_eq_true, if_false] at hop
+    simp only [underLabelOps, List.mem_flatMap, List.mem_map, Bool.false_eq_true, ite_false] at hop
     obtain ⟨⟨i, l⟩, _, ⟨A', v'⟩, hav, rfl⟩ := hop
     simp only at hid hattr ⊢; subst hid hattr
     rw [nodeAllAttrs_unique g hn _ _ _ _ hav hv]; rfl
@@ -1067,15 +1067,15 @@ theorem labelsAdded_hit (g : G) (hn : g.attrNames.Nodup) (r c : List Nat) (hids 
     lastOp (colLog (L, A) (labelsAdded g r c).changes) (enc kk id0) = outcome none (some v) kk := by
   rw [labelsAdded_changes g r c (hasColumns_of_hasColumn _ _ _ _ hcol)]
   have hops : ∀ op ∈ (r.zip c).flatMap (fun p => underLabelOps g p.1 p.2 true), op.id < W := by
-    intro op hop; simp only [underLabelOps, List.mem_flatMap, List.mem_map, if_true] at hop
+    intro op hop; simp only [underLabelOps, List.mem_flatMap, List.mem_map, ite_true] at hop
     obtain ⟨p, hp, _, _, rfl⟩ := hop; exact hids _ (List.of_mem_zip hp).1
   rw [lastOp_ops g.idx .node _ L A kk id0 hops hid0 hcol (outcome none (some v) kk)]
-  · rw [if_pos]
+  · rw [ite_eq_left]
     exact ⟨⟨id0, [g.labelName lid], A, none, some v⟩, by
-      simp only [underLabelOps, List.mem_flatMap, List.mem_map, if_true]
+      simp only [underLabelOps, List.mem_flatMap, List.mem_map, ite_true]
       exact ⟨(id0, lid), hmem, (A, v), hv, rfl⟩, rfl, rfl, by simp [hL]⟩
   · intro op hop hid hattr _
-    simp only [underLabelOps, List.mem_flatMap, List.mem_map, if_true] at hop
+    simp only [underLabelOps, List.mem_flatMap, List.mem_map, ite_true] at hop
     obtain ⟨⟨i, l⟩, _, ⟨A', v'⟩, hav, rfl⟩ := hop
     simp only at hid hattr ⊢; subst hid hattr
     rw [nodeAllAttrs_unique g hn _ _ _ _ hav hv]; rfl
@@ -1090,7 +1090,7 @@ theorem edgesDeleted_hit (g : G) (hn : g.attrNames.Nodup) (ids : List Nat) (hids
     intro op hop; simp only [edgesDeletedOps, List.mem_flatMap, List.mem_map] at hop
     obtain ⟨i, hi, _, _, rfl⟩ := hop; exact hids i hi
   rw [lastOp_ops g.idx .relationship _ T A kk id0 hops hid0 hcol (outcome (some v) none kk)]
-  · rw [if_pos]
+  · rw [ite_eq_left]
     exact ⟨⟨id0, [edgeType g id0], A, some v, none⟩,
       by simp only [edgesDeletedOps, List.mem_flatMap, List.mem_map]; exact ⟨id0, hmem, (A, v), hv, rfl⟩,
       rfl, rfl, by simp [hT]⟩
@@ -1127,7 +1127,7 @@ theorem edgeAttrsSetWith_hit (g : G) (hn : g.attrNames.Nodup) (attrs : List (Nat
     obtain ⟨iw, hiw, an, _, attr, _, rfl⟩ := hop
     exact hids iw hiw
   rw [lastOp_ops g.idx .relationship _ T A kk id0 hops hid0 hcol (outcome (g.relAttr id0 aid) (some nv) kk)]
-  · rw [if_pos]
+  · rw [ite_eq_left]
     refine ⟨⟨id0, [edgeTypeOf g typeId id0], A, g.relAttr id0 aid, some nv⟩,
       ?_, rfl, rfl, by simp [hT]⟩
     simp only [edgeAttrsSetOps, List.mem_flatMap, List.mem_filterMap, Option.map_eq_some_iff]
@@ -1164,7 +1164,7 @@ theorem newNodeAttrs_hit (g : G) (hn : g.attrNames.Nodup) (attrs : List (Nat × 
     · simp only [List.mem_filterMap, Option.map_eq_some_iff] at hop
       obtain ⟨an, _, attr, _, rfl⟩ := hop; exact hids iw hiw
   rw [lastOp_ops g.idx .node _ L A kk id0 hops hid0 hcol (outcome none (some nv) kk)]
-  · rw [if_pos]
+  · rw [ite_eq_left]
     refine ⟨⟨id0, lids.map g.labelName, A, none, some nv⟩, ?_, rfl, rfl, hL⟩
     simp only [newNodeAttrsOps, List.mem_flatMap]
     refine ⟨(id0, written), hmem, ?_⟩

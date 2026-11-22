@@ -3,7 +3,7 @@
 
 | here | there |
 | --- | --- |
-| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:92-137 |
+| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:160-216 (#3303 adds `anon`) |
 | `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs:473-640 |
 | `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs:481-489, 542-566, 643-660 |
 | `mergeAttrs` | `merge_attr_maps` ast.rs:667-683 |
@@ -31,31 +31,54 @@ namespace PlannerBuild.Ast
 
 structure AV where
   name : Option String
+  /-- The parser's number of an unnamed pattern entity (#3303), shown in plans. -/
+  anon : Option Nat
   id : Nat
   scope : Nat
   deriving DecidableEq, Repr
 
-def AV.fmt (v : AV) : String := match v.name with
-  | some n => n
-  | none => "?" ++ toString v.id
+/-- `impl Display for Variable` (ast.rs:171-184): the name; else, for an unnamed pattern
+entity, `write_anon` (ast.rs:125-130) `@anon_<n>`; else (a planner temporary) `?<id>`. -/
+def AV.fmt (v : AV) : String := match v.name, v.anon with
+  | some n, _ => n
+  | none, some k => "@anon_" ++ toString k
+  | none, none => "?" ++ toString v.id
 
-/-- `PartialEq for Variable`: by id only (ast.rs:113-119). -/
+/-- `PartialEq for Variable`: by id only (ast.rs:186-193). -/
 def AV.eqv (a b : AV) : Bool := a.id == b.id
 
-/-- `Hash for Variable`: hashes the id only (ast.rs:124-130). -/
+/-- `Hash for Variable`: hashes the id only (ast.rs:197-204). -/
 def AV.hashKey (v : AV) : Nat := v.id
 
 def AV.asStr (v : AV) : String := v.name.getD "?"
 
-theorem AV.fmt_named (n : String) (i s : Nat) : AV.fmt ⟨some n, i, s⟩ = n := rfl
-theorem AV.fmt_anon (i s : Nat) : AV.fmt ⟨none, i, s⟩ = "?" ++ toString i := rfl
+/-- `Variable::key` (ast.rs:214-219): the `VarKey { id, scope_id }` naming the variable's identity. -/
+def AV.key (v : AV) : Nat × Nat := (v.id, v.scope)
+
+/-- Two variables share a `VarKey` exactly when both id and scope agree. -/
+theorem AV.key_eq_iff (a b : AV) : a.key = b.key ↔ a.id = b.id ∧ a.scope = b.scope := by
+  simp [AV.key]
+
+/-- A shared `VarKey` implies `Variable` equality (which compares ids only). -/
+theorem AV.key_eq_eqv (a b : AV) (h : a.key = b.key) : a.eqv b = true := by
+  simp [AV.key, AV.eqv] at *; exact h.1
+
+/-- Unlike `Eq`, the key separates equal ids in different scopes. -/
+theorem AV.key_other_scope : AV.key ⟨some "a", none, 3, 0⟩ ≠ AV.key ⟨some "b", none, 3, 1⟩ := by
+  decide
+
+theorem AV.fmt_named (n : String) (a : Option Nat) (i s : Nat) : AV.fmt ⟨some n, a, i, s⟩ = n := rfl
+/-- A nameless variable that is not a pattern entity (a planner temporary) prints `?<id>`. -/
+theorem AV.fmt_anon (i s : Nat) : AV.fmt ⟨none, none, i, s⟩ = "?" ++ toString i := rfl
+/-- An unnamed pattern entity prints `@anon_<n>` from the parser's number (#3303). -/
+theorem AV.fmt_unnamed (k i s : Nat) : AV.fmt ⟨none, some k, i, s⟩ = "@anon_" ++ toString k := rfl
 theorem AV.asStr_spec (v : AV) : v.asStr = v.name.getD "?" := rfl
 
 /-- Equality ignores scope and name — two variables of different scopes with
 the same id are "equal" (the root of the id-only issues noted elsewhere). -/
 theorem AV.eqv_iff (a b : AV) : a.eqv b = true ↔ a.id = b.id := by simp [AV.eqv]
 
-theorem AV.eqv_other_scope : AV.eqv ⟨some "a", 3, 0⟩ ⟨some "b", 3, 1⟩ = true := rfl
+theorem AV.eqv_other_scope : AV.eqv ⟨some "a", none, 3, 0⟩ ⟨some "b", none, 3, 1⟩ = true := rfl
 
 /-- `Hash` is consistent with `Eq` (as `HashMap`/`HashSet` require). -/
 theorem AV.hash_consistent (a b : AV) (h : a.eqv b = true) : a.hashKey = b.hashKey := by
@@ -282,6 +305,9 @@ theorem accessors (g : QG) (ns : List QN) (rs : List QR) :
 /-! ## `filter_visited` -/
 
 def notVisited (vis : List (Nat × Nat)) (v : AV) : Bool := !vis.contains (v.id, v.scope)
+
+/-- `filter_visited` tests `visited.contains(&alias.key())`. -/
+theorem notVisited_key (vis : List (Nat × Nat)) (v : AV) : notVisited vis v = !vis.contains v.key := rfl
 
 def filterVisited (g : QG) (vis : List (Nat × Nat)) : QG :=
   let g1 := (g.nodes.filter (fun n => notVisited vis n.alias)).foldl (fun acc n => (addNode eqv acc n).1) QG.default

@@ -5,7 +5,7 @@ import FalkorValueMath.Value
 | Lean | Rust |
 | --- | --- |
 | `Ty` | `enum Type` (mod.rs:531) |
-| `valueOfType` | `ValueTypeOf::value_of_type` (value.rs:1282) |
+| `valueOfType` | `ValueTypeOf::value_of_type` (value.rs:1323) |
 | `getType` | `ValueGetType::get_type` (value.rs:1328) |
 | `validate` | `GraphFn::validate` (mod.rs:787-823) — arity, called by the parser |
 | `validateArgsType` | `GraphFn::validate_args_type` (mod.rs:828) — per call, eval.rs:955 |
@@ -134,6 +134,13 @@ theorem vot_any (v : V F) : valueOfType v .any = none := by
 
 theorem vot_list_list (vs : List (V F)) (ty : Ty) : valueOfType (.list vs) (.list ty) = listLoop vs ty := by
   simp [valueOfType]
+
+/-- The `(List(_), List(Any)) => None` fast path (value.rs:1331) agrees with the
+element walk: every element is accepted by `Any`, so the walk returns `None` too. -/
+theorem vot_list_any (vs : List (V F)) : valueOfType (.list vs) (.list .any) = none := by
+  rw [vot_list_list, listLoop_none]
+  intro w _
+  exact vot_any w
 
 theorem vot_nonlist_list (v : V F) (ty : Ty) (h : v.isList = false) :
     valueOfType v (.list ty) = some (getType v, .list ty) := by
@@ -437,7 +444,7 @@ theorem canReturnBoolean_of_accepts : ∀ (t : Ty) (v : V F), Accepts v t →
     cases ha
     all_goals first
       | rfl
-      | (rcases hv with hv | ⟨b, rfl⟩ <;> (try cases v) <;> simp_all [V.isNull, tagMatch, canReturnBoolean])
+      | (rcases hv with hv | ⟨b, rfl⟩ <;> (try cases v) <;> simp_all [V.isNull, tagMatch])
 
 /-! ## `Display for Type` (mod.rs:610): "A", "A or B", "A, B, or C" -/
 

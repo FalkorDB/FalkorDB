@@ -239,7 +239,7 @@ def Mode.descend (m : Mode) (parent : D) : Mode :=
 
 theorem descend_table (m : Mode) (p : D) :
     m.descend p = (if m = .semiApply then (if isConn p then .semiApply else .exists_) else m) := by
-  unfold Mode.descend; cases m <;> cases h : isConn p <;> simp [h]
+  unfold Mode.descend; cases m <;> cases h : isConn p <;> simp
 
 mutual
 def needsExtraction : Ex → Mode → Bool
