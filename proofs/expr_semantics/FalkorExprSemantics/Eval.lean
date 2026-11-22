@@ -71,7 +71,7 @@ def evalNode (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) : E 
     let _ ← ev.rt
     match f.structFn with
     | some sf =>
-      if f.structSlots ≠ 0 ∧ cs.length = f.structSlots then do
+      if f.structSlots ≠ 0 ∧ cs.length = f.structSlots + (if f.structMasked then 1 else 0) then do
         let slots ← evalSlots ev c env cs
         sf slots
       else do
@@ -173,8 +173,9 @@ def evalArms (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (sv 
     if caseHit O sv wv then do let v ← evalNode ev c env t; .ok (some v)
     else evalArms ev c env sv rest
   | _ => .ok none
-/-- The struct-constructor slots (eval.rs): `Constant(Null)` children are not
-evaluated. -/
+/-- The struct-constructor slots (eval.rs): `Constant(Null)` children are left `Null`;
+since #3607 other constants (incl. the presence mask) are cloned without dispatch, which is
+`evalNode` of `.const v` (= `.ok v`), so this model covers both. -/
 def evalSlots (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) :
     List (E V) → Except String (List V)
   | [] => .ok []
