@@ -141,27 +141,33 @@ impl<'a> ApplyOp<'a> {
         // 0..N-1 wrote (and deleted). One batched instance would run every
         // row's reads before any row's writes (#2738).
         let can_batch = !subtree_contains(&runtime.plan, child_idx, |ir| {
-            matches!(
-                ir,
-                IR::Create(_)
-                    | IR::Set(_)
-                    | IR::Remove(_)
-                    | IR::Delete { .. }
-                    | IR::ForEach { .. }
-                    | IR::CreateIndex { .. }
-                    | IR::DropIndex { .. }
-                    | IR::Commit
-                    | IR::Aggregate { .. }
-                    | IR::CartesianProduct
-                    | IR::Optional(_)
-                    | IR::Apply
-                    | IR::Merge { .. }
-                    | IR::Union
-                    | IR::Sort(_)
-                    | IR::Limit(_)
-                    | IR::Skip(_)
-                    | IR::Distinct
-            )
+            // A write procedure (`db.idx.fulltext.createNodeIndex`) is a
+            // `ProcedureCall`, not one of the write operators below.
+            matches!(ir, IR::ProcedureCall { func, .. } if func.write)
+                || matches!(
+                    ir,
+                    IR::Create(_)
+                        | IR::Set(_)
+                        | IR::Remove(_)
+                        | IR::Delete { .. }
+                        | IR::ForEach { .. }
+                        | IR::CreateIndex { .. }
+                        | IR::DropIndex { .. }
+                        | IR::Commit
+                        | IR::Aggregate { .. }
+                        | IR::CartesianProduct
+                        | IR::Optional(_)
+                        | IR::Apply
+                        | IR::Merge { .. }
+                        | IR::Union
+                        | IR::Sort(_)
+                        | IR::Limit(_)
+                        | IR::Skip(_)
+                        | IR::Distinct
+                )
+        });
+        let sub_plan_deletes = subtree_contains(&runtime.plan, child_idx, |ir| {
+            matches!(ir, IR::Delete { .. })
         });
 
         let sub_plan_distincts = if can_batch {
@@ -181,10 +187,13 @@ impl<'a> ApplyOp<'a> {
             acc: Vec::new(),
             acc_rows: 0,
             overflow: None,
-            imported: imported_ids(runtime, child_idx),
-            sub_plan_deletes: subtree_contains(&runtime.plan, child_idx, |ir| {
-                matches!(ir, IR::Delete { .. })
-            }),
+            // Only read when the body deletes (`row_has_deleted_entity`).
+            imported: if sub_plan_deletes {
+                imported_ids(runtime, child_idx)
+            } else {
+                Vec::new()
+            },
+            sub_plan_deletes,
             passthrough: matches!(
                 runtime.plan.node(child_idx).data(),
                 IR::Aggregate { keys, aggregations, .. } if keys.is_empty() && aggregations.is_empty()
@@ -524,6 +533,25 @@ fn imported_ids(
         .walk_with(&mut Traversal.bfs().over_nodes())
     {
         if !matches!(node.data(), IR::Argument(_)) {
+            continue;
+        }
+        // An `Argument` under a nested `CALL {}` (the right child of an
+        // `Apply` inside the body) imports from that scope, not ours.
+        let mut cur = node.idx();
+        let mut up = node.parent();
+        let mut nested = false;
+        while let Some(p) = up {
+            if matches!(p.data(), IR::Apply) && p.child(1).idx() == cur {
+                nested = true;
+                break;
+            }
+            if p.idx() == root {
+                break;
+            }
+            cur = p.idx();
+            up = p.parent();
+        }
+        if nested {
             continue;
         }
         let Some(parent) = node.parent() else {
