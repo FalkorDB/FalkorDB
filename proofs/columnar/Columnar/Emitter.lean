@@ -15,6 +15,7 @@ gathers the parent columns by the packed parent rows.
 | `drain` | `drain_pending_entry` |
 | `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` |
 | `emitLazy` | `emit_lazy` |
+| `parentRows` | `parent_rows` after `emit_lazy` with `record_parent_rows` (#3110) |
 | `stream` | the flattened `(row, item)` sequence of `pending` + unread rows |
 | `emitAll` | repeated `emit_lazy` until `Ok(None)` |
 | `finishLen` | `finish_batch` row count incl. the `should_expand` switch (`start_batch`) |
@@ -253,6 +254,36 @@ theorem batch_rows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List 
   Batch.gather_isSome h (fun i hi => by
     obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hi
     exact (stream_rows_active h f x (hsub x hx)).2)
+
+/-- `parent_rows` after one `emit_lazy` (#3110): with `record_parent_rows` set it is the packed
+parent-row list `indices` (filled when `should_expand || record_parent_rows`, `start_batch`,
+`drain_pending_entry`); otherwise it keeps its previous value (initially empty, `with_binding`). -/
+def parentRows (rec : Bool) (prev : List Nat) (c : Nat) (p : Option (Nat × List I))
+    (t : List (Nat × List I)) : List Nat :=
+  if rec then (emitLazy c p t).1.map (·.1) else prev
+
+/-- **`parent_rows` names, row for row, the parent of each emitted row**: it is the emitted
+batch's parent-row column, so it has the emitted batch's length. -/
+theorem parentRows_spec (prev : List Nat) (c : Nat) (p : Option (Nat × List I))
+    (t : List (Nat × List I)) :
+    parentRows true prev c p t = (emitLazy c p t).1.map (·.1) ∧
+    (parentRows true prev c p t).length = min c (stream p t).length ∧
+    parentRows false prev c p t = prev := by
+  refine ⟨rfl, ?_, rfl⟩
+  simp [parentRows, (emitLazy_spec c p t).2]
+
+/-- Every recorded parent row is an active row of the seeded batch (`< len`), so a
+consumer may index per-parent-row state by it (`in_lineage[r]`). -/
+theorem parentRows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List I)
+    (prev : List Nat) (c : Nat) :
+    ∀ r ∈ parentRows true prev c none (seedRows b f), r ∈ b.active ∧ r < b.len := by
+  intro r hr
+  simp only [parentRows, ite_true, List.mem_map] at hr
+  obtain ⟨x, hx, rfl⟩ := hr
+  have hs := (emitLazy_spec c none (seedRows b f)).1
+  have : x ∈ stream none (seedRows b f) := by
+    rw [← hs]; exact List.mem_append_left _ hx
+  exact stream_rows_active h f x this
 
 /-- `finish_batch`'s row count: gathered when `start_batch` sets
 `should_expand` — the parent has a column **or carries correlation origins**

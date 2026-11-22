@@ -64,84 +64,76 @@ longer needs to inspect them. -/
 
 /-! ## `CondTraverseOp::new` (cond_traverse.rs) -/
 
+/-- An alias is `(id, scope_id)`; `fromName` is the `from` alias's name. -/
 structure RelPat where
   fromAlias : Nat
+  fromScope : Nat
   fromName : Option String
   toAlias : Nat
   relAlias : Nat
   bidir : Bool
 
+/-- What `new` reads of a child `CondTraverse` (its pattern's `to` alias, since #3110). -/
 structure ChildCT where
   emitRel : Bool
   bidir : Bool
-  fromAlias : Nat
+  toAlias : Nat
+  toScope : Nat
 
+/-- `dedup`: `bidir_dedup` is `Some`; `childTracks`: `new` set the child's `track_lineage` and
+`emitter.record_parent_rows()` in the same match arm. -/
 structure CtCfg where
   dedup : Bool
-  dedupSrc : Option Nat
+  childTracks : Bool
   eligible : Bool
   toCol : Option Nat
   produced : Nat
 
+/-- `CondTraverseOp::new` (#3110: the child's `to` alias must be this CT's `from`). -/
 def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : List Bool)
     (child : Option ChildCT) : CtCfg :=
-  -- cond_traverse.rs `rp.from.alias.is_unnamed()` (no name)
+  -- `rp.from.alias.is_unnamed()` (no name)
   let anon := rp.fromName.isNone
-  let (dedup, src) :=
-    if !emitRel && rp.bidir && anon then
-      match child with
-      | some c => if !c.emitRel && c.bidir then (true, some c.fromAlias) else (false, none)
-      | none => (false, none)
-    else (false, none)
-  -- cond_traverse.rs (#2390: the inline-attr emptiness test is gone)
+  let dedup :=
+    match child with
+    | some c => !emitRel && rp.bidir && anon && !c.emitRel && c.bidir &&
+        c.toAlias == rp.fromAlias && c.toScope == rp.fromScope
+    | none => false
+  -- (#2390: the inline-attr emptiness test is gone)
   let eligible := !emitRel && !rp.bidir && !dedup && siblings.isEmpty &&
     chainBidir.all (!·)
-  { dedup, dedupSrc := src, eligible, toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none,
-    produced := 0 }
+  { dedup, childTracks := dedup, eligible,
+    toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none, produced := 0 }
 
 /-- Cross-row bidirectional dedup is armed exactly for an anonymous-intermediate,
-non-emitting bidirectional hop over a non-emitting bidirectional child CT, keyed by the
-child's source alias; the F·A batched path is taken only for directed, non-emitting,
-sibling-free hops whose chain hops are all directed; a self-loop
-binds one endpoint column. -/
+non-emitting bidirectional hop over a non-emitting bidirectional child CT whose `to` alias is
+this hop's `from` alias, and then the child is told to track lineage (the dedup key's record);
+the F·A batched path is taken only for directed, non-emitting, sibling-free hops whose chain
+hops are all directed; a self-loop binds one endpoint column. -/
 theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (ch : Option ChildCT) :
     let c := ctNew rp er sib cb ch
     (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName = none ∧
-      ∃ x, ch = some x ∧ x.emitRel = false ∧ x.bidir = true) ∧
-    (c.dedup = true → c.dedupSrc = ch.map (·.fromAlias)) ∧
+      ∃ x, ch = some x ∧ x.emitRel = false ∧ x.bidir = true ∧
+        x.toAlias = rp.fromAlias ∧ x.toScope = rp.fromScope) ∧
+    (c.childTracks = c.dedup) ∧
     (c.eligible = true → er = false ∧ rp.bidir = false ∧ sib = [] ∧ ∀ b ∈ cb, b = false) ∧
     (c.toCol = none ↔ rp.toAlias = rp.fromAlias) ∧ c.produced = 0 := by
   simp only [ctNew]
-  refine ⟨?_, ?_, ?_, ?_, by first | rfl | trivial⟩
-  · by_cases h : (!er && rp.bidir && rp.fromName.isNone) = true
-    · simp only [h, ite_true]
-      simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
-      obtain ⟨⟨h1, h2⟩, h3⟩ := h
-      rw [Option.isNone_iff_eq_none] at h3
-      cases ch with
-      | none => simp
-      | some x => by_cases hx : (!x.emitRel && x.bidir) = true
-                  · simp only [hx, ite_true]; simp at hx; simp [h1, h2, h3, hx]
-                  · simp only [hx, Bool.false_eq_true, ite_false]; simp at hx
-                    constructor
-                    · intro h; cases h
-                    · rintro ⟨_, _, _, y, hy, h4, h5⟩
-                      cases hy; simp [hx h4] at h5
-    · simp only [h, Bool.false_eq_true, ite_false, false_iff, not_and]
-      intro h1 h2 h3; simp [h1, h2, h3] at h
-  · intro hd
-    split at hd
-    · split at hd
-      · split at hd
-        · simp_all
-        · simp at hd
-      · simp at hd
-    · simp at hd
+  refine ⟨?_, by first | rfl | trivial, ?_, ?_, by first | rfl | trivial⟩
+  · cases ch with
+    | none => simp
+    | some x => simp [and_assoc]
   · intro he
     simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_iff, List.all_eq_true] at he
     obtain ⟨⟨⟨⟨h1, h2⟩, _⟩, h4⟩, h6⟩ := he
     exact ⟨h1, h2, h4, fun b hb => by simpa using h6 b hb⟩
   · by_cases h : rp.toAlias = rp.fromAlias <;> simp [h]
+
+/-- A bidirectional CT is never on the F·A batched path, so a chain start that a dedup parent
+asks to track lineage always emits through its emitter (the `debug_assert!` in `new`). -/
+theorem ctNew_bidir_not_eligible (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
+    (ch : Option ChildCT) (h : rp.bidir = true) : (ctNew rp er sib cb ch).eligible = false := by
+  simp [ctNew, h]
 
 /-- The F·A batched path is taken exactly for non-emitting, directed, dedup-free,
 sibling-free hops whose fused chain is all directed (cond_traverse.rs). -/
@@ -291,7 +283,11 @@ theorem nullPad_spec {V : Type} (rows : List (Nat → Option V)) (un : List Nat)
 
 /-- Output batches for one child batch: the batched F·A path's batches when it handles the
 batch, else the emitter's packed batches followed (for OPTIONAL) by one null-padded batch of the
-rows that expanded to nothing. -/
+rows that expanded to nothing. Since #3110 `next` also records, when `track_lineage`, the
+lineage of every row it returns (`stamp_lineage`, `BidirDedup.stampStart`/`stampFwd`) and, for a
+dedup CT, installs the child's lineage on each new child batch; neither changes the rows. The
+dedup state is threaded across child batches, never cleared there, so a dedup CT's `emitted` is
+`BidirDedup.runBatches`, equal to the dedup of the flattened stream (`BidirDedup.runBatches_eq`). -/
 def ctPack {C R : Type} (batched : C → Option (List (List R))) (emitted : C → List (List R))
     (padded : C → List R) (optional : Bool) (c : C) : List (List R) :=
   match batched c with

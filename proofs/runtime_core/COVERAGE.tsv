@@ -55,11 +55,11 @@ graph/src/runtime/ops/mod.rs	edge_already_used	155	PROVEN	Misc.edgeAlreadyUsed_i
 graph/src/runtime/ops/batched_result_emitter.rs	one	458	PROVEN	Emitter.RowIter.one; reused: proofs/columnar Gather.RowIter.one: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Emitter.RowIter.spread; reused: proofs/columnar Gather.RowIter.spread: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Emitter.RowIter.many; reused: proofs/columnar Gather.RowIter.many: rowIter_spec
-graph/src/runtime/ops/batched_result_emitter.rs	seed	577	PROVEN	Emitter.seed, remaining_seed, drive_flatten
-graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs; reused: proofs/columnar Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
-graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
-graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	output = packed (row,item) pairs; gather not modelled; reused: proofs/columnar Emitter batch_rows_active (gather never panics), finishLen_eq
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
-graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
-graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
-graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)
+graph/src/runtime/ops/batched_result_emitter.rs	seed	586	PROVEN	Emitter.seed, remaining_seed, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	613	PROVEN	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs (indices also kept when record_parent_rows, #3110: Emitter.emitRec, emitRec_emit); reused: proofs/columnar Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	631	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty (the drained (row,item) pairs are `indices` when keep_rows, #3110: emitRec_parents)
+graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	661	PROVEN	output = packed (row,item) pairs; gather not modelled; reused: proofs/columnar Emitter batch_rows_active (gather never panics), finishLen_eq
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	739	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten; parent_rows (#3110): Emitter.emitRec, emitRec_emit, emitRec_parents, parents_runs
+graph/src/runtime/ops/batched_result_emitter.rs	reset	778	PROVEN	Emitter.reset_remaining
+graph/src/runtime/ops/batched_result_emitter.rs	new	801	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	811	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)
