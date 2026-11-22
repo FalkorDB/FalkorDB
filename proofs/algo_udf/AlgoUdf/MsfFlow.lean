@@ -1,15 +1,5 @@
 /-! # algo.MSF edge selection and algo.maxFlow result assembly
 
-| here | there (`graph/src/runtime/functions/algo_procedures.rs`) |
-| --- | --- |
-| `Score`               | f64 score from `msf_score` :144 (abstracted: `num k` finite/±inf ordered, `nan`) |
-| `SE`, `keepMin`       | `ScoredEdge`, `msf_keep_min_score` :238 (binary op + monoid for `GrB_Matrix_reduce_Monoid`) |
-| `identity`            | the monoid identity `{score: +inf, edge: u64::MAX}` :1561-1564 |
-| `componentKeys`       | MSF grouping :1890-1912 (component key = compact rep; isolated fallback keyed by *original* id) |
-| `flowAlign`           | maxFlow identity-compaction :3091-3151 and flow read-back :3292-3346 |
-| `superFresh`          | super source/sink ids `base_dim`, `base_dim + multi_srcs` :3096-3097 (identity compaction) and :3167-3168 (dense compaction) |
-| `buildTbl`, `denseTable`, `compactOf`, `bsearch` | the original-id → compact-id map and `compact_of` :1452-1465 (#3586) |
-
 GraphBLAS requires a monoid's operator to be associative and commutative with
 an identity (GrB spec §3.5, `GrB_Monoid_new`); `keepMin` is that operator.
 -/
@@ -89,7 +79,7 @@ theorem msf_fallback_key_space_mixed :
     componentKeys [0, 5] (fun i => if i = 0 then some 0 else none) = [(0, 0), (5, 5)] := by
   decide
 
-/-! ## MSF original-id → compact-id map (#3586, fixes #3444) -/
+/-! ## MSF original-id → compact-id map -/
 
 /-- The dense table `map[orig] = compact` filled by the loop at :1454-1457:
 `buildTbl ids 0 (replicate (max_id + 1) none)` (`u64::MAX` = `none`). -/
@@ -116,7 +106,7 @@ theorem buildTbl_get (ids : List Nat) (c : Nat) (t : List (Option Nat))
     rw [ih (c + 1) _ hlt' hnd'.2]
     by_cases hx : x = o
     · subst hx
-      simp only [List.mem_cons_self, if_true, hnd'.1]
+      simp only [List.mem_cons_self, ite_true, hnd'.1]
       simp [List.getElem?_set_self (hlt x (List.mem_cons_self ..))]
     · by_cases hm : x ∈ os
       · have hox : (o == x) = false := by simpa using Ne.symm hx
@@ -154,8 +144,8 @@ theorem compactOf_eq (ids : List Nat) (maxId : Nat) (hmax : ∀ o ∈ ids, o ≤
       by_cases hx : x ∈ ids
       · simp [hx]
       · by_cases hle : x ≤ maxId
-        · simp [hx, List.getElem?_replicate, hle, Nat.lt_succ_iff]
-        · simp [hx, List.getElem?_replicate, hle, Nat.lt_succ_iff]
+        · simp [hx, hle, Nat.lt_succ_iff]
+        · simp [hx, hle, Nat.lt_succ_iff]
     · cases hd
 
 /-- **#3444 fixed, memory**: when a table is built its length is at most `4 * n` (`n` = `ids.length`): at

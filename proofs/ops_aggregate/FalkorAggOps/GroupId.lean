@@ -1,13 +1,11 @@
 import FalkorAggOps.Ops
 /-
-# Per-group DISTINCT state is keyed by a group id (#2977, fixes #2969)
+# Per-group DISTINCT state is keyed by a group id
 
-Before c652e505e the dedup table `Runtime::value_dedupers` was keyed `(distinct node,
-hash(group key row))` (`hash_u64`, aggregate.rs:1267 at ca36bfa15), so two groups whose key rows
-collided in FxHash shared one seen-set (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now `GroupMap`'s value carries the group's id
+The dedup table `Runtime::value_dedupers` is keyed `(distinct node, group id)`; `GroupMap`'s value carries the group's id
 (aggregate.rs `GroupMap`, :65): `groups.len()` at insertion (`next_group_id`, :709 vectorized, :970 per-row,
 `0` for the keyless pre-insert :533-540, :891-898), and both paths read it back (`entry.2`, :728,
-:976) as the key. The `hash_u64` trait and its `Row` impl were removed.
+:976) as the key.
 
 Scope: this separates GROUPS (two groups never share a seen-set). It does not make the value
 dedup exact: inside one group `ValuesDeduper::is_seen` (value.rs) still stores only the 64-bit
@@ -15,12 +13,6 @@ FxHash of the value (`seen: FxHashSet<u64>`), so two distinct values of one grou
 still counted once (`Ops.dedup_collision_drops`, #2780). `dcgIdGo` models the seen-set as exact
 `(group id, value)` membership, so `distinct_by_group_id_exact` is exact relative to that
 abstraction of the per-group value hashing.
-
-| here | there |
-| --- | --- |
-| `insertKey`, `gid` | `groups.entry(key).or_insert_with(.. next_group_id)`; `entry.2` |
-| `dcgIdGo` | the per-row DISTINCT check `value_dedupers.entry((didx, group_id))` (aggregate.rs:746, eval.rs:854) |
-| `dcgRef` | the exact per-group semantics (`dedupBy` on the group's own values) |
 -/
 namespace FalkorAggOps.GroupId
 
@@ -50,7 +42,7 @@ theorem gid_append_new (a : List K) (k : K) (h : k ∉ a) : gid (a ++ [k]) k = a
   | cons x xs ih =>
     have hx : x ≠ k := fun e => h (by simp [e])
     have hk : k ∉ xs := fun e => h (by simp [e])
-    simp only [List.cons_append, gid, hx, if_false, List.length_cons]
+    simp only [List.cons_append, gid, hx, ite_false, List.length_cons]
     rw [ih hk]; omega
 
 /-- A new group gets id = the number of groups so far (`next_group_id = groups.len()`). -/

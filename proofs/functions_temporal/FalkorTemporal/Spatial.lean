@@ -1,10 +1,9 @@
 /-!
-# `Point::distance` (`graph/src/runtime/value.rs:153-176`)
+# `Point::distance` (`graph/src/runtime/value.rs`)
 
 `a = cos φ₁ cos φ₂ · sin²(Δλ/2) + sin²(Δφ/2)` is ≤ 1 over the reals, but in f64 it can
-round to `1 + 2⁻⁵²` for antipodal points; before #2983 (86dcd5a11) `(1.0 - a).sqrt()` was
-then NaN and `atan2(√a, NaN)` NaN (W2-temporal-4; 35 428 of 6 485 401 antipodal pairs on
-a 0.1° grid, Rust test `lean_functions_temporal::bug_distance_antipodal_nan`). Main clamps
+round to `1 + 2⁻⁵²` for antipodal points, where an unclamped `(1.0 - a).sqrt()` would be
+NaN (35 428 of 6 485 401 antipodal pairs on a 0.1° grid). Main clamps
 `a` to `[0, 1]`. Lean's `Float` is IEEE binary64 but opaque to the kernel, so the `#eval`s
 below only show the mechanism; the proof (`distance_finite`) is in
 `SpatialFns.lean` over an abstract float. The full operation-by-operation model of `Point::distance` (degrees → radians, `mul_add`,
@@ -12,7 +11,7 @@ the clamp) is `Spatial2.distance` in `SpatialFns.lean`; this file only checks th
 -/
 namespace FalkorTemporal.Spatial
 
-/-- Rust's `EARTH_RADIUS` (value.rs:157). -/
+/-- Rust's `EARTH_RADIUS` (value.rs). -/
 def EARTH_RADIUS : Float := 6378140.0
 
 -- The mechanism, checked at build time (`#guard` fails the build on a mismatch): one ulp above 1

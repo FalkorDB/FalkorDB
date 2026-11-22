@@ -456,6 +456,21 @@ def test_match_node_by_id():
     assert res1.result_set == res2.result_set == [[1000]]
     assert res1.run_time_ms < res2.run_time_ms
 
+def test_stacked_filters_keep_their_order():
+    # The optimizer merges the second MATCH's filter into the first's. The
+    # first one must still run first: it is what keeps `1 / (n.v - 1)` from
+    # dividing by zero.
+    query("UNWIND range(1, 5) AS i CREATE (:N {v: i})", write=True)
+    res = query(
+        "MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1 / (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[15]]
+    res = query(
+        "MATCH (n:N) WHERE n.v > 1 WITH n MATCH (m:N) WHERE m.v % (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[9]]
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
@@ -2064,6 +2079,245 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_order_by_aggregate_matches_projection_only_on_equal_constants():
+    """An ORDER BY aggregate binds to a projected aggregate only when their
+    constants are equal values, as in C (#3236): `3` matches `3.0`, but `4.0`
+    does not match `3`, and `null` does not match `7`."""
+    query("UNWIND range(1, 6) AS i CREATE (:N {g: i % 2, v: i})", write=True)
+    try:
+        for order_by in [
+            "max(n.v % 4.0)",
+            "max(coalesce(n.x, null))",
+            "max(n.v % '3')",
+        ]:
+            try:
+                common.g.query(
+                    f"MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m, max(coalesce(n.x, 7)) AS c ORDER BY {order_by}"
+                )
+            except ResponseError as e:
+                assert "failed to map aggregation expression" in str(e), order_by
+            else:
+                assert False, f"ORDER BY {order_by} should be rejected"
+
+        for order_by in ["max(n.v % 3)", "max(n.v % 3.0)"]:
+            res = query(
+                f"MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m ORDER BY {order_by} DESC, g"
+            )
+            assert res.result_set == [[0, 2], [1, 2]], order_by
+
+        # quantifiers that differ only in kind are different aggregates
+        projected = "max(all(x IN [1, 2] WHERE x > 1))"
+        query_exception(
+            f"MATCH (n:N) RETURN n.g AS g, {projected} AS m ORDER BY max(any(x IN [1, 2] WHERE x > 1))",
+            "failed to map aggregation expression",
+        )
+        res = query(
+            f"MATCH (n:N) RETURN n.g AS g, {projected} AS m ORDER BY {projected}, g"
+        )
+        assert res.result_set == [[0, False], [1, False]]
+    finally:
+        query("MATCH (n:N) DETACH DELETE n", write=True)
+
+
+def test_call_optional_match_filter_not_pushed_with_outer_variable_ids():
+    """A filter in an OPTIONAL MATCH inside a CALL {} body must stay on the
+    body's own rows: variable ids are per scope, so the body's `n` must not
+    pass for an outer variable with the same id (#2728)."""
+    query("UNWIND range(1, 3) AS i CREATE (:A:B {id: i})", write=True)
+
+    res = query(
+        "MATCH (x:A:B) CALL { OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id AS nid }"
+        " RETURN x.id, nid ORDER BY x.id"
+    )
+    assert res.result_set == [[1, 3], [2, 3], [3, 3]]
+
+    res = query(
+        "MATCH (x:A:B) CALL { WITH x OPTIONAL MATCH (n:A:B) WHERE n.id = x.id + 1"
+        " RETURN n.id AS nid } RETURN x.id, nid ORDER BY x.id"
+    )
+    assert res.result_set == [[1, 2], [2, 3], [3, None]]
+
+    # The query from #2728.
+    res = query(
+        """
+        UNWIND [1] AS alias0
+        CALL { WITH * RETURN alias0 AS alias1, range(0, 4) AS alias2, range(9, 16, 1) AS alias3 SKIP 0 }
+        CREATE ({id: 135})
+        WITH alias0, alias3, alias2, alias1 AS alias4,
+             toBooleanOrNull(range(23, 9, -3)) AS alias5, localTime('12:00:00') AS alias6
+        WHERE true
+        CALL {
+            WITH alias3, alias2, alias6
+            OPTIONAL MATCH (n0)<-[r0:rt11]-(n1 {k6: '9'}), (n0), p0 = (n0)<-[:rt3]-()
+            WHERE size(r0.k9) >= 0
+            RETURN n1 AS n2, r0 AS r1, p0 AS p1, alias6 AS alias7, alias3 AS alias8,
+                   alias2 AS alias9, list.insertListElements(labels(n1), [0], 0, false) AS alias10
+        }
+        CALL db.relationshipTypes() YIELD relationshipType AS alias11
+        RETURN n2
+        """,
+        write=True,
+    )
+    assert res.result_set == []
+
+
+def test_call_optional_match_filter_wrapped_aggregate_inherits_only_outputs():
+    """An aggregate under a wrapper (`LIMIT`) in the left branch exposes only
+    its own outputs to the OPTIONAL MATCH, so the filter on `n` must not be
+    pushed onto an Argument that carries a discarded variable's id."""
+    query("UNWIND range(1, 3) AS i CREATE (:A:B {id: i})", write=True)
+
+    res = query(
+        "UNWIND [1] AS a UNWIND [1] AS b WITH count(*) AS k LIMIT 1"
+        " OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id"
+    )
+    assert res.result_set == [[3]]
+
+
+def test_optional_match_filter_after_projection_copy_to_another_slot():
+    """`WITH 1 AS k ORDER BY c` carries `c` through the projection from one
+    slot to another. The OPTIONAL MATCH after it inherits the slot the copy is
+    written to, not the one it was read from, which the next scan reuses."""
+    query("CREATE (:A:B {id: 3})", write=True)
+
+    res = query(
+        "UNWIND [1] AS a UNWIND [1] AS b UNWIND [1] AS c WITH 1 AS k ORDER BY c"
+        " OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id"
+    )
+    assert res.result_set == [[3]]
+
+
+def test_call_optional_match_filter_after_pattern_predicate():
+    """A pattern predicate (SemiApply / AntiSemiApply) in the left branch
+    contributes only its input's variables; its existence sub-plan's anonymous
+    entities must not pass for the body's variables (#2728)."""
+    query(
+        "CREATE (a:A:B {id: 1})-[:R]->(:A:B {id: 2}), (:A:B {id: 3})", write=True
+    )
+
+    for pred in ["(x)-[:R]->()", "NOT (x)-[:R]->()", "(x)-[:R]->(:B) OR x.id > 2"]:
+        res = query(
+            f"MATCH (x:A:B) WHERE {pred} CALL {{ OPTIONAL MATCH (n:A:B {{id: 3}})"
+            " RETURN n.id AS nid } RETURN x.id, nid ORDER BY x.id"
+        )
+        expected = {
+            "(x)-[:R]->()": [[1, 3]],
+            "NOT (x)-[:R]->()": [[2, 3], [3, 3]],
+            "(x)-[:R]->(:B) OR x.id > 2": [[1, 3], [3, 3]],
+        }[pred]
+        assert res.result_set == expected
+
+        res = query(
+            f"MATCH (x:A:B) WHERE {pred} OPTIONAL MATCH (n:A:B) WHERE n.id = 3"
+            " RETURN x.id, n.id ORDER BY x.id"
+        )
+        assert res.result_set == [[r[0], 3] for r in expected]
+
+
+def test_union_branch_optional_match_filter_keeps_anonymous_scan():
+    """A `WHERE` on an OPTIONAL MATCH inside a UNION branch of a CALL {} stays
+    above the anonymous node's scan: the branch's `_anon_0` shares its id with
+    an outer variable, and was pushed onto the scan's Argument, where it is
+    unbound ("Variable _anon_0 not found", #2742)."""
+    query("CREATE (:L {k0: true})", write=True)
+
+    body = """
+        MATCH (n0:L)
+        CALL { WITH * RETURN n0 AS n1 }
+        CALL {
+            WITH n0, n1
+            RETURN n0 AS n2
+            UNION
+            OPTIONAL MATCH ({k0: true}), ()
+            WHERE true
+            %s
+            RETURN null AS n2
+        }
+        RETURN id(n0), id(n1), id(n2) ORDER BY id(n2)
+    """
+    for barrier in ["", "CALL { RETURN 0 AS __barrier }"]:
+        res = query(body % barrier)
+        assert res.result_set == [[0, 0, 0], [0, 0, None]]
+
+
+def test_var_len_traverse_keeps_earlier_clause_below_it():
+    """Reversing a variable-length traverse to scan its more selective end
+    must not drop an earlier clause stitched under it: a MATCH … WHERE
+    filter or an UNWIND (#2972, variable-length shape)."""
+    query(
+        "CREATE (:S {v: 1})-[:R]->(:B {w: 2}), (:S {v: 0})-[:R]->(:B {w: 2}),"
+        " (:S {v: 0})-[:R]->(:X)-[:R]->(:B {w: 2})",
+        write=True,
+    )
+
+    res = query(
+        "MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN a.v, b.w"
+    )
+    assert res.result_set == [[1, 2]]
+
+    res = query(
+        "UNWIND [1, 2] AS i MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN count(*)"
+    )
+    assert res.result_set == [[2]]
+
+    res = query("UNWIND [1, 2] AS i MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    assert res.result_set == [[8]]
+
+    # A single MATCH still scans the selective end.
+    res = query("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    assert res.result_set == [[2]]
+
+    plan = str(
+        common.g.explain("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    )
+    assert "Node By Label Scan | (b:B)" in plan, plan
+
+
+def test_variable_named_like_an_anonymous_entity():
+    # An unnamed pattern entity has no name at all, so no variable a query
+    # writes can be it - not `_anon_<n>`, not `_anonymous`, and not even the
+    # backquoted `@anon_<n>` that plans print for it.
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    res = query("MATCH (_anon_0:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (`@anon_0`:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (`@anon_1`:A), (:B), (`@anon_0`:B) RETURN count(*)")
+    assert res.result_set == [[4]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->(_anon_2) RETURN count(_anon_1)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (`@anon_0`:B)-[`@anon_1`]->(`@anon_2`) RETURN count(*)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->() RETURN labels(_anon_0), type(_anon_1)")
+    assert res.result_set == [[["B"], "R"]]
+    res = query("MATCH (_anonymous:A) RETURN count(_anonymous)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_x:A) RETURN _anon_x.v, labels(_anon_x)")
+    assert res.result_set == [[None, ["A"]]]
+
+
+def test_foreach_slot_of_an_unnamed_entity_cannot_be_named():
+    """The slot a FOREACH keeps for an unnamed entity it created is not a name
+    a query can spell."""
+    query_exception(
+        "FOREACH (i IN [] | CREATE ()) WITH _foreach_0_1 AS n RETURN n",
+        "not defined",
+    )
+
+
+def test_return_star_leaves_out_unnamed_entities():
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    # Only `a` is named: the relationship and the other node are not columns.
+    res = query("MATCH (a:B)-[]->() RETURN *")
+    assert res.header[0][1] == "a" and len(res.header) == 1
+    assert len(res.result_set) == 1
+    res = query("MATCH (a:B)-[r]->(c) RETURN *")
+    assert sorted(h[1] for h in res.header) == ["a", "c", "r"]
+    # No named variable in scope: nothing for `*` to return.
+    query_exception("MATCH (:A) RETURN *", "RETURN * is not allowed when there are no variables in scope")
+    query_exception("MATCH ()-[]->() RETURN *", "RETURN * is not allowed when there are no variables in scope")
 
 
 def test_self_loop_hop_after_other_hops_keeps_them():

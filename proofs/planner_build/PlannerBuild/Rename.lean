@@ -2,12 +2,6 @@ import PlannerBuild.ToPlan
 import PlannerBuild.Nested
 /-
 # Odds and ends of planner/mod.rs
-
-| here | there |
-| --- | --- |
-| `Proj`, `outerOf`, `renameProj` | `rename_projection_outputs` mod.rs:2646-2679 |
-| `newPSt` | `Planner::new` mod.rs:809-818 |
-| `inlineAttrs_passes` | `inline_attrs_to_filter` mod.rs:543-571 (meaning of the filter) |
 -/
 namespace PlannerBuild.E
 

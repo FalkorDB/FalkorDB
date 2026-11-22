@@ -8,18 +8,18 @@ for *any* indexer behaviour.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `populateStart`   | `populate_index` :560 |
-| `dropBg`          | `drop_index_bg` :819 |
-| `createIndex`     | `create_index` :3670 / `create_index_sync` :3717 |
-| `syncDocs`        | `populate_indexes_sync` :3764 (one label/type) |
-| `commitDocs`      | `commit_index_kind` :4043 (via `commit_index` :3927, `commit_index_locked` :3940) |
-| `commitEdgeDocs`  | `commit_edge_index_locked` :3962 (via `commit_edge_index` :3950) |
-| `commitIndexDocs` | `commit_index_docs` :3913 (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
-| `dropIndex`, `noSuchIndexMsg` | `drop_index` :4090 (message :4160-4177) |
-| `indexInfo`       | `index_info` :4468 |
-| `memEstimate`, `labelPass` | `memory_usage_report` :4919 sampling arithmetic and seen-dedup |
-| `encodeOp`        | `encode_payload` :5093 dispatch |
-| `getPlan`, `getPlanChk` | `get_plan` :1377 cache decision; `getPlanChk` adds #3304's `check_depth`/`check_height` rejections |
+| `populateStart`   | `populate_index`  |
+| `dropBg`          | `drop_index_bg`  (`Indexer::remove_if_empty`, #3856) |
+| `createIndex`     | `create_index`  / `create_index_sync`  |
+| `syncDocs`        | `populate_indexes_sync`  (one label/type) |
+| `commitDocs`      | `commit_index_kind`  (via `commit_index` , `commit_index_locked` ) |
+| `commitEdgeDocs`  | `commit_edge_index_locked`  (via `commit_edge_index` ) |
+| `commitIndexDocs` | `commit_index_docs`  (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
+| `dropIndex`, `noSuchIndexMsg` | `drop_index`  (message :4160-4177) |
+| `indexInfo`       | `index_info`  |
+| `memEstimate`, `labelPass` | `memory_usage_report`  sampling arithmetic and seen-dedup |
+| `encodeOp`        | `encode_payload`  dispatch |
+| `getPlan`         | `get_plan`  cache decision |
 -/
 namespace GQ
 variable {V : Type}
@@ -30,10 +30,35 @@ def populateStart (snap : Option Nat) : Option (Nat × Nat × Option Nat × Opti
 theorem populateStart_spec (t : Nat) : populateStart (some t) = some (0, 0, none, none) ∧
     populateStart none = none := ⟨rfl, rfl⟩
 
-/-- `drop_index_bg`: the label leaves the indexer's map (under its lock). -/
-def dropBg (idxLabels : List String) (l : String) : List String := idxLabels.filter (· != l)
-theorem dropBg_spec (idxLabels : List String) (l : String) : l ∉ dropBg idxLabels l := by
-  simp [dropBg]
+/-- `drop_index_bg` (under the indexer lock): `remove_if_empty` drops the
+label's entry only while it has no fields (#3856). The indexer map is
+`(label, index_count)` pairs. -/
+def dropBg (idx : List (String × Nat)) (l : String) : List (String × Nat) :=
+  idx.filter (fun e => !(e.1 == l && e.2 == 0))
+
+/-- **PROVEN**: no fieldless entry for the label is left. -/
+theorem dropBg_spec (idx : List (String × Nat)) (l : String) :
+    ∀ e ∈ dropBg idx l, e.1 = l → e.2 ≠ 0 := by
+  intro e he h1 h2; simp [dropBg, h1, h2] at he
+
+/-- **PROVEN**: on the drop path with no racing `CREATE INDEX` (`drop_index`
+reported `remaining = 0`), the label leaves the indexer's map. -/
+theorem dropBg_after_drop (idx : List (String × Nat)) (l : String)
+    (h : ∀ n, (l, n) ∈ idx → n = 0) : l ∉ (dropBg idx l).map (·.1) := by
+  simp only [dropBg, List.mem_map, List.mem_filter, not_exists, not_and]
+  rintro ⟨l', n⟩ ⟨hm, hb⟩ rfl
+  simp [h n hm] at hb
+
+/-- **PROVEN** (#3856): an entry a `CREATE INDEX` re-filled before the
+background drop ran is kept. -/
+theorem dropBg_keeps_filled (idx : List (String × Nat)) (l : String) (n : Nat)
+    (hm : (l, n) ∈ idx) (hn : n ≠ 0) : (l, n) ∈ dropBg idx l := by
+  simp [dropBg, hm, hn]
+
+/-- **PROVEN**: other labels are untouched. -/
+theorem dropBg_other (idx : List (String × Nat)) (l l' : String) (n : Nat) (hl : l' ≠ l) :
+    (l', n) ∈ dropBg idx l ↔ (l', n) ∈ idx := by
+  simp [dropBg, hl]
 
 /-- `create_index` / `create_index_sync`: register the label (or type),
 ask the indexer (`res`), then on success register the attribute names.
@@ -152,7 +177,7 @@ theorem commitDocs_every_id (adds rems : List (Nat × List Nat)) (names : List S
   · cases h
     exact ⟨_, _, List.mem_map.2 ⟨_, hs, rfl⟩, _, List.mem_map.2 ⟨id, hi, rfl⟩⟩
 
-/-- `commit_index_docs` (graph.rs:3913): first `apply_index_writes` (the native index's
+/-- `commit_index_docs` (graph.rs): first `apply_index_writes` (the native index's
 staged `docs.native`, a no-op without `index-falkordb`; its semantics belong to
 proofs/index_layer), then the RediSearch node documents iff `node_adds`/`node_removes` is
 non-empty, then the edge documents iff `edge_adds`/`edge_removes` is non-empty. The ops
@@ -202,8 +227,8 @@ theorem commitEdgeDocs_mem (tn : Ten) (ids : List Nat) (s d e : Nat) (hnd : (tn.
       · have : y.2.2 ≠ e := fun h => hnd.1 (h ▸ List.mem_map_of_mem hm')
         simp [this, ih hnd.2 hm']
 
-/-- The "no such index" text (graph.rs:4160-4177): `:L` when no attribute is named
-(`db.idx.fulltext.drop('L')`, #3280, as C), else `:L(a, b)`. -/
+/-- The "no such index" text (graph.rs): `:L` when no attribute is named
+(`db.idx.fulltext.drop('L')`, as C), else `:L(a, b)`. -/
 def noSuchIndexMsg (label : String) (attrs : List String) : String :=
   let attrList := ", ".intercalate attrs
   let a := if attrList = "" then "" else "(" ++ attrList ++ ")"
@@ -222,9 +247,9 @@ theorem dropIndex_protects (dependsOn : String → Bool) (fieldsOfType : List St
     (a : String) (ha : a ∈ (if attrs = [] then fieldsOfType else attrs)) (hd : dependsOn a = true) :
     dropIndex dependsOn fieldsOfType label attrs dropped = .error "Index supports constraint" := by
   unfold dropIndex
-  rw [if_pos (List.any_eq_true.2 ⟨a, ha, hd⟩)]
+  rw [ite_eq_left (List.any_eq_true.2 ⟨a, ha, hd⟩)]
 
-/-- **#3280 (fixed)**: dropping an index that does not exist (no constraint in the way)
+/-- Dropping an index that does not exist (no constraint in the way)
 reports `Unable to drop index on :L: no such index.` when no attribute was named, as C. -/
 theorem dropIndex_none_noattr (dependsOn : String → Bool) (fieldsOfType : List String)
     (label : String) (h : fieldsOfType.any dependsOn = false) :
@@ -241,6 +266,126 @@ def indexInfo {I} (nodeInfos edgeInfos : List I) : List (String × I) :=
   nodeInfos.map ("NODE", ·) ++ edgeInfos.map ("RELATIONSHIP", ·)
 theorem indexInfo_length {I} (a b : List I) : (indexInfo a b).length = a.length + b.length := by
   simp [indexInfo]
+
+/-! ## `add_native_build` / `native_build_total` (`index-falkordb` only, #3585)
+
+Both are `#[cfg(feature = "index-falkordb")]` and run only from `index_info`: under the feature a
+label with a `Building` native Range column reports that build's progress. The column's own state
+is `FalkorDbIndex::building_read` (proofs/native_index), taken here as the per-attribute answer
+`Option Nat` (`none` = not a `Building` column). -/
+
+/-- The `IndexInfo` fields `add_native_build` reads and writes: `pending: i32`,
+`progress: u64`, `total: u64` (graph/src/index/mod.rs). -/
+structure BuildInfo where
+  pending : Int
+  progress : Nat
+  total : Nat
+
+/-- `native_build_total` (graph.rs): the label's `nvals` / the type's `edge_count`; a name
+without a matrix counts 0. -/
+def nativeBuildTotal (g : G V) (isNode : Bool) (label : String) : Nat :=
+  if isNode then ((getLabelMat g label).map (·.ents.length)).getD 0
+  else ((getRelMat g label).map Ten.edgeCount).getD 0
+
+/-- One turn of `add_native_build`'s loop over `field_order`: the pair is
+`(is a Range field, building_read)`; the accumulator is `(columns, least read)`. -/
+def nbStep (acc : Option (Int × Nat)) (a : Bool × Option Nat) : Option (Int × Nat) :=
+  if a.1 then
+    match a.2 with
+    | some read => some (match acc with | none => (1, read) | some (columns, least) => (columns + 1, min least read))
+    | none => acc
+  else acc
+
+def nbFold (attrs : List (Bool × Option Nat)) : Option (Int × Nat) := attrs.foldl nbStep none
+
+/-- `add_native_build` (graph.rs). -/
+def addNativeBuild (g : G V) (isNode : Bool) (label : String) (attrs : List (Bool × Option Nat))
+    (info : BuildInfo) : BuildInfo :=
+  match nbFold attrs with
+  | none => info
+  | some (columns, least) =>
+    let total := nativeBuildTotal g isNode label
+    let done := min least total
+    { pending := info.pending + columns,
+      progress := if info.pending > 0 then min done info.progress else done,
+      total := total }
+
+/-- Fields that are building Range columns. -/
+def nbCount (attrs : List (Bool × Option Nat)) : Nat :=
+  (attrs.filter (fun a => a.1 && a.2.isSome)).length
+
+theorem nbCount_cons (r : Bool) (rd : Option Nat) (l : List (Bool × Option Nat)) :
+    nbCount ((r, rd) :: l) = nbCount l + (if r && rd.isSome then 1 else 0) := by
+  simp only [nbCount, List.filter_cons]
+  by_cases h : (r && rd.isSome) = true <;> simp [h] <;> omega
+
+theorem nbFold_cols : ∀ (attrs : List (Bool × Option Nat)) (acc : Option (Int × Nat)),
+    (attrs.foldl nbStep acc).map (·.1) =
+      (match acc with
+       | none => if nbCount attrs = 0 then none else some (nbCount attrs : Int)
+       | some (c, _) => some (c + nbCount attrs))
+  | [], acc => by cases acc <;> simp [nbCount]
+  | a :: l, acc => by
+    obtain ⟨r, rd⟩ := a
+    have ih := nbFold_cols l (nbStep acc (r, rd))
+    simp only [List.foldl_cons, ih, nbCount_cons]
+    cases r <;> cases rd <;> cases acc <;> simp [nbStep] <;> omega
+
+/-- No building Range column: the info is untouched (the label is not under native construction). -/
+theorem addNativeBuild_none (g : G V) (isNode : Bool) (label : String)
+    (attrs : List (Bool × Option Nat)) (info : BuildInfo) (h : nbCount attrs = 0) :
+    addNativeBuild g isNode label attrs info = info := by
+  have := nbFold_cols attrs none
+  have hn : nbFold attrs = none := by
+    unfold nbFold
+    cases hf : attrs.foldl nbStep none with
+    | none => rfl
+    | some x => rw [hf] at this; simp [h] at this
+  simp [addNativeBuild, hn]
+
+/-- Each building Range column counts as one pending index, and the label's total is reported once. -/
+theorem addNativeBuild_pending (g : G V) (isNode : Bool) (label : String)
+    (attrs : List (Bool × Option Nat)) (info : BuildInfo) (h : 0 < nbCount attrs) :
+    (addNativeBuild g isNode label attrs info).pending = info.pending + nbCount attrs ∧
+    (addNativeBuild g isNode label attrs info).total = nativeBuildTotal g isNode label := by
+  have := nbFold_cols attrs none
+  have hne : ¬ nbCount attrs = 0 := by omega
+  cases hf : attrs.foldl nbStep none with
+  | none => rw [hf] at this; simp [hne] at this
+  | some x =>
+    obtain ⟨c, l⟩ := x
+    rw [hf] at this
+    simp [hne] at this
+    simp only [addNativeBuild, nbFold, hf]
+    simp [this]
+
+/-- The reported progress never exceeds the label's entities (so `m/n` shows `m ≤ n`). -/
+theorem addNativeBuild_progress_le (g : G V) (isNode : Bool) (label : String)
+    (attrs : List (Bool × Option Nat)) (info : BuildInfo) (h : 0 < nbCount attrs) :
+    (addNativeBuild g isNode label attrs info).progress ≤ nativeBuildTotal g isNode label := by
+  have := nbFold_cols attrs none
+  have hne : ¬ nbCount attrs = 0 := by omega
+  cases hf : attrs.foldl nbStep none with
+  | none => rw [hf] at this; simp [hne] at this
+  | some x =>
+    obtain ⟨c, l⟩ := x
+    simp only [addNativeBuild, nbFold, hf]
+    split <;> omega
+
+/-- While RediSearch has a field pending, the progress shown is the smaller of the two. -/
+theorem addNativeBuild_progress_min (g : G V) (isNode : Bool) (label : String)
+    (attrs : List (Bool × Option Nat)) (info : BuildInfo) (h : 0 < nbCount attrs)
+    (hp : 0 < info.pending) :
+    (addNativeBuild g isNode label attrs info).progress ≤ info.progress := by
+  have := nbFold_cols attrs none
+  have hne : ¬ nbCount attrs = 0 := by omega
+  cases hf : attrs.foldl nbStep none with
+  | none => rw [hf] at this; simp [hne] at this
+  | some x =>
+    obtain ⟨c, l⟩ := x
+    simp only [addNativeBuild, nbFold, hf]
+    simp [hp]
+    omega
 
 /-! ## `memory_usage_report` -/
 
@@ -312,37 +457,6 @@ theorem getPlan_stale (cache : List (String × Nat)) (q : String) (u u' : Nat) (
 theorem getPlan_then_hit (cache : List (String × Nat)) (q : String) (u : Nat) :
     (getPlan (getPlan cache q u u).2 q u u).1 = true := by
   unfold getPlan; by_cases h : (q, u) ∈ cache <;> simp [h]
-
-/-- `get_plan` with #3304's depth guards. `heightOk`: `Planner::check_height` accepts
-the optimized plan; `depthOk`: `Planner::check_depth` accepts the freshly planned one
-(the hit path does not run it: a cached plan passed it when it was cached). Returns
-(`some cached?` or `none` for `Err`, new cache). A rejected plan is not cached. -/
-def getPlanChk (cache : List (String × Nat)) (q : String) (udf udfAfter : Nat)
-    (depthOk heightOk : Bool) : Option Bool × List (String × Nat) :=
-  if (q, udf) ∈ cache then (if heightOk then some true else none, cache)
-  else if depthOk && heightOk then
-    (some false, if udfAfter = udf then (q, udf) :: cache.filter (·.1 != q) else cache)
-  else (none, cache)
-
-/-- On plans both guards accept, `get_plan` is the old cache decision. -/
-theorem getPlanChk_ok (cache : List (String × Nat)) (q : String) (u u' : Nat) :
-    getPlanChk cache q u u' true true =
-      (some (getPlan cache q u u').1, (getPlan cache q u u').2) := by
-  unfold getPlanChk getPlan; by_cases h : (q, u) ∈ cache <;> simp [h]
-
-/-- A query rejected as too deep leaves the plan cache as it was. -/
-theorem getPlanChk_reject_keeps_cache (cache : List (String × Nat)) (q : String) (u u' : Nat)
-    (d h : Bool) (hr : (d && h) = false) :
-    (getPlanChk cache q u u' d h).2 = cache := by
-  unfold getPlanChk; split
-  · rfl
-  · simp [hr]
-
-/-- A hit never changes the cache, whatever `check_height` says. -/
-theorem getPlanChk_hit_keeps_cache (cache : List (String × Nat)) (q : String) (u u' : Nat)
-    (d h : Bool) (hm : (q, u) ∈ cache) :
-    getPlanChk cache q u u' d h = (if h then some true else none, cache) := by
-  simp [getPlanChk, hm]
 
 /-- `is_synced`: conjunction over every matrix and tensor. -/
 def isSynced (flags : List Bool) : Bool := flags.all id
