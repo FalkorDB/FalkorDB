@@ -574,8 +574,9 @@ impl Pending {
     ) -> bool {
         graph.get_labels().len() > self.schema_label_count
             || graph.get_types().len() > self.schema_rel_type_count
-            || graph.get_node_attribute_names().len() > self.schema_node_attr_count
-            || graph.get_relationship_attribute_names().len() > self.schema_rel_attr_count
+            // node and relationship attribute names share one dictionary, so one
+            // length check covers both baselines, without cloning every name
+            || graph.property_key_count() > self.schema_node_attr_count.max(self.schema_rel_attr_count)
     }
 
     pub fn created_nodes(

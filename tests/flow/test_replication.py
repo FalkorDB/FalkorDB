@@ -677,17 +677,17 @@ class testReplication(FlowTestsBase):
             return sorted(row[0] for row in graph.ro_query("CALL db.labels()").result_set)
 
         src.query("CREATE (:A)")
-        source_con.execute_command("WAIT", "1", "0")
+        env.assertEqual(source_con.execute_command("WAIT", "1", "10000"), 1)
         sync_full_before = source_con.info("stats")["sync_full"]
 
         src.query("OPTIONAL MATCH (n:Nope) SET n:OnlyRegistered")
-        source_con.execute_command("WAIT", "1", "0")
+        env.assertEqual(source_con.execute_command("WAIT", "1", "10000"), 1)
         env.assertContains("OnlyRegistered", labels(src))
         env.assertEqual(labels(replica), labels(src))
 
         # its label is numbered after OnlyRegistered on the master
         src.query("CREATE (:B)")
-        source_con.execute_command("WAIT", "1", "0")
+        env.assertEqual(source_con.execute_command("WAIT", "1", "10000"), 1)
         env.assertEqual(labels(replica), labels(src))
         res = replica.ro_query("MATCH (n:B) RETURN count(n)")
         env.assertEqual(res.result_set[0][0], 1)
